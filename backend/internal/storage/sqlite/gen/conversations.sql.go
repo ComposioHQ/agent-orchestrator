@@ -13,6 +13,56 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
+const acceptConversationEditDelivery = `-- name: AcceptConversationEditDelivery :execrows
+UPDATE conversation_edit_deliveries
+SET state = 'accepted',
+    source_branch_id = ?,
+    active_branch_id = ?,
+    turn_id = ?,
+    handled_by_session_id = ?,
+    provider_turn_id = ?,
+    turn_state = ?,
+    turn_requested_at = ?,
+    rejection_kind = '',
+    rejection_message = '',
+    settled_at = ?
+WHERE conversation_id = ?
+  AND client_message_id = ?
+  AND state = 'reserved'
+`
+
+type AcceptConversationEditDeliveryParams struct {
+	SourceBranchID     string
+	ActiveBranchID     string
+	TurnID             string
+	HandledBySessionID string
+	ProviderTurnID     string
+	TurnState          string
+	TurnRequestedAt    sql.NullTime
+	SettledAt          sql.NullTime
+	ConversationID     string
+	ClientMessageID    string
+}
+
+func (q *Queries) AcceptConversationEditDelivery(ctx context.Context, arg AcceptConversationEditDeliveryParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, acceptConversationEditDelivery,
+		arg.SourceBranchID,
+		arg.ActiveBranchID,
+		arg.TurnID,
+		arg.HandledBySessionID,
+		arg.ProviderTurnID,
+		arg.TurnState,
+		arg.TurnRequestedAt,
+		arg.SettledAt,
+		arg.ConversationID,
+		arg.ClientMessageID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const acceptConversationSteerDelivery = `-- name: AcceptConversationSteerDelivery :execrows
 UPDATE conversation_steer_deliveries
 SET state = 'accepted',
@@ -655,6 +705,32 @@ func (q *Queries) InsertConversationBranch(ctx context.Context, arg InsertConver
 	return err
 }
 
+const insertConversationEditDeliveryReservation = `-- name: InsertConversationEditDeliveryReservation :execrows
+INSERT OR IGNORE INTO conversation_edit_deliveries (
+    conversation_id, client_message_id, request_json, state, created_at
+) VALUES (?, ?, ?, 'reserved', ?)
+`
+
+type InsertConversationEditDeliveryReservationParams struct {
+	ConversationID  string
+	ClientMessageID string
+	RequestJson     string
+	CreatedAt       time.Time
+}
+
+func (q *Queries) InsertConversationEditDeliveryReservation(ctx context.Context, arg InsertConversationEditDeliveryReservationParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, insertConversationEditDeliveryReservation,
+		arg.ConversationID,
+		arg.ClientMessageID,
+		arg.RequestJson,
+		arg.CreatedAt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const insertConversationMessage = `-- name: InsertConversationMessage :exec
 INSERT INTO conversation_messages (
     id, conversation_id, turn_id, sequence, revision, role, origin,
@@ -989,6 +1065,39 @@ type RecomputeConversationCompactedAtParams struct {
 func (q *Queries) RecomputeConversationCompactedAt(ctx context.Context, arg RecomputeConversationCompactedAtParams) error {
 	_, err := q.db.ExecContext(ctx, recomputeConversationCompactedAt, arg.UpdatedAt, arg.TargetConversationID)
 	return err
+}
+
+const rejectConversationEditDelivery = `-- name: RejectConversationEditDelivery :execrows
+UPDATE conversation_edit_deliveries
+SET state = 'rejected',
+    rejection_kind = ?,
+    rejection_message = ?,
+    settled_at = ?
+WHERE conversation_id = ?
+  AND client_message_id = ?
+  AND state = 'reserved'
+`
+
+type RejectConversationEditDeliveryParams struct {
+	RejectionKind    string
+	RejectionMessage string
+	SettledAt        sql.NullTime
+	ConversationID   string
+	ClientMessageID  string
+}
+
+func (q *Queries) RejectConversationEditDelivery(ctx context.Context, arg RejectConversationEditDeliveryParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, rejectConversationEditDelivery,
+		arg.RejectionKind,
+		arg.RejectionMessage,
+		arg.SettledAt,
+		arg.ConversationID,
+		arg.ClientMessageID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const rejectConversationSteerDelivery = `-- name: RejectConversationSteerDelivery :execrows
@@ -1682,6 +1791,42 @@ func (q *Queries) SelectConversationEditAnchor(ctx context.Context, arg SelectCo
 		&i.ForkAfterSequence,
 		&i.OriginalDeliveryContentJson,
 		&i.RetryActiveBranch,
+	)
+	return i, err
+}
+
+const selectConversationEditDelivery = `-- name: SelectConversationEditDelivery :one
+SELECT conversation_id, client_message_id, request_json, state, source_branch_id, active_branch_id, turn_id, handled_by_session_id, provider_turn_id, turn_state, turn_requested_at, rejection_kind, rejection_message, created_at, settled_at FROM conversation_edit_deliveries
+WHERE conversation_id = ? AND client_message_id = ?
+LIMIT 1
+`
+
+type SelectConversationEditDeliveryParams struct {
+	ConversationID  string
+	ClientMessageID string
+}
+
+// Inline edit delivery uses the same fail-closed reservation model as steer,
+// but its accepted result also names the branch and durable replacement turn.
+func (q *Queries) SelectConversationEditDelivery(ctx context.Context, arg SelectConversationEditDeliveryParams) (ConversationEditDelivery, error) {
+	row := q.db.QueryRowContext(ctx, selectConversationEditDelivery, arg.ConversationID, arg.ClientMessageID)
+	var i ConversationEditDelivery
+	err := row.Scan(
+		&i.ConversationID,
+		&i.ClientMessageID,
+		&i.RequestJson,
+		&i.State,
+		&i.SourceBranchID,
+		&i.ActiveBranchID,
+		&i.TurnID,
+		&i.HandledBySessionID,
+		&i.ProviderTurnID,
+		&i.TurnState,
+		&i.TurnRequestedAt,
+		&i.RejectionKind,
+		&i.RejectionMessage,
+		&i.CreatedAt,
+		&i.SettledAt,
 	)
 	return i, err
 }

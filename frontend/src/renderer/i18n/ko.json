@@ -1274,6 +1274,7 @@
 	"chat.edit.preservedContent": "보존된 메시지 내용",
 	"chat.edit.image": "이미지",
 	"chat.edit.cancel": "편집 취소",
+	"chat.edit.abandonRecovery": "편집 복구 포기",
 	"chat.edit.send": "편집한 메시지 보내기",
 	"chat.edit.sendShortcut": "편집한 메시지 보내기(⌘/Ctrl+Enter)",
 	"pr.card.reviewStatus": "Review status",

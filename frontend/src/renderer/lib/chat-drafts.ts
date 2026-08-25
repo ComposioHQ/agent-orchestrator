@@ -10,7 +10,19 @@ import type { ConversationContentSummary } from "../types/conversation";
  * the daemon has durably staged those bytes in the session worktree.
  */
 
-export const CHAT_DRAFT_SCHEMA_VERSION = 1 as const;
+export const CHAT_DRAFT_SCHEMA_VERSION = 2 as const;
+
+/**
+ * One immutable AO session incarnation. Session ids are human-stable handles and
+ * may be reused after authoritative deletion; createdAt (or another daemon-owned
+ * UUID) is what prevents an old renderer draft from entering the replacement.
+ */
+export interface ChatDraftScope {
+	sessionId: string;
+	incarnation: string;
+}
+
+type ChatDraftScopeInput = string | ChatDraftScope;
 
 export interface ChatDraftAttachment {
 	id: string;
@@ -56,6 +68,7 @@ export type ChatDraftInlineEditInput = Omit<ChatDraftInlineEdit, "revision">;
 export interface ChatSessionDraft {
 	schemaVersion: typeof CHAT_DRAFT_SCHEMA_VERSION;
 	sessionId: string;
+	incarnation: string;
 	composer: {
 		/** Changes whenever text or attachments change. Used for accepted-send CAS. */
 		revision: number;
@@ -107,6 +120,7 @@ export interface ChatDraftMutationSnapshot<Revision> {
 type DraftMutationKind = "composer" | "inline-edit";
 
 type ChatDraftRuntime = {
+	sessionId: string;
 	listeners: Set<() => void>;
 	sequence: number;
 	composerToken?: ChatDraftMutationToken;
@@ -119,16 +133,41 @@ const EMPTY_COMPOSER_MUTATION: ChatDraftMutationSnapshot<number> = { pending: fa
 const EMPTY_INLINE_EDIT_MUTATION: ChatDraftMutationSnapshot<string> = { pending: false };
 const draftRuntimes = new Map<string, ChatDraftRuntime>();
 
-function draftRuntime(sessionId: string): ChatDraftRuntime {
-	let runtime = draftRuntimes.get(sessionId);
+function normalizeScope(scope: ChatDraftScopeInput): ChatDraftScope {
+	return typeof scope === "string"
+		? { sessionId: scope, incarnation: scope }
+		: scope;
+}
+
+function draftRuntimeKey(scope: ChatDraftScopeInput): string {
+	const identity = normalizeScope(scope);
+	return JSON.stringify([identity.sessionId, identity.incarnation]);
+}
+
+function purgeDraftRuntimes(sessionId: string): void {
+	for (const [key, runtime] of draftRuntimes) {
+		if (runtime.sessionId !== sessionId) continue;
+		runtime.composerToken = undefined;
+		runtime.inlineEditToken = undefined;
+		runtime.composer = EMPTY_COMPOSER_MUTATION;
+		runtime.inlineEdit = EMPTY_INLINE_EDIT_MUTATION;
+		draftRuntimes.delete(key);
+	}
+}
+
+function draftRuntime(scope: ChatDraftScopeInput): ChatDraftRuntime {
+	const identity = normalizeScope(scope);
+	const key = draftRuntimeKey(identity);
+	let runtime = draftRuntimes.get(key);
 	if (!runtime) {
 		runtime = {
+			sessionId: identity.sessionId,
 			listeners: new Set(),
 			sequence: 0,
 			composer: EMPTY_COMPOSER_MUTATION,
 			inlineEdit: EMPTY_INLINE_EDIT_MUTATION,
 		};
-		draftRuntimes.set(sessionId, runtime);
+		draftRuntimes.set(key, runtime);
 	}
 	return runtime;
 }
@@ -137,31 +176,31 @@ function emitDraftRuntime(runtime: ChatDraftRuntime): void {
 	for (const listener of runtime.listeners) listener();
 }
 
-export function subscribeChatDraftRuntime(sessionId: string, listener: () => void): () => void {
-	if (!sessionId) return () => undefined;
-	const runtime = draftRuntime(sessionId);
+export function subscribeChatDraftRuntime(scope: ChatDraftScopeInput, listener: () => void): () => void {
+	if (!normalizeScope(scope).sessionId) return () => undefined;
+	const runtime = draftRuntime(scope);
 	runtime.listeners.add(listener);
 	return () => runtime.listeners.delete(listener);
 }
 
 export function getChatComposerMutation(
-	sessionId: string,
+	scope: ChatDraftScopeInput,
 ): ChatDraftMutationSnapshot<number> {
-	return draftRuntimes.get(sessionId)?.composer ?? EMPTY_COMPOSER_MUTATION;
+	return draftRuntimes.get(draftRuntimeKey(scope))?.composer ?? EMPTY_COMPOSER_MUTATION;
 }
 
 export function getChatInlineEditMutation(
-	sessionId: string,
+	scope: ChatDraftScopeInput,
 ): ChatDraftMutationSnapshot<string> {
-	return draftRuntimes.get(sessionId)?.inlineEdit ?? EMPTY_INLINE_EDIT_MUTATION;
+	return draftRuntimes.get(draftRuntimeKey(scope))?.inlineEdit ?? EMPTY_INLINE_EDIT_MUTATION;
 }
 
 function beginDraftMutation(
-	sessionId: string,
+	scope: ChatDraftScopeInput,
 	kind: DraftMutationKind,
 ): ChatDraftMutationToken | undefined {
-	if (!sessionId) return undefined;
-	const runtime = draftRuntime(sessionId);
+	if (!normalizeScope(scope).sessionId) return undefined;
+	const runtime = draftRuntime(scope);
 	if (kind === "composer") {
 		if (runtime.composer.pending) return undefined;
 		const token = Symbol("chat-composer-mutation");
@@ -178,20 +217,20 @@ function beginDraftMutation(
 	return token;
 }
 
-export function beginChatComposerMutation(sessionId: string): ChatDraftMutationToken | undefined {
-	return beginDraftMutation(sessionId, "composer");
+export function beginChatComposerMutation(scope: ChatDraftScopeInput): ChatDraftMutationToken | undefined {
+	return beginDraftMutation(scope, "composer");
 }
 
-export function beginChatInlineEditMutation(sessionId: string): ChatDraftMutationToken | undefined {
-	return beginDraftMutation(sessionId, "inline-edit");
+export function beginChatInlineEditMutation(scope: ChatDraftScopeInput): ChatDraftMutationToken | undefined {
+	return beginDraftMutation(scope, "inline-edit");
 }
 
 function cancelDraftMutation(
-	sessionId: string,
+	scope: ChatDraftScopeInput,
 	kind: DraftMutationKind,
 	token: ChatDraftMutationToken,
 ): void {
-	const runtime = draftRuntimes.get(sessionId);
+	const runtime = draftRuntimes.get(draftRuntimeKey(scope));
 	if (!runtime) return;
 	if (kind === "composer") {
 		if (runtime.composerToken !== token) return;
@@ -206,26 +245,26 @@ function cancelDraftMutation(
 }
 
 export function cancelChatComposerMutation(
-	sessionId: string,
+	scope: ChatDraftScopeInput,
 	token: ChatDraftMutationToken,
 ): void {
-	cancelDraftMutation(sessionId, "composer", token);
+	cancelDraftMutation(scope, "composer", token);
 }
 
 export function cancelChatInlineEditMutation(
-	sessionId: string,
+	scope: ChatDraftScopeInput,
 	token: ChatDraftMutationToken,
 ): void {
-	cancelDraftMutation(sessionId, "inline-edit", token);
+	cancelDraftMutation(scope, "inline-edit", token);
 }
 
 export function finishChatComposerMutation(
-	sessionId: string,
+	scope: ChatDraftScopeInput,
 	token: ChatDraftMutationToken,
 	revision: number,
 	result: DraftClearResult,
 ): void {
-	const runtime = draftRuntimes.get(sessionId);
+	const runtime = draftRuntimes.get(draftRuntimeKey(scope));
 	if (!runtime || runtime.composerToken !== token) return;
 	runtime.composerToken = undefined;
 	runtime.sequence += 1;
@@ -237,12 +276,12 @@ export function finishChatComposerMutation(
 }
 
 export function finishChatInlineEditMutation(
-	sessionId: string,
+	scope: ChatDraftScopeInput,
 	token: ChatDraftMutationToken,
 	revision: string,
 	result: DraftClearResult,
 ): void {
-	const runtime = draftRuntimes.get(sessionId);
+	const runtime = draftRuntimes.get(draftRuntimeKey(scope));
 	if (!runtime || runtime.inlineEditToken !== token) return;
 	runtime.inlineEditToken = undefined;
 	runtime.sequence += 1;
@@ -253,8 +292,8 @@ export function finishChatInlineEditMutation(
 	emitDraftRuntime(runtime);
 }
 
-function invalidateAcceptedDraftMutation(sessionId: string, kind: DraftMutationKind): void {
-	const runtime = draftRuntimes.get(sessionId);
+function invalidateAcceptedDraftMutation(scope: ChatDraftScopeInput, kind: DraftMutationKind): void {
+	const runtime = draftRuntimes.get(draftRuntimeKey(scope));
 	if (!runtime) return;
 	if (kind === "composer") {
 		if (!runtime.composer.accepted) return;
@@ -281,10 +320,12 @@ function rendererStorage(): DraftStorage | undefined {
 	}
 }
 
-function emptyDraft(sessionId: string): ChatSessionDraft {
+function emptyDraft(scope: ChatDraftScopeInput): ChatSessionDraft {
+	const identity = normalizeScope(scope);
 	return {
 		schemaVersion: CHAT_DRAFT_SCHEMA_VERSION,
-		sessionId,
+		sessionId: identity.sessionId,
+		incarnation: identity.incarnation,
 		composer: { revision: 0, text: "", attachments: [] },
 	};
 }
@@ -370,13 +411,14 @@ function inlineEditRevision(): string {
 	return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-function isChatSessionDraft(value: unknown, sessionId: string): value is ChatSessionDraft {
+function isChatSessionDraft(value: unknown, scope: ChatDraftScope): value is ChatSessionDraft {
 	if (!value || typeof value !== "object") return false;
 	const draft = value as Partial<ChatSessionDraft>;
 	const composer = draft.composer as Partial<ChatSessionDraft["composer"]> | undefined;
 	return (
 		draft.schemaVersion === CHAT_DRAFT_SCHEMA_VERSION &&
-		draft.sessionId === sessionId &&
+		draft.sessionId === scope.sessionId &&
+		draft.incarnation === scope.incarnation &&
 		Boolean(composer) &&
 		typeof composer?.revision === "number" &&
 		Number.isInteger(composer.revision) &&
@@ -392,35 +434,56 @@ function isChatSessionDraft(value: unknown, sessionId: string): value is ChatSes
 
 type DraftReadResult = { ok: true; draft: ChatSessionDraft } | { ok: false; draft: ChatSessionDraft };
 
-function loadChatSessionDraft(sessionId: string, storage: DraftStorage | undefined): DraftReadResult {
-	const empty = emptyDraft(sessionId);
-	if (!sessionId || !storage) return { ok: false, draft: empty };
+function loadChatSessionDraft(scopeInput: ChatDraftScopeInput, storage: DraftStorage | undefined): DraftReadResult {
+	const scope = normalizeScope(scopeInput);
+	const empty = emptyDraft(scope);
+	if (!scope.sessionId || !scope.incarnation || !storage) return { ok: false, draft: empty };
 	let raw: string | null;
 	try {
-		raw = storage.getItem(storageKey(sessionId));
+		raw = storage.getItem(storageKey(scope.sessionId));
 	} catch {
 		return { ok: false, draft: empty };
 	}
 	if (!raw) return { ok: true, draft: empty };
+	let parsed: unknown;
 	try {
-		const parsed: unknown = JSON.parse(raw);
-		return {
-			ok: true,
-			draft: isChatSessionDraft(parsed, sessionId) ? parsed : empty,
-		};
+		parsed = JSON.parse(raw);
 	} catch {
-		// Corrupt renderer data is recoverable. Treat it as an empty draft so the
-		// next valid user edit can replace it; only an actual storage access failure
-		// should fail closed and keep reporting that durability is unavailable.
+		// Corrupt renderer data is recoverable; the next proven write replaces it.
 		return { ok: true, draft: empty };
 	}
+	if (
+		parsed &&
+		typeof parsed === "object" &&
+		"sessionId" in parsed &&
+		(parsed as { sessionId?: unknown }).sessionId === scope.sessionId &&
+		(!("incarnation" in parsed) ||
+			(parsed as { incarnation?: unknown }).incarnation !== scope.incarnation)
+	) {
+		// A session id can be recreated. Prove that every renderer descriptor for
+		// the deleted incarnation is gone before allowing the replacement to use
+		// this key. Staged worktree bytes are intentionally outside this boundary.
+		const key = storageKey(scope.sessionId);
+		try {
+			storage.removeItem(key);
+			if (storage.getItem(key) !== null) return { ok: false, draft: empty };
+		} catch {
+			return { ok: false, draft: empty };
+		}
+		purgeDraftRuntimes(scope.sessionId);
+		return { ok: true, draft: empty };
+	}
+	return {
+		ok: true,
+		draft: isChatSessionDraft(parsed, scope) ? parsed : empty,
+	};
 }
 
 export function readChatSessionDraft(
-	sessionId: string,
+	scope: ChatDraftScopeInput,
 	storage: DraftStorage | undefined = rendererStorage(),
 ): ChatSessionDraft {
-	return loadChatSessionDraft(sessionId, storage).draft;
+	return loadChatSessionDraft(scope, storage).draft;
 }
 
 function hasContent(draft: ChatSessionDraft): boolean {
@@ -495,11 +558,11 @@ function attachmentsEqual(
  * before the renderer is allowed to call the daemon.
  */
 export function prepareChatComposerDelivery(
-	sessionId: string,
+	scope: ChatDraftScopeInput,
 	input: PrepareChatComposerDeliveryInput,
 	storage: DraftStorage | undefined = rendererStorage(),
 ): DraftDeliveryResult<ChatComposerDelivery> {
-	const loaded = loadChatSessionDraft(sessionId, storage);
+	const loaded = loadChatSessionDraft(scope, storage);
 	if (!loaded.ok) return { ok: false, recovered: false, draft: loaded.draft };
 	const existing = loaded.draft.composer.delivery;
 	if (existing) {
@@ -538,12 +601,12 @@ export function prepareChatComposerDelivery(
 
 /** Persist the daemon's acceptance before attempting to remove the draft. */
 export function markChatComposerDeliveryAccepted(
-	sessionId: string,
+	scope: ChatDraftScopeInput,
 	clientMessageId: string,
 	revision: number,
 	storage: DraftStorage | undefined = rendererStorage(),
 ): DraftWriteResult {
-	const loaded = loadChatSessionDraft(sessionId, storage);
+	const loaded = loadChatSessionDraft(scope, storage);
 	const delivery = loaded.draft.composer.delivery;
 	if (
 		!loaded.ok ||
@@ -573,12 +636,12 @@ export function markChatComposerDeliveryAccepted(
  * revision becomes an ordinary editable draft again.
  */
 export function clearRejectedChatComposerDelivery(
-	sessionId: string,
+	scope: ChatDraftScopeInput,
 	clientMessageId: string,
 	revision: number,
 	storage: DraftStorage | undefined = rendererStorage(),
 ): DraftWriteResult {
-	const loaded = loadChatSessionDraft(sessionId, storage);
+	const loaded = loadChatSessionDraft(scope, storage);
 	const delivery = loaded.draft.composer.delivery;
 	if (
 		!loaded.ok ||
@@ -602,15 +665,51 @@ export function clearRejectedChatComposerDelivery(
 }
 
 /**
+ * Explicitly abandon a steer whose acceptance is unknowable. This is deliberately
+ * separate from definitive refusal: the provider may already have received it.
+ * Only the renderer journal is removed; text and staged descriptors remain so the
+ * person can decide whether a later submit is worth the duplicate-delivery risk.
+ */
+export function clearUncertainChatComposerDelivery(
+	scope: ChatDraftScopeInput,
+	clientMessageId: string,
+	revision: number,
+	storage: DraftStorage | undefined = rendererStorage(),
+): DraftWriteResult {
+	const loaded = loadChatSessionDraft(scope, storage);
+	const delivery = loaded.draft.composer.delivery;
+	if (
+		!loaded.ok ||
+		!delivery ||
+		delivery.kind !== "steer" ||
+		delivery.state !== "dispatching" ||
+		delivery.clientMessageId !== clientMessageId ||
+		delivery.revision !== revision
+	) {
+		return { ok: false, draft: loaded.draft };
+	}
+	const next: ChatSessionDraft = {
+		...loaded.draft,
+		composer: {
+			revision: loaded.draft.composer.revision,
+			text: loaded.draft.composer.text,
+			attachments: loaded.draft.composer.attachments,
+		},
+	};
+	const result = persistDraftProven(next, storage);
+	return result.ok ? result : { ok: false, draft: loaded.draft };
+}
+
+/**
  * Atomically proves an inline edit and its stable branch-mutation id before
  * dispatch. A restored journal is returned unchanged for explicit safe retry.
  */
 export function prepareChatInlineEditDelivery(
-	sessionId: string,
+	scope: ChatDraftScopeInput,
 	input: PrepareChatInlineEditDeliveryInput,
 	storage: DraftStorage | undefined = rendererStorage(),
 ): DraftDeliveryResult<ChatInlineEditDelivery> {
-	const loaded = loadChatSessionDraft(sessionId, storage);
+	const loaded = loadChatSessionDraft(scope, storage);
 	if (!loaded.ok) return { ok: false, recovered: false, draft: loaded.draft };
 	if (loaded.draft.inlineEditDelivery) {
 		const proof = persistDraftProven(loaded.draft, storage);
@@ -656,12 +755,12 @@ export function prepareChatInlineEditDelivery(
 }
 
 export function markChatInlineEditDeliveryAccepted(
-	sessionId: string,
+	scope: ChatDraftScopeInput,
 	clientMessageId: string,
 	revision: string,
 	storage: DraftStorage | undefined = rendererStorage(),
 ): DraftWriteResult {
-	const loaded = loadChatSessionDraft(sessionId, storage);
+	const loaded = loadChatSessionDraft(scope, storage);
 	const delivery = loaded.draft.inlineEditDelivery;
 	if (
 		!loaded.ok ||
@@ -682,11 +781,50 @@ export function markChatInlineEditDeliveryAccepted(
 	return result.ok ? result : { ok: false, draft: loaded.draft };
 }
 
+/** Remove only the journal for an edit the daemon durably proved it rejected. */
+export function clearRejectedChatInlineEditDelivery(
+	scope: ChatDraftScopeInput,
+	clientMessageId: string,
+	revision: string,
+	storage: DraftStorage | undefined = rendererStorage(),
+): DraftWriteResult {
+	const loaded = loadChatSessionDraft(scope, storage);
+	const delivery = loaded.draft.inlineEditDelivery;
+	if (
+		!loaded.ok ||
+		!delivery ||
+		delivery.state !== "dispatching" ||
+		delivery.clientMessageId !== clientMessageId ||
+		delivery.revision !== revision
+	) {
+		return { ok: false, draft: loaded.draft };
+	}
+	const next = { ...loaded.draft };
+	delete next.inlineEditDelivery;
+	const result = persistDraftProven(next, storage);
+	return result.ok ? result : { ok: false, draft: loaded.draft };
+}
+
+/** Explicitly abandon an inline edit whose provider acceptance is unknowable. */
+export function clearUncertainChatInlineEditDelivery(
+	scope: ChatDraftScopeInput,
+	clientMessageId: string,
+	revision: string,
+	storage: DraftStorage | undefined = rendererStorage(),
+): DraftWriteResult {
+	return clearRejectedChatInlineEditDelivery(
+		scope,
+		clientMessageId,
+		revision,
+		storage,
+	);
+}
+
 function mutateDraft(
-	sessionId: string,
+	scope: ChatDraftScopeInput,
 	mutate: (draft: ChatSessionDraft) => ChatSessionDraft,
 	storage: DraftStorage | undefined,
-	loaded: DraftReadResult = loadChatSessionDraft(sessionId, storage),
+	loaded: DraftReadResult = loadChatSessionDraft(scope, storage),
 ): DraftWriteResult {
 	const next = mutate(loaded.draft);
 	if (!loaded.ok) return { ok: false, draft: next };
@@ -694,16 +832,16 @@ function mutateDraft(
 }
 
 export function writeChatComposerText(
-	sessionId: string,
+	scope: ChatDraftScopeInput,
 	text: string,
 	storage: DraftStorage | undefined = rendererStorage(),
 ): DraftWriteResult {
-	const loaded = loadChatSessionDraft(sessionId, storage);
+	const loaded = loadChatSessionDraft(scope, storage);
 	if (loaded.ok && loaded.draft.composer.text === text) {
 		return { ok: true, draft: loaded.draft };
 	}
 	const result = mutateDraft(
-		sessionId,
+		scope,
 		(draft) => ({
 			...draft,
 			composer: {
@@ -715,16 +853,16 @@ export function writeChatComposerText(
 		storage,
 		loaded,
 	);
-	if (result.ok) invalidateAcceptedDraftMutation(sessionId, "composer");
+	if (result.ok) invalidateAcceptedDraftMutation(scope, "composer");
 	return result;
 }
 
 export function writeChatAttachments(
-	sessionId: string,
+	scope: ChatDraftScopeInput,
 	attachments: ChatDraftAttachment[],
 	storage: DraftStorage | undefined = rendererStorage(),
 ): DraftWriteResult {
-	const loaded = loadChatSessionDraft(sessionId, storage);
+	const loaded = loadChatSessionDraft(scope, storage);
 	const current = loaded.draft;
 	if (
 		loaded.ok &&
@@ -744,7 +882,7 @@ export function writeChatAttachments(
 		return { ok: true, draft: current };
 	}
 	const result = mutateDraft(
-		sessionId,
+		scope,
 		(draft) => ({
 			...draft,
 			composer: {
@@ -756,17 +894,17 @@ export function writeChatAttachments(
 		storage,
 		loaded,
 	);
-	if (result.ok) invalidateAcceptedDraftMutation(sessionId, "composer");
+	if (result.ok) invalidateAcceptedDraftMutation(scope, "composer");
 	return result;
 }
 
 export function writeChatInlineEdit(
-	sessionId: string,
+	scope: ChatDraftScopeInput,
 	inlineEdit: ChatDraftInlineEditInput | undefined,
 	storage: DraftStorage | undefined = rendererStorage(),
 ): DraftWriteResult {
 	const result = mutateDraft(
-		sessionId,
+		scope,
 		(draft) => {
 			const next = { ...draft };
 			if (inlineEdit) {
@@ -779,7 +917,7 @@ export function writeChatInlineEdit(
 		},
 		storage,
 	);
-	if (result.ok) invalidateAcceptedDraftMutation(sessionId, "inline-edit");
+	if (result.ok) invalidateAcceptedDraftMutation(scope, "inline-edit");
 	return result;
 }
 
@@ -788,11 +926,11 @@ export function writeChatInlineEdit(
  * This protects a remounted editor from a stale request completing afterward.
  */
 export function clearAcceptedChatInlineEdit(
-	sessionId: string,
+	scope: ChatDraftScopeInput,
 	acceptedRevision: string,
 	storage: DraftStorage | undefined = rendererStorage(),
 ): DraftClearResult {
-	const loaded = loadChatSessionDraft(sessionId, storage);
+	const loaded = loadChatSessionDraft(scope, storage);
 	const current = loaded.draft;
 	if (!loaded.ok) return { ok: false, cleared: false, draft: current };
 	if (!current.inlineEdit || current.inlineEdit.revision !== acceptedRevision) {
@@ -821,11 +959,11 @@ export function clearAcceptedChatInlineEdit(
  * acceptance must remain both on screen and in durable storage.
  */
 export function clearAcceptedChatComposer(
-	sessionId: string,
+	scope: ChatDraftScopeInput,
 	acceptedRevision: number,
 	storage: DraftStorage | undefined = rendererStorage(),
 ): DraftClearResult {
-	const loaded = loadChatSessionDraft(sessionId, storage);
+	const loaded = loadChatSessionDraft(scope, storage);
 	const current = loaded.draft;
 	if (!loaded.ok) return { ok: false, cleared: false, draft: current };
 	if (current.composer.revision !== acceptedRevision) {

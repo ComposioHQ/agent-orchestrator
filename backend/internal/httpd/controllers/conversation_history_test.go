@@ -271,6 +271,9 @@ func TestEditConversationRouteRefusalsUseEditCodes(t *testing.T) {
 		{"blank", nil, http.StatusBadRequest, "CHAT_EDIT_TURN_INVALID"},
 		{"unsupported", chatsvc.ErrForkUnsupported, http.StatusConflict, "CHAT_EDIT_UNSUPPORTED"},
 		{"busy", chatsvc.ErrTurnRunning, http.StatusConflict, "CHAT_EDIT_BUSY"},
+		{"delivery uncertain", chatsvc.ErrEditDeliveryUncertain, http.StatusConflict, "CHAT_EDIT_UNCERTAIN"},
+		{"idempotency conflict", chatsvc.ErrEditIdempotencyConflict, http.StatusConflict, "CHAT_EDIT_IDEMPOTENCY_CONFLICT"},
+		{"durably rejected", chatsvc.ErrEditDeliveryRejected, http.StatusConflict, "CHAT_EDIT_REJECTED"},
 		{"missing turn", fmt.Errorf("%w: %w", chatsvc.ErrEditTurnInvalid, domain.ErrNoConversationTurn), http.StatusNotFound, "CHAT_EDIT_TURN_INVALID"},
 		{"invalid stored content", chatsvc.ErrEditTurnInvalid, http.StatusBadRequest, "CHAT_EDIT_TURN_INVALID"},
 	}

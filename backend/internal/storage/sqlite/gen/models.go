@@ -157,6 +157,24 @@ type ConversationBranch struct {
 	CreatedAt              time.Time
 }
 
+type ConversationEditDelivery struct {
+	ConversationID     string
+	ClientMessageID    string
+	RequestJson        string
+	State              string
+	SourceBranchID     string
+	ActiveBranchID     string
+	TurnID             string
+	HandledBySessionID string
+	ProviderTurnID     string
+	TurnState          string
+	TurnRequestedAt    sql.NullTime
+	RejectionKind      string
+	RejectionMessage   string
+	CreatedAt          time.Time
+	SettledAt          sql.NullTime
+}
+
 type ConversationMessage struct {
 	ID                  string
 	ConversationID      string

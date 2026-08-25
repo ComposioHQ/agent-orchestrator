@@ -54,6 +54,15 @@ var (
 	// ErrEditTurnInvalid reports a prompt that cannot be safely reconstructed from
 	// durable history, including malformed legacy structured content.
 	ErrEditTurnInvalid = errors.New("conversation turn cannot be edited")
+	// ErrEditDeliveryUncertain means AO reserved the edit handle but cannot prove
+	// whether provider delivery and the durable branch result committed together.
+	ErrEditDeliveryUncertain = errors.New("edit delivery is uncertain")
+	// ErrEditIdempotencyConflict refuses reuse of one edit handle for a different
+	// source prompt or replacement payload.
+	ErrEditIdempotencyConflict = errors.New("edit idempotency handle belongs to a different request")
+	// ErrEditDeliveryRejected replays a provider/transport failure that AO observed
+	// and rolled back. A deliberate retry must use a fresh handle.
+	ErrEditDeliveryRejected = errors.New("edit delivery was rejected")
 	// ErrBranchProviderMismatch refuses a historical branch whose opaque provider
 	// conversation id belongs to an earlier agent ownership epoch.
 	ErrBranchProviderMismatch = errors.New("conversation branch belongs to a different agent provider")
@@ -158,30 +167,57 @@ func (s *Service) EditMessage(
 	if err != nil {
 		return EditMessageResult{}, err
 	}
+	requestJSON, err := encodeEditDeliveryRequest(turnID, msg)
+	if err != nil {
+		return EditMessageResult{}, err
+	}
+	if msg.ClientMessageID != "" {
+		delivery, found, loadErr := s.store.EditDelivery(
+			ctx, source.conversation.ID, msg.ClientMessageID)
+		if loadErr != nil {
+			return EditMessageResult{}, fmt.Errorf("%w: load prior result: %w",
+				ErrEditDeliveryUncertain, loadErr)
+		}
+		if found {
+			return replayEditDelivery(delivery, requestJSON)
+		}
+		delivery, created, reserveErr := s.store.ReserveEditDelivery(
+			ctx, source.conversation.ID, msg.ClientMessageID, requestJSON, s.now())
+		if reserveErr != nil {
+			return EditMessageResult{}, fmt.Errorf("%w: reserve delivery: %w",
+				ErrEditDeliveryUncertain, reserveErr)
+		}
+		if !created {
+			return replayEditDelivery(delivery, requestJSON)
+		}
+	}
+	reject := func(result EditMessageResult, cause error) (EditMessageResult, error) {
+		return s.rejectEditDelivery(ctx, source.conversation.ID, msg.ClientMessageID, result, cause)
+	}
 	forker, canFork := source.conv.(ports.ChatForker)
 	anchor, err := s.store.ConversationEditAnchor(ctx, source.conversation.ID, turnID)
 	if err != nil {
-		return EditMessageResult{}, fmt.Errorf("%w: %w", ErrEditTurnInvalid, err)
+		return reject(EditMessageResult{}, fmt.Errorf("%w: %w", ErrEditTurnInvalid, err))
 	}
 	var content []ports.ChatContent
 	if anchor.OriginalDeliveryContentJSON != "" {
 		if err := json.Unmarshal([]byte(anchor.OriginalDeliveryContentJSON), &content); err != nil {
-			return EditMessageResult{}, fmt.Errorf("%w: decode stored prompt content: %w", ErrEditTurnInvalid, err)
+			return reject(EditMessageResult{}, fmt.Errorf("%w: decode stored prompt content: %w", ErrEditTurnInvalid, err))
 		}
 	}
 	msg.Content = content
 	if anchor.RetryActiveBranch {
 		branch, err := s.store.ConversationBranch(ctx, source.conversation.ID, anchor.SourceBranchID)
 		if err != nil {
-			return EditMessageResult{}, fmt.Errorf("load pending edited conversation: %w", err)
+			return reject(EditMessageResult{}, fmt.Errorf("load pending edited conversation: %w", err))
 		}
 		return s.sendEditedMessage(ctx, branch.ParentBranchID, branch.ID, source, msg)
 	}
 	if anchor.PreviousProviderTurnID != "" && !canFork {
-		return EditMessageResult{}, ErrForkUnsupported
+		return reject(EditMessageResult{}, ErrForkUnsupported)
 	}
 	if err := source.BeginIdleBranchHandoff(ctx); err != nil {
-		return EditMessageResult{}, err
+		return reject(EditMessageResult{}, err)
 	}
 	abortSource := true
 	defer func() {
@@ -192,7 +228,7 @@ func (s *Service) EditMessage(
 
 	cfg, driver, err := s.branchLaunchConfig(id, source)
 	if err != nil {
-		return EditMessageResult{}, err
+		return reject(EditMessageResult{}, err)
 	}
 	var providerConversationID string
 	var provider ports.ChatConversation
@@ -219,13 +255,13 @@ func (s *Service) EditMessage(
 		}
 	}
 	if err != nil {
-		return EditMessageResult{}, classify(fmt.Errorf("prepare edited conversation: %w", err))
+		return reject(EditMessageResult{}, classify(fmt.Errorf("prepare edited conversation: %w", err)))
 	}
 	if provider == nil || providerConversationID == "" {
 		if provider != nil {
 			_ = provider.Close()
 		}
-		return EditMessageResult{}, errors.New("replacement provider conversation is not ready")
+		return reject(EditMessageResult{}, errors.New("replacement provider conversation is not ready"))
 	}
 
 	branchID := s.newID()
@@ -241,10 +277,10 @@ func (s *Service) EditMessage(
 	replacement := newController(id, conversation, generation, provider, s.store, s.activity, s.log, s.newID, s.now)
 	if err := s.store.CreateAndActivateConversationBranch(ctx, id, branch, generation, s.now()); err != nil {
 		_ = provider.Close()
-		return EditMessageResult{}, fmt.Errorf("activate edited conversation: %w", err)
+		return reject(EditMessageResult{}, fmt.Errorf("activate edited conversation: %w", err))
 	}
 	if err := s.installBranchController(ctx, id, source, replacement, anchor.SourceBranchID); err != nil {
-		return EditMessageResult{}, err
+		return reject(EditMessageResult{}, err)
 	}
 	abortSource = false
 
@@ -272,12 +308,21 @@ func (s *Service) sendEditedMessage(
 				sendErr = errors.Join(sendErr, fmt.Errorf("discard failed edited turn: %w", err))
 			}
 		}
-		return result, sendErr
+		return s.rejectEditDelivery(ctx, controller.conversation.ID,
+			msg.ClientMessageID, result, sendErr)
 	}
-	if turn.ID != "" {
-		if err := s.store.UpdateConversationBranchReplacement(ctx, activeBranchID, turn.ID); err != nil {
-			return result, err
+	if turn.ID == "" {
+		return s.rejectEditDelivery(ctx, controller.conversation.ID,
+			msg.ClientMessageID, result, errors.New("replacement message was already consumed"))
+	}
+	if msg.ClientMessageID != "" {
+		if err := s.store.CompleteEditDelivery(
+			context.WithoutCancel(ctx), controller.conversation.ID, msg.ClientMessageID,
+			sourceBranchID, activeBranchID, turn, s.now()); err != nil {
+			return result, fmt.Errorf("%w: complete delivery: %w", ErrEditDeliveryUncertain, err)
 		}
+	} else if err := s.store.UpdateConversationBranchReplacement(ctx, activeBranchID, turn.ID); err != nil {
+		return result, err
 	}
 	return result, nil
 }
@@ -287,6 +332,119 @@ type EditMessageResult struct {
 	SourceBranchID string
 	ActiveBranchID string
 	Turn           domain.ConversationTurn
+}
+
+type editDeliveryRequest struct {
+	SourceTurnID string                       `json:"sourceTurnId"`
+	Text         string                       `json:"text"`
+	Content      []ports.ChatContent          `json:"content,omitempty"`
+	Origin       domain.MessageOrigin         `json:"origin"`
+	Settings     steerDeliveryRequestSettings `json:"settings"`
+}
+
+func encodeEditDeliveryRequest(turnID string, msg ports.ChatUserMessage) (string, error) {
+	encoded, err := json.Marshal(editDeliveryRequest{
+		SourceTurnID: turnID, Text: msg.Text, Content: msg.Content,
+		Origin: normalizeOrigin(msg.Origin),
+		Settings: steerDeliveryRequestSettings{
+			Model: msg.Settings.Model, Effort: msg.Settings.Effort, Approval: msg.Settings.Approval,
+		},
+	})
+	if err != nil {
+		return "", fmt.Errorf("encode edit delivery request: %w", err)
+	}
+	return string(encoded), nil
+}
+
+func replayEditDelivery(
+	delivery domain.ConversationEditDelivery,
+	requestJSON string,
+) (EditMessageResult, error) {
+	if delivery.RequestJSON != requestJSON {
+		return EditMessageResult{}, ErrEditIdempotencyConflict
+	}
+	switch delivery.State {
+	case domain.ConversationEditAccepted:
+		return EditMessageResult{
+			SourceBranchID: delivery.SourceBranchID,
+			ActiveBranchID: delivery.ActiveBranchID,
+			Turn:           delivery.Turn,
+		}, nil
+	case domain.ConversationEditRejected:
+		return EditMessageResult{}, replayEditRejection(delivery)
+	case domain.ConversationEditReserved:
+		return EditMessageResult{}, ErrEditDeliveryUncertain
+	default:
+		return EditMessageResult{}, fmt.Errorf("%w: invalid durable state %q",
+			ErrEditDeliveryUncertain, delivery.State)
+	}
+}
+
+type storedEditRejection struct {
+	message string
+	cause   error
+}
+
+func (e storedEditRejection) Error() string { return e.message }
+func (e storedEditRejection) Unwrap() error { return e.cause }
+
+func replayEditRejection(delivery domain.ConversationEditDelivery) error {
+	var cause error
+	switch delivery.RejectionKind {
+	case domain.ConversationEditRejectedInvalid:
+		cause = ErrEditTurnInvalid
+	case domain.ConversationEditRejectedUnsupported:
+		cause = ErrForkUnsupported
+	case domain.ConversationEditRejectedBusy:
+		cause = ErrTurnRunning
+	case domain.ConversationEditRejectedInterfaceTransition:
+		cause = ErrControllerHandoff
+	case domain.ConversationEditRejectedByProvider:
+		cause = ErrProviderRefused
+	case domain.ConversationEditRejectedProviderFailure:
+		cause = ErrEditDeliveryRejected
+	default:
+		return fmt.Errorf("%w: invalid durable rejection %q",
+			ErrEditDeliveryUncertain, delivery.RejectionKind)
+	}
+	return storedEditRejection{message: delivery.RejectionMessage, cause: cause}
+}
+
+func classifyEditRejection(err error) (domain.ConversationEditRejectionKind, error) {
+	switch {
+	case errors.Is(err, ErrEditTurnInvalid), errors.Is(err, domain.ErrNoConversationTurn):
+		return domain.ConversationEditRejectedInvalid, err
+	case errors.Is(err, ErrForkUnsupported):
+		return domain.ConversationEditRejectedUnsupported, err
+	case errors.Is(err, ErrControllerHandoff):
+		return domain.ConversationEditRejectedInterfaceTransition, err
+	case errors.Is(err, ErrTurnRunning):
+		return domain.ConversationEditRejectedBusy, err
+	case errors.Is(err, ErrProviderRefused):
+		return domain.ConversationEditRejectedByProvider, err
+	default:
+		return domain.ConversationEditRejectedProviderFailure,
+			fmt.Errorf("%w: %w", ErrEditDeliveryRejected, err)
+	}
+}
+
+func (s *Service) rejectEditDelivery(
+	ctx context.Context,
+	conversationID, clientMessageID string,
+	result EditMessageResult,
+	cause error,
+) (EditMessageResult, error) {
+	if clientMessageID == "" {
+		return result, cause
+	}
+	kind, classified := classifyEditRejection(cause)
+	if err := s.store.RejectEditDelivery(
+		context.WithoutCancel(ctx), conversationID, clientMessageID,
+		kind, classified.Error(), s.now()); err != nil {
+		return result, fmt.Errorf("%w: persist rejected result: %w",
+			ErrEditDeliveryUncertain, err)
+	}
+	return result, classified
 }
 
 // ActivateBranch resumes a durable provider branch in the same worktree and

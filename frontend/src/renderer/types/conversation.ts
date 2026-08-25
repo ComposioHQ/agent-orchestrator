@@ -75,6 +75,9 @@ export type ChatSteerOutcome =
 	| { status: "accepted" }
 	| { status: "not-accepted"; reason: string };
 
+/** Durable inline-edit acceptance; uncertainty remains a rejected promise. */
+export type ChatEditOutcome = ChatSteerOutcome;
+
 /** How far the agent has got with one step of its plan. */
 export type PlanStepStatus = "pending" | "in_progress" | "completed";
 

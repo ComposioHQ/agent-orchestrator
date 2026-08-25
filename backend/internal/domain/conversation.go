@@ -650,11 +650,51 @@ const (
 type ConversationSteerRejectionKind string
 
 const (
-	ConversationSteerRejectedNoActiveTurn       ConversationSteerRejectionKind = "no_active_turn"
-	ConversationSteerRejectedUnsupported        ConversationSteerRejectionKind = "unsupported"
-	ConversationSteerRejectedTurnNotSteerable   ConversationSteerRejectionKind = "turn_not_steerable"
-	ConversationSteerRejectedContentUnsupported ConversationSteerRejectionKind = "content_unsupported"
-	ConversationSteerRejectedByProvider         ConversationSteerRejectionKind = "provider_refused"
+	ConversationSteerRejectedNoActiveTurn        ConversationSteerRejectionKind = "no_active_turn"
+	ConversationSteerRejectedUnsupported         ConversationSteerRejectionKind = "unsupported"
+	ConversationSteerRejectedTurnNotSteerable    ConversationSteerRejectionKind = "turn_not_steerable"
+	ConversationSteerRejectedContentUnsupported  ConversationSteerRejectionKind = "content_unsupported"
+	ConversationSteerRejectedByProvider          ConversationSteerRejectionKind = "provider_refused"
+	ConversationSteerRejectedInterfaceTransition ConversationSteerRejectionKind = "interface_transition"
+)
+
+// ConversationEditDelivery is AO's durable answer to one caller-owned inline
+// edit handle. Reserved means provider delivery may have happened and therefore
+// cannot be attempted automatically again. Accepted and rejected are replayable
+// across active-lineage changes and daemon restarts.
+type ConversationEditDelivery struct {
+	ConversationID   string
+	ClientMessageID  string
+	RequestJSON      string
+	State            ConversationEditDeliveryState
+	SourceBranchID   string
+	ActiveBranchID   string
+	Turn             ConversationTurn
+	RejectionKind    ConversationEditRejectionKind
+	RejectionMessage string
+	CreatedAt        time.Time
+	SettledAt        *time.Time
+}
+
+type ConversationEditDeliveryState string
+
+const (
+	ConversationEditReserved ConversationEditDeliveryState = "reserved"
+	ConversationEditAccepted ConversationEditDeliveryState = "accepted"
+	ConversationEditRejected ConversationEditDeliveryState = "rejected"
+)
+
+// ConversationEditRejectionKind reconstructs errors.Is behavior for definitive
+// edit failures after the controller that observed them no longer exists.
+type ConversationEditRejectionKind string
+
+const (
+	ConversationEditRejectedInvalid             ConversationEditRejectionKind = "invalid_turn"
+	ConversationEditRejectedUnsupported         ConversationEditRejectionKind = "unsupported"
+	ConversationEditRejectedBusy                ConversationEditRejectionKind = "busy"
+	ConversationEditRejectedInterfaceTransition ConversationEditRejectionKind = "interface_transition"
+	ConversationEditRejectedByProvider          ConversationEditRejectionKind = "provider_refused"
+	ConversationEditRejectedProviderFailure     ConversationEditRejectionKind = "provider_failure"
 )
 
 // ErrNoConversation reports that a session has no conversation row yet. It is not

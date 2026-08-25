@@ -249,6 +249,31 @@ describe("conversation branching commands", () => {
 		).toBe(false);
 	});
 
+	it("returns a typed non-acceptance for a durably rejected inline edit", async () => {
+		apiErrorCodeMock.mockReturnValue("CHAT_EDIT_REJECTED");
+		apiErrorMessageMock.mockReturnValue("provider rejected edited prompt");
+		postMock.mockResolvedValue({ data: undefined, error: { code: "CHAT_EDIT_REJECTED" } });
+		const { result } = renderHook(() => useConversationCommands("ao-1"), { wrapper });
+
+		await expect(
+			result.current.editMessage("turn-2", "keep this edit", "edit-rejected-1"),
+		).resolves.toEqual({
+			status: "not-accepted",
+			reason: "provider rejected edited prompt",
+		});
+	});
+
+	it("keeps an uncertain inline edit rejected for same-id recovery", async () => {
+		apiErrorCodeMock.mockReturnValue("CHAT_EDIT_UNCERTAIN");
+		const failure = { code: "CHAT_EDIT_UNCERTAIN" };
+		postMock.mockResolvedValue({ data: undefined, error: failure });
+		const { result } = renderHook(() => useConversationCommands("ao-1"), { wrapper });
+
+		await expect(
+			result.current.editMessage("turn-2", "do not redispatch", "edit-uncertain-1"),
+		).rejects.toBe(failure);
+	});
+
 	it("activates an existing branch", async () => {
 		postMock.mockResolvedValue({ data: {}, error: undefined });
 		const { result } = renderHook(() => useConversationCommands("ao-1"), { wrapper });
@@ -316,6 +341,19 @@ describe("steering refusals", () => {
 		expect(outcome).toEqual({
 			status: "not-accepted",
 			reason: "The turn finished before this landed. Send it as a message instead.",
+		});
+	});
+
+	it("treats a durable interface-transition refusal as definitive non-acceptance", async () => {
+		apiErrorCodeMock.mockReturnValue("CHAT_INTERFACE_TRANSITION");
+		apiErrorMessageMock.mockReturnValue("the session is switching interfaces");
+		const failure = { code: "CHAT_INTERFACE_TRANSITION" };
+		postMock.mockResolvedValue({ data: undefined, error: failure });
+		const { result } = renderHook(() => useConversationCommands("ao-1"), { wrapper });
+
+		await expect(result.current.steer("wait for the switch", "transition-steer-1")).resolves.toEqual({
+			status: "not-accepted",
+			reason: "The session is switching interfaces. This guidance was not delivered; send it after the switch finishes.",
 		});
 	});
 

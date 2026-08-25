@@ -1291,6 +1291,7 @@
 	"chat.edit.preservedContent": "Conteúdo preservado da mensagem",
 	"chat.edit.image": "Imagem",
 	"chat.edit.cancel": "Cancelar edição",
+	"chat.edit.abandonRecovery": "Abandonar recuperação da edição",
 	"chat.edit.send": "Enviar mensagem editada",
 	"chat.edit.sendShortcut": "Enviar mensagem editada (⌘/Ctrl+Enter)",
 	"pr.card.reviewStatus": "Review status",

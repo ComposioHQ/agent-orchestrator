@@ -32,6 +32,7 @@ import type {
 	ChatConfigOptionValue,
 	ChatModel,
 	ChatSkill,
+	ChatEditOutcome,
 	ChatSteerOutcome,
 	PlanStep,
 	PlanStepStatus,
@@ -450,8 +451,20 @@ export function useConversationCommands(sessionId: string | undefined) {
 			error: retryTurn.error ? apiErrorMessage(retryTurn.error) : undefined,
 			turnId: retryTurn.variables,
 		},
-		editMessage: (turnId: string, text: string, clientMessageId?: string) =>
-			editMessage.mutateAsync({ turnId, text, clientMessageId }),
+		editMessage: async (
+			turnId: string,
+			text: string,
+			clientMessageId?: string,
+		): Promise<ChatEditOutcome> => {
+			try {
+				await editMessage.mutateAsync({ turnId, text, clientMessageId });
+				return { status: "accepted" };
+			} catch (error) {
+				const outcome = editNonAcceptance(error);
+				if (outcome) return outcome;
+				throw error;
+			}
+		},
 		editMessagePending: editMessage.isPending,
 		editMessageError: editMessage.error ? apiErrorMessage(editMessage.error) : undefined,
 		activateBranch: (branchId: string) => activateBranch.mutateAsync(branchId),
@@ -514,6 +527,8 @@ function steerRefusal(error: unknown): string | undefined {
 	switch (code) {
 		case "CHAT_NO_ACTIVE_TURN":
 			return "The turn finished before this landed. Send it as a message instead.";
+		case "CHAT_INTERFACE_TRANSITION":
+			return "The session is switching interfaces. This guidance was not delivered; send it after the switch finishes.";
 		case "CHAT_TURN_NOT_STEERABLE":
 			return `${apiErrorMessage(error)} Try again once it finishes.`;
 		case "CHAT_STEER_UNSUPPORTED":
@@ -528,6 +543,7 @@ function steerRefusal(error: unknown): string | undefined {
 
 const DEFINITIVE_STEER_NON_ACCEPTANCE_CODES = new Set([
 	"CHAT_NO_ACTIVE_TURN",
+	"CHAT_INTERFACE_TRANSITION",
 	"CHAT_TURN_NOT_STEERABLE",
 	"CHAT_STEER_UNSUPPORTED",
 	"CHAT_STEER_TEXT_REQUIRED",
@@ -546,6 +562,25 @@ function steerNonAcceptance(error: unknown): ChatSteerOutcome | undefined {
 		status: "not-accepted",
 		reason: steerRefusal(error) ?? apiErrorMessage(error),
 	};
+}
+
+const DEFINITIVE_EDIT_NON_ACCEPTANCE_CODES = new Set([
+	"CHAT_EDIT_REJECTED",
+	"CHAT_EDIT_IDEMPOTENCY_CONFLICT",
+	"CHAT_EDIT_UNSUPPORTED",
+	"CHAT_EDIT_BUSY",
+	"CHAT_EDIT_TURN_INVALID",
+	"CHAT_PROVIDER_REFUSED",
+	"SESSION_MODE_MISMATCH",
+	"SESSION_NOT_FOUND",
+	"CHAT_CONTROLLER_NOT_READY",
+	"CHAT_AUTH_REQUIRED",
+]);
+
+function editNonAcceptance(error: unknown): ChatEditOutcome | undefined {
+	const code = apiErrorCode(error);
+	if (!code || !DEFINITIVE_EDIT_NON_ACCEPTANCE_CODES.has(code)) return undefined;
+	return { status: "not-accepted", reason: apiErrorMessage(error) };
 }
 
 /**

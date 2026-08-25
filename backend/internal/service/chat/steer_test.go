@@ -390,6 +390,50 @@ func TestSteerClientHandleCannotBeReusedForDifferentGuidance(t *testing.T) {
 	}
 }
 
+// A handoff refusal belongs to the original delivery handle. If the 409 response
+// is lost, retrying after the source controller reopens or a new controller starts
+// must replay that refusal rather than steering whichever turn happens to be live.
+func TestSteerDuringInterfaceTransitionDurablyReplaysWithoutProviderDispatch(t *testing.T) {
+	h, provider := steerHarness(t)
+	msg := ports.ChatUserMessage{
+		Text: "guidance typed during the switch", ClientMessageID: "steer-handoff",
+		Origin: domain.MessageOriginHuman,
+	}
+	if err := h.ctrl.ArmHandoff(
+		context.Background(), domain.SessionInterfaceTransitionDrain); err != nil {
+		t.Fatalf("ArmHandoff: %v", err)
+	}
+
+	_, err := h.svc.Steer(context.Background(), testSession, msg)
+	if !errors.Is(err, chatsvc.ErrControllerHandoff) {
+		t.Fatalf("Steer during handoff error = %v, want ErrControllerHandoff", err)
+	}
+	if calls := provider.steers(); len(calls) != 0 {
+		t.Fatalf("provider received %d steers during handoff, want none", len(calls))
+	}
+
+	// Model a lost 409: the caller did not observe it and retries only after the
+	// transition was abandoned. The durable result still wins over current state.
+	h.svc.AbortChatHandoff(testSession)
+	_, err = h.svc.Steer(context.Background(), testSession, msg)
+	if !errors.Is(err, chatsvc.ErrControllerHandoff) {
+		t.Fatalf("same-controller replay error = %v, want durable ErrControllerHandoff", err)
+	}
+	if calls := provider.steers(); len(calls) != 0 {
+		t.Fatalf("provider received %d steers after handoff reopened, want none", len(calls))
+	}
+
+	restartedProvider := newSteerRecorder()
+	restarted := restartSteerService(t, h, restartedProvider)
+	_, err = restarted.Steer(context.Background(), testSession, msg)
+	if !errors.Is(err, chatsvc.ErrControllerHandoff) {
+		t.Fatalf("new-controller replay error = %v, want durable ErrControllerHandoff", err)
+	}
+	if calls := restartedProvider.steers(); len(calls) != 0 {
+		t.Fatalf("new provider received %d steers for prior handoff refusal, want none", len(calls))
+	}
+}
+
 // Nothing in flight is an ordinary outcome — the turn finished while the user was
 // typing — and the provider must not be asked.
 func TestSteerWithNothingInFlightIsTypedAndNeverReachesTheProvider(t *testing.T) {
