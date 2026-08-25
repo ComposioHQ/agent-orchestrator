@@ -17,6 +17,14 @@ export interface Settings {
 	defaultSessionMode: SessionMode;
 	/** Agents that can run in chat mode today. Empty means chat is unavailable. */
 	chatHarnesses: string[];
+	/** Deployment client identity (AO_CLIENT); empty when unset. */
+	client: string;
+	/** Whether the local offering is available on this daemon. */
+	localEnabled: boolean;
+	/** Whether the cloud offering is available (flag + entitled client + control plane). */
+	cloudEnabled: boolean;
+	/** Cloud control plane base URL; empty when cloud is not configured. */
+	cloudControlPlaneUrl: string;
 }
 
 export function useSettings() {
@@ -28,6 +36,12 @@ export function useSettings() {
 			return {
 				defaultSessionMode: (data?.defaultSessionMode ?? "tui") as SessionMode,
 				chatHarnesses: data?.chatHarnesses ?? [],
+				client: data?.client ?? "",
+				// Offering gates fail closed for cloud and open for local, so a daemon
+				// that predates them behaves like a plain local install.
+				localEnabled: data?.localEnabled ?? true,
+				cloudEnabled: data?.cloudEnabled ?? false,
+				cloudControlPlaneUrl: data?.cloudControlPlaneUrl ?? "",
 			};
 		},
 	});

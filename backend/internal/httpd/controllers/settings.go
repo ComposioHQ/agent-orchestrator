@@ -17,6 +17,7 @@ type SettingsService interface {
 	Get(ctx context.Context) (settingssvc.Snapshot, error)
 	SetDefaultSessionMode(ctx context.Context, mode domain.SessionMode) (settingssvc.Snapshot, error)
 	ChatHarnesses(candidates []domain.AgentHarness) []domain.AgentHarness
+	Offering() settingssvc.Offering
 }
 
 // SettingsController owns the daemon-owned preference routes.
@@ -82,8 +83,13 @@ func (c *SettingsController) response(snapshot settingssvc.Snapshot) SettingsRes
 	for _, harness := range chatHarnesses {
 		names = append(names, string(harness))
 	}
+	offering := c.Svc.Offering()
 	return SettingsResponse{
-		DefaultSessionMode: string(snapshot.DefaultSessionMode),
-		ChatHarnesses:      names,
+		DefaultSessionMode:   string(snapshot.DefaultSessionMode),
+		ChatHarnesses:        names,
+		Client:               offering.Client,
+		LocalEnabled:         offering.LocalEnabled,
+		CloudEnabled:         offering.CloudEnabled,
+		CloudControlPlaneURL: offering.CloudControlPlaneURL,
 	}
 }

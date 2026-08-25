@@ -74,6 +74,7 @@ import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { renameSession } from "../lib/rename-session";
 import { useTerminateSession } from "../hooks/useTerminateSession";
 import { useResizable } from "../hooks/useResizable";
+import { useCloudGate } from "../hooks/useCloudGate";
 import { useShellMaybe } from "../lib/shell-context";
 import { useUpdateStatus } from "../hooks/useUpdateStatus";
 import { effectiveShortcutBindings, shortcutBindingKeys } from "../../shared/shortcuts";
@@ -1788,8 +1789,9 @@ const SessionActions = memo(function SessionActions({
 // ready to expose in the app again.
 function CloudAccountRow({ tabIndex }: { tabIndex: number }) {
 	const { t } = useTranslation();
+	const { cloudEnabled } = useCloudGate();
 	const { configured, session, status, signOut } = useCloudSession();
-	if (!configured || status !== "authenticated") return null;
+	if (!configured || !cloudEnabled || status !== "authenticated") return null;
 
 	return (
 		<DropdownMenu>
@@ -1824,8 +1826,9 @@ function CloudAccountRow({ tabIndex }: { tabIndex: number }) {
 // Icon-rail variant for collapsed sidebar.
 function CloudAccountRailButton({ tabIndex }: { tabIndex: number }) {
 	const { t } = useTranslation();
+	const { cloudEnabled } = useCloudGate();
 	const { configured, session, status, signOut } = useCloudSession();
-	if (!configured || status !== "authenticated") return null;
+	if (!configured || !cloudEnabled || status !== "authenticated") return null;
 
 	return (
 		<Tooltip>

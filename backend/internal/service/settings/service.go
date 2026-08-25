@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -26,6 +27,35 @@ type Snapshot struct {
 	UpdatedAt          time.Time
 }
 
+// Offering reports which AO offerings this daemon exposes to clients. It is
+// resolved once at boot from daemon config: offering gates are a deployment
+// decision, not a user preference, so they ride alongside the preferences the
+// settings endpoint serves rather than living in the durable store.
+type Offering struct {
+	// Client is the deployment's client identity (AO_CLIENT); empty when unset.
+	Client string
+	// LocalEnabled reports whether the local offering is available.
+	LocalEnabled bool
+	// CloudEnabled reports whether the cloud offering is available.
+	CloudEnabled bool
+	// CloudControlPlaneURL is the cloud control plane base URL; empty when
+	// no control plane is configured.
+	CloudControlPlaneURL string
+}
+
+// OfferingFromConfig derives the offering gates from daemon config. Cloud is
+// enabled only when all three conditions hold — the flag is on, the client is
+// the entitled one, and a control plane is configured — so a half-configured
+// deployment fails closed instead of surfacing broken cloud UI.
+func OfferingFromConfig(cfg config.Config) Offering {
+	return Offering{
+		Client:               cfg.Client,
+		LocalEnabled:         cfg.LocalOffering,
+		CloudEnabled:         cfg.CloudOffering && cfg.Client == config.ClientElevenX && cfg.CloudControlPlaneURL != "",
+		CloudControlPlaneURL: cfg.CloudControlPlaneURL,
+	}
+}
+
 // ChatCapability reports which harnesses can run in chat mode, so the UI can warn
 // that choosing chat narrows the agents available rather than letting the user
 // discover it at spawn time.
@@ -35,17 +65,23 @@ type ChatCapability interface {
 
 // Service reads and writes preferences.
 type Service struct {
-	store Store
-	chat  ChatCapability
-	now   func() time.Time
+	store    Store
+	chat     ChatCapability
+	offering Offering
+	now      func() time.Time
 }
 
 // New builds the service.
-func New(store Store, chat ChatCapability, now func() time.Time) *Service {
+func New(store Store, chat ChatCapability, offering Offering, now func() time.Time) *Service {
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
-	return &Service{store: store, chat: chat, now: now}
+	return &Service{store: store, chat: chat, offering: offering, now: now}
+}
+
+// Offering reports the boot-resolved offering gates.
+func (s *Service) Offering() Offering {
+	return s.offering
 }
 
 // Get returns the current preferences.

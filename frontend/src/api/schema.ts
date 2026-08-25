@@ -3011,8 +3011,12 @@ export interface components {
         };
         SettingsResponse: {
             chatHarnesses: string[];
+            client: string;
+            cloudControlPlaneUrl: string;
+            cloudEnabled: boolean;
             /** @enum {string} */
             defaultSessionMode: "chat" | "tui";
+            localEnabled: boolean;
         };
         ShellTerminalEnvelope: {
             shellTerminal: components["schemas"]["ShellTerminalResponse"];
