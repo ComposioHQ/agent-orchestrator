@@ -619,6 +619,44 @@ type ConversationActivity struct {
 	StreamedTextTruncated bool `json:"streamedTextTruncated,omitempty"`
 }
 
+// ConversationSteerDelivery is AO's durable answer to one idempotent steer.
+// Reserved is deliberately terminal from an automatic-retry perspective: once
+// provider I/O may have begun, only a recorded accepted or rejected result can
+// safely unlock the same client handle.
+type ConversationSteerDelivery struct {
+	ConversationID   string
+	ClientMessageID  string
+	RequestJSON      string
+	State            ConversationSteerDeliveryState
+	ProviderTurnID   string
+	ActivityID       string
+	RejectionKind    ConversationSteerRejectionKind
+	RejectionMessage string
+	CreatedAt        time.Time
+	SettledAt        *time.Time
+}
+
+type ConversationSteerDeliveryState string
+
+const (
+	ConversationSteerReserved ConversationSteerDeliveryState = "reserved"
+	ConversationSteerAccepted ConversationSteerDeliveryState = "accepted"
+	ConversationSteerRejected ConversationSteerDeliveryState = "rejected"
+)
+
+// ConversationSteerRejectionKind is the stable typed outcome persisted after a
+// provider definitively declines a steer. The original message is display detail;
+// this discriminator is what reconstructs errors.Is behavior after restart.
+type ConversationSteerRejectionKind string
+
+const (
+	ConversationSteerRejectedNoActiveTurn       ConversationSteerRejectionKind = "no_active_turn"
+	ConversationSteerRejectedUnsupported        ConversationSteerRejectionKind = "unsupported"
+	ConversationSteerRejectedTurnNotSteerable   ConversationSteerRejectionKind = "turn_not_steerable"
+	ConversationSteerRejectedContentUnsupported ConversationSteerRejectionKind = "content_unsupported"
+	ConversationSteerRejectedByProvider         ConversationSteerRejectionKind = "provider_refused"
+)
+
 // ErrNoConversation reports that a session has no conversation row yet. It is not
 // a failure: a Chat session has no conversation until its controller first
 // starts, and a reader should show an empty conversation rather than an error.

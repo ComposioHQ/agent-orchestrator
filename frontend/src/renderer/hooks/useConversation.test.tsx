@@ -299,6 +299,38 @@ describe("steering refusals", () => {
 		);
 	});
 
+	it("returns a typed non-acceptance for a steer the daemon definitively refused", async () => {
+		apiErrorCodeMock.mockReturnValue("CHAT_NO_ACTIVE_TURN");
+		apiErrorMessageMock.mockReturnValue("there is no turn in flight");
+		postMock.mockResolvedValue({
+			data: undefined,
+			error: { code: "CHAT_NO_ACTIVE_TURN" },
+		});
+		const { result } = renderHook(() => useConversationCommands("ao-1"), { wrapper });
+		let outcome: Awaited<ReturnType<typeof result.current.steer>> | undefined;
+
+		await act(async () => {
+			outcome = await result.current.steer("send this normally", "steer-refused-1");
+		});
+
+		expect(outcome).toEqual({
+			status: "not-accepted",
+			reason: "The turn finished before this landed. Send it as a message instead.",
+		});
+	});
+
+	it("keeps an uncertain steer rejected so the composer remains fail-closed", async () => {
+		apiErrorCodeMock.mockReturnValue("CHAT_STEER_UNCERTAIN");
+		apiErrorMessageMock.mockReturnValue("the provider may have received this guidance");
+		const failure = { code: "CHAT_STEER_UNCERTAIN" };
+		postMock.mockResolvedValue({ data: undefined, error: failure });
+		const { result } = renderHook(() => useConversationCommands("ao-1"), { wrapper });
+
+		await expect(
+			act(async () => result.current.steer("do not redispatch", "steer-unknown-1")),
+		).rejects.toBe(failure);
+	});
+
 	// The daemon's own message names which kind of turn refused, which is the part the
 	// user needs; "cannot be steered" alone leaves them nothing to do.
 	it("keeps the daemon's wording for a turn that cannot absorb guidance", async () => {

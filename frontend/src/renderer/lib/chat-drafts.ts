@@ -568,6 +568,40 @@ export function markChatComposerDeliveryAccepted(
 }
 
 /**
+ * Remove a definitively refused steer journal without consuming its text. The
+ * daemon proved that this guidance was not accepted, so the same composer
+ * revision becomes an ordinary editable draft again.
+ */
+export function clearRejectedChatComposerDelivery(
+	sessionId: string,
+	clientMessageId: string,
+	revision: number,
+	storage: DraftStorage | undefined = rendererStorage(),
+): DraftWriteResult {
+	const loaded = loadChatSessionDraft(sessionId, storage);
+	const delivery = loaded.draft.composer.delivery;
+	if (
+		!loaded.ok ||
+		!delivery ||
+		delivery.kind !== "steer" ||
+		delivery.clientMessageId !== clientMessageId ||
+		delivery.revision !== revision
+	) {
+		return { ok: false, draft: loaded.draft };
+	}
+	const next: ChatSessionDraft = {
+		...loaded.draft,
+		composer: {
+			revision: loaded.draft.composer.revision,
+			text: loaded.draft.composer.text,
+			attachments: loaded.draft.composer.attachments,
+		},
+	};
+	const result = persistDraftProven(next, storage);
+	return result.ok ? result : { ok: false, draft: loaded.draft };
+}
+
+/**
  * Atomically proves an inline edit and its stable branch-mutation id before
  * dispatch. A restored journal is returned unchanged for explicit safe retry.
  */

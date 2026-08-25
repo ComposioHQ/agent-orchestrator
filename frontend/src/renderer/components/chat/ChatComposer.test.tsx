@@ -469,6 +469,51 @@ describe("steering", () => {
 		expect(onSend).not.toHaveBeenCalled();
 	});
 
+	it("durably unlocks a typed refused steer without offering delivery retry after remount", async () => {
+		const sessionId = "steer-definitive-refusal";
+		const onSteer = vi.fn().mockResolvedValue({
+			status: "not-accepted",
+			reason: "The turn finished before this landed. Send it as a message instead.",
+		});
+		const first = render(
+			<ChatComposer
+				onSend={vi.fn()}
+				onSteer={onSteer}
+				canSteer
+				willQueue
+				draftSessionId={sessionId}
+			/>,
+		);
+		const field = screen.getByLabelText("Message the agent");
+		await typeInComposer(field, "send this normally instead");
+		fireEvent.keyDown(field, { key: "Enter", ctrlKey: true });
+
+		await waitFor(() => expect(onSteer).toHaveBeenCalledTimes(1));
+		await waitFor(() => expect(field).toHaveAttribute("contenteditable", "true"));
+		expect(field).toHaveTextContent("send this normally instead");
+		expect(screen.queryByRole("button", { name: "Retry message safely" })).not.toBeInTheDocument();
+		const restored = readChatSessionDraft(sessionId);
+		expect(restored.composer.text).toBe("send this normally instead");
+		expect(restored.composer.delivery).toBeUndefined();
+
+		first.unmount();
+		render(
+			<ChatComposer
+				onSend={vi.fn()}
+				onSteer={onSteer}
+				canSteer
+				willQueue
+				draftSessionId={sessionId}
+			/>,
+		);
+		expect(screen.getByLabelText("Message the agent")).toHaveTextContent(
+			"send this normally instead",
+		);
+		expect(screen.getByLabelText("Message the agent")).toHaveAttribute("contenteditable", "true");
+		expect(screen.queryByRole("button", { name: "Retry message safely" })).not.toBeInTheDocument();
+		expect(onSteer).toHaveBeenCalledTimes(1);
+	});
+
 	it("restores an unresolved steer and retries with its original client id", async () => {
 		const sessionId = "steer-stable-retry";
 		const onSteer = vi

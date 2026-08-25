@@ -32,6 +32,7 @@ import type {
 	ChatConfigOptionValue,
 	ChatModel,
 	ChatSkill,
+	ChatSteerOutcome,
 	PlanStep,
 	PlanStepStatus,
 	SessionMode,
@@ -458,8 +459,16 @@ export function useConversationCommands(sessionId: string | undefined) {
 		activateBranchError: activateBranch.error
 			? apiErrorMessage(activateBranch.error)
 			: undefined,
-		steer: (text: string, clientMessageId?: string) =>
-			steer.mutateAsync({ text, clientMessageId }),
+		steer: async (text: string, clientMessageId?: string): Promise<ChatSteerOutcome> => {
+			try {
+				await steer.mutateAsync({ text, clientMessageId });
+				return { status: "accepted" };
+			} catch (error) {
+				const outcome = steerNonAcceptance(error);
+				if (outcome) return outcome;
+				throw error;
+			}
+		},
 		promoteQueuedTurn: (turnId: string) => promoteQueuedTurn.mutateAsync(turnId),
 		steerPending: steer.isPending,
 		/**
@@ -515,6 +524,28 @@ function steerRefusal(error: unknown): string | undefined {
 		default:
 			return apiErrorMessage(error);
 	}
+}
+
+const DEFINITIVE_STEER_NON_ACCEPTANCE_CODES = new Set([
+	"CHAT_NO_ACTIVE_TURN",
+	"CHAT_TURN_NOT_STEERABLE",
+	"CHAT_STEER_UNSUPPORTED",
+	"CHAT_STEER_TEXT_REQUIRED",
+	"CHAT_UNSUPPORTED_STEER_CONTENT",
+	"CHAT_PROVIDER_REFUSED",
+	"SESSION_MODE_MISMATCH",
+	"SESSION_NOT_FOUND",
+	"CHAT_CONTROLLER_NOT_READY",
+	"CHAT_AUTH_REQUIRED",
+]);
+
+function steerNonAcceptance(error: unknown): ChatSteerOutcome | undefined {
+	const code = apiErrorCode(error);
+	if (!code || !DEFINITIVE_STEER_NON_ACCEPTANCE_CODES.has(code)) return undefined;
+	return {
+		status: "not-accepted",
+		reason: steerRefusal(error) ?? apiErrorMessage(error),
+	};
 }
 
 /**
