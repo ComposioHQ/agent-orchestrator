@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -100,6 +101,100 @@ func TestLiveCursorACP(t *testing.T) {
 	questionAnswer := waitForLiveTurn(ctx, t, resumed, questionRef.ProviderTurnID, false, false)
 	if !strings.Contains(strings.ToLower(questionAnswer), "alpha") {
 		t.Fatalf("answer after cursor/ask_question = %q, want selected alpha", questionAnswer)
+	}
+}
+
+// TestLiveCursorCrossInterfaceContinuity proves Cursor's native CLI resume id
+// and ACP session id name the same durable conversation. Print mode makes the
+// native side deterministic for automation while exercising the same --resume
+// path used by Cursor's interactive TUI.
+func TestLiveCursorCrossInterfaceContinuity(t *testing.T) {
+	if os.Getenv("AO_LIVE_CURSOR_ACP") != "1" {
+		t.Skip("set AO_LIVE_CURSOR_ACP=1 to run against the local Cursor account")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
+	defer cancel()
+	plugin := cursor.New()
+	binary, err := plugin.ResolveBinary(ctx)
+	if err != nil {
+		t.Fatalf("ResolveBinary: %v", err)
+	}
+	dataDir := liveDataDir(t)
+	workspace := t.TempDir()
+	providerID := runLiveCursorCLI(ctx, t, binary, dataDir, workspace, "create-chat")
+	if providerID == "" || strings.ContainsAny(providerID, " \t\r\n") {
+		t.Fatalf("create-chat id = %q, want one non-empty token", providerID)
+	}
+
+	nativeMarker := "CURSOR_NATIVE_TO_ACP_" + time.Now().Format("150405000000")
+	runLiveCursorCLI(
+		ctx,
+		t,
+		binary,
+		dataDir,
+		workspace,
+		"--force",
+		"--print",
+		"--resume",
+		providerID,
+		"Remember this exact token and include it in your answer: "+nativeMarker,
+	)
+
+	driver := New(plugin, nil)
+	conv, err := driver.Resume(ctx, ports.ChatResumeConfig{
+		SessionID:              "live-cursor-cross-interface",
+		ProviderConversationID: providerID,
+		DataDir:                dataDir,
+		WorkspacePath:          workspace,
+		Env:                    liveEnvMap(),
+		Permissions:            ports.PermissionModeDefault,
+	})
+	if err != nil {
+		t.Fatalf("ACP Resume(%s): %v", providerID, err)
+	}
+	historyReader, ok := conv.(ports.ChatHistoryReader)
+	if !ok {
+		_ = conv.Close()
+		t.Fatal("Cursor ACP resume exposed no native history reader")
+	}
+	history, err := historyReader.ReadHistory(ctx)
+	if err != nil {
+		_ = conv.Close()
+		t.Fatalf("ReadHistory: %v", err)
+	}
+	if !historyContains(history, nativeMarker) {
+		_ = conv.Close()
+		t.Fatalf("ACP replay omitted native marker %q", nativeMarker)
+	}
+
+	chatMarker := "CURSOR_ACP_TO_NATIVE_" + time.Now().Format("150405000000")
+	ref := sendLiveTurn(ctx, t, conv, "Include this exact token in your answer: "+chatMarker)
+	if answer := waitForLiveTurn(ctx, t, conv, ref.ProviderTurnID, false, false); !strings.Contains(answer, chatMarker) {
+		_ = conv.Close()
+		t.Fatalf("ACP answer omitted marker %q: %q", chatMarker, answer)
+	}
+
+	interruptRef := sendLiveTurn(ctx, t, conv, "Use the shell to run `sleep 30`, wait for it, then say finished.")
+	waitForLiveTurn(ctx, t, conv, interruptRef.ProviderTurnID, true, true)
+	if err := conv.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	nativeAnswer := runLiveCursorCLI(
+		ctx,
+		t,
+		binary,
+		dataDir,
+		workspace,
+		"--force",
+		"--print",
+		"--resume",
+		providerID,
+		"Repeat the exact token from your most recent completed answer. Do not treat the interrupted request as complete.",
+	)
+	if !strings.Contains(nativeAnswer, chatMarker) {
+		t.Fatalf("native resume omitted ACP marker %q: %q", chatMarker, nativeAnswer)
 	}
 }
 
@@ -314,6 +409,34 @@ func firstFormChoice(schema map[string]any) map[string]any {
 		}
 	}
 	return nil
+}
+
+func runLiveCursorCLI(
+	ctx context.Context,
+	t *testing.T,
+	binary, dataDir, workspace string,
+	args ...string,
+) string {
+	t.Helper()
+	cmd := exec.CommandContext(ctx, binary, args...)
+	cmd.Dir = workspace
+	cmd.Env = append(os.Environ(), "CURSOR_DATA_DIR="+filepath.Join(dataDir, "cursor"))
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("cursor-agent %v: %v\n%s", args, err, output)
+	}
+	return strings.TrimSpace(string(output))
+}
+
+func historyContains(events []ports.ChatEvent, marker string) bool {
+	for _, event := range events {
+		if (event.Kind == ports.ChatEventUserMessageCompleted ||
+			event.Kind == ports.ChatEventMessageCompleted) &&
+			strings.Contains(event.Text, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func liveEnvMap() map[string]string {

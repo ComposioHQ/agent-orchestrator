@@ -55,7 +55,9 @@ surface (`npm run sqlc`, `npm run api`).
   fallback. The binding reuses the existing Pi config environment and auth
   probe and is never downloaded by AO. AO reuses each harness's existing
   binary/auth/environment resolution and does not bundle provider CLIs. Cursor
-  is Chat-only until its ACP and TUI conversation ids are proven to share identity.
+  supports the same capability-gated TUI↔Chat handoff as Claude Code and Codex.
+  AO carries Cursor's hook-captured native chat id across controllers and
+  requires ACP `session/load` replay before activating Chat.
 - Project CRUD plus per-project config (`PUT /projects/{id}/config`).
 - PR action engine wired into the API: `POST /prs/{id}/merge` and
   `/prs/{id}/resolve-comments`.

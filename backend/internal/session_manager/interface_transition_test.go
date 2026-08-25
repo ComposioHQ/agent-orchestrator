@@ -12,6 +12,7 @@ import (
 	"time"
 
 	codexagent "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/codex"
+	cursoragent "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/cursor"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -587,6 +588,42 @@ func TestInterfaceTransitionStatusAllowsSwitchToTUIWhenChatUnsupported(t *testin
 	}
 	if status.ReasonCode == "CHAT_UNSUPPORTED" {
 		t.Fatal("switching back to TUI should not report CHAT_UNSUPPORTED")
+	}
+}
+
+func TestInterfaceTransitionStatusOffersCursorWithCurrentLaunchIdentity(t *testing.T) {
+	manager, store, _, _, _ := newTransitionManager(t, domain.SessionModeTUI)
+	manager.agents = singleAgent{agent: cursoragent.New()}
+	rec := store.sessions["session-1"]
+	rec.Harness = domain.HarnessCursor
+	rec.Metadata.AgentSessionID = "cursor-native-1"
+	rec.Metadata.AgentSessionIDLaunchID = rec.Metadata.RuntimeLaunchID
+	store.sessions["session-1"] = rec
+
+	status, err := manager.InterfaceTransitionStatus(context.Background(), rec.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !status.Supported || status.TargetMode != domain.SessionModeChat {
+		t.Fatalf("Cursor interface status = %+v, want supported Chat target", status)
+	}
+}
+
+func TestInterfaceTransitionStatusRejectsCursorIdentityFromOldLaunch(t *testing.T) {
+	manager, store, _, _, _ := newTransitionManager(t, domain.SessionModeTUI)
+	manager.agents = singleAgent{agent: cursoragent.New()}
+	rec := store.sessions["session-1"]
+	rec.Harness = domain.HarnessCursor
+	rec.Metadata.AgentSessionID = "cursor-native-1"
+	rec.Metadata.AgentSessionIDLaunchID = "older-launch"
+	store.sessions["session-1"] = rec
+
+	status, err := manager.InterfaceTransitionStatus(context.Background(), rec.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.Supported || status.ReasonCode != "NATIVE_SESSION_UNVERIFIED" {
+		t.Fatalf("Cursor stale identity status = %+v", status)
 	}
 }
 

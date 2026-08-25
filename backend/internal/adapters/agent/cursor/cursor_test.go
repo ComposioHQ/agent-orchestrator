@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -203,6 +204,49 @@ func TestGetRestoreCommandFalseWithoutAgentSessionID(t *testing.T) {
 	}
 }
 
+func TestNativeConversationIDUsesCursorIdentityFromCurrentInterface(t *testing.T) {
+	plugin := &Plugin{}
+	tuiID, ok, err := plugin.NativeConversationID(context.Background(), ports.SessionRef{
+		ID: "ao-session-1",
+		Metadata: map[string]string{
+			ports.MetadataKeyAgentSessionID: "cursor-native-1",
+		},
+	}, domain.SessionModeTUI, "stale-chat-id")
+	if err != nil || !ok || tuiID != "cursor-native-1" {
+		t.Fatalf("TUI native id = %q ok=%v err=%v", tuiID, ok, err)
+	}
+
+	chatID, ok, err := plugin.NativeConversationID(context.Background(), ports.SessionRef{
+		Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "stale-tui-id"},
+	}, domain.SessionModeChat, "cursor-native-1")
+	if err != nil || !ok || chatID != "cursor-native-1" {
+		t.Fatalf("Chat native id = %q ok=%v err=%v", chatID, ok, err)
+	}
+}
+
+func TestNativeConversationIDRefusesMissingCursorIdentity(t *testing.T) {
+	plugin := &Plugin{}
+	for _, test := range []struct {
+		name       string
+		mode       domain.SessionMode
+		providerID string
+		metadata   map[string]string
+	}{
+		{name: "TUI does not derive AO id", mode: domain.SessionModeTUI, metadata: map[string]string{}},
+		{name: "blank TUI id", mode: domain.SessionModeTUI, metadata: map[string]string{ports.MetadataKeyAgentSessionID: "  "}},
+		{name: "blank Chat id", mode: domain.SessionModeChat, providerID: "  ", metadata: map[string]string{ports.MetadataKeyAgentSessionID: "stale"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			id, ok, err := plugin.NativeConversationID(context.Background(), ports.SessionRef{
+				ID: "ao-session-1", Metadata: test.metadata,
+			}, test.mode, test.providerID)
+			if err != nil || ok || id != "" {
+				t.Fatalf("native id = %q ok=%v err=%v, want empty/false/nil", id, ok, err)
+			}
+		})
+	}
+}
+
 func TestSessionInfoReadsHookMetadata(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "cursor-agent"}
 
@@ -273,6 +317,9 @@ func TestContextCancellationPerMethod(t *testing.T) {
 	}
 	if _, _, err := plugin.SessionInfo(ctx, ports.SessionRef{}); err == nil {
 		t.Fatal("SessionInfo: want context error")
+	}
+	if _, _, err := plugin.NativeConversationID(ctx, ports.SessionRef{}, domain.SessionModeTUI, ""); err == nil {
+		t.Fatal("NativeConversationID: want context error")
 	}
 	if err := plugin.GetAgentHooks(ctx, ports.WorkspaceHookConfig{WorkspacePath: t.TempDir()}); err == nil {
 		t.Fatal("GetAgentHooks: want context error")

@@ -21,6 +21,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agentbase"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/binaryutil"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/hookutil"
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/pkg/agentruntime"
 )
@@ -40,6 +41,7 @@ func New() *Plugin {
 
 var _ adapters.Adapter = (*Plugin)(nil)
 var _ ports.Agent = (*Plugin)(nil)
+var _ ports.AgentInterfaceHandoff = (*Plugin)(nil)
 
 // cursorDataDir returns the isolated Cursor profile AO uses for managed Cursor
 // sessions. This keeps Cursor's trust/cache state under AO_DATA_DIR instead of
@@ -144,6 +146,26 @@ func (p *Plugin) SessionInfo(ctx context.Context, session ports.SessionRef) (por
 	}
 	info, ok := agentbase.StandardSessionInfo(session)
 	return info, ok, nil
+}
+
+// NativeConversationID bridges Cursor's terminal resume id and ACP session id.
+// Both surfaces use the same Cursor chat id; a TUI source must have reported it
+// through its sessionStart hook before AO may replace the controller.
+func (p *Plugin) NativeConversationID(
+	ctx context.Context,
+	session ports.SessionRef,
+	currentMode domain.SessionMode,
+	providerConversationID string,
+) (string, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return "", false, err
+	}
+	if currentMode == domain.SessionModeChat {
+		id := strings.TrimSpace(providerConversationID)
+		return id, id != "", nil
+	}
+	id := strings.TrimSpace(session.Metadata[ports.MetadataKeyAgentSessionID])
+	return id, id != "", nil
 }
 
 // ResolveCursorBinary returns the path to the cursor-agent binary on this
