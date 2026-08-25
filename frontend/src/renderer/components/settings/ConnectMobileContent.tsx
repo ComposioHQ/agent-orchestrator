@@ -91,6 +91,12 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 		{ value: "lan", label: t("mobile.lan") },
 		{ value: "tailscale", label: t("mobile.tailscale") },
 	] satisfies SettingsOption<SetupMode>[];
+	const renderPlatformOption = (option: SettingsOption<MobilePlatform>) => (
+		<span className="flex min-w-0 items-center gap-1.5">
+			<span className="flex w-5 shrink-0 justify-center">{option.icon}</span>
+			<span className="min-w-0">{option.label}</span>
+		</span>
+	);
 
 	useEffect(() => {
 		return () => {
@@ -139,6 +145,14 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 		onSuccess: invalidate,
 	});
 
+	const disable = useMutation({
+		mutationFn: async () => {
+			const { error } = await apiClient.POST("/api/v1/mobile/disable");
+			if (error) throw new Error(apiErrorMessage(error));
+		},
+		onSuccess: invalidate,
+	});
+
 	const setSecure = useMutation({
 		mutationFn: async (secureEnabled: boolean) => {
 			const { data, error } = await apiClient.POST("/api/v1/mobile/secure-pairing", { body: { enabled: secureEnabled } });
@@ -158,11 +172,12 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 			: (status?.host ?? "");
 	const activePort = secureActive ? status!.securePairing.port : (status?.port ?? 0);
 	const secureBlocked = mode === "tailscale" && (status?.securePairing?.enabled ?? false) && !secureActive;
-	const busy = enable.isPending || regenerate.isPending || setSecure.isPending;
+	const busy = enable.isPending || regenerate.isPending || disable.isPending || setSecure.isPending;
 
 	const clearActionErrors = () => {
 		enable.reset();
 		regenerate.reset();
+		disable.reset();
 		setSecure.reset();
 	};
 
@@ -194,6 +209,7 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 	const actionError =
 		(enable.error instanceof Error && enable.error.message) ||
 		(regenerate.error instanceof Error && regenerate.error.message) ||
+		(disable.error instanceof Error && disable.error.message) ||
 		(setSecure.error instanceof Error && setSecure.error.message) ||
 		null;
 
@@ -225,6 +241,9 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 							value={platform}
 							options={platformOptions}
 							onChange={setPlatform}
+							triggerClassName="w-48 justify-between"
+							renderMenuItem={renderPlatformOption}
+							renderTrigger={(selected) => selected && renderPlatformOption(selected)}
 							menuAlign="start"
 						/>
 						<SettingsOptionMenu
@@ -232,6 +251,7 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 							value={mode}
 							options={modeOptions}
 							onChange={setMode}
+							triggerClassName="w-48 justify-between"
 							menuAlign="start"
 						/>
 					</div>
@@ -378,7 +398,7 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 				{/* Right: dedicated pairing-QR panel — square, clipping, flush with
 				    the content's right edge so bottom/right spacing match. */}
 				<div className="flex w-full shrink-0 flex-col gap-3 self-start sm:w-60">
-					<div className="relative aspect-square w-full overflow-hidden rounded-md border border-(--color-border-settings-input) bg-(--color-bg-settings-input)">
+					<div className="relative aspect-square w-full overflow-hidden rounded-md">
 						{enabled && !activeHost ? (
 							<div className="flex size-full items-center justify-center bg-(--color-bg-settings-input) p-4">
 								<p className="text-center text-caption leading-(--leading-settings-mobile-hint) text-settings-muted">
@@ -387,7 +407,13 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 							</div>
 						) : (
 							<>
-								<div className={cn("size-full", !showRealQR && "opacity-60 blur-[6px]")} aria-hidden={!showRealQR}>
+								<div
+									className={cn(
+										"size-full transition-[filter,opacity] duration-300 ease-out",
+										!showRealQR && "opacity-60 blur-[6px]",
+									)}
+									aria-hidden={!showRealQR}
+								>
 									<StyledQRCode
 										value={showRealQR ? pairingPayload(activeHost, activePort, status.password, secureActive) : PLACEHOLDER_QR_VALUE}
 										data-qr-value={showRealQR ? pairingPayload(activeHost, activePort, status.password, secureActive) : undefined}
@@ -404,7 +430,6 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 											onClick={startBridge}
 											disabled={busy || (enabled && secureBlocked)}
 										>
-											{enable.isPending && <Loader2 className="mr-2 size-4 animate-spin" aria-hidden="true" />}
 											{t("mobile.generate")}
 										</Button>
 									</div>
@@ -412,6 +437,20 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 							</>
 						)}
 					</div>
+					{enabled && (
+						<Button
+							type="button"
+							variant="footer"
+							className="w-full"
+							disabled={busy}
+							onClick={() => {
+								clearActionErrors();
+								disable.mutate();
+							}}
+						>
+							{t("mobile.disable", "Turn off mobile connection")}
+						</Button>
+					)}
 					</div>
 			</div>
 		</div>
