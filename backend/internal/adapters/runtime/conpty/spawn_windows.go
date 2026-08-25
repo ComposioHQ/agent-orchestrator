@@ -1,7 +1,8 @@
 //go:build windows
 
 // spawn_windows.go - real detached pty-host spawner for Windows using
-// CREATE_NEW_PROCESS_GROUP + DETACHED_PROCESS so the host survives daemon exit.
+// DETACHED_PROCESS so the host survives daemon exit. Deliberately without
+// CREATE_NEW_PROCESS_GROUP — see ptyHostSysProcAttr.
 package conpty
 
 import (
@@ -21,6 +22,28 @@ import (
 
 // readyRE matches the "READY:<pid> <port>" line printed by RunHost.
 var readyRE = regexp.MustCompile(`READY:(\d+) (\d+)`)
+
+// ptyHostSysProcAttr returns the Windows process-creation attributes for the
+// detached pty-host.
+//
+// DETACHED_PROCESS keeps the child console-less so it survives the parent's
+// console closing; HideWindow suppresses the console flash.
+//
+// CREATE_NEW_PROCESS_GROUP must NOT be set here, even though it would
+// "insulate" the host from Ctrl+C sent to the parent. pty-host is the process
+// that calls CreatePseudoConsole, and conhost can only deliver a synthesized
+// CTRL_C_EVENT (from a 0x03 byte written to the ConPTY input pipe) to
+// processes in its own console process group — isolating pty-host's group
+// severs that delivery, so Ctrl+C in AO terminals never interrupts foreground
+// processes (ping -t keeps running). DETACHED_PROCESS already provides the
+// insulation: a process attached to no console receives no console control
+// events. See https://learn.microsoft.com/en-us/answers/questions/5832200/
+func ptyHostSysProcAttr() *windows.SysProcAttr {
+	return &windows.SysProcAttr{
+		CreationFlags: windows.DETACHED_PROCESS,
+		HideWindow:    true,
+	}
+}
 
 const spawnReadyTimeout = 10 * time.Second
 
@@ -90,14 +113,7 @@ func defaultSpawnHost(ctx context.Context, sessionID, cwd string, argv []string,
 	cmd.Dir = cwd
 	cmd.Env = merged
 
-	// Windows process-creation flags: detached + hidden console.
-	// ponytail: DETACHED_PROCESS puts the child in its own console; without it
-	// the child is killed when the parent's console closes. CREATE_NEW_PROCESS_GROUP
-	// insulates it from Ctrl+C sent to the parent. windowsHide suppresses the flash.
-	cmd.SysProcAttr = &windows.SysProcAttr{
-		CreationFlags: windows.DETACHED_PROCESS | windows.CREATE_NEW_PROCESS_GROUP,
-		HideWindow:    true,
-	}
+	cmd.SysProcAttr = ptyHostSysProcAttr()
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
