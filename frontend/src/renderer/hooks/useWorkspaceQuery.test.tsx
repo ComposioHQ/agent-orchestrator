@@ -351,4 +351,44 @@ describe("useWorkspaceQuery", () => {
 		await waitFor(() => expect(result.current.isError).toBe(true), { timeout: 3_000 });
 		expect(result.current.error).toBe(failure);
 	});
+
+	it("shows opted-in Cloud projects beside local projects", async () => {
+		respondWith({
+			projects: { data: { projects: [{ id: "local-1", name: "local-app", path: "/local" }] }, error: undefined },
+			sessions: { data: { sessions: [] }, error: undefined },
+		});
+		const enabled = vi.spyOn(window.ao!.cloud, "isBetaEnabled").mockResolvedValue(true);
+		const overview = vi.spyOn(window.ao!.cloud, "getOverview").mockResolvedValue({
+			apiBaseUrl: "https://cloud.example.test",
+			organization: { id: "org-1", displayName: "Example", role: "owner" },
+			projects: [{
+				id: "cloud-1",
+				orgId: "org-1",
+				displayName: "cloud-app",
+				repositoryUrl: "https://github.com/acme/cloud-app.git",
+				defaultBranch: "main",
+				executionLocation: "cloud",
+				config: { orchestrator: { agent: "codex" } },
+				createdAt: "2026-08-24T20:00:00Z",
+				updatedAt: "2026-08-24T20:00:00Z",
+			}],
+			sessions: [],
+			harnesses: [],
+		});
+
+		try {
+			const { result } = renderHook(() => useWorkspaceQuery(), { wrapper });
+			await waitFor(() => expect(result.current.data).toHaveLength(2));
+			expect(result.current.data?.[0]).toMatchObject({
+				id: "cloud-1",
+				executionLocation: "cloud",
+				cloudOrgId: "org-1",
+				orchestratorAgent: "codex",
+			});
+			expect(result.current.data?.[1]).toMatchObject({ id: "local-1" });
+		} finally {
+			enabled.mockRestore();
+			overview.mockRestore();
+		}
+	});
 });

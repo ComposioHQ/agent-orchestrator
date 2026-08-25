@@ -27,7 +27,7 @@ import {
 } from "../hooks/useSessionUsageSummaries";
 import { useRestoreSession } from "../hooks/useRestoreSession";
 import { useTerminateSession } from "../hooks/useTerminateSession";
-import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import { cloudWorkspaceQueryKey, useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { NotificationCenter } from "./NotificationCenter";
 import { BoardWelcome, ProjectBoardEmpty } from "./BoardEmptyStates";
 import { OrchestratorIcon } from "./icons";
@@ -49,6 +49,7 @@ import {
 	sessionsBoardLabels,
 } from "./SessionsBoardAdapters";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
+import { spawnCloudOrchestrator } from "../lib/spawn-cloud-orchestrator";
 
 type SessionsBoardProps = {
 	/** When set, the board shows only this project's sessions. */
@@ -83,6 +84,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const all = workspaceQuery.data ?? [];
 	const workspaces = projectId ? all.filter((workspace) => workspace.id === projectId) : all;
 	const workspace = projectId ? workspaces[0] : undefined;
+	const isCloud = workspace?.executionLocation === "cloud";
 	// Board chrome stays route-oriented; project context remains in the sidebar.
 	const boardLabel = t("shell.board");
 	const sessions = workspaces.flatMap((workspace) => workerSessions(workspace.sessions));
@@ -178,8 +180,10 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 		setOrchestratorStartupError(projectId, null);
 		setIsSpawning(true);
 		try {
-			const sessionId = await spawnOrchestrator(projectId, "board", false, mode);
-			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+			const sessionId = isCloud && workspace
+				? await spawnCloudOrchestrator(workspace)
+				: await spawnOrchestrator(projectId, "board", false, mode);
+			await queryClient.invalidateQueries({ queryKey: isCloud ? cloudWorkspaceQueryKey : workspaceQueryKey });
 			setOrchestratorStartupError(projectId, null);
 			void navigate({
 				to: "/projects/$projectId/sessions/$sessionId",
@@ -219,7 +223,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 					{t("newTask.createAsTui")}
 				</TopbarButton>
 			) : null}
-			<Tooltip>
+			{!isCloud ? <Tooltip>
 				<TooltipTrigger asChild>
 					<span className="inline-flex">
 						<TopbarButton
@@ -236,7 +240,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 					</span>
 				</TooltipTrigger>
 				<TooltipContent side="bottom">{t("shell.newTask")}</TooltipContent>
-			</Tooltip>
+			</Tooltip> : null}
 			<Tooltip>
 				<TooltipTrigger asChild>
 					<span className="inline-flex">
@@ -335,7 +339,8 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 						isProjectRestarting={isProjectRestarting}
 						onNewTask={() => projectId && requestNewTask(projectId)}
 						onOpenOrchestrator={() => void openOrchestrator()}
-						onOpenOrchestratorAsTui={canCreateAsTui ? () => void openOrchestrator("tui") : undefined}
+						onOpenOrchestratorAsTui={!isCloud && canCreateAsTui ? () => void openOrchestrator("tui") : undefined}
+						showNewTask={!isCloud}
 						spawnError={visibleSpawnError}
 					/>
 				) : (

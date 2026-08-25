@@ -5,6 +5,7 @@ import { mockWorkspaces } from "../lib/mock-data";
 import { usesPreviewWorkspaceData } from "../lib/preview-mode";
 import { toReviewerHarnessId } from "../lib/reviewer-harnesses";
 import { captureRendererEvent } from "../lib/telemetry";
+import { aoBridge } from "../lib/bridge";
 import {
 	type AgentSwitchSummary,
 	type PRState,
@@ -43,6 +44,7 @@ function toPullRequestFacts(pr: components["schemas"]["SessionPRFacts"]): PullRe
 }
 
 export const workspaceQueryKey = ["workspaces"] as const;
+export const cloudWorkspaceQueryKey = ["cloud-workspaces"] as const;
 const reportedUnknownSessionFields = new Set<string>();
 
 function reportUnknownSessionField(field: "status" | "activity", value?: string): void {
@@ -134,6 +136,49 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 	});
 }
 
+async function fetchCloudWorkspaces(): Promise<WorkspaceSummary[]> {
+	if (!(await aoBridge.cloud.isBetaEnabled())) return [];
+	try {
+		const overview = await aoBridge.cloud.getOverview();
+		return overview.projects.map((project) => {
+			const sessions = overview.sessions.filter((session) => session.projectId === project.id);
+			const orchestrator = sessions.find((session) => session.kind === "orchestrator");
+			const orchestratorAgent = orchestrator?.harness ?? project.config?.orchestrator?.agent;
+			return {
+				id: project.id,
+				executionLocation: "cloud" as const,
+				cloudOrgId: project.orgId,
+				name: project.displayName,
+				kind: "single_repo" as const,
+				path: project.repositoryUrl,
+				orchestratorAgent: orchestratorAgent ? toAgentProvider(orchestratorAgent) : undefined,
+				sessions: sessions.map((session) => ({
+					id: session.id,
+					executionLocation: "cloud" as const,
+					workspaceId: project.id,
+					workspaceName: project.displayName,
+					title: session.displayName,
+					provider: toAgentProvider(session.harness),
+					kind: session.kind,
+					mode: session.mode === "chat" ? "chat" : "tui",
+					branch: session.branch || undefined,
+					status: toSessionStatus(session.status, session.isTerminated),
+					isTerminated: session.isTerminated,
+					createdAt: session.createdAt,
+					updatedAt: session.updatedAt,
+					activity: session.activityState
+						? toSessionActivity({ state: session.activityState })
+						: undefined,
+					prs: [],
+				})),
+			};
+		});
+	} catch {
+		// Cloud availability must never block or hide the user's local projects.
+		return [];
+	}
+}
+
 // Shared so route loaders can prefetch via queryClient.ensureQueryData (paired
 // with the router's defaultPreload: "intent") and the hook reads the same cache.
 export const workspaceQueryOptions = {
@@ -144,5 +189,15 @@ export const workspaceQueryOptions = {
 };
 
 export function useWorkspaceQuery() {
-	return useQuery(workspaceQueryOptions);
+	const local = useQuery(workspaceQueryOptions);
+	const cloud = useQuery({
+		queryKey: cloudWorkspaceQueryKey,
+		queryFn: fetchCloudWorkspaces,
+		retry: 0,
+		refetchInterval: 15_000,
+	});
+	return {
+		...local,
+		data: local.data ? [...(cloud.data ?? []), ...local.data] : local.data,
+	};
 }

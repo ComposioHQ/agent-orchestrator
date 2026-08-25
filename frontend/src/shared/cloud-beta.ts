@@ -13,6 +13,10 @@ export interface CloudProject {
 	repositoryUrl: string;
 	defaultBranch: string;
 	executionLocation: "cloud";
+	config?: {
+		worker?: { agent?: CloudHarness };
+		orchestrator?: { agent?: CloudHarness };
+	};
 	createdAt: string;
 	updatedAt: string;
 }
@@ -24,6 +28,10 @@ export interface CloudSessionSummary {
 	harness: CloudHarness;
 	displayName: string;
 	status: string;
+	activityState?: string;
+	branch?: string;
+	mode?: "chat" | "tui";
+	isTerminated?: boolean;
 	runtimeConnected: boolean;
 	runtimeState?: string;
 	runtimeError?: string;

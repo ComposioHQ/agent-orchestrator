@@ -1,4 +1,5 @@
 import * as Dialog from "@radix-ui/react-dialog";
+import { useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, ChevronLeft, Cloud, LoaderCircle, X } from "lucide-react";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -11,6 +12,7 @@ import type {
 } from "../../shared/cloud-beta";
 import { useCloudSession } from "../lib/cloud-session";
 import { aoBridge } from "../lib/bridge";
+import { cloudWorkspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { Button } from "./ui/button";
 
 function errorMessage(error: unknown, fallback: string): string {
@@ -32,6 +34,7 @@ export function CreateCloudProjectDialog({
 	open: boolean;
 }) {
 	const { t } = useTranslation();
+	const queryClient = useQueryClient();
 	const cloudSession = useCloudSession();
 	const signInStarted = useRef(false);
 	const [overview, setOverview] = useState<CloudBetaOverview | null>(null);
@@ -90,16 +93,23 @@ export function CreateCloudProjectDialog({
 		let project: CloudProject | null = null;
 		try {
 			const availableHarnesses = new Set<CloudHarness>(
-				overview.harnesses.filter((item) => item.connected).map((item) => item.harness),
+				overview.harnesses
+					.filter((item) => item.connected && !(item.harness === "codex" && item.credentialType === "access_token"))
+					.map((item) => item.harness),
 			);
+			let connectionFailure: unknown = null;
 			for (const candidate of ["claude-code", "codex"] as const) {
 				if (availableHarnesses.has(candidate)) continue;
 				try {
 					await aoBridge.cloud.connectLocalHarness(candidate);
 					availableHarnesses.add(candidate);
-				} catch {
+				} catch (connectError) {
 					// A user may have only one harness installed or signed in. Connect as
-					// many as are available and continue with the first usable one.
+					// many as are available and continue with the first usable one. Keep
+					// provider errors so they are not misreported as a missing local login.
+					if (!errorMessage(connectError, "").startsWith("No local ")) {
+						connectionFailure = connectError;
+					}
 				}
 			}
 			const harness: CloudHarness | undefined = availableHarnesses.has("claude-code")
@@ -108,6 +118,7 @@ export function CreateCloudProjectDialog({
 					? "codex"
 					: undefined;
 			if (!harness) {
+				if (connectionFailure) throw connectionFailure;
 				throw new Error(t("createProject.cloudNoHarness"));
 			}
 			project = await aoBridge.cloud.createProject(overview.organization.id, {
@@ -115,6 +126,11 @@ export function CreateCloudProjectDialog({
 				workerAgent: harness,
 				orchestratorAgent: harness,
 			});
+			// The project is durable before its initial orchestrator finishes
+			// provisioning. Refresh the normal project list immediately so a slow or
+			// interrupted sandbox create cannot leave a successfully created project
+			// hidden from the user.
+			await queryClient.invalidateQueries({ queryKey: cloudWorkspaceQueryKey });
 			const session = await aoBridge.cloud.createSession({
 				orgId: overview.organization.id,
 				projectId: project.id,

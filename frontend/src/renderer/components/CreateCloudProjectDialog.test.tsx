@@ -1,4 +1,5 @@
 import { render, screen, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CreateCloudProjectDialog } from "./CreateCloudProjectDialog";
@@ -29,6 +30,15 @@ vi.mock("../lib/bridge", () => ({
 	},
 }));
 
+function renderDialog() {
+	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+	return render(
+		<QueryClientProvider client={queryClient}>
+			<CreateCloudProjectDialog onBack={() => undefined} onOpenChange={() => undefined} open />
+		</QueryClientProvider>,
+	);
+}
+
 beforeEach(() => {
 	mocks.cloudSession.configured = true;
 	mocks.cloudSession.session = null;
@@ -47,7 +57,7 @@ beforeEach(() => {
 
 describe("CreateCloudProjectDialog", () => {
 	it("starts sign-in as part of selecting Cloud", async () => {
-		render(<CreateCloudProjectDialog onBack={() => undefined} onOpenChange={() => undefined} open />);
+		renderDialog();
 
 		await waitFor(() => expect(mocks.cloudSession.signIn).toHaveBeenCalledOnce());
 		expect(screen.getByText("Finish signing in in your browser. This window will continue automatically.")).toBeInTheDocument();
@@ -57,7 +67,7 @@ describe("CreateCloudProjectDialog", () => {
 		mocks.cloudSession.status = "authenticated";
 		mocks.cloudSession.session = { user: { email: "person@example.com" } };
 		const user = userEvent.setup();
-		render(<CreateCloudProjectDialog onBack={() => undefined} onOpenChange={() => undefined} open />);
+		renderDialog();
 
 		await user.type(await screen.findByLabelText("Git repository"), "https://github.com/acme/repository.git");
 		await user.click(screen.getByRole("button", { name: "Create Cloud project" }));
@@ -90,7 +100,7 @@ describe("CreateCloudProjectDialog", () => {
 			return { connected: true };
 		});
 		const user = userEvent.setup();
-		render(<CreateCloudProjectDialog onBack={() => undefined} onOpenChange={() => undefined} open />);
+		renderDialog();
 
 		await user.type(await screen.findByLabelText("Git repository"), "https://github.com/acme/repository.git");
 		await user.click(screen.getByRole("button", { name: "Create Cloud project" }));
@@ -98,5 +108,27 @@ describe("CreateCloudProjectDialog", () => {
 		await waitFor(() =>
 			expect(mocks.createSession).toHaveBeenCalledWith(expect.objectContaining({ harness: "codex" })),
 		);
+	});
+
+	it("surfaces provider rejection instead of claiming no local login exists", async () => {
+		mocks.cloudSession.status = "authenticated";
+		mocks.cloudSession.session = { user: { email: "person@example.com" } };
+		mocks.connectLocalHarness.mockImplementation(async (harness: string) => {
+			if (harness === "claude-code") {
+				throw new Error("No local Claude Code subscription login was found.");
+			}
+			throw new Error("The Codex credential is invalid or expired. Request request-123.");
+		});
+		const user = userEvent.setup();
+		renderDialog();
+
+		await user.type(await screen.findByLabelText("Git repository"), "https://github.com/acme/repository.git");
+		await user.click(screen.getByRole("button", { name: "Create Cloud project" }));
+
+		expect(
+			await screen.findByText("The Codex credential is invalid or expired. Request request-123."),
+		).toBeInTheDocument();
+		expect(screen.queryByText("No local Claude Code or Codex login was found. Sign in to either agent locally and retry.")).not.toBeInTheDocument();
+		expect(mocks.createProject).not.toHaveBeenCalled();
 	});
 });

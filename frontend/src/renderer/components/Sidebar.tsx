@@ -4,6 +4,7 @@ import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
 import {
 	AlertTriangle,
 	ChevronRight,
+	Cloud,
 	Download,
 	Folder,
 	FolderOpen,
@@ -33,7 +34,7 @@ import { getSessionStatusDotView } from "../lib/session-presentation";
 import { deriveSessionAgentSwitchPresentation } from "../lib/agent-switch-presentation";
 import { aoBridge } from "../lib/bridge";
 import { useCommandPaletteEnabled } from "../hooks/useCommandPaletteEnabled";
-import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import { cloudWorkspaceQueryKey, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { usePinSession, useUnpinSession } from "../hooks/usePinSession";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { renameSession } from "../lib/rename-session";
@@ -81,6 +82,7 @@ import { ConfirmDialog } from "./ConfirmDialog";
 import { CreateProjectFlow, type CloneProjectInput, type CreateProjectInput } from "./CreateProjectFlow";
 import { ResizeHandle } from "./ResizeHandle";
 import { isMacPlatform, isWindowsPlatform } from "../lib/platform";
+import { spawnCloudOrchestrator } from "../lib/spawn-cloud-orchestrator";
 
 // macOS paints framed chrome: the fixed TitlebarNav cluster carries the
 // sidebar toggle + history arrows above this surface. Windows hangs the sidebar
@@ -525,6 +527,7 @@ function ProjectItem({
 	onRemoveProject: (projectId: string) => Promise<void>;
 }) {
 	const { t } = useTranslation();
+	const isCloud = workspace.executionLocation === "cloud";
 	const prefersReducedMotion = useReducedMotion();
 	const activeProjectMatches = selection.activeProjectId === workspace.id;
 	const dashboardActive = activeProjectMatches && !selection.activeSessionId;
@@ -569,6 +572,21 @@ function ProjectItem({
 		if (!expanded) onToggle();
 		if (orchestrator) {
 			selection.goSession(workspace.id, orchestrator.id);
+			return;
+		}
+		if (isCloud) {
+			setIsSpawning(true);
+			setRemoveError(null);
+			try {
+				const sessionId = await spawnCloudOrchestrator(workspace);
+				await queryClient.invalidateQueries({ queryKey: cloudWorkspaceQueryKey });
+				selection.goSession(workspace.id, sessionId);
+			} catch (err) {
+				console.error("Failed to spawn Cloud orchestrator:", err);
+				setRemoveError(err instanceof Error ? err.message : t("shell.couldNotSpawn"));
+			} finally {
+				setIsSpawning(false);
+			}
 			return;
 		}
 		if (!hasConfiguredOrchestratorAgent(workspace)) {
@@ -693,6 +711,8 @@ function ProjectItem({
 				>
 					<ChevronRight strokeWidth={1.75} />
 				</motion.span>
+			) : isCloud ? (
+				<Cloud strokeWidth={1.75} />
 			) : expanded ? (
 				<FolderOpen strokeWidth={1.75} />
 			) : (
@@ -704,7 +724,9 @@ function ProjectItem({
 			aria-hidden="true"
 			className="hidden group-data-[collapsible=icon]:inline-flex size-8 items-center justify-center text-muted-foreground"
 		>
-			{expanded ? (
+			{isCloud ? (
+				<Cloud className="size-5" strokeWidth={1.75} />
+			) : expanded ? (
 				<FolderOpen className="size-5" strokeWidth={1.75} />
 			) : (
 				<Folder className="size-5" strokeWidth={1.75} />
@@ -767,7 +789,7 @@ function ProjectItem({
 								: t("shell.spawnOrchestratorLower")}
 				</TooltipContent>
 			</Tooltip>
-			<DropdownMenu>
+			{!isCloud ? <DropdownMenu>
 				<DropdownMenuTrigger asChild>
 					<button aria-label={t("shell.projectActions", { name: workspace.name })} className={HOVER_ACTION_CLASS} type="button">
 						<MoreVertical aria-hidden="true" />
@@ -793,7 +815,7 @@ function ProjectItem({
 						{t("shell.removeProjectTitle")}
 					</DropdownMenuItem>
 				</DropdownMenuContent>
-			</DropdownMenu>
+			</DropdownMenu> : null}
 		</div>
 		</div>{/* end outer relative */}
 		{isRemoving ? (
@@ -838,7 +860,7 @@ function ProjectItem({
 				</motion.div>
 			)}
 		</AnimatePresence>
-		<ConfirmDialog
+		{!isCloud ? <ConfirmDialog
 			open={confirmOpen}
 			onOpenChange={setConfirmOpen}
 			title={t("shell.removeProjectTitle")}
@@ -853,10 +875,10 @@ function ProjectItem({
 			confirmLabel={t("shell.remove")}
 			destructive
 			onConfirm={handleConfirmRemove}
-		/>
+		/> : null}
 		</SidebarMenuItem>
 		</ContextMenuTrigger>
-		<ContextMenuContent className="min-w-44">
+		{!isCloud ? <ContextMenuContent className="min-w-44">
 			<ContextMenuItem disabled={isProjectRestarting} onSelect={() => requestNewTask(workspace.id)}>
 				<Plus aria-hidden="true" />
 				{t("shell.newSession")}
@@ -875,7 +897,7 @@ function ProjectItem({
 				<Trash2 aria-hidden="true" />
 				{t("shell.removeProjectTitle")}
 			</ContextMenuItem>
-		</ContextMenuContent>
+		</ContextMenuContent> : null}
 		</ContextMenu>
 	);
 }

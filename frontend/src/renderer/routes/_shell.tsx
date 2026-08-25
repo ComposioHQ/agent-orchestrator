@@ -250,11 +250,14 @@ function ShellLayout() {
 		: routeParams.sessionId
 			? workspaces.find((workspace) => workspace.sessions.some((session) => session.id === routeParams.sessionId))?.id
 			: undefined;
+	const scopedWorkspace = scopedProjectId
+		? workspaces.find((workspace) => workspace.id === scopedProjectId)
+		: undefined;
 	// Warms the New Task composer's model-catalog cache while the user is just
 	// looking at the project, so the picker never shows a loading flash the
 	// first time they actually open the dialog.
 	useEffect(() => {
-		if (!scopedProjectId) return;
+		if (!scopedProjectId || scopedWorkspace?.executionLocation === "cloud") return;
 		const projectQueryKey = ["project", scopedProjectId];
 		void queryClient
 			.prefetchQuery({
@@ -275,7 +278,7 @@ function ShellLayout() {
 					void queryClient.prefetchQuery(agentModelsQueryOptions(defaultWorkerAgent, scopedProjectId));
 				}
 			});
-	}, [queryClient, scopedProjectId]);
+	}, [queryClient, scopedProjectId, scopedWorkspace?.executionLocation]);
 	// First-launch root board only (no projects in scope).
 	const isWelcomeBoard =
 		Boolean(matchRoute({ to: "/" })) &&

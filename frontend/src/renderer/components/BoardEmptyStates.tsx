@@ -38,6 +38,7 @@ export function ProjectBoardEmpty({
 	onNewTask,
 	onOpenOrchestrator,
 	onOpenOrchestratorAsTui,
+	showNewTask = true,
 	spawnError,
 }: {
 	hasOrchestrator: boolean;
@@ -46,6 +47,7 @@ export function ProjectBoardEmpty({
 	onNewTask: () => void;
 	onOpenOrchestrator: () => void;
 	onOpenOrchestratorAsTui?: () => void;
+	showNewTask?: boolean;
 	spawnError?: string | null;
 }) {
 	const { t } = useTranslation();
@@ -71,10 +73,10 @@ export function ProjectBoardEmpty({
 						<OrchestratorIcon className="size-icon-md" aria-hidden="true" />
 						{busyLabel}
 					</TopbarButton>
-					<TopbarButton aria-label={t("shell.newTask")} disabled={isProjectRestarting} onClick={onNewTask} variant="accent">
+					{showNewTask ? <TopbarButton aria-label={t("shell.newTask")} disabled={isProjectRestarting} onClick={onNewTask} variant="accent">
 						<Plus className="size-icon-md" aria-hidden="true" />
 						{t("shell.newTask")}
-					</TopbarButton>
+					</TopbarButton> : null}
 				</div>
 				{spawnError && (
 					<div className="mt-3 flex flex-col items-center gap-2">
