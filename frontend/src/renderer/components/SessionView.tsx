@@ -53,8 +53,9 @@ import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { aoBridge } from "../lib/bridge";
 import { discardPendingFileAttachmentsForSession } from "../hooks/useFileAttachments";
 import {
-	confirmDiscardChatDraft,
+	confirmDiscardChatDrafts,
 	getChatDraftBoundary,
+	getChatDraftBoundaries,
 	subscribeChatDraftBoundaries,
 } from "../lib/chat-draft-boundary";
 import { SHELL_PANEL_SPRING } from "../lib/motion-spring";
@@ -370,13 +371,14 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		getCurrentChatDraftBoundary,
 	);
 	const confirmUnsafeDraftLeave = useCallback(() => {
-		if (!chatDraftBoundary) return true;
-		if (!confirmDiscardChatDraft(chatDraftBoundary)) return false;
-		if (chatDraftBoundary === "pending-attachments") {
-			discardPendingFileAttachmentsForSession(sessionId);
-		}
+		const activeBoundaries = getChatDraftBoundaries(sessionId);
+		if (activeBoundaries.length === 0) return true;
+		if (!confirmDiscardChatDrafts(activeBoundaries)) return false;
+		// This only invalidates renderer-owned in-flight generations. Bytes that
+		// already reached the daemon/worktree remain outside this discard boundary.
+		discardPendingFileAttachmentsForSession(sessionId);
 		return true;
-	}, [chatDraftBoundary, sessionId]);
+	}, [sessionId]);
 	useBlocker({
 		disabled: !chatDraftBoundary,
 		enableBeforeUnload: Boolean(chatDraftBoundary),

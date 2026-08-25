@@ -873,6 +873,78 @@ describe("SessionView", () => {
 		confirm.mockRestore();
 	});
 
+	it("cancels hidden attachment work after a confirmed mixed-risk leave without resurrection", async () => {
+		interfaceTransitionState.status = { supported: true, targetMode: "tui" };
+		const session = workerSession("sess-1");
+		session.mode = "chat";
+		const draftKey = chatDraftScopeKey({
+			sessionId: session.id,
+			incarnation: "2026-08-27T09:00:00.000Z",
+		});
+		let finishStaging!: (attachments: FileAttachment[]) => void;
+		const staging = renderHook(() =>
+			useFileAttachments({
+				initialKey: draftKey,
+				prepareAttachments: () =>
+					new Promise<FileAttachment[]>((resolve) => {
+						finishStaging = resolve;
+					}),
+			}),
+		);
+		let pending!: Promise<void>;
+		act(() => {
+			pending = staging.result.current.addFiles([
+				new File([new Uint8Array(8).fill(1)], "mixed-late.txt", {
+					type: "text/plain",
+				}),
+			]);
+		});
+		await waitFor(() => expect(finishStaging).toBeTypeOf("function"));
+		act(() => {
+			// Inline edit registers first, so the legacy single-kind snapshot hides
+			// the composer's pending attachment work behind delivery recovery.
+			setChatDraftBoundary(session.id, "inline-edit", "pending-delivery");
+			setChatDraftBoundary(session.id, "composer", "pending-attachments");
+		});
+		const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+		const view = render(<SessionView sessionId={session.id} />);
+
+		fireEvent.click(screen.getByRole("button", { name: "Switch to terminal UI" }));
+		const warning = confirm.mock.calls[0]?.[0] ?? "";
+		expect(warning).toContain("delivery outcome is still unresolved");
+		expect(warning).toContain("Attachments are still being saved");
+		expect(interfaceTransitionMock.start).toHaveBeenCalledWith({
+			targetMode: "tui",
+			policy: "interrupt",
+		});
+		await waitFor(() => expect(staging.result.current.preparing).toBe(false));
+
+		view.unmount();
+		staging.unmount();
+		await act(async () => {
+			finishStaging([
+				{
+					id: "mixed-discarded-late",
+					mimeType: "text/plain",
+					bytes: 8,
+					name: "mixed-late.txt",
+					stagedPath: ".ao/attachments/mixed-late.txt",
+				},
+			]);
+			await pending;
+		});
+		const replacement = renderHook(() => useFileAttachments({ initialKey: draftKey }));
+		expect(replacement.result.current.attachments).toEqual([]);
+		expect(replacement.result.current.preparing).toBe(false);
+
+		replacement.unmount();
+		act(() => {
+			setChatDraftBoundary(session.id, "inline-edit", undefined);
+			setChatDraftBoundary(session.id, "composer", undefined);
+		});
+		confirm.mockRestore();
+	});
+
 	it("checks only the selected session when deciding whether to show the policy dialog", () => {
 		interfaceTransitionState.status = { supported: true, targetMode: "chat" };
 		const selected = workerSession("sess-1");

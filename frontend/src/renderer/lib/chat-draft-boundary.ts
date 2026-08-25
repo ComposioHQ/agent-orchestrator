@@ -51,6 +51,13 @@ export function getChatDraftBoundary(sessionId: string): ChatDraftBoundaryKind |
 	return sessionBoundaries.values().next().value;
 }
 
+/** Every distinct risk currently active for one logical Chat session. */
+export function getChatDraftBoundaries(sessionId: string): readonly ChatDraftBoundaryKind[] {
+	const sessionBoundaries = boundaries.get(sessionId);
+	if (!sessionBoundaries) return [];
+	return [...new Set(sessionBoundaries.values())];
+}
+
 export function subscribeChatDraftBoundaries(listener: () => void): () => void {
 	listeners.add(listener);
 	return () => listeners.delete(listener);
@@ -60,5 +67,14 @@ export function confirmDiscardChatDraft(
 	kind: ChatDraftBoundaryKind,
 	confirm: (message: string) => boolean = (message) => window.confirm(message),
 ): boolean {
-	return confirm(`${CHAT_DRAFT_BOUNDARY_COPY[kind]}\n\nLeave this chat anyway?`);
+	return confirmDiscardChatDrafts([kind], confirm);
+}
+
+export function confirmDiscardChatDrafts(
+	kinds: Iterable<ChatDraftBoundaryKind>,
+	confirm: (message: string) => boolean = (message) => window.confirm(message),
+): boolean {
+	const warnings = [...new Set(kinds)].map((kind) => CHAT_DRAFT_BOUNDARY_COPY[kind]);
+	if (warnings.length === 0) return true;
+	return confirm(`${warnings.join("\n\n")}\n\nLeave this chat anyway?`);
 }
