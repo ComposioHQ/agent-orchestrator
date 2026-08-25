@@ -1,0 +1,838 @@
+import { withAuth } from "@workos-inc/authkit-nextjs";
+import { NextRequest, NextResponse } from "next/server";
+
+import {
+  cloudApiBaseUrl,
+  cloudControlEnvironment,
+  cloudWebMode,
+  environmentControlToken,
+  githubApiBaseUrl,
+  localAuthCookie,
+  repositoryBrokerToken,
+} from "@/lib/cloud-config";
+
+const localEntryPaths = new Set([
+  "auth/local/login",
+  "auth/local/register",
+]);
+
+type RouteContext = {
+  params: Promise<{ path: string[] }>;
+};
+
+export async function GET(request: NextRequest, context: RouteContext) {
+  return forward(request, context);
+}
+
+export async function POST(request: NextRequest, context: RouteContext) {
+  return forward(request, context);
+}
+
+export async function PUT(request: NextRequest, context: RouteContext) {
+  return forward(request, context);
+}
+
+export async function DELETE(request: NextRequest, context: RouteContext) {
+  return forward(request, context);
+}
+
+export async function PATCH(request: NextRequest, context: RouteContext) {
+  return forward(request, context);
+}
+
+async function forward(request: NextRequest, context: RouteContext) {
+  const origin = request.headers.get("origin");
+  const { path: segments } = await context.params;
+  const path = segments.join("/");
+  if (
+    request.method !== "GET" &&
+    request.method !== "HEAD" &&
+    origin &&
+    !isSameOrigin(request, origin) &&
+    !(origin === "null" && isBrowserProxyPath(segments))
+  ) {
+    return NextResponse.json(
+      { code: "INVALID_ORIGIN", message: "Cross-origin requests are rejected." },
+      { status: 403 },
+    );
+  }
+
+  if (!path || segments.some((segment) => segment === "." || segment === "..")) {
+    return NextResponse.json(
+      { code: "INVALID_REQUEST", message: "Invalid Cloud API path." },
+      { status: 400 },
+    );
+  }
+
+  const mode = cloudWebMode();
+  const githubRoute = parseGitHubRoute(segments);
+  const githubUserRoute =
+    path === "github/user" || path === "github/user/authorize";
+  const scratchRoute = parseScratchRoute(segments);
+  const githubBrokerRoute =
+    Boolean(githubRoute) || githubUserRoute || Boolean(scratchRoute);
+  let environmentAccessToken: string | undefined;
+  let workosAccessToken: string | undefined;
+  if (mode === "local") {
+    environmentAccessToken = request.cookies.get(localAuthCookie)?.value;
+    if (githubBrokerRoute) {
+      const auth = await withAuth();
+      workosAccessToken = auth.user ? auth.accessToken : undefined;
+    }
+  } else {
+    const auth = await withAuth();
+    environmentAccessToken = auth.user ? auth.accessToken : undefined;
+    workosAccessToken = environmentAccessToken;
+  }
+
+  const isLocalEntry = mode === "local" && localEntryPaths.has(path);
+  if (!isLocalEntry && !environmentAccessToken) {
+    return NextResponse.json(
+      {
+        error: "Unauthorized",
+        code: "AUTH_REQUIRED",
+        message: "Sign in to continue.",
+        requestId: "",
+      },
+      { status: 401 },
+    );
+  }
+  if (githubBrokerRoute && !workosAccessToken) {
+    return NextResponse.json(
+      {
+        error: "GitHub authentication required",
+        code: "GITHUB_AUTH_REQUIRED",
+        message: "Connect your hosted AO account to manage GitHub access.",
+        requestId: "",
+      },
+      { status: 401 },
+    );
+  }
+
+  if (
+    githubRoute &&
+    environmentAccessToken &&
+    workosAccessToken
+  ) {
+    return forwardGitHub(
+      request,
+      githubRoute,
+      environmentAccessToken,
+      workosAccessToken,
+    );
+  }
+  if (githubUserRoute && workosAccessToken) {
+    return forwardGitHubUser(request, path, workosAccessToken);
+  }
+  if (
+    scratchRoute &&
+    request.method === "POST" &&
+    environmentAccessToken &&
+    workosAccessToken &&
+    cloudControlEnvironment() !== "production"
+  ) {
+    return createSplitAuthorityScratchProject(
+      request,
+      scratchRoute.localOrganizationId,
+      environmentAccessToken,
+      workosAccessToken,
+    );
+  }
+
+  const upstreamUrl = new URL(
+    `/api/cloud/v1/${path}${request.nextUrl.search}`,
+    cloudApiBaseUrl(),
+  );
+  const headers = new Headers();
+  headers.set("Accept", request.headers.get("accept") || "application/json");
+  const contentType = request.headers.get("content-type");
+  const idempotencyKey = request.headers.get("idempotency-key");
+  if (contentType) headers.set("Content-Type", contentType);
+  if (idempotencyKey) headers.set("Idempotency-Key", idempotencyKey);
+  if (environmentAccessToken) {
+    headers.set("Authorization", `Bearer ${environmentAccessToken}`);
+  }
+  setForwardedOrigin(headers, request);
+
+  let upstream: Response;
+  try {
+    upstream = await fetch(upstreamUrl, {
+      method: request.method,
+      headers,
+      body:
+        request.method === "GET" || request.method === "HEAD"
+          ? undefined
+          : await request.arrayBuffer(),
+      cache: "no-store",
+      signal: request.signal,
+    });
+  } catch {
+    return NextResponse.json(
+      {
+        error: "Bad Gateway",
+        code: "CLOUD_API_UNAVAILABLE",
+        message: "The Cloud API is unavailable.",
+        requestId: "",
+      },
+      { status: 502 },
+    );
+  }
+
+  if (isLocalEntry && upstream.ok) {
+    const payload = (await upstream.json()) as {
+      token?: string;
+      expiresAt?: string;
+      [key: string]: unknown;
+    };
+    const token = payload.token;
+    delete payload.token;
+    if (!token) {
+      return NextResponse.json(
+        {
+          error: "Invalid Response",
+          code: "INVALID_RESPONSE",
+          message: "Local authentication returned no session token.",
+          requestId: "",
+        },
+        { status: 502 },
+      );
+    }
+    const response = NextResponse.json(payload, { status: upstream.status });
+    response.cookies.set(localAuthCookie, token, {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: false,
+      path: "/",
+      expires: payload.expiresAt
+        ? new Date(payload.expiresAt)
+        : new Date(Date.now() + 24 * 60 * 60 * 1000),
+    });
+    return response;
+  }
+
+  const responseHeaders = new Headers();
+  for (const name of [
+    "cache-control",
+    "content-type",
+    "access-control-allow-origin",
+    "retry-after",
+    "x-request-id",
+    "x-accel-buffering",
+  ]) {
+    const value = upstream.headers.get(name);
+    if (value) responseHeaders.set(name, value);
+  }
+  const response = new NextResponse(upstream.body, {
+    status: upstream.status,
+    headers: responseHeaders,
+  });
+  if (mode === "local" && path === "auth/local/logout" && upstream.ok) {
+    response.cookies.delete(localAuthCookie);
+  }
+  return response;
+}
+
+function isBrowserProxyPath(segments: string[]): boolean {
+  return (
+    segments.length >= 6 &&
+    segments[0] === "orgs" &&
+    segments[2] === "sessions" &&
+    segments[4] === "browser"
+  );
+}
+
+// Preserve the browser-facing origin across the server-to-server proxy hop.
+function setForwardedOrigin(headers: Headers, request: NextRequest): void {
+  const host =
+    request.headers.get("x-forwarded-host")?.trim() ||
+    request.headers.get("host")?.trim();
+  if (host) headers.set("X-Forwarded-Host", host);
+  const protocol =
+    request.headers.get("x-forwarded-proto")?.split(",", 1)[0]?.trim() ||
+    request.nextUrl.protocol.slice(0, -1);
+  headers.set("X-Forwarded-Proto", protocol);
+}
+
+function isSameOrigin(request: NextRequest, origin: string): boolean {
+  let actual: URL;
+  try {
+    actual = new URL(origin);
+  } catch {
+    return false;
+  }
+
+  const host = request.headers.get("host")?.trim();
+  const forwardedProtocol = request.headers
+    .get("x-forwarded-proto")
+    ?.split(",", 1)[0]
+    ?.trim();
+  const protocol = forwardedProtocol || request.nextUrl.protocol.slice(0, -1);
+  if (host && (protocol === "http" || protocol === "https")) {
+    return actual.origin === `${protocol}://${host}`;
+  }
+  return actual.origin === request.nextUrl.origin;
+}
+
+async function forwardGitHubUser(
+  request: NextRequest,
+  path: string,
+  workosAccessToken: string,
+): Promise<Response> {
+  const productionURL = new URL(
+    `/api/cloud/v1/${path}${request.nextUrl.search}`,
+    githubApiBaseUrl(),
+  );
+  try {
+    const upstream = await fetch(productionURL, {
+      method: request.method,
+      headers: forwardedHeaders(request, workosAccessToken),
+      body:
+        request.method === "GET" || request.method === "HEAD"
+          ? undefined
+          : await request.arrayBuffer(),
+      cache: "no-store",
+      signal: request.signal,
+    });
+    return upstreamResponse(upstream);
+  } catch {
+    return gatewayError("The production GitHub service is unavailable.");
+  }
+}
+
+type GitHubRoute = {
+  localOrganizationId: string;
+  suffix: string;
+};
+
+function parseScratchRoute(
+  segments: string[],
+): { localOrganizationId: string } | null {
+  if (
+    segments.length === 4 &&
+    segments[0] === "orgs" &&
+    segments[2] === "projects" &&
+    segments[3] === "scratch"
+  ) {
+    return { localOrganizationId: segments[1] };
+  }
+  return null;
+}
+
+type AccountOrganization = {
+  id: string;
+  slug: string;
+};
+
+type CurrentAccountResponse = {
+  organizations: AccountOrganization[];
+};
+
+type GitHubRepositoryResponse = {
+  githubRepositoryId: string;
+  name: string;
+  htmlUrl: string;
+  defaultBranch: string;
+  access: "active" | "revoked";
+};
+
+type GitHubProjectInput = {
+  githubRepositoryId?: string;
+  displayName?: string;
+  config?: Record<string, unknown>;
+};
+
+function parseGitHubRoute(segments: string[]): GitHubRoute | null {
+  if (
+    segments.length < 4 ||
+    segments[0] !== "orgs" ||
+    segments[2] !== "github"
+  ) {
+    return null;
+  }
+  return {
+    localOrganizationId: segments[1],
+    suffix: segments.slice(3).join("/"),
+  };
+}
+
+async function forwardGitHub(
+  request: NextRequest,
+  route: GitHubRoute,
+  environmentAccessToken: string,
+  workosAccessToken: string,
+): Promise<Response> {
+  let projectInput: GitHubProjectInput | undefined;
+  if (request.method === "POST" && route.suffix === "projects") {
+    try {
+      projectInput = (await request.json()) as GitHubProjectInput;
+    } catch {
+      return NextResponse.json(
+        {
+          error: "Invalid request",
+          code: "INVALID_REQUEST",
+          message: "The request body is invalid.",
+          requestId: "",
+        },
+        { status: 400 },
+      );
+    }
+  }
+
+  const productionOrganization = await resolveProductionOrganization(
+    request,
+    route.localOrganizationId,
+    environmentAccessToken,
+    workosAccessToken,
+  );
+  if (productionOrganization instanceof Response) {
+    return productionOrganization;
+  }
+
+  const productionURL = new URL(
+    `/api/cloud/v1/orgs/${encodeURIComponent(productionOrganization)}/github/${route.suffix}${request.nextUrl.search}`,
+    githubApiBaseUrl(),
+  );
+  const headers = forwardedHeaders(request, workosAccessToken);
+
+  if (projectInput) {
+    return createEnvironmentProjectFromGitHub(
+      request,
+      projectInput,
+      route.localOrganizationId,
+      productionOrganization,
+      environmentAccessToken,
+      workosAccessToken,
+    );
+  }
+
+  try {
+    const upstream = await fetch(productionURL, {
+      method: request.method,
+      headers,
+      body:
+        request.method === "GET" || request.method === "HEAD"
+          ? undefined
+          : await request.arrayBuffer(),
+      cache: "no-store",
+      signal: request.signal,
+    });
+    return upstreamResponse(upstream);
+  } catch {
+    return gatewayError("The production GitHub service is unavailable.");
+  }
+}
+
+async function resolveProductionOrganization(
+  request: NextRequest,
+  localOrganizationId: string,
+  environmentAccessToken: string,
+  workosAccessToken: string,
+): Promise<string | Response> {
+  let productionAccountResponse: Response;
+  try {
+    productionAccountResponse = await fetch(
+      new URL("/api/cloud/v1/me", githubApiBaseUrl()),
+      {
+        headers: forwardedHeaders(request, workosAccessToken),
+        cache: "no-store",
+        signal: request.signal,
+      },
+    );
+  } catch {
+    return gatewayError("The production GitHub service is unavailable.");
+  }
+  if (!productionAccountResponse.ok) {
+    return upstreamResponse(productionAccountResponse);
+  }
+  const productionAccount =
+    (await productionAccountResponse.json()) as CurrentAccountResponse;
+  if (productionAccount.organizations.length === 0) {
+    return NextResponse.json(
+      {
+        error: "GitHub organization unavailable",
+        code: "GITHUB_ORGANIZATION_UNAVAILABLE",
+        message:
+          "Your hosted AO account has no organization available for GitHub.",
+        requestId: "",
+      },
+      { status: 409 },
+    );
+  }
+
+  if (cloudWebMode() === "local") {
+    return productionAccount.organizations[0].id;
+  }
+
+  let environmentAccountResponse: Response;
+  try {
+    environmentAccountResponse = await fetch(
+      new URL("/api/cloud/v1/me", cloudApiBaseUrl()),
+      {
+        headers: forwardedHeaders(request, environmentAccessToken),
+        cache: "no-store",
+        signal: request.signal,
+      },
+    );
+  } catch {
+    return gatewayError("The Cloud API is unavailable.");
+  }
+  if (!environmentAccountResponse.ok) {
+    return upstreamResponse(environmentAccountResponse);
+  }
+  const environmentAccount =
+    (await environmentAccountResponse.json()) as CurrentAccountResponse;
+  const localOrganization = environmentAccount.organizations.find(
+    ({ id }) => id === localOrganizationId,
+  );
+  if (!localOrganization) {
+    return NextResponse.json(
+      {
+        error: "Organization not found",
+        code: "NOT_FOUND",
+        message: "The selected organization is unavailable.",
+        requestId: "",
+      },
+      { status: 404 },
+    );
+  }
+  const matchingOrganization = productionAccount.organizations.find(
+    ({ slug }) => slug === localOrganization.slug,
+  );
+  if (matchingOrganization) {
+    return matchingOrganization.id;
+  }
+  if (productionAccount.organizations.length === 1) {
+    return productionAccount.organizations[0].id;
+  }
+  return NextResponse.json(
+    {
+      error: "GitHub organization mismatch",
+      code: "GITHUB_ORGANIZATION_MISMATCH",
+      message:
+        "The selected organization could not be matched to your production GitHub connection.",
+      requestId: "",
+    },
+    { status: 409 },
+  );
+}
+
+type ScratchRequest = {
+  displayName?: string;
+  githubInstallationId?: string;
+  private?: boolean;
+  config?: Record<string, unknown>;
+  orchestrator?: {
+    harness?: string;
+    prompt?: string;
+  };
+};
+
+type ScratchCapabilityResponse = {
+  capability: string;
+  githubInstallationId: string;
+  githubRepositoryId: string;
+  userExternalId: string;
+  targetEnvironment: "development" | "staging" | "production";
+};
+
+async function createSplitAuthorityScratchProject(
+  request: NextRequest,
+  localOrganizationId: string,
+  environmentAccessToken: string,
+  workosAccessToken: string,
+): Promise<Response> {
+  const controlToken = environmentControlToken();
+  const brokerToken = repositoryBrokerToken();
+  let input: ScratchRequest;
+  try {
+    input = (await request.json()) as ScratchRequest;
+  } catch {
+    return NextResponse.json(
+      {
+        error: "Invalid request",
+        code: "INVALID_REQUEST",
+        message: "The request body is invalid.",
+        requestId: "",
+      },
+      { status: 400 },
+    );
+  }
+  const productionOrganization = await resolveProductionOrganization(
+    request,
+    localOrganizationId,
+    environmentAccessToken,
+    workosAccessToken,
+  );
+  if (productionOrganization instanceof Response) {
+    return productionOrganization;
+  }
+  const targetEnvironment = cloudControlEnvironment();
+  const capabilityURL = new URL(
+    `/api/cloud/v1/orgs/${encodeURIComponent(productionOrganization)}/github/scratch-capabilities`,
+    githubApiBaseUrl(),
+  );
+  let capabilityResponse: Response;
+  try {
+    capabilityResponse = await fetch(capabilityURL, {
+      method: "POST",
+      headers: brokerUserHeaders(request, brokerToken, workosAccessToken),
+      body: JSON.stringify({ ...input, targetEnvironment }),
+      cache: "no-store",
+      signal: request.signal,
+    });
+  } catch {
+    return gatewayError("The production GitHub service is unavailable.");
+  }
+  if (!capabilityResponse.ok) {
+    return upstreamResponse(capabilityResponse);
+  }
+  let authority: ScratchCapabilityResponse;
+  try {
+    authority =
+      (await capabilityResponse.json()) as ScratchCapabilityResponse;
+  } catch {
+    return gatewayError("The production GitHub service returned an invalid response.");
+  }
+  if (
+    !authority.capability ||
+    !authority.githubInstallationId ||
+    !authority.githubRepositoryId ||
+    !authority.userExternalId ||
+    authority.targetEnvironment !== targetEnvironment
+  ) {
+    if (authority.capability) {
+      await compensateScratchCapability(
+        request,
+        productionOrganization,
+        workosAccessToken,
+        brokerToken,
+        authority.capability,
+      );
+    }
+    return gatewayError("The production GitHub service returned an invalid response.");
+  }
+
+  const environmentURL = new URL(
+    "/api/cloud/v1/control/github/scratch-projects",
+    cloudApiBaseUrl(),
+  );
+  const headers = new Headers({
+    Accept: "application/json",
+    Authorization: `Bearer ${controlToken}`,
+    "Content-Type": "application/json",
+    "X-AO-Target-Environment": targetEnvironment,
+    "X-AO-User-Authorization": `Bearer ${environmentAccessToken}`,
+  });
+  const idempotencyKey = request.headers.get("idempotency-key");
+  if (idempotencyKey) headers.set("Idempotency-Key", idempotencyKey);
+  const environmentBody = JSON.stringify({
+    orgId: localOrganizationId,
+    ...input,
+    capability: authority.capability,
+    githubInstallationId: authority.githubInstallationId,
+    githubRepositoryId: authority.githubRepositoryId,
+    userExternalId: authority.userExternalId,
+  });
+  let environmentResponse: Response;
+  try {
+    environmentResponse = await fetch(environmentURL, {
+      method: "POST",
+      headers,
+      body: environmentBody,
+      cache: "no-store",
+      signal: request.signal,
+    });
+  } catch {
+    try {
+      environmentResponse = await fetch(environmentURL, {
+        method: "POST",
+        headers,
+        body: environmentBody,
+        cache: "no-store",
+      });
+    } catch {
+      await compensateScratchCapability(
+        request,
+        productionOrganization,
+        workosAccessToken,
+        brokerToken,
+        authority.capability,
+      );
+      return gatewayError("The environment Cloud API is unavailable.");
+    }
+  }
+  if (!environmentResponse.ok) {
+    await compensateScratchCapability(
+      request,
+      productionOrganization,
+      workosAccessToken,
+      brokerToken,
+      authority.capability,
+    );
+  }
+  return upstreamResponse(environmentResponse);
+}
+
+async function compensateScratchCapability(
+  request: NextRequest,
+  productionOrganizationId: string,
+  workosAccessToken: string,
+  brokerToken: string,
+  capability: string,
+): Promise<void> {
+  const url = new URL(
+    `/api/cloud/v1/orgs/${encodeURIComponent(productionOrganizationId)}/github/scratch-capabilities/revoke`,
+    githubApiBaseUrl(),
+  );
+  try {
+    await fetch(url, {
+      method: "POST",
+      headers: brokerUserHeaders(request, brokerToken, workosAccessToken),
+      body: JSON.stringify({ capability }),
+      cache: "no-store",
+    });
+  } catch {
+    // The capability remains fail-closed if compensation is temporarily
+    // unavailable; operators can retry cleanup with the same idempotency key.
+  }
+}
+
+function brokerUserHeaders(
+  request: NextRequest,
+  brokerToken: string,
+  userAccessToken: string,
+): Headers {
+  const headers = forwardedHeaders(request, brokerToken);
+  headers.set("X-AO-User-Authorization", `Bearer ${userAccessToken}`);
+  return headers;
+}
+
+async function createEnvironmentProjectFromGitHub(
+  request: NextRequest,
+  input: GitHubProjectInput,
+  localOrganizationId: string,
+  productionOrganizationId: string,
+  environmentAccessToken: string,
+  workosAccessToken: string,
+): Promise<Response> {
+  const repositoryID = input.githubRepositoryId?.trim();
+  if (!repositoryID) {
+    return NextResponse.json(
+      {
+        error: "Validation failed",
+        code: "VALIDATION_ERROR",
+        message: "A GitHub repository is required.",
+        requestId: "",
+      },
+      { status: 422 },
+    );
+  }
+
+  let repositoriesResponse: Response;
+  try {
+    repositoriesResponse = await fetch(
+      new URL(
+        `/api/cloud/v1/orgs/${encodeURIComponent(productionOrganizationId)}/github/repositories?limit=100`,
+        githubApiBaseUrl(),
+      ),
+      {
+        headers: forwardedHeaders(request, workosAccessToken),
+        cache: "no-store",
+        signal: request.signal,
+      },
+    );
+  } catch {
+    return gatewayError("The production GitHub service is unavailable.");
+  }
+  if (!repositoriesResponse.ok) {
+    return upstreamResponse(repositoriesResponse);
+  }
+  const repositoryPage = (await repositoriesResponse.json()) as {
+    items: GitHubRepositoryResponse[];
+  };
+  const repository = repositoryPage.items.find(
+    (item) =>
+      item.githubRepositoryId === repositoryID && item.access === "active",
+  );
+  if (!repository) {
+    return NextResponse.json(
+      {
+        error: "Repository unavailable",
+        code: "GITHUB_REPOSITORY_UNAVAILABLE",
+        message: "The selected repository is not actively granted to this account.",
+        requestId: "",
+      },
+      { status: 403 },
+    );
+  }
+
+  const projectURL = new URL(
+    `/api/cloud/v1/orgs/${encodeURIComponent(localOrganizationId)}/projects`,
+    cloudApiBaseUrl(),
+  );
+  let projectResponse: Response;
+  try {
+    projectResponse = await fetch(projectURL, {
+      method: "POST",
+      headers: forwardedHeaders(request, environmentAccessToken),
+      body: JSON.stringify({
+        displayName: input.displayName?.trim() || repository.name,
+        repositoryUrl: repository.htmlUrl,
+        defaultBranch: repository.defaultBranch,
+        config: {
+          ...input.config,
+          githubRepositoryId: repository.githubRepositoryId,
+        },
+      }),
+      cache: "no-store",
+      signal: request.signal,
+    });
+  } catch {
+    return gatewayError("The Cloud API is unavailable.");
+  }
+  return upstreamResponse(projectResponse);
+}
+
+function forwardedHeaders(
+  request: NextRequest,
+  accessToken: string,
+): Headers {
+  const headers = new Headers();
+  headers.set("Accept", request.headers.get("accept") || "application/json");
+  headers.set("Authorization", `Bearer ${accessToken}`);
+  const contentType = request.headers.get("content-type");
+  const idempotencyKey = request.headers.get("idempotency-key");
+  if (contentType) headers.set("Content-Type", contentType);
+  if (idempotencyKey) headers.set("Idempotency-Key", idempotencyKey);
+  return headers;
+}
+
+function upstreamResponse(upstream: Response): Response {
+  const responseHeaders = new Headers();
+  for (const name of [
+    "cache-control",
+    "content-type",
+    "retry-after",
+    "x-request-id",
+    "x-accel-buffering",
+  ]) {
+    const value = upstream.headers.get(name);
+    if (value) responseHeaders.set(name, value);
+  }
+  return new NextResponse(upstream.body, {
+    status: upstream.status,
+    headers: responseHeaders,
+  });
+}
+
+function gatewayError(message: string): Response {
+  return NextResponse.json(
+    {
+      error: "Bad Gateway",
+      code: "CLOUD_API_UNAVAILABLE",
+      message,
+      requestId: "",
+    },
+    { status: 502 },
+  );
+}

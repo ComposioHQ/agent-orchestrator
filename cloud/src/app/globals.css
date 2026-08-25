@@ -1,0 +1,321 @@
+@import "tailwindcss";
+@import "@fontsource-variable/geist";
+@import "@fontsource-variable/geist-mono";
+@import "@xterm/xterm/css/xterm.css";
+@import "../styles/tokens.css";
+@source "../../node_modules/@aoagents/product-ui/dist";
+
+/* ═══════════════════════════════════════════════════════════════
+   KEYFRAMES
+   ═══════════════════════════════════════════════════════════════ */
+
+@keyframes overlay-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes overlay-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+@keyframes modal-in {
+  from { opacity: 0; scale: 0.95; }
+  to { opacity: 1; scale: 1; }
+}
+@keyframes modal-out {
+  from { opacity: 1; scale: 1; }
+  to { opacity: 0; scale: 0.95; }
+}
+@keyframes popover-in {
+  from { opacity: 0; scale: 0.98; }
+  to { opacity: 1; scale: 1; }
+}
+@keyframes popover-out {
+  from { opacity: 1; scale: 1; }
+  to { opacity: 0; scale: 0.98; }
+}
+@keyframes auth-grid-enter {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.auth-grid-enter {
+  animation: auth-grid-enter 500ms ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auth-grid-enter {
+    animation: none;
+  }
+}
+
+@keyframes ao-startup-logo-breathe {
+  0%, 100% { opacity: 0.86; transform: translateY(0); }
+  50% { opacity: 1; transform: translateY(-2px); }
+}
+
+@keyframes ao-startup-status-in {
+  from { opacity: 0; filter: blur(2px); transform: translateY(3px); }
+  to { opacity: 1; filter: blur(0); transform: translateY(0); }
+}
+
+@keyframes ao-startup-dot-pulse {
+  0%, 70%, 100% { opacity: 0.25; transform: translateY(0); }
+  35% { opacity: 1; transform: translateY(-3px); }
+}
+
+.ao-startup-screen {
+  position: relative;
+  flex: 1 1 0%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.ao-startup-logo {
+  animation: ao-startup-logo-breathe 3.2s ease-in-out infinite;
+  filter: drop-shadow(0 7px 20px rgb(0 0 0 / 0.28));
+}
+
+.ao-startup-status {
+  display: inline-block;
+  animation: ao-startup-status-in 240ms ease-out;
+}
+
+.ao-startup-dots span {
+  width: 4px;
+  height: 4px;
+  animation: ao-startup-dot-pulse 1.4s ease-in-out infinite;
+  border-radius: 9999px;
+  background: var(--color-accent);
+  opacity: 0.25;
+}
+
+.ao-startup-dots span:nth-child(2) { animation-delay: 160ms; }
+.ao-startup-dots span:nth-child(3) { animation-delay: 320ms; }
+
+@media (prefers-reduced-motion: reduce) {
+  .ao-startup-logo, .ao-startup-status, .ao-startup-dots span { animation: none; }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   UTILITIES — copied from the Electron renderer styles.css
+   ═══════════════════════════════════════════════════════════════ */
+
+@utility dialog-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-overlay);
+  background-color: rgba(0, 0, 0, 0.35);
+  -webkit-backdrop-filter: blur(var(--blur-overlay));
+  backdrop-filter: blur(var(--blur-overlay));
+}
+
+@utility settings-row-bar {
+  display: flex;
+  height: var(--size-settings-row);
+  min-height: var(--size-settings-row);
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--size-settings-row-icon-gap);
+  border-radius: var(--radius-settings-row);
+  background-color: var(--color-bg-settings-row);
+  padding-inline: var(--size-settings-row-padding);
+  padding-block: var(--size-settings-row-padding);
+}
+
+@utility settings-option-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 1.5);
+  border-radius: var(--radius-md);
+  padding-inline: var(--space-2);
+  padding-block: var(--space-1);
+  font-size: var(--font-size-base);
+  color: var(--color-text-settings-muted);
+  outline: none;
+  box-shadow: none;
+  transition-property: color, background-color;
+  transition-duration: var(--duration-fast);
+}
+
+@utility settings-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 8px;
+  border: none;
+  padding: 8px 10px;
+  font-size: var(--font-size-md);
+  line-height: var(--line-height-row);
+  color: var(--color-text-settings-row);
+}
+
+@utility settings-menu-surface {
+  display: flex;
+  width: max-content;
+  max-width: min(var(--size-settings-menu-width), calc(100vw - 2rem));
+  min-width: var(--size-settings-menu-min-width);
+  max-height: var(--size-select-menu-max);
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 12px;
+  border: none;
+  background-color: var(--color-bg-settings-menu);
+  padding: 4px;
+  gap: 1px;
+}
+
+.settings-menu-surface,
+.settings-menu-surface *,
+.settings-menu-surface [data-radix-dropdown-menu-viewport] {
+  scrollbar-width: none !important;
+  -ms-overflow-style: none !important;
+}
+.settings-menu-surface::-webkit-scrollbar,
+.settings-menu-surface *::-webkit-scrollbar {
+  display: none !important;
+}
+
+@utility settings-row-value {
+  min-width: 0;
+  max-width: min(var(--size-settings-row-value-max), var(--size-settings-row-value-max-percent));
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+  font-size: var(--font-size-base);
+  line-height: var(--line-height-row);
+  color: var(--color-text-settings-muted);
+}
+
+@utility settings-close-button {
+  display: grid;
+  width: calc(var(--spacing) * 8);
+  height: calc(var(--spacing) * 8);
+  place-items: center;
+  border-radius: var(--radius-md);
+  color: var(--color-text-settings-muted);
+  transition-property: color, background-color;
+  transition-duration: var(--duration-normal);
+
+  &:hover {
+    background-color: var(--color-bg-settings-row-hover);
+    color: var(--color-text-settings-title);
+  }
+
+  &:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px var(--bridge-accent-weak);
+  }
+}
+
+@utility border-settings-menu {
+  border-color: var(--color-border-settings-menu);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   NON-UTILITY RULES — cascading overrides that cannot be @utility
+   ═══════════════════════════════════════════════════════════════ */
+
+button.settings-row-bar {
+  background-color: var(--color-bg-settings-row);
+}
+
+button.settings-link-row:hover,
+button.settings-link-row:active {
+  background-color: var(--color-bg-settings-row-hover);
+  color: var(--color-text-settings-title);
+}
+
+.settings-grouped-rows .settings-row-bar {
+  height: auto;
+  min-height: calc(var(--size-settings-action-height) + (var(--space-2) * 2));
+  padding-block: var(--space-2);
+  padding-inline: var(--space-3);
+  border-radius: 0;
+}
+
+.settings-grouped-rows .settings-link-row.settings-row-bar {
+  border-radius: var(--radius-md);
+}
+
+.settings-option-trigger:hover,
+.settings-option-trigger[data-state="open"] {
+  background-color: var(--color-bg-settings-trigger-hover);
+  color: var(--color-text-settings-trigger);
+}
+
+.model-menu-overflow-cue {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: var(--space-8);
+  pointer-events: none;
+  background: linear-gradient(to bottom, transparent, var(--color-bg-settings-menu));
+  transition: opacity var(--duration-fast) ease-out;
+}
+
+/* ── Task composer toolbar (from Electron TaskComposer) ── */
+.composer-run-controls {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) 1px minmax(0, 1fr);
+  align-items: center;
+  overflow: hidden;
+  border-radius: var(--radius-md);
+  background-color: color-mix(in oklab, var(--card) 97%, var(--foreground));
+}
+
+.composer-toolbar-divider {
+  align-self: stretch;
+  width: 1px;
+  height: 100%;
+  background-color: var(--color-border);
+}
+
+.composer-toolbar-option {
+  height: var(--size-settings-action-height);
+  border-radius: 0 !important;
+  background-color: transparent !important;
+}
+.composer-toolbar-option:hover:not(:disabled),
+.composer-toolbar-option[data-state="open"] {
+  background-color: color-mix(in oklab, var(--card) 88%, var(--foreground)) !important;
+}
+
+.animate-popover-in {
+  animation: popover-in 150ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+/* Override product-ui board column headers: sans-serif, title case, no uppercase */
+[data-testid="cloud-main-shell"] .font-mono.uppercase.tracking-wide-sm {
+  font-family: var(--font-family-base);
+  text-transform: capitalize;
+  letter-spacing: normal;
+}
+
+body {
+  margin: 0;
+  background: var(--color-bg-primary);
+  color: var(--color-text-primary);
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+:focus, :focus-visible {
+  outline: none !important;
+}
+button:focus-visible, a:focus-visible, input:focus-visible,
+select:focus-visible, textarea:focus-visible, [role="button"]:focus-visible,
+[role="menuitem"]:focus-visible, [role="menuitemradio"]:focus-visible,
+[tabindex]:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+  --tw-ring-shadow: none !important;
+}
+
+input {
+  -webkit-user-select: text;
+  user-select: text;
+}

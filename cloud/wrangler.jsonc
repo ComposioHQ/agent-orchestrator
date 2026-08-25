@@ -1,0 +1,32 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "ao-cloud-web",
+  "account_id": "ed364bdf90d5a988f50a0650eddc2742",
+  "main": "open-next.wrapper.js",
+  "compatibility_date": "2026-08-14",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "workers_dev": true,
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  "services": [
+    {
+      "binding": "WORKER_SELF_REFERENCE",
+      "service": "ao-cloud-web"
+    }
+  ],
+  "routes": [
+    {
+      "pattern": "cloud.aoagents.dev",
+      "custom_domain": true
+    }
+  ],
+  "vars": {
+    "AO_CLOUD_WEB_MODE": "production",
+    "AO_CLOUD_WEB_API_BASE_URL": "https://api.aoagents.dev",
+    "AO_CLOUD_GITHUB_API_BASE_URL": "https://api.aoagents.dev",
+    "WORKOS_REDIRECT_URI": "https://cloud.aoagents.dev/callback",
+    "NEXT_PUBLIC_WORKOS_REDIRECT_URI": "https://cloud.aoagents.dev/callback"
+  }
+}
