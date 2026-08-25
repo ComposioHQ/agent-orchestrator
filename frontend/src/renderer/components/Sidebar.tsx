@@ -113,8 +113,6 @@ import aoLogo from "../../../assets/ao-logo.svg";
 import { cn } from "../lib/utils";
 import { useUiStore } from "../stores/ui-store"
 import { useKeybindingsStore } from "../stores/keybindings-store";
-import { useSidebarOrderStore } from "../stores/sidebar-order-store";
-import { applyManualOrder, moveByOffset, reorderById } from "../lib/sidebar-order";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { CreateProjectFlow, type CloneProjectInput, type CreateProjectInput } from "./CreateProjectFlow";
 import { ResizeHandle } from "./ResizeHandle";
@@ -275,6 +273,29 @@ function reorderAtProjectBoundary(
 	return next.every((id, index) => id === ids[index]) ? null : next;
 }
 
+function reorderById(ids: string[], activeId: string, overId: string): string[] | null {
+	if (activeId === overId) return null;
+	const from = ids.indexOf(activeId);
+	const to = ids.indexOf(overId);
+	if (from < 0 || to < 0) return null;
+	const next = [...ids];
+	const [moved] = next.splice(from, 1);
+	next.splice(to, 0, moved);
+	return next;
+}
+
+function applyOrder<T>(items: readonly T[], idOf: (item: T) => string, order: readonly string[], unplaced: "start" | "end"): T[] {
+	if (order.length === 0) return [...items];
+	const byId = new Map(items.map((item) => [idOf(item), item]));
+	const placed = order.flatMap((id) => {
+		const item = byId.get(id);
+		return item ? [item] : [];
+	});
+	const placedIds = new Set(order);
+	const rest = items.filter((item) => !placedIds.has(idOf(item)));
+	return unplaced === "start" ? [...rest, ...placed] : [...placed, ...rest];
+}
+
 function useGrabbingCursor(active: boolean) {
 	useEffect(() => {
 		if (!active) return;
@@ -430,12 +451,9 @@ export function Sidebar({
 		onExpand: () => setOpen(true),
 	});
 
-	// Manual project order (persisted in the sidebar-order store). Projects the
-	// user has never dragged keep the daemon's order at the end of the list.
-	const projectOrder = useSidebarOrderStore((state) => state.projectOrder);
-	const setProjectOrder = useSidebarOrderStore((state) => state.setProjectOrder);
+	const [projectOrder, setProjectOrder] = useState<string[]>([]);
 	const orderedWorkspaces = useMemo(
-		() => applyManualOrder(workspaces, (workspace) => workspace.id, projectOrder, "end"),
+		() => applyOrder(workspaces, (workspace) => workspace.id, projectOrder, "end"),
 		[projectOrder, workspaces],
 	);
 	const projectIds = useMemo(() => orderedWorkspaces.map((workspace) => workspace.id), [orderedWorkspaces]);
@@ -448,7 +466,6 @@ export function Sidebar({
 	}>({ activeId: null, overId: null, placement: null });
 	const projectDragBoundsRef = useRef<DragBounds | null>(null);
 	const projectDropTargetRef = useRef<{ overId: string; placement: ProjectDropPlacement } | null>(null);
-	const [projectAnnouncement, setProjectAnnouncement] = useState("");
 	useGrabbingCursor(projectDragState.activeId !== null);
 
 	const activeDragWorkspace = useMemo(
@@ -466,27 +483,9 @@ export function Sidebar({
 		};
 	}, []);
 
-	const commitProjectOrder = useCallback(
-		(next: string[] | null, projectId: string) => {
-			if (!next) return;
-			setProjectOrder(next);
-			const name = orderedWorkspaces.find((workspace) => workspace.id === projectId)?.name ?? projectId;
-			setProjectAnnouncement(
-				t("shell.reorderMoved", {
-					name,
-					position: next.indexOf(projectId) + 1,
-					total: next.length,
-				}),
-			);
-		},
-		[orderedWorkspaces, setProjectOrder, t],
-	);
-	const moveProject = useCallback(
-		(projectId: string, offset: number) => {
-			commitProjectOrder(moveByOffset(projectIds, projectId, offset), projectId);
-		},
-		[commitProjectOrder, projectIds],
-	);
+	const commitProjectOrder = useCallback((next: string[] | null) => {
+		if (next) setProjectOrder(next);
+	}, []);
 
 	const onProjectDragEnd = useCallback(
 		({ active, over }: DragEndEvent) => {
@@ -498,10 +497,7 @@ export function Sidebar({
 					? projectDropTargetRef.current.placement
 					: projectDragState.placement ??
 					(projectIds.indexOf(projectId) < projectIds.indexOf(targetId) ? "after" : "before");
-				commitProjectOrder(
-					reorderAtProjectBoundary(projectIds, projectId, targetId, placement),
-					projectId,
-				);
+				commitProjectOrder(reorderAtProjectBoundary(projectIds, projectId, targetId, placement));
 			}
 			projectDragBoundsRef.current = null;
 			projectDropTargetRef.current = null;
@@ -711,27 +707,7 @@ export function Sidebar({
 							</div>
 						) : workspaces.length === 0 ? null : (
 							<>
-									{/* aria-live without role="status": the sidebar already owns a
-								    role="status" node (project removal progress), and a second one
-								    would make an unqualified status lookup ambiguous. */}
-								<span
-									aria-atomic="true"
-									aria-live="polite"
-									className="sr-only"
-									data-testid="project-reorder-status"
-								>
-									{projectAnnouncement}
-								</span>
-								{/* One DndContext per list: projects here, each project's sessions in
-								    their own context below. Separate contexts make a cross-list drop
-								    structurally impossible, which is the semantics we want — this is
-								    ordering, not moving a session between projects. */}
 								<DndContext
-									accessibility={{
-										screenReaderInstructions: {
-											draggable: t("shell.reorderInstructions"),
-										},
-									}}
 									collisionDetection={projectBlockCollision}
 									id={PROJECT_DND_ID}
 									onDragStart={onProjectDragStart}
@@ -752,7 +728,6 @@ export function Sidebar({
 														draggingProjectId={projectDragState.activeId}
 														dropIndicator={projectDragState.overId === workspace.id ? projectDragState.placement ?? undefined : undefined}
 														consumeDragClick={projectDragClickGuard.consumeClick}
-														onMove={moveProject}
 														onToggle={toggleCollapsed}
 														onRemoveProject={onRemoveProject}
 													/>
@@ -871,14 +846,12 @@ type ProjectItemProps = {
 	draggingProjectId?: string | null;
 	dropIndicator?: "before" | "after";
 	consumeDragClick: (id: string) => boolean;
-	/** Keyboard fallback for the focused row: nudge this project one slot up or down. */
-	onMove: (projectId: string, offset: number) => void;
 	onToggle: (projectId: string) => void;
 	onRemoveProject: (projectId: string) => Promise<void>;
 };
 
 type ProjectDraggable = ReturnType<typeof useDraggable>;
-type ProjectItemDndProps = Pick<ProjectDraggable, "attributes" | "listeners" | "setActivatorNodeRef"> & {
+type ProjectItemDndProps = Pick<ProjectDraggable, "listeners" | "setActivatorNodeRef"> & {
 	setDraggableNodeRef: ProjectDraggable["setNodeRef"];
 	setDroppableNodeRef: ReturnType<typeof useDroppable>["setNodeRef"];
 };
@@ -887,7 +860,7 @@ type ProjectItemDndProps = Pick<ProjectDraggable, "attributes" | "listeners" | "
 // project/session subtree. The content only rerenders when its visible props
 // change (drag start/end or a different drop boundary), not for every transform.
 const ProjectItem = memo(function ProjectItem(props: ProjectItemProps) {
-	const { attributes, listeners, setActivatorNodeRef, setNodeRef: setDraggableNodeRef } = useDraggable({
+	const { listeners, setActivatorNodeRef, setNodeRef: setDraggableNodeRef } = useDraggable({
 		id: props.workspace.id,
 	});
 	const { setNodeRef: setDroppableNodeRef } = useDroppable({
@@ -896,7 +869,6 @@ const ProjectItem = memo(function ProjectItem(props: ProjectItemProps) {
 	return (
 		<ProjectItemContent
 			{...props}
-			attributes={attributes}
 			listeners={listeners}
 			setActivatorNodeRef={setActivatorNodeRef}
 			setDraggableNodeRef={setDraggableNodeRef}
@@ -912,10 +884,8 @@ const ProjectItemContent = memo(function ProjectItemContent({
 	draggingProjectId,
 	dropIndicator,
 	consumeDragClick,
-	onMove,
 	onToggle,
 	onRemoveProject,
-	attributes,
 	listeners,
 	setActivatorNodeRef,
 	setDraggableNodeRef,
@@ -956,35 +926,22 @@ const ProjectItemContent = memo(function ProjectItemContent({
 		() => sortedWorkerSessions(workspace.sessions).filter((session) => session.isTerminated !== true),
 		[workspace.sessions],
 	);
-	// Manual session order, scoped to this project. Sessions the user has never
-	// dragged keep the derived newest-first position at the top, so a freshly
-	// spawned session still surfaces where it always did.
-	const sessionOrder = useSidebarOrderStore((state) => state.sessionOrderByProject[workspace.id]);
-	const setSessionOrder = useSidebarOrderStore((state) => state.setSessionOrder);
+	const [sessionOrder, setSessionOrder] = useState<string[]>([]);
 	const sessions = useMemo(
-		() => applyManualOrder(visibleSessions, (session) => session.id, sessionOrder, "start"),
+		() => applyOrder(visibleSessions, (session) => session.id, sessionOrder, "start"),
 		[sessionOrder, visibleSessions],
 	);
 	const sessionIds = useMemo(() => sessions.map((session) => session.id), [sessions]);
 	const sessionLayoutDependency = useMemo(() => sessionIds.join("\u0000"), [sessionIds]);
 	const sessionSensors = useReorderSensors();
 	const sessionDragClickGuard = usePostDragClickGuard();
-	const [sessionAnnouncement, setSessionAnnouncement] = useState("");
 	const [sessionDragging, setSessionDragging] = useState(false);
 	const [dropTransitionDisabledId, setDropTransitionDisabledId] = useState<string | null>(null);
 
-	const commitSessionOrder = useCallback((next: string[] | null, sessionId: string) => {
+	const commitSessionOrder = useCallback((next: string[] | null) => {
 		if (!next) return;
-		setSessionOrder(workspace.id, next);
-		const title = sessions.find((session) => session.id === sessionId)?.title ?? sessionId;
-		setSessionAnnouncement(
-			t("shell.reorderMoved", {
-				name: title,
-				position: next.indexOf(sessionId) + 1,
-				total: next.length,
-			}),
-		);
-	}, [sessions, setSessionOrder, t, workspace.id]);
+		setSessionOrder(next);
+	}, []);
 
 	const onSessionDragEnd = useCallback(({ active, over }: DragEndEvent) => {
 		const sessionId = String(active.id);
@@ -1002,7 +959,7 @@ const ProjectItemContent = memo(function ProjectItemContent({
 		// Otherwise the row briefly snaps back to its derived (usually top) position,
 		// then Motion animates it forward to the persisted destination.
 		flushSync(() => {
-			commitSessionOrder(next, sessionId);
+			commitSessionOrder(next);
 			setSessionDragging(false);
 			setDropTransitionDisabledId(sessionId);
 		});
@@ -1014,9 +971,6 @@ const ProjectItemContent = memo(function ProjectItemContent({
 		setDropTransitionDisabledId(null);
 		if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
 	}, []);
-	const moveSession = useCallback((sessionId: string, offset: number) => {
-		commitSessionOrder(moveByOffset(sessionIds, sessionId, offset), sessionId);
-	}, [commitSessionOrder, sessionIds]);
 	const openSession = useCallback((sessionId: string) => {
 		selection.goSession(workspace.id, sessionId);
 	}, [selection, workspace.id]);
@@ -1075,17 +1029,6 @@ const ProjectItemContent = memo(function ProjectItemContent({
 		onToggle(workspace.id);
 	};
 
-	const onProjectKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
-		if (event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
-			event.preventDefault();
-			event.stopPropagation();
-			onMove(workspace.id, event.key === "ArrowUp" ? -1 : 1);
-			return;
-		}
-		if (event.key !== "Enter" && event.key !== " ") return;
-		event.preventDefault();
-		onProjectClick();
-	};
 
 	const removeProject = () => {
 		setRemoveError(null);
@@ -1162,15 +1105,11 @@ const ProjectItemContent = memo(function ProjectItemContent({
 								{/* project-sidebar__proj-row */}
 								<SidebarMenuButton
 									aria-current={dashboardActive ? "page" : undefined}
-									aria-describedby={attributes["aria-describedby"]}
 									aria-expanded={expanded}
-									aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
-									aria-roledescription={attributes["aria-roledescription"]}
 									isActive={projectActive}
 									tooltip={workspace.name}
 									{...listeners}
 									onClick={onProjectClick}
-									onKeyDown={onProjectKeyDown}
 									ref={setActivatorNodeRef}
 									className={cn(
 										NAV_ROW_CLASS,
@@ -1346,18 +1285,7 @@ const ProjectItemContent = memo(function ProjectItemContent({
 						exit={{ y: -12, opacity: 0 }}
 						transition={prefersReducedMotion ? { duration: 0 } : { duration: 0.14, ease: [0.25, 0.46, 0.45, 0.94] }}
 					>
-						<span aria-atomic="true" aria-live="polite" className="sr-only" data-testid="session-reorder-status">
-							{sessionAnnouncement}
-						</span>
-						{/* This project's own drag context: its sortable ids are exactly this
-						    project's sessions, so nothing from another project can be dropped
-						    here and nothing here can be dropped elsewhere. */}
-									<DndContext
-										accessibility={{
-											screenReaderInstructions: {
-												draggable: t("shell.reorderInstructions"),
-											},
-										}}
+											<DndContext
 										collisionDetection={closestCenter}
 										modifiers={[restrictToListBounds]}
 										id={sessionDndId(workspace.id)}
@@ -1380,7 +1308,6 @@ const ProjectItemContent = memo(function ProjectItemContent({
 														layoutDependency={sessionLayoutDependency}
 														listIsDragging={sessionDragging}
 														dropTransitionDisabled={dropTransitionDisabledId === session.id}
-														onMove={moveSession}
 														onOpen={openSession}
 													/>
 												))}
@@ -1435,11 +1362,10 @@ const ProjectItemContent = memo(function ProjectItemContent({
  * visible sessions travel with it without becoming collision targets. */
 const ProjectDragPreview = memo(function ProjectDragPreview({ workspace, expanded, selection }: { workspace: WorkspaceSummary; expanded: boolean; selection: Selection }) {
 	const { t } = useTranslation();
-	const sessionOrder = useSidebarOrderStore((state) => state.sessionOrderByProject[workspace.id]);
-	const sessions = useMemo(() => {
-		const visible = sortedWorkerSessions(workspace.sessions).filter((session) => session.isTerminated !== true);
-		return applyManualOrder(visible, (session) => session.id, sessionOrder, "start");
-	}, [sessionOrder, workspace.sessions]);
+	const sessions = useMemo(
+		() => sortedWorkerSessions(workspace.sessions).filter((session) => session.isTerminated !== true),
+		[workspace.sessions],
+	);
 	const activeProjectMatches = selection.activeProjectId === workspace.id;
 	const projectActive =
 		(activeProjectMatches && !selection.activeSessionId) ||
@@ -1508,7 +1434,6 @@ const SortableSessionRow = memo(function SortableSessionRow({
 	layoutDependency,
 	listIsDragging,
 	dropTransitionDisabled,
-	onMove,
 	onOpen,
 }: {
 	session: WorkspaceSession;
@@ -1517,10 +1442,9 @@ const SortableSessionRow = memo(function SortableSessionRow({
 	layoutDependency: string;
 	listIsDragging: boolean;
 	dropTransitionDisabled: boolean;
-	onMove: (sessionId: string, offset: number) => void;
 	onOpen: (sessionId: string) => void;
 }) {
-	const { attributes, isDragging, listeners, setActivatorNodeRef, setNodeRef, transform, transition } = useSortable({
+	const { isDragging, listeners, setActivatorNodeRef, setNodeRef, transform, transition } = useSortable({
 		id: session.id,
 	});
 	return (
@@ -1533,10 +1457,8 @@ const SortableSessionRow = memo(function SortableSessionRow({
 			layoutDependency={layoutDependency}
 			listIsDragging={listIsDragging}
 			reorder={{
-				attributes,
 				isDragging,
 				listeners,
-				onMove: (offset) => onMove(session.id, offset),
 				setActivatorNodeRef,
 				setNodeRef,
 				transform,
@@ -1547,9 +1469,8 @@ const SortableSessionRow = memo(function SortableSessionRow({
 	);
 });
 
-type SessionReorder = Pick<SortableRow, "attributes" | "isDragging" | "listeners" | "setActivatorNodeRef" | "setNodeRef" | "transform" | "transition"> & {
+type SessionReorder = Pick<SortableRow, "isDragging" | "listeners" | "setActivatorNodeRef" | "setNodeRef" | "transform" | "transition"> & {
 	dropTransitionDisabled: boolean;
-	onMove: (offset: number) => void;
 };
 
 // One worker-session row. Reads as a link by default; a hover-revealed pencil
@@ -1581,10 +1502,7 @@ function SessionRow({
 		? t(switchPresentation.compactLabelKey, switchPresentation.values)
 		: undefined;
 	const switchStatusId = useId();
-	const reorderDescriptionId = reorder?.attributes["aria-describedby"];
-	const describedBy = [switchLabel ? switchStatusId : undefined, reorderDescriptionId]
-		.filter((id): id is string => Boolean(id))
-		.join(" ") || undefined;
+	const describedBy = switchLabel ? switchStatusId : undefined;
 	const [isEditing, setIsEditing] = useState(false);
 	const [draft, setDraft] = useState(session.title);
 	const [sessionPressed, setSessionPressed] = useState(false);
@@ -1678,9 +1596,7 @@ function SessionRow({
 						<button
 							aria-current={active ? "page" : undefined}
 							aria-describedby={describedBy}
-							aria-keyshortcuts={reorder ? "Alt+ArrowUp Alt+ArrowDown" : undefined}
 							aria-label={t("shell.openSession", { title: session.title })}
-							aria-roledescription={reorder?.attributes["aria-roledescription"]}
 							className={cn(
 							"flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-lg px-2.5 py-0 pr-[70px] text-left text-sm outline-hidden focus-visible:ring-2 focus-visible:ring-sidebar-ring",
 								reorder && "cursor-grab active:cursor-grabbing",
@@ -1688,12 +1604,6 @@ function SessionRow({
 							)}
 							{...(reorder?.listeners ?? {})}
 							onClick={onOpen}
-							onKeyDown={(event) => {
-								if (!reorder || !event.altKey || (event.key !== "ArrowUp" && event.key !== "ArrowDown")) return;
-								event.preventDefault();
-								event.stopPropagation();
-								reorder.onMove(event.key === "ArrowUp" ? -1 : 1);
-							}}
 							ref={reorder?.setActivatorNodeRef}
 							type="button"
 						>

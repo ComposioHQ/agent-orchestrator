@@ -849,8 +849,6 @@
 	"shell.removeProjectLead": "{{name}} を AO から削除します",
 	"shell.removeProjectTitle": "プロジェクトを削除",
 	"shell.removingNamed": "{{name}} を削除中…",
-	"shell.reorderMoved": "{{name}} を {{total}} 件中 {{position}} 番目に移動しました",
-	"shell.reorderInstructions": "並べ替えるには、Alt と上矢印または Alt と下矢印を押します。",
 	"shell.renameSession": "{{title}} の名前を変更",
 	"shell.restartToUpdate": "再起動して更新",
 	"shell.restartInstallUpdate": "再起動してアップデートをインストール",

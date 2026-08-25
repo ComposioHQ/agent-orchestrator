@@ -860,8 +860,6 @@
 	"shell.removeProjectLead": "Isso removerá {{name}} do AO",
 	"shell.removeProjectTitle": "Remover projeto",
 	"shell.removingNamed": "Removendo {{name}}…",
-	"shell.reorderMoved": "{{name}} movido para a posição {{position}} de {{total}}",
-	"shell.reorderInstructions": "Para reordenar, pressione Alt mais Seta para cima ou Alt mais Seta para baixo.",
 	"shell.renameSession": "Renomear {{title}}",
 	"shell.restartToUpdate": "Reiniciar para atualizar",
 	"shell.restartInstallUpdate": "Reiniciar para instalar a atualização",

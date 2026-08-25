@@ -849,8 +849,6 @@
 	"shell.removeProjectLead": "Dadurch wird {{name}} aus AO entfernt",
 	"shell.removeProjectTitle": "Projekt entfernen",
 	"shell.removingNamed": "{{name}} wird entfernt…",
-	"shell.reorderMoved": "{{name}} an Position {{position}} von {{total}} verschoben",
-	"shell.reorderInstructions": "Zum Neuanordnen Alt plus Pfeil nach oben oder Alt plus Pfeil nach unten drücken.",
 	"shell.renameSession": "{{title}} umbenennen",
 	"shell.restartToUpdate": "Neu starten zum Aktualisieren",
 	"shell.restartInstallUpdate": "Neu starten, um Update zu installieren",
