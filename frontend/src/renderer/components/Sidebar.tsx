@@ -4,7 +4,6 @@ import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
 import {
 	AlertTriangle,
 	ChevronRight,
-	Cloud,
 	Download,
 	Folder,
 	FolderOpen,
@@ -82,8 +81,6 @@ import { ConfirmDialog } from "./ConfirmDialog";
 import { CreateProjectFlow, type CloneProjectInput, type CreateProjectInput } from "./CreateProjectFlow";
 import { ResizeHandle } from "./ResizeHandle";
 import { isMacPlatform, isWindowsPlatform } from "../lib/platform";
-import { useCloudSession } from "../lib/cloud-session";
-import { useCloudBetaStore } from "../stores/cloud-beta-store";
 
 // macOS paints framed chrome: the fixed TitlebarNav cluster carries the
 // sidebar toggle + history arrows above this surface. Windows hangs the sidebar
@@ -432,7 +429,6 @@ export function Sidebar({
 					className="sidebar-expanded-chrome relative flex w-full min-w-46.5 flex-col gap-0.5 transition-[opacity,transform] duration-150 ease-out group-data-[collapsible=icon]:pointer-events-none group-data-[collapsible=icon]:-translate-x-2 group-data-[collapsible=icon]:opacity-0"
 				>
 					<UpdateStatusRow status={updateStatus} tabIndex={isCollapsed ? -1 : 0} />
-					<CloudAccountRow tabIndex={isCollapsed ? -1 : 0} />
 					<button
 						aria-label={t("settings.connectMobile")}
 						className={cn(
@@ -465,7 +461,6 @@ export function Sidebar({
 					className="pointer-events-none absolute inset-x-1.5 bottom-0 top-auto flex min-h-row-md flex-col items-center justify-end gap-1 opacity-0 transition-opacity duration-150 ease-out group-data-[collapsible=icon]:pointer-events-auto group-data-[collapsible=icon]:opacity-100"
 				>
 					<UpdateStatusRail status={updateStatus} tabIndex={isCollapsed ? 0 : -1} />
-					<CloudAccountRailButton tabIndex={isCollapsed ? 0 : -1} />
 					<Tooltip>
 						<TooltipTrigger asChild>
 							<button
@@ -1062,48 +1057,6 @@ function SessionRow({
 	);
 }
 
-// CloudAccountRow: shown above the Settings button for an existing cloud
-// session. The unauthenticated sign-in entry stays hidden until that flow is
-// ready to expose in the app again.
-function CloudAccountRow({ tabIndex }: { tabIndex: number }) {
-	const { t } = useTranslation();
-	const navigate = useNavigate();
-	const { configured, session, status, signIn } = useCloudSession();
-	const cloudBetaEnabled = useCloudBetaStore((state) => state.enabled);
-	const authenticated = status === "authenticated";
-	if (!configured || !cloudBetaEnabled) return null;
-	return <button aria-label={authenticated ? t("shell.signedInAs", { email: session?.user.email ?? "AO Cloud" }) : "Sign in to AO Cloud"} className={cn(NAV_ROW_CLASS, "flex h-9 w-full items-center text-left [&_svg]:size-icon-md [&_svg]:shrink-0")} onClick={() => authenticated ? void navigate({ to: "/cloud" }) : signIn()} tabIndex={tabIndex} type="button"><Cloud aria-hidden="true" /><span className="min-w-0 flex-1 truncate tracking-tight">{authenticated ? "AO Cloud" : "Sign in to AO Cloud"}</span><span className="rounded bg-accent/10 px-1 text-[10px] font-medium text-accent">BETA</span></button>;
-}
-
-// Icon-rail variant for collapsed sidebar.
-function CloudAccountRailButton({ tabIndex }: { tabIndex: number }) {
-	const { t } = useTranslation();
-	const navigate = useNavigate();
-	const { configured, session, status, signIn } = useCloudSession();
-	const cloudBetaEnabled = useCloudBetaStore((state) => state.enabled);
-	const authenticated = status === "authenticated";
-	if (!configured || !cloudBetaEnabled) return null;
-
-	return (
-		<Tooltip>
-			<TooltipTrigger asChild>
-				<button
-					aria-label={t("shell.signedInAs", { email: session?.user.email ?? "AO Cloud" })}
-					className="grid size-control-board place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-icon-base"
-					onClick={() => authenticated ? void navigate({ to: "/cloud" }) : signIn()}
-					tabIndex={tabIndex}
-					type="button"
-				>
-					<Cloud aria-hidden="true" />
-				</button>
-			</TooltipTrigger>
-			<TooltipContent side="right">
-				{authenticated ? `AO Cloud · ${session?.user.email ?? "signed in"}` : "Sign in to AO Cloud"}
-			</TooltipContent>
-		</Tooltip>
-	);
-}
-
 // UpdateStatusRow makes update activity visible and actionable from the
 // sidebar: an available build downloads on click, progress reports itself, and
 // a staged build becomes the restart action. Idle/checking states stay quiet so
@@ -1433,7 +1386,6 @@ function CreateProjectButton({
 	onInitializeProject,
 }: Pick<SidebarProps, "onCloneProject" | "onCreateProject" | "onInitializeProject"> & { hideTrigger?: boolean }) {
 	const { t } = useTranslation();
-	const navigate = useNavigate();
 	// Single CreateProjectFlow owner for the sidebar: the header "+" stays mounted
 	// (CSS-hidden when collapsed or on the empty start page) so it can own
 	// openSignal for ⌘N on every shell route. The collapsed rail button below
@@ -1446,8 +1398,7 @@ function CreateProjectButton({
 			mode="choose"
 			onCloneProject={onCloneProject}
 			onCreateProject={onCreateProject}
-				onInitializeProject={onInitializeProject}
-				onOpenCloudProject={() => void navigate({ to: "/cloud" })}
+			onInitializeProject={onInitializeProject}
 			openSignal={createProjectNonce}
 		>
 			{({ disabled, choosePath, label }) => (

@@ -590,8 +590,7 @@ export function CommandPalette() {
 				mode="choose"
 				onCloneProject={cloneProject}
 				onCreateProject={createProject}
-					onInitializeProject={initializeProjectRepository}
-					onOpenCloudProject={() => void navigate({ to: "/cloud" })}
+				onInitializeProject={initializeProjectRepository}
 			>
 				{({ choosePath }) => <BindChoosePath choosePath={choosePath} choosePathRef={choosePathRef} />}
 			</CreateProjectFlow>

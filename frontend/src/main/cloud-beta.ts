@@ -103,13 +103,20 @@ export async function createCloudProject(
 	orgId: string,
 	input: CreateCloudProjectInput,
 ): Promise<CloudProject> {
+	const { workerAgent, orchestratorAgent, ...project } = input;
 	const response = await cloudRequest<{ project: CloudProject }>(
 		accessToken,
 		`/api/cloud/v1/orgs/${encodeURIComponent(orgId)}/projects`,
 		{
 			method: "POST",
 			headers: { "Idempotency-Key": crypto.randomUUID() },
-			body: JSON.stringify({ ...input, config: {} }),
+			body: JSON.stringify({
+				...project,
+				config: {
+					...(workerAgent ? { worker: { agent: workerAgent } } : {}),
+					...(orchestratorAgent ? { orchestrator: { agent: orchestratorAgent } } : {}),
+				},
+			}),
 		},
 	);
 	return { ...response.project, executionLocation: "cloud" };

@@ -20,6 +20,7 @@ import { aoBridge } from "../lib/bridge";
 import { cn } from "../lib/utils";
 import type { ProjectKind } from "../types/workspace";
 import { CreateProjectAgentSheet, type CreateProjectAgentSelection } from "./CreateProjectAgentSheet";
+import { CreateCloudProjectDialog } from "./CreateCloudProjectDialog";
 import type { CloneRepositoryDetails, CloneRepositorySelection } from "./CloneRepositoryDialog";
 import { Button } from "./ui/button";
 import { useCloudBetaStore } from "../stores/cloud-beta-store";
@@ -45,7 +46,6 @@ export function CreateProjectFlow({
 	onCloneProject,
 	onCreateProject,
 	onInitializeProject,
-	onOpenCloudProject,
 	openSignal,
 }: {
 	children?: (state: { choosePath: () => void; disabled: boolean; error: string | null; label: string }) => ReactNode;
@@ -61,8 +61,6 @@ export function CreateProjectFlow({
 	onCloneProject: (input: CloneProjectInput) => Promise<void>;
 	onCreateProject: (input: CreateProjectInput) => Promise<void>;
 	onInitializeProject: (path: string) => Promise<void>;
-	/** Opens the project-level Cloud creation surface when the beta is enabled. */
-	onOpenCloudProject?: () => void;
 	// Monotonic counter: each new value opens the flow programmatically (the ⌘N
 	// "no project in scope" fallback). Lets the shortcut reuse the sidebar's own
 	// create-project flow instead of a separate delegating component.
@@ -73,6 +71,7 @@ export function CreateProjectFlow({
 	const resolvedIdleLabel = idleLabel ?? t("createProject.newProject");
 	const [error, setError] = useState<string | null>(null);
 	const [modePickerOpen, setModePickerOpen] = useState(false);
+	const [cloudDialogOpen, setCloudDialogOpen] = useState(false);
 	const [cloneDialogOpen, setCloneDialogOpen] = useState(false);
 	const [cloneDetails, setCloneDetails] = useState<CloneRepositoryDetails>(() => ({
 		remoteUrl: "",
@@ -103,7 +102,7 @@ export function CreateProjectFlow({
 		setValidationScan(null);
 		if (source === "cloud") {
 			setModePickerOpen(false);
-			onOpenCloudProject?.();
+			setCloudDialogOpen(true);
 			return;
 		}
 		if (source === "clone") {
@@ -190,7 +189,7 @@ export function CreateProjectFlow({
 	useEffect(() => {
 		if (!droppedPath || droppedPath.nonce === lastDropNonce.current) return;
 		lastDropNonce.current = droppedPath.nonce;
-		if (isBusy || modePickerOpen || cloneDialogOpen || folderPickerOpen || selectedPath !== null) return;
+		if (isBusy || modePickerOpen || cloudDialogOpen || cloneDialogOpen || folderPickerOpen || selectedPath !== null) return;
 		startFlow(droppedPath.path);
 	}, [droppedPath]);
 
@@ -272,9 +271,9 @@ export function CreateProjectFlow({
 					error,
 					label,
 				})}
-			{hasModePicker && embedded && !modePickerOpen && !cloneDialogOpen && selectedPath === null && (
+			{hasModePicker && embedded && !modePickerOpen && !cloudDialogOpen && !cloneDialogOpen && selectedPath === null && (
 				<div className="flex w-full flex-col items-center gap-3">
-					<ImportSourcePicker disabled={isBusy} onSelect={selectSource} showCloud={cloudBetaEnabled && Boolean(onOpenCloudProject)} />
+					<ImportSourcePicker disabled={isBusy} onSelect={selectSource} showCloud={cloudBetaEnabled} />
 					{error && !folderPickerOpen && selectedPath === null && (
 						<p className="text-caption leading-body text-error" role="status">
 							{error}
@@ -295,8 +294,18 @@ export function CreateProjectFlow({
 							if (!open) setPendingDropPath(null);
 						}}
 						onSelect={selectSource}
-						showCloud={cloudBetaEnabled && Boolean(onOpenCloudProject)}
+						showCloud={cloudBetaEnabled}
 					/>
+					{cloudDialogOpen ? (
+						<CreateCloudProjectDialog
+							onBack={() => {
+								setCloudDialogOpen(false);
+								if (!embedded) window.requestAnimationFrame(() => setModePickerOpen(true));
+							}}
+							onOpenChange={setCloudDialogOpen}
+							open
+						/>
+					) : null}
 					{cloneDialogOpen ? (
 						<Suspense fallback={<CloneRepositoryDialogSkeleton />}>
 							<CloneRepositoryDialog

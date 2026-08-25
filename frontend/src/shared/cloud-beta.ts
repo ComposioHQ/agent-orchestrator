@@ -50,6 +50,8 @@ export interface CreateCloudProjectInput {
 	displayName: string;
 	repositoryUrl: string;
 	defaultBranch: string;
+	workerAgent?: CloudHarness;
+	orchestratorAgent?: CloudHarness;
 }
 
 export interface CreateCloudSessionInput {

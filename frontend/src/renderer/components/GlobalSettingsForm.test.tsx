@@ -31,6 +31,9 @@ const {
 	getKeybindings,
 	setKeybindings,
 	setKeybindingRecording,
+	cloudGetSession,
+	cloudOnSessionChanged,
+	cloudSignOut,
 } = vi.hoisted(() => ({
 	getUpdate: vi.fn(),
 	setUpdate: vi.fn(),
@@ -52,6 +55,9 @@ const {
 	getKeybindings: vi.fn(),
 	setKeybindings: vi.fn(),
 	setKeybindingRecording: vi.fn(),
+	cloudGetSession: vi.fn(),
+	cloudOnSessionChanged: vi.fn(),
+	cloudSignOut: vi.fn(),
 }));
 
 vi.mock("@tanstack/react-router", async (importOriginal) => {
@@ -83,6 +89,11 @@ vi.mock("../lib/bridge", () => ({
 			onStatus: updOnStatus,
 		},
 		featureBuilds: { list: featListBuilds, getActive: featGetActive },
+		cloud: {
+			getSession: cloudGetSession,
+			onSessionChanged: cloudOnSessionChanged,
+			signOut: cloudSignOut,
+		},
 	},
 }));
 
@@ -120,6 +131,9 @@ beforeEach(async () => {
 		getKeybindings,
 		setKeybindings,
 		setKeybindingRecording,
+		cloudGetSession,
+		cloudOnSessionChanged,
+		cloudSignOut,
 	]) {
 		m.mockReset();
 	}
@@ -147,6 +161,9 @@ beforeEach(async () => {
 	getKeybindings.mockResolvedValue({});
 	setKeybindings.mockImplementation(async (overrides) => overrides);
 	setKeybindingRecording.mockResolvedValue(undefined);
+	cloudGetSession.mockResolvedValue(null);
+	cloudOnSessionChanged.mockReturnValue(() => undefined);
+	cloudSignOut.mockResolvedValue(undefined);
 	// Locale defaults to English so existing copy assertions stay green.
 	await appI18n.changeLanguage("en");
 	useLocaleStore.setState({ locale: "en", loaded: false, saving: false, saveError: false });

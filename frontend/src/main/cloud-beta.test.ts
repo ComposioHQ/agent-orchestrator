@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { connectLocalHarness, disconnectCloudHarness } from "./cloud-beta";
+import { connectLocalHarness, createCloudProject, disconnectCloudHarness } from "./cloud-beta";
 
 describe("cloud harness credentials", () => {
 	afterEach(() => {
@@ -40,5 +40,34 @@ describe("cloud harness credentials", () => {
 		const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
 		expect(url).toContain("/api/cloud/v1/me/providers/codex");
 		expect(init.method).toBe("DELETE");
+	});
+
+	it("stores Cloud agent defaults in the project config", async () => {
+		const fetchMock = vi.fn().mockResolvedValue(
+			new Response(JSON.stringify({ project: { id: "project-1" } }), {
+				status: 201,
+				headers: { "Content-Type": "application/json" },
+			}),
+		);
+		vi.stubGlobal("fetch", fetchMock);
+
+		await createCloudProject("fake-cloud-access-token", "org-1", {
+			displayName: "Example",
+			repositoryUrl: "https://github.com/acme/example.git",
+			defaultBranch: "main",
+			workerAgent: "codex",
+			orchestratorAgent: "claude-code",
+		});
+
+		const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+		expect(JSON.parse(String(init.body))).toEqual({
+			displayName: "Example",
+			repositoryUrl: "https://github.com/acme/example.git",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+			},
+		});
 	});
 });

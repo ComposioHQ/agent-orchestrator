@@ -49,7 +49,6 @@ import { matchesRendererShortcut } from "../stores/keybindings-store";
 import { sessionIsActive, toProjectKind, type WorkspaceSummary } from "../types/workspace";
 import type { components } from "../../api/schema";
 import { useAgentInventoryTelemetry } from "../hooks/useAgentInventoryTelemetry";
-import { useCloudBetaStore } from "../stores/cloud-beta-store";
 
 export const Route = createFileRoute("/_shell")({
 	// Prefetch the workspace list for the whole shell (parent loaders run before
@@ -101,7 +100,6 @@ function ShellLayout() {
 	useAgentInventoryTelemetry();
 	const { t } = useTranslation();
 	const navigate = useNavigate();
-	const cloudBetaEnabled = useCloudBetaStore((state) => state.enabled);
 	const matchRoute = useMatchRoute();
 	const queryClient = useQueryClient();
 	const workspaceQuery = useWorkspaceQuery();
@@ -188,13 +186,6 @@ function ShellLayout() {
 		document.addEventListener("click", handleModifierLinkClick);
 		return () => document.removeEventListener("click", handleModifierLinkClick);
 	}, []);
-	useEffect(
-		() =>
-			aoBridge.cloud.onSessionChanged((account) => {
-				if (account && cloudBetaEnabled) void navigate({ to: "/cloud" });
-			}),
-		[cloudBetaEnabled, navigate],
-	);
 	// Drop a folder anywhere in the app window to add it as a project, mirroring
 	// VS Code's "drop a folder to open it". A depth counter (not a relatedTarget
 	// check) tracks dragenter/dragleave so the overlay doesn't flicker as the

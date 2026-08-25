@@ -4,6 +4,7 @@ import type { AppLocale } from "../../i18n";
 import { useLocaleStore } from "../../stores/locale-store";
 import { useSoundNotificationsStore } from "../../stores/sound-notifications-store";
 import { useCloudBetaStore } from "../../stores/cloud-beta-store";
+import { useCloudSession } from "../../lib/cloud-session";
 import { useUiStore } from "../../stores/ui-store";
 import { SettingsOptionMenu, type SettingsOption } from "./SettingsOptionMenu";
 import { SettingsRow } from "./SettingsRow";
@@ -32,172 +33,94 @@ function SessionInterfaceRow() {
 	// (no chat-capable agent installed) or a save failed.
 	const note = saveError ?? error ?? (!chatAvailable ? t("settings.sessionInterface.unavailable") : null);
 
-	return (
-		<div className="flex w-full flex-col">
-			<SettingsRow className="rounded-none" label={t("settings.sessionInterface.label")}>
-				<SettingsOptionMenu
-					aria-label={t("settings.sessionInterface.label")}
-					value={settings?.defaultSessionMode ?? "tui"}
-					options={interfaceOptions}
-					onChange={(mode) => update(mode)}
-					disabled={isLoading || saving || !chatAvailable}
-				/>
-			</SettingsRow>
-			{note ? (
-				<p
-					className={cn(
-						"px-3 pt-0 pb-4 text-xs leading-relaxed",
-						saveError || error ? "text-destructive" : "text-muted-foreground",
-					)}
-				>
-					{note}
-				</p>
-			) : null}
-		</div>
-	);
-}
+\treturn (
+\t\t<>
+\t\t\t{/* Appearance */}
+\t\t\t<SettingsSection title={t("settings.appearance")} titleHidden={titleHidden} grouped>
+\t\t\t\t<SettingsRow label={t("settings.theme")}>
+\t\t\t\t\t<div className="flex items-center gap-1.5">
+\t\t\t\t\t\t<SettingsOptionMenu
+\t\t\t\t\t\t\taria-label={t("settings.colorTheme")}
+\t\t\t\t\t\t\tvalue={themeStyle}
+\t\t\t\t\t\t\toptions={COLOR_THEME_OPTIONS}
+\t\t\t\t\t\t\tonChange={setThemeStyle}
+\t\t\t\t\t\t/>
+\t\t\t\t\t\t<SettingsOptionMenu
+\t\t\t\t\t\t\taria-label={t("settings.theme")}
+\t\t\t\t\t\t\tvalue={themePreference}
+\t\t\t\t\t\t\toptions={themeOptions}
+\t\t\t\t\t\t\tonChange={setThemePreference}
+\t\t\t\t\t\t/>
+\t\t\t\t\t</div>
+\t\t\t\t</SettingsRow>
+\t\t\t\t<SettingsRow label={t("settings.language")}>
+\t\t\t\t\t<SettingsOptionMenu
+\t\t\t\t\t\taria-label={t("settings.language")}
+\t\t\t\t\t\tdisabled={localeSaving}
+\t\t\t\t\t\tvalue={locale}
+\t\t\t\t\t\toptions={languageOptions}
+\t\t\t\t\t\tonChange={(next) => {
+\t\t\t\t\t\t\tvoid setLocale(next);
+\t\t\t\t\t\t}}
+\t\t\t\t\t/>
+\t\t\t\t</SettingsRow>
+\t\t\t\t{localeSaveError ? (
+\t\t\t\t\t<p role="alert" className="px-3 text-caption leading-4 text-error">
+\t\t\t\t\t\t{t("settings.language.saveFailed")}
+\t\t\t\t\t</p>
+\t\t\t\t) : null}
+\t\t\t</SettingsSection>
 
-const COLOR_THEME_OPTIONS = [
-	{ value: "orchestrate", label: "Orchestrate" },
-	{ value: "github", label: "GitHub" },
-	{ value: "catppuccin", label: "Catppuccin" },
-	{ value: "dracula", label: "Dracula" },
-	{ value: "tokyo-night", label: "Tokyo Night" },
-	{ value: "rose-pine", label: "Rosé Pine" },
-	{ value: "nord", label: "Nord" },
-	{ value: "gruvbox", label: "Gruvbox" },
-	{ value: "solarized", label: "Solarized" },
-] satisfies SettingsOption<ThemeStyle>[];
+\t\t\t{/* Sessions */}
+\t\t\t<SettingsSection title={t("settings.sessions")} grouped>
+\t\t\t\t<SessionInterfaceRow />
+\t\t\t\t<SettingsRow label={t("settings.soundNotifications")}>
+\t\t\t\t\t<Switch
+\t\t\t\t\t\taria-label={t("settings.soundNotifications")}
+\t\t\t\t\t\tchecked={soundNotificationsEnabled}
+\t\t\t\t\t\tdisabled={soundNotificationsSaving}
+\t\t\t\t\t\tonCheckedChange={(next) => {
+\t\t\t\t\t\t\tvoid setSoundNotificationsEnabled(next);
+\t\t\t\t\t\t}}
+\t\t\t\t\t/>
+\t\t\t\t</SettingsRow>
+\t\t\t\t{soundNotificationsSaveError ? (
+\t\t\t\t\t<p role="alert" className="px-3 text-caption leading-4 text-error">
+\t\t\t\t\t\t{t("settings.soundNotifications.saveFailed")}
+\t\t\t\t\t</p>
+\t\t\t\t) : null}
+\t\t\t</SettingsSection>
 
-export function GeneralSettingsSection({
-	titleHidden,
-}: {
-	titleHidden?: boolean;
-}) {
-	const { t } = useTranslation();
-	const themePreference = useUiStore((state) => state.themePreference);
-	const setThemePreference = useUiStore((state) => state.setThemePreference);
-	const themeStyle = useUiStore((state) => state.themeStyle);
-	const setThemeStyle = useUiStore((state) => state.setThemeStyle);
-	const locale = useLocaleStore((state) => state.locale);
-	const setLocale = useLocaleStore((state) => state.setLocale);
-	const localeSaving = useLocaleStore((state) => state.saving);
-	const localeSaveError = useLocaleStore((state) => state.saveError);
-	const soundNotificationsEnabled = useSoundNotificationsStore((state) => state.enabled);
-	const setSoundNotificationsEnabled = useSoundNotificationsStore((state) => state.setEnabled);
-	const soundNotificationsSaving = useSoundNotificationsStore((state) => state.saving);
-	const soundNotificationsSaveError = useSoundNotificationsStore((state) => state.saveError);
-	const cloudBetaEnabled = useCloudBetaStore((state) => state.enabled);
-	const cloudBetaSaving = useCloudBetaStore((state) => state.saving);
-	const cloudBetaSaveError = useCloudBetaStore((state) => state.saveError);
-	const setCloudBetaEnabled = useCloudBetaStore((state) => state.setEnabled);
-	const developerMode = useUiStore((state) => state.developerMode);
-	const setDeveloperMode = useUiStore((state) => state.setDeveloperMode);
-
-	const themeOptions = [
-		{ value: "light", label: t("settings.theme.light") },
-		{ value: "dark", label: t("settings.theme.dark") },
-		{ value: "system", label: t("settings.theme.system") },
-	] satisfies SettingsOption<ThemePreference>[];
-
-	const languageOptions = [
-		{ value: "en", label: t("settings.language.en") },
-		{ value: "zh-CN", label: t("settings.language.zhCN") },
-		{ value: "ja", label: t("settings.language.ja") },
-		{ value: "ko", label: t("settings.language.ko") },
-		{ value: "es", label: t("settings.language.es") },
-		{ value: "fr", label: t("settings.language.fr") },
-		{ value: "de", label: t("settings.language.de") },
-		{ value: "pt-BR", label: t("settings.language.ptBR") },
-	] satisfies SettingsOption<AppLocale>[];
-
-	return (
-		<>
-			{/* Appearance */}
-			<SettingsSection title={t("settings.appearance")} titleHidden={titleHidden} grouped>
-				<SettingsRow label={t("settings.theme")}>
-					<div className="flex items-center gap-1.5">
-						<SettingsOptionMenu
-							aria-label={t("settings.colorTheme")}
-							value={themeStyle}
-							options={COLOR_THEME_OPTIONS}
-							onChange={setThemeStyle}
-						/>
-						<SettingsOptionMenu
-							aria-label={t("settings.theme")}
-							value={themePreference}
-							options={themeOptions}
-							onChange={setThemePreference}
-						/>
-					</div>
-				</SettingsRow>
-				<SettingsRow label={t("settings.language")}>
-					<SettingsOptionMenu
-						aria-label={t("settings.language")}
-						disabled={localeSaving}
-						value={locale}
-						options={languageOptions}
-						onChange={(next) => {
-							void setLocale(next);
-						}}
-					/>
-				</SettingsRow>
-				{localeSaveError ? (
-					<p role="alert" className="px-3 text-caption leading-4 text-error">
-						{t("settings.language.saveFailed")}
-					</p>
-				) : null}
-			</SettingsSection>
-
-			{/* Sessions */}
-			<SettingsSection title={t("settings.sessions")} grouped>
-				<SessionInterfaceRow />
-				<SettingsRow label={t("settings.soundNotifications")}>
-					<Switch
-						aria-label={t("settings.soundNotifications")}
-						checked={soundNotificationsEnabled}
-						disabled={soundNotificationsSaving}
-						onCheckedChange={(next) => {
-							void setSoundNotificationsEnabled(next);
-						}}
-					/>
-				</SettingsRow>
-				{soundNotificationsSaveError ? (
-					<p role="alert" className="px-3 text-caption leading-4 text-error">
-						{t("settings.soundNotifications.saveFailed")}
-					</p>
-				) : null}
-			</SettingsSection>
-
-			{/* Advanced */}
-			<SettingsSection title={t("settings.advanced")} grouped>
-				{import.meta.env.VITE_AO_CLOUD_BETA === "true" ? (
-					<>
-						<SettingsRow label={t("settings.cloudBeta")}>
-							<Switch
-								aria-label={t("settings.cloudBeta")}
-								checked={cloudBetaEnabled}
-								disabled={cloudBetaSaving}
-								onCheckedChange={(next) => {
-									void setCloudBetaEnabled(next);
-								}}
-							/>
-						</SettingsRow>
-						{cloudBetaSaveError ? (
-							<p role="alert" className="px-3 text-caption leading-4 text-error">
-								{t("settings.cloudBetaSaveFailed")}
-							</p>
-						) : null}
-					</>
-				) : null}
-				<SettingsRow label={t("settings.developerMode")}>
-					<Switch
-						aria-label={t("settings.developerMode")}
-						checked={developerMode}
-						onCheckedChange={setDeveloperMode}
-					/>
-				</SettingsRow>
-			</SettingsSection>
-		</>
-	);
+\t\t\t{/* Advanced */}
+\t\t\t<SettingsSection title={t("settings.advanced")} grouped>
+\t\t\t\t{import.meta.env.VITE_AO_CLOUD_BETA === "true" ? (
+\t\t\t\t\t<>
+\t\t\t\t\t\t<SettingsRow label={t("settings.cloudBeta")}>
+\t\t\t\t\t\t\t<Switch
+\t\t\t\t\t\t\t\taria-label={t("settings.cloudBeta")}
+\t\t\t\t\t\t\t\tchecked={cloudBetaEnabled}
+\t\t\t\t\t\t\t\tdisabled={cloudBetaSaving}
+\t\t\t\t\t\t\t\tonCheckedChange={(next) => {
+\t\t\t\t\t\t\t\t\tvoid setCloudBetaEnabled(next);
+\t\t\t\t\t\t\t\t}}
+\t\t\t\t\t\t\t/>
+\t\t\t\t\t\t</SettingsRow>
+\t\t\t\t\t\t{cloudBetaSaveError ? (
+\t\t\t\t\t\t\t<p role="alert" className="px-3 text-caption leading-4 text-error">
+\t\t\t\t\t\t\t\t{t("settings.cloudBetaSaveFailed")}
+\t\t\t\t\t\t\t</p>
+\t\t\t\t\t\t) : null}
+\t\t\t\t\t\t{cloudBetaEnabled ? <CloudAccountSettingsRow /> : null}
+\t\t\t\t\t</>
+\t\t\t\t) : null}
+\t\t\t\t<SettingsRow label={t("settings.developerMode")}>
+\t\t\t\t\t<Switch
+\t\t\t\t\t\taria-label={t("settings.developerMode")}
+\t\t\t\t\t\tchecked={developerMode}
+\t\t\t\t\t\tonCheckedChange={setDeveloperMode}
+\t\t\t\t\t/>
+\t\t\t\t</SettingsRow>
+\t\t\t</SettingsSection>
+\t\t</>
+\t);
 }

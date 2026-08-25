@@ -42,6 +42,10 @@ vi.mock("./CloneRepositoryDialog", () => ({
 	default: ({ open }: { open: boolean }) => (open ? <div data-testid="clone-dialog" /> : null),
 }));
 
+vi.mock("./CreateCloudProjectDialog", () => ({
+	CreateCloudProjectDialog: ({ open }: { open: boolean }) => (open ? <div data-testid="cloud-project-dialog" /> : null),
+}));
+
 function okScan(path: string) {
 	return {
 		path,
@@ -75,15 +79,14 @@ beforeEach(() => {
 describe("CreateProjectFlow droppedPath", () => {
 	it("shows Cloud project creation only after the beta opt-in", async () => {
 		const user = userEvent.setup();
-		const onOpenCloudProject = vi.fn();
 		useCloudBetaStore.setState({ enabled: true });
 		const { rerender } = render(
-			<CreateProjectFlow mode="choose" {...noop} onOpenCloudProject={onOpenCloudProject} openSignal={0} />,
+			<CreateProjectFlow mode="choose" {...noop} openSignal={0} />,
 		);
-		rerender(<CreateProjectFlow mode="choose" {...noop} onOpenCloudProject={onOpenCloudProject} openSignal={1} />);
+		rerender(<CreateProjectFlow mode="choose" {...noop} openSignal={1} />);
 
 		await user.click(await screen.findByRole("button", { name: "Create Cloud project" }));
-		expect(onOpenCloudProject).toHaveBeenCalledOnce();
+		expect(screen.getByTestId("cloud-project-dialog")).toBeInTheDocument();
 	});
 
 	it("does not open on mount", () => {
