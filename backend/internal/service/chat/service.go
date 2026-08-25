@@ -327,17 +327,33 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	if err != nil {
 		return nil, fmt.Errorf("open conversation: %w", err)
 	}
-	if cfg.ProviderConversationID != "" && conversation.Settings.ApprovalMode != "" {
+	// A conversation's explicit choices outlive its live provider process. On a
+	// desktop restart the start config is reconstructed from session defaults, so
+	// it must never overwrite the model the person picked for this conversation.
+	if conversation.Settings.Model != "" {
+		cfg.Model = conversation.Settings.Model
+	}
+	if conversation.Settings.ApprovalMode != "" {
 		cfg.Permissions = conversation.Settings.ApprovalMode
 	}
 	if err := capabilityAdmissionError(cfg.Harness, caps, cfg.Permissions); err != nil {
 		return nil, err
 	}
 	if cfg.ProviderConversationID == "" {
-		conversation.Settings.Model = cfg.Model
-		conversation.Settings.ApprovalMode = cfg.Permissions
-		if err := s.store.SetConversationSettings(ctx, conversation.ID, conversation.Settings, s.now()); err != nil {
-			return nil, fmt.Errorf("record initial conversation settings: %w", err)
+		// Seed a newly-created conversation once, but retain settings from a
+		// previous controller when a provider thread cannot be resumed.
+		initial := conversation.Settings
+		if initial.Model == "" {
+			initial.Model = cfg.Model
+		}
+		if initial.ApprovalMode == "" {
+			initial.ApprovalMode = cfg.Permissions
+		}
+		if initial != conversation.Settings {
+			if err := s.store.SetConversationSettings(ctx, conversation.ID, initial, s.now()); err != nil {
+				return nil, fmt.Errorf("record initial conversation settings: %w", err)
+			}
+			conversation.Settings = initial
 		}
 	}
 
@@ -350,6 +366,7 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 			WorkspacePath:          cfg.WorkspacePath,
 			Env:                    cfg.Env,
 			Model:                  cfg.Model,
+			Effort:                 conversation.Settings.ReasoningEffort,
 			Permissions:            cfg.Permissions,
 			SystemPrompt:           cfg.SystemPrompt,
 			AdditionalDirectories:  cfg.AdditionalDirectories,
@@ -1078,7 +1095,39 @@ func (s *Service) SetConfigOption(
 	if !ok {
 		return nil, ErrConfigOptionsUnsupported
 	}
-	return configurer.SetConfigOption(ctx, configID, value)
+	options, err := configurer.SetConfigOption(ctx, configID, value)
+	if err != nil {
+		return nil, err
+	}
+	if settings, changed := settingsFromConfigOptions(controller.Settings(), options); changed {
+		if err := controller.SetSettings(ctx, settings); err != nil {
+			return nil, err
+		}
+	}
+	return options, nil
+}
+
+// settingsFromConfigOptions copies the provider's selected model and effort
+// into AO's durable session settings. ACP owns the complete live catalogue, but
+// those two choices must survive its process (and Electron) restarting.
+func settingsFromConfigOptions(
+	settings domain.ConversationSettings,
+	options []ports.ChatConfigOption,
+) (domain.ConversationSettings, bool) {
+	next := settings
+	for _, option := range options {
+		switch {
+		case option.ID == "model" || option.Category == "model":
+			if option.Current.Select != "" {
+				next.Model = option.Current.Select
+			}
+		case option.ID == "effort" || option.Category == "thought_level":
+			if option.Current.Select != "" {
+				next.ReasoningEffort = option.Current.Select
+			}
+		}
+	}
+	return next, next != settings
 }
 
 // Compact asks the provider to summarize earlier history and reclaim context.
