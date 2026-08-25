@@ -233,19 +233,23 @@ describe("TaskComposer", () => {
 		const agent = await screen.findByTestId("agent-field");
 		await waitFor(() => expect(agent).toHaveAttribute("data-value", "codex"));
 		const model = screen.getByRole("textbox", { name: "Model" });
+		const prompt = task();
 		expect(agent).toBeEnabled();
 		expect(model).toBeEnabled();
+		expect(prompt).toBeEnabled();
 
 		fireEvent.click(screen.getByRole("button", { name: "Start task" }));
 
 		await waitFor(() => expect(h.post).toHaveBeenCalledOnce());
 		expect(agent).toBeDisabled();
 		expect(model).toBeDisabled();
+		expect(prompt).toBeDisabled();
 
 		await act(async () => rejectCreate(new Error("creation failed")));
 		await screen.findByText("creation failed");
 		expect(agent).toBeEnabled();
 		expect(model).toBeEnabled();
+		expect(prompt).toBeEnabled();
 	});
 
 	it("attaches a selected file and sends it in the delegate body", async () => {

@@ -118,6 +118,7 @@ export type TaskComposerViewProps = {
 
 type TaskPromptProps = {
 	autoFocus?: boolean;
+	disabled: boolean;
 	id: string;
 	initialValue: string;
 	label: string;
@@ -128,6 +129,7 @@ type TaskPromptProps = {
 
 const TaskPrompt = memo(function TaskPrompt({
 	autoFocus,
+	disabled,
 	id,
 	initialValue,
 	label,
@@ -154,7 +156,8 @@ const TaskPrompt = memo(function TaskPrompt({
 				ref={textareaRef}
 				id={id}
 				autoFocus={autoFocus}
-				className="min-h-[calc(3lh+1.75rem)] max-h-[calc(8lh+1.75rem)] w-full resize-none overflow-y-auto bg-transparent px-4 pb-3 pt-4 text-md leading-relaxed text-foreground outline-none placeholder:text-passive"
+				className="min-h-[calc(3lh+1.75rem)] max-h-[calc(8lh+1.75rem)] w-full resize-none overflow-y-auto bg-transparent px-4 pb-3 pt-4 text-md leading-relaxed text-foreground outline-none placeholder:text-passive disabled:cursor-not-allowed disabled:opacity-50"
+				disabled={disabled}
 				placeholder={placeholder}
 				value={value}
 				onChange={(event) => {
@@ -242,6 +245,7 @@ export function TaskComposerView({
 		>
 			<TaskPrompt
 				autoFocus={autoFocusPrompt}
+				disabled={submission.isSubmitting}
 				id={promptId}
 				initialValue={initialPrompt}
 				label={labels.task}
