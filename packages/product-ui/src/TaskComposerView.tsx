@@ -58,6 +58,7 @@ export type TaskComposerModelControl = {
 	agentId: string;
 	agentLabel: string;
 	catalog?: TaskComposerModelCatalog;
+	disabled: boolean;
 	fetching: boolean;
 	id: string;
 	loading: boolean;
