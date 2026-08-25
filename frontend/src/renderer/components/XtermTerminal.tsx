@@ -100,7 +100,9 @@ function loadRenderer(term: Terminal): void {
 		fallbackLoaded = true;
 		try {
 			term.loadAddon(new CanvasAddon());
+			diag(`renderer=canvas dpr=${window.devicePixelRatio}`);
 		} catch (error) {
+			diag(`renderer=DOM dpr=${window.devicePixelRatio} (webgl and canvas failed)`);
 			console.warn("xterm: WebGL and canvas renderers unavailable; box-drawing may drift", error);
 		}
 	};
@@ -112,6 +114,7 @@ function loadRenderer(term: Terminal): void {
 			loadCanvasFallback();
 		});
 		term.loadAddon(webgl);
+		diag(`renderer=webgl dpr=${window.devicePixelRatio}`);
 		return;
 	} catch {
 		// WebGL context unavailable — fall through to the canvas renderer.
@@ -663,10 +666,14 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			try {
 				const before = `${term.cols}x${term.rows}`;
 				fit.fit();
+				// Sync render ONLY when the grid actually changed: that is the only
+				// case where the canvas was resized (and cleared). Forcing a full
+				// synchronous viewport render on every no-op fit doubles render work
+				// on every observed frame of a drag — measurable lag on iGPUs.
 				if (`${term.cols}x${term.rows}` !== before) {
 					diag(`fit ${before} -> ${term.cols}x${term.rows}`);
+					forceSyncRender(term);
 				}
-				forceSyncRender(term);
 			} catch {
 				// Container momentarily has no size (hidden/unmounting) — a later
 				// trigger retries.
@@ -707,8 +714,8 @@ export function XtermTerminal(props: XtermTerminalProps) {
 					fit.fit();
 					if (`${term.cols}x${term.rows}` !== before) {
 						diag(`debounced-fit ${before} -> ${term.cols}x${term.rows} hidden=${fitAllowsHidden}`);
+						forceSyncRender(term);
 					}
-					forceSyncRender(term);
 				} catch {
 					// The next observer/window event retries if the host is transiently
 					// unmeasurable (for example while entering fullscreen).
