@@ -98,6 +98,43 @@ describe("ACP session config options", () => {
 		expect(onChange).toHaveBeenCalledWith("model", { value: "sonnet" });
 	});
 
+	it("qualifies provider Plan mode descriptions that promise no tool execution", async () => {
+		const user = userEvent.setup();
+		render(
+			<TurnSettingsBar
+				models={[]}
+				settings={{}}
+				configOptions={[
+					{
+						id: "mode",
+						name: "Mode",
+						description: "Provider execution mode",
+						category: "mode",
+						type: "select",
+						currentValue: "plan",
+						choices: [
+							{
+								value: "plan",
+								name: "Plan",
+								description: "Planning mode, no actual tool execution.",
+							},
+						],
+					},
+				]}
+				onChangeConfigOption={vi.fn()}
+			/>,
+		);
+
+		await user.click(screen.getByRole("button", { name: "Provider execution mode" }));
+
+		expect(screen.queryByText(/no actual tool execution/i)).not.toBeInTheDocument();
+		expect(
+			screen.getByText(
+				"Provider-native Plan mode may still read or write files and use tools under normal permissions.",
+			),
+		).toBeInTheDocument();
+	});
+
 	it("keeps Codex native model+effort in one trigger when the provider has no catalog", () => {
 		render(
 			<TurnSettingsBar

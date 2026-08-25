@@ -60,6 +60,8 @@ const APPROVAL_ORDER: ApprovalMode[] = [
 const TRIGGER_CLASS =
 	"h-7 gap-1 bg-transparent rounded-lg px-3 text-[12px]! leading-none text-muted-foreground hover:bg-white/5 hover:text-foreground data-[state=open]:bg-white/5 data-[state=open]:text-foreground";
 const CHAT_MENU_CLASS = "chat-settings-menu text-[12px]!";
+const PROVIDER_PLAN_MODE_DISCLOSURE =
+	"Provider-native Plan mode may still read or write files and use tools under normal permissions.";
 
 export function TurnSettingsBar({
 	models,
@@ -543,6 +545,11 @@ function ConfigOptionChoices({
 		<>
 			{option.choices.map((choice, index) => {
 				const previousGroup = index > 0 ? option.choices[index - 1]?.group : undefined;
+				const description =
+					option.category === "mode" &&
+					/\bplan\b/i.test(`${choice.value} ${choice.name}`)
+						? PROVIDER_PLAN_MODE_DISCLOSURE
+						: choice.description;
 				return (
 					<Fragment key={choice.value}>
 						{choice.group && choice.group !== previousGroup ? (
@@ -567,9 +574,9 @@ function ConfigOptionChoices({
 									{choice.name}
 								</span>
 							</span>
-							{choice.description ? (
+							{description ? (
 								<span className="text-[11px] leading-snug text-muted-foreground">
-									{choice.description}
+									{description}
 								</span>
 							) : null}
 						</OptionMenuItem>
