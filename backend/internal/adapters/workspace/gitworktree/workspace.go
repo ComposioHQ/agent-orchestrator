@@ -86,6 +86,7 @@ type Workspace struct {
 type commandRunner func(ctx context.Context, binary string, args ...string) ([]byte, error)
 
 var _ ports.Workspace = (*Workspace)(nil)
+var _ ports.WorkspaceBranchReader = (*Workspace)(nil)
 var _ ports.WorkspaceDefaultBranchRefresher = (*Workspace)(nil)
 var _ ports.WorkspaceProject = (*Workspace)(nil)
 var _ ports.WorkspaceObserver = (*Workspace)(nil)
@@ -113,6 +114,26 @@ func New(opts Options) (*Workspace, error) {
 		repos:       opts.RepoResolver,
 		run:         runCommand,
 	}, nil
+}
+
+// CurrentBranch returns the symbolic branch checked out in an existing AO
+// managed worktree. The path is validated against ManagedRoot before invoking
+// git so a corrupted session row cannot turn read-model enrichment into an
+// arbitrary filesystem probe.
+func (w *Workspace) CurrentBranch(ctx context.Context, workspacePath string) (string, error) {
+	path, err := w.validateManagedPath(workspacePath)
+	if err != nil {
+		return "", fmt.Errorf("current branch: %w", err)
+	}
+	out, err := w.run(ctx, w.binary, "-C", path, "symbolic-ref", "--quiet", "--short", "HEAD")
+	if err != nil {
+		return "", fmt.Errorf("current branch for %s: %w", path, err)
+	}
+	branch := strings.TrimSpace(string(out))
+	if branch == "" {
+		return "", fmt.Errorf("current branch for %s: empty symbolic ref", path)
+	}
+	return branch, nil
 }
 
 // ResolveDefaultBranch selects a canonical remote-tracking ref using only local

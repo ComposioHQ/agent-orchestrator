@@ -215,6 +215,13 @@ type Workspace interface {
 	AddExclude(ctx context.Context, info WorkspaceInfo, patterns ...string) error
 }
 
+// WorkspaceBranchReader reports the branch currently checked out in an
+// existing managed workspace. Session read models use this optional surface to
+// avoid presenting the spawn-time branch after an agent changes branches.
+type WorkspaceBranchReader interface {
+	CurrentBranch(ctx context.Context, workspacePath string) (string, error)
+}
+
 // WorkspaceDefaultBranchRefresher is an optional capability for Git-backed
 // workspaces. Resolution is local-only so callers can retain the canonical ref
 // even when the subsequent best-effort network refresh fails.

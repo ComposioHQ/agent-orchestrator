@@ -223,6 +223,7 @@ func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.
 		Store:             store,
 		PRClaimer:         store,
 		SCM:               scmProvider,
+		WorkspaceBranches: gitWS,
 		DataDir:           cfg.DataDir,
 		Tracker:           tracker,
 		Telemetry:         telemetry,

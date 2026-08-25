@@ -152,6 +152,7 @@ type Service struct {
 	prClaimer           ports.PRClaimer
 	scm                 scmProvider
 	tracker             ports.Tracker
+	workspaceBranches   ports.WorkspaceBranchReader
 	clock               func() time.Time
 	dataDir             string
 	telemetry           ports.EventSink
@@ -187,10 +188,14 @@ type Deps struct {
 	PRClaimer ports.PRClaimer
 	SCM       scmProvider
 	Tracker   ports.Tracker
-	Clock     func() time.Time
-	DataDir   string
-	Telemetry ports.EventSink
-	Logger    *slog.Logger
+	// WorkspaceBranches resolves the live branch for active git workspaces.
+	// When unavailable or resolution fails, read models retain the durable
+	// spawn-time branch as a fallback.
+	WorkspaceBranches ports.WorkspaceBranchReader
+	Clock             func() time.Time
+	DataDir           string
+	Telemetry         ports.EventSink
+	Logger            *slog.Logger
 	// BackgroundContext owns best-effort work that must survive an HTTP request
 	// returning but stop with the daemon. It defaults to context.Background for
 	// focused service tests and non-daemon callers.
@@ -207,7 +212,7 @@ func NewWithDeps(d Deps) *Service {
 	if backgroundContext == nil {
 		backgroundContext = context.Background()
 	}
-	s := &Service{manager: d.Manager, store: d.Store, prClaimer: d.PRClaimer, scm: d.SCM, tracker: d.Tracker, clock: d.Clock, dataDir: d.DataDir, signalCapable: d.SignalCapable, telemetry: d.Telemetry, logger: d.Logger, backgroundContext: backgroundContext}
+	s := &Service{manager: d.Manager, store: d.Store, prClaimer: d.PRClaimer, scm: d.SCM, tracker: d.Tracker, workspaceBranches: d.WorkspaceBranches, clock: d.Clock, dataDir: d.DataDir, signalCapable: d.SignalCapable, telemetry: d.Telemetry, logger: d.Logger, backgroundContext: backgroundContext}
 	if s.prClaimer == nil {
 		if w, ok := d.Store.(ports.PRClaimer); ok {
 			s.prClaimer = w
@@ -1095,6 +1100,7 @@ func toSpawnAPIError(err error) error {
 }
 
 func (s *Service) toSession(ctx context.Context, rec domain.SessionRecord) (domain.Session, error) {
+	rec = s.withCurrentWorkspaceBranch(ctx, rec)
 	prs, err := s.store.ListPRFactsForSession(ctx, rec.ID)
 	if err != nil {
 		return domain.Session{}, fmt.Errorf("pr facts %s: %w", rec.ID, err)
