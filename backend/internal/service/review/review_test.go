@@ -671,3 +671,167 @@ func TestReviewErrorKindClassifiesEngineSentinels(t *testing.T) {
 		}
 	}
 }
+
+// An automatic pass was previously invisible: only the manual Trigger emitted,
+// so auto-review could not be told apart from manual review anywhere
+// downstream even though the two answer different product questions.
+func TestTriggerReportsWhoStartedThePass(t *testing.T) {
+	cases := []struct {
+		name string
+		call func(*Service) error
+		want string
+	}{
+		{"manual", func(s *Service) error {
+			_, err := s.Trigger(context.Background(), "worker-1", "")
+			return err
+		}, "manual"},
+		{"auto", func(s *Service) error {
+			_, err := s.TriggerAuto(context.Background(), "worker-1", "claude-code")
+			return err
+		}, "auto"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			sink := &recordingSink{}
+			svc := New(nil, &fakeStore{}, WithTelemetry(sink))
+			svc.engineTrigger = func(
+				_ context.Context, _ domain.SessionID, _ domain.ReviewerHarness, _ domain.ReviewTriggerSource,
+			) (reviewcore.TriggerResult, error) {
+				return reviewcore.TriggerResult{
+					Run:         domain.ReviewRun{Harness: "claude-code"},
+					CreatedRuns: []domain.ReviewRun{{ID: "run-1"}},
+				}, nil
+			}
+			if err := c.call(svc); err != nil {
+				t.Fatalf("trigger: %v", err)
+			}
+			got := sink.named("ao.review.triggered")
+			if len(got) != 1 {
+				t.Fatalf("ao.review.triggered count = %d, want 1", len(got))
+			}
+			if got[0].Payload["trigger"] != c.want {
+				t.Fatalf("trigger = %#v, want %q", got[0].Payload["trigger"], c.want)
+			}
+			if got[0].Payload["reused"] != false {
+				t.Fatalf("reused = %#v, want false", got[0].Payload["reused"])
+			}
+		})
+	}
+}
+
+func TestTriggerFailureReportsWhichPassFailed(t *testing.T) {
+	sink := &recordingSink{}
+	svc := New(nil, &fakeStore{}, WithTelemetry(sink))
+	svc.engineTrigger = func(
+		_ context.Context, _ domain.SessionID, _ domain.ReviewerHarness, _ domain.ReviewTriggerSource,
+	) (reviewcore.TriggerResult, error) {
+		return reviewcore.TriggerResult{}, fmt.Errorf("%w: no PR", reviewcore.ErrInvalid)
+	}
+
+	if _, err := svc.TriggerAuto(context.Background(), "worker-1", "codex"); err == nil {
+		t.Fatal("TriggerAuto: want error")
+	}
+	got := sink.named("ao.review.trigger_failed")
+	if len(got) != 1 {
+		t.Fatalf("ao.review.trigger_failed count = %d, want 1", len(got))
+	}
+	if got[0].Payload["error_kind"] != "invalid" || got[0].Payload["trigger"] != "auto" {
+		t.Fatalf("payload = %#v, want error_kind=invalid trigger=auto", got[0].Payload)
+	}
+}
+
+// The submitted event has to carry enough to tell a shallow automatic approval
+// apart from a substantial manual changes-requested pass.
+func TestSubmitReportsPassShapeNotItsContents(t *testing.T) {
+	policyOff := false
+	store := &fakeStore{
+		ok: true,
+		run: domain.ReviewRun{
+			ID: "run-1", SessionID: "worker-1", Status: domain.ReviewRunRunning,
+			Harness: "codex", TriggerSource: domain.ReviewTriggerAuto, CreatedAt: time.Now().UTC(),
+		},
+		sessionAutoInjectReview: &policyOff,
+	}
+	sink := &recordingSink{}
+	svc := New(nil, store, WithTelemetry(sink))
+
+	body := "rename this symbol"
+	if _, err := svc.Submit(context.Background(), "worker-1", "run-1",
+		domain.VerdictChangesRequested, body, ""); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	p := sink.named("ao.review.submitted")[0].Payload
+	if p["trigger"] != string(domain.ReviewTriggerAuto) {
+		t.Fatalf("trigger = %#v, want auto", p["trigger"])
+	}
+	if p["body_bytes"] != len(body) {
+		t.Fatalf("body_bytes = %#v, want %d", p["body_bytes"], len(body))
+	}
+	if p["auto_inject"] != false {
+		t.Fatalf("auto_inject = %#v, want false for a session with the policy off", p["auto_inject"])
+	}
+}
+func TestReusedManualPassStaysATrigger(t *testing.T) {
+	sink := &recordingSink{}
+	svc := New(nil, &fakeStore{}, WithTelemetry(sink))
+	svc.engineTrigger = func(
+		_ context.Context, _ domain.SessionID, _ domain.ReviewerHarness, _ domain.ReviewTriggerSource,
+	) (reviewcore.TriggerResult, error) {
+		return reviewcore.TriggerResult{Run: domain.ReviewRun{Harness: "codex"}, CreatedRuns: nil}, nil
+	}
+
+	if _, err := svc.Trigger(context.Background(), "worker-1", ""); err != nil {
+		t.Fatalf("Trigger: %v", err)
+	}
+	got := sink.named("ao.review.triggered")
+	if len(got) != 1 {
+		t.Fatalf("ao.review.triggered count = %d, want 1", len(got))
+	}
+	if got[0].Payload["reused"] != true || got[0].Payload["trigger"] != "manual" {
+		t.Fatalf("payload = %#v, want reused=true trigger=manual", got[0].Payload)
+	}
+	if n := len(sink.events); n != 1 {
+		t.Fatalf("emitted %d events, want only the trigger for a manual reuse", n)
+	}
+}
+
+// Found by running the real coordinator against a real open PR: while a review
+// is running, the once-a-minute sweep calls TriggerAuto again and the engine
+// reports success with nothing created. Every sweep used to emit another
+// ao.review.triggered -- a six-minute review produced seven "triggers" for one
+// real pass, inflating the headline count and spending the per-name daily rate
+// limit that real triggers need. An automatic pass that did no work reports
+// nothing at all.
+func TestReusedOrSkippedAutoPassReportsNothing(t *testing.T) {
+	cases := []struct {
+		name   string
+		result reviewcore.TriggerResult
+	}{
+		{"reused: a reviewer is already running", reviewcore.TriggerResult{
+			Run: domain.ReviewRun{Harness: "claude-code"}, CreatedRuns: nil,
+		}},
+		{"skipped: the session changed under the coordinator", reviewcore.TriggerResult{
+			SkipReason: "worker_active",
+		}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			sink := &recordingSink{}
+			svc := New(nil, &fakeStore{}, WithTelemetry(sink))
+			svc.engineTrigger = func(
+				_ context.Context, _ domain.SessionID, _ domain.ReviewerHarness, _ domain.ReviewTriggerSource,
+			) (reviewcore.TriggerResult, error) {
+				return c.result, nil
+			}
+
+			for i := 0; i < 6; i++ {
+				if _, err := svc.TriggerAuto(context.Background(), "worker-1", "claude-code"); err != nil {
+					t.Fatalf("TriggerAuto %d: %v", i, err)
+				}
+			}
+			if got := len(sink.events); got != 0 {
+				t.Fatalf("emitted %d event(s) for six no-op automatic sweeps: %#v", got, sink.events)
+			}
+		})
+	}
+}

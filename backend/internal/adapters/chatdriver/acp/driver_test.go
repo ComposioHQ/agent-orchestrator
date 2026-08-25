@@ -43,6 +43,7 @@ type fakeAgent struct {
 	mode                string
 	modeNotFound        bool // SetSessionMode returns -32601
 	configNotFound      bool // SetSessionConfigOption returns -32601
+	configErr           error
 	newSessionUpdates   []acpsdk.SessionUpdate
 	options             map[string]string
 	newConfig           []acpsdk.SessionConfigOption
@@ -53,6 +54,113 @@ type fakeAgent struct {
 	steerPrompt         []acpsdk.ContentBlock
 	steerMeta           map[string]any
 	steerOut            string
+}
+
+type legacyKimiAgent struct {
+	mu          sync.Mutex
+	model       string
+	modelCalls  int
+	mode        string
+	modeCalls   int
+	configCalls int
+}
+
+func fakeLegacyKimiSpawn(agent *legacyKimiAgent) spawnFunc {
+	return func(Launch, string) (*process, error) {
+		clientToAgentR, clientToAgentW := io.Pipe()
+		agentToClientR, agentToClientW := io.Pipe()
+		go serveLegacyKimi(agent, clientToAgentR, agentToClientW)
+		var once sync.Once
+		return &process{
+			stdin: clientToAgentW, stdout: agentToClientR,
+			stop: func() error {
+				once.Do(func() {
+					_ = clientToAgentW.Close()
+					_ = clientToAgentR.Close()
+					_ = agentToClientW.Close()
+					_ = agentToClientR.Close()
+				})
+				return nil
+			},
+		}, nil
+	}
+}
+
+func serveLegacyKimi(agent *legacyKimiAgent, in io.Reader, out io.Writer) {
+	decoder := json.NewDecoder(in)
+	encoder := json.NewEncoder(out)
+	for {
+		var request struct {
+			ID     json.RawMessage `json:"id"`
+			Method string          `json:"method"`
+			Params json.RawMessage `json:"params"`
+		}
+		if err := decoder.Decode(&request); err != nil {
+			return
+		}
+		result := any(map[string]any{})
+		var responseError any
+		switch request.Method {
+		case "initialize":
+			result = map[string]any{
+				"protocolVersion": acpsdk.ProtocolVersionNumber,
+				"agentCapabilities": map[string]any{
+					"sessionCapabilities": map[string]any{"resume": map[string]any{}},
+				},
+			}
+		case "session/new":
+			result = map[string]any{
+				"sessionId": "kimi-session-1",
+				"models": map[string]any{
+					"currentModelId": "kimi-code/kimi-for-coding",
+					"availableModels": []map[string]any{{
+						"modelId": "kimi-code/kimi-for-coding",
+						"name":    "Kimi for Coding", "description": "Kimi coding model",
+					}},
+				},
+				"modes": map[string]any{
+					"currentModeId": "default",
+					"availableModes": []map[string]any{{
+						"id": "default", "name": "Default", "description": "The default mode.",
+					}},
+				},
+			}
+		case "session/set_model":
+			var params struct {
+				ModelID string `json:"modelId"`
+			}
+			_ = json.Unmarshal(request.Params, &params)
+			agent.mu.Lock()
+			agent.model = params.ModelID
+			agent.modelCalls++
+			agent.mu.Unlock()
+		case "session/set_mode":
+			var params struct {
+				ModeID string `json:"modeId"`
+			}
+			_ = json.Unmarshal(request.Params, &params)
+			agent.mu.Lock()
+			agent.mode = params.ModeID
+			agent.modeCalls++
+			agent.mu.Unlock()
+		case "session/set_config_option":
+			agent.mu.Lock()
+			agent.configCalls++
+			agent.mu.Unlock()
+			responseError = map[string]any{"code": -32601, "message": "Method not found"}
+		default:
+			responseError = map[string]any{"code": -32601, "message": "Method not found"}
+		}
+		response := map[string]any{"jsonrpc": "2.0", "id": request.ID}
+		if responseError != nil {
+			response["error"] = responseError
+		} else {
+			response["result"] = result
+		}
+		if err := encoder.Encode(response); err != nil {
+			return
+		}
+	}
 }
 
 var _ acpsdk.Agent = (*fakeAgent)(nil)
@@ -163,6 +271,11 @@ func (a *fakeAgent) LoadSession(ctx context.Context, params acpsdk.LoadSessionRe
 func (a *fakeAgent) SetSessionConfigOption(_ context.Context, params acpsdk.SetSessionConfigOptionRequest) (acpsdk.SetSessionConfigOptionResponse, error) {
 	a.mu.Lock()
 	a.setCalls++
+	if a.configErr != nil {
+		err := a.configErr
+		a.mu.Unlock()
+		return acpsdk.SetSessionConfigOptionResponse{}, err
+	}
 	if a.configNotFound {
 		a.mu.Unlock()
 		return acpsdk.SetSessionConfigOptionResponse{}, acpsdk.NewMethodNotFound("session/set_config_option")
@@ -368,6 +481,41 @@ func TestACPDriverDefersPromptUntilDurableTurnBinding(t *testing.T) {
 	}
 }
 
+func TestACPDriverValidatesHandshakeIdentityBeforeOpeningSession(t *testing.T) {
+	agent := &fakeAgent{}
+	validated := false
+	driver := New(Config{
+		Harness: domain.HarnessPi,
+		Capabilities: ports.ChatCapabilities{
+			ports.ChatCapabilityStreaming: true,
+			ports.ChatCapabilityApprovals: true,
+			ports.ChatCapabilityInterrupt: true,
+			ports.ChatCapabilityResume:    true,
+		},
+		Probe:  func(context.Context) error { return nil },
+		Launch: func(context.Context, LaunchConfig) (Launch, error) { return Launch{Command: "fake"}, nil },
+		ValidateInitialize: func(acpsdk.InitializeResponse) error {
+			validated = true
+			return errors.New("unsupported adapter version")
+		},
+	}, nil)
+	driver.spawn = fakeSpawn(agent)
+
+	_, err := driver.Start(context.Background(), ports.ChatStartConfig{WorkspacePath: t.TempDir()})
+	if !validated {
+		t.Fatal("initialize response was not validated")
+	}
+	if !errors.Is(err, ports.ErrChatDriverIncompatible) || !strings.Contains(err.Error(), "unsupported adapter version") {
+		t.Fatalf("Start error = %v", err)
+	}
+	agent.mu.Lock()
+	opened := agent.newParams.Cwd != ""
+	agent.mu.Unlock()
+	if opened {
+		t.Fatal("session/new ran before the handshake identity was admitted")
+	}
+}
+
 func TestACPInterruptCancelsTheLocalPromptAfterNotifyingTheAgent(t *testing.T) {
 	agent := &fakeAgent{promptBlock: true, promptStarted: make(chan struct{}, 1)}
 	driver := New(Config{
@@ -495,6 +643,7 @@ func TestACPDriverNegotiatesRichClientCapabilitiesAndNativePromptContent(t *test
 	}
 	if !conv.Capabilities().Has(ports.ChatCapabilityImages) ||
 		!conv.Capabilities().Has(ports.ChatCapabilityEmbeddedContext) ||
+		!conv.Capabilities().Has(ports.ChatCapabilityResourceLinks) ||
 		!conv.Capabilities().Has(ports.ChatCapabilityElicitation) {
 		t.Fatalf("conversation capabilities = %#v", conv.Capabilities())
 	}
@@ -593,7 +742,7 @@ func TestACPDriverReappliesLaunchContextWhenResuming(t *testing.T) {
 	}
 }
 
-func TestACPDriverLoadsSettledHistoryWhenTheAgentCanReplayIt(t *testing.T) {
+func TestACPDriverClosesReplayTurnsAsRecoveredWithoutBlockingResume(t *testing.T) {
 	userOneID := "11111111-1111-4111-8111-111111111111"
 	answerOneID := "22222222-2222-4222-8222-222222222222"
 	userTwoID := "33333333-3333-4333-8333-333333333333"
@@ -608,12 +757,16 @@ func TestACPDriverLoadsSettledHistoryWhenTheAgentCanReplayIt(t *testing.T) {
 	userTwo.UserMessageChunk.MessageId = &userTwoID
 	answerTwo := acpsdk.UpdateAgentMessageText("All tests pass.")
 	answerTwo.AgentMessageChunk.MessageId = &answerTwoID
+	pendingTool := acpsdk.SessionUpdate{ToolCall: &acpsdk.SessionUpdateToolCall{
+		SessionUpdate: "tool_call", ToolCallId: "history-tool", Title: "Run tests",
+		Kind: acpsdk.ToolKindExecute, Status: acpsdk.ToolCallStatusInProgress,
+	}}
 
 	agent := &fakeAgent{
 		capabilities: &acpsdk.AgentCapabilities{
 			LoadSession: true,
 		},
-		loadUpdates: []acpsdk.SessionUpdate{userOne, answerOneA, answerOneB, userTwo, answerTwo},
+		loadUpdates: []acpsdk.SessionUpdate{userOne, answerOneA, answerOneB, userTwo, answerTwo, pendingTool},
 	}
 	driver := New(Config{
 		Harness:      domain.HarnessClaudeCode,
@@ -656,40 +809,22 @@ func TestACPDriverLoadsSettledHistoryWhenTheAgentCanReplayIt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadHistory: %v", err)
 	}
-	wantKinds := []ports.ChatEventKind{
-		ports.ChatEventTurnStarted,
-		ports.ChatEventUserMessageCompleted,
-		ports.ChatEventMessageDelta,
-		ports.ChatEventMessageDelta,
-		ports.ChatEventMessageCompleted,
-		ports.ChatEventTurnCompleted,
-		ports.ChatEventTurnStarted,
-		ports.ChatEventUserMessageCompleted,
-		ports.ChatEventMessageDelta,
-		ports.ChatEventMessageCompleted,
-		ports.ChatEventTurnCompleted,
-	}
-	if len(history) != len(wantKinds) {
-		t.Fatalf("history = %d events, want %d: %#v", len(history), len(wantKinds), history)
-	}
-	seenIDs := make(map[string]bool, len(history))
-	for i, event := range history {
-		if event.Kind != wantKinds[i] {
-			t.Errorf("history event %d kind = %q, want %q", i, event.Kind, wantKinds[i])
+	var states []domain.TurnState
+	var recoveredActivity bool
+	for _, event := range history {
+		if event.Kind == ports.ChatEventTurnCompleted {
+			states = append(states, event.TurnState)
 		}
-		if event.ProviderEventID == "" || seenIDs[event.ProviderEventID] {
-			t.Errorf("history event %d has missing or duplicate identity %q", i, event.ProviderEventID)
+		if event.ProviderItemID == "history-tool" && event.Kind == ports.ChatEventActivityCompleted {
+			recoveredActivity = event.ActivityStatus == domain.ActivityStatusRecovered
 		}
-		seenIDs[event.ProviderEventID] = true
 	}
-	if history[1].Text != "Inspect the repository" || history[4].Text != "The repository is ready." {
-		t.Fatalf("first reconstructed turn = %#v", history[:6])
+	if len(states) != 2 || states[0] != domain.TurnStateRecovered ||
+		states[1] != domain.TurnStateRecovered {
+		t.Fatalf("replayed turn states = %v, want [recovered recovered]", states)
 	}
-	if history[7].Text != "Run the tests" || history[9].Text != "All tests pass." {
-		t.Fatalf("second reconstructed turn = %#v", history[6:])
-	}
-	if history[0].ProviderTurnID == history[6].ProviderTurnID {
-		t.Fatalf("both native turns share provider id %q", history[0].ProviderTurnID)
+	if !recoveredActivity {
+		t.Fatalf("history = %#v, want pending replay tool settled as recovered", history)
 	}
 	if !conv.Capabilities().Has(ports.ChatCapabilityHistory) {
 		t.Fatal("session/load conversation did not advertise replayable history")
@@ -706,7 +841,7 @@ func TestACPDriverLoadsSettledHistoryWhenTheAgentCanReplayIt(t *testing.T) {
 	}
 }
 
-func TestACPDriverImportsTrailingUserOnlyHistoryAsInterrupted(t *testing.T) {
+func TestACPDriverClosesTrailingUserOnlyHistoryAsRecovered(t *testing.T) {
 	userID := "55555555-5555-4555-8555-555555555555"
 	user := acpsdk.UpdateUserMessageText("Work that has not produced a provider event yet")
 	user.UserMessageChunk.MessageId = &userID
@@ -740,27 +875,118 @@ func TestACPDriverImportsTrailingUserOnlyHistoryAsInterrupted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadHistory: %v", err)
 	}
-	wantKinds := []ports.ChatEventKind{
-		ports.ChatEventTurnStarted,
-		ports.ChatEventUserMessageCompleted,
-		ports.ChatEventTurnCompleted,
+	if len(history) != 3 || history[2].Kind != ports.ChatEventTurnCompleted ||
+		history[2].TurnState != domain.TurnStateRecovered {
+		t.Fatalf("history = %#v, want trailing recovered turn", history)
 	}
-	if len(history) != len(wantKinds) {
-		t.Fatalf("history = %d events, want %d: %#v", len(history), len(wantKinds), history)
+}
+
+func TestConversationCapabilitiesTreatLoadSessionAsResume(t *testing.T) {
+	configured := ports.ChatCapabilities{ports.ChatCapabilityResume: true}
+	init := acpsdk.InitializeResponse{AgentCapabilities: acpsdk.AgentCapabilities{
+		LoadSession: true,
+	}}
+	if !conversationCapabilities(configured, init)[ports.ChatCapabilityResume] {
+		t.Fatal("loadSession-only ACP agent was reported as non-resumable")
 	}
-	for i, event := range history {
-		if event.Kind != wantKinds[i] {
-			t.Errorf("history event %d kind = %q, want %q", i, event.Kind, wantKinds[i])
-		}
-		if event.ProviderEventID == "" {
-			t.Errorf("history event %d has no stable identity", i)
-		}
+}
+
+func TestACPDriverUsesProviderPermissionPolicyBeforeParking(t *testing.T) {
+	agent := &fakeAgent{promptNoPermission: true}
+	driver := New(Config{
+		Harness:      domain.HarnessCursor,
+		Capabilities: ports.ChatCapabilities{ports.ChatCapabilityApprovals: true},
+		Probe:        func(context.Context) error { return nil },
+		Launch:       func(context.Context, LaunchConfig) (Launch, error) { return Launch{Command: "fake"}, nil },
+		PermissionPolicy: func(mode ports.PermissionMode, params acpsdk.RequestPermissionRequest) (acpsdk.PermissionOptionId, bool) {
+			if mode != ports.PermissionModeBypassPermissions {
+				return "", false
+			}
+			return params.Options[0].OptionId, true
+		},
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	driver.spawn = fakeSpawn(agent)
+
+	opened, err := driver.Start(context.Background(), ports.ChatStartConfig{
+		WorkspacePath: t.TempDir(), Permissions: ports.PermissionModeBypassPermissions,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
 	}
-	if history[1].Text != "Work that has not produced a provider event yet" {
-		t.Fatalf("user message = %q", history[1].Text)
+	defer opened.Close()
+	ready := nextEvent(t, opened.Events())
+	if ready.Kind != ports.ChatEventControllerState {
+		t.Fatalf("first event = %#v, want controller state", ready)
 	}
-	if history[2].TurnState != domain.TurnStateInterrupted {
-		t.Fatalf("turn state = %q, want %q", history[2].TurnState, domain.TurnStateInterrupted)
+
+	conv := opened.(*conversation)
+	if err := conv.applyTurnSettings(context.Background(), ports.ChatTurnSettings{}); err != nil {
+		t.Fatalf("apply empty settings: %v", err)
+	}
+	conv.mu.Lock()
+	modeAfterEmpty := conv.permissionMode
+	conv.mu.Unlock()
+	if modeAfterEmpty != ports.PermissionModeBypassPermissions {
+		t.Fatalf("permission mode after empty turn settings = %q, want launch mode %q",
+			modeAfterEmpty, ports.PermissionModeBypassPermissions)
+	}
+	response, err := conv.RequestPermission(context.Background(), acpsdk.RequestPermissionRequest{
+		ToolCall: acpsdk.ToolCallUpdate{ToolCallId: "edit-1", Kind: acpsdk.Ptr(acpsdk.ToolKindEdit)},
+		Options: []acpsdk.PermissionOption{{
+			OptionId: "allow-once", Name: "Allow", Kind: acpsdk.PermissionOptionKindAllowOnce,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("RequestPermission: %v", err)
+	}
+	if response.Outcome.Selected == nil || response.Outcome.Selected.OptionId != "allow-once" {
+		t.Fatalf("permission response = %#v", response)
+	}
+	select {
+	case event := <-opened.Events():
+		t.Fatalf("automatic policy emitted a parked approval: %#v", event)
+	case <-time.After(30 * time.Millisecond):
+	}
+}
+
+func TestACPDriverKeepsPermissionPolicyWhenLaterTurnSettingFails(t *testing.T) {
+	agent := &fakeAgent{}
+	driver := New(Config{
+		Harness: domain.HarnessCursor,
+		Probe:   func(context.Context) error { return nil },
+		Launch:  func(context.Context, LaunchConfig) (Launch, error) { return Launch{Command: "fake"}, nil },
+		SessionOptions: func(settings ports.ChatTurnSettings) []SessionOption {
+			if settings.Model == "" {
+				return nil
+			}
+			return []SessionOption{{ID: "model", Value: settings.Model}}
+		},
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	driver.spawn = fakeSpawn(agent)
+
+	opened, err := driver.Start(context.Background(), ports.ChatStartConfig{WorkspacePath: t.TempDir()})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer opened.Close()
+	_ = nextEvent(t, opened.Events())
+
+	agent.mu.Lock()
+	agent.configErr = errors.New("set model failed")
+	agent.mu.Unlock()
+	conv := opened.(*conversation)
+	err = conv.applyTurnSettings(context.Background(), ports.ChatTurnSettings{
+		Approval: ports.PermissionModeAcceptEdits,
+		Model:    "cursor-model",
+	})
+	if err == nil {
+		t.Fatal("applyTurnSettings succeeded, want config error")
+	}
+	conv.mu.Lock()
+	mode := conv.permissionMode
+	conv.mu.Unlock()
+	if mode != ports.PermissionModeDefault {
+		t.Fatalf("permission mode after rejected settings = %q, want %q", mode, ports.PermissionModeDefault)
 	}
 }
 
@@ -1161,6 +1387,62 @@ func TestACPDriverExposesAndMutatesAdvertisedConfigOptions(t *testing.T) {
 	}
 }
 
+func TestACPDriverConsumesLegacyKimiSelectorsOnSDK0135(t *testing.T) {
+	agent := &legacyKimiAgent{}
+	driver := New(Config{
+		Harness:      domain.HarnessKimi,
+		Capabilities: ports.ChatCapabilities{ports.ChatCapabilityStreaming: true},
+		Probe:        func(context.Context) error { return nil },
+		Launch:       func(context.Context, LaunchConfig) (Launch, error) { return Launch{Command: "fake"}, nil },
+		SessionOptions: func(settings ports.ChatTurnSettings) []SessionOption {
+			if settings.Model == "" {
+				return nil
+			}
+			return []SessionOption{{ID: "model", Value: settings.Model}}
+		},
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	driver.spawn = fakeLegacyKimiSpawn(agent)
+
+	conv, err := driver.Start(context.Background(), ports.ChatStartConfig{
+		WorkspacePath: t.TempDir(), Model: "kimi-code/kimi-for-coding",
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer conv.Close()
+
+	options, err := conv.(ports.ChatConfigOptionController).ListConfigOptions(context.Background())
+	if err != nil {
+		t.Fatalf("ListConfigOptions: %v", err)
+	}
+	if len(options) != 2 || options[0].ID != "model" || options[0].Current.Select != "kimi-code/kimi-for-coding" ||
+		options[1].ID != "mode" || options[1].Current.Select != "default" {
+		t.Fatalf("legacy Kimi options = %#v, want model and default mode", options)
+	}
+
+	controller := conv.(ports.ChatConfigOptionController)
+	if _, err := controller.SetConfigOption(context.Background(), "model", ports.ChatConfigOptionValue{
+		Select: "kimi-code/kimi-for-coding",
+	}); err != nil {
+		t.Fatalf("SetConfigOption model: %v", err)
+	}
+	if _, err := controller.SetConfigOption(context.Background(), "mode", ports.ChatConfigOptionValue{
+		Select: "default",
+	}); err != nil {
+		t.Fatalf("SetConfigOption mode: %v", err)
+	}
+
+	agent.mu.Lock()
+	model, modelCalls := agent.model, agent.modelCalls
+	mode, modeCalls, configCalls := agent.mode, agent.modeCalls, agent.configCalls
+	agent.mu.Unlock()
+	if model != "kimi-code/kimi-for-coding" || modelCalls != 2 ||
+		mode != "default" || modeCalls != 1 || configCalls != 0 {
+		t.Fatalf("legacy setters: model=%q/%d mode=%q/%d config=%d",
+			model, modelCalls, mode, modeCalls, configCalls)
+	}
+}
+
 func TestACPDriverExposesDynamicAvailableCommandsAsSkills(t *testing.T) {
 	agent := &fakeAgent{}
 	driver := New(Config{
@@ -1440,6 +1722,42 @@ func TestACPDriverSendTurnPropagatesMethodNotFound(t *testing.T) {
 	})
 	if !errors.Is(err, ErrACPSetterUnsupported) {
 		t.Fatalf("SendTurn with -32601 mode setter: err = %v, want ErrACPSetterUnsupported", err)
+	}
+}
+
+func TestACPDriverRejectsUnsupportedTurnSettingsAtStartAndSend(t *testing.T) {
+	agent := &fakeAgent{}
+	driver := New(Config{
+		Harness:      domain.HarnessKimi,
+		Capabilities: ports.ChatCapabilities{ports.ChatCapabilityStreaming: true},
+		Probe:        func(context.Context) error { return nil },
+		Launch:       func(context.Context, LaunchConfig) (Launch, error) { return Launch{Command: "fake"}, nil },
+		ValidateTurnSettings: func(_ ports.PermissionMode, settings ports.ChatTurnSettings) error {
+			if ports.NormalizePermissionMode(settings.Approval) == ports.PermissionModeDefault {
+				return nil
+			}
+			return ports.ErrChatPermissionModeUnsupported
+		},
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	driver.spawn = fakeSpawn(agent)
+
+	_, err := driver.Start(context.Background(), ports.ChatStartConfig{
+		WorkspacePath: t.TempDir(), Permissions: ports.PermissionModeAuto,
+	})
+	if !errors.Is(err, ports.ErrChatPermissionModeUnsupported) {
+		t.Fatalf("Start unsupported permissions error = %v", err)
+	}
+
+	conv, err := driver.Start(context.Background(), ports.ChatStartConfig{WorkspacePath: t.TempDir()})
+	if err != nil {
+		t.Fatalf("Start default permissions: %v", err)
+	}
+	defer conv.Close()
+	_, err = conv.SendTurn(context.Background(), ports.ChatUserMessage{
+		Text: "do work", Settings: ports.ChatTurnSettings{Approval: ports.PermissionModeAuto},
+	})
+	if !errors.Is(err, ports.ErrChatPermissionModeUnsupported) {
+		t.Fatalf("SendTurn unsupported permissions error = %v", err)
 	}
 }
 

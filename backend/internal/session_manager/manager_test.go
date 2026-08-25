@@ -1541,6 +1541,9 @@ func TestRestore_RotatesSupervisedAgentGeneration(t *testing.T) {
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
 	seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "b", AgentSessionID: "agent-x", RuntimeLaunchID: "launch-old"})
+	rec := st.sessions["mer-1"]
+	rec.Harness = domain.HarnessCodex
+	st.sessions["mer-1"] = rec
 	rt := &fakeRuntime{}
 	agent := supervisedLaunchAgent{launchArgvAgent{argv: []string{"codex", "resume", "agent-x"}}}
 	m := New(Deps{
@@ -1557,6 +1560,9 @@ func TestRestore_RotatesSupervisedAgentGeneration(t *testing.T) {
 	}
 	if result.Session.Metadata.RuntimeLaunchID != "launch-new" {
 		t.Fatalf("restored launch id = %q, want launch-new", result.Session.Metadata.RuntimeLaunchID)
+	}
+	if result.Session.Metadata.AgentSessionIDLaunchID != "launch-new" {
+		t.Fatalf("restored native identity launch = %q, want launch-new", result.Session.Metadata.AgentSessionIDLaunchID)
 	}
 	if got := rt.lastCfg.Env[EnvRuntimeLaunchID]; got != "launch-new" {
 		t.Fatalf("restored launch env = %q, want launch-new", got)
@@ -1636,6 +1642,9 @@ func TestResumeAgent_RestartsRuntimeWithManagedGeneration(t *testing.T) {
 	}
 	if got.Metadata.RuntimeHandleID != "tmux-mer-1" || got.Metadata.RuntimeLaunchID != "launch-new" {
 		t.Fatalf("resumed metadata = %+v", got.Metadata)
+	}
+	if got.Metadata.AgentSessionIDLaunchID != "launch-new" {
+		t.Fatalf("native Codex resume identity launch = %q, want launch-new", got.Metadata.AgentSessionIDLaunchID)
 	}
 	if result.Mode != RestoreModeNative {
 		t.Fatalf("resume mode = %q, want native", result.Mode)
@@ -2190,6 +2199,19 @@ func TestSpawn_StampsUTCTimestamps(t *testing.T) {
 	}
 }
 
+func TestWrapSpawnStagePreservesInnerSentinel(t *testing.T) {
+	err := wrapSpawnStage("mer-1", ErrWorkspaceCreate, ports.ErrWorkspaceBranchNotFetched)
+	if !errors.Is(err, ErrWorkspaceCreate) {
+		t.Fatalf("err = %v, want ErrWorkspaceCreate", err)
+	}
+	if !errors.Is(err, ports.ErrWorkspaceBranchNotFetched) {
+		t.Fatalf("err = %v, want ErrWorkspaceBranchNotFetched", err)
+	}
+	if got, want := err.Error(), "spawn mer-1: workspace: workspace: branch is not fetched"; got != want {
+		t.Fatalf("err.Error() = %q, want %q", got, want)
+	}
+}
+
 func TestSpawn_RollsBackOnRuntimeFailure(t *testing.T) {
 	m, st, _, ws := newManager()
 	m.runtime = &fakeRuntime{createErr: errors.New("boom")}
@@ -2225,8 +2247,12 @@ func TestSpawn_RuntimeFailureCleansAgentWorkspaceAfterDestroy(t *testing.T) {
 		LookPath:  func(string) (string, error) { return "/bin/true", nil },
 	})
 
-	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err == nil || !strings.Contains(err.Error(), "runtime") {
+	_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	if err == nil || !strings.Contains(err.Error(), "runtime") {
 		t.Fatalf("Spawn err = %v, want runtime failure", err)
+	}
+	if !errors.Is(err, ErrRuntimeCreate) {
+		t.Fatalf("Spawn err = %v, want ErrRuntimeCreate sentinel", err)
 	}
 	if ws.destroyed != 1 {
 		t.Fatalf("workspace destroy calls = %d, want 1", ws.destroyed)
@@ -5084,6 +5110,7 @@ func TestSpawn_RejectsMissingTmuxBeforeSessionRow(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Windows uses ConPTY, not tmux")
 	}
+	t.Setenv("AO_TMUX_BINARY", "")
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
 	rt := &fakeRuntime{}
@@ -5108,6 +5135,26 @@ func TestSpawn_RejectsMissingTmuxBeforeSessionRow(t *testing.T) {
 	}
 	if rt.created != 0 {
 		t.Fatal("runtime must not be created when tmux is missing")
+	}
+}
+
+func TestValidateRuntimePrerequisites_AllowsConfiguredBundledTmux(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows uses ConPTY, not tmux")
+	}
+	bundled := filepath.Join(t.TempDir(), "resources", "tmux", "bin", "tmux")
+	t.Setenv("AO_TMUX_BINARY", bundled)
+	m := &Manager{
+		executable: func() (string, error) { return "", errors.New("unexpected executable lookup") },
+		lookPath: func(name string) (string, error) {
+			if name == bundled {
+				return bundled, nil
+			}
+			return "", fmt.Errorf("exec: %q: not found", name)
+		},
+	}
+	if err := m.validateRuntimePrerequisites(); err != nil {
+		t.Fatalf("validateRuntimePrerequisites() = %v, want configured bundled tmux accepted", err)
 	}
 }
 
@@ -7402,6 +7449,50 @@ func TestReconcile_LivePassUsesConfiguredConcurrency(t *testing.T) {
 	}
 }
 
+func TestReconcileStartupSafetyDefersRuntimeReconciliation(t *testing.T) {
+	st := newFakeStore()
+	st.projects["p1"] = domain.ProjectRecord{ID: "p1", Config: testRoleAgents()}
+	st.sessions["s1"] = domain.SessionRecord{
+		ID: "s1", ProjectID: "p1", Harness: domain.HarnessClaudeCode,
+		Metadata: domain.SessionMetadata{Branch: "ao/s1/root", WorkspacePath: "/wt/s1", RuntimeHandleID: "s1"},
+	}
+	release := make(chan struct{})
+	rt := &blockingAliveRuntime{
+		fakeRuntime: &fakeRuntime{},
+		entered:     make(chan domain.SessionID, 1),
+		release:     release,
+	}
+	m := New(Deps{
+		Runtime: rt, Agents: fakeAgents{}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	if err := m.ReconcileStartupSafety(context.Background()); err != nil {
+		t.Fatalf("ReconcileStartupSafety: %v", err)
+	}
+	select {
+	case id := <-rt.entered:
+		t.Fatalf("startup safety unexpectedly probed runtime %s", id)
+	default:
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- m.ReconcileBackground(context.Background()) }()
+	select {
+	case id := <-rt.entered:
+		if id != "s1" {
+			t.Fatalf("runtime probe = %s, want s1", id)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("background reconciliation did not probe the live runtime")
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatalf("ReconcileBackground: %v", err)
+	}
+}
+
 // TestReconcileLive_ProbeErrorIsNotDeath locks the invariant that a failed
 // IsAlive probe is NOT treated as proof that the session is dead. reconcileLive
 // must propagate the error and must NOT stash, terminate, or destroy.
@@ -7434,6 +7525,52 @@ func TestReconcileLive_ProbeErrorIsNotDeath(t *testing.T) {
 	}
 	if rt.destroyed != 0 {
 		t.Fatalf("Destroy calls = %d, want 0 (probe error is not death)", rt.destroyed)
+	}
+}
+
+func TestReconcileLive_InconclusiveRuntimeProbeDoesNotRelaunch(t *testing.T) {
+	st := newFakeStore()
+	st.projects["p1"] = domain.ProjectRecord{ID: "p1", Config: testRoleAgents()}
+	rt := &fakeRuntime{aliveErr: fmt.Errorf("legacy client mismatch: %w", ports.ErrRuntimeProbeInconclusive)}
+	ws := &fakeWorkspace{}
+	lcm := &fakeLCM{store: st}
+	m := New(Deps{
+		Runtime: rt, Agents: fakeAgents{}, Workspace: ws, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: lcm,
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+	rec := domain.SessionRecord{
+		ID: "s-inconclusive", ProjectID: "p1", Harness: domain.HarnessClaudeCode,
+		Metadata: domain.SessionMetadata{
+			Branch: "ao/s-inconclusive/root", WorkspacePath: "/wt/s-inconclusive", RuntimeHandleID: "s-inconclusive",
+		},
+	}
+	st.sessions[rec.ID] = rec
+
+	err := m.reconcileLive(context.Background(), rec)
+	if !errors.Is(err, ports.ErrRuntimeProbeInconclusive) {
+		t.Fatalf("reconcileLive err = %v, want ErrRuntimeProbeInconclusive", err)
+	}
+	if rt.created != 0 || rt.destroyed != 0 {
+		t.Fatalf("inconclusive probe changed runtime: created=%d destroyed=%d", rt.created, rt.destroyed)
+	}
+	if ws.stashCalls != 0 || lcm.terminated[rec.ID] != 0 {
+		t.Fatalf("inconclusive probe changed lifecycle: stash=%d terminated=%d", ws.stashCalls, lcm.terminated[rec.ID])
+	}
+}
+
+func TestRestartRuntime_InconclusiveProbeDoesNotCreateReplacement(t *testing.T) {
+	rt := &fakeRuntime{aliveErr: fmt.Errorf("legacy client unavailable: %w", ports.ErrRuntimeProbeInconclusive)}
+	m := New(Deps{Runtime: rt})
+
+	_, err := m.restartRuntime(context.Background(), ports.RuntimeHandle{ID: "legacy-live"}, ports.RuntimeConfig{
+		SessionID: "legacy-live",
+	})
+	if !errors.Is(err, ports.ErrRuntimeProbeInconclusive) {
+		t.Fatalf("restartRuntime err = %v, want ErrRuntimeProbeInconclusive", err)
+	}
+	if rt.created != 0 || rt.destroyed != 0 {
+		t.Fatalf("inconclusive probe replaced runtime: created=%d destroyed=%d", rt.created, rt.destroyed)
 	}
 }
 

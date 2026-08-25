@@ -203,6 +203,7 @@ type ConversationTurn struct {
 	BranchID             string
 	PromotionStartedAt   sql.NullTime
 	PromotedToTurnID     sql.NullString
+	RetryOfTurnID        sql.NullString
 }
 
 type ModelUsageEvent struct {
@@ -313,6 +314,7 @@ type PRComment struct {
 	URL              string
 	IsBot            int64
 	AutoInjectReview bool
+	ReviewID         string
 }
 
 type PRReview struct {

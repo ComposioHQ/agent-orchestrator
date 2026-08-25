@@ -154,7 +154,6 @@ function Sidebar({
 	side = "left",
 	variant = "sidebar",
 	collapsible = "offcanvas",
-	overlay = false,
 	className,
 	children,
 	...props
@@ -162,7 +161,6 @@ function Sidebar({
 	side?: "left" | "right";
 	variant?: "sidebar" | "floating" | "inset";
 	collapsible?: "offcanvas" | "icon" | "none";
-	overlay?: boolean;
 }) {
 	const { t } = useTranslation();
 	const prefersReducedMotion = useReducedMotion();
@@ -214,7 +212,7 @@ function Sidebar({
 	// Target width for the gap placeholder. Animating the actual width lets the
 	// flex sibling <main> follow in real time instead of snapping separately.
 	const gapTargetWidth =
-		overlay || isOffcanvasCollapsed
+		isOffcanvasCollapsed
 			? 0
 			: isIconCollapsed
 				? variant === "floating" || variant === "inset"
@@ -232,7 +230,6 @@ function Sidebar({
 			className="group peer hidden text-sidebar-foreground md:block"
 			data-state={state}
 			data-collapsible={state === "collapsed" ? collapsible : ""}
-			data-overlay={overlay ? "true" : "false"}
 			data-variant={variant}
 			data-side={side}
 			data-slot="sidebar"

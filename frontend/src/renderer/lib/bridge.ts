@@ -63,6 +63,17 @@ export const aoBridge: AoBridge =
 			restart: async () => ({ state: "starting" }),
 			onStatus: () => () => undefined,
 		},
+		editorHandoff: {
+			getState: async () => ({
+				targets: [],
+				preferredEditorId: "cursor",
+				workspaceAvailable: false,
+				unavailableReason: "Desktop app is required to open a workspace.",
+			}),
+			open: async () => {
+				throw new Error("Desktop app is required to open a workspace.");
+			},
+		},
 		telemetry: {
 			getBootstrap: async () => null,
 		},

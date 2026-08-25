@@ -334,6 +334,45 @@ paths:
       summary: Check whether the desktop browser runtime is connected for a session
       tags:
       - browser
+  /api/v1/desktop/sessions/{sessionId}/workspace:
+    get:
+      operationId: getDesktopSessionWorkspace
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DesktopWorkspaceLocationResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Resolve a session workspace for the loopback desktop supervisor
+      tags:
+      - sessions
   /api/v1/dev/import-projects:
     post:
       operationId: runDevImportProjects
@@ -3012,6 +3051,65 @@ paths:
                 $ref: '#/components/schemas/APIError'
           description: Not Implemented
       summary: Branch before and replace an earlier human prompt
+      tags:
+      - conversations
+  /api/v1/sessions/{sessionId}/conversation/turns/{turnId}/retry:
+    post:
+      operationId: retrySessionConversationTurn
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      - description: AO conversation turn identifier, from the snapshot's turns array.
+        in: path
+        name: turnId
+        required: true
+        schema:
+          description: AO conversation turn identifier, from the snapshot's turns
+            array.
+          type: string
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RetryTurnResponse'
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Re-dispatch a failed turn's durable prompt as a new turn
       tags:
       - conversations
   /api/v1/sessions/{sessionId}/conversation/turns/{turnId}/rollback:
@@ -6010,6 +6108,7 @@ components:
           enum:
           - running
           - completed
+          - recovered
           - failed
           - cancelled
           - pending
@@ -6484,6 +6583,8 @@ components:
           $ref: '#/components/schemas/ConversationTurnDiffResponse'
         errorMessage:
           type: string
+        hasRetryAttempt:
+          type: boolean
         id:
           type: string
         plan:
@@ -6491,6 +6592,8 @@ components:
         providerTurnId:
           type: string
         requestedAt:
+          type: string
+        retryOfTurnId:
           type: string
         rolledBack:
           type: boolean
@@ -6503,6 +6606,7 @@ components:
           - queued
           - running
           - completed
+          - recovered
           - interrupted
           - failed
           type: string
@@ -6610,9 +6714,17 @@ components:
           - vibe
           - pi
           - kimchi
+          - omp
           - prime-agent
           - autohand
           - fake
+          type: string
+        approvalMode:
+          enum:
+          - default
+          - accept-edits
+          - auto
+          - bypass-permissions
           type: string
         attachments:
           items:
@@ -6646,6 +6758,16 @@ components:
       required:
       - ok
       - workerId
+      type: object
+    DesktopWorkspaceLocationResponse:
+      properties:
+        sessionId:
+          type: string
+        workspacePath:
+          type: string
+      required:
+      - sessionId
+      - workspacePath
       type: object
     DevImportProjectsConflict:
       properties:
@@ -6748,6 +6870,7 @@ components:
           - queued
           - running
           - completed
+          - recovered
           - interrupted
           - failed
           type: string
@@ -7670,6 +7793,22 @@ components:
       - resumeMode
       - session
       type: object
+    RetryTurnResponse:
+      properties:
+        providerTurnId:
+          type: string
+        state:
+          enum:
+          - queued
+          - running
+          - completed
+          - recovered
+          - interrupted
+          - failed
+          type: string
+        turnId:
+          type: string
+      type: object
     ReviewRun:
       properties:
         autoInjectReview:
@@ -7796,6 +7935,7 @@ components:
           - queued
           - running
           - completed
+          - recovered
           - interrupted
           - failed
           type: string
@@ -8044,6 +8184,8 @@ components:
           type: string
         line:
           type: integer
+        reviewId:
+          type: string
         url:
           type: string
       required:
@@ -8571,6 +8713,7 @@ components:
           - vibe
           - pi
           - kimchi
+          - omp
           - prime-agent
           - autohand
           type: string
@@ -8796,7 +8939,7 @@ components:
             readiness.
           type: boolean
         requirements:
-          description: 'Individual checks, in stable order: git, tmux, harness, gh.'
+          description: Individual checks in stable order for the selected probe.
           items:
             $ref: '#/components/schemas/SystemRequirement'
           type: array

@@ -141,6 +141,7 @@ func schemaName(_ reflect.Type, defaultName string) string {
 // the drift test fails until the spec is regenerated, which flags the gap.
 var schemaNames = map[string]string{
 	"ControllersSettingsResponse":                     "SettingsResponse",
+	"ControllersDesktopWorkspaceLocationResponse":     "DesktopWorkspaceLocationResponse",
 	"ControllersUpdateSessionInterfaceRequest":        "UpdateSessionInterfaceRequest",
 	"ControllersConversationSnapshotResponse":         "ConversationSnapshotResponse",
 	"ControllersConversationTurnResponse":             "ConversationTurnResponse",
@@ -179,6 +180,7 @@ var schemaNames = map[string]string{
 	"ControllersReloadConversationMCPServersResponse": "ReloadConversationMCPServersResponse",
 	"ControllersCompactConversationResponse":          "CompactConversationResponse",
 	"ControllersRollbackConversationResponse":         "RollbackConversationResponse",
+	"ControllersRetryTurnResponse":                    "RetryTurnResponse",
 	"ControllersSetConversationTitleRequest":          "SetConversationTitleRequest",
 	"ControllersSetConversationTitleResponse":         "SetConversationTitleResponse",
 	"ControllersSteerConversationRequest":             "SteerConversationRequest",
@@ -249,6 +251,10 @@ var schemaNames = map[string]string{
 	"ControllersListWorkspaceFilesResponse":               "ListWorkspaceFilesResponse",
 	"ControllersWorkspaceFileSummary":                     "WorkspaceFileSummary",
 	"ControllersWorkspaceFileResponse":                    "WorkspaceFileResponse",
+	"ControllersListEditorsResponse":                      "ListEditorsResponse",
+	"ControllersEditorSummary":                            "EditorSummary",
+	"ControllersOpenSessionEditorRequest":                 "OpenSessionEditorRequest",
+	"ControllersOpenSessionEditorResponse":                "OpenSessionEditorResponse",
 	"ControllersKillSessionResponse":                      "KillSessionResponse",
 	"ControllersRollbackSessionResponse":                  "RollbackSessionResponse",
 	"ControllersSendSessionMessageRequest":                "SendSessionMessageRequest",
@@ -808,6 +814,19 @@ func shellTerminalOperations() []operation {
 			pathParams: []any{controllers.SessionIDParam{}, controllers.ConversationTurnIDParam{}},
 			resps: []respUnit{
 				{http.StatusOK, controllers.RollbackConversationResponse{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/retry", id: "retrySessionConversationTurn", tag: "conversations",
+			summary:    "Re-dispatch a failed turn's durable prompt as a new turn",
+			pathParams: []any{controllers.SessionIDParam{}, controllers.ConversationTurnIDParam{}},
+			resps: []respUnit{
+				{http.StatusAccepted, controllers.RetryTurnResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusConflict, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
@@ -1585,6 +1604,17 @@ func sessionOperations() []operation {
 			resps: []respUnit{
 				{http.StatusOK, controllers.WorkspaceFileResponse{}},
 				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/desktop/sessions/{sessionId}/workspace", id: "getDesktopSessionWorkspace", tag: "sessions",
+			summary:    "Resolve a session workspace for the loopback desktop supervisor",
+			pathParams: []any{controllers.SessionIDParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.DesktopWorkspaceLocationResponse{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},

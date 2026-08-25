@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest";
-import config from "./forge.config";
+import config, { extraResourcesForPlatform } from "./forge.config";
+
+describe("native runtime resources", () => {
+	it.each(["darwin", "linux"] as const)("bundles tmux on %s", (platform) => {
+		expect(extraResourcesForPlatform(platform)).toContain("tmux");
+	});
+
+	it("does not bundle tmux on Windows", () => {
+		expect(extraResourcesForPlatform("win32")).not.toContain("tmux");
+	});
+});
 
 describe("packaged authentication callback registration", () => {
 	it("declares ao-app in the macOS bundle and Linux package metadata", () => {

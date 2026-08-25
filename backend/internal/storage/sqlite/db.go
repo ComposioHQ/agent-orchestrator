@@ -137,6 +137,9 @@ func migrate(db *sql.DB) error {
 	if err := prepareAutoInjectReviewMigration(db); err != nil {
 		return fmt.Errorf("prepare auto-inject-review migration: %w", err)
 	}
+	if err := preparePRCommentReviewIDMigration(db); err != nil {
+		return fmt.Errorf("prepare PR comment review-id migration: %w", err)
+	}
 	if err := repairRenumberedAgentSwitchMigrationHistory(db); err != nil {
 		return fmt.Errorf("repair renumbered agent-switch migration history: %w", err)
 	}
@@ -203,6 +206,44 @@ SELECT COALESCE((
 	}
 
 	_, err := db.Exec(`INSERT INTO goose_db_version (version_id, is_applied) VALUES (84, 1)`)
+	return err
+}
+
+// preparePRCommentReviewIDMigration preserves development databases that
+// acquired pr_comment.review_id while this migration was being renumbered but
+// do not have its canonical 0106 ledger entry. Recording the physically present
+// effect prevents goose from replaying the ALTER TABLE over the existing column.
+func preparePRCommentReviewIDMigration(db *sql.DB) error {
+	var gooseTable int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'goose_db_version'`,
+	).Scan(&gooseTable); err != nil {
+		return err
+	}
+	if gooseTable == 0 {
+		return nil
+	}
+
+	var applied, reviewIDColumn int
+	if err := db.QueryRow(`
+SELECT COALESCE((
+    SELECT is_applied FROM goose_db_version
+    WHERE version_id = 106 ORDER BY id DESC LIMIT 1
+), 0)`).Scan(&applied); err != nil {
+		return err
+	}
+	if applied != 0 {
+		return nil
+	}
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM pragma_table_info('pr_comment') WHERE name = 'review_id'`,
+	).Scan(&reviewIDColumn); err != nil {
+		return err
+	}
+	if reviewIDColumn == 0 {
+		return nil
+	}
+	_, err := db.Exec(`INSERT INTO goose_db_version (version_id, is_applied) VALUES (106, 1)`)
 	return err
 }
 

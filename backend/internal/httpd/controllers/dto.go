@@ -185,7 +185,7 @@ type SpawnSessionRequest struct {
 	IssueID         domain.IssueID         `json:"issueId,omitempty"`
 	TrackerProvider domain.TrackerProvider `json:"trackerProvider,omitempty" enum:"github,gitlab"`
 	Kind            domain.SessionKind     `json:"kind,omitempty" enum:"worker,orchestrator"`
-	Harness         domain.AgentHarness    `json:"harness,omitempty" enum:"claude-code,codex,aider,opencode,grok,droid,amp,agy,crush,cursor,qwen,copilot,goose,auggie,continue,devin,cline,kimi,muse,kiro,kilocode,vibe,pi,kimchi,prime-agent,autohand"`
+	Harness         domain.AgentHarness    `json:"harness,omitempty" enum:"claude-code,codex,aider,opencode,grok,droid,amp,agy,crush,cursor,qwen,copilot,goose,auggie,continue,devin,cline,kimi,muse,kiro,kilocode,vibe,pi,kimchi,omp,prime-agent,autohand"`
 	Branch          string                 `json:"branch,omitempty"`
 	// Mode picks the conversation controller: chat talks to the agent over a
 	// structured connection, tui opens the agent's native terminal interface.
@@ -342,6 +342,14 @@ type WorkspaceFileResponse struct {
 	CompareBaseSHA   string                          `json:"compareBaseSha,omitempty"`
 	CompareBaseRef   string                          `json:"compareBaseRef,omitempty"`
 	CompareMode      sessionsvc.WorkspaceCompareMode `json:"compareMode,omitempty" enum:"base,head_fallback"`
+}
+
+// DesktopWorkspaceLocationResponse is returned only by the LAN-blocked desktop
+// handoff route. Electron main consumes the absolute path and never exposes it
+// through the preload bridge.
+type DesktopWorkspaceLocationResponse struct {
+	SessionID     domain.SessionID `json:"sessionId"`
+	WorkspacePath string           `json:"workspacePath"`
 }
 
 // SessionPreviewResponse is the body of GET /api/v1/sessions/{sessionId}/preview.
@@ -621,8 +629,11 @@ type SendSessionMessageResponse struct {
 type DelegateTaskRequest struct {
 	ProjectID domain.ProjectID    `json:"projectId"`
 	Brief     string              `json:"brief" maxLength:"4096"`
-	Agent     domain.AgentHarness `json:"agent,omitempty" enum:"claude-code,codex,aider,opencode,grok,droid,amp,agy,crush,cursor,qwen,copilot,goose,auggie,continue,devin,cline,kimi,muse,kiro,kilocode,vibe,pi,kimchi,prime-agent,autohand,fake"`
+	Agent     domain.AgentHarness `json:"agent,omitempty" enum:"claude-code,codex,aider,opencode,grok,droid,amp,agy,crush,cursor,qwen,copilot,goose,auggie,continue,devin,cline,kimi,muse,kiro,kilocode,vibe,pi,kimchi,omp,prime-agent,autohand,fake"`
 	Model     string              `json:"model,omitempty" maxLength:"256"`
+	// ApprovalMode is an optional per-session override. The UI uses the explicit
+	// bypass value only after the user accepts an approval-less Chat fallback.
+	ApprovalMode domain.PermissionMode `json:"approvalMode,omitempty" enum:"default,accept-edits,auto,bypass-permissions"`
 	// Mode is omitted for the daemon-owned default. The UI sends tui only when
 	// the user explicitly accepts the fallback after Chat preflight fails.
 	Mode domain.SessionMode `json:"mode,omitempty" enum:"tui,chat"`
@@ -730,6 +741,7 @@ type SessionPRUnresolvedReviewer struct {
 // SessionPRReviewCommentLink points to one review comment.
 type SessionPRReviewCommentLink struct {
 	URL              string `json:"url,omitempty"`
+	ReviewID         string `json:"reviewId,omitempty"`
 	File             string `json:"file,omitempty"`
 	Line             int    `json:"line,omitempty"`
 	Body             string `json:"body,omitempty"`
@@ -823,7 +835,7 @@ func newSessionPRCommentReviewers(in []sessionsvc.PRUnresolvedReviewer) []Sessio
 	for _, reviewer := range in {
 		links := make([]SessionPRReviewCommentLink, 0, len(reviewer.Links))
 		for _, link := range reviewer.Links {
-			links = append(links, SessionPRReviewCommentLink{URL: link.URL, File: link.File, Line: link.Line, Body: link.Body, AutoInjectReview: link.AutoInjectReview})
+			links = append(links, SessionPRReviewCommentLink{URL: link.URL, ReviewID: link.ReviewID, File: link.File, Line: link.Line, Body: link.Body, AutoInjectReview: link.AutoInjectReview})
 		}
 		reviewers = append(reviewers, SessionPRUnresolvedReviewer{ReviewerID: reviewer.ReviewerID, Count: reviewer.Count, Links: links, ReviewURL: reviewer.ReviewURL, IsBot: reviewer.IsBot})
 	}
@@ -1358,7 +1370,7 @@ type SendConversationMessageResponse struct {
 	// `queued` when it arrived mid-turn and will be sent once the turn ends. A
 	// client that only reads turnId cannot tell those apart, and "accepted" is not
 	// the same claim as "delivered".
-	State domain.TurnState `json:"state,omitempty" enum:"queued,running,completed,interrupted,failed"`
+	State domain.TurnState `json:"state,omitempty" enum:"queued,running,completed,recovered,interrupted,failed"`
 	// Duplicate is true when this client message id was already delivered, so a
 	// retrying client can stop instead of assuming a new turn began.
 	Duplicate bool `json:"duplicate"`
@@ -1388,7 +1400,16 @@ type EditConversationMessageResponse struct {
 	ActiveBranchID string           `json:"activeBranchId"`
 	TurnID         string           `json:"turnId,omitempty"`
 	ProviderTurnID string           `json:"providerTurnId,omitempty"`
-	State          domain.TurnState `json:"state,omitempty" enum:"queued,running,completed,interrupted,failed"`
+	State          domain.TurnState `json:"state,omitempty" enum:"queued,running,completed,recovered,interrupted,failed"`
+}
+
+// RetryTurnResponse reports the new turn a retry dispatched. The original failed
+// turn is not referenced here: it stays failed and unchanged, and both attempts
+// remain separately visible in history.
+type RetryTurnResponse struct {
+	TurnID         string           `json:"turnId,omitempty"`
+	ProviderTurnID string           `json:"providerTurnId,omitempty"`
+	State          domain.TurnState `json:"state,omitempty" enum:"queued,running,completed,recovered,interrupted,failed"`
 }
 
 // ActivateConversationBranchResponse reports the durable head after switching.
@@ -1517,13 +1538,17 @@ type CompactConversationResponse struct {
 
 // ConversationTurnResponse is one request and the work that followed it.
 type ConversationTurnResponse struct {
-	ID             string  `json:"id"`
-	State          string  `json:"state" enum:"queued,running,completed,interrupted,failed"`
-	ProviderTurnID string  `json:"providerTurnId,omitempty"`
-	ErrorMessage   string  `json:"errorMessage,omitempty"`
-	RequestedAt    string  `json:"requestedAt"`
-	StartedAt      *string `json:"startedAt,omitempty"`
-	CompletedAt    *string `json:"completedAt,omitempty"`
+	ID             string `json:"id"`
+	State          string `json:"state" enum:"queued,running,completed,recovered,interrupted,failed"`
+	ProviderTurnID string `json:"providerTurnId,omitempty"`
+	// RetryOfTurnID is the failed source whose durable prompt created this turn.
+	RetryOfTurnID string `json:"retryOfTurnId,omitempty"`
+	// HasRetryAttempt remains true when the attempt is outside the active branch.
+	HasRetryAttempt bool    `json:"hasRetryAttempt,omitempty"`
+	ErrorMessage    string  `json:"errorMessage,omitempty"`
+	RequestedAt     string  `json:"requestedAt"`
+	StartedAt       *string `json:"startedAt,omitempty"`
+	CompletedAt     *string `json:"completedAt,omitempty"`
 	// RolledBack marks a turn an undo discarded. Its messages and activities are
 	// absent from this snapshot because the agent no longer remembers them; the turn
 	// is still reported so a client can say what was taken back rather than letting
@@ -1622,7 +1647,7 @@ type ConversationActivityResponse struct {
 	// approval is a question waiting on a person, while an auto-review is a decision
 	// the provider already made on their behalf, and those are opposites.
 	ActivityKind string `json:"activityKind" enum:"command,file_change,plan,reasoning,approval,usage,error,system,mcp_tool,auto_review,user_input"`
-	Status       string `json:"status" enum:"running,completed,failed,cancelled,pending,resolved"`
+	Status       string `json:"status" enum:"running,completed,recovered,failed,cancelled,pending,resolved"`
 	Summary      string `json:"summary"`
 	// Detail is the provider-neutral typed payload for this kind. For an approval
 	// it carries the provider's own offered decisions, which is what the client

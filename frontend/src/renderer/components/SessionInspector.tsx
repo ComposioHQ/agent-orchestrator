@@ -18,6 +18,7 @@ import {
 	type InspectorGithubReview,
 	type InspectorReviewGroup,
 	type InspectorReviewLabels,
+	type InspectorReviewSummaryAction,
 	type InspectorTimelineEvent,
 	type InspectorView,
 } from "@aoagents/product-ui";
@@ -38,6 +39,7 @@ import {
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import { captureRendererEvent } from "../lib/telemetry";
 import { formatTimeCompact } from "../lib/format-time";
 import { AgentAvatar } from "./AgentAvatar";
 import { ProductExternalLink } from "./ProductExternalLink";
@@ -48,6 +50,7 @@ import {
 } from "../hooks/useSessionScmSummary";
 import { useSessionUsage, type SessionUsage } from "../hooks/useSessionUsage";
 import { useSessionWorkspaceFilesChangedCount } from "../hooks/useSessionWorkspaceFiles";
+import { useSessionBrowserLink } from "../hooks/useSessionBrowserLink";
 import { clearTerminateSessionState, useTerminateSession } from "../hooks/useTerminateSession";
 import { prBrowserUrl, prCardPresentation, prNounKeys, sessionPRDisplaySummaries } from "../lib/pr-display";
 import { formatTokenCount } from "../lib/format-token-count";
@@ -73,6 +76,7 @@ import {
 	openReviewStatesFor,
 	reviewIsRunning,
 	reviewRunDisabled,
+	reviewRunActionKind,
 	reviewSessionRunAction,
 	sessionReviewsQueryOptions,
 	type PRReviewState,
@@ -144,6 +148,7 @@ export function SessionInspector({
 	isInspectorVisible = true,
 	onToggleBrowserPopOut,
 	onOpenFiles,
+	onOpenReviewFile,
 	filesView,
 	browserView,
 	view: viewProp,
@@ -154,8 +159,9 @@ export function SessionInspector({
 	browserPoppedOut?: boolean;
 	browserAnnotationQueue?: BrowserAnnotationQueueModel;
 	isInspectorVisible?: boolean;
-	onToggleBrowserPopOut?: (next: boolean) => void;
+	onToggleBrowserPopOut?: (next: boolean, sourceRect?: DOMRectReadOnly) => void;
 	onOpenFiles?: () => void;
+	onOpenReviewFile?: (target: { line?: number; path: string }) => void;
 	filesView?: ReactNode;
 	browserView?: BrowserViewModel;
 	/** Controlled active tab. Omit to let the inspector own its own selection. */
@@ -229,7 +235,7 @@ export function SessionInspector({
 				loadingText={session ? undefined : t("inspector.loadingSession")}
 				onViewChange={setView}
 				reviewsView={
-					session ? <ReviewsView onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} /> : undefined
+					session ? <ReviewsView onOpenReviewFile={onOpenReviewFile} onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} /> : undefined
 				}
 				summaryView={
 					session ? <SummaryView canOpenReviews={reviewsAvailable} onOpenReviews={() => setView("reviews")} session={session} /> : undefined
@@ -324,14 +330,16 @@ function SummaryView({
 
 function ReviewsView({
 	session,
+	onOpenReviewFile,
 	onOpenReviewerTerminal,
 }: {
 	session: WorkspaceSession;
+	onOpenReviewFile?: (target: { line?: number; path: string }) => void;
 	onOpenReviewerTerminal?: OpenReviewerTerminal;
 }) {
 	return (
 		<div role="tabpanel">
-			<ReviewsSection onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} />
+			<ReviewsSection onOpenReviewFile={onOpenReviewFile} onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} />
 		</div>
 	);
 }
@@ -1366,9 +1374,11 @@ function resolveDefaultReviewerHarness(config: ProjectConfig | undefined, worker
 
 function ReviewsSection({
 	session,
+	onOpenReviewFile,
 	onOpenReviewerTerminal,
 }: {
 	session: WorkspaceSession;
+	onOpenReviewFile?: (target: { line?: number; path: string }) => void;
 	onOpenReviewerTerminal?: OpenReviewerTerminal;
 }) {
 	const { t } = useTranslation();
@@ -1426,6 +1436,9 @@ function ReviewsSection({
 	});
 	const saveAutoReview = useMutation({
 		mutationFn: async (enabled: boolean) => {
+			// Intent, not effect: emitted before the PUT, so a failed save still
+			// counts as the user reaching for the switch.
+			void captureRendererEvent("ao.renderer.review_auto_review_toggled", { enabled });
 			const { error } = await apiClient.PUT("/api/v1/sessions/{sessionId}/auto-review", {
 				params: { path: { sessionId: session.id } },
 				body: { enabled },
@@ -1438,6 +1451,13 @@ function ReviewsSection({
 	});
 	const triggerReview = useMutation({
 		mutationFn: async () => {
+			// Emitted before the request: these renderer events count INTENT, and the
+			// daemon's ao.review.* events are the ground truth for what actually ran.
+			void captureRendererEvent("ao.renderer.review_triggered", {
+				action: reviewRunActionKind(openReviewStatesFor(session, reviewsQuery.data?.reviews ?? []), false),
+				has_override: reviewerOverride !== "",
+				source: "inspector",
+			});
 			// No override sends no body at all, leaving the default path on the wire
 			// exactly as it was.
 			const { data, error, response } = await apiClient.POST("/api/v1/sessions/{sessionId}/reviews/trigger", {
@@ -1499,7 +1519,8 @@ function ReviewsSection({
 		(pr) =>
 			(pr.state === "open" || pr.state === "draft") &&
 			((pr.review?.reviews?.length ?? 0) > 0 ||
-				(pr.review?.unresolvedBy ?? []).some((reviewer) => reviewer.count > 0)),
+				(pr.review?.unresolvedBy ?? []).some((reviewer) => reviewer.count > 0) ||
+				(pr.review?.resolvedBy ?? []).some((reviewer) => reviewer.count > 0)),
 	);
 	return (
 		<div className="p-2">
@@ -1540,6 +1561,7 @@ function ReviewsSection({
 			<MergedReviewsSection
 				githubPRs={githubReviews}
 				isLoading={scmSummary.isLoading}
+				onOpenReviewFile={onOpenReviewFile}
 				reviewStates={reviewStates}
 				runs={reviewsQuery.data?.runs ?? []}
 				session={session}
@@ -1558,18 +1580,21 @@ function ReviewsSection({
 function MergedReviewsSection({
 	githubPRs,
 	isLoading,
+	onOpenReviewFile,
 	reviewStates,
 	runs,
 	session,
 }: {
 	githubPRs: SessionPRSummary[];
 	isLoading: boolean;
+	onOpenReviewFile?: (target: { line?: number; path: string }) => void;
 	reviewStates: PRReviewState[];
 	runs: ReviewRunFacts[];
 	session: WorkspaceSession;
 }) {
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
+	const openInAOBrowser = useSessionBrowserLink(session);
 	const openReviewStates = openReviewStatesFor(session, reviewStates);
 	const runsByPR = runsByPRFrom(openReviewStates, runs);
 	const aoStates = triggeredReviewStatesFrom(openReviewStates, runs);
@@ -1607,15 +1632,56 @@ function MergedReviewsSection({
 		});
 		if (error) throw new Error(apiErrorMessage(error, "Unable to send review comment to worker agent"));
 	};
+	const sendReviewSummaryToWorker = async (summary: InspectorReviewSummaryAction) => {
+		const { error } = await apiClient.POST("/api/v1/sessions/{sessionId}/send", {
+			params: { path: { sessionId: session.id } },
+			body: { message: formatReviewSummaryMessage(summary) },
+		});
+		if (error) throw new Error(apiErrorMessage(error, "Unable to send review summary to worker agent"));
+	};
 	const groups: InspectorReviewGroup[] = rows.map(([number, { ao, github }]) => {
 		const aoRuns = ao ? [...(runsByPR.get(ao.prUrl) ?? [])].sort((a, b) => b.createdAt.localeCompare(a.createdAt)) : [];
 		const entries = (github?.review?.reviews ?? []).filter(
 			(entry) => !externalReviewActorMatchesPRAuthor(entry.reviewerId, github?.author),
 		);
-		const unresolvedReviewers = (github?.review?.unresolvedBy ?? []).filter(
+		const allUnresolvedReviewers = github?.review?.unresolvedBy ?? [];
+		const allResolvedReviewers = github?.review?.resolvedBy ?? [];
+		const agentReviewIds = new Set(aoRuns.map((run) => run.githubReviewId).filter(Boolean));
+		const agentComments = new Map<string, { inlineComments: InspectorInlineComment[]; resolvedComments: InspectorInlineComment[] }>();
+		const partitionReviewerComments = (
+			reviewers: typeof allUnresolvedReviewers,
+			resolved: boolean,
+		) => reviewers
+			.map((reviewer) => {
+				const externalLinks = [] as typeof reviewer.links;
+				for (const link of reviewer.links) {
+					const reviewId = link.reviewId?.trim();
+					if (!reviewId || !agentReviewIds.has(reviewId)) {
+						externalLinks.push(link);
+						continue;
+					}
+					const comments = agentComments.get(reviewId) ?? { inlineComments: [], resolvedComments: [] };
+					const comment = {
+						autoInjectReview: link.autoInjectReview,
+						body: link.body,
+						file: link.file,
+						line: link.line,
+						pullRequestUrl: github?.url,
+						resolved,
+						reviewerId: reviewer.reviewerId,
+						url: link.url || reviewer.reviewUrl,
+					};
+					if (resolved) comments.resolvedComments.push(comment);
+					else comments.inlineComments.push(comment);
+					agentComments.set(reviewId, comments);
+				}
+				return { ...reviewer, count: externalLinks.length, links: externalLinks };
+			})
+			.filter((reviewer) => reviewer.links.length > 0);
+		const unresolvedReviewers = partitionReviewerComments(allUnresolvedReviewers, false).filter(
 			(reviewer) => !externalReviewActorMatchesPRAuthor(reviewer.reviewerId, github?.author),
 		);
-		const resolvedReviewers = (github?.review?.resolvedBy ?? []).filter(
+		const resolvedReviewers = partitionReviewerComments(allResolvedReviewers, true).filter(
 			(reviewer) => !externalReviewActorMatchesPRAuthor(reviewer.reviewerId, github?.author),
 		);
 		const unresolved = unresolvedReviewers.reduce((count, reviewer) => count + reviewer.count, 0);
@@ -1627,6 +1693,8 @@ function MergedReviewsSection({
 				createdAtLabel: formatTimeCompact(run.createdAt),
 				harness: run.harness || "reviewer",
 				id: run.id,
+				inlineComments: agentComments.get(run.githubReviewId)?.inlineComments ?? [],
+				resolvedComments: agentComments.get(run.githubReviewId)?.resolvedComments ?? [],
 				status: run.status,
 				url: reviewUrl ?? (ao?.prUrl || null),
 				verdict: githubVerdict(run.verdict, t),
@@ -1788,7 +1856,12 @@ function MergedReviewsSection({
 			labels={labels}
 			onRequestRereview={requestRereview}
 			onResolveInlineComment={resolveInlineComment}
+			onOpenInAOBrowser={openInAOBrowser}
 			onSendInlineComment={sendInlineCommentToWorker}
+			onSendReviewSummary={sendReviewSummaryToWorker}
+			onViewInlineCommentInFile={(comment) => {
+				if (comment.file) onOpenReviewFile?.({ line: comment.line, path: comment.file });
+			}}
 			renderAvatar={(harness) => (
 				<AgentAvatar className="size-5 shrink-0" decorative provider={harness} />
 			)}
@@ -1813,8 +1886,11 @@ function reviewLabels(t: TFunction): InspectorReviewLabels {
 		noPastReviewSummaries: t("inspector.noPastReviewSummaries"),
 		notInjected: t("inspector.review.notInjected"),
 		openComments: t("inspector.openComments"),
+		openInAOBrowser: t("inspector.openInAOBrowser"),
+		openInSystemBrowser: t("inspector.openInSystemBrowser"),
 		openInlineComments: (count) => t("inspector.openInlineComments", { count }),
 		requestRereviewPR: t("inspector.requestRereviewPR"),
+		reviewActions: t("inspector.reviewActions"),
 		reviews: t("inspector.reviews"),
 		reviewedAt: (time) => t("inspector.reviewedAt", { time }),
 		resolvedComments: (count) => t("inspector.resolvedComments", { count }),
@@ -1874,6 +1950,21 @@ function formatInlineReviewCommentMessage(comment: InspectorInlineComment & { re
 		lines.push("", `Comment URL: ${url}`);
 	}
 	lines.push("", "You should not need to re-fetch review data unless you need additional context beyond what AO has provided here.");
+	return lines.join("\n");
+}
+
+function formatReviewSummaryMessage(summary: InspectorReviewSummaryAction): string {
+	const reviewer = sanitizeWorkerMessagePart(summary.reviewerId.trim() || "reviewer");
+	const body = sanitizeWorkerMessagePart(summary.body.trim());
+	const url = sanitizeWorkerMessagePart((summary.url || summary.pullRequestUrl || "").trim());
+	const source = summary.source === "agent" ? "AO agent review" : "external PR review";
+	const lines = [
+		`A ${source} from ${reviewer} has feedback for your pull request. Address the actionable items, run relevant tests, commit the fixes, and push the branch.`,
+		"",
+		"Review summary:",
+		body,
+	];
+	if (url) lines.push("", `Review URL: ${url}`);
 	return lines.join("\n");
 }
 
@@ -2036,7 +2127,7 @@ function ReviewPanel({
 					</TooltipProvider>
 				) : null}
 				<div className="review-run-controls-container min-w-0 divide-y divide-border/70 text-xs">
-					<div className="flex min-h-10 min-w-0 items-center justify-between gap-3 py-2">
+					<div className="flex min-h-10 min-w-0 items-center justify-between gap-3 py-2 @max-[420px]/inspector:flex-col @max-[420px]/inspector:items-stretch @max-[420px]/inspector:gap-2">
 						<span className="min-w-0 text-xs font-medium text-foreground">
 							{t("inspector.selectReviewerAgent")}
 						</span>
@@ -2050,7 +2141,7 @@ function ReviewPanel({
 							installed={agentCatalog?.installed}
 							onChange={(next) => onReviewerOverrideChange(next as ReviewerHarness | "")}
 							supported={agentCatalog?.supported}
-							triggerClassName="review-run-agent-select ml-auto h-control-md w-auto min-w-0 max-w-[11rem] shrink-0 justify-end px-2 text-right text-xs"
+							triggerClassName="review-run-agent-select ml-auto h-control-md w-auto min-w-0 max-w-[11rem] shrink-0 justify-end px-2 text-right text-xs @max-[420px]/inspector:ml-0 @max-[420px]/inspector:w-full @max-[420px]/inspector:max-w-none @max-[420px]/inspector:justify-between @max-[420px]/inspector:text-left"
 							value={reviewerOverride}
 							excludedHarness={resolvedDefaultHarness}
 							showDefaultOption
@@ -2065,9 +2156,9 @@ function ReviewPanel({
 						onCheckedChange={onAutoReviewChange}
 						tooltipClassName="max-w-64"
 					/>
-					<div className="flex min-h-10 items-center justify-between gap-3 py-2">
+					<div className="flex min-h-10 min-w-0 items-center justify-between gap-3 py-2 @max-[420px]/inspector:flex-col @max-[420px]/inspector:items-stretch @max-[420px]/inspector:gap-2">
 						<span className="text-xs font-medium text-foreground">{t("inspector.review.session")}</span>
-						<div className="flex shrink-0 items-center gap-1.5">
+						<div className="flex min-w-0 items-center justify-end gap-1.5">
 							<Button
 								aria-label={primaryReviewActionLabel}
 								className="shrink-0 gap-1 px-1.5 text-xs [&_svg]:size-icon-sm"
@@ -2233,7 +2324,7 @@ function BrowserView({
 	isActive: boolean;
 	browserPoppedOut: boolean;
 	browserAnnotationQueue?: BrowserAnnotationQueueModel;
-	onTogglePopOut?: (next: boolean) => void;
+	onTogglePopOut?: (next: boolean, sourceRect?: DOMRectReadOnly) => void;
 	browserView?: BrowserViewModel;
 }) {
 	// While maximized, the browser is a full-window overlay that covers the rail,
@@ -2243,7 +2334,7 @@ function BrowserView({
 	const { t } = useTranslation();
 	if (browserPoppedOut) {
 		return (
-			<div role="tabpanel">
+			<div className="h-full min-h-0" data-browser-dock-target="" role="tabpanel">
 				<div className={cn(inspectorEmptyClass, "flex flex-col items-center gap-2 py-10 px-5 text-center")}>
 					<p className="text-md-sm text-muted-foreground">{t("inspector.browserInCenter")}</p>
 					<Button onClick={() => onTogglePopOut?.(false)} size="sm" type="button" variant="outline">
@@ -2263,7 +2354,7 @@ function BrowserView({
 			active={isActive}
 			annotationQueue={browserAnnotationQueue}
 			browserView={browserView}
-			onTogglePopOut={(next) => onTogglePopOut?.(next)}
+			onTogglePopOut={(next, sourceRect) => onTogglePopOut?.(next, sourceRect)}
 			poppedOut={false}
 			session={session}
 		/>

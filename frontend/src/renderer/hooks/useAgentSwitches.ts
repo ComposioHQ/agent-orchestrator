@@ -17,9 +17,12 @@ export function isTerminalAgentSwitch(agentSwitch: AgentSwitch): boolean {
 export function agentSwitchNeedsRecovery(agentSwitch: AgentSwitch): boolean {
 	return (
 		agentSwitchNeedsTargetStartRecovery(agentSwitch) ||
-		agentSwitchNeedsSourceStopRecovery(agentSwitch) ||
-		agentSwitchNeedsSourceRestore(agentSwitch)
+		agentSwitchNeedsSourceRecovery(agentSwitch)
 	);
+}
+
+export function agentSwitchNeedsSourceRecovery(agentSwitch: AgentSwitch): boolean {
+	return agentSwitchNeedsSourceStopRecovery(agentSwitch) || agentSwitchNeedsSourceRestore(agentSwitch);
 }
 
 export function agentSwitchNeedsTargetStartRecovery(agentSwitch: AgentSwitch): boolean {
@@ -67,7 +70,9 @@ export function selectDurableAgentSwitch(
 }
 
 export function agentSwitchesRefetchInterval(agentSwitches: AgentSwitch[]): 1_000 | false {
-	return findActiveAgentSwitch(agentSwitches) ? 1_000 : false;
+	return findActiveAgentSwitch(agentSwitches) || agentSwitches.some(agentSwitchNeedsSourceRecovery)
+		? 1_000
+		: false;
 }
 
 async function fetchAgentSwitches(sessionId: string): Promise<AgentSwitch[]> {
@@ -85,9 +90,9 @@ export function useAgentSwitches(sessionId: string) {
 		queryKey: agentSwitchesQueryKey(sessionId),
 		enabled: Boolean(sessionId),
 		queryFn: () => (usesPreviewWorkspaceData ? Promise.resolve([]) : fetchAgentSwitches(sessionId)),
-		// Once a durable saga is active, keep its phase fresh even if the CDC
-		// connection is temporarily unavailable. Recovery-required records are
-		// intentionally static until an external recovery changes them.
+		// Keep active sagas fresh even if the CDC connection is temporarily
+		// unavailable. Source-recovery endpoints accept work asynchronously, so
+		// those recovery rows must also poll until their worker settles.
 		refetchInterval: (query) =>
 			agentSwitchesRefetchInterval((query.state.data as AgentSwitch[] | undefined) ?? []),
 		retry: 1,
