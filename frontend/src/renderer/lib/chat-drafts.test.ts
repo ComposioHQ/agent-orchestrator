@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+	activateChatDraftScope,
 	beginChatComposerMutation,
 	beginChatInlineEditMutation,
 	cancelChatComposerMutation,
@@ -43,7 +44,7 @@ class MemoryStorage implements DraftStorage {
 }
 
 describe("Chat draft storage", () => {
-	it("purges every renderer draft registry before restoring a recreated session id", () => {
+	it("lets authoritative recreation purge once while every late obsolete callback fails closed", () => {
 		const storage = new MemoryStorage();
 		const first: ChatDraftScope = {
 			sessionId: "session-recreated",
@@ -53,6 +54,7 @@ describe("Chat draft storage", () => {
 			sessionId: first.sessionId,
 			incarnation: "2026-08-26T09:00:00.000Z",
 		};
+		expect(activateChatDraftScope(first, storage)).toMatchObject({ ok: true });
 		writeChatComposerText(first, "belongs to deleted session", storage);
 		writeChatAttachments(
 			first,
@@ -67,7 +69,7 @@ describe("Chat draft storage", () => {
 			],
 			storage,
 		);
-		prepareChatComposerDelivery(
+		const oldSend = prepareChatComposerDelivery(
 			first,
 			{
 				kind: "steer",
@@ -78,24 +80,114 @@ describe("Chat draft storage", () => {
 			},
 			storage,
 		);
+		const oldEdit = prepareChatInlineEditDelivery(
+			first,
+			{
+				turnId: "old-turn",
+				text: "old edit",
+				content: [],
+				clientMessageId: "old-edit-delivery",
+			},
+			storage,
+		);
+		expect(oldSend.ok).toBe(true);
+		expect(oldEdit.ok).toBe(true);
 		expect(beginChatComposerMutation(first)).toBeTypeOf("symbol");
+		expect(beginChatInlineEditMutation(first)).toBeTypeOf("symbol");
+
+		expect(activateChatDraftScope(replacement, storage)).toMatchObject({
+			ok: true,
+			replaced: true,
+		});
+		expect(writeChatComposerText(replacement, "replacement draft", storage).ok).toBe(true);
+		expect(
+			writeChatAttachments(
+				replacement,
+				[
+					{
+						id: "new-attachment",
+						path: ".ao/attachments/new.png",
+						name: "new.png",
+						mimeType: "image/png",
+						bytes: 20,
+					},
+				],
+				storage,
+			).ok,
+		).toBe(true);
+		expect(
+			writeChatInlineEdit(
+				replacement,
+				{ turnId: "new-turn", text: "replacement edit", content: [] },
+				storage,
+			).ok,
+		).toBe(true);
+
+		// These model late FileReader/staging, send, edit, and stale-render callbacks
+		// from the deleted incarnation after the replacement already owns storage.
+		expect(writeChatComposerText(first, "late old text", storage).ok).toBe(false);
+		expect(
+			writeChatAttachments(
+				first,
+				[
+					{
+						id: "late-old-attachment",
+						path: ".ao/attachments/late-old.png",
+						name: "late-old.png",
+						mimeType: "image/png",
+						bytes: 30,
+					},
+				],
+				storage,
+			).ok,
+		).toBe(false);
+		expect(
+			markChatComposerDeliveryAccepted(
+				first,
+				"old-unresolved-delivery",
+				oldSend.mutation!.revision,
+				storage,
+			).ok,
+		).toBe(false);
+		expect(
+			markChatInlineEditDeliveryAccepted(
+				first,
+				"old-edit-delivery",
+				oldEdit.mutation!.revision,
+				storage,
+			).ok,
+		).toBe(false);
+		expect(activateChatDraftScope(first, storage)).toMatchObject({
+			ok: false,
+			reason: "obsolete",
+		});
 
 		const restored = readChatSessionDraft(replacement, storage);
-
 		expect(restored).toMatchObject({
 			sessionId: replacement.sessionId,
 			incarnation: replacement.incarnation,
-			composer: { text: "", attachments: [] },
+			composer: {
+				text: "replacement draft",
+				attachments: [{ id: "new-attachment", path: ".ao/attachments/new.png" }],
+			},
+			inlineEdit: { turnId: "new-turn", text: "replacement edit" },
 		});
 		expect(restored.composer.delivery).toBeUndefined();
 		expect(getChatComposerMutation(first)).toEqual({ pending: false });
-		expect(storage.values.has(`ao.chat.draft:${encodeURIComponent(first.sessionId)}`)).toBe(false);
+		expect(getChatInlineEditMutation(first)).toEqual({ pending: false });
 	});
 
-	it("fails closed when an obsolete incarnation cannot be durably purged", () => {
+	it("keeps both incarnations fail closed until an interrupted authoritative purge finishes", () => {
 		const backing = new MemoryStorage();
-		const first: ChatDraftScope = { sessionId: "session-purge", incarnation: "first" };
-		const replacement: ChatDraftScope = { sessionId: first.sessionId, incarnation: "second" };
+		const first: ChatDraftScope = {
+			sessionId: "session-purge",
+			incarnation: "2026-08-25T09:00:00.000Z",
+		};
+		const replacement: ChatDraftScope = {
+			sessionId: first.sessionId,
+			incarnation: "2026-08-26T09:00:00.000Z",
+		};
+		expect(activateChatDraftScope(first, backing)).toMatchObject({ ok: true });
 		writeChatComposerText(first, "obsolete", backing);
 		const blockedRemoval: DraftStorage = {
 			getItem: backing.getItem.bind(backing),
@@ -105,20 +197,23 @@ describe("Chat draft storage", () => {
 			},
 		};
 
-		expect(
-			prepareChatComposerDelivery(
-				replacement,
-				{
-					kind: "send",
-					composerText: "replacement draft",
-					attachments: [],
-					requestText: "replacement draft",
-					clientMessageId: "replacement-delivery",
-				},
-				blockedRemoval,
-			),
-		).toMatchObject({ ok: false });
-		expect(readChatSessionDraft(first, backing).composer.text).toBe("obsolete");
+		expect(activateChatDraftScope(replacement, blockedRemoval)).toMatchObject({
+			ok: false,
+			reason: "storage",
+		});
+		expect(writeChatComposerText(first, "late obsolete write", backing).ok).toBe(false);
+		expect(writeChatComposerText(replacement, "too early", backing).ok).toBe(false);
+		expect(backing.values.get(`ao.chat.draft:${encodeURIComponent(first.sessionId)}`)).toContain(
+			"obsolete",
+		);
+
+		expect(activateChatDraftScope(replacement, backing)).toMatchObject({
+			ok: true,
+			replaced: true,
+		});
+		expect(writeChatComposerText(replacement, "replacement draft", backing).ok).toBe(true);
+		expect(readChatSessionDraft(replacement, backing).composer.text).toBe("replacement draft");
+		expect(writeChatComposerText(first, "still obsolete", backing).ok).toBe(false);
 	});
 
 	it("warned abandon clears only an uncertain steer journal", () => {

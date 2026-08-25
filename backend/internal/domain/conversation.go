@@ -694,7 +694,9 @@ const (
 	ConversationEditRejectedBusy                ConversationEditRejectionKind = "busy"
 	ConversationEditRejectedInterfaceTransition ConversationEditRejectionKind = "interface_transition"
 	ConversationEditRejectedByProvider          ConversationEditRejectionKind = "provider_refused"
-	ConversationEditRejectedProviderFailure     ConversationEditRejectionKind = "provider_failure"
+	// Retained only to replay reservations settled by builds that treated a
+	// generic provider/transport error as definitive.
+	ConversationEditRejectedProviderFailure ConversationEditRejectionKind = "provider_failure"
 )
 
 // ErrNoConversation reports that a session has no conversation row yet. It is not

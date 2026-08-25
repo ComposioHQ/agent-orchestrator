@@ -64,6 +64,7 @@ import type { ChatSkill, ChatSteerOutcome } from "../../types/conversation";
 import {
 	beginChatComposerMutation,
 	cancelChatComposerMutation,
+	chatDraftScopeKey,
 	clearAcceptedChatComposer,
 	clearRejectedChatComposerDelivery,
 	clearUncertainChatComposerDelivery,
@@ -200,9 +201,7 @@ export function ChatComposer({
 				: undefined,
 		[draftSessionId, draftSessionIncarnation],
 	);
-	const draftScopeKey = draftScope
-		? `${draftScope.sessionId}\u0000${draftScope.incarnation}`
-		: undefined;
+	const draftScopeKey = draftScope ? chatDraftScopeKey(draftScope) : undefined;
 	const [hasText, setHasText] = useState(false);
 	const hasTextRef = useRef(false);
 	const [trigger, setTrigger] = useState<ComposerTrigger>();

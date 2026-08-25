@@ -68,6 +68,7 @@ type fakeConversation struct {
 	caps      ports.ChatCapabilities
 	resolved  map[string]ports.ChatDecision
 	turnSeq   int
+	sendCalls int
 	sendErr   error
 	onSend    func(providerTurnID string)
 	closeOnce sync.Once
@@ -199,6 +200,7 @@ func (f *fakeConversation) Events() <-chan ports.ChatEvent { return f.events }
 
 func (f *fakeConversation) SendTurn(_ context.Context, msg ports.ChatUserMessage) (ports.ChatTurnRef, error) {
 	f.mu.Lock()
+	f.sendCalls++
 	if f.sendErr != nil {
 		f.mu.Unlock()
 		return ports.ChatTurnRef{}, f.sendErr
@@ -230,6 +232,12 @@ func (f *fakeConversation) sentMessages() []ports.ChatUserMessage {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]ports.ChatUserMessage(nil), f.sent...)
+}
+
+func (f *fakeConversation) sendCallCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.sendCalls
 }
 
 func (f *fakeConversation) Interrupt(context.Context, string) error { return nil }

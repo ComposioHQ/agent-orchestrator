@@ -60,8 +60,8 @@ var (
 	// ErrEditIdempotencyConflict refuses reuse of one edit handle for a different
 	// source prompt or replacement payload.
 	ErrEditIdempotencyConflict = errors.New("edit idempotency handle belongs to a different request")
-	// ErrEditDeliveryRejected replays a provider/transport failure that AO observed
-	// and rolled back. A deliberate retry must use a fresh handle.
+	// ErrEditDeliveryRejected replays a legacy provider/transport failure that an
+	// earlier build durably rejected. New ambiguous failures remain reserved.
 	ErrEditDeliveryRejected = errors.New("edit delivery was rejected")
 	// ErrBranchProviderMismatch refuses a historical branch whose opaque provider
 	// conversation id belongs to an earlier agent ownership epoch.
@@ -288,8 +288,9 @@ func (s *Service) EditMessage(
 }
 
 // sendEditedMessage commits the branch replacement only after the provider has
-// accepted it. A transport refusal leaves an empty active branch so the same
-// source prompt and in-memory editor draft can be retried without another fork.
+// accepted it. A failed dispatch leaves an empty active branch, but an ambiguous
+// delivery handle stays reserved: AO never manufactures a fresh handle and risks
+// sending the replacement twice.
 func (s *Service) sendEditedMessage(
 	ctx context.Context,
 	sourceBranchID, activeBranchID string,
@@ -410,21 +411,26 @@ func replayEditRejection(delivery domain.ConversationEditDelivery) error {
 	return storedEditRejection{message: delivery.RejectionMessage, cause: cause}
 }
 
-func classifyEditRejection(err error) (domain.ConversationEditRejectionKind, error) {
+// classifyEditRejection separates facts that prove no provider delivery occurred
+// from generic errors whose delivery outcome the Controller.Send contract cannot
+// establish. Only the former may settle a reservation as rejected.
+func classifyEditRejection(
+	err error,
+) (domain.ConversationEditRejectionKind, error, bool) {
+	err = classify(err)
 	switch {
 	case errors.Is(err, ErrEditTurnInvalid), errors.Is(err, domain.ErrNoConversationTurn):
-		return domain.ConversationEditRejectedInvalid, err
+		return domain.ConversationEditRejectedInvalid, err, true
 	case errors.Is(err, ErrForkUnsupported):
-		return domain.ConversationEditRejectedUnsupported, err
+		return domain.ConversationEditRejectedUnsupported, err, true
 	case errors.Is(err, ErrControllerHandoff):
-		return domain.ConversationEditRejectedInterfaceTransition, err
+		return domain.ConversationEditRejectedInterfaceTransition, err, true
 	case errors.Is(err, ErrTurnRunning):
-		return domain.ConversationEditRejectedBusy, err
+		return domain.ConversationEditRejectedBusy, err, true
 	case errors.Is(err, ErrProviderRefused):
-		return domain.ConversationEditRejectedByProvider, err
+		return domain.ConversationEditRejectedByProvider, err, true
 	default:
-		return domain.ConversationEditRejectedProviderFailure,
-			fmt.Errorf("%w: %w", ErrEditDeliveryRejected, err)
+		return "", err, false
 	}
 }
 
@@ -437,7 +443,10 @@ func (s *Service) rejectEditDelivery(
 	if clientMessageID == "" {
 		return result, cause
 	}
-	kind, classified := classifyEditRejection(cause)
+	kind, classified, definitive := classifyEditRejection(cause)
+	if !definitive {
+		return result, fmt.Errorf("%w: %w", ErrEditDeliveryUncertain, classified)
+	}
 	if err := s.store.RejectEditDelivery(
 		context.WithoutCancel(ctx), conversationID, clientMessageID,
 		kind, classified.Error(), s.now()); err != nil {

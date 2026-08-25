@@ -1,6 +1,6 @@
 import { StrictMode, type ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render as rtlRender, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render as rtlRender, renderHook, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionView } from "./SessionView";
 import { SessionTopbarProvider } from "./SessionTopbarPortal";
@@ -8,6 +8,8 @@ import { TooltipProvider } from "./ui/tooltip";
 import { useUiStore } from "../stores/ui-store";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { setChatDraftBoundary } from "../lib/chat-draft-boundary";
+import { chatDraftScopeKey } from "../lib/chat-drafts";
+import { useFileAttachments, type FileAttachment } from "../hooks/useFileAttachments";
 
 const navigateMock = vi.hoisted(() => vi.fn());
 const openShellTerminalMock = vi.hoisted(() => vi.fn());
@@ -814,6 +816,60 @@ describe("SessionView", () => {
 			policy: "interrupt",
 		});
 		setChatDraftBoundary("sess-1", "composer", undefined);
+		confirm.mockRestore();
+	});
+
+	it("discarding pending attachments cancels the exact incarnation registry", async () => {
+		interfaceTransitionState.status = { supported: true, targetMode: "tui" };
+		const session = workerSession("sess-1");
+		session.mode = "chat";
+		let finishStaging!: (attachments: FileAttachment[]) => void;
+		const staging = renderHook(() =>
+			useFileAttachments({
+				initialKey: chatDraftScopeKey({
+					sessionId: session.id,
+					incarnation: "2026-08-26T09:00:00.000Z",
+				}),
+				prepareAttachments: () =>
+					new Promise<FileAttachment[]>((resolve) => {
+						finishStaging = resolve;
+					}),
+			}),
+		);
+		let pending!: Promise<void>;
+		act(() => {
+			pending = staging.result.current.addFiles([
+				new File([new Uint8Array(8).fill(1)], "discard-late.txt", {
+					type: "text/plain",
+				}),
+			]);
+		});
+		await waitFor(() => expect(finishStaging).toBeTypeOf("function"));
+		act(() => setChatDraftBoundary(session.id, "composer", "pending-attachments"));
+		const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+		render(<SessionView sessionId={session.id} />);
+
+		fireEvent.click(screen.getByRole("button", { name: "Switch to terminal UI" }));
+		expect(interfaceTransitionMock.start).toHaveBeenCalledWith({
+			targetMode: "tui",
+			policy: "interrupt",
+		});
+		await waitFor(() => expect(staging.result.current.preparing).toBe(false));
+
+		await act(async () => {
+			finishStaging([
+				{
+					id: "discarded-late",
+					mimeType: "text/plain",
+					bytes: 8,
+					name: "discard-late.txt",
+					stagedPath: ".ao/attachments/discard-late.txt",
+				},
+			]);
+			await pending;
+		});
+		expect(staging.result.current.attachments).toEqual([]);
+		act(() => setChatDraftBoundary(session.id, "composer", undefined));
 		confirm.mockRestore();
 	});
 

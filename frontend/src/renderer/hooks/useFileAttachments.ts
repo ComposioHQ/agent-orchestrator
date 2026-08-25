@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { chatDraftScopeSessionId } from "../lib/chat-drafts";
 
 // Client-side mirror of the backend spawn caps in
 // backend/internal/httpd/controllers/sessions.go (maxAttachments /
@@ -166,6 +167,31 @@ export function discardPendingFileAttachments(key: string): void {
 	entry.generation += 1;
 	entry.pending.clear();
 	notifySharedAttachmentEntry(key, { error: null });
+}
+
+function attachmentKeyBelongsToSession(key: string, sessionId: string): boolean {
+	return key === sessionId || chatDraftScopeSessionId(key) === sessionId;
+}
+
+/** Cancel every in-flight renderer generation owned by one logical AO session. */
+export function discardPendingFileAttachmentsForSession(sessionId: string): void {
+	for (const key of [...sharedAttachmentEntries.keys()]) {
+		if (attachmentKeyBelongsToSession(key, sessionId)) discardPendingFileAttachments(key);
+	}
+}
+
+/**
+ * Remove only renderer descriptors/work for a deleted session incarnation. The
+ * durable worktree bytes are intentionally outside this registry and untouched.
+ */
+export function purgeFileAttachmentsForSession(sessionId: string): void {
+	for (const [key, entry] of [...sharedAttachmentEntries]) {
+		if (!attachmentKeyBelongsToSession(key, sessionId)) continue;
+		entry.generation += 1;
+		entry.pending.clear();
+		notifySharedAttachmentEntry(key, { attachments: [], error: null });
+		if (entry.listeners.size === 0) sharedAttachmentEntries.delete(key);
+	}
 }
 
 // Client-side mirror of the backend image-preview allowlist. Non-image files can

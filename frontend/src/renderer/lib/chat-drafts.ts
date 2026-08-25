@@ -11,6 +11,7 @@ import type { ConversationContentSummary } from "../types/conversation";
  */
 
 export const CHAT_DRAFT_SCHEMA_VERSION = 2 as const;
+const CHAT_DRAFT_SCOPE_SCHEMA_VERSION = 1 as const;
 
 /**
  * One immutable AO session incarnation. Session ids are human-stable handles and
@@ -23,6 +24,18 @@ export interface ChatDraftScope {
 }
 
 type ChatDraftScopeInput = string | ChatDraftScope;
+
+type ChatDraftScopeLease = {
+	schemaVersion: typeof CHAT_DRAFT_SCOPE_SCHEMA_VERSION;
+	sessionId: string;
+	incarnation: string;
+	state: "active" | "activating";
+	previousIncarnation?: string;
+};
+
+export type ChatDraftScopeActivationResult =
+	| { ok: true; replaced: boolean; previousIncarnation?: string }
+	| { ok: false; reason: "obsolete" | "storage" };
 
 export interface ChatDraftAttachment {
 	id: string;
@@ -139,9 +152,27 @@ function normalizeScope(scope: ChatDraftScopeInput): ChatDraftScope {
 		: scope;
 }
 
-function draftRuntimeKey(scope: ChatDraftScopeInput): string {
+export function chatDraftScopeKey(scope: ChatDraftScopeInput): string {
 	const identity = normalizeScope(scope);
 	return JSON.stringify([identity.sessionId, identity.incarnation]);
+}
+
+export function chatDraftScopeSessionId(key: string): string | undefined {
+	try {
+		const parsed: unknown = JSON.parse(key);
+		return Array.isArray(parsed) &&
+			parsed.length === 2 &&
+			typeof parsed[0] === "string" &&
+			typeof parsed[1] === "string"
+			? parsed[0]
+			: undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+function draftRuntimeKey(scope: ChatDraftScopeInput): string {
+	return chatDraftScopeKey(scope);
 }
 
 function purgeDraftRuntimes(sessionId: string): void {
@@ -311,6 +342,182 @@ function storageKey(sessionId: string): string {
 	return `ao.chat.draft:${encodeURIComponent(sessionId)}`;
 }
 
+function scopeLeaseStorageKey(sessionId: string): string {
+	return `ao.chat.draft.active:${encodeURIComponent(sessionId)}`;
+}
+
+function isScopeLease(value: unknown, sessionId: string): value is ChatDraftScopeLease {
+	if (!value || typeof value !== "object") return false;
+	const lease = value as Partial<ChatDraftScopeLease>;
+	return (
+		lease.schemaVersion === CHAT_DRAFT_SCOPE_SCHEMA_VERSION &&
+		lease.sessionId === sessionId &&
+		typeof lease.incarnation === "string" &&
+		lease.incarnation.length > 0 &&
+		(lease.state === "active" || lease.state === "activating") &&
+		(lease.previousIncarnation === undefined ||
+			typeof lease.previousIncarnation === "string")
+	);
+}
+
+type ScopeLeaseReadResult =
+	| { ok: true; lease?: ChatDraftScopeLease }
+	| { ok: false };
+
+function readScopeLease(
+	sessionId: string,
+	storage: DraftStorage | undefined,
+): ScopeLeaseReadResult {
+	if (!sessionId || !storage) return { ok: false };
+	let raw: string | null;
+	try {
+		raw = storage.getItem(scopeLeaseStorageKey(sessionId));
+	} catch {
+		return { ok: false };
+	}
+	if (raw === null) return { ok: true };
+	try {
+		const parsed: unknown = JSON.parse(raw);
+		return isScopeLease(parsed, sessionId) ? { ok: true, lease: parsed } : { ok: false };
+	} catch {
+		return { ok: false };
+	}
+}
+
+function storedDraftIncarnation(raw: string | null, sessionId: string): string | undefined {
+	if (raw === null) return undefined;
+	try {
+		const parsed = JSON.parse(raw) as {
+			sessionId?: unknown;
+			incarnation?: unknown;
+		};
+		return parsed?.sessionId === sessionId && typeof parsed.incarnation === "string"
+			? parsed.incarnation
+			: undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+function isStrictlyNewerIncarnation(
+	sessionId: string,
+	candidate: string,
+	current: string,
+): boolean {
+	if (candidate === current) return false;
+	// The production incarnation is the daemon's createdAt. A legacy renderer used
+	// the logical session id itself; an authoritative createdAt may replace that
+	// sentinel, but the sentinel may never replace an already-dated incarnation.
+	if (current === sessionId) return candidate !== sessionId;
+	if (candidate === sessionId) return false;
+	const candidateTime = Date.parse(candidate);
+	const currentTime = Date.parse(current);
+	return Number.isFinite(candidateTime) &&
+		Number.isFinite(currentTime) &&
+		candidateTime > currentTime;
+}
+
+function writeScopeLeaseProven(
+	lease: ChatDraftScopeLease,
+	storage: DraftStorage,
+): boolean {
+	const serialized = JSON.stringify(lease);
+	try {
+		storage.setItem(scopeLeaseStorageKey(lease.sessionId), serialized);
+		return storage.getItem(scopeLeaseStorageKey(lease.sessionId)) === serialized;
+	} catch {
+		return false;
+	}
+}
+
+function finishScopeActivation(
+	scope: ChatDraftScope,
+	lease: ChatDraftScopeLease,
+	storage: DraftStorage,
+): ChatDraftScopeActivationResult {
+	const key = storageKey(scope.sessionId);
+	try {
+		storage.removeItem(key);
+		if (storage.getItem(key) !== null) return { ok: false, reason: "storage" };
+	} catch {
+		return { ok: false, reason: "storage" };
+	}
+	purgeDraftRuntimes(scope.sessionId);
+	const active: ChatDraftScopeLease = {
+		schemaVersion: CHAT_DRAFT_SCOPE_SCHEMA_VERSION,
+		sessionId: scope.sessionId,
+		incarnation: scope.incarnation,
+		state: "active",
+	};
+	if (!writeScopeLeaseProven(active, storage)) return { ok: false, reason: "storage" };
+	return {
+		ok: true,
+		replaced: lease.previousIncarnation !== undefined,
+		...(lease.previousIncarnation !== undefined
+			? { previousIncarnation: lease.previousIncarnation }
+			: {}),
+	};
+}
+
+/**
+ * Establish the one daemon-authoritative incarnation allowed to own a logical
+ * session's renderer draft. Replacement is a monotonic, recoverable transition:
+ * the successor blocks every predecessor first, then proves the old record is
+ * gone, and only then becomes writable.
+ */
+export function activateChatDraftScope(
+	scopeInput: ChatDraftScopeInput,
+	storage: DraftStorage | undefined = rendererStorage(),
+): ChatDraftScopeActivationResult {
+	const scope = normalizeScope(scopeInput);
+	if (!scope.sessionId || !scope.incarnation || !storage) {
+		return { ok: false, reason: "storage" };
+	}
+	const leaseRead = readScopeLease(scope.sessionId, storage);
+	if (!leaseRead.ok) return { ok: false, reason: "storage" };
+	const lease = leaseRead.lease;
+	if (lease?.incarnation === scope.incarnation) {
+		if (lease.state === "active") return { ok: true, replaced: false };
+		return finishScopeActivation(scope, lease, storage);
+	}
+
+	let previousIncarnation = lease?.incarnation;
+	if (!previousIncarnation) {
+		let raw: string | null;
+		try {
+			raw = storage.getItem(storageKey(scope.sessionId));
+		} catch {
+			return { ok: false, reason: "storage" };
+		}
+		previousIncarnation = storedDraftIncarnation(raw, scope.sessionId);
+		if (!previousIncarnation || previousIncarnation === scope.incarnation) {
+			const active: ChatDraftScopeLease = {
+				schemaVersion: CHAT_DRAFT_SCOPE_SCHEMA_VERSION,
+				sessionId: scope.sessionId,
+				incarnation: scope.incarnation,
+				state: "active",
+			};
+			return writeScopeLeaseProven(active, storage)
+				? { ok: true, replaced: false }
+				: { ok: false, reason: "storage" };
+		}
+	}
+	if (!isStrictlyNewerIncarnation(scope.sessionId, scope.incarnation, previousIncarnation)) {
+		return { ok: false, reason: "obsolete" };
+	}
+	const activating: ChatDraftScopeLease = {
+		schemaVersion: CHAT_DRAFT_SCOPE_SCHEMA_VERSION,
+		sessionId: scope.sessionId,
+		incarnation: scope.incarnation,
+		state: "activating",
+		previousIncarnation,
+	};
+	if (!writeScopeLeaseProven(activating, storage)) {
+		return { ok: false, reason: "storage" };
+	}
+	return finishScopeActivation(scope, activating, storage);
+}
+
 function rendererStorage(): DraftStorage | undefined {
 	if (typeof window === "undefined") return undefined;
 	try {
@@ -438,6 +645,14 @@ function loadChatSessionDraft(scopeInput: ChatDraftScopeInput, storage: DraftSto
 	const scope = normalizeScope(scopeInput);
 	const empty = emptyDraft(scope);
 	if (!scope.sessionId || !scope.incarnation || !storage) return { ok: false, draft: empty };
+	const leaseRead = readScopeLease(scope.sessionId, storage);
+	if (!leaseRead.ok) return { ok: false, draft: empty };
+	if (
+		leaseRead.lease &&
+		(leaseRead.lease.incarnation !== scope.incarnation || leaseRead.lease.state !== "active")
+	) {
+		return { ok: false, draft: empty };
+	}
 	let raw: string | null;
 	try {
 		raw = storage.getItem(storageKey(scope.sessionId));
@@ -457,22 +672,9 @@ function loadChatSessionDraft(scopeInput: ChatDraftScopeInput, storage: DraftSto
 		typeof parsed === "object" &&
 		"sessionId" in parsed &&
 		(parsed as { sessionId?: unknown }).sessionId === scope.sessionId &&
-		(!("incarnation" in parsed) ||
-			(parsed as { incarnation?: unknown }).incarnation !== scope.incarnation)
-	) {
-		// A session id can be recreated. Prove that every renderer descriptor for
-		// the deleted incarnation is gone before allowing the replacement to use
-		// this key. Staged worktree bytes are intentionally outside this boundary.
-		const key = storageKey(scope.sessionId);
-		try {
-			storage.removeItem(key);
-			if (storage.getItem(key) !== null) return { ok: false, draft: empty };
-		} catch {
-			return { ok: false, draft: empty };
-		}
-		purgeDraftRuntimes(scope.sessionId);
-		return { ok: true, draft: empty };
-	}
+		"incarnation" in parsed &&
+		(parsed as { incarnation?: unknown }).incarnation !== scope.incarnation
+	) return { ok: false, draft: empty };
 	return {
 		ok: true,
 		draft: isChatSessionDraft(parsed, scope) ? parsed : empty,
@@ -496,8 +698,40 @@ function hasContent(draft: ChatSessionDraft): boolean {
 	);
 }
 
+function claimOrProveDraftScope(
+	draft: ChatSessionDraft,
+	storage: DraftStorage,
+): boolean {
+	const leaseRead = readScopeLease(draft.sessionId, storage);
+	if (!leaseRead.ok) return false;
+	if (leaseRead.lease) {
+		return (
+			leaseRead.lease.state === "active" &&
+			leaseRead.lease.incarnation === draft.incarnation
+		);
+	}
+	let raw: string | null;
+	try {
+		raw = storage.getItem(storageKey(draft.sessionId));
+	} catch {
+		return false;
+	}
+	const existingIncarnation = storedDraftIncarnation(raw, draft.sessionId);
+	if (existingIncarnation && existingIncarnation !== draft.incarnation) return false;
+	return writeScopeLeaseProven(
+		{
+			schemaVersion: CHAT_DRAFT_SCOPE_SCHEMA_VERSION,
+			sessionId: draft.sessionId,
+			incarnation: draft.incarnation,
+			state: "active",
+		},
+		storage,
+	);
+}
+
 function persistDraft(draft: ChatSessionDraft, storage: DraftStorage | undefined): DraftWriteResult {
 	if (!draft.sessionId || !storage) return { ok: false, draft };
+	if (!claimOrProveDraftScope(draft, storage)) return { ok: false, draft };
 	try {
 		if (hasContent(draft)) storage.setItem(storageKey(draft.sessionId), JSON.stringify(draft));
 		else storage.removeItem(storageKey(draft.sessionId));
@@ -517,6 +751,7 @@ function persistDraftProven(
 	storage: DraftStorage | undefined,
 ): DraftWriteResult {
 	if (!draft.sessionId || !storage) return { ok: false, draft };
+	if (!claimOrProveDraftScope(draft, storage)) return { ok: false, draft };
 	const key = storageKey(draft.sessionId);
 	try {
 		if (hasContent(draft)) {
