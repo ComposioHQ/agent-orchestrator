@@ -87,6 +87,9 @@ type SessionMetadata struct {
 type SessionRecord struct {
 	ID        SessionID    `json:"id"`
 	ProjectID ProjectID    `json:"projectId"`
+	// AutomationRunID is the optional durable origin for an unattended spawn.
+	// It is internal lifecycle data, not part of the session API read model.
+	AutomationRunID *AutomationRunID `json:"-"`
 	IssueID   IssueID      `json:"issueId,omitempty"`
 	Kind      SessionKind  `json:"kind"`
 	Harness   AgentHarness `json:"harness,omitempty"`

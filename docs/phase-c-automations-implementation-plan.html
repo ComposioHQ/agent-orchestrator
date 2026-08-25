@@ -179,7 +179,7 @@
     <tr><td><code>domain/automation.go</code></td><td>IDs, enums, definition/run records, validation vocabulary.</td><td>SQL, HTTP, recurrence library calls, timers.</td></tr>
     <tr><td><code>service/automation/</code></td><td>CRUD, schedule parsing, occurrence materialization, claims, advancement, reconciliation, session dispatch.</td><td>HTTP request parsing or UI state.</td></tr>
     <tr><td><code>observe/automations/</code></td><td>Polling cadence and cancellation.</td><td>Scheduling decisions, SQL transactions, direct spawning.</td></tr>
-    <tr><td>SQLite store</td><td>Atomic persistence, leases, uniqueness, query ordering, CDC triggers.</td><td>Business decisions derived from runtime state.</td></tr>
+    <tr><td>SQLite store</td><td>Atomic persistence, leases, uniqueness, and query ordering.</td><td>Business decisions derived from runtime state.</td></tr>
     <tr><td>Session service</td><td>Normal workspace/runtime/agent creation and durable lifecycle.</td><td>Recurrence calculation.</td></tr>
     <tr><td>REST / CLI / Electron</td><td>User input, presentation, transport, cache refresh.</td><td>Direct database or runtime access.</td></tr>
   </table>
@@ -243,8 +243,8 @@ const (
 
   <h3>CDC and deletion behavior</h3>
   <div class="card"><div class="card-body"><ul>
-    <li>Add normal SQLite <code>change_log</code> triggers for definition/run tables using repository conventions.</li>
-    <li>Do not emit parallel manual CDC events from store methods.</li>
+    <li>Do not widen the mature <code>change_log.event_type</code> allowlist for this feature; automation mutations use direct query-cache updates plus a short visible-page refetch interval.</li>
+    <li>Do not emit parallel manual CDC events from store methods. Existing session CDC refreshes linked-session presentation.</li>
     <li>Deleting an automation cascades run history. Spawned sessions remain durable user work.</li>
     <li>Disabling changes only future scheduler behavior. Existing history and a currently running session remain untouched.</li>
   </ul></div></div>
@@ -392,7 +392,7 @@ ao automation runs &lt;automation-id&gt; [--status running] [--json]</code></pre
     <tr><th>Area</th><th>Files / directories</th><th>Change</th></tr>
     <tr><td>Domain</td><td><code>backend/internal/domain/automation.go</code></td><td>Definition/run records, IDs, enums, durable fields.</td></tr>
     <tr><td>Ports</td><td><code>backend/internal/ports/...</code></td><td>Store/service boundaries and optional run origin in spawn config.</td></tr>
-    <tr><td>Migration</td><td><code>storage/sqlite/migrations/0109_automations.sql</code></td><td>Tables, indexes, constraints, session link, CDC triggers.</td></tr>
+    <tr><td>Migration</td><td><code>storage/sqlite/migrations/0109_automations.sql</code></td><td>Tables, indexes, constraints, and the session idempotency link.</td></tr>
     <tr><td>Queries</td><td><code>storage/sqlite/queries/automations.sql</code></td><td>CRUD, due reads, claims, lifecycle, recovery, history.</td></tr>
     <tr><td>Generated storage</td><td><code>storage/sqlite/gen/*</code></td><td>Regenerate with <code>npm run sqlc</code>; never hand-edit.</td></tr>
     <tr><td>Service</td><td><code>backend/internal/service/automation/</code></td><td>Schedule wrapper, CRUD, tick, dispatch, reconcile.</td></tr>
@@ -418,7 +418,7 @@ ao automation runs &lt;automation-id&gt; [--status running] [--json]</code></pre
   <table>
     <tr><th>Layer</th><th>Required cases</th></tr>
     <tr><td>Schedule unit</td><td>Valid/invalid RRULE; cron translation/rejection; no future occurrence; minute floor; IANA timezone; DST gap/repeat; month/leap boundaries.</td></tr>
-    <tr><td>Migration/store</td><td>Up/down; CHECK/FK; unique occurrence; unique run/session link; due ordering; paging; cascade history; session preservation; CDC triggers.</td></tr>
+    <tr><td>Migration/store</td><td>Up/down; CHECK/FK; unique occurrence; unique run/session link; due ordering; paging; cascade history; session preservation.</td></tr>
     <tr><td>Materialization</td><td>Not due; single due; three-run cap; advance beyond now; repeated tick produces no duplicate.</td></tr>
     <tr><td>Claims/dispatch</td><td>Atomic lease; expiry; one active blocks next; oldest pending first; successful link; race returns existing session.</td></tr>
     <tr><td>Reconciliation</td><td>Interrupted before spawn; after session creation; linked running/terminated; unknown probe remains running; structural failure.</td></tr>

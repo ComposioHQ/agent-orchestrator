@@ -20,6 +20,15 @@ import (
 func (s *Store) CreateSession(ctx context.Context, rec domain.SessionRecord) (domain.SessionRecord, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
+	if rec.AutomationRunID != nil {
+		existing, err := s.qw.GetSessionByAutomationRunID(ctx, rec.AutomationRunID)
+		if err == nil {
+			return rowToRecord(gen.GetSessionRow(existing)), nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return domain.SessionRecord{}, fmt.Errorf("find session for automation run %s: %w", *rec.AutomationRunID, err)
+		}
+	}
 
 	num, err := s.qw.NextSessionNum(ctx, rec.ProjectID)
 	if err != nil {
@@ -27,6 +36,12 @@ func (s *Store) CreateSession(ctx context.Context, rec domain.SessionRecord) (do
 	}
 	rec.ID = domain.SessionID(fmt.Sprintf("%s-%d", rec.ProjectID, num))
 	if err := s.qw.InsertSession(ctx, recordToInsert(rec, num)); err != nil {
+		if rec.AutomationRunID != nil {
+			existing, reloadErr := s.qw.GetSessionByAutomationRunID(ctx, rec.AutomationRunID)
+			if reloadErr == nil {
+				return rowToRecord(gen.GetSessionRow(existing)), nil
+			}
+		}
 		return domain.SessionRecord{}, fmt.Errorf("insert session %s: %w", rec.ID, err)
 	}
 	return rec, nil
@@ -327,6 +342,19 @@ func (s *Store) GetSession(ctx context.Context, id domain.SessionID) (domain.Ses
 	return getSessionRowToRecord(row), true, nil
 }
 
+// GetSessionByAutomationRunID returns the unique session spawned for a durable
+// automation occurrence, if one exists.
+func (s *Store) GetSessionByAutomationRunID(ctx context.Context, id domain.AutomationRunID) (domain.SessionRecord, bool, error) {
+	row, err := s.qr.GetSessionByAutomationRunID(ctx, &id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.SessionRecord{}, false, nil
+	}
+	if err != nil {
+		return domain.SessionRecord{}, false, fmt.Errorf("get session for automation run %s: %w", id, err)
+	}
+	return rowToRecord(gen.GetSessionRow(row)), true, nil
+}
+
 // ListSessions returns every session in a project, ordered by num.
 func (s *Store) ListSessions(ctx context.Context, project domain.ProjectID) ([]domain.SessionRecord, error) {
 	rows, err := s.qr.ListSessionsByProject(ctx, project)
@@ -365,6 +393,7 @@ func rowToRecord(row gen.GetSessionRow) domain.SessionRecord {
 	return domain.SessionRecord{
 		ID:                row.ID,
 		ProjectID:         row.ProjectID,
+		AutomationRunID:   row.AutomationRunID,
 		IssueID:           row.IssueID,
 		Kind:              row.Kind,
 		Harness:           row.Harness,
@@ -466,6 +495,7 @@ func recordToInsert(rec domain.SessionRecord, num int64) gen.InsertSessionParams
 		Model:                     rec.Metadata.Model,
 		CreatedAt:                 rec.CreatedAt,
 		UpdatedAt:                 rec.UpdatedAt,
+		AutomationRunID:           rec.AutomationRunID,
 	}
 }
 

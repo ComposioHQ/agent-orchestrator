@@ -26,6 +26,19 @@ import (
 
 var ctx = context.Background()
 
+// The scheduler's durable run identity must cross the existing spawn boundary
+// into the seed row so retries can adopt the same session.
+func TestSeedRecordPreservesAutomationRunIdentity(t *testing.T) {
+	runID := domain.AutomationRunID("run-1")
+	rec := seedRecord(ports.SpawnConfig{
+		ProjectID: "scheduled", Kind: domain.KindWorker,
+		AutomationRunID: &runID,
+	}, domain.ProjectConfig{}, time.Date(2026, time.August, 25, 9, 0, 0, 0, time.UTC))
+	if rec.AutomationRunID == nil || *rec.AutomationRunID != runID {
+		t.Fatalf("automation run id = %v, want %q", rec.AutomationRunID, runID)
+	}
+}
+
 type fakeStore struct {
 	sessions      map[domain.SessionID]domain.SessionRecord
 	pr            map[domain.SessionID]domain.PRFacts
