@@ -240,10 +240,10 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 //      REST base URL and opens its SSE streams (the same seam the packaged app
 //      fills). The `browser.*` IPC is driven off a shared in-page state so the
 //      preview surface is controllable.
-//   2. A fake `window.EventSource` — the daemon's CDC (`/api/v1/events`) and
-//      notification (`/api/v1/notifications/stream`) SSE streams. The controller
-//      pushes `session_updated` / `notification_created` frames into it, which is
-//      exactly what drives the renderer's cache-invalidation → refetch path (no
+//   2. A fake `window.EventSource` — the daemon's CDC (`/api/v1/events`),
+//      notification (`/api/v1/notifications/stream`), and session workspace
+//      streams. The controller pushes their real event names into the matching
+//      source, which drives the renderer's cache-invalidation → refetch path (no
 //      manual refresh), matching the real daemon's behaviour.
 //   3. A mutable workspace snapshot read by `useWorkspaceQuery` via
 //      `window.__aoFakeAgent.snapshot()` (dev:web seam). Controller mutations +
@@ -285,9 +285,17 @@ export type FakeAgentController = {
 	createWorker: (worker: FakeWorker) => void;
 	removeWorker: (id: string) => void;
 	setStatus: (id: string, status: string, activity?: string) => void;
+	setMode: (id: string, mode: "chat" | "tui", terminalHandleId?: string) => void;
+	setProvider: (id: string, provider: string) => void;
 	setTerminalHandle: (id: string, handleId: string) => void;
 	setPreview: (id: string, previewUrl: string, previewRevision?: number) => void;
 	setBrowserError: (message: string | null) => void;
+	emitCDC: (input: {
+		type?: string;
+		sessionId?: string;
+		conversationId?: string;
+		interfaceTransitionId?: string;
+	}) => void;
 	notify: (n: { id: string; type: string; title: string; body?: string; sessionId?: string }) => void;
 };
 
@@ -468,6 +476,25 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					touch(s);
 					pushWorkspaces();
 				},
+				setMode: (id, mode, terminalHandleId) => {
+					const s = findSession(id);
+					if (!s) return;
+					s.mode = mode;
+					if (mode === "tui") {
+						s.terminalHandleId = terminalHandleId || `${id}/terminal_0`;
+					} else {
+						delete s.terminalHandleId;
+					}
+					touch(s);
+					pushWorkspaces();
+				},
+				setProvider: (id, provider) => {
+					const s = findSession(id);
+					if (!s) return;
+					s.provider = provider;
+					touch(s);
+					pushWorkspaces();
+				},
 				setTerminalHandle: (id, handleId) => {
 					const s = findSession(id);
 					if (!s) return;
@@ -485,6 +512,25 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 				},
 				setBrowserError: (message) => {
 					state.browserError = message;
+				},
+				emitCDC: ({
+					type = "session_updated",
+					sessionId,
+					conversationId,
+					interfaceTransitionId,
+				}) => {
+					const stream =
+						type === "workspace_changed" && sessionId
+							? `/api/v1/sessions/${encodeURIComponent(sessionId)}/workspace/events`
+							: "/api/v1/events";
+					emit(
+						stream,
+						type,
+						JSON.stringify({
+							sessionId,
+							payload: { conversationId, interfaceTransitionId },
+						}),
+					);
 				},
 				notify: (n) => {
 					const payload = JSON.stringify({

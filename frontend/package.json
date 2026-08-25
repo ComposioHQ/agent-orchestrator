@@ -30,6 +30,9 @@
 		"test": "vitest run --config vite.renderer.config.ts",
 		"test:e2e": "playwright test",
 		"test:e2e:renderer": "playwright test --grep \"@T0|@P0\"",
+		"test:e2e:chatui": "node ./scripts/run-chatui-regressions.mjs",
+		"test:e2e:chatui:capture": "node ./scripts/run-chatui-regressions.mjs --capture",
+		"test:chatui-runner": "vitest run --config vite.renderer.config.ts scripts/run-chatui-regressions.test.mjs",
 		"api:ts": "openapi-typescript ../backend/internal/httpd/apispec/openapi.yaml -o src/api/schema.ts"
 	},
 	"devDependencies": {
