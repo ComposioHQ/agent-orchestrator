@@ -31,10 +31,21 @@ function snapshotFor(sessionId: string): ConversationSnapshot & { capabilities: 
 	};
 }
 
-const { getMock, postMock, conversationState, agentSwitchState } = vi.hoisted(() => ({
+const {
+	getMock,
+	postMock,
+	conversationState,
+	conversationCommandState,
+	agentSwitchState,
+} = vi.hoisted(() => ({
 	getMock: vi.fn(),
 	postMock: vi.fn(),
 	agentSwitchState: { data: [] as AgentSwitchSummary[] },
+	conversationCommandState: {
+		busy: false,
+		pendingAcceptedSendTurnId: undefined as string | undefined,
+		acknowledgeAcceptedSend: vi.fn(),
+	},
 	conversationState: {
 		snapshot: { capabilities: [] } as
 			| (Partial<ConversationSnapshot> & { capabilities: string[] })
@@ -60,7 +71,7 @@ vi.mock("../../hooks/useConversation", () => ({
 			? { ...snapshotFor(sessionId), ...conversationState.snapshot }
 			: undefined,
 	}),
-	useConversationCommands: () => ({}),
+	useConversationCommands: () => conversationCommandState,
 	useConversationConfigOptions: () => ({ options: [] }),
 	useConversationModels: () => ({ models: [] }),
 	useConversationSkills: () => ({ skills: [] }),
@@ -148,6 +159,9 @@ beforeEach(() => {
 	conversationState.hasOlder = false;
 	conversationState.isLoadingOlder = false;
 	conversationState.loadOlder = vi.fn();
+	conversationCommandState.busy = false;
+	conversationCommandState.pendingAcceptedSendTurnId = undefined;
+	conversationCommandState.acknowledgeAcceptedSend.mockReset();
 	agentSwitchState.data = [];
 	useUiStore.setState({ inspectorSessions: {} });
 });
@@ -205,6 +219,75 @@ describe("SessionChatSurface link routing", () => {
 				controllerBusy: true,
 				hasRunningTurn: true,
 				queuedTurnCount: 1,
+			});
+		});
+	});
+
+	it("reports an accepted local send while the conversation snapshot is still stale", async () => {
+		conversationState.snapshot = {
+			capabilities: [],
+			controller: { state: "ready" },
+			turns: [],
+		};
+		conversationCommandState.pendingAcceptedSendTurnId = "turn-accepted";
+		const onConversationWorkChange = vi.fn();
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+		});
+
+		render(
+			<Wrapper client={queryClient}>
+				<SessionChatSurface
+					session={session}
+					onConversationWorkChange={onConversationWorkChange}
+				/>
+			</Wrapper>,
+		);
+
+		await waitFor(() => {
+			expect(onConversationWorkChange).toHaveBeenLastCalledWith({
+				controllerBusy: true,
+				hasRunningTurn: false,
+				queuedTurnCount: 0,
+			});
+		});
+	});
+
+	it("returns to idle after the accepted turn appears in the conversation snapshot", async () => {
+		conversationState.snapshot = {
+			capabilities: [],
+			controller: { state: "ready" },
+			turns: [
+				{
+					id: "turn-accepted",
+					state: "completed",
+					requestedAt: "2026-08-25T09:00:00Z",
+				},
+			],
+		};
+		conversationCommandState.pendingAcceptedSendTurnId = "turn-accepted";
+		const onConversationWorkChange = vi.fn();
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+		});
+
+		render(
+			<Wrapper client={queryClient}>
+				<SessionChatSurface
+					session={session}
+					onConversationWorkChange={onConversationWorkChange}
+				/>
+			</Wrapper>,
+		);
+
+		await waitFor(() => {
+			expect(conversationCommandState.acknowledgeAcceptedSend).toHaveBeenCalledWith(
+				"turn-accepted",
+			);
+			expect(onConversationWorkChange).toHaveBeenLastCalledWith({
+				controllerBusy: false,
+				hasRunningTurn: false,
+				queuedTurnCount: 0,
 			});
 		});
 	});

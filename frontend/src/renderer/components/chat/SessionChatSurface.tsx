@@ -110,15 +110,27 @@ export function SessionChatSurface({
 		isLoadingOlder,
 		loadOlder,
 	} = useConversation(session.id);
+	const commands = useConversationCommands(session.id);
+	const { acknowledgeAcceptedSend, pendingAcceptedSendTurnId } = commands;
 	const conversationWorkKnown = Boolean(snapshot);
-	const controllerBusy = snapshot?.controller?.state === "busy";
+	const acceptedSendObserved = Boolean(
+		pendingAcceptedSendTurnId &&
+			snapshot?.turns.some((turn) => turn.id === pendingAcceptedSendTurnId),
+	);
+	const acceptedSendPending = Boolean(pendingAcceptedSendTurnId && !acceptedSendObserved);
+	const controllerBusy =
+		snapshot?.controller?.state === "busy" || commands.busy || acceptedSendPending;
 	const hasRunningTurn = Boolean(snapshot?.turns.some((turn) => turn.state === "running"));
 	const queuedTurnCount = snapshot?.turns.filter((turn) => turn.state === "queued").length ?? 0;
+	useEffect(() => {
+		if (acceptedSendObserved && pendingAcceptedSendTurnId) {
+			acknowledgeAcceptedSend(pendingAcceptedSendTurnId);
+		}
+	}, [acceptedSendObserved, acknowledgeAcceptedSend, pendingAcceptedSendTurnId]);
 	useEffect(() => {
 		if (!conversationWorkKnown) return;
 		onConversationWorkChange?.({ controllerBusy, hasRunningTurn, queuedTurnCount });
 	}, [controllerBusy, conversationWorkKnown, hasRunningTurn, onConversationWorkChange, queuedTurnCount]);
-	const commands = useConversationCommands(session.id);
 	const configOptions = useConversationConfigOptions(
 		session.id,
 		Boolean(snapshot && can(snapshot, "config_options")),

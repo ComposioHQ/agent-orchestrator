@@ -160,6 +160,7 @@ export function useConversation(sessionId: string | undefined): ConversationQuer
 /** Commands against a conversation. Each refetches the snapshot on success. */
 export function useConversationCommands(sessionId: string | undefined) {
 	const queryClient = useQueryClient();
+	const [acceptedSend, setAcceptedSend] = useState<{ sessionId: string; turnId: string }>();
 	const invalidate = useCallback(async () => {
 		if (sessionId) {
 			// Keep the mutation pending until the active conversation has refreshed. A
@@ -185,7 +186,14 @@ export function useConversationCommands(sessionId: string | undefined) {
 			if (error) throw error;
 			return data;
 		},
-		onSuccess: invalidate,
+		onSuccess: async (data) => {
+			if (sessionId && data?.turnId) {
+				// A refetch can briefly return the pre-send snapshot. Keep the accepted
+				// turn locally visible as pending until that exact durable row arrives.
+				setAcceptedSend({ sessionId, turnId: data.turnId });
+			}
+			await invalidate();
+		},
 	});
 
 	const resolve = useMutation({
@@ -444,10 +452,23 @@ export function useConversationCommands(sessionId: string | undefined) {
 		},
 		onSettled: invalidate,
 	});
+	const acknowledgeAcceptedSend = useCallback(
+		(turnId: string) => {
+			setAcceptedSend((current) =>
+				current && current.sessionId === sessionId && current.turnId === turnId
+					? undefined
+					: current,
+			);
+		},
+		[sessionId],
+	);
 
 	return {
 		send: (input: string | ConversationSendInput) =>
 			send.mutateAsync(typeof input === "string" ? { text: input } : input),
+		pendingAcceptedSendTurnId:
+			acceptedSend && acceptedSend.sessionId === sessionId ? acceptedSend.turnId : undefined,
+		acknowledgeAcceptedSend,
 		resolve: (requestId: string, decisionId: string) => resolve.mutate({ requestId, decisionId }),
 		resolveInput: (
 			requestId: string,
