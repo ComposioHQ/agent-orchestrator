@@ -350,7 +350,7 @@ func (c *Controller) Steer(ctx context.Context, msg ports.ChatUserMessage) (Stee
 
 	ref, err := steerer.Steer(ctx, turn, msg)
 	if err != nil {
-		kind, refused, definitive := classifySteerRejection(err)
+		kind, definitive, refused := classifySteerRejection(err)
 		if definitive {
 			if msg.ClientMessageID != "" {
 				if rejectErr := c.store.RejectSteerDelivery(
@@ -480,24 +480,24 @@ func replaySteerRejection(delivery domain.ConversationSteerDelivery) error {
 
 func classifySteerRejection(
 	err error,
-) (domain.ConversationSteerRejectionKind, error, bool) {
+) (domain.ConversationSteerRejectionKind, bool, error) {
 	switch {
 	case errors.Is(err, ports.ErrChatNoSteerableTurn):
 		// The turn ended, or was replaced, between AO's check and the provider's.
 		// The provider is the authority on that, and losing the race is ordinary.
-		return domain.ConversationSteerRejectedNoActiveTurn, ErrNoActiveTurn, true
+		return domain.ConversationSteerRejectedNoActiveTurn, true, ErrNoActiveTurn
 	case errors.Is(err, ports.ErrChatTurnNotSteerable):
-		return domain.ConversationSteerRejectedTurnNotSteerable,
-			fmt.Errorf("%w: %w", ErrTurnNotSteerable, err), true
+		return domain.ConversationSteerRejectedTurnNotSteerable, true,
+			fmt.Errorf("%w: %w", ErrTurnNotSteerable, err)
 	case errors.Is(err, ports.ErrChatSteerContentUnsupported):
-		return domain.ConversationSteerRejectedContentUnsupported,
-			fmt.Errorf("%w: %w", ErrSteerContentUnsupported, err), true
+		return domain.ConversationSteerRejectedContentUnsupported, true,
+			fmt.Errorf("%w: %w", ErrSteerContentUnsupported, err)
 	}
 	classified := classify(err)
 	if errors.Is(classified, ErrProviderRefused) {
-		return domain.ConversationSteerRejectedByProvider, classified, true
+		return domain.ConversationSteerRejectedByProvider, true, classified
 	}
-	return "", classified, false
+	return "", false, classified
 }
 
 // recordSteer writes the guidance onto the turn that took it.
