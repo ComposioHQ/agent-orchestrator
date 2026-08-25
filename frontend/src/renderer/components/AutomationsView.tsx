@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { CalendarClock, ChevronDown, ChevronRight, Plus, Trash2, X } from "lucide-react";
+import { CalendarClock, ChevronDown, ChevronRight, Plus, Trash2, TriangleAlert, X } from "lucide-react";
 import { Button } from "./ui/button";
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import {
@@ -107,6 +107,17 @@ type CreateAutomationDialogProps = {
 };
 
 const PROJECT_DEFAULT = "__project_default__";
+type AutomationField = "projectId" | "name" | "prompt" | "raw" | "hour" | "minute";
+type AutomationValidationErrors = Partial<Record<AutomationField, string>>;
+
+const AUTOMATION_FIELD_IDS: Record<AutomationField, string> = {
+	projectId: "automation-project",
+	name: "automation-name",
+	prompt: "automation-prompt",
+	raw: "automation-rrule",
+	hour: "automation-hour",
+	minute: "automation-minute",
+};
 
 function CreateAutomationDialog({
 	open,
@@ -127,9 +138,36 @@ function CreateAutomationDialog({
 	const [hour, setHour] = useState("09");
 	const [minute, setMinute] = useState("00");
 	const [raw, setRaw] = useState("FREQ=DAILY;BYHOUR=9;BYMINUTE=0;BYSECOND=0");
+	const [validationErrors, setValidationErrors] = useState<AutomationValidationErrors>({});
+
+	function clearValidationError(field: AutomationField) {
+		setValidationErrors((current) => {
+			if (!current[field]) return current;
+			const next = { ...current };
+			delete next[field];
+			return next;
+		});
+	}
 
 	async function submit(event: FormEvent) {
 		event.preventDefault();
+		const nextErrors: AutomationValidationErrors = {};
+		if (!projectId) nextErrors.projectId = "Select a project.";
+		if (!name.trim()) nextErrors.name = "Enter a name.";
+		if (!prompt.trim()) nextErrors.prompt = "Enter a prompt.";
+		if (preset === "raw" && !raw.trim()) nextErrors.raw = "Enter an RRule.";
+		if (preset !== "raw") {
+			if (!/^(?:[01]?[0-9]|2[0-3])$/.test(hour)) nextErrors.hour = "Enter an hour from 00 to 23.";
+			if (!/^[0-5]?[0-9]$/.test(minute)) nextErrors.minute = "Enter minutes from 00 to 59.";
+		}
+		setValidationErrors(nextErrors);
+		const firstInvalid = (["projectId", "name", "prompt", "raw", "hour", "minute"] as const).find(
+			(field) => nextErrors[field],
+		);
+		if (firstInvalid) {
+			document.getElementById(AUTOMATION_FIELD_IDS[firstInvalid])?.focus();
+			return;
+		}
 		const rrule =
 			preset === "daily"
 				? `FREQ=DAILY;BYHOUR=${Number(hour)};BYMINUTE=${Number(minute)};BYSECOND=0`
@@ -166,28 +204,40 @@ function CreateAutomationDialog({
 						The daemon schedules sessions in the selected timezone, including daylight-saving changes.
 					</DialogDescription>
 				</div>
-				<form className="flex min-h-0 flex-1 flex-col" onSubmit={(event) => void submit(event)}>
+				<form className="flex min-h-0 flex-1 flex-col" noValidate onSubmit={(event) => void submit(event)}>
 					<div className={settingsDialogBodyClass}>
-						<Field label="Project">
+						{Object.keys(validationErrors).length > 0 ? (
+							<div role="alert" className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+								<TriangleAlert className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+								<span>Complete the highlighted fields.</span>
+							</div>
+						) : null}
+						<Field label="Project" id={AUTOMATION_FIELD_IDS.projectId} error={validationErrors.projectId}>
 							<AutomationSelect
+								id={AUTOMATION_FIELD_IDS.projectId}
 								label="Project"
 								placeholder="Select a project"
 								required
+								invalid={Boolean(validationErrors.projectId)}
+								describedBy={validationErrors.projectId ? `${AUTOMATION_FIELD_IDS.projectId}-error` : undefined}
 								value={projectId}
-								onValueChange={setProjectId}
+								onValueChange={(value) => { setProjectId(value); clearValidationError("projectId"); }}
 								options={workspaces.map((item) => ({ value: item.id, label: item.name }))}
 							/>
 						</Field>
-						<Field label="Name">
-							<Input required maxLength={120} value={name} onChange={(event) => setName(event.target.value)} />
+						<Field label="Name" id={AUTOMATION_FIELD_IDS.name} error={validationErrors.name}>
+							<Input id={AUTOMATION_FIELD_IDS.name} required maxLength={120} value={name} aria-invalid={Boolean(validationErrors.name) || undefined} aria-describedby={validationErrors.name ? `${AUTOMATION_FIELD_IDS.name}-error` : undefined} onChange={(event) => { setName(event.target.value); if (event.target.value.trim()) clearValidationError("name"); }} />
 						</Field>
-						<Field label="Prompt">
+						<Field label="Prompt" id={AUTOMATION_FIELD_IDS.prompt} error={validationErrors.prompt}>
 							<textarea
+								id={AUTOMATION_FIELD_IDS.prompt}
 								required
 								maxLength={4096}
 								value={prompt}
-								onChange={(event) => setPrompt(event.target.value)}
-								className="min-h-24 w-full rounded-md bg-input/50 px-3 py-2 text-sm outline-none"
+								aria-invalid={Boolean(validationErrors.prompt) || undefined}
+								aria-describedby={validationErrors.prompt ? `${AUTOMATION_FIELD_IDS.prompt}-error` : undefined}
+								onChange={(event) => { setPrompt(event.target.value); if (event.target.value.trim()) clearValidationError("prompt"); }}
+								className="min-h-24 w-full rounded-md border border-transparent bg-input/50 px-3 py-2 text-sm outline-none aria-invalid:border-destructive"
 							/>
 						</Field>
 						<div className="grid grid-cols-2 gap-3">
@@ -218,7 +268,15 @@ function CreateAutomationDialog({
 							<AutomationSelect
 								label="Schedule"
 								value={preset}
-								onValueChange={setPreset}
+								onValueChange={(value) => {
+									setPreset(value);
+									if (value === "raw") {
+										clearValidationError("hour");
+										clearValidationError("minute");
+									} else {
+										clearValidationError("raw");
+									}
+								}}
 								options={[
 									{ value: "daily", label: "Daily" },
 									{ value: "weekly", label: "Weekly on Monday" },
@@ -227,15 +285,15 @@ function CreateAutomationDialog({
 							/>
 						</Field>
 						{preset === "raw" ? (
-							<Field label="RRule">
-								<Input required value={raw} onChange={(event) => setRaw(event.target.value)} />
+							<Field label="RRule" id={AUTOMATION_FIELD_IDS.raw} error={validationErrors.raw}>
+								<Input id={AUTOMATION_FIELD_IDS.raw} required value={raw} aria-invalid={Boolean(validationErrors.raw) || undefined} aria-describedby={validationErrors.raw ? `${AUTOMATION_FIELD_IDS.raw}-error` : undefined} onChange={(event) => { setRaw(event.target.value); if (event.target.value.trim()) clearValidationError("raw"); }} />
 							</Field>
 						) : (
 							<Field label="Local time">
 								<div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
-									<TimePartInput label="Hour" value={hour} max={23} onChange={setHour} />
+									<TimePartInput id={AUTOMATION_FIELD_IDS.hour} label="Hour" value={hour} max={23} error={validationErrors.hour} onChange={(value) => { setHour(value); if (/^(?:[01]?[0-9]|2[0-3])$/.test(value)) clearValidationError("hour"); }} />
 									<span aria-hidden="true" className="text-center font-semibold text-muted-foreground">:</span>
-									<TimePartInput label="Minute" value={minute} max={59} onChange={setMinute} />
+									<TimePartInput id={AUTOMATION_FIELD_IDS.minute} label="Minute" value={minute} max={59} error={validationErrors.minute} onChange={(value) => { setMinute(value); if (/^[0-5]?[0-9]$/.test(value)) clearValidationError("minute"); }} />
 								</div>
 							</Field>
 						)}
@@ -256,46 +314,58 @@ function CreateAutomationDialog({
 	);
 }
 
-function TimePartInput({ label, value, max, onChange }: { label: string; value: string; max: number; onChange: (value: string) => void }) {
+function TimePartInput({ id, label, value, max, error, onChange }: { id: string; label: string; value: string; max: number; error?: string; onChange: (value: string) => void }) {
 	return (
-		<Input
-			type="text"
-			inputMode="numeric"
-			required
-			maxLength={2}
-			pattern={max === 23 ? "(?:[01]?[0-9]|2[0-3])" : "[0-5]?[0-9]"}
-			value={value}
-			aria-label={label}
-			className="text-control tabular-nums"
-			onFocus={(event) => event.currentTarget.select()}
-			onChange={(event) => onChange(event.target.value)}
-			onBlur={(event) => {
-				if (event.currentTarget.validity.valid && event.currentTarget.value !== "") {
-					onChange(String(Number(event.currentTarget.value)).padStart(2, "0"));
-				}
-			}}
-		/>
+		<div className="flex min-w-0 flex-col gap-1.5">
+			<Input
+				id={id}
+				type="text"
+				inputMode="numeric"
+				required
+				maxLength={2}
+				pattern={max === 23 ? "(?:[01]?[0-9]|2[0-3])" : "[0-5]?[0-9]"}
+				value={value}
+				aria-label={label}
+				aria-invalid={Boolean(error) || undefined}
+				aria-describedby={error ? `${id}-error` : undefined}
+				className="text-control tabular-nums"
+				onFocus={(event) => event.currentTarget.select()}
+				onChange={(event) => onChange(event.target.value)}
+				onBlur={(event) => {
+					if (event.currentTarget.validity.valid && event.currentTarget.value !== "") {
+						onChange(String(Number(event.currentTarget.value)).padStart(2, "0"));
+					}
+				}}
+			/>
+			{error ? <p id={`${id}-error`} className="text-[11px] leading-4 text-destructive">{error}</p> : null}
+		</div>
 	);
 }
 
 function AutomationSelect({
+	id,
 	label,
 	value,
 	onValueChange,
 	options,
 	placeholder,
 	required,
+	invalid,
+	describedBy,
 }: {
+	id?: string;
 	label: string;
 	value: string;
 	onValueChange: (value: string) => void;
 	options: Array<{ value: string; label: string }>;
 	placeholder?: string;
 	required?: boolean;
+	invalid?: boolean;
+	describedBy?: string;
 }) {
 	return (
 		<Select value={value} onValueChange={onValueChange} required={required}>
-			<SelectTrigger size="sm" className="w-full text-control" aria-label={label}>
+			<SelectTrigger id={id} size="sm" className="w-full text-control" aria-label={label} aria-invalid={invalid || undefined} aria-describedby={describedBy}>
 				<SelectValue placeholder={placeholder} />
 			</SelectTrigger>
 			<SelectContent position="popper" side="bottom" align="start" sideOffset={4} className="max-h-64">
@@ -309,11 +379,12 @@ function AutomationSelect({
 	);
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, id, error, children }: { label: string; id?: string; error?: string; children: React.ReactNode }) {
 	return (
 		<div className="flex flex-col gap-1.5 text-sm">
-			<span className="font-medium text-settings-label">{label}</span>
+			{id ? <label htmlFor={id} className="font-medium text-settings-label">{label}</label> : <span className="font-medium text-settings-label">{label}</span>}
 			{children}
+			{error ? <p id={`${id}-error`} className="text-[11px] leading-4 text-destructive">{error}</p> : null}
 		</div>
 	);
 }

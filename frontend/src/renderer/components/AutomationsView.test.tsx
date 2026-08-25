@@ -5,6 +5,7 @@ import { AutomationsView } from "./AutomationsView";
 
 const mocks = vi.hoisted(() => ({
 	automations: [] as Array<Record<string, unknown>>,
+	create: vi.fn(),
 	update: vi.fn(),
 }));
 
@@ -13,14 +14,14 @@ vi.mock("../hooks/useAgentsQuery", () => ({ useAgentsQuery: () => ({ data: { sup
 vi.mock("../hooks/useWorkspaceQuery", () => ({ useWorkspaceQuery: () => ({ data: [{ id: "demo", name: "Demo" }] }) }));
 vi.mock("../hooks/useAutomations", () => ({
 	useAutomations: () => ({ data: mocks.automations, isLoading: false, error: null }),
-	useCreateAutomation: () => ({ mutateAsync: vi.fn(), isPending: false, error: null }),
+	useCreateAutomation: () => ({ mutateAsync: mocks.create, isPending: false, error: null }),
 	useUpdateAutomation: () => ({ mutateAsync: mocks.update, isPending: false, error: null }),
 	useDeleteAutomation: () => ({ mutate: vi.fn(), isPending: false, error: null }),
 	useAutomationRuns: () => ({ data: [], isLoading: false }),
 }));
 
 describe("AutomationsView", () => {
-	beforeEach(() => { mocks.automations = []; mocks.update.mockReset(); });
+	beforeEach(() => { mocks.automations = []; mocks.create.mockReset(); mocks.update.mockReset(); });
 
 	it("shows a discoverable empty state and create action", () => {
 		render(<AutomationsView />);
@@ -79,9 +80,13 @@ describe("AutomationsView", () => {
 		await userEvent.type(hour, "24");
 		await userEvent.clear(minute);
 		await userEvent.type(minute, "60");
+		await userEvent.click(screen.getByRole("button", { name: "Create automation" }));
 
 		expect(hour).toBeInvalid();
 		expect(minute).toBeInvalid();
+		expect(hour).toHaveAccessibleDescription("Enter an hour from 00 to 23.");
+		expect(minute).toHaveAccessibleDescription("Enter minutes from 00 to 59.");
+		expect(mocks.create).not.toHaveBeenCalled();
 	});
 
 	it("uses the shared AO settings-dialog frame", async () => {
@@ -92,6 +97,52 @@ describe("AutomationsView", () => {
 			"border-[var(--color-border-settings-dialog)]",
 			"bg-popover",
 		);
+	});
+
+	it("shows AO-styled inline feedback when required fields are missing", async () => {
+		const user = userEvent.setup();
+		render(<AutomationsView />);
+		await user.click(screen.getAllByRole("button", { name: /create automation/i })[0]);
+		await user.click(screen.getByRole("button", { name: "Create automation" }));
+
+		const dialog = screen.getByRole("dialog", { name: "Create automation" });
+		const project = within(dialog).getByRole("combobox", { name: "Project" });
+		expect(within(dialog).getByRole("alert")).toHaveTextContent("Complete the highlighted fields.");
+		expect(project).toHaveAttribute("aria-invalid", "true");
+		expect(project).toHaveAccessibleDescription("Select a project.");
+		expect(within(dialog).getByRole("textbox", { name: "Name" })).toHaveAccessibleDescription("Enter a name.");
+		expect(within(dialog).getByRole("textbox", { name: "Prompt" })).toHaveAccessibleDescription("Enter a prompt.");
+		expect(mocks.create).not.toHaveBeenCalled();
+	});
+
+	it("clears a field error as soon as the field is corrected", async () => {
+		const user = userEvent.setup();
+		render(<AutomationsView />);
+		await user.click(screen.getAllByRole("button", { name: /create automation/i })[0]);
+		await user.click(screen.getByRole("button", { name: "Create automation" }));
+
+		const project = screen.getByRole("combobox", { name: "Project" });
+		expect(project).toHaveAttribute("aria-invalid", "true");
+		await user.click(project);
+		await user.click(screen.getByRole("option", { name: "Demo" }));
+
+		expect(project).not.toHaveAttribute("aria-invalid");
+		expect(screen.queryByText("Select a project.")).not.toBeInTheDocument();
+	});
+
+	it("keeps inline feedback until a text field has meaningful content", async () => {
+		const user = userEvent.setup();
+		render(<AutomationsView />);
+		await user.click(screen.getAllByRole("button", { name: /create automation/i })[0]);
+		await user.click(screen.getByRole("button", { name: "Create automation" }));
+
+		const name = screen.getByRole("textbox", { name: "Name" });
+		await user.type(name, "   ");
+		expect(name).toHaveAccessibleDescription("Enter a name.");
+
+		await user.type(name, "AO check");
+		expect(name).not.toHaveAttribute("aria-invalid");
+		expect(screen.queryByText("Enter a name.")).not.toBeInTheDocument();
 	});
 
 	it("exposes accessible toggle, delete, and run-history controls", () => {
