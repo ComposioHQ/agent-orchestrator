@@ -78,13 +78,11 @@ func defaultSpawnHost(ctx context.Context, sessionID, cwd string, argv []string,
 	// Build: <exe> pty-host <sessionID> <cwd> <shellCmd> <shellArgs...>
 	args := append([]string{"pty-host", sessionID, cwd}, argv...)
 
-	// Merge env: inherit parent, overlay caller-provided vars, then apply the
-	// assignments stripped from the argv prefix.
-	merged := os.Environ()
-	for k, v := range env {
-		merged = append(merged, k+"="+v)
-	}
-	merged = append(merged, envAssignments...)
+	// Merge env: inherit parent, apply argv-prefix assignments, then overlay
+	// caller-provided vars. Windows environment keys are case-insensitive, so
+	// AO's pinned PATH must replace any Path casing that came from the project
+	// or parent process instead of letting the old package-manager path win.
+	merged := mergeWindowsEnv(os.Environ(), env, envAssignments)
 
 	cmd := exec.CommandContext(ctx, exe, args...)
 	cmd.Dir = cwd

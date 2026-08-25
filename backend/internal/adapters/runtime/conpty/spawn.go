@@ -46,3 +46,59 @@ func stripEnvAssignments(argv []string) (assignments, rest []string) {
 	}
 	return argv[1:i], argv[i:]
 }
+
+func mergeWindowsEnv(base []string, overlay map[string]string, assignments []string) []string {
+	merged := make(map[string]string, len(base)+len(overlay)+len(assignments))
+	canonical := make(map[string]string, len(base)+len(overlay)+len(assignments))
+	for _, entry := range base {
+		if key, value, ok := strings.Cut(entry, "="); ok {
+			setWindowsEnv(merged, canonical, key, value)
+		}
+	}
+	for _, entry := range assignments {
+		if key, value, ok := strings.Cut(entry, "="); ok {
+			setWindowsEnv(merged, canonical, key, value)
+		}
+	}
+	for _, entry := range orderedWindowsOverlay(overlay) {
+		setWindowsEnv(merged, canonical, entry.key, entry.value)
+	}
+	out := make([]string, 0, len(merged))
+	for key, value := range merged {
+		out = append(out, key+"="+value)
+	}
+	return out
+}
+
+type windowsEnvPair struct {
+	key   string
+	value string
+}
+
+func orderedWindowsOverlay(overlay map[string]string) []windowsEnvPair {
+	out := make([]windowsEnvPair, 0, len(overlay))
+	var pinnedPath windowsEnvPair
+	hasPinnedPath := false
+	for key, value := range overlay {
+		pair := windowsEnvPair{key: key, value: value}
+		if key == "PATH" {
+			pinnedPath = pair
+			hasPinnedPath = true
+			continue
+		}
+		out = append(out, pair)
+	}
+	if hasPinnedPath {
+		out = append(out, pinnedPath)
+	}
+	return out
+}
+
+func setWindowsEnv(merged, canonical map[string]string, key, value string) {
+	folded := strings.ToUpper(key)
+	if existing, ok := canonical[folded]; ok && existing != key {
+		delete(merged, existing)
+	}
+	canonical[folded] = key
+	merged[key] = value
+}
