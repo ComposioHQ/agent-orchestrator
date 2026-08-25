@@ -416,21 +416,21 @@ func replayEditRejection(delivery domain.ConversationEditDelivery) error {
 // establish. Only the former may settle a reservation as rejected.
 func classifyEditRejection(
 	err error,
-) (domain.ConversationEditRejectionKind, error, bool) {
+) (domain.ConversationEditRejectionKind, bool, error) {
 	err = classify(err)
 	switch {
 	case errors.Is(err, ErrEditTurnInvalid), errors.Is(err, domain.ErrNoConversationTurn):
-		return domain.ConversationEditRejectedInvalid, err, true
+		return domain.ConversationEditRejectedInvalid, true, err
 	case errors.Is(err, ErrForkUnsupported):
-		return domain.ConversationEditRejectedUnsupported, err, true
+		return domain.ConversationEditRejectedUnsupported, true, err
 	case errors.Is(err, ErrControllerHandoff):
-		return domain.ConversationEditRejectedInterfaceTransition, err, true
+		return domain.ConversationEditRejectedInterfaceTransition, true, err
 	case errors.Is(err, ErrTurnRunning):
-		return domain.ConversationEditRejectedBusy, err, true
+		return domain.ConversationEditRejectedBusy, true, err
 	case errors.Is(err, ErrProviderRefused):
-		return domain.ConversationEditRejectedByProvider, err, true
+		return domain.ConversationEditRejectedByProvider, true, err
 	default:
-		return "", err, false
+		return "", false, err
 	}
 }
 
@@ -443,7 +443,7 @@ func (s *Service) rejectEditDelivery(
 	if clientMessageID == "" {
 		return result, cause
 	}
-	kind, classified, definitive := classifyEditRejection(cause)
+	kind, definitive, classified := classifyEditRejection(cause)
 	if !definitive {
 		return result, fmt.Errorf("%w: %w", ErrEditDeliveryUncertain, classified)
 	}

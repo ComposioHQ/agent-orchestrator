@@ -636,8 +636,11 @@ type ConversationSteerDelivery struct {
 	SettledAt        *time.Time
 }
 
+// ConversationSteerDeliveryState records whether a reserved steer was accepted
+// or definitively rejected.
 type ConversationSteerDeliveryState string
 
+// Conversation steer delivery states.
 const (
 	ConversationSteerReserved ConversationSteerDeliveryState = "reserved"
 	ConversationSteerAccepted ConversationSteerDeliveryState = "accepted"
@@ -649,6 +652,7 @@ const (
 // this discriminator is what reconstructs errors.Is behavior after restart.
 type ConversationSteerRejectionKind string
 
+// Conversation steer rejection kinds.
 const (
 	ConversationSteerRejectedNoActiveTurn        ConversationSteerRejectionKind = "no_active_turn"
 	ConversationSteerRejectedUnsupported         ConversationSteerRejectionKind = "unsupported"
@@ -676,8 +680,11 @@ type ConversationEditDelivery struct {
 	SettledAt        *time.Time
 }
 
+// ConversationEditDeliveryState records whether a reserved edit was accepted
+// or definitively rejected.
 type ConversationEditDeliveryState string
 
+// Conversation edit delivery states.
 const (
 	ConversationEditReserved ConversationEditDeliveryState = "reserved"
 	ConversationEditAccepted ConversationEditDeliveryState = "accepted"
@@ -688,14 +695,16 @@ const (
 // edit failures after the controller that observed them no longer exists.
 type ConversationEditRejectionKind string
 
+// Conversation edit rejection kinds.
 const (
 	ConversationEditRejectedInvalid             ConversationEditRejectionKind = "invalid_turn"
 	ConversationEditRejectedUnsupported         ConversationEditRejectionKind = "unsupported"
 	ConversationEditRejectedBusy                ConversationEditRejectionKind = "busy"
 	ConversationEditRejectedInterfaceTransition ConversationEditRejectionKind = "interface_transition"
 	ConversationEditRejectedByProvider          ConversationEditRejectionKind = "provider_refused"
-	// Retained only to replay reservations settled by builds that treated a
-	// generic provider/transport error as definitive.
+	// ConversationEditRejectedProviderFailure is retained only to replay
+	// reservations settled by builds that treated a generic provider/transport
+	// error as definitive.
 	ConversationEditRejectedProviderFailure ConversationEditRejectionKind = "provider_failure"
 )
 
