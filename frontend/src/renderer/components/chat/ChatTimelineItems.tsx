@@ -121,13 +121,13 @@ function streamGraphemes(text: string): string[] {
 }
 
 function reconciledStreamPrefix(visibleText: string, targetGraphemes: string[]): string {
-	let prefix = "";
+	let boundary = 0;
 	for (const grapheme of targetGraphemes) {
-		const candidate = prefix + grapheme;
-		if (!visibleText.startsWith(candidate)) break;
-		prefix = candidate;
+		const nextBoundary = boundary + grapheme.length;
+		if (nextBoundary > visibleText.length) break;
+		boundary = nextBoundary;
 	}
-	return prefix;
+	return visibleText.slice(0, boundary);
 }
 
 function useSmoothStreamingText(message: ConversationMessage): string {
