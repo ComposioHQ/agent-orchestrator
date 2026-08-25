@@ -40,6 +40,49 @@ function renderButton() {
 }
 
 describe("TopbarOpenEditorButton", () => {
+	// The bug this PR chases: the worktree goes away after getState was cached,
+	// so the control is still enabled, the click fails, and nothing refreshes the
+	// state, leaving it enabled to fail again. Failing the open must re-read
+	// availability and disable the control.
+	it("refreshes availability after a failed open so the control stops inviting the click", async () => {
+		const getState = vi
+			.fn()
+			.mockResolvedValueOnce(availableState)
+			.mockResolvedValue({ ...availableState, workspaceAvailable: false, unavailableReason: "Session workspace is not available" });
+		window.ao!.editorHandoff.getState = getState;
+		window.ao!.editorHandoff.open = vi.fn().mockRejectedValue(
+			new Error("Error invoking remote method 'editorHandoff:open': Error: Session workspace is not available"),
+		);
+		renderButton();
+
+		const main = await screen.findByRole("button", { name: "Open in Cursor" });
+		expect(main).toBeEnabled();
+
+		await userEvent.click(main);
+
+		// the failure must trigger a refetch, not just show a message
+		await waitFor(() => expect(getState).toHaveBeenCalledTimes(2));
+		await waitFor(() => expect(screen.getByRole("button", { name: "Open in Cursor" })).toBeDisabled());
+	});
+
+	// Regression: an ipcMain rejection arrives wrapped as "Error invoking remote
+	// method 'editorHandoff:open': Error: <reason>", and the topbar used to paint
+	// that whole string into the actions row.
+	it("shows the reason, not Electron's remote-method wrapper, when the open fails", async () => {
+		setState(availableState);
+		window.ao!.editorHandoff.open = vi.fn().mockRejectedValue(
+			new Error("Error invoking remote method 'editorHandoff:open': Error: Session workspace is not available"),
+		);
+		renderButton();
+
+		await userEvent.click(await screen.findByRole("button", { name: "Open in Cursor" }));
+
+		const alert = await screen.findByRole("alert");
+		expect(alert).toHaveTextContent("Session workspace is not available");
+		expect(alert.textContent).not.toContain("Error invoking remote method");
+	});
+
+
 	beforeEach(() => {
 		openMock.mockClear();
 		openMock.mockImplementation(async ({ targetId }: OpenSessionTargetInput) => {

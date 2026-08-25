@@ -135,16 +135,21 @@ func Run() error {
 
 	telemetrySink := newTelemetrySink(cfg, store, log)
 	defer func() { _ = telemetrySink.Close(context.Background()) }()
-	// Daemon Sentry: captures genuine 5xx/panics with their Go stack. No-op
-	// unless AO_SENTRY_DSN is set. Flushed on shutdown so buffered faults send.
-	if err := sentryobs.Init(sentryobs.Config{
-		DSN:         cfg.Telemetry.SentryDSN,
-		Release:     cfg.Telemetry.AppVersion,
-		Environment: sentryEnvironment(cfg.Telemetry.AppVersion),
-	}); err != nil {
-		log.Warn("daemon sentry disabled", "err", err)
+	// Daemon Sentry: captures genuine 5xx/panics with their Go stack. Gated on
+	// the same consent switch as the remote telemetry sink (cfg.Telemetry.Events)
+	// so a user who has turned telemetry off never has faults reported, and a
+	// no-op besides unless a DSN is set. Flushed on shutdown so buffered faults
+	// send.
+	if cfg.Telemetry.Events {
+		if err := sentryobs.Init(sentryobs.Config{
+			DSN:         cfg.Telemetry.SentryDSN,
+			Release:     cfg.Telemetry.AppVersion,
+			Environment: sentryEnvironment(cfg.Telemetry.AppVersion),
+		}); err != nil {
+			log.Warn("daemon sentry disabled", "err", err)
+		}
+		defer sentryobs.Flush(2 * time.Second)
 	}
-	defer sentryobs.Flush(2 * time.Second)
 	telemetrySink.Emit(context.Background(), ports.TelemetryEvent{
 		Name:       "ao.daemon.started",
 		Source:     "daemon",

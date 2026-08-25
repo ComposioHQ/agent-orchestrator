@@ -2225,6 +2225,13 @@ export function TurnDuration({ durationMs }: { durationMs: number }) {
 	);
 }
 
+export interface TurnOutcomeRetryControl {
+	onRetry: () => void;
+	pending?: boolean;
+	error?: string;
+	disabled?: boolean;
+}
+
 /**
  * How a turn ended when it did not complete cleanly. Successful turns skip this —
  * their duration already sits on the answer action row. `interrupted` is kept
@@ -2234,9 +2241,12 @@ export function TurnDuration({ durationMs }: { durationMs: number }) {
 export function TurnOutcome({
 	state,
 	error,
+	retry,
 }: {
 	state: "recovered" | "interrupted" | "failed";
 	error?: string;
+	/** Re-dispatch this failed turn's prompt. Absent when retry is ineligible. */
+	retry?: TurnOutcomeRetryControl;
 }) {
 	const copy = {
 		recovered: { label: "Outcome unknown", tone: "text-muted-foreground/70" },
@@ -2254,6 +2264,30 @@ export function TurnOutcome({
 				<span className="max-w-[40%] shrink truncate text-[10px] text-destructive" title={error}>
 					{error}
 				</span>
+			) : null}
+			{retry?.error ? (
+				<span
+					role="alert"
+					className="max-w-[50%] text-pretty text-right text-[10px] leading-tight text-destructive"
+				>
+					{retry.error}
+				</span>
+			) : null}
+			{retry ? (
+				<button
+					type="button"
+					onClick={retry.onRetry}
+					disabled={retry.pending || retry.disabled}
+					aria-label="Retry this turn"
+					title={
+						retry.error ??
+						(retry.disabled ? "Wait for the current turn to finish" : "Send this prompt again as a new turn")
+					}
+					data-testid="retry-turn"
+					className="shrink-0 rounded px-1.5 py-0.5 text-[10px] uppercase tracking-[0.08em] text-muted-foreground/70 transition-colors hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-50"
+				>
+					{retry.pending ? "Retrying…" : "Retry"}
+				</button>
 			) : null}
 			<span aria-hidden="true" className="h-px min-w-0 flex-1 bg-border" />
 		</div>

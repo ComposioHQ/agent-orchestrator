@@ -35,6 +35,8 @@ import { apiClient, apiErrorMessage } from "../lib/api-client";
 import {
 	isChangedWorkspaceFile,
 	sessionWorkspaceFilesQueryOptions,
+	useWorkspaceFileConnectionState,
+	workspaceFilesRefetchInterval,
 	type WorkspaceCompareMode,
 	type WorkspaceFileSummary,
 } from "../hooks/useSessionWorkspaceFiles";
@@ -146,7 +148,11 @@ export function SessionFilesView({
 	const annotationSentTimerRef = useRef<number | null>(null);
 	const rootRef = useRef<HTMLElement>(null);
 
-	const filesQuery = useQuery(sessionWorkspaceFilesQueryOptions(sessionId, t("files.error.loadWorkspace")));
+	const workspaceConnectionState = useWorkspaceFileConnectionState(sessionId);
+	const filesQuery = useQuery({
+		...sessionWorkspaceFilesQueryOptions(sessionId, t("files.error.loadWorkspace")),
+		refetchInterval: workspaceFilesRefetchInterval(workspaceConnectionState),
+	});
 	useEffect(() => subscribeWorkspaceFileChanges(sessionId, queryClient), [queryClient, sessionId]);
 	const files = filesQuery.data?.files ?? emptyFiles;
 	const changedFiles = useMemo(() => files.filter(isChangedWorkspaceFile), [files]);

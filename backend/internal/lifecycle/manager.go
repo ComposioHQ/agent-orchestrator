@@ -152,6 +152,16 @@ func WithActiveSteering(pred func(domain.AgentHarness) bool) Option {
 	}
 }
 
+// WithStartupSignalGate supplies the adapter capability predicate used to
+// suppress reaction writes until a TUI's first startup-ready hook arrives.
+func WithStartupSignalGate(pred func(domain.AgentHarness) bool) Option {
+	return func(m *Manager) {
+		if pred != nil {
+			m.startupSignalGatesInput = pred
+		}
+	}
+}
+
 // Manager reduces runtime, activity, spawn, and termination observations into durable session facts.
 // It also owns agent nudges caused by PR observations, including merge-conflict, CI-failure, and review-feedback prompts.
 type Manager struct {
@@ -192,7 +202,8 @@ type Manager struct {
 	// active turn (input steers the run) rather than only while idle. Supplied by
 	// the agent adapter via WithActiveSteering; the default answers false, so an
 	// unknown harness is only written to while idle.
-	steerActive func(domain.AgentHarness) bool
+	steerActive             func(domain.AgentHarness) bool
+	startupSignalGatesInput func(domain.AgentHarness) bool
 }
 
 // New builds a Lifecycle Manager over the session store it writes and the messenger it uses for agent nudges.
@@ -203,19 +214,23 @@ func New(store sessionStore, messenger ports.AgentMessenger, opts ...Option) *Ma
 	// WithClock option may still override this in tests.
 	clock := func() time.Time { return time.Now().UTC() }
 	m := &Manager{
-		store:           store,
-		window:          defaultRecentActivityWindow,
-		clock:           clock,
-		react:           newReactionState(),
-		flights:         map[domain.SessionID]*toolFlight{},
-		pendingLaunches: map[domain.SessionID]pendingLaunch{},
-		steerActive:     func(domain.AgentHarness) bool { return false },
+		store:                   store,
+		window:                  defaultRecentActivityWindow,
+		clock:                   clock,
+		react:                   newReactionState(),
+		flights:                 map[domain.SessionID]*toolFlight{},
+		pendingLaunches:         map[domain.SessionID]pendingLaunch{},
+		steerActive:             func(domain.AgentHarness) bool { return false },
+		startupSignalGatesInput: func(domain.AgentHarness) bool { return false },
 	}
 	if messenger != nil {
 		m.guard = sessionguard.New(store, messenger, nil)
 	}
 	for _, opt := range opts {
 		opt(m)
+	}
+	if m.guard != nil {
+		m.guard.SetStartupSignalGate(m.startupSignalGatesInput)
 	}
 	return m
 }
