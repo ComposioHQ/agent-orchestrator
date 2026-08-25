@@ -286,7 +286,7 @@ export function InspectorPullRequestCardView({
 	statusNotice?: ReactNode;
 }) {
 	return (
-		<article className="min-w-0 w-full rounded-lg border border-(--color-border-settings-input) bg-(--color-bg-settings-input) px-3 py-2.5">
+		<article className="min-w-0 w-full select-text rounded-lg border border-(--color-border-settings-input) bg-(--color-bg-settings-input) px-3 py-2.5">
 			{pr.title ? (
 				<ExternalLink
 					className="inline text-sm font-semibold leading-snug tracking-tight text-settings-label underline-offset-2 hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
@@ -365,7 +365,7 @@ export function InspectorActivityTimelineView({ events }: { events: InspectorTim
 	return (
 		<div className="relative pl-5">
 			{events.map((event, index) => (
-				<div key={index} className="relative pb-4 last:pb-0" data-testid="inspector-timeline-event">
+				<div key={index} className="relative select-text pb-4 last:pb-0" data-testid="inspector-timeline-event">
 					{index < events.length - 1 ? (
 						<span
 							aria-hidden="true"
@@ -997,7 +997,7 @@ function ExternalReviewCard({
 						{headerContent}
 					</button>
 				) : (
-					<div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 px-1.5 py-1.5 text-left @max-[420px]/inspector:grid-cols-[auto_minmax(0,1fr)] @max-[420px]/inspector:gap-x-2">
+					<div className="grid min-w-0 select-text grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 px-1.5 py-1.5 text-left @max-[420px]/inspector:grid-cols-[auto_minmax(0,1fr)] @max-[420px]/inspector:gap-x-2">
 						{headerContent}
 					</div>
 				)}
@@ -1253,9 +1253,9 @@ function InlineCommentRow({
 				</span>
 				{body ? <span data-overflow-axis="horizontal" ref={previewRef} className={cn("mt-1 block min-w-0 text-muted-foreground", expanded ? "whitespace-pre-wrap break-words" : "truncate")}>{expanded ? body : preview}</span> : null}
 			</div>
-			{resolvedSuccess ? <p className="m-0 text-2xs font-medium text-success">{labels.resolvedReview}</p> : null}
-			{resolveError ? <p className="m-0 text-2xs font-medium text-error">{labels.resolveReviewFailed}</p> : null}
-			{sendError && !sent ? <p className="m-0 text-2xs font-medium text-error">{labels.sendToWorkerAgentError}</p> : null}
+			{resolvedSuccess ? <p className="m-0 select-text text-2xs font-medium text-success">{labels.resolvedReview}</p> : null}
+			{resolveError ? <p className="m-0 select-text text-2xs font-medium text-error">{labels.resolveReviewFailed}</p> : null}
+			{sendError && !sent ? <p className="m-0 select-text text-2xs font-medium text-error">{labels.sendToWorkerAgentError}</p> : null}
 		</div>
 	);
 }
@@ -1310,7 +1310,7 @@ function ReviewSummaryCard({
 	useEffect(() => setExpanded(false), [body]);
 	return (
 		<article className="flex min-w-0 flex-col gap-1 rounded-md bg-overlay/50 px-2.5 py-2.5">
-			<span className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-1.5 gap-y-1 @max-[420px]/inspector:grid-cols-[minmax(0,1fr)_auto]">
+			<span className="grid min-w-0 select-text grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-1.5 gap-y-1 @max-[420px]/inspector:grid-cols-[minmax(0,1fr)_auto]">
 				<span className="inline-flex min-w-0 items-center gap-1.5">
 					<span className="inline-flex min-w-0 flex-1 items-center gap-1 text-micro font-medium text-muted-foreground">
 						{renderAvatar(actor)}
