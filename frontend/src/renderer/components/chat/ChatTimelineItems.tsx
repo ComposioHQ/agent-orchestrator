@@ -339,7 +339,7 @@ export function TurnOutcome({
 }) {
 	const copy = {
 		recovered: {
-			label: "This turn was recovered from an earlier session",
+			label: "Imported from Terminal UI — completion status unavailable",
 			tone: "text-muted-foreground/70",
 		},
 		interrupted: {
