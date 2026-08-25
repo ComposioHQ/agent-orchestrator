@@ -191,6 +191,35 @@ describe("SessionChatSurface link routing", () => {
 		expect(onConversationWorkChange).not.toHaveBeenCalled();
 	});
 
+	it("does not attribute a previous session snapshot's work to the destination", () => {
+		conversationState.snapshot = {
+			...snapshotFor("sess-previous"),
+			controller: { state: "busy" },
+			turns: [
+				{
+					id: "turn-previous",
+					state: "running",
+					requestedAt: "2026-08-25T09:00:00Z",
+				},
+			],
+		};
+		const onConversationWorkChange = vi.fn();
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+		});
+
+		render(
+			<Wrapper client={queryClient}>
+				<SessionChatSurface
+					session={session}
+					onConversationWorkChange={onConversationWorkChange}
+				/>
+			</Wrapper>,
+		);
+
+		expect(onConversationWorkChange).not.toHaveBeenCalled();
+	});
+
 	it("reports live and queued Chat work to the interface-switch owner", async () => {
 		conversationState.snapshot = {
 			capabilities: [],

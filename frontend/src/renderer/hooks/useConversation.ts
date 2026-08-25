@@ -66,6 +66,9 @@ export function conversationConfigOptionsQueryKey(sessionId: string) {
 	return ["conversation-config-options", sessionId] as const;
 }
 
+const acceptedConversationSendsQueryKey = ["conversation-accepted-sends"] as const;
+type AcceptedConversationSends = Record<string, string>;
+
 const CONVERSATION_PAGE_SIZE = 200;
 const CONFIG_OPTIONS_POLL_INTERVAL_MS = 5_000;
 
@@ -160,24 +163,43 @@ export function useConversation(sessionId: string | undefined): ConversationQuer
 /** Commands against a conversation. Each refetches the snapshot on success. */
 export function useConversationCommands(sessionId: string | undefined) {
 	const queryClient = useQueryClient();
-	const [acceptedSend, setAcceptedSend] = useState<{ sessionId: string; turnId: string }>();
+	const acceptedSends = useQuery({
+		queryKey: acceptedConversationSendsQueryKey,
+		queryFn: async (): Promise<AcceptedConversationSends> => ({}),
+		initialData: {} as AcceptedConversationSends,
+		enabled: false,
+		// Accepted work is a safety boundary for Chat -> Terminal. Keep it until the
+		// exact durable turn is observed, even if the Chat surface is unmounted.
+		gcTime: Number.POSITIVE_INFINITY,
+		staleTime: Number.POSITIVE_INFINITY,
+	}).data;
+	const invalidateSession = useCallback(
+		async (targetSessionId: string) => {
+			await queryClient.invalidateQueries({ queryKey: conversationQueryKey(targetSessionId) });
+		},
+		[queryClient],
+	);
 	const invalidate = useCallback(async () => {
 		if (sessionId) {
 			// Keep the mutation pending until the active conversation has refreshed. A
 			// queued message or landed steer should be visible before the composer clears,
 			// otherwise the action looks dropped even though the daemon accepted it.
-			await queryClient.invalidateQueries({
-				queryKey: conversationQueryKey(sessionId),
-			});
+			await invalidateSession(sessionId);
 		}
-	}, [queryClient, sessionId]);
+	}, [invalidateSession, sessionId]);
 
 	const send = useMutation({
-		mutationFn: async (input: ConversationSendInput) => {
+		mutationFn: async ({
+			targetSessionId,
+			input,
+		}: {
+			targetSessionId: string;
+			input: ConversationSendInput;
+		}) => {
 			const { data, error } = await apiClient.POST(
 				"/api/v1/sessions/{sessionId}/conversation/messages",
 				{
-					params: { path: { sessionId: sessionId as string } },
+					params: { path: { sessionId: targetSessionId } },
 					// A stable id per attempt makes a retry idempotent: the daemon
 					// answers `duplicate` instead of opening a second provider turn.
 					body: { ...input, clientMessageId: crypto.randomUUID() },
@@ -186,13 +208,20 @@ export function useConversationCommands(sessionId: string | undefined) {
 			if (error) throw error;
 			return data;
 		},
-		onSuccess: async (data) => {
-			if (sessionId && data?.turnId) {
+		onSuccess: async (data, variables) => {
+			const acceptedTurnId = data?.turnId;
+			if (acceptedTurnId) {
 				// A refetch can briefly return the pre-send snapshot. Keep the accepted
 				// turn locally visible as pending until that exact durable row arrives.
-				setAcceptedSend({ sessionId, turnId: data.turnId });
+				queryClient.setQueryData<AcceptedConversationSends>(
+					acceptedConversationSendsQueryKey,
+					(current = {}) => ({
+						...current,
+						[variables.targetSessionId]: acceptedTurnId,
+					}),
+				);
 			}
-			await invalidate();
+			await invalidateSession(variables.targetSessionId);
 		},
 	});
 
@@ -454,20 +483,27 @@ export function useConversationCommands(sessionId: string | undefined) {
 	});
 	const acknowledgeAcceptedSend = useCallback(
 		(turnId: string) => {
-			setAcceptedSend((current) =>
-				current && current.sessionId === sessionId && current.turnId === turnId
-					? undefined
-					: current,
+			if (!sessionId) return;
+			queryClient.setQueryData<AcceptedConversationSends>(
+				acceptedConversationSendsQueryKey,
+				(current = {}) => {
+					if (current[sessionId] !== turnId) return current;
+					const next = { ...current };
+					delete next[sessionId];
+					return next;
+				},
 			);
 		},
-		[sessionId],
+		[queryClient, sessionId],
 	);
 
 	return {
 		send: (input: string | ConversationSendInput) =>
-			send.mutateAsync(typeof input === "string" ? { text: input } : input),
-		pendingAcceptedSendTurnId:
-			acceptedSend && acceptedSend.sessionId === sessionId ? acceptedSend.turnId : undefined,
+			send.mutateAsync({
+				targetSessionId: sessionId as string,
+				input: typeof input === "string" ? { text: input } : input,
+			}),
+		pendingAcceptedSendTurnId: sessionId ? acceptedSends[sessionId] : undefined,
 		acknowledgeAcceptedSend,
 		resolve: (requestId: string, decisionId: string) => resolve.mutate({ requestId, decisionId }),
 		resolveInput: (

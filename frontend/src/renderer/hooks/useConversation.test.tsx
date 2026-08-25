@@ -27,6 +27,14 @@ function wrapper({ children }: { children: ReactNode }) {
 	return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
 }
 
+function deferred<T>() {
+	let resolve!: (value: T) => void;
+	const promise = new Promise<T>((resolvePromise) => {
+		resolve = resolvePromise;
+	});
+	return { promise, resolve };
+}
+
 /** The provider state the daemon now serves, in wire shape. */
 const WIRE = {
 	conversationId: "conv-1",
@@ -77,6 +85,84 @@ beforeEach(() => {
 	postMock.mockReset();
 	apiErrorCodeMock.mockReset().mockReturnValue(undefined);
 	apiErrorMessageMock.mockReset().mockReturnValue("failed");
+});
+
+describe("accepted conversation sends", () => {
+	it("keeps each accepted turn attached to the session that initiated it", async () => {
+		const firstResponse = deferred<{
+			data: { turnId: string };
+			error: undefined;
+		}>();
+		postMock.mockImplementation(
+			(_path: string, request: { params: { path: { sessionId: string } } }) =>
+				request.params.path.sessionId === "ao-1"
+					? firstResponse.promise
+					: Promise.resolve({ data: { turnId: "turn-2" }, error: undefined }),
+		);
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+		});
+		const HookWrapper = ({ children }: { children: ReactNode }) => (
+			<QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+		);
+		const { result, rerender } = renderHook(
+			({ sessionId }) => useConversationCommands(sessionId),
+			{ initialProps: { sessionId: "ao-1" }, wrapper: HookWrapper },
+		);
+
+		let firstSend!: Promise<unknown>;
+		act(() => {
+			firstSend = result.current.send("first session work");
+		});
+		rerender({ sessionId: "ao-2" });
+		await act(async () => {
+			await result.current.send("second session work");
+		});
+		firstResponse.resolve({ data: { turnId: "turn-1" }, error: undefined });
+		await act(async () => {
+			await firstSend;
+		});
+
+		expect(result.current.pendingAcceptedSendTurnId).toBe("turn-2");
+		rerender({ sessionId: "ao-1" });
+		expect(result.current.pendingAcceptedSendTurnId).toBe("turn-1");
+	});
+
+	it("retains accepted work across a full chat surface unmount and remount", async () => {
+		postMock.mockResolvedValue({
+			data: { turnId: "turn-after-remount" },
+			error: undefined,
+		});
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+		});
+		const HookWrapper = ({ children }: { children: ReactNode }) => (
+			<QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+		);
+		const firstMount = renderHook(() => useConversationCommands("ao-remount"), {
+			wrapper: HookWrapper,
+		});
+
+		await act(async () => {
+			await firstMount.result.current.send("keep this work visible");
+		});
+		await waitFor(() => {
+			expect(firstMount.result.current.pendingAcceptedSendTurnId).toBe("turn-after-remount");
+		});
+		firstMount.unmount();
+
+		const secondMount = renderHook(() => useConversationCommands("ao-remount"), {
+			wrapper: HookWrapper,
+		});
+		expect(secondMount.result.current.pendingAcceptedSendTurnId).toBe("turn-after-remount");
+
+		act(() => {
+			secondMount.result.current.acknowledgeAcceptedSend("turn-after-remount");
+		});
+		await waitFor(() => {
+			expect(secondMount.result.current.pendingAcceptedSendTurnId).toBeUndefined();
+		});
+	});
 });
 
 describe("useConversation snapshot mapping", () => {
