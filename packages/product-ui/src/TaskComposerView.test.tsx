@@ -32,6 +32,7 @@ function viewProps(overrides: Partial<TaskComposerViewProps> = {}): TaskComposer
 			agentId: "codex",
 			agentLabel: "Codex",
 			projectId: "project-1",
+			disabled: false,
 			value: "gpt-5",
 			mode: "",
 			catalog: {
