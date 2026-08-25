@@ -444,13 +444,11 @@ export function ChatComposer({
 		setChatDraftBoundary(
 			draftSessionId,
 			"composer",
-				durableDelivery
-					? "pending-delivery"
-					: draftPersistenceError
-						? "persistence-failed"
-						: fileAttachments.preparing
-						? "pending-attachments"
-						: undefined,
+			[
+				...(draftPersistenceError ? (["persistence-failed"] as const) : []),
+				...(durableDelivery ? (["pending-delivery"] as const) : []),
+				...(fileAttachments.preparing ? (["pending-attachments"] as const) : []),
+			],
 		);
 	}, [draftPersistenceError, draftSessionId, durableDelivery, fileAttachments.preparing]);
 

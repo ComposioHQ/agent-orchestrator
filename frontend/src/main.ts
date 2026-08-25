@@ -73,7 +73,11 @@ import {
 	TRAY_RENDERER_READY_CHANNEL,
 	TRAY_SET_ATTENTION_STATE_CHANNEL,
 } from "./shared/tray";
-import { SET_CHAT_DRAFT_RISK_CHANNEL } from "./shared/chat-draft-risk";
+import {
+	parseChatDraftBoundaryKinds,
+	SET_CHAT_DRAFT_RISK_CHANNEL,
+	type ChatDraftBoundaryKind,
+} from "./shared/chat-draft-risk";
 import {
 	confirmUnsafeChatDraftLeave,
 	shouldPreventUnsafeChatDraftClose,
@@ -206,7 +210,7 @@ let keybindingOverrides: KeybindingOverrides = {};
 let keybindingRecordingActive = false;
 let closeShellTerminalShortcutEnabled = false;
 let terminalFocused = false;
-let chatDraftRiskActive = false;
+let chatDraftRisks: ChatDraftBoundaryKind[] = [];
 let chatDraftQuitConfirmed = false;
 let chatDraftWindowCloseConfirmed = false;
 // Held for the app lifetime. Dropping it (on any exit) triggers daemon self-stop.
@@ -502,11 +506,11 @@ async function createWindowInternal(): Promise<void> {
 	});
 
 	shellWebContents.on("will-prevent-unload", (event) => {
-		if (!chatDraftRiskActive) return;
+		if (chatDraftRisks.length === 0) return;
 		if (
 			chatDraftQuitConfirmed ||
 			chatDraftWindowCloseConfirmed ||
-			confirmUnsafeChatDraftLeave((options) => dialog.showMessageBoxSync(options))
+			confirmUnsafeChatDraftLeave(chatDraftRisks, (options) => dialog.showMessageBoxSync(options))
 		) {
 			// Electron uses preventDefault here to ignore beforeunload and continue
 			// leaving. Doing nothing honors the renderer's request to stay.
@@ -516,7 +520,7 @@ async function createWindowInternal(): Promise<void> {
 
 	mainWindow.on("close", (event) => {
 		const preventClose = shouldPreventUnsafeChatDraftClose(
-			chatDraftRiskActive,
+			chatDraftRisks,
 			chatDraftQuitConfirmed || chatDraftWindowCloseConfirmed,
 			(options) => dialog.showMessageBoxSync(options),
 		);
@@ -524,7 +528,7 @@ async function createWindowInternal(): Promise<void> {
 			event.preventDefault();
 			return;
 		}
-		if (chatDraftRiskActive) chatDraftWindowCloseConfirmed = true;
+		if (chatDraftRisks.length > 0) chatDraftWindowCloseConfirmed = true;
 	});
 
 	// Application shortcuts are handled here so they fire no matter which web
@@ -599,7 +603,7 @@ async function createWindowInternal(): Promise<void> {
 	shellWebContents.on("render-process-gone", () => trayLifecycle.clear());
 
 	mainWindow.on("closed", () => {
-		chatDraftRiskActive = false;
+		chatDraftRisks = [];
 		chatDraftQuitConfirmed = false;
 		chatDraftWindowCloseConfirmed = false;
 		disposeBrowserRuntimeLink();
@@ -1741,13 +1745,17 @@ ipcMain.on(SET_TERMINAL_FOCUSED_CHANNEL, (event, focused: unknown) => {
 	terminalFocused = focused;
 });
 
-ipcMain.on(SET_CHAT_DRAFT_RISK_CHANNEL, (event, active: unknown) => {
-	if (event.sender !== getShellWebContents() || typeof active !== "boolean") return;
-	chatDraftRiskActive = active;
-	if (!active) {
-		chatDraftQuitConfirmed = false;
-		chatDraftWindowCloseConfirmed = false;
-	}
+ipcMain.on(SET_CHAT_DRAFT_RISK_CHANNEL, (event, risks: unknown) => {
+	if (event.sender !== getShellWebContents()) return;
+	const parsed = parseChatDraftBoundaryKinds(risks);
+	if (!parsed) return;
+	if (
+		chatDraftRisks.length === parsed.length &&
+		chatDraftRisks.every((risk, index) => risk === parsed[index])
+	) return;
+	chatDraftRisks = [...parsed];
+	chatDraftQuitConfirmed = false;
+	chatDraftWindowCloseConfirmed = false;
 });
 
 // Backs the custom title-bar menu (WindowTitlebar). Each item maps to the same
@@ -2306,9 +2314,12 @@ app.whenReady().then(async () => {
 // The supervisorLink fd is NOT explicitly closed on quit; the OS closes it when
 // the process exits for any reason (Cmd+Q, crash, SIGKILL). Sessions survive.
 app.on("before-quit", (event) => {
-	if (chatDraftRiskActive && !chatDraftQuitConfirmed) {
+	if (chatDraftRisks.length > 0 && !chatDraftQuitConfirmed) {
 		event.preventDefault();
-		if (confirmUnsafeChatDraftLeave((options) => dialog.showMessageBoxSync(options))) {
+		if (confirmUnsafeChatDraftLeave(
+			chatDraftRisks,
+			(options) => dialog.showMessageBoxSync(options),
+		)) {
 			chatDraftQuitConfirmed = true;
 			app.quit();
 		}

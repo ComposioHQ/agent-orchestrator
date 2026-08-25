@@ -1,61 +1,90 @@
-export type ChatDraftBoundaryKind =
-	| "pending-attachments"
-	| "pending-delivery"
-	| "persistence-failed";
+import {
+	CHAT_DRAFT_BOUNDARY_COPY,
+	parseChatDraftBoundaryKinds,
+	type ChatDraftBoundaryKind,
+} from "../../shared/chat-draft-risk";
+
+export {
+	CHAT_DRAFT_BOUNDARY_COPY,
+	type ChatDraftBoundaryKind,
+} from "../../shared/chat-draft-risk";
+
 export type ChatDraftBoundarySource = "composer" | "inline-edit";
 
-const boundaries = new Map<string, Map<ChatDraftBoundarySource, ChatDraftBoundaryKind>>();
+const EMPTY_BOUNDARIES: readonly ChatDraftBoundaryKind[] = Object.freeze([]);
+const boundaries = new Map<
+	string,
+	Map<ChatDraftBoundarySource, readonly ChatDraftBoundaryKind[]>
+>();
+const boundarySnapshots = new Map<string, readonly ChatDraftBoundaryKind[]>();
 const listeners = new Set<() => void>();
-
-export const CHAT_DRAFT_BOUNDARY_COPY: Record<ChatDraftBoundaryKind, string> = {
-	"pending-attachments":
-		"Attachments are still being saved. Leaving now will discard any files AO has not finished writing to the worktree. Wait for saving to finish.",
-	"pending-delivery":
-		"A Chat delivery outcome is still unresolved. Its recovery ID is saved, but finish or explicitly retry recovery before leaving this chat.",
-	"persistence-failed":
-		"This Chat draft could not be saved locally. Leaving now will discard the unsaved changes. Copy the draft before leaving.",
-};
 
 function emitBoundaryChange(): void {
 	for (const listener of listeners) listener();
 }
 
-export function setChatDraftBoundary(
-	sessionId: string,
-	source: ChatDraftBoundarySource,
-	kind: ChatDraftBoundaryKind | undefined,
-): void {
-	if (!sessionId) return;
+function sameBoundaryKinds(
+	left: readonly ChatDraftBoundaryKind[] | undefined,
+	right: readonly ChatDraftBoundaryKind[],
+): boolean {
+	return Boolean(left && left.length === right.length && left.every((kind, index) => kind === right[index]));
+}
+
+function normalizeBoundaryKinds(
+	kinds: ChatDraftBoundaryKind | readonly ChatDraftBoundaryKind[] | undefined,
+): readonly ChatDraftBoundaryKind[] {
+	if (!kinds) return EMPTY_BOUNDARIES;
+	return parseChatDraftBoundaryKinds(Array.isArray(kinds) ? kinds : [kinds]) ?? EMPTY_BOUNDARIES;
+}
+
+function refreshBoundarySnapshot(sessionId: string): void {
 	const sessionBoundaries = boundaries.get(sessionId);
-	if (!kind) {
-		if (!sessionBoundaries?.delete(source)) return;
-		if (sessionBoundaries.size === 0) boundaries.delete(sessionId);
-		emitBoundaryChange();
-		return;
+	const next = sessionBoundaries
+		? (parseChatDraftBoundaryKinds([...sessionBoundaries.values()].flat()) ?? EMPTY_BOUNDARIES)
+		: EMPTY_BOUNDARIES;
+	const previous = boundarySnapshots.get(sessionId) ?? EMPTY_BOUNDARIES;
+	if (sameBoundaryKinds(previous, next)) return;
+	if (next.length === 0) {
+		boundarySnapshots.delete(sessionId);
+	} else {
+		boundarySnapshots.set(sessionId, Object.freeze(next));
 	}
-	if (sessionBoundaries?.get(source) === kind) return;
-	const next = sessionBoundaries ?? new Map<ChatDraftBoundarySource, ChatDraftBoundaryKind>();
-	next.set(source, kind);
-	boundaries.set(sessionId, next);
 	emitBoundaryChange();
 }
 
-export function getChatDraftBoundary(sessionId: string): ChatDraftBoundaryKind | undefined {
+export function setChatDraftBoundary(
+	sessionId: string,
+	source: ChatDraftBoundarySource,
+	kinds: ChatDraftBoundaryKind | readonly ChatDraftBoundaryKind[] | undefined,
+): void {
+	if (!sessionId) return;
+	const normalized = normalizeBoundaryKinds(kinds);
 	const sessionBoundaries = boundaries.get(sessionId);
-	if (!sessionBoundaries) return undefined;
+	if (normalized.length === 0) {
+		if (!sessionBoundaries?.delete(source)) return;
+		if (sessionBoundaries.size === 0) boundaries.delete(sessionId);
+		refreshBoundarySnapshot(sessionId);
+		return;
+	}
+	if (sameBoundaryKinds(sessionBoundaries?.get(source), normalized)) return;
+	const next =
+		sessionBoundaries ?? new Map<ChatDraftBoundarySource, readonly ChatDraftBoundaryKind[]>();
+	next.set(source, Object.freeze([...normalized]));
+	boundaries.set(sessionId, next);
+	refreshBoundarySnapshot(sessionId);
+}
+
+export function getChatDraftBoundary(sessionId: string): ChatDraftBoundaryKind | undefined {
+	const active = getChatDraftBoundaries(sessionId);
 	// A known failed write is more serious than an in-flight write and provides
 	// the more accurate discard copy when both composer slices are unsafe.
-	for (const kind of sessionBoundaries.values()) {
-		if (kind === "persistence-failed") return kind;
-	}
-	return sessionBoundaries.values().next().value;
+	if (active.includes("persistence-failed")) return "persistence-failed";
+	return active[0];
 }
 
 /** Every distinct risk currently active for one logical Chat session. */
 export function getChatDraftBoundaries(sessionId: string): readonly ChatDraftBoundaryKind[] {
-	const sessionBoundaries = boundaries.get(sessionId);
-	if (!sessionBoundaries) return [];
-	return [...new Set(sessionBoundaries.values())];
+	return boundarySnapshots.get(sessionId) ?? EMPTY_BOUNDARIES;
 }
 
 export function subscribeChatDraftBoundaries(listener: () => void): () => void {

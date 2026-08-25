@@ -1596,23 +1596,25 @@ func (s *Store) SteerDelivery(
 	return steerDeliveryToDomain(row), true, nil
 }
 
-func reserveConversationDelivery[Row any](
+func reserveConversationDelivery[Row, Delivery any](
+	ctx context.Context,
 	s *Store,
-	insert func() (int64, error),
-	load func() (Row, error),
+	insert func(context.Context) (int64, error),
+	load func(context.Context) (Row, error),
+	toDomain func(Row) Delivery,
 	insertError, loadError string,
-) (row Row, created bool, err error) {
+) (delivery Delivery, created bool, err error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	rows, err := insert()
+	rows, err := insert(ctx)
 	if err != nil {
-		return row, false, fmt.Errorf("%s: %w", insertError, err)
+		return delivery, false, fmt.Errorf("%s: %w", insertError, err)
 	}
-	row, err = load()
+	row, err := load(ctx)
 	if err != nil {
-		return row, false, fmt.Errorf("%s: %w", loadError, err)
+		return delivery, false, fmt.Errorf("%s: %w", loadError, err)
 	}
-	return row, rows == 1, nil
+	return toDomain(row), rows == 1, nil
 }
 
 // ReserveSteerDelivery claims a client handle before provider I/O. created is
@@ -1623,28 +1625,26 @@ func (s *Store) ReserveSteerDelivery(
 	conversationID, clientMessageID, requestJSON string,
 	now time.Time,
 ) (delivery domain.ConversationSteerDelivery, created bool, err error) {
-	row, created, err := reserveConversationDelivery(
+	return reserveConversationDelivery(
+		ctx,
 		s,
-		func() (int64, error) {
+		func(ctx context.Context) (int64, error) {
 			return s.qw.InsertConversationSteerDeliveryReservation(ctx,
 				gen.InsertConversationSteerDeliveryReservationParams{
 					ConversationID: conversationID, ClientMessageID: clientMessageID,
 					RequestJson: requestJSON, CreatedAt: now,
 				})
 		},
-		func() (gen.ConversationSteerDelivery, error) {
+		func(ctx context.Context) (gen.ConversationSteerDelivery, error) {
 			return s.qw.SelectConversationSteerDelivery(ctx,
 				gen.SelectConversationSteerDeliveryParams{
 					ConversationID: conversationID, ClientMessageID: clientMessageID,
 				})
 		},
+		steerDeliveryToDomain,
 		"reserve steer delivery "+clientMessageID,
 		"load reserved steer delivery "+clientMessageID,
 	)
-	if err != nil {
-		return domain.ConversationSteerDelivery{}, false, err
-	}
-	return steerDeliveryToDomain(row), created, nil
 }
 
 // CompleteSteerDelivery records the visible timeline row and accepted provider
@@ -1731,28 +1731,26 @@ func (s *Store) ReserveEditDelivery(
 	conversationID, clientMessageID, requestJSON string,
 	now time.Time,
 ) (delivery domain.ConversationEditDelivery, created bool, err error) {
-	row, created, err := reserveConversationDelivery(
+	return reserveConversationDelivery(
+		ctx,
 		s,
-		func() (int64, error) {
+		func(ctx context.Context) (int64, error) {
 			return s.qw.InsertConversationEditDeliveryReservation(ctx,
 				gen.InsertConversationEditDeliveryReservationParams{
 					ConversationID: conversationID, ClientMessageID: clientMessageID,
 					RequestJson: requestJSON, CreatedAt: now,
 				})
 		},
-		func() (gen.ConversationEditDelivery, error) {
+		func(ctx context.Context) (gen.ConversationEditDelivery, error) {
 			return s.qw.SelectConversationEditDelivery(ctx,
 				gen.SelectConversationEditDeliveryParams{
 					ConversationID: conversationID, ClientMessageID: clientMessageID,
 				})
 		},
+		editDeliveryToDomain,
 		"reserve edit delivery "+clientMessageID,
 		"read edit delivery reservation "+clientMessageID,
 	)
-	if err != nil {
-		return domain.ConversationEditDelivery{}, false, err
-	}
-	return editDeliveryToDomain(row), created, nil
 }
 
 // CompleteEditDelivery attaches the replacement turn to its branch and records

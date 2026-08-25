@@ -233,6 +233,39 @@ func (c *Controller) PromoteQueuedTurn(
 	}, nil
 }
 
+type durableSteerRefusal struct {
+	kind           domain.ConversationSteerRejectionKind
+	cause          error
+	reserveContext string
+	persistContext string
+}
+
+func (c *Controller) rejectSteerBeforeDispatch(
+	ctx context.Context,
+	clientMessageID, requestJSON string,
+	refusal durableSteerRefusal,
+) (SteerResult, error) {
+	if clientMessageID == "" {
+		return SteerResult{}, refusal.cause
+	}
+	delivery, created, err := c.store.ReserveSteerDelivery(
+		ctx, c.conversation.ID, clientMessageID, requestJSON, c.now())
+	if err != nil {
+		return SteerResult{}, fmt.Errorf("%w: %s: %w",
+			ErrSteerDeliveryUncertain, refusal.reserveContext, err)
+	}
+	if !created {
+		return replaySteerDelivery(delivery, requestJSON)
+	}
+	if err := c.store.RejectSteerDelivery(
+		context.WithoutCancel(ctx), c.conversation.ID, clientMessageID,
+		refusal.kind, refusal.cause.Error(), c.now()); err != nil {
+		return SteerResult{}, fmt.Errorf("%w: %s: %w",
+			ErrSteerDeliveryUncertain, refusal.persistContext, err)
+	}
+	return SteerResult{}, refusal.cause
+}
+
 // Steer hands guidance to the provider for the turn currently in flight, then
 // records it on that turn.
 //
@@ -268,47 +301,23 @@ func (c *Controller) Steer(ctx context.Context, msg ports.ChatUserMessage) (Stee
 		}
 	}
 	if c.handoffActive() {
-		if msg.ClientMessageID != "" {
-			delivery, created, reserveErr := c.store.ReserveSteerDelivery(
-				ctx, c.conversation.ID, msg.ClientMessageID, requestJSON, c.now())
-			if reserveErr != nil {
-				return SteerResult{}, fmt.Errorf("%w: reserve interface-transition refusal: %w",
-					ErrSteerDeliveryUncertain, reserveErr)
-			}
-			if !created {
-				return replaySteerDelivery(delivery, requestJSON)
-			}
-			if rejectErr := c.store.RejectSteerDelivery(
-				context.WithoutCancel(ctx), c.conversation.ID, msg.ClientMessageID,
-				domain.ConversationSteerRejectedInterfaceTransition,
-				ErrControllerHandoff.Error(), c.now()); rejectErr != nil {
-				return SteerResult{}, fmt.Errorf("%w: persist interface-transition refusal: %w",
-					ErrSteerDeliveryUncertain, rejectErr)
-			}
-		}
-		return SteerResult{}, ErrControllerHandoff
+		return c.rejectSteerBeforeDispatch(ctx, msg.ClientMessageID, requestJSON,
+			durableSteerRefusal{
+				kind:           domain.ConversationSteerRejectedInterfaceTransition,
+				cause:          ErrControllerHandoff,
+				reserveContext: "reserve interface-transition refusal",
+				persistContext: "persist interface-transition refusal",
+			})
 	}
 	steerer, ok := c.conv.(ports.ChatSteerer)
 	if !ok {
-		if msg.ClientMessageID != "" {
-			delivery, created, reserveErr := c.store.ReserveSteerDelivery(
-				ctx, c.conversation.ID, msg.ClientMessageID, requestJSON, c.now())
-			if reserveErr != nil {
-				return SteerResult{}, fmt.Errorf("%w: reserve unsupported result: %w",
-					ErrSteerDeliveryUncertain, reserveErr)
-			}
-			if !created {
-				return replaySteerDelivery(delivery, requestJSON)
-			}
-			if rejectErr := c.store.RejectSteerDelivery(
-				context.WithoutCancel(ctx), c.conversation.ID, msg.ClientMessageID,
-				domain.ConversationSteerRejectedUnsupported,
-				ErrSteerUnsupported.Error(), c.now()); rejectErr != nil {
-				return SteerResult{}, fmt.Errorf("%w: persist unsupported result: %w",
-					ErrSteerDeliveryUncertain, rejectErr)
-			}
-		}
-		return SteerResult{}, ErrSteerUnsupported
+		return c.rejectSteerBeforeDispatch(ctx, msg.ClientMessageID, requestJSON,
+			durableSteerRefusal{
+				kind:           domain.ConversationSteerRejectedUnsupported,
+				cause:          ErrSteerUnsupported,
+				reserveContext: "reserve unsupported result",
+				persistContext: "persist unsupported result",
+			})
 	}
 
 	turn, ok := c.awaitAcknowledgedTurn(ctx)
@@ -316,25 +325,13 @@ func (c *Controller) Steer(ctx context.Context, msg ports.ChatUserMessage) (Stee
 		// Nothing is in flight. Reusing the interrupt sentinel keeps one code for
 		// "there is no turn" across every command that needs one; the endpoint says
 		// what to do about it.
-		if msg.ClientMessageID != "" {
-			delivery, created, reserveErr := c.store.ReserveSteerDelivery(
-				ctx, c.conversation.ID, msg.ClientMessageID, requestJSON, c.now())
-			if reserveErr != nil {
-				return SteerResult{}, fmt.Errorf("%w: reserve refusal: %w",
-					ErrSteerDeliveryUncertain, reserveErr)
-			}
-			if !created {
-				return replaySteerDelivery(delivery, requestJSON)
-			}
-			if rejectErr := c.store.RejectSteerDelivery(
-				context.WithoutCancel(ctx), c.conversation.ID, msg.ClientMessageID,
-				domain.ConversationSteerRejectedNoActiveTurn,
-				ErrNoActiveTurn.Error(), c.now()); rejectErr != nil {
-				return SteerResult{}, fmt.Errorf("%w: persist no-active-turn refusal: %w",
-					ErrSteerDeliveryUncertain, rejectErr)
-			}
-		}
-		return SteerResult{}, ErrNoActiveTurn
+		return c.rejectSteerBeforeDispatch(ctx, msg.ClientMessageID, requestJSON,
+			durableSteerRefusal{
+				kind:           domain.ConversationSteerRejectedNoActiveTurn,
+				cause:          ErrNoActiveTurn,
+				reserveContext: "reserve refusal",
+				persistContext: "persist no-active-turn refusal",
+			})
 	}
 	if msg.ClientMessageID != "" {
 		delivery, created, reserveErr := c.store.ReserveSteerDelivery(
