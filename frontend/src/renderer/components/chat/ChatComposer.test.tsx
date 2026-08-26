@@ -55,6 +55,14 @@ function renderComposer(props: Partial<Parameters<typeof ChatComposer>[0]> = {})
 	return { onSend, field: screen.getByLabelText("Message the agent") as HTMLElement };
 }
 
+function deferred<T>() {
+	let resolve!: (value: T) => void;
+	const promise = new Promise<T>((resolvePromise) => {
+		resolve = resolvePromise;
+	});
+	return { promise, resolve };
+}
+
 async function typeInComposer(field: HTMLElement, text: string) {
 	await typeInLexicalEditor(field, text);
 }
