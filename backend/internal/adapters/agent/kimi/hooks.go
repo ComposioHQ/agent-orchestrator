@@ -196,9 +196,27 @@ func kimiSeedConfig(targetPath string, existing []byte) ([]byte, bool, error) {
 		return nil, false, fmt.Errorf("read source Kimi config %s: %w", sourcePath, err)
 	}
 	if !kimiConfigHasAPIKey(source) {
-		return nil, false, nil
+		// Device-code logins leave api_key empty and keep their tokens in the
+		// credential file. The full config is still required for default_model,
+		// the provider/OAuth mapping, model aliases, services, and permissions.
+		authorized, err := kimiSourceOAuthAuthorized(sourceHome)
+		if err != nil {
+			return nil, false, err
+		}
+		if !authorized {
+			return nil, false, nil
+		}
 	}
 	return source, true, nil
+}
+
+func kimiSourceOAuthAuthorized(sourceHome string) (bool, error) {
+	path := filepath.Join(sourceHome, "credentials", "kimi-code.json")
+	status, ok, err := kimiCredentialsAuthStatus(path)
+	if err != nil {
+		return false, fmt.Errorf("read source Kimi credentials %s: %w", path, err)
+	}
+	return ok && status == ports.AgentAuthStatusAuthorized, nil
 }
 
 func kimiConfigCanSeed(existing []byte) bool {
