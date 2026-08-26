@@ -5,7 +5,6 @@ import {
 	startTransition,
 	useEffect,
 	useState,
-	type CSSProperties,
 	type HTMLAttributes,
 	type ReactElement,
 	type ReactNode,
@@ -235,9 +234,6 @@ export function SessionCardView({
 		session.activity?.state === "blocked";
 	const needsAttentionChip = needsAttention && !statusPresentation;
 	const column = getKanbanColumnView(toKanbanColumn(session.kanbanColumn, session.status), translate);
-	const statusTone = needsAttentionChip
-		? "var(--color-status-needs-you)"
-		: (statusPresentation?.tone ?? (!statusPresentation ? column.dot : undefined));
 	const branch = session.branch ?? "";
 	const showBranch = branch !== "" && !sameLabel(branch, session.title) && !sameLabel(branch, session.id);
 
@@ -315,13 +311,11 @@ export function SessionCardView({
 				<div className="flex min-w-0 flex-1">
 					<span
 						className={cn(
-							"inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-sm border border-[color-mix(in_srgb,var(--session-status-tone)_24%,transparent)] bg-[color-mix(in_srgb,var(--session-status-tone)_10%,transparent)] px-1.5 py-0.5 text-2xs font-medium",
-							!statusTone && "border-border bg-overlay",
+							"inline-flex min-w-0 max-w-full items-center text-2xs font-medium",
 							needsAttentionChip ? "text-status-needs-you" : (statusPresentation?.className ?? column.titleClassName),
 						)}
 						data-kanban-column={statusPresentation ? undefined : column.column}
 						data-testid="session-status"
-						style={statusTone ? ({ "--session-status-tone": statusTone } as CSSProperties) : undefined}
 					>
 						<span className="min-w-0 truncate">
 							{statusPresentation?.label ??

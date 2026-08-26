@@ -403,15 +403,9 @@ describe("SessionsBoardView", () => {
 		const label = screen.getByText("Fixing CI failures");
 		const status = label.parentElement;
 		expect(status).toHaveAttribute("data-kanban-column", "validating");
-		expect(status).toHaveClass(
-			"rounded-sm",
-			"border",
-			"border-[color-mix(in_srgb,var(--session-status-tone)_24%,transparent)]",
-			"bg-[color-mix(in_srgb,var(--session-status-tone)_10%,transparent)]",
-		);
-		expect(status?.style.getPropertyValue("--session-status-tone")).toBe(
-			"var(--color-status-validating)",
-		);
+		expect(status).toHaveClass("text-status-validating");
+		expect(status).not.toHaveClass("rounded-sm", "border");
+		expect(status?.style.getPropertyValue("--session-status-tone")).toBe("");
 		expect(status?.querySelector(".rounded-full")).toBeNull();
 	});
 
