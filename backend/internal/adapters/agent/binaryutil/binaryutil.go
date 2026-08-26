@@ -164,6 +164,23 @@ func ResolveBinaryCandidates(ctx context.Context, spec BinarySpec) ([]string, er
 // "command not found" rather than launching an empty argv. ctx cancellation is
 // honored between probes.
 func ResolveBinary(ctx context.Context, spec BinarySpec) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+
+	names := spec.Names
+	if runtime.GOOS == "windows" {
+		names = spec.WinNames
+	}
+	for _, name := range names {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		if path, err := exec.LookPath(name); err == nil && path != "" {
+			return path, nil
+		}
+	}
+
 	candidates, err := ResolveBinaryCandidates(ctx, spec)
 	if err != nil {
 		return "", err
