@@ -247,8 +247,8 @@ function prDetailRows(summaries: ReturnType<typeof sessionPRDisplaySummaries>, t
 		if (!ciLabel && !reviewLabel) return null;
 		return (
 			<div className="col-span-2 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-2xs text-muted-foreground">
-				{ciLabel ? <span>CI · {ciLabel}</span> : null}
-				{reviewLabel ? <span>Review · {reviewLabel}</span> : null}
+				{ciLabel ? <span>{t("pr.section.ci")} · {ciLabel}</span> : null}
+				{reviewLabel ? <span>{t("pr.section.review")} · {reviewLabel}</span> : null}
 			</div>
 		);
 }
