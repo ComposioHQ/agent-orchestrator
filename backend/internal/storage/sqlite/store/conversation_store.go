@@ -1599,6 +1599,28 @@ func (s *Store) CancelQueuedTurns(
 	return nil
 }
 
+// CancelQueuedTurn closes exactly one durable queue item. The compare-and-set
+// keeps a concurrent promotion authoritative: after provider delivery may have
+// begun, this operation reports the item unavailable rather than mislabelling it
+// interrupted.
+func (s *Store) CancelQueuedTurn(
+	ctx context.Context,
+	conversationID, turnID string,
+	now time.Time,
+) (bool, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	rows, err := s.qw.CancelQueuedConversationTurn(ctx, gen.CancelQueuedConversationTurnParams{
+		CompletedAt:    sql.NullTime{Time: now, Valid: true},
+		ID:             turnID,
+		ConversationID: conversationID,
+	})
+	if err != nil {
+		return false, fmt.Errorf("cancel queued turn %s: %w", turnID, err)
+	}
+	return rows > 0, nil
+}
+
 // CancelAllQueuedTurns closes the whole durable queue after an interface
 // handoff has synchronously fenced intake and promotion. Unlike an ordinary Stop
 // action, there is no post-request message to preserve with a timestamp cutoff.

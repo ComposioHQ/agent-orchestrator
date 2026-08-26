@@ -826,6 +826,17 @@ UPDATE conversation_turns
 SET state = 'interrupted', completed_at = ?
 WHERE conversation_id = ? AND state = 'queued' AND requested_at <= ?;
 
+-- Cancel exactly one queue item. The promotion reservation is part of the state
+-- check: once delivery to the provider may have started, cancellation must lose
+-- the compare-and-set instead of claiming the prompt was never delivered.
+-- name: CancelQueuedConversationTurn :execrows
+UPDATE conversation_turns
+SET state = 'interrupted', completed_at = sqlc.arg(completed_at)
+WHERE id = sqlc.arg(id)
+  AND conversation_id = sqlc.arg(conversation_id)
+  AND state = 'queued'
+  AND promotion_started_at IS NULL;
+
 -- An interrupt interface handoff closes intake under the controller's dispatch
 -- lock before this runs. There can be no later accepted row to preserve, so the
 -- correct operation is independent of wall-clock ordering and cancels the whole

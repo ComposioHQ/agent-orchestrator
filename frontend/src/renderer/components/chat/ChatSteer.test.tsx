@@ -115,6 +115,74 @@ describe("ChatWorkspace steering", () => {
 		expect(within(dock).getByText("second queued")).toBeVisible();
 	});
 
+	it("controls one queued message at a time and confirms Stop's queue consequence", async () => {
+		const queued = withQueuedMessages();
+		const snapshot = {
+			...queued,
+			items: queued.items.filter(
+				(item) =>
+					!(item.kind === "activity" && item.activityKind === "approval" && item.status === "pending"),
+			),
+		};
+		const onCancelQueuedTurn = vi.fn().mockResolvedValue(undefined);
+		const onPromoteQueuedTurn = vi.fn().mockResolvedValue(undefined);
+		const onInterrupt = vi.fn().mockResolvedValue(undefined);
+		const { rerender } = render(
+			<ChatWorkspace
+				snapshot={snapshot}
+				onInterrupt={onInterrupt}
+				onCancelQueuedTurn={onCancelQueuedTurn}
+				onPromoteQueuedTurn={onPromoteQueuedTurn}
+			/>,
+		);
+
+		await userEvent.click(
+			screen.getByRole("button", { name: "Cancel queued message: first queued" }),
+		);
+		expect(onCancelQueuedTurn).toHaveBeenCalledWith("queued-1");
+		expect(onPromoteQueuedTurn).not.toHaveBeenCalled();
+		expect(onInterrupt).not.toHaveBeenCalled();
+
+		await userEvent.click(
+			screen.getByRole("button", { name: "Use as next message: second queued" }),
+		);
+		expect(onPromoteQueuedTurn).toHaveBeenCalledWith("queued-2");
+		expect(onCancelQueuedTurn).toHaveBeenCalledTimes(1);
+		expect(onInterrupt).not.toHaveBeenCalled();
+
+		const stop = screen.getByRole("button", { name: "Stop turn" });
+		expect(stop).toHaveAccessibleDescription(/also cancels 2 queued messages/i);
+		await userEvent.click(stop);
+		const stopDialog = screen.getByRole("dialog", {
+			name: "Stop turn and cancel 2 queued messages?",
+		});
+		expect(stopDialog).toHaveTextContent(
+			"The active turn and both queued messages will be stopped",
+		);
+		expect(onInterrupt).not.toHaveBeenCalled();
+
+		// Polling may settle one queue item while the destructive confirmation is
+		// open. Its copy must keep describing the scope the user chose to confirm.
+		rerender(
+			<ChatWorkspace
+				snapshot={{
+					...snapshot,
+					turns: snapshot.turns.map((turn) =>
+						turn.id === "queued-2" ? { ...turn, state: "interrupted" as const } : turn,
+					),
+				}}
+				onInterrupt={onInterrupt}
+				onCancelQueuedTurn={onCancelQueuedTurn}
+				onPromoteQueuedTurn={onPromoteQueuedTurn}
+			/>,
+		);
+		const stableDialog = screen.getByRole("dialog", {
+			name: "Stop turn and cancel 2 queued messages?",
+		});
+		await userEvent.click(within(stableDialog).getByRole("button", { name: "Stop all" }));
+		expect(onInterrupt).toHaveBeenCalledTimes(1);
+	});
+
 	it("shows the delivery indicator only for a running turn without a pending approval", () => {
 		const snapshot = {
 			...chatFixture,

@@ -358,6 +358,17 @@ export function useConversationCommands(sessionId: string | undefined) {
 		onSuccess: invalidate,
 	});
 
+	const cancelQueuedTurn = useMutation({
+		mutationFn: async (turnId: string) => {
+			const { error } = await apiClient.POST(
+				"/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/cancel",
+				{ params: { path: { sessionId: sessionId as string, turnId } } },
+			);
+			if (error) throw error;
+		},
+		onSuccess: invalidate,
+	});
+
 	/**
 	 * Restart the tool servers.
 	 *
@@ -492,6 +503,7 @@ export function useConversationCommands(sessionId: string | undefined) {
 		activateBranchError: activateBranch.error ? apiErrorMessage(activateBranch.error) : undefined,
 		steer: (text: string) => steer.mutateAsync(text),
 		promoteQueuedTurn: (turnId: string) => promoteQueuedTurn.mutateAsync(turnId),
+		cancelQueuedTurn: (turnId: string) => cancelQueuedTurn.mutateAsync(turnId),
 		steerPending: steer.isPending,
 		/**
 		 * Why the last steer was refused, or undefined. Only the retryable and

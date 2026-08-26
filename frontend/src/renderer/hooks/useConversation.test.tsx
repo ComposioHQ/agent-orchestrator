@@ -264,6 +264,18 @@ describe("steering refusals", () => {
 		);
 	});
 
+	it("cancels only the selected durable queued turn through the turn-scoped route", async () => {
+		postMock.mockResolvedValue({ data: undefined, error: undefined });
+		const { result } = renderHook(() => useConversationCommands("ao-1"), { wrapper });
+		await act(async () => {
+			await result.current.cancelQueuedTurn("queued-1");
+		});
+		expect(postMock).toHaveBeenCalledWith(
+			"/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/cancel",
+			{ params: { path: { sessionId: "ao-1", turnId: "queued-1" } } },
+		);
+	});
+
 	async function steerFailingWith(code: string) {
 		apiErrorCodeMock.mockReturnValue(code);
 		apiErrorMessageMock.mockReturnValue("a compaction turn is running.");

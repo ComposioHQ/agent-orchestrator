@@ -588,6 +588,97 @@ func TestQueuedTurnPromotionReservationPreservesTheOtherQueueOrder(t *testing.T)
 	}
 }
 
+// Cancelling one accepted follow-up is a turn-scoped queue mutation. It must not
+// interrupt the active turn or sweep up either neighbour in the durable queue.
+func TestCancelSelectedQueuedTurnLeavesRunningAndSiblingTurnsUntouched(t *testing.T) {
+	s, session, conversation := conversationFixture(t)
+	ctx := context.Background()
+	for i, text := range []string{"running", "cancel me", "keep me"} {
+		turnID := fmt.Sprintf("turn-%d", i+1)
+		created, err := s.AppendUserMessage(ctx, conversation, session, "gen-1",
+			domain.ConversationMessage{
+				ID: turnID + "-message", Text: text, Origin: domain.MessageOriginHuman,
+			}, turnID, histClock.Add(time.Duration(i)*time.Second))
+		if err != nil || !created {
+			t.Fatalf("append %s: created=%v err=%v", turnID, created, err)
+		}
+	}
+	if err := s.BindTurnToProvider(ctx, "turn-1", "provider-running", histClock); err != nil {
+		t.Fatalf("bind running turn: %v", err)
+	}
+
+	cancelled, err := s.CancelQueuedTurn(ctx, conversation, "turn-2", histClock.Add(time.Minute))
+	if err != nil || !cancelled {
+		t.Fatalf("cancel selected queued turn: cancelled=%v err=%v", cancelled, err)
+	}
+
+	snapshot, err := s.LoadConversationSnapshot(ctx, conversation)
+	if err != nil {
+		t.Fatalf("load snapshot: %v", err)
+	}
+	states := make(map[string]domain.TurnState, len(snapshot.Turns))
+	for _, turn := range snapshot.Turns {
+		states[turn.ID] = turn.State
+	}
+	if states["turn-1"] != domain.TurnStateRunning {
+		t.Errorf("active turn = %q, want running", states["turn-1"])
+	}
+	if states["turn-2"] != domain.TurnStateInterrupted {
+		t.Errorf("cancelled turn = %q, want interrupted", states["turn-2"])
+	}
+	if states["turn-3"] != domain.TurnStateQueued {
+		t.Errorf("sibling turn = %q, want queued", states["turn-3"])
+	}
+	next, err := s.NextQueuedTurn(ctx, conversation)
+	if err != nil {
+		t.Fatalf("next queued turn: %v", err)
+	}
+	if next.TurnID != "turn-3" {
+		t.Fatalf("queue head = %q, want turn-3", next.TurnID)
+	}
+}
+
+// Promotion owns a selected prompt as soon as its durable reservation lands.
+// A concurrent cancel must lose at that boundary rather than report success for
+// guidance that may already be on its way to the provider.
+func TestCancelQueuedTurnCannotOvertakePromotionReservation(t *testing.T) {
+	s, session, conversation := conversationFixture(t)
+	ctx := context.Background()
+	created, err := s.AppendUserMessage(ctx, conversation, session, "gen-1",
+		domain.ConversationMessage{
+			ID: "reserved-message", Text: "promote me", Origin: domain.MessageOriginHuman,
+		}, "reserved-turn", histClock)
+	if err != nil || !created {
+		t.Fatalf("append queued turn: created=%v err=%v", created, err)
+	}
+	if _, err := s.ReserveQueuedTurnForPromotion(
+		ctx, conversation, "reserved-turn", histClock.Add(time.Second)); err != nil {
+		t.Fatalf("reserve queued turn: %v", err)
+	}
+
+	cancelled, err := s.CancelQueuedTurn(
+		ctx, conversation, "reserved-turn", histClock.Add(2*time.Second))
+	if err != nil {
+		t.Fatalf("cancel reserved turn: %v", err)
+	}
+	if cancelled {
+		t.Fatal("cancelled reserved turn; promotion reservation must win")
+	}
+	turn, err := s.TurnByID(ctx, "reserved-turn")
+	if err != nil || turn.State != domain.TurnStateQueued {
+		t.Fatalf("reserved turn = %+v, %v; want queued", turn, err)
+	}
+
+	if err := s.ReleaseQueuedTurnPromotion(ctx, conversation, "reserved-turn"); err != nil {
+		t.Fatalf("release promotion reservation: %v", err)
+	}
+	cancelled, err = s.CancelQueuedTurn(
+		ctx, conversation, "reserved-turn", histClock.Add(3*time.Second))
+	if err != nil || !cancelled {
+		t.Fatalf("cancel released turn: cancelled=%v err=%v", cancelled, err)
+	}
+}
+
 // seedTurn records one dispatched turn with a user message and an activity, which is
 // the shape a real turn leaves behind.
 func seedTurn(t *testing.T, s *sqlite.Store, conversationID string, session domain.SessionID, turnID, text string, at time.Time) {

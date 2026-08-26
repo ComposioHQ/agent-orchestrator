@@ -327,6 +327,32 @@ func (q *Queries) CancelAllQueuedConversationTurns(ctx context.Context, arg Canc
 	return err
 }
 
+const cancelQueuedConversationTurn = `-- name: CancelQueuedConversationTurn :execrows
+UPDATE conversation_turns
+SET state = 'interrupted', completed_at = ?1
+WHERE id = ?2
+  AND conversation_id = ?3
+  AND state = 'queued'
+  AND promotion_started_at IS NULL
+`
+
+type CancelQueuedConversationTurnParams struct {
+	CompletedAt    sql.NullTime
+	ID             string
+	ConversationID string
+}
+
+// Cancel exactly one queue item. The promotion reservation is part of the state
+// check: once delivery to the provider may have started, cancellation must lose
+// the compare-and-set instead of claiming the prompt was never delivered.
+func (q *Queries) CancelQueuedConversationTurn(ctx context.Context, arg CancelQueuedConversationTurnParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, cancelQueuedConversationTurn, arg.CompletedAt, arg.ID, arg.ConversationID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const cancelQueuedConversationTurns = `-- name: CancelQueuedConversationTurns :exec
 UPDATE conversation_turns
 SET state = 'interrupted', completed_at = ?

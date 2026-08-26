@@ -17,6 +17,7 @@ import (
 // answer and the spec cannot drift apart.
 const steerPath = "/api/v1/sessions/{sessionId}/conversation/steer"
 const queuedTurnSteerPath = "/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/steer"
+const queuedTurnCancelPath = "/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/cancel"
 
 // SteerConversationRequest is guidance for a turn that is already running.
 type SteerConversationRequest struct {
@@ -101,6 +102,28 @@ func (c *ConversationsController) promoteQueuedTurn(w http.ResponseWriter, r *ht
 		SourceTurnID: result.SourceTurnID, ProviderTurnID: result.ProviderTurnID,
 		ActivityID: result.ActivityID,
 	})
+}
+
+func (c *ConversationsController) cancelQueuedTurn(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "POST", queuedTurnCancelPath)
+		return
+	}
+	err := c.Svc.CancelQueuedTurn(
+		r.Context(),
+		domain.SessionID(chi.URLParam(r, "sessionId")),
+		chi.URLParam(r, "turnId"),
+	)
+	if err != nil {
+		if errors.Is(err, chatsvc.ErrTurnNotQueued) {
+			envelope.WriteAPIError(w, r, http.StatusConflict, "conflict",
+				"CHAT_TURN_NOT_QUEUED", "that message is no longer queued", nil)
+			return
+		}
+		writeConversationError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func writeQueuedTurnSteerError(w http.ResponseWriter, r *http.Request, err error) {
