@@ -2370,6 +2370,61 @@ func TestTypedProviderErrorPersistsNormalizedRecoveryDetail(t *testing.T) {
 	}
 }
 
+func TestStableNativeHistoryErrorIdentityDeduplicatesProjection(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "go", ClientMessageID: "c1", Origin: domain.MessageOriginHuman,
+	}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	errorEvent := ports.ChatEvent{
+		Kind:            ports.ChatEventError,
+		ProviderEventID: "codex-history:thread-1:provider-turn-1:error",
+		ProviderTurnID:  "provider-turn-1",
+		Err:             errors.New("Reconnecting"),
+		ErrorInfo: &ports.ChatErrorInfo{
+			Headline: "Reconnecting",
+			Detail:   "You have no credits remaining.",
+			Action:   ports.ChatRecoveryActionOpenAIBilling,
+		},
+	}
+	h.conv.emit(
+		ports.ChatEvent{
+			Kind: ports.ChatEventTurnStarted, ProviderEventID: "history-start",
+			ProviderTurnID: "provider-turn-1",
+		},
+		errorEvent,
+		errorEvent,
+		ports.ChatEvent{
+			Kind: ports.ChatEventTurnCompleted, ProviderEventID: "history-completed",
+			ProviderTurnID: "provider-turn-1", TurnState: domain.TurnStateFailed,
+		},
+	)
+
+	snapshot := h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return len(s.Turns) == 1 && s.Turns[0].State.Terminal()
+	})
+	if len(snapshot.Activities) != 1 || snapshot.Activities[0].Summary != "Reconnecting" {
+		t.Fatalf("deduplicated history activities = %#v, want one provider error", snapshot.Activities)
+	}
+
+	events, err := h.st.ProviderEventsSince(ctx, h.ctrl.ConversationID(), 0, 10)
+	if err != nil {
+		t.Fatalf("read provider archive: %v", err)
+	}
+	errorRows := 0
+	for _, event := range events {
+		if event.ProviderEventID == errorEvent.ProviderEventID {
+			errorRows++
+		}
+	}
+	if errorRows != 1 {
+		t.Fatalf("archived history error rows = %d, want one", errorRows)
+	}
+}
+
 /* ---- the send queue ---------------------------------------------------- */
 
 // turnStateByText is how the queue tests read the timeline: a turn matters here

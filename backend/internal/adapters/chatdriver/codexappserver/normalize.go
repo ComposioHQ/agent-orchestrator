@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -681,7 +682,14 @@ func normalizeErrorNotification(params json.RawMessage) ports.ChatEvent {
 		Err:  fmt.Errorf("provider error: %s", truncateForLog(params)),
 	}
 
-	var notification codexproto.ErrorNotification
+	// Decode the readable fields separately from the schema gate below. This lets
+	// AO retain the provider's explanation when a future or malformed field makes
+	// the notification ineligible for a trusted recovery action.
+	var notification struct {
+		Error    codexproto.TurnError `json:"error"`
+		ThreadID string               `json:"threadId"`
+		TurnID   string               `json:"turnId"`
+	}
 	if err := json.Unmarshal(params, &notification); err != nil ||
 		strings.TrimSpace(notification.ThreadID) == "" ||
 		strings.TrimSpace(notification.TurnID) == "" ||
@@ -694,9 +702,11 @@ func normalizeErrorNotification(params json.RawMessage) ports.ChatEvent {
 	if notification.Error.AdditionalDetails != nil {
 		info.Detail = strings.TrimSpace(*notification.Error.AdditionalDetails)
 	}
-	if !hasProviderSuppliedActionURL(params) &&
-		isResponseStreamDisconnected(notification.Error.CodexErrorInfo) &&
-		isPositiveCreditExhaustion(notification.Error.AdditionalDetails) {
+	var trusted codexproto.ErrorNotification
+	if decodeStrictErrorNotification(params, &trusted) &&
+		!hasProviderSuppliedActionURL(params) &&
+		isResponseStreamDisconnected(trusted.Error.CodexErrorInfo) &&
+		isPositiveCreditExhaustion(trusted.Error.AdditionalDetails) {
 		info.Action = ports.ChatRecoveryActionOpenAIBilling
 	}
 	return ports.ChatEvent{
@@ -706,6 +716,45 @@ func normalizeErrorNotification(params json.RawMessage) ports.ChatEvent {
 		Err:                    fmt.Errorf("%s", headline),
 		ErrorInfo:              info,
 	}
+}
+
+// decodeStrictErrorNotification is the trust gate for AO-owned recovery
+// actions. The generated bool cannot distinguish false from an omitted or null
+// willRetry, so its raw JSON member must also be present and boolean. Unknown
+// top-level or TurnError fields fail closed; newer provider payloads remain
+// readable through the lenient projection above but cannot mint an action until
+// AO understands their complete shape.
+func decodeStrictErrorNotification(params json.RawMessage, notification *codexproto.ErrorNotification) bool {
+	if !decodeStrictJSON(params, notification) {
+		return false
+	}
+
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(params, &envelope); err != nil {
+		return false
+	}
+	willRetry, ok := envelope["willRetry"]
+	if !ok {
+		return false
+	}
+	switch string(bytes.TrimSpace(willRetry)) {
+	case "true", "false":
+		return true
+	default:
+		return false
+	}
+}
+
+func decodeStrictJSON(raw json.RawMessage, value any) bool {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(value); err != nil {
+		return false
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return false
+	}
+	return true
 }
 
 func hasProviderSuppliedActionURL(params json.RawMessage) bool {
@@ -735,12 +784,18 @@ func isResponseStreamDisconnected(raw *codexproto.CodexErrorInfo) bool {
 	if err := json.Unmarshal(*raw, &variants); err != nil {
 		return false
 	}
+	if len(variants) != 1 {
+		return false
+	}
 	marker, ok := variants["responseStreamDisconnected"]
 	if !ok {
 		return false
 	}
 	var disconnected map[string]json.RawMessage
 	if err := json.Unmarshal(marker, &disconnected); err != nil {
+		return false
+	}
+	if len(disconnected) != 1 {
 		return false
 	}
 	status, ok := disconnected["httpStatusCode"]

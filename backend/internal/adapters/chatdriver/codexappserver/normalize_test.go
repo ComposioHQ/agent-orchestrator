@@ -98,6 +98,70 @@ func TestNormalizeCreditExhaustionEmitsTypedRecoveryAction(t *testing.T) {
 	}
 }
 
+func TestNormalizeCreditRecoveryRequiresCompleteStrictErrorNotification(t *testing.T) {
+	const detail = "stream disconnected before completion: You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing"
+	baseError := `"error":{"message":"Reconnecting","codexErrorInfo":{"responseStreamDisconnected":{"httpStatusCode":429}},"additionalDetails":"` + detail + `"}`
+	tests := []struct {
+		name       string
+		params     string
+		wantAction bool
+	}{
+		{
+			name:       "false willRetry is present and valid",
+			params:     `{` + baseError + `,"threadId":"th","turnId":"tu","willRetry":false}`,
+			wantAction: true,
+		},
+		{
+			name:   "willRetry omitted",
+			params: `{` + baseError + `,"threadId":"th","turnId":"tu"}`,
+		},
+		{
+			name:   "willRetry null",
+			params: `{` + baseError + `,"threadId":"th","turnId":"tu","willRetry":null}`,
+		},
+		{
+			name:   "willRetry string",
+			params: `{` + baseError + `,"threadId":"th","turnId":"tu","willRetry":"false"}`,
+		},
+		{
+			name:   "willRetry number",
+			params: `{` + baseError + `,"threadId":"th","turnId":"tu","willRetry":0}`,
+		},
+		{
+			name:   "unknown top-level field",
+			params: `{` + baseError + `,"threadId":"th","turnId":"tu","willRetry":true,"future":true}`,
+		},
+		{
+			name: "unknown TurnError field",
+			params: `{"error":{"message":"Reconnecting","codexErrorInfo":{"responseStreamDisconnected":{"httpStatusCode":429}},"additionalDetails":"` +
+				detail + `","future":true},"threadId":"th","turnId":"tu","willRetry":true}`,
+		},
+		{
+			name: "second CodexErrorInfo union variant",
+			params: `{"error":{"message":"Reconnecting","codexErrorInfo":{"responseStreamDisconnected":{"httpStatusCode":429},"futureVariant":{}},"additionalDetails":"` +
+				detail + `"},"threadId":"th","turnId":"tu","willRetry":true}`,
+		},
+		{
+			name: "unknown responseStreamDisconnected field",
+			params: `{"error":{"message":"Reconnecting","codexErrorInfo":{"responseStreamDisconnected":{"httpStatusCode":429,"future":true}},"additionalDetails":"` +
+				detail + `"},"threadId":"th","turnId":"tu","willRetry":true}`,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ev := normalizeOne(t, "error", tc.params)
+			if ev.ErrorInfo == nil || ev.ErrorInfo.Detail != detail {
+				t.Fatalf("error detail was not preserved: %+v", ev.ErrorInfo)
+			}
+			gotAction := ev.ErrorInfo.Action == ports.ChatRecoveryActionOpenAIBilling
+			if gotAction != tc.wantAction {
+				t.Fatalf("action = %q, want action %v", ev.ErrorInfo.Action, tc.wantAction)
+			}
+		})
+	}
+}
+
 func TestNormalizeCreditRecoveryRejectsProviderSuppliedActionURL(t *testing.T) {
 	for _, destination := range []string{
 		"https://evil.example/provider-destination",
