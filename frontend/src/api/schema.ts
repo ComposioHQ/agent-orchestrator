@@ -2639,6 +2639,8 @@ export interface components {
             projectId?: string;
             /** @description Agent session the shell is scoped to, so it appears only in that session's tab strip. Omitted makes it a standalone shell. */
             sessionId?: string;
+            /** @description Windows shell selector: auto, git-bash, pwsh, powershell, cmd, or a custom executable path. Ignored on macOS and Linux. */
+            shell?: string;
         };
         OrchestratorResponse: {
             id: string;
