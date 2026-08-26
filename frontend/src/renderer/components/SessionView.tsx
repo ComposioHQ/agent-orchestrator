@@ -113,6 +113,7 @@ const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as CSSProperties) : 
 const newTerminalShortcutLabel = shortcutBindingLabel(defaultShortcutBindings("new-shell-terminal", isMac)[0], isMac);
 
 type ReviewsResponse = components["schemas"]["ListReviewsResponse"];
+type SessionInterfaceTransition = components["schemas"]["SessionInterfaceTransition"];
 type ReviewerTerminalTarget = { handleId: string; harness: string };
 
 type WorkspaceLayoutMode = "utility" | "browser" | "files";
@@ -121,6 +122,31 @@ type UnsafeDraftLeaveDecision =
 	| { kind: "safe" }
 	| { kind: "cancelled" }
 	| { kind: "confirmed"; pendingAttachments: PendingFileAttachmentCapture };
+
+type ChatLeaveLock = {
+	sessionId: string;
+	requestId: number;
+	previousTransitionId?: string;
+	targetMode: "tui";
+	policy: "drain" | "interrupt";
+	transitionId?: string;
+	pendingAttachments?: PendingFileAttachmentCapture;
+	needsReconciliation?: boolean;
+};
+
+function chatLeaveTransitionMatches(
+	lock: ChatLeaveLock,
+	transition: SessionInterfaceTransition | undefined,
+): transition is SessionInterfaceTransition {
+	return Boolean(
+		transition &&
+			transition.id !== lock.previousTransitionId &&
+			transition.sessionId === lock.sessionId &&
+			transition.sourceMode === "chat" &&
+			transition.targetMode === lock.targetMode &&
+			transition.policy === lock.policy,
+	);
+}
 
 type InspectorSizing = {
 	chatMinWidth: number;
@@ -374,11 +400,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		transitionId: string;
 		pendingAttachments: PendingFileAttachmentCapture;
 	}>();
-	const [chatLeaveLock, setChatLeaveLock] = useState<{
-		sessionId: string;
-		requestId: number;
-		transitionId?: string;
-	}>();
+	const [chatLeaveLock, setChatLeaveLock] = useState<ChatLeaveLock>();
 	const chatLeaveRequestIdRef = useRef(0);
 	const getCurrentChatDraftBoundaries = useCallback(
 		() => getChatDraftBoundaries(sessionId),
@@ -492,14 +514,44 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	}, [sessionId]);
 	useEffect(() => {
 		if (!chatLeaveLock) return;
-		if (chatLeaveLock.sessionId !== sessionId || session?.mode !== "chat") {
+		if (chatLeaveLock.sessionId !== sessionId) {
 			setChatLeaveLock((current) =>
 				current?.requestId === chatLeaveLock.requestId ? undefined : current,
 			);
 			return;
 		}
-		if (!chatLeaveLock.transitionId) return;
 		const transition = interfaceSwitch.transition;
+		if (!chatLeaveLock.transitionId) {
+			if (chatLeaveTransitionMatches(chatLeaveLock, transition)) {
+				setChatLeaveLock((current) =>
+					current?.requestId === chatLeaveLock.requestId
+						? {
+								...current,
+								transitionId: transition.id,
+								needsReconciliation: false,
+							}
+						: current,
+				);
+			}
+			return;
+		}
+		if (chatLeaveLock.pendingAttachments) {
+			setConfirmedDraftDiscard({
+				sessionId,
+				transitionId: chatLeaveLock.transitionId,
+				pendingAttachments: chatLeaveLock.pendingAttachments,
+			});
+			setChatLeaveLock((current) => {
+				if (current?.requestId !== chatLeaveLock.requestId) return current;
+				return { ...current, pendingAttachments: undefined };
+			});
+		}
+		if (session?.mode !== "chat") {
+			setChatLeaveLock((current) =>
+				current?.requestId === chatLeaveLock.requestId ? undefined : current,
+			);
+			return;
+		}
 		if (!transition || transition.id !== chatLeaveLock.transitionId) return;
 		if (
 			transition.phase === "failed" ||
@@ -511,6 +563,39 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			);
 		}
 	}, [chatLeaveLock, interfaceSwitch.transition, session?.mode, sessionId]);
+	useEffect(() => {
+		if (
+			!chatLeaveLock?.needsReconciliation ||
+			chatLeaveLock.transitionId ||
+			chatLeaveLock.sessionId !== sessionId
+		) return;
+		let active = true;
+		let retryTimer: number | undefined;
+		const reconcile = async () => {
+			try {
+				const status = await interfaceSwitch.refreshStatus();
+				if (!active) return;
+				setChatLeaveLock((current) => {
+					if (current?.requestId !== chatLeaveLock.requestId) return current;
+					return chatLeaveTransitionMatches(current, status?.transition)
+						? {
+								...current,
+								transitionId: status.transition.id,
+								needsReconciliation: false,
+							}
+						: undefined;
+				});
+			} catch {
+				if (!active) return;
+				retryTimer = window.setTimeout(() => void reconcile(), 1_000);
+			}
+		};
+		void reconcile();
+		return () => {
+			active = false;
+			if (retryTimer !== undefined) window.clearTimeout(retryTimer);
+		};
+	}, [chatLeaveLock, interfaceSwitch.refreshStatus, sessionId]);
 	useEffect(() => {
 		if (!confirmedDraftDiscard || confirmedDraftDiscard.sessionId !== sessionId) return;
 		const transition = interfaceSwitch.transition;
@@ -818,31 +903,40 @@ export function SessionView({ sessionId }: SessionViewProps) {
 				? (chatLeaveRequestIdRef.current += 1)
 				: undefined;
 			if (chatLeaveRequestId !== undefined) {
-				setChatLeaveLock({ sessionId, requestId: chatLeaveRequestId });
+				setChatLeaveLock({
+					sessionId,
+					requestId: chatLeaveRequestId,
+					previousTransitionId: interfaceSwitch.transition?.id,
+					targetMode: "tui",
+					policy,
+					pendingAttachments:
+						draftLeaveDecision.kind === "confirmed"
+							? draftLeaveDecision.pendingAttachments
+							: undefined,
+				});
 			}
 			try {
 				const response = await interfaceSwitch.start({ targetMode: interfaceTarget, policy });
 				if (chatLeaveRequestId !== undefined) {
 					setChatLeaveLock((current) =>
 						current?.requestId === chatLeaveRequestId && response?.transition?.id
-							? { ...current, transitionId: response.transition.id }
+							? {
+									...current,
+									transitionId: response.transition.id,
+									needsReconciliation: false,
+								}
 							: current?.requestId === chatLeaveRequestId
-								? undefined
+								? { ...current, needsReconciliation: true }
 								: current,
 					);
-				}
-				if (draftLeaveDecision.kind === "confirmed" && response?.transition?.id) {
-					setConfirmedDraftDiscard({
-						sessionId,
-						transitionId: response.transition.id,
-						pendingAttachments: draftLeaveDecision.pendingAttachments,
-					});
 				}
 				setInterfaceSwitchDialogOpen(false);
 			} catch {
 				if (chatLeaveRequestId !== undefined) {
 					setChatLeaveLock((current) =>
-						current?.requestId === chatLeaveRequestId ? undefined : current,
+						current?.requestId === chatLeaveRequestId
+							? { ...current, needsReconciliation: true }
+							: current,
 					);
 				}
 				// The mutation owns the typed error. A policy dialog that was already
