@@ -377,7 +377,7 @@ export const mockSessionScmSummaries: Record<string, SessionPRSummary[]> = {
 		prSummary("demo-review-stack", 317, {
 			url: "https://github.com/Untrivial-ai/agent-orchestrator/pull/317",
 			htmlUrl: "https://github.com/Untrivial-ai/agent-orchestrator/pull/317",
-			state: "merged",
+			state: "closed",
 			createdAt: hoursAgo(7),
 			stateChangedAt: hoursAgo(1),
 			mergeability: {
