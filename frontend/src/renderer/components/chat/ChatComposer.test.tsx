@@ -1095,6 +1095,51 @@ describe("file mentions", () => {
 		);
 	});
 
+	it("identifies a selected file as a focusable path reference", async () => {
+		const { field } = renderComposer({ filePaths: FILES });
+		await typeInComposer(field, "@ChatComposer");
+		await userEvent.keyboard("{Enter}");
+
+		const token = field.querySelector('[data-composer-token="file"]');
+		expect(token).toHaveAccessibleName("ChatComposer.tsx path reference");
+		expect(token).toHaveAccessibleDescription(
+			"Path reference only: frontend/src/renderer/components/chat/ChatComposer.tsx. The agent reads it with normal permissions from the current worktree; file contents are not attached.",
+		);
+		expect(token).toHaveAttribute(
+			"title",
+			"Path reference only: frontend/src/renderer/components/chat/ChatComposer.tsx. The agent reads it with normal permissions from the current worktree; file contents are not attached.",
+		);
+		expect(token).toHaveAttribute("tabindex", "0");
+	});
+
+	it("keeps duplicate basenames distinguishable before and after selection", async () => {
+		const { field } = renderComposer({
+			filePaths: ["frontend/src/config.ts", "backend/internal/config.ts"],
+		});
+		await typeInComposer(field, "@config");
+
+		const options = screen.getAllByRole("option");
+		expect(options).toHaveLength(2);
+		expect(options[0]).toHaveTextContent("frontend/src");
+		expect(options[1]).toHaveTextContent("backend/internal");
+
+		await userEvent.click(options[1]!);
+		expect(field.querySelector('[data-composer-token="file"]')).toHaveAccessibleDescription(
+			/Path reference only: backend\/internal\/config\.ts\./,
+		);
+	});
+
+	it("reports a failed file catalog when an at-sign reference is attempted", async () => {
+		const { field } = renderComposer({
+			filePathsError: "Try again after the workspace reconnects.",
+		});
+		await typeInComposer(field, "@config");
+
+		expect(screen.getByRole("alert")).toHaveTextContent(
+			"File references could not be loaded. Try again after the workspace reconnects.",
+		);
+	});
+
 	it("inserts a file instead of sending when Enter follows typing before React rerenders", async () => {
 		const { onSend, field } = renderComposer({ filePaths: FILES });
 		await typeAndPressInLexicalEditor(field, "@chat", "Enter");

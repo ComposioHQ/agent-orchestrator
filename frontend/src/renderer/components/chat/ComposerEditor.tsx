@@ -34,6 +34,7 @@ import {
 	type KeyboardEvent,
 } from "react";
 import { Box } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { cn } from "../../lib/utils";
 import { composerFileIcon } from "./composerFileIcon";
 import { findActiveTrigger, type TriggerKind } from "./composerSuggest";
@@ -75,6 +76,41 @@ type SerializedComposerTokenNode = Spread<
 	},
 	SerializedLexicalNode
 >;
+
+function ComposerToken({
+	kind,
+	value,
+	display,
+}: {
+	kind: TokenKind;
+	value: string;
+	display: string;
+}) {
+	const { t } = useTranslation();
+	const Icon = kind === "skill" ? Box : composerFileIcon(value);
+	const pathReferenceDescription =
+		kind === "file" ? t("chat.composer.pathReferenceDescription", { path: value }) : undefined;
+	return (
+		<span
+			data-composer-token={kind}
+			data-value={value}
+			aria-label={
+				kind === "file" ? t("chat.composer.pathReferenceLabel", { file: display }) : undefined
+			}
+			aria-description={pathReferenceDescription}
+			tabIndex={kind === "file" ? 0 : undefined}
+			title={pathReferenceDescription}
+			contentEditable={false}
+			className={cn(
+				"mx-0.5 inline-flex items-center gap-1 rounded-md border border-border-strong bg-interactive-hover px-1.5 py-0.5 align-middle text-[0.9em] leading-none select-none",
+				kind === "skill" ? "text-logo-accent" : "text-foreground",
+			)}
+		>
+			<Icon aria-hidden="true" className="size-3 shrink-0" />
+			{display}
+		</span>
+	);
+}
 
 class ComposerTokenNode extends DecoratorNode<JSX.Element> {
 	__kind: TokenKind;
@@ -146,22 +182,8 @@ class ComposerTokenNode extends DecoratorNode<JSX.Element> {
 	}
 
 	decorate(): JSX.Element {
-		const Icon = this.__kind === "skill" ? Box : composerFileIcon(this.__value);
 		return (
-			<span
-				data-composer-token={this.__kind}
-				data-value={this.__value}
-				contentEditable={false}
-				className={cn(
-					"mx-0.5 inline-flex items-center gap-1 rounded-md border border-border-strong bg-interactive-hover px-1.5 py-0.5 align-middle text-[0.9em] leading-none select-none",
-					this.__kind === "skill"
-						? "text-logo-accent"
-						: "text-foreground",
-				)}
-			>
-				<Icon aria-hidden="true" className="size-3 shrink-0" />
-				{this.__display}
-			</span>
+			<ComposerToken kind={this.__kind} value={this.__value} display={this.__display} />
 		);
 	}
 }

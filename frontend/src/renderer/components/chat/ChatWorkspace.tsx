@@ -287,6 +287,8 @@ export interface ChatWorkspaceProps {
 	filePaths?: string[];
 	/** The path list was capped by the daemon rather than being all of them. */
 	filePathsTruncated?: boolean;
+	/** Why the worktree path catalog is unavailable. */
+	filePathsError?: string;
 	/**
 	 * Writes staged images into the worktree and answers with the paths the agent
 	 * can open. Absent means no attach control is offered — the fixture preview has
@@ -450,6 +452,7 @@ function ChatWorkspaceContent({
 	skills,
 	filePaths,
 	filePathsTruncated,
+	filePathsError,
 	onStageAttachments,
 	nativeImages,
 	onSteer,
@@ -1015,6 +1018,7 @@ function ChatWorkspaceContent({
 								skills={skills}
 								filePaths={filePaths}
 								filePathsTruncated={filePathsTruncated}
+								filePathsError={filePathsError}
 								onStageAttachments={onStageAttachments}
 								nativeImages={nativeImages}
 								autoFocus={!reviewerActive}
