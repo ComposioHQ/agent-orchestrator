@@ -12,7 +12,15 @@ import {
 } from "react";
 import { motion, useReducedMotion } from "motion/react";
 import type { ExternalLinkComponent } from "./external-link";
-import { ChevronIcon, GitBranchIcon } from "./icons";
+import {
+	ChevronIcon,
+	GitBranchIcon,
+	GitMergeIcon,
+	GitPullRequestClosedIcon,
+	GitPullRequestDraftIcon,
+	GitPullRequestIcon,
+	MessageSquareIcon,
+} from "./icons";
 import {
 	attentionZone,
 	getDisplayStatusLabel,
@@ -393,40 +401,58 @@ function BoardPullRequestGroup({
 	return (
 		<span
 			aria-label={`${group.prs.map((pr) => `#${pr.number}`).join(", ")} ${statusLabel}`}
-			className="inline-flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1"
+			className="flex w-full min-w-0 items-center gap-x-2"
 		>
-			<span>{labels.short}</span>
-			{group.prs.map((pr, index) => (
-				<span className="inline-flex items-center" key={pr.url || pr.number}>
-					<ExternalLink
-						className="font-medium text-foreground underline-offset-2 transition-colors hover:underline"
-						href={pr.url}
-						stopPropagation
-					>
-						#{pr.number}
-					</ExternalLink>
-					{index < group.prs.length - 1 ? "," : null}
-				</span>
-			))}
-			{group.prs
-				.flatMap((pr) => pr.reviewerAvatars ?? [])
-				.slice(0, 3)
-				.map((avatar, index) => (
-					<img
-						alt=""
-						className="size-icon-sm rounded-full border border-border object-cover"
-						key={`${avatar}-${index}`}
-						src={avatar}
-					/>
+			<PullRequestLifecycleIcon state={group.state} />
+			<span className="sr-only">{labels.short}</span>
+			<span className="inline-flex min-w-0 items-center gap-x-1 font-mono text-xs">
+				{group.prs.map((pr, index) => (
+					<span className="inline-flex items-center" key={pr.url || pr.number}>
+						<ExternalLink
+							className="font-medium text-foreground underline-offset-2 transition-colors hover:underline"
+							href={pr.url}
+							stopPropagation
+						>
+							#{pr.number}
+						</ExternalLink>
+						{index < group.prs.length - 1 ? "," : null}
+					</span>
 				))}
-			{group.prs.some((pr) => (pr.commentCount ?? 0) > 0) ? (
-				<span className="text-muted-foreground">
-					{group.prs.reduce((count, pr) => count + (pr.commentCount ?? 0), 0)} comments
-				</span>
-			) : null}
-			<span className={cn("font-medium", lifecycleClassName(group.state))}>{statusLabel}</span>
+			</span>
+			<span className="sr-only">{statusLabel}</span>
+			<div className="-ml-0.5 flex shrink-0 items-center pl-1">
+				{group.prs
+					.flatMap((pr) => pr.reviewerAvatars ?? [])
+					.slice(0, 3)
+					.map((avatar, index) => (
+						<img
+							alt=""
+							className={cn("size-5 rounded-full border-2 border-surface object-cover ring-1 ring-border", index > 0 && "-ml-1.5")}
+							key={`${avatar}-${index}`}
+							src={avatar}
+						/>
+					))}
+			</div>
+			<span className="ml-auto inline-flex shrink-0 items-center gap-1 text-xs tabular-nums text-muted-foreground" aria-label={`${group.prs.reduce((count, pr) => count + (pr.commentCount ?? 0), 0)} comments`}>
+				<MessageSquareIcon aria-hidden="true" className="size-icon-2xs" />
+				{group.prs.reduce((count, pr) => count + (pr.commentCount ?? 0), 0)}
+			</span>
 		</span>
 	);
+}
+
+function PullRequestLifecycleIcon({ state }: { state: BoardPullRequestState }) {
+	const className = cn("size-icon-sm shrink-0", lifecycleClassName(state));
+	switch (state) {
+		case "merged":
+			return <GitMergeIcon aria-hidden="true" className={className} />;
+		case "closed":
+			return <GitPullRequestClosedIcon aria-hidden="true" className={className} />;
+		case "draft":
+			return <GitPullRequestDraftIcon aria-hidden="true" className={className} />;
+		case "open":
+			return <GitPullRequestIcon aria-hidden="true" className={className} />;
+	}
 }
 
 export function groupBoardPullRequests(
