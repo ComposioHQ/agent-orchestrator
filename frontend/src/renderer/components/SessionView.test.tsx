@@ -200,6 +200,7 @@ vi.mock("./chat/SessionChatSurface", () => ({
 		onOpenReviewerTerminal,
 		reviewerTarget,
 		onSelectChat,
+		controllerTransitioning,
 		shellTerminals = [],
 		shellTarget,
 		onSelectShellTerminal,
@@ -210,11 +211,15 @@ vi.mock("./chat/SessionChatSurface", () => ({
 		onOpenReviewerTerminal?: (target: { handleId: string; harness: string }) => void;
 		reviewerTarget?: { kind: "reviewer"; handleId: string; harness: string; sessionId: string };
 		onSelectChat?: () => void;
+		controllerTransitioning?: boolean;
 		shellTerminals?: Array<{ handleId: string; title: string }>;
 		shellTarget?: { kind: "shell"; handleId: string };
 		onSelectShellTerminal?: (handleId: string) => void;
 	}) => (
-		<div data-testid="chat-surface">
+		<div
+			data-testid="chat-surface"
+			data-transitioning={controllerTransitioning ? "true" : "false"}
+		>
 			chat surface
 			{headerActions}
 			{reviewerTerminal ? (
@@ -1001,6 +1006,9 @@ describe("SessionView", () => {
 
 		fireEvent.click(screen.getByRole("button", { name: "Switch to terminal UI" }));
 		await waitFor(() => expect(interfaceTransitionMock.start).toHaveBeenCalledTimes(1));
+		await waitFor(() =>
+			expect(screen.getByTestId("chat-surface")).toHaveAttribute("data-transitioning", "true"),
+		);
 
 		let finishStaging!: (attachments: FileAttachment[]) => void;
 		const staging = renderHook(() =>
@@ -1051,6 +1059,28 @@ describe("SessionView", () => {
 		]);
 		act(() => setChatDraftBoundary(session.id, "composer", undefined));
 		confirm.mockRestore();
+	});
+
+	it("unlocks Chat when a pending Chat-to-Terminal request is rejected", async () => {
+		interfaceTransitionState.status = { supported: true, targetMode: "tui" };
+		const session = workerSession("sess-1");
+		session.mode = "chat";
+		let rejectSwitch!: (error: Error) => void;
+		interfaceTransitionMock.start.mockReturnValueOnce(
+			new Promise((_resolve, reject) => {
+				rejectSwitch = reject;
+			}),
+		);
+		render(<SessionView sessionId={session.id} />);
+
+		fireEvent.click(screen.getByRole("button", { name: "Switch to terminal UI" }));
+		await waitFor(() =>
+			expect(screen.getByTestId("chat-surface")).toHaveAttribute("data-transitioning", "true"),
+		);
+		await act(async () => rejectSwitch(new Error("switch rejected")));
+		await waitFor(() =>
+			expect(screen.getByTestId("chat-surface")).toHaveAttribute("data-transitioning", "false"),
+		);
 	});
 
 	it("preserves pending attachments when starting the confirmed interface switch rejects", async () => {

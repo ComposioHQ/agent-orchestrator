@@ -374,6 +374,12 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		transitionId: string;
 		pendingAttachments: PendingFileAttachmentCapture;
 	}>();
+	const [chatLeaveLock, setChatLeaveLock] = useState<{
+		sessionId: string;
+		requestId: number;
+		transitionId?: string;
+	}>();
+	const chatLeaveRequestIdRef = useRef(0);
 	const getCurrentChatDraftBoundaries = useCallback(
 		() => getChatDraftBoundaries(sessionId),
 		[sessionId],
@@ -484,6 +490,27 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	useEffect(() => {
 		setConfirmedDraftDiscard(undefined);
 	}, [sessionId]);
+	useEffect(() => {
+		if (!chatLeaveLock) return;
+		if (chatLeaveLock.sessionId !== sessionId || session?.mode !== "chat") {
+			setChatLeaveLock((current) =>
+				current?.requestId === chatLeaveLock.requestId ? undefined : current,
+			);
+			return;
+		}
+		if (!chatLeaveLock.transitionId) return;
+		const transition = interfaceSwitch.transition;
+		if (!transition || transition.id !== chatLeaveLock.transitionId) return;
+		if (
+			transition.phase === "failed" ||
+			transition.phase === "cancelled" ||
+			transition.phase === "recovery_required"
+		) {
+			setChatLeaveLock((current) =>
+				current?.requestId === chatLeaveLock.requestId ? undefined : current,
+			);
+		}
+	}, [chatLeaveLock, interfaceSwitch.transition, session?.mode, sessionId]);
 	useEffect(() => {
 		if (!confirmedDraftDiscard || confirmedDraftDiscard.sessionId !== sessionId) return;
 		const transition = interfaceSwitch.transition;
@@ -751,9 +778,17 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		[setSidebarWorkspaceDemand],
 	);
 	const activeInterfaceTransition = interfaceTransitionIsActive(interfaceSwitch.transition);
+	const chatLeaveLocked = Boolean(
+		chatLeaveLock?.sessionId === sessionId && session?.mode === "chat",
+	);
 	const chatControllerTransitioning = Boolean(
-		interfaceSwitch.transition?.targetMode === "chat" &&
-			(activeInterfaceTransition || interfaceSwitch.settling),
+		session?.mode === "chat" &&
+			(chatLeaveLocked ||
+				interfaceSwitch.starting ||
+				(interfaceSwitch.transition?.targetMode === "tui" &&
+					(activeInterfaceTransition || interfaceSwitch.transition.phase === "completed")) ||
+				(interfaceSwitch.transition?.targetMode === "chat" &&
+					(activeInterfaceTransition || interfaceSwitch.settling))),
 	);
 	const interfaceTarget =
 		(activeInterfaceTransition ? interfaceSwitch.transition?.targetMode : interfaceSwitch.status?.targetMode) ??
@@ -779,8 +814,23 @@ export function SessionView({ sessionId }: SessionViewProps) {
 				? confirmUnsafeDraftLeave()
 				: ({ kind: "safe" } satisfies UnsafeDraftLeaveDecision);
 			if (draftLeaveDecision.kind === "cancelled") return;
+			const chatLeaveRequestId = chatToTerminal
+				? (chatLeaveRequestIdRef.current += 1)
+				: undefined;
+			if (chatLeaveRequestId !== undefined) {
+				setChatLeaveLock({ sessionId, requestId: chatLeaveRequestId });
+			}
 			try {
 				const response = await interfaceSwitch.start({ targetMode: interfaceTarget, policy });
+				if (chatLeaveRequestId !== undefined) {
+					setChatLeaveLock((current) =>
+						current?.requestId === chatLeaveRequestId && response?.transition?.id
+							? { ...current, transitionId: response.transition.id }
+							: current?.requestId === chatLeaveRequestId
+								? undefined
+								: current,
+					);
+				}
 				if (draftLeaveDecision.kind === "confirmed" && response?.transition?.id) {
 					setConfirmedDraftDiscard({
 						sessionId,
@@ -790,6 +840,11 @@ export function SessionView({ sessionId }: SessionViewProps) {
 				}
 				setInterfaceSwitchDialogOpen(false);
 			} catch {
+				if (chatLeaveRequestId !== undefined) {
+					setChatLeaveLock((current) =>
+						current?.requestId === chatLeaveRequestId ? undefined : current,
+					);
+				}
 				// The mutation owns the typed error. A policy dialog that was already
 				// open stays open; a direct switch must not open one on failure.
 			}
@@ -828,13 +883,15 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const interfaceSwitchAction = session && showInterfaceSwitchAction ? (
 		<SessionInterfaceSwitchButton
 			target={interfaceTarget}
-			supported={Boolean(interfaceSwitch.status?.supported) && !activeInterfaceTransition}
+			supported={
+				Boolean(interfaceSwitch.status?.supported) && !activeInterfaceTransition && !chatLeaveLocked
+			}
 			disabledReason={
 				interfaceSwitch.isLoading
 					? "Checking whether this agent can switch interfaces…"
 					: interfaceSwitch.status?.reason || interfaceSwitch.statusError
 			}
-			pending={interfaceSwitch.starting || activeInterfaceTransition}
+			pending={interfaceSwitch.starting || activeInterfaceTransition || chatLeaveLocked}
 			transition={interfaceSwitch.transition}
 			cancelling={interfaceSwitch.cancelling}
 			cancelError={interfaceSwitch.cancelError}
