@@ -136,6 +136,9 @@ func (c *Controller) PromoteQueuedTurn(
 	if c.handoffActive() {
 		return PromoteQueuedTurnResult{}, ErrControllerHandoff
 	}
+	if c.interruptReservationID != "" {
+		return PromoteQueuedTurnResult{}, fmt.Errorf("%w: %s", ErrTurnNotQueued, turnID)
+	}
 
 	source, err := c.store.TurnByID(ctx, turnID)
 	if err != nil {

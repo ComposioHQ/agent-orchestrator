@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"time"
 
@@ -38,6 +39,8 @@ var ErrNoQueuedTurn = domain.ErrNoQueuedTurn
 // absent from this conversation, no longer queued, or another promotion already
 // owns it. The caller must not contact the provider after this outcome.
 var ErrQueuedTurnNotAvailable = errors.New("queued turn is not available for promotion")
+
+var errInterruptQueueScopeUnavailable = errors.New("interrupt queue scope is unavailable")
 
 type conversationCreateOptions struct {
 	id           string
@@ -1000,25 +1003,33 @@ func terminalActivityStatus(state domain.TurnState) domain.ActivityStatus {
 
 // SettleOrphanedTurns marks anything a dead controller left in flight. A turn the
 // controller was running is not evidence the work finished, so it settles as
-// failed rather than silently completing.
+// failed rather than silently completing. Queued work durably reserved by a
+// confirmed Stop settles as interrupted: restart must honor that destructive
+// boundary instead of making the same prompt dispatchable again.
 func (s *Store) SettleOrphanedTurns(ctx context.Context, session domain.SessionID, now time.Time) error {
-	q, unlock := s.conversationWriter(ctx)
+	_, unlock := s.conversationWriter(ctx)
 	defer unlock()
-	if err := q.FailOrphanedConversationActivities(ctx,
-		gen.FailOrphanedConversationActivitiesParams{
-			UpdatedAt:          now,
-			HandledBySessionID: session,
-		}); err != nil {
-		return fmt.Errorf("settle orphaned activities for %s: %w", session, err)
-	}
-	if err := q.SettleOrphanedConversationTurns(ctx,
-		gen.SettleOrphanedConversationTurnsParams{
-			CompletedAt:        sql.NullTime{Time: now, Valid: true},
-			HandledBySessionID: session,
-		}); err != nil {
-		return fmt.Errorf("settle orphaned turns for %s: %w", session, err)
-	}
-	return nil
+	return s.inTx(ctx, "settle orphaned conversation work", func(q *gen.Queries) error {
+		if err := q.FailOrphanedConversationActivities(ctx,
+			gen.FailOrphanedConversationActivitiesParams{
+				UpdatedAt:          now,
+				HandledBySessionID: session,
+			}); err != nil {
+			return fmt.Errorf("settle orphaned activities for %s: %w", session, err)
+		}
+		if err := q.SettleOrphanedConversationTurns(ctx,
+			gen.SettleOrphanedConversationTurnsParams{
+				CompletedAt:        sql.NullTime{Time: now, Valid: true},
+				HandledBySessionID: session,
+			}); err != nil {
+			return fmt.Errorf("settle orphaned turns for %s: %w", session, err)
+		}
+		if err := q.ReleaseOrphanedConversationInterruptReservations(ctx,
+			sql.NullString{String: string(session), Valid: true}); err != nil {
+			return fmt.Errorf("release orphaned interrupt reservation for %s: %w", session, err)
+		}
+		return nil
+	})
 }
 
 // CleanupOwnedControllerWork settles work only when the closing controller still
@@ -1507,6 +1518,150 @@ func (s *Store) ListQueuedTurns(ctx context.Context, conversationID string) ([]d
 	return queued, nil
 }
 
+// ReserveQueuedTurnsForInterrupt atomically compares the complete durable queue
+// in dispatch order and fences exactly that scope. A mismatch or an item already
+// owned by another queue command returns false without changing any row.
+func (s *Store) ReserveQueuedTurnsForInterrupt(
+	ctx context.Context,
+	conversationID string,
+	expectedTurnIDs []string,
+	reservationID string,
+) (bool, error) {
+	if reservationID == "" {
+		return false, errors.New("interrupt reservation id is required")
+	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	err := s.inTx(ctx, "reserve queued turns for interrupt", func(q *gen.Queries) error {
+		rows, err := q.SelectQueuedConversationTurns(ctx, conversationID)
+		if err != nil {
+			return err
+		}
+		actual := make([]string, 0, len(rows))
+		for _, row := range rows {
+			actual = append(actual, row.ID)
+		}
+		if !slices.Equal(actual, expectedTurnIDs) {
+			return errInterruptQueueScopeUnavailable
+		}
+		updated, err := q.ReserveConversationForInterrupt(ctx,
+			gen.ReserveConversationForInterruptParams{
+				InterruptReservationID: sql.NullString{String: reservationID, Valid: true},
+				ConversationID:         conversationID,
+			})
+		if err != nil {
+			return err
+		}
+		if updated != 1 {
+			return errInterruptQueueScopeUnavailable
+		}
+		for _, turnID := range expectedTurnIDs {
+			updated, err = q.ReserveQueuedConversationTurnForInterrupt(ctx,
+				gen.ReserveQueuedConversationTurnForInterruptParams{
+					InterruptReservationID: sql.NullString{String: reservationID, Valid: true},
+					ID:                     turnID,
+					ConversationID:         conversationID,
+				})
+			if err != nil {
+				return err
+			}
+			if updated != 1 {
+				return errInterruptQueueScopeUnavailable
+			}
+		}
+		return nil
+	})
+	if errors.Is(err, errInterruptQueueScopeUnavailable) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("reserve interrupt queue for %s: %w", conversationID, err)
+	}
+	return true, nil
+}
+
+// ReleaseQueuedTurnsForInterrupt restores the exact fenced queue after the
+// provider rejects Stop. All rows change together or none do.
+func (s *Store) ReleaseQueuedTurnsForInterrupt(
+	ctx context.Context,
+	conversationID string,
+	turnIDs []string,
+	reservationID string,
+) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	return s.inTx(ctx, "release queued turns after interrupt failure", func(q *gen.Queries) error {
+		for _, turnID := range turnIDs {
+			updated, err := q.ReleaseQueuedConversationTurnInterruptReservation(ctx,
+				gen.ReleaseQueuedConversationTurnInterruptReservationParams{
+					ID:                     turnID,
+					ConversationID:         conversationID,
+					InterruptReservationID: sql.NullString{String: reservationID, Valid: true},
+				})
+			if err != nil {
+				return err
+			}
+			if updated != 1 {
+				return fmt.Errorf("turn %s lost interrupt reservation", turnID)
+			}
+		}
+		updated, err := q.ReleaseConversationInterruptReservation(ctx,
+			gen.ReleaseConversationInterruptReservationParams{
+				ConversationID:         conversationID,
+				InterruptReservationID: sql.NullString{String: reservationID, Valid: true},
+			})
+		if err != nil {
+			return err
+		}
+		if updated != 1 {
+			return errors.New("conversation lost interrupt reservation")
+		}
+		return nil
+	})
+}
+
+// CancelQueuedTurnsForInterrupt settles exactly the confirmed, fenced scope.
+// Newly queued work has no reservation and cannot be swept into this mutation.
+func (s *Store) CancelQueuedTurnsForInterrupt(
+	ctx context.Context,
+	conversationID string,
+	turnIDs []string,
+	reservationID string,
+	now time.Time,
+) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	return s.inTx(ctx, "cancel queued turns after interrupt", func(q *gen.Queries) error {
+		for _, turnID := range turnIDs {
+			updated, err := q.CancelQueuedConversationTurnForInterrupt(ctx,
+				gen.CancelQueuedConversationTurnForInterruptParams{
+					CompletedAt:            sql.NullTime{Time: now, Valid: true},
+					ID:                     turnID,
+					ConversationID:         conversationID,
+					InterruptReservationID: sql.NullString{String: reservationID, Valid: true},
+				})
+			if err != nil {
+				return err
+			}
+			if updated != 1 {
+				return fmt.Errorf("turn %s lost interrupt reservation", turnID)
+			}
+		}
+		updated, err := q.ReleaseConversationInterruptReservation(ctx,
+			gen.ReleaseConversationInterruptReservationParams{
+				ConversationID:         conversationID,
+				InterruptReservationID: sql.NullString{String: reservationID, Valid: true},
+			})
+		if err != nil {
+			return err
+		}
+		if updated != 1 {
+			return errors.New("conversation lost interrupt reservation")
+		}
+		return nil
+	})
+}
+
 // ReserveQueuedTurnForPromotion atomically removes one selected queued turn from
 // automatic drain and returns the durable content that must be steered.
 func (s *Store) ReserveQueuedTurnForPromotion(
@@ -1597,28 +1752,6 @@ func (s *Store) CompleteQueuedTurnPromotion(
 		}
 		return nil
 	})
-}
-
-// CancelQueuedTurns closes out everything queued at or before cutoff.
-//
-// They settle as interrupted rather than failed: nothing went wrong, the user
-// stopped the agent, and a message that was never dispatched did not fail. The
-// cutoff keeps a message typed after the stop out of a cancellation it predates.
-func (s *Store) CancelQueuedTurns(
-	ctx context.Context,
-	conversationID string,
-	cutoff, now time.Time,
-) error {
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
-	if err := s.qw.CancelQueuedConversationTurns(ctx, gen.CancelQueuedConversationTurnsParams{
-		CompletedAt:    sql.NullTime{Time: now, Valid: true},
-		ConversationID: conversationID,
-		RequestedAt:    cutoff,
-	}); err != nil {
-		return fmt.Errorf("cancel queued turns for %s: %w", conversationID, err)
-	}
-	return nil
 }
 
 // CancelQueuedTurn closes exactly one durable queue item. The compare-and-set

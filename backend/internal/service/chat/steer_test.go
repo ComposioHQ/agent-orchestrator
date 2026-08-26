@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -41,6 +42,36 @@ type steerRecorder struct {
 type cancelAfterSteerRecorder struct {
 	*steerRecorder
 	cancel context.CancelFunc
+}
+
+// blockingInterruptSteerRecorder keeps Stop inside the provider boundary so a
+// competing queue command can exercise the interval after scope confirmation
+// but before the interrupt outcome is known.
+type blockingInterruptSteerRecorder struct {
+	*steerRecorder
+	interruptStarted chan struct{}
+	releaseInterrupt chan struct{}
+	interruptErr     error
+	startOnce        sync.Once
+}
+
+func newBlockingInterruptSteerRecorder(interruptErr error) *blockingInterruptSteerRecorder {
+	return &blockingInterruptSteerRecorder{
+		steerRecorder:    newSteerRecorder(),
+		interruptStarted: make(chan struct{}),
+		releaseInterrupt: make(chan struct{}),
+		interruptErr:     interruptErr,
+	}
+}
+
+func (s *blockingInterruptSteerRecorder) Interrupt(ctx context.Context, _ string) error {
+	s.startOnce.Do(func() { close(s.interruptStarted) })
+	select {
+	case <-s.releaseInterrupt:
+		return s.interruptErr
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func (s *cancelAfterSteerRecorder) Steer(
@@ -567,5 +598,211 @@ func TestPromoteQueuedTurnAmbiguousProviderFailureSettlesUncertainWithoutRedeliv
 	}
 	if calls := provider.steers(); len(calls) != 1 {
 		t.Fatalf("provider received %d steer attempts, want one", len(calls))
+	}
+}
+
+func TestInterruptFencesConfirmedQueueFromConcurrentPromotion(t *testing.T) {
+	provider := newBlockingInterruptSteerRecorder(nil)
+	t.Cleanup(func() {
+		select {
+		case <-provider.releaseInterrupt:
+		default:
+			close(provider.releaseInterrupt)
+		}
+	})
+	h := newHarnessWithConversation(t, provider)
+	ctx := context.Background()
+
+	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "running", ClientMessageID: "running", Origin: domain.MessageOriginHuman,
+	}); err != nil {
+		t.Fatalf("Send running: %v", err)
+	}
+	provider.emit(ports.ChatEvent{
+		Kind: ports.ChatEventTurnStarted, ProviderTurnID: "provider-turn-1",
+	})
+	queued, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "confirmed for Stop", ClientMessageID: "queued", Origin: domain.MessageOriginHuman,
+	})
+	if err != nil {
+		t.Fatalf("Send queued: %v", err)
+	}
+
+	interruptDone := make(chan error, 1)
+	go func() {
+		interruptDone <- h.svc.Interrupt(ctx, testSession, []string{queued.ID})
+	}()
+	select {
+	case <-provider.interruptStarted:
+	case <-time.After(4 * time.Second):
+		t.Fatal("Stop did not reach provider")
+	}
+
+	_, promoteErr := h.svc.PromoteQueuedTurn(ctx, testSession, queued.ID)
+	if !errors.Is(promoteErr, chatsvc.ErrTurnNotQueued) {
+		t.Fatalf("concurrent promotion error = %v, want ErrTurnNotQueued", promoteErr)
+	}
+	if calls := provider.steers(); len(calls) != 0 {
+		t.Fatalf("provider received confirmed Stop work through promotion: %+v", calls)
+	}
+
+	close(provider.releaseInterrupt)
+	if err := <-interruptDone; err != nil {
+		t.Fatalf("Interrupt: %v", err)
+	}
+	snapshot := h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return turnStateByText(t, s)["confirmed for Stop"].Terminal()
+	})
+	if got := turnStateByText(t, snapshot)["confirmed for Stop"]; got != domain.TurnStateInterrupted {
+		t.Fatalf("confirmed queue state = %q, want interrupted", got)
+	}
+}
+
+func TestInterruptCompletionBeforeSuccessCancelsExactScopeAndReleasesPostStopWork(t *testing.T) {
+	provider := newBlockingInterruptSteerRecorder(nil)
+	t.Cleanup(func() {
+		select {
+		case <-provider.releaseInterrupt:
+		default:
+			close(provider.releaseInterrupt)
+		}
+	})
+	h := newHarnessWithConversation(t, provider)
+	ctx := context.Background()
+
+	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "running", ClientMessageID: "running", Origin: domain.MessageOriginHuman,
+	}); err != nil {
+		t.Fatalf("Send running: %v", err)
+	}
+	provider.emit(ports.ChatEvent{
+		Kind: ports.ChatEventTurnStarted, ProviderTurnID: "provider-turn-1",
+	})
+	confirmed, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "confirmed for Stop", ClientMessageID: "confirmed", Origin: domain.MessageOriginHuman,
+	})
+	if err != nil {
+		t.Fatalf("Send confirmed queue: %v", err)
+	}
+
+	interruptDone := make(chan error, 1)
+	go func() {
+		interruptDone <- h.svc.Interrupt(ctx, testSession, []string{confirmed.ID})
+	}()
+	select {
+	case <-provider.interruptStarted:
+	case <-time.After(4 * time.Second):
+		t.Fatal("Stop did not reach provider")
+	}
+
+	postStop, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "after Stop", ClientMessageID: "after", Origin: domain.MessageOriginHuman,
+	})
+	if err != nil {
+		t.Fatalf("Send after Stop: %v", err)
+	}
+	if postStop.State != domain.TurnStateQueued {
+		t.Fatalf("post-Stop send state = %q, want queued behind pending outcome", postStop.State)
+	}
+	if _, err := h.svc.PromoteQueuedTurn(ctx, testSession, postStop.ID); !errors.Is(err, chatsvc.ErrTurnNotQueued) {
+		t.Fatalf("promote post-Stop work error = %v, want ErrTurnNotQueued", err)
+	}
+	if err := h.svc.CancelQueuedTurn(ctx, testSession, confirmed.ID); !errors.Is(err, chatsvc.ErrTurnNotQueued) {
+		t.Fatalf("cancel confirmed work error = %v, want ErrTurnNotQueued", err)
+	}
+	if err := h.svc.Interrupt(ctx, testSession, []string{confirmed.ID, postStop.ID}); !errors.Is(err, chatsvc.ErrQueueScopeChanged) {
+		t.Fatalf("second Stop error = %v, want ErrQueueScopeChanged", err)
+	}
+
+	provider.emit(ports.ChatEvent{
+		Kind: ports.ChatEventTurnCompleted, ProviderTurnID: "provider-turn-1",
+		TurnState: domain.TurnStateCompleted,
+	})
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		states := turnStateByText(t, s)
+		return states["running"] == domain.TurnStateCompleted &&
+			states["confirmed for Stop"] == domain.TurnStateQueued &&
+			states["after Stop"] == domain.TurnStateQueued
+	})
+	if got := provider.sentTexts(); len(got) != 1 {
+		t.Fatalf("provider received %v while Stop outcome was pending", got)
+	}
+
+	close(provider.releaseInterrupt)
+	if err := <-interruptDone; err != nil {
+		t.Fatalf("Interrupt: %v", err)
+	}
+	snapshot := h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		states := turnStateByText(t, s)
+		return states["confirmed for Stop"] == domain.TurnStateInterrupted &&
+			states["after Stop"] == domain.TurnStateRunning
+	})
+	states := turnStateByText(t, snapshot)
+	if states["confirmed for Stop"] != domain.TurnStateInterrupted {
+		t.Fatalf("confirmed queue state = %q, want interrupted", states["confirmed for Stop"])
+	}
+	if got := provider.sentTexts(); len(got) != 2 || got[1] != "after Stop" {
+		t.Fatalf("provider received %v, want only post-Stop work after success", got)
+	}
+}
+
+func TestInterruptFailureReleasesFenceAndResumesOriginalQueue(t *testing.T) {
+	provider := newBlockingInterruptSteerRecorder(errors.New("provider unavailable"))
+	t.Cleanup(func() {
+		select {
+		case <-provider.releaseInterrupt:
+		default:
+			close(provider.releaseInterrupt)
+		}
+	})
+	h := newHarnessWithConversation(t, provider)
+	ctx := context.Background()
+
+	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "running", ClientMessageID: "running", Origin: domain.MessageOriginHuman,
+	}); err != nil {
+		t.Fatalf("Send running: %v", err)
+	}
+	provider.emit(ports.ChatEvent{
+		Kind: ports.ChatEventTurnStarted, ProviderTurnID: "provider-turn-1",
+	})
+	queued, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "original queue", ClientMessageID: "queued", Origin: domain.MessageOriginHuman,
+	})
+	if err != nil {
+		t.Fatalf("Send queued: %v", err)
+	}
+
+	interruptDone := make(chan error, 1)
+	go func() {
+		interruptDone <- h.svc.Interrupt(ctx, testSession, []string{queued.ID})
+	}()
+	select {
+	case <-provider.interruptStarted:
+	case <-time.After(4 * time.Second):
+		t.Fatal("Stop did not reach provider")
+	}
+	provider.emit(ports.ChatEvent{
+		Kind: ports.ChatEventTurnCompleted, ProviderTurnID: "provider-turn-1",
+		TurnState: domain.TurnStateCompleted,
+	})
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		states := turnStateByText(t, s)
+		return states["running"] == domain.TurnStateCompleted &&
+			states["original queue"] == domain.TurnStateQueued
+	})
+	if got := provider.sentTexts(); len(got) != 1 {
+		t.Fatalf("provider received %v before failed Stop released its fence", got)
+	}
+
+	close(provider.releaseInterrupt)
+	if err := <-interruptDone; err == nil || !strings.Contains(err.Error(), "provider unavailable") {
+		t.Fatalf("Interrupt error = %v, want provider failure", err)
+	}
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return turnStateByText(t, s)["original queue"] == domain.TurnStateRunning
+	})
+	if got := provider.sentTexts(); len(got) != 2 || got[1] != "original queue" {
+		t.Fatalf("provider received %v, want original queue resumed after failure", got)
 	}
 }

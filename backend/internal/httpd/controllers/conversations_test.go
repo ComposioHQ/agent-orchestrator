@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -85,24 +87,28 @@ func (f *fakeConversationService) Interrupt(_ context.Context, _ domain.SessionI
 }
 
 func TestInterruptConversationRejectsOmittedLegacyScope(t *testing.T) {
-	service := &fakeConversationService{}
-	server := conversationTestServer(t, service)
-	request, err := http.NewRequest(http.MethodPost,
-		server.URL+"/api/v1/sessions/p1-1/conversation/interrupt", nil)
-	if err != nil {
-		t.Fatalf("request: %v", err)
-	}
-	response, err := http.DefaultClient.Do(request)
-	if err != nil {
-		t.Fatalf("POST interrupt: %v", err)
-	}
-	defer func() { _ = response.Body.Close() }()
-	if response.StatusCode != http.StatusBadRequest {
-		body, _ := io.ReadAll(response.Body)
-		t.Fatalf("status = %d, body = %s", response.StatusCode, body)
-	}
-	if service.interruptCalls != 0 {
-		t.Fatalf("service interrupt calls = %d, want 0", service.interruptCalls)
+	for _, body := range []string{"", `{}`, `{"queuedTurnIds":null}`} {
+		t.Run(fmt.Sprintf("body_%q", body), func(t *testing.T) {
+			service := &fakeConversationService{}
+			server := conversationTestServer(t, service)
+			request, err := http.NewRequest(http.MethodPost,
+				server.URL+"/api/v1/sessions/p1-1/conversation/interrupt", strings.NewReader(body))
+			if err != nil {
+				t.Fatalf("request: %v", err)
+			}
+			response, err := http.DefaultClient.Do(request)
+			if err != nil {
+				t.Fatalf("POST interrupt: %v", err)
+			}
+			defer func() { _ = response.Body.Close() }()
+			if response.StatusCode != http.StatusBadRequest {
+				responseBody, _ := io.ReadAll(response.Body)
+				t.Fatalf("status = %d, body = %s", response.StatusCode, responseBody)
+			}
+			if service.interruptCalls != 0 {
+				t.Fatalf("service interrupt calls = %d, want 0", service.interruptCalls)
+			}
+		})
 	}
 }
 

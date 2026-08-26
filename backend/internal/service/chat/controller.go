@@ -21,7 +21,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -62,6 +61,9 @@ type Store interface {
 	CleanupOwnedControllerWork(ctx context.Context, session domain.SessionID, conversationID, generation string, now time.Time) (bool, error)
 	ListVisibleRunningTurnProviderIDs(ctx context.Context, conversationID string) ([]string, error)
 	ListQueuedTurns(ctx context.Context, conversationID string) ([]domain.QueuedTurn, error)
+	ReserveQueuedTurnsForInterrupt(ctx context.Context, conversationID string, expectedTurnIDs []string, reservationID string) (bool, error)
+	ReleaseQueuedTurnsForInterrupt(ctx context.Context, conversationID string, turnIDs []string, reservationID string) error
+	CancelQueuedTurnsForInterrupt(ctx context.Context, conversationID string, turnIDs []string, reservationID string, now time.Time) error
 
 	SetConversationSettings(ctx context.Context, conversationID string, settings domain.ConversationSettings, now time.Time) error
 
@@ -76,7 +78,6 @@ type Store interface {
 	ReleaseQueuedTurnPromotion(ctx context.Context, conversationID, turnID string) error
 	CompleteQueuedTurnPromotion(ctx context.Context, conversationID, sourceTurnID, providerTurnID string, activity domain.ConversationActivity, now time.Time) error
 	CancelQueuedTurn(ctx context.Context, conversationID, turnID string, now time.Time) (bool, error)
-	CancelQueuedTurns(ctx context.Context, conversationID string, cutoff, now time.Time) error
 	CancelAllQueuedTurns(ctx context.Context, conversationID string, now time.Time) error
 
 	RetryPrompt(ctx context.Context, conversationID, turnID string) (domain.RetryPrompt, error)
@@ -188,9 +189,11 @@ type Controller struct {
 	// well as on disk so a dispatch does not need a read, and updated together with
 	// the row so the two cannot drift.
 	settings domain.ConversationSettings
-	// cancelQueuedAt is set when the user interrupts, and is the cutoff for the
-	// queue that interrupt cancels. Zero means nothing is being cancelled.
-	cancelQueuedAt time.Time
+	// An interrupt reservation is durable while the provider outcome is unknown.
+	// These fields mirror the reservation owned by this controller so completion
+	// drains pause and the exact confirmed rows can be cancelled or released.
+	interruptReservationID string
+	interruptQueuedTurnIDs []string
 	// handoff closes source-controller intake while ownership is being changed.
 	// Interface drain keeps dispatching accepted rows; interface interrupt and an
 	// idle branch mutation stop dispatch entirely. The target controller is not
@@ -995,7 +998,7 @@ func (c *Controller) Send(ctx context.Context, msg ports.ChatUserMessage) (domai
 		return domain.ConversationTurn{}, nil
 	}
 
-	if c.busy() {
+	if c.busy() || c.interruptReservationID != "" {
 		// AppendUserMessage wrote it as queued, which is exactly where it belongs
 		// until the running turn ends. drain picks it up from there.
 		return domain.ConversationTurn{
@@ -1337,9 +1340,13 @@ func (c *Controller) drain(ctx context.Context) {
 // uses it so committing the completion, clearing primary ownership, and claiming
 // the next queued request are one serialized lifecycle transition.
 func (c *Controller) drainLocked(ctx context.Context) {
+	if c.interruptReservationID != "" {
+		// A provider completion can arrive before its Interrupt response. Until
+		// that response says success or failure, neither the confirmed scope nor
+		// later work may cross the provider boundary.
+		return
+	}
 	c.mu.Lock()
-	cutoff := c.cancelQueuedAt
-	c.cancelQueuedAt = time.Time{}
 	busy := c.pendingTurnID != ""
 	handoff := c.handoff
 	c.mu.Unlock()
@@ -1349,15 +1356,6 @@ func (c *Controller) drainLocked(ctx context.Context) {
 		return
 	}
 
-	if !cutoff.IsZero() {
-		// The user stopped the agent. Everything queued at that moment is
-		// cancelled; anything typed afterwards is still theirs to send, and falls
-		// through to the dispatch below.
-		if err := c.store.CancelQueuedTurns(ctx, c.conversation.ID, cutoff, c.now()); err != nil {
-			c.log.Error("failed to cancel queued turns", "session", c.sessionID, "error", err)
-			return
-		}
-	}
 	if handoff != controllerHandoffNone && handoff != controllerHandoffInterfaceDrain {
 		return
 	}
@@ -1679,8 +1677,8 @@ func (c *Controller) interruptForHandoff(ctx context.Context) error {
 //
 // The queue is cancelled because stop is the user's brake: a brake that releases
 // the next message instead of stopping would be the opposite of what the button
-// says. The cutoff is recorded before the provider call, so a completion that
-// races back cannot drain the queue the interrupt was about to cancel.
+// says. The exact confirmed queue is durably reserved before the provider call,
+// so a completion racing the response cannot dispatch or mutate it.
 // Durable state is what the UI renders, so it is also what Stop must be able to
 // act on. Two recovery paths reconcile the cases where in-memory tracking and the
 // durable turn row disagree:
@@ -1697,92 +1695,166 @@ func (c *Controller) interruptForHandoff(ctx context.Context) error {
 //     dismiss. Reconcile the durable row instead.
 func (c *Controller) Interrupt(ctx context.Context, expectedQueuedTurnIDs []string) error {
 	// Stop's linearization point is the dispatch lock. A Send that acquired the
-	// lock first is existing work Stop should cancel; a Send that arrives after
-	// this point waits and is therefore post-Stop work that must survive.
+	// lock first is existing work Stop should cancel; a Send that acquires it after
+	// the durable reservation is post-Stop work that queues behind the pending
+	// outcome and must survive.
 	c.sendMu.Lock()
-	queued, err := c.store.ListQueuedTurns(ctx, c.conversation.ID)
-	if err != nil {
-		c.sendMu.Unlock()
-		return fmt.Errorf("read queued turn scope: %w", err)
-	}
-	queuedTurnIDs := make([]string, 0, len(queued))
-	for _, turn := range queued {
-		queuedTurnIDs = append(queuedTurnIDs, turn.TurnID)
-	}
-	if !slices.Equal(queuedTurnIDs, expectedQueuedTurnIDs) {
+	if c.interruptReservationID != "" {
 		c.sendMu.Unlock()
 		return ErrQueueScopeChanged
 	}
-	cutoff := c.now()
+	reservationID := c.newID()
+	matched, err := c.store.ReserveQueuedTurnsForInterrupt(
+		ctx, c.conversation.ID, expectedQueuedTurnIDs, reservationID,
+	)
+	if err != nil {
+		c.sendMu.Unlock()
+		return fmt.Errorf("reserve queued turn scope: %w", err)
+	}
+	if !matched {
+		c.sendMu.Unlock()
+		return ErrQueueScopeChanged
+	}
+	c.interruptReservationID = reservationID
+	c.interruptQueuedTurnIDs = append([]string(nil), expectedQueuedTurnIDs...)
 	c.mu.Lock()
 	turn := c.pendingTurnID
-	if turn != "" {
-		// Publish the queue cutoff before releasing sendMu. A completion can then
-		// win the provider race, but it cannot drain pre-Stop work as if Stop had
-		// never happened.
-		c.cancelQueuedAt = cutoff
-	}
 	c.mu.Unlock()
 
 	if turn == "" {
 		providerTurnIDs, err := c.store.ListVisibleRunningTurnProviderIDs(ctx, c.conversation.ID)
 		if err != nil {
+			releaseErr := c.finishInterruptQueueLocked(context.WithoutCancel(ctx), false)
 			c.sendMu.Unlock()
+			if releaseErr != nil {
+				return errors.Join(fmt.Errorf("check running turns: %w", err), releaseErr)
+			}
 			return fmt.Errorf("check running turns: %w", err)
 		}
 		if len(providerTurnIDs) == 0 {
+			releaseErr := c.finishInterruptQueueLocked(context.WithoutCancel(ctx), false)
 			c.sendMu.Unlock()
+			if releaseErr != nil {
+				return errors.Join(ErrNoActiveTurn, releaseErr)
+			}
 			return ErrNoActiveTurn
 		}
 		// The list uses the snapshot's visibility and ordering rules, so its first
 		// row is the same running turn whose Working bar the user pressed Stop on.
 		providerTurnID := providerTurnIDs[0]
-		if err := c.conv.Interrupt(ctx, providerTurnID); err != nil &&
-			!errors.Is(err, ports.ErrChatNoActiveTurn) {
-			c.log.Warn("provider interrupt during reconciliation failed",
-				"session", c.sessionID, "turn", providerTurnID, "error", err)
-		}
-		err = c.reconcileDurableTurnsLocked(ctx, providerTurnID, providerTurnIDs, cutoff)
 		c.sendMu.Unlock()
-		return err
+		interruptErr := c.conv.Interrupt(ctx, providerTurnID)
+		c.sendMu.Lock()
+		defer c.sendMu.Unlock()
+		if interruptErr != nil && !errors.Is(interruptErr, ports.ErrChatNoActiveTurn) {
+			// The provider may still be running the durable turn that memory lost.
+			// Rehydrate ownership before releasing the queue fence so finish cannot
+			// drain either the original queue or post-Stop work into that turn.
+			stillRunning, listErr := c.store.ListVisibleRunningTurnProviderIDs(ctx, c.conversation.ID)
+			if listErr != nil {
+				return errors.Join(
+					fmt.Errorf("interrupt durable turn %s: %w", providerTurnID, interruptErr),
+					fmt.Errorf("check running turns after provider failure: %w", listErr),
+				)
+			}
+			if len(stillRunning) > 0 {
+				c.mu.Lock()
+				if c.pendingTurnID == "" {
+					c.pendingTurnID = stillRunning[0]
+					c.ackedTurnID = stillRunning[0]
+					c.state = ports.ChatControllerBusy
+				}
+				c.mu.Unlock()
+			}
+			if releaseErr := c.finishInterruptQueueLocked(context.WithoutCancel(ctx), false); releaseErr != nil {
+				return errors.Join(
+					fmt.Errorf("interrupt durable turn %s: %w", providerTurnID, interruptErr),
+					releaseErr,
+				)
+			}
+			return fmt.Errorf("interrupt durable turn %s: %w", providerTurnID, interruptErr)
+		}
+		if err := c.reconcileDurableTurnsLocked(ctx, providerTurnID, providerTurnIDs); err != nil {
+			return err
+		}
+		return c.finishInterruptQueueLocked(context.WithoutCancel(ctx), true)
 	}
 	c.sendMu.Unlock()
 
 	// sendMu proved dispatch is complete, but the provider's turn-started event
 	// may still be in transit. Wait for this exact turn: if it completes and a
 	// post-Stop survivor starts, Stop must not follow ownership to that new turn.
-	if !c.awaitTurnAcknowledged(ctx, turn) {
-		return nil
+	acknowledged, waitErr := c.awaitTurnAcknowledgement(ctx, turn)
+	if waitErr != nil {
+		c.sendMu.Lock()
+		defer c.sendMu.Unlock()
+		if releaseErr := c.finishInterruptQueueLocked(context.WithoutCancel(ctx), false); releaseErr != nil {
+			return errors.Join(waitErr, releaseErr)
+		}
+		return waitErr
+	}
+	if !acknowledged {
+		c.sendMu.Lock()
+		defer c.sendMu.Unlock()
+		return c.finishInterruptQueueLocked(context.WithoutCancel(ctx), true)
 	}
 
-	if err := c.conv.Interrupt(ctx, turn); err != nil {
-		if errors.Is(err, ports.ErrChatNoActiveTurn) {
-			// Serialize durable settlement, memory cleanup, and queue promotion so
-			// a message arriving after Stop cannot slip between those steps.
-			c.sendMu.Lock()
-			defer c.sendMu.Unlock()
-
-			// A committed completion may have won the sendMu race after the
-			// provider answered. It already consumed the cutoff and drained the
-			// queue, so do not overwrite its terminal state or a successor turn.
-			c.mu.Lock()
-			stillPending := c.pendingTurnID == turn
-			c.mu.Unlock()
-			if !stillPending {
-				return nil
-			}
+	interruptErr := c.conv.Interrupt(ctx, turn)
+	c.sendMu.Lock()
+	defer c.sendMu.Unlock()
+	if interruptErr == nil {
+		return c.finishInterruptQueueLocked(context.WithoutCancel(ctx), true)
+	}
+	if errors.Is(interruptErr, ports.ErrChatNoActiveTurn) {
+		c.mu.Lock()
+		stillPending := c.pendingTurnID == turn
+		c.mu.Unlock()
+		if stillPending {
 			providerTurnIDs, listErr := c.store.ListVisibleRunningTurnProviderIDs(ctx, c.conversation.ID)
 			if listErr != nil {
 				return fmt.Errorf("check running turns after provider refusal: %w", listErr)
 			}
-			return c.reconcileDurableTurnsLocked(ctx, turn, providerTurnIDs, cutoff)
+			if err := c.reconcileDurableTurnsLocked(ctx, turn, providerTurnIDs); err != nil {
+				return err
+			}
 		}
-		// The interrupt did not happen, so the queue it was going to cancel is
-		// still the user's to send.
-		c.mu.Lock()
-		c.cancelQueuedAt = time.Time{}
-		c.mu.Unlock()
-		return fmt.Errorf("interrupt turn %s: %w", turn, err)
+		return c.finishInterruptQueueLocked(context.WithoutCancel(ctx), true)
+	}
+	// The provider did not accept Stop. Remove the durable fence and, if a
+	// completion arrived while the request was pending, resume the original queue.
+	if releaseErr := c.finishInterruptQueueLocked(context.WithoutCancel(ctx), false); releaseErr != nil {
+		return errors.Join(fmt.Errorf("interrupt turn %s: %w", turn, interruptErr), releaseErr)
+	}
+	return fmt.Errorf("interrupt turn %s: %w", turn, interruptErr)
+}
+
+// finishInterruptQueueLocked commits the provider outcome against the exact
+// durable scope that was confirmed. Callers hold sendMu. The reservation remains
+// in place on storage failure, which is safer than dispatching work Stop may have
+// accepted but AO could not settle.
+func (c *Controller) finishInterruptQueueLocked(ctx context.Context, interrupted bool) error {
+	reservationID := c.interruptReservationID
+	turnIDs := append([]string(nil), c.interruptQueuedTurnIDs...)
+	if reservationID == "" {
+		return nil
+	}
+	var err error
+	if interrupted {
+		err = c.store.CancelQueuedTurnsForInterrupt(
+			ctx, c.conversation.ID, turnIDs, reservationID, c.now(),
+		)
+	} else {
+		err = c.store.ReleaseQueuedTurnsForInterrupt(
+			ctx, c.conversation.ID, turnIDs, reservationID,
+		)
+	}
+	if err != nil {
+		return err
+	}
+	c.interruptReservationID = ""
+	c.interruptQueuedTurnIDs = nil
+	if !c.busy() {
+		c.drainLocked(ctx)
 	}
 	return nil
 }
@@ -1791,14 +1863,12 @@ func (c *Controller) Interrupt(ctx context.Context, expectedQueuedTurnIDs []stri
 // through the normal path but durable state still shows as running. Every visible
 // running row is settled because nested provider turns can coexist with the root;
 // leaving any one of them running would leave the same Working bar behind. Callers
-// hold sendMu so settlement, memory cleanup, queue cancellation, and survivor
-// dispatch are one serialized transition. The cutoff is the original Stop time: a
-// prompt submitted while provider cancellation was pending is new work and survives.
+// hold sendMu so settlement and memory cleanup are one serialized transition.
+// Queue settlement follows through finishInterruptQueueLocked.
 func (c *Controller) reconcileDurableTurnsLocked(
 	ctx context.Context,
 	targetProviderTurnID string,
 	visibleProviderTurnIDs []string,
-	cutoff time.Time,
 ) error {
 	now := c.now()
 	providerTurnIDs := make([]string, 0, len(visibleProviderTurnIDs)+1)
@@ -1818,7 +1888,6 @@ func (c *Controller) reconcileDurableTurnsLocked(
 	}
 
 	c.mu.Lock()
-	c.cancelQueuedAt = cutoff
 	if c.pendingTurnID == targetProviderTurnID {
 		c.pendingTurnID = ""
 	}
@@ -1831,9 +1900,6 @@ func (c *Controller) reconcileDurableTurnsLocked(
 	c.mu.Unlock()
 
 	c.reportActivity(ctx, domain.ActivityIdle, "chat.interrupt.reconciled", now)
-	// drainLocked consumes cancelQueuedAt, cancels only the pre-Stop queue, and
-	// immediately dispatches the oldest surviving post-Stop prompt.
-	c.drainLocked(ctx)
 	return nil
 }
 
@@ -1859,24 +1925,45 @@ func (c *Controller) awaitAcknowledgedTurn(ctx context.Context) (string, bool) {
 // queued post-Stop survivor while this wait is in progress; following that move
 // would interrupt new work the user submitted after pressing Stop.
 func (c *Controller) awaitTurnAcknowledged(ctx context.Context, turn string) bool {
+	acknowledged, err := c.awaitTurnAcknowledgement(ctx, turn)
+	// Existing steer/handoff callers pass the request context through to the
+	// provider, which remains the authority on a timed-out/cancelled operation.
+	// Interrupt consumes the error explicitly because it owns a destructive queue
+	// reservation that must be released when the request itself is cancelled.
+	return acknowledged || err != nil
+}
+
+// awaitTurnAcknowledgement distinguishes a turn that definitively left pending
+// ownership from a caller that stopped waiting. Those cases cannot share a bool:
+// only the former proves Stop no longer needs to contact the provider.
+func (c *Controller) awaitTurnAcknowledgement(ctx context.Context, turn string) (bool, error) {
 	deadline := time.Now().Add(turnAckWait)
 	for {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
 		c.mu.Lock()
 		pending, acked := c.pendingTurnID, c.ackedTurnID
 		c.mu.Unlock()
 
 		if pending != turn {
-			return false
+			// Cancellation and a completion can become visible together. Prefer the
+			// conservative request outcome unless pending ownership was observed
+			// while the caller was still live.
+			if err := ctx.Err(); err != nil {
+				return false, err
+			}
+			return false, nil
 		}
 		if acked == turn || time.Now().After(deadline) {
-			return true
+			return true, nil
 		}
 
 		select {
 		case <-ctx.Done():
-			return true
+			return false, ctx.Err()
 		case <-c.stopped:
-			return true
+			return true, nil
 		case <-time.After(20 * time.Millisecond):
 		}
 	}

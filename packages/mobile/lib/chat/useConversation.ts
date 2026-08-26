@@ -27,6 +27,7 @@ import { conversationActionError, conversationErrorCode } from "./conversationEr
 import { subscribeConversationEvents } from "./conversationEvents";
 import { createAsyncValueCache } from "./asyncValueCache";
 import { createRequestGate } from "./requestGate";
+import { runConversationStop } from "./stopAction";
 import { loadTurnOptionCatalog } from "./turnOptionsCatalog";
 
 const REFRESH_DEBOUNCE_MS = 120;
@@ -78,7 +79,7 @@ export type MobileConversation = {
 	retrySend(id: string): Promise<void>;
 	discardSend(id: string): void;
 	steer(text: string): Promise<void>;
-	interrupt(): Promise<void>;
+	interrupt(queuedTurnIds: string[]): Promise<void>;
 	resolveApproval(requestId: string, decisionId: string): Promise<void>;
 	resolveInput(requestId: string, action: "accept" | "decline" | "cancel", content?: Record<string, unknown>): Promise<void>;
 	compact(): Promise<void>;
@@ -301,8 +302,12 @@ export function useMobileConversation(
 		[cfg, runAction, sessionId],
 	);
 	const interrupt = useCallback(
-		() => runAction("interrupt", () => requireConfig(cfg, (c) => interruptConversation(c, sessionId))),
-		[cfg, runAction, sessionId],
+		(queuedTurnIds: string[]) => runAction("interrupt", () => runConversationStop(
+			queuedTurnIds,
+			(scope) => requireConfig(cfg, (c) => interruptConversation(c, sessionId, scope)),
+			refresh,
+		)),
+		[cfg, refresh, runAction, sessionId],
 	);
 	const resolveApprovalAction = useCallback(
 		(requestId: string, decisionId: string) =>

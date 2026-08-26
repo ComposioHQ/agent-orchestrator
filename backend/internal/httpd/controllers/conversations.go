@@ -686,6 +686,12 @@ func (c *ConversationsController) interrupt(w http.ResponseWriter, r *http.Reque
 	if !decodeConversationBody(w, r, &req) {
 		return
 	}
+	if req.QueuedTurnIDs == nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "validation",
+			"CHAT_QUEUE_SCOPE_REQUIRED",
+			"queuedTurnIds must be the complete confirmed queue, or an explicit empty array", nil)
+		return
+	}
 	err := c.Svc.Interrupt(
 		r.Context(), domain.SessionID(chi.URLParam(r, "sessionId")), req.QueuedTurnIDs,
 	)

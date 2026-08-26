@@ -37,6 +37,7 @@ import { chatSheetRoute } from "./chatSheetRegistry";
 import { centeredConversationMenu } from "./chatLayout";
 import { elapsedLabel, mcpServerFailureLabel, quotaWarning, resetLabel } from "./conversationChrome";
 import { conversationActionError, conversationActionUnsupported } from "./conversationErrors";
+import { confirmConversationStop } from "./stopConfirmation";
 import { conversationMarkers } from "./timelineModel";
 import { brokenMcpServers, can } from "./types";
 import { useMobileConversation } from "./useConversation";
@@ -241,6 +242,11 @@ export function ChatSessionScreen({ session }: { session: MobileChatSession }) {
 			],
 		);
 	}, [interfaceSwitch, startInterfaceSwitch, turnActive, turnWaiting]);
+	const requestInterrupt = useCallback(() => {
+		confirmConversationStop(conversation.snapshot?.queuedTurns, (queuedTurnIds) => {
+			void conversation.interrupt(queuedTurnIds).catch(() => {});
+		});
+	}, [conversation.interrupt, conversation.snapshot?.queuedTurns]);
 
 	if (conversation.loading && !conversation.snapshot) return <Centered icon="message-square" title="Loading conversation…" spinning />;
 	if (conversation.unavailable) return <Unavailable message={conversation.unavailable.message} onShell={() => void openShell()} openingShell={openingShell} />;
@@ -248,8 +254,8 @@ export function ChatSessionScreen({ session }: { session: MobileChatSession }) {
 	if (contentReadySessionId !== session.id) return <Centered icon="message-square" title="Preparing conversation…" spinning />;
 
 	const snapshot = conversation.snapshot;
-	const active = snapshot.turns.some((turn) => turn.state === "running" || turn.state === "queued");
-	const activeTurn = snapshot.turns.find((turn) => turn.state === "running") ?? snapshot.turns.find((turn) => turn.state === "queued");
+	const turnInFlight = snapshot.turns.some((turn) => turn.state === "running" || turn.state === "queued");
+	const runningTurn = snapshot.turns.find((turn) => turn.state === "running");
 	const brokenServers = brokenMcpServers(snapshot);
 	const rolledBack = snapshot.turns.filter((turn) => turn.rolledBack).length;
 	const quota = quotaWarning(snapshot.rateLimits);
@@ -309,7 +315,7 @@ export function ChatSessionScreen({ session }: { session: MobileChatSession }) {
 				mcpReloading={conversation.pendingActions.includes("mcp")}
 				mcpError={conversation.actionErrors.mcp}
 				mcpReloadSupported={mcpReloadSupported}
-				turnInFlight={active}
+				turnInFlight={turnInFlight}
 				onResume={() => void resume()}
 				onReload={() => void conversation.reloadMcp().catch(() => {})}
 				onOpenShell={() => void openShell()}
@@ -331,7 +337,7 @@ export function ChatSessionScreen({ session }: { session: MobileChatSession }) {
 				jumpToSequence={jumpToSequence}
 				onJumpHandled={clearJumpToSequence}
 			/>
-			{activeTurn ? <LiveTurnBar snapshot={snapshot} startedAt={activeTurn.startedAt ?? activeTurn.requestedAt} stopping={conversation.pendingActions.includes("interrupt")} onInterrupt={() => void conversation.interrupt().catch(() => {})} /> : null}
+			{runningTurn ? <LiveTurnBar snapshot={snapshot} startedAt={runningTurn.startedAt ?? runningTurn.requestedAt} stopping={conversation.pendingActions.includes("interrupt")} onInterrupt={requestInterrupt} /> : null}
 			<ChatComposer
 				sessionId={session.id}
 				snapshot={snapshot}
@@ -346,7 +352,7 @@ export function ChatSessionScreen({ session }: { session: MobileChatSession }) {
 				error={conversation.actionError}
 				onSend={conversation.send}
 				onSteer={conversation.steer}
-				onInterrupt={() => void conversation.interrupt().catch(() => {})}
+				onInterrupt={requestInterrupt}
 				onOpenSettings={() => void openTurnSettings()}
 			/>
 			<ConversationMenu
@@ -400,7 +406,7 @@ function LiveTurnBar({ snapshot, startedAt, stopping, onInterrupt }: { snapshot:
 	const styles = useThemedStyles(makeStyles);
 	const [now, setNow] = useState(() => Date.now());
 	useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 1_000); return () => clearInterval(timer); }, []);
-	const queued = snapshot.turns.filter((turn) => turn.state === "queued").length;
+	const queued = snapshot.queuedTurns?.length ?? 0;
 	const blocked = snapshot.items.some((item) => item.kind === "activity" && (item.activityKind === "approval" || item.activityKind === "user_input") && item.status === "pending");
 	const elapsed = elapsedLabel(startedAt, now);
 	const stopLabel = queued ? "Stop and clear queue" : "Stop turn";

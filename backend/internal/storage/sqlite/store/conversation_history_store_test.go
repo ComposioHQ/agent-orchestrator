@@ -731,6 +731,189 @@ func TestCancelQueuedTurnCannotOvertakePromotionReservation(t *testing.T) {
 	}
 }
 
+func TestInterruptQueueReservationIsAtomicExactAndAllowsAnEmptyScope(t *testing.T) {
+	s, session, conversation := conversationFixture(t)
+	ctx := context.Background()
+
+	matched, err := s.ReserveQueuedTurnsForInterrupt(ctx, conversation, nil, "empty-stop")
+	if err != nil || !matched {
+		t.Fatalf("reserve empty queue: matched=%v err=%v", matched, err)
+	}
+	created, err := s.AppendUserMessage(ctx, conversation, session, "gen-1",
+		domain.ConversationMessage{
+			ID: "post-empty-stop-message", Text: "arrived after empty Stop", Origin: domain.MessageOriginHuman,
+		}, "post-empty-stop", histClock)
+	if err != nil || !created {
+		t.Fatalf("append after empty Stop: created=%v err=%v", created, err)
+	}
+	if _, err := s.NextQueuedTurn(ctx, conversation); !errors.Is(err, domain.ErrNoQueuedTurn) {
+		t.Fatalf("empty Stop scope did not fence later dispatch: %v", err)
+	}
+	if _, err := s.ReserveQueuedTurnForPromotion(
+		ctx, conversation, "post-empty-stop", histClock.Add(time.Minute),
+	); !errors.Is(err, store.ErrQueuedTurnNotAvailable) {
+		t.Fatalf("empty Stop scope did not fence later promotion: %v", err)
+	}
+	if err := s.CancelQueuedTurnsForInterrupt(
+		ctx, conversation, nil, "empty-stop", histClock,
+	); err != nil {
+		t.Fatalf("finish empty queue reservation: %v", err)
+	}
+	next, err := s.NextQueuedTurn(ctx, conversation)
+	if err != nil || next.TurnID != "post-empty-stop" {
+		t.Fatalf("post-Stop work after outcome = %+v err=%v, want post-empty-stop", next, err)
+	}
+	cancelled, err := s.CancelQueuedTurn(
+		ctx, conversation, "post-empty-stop", histClock.Add(2*time.Minute),
+	)
+	if err != nil || !cancelled {
+		t.Fatalf("settle post-empty proof turn: cancelled=%v err=%v", cancelled, err)
+	}
+
+	for i, text := range []string{"first", "second"} {
+		turnID := fmt.Sprintf("stop-%d", i+1)
+		created, err := s.AppendUserMessage(ctx, conversation, session, "gen-1",
+			domain.ConversationMessage{
+				ID: turnID + "-message", Text: text, Origin: domain.MessageOriginHuman,
+			}, turnID, histClock.Add(time.Duration(i)*time.Second))
+		if err != nil || !created {
+			t.Fatalf("append %s: created=%v err=%v", turnID, created, err)
+		}
+	}
+
+	matched, err = s.ReserveQueuedTurnsForInterrupt(
+		ctx, conversation, []string{"stop-2", "stop-1"}, "wrong-order",
+	)
+	if err != nil || matched {
+		t.Fatalf("reserve reordered queue: matched=%v err=%v, want side-effect-free mismatch", matched, err)
+	}
+	if _, err := s.ReserveQueuedTurnForPromotion(
+		ctx, conversation, "stop-1", histClock.Add(time.Minute)); err != nil {
+		t.Fatalf("mismatch left a reservation behind: %v", err)
+	}
+	if err := s.ReleaseQueuedTurnPromotion(ctx, conversation, "stop-1"); err != nil {
+		t.Fatalf("release proof promotion: %v", err)
+	}
+
+	matched, err = s.ReserveQueuedTurnsForInterrupt(
+		ctx, conversation, []string{"stop-1", "stop-2"}, "stop-token",
+	)
+	if err != nil || !matched {
+		t.Fatalf("reserve exact queue: matched=%v err=%v", matched, err)
+	}
+	created, err = s.AppendUserMessage(ctx, conversation, session, "gen-1",
+		domain.ConversationMessage{
+			ID: "post-stop-message", Text: "after Stop", Origin: domain.MessageOriginHuman,
+		}, "post-stop", histClock.Add(2*time.Minute))
+	if err != nil || !created {
+		t.Fatalf("append post-Stop work: created=%v err=%v", created, err)
+	}
+	if _, err := s.NextQueuedTurn(ctx, conversation); !errors.Is(err, domain.ErrNoQueuedTurn) {
+		t.Fatalf("queue advanced through pending Stop fence: %v", err)
+	}
+	if _, err := s.ReserveQueuedTurnForPromotion(
+		ctx, conversation, "stop-1", histClock.Add(3*time.Minute)); !errors.Is(err, store.ErrQueuedTurnNotAvailable) {
+		t.Fatalf("promotion crossed pending Stop fence: %v", err)
+	}
+	if _, err := s.ReserveQueuedTurnForPromotion(
+		ctx, conversation, "post-stop", histClock.Add(3*time.Minute)); !errors.Is(err, store.ErrQueuedTurnNotAvailable) {
+		t.Fatalf("post-Stop promotion crossed pending Stop fence: %v", err)
+	}
+
+	if err := s.CancelQueuedTurnsForInterrupt(
+		ctx, conversation, []string{"stop-1", "stop-2"}, "stop-token", histClock.Add(4*time.Minute),
+	); err != nil {
+		t.Fatalf("cancel exact Stop queue: %v", err)
+	}
+	snapshot, err := s.LoadConversationSnapshot(ctx, conversation)
+	if err != nil {
+		t.Fatalf("load snapshot: %v", err)
+	}
+	states := make(map[string]domain.TurnState, len(snapshot.Turns))
+	for _, turn := range snapshot.Turns {
+		states[turn.ID] = turn.State
+	}
+	if states["stop-1"] != domain.TurnStateInterrupted || states["stop-2"] != domain.TurnStateInterrupted {
+		t.Fatalf("confirmed Stop states = %q/%q, want interrupted/interrupted",
+			states["stop-1"], states["stop-2"])
+	}
+	if states["post-stop"] != domain.TurnStateQueued {
+		t.Fatalf("post-Stop state = %q, want queued", states["post-stop"])
+	}
+	next, err = s.NextQueuedTurn(ctx, conversation)
+	if err != nil || next.TurnID != "post-stop" {
+		t.Fatalf("next after Stop outcome = %+v err=%v, want post-stop", next, err)
+	}
+}
+
+func TestRestartHonorsAnEmptyConfirmedStopFence(t *testing.T) {
+	s, session, conversation := conversationFixture(t)
+	ctx := context.Background()
+
+	matched, err := s.ReserveQueuedTurnsForInterrupt(ctx, conversation, nil, "crashed-empty-stop")
+	if err != nil || !matched {
+		t.Fatalf("reserve empty queue: matched=%v err=%v", matched, err)
+	}
+	created, err := s.AppendUserMessage(ctx, conversation, session, "dead-generation",
+		domain.ConversationMessage{
+			ID: "after-crashed-stop-message", Text: "must not dispatch", Origin: domain.MessageOriginHuman,
+		}, "after-crashed-stop", histClock)
+	if err != nil || !created {
+		t.Fatalf("append after crashed Stop: created=%v err=%v", created, err)
+	}
+	if _, err := s.NextQueuedTurn(ctx, conversation); !errors.Is(err, domain.ErrNoQueuedTurn) {
+		t.Fatalf("work crossed durable empty Stop fence before recovery: %v", err)
+	}
+
+	if err := s.SettleOrphanedTurns(ctx, session, histClock.Add(time.Minute)); err != nil {
+		t.Fatalf("settle orphaned work: %v", err)
+	}
+	turn, err := s.TurnByID(ctx, "after-crashed-stop")
+	if err != nil {
+		t.Fatalf("read post-Stop turn: %v", err)
+	}
+	if turn.State != domain.TurnStateFailed {
+		t.Fatalf("dead-generation post-Stop turn = %q, want failed", turn.State)
+	}
+
+	matched, err = s.ReserveQueuedTurnsForInterrupt(ctx, conversation, nil, "after-restart")
+	if err != nil || !matched {
+		t.Fatalf("restart did not clear orphaned Stop fence: matched=%v err=%v", matched, err)
+	}
+	if err := s.ReleaseQueuedTurnsForInterrupt(ctx, conversation, nil, "after-restart"); err != nil {
+		t.Fatalf("release proof reservation: %v", err)
+	}
+}
+
+func TestRestartHonorsAnOrphanedConfirmedStopQueue(t *testing.T) {
+	s, session, conversation := conversationFixture(t)
+	ctx := context.Background()
+	created, err := s.AppendUserMessage(ctx, conversation, session, "dead-generation",
+		domain.ConversationMessage{
+			ID: "stopping-message", Text: "confirmed before crash", Origin: domain.MessageOriginHuman,
+		}, "stopping-turn", histClock)
+	if err != nil || !created {
+		t.Fatalf("append queue: created=%v err=%v", created, err)
+	}
+	matched, err := s.ReserveQueuedTurnsForInterrupt(
+		ctx, conversation, []string{"stopping-turn"}, "crashed-stop",
+	)
+	if err != nil || !matched {
+		t.Fatalf("reserve queue: matched=%v err=%v", matched, err)
+	}
+
+	if err := s.SettleOrphanedTurns(ctx, session, histClock.Add(time.Minute)); err != nil {
+		t.Fatalf("settle orphaned work: %v", err)
+	}
+	turn, err := s.TurnByID(ctx, "stopping-turn")
+	if err != nil {
+		t.Fatalf("read turn: %v", err)
+	}
+	if turn.State != domain.TurnStateInterrupted {
+		t.Fatalf("orphaned confirmed Stop queue = %q, want interrupted", turn.State)
+	}
+}
+
 // seedTurn records one dispatched turn with a user message and an activity, which is
 // the shape a real turn leaves behind.
 func seedTurn(t *testing.T, s *sqlite.Store, conversationID string, session domain.SessionID, turnID, text string, at time.Time) {
