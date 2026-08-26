@@ -292,16 +292,21 @@ export function SessionCardView({
 				<div className="flex min-w-0 flex-col gap-1.5 px-3.5 pb-1">
 					{prs.length > 0 && (
 						<div className="flex min-w-0 flex-col gap-y-1 font-mono text-2xs text-muted-foreground">
-							{groupBoardPullRequests(prs).flatMap((group) =>
-								group.prs.map((pr) => (
+							{groupBoardPullRequests(prs).flatMap((group) => {
+								const compact = group.prs.filter((pr) => (pr.commentCount ?? 0) === 0);
+								const commented = group.prs.filter((pr) => (pr.commentCount ?? 0) > 0);
+								return [
+									...(compact.length > 0 ? [{ ...group, prs: compact }] : []),
+									...commented.map((pr) => ({ ...group, prs: [pr] })),
+								];
+							}).map((group) => (
 								<BoardPullRequestGroup
 									externalLink={externalLink}
-									group={{ state: group.state, prs: [pr] }}
-									key={`${group.state}-${pr.url || pr.number}`}
+									group={group}
+									key={`${group.state}-${group.prs.map((pr) => pr.url || pr.number).join("-")}`}
 									labels={labels.pr}
 								/>
-								)),
-							)}
+							))}
 						</div>
 					)}
 				</div>
