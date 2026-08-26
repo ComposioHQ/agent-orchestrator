@@ -57,7 +57,8 @@ type APIDeps struct {
 	// Endpoints reports how this daemon can currently be reached, for the
 	// phone's endpoint-refresh route.
 	Endpoints controllers.EndpointSource
-	Installer controllers.Installer
+	Installer           controllers.Installer
+	AgentAuth           controllers.AgentAuthService
 
 	// Presence tracks which mobile devices are currently running the app.
 	// Nil disables presence tracking (the roster then reports every device offline).
@@ -119,6 +120,7 @@ type API struct {
 	identity      *controllers.IdentityController
 	endpoints     *controllers.EndpointsController
 	systemInstall *controllers.SystemInstallController
+	agentAuth     *controllers.AgentAuthController
 	events        *EventsController
 }
 
@@ -159,6 +161,7 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 		identity:      &controllers.IdentityController{HostID: deps.HostID},
 		endpoints:     &controllers.EndpointsController{Source: deps.Endpoints},
 		systemInstall: &controllers.SystemInstallController{Installer: deps.Installer},
+		agentAuth:     &controllers.AgentAuthController{Svc: deps.AgentAuth},
 		events:        &EventsController{Source: deps.CDC, Live: deps.Events},
 	}
 }
@@ -196,6 +199,7 @@ func (a *API) Register(root chi.Router) {
 			a.identity.Register(r)
 			a.endpoints.Register(r)
 			a.systemInstall.Register(r)
+			a.agentAuth.Register(r)
 			// Sibling REST controllers plug in here.
 		})
 		// Long-lived streams intentionally bypass the REST timeout middleware.
