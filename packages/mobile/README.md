@@ -210,6 +210,34 @@ Rebuild with `npx expo run:ios|run:android` only when **native** config changes:
 plugins or permissions, native dependencies, `expo-build-properties`. After dependency
 surgery, regenerate the native projects from scratch with `npx expo prebuild --clean`.
 
+## Over-the-air updates
+
+Preview and production builds pull JS-only changes from
+[EAS Update](https://docs.expo.dev/eas-update/introduction/), so a fix that touches no
+native code reaches phones without a store release. A cold start checks in the
+background and applies on the next launch. When the app comes back after 15+ minutes
+in the background it applies a downloaded update (a quick reload; sessions live in the
+daemon) or checks for one. **Settings → About → App updates** checks on demand,
+restarts into a pending update and shows what is running. Dev builds
+(`npx expo run:*`) never take updates — they load from Metro.
+
+- **Runtime version** is a
+  [fingerprint](https://docs.expo.dev/eas-update/runtime-versions/#fingerprint-runtime-version-policy)
+  of the native inputs (dependencies, config plugins, patches; see `fingerprint.config.js`).
+  Any native change produces a new runtime, so an update can never land on a build that
+  lacks the native code it needs. `npx expo-updates runtimeversion:resolve --platform ios`
+  prints the current value.
+- **Channels** follow the `eas.json` build profiles: `preview` and `production`.
+- **Publishing:** every push to `main` that touches this package publishes to `preview`
+  (`.github/workflows/mobile-update.yml`, needs the `EXPO_TOKEN` secret). Production is
+  a manual run of that workflow with the channel set to `production`, or locally:
+
+  ```bash
+  eas update --channel production --message "fix: ..."
+  ```
+
+  Staged rollouts and rollbacks are done from the EAS dashboard (`eas update:rollback`).
+
 ## Troubleshooting
 
 | Symptom                                           | Fix                                                                                                                                                          |
@@ -222,6 +250,7 @@ surgery, regenerate the native projects from scratch with `npx expo prebuild --c
 | iOS app installs, then closes immediately         | Untrusted developer profile: **Settings → General → VPN & Device Management → trust your Apple ID**.                                                         |
 | App runs but can't reach the daemon (iOS)         | The Local Network prompt was denied: **Settings → Privacy & Security → Local Network → AO** → on.                                                            |
 | Phone can't reach Metro                           | `adb reverse tcp:8081 tcp:8081` (Android), or `npx expo start --tunnel` (either platform).                                                                   |
+| An update never arrives                           | Its runtime version differs from the build's — a native change since that build. Compare `runtimeversion:resolve` with the runtime shown in a bug-report body. |
 | Terminal renders blank                            | The xterm WebView is patched via `patch-package`; confirm `postinstall` ran (`npx patch-package`).                                                           |
 
 ## Project layout

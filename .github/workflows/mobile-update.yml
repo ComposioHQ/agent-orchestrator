@@ -1,0 +1,81 @@
+name: Mobile OTA update
+
+# Publishes the mobile JS bundle to EAS Update (JS only; a build accepts updates
+# for its own runtime version). Push to main → `preview`; manual run → any channel.
+# Needs the EXPO_TOKEN secret; skips without it so forks stay green.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "packages/mobile/**"
+      - "!packages/mobile/**/*.md"
+      - "!packages/mobile/**/*.test.ts"
+      - ".github/workflows/mobile-update.yml"
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: EAS Update channel
+        type: choice
+        options: [preview, production]
+        default: preview
+      message:
+        description: Update message (defaults to the commit subject)
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-update-${{ inputs.channel || 'preview' }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    # Protect `production` with required reviewers in repo settings.
+    environment: ${{ inputs.channel || 'preview' }}
+    defaults:
+      run:
+        working-directory: packages/mobile
+    steps:
+      - name: Check for EXPO_TOKEN
+        id: token
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          if [ -z "$EXPO_TOKEN" ]; then
+            echo "::notice::EXPO_TOKEN is not set; skipping publish"
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.token.outputs.present == 'true'
+
+      - uses: actions/setup-node@v4
+        if: steps.token.outputs.present == 'true'
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: packages/mobile/package-lock.json
+
+      - uses: expo/expo-github-action@v8
+        if: steps.token.outputs.present == 'true'
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      # .npmrc pins legacy-peer-deps for this package; npm ci honors it.
+      - run: npm ci
+        if: steps.token.outputs.present == 'true'
+
+      - name: Publish
+        if: steps.token.outputs.present == 'true'
+        env:
+          CHANNEL: ${{ inputs.channel || 'preview' }}
+          MESSAGE: ${{ inputs.message || github.event.head_commit.message || 'manual update' }}
+        run: |
+          eas update --channel "$CHANNEL" --message "$(printf '%s' "$MESSAGE" | head -n1)" --non-interactive
