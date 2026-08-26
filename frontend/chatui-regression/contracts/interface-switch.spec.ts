@@ -194,7 +194,12 @@ test.describe("ChatUI interface switching", () => {
 				...chatUI.conversation,
 				latestSequence: 2,
 				oldestSequence: 1,
-				turns: [turn("turn-imported", "recovered", { providerTurnId: "native-turn-1" })],
+				turns: [
+					turn("turn-imported", "recovered", {
+						providerTurnId: "native-turn-1",
+						importedFromTerminal: true,
+					}),
+				],
 				messages: [
 					message("message-imported-user", "turn-imported", 1, "user", "Run the native task"),
 					message("message-imported-assistant", "turn-imported", 2, "assistant", "Native task output imported"),
