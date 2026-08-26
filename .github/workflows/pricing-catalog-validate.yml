@@ -8,9 +8,6 @@ on:
       - "pricing/**"
       - "backend/cmd/pricingcatalog/**"
       - "backend/internal/pricing/**"
-      - "scripts/pricing-catalog-update-branch.sh"
-      - "test/pricing-catalog-update-branch.sh"
-      - ".github/workflows/pricing-catalog-sync.yml"
       - ".github/workflows/pricing-catalog-validate.yml"
 
 permissions:
@@ -29,7 +26,6 @@ jobs:
         run: |
           set -euo pipefail
           (cd backend && go test ./cmd/pricingcatalog ./internal/pricing/catalogsync)
-          bash test/pricing-catalog-update-branch.sh
       - name: Validate reviewed catalog
         run: (cd backend && go run ./cmd/pricingcatalog validate -root ..)
       - name: Resolve latest LiteLLM catalog revision
