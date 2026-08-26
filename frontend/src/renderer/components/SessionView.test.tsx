@@ -1123,7 +1123,7 @@ describe("SessionView", () => {
 			expect(split).toHaveAttribute("data-inspector-transition", "true");
 			expect(split).toHaveAttribute("data-topbar-secondary-label-mode", "expanded");
 
-			act(() => vi.advanceTimersByTime(399));
+			act(() => vi.advanceTimersByTime(299));
 			expect(split).toHaveAttribute("data-inspector-transition", "true");
 			expect(split).toHaveAttribute("data-topbar-secondary-label-mode", "expanded");
 
