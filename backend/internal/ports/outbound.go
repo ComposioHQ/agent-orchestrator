@@ -153,6 +153,23 @@ type ExactSupervisedProcessInspector interface {
 	IsExactSupervisedProcessAlive(ctx context.Context, handle RuntimeHandle, ref SupervisedProcessRef) (bool, error)
 }
 
+// RuntimeIdentity is provenance recovered from a surviving runtime during an
+// update or downgrade. HandleID is the adapter-qualified durable identity;
+// Legacy reports that the stored handle needs rewriting after ownership proof.
+type RuntimeIdentity struct {
+	HandleID      string
+	LaunchID      string
+	Legacy        bool
+	WorkloadAlive bool
+}
+
+// RuntimeIdentityInspector is an optional upgrade capability. It lets boot
+// reconciliation repair a stale durable generation after safely adopting a
+// pre-private-socket runtime that survived one or more desktop updates.
+type RuntimeIdentityInspector interface {
+	InspectRuntimeIdentity(ctx context.Context, handle RuntimeHandle, sessionID domain.SessionID) (RuntimeIdentity, error)
+}
+
 // ContainerReaper removes Docker containers a worker session owns, identified
 // by the ao.session=<id> label convention (see EnvSessionID). It is an
 // optional capability: nil wiring means container reaping is a no-op, not an
@@ -340,6 +357,14 @@ var (
 	// or otherwise treat the session as dead. Adapters wrap this sentinel via
 	// fmt.Errorf so callers can match it with errors.Is.
 	ErrRuntimeProbeInconclusive = errors.New("runtime: liveness probe inconclusive")
+	// ErrRuntimeAmbiguous reports that more than one ownership-verified runtime
+	// can satisfy the same durable handle. Callers must not pick one or mutate
+	// any candidate until recovery explicitly establishes the canonical owner.
+	ErrRuntimeAmbiguous = errors.New("runtime: multiple owned runtimes match handle")
+	// ErrRuntimeBusy reports that Restart found a live AO supervisor/controller
+	// in the target runtime. Replacing its pane would create or destroy a second
+	// controller based only on stale durable activity, so restart fails closed.
+	ErrRuntimeBusy = errors.New("runtime: managed controller is still alive")
 )
 
 // WorkspaceConfig is the spec for creating or restoring a session's workspace.

@@ -1580,6 +1580,45 @@ func TestMarkSpawnedStoresRuntimeMetadata(t *testing.T) {
 	}
 }
 
+func TestReconcileRuntimeIdentityRepairsMatchingLiveGeneration(t *testing.T) {
+	store := newFakeStore()
+	store.sessions["mer-1"] = domain.SessionRecord{
+		ID:       "mer-1",
+		Activity: domain.Activity{State: domain.ActivityExited},
+		Metadata: domain.SessionMetadata{
+			RuntimeHandleID:        "mer-1",
+			RuntimeLaunchID:        "stale-launch",
+			AgentSessionID:         "native-1",
+			AgentSessionIDLaunchID: "stale-launch",
+		},
+	}
+	m := New(store, nil)
+
+	if err := m.ReconcileRuntimeIdentity(ctx, "mer-1", "mer-1", "stale-launch", "ao-tmux-v1:default:mer-1", "legacy-live-launch", true); err != nil {
+		t.Fatal(err)
+	}
+	got := store.sessions["mer-1"]
+	if got.Metadata.RuntimeHandleID != "ao-tmux-v1:default:mer-1" || got.Metadata.RuntimeLaunchID != "legacy-live-launch" || got.Metadata.AgentSessionIDLaunchID != "legacy-live-launch" || got.Activity.State != domain.ActivityIdle {
+		t.Fatalf("metadata = %+v", got.Metadata)
+	}
+}
+
+func TestReconcileRuntimeIdentityIgnoresStaleObservation(t *testing.T) {
+	store := newFakeStore()
+	store.sessions["mer-1"] = domain.SessionRecord{
+		ID:       "mer-1",
+		Metadata: domain.SessionMetadata{RuntimeHandleID: "mer-1", RuntimeLaunchID: "newer-launch"},
+	}
+	m := New(store, nil)
+
+	if err := m.ReconcileRuntimeIdentity(ctx, "mer-1", "mer-1", "stale-launch", "ao-tmux-v1:default:mer-1", "legacy-live-launch", true); err != nil {
+		t.Fatal(err)
+	}
+	if got := store.sessions["mer-1"].Metadata.RuntimeLaunchID; got != "newer-launch" {
+		t.Fatalf("launch id = %q, want newer-launch", got)
+	}
+}
+
 func TestMarkSpawnedPersistsAndPreservesDiffBase(t *testing.T) {
 	m, st, _ := newManager()
 	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", IsTerminated: true}

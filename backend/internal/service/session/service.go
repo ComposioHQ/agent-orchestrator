@@ -1007,6 +1007,12 @@ func toAPIError(err error) error {
 		return apierr.Invalid("AGENT_BINARY_NOT_FOUND", err.Error(), nil)
 	case errors.Is(err, ports.ErrRuntimePrerequisite):
 		return apierr.Invalid("RUNTIME_PREREQUISITE_MISSING", err.Error(), nil)
+	case errors.Is(err, ports.ErrRuntimeAmbiguous):
+		return apierr.Conflict("RUNTIME_OWNERSHIP_AMBIGUOUS",
+			"Multiple AO-owned controllers match this session; recovery is required before any runtime action", nil)
+	case errors.Is(err, ports.ErrRuntimeBusy):
+		return apierr.Conflict("RUNTIME_CONTROLLER_ACTIVE",
+			"The session still has a live controller and cannot be resumed", nil)
 	case errors.Is(err, ports.ErrChatUnsupported):
 		var capabilityErr *ports.ChatCapabilityError
 		if errors.As(err, &capabilityErr) {

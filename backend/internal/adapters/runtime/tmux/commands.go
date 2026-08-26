@@ -99,6 +99,14 @@ func listPanePIDsArgs(id string) []string {
 	return []string{"list-panes", "-s", "-t", exactSessionTarget(id), "-F", "#{pane_pid}"}
 }
 
+// paneStartCommandsArgs returns the immutable command tmux recorded for every
+// pane in a session. Legacy-socket adoption uses it as provenance: sessions
+// created by AO before the private-socket cutover carry the AO run-file,
+// session id, supervised-process marker, and supervisor launch id here.
+func paneStartCommandsArgs(id string) []string {
+	return []string{"list-panes", "-s", "-t", exactSessionTarget(id), "-F", "#{pane_start_command}"}
+}
+
 // sendKeysLiteralArgs builds args for `tmux send-keys -t <id> -l <chunk>`.
 // The -l flag stops tmux interpreting words like "Enter" as key names so the
 // text is sent verbatim.

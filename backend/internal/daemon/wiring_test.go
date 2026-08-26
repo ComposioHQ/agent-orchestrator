@@ -580,7 +580,9 @@ func TestWiring_StartLifecycleThreadsMessengerIntoLCM(t *testing.T) {
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	messenger := &captureMessenger{}
-	stack := startLifecycle(ctx, store, tmux.New(tmux.Options{}), messenger, nil, nil, nil, log)
+	stack := startLifecycle(ctx, store, tmux.New(tmux.Options{
+		SocketPath: shortPrivateTmuxSocket(t),
+	}), messenger, nil, nil, nil, log)
 	t.Cleanup(stack.Stop)
 	t.Cleanup(cancel)
 
@@ -611,6 +613,16 @@ func TestWiring_StartLifecycleThreadsMessengerIntoLCM(t *testing.T) {
 	if messenger.msgs[0].id != rec.ID {
 		t.Fatalf("nudge sent to %q, want %q", messenger.msgs[0].id, rec.ID)
 	}
+}
+
+func shortPrivateTmuxSocket(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "ao-tmux-")
+	if err != nil {
+		t.Fatalf("create private tmux socket directory: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return filepath.Join(dir, "s")
 }
 
 // TestProjectRepoResolver_ResolvesRegisteredProject asserts the DB-backed repo

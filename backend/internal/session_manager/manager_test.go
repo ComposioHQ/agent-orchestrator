@@ -170,6 +170,33 @@ type fakeLCM struct {
 	cancelled []string
 	// terminated counts MarkTerminated calls per session id.
 	terminated map[domain.SessionID]int
+	reconciled []string
+}
+
+func (l *fakeLCM) ReconcileRuntimeIdentity(
+	_ context.Context,
+	id domain.SessionID,
+	expectedHandleID string,
+	expectedLaunchID string,
+	actualHandleID string,
+	actualLaunchID string,
+	workloadAlive bool,
+) error {
+	l.reconciled = append(l.reconciled, string(id)+":"+expectedHandleID+":"+expectedLaunchID+":"+actualHandleID+":"+actualLaunchID)
+	rec := l.store.sessions[id]
+	if rec.IsTerminated || rec.Metadata.RuntimeHandleID != expectedHandleID || rec.Metadata.RuntimeLaunchID != expectedLaunchID {
+		return nil
+	}
+	rec.Metadata.RuntimeHandleID = actualHandleID
+	rec.Metadata.RuntimeLaunchID = actualLaunchID
+	if workloadAlive && rec.Activity.State == domain.ActivityExited {
+		rec.Activity.State = domain.ActivityIdle
+	}
+	if rec.Metadata.AgentSessionID != "" && rec.Metadata.AgentSessionIDLaunchID == expectedLaunchID {
+		rec.Metadata.AgentSessionIDLaunchID = actualLaunchID
+	}
+	l.store.sessions[id] = rec
+	return nil
 }
 
 func (l *fakeLCM) PrepareLaunch(id domain.SessionID, launchID string) error {
@@ -274,6 +301,11 @@ type fakeRuntime struct {
 	supervisedAliveOverride *bool
 	supervisedSequence      []bool
 	destroyedIDs            []string
+	identities              map[string]ports.RuntimeIdentity
+}
+
+func (r *fakeRuntime) InspectRuntimeIdentity(_ context.Context, handle ports.RuntimeHandle, _ domain.SessionID) (ports.RuntimeIdentity, error) {
+	return r.identities[handle.ID], nil
 }
 
 func (r *fakeRuntime) Interrupt(_ context.Context, handle ports.RuntimeHandle) error {
@@ -7402,6 +7434,42 @@ func TestReconcileLive_AliveSessionAdoptedNoop(t *testing.T) {
 	}
 	if ws.stashCalls != 0 || lcm.terminated["s2"] != 0 || rt.destroyed != 0 {
 		t.Fatalf("adopt should be a no-op: stash=%d term=%d destroy=%d", ws.stashCalls, lcm.terminated["s2"], rt.destroyed)
+	}
+}
+
+func TestReconcileLive_RepairsAdoptedLegacyLaunchIdentity(t *testing.T) {
+	st := newFakeStore()
+	rt := &fakeRuntime{
+		aliveByHandle: map[string]bool{"s2": true},
+		identities: map[string]ports.RuntimeIdentity{
+			"s2": {HandleID: "ao-tmux-v1:default:s2", Legacy: true, LaunchID: "legacy-live-launch", WorkloadAlive: true},
+		},
+	}
+	ws := &fakeWorkspace{}
+	lcm := &fakeLCM{store: st}
+	m := New(Deps{Runtime: rt, Agents: fakeAgents{}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: lcm})
+
+	rec := domain.SessionRecord{
+		ID: "s2", ProjectID: "p1",
+		Metadata: domain.SessionMetadata{
+			Branch: "ao/s2/root", WorkspacePath: "/wt/s2", RuntimeHandleID: "s2",
+			RuntimeLaunchID: "stale-db-launch", AgentSessionID: "native-1", AgentSessionIDLaunchID: "stale-db-launch",
+		},
+	}
+	st.sessions[rec.ID] = rec
+
+	if err := m.reconcileLive(context.Background(), rec); err != nil {
+		t.Fatalf("reconcileLive: %v", err)
+	}
+	got := st.sessions[rec.ID]
+	if got.Metadata.RuntimeHandleID != "ao-tmux-v1:default:s2" || got.Metadata.RuntimeLaunchID != "legacy-live-launch" || got.Metadata.AgentSessionIDLaunchID != "legacy-live-launch" {
+		t.Fatalf("reconciled metadata = %+v", got.Metadata)
+	}
+	if len(lcm.reconciled) != 1 {
+		t.Fatalf("identity reconciliations = %v, want one", lcm.reconciled)
+	}
+	if ws.stashCalls != 0 || rt.destroyed != 0 {
+		t.Fatalf("adoption mutated runtime/workspace: stash=%d destroy=%d", ws.stashCalls, rt.destroyed)
 	}
 }
 
