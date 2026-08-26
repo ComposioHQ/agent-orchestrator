@@ -51,7 +51,11 @@ import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
 import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { aoBridge } from "../lib/bridge";
-import { discardPendingFileAttachmentsForSession } from "../hooks/useFileAttachments";
+import {
+	capturePendingFileAttachmentsForSession,
+	discardCapturedPendingFileAttachments,
+	type PendingFileAttachmentCapture,
+} from "../hooks/useFileAttachments";
 import {
 	confirmDiscardChatDrafts,
 	getChatDraftBoundaries,
@@ -112,6 +116,11 @@ type ReviewsResponse = components["schemas"]["ListReviewsResponse"];
 type ReviewerTerminalTarget = { handleId: string; harness: string };
 
 type WorkspaceLayoutMode = "utility" | "browser" | "files";
+
+type UnsafeDraftLeaveDecision =
+	| { kind: "safe" }
+	| { kind: "cancelled" }
+	| { kind: "confirmed"; pendingAttachments: PendingFileAttachmentCapture };
 
 type InspectorSizing = {
 	chatMinWidth: number;
@@ -363,6 +372,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const [confirmedDraftDiscard, setConfirmedDraftDiscard] = useState<{
 		sessionId: string;
 		transitionId: string;
+		pendingAttachments: PendingFileAttachmentCapture;
 	}>();
 	const getCurrentChatDraftBoundaries = useCallback(
 		() => getChatDraftBoundaries(sessionId),
@@ -373,22 +383,26 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		getCurrentChatDraftBoundaries,
 		getCurrentChatDraftBoundaries,
 	);
-	const confirmUnsafeDraftLeave = useCallback((): "safe" | "confirmed" | "cancelled" => {
+	const confirmUnsafeDraftLeave = useCallback((): UnsafeDraftLeaveDecision => {
 		const activeBoundaries = getChatDraftBoundaries(sessionId);
-		if (activeBoundaries.length === 0) return "safe";
-		return confirmDiscardChatDrafts(activeBoundaries) ? "confirmed" : "cancelled";
+		if (activeBoundaries.length === 0) return { kind: "safe" };
+		if (!confirmDiscardChatDrafts(activeBoundaries)) return { kind: "cancelled" };
+		return {
+			kind: "confirmed",
+			pendingAttachments: capturePendingFileAttachmentsForSession(sessionId),
+		};
 	}, [sessionId]);
 	useBlocker({
 		disabled: chatDraftBoundaries.length === 0,
 		enableBeforeUnload: chatDraftBoundaries.length > 0,
 		shouldBlockFn: () => {
 			const decision = confirmUnsafeDraftLeave();
-			if (decision === "cancelled") return true;
-			if (decision === "confirmed") {
+			if (decision.kind === "cancelled") return true;
+			if (decision.kind === "confirmed") {
 				// Route navigation is the boundary itself, so confirmed in-flight file
 				// work can be invalidated now. Interface switches defer this until the
 				// exact durable transition reports completed.
-				discardPendingFileAttachmentsForSession(sessionId);
+				discardCapturedPendingFileAttachments(decision.pendingAttachments);
 			}
 			return false;
 		},
@@ -478,7 +492,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			case "completed":
 				// This only invalidates renderer-owned in-flight generations. Bytes that
 				// already reached the daemon/worktree remain outside this discard boundary.
-				discardPendingFileAttachmentsForSession(sessionId);
+				discardCapturedPendingFileAttachments(confirmedDraftDiscard.pendingAttachments);
 				setConfirmedDraftDiscard(undefined);
 				break;
 			case "failed":
@@ -761,14 +775,17 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	);
 	const beginInterfaceSwitch = useCallback(
 		async (policy: "drain" | "interrupt") => {
-			const draftLeaveDecision = chatToTerminal ? confirmUnsafeDraftLeave() : "safe";
-			if (draftLeaveDecision === "cancelled") return;
+			const draftLeaveDecision = chatToTerminal
+				? confirmUnsafeDraftLeave()
+				: ({ kind: "safe" } satisfies UnsafeDraftLeaveDecision);
+			if (draftLeaveDecision.kind === "cancelled") return;
 			try {
 				const response = await interfaceSwitch.start({ targetMode: interfaceTarget, policy });
-				if (draftLeaveDecision === "confirmed" && response?.transition?.id) {
+				if (draftLeaveDecision.kind === "confirmed" && response?.transition?.id) {
 					setConfirmedDraftDiscard({
 						sessionId,
 						transitionId: response.transition.id,
+						pendingAttachments: draftLeaveDecision.pendingAttachments,
 					});
 				}
 				setInterfaceSwitchDialogOpen(false);

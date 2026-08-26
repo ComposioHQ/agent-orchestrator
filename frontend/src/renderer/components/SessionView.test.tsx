@@ -984,6 +984,75 @@ describe("SessionView", () => {
 		confirm.mockRestore();
 	});
 
+	it("preserves attachment work started after the switch confirmation", async () => {
+		interfaceTransitionState.status = { supported: true, targetMode: "tui" };
+		const transition = testInterfaceTransition("preserve-after-confirmation", "requested");
+		let admitSwitch!: (response: { transition: typeof transition }) => void;
+		interfaceTransitionMock.start.mockReturnValueOnce(
+			new Promise((resolve) => {
+				admitSwitch = resolve;
+			}),
+		);
+		const session = workerSession("sess-1");
+		session.mode = "chat";
+		act(() => setChatDraftBoundary(session.id, "composer", "persistence-failed"));
+		const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+		const view = render(<SessionView sessionId={session.id} />);
+
+		fireEvent.click(screen.getByRole("button", { name: "Switch to terminal UI" }));
+		await waitFor(() => expect(interfaceTransitionMock.start).toHaveBeenCalledTimes(1));
+
+		let finishStaging!: (attachments: FileAttachment[]) => void;
+		const staging = renderHook(() =>
+			useFileAttachments({
+				initialKey: chatDraftScopeKey({
+					sessionId: session.id,
+					incarnation: "2026-08-26T09:30:00.000Z",
+				}),
+				prepareAttachments: () =>
+					new Promise<FileAttachment[]>((resolve) => {
+						finishStaging = resolve;
+					}),
+			}),
+		);
+		let pending!: Promise<void>;
+		act(() => {
+			pending = staging.result.current.addFiles([
+				new File([new Uint8Array(8).fill(1)], "after-confirmation.txt", {
+					type: "text/plain",
+				}),
+			]);
+		});
+		await waitFor(() => expect(finishStaging).toBeTypeOf("function"));
+		await act(async () => admitSwitch({ transition }));
+
+		interfaceTransitionState.status = {
+			supported: true,
+			targetMode: "tui",
+			transition: { ...transition, phase: "completed" },
+		};
+		view.rerender(<SessionView sessionId={session.id} />);
+		expect(staging.result.current.preparing).toBe(true);
+
+		await act(async () => {
+			finishStaging([
+				{
+					id: "after-confirmation",
+					mimeType: "text/plain",
+					bytes: 8,
+					name: "after-confirmation.txt",
+					stagedPath: ".ao/attachments/after-confirmation.txt",
+				},
+			]);
+			await pending;
+		});
+		expect(staging.result.current.attachments.map((attachment) => attachment.name)).toEqual([
+			"after-confirmation.txt",
+		]);
+		act(() => setChatDraftBoundary(session.id, "composer", undefined));
+		confirm.mockRestore();
+	});
+
 	it("preserves pending attachments when starting the confirmed interface switch rejects", async () => {
 		interfaceTransitionState.status = { supported: true, targetMode: "tui" };
 		interfaceTransitionMock.start.mockRejectedValueOnce(new Error("switch failed"));

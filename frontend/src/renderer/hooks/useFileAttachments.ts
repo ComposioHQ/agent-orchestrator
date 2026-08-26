@@ -66,6 +66,19 @@ type SharedAttachmentEntry = {
 
 type SharedAttachmentWork = { token: symbol; generation: number };
 
+type CapturedPendingFileAttachmentEntry = {
+	key: string;
+	generation: number;
+	tokens: readonly symbol[];
+};
+
+const pendingFileAttachmentCaptureEntries = Symbol("pending-file-attachment-capture");
+
+/** Opaque handle for attachment work that was pending at a user-approved boundary. */
+export type PendingFileAttachmentCapture = {
+	readonly [pendingFileAttachmentCaptureEntries]: readonly CapturedPendingFileAttachmentEntry[];
+};
+
 function sharedAttachmentDescriptors(attachments: FileAttachment[]): FileAttachment[] {
 	return attachments.map(({ id, mimeType, bytes, name, stagedPath }) => ({
 		id,
@@ -171,6 +184,44 @@ export function discardPendingFileAttachments(key: string): void {
 
 function attachmentKeyBelongsToSession(key: string, sessionId: string): boolean {
 	return key === sessionId || chatDraftScopeSessionId(key) === sessionId;
+}
+
+/** Capture only the work that is pending when the user confirms leaving Chat. */
+export function capturePendingFileAttachmentsForSession(
+	sessionId: string,
+): PendingFileAttachmentCapture {
+	const entries: CapturedPendingFileAttachmentEntry[] = [];
+	for (const [key, entry] of sharedAttachmentEntries) {
+		if (!attachmentKeyBelongsToSession(key, sessionId) || entry.pending.size === 0) continue;
+		entries.push({ key, generation: entry.generation, tokens: [...entry.pending] });
+	}
+	return { [pendingFileAttachmentCaptureEntries]: entries };
+}
+
+/**
+ * Cancel exactly the pending work represented by a prior confirmation. Work
+ * begun afterward remains current and can finish into the recoverable draft.
+ */
+export function discardCapturedPendingFileAttachments(
+	capture: PendingFileAttachmentCapture,
+): void {
+	for (const captured of capture[pendingFileAttachmentCaptureEntries]) {
+		const entry = sharedAttachmentEntries.get(captured.key);
+		if (!entry || entry.generation !== captured.generation) continue;
+		let changed = false;
+		for (const token of captured.tokens) {
+			changed = entry.pending.delete(token) || changed;
+		}
+		if (!changed) continue;
+		notifySharedAttachmentEntry(captured.key);
+		if (
+			entry.pending.size === 0 &&
+			entry.listeners.size === 0 &&
+			(entry.attachments?.length ?? 0) === 0
+		) {
+			sharedAttachmentEntries.delete(captured.key);
+		}
+	}
 }
 
 /** Cancel every in-flight renderer generation owned by one logical AO session. */
