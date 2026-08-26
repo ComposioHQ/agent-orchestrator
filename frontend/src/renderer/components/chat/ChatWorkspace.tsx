@@ -907,7 +907,11 @@ function ChatWorkspaceContent({
 					className="flex min-h-0 flex-1 flex-col"
 					data-testid="chat-conversation-panel"
 					hidden={reviewerActive || shellActive}
-					inert={reviewerActive || shellActive || agentInputDisabled ? true : undefined}
+					inert={
+						reviewerActive || shellActive || agentInputDisabled || controllerTransitioning
+							? true
+							: undefined
+					}
 					role="tabpanel"
 				>
 					{/* Ordered by what blocks what. A session that needs credentials cannot make

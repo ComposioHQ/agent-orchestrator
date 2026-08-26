@@ -872,6 +872,7 @@ describe("ChatWorkspace timeline", () => {
 
 		expect(screen.queryByText("The agent controller stopped")).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Resume agent" })).not.toBeInTheDocument();
+		expect(screen.getByTestId("chat-conversation-panel")).toHaveAttribute("inert");
 	});
 
 	it("announces thread and tool-server failures", () => {
