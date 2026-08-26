@@ -55,15 +55,15 @@ func TestDelegateTaskSpawnsWorkerThenRequestsTitleFromNewestActiveOrchestrator(t
 			if cmd.spawnedCfg.RequestedMode != tt.mode {
 				t.Fatalf("spawn mode = %q, want %q", cmd.spawnedCfg.RequestedMode, tt.mode)
 			}
-			if len(cmd.sent) != 1 || cmd.sent[0] != "orch-new" {
-				t.Fatalf("sent = %#v; want orch-new", cmd.sent)
+			if len(cmd.sent) != 1 || cmd.sent[0] != "mer-9" {
+				t.Fatalf("sent = %#v; want mer-9", cmd.sent)
 			}
-			if len(cmd.ready) != 1 || cmd.ready[0] != "orch-new" {
-				t.Fatalf("readiness waits = %#v; want orch-new", cmd.ready)
+			if len(cmd.ready) != 1 || cmd.ready[0] != "mer-9" {
+				t.Fatalf("readiness waits = %#v; want mer-9", cmd.ready)
 			}
 			for _, want := range []string{
 				"AO TASK TITLE UPDATE",
-				"Do not spawn another worker or orchestrator",
+				"You are the worker that was just spawned",
 				`ao session rename mer-9 "<title, max 20 chars>"`,
 				"Worker session id: mer-9",
 				brief,
@@ -123,6 +123,7 @@ func TestDelegateTaskStartsPromptlessWorkerWithoutRequestingTitle(t *testing.T) 
 }
 
 func TestDelegateTaskResumesNewestExitedOrchestratorBeforeRequestingTitle(t *testing.T) {
+	t.Skip("title refinement no longer contacts project orchestrators")
 	st := newFakeStore()
 	st.projects["ao"] = domain.ProjectRecord{ID: "ao"}
 	now := time.Now().UTC()
@@ -149,6 +150,7 @@ func TestDelegateTaskResumesNewestExitedOrchestratorBeforeRequestingTitle(t *tes
 }
 
 func TestDelegateTaskStartsMissingOrchestratorBeforeRequestingTitle(t *testing.T) {
+	t.Skip("title refinement no longer contacts project orchestrators")
 	st := newFakeStore()
 	st.projects["ao"] = domain.ProjectRecord{ID: "ao"}
 	st.sessions["orch-dead"] = domain.SessionRecord{ID: "orch-dead", ProjectID: "ao", Kind: domain.KindOrchestrator, IsTerminated: true}
@@ -178,6 +180,7 @@ func TestDelegateTaskStartsMissingOrchestratorBeforeRequestingTitle(t *testing.T
 }
 
 func TestDelegateTaskKeepsSpawnSuccessWhenTitleOrchestratorNeverBecomesReady(t *testing.T) {
+	t.Skip("title refinement targets the spawned worker")
 	st := newFakeStore()
 	st.projects["ao"] = domain.ProjectRecord{ID: "ao"}
 	st.sessions["orch"] = domain.SessionRecord{ID: "orch", ProjectID: "ao", Kind: domain.KindOrchestrator}
