@@ -5,12 +5,13 @@ import { useTranslation } from "react-i18next";
 import { clearSwitchAgentState } from "../hooks/useSwitchAgent";
 import type { AgentSwitchPresentation } from "../lib/agent-switch-presentation";
 import { cn } from "../lib/utils";
-import { sessionIsActive, type WorkspaceSession } from "../types/workspace";
+import { sessionIsActive, type AgentSwitchSummary, type WorkspaceSession } from "../types/workspace";
 import { canSwitchAgentHarness, SwitchAgentDialog } from "./SwitchAgentDialog";
 import { TopbarButton } from "./TopbarButton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 type TerminalSwitchAgentButtonProps = {
+	agentSwitch?: AgentSwitchSummary;
 	container: HTMLElement | null | undefined;
 	onOpenChange: ((open: boolean) => void) | undefined;
 	open: boolean;
@@ -20,6 +21,7 @@ type TerminalSwitchAgentButtonProps = {
 };
 
 export function TerminalSwitchAgentButton({
+	agentSwitch,
 	container,
 	onOpenChange,
 	open,
@@ -91,7 +93,13 @@ export function TerminalSwitchAgentButton({
 				<TooltipContent>{label}</TooltipContent>
 			</Tooltip>
 			{open && container ? (
-				<SwitchAgentDialog container={container} onOpenChange={handleOpenChange} open session={session} />
+				<SwitchAgentDialog
+					agentSwitch={agentSwitch}
+					container={container}
+					onOpenChange={handleOpenChange}
+					open
+					session={session}
+				/>
 			) : null}
 		</>
 	);

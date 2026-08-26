@@ -32,6 +32,7 @@ import (
 const (
 	nativeHistorySettlePoll  = 100 * time.Millisecond
 	nativeHistorySettleLimit = 45 * time.Second
+	retryClientMessagePrefix = "retry-attempt/"
 )
 
 // Store is the durable conversation surface the controller needs. Implemented by
@@ -51,6 +52,7 @@ type Store interface {
 	AppendImportedUserMessage(ctx context.Context, conversationID, providerTurnID string, msg domain.ConversationMessage, now time.Time) error
 
 	AppendUserMessage(ctx context.Context, conversationID string, session domain.SessionID, generation string, msg domain.ConversationMessage, turnID string, now time.Time) (bool, error)
+	AppendRetryUserMessage(ctx context.Context, conversationID string, session domain.SessionID, generation string, msg domain.ConversationMessage, turnID, retryOfTurnID string, now time.Time) (bool, error)
 	BindTurnToProvider(ctx context.Context, turnID, providerTurnID string, now time.Time) error
 	SettleTurn(ctx context.Context, conversationID, providerTurnID string, state domain.TurnState, errMessage string, now time.Time) error
 	SettleTurnByID(ctx context.Context, turnID string, state domain.TurnState, errMessage string, now time.Time) error
@@ -71,6 +73,9 @@ type Store interface {
 	CompleteQueuedTurnPromotion(ctx context.Context, conversationID, sourceTurnID, providerTurnID string, activity domain.ConversationActivity, now time.Time) error
 	CancelQueuedTurns(ctx context.Context, conversationID string, cutoff, now time.Time) error
 	CancelAllQueuedTurns(ctx context.Context, conversationID string, now time.Time) error
+
+	RetryPrompt(ctx context.Context, conversationID, turnID string) (domain.RetryPrompt, error)
+	RetryTurnIDForSource(ctx context.Context, conversationID, sourceTurnID string) (string, bool, error)
 
 	TurnByID(ctx context.Context, turnID string) (domain.ConversationTurn, error)
 	RollbackTurns(ctx context.Context, conversationID, turnID string, now time.Time) (int, error)
@@ -216,6 +221,34 @@ var ErrNoActiveTurn = errors.New("no active turn")
 // closed source intake. The client should retain the draft and retry after the
 // session_updated event announces the target mode.
 var ErrControllerHandoff = errors.New("chat controller is switching interfaces")
+
+// ErrTurnNotRetryable reports a turn that cannot be retried: it is not part of
+// this conversation, not failed, was rolled back, or carries no durable prompt
+// the user authored. A retry is only ever offered for an eligible failed human
+// turn.
+var ErrTurnNotRetryable = errors.New("turn is not retryable")
+
+// ErrRetryStaleBranch reports a durable failed turn that is no longer visible
+// on the conversation's active branch. Retrying it would inject abandoned
+// history into the provider thread the user is currently viewing.
+var ErrRetryStaleBranch = errors.New("turn is not on the active conversation branch")
+
+// ErrRetryDeliveryUncertain reports a failed turn whose dispatch was never
+// acknowledged by the provider. Settling it failed was AO's safe guess rather
+// than a fact about delivery: the provider may have accepted the work. Because
+// a retry re-sends the prompt as a new turn, an uncertain source could execute
+// it twice, so these turns are refused until delivery is confirmed.
+var ErrRetryDeliveryUncertain = errors.New("turn was never confirmed as delivered to the provider")
+
+// ErrRetryContentInvalid reports durable structured prompt content that can no
+// longer be reconstructed safely. Retrying must fail clearly rather than drop
+// an attachment or hand corrupt data to the provider.
+var ErrRetryContentInvalid = errors.New("stored retry content is invalid")
+
+// ErrRetryUnsupported reports structured prompt content the current provider
+// cannot accept. This can happen after an in-place agent switch: the failed
+// prompt remains visible, but the new provider may negotiate fewer capabilities.
+var ErrRetryUnsupported = errors.New("current agent cannot retry this prompt content")
 
 func newController(
 	sessionID domain.SessionID,
@@ -916,6 +949,154 @@ func (c *Controller) Send(ctx context.Context, msg ports.ChatUserMessage) (domai
 	}
 
 	return c.dispatch(ctx, turnID, msg, now)
+}
+
+// RetryTurn re-dispatches a failed turn's durable prompt as a new turn.
+//
+// The content is loaded from AO's own rows, never from the caller, so the daemon
+// owns what gets sent again. The original failed turn is never mutated or
+// relabeled: the retry is a brand-new turn and both attempts stay in history.
+//
+// Idempotency: each retry turn stores an explicit, unique link to its source.
+// A replayed request — an uncertain network round trip, a double-click, a
+// client retry — looks that relation up before anything else and returns the
+// turn that already exists, so caller-controlled message ids cannot counterfeit
+// or consume a retry. A deliberate further attempt retries the failed child:
+// the chain A -> B -> C is built from distinct sources, never by re-sending A.
+// The current next-turn settings apply.
+func (c *Controller) RetryTurn(ctx context.Context, turnID string) (domain.ConversationTurn, error) {
+	c.sendMu.Lock()
+	defer c.sendMu.Unlock()
+	if c.handoffActive() {
+		return domain.ConversationTurn{}, ErrControllerHandoff
+	}
+
+	source, err := c.store.TurnByID(ctx, turnID)
+	if err != nil {
+		return domain.ConversationTurn{}, err
+	}
+	if source.ConversationID != c.conversation.ID {
+		return domain.ConversationTurn{}, fmt.Errorf("%w: %s", domain.ErrNoConversationTurn, turnID)
+	}
+	if source.State != domain.TurnStateFailed || source.RolledBackAt != nil {
+		return domain.ConversationTurn{}, fmt.Errorf("%w: %s", ErrTurnNotRetryable, turnID)
+	}
+
+	prompt, err := c.store.RetryPrompt(ctx, c.conversation.ID, turnID)
+	if err != nil {
+		return domain.ConversationTurn{}, fmt.Errorf("%w: %s", ErrTurnNotRetryable, turnID)
+	}
+	if !prompt.ActiveLineage {
+		return domain.ConversationTurn{}, fmt.Errorf("%w: %s", ErrRetryStaleBranch, turnID)
+	}
+	if prompt.Origin != domain.MessageOriginHuman {
+		return domain.ConversationTurn{}, fmt.Errorf("%w: %s", ErrTurnNotRetryable, turnID)
+	}
+
+	// A dispatch the provider never acknowledged may still have been accepted:
+	// settling it failed was AO's safe guess, not a fact about delivery.
+	// Re-dispatching such a prompt could run the work twice, which is the one
+	// outcome a retry must never have. Refuse until the caller confirms.
+	if source.ProviderTurnID == "" {
+		return domain.ConversationTurn{}, fmt.Errorf("%w: %s", ErrRetryDeliveryUncertain, turnID)
+	}
+
+	// The replay check comes before the busy check on purpose: returning an
+	// already-recorded attempt must stay true even while that attempt runs.
+	if existingID, found, lookupErr := c.store.RetryTurnIDForSource(ctx, c.conversation.ID, turnID); lookupErr != nil {
+		return domain.ConversationTurn{}, lookupErr
+	} else if found {
+		existing, existingErr := c.store.TurnByID(ctx, existingID)
+		if existingErr != nil {
+			return domain.ConversationTurn{}, existingErr
+		}
+		return existing, nil
+	}
+
+	if c.busy() {
+		return domain.ConversationTurn{}, ErrTurnRunning
+	}
+
+	content, err := retryPromptContent(prompt.DeliveryContentJSON, c.Capabilities())
+	if err != nil {
+		return domain.ConversationTurn{}, err
+	}
+
+	now := c.now()
+	newTurnID := c.newID()
+	key := retryClientMessagePrefix + newTurnID
+	created, err := c.store.AppendRetryUserMessage(ctx, c.conversation.ID, c.sessionID, c.generation,
+		domain.ConversationMessage{
+			ID:                  c.newID(),
+			Text:                prompt.Text,
+			Origin:              prompt.Origin,
+			ClientMessageID:     key,
+			DeliveryContentJSON: prompt.DeliveryContentJSON,
+		}, newTurnID, turnID, now)
+	if err != nil {
+		return domain.ConversationTurn{}, fmt.Errorf("record retried message: %w", err)
+	}
+	if !created {
+		// Lost a race with a concurrent identical click. Report the turn it
+		// created rather than opening a second one.
+		if existingID, found, lookupErr := c.store.RetryTurnIDForSource(ctx, c.conversation.ID, turnID); lookupErr == nil && found {
+			if existing, existingErr := c.store.TurnByID(ctx, existingID); existingErr == nil {
+				return existing, nil
+			}
+		}
+		return domain.ConversationTurn{}, ErrTurnNotRetryable
+	}
+
+	return c.dispatch(ctx, newTurnID, ports.ChatUserMessage{
+		Text:            prompt.Text,
+		Content:         content,
+		Origin:          prompt.Origin,
+		ClientMessageID: key,
+	}, now)
+}
+
+// retryPromptContent reconstructs provider-neutral durable prompt blocks and
+// refuses anything that would be corrupted or silently discarded by the
+// currently attached provider.
+func retryPromptContent(raw string, capabilities ports.ChatCapabilities) ([]ports.ChatContent, error) {
+	if raw == "" {
+		return nil, nil
+	}
+	var content []ports.ChatContent
+	if err := json.Unmarshal([]byte(raw), &content); err != nil {
+		return nil, fmt.Errorf("%w: attachments are not valid JSON", ErrRetryContentInvalid)
+	}
+	if len(content) == 0 {
+		return nil, fmt.Errorf("%w: attachment data contains no content blocks", ErrRetryContentInvalid)
+	}
+	for _, item := range content {
+		switch item.Type {
+		case "image":
+			if item.Data == "" || !strings.HasPrefix(strings.ToLower(item.MIMEType), "image/") {
+				return nil, fmt.Errorf("%w: image attachments require data and an image MIME type", ErrRetryContentInvalid)
+			}
+			if !capabilities.Has(ports.ChatCapabilityImages) {
+				return nil, fmt.Errorf("%w: image attachments are unsupported", ErrRetryUnsupported)
+			}
+		case "resource":
+			if item.URI == "" {
+				return nil, fmt.Errorf("%w: embedded resources require a URI", ErrRetryContentInvalid)
+			}
+			if !capabilities.Has(ports.ChatCapabilityEmbeddedContext) {
+				return nil, fmt.Errorf("%w: embedded resources are unsupported", ErrRetryUnsupported)
+			}
+		case "resource_link":
+			if item.URI == "" || item.Name == "" {
+				return nil, fmt.Errorf("%w: resource links require a URI and name", ErrRetryContentInvalid)
+			}
+			if !capabilities.Has(ports.ChatCapabilityResourceLinks) {
+				return nil, fmt.Errorf("%w: resource links are unsupported", ErrRetryUnsupported)
+			}
+		default:
+			return nil, fmt.Errorf("%w: unsupported attachment type %q", ErrRetryContentInvalid, item.Type)
+		}
+	}
+	return content, nil
 }
 
 // Settings reports the provider choices for the next turn.

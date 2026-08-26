@@ -112,13 +112,13 @@ var shippedMigrations = map[int64]string{
 	105: "0105_default_session_mode_chat.sql",
 	106: "0106_pr_comment_review_id.sql",
 	107: "0107_recovered_conversation_turns.sql",
-	// Renumbered above 107 while this branch was in review, because the three
-	// migrations above shipped first. Two files on one version is not a textual
-	// conflict: goose refuses to start at all.
-	108: "0108_usage_cost_estimation.sql",
-	109: "0109_usage_cost_candidate_canonical_index.sql",
-	110: "0110_usage_measurement_and_provider_usage.sql",
-	111: "0111_usage_billing_provider_source.sql",
+	108: "0108_conversation_retry_source.sql",
+	// Renumbered above 108 while this branch was in review. Two files on one
+	// version is not a textual conflict: goose refuses to start at all.
+	109: "0109_usage_cost_estimation.sql",
+	110: "0110_usage_cost_candidate_canonical_index.sql",
+	111: "0111_usage_measurement_and_provider_usage.sql",
+	112: "0112_usage_billing_provider_source.sql",
 }
 
 // burnedVersion reports version numbers that must never be (re)used: they

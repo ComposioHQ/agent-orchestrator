@@ -14,12 +14,14 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/ptyexec"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	"github.com/aoagents/agent-orchestrator/backend/internal/tmuxbin"
 )
 
 const (
@@ -49,25 +51,31 @@ var getenv = os.Getenv
 // Options configures a tmux Runtime. Every field has a sensible default (see
 // New), so the zero value is usable.
 type Options struct {
-	Binary     string        // default "tmux" (resolved via exec.LookPath)
-	Shell      string        // default $SHELL else /bin/sh
-	Timeout    time.Duration // default 5s
-	ChunkSize  int           // default 16*1024
-	EnterDelay time.Duration // pause after pasting a non-empty message before pressing Enter; default defaultEnterDelay. Conpty already does this (ptyInputEnterDelay); tmux lacked it, so a large multiline paste could absorb the trailing Enter and leave the prompt unsubmitted (issue #2342).
-	ReapGrace  time.Duration // grace between SIGTERM and SIGKILL when reaping a pane's leftover background processes on Destroy; default defaultReapGrace.
+	Binary       string        // default configured/bundled/system tmux resolution
+	LegacyBinary string        // default system tmux from PATH when SocketName is set; used only for pre-private-socket sessions
+	SocketName   string        // default $AO_TMUX_SOCKET_NAME; empty uses tmux's machine-wide default socket
+	Shell        string        // default $SHELL else /bin/sh
+	Timeout      time.Duration // default 5s
+	ChunkSize    int           // default 16*1024
+	EnterDelay   time.Duration // pause after pasting a non-empty message before pressing Enter; default defaultEnterDelay. Conpty already does this (ptyInputEnterDelay); tmux lacked it, so a large multiline paste could absorb the trailing Enter and leave the prompt unsubmitted (issue #2342).
+	ReapGrace    time.Duration // grace between SIGTERM and SIGKILL when reaping a pane's leftover background processes on Destroy; default defaultReapGrace.
 }
 
 // Runtime runs agent sessions inside tmux sessions, driving them via the tmux
 // CLI. It implements ports.Runtime.
 type Runtime struct {
-	binary       string
-	shell        string
-	timeout      time.Duration
-	chunkSize    int
-	enterDelay   time.Duration
-	reapGrace    time.Duration
-	runner       runner
-	reapSessions func(ctx context.Context, pids []int, grace time.Duration)
+	binary         string
+	legacyBinary   string
+	socketName     string
+	shell          string
+	timeout        time.Duration
+	chunkSize      int
+	enterDelay     time.Duration
+	reapGrace      time.Duration
+	runner         runner
+	reapSessions   func(ctx context.Context, pids []int, grace time.Duration)
+	socketMu       sync.RWMutex
+	sessionSockets map[string]string
 }
 
 var _ ports.Runtime = (*Runtime)(nil)
@@ -236,14 +244,19 @@ func stableRunDir() string {
 	return ""
 }
 
-// New builds a tmux Runtime, filling unset Options with defaults: binary "tmux"
-// (resolved via exec.LookPath), shell from $SHELL (else /bin/sh), and the
+// New builds a tmux Runtime, filling unset Options with defaults: binary from
+// AO's configured/bundled/system resolver; shell from $SHELL (else /bin/sh); and the
 // default timeout and output chunk size.
 func New(opts Options) *Runtime {
 	binary := opts.Binary
 	if binary == "" {
-		if path, err := exec.LookPath("tmux"); err == nil {
-			binary = path
+		resolution, err := tmuxbin.Resolve()
+		if err == nil {
+			binary = resolution.Path
+		} else if configured := strings.TrimSpace(getenv("AO_TMUX_BINARY")); configured != "" {
+			// Keep the configured path on failure so packaged builds fail closed
+			// when they eventually execute it instead of selecting machine tmux.
+			binary = configured
 		} else {
 			binary = "tmux"
 		}
@@ -271,15 +284,34 @@ func New(opts Options) *Runtime {
 	if reapGrace <= 0 {
 		reapGrace = defaultReapGrace
 	}
+	socketName := strings.TrimSpace(opts.SocketName)
+	if socketName == "" {
+		socketName = strings.TrimSpace(getenv("AO_TMUX_SOCKET_NAME"))
+	}
+	legacyBinary := opts.LegacyBinary
+	if socketName == "" {
+		legacyBinary = binary
+	} else if legacyBinary == "" {
+		// Sessions created before AO introduced its private socket were started by
+		// the machine tmux from PATH. Use that matching client for the legacy
+		// default socket: tmux's client/server protocol is not guaranteed across
+		// versions, so AO's pinned bundled client may be unable to adopt them.
+		if systemTmux, err := exec.LookPath("tmux"); err == nil {
+			legacyBinary = systemTmux
+		}
+	}
 	return &Runtime{
-		binary:       binary,
-		shell:        shellPath,
-		timeout:      timeout,
-		chunkSize:    chunkSize,
-		enterDelay:   enterDelay,
-		reapGrace:    reapGrace,
-		runner:       execRunner{},
-		reapSessions: killSessionsByPID,
+		binary:         binary,
+		legacyBinary:   legacyBinary,
+		socketName:     socketName,
+		shell:          shellPath,
+		timeout:        timeout,
+		chunkSize:      chunkSize,
+		enterDelay:     enterDelay,
+		reapGrace:      reapGrace,
+		runner:         execRunner{},
+		reapSessions:   killSessionsByPID,
+		sessionSockets: make(map[string]string),
 	}
 }
 
@@ -305,6 +337,7 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 	if _, err := r.run(ctx, args...); err != nil {
 		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: create session %s: %w", id, err)
 	}
+	r.rememberSessionSocket(id, r.socketName)
 	if err := r.verifyPaneWorkingDirectory(ctx, id, cfg.WorkspacePath); err != nil {
 		_ = r.Destroy(context.Background(), ports.RuntimeHandle{ID: id})
 		return ports.RuntimeHandle{}, err
@@ -371,7 +404,7 @@ func (r *Runtime) Restart(ctx context.Context, handle ports.RuntimeHandle, cfg p
 	}
 
 	launchCmd := buildLaunchCommand(cfg)
-	if _, err := r.run(ctx, respawnPaneArgs(id, cfg.WorkspacePath, r.shell, launchCmd)...); err != nil {
+	if _, err := r.runForSession(ctx, id, respawnPaneArgs(id, cfg.WorkspacePath, r.shell, launchCmd)...); err != nil {
 		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: restart session %s: %w", id, err)
 	}
 	alive, err := r.IsAlive(ctx, handle)
@@ -409,7 +442,7 @@ func (r *Runtime) verifyPaneWorkingDirectory(ctx context.Context, id, want strin
 			case <-time.After(paneCwdVerifyRetryDelay):
 			}
 		}
-		out, err := r.run(ctx, paneCurrentPathArgs(id)...)
+		out, err := r.runForSession(ctx, id, paneCurrentPathArgs(id)...)
 		if err != nil {
 			// A later transient probe failure (e.g. a one-off tmux CLI hiccup)
 			// must not overwrite an already-observed cwd mismatch: the mismatch
@@ -451,7 +484,7 @@ func (r *Runtime) Destroy(ctx context.Context, handle ports.RuntimeHandle) error
 	// not block the kill-session below.
 	sessionIDs := r.paneSessionIDs(ctx, id)
 
-	out, err := r.run(ctx, killSessionArgs(id)...)
+	out, err := r.runForSession(ctx, id, killSessionArgs(id)...)
 	// Reap regardless of the kill-session result: orphaned children outlive the
 	// session, so they must be cleaned up even when the session was already
 	// gone (a benign double-kill).
@@ -460,10 +493,12 @@ func (r *Runtime) Destroy(ctx context.Context, handle ports.RuntimeHandle) error
 	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) && killSessionMissingOutput(string(out)) {
+			r.forgetSessionSocket(id)
 			return nil
 		}
 		return fmt.Errorf("tmux runtime: destroy session %s: %w", id, err)
 	}
+	r.forgetSessionSocket(id)
 	return nil
 }
 
@@ -473,7 +508,7 @@ func (r *Runtime) Destroy(ctx context.Context, handle ports.RuntimeHandle) error
 // any error (including a missing session) or unparseable line yields no ids,
 // and pids <= 1 are skipped so we never signal init or the "current session".
 func (r *Runtime) paneSessionIDs(ctx context.Context, id string) []int {
-	out, err := r.run(ctx, listPanePIDsArgs(id)...)
+	out, err := r.runForSession(ctx, id, listPanePIDsArgs(id)...)
 	if err != nil {
 		return nil
 	}
@@ -490,28 +525,30 @@ func (r *Runtime) paneSessionIDs(ctx context.Context, id string) []int {
 
 // IsAlive reports whether the handle's session still exists via `tmux
 // has-session`. Exit 0 means alive. A non-zero exit with output naming this
-// session as missing is a definitive false, nil. A server-level failure ("no
-// server running", "error connecting") wraps ports.ErrRuntimeUnavailable: the
-// probe learned nothing about this session — the agent process may well still
-// be running as an orphan of the dead server — so it must never be read as
-// per-session death (issue #3475). Any other non-zero exit is a plain probe
-// error so callers (the reaper feeding the LCM) treat it as a failed probe
-// and never kill a session on a transient error.
+// session as missing is a definitive false, nil. A conclusively absent server
+// wraps ports.ErrRuntimeUnavailable so recovery may recreate it. A transient
+// connection or protocol/client failure wraps ErrRuntimeProbeInconclusive so
+// no caller can treat a possibly-live session as absent. Any other non-zero
+// exit is a plain probe error, which is likewise never per-session death.
 func (r *Runtime) IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool, error) {
 	id, err := handleID(handle)
 	if err != nil {
 		return false, err
 	}
-	out, err := r.run(ctx, hasSessionArgs(id)...)
+	out, err := r.runForSession(ctx, id, hasSessionArgs(id)...)
 	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
 			if sessionMissingOutput(string(out)) {
 				return false, nil
 			}
-			if serverUnreachableOutput(string(out)) {
+			if serverNotRunningOutput(string(out)) {
 				return false, fmt.Errorf("tmux runtime: probe session %s: %w: %s",
 					id, ports.ErrRuntimeUnavailable, strings.TrimSpace(string(out)))
+			}
+			if transientServerFailureOutput(string(out)) {
+				return false, fmt.Errorf("tmux runtime: probe session %s: %w: %s",
+					id, ports.ErrRuntimeProbeInconclusive, strings.TrimSpace(string(out)))
 			}
 		}
 		return false, fmt.Errorf("tmux runtime: probe session %s: %w", id, err)
@@ -553,7 +590,7 @@ func (r *Runtime) supervisedProcessTree(ctx context.Context, handle ports.Runtim
 	if err != nil {
 		return nil, 0, err
 	}
-	paneOut, err := r.run(ctx, panePIDArgs(id)...)
+	paneOut, err := r.runForSession(ctx, id, panePIDArgs(id)...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("tmux runtime: inspect pane pid %s: %w", id, err)
 	}
@@ -590,7 +627,7 @@ func (r *Runtime) SendMessage(ctx context.Context, handle ports.RuntimeHandle, m
 		sendCtx := ctx
 		var finishCancel context.CancelFunc
 		for i, chunk := range messageChunks {
-			if _, err := r.run(sendCtx, sendKeysLiteralArgs(id, chunk)...); err != nil {
+			if _, err := r.runForSession(sendCtx, id, sendKeysLiteralArgs(id, chunk)...); err != nil {
 				if finishCancel != nil {
 					finishCancel()
 				}
@@ -626,7 +663,7 @@ func (r *Runtime) SendMessage(ctx context.Context, handle ports.RuntimeHandle, m
 			}
 		}
 	}
-	if _, err := r.run(enterCtx, sendEnterArgs(id)...); err != nil {
+	if _, err := r.runForSession(enterCtx, id, sendEnterArgs(id)...); err != nil {
 		return fmt.Errorf("tmux runtime: send enter %s: %w", id, err)
 	}
 	return nil
@@ -643,7 +680,7 @@ func (r *Runtime) Interrupt(ctx context.Context, handle ports.RuntimeHandle) err
 	if err != nil {
 		return err
 	}
-	if _, err := r.run(ctx, sendInterruptArgs(id)...); err != nil {
+	if _, err := r.runForSession(ctx, id, sendInterruptArgs(id)...); err != nil {
 		return fmt.Errorf("tmux runtime: interrupt session %s: %w", id, err)
 	}
 	return nil
@@ -657,7 +694,7 @@ func (r *Runtime) SendInput(ctx context.Context, handle ports.RuntimeHandle, inp
 		return err
 	}
 	args := sendKeysLiteralArgs(id, input)
-	if _, err := r.run(ctx, args...); err != nil {
+	if _, err := r.runForSession(ctx, id, args...); err != nil {
 		return fmt.Errorf("tmux runtime: send input %s: %w", id, err)
 	}
 	return nil
@@ -673,7 +710,7 @@ func (r *Runtime) GetOutput(ctx context.Context, handle ports.RuntimeHandle, lin
 	if lines <= 0 {
 		return "", errors.New("tmux runtime: lines must be positive")
 	}
-	out, err := r.run(ctx, capturePaneArgs(id, lines)...)
+	out, err := r.runForSession(ctx, id, capturePaneArgs(id, lines)...)
 	if err != nil {
 		return "", fmt.Errorf("tmux runtime: capture output %s: %w", id, err)
 	}
@@ -689,7 +726,7 @@ func (r *Runtime) GetStyledOutput(ctx context.Context, handle ports.RuntimeHandl
 	if lines <= 0 {
 		return "", errors.New("tmux runtime: lines must be positive")
 	}
-	out, err := r.run(ctx, capturePaneStyledArgs(id, lines)...)
+	out, err := r.runForSession(ctx, id, capturePaneStyledArgs(id, lines)...)
 	if err != nil {
 		return "", fmt.Errorf("tmux runtime: capture styled output %s: %w", id, err)
 	}
@@ -700,10 +737,15 @@ func (r *Runtime) GetStyledOutput(ctx context.Context, handle ports.RuntimeHandl
 // local PTY, sized rows x cols from birth when known. ctx cancellation closes
 // the PTY.
 func (r *Runtime) Attach(ctx context.Context, handle ports.RuntimeHandle, rows, cols uint16) (ports.Stream, error) {
-	argv, err := r.attachCommand(handle)
+	id, err := handleID(handle)
 	if err != nil {
 		return nil, err
 	}
+	socketName, err := r.socketForSession(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("tmux runtime: attach session %s: %w", id, err)
+	}
+	argv := r.attachCommandForSocket(id, socketName)
 	return ptyexec.Spawn(ctx, argv, attachEnv(os.Environ()), rows, cols)
 }
 
@@ -730,10 +772,22 @@ func (r *Runtime) attachCommand(handle ports.RuntimeHandle) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	return r.attachCommandForSocket(id, r.socketName), nil
+}
+
+func (r *Runtime) attachCommandForSocket(id, socketName string) []string {
 	// The embedded xterm renderer supports 24-bit SGR colors. Tell this tmux
 	// client explicitly so tmux forwards RGB instead of quantizing it to the
 	// xterm-256color palette. -T is available in AO's minimum tmux version (3.2).
-	return []string{r.binary, "-u", "-T", "RGB", "attach-session", "-t", id}, nil
+	argv := []string{r.binaryForSocket(socketName)}
+	if socketName != "" {
+		argv = append(argv, "-L", socketName)
+	} else if r.socketName != "" {
+		// A legacy session means tmux's historical machine default, never the
+		// socket named by an inherited TMUX from an AO worker or nested shell.
+		argv = append(argv, "-L", "default")
+	}
+	return append(argv, "-u", "-T", "RGB", "attach-session", "-t", id)
 }
 
 func attachEnv(base []string) []string {
@@ -761,7 +815,100 @@ func attachEnv(base []string) []string {
 
 // run wraps runner.Run with a per-call timeout context.
 func (r *Runtime) run(ctx context.Context, args ...string) ([]byte, error) {
-	return r.runCommand(ctx, r.binary, args...)
+	return r.runOnSocket(ctx, r.socketName, args...)
+}
+
+func (r *Runtime) runOnSocket(ctx context.Context, socketName string, args ...string) ([]byte, error) {
+	if socketName != "" {
+		args = append([]string{"-L", socketName}, args...)
+	} else if r.socketName != "" {
+		// Pin legacy discovery and commands to the historical machine default.
+		// Without -L, tmux honors inherited TMUX and may target an unrelated
+		// nested server whose session name happens to collide with AO's handle.
+		args = append([]string{"-L", "default"}, args...)
+	}
+	return r.runCommand(ctx, r.binaryForSocket(socketName), args...)
+}
+
+func (r *Runtime) binaryForSocket(socketName string) string {
+	if socketName == "" && r.socketName != "" {
+		return r.legacyBinary
+	}
+	return r.binary
+}
+
+// runForSession routes sessions created before AO introduced its private tmux
+// socket back to tmux's legacy default socket. The decision is discovered once
+// per daemon lifetime and cached. New sessions always use socketName.
+func (r *Runtime) runForSession(ctx context.Context, id string, args ...string) ([]byte, error) {
+	socketName, err := r.socketForSession(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return r.runOnSocket(ctx, socketName, args...)
+}
+
+func (r *Runtime) socketForSession(ctx context.Context, id string) (string, error) {
+	if r.socketName == "" {
+		return "", nil
+	}
+	r.socketMu.RLock()
+	socketName, ok := r.sessionSockets[id]
+	r.socketMu.RUnlock()
+	if ok {
+		return socketName, nil
+	}
+
+	out, err := r.runOnSocket(ctx, r.socketName, hasSessionArgs(id)...)
+	if err == nil {
+		r.rememberSessionSocket(id, r.socketName)
+		return r.socketName, nil
+	}
+	// Only cross the migration boundary when the private server definitively
+	// lacks this session. An ambiguous probe stays on the private socket so a
+	// transient error cannot redirect a live session elsewhere.
+	if !sessionMissingOutput(string(out)) && !serverNotRunningOutput(string(out)) {
+		return r.socketName, nil
+	}
+	if r.legacyBinary == "" {
+		return "", fmt.Errorf(
+			"%w: cannot inspect legacy default-socket session %s because system tmux is unavailable",
+			ports.ErrRuntimeProbeInconclusive,
+			id,
+		)
+	}
+	legacyOut, legacyErr := r.runOnSocket(ctx, "", hasSessionArgs(id)...)
+	if legacyErr == nil {
+		r.rememberSessionSocket(id, "")
+		return "", nil
+	}
+	if ctx.Err() != nil {
+		return "", ctx.Err()
+	}
+	if sessionMissingOutput(string(legacyOut)) || serverNotRunningOutput(string(legacyOut)) {
+		// Both known sockets definitively lack the session. Return the private
+		// target so IsAlive's ordinary exact-session handling reports false.
+		return r.socketName, nil
+	}
+	return "", fmt.Errorf(
+		"%w: system tmux %q could not inspect legacy default-socket session %s: %w",
+		ports.ErrRuntimeProbeInconclusive,
+		r.legacyBinary,
+		id,
+		legacyErr,
+	)
+}
+
+func (r *Runtime) rememberSessionSocket(id, socketName string) {
+	r.socketMu.Lock()
+	r.sessionSockets[id] = socketName
+	r.socketMu.Unlock()
+}
+
+func (r *Runtime) forgetSessionSocket(id string) {
+	r.socketMu.Lock()
+	delete(r.sessionSockets, id)
+	r.socketMu.Unlock()
 }
 
 func (r *Runtime) runCommand(ctx context.Context, name string, args ...string) ([]byte, error) {
@@ -962,9 +1109,19 @@ func sessionMissingOutput(out string) bool {
 // server itself could not be reached, which is inconclusive for any single
 // session's liveness.
 func serverUnreachableOutput(out string) bool {
+	return serverNotRunningOutput(out) || transientServerFailureOutput(out)
+}
+
+func serverNotRunningOutput(out string) bool {
 	s := strings.ToLower(out)
-	return strings.Contains(s, "no server running") ||
-		strings.Contains(s, "error connecting")
+	return strings.Contains(s, "no server running")
+}
+
+func transientServerFailureOutput(out string) bool {
+	s := strings.ToLower(out)
+	return strings.Contains(s, "error connecting") ||
+		strings.Contains(s, "protocol version mismatch") ||
+		strings.Contains(s, "server exited unexpectedly")
 }
 
 // killSessionMissingOutput reports whether a non-zero `tmux kill-session`

@@ -461,7 +461,7 @@ FROM model_usage_events WHERE source_event_key = ?`, test.key).Scan(
 }
 
 // TestBillingProviderSourceMigrationMarksExistingAttributionsObserved covers
-// 0111. Every row attributed before the column existed came from the transcript
+// 0112. Every row attributed before the column existed came from the transcript
 // or the route hint, so all of them must survive as observations: mislabelling
 // one as an inference would invite a later repair to overwrite a fact.
 func TestBillingProviderSourceMigrationMarksExistingAttributionsObserved(t *testing.T) {
@@ -471,7 +471,7 @@ func TestBillingProviderSourceMigrationMarksExistingAttributionsObserved(t *test
 	}
 	db.SetMaxOpenConns(1)
 	t.Cleanup(func() { _ = db.Close() })
-	upTo(t, db, 110)
+	upTo(t, db, 111)
 
 	now := time.Now().UTC().Format(time.RFC3339)
 	if _, err := db.Exec(`
