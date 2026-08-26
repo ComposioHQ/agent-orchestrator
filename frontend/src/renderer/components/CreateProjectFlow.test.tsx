@@ -27,6 +27,7 @@ const cloudMocks = vi.hoisted(() => ({
 	cloudEnabled: false,
 	sessionStatus: "unauthenticated",
 	createProject: vi.fn(),
+	signIn: vi.fn(),
 }));
 
 vi.mock("../hooks/useCloudGate", () => ({
@@ -38,7 +39,7 @@ vi.mock("../lib/cloud-session", () => ({
 		configured: true,
 		session: null,
 		status: cloudMocks.sessionStatus,
-		signIn: () => undefined,
+		signIn: cloudMocks.signIn,
 		signOut: async () => undefined,
 	}),
 }));
@@ -119,6 +120,7 @@ beforeEach(() => {
 	cloudMocks.cloudEnabled = false;
 	cloudMocks.sessionStatus = "unauthenticated";
 	cloudMocks.createProject.mockReset();
+	cloudMocks.signIn.mockReset();
 });
 
 describe("CreateProjectFlow droppedPath", () => {
@@ -221,11 +223,16 @@ describe("CreateProjectFlow cloud offering", () => {
 		expect(screen.getByRole("button", { name: "Open local repository" })).toBeInTheDocument();
 	});
 
-	it("hides the Local | Cloud choice when cloud is enabled but the user is signed out", () => {
+	it("shows the Cloud choice and sign-in prompt when the user is signed out", async () => {
 		cloudMocks.cloudEnabled = true;
+		const user = userEvent.setup();
 		render(<CreateProjectFlow embedded mode="choose" {...noop} />, { wrapper: CloudTestProviders });
 
-		expect(screen.queryByRole("tab", { name: "Cloud" })).not.toBeInTheDocument();
+		expect(screen.getByRole("tab", { name: "Local", selected: true })).toBeInTheDocument();
+		await user.click(screen.getByRole("tab", { name: "Cloud" }));
+		expect(screen.getByText(/sign in to AO Cloud to create a cloud project/i)).toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: "Sign in to AO Cloud" }));
+		expect(cloudMocks.signIn).toHaveBeenCalledOnce();
 	});
 
 	it("shows the choice defaulting to Local when the gate is on and the user is signed in", () => {
