@@ -5,6 +5,17 @@ const projectId = "chat-composer-selection";
 const sessionId = "chat-composer-selection-worker";
 const draft =
 	"Select this existing chat draft across its wrapped text so an earlier instruction can be replaced precisely without retyping the entire message.";
+const themeStyles = [
+	"orchestrate",
+	"github",
+	"catppuccin",
+	"dracula",
+	"tokyo-night",
+	"rose-pine",
+	"nord",
+	"gruvbox",
+	"solarized",
+] as const;
 
 test("typed chat composer text is visibly selected with a pointer drag @T0", async ({ page }) => {
 	await page.emulateMedia({ reducedMotion: "reduce" });
@@ -127,7 +138,7 @@ test("typed chat composer text is visibly selected with a pointer drag @T0", asy
 	expect(draft).toContain(selection.text.trim());
 	expect(selection.text.trim().length).toBeGreaterThan(draft.length / 2);
 
-	const selectionContrast = await composer.evaluate((element) => {
+	const selectionContrasts = await composer.evaluate((element, styles) => {
 		function rgba(color: string): [number, number, number, number] {
 			const canvas = document.createElement("canvas");
 			canvas.width = 1;
@@ -151,18 +162,41 @@ test("typed chat composer text is visibly selected with a pointer drag @T0", asy
 			return 0.2126 * linear[0]! + 0.7152 * linear[1]! + 0.0722 * linear[2]!;
 		}
 
-		const selectionColor = rgba(getComputedStyle(element, "::selection").backgroundColor);
 		const surface = element.closest("form") ?? element;
-		const surfaceColor = rgba(getComputedStyle(surface).backgroundColor);
-		const composited = selectionColor.slice(0, 3).map(
-			(channel, index) => channel * selectionColor[3] + surfaceColor[index]! * (1 - selectionColor[3]),
+		if (surface instanceof HTMLElement) surface.style.transition = "none";
+		return styles.flatMap((style) =>
+			(["dark", "light"] as const).map((appearance) => {
+				document.documentElement.dataset.theme = appearance;
+				if (style === "orchestrate") delete document.documentElement.dataset.styleTheme;
+				else document.documentElement.dataset.styleTheme = style;
+
+				const selectionBackground = getComputedStyle(element, "::selection").backgroundColor;
+				const surfaceBackground = getComputedStyle(surface).backgroundColor;
+				const selectionColor = rgba(selectionBackground);
+				const surfaceColor = rgba(surfaceBackground);
+				const composited = selectionColor.slice(0, 3).map(
+					(channel, index) => channel * selectionColor[3] + surfaceColor[index]! * (1 - selectionColor[3]),
+				);
+				const foregroundLuminance = luminance(composited);
+				const backgroundLuminance = luminance(surfaceColor);
+				return {
+					style,
+					appearance,
+					selectionBackground,
+					surfaceBackground,
+					contrast:
+						(Math.max(foregroundLuminance, backgroundLuminance) + 0.05) /
+						(Math.min(foregroundLuminance, backgroundLuminance) + 0.05),
+				};
+			}),
 		);
-		const foregroundLuminance = luminance(composited);
-		const backgroundLuminance = luminance(surfaceColor);
-		return (
-			(Math.max(foregroundLuminance, backgroundLuminance) + 0.05) /
-			(Math.min(foregroundLuminance, backgroundLuminance) + 0.05)
-		);
-	});
-	expect(selectionContrast).toBeGreaterThanOrEqual(1.5);
+	}, themeStyles);
+	expect(selectionContrasts).toHaveLength(themeStyles.length * 2);
+	const lowestContrast = selectionContrasts.reduce((lowest, current) =>
+		current.contrast < lowest.contrast ? current : lowest,
+	);
+	expect(
+		lowestContrast.contrast,
+		`${lowestContrast.style} ${lowestContrast.appearance} selection contrast (${lowestContrast.selectionBackground} on ${lowestContrast.surfaceBackground})`,
+	).toBeGreaterThanOrEqual(1.5);
 });
