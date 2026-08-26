@@ -1714,6 +1714,9 @@ type ConversationActivityResponse struct {
 	//   user_input   inputMode, message, schema, url, elicitationId
 	//   system       event -- "compaction", "model.rerouted" or
 	//                "auth.reauth_required" -- plus that event's own fields
+	//   error        headline, detail, action -- action is an AO-owned allowlisted
+	//                discriminator such as "openai_billing"; legacy rows may carry
+	//                only error with readable provider text and never an action
 	Detail    map[string]any `json:"detail,omitempty"`
 	RequestID string         `json:"requestId,omitempty"`
 	// ProviderItemID is the stable parent key used by nested ACP transcripts.

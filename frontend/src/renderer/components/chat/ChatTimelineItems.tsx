@@ -1716,7 +1716,6 @@ function ErrorActivityRow({ activity }: { activity: ConversationActivity }) {
 }
 
 const OPENAI_BILLING_URL = "https://platform.openai.com/settings/organization/billing";
-const CREDIT_EXHAUSTED = /\b(?:no credits? remaining|insufficient[_ -]?quota)\b/i;
 
 type ProviderErrorCopy = {
 	headline: string;
@@ -1724,27 +1723,9 @@ type ProviderErrorCopy = {
 	action?: { href: string; label: string };
 };
 
-type UnwrappedProviderError = {
-	copy: ProviderErrorCopy;
-	trustedCodexEnvelope: boolean;
-};
-
-function withKnownProviderAction(
-	copy: ProviderErrorCopy,
-	trustedCodexEnvelope: boolean,
-): ProviderErrorCopy {
-	if (
-		!trustedCodexEnvelope ||
-		!CREDIT_EXHAUSTED.test(`${copy.headline}\n${copy.detail ?? ""}`)
-	) {
-		return copy;
-	}
-	return {
-		...copy,
-		// Never trust an action URL from provider detail. Recognized failure classes
-		// map to AO-owned destinations; everything else remains inert text.
-		action: { href: OPENAI_BILLING_URL, label: "Add credits" },
-	};
+function recoveryAction(action: unknown): ProviderErrorCopy["action"] {
+	if (action !== "openai_billing") return undefined;
+	return { href: OPENAI_BILLING_URL, label: "Add credits" };
 }
 
 /**
@@ -1752,14 +1733,27 @@ function withKnownProviderAction(
  * dump. Falls back to the stored text when it is already plain language.
  */
 export function providerErrorCopy(activity: ConversationActivity): ProviderErrorCopy {
+	const normalizedHeadline = String(activity.detail?.headline ?? "").trim();
+	const normalizedDetail = String(activity.detail?.detail ?? "").trim();
+	const action = recoveryAction(activity.detail?.action);
+	if (normalizedHeadline || normalizedDetail || action) {
+		const headline =
+			normalizedHeadline ||
+			String(activity.detail?.message ?? activity.summary ?? "").trim() ||
+			"Provider error";
+		return {
+			headline,
+			detail: normalizedDetail && normalizedDetail !== headline ? normalizedDetail : undefined,
+			action,
+		};
+	}
+
 	const candidates = [activity.detail?.message, activity.summary, activity.detail?.error];
 	for (const candidate of candidates) {
 		const raw = String(candidate ?? "").trim();
 		if (!raw) continue;
 		const unwrapped = unwrapProviderErrorJson(raw);
-		if (unwrapped) {
-			return withKnownProviderAction(unwrapped.copy, unwrapped.trustedCodexEnvelope);
-		}
+		if (unwrapped) return unwrapped;
 	}
 
 	const headline = String(activity.detail?.message ?? activity.summary ?? "").trim();
@@ -1769,7 +1763,7 @@ export function providerErrorCopy(activity: ConversationActivity): ProviderError
 	return { headline };
 }
 
-function unwrapProviderErrorJson(raw: string): UnwrappedProviderError | undefined {
+function unwrapProviderErrorJson(raw: string): ProviderErrorCopy | undefined {
 	const parsed = parseJsonObjectSuffix(raw);
 	const err = parsed
 		? parsed.error && typeof parsed.error === "object" && !Array.isArray(parsed.error)
@@ -1785,74 +1779,10 @@ function unwrapProviderErrorJson(raw: string): UnwrappedProviderError | undefine
 			? err.additionalDetails.trim()
 			: readJsonStringField(raw, "additionalDetails");
 	if (!message && !additional) return undefined;
-	const trustedCodexEnvelope = hasStructuredCodexProvenance(raw, parsed);
 	if (message && additional && additional !== message) {
-		return { copy: { headline: message, detail: additional }, trustedCodexEnvelope };
+		return { headline: message, detail: additional };
 	}
-	return { copy: { headline: message || additional }, trustedCodexEnvelope };
-}
-
-/**
- * A billing action is stronger than rendering text: it needs evidence that the
- * durable row came from Codex, not merely provider-neutral prose that happens to
- * contain the same words. Codex notifications carry a structured `codexErrorInfo`
- * discriminator inside AO's `provider error: {…}` envelope.
- *
- * AO caps the stored envelope at 400 bytes. When that cuts the outer object after
- * the complete `error` member, parse that member independently; an incomplete or
- * malformed discriminator fails closed.
- */
-function hasStructuredCodexProvenance(
-	raw: string,
-	parsed: Record<string, unknown> | undefined,
-): boolean {
-	if (!raw.startsWith("provider error:")) return false;
-	const error = asJsonObject(parsed?.error) ?? readLeadingErrorObject(raw);
-	const codexErrorInfo = asJsonObject(error?.codexErrorInfo);
-	if (!codexErrorInfo) return false;
-	const disconnected = asJsonObject(codexErrorInfo.responseStreamDisconnected);
-	if (!disconnected || !("httpStatusCode" in disconnected)) return false;
-	const status = disconnected.httpStatusCode;
-	return (
-		status === null ||
-		(typeof status === "number" && Number.isInteger(status) && status >= 100 && status <= 599)
-	);
-}
-
-function readLeadingErrorObject(raw: string): Record<string, unknown> | undefined {
-	const objectStart = raw.indexOf("{");
-	if (objectStart < 0) return undefined;
-	const leadingError = /^\{\s*"error"\s*:\s*/.exec(raw.slice(objectStart));
-	if (!leadingError) return undefined;
-	const errorStart = objectStart + leadingError[0].length;
-	if (raw[errorStart] !== "{") return undefined;
-
-	let depth = 0;
-	let escaped = false;
-	let inString = false;
-	for (let index = errorStart; index < raw.length; index += 1) {
-		const character = raw[index];
-		if (inString) {
-			if (escaped) escaped = false;
-			else if (character === "\\") escaped = true;
-			else if (character === '"') inString = false;
-			continue;
-		}
-		if (character === '"') {
-			inString = true;
-			continue;
-		}
-		if (character === "{") depth += 1;
-		if (character !== "}") continue;
-		depth -= 1;
-		if (depth !== 0) continue;
-		try {
-			return asJsonObject(JSON.parse(raw.slice(errorStart, index + 1)) as unknown);
-		} catch {
-			return undefined;
-		}
-	}
-	return undefined;
+	return { headline: message || additional };
 }
 
 function asJsonObject(value: unknown): Record<string, unknown> | undefined {

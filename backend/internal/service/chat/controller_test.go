@@ -2320,6 +2320,56 @@ func TestProviderEventsAreArchived(t *testing.T) {
 	}
 }
 
+func TestTypedProviderErrorPersistsNormalizedRecoveryDetail(t *testing.T) {
+	h := newHarness(t)
+	h.conv.emit(ports.ChatEvent{
+		Kind: ports.ChatEventError,
+		Err:  errors.New("raw provider envelope with https://evil.example/billing"),
+		ErrorInfo: &ports.ChatErrorInfo{
+			Headline: "Reconnecting... [1/5]",
+			Detail:   "You have no credits remaining.",
+			Action:   ports.ChatRecoveryActionOpenAIBilling,
+		},
+	})
+
+	snapshot := h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return len(s.Activities) == 1
+	})
+	activity := snapshot.Activities[0]
+	if activity.Summary != "Reconnecting... [1/5]" {
+		t.Fatalf("summary = %q", activity.Summary)
+	}
+	var detail map[string]string
+	if err := json.Unmarshal(activity.Detail, &detail); err != nil {
+		t.Fatalf("decode detail: %v", err)
+	}
+	if detail["headline"] != "Reconnecting... [1/5]" ||
+		detail["detail"] != "You have no credits remaining." ||
+		detail["action"] != "openai_billing" {
+		t.Fatalf("detail = %#v", detail)
+	}
+	if strings.Contains(string(activity.Detail), "evil.example") {
+		t.Fatalf("raw provider destination leaked into durable detail: %s", activity.Detail)
+	}
+
+	events, err := h.st.ProviderEventsSince(context.Background(), h.ctrl.ConversationID(), 0, 10)
+	if err != nil {
+		t.Fatalf("read provider archive: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("archived events = %d, want 1", len(events))
+	}
+	var archived struct {
+		ErrorInfo *ports.ChatErrorInfo `json:"errorInfo"`
+	}
+	if err := json.Unmarshal([]byte(events[0].PayloadJson), &archived); err != nil {
+		t.Fatalf("decode archived provider event: %v", err)
+	}
+	if archived.ErrorInfo == nil || archived.ErrorInfo.Action != ports.ChatRecoveryActionOpenAIBilling {
+		t.Fatalf("archived ErrorInfo = %#v", archived.ErrorInfo)
+	}
+}
+
 /* ---- the send queue ---------------------------------------------------- */
 
 // turnStateByText is how the queue tests read the timeline: a turn matters here

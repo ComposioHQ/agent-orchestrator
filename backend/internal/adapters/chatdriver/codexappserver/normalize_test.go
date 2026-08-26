@@ -69,6 +69,132 @@ func TestNormalizeUnknownTurnStatusFailsClosed(t *testing.T) {
 	}
 }
 
+// A provider recovery action is stronger than provider prose. The Codex adapter
+// authenticates it while the complete typed notification and its structured
+// disconnect discriminator are still available, then emits only AO vocabulary.
+func TestNormalizeCreditExhaustionEmitsTypedRecoveryAction(t *testing.T) {
+	ev := normalizeOne(t, "error", `{
+		"error": {
+			"message": "Reconnecting... [1/5] ",
+			"codexErrorInfo": {"responseStreamDisconnected": {"httpStatusCode": null}},
+			"additionalDetails": "stream disconnected before completion: You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing"
+		},
+		"threadId": "019feb6c-42f9-7411-b296-fc694ae7c69e",
+		"turnId": "019ffd9d-714c-7d31-932f-4e7c10cf5a82",
+		"willRetry": true
+	}`)
+
+	if ev.Kind != ports.ChatEventError || ev.ErrorInfo == nil {
+		t.Fatalf("error notification -> %+v", ev)
+	}
+	if ev.ErrorInfo.Headline != "Reconnecting... [1/5]" {
+		t.Errorf("headline = %q", ev.ErrorInfo.Headline)
+	}
+	if ev.ErrorInfo.Detail != "stream disconnected before completion: You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing" {
+		t.Errorf("detail = %q", ev.ErrorInfo.Detail)
+	}
+	if ev.ErrorInfo.Action != ports.ChatRecoveryActionOpenAIBilling {
+		t.Errorf("action = %q, want %q", ev.ErrorInfo.Action, ports.ChatRecoveryActionOpenAIBilling)
+	}
+}
+
+func TestNormalizeCreditRecoveryRejectsProviderSuppliedActionURL(t *testing.T) {
+	for _, destination := range []string{
+		"https://evil.example/provider-destination",
+		"https://platform.openai.com/settings/organization/billing",
+	} {
+		t.Run(destination, func(t *testing.T) {
+			ev := normalizeOne(t, "error", `{
+				"error": {
+					"message": "Reconnecting... [1/5]",
+					"codexErrorInfo": {"responseStreamDisconnected": {"httpStatusCode": 429}},
+					"additionalDetails": "stream disconnected before completion: You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing",
+					"actionUrl": "`+destination+`"
+				},
+				"threadId": "codex-thread",
+				"turnId": "codex-turn",
+				"willRetry": true
+			}`)
+			if ev.ErrorInfo == nil {
+				t.Fatal("complete provider error did not retain readable normalized detail")
+			}
+			if ev.ErrorInfo.Action != "" {
+				t.Errorf("provider actionUrl produced AO action %q", ev.ErrorInfo.Action)
+			}
+		})
+	}
+}
+
+func TestNormalizeCreditRecoveryRejectsNegatedCanonicalQuote(t *testing.T) {
+	ev := normalizeOne(t, "error", `{
+		"error": {
+			"message": "Reconnecting... [1/5]",
+			"codexErrorInfo": {"responseStreamDisconnected": {"httpStatusCode": 429}},
+			"additionalDetails": "stream disconnected before completion: You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing — this quoted diagnosis is not true; credits remain"
+		},
+		"threadId": "codex-thread",
+		"turnId": "codex-turn",
+		"willRetry": true
+	}`)
+
+	if ev.ErrorInfo == nil {
+		t.Fatal("complete provider error did not retain readable normalized detail")
+	}
+	if ev.ErrorInfo.Action != "" {
+		t.Errorf("negated diagnostic action = %q, want none", ev.ErrorInfo.Action)
+	}
+}
+
+func TestNormalizeCreditRecoveryFailsClosedWithoutCompleteTypedEvidence(t *testing.T) {
+	const positive = "stream disconnected before completion: You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing"
+	tests := []struct {
+		name      string
+		params    string
+		wantTyped bool
+	}{
+		{
+			name:      "missing structured discriminator",
+			params:    `{"error":{"message":"Reconnecting","additionalDetails":"` + positive + `"},"threadId":"th","turnId":"tu","willRetry":true}`,
+			wantTyped: true,
+		},
+		{
+			name:      "incomplete structured discriminator",
+			params:    `{"error":{"message":"Reconnecting","codexErrorInfo":{"responseStreamDisconnected":{}},"additionalDetails":"` + positive + `"},"threadId":"th","turnId":"tu","willRetry":true}`,
+			wantTyped: true,
+		},
+		{
+			name:      "loose quota token",
+			params:    `{"error":{"message":"Reconnecting","codexErrorInfo":{"responseStreamDisconnected":{"httpStatusCode":429}},"additionalDetails":"insufficient_quota"},"threadId":"th","turnId":"tu","willRetry":true}`,
+			wantTyped: true,
+		},
+		{
+			name:      "negated credit phrase",
+			params:    `{"error":{"message":"Reconnecting","codexErrorInfo":{"responseStreamDisconnected":{"httpStatusCode":429}},"additionalDetails":"You do not have no credits remaining; the account still has credits"},"threadId":"th","turnId":"tu","willRetry":true}`,
+			wantTyped: true,
+		},
+		{
+			name:   "truncated envelope",
+			params: `{"error":{"message":"Reconnecting","codexErrorInfo":{"responseStreamDisconnected":{"httpStatusCode":429}},"additionalDetails":"` + positive,
+		},
+		{
+			name:   "missing required identity",
+			params: `{"error":{"message":"Reconnecting","codexErrorInfo":{"responseStreamDisconnected":{"httpStatusCode":429}},"additionalDetails":"` + positive + `"},"willRetry":true}`,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ev := normalizeOne(t, "error", tc.params)
+			if (ev.ErrorInfo != nil) != tc.wantTyped {
+				t.Fatalf("ErrorInfo = %+v, want typed %v", ev.ErrorInfo, tc.wantTyped)
+			}
+			if ev.ErrorInfo != nil && ev.ErrorInfo.Action != "" {
+				t.Errorf("action = %q, want none", ev.ErrorInfo.Action)
+			}
+		})
+	}
+}
+
 func TestNormalizeAssistantStreaming(t *testing.T) {
 	delta := normalizeOne(t, "item/agentMessage/delta",
 		`{"threadId":"th1","turnId":"tu1","itemId":"msg_1","delta":"Running"}`)

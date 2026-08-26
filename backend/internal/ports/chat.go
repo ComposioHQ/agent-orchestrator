@@ -764,6 +764,24 @@ const (
 	ChatControllerStopped    ChatControllerState = "stopped"
 )
 
+// ChatRecoveryAction is an AO-owned recovery destination derived while a driver
+// still has typed provider provenance. A renderer maps the value to its own
+// hardcoded destination; provider URLs never cross this boundary.
+type ChatRecoveryAction string
+
+const (
+	// ChatRecoveryActionOpenAIBilling opens AO's known OpenAI billing destination.
+	ChatRecoveryActionOpenAIBilling ChatRecoveryAction = "openai_billing"
+)
+
+// ChatErrorInfo is the provider-neutral, user-readable projection of one typed
+// provider failure. Raw provider DTOs remain inside the adapter.
+type ChatErrorInfo struct {
+	Headline string             `json:"headline"`
+	Detail   string             `json:"detail,omitempty"`
+	Action   ChatRecoveryAction `json:"action,omitempty"`
+}
+
 // ChatEvent is one normalized observation from the provider.
 //
 // Deltas are the high-frequency case, so they carry only what changed. A
@@ -846,6 +864,9 @@ type ChatEvent struct {
 	// Err carries a structured failure. Its presence does not imply the
 	// conversation is over; check ControllerState for that.
 	Err error
+	// ErrorInfo is safe provider-neutral copy and an optional AO-owned recovery
+	// action authenticated by the driver from its typed protocol.
+	ErrorInfo *ChatErrorInfo
 }
 
 // ChatDriver opens conversations for one harness.

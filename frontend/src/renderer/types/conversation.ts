@@ -196,6 +196,16 @@ export interface ApprovalDetail {
 	toolKind?: string;
 }
 
+/** AO-normalized recovery information for an error activity. */
+export interface ProviderErrorDetail {
+	/** Short causal status normalized while the daemon still had typed provenance. */
+	headline?: string;
+	/** User-readable explanation; never interpreted as an action by the renderer. */
+	detail?: string;
+	/** AO-owned action discriminator. The renderer supplies the destination. */
+	action?: "openai_billing";
+}
+
 export interface CommandDetail {
 	/**
 	 * Free text payload: a plan body, a reasoning summary, a message.
@@ -483,6 +493,7 @@ export interface ConversationActivity {
 	 */
 	detail?: CommandDetail &
 		ApprovalDetail &
+		ProviderErrorDetail &
 		FileChangeDetail &
 		UsageDetail &
 		CompactionDetail &

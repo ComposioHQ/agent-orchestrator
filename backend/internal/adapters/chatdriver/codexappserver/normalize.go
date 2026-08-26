@@ -1,6 +1,7 @@
 package codexappserver
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -646,10 +647,7 @@ func normalizeNotification(n notification, now time.Time) []ports.ChatEvent {
 		}}
 
 	case codexproto.MethodError:
-		return []ports.ChatEvent{{
-			Kind: ports.ChatEventError,
-			Err:  fmt.Errorf("provider error: %s", truncateForLog(n.Params)),
-		}}
+		return []ports.ChatEvent{normalizeErrorNotification(n.Params)}
 
 	default:
 		// Provider bookkeeping: hook/started, hook/completed,
@@ -670,6 +668,101 @@ func normalizeNotification(n notification, now time.Time) []ports.ChatEvent {
 		//     from a transcript delta would be a feature nobody asked for.
 		return nil
 	}
+}
+
+const (
+	codexCreditExhaustionSignature = "stream disconnected before completion: You have no credits remaining. Add credits to continue using the API" //nolint:gosec // Provider error text, not a credential.
+	codexCreditExhaustionDetail    = codexCreditExhaustionSignature + " at https://platform.openai.com/settings/organization/billing"
+)
+
+func normalizeErrorNotification(params json.RawMessage) ports.ChatEvent {
+	fallback := ports.ChatEvent{
+		Kind: ports.ChatEventError,
+		Err:  fmt.Errorf("provider error: %s", truncateForLog(params)),
+	}
+
+	var notification codexproto.ErrorNotification
+	if err := json.Unmarshal(params, &notification); err != nil ||
+		strings.TrimSpace(notification.ThreadID) == "" ||
+		strings.TrimSpace(notification.TurnID) == "" ||
+		strings.TrimSpace(notification.Error.Message) == "" {
+		return fallback
+	}
+
+	headline := strings.TrimSpace(notification.Error.Message)
+	info := &ports.ChatErrorInfo{Headline: headline}
+	if notification.Error.AdditionalDetails != nil {
+		info.Detail = strings.TrimSpace(*notification.Error.AdditionalDetails)
+	}
+	if !hasProviderSuppliedActionURL(params) &&
+		isResponseStreamDisconnected(notification.Error.CodexErrorInfo) &&
+		isPositiveCreditExhaustion(notification.Error.AdditionalDetails) {
+		info.Action = ports.ChatRecoveryActionOpenAIBilling
+	}
+	return ports.ChatEvent{
+		Kind:                   ports.ChatEventError,
+		ProviderTurnID:         notification.TurnID,
+		ProviderConversationID: notification.ThreadID,
+		Err:                    fmt.Errorf("%s", headline),
+		ErrorInfo:              info,
+	}
+}
+
+func hasProviderSuppliedActionURL(params json.RawMessage) bool {
+	var envelope struct {
+		Error map[string]json.RawMessage `json:"error"`
+	}
+	if err := json.Unmarshal(params, &envelope); err != nil {
+		return true
+	}
+	for key := range envelope.Error {
+		if strings.EqualFold(key, "actionUrl") {
+			return true
+		}
+	}
+	return false
+}
+
+// CodexErrorInfo is generated as raw JSON because it is a provider union. A
+// complete responseStreamDisconnected variant always carries httpStatusCode;
+// accepting only null or an HTTP status-sized integer fails closed on copied,
+// malformed, and partial discriminators.
+func isResponseStreamDisconnected(raw *codexproto.CodexErrorInfo) bool {
+	if raw == nil {
+		return false
+	}
+	var variants map[string]json.RawMessage
+	if err := json.Unmarshal(*raw, &variants); err != nil {
+		return false
+	}
+	marker, ok := variants["responseStreamDisconnected"]
+	if !ok {
+		return false
+	}
+	var disconnected map[string]json.RawMessage
+	if err := json.Unmarshal(marker, &disconnected); err != nil {
+		return false
+	}
+	status, ok := disconnected["httpStatusCode"]
+	if !ok {
+		return false
+	}
+	if bytes.Equal(bytes.TrimSpace(status), []byte("null")) {
+		return true
+	}
+	var code int
+	return json.Unmarshal(status, &code) == nil && code >= 100 && code <= 599
+}
+
+// The recovery classification deliberately recognizes the complete positive
+// provider sentence, not loose tokens such as "credits" or "quota" that can be
+// quoted, negated, or emitted by an unrelated provider error.
+func isPositiveCreditExhaustion(detail *string) bool {
+	if detail == nil {
+		return false
+	}
+	normalized := strings.Join(strings.Fields(*detail), " ")
+	return normalized == codexCreditExhaustionSignature || normalized == codexCreditExhaustionDetail
 }
 
 // turnIDFallback reads a top-level turnId, which some builds send instead of

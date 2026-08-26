@@ -1996,6 +1996,7 @@ func (c *Controller) projectEvent(ctx context.Context, event ports.ChatEvent) (b
 		"account":                event.Account,
 		"threadState":            event.ThreadState,
 		"mcpServers":             event.MCPServers,
+		"errorInfo":              event.ErrorInfo,
 	}
 	record["diff"] = event.Diff
 	if event.Input != nil {
@@ -2412,10 +2413,29 @@ func (c *Controller) apply(ctx context.Context, event ports.ChatEvent) error {
 
 	case ports.ChatEventError:
 		message := "provider error"
-		if event.Err != nil {
+		var detail []byte
+		if event.ErrorInfo != nil {
+			normalized := ports.ChatErrorInfo{
+				Headline: strings.TrimSpace(event.ErrorInfo.Headline),
+				Detail:   strings.TrimSpace(event.ErrorInfo.Detail),
+				Action:   event.ErrorInfo.Action,
+			}
+			if normalized.Headline == "" {
+				normalized.Headline = message
+			}
+			switch normalized.Action {
+			case "", ports.ChatRecoveryActionOpenAIBilling:
+			default:
+				normalized.Action = ""
+			}
+			message = normalized.Headline
+			detail, _ = json.Marshal(normalized)
+		} else if event.Err != nil {
 			message = event.Err.Error()
 		}
-		detail, _ := json.Marshal(map[string]string{"error": message})
+		if len(detail) == 0 {
+			detail, _ = json.Marshal(map[string]string{"error": message})
+		}
 		return c.store.UpsertActivity(ctx, c.conversation.ID, event.ProviderTurnID,
 			domain.ConversationActivity{
 				ID:      c.newID(),

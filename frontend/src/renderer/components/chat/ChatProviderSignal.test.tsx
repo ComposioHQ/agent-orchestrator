@@ -303,10 +303,33 @@ describe("provider error", () => {
 		turnId: "019ffd9d-714c-7d31-932f-4e7c10cf5a82",
 		willRetry: true,
 	});
-	// What AO persists: the Codex envelope, prefixed, in summary and detail.error.
+	// Historical AO rows persisted the Codex envelope, prefixed, in summary and detail.error.
 	const stored = `provider error: ${envelope.length > 400 ? `${envelope.slice(0, 400)}…` : envelope}`;
 
-	it("unwraps the truncated prefixed payload AO actually stores", () => {
+	it("renders AO's typed recovery action at its hardcoded destination", () => {
+		render(
+			<ActivityRow
+				activity={activity({
+					activityKind: "error",
+					status: "failed",
+					summary: "Reconnecting... [1/5]",
+					detail: {
+						headline: "Reconnecting... [1/5]",
+						detail: "You have no credits remaining.",
+						action: "openai_billing",
+					},
+				})}
+			/>,
+		);
+		expect(screen.getByText("Reconnecting... [1/5]")).toBeInTheDocument();
+		expect(screen.getByText(/You have no credits remaining/i)).toBeInTheDocument();
+		expect(screen.getByRole("link", { name: "Add credits" })).toHaveAttribute(
+			"href",
+			"https://platform.openai.com/settings/organization/billing",
+		);
+	});
+
+	it("keeps a truncated historical Codex envelope readable but inert", () => {
 		expect(envelope.length).toBeGreaterThan(400);
 		render(
 			<ActivityRow
@@ -320,10 +343,7 @@ describe("provider error", () => {
 		);
 		expect(screen.getByText("Reconnecting... [1/5]")).toBeInTheDocument();
 		expect(screen.getByText(/You have no credits remaining/i)).toBeInTheDocument();
-		expect(screen.getByRole("link", { name: "Add credits" })).toHaveAttribute(
-			"href",
-			"https://platform.openai.com/settings/organization/billing",
-		);
+		expect(screen.queryByRole("link")).not.toBeInTheDocument();
 		// The raw envelope must not paint as the row label — that is what overflowed the column.
 		expect(screen.queryByText(/codexErrorInfo/i)).not.toBeInTheDocument();
 		expect(screen.queryByText(/provider error:/i)).not.toBeInTheDocument();
@@ -366,6 +386,29 @@ describe("provider error", () => {
 
 		expect(screen.getByText(untrusted)).toBeInTheDocument();
 		expect(document.querySelector("script")).not.toBeInTheDocument();
+		expect(screen.queryByRole("link")).not.toBeInTheDocument();
+	});
+
+	it("keeps an unknown action discriminator inert without hiding its detail", () => {
+		const detail = JSON.parse(
+			JSON.stringify({
+				message: "Provider request failed",
+				error: "The provider supplied an unsupported recovery action.",
+				action: "https://evil.example/billing",
+			}),
+		);
+		render(
+			<ActivityRow
+				activity={activity({
+					activityKind: "error",
+					status: "failed",
+					summary: "Provider request failed",
+					detail,
+				})}
+			/>,
+		);
+
+		expect(screen.getByText(/unsupported recovery action/i)).toBeVisible();
 		expect(screen.queryByRole("link")).not.toBeInTheDocument();
 	});
 
@@ -413,13 +456,13 @@ describe("provider error", () => {
 		expect(screen.queryByRole("link")).not.toBeInTheDocument();
 	});
 
-	it("never trusts a provider-supplied billing destination", () => {
+	it("keeps a provider-supplied actionUrl entirely inert", () => {
 		const maliciousEnvelope = JSON.stringify({
 			error: {
 				message: "Reconnecting... [1/5]",
 				codexErrorInfo: { responseStreamDisconnected: { httpStatusCode: 429 } },
 				additionalDetails:
-					"You have no credits remaining. Add credits at https://evil.example/billing",
+					"stream disconnected before completion: You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing",
 				actionUrl: "https://evil.example/billing",
 			},
 			threadId: "codex-thread",
@@ -437,11 +480,27 @@ describe("provider error", () => {
 			/>,
 		);
 
-		expect(screen.getByRole("link", { name: "Add credits" })).toHaveAttribute(
-			"href",
-			"https://platform.openai.com/settings/organization/billing",
+		expect(screen.getByText(/You have no credits remaining/i)).toBeVisible();
+		expect(screen.queryByRole("link")).not.toBeInTheDocument();
+	});
+
+	it("keeps a negated credit diagnosis inert", () => {
+		render(
+			<ActivityRow
+				activity={activity({
+					activityKind: "error",
+					status: "failed",
+					summary: "Provider request failed",
+					detail: {
+						headline: "Provider request failed",
+						detail: "The account does not have no credits remaining; credits are available.",
+					},
+				})}
+			/>,
 		);
-		expect(screen.queryByRole("link", { name: /evil/i })).not.toBeInTheDocument();
+
+		expect(screen.getByText(/credits are available/i)).toBeVisible();
+		expect(screen.queryByRole("link")).not.toBeInTheDocument();
 	});
 
 	it("keeps plain-language errors readable without a JSON dump", () => {
