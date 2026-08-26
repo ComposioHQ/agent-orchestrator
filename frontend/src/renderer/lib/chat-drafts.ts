@@ -137,6 +137,7 @@ type DraftMutationKind = "composer" | "inline-edit";
 type ChatDraftRuntime = {
 	sessionId: string;
 	listeners: Set<() => void>;
+	settledEvictionTimer?: ReturnType<typeof setTimeout>;
 	sequence: number;
 	composerToken?: ChatDraftMutationToken;
 	inlineEditToken?: ChatDraftMutationToken;
@@ -180,6 +181,10 @@ function draftRuntimeKey(scope: ChatDraftScopeInput): string {
 function purgeDraftRuntimes(sessionId: string): void {
 	for (const [key, runtime] of draftRuntimes) {
 		if (runtime.sessionId !== sessionId) continue;
+		if (runtime.settledEvictionTimer !== undefined) {
+			clearTimeout(runtime.settledEvictionTimer);
+			runtime.settledEvictionTimer = undefined;
+		}
 		runtime.composerToken = undefined;
 		runtime.inlineEditToken = undefined;
 		runtime.composer = EMPTY_COMPOSER_MUTATION;
@@ -205,13 +210,40 @@ function draftRuntime(scope: ChatDraftScopeInput): ChatDraftRuntime {
 	return runtime;
 }
 
-function evictSettledDraftRuntime(key: string, runtime: ChatDraftRuntime): void {
+function cancelSettledDraftRuntimeEviction(runtime: ChatDraftRuntime): void {
+	if (runtime.settledEvictionTimer === undefined) return;
+	clearTimeout(runtime.settledEvictionTimer);
+	runtime.settledEvictionTimer = undefined;
+}
+
+function evictSettledDraftRuntime(
+	key: string,
+	runtime: ChatDraftRuntime,
+	preserveAcceptanceForSubscription = false,
+): void {
 	if (
 		runtime.listeners.size > 0 ||
 		runtime.composer.pending ||
 		runtime.inlineEdit.pending ||
 		draftRuntimes.get(key) !== runtime
 	) return;
+	// useSyncExternalStore reads a snapshot during render and subscribes only at
+	// commit. A send can settle between those steps after the prior surface has
+	// unsubscribed. Keep the accepted receipt through that turn so the remount can
+	// consume the clear result, then evict it if no subscriber claims it.
+	if (
+		preserveAcceptanceForSubscription &&
+		(runtime.composer.accepted || runtime.inlineEdit.accepted)
+	) {
+		if (runtime.settledEvictionTimer === undefined) {
+			runtime.settledEvictionTimer = setTimeout(() => {
+				runtime.settledEvictionTimer = undefined;
+				evictSettledDraftRuntime(key, runtime);
+			}, 0);
+		}
+		return;
+	}
+	cancelSettledDraftRuntimeEviction(runtime);
 	draftRuntimes.delete(key);
 }
 
@@ -223,6 +255,7 @@ export function subscribeChatDraftRuntime(scope: ChatDraftScopeInput, listener: 
 	if (!normalizeScope(scope).sessionId) return () => undefined;
 	const key = draftRuntimeKey(scope);
 	const runtime = draftRuntime(scope);
+	cancelSettledDraftRuntimeEviction(runtime);
 	runtime.listeners.add(listener);
 	return () => {
 		runtime.listeners.delete(listener);
@@ -290,7 +323,7 @@ function cancelDraftMutation(
 		runtime.inlineEdit = EMPTY_INLINE_EDIT_MUTATION;
 	}
 	emitDraftRuntime(runtime);
-	evictSettledDraftRuntime(key, runtime);
+	evictSettledDraftRuntime(key, runtime, true);
 }
 
 export function cancelChatComposerMutation(
@@ -323,7 +356,7 @@ export function finishChatComposerMutation(
 		accepted: { sequence: runtime.sequence, revision, result },
 	};
 	emitDraftRuntime(runtime);
-	evictSettledDraftRuntime(key, runtime);
+	evictSettledDraftRuntime(key, runtime, true);
 }
 
 export function finishChatInlineEditMutation(
@@ -342,7 +375,7 @@ export function finishChatInlineEditMutation(
 		accepted: { sequence: runtime.sequence, revision, result },
 	};
 	emitDraftRuntime(runtime);
-	evictSettledDraftRuntime(key, runtime);
+	evictSettledDraftRuntime(key, runtime, true);
 }
 
 function invalidateAcceptedDraftMutation(scope: ChatDraftScopeInput, kind: DraftMutationKind): void {
@@ -357,7 +390,7 @@ function invalidateAcceptedDraftMutation(scope: ChatDraftScopeInput, kind: Draft
 		runtime.inlineEdit = { pending: runtime.inlineEdit.pending };
 	}
 	emitDraftRuntime(runtime);
-	evictSettledDraftRuntime(key, runtime);
+	evictSettledDraftRuntime(key, runtime, true);
 }
 
 function storageKey(sessionId: string): string {
