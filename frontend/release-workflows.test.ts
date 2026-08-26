@@ -42,8 +42,11 @@ describe("desktop release workflows", () => {
   it("prevents public workflows from mutating releases or release tags", async () => {
     const workflows = await readWorkflows();
     const mutationPatterns = [
-      /gh release (?:create|delete|edit|upload)\b/,
-      /gh api\b[^\n]*(?:--method|-X)\s+(?:DELETE|PATCH|POST|PUT)\b[^\n]*(?:releases|git\/refs\/tags)/,
+      /gh release (?:create|delete|edit|publish|upload)\b/,
+      /gh api(?=[^\n]*(?:releases|git\/refs\/tags))(?=[^\n]*(?:(?:--method|-X)\s+(?:DELETE|PATCH|POST|PUT)))[^\n]*/,
+      /curl(?=[^\n]*(?:releases|git\/refs\/tags))(?=[^\n]*(?:(?:--request|-X)\s*(?:DELETE|PATCH|POST|PUT)))[^\n]*/,
+      /github\.rest\.repos\.(?:createRelease|deleteRelease|updateRelease|uploadReleaseAsset)\b/,
+      /uses:\s*(?:actions\/create-release|ncipollo\/release-action|softprops\/action-gh-release)@/,
       /electron-forge publish/,
       /npm run publish/,
     ];
