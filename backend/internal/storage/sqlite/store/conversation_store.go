@@ -782,6 +782,33 @@ func (s *Store) SettleOrphanedTurns(ctx context.Context, session domain.SessionI
 	return nil
 }
 
+// SettleOrphanedRunningTurns closes only work that reached a dead provider.
+// Authentication recovery uses this variant so messages queued behind the
+// rejected turn remain available for the user's explicit controller resume.
+func (s *Store) SettleOrphanedRunningTurns(
+	ctx context.Context,
+	session domain.SessionID,
+	now time.Time,
+) error {
+	q, unlock := s.conversationWriter(ctx)
+	defer unlock()
+	if err := q.FailOrphanedRunningConversationActivities(ctx,
+		gen.FailOrphanedRunningConversationActivitiesParams{
+			UpdatedAt:          now,
+			HandledBySessionID: session,
+		}); err != nil {
+		return fmt.Errorf("settle orphaned running activities for %s: %w", session, err)
+	}
+	if err := q.SettleOrphanedRunningConversationTurns(ctx,
+		gen.SettleOrphanedRunningConversationTurnsParams{
+			CompletedAt:        sql.NullTime{Time: now, Valid: true},
+			HandledBySessionID: session,
+		}); err != nil {
+		return fmt.Errorf("settle orphaned running turns for %s: %w", session, err)
+	}
+	return nil
+}
+
 // ListVisibleRunningTurnProviderIDs returns the same active-branch running turns,
 // in the same order, that a conversation snapshot exposes to clients. Interrupt
 // uses the full set because a root and nested provider turn may overlap; settling

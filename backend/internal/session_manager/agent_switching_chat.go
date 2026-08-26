@@ -504,7 +504,7 @@ func (m *Manager) rollbackStoppedChatAgentSwitchSource(
 	}
 	_, err = m.resumeChatController(
 		ctx, "restore failed agent switch", current, project,
-		workspaceInfo(current), false, "",
+		workspaceInfo(current), false, "", false,
 	)
 	return err
 }
@@ -606,7 +606,7 @@ func (m *Manager) recoverActivatedChatAgentSwitch(
 		}
 		if _, err := m.resumeChatController(
 			ctx, "recover Chat agent switch", rec, project, workspaceInfo(rec), false,
-			string(sw.TargetGenerationID),
+			string(sw.TargetGenerationID), false,
 		); err != nil {
 			return false, err
 		}
