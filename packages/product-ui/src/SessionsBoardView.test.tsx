@@ -403,7 +403,7 @@ describe("SessionsBoardView", () => {
 		const label = screen.getByText("Fixing CI failures");
 		const status = label.parentElement;
 		expect(status).toHaveAttribute("data-kanban-column", "validating");
-		expect(status).toHaveClass("text-muted-foreground");
+		expect(status).toHaveClass("text-status-needs-you");
 		expect(status).not.toHaveClass("rounded-sm", "border");
 		expect(status?.style.getPropertyValue("--session-status-tone")).toBe("");
 		expect(status?.querySelector(".rounded-full")).toBeNull();

@@ -229,11 +229,11 @@ export function SessionCardView({
 	const badge = getSessionStatusView(session.status, translate);
 	const statusPresentation = session.statusPresentation;
 	const needsAttention =
-		(session.status === "ci_failed" && session.displayStatus !== "Fixing CI failures") ||
-		(session.status === "changes_requested" && session.displayStatus !== "Addressing comments") ||
+		session.status === "ci_failed" ||
+		session.status === "changes_requested" ||
 		session.displayStatus === "Needs human review" ||
 		session.activity?.state === "blocked";
-	const needsAttentionChip = needsAttention && !statusPresentation;
+	const needsAttentionChip = needsAttention;
 	const column = getKanbanColumnView(toKanbanColumn(session.kanbanColumn, session.status), translate);
 	const branch = session.branch ?? "";
 	const showBranch = branch !== "" && !sameLabel(branch, session.title) && !sameLabel(branch, session.id);
