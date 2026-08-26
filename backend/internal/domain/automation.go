@@ -12,11 +12,16 @@ type AutomationRunID string
 type AutomationRunStatus string
 
 const (
-	AutomationRunPending   AutomationRunStatus = "pending"
-	AutomationRunSpawning  AutomationRunStatus = "spawning"
-	AutomationRunRunning   AutomationRunStatus = "running"
+	// AutomationRunPending is waiting to be claimed by the scheduler.
+	AutomationRunPending AutomationRunStatus = "pending"
+	// AutomationRunSpawning has been claimed and is creating its session.
+	AutomationRunSpawning AutomationRunStatus = "spawning"
+	// AutomationRunRunning has an active session.
+	AutomationRunRunning AutomationRunStatus = "running"
+	// AutomationRunCompleted finished successfully.
 	AutomationRunCompleted AutomationRunStatus = "completed"
-	AutomationRunFailed    AutomationRunStatus = "failed"
+	// AutomationRunFailed could not complete successfully.
+	AutomationRunFailed AutomationRunStatus = "failed"
 )
 
 // Automation is the durable user-authored recurring definition. RRuleText is

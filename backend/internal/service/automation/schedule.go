@@ -125,11 +125,11 @@ func cronToRRule(value string) (string, error) {
 	if len(fields) != 5 {
 		return "", fmt.Errorf("cron must contain exactly five fields")
 	}
-	minute, err := boundedInt(fields[0], 0, 59, "minute")
+	minute, err := boundedInt(fields[0], 59, "minute")
 	if err != nil {
 		return "", err
 	}
-	hour, err := boundedInt(fields[1], 0, 23, "hour")
+	hour, err := boundedInt(fields[1], 23, "hour")
 	if err != nil {
 		return "", err
 	}
@@ -153,10 +153,10 @@ func cronToRRule(value string) (string, error) {
 	return strings.Join(parts, ";"), nil
 }
 
-func boundedInt(value string, minValue, maxValue int, label string) (int, error) {
+func boundedInt(value string, maxValue int, label string) (int, error) {
 	n, err := strconv.Atoi(value)
-	if err != nil || n < minValue || n > maxValue {
-		return 0, fmt.Errorf("cron %s must be an integer from %d to %d", label, minValue, maxValue)
+	if err != nil || n < 0 || n > maxValue {
+		return 0, fmt.Errorf("cron %s must be an integer from 0 to %d", label, maxValue)
 	}
 	return n, nil
 }
@@ -168,13 +168,13 @@ func cronWeekdays(value string) ([]string, error) {
 		if len(bounds) > 2 {
 			return nil, fmt.Errorf("unsupported cron weekday %q", token)
 		}
-		start, err := boundedInt(bounds[0], 0, 7, "weekday")
+		start, err := boundedInt(bounds[0], 7, "weekday")
 		if err != nil {
 			return nil, err
 		}
 		end := start
 		if len(bounds) == 2 {
-			end, err = boundedInt(bounds[1], 0, 7, "weekday")
+			end, err = boundedInt(bounds[1], 7, "weekday")
 			if err != nil {
 				return nil, err
 			}

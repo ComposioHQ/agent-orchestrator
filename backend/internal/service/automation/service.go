@@ -183,8 +183,8 @@ func (s *Service) List(ctx context.Context, filter domain.AutomationFilter) (dom
 	}
 	for i := range page.Items {
 		if run, ok := latest[page.Items[i].ID]; ok {
-			copy := run
-			page.Items[i].LatestRun = &copy
+			latestRun := run
+			page.Items[i].LatestRun = &latestRun
 		}
 	}
 	return page, nil

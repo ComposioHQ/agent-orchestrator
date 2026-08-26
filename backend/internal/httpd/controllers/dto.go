@@ -1130,6 +1130,7 @@ type AutomationIDParam struct {
 	AutomationID string `path:"automationId" description:"Automation identifier."`
 }
 
+// ListAutomationsQuery describes filters and pagination for automation definitions.
 type ListAutomationsQuery struct {
 	ProjectID string `query:"projectId,omitempty"`
 	Enabled   *bool  `query:"enabled,omitempty"`
@@ -1137,11 +1138,13 @@ type ListAutomationsQuery struct {
 	Cursor    string `query:"cursor,omitempty"`
 }
 
+// ListAutomationRunsQuery describes pagination for an automation's run history.
 type ListAutomationRunsQuery struct {
 	Limit  int    `query:"limit,omitempty" minimum:"1" maximum:"100"`
 	Cursor string `query:"cursor,omitempty"`
 }
 
+// CreateAutomationRequest is the body accepted when creating an automation.
 type CreateAutomationRequest struct {
 	ProjectID   string `json:"projectId"`
 	DisplayName string `json:"displayName"`
@@ -1154,6 +1157,7 @@ type CreateAutomationRequest struct {
 	Enabled     *bool  `json:"enabled,omitempty"`
 }
 
+// UpdateAutomationRequest is the partial body accepted when updating an automation.
 type UpdateAutomationRequest struct {
 	DisplayName *string `json:"displayName,omitempty"`
 	Prompt      *string `json:"prompt,omitempty"`
@@ -1165,6 +1169,7 @@ type UpdateAutomationRequest struct {
 	Enabled     *bool   `json:"enabled,omitempty"`
 }
 
+// AutomationRunSummaryResponse is the latest-run projection attached to a definition.
 type AutomationRunSummaryResponse struct {
 	ID           string     `json:"id"`
 	Status       string     `json:"status" enum:"pending,spawning,running,completed,failed"`
@@ -1175,6 +1180,7 @@ type AutomationRunSummaryResponse struct {
 	FinishedAt   *time.Time `json:"finishedAt,omitempty"`
 }
 
+// AutomationResponse is the API representation of an automation definition.
 type AutomationResponse struct {
 	ID          string                        `json:"id"`
 	ProjectID   string                        `json:"projectId"`
@@ -1192,13 +1198,18 @@ type AutomationResponse struct {
 	LatestRun   *AutomationRunSummaryResponse `json:"latestRun,omitempty"`
 }
 
+// AutomationEnvelope wraps one automation response.
 type AutomationEnvelope struct {
 	Automation AutomationResponse `json:"automation"`
 }
+
+// ListAutomationsResponse is one page of automation definitions.
 type ListAutomationsResponse struct {
 	Automations []AutomationResponse `json:"automations"`
 	NextCursor  string               `json:"nextCursor,omitempty"`
 }
+
+// AutomationRunResponse is the API representation of one scheduled occurrence.
 type AutomationRunResponse struct {
 	ID             string     `json:"id"`
 	AutomationID   string     `json:"automationId"`
@@ -1214,6 +1225,8 @@ type AutomationRunResponse struct {
 	CreatedAt      time.Time  `json:"createdAt"`
 	UpdatedAt      time.Time  `json:"updatedAt"`
 }
+
+// ListAutomationRunsResponse is one page of automation run history.
 type ListAutomationRunsResponse struct {
 	Runs       []AutomationRunResponse `json:"runs"`
 	NextCursor string                  `json:"nextCursor,omitempty"`

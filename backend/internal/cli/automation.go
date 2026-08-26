@@ -148,7 +148,6 @@ func newAutomationListCommand(ctx *commandContext) *cobra.Command {
 			return writeAutomationJSON(cmd, response)
 		}
 		writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
-		defer writer.Flush()
 		_, _ = fmt.Fprintln(writer, "ID\tNAME\tPROJECT\tENABLED\tNEXT\tLATEST")
 		for _, item := range response.Automations {
 			latest := "-"
@@ -157,7 +156,7 @@ func newAutomationListCommand(ctx *commandContext) *cobra.Command {
 			}
 			_, _ = fmt.Fprintf(writer, "%s\t%s\t%s\t%t\t%s\t%s\n", item.ID, item.DisplayName, item.ProjectID, item.Enabled, formatAutomationTime(item.NextRunAt), latest)
 		}
-		return nil
+		return writer.Flush()
 	}}
 	cmd.Flags().StringVar(&project, "project", "", "Filter by project id")
 	cmd.Flags().BoolVar(&enabled, "enabled", false, "Filter by enabled state")
@@ -191,8 +190,8 @@ func newAutomationUpdateCommand(ctx *commandContext) *cobra.Command {
 		changed := false
 		stringFlag := func(flag string, value string, target **string) {
 			if cmd.Flags().Changed(flag) {
-				copy := value
-				*target = &copy
+				flagValue := value
+				*target = &flagValue
 				changed = true
 			}
 		}
@@ -281,7 +280,6 @@ func newAutomationRunsCommand(ctx *commandContext) *cobra.Command {
 			return writeAutomationJSON(cmd, response)
 		}
 		writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
-		defer writer.Flush()
 		_, _ = fmt.Fprintln(writer, "SCHEDULED\tSTATUS\tSESSION\tERROR")
 		for _, run := range response.Runs {
 			_, _ = fmt.Fprintf(writer, "%s\t%s\t%s\t%s\n", formatAutomationTime(run.ScheduledFor), run.Status, emptyDash(run.SessionID), emptyDash(run.ErrorMessage))
@@ -289,7 +287,7 @@ func newAutomationRunsCommand(ctx *commandContext) *cobra.Command {
 		if response.NextCursor != "" {
 			_, _ = fmt.Fprintf(writer, "next cursor: %s\n", response.NextCursor)
 		}
-		return nil
+		return writer.Flush()
 	}}
 	cmd.Flags().IntVar(&limit, "limit", 50, "Maximum runs (1-100)")
 	cmd.Flags().StringVar(&cursor, "cursor", "", "Opaque page cursor")
