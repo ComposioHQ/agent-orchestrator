@@ -389,35 +389,26 @@ function BoardPullRequestGroup({
 	labels: BoardPullRequestLabels;
 }) {
 	const statusLabel = labels.states[group.state];
-	const singlePullRequest = group.prs.length === 1;
 	const linkClassName = "pr-link hover:underline";
-	const details = (
-		<>
+	return (
+		<div className="flex min-w-0 items-center gap-x-2">
+			{group.prs.map((pr) => {
+				const hasComments = (pr.commentCount ?? 0) > 0;
+				return (
+					<Fragment key={pr.url || pr.number}>
+						<ExternalLink
+							ariaLabel={`PR #${pr.number} ${statusLabel}`}
+							className={cn("inline-flex min-w-0 items-center gap-x-2 py-0.5", linkClassName)}
+							href={pr.url}
+							stopPropagation
+						>
 			<PullRequestLifecycleIcon state={group.state} />
 			<span className="sr-only">{labels.short}</span>
-			<span className="inline-flex min-w-0 items-center gap-x-1 font-mono text-xs">
-				{group.prs.map((pr, index) => (
-					<span className="inline-flex items-center" key={pr.url || pr.number}>
-						{singlePullRequest ? (
-							<span>#{pr.number}</span>
-						) : (
-							<ExternalLink
-								className={cn("font-medium text-foreground underline-offset-2 hover:underline", linkClassName)}
-								href={pr.url}
-								stopPropagation
-							>
-								#{pr.number}
-							</ExternalLink>
-						)}
-						{index < group.prs.length - 1 ? "," : null}
-					</span>
-				))}
-			</span>
+			<span className="font-mono text-xs font-medium text-foreground">#{pr.number}</span>
 			<span className="sr-only">{statusLabel}</span>
-			{group.prs.some((pr) => (pr.commentCount ?? 0) > 0) ? (
+			{hasComments ? (
 				<div className="-ml-0.5 flex shrink-0 items-center pl-1">
-					{group.prs
-						.flatMap((pr) => pr.reviewerAvatars ?? [])
+					{(pr.reviewerAvatars ?? [])
 						.slice(0, 3)
 						.map((avatar, index) => (
 							<img
@@ -429,51 +420,21 @@ function BoardPullRequestGroup({
 						))}
 				</div>
 			) : null}
-			{group.prs.some((pr) => (pr.commentCount ?? 0) > 0) ? (
-				<span className="ml-auto inline-flex shrink-0 items-center gap-1 text-xs tabular-nums text-muted-foreground">
-					<MessageSquareIcon aria-hidden="true" className="size-icon-2xs" />
-					{singlePullRequest ? (
-						<span>{group.prs[0]?.commentCount}</span>
-					) : (
-						<span className="inline-flex items-center gap-1">
-							{group.prs
-								.filter((pr) => (pr.commentCount ?? 0) > 0)
-								.map((pr, index, comments) => (
-									<span className="inline-flex items-center" key={`comments-${pr.url || pr.number}`}>
-										<ExternalLink
-											ariaLabel={`${pr.commentCount} comments on PR #${pr.number}`}
-											className={cn("font-medium text-foreground underline-offset-2 hover:underline", linkClassName)}
-											href={pr.url}
-											stopPropagation
-										>
-											{pr.commentCount}
-										</ExternalLink>
-										{index < comments.length - 1 ? "," : null}
-									</span>
-								))}
-						</span>
-					)}
-				</span>
-			) : null}
-		</>
-	);
-	return (
-		<div
-			aria-label={`${group.prs.map((pr) => `#${pr.number}`).join(", ")} ${statusLabel}`}
-			className="flex min-w-0"
-		>
-			{singlePullRequest ? (
-				<ExternalLink
-					ariaLabel={`PR #${group.prs[0]?.number} ${statusLabel}`}
-					className={cn("flex w-full min-w-0 items-center gap-x-2 py-0.5", linkClassName)}
-					href={group.prs[0]?.url ?? "#"}
-					stopPropagation
-				>
-					{details}
-				</ExternalLink>
-			) : (
-				<div className="flex w-full min-w-0 items-center gap-x-2">{details}</div>
-			)}
+						</ExternalLink>
+						{hasComments ? (
+							<ExternalLink
+								ariaLabel={`${pr.commentCount} comments on PR #${pr.number}`}
+								className={cn("ml-auto inline-flex shrink-0 items-center gap-1 text-xs tabular-nums text-muted-foreground", linkClassName)}
+								href={pr.url}
+								stopPropagation
+							>
+								<MessageSquareIcon aria-hidden="true" className="size-icon-2xs" />
+								{pr.commentCount}
+							</ExternalLink>
+						) : null}
+					</Fragment>
+				);
+			})}
 		</div>
 	);
 }
