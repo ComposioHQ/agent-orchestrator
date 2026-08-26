@@ -47,6 +47,15 @@ export function HumanMessageEditor({
 	const busyMessage = busy ? t("chat.edit.stopCurrentTurn") : undefined;
 
 	useEffect(() => {
+		// React can preserve this editor while its Chat surface is hidden. If another
+		// committed surface advances the durable revision in that interval, the parent
+		// restores the newer text when this surface reconnects and it must replace the
+		// stale local seed. Ordinary typing already publishes the same text upward, so
+		// this equality-preserving update does not reset an active edit.
+		setDraft(text);
+	}, [text]);
+
+	useEffect(() => {
 		const node = textarea.current;
 		if (!node) return;
 		node.style.height = "0px";

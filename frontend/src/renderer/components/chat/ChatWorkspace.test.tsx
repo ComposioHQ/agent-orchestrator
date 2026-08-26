@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { Activity } from "react";
 import { typeInLexicalEditor } from "../../test/lexical";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatWorkspace, promptSpacerHeight, promptTopInset } from "./ChatWorkspace";
@@ -1907,6 +1908,104 @@ describe("ChatWorkspace message actions", () => {
 		expect(restored).toHaveValue("later edit revision");
 		expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 		await waitFor(() => expect(getChatDraftBoundary(snapshot.sessionId)).toBeUndefined());
+	});
+
+	it("does not expose an accepted inline edit when a hidden replacement committed a later revision", async () => {
+		const snapshot = idleSnapshot();
+		let acceptFirstEdit!: () => void;
+		const firstEditPending = new Promise<void>((resolve) => {
+			acceptFirstEdit = resolve;
+		});
+		const onEditMessage = vi
+			.fn()
+			.mockImplementationOnce(() => firstEditPending)
+			.mockResolvedValue(undefined);
+		const common = { snapshot, onEditMessage };
+		const surfaces = (
+			showOriginal: boolean,
+			replacementMode?: "hidden" | "visible",
+		) => (
+			<>
+				{showOriginal ? (
+					<div data-testid="original-inline-edit-surface">
+						<ChatWorkspace {...common} />
+					</div>
+				) : null}
+				{replacementMode ? (
+					<Activity key="replacement" mode={replacementMode}>
+						<div data-testid="replacement-inline-edit-surface">
+							<ChatWorkspace {...common} />
+						</div>
+					</Activity>
+				) : null}
+			</>
+		);
+
+		const view = render(surfaces(true));
+		const originalSurface = within(screen.getByTestId("original-inline-edit-surface"));
+		fireEvent.click(originalSurface.getAllByRole("button", { name: "Edit user message" })[0]!);
+		const originalEditor = originalSurface.getByRole("textbox", { name: "Edit message" });
+		fireEvent.change(originalEditor, { target: { value: "accepted inline edit" } });
+
+		// Mount once before hiding so React preserves a replacement editor whose local
+		// state was seeded from the exact revision that is about to be accepted.
+		await act(async () => {
+			view.rerender(surfaces(true, "visible"));
+		});
+		const replacementSurface = within(
+			await screen.findByTestId("replacement-inline-edit-surface"),
+		);
+		expect(replacementSurface.getByRole("textbox", { name: "Edit message" })).toHaveValue(
+			"accepted inline edit",
+		);
+		await act(async () => {
+			view.rerender(surfaces(true, "hidden"));
+		});
+
+		// The edit event was already queued when submission locked the surface. React
+		// processes both in one batch: A is delivered, while B becomes the later durable
+		// revision that accepted-clear must preserve.
+		await act(async () => {
+			fireEvent.keyDown(originalEditor, { key: "Enter", ctrlKey: true });
+			fireEvent.change(originalEditor, { target: { value: "later inline edit" } });
+		});
+		await waitFor(() =>
+			expect(onEditMessage).toHaveBeenCalledWith(
+				"turn-1",
+				"accepted inline edit",
+				expect.any(String),
+			),
+		);
+		expect(readChatSessionDraft(snapshot.sessionId).inlineEdit?.text).toBe(
+			"later inline edit",
+		);
+
+		await act(async () => acceptFirstEdit());
+		await waitFor(() => expect(originalEditor).not.toBeDisabled());
+		expect(originalEditor).toHaveValue("later inline edit");
+		expect(readChatSessionDraft(snapshot.sessionId).inlineEdit?.text).toBe(
+			"later inline edit",
+		);
+		expect(getChatInlineEditMutation(snapshot.sessionId)).toEqual({ pending: false });
+
+		await act(async () => {
+			view.rerender(surfaces(false, "visible"));
+		});
+		const committedReplacement = within(
+			screen.getByTestId("replacement-inline-edit-surface"),
+		).getByRole("textbox", { name: "Edit message" });
+		await waitFor(() => expect(committedReplacement).toHaveValue("later inline edit"));
+		expect(onEditMessage).toHaveBeenCalledTimes(1);
+
+		fireEvent.keyDown(committedReplacement, { key: "Enter", ctrlKey: true });
+		await waitFor(() => expect(onEditMessage).toHaveBeenCalledTimes(2));
+		expect(onEditMessage.mock.calls[1]).toEqual([
+			"turn-1",
+			"later inline edit",
+			expect.any(String),
+		]);
+		expect(onEditMessage.mock.calls[1]?.[2]).not.toBe(onEditMessage.mock.calls[0]?.[2]);
+		await waitFor(() => expect(committedReplacement).not.toBeInTheDocument());
 	});
 
 	it("locks an accepted inline edit whose durable clear failed and clears without redispatch", async () => {
