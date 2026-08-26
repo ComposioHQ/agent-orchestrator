@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -191,30 +192,51 @@ func (c *conn) readLoop(r io.Reader) {
 }
 
 // notificationFromFrame preserves exact canonical method/params members before
-// encoding/json can collapse duplicates or case aliases. An ambiguous frame that
-// contains a canonical error method is still delivered for readable diagnostics;
-// its raw frame later prevents it from minting a trusted recovery action.
+// encoding/json can collapse duplicates or case aliases. Ambiguous non-error
+// notifications are dropped rather than projected as an arbitrary state change.
+// A frame containing a canonical error method is still delivered for readable
+// diagnostics; its raw frame later prevents it from minting a trusted action.
 func notificationFromFrame(raw json.RawMessage, decoded frame) (notification, bool) {
 	members, parsed := readJSONObjectMembers(raw)
 	method := ""
+	exactMethods := 0
+	hasCanonicalError := false
+	hasMethodAlias := false
 	var params json.RawMessage
+	exactParams := 0
+	hasParamsAlias := false
 	if parsed {
 		for _, member := range members {
 			switch member.name {
 			case "method":
+				exactMethods++
 				var candidate string
 				if json.Unmarshal(member.value, &candidate) != nil {
 					continue
+				}
+				if candidate == codexproto.MethodError {
+					hasCanonicalError = true
 				}
 				if method == "" || candidate == codexproto.MethodError {
 					method = candidate
 				}
 			case "params":
+				exactParams++
 				if params == nil {
 					params = append(json.RawMessage(nil), member.value...)
 				}
+			default:
+				if strings.EqualFold(member.name, "method") {
+					hasMethodAlias = true
+				}
+				if strings.EqualFold(member.name, "params") {
+					hasParamsAlias = true
+				}
 			}
 		}
+	}
+	if (exactMethods > 1 || hasMethodAlias || exactParams > 1 || hasParamsAlias) && !hasCanonicalError {
+		return notification{}, false
 	}
 	if method == "" {
 		method = decoded.Method

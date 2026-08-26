@@ -182,6 +182,63 @@ func TestNotificationsAreFannedOut(t *testing.T) {
 	}
 }
 
+func TestAmbiguousNonErrorNotificationEnvelopesAreDropped(t *testing.T) {
+	tests := []struct {
+		name  string
+		frame string
+	}{
+		{
+			name:  "duplicate method started then completed",
+			frame: `{"method":"turn/started","method":"turn/completed","params":{"turn":{"id":"turn-1","status":"completed"}}}`,
+		},
+		{
+			name:  "duplicate method completed then started",
+			frame: `{"method":"turn/completed","method":"turn/started","params":{"threadId":"thread-1","turn":{"id":"turn-1"}}}`,
+		},
+		{
+			name:  "method canonical then case alias",
+			frame: `{"method":"turn/started","Method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"turn-1"}}}`,
+		},
+		{
+			name:  "method case alias then canonical",
+			frame: `{"Method":"turn/completed","method":"turn/started","params":{"threadId":"thread-1","turn":{"id":"turn-1"}}}`,
+		},
+		{
+			name:  "duplicate params first then second",
+			frame: `{"method":"turn/started","params":{"threadId":"thread-1","turn":{"id":"turn-first"}},"params":{"threadId":"thread-1","turn":{"id":"turn-second"}}}`,
+		},
+		{
+			name:  "duplicate params second then first",
+			frame: `{"method":"turn/started","params":{"threadId":"thread-1","turn":{"id":"turn-second"}},"params":{"threadId":"thread-1","turn":{"id":"turn-first"}}}`,
+		},
+		{
+			name:  "params canonical then case alias",
+			frame: `{"method":"turn/started","params":{"threadId":"thread-1","turn":{"id":"turn-canonical"}},"Params":{"threadId":"thread-1","turn":{"id":"turn-alias"}}}`,
+		},
+		{
+			name:  "params case alias then canonical",
+			frame: `{"method":"turn/started","Params":{"threadId":"thread-1","turn":{"id":"turn-alias"}},"params":{"threadId":"thread-1","turn":{"id":"turn-canonical"}}}`,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c, fake := newFakeAppServer(t, rejectAllServerRequests)
+			fake.push(tc.frame)
+			fake.push(`{"method":"item/agentMessage/delta","params":{"itemId":"sentinel","delta":"ok"}}`)
+
+			select {
+			case got := <-c.notifs():
+				if got.Method != "item/agentMessage/delta" {
+					t.Fatalf("first delivered notification = %q, want valid sentinel after ambiguous envelope was dropped", got.Method)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("timed out waiting for valid notification after ambiguous envelope")
+			}
+		})
+	}
+}
+
 func TestAmbiguousErrorNotificationFrameStaysReadableButCannotMintAction(t *testing.T) {
 	const (
 		positive = `{"error":{"message":"Reconnecting","codexErrorInfo":{"responseStreamDisconnected":{"httpStatusCode":429}},"additionalDetails":"stream disconnected before completion: You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing"},"threadId":"th","turnId":"tu","willRetry":false}`
