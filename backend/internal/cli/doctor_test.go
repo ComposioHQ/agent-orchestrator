@@ -74,8 +74,36 @@ func TestDoctorChecksTmuxVersion(t *testing.T) {
 	})
 
 	check := findDoctorCheck(t, c.runDoctor(context.Background()), "tmux")
-	if check.Level != doctorPass || !strings.Contains(check.Message, "3.3a") {
-		t.Fatalf("tmux check = %+v, want PASS with version", check)
+	if check.Level != doctorPass || !strings.Contains(check.Message, "3.3a") || !strings.Contains(check.Message, "system for this ao process") {
+		t.Fatalf("tmux check = %+v, want PASS with system source and version", check)
+	}
+}
+
+func TestDoctorPrefersAndReportsConfiguredTmux(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("ao doctor emits a conpty check on Windows, not tmux")
+	}
+	setConfigEnv(t)
+	bundled := filepath.Join(t.TempDir(), "resources", "tmux", "bin", "tmux")
+	c := doctorContext(t, map[string]string{"git": "/bin/git", bundled: bundled, "tmux": "/bin/tmux"}, func(_ context.Context, name string, args ...string) ([]byte, error) {
+		switch name {
+		case "/bin/git":
+			return []byte("git version 2.43.0\n"), nil
+		case bundled:
+			if len(args) != 1 || args[0] != "-V" {
+				t.Fatalf("unexpected tmux command: %s %v", name, args)
+			}
+			return []byte("tmux 3.5a\n"), nil
+		default:
+			t.Fatalf("unexpected command: %s %v", name, args)
+			return nil, nil
+		}
+	})
+	t.Setenv("AO_TMUX_BINARY", bundled)
+
+	check := findDoctorCheck(t, c.runDoctor(context.Background()), "tmux")
+	if check.Level != doctorPass || !strings.Contains(check.Message, bundled) || !strings.Contains(check.Message, "configured for this ao process") || !strings.Contains(check.Message, "3.5a") {
+		t.Fatalf("tmux check = %+v, want PASS with configured source and version", check)
 	}
 }
 
@@ -111,6 +139,9 @@ func TestDoctorWarnsWhenTmuxMissing(t *testing.T) {
 	check := findDoctorCheck(t, c.runDoctor(context.Background()), "tmux")
 	if check.Level != doctorWarn {
 		t.Fatalf("tmux check = %+v, want WARN", check)
+	}
+	if !strings.Contains(check.Message, "no configured, bundled, or system tmux found") {
+		t.Fatalf("tmux check = %+v, want all lookup locations reported missing", check)
 	}
 }
 
@@ -505,6 +536,7 @@ func TestDoctorIncludesAOBinaryCheck(t *testing.T) {
 
 func doctorContext(t *testing.T, paths map[string]string, commandOutput func(context.Context, string, ...string) ([]byte, error)) *commandContext {
 	t.Helper()
+	t.Setenv("AO_TMUX_BINARY", "")
 	clearDoctorGitHubEnv(t)
 	clearDoctorGitLabEnv(t)
 	deps := Deps{

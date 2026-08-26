@@ -36,7 +36,7 @@ import { isLinuxPlatform, isMacPlatform } from "../lib/platform";
 import { aoBridge } from "../lib/bridge";
 import { handleTerminalTabListKeyDown } from "../lib/terminal-tabs";
 import { cn } from "../lib/utils";
-import { useUiStore, type Theme } from "../stores/ui-store";
+import { sidebarOccupiesLayout, useUiStore, type Theme } from "../stores/ui-store";
 import type { TerminalTarget } from "../types/terminal";
 import {
 	isOrchestratorSession,
@@ -142,7 +142,7 @@ export function CenterPane({
 	const [switchSelectorOpen, setSwitchSelectorOpen] = useState(false);
 	const [switchSelectorContainer, setSwitchSelectorContainer] = useState<HTMLDivElement | null>(null);
 	const [terminalOrder, setTerminalOrder] = useState<TerminalOrder | null>(null);
-	const isSidebarOpen = useUiStore((state) => state.isSidebarOpen);
+	const isSidebarOpen = useUiStore(sidebarOccupiesLayout);
 	const sessionId = session?.id;
 	const auxiliaryTerminals = useMemo<AuxiliaryTerminal[]>(
 		() => [
@@ -608,6 +608,7 @@ export function CenterPane({
 			{session ? (
 				<TerminalSwitchAgentButton
 					key={session.id}
+					agentSwitch={selectedCurrentAgentSwitch}
 					container={switchSelectorContainer}
 					onOpenChange={setSwitchSelectorOpen}
 					open={switchSelectorOpen}
@@ -874,10 +875,10 @@ function SessionPaneTab({
 		<span
 			data-terminal-role={connected ? undefined : "primary"}
 			className={cn(
-				"group relative inline-flex min-w-shell-tab-min shrink-0 self-stretch items-center gap-1.5 transition-colors",
+				"group relative inline-flex self-stretch items-center gap-1.5 transition-colors",
 				connected
-					? "w-shell-tab-connected border-x border-transparent px-2"
-					: "border-r border-border bg-surface px-3 text-foreground",
+					? "w-shell-tab-connected min-w-shell-tab-min shrink-0 border-x border-transparent px-2"
+					: "min-w-0 shrink overflow-hidden border-r border-border bg-surface px-3 text-foreground",
 				connected
 					? isActive
 						? "border-border-strong bg-overlay text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80"

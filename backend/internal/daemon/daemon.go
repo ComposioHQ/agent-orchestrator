@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/modelcatalog"
 	chatdriverregistry "github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/registry"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/runtimeselect"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/systemexec"
 	"github.com/aoagents/agent-orchestrator/backend/internal/autoreview"
 	"github.com/aoagents/agent-orchestrator/backend/internal/browserruntime"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
@@ -28,6 +30,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/controllers"
 	"github.com/aoagents/agent-orchestrator/backend/internal/mobilebridge"
 	"github.com/aoagents/agent-orchestrator/backend/internal/notify"
+	"github.com/aoagents/agent-orchestrator/backend/internal/observe/sentryobs"
 	usagepipeline "github.com/aoagents/agent-orchestrator/backend/internal/observe/usage"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/presence"
@@ -44,11 +47,29 @@ import (
 	prsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/pr"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 	settingssvc "github.com/aoagents/agent-orchestrator/backend/internal/service/settings"
+	"github.com/aoagents/agent-orchestrator/backend/internal/service/systemcheck"
+	"github.com/aoagents/agent-orchestrator/backend/internal/service/systeminstall"
 	usagesvc "github.com/aoagents/agent-orchestrator/backend/internal/service/usage"
 	"github.com/aoagents/agent-orchestrator/backend/internal/skillassets"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 	"github.com/aoagents/agent-orchestrator/backend/internal/terminal"
 )
+
+// sentryEnvironment maps the daemon's app version to a Sentry environment so a
+// nightly/edge build's issues do not mix with stable release health.
+func sentryEnvironment(version string) string {
+	v := strings.ToLower(strings.TrimSpace(version))
+	switch {
+	case v == "":
+		return "unknown"
+	case strings.Contains(v, "nightly"):
+		return "nightly"
+	case strings.Contains(v, "edge") || strings.Contains(v, "pr"):
+		return "development"
+	default:
+		return "stable"
+	}
+}
 
 // Run starts the daemon and blocks until it exits. SIGINT/SIGTERM drive
 // graceful shutdown through the HTTP server and background workers.
@@ -114,6 +135,21 @@ func Run() error {
 
 	telemetrySink := newTelemetrySink(cfg, store, log)
 	defer func() { _ = telemetrySink.Close(context.Background()) }()
+	// Daemon Sentry: captures genuine 5xx/panics with their Go stack. Gated on
+	// the same consent switch as the remote telemetry sink (cfg.Telemetry.Events)
+	// so a user who has turned telemetry off never has faults reported, and a
+	// no-op besides unless a DSN is set. Flushed on shutdown so buffered faults
+	// send.
+	if cfg.Telemetry.Events {
+		if err := sentryobs.Init(sentryobs.Config{
+			DSN:         cfg.Telemetry.SentryDSN,
+			Release:     cfg.Telemetry.AppVersion,
+			Environment: sentryEnvironment(cfg.Telemetry.AppVersion),
+		}); err != nil {
+			log.Warn("daemon sentry disabled", "err", err)
+		}
+		defer sentryobs.Flush(2 * time.Second)
+	}
 	telemetrySink.Emit(context.Background(), ports.TelemetryEvent{
 		Name:       "ao.daemon.started",
 		Source:     "daemon",
@@ -209,14 +245,15 @@ func Run() error {
 				return chatsvc.ConversationRows{}, err
 			}
 			return chatsvc.ConversationRows{
-				Conversation:               rows.Conversation,
-				ActiveBranch:               rows.ActiveBranch,
-				EditFloorSequence:          rows.EditFloorSequence,
-				Turns:                      rows.Turns,
-				Messages:                   rows.Messages,
-				Activities:                 rows.Activities,
-				BranchPoints:               rows.BranchPoints,
-				BranchedFromEarlierMessage: rows.BranchedFromEarlierMessage,
+				Conversation:                     rows.Conversation,
+				ActiveBranch:                     rows.ActiveBranch,
+				EditFloorSequence:                rows.EditFloorSequence,
+				NativeForkAvailableAfterSequence: rows.NativeForkAvailableAfterSequence,
+				Turns:                            rows.Turns,
+				Messages:                         rows.Messages,
+				Activities:                       rows.Activities,
+				BranchPoints:                     rows.BranchPoints,
+				BranchedFromEarlierMessage:       rows.BranchedFromEarlierMessage,
 			}, nil
 		}),
 		PageReader: chatsvc.SnapshotPageReaderFunc(func(ctx context.Context, conversationID string, beforeSequence, limit int64) (chatsvc.ConversationRows, error) {
@@ -225,16 +262,17 @@ func Run() error {
 				return chatsvc.ConversationRows{}, err
 			}
 			return chatsvc.ConversationRows{
-				Conversation:               rows.Conversation,
-				ActiveBranch:               rows.ActiveBranch,
-				EditFloorSequence:          rows.EditFloorSequence,
-				Turns:                      rows.Turns,
-				Messages:                   rows.Messages,
-				Activities:                 rows.Activities,
-				BranchPoints:               rows.BranchPoints,
-				BranchedFromEarlierMessage: rows.BranchedFromEarlierMessage,
-				OldestSequence:             rows.OldestSequence,
-				HasMoreBefore:              rows.HasMoreBefore,
+				Conversation:                     rows.Conversation,
+				ActiveBranch:                     rows.ActiveBranch,
+				EditFloorSequence:                rows.EditFloorSequence,
+				NativeForkAvailableAfterSequence: rows.NativeForkAvailableAfterSequence,
+				Turns:                            rows.Turns,
+				Messages:                         rows.Messages,
+				Activities:                       rows.Activities,
+				BranchPoints:                     rows.BranchPoints,
+				BranchedFromEarlierMessage:       rows.BranchedFromEarlierMessage,
+				OldestSequence:                   rows.OldestSequence,
+				HasMoreBefore:                    rows.HasMoreBefore,
 			}, nil
 		}),
 		Drivers: chatDrivers,
@@ -271,12 +309,10 @@ func Run() error {
 	}
 	lcStack.trackerDone = startTrackerIntake(ctx, store, sessionSvc, log)
 
-	agentSvc := agentsvc.NewWithDeps(agentsvc.Deps{Cache: store, Discoverer: modelcatalog.Discoverer{}, Projects: store})
-	go func() {
-		if _, err := agentSvc.Refresh(ctx); err != nil {
-			log.Warn("initial agent catalog refresh failed", "err", err)
-		}
-	}()
+	agentSvc := agentsvc.NewWithDeps(agentsvc.Deps{Cache: store, InventoryCache: store, Discoverer: modelcatalog.Discoverer{}, Projects: store, Sessions: store})
+	hostCommands := systemexec.Adapter{}
+	systemChecks := systemcheck.New(agentSvc, hostCommands)
+	systemInstall := systeminstall.New(hostCommands, hostCommands)
 
 	// Connect Mobile: the bridge service needs the LAN listener, but the LAN
 	// listener needs the built router's handler, which only exists once srv is
@@ -342,12 +378,12 @@ func Run() error {
 		log.Warn("pr action service disabled: no usable SCM provider")
 	}
 
-	// Durable agent-switch reconciliation is a startup safety boundary. The
-	// in-memory input fence disappeared with the previous daemon; if AO cannot
-	// prove and recover every active saga, do not bind a usable API with user
-	// input accidentally reopened. This runs after session-scoped shell wiring
-	// (ordinary recovery may tear down a worktree) but before HTTP is bound.
-	if reconcileErr := sessMgr.Reconcile(ctx); reconcileErr != nil {
+	// Durable agent-switch and interface-transition recovery is the startup
+	// safety boundary. The in-memory input fence disappeared with the previous
+	// daemon; if AO cannot prove and close every active saga, do not bind a
+	// usable API with user input accidentally reopened. Runtime/worktree
+	// restoration follows in the background after the listener is live.
+	if reconcileErr := sessMgr.ReconcileStartupSafety(ctx); reconcileErr != nil {
 		stop()
 		managedPreview.Close()
 		lcStack.Stop()
@@ -355,9 +391,6 @@ func Run() error {
 			log.Error("cdc pipeline shutdown", "err", cdcErr)
 		}
 		return fmt.Errorf("reconcile sessions on boot: %w", reconcileErr)
-	}
-	if reconcileErr := lcStack.ReconcileRuntime(ctx); reconcileErr != nil {
-		log.Error("reconcile agent processes on boot failed", "err", reconcileErr)
 	}
 	autoReview := autoreview.New(store, reviewSvc, autoreview.Config{Logger: log})
 	lcStack.autoReviewDone = autoReview.Start(ctx)
@@ -404,7 +437,10 @@ func Run() error {
 	srv, err := httpd.NewWithDeps(cfg, log, termMgr, httpd.APIDeps{
 		Projects:           projectSvc,
 		Agents:             agentSvc,
+		SystemChecks:       systemChecks,
+		Installer:          systemInstall,
 		Sessions:           sessionSvc,
+		DesktopWorkspaces:  sessionSvc,
 		PRs:                prActions,
 		Reviews:            reviewSvc,
 		Notifications:      notifier,
@@ -497,7 +533,20 @@ func Run() error {
 		}()
 	}
 
-	runErr := srv.Run(ctx)
+	var startupReconcileDone <-chan struct{}
+	runErr := srv.RunWithReady(ctx, func() {
+		done := make(chan struct{})
+		startupReconcileDone = done
+		go func() {
+			defer close(done)
+			if reconcileErr := sessMgr.ReconcileBackground(ctx); reconcileErr != nil {
+				log.Error("background session reconciliation on boot failed", "err", reconcileErr)
+			}
+			if reconcileErr := lcStack.ReconcileRuntime(ctx); reconcileErr != nil {
+				log.Error("background agent-process reconciliation on boot failed", "err", reconcileErr)
+			}
+		}()
+	})
 
 	// Both graceful shutdown paths (SIGTERM and POST /shutdown) funnel through
 	// srv.Run returning. We deliberately do NOT tear down sessions here: they
@@ -510,6 +559,9 @@ func Run() error {
 	// via defer) avoids the LIFO trap where a Stop() that blocks on ctx-cancel
 	// runs before the cancel: a non-signal exit path would hang otherwise.
 	stop()
+	if startupReconcileDone != nil {
+		<-startupReconcileDone
+	}
 	switchStopCtx, switchCancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	if err := sessMgr.WaitAgentSwitchWorkers(switchStopCtx); err != nil {
 		log.Error("agent switch worker shutdown", "err", err)

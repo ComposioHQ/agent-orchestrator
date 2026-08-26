@@ -24,10 +24,77 @@ var expectedUsageTableColumns = map[string][]string{
 		"failure_count", "anomaly_count", "next_retry_at", "last_error_code", "updated_at",
 	},
 	"model_usage_events": {
-		"id", "binding_id", "usage_source_id", "model_id", "input_tokens", "uncached_input_tokens",
-		"cache_read_tokens", "cache_write_tokens", "output_tokens", "reasoning_tokens",
-		"source_event_key",
+		"id", "binding_id", "usage_source_id", "provider_id", "model_id",
+		"input_tokens", "input_provenance", "cached_input_tokens", "cached_input_provenance",
+		"uncached_input_tokens", "uncached_input_provenance",
+		"output_tokens", "output_provenance", "source_event_key", "created_at",
 	},
+	"openai_usage_event_details": {
+		"event_id", "openai_reasoning_output_tokens", "openai_cache_write_input_tokens", "openai_reported_total_tokens",
+	},
+	"anthropic_usage_event_details": {
+		"event_id", "anthropic_direct_uncached_input_tokens", "anthropic_cache_creation_input_tokens",
+		"anthropic_cache_creation_5m_input_tokens", "anthropic_cache_creation_1h_input_tokens",
+	},
+}
+
+func TestMigrateDefaultsSessionInterfaceToChat(t *testing.T) {
+	db := openMigratedTestDB(t)
+
+	var mode string
+	if err := db.QueryRow(`SELECT default_session_mode FROM app_settings WHERE id = 1`).Scan(&mode); err != nil {
+		t.Fatalf("read default session mode: %v", err)
+	}
+	if mode != "chat" {
+		t.Fatalf("default session mode = %q, want chat", mode)
+	}
+}
+
+func TestMigrateUpdatesExistingSessionInterfaceDefaultToChat(t *testing.T) {
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "ao.db")+pragmas)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	upTo(t, db, 103)
+
+	if _, err := db.Exec(`UPDATE app_settings SET default_session_mode = 'tui' WHERE id = 1`); err != nil {
+		t.Fatalf("seed existing TUI default: %v", err)
+	}
+	if err := migrate(db); err != nil {
+		t.Fatalf("migrate existing database: %v", err)
+	}
+
+	var mode string
+	if err := db.QueryRow(`SELECT default_session_mode FROM app_settings WHERE id = 1`).Scan(&mode); err != nil {
+		t.Fatalf("read default session mode: %v", err)
+	}
+	if mode != "chat" {
+		t.Fatalf("default session mode = %q, want chat after upgrade", mode)
+	}
+}
+
+func TestMigrateRollbackPreservesSessionInterfacePreference(t *testing.T) {
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "ao.db")+pragmas)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	upTo(t, db, 103)
+
+	if _, err := db.Exec(`UPDATE app_settings SET default_session_mode = 'chat' WHERE id = 1`); err != nil {
+		t.Fatalf("seed deliberate Chat default: %v", err)
+	}
+	upTo(t, db, 105)
+	downTo(t, db, 104)
+
+	var mode string
+	if err := db.QueryRow(`SELECT default_session_mode FROM app_settings WHERE id = 1`).Scan(&mode); err != nil {
+		t.Fatalf("read default session mode: %v", err)
+	}
+	if mode != "chat" {
+		t.Fatalf("default session mode after rollback = %q, want preserved chat", mode)
+	}
 }
 
 func TestUsageTablesKeepOnlyDurableCollectionState(t *testing.T) {
@@ -132,6 +199,86 @@ VALUES (1, 1, 1, 'gpt-test', 120, 100, 20, 0, 30, 'event-1');
 		).Scan(&staleReferences); err != nil || staleReferences != 0 {
 			t.Fatalf("%s stale compatibility foreign keys = %d, err = %v", table, staleReferences, err)
 		}
+	}
+}
+
+func TestCanonicalUsageMigrationBackfillsProviderAwareMetrics(t *testing.T) {
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "ao.db")+pragmas)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	db.SetMaxOpenConns(1)
+	t.Cleanup(func() { _ = db.Close() })
+	upTo(t, db, 100)
+	now := time.Unix(1700000000, 0).UTC()
+	if _, err := db.Exec(`
+INSERT INTO projects (id, path, registered_at, config)
+VALUES ('usage', '/repo/usage', ?, '{}');
+INSERT INTO sessions (id, project_id, num, harness, activity_last_at, created_at, updated_at)
+VALUES ('usage-1', 'usage', 1, 'codex', ?, ?, ?),
+       ('usage-2', 'usage', 2, 'claude-code', ?, ?, ?);
+INSERT INTO usage_bindings (id, session_id, harness, native_root_id, state, updated_at)
+VALUES (1, 'usage-1', 'codex', 'codex-root', 'complete', ?),
+       (2, 'usage-2', 'claude-code', 'claude-root', 'complete', ?);
+INSERT INTO usage_sources (id, binding_id, kind, artifact_path, state, updated_at)
+VALUES (1, 1, 'codex_rollout', '/tmp/codex.jsonl', 'complete', ?),
+       (2, 2, 'claude_main', '/tmp/claude.jsonl', 'complete', ?);
+INSERT INTO model_usage_events
+    (id, binding_id, usage_source_id, model_id, input_tokens, uncached_input_tokens,
+     cache_read_tokens, cache_write_tokens, output_tokens, reasoning_tokens, source_event_key)
+VALUES (1, 1, 1, 'gpt-test', 100, 30, 60, 10, 20, 3, 'codex-event'),
+       (2, 2, 2, 'claude-test', 100, 10, 50, 40, 20, NULL, 'claude-event');
+`, now, now, now, now, now, now, now, now, now, now, now); err != nil {
+		t.Fatalf("seed pre-canonical usage: %v", err)
+	}
+
+	if err := migrate(db); err != nil {
+		t.Fatalf("migrate canonical usage: %v", err)
+	}
+	type canonicalRow struct {
+		provider                     string
+		input, cached, uncached, out int64
+		inputProvenance              string
+	}
+	for _, test := range []struct {
+		key, provider    string
+		cached, uncached int64
+		inputProv        string
+	}{
+		{key: "codex-event", provider: "openai", cached: 60, uncached: 40, inputProv: "reported"},
+		{key: "claude-event", provider: "anthropic", cached: 50, uncached: 50, inputProv: "derived"},
+	} {
+		var row canonicalRow
+		if err := db.QueryRow(`SELECT provider_id, input_tokens, cached_input_tokens,
+uncached_input_tokens, output_tokens, input_provenance
+FROM model_usage_events WHERE source_event_key = ?`, test.key).Scan(
+			&row.provider, &row.input, &row.cached, &row.uncached, &row.out,
+			&row.inputProvenance,
+		); err != nil {
+			t.Fatalf("read %s canonical event: %v", test.key, err)
+		}
+		if row.provider != test.provider || row.input != 100 || row.cached != test.cached || row.uncached != test.uncached ||
+			row.out != 20 || row.inputProvenance != test.inputProv {
+			t.Fatalf("%s canonical row = %+v", test.key, row)
+		}
+	}
+
+	var reasoning, cacheWrite int64
+	if err := db.QueryRow(`SELECT openai_reasoning_output_tokens, openai_cache_write_input_tokens
+FROM openai_usage_event_details WHERE event_id = 1`).Scan(&reasoning, &cacheWrite); err != nil || reasoning != 3 || cacheWrite != 10 {
+		t.Fatalf("OpenAI details = reasoning:%d cache-write:%d err:%v", reasoning, cacheWrite, err)
+	}
+	var direct, creation int64
+	var creation5m, creation1h sql.NullInt64
+	if err := db.QueryRow(`SELECT anthropic_direct_uncached_input_tokens,
+anthropic_cache_creation_input_tokens, anthropic_cache_creation_5m_input_tokens,
+anthropic_cache_creation_1h_input_tokens FROM anthropic_usage_event_details WHERE event_id = 2`).Scan(
+		&direct, &creation, &creation5m, &creation1h,
+	); err != nil || direct != 10 || creation != 40 || creation5m.Valid || creation1h.Valid {
+		t.Fatalf("Anthropic details = direct:%d creation:%d 5m:%v 1h:%v err:%v", direct, creation, creation5m, creation1h, err)
+	}
+	if err := migrate(db); err != nil {
+		t.Fatalf("repeat canonical migration: %v", err)
 	}
 }
 

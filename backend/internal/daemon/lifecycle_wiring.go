@@ -62,6 +62,7 @@ func startLifecycle(ctx context.Context, store *sqlite.Store, runtime ports.Runt
 		lifecycle.WithTelemetry(telemetry),
 		lifecycle.WithContainerReaper(dockerreap.New(), store),
 		lifecycle.WithActiveSteering(activeTurnSteering(agents)),
+		lifecycle.WithStartupSignalGate(startupSignalGatesInput(agents)),
 	)
 	rp := reaper.New(lcm, store, runtime, reaper.Config{Logger: logger})
 	activityPoller := activityobserver.New(store, lcm, runtime, agents, activityobserver.Config{Logger: logger})
@@ -70,6 +71,23 @@ func startLifecycle(ctx context.Context, store *sqlite.Store, runtime ports.Runt
 		runtimeReaper: rp,
 		reaperDone:    rp.Start(ctx),
 		activityDone:  activityPoller.Start(ctx),
+	}
+}
+
+// startupSignalGatesInput resolves whether an adapter promises that its first
+// hook proves native TUI startup dialogs have cleared. Unknown and hookless
+// adapters remain ungated.
+func startupSignalGatesInput(agents ports.AgentResolver) func(domain.AgentHarness) bool {
+	return func(harness domain.AgentHarness) bool {
+		if agents == nil {
+			return false
+		}
+		agent, ok := agents.Agent(harness)
+		if !ok {
+			return false
+		}
+		signaler, ok := agent.(ports.StartupInputReadinessSignaler)
+		return ok && signaler.FirstSignalProvesInputReady()
 	}
 }
 
@@ -127,6 +145,8 @@ func (l *lifecycleStack) Stop() {
 // the method here is a visible, reviewable interface change.
 type sessionLifecycle interface {
 	Reconcile(ctx context.Context) error
+	ReconcileStartupSafety(ctx context.Context) error
+	ReconcileBackground(ctx context.Context) error
 	RestoreAll(ctx context.Context) error
 	WaitAgentSwitchWorkers(ctx context.Context) error
 	Kill(ctx context.Context, id domain.SessionID) (bool, error)
@@ -458,8 +478,12 @@ func (c chatLauncher) SupportsChat(harness domain.AgentHarness) bool {
 	return c.svc.SupportsChat(harness)
 }
 
-func (c chatLauncher) PreflightChat(ctx context.Context, harness domain.AgentHarness) error {
-	return c.svc.PreflightChat(ctx, harness)
+func (c chatLauncher) PreflightChat(
+	ctx context.Context,
+	harness domain.AgentHarness,
+	permissions ports.PermissionMode,
+) error {
+	return c.svc.PreflightChat(ctx, harness, permissions)
 }
 
 func (c chatLauncher) StartChat(ctx context.Context, cfg sessionmanager.ChatStart) (sessionmanager.ChatStarted, error) {

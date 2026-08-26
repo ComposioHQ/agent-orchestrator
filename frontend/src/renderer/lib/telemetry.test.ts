@@ -130,6 +130,86 @@ describe("telemetry sanitizers", () => {
 		expect(safe).toEqual({});
 	});
 
+	it("reports which review controls a project save actually changed", async () => {
+		const safe = await sanitizeRendererProperties("ao.renderer.review_settings_changed", {
+			project_id: "proj-1",
+			auto_review: true,
+			reviewer_harness: "claude-code",
+			harness_is_default: false,
+			auto_review_changed: true,
+			reviewer_harness_changed: false,
+			// Must be dropped: a project's own name and path are the user's, and the
+			// raw id is hashed rather than forwarded.
+			project_name: "secret-client",
+			repo: "/Users/me/work/secret-client",
+		});
+		expect(safe.auto_review).toBe(true);
+		expect(safe.reviewer_harness).toBe("claude-code");
+		expect(safe.harness_is_default).toBe(false);
+		expect(safe.auto_review_changed).toBe(true);
+		expect(safe.reviewer_harness_changed).toBe(false);
+		expect(safe.project_id_hash).toEqual(expect.any(String));
+		expect(safe.project_id).toBeUndefined();
+		expect(safe.project_name).toBeUndefined();
+		expect(safe.repo).toBeUndefined();
+	});
+
+	// Harness ids come from AO's own reviewer registry, so anything outside it is
+	// a caller mistake and must not be forwarded as a free-text property.
+	it("drops a reviewer harness outside AO's reviewer registry", async () => {
+		const safe = await sanitizeRendererProperties("ao.renderer.review_settings_changed", {
+			reviewer_harness: "my-internal-reviewer",
+			auto_review: false,
+		});
+		expect(safe.reviewer_harness).toBeUndefined();
+		expect(safe.auto_review).toBe(false);
+	});
+
+	it("reports a manual review with the action offered and whether it was overridden", async () => {
+		const safe = await sanitizeRendererProperties("ao.renderer.review_triggered", {
+			action: "rerun",
+			has_override: true,
+			source: "inspector",
+			// Must be dropped: the button's translated label and the PR it targets.
+			label: "Re-review",
+			pr_url: "https://github.com/acme/secret-repo/pull/7",
+		});
+		expect(safe).toEqual({ action: "rerun", has_override: true, source: "inspector" });
+
+		const bogus = await sanitizeRendererProperties("ao.renderer.review_triggered", { action: "resume" });
+		expect(bogus.action).toBeUndefined();
+	});
+
+	// The emit sites pass reviewRunActionKind's result straight through, so any
+	// value it can return has to survive here. Narrowing this list drops the
+	// property silently, leaving a hole in the adoption signal the event exists
+	// to measure.
+	it("accepts every action reviewRunActionKind can return", async () => {
+		for (const action of ["run", "run_latest", "rerun", "reviewing"] as const) {
+			const safe = await sanitizeRendererProperties("ao.renderer.review_triggered", { action });
+			expect(safe.action).toBe(action);
+		}
+	});
+
+	it("keeps the two manual on-ramps apart and drops an unknown one", async () => {
+		for (const source of ["inspector", "command_palette"] as const) {
+			const safe = await sanitizeRendererProperties("ao.renderer.review_triggered", { source });
+			expect(safe.source).toBe(source);
+		}
+		const bogus = await sanitizeRendererProperties("ao.renderer.review_triggered", { source: "keyboard" });
+		expect(bogus.source).toBeUndefined();
+	});
+
+	it("reports the session auto-review switch with only its direction", async () => {
+		const safe = await sanitizeRendererProperties("ao.renderer.review_auto_review_toggled", {
+			enabled: true,
+			// Must be dropped: the session's id and the title the user typed.
+			session_id: "sess-1",
+			session_name: "fix the login bug",
+		});
+		expect(safe).toEqual({ enabled: true });
+	});
+
 	it("reports the mobile connect open with only the bridge state", async () => {
 		const safe = await sanitizeRendererProperties("ao.renderer.mobile_connect_opened", {
 			bridge_enabled: true,
@@ -428,6 +508,46 @@ describe("telemetry sanitizers", () => {
 		expect(
 			await sanitizeRendererProperties("ao.renderer.notification_mark_read_requested", { scope: "everything" }),
 		).toEqual({});
+	});
+
+	it("keeps a hashed project id, shared editor id, and target kind on open_in_editor_requested", async () => {
+		const props = await sanitizeRendererProperties("ao.renderer.open_in_editor_requested", {
+			project_id: "demo-project",
+			editor_id: "vscode",
+			target_kind: "editor",
+		});
+		expect(Object.keys(props).sort()).toEqual(["editor_id", "project_id_hash", "target_kind"]);
+		expect(props.editor_id).toBe("vscode");
+		expect(props.target_kind).toBe("editor");
+
+		const bogus = await sanitizeRendererProperties("ao.renderer.open_in_editor_requested", {
+			project_id: "demo-project",
+			// Not a real editor id — must not be forwarded as-is.
+			editor_id: "/Users/alice/bin/notepad",
+			target_kind: "everything",
+		});
+		expect(bogus).not.toHaveProperty("editor_id");
+		expect(bogus).not.toHaveProperty("target_kind");
+	});
+
+	it("keeps the editor id and target kind on open_in_editor_succeeded", async () => {
+		const props = await sanitizeRendererProperties("ao.renderer.open_in_editor_succeeded", {
+			project_id: "demo-project",
+			editor_id: "cursor",
+			target_kind: "editor",
+		});
+		expect(Object.keys(props).sort()).toEqual(["editor_id", "project_id_hash", "target_kind"]);
+		expect(props.editor_id).toBe("cursor");
+		expect(props.target_kind).toBe("editor");
+	});
+
+	it("reports open_in_editor_failed with only the hashed project id", async () => {
+		const props = await sanitizeRendererProperties("ao.renderer.open_in_editor_failed", {
+			project_id: "demo-project",
+			// Never part of the contract; must not leak through.
+			error: "EDITOR_LAUNCH_FAILED: Could not launch VS Code",
+		});
+		expect(Object.keys(props)).toEqual(["project_id_hash"]);
 	});
 
 	it("whitelists coarse daemon failure fields and drops messages", async () => {

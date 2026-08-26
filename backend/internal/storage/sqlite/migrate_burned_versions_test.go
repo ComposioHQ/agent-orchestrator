@@ -105,7 +105,14 @@ var shippedMigrations = map[int64]string{
 	99:  "0099_interface_transition_notice_acknowledgement.sql",
 	100: "0100_session_model.sql",
 	101: "0101_conversation_provider_ownership_epochs.sql",
-	102: "0102_approximate_conversation_branches.sql",
+	102: "0102_canonical_usage.sql",
+	103: "0103_review_run_cdc.sql",
+	104: "0104_agent_inventory_cache.sql",
+	105: "0105_default_session_mode_chat.sql",
+	106: "0106_pr_comment_review_id.sql",
+	107: "0107_recovered_conversation_turns.sql",
+	108: "0108_conversation_retry_source.sql",
+	109: "0109_approximate_conversation_branches.sql",
 }
 
 // burnedVersion reports version numbers that must never be (re)used: they

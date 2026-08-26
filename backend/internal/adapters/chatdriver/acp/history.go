@@ -13,7 +13,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
-const aoConversationEditReplayURI = "ao://conversation/edit-replay"
+const aoInternalReplayMetaKey = "ao.internalReplay"
 
 // historyCapture receives the session/update replay produced by ACP session/load.
 // ACP deliberately replays a flat stream rather than provider turns, so user
@@ -67,23 +67,19 @@ func (c *conversation) abortHistoryReplay() {
 	c.mu.Unlock()
 }
 
-// finishHistoryReplay settles the last reconstructed turn, then exposes the
-// captured facts through ChatHistoryReader for the controller's transactional,
-// idempotent import path.
+// finishHistoryReplay closes the capture without inventing an outcome for its
+// final turn. ACP session/load guarantees only that all stored entries were
+// replayed; it does not report their terminal outcomes. Recovered is the shared
+// terminal state for that evidence gap; service reconciliation replaces it with
+// AO's known completed/interrupted/failed result when a durable turn matches.
 func (c *conversation) finishHistoryReplay() {
 	c.historyMu.Lock()
-	interrupted := c.history != nil && c.history.turnID != "" &&
-		c.history.turnUserID != "" && !c.history.turnHasProvider
+	hasTail := c.history != nil && c.history.turnID != ""
 	c.historyMu.Unlock()
 
-	turnState := domain.TurnStateCompleted
-	if interrupted {
-		// session/load has finished, so this user-only turn cannot still be
-		// producing output. It represents a prompt interrupted before the agent
-		// emitted a provider event and remains valid replayable history.
-		turnState = domain.TurnStateInterrupted
+	if hasTail {
+		c.finishHistoryTurn(domain.TurnStateRecovered)
 	}
-	c.finishHistoryTurn(turnState)
 
 	c.historyMu.Lock()
 	if c.history != nil {
@@ -178,7 +174,7 @@ func (c *conversation) captureHistoryUserChunk(chunk *acpsdk.SessionUpdateUserMe
 	c.historyMu.Unlock()
 
 	if finishPrevious {
-		c.finishHistoryTurn(domain.TurnStateCompleted)
+		c.finishHistoryTurn(domain.TurnStateRecovered)
 		startTurn = true
 	}
 	if startTurn {
@@ -274,12 +270,14 @@ func (c *conversation) finishHistoryTurn(state domain.TurnState) {
 	turnID := c.history.turnID
 	c.historyMu.Unlock()
 
-	c.settleOpenItems(turnID)
-	c.emit(ports.ChatEvent{
-		Kind:           ports.ChatEventTurnCompleted,
-		ProviderTurnID: turnID,
-		TurnState:      state,
-	})
+	c.settleOpenItems(turnID, state)
+	if state != "" {
+		c.emit(ports.ChatEvent{
+			Kind:           ports.ChatEventTurnCompleted,
+			ProviderTurnID: turnID,
+			TurnState:      state,
+		})
+	}
 
 	c.historyMu.Lock()
 	if c.history != nil && c.history.turnID == turnID {
@@ -392,15 +390,24 @@ func historicalUserContent(content acpsdk.ContentBlock) string {
 	case content.ResourceLink != nil:
 		return fmt.Sprintf("[File: %s]", content.ResourceLink.Name)
 	case content.Resource != nil:
-		resource := content.Resource.Resource
-		if resource.TextResourceContents != nil && resource.TextResourceContents.Uri == aoConversationEditReplayURI {
-			return ""
-		}
-		if resource.BlobResourceContents != nil && resource.BlobResourceContents.Uri == aoConversationEditReplayURI {
+		if isInternalReplayResource(content.Resource) {
 			return ""
 		}
 		return "[Embedded context]"
 	default:
 		return ""
 	}
+}
+
+func isInternalReplayResource(content *acpsdk.ContentBlockResource) bool {
+	resource := content.Resource
+	if text := resource.TextResourceContents; text != nil {
+		internal, _ := text.Meta[aoInternalReplayMetaKey].(bool)
+		return internal && text.Uri == ports.ChatInternalReplayResourceURI
+	}
+	if blob := resource.BlobResourceContents; blob != nil {
+		internal, _ := blob.Meta[aoInternalReplayMetaKey].(bool)
+		return internal && blob.Uri == ports.ChatInternalReplayResourceURI
+	}
+	return false
 }

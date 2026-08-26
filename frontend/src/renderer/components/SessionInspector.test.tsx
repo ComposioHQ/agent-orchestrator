@@ -34,6 +34,14 @@ const { getMock, navigateMock, patchMock, putMock, postMock } = vi.hoisted(
   }),
 );
 
+function setRenderedOverflow(element: HTMLElement, overflowing: boolean) {
+  Object.defineProperties(element, {
+    clientHeight: { configurable: true, value: 64 },
+    scrollHeight: { configurable: true, value: overflowing ? 96 : 64 },
+  });
+  fireEvent(window, new Event("resize"));
+}
+
 vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => navigateMock,
 }));
@@ -771,14 +779,23 @@ describe("SessionInspector PR section", () => {
 describe("SessionInspector usage", () => {
 	it("shows detailed token statistics only when Developer Mode is enabled", async () => {
 		useUiStore.getState().setDeveloperMode(true);
+		const totals = {
+			inputTokens: 1200,
+			cachedInputTokens: 1000,
+			uncachedInputTokens: 200,
+			outputTokens: 300,
+			processedTokens: 1500,
+			provenance: { inputTokens: "reported", cachedInputTokens: "reported", uncachedInputTokens: "derived", outputTokens: "reported" },
+			providerDetails: { openai: { openaiReasoningOutputTokens: 5, openaiCacheWriteInputTokens: 0 } },
+		};
 		getMock.mockImplementation(async (path: string) => {
 			if (path === "/api/v1/usage/sessions/{sessionId}") {
 				return {
 					data: {
 						sessionId: "sess-1",
 						incomplete: false,
-						totals: { inputTokens: 1200, outputTokens: 300, cacheReadTokens: 12, cacheWriteTokens: 0, reasoningTokens: 5, uncachedInputTokens: 20 },
-						harnesses: [{ harness: "codex", totals: { inputTokens: 1200, outputTokens: 300, cacheReadTokens: 12, cacheWriteTokens: 0, reasoningTokens: 5, uncachedInputTokens: 20 }, models: [] }],
+						totals,
+						harnesses: [{ harness: "codex", totals, models: [{ modelId: "gpt-5.5", totals }, { modelId: "gpt-5.5-mini", totals }] }],
 					},
 					error: undefined,
 				};
@@ -788,8 +805,77 @@ describe("SessionInspector usage", () => {
 
 		renderWithQuery(<SessionInspector session={session([])} />);
 		expect(await screen.findByText("Usage & cost")).toBeInTheDocument();
-		expect(screen.getByText("Total tokens")).toBeInTheDocument();
-		expect(screen.getByText("Codex")).toBeInTheDocument();
+		expect(screen.getByText("Tokens processed")).toBeInTheDocument();
+		expect(screen.getByLabelText("1,500 tokens processed")).toBeInTheDocument();
+		const metrics = screen.getAllByTestId("session-usage-metrics")[0];
+		expect(within(metrics).getAllByRole("term").map((term) => term.textContent)).toEqual([
+			"Fresh Input", "Cache Reads", "Output", "Cache Hit Rate",
+		]);
+		expect(within(metrics).getByLabelText("Cache Reads: 1,000 tokens")).toHaveTextContent("1K");
+		expect(within(metrics).getByLabelText("83.3% cache hit rate (cache reads / total input)")).toHaveTextContent("83.3%");
+		expect(within(metrics).queryByText("Cached Output")).not.toBeInTheDocument();
+		expect(screen.queryByText("Cache write tokens")).not.toBeInTheDocument();
+		expect(screen.queryByText("Reasoning (included in output)")).not.toBeInTheDocument();
+		const agentAttribution = screen.getByText("Codex").parentElement;
+		expect(agentAttribution?.querySelector("img")).toBeInTheDocument();
+		const agentDisclosure = screen.getByRole("button", { name: "Codex usage details" });
+		await userEvent.click(agentDisclosure);
+		const details = screen.getByRole("region", { name: "Codex usage peek" });
+		expect(within(details).getByRole("button", { name: "GPT 5.5 usage details" })).toBeInTheDocument();
+		expect(within(details).getByRole("button", { name: "GPT 5.5 Mini usage details" })).toBeInTheDocument();
+		expect(within(details).queryByText("2 models")).not.toBeInTheDocument();
+		expect(within(details).queryByText("Processed")).not.toBeInTheDocument();
+		expect(within(details).queryByText("Cost")).not.toBeInTheDocument();
+	});
+
+	it("shows icon disclosures without repeated metrics when multiple agents contributed", async () => {
+		useUiStore.getState().setDeveloperMode(true);
+		const totals = {
+			inputTokens: 1200,
+			cachedInputTokens: 1000,
+			uncachedInputTokens: 200,
+			outputTokens: 300,
+			processedTokens: 1500,
+			provenance: { inputTokens: "reported", cachedInputTokens: "reported", uncachedInputTokens: "derived", outputTokens: "reported" },
+			providerDetails: {},
+		};
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/usage/sessions/{sessionId}") {
+				return {
+					data: {
+						sessionId: "sess-1",
+						incomplete: false,
+						totals,
+						harnesses: [
+							{ harness: "codex", totals, models: [{ modelId: "gpt-5.5", totals }] },
+							{ harness: "claude-code", totals, models: [{ modelId: "claude-haiku-4-5-20251001", totals }] },
+						],
+					},
+					error: undefined,
+				};
+			}
+			return { data: undefined };
+		});
+
+		renderWithQuery(<SessionInspector session={session([])} />);
+		const codexDisclosure = await screen.findByRole("button", { name: "Codex usage details" });
+		expect(codexDisclosure.querySelector("img")).toBeInTheDocument();
+
+		await userEvent.click(codexDisclosure);
+		const details = screen.getByRole("region", { name: "Codex usage peek" });
+		expect(within(details).getByRole("button", { name: "GPT 5.5 usage details" })).toBeInTheDocument();
+		expect(within(details).queryByText("1 model")).not.toBeInTheDocument();
+		expect(within(details).queryByText("Processed")).not.toBeInTheDocument();
+		expect(within(details).queryByText("Cost")).not.toBeInTheDocument();
+		expect(within(details).queryByText("Fresh Input")).not.toBeInTheDocument();
+
+		await userEvent.click(screen.getByRole("button", { name: "Claude usage details" }));
+		const claudeDetails = screen.getByRole("region", { name: "Claude usage peek" });
+		const haikuDisclosure = within(claudeDetails).getByRole("button", { name: "Haiku 4.5 usage details" });
+		expect(within(haikuDisclosure).getByText("Haiku 4.5")).toHaveAttribute(
+			"title",
+			"claude-haiku-4-5-20251001",
+		);
 	});
 });
 
@@ -1920,8 +2006,9 @@ describe("SessionInspector summary reviews", () => {
 
     const summary = await screen.findByTestId("review-run-summary");
     expect(summary).toHaveClass("line-clamp-4");
+    setRenderedOverflow(summary, true);
 
-    await userEvent.click(screen.getByRole("button", { name: "Show more" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Show more" }));
     expect(screen.getByTestId("review-run-summary")).not.toHaveClass(
       "line-clamp-4",
     );
@@ -1944,9 +2031,9 @@ describe("SessionInspector summary reviews", () => {
     renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
     await openReviewsSection();
 
-    expect(await screen.findByTestId("review-run-summary")).not.toHaveClass(
-      "line-clamp-4",
-    );
+    const summary = await screen.findByTestId("review-run-summary");
+    setRenderedOverflow(summary, false);
+    expect(summary).toHaveClass("line-clamp-4");
     expect(
       screen.queryByRole("button", { name: "Show more" }),
     ).not.toBeInTheDocument();
@@ -1985,6 +2072,192 @@ describe("SessionInspector summary reviews", () => {
 
     expect(await screen.findByTestId("review-run-summary")).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /View on PR/ })).not.toBeInTheDocument();
+  });
+
+  it("opens an AO review in Browser and sends its summary to the worker", async () => {
+    const reviewUrl = "https://github.com/acme/repo/pull/3#pullrequestreview-98765";
+    mockCommonGets([], "reviewer-pane", [
+      {
+        ...reviewState(3, "up_to_date", "abc123"),
+        latestRun: {
+          ...approvedReview,
+          body: "Please tighten validation and add a regression test.",
+          githubReviewId: "98765",
+          prUrl: "https://github.com/acme/repo/pull/3",
+        },
+      },
+    ]);
+
+    renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+    await openReviewsSection();
+
+    await userEvent.click(await screen.findByRole("button", { name: "Review actions" }));
+    await userEvent.click(screen.getByRole("button", { name: "Open in AO Browser" }));
+
+    await waitFor(() =>
+      expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/preview", {
+        params: { path: { sessionId: "sess-1" } },
+        body: { url: reviewUrl },
+      }),
+    );
+    expect(useUiStore.getState().inspectorSessions["sess-1"]?.view).toBe("browser");
+    expect(useUiStore.getState().inspectorSessions["sess-1"]?.isOpen).toBe(true);
+
+    await userEvent.click(screen.getByRole("button", { name: "Send to worker agent" }));
+    await waitFor(() =>
+      expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/send", {
+        params: { path: { sessionId: "sess-1" } },
+        body: {
+          message: expect.stringContaining("Review summary:\nPlease tighten validation and add a regression test."),
+        },
+      }),
+    );
+    expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/send", {
+      params: { path: { sessionId: "sess-1" } },
+      body: { message: expect.stringContaining(`Review URL: ${reviewUrl}`) },
+    });
+  });
+
+  it("shows inline comments on their exact AO review pass without duplicating them externally", async () => {
+    const onOpenReviewFile = vi.fn();
+    const currentRun = {
+      ...approvedReview,
+      body: "Current AO review.",
+      githubReviewId: "111",
+      prUrl: "https://example.com/pr/3",
+    };
+    const previousRun = {
+      ...approvedReview,
+      id: "run-previous",
+      body: "Earlier AO review.",
+      githubReviewId: "222",
+      prUrl: "https://example.com/pr/3",
+      createdAt: "2026-06-15T10:06:00Z",
+    };
+    mockCommonGets([], "reviewer-pane", [{
+      ...reviewState(3, "up_to_date", "abc123"),
+      latestRun: currentRun,
+      previousRun,
+    }]);
+    const previousGet = getMock.getMockImplementation()!;
+    getMock.mockImplementation(async (path: string, opts?: unknown) => {
+      if (path === "/api/v1/sessions/{sessionId}/pr") {
+        return {
+          data: {
+            prs: [prSummary(3, "open", {
+              author: "codebanditssss",
+              review: {
+                decision: "changes_requested",
+                hasUnresolvedHumanComments: true,
+                reviews: [],
+                unresolvedBy: [{
+                  reviewerId: "codebanditssss",
+                  count: 2,
+                  links: [
+                    { reviewId: "111", body: "Current-pass comment.", file: "src/current.ts", line: 11, url: "https://example.com/current", autoInjectReview: false },
+                    { reviewId: "222", body: "Earlier-pass comment.", file: "src/earlier.ts", line: 22, url: "https://example.com/earlier", autoInjectReview: true },
+                  ],
+                }, {
+                  reviewerId: "maya",
+                  count: 1,
+                  links: [
+                    { body: "Legacy external comment.", file: "src/legacy.ts", line: 33, url: "https://example.com/legacy", autoInjectReview: true },
+                  ],
+                }],
+                resolvedBy: [{
+                  reviewerId: "codebanditssss",
+                  count: 1,
+                  links: [{ reviewId: "111", body: "Resolved current-pass comment.", file: "src/current.ts", line: 9, url: "https://example.com/resolved", autoInjectReview: true }],
+                }],
+              },
+            })],
+          },
+        };
+      }
+      return previousGet(path, opts);
+    });
+
+    renderWithQuery(
+      <SessionInspector
+        onOpenReviewFile={onOpenReviewFile}
+        session={session([pr(3, "open")])}
+      />,
+    );
+    await openReviewsSection();
+
+    expect(await screen.findByText("Current-pass comment.")).toBeInTheDocument();
+    expect(screen.queryByText("Earlier-pass comment.")).not.toBeInTheDocument();
+    expect(screen.getByText("Resolved comments · 1")).toBeInTheDocument();
+
+    await userEvent.click(screen.getAllByRole("button", { name: "Comment actions" })[0]!);
+    await userEvent.click(screen.getByRole("button", { name: "Send to worker agent" }));
+    expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/send", expect.objectContaining({
+      params: { path: { sessionId: "sess-1" } },
+    }));
+    await userEvent.click(screen.getAllByRole("button", { name: "Comment actions" })[0]!);
+    await userEvent.click(screen.getByRole("button", { name: "View in file" }));
+    expect(onOpenReviewFile).toHaveBeenCalledWith({ path: "src/current.ts", line: 11 });
+    await userEvent.click(screen.getByRole("button", { name: "Resolve comment" }));
+    await waitFor(() => expect(postMock).toHaveBeenCalledWith(
+      "/api/v1/sessions/{sessionId}/reviews/comments/resolve",
+      expect.objectContaining({ params: { path: { sessionId: "sess-1" } } }),
+    ));
+
+    await userEvent.click(screen.getByRole("button", { name: /Load more.*1 earlier/i }));
+    expect(screen.getByText("Earlier-pass comment.")).toBeInTheDocument();
+    expect(screen.getAllByText("Current-pass comment.")).toHaveLength(1);
+
+    await userEvent.click(screen.getByRole("button", { name: /maya.*Commented/i }));
+    expect(screen.getByText("Legacy external comment.")).toBeInTheDocument();
+    expect(screen.getAllByText("Current-pass comment.")).toHaveLength(1);
+    expect(screen.getAllByText("Earlier-pass comment.")).toHaveLength(1);
+  });
+
+  it("passes an inline review location to the Files diff viewer", async () => {
+    const onOpenReviewFile = vi.fn();
+    const previous = getMock.getMockImplementation()!;
+    getMock.mockImplementation(async (path: string, opts?: unknown) => {
+      if (path === "/api/v1/sessions/{sessionId}/pr") {
+        return {
+          data: {
+            prs: [
+              prSummary(3, "open", {
+                review: {
+                  decision: "changes_requested",
+                  hasUnresolvedHumanComments: true,
+                  reviews: [],
+                  unresolvedBy: [{
+                    reviewerId: "maya",
+                    count: 1,
+                    links: [{
+                      body: "Guard this optional value.",
+                      file: "src/panel.tsx",
+                      line: 42,
+                      url: "https://example.com/comment-42",
+                      autoInjectReview: false,
+                    }],
+                  }],
+                },
+              }),
+            ],
+          },
+        };
+      }
+      return previous(path, opts);
+    });
+
+    renderWithQuery(
+      <SessionInspector
+        onOpenReviewFile={onOpenReviewFile}
+        session={session([pr(3, "open")])}
+      />,
+    );
+    await openReviewsSection();
+    await userEvent.click(await screen.findByRole("button", { name: /maya.*Commented/i }));
+    await userEvent.click(screen.getByRole("button", { name: "Comment actions" }));
+    await userEvent.click(screen.getByRole("button", { name: "View in file" }));
+
+    expect(onOpenReviewFile).toHaveBeenCalledWith({ path: "src/panel.tsx", line: 42 });
   });
 
   it.each([
@@ -2137,7 +2410,9 @@ describe("SessionInspector summary reviews", () => {
     const comments = screen.getByTestId("github-inline-comments");
     expect(comments).toHaveTextContent("Open comments · 2");
     expect(comments).not.toHaveTextContent("maya");
-    expect(comments).toHaveTextContent("Sent to worker agent");
+    expect(
+      within(comments).getAllByRole("status", { name: "Sent to worker agent" }),
+    ).toHaveLength(2);
     expect(comments).toHaveTextContent("a.ts:3");
     expect(comments).toHaveTextContent("a.ts:9");
     // AO's runs and the PR's own reviews share one section keyed by PR, so the
@@ -2231,11 +2506,6 @@ describe("SessionInspector summary reviews", () => {
     renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
     await openReviewsSection();
 
-    const reviewCard = await screen.findByRole("button", {
-      name: /maya.*Approved/,
-    });
-    expect(reviewCard).toHaveAttribute("aria-expanded", "false");
-    await userEvent.click(reviewCard);
     const summary = await screen.findByTestId("github-review-summary");
     const externalReview = summary.closest("article") as HTMLElement;
     expect(screen.queryByRole("button", { name: /ada/i })).not.toBeInTheDocument();
@@ -2257,7 +2527,7 @@ describe("SessionInspector summary reviews", () => {
     expect(screen.getByText("External reviews")).toBeInTheDocument();
   });
 
-  it("does not show PR re-review CTAs in external review rows", async () => {
+  it("requests PR re-review from the external review actions menu", async () => {
     const previous = getMock.getMockImplementation()!;
     getMock.mockImplementation(async (path: string, opts?: unknown) => {
       if (path === "/api/v1/sessions/{sessionId}/pr") {
@@ -2291,18 +2561,22 @@ describe("SessionInspector summary reviews", () => {
 
     renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
     await openReviewsSection();
-    await userEvent.click(
-      await screen.findByRole("button", { name: /maya.*Changes requested/i }),
-    );
-
-    expect(
-      screen.queryByRole("button", { name: "Request to re-review PR" }),
-    ).not.toBeInTheDocument();
     expect(screen.getByText("Please request another look after the fixes.")).toBeInTheDocument();
-    expect(postMock).not.toHaveBeenCalledWith(
+    await userEvent.click(screen.getByRole("button", { name: "Review actions" }));
+    await userEvent.click(screen.getByRole("button", { name: "Request to re-review PR" }));
+    await waitFor(() => expect(postMock).toHaveBeenCalledWith(
       "/api/v1/sessions/{sessionId}/reviews/rerequest",
-      expect.anything(),
-    );
+      {
+        params: { path: { sessionId: "sess-1" } },
+        body: {
+          pullRequestUrl: "https://api.github.com/repos/acme/repo/pulls/3",
+          reviewerId: "maya",
+        },
+      },
+    ));
+    expect(
+      screen.getByRole("button", { name: "Asked for re-review" }),
+    ).toBeDisabled();
   });
 
   it("marks SCM reviews and individual comments using their stored injection decision", async () => {
@@ -2359,6 +2633,9 @@ describe("SessionInspector summary reviews", () => {
     await userEvent.click(
       screen.getByRole("button", { name: /maya.*Changes requested/i }),
     );
+    await userEvent.click(
+      screen.getAllByRole("button", { name: "Comment actions" })[1]!,
+    );
     const sendButton = screen.getByRole("button", {
       name: "Send to worker agent",
     });
@@ -2392,7 +2669,9 @@ describe("SessionInspector summary reviews", () => {
     expect(
       screen.queryByRole("button", { name: "Resolve comment" }),
     ).not.toBeInTheDocument();
-    expect(screen.getAllByText("Sent to worker agent")).toHaveLength(2);
+    expect(
+      screen.getAllByRole("status", { name: "Sent to worker agent" }),
+    ).toHaveLength(2);
   });
 
   it("marks an AO review using its stored injection decision", async () => {

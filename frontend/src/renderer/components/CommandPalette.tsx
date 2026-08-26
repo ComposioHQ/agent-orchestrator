@@ -19,6 +19,7 @@ import {
 } from "../lib/command-palette";
 import { iconForCommand } from "../lib/command-palette-icons";
 import { isDialogOrMenuOpen } from "../lib/dom-selectors";
+import { captureRendererEvent } from "../lib/telemetry";
 import { isMacPlatform } from "../lib/platform";
 import { sessionReviewsQueryOptions, type PRReviewState } from "../lib/session-reviews";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
@@ -331,6 +332,16 @@ export function CommandPalette() {
 					closePalette();
 					break;
 				case "trigger-review": {
+					// Emitted before the request, like the inspector's: these renderer
+					// events count INTENT, and the daemon's ao.review.* events are the
+					// ground truth for what actually ran.
+					void captureRendererEvent("ao.renderer.review_triggered", {
+						action: action.reviewAction,
+						// The palette sends no body, so it can never carry a per-session
+						// reviewer override.
+						has_override: false,
+						source: "command_palette",
+					});
 					const { error: triggerError } = await apiClient.POST("/api/v1/sessions/{sessionId}/reviews/trigger", {
 						params: { path: { sessionId: action.sessionId } },
 					});

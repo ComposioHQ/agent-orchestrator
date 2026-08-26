@@ -32,7 +32,7 @@ import { NotificationCenter } from "./NotificationCenter";
 import { BoardWelcome, ProjectBoardEmpty } from "./BoardEmptyStates";
 import { OrchestratorIcon } from "./icons";
 import { OrchestratorActivityIndicator } from "./OrchestratorActivityIndicator";
-import { TopbarButton, TopbarKillError, topbarProjectLabelClass } from "./TopbarButton";
+import { TopbarActionError, TopbarButton, topbarProjectLabelClass } from "./TopbarButton";
 import { isChatPreflightError, spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
 import { usesPreviewWorkspaceData } from "../lib/preview-mode";
@@ -42,6 +42,7 @@ import { useUiStore } from "../stores/ui-store";
 import { RestoreUnavailableDialog } from "./RestoreUnavailableDialog";
 import { DaemonStartupLoader } from "./DaemonStartupLoader";
 import { useShellMaybe } from "../lib/shell-context";
+import { useSystemRequirementsGate } from "../hooks/useSystemRequirementsGate";
 import {
 	ArchivedSessionCardAdapter,
 	BoardSessionCardAdapter,
@@ -134,11 +135,16 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const isDaemonReady = usesPreviewWorkspaceData || (shell ? shell.daemonStatus.state === "ready" : true);
 	const daemonHasFailed = Boolean(shell?.daemonStatus.code);
 	const workspaceStartupState = shell?.workspaceStartupState ?? "ready";
-	const isLoaded = isDaemonReady && workspaceStartupState === "ready" && workspaceQuery.isSuccess;
+	const { blocked: requirementsBlocked } = useSystemRequirementsGate();
+	const isLoaded = isDaemonReady && workspaceStartupState === "ready" && workspaceQuery.isSuccess && !requirementsBlocked;
+	// The shell deliberately keeps its sidebar closed until this same readiness
+	// boundary. Keep the full-screen loader up until then so the first visible
+	// frame contains the restored sidebar and center pane together, rather than
+	// showing a collapsed layout that expands a moment later.
 	const showStartup =
 		shell !== null &&
 		!daemonHasFailed &&
-		(!isDaemonReady || workspaceStartupState === "loading" || (!workspaceQuery.isSuccess && !workspaceQuery.isError));
+		(!isDaemonReady || workspaceStartupState === "loading" || (!workspaceQuery.isSuccess && !workspaceQuery.isError) || requirementsBlocked);
 	const showWelcome = !projectId && isLoaded && all.length === 0;
 	const showProjectEmpty = projectId !== undefined && isLoaded && workspaces.length > 0 && sessions.length === 0;
 	const hasArchive = archived.length > 0;
@@ -204,9 +210,9 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const actions = projectId ? (
 		<>
 			{visibleSpawnError && !showProjectEmpty && (
-				<TopbarKillError className="max-w-content-max truncate" title={visibleSpawnError}>
+				<TopbarActionError className="max-w-content-max truncate" title={visibleSpawnError}>
 					{visibleSpawnError}
-				</TopbarKillError>
+				</TopbarActionError>
 			)}
 			{visibleSpawnError && canCreateAsTui && !showProjectEmpty ? (
 				<TopbarButton disabled={isSpawning || isProjectRestarting} onClick={() => void openOrchestrator("tui")}>
@@ -280,7 +286,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			    Win/Linux keep the crumb and actions in the framed ShellTopbar.
 			    Welcome skips the row — a dangling "Board" above the import
 			    chooser was review feedback on #2432. */}
-			{!showWelcome && !showStartup && boardActionsInPanel && (boardLabel || actions) ? (
+			{!showWelcome && boardActionsInPanel && (boardLabel || actions) ? (
 				<div
 					className="workspace-topbar-container center-panel-titlebar flex h-toolbar shrink-0 items-center gap-2 border-b border-border-strong pr-4"
 					style={dragStyle}
@@ -318,9 +324,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 						) : null}
 					</div>
 				) : null}
-				{showStartup ? (
-					<DaemonStartupLoader />
-				) : workspaceStartupState === "error" || workspaceQuery.isError ? (
+				{workspaceStartupState === "error" || workspaceQuery.isError ? (
 					<p className="py-10 text-center text-xs text-passive">{t("shell.couldNotLoadSessions")}</p>
 				) : showWelcome ? (
 					<BoardWelcome />
@@ -360,6 +364,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 					usageBySession={usageBySession}
 				/>
 			) : null}
+			{showStartup ? <DaemonStartupLoader /> : null}
 		</div>
 	);
 }

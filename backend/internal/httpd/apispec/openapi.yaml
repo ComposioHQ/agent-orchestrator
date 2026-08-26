@@ -334,6 +334,45 @@ paths:
       summary: Check whether the desktop browser runtime is connected for a session
       tags:
       - browser
+  /api/v1/desktop/sessions/{sessionId}/workspace:
+    get:
+      operationId: getDesktopSessionWorkspace
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DesktopWorkspaceLocationResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Resolve a session workspace for the loopback desktop supervisor
+      tags:
+      - sessions
   /api/v1/dev/import-projects:
     post:
       operationId: runDevImportProjects
@@ -3014,6 +3053,65 @@ paths:
       summary: Branch before and replace an earlier human prompt
       tags:
       - conversations
+  /api/v1/sessions/{sessionId}/conversation/turns/{turnId}/retry:
+    post:
+      operationId: retrySessionConversationTurn
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      - description: AO conversation turn identifier, from the snapshot's turns array.
+        in: path
+        name: turnId
+        required: true
+        schema:
+          description: AO conversation turn identifier, from the snapshot's turns
+            array.
+          type: string
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RetryTurnResponse'
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Re-dispatch a failed turn's durable prompt as a new turn
+      tags:
+      - conversations
   /api/v1/sessions/{sessionId}/conversation/turns/{turnId}/rollback:
     post:
       operationId: rollbackSessionConversation
@@ -4707,6 +4805,23 @@ paths:
         schema:
           description: Session-worktree-relative file path.
           type: string
+      - description: Git-state section the file was opened from (see WorkspaceFileSections).
+          staged diffs the index against HEAD; unstaged diffs the worktree against
+          the index; omitted/committed/untracked diff the worktree against the compare
+          base.
+        in: query
+        name: section
+        schema:
+          description: Git-state section the file was opened from (see WorkspaceFileSections).
+            staged diffs the index against HEAD; unstaged diffs the worktree against
+            the index; omitted/committed/untracked diff the worktree against the compare
+            base.
+          enum:
+          - committed
+          - staged
+          - unstaged
+          - untracked
+          type: string
       responses:
         "200":
           content:
@@ -4739,6 +4854,77 @@ paths:
                 $ref: '#/components/schemas/APIError'
           description: Not Implemented
       summary: Read one session workspace file and its git diff
+      tags:
+      - sessions
+  /api/v1/sessions/{sessionId}/workspace/file/blob:
+    get:
+      operationId: getSessionWorkspaceFileBlob
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      - description: Session-worktree-relative file path.
+        in: query
+        name: path
+        required: true
+        schema:
+          description: Session-worktree-relative file path.
+          type: string
+      - description: 'Which revision to read: the compare base (before) or the session
+          worktree (after). Defaults to after.'
+        in: query
+        name: side
+        schema:
+          description: 'Which revision to read: the compare base (before) or the session
+            worktree (after). Defaults to after.'
+          enum:
+          - before
+          - after
+          type: string
+      - description: Cache-busting token. Ignored by the server; the response is never
+          cached.
+        in: query
+        name: v
+        schema:
+          description: Cache-busting token. Ignored by the server; the response is
+            never cached.
+          type: string
+      responses:
+        "200":
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Read one side of a session workspace image file
       tags:
       - sessions
   /api/v1/sessions/{sessionId}/workspace/files:
@@ -5034,6 +5220,113 @@ paths:
       summary: Rename a standalone shell terminal tab
       tags:
       - shellTerminals
+  /api/v1/system/install/{target}:
+    get:
+      operationId: getSystemInstallStatus
+      parameters:
+      - description: 'Install target identifier: tmux, gh, claude, codex, opencode,
+          or copilot.'
+        in: path
+        name: target
+        required: true
+        schema:
+          description: 'Install target identifier: tmux, gh, claude, codex, opencode,
+            or copilot.'
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstallJob'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Get the current or last known install job status for a system target
+      tags:
+      - system
+    post:
+      operationId: startSystemInstall
+      parameters:
+      - description: 'Install target identifier: tmux, gh, claude, codex, opencode,
+          or copilot.'
+        in: path
+        name: target
+        required: true
+        schema:
+          description: 'Install target identifier: tmux, gh, claude, codex, opencode,
+            or copilot.'
+          type: string
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstallJob'
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Start (or return the already-running) install job for a fixed system
+        target
+      tags:
+      - system
+  /api/v1/system/requirements:
+    get:
+      operationId: getSystemRequirements
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemRequirementsResponse'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Check local machine readiness (git, tmux, agent harness, gh)
+      tags:
+      - system
   /api/v1/usage/sessions:
     get:
       operationId: listCompactSessionUsage
@@ -5187,6 +5480,16 @@ components:
           type: string
         label:
           type: string
+        lastUsedAt:
+          description: Creation time of the newest retained session currently attributed
+            to this agent.
+          format: date-time
+          type:
+          - "null"
+          - string
+        usageCount:
+          description: Number of retained sessions currently attributed to this agent.
+          type: integer
       required:
       - id
       - label
@@ -5334,6 +5637,34 @@ components:
           $ref: '#/components/schemas/AgentSwitch'
       required:
       - switch
+      type: object
+    AnthropicUsageDetailsResponse:
+      properties:
+        anthropicCacheCreation1hInputTokens:
+          minimum: 0
+          type:
+          - "null"
+          - integer
+        anthropicCacheCreation5mInputTokens:
+          minimum: 0
+          type:
+          - "null"
+          - integer
+        anthropicCacheCreationInputTokens:
+          minimum: 0
+          type:
+          - "null"
+          - integer
+        anthropicDirectUncachedInputTokens:
+          minimum: 0
+          type:
+          - "null"
+          - integer
+      required:
+      - anthropicDirectUncachedInputTokens
+      - anthropicCacheCreationInputTokens
+      - anthropicCacheCreation5mInputTokens
+      - anthropicCacheCreation1hInputTokens
       type: object
     AttachmentInput:
       properties:
@@ -5507,14 +5838,23 @@ components:
       properties:
         incomplete:
           type: boolean
+        processedTokens:
+          description: Canonical input plus output. Null when either component is
+            unknown.
+          minimum: 0
+          type:
+          - "null"
+          - integer
         sessionId:
           type: string
         totalTokens:
+          description: Deprecated compatibility alias for processedTokens.
           format: int64
           minimum: 0
           type: integer
       required:
       - sessionId
+      - processedTokens
       - totalTokens
       - incomplete
       type: object
@@ -5785,6 +6125,7 @@ components:
           enum:
           - running
           - completed
+          - recovered
           - failed
           - cancelled
           - pending
@@ -6198,6 +6539,9 @@ components:
           type: string
         modelReroute:
           $ref: '#/components/schemas/ConversationModelReroutePayload'
+        nativeForkAvailableAfterSequence:
+          format: int64
+          type: integer
         oldestSequence:
           format: int64
           type: integer
@@ -6225,6 +6569,7 @@ components:
       - controller
       - latestSequence
       - hasMoreBefore
+      - nativeForkAvailableAfterSequence
       - turns
       - messages
       - activities
@@ -6274,6 +6619,8 @@ components:
           $ref: '#/components/schemas/ConversationTurnDiffResponse'
         errorMessage:
           type: string
+        hasRetryAttempt:
+          type: boolean
         id:
           type: string
         plan:
@@ -6281,6 +6628,8 @@ components:
         providerTurnId:
           type: string
         requestedAt:
+          type: string
+        retryOfTurnId:
           type: string
         rolledBack:
           type: boolean
@@ -6293,6 +6642,7 @@ components:
           - queued
           - running
           - completed
+          - recovered
           - interrupted
           - failed
           type: string
@@ -6400,9 +6750,17 @@ components:
           - vibe
           - pi
           - kimchi
+          - omp
           - prime-agent
           - autohand
           - fake
+          type: string
+        approvalMode:
+          enum:
+          - default
+          - accept-edits
+          - auto
+          - bypass-permissions
           type: string
         attachments:
           items:
@@ -6436,6 +6794,16 @@ components:
       required:
       - ok
       - workerId
+      type: object
+    DesktopWorkspaceLocationResponse:
+      properties:
+        sessionId:
+          type: string
+        workspacePath:
+          type: string
+      required:
+      - sessionId
+      - workspacePath
       type: object
     DevImportProjectsConflict:
       properties:
@@ -6538,6 +6906,7 @@ components:
           - queued
           - running
           - completed
+          - recovered
           - interrupted
           - failed
           type: string
@@ -6594,6 +6963,54 @@ components:
           type: string
       required:
       - path
+      type: object
+    InstallJob:
+      properties:
+        command:
+          description: Human-readable install command, e.g. "brew install tmux", for
+            display even before/without output.
+          type: string
+        error:
+          description: 'Set on failure or when the target is unsupported on this machine:
+            the exec error, the Unsupported reason, or a timeout message.'
+          type: string
+        finishedAt:
+          description: Absent until the job finishes.
+          format: date-time
+          type:
+          - "null"
+          - string
+        output:
+          description: Combined stdout+stderr from the install command, tail-capped
+            to the last ~4000 bytes.
+          type: string
+        startedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        status:
+          description: Current lifecycle state of the job.
+          enum:
+          - idle
+          - running
+          - succeeded
+          - failed
+          - unsupported
+          type: string
+        target:
+          description: Install target this job ran (or is running) for.
+          enum:
+          - tmux
+          - gh
+          - claude
+          - codex
+          - opencode
+          - copilot
+          type: string
+      required:
+      - target
+      - status
       type: object
     KillReviewResponse:
       properties:
@@ -6746,6 +7163,18 @@ components:
       type: object
     ListWorkspaceFilesResponse:
       properties:
+        ahead:
+          type:
+          - "null"
+          - integer
+        behind:
+          type:
+          - "null"
+          - integer
+        commits:
+          items:
+            $ref: '#/components/schemas/WorkspaceCommitSummary'
+          type: array
         compareBaseRef:
           type: string
         compareBaseSha:
@@ -6759,14 +7188,21 @@ components:
           items:
             $ref: '#/components/schemas/WorkspaceFileSummary'
           type: array
+        sections:
+          $ref: '#/components/schemas/WorkspaceFileSections'
         sessionId:
           type: string
+        summary:
+          $ref: '#/components/schemas/WorkspaceSummary'
         truncated:
           type: boolean
       required:
       - sessionId
       - files
       - truncated
+      - sections
+      - commits
+      - summary
       type: object
     MarkAllNotificationsReadRequest:
       properties:
@@ -6977,6 +7413,22 @@ components:
       required:
       - kind
       - sessionId
+      type: object
+    OpenAIUsageDetailsResponse:
+      properties:
+        openaiCacheWriteInputTokens:
+          minimum: 0
+          type:
+          - "null"
+          - integer
+        openaiReasoningOutputTokens:
+          minimum: 0
+          type:
+          - "null"
+          - integer
+      required:
+      - openaiReasoningOutputTokens
+      - openaiCacheWriteInputTokens
       type: object
     OpenShellTerminalRequest:
       properties:
@@ -7396,6 +7848,22 @@ components:
       - resumeMode
       - session
       type: object
+    RetryTurnResponse:
+      properties:
+        providerTurnId:
+          type: string
+        state:
+          enum:
+          - queued
+          - running
+          - completed
+          - recovered
+          - interrupted
+          - failed
+          type: string
+        turnId:
+          type: string
+      type: object
     ReviewRun:
       properties:
         autoInjectReview:
@@ -7522,6 +7990,7 @@ components:
           - queued
           - running
           - completed
+          - recovered
           - interrupted
           - failed
           type: string
@@ -7770,6 +8239,8 @@ components:
           type: string
         line:
           type: integer
+        reviewId:
+          type: string
         url:
           type: string
       required:
@@ -8297,6 +8768,7 @@ components:
           - vibe
           - pi
           - kimchi
+          - omp
           - prime-agent
           - autohand
           type: string
@@ -8485,6 +8957,51 @@ components:
       required:
       - targetHarness
       type: object
+    SystemRequirement:
+      properties:
+        detail:
+          description: 'Extra context: the resolved path when satisfied, or why it
+            is not.'
+          type: string
+        id:
+          description: Stable requirement identifier.
+          enum:
+          - git
+          - tmux
+          - harness
+          - gh
+          type: string
+        label:
+          description: Human-readable requirement name.
+          type: string
+        required:
+          description: Whether this requirement blocks the overall Ready state.
+          type: boolean
+        satisfied:
+          description: Whether this requirement is currently met.
+          type: boolean
+      required:
+      - id
+      - label
+      - satisfied
+      - required
+      type: object
+    SystemRequirementsResponse:
+      properties:
+        ready:
+          description: True iff every requirement with Required=true is satisfied.
+            Requirements with Required=false (e.g. gh) are advisory and never block
+            readiness.
+          type: boolean
+        requirements:
+          description: Individual checks in stable order for the selected probe.
+          items:
+            $ref: '#/components/schemas/SystemRequirement'
+          type: array
+      required:
+      - ready
+      - requirements
+      type: object
     TrackerIntakeConfig:
       properties:
         assignee:
@@ -8625,6 +9142,42 @@ components:
       required:
       - harness
       type: object
+    UsageMetricProvenanceResponse:
+      properties:
+        cachedInputTokens:
+          enum:
+          - reported
+          - derived
+          - unsupported
+          - unknown
+          type: string
+        inputTokens:
+          enum:
+          - reported
+          - derived
+          - unsupported
+          - unknown
+          type: string
+        outputTokens:
+          enum:
+          - reported
+          - derived
+          - unsupported
+          - unknown
+          type: string
+        uncachedInputTokens:
+          enum:
+          - reported
+          - derived
+          - unsupported
+          - unknown
+          type: string
+      required:
+      - inputTokens
+      - cachedInputTokens
+      - uncachedInputTokens
+      - outputTokens
+      type: object
     UsageModelResponse:
       properties:
         modelId:
@@ -8635,39 +9188,100 @@ components:
       - modelId
       - totals
       type: object
+    UsageProviderDetailsResponse:
+      properties:
+        anthropic:
+          $ref: '#/components/schemas/AnthropicUsageDetailsResponse'
+        openai:
+          $ref: '#/components/schemas/OpenAIUsageDetailsResponse'
+      type: object
     UsageTotalsResponse:
       properties:
         cacheReadTokens:
+          description: Deprecated compatibility alias for cachedInputTokens.
+          minimum: 0
           type:
           - "null"
           - integer
         cacheWriteTokens:
+          description: Deprecated compatibility aggregate of provider cache-write
+            input counters.
+          minimum: 0
+          type:
+          - "null"
+          - integer
+        cachedInputTokens:
+          description: Input read from an existing provider cache. Cache hit percentage
+            uses cachedInputTokens divided by inclusive inputTokens.
+          minimum: 0
           type:
           - "null"
           - integer
         inputTokens:
+          description: Total input, including cached and uncached input.
+          minimum: 0
           type:
           - "null"
           - integer
         outputTokens:
+          description: Total output, including provider-specific subsets such as reasoning
+            output.
+          minimum: 0
           type:
           - "null"
           - integer
+        processedTokens:
+          description: Canonical input plus output. Null when either component is
+            unknown.
+          minimum: 0
+          type:
+          - "null"
+          - integer
+        provenance:
+          $ref: '#/components/schemas/UsageMetricProvenanceResponse'
+        providerDetails:
+          $ref: '#/components/schemas/UsageProviderDetailsResponse'
         reasoningTokens:
+          description: Deprecated compatibility alias for the OpenAI reasoning-output
+            subset.
+          minimum: 0
           type:
           - "null"
           - integer
         uncachedInputTokens:
+          description: Input not read from an existing provider cache.
+          minimum: 0
           type:
           - "null"
           - integer
       required:
       - inputTokens
+      - cachedInputTokens
       - uncachedInputTokens
+      - outputTokens
+      - processedTokens
       - cacheReadTokens
       - cacheWriteTokens
-      - outputTokens
       - reasoningTokens
+      - provenance
+      - providerDetails
+      type: object
+    WorkspaceCommitSummary:
+      properties:
+        author:
+          type: string
+        sha:
+          type: string
+        subject:
+          type: string
+        timestamp:
+          format: date-time
+          type: string
+      required:
+      - sha
+      - subject
+      - author
+      - timestamp
       type: object
     WorkspaceFileResponse:
       properties:
@@ -8696,6 +9310,8 @@ components:
           type: string
         diffTruncated:
           type: boolean
+        imageMediaType:
+          type: string
         path:
           type: string
         previousPath:
@@ -8726,6 +9342,30 @@ components:
       - contentTruncated
       - diff
       - diffTruncated
+      type: object
+    WorkspaceFileSections:
+      properties:
+        committed:
+          items:
+            $ref: '#/components/schemas/WorkspaceFileSummary'
+          type: array
+        staged:
+          items:
+            $ref: '#/components/schemas/WorkspaceFileSummary'
+          type: array
+        unstaged:
+          items:
+            $ref: '#/components/schemas/WorkspaceFileSummary'
+          type: array
+        untracked:
+          items:
+            $ref: '#/components/schemas/WorkspaceFileSummary'
+          type: array
+      required:
+      - staged
+      - unstaged
+      - untracked
+      - committed
       type: object
     WorkspaceFileSummary:
       properties:
@@ -8773,6 +9413,19 @@ components:
       - relativePath
       - repo
       type: object
+    WorkspaceSummary:
+      properties:
+        additions:
+          type: integer
+        deletions:
+          type: integer
+        files:
+          type: integer
+      required:
+      - files
+      - additions
+      - deletions
+      type: object
 tags:
 - description: Supported and locally runnable agent adapters
   name: agents
@@ -8800,3 +9453,6 @@ tags:
   name: mobile
 - description: Target-isolated desktop browser runtime (loopback only)
   name: browser
+- description: Local machine readiness checks the desktop app runs before showing
+    the board
+  name: system

@@ -1672,6 +1672,26 @@ func TestCodexSessionMetaMatchesLargeRollout(t *testing.T) {
 	}
 }
 
+func TestCodexSessionMetaMatchesLargeFirstRecord(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "rollout-large-meta.jsonl")
+	line, err := json.Marshal(map[string]any{
+		"type": "session_meta",
+		"payload": map[string]any{
+			"id":             "native-large-meta",
+			"model_provider": "openai",
+			"base_instructions": map[string]any{
+				"text": strings.Repeat("x", 96<<10),
+			},
+		},
+	})
+	mustNoError(t, err)
+	writeUsageFixture(t, path, string(line)+"\n")
+
+	if !codexSessionMetaMatches(path, "native-large-meta", "") {
+		t.Fatal("valid session_meta record with a switch-sized system prompt was rejected")
+	}
+}
+
 func TestDiscoverCodexPathRequiresConfiguredRoots(t *testing.T) {
 	const nativeID = "11111111-1111-4111-8111-111111111111"
 	t.Chdir(t.TempDir())

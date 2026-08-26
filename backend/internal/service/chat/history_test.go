@@ -542,11 +542,14 @@ func newEditHarness(t *testing.T, supportsPromptReplay bool) (*harness, *history
 		sourceCapabilities := productionCaps()
 		sourceCapabilities[ports.ChatCapabilityPromptReplay] = true
 		sourceCapabilities[ports.ChatCapabilityEmbeddedContext] = true
-		source.capabilities = sourceCapabilities
+		source.setCapabilities(sourceCapabilities)
 	}
 	fresh := newFakeConversation()
 	fresh.providerConversationID = "thread-fresh"
 	fresh.turnSeq = 100
+	if supportsPromptReplay {
+		fresh.setCapabilities(source.Capabilities())
+	}
 	forked := newFakeConversation()
 	forked.providerConversationID = "thread-forked"
 	forked.turnSeq = 200
@@ -582,7 +585,7 @@ func newEditHarness(t *testing.T, supportsPromptReplay bool) (*harness, *history
 		freshBranch.providerConversationID = fmt.Sprintf("thread-fresh-%d", state.startCalls)
 		freshBranch.turnSeq = state.startCalls * 100
 		if supportsPromptReplay {
-			freshBranch.capabilities = source.capabilities
+			freshBranch.setCapabilities(source.Capabilities())
 		}
 		state.fresh = freshBranch
 		return freshBranch, nil
@@ -684,6 +687,53 @@ func TestEditMessageReplaysDurableContextWhenNativeForkIsUnavailable(t *testing.
 	sent := driver.fresh.sentMessages()
 	if len(sent) != 1 || len(sent[0].Content) != 1 || !strings.Contains(sent[0].Content[0].Text, "reply to A") || strings.Contains(sent[0].Content[0].Text, "answer B") {
 		t.Fatalf("replay content = %#v", sent)
+	}
+}
+
+func TestEditMessageRejectsReplayWhenFreshProviderNegotiatesFewerCapabilities(t *testing.T) {
+	h, _, driver := newEditHarness(t, true)
+	ctx := context.Background()
+	completeTurn(t, h, "A", "provider-turn-1")
+	second := completeTurn(t, h, "B", "provider-turn-2")
+	h.awaitSnapshot(t, func(snapshot store.ConversationSnapshot) bool {
+		for _, turn := range snapshot.Turns {
+			if turn.ID == second {
+				return turn.State == domain.TurnStateCompleted
+			}
+		}
+		return false
+	})
+	before, err := h.st.LoadConversationSnapshot(ctx, h.ctrl.ConversationID())
+	if err != nil {
+		t.Fatalf("LoadConversationSnapshot before edit: %v", err)
+	}
+
+	capabilities := driver.fresh.Capabilities()
+	delete(capabilities, ports.ChatCapabilityEmbeddedContext)
+	driver.fresh.setCapabilities(capabilities)
+
+	_, err = h.svc.EditMessage(ctx, testSession, second, ports.ChatUserMessage{
+		Text: "B edited", Origin: domain.MessageOriginHuman,
+	})
+	if !errors.Is(err, chatsvc.ErrForkUnsupported) {
+		t.Fatalf("EditMessage error = %v, want ErrForkUnsupported", err)
+	}
+	after, snapshotErr := h.st.LoadConversationSnapshot(ctx, h.ctrl.ConversationID())
+	if snapshotErr != nil {
+		t.Fatalf("LoadConversationSnapshot after edit: %v", snapshotErr)
+	}
+	if after.ActiveBranch.ID != before.ActiveBranch.ID {
+		t.Fatalf("active branch = %q, want source %q", after.ActiveBranch.ID, before.ActiveBranch.ID)
+	}
+	if sent := driver.fresh.sentMessages(); len(sent) != 0 {
+		t.Fatalf("fresh provider received %d replay sends, want none: %#v", len(sent), sent)
+	}
+	branches, branchErr := h.st.ConversationBranches(ctx, h.ctrl.ConversationID())
+	if branchErr != nil {
+		t.Fatalf("ConversationBranches: %v", branchErr)
+	}
+	if len(branches) != 1 {
+		t.Fatalf("branches = %d, want only source after capability refusal: %#v", len(branches), branches)
 	}
 }
 
@@ -1046,7 +1096,8 @@ func TestEditMessageForksBeforeMiddlePromptAndReusesStoredContent(t *testing.T) 
 	second, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
 		Text: "B", Origin: domain.MessageOriginHuman, ClientMessageID: "original-b",
 		Content: []ports.ChatContent{
-			{Type: "resource", URI: "ao://conversation/edit-replay", MIMEType: "application/json", Text: `{"internal":true}`},
+			{Type: "resource", URI: ports.ChatInternalReplayResourceURI, MIMEType: "application/json", Text: `{"userSupplied":true}`},
+			{Type: "resource", URI: ports.ChatInternalReplayResourceURI, MIMEType: "application/json", Text: `{"internal":true}`, Internal: true},
 			{Type: "image", Data: "data:image/png;base64,AA==", MIMEType: "image/png", Name: "diagram.png"},
 		},
 	})
@@ -1080,7 +1131,9 @@ func TestEditMessageForksBeforeMiddlePromptAndReusesStoredContent(t *testing.T) 
 	resumes := append([]ports.ChatResumeConfig(nil), driver.resumeCalls...)
 	driver.mu.Unlock()
 	sent := replacement.sentMessages()
-	if len(sent) != 1 || sent[0].Text != "B edited" || len(sent[0].Content) != 1 || sent[0].Content[0].Data != "data:image/png;base64,AA==" {
+	if len(sent) != 1 || sent[0].Text != "B edited" || len(sent[0].Content) != 2 ||
+		sent[0].Content[0].Text != `{"userSupplied":true}` ||
+		sent[0].Content[1].Data != "data:image/png;base64,AA==" {
 		t.Fatalf("replacement send = %#v", sent)
 	}
 	driver.mu.Lock()

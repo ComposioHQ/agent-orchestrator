@@ -67,6 +67,11 @@ type TelemetryConfig struct {
 	// binary has no reliable version of its own (see cli.Version, which release
 	// tooling does not currently override), so the supervisor passes it in.
 	AppVersion string
+	// SentryDSN, when set (AO_SENTRY_DSN), enables daemon-side Sentry capture of
+	// genuine server faults (5xx and panics) with their Go stack. Blank keeps
+	// Sentry a no-op. Kept separate from the PostHog key: the two are different
+	// processors with different projects.
+	SentryDSN string
 }
 
 // GitLabConfig carries the self-managed GitLab host allowlist and per-host
@@ -274,6 +279,9 @@ func Load() (Config, error) {
 	}
 	if raw := os.Getenv("AO_TELEMETRY_APP_VERSION"); raw != "" {
 		cfg.Telemetry.AppVersion = strings.TrimSpace(raw)
+	}
+	if raw := os.Getenv("AO_SENTRY_DSN"); raw != "" {
+		cfg.Telemetry.SentryDSN = strings.TrimSpace(raw)
 	}
 
 	if raw, ok := os.LookupEnv("AO_GITLAB_ALLOWED_HOSTS"); ok && raw != "" {

@@ -2,6 +2,7 @@ import {
 	memo,
 	useCallback,
 	useEffect,
+	useLayoutEffect,
 	useMemo,
 	useRef,
 	useState,
@@ -34,18 +35,32 @@ import { apiClient, apiErrorMessage } from "../lib/api-client";
 import {
 	isChangedWorkspaceFile,
 	sessionWorkspaceFilesQueryOptions,
+	useWorkspaceFileConnectionState,
+	workspaceFilesRefetchInterval,
+	type WorkspaceCommitSummary,
 	type WorkspaceCompareMode,
+	type WorkspaceFileSections,
 	type WorkspaceFileSummary,
+	type WorkspaceSummary,
 } from "../hooks/useSessionWorkspaceFiles";
 import { useParsedDiff } from "../hooks/useParsedDiff";
+import { useDiffHighlight } from "../hooks/useDiffHighlight";
 import { cn } from "../lib/utils";
-import type { DiffRow, DiffRowKind, DiffSegment } from "../lib/diff-parser";
+import type { DiffRow, DiffRowKind } from "../lib/diff-parser";
+import type { DiffRun } from "../lib/diff-highlight";
 import type { DiffSelectionLine } from "../../shared/diff-selection";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "./ui/accordion";
 import { subscribeWorkspaceFileChanges } from "../lib/workspace-file-events";
 import { Button } from "./ui/button";
 import { DiffSelectionMenu } from "./DiffSelectionMenu";
+import { ImageDiffView } from "./ImageDiffView";
 import { Input } from "./ui/input";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
+import { MarkdownFileView } from "./markdown/MarkdownFileView";
+// The token colours live with the engine rather than with one caller: they are
+// scoped under `.chat-code`/`.diff-code`/`.markdown-code`, so anything rendering these class names
+// has to be inside one of those containers and has to have loaded this sheet.
+import "./chat/code-theme.css";
 
 type WorkspaceFileDetail = components["schemas"]["WorkspaceFileResponse"] & {
 	previousPath?: string;
@@ -70,9 +85,19 @@ type SessionFilesViewProps = {
 	sessionId: string;
 	isMaximized?: boolean;
 	onToggleMaximized?: (next: boolean) => void;
+	revealFile?: ReviewFileTarget;
+	/** Expand and reveal this workspace path once (from chat "open file"). */
+	focusPath?: string | null;
+	onFocusPathConsumed?: () => void;
 };
 
+export type ReviewFileTarget = { line?: number; path: string; requestId: number };
+type ReviewLineTarget = { line: number; requestId: number };
+
 const emptyFiles: WorkspaceFileSummary[] = [];
+const emptyCommits: WorkspaceCommitSummary[] = [];
+
+type WorkspaceSectionKey = "committed" | "staged" | "unstaged" | "untracked";
 
 const statusLabel: Record<WorkspaceFileStatus, string> = {
 	added: "A",
@@ -86,8 +111,8 @@ const statusTone: Record<WorkspaceFileStatus, string> = {
 	added: "text-success",
 	deleted: "text-error",
 	modified: "text-warning",
-	renamed: "text-accent",
-	unmodified: "text-passive",
+	renamed: "text-status-working",
+	unmodified: "text-muted-foreground",
 };
 
 // Split (old | new) view only means something when both sides have content to
@@ -98,10 +123,23 @@ function canSplitCompare(status: WorkspaceFileStatus): boolean {
 	return status === "modified" || status === "renamed";
 }
 
+const MARKDOWN_EXTENSIONS = [".md", ".markdown"];
+
+// A deleted file has no current worktree content — the Rendered view shows the
+// file as it stands now, not a historical revision — so there's nothing for it
+// to render and the toggle stays hidden.
+function canRenderMarkdown(path: string, status: WorkspaceFileStatus): boolean {
+	const lower = path.toLowerCase();
+	return status !== "deleted" && MARKDOWN_EXTENSIONS.some((extension) => lower.endsWith(extension));
+}
+
 export function SessionFilesView({
 	sessionId,
 	isMaximized = false,
 	onToggleMaximized,
+	revealFile,
+	focusPath,
+	onFocusPathConsumed,
 }: SessionFilesViewProps) {
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
@@ -116,10 +154,51 @@ export function SessionFilesView({
 	const annotationSentTimerRef = useRef<number | null>(null);
 	const rootRef = useRef<HTMLElement>(null);
 
-	const filesQuery = useQuery(sessionWorkspaceFilesQueryOptions(sessionId, t("files.error.loadWorkspace")));
+	const workspaceConnectionState = useWorkspaceFileConnectionState(sessionId);
+	const filesQuery = useQuery({
+		...sessionWorkspaceFilesQueryOptions(sessionId, t("files.error.loadWorkspace")),
+		refetchInterval: workspaceFilesRefetchInterval(workspaceConnectionState),
+	});
 	useEffect(() => subscribeWorkspaceFileChanges(sessionId, queryClient), [queryClient, sessionId]);
 	const files = filesQuery.data?.files ?? emptyFiles;
 	const changedFiles = useMemo(() => files.filter(isChangedWorkspaceFile), [files]);
+	const sections = filesQuery.data?.sections;
+	const commits = filesQuery.data?.commits ?? emptyCommits;
+	const summary = filesQuery.data?.summary;
+	const ahead = filesQuery.data?.ahead ?? null;
+	const behind = filesQuery.data?.behind ?? null;
+	// Sections are only populated for single-repo sessions (see backend
+	// workspaceGitState). Workspace-project and scratch sessions fall back to
+	// the flat base..worktree list below instead of showing an empty panel.
+	const useSections = Boolean(
+		sections &&
+			(sections.staged.length > 0 ||
+				sections.unstaged.length > 0 ||
+				sections.untracked.length > 0 ||
+				sections.committed.length > 0),
+	);
+
+	useEffect(() => {
+		if (!revealFile?.path) return;
+		const match = changedFiles.find(
+			(file) => file.path === revealFile.path || file.previousPath === revealFile.path,
+		);
+		if (!match) return;
+		setFilter("");
+		setExpandedPaths((current) => {
+			if (current.has(match.path)) return current;
+			const next = new Set(current);
+			next.add(match.path);
+			return next;
+		});
+		window.requestAnimationFrame(() => {
+			if (revealFile.line && document.activeElement?.matches("[data-diff-row]")) return;
+			const row = Array.from(rootRef.current?.querySelectorAll<HTMLElement>("[data-file-path]") ?? [])
+				.find((candidate) => candidate.dataset.filePath === match.path);
+			row?.scrollIntoView?.({ block: "nearest" });
+			row?.querySelector<HTMLButtonElement>("[data-file-toggle]")?.focus();
+		});
+	}, [changedFiles, revealFile]);
 
 	useEffect(() => {
 		annotationGenerationRef.current += 1;
@@ -130,6 +209,32 @@ export function SessionFilesView({
 		setAnnotationStatus("idle");
 		setAnnotationError("");
 	}, [sessionId]);
+
+	// Chat (and similar) can ask the Files rail to open on a specific path. Match
+	// by exact path first, then by basename when the turn diff only carried a
+	// short name — either way expand that row and clear the request.
+	useEffect(() => {
+		if (!focusPath) return;
+		const match =
+			changedFiles.find((file) => file.path === focusPath) ??
+			changedFiles.find((file) => file.path === focusPath.replace(/^\.\//, "")) ??
+			changedFiles.find((file) => file.path.endsWith(`/${focusPath}`) || file.path === focusPath);
+		if (!match && !filesQuery.isSuccess) return;
+		const target = match?.path ?? focusPath;
+		setExpandedPaths((current) => {
+			if (current.has(target)) return current;
+			const next = new Set(current);
+			next.add(target);
+			return next;
+		});
+		onFocusPathConsumed?.();
+		requestAnimationFrame(() => {
+			const toggle = rootRef.current?.querySelector<HTMLElement>(
+				`[data-file-toggle][data-file-path="${CSS.escape(target)}"]`,
+			);
+			toggle?.scrollIntoView({ block: "nearest" });
+		});
+	}, [changedFiles, filesQuery.isSuccess, focusPath, onFocusPathConsumed]);
 
 	useEffect(
 		() => () => {
@@ -214,24 +319,40 @@ export function SessionFilesView({
 	};
 
 	const normalizedFilter = filter.trim().toLowerCase();
-	const visibleFiles = useMemo(
-		() =>
-			normalizedFilter
-				? changedFiles.filter((file) => fileSearchText(file).includes(normalizedFilter))
-				: changedFiles,
-		[changedFiles, normalizedFilter],
+	const filterFiles = useCallback(
+		(list: WorkspaceFileSummary[]) =>
+			normalizedFilter ? list.filter((file) => fileSearchText(file).includes(normalizedFilter)) : list,
+		[normalizedFilter],
 	);
+	const visibleFiles = useMemo(() => filterFiles(changedFiles), [changedFiles, filterFiles]);
+	const visibleSections = useMemo<WorkspaceFileSections | null>(() => {
+		if (!sections) return null;
+		return {
+			committed: filterFiles(sections.committed),
+			staged: filterFiles(sections.staged),
+			unstaged: filterFiles(sections.unstaged),
+			untracked: filterFiles(sections.untracked),
+		};
+	}, [sections, filterFiles]);
 	const changedCount = changedFiles.length;
-	const expandedVisibleCount = visibleFiles.filter((file) => expandedPaths.has(file.path)).length;
+	const allVisibleFiles = useSections
+		? [
+				...(visibleSections?.committed ?? []),
+				...(visibleSections?.staged ?? []),
+				...(visibleSections?.unstaged ?? []),
+				...(visibleSections?.untracked ?? []),
+			]
+		: visibleFiles;
+	const expandedVisibleCount = allVisibleFiles.filter((file) => expandedPaths.has(file.path)).length;
 
 	const toggleVisibleFiles = () => {
 		setExpandedPaths((current) => {
 			const next = new Set(current);
 			if (expandedVisibleCount > 0) {
-				for (const file of visibleFiles) next.delete(file.path);
+				for (const file of allVisibleFiles) next.delete(file.path);
 				return next;
 			}
-			for (const file of visibleFiles) next.add(file.path);
+			for (const file of allVisibleFiles) next.add(file.path);
 			return next;
 		});
 	};
@@ -276,10 +397,11 @@ export function SessionFilesView({
 						value={filter}
 					/>
 				</label>
+				<WorkspaceHeaderStats ahead={ahead} behind={behind} summary={summary} />
 				<Button
 					aria-label={expandedVisibleCount > 0 ? t("files.collapseAll") : t("files.expandAll")}
 					className="shrink-0"
-					disabled={visibleFiles.length === 0}
+					disabled={allVisibleFiles.length === 0}
 					onClick={toggleVisibleFiles}
 					size="icon-sm"
 					type="button"
@@ -329,19 +451,38 @@ export function SessionFilesView({
 				data-files-scroll-root=""
 			>
 				<div className={cn("flex w-full flex-col px-0", !isMaximized && "mx-auto max-w-[1200px]")}>
-					<ReviewFileList
-						annotation={annotation}
-						compareMode={filesQuery.data?.compareMode}
-						error={filesQuery.error}
-						expandedPaths={expandedPaths}
-						files={visibleFiles}
-						isLoading={filesQuery.isPending}
-						onExpandedPathsChange={setExpandedPaths}
-						onRetry={() => void filesQuery.refetch()}
-						sessionId={sessionId}
-						split={split}
-						wrap={true}
-					/>
+					{useSections && visibleSections ? (
+						<SectionedFileList
+							annotation={annotation}
+							commits={commits}
+							compareMode={filesQuery.data?.compareMode}
+							error={filesQuery.error}
+							expandedPaths={expandedPaths}
+							isLoading={filesQuery.isPending}
+							onExpandedPathsChange={setExpandedPaths}
+							onRetry={() => void filesQuery.refetch()}
+							revealFile={revealFile}
+							sections={visibleSections}
+							sessionId={sessionId}
+							split={split}
+							wrap={true}
+						/>
+					) : (
+						<ReviewFileList
+							annotation={annotation}
+							compareMode={filesQuery.data?.compareMode}
+							error={filesQuery.error}
+							expandedPaths={expandedPaths}
+							files={visibleFiles}
+							isLoading={filesQuery.isPending}
+							onExpandedPathsChange={setExpandedPaths}
+							onRetry={() => void filesQuery.refetch()}
+							revealFile={revealFile}
+							sessionId={sessionId}
+							split={split}
+							wrap={true}
+						/>
+					)}
 				</div>
 			</div>
 		</section>
@@ -357,6 +498,7 @@ function ReviewFileList({
 	isLoading,
 	onExpandedPathsChange,
 	onRetry,
+	revealFile,
 	sessionId,
 	split,
 	wrap,
@@ -369,6 +511,7 @@ function ReviewFileList({
 	isLoading: boolean;
 	onExpandedPathsChange: (next: Set<string>) => void;
 	onRetry: () => void;
+	revealFile?: ReviewFileTarget;
 	sessionId: string;
 	split: boolean;
 	wrap: boolean;
@@ -386,11 +529,64 @@ function ReviewFileList({
 		return <PanelMessage>{emptyFilesMessage(compareMode, t)}</PanelMessage>;
 	}
 	return (
+		<FileAccordionList
+			annotation={annotation}
+			expandedPaths={expandedPaths}
+			files={files}
+			onExpandedPathsChange={onExpandedPathsChange}
+			revealFile={revealFile}
+			sessionId={sessionId}
+			split={split}
+			wrap={wrap}
+		/>
+	);
+}
+
+// FileAccordionList is one Radix Accordion instance over one flat file list.
+// SectionedFileList mounts several of these side by side (one per git-state
+// group), each scoped to its own files but sharing the single `expandedPaths`
+// set: `value` is filtered down to the paths this instance owns, and
+// onValueChange writes its own paths back into the shared set rather than
+// replacing it outright (Radix's onValueChange reports only this instance's
+// open values, which would otherwise clobber every other section's expanded
+// state).
+function FileAccordionList({
+	annotation,
+	expandedPaths,
+	files,
+	onExpandedPathsChange,
+	revealFile,
+	section,
+	sessionId,
+	split,
+	wrap,
+}: {
+	annotation: FileAnnotationModel;
+	expandedPaths: Set<string>;
+	files: WorkspaceFileSummary[];
+	onExpandedPathsChange: (next: Set<string>) => void;
+	revealFile?: ReviewFileTarget;
+	section?: WorkspaceSectionKey;
+	sessionId: string;
+	split: boolean;
+	wrap: boolean;
+}) {
+	const ownPaths = useMemo(() => new Set(files.map((file) => file.path)), [files]);
+	const openValues = useMemo(
+		() => Array.from(expandedPaths).filter((path) => ownPaths.has(path)),
+		[expandedPaths, ownPaths],
+	);
+	return (
 		<Accordion
 			asChild
-			onValueChange={(next: string[]) => onExpandedPathsChange(new Set(next))}
+			onValueChange={(next: string[]) => {
+				const merged = new Set(expandedPaths);
+				for (const path of ownPaths) merged.delete(path);
+				for (const path of next) merged.add(path);
+				onExpandedPathsChange(merged);
+			}}
 			type="multiple"
-			value={Array.from(expandedPaths)}
+			value={openValues}
 		>
 			<ul className="session-files-review-list flex flex-col gap-0.5">
 				{files.map((file) => (
@@ -399,6 +595,13 @@ function ReviewFileList({
 						expanded={expandedPaths.has(file.path)}
 						file={file}
 						key={file.path}
+						revealLine={
+							revealFile?.line &&
+							(file.path === revealFile.path || file.previousPath === revealFile.path)
+								? { line: revealFile.line, requestId: revealFile.requestId }
+								: undefined
+						}
+						section={section}
 						sessionId={sessionId}
 						split={split}
 						wrap={wrap}
@@ -409,10 +612,208 @@ function ReviewFileList({
 	);
 }
 
+function SectionedFileList({
+	annotation,
+	commits,
+	compareMode,
+	error,
+	expandedPaths,
+	isLoading,
+	onExpandedPathsChange,
+	onRetry,
+	revealFile,
+	sections,
+	sessionId,
+	split,
+	wrap,
+}: {
+	annotation: FileAnnotationModel;
+	commits: WorkspaceCommitSummary[];
+	compareMode?: WorkspaceCompareMode;
+	error: Error | null;
+	expandedPaths: Set<string>;
+	isLoading: boolean;
+	onExpandedPathsChange: (next: Set<string>) => void;
+	onRetry: () => void;
+	revealFile?: ReviewFileTarget;
+	sections: WorkspaceFileSections;
+	sessionId: string;
+	split: boolean;
+	wrap: boolean;
+}) {
+	const { t } = useTranslation();
+	const [collapsedSections, setCollapsedSections] = useState<Set<WorkspaceSectionKey>>(() => new Set());
+	if (isLoading) {
+		return <PanelMessage>{t("files.loading")}</PanelMessage>;
+	}
+	if (error) {
+		return (
+			<PanelMessage action={<RetryButton onClick={onRetry} />}>{error.message || t("files.error.load")}</PanelMessage>
+		);
+	}
+	const groups: Array<{ key: WorkspaceSectionKey; label: string; files: WorkspaceFileSummary[] }> = [
+		{ key: "committed", label: t("files.section.committed"), files: sections.committed },
+		{ key: "staged", label: t("files.section.staged"), files: sections.staged },
+		{ key: "unstaged", label: t("files.section.unstaged"), files: sections.unstaged },
+		{ key: "untracked", label: t("files.section.untracked"), files: sections.untracked },
+	];
+	if (groups.every((group) => group.files.length === 0)) {
+		return <PanelMessage>{emptyFilesMessage(compareMode, t)}</PanelMessage>;
+	}
+	const toggleSection = (key: WorkspaceSectionKey) => {
+		setCollapsedSections((current) => {
+			const next = new Set(current);
+			if (next.has(key)) next.delete(key);
+			else next.add(key);
+			return next;
+		});
+	};
+	return (
+		<div className="flex flex-col gap-2 py-1.5">
+			{groups.map((group) =>
+				group.files.length === 0 ? null : (
+					<SectionGroup
+						annotation={annotation}
+						collapsed={collapsedSections.has(group.key)}
+						commits={group.key === "committed" ? commits : undefined}
+						expandedPaths={expandedPaths}
+						files={group.files}
+						key={group.key}
+						label={group.label}
+						onExpandedPathsChange={onExpandedPathsChange}
+						onToggleCollapsed={() => toggleSection(group.key)}
+						revealFile={revealFile}
+						section={group.key}
+						sessionId={sessionId}
+						split={split}
+						wrap={wrap}
+					/>
+				),
+			)}
+		</div>
+	);
+}
+
+function SectionGroup({
+	annotation,
+	collapsed,
+	commits,
+	expandedPaths,
+	files,
+	label,
+	onExpandedPathsChange,
+	onToggleCollapsed,
+	revealFile,
+	section,
+	sessionId,
+	split,
+	wrap,
+}: {
+	annotation: FileAnnotationModel;
+	collapsed: boolean;
+	commits?: WorkspaceCommitSummary[];
+	expandedPaths: Set<string>;
+	files: WorkspaceFileSummary[];
+	label: string;
+	onExpandedPathsChange: (next: Set<string>) => void;
+	onToggleCollapsed: () => void;
+	revealFile?: ReviewFileTarget;
+	section: WorkspaceSectionKey;
+	sessionId: string;
+	split: boolean;
+	wrap: boolean;
+}) {
+	return (
+		<section>
+			<button
+				aria-expanded={!collapsed}
+				className="flex w-full items-center gap-1.5 px-2.5 py-1 text-left hover:bg-interactive-hover/50"
+				onClick={onToggleCollapsed}
+				type="button"
+			>
+				{collapsed ? (
+					<ChevronRight className="size-icon-sm shrink-0 text-muted-foreground" aria-hidden="true" />
+				) : (
+					<ChevronDown className="size-icon-sm shrink-0 text-muted-foreground" aria-hidden="true" />
+				)}
+				<span className="text-caption font-bold uppercase tracking-wide text-foreground">{label}</span>
+				<span className="rounded-full bg-muted px-1.5 py-0.25 text-caption font-medium text-muted-foreground">
+					{files.length}
+				</span>
+			</button>
+			{collapsed ? null : (
+				<div className="flex flex-col gap-1.5 px-2.5 pb-1">
+					{commits && commits.length > 0 ? <CommitList commits={commits} /> : null}
+					<FileAccordionList
+						annotation={annotation}
+						expandedPaths={expandedPaths}
+						files={files}
+						onExpandedPathsChange={onExpandedPathsChange}
+						revealFile={revealFile}
+						section={section}
+						sessionId={sessionId}
+						split={split}
+						wrap={wrap}
+					/>
+				</div>
+			)}
+		</section>
+	);
+}
+
+function CommitList({ commits }: { commits: WorkspaceCommitSummary[] }) {
+	return (
+		<ul className="flex flex-col gap-0.5 border-b border-border/40 pb-1.5">
+			{commits.map((commit) => (
+				<li className="flex items-center gap-1.5 py-0.5 font-mono text-caption text-passive" key={commit.sha}>
+					<span className="shrink-0 text-passive/70">{commit.sha.slice(0, 7)}</span>
+					<span className="min-w-0 flex-1 truncate text-foreground">{commit.subject}</span>
+				</li>
+			))}
+		</ul>
+	);
+}
+
+function WorkspaceHeaderStats({
+	ahead,
+	behind,
+	summary,
+}: {
+	ahead: number | null;
+	behind: number | null;
+	summary?: WorkspaceSummary;
+}) {
+	const { t } = useTranslation();
+	const hasSummary = Boolean(summary && summary.files > 0);
+	const hasAheadBehind = Boolean(ahead || behind);
+	if (!hasSummary && !hasAheadBehind) return null;
+	return (
+		<span
+			aria-label={t("files.workspaceSummary")}
+			className="flex shrink-0 items-center gap-2 px-1 font-mono text-caption"
+		>
+			{hasSummary && summary ? (
+				<span className="flex items-center gap-1">
+					{summary.additions > 0 ? <span className="text-success">+{summary.additions}</span> : null}
+					{summary.deletions > 0 ? <span className="text-error">-{summary.deletions}</span> : null}
+				</span>
+			) : null}
+			{hasAheadBehind ? (
+				<span className="flex items-center gap-1.5 text-passive">
+					{ahead ? <span title={t("files.aheadCount", { count: ahead })}>↑{ahead}</span> : null}
+					{behind ? <span title={t("files.behindCount", { count: behind })}>↓{behind}</span> : null}
+				</span>
+			) : null}
+		</span>
+	);
+}
+
 function ReviewFileCard({
 	annotation,
 	expanded,
 	file,
+	revealLine,
+	section,
 	sessionId,
 	split,
 	wrap,
@@ -420,6 +821,8 @@ function ReviewFileCard({
 	annotation: FileAnnotationModel;
 	expanded: boolean;
 	file: WorkspaceFileSummary;
+	revealLine?: ReviewLineTarget;
+	section?: WorkspaceSectionKey;
 	sessionId: string;
 	split: boolean;
 	wrap: boolean;
@@ -429,26 +832,47 @@ function ReviewFileCard({
 	// in this file's diff, a background refetch would re-render the diff body
 	// out from under them and blow away the browser's native selection.
 	const [selectionOrMenuActive, setSelectionOrMenuActive] = useState(false);
+	// Keyed by file.path in ReviewFileList's .map(), so this naturally resets to
+	// "source" for a different file while surviving this file's own re-renders.
+	const [viewMode, setViewMode] = useState<"source" | "rendered">("source");
+	const cardRef = useRef<HTMLElement>(null);
+	const { onViewModeChange } = useViewModeScrollAnchor(cardRef, viewMode, setViewMode);
 	const detailQuery = useQuery({
-		queryKey: ["session-workspace-file", sessionId, file.path],
+		// section is part of the key: a partially staged file has one row under
+		// Staged and another under Unstaged, and each must resolve its own diff
+		// rather than sharing a cache entry keyed on path alone.
+		queryKey: ["session-workspace-file", sessionId, file.path, section],
 		enabled: expanded && !selectionOrMenuActive,
-		queryFn: () => loadWorkspaceFile(sessionId, file.path, t),
+		queryFn: () => loadWorkspaceFile(sessionId, file.path, section, t),
 	});
 
-	return (
-		<AccordionItem asChild value={file.path}>
-			<li className="session-files-review-row overflow-hidden bg-transparent">
+	const markdownTabs = canRenderMarkdown(file.path, file.status);
+	const card = (
+			<li className="session-files-review-row overflow-hidden bg-transparent" data-file-path={file.path}>
 				<AccordionTrigger
 					aria-label={t(expanded ? "files.collapseFile" : "files.expandFile", { file: fileLabel(file) })}
 					className="flex min-w-0 flex-1 items-center gap-1.5 px-2.5 py-1 text-left"
 					data-file-toggle=""
+					data-file-path={file.path}
 					headerClassName="min-h-9 hover:bg-interactive-hover/50 data-[state=open]:bg-interactive-active/35"
 					trailing={
-						<FileFeedbackButton
-							active={annotation.target?.path === file.path && annotation.target.side === "file"}
-							file={file}
-							onClick={() => annotation.begin({ path: file.path, previousPath: file.previousPath, side: "file" })}
-						/>
+						<>
+							{markdownTabs && expanded ? (
+								<TabsList className={markdownTabsListClass}>
+									<TabsTrigger value="source" className={markdownTabTriggerClass}>
+										{t("files.diff")}
+									</TabsTrigger>
+									<TabsTrigger value="rendered" className={markdownTabTriggerClass}>
+										{t("files.preview")}
+									</TabsTrigger>
+								</TabsList>
+							) : null}
+							<FileFeedbackButton
+								active={annotation.target?.path === file.path && annotation.target.side === "file"}
+								file={file}
+								onClick={() => annotation.begin({ path: file.path, previousPath: file.previousPath, side: "file" })}
+							/>
+						</>
 					}
 				>
 					{expanded ? (
@@ -471,18 +895,41 @@ function ReviewFileCard({
 						</PanelMessage>
 					) : null}
 					{!detailQuery.isPending && !detailQuery.error && detailQuery.data ? (
-						<ReviewDiffBody
+						<FileDetailBody
 							annotation={annotation}
 							detail={detailQuery.data}
-							filePath={file.path}
+							detailLoadedAt={detailQuery.dataUpdatedAt}
+							file={file}
 							onActiveSelectionChange={setSelectionOrMenuActive}
+							revealLine={revealLine}
 							sessionId={sessionId}
-							split={split && canSplitCompare(file.status)}
+							split={split}
 							wrap={wrap}
 						/>
 					) : null}
 				</AccordionContent>
 			</li>
+	);
+	// The tab strip lives in the file's own title row, so the Tabs root has to
+	// enclose that row as well as the body it switches. Both roots take `asChild`,
+	// so Accordion item → Tabs root → the same single <li>: no wrapper element, and
+	// the DOM is what it was before the strip moved up. That also makes `cardRef`
+	// the <li> rather than the <div> Radix types it as — the scroll anchor only
+	// reads getBoundingClientRect/closest off it, so the cast is safe.
+	return (
+		<AccordionItem asChild value={file.path}>
+			{markdownTabs ? (
+				<Tabs
+					ref={cardRef as RefObject<HTMLDivElement>}
+					value={viewMode}
+					onValueChange={(next) => onViewModeChange(next as FileViewMode)}
+					asChild
+				>
+					{card}
+				</Tabs>
+			) : (
+				card
+			)}
 		</AccordionItem>
 	);
 }
@@ -534,34 +981,230 @@ function emptyDiffMessage(compareMode: WorkspaceCompareMode | undefined, t: TFun
 	return compareMode === "base" ? t("files.noChangesBase") : t("files.noChangesHead");
 }
 
-async function loadWorkspaceFile(sessionId: string, path: string, t: TFunction) {
+async function loadWorkspaceFile(sessionId: string, path: string, section: WorkspaceSectionKey | undefined, t: TFunction) {
 	const { data, error } = await apiClient.GET("/api/v1/sessions/{sessionId}/workspace/file", {
-		params: { path: { sessionId }, query: { path } },
+		params: { path: { sessionId }, query: { path, section } },
 	});
 	if (error) throw new Error(apiErrorMessage(error, t("files.error.loadWorkspaceFile")));
 	if (!data) throw new Error(t("files.error.emptyResponse"));
 	return data;
 }
 
-function ReviewDiffBody({
+type FileViewMode = "source" | "rendered";
+
+/**
+ * Keeps a file card where the eye left it when its diff/rendered tab changes.
+ *
+ * There is no per-file scroll box — the Files panel is one shared scroller
+ * (`[data-files-scroll-root]`, see `useSharedScrollRowVirtualizer`), so "scroll
+ * position" is that panel's `scrollTop`, and nothing about switching tabs resets
+ * it directly. What moves the content is the height swap: a 4,000-line diff and
+ * its rendered form are wildly different heights, and when the shorter one mounts
+ * the browser clamps `scrollTop` to the now-smaller maximum. Switching back
+ * restores the height but not the clamped-away offset, which is why a long diff
+ * came back parked near its top.
+ *
+ * Note this is NOT solved by `forceMount` on both tabs: a hidden `TabsContent`
+ * is `display: none`, contributes zero height, and clamps identically — it would
+ * only add the cost of keeping a large diff permanently mounted.
+ *
+ * So: remember where the card sat when a mode was left, and put it back when that
+ * mode returns. Re-run after a frame as well, because virtualized rows measure
+ * their real heights one frame after mounting and shift everything below them.
+ */
+function useViewModeScrollAnchor(
+	cardRef: RefObject<HTMLElement | null>,
+	viewMode: FileViewMode,
+	setViewMode: (mode: FileViewMode) => void,
+) {
+	// Offset of the card's top edge from the scroll root's, per mode. Negative
+	// once it has scrolled up out of view, which is the case that mattered. The
+	// card rather than the tab strip: the strip sits in the title row now, so it
+	// no longer moves with the body being swapped, and the card's own top edge is
+	// the fixed thing above it.
+	const offsets = useRef<Partial<Record<FileViewMode, number>>>({});
+	const pending = useRef<{ root: HTMLElement; offset: number } | null>(null);
+
+	const currentOffset = useCallback(
+		(root: HTMLElement) => {
+			const card = cardRef.current;
+			if (!card) return null;
+			return card.getBoundingClientRect().top - root.getBoundingClientRect().top;
+		},
+		[cardRef],
+	);
+
+	const onViewModeChange = useCallback(
+		(next: FileViewMode) => {
+			const root = cardRef.current?.closest<HTMLElement>("[data-files-scroll-root]") ?? null;
+			const offset = root ? currentOffset(root) : null;
+			if (root && offset !== null) {
+				offsets.current[viewMode] = offset;
+				// Fall back to holding the card still when the incoming mode has no
+				// remembered offset yet — the first switch in either direction.
+				pending.current = { root, offset: offsets.current[next] ?? offset };
+			}
+			setViewMode(next);
+		},
+		[cardRef, currentOffset, setViewMode, viewMode],
+	);
+
+	useLayoutEffect(() => {
+		const target = pending.current;
+		pending.current = null;
+		if (!target) return;
+		const settle = () => {
+			const offset = currentOffset(target.root);
+			if (offset === null) return;
+			const delta = offset - target.offset;
+			if (delta) target.root.scrollTop += delta;
+		};
+		settle();
+		const frame = requestAnimationFrame(settle);
+		return () => cancelAnimationFrame(frame);
+	}, [currentOffset, viewMode]);
+
+	return { onViewModeChange };
+}
+
+// Colours and sizes come from the inspector rail's own tab buttons
+// (`session-inspector__tab-button` in packages/product-ui/src/SessionInspectorView.tsx),
+// which is the tab language for the pane this control sits in: `text-passive` labels
+// at `text-2xs font-semibold` and `--color-interactive-*` fills, a rung or two down
+// the control scale from the rail's own 28px. Stock shadcn's own palette is dropped — its dark-theme active fill,
+// `bg-input/30`, is white at 1.2% over the track, which is not a visible selection at
+// this size.
+//
+// The two interaction fills are one step apart on the same neutral (foreground at 4%
+// for the track, 7% for the selected tab) rather than two competing colours, so the
+// pair reads as one control with one thing lit. Hover moves the label, not the fill —
+// a hover tint would land on the track's own value and disappear. That is also what
+// `settings-segment-item` does.
+//
+// Sizing tracks the rail as the user drags it in, off the `inspector` container the
+// shell already declares and the 350px/300px steps it already breaks at, so the
+// toggle narrows on the same drag positions as everything else in the pane rather
+// than on a threshold invented here. In the centre pane there is no `inspector`
+// container to match, so the variants sit inert and the control keeps its full size.
+//
+// Full size is a `--size-control-xs` track, the bottom rung of the control scale, over
+// 16px pills — deliberately under the 20px a standalone control would get. It rides
+// in a 36px row it does not own, next to a 28px feedback button, and reading as the
+// smaller thing there is the point. Wide labels keep the targets easy despite the
+// height. Nothing below that is left to give, so the two narrow steps buy their width
+// back out of horizontal padding instead, which is the dimension actually under
+// pressure when the rail closes in.
+//
+// The hairline around the track is GitHub's segmented-control signature, and it is
+// what separates this shape from a shadcn pill group: the border draws the outline,
+// the fills only say which half is live. Border and padding cost the track 1px a side
+// each, hence 16px pills inside 20px, and the radii follow — 6px outside, 4px inside,
+// still concentric.
+//
+// Every line below overrides a stock-shadcn base class in ui/tabs.tsx, so the dark:
+// variants have to be restated to outrank the primitive's own dark: rules.
+const markdownTabsListClass =
+	"mr-1 h-control-xs shrink-0 gap-px rounded-sm border border-border bg-interactive-hover p-px";
+const markdownTabTriggerClass = [
+	"h-4 flex-none rounded-xs px-1.5 text-2xs font-semibold",
+	"text-passive transition-[background,color] duration-fast",
+	"hover:text-foreground dark:text-passive dark:hover:text-foreground",
+	"data-[state=active]:bg-interactive-active data-[state=active]:text-foreground",
+	"dark:data-[state=active]:border-transparent dark:data-[state=active]:bg-interactive-active",
+	"@max-[350px]/inspector:px-1",
+	"@max-[300px]/inspector:px-0.5",
+].join(" ");
+
+// A markdown file's body is the two panels the title row's tab strip switches
+// between; every other file (and a deleted markdown file, which has no current
+// content to render) falls straight through to the diff body unchanged.
+function FileDetailBody({
 	annotation,
 	detail,
-	filePath,
+	detailLoadedAt,
+	file,
 	onActiveSelectionChange,
+	revealLine,
 	sessionId,
 	split,
 	wrap,
 }: {
 	annotation: FileAnnotationModel;
 	detail: WorkspaceFileDetail;
+	detailLoadedAt: number;
+	file: WorkspaceFileSummary;
+	onActiveSelectionChange: (active: boolean) => void;
+	revealLine?: ReviewLineTarget;
+	sessionId: string;
+	split: boolean;
+	wrap: boolean;
+}) {
+	const diffBody = (
+		<ReviewDiffBody
+			annotation={annotation}
+			detail={detail}
+			detailLoadedAt={detailLoadedAt}
+			filePath={file.path}
+			onActiveSelectionChange={onActiveSelectionChange}
+			revealLine={revealLine}
+			sessionId={sessionId}
+			split={split && canSplitCompare(file.status)}
+			wrap={wrap}
+		/>
+	);
+	if (!canRenderMarkdown(file.path, file.status)) return diffBody;
+	return (
+		<>
+			<TabsContent value="source">{diffBody}</TabsContent>
+			<TabsContent value="rendered">
+				<MarkdownFileView
+					content={detail.content}
+					filePath={file.path}
+					sessionId={sessionId}
+					truncated={detail.contentTruncated}
+					version={detailLoadedAt}
+				/>
+			</TabsContent>
+		</>
+	);
+}
+
+function ReviewDiffBody({
+	annotation,
+	detail,
+	detailLoadedAt,
+	filePath,
+	onActiveSelectionChange,
+	revealLine,
+	sessionId,
+	split,
+	wrap,
+}: {
+	annotation: FileAnnotationModel;
+	detail: WorkspaceFileDetail;
+	detailLoadedAt: number;
 	filePath: string;
 	onActiveSelectionChange: (active: boolean) => void;
+	revealLine?: ReviewLineTarget;
 	sessionId: string;
 	split: boolean;
 	wrap: boolean;
 }) {
 	const { t } = useTranslation();
 	const { rows, pending } = useParsedDiff(detail.diff);
+	// An image has no readable line diff, so it renders as the images themselves
+	// rather than the binary placeholder.
+	if (detail.imageMediaType) {
+		return (
+			<ImageDiffView
+				path={detail.path}
+				sessionId={sessionId}
+				split={split}
+				status={detail.status}
+				version={detailLoadedAt}
+			/>
+		);
+	}
 	if (detail.binary) {
 		return <PanelMessage compact>{t("files.binaryUnavailable")}</PanelMessage>;
 	}
@@ -578,6 +1221,7 @@ function ReviewDiffBody({
 			onActiveSelectionChange={onActiveSelectionChange}
 			path={detail.path}
 			previousPath={detail.previousPath}
+			revealLine={revealLine}
 			rows={rows}
 			sessionId={sessionId}
 			split={split}
@@ -714,7 +1358,7 @@ function useSharedScrollRowVirtualizer(
 		scrollMargin,
 	});
 
-	return { listRef, virtualizer };
+	return { listRef, scrollElement, virtualizer };
 }
 
 function DiffView({
@@ -723,6 +1367,7 @@ function DiffView({
 	onActiveSelectionChange,
 	path,
 	previousPath,
+	revealLine,
 	rows,
 	sessionId,
 	split,
@@ -734,6 +1379,7 @@ function DiffView({
 	onActiveSelectionChange: (active: boolean) => void;
 	path: string;
 	previousPath?: string;
+	revealLine?: ReviewLineTarget;
 	rows: DiffRow[];
 	sessionId: string;
 	split: boolean;
@@ -745,7 +1391,43 @@ function DiffView({
 	const [hasSelection, setHasSelection] = useState(false);
 	const [menuState, setMenuState] = useState<DiffViewMenuState | null>(null);
 	const shouldVirtualize = !split && rows.length > ROW_VIRTUALIZE_THRESHOLD;
-	const { listRef, virtualizer } = useSharedScrollRowVirtualizer(containerRef, rows.length, shouldVirtualize);
+	const { listRef, scrollElement, virtualizer } = useSharedScrollRowVirtualizer(containerRef, rows.length, shouldVirtualize);
+	const highlight = useDiffHighlight(rows, path, previousPath);
+	// Unified view shows each row once, so a del row reads its old-file color and
+	// every other row (context, add) reads its new-file color — same convention
+	// toSplitRows already uses to decide which side "owns" a context row.
+	const runs = useMemo(
+		() => rows.map((row, index) => (row.kind === "del" ? highlight.oldSide[index] : highlight.newSide[index])),
+		[rows, highlight],
+	);
+	const revealLineNumber = revealLine?.line;
+	const revealRequestId = revealLine?.requestId;
+
+	useEffect(() => {
+		if (!revealLineNumber) return;
+		const newSideIndex = rows.findIndex((row) => row.newNo === revealLineNumber);
+		const rowIndex = newSideIndex >= 0 ? newSideIndex : rows.findIndex((row) => row.oldNo === revealLineNumber);
+		const targetSide = newSideIndex >= 0 ? "new" : "old";
+		if (rowIndex < 0 || (shouldVirtualize && !scrollElement)) return;
+
+		if (shouldVirtualize) virtualizer.scrollToIndex(rowIndex, { align: "center" });
+		let retryFrame: number | undefined;
+		const focusRow = () => {
+			const sideSelector = split ? `[data-diff-side="${targetSide}"]` : "";
+			const row = containerRef.current?.querySelector<HTMLElement>(`[data-diff-row][data-row-index="${rowIndex}"]${sideSelector}`);
+			if (!row) return false;
+			row.scrollIntoView({ block: "center" });
+			row.focus({ preventScroll: true });
+			return true;
+		};
+		const frame = window.requestAnimationFrame(() => {
+			if (!focusRow()) retryFrame = window.requestAnimationFrame(focusRow);
+		});
+		return () => {
+			window.cancelAnimationFrame(frame);
+			if (retryFrame !== undefined) window.cancelAnimationFrame(retryFrame);
+		};
+	}, [revealLineNumber, revealRequestId, rows, scrollElement, shouldVirtualize, split, virtualizer]);
 
 	useEffect(() => {
 		const onSelectionChange = () => {
@@ -758,6 +1440,10 @@ function DiffView({
 	const menuOpen = menuState?.open ?? false;
 	useEffect(() => {
 		onActiveSelectionChange(hasSelection || menuOpen);
+		// Unmounting takes the selection with it. Without this the guard sticks on
+		// after a tab switch away from the diff, and the file's detail query stays
+		// disabled — the rendered view would then show content that never refreshes.
+		return () => onActiveSelectionChange(false);
 	}, [hasSelection, menuOpen, onActiveSelectionChange]);
 
 	const onContextMenu = useCallback(
@@ -805,12 +1491,20 @@ function DiffView({
 				</div>
 			) : null}
 			<div
-				className="session-files-diff-scrollbar overflow-x-auto overflow-y-visible bg-terminal font-mono text-xs leading-row text-terminal-foreground"
+				className="diff-code session-files-diff-scrollbar overflow-x-auto overflow-y-visible bg-terminal font-mono text-xs leading-row text-terminal-foreground"
 				onContextMenu={onContextMenu}
 				ref={containerRef}
 			>
 				{split ? (
-					<SplitDiff annotation={annotation} path={path} previousPath={previousPath} rows={rows} t={t} />
+					<SplitDiff
+						annotation={annotation}
+						newRuns={highlight.newSide}
+						oldRuns={highlight.oldSide}
+						path={path}
+						previousPath={previousPath}
+						rows={rows}
+						t={t}
+					/>
 				) : shouldVirtualize ? (
 					<div
 						className={cn("relative", !wrap && "min-w-max")}
@@ -838,6 +1532,7 @@ function DiffView({
 										path={path}
 										previousPath={previousPath}
 										row={row}
+										runs={runs[virtualRow.index]}
 										t={t}
 										wrap={wrap}
 									/>
@@ -855,6 +1550,7 @@ function DiffView({
 								path={path}
 								previousPath={previousPath}
 								row={row}
+								runs={runs[index]}
 								t={t}
 								wrap={wrap}
 							/>
@@ -890,23 +1586,28 @@ type DiffRowContentProps = {
 	path: string;
 	previousPath?: string;
 	row: DiffRow;
+	runs: DiffRun[];
 	t: TFunction;
 	wrap: boolean;
 };
 
 // One unified-view diff row, shared between the plain (non-virtualized) and
 // virtualized render paths so they can't drift apart from each other.
-function DiffRowContentInner({ annotation, index, path, previousPath, row, t, wrap }: DiffRowContentProps) {
+function DiffRowContentInner({ annotation, index, path, previousPath, row, runs, t, wrap }: DiffRowContentProps) {
 	if (row.kind === "hunk") return <HunkBand row={row} />;
 	return (
 		<div>
 			<div
-				className={cn("group/line relative flex", diffRowTone[row.kind])}
+				className={cn(
+					"group/line relative flex focus:outline-none focus:ring-1 focus:ring-inset focus:ring-accent",
+					diffRowTone[row.kind],
+				)}
 				data-diff-row=""
 				data-kind={row.kind}
 				data-new-no={row.newNo ?? ""}
 				data-old-no={row.oldNo ?? ""}
 				data-row-index={index}
+				tabIndex={-1}
 			>
 				<LineFeedbackButton
 					active={isAnnotationRow(annotation.target, path, index)}
@@ -927,7 +1628,7 @@ function DiffRowContentInner({ annotation, index, path, previousPath, row, t, wr
 					{diffMarkerGlyph[row.kind]}
 				</span>
 				<span className={cn("pr-3", wrap ? "whitespace-pre-wrap break-all" : "whitespace-pre")}>
-					{row.segments ? <DiffLineSegments add={row.kind === "add"} segments={row.segments} /> : row.text || " "}
+					{renderDiffRuns(runs, row.kind === "add")}
 				</span>
 			</div>
 			{isAnnotationRow(annotation.target, path, index) ? <FileAnnotationComposer annotation={annotation} /> : null}
@@ -941,16 +1642,19 @@ function DiffRowContentInner({ annotation, index, path, previousPath, row, t, wr
 // anywhere in the panel, on top of every scroll tick. Only a row that IS or
 // WAS the active annotation target actually needs to re-render when
 // `annotation` changes; every other row only cares about `row`/`index`/
-// `path`/`previousPath`/`wrap`, which are stable across scroll-driven
-// re-renders. This is what actually lets scrolling skip re-running the
-// i18next calls, cn() calls, and nested Button for rows that are already
-// mounted and unchanged.
+// `path`/`previousPath`/`runs`/`wrap`, which are stable across scroll-driven
+// re-renders (`runs` only gets a new reference when useDiffHighlight actually
+// recomputes — unchanged rows and settled diffs keep the same array). This is
+// what actually lets scrolling skip re-running the i18next calls, cn() calls,
+// and nested Button for rows that are already mounted and unchanged, while
+// still picking up the color pop-in once a grammar chunk finishes loading.
 const DiffRowContent = memo(DiffRowContentInner, (prev, next) => {
 	if (
 		prev.row !== next.row ||
 		prev.index !== next.index ||
 		prev.path !== next.path ||
 		prev.previousPath !== next.previousPath ||
+		prev.runs !== next.runs ||
 		prev.wrap !== next.wrap
 	) {
 		return false;
@@ -1007,12 +1711,16 @@ function toSplitRows(rows: DiffRow[]): SplitRow[] {
 
 function SplitDiff({
 	annotation,
+	newRuns,
+	oldRuns,
 	path,
 	previousPath,
 	rows,
 	t,
 }: {
 	annotation: FileAnnotationModel;
+	newRuns: DiffRun[][];
+	oldRuns: DiffRun[][];
 	path: string;
 	previousPath?: string;
 	rows: DiffRow[];
@@ -1033,6 +1741,7 @@ function SplitDiff({
 								previousPath={previousPath}
 								row={splitRow.left}
 								rowIndex={splitRow.leftIndex}
+								runs={splitRow.leftIndex === null ? null : oldRuns[splitRow.leftIndex]}
 								side="old"
 								t={t}
 							/>
@@ -1042,6 +1751,7 @@ function SplitDiff({
 								previousPath={previousPath}
 								row={splitRow.right}
 								rowIndex={splitRow.rightIndex}
+								runs={splitRow.rightIndex === null ? null : newRuns[splitRow.rightIndex]}
 								side="new"
 								t={t}
 							/>
@@ -1063,6 +1773,7 @@ function SplitSide({
 	previousPath,
 	row,
 	rowIndex,
+	runs,
 	side,
 	t,
 }: {
@@ -1071,21 +1782,27 @@ function SplitSide({
 	previousPath?: string;
 	row: DiffRow | null;
 	rowIndex: number | null;
+	runs: DiffRun[] | null;
 	side: "old" | "new";
 	t: TFunction;
 }) {
-	if (!row || rowIndex === null) return <div className="bg-surface-faint/20" aria-hidden="true" />;
+	if (!row || rowIndex === null || !runs) return <div className="bg-surface-faint/20" aria-hidden="true" />;
 	const lineNo = side === "old" ? row.oldNo : row.newNo;
 	const tone = row.kind === "hunk" ? "" : diffRowTone[row.kind];
 	const target = lineNo == null ? null : lineAnnotationTarget(path, previousPath, row, rowIndex, side);
 	return (
 		<div
-			className={cn("group/line relative flex min-w-0", tone)}
+			className={cn(
+				"group/line relative flex min-w-0 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-accent",
+				tone,
+			)}
 			data-diff-row=""
+			data-diff-side={side}
 			data-kind={row.kind}
 			data-new-no={row.newNo ?? ""}
 			data-old-no={row.oldNo ?? ""}
 			data-row-index={rowIndex}
+			tabIndex={-1}
 		>
 			{target ? (
 				<LineFeedbackButton
@@ -1098,9 +1815,7 @@ function SplitSide({
 			<span className="w-9 shrink-0 select-none border-r border-border/50 bg-terminal px-1.5 text-right text-passive/70 tabular-nums">
 				{lineNo ?? ""}
 			</span>
-			<span className="min-w-0 whitespace-pre-wrap break-all px-1.5">
-				{row.segments ? <DiffLineSegments add={row.kind === "add"} segments={row.segments} /> : row.text || " "}
-			</span>
+			<span className="min-w-0 whitespace-pre-wrap break-all px-1.5">{renderDiffRuns(runs, row.kind === "add")}</span>
 		</div>
 	);
 }
@@ -1237,19 +1952,24 @@ function FileAnnotationComposer({ annotation }: { annotation: FileAnnotationMode
 	);
 }
 
-function DiffLineSegments({ add, segments }: { add: boolean; segments: DiffSegment[] }) {
-	return (
-		<>
-			{segments.map((segment, index) =>
-				segment.changed ? (
-					<span className={cn("rounded-sm", add ? "bg-success/35" : "bg-error/35")} key={index}>
-						{segment.text}
-					</span>
-				) : (
-					<span key={index}>{segment.text}</span>
-				),
-			)}
-		</>
+// Renders a diff line's composed runs: a highlight.js class when the line could
+// be tokenized, layered with the existing exact-changed-word background tint. A
+// run with neither renders as a bare string, matching the plain-text output this
+// replaces exactly (no highlighting available for the file's language, or the
+// row is unchanged context with nothing to tokenize against).
+function renderDiffRuns(runs: DiffRun[], add: boolean): ReactNode {
+	return runs.map((run, index) =>
+		run.changed ? (
+			<span className={cn(run.className, "rounded-sm", add ? "bg-success/35" : "bg-error/35")} key={index}>
+				{run.text}
+			</span>
+		) : run.className ? (
+			<span className={run.className} key={index}>
+				{run.text}
+			</span>
+		) : (
+			run.text
+		),
 	);
 }
 
@@ -1293,7 +2013,7 @@ function StatusMark({ status }: { status: WorkspaceFileStatus }) {
 	return (
 		<span
 			className={cn(
-				"inline-flex w-5 shrink-0 items-center justify-center font-mono text-caption font-medium",
+				"inline-flex w-5 shrink-0 items-center justify-center font-mono text-caption font-bold",
 				statusTone[status],
 			)}
 			title={t(`files.status.${status}`)}

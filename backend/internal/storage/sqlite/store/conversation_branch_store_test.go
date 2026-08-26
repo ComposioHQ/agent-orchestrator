@@ -80,6 +80,14 @@ func TestConversationBranchRootAndEditAnchorPersist(t *testing.T) {
 	}
 
 	seedBranchTurns(t, s, session, conversation)
+	page, err := s.LoadConversationSnapshotPage(ctx, conversation.ID, 0, 1)
+	if err != nil {
+		t.Fatalf("LoadConversationSnapshotPage: %v", err)
+	}
+	if !page.HasMoreBefore || page.NativeForkAvailableAfterSequence != 1 {
+		t.Fatalf("bounded page native fork threshold = %d hasMore=%v, want 1/true",
+			page.NativeForkAvailableAfterSequence, page.HasMoreBefore)
+	}
 	anchor, err := s.ConversationEditAnchor(ctx, conversation.ID, "turn-2")
 	if err != nil {
 		t.Fatalf("ConversationEditAnchor: %v", err)

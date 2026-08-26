@@ -244,6 +244,49 @@ SELECT selected_message.conversation_id,
 FROM selected_message
 JOIN conversations AS conversation ON conversation.id = selected_message.conversation_id;
 
+-- The renderer receives bounded history pages, so it cannot infer a native fork
+-- anchor by scanning only the currently loaded turns. Return the first durable,
+-- provider-backed human prompt in the active opaque provider scope; every later
+-- prompt has a native anchor when the driver advertises fork.
+-- name: SelectConversationNativeForkAvailableAfterSequence :one
+WITH RECURSIVE active_path(branch_id, max_sequence, depth) AS (
+    SELECT conversations.active_branch_id, CAST(NULL AS INTEGER), 0
+    FROM conversations
+    WHERE conversations.id = sqlc.arg(conversation_id)
+    UNION ALL
+    SELECT branch.parent_branch_id,
+           CASE
+               WHEN path.max_sequence IS NULL THEN branch.fork_after_sequence
+               WHEN branch.fork_after_sequence < path.max_sequence THEN branch.fork_after_sequence
+               ELSE path.max_sequence
+           END,
+           path.depth + 1
+    FROM active_path AS path
+    JOIN conversation_branches AS branch ON branch.id = path.branch_id
+    WHERE branch.parent_branch_id IS NOT NULL
+), active_opaque_scope_floor AS (
+    SELECT branch.fork_after_sequence
+    FROM active_path AS path
+    JOIN conversation_branches AS branch ON branch.id = path.branch_id
+    WHERE branch.provider_scope_id <> ''
+       OR branch.parent_branch_id IS NULL
+       OR branch.replaced_turn_id IS NULL
+    ORDER BY path.depth
+    LIMIT 1
+)
+SELECT CAST(COALESCE(MIN(message.sequence), 0) AS INTEGER)
+FROM conversation_messages AS message
+JOIN conversation_turns AS turn ON turn.id = message.turn_id
+JOIN active_path AS path ON path.branch_id = message.branch_id
+CROSS JOIN active_opaque_scope_floor
+WHERE message.conversation_id = sqlc.arg(conversation_id)
+  AND message.role = 'user'
+  AND message.origin = 'human'
+  AND message.sequence > active_opaque_scope_floor.fork_after_sequence
+  AND turn.provider_turn_id <> ''
+  AND turn.rolled_back_at IS NULL
+  AND (path.max_sequence IS NULL OR message.sequence <= path.max_sequence);
+
 -- name: UpdateConversationBranchReplacement :execrows
 UPDATE conversation_branches
 SET replacement_turn_id = sqlc.arg(replacement_turn_id)
@@ -401,8 +444,8 @@ RETURNING latest_sequence;
 -- name: InsertConversationTurn :exec
 INSERT INTO conversation_turns (
     id, conversation_id, handled_by_session_id, provider_turn_id,
-    controller_generation, state, requested_at
-) VALUES (?, ?, ?, ?, ?, ?, ?);
+    controller_generation, retry_of_turn_id, state, requested_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
 
 -- A turn the PROVIDER started that AO never dispatched: a compaction runs as its
 -- own turn, and so does work resumed inside the provider's own history. Without a
@@ -912,10 +955,17 @@ WHERE conversation_id = ? AND provider_item_id = ? AND status <> 'cancelled';
 
 -- Resolving an approval matches on the provider's request id, so a card the user
 -- left on screen cannot answer a request that replaced it.
+-- Merge the resolution into the provider payload so the offered decision kinds
+-- remain available to audit/history readers after the request is answered.
 -- name: ResolveConversationApproval :exec
 UPDATE conversation_activities
-SET status = 'resolved', detail_json = ?, revision = revision + 1, updated_at = ?
-WHERE conversation_id = ? AND request_id = ? AND status = 'pending';
+SET status = 'resolved',
+    detail_json = json_patch(detail_json, CAST(sqlc.arg(detail_json) AS TEXT)),
+    revision = revision + 1,
+    updated_at = sqlc.arg(updated_at)
+WHERE conversation_id = sqlc.arg(conversation_id)
+  AND request_id = sqlc.arg(request_id)
+  AND status = 'pending';
 
 -- Any approval still pending when a controller dies can never be answered: the
 -- provider call it was blocking is gone.
@@ -1042,6 +1092,13 @@ SELECT * FROM conversation_activities
 WHERE conversation_id = ? AND provider_item_id = ?
 LIMIT 1;
 
+-- name: SelectConversationContextResetSequence :one
+SELECT CAST(COALESCE(MAX(sequence), 0) AS INTEGER) AS sequence
+FROM conversation_activities
+WHERE conversation_id = ?
+  AND kind = 'system'
+  AND provider_item_id = ?;
+
 -- Activities the agent still remembers, filtered the same way messages are and for
 -- the same reason. See SelectConversationMessages.
 -- name: SelectConversationActivities :many
@@ -1145,3 +1202,54 @@ WHERE conversation_provider_events.conversation_id = sqlc.arg(conversation_id)
   AND conversation_provider_events.id > sqlc.arg(id)
 ORDER BY conversation_provider_events.id
 LIMIT sqlc.arg(page_limit);
+-- A retry re-dispatches a failed turn's durable prompt as a NEW turn. Content is
+-- loaded from AO's own rows, never from the caller, so the daemon owns what gets
+-- sent again.
+-- name: SelectRetryableConversationPrompt :one
+WITH RECURSIVE active_path(branch_id, max_sequence) AS (
+    SELECT conversations.active_branch_id, CAST(NULL AS INTEGER)
+    FROM conversations
+    WHERE conversations.id = sqlc.arg(conversation_id)
+    UNION ALL
+    SELECT branch.parent_branch_id,
+           CASE
+               WHEN path.max_sequence IS NULL THEN branch.fork_after_sequence
+               WHEN branch.fork_after_sequence < path.max_sequence THEN branch.fork_after_sequence
+               ELSE path.max_sequence
+           END
+    FROM active_path AS path
+    JOIN conversation_branches AS branch ON branch.id = path.branch_id
+    WHERE branch.parent_branch_id IS NOT NULL
+)
+SELECT conversation_messages.text,
+       conversation_messages.origin,
+       conversation_messages.delivery_content_json,
+       EXISTS (
+           SELECT 1
+           FROM active_path AS path
+           WHERE path.branch_id = conversation_messages.branch_id
+             AND (path.max_sequence IS NULL OR conversation_messages.sequence <= path.max_sequence)
+       ) AS active_lineage
+FROM conversation_turns
+JOIN conversation_messages
+    ON conversation_messages.turn_id = conversation_turns.id
+    AND conversation_messages.role = 'user'
+WHERE conversation_turns.id = sqlc.arg(id)
+  AND conversation_turns.conversation_id = sqlc.arg(conversation_id)
+  AND conversation_turns.state = 'failed'
+LIMIT 1;
+
+-- A replayed retry request returns the attempt already linked to its source.
+-- The relation is daemon-owned rather than inferred from caller-controlled text.
+-- name: SelectConversationRetryTurnIDBySource :one
+SELECT id FROM conversation_turns
+WHERE conversation_id = sqlc.arg(conversation_id)
+  AND retry_of_turn_id = sqlc.arg(retry_of_turn_id)
+LIMIT 1;
+
+-- Retry attempts outside the active branch still consume their source action.
+-- name: SelectConversationRetriedSourceTurnIDs :many
+SELECT CAST(retry_of_turn_id AS TEXT) AS retry_of_turn_id
+FROM conversation_turns
+WHERE conversation_id = sqlc.arg(conversation_id)
+  AND retry_of_turn_id IS NOT NULL;

@@ -23,6 +23,13 @@ on `main`; the PR-based flow below supersedes it.
   tracks the last released version; the `desktop-v*` tag then points at that
   merge commit. Nightlies stamp the version at build time from the highest
   `desktop-v*` tag, so they are unaffected by whatever `main` currently carries.
+- macOS and Linux packages build and ship a pinned tmux under
+  `resources/tmux/bin/tmux`. Before spawning the daemon, Electron atomically
+  stages that binary in versioned storage under the AO data directory; this
+  keeps it available after a Linux AppImage mount disappears. The supervisor
+  pins new sessions to an AO-owned tmux socket. Sessions created by an older AO
+  release are discovered and kept on the legacy default socket until they end.
+  Windows uses ConPTY and carries no tmux resource.
 
 ## Hard rule: exactly one publisher
 

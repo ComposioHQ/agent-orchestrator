@@ -13,13 +13,12 @@
  * settings because the provider takes all three per turn: choosing one changes the
  * next message and never restarts the agent.
  *
- * Three completions live on top of a plain textarea — `/` for AO commands and the
- * agent's own skills, `@` for worktree files, and pasted or dropped files. It is a textarea and
- * not a rich editor; the reasoning is in composerSuggest.ts, where the logic that
- * would otherwise justify one lives. What matters here is that the original
- * keyboard contract survives: Enter sends, Shift+Enter makes a newline, and no
- * keystroke is ever swallowed, because the menu is derived from (text, caret)
- * rather than intercepting input.
+ * Three completions live in the editor — `/` for AO commands and the agent's own
+ * skills, `@` for worktree files, and pasted or dropped files. Completed skills
+ * and paths are atomic inline chips but serialize to the plain text the agent
+ * expects. The original keyboard contract remains: Enter sends, Shift+Enter makes
+ * a newline, and ordinary typing stays local to the editor instead of rerendering
+ * the surrounding chat surface.
  *
  * Every affordance is conditional on being able to deliver. The `/` menu only opens
  * when the provider actually reported skills, and the attach control only appears
@@ -28,32 +27,31 @@
  */
 
 import {
+	cloneElement,
+	isValidElement,
 	useCallback,
 	useEffect,
 	useId,
-	useLayoutEffect,
 	useMemo,
 	useRef,
 	useState,
-	type ChangeEvent,
 	type ClipboardEvent,
 	type DragEvent,
 	type FormEvent,
 	type KeyboardEvent,
 	type ReactNode,
 } from "react";
-import { ArrowUp, CornerDownRight, Loader2, Paperclip, Square, X } from "lucide-react";
+import { ArrowUp, Command, CornerDownLeft, Loader2, Plus, Square, X } from "lucide-react";
 import { Button } from "../ui/button";
 import { cn } from "../../lib/utils";
 import { ComposerSuggestMenu } from "./ComposerSuggestMenu";
 import {
-	applySuggestion,
-	findActiveTrigger,
-	moveHighlight,
-	rankFiles,
-	rankSkills,
-	type Suggestion,
-} from "./composerSuggest";
+	ComposerEditor,
+	type ComposerEditorHandle,
+	type ComposerEditorSnapshot,
+	type ComposerTrigger,
+} from "./ComposerEditor";
+import { moveHighlight, rankFiles, rankSkills, type Suggestion } from "./composerSuggest";
 import {
 	isSupportedImageAttachment,
 	useFileAttachments,
@@ -70,9 +68,7 @@ import type { ChatSkill } from "../../types/conversation";
 function withAttachmentReferences(text: string, paths: string[]): string {
 	if (paths.length === 0) return text;
 	const lead = text.trim() === "" ? "" : `${text}\n\n`;
-	return `${lead}Attached files (read these files in the workspace):\n${paths
-		.map((path) => `- ${path}`)
-		.join("\n")}`;
+	return `${lead}Attached files (read these files in the workspace):\n${paths.map((path) => `- ${path}`).join("\n")}`;
 }
 
 export function ChatComposer({
@@ -81,7 +77,7 @@ export function ChatComposer({
 	willQueue,
 	disabled,
 	settings,
-	footerAction,
+	approval,
 	skills = [],
 	filePaths = [],
 	filePathsTruncated,
@@ -95,6 +91,7 @@ export function ChatComposer({
 	draftSeed,
 	commandError,
 	attachedTop = false,
+	queuedDock,
 	onCompact,
 	compacting,
 	compactUnavailable,
@@ -103,10 +100,9 @@ export function ChatComposer({
 	autoFocus = true,
 }: {
 	onSend: (text: string, attachments?: FileAttachmentPayload[]) => void | Promise<unknown>;
-	/** The next-turn controls, rendered inline. Omitted in the fixture preview. */
 	settings?: ReactNode;
-	/** Optional secondary action rendered with message tools in the lower input row. */
-	footerAction?: ReactNode;
+	/** A provider decision that temporarily replaces ordinary message entry. */
+	approval?: ReactNode;
 	/** A send is in flight. */
 	busy?: boolean;
 	/** The agent is mid-turn, so this message is held until the turn ends. */
@@ -144,6 +140,8 @@ export function ChatComposer({
 	commandError?: string;
 	/** A queued-message dock owns the shared rounded top edge. */
 	attachedTop?: boolean;
+	/** Queued messages rendered above the composer. */
+	queuedDock?: ReactNode;
 	/** Run AO's built-in `/compact` command instead of sending it to the agent. */
 	onCompact?: () => void | Promise<unknown>;
 	/** The provider is already compacting this conversation. */
@@ -157,16 +155,23 @@ export function ChatComposer({
 	/** Whether this composer is currently visible and should take focus. */
 	autoFocus?: boolean;
 }) {
-	const [text, setText] = useState("");
-	const [caret, setCaret] = useState(0);
+	const [hasText, setHasText] = useState(false);
+	const hasTextRef = useRef(false);
+	const [trigger, setTrigger] = useState<ComposerTrigger>();
 	/**
 	 * The trigger position the user dismissed with Escape. Held so the menu stays
 	 * shut for the completion they rejected, while a new `/` or `@` still opens one.
 	 */
-	const [dismissedAt, setDismissedAt] = useState<number | null>(null);
+	const [dismissedKey, setDismissedKey] = useState<string | null>(null);
+	const dismissedKeyRef = useRef<string | null>(null);
 	const [highlighted, setHighlighted] = useState(0);
+	const highlightedRef = useRef(0);
+	const [isComposing, setIsComposing] = useState(false);
 	const [dragging, setDragging] = useState(false);
 	const [sendError, setSendError] = useState<string | null>(null);
+	// The DOM event is the source of truth while React catches up with the draft
+	// transition. This keeps Enter-after-fast-typing from observing stale state.
+	const textRef = useRef("");
 	/**
 	 * What Enter does while the agent is working.
 	 *
@@ -174,36 +179,16 @@ export function ChatComposer({
 	 * message durably and dispatches it when the current turn finishes. Steering is
 	 * timing-sensitive and changes the running turn, so it stays an explicit choice.
 	 */
-	const [delivery, setDelivery] = useState<"steer" | "queue">("queue");
 
-	const textarea = useRef<HTMLTextAreaElement>(null);
+	const editor = useRef<ComposerEditorHandle>(null);
 	const filePicker = useRef<HTMLInputElement>(null);
-	/** Where the caret should land once React has committed the new text. */
-	const pendingCaret = useRef<number | null>(null);
 	const stagedDelivery = useRef<{ signature: string; paths: string[] } | null>(null);
 	const menuId = useId();
-	/** Match the field to its content until CSS's seven-line cap takes over. */
-	const resizeTextarea = useCallback(() => {
-		const node = textarea.current;
-		if (!node) return;
-		// Reset first so deleting a draft shrinks the field as well as growing it.
-		node.style.height = "0px";
-		node.style.overflowY = "hidden";
-
-		const contentHeight = node.scrollHeight;
-		const maxHeight = Number.parseFloat(window.getComputedStyle(node).maxHeight);
-		const cappedHeight = Number.isFinite(maxHeight)
-			? Math.min(contentHeight, maxHeight)
-			: contentHeight;
-
-		node.style.height = `${cappedHeight}px`;
-		node.style.overflowY = contentHeight > cappedHeight ? "auto" : "hidden";
-	}, []);
+	const previousTrigger = useRef<ComposerTrigger | undefined>(undefined);
+	const triggerRef = useRef<ComposerTrigger | undefined>(undefined);
 
 	const fileAttachments = useFileAttachments();
 	const canAttach = Boolean(onStageAttachments);
-
-	const trigger = useMemo(() => findActiveTrigger(text, caret), [text, caret]);
 
 	const slashCommands = useMemo<ChatSkill[]>(() => {
 		if (!onCompact || compactUnavailable === "This agent cannot compact its history") return skills;
@@ -218,13 +203,20 @@ export function ChatComposer({
 		];
 	}, [compactUnavailable, onCompact, skills]);
 
-	const suggestions: Suggestion[] = useMemo(() => {
-		if (!trigger || trigger.start === dismissedAt) return [];
+	const suggestionsFor = useCallback((currentTrigger?: ComposerTrigger): Suggestion[] => {
+		if (!currentTrigger || currentTrigger.key === dismissedKeyRef.current) return [];
 		// An empty candidate list is the whole reason the sigil stays ordinary: with
 		// no commands or skills there is nothing to open, so `/` types a slash.
-		if (trigger.kind === "skill") return rankSkills(slashCommands, trigger.query);
-		return rankFiles(filePaths, trigger.query);
-	}, [trigger, dismissedAt, slashCommands, filePaths]);
+		if (currentTrigger.kind === "skill") {
+			return rankSkills(slashCommands, currentTrigger.query);
+		}
+		return rankFiles(filePaths, currentTrigger.query);
+	}, [slashCommands, filePaths]);
+
+	const suggestions: Suggestion[] = useMemo(
+		() => suggestionsFor(trigger),
+		[trigger, dismissedKey, suggestionsFor],
+	);
 
 	const menuOpen = suggestions.length > 0;
 	// Clamped rather than trusted: the list re-ranks on every keystroke, so the
@@ -232,35 +224,39 @@ export function ChatComposer({
 	const activeIndex = Math.min(highlighted, suggestions.length - 1);
 
 	const staged = fileAttachments.attachments.length > 0;
-	const hasDraft = text.trim().length > 0 || staged;
-	// The control disappears the moment the turn ends, and the armed mode degrades
-	// with it: a steer with nothing in flight is refused, so it must never be what
-	// Enter is still pointing at.
-	const steering = Boolean(canSteer && onSteer) && delivery === "steer";
-	// Attachments cannot be steered: the steer branch delivers text only and refuses
-	// an empty body. A staged file must not light up the send button on its own while
-	// steering is armed, or Enter would silently do nothing.
-	const canSend =
-		(text.trim().length > 0 || (staged && !steering)) && !busy && !disabled && !steerPending;
+	const hasDraft = hasText || staged;
+	const canSend = (hasText || staged) && !busy && !disabled && !steerPending;
 	const canStopTurn = Boolean(willQueue && onInterrupt && !disabled && !hasDraft);
+	// Steering delivers text only, so a draft carrying files cannot take that
+	// path. Treating it as unavailable — rather than steering the text and
+	// dropping the files, or refusing on an empty body with attachments staged —
+	// keeps the armed state something the composer can actually honour.
+	const canSteerDraft = Boolean(canSteer && onSteer) && !staged;
+	const sendHint = menuOpen
+		? "Enter to insert"
+		: willQueue && canSteerDraft
+			? "⏎ queue · ⌘⏎ steer"
+			: willQueue
+				? "⏎ queue"
+				: "Enter to send";
 	const draftSeedId = draftSeed?.id;
 	const draftSeedText = draftSeed?.text;
 
-	const focusTextarea = useCallback(() => {
+	const focusEditor = useCallback(() => {
 		if (!autoFocus || disabled) return;
-		textarea.current?.focus();
+		editor.current?.focus();
 	}, [autoFocus, disabled]);
 
 	useEffect(() => {
-		focusTextarea();
-	}, [autoFocusKey, focusTextarea]);
+		focusEditor();
+	}, [autoFocusKey, focusEditor]);
 
 	useEffect(() => {
 		if (!autoFocus) return;
 
-		const onWindowFocus = () => focusTextarea();
+		const onWindowFocus = () => focusEditor();
 		const onVisibilityChange = () => {
-			if (document.visibilityState === "visible") focusTextarea();
+			if (document.visibilityState === "visible") focusEditor();
 		};
 
 		window.addEventListener("focus", onWindowFocus);
@@ -269,81 +265,119 @@ export function ChatComposer({
 			window.removeEventListener("focus", onWindowFocus);
 			document.removeEventListener("visibilitychange", onVisibilityChange);
 		};
-	}, [autoFocus, focusTextarea]);
+	}, [autoFocus, focusEditor]);
 
-	// A steer choice belongs to one running turn. Once that turn disappears, return
-	// Enter to the durable queue path so the next turn cannot be steered by accident.
-	useEffect(() => {
-		if (!canSteer) setDelivery("queue");
-	}, [canSteer]);
-
-	/**
-	 * Write text and caret back into the field.
-	 *
-	 * The caret is applied after the render rather than alongside it: setting it
-	 * before React has written the new value would place it against the old string,
-	 * and the controlled re-render would then drop it to the end of the new one.
-	 */
-	const applyText = useCallback((next: string, nextCaret: number) => {
-		pendingCaret.current = nextCaret;
-		setText(next);
-		setCaret(nextCaret);
+	const clearEditor = useCallback(() => {
+		textRef.current = "";
+		hasTextRef.current = false;
+		setHasText(false);
+		setTrigger(undefined);
+		triggerRef.current = undefined;
+		previousTrigger.current = undefined;
+		dismissedKeyRef.current = null;
+		setDismissedKey(null);
+		highlightedRef.current = 0;
+		setHighlighted(0);
+		editor.current?.clear();
 	}, []);
 
 	useEffect(() => {
 		if (draftSeedText === undefined) return;
-		applyText(draftSeedText, draftSeedText.length);
-		setDismissedAt(null);
+		textRef.current = draftSeedText;
+		hasTextRef.current = draftSeedText.trim().length > 0;
+		setHasText(hasTextRef.current);
+		editor.current?.setText(draftSeedText);
+		dismissedKeyRef.current = null;
+		setDismissedKey(null);
+		highlightedRef.current = 0;
 		setHighlighted(0);
 		setSendError(null);
-	}, [applyText, draftSeedId, draftSeedText]);
+	}, [draftSeedId, draftSeedText]);
 
-	useLayoutEffect(() => {
-		resizeTextarea();
-	}, [resizeTextarea, text]);
+	const onEditorChange = useCallback((snapshot: ComposerEditorSnapshot) => {
+		textRef.current = snapshot.text;
+		if (hasTextRef.current !== snapshot.hasText) {
+			hasTextRef.current = snapshot.hasText;
+			setHasText(snapshot.hasText);
+		}
+
+		const previous = previousTrigger.current;
+		const next = snapshot.trigger;
+		triggerRef.current = next;
+		if (
+			previous?.key !== next?.key ||
+			previous?.end !== next?.end ||
+			previous?.query !== next?.query ||
+			previous?.kind !== next?.kind
+		) {
+			highlightedRef.current = 0;
+			setHighlighted(0);
+			previousTrigger.current = next;
+			setTrigger(next);
+		}
+		if (dismissedKeyRef.current && next?.key !== dismissedKeyRef.current) {
+			dismissedKeyRef.current = null;
+			setDismissedKey(null);
+		}
+	}, []);
+
+	const pick = useCallback((value: string) => {
+		const currentTrigger = triggerRef.current;
+		if (!currentTrigger) return;
+		editor.current?.insertToken(currentTrigger, value);
+		triggerRef.current = undefined;
+		previousTrigger.current = undefined;
+		setTrigger(undefined);
+		highlightedRef.current = 0;
+		setHighlighted(0);
+		dismissedKeyRef.current = null;
+		setDismissedKey(null);
+	}, []);
 
 	useEffect(() => {
-		const node = textarea.current;
-		if (!node || typeof ResizeObserver === "undefined") return;
+		if (isComposing || !trigger || trigger.kind !== "skill" || trigger.key === dismissedKey) return;
+		const query = trigger.query.toLowerCase();
+		if (!query) return;
+		const exact = slashCommands.find((skill) => skill.name.toLowerCase() === query);
+		if (!exact) return;
 
-		let width = node.clientWidth;
-		const observer = new ResizeObserver(([entry]) => {
-			const nextWidth = entry?.contentRect.width ?? width;
-			if (nextWidth === width) return;
-			width = nextWidth;
-			resizeTextarea();
+		// Do not eagerly accept a skill whose full name is also the start of another
+		// skill. The user must still be able to type `/review-pr` when `/review`
+		// exists; Enter remains available to accept the shorter exact match.
+		const hasLongerPrefix = slashCommands.some((skill) => {
+			const name = skill.name.toLowerCase();
+			return name.length > query.length && name.startsWith(query);
 		});
-		observer.observe(node);
-		return () => observer.disconnect();
-	}, [resizeTextarea]);
+		if (!hasLongerPrefix) pick(exact.name);
+	}, [dismissedKey, isComposing, pick, slashCommands, trigger]);
 
-	useLayoutEffect(() => {
-		const target = pendingCaret.current;
-		if (target === null) return;
-		pendingCaret.current = null;
-		const node = textarea.current;
-		if (!node) return;
-		node.setSelectionRange(target, target);
-		node.focus();
-	}, [text]);
-
-	const pick = useCallback(
-		(value: string) => {
-			if (!trigger) return;
-			const next = applySuggestion(text, trigger, value);
-			applyText(next.text, next.caret);
-			setHighlighted(0);
-			setDismissedAt(null);
+	const completeFromEditor = useCallback(
+		(snapshot: ComposerEditorSnapshot, key: "Enter" | "Tab"): string | undefined => {
+			const currentTrigger = snapshot.trigger;
+			if (!currentTrigger) return undefined;
+			if (key === "Enter" && snapshot.text.trim() === "/compact" && onCompact) {
+				return undefined;
+			}
+			const matches = suggestionsFor(currentTrigger);
+			const chosen = matches[Math.min(highlightedRef.current, matches.length - 1)];
+			if (!chosen) return undefined;
+			triggerRef.current = currentTrigger;
+			highlightedRef.current = 0;
+			dismissedKeyRef.current = null;
+			return chosen.value;
 		},
-		[applyText, text, trigger],
+		[onCompact, suggestionsFor],
 	);
 
-	async function submit(event?: FormEvent) {
+	async function submit(event?: FormEvent, forceSteer?: boolean) {
 		event?.preventDefault();
-		if (!canSend) return;
+		const currentText = textRef.current;
+		const canSubmitNow = (currentText.trim().length > 0 || staged) && !busy && !disabled && !steerPending;
+		if (!canSubmitNow) return;
 		setSendError(null);
 
-		const body = text.trim();
+		const shouldSteer = forceSteer ?? false;
+		const body = currentText.trim();
 
 		if (body === "/compact" && onCompact) {
 			if (compactBlocked) {
@@ -364,8 +398,8 @@ export function ChatComposer({
 				setSendError("Conversation history could not be compacted. Try again.");
 				return;
 			}
-			applyText("", 0);
-			setDismissedAt(null);
+			clearEditor();
+			setDismissedKey(null);
 			setHighlighted(0);
 			return;
 		}
@@ -373,7 +407,7 @@ export function ChatComposer({
 		// Steering keeps the text in the box until the provider has taken it. The turn
 		// is already running, so a refusal is a real possibility — and a refusal that
 		// had already cleared the composer would lose what the user typed.
-		if (steering && onSteer) {
+		if (shouldSteer && onSteer) {
 			if (body === "") return;
 			try {
 				await onSteer(body);
@@ -381,11 +415,10 @@ export function ChatComposer({
 				// The refusal is the daemon's typed answer and the surface renders it from
 				// `steerRefusal`; keep the draft, but arm the reliable queue path for the
 				// next Enter in case the turn ended while the user was typing.
-				setDelivery("queue");
 				return;
 			}
-			applyText("", 0);
-			setDismissedAt(null);
+			clearEditor();
+			setDismissedKey(null);
 			setHighlighted(0);
 			return;
 		}
@@ -428,37 +461,48 @@ export function ChatComposer({
 			}
 		}
 
-		applyText("", 0);
-		setDismissedAt(null);
+		clearEditor();
+		setDismissedKey(null);
 		setHighlighted(0);
 	}
 
-	function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
-		if (menuOpen) {
+	function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+		if (event.nativeEvent.isComposing) return;
+		if (event.key === "Enter" && event.shiftKey) return;
+		// Read Lexical directly here. A fast typist can press Enter before React has
+		// rendered the state update for the last character, while the editor state is
+		// already current. Using the rendered `menuOpen` in that window sent the draft
+		// instead of accepting the visible completion.
+		const liveSnapshot = editor.current?.getSnapshot();
+		if (liveSnapshot) textRef.current = liveSnapshot.text;
+		const liveTrigger = liveSnapshot?.trigger;
+		const liveSuggestions = suggestionsFor(liveTrigger);
+		if (liveSuggestions.length > 0) {
 			// `/compact` takes no arguments. Once its exact name is present, Enter
 			// executes it directly instead of merely accepting the highlighted row and
 			// requiring a second Enter on the inserted trailing space.
-			if (event.key === "Enter" && text.trim() === "/compact" && onCompact) {
+			if (event.key === "Enter" && textRef.current.trim() === "/compact" && onCompact) {
 				event.preventDefault();
 				void submit();
 				return;
 			}
 			// Only these keys are taken while the menu is open. Everything else falls
-			// through to the textarea, which is what keeps typing from being swallowed.
+			// through to the editor, which is what keeps typing from being swallowed.
 			if (event.key === "ArrowDown" || event.key === "ArrowUp") {
 				event.preventDefault();
-				setHighlighted((current) =>
-					moveHighlight(
-						Math.min(current, suggestions.length - 1),
-						event.key === "ArrowDown" ? 1 : -1,
-						suggestions.length,
-					),
+				const next = moveHighlight(
+					Math.min(highlightedRef.current, liveSuggestions.length - 1),
+					event.key === "ArrowDown" ? 1 : -1,
+					liveSuggestions.length,
 				);
+				highlightedRef.current = next;
+				setHighlighted(next);
 				return;
 			}
 			if (event.key === "Enter" || event.key === "Tab") {
 				event.preventDefault();
-				const chosen = suggestions[activeIndex];
+				triggerRef.current = liveTrigger;
+				const chosen = liveSuggestions[Math.min(highlightedRef.current, liveSuggestions.length - 1)];
 				if (chosen) pick(chosen.value);
 				return;
 			}
@@ -467,47 +511,28 @@ export function ChatComposer({
 				// Stopped here so Escape closes the menu rather than travelling on to
 				// whatever surface is hosting the composer.
 				event.stopPropagation();
-				setDismissedAt(trigger?.start ?? null);
+				dismissedKeyRef.current = liveTrigger?.key ?? null;
+				setDismissedKey(dismissedKeyRef.current);
 				return;
 			}
 		}
 
-		// Enter sends; Shift+Enter makes a newline.
+		// Enter queues; Shift+Enter makes a newline; Cmd/Ctrl+Enter steers.
 		if (event.key !== "Enter") return;
 		if (event.shiftKey) return;
 		event.preventDefault();
-		void submit();
+		const wantsSteer = (event.metaKey || event.ctrlKey) && canSteerDraft;
+		void submit(undefined, wantsSteer);
 	}
 
-	function onChange(event: ChangeEvent<HTMLTextAreaElement>) {
-		const value = event.target.value;
-		const nextCaret = event.target.selectionStart ?? value.length;
-		setText(value);
-		setCaret(nextCaret);
-		setHighlighted(0);
-		// A dismissal covers one trigger. It is released as soon as that trigger is no
-		// longer the one under the caret, so a fresh `/` or `@` opens a menu again
-		// without the user having to guess why the last one stayed shut.
-		const next = findActiveTrigger(value, nextCaret);
-		setDismissedAt((current) =>
-			current !== null && next?.start === current ? current : null,
-		);
-	}
-
-	/** Caret moves that are not edits: arrow keys, clicks, selection changes. */
-	function onSelectionChange(event: { currentTarget: HTMLTextAreaElement }) {
-		setCaret(event.currentTarget.selectionStart ?? 0);
-	}
-
-	function onPaste(event: ClipboardEvent<HTMLTextAreaElement>) {
+	function onPaste(event: ClipboardEvent<HTMLDivElement>) {
 		if (!canAttach) return;
 		const clipboard = event.clipboardData;
 		const files = Array.from(clipboard?.files ?? []);
 		if (files.length === 0) return;
 		// The paste is only claimed when there is no text alongside the image: a copy
 		// carrying both should still paste its text.
-		const hasText =
-			typeof clipboard?.getData === "function" && clipboard.getData("text/plain") !== "";
+		const hasText = typeof clipboard?.getData === "function" && clipboard.getData("text/plain") !== "";
 		if (!hasText) event.preventDefault();
 		void fileAttachments.addFiles(files);
 	}
@@ -518,194 +543,228 @@ export function ChatComposer({
 		const files = Array.from(event.dataTransfer?.files ?? []);
 		if (files.length === 0) return;
 		event.preventDefault();
+		event.stopPropagation();
 		void fileAttachments.addFiles(files);
 	}
 
+	const [metaHeld, setMetaHeld] = useState(false);
+	useEffect(() => {
+		const onKey = (e: globalThis.KeyboardEvent) => setMetaHeld(e.metaKey || e.ctrlKey);
+		const onBlur = () => setMetaHeld(false);
+		window.addEventListener("keydown", onKey);
+		window.addEventListener("keyup", onKey);
+		window.addEventListener("blur", onBlur);
+		return () => {
+			window.removeEventListener("keydown", onKey);
+			window.removeEventListener("keyup", onKey);
+			window.removeEventListener("blur", onBlur);
+		};
+	}, []);
+	const activeDelivery = metaHeld && canSteerDraft ? "steer" : "queue";
+
 	const attachmentError = fileAttachments.error ?? sendError ?? commandError;
+	const deliveryChoice =
+		canSteer && onSteer ? <DeliveryChoice value={activeDelivery} disabled={steerPending} /> : null;
+	const settingsNode =
+		settings && deliveryChoice && isValidElement(settings)
+			? cloneElement(settings, undefined, deliveryChoice)
+			: settings;
+
+	if (approval) {
+		return (
+			<>
+				{queuedDock}
+				<form
+					onSubmit={(event) => event.preventDefault()}
+					data-attached-top={attachedTop || undefined}
+					className="cursor-chat-composer relative flex flex-col gap-1.5 border border-border-strong px-3 py-3 transition-[background,border-color,box-shadow]"
+				>
+					{approval}
+					{commandError ? (
+						<p role="alert" className="px-1.5 text-[11px] leading-snug text-destructive">
+							{commandError}
+						</p>
+					) : null}
+				</form>
+			</>
+		);
+	}
 
 	return (
-		<form
-			onSubmit={(event) => void submit(event)}
-			onDragOver={(event) => {
-				if (!canAttach) return;
-				event.preventDefault();
-				setDragging(true);
-			}}
-			onDragLeave={() => setDragging(false)}
-			onDrop={onDrop}
-			className={cn(
-				"cursor-chat-composer relative flex flex-col gap-2 border p-2.5 transition-[background,border-color,box-shadow]",
-				attachedTop ? "rounded-b-[10px] rounded-t-none" : "rounded-[10px]",
-				dragging ? "border-logo-accent" : "border-border-strong",
-			)}
-		>
-			{menuOpen && trigger ? (
-				<ComposerSuggestMenu
-					id={menuId}
-					kind={trigger.kind}
-					items={suggestions}
-					highlighted={activeIndex}
-					onPick={pick}
-					onHighlight={setHighlighted}
-					truncated={trigger.kind === "file" && filePathsTruncated}
-				/>
-			) : null}
+		<>
+			{queuedDock}
+			<form
+				// Clicking send while Cmd/Ctrl is held has to mean what the indicator
+				// beside it says. Reading the same armed state the chip paints keeps the
+				// pointer and keyboard paths from disagreeing about where the message goes.
+				onSubmit={(event) => void submit(event, activeDelivery === "steer")}
+				onDragOver={(event) => {
+					if (!canAttach) return;
+					event.preventDefault();
+					setDragging(true);
+				}}
+				onDragLeave={() => setDragging(false)}
+				onDropCapture={onDrop}
+				// The border colors for rest, hover, focus and drag are one set of states
+				// on one surface, so they are declared together in CSS rather than half
+				// here and half there.
+				data-dragging={dragging || undefined}
+				data-attached-top={attachedTop || undefined}
+				onClick={(e) => {
+					if (
+						e.target === e.currentTarget ||
+						!(e.target as HTMLElement).closest("button, a, [role='option'], ul")
+					) {
+						editor.current?.focus();
+					}
+				}}
+				className="cursor-chat-composer relative flex cursor-text flex-col gap-1.5 border px-3 pt-3 pb-3 transition-[background,border-color,box-shadow]"
+			>
+				{menuOpen && trigger ? (
+					<ComposerSuggestMenu
+						id={menuId}
+						kind={trigger.kind}
+						items={suggestions}
+						highlighted={activeIndex}
+						onPick={pick}
+						truncated={trigger?.kind === "file" && filePathsTruncated}
+					/>
+				) : null}
 
-			{staged ? (
-				<ul className="flex flex-wrap gap-1.5" aria-label="Attached files">
-					{fileAttachments.attachments.map((file) => (
-						<li
-							key={file.id}
-							className="flex items-center gap-1.5 rounded border border-border bg-background py-0.5 pl-0.5 pr-1"
-						>
-							{file.dataUrl ? (
-								<img
-									src={file.dataUrl}
-									alt=""
-									className="size-6 rounded-sm object-cover"
-								/>
-							) : (
-								<div className="flex size-6 items-center justify-center rounded-sm bg-surface">
-									<File aria-hidden="true" className="size-3.5 text-muted-foreground" />
-								</div>
-							)}
-							<span className="max-w-[120px] truncate text-[11px] text-muted-foreground" title={file.name}>
-								{file.name}
-							</span>
-							<button
-								type="button"
-								onClick={() => fileAttachments.remove(file.id)}
-								aria-label={`Remove ${file.name}`}
-								className="text-muted-foreground hover:text-foreground"
+				{staged ? (
+					<ul className="flex flex-wrap gap-1.5" aria-label="Attached files">
+						{fileAttachments.attachments.map((file) => (
+							<li
+								key={file.id}
+								className="flex items-center gap-1.5 rounded border border-border bg-background py-0.5 pl-0.5 pr-1"
 							>
-								<X aria-hidden="true" className="size-3" />
-							</button>
-						</li>
-					))}
-				</ul>
-			) : null}
+								{file.dataUrl ? (
+									<img src={file.dataUrl} alt="" className="size-6 rounded-sm object-cover" />
+								) : (
+									<div className="flex size-6 items-center justify-center rounded-sm bg-surface">
+										<File aria-hidden="true" className="size-3.5 text-muted-foreground" />
+									</div>
+								)}
+								<span
+									className="max-w-[120px] truncate text-[11px] text-muted-foreground"
+									title={file.name}
+								>
+									{file.name}
+								</span>
+								<button
+									type="button"
+									onClick={() => fileAttachments.remove(file.id)}
+									aria-label={`Remove ${file.name}`}
+									className="text-muted-foreground hover:text-foreground"
+								>
+									<X aria-hidden="true" className="size-3" />
+								</button>
+							</li>
+						))}
+					</ul>
+				) : null}
 
-			<textarea
-				ref={textarea}
-				value={text}
-				onChange={onChange}
-				onKeyDown={onKeyDown}
-				onSelect={onSelectionChange}
-				onClick={onSelectionChange}
-				onPaste={onPaste}
-				rows={1}
-				disabled={disabled}
-				aria-label="Message the agent"
-				role="combobox"
-				aria-expanded={menuOpen}
-				aria-controls={menuOpen ? menuId : undefined}
-				aria-activedescendant={menuOpen ? `${menuId}-option-${activeIndex}` : undefined}
-				aria-autocomplete="list"
-				placeholder={
-					disabled
-						? "The controller is not connected"
-						: steering
-							? "Agent is working — this goes into the turn it is running"
+				<ComposerEditor
+					ref={editor}
+					disabled={disabled}
+					label="Message the agent"
+					placeholder={
+						disabled
+							? "The controller is not connected"
 							: willQueue
 								? "Agent is working — this sends when it finishes"
 								: "Message the agent…"
-				}
-				className="chat-composer-scrollbar max-h-40 min-h-9 w-full resize-none overflow-y-hidden overscroll-contain bg-transparent px-1.5 py-1.5 text-sm leading-relaxed text-foreground outline-none placeholder:text-passive disabled:opacity-50"
-			/>
+					}
+					menuOpen={menuOpen}
+					menuId={menuId}
+					activeIndex={activeIndex}
+					onChange={onEditorChange}
+					onComplete={completeFromEditor}
+					onCompositionChange={setIsComposing}
+					onKeyDown={onKeyDown}
+					onPaste={onPaste}
+				/>
 
-			{attachmentError ? (
-				<p role="alert" className="px-1.5 text-[11px] leading-snug text-destructive">
-					{attachmentError}
-				</p>
-			) : null}
+				{attachmentError ? (
+					<p role="alert" className="px-1.5 text-[11px] leading-snug text-destructive">
+						{attachmentError}
+					</p>
+				) : null}
 
-			{/* A refused steer is an ordinary outcome, not a failure: the text is still
+				{/* A refused steer is an ordinary outcome, not a failure: the text is still
 			    in the box and the message says which of "send it instead" and "try again
 			    in a moment" applies. */}
-			{steerRefusal ? (
-				<p role="status" className="px-1.5 text-[11px] leading-snug text-warning">
-					{steerRefusal}
-				</p>
-			) : null}
+				{steerRefusal ? (
+					<p role="status" className="px-1.5 text-[11px] leading-snug text-warning">
+						{steerRefusal}
+					</p>
+				) : null}
 
-			{canSteer && onSteer ? (
-				<DeliveryChoice value={delivery} onChange={setDelivery} disabled={steerPending} />
-			) : null}
+				<div className="flex h-7 items-center gap-1.5">
+					<div role="group" aria-label="Message tools" className="flex min-w-0 flex-1 items-center gap-0.5">
+						{canAttach ? (
+							<>
+								<input
+									ref={filePicker}
+									type="file"
+									multiple
+									hidden
+									onChange={(event) => {
+										void fileAttachments.addFiles(Array.from(event.target.files ?? []));
+										// Cleared so picking the same file twice still fires a change.
+										event.target.value = "";
+									}}
+								/>
+								<Button
+									type="button"
+									variant="ghost"
+									size="icon-sm"
+									disabled={disabled}
+									onClick={() => filePicker.current?.click()}
+									aria-label="Attach a file"
+									title="Attach a file"
+									className="size-7 shrink-0 rounded-full p-0 text-muted-foreground hover:bg-white/5! hover:text-foreground"
+								>
+									<Plus aria-hidden="true" className="size-3.5 text-muted-foreground" />
+								</Button>
+							</>
+						) : null}
+						{settingsNode}
+						{!settings && deliveryChoice}
+					</div>
 
-			<div className="flex min-h-8 items-end justify-between gap-3">
-				<div
-					role="group"
-					aria-label="Message tools"
-					className="flex min-w-0 flex-1 flex-wrap items-center gap-1"
-				>
-					{canAttach ? (
-						<>
-							<input
-								ref={filePicker}
-								type="file"
-								multiple
-								hidden
-								onChange={(event) => {
-									void fileAttachments.addFiles(Array.from(event.target.files ?? []));
-									// Cleared so picking the same file twice still fires a change.
-									event.target.value = "";
-								}}
-							/>
-							<Button
-								type="button"
-								variant="ghost"
-								size="sm"
-								disabled={disabled}
-								onClick={() => filePicker.current?.click()}
-								aria-label="Attach a file"
-								title="Attach a file"
-								className="size-8 shrink-0 p-0"
-							>
-								<Paperclip aria-hidden="true" className="size-4 text-muted-foreground" />
-							</Button>
-						</>
-					) : null}
-					{canAttach && settings ? (
-						<span aria-hidden="true" className="mx-1 h-4 w-px shrink-0 bg-border" />
-					) : null}
-					{settings}
-					{footerAction ? (
-						<>
-							{canAttach || settings ? (
-								<span aria-hidden="true" className="mx-1 h-4 w-px shrink-0 bg-border" />
-							) : null}
-							{footerAction}
-						</>
-					) : null}
+					<div role="group" aria-label="Send message controls" className="flex h-7 shrink-0 items-center">
+						<Button
+							type={canStopTurn ? "button" : "submit"}
+							variant="ghost"
+							size="icon-sm"
+							disabled={canStopTurn ? false : !canSend}
+							onClick={canStopTurn ? onInterrupt : undefined}
+							aria-label={canStopTurn ? "Stop turn" : "Send message"}
+							// The destination Enter is armed with used to be spelled out beside
+							// the button. The row reads better without a line of prose in it, but
+							// the fact is not decoration, so it moves onto the control it
+							// describes rather than being dropped.
+							title={canStopTurn ? "Stop turn" : sendHint}
+							className={cn(
+								"size-7 rounded-full border-transparent focus-visible:ring-ring/40",
+								canStopTurn || canSend
+									? "bg-foreground text-background hover:bg-foreground/90 hover:text-background dark:hover:bg-foreground/90 dark:hover:text-background"
+									: "bg-primary text-primary-foreground",
+							)}
+						>
+							{canStopTurn ? (
+								<Square aria-hidden="true" className="size-2.5 fill-current" />
+							) : steerPending ? (
+								<Loader2 aria-hidden="true" className="size-3.5 animate-spin" />
+							) : (
+								<ArrowUp aria-hidden="true" className="size-3.5" />
+							)}
+						</Button>
+					</div>
 				</div>
-
-				<div
-					role="group"
-					aria-label="Send message controls"
-					className="flex shrink-0 items-center"
-				>
-					<Button
-						type={canStopTurn ? "button" : "submit"}
-						size="icon-sm"
-						disabled={canStopTurn ? false : !canSend}
-						onClick={canStopTurn ? onInterrupt : undefined}
-						aria-label={canStopTurn ? "Stop turn" : steering ? "Steer the running turn" : "Send message"}
-						title={canStopTurn ? "Stop turn" : undefined}
-						className="size-8 rounded-lg border-logo-accent bg-logo-accent text-logo-accent-foreground hover:bg-logo-accent-bright"
-					>
-						{canStopTurn ? (
-							<Square aria-hidden="true" className="size-2.5 fill-current" />
-						) : steerPending ? (
-							<Loader2 aria-hidden="true" className="size-3.5 animate-spin" />
-						) : steering ? (
-							<CornerDownRight aria-hidden="true" className="size-3.5" />
-						) : (
-							<ArrowUp aria-hidden="true" className="size-3.5" />
-						)}
-					</Button>
-				</div>
-			</div>
-		</form>
+			</form>
+		</>
 	);
 }
 
@@ -720,43 +779,41 @@ export function ChatComposer({
  * asked for the wrong thing, that is the whole difference, so both are named and the
  * active choice is exposed visually and through `aria-pressed`.
  */
-function DeliveryChoice({
-	value,
-	onChange,
-	disabled,
-}: {
-	value: "steer" | "queue";
-	onChange: (next: "steer" | "queue") => void;
-	disabled?: boolean;
-}) {
+export function DeliveryChoice({ value, disabled }: { value: "steer" | "queue"; disabled?: boolean }) {
 	return (
+		// A group, not a status: these chips label what each keystroke will do,
+		// they are not a live region announcing an event. `status` also made this
+		// shadow the steer refusal below, which is the real one.
 		<div
 			role="group"
 			aria-label="Where this message goes while the agent is working"
-			className="flex items-center gap-1 px-1.5"
+			className="flex h-7 shrink-0 items-center gap-1"
 		>
-			{(["queue", "steer"] as const).map((option) => (
-				<button
-					key={option}
-					type="button"
-					onClick={() => onChange(option)}
-					disabled={disabled}
-					aria-pressed={value === option}
-					title={
-						option === "steer"
-							? "Send this into the running turn. The agent keeps its context and its work in flight."
-							: "Hold this until the turn ends, then send it as a new message."
-					}
-					className={cn(
-						"rounded px-1.5 py-0.5 text-[11px] transition-colors disabled:opacity-50",
-						value === option
-							? "bg-raised text-foreground"
-							: "text-muted-foreground hover:bg-interactive-hover hover:text-foreground",
-					)}
-				>
-					{option === "steer" ? "Steer this turn" : "Queue for next"}
-				</button>
-			))}
+			<span
+				className={cn(
+					"inline-flex h-7 items-center gap-1.5 rounded-lg px-3 text-sm leading-none transition-colors",
+					disabled && "opacity-50",
+					value === "queue" ? "bg-white/5 text-foreground" : "text-muted-foreground",
+				)}
+			>
+				<span className="inline-flex items-center gap-0.5 text-muted-foreground">
+					<CornerDownLeft aria-hidden="true" className="size-3" />
+				</span>
+				Queue
+			</span>
+			<span
+				className={cn(
+					"inline-flex h-7 items-center gap-1.5 rounded-lg px-3 text-sm leading-none transition-colors",
+					disabled && "opacity-50",
+					value === "steer" ? "bg-white/5 text-foreground" : "text-muted-foreground",
+				)}
+			>
+				<span className="inline-flex items-center gap-1 text-muted-foreground">
+					<Command aria-hidden="true" className="size-2.5" />
+					<CornerDownLeft aria-hidden="true" className="size-3" />
+				</span>
+				Steer
+			</span>
 		</div>
 	);
 }

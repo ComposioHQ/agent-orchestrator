@@ -7,6 +7,7 @@ import { GlobalSettingsForm } from "./GlobalSettingsForm";
 import { useLocaleStore } from "../stores/locale-store";
 import { useSoundNotificationsStore } from "../stores/sound-notifications-store";
 import { useUiStore } from "../stores/ui-store";
+import { TooltipProvider } from "./ui/tooltip";
 
 const {
 	getUpdate,
@@ -88,7 +89,9 @@ function renderForm() {
 	const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 	render(
 		<QueryClientProvider client={qc}>
-			<GlobalSettingsForm />
+			<TooltipProvider>
+				<GlobalSettingsForm />
+			</TooltipProvider>
 		</QueryClientProvider>,
 	);
 	return qc;
@@ -151,26 +154,16 @@ beforeEach(async () => {
 });
 
 describe("GlobalSettingsForm", () => {
-	it("renders the Figma settings sections", async () => {
+	it("renders the settings sections", async () => {
 		renderForm();
 		expect(await screen.findByLabelText("Settings")).toBeInTheDocument();
-		// "Settings" heading is now in the modal dialog header, not in the form body
-		expect(screen.getByText("General")).toBeInTheDocument();
+		expect(screen.getByText("Appearance")).toBeInTheDocument();
 		expect(screen.getByText("Language")).toBeInTheDocument();
-		expect(screen.getByText("Updates")).toBeInTheDocument();
-		expect(screen.getByText("Get help")).toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "Report a problem" })).toBeInTheDocument();
-	});
-
-	it("gives settings link rows internal padding and rounded borders", async () => {
-		renderForm();
-
-		const connectMobile = await screen.findByRole("button", { name: "Connect Mobile" });
-		const keyboardShortcuts = screen.getByRole("button", { name: "Keyboard shortcuts" });
-
-		for (const row of [connectMobile, keyboardShortcuts]) {
-			expect(row).toHaveClass("settings-row-bar", "settings-link-row");
-		}
+		expect(await screen.findByText("Updates")).toBeInTheDocument();
+		expect(screen.getByText("Advanced")).toBeInTheDocument();
+		expect(screen.getByText("Report a problem")).toBeInTheDocument();
+		// Report form is inline — no dialog, fields directly present.
+		expect(screen.getByLabelText("Title")).toBeInTheDocument();
 	});
 
 	it("persists Developer Mode and reveals Feature Releases", async () => {
@@ -197,18 +190,17 @@ describe("GlobalSettingsForm", () => {
 		expect(featListBuilds).toHaveBeenCalled();
 	});
 
-	it("switches General settings labels to Simplified Chinese and persists locale", async () => {
+	it("switches settings labels to Simplified Chinese and persists locale", async () => {
 		const user = userEvent.setup();
 		renderForm();
-		expect(await screen.findByText("General")).toBeInTheDocument();
+		expect(await screen.findByLabelText("Settings")).toBeInTheDocument();
 		expect(screen.getByLabelText("Language")).toBeInTheDocument();
 
 		await user.click(screen.getByLabelText("Language"));
 		await user.click(await screen.findByRole("menuitem", { name: "Simplified Chinese" }));
 
 		await waitFor(() => expect(setUiSettings).toHaveBeenCalledWith({ locale: "zh-CN" }));
-		await waitFor(() => expect(screen.getByText("通用")).toBeInTheDocument());
-		expect(screen.getByText("语言")).toBeInTheDocument();
+		await waitFor(() => expect(screen.getByText("语言")).toBeInTheDocument());
 		expect(screen.getByText("主题")).toBeInTheDocument();
 		expect(document.documentElement.lang).toBe("zh-CN");
 		expect(useLocaleStore.getState().locale).toBe("zh-CN");
@@ -243,14 +235,14 @@ describe("GlobalSettingsForm", () => {
 		setUiSettings.mockRejectedValue(new Error("disk full"));
 		const user = userEvent.setup();
 		renderForm();
-		await screen.findByText("General");
+		await screen.findByLabelText("Settings");
 
 		await user.click(screen.getByLabelText("Language"));
 		await user.click(await screen.findByRole("menuitem", { name: "Simplified Chinese" }));
 
 		expect(await screen.findByRole("alert")).toHaveTextContent("Could not save the language preference.");
 		expect(useLocaleStore.getState().locale).toBe("en");
-		expect(screen.getByText("General")).toBeInTheDocument();
+		expect(screen.getByText("Appearance")).toBeInTheDocument();
 	});
 
 	it("closes settings with Escape", async () => {
@@ -264,15 +256,10 @@ describe("GlobalSettingsForm", () => {
 		expect(navigateMock).not.toHaveBeenCalled();
 	});
 
-	it("lets an open settings dialog consume Escape first", async () => {
-		const user = userEvent.setup();
+	it("renders the report form inline without a dialog", async () => {
 		renderForm();
-		await user.click(await screen.findByRole("button", { name: "Report a problem" }));
-
-		await user.keyboard("{Escape}");
-
-		await waitFor(() => expect(screen.queryByRole("dialog", { name: "Report a problem" })).not.toBeInTheDocument());
-		expect(navigateMock).not.toHaveBeenCalled();
+		expect(await screen.findByLabelText("Title")).toBeInTheDocument();
+		expect(screen.queryByRole("dialog", { name: "Report a problem" })).not.toBeInTheDocument();
 	});
 
 	it("shows the nightly warning when the nightly channel is loaded", async () => {
@@ -297,12 +284,11 @@ describe("GlobalSettingsForm", () => {
 
 	it("auto-saves when automatic updates are toggled", async () => {
 		renderForm();
-		await screen.findByLabelText("Automatic Updates");
-		await userEvent.click(screen.getByLabelText("Automatic Updates"));
-		await userEvent.click(await screen.findByRole("menuitem", { name: "Disabled" }));
+		await userEvent.click(await screen.findByRole("switch", { name: "Automatic Updates" }));
 		await waitFor(() =>
 			expect(setUpdate).toHaveBeenCalledWith(expect.objectContaining({ enabled: false, channel: "latest" })),
 		);
+		expect(screen.queryByLabelText("Updates channel")).not.toBeInTheDocument();
 	});
 
 	it("hides the nightly warning on the stable channel", async () => {
@@ -316,11 +302,90 @@ describe("GlobalSettingsForm", () => {
 		expect(await screen.findByText(/Current version - v1\.4\.0/)).toBeInTheDocument();
 	});
 
-	it("Check for updates icon triggers a manual check", async () => {
+	it("shows an explicit idle update state and triggers a manual check", async () => {
 		renderForm();
 		expect(await screen.findByText(/Current version - v1\.4\.0/)).toBeInTheDocument();
+		expect(screen.getByText("No update check yet.")).toBeInTheDocument();
 		await userEvent.click(screen.getByRole("button", { name: "Check for updates" }));
 		expect(updCheck).toHaveBeenCalled();
+	});
+
+	it("shows immediate animated feedback while a manual check is pending", async () => {
+		let finishCheck: () => void = () => undefined;
+		updCheck.mockReturnValue(
+			new Promise<void>((resolve) => {
+				finishCheck = resolve;
+			}),
+		);
+		renderForm();
+		const button = await screen.findByRole("button", { name: "Check for updates" });
+
+		await userEvent.click(button);
+
+		expect(button).toBeDisabled();
+		expect(button).toHaveTextContent("Checking for updates…");
+		expect(button.querySelector("svg")).toHaveClass("animate-spin");
+		expect(screen.getByRole("status")).toHaveTextContent("Checking for updates…");
+
+		act(() => finishCheck());
+		await waitFor(() => expect(button).toBeEnabled());
+	});
+
+	it("stops manual loading when the updater completes before the check invocation settles", async () => {
+		let emit: (status: { state: string; checkedAt?: number; requestId?: string }) => void = () => undefined;
+		updOnStatus.mockImplementation((listener: (status: unknown) => void) => {
+			emit = listener as typeof emit;
+			return () => undefined;
+		});
+		updCheck.mockReturnValue(new Promise<void>(() => undefined));
+		renderForm();
+		const button = await screen.findByRole("button", { name: "Check for updates" });
+
+		await userEvent.click(button);
+		const requestId = updCheck.mock.calls[0]?.[0]?.requestId;
+		expect(requestId).toMatch(/^manual-update-/);
+		act(() => emit({ state: "not-available", checkedAt: Date.now() }));
+		expect(screen.getByRole("status")).toHaveTextContent("Checking for updates…");
+		expect(button).toBeDisabled();
+
+		act(() => emit({ state: "not-available", checkedAt: Date.now(), requestId }));
+
+		expect(screen.getByRole("status")).toHaveTextContent("You're on the latest version.");
+		expect(button).toBeEnabled();
+	});
+
+	it("stops manual loading when a completed check is immediately followed by the restored staged update", async () => {
+		let emit: (status: { state: string; version?: string; requestId?: string }) => void = () => undefined;
+		updOnStatus.mockImplementation((listener: (status: unknown) => void) => {
+			emit = listener as typeof emit;
+			return () => undefined;
+		});
+		updCheck.mockReturnValue(new Promise<void>(() => undefined));
+		renderForm();
+		const button = await screen.findByRole("button", { name: "Check for updates" });
+
+		await userEvent.click(button);
+		const requestId = updCheck.mock.calls[0]?.[0]?.requestId;
+		expect(requestId).toMatch(/^manual-update-/);
+
+		act(() => {
+			emit({ state: "error", requestId });
+			emit({ state: "downloaded", version: "1.2.3", requestId: "earlier-download" });
+		});
+
+		expect(screen.getByRole("status")).toHaveTextContent("Downloaded. Restart to finish updating.");
+		expect(screen.getByRole("button", { name: "Check for updates" })).toBeEnabled();
+		expect(screen.getByRole("button", { name: "Restart & install" })).toBeInTheDocument();
+	});
+
+	it("shows when the updater last completed a check", async () => {
+		const checkedAt = new Date("2026-08-19T12:51:00.000Z").getTime();
+		updGetStatus.mockResolvedValue({ state: "not-available", checkedAt });
+		renderForm();
+
+		const formatted = new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short" }).format(checkedAt);
+		expect(await screen.findByTestId("update-checked-at")).toHaveTextContent(`Last checked ${formatted}`);
+		expect(screen.getByRole("status")).toHaveTextContent("You're on the latest version.");
 	});
 
 	it("offers an Update button when an update is available and downloads it", async () => {
@@ -381,10 +446,7 @@ describe("GlobalSettingsForm", () => {
 		});
 		renderForm();
 
-		await user.click(await screen.findByRole("button", { name: "Report a problem" }));
-		expect(await screen.findByRole("dialog", { name: "Report a problem" })).toBeInTheDocument();
-
-		await user.type(screen.getByLabelText("Title"), "Create project fails in /Users/alice/private-repo");
+		await user.type(await screen.findByLabelText("Title"), "Create project fails in /Users/alice/private-repo");
 		await user.type(
 			screen.getByLabelText("What happened?"),
 			"Open http://127.0.0.1:5173/projects/demo?access_token=local-secret and click Create. Show a clear prerequisite error.",
@@ -426,9 +488,7 @@ describe("GlobalSettingsForm", () => {
 		getDaemonStatus.mockRejectedValue(new Error("daemon unavailable"));
 		renderForm();
 
-		await user.click(await screen.findByRole("button", { name: "Report a problem" }));
-		expect(await screen.findByRole("dialog", { name: "Report a problem" })).toBeInTheDocument();
-		await user.type(screen.getByLabelText("Title"), "Need help with setup");
+		await user.type(await screen.findByLabelText("Title"), "Need help with setup");
 		await user.type(screen.getByLabelText("What happened?"), "The setup flow stalls after the first prompt.");
 
 		await user.click(screen.getByRole("radio", { name: "Discord" }));
@@ -459,32 +519,10 @@ describe("GlobalSettingsForm", () => {
 		expect(open).not.toHaveBeenCalled();
 	});
 
-	it("clears draft text when the feedback dialog closes", async () => {
-		const user = userEvent.setup();
-		const githubToken = `ghp_${"abcdefghijklmnopqrstuvwxyz"}${"1234567890AB"}`;
-		renderForm();
-
-		await user.click(await screen.findByRole("button", { name: "Report a problem" }));
-		expect(await screen.findByRole("dialog", { name: "Report a problem" })).toBeInTheDocument();
-		await user.type(screen.getByLabelText("Title"), "Sensitive setup problem");
-		await user.type(screen.getByLabelText("What happened?"), `Token is ${githubToken}`);
-
-		await user.click(screen.getByRole("button", { name: "Close report dialog" }));
-		await waitFor(() => expect(screen.queryByRole("dialog", { name: "Report a problem" })).not.toBeInTheDocument());
-
-		await user.click(await screen.findByRole("button", { name: "Report a problem" }));
-		expect(await screen.findByRole("dialog", { name: "Report a problem" })).toBeInTheDocument();
-		expect(screen.getByLabelText("Title")).toHaveValue("");
-		expect(screen.getByLabelText("What happened?")).toHaveValue("");
-	});
-
 	it("keeps the report form to title and details while tailoring placeholder guidance", async () => {
-		const user = userEvent.setup();
 		renderForm();
 
-		await user.click(await screen.findByRole("button", { name: "Report a problem" }));
-		expect(await screen.findByRole("dialog", { name: "Report a problem" })).toBeInTheDocument();
-		expect(screen.getByLabelText("Title")).toHaveAttribute("placeholder", "Brief Title");
+		expect(await screen.findByLabelText("Title")).toHaveAttribute("placeholder", "Brief Title");
 		expect(screen.getByLabelText("What happened?")).toHaveAttribute(
 			"placeholder",
 			"Share what happened, what you expected, and how to reproduce it.",

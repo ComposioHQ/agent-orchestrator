@@ -160,7 +160,7 @@ func (s *Service) EditMessage(
 		return EditMessageResult{}, err
 	}
 	forker, canFork := source.conv.(ports.ChatForker)
-	canReplay := source.conv.Capabilities().Has(ports.ChatCapabilityPromptReplay) && source.conv.Capabilities().Has(ports.ChatCapabilityEmbeddedContext)
+	canReplay := supportsApproximateReplay(source.conv)
 	anchor, err := s.store.ConversationEditAnchor(ctx, source.conversation.ID, turnID)
 	if err != nil {
 		return EditMessageResult{}, fmt.Errorf("%w: %w", ErrEditTurnInvalid, err)
@@ -178,6 +178,9 @@ func (s *Service) EditMessage(
 			return EditMessageResult{}, fmt.Errorf("load pending edited conversation: %w", err)
 		}
 		if domain.NormalizeConversationBranchStrategy(branch.Strategy) == domain.ConversationBranchStrategyApproximateContext {
+			if !canReplay {
+				return EditMessageResult{}, ErrForkUnsupported
+			}
 			replay, _, replayErr := s.approximateReplayContent(
 				ctx, source.conversation.ID, anchor.ReplayFloorSequence, branch.ReplayCutoffSequence)
 			if replayErr != nil {
@@ -259,6 +262,10 @@ func (s *Service) EditMessage(
 		}
 		return EditMessageResult{}, errors.New("replacement provider conversation is not ready")
 	}
+	if replayContent.Type != "" && !supportsApproximateReplay(provider) {
+		_ = provider.Close()
+		return EditMessageResult{}, ErrForkUnsupported
+	}
 
 	branchID := s.newID()
 	generation := s.newID()
@@ -321,7 +328,6 @@ func (s *Service) EditMessage(
 // replayed: doing so could repeat side effects. Providers that support native
 // fork remain on that exact-history path instead.
 const approximateReplayBudget = 24 * 1024
-const approximateReplayResourceURI = "ao://conversation/edit-replay"
 
 func (s *Service) approximateReplayContent(
 	ctx context.Context,
@@ -340,9 +346,15 @@ func (s *Service) approximateReplayContent(
 		return ports.ChatContent{}, false, err
 	}
 	return ports.ChatContent{
-		Type: "resource", URI: approximateReplayResourceURI, Name: "approximate conversation context",
-		MIMEType: "application/json", Text: seed,
+		Type: "resource", URI: ports.ChatInternalReplayResourceURI, Name: "approximate conversation context",
+		MIMEType: "application/json", Text: seed, Internal: true,
 	}, truncated, nil
+}
+
+func supportsApproximateReplay(conversation ports.ChatConversation) bool {
+	capabilities := conversation.Capabilities()
+	return capabilities.Has(ports.ChatCapabilityPromptReplay) &&
+		capabilities.Has(ports.ChatCapabilityEmbeddedContext)
 }
 
 func buildApproximateReplayContext(rows []domain.ConversationMessage, floor, cutoff int64) (string, bool, error) {
@@ -411,7 +423,7 @@ func buildApproximateReplayContext(rows []domain.ConversationMessage, floor, cut
 func withoutInternalReplayContent(content []ports.ChatContent) []ports.ChatContent {
 	filtered := make([]ports.ChatContent, 0, len(content))
 	for _, item := range content {
-		if item.URI == approximateReplayResourceURI {
+		if ports.IsInternalReplayContent(item) {
 			continue
 		}
 		filtered = append(filtered, item)
