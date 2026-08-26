@@ -303,6 +303,10 @@ func (s *Service) openTerminal(ctx context.Context, cfg openTerminalConfig) (She
 			rollback()
 			return ShellTerminal{}, fmt.Errorf("open shell terminal %s: wait for initial input: %w", handle.ID, err)
 		}
+		if err := ctx.Err(); err != nil {
+			rollback()
+			return ShellTerminal{}, fmt.Errorf("open shell terminal %s: send initial input: %w", handle.ID, err)
+		}
 		if err := s.runtime.SendInput(ctx, handle, cfg.initialInput); err != nil {
 			rollback()
 			return ShellTerminal{}, fmt.Errorf("open shell terminal %s: send initial input: %w", handle.ID, err)
@@ -348,13 +352,16 @@ func nextShellTerminalTitle(terminals []ShellTerminalRecord) string {
 }
 
 func waitForInitialInput(ctx context.Context, delay time.Duration) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	timer := time.NewTimer(delay)
 	defer timer.Stop()
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-timer.C:
-		return nil
+		return ctx.Err()
 	}
 }
 

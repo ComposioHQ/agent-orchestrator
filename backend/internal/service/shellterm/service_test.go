@@ -314,6 +314,29 @@ func TestOpenCommandTerminalDestroysRuntimeWhenInitialInputWaitIsCanceled(t *tes
 	}
 }
 
+func TestOpenCommandTerminalDoesNotSendInputAfterZeroDelayCanceledWait(t *testing.T) {
+	for i := 0; i < 100; i++ {
+		rt := newFakeShellRuntime()
+		st := &fakeShellTerminalStore{}
+		svc := newTestService(rt, st, &fakeProjectRootLocator{})
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		if _, err := svc.OpenCommandTerminal(ctx, OpenCommandTerminalInput{Argv: []string{"pi"}, Title: "Log in to Pi", InitialInput: "/login\r"}); err == nil {
+			t.Fatal("OpenCommandTerminal succeeded despite a canceled zero-delay initial-input wait")
+		}
+		if len(rt.sent) != 0 {
+			t.Fatalf("sent = %#v, want no input sent after canceled wait", rt.sent)
+		}
+		if len(st.records) != 0 {
+			t.Fatalf("records = %#v, want no persisted terminal", st.records)
+		}
+		if !reflect.DeepEqual(rt.destroyed, []string{"shellterm-test1"}) {
+			t.Fatalf("destroyed = %#v, want rollback of the created runtime", rt.destroyed)
+		}
+	}
+}
+
 func TestOpenCommandTerminalRejectsInvalidInput(t *testing.T) {
 	cases := []OpenCommandTerminalInput{
 		{Title: "Log in to Pi"},
