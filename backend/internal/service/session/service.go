@@ -251,15 +251,15 @@ func (s *Service) spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	cfg = s.withIssueContext(ctx, cfg, project)
 	rec, promptBytes, systemPromptBytes, err := s.manager.Spawn(ctx, cfg)
 	if err != nil {
-	apiErr := toSpawnAPIError(err)
-			s.emitSpawnFailed(cfg, apiErr, s.now().Sub(start).Milliseconds())
-			if toAPIError(err) == err && s.logger != nil {
-				s.logger.Error("spawn: unclassified internal error",
-					"projectID", cfg.ProjectID,
-					"kind", cfg.Kind,
-					"harness", cfg.Harness,
-					"error", err)
-			}
+		apiErr := toSpawnAPIError(err)
+		s.emitSpawnFailed(cfg, apiErr, s.now().Sub(start).Milliseconds())
+		if toAPIError(err) == err && s.logger != nil {
+			s.logger.Error("spawn: unclassified internal error",
+				"projectID", cfg.ProjectID,
+				"kind", cfg.Kind,
+				"harness", cfg.Harness,
+				"error", err)
+		}
 		return domain.Session{}, 0, 0, apiErr
 	}
 	s.emitSpawned(rec, s.now().Sub(start).Milliseconds())
