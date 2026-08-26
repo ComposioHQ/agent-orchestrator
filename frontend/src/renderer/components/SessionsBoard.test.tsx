@@ -690,7 +690,7 @@ describe("SessionsBoard", () => {
 		expect(within(terminatedCard!).getByRole("button", { name: "Copy branch ao/dead-worker" })).toBeInTheDocument();
 		const divider = terminatedCard!.querySelector("div.border-t.border-border");
 		expect(divider).not.toBeNull();
-		expect(divider!.compareDocumentPosition(prStatus) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+		expect(divider!.compareDocumentPosition(prStatus) & Node.DOCUMENT_POSITION_PRECEDING).not.toBe(0);
 		expect(
 			screen.getByText("ao/dead-worker").compareDocumentPosition(divider!) & Node.DOCUMENT_POSITION_FOLLOWING,
 		).not.toBe(0);

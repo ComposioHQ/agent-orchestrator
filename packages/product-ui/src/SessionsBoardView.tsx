@@ -281,6 +281,30 @@ export function SessionCardView({
 					</div>
 				)}
 			</div>
+			{(prs.length > 0 || session.trackerIssueId) && (
+				<div className="flex min-w-0 flex-col gap-1.5 px-3.5 pb-2.5">
+					{prs.length > 0 && (
+						<div className="flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-2xs text-muted-foreground">
+							{groupBoardPullRequests(prs).map((group) => (
+								<BoardPullRequestGroup
+									externalLink={externalLink}
+									group={group}
+									key={group.state}
+									labels={labels.pr}
+								/>
+							))}
+						</div>
+					)}
+					{session.trackerIssueId && (
+						<span
+							className="inline-flex max-w-branch-chip items-center self-start truncate rounded-sm bg-accent/12 px-1.5 py-0.5 font-mono text-micro text-accent"
+							title={labels.intakeIssue(session.trackerIssueId)}
+						>
+							{session.trackerIssueId}
+						</span>
+					)}
+				</div>
+			)}
 			<div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2 border-t border-border pl-2 pr-3.5 py-2.5">
 				<div className="flex min-w-0 flex-1">
 					<span
@@ -320,26 +344,6 @@ export function SessionCardView({
 						{labels.formatTime(session.updatedAt)}
 					</span>
 				</div>
-				{prs.length > 0 && (
-					<div className="col-span-2 flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-2xs text-muted-foreground">
-						{groupBoardPullRequests(prs).map((group) => (
-							<BoardPullRequestGroup
-								externalLink={externalLink}
-								group={group}
-								key={group.state}
-								labels={labels.pr}
-							/>
-						))}
-					</div>
-				)}
-				{session.trackerIssueId && (
-					<span
-						className="col-span-2 inline-flex max-w-branch-chip items-center self-start truncate rounded-sm bg-accent/12 px-1.5 py-0.5 font-mono text-micro text-accent"
-						title={labels.intakeIssue(session.trackerIssueId)}
-					>
-						{session.trackerIssueId}
-					</span>
-				)}
 			</div>
 			{error ? (
 				<div className="border-t border-border px-3.5 py-1.5 text-2xs text-destructive" role="alert">
