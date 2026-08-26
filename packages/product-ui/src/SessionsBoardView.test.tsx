@@ -408,7 +408,7 @@ describe("SessionsBoardView", () => {
 		expect(screen.getByText("Rebasing onto main")).toBeInTheDocument();
 	});
 
-	it("styles the display status with the daemon-owned Kanban column", () => {
+	it("styles an agent-progress display status without human-action emphasis", () => {
 		render(
 			<SessionCardView
 				externalLink={ExternalLink}
@@ -434,14 +434,13 @@ describe("SessionsBoardView", () => {
 		const label = screen.getByText("Fixing CI failures");
 		const status = label.parentElement;
 		expect(status).toHaveAttribute("data-kanban-column", "validating");
-		expect(status).toHaveClass(
-			"rounded-sm",
+		expect(status).not.toHaveClass(
 			"border",
 			"border-[color-mix(in_srgb,var(--session-status-tone)_24%,transparent)]",
 			"bg-[color-mix(in_srgb,var(--session-status-tone)_10%,transparent)]",
 		);
 		expect(status?.style.getPropertyValue("--session-status-tone")).toBe(
-			"var(--color-status-needs-you)",
+			"var(--color-status-in-review)",
 		);
 		expect(status?.querySelector(".rounded-full")).toBeNull();
 	});
