@@ -389,11 +389,11 @@ const kanbanColumnBases: Record<KanbanColumn, KanbanColumnBase> = {
 	needs_review: {
 		column: "needs_review",
 		labelKey: "column.needs_review",
-		glow: "color-mix(in srgb, var(--color-status-needs-you) 6%, transparent)",
-		dot: "var(--color-status-needs-you)",
-		dotGlow: true,
-		titleClassName: "text-status-needs-you",
-		dotClassName: "bg-status-needs-you",
+		glow: "color-mix(in srgb, var(--color-status-in-review) 5%, transparent)",
+		dot: "var(--color-status-in-review)",
+		dotGlow: false,
+		titleClassName: "text-status-in-review",
+		dotClassName: "bg-status-in-review",
 	},
 	ready: {
 		column: "ready",
