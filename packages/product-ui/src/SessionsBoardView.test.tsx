@@ -154,7 +154,7 @@ describe("SessionsBoardView", () => {
 		}
 	});
 
-	it.each(["ci_failed", "changes_requested", "review_pending"] as const)(
+	it.each(["ci_failed", "changes_requested"] as const)(
 		"gives %s cards the persistent orange attention treatment",
 		(status) => {
 			render(

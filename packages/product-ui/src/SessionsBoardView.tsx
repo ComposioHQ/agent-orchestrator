@@ -221,13 +221,11 @@ export function SessionCardView({
 }: SessionCardViewProps) {
 	const badge = getSessionStatusView(session.status, translate);
 	const statusPresentation = session.statusPresentation;
-	const agentProgressStatus = new Set(["Fixing CI failures", "Addressing comments", "Reviewing"]);
 	const needsAttention =
-		!agentProgressStatus.has(session.displayStatus ?? "") &&
-		(session.status === "ci_failed" ||
-			session.status === "changes_requested" ||
-			session.status === "review_pending" ||
-			session.activity?.state === "blocked");
+		(session.status === "ci_failed" && session.displayStatus !== "Fixing CI failures") ||
+		(session.status === "changes_requested" && session.displayStatus !== "Addressing comments") ||
+		session.displayStatus === "Needs human review" ||
+		session.activity?.state === "blocked";
 	const needsAttentionChip = needsAttention && !statusPresentation;
 	const column = getKanbanColumnView(toKanbanColumn(session.kanbanColumn, session.status), translate);
 	const statusTone = needsAttentionChip

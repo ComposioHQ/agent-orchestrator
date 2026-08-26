@@ -1058,7 +1058,6 @@ describe("SessionsBoard", () => {
 		const attentionStatuses = [
 			"ci_failed",
 			"changes_requested",
-			"review_pending",
 		] as const;
 		workspaceQueryMock.mockReturnValue({
 			data: [
