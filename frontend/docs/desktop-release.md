@@ -43,6 +43,108 @@ The private conductor pins the immutable source SHA before dispatch and treats
 the returned digests as the handoff boundary. Signing credentials and release
 publication permissions stay in `Untrivial-ai/ao-releases`.
 
+## Re-enabling updater feeds after a runtime safety containment
+
+Withdrawing updater manifests is a fail-closed containment tool, not a release
+rollback. If stable or nightly feeds have been disabled because an update or
+downgrade could duplicate a session controller, keep every affected feed
+disabled until all gates below pass. Existing tags, installers, and historical
+release entries remain forensic evidence. **Never restore a withdrawn old
+manifest:** it still selects the unsafe artifact. Re-enable a channel only by
+publishing fresh manifests that select one newly verified release.
+
+The sole release conductor owns the feed mutation. Code authors and test
+operators may prepare artifacts and evidence but must not add, delete, or
+replace manifests while the containment is active.
+
+### 1. Candidate provenance and CI
+
+- The candidate contains the reviewed runtime-provenance fix, including
+  namespace-qualified handles, ownership-gated legacy adoption, ambiguous-owner
+  rejection, and a pre-respawn live-controller fence.
+- Required review is complete and every required CI job passes, including the
+  full race-enabled backend suite and desktop tests.
+- Candidate installers are produced once by the designated conductor from the
+  reviewed commit. The packaged daemon's version/build metadata resolves to
+  that exact commit on every platform; no locally rebuilt daemon is substituted.
+- macOS zip and dmg artifacts pass
+  `frontend/scripts/verify-mac-artifact.sh`. The ordinary Windows and Linux
+  signing/package checks also pass before runtime testing begins.
+
+### 2. Disposable update and downgrade matrix
+
+Run this matrix only with copied fixture data and isolated `AO_DATA_DIR`,
+`AO_RUN_FILE`, and `TMUX_TMPDIR` values. Do not point a candidate at a user's
+live database, worktrees, tmux servers, agent homes, or native thread files.
+Capture database rows, tmux server/socket identity, pane PID/start command, AO
+supervisor PID/generation, and native-agent PID before and after every case.
+
+- **Historical default -> candidate:** a uniquely AO-owned session on the
+  system-default server is adopted without pane restart, input, resize, or
+  process replacement. Its durable handle becomes qualified as `default`, its
+  live launch generation is repaired, and a false `exited` activity becomes
+  `idle` only when the exact supervised workload is alive.
+- **Historical named -> candidate:** the same assertions pass for the legacy
+  named `-L ao` server, with a qualified `named` handle.
+- **Private -> candidate restart:** a private-socket session remains on the
+  same socket with the same controller/process chain and a qualified `private`
+  handle across two desktop restarts.
+- **Clean candidate spawn:** a new session exists only on the run-file-derived
+  private socket and survives attach, output, input, ordinary exit, and a safe
+  resume without appearing in either legacy server.
+- **Owned ambiguity:** the same AO session name and valid ownership stamp in
+  any two, then all three, namespaces produces
+  `RUNTIME_OWNERSHIP_AMBIGUOUS`. No candidate pane, process, durable generation,
+  worktree, or native thread is changed.
+- **Foreign collision:** a same-named user tmux session is never adopted or
+  mutated. A foreign match cannot be converted into `exited` or used as a
+  resume target.
+- **Stale durable launch:** when the database generation differs from a live AO
+  supervisor, resume returns `RUNTIME_CONTROLLER_ACTIVE` before
+  `respawn-pane`, child launch, or generation writes. Repeat with the activity
+  row already marked `exited`.
+- **Candidate -> old build downgrade:** a namespace-qualified handle is
+  rejected by each supported older packaged adapter. The old build may report
+  recovery-required/inconclusive, but it must not create a tmux session,
+  respawn a pane, start a second supervisor/native writer, or rewrite the
+  qualified handle. Test both ordinary startup and an attempted Resume.
+- **Active native writer:** using a disposable native-agent home and thread,
+  keep one controller live and attempt a second restore. AO must reject before
+  a duplicate controller is launched; the canonical writer and rollout remain
+  unchanged, and the client receives a structured conflict rather than a
+  successful Resume followed only by terminal stderr.
+- **Windows control:** ConPTY create, attach, exit, and resume smoke tests pass;
+  tmux-qualified handles and Unix compatibility scanning are never selected.
+
+Every case must pass with zero unexplained PID, start-command, socket, handle,
+or lifecycle changes. An inconclusive probe is a failed release gate unless the
+expected outcome for that case is an explicit, non-mutating recovery-required
+result.
+
+### 3. Fresh-feed verification
+
+- Build and exercise the candidate through the conductor's preview channel
+  while the canonical stable and nightly feeds still have zero public
+  candidates.
+- Generate fresh stable/nightly manifests from the verified candidate
+  artifacts only. Their version, checksum, size, and platform/architecture
+  targets must match the assets tested above.
+- Before making a feed public, inventory GitHub's release API, Atom output, and
+  the shipped resolver's complete fallback window. There must be no older
+  manifest that a client can select after skipping the new release.
+- After publication, verify authenticated and unauthenticated API responses,
+  Atom, `/releases/latest`, and direct macOS/Linux/Windows manifest URLs all
+  select the exact verified tag and commit. Stable must not resolve to nightly;
+  nightly must not fall back to a historical release.
+- Canary one real update from the last supported stable and one from the last
+  supported nightly on each desktop platform, then rerun the session/runtime
+  invariants above. Stop and withdraw only the new manifests if any invariant
+  fails; preserve the candidate release and artifacts for diagnosis.
+
+Record the tested artifact digests, source commit, complete matrix results,
+feed inventory, selected tag per platform/channel, conductor identity, and
+timestamps in the incident issue before declaring either channel restored.
+
 ## Channels
 
 - **Stable** releases are deliberate production cuts. After all verification
