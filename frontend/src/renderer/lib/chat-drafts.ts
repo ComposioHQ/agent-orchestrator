@@ -139,17 +139,13 @@ type ChatDraftRuntime = {
 	listeners: Set<() => void>;
 	composerToken?: ChatDraftMutationToken;
 	inlineEditToken?: ChatDraftMutationToken;
-	composerReceiptOrder?: number;
-	inlineEditReceiptOrder?: number;
 	composer: ChatDraftMutationSnapshot<number>;
 	inlineEdit: ChatDraftMutationSnapshot<string>;
 };
 
-const MAX_UNACKNOWLEDGED_DRAFT_RECEIPTS = 64;
 const EMPTY_COMPOSER_MUTATION: ChatDraftMutationSnapshot<number> = { pending: false };
 const EMPTY_INLINE_EDIT_MUTATION: ChatDraftMutationSnapshot<string> = { pending: false };
 const draftRuntimes = new Map<string, ChatDraftRuntime>();
-let draftReceiptOrder = 0;
 let draftMutationSequence = 0;
 
 function normalizeScope(scope: ChatDraftScopeInput): ChatDraftScope {
@@ -227,54 +223,9 @@ function clearDraftMutationReceipt(
 ): void {
 	if (kind === "composer") {
 		runtime.composer = { pending: pending ?? runtime.composer.pending };
-		runtime.composerReceiptOrder = undefined;
 		return;
 	}
 	runtime.inlineEdit = { pending: pending ?? runtime.inlineEdit.pending };
-	runtime.inlineEditReceiptOrder = undefined;
-}
-
-function boundUnacknowledgedDraftReceipts(): void {
-	const candidates: Array<{
-		key: string;
-		runtime: ChatDraftRuntime;
-		kind: DraftMutationKind;
-		order: number;
-	}> = [];
-	for (const [key, runtime] of draftRuntimes) {
-		if (runtime.listeners.size > 0) continue;
-		if (
-			runtime.composer.accepted &&
-			runtime.composerReceiptOrder !== undefined
-		) {
-			candidates.push({
-				key,
-				runtime,
-				kind: "composer",
-				order: runtime.composerReceiptOrder,
-			});
-		}
-		if (
-			runtime.inlineEdit.accepted &&
-			runtime.inlineEditReceiptOrder !== undefined
-		) {
-			candidates.push({
-				key,
-				runtime,
-				kind: "inline-edit",
-				order: runtime.inlineEditReceiptOrder,
-			});
-		}
-	}
-	if (candidates.length <= MAX_UNACKNOWLEDGED_DRAFT_RECEIPTS) return;
-	candidates.sort((left, right) => left.order - right.order);
-	for (const candidate of candidates.slice(
-		0,
-		candidates.length - MAX_UNACKNOWLEDGED_DRAFT_RECEIPTS,
-	)) {
-		clearDraftMutationReceipt(candidate.runtime, candidate.kind);
-		evictSettledDraftRuntime(candidate.key, candidate.runtime);
-	}
 }
 
 function emitDraftRuntime(runtime: ChatDraftRuntime): void {
@@ -288,7 +239,6 @@ export function subscribeChatDraftRuntime(scope: ChatDraftScopeInput, listener: 
 	runtime.listeners.add(listener);
 	return () => {
 		runtime.listeners.delete(listener);
-		boundUnacknowledgedDraftReceipts();
 		evictSettledDraftRuntime(key, runtime);
 	};
 }
@@ -319,7 +269,6 @@ function beginDraftMutation(
 		if (runtime.composer.pending || runtime.composer.accepted) return undefined;
 		const token = Symbol("chat-composer-mutation");
 		runtime.composerToken = token;
-		runtime.composerReceiptOrder = undefined;
 		runtime.composer = { pending: true };
 		emitDraftRuntime(runtime);
 		return token;
@@ -327,7 +276,6 @@ function beginDraftMutation(
 	if (runtime.inlineEdit.pending || runtime.inlineEdit.accepted) return undefined;
 	const token = Symbol("chat-inline-edit-mutation");
 	runtime.inlineEditToken = token;
-	runtime.inlineEditReceiptOrder = undefined;
 	runtime.inlineEdit = { pending: true };
 	emitDraftRuntime(runtime);
 	return token;
@@ -391,9 +339,7 @@ export function finishChatComposerMutation(
 		pending: false,
 		accepted: { sequence, revision, result },
 	};
-	runtime.composerReceiptOrder = ++draftReceiptOrder;
 	emitDraftRuntime(runtime);
-	boundUnacknowledgedDraftReceipts();
 	evictSettledDraftRuntime(key, runtime);
 }
 
@@ -412,9 +358,7 @@ export function finishChatInlineEditMutation(
 		pending: false,
 		accepted: { sequence, revision, result },
 	};
-	runtime.inlineEditReceiptOrder = ++draftReceiptOrder;
 	emitDraftRuntime(runtime);
-	boundUnacknowledgedDraftReceipts();
 	evictSettledDraftRuntime(key, runtime);
 }
 
@@ -439,9 +383,10 @@ function acknowledgeDraftMutation(
 
 /**
  * Release a settled composer receipt only after a committed subscriber applied
- * it. No task-duration timer decides this lifetime: acknowledgement, a newer
- * mutation, or a scope purge normally retires it. A deterministic oldest-first
- * cap bounds abandoned receipts that have neither subscribers nor acknowledgements.
+ * it. No task duration or global pressure decides this lifetime. Each exact
+ * session incarnation owns at most one composer and one inline-edit receipt;
+ * acknowledgement, a superseding durable edit, or authoritative incarnation
+ * cleanup retires them.
  */
 export function acknowledgeChatComposerMutation(
 	scope: ChatDraftScopeInput,

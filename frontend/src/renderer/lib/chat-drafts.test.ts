@@ -220,6 +220,51 @@ describe("Chat draft storage", () => {
 		expect(writeChatComposerText(first, "still obsolete", backing).ok).toBe(false);
 	});
 
+	it("purges retained receipts when an authoritative incarnation replaces their scope", () => {
+		const storage = new MemoryStorage();
+		const first: ChatDraftScope = {
+			sessionId: "session-retained-receipts",
+			incarnation: "2026-08-25T09:00:00.000Z",
+		};
+		const replacement: ChatDraftScope = {
+			sessionId: first.sessionId,
+			incarnation: "2026-08-26T09:00:00.000Z",
+		};
+		expect(activateChatDraftScope(first, storage)).toMatchObject({ ok: true });
+
+		const composerRevision = writeChatComposerText(first, "accepted", storage).draft.composer
+			.revision;
+		const composerToken = beginChatComposerMutation(first)!;
+		finishChatComposerMutation(
+			first,
+			composerToken,
+			composerRevision,
+			clearAcceptedChatComposer(first, composerRevision, storage),
+		);
+		const inlineRevision = writeChatInlineEdit(
+			first,
+			{ turnId: "turn-1", text: "accepted edit", content: [] },
+			storage,
+		).draft.inlineEdit!.revision;
+		const inlineToken = beginChatInlineEditMutation(first)!;
+		finishChatInlineEditMutation(
+			first,
+			inlineToken,
+			inlineRevision,
+			clearAcceptedChatInlineEdit(first, inlineRevision, storage),
+		);
+		expect(getChatComposerMutation(first).accepted).toBeDefined();
+		expect(getChatInlineEditMutation(first).accepted).toBeDefined();
+
+		expect(activateChatDraftScope(replacement, storage)).toMatchObject({
+			ok: true,
+			replaced: true,
+			previousIncarnation: first.incarnation,
+		});
+		expect(getChatComposerMutation(first)).toEqual({ pending: false });
+		expect(getChatInlineEditMutation(first)).toEqual({ pending: false });
+	});
+
 	it("warned abandon clears only an uncertain steer journal", () => {
 		const storage = new MemoryStorage();
 		const scope: ChatDraftScope = { sessionId: "session-abandon", incarnation: "one" };
@@ -870,33 +915,59 @@ describe("Chat draft storage", () => {
 		expect(getChatComposerMutation(sessionId)).toEqual({ pending: false });
 	});
 
-	it("bounds never-acknowledged settled receipts without depending on elapsed time", () => {
+	it("keeps more than 64 delayed composer and inline handoffs until each replacement acknowledges", () => {
 		const storage = new MemoryStorage();
-		const receiptCapacity = 64;
 		const sessionIds = Array.from(
-			{ length: receiptCapacity + 1 },
-			(_, index) => `runtime-unobserved-capacity-${index}`,
+			{ length: 65 },
+			(_, index) => `runtime-delayed-handoff-${index}`,
 		);
 		for (const sessionId of sessionIds) {
-			const revision = writeChatComposerText(sessionId, "accepted", storage).draft.composer
+			const composerRevision = writeChatComposerText(sessionId, "accepted", storage).draft.composer
 				.revision;
-			const token = beginChatComposerMutation(sessionId)!;
+			const inlineRevision = writeChatInlineEdit(
+				sessionId,
+				{ turnId: "turn-1", text: "accepted edit", content: [] },
+				storage,
+			).draft.inlineEdit!.revision;
+			const unsubscribeOldSurface = subscribeChatDraftRuntime(sessionId, () => undefined);
+			const composerToken = beginChatComposerMutation(sessionId)!;
+			const inlineToken = beginChatInlineEditMutation(sessionId)!;
+			// The replacement has rendered from the in-flight snapshot, but its passive
+			// subscription is deliberately delayed until every request below settles.
+			expect(getChatComposerMutation(sessionId)).toEqual({ pending: true });
+			expect(getChatInlineEditMutation(sessionId)).toEqual({ pending: true });
 			finishChatComposerMutation(
 				sessionId,
-				token,
-				revision,
-				clearAcceptedChatComposer(sessionId, revision, storage),
+				composerToken,
+				composerRevision,
+				clearAcceptedChatComposer(sessionId, composerRevision, storage),
 			);
+			finishChatInlineEditMutation(
+				sessionId,
+				inlineToken,
+				inlineRevision,
+				clearAcceptedChatInlineEdit(sessionId, inlineRevision, storage),
+			);
+			unsubscribeOldSurface();
 		}
 
-		// The oldest unacknowledged receipt is the deterministic capacity victim. The
-		// newest remains available without a TTL or render-scheduling assumption.
-		expect(getChatComposerMutation(sessionIds[0])).toEqual({ pending: false });
-		expect(getChatComposerMutation(sessionIds.at(-1)!).accepted).toBeDefined();
-
 		for (const sessionId of sessionIds) {
-			const accepted = getChatComposerMutation(sessionId).accepted;
-			if (accepted) acknowledgeChatComposerMutation(sessionId, accepted.sequence);
+			const unsubscribeReplacement = subscribeChatDraftRuntime(sessionId, () => undefined);
+			const acceptedComposer = getChatComposerMutation(sessionId).accepted;
+			const acceptedInline = getChatInlineEditMutation(sessionId).accepted;
+			expect(acceptedComposer).toBeDefined();
+			expect(acceptedInline).toBeDefined();
+			acknowledgeChatComposerMutation(sessionId, acceptedComposer!.sequence);
+			expect(getChatComposerMutation(sessionId)).toEqual({ pending: false });
+			expect(getChatInlineEditMutation(sessionId).accepted).toBe(acceptedInline);
+			acknowledgeChatInlineEditMutation(sessionId, acceptedInline!.sequence);
+			expect(getChatInlineEditMutation(sessionId)).toEqual({ pending: false });
+			unsubscribeReplacement();
+
+			const unsubscribeLaterMount = subscribeChatDraftRuntime(sessionId, () => undefined);
+			expect(getChatComposerMutation(sessionId)).toEqual({ pending: false });
+			expect(getChatInlineEditMutation(sessionId)).toEqual({ pending: false });
+			unsubscribeLaterMount();
 		}
 	});
 
