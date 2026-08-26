@@ -15,6 +15,7 @@ import {
 	ChevronIcon,
 	GitBranchIcon,
 	GitPullRequestIcon,
+	LoaderCircleIcon,
 	MessageSquareIcon,
 } from "./icons";
 import {
@@ -236,6 +237,15 @@ export function SessionCardView({
 	const column = getKanbanColumnView(toKanbanColumn(session.kanbanColumn, session.status), translate);
 	const branch = session.branch ?? "";
 	const showBranch = branch !== "" && !sameLabel(branch, session.title) && !sameLabel(branch, session.id);
+	const renderedStatusLabel =
+		statusPresentation?.label ??
+		(session.displayStatus ? getDisplayStatusLabel(session.displayStatus, translate) : badge.label);
+	const showStatusLoader =
+		session.status === "working" ||
+		session.status === "review_pending" ||
+		session.displayStatus === "Fixing CI failures" ||
+		session.displayStatus === "Addressing comments" ||
+		session.displayStatus === "Reviewing";
 
 	return (
 		<div
@@ -307,7 +317,7 @@ export function SessionCardView({
 					)}
 				</div>
 			)}
-			<div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2 border-t border-border pl-2 pr-3.5 py-2.5">
+			<div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2 border-t border-border px-3.5 py-2.5">
 				<div className="flex min-w-0 flex-1">
 					<span
 						className={cn(
@@ -317,11 +327,9 @@ export function SessionCardView({
 						data-kanban-column={statusPresentation ? undefined : column.column}
 						data-testid="session-status"
 					>
+						{showStatusLoader ? <LoaderCircleIcon aria-hidden="true" className="mr-1 size-icon-2xs animate-spin" /> : null}
 						<span className="min-w-0 truncate">
-							{statusPresentation?.label ??
-								(session.displayStatus
-									? getDisplayStatusLabel(session.displayStatus, translate)
-									: badge.label)}
+							{renderedStatusLabel}
 						</span>
 					</span>
 				</div>
