@@ -69,8 +69,8 @@ type serverRequestHandler func(context.Context, serverRequest) (any, error)
 var ErrConnClosed = errors.New("app-server connection closed")
 
 // errRequestDeliveryUncertain marks a request whose complete frame was written
-// but whose response lost a race with caller cancellation. The method adapter
-// translates it into the provider-neutral operation-specific contract.
+// but no response was observed before cancellation or connection loss. The method
+// adapter translates it into the provider-neutral operation-specific contract.
 var errRequestDeliveryUncertain = errors.New("app-server request delivery outcome is uncertain")
 
 // conn is one live stdio connection to an app-server process.
@@ -302,7 +302,7 @@ func (c *conn) request(ctx context.Context, method string, params, out any) erro
 
 	case f, ok := <-ch:
 		if !ok {
-			return fmt.Errorf("%s: %w", method, ErrConnClosed)
+			return fmt.Errorf("%s: %w: %w", method, errRequestDeliveryUncertain, ErrConnClosed)
 		}
 		if f.Error != nil {
 			return fmt.Errorf("%s: %w", method, f.Error)

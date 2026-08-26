@@ -22,6 +22,11 @@ type fakeAppServer struct {
 	toClient io.WriteCloser
 }
 
+type errorWriteCloser struct{ err error }
+
+func (w errorWriteCloser) Write([]byte) (int, error) { return 0, w.err }
+func (errorWriteCloser) Close() error                { return nil }
+
 func newFakeAppServer(t *testing.T, onReq serverRequestHandler) (*conn, *fakeAppServer) {
 	t.Helper()
 
@@ -253,7 +258,8 @@ func TestServerRequestHandlerErrorBecomesRPCError(t *testing.T) {
 	_ = c
 }
 
-// When the process dies, an in-flight request must fail fast instead of hanging.
+// When the process dies after consuming a request, the caller must know both
+// that the response connection closed and that delivery may already have happened.
 func TestProcessExitUnblocksPendingRequest(t *testing.T) {
 	c, fake := newFakeAppServer(t, rejectAllServerRequests)
 
@@ -270,6 +276,9 @@ func TestProcessExitUnblocksPendingRequest(t *testing.T) {
 		if !errors.Is(err, ErrConnClosed) {
 			t.Fatalf("err = %v, want ErrConnClosed", err)
 		}
+		if !errors.Is(err, errRequestDeliveryUncertain) {
+			t.Fatalf("err = %v, want delivery-uncertain classification after write", err)
+		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("pending request did not unblock when the process exited")
 	}
@@ -278,6 +287,42 @@ func TestProcessExitUnblocksPendingRequest(t *testing.T) {
 	case <-c.wait():
 	case <-time.After(2 * time.Second):
 		t.Fatal("connection never reported done")
+	}
+}
+
+func TestRequestOnAlreadyClosedConnectionIsNotDeliveryUncertain(t *testing.T) {
+	c, fake := newFakeAppServer(t, rejectAllServerRequests)
+	if err := fake.toClient.Close(); err != nil {
+		t.Fatalf("close server side: %v", err)
+	}
+	select {
+	case <-c.wait():
+	case <-time.After(2 * time.Second):
+		t.Fatal("connection never reported done")
+	}
+
+	err := c.request(context.Background(), "turn/interrupt", nil, nil)
+	if !errors.Is(err, ErrConnClosed) {
+		t.Fatalf("err = %v, want ErrConnClosed", err)
+	}
+	if errors.Is(err, errRequestDeliveryUncertain) {
+		t.Fatalf("err = %v, did not want delivery-uncertain before write", err)
+	}
+}
+
+func TestRequestWriteFailureIsNotDeliveryUncertain(t *testing.T) {
+	readSide, keepOpen := io.Pipe()
+	t.Cleanup(func() { _ = keepOpen.Close() })
+	writeErr := errors.New("injected write failure")
+	c := newConn(errorWriteCloser{err: writeErr}, readSide,
+		slog.New(slog.DiscardHandler), rejectAllServerRequests)
+
+	err := c.request(context.Background(), "turn/interrupt", nil, nil)
+	if !errors.Is(err, writeErr) {
+		t.Fatalf("err = %v, want write failure", err)
+	}
+	if errors.Is(err, errRequestDeliveryUncertain) {
+		t.Fatalf("err = %v, did not want delivery-uncertain before a complete write", err)
 	}
 }
 
