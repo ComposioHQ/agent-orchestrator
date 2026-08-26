@@ -8,23 +8,65 @@ describe("desktop release workflows", () => {
   const workflowsDirectory = path.join(repositoryRoot, ".github", "workflows");
   const artifactBuilder = path.join(workflowsDirectory, "build-artifacts.yml");
 
-  it("removes the obsolete public desktop publisher", async () => {
-    await expect(
-      stat(path.join(workflowsDirectory, "frontend-release.yml")),
-    ).rejects.toMatchObject({ code: "ENOENT" });
+  async function readWorkflows() {
+    const names = (await readdir(workflowsDirectory)).filter((name) =>
+      /\.ya?ml$/.test(name),
+    );
+    return Promise.all(
+      names.map(async (name) => ({
+        name,
+        contents: await readFile(path.join(workflowsDirectory, name), "utf8"),
+      })),
+    );
+  }
+
+  it("removes obsolete public release mutation workflows", async () => {
+    for (const name of [
+      "frontend-release.yml",
+      "feature-release-cleanup.yml",
+    ]) {
+      await expect(
+        stat(path.join(workflowsDirectory, name)),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+    }
   });
 
   it("prevents a public desktop tag publisher from returning", async () => {
-    const workflowNames = (await readdir(workflowsDirectory)).filter((name) =>
-      /\.ya?ml$/.test(name),
+    const workflows = await readWorkflows();
+
+    expect(workflows.map(({ contents }) => contents).join("\n")).not.toContain(
+      "desktop-v*",
     );
-    const contents = await Promise.all(
-      workflowNames.map((name) =>
-        readFile(path.join(workflowsDirectory, name), "utf8"),
-      ),
+  });
+
+  it("prevents public workflows from mutating releases or release tags", async () => {
+    const workflows = await readWorkflows();
+    const mutationPatterns = [
+      /gh release (?:create|delete|edit|upload)\b/,
+      /gh api\b[^\n]*(?:--method|-X)\s+(?:DELETE|PATCH|POST|PUT)\b[^\n]*(?:releases|git\/refs\/tags)/,
+      /electron-forge publish/,
+      /npm run publish/,
+    ];
+    const violations = workflows.flatMap(({ name, contents }) =>
+      mutationPatterns
+        .filter((pattern) => pattern.test(contents))
+        .map((pattern) => `${name}: ${pattern.source}`),
     );
 
-    expect(contents.join("\n")).not.toContain("desktop-v*");
+    expect(violations).toEqual([]);
+  });
+
+  it("prevents write-enabled public release workflows", async () => {
+    const workflows = await readWorkflows();
+    const violations = workflows
+      .filter(
+        ({ contents }) =>
+          /contents:\s*write/.test(contents) &&
+          /(?:\brelease\b|git\/refs\/tags)/i.test(contents),
+      )
+      .map(({ name }) => name);
+
+    expect(violations).toEqual([]);
   });
 
   it("keeps the conductor artifact builder dispatchable and read-only", async () => {
