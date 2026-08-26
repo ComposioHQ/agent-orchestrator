@@ -238,6 +238,7 @@ export function SessionCardView({
 	const branch = session.branch ?? "";
 	const showBranch = branch !== "" && !sameLabel(branch, session.title) && !sameLabel(branch, session.id);
 	const renderedStatusLabel =
+		(needsAttention ? alertStatusLabel(session) : undefined) ??
 		statusPresentation?.label ??
 		(session.displayStatus ? getDisplayStatusLabel(session.displayStatus, translate) : badge.label);
 	const showStatusLoader =
@@ -355,6 +356,14 @@ export function SessionCardView({
 			{footer}
 		</div>
 	);
+}
+
+function alertStatusLabel(session: BoardSessionPresentation): string | undefined {
+	if (session.activity?.state === "blocked") return "Blocked";
+	if (session.status === "changes_requested") return "Changes requested";
+	if (session.status === "ci_failed") return "CI failing";
+	if (session.displayStatus === "Needs human review") return "Needs human review";
+	return undefined;
 }
 
 export const SessionUsageMetricView = forwardRef<
