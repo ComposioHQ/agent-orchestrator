@@ -251,7 +251,7 @@ describe("SessionsBoardView", () => {
 		expect(screen.getByText("feat/portable")).toHaveClass("text-muted-foreground");
 		expect(screen.getByText("5m ago")).toHaveAttribute("title", "Updated 2026-08-09T10:00:00Z");
 		expect(screen.getByText("5m ago")).toHaveClass("tabular-nums", "text-muted-foreground");
-		expect(screen.getByText("github:42")).toHaveAttribute("title", "Issue github:42");
+		expect(screen.queryByText("github:42")).not.toBeInTheDocument();
 
 		fireEvent.click(screen.getByRole("button", { name: "portable task" }));
 		expect(onOpen).toHaveBeenCalledOnce();

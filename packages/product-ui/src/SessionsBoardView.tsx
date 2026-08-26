@@ -291,7 +291,7 @@ export function SessionCardView({
 					</div>
 				)}
 			</div>
-			{(prs.length > 0 || session.trackerIssueId) && (
+			{prs.length > 0 && (
 				<div className="flex min-w-0 flex-col gap-1.5 px-3.5 pb-1">
 					{prs.length > 0 && (
 						<div className="flex min-w-0 flex-col gap-y-1 font-mono text-2xs text-muted-foreground">
@@ -306,14 +306,6 @@ export function SessionCardView({
 								)),
 							)}
 						</div>
-					)}
-					{session.trackerIssueId && (
-						<span
-							className="inline-flex max-w-branch-chip items-center self-start truncate rounded-sm bg-accent/12 px-1.5 py-0.5 font-mono text-micro text-accent"
-							title={labels.intakeIssue(session.trackerIssueId)}
-						>
-							{session.trackerIssueId}
-						</span>
 					)}
 				</div>
 			)}
