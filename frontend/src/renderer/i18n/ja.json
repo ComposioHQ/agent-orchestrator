@@ -1232,6 +1232,8 @@
 	"settings.dev.activitySpreadAria": "Activity spread in minutes",
 	"settings.dev.resetDefaultsLabel": "Reset defaults",
 	"settings.dev.resetReload": "Reset & Reload",
+	"shell.usageProcessed": "処理済みトークン {{count}} 個",
+	"shell.usageProcessedCompact": "{{count}} 処理済み",
 	"shell.usageTokens": "{{count}} トークン",
 	"usage.cachedInput": "キャッシュ入力",
 	"usage.estimatedCost": "推定コスト",

@@ -1232,6 +1232,8 @@
 	"settings.dev.activitySpreadAria": "Activity spread in minutes",
 	"settings.dev.resetDefaultsLabel": "Reset defaults",
 	"settings.dev.resetReload": "Reset & Reload",
+	"shell.usageProcessed": "처리된 토큰 {{count}}개",
+	"shell.usageProcessedCompact": "{{count}} 처리됨",
 	"shell.usageTokens": "토큰 {{count}}개",
 	"usage.cachedInput": "캐시된 입력",
 	"usage.estimatedCost": "예상 비용",

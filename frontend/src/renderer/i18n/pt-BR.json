@@ -1249,6 +1249,8 @@
 	"settings.dev.activitySpreadAria": "Activity spread in minutes",
 	"settings.dev.resetDefaultsLabel": "Reset defaults",
 	"settings.dev.resetReload": "Reset & Reload",
+	"shell.usageProcessed": "{{count}} tokens processados",
+	"shell.usageProcessedCompact": "{{count}} processados",
 	"shell.usageTokens": "{{count}} tokens",
 	"usage.cachedInput": "Entrada em cache",
 	"usage.estimatedCost": "Custo estimado",
