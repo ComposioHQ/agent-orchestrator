@@ -212,7 +212,9 @@ function DesktopSessionCard({
 			onOpen={onOpen}
 			overlay={terminationOverlay}
 			prs={summaries.map((pr) => ({
+				commentCount: pr.review.unresolvedBy.reduce((count, reviewer) => count + reviewer.count, 0),
 				number: pr.number,
+				reviewerAvatars: (pr.review.reviews ?? []).map((review) => `https://github.com/${review.reviewerId}.png`),
 				state: pr.state,
 				url: prBrowserUrl(pr),
 			}))}

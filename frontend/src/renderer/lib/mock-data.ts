@@ -13,7 +13,7 @@ const demoPr = (
 	review: PullRequestFacts["review"] = "none",
 	mergeability: PullRequestFacts["mergeability"] = "mergeable",
 ): PullRequestFacts => ({
-	url: `https://github.com/acme-inc/ao-demo/pull/${number}`,
+	url: `https://github.com/Untrivial-ai/agent-orchestrator/pull/${number}`,
 	number,
 	state,
 	ci,
@@ -115,6 +115,7 @@ export const mockWorkspaces: WorkspaceSummary[] = [
 				status: "review_pending",
 				kanbanColumn: "needs_review",
 				displayStatus: "Needs human review",
+				issueId: "github:4479",
 				createdAt: hoursAgo(7),
 				updatedAt: minutesAgo(7),
 				activity: { state: "idle", lastActivityAt: minutesAgo(7) },
@@ -234,7 +235,7 @@ export const mockWorkspaces: WorkspaceSummary[] = [
 const prSummary = (sessionId: string, number: number, overrides: Partial<SessionPRSummary> = {}): SessionPRSummary => {
 	const session = mockWorkspaces.flatMap((workspace) => workspace.sessions).find((item) => item.id === sessionId);
 	const facts = session?.prs.find((item) => item.number === number);
-	const url = facts?.url ?? `https://github.com/me/${session?.workspaceName ?? "preview"}/pull/${number}`;
+	const url = facts?.url ?? `https://github.com/Untrivial-ai/agent-orchestrator/pull/${number}`;
 	return {
 		url,
 		htmlUrl: url,
@@ -242,7 +243,7 @@ const prSummary = (sessionId: string, number: number, overrides: Partial<Session
 		title: session?.title ?? `PR #${number}`,
 		state: facts?.state ?? "open",
 		provider: "github",
-		repo: `me/${session?.workspaceName ?? "preview"}`,
+		repo: "Untrivial-ai/agent-orchestrator",
 		author: "preview-agent",
 		sourceBranch: session?.branch ?? "",
 		targetBranch: "main",
@@ -301,7 +302,7 @@ export const mockSessionScmSummaries: Record<string, SessionPRSummary[]> = {
 						name: "renderer smoke",
 						status: "failed",
 						conclusion: "failure",
-						url: "https://github.com/acme-inc/ao-demo/actions/runs/324001/job/1",
+						url: "https://github.com/Untrivial-ai/agent-orchestrator/actions/runs/4486001/job/1",
 					},
 				],
 			},
@@ -323,7 +324,7 @@ export const mockSessionScmSummaries: Record<string, SessionPRSummary[]> = {
 						autoInjectReview: true,
 						verdict: "changes_requested",
 						submittedAt: minutesAgo(18),
-						reviewUrl: "https://github.com/acme-inc/ao-demo/pull/318#pullrequestreview-3101",
+						reviewUrl: "https://github.com/Untrivial-ai/agent-orchestrator/pull/318#pullrequestreview-3101",
 						body: "The activity sample is **tighter**, but the toolbar density change needs a second look before this lands.\n\n- Check compact spacing\n- Keep button labels readable",
 					},
 					{
@@ -332,7 +333,7 @@ export const mockSessionScmSummaries: Record<string, SessionPRSummary[]> = {
 						isBot: true,
 						verdict: "approved",
 						submittedAt: minutesAgo(15),
-						reviewUrl: "https://github.com/acme-inc/ao-demo/pull/318#pullrequestreview-3102",
+						reviewUrl: "https://github.com/Untrivial-ai/agent-orchestrator/pull/318#pullrequestreview-3102",
 						body: "No issues found in the terminal pane changes.",
 					},
 				],
@@ -340,7 +341,7 @@ export const mockSessionScmSummaries: Record<string, SessionPRSummary[]> = {
 					{
 						reviewerId: "prateek",
 						count: 2,
-						reviewUrl: "https://github.com/acme-inc/ao-demo/pull/318#pullrequestreview-3101",
+						reviewUrl: "https://github.com/Untrivial-ai/agent-orchestrator/pull/318#pullrequestreview-3101",
 						// Two comments, two separate threads — resolving addresses threads.
 						links: [
 							{ file: "frontend/src/renderer/components/TerminalPane.tsx", line: 84, body: "The reviewer terminal header wraps awkwardly at this width. Please keep the role label and controls on one line.", autoInjectReview: true },
@@ -355,6 +356,15 @@ export const mockSessionScmSummaries: Record<string, SessionPRSummary[]> = {
 		prSummary("demo-review-stack", 321, {
 			createdAt: hoursAgo(2),
 			stateChangedAt: hoursAgo(2),
+			review: {
+				decision: "changes_requested",
+				hasUnresolvedHumanComments: true,
+				reviews: [
+					{ reviewerId: "vickyshaw29", autoInjectReview: false, verdict: "changes_requested", submittedAt: hoursAgo(1), reviewUrl: "https://github.com/Untrivial-ai/agent-orchestrator/pull/321#review-1", body: "Please address the browser preview comments before merge." },
+					{ reviewerId: "Prasad-D-Ware", autoInjectReview: false, verdict: "approved", submittedAt: hoursAgo(1), reviewUrl: "https://github.com/Untrivial-ai/agent-orchestrator/pull/321#review-2", body: "The preview flow looks good overall." },
+				],
+				unresolvedBy: [{ reviewerId: "vickyshaw29", count: 3, reviewUrl: "https://github.com/Untrivial-ai/agent-orchestrator/pull/321#review-1", links: [] }],
+			},
 		}),
 		prSummary("demo-review-stack", 319, {
 			createdAt: hoursAgo(6),
@@ -365,15 +375,15 @@ export const mockSessionScmSummaries: Record<string, SessionPRSummary[]> = {
 			stateChangedAt: hoursAgo(3),
 		}),
 		prSummary("demo-review-stack", 317, {
-			url: "https://github.com/acme-inc/ao-demo/pull/317",
-			htmlUrl: "https://github.com/acme-inc/ao-demo/pull/317",
+			url: "https://github.com/Untrivial-ai/agent-orchestrator/pull/317",
+			htmlUrl: "https://github.com/Untrivial-ai/agent-orchestrator/pull/317",
 			state: "merged",
 			createdAt: hoursAgo(7),
 			stateChangedAt: hoursAgo(1),
 			mergeability: {
 				state: "mergeable",
 				reasons: [],
-				prUrl: "https://github.com/acme-inc/ao-demo/pull/317",
+				prUrl: "https://github.com/Untrivial-ai/agent-orchestrator/pull/317",
 				conflictFiles: [],
 			},
 		}),

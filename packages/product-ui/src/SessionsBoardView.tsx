@@ -65,7 +65,9 @@ export type BoardSessionStatusPresentation = {
 export type BoardPullRequestState = "closed" | "open" | "draft" | "merged";
 
 export type BoardPullRequestPresentation = {
+	commentCount?: number;
 	number: number;
+	reviewerAvatars?: string[];
 	state: BoardPullRequestState;
 	url: string;
 };
@@ -406,6 +408,22 @@ function BoardPullRequestGroup({
 					{index < group.prs.length - 1 ? "," : null}
 				</span>
 			))}
+			{group.prs
+				.flatMap((pr) => pr.reviewerAvatars ?? [])
+				.slice(0, 3)
+				.map((avatar, index) => (
+					<img
+						alt=""
+						className="size-icon-sm rounded-full border border-border object-cover"
+						key={`${avatar}-${index}`}
+						src={avatar}
+					/>
+				))}
+			{group.prs.some((pr) => (pr.commentCount ?? 0) > 0) ? (
+				<span className="text-muted-foreground">
+					{group.prs.reduce((count, pr) => count + (pr.commentCount ?? 0), 0)} comments
+				</span>
+			) : null}
 			<span className={cn("font-medium", lifecycleClassName(group.state))}>{statusLabel}</span>
 		</span>
 	);
