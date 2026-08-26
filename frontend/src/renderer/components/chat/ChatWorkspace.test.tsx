@@ -17,8 +17,15 @@ import type { ConversationMessage, ConversationSnapshot } from "../../types/conv
 import { setApiBaseUrl } from "../../lib/api-client";
 import { useUiStore } from "../../stores/ui-store";
 import type { WorkspaceSession } from "../../types/workspace";
-import { readChatSessionDraft, writeChatInlineEdit } from "../../lib/chat-drafts";
-import { getChatDraftBoundary } from "../../lib/chat-draft-boundary";
+import {
+	prepareChatInlineEditDelivery,
+	readChatSessionDraft,
+	writeChatInlineEdit,
+} from "../../lib/chat-drafts";
+import {
+	getChatDraftBoundaries,
+	getChatDraftBoundary,
+} from "../../lib/chat-draft-boundary";
 
 const writeText = vi.fn(async (_text: string) => undefined);
 const menuAction = vi.fn(async (_action: string) => undefined);
@@ -1841,6 +1848,26 @@ describe("ChatWorkspace message actions", () => {
 		expect(readChatSessionDraft(snapshot.sessionId).inlineEditDelivery).toBeUndefined();
 	});
 
+	it("reports a restored inline delivery as pending recovery without claiming persistence failed", async () => {
+		const snapshot = {
+			...idleSnapshot(),
+			sessionId: "inline-edit-restored-delivery-boundary",
+		};
+		prepareChatInlineEditDelivery(snapshot.sessionId, {
+			turnId: "turn-1",
+			text: "recover this edit",
+			content: [],
+			clientMessageId: "inline-edit-restored-delivery-id",
+		});
+
+		render(<ChatWorkspace snapshot={snapshot} onEditMessage={vi.fn()} />);
+
+		expect(await screen.findByRole("alert")).toHaveTextContent(
+			"earlier edit may already have been delivered before Chat restarted",
+		);
+		await waitFor(() => expect(getChatDraftBoundary(snapshot.sessionId)).toBe("pending-delivery"));
+	});
+
 	it("reconciles an accepted inline delivery without clearing or blocking a later edit", async () => {
 		const user = userEvent.setup();
 		const snapshot = idleSnapshot();
@@ -1901,7 +1928,10 @@ describe("ChatWorkspace message actions", () => {
 			fireEvent.keyDown(editor, { key: "Enter", ctrlKey: true });
 			await waitFor(() => expect(onEditMessage).toHaveBeenCalledTimes(1));
 			expect(await screen.findByRole("alert")).toHaveTextContent("couldn’t be cleared");
-			expect(getChatDraftBoundary(snapshot.sessionId)).toBe("pending-delivery");
+			expect(getChatDraftBoundaries(snapshot.sessionId)).toEqual([
+				"persistence-failed",
+				"pending-delivery",
+			]);
 
 			fireEvent.keyDown(editor, { key: "Enter", ctrlKey: true });
 			expect(onEditMessage).toHaveBeenCalledTimes(1);

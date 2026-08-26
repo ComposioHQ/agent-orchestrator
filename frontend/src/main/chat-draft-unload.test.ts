@@ -22,7 +22,7 @@ describe("native Chat draft unload confirmation", () => {
 		});
 		expect(dialog.detail).toContain("could not be saved locally");
 		expect(dialog.detail).toContain("Attachments are still being saved");
-		expect(dialog.detail).not.toContain("delivery outcome is still unresolved");
+		expect(dialog.detail).not.toContain("delivery recovery is still pending");
 	});
 
 	it("prevents the native window close until the user explicitly chooses to leave", () => {
@@ -35,7 +35,7 @@ describe("native Chat draft unload confirmation", () => {
 		expect(shouldPreventUnsafeChatDraftClose(["pending-delivery"], true, stay)).toBe(false);
 		expect(stay).toHaveBeenCalledTimes(1);
 		const dialog = stay.mock.calls[0]?.[0];
-		expect(dialog?.detail).toContain("delivery outcome is still unresolved");
+		expect(dialog?.detail).toContain("delivery recovery is still pending");
 		expect(dialog?.detail).not.toContain("Attachments are still being saved");
 		expect(dialog?.detail).not.toContain("could not be saved locally");
 	});

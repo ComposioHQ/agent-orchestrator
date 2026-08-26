@@ -12,7 +12,7 @@ export const CHAT_DRAFT_BOUNDARY_COPY: Record<ChatDraftBoundaryKind, string> = {
 	"pending-attachments":
 		"Attachments are still being saved. Leaving now will discard any files AO has not finished writing to the worktree. Wait for saving to finish.",
 	"pending-delivery":
-		"A Chat delivery outcome is still unresolved. Its recovery ID is saved, but finish or explicitly retry recovery before leaving this chat.",
+		"A Chat delivery recovery is still pending. Its recovery ID is saved, but finish or explicitly retry recovery before leaving this chat.",
 	"persistence-failed":
 		"This Chat draft could not be saved locally. Leaving now will discard the unsaved changes. Copy the draft before leaving.",
 };

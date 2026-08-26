@@ -1546,6 +1546,7 @@ function Timeline({
 	);
 	const automaticInlineRecoveryAttempted = useRef<string | undefined>(undefined);
 	const [draftPersistenceError, setDraftPersistenceError] = useState<string>();
+	const [inlineEditRecoveryNotice, setInlineEditRecoveryNotice] = useState<string>();
 	const [inlineEditOutcomeNotice, setInlineEditOutcomeNotice] = useState<string>();
 	const subscribeInlineEditMutation = useCallback(
 		(listener: () => void) => subscribeChatDraftRuntime(draftScope, listener),
@@ -1721,7 +1722,8 @@ function Timeline({
 		setMessageEdit(restored.inlineEdit);
 		setDurableInlineEditDelivery(restored.inlineEditDelivery);
 		setInlineEditUncertain(restored.inlineEditDelivery?.state === "dispatching");
-		setDraftPersistenceError(
+		setDraftPersistenceError(undefined);
+		setInlineEditRecoveryNotice(
 			restored.inlineEditDelivery
 				? restored.inlineEditDelivery.state === "accepted"
 					? "Edited message was accepted, but its local draft still needs to be cleared."
@@ -1736,12 +1738,16 @@ function Timeline({
 	const applyAcceptedInlineEditResult = useCallback((result: DraftClearResult) => {
 		setDurableInlineEditDelivery(result.draft.inlineEditDelivery);
 		if (!result.ok) {
+			setInlineEditRecoveryNotice(
+				"Edited message was accepted, but its local draft still needs to be cleared.",
+			);
 			setDraftPersistenceError(
 				"Edited message was accepted, but its local draft couldn’t be cleared. Retry clearing before leaving; AO will not branch it again.",
 			);
 			return;
 		}
 		setDraftPersistenceError(undefined);
+		setInlineEditRecoveryNotice(undefined);
 		if (!result.cleared) return;
 		messageEditRef.current = undefined;
 		setMessageEdit(undefined);
@@ -1802,6 +1808,7 @@ function Timeline({
 		}
 		setInlineEditUncertain(false);
 		setDraftPersistenceError(undefined);
+		setInlineEditRecoveryNotice(undefined);
 		setInlineEditOutcomeNotice(
 			"Recovery was abandoned. The earlier edit may already have been delivered; sending this edit again may duplicate it.",
 		);
@@ -1836,6 +1843,7 @@ function Timeline({
 		if (!next) return;
 		messageEditRef.current = next;
 		setMessageEdit(next);
+		setInlineEditRecoveryNotice(undefined);
 		setInlineEditOutcomeNotice(undefined);
 		setDraftPersistenceError(
 			result.ok
@@ -1857,6 +1865,7 @@ function Timeline({
 		if (!next) return;
 		messageEditRef.current = next;
 		setMessageEdit(next);
+		setInlineEditRecoveryNotice(undefined);
 		setInlineEditOutcomeNotice(undefined);
 		setDraftPersistenceError(
 			result.ok
@@ -1875,6 +1884,7 @@ function Timeline({
 		}
 		messageEditRef.current = undefined;
 		setMessageEdit(undefined);
+		setInlineEditRecoveryNotice(undefined);
 		setInlineEditOutcomeNotice(undefined);
 		setDraftPersistenceError(undefined);
 	}, [draftScope, inlineEditLocked]);
@@ -1905,7 +1915,8 @@ function Timeline({
 			const delivery = prepared.mutation;
 			setInlineEditUncertain(false);
 			setDurableInlineEditDelivery(delivery);
-			setDraftPersistenceError(
+			setDraftPersistenceError(undefined);
+			setInlineEditRecoveryNotice(
 				delivery.state === "accepted"
 					? "Edited message was accepted, but its local draft still needs to be cleared."
 					: undefined,
@@ -1926,14 +1937,15 @@ function Timeline({
 				if (outcome?.status === "not-accepted") {
 					const cleared = clearRejectedChatInlineEditDelivery(
 						draftScope,
-						delivery.clientMessageId,
-						delivery.revision,
-					);
-					setDurableInlineEditDelivery(cleared.draft.inlineEditDelivery);
-					if (cleared.ok) {
-						setDraftPersistenceError(undefined);
-						setInlineEditOutcomeNotice(outcome.reason);
-					} else {
+							delivery.clientMessageId,
+							delivery.revision,
+						);
+						setDurableInlineEditDelivery(cleared.draft.inlineEditDelivery);
+						if (cleared.ok) {
+							setDraftPersistenceError(undefined);
+							setInlineEditRecoveryNotice(undefined);
+							setInlineEditOutcomeNotice(outcome.reason);
+						} else {
 						setDraftPersistenceError(
 							"The edit was rejected, but its local recovery record couldn’t be cleared. Nothing will be resent automatically.",
 						);
@@ -1944,7 +1956,7 @@ function Timeline({
 				mutationFinished = true;
 			} catch {
 				setInlineEditUncertain(true);
-				setDraftPersistenceError(
+				setInlineEditRecoveryNotice(
 					"AO can’t determine whether the earlier edit may already have been delivered. Retry safely with the same delivery ID, or abandon recovery to edit it. Sending it again after abandonment may duplicate it.",
 				);
 			} finally {
@@ -2291,7 +2303,12 @@ function Timeline({
 									editSendBlocked={inlineEditSendBlocked}
 									editRecoveryLabel={inlineEditRecoveryLabel}
 									editBusy={editBusy}
-									editError={editError ?? draftPersistenceError ?? inlineEditOutcomeNotice}
+									editError={
+										editError ??
+										draftPersistenceError ??
+										inlineEditRecoveryNotice ??
+										inlineEditOutcomeNotice
+									}
 									branchPoints={branchPoints}
 									editableTurns={editableTurns}
 									newHumanMessageIds={newHumanMessageIds}
@@ -2321,7 +2338,12 @@ function Timeline({
 								recoveryLabel={inlineEditRecoveryLabel}
 								sendBlocked={inlineEditSendBlocked}
 								busy={Boolean(editBusy)}
-								error={editError ?? draftPersistenceError ?? inlineEditOutcomeNotice}
+								error={
+									editError ??
+									draftPersistenceError ??
+									inlineEditRecoveryNotice ??
+									inlineEditOutcomeNotice
+								}
 								reconstructedContext={messageEdit.reconstructedContext}
 								onDraftChange={updateMessageEdit}
 								onCancel={cancelMessageEdit}

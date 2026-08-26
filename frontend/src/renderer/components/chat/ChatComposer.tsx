@@ -94,6 +94,16 @@ function withAttachmentReferences(text: string, paths: string[]): string {
 	return `${lead}Attached files (read these files in the workspace):\n${paths.map((path) => `- ${path}`).join("\n")}`;
 }
 
+function restoredDeliveryNotice(delivery: ChatComposerDelivery | undefined): string | null {
+	if (!delivery) return null;
+	if (delivery.state === "accepted") {
+		return "Message was accepted, but its local draft still needs to be cleared.";
+	}
+	return delivery.kind === "steer"
+		? "AO can’t determine whether the agent may already have received this guidance before Chat restarted. Retry safely with the same delivery ID, or abandon recovery to edit it. Sending it again after abandonment may duplicate it."
+		: "Message delivery wasn’t confirmed before Chat restarted. Retry safely to reuse the same delivery ID.";
+}
+
 export function ChatComposer({
 	onSend,
 	busy,
@@ -217,6 +227,7 @@ export function ChatComposer({
 	const [dragging, setDragging] = useState(false);
 	const [sendError, setSendError] = useState<string | null>(null);
 	const [steerOutcomeNotice, setSteerOutcomeNotice] = useState<string | null>(null);
+	const [deliveryRecoveryNotice, setDeliveryRecoveryNotice] = useState<string | null>(null);
 	const [deliveryUncertain, setDeliveryUncertain] = useState(
 		() =>
 			draftScope !== undefined &&
@@ -332,15 +343,8 @@ export function ChatComposer({
 		composerRevision.current = currentDraft?.composer.revision ?? 0;
 		setDurableDelivery(currentDraft?.composer.delivery);
 		setAppliedAcceptanceSequence(0);
-		setTextDraftPersistenceError(
-			currentDraft?.composer.delivery
-				? currentDraft.composer.delivery.state === "accepted"
-					? "Message was accepted, but its local draft still needs to be cleared."
-					: currentDraft.composer.delivery.kind === "steer"
-						? "AO can’t determine whether the agent may already have received this guidance before Chat restarted. Retry safely with the same delivery ID, or abandon recovery to edit it. Sending it again after abandonment may duplicate it."
-						: "Message delivery wasn’t confirmed before Chat restarted. Retry safely to reuse the same delivery ID."
-				: null,
-		);
+		setTextDraftPersistenceError(null);
+		setDeliveryRecoveryNotice(restoredDeliveryNotice(currentDraft?.composer.delivery));
 		setDeliveryUncertain(currentDraft?.composer.delivery?.state === "dispatching");
 		setAttachmentDraftPersistenceError(null);
 		automaticDeliveryRecoveryAttempted.current = undefined;
@@ -502,6 +506,9 @@ export function ChatComposer({
 		(result: DraftClearResult) => {
 			setDurableDelivery(result.draft.composer.delivery);
 			if (!result.ok) {
+				setDeliveryRecoveryNotice(
+					"Message was accepted, but its local draft still needs to be cleared.",
+				);
 				setTextDraftPersistenceError(
 					"Message was accepted, but its local draft couldn’t be cleared. Retry clearing before leaving; AO will not send it again.",
 				);
@@ -509,6 +516,7 @@ export function ChatComposer({
 			}
 			composerRevision.current = result.draft.composer.revision;
 			setTextDraftPersistenceError(null);
+			setDeliveryRecoveryNotice(null);
 			if (!result.cleared) return false;
 			clearEditorView();
 			fileAttachments.clear();
@@ -584,6 +592,7 @@ export function ChatComposer({
 		}
 		setDeliveryUncertain(false);
 		setTextDraftPersistenceError(null);
+		setDeliveryRecoveryNotice(null);
 		setSteerOutcomeNotice(
 			"Recovery was abandoned. The earlier guidance may already have been delivered; sending this draft now may duplicate it.",
 		);
@@ -873,7 +882,8 @@ export function ChatComposer({
 		setDeliveryUncertain(false);
 		composerRevision.current = prepared.draft.composer.revision;
 		setDurableDelivery(delivery);
-		setTextDraftPersistenceError(
+		setTextDraftPersistenceError(null);
+		setDeliveryRecoveryNotice(
 			delivery.state === "accepted"
 				? "Message was accepted, but its local draft still needs to be cleared."
 				: null,
@@ -901,6 +911,7 @@ export function ChatComposer({
 					composerRevision.current = cleared.draft.composer.revision;
 					if (cleared.ok) {
 						setTextDraftPersistenceError(null);
+						setDeliveryRecoveryNotice(null);
 						setSteerOutcomeNotice(outcome.reason);
 					} else {
 						setTextDraftPersistenceError(
@@ -927,7 +938,7 @@ export function ChatComposer({
 			setHighlighted(0);
 		} catch {
 			setDeliveryUncertain(true);
-			setTextDraftPersistenceError(
+			setDeliveryRecoveryNotice(
 				delivery.kind === "steer"
 					? "AO can’t determine whether the agent may already have received this guidance. Retry safely with the same delivery ID, or abandon recovery to edit it. Sending it again after abandonment may duplicate it."
 					: "Message delivery wasn’t confirmed. Retry safely to reuse the same delivery ID; your draft remains locked until it is reconciled.",
@@ -1045,7 +1056,11 @@ export function ChatComposer({
 	const activeDelivery = metaHeld && canSteerDraft ? "steer" : "queue";
 
 	const attachmentError =
-		fileAttachments.error ?? draftPersistenceError ?? sendError ?? commandError;
+		fileAttachments.error ??
+		draftPersistenceError ??
+		deliveryRecoveryNotice ??
+		sendError ??
+		commandError;
 	const deliveryChoice =
 		canSteer && onSteer ? <DeliveryChoice value={activeDelivery} disabled={steerPending} /> : null;
 	const settingsNode =
