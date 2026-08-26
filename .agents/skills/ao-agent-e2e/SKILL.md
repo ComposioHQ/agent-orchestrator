@@ -31,6 +31,19 @@ The default mode is `tui`, which works with installed native harnesses. Use `--m
 
 The runner exits 0 only when every stage passes. Exit 1 means an observable assertion failed or a required fact was `unobservable`. Exit 2 means configuration or preflight could not start the test. Use `--allow-unobservable` only to produce a diagnostic baseline against a CLI/API that cannot yet expose every fact; do not treat that run as acceptance.
 
+## Harness readiness
+
+When `roles` is selected, the runner performs `ao agent ls --refresh --json` before it creates an orchestrator or worker. This runs AO's fresh, harness-specific local install and authentication probes, including each adapter's supported local configuration and credential sources. The runner never reads or reports credential values.
+
+The report contains `roleReadiness.harnesses` before session creation. Each entry identifies the affected roles and records whether the harness is supported, installed, and `authorized`, `unauthorized`, or `unknown`, along with the safe reason:
+
+- `authorized`: AO's fresh local probe confirmed authorization; role testing continues.
+- `unauthorized`: AO found missing or invalid local credentials; authenticate the harness before retrying.
+- `unknown`: AO checked the harness's supported local sources but could not prove authorization; the role test stops rather than starting an agent that may block on login.
+- not installed or unsupported: the report names the missing CLI or unsupported harness; no agent is started.
+
+This readiness gate is strict and is not bypassed by `--allow-unobservable`. Use the recorded `probe` command and reason when fixing a local harness setup, then rerun the same E2E command.
+
 ## Modular runs
 
 Use `--stages all` for the full flow. Use a comma-separated list to run parts independently:
@@ -71,7 +84,7 @@ Use `--lifecycle-session` for the exact target. If omitted, lifecycle falls back
 ## What the runner checks
 
 - Preflight: AO binary, daemon, project, and harness configuration.
-- Roles: real orchestrator spawn, system-prompt byte evidence, prompt artifact evidence, task visibility, worker delegation, worker role prompt marker, and live worker session state.
+- Roles: fresh per-harness installation/authentication readiness, then real orchestrator spawn, system-prompt byte evidence, prompt artifact evidence, task visibility, worker delegation, worker role prompt marker, and live worker session state.
 - Kanban activity: worker activity/status changes are sampled, branch and PR facts are detected from API session detail when available, and missing worktree/tracker/PR facts are recorded as non-passing observation gaps.
 - Reviewer testing: review records are polled until a completed reviewer run with session, status, and verdict evidence is visible.
 - Lifecycle: a selected session is killed, observed as terminated, restored, observed as live again, and checked through tmux diagnostics.
@@ -107,7 +120,8 @@ For prompt delivery, prefer observed role behavior and AO-generated prompt artif
 ## Failure interpretation
 
 - `preflight`: wrong binary/daemon, missing project, missing credentials, or unsupported harness.
-- `orchestrator`: role spawn, prompt construction, or session startup failure.
+- `role-readiness`: a requested role harness is unsupported, not installed, needs authentication, or has authorization that cannot be proven from AO's fresh local probe.
+- `orchestrator`: role spawn, prompt construction, or session startup failure after readiness passed.
 - `delegation-and-worker`: orchestrator did not produce an inspectable worker in the project before timeout.
 - `work-kanban-and-pr`: observable activity/status mismatch, missing PR evidence, or branch/worktree/tracker evidence unavailable through the CLI.
 - `reviewer`: review run, reviewer session, or submitted verdict evidence missing before timeout.

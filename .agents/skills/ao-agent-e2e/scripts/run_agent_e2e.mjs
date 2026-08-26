@@ -95,6 +95,40 @@ function json(text) { try { return JSON.parse(text); } catch { return null; } }
 function strings(value, result = []) { if (typeof value === "string") result.push(value); else if (Array.isArray(value)) value.forEach((x) => strings(x, result)); else if (value && typeof value === "object") Object.values(value).forEach((x) => strings(x, result)); return result; }
 function sessionFrom(payload) { return payload?.session ?? null; }
 function itemsFrom(payload) { return payload?.data ?? payload?.sessions ?? []; }
+function agentInfoByID(infos, id) { return Array.isArray(infos) ? infos.find((info) => info?.id === id) ?? null : null; }
+function readinessForHarness(inventory, harness, roles) {
+  const supported = agentInfoByID(inventory?.supported, harness);
+  const installed = agentInfoByID(inventory?.installed, harness);
+  const authorized = agentInfoByID(inventory?.authorized, harness);
+  const authStatus = authorized?.authStatus || installed?.authStatus || "unknown";
+  const readiness = {
+    harness,
+    roles,
+    supported: Boolean(supported),
+    installed: Boolean(installed || authorized),
+    authorization: authStatus,
+    probe: "ao agent ls --refresh --json",
+  };
+  if (!readiness.supported) readiness.reason = "harness is not supported by this AO daemon";
+  else if (!readiness.installed) readiness.reason = "agent CLI is not installed according to AO's fresh local probe";
+  else if (authStatus === "authorized") readiness.reason = "AO's fresh local auth probe confirmed authorization";
+  else if (authStatus === "unauthorized") readiness.reason = "AO's fresh local auth probe found missing or invalid credentials; authentication is required";
+  else readiness.reason = "authorization could not be verified by AO's fresh local probe";
+  readiness.ready = readiness.supported && readiness.installed && readiness.authorization === "authorized";
+  return readiness;
+}
+function requiredRoleHarnesses(options) {
+  const required = new Map();
+  const add = (harness, role) => {
+    const current = required.get(harness) ?? [];
+    current.push(role);
+    required.set(harness, current);
+  };
+  add(options.orchestratorHarness || options.harness, "orchestrator");
+  add(options.harness, "worker");
+  if (wants(options, "reviewer-testing") && options.reviewerHarness) add(options.reviewerHarness, "reviewer");
+  return [...required].map(([harness, roles]) => ({ harness, roles }));
+}
 function hasTaskEvidence(payload, task) { return strings(payload).some((x) => x.includes(task)); }
 function classifyTaskEvidence(payload, task) { return hasTaskEvidence(payload, task) ? "observed" : "unobservable"; }
 function firstPR(session) { return Array.isArray(session?.prs) && session.prs.length ? session.prs[0] : null; }
@@ -170,7 +204,7 @@ async function save(report, path) {
 async function main() {
   let options; try { options = parseArgs(process.argv.slice(2)); } catch (error) { console.error(`configuration error: ${error.message}`); return 2; }
   if (options.help) { help(); return 0; }
-  const report = { startedAt: new Date().toISOString(), options, stages: [], sessions: [], cleanup: { requested: options.cleanup, results: [] } };
+  const report = { startedAt: new Date().toISOString(), options, stages: [], sessions: [], roleReadiness: null, cleanup: { requested: options.cleanup, results: [] } };
   let ao; try { ao = await resolveAo(options.ao); } catch (error) { report.failure = { stage: "preflight", reason: error.message }; await save(report, options.report); console.error(error.message); return 2; }
   const created = [];
   const command = (args) => runCommand([ao, ...args], options.commandTimeoutSeconds);
@@ -206,6 +240,16 @@ async function main() {
   await stage("preflight", async (r) => { r.observed = { ao, version: await run(r, ["version"]), status: await run(r, ["status", "--json"], true), project: await run(r, ["project", "get", options.project, "--json"], true), harness: options.harness, baselineSessions: await run(r, ["session", "ls", "--project", options.project, "--all", "--json"], true) }; });
   if (report.failure) return finish(report, options, created, command);
   const baseline = new Set(itemsFrom(report.stages[0]?.observed?.baselineSessions).map((x) => x.id));
+  if (wants(options, "roles")) await stage("role-readiness", async (r) => {
+    r.observed = { harnesses: [], inventoryProbe: "ao agent ls --refresh --json" };
+    report.roleReadiness = r.observed;
+    const inventory = await run(r, ["agent", "ls", "--refresh", "--json"], true);
+    const harnesses = requiredRoleHarnesses(options).map(({ harness, roles }) => readinessForHarness(inventory, harness, roles));
+    r.observed.harnesses = harnesses;
+    const blocked = harnesses.filter((harness) => !harness.ready);
+    if (blocked.length) throw new Error(blocked.map((harness) => `${harness.harness}: ${harness.reason}`).join("; "));
+  });
+  if (report.failure) return finish(report, options, created, command);
   if (options.orchestratorSession) report.sessions.push({ role: "orchestrator", id: options.orchestratorSession, harness: options.orchestratorHarness || options.harness, mode: options.mode, external: true });
   if (options.workerSession) report.sessions.push({ role: "worker", id: options.workerSession, harness: options.harness, external: true });
   if (options.reviewerSession) report.sessions.push({ role: "reviewer", id: options.reviewerSession, harness: options.reviewerHarness || "configured-by-AO", external: true });
