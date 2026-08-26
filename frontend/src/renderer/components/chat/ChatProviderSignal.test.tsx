@@ -319,7 +319,11 @@ describe("provider error", () => {
 			/>,
 		);
 		expect(screen.getByText("Reconnecting... [1/5]")).toBeInTheDocument();
-		expect(screen.queryByText(/You have no credits remaining/i)).not.toBeInTheDocument();
+		expect(screen.getByText(/You have no credits remaining/i)).toBeInTheDocument();
+		expect(screen.getByRole("link", { name: "Add credits" })).toHaveAttribute(
+			"href",
+			"https://platform.openai.com/settings/organization/billing",
+		);
 		// The raw envelope must not paint as the row label — that is what overflowed the column.
 		expect(screen.queryByText(/codexErrorInfo/i)).not.toBeInTheDocument();
 		expect(screen.queryByText(/provider error:/i)).not.toBeInTheDocument();
@@ -341,8 +345,52 @@ describe("provider error", () => {
 			/>,
 		);
 		expect(screen.getByText("Reconnecting... [1/5]")).toBeInTheDocument();
-		expect(screen.queryByText(/You have no credits remaining/i)).not.toBeInTheDocument();
+		expect(screen.getByText(/You have no credits remaining/i)).toBeInTheDocument();
+		expect(screen.getByRole("link", { name: "Add credits" })).toHaveAttribute(
+			"href",
+			"https://platform.openai.com/settings/organization/billing",
+		);
 		expect(screen.queryByText(/codexErrorInfo/i)).not.toBeInTheDocument();
+	});
+
+	it("keeps unknown provider detail escaped and never linkifies its URL", () => {
+		const untrusted = '<script>alert("owned")</script> Pay at https://evil.example/billing';
+		render(
+			<ActivityRow
+				activity={activity({
+					activityKind: "error",
+					status: "failed",
+					summary: "Provider request failed",
+					detail: { message: "Provider request failed", error: untrusted },
+				})}
+			/>,
+		);
+
+		expect(screen.getByText(untrusted)).toBeInTheDocument();
+		expect(document.querySelector("script")).not.toBeInTheDocument();
+		expect(screen.queryByRole("link")).not.toBeInTheDocument();
+	});
+
+	it("never trusts a provider-supplied billing destination", () => {
+		render(
+			<ActivityRow
+				activity={activity({
+					activityKind: "error",
+					status: "failed",
+					summary: "Reconnecting... [1/5]",
+					detail: {
+						message: "Reconnecting... [1/5]",
+						error: "You have no credits remaining. Add credits at https://evil.example/billing",
+					},
+				})}
+			/>,
+		);
+
+		expect(screen.getByRole("link", { name: "Add credits" })).toHaveAttribute(
+			"href",
+			"https://platform.openai.com/settings/organization/billing",
+		);
+		expect(screen.queryByRole("link", { name: /evil/i })).not.toBeInTheDocument();
 	});
 
 	it("keeps plain-language errors readable without a JSON dump", () => {

@@ -51,6 +51,7 @@ const activityIcon: Record<ActivityKind, typeof SquareTerminal> = {
 import { cn } from "../../lib/utils";
 import { caretNotation, stripAnsi } from "../../lib/ansi";
 import { getApiBaseUrl } from "../../lib/api-client";
+import { openLinkInSystemBrowser } from "../../lib/external-link-policy";
 import { ChatMarkdown } from "./ChatMarkdown";
 import { HighlightedCode } from "./HighlightedCode";
 import { CopyButton } from "./CopyButton";
@@ -1691,35 +1692,66 @@ function RerouteRow({ activity }: { activity: ConversationActivity }) {
  * reconnect row as `role="alert"` would interrupt a screen reader once per attempt.
  */
 function ErrorActivityRow({ activity }: { activity: ConversationActivity }) {
-	const { headline } = providerErrorCopy(activity);
+	const { action, detail, headline } = providerErrorCopy(activity);
 	return (
-		<div className="flex min-w-0 max-w-full items-baseline overflow-hidden py-0.5 text-[11.5px] leading-snug text-muted-foreground">
+		<div className="flex min-w-0 max-w-full flex-col items-start gap-0.5 overflow-hidden py-0.5 text-[11.5px] leading-snug text-muted-foreground">
 			<span className="wrap-anywhere min-w-0">{headline}</span>
+			{detail ? <span className="wrap-anywhere min-w-0 text-foreground">{detail}</span> : null}
+			{action ? (
+				<a
+					className="text-markdown-link underline decoration-markdown-link/45 underline-offset-2 transition-colors hover:text-markdown-link-hover"
+					href={action.href}
+					onClick={(event) => {
+						event.preventDefault();
+						void openLinkInSystemBrowser(action.href);
+					}}
+					rel="noreferrer noopener"
+					target="_blank"
+				>
+					{action.label}
+				</a>
+			) : null}
 		</div>
 	);
+}
+
+const OPENAI_BILLING_URL = "https://platform.openai.com/settings/organization/billing";
+const CREDIT_EXHAUSTED = /\b(?:no credits? remaining|insufficient[_ -]?quota)\b/i;
+
+type ProviderErrorCopy = {
+	headline: string;
+	detail?: string;
+	action?: { href: string; label: string };
+};
+
+function withKnownProviderAction(copy: ProviderErrorCopy): ProviderErrorCopy {
+	if (!CREDIT_EXHAUSTED.test(`${copy.headline}\n${copy.detail ?? ""}`)) return copy;
+	return {
+		...copy,
+		// Never trust an action URL from provider detail. Recognized failure classes
+		// map to AO-owned destinations; everything else remains inert text.
+		action: { href: OPENAI_BILLING_URL, label: "Add credits" },
+	};
 }
 
 /**
  * Prefer the provider's short status line and `additionalDetails` over a raw JSON
  * dump. Falls back to the stored text when it is already plain language.
  */
-export function providerErrorCopy(activity: ConversationActivity): {
-	headline: string;
-	detail?: string;
-} {
+export function providerErrorCopy(activity: ConversationActivity): ProviderErrorCopy {
 	const candidates = [activity.detail?.message, activity.summary, activity.detail?.error];
 	for (const candidate of candidates) {
 		const raw = String(candidate ?? "").trim();
 		if (!raw) continue;
 		const unwrapped = unwrapProviderErrorJson(raw);
-		if (unwrapped) return unwrapped;
+		if (unwrapped) return withKnownProviderAction(unwrapped);
 	}
 
 	const headline = String(activity.detail?.message ?? activity.summary ?? "").trim();
 	const extra = String(activity.detail?.error ?? "").trim();
-	if (!headline) return { headline: extra || "Provider error" };
-	if (extra && extra !== headline) return { headline, detail: extra };
-	return { headline };
+	if (!headline) return withKnownProviderAction({ headline: extra || "Provider error" });
+	if (extra && extra !== headline) return withKnownProviderAction({ headline, detail: extra });
+	return withKnownProviderAction({ headline });
 }
 
 function unwrapProviderErrorJson(raw: string): { headline: string; detail?: string } | undefined {
