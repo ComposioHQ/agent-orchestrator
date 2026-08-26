@@ -72,8 +72,13 @@ type Sandbox struct {
 	// provisioning attempt. Unlike UpdatedAt it survives repeated provider
 	// observations such as paused -> resuming -> paused.
 	StartupStartedAt *time.Time
-	LastError        string
-	UpdatedAt        time.Time
+	// DeletionRequestedAt marks when deletion was first attempted. It bounds a
+	// deletion that a provider cannot converge (an unreclaimable box), so the
+	// reconciler gives up past a deadline instead of re-requesting Delete
+	// forever. Nil until the first deletion tick stamps it.
+	DeletionRequestedAt *time.Time
+	LastError           string
+	UpdatedAt           time.Time
 }
 
 // SandboxRef identifies a session sandbox across organizations.

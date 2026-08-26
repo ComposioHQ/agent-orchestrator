@@ -28,6 +28,7 @@ type Store interface {
 	ReleaseSandboxClaim(ctx context.Context, owner, orgID, sessionID string, reconcileAfter time.Time) error
 	IssueAccessTicket(ctx context.Context, orgID, sessionID, purpose string, scopes []string, ttl time.Duration) (string, error)
 	AppendSessionEvent(ctx context.Context, orgID, sessionID, eventType string, payload json.RawMessage) (domain.ClientEvent, error)
+	MarkSandboxDeletionRequested(ctx context.Context, owner, orgID, sessionID string) error
 	CompleteSandboxDeletion(ctx context.Context, owner, orgID, sessionID string) error
 	DisconnectSessionWorkers(ctx context.Context, orgID, sessionID string) error
 }
@@ -73,6 +74,13 @@ type Options struct {
 	TerminalStartupTimeout time.Duration
 	// HeartbeatTimeout is how long a silent worker is tolerated before repair.
 	HeartbeatTimeout time.Duration
+	// DeletionDeadline bounds how long the reconciler keeps re-requesting a
+	// deletion the provider will not converge (an unreclaimable box, e.g. a
+	// NodeOps VM stuck in "failed" that the API refuses to destroy). Past it the
+	// reconciler releases the row and logs the orphan rather than looping every
+	// tick forever. Generous on purpose: a healthy deletion converges in
+	// seconds, so anything still churning past this is genuinely stuck.
+	DeletionDeadline time.Duration
 	// BatchSize is the maximum number of sandboxes claimed per tick.
 	BatchSize int
 	// LeaseDuration bounds exclusive ownership of one reconciliation. It is
@@ -99,6 +107,7 @@ const (
 	DefaultStartupTimeout          = 180 * time.Second
 	DefaultTerminalStartupTimeout  = 10 * time.Minute
 	DefaultHeartbeatTimeout        = time.Minute
+	DefaultDeletionDeadline        = 15 * time.Minute
 	DefaultBatchSize               = 20
 	DefaultMaxConcurrentOperations = 4
 	defaultLease                   = 30 * time.Second
@@ -138,6 +147,9 @@ func New(store Store, providers Resolver, options Options) *Reconciler {
 	}
 	if options.HeartbeatTimeout <= 0 {
 		options.HeartbeatTimeout = DefaultHeartbeatTimeout
+	}
+	if options.DeletionDeadline <= 0 {
+		options.DeletionDeadline = DefaultDeletionDeadline
 	}
 	if options.BatchSize <= 0 {
 		options.BatchSize = DefaultBatchSize
@@ -591,7 +603,31 @@ func (r *Reconciler) reconcileDeletion(
 		return r.fail(ctx, record, err)
 	case environment.State == sandbox.StateDeleted:
 		return r.store.CompleteSandboxDeletion(ctx, r.owner, record.OrgID, record.SessionID)
-	case environment.State == sandbox.StateDeleting:
+	}
+
+	// The box has not converged to gone. Bound the attempt: some providers cannot
+	// reclaim a box in certain states (a NodeOps VM stuck in "failed" accepts
+	// DELETE with 200 but never transitions, so Get keeps reporting it), which
+	// would otherwise re-request Delete every tick forever. Stamp the first
+	// attempt, then past a deadline release the row and log the orphan for
+	// provider-side cleanup rather than loop indefinitely.
+	if record.DeletionRequestedAt == nil {
+		if err := r.store.MarkSandboxDeletionRequested(ctx, r.owner, record.OrgID, record.SessionID); err != nil {
+			r.log.Warn("mark sandbox deletion requested",
+				"session_id", record.SessionID, "err", err)
+		}
+	} else if time.Since(*record.DeletionRequestedAt) >= r.options.DeletionDeadline {
+		r.log.Warn("abandoning unreclaimable sandbox after deletion deadline",
+			"session_id", record.SessionID,
+			"provider", record.Provider,
+			"provider_id", record.ProviderEnvironmentID,
+			"provider_state", environment.State,
+			"deadline", r.options.DeletionDeadline,
+		)
+		return r.store.CompleteSandboxDeletion(ctx, r.owner, record.OrgID, record.SessionID)
+	}
+
+	if environment.State == sandbox.StateDeleting {
 		return r.observe(
 			ctx,
 			record,

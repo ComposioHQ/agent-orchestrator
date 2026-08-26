@@ -31,6 +31,7 @@ const sandboxColumns = `sandbox.session_id, sandbox.org_id, sandbox.provider,
 	sandbox.desired_state, sandbox.observed_state,
 	sandbox.resource_profile, sandbox.bootstrap_context,
 	sandbox.worker_last_seen_at, sandbox.startup_started_at,
+	sandbox.deletion_requested_at,
 	sandbox.last_error, sandbox.updated_at`
 
 // ClaimSandboxes leases up to limit due sandboxes for reconciliation. The
@@ -462,6 +463,33 @@ func (s *Store) DisconnectSessionWorkers(
 			sessionID,
 		)
 		return err
+	})
+}
+
+// MarkSandboxDeletionRequested stamps the first deletion attempt so the
+// reconciler can bound a deletion the provider cannot converge. It is a no-op
+// once stamped (COALESCE), and only the current lease owner may write it.
+func (s *Store) MarkSandboxDeletionRequested(
+	ctx context.Context,
+	owner, orgID, sessionID string,
+) error {
+	return s.withOrg(ctx, orgID, func(tx pgx.Tx) error {
+		_, err := tx.Exec(
+			ctx,
+			`UPDATE ao_sandboxes
+			SET deletion_requested_at = COALESCE(deletion_requested_at, now())
+			WHERE session_id = $1
+				AND org_id = $3
+				AND reconcile_lease_owner = $2
+				AND reconcile_lease_until > now()`,
+			sessionID,
+			owner,
+			orgID,
+		)
+		if err != nil {
+			return fmt.Errorf("mark sandbox deletion requested: %w", err)
+		}
+		return nil
 	})
 }
 
@@ -986,6 +1014,7 @@ func scanSandbox(row rowScanner) (domain.Sandbox, error) {
 		&bootstrapContext,
 		&record.WorkerLastSeenAt,
 		&record.StartupStartedAt,
+		&record.DeletionRequestedAt,
 		&record.LastError,
 		&record.UpdatedAt,
 	); err != nil {
