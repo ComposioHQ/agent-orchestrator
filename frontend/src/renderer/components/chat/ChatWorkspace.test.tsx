@@ -226,6 +226,20 @@ describe("HumanMessage attachments", () => {
 		expect(screen.queryByText(/Attached files \(read these files/)).not.toBeInTheDocument();
 	});
 
+	it("shows the preserved original filename instead of the randomized durable prefix", () => {
+		render(
+			<HumanMessage
+				message={humanMessage(
+					"inspect\n\nAttached files (read these files in the workspace):\n- .ao/attachments/attachment-cafebabe00-original.png",
+				)}
+				sessionId="ao-1"
+			/>,
+		);
+
+		expect(screen.getByRole("img", { name: "original.png" })).toBeInTheDocument();
+		expect(screen.queryByRole("img", { name: "attachment-cafebabe00-original.png" })).not.toBeInTheDocument();
+	});
+
 	it("leaves ordinary user-authored path lists untouched", () => {
 		const text =
 			"Document this example:\n\nAttached files (read these files in the workspace):\n- docs/screenshot.png";

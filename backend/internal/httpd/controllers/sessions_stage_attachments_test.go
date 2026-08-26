@@ -58,6 +58,22 @@ func TestStageAttachmentsReturnsTheWorktreePaths(t *testing.T) {
 	}
 }
 
+func TestStageAttachmentsPreservesASanitizedOriginalName(t *testing.T) {
+	svc := newFakeSessionService()
+	svc.stagedPaths = []string{".ao/attachments/attachment-ab12cd34ef-original.png"}
+	srv := stagingServer(t, svc)
+
+	payload := `{"attachments":[{"name":"folder\\\\original.png","mimeType":"image/png","data":"cG5nYnl0ZXM="}]}`
+	body, status, _ := doRequest(t, srv, http.MethodPost,
+		"/api/v1/sessions/ao-1/attachments", payload)
+	if status != http.StatusCreated {
+		t.Fatalf("status = %d, want 201 (%s)", status, body)
+	}
+	if len(svc.staged) != 1 || svc.staged[0].Name != "original.png" {
+		t.Fatalf("staged attachment = %#v, want sanitized original.png", svc.staged)
+	}
+}
+
 // The same security restrictions as spawn: this is the same operation against a
 // session that already exists, so it must not be a looser door into the worktree.
 // Blocked types (e.g., SVG for security) and the same caps are enforced, but all

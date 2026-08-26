@@ -387,7 +387,8 @@ function formatTokens(tokens: number): string {
 }
 
 function attachmentName(path: string): string {
-	return path.slice(path.lastIndexOf("/") + 1);
+	const name = path.slice(path.lastIndexOf("/") + 1);
+	return /^attachment-[A-Za-z0-9]+-(.+)$/.exec(name)?.[1] ?? name;
 }
 
 function attachmentURL(apiBaseUrl: string, sessionId: string, path: string): string {

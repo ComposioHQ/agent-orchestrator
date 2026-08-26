@@ -71,6 +71,7 @@ import {
 } from "../../lib/design-tokens";
 import { isLinuxPlatform, isMacPlatform } from "../../lib/platform";
 import { handleTerminalTabListKeyDown } from "../../lib/terminal-tabs";
+import type { FileAttachmentPayload } from "../../hooks/useFileAttachments";
 import type { ShellTerminal } from "../../hooks/useShellTerminals";
 import { sidebarOccupiesLayout, useUiStore } from "../../stores/ui-store";
 import type { TerminalTarget } from "../../types/terminal";
@@ -286,11 +287,10 @@ export interface ChatWorkspaceProps {
 	/** Live worktree paths and their load/refresh state for `@` completion. */
 	fileCatalog?: WorkspaceFileCatalog;
 	/**
-	 * Writes staged images into the worktree and answers with the paths the agent
-	 * can open. Absent means no attach control is offered — the fixture preview has
-	 * no worktree to write into.
+	 * Writes staged files into the worktree and answers with the paths the agent
+	 * can open. It may be absent when nativeImages provides native-only delivery.
 	 */
-	onStageAttachments?: (attachments: { mimeType: string; data: string }[]) => Promise<string[]>;
+	onStageAttachments?: (attachments: FileAttachmentPayload[]) => Promise<string[]>;
 	/** The provider negotiated native image prompt blocks. */
 	nativeImages?: boolean;
 	/**

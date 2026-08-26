@@ -17,7 +17,7 @@ func TestDecodeSpawnAttachments(t *testing.T) {
 
 	t.Run("decodes and maps extension", func(t *testing.T) {
 		out, err := decodeSpawnAttachments([]AttachmentInput{
-			{MimeType: "image/png", Data: b64([]byte("pngbytes"))},
+			{Name: "original.png", MimeType: "image/png", Data: b64([]byte("pngbytes"))},
 			{MimeType: "IMAGE/JPEG", Data: b64([]byte("jpgbytes"))},
 		})
 		if err != nil {
@@ -29,8 +29,23 @@ func TestDecodeSpawnAttachments(t *testing.T) {
 		if out[0].Ext != ".png" || string(out[0].Data) != "pngbytes" {
 			t.Errorf("attachment 0 = %q %q", out[0].Ext, out[0].Data)
 		}
+		if out[0].Name != "original.png" {
+			t.Errorf("attachment 0 name = %q, want original.png", out[0].Name)
+		}
 		if out[1].Ext != ".jpg" {
 			t.Errorf("case-insensitive mime not mapped: %q", out[1].Ext)
+		}
+	})
+
+	t.Run("sanitizes an untrusted display name without retaining a path", func(t *testing.T) {
+		out, err := decodeSpawnAttachments([]AttachmentInput{
+			{Name: `..\\folder/Quarterly report.PNG`, MimeType: "image/png", Data: b64([]byte("pngbytes"))},
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %+v", err)
+		}
+		if got := out[0].Name; got != "Quarterly-report.png" {
+			t.Fatalf("sanitized name = %q, want Quarterly-report.png", got)
 		}
 	})
 

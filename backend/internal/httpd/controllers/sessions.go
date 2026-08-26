@@ -334,6 +334,43 @@ func extensionForMimeType(mimeType string) string {
 	return ".bin"
 }
 
+// sanitizeAttachmentDisplayName turns an untrusted browser filename into a
+// portable basename. The MIME-derived extension stays authoritative so a
+// misleading client name cannot change the on-disk type or bypass blocked-type
+// checks. Empty names keep the legacy neutral attachment name.
+func sanitizeAttachmentDisplayName(raw, ext string) string {
+	raw = strings.TrimSpace(strings.ReplaceAll(raw, `\`, "/"))
+	if raw == "" {
+		return ""
+	}
+	base := path.Base(raw)
+	stem := strings.TrimSpace(strings.TrimSuffix(base, path.Ext(base)))
+
+	var clean strings.Builder
+	separator := false
+	for _, r := range stem {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' {
+			clean.WriteRune(r)
+			separator = false
+			continue
+		}
+		if !separator {
+			clean.WriteByte('-')
+			separator = true
+		}
+	}
+	name := strings.Trim(clean.String(), "-_")
+	if name == "" {
+		name = "file"
+	}
+	// Leave room for "attachment-", the random suffix, a separator, and the
+	// extension under the attachment store's 255-byte filename cap.
+	if len(name) > 180 {
+		name = strings.TrimRight(name[:180], "-_")
+	}
+	return name + ext
+}
+
 // decodeAttachment validates and base64-decodes a single inline file
 // attachment shared by spawn, delegate, stage, and send requests, enforcing
 // the blocked-MIME-type rule and per-file size cap. Callers handling multiple
@@ -354,7 +391,11 @@ func decodeAttachment(a AttachmentInput) (ports.SpawnAttachment, *attachmentErro
 	if len(data) > maxAttachmentBytes {
 		return ports.SpawnAttachment{}, &attachmentError{"ATTACHMENT_TOO_LARGE", "attachment is too large"}
 	}
-	return ports.SpawnAttachment{Ext: ext, Data: data}, nil
+	return ports.SpawnAttachment{
+		Name: sanitizeAttachmentDisplayName(a.Name, ext),
+		Ext:  ext,
+		Data: data,
+	}, nil
 }
 
 // decodeSpawnAttachments validates and base64-decodes the inline file
