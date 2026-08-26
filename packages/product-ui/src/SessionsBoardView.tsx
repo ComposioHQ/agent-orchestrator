@@ -241,11 +241,13 @@ export function SessionCardView({
 		statusPresentation?.label ??
 		(session.displayStatus ? getDisplayStatusLabel(session.displayStatus, translate) : badge.label);
 	const showStatusLoader =
-		session.status === "working" ||
-		session.status === "review_pending" ||
-		session.displayStatus === "Fixing CI failures" ||
-		session.displayStatus === "Addressing comments" ||
-		session.displayStatus === "Reviewing";
+		!needsAttention &&
+		session.displayStatus !== "Needs human review" &&
+		(session.status === "working" ||
+			session.status === "review_pending" ||
+			session.displayStatus === "Fixing CI failures" ||
+			session.displayStatus === "Addressing comments" ||
+			session.displayStatus === "Reviewing");
 
 	return (
 		<div
