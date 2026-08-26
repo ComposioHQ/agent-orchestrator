@@ -611,7 +611,8 @@ func (r *Reconciler) reconcileDeletion(
 	// would otherwise re-request Delete every tick forever. Stamp the first
 	// attempt, then past a deadline release the row and log the orphan for
 	// provider-side cleanup rather than loop indefinitely.
-	if record.DeletionRequestedAt == nil {
+	firstAttempt := record.DeletionRequestedAt == nil
+	if firstAttempt {
 		if err := r.store.MarkSandboxDeletionRequested(ctx, r.owner, record.OrgID, record.SessionID); err != nil {
 			r.log.Warn("mark sandbox deletion requested",
 				"session_id", record.SessionID, "err", err)
@@ -638,11 +639,15 @@ func (r *Reconciler) reconcileDeletion(
 		)
 	}
 
-	r.log.Info("requesting sandbox deletion",
-		"session_id", record.SessionID,
-		"provider", record.Provider,
-		"provider_id", record.ProviderEnvironmentID,
-	)
+	// Log once per deletion (first attempt), not every retry tick: DELETE is
+	// re-issued each tick until the box converges, but the intent is the same.
+	if firstAttempt {
+		r.log.Info("requesting sandbox deletion",
+			"session_id", record.SessionID,
+			"provider", record.Provider,
+			"provider_id", record.ProviderEnvironmentID,
+		)
+	}
 	if err := provider.Delete(ctx, environment.ID); err != nil && !errors.Is(err, sandbox.ErrNotFound) {
 		return r.fail(ctx, record, err)
 	}

@@ -439,12 +439,24 @@ func (s *Server) requestLog(next http.Handler) http.Handler {
 		if status == 0 {
 			status = http.StatusOK
 		}
-		s.logger.Info(
+		route := chi.RouteContext(r.Context()).RoutePattern()
+		// Worker transport/turn polling is high frequency (every ~80ms per live
+		// worker), so logging each at Info floods the access log and dominates
+		// log ingestion. Record those at Debug -- available when needed but
+		// suppressed by default -- and keep real API calls at Info.
+		level := slog.LevelInfo
+		switch route {
+		case "/api/cloud/v1/worker/transport/claim", "/api/cloud/v1/worker/turns/claim":
+			level = slog.LevelDebug
+		}
+		s.logger.Log(
+			r.Context(),
+			level,
 			"HTTP request complete",
 			"method",
 			r.Method,
 			"route",
-			chi.RouteContext(r.Context()).RoutePattern(),
+			route,
 			"status",
 			status,
 			"duration_ms",
