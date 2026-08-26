@@ -310,7 +310,14 @@ func (q *Queries) BindProjectConversationSession(ctx context.Context, arg BindPr
 const cancelAllQueuedConversationTurns = `-- name: CancelAllQueuedConversationTurns :exec
 UPDATE conversation_turns
 SET state = 'interrupted', completed_at = ?
-WHERE conversation_id = ? AND state = 'queued'
+WHERE conversation_turns.conversation_id = ?
+  AND conversation_turns.state = 'queued'
+  AND EXISTS (
+      SELECT 1
+      FROM conversations AS queue_owner
+      WHERE queue_owner.id = conversation_turns.conversation_id
+        AND queue_owner.current_session_id = conversation_turns.handled_by_session_id
+  )
 `
 
 type CancelAllQueuedConversationTurnsParams struct {
@@ -333,6 +340,12 @@ SET state = 'interrupted', completed_at = ?1
 WHERE conversation_turns.id = ?2
   AND conversation_turns.conversation_id = ?3
   AND conversation_turns.state = 'queued'
+  AND EXISTS (
+      SELECT 1
+      FROM conversations AS queue_owner
+      WHERE queue_owner.id = conversation_turns.conversation_id
+        AND queue_owner.current_session_id = conversation_turns.handled_by_session_id
+  )
   AND conversation_turns.promotion_started_at IS NULL
   AND conversation_turns.interrupt_reservation_id IS NULL
   AND NOT EXISTS (
@@ -365,10 +378,16 @@ UPDATE conversation_turns
 SET state = 'interrupted',
     completed_at = ?1,
     interrupt_reservation_id = NULL
-WHERE id = ?2
-  AND conversation_id = ?3
-  AND state = 'queued'
-  AND interrupt_reservation_id = ?4
+WHERE conversation_turns.id = ?2
+  AND conversation_turns.conversation_id = ?3
+  AND conversation_turns.state = 'queued'
+  AND EXISTS (
+      SELECT 1
+      FROM conversations AS queue_owner
+      WHERE queue_owner.id = conversation_turns.conversation_id
+        AND queue_owner.current_session_id = conversation_turns.handled_by_session_id
+  )
+  AND conversation_turns.interrupt_reservation_id = ?4
 `
 
 type CancelQueuedConversationTurnForInterruptParams struct {
@@ -397,10 +416,16 @@ SET state = 'completed',
     completed_at = ?1,
     promotion_started_at = NULL,
     promoted_to_turn_id = ?2
-WHERE id = ?3
-  AND conversation_id = ?4
-  AND state = 'queued'
-  AND promotion_started_at IS NOT NULL
+WHERE conversation_turns.id = ?3
+  AND conversation_turns.conversation_id = ?4
+  AND conversation_turns.state = 'queued'
+  AND EXISTS (
+      SELECT 1
+      FROM conversations AS queue_owner
+      WHERE queue_owner.id = conversation_turns.conversation_id
+        AND queue_owner.current_session_id = conversation_turns.handled_by_session_id
+  )
+  AND conversation_turns.promotion_started_at IS NOT NULL
 `
 
 type CompleteQueuedConversationTurnPromotionParams struct {
@@ -1050,10 +1075,16 @@ func (q *Queries) ReleaseOrphanedConversationInterruptReservations(ctx context.C
 const releaseQueuedConversationTurnInterruptReservation = `-- name: ReleaseQueuedConversationTurnInterruptReservation :execrows
 UPDATE conversation_turns
 SET interrupt_reservation_id = NULL
-WHERE id = ?1
-  AND conversation_id = ?2
-  AND state = 'queued'
-  AND interrupt_reservation_id = ?3
+WHERE conversation_turns.id = ?1
+  AND conversation_turns.conversation_id = ?2
+  AND conversation_turns.state = 'queued'
+  AND EXISTS (
+      SELECT 1
+      FROM conversations AS queue_owner
+      WHERE queue_owner.id = conversation_turns.conversation_id
+        AND queue_owner.current_session_id = conversation_turns.handled_by_session_id
+  )
+  AND conversation_turns.interrupt_reservation_id = ?3
 `
 
 type ReleaseQueuedConversationTurnInterruptReservationParams struct {
@@ -1073,10 +1104,16 @@ func (q *Queries) ReleaseQueuedConversationTurnInterruptReservation(ctx context.
 const releaseQueuedConversationTurnPromotion = `-- name: ReleaseQueuedConversationTurnPromotion :execrows
 UPDATE conversation_turns
 SET promotion_started_at = NULL
-WHERE id = ?1
-  AND conversation_id = ?2
-  AND state = 'queued'
-  AND promotion_started_at IS NOT NULL
+WHERE conversation_turns.id = ?1
+  AND conversation_turns.conversation_id = ?2
+  AND conversation_turns.state = 'queued'
+  AND EXISTS (
+      SELECT 1
+      FROM conversations AS queue_owner
+      WHERE queue_owner.id = conversation_turns.conversation_id
+        AND queue_owner.current_session_id = conversation_turns.handled_by_session_id
+  )
+  AND conversation_turns.promotion_started_at IS NOT NULL
 `
 
 type ReleaseQueuedConversationTurnPromotionParams struct {
@@ -1122,11 +1159,17 @@ func (q *Queries) ReserveConversationForInterrupt(ctx context.Context, arg Reser
 const reserveQueuedConversationTurnForInterrupt = `-- name: ReserveQueuedConversationTurnForInterrupt :execrows
 UPDATE conversation_turns
 SET interrupt_reservation_id = ?1
-WHERE id = ?2
-  AND conversation_id = ?3
-  AND state = 'queued'
-  AND promotion_started_at IS NULL
-  AND interrupt_reservation_id IS NULL
+WHERE conversation_turns.id = ?2
+  AND conversation_turns.conversation_id = ?3
+  AND conversation_turns.state = 'queued'
+  AND EXISTS (
+      SELECT 1
+      FROM conversations AS queue_owner
+      WHERE queue_owner.id = conversation_turns.conversation_id
+        AND queue_owner.current_session_id = conversation_turns.handled_by_session_id
+  )
+  AND conversation_turns.promotion_started_at IS NULL
+  AND conversation_turns.interrupt_reservation_id IS NULL
 `
 
 type ReserveQueuedConversationTurnForInterruptParams struct {
@@ -1151,6 +1194,12 @@ SET promotion_started_at = ?1
 WHERE conversation_turns.id = ?2
   AND conversation_turns.conversation_id = ?3
   AND conversation_turns.state = 'queued'
+  AND EXISTS (
+      SELECT 1
+      FROM conversations AS queue_owner
+      WHERE queue_owner.id = conversation_turns.conversation_id
+        AND queue_owner.current_session_id = conversation_turns.handled_by_session_id
+  )
   AND conversation_turns.promotion_started_at IS NULL
   AND conversation_turns.interrupt_reservation_id IS NULL
   AND NOT EXISTS (
@@ -2593,6 +2642,12 @@ JOIN conversation_messages
     AND conversation_messages.role = 'user'
 WHERE conversation_turns.conversation_id = ?
   AND conversation_turns.state = 'queued'
+  AND EXISTS (
+      SELECT 1
+      FROM conversations AS queue_owner
+      WHERE queue_owner.id = conversation_turns.conversation_id
+        AND queue_owner.current_session_id = conversation_turns.handled_by_session_id
+  )
   AND conversation_turns.promotion_started_at IS NULL
   AND conversation_turns.interrupt_reservation_id IS NULL
   AND NOT EXISTS (
@@ -2696,6 +2751,12 @@ LEFT JOIN conversation_messages
     )
 WHERE conversation_turns.conversation_id = ?
   AND conversation_turns.state = 'queued'
+  AND EXISTS (
+      SELECT 1
+      FROM conversations AS queue_owner
+      WHERE queue_owner.id = conversation_turns.conversation_id
+        AND queue_owner.current_session_id = conversation_turns.handled_by_session_id
+  )
 ORDER BY conversation_turns.requested_at, conversation_turns.rowid
 `
 
@@ -2752,6 +2813,12 @@ JOIN conversation_messages
 WHERE conversation_turns.id = ?1
   AND conversation_turns.conversation_id = ?2
   AND conversation_turns.state = 'queued'
+  AND EXISTS (
+      SELECT 1
+      FROM conversations AS queue_owner
+      WHERE queue_owner.id = conversation_turns.conversation_id
+        AND queue_owner.current_session_id = conversation_turns.handled_by_session_id
+  )
   AND conversation_turns.promotion_started_at IS NOT NULL
 LIMIT 1
 `

@@ -480,9 +480,17 @@ func TestProjectConversationPageStartsAtCurrentContextReset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("pending reset page: %v", err)
 	}
-	if len(pending.Messages) != 0 || len(pending.Activities) != 0 || len(pending.Turns) != 0 || pending.HasMoreBefore {
-		t.Fatalf("pending reset page = messages %#v activities %#v turns %#v hasMore %v, want empty",
-			pending.Messages, pending.Activities, pending.Turns, pending.HasMoreBefore)
+	if len(pending.Messages) != 0 || len(pending.Activities) != 0 || len(pending.Turns) != 0 ||
+		len(pending.QueuedTurns) != 0 || pending.HasMoreBefore {
+		t.Fatalf("pending reset page = messages %#v activities %#v turns %#v queue %#v hasMore %v, want empty",
+			pending.Messages, pending.Activities, pending.Turns, pending.QueuedTurns, pending.HasMoreBefore)
+	}
+	retired, err := s.TurnByID(ctx, "old-turn")
+	if err != nil {
+		t.Fatalf("load retired orchestrator turn: %v", err)
+	}
+	if retired.State != domain.TurnStateFailed {
+		t.Fatalf("retired orchestrator turn = %q, want failed at the rebind boundary", retired.State)
 	}
 	if err := s.UpsertActivity(ctx, conversation.ID, "", domain.ConversationActivity{
 		ID: "context-reset", Kind: domain.ActivityKindSystem, Status: domain.ActivityStatusCompleted,
@@ -495,6 +503,40 @@ func TestProjectConversationPageStartsAtCurrentContextReset(t *testing.T) {
 		ID: "fresh-message", Text: "fresh orchestrator work", Origin: domain.MessageOriginHuman,
 	}, "fresh-turn", histClock.Add(5*time.Second)); err != nil {
 		t.Fatalf("append fresh message: %v", err)
+	}
+	queued, err := s.ListQueuedTurns(ctx, conversation.ID)
+	if err != nil {
+		t.Fatalf("list replacement queue: %v", err)
+	}
+	if len(queued) != 1 || queued[0].TurnID != "fresh-turn" {
+		t.Fatalf("replacement queue = %#v, want only fresh-turn", queued)
+	}
+	matched, err := s.ReserveQueuedTurnsForInterrupt(
+		ctx, conversation.ID, []string{"fresh-turn"}, "replacement-stop",
+	)
+	if err != nil || !matched {
+		t.Fatalf("reserve replacement Stop scope: matched=%v err=%v", matched, err)
+	}
+	if err := s.SettleOrphanedTurns(ctx, second.ID, histClock.Add(6*time.Second)); err != nil {
+		t.Fatalf("recover replacement Stop: %v", err)
+	}
+	queued, err = s.ListQueuedTurns(ctx, conversation.ID)
+	if err != nil {
+		t.Fatalf("list queue after replacement recovery: %v", err)
+	}
+	if len(queued) != 0 {
+		t.Fatalf("queue after replacement recovery = %#v, want empty", queued)
+	}
+	matched, err = s.ReserveQueuedTurnsForInterrupt(
+		ctx, conversation.ID, nil, "after-replacement-recovery",
+	)
+	if err != nil || !matched {
+		t.Fatalf("fresh Stop after replacement recovery: matched=%v err=%v", matched, err)
+	}
+	if err := s.ReleaseQueuedTurnsForInterrupt(
+		ctx, conversation.ID, nil, "after-replacement-recovery",
+	); err != nil {
+		t.Fatalf("release fresh Stop after replacement recovery: %v", err)
 	}
 
 	page, err := s.LoadConversationSnapshotPage(ctx, conversation.ID, 0, 10)
@@ -524,6 +566,106 @@ func TestProjectConversationPageStartsAtCurrentContextReset(t *testing.T) {
 	}
 	if older.ActiveBranch.ID != conversation.ActiveBranchID {
 		t.Fatalf("older page active branch = %q, want %q", older.ActiveBranch.ID, conversation.ActiveBranchID)
+	}
+}
+
+// A retired controller can lose a race with project-conversation rebinding and
+// append after the replacement owns the conversation. Queue reads and controls
+// must still use the authoritative current owner: exposing or dispatching that
+// stale prompt would inject an earlier orchestrator's work into the new context.
+func TestProjectConversationQueueOperationsStayWithinCurrentOwner(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "project-queue-owner")
+
+	firstRecord := sampleRecord("project-queue-owner")
+	firstRecord.Kind = domain.KindOrchestrator
+	firstRecord.Mode = domain.SessionModeChat
+	first, err := s.CreateSession(ctx, firstRecord)
+	if err != nil {
+		t.Fatalf("create first orchestrator: %v", err)
+	}
+	conversation, err := s.CreateConversation(
+		ctx, "project-queue-owner-conversation", domain.ConversationScopeProject,
+		"project-queue-owner", first.ID, histClock,
+	)
+	if err != nil {
+		t.Fatalf("create project conversation: %v", err)
+	}
+
+	secondRecord := sampleRecord("project-queue-owner")
+	secondRecord.Kind = domain.KindOrchestrator
+	secondRecord.Mode = domain.SessionModeChat
+	second, err := s.CreateSession(ctx, secondRecord)
+	if err != nil {
+		t.Fatalf("create replacement orchestrator: %v", err)
+	}
+	if _, err := s.CreateConversation(
+		ctx, "unused-project-queue-owner", domain.ConversationScopeProject,
+		"project-queue-owner", second.ID, histClock.Add(time.Minute),
+	); err != nil {
+		t.Fatalf("rebind project conversation: %v", err)
+	}
+
+	if _, err := s.AppendUserMessage(ctx, conversation.ID, first.ID, "retired-generation",
+		domain.ConversationMessage{
+			ID: "retired-owner-message", Text: "retired owner work", Origin: domain.MessageOriginHuman,
+		}, "retired-owner-turn", histClock.Add(2*time.Minute)); err != nil {
+		t.Fatalf("append retired owner race: %v", err)
+	}
+	if _, err := s.AppendUserMessage(ctx, conversation.ID, second.ID, "current-generation",
+		domain.ConversationMessage{
+			ID: "current-owner-message", Text: "current owner work", Origin: domain.MessageOriginHuman,
+		}, "current-owner-turn", histClock.Add(3*time.Minute)); err != nil {
+		t.Fatalf("append current owner work: %v", err)
+	}
+
+	queued, err := s.ListQueuedTurns(ctx, conversation.ID)
+	if err != nil {
+		t.Fatalf("list current queue: %v", err)
+	}
+	if len(queued) != 1 || queued[0].TurnID != "current-owner-turn" {
+		t.Fatalf("current queue = %#v, want only current-owner-turn", queued)
+	}
+	next, err := s.NextQueuedTurn(ctx, conversation.ID)
+	if err != nil || next.TurnID != "current-owner-turn" {
+		t.Fatalf("next current queue turn = %#v err=%v, want current-owner-turn", next, err)
+	}
+	if cancelled, err := s.CancelQueuedTurn(
+		ctx, conversation.ID, "retired-owner-turn", histClock.Add(4*time.Minute),
+	); err != nil || cancelled {
+		t.Fatalf("cancel retired owner turn: cancelled=%v err=%v, want refused", cancelled, err)
+	}
+	if _, err := s.ReserveQueuedTurnForPromotion(
+		ctx, conversation.ID, "retired-owner-turn", histClock.Add(4*time.Minute),
+	); !errors.Is(err, store.ErrQueuedTurnNotAvailable) {
+		t.Fatalf("promote retired owner turn error = %v, want unavailable", err)
+	}
+
+	matched, err := s.ReserveQueuedTurnsForInterrupt(
+		ctx, conversation.ID, []string{"current-owner-turn"}, "current-owner-stop",
+	)
+	if err != nil || !matched {
+		t.Fatalf("reserve current owner Stop: matched=%v err=%v", matched, err)
+	}
+	if err := s.ReleaseQueuedTurnsForInterrupt(
+		ctx, conversation.ID, []string{"current-owner-turn"}, "current-owner-stop",
+	); err != nil {
+		t.Fatalf("release current owner Stop: %v", err)
+	}
+	if err := s.CancelAllQueuedTurns(
+		ctx, conversation.ID, histClock.Add(5*time.Minute),
+	); err != nil {
+		t.Fatalf("cancel current owner queue: %v", err)
+	}
+
+	current, err := s.TurnByID(ctx, "current-owner-turn")
+	if err != nil || current.State != domain.TurnStateInterrupted {
+		t.Fatalf("current owner turn = %#v err=%v, want interrupted", current, err)
+	}
+	retired, err := s.TurnByID(ctx, "retired-owner-turn")
+	if err != nil || retired.State != domain.TurnStateQueued {
+		t.Fatalf("retired owner turn = %#v err=%v, want untouched queued", retired, err)
 	}
 }
 

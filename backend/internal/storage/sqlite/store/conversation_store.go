@@ -109,19 +109,20 @@ func (s *Store) createConversation(
 				transactionName += " with reset"
 			}
 			err = s.inTx(ctx, transactionName, func(q *gen.Queries) error {
-				// Rebinding is a durable controller replacement boundary. A Stop owned
-				// by the previous orchestrator may have crossed the provider before that
-				// controller crashed, so settle its exact reserved queue as interrupted
-				// before changing current_session_id. Merely rebinding first loses the
-				// owner needed by restart recovery and strands the global dispatch fence.
-				if existing.InterruptReservationID.Valid &&
-					existing.InterruptReservationSessionID.Valid &&
-					existing.InterruptReservationSessionID.String != string(options.session) {
-					owner := domain.SessionID(existing.InterruptReservationSessionID.String)
+				// Rebinding is a durable controller replacement boundary. Settle every
+				// queued or running turn owned by the previous orchestrator before
+				// current_session_id changes, whether or not Stop had already fenced it.
+				// Otherwise its accepted work can appear in the replacement's queue and
+				// a later Stop would reserve rows recovery cannot settle under the new
+				// owner. Reserved rows settle interrupted; all other abandoned work fails.
+				if existing.CurrentSessionID != nil &&
+					*existing.CurrentSessionID != "" &&
+					*existing.CurrentSessionID != options.session {
+					owner := *existing.CurrentSessionID
 					if settleErr := settleOrphanedTurnsWithQueries(
 						ctx, q, owner, options.now,
 					); settleErr != nil {
-						return fmt.Errorf("settle replaced interrupt owner %s: %w", owner, settleErr)
+						return fmt.Errorf("settle replaced conversation owner %s: %w", owner, settleErr)
 					}
 				}
 				if err := q.BindProjectConversationSession(ctx, gen.BindProjectConversationSessionParams{
