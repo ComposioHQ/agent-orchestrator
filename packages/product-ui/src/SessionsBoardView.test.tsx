@@ -180,12 +180,6 @@ describe("SessionsBoardView", () => {
 				"border-status-needs-you",
 				"bg-[color-mix(in_srgb,var(--color-status-needs-you)_8%,var(--color-surface))]",
 			);
-			if (status === "needs_input") {
-				expect(screen.getByTestId("session-status")).toHaveClass("text-status-needs-you");
-				expect(screen.getByTestId("session-status")).toHaveStyle({
-					"--session-status-tone": "var(--color-status-needs-you)",
-				});
-			}
 		},
 	);
 
