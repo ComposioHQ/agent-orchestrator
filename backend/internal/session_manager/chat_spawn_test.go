@@ -47,6 +47,7 @@ type recordingLauncher struct {
 	startErr     error
 	turnErr      error
 	live         bool
+	beforeStart  func(ChatStart)
 	afterReady   func()
 
 	preflighted          []domain.AgentHarness
@@ -77,6 +78,9 @@ func (l *recordingLauncher) PreflightChat(
 
 func (l *recordingLauncher) StartChat(_ context.Context, cfg ChatStart) (ChatStarted, error) {
 	l.started = append(l.started, cfg)
+	if l.beforeStart != nil {
+		l.beforeStart(cfg)
+	}
 	if l.startErr != nil {
 		return ChatStarted{}, l.startErr
 	}
@@ -210,6 +214,35 @@ func TestResumeExitedChatSessionDoesNotRequireTerminalRuntimeHandle(t *testing.T
 	}
 	if result.Session.Activity.State != domain.ActivityIdle {
 		t.Fatalf("resumed activity = %q, want idle", result.Session.Activity.State)
+	}
+}
+
+func TestResumeChatRotatesBrowserCapabilityBeforeControllerStart(t *testing.T) {
+	launcher := &recordingLauncher{}
+	mgr, store, _ := newChatManager(launcher)
+	seedChatResumeSession(store, domain.ActivityExited)
+	rec := store.sessions["mer-1"]
+	rec.Metadata.BrowserCapabilityVerifier = "old-verifier"
+	store.sessions[rec.ID] = rec
+	mgr.browserCapabilities = &scriptedBrowserCapabilities{issues: []browserCapabilityIssue{{
+		token: "resumed-token", verifier: "resumed-verifier",
+	}}}
+	launcher.beforeStart = func(cfg ChatStart) {
+		stored := store.sessions[cfg.SessionID]
+		if got := stored.Metadata.BrowserCapabilityVerifier; got != "resumed-verifier" {
+			t.Fatalf("verifier at controller start = %q, want resumed-verifier", got)
+		}
+	}
+
+	result, err := mgr.ResumeAgentWithMode(context.Background(), rec.ID)
+	if err != nil {
+		t.Fatalf("ResumeAgentWithMode: %v", err)
+	}
+	if got := launcher.started[0].Env[EnvBrowserCapability]; got != "resumed-token" {
+		t.Fatalf("resumed capability = %q, want resumed-token", got)
+	}
+	if got := result.Session.Metadata.BrowserCapabilityVerifier; got != "resumed-verifier" {
+		t.Fatalf("resumed verifier = %q, want resumed-verifier", got)
 	}
 }
 
@@ -560,6 +593,91 @@ func TestChatSpawnStartsControllerAndNoRuntime(t *testing.T) {
 
 	if len(launcher.turns) != 1 || launcher.turns[0] == "" {
 		t.Fatalf("initial prompt was not delivered as a turn: %v", launcher.turns)
+	}
+}
+
+func TestChatSpawnPersistsBrowserCapabilityBeforeControllerStart(t *testing.T) {
+	launcher := &recordingLauncher{}
+	mgr, store, runtime := newChatManager(launcher)
+	mgr.browserCapabilities = &scriptedBrowserCapabilities{issues: []browserCapabilityIssue{{
+		token: "chat-token", verifier: "chat-verifier",
+	}}}
+	project := store.projects[string(chatTestProject)]
+	project.Config.Env = map[string]string{
+		EnvBrowserCapability:        "project-token",
+		EnvBrowserRuntimeToken:      "runtime-secret",
+		EnvBrowserRuntimeTokenStdin: "1",
+	}
+	store.projects[string(chatTestProject)] = project
+	launcher.beforeStart = func(cfg ChatStart) {
+		stored := store.sessions[cfg.SessionID]
+		if got := stored.Metadata.BrowserCapabilityVerifier; got != "chat-verifier" {
+			t.Fatalf("verifier at controller start = %q, want chat-verifier", got)
+		}
+	}
+
+	rec, _, _, err := mgr.Spawn(context.Background(), ports.SpawnConfig{
+		ProjectID:     chatTestProject,
+		Kind:          domain.KindWorker,
+		Harness:       domain.HarnessCodex,
+		RequestedMode: domain.SessionModeChat,
+	})
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if runtime.created != 0 {
+		t.Fatalf("Chat spawn created %d terminal runtimes", runtime.created)
+	}
+	start := launcher.started[0]
+	if got := start.Env[EnvBrowserCapability]; got != "chat-token" {
+		t.Fatalf("controller capability = %q, want issued token", got)
+	}
+	if start.Env[EnvBrowserRuntimeToken] != "" || start.Env[EnvBrowserRuntimeTokenStdin] != "" {
+		t.Fatalf("browser runtime secrets reached Chat controller: token=%q stdin=%q",
+			start.Env[EnvBrowserRuntimeToken], start.Env[EnvBrowserRuntimeTokenStdin])
+	}
+	if got := rec.Metadata.BrowserCapabilityVerifier; got != "chat-verifier" {
+		t.Fatalf("committed verifier = %q, want chat-verifier", got)
+	}
+}
+
+func TestChatSpawnCapabilityFailurePreventsControllerStart(t *testing.T) {
+	tests := []struct {
+		name       string
+		issue      browserCapabilityIssue
+		persistErr error
+	}{
+		{name: "issuer error", issue: browserCapabilityIssue{err: errors.New("entropy unavailable")}},
+		{name: "empty token", issue: browserCapabilityIssue{verifier: "verifier"}},
+		{name: "empty verifier", issue: browserCapabilityIssue{token: "token"}},
+		{name: "verifier persistence", issue: browserCapabilityIssue{token: "token", verifier: "verifier"}, persistErr: errors.New("database unavailable")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			launcher := &recordingLauncher{}
+			mgr, store, runtime := newChatManager(launcher)
+			mgr.browserCapabilities = &scriptedBrowserCapabilities{issues: []browserCapabilityIssue{tt.issue}}
+			store.updateSessionErr = tt.persistErr
+
+			_, _, _, err := mgr.Spawn(context.Background(), ports.SpawnConfig{
+				ProjectID:     chatTestProject,
+				Kind:          domain.KindWorker,
+				Harness:       domain.HarnessCodex,
+				RequestedMode: domain.SessionModeChat,
+			})
+			if !errors.Is(err, ErrSpawnBrowser) {
+				t.Fatalf("Spawn error = %v, want ErrSpawnBrowser", err)
+			}
+			if len(launcher.started) != 0 || runtime.created != 0 {
+				t.Fatalf("failed capability started controller/runtime: chat=%d runtime=%d",
+					len(launcher.started), runtime.created)
+			}
+			for _, session := range store.sessions {
+				if !session.IsTerminated {
+					t.Fatalf("capability failure left session %s live", session.ID)
+				}
+			}
+		})
 	}
 }
 

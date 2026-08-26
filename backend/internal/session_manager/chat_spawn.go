@@ -130,21 +130,26 @@ func (m *Manager) launchChatController(ctx context.Context, in chatSpawn) (domai
 		in.cfg.AgentConfig,
 	)
 
-	// The same env the terminal path builds, including the HookPATH pin. The
-	// provider passes its environment through to the shell commands it runs, so
-	// this is what makes `ao` resolvable to the agent.
-	env := m.runtimeEnv(id, in.cfg.ProjectID, in.cfg.IssueID, in.project.Config.Env)
 	var diffBaseSHA, diffBaseRef string
 	if in.projectKind == domain.ProjectKindSingleRepo {
 		diffBaseSHA, diffBaseRef = resolveSpawnDiffBase(
 			ctx, in.workspace.Path, in.workspace.BaseRef)
 	}
+	// The provider passes this environment through to agent shell commands. The
+	// shared launch boundary pins `ao`, issues the browser bearer, and persists
+	// its verifier before StartChat can run an eager provider process.
+	preparedRecord, env, err := m.prepareWorkerLaunchEnv(ctx, in.record, in.project.Config.Env)
+	if err != nil {
+		m.rollbackSeedSpawnWorkspace(ctx, in.record, in.workspace, in.workspaceProject, false)
+		return domain.SessionRecord{}, wrapSpawnStage(id, ErrSpawnBrowser, err)
+	}
+	in.record = preparedRecord
 
 	var (
 		controllerCommitted bool
 		completionErr       error
 	)
-	_, err := m.chat.StartChat(ctx, ChatStart{
+	_, err = m.chat.StartChat(ctx, ChatStart{
 		SessionID:             id,
 		ProjectID:             in.cfg.ProjectID,
 		Kind:                  in.cfg.Kind,
@@ -167,9 +172,10 @@ func (m *Manager) launchChatController(ctx context.Context, in chatSpawn) (domai
 				// No RuntimeHandleID or RuntimeLaunchID: a chat session has no
 				// agent pane. Leaving them empty keeps the reaper from probing for
 				// a terminal that was never created.
-				ProviderConversationID: started.ProviderConversationID,
-				ControllerGeneration:   started.ControllerGeneration,
-				Model:                  agentConfig.Model,
+				ProviderConversationID:    started.ProviderConversationID,
+				ControllerGeneration:      started.ControllerGeneration,
+				BrowserCapabilityVerifier: in.record.Metadata.BrowserCapabilityVerifier,
+				Model:                     agentConfig.Model,
 			}
 			completionErr = m.lcm.MarkSpawned(ctx, id, metadata)
 			controllerCommitted = completionErr == nil
@@ -317,6 +323,10 @@ func (m *Manager) resumeChatController(
 	if err != nil {
 		return RestoreResult{}, fmt.Errorf("%s %s: workspace roots: %w", operation, rec.ID, err)
 	}
+	rec, env, err := m.prepareWorkerLaunchEnv(ctx, rec, project.Config.Env)
+	if err != nil {
+		return RestoreResult{}, fmt.Errorf("%s %s: browser capability: %w", operation, rec.ID, err)
+	}
 	var completionErr error
 	_, err = m.chat.StartChat(ctx, ChatStart{
 		SessionID:             rec.ID,
@@ -325,7 +335,7 @@ func (m *Manager) resumeChatController(
 		Harness:               rec.Harness,
 		DataDir:               m.dataDir,
 		WorkspacePath:         ws.Path,
-		Env:                   m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env),
+		Env:                   env,
 		Model:                 agentConfig.Model,
 		Permissions:           agentConfig.Permissions,
 		SystemPrompt:          systemPrompt,
