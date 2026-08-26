@@ -323,18 +323,6 @@ export function SessionCardView({
 						data-testid="session-status"
 						style={statusTone ? ({ "--session-status-tone": statusTone } as CSSProperties) : undefined}
 					>
-						{statusPresentation ? (
-							<span
-								aria-hidden="true"
-								className={cn("size-dot-sm shrink-0 rounded-full", statusPresentation.indicatorClassName)}
-							/>
-						) : (
-							<span
-								aria-hidden="true"
-								className="size-[var(--size-swatch)] shrink-0 rounded-[var(--radius-swatch)]"
-								style={{ backgroundColor: statusTone ?? column.dot }}
-							/>
-						)}
 						<span className="min-w-0 truncate">
 							{statusPresentation?.label ??
 								(session.displayStatus
