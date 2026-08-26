@@ -18,6 +18,8 @@ import { setApiBaseUrl } from "../../lib/api-client";
 import { useUiStore } from "../../stores/ui-store";
 import type { WorkspaceSession } from "../../types/workspace";
 import {
+	getChatComposerMutation,
+	getChatInlineEditMutation,
 	prepareChatInlineEditDelivery,
 	readChatSessionDraft,
 	writeChatInlineEdit,
@@ -1709,6 +1711,7 @@ describe("ChatWorkspace message actions", () => {
 		await act(async () => acceptSend());
 		await waitFor(() => expect(replacement).toHaveTextContent(""));
 		expect(readChatSessionDraft(snapshot.sessionId).composer.text).toBe("");
+		expect(getChatComposerMutation(snapshot.sessionId)).toEqual({ pending: false });
 	});
 
 	it("restores an inline edit independently and cancelling it preserves the composer draft", async () => {
@@ -1783,6 +1786,7 @@ describe("ChatWorkspace message actions", () => {
 			expect(screen.queryByRole("textbox", { name: "Edit message" })).not.toBeInTheDocument(),
 		);
 		expect(readChatSessionDraft(snapshot.sessionId).inlineEdit).toBeUndefined();
+		expect(getChatInlineEditMutation(snapshot.sessionId)).toEqual({ pending: false });
 	});
 
 	it("durably unlocks a definitively rejected inline edit without consuming its text", async () => {
