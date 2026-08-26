@@ -1184,6 +1184,14 @@ func (s *Service) SetConfigOption(
 	if !ok {
 		return nil, ErrConfigOptionsUnsupported
 	}
+	controller.sendMu.Lock()
+	defer controller.sendMu.Unlock()
+	if controller.handoffActive() {
+		return nil, ErrControllerHandoff
+	}
+	if err := controller.requireNoInterruptPendingLocked(); err != nil {
+		return nil, err
+	}
 	return configurer.SetConfigOption(ctx, configID, value)
 }
 

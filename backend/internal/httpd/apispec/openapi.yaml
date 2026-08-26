@@ -2604,6 +2604,12 @@ paths:
       responses:
         "204":
           description: No Content
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
         "404":
           content:
             application/json:

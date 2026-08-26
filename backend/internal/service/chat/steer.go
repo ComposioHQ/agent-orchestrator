@@ -136,7 +136,7 @@ func (c *Controller) PromoteQueuedTurn(
 	if c.handoffActive() {
 		return PromoteQueuedTurnResult{}, ErrControllerHandoff
 	}
-	if c.interruptReservationID != "" {
+	if c.interruptPendingLocked() {
 		return PromoteQueuedTurnResult{}, fmt.Errorf("%w: %s", ErrTurnNotQueued, turnID)
 	}
 
@@ -254,6 +254,9 @@ func (c *Controller) Steer(ctx context.Context, msg ports.ChatUserMessage) (Stee
 	defer c.sendMu.Unlock()
 	if c.handoffActive() {
 		return SteerResult{}, ErrControllerHandoff
+	}
+	if err := c.requireNoInterruptPendingLocked(); err != nil {
+		return SteerResult{}, err
 	}
 
 	turn, ok := c.awaitAcknowledgedTurn(ctx)

@@ -264,6 +264,11 @@ func TestSteerRouteRefusalsAreTypedAndCoded(t *testing.T) {
 			wantStatus: http.StatusConflict, wantCode: "CHAT_CONTROLLER_NOT_READY",
 		},
 		{
+			name:       "Stop outcome pending",
+			err:        chatsvc.ErrInterruptPending,
+			wantStatus: http.StatusConflict, wantCode: "CHAT_INTERRUPT_PENDING",
+		},
+		{
 			name:       "unknown session",
 			err:        ports.ErrSessionNotFound,
 			wantStatus: http.StatusNotFound, wantCode: "SESSION_NOT_FOUND",

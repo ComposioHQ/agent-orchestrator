@@ -53,6 +53,8 @@ type blockingInterruptSteerRecorder struct {
 	releaseInterrupt chan struct{}
 	interruptErr     error
 	startOnce        sync.Once
+	commandMu        sync.Mutex
+	providerCommands []string
 }
 
 func newBlockingInterruptSteerRecorder(interruptErr error) *blockingInterruptSteerRecorder {
@@ -70,8 +72,66 @@ func (s *blockingInterruptSteerRecorder) Interrupt(ctx context.Context, _ string
 	case <-s.releaseInterrupt:
 		return s.interruptErr
 	case <-ctx.Done():
-		return ctx.Err()
+		return errors.Join(ports.ErrChatInterruptDeliveryUncertain, ctx.Err())
 	}
+}
+
+func (s *blockingInterruptSteerRecorder) Compact(context.Context) (ports.ChatCompactionResult, error) {
+	s.recordProviderCommand("compact")
+	return ports.ChatCompactionResult{}, nil
+}
+
+func (s *blockingInterruptSteerRecorder) Rollback(context.Context, string) error {
+	s.recordProviderCommand("rollback")
+	return nil
+}
+
+func (s *blockingInterruptSteerRecorder) ReloadMCPServers(context.Context) ([]ports.ChatMCPServer, error) {
+	s.recordProviderCommand("mcp reload")
+	return nil, nil
+}
+
+func (s *blockingInterruptSteerRecorder) ListConfigOptions(context.Context) ([]ports.ChatConfigOption, error) {
+	return nil, nil
+}
+
+func (s *blockingInterruptSteerRecorder) SetConfigOption(
+	context.Context,
+	string,
+	ports.ChatConfigOptionValue,
+) ([]ports.ChatConfigOption, error) {
+	s.recordProviderCommand("config")
+	return nil, nil
+}
+
+func (s *blockingInterruptSteerRecorder) ResolveRequest(
+	context.Context,
+	string,
+	ports.ChatDecision,
+) error {
+	s.recordProviderCommand("approval")
+	return nil
+}
+
+func (s *blockingInterruptSteerRecorder) ResolveInput(
+	context.Context,
+	string,
+	ports.ChatInputResponse,
+) error {
+	s.recordProviderCommand("input")
+	return nil
+}
+
+func (s *blockingInterruptSteerRecorder) recordProviderCommand(command string) {
+	s.commandMu.Lock()
+	defer s.commandMu.Unlock()
+	s.providerCommands = append(s.providerCommands, command)
+}
+
+func (s *blockingInterruptSteerRecorder) providerCommandSnapshot() []string {
+	s.commandMu.Lock()
+	defer s.commandMu.Unlock()
+	return append([]string(nil), s.providerCommands...)
 }
 
 func (s *cancelAfterSteerRecorder) Steer(
@@ -658,6 +718,135 @@ func TestInterruptFencesConfirmedQueueFromConcurrentPromotion(t *testing.T) {
 	}
 }
 
+func TestPendingInterruptReservationBlocksConflictingProviderCommands(t *testing.T) {
+	provider := newBlockingInterruptSteerRecorder(nil)
+	t.Cleanup(func() {
+		select {
+		case <-provider.releaseInterrupt:
+		default:
+			close(provider.releaseInterrupt)
+		}
+	})
+	h := newHarnessWithConversation(t, provider)
+	ctx := context.Background()
+
+	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "running", ClientMessageID: "running", Origin: domain.MessageOriginHuman,
+	}); err != nil {
+		t.Fatalf("Send running: %v", err)
+	}
+	provider.emit(ports.ChatEvent{
+		Kind: ports.ChatEventTurnStarted, ProviderTurnID: "provider-turn-1",
+	})
+	queued, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "confirmed for Stop", ClientMessageID: "queued", Origin: domain.MessageOriginHuman,
+	})
+	if err != nil {
+		t.Fatalf("Send queued: %v", err)
+	}
+
+	interruptDone := make(chan error, 1)
+	go func() {
+		interruptDone <- h.svc.Interrupt(ctx, testSession, []string{queued.ID})
+	}()
+	select {
+	case <-provider.interruptStarted:
+	case <-time.After(4 * time.Second):
+		t.Fatal("Stop did not reach provider")
+	}
+
+	if _, err := h.svc.Steer(ctx, testSession, ports.ChatUserMessage{
+		Text: "change course", Origin: domain.MessageOriginHuman,
+	}); !errors.Is(err, chatsvc.ErrInterruptPending) {
+		t.Fatalf("Steer during Stop = %v, want ErrInterruptPending", err)
+	}
+	if _, err := h.svc.RetryTurn(ctx, testSession, "missing-retry"); !errors.Is(err, chatsvc.ErrInterruptPending) {
+		t.Fatalf("Retry during Stop = %v, want ErrInterruptPending", err)
+	}
+	if _, err := h.svc.Rollback(ctx, testSession, "missing-rollback"); !errors.Is(err, chatsvc.ErrInterruptPending) {
+		t.Fatalf("Rollback during Stop = %v, want ErrInterruptPending", err)
+	}
+	if _, err := h.svc.Compact(ctx, testSession); !errors.Is(err, chatsvc.ErrInterruptPending) {
+		t.Fatalf("Compact during Stop = %v, want ErrInterruptPending", err)
+	}
+	if _, err := h.svc.ReloadMCPServers(ctx, testSession); !errors.Is(err, chatsvc.ErrInterruptPending) {
+		t.Fatalf("MCP reload during Stop = %v, want ErrInterruptPending", err)
+	}
+	if _, err := h.svc.SetConfigOption(
+		ctx, testSession, "model", ports.ChatConfigOptionValue{Select: "other"},
+	); !errors.Is(err, chatsvc.ErrInterruptPending) {
+		t.Fatalf("provider config during Stop = %v, want ErrInterruptPending", err)
+	}
+	if err := h.svc.Resolve(
+		ctx, testSession, "pending-approval", ports.ChatDecision{ID: "accept"},
+	); !errors.Is(err, chatsvc.ErrInterruptPending) {
+		t.Fatalf("approval during Stop = %v, want ErrInterruptPending", err)
+	}
+	if err := h.svc.ResolveInput(ctx, testSession, "pending-input", ports.ChatInputResponse{
+		Action: ports.ChatInputActionAccept,
+	}); !errors.Is(err, chatsvc.ErrInterruptPending) {
+		t.Fatalf("input response during Stop = %v, want ErrInterruptPending", err)
+	}
+	if err := h.svc.PrepareChatHandoff(
+		ctx, testSession, domain.SessionInterfaceTransitionInterrupt,
+	); !errors.Is(err, chatsvc.ErrInterruptPending) {
+		t.Fatalf("interface handoff during Stop = %v, want ErrInterruptPending", err)
+	}
+
+	if calls := provider.steers(); len(calls) != 0 {
+		t.Fatalf("provider received steer during Stop: %+v", calls)
+	}
+	if calls := provider.providerCommandSnapshot(); len(calls) != 0 {
+		t.Fatalf("provider received conflicting commands during Stop: %v", calls)
+	}
+	if got := provider.sentTexts(); len(got) != 1 {
+		t.Fatalf("provider received %v while Stop outcome was pending", got)
+	}
+
+	close(provider.releaseInterrupt)
+	if err := <-interruptDone; err != nil {
+		t.Fatalf("Interrupt: %v", err)
+	}
+}
+
+func TestArmedInterfaceHandoffRejectsStopBeforeProviderBoundary(t *testing.T) {
+	provider := newBlockingInterruptSteerRecorder(nil)
+	h := newHarnessWithConversation(t, provider)
+	ctx := context.Background()
+
+	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "running", ClientMessageID: "running", Origin: domain.MessageOriginHuman,
+	}); err != nil {
+		t.Fatalf("Send running: %v", err)
+	}
+	provider.emit(ports.ChatEvent{
+		Kind: ports.ChatEventTurnStarted, ProviderTurnID: "provider-turn-1",
+	})
+	queued, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "queued", ClientMessageID: "queued", Origin: domain.MessageOriginHuman,
+	})
+	if err != nil {
+		t.Fatalf("Send queued: %v", err)
+	}
+	if err := h.svc.ArmChatHandoff(
+		ctx, testSession, domain.SessionInterfaceTransitionDrain,
+	); err != nil {
+		t.Fatalf("ArmChatHandoff: %v", err)
+	}
+
+	stopCtx, stopCancel := context.WithTimeout(ctx, 100*time.Millisecond)
+	defer stopCancel()
+	if err := h.svc.Interrupt(stopCtx, testSession, []string{queued.ID}); !errors.Is(err, chatsvc.ErrControllerHandoff) {
+		t.Fatalf("Stop during armed handoff = %v, want ErrControllerHandoff", err)
+	}
+	select {
+	case <-provider.interruptStarted:
+		t.Fatal("Stop crossed provider boundary during an armed interface handoff")
+	default:
+	}
+	h.svc.AbortChatHandoff(testSession)
+}
+
 func TestInterruptCompletionBeforeSuccessCancelsExactScopeAndReleasesPostStopWork(t *testing.T) {
 	provider := newBlockingInterruptSteerRecorder(nil)
 	t.Cleanup(func() {
@@ -804,5 +993,82 @@ func TestInterruptFailureReleasesFenceAndResumesOriginalQueue(t *testing.T) {
 	})
 	if got := provider.sentTexts(); len(got) != 2 || got[1] != "original queue" {
 		t.Fatalf("provider received %v, want original queue resumed after failure", got)
+	}
+}
+
+func TestInterruptCancellationAfterProviderDispatchNeverDeliversConfirmedQueue(t *testing.T) {
+	provider := newBlockingInterruptSteerRecorder(nil)
+	t.Cleanup(func() {
+		select {
+		case <-provider.releaseInterrupt:
+		default:
+			close(provider.releaseInterrupt)
+		}
+	})
+	h := newHarnessWithConversation(t, provider)
+	ctx := context.Background()
+
+	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "running", ClientMessageID: "running", Origin: domain.MessageOriginHuman,
+	}); err != nil {
+		t.Fatalf("Send running: %v", err)
+	}
+	provider.emit(ports.ChatEvent{
+		Kind: ports.ChatEventTurnStarted, ProviderTurnID: "provider-turn-1",
+	})
+	confirmed, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "confirmed for Stop", ClientMessageID: "confirmed", Origin: domain.MessageOriginHuman,
+	})
+	if err != nil {
+		t.Fatalf("Send confirmed queue: %v", err)
+	}
+
+	interruptCtx, cancel := context.WithCancel(ctx)
+	interruptDone := make(chan error, 1)
+	go func() {
+		interruptDone <- h.svc.Interrupt(interruptCtx, testSession, []string{confirmed.ID})
+	}()
+	select {
+	case <-provider.interruptStarted:
+	case <-time.After(4 * time.Second):
+		t.Fatal("Stop did not cross the provider dispatch boundary")
+	}
+	cancel()
+	interruptErr := <-interruptDone
+	if !errors.Is(interruptErr, context.Canceled) {
+		t.Fatalf("Interrupt error = %v, want context.Canceled", interruptErr)
+	}
+	if !errors.Is(interruptErr, ports.ErrChatInterruptDeliveryUncertain) {
+		t.Fatalf("Interrupt error = %v, want delivery-uncertain classification", interruptErr)
+	}
+
+	// The provider may have accepted the dispatched Stop even though its response
+	// lost the race with cancellation. Its eventual completion must not release the
+	// exact queue the user confirmed into a new provider turn.
+	provider.emit(ports.ChatEvent{
+		Kind: ports.ChatEventTurnCompleted, ProviderTurnID: "provider-turn-1",
+		TurnState: domain.TurnStateCompleted,
+	})
+	snapshot := h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		states := turnStateByText(t, s)
+		return states["running"] == domain.TurnStateCompleted &&
+			states["confirmed for Stop"] != domain.TurnStateQueued
+	})
+	states := turnStateByText(t, snapshot)
+	if states["confirmed for Stop"] != domain.TurnStateInterrupted {
+		t.Fatalf("confirmed Stop queue = %q, want interrupted after uncertain delivery", states["confirmed for Stop"])
+	}
+	if got := provider.sentTexts(); len(got) != 1 {
+		t.Fatalf("provider received %v, want zero confirmed-queue deliveries", got)
+	}
+
+	after, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "after uncertain Stop", ClientMessageID: "after", Origin: domain.MessageOriginHuman,
+	})
+	if err != nil || after.State != domain.TurnStateRunning {
+		t.Fatalf("Send after durable reconciliation = %+v, %v; want running", after, err)
+	}
+	if got := provider.sentTexts(); len(got) != 2 || got[1] != "after uncertain Stop" {
+		t.Fatalf("provider received %v, want only new post-reconciliation work", got)
 	}
 }

@@ -765,6 +765,11 @@ func writeConversationError(w http.ResponseWriter, r *http.Request, err error) {
 			"CHAT_QUEUE_SCOPE_CHANGED",
 			"the queued work changed; review the refreshed queue and confirm Stop again", nil)
 
+	case errors.Is(err, chatsvc.ErrInterruptPending):
+		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict",
+			"CHAT_INTERRUPT_PENDING",
+			"Stop is still being reconciled; retry after its outcome is known", nil)
+
 	case errors.Is(err, domain.ErrNoConversationTurn):
 		envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found",
 			"CHAT_TURN_NOT_FOUND", "that turn is not in this session's conversation", nil)

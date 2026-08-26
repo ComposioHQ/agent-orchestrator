@@ -3712,7 +3712,7 @@ func (c *blockingInterruptRefusalConversation) Interrupt(ctx context.Context, _ 
 	case <-c.release:
 		return c.result
 	case <-ctx.Done():
-		return ctx.Err()
+		return errors.Join(ports.ErrChatInterruptDeliveryUncertain, ctx.Err())
 	}
 }
 
@@ -4239,6 +4239,85 @@ func TestInterruptDurableFallbackFailureReleasesFenceWithoutDispatchingIntoStale
 	}
 	if got := conv.sentTexts(); len(got) != 0 {
 		t.Fatalf("provider received %v after refusing Stop", got)
+	}
+}
+
+func TestInterruptDurableFallbackReconcilesAfterDispatchedRequestCancellation(t *testing.T) {
+	conv := newBlockingInterruptRefusalConversation()
+	t.Cleanup(conv.unblock)
+	h := newHarnessWithConversation(t, conv)
+	ctx := context.Background()
+
+	if err := h.st.AdoptProviderTurn(ctx, h.ctrl.ConversationID(), testSession,
+		h.ctrl.Generation(), "stale-turn", "provider-stale", h.now()); err != nil {
+		t.Fatalf("AdoptProviderTurn: %v", err)
+	}
+	created, err := h.st.AppendUserMessage(ctx, h.ctrl.ConversationID(), testSession,
+		h.ctrl.Generation(), domain.ConversationMessage{
+			ID: "confirmed-message", Text: "confirmed for Stop", Origin: domain.MessageOriginHuman,
+		}, "confirmed-turn", h.now())
+	if err != nil || !created {
+		t.Fatalf("append confirmed queue: created=%v err=%v", created, err)
+	}
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		states := turnStateByText(t, s)
+		return len(s.Turns) == 2 && s.Turns[0].ProviderTurnID == "provider-stale" &&
+			s.Turns[0].State == domain.TurnStateRunning &&
+			states["confirmed for Stop"] == domain.TurnStateQueued
+	})
+
+	interruptCtx, cancel := context.WithCancel(ctx)
+	interruptDone := make(chan error, 1)
+	go func() {
+		interruptDone <- h.svc.Interrupt(interruptCtx, testSession, []string{"confirmed-turn"})
+	}()
+	select {
+	case <-conv.started:
+	case <-time.After(4 * time.Second):
+		t.Fatal("durable fallback did not dispatch provider interrupt")
+	}
+
+	survivor, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "after uncertain Stop", ClientMessageID: "after-uncertain",
+	})
+	if err != nil || survivor.State != domain.TurnStateQueued {
+		t.Fatalf("post-Stop survivor = %+v, %v; want queued", survivor, err)
+	}
+	cancelProbe, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "cancel after reconciliation", ClientMessageID: "cancel-probe",
+	})
+	if err != nil || cancelProbe.State != domain.TurnStateQueued {
+		t.Fatalf("post-Stop cancel probe = %+v, %v; want queued", cancelProbe, err)
+	}
+
+	cancel()
+	interruptErr := <-interruptDone
+	if !errors.Is(interruptErr, context.Canceled) ||
+		!errors.Is(interruptErr, ports.ErrChatInterruptDeliveryUncertain) {
+		t.Fatalf("Interrupt error = %v, want cancelled delivery-uncertain result", interruptErr)
+	}
+	if err := h.svc.CancelQueuedTurn(ctx, testSession, cancelProbe.ID); err != nil {
+		t.Fatalf("queue command remained blocked behind cancelled request context: %v", err)
+	}
+
+	conv.emit(ports.ChatEvent{
+		Kind: ports.ChatEventTurnCompleted, ProviderTurnID: "provider-stale",
+		TurnState: domain.TurnStateCompleted,
+	})
+	snapshot := h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		states := turnStateByText(t, s)
+		return len(s.Turns) == 4 && s.Turns[0].ProviderTurnID == "provider-stale" &&
+			s.Turns[0].State == domain.TurnStateCompleted &&
+			states["confirmed for Stop"] == domain.TurnStateInterrupted &&
+			states["after uncertain Stop"] == domain.TurnStateRunning &&
+			states["cancel after reconciliation"] == domain.TurnStateInterrupted
+	})
+	states := turnStateByText(t, snapshot)
+	if states["confirmed for Stop"] != domain.TurnStateInterrupted {
+		t.Fatalf("confirmed queue = %q, want interrupted", states["confirmed for Stop"])
+	}
+	if got := conv.sentTexts(); len(got) != 1 || got[0] != "after uncertain Stop" {
+		t.Fatalf("provider received %v, want only surviving post-Stop work", got)
 	}
 }
 

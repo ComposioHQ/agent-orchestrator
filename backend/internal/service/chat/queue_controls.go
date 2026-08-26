@@ -34,7 +34,7 @@ func (c *Controller) CancelQueuedTurn(ctx context.Context, turnID string) error 
 	if c.handoffActive() {
 		return ErrControllerHandoff
 	}
-	if c.interruptReservationID != "" {
+	if c.interruptPendingLocked() {
 		return fmt.Errorf("%w: %s", ErrTurnNotQueued, turnID)
 	}
 

@@ -785,6 +785,7 @@ func shellTerminalOperations() []operation {
 			reqBody:    controllers.InterruptConversationRequest{},
 			resps: []respUnit{
 				{http.StatusNoContent, nil},
+				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusConflict, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},

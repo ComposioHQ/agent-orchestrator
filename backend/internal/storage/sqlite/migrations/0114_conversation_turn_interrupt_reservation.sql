@@ -6,8 +6,10 @@
 -- settle an orphaned request. Per-turn markers retain the exact confirmed scope.
 ALTER TABLE conversations
     ADD COLUMN interrupt_reservation_id TEXT;
+-- Keep the default NO ACTION deletion rule: owner cleanup must settle the exact
+-- confirmed scope before deleting the session, never erase the recovery key.
 ALTER TABLE conversations
-    ADD COLUMN interrupt_reservation_session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL;
+    ADD COLUMN interrupt_reservation_session_id TEXT REFERENCES sessions(id);
 ALTER TABLE conversation_turns
     ADD COLUMN interrupt_reservation_id TEXT;
 -- +goose StatementEnd

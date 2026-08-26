@@ -914,6 +914,171 @@ func TestRestartHonorsAnOrphanedConfirmedStopQueue(t *testing.T) {
 	}
 }
 
+func TestProjectConversationReplacementSettlesCrashedStopOwner(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "stop-rebind")
+
+	firstRecord := sampleRecord("stop-rebind")
+	firstRecord.Kind = domain.KindOrchestrator
+	firstRecord.Mode = domain.SessionModeChat
+	first, err := s.CreateSession(ctx, firstRecord)
+	if err != nil {
+		t.Fatalf("create first orchestrator: %v", err)
+	}
+	conversation, err := s.CreateConversation(
+		ctx, "stop-rebind-conversation", domain.ConversationScopeProject,
+		"stop-rebind", first.ID, histClock,
+	)
+	if err != nil {
+		t.Fatalf("create project conversation: %v", err)
+	}
+	if err := s.ClaimChatControllerGeneration(ctx, first.ID, "dead-generation", histClock); err != nil {
+		t.Fatalf("claim first controller: %v", err)
+	}
+	for _, turn := range []struct {
+		id, text string
+	}{
+		{id: "rebind-confirmed", text: "confirmed before crash"},
+	} {
+		created, appendErr := s.AppendUserMessage(ctx, conversation.ID, first.ID, "dead-generation",
+			domain.ConversationMessage{
+				ID: turn.id + "-message", Text: turn.text, Origin: domain.MessageOriginHuman,
+			}, turn.id, histClock)
+		if appendErr != nil || !created {
+			t.Fatalf("append %s: created=%v err=%v", turn.id, created, appendErr)
+		}
+	}
+	matched, err := s.ReserveQueuedTurnsForInterrupt(
+		ctx, conversation.ID, []string{"rebind-confirmed"}, "crashed-rebind-stop",
+	)
+	if err != nil || !matched {
+		t.Fatalf("reserve replacement Stop scope: matched=%v err=%v", matched, err)
+	}
+	created, err := s.AppendUserMessage(ctx, conversation.ID, first.ID, "dead-generation",
+		domain.ConversationMessage{
+			ID: "rebind-post-stop-message", Text: "accepted after Stop", Origin: domain.MessageOriginHuman,
+		}, "rebind-post-stop", histClock.Add(time.Second))
+	if err != nil || !created {
+		t.Fatalf("append post-Stop turn: created=%v err=%v", created, err)
+	}
+
+	secondRecord := sampleRecord("stop-rebind")
+	secondRecord.Kind = domain.KindOrchestrator
+	secondRecord.Mode = domain.SessionModeChat
+	second, err := s.CreateSession(ctx, secondRecord)
+	if err != nil {
+		t.Fatalf("create replacement orchestrator: %v", err)
+	}
+	if _, err := s.CreateConversation(
+		ctx, "unused-replacement-id", domain.ConversationScopeProject,
+		"stop-rebind", second.ID, histClock.Add(time.Minute),
+	); err != nil {
+		t.Fatalf("rebind project conversation: %v", err)
+	}
+
+	confirmed, err := s.TurnByID(ctx, "rebind-confirmed")
+	if err != nil || confirmed.State != domain.TurnStateInterrupted {
+		t.Fatalf("replacement confirmed turn = %+v, %v; want interrupted", confirmed, err)
+	}
+	postStop, err := s.TurnByID(ctx, "rebind-post-stop")
+	if err != nil || postStop.State != domain.TurnStateFailed {
+		t.Fatalf("replacement post-Stop turn = %+v, %v; want failed", postStop, err)
+	}
+	matched, err = s.ReserveQueuedTurnsForInterrupt(
+		ctx, conversation.ID, nil, "replacement-stop",
+	)
+	if err != nil || !matched {
+		t.Fatalf("replacement controller remained fenced: matched=%v err=%v", matched, err)
+	}
+	if err := s.ReleaseQueuedTurnsForInterrupt(ctx, conversation.ID, nil, "replacement-stop"); err != nil {
+		t.Fatalf("release replacement proof reservation: %v", err)
+	}
+}
+
+func TestDeletingInterruptReservationOwnerSettlesScopeBeforeForeignKeysClearIt(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "stop-owner-delete")
+
+	ownerRecord := domain.SessionRecord{
+		ProjectID: "stop-owner-delete",
+		Kind:      domain.KindOrchestrator,
+		Harness:   domain.HarnessClaudeCode,
+		Mode:      domain.SessionModeChat,
+		Activity: domain.Activity{
+			State: domain.ActivityIdle, LastActivityAt: histClock,
+		},
+		CreatedAt: histClock,
+		UpdatedAt: histClock,
+	}
+	owner, err := s.CreateSession(ctx, ownerRecord)
+	if err != nil {
+		t.Fatalf("create seed owner: %v", err)
+	}
+	conversation, err := s.CreateConversation(
+		ctx, "owner-delete-conversation", domain.ConversationScopeProject,
+		"stop-owner-delete", owner.ID, histClock,
+	)
+	if err != nil {
+		t.Fatalf("create owner conversation: %v", err)
+	}
+	created, err := s.AppendUserMessage(ctx, conversation.ID, owner.ID, "dead-generation",
+		domain.ConversationMessage{
+			ID: "owner-delete-message", Text: "confirmed before deletion", Origin: domain.MessageOriginHuman,
+		}, "owner-delete-turn", histClock)
+	if err != nil || !created {
+		t.Fatalf("append owner turn: created=%v err=%v", created, err)
+	}
+	matched, err := s.ReserveQueuedTurnsForInterrupt(
+		ctx, conversation.ID, []string{"owner-delete-turn"}, "owner-delete-stop",
+	)
+	if err != nil || !matched {
+		t.Fatalf("reserve owner Stop scope: matched=%v err=%v", matched, err)
+	}
+	// Keep the project session counter ahead of the deleted owner so the eventual
+	// replacement proves recovery under a genuinely different session identity.
+	otherRecord := ownerRecord
+	otherRecord.Kind = domain.KindWorker
+	if _, err := s.CreateSession(ctx, otherRecord); err != nil {
+		t.Fatalf("create unrelated session: %v", err)
+	}
+
+	deleted, err := s.DeleteSession(ctx, owner.ID)
+	if err != nil || !deleted {
+		t.Fatalf("delete reservation owner: deleted=%v err=%v", deleted, err)
+	}
+	if _, err := s.TurnByID(ctx, "owner-delete-turn"); !errors.Is(err, domain.ErrNoConversationTurn) {
+		t.Fatalf("deleted owner's confirmed turn remained dispatchable: %v", err)
+	}
+
+	replacementRecord := ownerRecord
+	replacementRecord.CreatedAt = histClock.Add(time.Minute)
+	replacementRecord.UpdatedAt = histClock.Add(time.Minute)
+	replacement, err := s.CreateSession(ctx, replacementRecord)
+	if err != nil {
+		t.Fatalf("create replacement owner: %v", err)
+	}
+	if replacement.ID == owner.ID {
+		t.Fatalf("replacement reused deleted owner id %s", owner.ID)
+	}
+	if _, err := s.CreateConversation(
+		ctx, "unused-after-delete", domain.ConversationScopeProject,
+		"stop-owner-delete", replacement.ID, histClock.Add(time.Minute),
+	); err != nil {
+		t.Fatalf("rebind after owner deletion: %v", err)
+	}
+	matched, err = s.ReserveQueuedTurnsForInterrupt(
+		ctx, conversation.ID, nil, "after-owner-delete",
+	)
+	if err != nil || !matched {
+		t.Fatalf("owner deletion stranded Stop fence: matched=%v err=%v", matched, err)
+	}
+	if err := s.ReleaseQueuedTurnsForInterrupt(ctx, conversation.ID, nil, "after-owner-delete"); err != nil {
+		t.Fatalf("release deletion proof reservation: %v", err)
+	}
+}
+
 // seedTurn records one dispatched turn with a user message and an activity, which is
 // the shape a real turn leaves behind.
 func seedTurn(t *testing.T, s *sqlite.Store, conversationID string, session domain.SessionID, turnID, text string, at time.Time) {

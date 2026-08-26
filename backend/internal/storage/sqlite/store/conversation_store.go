@@ -109,6 +109,21 @@ func (s *Store) createConversation(
 				transactionName += " with reset"
 			}
 			err = s.inTx(ctx, transactionName, func(q *gen.Queries) error {
+				// Rebinding is a durable controller replacement boundary. A Stop owned
+				// by the previous orchestrator may have crossed the provider before that
+				// controller crashed, so settle its exact reserved queue as interrupted
+				// before changing current_session_id. Merely rebinding first loses the
+				// owner needed by restart recovery and strands the global dispatch fence.
+				if existing.InterruptReservationID.Valid &&
+					existing.InterruptReservationSessionID.Valid &&
+					existing.InterruptReservationSessionID.String != string(options.session) {
+					owner := domain.SessionID(existing.InterruptReservationSessionID.String)
+					if settleErr := settleOrphanedTurnsWithQueries(
+						ctx, q, owner, options.now,
+					); settleErr != nil {
+						return fmt.Errorf("settle replaced interrupt owner %s: %w", owner, settleErr)
+					}
+				}
 				if err := q.BindProjectConversationSession(ctx, gen.BindProjectConversationSessionParams{
 					CurrentSessionID: &options.session,
 					UpdatedAt:        options.now,
@@ -1010,26 +1025,40 @@ func (s *Store) SettleOrphanedTurns(ctx context.Context, session domain.SessionI
 	_, unlock := s.conversationWriter(ctx)
 	defer unlock()
 	return s.inTx(ctx, "settle orphaned conversation work", func(q *gen.Queries) error {
-		if err := q.FailOrphanedConversationActivities(ctx,
-			gen.FailOrphanedConversationActivitiesParams{
-				UpdatedAt:          now,
-				HandledBySessionID: session,
-			}); err != nil {
-			return fmt.Errorf("settle orphaned activities for %s: %w", session, err)
-		}
-		if err := q.SettleOrphanedConversationTurns(ctx,
-			gen.SettleOrphanedConversationTurnsParams{
-				CompletedAt:        sql.NullTime{Time: now, Valid: true},
-				HandledBySessionID: session,
-			}); err != nil {
-			return fmt.Errorf("settle orphaned turns for %s: %w", session, err)
-		}
-		if err := q.ReleaseOrphanedConversationInterruptReservations(ctx,
-			sql.NullString{String: string(session), Valid: true}); err != nil {
-			return fmt.Errorf("release orphaned interrupt reservation for %s: %w", session, err)
-		}
-		return nil
+		return settleOrphanedTurnsWithQueries(ctx, q, session, now)
 	})
+}
+
+// settleOrphanedTurnsWithQueries is the transaction-local recovery primitive for
+// controller death, project-conversation replacement, and seed-owner deletion.
+// The reservation owner must be used before it is rebound or deleted: confirmed
+// rows become interrupted, other abandoned work fails, then the global fence is
+// cleared. Reversing that order could make confirmed work dispatchable again.
+func settleOrphanedTurnsWithQueries(
+	ctx context.Context,
+	q *gen.Queries,
+	session domain.SessionID,
+	now time.Time,
+) error {
+	if err := q.FailOrphanedConversationActivities(ctx,
+		gen.FailOrphanedConversationActivitiesParams{
+			UpdatedAt:          now,
+			HandledBySessionID: session,
+		}); err != nil {
+		return fmt.Errorf("settle orphaned activities for %s: %w", session, err)
+	}
+	if err := q.SettleOrphanedConversationTurns(ctx,
+		gen.SettleOrphanedConversationTurnsParams{
+			CompletedAt:        sql.NullTime{Time: now, Valid: true},
+			HandledBySessionID: session,
+		}); err != nil {
+		return fmt.Errorf("settle orphaned turns for %s: %w", session, err)
+	}
+	if err := q.ReleaseOrphanedConversationInterruptReservations(ctx,
+		sql.NullString{String: string(session), Valid: true}); err != nil {
+		return fmt.Errorf("release orphaned interrupt reservation for %s: %w", session, err)
+	}
+	return nil
 }
 
 // CleanupOwnedControllerWork settles work only when the closing controller still
