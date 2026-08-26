@@ -485,6 +485,12 @@ export function HumanMessage({
 	activateBranchError?: string;
 }) {
 	const { body, attachments } = humanMessageParts(message.text);
+	const referencedNames = new Set(attachments.map(attachmentName));
+	// Combined delivery records the same image as a native prompt block and a
+	// staged path. The path supplies the real preview, so do not add a second chip.
+	const durableContent = (message.content ?? []).filter(
+		(item) => !(item.type === "image" && item.name && referencedNames.has(item.name)),
+	);
 	return (
 		<div className="group/message flex flex-col items-end gap-1">
 			{/* A queued message reads as not-yet-sent rather than as sent-and-ignored:
@@ -535,6 +541,12 @@ export function HumanMessage({
 							})}
 						</ul>
 					) : null}
+					<ConversationContentItems
+						content={durableContent}
+						ariaLabel="Attached files"
+						imageLabel="Attached image"
+						className={cn((body || attachments.length > 0) && "mt-2")}
+					/>
 				</div>
 			)}
 			{editing ? null : (

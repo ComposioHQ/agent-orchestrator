@@ -240,6 +240,60 @@ describe("HumanMessage attachments", () => {
 		expect(screen.queryByRole("img", { name: "attachment-cafebabe00-original.png" })).not.toBeInTheDocument();
 	});
 
+	it("shows a native-only attachment's durable filename in the normal transcript", () => {
+		render(
+			<HumanMessage
+				message={{
+					...humanMessage("inspect natively"),
+					content: [{ type: "image", mimeType: "image/png", name: "native-only.png" }],
+				}}
+				sessionId="ao-1"
+			/>,
+		);
+
+		const files = screen.getByRole("list", { name: "Attached files" });
+		expect(within(files).getByText("native-only.png")).toBeVisible();
+		expect(within(files).queryByText("image/png")).not.toBeInTheDocument();
+		expect(screen.getByText("inspect natively")).toBeVisible();
+		expect(document.querySelector('img[src^="data:"]')).not.toBeInTheDocument();
+	});
+
+	it("renders combined native-and-path delivery once through its staged file", () => {
+		render(
+			<HumanMessage
+				message={{
+					...humanMessage(
+						"inspect both ways\n\nAttached files (read these files in the workspace):\n- .ao/attachments/attachment-cafebabe00-combined.png",
+					),
+					content: [{ type: "image", mimeType: "image/png", name: "combined.png" }],
+				}}
+				sessionId="ao-1"
+			/>,
+		);
+
+		const files = screen.getByRole("list", { name: "Attached files" });
+		expect(screen.getAllByRole("list", { name: "Attached files" })).toHaveLength(1);
+		expect(within(files).getAllByRole("listitem")).toHaveLength(1);
+		expect(screen.getByRole("img", { name: "combined.png" })).toBeVisible();
+		expect(screen.queryByText("combined.png")).not.toBeInTheDocument();
+	});
+
+	it("falls back to a safe image-type label when durable history has no filename", () => {
+		render(
+			<HumanMessage
+				message={{
+					...humanMessage("legacy native image"),
+					content: [{ type: "image", mimeType: "image/png" }],
+				}}
+				sessionId="ao-1"
+			/>,
+		);
+
+		expect(
+			within(screen.getByRole("list", { name: "Attached files" })).getByText("image/png"),
+		).toBeVisible();
+	});
+
 	it("leaves ordinary user-authored path lists untouched", () => {
 		const text =
 			"Document this example:\n\nAttached files (read these files in the workspace):\n- docs/screenshot.png";
