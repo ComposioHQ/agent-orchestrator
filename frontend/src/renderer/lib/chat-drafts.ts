@@ -203,15 +203,29 @@ function draftRuntime(scope: ChatDraftScopeInput): ChatDraftRuntime {
 	return runtime;
 }
 
+function evictSettledDraftRuntime(key: string, runtime: ChatDraftRuntime): void {
+	if (
+		runtime.listeners.size > 0 ||
+		runtime.composer.pending ||
+		runtime.inlineEdit.pending ||
+		draftRuntimes.get(key) !== runtime
+	) return;
+	draftRuntimes.delete(key);
+}
+
 function emitDraftRuntime(runtime: ChatDraftRuntime): void {
 	for (const listener of runtime.listeners) listener();
 }
 
 export function subscribeChatDraftRuntime(scope: ChatDraftScopeInput, listener: () => void): () => void {
 	if (!normalizeScope(scope).sessionId) return () => undefined;
+	const key = draftRuntimeKey(scope);
 	const runtime = draftRuntime(scope);
 	runtime.listeners.add(listener);
-	return () => runtime.listeners.delete(listener);
+	return () => {
+		runtime.listeners.delete(listener);
+		evictSettledDraftRuntime(key, runtime);
+	};
 }
 
 export function getChatComposerMutation(
@@ -261,7 +275,8 @@ function cancelDraftMutation(
 	kind: DraftMutationKind,
 	token: ChatDraftMutationToken,
 ): void {
-	const runtime = draftRuntimes.get(draftRuntimeKey(scope));
+	const key = draftRuntimeKey(scope);
+	const runtime = draftRuntimes.get(key);
 	if (!runtime) return;
 	if (kind === "composer") {
 		if (runtime.composerToken !== token) return;
@@ -273,6 +288,7 @@ function cancelDraftMutation(
 		runtime.inlineEdit = EMPTY_INLINE_EDIT_MUTATION;
 	}
 	emitDraftRuntime(runtime);
+	evictSettledDraftRuntime(key, runtime);
 }
 
 export function cancelChatComposerMutation(
@@ -295,7 +311,8 @@ export function finishChatComposerMutation(
 	revision: number,
 	result: DraftClearResult,
 ): void {
-	const runtime = draftRuntimes.get(draftRuntimeKey(scope));
+	const key = draftRuntimeKey(scope);
+	const runtime = draftRuntimes.get(key);
 	if (!runtime || runtime.composerToken !== token) return;
 	runtime.composerToken = undefined;
 	runtime.sequence += 1;
@@ -304,6 +321,7 @@ export function finishChatComposerMutation(
 		accepted: { sequence: runtime.sequence, revision, result },
 	};
 	emitDraftRuntime(runtime);
+	evictSettledDraftRuntime(key, runtime);
 }
 
 export function finishChatInlineEditMutation(
@@ -312,7 +330,8 @@ export function finishChatInlineEditMutation(
 	revision: string,
 	result: DraftClearResult,
 ): void {
-	const runtime = draftRuntimes.get(draftRuntimeKey(scope));
+	const key = draftRuntimeKey(scope);
+	const runtime = draftRuntimes.get(key);
 	if (!runtime || runtime.inlineEditToken !== token) return;
 	runtime.inlineEditToken = undefined;
 	runtime.sequence += 1;
@@ -321,10 +340,12 @@ export function finishChatInlineEditMutation(
 		accepted: { sequence: runtime.sequence, revision, result },
 	};
 	emitDraftRuntime(runtime);
+	evictSettledDraftRuntime(key, runtime);
 }
 
 function invalidateAcceptedDraftMutation(scope: ChatDraftScopeInput, kind: DraftMutationKind): void {
-	const runtime = draftRuntimes.get(draftRuntimeKey(scope));
+	const key = draftRuntimeKey(scope);
+	const runtime = draftRuntimes.get(key);
 	if (!runtime) return;
 	if (kind === "composer") {
 		if (!runtime.composer.accepted) return;
@@ -334,6 +355,7 @@ function invalidateAcceptedDraftMutation(scope: ChatDraftScopeInput, kind: Draft
 		runtime.inlineEdit = { pending: runtime.inlineEdit.pending };
 	}
 	emitDraftRuntime(runtime);
+	evictSettledDraftRuntime(key, runtime);
 }
 
 function storageKey(sessionId: string): string {
@@ -1099,21 +1121,7 @@ export function writeChatAttachments(
 ): DraftWriteResult {
 	const loaded = loadChatSessionDraft(scope, storage);
 	const current = loaded.draft;
-	if (
-		loaded.ok &&
-		current.composer.attachments.length === attachments.length &&
-		current.composer.attachments.every((attachment, index) => {
-			const next = attachments[index];
-			return (
-				next !== undefined &&
-				attachment.id === next.id &&
-				attachment.path === next.path &&
-				attachment.name === next.name &&
-				attachment.mimeType === next.mimeType &&
-				attachment.bytes === next.bytes
-			);
-		})
-	) {
+	if (loaded.ok && attachmentsEqual(current.composer.attachments, attachments)) {
 		return { ok: true, draft: current };
 	}
 	const result = mutateDraft(

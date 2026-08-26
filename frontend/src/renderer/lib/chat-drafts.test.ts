@@ -13,6 +13,7 @@ import {
 	clearUncertainChatInlineEditDelivery,
 	clearUncertainChatComposerDelivery,
 	finishChatComposerMutation,
+	finishChatInlineEditMutation,
 	getChatComposerMutation,
 	getChatInlineEditMutation,
 	markChatComposerDeliveryAccepted,
@@ -20,6 +21,7 @@ import {
 	prepareChatComposerDelivery,
 	prepareChatInlineEditDelivery,
 	readChatSessionDraft,
+	subscribeChatDraftRuntime,
 	writeChatAttachments,
 	writeChatComposerText,
 	writeChatInlineEdit,
@@ -738,16 +740,20 @@ describe("Chat draft storage", () => {
 		expect(restored.inlineEditDelivery).toBeUndefined();
 	});
 
-	it("keeps mutation ownership and accepted outcomes session-scoped across remounts", () => {
+	it("keeps only in-flight mutation ownership across remounts and evicts it once settled", () => {
 		const storage = new MemoryStorage();
 		const sessionId = "runtime-session-a";
 		const revision = writeChatComposerText(sessionId, "send once", storage).draft.composer.revision;
+		const unsubscribeFirstMount = subscribeChatDraftRuntime(sessionId, () => undefined);
 		const token = beginChatComposerMutation(sessionId);
 		expect(token).toBeTypeOf("symbol");
 		expect(beginChatComposerMutation(sessionId)).toBeUndefined();
 		expect(getChatComposerMutation(sessionId).pending).toBe(true);
 		expect(getChatComposerMutation("runtime-session-b").pending).toBe(false);
 
+		unsubscribeFirstMount();
+		expect(getChatComposerMutation(sessionId).pending).toBe(true);
+		const unsubscribeRemount = subscribeChatDraftRuntime(sessionId, () => undefined);
 		cancelChatComposerMutation(sessionId, Symbol("stale"));
 		expect(getChatComposerMutation(sessionId).pending).toBe(true);
 		const result = clearAcceptedChatComposer(sessionId, revision, storage);
@@ -762,5 +768,116 @@ describe("Chat draft storage", () => {
 		expect(getChatInlineEditMutation(sessionId).pending).toBe(true);
 		cancelChatInlineEditMutation(sessionId, inlineToken!);
 		expect(getChatInlineEditMutation(sessionId)).toEqual({ pending: false });
+
+		unsubscribeRemount();
+		expect(getChatComposerMutation(sessionId)).toEqual({ pending: false });
+		expect(getChatInlineEditMutation(sessionId)).toEqual({ pending: false });
+	});
+
+	it("evicts a failed clear and its full draft after the final subscriber leaves", () => {
+		const backing = new MemoryStorage();
+		const sessionId = "runtime-failed-clear";
+		const revision = writeChatComposerText(sessionId, "accepted but still durable", backing).draft
+			.composer.revision;
+		const removalFailure: DraftStorage = {
+			getItem: backing.getItem.bind(backing),
+			setItem: backing.setItem.bind(backing),
+			removeItem: () => {
+				throw new DOMException("blocked", "SecurityError");
+			},
+		};
+		const unsubscribe = subscribeChatDraftRuntime(sessionId, () => undefined);
+		const token = beginChatComposerMutation(sessionId);
+		const result = clearAcceptedChatComposer(sessionId, revision, removalFailure);
+		expect(result).toMatchObject({
+			ok: false,
+			cleared: false,
+			draft: { composer: { text: "accepted but still durable" } },
+		});
+		finishChatComposerMutation(sessionId, token!, revision, result);
+		expect(getChatComposerMutation(sessionId).accepted?.result).toBe(result);
+
+		unsubscribe();
+		expect(getChatComposerMutation(sessionId)).toEqual({ pending: false });
+	});
+
+	it("waits for every mutation to settle before evicting an unmounted runtime", () => {
+		const storage = new MemoryStorage();
+		const sessionId = "runtime-two-pending-mutations";
+		const composerRevision = writeChatComposerText(sessionId, "send once", storage).draft
+			.composer.revision;
+		const inlineRevision = writeChatInlineEdit(
+			sessionId,
+			{ turnId: "turn-1", text: "edit once", content: [] },
+			storage,
+		).draft.inlineEdit!.revision;
+		const unsubscribe = subscribeChatDraftRuntime(sessionId, () => undefined);
+		const composerToken = beginChatComposerMutation(sessionId)!;
+		const inlineToken = beginChatInlineEditMutation(sessionId)!;
+		unsubscribe();
+
+		finishChatComposerMutation(
+			sessionId,
+			composerToken,
+			composerRevision,
+			clearAcceptedChatComposer(sessionId, composerRevision, storage),
+		);
+		expect(getChatComposerMutation(sessionId).accepted?.revision).toBe(composerRevision);
+		expect(getChatInlineEditMutation(sessionId).pending).toBe(true);
+
+		finishChatInlineEditMutation(
+			sessionId,
+			inlineToken,
+			inlineRevision,
+			clearAcceptedChatInlineEdit(sessionId, inlineRevision, storage),
+		);
+		expect(getChatComposerMutation(sessionId)).toEqual({ pending: false });
+		expect(getChatInlineEditMutation(sessionId)).toEqual({ pending: false });
+	});
+
+	it("does not let a deleted runtime's late unsubscribe evict a later in-flight owner", () => {
+		const storage = new MemoryStorage();
+		const deleted: ChatDraftScope = {
+			sessionId: "runtime-recreated-session",
+			incarnation: "2026-08-25T09:00:00.000Z",
+		};
+		const replacement: ChatDraftScope = {
+			sessionId: deleted.sessionId,
+			incarnation: "2026-08-26T09:00:00.000Z",
+		};
+		expect(activateChatDraftScope(deleted, storage)).toMatchObject({ ok: true });
+		const unsubscribeDeletedRuntime = subscribeChatDraftRuntime(deleted, () => undefined);
+		expect(activateChatDraftScope(replacement, storage)).toMatchObject({
+			ok: true,
+			replaced: true,
+		});
+
+		const laterToken = beginChatComposerMutation(deleted);
+		expect(laterToken).toBeTypeOf("symbol");
+		unsubscribeDeletedRuntime();
+		expect(getChatComposerMutation(deleted).pending).toBe(true);
+
+		cancelChatComposerMutation(deleted, laterToken!);
+		expect(getChatComposerMutation(deleted)).toEqual({ pending: false });
+	});
+
+	it("does not revise a draft for equivalent attachment metadata", () => {
+		const storage = new MemoryStorage();
+		const attachment = {
+			id: "attachment-equivalent",
+			path: ".ao/attachments/equivalent.png",
+			name: "equivalent.png",
+			mimeType: "image/png",
+			bytes: 42,
+		};
+		const first = writeChatAttachments("attachment-equivalence", [attachment], storage);
+		const equivalent = writeChatAttachments(
+			"attachment-equivalence",
+			[{ ...attachment }],
+			storage,
+		);
+
+		expect(equivalent.ok).toBe(true);
+		expect(equivalent.draft.composer.revision).toBe(first.draft.composer.revision);
 	});
 });
