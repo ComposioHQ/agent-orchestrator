@@ -149,6 +149,24 @@ test.describe("ChatUI conversation integrity", () => {
 
 			const attachedFile = page.getByRole("list", { name: "Attached files" }).getByRole("listitem");
 			await expect(attachedFile).toContainText(/worktree path.*native image|native image.*worktree path/i);
+			const freshDelivery = attachedFile.getByRole("status");
+			await expect(freshDelivery).toHaveAttribute("aria-live", "polite");
+			await expect(freshDelivery).toHaveAttribute("aria-atomic", "true");
+
+			await page.reload();
+			const restoredFile = page
+				.getByRole("list", { name: "Attached files" })
+				.getByRole("listitem");
+			await expect(restoredFile).toContainText("Worktree path · agent must read");
+			await expect(restoredFile).not.toContainText("native image");
+			await expect(restoredFile.getByRole("status")).toHaveText("Worktree path · agent must read");
+			await page.getByRole("combobox", { name: "Message the agent" }).fill("Inspect after reload");
+			await page.getByRole("button", { name: "Send message" }).click();
+
+			await expect.poll(() => chatUI.requestsMatching("POST", "/conversation/messages").length).toBe(1);
+			const sent = chatUI.requestsMatching("POST", "/conversation/messages")[0]?.body as JsonObject;
+			expect(String(sent.text ?? "")).toContain(".ao/attachments/");
+			expect(sent.attachments ?? []).toEqual([]);
 		});
 
 		test("preserves the original filename in staged and native image payloads", async ({ chatUI, page }) => {
