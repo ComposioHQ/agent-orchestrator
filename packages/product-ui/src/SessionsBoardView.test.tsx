@@ -127,9 +127,9 @@ describe("SessionsBoardView", () => {
 			},
 			{
 				...baseSession,
+				activity: { state: "blocked", lastActivityAt: "2026-08-08T09:00:00Z" },
 				id: `${column}-attention`,
 				kanbanColumn: column,
-				status: "needs_input",
 				title: `${column} attention`,
 				updatedAt: "2026-08-08T09:00:00Z",
 			},
@@ -180,8 +180,44 @@ describe("SessionsBoardView", () => {
 				"border-status-needs-you",
 				"bg-[color-mix(in_srgb,var(--color-status-needs-you)_8%,var(--color-surface))]",
 			);
+			expect(screen.getByTestId("session-status")).toHaveClass(
+				"border",
+				"border-[color-mix(in_srgb,var(--session-status-tone)_24%,transparent)]",
+				"bg-[color-mix(in_srgb,var(--session-status-tone)_10%,transparent)]",
+			);
 		},
 	);
+
+	it("gives blocked cards the persistent orange attention treatment", () => {
+		render(
+			<SessionCardView
+				externalLink={ExternalLink}
+				labels={{
+					formatTime: () => "5m ago",
+					intakeIssue: (id) => `Issue ${id}`,
+					pr: {
+						short: "PR",
+						states: { closed: "closed", draft: "draft", merged: "merged", open: "open" },
+					},
+					updatedAt: (timestamp) => `Updated ${timestamp}`,
+				}}
+				renderAvatar={(provider) => <span role="img" aria-label={provider}>C</span>}
+				session={{
+					...baseSession,
+					activity: { state: "blocked", lastActivityAt: "2026-08-08T09:00:00Z" },
+				}}
+			/>,
+		);
+
+		expect(screen.getByTestId("board-session-card")).toHaveClass(
+			"animate-attention-card-pulse",
+			"border-status-needs-you",
+		);
+		expect(screen.getByTestId("session-status")).toHaveClass(
+			"border",
+			"border-[color-mix(in_srgb,var(--session-status-tone)_24%,transparent)]",
+		);
+	});
 
 	it("leaves ordinary cards on the neutral surface", () => {
 		render(
@@ -205,6 +241,11 @@ describe("SessionsBoardView", () => {
 		expect(card).toHaveClass("border", "border-border", "bg-surface");
 		expect(card).toHaveClass("rounded-lg");
 		expect(card).not.toHaveClass("animate-attention-card-pulse", "border-status-needs-you");
+		expect(screen.getByTestId("session-status")).not.toHaveClass(
+			"border",
+			"border-[color-mix(in_srgb,var(--session-status-tone)_24%,transparent)]",
+			"bg-[color-mix(in_srgb,var(--session-status-tone)_10%,transparent)]",
+		);
 	});
 
 	it("renders a neutral card with grouped multi-PR, usage, and action presentation", () => {

@@ -14,7 +14,6 @@ import { motion, useReducedMotion } from "motion/react";
 import type { ExternalLinkComponent } from "./external-link";
 import { ChevronIcon, GitBranchIcon } from "./icons";
 import {
-	attentionZone,
 	getDisplayStatusLabel,
 	getKanbanColumnView,
 	getSessionStatusView,
@@ -144,8 +143,7 @@ function BoardColumnView<TSession extends BoardSessionPresentation>({
 }) {
 	const ordered = [...sessions].sort((left, right) => {
 		const attentionPriority =
-			Number(attentionZone(right.status) === "action") -
-			Number(attentionZone(left.status) === "action");
+			Number(requiresHumanAction(right)) - Number(requiresHumanAction(left));
 		return attentionPriority || right.updatedAt.localeCompare(left.updatedAt);
 	});
 	return (
@@ -178,7 +176,7 @@ function BoardColumnView<TSession extends BoardSessionPresentation>({
 }
 
 export type SessionCardViewProps = {
-		action?: ReactNode;
+	action?: ReactNode;
 	branchAction?: ReactNode;
 	branchIcon?: ReactNode;
 	error?: string;
@@ -220,11 +218,7 @@ export function SessionCardView({
 	usage,
 }: SessionCardViewProps) {
 	const badge = getSessionStatusView(session.status, translate);
-	const needsAttention =
-		session.status === "ci_failed" ||
-		session.status === "changes_requested" ||
-		session.status === "review_pending" ||
-		session.activity?.state === "blocked";
+	const needsAttention = requiresHumanAction(session);
 	const statusPresentation = session.statusPresentation;
 	const needsAttentionChip = needsAttention && !statusPresentation;
 	const column = getKanbanColumnView(toKanbanColumn(session.kanbanColumn, session.status), translate);
@@ -285,8 +279,9 @@ export function SessionCardView({
 				<div className="flex min-w-0 flex-1">
 					<span
 						className={cn(
-							"inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-sm border border-[color-mix(in_srgb,var(--session-status-tone)_24%,transparent)] bg-[color-mix(in_srgb,var(--session-status-tone)_10%,transparent)] px-1.5 py-0.5 text-2xs font-medium",
-							!statusTone && "border-border bg-overlay",
+							"inline-flex min-w-0 max-w-full items-center gap-1.5 px-1.5 py-0.5 text-2xs font-medium",
+							needsAttentionChip &&
+								"rounded-sm border border-[color-mix(in_srgb,var(--session-status-tone)_24%,transparent)] bg-[color-mix(in_srgb,var(--session-status-tone)_10%,transparent)]",
 							needsAttentionChip ? "text-status-needs-you" : (statusPresentation?.className ?? column.titleClassName),
 						)}
 						data-kanban-column={statusPresentation ? undefined : column.column}
@@ -566,4 +561,13 @@ function sameLabel(a: string, b: string): boolean {
 			.replace(/^(feat|fix|chore|refactor|session)\//, "")
 			.replace(/[^a-z0-9]+/g, "");
 	return normalize(a) === normalize(b);
+}
+
+function requiresHumanAction(session: BoardSessionPresentation): boolean {
+	return (
+		session.status === "ci_failed" ||
+		session.status === "changes_requested" ||
+		session.status === "review_pending" ||
+		session.activity?.state === "blocked"
+	);
 }
