@@ -2013,6 +2013,12 @@ func TestApprovalIsStoredPendingWithProviderDecisions(t *testing.T) {
 	if len(resolvedDetail.Decisions) != 3 {
 		t.Fatalf("resolved decision options = %d, want preserved 3", len(resolvedDetail.Decisions))
 	}
+	if !hasActivitySignal(h.activity.snapshot(), domain.ActivityWaitingInput, "chat.approval.requested") {
+		t.Fatalf("activity signals = %v, want waiting_input on approval request", h.activity.snapshot())
+	}
+	if !hasActivitySignal(h.activity.snapshot(), domain.ActivityActive, "chat.approval.resolved") {
+		t.Fatalf("activity signals = %v, want active after approval resolve", h.activity.snapshot())
+	}
 }
 
 // A controller that dies mid-turn must not leave the turn looking like it is still

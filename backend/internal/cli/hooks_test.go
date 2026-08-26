@@ -1133,3 +1133,73 @@ func TestHooks_DaemonErrorIsSwallowed(t *testing.T) {
 		t.Errorf("expected the failure surfaced to stderr, got %q", errOut)
 	}
 }
+
+func TestHooks_CursorBeforeShellDefaultModeReportsWaitingInput(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "ao-7")
+	t.Setenv("AO_PERMISSION_MODE", "default")
+	cfg := setConfigEnv(t)
+	srv, capture := activityServer(t, http.StatusOK, `{"ok":true}`)
+	writeRunFileFor(t, cfg, srv)
+
+	stdout, _, err := executeCLI(t, Deps{
+		In:           strings.NewReader(`{"command":"git status"}`),
+		ProcessAlive: func(int) bool { return true },
+	}, "hooks", "cursor", "before-shell-execution")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := capturedState(t, capture); got != "waiting_input" {
+		t.Fatalf("state = %q, want waiting_input", got)
+	}
+	var out cursorPermissionHookOutput
+	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &out); err != nil {
+		t.Fatalf("decode stdout: %v\nstdout=%q", err, stdout)
+	}
+	if out.Permission != "ask" {
+		t.Fatalf("permission = %q, want ask", out.Permission)
+	}
+}
+
+func TestHooks_CursorBeforeShellAutoModeReportsActive(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "ao-7")
+	t.Setenv("AO_PERMISSION_MODE", "auto")
+	cfg := setConfigEnv(t)
+	srv, capture := activityServer(t, http.StatusOK, `{"ok":true}`)
+	writeRunFileFor(t, cfg, srv)
+
+	stdout, _, err := executeCLI(t, Deps{
+		In:           strings.NewReader(`{"command":"git status"}`),
+		ProcessAlive: func(int) bool { return true },
+	}, "hooks", "cursor", "before-shell-execution")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := capturedState(t, capture); got != "active" {
+		t.Fatalf("state = %q, want active", got)
+	}
+	var out cursorPermissionHookOutput
+	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &out); err != nil {
+		t.Fatalf("decode stdout: %v\nstdout=%q", err, stdout)
+	}
+	if out.Permission != "allow" {
+		t.Fatalf("permission = %q, want allow", out.Permission)
+	}
+}
+
+func TestHooks_CursorAfterShellExecutionReportsActive(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "ao-7")
+	cfg := setConfigEnv(t)
+	srv, capture := activityServer(t, http.StatusOK, `{"ok":true}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, _, err := executeCLI(t, Deps{
+		In:           strings.NewReader(`{"command":"git status","output":"ok"}`),
+		ProcessAlive: func(int) bool { return true },
+	}, "hooks", "cursor", "after-shell-execution")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := capturedState(t, capture); got != "active" {
+		t.Fatalf("state = %q, want active", got)
+	}
+}

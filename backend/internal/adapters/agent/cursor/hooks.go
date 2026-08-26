@@ -61,8 +61,12 @@ var cursorManagedHooks = []cursorHookSpec{
 	{Event: "sessionStart", Command: cursorHookCommandPrefix + "session-start"},
 	{Event: "beforeSubmitPrompt", Command: cursorHookCommandPrefix + "user-prompt-submit"},
 	{Event: "stop", Command: cursorHookCommandPrefix + "stop"},
-	{Event: "beforeShellExecution", Command: cursorHookCommandPrefix + "permission-request"},
-	{Event: "beforeMCPExecution", Command: cursorHookCommandPrefix + "permission-request"},
+	{Event: "beforeShellExecution", Command: cursorHookCommandPrefix + "before-shell-execution"},
+	{Event: "beforeMCPExecution", Command: cursorHookCommandPrefix + "before-mcp-execution"},
+	{Event: "afterShellExecution", Command: cursorHookCommandPrefix + "after-shell-execution"},
+	{Event: "afterMCPExecution", Command: cursorHookCommandPrefix + "after-mcp-execution"},
+	{Event: "postToolUse", Command: cursorHookCommandPrefix + "post-tool-use"},
+	{Event: "postToolUseFailure", Command: cursorHookCommandPrefix + "post-tool-use-failure"},
 }
 
 // GetAgentHooks installs AO's Cursor hooks into the worktree-local

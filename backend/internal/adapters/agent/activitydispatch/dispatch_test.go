@@ -83,6 +83,29 @@ func TestPrimeAgentDerivesManagedExtensionActivity(t *testing.T) {
 	}
 }
 
+func TestCursorDerivesManagedHookActivity(t *testing.T) {
+	tests := []struct {
+		event string
+		want  domain.ActivityState
+	}{
+		{"session-start", domain.ActivityActive},
+		{"user-prompt-submit", domain.ActivityActive},
+		{"stop", domain.ActivityIdle},
+		{"after-shell-execution", domain.ActivityActive},
+	}
+	for _, tt := range tests {
+		t.Run(tt.event, func(t *testing.T) {
+			got, ok := Derive("cursor", tt.event, []byte(`{}`))
+			if !ok || got != tt.want {
+				t.Fatalf("Derive(cursor, %q) = (%q, %v), want (%q, true)", tt.event, got, ok, tt.want)
+			}
+		})
+	}
+	if got, ok := Derive("cursor", "before-shell-execution", []byte(`{}`)); ok {
+		t.Fatalf("Derive(cursor, before-shell-execution) = (%q, true), want no activity from deriver", got)
+	}
+}
+
 func TestMuseDerivesManagedHookActivity(t *testing.T) {
 	tests := []struct {
 		event string

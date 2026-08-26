@@ -1508,6 +1508,7 @@ func (c *Controller) Resolve(ctx context.Context, requestID string, decision por
 		ctx, c.conversation.ID, requestID, string(detail), c.now()); err != nil {
 		return fmt.Errorf("record approval %s: %w", requestID, err)
 	}
+	c.reportActivity(ctx, domain.ActivityActive, "chat.approval.resolved", c.now())
 	return nil
 }
 
@@ -1534,6 +1535,7 @@ func (c *Controller) ResolveInput(
 		ctx, c.conversation.ID, requestID, string(detail), c.now()); err != nil {
 		return fmt.Errorf("record input %s: %w", requestID, err)
 	}
+	c.reportActivity(ctx, domain.ActivityActive, "chat.input.resolved", c.now())
 	return nil
 }
 
@@ -2451,8 +2453,12 @@ func (c *Controller) afterProject(ctx context.Context, event ports.ChatEvent, pr
 		c.drainLocked(ctx)
 	case ports.ChatEventApprovalRequested:
 		c.reportActivity(ctx, domain.ActivityWaitingInput, "chat.approval.requested", now)
+	case ports.ChatEventApprovalResolved:
+		c.reportActivity(ctx, domain.ActivityActive, "chat.approval.resolved", now)
 	case ports.ChatEventInputRequested:
 		c.reportActivity(ctx, domain.ActivityWaitingInput, "chat.input.requested", now)
+	case ports.ChatEventInputResolved:
+		c.reportActivity(ctx, domain.ActivityActive, "chat.input.resolved", now)
 	case ports.ChatEventControllerState:
 		// Volatile state moves only after the provider event and all of its durable
 		// cleanup committed. Otherwise a rollback can say "stopped" in memory while
