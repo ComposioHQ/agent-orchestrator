@@ -152,6 +152,11 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 	// False only while the initial replay is being buffered — the pane keeps a
 	// cover over xterm until the burst has been written and parsed.
 	const [replaySettled, setReplaySettled] = useState(true);
+	// True once this attachment has opened at least once. Lets the pane show a
+	// calm "Connecting…" during the first connect (e.g. a cloud sandbox worker
+	// still checking in) and reserve "disconnected — reattaching" for a genuine
+	// mid-session drop.
+	const [hasAttached, setHasAttached] = useState(false);
 
 	const sessionRef = useRef(session);
 	sessionRef.current = session;
@@ -300,7 +305,9 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		}
 		transition("reattaching");
 		// Not ready → no timer; the daemonReady effect reconnects when it flips.
-		if (!optionsRef.current.daemonReady) {
+		// A cloud pane targets its sandbox worker, not the local daemon, so it
+		// keeps retrying on its own backoff regardless of local daemon state.
+		if (!optionsRef.current.daemonReady && !sessionRef.current?.cloud) {
 			return;
 		}
 		if (r.retryTimer) {
@@ -554,6 +561,7 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 				r.inputReady = true;
 				r.attempts = 0;
 				setError(undefined);
+				setHasAttached(true);
 				transition("attached");
 				// Bound the gate from here: the daemon fires onOpen from setPTY and
 				// starts copyOut immediately after, so the replay is imminent and
@@ -729,8 +737,11 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 			r.detached = false;
 			r.attempts = 0;
 			setError(undefined);
+			setHasAttached(false);
 			if (handle) {
-				if (optionsRef.current.daemonReady) {
+				// A cloud pane connects to its sandbox worker directly, so it must
+				// not wait on the LOCAL daemon being ready; only local panes do.
+				if (optionsRef.current.daemonReady || Boolean(sessionRef.current?.cloud)) {
 					transition("connecting");
 					connect();
 				} else {
@@ -862,5 +873,5 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		[teardownMux],
 	);
 
-	return { attach, state, error, replaySettled, syncVisibleSize };
+	return { attach, state, error, replaySettled, hasAttached, syncVisibleSize };
 }

@@ -916,8 +916,16 @@ export function providerScrollsByKeyboard(provider?: string): boolean {
 	return provider ? KEYBOARD_SCROLL_PROVIDERS.has(provider) : false;
 }
 
-function bannerText(state: TerminalSessionState, t: TFunction, error?: string): string | undefined {
-	if (state === "reattaching") return t("terminal.reattaching");
+function bannerText(
+	state: TerminalSessionState,
+	t: TFunction,
+	hasAttached: boolean,
+	error?: string,
+): string | undefined {
+	// Before the first successful open (e.g. a cloud sandbox worker still coming
+	// up), show a calm "Connecting…" rather than the alarming "disconnected —
+	// reattaching", which is reserved for a genuine mid-session drop.
+	if (state === "reattaching") return hasAttached ? t("terminal.reattaching") : t("terminal.connecting");
 	if (state === "error") return t("terminal.error", { error: error ?? t("terminal.connectionFailed") });
 	return undefined;
 }
@@ -960,7 +968,7 @@ function AttachedTerminal({
 	// A shell pane has no session, so it hands the hook its handle directly
 	// instead of reading one off `attachSession`.
 	const shellTerminalHandleId = terminalTarget?.kind === "shell" ? terminalTarget.handleId : undefined;
-	const { attach, state, error, replaySettled, syncVisibleSize } = useTerminalSession(attachSession, {
+	const { attach, state, error, replaySettled, hasAttached, syncVisibleSize } = useTerminalSession(attachSession, {
 		coverInitialReplay: terminalTarget?.kind !== "reviewer",
 		createMux,
 		daemonReady,
@@ -1061,7 +1069,7 @@ function AttachedTerminal({
 		);
 	}
 
-	const banner = bannerText(state, t, error);
+	const banner = bannerText(state, t, hasAttached, error);
 	const showEmptyState = !handleId;
 	// Cover xterm while the attachment buffers the initial replay, so the pane
 	// appears already drawn at the tail instead of visibly scrolling down to it.
@@ -1165,7 +1173,7 @@ function ReplayCover() {
 		// live the whole time, so clicks, selection and wheel must pass through
 		// rather than being swallowed for the length of the gate.
 		<div
-			className="terminal-surface pointer-events-none absolute inset-0 grid place-items-center"
+			className="bg-terminal-opaque pointer-events-none absolute inset-0 grid place-items-center"
 			data-testid="terminal-replay-cover"
 		>
 			{showLabel && <div className="font-mono text-caption text-terminal-dim">{t("terminal.loadingOutput")}</div>}

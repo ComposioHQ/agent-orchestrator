@@ -252,6 +252,31 @@ export async function getCloudSession(
 }
 
 /**
+ * Fast, non-blocking variant of getCloudSession for the renderer's initial
+ * mount. Returns the on-disk identity immediately (no WorkOS round-trip), so
+ * the sidebar and the create-project Cloud tab render right away instead of
+ * blanking for seconds while a token refresh runs on cold open. If the stored
+ * token is stale, the refresh runs in the background and the corrected result
+ * (rotated session, or null on terminal failure) is pushed over
+ * cloud:sessionChanged, which the renderer already subscribes to. The CP proxy
+ * refreshes independently via getCloudAccessToken, so outbound requests stay
+ * authorized regardless.
+ */
+export async function getCloudSessionCached(
+  dataDir: string,
+): Promise<CloudAccount | null> {
+  if (!workos) return null;
+  const store = await readAuthStore(dataDir);
+  if (!store.session) return null;
+  if (tokenExpiresSoon(store.session.accessToken)) {
+    void getCloudSession(dataDir)
+      .then((refreshed) => notifyRenderersFn?.(refreshed))
+      .catch(() => {});
+  }
+  return publicAccount(store.session);
+}
+
+/**
  * Raw bearer token for the main-process control-plane proxy
  * (cloud-cp-proxy.ts). Runs the same refresh-if-expiring path as
  * getCloudSession, then reads the (possibly rotated) token back out of the
@@ -514,7 +539,7 @@ export function installCloudIPC(
   notifyRenderers: (session: CloudAccount | null) => void,
 ): void {
   notifyRenderersFn = notifyRenderers;
-  ipcMain.handle("cloud:getSession", () => getCloudSession(getDataDir()));
+  ipcMain.handle("cloud:getSession", () => getCloudSessionCached(getDataDir()));
   ipcMain.handle("cloud:signIn", async () => {
     if (!workos) {
       await dialog.showMessageBox({

@@ -102,10 +102,13 @@ export function CreateProjectFlow({
 	// Workspace vs Project. Consumed exactly once by openFolderStep.
 	const [pendingDropPath, setPendingDropPath] = useState<string | null>(null);
 
-	// The Local | Cloud choice renders only when the daemon offers cloud AND the
-	// user is signed in; everyone else sees the unchanged local-only flow.
+	// The Local | Cloud choice renders whenever this deployment offers cloud
+	// (cloudEnabled). Actually creating a cloud project also needs the user
+	// signed in (cloudAvailable); when they aren't, the Cloud tab shows a
+	// sign-in prompt instead of the create form so the option is always
+	// discoverable rather than silently absent.
 	const { cloudEnabled } = useCloudGate();
-	const { status: cloudSessionStatus } = useCloudSession();
+	const { status: cloudSessionStatus, signIn: cloudSignIn } = useCloudSession();
 	const cloudAvailable = cloudEnabled && cloudSessionStatus === "authenticated";
 	const [offering, setOffering] = useState<ProjectOffering>("local");
 
@@ -294,11 +297,15 @@ export function CreateProjectFlow({
 				})}
 			{hasModePicker && embedded && !modePickerOpen && !cloneDialogOpen && selectedPath === null && (
 				<div className="flex w-full flex-col items-center gap-3">
-					{cloudAvailable && (
+					{cloudEnabled && (
 						<ProjectOfferingTabs disabled={isBusy} offering={offering} onOfferingChange={setOffering} />
 					)}
-					{cloudAvailable && offering === "cloud" ? (
-						<CloudProjectCard onCreated={onCloudProjectCreated} />
+					{cloudEnabled && offering === "cloud" ? (
+						cloudAvailable ? (
+							<CloudProjectCard onCreated={onCloudProjectCreated} />
+						) : (
+							<CloudSignInPanel disabled={isBusy} onSignIn={cloudSignIn} />
+						)
 					) : (
 						<ImportSourcePicker disabled={isBusy} onSelect={selectSource} />
 					)}
@@ -313,10 +320,12 @@ export function CreateProjectFlow({
 				<>
 					<CreateProjectSourceDialog
 						cloudAvailable={cloudAvailable}
+						cloudEnabled={cloudEnabled}
 						disabled={isBusy}
 						offering={offering}
 						onCloudCreated={onCloudProjectCreated}
 						onOfferingChange={setOffering}
+						onSignIn={cloudSignIn}
 						open={modePickerOpen}
 						onOpenChange={(open) => {
 							if (isBusy) return;
@@ -473,19 +482,23 @@ function shouldScanCreateFailure(message: string): boolean {
 
 function CreateProjectSourceDialog({
 	cloudAvailable,
+	cloudEnabled,
 	disabled,
 	offering,
 	onCloudCreated,
 	onOfferingChange,
+	onSignIn,
 	onOpenChange,
 	onSelect,
 	open,
 }: {
 	cloudAvailable: boolean;
+	cloudEnabled: boolean;
 	disabled: boolean;
 	offering: ProjectOffering;
 	onCloudCreated: () => void;
 	onOfferingChange: (offering: ProjectOffering) => void;
+	onSignIn: () => void;
 	onOpenChange: (open: boolean) => void;
 	onSelect: (source: ProjectSource) => void;
 	open: boolean;
@@ -496,11 +509,15 @@ function CreateProjectSourceDialog({
 				<Dialog.Overlay className="dialog-overlay data-[state=open]:animate-overlay-in" />
 				<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay w-[min(var(--size-import-modal-max),calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 border-0 bg-transparent p-0 shadow-none outline-none data-[state=open]:animate-modal-in">
 					<div className="flex w-full flex-col items-center gap-3">
-						{cloudAvailable && (
+						{cloudEnabled && (
 							<ProjectOfferingTabs disabled={disabled} offering={offering} onOfferingChange={onOfferingChange} />
 						)}
-						{cloudAvailable && offering === "cloud" ? (
-							<CloudProjectCard dialog onClose={() => onOpenChange(false)} onCreated={onCloudCreated} />
+						{cloudEnabled && offering === "cloud" ? (
+							cloudAvailable ? (
+								<CloudProjectCard dialog onClose={() => onOpenChange(false)} onCreated={onCloudCreated} />
+							) : (
+								<CloudSignInPanel dialog disabled={disabled} onSignIn={onSignIn} />
+							)
 						) : (
 							<ImportSourcePicker disabled={disabled} onClose={() => onOpenChange(false)} onSelect={onSelect} dialog />
 						)}
@@ -511,7 +528,12 @@ function CreateProjectSourceDialog({
 	);
 }
 
-/** Local | Cloud segmented choice, shown only when the cloud offering is usable. */
+/**
+ * Local | Cloud segmented choice, shown whenever this deployment offers cloud.
+ * A caption below spells out what each choice means (sessions on this machine
+ * vs. each session in its own cloud sandbox) so the decision is explicit rather
+ * than a subtle toggle that is easy to miss.
+ */
 function ProjectOfferingTabs({
 	disabled,
 	offering,
@@ -523,17 +545,49 @@ function ProjectOfferingTabs({
 }) {
 	const { t } = useTranslation();
 	return (
-		<Tabs value={offering} onValueChange={(value) => onOfferingChange(value === "cloud" ? "cloud" : "local")}>
-			<TabsList aria-label={t("createProject.kindChoice")}>
-				<TabsTrigger disabled={disabled} value="local">
-					{t("createProject.kindLocal")}
-				</TabsTrigger>
-				<TabsTrigger disabled={disabled} value="cloud">
-					<Cloud className="size-3.5" aria-hidden="true" />
-					{t("createProject.kindCloud")}
-				</TabsTrigger>
-			</TabsList>
-		</Tabs>
+		<div className="flex w-full flex-col items-center gap-1.5">
+			<Tabs value={offering} onValueChange={(value) => onOfferingChange(value === "cloud" ? "cloud" : "local")}>
+				<TabsList aria-label={t("createProject.kindChoice")}>
+					<TabsTrigger disabled={disabled} value="local">
+						{t("createProject.kindLocal")}
+					</TabsTrigger>
+					<TabsTrigger disabled={disabled} value="cloud">
+						<Cloud className="size-3.5" aria-hidden="true" />
+						{t("createProject.kindCloud")}
+					</TabsTrigger>
+				</TabsList>
+			</Tabs>
+			<p className="text-caption leading-body text-secondary text-center" role="status">
+				{offering === "cloud" ? t("createProject.kindCloudHint") : t("createProject.kindLocalHint")}
+			</p>
+		</div>
+	);
+}
+
+/**
+ * Shown when the user picks Cloud but is not signed in yet. Keeps the Cloud
+ * option discoverable and actionable from the create-project flow instead of
+ * silently hiding it: a single button starts the WorkOS sign-in.
+ */
+function CloudSignInPanel({
+	disabled,
+	onSignIn,
+}: {
+	dialog?: boolean;
+	disabled: boolean;
+	onSignIn: () => void;
+}) {
+	const { t } = useTranslation();
+	return (
+		<div className="flex w-full max-w-(--size-import-modal-max) flex-col items-center gap-4 rounded-welcome-panel border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-modal)] p-(--size-import-modal-padding) text-center shadow-[var(--shadow-import-modal)]">
+			<Cloud className="size-6 text-[var(--color-text-import-title)]" aria-hidden="true" />
+			<p className="text-[13px] leading-5 text-[var(--color-text-import-subtitle)]">
+				{t("createProject.cloudSignInPrompt")}
+			</p>
+			<Button disabled={disabled} onClick={onSignIn} type="button">
+				{t("shell.signInToAOCloud")}
+			</Button>
+		</div>
 	);
 }
 
