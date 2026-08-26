@@ -15,9 +15,6 @@ import type { ExternalLinkComponent } from "./external-link";
 import {
 	ChevronIcon,
 	GitBranchIcon,
-	GitMergeIcon,
-	GitPullRequestClosedIcon,
-	GitPullRequestDraftIcon,
 	GitPullRequestIcon,
 	MessageSquareIcon,
 } from "./icons";
@@ -484,16 +481,7 @@ function BoardPullRequestGroup({
 
 function PullRequestLifecycleIcon({ state }: { state: BoardPullRequestState }) {
 	const className = cn("size-icon-sm shrink-0", lifecycleClassName(state));
-	switch (state) {
-		case "merged":
-			return <GitMergeIcon aria-hidden="true" className={className} />;
-		case "closed":
-			return <GitPullRequestClosedIcon aria-hidden="true" className={className} />;
-		case "draft":
-			return <GitPullRequestDraftIcon aria-hidden="true" className={className} />;
-		case "open":
-			return <GitPullRequestIcon aria-hidden="true" className={className} />;
-	}
+	return <GitPullRequestIcon aria-hidden="true" className={className} />;
 }
 
 export function groupBoardPullRequests(
