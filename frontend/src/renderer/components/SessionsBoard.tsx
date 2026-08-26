@@ -99,14 +99,18 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const sessions = usesPreviewWorkspaceData && demoWorkspaceId && liveSessions.length === 0
 		? demoBoardSessions(demoWorkspaceId)
 		: liveSessions;
-	const usageBySession = usesPreviewWorkspaceData && demoWorkspaceId && liveSessions.length === 0
-		? new Map<string, SessionUsageSummary>([
-				["demo-building", { sessionId: "demo-building", processedTokens: 18_400, totalTokens: 20_000, incomplete: false }],
-				["demo-ci-failing", { sessionId: "demo-ci-failing", processedTokens: 46_700, totalTokens: 50_000, incomplete: false }],
-				["demo-needs-review", { sessionId: "demo-needs-review", processedTokens: 12_900, totalTokens: 15_000, incomplete: false }],
-				["demo-ready", { sessionId: "demo-ready", processedTokens: 81_200, totalTokens: 85_000, incomplete: false }],
-				["demo-blocked", { sessionId: "demo-blocked", processedTokens: 3_100, totalTokens: 4_000, incomplete: true }],
-			])
+	const usageBySession = usesPreviewWorkspaceData
+		? new Map<string, SessionUsageSummary>(
+				sessions.map((session, index) => [
+					session.id,
+					liveUsageBySession.get(session.id) ?? {
+						sessionId: session.id,
+						processedTokens: [18_400, 46_700, 12_900, 81_200, 3_100][index % 5],
+						totalTokens: 100_000,
+						incomplete: false,
+					},
+				]),
+			)
 		: liveUsageBySession;
 	const orchestrator = projectId ? newestActiveOrchestrator(workspaces[0]?.sessions ?? []) : undefined;
 	const orchestratorActivityLabel = orchestrator ? getAgentActivityView(orchestrator.activity, t).label : undefined;
