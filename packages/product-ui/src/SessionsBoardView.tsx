@@ -292,7 +292,7 @@ export function SessionCardView({
 				)}
 			</div>
 			{(prs.length > 0 || session.trackerIssueId) && (
-				<div className="flex min-w-0 flex-col gap-1.5 px-3.5 pb-2.5">
+				<div className="flex min-w-0 flex-col gap-1.5 px-3.5 pb-1">
 					{prs.length > 0 && (
 						<div className="flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-2xs text-muted-foreground">
 							{groupBoardPullRequests(prs).map((group) => (
