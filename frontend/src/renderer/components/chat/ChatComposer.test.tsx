@@ -312,12 +312,20 @@ describe("send keys", () => {
 			fireEvent.keyDown(field, { key: "Enter" });
 			expect(onSend).toHaveBeenCalledTimes(1);
 
+			view.rerender(
+				<ChatComposer busy onSend={onSend} draftSessionId={sessionId} />,
+			);
+			expect(
+				screen.getByRole("button", { name: "Finish clearing accepted message" }),
+			).toBeEnabled();
+
 			failRemoval = false;
 			await userEvent.click(
 				screen.getByRole("button", { name: "Finish clearing accepted message" }),
 			);
 			await waitFor(() => expect(field).toHaveTextContent(""));
 			expect(onSend).toHaveBeenCalledTimes(1);
+			view.rerender(<ChatComposer onSend={onSend} draftSessionId={sessionId} />);
 
 			await typeInComposer(field, "a new message after recovery");
 			fireEvent.keyDown(field, { key: "Enter" });
