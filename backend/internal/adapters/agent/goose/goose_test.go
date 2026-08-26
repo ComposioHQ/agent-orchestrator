@@ -7,8 +7,10 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"testing"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/binaryutil"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/hooksjson"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -544,6 +546,49 @@ func TestResolveGooseBinaryFallback(t *testing.T) {
 	}
 	if bin == "" {
 		t.Fatal("ResolveGooseBinary returned empty path with no error")
+	}
+}
+
+func TestResolveGooseBinaryRejectsPresslyGoose(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fixture is Unix-only")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "goose")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nprintf 'goose version: 3.27.1\\n'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+
+	_, err := resolveGooseBinary(context.Background(), binaryutil.BinarySpec{
+		Label: "goose",
+		Names: []string{"goose"},
+	})
+	if !errors.Is(err, ports.ErrAgentBinaryNotFound) {
+		t.Fatalf("err = %v, want ErrAgentBinaryNotFound", err)
+	}
+}
+
+func TestResolveGooseBinaryAcceptsBlockGoose(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fixture is Unix-only")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "goose")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nprintf 'goose 1.46.0\\n'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+
+	got, err := resolveGooseBinary(context.Background(), binaryutil.BinarySpec{
+		Label: "goose",
+		Names: []string{"goose"},
+	})
+	if err != nil {
+		t.Fatalf("resolveGooseBinary = (%q, %v), want (%q, nil)", got, err, path)
+	}
+	if got != path {
+		t.Fatalf("resolveGooseBinary = %q, want %q", got, path)
 	}
 }
 

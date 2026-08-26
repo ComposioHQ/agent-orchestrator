@@ -27,13 +27,17 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agentbase"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/binaryutil"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
 )
 
 const (
@@ -271,10 +275,66 @@ var gooseBinarySpec = binaryutil.BinarySpec{
 	},
 }
 
-// ResolveGooseBinary returns the path to the goose binary, or a wrapped
-// ports.ErrAgentBinaryNotFound when it is absent.
+// ResolveGooseBinary returns the Block/AI Goose path, or a wrapped
+// ports.ErrAgentBinaryNotFound when it is absent or a different goose CLI.
 func ResolveGooseBinary(ctx context.Context) (string, error) {
-	return binaryutil.ResolveBinary(ctx, gooseBinarySpec)
+	return resolveGooseBinary(ctx, gooseBinarySpec)
+}
+
+func resolveGooseBinary(ctx context.Context, spec binaryutil.BinarySpec) (string, error) {
+	first, err := binaryutil.ResolveBinary(ctx, spec)
+	if err != nil {
+		return "", err
+	}
+
+	candidates := append([]string{first}, gooseCanonicalBinaryCandidates(spec)...)
+	seen := make(map[string]struct{}, len(candidates))
+	for _, candidate := range candidates {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		if candidate == "" {
+			continue
+		}
+		if _, ok := seen[candidate]; ok {
+			continue
+		}
+		seen[candidate] = struct{}{}
+		if isOfficialGooseBinary(ctx, candidate) {
+			return candidate, nil
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	return "", fmt.Errorf("%s: %w", spec.Label, ports.ErrAgentBinaryNotFound)
+}
+
+func isOfficialGooseBinary(ctx context.Context, binary string) bool {
+	probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
+	out, err := aoprocess.CommandContext(probeCtx, binary, "--version").CombinedOutput()
+	if err != nil || probeCtx.Err() != nil {
+		return false
+	}
+	version := strings.TrimSpace(string(out))
+	return strings.HasPrefix(version, "goose ") && !strings.HasPrefix(version, "goose version:")
+}
+
+func gooseCanonicalBinaryCandidates(spec binaryutil.BinarySpec) []string {
+	if runtime.GOOS == "windows" {
+		return nil
+	}
+	candidates := append([]string(nil), spec.UnixPaths...)
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return candidates
+	}
+	for _, parts := range spec.UnixHomePaths {
+		candidates = append(candidates, filepath.Join(append([]string{home}, parts...)...))
+	}
+	return candidates
 }
 
 func (p *Plugin) gooseBinary(ctx context.Context) (string, error) {
