@@ -15,6 +15,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	chatsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/chat"
 	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
 	"github.com/aoagents/agent-orchestrator/backend/internal/telemetrymeta"
 )
@@ -902,6 +903,14 @@ func toAPIError(err error) error {
 		return apierr.Conflict("SESSION_NOT_RESTORABLE", "Session is not restorable", nil)
 	case errors.Is(err, sessionmanager.ErrTerminated):
 		return apierr.Conflict("SESSION_TERMINATED", "Session is terminated", nil)
+	case errors.Is(err, chatsvc.ErrNoController):
+		// The session's chat controller is not live yet (daemon just restarted,
+		// controller stopped, mid-reconnect). This is a transient not-ready, not a
+		// server fault, so it must be a typed 409 rather than an untyped 500. The
+		// conversation-send path already maps it this way; the session-send path
+		// (orchestrator relay, `ao send`) fell through to a raw 500 here.
+		return apierr.Conflict("CHAT_CONTROLLER_NOT_READY",
+			"the agent controller for this session is not running", nil)
 	case errors.Is(err, sessionmanager.ErrAgentExited):
 		return apierr.Conflict("AGENT_EXITED",
 			"The agent process exited; relaunch it before sending another message", nil)

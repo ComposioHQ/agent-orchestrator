@@ -17,6 +17,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	chatsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/chat"
 	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
 )
 
@@ -3061,6 +3062,19 @@ func TestToAPIError_NotResumable(t *testing.T) {
 	var e *apierr.Error
 	if !errors.As(mapped, &e) || e.Kind != apierr.KindConflict || e.Code != "SESSION_NOT_RESUMABLE" {
 		t.Fatalf("mapped = %v, want Conflict SESSION_NOT_RESUMABLE", mapped)
+	}
+}
+
+// A send to a session whose chat controller is not live must map to a typed 409
+// CHAT_CONTROLLER_NOT_READY, not a raw 500. Regression for the session-send path
+// (orchestrator relay / `ao send`) that previously fell through toAPIError's
+// default and surfaced `send X: no live chat controller for session` as a 500.
+func TestToAPIError_NoChatController(t *testing.T) {
+	err := fmt.Errorf("send mer-1: %w", chatsvc.ErrNoController)
+	mapped := toAPIError(err)
+	var e *apierr.Error
+	if !errors.As(mapped, &e) || e.Kind != apierr.KindConflict || e.Code != "CHAT_CONTROLLER_NOT_READY" {
+		t.Fatalf("mapped = %v, want Conflict CHAT_CONTROLLER_NOT_READY", mapped)
 	}
 }
 
