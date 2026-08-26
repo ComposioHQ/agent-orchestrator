@@ -2,9 +2,9 @@
 // detached process. It owns the agent's PTY (via the ptyConn seam), exposes
 // it over a loopback TCP socket using the B1 binary protocol, replays
 // scrollback to new clients, fans output to all connected clients, and shuts
-// down gracefully (ConPTY dispose first, then clients, then listener).
+// down gracefully (PTY dispose first, then clients, then listener).
 //
-// This file is cross-platform; only the real conptyConn impl is Windows-tagged.
+// This file is cross-platform; build-tagged files provide the native PTY.
 package conpty
 
 import (
@@ -27,7 +27,7 @@ type ptyConn interface {
 	io.Reader // PTY output (raw bytes from the terminal)
 	io.Writer // PTY input (keystrokes to the terminal)
 	Resize(cols, rows int) error
-	Close() error          // dispose the ConPTY
+	Close() error          // dispose the platform PTY
 	Done() <-chan struct{} // closed when the child process exits
 	ExitCode() (int, bool) // (code, true) once exited; (0, false) while running
 	PID() int
@@ -154,7 +154,7 @@ func (h *host) runAcceptLoop() {
 	}
 }
 
-// shutdown is idempotent: disposes the ConPTY, closes clients, closes the
+// shutdown is idempotent: disposes the PTY, closes clients, closes the
 // listener. Mirrors the pty-host.ts shutdown() function.
 // ponytail: 50ms sleep after pty.Close() gives the OS ConPTY helper
 // (conpty_console_list_agent.exe) time to release cleanly; avoids the
@@ -163,7 +163,7 @@ func (h *host) shutdown() {
 	h.shutdownOnce.Do(func() {
 		close(h.shutdownC)
 
-		// 1. Dispose the ConPTY first (critical ordering).
+		// 1. Dispose the PTY first (critical ordering).
 		_ = h.cfg.PTY.Close()
 
 		// 2. Brief grace so the OS ConPTY helper can clean up.
