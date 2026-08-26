@@ -252,7 +252,7 @@ export function SessionCardView({
 				"group relative w-full rounded-lg border border-border text-left transition-[background-color,box-shadow,transform] duration-[120ms] ease-out",
 				badge.cardClassName ?? "border-border bg-surface",
 				interactive &&
-					"cursor-pointer hover:bg-interactive-hover focus-within:bg-interactive-hover focus-within:ring-2 focus-within:ring-ring/60 active:scale-[0.99]",
+					"cursor-pointer hover:bg-interactive-hover focus-within:bg-interactive-hover active:scale-[0.99]",
 				needsAttention &&
 					"animate-attention-card-pulse border-status-needs-you bg-[color-mix(in_srgb,var(--color-status-needs-you)_8%,var(--color-surface))]",
 			)}
@@ -294,15 +294,17 @@ export function SessionCardView({
 			{(prs.length > 0 || session.trackerIssueId) && (
 				<div className="flex min-w-0 flex-col gap-1.5 px-3.5 pb-1">
 					{prs.length > 0 && (
-						<div className="flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-2xs text-muted-foreground">
-							{groupBoardPullRequests(prs).map((group) => (
+						<div className="flex min-w-0 flex-col gap-y-1 font-mono text-2xs text-muted-foreground">
+							{groupBoardPullRequests(prs).flatMap((group) =>
+								group.prs.map((pr) => (
 								<BoardPullRequestGroup
 									externalLink={externalLink}
-									group={group}
-									key={group.state}
+									group={{ state: group.state, prs: [pr] }}
+									key={`${group.state}-${pr.url || pr.number}`}
 									labels={labels.pr}
 								/>
-							))}
+								)),
+							)}
 						</div>
 					)}
 					{session.trackerIssueId && (
@@ -424,19 +426,21 @@ function BoardPullRequestGroup({
 				))}
 			</span>
 			<span className="sr-only">{statusLabel}</span>
-			<div className="-ml-0.5 flex shrink-0 items-center pl-1">
-				{group.prs
-					.flatMap((pr) => pr.reviewerAvatars ?? [])
-					.slice(0, 3)
-					.map((avatar, index) => (
-						<img
-							alt=""
-							className={cn("size-5 rounded-full border-2 border-surface object-cover ring-1 ring-border", index > 0 && "-ml-1.5")}
-							key={`${avatar}-${index}`}
-							src={avatar}
-						/>
-					))}
-			</div>
+			{group.prs.some((pr) => (pr.commentCount ?? 0) > 0) ? (
+				<div className="-ml-0.5 flex shrink-0 items-center pl-1">
+					{group.prs
+						.flatMap((pr) => pr.reviewerAvatars ?? [])
+						.slice(0, 3)
+						.map((avatar, index) => (
+							<img
+								alt=""
+								className={cn("size-5 rounded-full border-2 border-surface object-cover ring-1 ring-border", index > 0 && "-ml-1.5")}
+								key={`${avatar}-${index}`}
+								src={avatar}
+							/>
+						))}
+				</div>
+			) : null}
 			{group.prs.some((pr) => (pr.commentCount ?? 0) > 0) ? (
 				<span className="ml-auto inline-flex shrink-0 items-center gap-1 text-xs tabular-nums text-muted-foreground">
 					<MessageSquareIcon aria-hidden="true" className="size-icon-2xs" />
