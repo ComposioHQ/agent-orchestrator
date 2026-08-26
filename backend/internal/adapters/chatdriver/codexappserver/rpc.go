@@ -293,27 +293,40 @@ func (c *conn) request(ctx context.Context, method string, params, out any) erro
 		return fmt.Errorf("%s: %w", method, err)
 	}
 
+	var f frame
+	var ok bool
 	select {
 	case <-ctx.Done():
 		c.mu.Lock()
-		delete(c.pending, id)
+		_, cancellationOwnsRequest := c.pending[id]
+		if cancellationOwnsRequest {
+			delete(c.pending, id)
+		}
 		c.mu.Unlock()
-		return fmt.Errorf("%s: %w: %w", method, errRequestDeliveryUncertain, ctx.Err())
+		if cancellationOwnsRequest {
+			return fmt.Errorf("%s: %w: %w", method, errRequestDeliveryUncertain, ctx.Err())
+		}
+		// deliver or readLoop already removed the request from pending and owns
+		// its terminal result. Consume that result even though the caller's
+		// context is now done, so a definitive response cannot be reclassified
+		// as an uncertain delivery outcome.
+		f, ok = <-ch
 
-	case f, ok := <-ch:
-		if !ok {
-			return fmt.Errorf("%s: %w: %w", method, errRequestDeliveryUncertain, ErrConnClosed)
-		}
-		if f.Error != nil {
-			return fmt.Errorf("%s: %w", method, f.Error)
-		}
-		if out != nil && len(f.Result) > 0 {
-			if err := json.Unmarshal(f.Result, out); err != nil {
-				return fmt.Errorf("%s: decode result: %w", method, err)
-			}
-		}
-		return nil
+	case f, ok = <-ch:
 	}
+
+	if !ok {
+		return fmt.Errorf("%s: %w: %w", method, errRequestDeliveryUncertain, ErrConnClosed)
+	}
+	if f.Error != nil {
+		return fmt.Errorf("%s: %w", method, f.Error)
+	}
+	if out != nil && len(f.Result) > 0 {
+		if err := json.Unmarshal(f.Result, out); err != nil {
+			return fmt.Errorf("%s: decode result: %w", method, err)
+		}
+	}
+	return nil
 }
 
 // notify sends a client->server notification, which expects no reply.

@@ -44,6 +44,12 @@ type cancelAfterSteerRecorder struct {
 	cancel context.CancelFunc
 }
 
+type cancelAfterInterruptRecorder struct {
+	*steerRecorder
+	cancel context.CancelFunc
+	err    error
+}
+
 // blockingInterruptSteerRecorder keeps Stop inside the provider boundary so a
 // competing queue command can exercise the interval after scope confirmation
 // but before the interrupt outcome is known.
@@ -74,6 +80,11 @@ func (s *blockingInterruptSteerRecorder) Interrupt(ctx context.Context, _ string
 	case <-ctx.Done():
 		return errors.Join(ports.ErrChatInterruptDeliveryUncertain, ctx.Err())
 	}
+}
+
+func (s *cancelAfterInterruptRecorder) Interrupt(context.Context, string) error {
+	s.cancel()
+	return s.err
 }
 
 func (s *blockingInterruptSteerRecorder) Compact(context.Context) (ports.ChatCompactionResult, error) {
@@ -1004,6 +1015,61 @@ func TestInterruptFailureReleasesFenceAndResumesOriginalQueue(t *testing.T) {
 	})
 	if got := provider.sentTexts(); len(got) != 2 || got[1] != "original queue" {
 		t.Fatalf("provider received %v, want original queue resumed after failure", got)
+	}
+}
+
+// A cancelled HTTP request does not make a provider response ambiguous when the
+// response already crossed the RPC correlation boundary. A definitive rejection
+// releases Stop's queue fence: the confirmed prompt stays queued, then resumes
+// normally when the active turn completes.
+func TestInterruptProviderRejectionAfterCancellationPreservesAndReleasesQueue(t *testing.T) {
+	providerFailure := errors.New("provider rejected interrupt")
+	ctx := context.Background()
+	interruptCtx, cancel := context.WithCancel(ctx)
+	provider := &cancelAfterInterruptRecorder{
+		steerRecorder: newSteerRecorder(), cancel: cancel, err: providerFailure,
+	}
+	h := newHarnessWithConversation(t, provider)
+
+	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "running", ClientMessageID: "provider-rejection-running", Origin: domain.MessageOriginHuman,
+	}); err != nil {
+		t.Fatalf("Send running: %v", err)
+	}
+	provider.emit(ports.ChatEvent{
+		Kind: ports.ChatEventTurnStarted, ProviderTurnID: "provider-turn-1",
+	})
+	queued, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "preserved queue", ClientMessageID: "provider-rejection-queued", Origin: domain.MessageOriginHuman,
+	})
+	if err != nil {
+		t.Fatalf("Send queued: %v", err)
+	}
+
+	interruptErr := h.svc.Interrupt(interruptCtx, testSession, []string{queued.ID})
+	if !errors.Is(interruptErr, providerFailure) {
+		t.Fatalf("Interrupt error = %v, want definitive provider rejection", interruptErr)
+	}
+	if errors.Is(interruptErr, ports.ErrChatInterruptDeliveryUncertain) {
+		t.Fatalf("Interrupt error = %v, did not want delivery uncertainty", interruptErr)
+	}
+	snapshot, err := h.st.LoadConversationSnapshot(ctx, h.ctrl.ConversationID())
+	if err != nil {
+		t.Fatalf("load snapshot: %v", err)
+	}
+	if got := turnStateByText(t, snapshot)["preserved queue"]; got != domain.TurnStateQueued {
+		t.Fatalf("confirmed queue = %q, want preserved queued state", got)
+	}
+
+	provider.emit(ports.ChatEvent{
+		Kind: ports.ChatEventTurnCompleted, ProviderTurnID: "provider-turn-1",
+		TurnState: domain.TurnStateCompleted,
+	})
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return turnStateByText(t, s)["preserved queue"] == domain.TurnStateRunning
+	})
+	if got := provider.sentTexts(); len(got) != 2 || got[1] != "preserved queue" {
+		t.Fatalf("provider received %v, want preserved queue resumed after rejection", got)
 	}
 }
 

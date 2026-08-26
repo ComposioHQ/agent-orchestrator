@@ -167,6 +167,83 @@ func TestRequestHonorsContextAndToleratesLateResponse(t *testing.T) {
 	}
 }
 
+// The reader owns a request when it removes it from pending. Cancellation after
+// that boundary must wait for the terminal response or closure instead of
+// overwriting the reader's definitive result with caller cancellation.
+func TestRequestCancellationWaitsForTerminalResultAlreadyOwnedByReader(t *testing.T) {
+	tests := []struct {
+		name        string
+		finish      func(chan frame, *json.RawMessage)
+		assertError func(*testing.T, error)
+	}{
+		{
+			name: "provider rejection",
+			finish: func(ch chan frame, id *json.RawMessage) {
+				ch <- frame{ID: id, Error: &rpcError{Code: -32600, Message: "provider rejected interrupt"}}
+			},
+			assertError: func(t *testing.T, err error) {
+				var providerErr *rpcError
+				if !errors.As(err, &providerErr) || providerErr.Message != "provider rejected interrupt" {
+					t.Fatalf("err = %v, want definitive provider rejection", err)
+				}
+				if errors.Is(err, context.Canceled) || errors.Is(err, errRequestDeliveryUncertain) {
+					t.Fatalf("err = %v, provider response must beat later cancellation", err)
+				}
+			},
+		},
+		{
+			name: "connection closure",
+			finish: func(ch chan frame, _ *json.RawMessage) {
+				close(ch)
+			},
+			assertError: func(t *testing.T, err error) {
+				if !errors.Is(err, ErrConnClosed) || !errors.Is(err, errRequestDeliveryUncertain) {
+					t.Fatalf("err = %v, want delivery-uncertain connection closure", err)
+				}
+				if errors.Is(err, context.Canceled) {
+					t.Fatalf("err = %v, connection closure must beat later cancellation", err)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, fake := newFakeAppServer(t, rejectAllServerRequests)
+			ctx, cancel := context.WithCancel(context.Background())
+			done := make(chan error, 1)
+			go func() { done <- c.request(ctx, "turn/interrupt", nil, nil) }()
+
+			req := fake.nextRequest()
+			var id int64
+			if err := json.Unmarshal(*req.ID, &id); err != nil {
+				t.Fatalf("decode request id: %v", err)
+			}
+			// Reproduce deliver/readLoop's ownership boundary, but hold its channel
+			// result until request has observed cancellation. This pins the ordering
+			// that used to misclassify a definitive response as uncertain.
+			c.mu.Lock()
+			terminal, ok := c.pending[id]
+			if ok {
+				delete(c.pending, id)
+			}
+			c.mu.Unlock()
+			if !ok {
+				t.Fatalf("request %d was not pending", id)
+			}
+
+			cancel()
+			select {
+			case err := <-done:
+				t.Fatalf("request returned before its owned terminal result arrived: %v", err)
+			case <-time.After(50 * time.Millisecond):
+			}
+			tt.finish(terminal, req.ID)
+			tt.assertError(t, <-done)
+		})
+	}
+}
+
 func TestNotificationsAreFannedOut(t *testing.T) {
 	c, fake := newFakeAppServer(t, rejectAllServerRequests)
 
