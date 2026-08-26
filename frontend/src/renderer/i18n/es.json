@@ -380,6 +380,7 @@
 	"mobile.connectionMethod": "Método de conexión",
 	"mobile.copyPassword": "Copiar contraseña",
 	"mobile.description": "Empareja la aplicación móvil de Agent Orchestrator con este escritorio a través de tu LAN.",
+	"mobile.disable": "Desactivar conexión móvil",
 	"mobile.devices.confirmRemove": "Confirmar eliminación",
 	"mobile.devices.empty": "Aún no hay dispositivos emparejados.",
 	"mobile.devices.loading": "Cargando dispositivos…",

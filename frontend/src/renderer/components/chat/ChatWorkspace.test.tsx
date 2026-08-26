@@ -235,21 +235,14 @@ describe("Chat message timestamps", () => {
 			origin: "provider",
 			text: "assistant message",
 		} satisfies ConversationMessage;
-		const { container } = render(
+		render(
 			<>
 				<HumanMessage message={user} sessionId="ao-1" />
-				<AssistantMessage message={assistant} />
+				<AssistantMessage message={assistant} showCopy />
 			</>,
 		);
 
-		const messageTimes = Array.from(container.querySelectorAll("div[title]")).map((element) =>
-			element.getAttribute("title"),
-		);
-		expect(messageTimes).toHaveLength(2);
-		for (const time of messageTimes) {
-			expect(time).toHaveLength(5);
-			expect(time?.[2]).toBe(":");
-		}
+		expect(screen.getAllByLabelText(/^Sent \d{2}:\d{2}$/)).toHaveLength(2);
 	});
 
 	it("labels yesterday and older messages with calendar dates", () => {
@@ -263,7 +256,7 @@ describe("Chat message timestamps", () => {
 			{ ...humanMessage("yesterday"), id: "yesterday", createdAt: relativeDate(1) },
 			{ ...humanMessage("older"), id: "older", createdAt: relativeDate(3) },
 		];
-		const { container } = render(
+		render(
 			<>
 				{messages.map((message) => (
 					<HumanMessage key={message.id} message={message} sessionId="ao-1" />
@@ -271,10 +264,8 @@ describe("Chat message timestamps", () => {
 			</>,
 		);
 
-		const titles = Array.from(container.querySelectorAll("div[title]"), (element) => element.getAttribute("title"));
-		expect(titles[0]).toBe("Yesterday");
-		expect(titles[1]).not.toBe("Yesterday");
-		expect(titles[1]?.includes(":")).toBe(false);
+		expect(screen.getByLabelText(/^Sent Yesterday · \d{2}:\d{2}$/)).toBeInTheDocument();
+		expect(screen.getByLabelText(/^Sent [A-Z][a-z]{2} \d{1,2}, \d{4}$/)).toBeInTheDocument();
 	});
 });
 
@@ -361,6 +352,98 @@ describe("ChatWorkspace timeline", () => {
 		expect(screen.getByLabelText("Message the agent").closest("form")).toContainElement(stop);
 		await user.click(stop);
 		expect(onInterrupt).toHaveBeenCalledOnce();
+	});
+
+	it("interrupts the active turn when Escape is pressed", () => {
+		const onInterrupt = vi.fn();
+		const snapshot = structuredClone(chatFixture);
+		snapshot.items = snapshot.items.filter(
+			(item) => !(item.kind === "activity" && item.activityKind === "approval" && item.status === "pending"),
+		);
+
+		render(<ChatWorkspace snapshot={snapshot} onInterrupt={onInterrupt} />);
+		fireEvent.keyDown(screen.getByLabelText("Message the agent"), { key: "Escape" });
+
+		expect(onInterrupt).toHaveBeenCalledOnce();
+	});
+
+	it("focuses the composer from conversation whitespace but preserves button focus", async () => {
+		const user = userEvent.setup();
+		const snapshot = structuredClone(chatFixture);
+		snapshot.items = snapshot.items.filter(
+			(item) => !(item.kind === "activity" && item.activityKind === "approval" && item.status === "pending"),
+		);
+
+		render(<ChatWorkspace snapshot={snapshot} onInterrupt={vi.fn()} />);
+		const composer = screen.getByLabelText("Message the agent");
+		await user.click(screen.getByRole("log", { name: "Conversation" }));
+		expect(document.activeElement).toBe(composer);
+
+		const stop = screen.getByRole("button", { name: "Stop turn" });
+		await user.click(stop);
+		expect(document.activeElement).toBe(stop);
+	});
+
+	it("does not steal focus from a text selection in the conversation", () => {
+		const snapshot = structuredClone(chatFixture);
+		snapshot.items = snapshot.items.filter(
+			(item) => !(item.kind === "activity" && item.activityKind === "approval" && item.status === "pending"),
+		);
+		render(<ChatWorkspace snapshot={snapshot} onInterrupt={vi.fn()} />);
+
+		const selection = window.getSelection();
+		const range = document.createRange();
+		const text = screen.getByRole("log", { name: "Conversation" }).querySelector("p")?.firstChild;
+		expect(text).not.toBeNull();
+		range.setStart(text as Text, 0);
+		range.setEnd(text as Text, Math.min(4, text?.textContent?.length ?? 0));
+		selection?.removeAllRanges();
+		selection?.addRange(range);
+
+		fireEvent.click(screen.getByRole("log", { name: "Conversation" }));
+		expect(selection?.isCollapsed).toBe(false);
+	});
+
+	it("does not interrupt while an elicitation is open", () => {
+		const onInterrupt = vi.fn();
+		const snapshot = structuredClone(chatFixture);
+		snapshot.turns[0] = { ...snapshot.turns[0], state: "running" };
+		snapshot.items = snapshot.items.filter(
+			(item) => !(item.kind === "activity" && item.activityKind === "approval" && item.status === "pending"),
+		);
+		snapshot.items.push({
+			kind: "activity",
+			id: "input-1",
+			sequence: 100,
+			revision: 1,
+			turnId: "turn-1",
+			activityKind: "user_input",
+			status: "pending",
+			summary: "Choose a direction",
+			requestId: "input-1",
+			detail: { inputMode: "form", message: "Choose a direction" },
+			createdAt: "2026-08-24T00:00:00Z",
+		});
+		render(<ChatWorkspace snapshot={snapshot} onInterrupt={onInterrupt} />);
+		fireEvent.keyDown(screen.getByLabelText("Message the agent"), { key: "Escape" });
+		expect(onInterrupt).not.toHaveBeenCalled();
+	});
+
+	it("does not interrupt while a menu is open", () => {
+		const onInterrupt = vi.fn();
+		const snapshot = structuredClone(chatFixture);
+		snapshot.turns[0] = { ...snapshot.turns[0], state: "running" };
+		snapshot.items = snapshot.items.filter(
+			(item) => !(item.kind === "activity" && item.activityKind === "approval" && item.status === "pending"),
+		);
+		render(<ChatWorkspace snapshot={snapshot} onInterrupt={onInterrupt} />);
+		const menu = document.createElement("div");
+		menu.setAttribute("role", "menu");
+		menu.setAttribute("data-state", "open");
+		document.body.appendChild(menu);
+		fireEvent.keyDown(screen.getByLabelText("Message the agent"), { key: "Escape" });
+		expect(onInterrupt).not.toHaveBeenCalled();
+		menu.remove();
 	});
 
 	it("moves a pending approval into the chat composer", async () => {
@@ -1138,12 +1221,12 @@ describe("ChatWorkspace message actions", () => {
 		snapshot.items = snapshot.items.filter((item) => item.sequence <= 12);
 		render(<ChatWorkspace snapshot={snapshot} />);
 		// The latest assistant message is mid-stream; half a message is not what the
-		// reader means by "copy this".
-		const streaming = screen.getByLabelText("still writing").closest("div");
-		expect(streaming?.querySelector('[aria-label*="Copy message"]')).toBeNull();
+		// reader means by "copy this", and streaming has no extra visual indicator.
+		expect(screen.queryByLabelText("still writing")).not.toBeInTheDocument();
+		expect(screen.queryByText("Writing…")).not.toBeInTheDocument();
 	});
 
-	it("does not leave a writing caret behind prose followed by tool activity", () => {
+	it("does not show a writing caret while prose is streaming", () => {
 		render(<ChatWorkspace snapshot={chatFixture} />);
 		expect(screen.queryByLabelText("still writing")).not.toBeInTheDocument();
 	});

@@ -380,6 +380,7 @@
 	"mobile.connectionMethod": "Méthode de connexion",
 	"mobile.copyPassword": "Copier le mot de passe",
 	"mobile.description": "Associez l'application mobile Agent Orchestrator à ce bureau via votre LAN.",
+	"mobile.disable": "Désactiver la connexion mobile",
 	"mobile.devices.confirmRemove": "Confirmer la suppression",
 	"mobile.devices.empty": "Aucun appareil associé pour le moment.",
 	"mobile.devices.loading": "Chargement des appareils…",

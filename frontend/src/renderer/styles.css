@@ -2251,19 +2251,6 @@ body.is-resizing-x .session-split[data-workspace-resizing="true"] [data-slot="in
 	color: color-mix(in oklch, var(--color-text-primary) 58%, transparent);
 }
 
-/* The live caret belongs to the text being written. A separate block after the
-   markdown looked like an empty automation row, especially between tool calls. */
-.chat-assistant-streaming .chat-md > :last-child::after {
-	display: inline-block;
-	width: 2px;
-	height: 1em;
-	margin-left: 0.25rem;
-	vertical-align: -0.12em;
-	background: var(--color-text-muted);
-	content: "";
-	animation: pulse 1.5s ease-in-out infinite;
-}
-
 .chat-md-emoji {
 	display: inline-block;
 	font-size: 0.86em;

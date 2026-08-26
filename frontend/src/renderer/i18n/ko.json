@@ -378,6 +378,7 @@
 	"mobile.connectionMethod": "연결 방법",
 	"mobile.copyPassword": "비밀번호 복사",
 	"mobile.description": "Agent Orchestrator 모바일 앱을 LAN을 통해 이 데스크톱과 페어링합니다.",
+	"mobile.disable": "모바일 연결 끄기",
 	"mobile.devices.confirmRemove": "제거 확인",
 	"mobile.devices.empty": "아직 페어링된 기기가 없습니다.",
 	"mobile.devices.loading": "기기를 불러오는 중…",
