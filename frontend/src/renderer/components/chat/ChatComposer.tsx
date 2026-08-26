@@ -615,17 +615,24 @@ export function ChatComposer({
 	]);
 
 	useEffect(() => {
-		if (draftSeedText === undefined) {
+		// A concurrent replacement can render this memoized seed, remain disconnected,
+		// and commit only after another surface accepted and cleared the draft. Read the
+		// session record again at the effect/commit boundary so acknowledgement cannot
+		// turn the runtime snapshot into an ABA that resurrects accepted text.
+		const committedSeedText =
+			draftSeed?.text ??
+			(draftScope ? readChatSessionDraft(draftScope).composer.text : draftSeedText);
+		if (committedSeedText === undefined) {
 			restoredSeedKey.current = undefined;
 			return;
 		}
-		const seedKey = JSON.stringify([draftSeedId, draftSeedText]);
+		const seedKey = JSON.stringify([draftSeedId, committedSeedText]);
 		if (restoredSeedKey.current === seedKey) return;
 		restoredSeedKey.current = seedKey;
-		textRef.current = draftSeedText;
-		hasTextRef.current = draftSeedText.trim().length > 0;
+		textRef.current = committedSeedText;
+		hasTextRef.current = committedSeedText.trim().length > 0;
 		setHasText(hasTextRef.current);
-		editor.current?.setText(draftSeedText);
+		editor.current?.setText(committedSeedText);
 		dismissedKeyRef.current = null;
 		setDismissedKey(null);
 		highlightedRef.current = 0;
@@ -636,7 +643,7 @@ export function ChatComposer({
 		// A session restore is already durable; writing it again here needlessly
 		// changes the accepted-send revision during mount.
 		if (draftScope && draftSeed) {
-			const result = writeChatComposerText(draftScope, draftSeedText);
+			const result = writeChatComposerText(draftScope, committedSeedText);
 			composerRevision.current = result.draft.composer.revision;
 			setTextDraftPersistenceError(
 				result.ok

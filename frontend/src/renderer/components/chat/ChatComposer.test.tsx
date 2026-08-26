@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { Profiler } from "react";
+import { Activity, Profiler } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { ChatComposer } from "./ChatComposer";
 import type { ChatSkill } from "../../types/conversation";
@@ -381,6 +381,70 @@ describe("send keys", () => {
 		expect(restored).toHaveTextContent("later revision");
 		expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 		await waitFor(() => expect(getChatDraftBoundary(sessionId)).toBeUndefined());
+	});
+
+	it("does not resurrect an accepted draft when a same-session replacement rendered before settlement", async () => {
+		const sessionId = "composer-rendered-replacement-before-settlement";
+		let acceptSend!: () => void;
+		const onSend = vi.fn(
+			() =>
+				new Promise<void>((resolve) => {
+					acceptSend = resolve;
+				}),
+		);
+		const surfaces = (
+			showOriginal: boolean,
+			replacementMode?: "hidden" | "visible",
+		) => (
+			<>
+				{showOriginal ? (
+					<div data-testid="original-composer-surface">
+						<ChatComposer onSend={onSend} draftSessionId={sessionId} />
+					</div>
+				) : null}
+				{replacementMode ? (
+					<Activity key="replacement" mode={replacementMode}>
+						<div data-testid="replacement-composer-surface">
+							<ChatComposer onSend={onSend} draftSessionId={sessionId} />
+						</div>
+					</Activity>
+				) : null}
+			</>
+		);
+
+		const view = render(surfaces(true));
+		const original = within(screen.getByTestId("original-composer-surface")).getByLabelText(
+			"Message the agent",
+		);
+		await typeInComposer(original, "send exactly once across the render gap");
+		fireEvent.keyDown(original, { key: "Enter" });
+		await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+
+		// Activity renders the replacement state but keeps its effects disconnected.
+		// This is the render-to-commit window: the original surface remains the sole
+		// subscriber that can observe and acknowledge settlement.
+		view.rerender(surfaces(true, "hidden"));
+		const renderedReplacement = within(
+			await screen.findByTestId("replacement-composer-surface"),
+		).getByLabelText("Message the agent");
+		expect(renderedReplacement).toBeInTheDocument();
+		expect(readChatSessionDraft(sessionId).composer.text).toBe(
+			"send exactly once across the render gap",
+		);
+
+		await act(async () => acceptSend());
+		await waitFor(() => expect(composerWireText(original)).toBe(""));
+		expect(readChatSessionDraft(sessionId).composer.text).toBe("");
+
+		// Commit the already-rendered replacement only after the original subscriber
+		// consumed the receipt. Accepted text must not come back unlocked and resendable.
+		view.rerender(surfaces(false, "visible"));
+		const committedReplacement = within(
+			screen.getByTestId("replacement-composer-surface"),
+		).getByLabelText("Message the agent");
+		expect(composerWireText(committedReplacement)).toBe("");
+		fireEvent.keyDown(committedReplacement, { key: "Enter" });
+		expect(onSend).toHaveBeenCalledTimes(1);
 	});
 
 	it("renders command failures from the live surface", () => {
