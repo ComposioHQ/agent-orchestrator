@@ -37,7 +37,14 @@ function fileCatalog(
 	paths: string[] = FILES,
 	overrides: Partial<WorkspaceFileCatalog> = {},
 ): WorkspaceFileCatalog {
-	return { paths, truncated: false, failed: false, refreshDegraded: false, ...overrides };
+	return {
+		paths,
+		truncated: false,
+		failed: false,
+		refreshDegraded: false,
+		refreshFailed: false,
+		...overrides,
+	};
 }
 
 function renderComposer(props: Partial<Parameters<typeof ChatComposer>[0]> = {}) {
@@ -1133,7 +1140,9 @@ describe("file mentions", () => {
 			/Path reference only: backend\/internal\/config\.ts\./,
 		);
 
-		token.focus();
+		field.focus();
+		await userEvent.tab();
+		expect(token).toHaveFocus();
 		expect(await screen.findByRole("tooltip")).toHaveTextContent(
 			/Path reference only: backend\/internal\/config\.ts\./,
 		);
@@ -1176,6 +1185,22 @@ describe("file mentions", () => {
 		expect(screen.getByRole("status")).toHaveTextContent(
 			"File references may be stale while workspace updates reconnect. AO is retrying.",
 		);
+	});
+
+	it("keeps cached references available when their latest refresh fails", async () => {
+		const { field } = renderComposer({
+			fileCatalog: fileCatalog(["src/cached.ts"], {
+				refreshFailed: true,
+				refreshError: "workspace refresh is offline",
+			}),
+		});
+		await typeInComposer(field, "@cached");
+
+		expect(screen.getByRole("option", { name: /cached\.ts/ })).toBeVisible();
+		expect(screen.getByRole("status")).toHaveTextContent(
+			"File references may be stale because the latest refresh failed. workspace refresh is offline",
+		);
+		expect(screen.queryByRole("alert")).toBeNull();
 	});
 
 	it("inserts a file instead of sending when Enter follows typing before React rerenders", async () => {

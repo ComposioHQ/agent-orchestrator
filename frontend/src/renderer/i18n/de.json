@@ -1280,6 +1280,8 @@
 	"chat.composer.fileReferencesLoadFailed": "Dateiverweise konnten nicht geladen werden. {{detail}}",
 	"chat.composer.fileReferencesLoadFailedFallback": "Dateiverweise konnten nicht geladen werden. Versuchen Sie es erneut, nachdem die Verbindung zum Worktree wiederhergestellt wurde.",
 	"chat.composer.fileReferencesRefreshDegraded": "Dateiverweise sind möglicherweise veraltet, während die Verbindung zu Worktree-Aktualisierungen wiederhergestellt wird. AO versucht es erneut.",
+	"chat.composer.fileReferencesRefreshFailed": "Dateiverweise sind möglicherweise veraltet, da die letzte Aktualisierung fehlgeschlagen ist. {{detail}} AO versucht es erneut.",
+	"chat.composer.fileReferencesRefreshFailedFallback": "Dateiverweise sind möglicherweise veraltet, da die letzte Aktualisierung fehlgeschlagen ist. AO versucht es erneut.",
 	"chat.composer.pathReferenceDescription": "Nur Pfadverweis: {{path}}. Der Agent liest die Datei mit normalen Berechtigungen aus dem aktuellen Worktree; Dateiinhalte sind nicht angehängt.",
 	"chat.composer.pathReferenceLabel": "{{file}} – Pfadverweis",
 	"pr.card.reviewStatus": "Review status",

@@ -1262,6 +1262,8 @@
 	"chat.composer.fileReferencesLoadFailed": "无法加载文件引用。{{detail}}",
 	"chat.composer.fileReferencesLoadFailedFallback": "无法加载文件引用。请在工作树连接恢复后重试。",
 	"chat.composer.fileReferencesRefreshDegraded": "正在重新连接工作树更新，文件引用可能已过时。AO 正在重试。",
+	"chat.composer.fileReferencesRefreshFailed": "最新刷新失败，文件引用可能已过时。{{detail}} AO 正在重试。",
+	"chat.composer.fileReferencesRefreshFailedFallback": "最新刷新失败，文件引用可能已过时。AO 正在重试。",
 	"chat.composer.pathReferenceDescription": "仅路径引用：{{path}}。文件内容不会附加；代理会使用普通权限从当前工作树中读取该文件。",
 	"chat.composer.pathReferenceLabel": "{{file}} 路径引用",
 	"pr.card.reviewStatus": "Review status",

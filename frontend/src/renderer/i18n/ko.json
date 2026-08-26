@@ -1280,6 +1280,8 @@
 	"chat.composer.fileReferencesLoadFailed": "파일 참조를 불러오지 못했습니다. {{detail}}",
 	"chat.composer.fileReferencesLoadFailedFallback": "파일 참조를 불러오지 못했습니다. 작업 트리 연결이 복구된 후 다시 시도하세요.",
 	"chat.composer.fileReferencesRefreshDegraded": "작업 트리 업데이트에 다시 연결하는 동안 파일 참조가 오래되었을 수 있습니다. AO가 다시 시도하고 있습니다.",
+	"chat.composer.fileReferencesRefreshFailed": "최근 새로 고침에 실패하여 파일 참조가 오래되었을 수 있습니다. {{detail}} AO가 다시 시도하고 있습니다.",
+	"chat.composer.fileReferencesRefreshFailedFallback": "최근 새로 고침에 실패하여 파일 참조가 오래되었을 수 있습니다. AO가 다시 시도하고 있습니다.",
 	"chat.composer.pathReferenceDescription": "경로 참조 전용: {{path}}. 파일 내용은 첨부되지 않으며, 에이전트가 현재 작업 트리에서 일반 권한으로 읽습니다.",
 	"chat.composer.pathReferenceLabel": "{{file}} 경로 참조",
 	"pr.card.reviewStatus": "Review status",

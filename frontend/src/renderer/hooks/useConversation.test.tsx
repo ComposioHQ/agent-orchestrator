@@ -45,6 +45,12 @@ function wrapper({ children }: { children: ReactNode }) {
 	return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
 }
 
+function wrapperFor(queryClient: QueryClient) {
+	return function QueryWrapper({ children }: { children: ReactNode }) {
+		return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
+	};
+}
+
 /** The provider state the daemon now serves, in wire shape. */
 const WIRE = {
 	conversationId: "conv-1",
@@ -143,6 +149,33 @@ describe("workspace file references", () => {
 		const { result } = renderHook(() => useWorkspaceFilePaths("ao-1", true), { wrapper });
 		await waitFor(() => expect(result.current.paths).toEqual(["src/cached.ts"]));
 		expect(result.current.refreshDegraded).toBe(true);
+	});
+
+	it("keeps cached paths usable when a later catalog refresh fails", async () => {
+		getMock
+			.mockResolvedValueOnce({
+				data: { files: [{ path: "src/cached.ts", status: "modified" }], truncated: false },
+				error: undefined,
+			})
+			.mockResolvedValueOnce({ data: undefined, error: { code: "WORKSPACE_OFFLINE" } });
+		apiErrorMessageMock.mockReturnValue("workspace refresh is offline");
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+		});
+
+		const { result } = renderHook(() => useWorkspaceFilePaths("ao-1", true), {
+			wrapper: wrapperFor(queryClient),
+		});
+		await waitFor(() => expect(result.current.paths).toEqual(["src/cached.ts"]));
+
+		await act(async () => {
+			await queryClient.invalidateQueries({ queryKey: ["workspace-file-paths", "ao-1"] });
+		});
+
+		await waitFor(() => expect(result.current.refreshFailed).toBe(true));
+		expect(result.current.failed).toBe(false);
+		expect(result.current.paths).toEqual(["src/cached.ts"]);
+		expect(result.current.refreshError).toBe("workspace refresh is offline");
 	});
 });
 

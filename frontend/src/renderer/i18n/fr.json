@@ -1297,6 +1297,8 @@
 	"chat.composer.fileReferencesLoadFailed": "Impossible de charger les références de fichiers. {{detail}}",
 	"chat.composer.fileReferencesLoadFailedFallback": "Impossible de charger les références de fichiers. Réessayez une fois la connexion à l’arborescence de travail rétablie.",
 	"chat.composer.fileReferencesRefreshDegraded": "Les références de fichiers peuvent être obsolètes pendant le rétablissement des mises à jour de l’arborescence de travail. AO réessaie.",
+	"chat.composer.fileReferencesRefreshFailed": "Les références de fichiers peuvent être obsolètes, car leur dernière actualisation a échoué. {{detail}} AO réessaie.",
+	"chat.composer.fileReferencesRefreshFailedFallback": "Les références de fichiers peuvent être obsolètes, car leur dernière actualisation a échoué. AO réessaie.",
 	"chat.composer.pathReferenceDescription": "Référence de chemin uniquement : {{path}}. L’agent lit le fichier avec les autorisations normales depuis l’arborescence de travail actuelle ; son contenu n’est pas joint.",
 	"chat.composer.pathReferenceLabel": "{{file}}, référence de chemin",
 	"pr.card.reviewStatus": "Review status",

@@ -746,10 +746,14 @@ export function useWorkspaceFilePaths(sessionId: string | undefined, enabled: bo
 		queryKey: workspaceFilePathsQueryKey(sessionId ?? ""),
 		enabled: Boolean(sessionId) && enabled,
 		// Workspace SSE invalidates this cache in the normal path. Poll only while
-		// that stream is degraded, so stale references recover without making every
-		// live conversation poll continuously.
+		// that stream is degraded or a refresh failed with cached data, so stale
+		// references recover without making every live conversation poll continuously.
 		staleTime: 30 * 1000,
-		refetchInterval: workspaceFilesRefetchInterval(connectionState),
+		refetchInterval: (activeQuery) =>
+			workspaceFilesRefetchInterval(
+				connectionState,
+				activeQuery.state.data !== undefined && activeQuery.state.error !== null,
+			),
 		retry: false,
 		queryFn: async () => {
 			const { data, error } = await apiClient.GET(
@@ -771,13 +775,16 @@ export function useWorkspaceFilePaths(sessionId: string | undefined, enabled: bo
 		if (!sessionId || !enabled) return;
 		return subscribeWorkspaceFileChanges(sessionId, queryClient);
 	}, [enabled, queryClient, sessionId]);
+	const queryError = query.error ? apiErrorMessage(query.error, "") || undefined : undefined;
 	return {
 		paths: query.data?.paths ?? [],
 		truncated: query.data?.truncated ?? false,
 		isLoading: query.isLoading,
-		failed: query.isError,
-		error: query.error ? apiErrorMessage(query.error, "") || undefined : undefined,
+		failed: query.isLoadingError,
+		error: query.isLoadingError ? queryError : undefined,
 		refreshDegraded: connectionState === "degraded",
+		refreshFailed: query.isRefetchError,
+		refreshError: query.isRefetchError ? queryError : undefined,
 	};
 }
 
