@@ -648,7 +648,7 @@ func normalizeNotification(n notification, now time.Time) []ports.ChatEvent {
 		}}
 
 	case codexproto.MethodError:
-		return []ports.ChatEvent{normalizeErrorNotification(n.Params)}
+		return []ports.ChatEvent{normalizeErrorNotification(n.Params, n.RawFrame)}
 
 	default:
 		// Provider bookkeeping: hook/started, hook/completed,
@@ -676,7 +676,7 @@ const (
 	codexCreditExhaustionDetail    = codexCreditExhaustionSignature + " at https://platform.openai.com/settings/organization/billing"
 )
 
-func normalizeErrorNotification(params json.RawMessage) ports.ChatEvent {
+func normalizeErrorNotification(params, rawFrame json.RawMessage) ports.ChatEvent {
 	fallback := ports.ChatEvent{
 		Kind: ports.ChatEventError,
 		Err:  fmt.Errorf("provider error: %s", truncateForLog(params)),
@@ -701,8 +701,9 @@ func normalizeErrorNotification(params json.RawMessage) ports.ChatEvent {
 	headline := info.Headline
 	threadID := firstExactStringMember(notificationMembers, "threadId")
 	turnID := firstExactStringMember(notificationMembers, "turnId")
-	trusted, trustedNotification := decodeExactErrorNotification(params)
-	if trustedNotification &&
+	trustedParams, trustedFrame := exactErrorNotificationParams(rawFrame)
+	trusted, trustedNotification := decodeExactErrorNotification(trustedParams)
+	if trustedFrame && trustedNotification &&
 		isResponseStreamDisconnected(trusted.Error.CodexErrorInfo) &&
 		isPositiveCreditExhaustion(trusted.Error.AdditionalDetails) {
 		info.Action = ports.ChatRecoveryActionOpenAIBilling
@@ -714,6 +715,22 @@ func normalizeErrorNotification(params json.RawMessage) ports.ChatEvent {
 		Err:                    fmt.Errorf("%s", headline),
 		ErrorInfo:              info,
 	}
+}
+
+func exactErrorNotificationParams(rawFrame json.RawMessage) (json.RawMessage, bool) {
+	members, ok := validateExactObjectMembers(
+		rawFrame,
+		[]string{"method", "params"},
+		nil,
+	)
+	if !ok {
+		return nil, false
+	}
+	var method string
+	if json.Unmarshal(members["method"], &method) != nil || method != codexproto.MethodError {
+		return nil, false
+	}
+	return members["params"], true
 }
 
 type jsonObjectMember struct {

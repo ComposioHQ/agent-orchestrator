@@ -105,10 +105,42 @@ type providerTurn struct {
 // provider-supplied actionUrl before AO can decide whether the typed recovery
 // evidence is trustworthy.
 type historyTurn struct {
-	ID     string                  `json:"id"`
-	Status codexproto.TurnStatus   `json:"status"`
-	Items  []codexproto.ThreadItem `json:"items"`
-	Error  json.RawMessage         `json:"error"`
+	ID                 string
+	Status             codexproto.TurnStatus
+	Items              []codexproto.ThreadItem
+	Error              json.RawMessage
+	ErrorMemberTrusted bool
+}
+
+func (t *historyTurn) UnmarshalJSON(raw []byte) error {
+	var readable struct {
+		ID     string                  `json:"id"`
+		Status codexproto.TurnStatus   `json:"status"`
+		Items  []codexproto.ThreadItem `json:"items"`
+	}
+	if err := json.Unmarshal(raw, &readable); err != nil {
+		return err
+	}
+	members, ok := readJSONObjectMembers(raw)
+	if !ok {
+		return errors.New("history turn is not one complete JSON object")
+	}
+	*t = historyTurn{ID: readable.ID, Status: readable.Status, Items: readable.Items}
+	exactErrors := 0
+	hasAlias := false
+	for _, member := range members {
+		switch {
+		case member.name == "error":
+			exactErrors++
+			if t.Error == nil {
+				t.Error = append(json.RawMessage(nil), member.value...)
+			}
+		case strings.EqualFold(member.name, "error"):
+			hasAlias = true
+		}
+	}
+	t.ErrorMemberTrusted = exactErrors == 1 && !hasAlias
+	return nil
 }
 
 type historyThreadReadResponse struct {
@@ -199,7 +231,7 @@ func (c *conversation) ReadHistory(ctx context.Context) ([]ports.ChatEvent, erro
 
 		var turnErr error
 		if hasHistoryTurnError(turn.Error) {
-			info, err := normalizeHistoryTurnError(turn.Error)
+			info, err := normalizeHistoryTurnError(turn.Error, turn.ErrorMemberTrusted)
 			turnErr = err
 			events = append(events, ports.ChatEvent{
 				Kind:                   ports.ChatEventError,
@@ -233,7 +265,7 @@ func hasHistoryTurnError(raw json.RawMessage) bool {
 // generated TurnError schema and exact Codex disconnect union recognized by the
 // live notification path. That split keeps future/malformed history visible
 // without treating provider prose or destinations as trusted controls.
-func normalizeHistoryTurnError(raw json.RawMessage) (*ports.ChatErrorInfo, error) {
+func normalizeHistoryTurnError(raw json.RawMessage, enclosingMemberTrusted bool) (*ports.ChatErrorInfo, error) {
 	info, readable := readableTurnErrorInfo(raw)
 	if !readable {
 		message := "provider error: " + truncateForLog(raw)
@@ -241,7 +273,7 @@ func normalizeHistoryTurnError(raw json.RawMessage) (*ports.ChatErrorInfo, error
 	}
 
 	trusted, exactTurnError := decodeExactTurnError(raw)
-	if exactTurnError &&
+	if enclosingMemberTrusted && exactTurnError &&
 		strings.TrimSpace(trusted.Message) != "" &&
 		isResponseStreamDisconnected(trusted.CodexErrorInfo) &&
 		isPositiveCreditExhaustion(trusted.AdditionalDetails) {

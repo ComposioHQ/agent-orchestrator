@@ -322,6 +322,57 @@ func TestReadHistoryRecoveryRequiresCanonicalUniqueErrorMembers(t *testing.T) {
 	}
 }
 
+func TestReadHistoryEnclosingErrorMemberMustBeCanonicalAndUnique(t *testing.T) {
+	const (
+		positive = `{"message":"Reconnecting","codexErrorInfo":{"responseStreamDisconnected":{"httpStatusCode":429}},"additionalDetails":"stream disconnected before completion: You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing"}`
+		benign   = `{"message":"Reconnecting","codexErrorInfo":{"responseStreamDisconnected":{"httpStatusCode":429}},"additionalDetails":"Scheduled maintenance disconnected the response stream."}`
+	)
+	tests := []struct {
+		name         string
+		errorMembers string
+		wantDetail   string
+	}{
+		{
+			name:         "canonical then case-alias error",
+			errorMembers: `"error":` + benign + `,"Error":` + positive,
+			wantDetail:   "Scheduled maintenance disconnected the response stream.",
+		},
+		{
+			name:         "case-alias then canonical error",
+			errorMembers: `"Error":` + positive + `,"error":` + benign,
+			wantDetail:   "Scheduled maintenance disconnected the response stream.",
+		},
+		{
+			name:         "benign then positive duplicate error",
+			errorMembers: `"error":` + benign + `,"error":` + positive,
+		},
+		{
+			name:         "positive then benign duplicate error",
+			errorMembers: `"error":` + positive + `,"error":` + benign,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			conv, srv := openConversation(t)
+			srv.reply("thread/read", `{"thread":{"id":"thread-1","turns":[{"id":"turn-a","status":"failed",`+tc.errorMembers+`}]}}`)
+			events, err := conv.ReadHistory(context.Background())
+			if err != nil {
+				t.Fatalf("ReadHistory: %v", err)
+			}
+			if len(events) != 3 || events[1].Kind != ports.ChatEventError || events[1].ErrorInfo == nil {
+				t.Fatalf("events = %#v, want readable provider error", events)
+			}
+			if tc.wantDetail != "" && events[1].ErrorInfo.Detail != tc.wantDetail {
+				t.Fatalf("canonical detail = %q, want %q", events[1].ErrorInfo.Detail, tc.wantDetail)
+			}
+			if events[1].ErrorInfo.Action != "" {
+				t.Fatalf("ambiguous enclosing history error minted action %q", events[1].ErrorInfo.Action)
+			}
+		})
+	}
+}
+
 func TestReadHistoryMakesMissingItemIDsUniqueAcrossTurns(t *testing.T) {
 	conv, srv := openConversation(t)
 	srv.reply("thread/read", `{"thread":{"id":"thread-1","turns":[`+

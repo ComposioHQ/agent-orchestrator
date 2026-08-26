@@ -21,6 +21,8 @@ import (
 	"log/slog"
 	"sync"
 	"sync/atomic"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/codexappserver/codexproto"
 )
 
 // frame is the union of every shape that crosses the wire.
@@ -48,8 +50,9 @@ func (e *rpcError) Error() string {
 
 // notification is a server->client message with no id.
 type notification struct {
-	Method string
-	Params json.RawMessage
+	Method   string
+	Params   json.RawMessage
+	RawFrame json.RawMessage
 }
 
 // serverRequest is a server->client message that expects a reply. Approvals and
@@ -173,14 +176,60 @@ func (c *conn) readLoop(r io.Reader) {
 			go c.answer(serverRequest{ID: *f.ID, Method: f.Method, Params: f.Params})
 		case f.ID != nil:
 			c.deliver(f)
-		case f.Method != "":
+		default:
+			n, ok := notificationFromFrame(line, f)
+			if !ok {
+				continue
+			}
 			select {
-			case c.notifications <- notification{Method: f.Method, Params: f.Params}:
+			case c.notifications <- n:
 			default:
-				c.log.Warn("dropped app-server notification: buffer full", "method", f.Method)
+				c.log.Warn("dropped app-server notification: buffer full", "method", n.Method)
 			}
 		}
 	}
+}
+
+// notificationFromFrame preserves exact canonical method/params members before
+// encoding/json can collapse duplicates or case aliases. An ambiguous frame that
+// contains a canonical error method is still delivered for readable diagnostics;
+// its raw frame later prevents it from minting a trusted recovery action.
+func notificationFromFrame(raw json.RawMessage, decoded frame) (notification, bool) {
+	members, parsed := readJSONObjectMembers(raw)
+	method := ""
+	var params json.RawMessage
+	if parsed {
+		for _, member := range members {
+			switch member.name {
+			case "method":
+				var candidate string
+				if json.Unmarshal(member.value, &candidate) != nil {
+					continue
+				}
+				if method == "" || candidate == codexproto.MethodError {
+					method = candidate
+				}
+			case "params":
+				if params == nil {
+					params = append(json.RawMessage(nil), member.value...)
+				}
+			}
+		}
+	}
+	if method == "" {
+		method = decoded.Method
+	}
+	if params == nil {
+		params = decoded.Params
+	}
+	if method == "" {
+		return notification{}, false
+	}
+	return notification{
+		Method:   method,
+		Params:   params,
+		RawFrame: append(json.RawMessage(nil), raw...),
+	}, true
 }
 
 // readFrame reads one newline-delimited frame with no length cap, so a large

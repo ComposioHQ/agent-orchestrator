@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 // fakeAppServer stands in for the `codex app-server` process over in-memory
@@ -177,6 +179,79 @@ func TestNotificationsAreFannedOut(t *testing.T) {
 		case <-time.After(2 * time.Second):
 			t.Fatalf("timed out waiting for %q", want)
 		}
+	}
+}
+
+func TestAmbiguousErrorNotificationFrameStaysReadableButCannotMintAction(t *testing.T) {
+	const (
+		positive = `{"error":{"message":"Reconnecting","codexErrorInfo":{"responseStreamDisconnected":{"httpStatusCode":429}},"additionalDetails":"stream disconnected before completion: You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing"},"threadId":"th","turnId":"tu","willRetry":false}`
+		benign   = `{"error":{"message":"Reconnecting","codexErrorInfo":{"responseStreamDisconnected":{"httpStatusCode":429}},"additionalDetails":"Scheduled maintenance disconnected the response stream."},"threadId":"th","turnId":"tu","willRetry":false}`
+	)
+	tests := []struct {
+		name       string
+		frame      string
+		wantDetail string
+	}{
+		{
+			name:  "other then error duplicate method",
+			frame: `{"method":"turn/started","method":"error","params":` + positive + `}`,
+		},
+		{
+			name:  "error then other duplicate method",
+			frame: `{"method":"error","method":"turn/started","params":` + positive + `}`,
+		},
+		{
+			name:       "canonical then case-alias method",
+			frame:      `{"method":"error","Method":"turn/started","params":` + benign + `}`,
+			wantDetail: "Scheduled maintenance disconnected the response stream.",
+		},
+		{
+			name:       "case-alias then canonical method",
+			frame:      `{"Method":"turn/started","method":"error","params":` + benign + `}`,
+			wantDetail: "Scheduled maintenance disconnected the response stream.",
+		},
+		{
+			name:  "benign then positive duplicate params",
+			frame: `{"method":"error","params":` + benign + `,"params":` + positive + `}`,
+		},
+		{
+			name:  "positive then benign duplicate params",
+			frame: `{"method":"error","params":` + positive + `,"params":` + benign + `}`,
+		},
+		{
+			name:       "canonical then case-alias params",
+			frame:      `{"method":"error","params":` + benign + `,"Params":` + positive + `}`,
+			wantDetail: "Scheduled maintenance disconnected the response stream.",
+		},
+		{
+			name:       "case-alias then canonical params",
+			frame:      `{"method":"error","Params":` + positive + `,"params":` + benign + `}`,
+			wantDetail: "Scheduled maintenance disconnected the response stream.",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c, fake := newFakeAppServer(t, rejectAllServerRequests)
+			fake.push(tc.frame)
+
+			var n notification
+			select {
+			case n = <-c.notifs():
+			case <-time.After(2 * time.Second):
+				t.Fatal("ambiguous canonical error notification was not delivered")
+			}
+			events := normalizeNotification(n, time.Unix(0, 0))
+			if len(events) != 1 || events[0].Kind != ports.ChatEventError || events[0].ErrorInfo == nil {
+				t.Fatalf("normalized events = %#v, want one readable provider error", events)
+			}
+			if tc.wantDetail != "" && events[0].ErrorInfo.Detail != tc.wantDetail {
+				t.Fatalf("canonical detail = %q, want %q", events[0].ErrorInfo.Detail, tc.wantDetail)
+			}
+			if events[0].ErrorInfo.Action != "" {
+				t.Fatalf("ambiguous JSON-RPC envelope minted action %q", events[0].ErrorInfo.Action)
+			}
+		})
 	}
 }
 

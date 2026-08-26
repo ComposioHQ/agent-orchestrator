@@ -2,6 +2,7 @@ package codexappserver
 
 import (
 	"encoding/json"
+	"strconv"
 	"testing"
 	"time"
 
@@ -20,7 +21,10 @@ var testNow = time.Unix(1785669503, 0)
 
 func normalizeOne(t *testing.T, method, params string) ports.ChatEvent {
 	t.Helper()
-	events := normalizeNotification(notification{Method: method, Params: json.RawMessage(params)}, testNow)
+	events := normalizeNotification(notification{
+		Method: method, Params: json.RawMessage(params),
+		RawFrame: json.RawMessage(`{"method":` + strconv.Quote(method) + `,"params":` + params + `}`),
+	}, testNow)
 	if len(events) != 1 {
 		t.Fatalf("normalize(%s) produced %d events, want 1", method, len(events))
 	}
@@ -29,7 +33,10 @@ func normalizeOne(t *testing.T, method, params string) ports.ChatEvent {
 
 func normalizeNone(t *testing.T, method, params string) {
 	t.Helper()
-	events := normalizeNotification(notification{Method: method, Params: json.RawMessage(params)}, testNow)
+	events := normalizeNotification(notification{
+		Method: method, Params: json.RawMessage(params),
+		RawFrame: json.RawMessage(`{"method":` + strconv.Quote(method) + `,"params":` + params + `}`),
+	}, testNow)
 	if len(events) != 0 {
 		t.Fatalf("normalize(%s) produced %d events, want none: %+v", method, len(events), events)
 	}
