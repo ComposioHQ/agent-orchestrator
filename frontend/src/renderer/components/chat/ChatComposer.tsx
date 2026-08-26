@@ -400,7 +400,12 @@ export function ChatComposer({
 	const draftMutationPending =
 		submitting || composerMutation.pending || acceptedMutationWaiting || Boolean(durableDelivery);
 	const canRecoverDelivery = Boolean(
-		durableDelivery && !busy && !disabled && !steerPending && !submitting && !composerMutation.pending,
+		durableDelivery &&
+			(!busy || durableDelivery.state === "accepted") &&
+			!disabled &&
+			!steerPending &&
+			!submitting &&
+			!composerMutation.pending,
 	);
 	const canAbandonUncertainSteer = Boolean(
 		deliveryUncertain &&
@@ -757,7 +762,7 @@ export function ChatComposer({
 		const recoveringDelivery = durableDelivery;
 		const canSubmitNow =
 			((currentText.trim().length > 0 || staged) || Boolean(recoveringDelivery)) &&
-			!busy &&
+			(!busy || recoveringDelivery?.state === "accepted") &&
 			!disabled &&
 			!steerPending &&
 			!submitting &&
