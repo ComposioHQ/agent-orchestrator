@@ -212,6 +212,116 @@ func TestReadHistoryProviderErrorsStayReadableButFailClosed(t *testing.T) {
 	}
 }
 
+func TestReadHistoryRecoveryRequiresCanonicalUniqueErrorMembers(t *testing.T) {
+	const (
+		positive = "stream disconnected before completion: You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing"
+		benign   = "The response stream disconnected during scheduled maintenance."
+	)
+	tests := []struct {
+		name       string
+		errorJSON  string
+		wantDetail string
+	}{
+		{
+			name: "canonical then case-alias TurnError detail",
+			errorJSON: `{"message":"Reconnecting","codexErrorInfo":{"responseStreamDisconnected":{"httpStatusCode":429}},` +
+				`"additionalDetails":"` + benign + `","AdditionalDetails":"` + positive + `"}`,
+			wantDetail: benign,
+		},
+		{
+			name: "case-alias then canonical TurnError detail",
+			errorJSON: `{"message":"Reconnecting","codexErrorInfo":{"responseStreamDisconnected":{"httpStatusCode":429}},` +
+				`"AdditionalDetails":"` + positive + `","additionalDetails":"` + benign + `"}`,
+			wantDetail: benign,
+		},
+		{
+			name: "benign then positive duplicate TurnError detail",
+			errorJSON: `{"message":"Reconnecting","codexErrorInfo":{"responseStreamDisconnected":{"httpStatusCode":429}},` +
+				`"additionalDetails":"` + benign + `","additionalDetails":"` + positive + `"}`,
+		},
+		{
+			name: "positive then benign duplicate TurnError detail",
+			errorJSON: `{"message":"Reconnecting","codexErrorInfo":{"responseStreamDisconnected":{"httpStatusCode":429}},` +
+				`"additionalDetails":"` + positive + `","additionalDetails":"` + benign + `"}`,
+		},
+		{
+			name: "malformed then valid duplicate union member",
+			errorJSON: `{"message":"Reconnecting","codexErrorInfo":{` +
+				`"responseStreamDisconnected":{"httpStatusCode":"429"},"responseStreamDisconnected":{"httpStatusCode":429}},` +
+				`"additionalDetails":"` + positive + `"}`,
+			wantDetail: positive,
+		},
+		{
+			name: "valid then malformed duplicate union member",
+			errorJSON: `{"message":"Reconnecting","codexErrorInfo":{` +
+				`"responseStreamDisconnected":{"httpStatusCode":429},"responseStreamDisconnected":{"httpStatusCode":"429"}},` +
+				`"additionalDetails":"` + positive + `"}`,
+			wantDetail: positive,
+		},
+		{
+			name: "canonical then case-alias union member",
+			errorJSON: `{"message":"Reconnecting","codexErrorInfo":{` +
+				`"responseStreamDisconnected":{"httpStatusCode":429},"ResponseStreamDisconnected":{"httpStatusCode":"429"}},` +
+				`"additionalDetails":"` + positive + `"}`,
+			wantDetail: positive,
+		},
+		{
+			name: "case-alias then canonical union member",
+			errorJSON: `{"message":"Reconnecting","codexErrorInfo":{` +
+				`"ResponseStreamDisconnected":{"httpStatusCode":"429"},"responseStreamDisconnected":{"httpStatusCode":429}},` +
+				`"additionalDetails":"` + positive + `"}`,
+			wantDetail: positive,
+		},
+		{
+			name: "malformed then valid duplicate marker member",
+			errorJSON: `{"message":"Reconnecting","codexErrorInfo":{"responseStreamDisconnected":{` +
+				`"httpStatusCode":"429","httpStatusCode":429}},"additionalDetails":"` + positive + `"}`,
+			wantDetail: positive,
+		},
+		{
+			name: "valid then malformed duplicate marker member",
+			errorJSON: `{"message":"Reconnecting","codexErrorInfo":{"responseStreamDisconnected":{` +
+				`"httpStatusCode":429,"httpStatusCode":"429"}},"additionalDetails":"` + positive + `"}`,
+			wantDetail: positive,
+		},
+		{
+			name: "canonical then case-alias marker member",
+			errorJSON: `{"message":"Reconnecting","codexErrorInfo":{"responseStreamDisconnected":{` +
+				`"httpStatusCode":429,"HttpStatusCode":"429"}},"additionalDetails":"` + positive + `"}`,
+			wantDetail: positive,
+		},
+		{
+			name: "case-alias then canonical marker member",
+			errorJSON: `{"message":"Reconnecting","codexErrorInfo":{"responseStreamDisconnected":{` +
+				`"HttpStatusCode":"429","httpStatusCode":429}},"additionalDetails":"` + positive + `"}`,
+			wantDetail: positive,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			conv, srv := openConversation(t)
+			srv.reply("thread/read", `{"thread":{"id":"thread-1","turns":[{"id":"turn-a","status":"failed","error":`+tc.errorJSON+`}]}}`)
+			events, err := conv.ReadHistory(context.Background())
+			if err != nil {
+				t.Fatalf("ReadHistory: %v", err)
+			}
+			if len(events) != 3 || events[1].Kind != ports.ChatEventError {
+				t.Fatalf("events = %#v, want readable provider error", events)
+			}
+			if events[1].ErrorInfo == nil || events[1].ErrorInfo.Headline != "Reconnecting" {
+				t.Fatalf("history error was not readable: %+v", events[1].ErrorInfo)
+			}
+			if tc.wantDetail != "" && events[1].ErrorInfo.Detail != tc.wantDetail {
+				t.Fatalf("canonical readable detail = %q, want %q", events[1].ErrorInfo.Detail, tc.wantDetail)
+			}
+			if events[1].ErrorInfo.Action != "" {
+				t.Fatalf("schema-invalid history error minted action %q", events[1].ErrorInfo.Action)
+			}
+		})
+	}
+}
+
 func TestReadHistoryMakesMissingItemIDsUniqueAcrossTurns(t *testing.T) {
 	conv, srv := openConversation(t)
 	srv.reply("thread/read", `{"thread":{"id":"thread-1","turns":[`+

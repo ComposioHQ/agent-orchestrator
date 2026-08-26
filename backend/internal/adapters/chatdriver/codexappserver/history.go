@@ -234,36 +234,20 @@ func hasHistoryTurnError(raw json.RawMessage) bool {
 // live notification path. That split keeps future/malformed history visible
 // without treating provider prose or destinations as trusted controls.
 func normalizeHistoryTurnError(raw json.RawMessage) (*ports.ChatErrorInfo, error) {
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &fields); err != nil || fields == nil {
+	info, readable := readableTurnErrorInfo(raw)
+	if !readable {
 		message := "provider error: " + truncateForLog(raw)
 		return &ports.ChatErrorInfo{Headline: message}, errors.New(message)
 	}
 
-	readString := func(name string) string {
-		var value string
-		if member, ok := fields[name]; ok && json.Unmarshal(member, &value) == nil {
-			return strings.TrimSpace(value)
-		}
-		return ""
-	}
-	headline := readString("message")
-	if headline == "" {
-		headline = "provider error"
-	}
-	info := &ports.ChatErrorInfo{
-		Headline: headline,
-		Detail:   readString("additionalDetails"),
-	}
-
-	var trusted codexproto.TurnError
-	if decodeStrictJSON(raw, &trusted) &&
+	trusted, exactTurnError := decodeExactTurnError(raw)
+	if exactTurnError &&
 		strings.TrimSpace(trusted.Message) != "" &&
 		isResponseStreamDisconnected(trusted.CodexErrorInfo) &&
 		isPositiveCreditExhaustion(trusted.AdditionalDetails) {
 		info.Action = ports.ChatRecoveryActionOpenAIBilling
 	}
-	return info, errors.New(headline)
+	return info, errors.New(info.Headline)
 }
 
 // RefreshHistory performs another authoritative thread/read. Codex exposes a

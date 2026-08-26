@@ -162,6 +162,234 @@ func TestNormalizeCreditRecoveryRequiresCompleteStrictErrorNotification(t *testi
 	}
 }
 
+func TestNormalizeCreditRecoveryRejectsTurnErrorCaseAliasConflicts(t *testing.T) {
+	const (
+		positive = "stream disconnected before completion: You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing"
+		benign   = "The response stream disconnected during scheduled maintenance."
+	)
+	for _, members := range []string{
+		`"additionalDetails":"` + benign + `","AdditionalDetails":"` + positive + `"`,
+		`"AdditionalDetails":"` + positive + `","additionalDetails":"` + benign + `"`,
+	} {
+		ev := normalizeOne(t, "error", `{
+			"error": {
+				"message": "Reconnecting",
+				"codexErrorInfo": {"responseStreamDisconnected": {"httpStatusCode": 429}},
+				`+members+`
+			},
+			"threadId": "th",
+			"turnId": "tu",
+			"willRetry": true
+		}`)
+		if ev.ErrorInfo == nil || ev.ErrorInfo.Detail != benign {
+			t.Fatalf("canonical readable detail = %+v, want %q", ev.ErrorInfo, benign)
+		}
+		if ev.ErrorInfo.Action != "" {
+			t.Fatalf("case-conflicted TurnError minted action %q", ev.ErrorInfo.Action)
+		}
+	}
+}
+
+func TestNormalizeCreditRecoveryRequiresCanonicalTurnErrorMemberCasing(t *testing.T) {
+	const detail = "stream disconnected before completion: You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing"
+	tests := []struct {
+		name         string
+		errorJSON    string
+		wantReadable bool
+		wantDetail   string
+	}{
+		{
+			name:      "message case alias only",
+			errorJSON: `{"Message":"Reconnecting","codexErrorInfo":{"responseStreamDisconnected":{"httpStatusCode":429}},"additionalDetails":"` + detail + `"}`,
+		},
+		{
+			name:         "additional detail case alias only",
+			errorJSON:    `{"message":"Reconnecting","codexErrorInfo":{"responseStreamDisconnected":{"httpStatusCode":429}},"AdditionalDetails":"` + detail + `"}`,
+			wantReadable: true,
+		},
+		{
+			name:         "Codex error info case alias only",
+			errorJSON:    `{"message":"Reconnecting","CodexErrorInfo":{"responseStreamDisconnected":{"httpStatusCode":429}},"additionalDetails":"` + detail + `"}`,
+			wantReadable: true,
+			wantDetail:   detail,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ev := normalizeOne(t, "error", `{"error":`+tc.errorJSON+`,"threadId":"th","turnId":"tu","willRetry":true}`)
+			if ev.Err == nil {
+				t.Fatal("schema-invalid provider error was not readable")
+			}
+			if (ev.ErrorInfo != nil) != tc.wantReadable {
+				t.Fatalf("ErrorInfo = %+v, want readable %v", ev.ErrorInfo, tc.wantReadable)
+			}
+			if ev.ErrorInfo != nil {
+				if ev.ErrorInfo.Detail != tc.wantDetail {
+					t.Fatalf("canonical detail = %q, want %q", ev.ErrorInfo.Detail, tc.wantDetail)
+				}
+				if ev.ErrorInfo.Action != "" {
+					t.Fatalf("case-aliased TurnError minted action %q", ev.ErrorInfo.Action)
+				}
+			}
+		})
+	}
+}
+
+func TestNormalizeCreditRecoveryRequiresCanonicalUniqueNotificationMembers(t *testing.T) {
+	const (
+		positive = "stream disconnected before completion: You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing"
+		benign   = "The response stream disconnected during scheduled maintenance."
+	)
+	positiveError := `{"message":"Reconnecting","codexErrorInfo":{"responseStreamDisconnected":{"httpStatusCode":429}},"additionalDetails":"` + positive + `"}`
+	benignError := `{"message":"Reconnecting","codexErrorInfo":{"responseStreamDisconnected":{"httpStatusCode":429}},"additionalDetails":"` + benign + `"}`
+	tests := []struct {
+		name       string
+		params     string
+		wantDetail string
+	}{
+		{
+			name:       "canonical error then case alias",
+			params:     `{"error":` + benignError + `,"Error":` + positiveError + `,"threadId":"th","turnId":"tu","willRetry":true}`,
+			wantDetail: benign,
+		},
+		{
+			name:       "case alias then canonical error",
+			params:     `{"Error":` + positiveError + `,"error":` + benignError + `,"threadId":"th","turnId":"tu","willRetry":true}`,
+			wantDetail: benign,
+		},
+		{
+			name:   "benign then positive duplicate error",
+			params: `{"error":` + benignError + `,"error":` + positiveError + `,"threadId":"th","turnId":"tu","willRetry":true}`,
+		},
+		{
+			name:   "positive then benign duplicate error",
+			params: `{"error":` + positiveError + `,"error":` + benignError + `,"threadId":"th","turnId":"tu","willRetry":true}`,
+		},
+		{
+			name:   "true then false duplicate willRetry",
+			params: `{"error":` + positiveError + `,"threadId":"th","turnId":"tu","willRetry":true,"willRetry":false}`,
+		},
+		{
+			name:   "false then true duplicate willRetry",
+			params: `{"error":` + positiveError + `,"threadId":"th","turnId":"tu","willRetry":false,"willRetry":true}`,
+		},
+		{
+			name:   "canonical then case-alias willRetry",
+			params: `{"error":` + positiveError + `,"threadId":"th","turnId":"tu","willRetry":false,"WillRetry":true}`,
+		},
+		{
+			name:   "case-alias then canonical willRetry",
+			params: `{"error":` + positiveError + `,"threadId":"th","turnId":"tu","WillRetry":true,"willRetry":false}`,
+		},
+		{
+			name:   "error alias only",
+			params: `{"Error":` + positiveError + `,"threadId":"th","turnId":"tu","willRetry":true}`,
+		},
+		{
+			name:   "thread id alias only",
+			params: `{"error":` + positiveError + `,"ThreadId":"th","turnId":"tu","willRetry":true}`,
+		},
+		{
+			name:   "turn id alias only",
+			params: `{"error":` + positiveError + `,"threadId":"th","TurnId":"tu","willRetry":true}`,
+		},
+		{
+			name:   "will retry alias only",
+			params: `{"error":` + positiveError + `,"threadId":"th","turnId":"tu","WillRetry":false}`,
+		},
+		{
+			name:   "trailing JSON value",
+			params: `{"error":` + positiveError + `,"threadId":"th","turnId":"tu","willRetry":false} {}`,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ev := normalizeOne(t, "error", tc.params)
+			if ev.Err == nil {
+				t.Fatal("malformed provider error was not readable")
+			}
+			if ev.ErrorInfo != nil && ev.ErrorInfo.Action != "" {
+				t.Fatalf("schema-invalid notification minted action %q", ev.ErrorInfo.Action)
+			}
+			if tc.wantDetail != "" && (ev.ErrorInfo == nil || ev.ErrorInfo.Detail != tc.wantDetail) {
+				t.Fatalf("canonical readable detail = %+v, want %q", ev.ErrorInfo, tc.wantDetail)
+			}
+		})
+	}
+}
+
+func TestNormalizeCreditRecoveryRequiresCanonicalUniqueCodexErrorMembers(t *testing.T) {
+	const positive = "stream disconnected before completion: You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing"
+	tests := []struct {
+		name  string
+		union string
+	}{
+		{
+			name:  "malformed then valid duplicate union member",
+			union: `"responseStreamDisconnected":{"httpStatusCode":"429"},"responseStreamDisconnected":{"httpStatusCode":429}`,
+		},
+		{
+			name:  "valid then malformed duplicate union member",
+			union: `"responseStreamDisconnected":{"httpStatusCode":429},"responseStreamDisconnected":{"httpStatusCode":"429"}`,
+		},
+		{
+			name:  "canonical then case-alias union member",
+			union: `"responseStreamDisconnected":{"httpStatusCode":429},"ResponseStreamDisconnected":{"httpStatusCode":"429"}`,
+		},
+		{
+			name:  "case-alias then canonical union member",
+			union: `"ResponseStreamDisconnected":{"httpStatusCode":"429"},"responseStreamDisconnected":{"httpStatusCode":429}`,
+		},
+		{
+			name:  "union member case alias only",
+			union: `"ResponseStreamDisconnected":{"httpStatusCode":429}`,
+		},
+		{
+			name:  "malformed then valid duplicate marker member",
+			union: `"responseStreamDisconnected":{"httpStatusCode":"429","httpStatusCode":429}`,
+		},
+		{
+			name:  "valid then malformed duplicate marker member",
+			union: `"responseStreamDisconnected":{"httpStatusCode":429,"httpStatusCode":"429"}`,
+		},
+		{
+			name:  "canonical then case-alias marker member",
+			union: `"responseStreamDisconnected":{"httpStatusCode":429,"HttpStatusCode":"429"}`,
+		},
+		{
+			name:  "case-alias then canonical marker member",
+			union: `"responseStreamDisconnected":{"HttpStatusCode":"429","httpStatusCode":429}`,
+		},
+		{
+			name:  "marker member case alias only",
+			union: `"responseStreamDisconnected":{"HttpStatusCode":429}`,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ev := normalizeOne(t, "error", `{
+				"error": {
+					"message": "Reconnecting",
+					"codexErrorInfo": {`+tc.union+`},
+					"additionalDetails": "`+positive+`"
+				},
+				"threadId": "th",
+				"turnId": "tu",
+				"willRetry": false
+			}`)
+			if ev.ErrorInfo == nil || ev.ErrorInfo.Detail != positive {
+				t.Fatalf("malformed structured error was not readable: %+v", ev.ErrorInfo)
+			}
+			if ev.ErrorInfo.Action != "" {
+				t.Fatalf("schema-invalid CodexErrorInfo minted action %q", ev.ErrorInfo.Action)
+			}
+		})
+	}
+}
+
 func TestNormalizeCreditRecoveryRejectsProviderSuppliedActionURL(t *testing.T) {
 	for _, destination := range []string{
 		"https://evil.example/provider-destination",
@@ -212,45 +440,46 @@ func TestNormalizeCreditRecoveryRejectsNegatedCanonicalQuote(t *testing.T) {
 func TestNormalizeCreditRecoveryFailsClosedWithoutCompleteTypedEvidence(t *testing.T) {
 	const positive = "stream disconnected before completion: You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing"
 	tests := []struct {
-		name      string
-		params    string
-		wantTyped bool
+		name         string
+		params       string
+		wantReadable bool
 	}{
 		{
-			name:      "missing structured discriminator",
-			params:    `{"error":{"message":"Reconnecting","additionalDetails":"` + positive + `"},"threadId":"th","turnId":"tu","willRetry":true}`,
-			wantTyped: true,
+			name:         "missing structured discriminator",
+			params:       `{"error":{"message":"Reconnecting","additionalDetails":"` + positive + `"},"threadId":"th","turnId":"tu","willRetry":true}`,
+			wantReadable: true,
 		},
 		{
-			name:      "incomplete structured discriminator",
-			params:    `{"error":{"message":"Reconnecting","codexErrorInfo":{"responseStreamDisconnected":{}},"additionalDetails":"` + positive + `"},"threadId":"th","turnId":"tu","willRetry":true}`,
-			wantTyped: true,
+			name:         "incomplete structured discriminator",
+			params:       `{"error":{"message":"Reconnecting","codexErrorInfo":{"responseStreamDisconnected":{}},"additionalDetails":"` + positive + `"},"threadId":"th","turnId":"tu","willRetry":true}`,
+			wantReadable: true,
 		},
 		{
-			name:      "loose quota token",
-			params:    `{"error":{"message":"Reconnecting","codexErrorInfo":{"responseStreamDisconnected":{"httpStatusCode":429}},"additionalDetails":"insufficient_quota"},"threadId":"th","turnId":"tu","willRetry":true}`,
-			wantTyped: true,
+			name:         "loose quota token",
+			params:       `{"error":{"message":"Reconnecting","codexErrorInfo":{"responseStreamDisconnected":{"httpStatusCode":429}},"additionalDetails":"insufficient_quota"},"threadId":"th","turnId":"tu","willRetry":true}`,
+			wantReadable: true,
 		},
 		{
-			name:      "negated credit phrase",
-			params:    `{"error":{"message":"Reconnecting","codexErrorInfo":{"responseStreamDisconnected":{"httpStatusCode":429}},"additionalDetails":"You do not have no credits remaining; the account still has credits"},"threadId":"th","turnId":"tu","willRetry":true}`,
-			wantTyped: true,
+			name:         "negated credit phrase",
+			params:       `{"error":{"message":"Reconnecting","codexErrorInfo":{"responseStreamDisconnected":{"httpStatusCode":429}},"additionalDetails":"You do not have no credits remaining; the account still has credits"},"threadId":"th","turnId":"tu","willRetry":true}`,
+			wantReadable: true,
 		},
 		{
 			name:   "truncated envelope",
 			params: `{"error":{"message":"Reconnecting","codexErrorInfo":{"responseStreamDisconnected":{"httpStatusCode":429}},"additionalDetails":"` + positive,
 		},
 		{
-			name:   "missing required identity",
-			params: `{"error":{"message":"Reconnecting","codexErrorInfo":{"responseStreamDisconnected":{"httpStatusCode":429}},"additionalDetails":"` + positive + `"},"willRetry":true}`,
+			name:         "missing required identity",
+			params:       `{"error":{"message":"Reconnecting","codexErrorInfo":{"responseStreamDisconnected":{"httpStatusCode":429}},"additionalDetails":"` + positive + `"},"willRetry":true}`,
+			wantReadable: true,
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			ev := normalizeOne(t, "error", tc.params)
-			if (ev.ErrorInfo != nil) != tc.wantTyped {
-				t.Fatalf("ErrorInfo = %+v, want typed %v", ev.ErrorInfo, tc.wantTyped)
+			if (ev.ErrorInfo != nil) != tc.wantReadable {
+				t.Fatalf("ErrorInfo = %+v, want readable %v", ev.ErrorInfo, tc.wantReadable)
 			}
 			if ev.ErrorInfo != nil && ev.ErrorInfo.Action != "" {
 				t.Errorf("action = %q, want none", ev.ErrorInfo.Action)

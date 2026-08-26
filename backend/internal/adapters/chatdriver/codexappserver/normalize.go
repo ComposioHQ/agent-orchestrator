@@ -682,94 +682,224 @@ func normalizeErrorNotification(params json.RawMessage) ports.ChatEvent {
 		Err:  fmt.Errorf("provider error: %s", truncateForLog(params)),
 	}
 
-	// Decode the readable fields separately from the schema gate below. This lets
-	// AO retain the provider's explanation when a future or malformed field makes
-	// the notification ineligible for a trusted recovery action.
-	var notification struct {
-		Error    codexproto.TurnError `json:"error"`
-		ThreadID string               `json:"threadId"`
-		TurnID   string               `json:"turnId"`
-	}
-	if err := json.Unmarshal(params, &notification); err != nil ||
-		strings.TrimSpace(notification.ThreadID) == "" ||
-		strings.TrimSpace(notification.TurnID) == "" ||
-		strings.TrimSpace(notification.Error.Message) == "" {
+	// Decode readable fields by their exact canonical names separately from the
+	// schema gate below. This lets AO retain the provider's explanation when a
+	// future, duplicate, or case-aliased field makes the notification ineligible
+	// for a trusted recovery action.
+	notificationMembers, ok := readJSONObjectMembers(params)
+	if !ok {
 		return fallback
 	}
-
-	headline := strings.TrimSpace(notification.Error.Message)
-	info := &ports.ChatErrorInfo{Headline: headline}
-	if notification.Error.AdditionalDetails != nil {
-		info.Detail = strings.TrimSpace(*notification.Error.AdditionalDetails)
+	errorRaw, ok := firstExactMember(notificationMembers, "error")
+	if !ok {
+		return fallback
 	}
-	var trusted codexproto.ErrorNotification
-	if decodeStrictErrorNotification(params, &trusted) &&
-		!hasProviderSuppliedActionURL(params) &&
+	info, ok := readableTurnErrorInfo(errorRaw)
+	if !ok {
+		return fallback
+	}
+	headline := info.Headline
+	threadID := firstExactStringMember(notificationMembers, "threadId")
+	turnID := firstExactStringMember(notificationMembers, "turnId")
+	trusted, trustedNotification := decodeExactErrorNotification(params)
+	if trustedNotification &&
 		isResponseStreamDisconnected(trusted.Error.CodexErrorInfo) &&
 		isPositiveCreditExhaustion(trusted.Error.AdditionalDetails) {
 		info.Action = ports.ChatRecoveryActionOpenAIBilling
 	}
 	return ports.ChatEvent{
 		Kind:                   ports.ChatEventError,
-		ProviderTurnID:         notification.TurnID,
-		ProviderConversationID: notification.ThreadID,
+		ProviderTurnID:         turnID,
+		ProviderConversationID: threadID,
 		Err:                    fmt.Errorf("%s", headline),
 		ErrorInfo:              info,
 	}
 }
 
-// decodeStrictErrorNotification is the trust gate for AO-owned recovery
-// actions. The generated bool cannot distinguish false from an omitted or null
-// willRetry, so its raw JSON member must also be present and boolean. Unknown
-// top-level or TurnError fields fail closed; newer provider payloads remain
-// readable through the lenient projection above but cannot mint an action until
-// AO understands their complete shape.
-func decodeStrictErrorNotification(params json.RawMessage, notification *codexproto.ErrorNotification) bool {
-	if !decodeStrictJSON(params, notification) {
-		return false
-	}
-
-	var envelope map[string]json.RawMessage
-	if err := json.Unmarshal(params, &envelope); err != nil {
-		return false
-	}
-	willRetry, ok := envelope["willRetry"]
-	if !ok {
-		return false
-	}
-	switch string(bytes.TrimSpace(willRetry)) {
-	case "true", "false":
-		return true
-	default:
-		return false
-	}
+type jsonObjectMember struct {
+	name  string
+	value json.RawMessage
 }
 
-func decodeStrictJSON(raw json.RawMessage, value any) bool {
+// readJSONObjectMembers decodes one complete object without collapsing member
+// order or duplicate names. Each value remains raw so nested objects can pass
+// through the same exact-member validation instead of being normalized by
+// encoding/json's case-insensitive struct matching.
+func readJSONObjectMembers(raw json.RawMessage) ([]jsonObjectMember, bool) {
 	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(value); err != nil {
-		return false
+	opening, err := decoder.Token()
+	if err != nil || opening != json.Delim('{') {
+		return nil, false
+	}
+	members := make([]jsonObjectMember, 0)
+	for decoder.More() {
+		name, err := decoder.Token()
+		if err != nil {
+			return nil, false
+		}
+		memberName, ok := name.(string)
+		if !ok {
+			return nil, false
+		}
+		var value json.RawMessage
+		if err := decoder.Decode(&value); err != nil {
+			return nil, false
+		}
+		members = append(members, jsonObjectMember{name: memberName, value: value})
+	}
+	closing, err := decoder.Token()
+	if err != nil || closing != json.Delim('}') {
+		return nil, false
 	}
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		return false
+		return nil, false
 	}
-	return true
+	return members, true
 }
 
-func hasProviderSuppliedActionURL(params json.RawMessage) bool {
-	var envelope struct {
-		Error map[string]json.RawMessage `json:"error"`
+// validateExactObjectMembers accepts only the named canonical members. Exact
+// duplicates, case aliases, unknown fields, missing required fields, malformed
+// objects, and trailing JSON all fail closed.
+func validateExactObjectMembers(
+	raw json.RawMessage,
+	required []string,
+	optional []string,
+) (map[string]json.RawMessage, bool) {
+	members, ok := readJSONObjectMembers(raw)
+	if !ok {
+		return nil, false
 	}
-	if err := json.Unmarshal(params, &envelope); err != nil {
-		return true
+	allowed := make(map[string]bool, len(required)+len(optional))
+	for _, name := range required {
+		allowed[name] = true
 	}
-	for key := range envelope.Error {
-		if strings.EqualFold(key, "actionUrl") {
-			return true
+	for _, name := range optional {
+		allowed[name] = true
+	}
+	result := make(map[string]json.RawMessage, len(members))
+	for _, member := range members {
+		if !allowed[member.name] {
+			return nil, false
+		}
+		if _, duplicate := result[member.name]; duplicate {
+			return nil, false
+		}
+		result[member.name] = member.value
+	}
+	for _, name := range required {
+		if _, present := result[name]; !present {
+			return nil, false
 		}
 	}
-	return false
+	return result, true
+}
+
+func firstExactMember(members []jsonObjectMember, name string) (json.RawMessage, bool) {
+	for _, member := range members {
+		if member.name == name {
+			return member.value, true
+		}
+	}
+	return nil, false
+}
+
+func firstExactStringMember(members []jsonObjectMember, name string) string {
+	raw, ok := firstExactMember(members, name)
+	if !ok {
+		return ""
+	}
+	var value string
+	if json.Unmarshal(raw, &value) != nil {
+		return ""
+	}
+	return strings.TrimSpace(value)
+}
+
+func readableTurnErrorInfo(raw json.RawMessage) (*ports.ChatErrorInfo, bool) {
+	members, ok := readJSONObjectMembers(raw)
+	if !ok {
+		return nil, false
+	}
+	messageRaw, ok := firstExactMember(members, "message")
+	if !ok {
+		return nil, false
+	}
+	var message string
+	if json.Unmarshal(messageRaw, &message) != nil || strings.TrimSpace(message) == "" {
+		return nil, false
+	}
+	info := &ports.ChatErrorInfo{Headline: strings.TrimSpace(message)}
+	if detailRaw, present := firstExactMember(members, "additionalDetails"); present {
+		var detail string
+		if json.Unmarshal(detailRaw, &detail) == nil {
+			info.Detail = strings.TrimSpace(detail)
+		}
+	}
+	return info, true
+}
+
+func decodeExactTurnError(raw json.RawMessage) (codexproto.TurnError, bool) {
+	members, ok := validateExactObjectMembers(
+		raw,
+		[]string{"message"},
+		[]string{"additionalDetails", "codexErrorInfo"},
+	)
+	if !ok {
+		return codexproto.TurnError{}, false
+	}
+	var result codexproto.TurnError
+	if json.Unmarshal(members["message"], &result.Message) != nil {
+		return codexproto.TurnError{}, false
+	}
+	if rawDetail, present := members["additionalDetails"]; present &&
+		!bytes.Equal(bytes.TrimSpace(rawDetail), []byte("null")) {
+		var detail string
+		if json.Unmarshal(rawDetail, &detail) != nil {
+			return codexproto.TurnError{}, false
+		}
+		result.AdditionalDetails = &detail
+	}
+	if rawInfo, present := members["codexErrorInfo"]; present &&
+		!bytes.Equal(bytes.TrimSpace(rawInfo), []byte("null")) {
+		info := append(json.RawMessage(nil), rawInfo...)
+		result.CodexErrorInfo = &info
+	}
+	return result, true
+}
+
+// decodeExactErrorNotification is the trust gate for AO-owned live recovery
+// actions. It verifies every object member before decoding values so
+// encoding/json cannot merge case aliases or duplicates into a trusted shape.
+func decodeExactErrorNotification(params json.RawMessage) (codexproto.ErrorNotification, bool) {
+	members, ok := validateExactObjectMembers(
+		params,
+		[]string{"error", "threadId", "turnId", "willRetry"},
+		nil,
+	)
+	if !ok {
+		return codexproto.ErrorNotification{}, false
+	}
+	turnError, ok := decodeExactTurnError(members["error"])
+	if !ok {
+		return codexproto.ErrorNotification{}, false
+	}
+	var notification codexproto.ErrorNotification
+	if json.Unmarshal(members["threadId"], &notification.ThreadID) != nil ||
+		strings.TrimSpace(notification.ThreadID) == "" ||
+		json.Unmarshal(members["turnId"], &notification.TurnID) != nil ||
+		strings.TrimSpace(notification.TurnID) == "" {
+		return codexproto.ErrorNotification{}, false
+	}
+	switch string(bytes.TrimSpace(members["willRetry"])) {
+	case "true":
+		notification.WillRetry = true
+	case "false":
+		notification.WillRetry = false
+	default:
+		return codexproto.ErrorNotification{}, false
+	}
+	notification.Error = turnError
+	return notification, true
 }
 
 // CodexErrorInfo is generated as raw JSON because it is a provider union. A
@@ -780,28 +910,23 @@ func isResponseStreamDisconnected(raw *codexproto.CodexErrorInfo) bool {
 	if raw == nil {
 		return false
 	}
-	var variants map[string]json.RawMessage
-	if err := json.Unmarshal(*raw, &variants); err != nil {
-		return false
-	}
-	if len(variants) != 1 {
-		return false
-	}
-	marker, ok := variants["responseStreamDisconnected"]
+	variants, ok := validateExactObjectMembers(
+		*raw,
+		[]string{"responseStreamDisconnected"},
+		nil,
+	)
 	if !ok {
 		return false
 	}
-	var disconnected map[string]json.RawMessage
-	if err := json.Unmarshal(marker, &disconnected); err != nil {
-		return false
-	}
-	if len(disconnected) != 1 {
-		return false
-	}
-	status, ok := disconnected["httpStatusCode"]
+	disconnected, ok := validateExactObjectMembers(
+		variants["responseStreamDisconnected"],
+		[]string{"httpStatusCode"},
+		nil,
+	)
 	if !ok {
 		return false
 	}
+	status := disconnected["httpStatusCode"]
 	if bytes.Equal(bytes.TrimSpace(status), []byte("null")) {
 		return true
 	}
