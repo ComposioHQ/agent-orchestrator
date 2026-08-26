@@ -152,7 +152,6 @@ function DesktopSessionCard({
 	const showTerminate = interactive && session.isTerminated !== true && onTerminate;
 	const keepTerminateVisible = session.status === "merged";
 	const usagePresentation = toUsagePresentation(usage, t);
-	const detailRows = prDetailRows(summaries, t);
 	const translate: ProductUITranslator = (key, values) => t(key as MessageKey, values);
 
 	const terminationOverlay = showTerminate ? (
@@ -200,7 +199,6 @@ function DesktopSessionCard({
 			action={action}
 			branchAction={branchAction}
 			branchIcon={<GitBranch aria-hidden="true" className="size-icon-2xs shrink-0" />}
-			details={detailRows}
 			error={termination.error ?? undefined}
 			externalLink={ProductExternalLink}
 			footer={footer}
@@ -225,32 +223,6 @@ function DesktopSessionCard({
 			usage={usagePresentation}
 		/>
 	);
-}
-
-function prDetailRows(summaries: ReturnType<typeof sessionPRDisplaySummaries>, t: TFunction): ReactNode {
-		const ciStates = new Set(summaries.map((pr) => pr.ci.state));
-		const reviewDecisions = new Set(summaries.map((pr) => pr.review.decision));
-		const ciLabel = ciStates.has("failing")
-			? t("pr.ci.failing")
-			: ciStates.has("pending")
-				? t("pr.ci.pending")
-				: ciStates.has("passing")
-					? t("pr.ci.passing")
-					: undefined;
-		const reviewLabel = reviewDecisions.has("changes_requested")
-			? t("pr.review.changesRequested")
-			: reviewDecisions.has("review_required")
-				? t("pr.review.requiredNotSubmitted")
-				: reviewDecisions.has("approved")
-					? t("pr.review.approved")
-					: undefined;
-		if (!ciLabel && !reviewLabel) return null;
-		return (
-			<div className="col-span-2 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-2xs text-muted-foreground">
-				{ciLabel ? <span>{t("pr.section.ci")} · {ciLabel}</span> : null}
-				{reviewLabel ? <span>{t("pr.section.review")} · {reviewLabel}</span> : null}
-			</div>
-		);
 }
 
 function pullRequestLabels(t: TFunction): BoardPullRequestLabels {

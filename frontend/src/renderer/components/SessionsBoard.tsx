@@ -95,8 +95,9 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	// Board chrome stays route-oriented; project context remains in the sidebar.
 	const boardLabel = t("shell.board");
 	const liveSessions = workspaces.flatMap((workspace) => workerSessions(workspace.sessions));
-	const sessions = usesPreviewWorkspaceData && projectId && liveSessions.length === 0
-		? demoBoardSessions(projectId)
+	const demoWorkspaceId = projectId ?? workspaces[0]?.id;
+	const sessions = usesPreviewWorkspaceData && demoWorkspaceId && liveSessions.length === 0
+		? demoBoardSessions(demoWorkspaceId)
 		: liveSessions;
 	const orchestrator = projectId ? newestActiveOrchestrator(workspaces[0]?.sessions ?? []) : undefined;
 	const orchestratorActivityLabel = orchestrator ? getAgentActivityView(orchestrator.activity, t).label : undefined;
