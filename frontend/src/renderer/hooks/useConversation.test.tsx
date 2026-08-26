@@ -36,6 +36,10 @@ const WIRE = {
 	controller: "ready",
 	latestSequence: 3,
 	settings: { model: "gpt-5.6-terra" },
+	queuedTurns: [
+		{ turnId: "queued-human", text: "human follow-up", origin: "human" },
+		{ turnId: "queued-automation", text: "relay follow-up", origin: "automation" },
+	],
 	turns: [
 		{
 			id: "turn-1",
@@ -167,6 +171,16 @@ describe("useConversation snapshot mapping", () => {
 		expect(snapshot.turns[0]!.plan?.steps).toEqual([
 			{ text: "one", status: "completed" },
 			{ text: "two", status: "in_progress" },
+		]);
+	});
+
+	it("maps the authoritative queue independently of timeline messages", async () => {
+		getMock.mockResolvedValue({ data: { ...WIRE, messages: [] }, error: undefined });
+		const { result } = renderHook(() => useConversation("ao-1"), { wrapper });
+		await waitFor(() => expect(result.current.snapshot).toBeDefined());
+		expect(result.current.snapshot?.queuedTurns).toEqual([
+			{ turnId: "queued-human", text: "human follow-up", origin: "human" },
+			{ turnId: "queued-automation", text: "relay follow-up", origin: "automation" },
 		]);
 	});
 
@@ -360,16 +374,38 @@ describe("controller recovery", () => {
 
 		const { result } = renderHook(() => useConversationCommands("ao-1"), { wrapper });
 		act(() => {
-			result.current.interrupt();
+			void result.current.interrupt(["queued-1", "queued-2"]).catch(() => {});
 		});
 
 		await waitFor(() => {
 			expect(postMock).toHaveBeenCalledWith(
 				"/api/v1/sessions/{sessionId}/conversation/interrupt",
-				{ params: { path: { sessionId: "ao-1" } } },
+				{
+					params: { path: { sessionId: "ao-1" } },
+					body: { queuedTurnIds: ["queued-1", "queued-2"] },
+				},
 			);
 			expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["conversation", "ao-1"] });
 		});
+		invalidateSpy.mockRestore();
+	});
+
+	it("surfaces a changed queue scope after refreshing it", async () => {
+		apiErrorCodeMock.mockImplementation((error: { code?: string }) => error?.code);
+		postMock.mockResolvedValue({
+			data: undefined,
+			error: { code: "CHAT_QUEUE_SCOPE_CHANGED" },
+			response: { status: 409 },
+		});
+		const invalidateSpy = vi.spyOn(QueryClient.prototype, "invalidateQueries");
+		const { result } = renderHook(() => useConversationCommands("ao-1"), { wrapper });
+
+		await act(async () => {
+			await result.current.interrupt(["stale-queued"]).catch(() => {});
+		});
+
+		await waitFor(() => expect(result.current.interruptScopeChanged).toBe(true));
+		expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["conversation", "ao-1"] });
 		invalidateSpy.mockRestore();
 	});
 

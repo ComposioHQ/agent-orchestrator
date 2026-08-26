@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -60,6 +61,7 @@ type Store interface {
 	SettleOrphanedTurns(ctx context.Context, session domain.SessionID, now time.Time) error
 	CleanupOwnedControllerWork(ctx context.Context, session domain.SessionID, conversationID, generation string, now time.Time) (bool, error)
 	ListVisibleRunningTurnProviderIDs(ctx context.Context, conversationID string) ([]string, error)
+	ListQueuedTurns(ctx context.Context, conversationID string) ([]domain.QueuedTurn, error)
 
 	SetConversationSettings(ctx context.Context, conversationID string, settings domain.ConversationSettings, now time.Time) error
 
@@ -219,6 +221,11 @@ type Controller struct {
 
 // ErrNoActiveTurn reports an interrupt with nothing to cancel.
 var ErrNoActiveTurn = errors.New("no active turn")
+
+// ErrQueueScopeChanged reports that the durable queue no longer exactly matches
+// the ordered turn IDs the user reviewed. Nothing is interrupted or cancelled;
+// the client must refresh and ask for confirmation again.
+var ErrQueueScopeChanged = errors.New("queued turn scope changed")
 
 // ErrControllerHandoff reports a send attempted after a controller handoff has
 // closed source intake. The client should retain the draft and retry after the
@@ -1688,11 +1695,24 @@ func (c *Controller) interruptForHandoff(ctx context.Context) error {
 //     The provider is the authority that the work already ended; surfacing a bare
 //     "no active turn" would leave the user staring at a Working bar they cannot
 //     dismiss. Reconcile the durable row instead.
-func (c *Controller) Interrupt(ctx context.Context) error {
+func (c *Controller) Interrupt(ctx context.Context, expectedQueuedTurnIDs []string) error {
 	// Stop's linearization point is the dispatch lock. A Send that acquired the
 	// lock first is existing work Stop should cancel; a Send that arrives after
 	// this point waits and is therefore post-Stop work that must survive.
 	c.sendMu.Lock()
+	queued, err := c.store.ListQueuedTurns(ctx, c.conversation.ID)
+	if err != nil {
+		c.sendMu.Unlock()
+		return fmt.Errorf("read queued turn scope: %w", err)
+	}
+	queuedTurnIDs := make([]string, 0, len(queued))
+	for _, turn := range queued {
+		queuedTurnIDs = append(queuedTurnIDs, turn.TurnID)
+	}
+	if !slices.Equal(queuedTurnIDs, expectedQueuedTurnIDs) {
+		c.sendMu.Unlock()
+		return ErrQueueScopeChanged
+	}
 	cutoff := c.now()
 	c.mu.Lock()
 	turn := c.pendingTurnID

@@ -23,7 +23,7 @@ func TestCancelSelectedQueuedTurnPreservesActiveTurnAndSiblingQueue(t *testing.T
 		t.Fatalf("start active turn: %v", err)
 	}
 	cancelled, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
-		Text: "cancel me", ClientMessageID: "cancel", Origin: domain.MessageOriginHuman,
+		Text: "cancel me", ClientMessageID: "cancel", Origin: domain.MessageOriginAutomation,
 	})
 	if err != nil {
 		t.Fatalf("queue selected turn: %v", err)
@@ -69,5 +69,97 @@ func TestCancelSelectedQueuedTurnPreservesActiveTurnAndSiblingQueue(t *testing.T
 	}
 	if err := h.svc.CancelQueuedTurn(ctx, "wrong-session", kept.ID); !errors.Is(err, ports.ErrSessionNotFound) {
 		t.Fatalf("cancel through wrong session error = %v, want ErrSessionNotFound", err)
+	}
+}
+
+// Stop confirmation is a compare-and-set over the complete durable queue. If
+// anything arrived, disappeared, or changed order while the dialog was open,
+// the provider and every queued row must remain untouched until the user reviews
+// the refreshed scope and confirms again.
+func TestInterruptRejectsChangedQueuedScopeWithoutCancellingAnything(t *testing.T) {
+	tests := []struct {
+		name     string
+		expected func(first, second string) []string
+		mutate   func(*testing.T, *harness, string)
+	}{
+		{
+			name:     "automation arrived",
+			expected: func(first, _ string) []string { return []string{first} },
+		},
+		{
+			name:     "confirmed item disappeared",
+			expected: func(first, second string) []string { return []string{first, second} },
+			mutate: func(t *testing.T, h *harness, first string) {
+				t.Helper()
+				if err := h.svc.CancelQueuedTurn(context.Background(), testSession, first); err != nil {
+					t.Fatalf("settle confirmed item: %v", err)
+				}
+			},
+		},
+		{
+			name:     "expected order changed",
+			expected: func(first, second string) []string { return []string{second, first} },
+		},
+		{
+			name:     "duplicate expected id",
+			expected: func(first, _ string) []string { return []string{first, first} },
+		},
+		{
+			name:     "expected ids omitted",
+			expected: func(_, _ string) []string { return nil },
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			conv := newInterruptRecorder()
+			h := newHarnessWithConversation(t, conv)
+			ctx := context.Background()
+			if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+				Text: "active work", ClientMessageID: "active", Origin: domain.MessageOriginHuman,
+			}); err != nil {
+				t.Fatalf("start active turn: %v", err)
+			}
+			conv.markActive("provider-turn-1")
+			conv.emit(ports.ChatEvent{Kind: ports.ChatEventTurnStarted, ProviderTurnID: "provider-turn-1"})
+
+			first, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+				Text: "human follow-up", ClientMessageID: "human", Origin: domain.MessageOriginHuman,
+			})
+			if err != nil {
+				t.Fatalf("queue human follow-up: %v", err)
+			}
+			second, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+				Text: "automation follow-up", ClientMessageID: "automation", Origin: domain.MessageOriginAutomation,
+			})
+			if err != nil {
+				t.Fatalf("queue automation follow-up: %v", err)
+			}
+			if tt.mutate != nil {
+				tt.mutate(t, h, first.ID)
+			}
+
+			err = h.svc.Interrupt(ctx, testSession, tt.expected(first.ID, second.ID))
+			if !errors.Is(err, chatsvc.ErrQueueScopeChanged) {
+				t.Fatalf("Interrupt error = %v, want ErrQueueScopeChanged", err)
+			}
+			if got := conv.attemptCount(); got != 0 {
+				t.Fatalf("provider interrupt attempts = %d, want 0", got)
+			}
+			snapshot, err := h.st.LoadConversationSnapshot(ctx, h.ctrl.ConversationID())
+			if err != nil {
+				t.Fatalf("load snapshot: %v", err)
+			}
+			states := turnStateByText(t, snapshot)
+			if states["active work"] != domain.TurnStateRunning {
+				t.Fatalf("active turn = %q, want running", states["active work"])
+			}
+			if tt.mutate == nil && (states["human follow-up"] != domain.TurnStateQueued || states["automation follow-up"] != domain.TurnStateQueued) {
+				t.Fatalf("queue states = human %q automation %q, want queued", states["human follow-up"], states["automation follow-up"])
+			}
+			if tt.mutate != nil && states["automation follow-up"] != domain.TurnStateQueued {
+				t.Fatalf("surviving queue sibling = %q, want queued", states["automation follow-up"])
+			}
+		})
 	}
 }

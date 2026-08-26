@@ -764,6 +764,29 @@ WHERE conversation_turns.conversation_id = ?
 ORDER BY conversation_turns.requested_at, conversation_turns.rowid
 LIMIT 1;
 
+-- The complete durable queue, independent of the bounded timeline page the UI
+-- happens to have loaded. LEFT JOIN keeps a damaged/missing message row from
+-- silently disappearing out of a destructive confirmation scope.
+-- name: SelectQueuedConversationTurns :many
+SELECT conversation_turns.id,
+       COALESCE(conversation_messages.text, '') AS text,
+       COALESCE(conversation_messages.client_message_id, '') AS client_message_id,
+       COALESCE(conversation_messages.origin, '') AS origin,
+       COALESCE(conversation_messages.delivery_content_json, '') AS delivery_content_json
+FROM conversation_turns
+LEFT JOIN conversation_messages
+    ON conversation_messages.rowid = (
+        SELECT queued_message.rowid
+        FROM conversation_messages AS queued_message
+        WHERE queued_message.turn_id = conversation_turns.id
+          AND queued_message.role = 'user'
+        ORDER BY queued_message.sequence, queued_message.rowid
+        LIMIT 1
+    )
+WHERE conversation_turns.conversation_id = ?
+  AND conversation_turns.state = 'queued'
+ORDER BY conversation_turns.requested_at, conversation_turns.rowid;
+
 -- Claim one selected queue item before contacting the provider. execrows is the
 -- compare-and-set result: zero means the turn is absent, settled, or already being
 -- promoted, and the provider must not be called.

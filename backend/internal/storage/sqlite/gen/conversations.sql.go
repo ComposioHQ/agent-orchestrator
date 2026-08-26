@@ -2527,6 +2527,67 @@ func (q *Queries) SelectProjectConversation(ctx context.Context, projectID domai
 	return i, err
 }
 
+const selectQueuedConversationTurns = `-- name: SelectQueuedConversationTurns :many
+SELECT conversation_turns.id,
+       COALESCE(conversation_messages.text, '') AS text,
+       COALESCE(conversation_messages.client_message_id, '') AS client_message_id,
+       COALESCE(conversation_messages.origin, '') AS origin,
+       COALESCE(conversation_messages.delivery_content_json, '') AS delivery_content_json
+FROM conversation_turns
+LEFT JOIN conversation_messages
+    ON conversation_messages.rowid = (
+        SELECT queued_message.rowid
+        FROM conversation_messages AS queued_message
+        WHERE queued_message.turn_id = conversation_turns.id
+          AND queued_message.role = 'user'
+        ORDER BY queued_message.sequence, queued_message.rowid
+        LIMIT 1
+    )
+WHERE conversation_turns.conversation_id = ?
+  AND conversation_turns.state = 'queued'
+ORDER BY conversation_turns.requested_at, conversation_turns.rowid
+`
+
+type SelectQueuedConversationTurnsRow struct {
+	ID                  string
+	Text                string
+	ClientMessageID     string
+	Origin              domain.MessageOrigin
+	DeliveryContentJson string
+}
+
+// The complete durable queue, independent of the bounded timeline page the UI
+// happens to have loaded. LEFT JOIN keeps a damaged/missing message row from
+// silently disappearing out of a destructive confirmation scope.
+func (q *Queries) SelectQueuedConversationTurns(ctx context.Context, conversationID string) ([]SelectQueuedConversationTurnsRow, error) {
+	rows, err := q.db.QueryContext(ctx, selectQueuedConversationTurns, conversationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SelectQueuedConversationTurnsRow{}
+	for rows.Next() {
+		var i SelectQueuedConversationTurnsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Text,
+			&i.ClientMessageID,
+			&i.Origin,
+			&i.DeliveryContentJson,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const selectReservedConversationTurnForPromotion = `-- name: SelectReservedConversationTurnForPromotion :one
 SELECT conversation_turns.id,
        conversation_messages.text,

@@ -380,6 +380,58 @@ func TestConversationSnapshotPagesCombinedTimelineBySequence(t *testing.T) {
 	}
 }
 
+// Queue controls and destructive confirmation cannot be derived from the
+// bounded timeline page: queued automation may not be human-authored, and older
+// queued rows may be outside the newest page entirely. The durable queue read is
+// complete, ordered, and independent of history pagination.
+func TestListQueuedTurnsIncludesAllOriginsBeyondHistoryPage(t *testing.T) {
+	s, session, conversation := conversationFixture(t)
+	ctx := context.Background()
+	const queuedCount = 205
+	for i := 0; i < queuedCount; i++ {
+		origin := domain.MessageOriginHuman
+		if i == 101 {
+			origin = domain.MessageOriginAutomation
+		}
+		turnID := fmt.Sprintf("queued-scope-%03d", i)
+		created, err := s.AppendUserMessage(ctx, conversation, session, "gen-1",
+			domain.ConversationMessage{
+				ID: turnID + "-message", Text: fmt.Sprintf("queued work %03d", i), Origin: origin,
+			}, turnID, histClock.Add(time.Duration(i)*time.Second))
+		if err != nil || !created {
+			t.Fatalf("append %s: created=%v err=%v", turnID, created, err)
+		}
+	}
+
+	page, err := s.LoadConversationSnapshotPage(ctx, conversation, 0, 2)
+	if err != nil {
+		t.Fatalf("load bounded history: %v", err)
+	}
+	if len(page.Messages) != 2 {
+		t.Fatalf("bounded history messages = %d, want 2", len(page.Messages))
+	}
+	if len(page.QueuedTurns) != queuedCount {
+		t.Fatalf("page durable queue = %d, want %d", len(page.QueuedTurns), queuedCount)
+	}
+	if page.QueuedTurns[101].Origin != domain.MessageOriginAutomation {
+		t.Fatalf("page automation origin = %q, want automation", page.QueuedTurns[101].Origin)
+	}
+
+	queued, err := s.ListQueuedTurns(ctx, conversation)
+	if err != nil {
+		t.Fatalf("ListQueuedTurns: %v", err)
+	}
+	if len(queued) != queuedCount {
+		t.Fatalf("durable queued turns = %d, want %d", len(queued), queuedCount)
+	}
+	if queued[0].TurnID != "queued-scope-000" || queued[queuedCount-1].TurnID != "queued-scope-204" {
+		t.Fatalf("queue order endpoints = %q..%q", queued[0].TurnID, queued[queuedCount-1].TurnID)
+	}
+	if queued[101].Origin != domain.MessageOriginAutomation {
+		t.Fatalf("automation origin = %q, want automation", queued[101].Origin)
+	}
+}
+
 func TestProjectConversationPageStartsAtCurrentContextReset(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

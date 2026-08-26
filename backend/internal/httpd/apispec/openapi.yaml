@@ -2595,6 +2595,12 @@ paths:
         schema:
           description: Session identifier, e.g. project-1.
           type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InterruptConversationRequest'
+        required: true
       responses:
         "204":
           description: No Content
@@ -6526,6 +6532,23 @@ components:
       - text
       - status
       type: object
+    ConversationQueuedTurnResponse:
+      properties:
+        origin:
+          enum:
+          - human
+          - automation
+          - daemon
+          - provider
+          type: string
+        text:
+          type: string
+        turnId:
+          type: string
+      required:
+      - turnId
+      - text
+      type: object
     ConversationRateLimitsPayload:
       properties:
         planLabel:
@@ -6653,6 +6676,10 @@ components:
         oldestSequence:
           format: int64
           type: integer
+        queuedTurns:
+          items:
+            $ref: '#/components/schemas/ConversationQueuedTurnResponse'
+          type: array
         rateLimits:
           $ref: '#/components/schemas/ConversationRateLimitsPayload'
         sessionId:
@@ -6679,6 +6706,7 @@ components:
       - hasMoreBefore
       - nativeForkAvailableAfterSequence
       - turns
+      - queuedTurns
       - messages
       - activities
       - settings
@@ -7119,6 +7147,15 @@ components:
       required:
       - target
       - status
+      type: object
+    InterruptConversationRequest:
+      properties:
+        queuedTurnIds:
+          items:
+            type: string
+          type: array
+      required:
+      - queuedTurnIds
       type: object
     KillReviewResponse:
       properties:

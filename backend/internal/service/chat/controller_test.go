@@ -3017,13 +3017,14 @@ func TestInterruptCancelsWhatIsQueuedBehindTheTurn(t *testing.T) {
 	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
 		return len(s.Turns) == 1 && s.Turns[0].State == domain.TurnStateRunning
 	})
-	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
-		Text: "queued", ClientMessageID: "c2",
-	}); err != nil {
+	queued, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "queued", ClientMessageID: "c2", Origin: domain.MessageOriginAutomation,
+	})
+	if err != nil {
 		t.Fatalf("mid-turn Send: %v", err)
 	}
 
-	if err := h.svc.Interrupt(ctx, testSession); err != nil {
+	if err := h.svc.Interrupt(ctx, testSession, []string{queued.ID}); err != nil {
 		t.Fatalf("Interrupt: %v", err)
 	}
 	h.conv.emit(ports.ChatEvent{
@@ -3533,13 +3534,14 @@ func TestMessageTypedAfterStopIsStillDelivered(t *testing.T) {
 	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
 		return len(s.Turns) == 1 && s.Turns[0].State == domain.TurnStateRunning
 	})
-	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+	beforeStop, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
 		Text: "before stop", ClientMessageID: "c2",
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("Send before stop: %v", err)
 	}
 
-	if err := h.svc.Interrupt(ctx, testSession); err != nil {
+	if err := h.svc.Interrupt(ctx, testSession, []string{beforeStop.ID}); err != nil {
 		t.Fatalf("Interrupt: %v", err)
 	}
 
@@ -3796,7 +3798,7 @@ func TestInterruptWaitsForTheProviderToAcknowledgeTheTurn(t *testing.T) {
 		conv.emit(ports.ChatEvent{Kind: ports.ChatEventTurnStarted, ProviderTurnID: "provider-turn-1"})
 	}()
 
-	if err := h.svc.Interrupt(ctx, testSession); err != nil {
+	if err := h.svc.Interrupt(ctx, testSession, nil); err != nil {
 		t.Fatalf("Interrupt raced the provider's acknowledgement: %v", err)
 	}
 	if got := conv.attemptCount(); got != 1 {
@@ -3826,7 +3828,7 @@ func TestInterruptWaitsForAcknowledgementAfterRacingDispatch(t *testing.T) {
 	}
 
 	interruptDone := make(chan error, 1)
-	go func() { interruptDone <- h.svc.Interrupt(ctx, testSession) }()
+	go func() { interruptDone <- h.svc.Interrupt(ctx, testSession, nil) }()
 	close(conv.releaseSend)
 	if err := <-sendDone; err != nil {
 		t.Fatalf("Send: %v", err)
@@ -3860,7 +3862,7 @@ func TestProviderRefusalReconcilesTheDurableTurnAsInterrupted(t *testing.T) {
 		return len(s.Turns) == 1 && s.Turns[0].State == domain.TurnStateRunning
 	})
 
-	if err := h.svc.Interrupt(ctx, testSession); err != nil {
+	if err := h.svc.Interrupt(ctx, testSession, nil); err != nil {
 		t.Fatalf("Interrupt: %v", err)
 	}
 
@@ -3893,14 +3895,15 @@ func TestProviderRefusalPreservesMessageQueuedAfterStop(t *testing.T) {
 	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
 		return len(s.Turns) == 1 && s.Turns[0].State == domain.TurnStateRunning
 	})
-	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+	beforeStop, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
 		Text: "before stop", ClientMessageID: "c2",
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("Send before stop: %v", err)
 	}
 
 	interruptDone := make(chan error, 1)
-	go func() { interruptDone <- h.svc.Interrupt(ctx, testSession) }()
+	go func() { interruptDone <- h.svc.Interrupt(ctx, testSession, []string{beforeStop.ID}) }()
 	select {
 	case <-conv.started:
 	case <-time.After(4 * time.Second):
@@ -3950,14 +3953,15 @@ func TestProviderRefusalDoesNotOverwriteCommittedCompletion(t *testing.T) {
 	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
 		return len(s.Turns) == 1 && s.Turns[0].State == domain.TurnStateRunning
 	})
-	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+	beforeStop, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
 		Text: "before stop", ClientMessageID: "c2",
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("Send before stop: %v", err)
 	}
 
 	interruptDone := make(chan error, 1)
-	go func() { interruptDone <- h.svc.Interrupt(ctx, testSession) }()
+	go func() { interruptDone <- h.svc.Interrupt(ctx, testSession, []string{beforeStop.ID}) }()
 	select {
 	case <-conv.emitted:
 	case <-time.After(4 * time.Second):
@@ -4009,7 +4013,7 @@ func TestInterruptReconcilesStaleRunningTurnOnDisk(t *testing.T) {
 		return len(s.Turns) == 1 && s.Turns[0].State == domain.TurnStateRunning
 	})
 
-	if err := h.svc.Interrupt(ctx, testSession); err != nil {
+	if err := h.svc.Interrupt(ctx, testSession, nil); err != nil {
 		t.Fatalf("Interrupt: %v", err)
 	}
 
@@ -4044,7 +4048,7 @@ func TestInterruptReconcilesAllVisibleRunningTurns(t *testing.T) {
 			s.Turns[1].State == domain.TurnStateRunning
 	})
 
-	if err := h.svc.Interrupt(ctx, testSession); err != nil {
+	if err := h.svc.Interrupt(ctx, testSession, nil); err != nil {
 		t.Fatalf("Interrupt: %v", err)
 	}
 	snapshot := h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
@@ -4081,7 +4085,7 @@ func TestInterruptDurableFallbackPreservesPostStopSend(t *testing.T) {
 	})
 
 	interruptDone := make(chan error, 1)
-	go func() { interruptDone <- h.svc.Interrupt(ctx, testSession) }()
+	go func() { interruptDone <- h.svc.Interrupt(ctx, testSession, nil) }()
 	select {
 	case <-conv.started:
 	case <-time.After(4 * time.Second):
@@ -4126,7 +4130,7 @@ func TestInterruptDurableFallbackPreservesPostStopSend(t *testing.T) {
 func TestInterruptReturnsNoActiveTurnWhenNoRunningTurnAnywhere(t *testing.T) {
 	h := newHarness(t)
 
-	err := h.svc.Interrupt(context.Background(), testSession)
+	err := h.svc.Interrupt(context.Background(), testSession, nil)
 	if !errorsIs(err, chatsvc.ErrNoActiveTurn) {
 		t.Fatalf("err = %v, want ErrNoActiveTurn", err)
 	}
@@ -4147,13 +4151,14 @@ func TestInterruptReconciliationCancelsQueuedTurns(t *testing.T) {
 	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
 		return len(s.Turns) == 1 && s.Turns[0].State == domain.TurnStateRunning
 	})
-	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+	queued, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
 		Text: "queued", ClientMessageID: "c2",
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("Send queued: %v", err)
 	}
 
-	if err := h.svc.Interrupt(ctx, testSession); err != nil {
+	if err := h.svc.Interrupt(ctx, testSession, []string{queued.ID}); err != nil {
 		t.Fatalf("Interrupt: %v", err)
 	}
 
@@ -4715,9 +4720,10 @@ func TestProjectionFailureThenStopStillStopsTheTurn(t *testing.T) {
 		return len(s.Turns) == 1 && s.Turns[0].State == domain.TurnStateRunning
 	})
 
-	if _, err := svc.Send(ctx, testSession, ports.ChatUserMessage{
+	queued, err := svc.Send(ctx, testSession, ports.ChatUserMessage{
 		Text: "queued", ClientMessageID: "c2",
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("Send queued: %v", err)
 	}
 
@@ -4734,7 +4740,7 @@ func TestProjectionFailureThenStopStillStopsTheTurn(t *testing.T) {
 		t.Fatal("completion projection did not reach the injected rollback")
 	}
 
-	if err := svc.Interrupt(ctx, testSession); err != nil {
+	if err := svc.Interrupt(ctx, testSession, []string{queued.ID}); err != nil {
 		t.Fatalf("Interrupt: %v", err)
 	}
 

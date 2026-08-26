@@ -54,6 +54,8 @@ async function installQueuedConversation(page: Page) {
 	];
 	const retiredTurnIds = new Set<string>();
 	const requests: string[] = [];
+	const interruptBodies: string[][] = [];
+	let rejectNextInterrupt = false;
 	await installFakeAgent(page, {
 		workers: [
 			{
@@ -80,6 +82,10 @@ async function installQueuedConversation(page: Page) {
 					oldestSequence: 1,
 					hasMoreBefore: false,
 					turns: turns.filter((entry) => !retiredTurnIds.has(entry.id)),
+					queuedTurns: [
+						{ turnId: "turn-queued-one", text: "First queued follow-up", origin: "human" },
+						{ turnId: "turn-queued-two", text: "Second queued follow-up", origin: "human" },
+					].filter((entry) => !retiredTurnIds.has(entry.turnId)),
 					messages: messages.filter(
 						(entry) => !retiredTurnIds.has(entry.turnId),
 					),
@@ -119,6 +125,20 @@ async function installQueuedConversation(page: Page) {
 			route.request().method() === "POST"
 		) {
 			requests.push(path);
+			const body = route.request().postDataJSON() as { queuedTurnIds?: string[] };
+			interruptBodies.push(body.queuedTurnIds ?? []);
+			if (rejectNextInterrupt) {
+				rejectNextInterrupt = false;
+				await route.fulfill({
+					status: 409,
+					json: {
+						error: "conflict",
+						code: "CHAT_QUEUE_SCOPE_CHANGED",
+						message: "the queued work changed; review the refreshed queue and confirm Stop again",
+					},
+				});
+				return;
+			}
 			await route.fulfill({ status: 204 });
 			return;
 		}
@@ -145,13 +165,19 @@ async function installQueuedConversation(page: Page) {
 	});
 	await page.goto(`/#/projects/fake-proj/sessions/${sessionId}`);
 	await expect(page.getByTestId("queued-message-dock")).toBeVisible();
-	return requests;
+	return {
+		requests,
+		interruptBodies,
+		rejectNextInterrupt: () => {
+			rejectNextInterrupt = true;
+		},
+	};
 }
 
 test("queued turns can be cancelled or promoted independently and Stop confirms its scope @T0", async ({
 	page,
 }) => {
-	const requests = await installQueuedConversation(page);
+	const fixture = await installQueuedConversation(page);
 	const evidenceDirectory = process.env.AO_QUEUE_EVIDENCE_DIR;
 	if (evidenceDirectory) {
 		await page.screenshot({
@@ -204,7 +230,7 @@ test("queued turns can be cancelled or promoted independently and Stop confirms 
 		.click();
 	await expect(page.getByTestId("queued-message-dock")).toHaveCount(0);
 	await expect(page.getByText("Active work", { exact: true })).toBeVisible();
-	expect(requests).toEqual([
+	expect(fixture.requests).toEqual([
 		`/api/v1/sessions/${sessionId}/conversation/turns/turn-queued-one/cancel`,
 		`/api/v1/sessions/${sessionId}/conversation/turns/turn-queued-two/steer`,
 	]);
@@ -215,4 +241,52 @@ test("queued turns can be cancelled or promoted independently and Stop confirms 
 			fullPage: true,
 		});
 	}
+});
+
+test("Stop sends the exact queue scope and requires reconfirmation after a conflict @T0", async ({
+	page,
+}) => {
+	const fixture = await installQueuedConversation(page);
+	fixture.rejectNextInterrupt();
+
+	await page.getByRole("button", { name: "Stop turn" }).click();
+	let dialog = page.getByRole("dialog", {
+		name: "Stop turn and cancel 2 queued messages?",
+	});
+	await dialog.getByRole("button", { name: "Stop all" }).click();
+
+	await expect(
+		page.getByText(
+			"Queued work changed while Stop was awaiting confirmation. Review the refreshed queue and press Stop again.",
+		),
+	).toBeVisible();
+	await expect(page.getByTestId("queued-message-turn-queued-one")).toBeVisible();
+	await expect(page.getByTestId("queued-message-turn-queued-two")).toBeVisible();
+	const evidenceDirectory = process.env.AO_QUEUE_EVIDENCE_DIR;
+	if (evidenceDirectory) {
+		await page.screenshot({
+			path: `${evidenceDirectory}/queued-controls-scope-conflict.png`,
+			fullPage: true,
+		});
+	}
+	expect(fixture.interruptBodies).toEqual([
+		["turn-queued-one", "turn-queued-two"],
+	]);
+
+	await page.getByRole("button", { name: "Stop turn" }).click();
+	dialog = page.getByRole("dialog", {
+		name: "Stop turn and cancel 2 queued messages?",
+	});
+	const secondInterrupt = page.waitForResponse(
+		(response) =>
+			new URL(response.url()).pathname.endsWith("/conversation/interrupt") &&
+			response.request().method() === "POST",
+	);
+	await dialog.getByRole("button", { name: "Stop all" }).click();
+	await secondInterrupt;
+	await expect(dialog).not.toBeVisible();
+	expect(fixture.interruptBodies).toEqual([
+		["turn-queued-one", "turn-queued-two"],
+		["turn-queued-one", "turn-queued-two"],
+	]);
 });
