@@ -390,8 +390,7 @@ function BoardPullRequestGroup({
 }) {
 	const statusLabel = labels.states[group.state];
 	const singlePullRequest = group.prs.length === 1;
-	const linkClassName =
-		"pr-link rounded-sm border border-transparent hover:border-border-strong hover:bg-interactive-hover";
+	const linkClassName = "pr-link hover:underline";
 	const details = (
 		<>
 			<PullRequestLifecycleIcon state={group.state} />
@@ -466,7 +465,7 @@ function BoardPullRequestGroup({
 			{singlePullRequest ? (
 				<ExternalLink
 					ariaLabel={`PR #${group.prs[0]?.number} ${statusLabel}`}
-					className={cn("flex w-full min-w-0 items-center gap-x-2 px-1 py-0.5", linkClassName)}
+					className={cn("flex w-full min-w-0 items-center gap-x-2 py-0.5", linkClassName)}
 					href={group.prs[0]?.url ?? "#"}
 					stopPropagation
 				>
