@@ -9,9 +9,8 @@ const releaseMutationPatterns = [
   /curl(?=[^\n]*(?:releases|git\/refs\/tags))(?=[^\n]*(?:(?:--request|-X)\s*(?:DELETE|PATCH|POST|PUT)))[^\n]*/,
   /github\.rest\.repos\.(?:createRelease|deleteRelease|updateRelease|uploadReleaseAsset)\b/,
   /uses:\s*(?:actions\/create-release|ncipollo\/release-action|softprops\/action-gh-release)@/,
-  /git tag\s+(?!-)\S+/,
-  /git tag\s+(?:-a|-s|-f|--annotate|--sign|--force)\s+\S+/,
-  /git push\b[^\n]*(?:--tags\b|refs\/tags\/|\btag\s+\S+|\bv?\d+\.\d+\.\d+(?:[-+][^\s]+)?\b)/,
+  /git tag\b(?![^\n]*(?:--list\b|-l\b|--contains\b|--no-contains\b|--points-at\b|--merged\b|--no-merged\b|--sort\b|--column\b|--ignore-case\b|--verify\b|-v\b|-n\d*\b))[^\n]*\S/,
+  /git push\b[^\n]*(?:--tags\b|--follow-tags\b|refs\/tags\/|\btag\s+\S+|\bv?\d+\.\d+\.\d+(?:[-+][^\s]+)?\b)/,
   /electron-forge publish/,
   /npm run publish/,
 ];
@@ -104,6 +103,16 @@ describe("desktop release workflows", () => {
         name: "tag-ref-publisher.yml",
         contents:
           "permissions: { contents: write }\nrun: git push origin HEAD:refs/tags/v1.2.3\n",
+      },
+      {
+        name: "annotated-tag-publisher.yml",
+        contents:
+          'permissions: { contents: write }\nrun: git tag -m "release" v1.2.3 && git push origin --follow-tags\n',
+      },
+      {
+        name: "combined-annotated-tag-publisher.yml",
+        contents:
+          'permissions: { contents: write }\nrun: git tag -am "release" v1.2.3 && git push origin --follow-tags\n',
       },
       {
         name: "flow-write-release.yml",
