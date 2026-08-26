@@ -354,6 +354,7 @@ export const mockSessionScmSummaries: Record<string, SessionPRSummary[]> = {
 	],
 	"demo-review-stack": [
 		prSummary("demo-review-stack", 321, {
+			state: "merged",
 			createdAt: hoursAgo(2),
 			stateChangedAt: hoursAgo(2),
 			review: {
