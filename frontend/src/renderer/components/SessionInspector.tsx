@@ -1942,12 +1942,16 @@ function reviewRunHasOutcome(run: ReviewRunFacts | undefined): boolean {
 }
 
 /** The PRs AO has an agent review outcome for. */
+function reviewRunIsVisible(run: ReviewRunFacts | undefined): boolean {
+	return Boolean(run && (reviewRunHasOutcome(run) || run.status === "failed"));
+}
+
 function triggeredReviewStatesFrom(openReviewStates: PRReviewState[], runs: ReviewRunFacts[]): PRReviewState[] {
 	return openReviewStates.filter(
 		(reviewState) =>
-			reviewRunHasOutcome(reviewState.latestRun) ||
-			reviewRunHasOutcome(reviewState.previousRun) ||
-			runs.some((run) => run.prUrl === reviewState.prUrl && reviewRunHasOutcome(run)) ||
+			reviewRunIsVisible(reviewState.latestRun) ||
+			reviewRunIsVisible(reviewState.previousRun) ||
+			runs.some((run) => run.prUrl === reviewState.prUrl && reviewRunIsVisible(run)) ||
 			reviewState.status === "up_to_date" ||
 			reviewState.status === "changes_requested",
 	);
@@ -1983,11 +1987,11 @@ function reviewVerdict(reviewState: PRReviewState): {
 	label: string;
 	tone: "neutral" | "running" | "success" | "danger";
 } {
-	if (reviewState.status === "needs_review") {
-		return { label: appI18n.t("inspector.review.needed"), tone: "neutral" };
-	}
 	if (reviewState.latestRun?.status === "failed") {
 		return { label: appI18n.t("inspector.review.failed"), tone: "danger" };
+	}
+	if (reviewState.status === "needs_review") {
+		return { label: appI18n.t("inspector.review.needed"), tone: "neutral" };
 	}
 	if (reviewState.latestRun?.status === "cancelled") {
 		return { label: appI18n.t("inspector.review.cancelled"), tone: "neutral" };

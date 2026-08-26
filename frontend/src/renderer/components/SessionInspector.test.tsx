@@ -2840,7 +2840,7 @@ describe("SessionInspector summary reviews", () => {
     expect(screen.getAllByText("Changes requested")).not.toHaveLength(0);
   });
 
-  it("does not list a failed run without a verdict and still allows reviewing the latest commit", async () => {
+  it("lists a failed run without a verdict and still allows reviewing the latest commit", async () => {
     mockCommonGets([failedReview], "reviewer-pane", [
       { ...reviewState(3, "needs_review", "abc123"), latestRun: failedReview },
     ]);
@@ -2848,7 +2848,7 @@ describe("SessionInspector summary reviews", () => {
     renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
     await openReviewsSection();
 
-    expect(screen.queryByText("Failed")).not.toBeInTheDocument();
+    expect(screen.getByText("Failed")).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Review latest commit" }),
     ).toBeEnabled();
