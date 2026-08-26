@@ -1983,6 +1983,70 @@ describe("attachments", () => {
 		expect(readChatSessionDraft(sessionId).composer.attachments).toEqual([]);
 	});
 
+	it("does not resurrect a removed attachment in a same-session replacement rendered before persistence", async () => {
+		const sessionId = "removed-attachment-rendered-replacement";
+		writeChatAttachments(sessionId, [
+			{
+				id: "removed-before-replacement-commit",
+				path: ".ao/attachments/removed-before-replacement-commit.png",
+				name: "removed-before-replacement-commit.png",
+				mimeType: "image/png",
+				bytes: 4,
+			},
+		]);
+		const onSend = vi.fn(async () => undefined);
+		const props = {
+			onSend,
+			draftSessionId: sessionId,
+			onStageAttachments: vi.fn(),
+		};
+		const surfaces = (
+			showOriginal: boolean,
+			replacementMode?: "hidden" | "visible",
+		) => (
+			<>
+				{showOriginal ? (
+					<div data-testid="original-attachment-composer">
+						<ChatComposer {...props} />
+					</div>
+				) : null}
+				{replacementMode ? (
+					<Activity key="replacement" mode={replacementMode}>
+						<div data-testid="replacement-attachment-composer">
+							<ChatComposer {...props} />
+						</div>
+					</Activity>
+				) : null}
+			</>
+		);
+
+		const view = render(surfaces(true));
+		view.rerender(surfaces(true, "hidden"));
+		const original = within(screen.getByTestId("original-attachment-composer"));
+		await userEvent.click(
+			original.getByLabelText("Remove removed-before-replacement-commit.png"),
+		);
+		await waitFor(() =>
+			expect(readChatSessionDraft(sessionId).composer.attachments).toEqual([]),
+		);
+
+		view.rerender(surfaces(false, "visible"));
+		const replacement = within(screen.getByTestId("replacement-attachment-composer"));
+		expect(
+			replacement.queryByLabelText("Remove removed-before-replacement-commit.png"),
+		).not.toBeInTheDocument();
+		const field = replacement.getByLabelText("Message the agent");
+		await typeInComposer(field, "send without the removed attachment");
+		fireEvent.keyDown(field, { key: "Enter" });
+
+		await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+		expect(onSend).toHaveBeenCalledWith(
+			"send without the removed attachment",
+			undefined,
+			expect.any(String),
+		);
+	});
+
 	it("shows a removable chip per pasted image", async () => {
 		const { field } = renderComposer({
 			onStageAttachments: vi.fn().mockResolvedValue([

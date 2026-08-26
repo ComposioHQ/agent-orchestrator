@@ -59,6 +59,8 @@ export type FileAttachmentOptions = {
 
 type SharedAttachmentUpdate = {
 	pending: number;
+	revision: number;
+	persistedRevision: number;
 	attachments?: FileAttachment[];
 	error?: string | null;
 };
@@ -67,6 +69,8 @@ type SharedAttachmentEntry = {
 	pending: Map<symbol, Set<string>>;
 	settlement?: { promise: Promise<void>; resolve: () => void };
 	generation: number;
+	revision: number;
+	persistedRevision: number;
 	listeners: Map<symbol, (update: SharedAttachmentUpdate) => void>;
 	stagingQueue: Promise<void>;
 	attachments?: FileAttachment[];
@@ -121,6 +125,8 @@ function sharedEntry(key: string): SharedAttachmentEntry {
 		entry = {
 			pending: new Map(),
 			generation: 0,
+			revision: 0,
+			persistedRevision: 0,
 			listeners: new Map(),
 			stagingQueue: Promise.resolve(),
 			descriptorVersions: new Map(),
@@ -135,7 +141,7 @@ function sharedEntry(key: string): SharedAttachmentEntry {
 
 function notifySharedAttachmentEntry(
 	key: string,
-	update: Omit<SharedAttachmentUpdate, "pending"> = {},
+	update: Omit<SharedAttachmentUpdate, "pending" | "revision" | "persistedRevision"> = {},
 	originToken?: symbol,
 ): void {
 	const entry = sharedAttachmentEntries.get(key);
@@ -164,9 +170,15 @@ function notifySharedAttachmentEntry(
 			if (!nextIDs.has(id)) entry.persistedDescriptorVersions.delete(id);
 		}
 		entry.attachments = update.attachments;
+		entry.revision += 1;
 	}
 	if (update.error !== undefined) entry.error = update.error;
-	const notification = { pending: entry.pending.size, ...update };
+	const notification = {
+		pending: entry.pending.size,
+		revision: entry.revision,
+		persistedRevision: entry.persistedRevision,
+		...update,
+	};
 	for (const [token, listener] of entry.listeners) {
 		if (token !== originToken) listener(notification);
 	}
@@ -238,6 +250,7 @@ function recordPersistedSharedAttachmentDescriptors(
 	const entry = sharedAttachmentEntries.get(key);
 	if (!entry) return;
 	const currentByID = new Map(entry.attachments?.map((attachment) => [attachment.id, attachment]));
+	let persistedDescriptorCount = 0;
 	for (const attachment of attachments) {
 		if (!attachment.stagedPath) continue;
 		const version = versions.get(attachment.id);
@@ -249,6 +262,13 @@ function recordPersistedSharedAttachmentDescriptors(
 			continue;
 		}
 		entry.persistedDescriptorVersions.set(attachment.id, version);
+		persistedDescriptorCount += 1;
+	}
+	if (
+		currentByID.size === attachments.length &&
+		persistedDescriptorCount === attachments.length
+	) {
+		entry.persistedRevision = entry.revision;
 	}
 	for (const [id, tombstone] of entry.removalTombstones) {
 		const current = currentByID.get(id);
@@ -273,6 +293,24 @@ function sharedAttachmentEntryCanEvict(entry: SharedAttachmentEntry): boolean {
 		entry.sources.size === 0 &&
 		entry.removalTombstones.size === 0
 	);
+}
+
+function scheduleSharedAttachmentEntryEviction(
+	key: string,
+	entry: SharedAttachmentEntry,
+): void {
+	// React disconnects effects while an Activity is hidden. During a same-commit
+	// replacement, the old subscriber cleans up before the already-rendered
+	// replacement subscribes. Keep the settled snapshot through that activation
+	// boundary so the replacement cannot fall back to its stale render-time draft.
+	queueMicrotask(() => {
+		if (
+			sharedAttachmentEntries.get(key) === entry &&
+			sharedAttachmentEntryCanEvict(entry)
+		) {
+			sharedAttachmentEntries.delete(key);
+		}
+	});
 }
 
 function beginSharedAttachmentWork(key: string): SharedAttachmentWork {
@@ -354,7 +392,7 @@ function endSharedAttachmentWork(key: string, token: symbol): void {
 	settleSharedAttachmentWork(entry);
 	notifySharedAttachmentEntry(key);
 	if (sharedAttachmentEntryCanEvict(entry)) {
-		sharedAttachmentEntries.delete(key);
+		scheduleSharedAttachmentEntryEviction(key, entry);
 	}
 }
 
@@ -367,13 +405,15 @@ function subscribeSharedAttachmentWork(
 	entry.listeners.set(token, listener);
 	listener({
 		pending: entry.pending.size,
+		revision: entry.revision,
+		persistedRevision: entry.persistedRevision,
 		...(entry.attachments !== undefined ? { attachments: entry.attachments } : {}),
 		...(entry.error !== undefined ? { error: entry.error } : {}),
 	});
 	return () => {
 		entry.listeners.delete(token);
 		if (sharedAttachmentEntryCanEvict(entry)) {
-			sharedAttachmentEntries.delete(key);
+			scheduleSharedAttachmentEntryEviction(key, entry);
 		}
 	};
 }
@@ -512,7 +552,7 @@ export function discardCapturedPendingFileAttachments(
 			...(discardedUnpersisted ? { error: null } : {}),
 		});
 		if (sharedAttachmentEntryCanEvict(entry)) {
-			sharedAttachmentEntries.delete(captured.key);
+			scheduleSharedAttachmentEntryEviction(captured.key, entry);
 		}
 	}
 }
@@ -602,6 +642,16 @@ export function useFileAttachments(options: FileAttachmentOptions = {}) {
 	const attachmentsRef = useRef<FileAttachment[]>(restoreInitial(initialAttachments));
 	const initialKeyRef = useRef(initialKey);
 	const listenerTokenRef = useRef(Symbol("file-attachment-listener"));
+	const renderedSharedRevisionRef = useRef({
+		key: initialKey,
+		revision: initialKey ? sharedEntry(initialKey).revision : 0,
+	});
+	if (renderedSharedRevisionRef.current.key !== initialKey) {
+		renderedSharedRevisionRef.current = {
+			key: initialKey,
+			revision: initialKey ? sharedEntry(initialKey).revision : 0,
+		};
+	}
 	const sourceFilesRef = useRef<Map<string, File>>(
 		initialKey ? sharedEntry(initialKey).sources : new Map(),
 	);
@@ -673,8 +723,18 @@ export function useFileAttachments(options: FileAttachmentOptions = {}) {
 
 	useEffect(() => {
 		if (!initialKey) return;
+		let activated = false;
 		return subscribeSharedAttachmentWork(initialKey, listenerTokenRef.current, (update) => {
-			if (update.attachments) {
+			const renderedRevision =
+				renderedSharedRevisionRef.current.key === initialKey
+					? renderedSharedRevisionRef.current.revision
+					: -1;
+			const shouldApplyAttachments =
+				activated ||
+				update.revision > renderedRevision ||
+				update.persistedRevision !== update.revision;
+			activated = true;
+			if (update.attachments && shouldApplyAttachments) {
 				const restored = normalizeInitial(update.attachments);
 				attachmentsRef.current = restored;
 				setAttachments(restored);
