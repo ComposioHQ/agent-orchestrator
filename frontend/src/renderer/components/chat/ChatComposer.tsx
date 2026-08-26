@@ -340,7 +340,7 @@ export function ChatComposer({
 	);
 	const persistAttachments = useCallback(
 		(attachments: FileAttachment[]) => {
-			if (!draftScope) return;
+			if (!draftScope) return true;
 			const result = writeChatAttachments(
 				draftScope,
 				attachments.flatMap((attachment) =>
@@ -361,6 +361,7 @@ export function ChatComposer({
 					? null
 					: "Draft couldn’t be saved. Keep this chat open or copy it before leaving.",
 			);
+			return result.ok;
 		},
 		[draftScope],
 	);

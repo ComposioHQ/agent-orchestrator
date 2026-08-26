@@ -914,6 +914,51 @@ describe("SessionView", () => {
 		confirm.mockRestore();
 	});
 
+	it("does not resurrect a staged descriptor whose local draft record was abandoned", async () => {
+		const scopeKey = chatDraftScopeKey({
+			sessionId: "sess-1",
+			incarnation: "2026-08-26T08:45:00.000Z",
+		});
+		const persistDraft = vi.fn(() => false);
+		const staging = renderHook(() =>
+			useFileAttachments({
+				initialKey: scopeKey,
+				prepareAttachments: async (attachments) =>
+					attachments.map((attachment) => ({
+						...attachment,
+						stagedPath: `.ao/attachments/${attachment.name}`,
+					})),
+				onAttachmentsChange: persistDraft,
+			}),
+		);
+		await act(async () => {
+			await staging.result.current.addFiles([
+				new File([new Uint8Array(8).fill(1)], "staged-but-unrecorded.txt", {
+					type: "text/plain",
+				}),
+			]);
+		});
+		expect(staging.result.current.attachments).toMatchObject([
+			{
+				name: "staged-but-unrecorded.txt",
+				stagedPath: ".ao/attachments/staged-but-unrecorded.txt",
+			},
+		]);
+		expect(persistDraft).toHaveLastReturnedWith(false);
+
+		act(() => setChatDraftBoundary("sess-1", "composer", "persistence-failed"));
+		const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+		render(<SessionView sessionId="sess-1" />);
+		expect(await routeBlockerState.options?.shouldBlockFn()).toBe(false);
+
+		staging.unmount();
+		const replacement = renderHook(() => useFileAttachments({ initialKey: scopeKey }));
+		expect(replacement.result.current.attachments).toEqual([]);
+		expect(replacement.result.current.preparing).toBe(false);
+		act(() => setChatDraftBoundary("sess-1", "composer", undefined));
+		confirm.mockRestore();
+	});
+
 	it("publishes the full stable native risk set and clears it only on unmount", async () => {
 		const publishRisk = vi.spyOn(window.ao!.app, "setChatDraftRisk");
 		const view = render(<SessionView sessionId="sess-1" />);

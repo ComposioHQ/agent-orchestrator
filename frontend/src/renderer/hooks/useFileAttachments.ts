@@ -50,8 +50,11 @@ export type FileAttachmentOptions = {
 	 * chips stay visible so the user can see, retry, or remove the exact file.
 	 */
 	prepareAttachments?: (attachments: FileAttachment[]) => Promise<FileAttachment[]>;
-	/** Called after an accepted add, removal, or clear. */
-	onAttachmentsChange?: (attachments: FileAttachment[]) => void;
+	/**
+	 * Called after an accepted add, removal, or clear. Return false when the
+	 * current staged descriptors could not be recorded in the local draft.
+	 */
+	onAttachmentsChange?: (attachments: FileAttachment[]) => boolean | void;
 };
 
 type SharedAttachmentUpdate = {
@@ -62,11 +65,14 @@ type SharedAttachmentUpdate = {
 
 type SharedAttachmentEntry = {
 	pending: Map<symbol, Set<string>>;
+	settlement?: { promise: Promise<void>; resolve: () => void };
 	generation: number;
 	listeners: Map<symbol, (update: SharedAttachmentUpdate) => void>;
 	stagingQueue: Promise<void>;
 	attachments?: FileAttachment[];
 	descriptorVersions: Map<string, number>;
+	/** Exact descriptor versions proven written to the renderer's local draft. */
+	persistedDescriptorVersions: Map<string, number>;
 	error?: string | null;
 	sources: Map<string, File>;
 };
@@ -77,12 +83,12 @@ type CapturedPendingFileAttachmentEntry = {
 	key: string;
 	generation: number;
 	tokens: readonly symbol[];
-	undurable: readonly { id: string; version: number }[];
+	locallyUnpersisted: readonly { id: string; version: number }[];
 };
 
 const pendingFileAttachmentCaptureEntries = Symbol("pending-file-attachment-capture");
 
-/** Opaque handle for pending work and undurable drafts at a user-approved boundary. */
+/** Opaque handle for pending work and locally unpersisted drafts at an approved boundary. */
 export type PendingFileAttachmentCapture = {
 	readonly [pendingFileAttachmentCaptureEntries]: readonly CapturedPendingFileAttachmentEntry[];
 };
@@ -98,10 +104,10 @@ function sharedAttachmentDescriptors(attachments: FileAttachment[]): FileAttachm
 	}));
 }
 
-// Staging belongs to the AO session, not to one React mount. A controller or
-// surface remount can happen while the daemon is writing bytes; keeping this
-// tiny registry lets the replacement hook remain pending and receive the staged
-// descriptors instead of restoring storage before the write and missing them.
+// Attachment preparation belongs to the AO session, not to one React mount. A
+// controller or surface remount can happen while FileReader or the daemon is
+// working; this registry lets the replacement hook await that exact lifecycle
+// and receive the staged descriptors instead of racing a stale storage restore.
 const sharedAttachmentEntries = new Map<string, SharedAttachmentEntry>();
 
 function sharedEntry(key: string): SharedAttachmentEntry {
@@ -113,6 +119,7 @@ function sharedEntry(key: string): SharedAttachmentEntry {
 			listeners: new Map(),
 			stagingQueue: Promise.resolve(),
 			descriptorVersions: new Map(),
+			persistedDescriptorVersions: new Map(),
 			sources: new Map(),
 		};
 		sharedAttachmentEntries.set(key, entry);
@@ -148,7 +155,10 @@ function notifySharedAttachmentEntry(
 			}
 		}
 		for (const id of entry.descriptorVersions.keys()) {
-			if (!nextIDs.has(id)) entry.descriptorVersions.delete(id);
+			if (!nextIDs.has(id)) {
+				entry.descriptorVersions.delete(id);
+				entry.persistedDescriptorVersions.delete(id);
+			}
 		}
 		entry.attachments = update.attachments;
 	}
@@ -159,12 +169,72 @@ function notifySharedAttachmentEntry(
 	}
 }
 
+function sharedDescriptorVersions(
+	key: string,
+	attachments: FileAttachment[],
+): Map<string, number> {
+	const entry = sharedAttachmentEntries.get(key);
+	return new Map(
+		attachments.flatMap(({ id }) => {
+			const version = entry?.descriptorVersions.get(id);
+			return version === undefined ? [] : [[id, version] as const];
+		}),
+	);
+}
+
+function recordPersistedSharedAttachmentDescriptors(
+	key: string,
+	attachments: FileAttachment[],
+	versions: ReadonlyMap<string, number>,
+	persisted: boolean | void,
+): void {
+	if (persisted === false) return;
+	const entry = sharedAttachmentEntries.get(key);
+	if (!entry) return;
+	const currentByID = new Map(entry.attachments?.map((attachment) => [attachment.id, attachment]));
+	for (const attachment of attachments) {
+		if (!attachment.stagedPath) continue;
+		const version = versions.get(attachment.id);
+		if (
+			version === undefined ||
+			entry.descriptorVersions.get(attachment.id) !== version ||
+			currentByID.get(attachment.id)?.stagedPath !== attachment.stagedPath
+		) {
+			continue;
+		}
+		entry.persistedDescriptorVersions.set(attachment.id, version);
+	}
+}
+
 function beginSharedAttachmentWork(key: string): SharedAttachmentWork {
 	const entry = sharedEntry(key);
+	if (entry.pending.size === 0) {
+		let resolve!: () => void;
+		const promise = new Promise<void>((settle) => {
+			resolve = settle;
+		});
+		entry.settlement = { promise, resolve };
+	}
 	const work = { token: Symbol("chat-attachment-work"), generation: entry.generation };
 	entry.pending.set(work.token, new Set());
 	notifySharedAttachmentEntry(key);
 	return work;
+}
+
+function settleSharedAttachmentWork(entry: SharedAttachmentEntry): void {
+	if (entry.pending.size > 0 || !entry.settlement) return;
+	entry.settlement.resolve();
+	entry.settlement = undefined;
+}
+
+async function waitForSharedAttachmentWork(key: string): Promise<void> {
+	while (true) {
+		const entry = sharedAttachmentEntries.get(key);
+		if (!entry || entry.pending.size === 0) return;
+		const settlement = entry.settlement;
+		if (!settlement) return;
+		await settlement.promise;
+	}
 }
 
 function registerSharedAttachmentWorkIds(
@@ -201,9 +271,11 @@ function discardSharedAttachmentTokens(
 		entry.attachments = entry.attachments?.filter(({ id }) => !abandonedIds.has(id)) ?? [];
 		for (const id of abandonedIds) {
 			entry.descriptorVersions.delete(id);
+			entry.persistedDescriptorVersions.delete(id);
 			entry.sources.delete(id);
 		}
 	}
+	settleSharedAttachmentWork(entry);
 	return changed;
 }
 
@@ -211,6 +283,7 @@ function endSharedAttachmentWork(key: string, token: symbol): void {
 	const entry = sharedAttachmentEntries.get(key);
 	if (!entry) return;
 	entry.pending.delete(token);
+	settleSharedAttachmentWork(entry);
 	notifySharedAttachmentEntry(key);
 	if (
 		entry.pending.size === 0 &&
@@ -271,31 +344,33 @@ function attachmentKeyBelongsToSession(key: string, sessionId: string): boolean 
 	return key === sessionId || chatDraftScopeSessionId(key) === sessionId;
 }
 
-/** Capture pending work and settled-undurable drafts when leaving is confirmed. */
+/** Capture pending work and locally unpersisted descriptors when leaving is confirmed. */
 export function capturePendingFileAttachmentsForSession(
 	sessionId: string,
 ): PendingFileAttachmentCapture {
 	const entries: CapturedPendingFileAttachmentEntry[] = [];
 	for (const [key, entry] of sharedAttachmentEntries) {
 		if (!attachmentKeyBelongsToSession(key, sessionId)) continue;
-		const undurable =
+		const locallyUnpersisted =
 			entry.attachments?.flatMap((attachment) =>
-				attachment.stagedPath
-					? []
-					: [{ id: attachment.id, version: entry.descriptorVersions.get(attachment.id) ?? 0 }],
+				!attachment.stagedPath ||
+				entry.persistedDescriptorVersions.get(attachment.id) !==
+					entry.descriptorVersions.get(attachment.id)
+					? [{ id: attachment.id, version: entry.descriptorVersions.get(attachment.id) ?? 0 }]
+					: [],
 			) ?? [];
-		if (entry.pending.size === 0 && undurable.length === 0) continue;
+		if (entry.pending.size === 0 && locallyUnpersisted.length === 0) continue;
 		entries.push({
 			key,
 			generation: entry.generation,
 			tokens: [...entry.pending.keys()],
-			undurable,
+			locallyUnpersisted,
 		});
 	}
 	return { [pendingFileAttachmentCaptureEntries]: entries };
 }
 
-function discardCapturedUndurableAttachments(
+function discardCapturedUnpersistedAttachments(
 	entry: SharedAttachmentEntry,
 	captured: CapturedPendingFileAttachmentEntry,
 ): boolean {
@@ -303,15 +378,17 @@ function discardCapturedUndurableAttachments(
 	for (const owned of entry.pending.values()) {
 		for (const id of owned) stillOwned.add(id);
 	}
-	const capturedVersions = new Map(captured.undurable.map(({ id, version }) => [id, version]));
+	const capturedVersions = new Map(
+		captured.locallyUnpersisted.map(({ id, version }) => [id, version]),
+	);
 	const abandoned = new Set<string>();
 	for (const attachment of entry.attachments ?? []) {
 		const capturedVersion = capturedVersions.get(attachment.id);
 		if (
 			capturedVersion === undefined ||
-			attachment.stagedPath ||
 			stillOwned.has(attachment.id) ||
-			entry.descriptorVersions.get(attachment.id) !== capturedVersion
+			entry.descriptorVersions.get(attachment.id) !== capturedVersion ||
+			entry.persistedDescriptorVersions.get(attachment.id) === capturedVersion
 		) {
 			continue;
 		}
@@ -321,13 +398,14 @@ function discardCapturedUndurableAttachments(
 	entry.attachments = entry.attachments?.filter(({ id }) => !abandoned.has(id)) ?? [];
 	for (const id of abandoned) {
 		entry.descriptorVersions.delete(id);
+		entry.persistedDescriptorVersions.delete(id);
 		entry.sources.delete(id);
 	}
 	return true;
 }
 
 /**
- * Abandon exactly the pending work and unchanged undurable descriptors from a
+ * Abandon exactly the pending work and unchanged locally unpersisted descriptors from a
  * prior confirmation. Work begun afterward remains recoverable.
  */
 export function discardCapturedPendingFileAttachments(
@@ -337,11 +415,11 @@ export function discardCapturedPendingFileAttachments(
 		const entry = sharedAttachmentEntries.get(captured.key);
 		if (!entry || entry.generation !== captured.generation) continue;
 		const discardedPending = discardSharedAttachmentTokens(entry, captured.tokens);
-		const discardedUndurable = discardCapturedUndurableAttachments(entry, captured);
-		if (!discardedPending && !discardedUndurable) continue;
+		const discardedUnpersisted = discardCapturedUnpersistedAttachments(entry, captured);
+		if (!discardedPending && !discardedUnpersisted) continue;
 		notifySharedAttachmentEntry(captured.key, {
 			attachments: entry.attachments ?? [],
-			...(discardedUndurable ? { error: null } : {}),
+			...(discardedUnpersisted ? { error: null } : {}),
 		});
 		if (
 			entry.pending.size === 0 &&
@@ -370,7 +448,9 @@ export function purgeFileAttachmentsForSession(sessionId: string): void {
 		if (!attachmentKeyBelongsToSession(key, sessionId)) continue;
 		entry.generation += 1;
 		entry.pending.clear();
+		settleSharedAttachmentWork(entry);
 		entry.sources.clear();
+		entry.persistedDescriptorVersions.clear();
 		notifySharedAttachmentEntry(key, { attachments: [], error: null });
 		if (entry.listeners.size === 0) sharedAttachmentEntries.delete(key);
 	}
@@ -439,12 +519,22 @@ export function useFileAttachments(options: FileAttachmentOptions = {}) {
 	const addQueueRef = useRef<Promise<void>>(Promise.resolve());
 	const stagingQueueRef = useRef<Promise<void>>(Promise.resolve());
 	const queuedAddsRef = useRef(0);
+	const reportAttachmentsChange = useCallback(
+		(next: FileAttachment[]) => {
+			if (!onAttachmentsChange) return;
+			const versions = initialKey ? sharedDescriptorVersions(initialKey, next) : undefined;
+			const persisted = onAttachmentsChange(next);
+			if (initialKey && versions) {
+				recordPersistedSharedAttachmentDescriptors(initialKey, next, versions, persisted);
+			}
+		},
+		[initialKey, onAttachmentsChange],
+	);
 
 	const commitAttachments = useCallback(
 		(next: FileAttachment[]) => {
 			attachmentsRef.current = next;
 			setAttachments(next);
-			onAttachmentsChange?.(next);
 			if (initialKey) {
 				notifySharedAttachmentEntry(
 					initialKey,
@@ -452,8 +542,9 @@ export function useFileAttachments(options: FileAttachmentOptions = {}) {
 					listenerTokenRef.current,
 				);
 			}
+			reportAttachmentsChange(next);
 		},
-		[initialKey, onAttachmentsChange],
+		[initialKey, reportAttachmentsChange],
 	);
 
 	const commitError = useCallback(
@@ -493,12 +584,12 @@ export function useFileAttachments(options: FileAttachmentOptions = {}) {
 				const restored = normalizeInitial(update.attachments);
 				attachmentsRef.current = restored;
 				setAttachments(restored);
-				onAttachmentsChange?.(restored);
+				reportAttachmentsChange(restored);
 			}
 			if (update.error !== undefined) setValidationError(update.error);
 			setPreparing(update.pending > 0);
 		});
-	}, [initialKey, normalizeInitial, onAttachmentsChange]);
+	}, [initialKey, normalizeInitial, reportAttachmentsChange]);
 
 	const readAttachment = useCallback(
 		(id: string, file: File, sharedWork?: SharedAttachmentWork): Promise<void> => {
@@ -823,6 +914,7 @@ export function useFileAttachments(options: FileAttachmentOptions = {}) {
 	);
 
 	const toSettledPayload = useCallback(async (): Promise<FileAttachmentPayload[]> => {
+		if (initialKey) await waitForSharedAttachmentWork(initialKey);
 		while (queuedAddsRef.current > 0) {
 			const queued = addQueueRef.current;
 			await queued;

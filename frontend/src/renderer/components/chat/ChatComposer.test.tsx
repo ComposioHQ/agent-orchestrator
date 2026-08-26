@@ -17,6 +17,10 @@ import {
 	getChatDraftBoundary,
 } from "../../lib/chat-draft-boundary";
 import {
+	capturePendingFileAttachmentsForSession,
+	discardCapturedPendingFileAttachments,
+} from "../../hooks/useFileAttachments";
+import {
 	lexicalEditorText,
 	placeLexicalCaret,
 	typeAndPressInLexicalEditor,
@@ -1637,6 +1641,58 @@ describe("attachments", () => {
 		expect(onSend.mock.calls[0]?.[0]).toContain("attachment-slow.png");
 	});
 
+	it("waits across a same-session remount for the original reader before sending", async () => {
+		let finishRead!: () => void;
+		class SlowFileReader {
+			error: Error | null = null;
+			result: string | ArrayBuffer | null = null;
+			onerror: (() => void) | null = null;
+			onload: (() => void) | null = null;
+
+			readAsDataURL(selected: File) {
+				finishRead = () => {
+					this.result = `data:${selected.type};base64,UkVNT1VOVA==`;
+					this.onload?.();
+				};
+			}
+		}
+		vi.stubGlobal("FileReader", SlowFileReader);
+		const stage = vi.fn().mockResolvedValue([
+			".ao/attachments/attachment-remounted-reader.png",
+		]);
+		const onSend = vi.fn();
+		const props = {
+			onSend,
+			onStageAttachments: stage,
+			draftSessionId: "remounted-pending-reader",
+		};
+		const firstView = render(<ChatComposer {...props} />);
+		fireEvent.paste(screen.getByLabelText("Message the agent"), {
+			clipboardData: clipboardData([png("remounted-reader.png")]),
+		});
+		expect(screen.getByRole("status")).toHaveTextContent("Reading…");
+		firstView.unmount();
+
+		render(<ChatComposer {...props} />);
+		const field = screen.getByLabelText("Message the agent");
+		await typeInComposer(field, "Inspect after remount");
+		const form = field.closest("form");
+		if (!form) throw new Error("composer form missing");
+		fireEvent.submit(form);
+		await act(async () => Promise.resolve());
+
+		expect(onSend).not.toHaveBeenCalled();
+		expect(form).toHaveAttribute("aria-busy", "true");
+		expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+
+		await act(async () => finishRead());
+		await waitFor(() => expect(stage).toHaveBeenCalledTimes(1));
+		await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+		expect(onSend.mock.calls[0]?.[0]).toContain(
+			".ao/attachments/attachment-remounted-reader.png",
+		);
+	});
+
 	it("keeps a failed read retryable, then stages and sends the same draft", async () => {
 		let failRead!: () => void;
 		let finishRetry!: () => void;
@@ -2192,6 +2248,49 @@ describe("attachments", () => {
 			expect(getChatDraftBoundary(sessionId)).toBe("persistence-failed");
 		} finally {
 			view.unmount();
+			localStorage.mockRestore();
+		}
+	});
+
+	it("forgets a staged chip after confirmed abandonment of its failed local draft write", async () => {
+		const sessionId = "composer-abandon-unrecorded-staged-attachment";
+		const durableStorage = window.localStorage;
+		let failAttachmentWrite = true;
+		const storage = {
+			getItem: durableStorage.getItem.bind(durableStorage),
+			removeItem: durableStorage.removeItem.bind(durableStorage),
+			setItem: (key: string, value: string) => {
+				if (failAttachmentWrite && key.includes(encodeURIComponent(sessionId))) {
+					failAttachmentWrite = false;
+					throw new DOMException("full", "QuotaExceededError");
+				}
+				durableStorage.setItem(key, value);
+			},
+		} as Storage;
+		const localStorage = vi.spyOn(window, "localStorage", "get").mockReturnValue(storage);
+		const props = {
+			onSend: vi.fn(),
+			draftSessionId: sessionId,
+			onStageAttachments: vi.fn().mockResolvedValue([
+				".ao/attachments/attachment-unrecorded.png",
+			]),
+		};
+		const firstView = render(<ChatComposer {...props} />);
+		try {
+			fireEvent.paste(screen.getByLabelText("Message the agent"), {
+				clipboardData: clipboardData([png("unrecorded.png")]),
+			});
+			await screen.findByLabelText("Remove unrecorded.png");
+			await waitFor(() =>
+				expect(getChatDraftBoundary(sessionId)).toBe("persistence-failed"),
+			);
+			const confirmed = capturePendingFileAttachmentsForSession(sessionId);
+			firstView.unmount();
+
+			act(() => discardCapturedPendingFileAttachments(confirmed));
+			render(<ChatComposer {...props} />);
+			expect(screen.queryByLabelText("Remove unrecorded.png")).not.toBeInTheDocument();
+		} finally {
 			localStorage.mockRestore();
 		}
 	});

@@ -612,6 +612,47 @@ describe("useFileAttachments", () => {
 		act(() => owner.result.current.clear());
 	});
 
+	it("preserves a captured staged descriptor that becomes locally persisted before discard", async () => {
+		const sessionId = "preserve-persisted-after-confirmation";
+		const prepareAttachments = vi.fn(async (attachments: FileAttachment[]) =>
+			attachments.map((attachment) => ({
+				...attachment,
+				stagedPath: `.ao/attachments/${attachment.name}`,
+			})),
+		);
+		const failPersistence = vi.fn(() => false);
+		const owner = renderHook(() =>
+			useFileAttachments({
+				initialKey: sessionId,
+				prepareAttachments,
+				onAttachmentsChange: failPersistence,
+			}),
+		);
+		await act(async () => {
+			await owner.result.current.addFiles([file("persisted-after-confirmation.txt")]);
+		});
+		const captured = capturePendingFileAttachmentsForSession(sessionId);
+
+		const persistenceRetry = vi.fn(() => true);
+		const replacement = renderHook(() =>
+			useFileAttachments({
+				initialKey: sessionId,
+				onAttachmentsChange: persistenceRetry,
+			}),
+		);
+		await waitFor(() => expect(persistenceRetry).toHaveBeenCalled());
+		act(() => discardCapturedPendingFileAttachments(captured));
+
+		expect(owner.result.current.attachments).toMatchObject([
+			{
+				name: "persisted-after-confirmation.txt",
+				stagedPath: ".ao/attachments/persisted-after-confirmation.txt",
+			},
+		]);
+		expect(replacement.result.current.attachments).toHaveLength(1);
+		act(() => replacement.result.current.clear());
+	});
+
 	it("ignores a discarded completion that resolves after a replacement attachment", async () => {
 		const sessionId = "discard-out-of-order-attachments";
 		const firstKey = chatDraftScopeKey({
