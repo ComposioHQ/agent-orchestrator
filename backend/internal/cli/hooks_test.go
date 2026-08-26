@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/pricing"
 )
@@ -270,6 +271,36 @@ func TestHooks_NotificationReportsBlocked(t *testing.T) {
 	}
 	if got := capturedState(t, capture); got != "blocked" {
 		t.Errorf("state = %q, want blocked", got)
+	}
+}
+
+func TestHooks_AiderNotificationDoesNotReadInheritedStdin(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "ao-7")
+	cfg := setConfigEnv(t)
+	srv, capture := activityServer(t, http.StatusOK, `{"ok":true}`)
+	writeRunFileFor(t, cfg, srv)
+
+	reader, writer := io.Pipe()
+	defer writer.Close()
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := executeCLI(t, Deps{
+			In:           reader,
+			ProcessAlive: func(int) bool { return true },
+		}, "hooks", "aider", "notification")
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Aider notification blocked on inherited stdin")
+	}
+	if capture.hits != 1 || capturedState(t, capture) != "waiting_input" {
+		t.Fatalf("activity capture = %+v, want one waiting_input report", *capture)
 	}
 }
 

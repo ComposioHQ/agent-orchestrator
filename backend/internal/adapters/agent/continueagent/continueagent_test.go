@@ -389,6 +389,37 @@ func TestGetAgentHooksDelegates(t *testing.T) {
 	}
 }
 
+func TestGetAgentHooksMigratesLegacyClaudeHooks(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "cn"}
+	ws := t.TempDir()
+	settingsDir := filepath.Join(ws, ".claude")
+	if err := os.MkdirAll(settingsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	legacy := `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"user stop hook"},{"type":"command","command":"ao hooks claude-code stop"}]}],"Notification":[{"hooks":[{"type":"command","command":"ao hooks claude-code notification"}]}]}}`
+	if err := os.WriteFile(filepath.Join(settingsDir, "settings.local.json"), []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := plugin.GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{WorkspacePath: ws}); err != nil {
+		t.Fatalf("GetAgentHooks: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(settingsDir, "settings.local.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(data)
+	if strings.Contains(body, "ao hooks claude-code") {
+		t.Fatalf("legacy Continue hooks were retained: %s", body)
+	}
+	if !strings.Contains(body, "user stop hook") {
+		t.Fatalf("user hook was not preserved: %s", body)
+	}
+	if !strings.Contains(body, "ao hooks continue stop") || !strings.Contains(body, "ao hooks continue notification") {
+		t.Fatalf("new Continue hooks missing: %s", body)
+	}
+}
+
 func TestDeriveActivityStateUsesClaudeCompatiblePayload(t *testing.T) {
 	got, ok := DeriveActivityState("notification", []byte(`{"notification_type":"agent_needs_input"}`))
 	if !ok || got != domain.ActivityWaitingInput {

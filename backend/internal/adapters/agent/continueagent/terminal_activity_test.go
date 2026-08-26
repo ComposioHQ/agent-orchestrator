@@ -51,3 +51,19 @@ func TestDetectTerminalActivityContinueRejectsTranscriptText(t *testing.T) {
 		t.Fatalf("DetectTerminalActivity() = (%q, true), want no signal", got)
 	}
 }
+
+func TestDetectTerminalActivityContinueIgnoresCompletedQuestionInIdleComposer(t *testing.T) {
+	output := `
+○ Ask Question(Which background color do you want to change to red?)
+│  ? Which background color do you want to change to red?
+│  ↑/↓ navigate, Enter select
+
+╭───────────────────────────────────────────────────────────────────────────────╮
+│  ❯                                                                         │
+╰───────────────────────────────────────────────────────────────────────────────╯
+`
+	got, ok := (&Plugin{}).DetectTerminalActivity(output)
+	if ok {
+		t.Fatalf("DetectTerminalActivity() = (%q, true), want no signal", got)
+	}
+}

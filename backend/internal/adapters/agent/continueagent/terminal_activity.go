@@ -40,12 +40,15 @@ func (p *Plugin) DetectTerminalActivity(output string) (domain.ActivityState, bo
 }
 
 func continueQuestionPickerAt(lines []string, idx int) bool {
-	line := strings.ToLower(lines[idx])
-	if strings.Contains(line, "ask question(") {
-		return true
-	}
-	if !strings.Contains(line, "enter select") {
+	if !strings.Contains(strings.ToLower(lines[idx]), "enter select") {
 		return false
+	}
+	// A completed picker remains in Continue's transcript. An empty composer
+	// after this action row proves that the picker is historical, not visible.
+	for i := idx + 1; i < len(lines); i++ {
+		if strings.Trim(lines[i], "│ ") == "❯" {
+			return false
+		}
 	}
 	start := idx - 8
 	if start < 0 {

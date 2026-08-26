@@ -79,11 +79,12 @@ var continueManagedHooks = []hooksjson.HookSpec{
 }
 
 var continueHooks = hooksjson.Manager{
-	Label:         adapterID,
-	CommandPrefix: continueHookCommandPrefix,
-	Timeout:       continueHookTimeout,
-	Path:          continueClaudeSettingsPath,
-	Managed:       continueManagedHooks,
+	Label:                 adapterID,
+	CommandPrefix:         continueHookCommandPrefix,
+	LegacyCommandPrefixes: []string{"ao hooks claude-code "},
+	Timeout:               continueHookTimeout,
+	Path:                  continueClaudeSettingsPath,
+	Managed:               continueManagedHooks,
 }
 
 // Plugin is the Continue CLI agent adapter. It is safe for concurrent use; the
