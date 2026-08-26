@@ -14,7 +14,11 @@ import {
 	useFileAttachments,
 	type FileAttachment,
 } from "./useFileAttachments";
-import { chatDraftScopeKey } from "../lib/chat-drafts";
+import {
+	chatDraftScopeKey,
+	readChatSessionDraft,
+	writeChatAttachments,
+} from "../lib/chat-drafts";
 
 const file = (name: string, bytes = 8, type = "text/plain") =>
 	new File([new Uint8Array(bytes).fill(1)], name, { type });
@@ -651,6 +655,138 @@ describe("useFileAttachments", () => {
 		]);
 		expect(replacement.result.current.attachments).toHaveLength(1);
 		act(() => replacement.result.current.clear());
+	});
+
+	it("keeps a failed clear tombstone through confirmation and repairs stale local storage", async () => {
+		const sessionId = "repair-confirmed-failed-attachment-clear";
+		const persisted = {
+			id: "clear-after-storage-failure",
+			path: ".ao/attachments/clear-after-storage-failure.txt",
+			name: "clear-after-failure.txt",
+			mimeType: "text/plain",
+			bytes: 8,
+		};
+		writeChatAttachments(sessionId, [persisted]);
+		const durableStorage = window.localStorage;
+		let storageAvailable = false;
+		const storage = {
+			getItem: durableStorage.getItem.bind(durableStorage),
+			setItem: durableStorage.setItem.bind(durableStorage),
+			removeItem: (key: string) => {
+				if (!storageAvailable && key.includes(encodeURIComponent(sessionId))) {
+					throw new DOMException("full", "QuotaExceededError");
+				}
+				durableStorage.removeItem(key);
+			},
+		} as Storage;
+		const persistAttachments = (attachments: FileAttachment[]) =>
+			writeChatAttachments(
+				sessionId,
+				attachments.flatMap((attachment) =>
+					attachment.stagedPath
+						? [{
+								id: attachment.id,
+								path: attachment.stagedPath,
+								name: attachment.name,
+								mimeType: attachment.mimeType,
+								bytes: attachment.bytes,
+							}]
+						: [],
+				),
+				storage,
+			).ok;
+		const restored = (): FileAttachment[] =>
+			readChatSessionDraft(sessionId, storage).composer.attachments.map((attachment) => ({
+				id: attachment.id,
+				name: attachment.name,
+				mimeType: attachment.mimeType,
+				bytes: attachment.bytes,
+				status: "ready",
+				stagedPath: attachment.path,
+			}));
+		const owner = renderHook(() =>
+			useFileAttachments({
+				initialKey: sessionId,
+				initialAttachments: restored(),
+				onAttachmentsChange: persistAttachments,
+			}),
+		);
+		act(() => owner.result.current.clear());
+		expect(owner.result.current.attachments).toEqual([]);
+		expect(readChatSessionDraft(sessionId, durableStorage).composer.attachments).toEqual([
+			persisted,
+		]);
+		const confirmed = capturePendingFileAttachmentsForSession(sessionId);
+		act(() => discardCapturedPendingFileAttachments(confirmed));
+		owner.unmount();
+
+		storageAvailable = true;
+		const replacement = renderHook(() =>
+			useFileAttachments({
+				initialKey: sessionId,
+				initialAttachments: restored(),
+				onAttachmentsChange: persistAttachments,
+			}),
+		);
+		expect(replacement.result.current.attachments).toEqual([]);
+		await waitFor(() =>
+			expect(readChatSessionDraft(sessionId, durableStorage).composer.attachments).toEqual([]),
+		);
+		replacement.unmount();
+
+		const cold = renderHook(() =>
+			useFileAttachments({
+				initialKey: sessionId,
+				initialAttachments: restored(),
+				onAttachmentsChange: persistAttachments,
+			}),
+		);
+		expect(cold.result.current.attachments).toEqual([]);
+	});
+
+	it("does not reapply an old removal confirmation after later persistence succeeds", async () => {
+		const sessionId = "later-persistence-wins-old-removal-confirmation";
+		const attachment: FileAttachment = {
+			id: "later-current-version",
+			name: "later-current-version.txt",
+			mimeType: "text/plain",
+			bytes: 8,
+			status: "ready",
+			stagedPath: ".ao/attachments/later-current-version.txt",
+		};
+		const failPersistence = vi.fn(() => false);
+		const owner = renderHook(() =>
+			useFileAttachments({
+				initialKey: sessionId,
+				initialAttachments: [attachment],
+				onAttachmentsChange: failPersistence,
+			}),
+		);
+		act(() => owner.result.current.clear());
+		const earlierConfirmation = capturePendingFileAttachmentsForSession(sessionId);
+
+		const persistCurrentAbsence = vi.fn(() => true);
+		const persistenceRetry = renderHook(() =>
+			useFileAttachments({
+				initialKey: sessionId,
+				initialAttachments: [attachment],
+				onAttachmentsChange: persistCurrentAbsence,
+			}),
+		);
+		await waitFor(() => expect(persistCurrentAbsence).toHaveBeenCalledWith([]));
+		act(() => discardCapturedPendingFileAttachments(earlierConfirmation));
+		owner.unmount();
+		persistenceRetry.unmount();
+
+		const laterCurrent = renderHook(() =>
+			useFileAttachments({
+				initialKey: sessionId,
+				initialAttachments: [attachment],
+				onAttachmentsChange: persistCurrentAbsence,
+			}),
+		);
+		expect(laterCurrent.result.current.attachments).toEqual([attachment]);
+		act(() => laterCurrent.result.current.clear());
 	});
 
 	it("ignores a discarded completion that resolves after a replacement attachment", async () => {

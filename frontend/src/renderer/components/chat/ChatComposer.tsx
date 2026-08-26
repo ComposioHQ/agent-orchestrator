@@ -1079,11 +1079,18 @@ export function ChatComposer({
 				}
 			} else {
 				const deliveryNativePayloads = prepared.recovered ? [] : nativePayloads;
-				await onSend(
-					delivery.requestText,
-					deliveryNativePayloads.length > 0 ? deliveryNativePayloads : undefined,
-					delivery.clientMessageId,
-				);
+				try {
+					await onSend(
+						delivery.requestText,
+						deliveryNativePayloads.length > 0 ? deliveryNativePayloads : undefined,
+						delivery.clientMessageId,
+					);
+				} finally {
+					// A durable retry can promise only the staged path: native bytes are
+					// intentionally not journaled. Drop the fresh payload after its first
+					// attempt so an uncertain retry's chip describes what will be resent.
+					fileAttachments.releaseStagedPayloadData();
+				}
 			}
 			acceptAndClearDurableDelivery(delivery, mutationToken);
 			mutationFinished = true;

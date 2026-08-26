@@ -1516,6 +1516,104 @@ describe("attachments", () => {
 		]);
 	});
 
+	it("retries a native-only image with its native bytes", async () => {
+		const onSend = vi
+			.fn()
+			.mockRejectedValueOnce(new Error("offline"))
+			.mockResolvedValueOnce(undefined);
+		render(<ChatComposer onSend={onSend} nativeImages />);
+		const field = screen.getByLabelText("Message the agent");
+		fireEvent.paste(field, { clipboardData: clipboardData([png("native-retry.png")]) });
+		const chip = await screen.findByRole("listitem");
+		await waitFor(() => expect(chip).toHaveTextContent("Native image"));
+
+		await typeInComposer(field, "Inspect the native retry");
+		await userEvent.keyboard("{Enter}");
+		expect(await screen.findByRole("alert")).toHaveTextContent("attachments were kept");
+		expect(chip).toHaveTextContent("Native image");
+		await userEvent.keyboard("{Enter}");
+
+		await waitFor(() => expect(onSend).toHaveBeenCalledTimes(2));
+		expect(onSend.mock.calls[0]?.[1]).toEqual([
+			{ mimeType: "image/png", data: expect.any(String), name: "native-retry.png" },
+		]);
+		expect(onSend.mock.calls[1]?.[1]).toEqual(onSend.mock.calls[0]?.[1]);
+	});
+
+	it("makes an uncertain combined retry path-only after releasing native bytes", async () => {
+		const sessionId = "same-mount-combined-delivery-retry";
+		const onSend = vi
+			.fn()
+			.mockRejectedValueOnce(new Error("outcome unknown"))
+			.mockResolvedValueOnce(undefined);
+		render(
+			<ChatComposer
+				onSend={onSend}
+				onStageAttachments={vi
+					.fn()
+					.mockResolvedValue([".ao/attachments/combined-retry.png"])}
+				nativeImages
+				draftSessionId={sessionId}
+			/>,
+		);
+		const field = screen.getByLabelText("Message the agent");
+		fireEvent.paste(field, { clipboardData: clipboardData([png("combined-retry.png")]) });
+		const chip = await screen.findByRole("listitem");
+		await waitFor(() => expect(chip).toHaveTextContent("Worktree path + native image"));
+
+		await typeInComposer(field, "Inspect the combined retry");
+		await userEvent.keyboard("{Enter}");
+		await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+		expect(onSend.mock.calls[0]?.[1]).toEqual([
+			{ mimeType: "image/png", data: expect.any(String), name: "combined-retry.png" },
+		]);
+		expect(await screen.findByRole("alert")).toHaveTextContent(
+			"Message delivery wasn’t confirmed",
+		);
+		await waitFor(() =>
+			expect(chip).toHaveTextContent("Worktree path · agent must read"),
+		);
+		expect(chip).not.toHaveTextContent("native image");
+
+		await userEvent.click(screen.getByRole("button", { name: "Retry message safely" }));
+		await waitFor(() => expect(onSend).toHaveBeenCalledTimes(2));
+		expect(onSend.mock.calls[1]?.[0]).toBe(onSend.mock.calls[0]?.[0]);
+		expect(onSend.mock.calls[1]?.[1]).toBeUndefined();
+		expect(onSend.mock.calls[1]?.[2]).toBe(onSend.mock.calls[0]?.[2]);
+	});
+
+	it("keeps an uncertain path-only retry path-only", async () => {
+		const sessionId = "same-mount-path-only-delivery-retry";
+		const onSend = vi
+			.fn()
+			.mockRejectedValueOnce(new Error("outcome unknown"))
+			.mockResolvedValueOnce(undefined);
+		render(
+			<ChatComposer
+				onSend={onSend}
+				onStageAttachments={vi.fn().mockResolvedValue([".ao/attachments/path-retry.png"])}
+				draftSessionId={sessionId}
+			/>,
+		);
+		const field = screen.getByLabelText("Message the agent");
+		fireEvent.paste(field, { clipboardData: clipboardData([png("path-retry.png")]) });
+		const chip = await screen.findByRole("listitem");
+		await waitFor(() => expect(chip).toHaveTextContent("Worktree path · agent must read"));
+
+		await typeInComposer(field, "Inspect the path retry");
+		await userEvent.keyboard("{Enter}");
+		await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+		expect(onSend.mock.calls[0]?.[1]).toBeUndefined();
+		await userEvent.click(await screen.findByRole("button", { name: "Retry message safely" }));
+
+		await waitFor(() => expect(onSend).toHaveBeenCalledTimes(2));
+		expect(chip).toHaveTextContent("Worktree path · agent must read");
+		expect(chip).not.toHaveTextContent("native image");
+		expect(onSend.mock.calls[1]?.[0]).toBe(onSend.mock.calls[0]?.[0]);
+		expect(onSend.mock.calls[1]?.[1]).toBeUndefined();
+		expect(onSend.mock.calls[1]?.[2]).toBe(onSend.mock.calls[0]?.[2]);
+	});
+
 	it("shows path-only delivery after a combined image remount drops native bytes", async () => {
 		const sessionId = "combined-image-remount-delivery";
 		const onSend = vi.fn();
@@ -2290,6 +2388,63 @@ describe("attachments", () => {
 			act(() => discardCapturedPendingFileAttachments(confirmed));
 			render(<ChatComposer {...props} />);
 			expect(screen.queryByLabelText("Remove unrecorded.png")).not.toBeInTheDocument();
+		} finally {
+			localStorage.mockRestore();
+		}
+	});
+
+	it("does not resurrect a staged chip after its failed removal is confirmed", async () => {
+		const sessionId = "composer-confirm-failed-attachment-removal";
+		writeChatAttachments(sessionId, [
+			{
+				id: "removed-after-storage-failure",
+				path: ".ao/attachments/removed-after-storage-failure.png",
+				name: "remove-after-failure.png",
+				mimeType: "image/png",
+				bytes: 4,
+			},
+		]);
+		const durableStorage = window.localStorage;
+		let storageAvailable = false;
+		const storage = {
+			getItem: durableStorage.getItem.bind(durableStorage),
+			setItem: durableStorage.setItem.bind(durableStorage),
+			removeItem: (key: string) => {
+				if (!storageAvailable && key.includes(encodeURIComponent(sessionId))) {
+					throw new DOMException("full", "QuotaExceededError");
+				}
+				durableStorage.removeItem(key);
+			},
+		} as Storage;
+		const localStorage = vi.spyOn(window, "localStorage", "get").mockReturnValue(storage);
+		const props = {
+			onSend: vi.fn(),
+			draftSessionId: sessionId,
+			onStageAttachments: vi.fn(),
+		};
+		const firstView = render(<ChatComposer {...props} />);
+		try {
+			await userEvent.click(
+				await screen.findByLabelText("Remove remove-after-failure.png"),
+			);
+			await waitFor(() =>
+				expect(getChatDraftBoundary(sessionId)).toBe("persistence-failed"),
+			);
+			expect(screen.queryByLabelText("Remove remove-after-failure.png")).toBeNull();
+			const confirmed = capturePendingFileAttachmentsForSession(sessionId);
+			act(() => discardCapturedPendingFileAttachments(confirmed));
+			firstView.unmount();
+
+			storageAvailable = true;
+			const recoveredView = render(<ChatComposer {...props} />);
+			expect(screen.queryByLabelText("Remove remove-after-failure.png")).toBeNull();
+			await waitFor(() =>
+				expect(readChatSessionDraft(sessionId).composer.attachments).toEqual([]),
+			);
+			recoveredView.unmount();
+
+			render(<ChatComposer {...props} />);
+			expect(screen.queryByLabelText("Remove remove-after-failure.png")).toBeNull();
 		} finally {
 			localStorage.mockRestore();
 		}

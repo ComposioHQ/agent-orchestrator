@@ -73,6 +73,10 @@ type SharedAttachmentEntry = {
 	descriptorVersions: Map<string, number>;
 	/** Exact descriptor versions proven written to the renderer's local draft. */
 	persistedDescriptorVersions: Map<string, number>;
+	removalTombstones: Map<
+		string,
+		{ attachment: FileAttachment; version: number; confirmed: boolean }
+	>;
 	error?: string | null;
 	sources: Map<string, File>;
 };
@@ -84,6 +88,7 @@ type CapturedPendingFileAttachmentEntry = {
 	generation: number;
 	tokens: readonly symbol[];
 	locallyUnpersisted: readonly { id: string; version: number }[];
+	removals: readonly { id: string; version: number }[];
 };
 
 const pendingFileAttachmentCaptureEntries = Symbol("pending-file-attachment-capture");
@@ -120,6 +125,7 @@ function sharedEntry(key: string): SharedAttachmentEntry {
 			stagingQueue: Promise.resolve(),
 			descriptorVersions: new Map(),
 			persistedDescriptorVersions: new Map(),
+			removalTombstones: new Map(),
 			sources: new Map(),
 		};
 		sharedAttachmentEntries.set(key, entry);
@@ -154,11 +160,8 @@ function notifySharedAttachmentEntry(
 				);
 			}
 		}
-		for (const id of entry.descriptorVersions.keys()) {
-			if (!nextIDs.has(id)) {
-				entry.descriptorVersions.delete(id);
-				entry.persistedDescriptorVersions.delete(id);
-			}
+		for (const id of entry.persistedDescriptorVersions.keys()) {
+			if (!nextIDs.has(id)) entry.persistedDescriptorVersions.delete(id);
 		}
 		entry.attachments = update.attachments;
 	}
@@ -167,6 +170,49 @@ function notifySharedAttachmentEntry(
 	for (const [token, listener] of entry.listeners) {
 		if (token !== originToken) listener(notification);
 	}
+}
+
+function stageSharedAttachmentRemovals(
+	key: string,
+	previous: FileAttachment[],
+	next: FileAttachment[],
+): void {
+	const entry = sharedEntry(key);
+	const nextIDs = new Set(next.map(({ id }) => id));
+	for (const attachment of sharedAttachmentDescriptors(previous)) {
+		if (!attachment.stagedPath || nextIDs.has(attachment.id)) continue;
+		let version = entry.descriptorVersions.get(attachment.id);
+		if (version === undefined) {
+			version = 1;
+			entry.descriptorVersions.set(attachment.id, version);
+		}
+		const existing = entry.removalTombstones.get(attachment.id);
+		if (!existing || existing.version <= version) {
+			entry.removalTombstones.set(attachment.id, {
+				attachment,
+				version,
+				confirmed: false,
+			});
+		}
+	}
+}
+
+function recoverableInitialAttachments(
+	key: string | undefined,
+	attachments: FileAttachment[],
+): FileAttachment[] {
+	if (!key) return attachments;
+	const entry = sharedAttachmentEntries.get(key);
+	if (!entry || entry.removalTombstones.size === 0) return attachments;
+	const currentIDs = new Set(entry.attachments?.map(({ id }) => id));
+	return attachments.filter(({ id }) => {
+		const tombstone = entry.removalTombstones.get(id);
+		if (!tombstone) return true;
+		return (
+			currentIDs.has(id) &&
+			(entry.descriptorVersions.get(id) ?? tombstone.version) > tombstone.version
+		);
+	});
 }
 
 function sharedDescriptorVersions(
@@ -204,6 +250,29 @@ function recordPersistedSharedAttachmentDescriptors(
 		}
 		entry.persistedDescriptorVersions.set(attachment.id, version);
 	}
+	for (const [id, tombstone] of entry.removalTombstones) {
+		const current = currentByID.get(id);
+		if (!current) {
+			if (entry.descriptorVersions.get(id) === tombstone.version) {
+				entry.removalTombstones.delete(id);
+			}
+			continue;
+		}
+		const currentVersion = versions.get(id);
+		if (currentVersion !== undefined && currentVersion > tombstone.version) {
+			entry.removalTombstones.delete(id);
+		}
+	}
+}
+
+function sharedAttachmentEntryCanEvict(entry: SharedAttachmentEntry): boolean {
+	return (
+		entry.pending.size === 0 &&
+		entry.listeners.size === 0 &&
+		(entry.attachments?.length ?? 0) === 0 &&
+		entry.sources.size === 0 &&
+		entry.removalTombstones.size === 0
+	);
 }
 
 function beginSharedAttachmentWork(key: string): SharedAttachmentWork {
@@ -270,7 +339,6 @@ function discardSharedAttachmentTokens(
 		const abandonedIds = new Set([...discardedIds].filter((id) => !stillOwned.has(id)));
 		entry.attachments = entry.attachments?.filter(({ id }) => !abandonedIds.has(id)) ?? [];
 		for (const id of abandonedIds) {
-			entry.descriptorVersions.delete(id);
 			entry.persistedDescriptorVersions.delete(id);
 			entry.sources.delete(id);
 		}
@@ -285,12 +353,7 @@ function endSharedAttachmentWork(key: string, token: symbol): void {
 	entry.pending.delete(token);
 	settleSharedAttachmentWork(entry);
 	notifySharedAttachmentEntry(key);
-	if (
-		entry.pending.size === 0 &&
-		entry.listeners.size === 0 &&
-		(entry.attachments?.length ?? 0) === 0 &&
-		entry.sources.size === 0
-	) {
+	if (sharedAttachmentEntryCanEvict(entry)) {
 		sharedAttachmentEntries.delete(key);
 	}
 }
@@ -309,12 +372,7 @@ function subscribeSharedAttachmentWork(
 	});
 	return () => {
 		entry.listeners.delete(token);
-		if (
-			entry.pending.size === 0 &&
-			entry.listeners.size === 0 &&
-			(entry.attachments?.length ?? 0) === 0 &&
-			entry.sources.size === 0
-		) {
+		if (sharedAttachmentEntryCanEvict(entry)) {
 			sharedAttachmentEntries.delete(key);
 		}
 	};
@@ -359,12 +417,21 @@ export function capturePendingFileAttachmentsForSession(
 					? [{ id: attachment.id, version: entry.descriptorVersions.get(attachment.id) ?? 0 }]
 					: [],
 			) ?? [];
-		if (entry.pending.size === 0 && locallyUnpersisted.length === 0) continue;
+		const removals = [...entry.removalTombstones.values()].map(({ attachment, version }) => ({
+			id: attachment.id,
+			version,
+		}));
+		if (
+			entry.pending.size === 0 &&
+			locallyUnpersisted.length === 0 &&
+			removals.length === 0
+		) continue;
 		entries.push({
 			key,
 			generation: entry.generation,
 			tokens: [...entry.pending.keys()],
 			locallyUnpersisted,
+			removals,
 		});
 	}
 	return { [pendingFileAttachmentCaptureEntries]: entries };
@@ -397,11 +464,33 @@ function discardCapturedUnpersistedAttachments(
 	if (abandoned.size === 0) return false;
 	entry.attachments = entry.attachments?.filter(({ id }) => !abandoned.has(id)) ?? [];
 	for (const id of abandoned) {
-		entry.descriptorVersions.delete(id);
 		entry.persistedDescriptorVersions.delete(id);
 		entry.sources.delete(id);
 	}
 	return true;
+}
+
+function confirmCapturedAttachmentRemovals(
+	entry: SharedAttachmentEntry,
+	captured: CapturedPendingFileAttachmentEntry,
+): boolean {
+	let changed = false;
+	const currentIDs = new Set(entry.attachments?.map(({ id }) => id));
+	for (const removal of captured.removals) {
+		const tombstone = entry.removalTombstones.get(removal.id);
+		if (!tombstone || tombstone.version !== removal.version) continue;
+		if (
+			currentIDs.has(removal.id) &&
+			(entry.descriptorVersions.get(removal.id) ?? removal.version) > removal.version
+		) {
+			continue;
+		}
+		if (!tombstone.confirmed) {
+			tombstone.confirmed = true;
+			changed = true;
+		}
+	}
+	return changed;
 }
 
 /**
@@ -416,17 +505,13 @@ export function discardCapturedPendingFileAttachments(
 		if (!entry || entry.generation !== captured.generation) continue;
 		const discardedPending = discardSharedAttachmentTokens(entry, captured.tokens);
 		const discardedUnpersisted = discardCapturedUnpersistedAttachments(entry, captured);
-		if (!discardedPending && !discardedUnpersisted) continue;
+		const confirmedRemovals = confirmCapturedAttachmentRemovals(entry, captured);
+		if (!discardedPending && !discardedUnpersisted && !confirmedRemovals) continue;
 		notifySharedAttachmentEntry(captured.key, {
 			attachments: entry.attachments ?? [],
 			...(discardedUnpersisted ? { error: null } : {}),
 		});
-		if (
-			entry.pending.size === 0 &&
-			entry.listeners.size === 0 &&
-			(entry.attachments?.length ?? 0) === 0 &&
-			entry.sources.size === 0
-		) {
+		if (sharedAttachmentEntryCanEvict(entry)) {
 			sharedAttachmentEntries.delete(captured.key);
 		}
 	}
@@ -451,6 +536,7 @@ export function purgeFileAttachmentsForSession(sessionId: string): void {
 		settleSharedAttachmentWork(entry);
 		entry.sources.clear();
 		entry.persistedDescriptorVersions.clear();
+		entry.removalTombstones.clear();
 		notifySharedAttachmentEntry(key, { attachments: [], error: null });
 		if (entry.listeners.size === 0) sharedAttachmentEntries.delete(key);
 	}
@@ -503,12 +589,17 @@ export function useFileAttachments(options: FileAttachmentOptions = {}) {
 			items.map((attachment) => ({ ...attachment, status: attachment.status ?? "ready" })),
 		[],
 	);
+	const restoreInitial = useCallback(
+		(items: FileAttachment[]): FileAttachment[] =>
+			normalizeInitial(recoverableInitialAttachments(initialKey, items)),
+		[initialKey, normalizeInitial],
+	);
 	const [attachments, setAttachments] = useState<FileAttachment[]>(() =>
-		normalizeInitial(initialAttachments),
+		restoreInitial(initialAttachments),
 	);
 	const [validationError, setValidationError] = useState<string | null>(null);
 	const [preparing, setPreparing] = useState(() => sharedAttachmentPending(initialKey));
-	const attachmentsRef = useRef<FileAttachment[]>(normalizeInitial(initialAttachments));
+	const attachmentsRef = useRef<FileAttachment[]>(restoreInitial(initialAttachments));
 	const initialKeyRef = useRef(initialKey);
 	const listenerTokenRef = useRef(Symbol("file-attachment-listener"));
 	const sourceFilesRef = useRef<Map<string, File>>(
@@ -533,6 +624,9 @@ export function useFileAttachments(options: FileAttachmentOptions = {}) {
 
 	const commitAttachments = useCallback(
 		(next: FileAttachment[]) => {
+			if (initialKey) {
+				stageSharedAttachmentRemovals(initialKey, attachmentsRef.current, next);
+			}
 			attachmentsRef.current = next;
 			setAttachments(next);
 			if (initialKey) {
@@ -569,13 +663,13 @@ export function useFileAttachments(options: FileAttachmentOptions = {}) {
 	useEffect(() => {
 		if (initialKeyRef.current === initialKey) return;
 		initialKeyRef.current = initialKey;
-		const restored = normalizeInitial(initialAttachments);
+		const restored = restoreInitial(initialAttachments);
 		attachmentsRef.current = restored;
 		setAttachments(restored);
 		sourceFilesRef.current = initialKey ? sharedEntry(initialKey).sources : new Map();
 		setValidationError(null);
 		setPreparing(sharedAttachmentPending(initialKey));
-	}, [initialAttachments, initialKey, normalizeInitial]);
+	}, [initialAttachments, initialKey, restoreInitial]);
 
 	useEffect(() => {
 		if (!initialKey) return;
@@ -886,6 +980,21 @@ export function useFileAttachments(options: FileAttachmentOptions = {}) {
 		commitError(null);
 	}, [commitAttachments, commitError, initialKey]);
 
+	const releaseStagedPayloadData = useCallback(() => {
+		let changed = false;
+		const next = attachmentsRef.current.map((attachment) => {
+			if (
+				!attachment.stagedPath ||
+				(attachment.data === undefined && attachment.dataUrl === undefined)
+			) {
+				return attachment;
+			}
+			changed = true;
+			return { ...attachment, data: undefined, dataUrl: undefined };
+		});
+		if (changed) commitAttachments(next);
+	}, [commitAttachments]);
+
 	const payloadsFor = useCallback(
 		(current: FileAttachment[]): FileAttachmentPayload[] =>
 			current.flatMap(({ mimeType, data, name, status }) =>
@@ -1039,6 +1148,7 @@ export function useFileAttachments(options: FileAttachmentOptions = {}) {
 		remove,
 		clear,
 		reconcilePersistedAttachments,
+		releaseStagedPayloadData,
 		toPayload,
 		toSettledPayload,
 		hasAttachments,
