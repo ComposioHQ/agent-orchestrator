@@ -171,32 +171,52 @@ test("typed chat composer text is visibly selected with a pointer drag @T0", asy
 				else document.documentElement.dataset.styleTheme = style;
 
 				const selectionBackground = getComputedStyle(element, "::selection").backgroundColor;
+				const selectionForeground = getComputedStyle(element, "::selection").color;
 				const surfaceBackground = getComputedStyle(surface).backgroundColor;
 				const selectionColor = rgba(selectionBackground);
+				const textColor = rgba(selectionForeground);
 				const surfaceColor = rgba(surfaceBackground);
-				const composited = selectionColor.slice(0, 3).map(
+				const compositedBackground = selectionColor.slice(0, 3).map(
 					(channel, index) => channel * selectionColor[3] + surfaceColor[index]! * (1 - selectionColor[3]),
 				);
-				const foregroundLuminance = luminance(composited);
-				const backgroundLuminance = luminance(surfaceColor);
+				const compositedText = textColor
+					.slice(0, 3)
+					.map(
+						(channel, index) =>
+							channel * textColor[3] + compositedBackground[index]! * (1 - textColor[3]),
+					);
+				const highlightLuminance = luminance(compositedBackground);
+				const surfaceLuminance = luminance(surfaceColor);
+				const textLuminance = luminance(compositedText);
 				return {
 					style,
 					appearance,
 					selectionBackground,
+					selectionForeground,
 					surfaceBackground,
 					contrast:
-						(Math.max(foregroundLuminance, backgroundLuminance) + 0.05) /
-						(Math.min(foregroundLuminance, backgroundLuminance) + 0.05),
+						(Math.max(highlightLuminance, surfaceLuminance) + 0.05) /
+						(Math.min(highlightLuminance, surfaceLuminance) + 0.05),
+					textContrast:
+						(Math.max(textLuminance, highlightLuminance) + 0.05) /
+						(Math.min(textLuminance, highlightLuminance) + 0.05),
 				};
 			}),
 		);
 	}, themeStyles);
 	expect(selectionContrasts).toHaveLength(themeStyles.length * 2);
-	const lowestContrast = selectionContrasts.reduce((lowest, current) =>
+	const lowestHighlightContrast = selectionContrasts.reduce((lowest, current) =>
 		current.contrast < lowest.contrast ? current : lowest,
 	);
 	expect(
-		lowestContrast.contrast,
-		`${lowestContrast.style} ${lowestContrast.appearance} selection contrast (${lowestContrast.selectionBackground} on ${lowestContrast.surfaceBackground})`,
+		lowestHighlightContrast.contrast,
+		`${lowestHighlightContrast.style} ${lowestHighlightContrast.appearance} selection contrast (${lowestHighlightContrast.selectionBackground} on ${lowestHighlightContrast.surfaceBackground})`,
 	).toBeGreaterThanOrEqual(1.5);
+	const lowestTextContrast = selectionContrasts.reduce((lowest, current) =>
+		current.textContrast < lowest.textContrast ? current : lowest,
+	);
+	expect(
+		lowestTextContrast.textContrast,
+		`${lowestTextContrast.style} ${lowestTextContrast.appearance} selected text contrast (${lowestTextContrast.selectionForeground} on ${lowestTextContrast.selectionBackground})`,
+	).toBeGreaterThanOrEqual(4.5);
 });
