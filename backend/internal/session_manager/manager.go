@@ -1495,6 +1495,11 @@ func (m *Manager) RollbackSpawn(ctx context.Context, id domain.SessionID) (delet
 // failed partway, handle lost after a crash) is still terminated after the
 // available destroy steps are skipped so it can be cleaned up from the
 // dashboard.
+//
+// Kill is idempotent for already-dead runtimes. A missing tmux session, an
+// inconclusive or unavailable runtime probe, or a failed agent-native
+// terminate still marks the session terminated so closing a zombie tab after
+// a daemon restart never 500s.
 func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 	if err := m.beginAgentOperation(ctx, id, agentOperationKill); err != nil {
 		if errors.Is(err, errAgentOperationInProgress) {
@@ -1530,7 +1535,10 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 		workspaceProject = true
 	}
 	if err := m.terminateNativeSession(ctx, rec); err != nil {
-		return false, fmt.Errorf("kill %s: native session: %w", id, err)
+		// Native terminate is best-effort on user kill. A stale grok/prime id
+		// after a daemon restart must not 500 the close; AO still owns
+		// runtime/workspace teardown and the terminated bit.
+		m.logger.Warn("kill: native session terminate failed; continuing teardown", "sessionID", id, "error", err)
 	}
 	// Attachments are deliberately ignored by git, so stash cannot preserve
 	// legacy worktree-only files. Import them before any controller or worktree
@@ -1547,7 +1555,10 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 		m.stopChatBestEffort(ctx, id)
 	} else if handle.ID != "" {
 		if err := m.runtime.Destroy(ctx, handle); err != nil {
-			return false, fmt.Errorf("kill %s: runtime: %w", id, err)
+			if !killTreatsRuntimeAsGone(err) {
+				return false, fmt.Errorf("kill %s: runtime: %w", id, err)
+			}
+			m.logger.Warn("kill: runtime already gone", "sessionID", id, "error", err)
 		}
 	}
 	if err := m.terminateReviewer(ctx, id, "cancelled by worker session termination"); err != nil {
@@ -1735,6 +1746,14 @@ func (m *Manager) stopPreviewBestEffort(ctx context.Context, id domain.SessionID
 	if err := m.preview.StopSession(ctx, id); err != nil {
 		m.logger.Warn("session preview cleanup failed", "sessionID", id, "error", err)
 	}
+}
+
+// killTreatsRuntimeAsGone reports Destroy errors that mean there is nothing
+// left to kill: the tmux server/session is gone, or a liveness probe could not
+// inspect a possibly-legacy socket. User kill must still succeed; recovery
+// paths keep treating ErrRuntimeProbeInconclusive as "do not recreate".
+func killTreatsRuntimeAsGone(err error) bool {
+	return errors.Is(err, ports.ErrRuntimeUnavailable) || errors.Is(err, ports.ErrRuntimeProbeInconclusive)
 }
 
 func (m *Manager) terminateNativeSession(ctx context.Context, rec domain.SessionRecord) error {

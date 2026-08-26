@@ -491,6 +491,15 @@ func (r *Runtime) Destroy(ctx context.Context, handle ports.RuntimeHandle) error
 	r.reapSessions(ctx, sessionIDs, r.reapGrace)
 
 	if err != nil {
+		// socketForSession returns ErrRuntimeProbeInconclusive when the private
+		// socket lacks the session and the legacy default socket cannot be
+		// inspected (no system tmux, protocol mismatch, transient connect).
+		// Destroy is teardown, not a liveness probe: there is nothing left we
+		// can kill, so treat that the same as an already-gone session.
+		if errors.Is(err, ports.ErrRuntimeProbeInconclusive) || errors.Is(err, ports.ErrRuntimeUnavailable) {
+			r.forgetSessionSocket(id)
+			return nil
+		}
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) && killSessionMissingOutput(string(out)) {
 			r.forgetSessionSocket(id)

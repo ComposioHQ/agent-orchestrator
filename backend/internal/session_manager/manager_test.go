@@ -2538,7 +2538,7 @@ func TestKill_TearsDownRuntimeAndWorkspace(t *testing.T) {
 	requireNoPromptDir(t, dataDir, "mer-1")
 }
 
-func TestKill_NativeTerminationFailurePreservesRuntimeAndWorkspace(t *testing.T) {
+func TestKill_NativeTerminationFailureStillTerminates(t *testing.T) {
 	m, st, rt, ws := newManager()
 	agent := &nativeTerminatingAgent{wantID: "native-7", err: errors.New("prime stop failed")}
 	m.agents = singleAgent{agent: agent}
@@ -2547,14 +2547,14 @@ func TestKill_NativeTerminationFailurePreservesRuntimeAndWorkspace(t *testing.T)
 	st.sessions[rec.ID] = rec
 
 	freed, err := m.Kill(ctx, rec.ID)
-	if err == nil || !strings.Contains(err.Error(), "prime stop failed") {
-		t.Fatalf("freed=%v err=%v, want native termination error", freed, err)
+	if err != nil || !freed {
+		t.Fatalf("freed=%v err=%v, want kill to succeed after native terminate failure", freed, err)
 	}
-	if freed || rt.destroyed != 0 || ws.destroyed != 0 {
-		t.Fatalf("freed=%v runtime=%d workspace=%d, want no destructive teardown", freed, rt.destroyed, ws.destroyed)
+	if agent.calls != 1 || rt.destroyed != 1 || ws.destroyed != 1 {
+		t.Fatalf("native=%d runtime=%d workspace=%d, want one each", agent.calls, rt.destroyed, ws.destroyed)
 	}
-	if st.sessions[rec.ID].IsTerminated {
-		t.Fatal("session must remain active when native termination fails")
+	if !st.sessions[rec.ID].IsTerminated {
+		t.Fatal("session must be terminated when native terminate fails on a stale id")
 	}
 }
 
@@ -2958,6 +2958,37 @@ func TestKill_RuntimeDestroyFailureLeavesSessionActive(t *testing.T) {
 	}
 	if ws.destroyed != 0 {
 		t.Fatalf("workspace destroy calls = %d, want 0 after runtime failure", ws.destroyed)
+	}
+}
+
+func TestKill_RuntimeProbeInconclusiveStillTerminates(t *testing.T) {
+	m, st, rt, ws := newManager()
+	rt.destroyErr = fmt.Errorf("legacy client unavailable: %w", ports.ErrRuntimeProbeInconclusive)
+	st.sessions["mer-1"] = mkLive("mer-1")
+
+	freed, err := m.Kill(ctx, "mer-1")
+	if err != nil || !freed {
+		t.Fatalf("freed=%v err=%v, want kill to succeed on inconclusive probe", freed, err)
+	}
+	if rt.destroyed != 1 || ws.destroyed != 1 {
+		t.Fatalf("runtime=%d workspace=%d, want teardown to continue", rt.destroyed, ws.destroyed)
+	}
+	if !st.sessions["mer-1"].IsTerminated {
+		t.Fatal("session must be terminated when runtime probe is inconclusive")
+	}
+}
+
+func TestKill_RuntimeUnavailableStillTerminates(t *testing.T) {
+	m, st, rt, _ := newManager()
+	rt.destroyErr = fmt.Errorf("no server running: %w", ports.ErrRuntimeUnavailable)
+	st.sessions["mer-1"] = mkLive("mer-1")
+
+	freed, err := m.Kill(ctx, "mer-1")
+	if err != nil || !freed {
+		t.Fatalf("freed=%v err=%v, want kill to succeed when tmux server is gone", freed, err)
+	}
+	if !st.sessions["mer-1"].IsTerminated {
+		t.Fatal("session must be terminated when runtime is unavailable")
 	}
 }
 

@@ -890,6 +890,45 @@ func TestDestroyReportsUnexpectedFailures(t *testing.T) {
 	}
 }
 
+func TestDestroyIsIdempotentWhenLegacyClientMissing(t *testing.T) {
+	r := New(Options{Binary: "bundled-tmux-test", SocketName: "ao", Timeout: time.Second})
+	r.legacyBinary = ""
+	r.reapSessions = (&recordingReaper{}).reap
+	// list-panes and kill-session each probe the private socket once, then
+	// socketForSession fails closed because system tmux is unavailable.
+	fr := &fakeRunnerSequence{results: []fakeRunnerResult{
+		{out: []byte("can't find session: sess-1"), err: &exec.ExitError{}},
+		{out: []byte("can't find session: sess-1"), err: &exec.ExitError{}},
+	}}
+	r.runner = fr
+
+	if err := r.Destroy(context.Background(), ports.RuntimeHandle{ID: "sess-1"}); err != nil {
+		t.Fatalf("Destroy missing legacy client: %v, want nil", err)
+	}
+}
+
+func TestDestroyIsIdempotentWhenLegacyProbeInconclusive(t *testing.T) {
+	r := New(Options{
+		Binary:       "bundled-tmux-test",
+		LegacyBinary: "system-tmux-test",
+		SocketName:   "ao",
+		Timeout:      time.Second,
+	})
+	r.reapSessions = (&recordingReaper{}).reap
+	privateMissing := fakeRunnerResult{out: []byte("can't find session: sess-1"), err: &exec.ExitError{}}
+	legacyRefused := fakeRunnerResult{out: []byte("error connecting to /tmp/tmux-1000/default (Connection refused)"), err: &exec.ExitError{}}
+	// list-panes and kill-session each discover via private then legacy.
+	fr := &fakeRunnerSequence{results: []fakeRunnerResult{
+		privateMissing, legacyRefused,
+		privateMissing, legacyRefused,
+	}}
+	r.runner = fr
+
+	if err := r.Destroy(context.Background(), ports.RuntimeHandle{ID: "sess-1"}); err != nil {
+		t.Fatalf("Destroy inconclusive legacy probe: %v, want nil", err)
+	}
+}
+
 func TestDestroyArgs(t *testing.T) {
 	r, fr := newTestRuntime(0)
 	fr.outputs = [][]byte{nil, nil}
