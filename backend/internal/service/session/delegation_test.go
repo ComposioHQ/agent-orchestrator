@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -64,7 +65,7 @@ func TestDelegateTaskSpawnsWorkerThenRequestsTitleFromNewestActiveOrchestrator(t
 			for _, want := range []string{
 				"AO TASK TITLE UPDATE",
 				"Do not spawn another worker or orchestrator",
-				`ao session rename mer-9 "<title, max 20 chars>"`,
+				fmt.Sprintf(`ao session rename mer-9 "<concise title, max %d chars>"`, domain.MaxSessionDisplayNameLen),
 				"Worker session id: mer-9",
 				brief,
 			} {

@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
 func authorizedAgentsJSON(agent string) string {
@@ -260,11 +263,52 @@ func TestSpawnCommand_RequiresName(t *testing.T) {
 }
 
 // TestSpawnCommand_RejectsOverlongName asserts `ao spawn` rejects a --name
-// longer than 20 characters without contacting the daemon.
+// longer than the domain cap without contacting the daemon.
 func TestSpawnCommand_RejectsOverlongName(t *testing.T) {
-	_, _, err := executeCLI(t, Deps{}, "spawn", "--project", "demo", "--name", strings.Repeat("x", 21))
-	if err == nil || ExitCode(err) != 2 || !strings.Contains(err.Error(), "20 characters or fewer") {
-		t.Fatalf("err=%v exit=%d, want 20 characters or fewer", err, ExitCode(err))
+	_, _, err := executeCLI(t, Deps{}, "spawn", "--project", "demo", "--name", strings.Repeat("x", domain.MaxSessionDisplayNameLen+1))
+	want := fmt.Sprintf("%d characters or fewer", domain.MaxSessionDisplayNameLen)
+	if err == nil || ExitCode(err) != 2 || !strings.Contains(err.Error(), want) {
+		t.Fatalf("err=%v exit=%d, want %s", err, ExitCode(err), want)
+	}
+}
+
+// TestSpawnCommand_CountsNameInRunes asserts the cap is a rune budget, not a
+// byte budget: a name of exactly the cap in multi-byte runes is accepted and
+// forwarded verbatim, while one rune more is rejected.
+func TestSpawnCommand_CountsNameInRunes(t *testing.T) {
+	cfg := setConfigEnv(t)
+	var req spawnRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/demo":
+			_, _ = io.WriteString(w, `{"status":"ok","project":{"id":"demo","name":"Demo","path":"/repo/demo","config":{"worker":{"agent":"codex"}}}}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/agents/refresh":
+			_, _ = io.WriteString(w, authorizedAgentsJSON("codex"))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions":
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatal(err)
+			}
+			_, _ = io.WriteString(w, `{"session":{"id":"demo-11","status":"idle"}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	writeRunFileFor(t, cfg, srv)
+
+	atCap := strings.Repeat("é", domain.MaxSessionDisplayNameLen)
+	if _, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--project", "demo", "--agent", "codex", "--name", atCap); err != nil {
+		t.Fatalf("spawn at the rune cap: %v stderr=%s", err, errOut)
+	}
+	if req.DisplayName != atCap {
+		t.Fatalf("displayName = %q, want the name forwarded unchanged", req.DisplayName)
+	}
+
+	overCap := strings.Repeat("é", domain.MaxSessionDisplayNameLen+1)
+	_, _, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--project", "demo", "--agent", "codex", "--name", overCap)
+	if err == nil || ExitCode(err) != 2 {
+		t.Fatalf("err=%v exit=%d, want a usage error one rune over the cap", err, ExitCode(err))
 	}
 }
 

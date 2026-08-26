@@ -396,6 +396,11 @@
 	--size-textarea-min: 112px;
 	/* Two 20px actions + one 1px gap + the 2px right inset. */
 	--size-sidebar-project-actions: 43px;
+	/* Three 20px actions (pin, rename, kill) + two 1px gaps + the 4px right
+	 * inset. Reserved on the session row whether or not it is hovered: the label
+	 * marquee measures its own overflow, and a track that changed width when the
+	 * actions faded in would reflow the text mid-animation. */
+	--size-sidebar-session-actions: 66px;
 
 	/* Shared inset-panel geometry (welcome board + settings page) */
 	--size-center-panel-inset: 24px;

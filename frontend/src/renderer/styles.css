@@ -236,6 +236,7 @@
 	--spacing-inspector-min: var(--size-inspector-min);
 	--spacing-textarea-min: var(--size-textarea-min);
 	--spacing-sidebar-project-actions: var(--size-sidebar-project-actions);
+	--spacing-sidebar-session-actions: var(--size-sidebar-session-actions);
 	--spacing-row-md: var(--size-row-md);
 	--spacing-empty-offset-y: var(--size-empty-offset-y);
 	--spacing-kv-label: var(--size-kv-label);
@@ -1660,6 +1661,95 @@ textarea,
 
 	.agent-switch-progress-dot,
 	.agent-switch-progress-step::before {
+		transition: none;
+	}
+}
+
+/* Sidebar session label — see SidebarSessionName.tsx.
+ *
+ * The label is clipped, never ellipsised: the distinguishing part of a session
+ * name is usually its tail, so hovering the row (or focusing its open button)
+ * slides the text far enough to read that tail and eases it back.
+ *
+ * At rest the label uses the full card-width track and its shadow sits at the
+ * right edge only when the name overflows. On hover/focus the fixed action
+ * layer overlays that track, and the same shadow moves to the action layer's
+ * measured left boundary. Nothing resizes, and the gradient takes its surface
+ * from the row state below so it follows every theme without hard-coding
+ * black. */
+[data-session-row] {
+	--ao-session-row-surface: var(--color-bg-sidebar);
+}
+
+[data-session-row]:hover,
+[data-session-row]:focus-within {
+	--ao-session-row-surface: color-mix(in oklch, var(--foreground) 4%, var(--color-bg-sidebar));
+}
+
+[data-session-row][data-active="true"] {
+	--ao-session-row-surface: color-mix(in oklch, var(--foreground) 7%, var(--color-bg-sidebar));
+}
+
+.ao-session-name[data-marquee="running"]::before {
+	position: absolute;
+	inset-block: 0;
+	z-index: 1;
+	content: "";
+	pointer-events: none;
+}
+
+/* One explicit shadow layer: at rest inset 0 places it at the card edge; while
+ * actions are visible the component supplies their measured overlap as the
+ * inset, placing the shadow immediately to their left. */
+.ao-session-name__shadow {
+	position: absolute;
+	inset-block: 0;
+	inset-inline-end: var(--ao-session-name-shadow-inset, 0px);
+	z-index: 1;
+	width: 12px;
+	background: linear-gradient(to right, transparent, var(--ao-session-row-surface));
+	pointer-events: none;
+}
+
+/* At rest the hidden action cluster remains transparent. While revealed, it is
+ * an opaque layer above the full-width name; the label's single shadow now sits
+ * directly to its left. */
+[data-session-row]:hover [data-session-actions],
+[data-session-row]:focus-within [data-session-actions] {
+	background: var(--ao-session-row-surface);
+}
+
+/* Once the label starts moving, soften only its clipped leading edge. */
+.ao-session-name[data-marquee="running"]::before {
+	inset-inline-start: 0;
+	width: 8px;
+	background: linear-gradient(to right, var(--ao-session-row-surface), transparent);
+}
+
+/* Removing hover/focus returns from the current travel position with a soft,
+ * slightly longer ease instead of snapping or rushing back to the start. */
+.ao-session-name__text {
+	transform: translateX(0);
+	transition: transform 360ms cubic-bezier(0.22, 1, 0.36, 1);
+	will-change: transform;
+}
+
+.ao-session-name[data-marquee="running"] .ao-session-name__text {
+	transform: translateX(var(--ao-marquee-shift, 0));
+	transition-delay: 450ms;
+	transition-duration: var(--ao-marquee-duration, 4s);
+	transition-timing-function: linear;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	/* Belt and braces: the component already refuses to set data-marquee under
+	 * this query, but a label must never travel if the media query flips while
+	 * a row is hovered. The full name stays readable through the row's tooltip
+	 * and its accessible name. */
+	.ao-session-name .ao-session-name__text,
+	.ao-session-name[data-marquee="running"] .ao-session-name__text {
+		animation: none;
+		transform: translateX(0);
 		transition: none;
 	}
 }

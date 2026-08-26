@@ -2352,15 +2352,59 @@ func TestSessionsAPI_SpawnBranchNotFetchedReturnsTypedError(t *testing.T) {
 }
 
 // TestSessionsAPI_SpawnRejectsOverlongDisplayName asserts the spawn endpoint
-// caps displayName at 20 characters even though the field itself is optional
-// (the desktop new-task dialog omits it). `ao spawn` enforces the same limit
-// CLI-side before the request is sent.
+// caps displayName at domain.MaxSessionDisplayNameLen even though the field
+// itself is optional (the desktop new-task dialog omits it). `ao spawn`
+// enforces the same limit CLI-side before the request is sent.
 func TestSessionsAPI_SpawnRejectsOverlongDisplayName(t *testing.T) {
 	srv := newSessionTestServer(t, newFakeSessionService())
 
-	overlong := strings.Repeat("x", 21)
+	overlong := strings.Repeat("x", domain.MaxSessionDisplayNameLen+1)
 	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions", `{"projectId":"ao","harness":"codex","displayName":"`+overlong+`"}`)
 	assertErrorCode(t, body, status, http.StatusBadRequest, "DISPLAY_NAME_TOO_LONG")
+}
+
+// TestSessionsAPI_SpawnAcceptsDisplayNameAtCap asserts a name of exactly the cap
+// is accepted and reaches the service verbatim. The cap counts runes, so the
+// name is built from multi-byte characters: a byte budget would reject it.
+func TestSessionsAPI_SpawnAcceptsDisplayNameAtCap(t *testing.T) {
+	svc := newFakeSessionService()
+	srv := newSessionTestServer(t, svc)
+
+	atCap := strings.Repeat("é", domain.MaxSessionDisplayNameLen)
+	_, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions", `{"projectId":"ao","harness":"codex","displayName":"`+atCap+`"}`)
+	if status != http.StatusCreated {
+		t.Fatalf("status = %d, want %d", status, http.StatusCreated)
+	}
+	if svc.lastSpawn.DisplayName != atCap {
+		t.Fatalf("spawned displayName = %q, want the name passed through unchanged", svc.lastSpawn.DisplayName)
+	}
+}
+
+// TestSessionsAPI_RenameRejectsOverlongDisplayName asserts the rename endpoint
+// carries the same cap as spawn. Without it a PATCH was the one way to put an
+// unbounded label on a session.
+func TestSessionsAPI_RenameRejectsOverlongDisplayName(t *testing.T) {
+	srv := newSessionTestServer(t, newFakeSessionService())
+
+	overlong := strings.Repeat("x", domain.MaxSessionDisplayNameLen+1)
+	body, status, _ := doRequest(t, srv, "PATCH", "/api/v1/sessions/ao-1", `{"displayName":"`+overlong+`"}`)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "DISPLAY_NAME_TOO_LONG")
+}
+
+// TestSessionsAPI_RenameAcceptsDisplayNameAtCap asserts a rename to exactly the
+// cap succeeds and is echoed back unchanged.
+func TestSessionsAPI_RenameAcceptsDisplayNameAtCap(t *testing.T) {
+	svc := newFakeSessionService()
+	srv := newSessionTestServer(t, svc)
+
+	atCap := strings.Repeat("é", domain.MaxSessionDisplayNameLen)
+	body, status, _ := doRequest(t, srv, "PATCH", "/api/v1/sessions/ao-1", `{"displayName":"`+atCap+`"}`)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d body = %s, want %d", status, body, http.StatusOK)
+	}
+	if !strings.Contains(string(body), atCap) {
+		t.Fatalf("body = %s, want the renamed label echoed back", body)
+	}
 }
 
 func TestSessionsAPI_RenameNotFound(t *testing.T) {

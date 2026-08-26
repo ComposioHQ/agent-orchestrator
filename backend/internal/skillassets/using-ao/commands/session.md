@@ -100,7 +100,7 @@ ao session kill mer-3
 
 ### ao session rename
 
-Rename a session.
+Rename a session. `<name>` is the sidebar label and must be 120 characters or fewer.
 
 **Syntax:**
 ```

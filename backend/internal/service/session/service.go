@@ -223,6 +223,10 @@ func NewWithDeps(d Deps) *Service {
 // Spawn creates a session and returns the API-facing read model plus
 // ephemeral prompt size measurements.
 func (s *Service) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Session, int, int, error) {
+	cfg.DisplayName = strings.TrimSpace(cfg.DisplayName)
+	if err := validateDisplayNameLength(cfg.DisplayName); err != nil {
+		return domain.Session{}, 0, 0, err
+	}
 	if cfg.Kind == domain.KindOrchestrator {
 		unlock := s.lockOrchestratorProject(cfg.ProjectID)
 		defer unlock()
@@ -645,11 +649,28 @@ func (s *Service) Send(ctx context.Context, id domain.SessionID, message string,
 	return toAPIError(s.manager.Send(ctx, id, message, attachment))
 }
 
+// validateDisplayNameLength holds a session display name to the domain cap. The
+// spawn and rename paths share it so the service stays the authority no matter
+// which transport (HTTP, CLI over HTTP, delegation) supplied the name.
+func validateDisplayNameLength(displayName string) error {
+	if domain.SessionDisplayNameTooLong(displayName) {
+		return apierr.Invalid(
+			"DISPLAY_NAME_TOO_LONG",
+			fmt.Sprintf("Display name must be %d characters or fewer", domain.MaxSessionDisplayNameLen),
+			nil,
+		)
+	}
+	return nil
+}
+
 // Rename updates the user-facing session display name.
 func (s *Service) Rename(ctx context.Context, id domain.SessionID, displayName string) error {
 	displayName = strings.TrimSpace(displayName)
 	if displayName == "" {
 		return apierr.Invalid("DISPLAY_NAME_REQUIRED", "Display name is required", nil)
+	}
+	if err := validateDisplayNameLength(displayName); err != nil {
+		return err
 	}
 	renamed, err := s.store.RenameSession(ctx, id, displayName, time.Now().UTC())
 	if err != nil {
