@@ -249,7 +249,7 @@ export function SessionCardView({
 				"group relative w-full rounded-lg border border-border text-left transition-[background-color,box-shadow,transform] duration-[120ms] ease-out",
 				badge.cardClassName ?? "border-border bg-surface",
 				interactive &&
-					"cursor-pointer hover:bg-interactive-hover focus-within:bg-interactive-hover active:scale-[0.99]",
+					"cursor-pointer hover:bg-interactive-hover focus-within:bg-interactive-hover active:scale-[0.99] has-[.pr-link:active]:scale-100",
 				needsAttention &&
 					"animate-attention-card-pulse border-status-needs-you bg-[color-mix(in_srgb,var(--color-status-needs-you)_8%,var(--color-surface))]",
 			)}
@@ -391,7 +391,7 @@ function BoardPullRequestGroup({
 	const statusLabel = labels.states[group.state];
 	const singlePullRequest = group.prs.length === 1;
 	const linkClassName =
-		"rounded-sm border border-transparent transition-colors hover:border-border-strong hover:bg-interactive-hover";
+		"pr-link rounded-sm border border-transparent hover:border-border-strong hover:bg-interactive-hover";
 	const details = (
 		<>
 			<PullRequestLifecycleIcon state={group.state} />
