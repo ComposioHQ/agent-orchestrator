@@ -220,12 +220,14 @@ export function SessionCardView({
 	usage,
 }: SessionCardViewProps) {
 	const badge = getSessionStatusView(session.status, translate);
-	const needsAttention =
-		session.status === "ci_failed" ||
-		session.status === "changes_requested" ||
-		session.status === "review_pending" ||
-		session.activity?.state === "blocked";
 	const statusPresentation = session.statusPresentation;
+	const agentProgressStatus = new Set(["Fixing CI failures", "Addressing comments", "Reviewing"]);
+	const needsAttention =
+		!agentProgressStatus.has(session.displayStatus ?? "") &&
+		(session.status === "ci_failed" ||
+			session.status === "changes_requested" ||
+			session.status === "review_pending" ||
+			session.activity?.state === "blocked");
 	const needsAttentionChip = needsAttention && !statusPresentation;
 	const column = getKanbanColumnView(toKanbanColumn(session.kanbanColumn, session.status), translate);
 	const statusTone = needsAttentionChip
@@ -397,7 +399,7 @@ function BoardPullRequestGroup({
 			{group.prs.map((pr, index) => (
 				<span className="inline-flex items-center" key={pr.url || pr.number}>
 					<ExternalLink
-						className="text-passive underline-offset-2 transition-colors hover:text-foreground hover:underline"
+						className="font-medium text-foreground underline-offset-2 transition-colors hover:underline"
 						href={pr.url}
 						stopPropagation
 					>

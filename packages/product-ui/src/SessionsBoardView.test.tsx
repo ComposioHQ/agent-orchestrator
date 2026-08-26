@@ -400,7 +400,7 @@ describe("SessionsBoardView", () => {
 			"bg-[color-mix(in_srgb,var(--session-status-tone)_10%,transparent)]",
 		);
 		expect(status?.style.getPropertyValue("--session-status-tone")).toBe(
-			"var(--color-status-needs-you)",
+			"var(--color-status-in-review)",
 		);
 		expect(status?.querySelector(".rounded-full")).toBeNull();
 	});
