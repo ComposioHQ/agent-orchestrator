@@ -13,8 +13,15 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tansta
 import { useCallback, useEffect, useState } from "react";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorCode, apiErrorMessage } from "../lib/api-client";
-import { subscribeWorkspaceFileChanges } from "../lib/workspace-file-events";
+import {
+	subscribeWorkspaceFileChanges,
+	workspaceFilePathsQueryKey,
+} from "../lib/workspace-file-events";
 import { workspaceQueryKey } from "./useWorkspaceQuery";
+import {
+	useWorkspaceFileConnectionState,
+	workspaceFilesRefetchInterval,
+} from "./useSessionWorkspaceFiles";
 import type {
 	ActivityKind,
 	ApprovalMode,
@@ -734,13 +741,15 @@ export function useConversationSkills(sessionId: string | undefined, enabled: bo
  */
 export function useWorkspaceFilePaths(sessionId: string | undefined, enabled: boolean) {
 	const queryClient = useQueryClient();
+	const connectionState = useWorkspaceFileConnectionState(sessionId ?? "");
 	const query = useQuery({
-		queryKey: ["workspace-file-paths", sessionId ?? ""],
+		queryKey: workspaceFilePathsQueryKey(sessionId ?? ""),
 		enabled: Boolean(sessionId) && enabled,
-		// The agent edits files as it works, so this goes stale; refetched on demand
-		// rather than polled, since a mention menu that is a minute out of date is
-		// still useful and polling every session would not be.
+		// Workspace SSE invalidates this cache in the normal path. Poll only while
+		// that stream is degraded, so stale references recover without making every
+		// live conversation poll continuously.
 		staleTime: 30 * 1000,
+		refetchInterval: workspaceFilesRefetchInterval(connectionState),
 		retry: false,
 		queryFn: async () => {
 			const { data, error } = await apiClient.GET(
@@ -766,9 +775,9 @@ export function useWorkspaceFilePaths(sessionId: string | undefined, enabled: bo
 		paths: query.data?.paths ?? [],
 		truncated: query.data?.truncated ?? false,
 		isLoading: query.isLoading,
-		error: query.error
-			? apiErrorMessage(query.error, "Try again after the workspace reconnects.")
-			: undefined,
+		failed: query.isError,
+		error: query.error ? apiErrorMessage(query.error, "") || undefined : undefined,
+		refreshDegraded: connectionState === "degraded",
 	};
 }
 

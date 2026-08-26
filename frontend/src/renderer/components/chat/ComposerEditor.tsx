@@ -36,6 +36,7 @@ import {
 import { Box } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { cn } from "../../lib/utils";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../ui/tooltip";
 import { composerFileIcon } from "./composerFileIcon";
 import { findActiveTrigger, type TriggerKind } from "./composerSuggest";
 
@@ -90,7 +91,7 @@ function ComposerToken({
 	const Icon = kind === "skill" ? Box : composerFileIcon(value);
 	const pathReferenceDescription =
 		kind === "file" ? t("chat.composer.pathReferenceDescription", { path: value }) : undefined;
-	return (
+	const token = (
 		<span
 			data-composer-token={kind}
 			data-value={value}
@@ -99,7 +100,6 @@ function ComposerToken({
 			}
 			aria-description={pathReferenceDescription}
 			tabIndex={kind === "file" ? 0 : undefined}
-			title={pathReferenceDescription}
 			contentEditable={false}
 			className={cn(
 				"mx-0.5 inline-flex items-center gap-1 rounded-md border border-border-strong bg-interactive-hover px-1.5 py-0.5 align-middle text-[0.9em] leading-none select-none",
@@ -109,6 +109,15 @@ function ComposerToken({
 			<Icon aria-hidden="true" className="size-3 shrink-0" />
 			{display}
 		</span>
+	);
+	if (kind !== "file") return token;
+	return (
+		<Tooltip>
+			<TooltipTrigger asChild>{token}</TooltipTrigger>
+			<TooltipContent side="top" className="max-w-sm leading-normal">
+				{pathReferenceDescription}
+			</TooltipContent>
+		</Tooltip>
 	);
 }
 
@@ -421,48 +430,50 @@ export const ComposerEditor = forwardRef<
 	);
 
 	return (
-		<LexicalComposer initialConfig={initialConfig}>
-			<div className="relative">
-				<PlainTextPlugin
-					contentEditable={
-						<ContentEditable
-							aria-label={label}
-							aria-placeholder={placeholder}
-							placeholder={placeholderNode}
-							aria-disabled={disabled || undefined}
-							role="combobox"
-							aria-expanded={menuOpen}
-							aria-controls={menuOpen ? menuId : undefined}
-							aria-activedescendant={
-								menuOpen ? `${menuId}-option-${activeIndex}` : undefined
-							}
-							aria-autocomplete="list"
-							onCompositionStart={() => onCompositionChange(true)}
-							onCompositionEnd={() => onCompositionChange(false)}
-							onKeyDown={(event) => {
-								if (!completionHandledEvents.has(event.nativeEvent)) onKeyDown(event);
-							}}
-							onPasteCapture={(event) => {
-								onPaste(event);
-								if (event.defaultPrevented) event.stopPropagation();
-							}}
-							className={cn(
-								"chat-composer-scrollbar max-h-40 min-h-[4.5rem] w-full overflow-y-auto overscroll-contain bg-transparent py-1 pl-[7px] pr-0 text-base! leading-relaxed text-foreground caret-foreground outline-none selection:bg-foreground selection:text-background",
-								disabled && "opacity-50",
-							)}
-						/>
-					}
-					ErrorBoundary={LexicalErrorBoundary}
-				/>
-				<HistoryPlugin />
-				<EditorBridge
-					ref={ref}
-					disabled={disabled}
-					onChange={onChange}
-					onComplete={onComplete}
-					onEnter={onEnter}
-				/>
-			</div>
-		</LexicalComposer>
+		<TooltipProvider delayDuration={200}>
+			<LexicalComposer initialConfig={initialConfig}>
+				<div className="relative">
+					<PlainTextPlugin
+						contentEditable={
+							<ContentEditable
+								aria-label={label}
+								aria-placeholder={placeholder}
+								placeholder={placeholderNode}
+								aria-disabled={disabled || undefined}
+								role="combobox"
+								aria-expanded={menuOpen}
+								aria-controls={menuOpen ? menuId : undefined}
+								aria-activedescendant={
+									menuOpen ? `${menuId}-option-${activeIndex}` : undefined
+								}
+								aria-autocomplete="list"
+								onCompositionStart={() => onCompositionChange(true)}
+								onCompositionEnd={() => onCompositionChange(false)}
+								onKeyDown={(event) => {
+									if (!completionHandledEvents.has(event.nativeEvent)) onKeyDown(event);
+								}}
+								onPasteCapture={(event) => {
+									onPaste(event);
+									if (event.defaultPrevented) event.stopPropagation();
+								}}
+								className={cn(
+									"chat-composer-scrollbar max-h-40 min-h-[4.5rem] w-full overflow-y-auto overscroll-contain bg-transparent py-1 pl-[7px] pr-0 text-base! leading-relaxed text-foreground caret-foreground outline-none selection:bg-foreground selection:text-background",
+									disabled && "opacity-50",
+								)}
+							/>
+						}
+						ErrorBoundary={LexicalErrorBoundary}
+					/>
+					<HistoryPlugin />
+					<EditorBridge
+						ref={ref}
+						disabled={disabled}
+						onChange={onChange}
+						onComplete={onComplete}
+						onEnter={onEnter}
+					/>
+				</div>
+			</LexicalComposer>
+		</TooltipProvider>
 	);
 });

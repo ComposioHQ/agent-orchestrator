@@ -1295,6 +1295,8 @@
 	"chat.edit.send": "Enviar mensaje editado",
 	"chat.edit.sendShortcut": "Enviar mensaje editado (⌘/Ctrl+Enter)",
 	"chat.composer.fileReferencesLoadFailed": "No se pudieron cargar las referencias de archivos. {{detail}}",
+	"chat.composer.fileReferencesLoadFailedFallback": "No se pudieron cargar las referencias de archivos. Inténtalo de nuevo cuando se restablezca la conexión con el árbol de trabajo.",
+	"chat.composer.fileReferencesRefreshDegraded": "Las referencias de archivos pueden estar desactualizadas mientras se restablecen las actualizaciones del árbol de trabajo. AO lo está reintentando.",
 	"chat.composer.pathReferenceDescription": "Solo referencia de ruta: {{path}}. El agente lee el archivo con los permisos normales del árbol de trabajo actual; el contenido no está adjunto.",
 	"chat.composer.pathReferenceLabel": "Referencia de ruta: {{file}}",
 	"pr.card.reviewStatus": "Review status",

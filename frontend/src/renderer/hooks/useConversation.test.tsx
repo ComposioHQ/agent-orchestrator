@@ -4,12 +4,22 @@ import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 
-const { getMock, postMock, apiErrorCodeMock, apiErrorMessageMock, subscribeWorkspaceFileChangesMock } = vi.hoisted(() => ({
+const {
+	getMock,
+	postMock,
+	apiErrorCodeMock,
+	apiErrorMessageMock,
+	subscribeWorkspaceFileChangesMock,
+	getWorkspaceFileConnectionStateMock,
+	subscribeWorkspaceFileConnectionStateMock,
+} = vi.hoisted(() => ({
 	getMock: vi.fn(),
 	postMock: vi.fn(),
 	apiErrorCodeMock: vi.fn(),
 	apiErrorMessageMock: vi.fn(),
 	subscribeWorkspaceFileChangesMock: vi.fn(() => vi.fn()),
+	getWorkspaceFileConnectionStateMock: vi.fn(() => "connected"),
+	subscribeWorkspaceFileConnectionStateMock: vi.fn(() => vi.fn()),
 }));
 
 vi.mock("../lib/api-client", () => ({
@@ -20,6 +30,9 @@ vi.mock("../lib/api-client", () => ({
 
 vi.mock("../lib/workspace-file-events", () => ({
 	subscribeWorkspaceFileChanges: subscribeWorkspaceFileChangesMock,
+	getWorkspaceFileConnectionState: getWorkspaceFileConnectionStateMock,
+	subscribeWorkspaceFileConnectionState: subscribeWorkspaceFileConnectionStateMock,
+	workspaceFilePathsQueryKey: (sessionId: string) => ["workspace-file-paths", sessionId] as const,
 }));
 
 import { useConversation, useConversationCommands, useWorkspaceFilePaths } from "./useConversation";
@@ -83,6 +96,8 @@ beforeEach(() => {
 	apiErrorCodeMock.mockReset().mockReturnValue(undefined);
 	apiErrorMessageMock.mockReset().mockReturnValue("failed");
 	subscribeWorkspaceFileChangesMock.mockClear();
+	getWorkspaceFileConnectionStateMock.mockReset().mockReturnValue("connected");
+	subscribeWorkspaceFileConnectionStateMock.mockClear();
 });
 
 describe("workspace file references", () => {
@@ -116,6 +131,18 @@ describe("workspace file references", () => {
 		const { result } = renderHook(() => useWorkspaceFilePaths("ao-1", true), { wrapper });
 		await waitFor(() => expect(result.current.error).toBe("workspace index is offline"));
 		expect(result.current.paths).toEqual([]);
+	});
+
+	it("marks suggestions as potentially stale while workspace events are degraded", async () => {
+		getWorkspaceFileConnectionStateMock.mockReturnValue("degraded");
+		getMock.mockResolvedValue({
+			data: { files: [{ path: "src/cached.ts", status: "modified" }], truncated: false },
+			error: undefined,
+		});
+
+		const { result } = renderHook(() => useWorkspaceFilePaths("ao-1", true), { wrapper });
+		await waitFor(() => expect(result.current.paths).toEqual(["src/cached.ts"]));
+		expect(result.current.refreshDegraded).toBe(true);
 	});
 });
 

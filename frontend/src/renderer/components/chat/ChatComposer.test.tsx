@@ -2,7 +2,8 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import userEvent from "@testing-library/user-event";
 import { Activity, Profiler } from "react";
 import { describe, expect, it, vi } from "vitest";
-import { ChatComposer } from "./ChatComposer";
+import { appI18n } from "../../i18n/instance";
+import { ChatComposer, type WorkspaceFileCatalog } from "./ChatComposer";
 import type { ChatSkill } from "../../types/conversation";
 import {
 	prepareChatComposerDelivery,
@@ -31,6 +32,13 @@ const FILES = [
 	"backend/internal/ports/chat.go",
 	"frontend/src/renderer/components/chat/ChatComposer.tsx",
 ];
+
+function fileCatalog(
+	paths: string[] = FILES,
+	overrides: Partial<WorkspaceFileCatalog> = {},
+): WorkspaceFileCatalog {
+	return { paths, truncated: false, failed: false, refreshDegraded: false, ...overrides };
+}
 
 function renderComposer(props: Partial<Parameters<typeof ChatComposer>[0]> = {}) {
 	const onSend = vi.fn();
@@ -1072,7 +1080,7 @@ describe("slash commands", () => {
 
 describe("file mentions", () => {
 	it("opens the file menu on an at-sign", async () => {
-		const { field } = renderComposer({ filePaths: FILES });
+		const { field } = renderComposer({ fileCatalog: fileCatalog() });
 		await typeInComposer(field, "@chat");
 		const options = screen.getAllByRole("option");
 		// Both files whose name starts with "chat" match; neither AGENTS.md does.
@@ -1084,7 +1092,7 @@ describe("file mentions", () => {
 
 	// The label is a name; what the agent has to resolve is the whole path.
 	it("inserts the full path, without the sigil", async () => {
-		const { field } = renderComposer({ filePaths: FILES });
+		const { field } = renderComposer({ fileCatalog: fileCatalog() });
 		await typeInComposer(field, "look at @ChatComposer");
 		await userEvent.keyboard("{Enter}");
 		const token = field.querySelector('[data-composer-token="file"]');
@@ -1096,7 +1104,7 @@ describe("file mentions", () => {
 	});
 
 	it("identifies a selected file as a focusable path reference", async () => {
-		const { field } = renderComposer({ filePaths: FILES });
+		const { field } = renderComposer({ fileCatalog: fileCatalog() });
 		await typeInComposer(field, "@ChatComposer");
 		await userEvent.keyboard("{Enter}");
 
@@ -1105,16 +1113,12 @@ describe("file mentions", () => {
 		expect(token).toHaveAccessibleDescription(
 			"Path reference only: frontend/src/renderer/components/chat/ChatComposer.tsx. The agent reads it with normal permissions from the current worktree; file contents are not attached.",
 		);
-		expect(token).toHaveAttribute(
-			"title",
-			"Path reference only: frontend/src/renderer/components/chat/ChatComposer.tsx. The agent reads it with normal permissions from the current worktree; file contents are not attached.",
-		);
 		expect(token).toHaveAttribute("tabindex", "0");
 	});
 
 	it("keeps duplicate basenames distinguishable before and after selection", async () => {
 		const { field } = renderComposer({
-			filePaths: ["frontend/src/config.ts", "backend/internal/config.ts"],
+			fileCatalog: fileCatalog(["frontend/src/config.ts", "backend/internal/config.ts"]),
 		});
 		await typeInComposer(field, "@config");
 
@@ -1124,14 +1128,23 @@ describe("file mentions", () => {
 		expect(options[1]).toHaveTextContent("backend/internal");
 
 		await userEvent.click(options[1]!);
-		expect(field.querySelector('[data-composer-token="file"]')).toHaveAccessibleDescription(
+		const token = field.querySelector<HTMLElement>('[data-composer-token="file"]')!;
+		expect(token).toHaveAccessibleDescription(
+			/Path reference only: backend\/internal\/config\.ts\./,
+		);
+
+		token.focus();
+		expect(await screen.findByRole("tooltip")).toHaveTextContent(
 			/Path reference only: backend\/internal\/config\.ts\./,
 		);
 	});
 
 	it("reports a failed file catalog when an at-sign reference is attempted", async () => {
 		const { field } = renderComposer({
-			filePathsError: "Try again after the workspace reconnects.",
+			fileCatalog: fileCatalog([], {
+				failed: true,
+				error: "Try again after the workspace reconnects.",
+			}),
 		});
 		await typeInComposer(field, "@config");
 
@@ -1140,8 +1153,33 @@ describe("file mentions", () => {
 		);
 	});
 
+	it("localizes a file-catalog failure that has no daemon detail", async () => {
+		await appI18n.changeLanguage("de");
+		try {
+			const { field } = renderComposer({ fileCatalog: fileCatalog([], { failed: true }) });
+			await typeInComposer(field, "@config");
+
+			expect(screen.getByRole("alert")).toHaveTextContent(
+				"Dateiverweise konnten nicht geladen werden. Versuchen Sie es erneut, nachdem die Verbindung zum Worktree wiederhergestellt wurde.",
+			);
+		} finally {
+			await appI18n.changeLanguage("en");
+		}
+	});
+
+	it("warns that cached references may be stale while workspace updates reconnect", async () => {
+		const { field } = renderComposer({
+			fileCatalog: fileCatalog(["src/cached.ts"], { refreshDegraded: true }),
+		});
+		await typeInComposer(field, "@cached");
+
+		expect(screen.getByRole("status")).toHaveTextContent(
+			"File references may be stale while workspace updates reconnect. AO is retrying.",
+		);
+	});
+
 	it("inserts a file instead of sending when Enter follows typing before React rerenders", async () => {
-		const { onSend, field } = renderComposer({ filePaths: FILES });
+		const { onSend, field } = renderComposer({ fileCatalog: fileCatalog() });
 		await typeAndPressInLexicalEditor(field, "@chat", "Enter");
 
 		expect(onSend).not.toHaveBeenCalled();
@@ -1155,7 +1193,7 @@ describe("file mentions", () => {
 	});
 
 	it("keeps Shift+Enter as a newline while the file menu is open", async () => {
-		const { onSend, field } = renderComposer({ filePaths: FILES });
+		const { onSend, field } = renderComposer({ fileCatalog: fileCatalog() });
 		await typeInComposer(field, "@chat");
 		await userEvent.keyboard("{Shift>}{Enter}{/Shift}");
 
@@ -1165,7 +1203,7 @@ describe("file mentions", () => {
 	});
 
 	it("sends the inserted path verbatim", async () => {
-		const { onSend, field } = renderComposer({ filePaths: FILES });
+		const { onSend, field } = renderComposer({ fileCatalog: fileCatalog() });
 		await typeInComposer(field, "@chat.go");
 		await userEvent.keyboard("{Enter}");
 		await userEvent.keyboard("{Enter}");
@@ -1173,7 +1211,9 @@ describe("file mentions", () => {
 	});
 
 	it("quotes a completed path containing spaces in the agent-facing text", async () => {
-		const { onSend, field } = renderComposer({ filePaths: ["docs/product notes.md"] });
+		const { onSend, field } = renderComposer({
+			fileCatalog: fileCatalog(["docs/product notes.md"]),
+		});
 		await typeInComposer(field, "read @notes");
 		await userEvent.keyboard("{Enter}{Enter}");
 
@@ -1182,14 +1222,14 @@ describe("file mentions", () => {
 	});
 
 	it("leaves the at-sign ordinary when there are no paths", async () => {
-		const { field } = renderComposer({ filePaths: [] });
+		const { field } = renderComposer({ fileCatalog: fileCatalog([]) });
 		await typeInComposer(field, "@chat");
 		expect(screen.queryByRole("listbox")).toBeNull();
 		expect(field.textContent).toBe("@chat");
 	});
 
 	it("says so when the worktree list was capped", async () => {
-		const { field } = renderComposer({ filePaths: FILES, filePathsTruncated: true });
+		const { field } = renderComposer({ fileCatalog: fileCatalog(FILES, { truncated: true }) });
 		await typeInComposer(field, "@chat");
 		expect(screen.getByText(/Showing part of a large worktree/)).toBeTruthy();
 	});

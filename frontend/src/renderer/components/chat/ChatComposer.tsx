@@ -85,6 +85,21 @@ import {
 } from "../../lib/chat-drafts";
 import { setChatDraftBoundary } from "../../lib/chat-draft-boundary";
 
+export interface WorkspaceFileCatalog {
+	paths: string[];
+	truncated: boolean;
+	failed: boolean;
+	error?: string;
+	refreshDegraded: boolean;
+}
+
+const EMPTY_WORKSPACE_FILE_CATALOG: WorkspaceFileCatalog = {
+	paths: [],
+	truncated: false,
+	failed: false,
+	refreshDegraded: false,
+};
+
 /**
  * Tell the agent to open the attached files. Mirrors the wording spawn uses for a task
  * brief, so the same instruction reaches the agent whether a file was attached at
@@ -114,9 +129,7 @@ export function ChatComposer({
 	settings,
 	approval,
 	skills = [],
-	filePaths = [],
-	filePathsTruncated,
-	filePathsError,
+	fileCatalog = EMPTY_WORKSPACE_FILE_CATALOG,
 	onStageAttachments,
 	nativeImages,
 	onSteer,
@@ -153,12 +166,8 @@ export function ChatComposer({
 	disabled?: boolean;
 	/** The provider's skills. Empty leaves `/` an ordinary character. */
 	skills?: ChatSkill[];
-	/** Worktree-relative paths offered for `@`. Empty leaves `@` ordinary. */
-	filePaths?: string[];
-	/** The path list was capped, so the menu says so rather than implying it is all. */
-	filePathsTruncated?: boolean;
-	/** Why the worktree path catalog is unavailable. Shown when `@` is attempted. */
-	filePathsError?: string;
+	/** Live worktree paths and their load/refresh state for `@` completion. */
+	fileCatalog?: WorkspaceFileCatalog;
 	/**
 	 * Writes staged files into the worktree and answers with the paths the agent
 	 * can open. Absent means files cannot be delivered, and no attach control is
@@ -383,8 +392,8 @@ export function ChatComposer({
 		if (currentTrigger.kind === "skill") {
 			return rankSkills(slashCommands, currentTrigger.query);
 		}
-		return rankFiles(filePaths, currentTrigger.query);
-	}, [slashCommands, filePaths]);
+		return rankFiles(fileCatalog.paths, currentTrigger.query);
+	}, [slashCommands, fileCatalog.paths]);
 
 	const suggestions: Suggestion[] = useMemo(
 		() => suggestionsFor(trigger),
@@ -1165,7 +1174,7 @@ export function ChatComposer({
 						items={suggestions}
 						highlighted={activeIndex}
 						onPick={pick}
-						truncated={trigger?.kind === "file" && filePathsTruncated}
+						truncated={trigger?.kind === "file" && fileCatalog.truncated}
 					/>
 				) : null}
 
@@ -1225,9 +1234,16 @@ export function ChatComposer({
 					onPaste={onPaste}
 				/>
 
-				{trigger?.kind === "file" && filePathsError ? (
+				{trigger?.kind === "file" && fileCatalog.failed ? (
 					<p role="alert" className="px-1.5 text-[11px] leading-snug text-destructive">
-						{t("chat.composer.fileReferencesLoadFailed", { detail: filePathsError })}
+						{fileCatalog.error
+							? t("chat.composer.fileReferencesLoadFailed", { detail: fileCatalog.error })
+							: t("chat.composer.fileReferencesLoadFailedFallback")}
+					</p>
+				) : null}
+				{trigger?.kind === "file" && !fileCatalog.failed && fileCatalog.refreshDegraded ? (
+					<p role="status" className="px-1.5 text-[11px] leading-snug text-warning">
+						{t("chat.composer.fileReferencesRefreshDegraded")}
 					</p>
 				) : null}
 

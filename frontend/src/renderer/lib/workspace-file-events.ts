@@ -6,6 +6,9 @@ const SSE_RETRY_MS = 5_000;
 const SSE_RETRY_JITTER_MS = 1_000;
 const EVENTSOURCE_CLOSED = 2;
 
+export const workspaceFilePathsQueryKey = (sessionId: string) =>
+	["workspace-file-paths", sessionId] as const;
+
 export type WorkspaceFileConnectionState = "connecting" | "connected" | "degraded";
 type ConnectionPhase = "idle" | "connecting" | "open" | "waiting";
 
@@ -81,7 +84,7 @@ function createWorkspaceStream(sessionId: string, queryClient: QueryClient): Wor
 		stream.debounce = setTimeout(() => {
 			void queryClient.invalidateQueries({ queryKey: ["session-workspace-files", sessionId] });
 			void queryClient.invalidateQueries({ queryKey: ["session-workspace-file", sessionId] });
-			void queryClient.invalidateQueries({ queryKey: ["workspace-file-paths", sessionId] });
+			void queryClient.invalidateQueries({ queryKey: workspaceFilePathsQueryKey(sessionId) });
 		}, INVALIDATE_DEBOUNCE_MS);
 	};
 	const scheduleRetry = (generation: number) => {
