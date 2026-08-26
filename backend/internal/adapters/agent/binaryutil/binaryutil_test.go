@@ -31,6 +31,42 @@ func TestResolveBinaryPrefersPath(t *testing.T) {
 	}
 }
 
+func TestResolveBinaryCandidatesPreservesOrderAndDeduplicates(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix candidate shape")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	pathDir := t.TempDir()
+	t.Setenv("PATH", pathDir)
+	pathBin := filepath.Join(pathDir, "widget")
+	if err := os.WriteFile(pathBin, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	candidates, err := ResolveBinaryCandidates(context.Background(), BinarySpec{
+		Label:         "widget",
+		Names:         []string{"widget"},
+		UnixPaths:     []string{pathBin, pathBin},
+		UnixHomePaths: [][]string{{".local", "bin", "widget"}},
+	})
+	if err != nil {
+		t.Fatalf("ResolveBinaryCandidates: %v", err)
+	}
+	if len(candidates) == 0 || candidates[0] != pathBin {
+		t.Fatalf("first candidates = %#v, want PATH candidate %q", candidates, pathBin)
+	}
+	count := 0
+	for _, candidate := range candidates {
+		if candidate == pathBin {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("PATH candidate count = %d, want 1: %#v", count, candidates)
+	}
+}
+
 func TestDefaultFNMDirDarwin(t *testing.T) {
 	home := filepath.Join(string(filepath.Separator), "Users", "tester")
 	want := filepath.Join(home, "Library", "Application Support", "fnm")

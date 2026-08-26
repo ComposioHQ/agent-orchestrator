@@ -27,8 +27,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -63,6 +61,7 @@ func New() *Plugin {
 
 var _ adapters.Adapter = (*Plugin)(nil)
 var _ ports.Agent = (*Plugin)(nil)
+var _ ports.AgentBinaryPresenceResolver = (*Plugin)(nil)
 
 // Manifest returns the adapter's static self-description.
 func (p *Plugin) Manifest() adapters.Manifest {
@@ -282,24 +281,15 @@ func ResolveGooseBinary(ctx context.Context) (string, error) {
 }
 
 func resolveGooseBinary(ctx context.Context, spec binaryutil.BinarySpec) (string, error) {
-	first, err := binaryutil.ResolveBinary(ctx, spec)
+	candidates, err := binaryutil.ResolveBinaryCandidates(ctx, spec)
 	if err != nil {
 		return "", err
 	}
 
-	candidates := append([]string{first}, gooseCanonicalBinaryCandidates(spec)...)
-	seen := make(map[string]struct{}, len(candidates))
 	for _, candidate := range candidates {
 		if err := ctx.Err(); err != nil {
 			return "", err
 		}
-		if candidate == "" {
-			continue
-		}
-		if _, ok := seen[candidate]; ok {
-			continue
-		}
-		seen[candidate] = struct{}{}
 		if isOfficialGooseBinary(ctx, candidate) {
 			return candidate, nil
 		}
@@ -322,33 +312,41 @@ func isOfficialGooseBinary(ctx context.Context, binary string) bool {
 	return strings.HasPrefix(version, "goose ") && !strings.HasPrefix(version, "goose version:")
 }
 
-func gooseCanonicalBinaryCandidates(spec binaryutil.BinarySpec) []string {
-	if runtime.GOOS == "windows" {
-		return nil
-	}
-	candidates := append([]string(nil), spec.UnixPaths...)
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return candidates
-	}
-	for _, parts := range spec.UnixHomePaths {
-		candidates = append(candidates, filepath.Join(append([]string{home}, parts...)...))
-	}
-	return candidates
-}
-
 func (p *Plugin) gooseBinary(ctx context.Context) (string, error) {
-	p.binaryMu.Lock()
-	defer p.binaryMu.Unlock()
-
-	if p.resolvedBinary != "" {
-		return p.resolvedBinary, nil
+	if err := ctx.Err(); err != nil {
+		return "", err
 	}
 
+	p.binaryMu.Lock()
+	binary := p.resolvedBinary
+	p.binaryMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if binary != "" {
+		return binary, nil
+	}
+
+	// Binary identity probing can execute an untrusted PATH collision and may
+	// take several seconds. Keep it outside the cache mutex so other callers
+	// can observe cancellation and do not queue behind the probe.
 	binary, err := ResolveGooseBinary(ctx)
 	if err != nil {
 		return "", err
 	}
-	p.resolvedBinary = binary
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+
+	p.binaryMu.Lock()
+	if p.resolvedBinary != "" {
+		binary = p.resolvedBinary
+	} else {
+		p.resolvedBinary = binary
+	}
+	p.binaryMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	return binary, nil
 }
