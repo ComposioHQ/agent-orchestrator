@@ -24,6 +24,8 @@
 	"browser.deviceCustomWidth": "Benutzerdefinierte Breite",
 	"browser.deviceFit": "Auf Panel anpassen",
 	"browser.devicePreset": "Geräte-Voreinstellung",
+	"browser.detectedPorts": "Erkannte Ports",
+	"browser.openDetectedPort": "localhost:{{port}} öffnen",
 	"browser.emptyUrl": "Geben Sie eine URL ein oder klicken Sie eine im Terminal an.",
 	"browser.forward": "Vorwärts",
 	"browser.newTab": "Neuer Tab",

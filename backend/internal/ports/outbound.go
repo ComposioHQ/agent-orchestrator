@@ -153,6 +153,28 @@ type ExactSupervisedProcessInspector interface {
 	IsExactSupervisedProcessAlive(ctx context.Context, handle RuntimeHandle, ref SupervisedProcessRef) (bool, error)
 }
 
+// DetectedPort is one TCP port a session's own process tree is listening on.
+// Command is a short display label for the owning process, not a stable
+// identifier: it exists so the desktop can show "5173 vite" instead of a bare
+// number, and may be empty.
+type DetectedPort struct {
+	Port    int
+	PID     int
+	Command string
+}
+
+// SessionRootProcessInspector is an optional runtime capability: the pid of the
+// process a session's own work hangs off, such as a tmux pane's shell. Callers
+// use it to scope a machine observation (which ports this session is serving
+// on, for instance) to one session.
+//
+// It is an observation root, not a lifecycle handle. A returned pid is not a
+// promise the process is alive, an error is not evidence a session is dead, and
+// nothing may signal or reap what it points at.
+type SessionRootProcessInspector interface {
+	RootProcessID(ctx context.Context, handle RuntimeHandle) (int, error)
+}
+
 // ContainerReaper removes Docker containers a worker session owns, identified
 // by the ao.session=<id> label convention (see EnvSessionID). It is an
 // optional capability: nil wiring means container reaping is a no-op, not an

@@ -929,6 +929,18 @@ func (c *Controller) State() ports.ChatControllerState {
 	return c.state
 }
 
+// ProcessID is the local provider process backing this controller, or 0 when
+// the driver runs no local child (or does not report one). It is an observation
+// root for machine-scoped questions about what this session started -- see
+// ports.ChatProcessInspector, which forbids using it as a lifecycle handle.
+func (c *Controller) ProcessID() int {
+	inspector, ok := c.conv.(ports.ChatProcessInspector)
+	if !ok {
+		return 0
+	}
+	return inspector.ProcessID()
+}
+
 // Capabilities reports what this session's provider can do, so a client can gate
 // a control before drawing it rather than discovering the answer from a refusal.
 func (c *Controller) Capabilities() ports.ChatCapabilities {

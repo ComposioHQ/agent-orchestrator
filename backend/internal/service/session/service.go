@@ -82,6 +82,13 @@ type interfaceTransitionCommander interface {
 	AcknowledgeInterfaceTransitionNotice(context.Context, domain.SessionID, string) (domain.SessionInterfaceTransition, error)
 }
 
+// previewPortsCommander is an optional command capability, kept separate from
+// commander for the same reason as interfaceTransitionCommander: focused
+// session-service fakes should not have to grow a method for it.
+type previewPortsCommander interface {
+	ListDescendantPorts(ctx context.Context, id domain.SessionID) ([]ports.DetectedPort, error)
+}
+
 // RollbackOutcome reports what happened in a rollback: either the seed row was
 // deleted, or the partially-spawned session was killed (runtime+workspace torn
 // down, row marked terminated).
@@ -554,6 +561,26 @@ func (s *Service) InterfaceTransitionStatus(ctx context.Context, id domain.Sessi
 		ReasonCode: status.ReasonCode, Reason: status.Reason,
 		Transition: status.Transition,
 	}, nil
+}
+
+// ListPreviewPorts returns the TCP ports this session's own processes are
+// listening on, as clickable suggestions for the desktop browser panel.
+//
+// Suggestions only: a build or runtime that cannot detect ports returns an
+// empty list, never an error. That is deliberately unlike
+// InterfaceTransitionStatus above, which reports an unsupported build as a
+// conflict -- there the user asked for an action that cannot happen, here they
+// only asked what is running.
+func (s *Service) ListPreviewPorts(ctx context.Context, id domain.SessionID) ([]ports.DetectedPort, error) {
+	manager, ok := s.manager.(previewPortsCommander)
+	if !ok {
+		return nil, nil
+	}
+	detected, err := manager.ListDescendantPorts(ctx, id)
+	if err != nil {
+		return nil, toAPIError(err)
+	}
+	return detected, nil
 }
 
 // StartInterfaceTransition begins a durable, asynchronous controller handoff.

@@ -24,6 +24,8 @@
 	"browser.deviceCustomWidth": "Ancho personalizado",
 	"browser.deviceFit": "Ajustar al panel",
 	"browser.devicePreset": "Preajuste de dispositivo",
+	"browser.detectedPorts": "Puertos detectados",
+	"browser.openDetectedPort": "Abrir localhost:{{port}}",
 	"browser.emptyUrl": "Introduce una URL o haz clic en una en el terminal.",
 	"browser.forward": "Adelante",
 	"browser.newTab": "Nueva pestaña",

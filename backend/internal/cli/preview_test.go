@@ -303,3 +303,96 @@ func TestPreview_BlankSessionIDIsUsageError(t *testing.T) {
 		t.Fatal("daemon should not be contacted when AO_SESSION_ID is blank")
 	}
 }
+
+// previewPortsServer answers the detection route and records the capability
+// header the CLI sent (it must send none).
+func previewPortsServer(t *testing.T, status int, respBody string) (*httptest.Server, *previewCapture, *string) {
+	t.Helper()
+	capture := &previewCapture{}
+	capability := new(string)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/sessions/aa-47/preview/ports" {
+			http.NotFound(w, r)
+			return
+		}
+		capture.called = true
+		capture.path = r.URL.Path
+		capture.method = r.Method
+		*capability = r.Header.Get(browserCapabilityHeader)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_, _ = io.WriteString(w, respBody)
+	}))
+	t.Cleanup(srv.Close)
+	return srv, capture, capability
+}
+
+func TestPreviewPortsListsDetectionsWithoutCapability(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "aa-47")
+	cfg := setConfigEnv(t)
+	srv, capture, capability := previewPortsServer(
+		t,
+		http.StatusOK,
+		`{"sessionId":"aa-47","ports":[{"port":5173,"pid":812,"command":"node"},{"port":8080,"pid":900}]}`,
+	)
+	writeRunFileFor(t, cfg, srv)
+
+	out, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "preview", "ports")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	if capture.method != http.MethodGet || capture.path != "/api/v1/sessions/aa-47/preview/ports" {
+		t.Fatalf("request = %s %s", capture.method, capture.path)
+	}
+	if *capability != "" {
+		t.Fatalf("capability header = %q, want none", *capability)
+	}
+	if out != "5173\tnode\n8080\n" {
+		t.Fatalf("output = %q", out)
+	}
+}
+
+// Nothing detected prints nothing: "no ports" and "cannot detect ports" are
+// indistinguishable to the caller, so the CLI claims neither.
+func TestPreviewPortsPrintsNothingWhenEmpty(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "aa-47")
+	cfg := setConfigEnv(t)
+	srv, _, _ := previewPortsServer(t, http.StatusOK, `{"sessionId":"aa-47","ports":[]}`)
+	writeRunFileFor(t, cfg, srv)
+
+	out, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "preview", "ports")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	if out != "" {
+		t.Fatalf("output = %q, want empty", out)
+	}
+}
+
+func TestPreviewPortsJSONAlwaysCarriesAPortsArray(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "aa-47")
+	cfg := setConfigEnv(t)
+	srv, _, _ := previewPortsServer(t, http.StatusOK, `{"sessionId":"aa-47"}`)
+	writeRunFileFor(t, cfg, srv)
+
+	out, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "preview", "ports", "--json")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	var decoded detectedPreviewPortsDTO
+	if err := json.Unmarshal([]byte(out), &decoded); err != nil {
+		t.Fatalf("decode %q: %v", out, err)
+	}
+	if !strings.Contains(out, `"ports": []`) && !strings.Contains(out, `"ports":[]`) {
+		t.Fatalf("output = %q, want an empty ports array", out)
+	}
+}
+
+func TestPreviewPortsRequiresSession(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "")
+	setConfigEnv(t)
+
+	if _, _, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "preview", "ports"); err == nil {
+		t.Fatal("expected a usage error outside an AO session")
+	}
+}

@@ -1,5 +1,7 @@
-import { act, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, fireEvent, render as rtlRender, renderHook, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { ReactElement } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { BrowserPanel, BrowserPanelView, useBrowserAnnotationQueue } from "./BrowserPanel";
 import { useBrowserView, type BrowserNavState } from "../hooks/useBrowserView";
@@ -13,14 +15,25 @@ import type {
 } from "../../shared/browser-annotations";
 
 const postMock = vi.hoisted(() => vi.fn());
+const getMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../lib/api-client", () => ({
-	apiClient: { POST: postMock },
+	apiClient: { GET: getMock, POST: postMock },
 	apiErrorMessage: (error: unknown, fallback = "Request failed") =>
 		typeof error === "object" && error !== null && "message" in error
 			? String((error as { message: unknown }).message)
 			: fallback,
 }));
+
+// The panel polls for detected preview ports, so every render needs a query
+// client. rerender is wrapped as well so re-rendering tests keep one client
+// (and therefore one cache) across renders, as the real app does.
+function render(ui: ReactElement) {
+	const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+	const wrap = (node: ReactElement) => <QueryClientProvider client={client}>{node}</QueryClientProvider>;
+	const result = rtlRender(wrap(ui));
+	return { ...result, rerender: (next: ReactElement) => result.rerender(wrap(next)) };
+}
 
 const hookState = vi.hoisted(() => ({
 	navigate: vi.fn(),
@@ -181,6 +194,8 @@ describe("BrowserPanel", () => {
 		hookState.setAnnotationMode.mockResolvedValue(undefined);
 		postMock.mockReset();
 		postMock.mockResolvedValue({ data: {} });
+		getMock.mockReset();
+		getMock.mockResolvedValue({ data: { sessionId: "sess-1", ports: [] } });
 		annotationSubmitListeners.clear();
 		annotationCancelListeners.clear();
 		window.ao!.browser.onAnnotationSubmit = vi.fn((listener: (payload: BrowserAnnotationSubmitPayload) => void) => {
@@ -1255,6 +1270,82 @@ describe("BrowserPanel", () => {
 			const tooltip = await screen.findByRole("tooltip");
 			expect(tooltip.closest('[data-browser-native-overlay="true"]')).not.toBeNull();
 			expect(document.querySelector(OPEN_BROWSER_OVERLAY_SELECTOR)).not.toBeNull();
+		});
+	});
+
+	describe("detected preview ports", () => {
+		it("hides the control entirely when nothing is detected", async () => {
+			render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+			await waitFor(() => expect(getMock).toHaveBeenCalled());
+			// No empty state: a toolbar has no room to explain the difference
+			// between "nothing is serving" and "this machine cannot tell".
+			expect(screen.queryByTestId("browser-detected-ports")).toBeNull();
+		});
+
+		it("opens a detected port the same way `ao preview <url>` does", async () => {
+			getMock.mockResolvedValue({
+				data: { sessionId: "sess-1", ports: [{ port: 5173, pid: 812, command: "node" }] },
+			});
+			render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+			const trigger = await screen.findByTestId("browser-detected-ports");
+			await userEvent.click(trigger);
+			await userEvent.click(await screen.findByRole("menuitem", { name: /5173/ }));
+
+			// The daemon persists the target and bumps the preview revision, so
+			// the panel returns to this page after a remount or session switch.
+			await waitFor(() =>
+				expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/preview", {
+					params: { path: { sessionId: "sess-1" } },
+					body: { url: "http://localhost:5173" },
+				}),
+			);
+		});
+
+		// The live page paints as a native view above this HTML. An overlay that
+		// does not announce itself renders behind the page: invisible, with its
+		// clicks landing on the page instead.
+		it("marks the menu as a native overlay so it paints above the live page", async () => {
+			getMock.mockResolvedValue({
+				data: { sessionId: "sess-1", ports: [{ port: 5173, pid: 812, command: "node" }] },
+			});
+			render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+			await userEvent.click(await screen.findByTestId("browser-detected-ports"));
+			const item = await screen.findByRole("menuitem", { name: /5173/ });
+			const overlay = item.closest('[data-browser-native-overlay="true"]');
+			if (overlay === null) {
+				throw new Error("detected-ports menu is not tagged as a browser native overlay");
+			}
+			if (document.querySelector(OPEN_BROWSER_OVERLAY_SELECTOR) === null) {
+				throw new Error("open detected-ports menu does not match OPEN_BROWSER_OVERLAY_SELECTOR");
+			}
+		});
+
+		it("labels each entry with its owning process", async () => {
+			getMock.mockResolvedValue({
+				data: {
+					sessionId: "sess-1",
+					ports: [
+						{ port: 5173, pid: 812, command: "node" },
+						{ port: 8080, pid: 900 },
+					],
+				},
+			});
+			render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+			await userEvent.click(await screen.findByTestId("browser-detected-ports"));
+			expect(await screen.findByText("node")).toBeTruthy();
+			// An unlabeled process still gets an entry; only the label is absent.
+			expect(await screen.findByRole("menuitem", { name: /8080/ })).toBeTruthy();
+		});
+
+		it("does not scan while the panel is off screen", async () => {
+			render(<BrowserPanel active={false} onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+			await waitFor(() => expect(screen.getByTestId("browser-panel")).toBeTruthy());
+			expect(getMock).not.toHaveBeenCalled();
 		});
 	});
 });

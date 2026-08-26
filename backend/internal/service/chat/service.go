@@ -572,6 +572,27 @@ func (s *Service) HasLiveChatController(sessionID domain.SessionID) bool {
 	return controller != nil && controller.State() != ports.ChatControllerStopped
 }
 
+// ChatProcessID is the live provider process for a chat session, and whether
+// there is one to report. A session with no controller, a stopped controller,
+// or a driver that runs no local child all report (0, false).
+//
+// Callers may only observe with this. It is not a lifecycle handle: the process
+// may already have exited, and nothing here is evidence about session liveness
+// (HasLiveChatController answers that question).
+func (s *Service) ChatProcessID(sessionID domain.SessionID) (int, bool) {
+	s.mu.RLock()
+	controller := s.controllers[sessionID]
+	s.mu.RUnlock()
+	if controller == nil || controller.State() == ports.ChatControllerStopped {
+		return 0, false
+	}
+	pid := controller.ProcessID()
+	if pid <= 0 {
+		return 0, false
+	}
+	return pid, true
+}
+
 // requireChatSession reads the persisted mode and refuses anything that is not a
 // Chat session. Dispatch is decided by durable state, never by the caller.
 func (s *Service) requireChatSession(ctx context.Context, id domain.SessionID) (domain.SessionRecord, error) {

@@ -93,6 +93,7 @@ const ROUTE_TEMPLATES = [
 	"/api/v1/sessions/{sessionId}/pr/claim",
 	"/api/v1/sessions/{sessionId}/preview",
 	"/api/v1/sessions/{sessionId}/preview/files/*",
+	"/api/v1/sessions/{sessionId}/preview/ports",
 	"/api/v1/sessions/{sessionId}/preview/server",
 	"/api/v1/sessions/{sessionId}/resume-agent",
 	"/api/v1/sessions/{sessionId}/restore",

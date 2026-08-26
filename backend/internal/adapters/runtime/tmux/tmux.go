@@ -609,6 +609,26 @@ func (r *Runtime) supervisedProcessTree(ctx context.Context, handle ports.Runtim
 	return entries, panePID, nil
 }
 
+// RootProcessID is the pid of tmux's direct pane process, the root of
+// everything this session has started. It satisfies
+// ports.SessionRootProcessInspector, which forbids treating it as a lifecycle
+// handle: a failure here says nothing about whether the session is alive.
+func (r *Runtime) RootProcessID(ctx context.Context, handle ports.RuntimeHandle) (int, error) {
+	id, err := handleID(handle)
+	if err != nil {
+		return 0, err
+	}
+	out, err := r.run(ctx, panePIDArgs(id)...)
+	if err != nil {
+		return 0, fmt.Errorf("tmux runtime: inspect pane pid %s: %w", id, err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil || pid <= 0 {
+		return 0, fmt.Errorf("tmux runtime: invalid pane pid %q", strings.TrimSpace(string(out)))
+	}
+	return pid, nil
+}
+
 // SendMessage sends literal text to the session (chunked via send-keys -l) then
 // presses Enter to submit. An empty message presses Enter alone (the nudge
 // contract on ports.AgentMessenger).

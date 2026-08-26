@@ -497,6 +497,25 @@ type PreviewServerStatusResponse struct {
 	Logs          []string         `json:"logs"`
 }
 
+// DetectedPreviewPort is one TCP port a session's own processes are listening
+// on. Command is a short display label ("vite", "npm") and may be empty; it is
+// never an identifier.
+type DetectedPreviewPort struct {
+	Port    int    `json:"port"`
+	PID     int    `json:"pid"`
+	Command string `json:"command,omitempty"`
+}
+
+// DetectedPreviewPortsResponse lists preview suggestions detected inside one
+// session's process tree. Unlike PreviewServerStatusResponse, which describes
+// the one server AO started and controls, this is a best-effort observation:
+// an empty list means "nothing detected", which covers a machine that cannot
+// enumerate sockets as well as a session that is simply not serving anything.
+type DetectedPreviewPortsResponse struct {
+	SessionID domain.SessionID      `json:"sessionId"`
+	Ports     []DetectedPreviewPort `json:"ports"`
+}
+
 // BrowserStatusQuery selects the session whose logical browser is inspected.
 type BrowserStatusQuery struct {
 	SessionID domain.SessionID `query:"sessionId" description:"AO session identifier."`

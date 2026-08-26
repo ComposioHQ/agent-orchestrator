@@ -50,6 +50,9 @@ type codexPlugin interface {
 type process struct {
 	stdin  io.WriteCloser
 	stdout io.Reader
+	// pid is the app-server process AO started. Retained for observation only
+	// (see ports.ChatProcessInspector); shutdown goes through stop.
+	pid int
 	// stop releases the process. It must be safe to call more than once.
 	stop func() error
 }
@@ -420,6 +423,7 @@ func spawnAppServer(ctx context.Context, bin, workdir string, env []string) (*pr
 	return &process{
 		stdin:  stdin,
 		stdout: stdout,
+		pid:    cmd.Process.Pid,
 		stop: func() error {
 			if stopped {
 				return nil

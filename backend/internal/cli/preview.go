@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -36,6 +37,17 @@ type previewServerStatusDTO struct {
 	StartedAt     time.Time `json:"startedAt,omitempty"`
 	Error         string    `json:"error,omitempty"`
 	Logs          []string  `json:"logs"`
+}
+
+type detectedPreviewPortDTO struct {
+	Port    int    `json:"port"`
+	PID     int    `json:"pid"`
+	Command string `json:"command,omitempty"`
+}
+
+type detectedPreviewPortsDTO struct {
+	SessionID string                   `json:"sessionId"`
+	Ports     []detectedPreviewPortDTO `json:"ports"`
 }
 
 func newPreviewCommand(ctx *commandContext) *cobra.Command {
@@ -124,6 +136,26 @@ func newPreviewCommand(ctx *commandContext) *cobra.Command {
 	}
 	stopCmd.Flags().BoolVar(&stopJSON, "json", false, "print JSON")
 	cmd.AddCommand(stopCmd)
+
+	var portsJSON bool
+	portsCmd := &cobra.Command{
+		Use:   "ports",
+		Short: "List TCP ports detected inside this session's own process tree",
+		Long: "List TCP ports this session's own processes are listening on.\n\n" +
+			"Best effort: a machine that cannot enumerate listening sockets prints\n" +
+			"nothing rather than failing. Unlike the server subcommands this needs no\n" +
+			"session capability, because it starts nothing.",
+		Args: noArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			detected, err := ctx.previewPorts(cmd.Context())
+			if err != nil {
+				return err
+			}
+			return writeDetectedPreviewPorts(cmd.OutOrStdout(), detected, portsJSON)
+		},
+	}
+	portsCmd.Flags().BoolVar(&portsJSON, "json", false, "print JSON")
+	cmd.AddCommand(portsCmd)
 	return cmd
 }
 
@@ -213,6 +245,42 @@ func (c *commandContext) stopPreviewServer(ctx context.Context) (previewServerSt
 	}
 	err = c.doJSONPathWithHeaders(ctx, http.MethodDelete, "/api/v1/"+path, nil, &out, headers)
 	return out, err
+}
+
+// previewPorts sends no capability header: the route observes rather than
+// executes, so the daemon does not gate it on session ownership.
+func (c *commandContext) previewPorts(ctx context.Context) (detectedPreviewPortsDTO, error) {
+	path, err := sessionPreviewPath()
+	if err != nil {
+		return detectedPreviewPortsDTO{}, err
+	}
+	path += "/ports"
+	var out detectedPreviewPortsDTO
+	err = c.doJSONPathWithHeaders(ctx, http.MethodGet, "/api/v1/"+path, nil, &out, nil)
+	return out, err
+}
+
+// writeDetectedPreviewPorts prints one "port command" line per detection. An
+// empty result prints nothing at all in text mode: there is no difference a
+// caller can act on between "nothing is serving" and "this machine cannot
+// tell", so inventing a message for either would overstate what is known.
+func writeDetectedPreviewPorts(out io.Writer, detected detectedPreviewPortsDTO, jsonOutput bool) error {
+	if jsonOutput {
+		if detected.Ports == nil {
+			detected.Ports = []detectedPreviewPortDTO{}
+		}
+		return writeJSON(out, detected)
+	}
+	for _, port := range detected.Ports {
+		line := strconv.Itoa(port.Port)
+		if port.Command != "" {
+			line += "\t" + port.Command
+		}
+		if _, err := fmt.Fprintln(out, line); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func previewServerHeaders() (map[string]string, error) {

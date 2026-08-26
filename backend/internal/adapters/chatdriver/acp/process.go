@@ -14,7 +14,11 @@ import (
 type process struct {
 	stdin  io.WriteCloser
 	stdout io.Reader
-	stop   func() error
+	// pid is the provider process AO started. Retained for observation only
+	// (see ports.ChatProcessInspector); shutdown goes through stop, which owns
+	// the process group.
+	pid  int
+	stop func() error
 }
 
 type spawnFunc func(Launch, string) (*process, error)
@@ -51,6 +55,7 @@ func spawnAgent(launch Launch, workdir string) (*process, error) {
 	return &process{
 		stdin:  stdin,
 		stdout: stdout,
+		pid:    cmd.Process.Pid,
 		stop: func() error {
 			var stopErr error
 			once.Do(func() {

@@ -107,6 +107,7 @@ type SessionService interface {
 	StageAttachments(ctx context.Context, id domain.SessionID, attachments []ports.SpawnAttachment) ([]string, error)
 	WorkspaceWatchPaths(ctx context.Context, id domain.SessionID) ([]string, error)
 	ListWorkspaceFiles(ctx context.Context, id domain.SessionID) (sessionsvc.WorkspaceFiles, error)
+	ListPreviewPorts(ctx context.Context, id domain.SessionID) ([]ports.DetectedPort, error)
 	GetWorkspaceFile(ctx context.Context, id domain.SessionID, path string, section sessionsvc.WorkspaceFileSection) (sessionsvc.WorkspaceFileDetail, error)
 	GetWorkspaceFileBlob(ctx context.Context, id domain.SessionID, path string, side sessionsvc.WorkspaceFileBlobSide) (sessionsvc.WorkspaceFileBlob, error)
 	ListWorkspaceTree(ctx context.Context, id domain.SessionID, path string) (sessionsvc.WorkspaceTree, error)
@@ -167,6 +168,7 @@ func (c *SessionsController) Register(r chi.Router) {
 	r.Get("/sessions/{sessionId}/preview/server", c.previewServerStatus)
 	r.Post("/sessions/{sessionId}/preview/server", c.startPreviewServer)
 	r.Delete("/sessions/{sessionId}/preview/server", c.stopPreviewServer)
+	r.Get("/sessions/{sessionId}/preview/ports", c.previewPorts)
 	r.Get("/sessions/{sessionId}/preview/files/*", c.previewFile)
 	r.Post("/sessions/{sessionId}/attachments", c.stageAttachments)
 	r.Get("/sessions/{sessionId}/workspace/files", c.listWorkspaceFiles)
@@ -855,6 +857,47 @@ func (c *SessionsController) stopPreviewServer(w http.ResponseWriter, r *http.Re
 		}
 	}
 	envelope.WriteJSON(w, http.StatusOK, previewServerStatusResponse(status))
+}
+
+// previewPorts lists the TCP ports this session's own processes are listening
+// on, as clickable suggestions for the desktop browser panel.
+//
+// It deliberately carries no X-AO-Browser-Capability check, unlike the
+// /preview/server routes above. Those start and stop a process, so they must
+// prove the caller owns the session; this one only observes, and its consumer
+// is the desktop panel, which is never issued a session capability. Exposure
+// is bounded at the listener instead: the path is blocked on the opt-in LAN
+// listener (see httpd/lan_listener.go) so a detected-port list never leaves
+// this machine.
+//
+// Detection failures are not errors. A missing enumeration tool, a permission
+// denial, or a runtime with no process tree all return 200 with an empty list,
+// because "nothing detected" is exactly what the panel renders for them.
+func (c *SessionsController) previewPorts(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, http.MethodGet, "/api/v1/sessions/{sessionId}/preview/ports")
+		return
+	}
+	id := sessionID(r)
+	sess, err := c.Svc.Get(r.Context(), id)
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	if sess.IsTerminated {
+		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict", "SESSION_TERMINATED", "Session is terminated", nil)
+		return
+	}
+	detected, err := c.Svc.ListPreviewPorts(r.Context(), id)
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	out := make([]DetectedPreviewPort, 0, len(detected))
+	for _, port := range detected {
+		out = append(out, DetectedPreviewPort{Port: port.Port, PID: port.PID, Command: port.Command})
+	}
+	envelope.WriteJSON(w, http.StatusOK, DetectedPreviewPortsResponse{SessionID: id, Ports: out})
 }
 
 func (c *SessionsController) authorizePreviewServer(w http.ResponseWriter, r *http.Request) bool {

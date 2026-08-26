@@ -13,12 +13,15 @@ import {
 	MousePointer2,
 	Plus,
 	RefreshCw,
+	Server,
 	Smartphone,
 	Tablet,
 	X,
 } from "lucide-react";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { useBrowserView, type BrowserViewModel } from "../hooks/useBrowserView";
+import { useDetectedPreviewPorts } from "../hooks/useDetectedPreviewPorts";
+import { useSessionBrowserLink } from "../hooks/useSessionBrowserLink";
 import { formatBrowserAnnotationMessage, type BrowserAnnotationSubmitPayload } from "../../shared/browser-annotations";
 import { MAX_BROWSER_TABS } from "../../shared/browser-tabs";
 import type { WorkspaceSession } from "../types/workspace";
@@ -278,6 +281,8 @@ export function BrowserPanel({
 }
 
 export function BrowserPanelView({
+	session,
+	active,
 	poppedOut,
 	onTogglePopOut,
 	browserView,
@@ -318,6 +323,10 @@ export function BrowserPanelView({
 	const canAnnotate = Boolean(window.ao?.browser && viewId && navState.url);
 	const canRetryAnnotation = status === "error" && queuedCount > 0;
 	const canOpenTab = tabs.length < MAX_BROWSER_TABS;
+	// Suggestions are only worth scanning for while someone is looking at the
+	// panel; a popped-out panel is on screen too, so both count as visible.
+	const detectedPorts = useDetectedPreviewPorts(session.id, active || poppedOut);
+	const openSessionLink = useSessionBrowserLink(session);
 	const [devicePreset, setDevicePreset] = useState<string | null>(null);
 	const [customDeviceWidth, setCustomDeviceWidth] = useState("390");
 	const deviceFrameWidth =
@@ -542,6 +551,44 @@ export function BrowserPanelView({
 						value={urlInput}
 					/>
 				</div>
+				{detectedPorts.length > 0 ? (
+					<DropdownMenu>
+						<DropdownMenuTrigger asChild>
+							<Button
+								aria-label={t("browser.detectedPorts")}
+								data-testid="browser-detected-ports"
+								size="icon-sm"
+								title={t("browser.detectedPorts")}
+								type="button"
+								variant="ghost"
+							>
+								<Server aria-hidden="true" className="size-icon-base" />
+							</Button>
+						</DropdownMenuTrigger>
+						{/* data-browser-native-overlay is load-bearing, not decoration:
+						    the live page paints as a native view ABOVE this HTML, so
+						    useBrowserView's observer needs this attribute to lower it
+						    while the menu is open. Without it the menu renders behind
+						    the page -- invisible, and clicks land on the page instead. */}
+						<DropdownMenuContent align="end" data-browser-native-overlay="true">
+							{detectedPorts.map((detected) => (
+								<DropdownMenuItem
+									aria-label={t("browser.openDetectedPort", { port: detected.port })}
+									key={detected.port}
+									// localhost, not 127.0.0.1: dev servers with host
+									// allowlists (Vite's default among them) accept the
+									// name and reject the literal address.
+									onSelect={() => openSessionLink(`http://localhost:${detected.port}`)}
+								>
+									<span className="font-mono text-xs">{detected.port}</span>
+									{detected.command ? (
+										<span className="truncate text-caption text-muted-foreground">{detected.command}</span>
+									) : null}
+								</DropdownMenuItem>
+							))}
+						</DropdownMenuContent>
+					</DropdownMenu>
+				) : null}
 				{tabNotice ? (
 					<span className="max-w-24 truncate text-caption text-accent" role="status">
 						{tabNotice}
