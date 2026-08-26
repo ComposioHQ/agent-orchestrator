@@ -3,6 +3,35 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 const repositoryRoot = path.resolve(import.meta.dirname, "..");
+const releaseMutationPatterns = [
+  /gh release (?:create|delete|edit|publish|upload)\b/,
+  /gh api(?=[^\n]*(?:releases|git\/refs\/tags))(?=[^\n]*(?:(?:--method|-X)\s+(?:DELETE|PATCH|POST|PUT)))[^\n]*/,
+  /curl(?=[^\n]*(?:releases|git\/refs\/tags))(?=[^\n]*(?:(?:--request|-X)\s*(?:DELETE|PATCH|POST|PUT)))[^\n]*/,
+  /github\.rest\.repos\.(?:createRelease|deleteRelease|updateRelease|uploadReleaseAsset)\b/,
+  /uses:\s*(?:actions\/create-release|ncipollo\/release-action|softprops\/action-gh-release)@/,
+  /electron-forge publish/,
+  /npm run publish/,
+];
+
+type WorkflowSource = { name: string; contents: string };
+
+function findReleaseMutationViolations(workflows: WorkflowSource[]) {
+  return workflows.flatMap(({ name, contents }) => {
+    const logicalCommands = contents.replace(/\\\r?\n[ \t]*/g, " ");
+    const violations = releaseMutationPatterns
+      .filter((pattern) => pattern.test(logicalCommands))
+      .map((pattern) => `${name}: ${pattern.source}`);
+
+    if (
+      /contents:\s*write/.test(contents) &&
+      /(?:\brelease\b|git\/refs\/tags)/i.test(contents)
+    ) {
+      violations.push(`${name}: write-enabled release workflow`);
+    }
+
+    return violations;
+  });
+}
 
 describe("desktop release workflows", () => {
   const workflowsDirectory = path.join(repositoryRoot, ".github", "workflows");
@@ -41,35 +70,44 @@ describe("desktop release workflows", () => {
 
   it("prevents public workflows from mutating releases or release tags", async () => {
     const workflows = await readWorkflows();
-    const mutationPatterns = [
-      /gh release (?:create|delete|edit|publish|upload)\b/,
-      /gh api(?=[^\n]*(?:releases|git\/refs\/tags))(?=[^\n]*(?:(?:--method|-X)\s+(?:DELETE|PATCH|POST|PUT)))[^\n]*/,
-      /curl(?=[^\n]*(?:releases|git\/refs\/tags))(?=[^\n]*(?:(?:--request|-X)\s*(?:DELETE|PATCH|POST|PUT)))[^\n]*/,
-      /github\.rest\.repos\.(?:createRelease|deleteRelease|updateRelease|uploadReleaseAsset)\b/,
-      /uses:\s*(?:actions\/create-release|ncipollo\/release-action|softprops\/action-gh-release)@/,
-      /electron-forge publish/,
-      /npm run publish/,
-    ];
-    const violations = workflows.flatMap(({ name, contents }) =>
-      mutationPatterns
-        .filter((pattern) => pattern.test(contents))
-        .map((pattern) => `${name}: ${pattern.source}`),
-    );
 
-    expect(violations).toEqual([]);
+    expect(findReleaseMutationViolations(workflows)).toEqual([]);
   });
 
-  it("prevents write-enabled public release workflows", async () => {
-    const workflows = await readWorkflows();
-    const violations = workflows
-      .filter(
-        ({ contents }) =>
-          /contents:\s*write/.test(contents) &&
-          /(?:\brelease\b|git\/refs\/tags)/i.test(contents),
-      )
-      .map(({ name }) => name);
+  it("recognizes multiline mutations without rejecting allowed workflows", () => {
+    const forbidden = [
+      {
+        name: "multiline-gh-api.yml",
+        contents: String.raw`gh api \
+          --method DELETE \
+          repos/o/r/releases/123`,
+      },
+      {
+        name: "multiline-curl.yml",
+        contents: String.raw`curl \
+          -X POST \
+          https://api.github.com/repos/o/r/releases`,
+      },
+      {
+        name: "write-enabled-release.yml",
+        contents: "name: Release publisher\npermissions:\n  contents: write\n",
+      },
+    ];
+    const allowed = [
+      {
+        name: "release-monitor.yml",
+        contents:
+          "permissions:\n  contents: read\nrun: gh release view v1.2.3\n",
+      },
+      {
+        name: "unrelated-write.yml",
+        contents:
+          "name: Label issue\npermissions:\n  contents: write\nrun: gh api -X POST repos/o/r/issues/1/labels\n",
+      },
+    ];
 
-    expect(violations).toEqual([]);
+    expect(findReleaseMutationViolations(forbidden)).toHaveLength(3);
+    expect(findReleaseMutationViolations(allowed)).toEqual([]);
   });
 
   it("keeps the conductor artifact builder dispatchable and read-only", async () => {
