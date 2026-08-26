@@ -2634,7 +2634,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Not Implemented
-      summary: Cancel the in-flight turn in a chat session
+      summary: Stop the in-flight turn and cancel the exact confirmed queued work
       tags:
       - conversations
   /api/v1/sessions/{sessionId}/conversation/mcp/reload:

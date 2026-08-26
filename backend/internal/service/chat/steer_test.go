@@ -104,6 +104,11 @@ func (s *blockingInterruptSteerRecorder) SetConfigOption(
 	return nil, nil
 }
 
+func (s *blockingInterruptSteerRecorder) SetTitle(context.Context, string) error {
+	s.recordProviderCommand("title")
+	return nil
+}
+
 func (s *blockingInterruptSteerRecorder) ResolveRequest(
 	context.Context,
 	string,
@@ -777,6 +782,9 @@ func TestPendingInterruptReservationBlocksConflictingProviderCommands(t *testing
 	); !errors.Is(err, chatsvc.ErrInterruptPending) {
 		t.Fatalf("provider config during Stop = %v, want ErrInterruptPending", err)
 	}
+	if _, err := h.svc.SetTitle(ctx, testSession, "A safer title"); !errors.Is(err, chatsvc.ErrInterruptPending) {
+		t.Fatalf("title mutation during Stop = %v, want ErrInterruptPending", err)
+	}
 	if err := h.svc.Resolve(
 		ctx, testSession, "pending-approval", ports.ChatDecision{ID: "accept"},
 	); !errors.Is(err, chatsvc.ErrInterruptPending) {
@@ -809,7 +817,7 @@ func TestPendingInterruptReservationBlocksConflictingProviderCommands(t *testing
 	}
 }
 
-func TestArmedInterfaceHandoffRejectsStopBeforeProviderBoundary(t *testing.T) {
+func TestArmedInterfaceHandoffRejectsStopAndTitleBeforeProviderBoundary(t *testing.T) {
 	provider := newBlockingInterruptSteerRecorder(nil)
 	h := newHarnessWithConversation(t, provider)
 	ctx := context.Background()
@@ -832,6 +840,9 @@ func TestArmedInterfaceHandoffRejectsStopBeforeProviderBoundary(t *testing.T) {
 		ctx, testSession, domain.SessionInterfaceTransitionDrain,
 	); err != nil {
 		t.Fatalf("ArmChatHandoff: %v", err)
+	}
+	if _, err := h.svc.SetTitle(ctx, testSession, "must not cross handoff"); !errors.Is(err, chatsvc.ErrControllerHandoff) {
+		t.Fatalf("SetTitle during armed handoff = %v, want ErrControllerHandoff", err)
 	}
 
 	stopCtx, stopCancel := context.WithTimeout(ctx, 100*time.Millisecond)

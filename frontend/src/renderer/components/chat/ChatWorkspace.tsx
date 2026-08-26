@@ -411,11 +411,15 @@ export function ChatWorkspace({
       item.status === "pending" &&
       (!item.turnId || item.turnId === turn?.id),
   );
-  const queuedTurns = snapshot.queuedTurns ?? [];
+  const queuedTurns = snapshot.queuedTurns;
+  const visibleQueuedTurns = queuedTurns ?? [];
+  const stopUnavailable = Boolean(
+    runningTurn && onInterrupt && queuedTurns === undefined,
+  );
   const [confirmingStopQueueIDs, setConfirmingStopQueueIDs] =
     useState<string[]>();
   const requestInterrupt = useCallback(() => {
-    if (!onInterrupt) return;
+    if (!onInterrupt || queuedTurns === undefined) return;
     if (queuedTurns.length > 0) {
       // Freeze the destructive scope shown to the user. Snapshot polling can
       // update the queue while this dialog is open, but the confirmation must
@@ -438,13 +442,14 @@ export function ChatWorkspace({
         event.metaKey ||
         turn?.state !== "running" ||
         hasPendingInteraction ||
-        !onInterrupt
+        !onInterrupt ||
+        queuedTurns === undefined
       )
         return;
       event.preventDefault();
       requestInterrupt();
     },
-    [hasPendingInteraction, onInterrupt, requestInterrupt, turn],
+    [hasPendingInteraction, onInterrupt, queuedTurns, requestInterrupt, turn],
   );
   const handleChatSurfaceClick = useCallback(
     (event: ReactMouseEvent<HTMLElement>) => {
@@ -949,11 +954,11 @@ export function ChatWorkspace({
                   </p>
                 ) : null}
                 <ChatComposer
-                  attachedTop={queuedTurns.length > 0}
+                  attachedTop={visibleQueuedTurns.length > 0}
                   queuedDock={
-                    queuedTurns.length > 0 ? (
+                    visibleQueuedTurns.length > 0 ? (
                       <QueuedMessageDock
-                        messages={queuedTurns}
+                        messages={visibleQueuedTurns}
                         onCancel={onCancelQueuedTurn}
                         onPromote={onPromoteQueuedTurn}
                       />
@@ -970,13 +975,22 @@ export function ChatWorkspace({
                     ) : undefined
                   }
                   onSend={(text, attachments) => onSend?.(text, attachments)}
-                  onInterrupt={runningTurn ? requestInterrupt : undefined}
-                  interruptDescription={
-                    queuedTurns.length > 0
-                      ? `Also cancels ${queuedTurns.length} queued ${queuedTurns.length === 1 ? "message" : "messages"}.`
+                  onInterrupt={
+                    runningTurn && queuedTurns !== undefined
+                      ? requestInterrupt
                       : undefined
                   }
-                  commandError={commandError}
+                  interruptDescription={
+                    visibleQueuedTurns.length > 0
+                      ? `Also cancels ${visibleQueuedTurns.length} queued ${visibleQueuedTurns.length === 1 ? "message" : "messages"}.`
+                      : undefined
+                  }
+                  commandError={
+                    commandError ??
+                    (stopUnavailable
+                      ? "Stop is unavailable because this AO daemon does not report the complete queued work needed for a safe Stop. Update or restart AO, then try again."
+                      : undefined)
+                  }
                   settings={
                     onChooseSettings || onChooseConfigOption ? (
                       <TurnSettingsBar

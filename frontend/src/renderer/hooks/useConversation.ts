@@ -968,7 +968,7 @@ function toSnapshot(wire: WireSnapshot): ConversationSnapshot {
         : undefined,
       rolledBack: turn.rolledBack ?? undefined,
     })),
-    queuedTurns: (wire.queuedTurns ?? []).map(
+    queuedTurns: wire.queuedTurns?.map(
       (queued): ConversationQueuedTurn => ({
         turnId: queued.turnId,
         text: queued.text,

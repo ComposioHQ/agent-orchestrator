@@ -765,6 +765,14 @@ func writeConversationError(w http.ResponseWriter, r *http.Request, err error) {
 			"CHAT_QUEUE_SCOPE_CHANGED",
 			"the queued work changed; review the refreshed queue and confirm Stop again", nil)
 
+	case errors.Is(err, ports.ErrChatInterruptDeliveryUncertain):
+		// The provider may already have acted and AO has permanently settled the
+		// exact queue the user confirmed. Retrying Stop is therefore not equivalent
+		// to the failed request; clients must refresh before taking another action.
+		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict",
+			"CHAT_INTERRUPT_DELIVERY_UNCERTAIN",
+			"Stop may have reached the agent; refresh the conversation before taking another action", nil)
+
 	case errors.Is(err, chatsvc.ErrInterruptPending):
 		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict",
 			"CHAT_INTERRUPT_PENDING",

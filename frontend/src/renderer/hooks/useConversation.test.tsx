@@ -184,6 +184,13 @@ describe("useConversation snapshot mapping", () => {
 		]);
 	});
 
+	it("preserves a missing authoritative queue as unavailable", async () => {
+		getMock.mockResolvedValue({ data: { ...WIRE, queuedTurns: undefined }, error: undefined });
+		const { result } = renderHook(() => useConversation("ao-1"), { wrapper });
+		await waitFor(() => expect(result.current.snapshot).toBeDefined());
+		expect(result.current.snapshot?.queuedTurns).toBeUndefined();
+	});
+
 	it("maps retry lineage and consumed-source facts from the daemon", async () => {
 		getMock.mockResolvedValue({
 			data: {

@@ -2507,6 +2507,47 @@ func TestControllerStreamClosureReportsSessionExited(t *testing.T) {
 	t.Fatalf("controller stream ended without an exited lifecycle signal: %+v", h.activity.snapshot())
 }
 
+type failOrphanSettlementStore struct {
+	*sqlite.Store
+	err error
+}
+
+func (s *failOrphanSettlementStore) SettleOrphanedTurns(
+	context.Context,
+	domain.SessionID,
+	time.Time,
+) error {
+	return s.err
+}
+
+func TestStartFailsClosedWhenOrphanedStopSettlementFails(t *testing.T) {
+	st := openStore(t)
+	conv := newFakeConversation()
+	settleErr := errors.New("injected orphaned Stop settlement failure")
+	svc := chatsvc.New(chatsvc.Options{
+		Store: &failOrphanSettlementStore{Store: st, err: settleErr}, Sessions: st,
+		Drivers: fakeRegistry{driver: fakeDriver{conv: conv}},
+		Log:     slog.New(slog.DiscardHandler),
+		NewID:   func() string { return "fail-closed-start-id" },
+	})
+	t.Cleanup(func() { _ = svc.Stop(context.Background(), testSession) })
+
+	_, err := svc.Start(context.Background(), chatsvc.StartConfig{
+		SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex,
+		WorkspacePath: t.TempDir(),
+	})
+	if !errors.Is(err, settleErr) {
+		t.Fatalf("Start error = %v, want orphaned Stop settlement failure", err)
+	}
+
+	if _, err := svc.StartChatTurn(context.Background(), testSession, "must stay fenced"); !errors.Is(err, chatsvc.ErrNoController) {
+		t.Fatalf("StartChatTurn error = %v, want ErrNoController", err)
+	}
+	if sent := conv.sentTexts(); len(sent) != 0 {
+		t.Fatalf("provider received work after failed Stop settlement: %v", sent)
+	}
+}
+
 func TestControllerReadyRunsBeforeStreamProjection(t *testing.T) {
 	st := openStore(t)
 	conv := newFakeConversation()

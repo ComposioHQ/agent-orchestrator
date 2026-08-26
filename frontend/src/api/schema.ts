@@ -922,7 +922,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Cancel the in-flight turn in a chat session */
+        /** Stop the in-flight turn and cancel the exact confirmed queued work */
         post: operations["interruptSessionConversationTurn"];
         delete?: never;
         options?: never;

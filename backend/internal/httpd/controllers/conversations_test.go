@@ -379,6 +379,37 @@ func TestInterruptConversationReportsQueueScopeConflict(t *testing.T) {
 	}
 }
 
+func TestInterruptConversationReportsUncertainDeliveryConflict(t *testing.T) {
+	service := &fakeConversationService{
+		interruptErr: fmt.Errorf("provider Stop result unknown: %w", ports.ErrChatInterruptDeliveryUncertain),
+	}
+	server := conversationTestServer(t, service)
+	request, err := http.NewRequest(http.MethodPost,
+		server.URL+"/api/v1/sessions/p1-1/conversation/interrupt",
+		bytes.NewBufferString(`{"queuedTurnIds":[]}`))
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatalf("POST interrupt: %v", err)
+	}
+	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode != http.StatusConflict {
+		body, _ := io.ReadAll(response.Body)
+		t.Fatalf("status = %d, body = %s", response.StatusCode, body)
+	}
+	var body struct {
+		Code string `json:"code"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode conflict: %v", err)
+	}
+	if body.Code != "CHAT_INTERRUPT_DELIVERY_UNCERTAIN" {
+		t.Fatalf("error code = %q", body.Code)
+	}
+}
+
 func TestSendConversationPreservesNativeImageAndResourceContent(t *testing.T) {
 	service := &fakeConversationService{}
 	server := conversationTestServer(t, service)

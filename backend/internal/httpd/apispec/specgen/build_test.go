@@ -79,6 +79,26 @@ func TestBuild_InterruptDocumentsInvalidConfirmationScope(t *testing.T) {
 	}
 }
 
+func TestBuild_InterruptDocumentsConfirmedQueueCancellation(t *testing.T) {
+	got, err := specgen.Build()
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	var doc struct {
+		Paths map[string]map[string]struct {
+			Summary string `yaml:"summary"`
+		} `yaml:"paths"`
+	}
+	if err := yaml.Unmarshal(got, &doc); err != nil {
+		t.Fatalf("parse generated OpenAPI: %v", err)
+	}
+	operation := doc.Paths["/api/v1/sessions/{sessionId}/conversation/interrupt"]["post"]
+	const want = "Stop the in-flight turn and cancel the exact confirmed queued work"
+	if operation.Summary != want {
+		t.Fatalf("interrupt summary = %q, want %q", operation.Summary, want)
+	}
+}
+
 func TestBuild_OMPIsPubliclySpawnable(t *testing.T) {
 	doc := buildSchemas(t)
 	harnesses := doc.Components.Schemas["SpawnSessionRequest"].Properties["harness"].Enum

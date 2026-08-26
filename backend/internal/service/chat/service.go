@@ -219,13 +219,17 @@ func cloneStartConfig(cfg StartConfig) StartConfig {
 
 // settleOrphanedWork closes out anything a previous controller left behind.
 //
-// Best-effort by design: a failure here must not stop a session from coming back,
-// because a session the user cannot reopen is worse than a stale row. Both
-// failures are logged rather than swallowed.
-func (s *Service) settleOrphanedWork(ctx context.Context, session domain.SessionID, conversationID string) {
+// The durable turn settlement is load-bearing: it releases any Stop fence the
+// previous controller owned, so a replacement must not publish if that write
+// fails. Pending interactions do not gate dispatch and remain best-effort.
+func (s *Service) settleOrphanedWork(
+	ctx context.Context,
+	session domain.SessionID,
+	conversationID string,
+) error {
 	now := s.now()
 	if err := s.store.SettleOrphanedTurns(ctx, session, now); err != nil {
-		s.log.Error("chat start: settle orphaned turns", "session", session, "error", err)
+		return fmt.Errorf("settle orphaned turns for %s: %w", session, err)
 	}
 	// An approval left pending can never be answered: the provider call it was
 	// blocking died with the process that was holding it.
@@ -235,6 +239,7 @@ func (s *Service) settleOrphanedWork(ctx context.Context, session domain.Session
 	if err := s.store.FailPendingInputs(ctx, conversationID, now); err != nil {
 		s.log.Error("chat start: close pending input requests", "session", session, "error", err)
 	}
+	return nil
 }
 
 // Start launches or resumes the Chat controller for a session.
@@ -462,7 +467,10 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	// behind a controller that no longer existed. Nothing would ever have corrected
 	// it. Settling here covers every way a controller can come up, and is a no-op
 	// for a session that has none of it.
-	s.settleOrphanedWork(ctx, cfg.SessionID, conversation.ID)
+	if err := s.settleOrphanedWork(ctx, cfg.SessionID, conversation.ID); err != nil {
+		_ = conv.Close()
+		return nil, err
+	}
 	// A fresh generation per launch, so events from the controller this one
 	// replaced can be told apart from the current one's.
 	controller := newController(

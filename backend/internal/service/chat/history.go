@@ -623,12 +623,28 @@ func (s *Service) installStartedBranchController(
 	return nil
 }
 
+// setTitle serializes a provider thread rename with every other command that can
+// mutate the live conversation.
+func (c *Controller) setTitle(ctx context.Context, title string) error {
+	renamer, ok := c.conv.(ports.ChatRenamer)
+	if !ok {
+		return ErrRenameUnsupported
+	}
+	c.sendMu.Lock()
+	defer c.sendMu.Unlock()
+	if c.handoffActive() {
+		return ErrControllerHandoff
+	}
+	if err := c.requireNoInterruptPendingLocked(); err != nil {
+		return err
+	}
+	return renamer.SetTitle(ctx, title)
+}
+
 // SetTitle names the provider's thread and returns the normalized title.
-//
 // Nothing is written to AO's rows here. The provider answers, then emits its own
 // rename notification, and the projection applies it — so the title AO stores is
-// always one the provider confirmed. Writing it optimistically as well would give
-// one fact two authors and no way to tell which lost.
+// always one the provider confirmed.
 func (s *Service) SetTitle(ctx context.Context, id domain.SessionID, title string) (string, error) {
 	if _, err := s.requireChatSession(ctx, id); err != nil {
 		return "", err
@@ -641,11 +657,7 @@ func (s *Service) SetTitle(ctx context.Context, id domain.SessionID, title strin
 	if err != nil {
 		return "", err
 	}
-	renamer, ok := controller.conv.(ports.ChatRenamer)
-	if !ok {
-		return "", ErrRenameUnsupported
-	}
-	if err := renamer.SetTitle(ctx, normalized); err != nil {
+	if err := controller.setTitle(ctx, normalized); err != nil {
 		return "", classify(fmt.Errorf("set title for %s: %w", id, err))
 	}
 	return normalized, nil

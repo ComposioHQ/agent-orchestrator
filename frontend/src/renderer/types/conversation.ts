@@ -701,8 +701,8 @@ export interface ConversationSnapshot {
 	mode: SessionMode;
 	controller: { state: ControllerState; error?: string };
 	turns: ConversationTurn[];
-	/** Complete durable queue in dispatch order. Optional only for old preview
-	 * fixtures; daemon snapshots always provide it. */
+	/** Complete durable queue in dispatch order. Missing from older daemon
+	 * snapshots; destructive queue-wide actions must fail closed when absent. */
 	queuedTurns?: ConversationQueuedTurn[];
 	/** Already ordered by sequence. The renderer does not re-sort. */
 	items: ConversationItem[];

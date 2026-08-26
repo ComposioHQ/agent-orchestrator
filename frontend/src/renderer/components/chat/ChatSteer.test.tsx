@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ChatComposer } from "./ChatComposer";
@@ -172,6 +172,30 @@ describe("ChatWorkspace steering", () => {
 			screen.getByRole("button", { name: "Cancel queued message: first queued" }),
 		).toBeVisible();
 		expect(screen.queryByRole("button", { name: "Stop turn" })).not.toBeInTheDocument();
+	});
+
+	it("refuses Stop when the daemon does not report the authoritative queue", () => {
+		const onInterrupt = vi.fn();
+		render(
+			<ChatWorkspace
+				snapshot={{
+					...chatFixture,
+					queuedTurns: undefined,
+					items: chatFixture.items.filter(
+						(item) =>
+							!(item.kind === "activity" && item.activityKind === "approval" && item.status === "pending"),
+					),
+				}}
+				onInterrupt={onInterrupt}
+			/>,
+		);
+
+		expect(screen.queryByRole("button", { name: "Stop turn" })).not.toBeInTheDocument();
+		expect(screen.getByRole("alert")).toHaveTextContent(
+			/stop is unavailable because this ao daemon does not report the complete queued work/i,
+		);
+		fireEvent.keyDown(screen.getByRole("combobox"), { key: "Escape" });
+		expect(onInterrupt).not.toHaveBeenCalled();
 	});
 
 	it("controls one queued message at a time and confirms Stop's queue consequence", async () => {
