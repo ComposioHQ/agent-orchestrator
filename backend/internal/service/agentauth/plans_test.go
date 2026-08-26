@@ -6,6 +6,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 )
 
 func TestPlansMatchAuthenticationMatrix(t *testing.T) {
@@ -45,7 +47,7 @@ func TestPlansMatchAuthenticationMatrix(t *testing.T) {
 		{"omp", "Log in to OMP", "omp", "Native OMP login flow", "https://github.com/can1357/oh-my-pi", "/login\r", ActionLogin, []string{"omp"}},
 	}
 
-	svc := New(foundExecutables(cases))
+	svc := New(foundExecutables(cases), nil)
 	plans := svc.Plans()
 	if len(plans) != len(cases) {
 		t.Fatalf("Plans() returned %d plans, want %d", len(plans), len(cases))
@@ -76,9 +78,9 @@ func TestPlansMatchAuthenticationMatrix(t *testing.T) {
 func TestUnknownPlanReturnsStableTargetError(t *testing.T) {
 	t.Parallel()
 
-	_, err := New(foundExecutables(nil)).Plan("not-a-harness")
-	var targetErr *Error
-	if !errors.As(err, &targetErr) || targetErr.Code != "AGENT_AUTH_TARGET_UNKNOWN" {
+	_, err := New(foundExecutables(nil), nil).Plan("not-a-harness")
+	var targetErr *apierr.Error
+	if !errors.As(err, &targetErr) || targetErr.Kind != apierr.KindInvalid || targetErr.Code != "AGENT_AUTH_TARGET_UNKNOWN" {
 		t.Fatalf("Plan() error = %v, want AGENT_AUTH_TARGET_UNKNOWN", err)
 	}
 }
@@ -86,7 +88,7 @@ func TestUnknownPlanReturnsStableTargetError(t *testing.T) {
 func TestPlanMissingExecutableIsUnavailable(t *testing.T) {
 	t.Parallel()
 
-	plan, err := New(foundExecutables(nil)).Plan("codex")
+	plan, err := New(foundExecutables(nil), nil).Plan("codex")
 	if err != nil {
 		t.Fatal(err)
 	}

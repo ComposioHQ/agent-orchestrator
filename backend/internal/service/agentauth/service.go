@@ -4,7 +4,11 @@
 package agentauth
 
 import (
+	"context"
 	"fmt"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
+	"github.com/aoagents/agent-orchestrator/backend/internal/service/shellterm"
 )
 
 // ExecutableFinder resolves an executable on the host PATH.
@@ -40,22 +44,31 @@ type Plan struct {
 	initialInput     string
 }
 
-// Error is a stable service error for a caller-selected authentication target.
-type Error struct {
-	Code    string
-	Message string
+// TerminalOpener opens the daemon-trusted terminal used for a native
+// authentication command.
+type TerminalOpener interface {
+	OpenCommandTerminal(context.Context, shellterm.OpenCommandTerminalInput) (shellterm.ShellTerminal, error)
 }
 
-func (e *Error) Error() string { return e.Message }
+// StartResult is the display-safe result of starting a native authentication
+// flow. Command arguments and initial terminal input remain private to the
+// resolved plan.
+type StartResult struct {
+	AgentID  string                  `json:"agentId"`
+	Action   Action                  `json:"action"`
+	Guidance string                  `json:"guidance,omitempty"`
+	Terminal shellterm.ShellTerminal `json:"terminal"`
+}
 
 // Service resolves the fixed authentication registry against the host PATH.
 type Service struct {
 	executables ExecutableFinder
+	terminals   TerminalOpener
 }
 
 // New creates an authentication-plan service.
-func New(executables ExecutableFinder) *Service {
-	return &Service{executables: executables}
+func New(executables ExecutableFinder, terminals TerminalOpener) *Service {
+	return &Service{executables: executables, terminals: terminals}
 }
 
 // Plans returns every known harness plan in stable Harness settings order.
@@ -71,9 +84,42 @@ func (s *Service) Plans() []Plan {
 func (s *Service) Plan(agentID string) (Plan, error) {
 	plan, ok := planByAgentID[agentID]
 	if !ok {
-		return Plan{}, &Error{Code: "AGENT_AUTH_TARGET_UNKNOWN", Message: fmt.Sprintf("unknown agent authentication target %q", agentID)}
+		return Plan{}, apierr.Invalid("AGENT_AUTH_TARGET_UNKNOWN", fmt.Sprintf("unknown agent authentication target %q", agentID), nil)
 	}
 	return s.resolve(plan), nil
+}
+
+// Start opens the reviewed native authentication flow for agentID. Callers
+// choose only the registry key; command and terminal input come exclusively
+// from the resolved private plan fields.
+func (s *Service) Start(ctx context.Context, agentID string) (StartResult, error) {
+	plan, err := s.Plan(agentID)
+	if err != nil {
+		return StartResult{}, err
+	}
+	if !plan.Available {
+		return StartResult{}, apierr.Invalid("AGENT_AUTH_UNAVAILABLE", plan.Reason, nil)
+	}
+	if plan.Action == ActionInstructions {
+		return StartResult{}, apierr.Invalid("AGENT_AUTH_INSTRUCTIONS_ONLY", "This authentication target provides instructions only.", nil)
+	}
+	if s.terminals == nil {
+		return StartResult{}, apierr.Internal("AGENT_AUTH_TERMINAL_UNAVAILABLE", "Authentication terminal service is unavailable.")
+	}
+	terminal, err := s.terminals.OpenCommandTerminal(ctx, shellterm.OpenCommandTerminalInput{
+		Argv:         plan.command,
+		Title:        plan.title,
+		InitialInput: plan.initialInput,
+	})
+	if err != nil {
+		return StartResult{}, err
+	}
+	return StartResult{
+		AgentID:  plan.AgentID,
+		Action:   plan.Action,
+		Guidance: plan.Guidance,
+		Terminal: terminal,
+	}, nil
 }
 
 func (s *Service) resolve(plan Plan) Plan {
