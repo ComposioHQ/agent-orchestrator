@@ -42,3 +42,13 @@ type OpenShellTerminalInput struct {
 	SessionID domain.SessionID `json:"sessionId,omitempty"`
 	Shell     string           `json:"shell,omitempty"`
 }
+
+// OpenCommandTerminalInput is a daemon-trusted command terminal request. It
+// is intentionally separate from OpenShellTerminalInput: public callers may
+// open only the user's login shell, while backend callers provide a reviewed
+// command and optional initial terminal input.
+type OpenCommandTerminalInput struct {
+	Argv         []string
+	Title        string
+	InitialInput string
+}

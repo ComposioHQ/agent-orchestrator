@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"runtime"
+	"reflect"
 	"testing"
 	"time"
 
@@ -25,12 +26,19 @@ func testLogger() *slog.Logger {
 type fakeShellRuntime struct {
 	created   []ports.RuntimeConfig
 	destroyed []string
+	sent      []sentInput
 
 	createErr  error
 	destroyErr error
+	sendErr    error
 	// aliveByHandle answers IsAlive; a handle absent from the map is dead.
 	aliveByHandle map[string]bool
 	aliveErr      error
+}
+
+type sentInput struct {
+	handleID string
+	input    string
 }
 
 func newFakeShellRuntime() *fakeShellRuntime {
@@ -56,6 +64,11 @@ func (f *fakeShellRuntime) Destroy(_ context.Context, handle ports.RuntimeHandle
 		delete(f.aliveByHandle, handle.ID)
 	}
 	return f.destroyErr
+}
+
+func (f *fakeShellRuntime) SendInput(_ context.Context, handle ports.RuntimeHandle, input string) error {
+	f.sent = append(f.sent, sentInput{handleID: handle.ID, input: input})
+	return f.sendErr
 }
 
 func (f *fakeShellRuntime) IsAlive(_ context.Context, handle ports.RuntimeHandle) (bool, error) {
@@ -204,10 +217,125 @@ func newTestServiceWithSessions(rt *fakeShellRuntime, st *fakeShellTerminalStore
 		return "shellterm-test" + string(rune('0'+n)), nil
 	}
 	svc.now = func() time.Time { return time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC) }
+	svc.initialInputDelay = 0
 	return svc
 }
 
-func TestOpenShellTerminalStartsLoginShellInProjectRoot(t *testing.T) {
+func TestOpenCommandTerminalStartsTrustedCommandInDataDir(t *testing.T) {
+	rt := newFakeShellRuntime()
+	st := &fakeShellTerminalStore{}
+	svc := newTestService(rt, st, &fakeProjectRootLocator{})
+
+	term, err := svc.OpenCommandTerminal(context.Background(), OpenCommandTerminalInput{
+		Argv:         []string{"pi"},
+		Title:        "Log in to Pi",
+		InitialInput: "/login\r",
+	})
+	if err != nil {
+		t.Fatalf("OpenCommandTerminal: %v", err)
+	}
+
+	if len(rt.created) != 1 {
+		t.Fatalf("runtime creates = %d, want 1", len(rt.created))
+	}
+	if got := rt.created[0].WorkspacePath; got != "/data/dir" {
+		t.Errorf("workspace path = %q, want daemon data dir", got)
+	}
+	if got := rt.created[0].Argv; !reflect.DeepEqual(got, []string{"pi"}) {
+		t.Errorf("argv = %#v, want []string{\"pi\"}", got)
+	}
+	wantRecord := ShellTerminalRecord{
+		HandleID:   "shellterm-test1",
+		WorkingDir: "/data/dir",
+		Title:      "Log in to Pi",
+		AppRunID:   testAppRunID,
+		CreatedAt:  time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC),
+	}
+	if !reflect.DeepEqual(st.records, []ShellTerminalRecord{wantRecord}) {
+		t.Errorf("records = %#v, want %#v", st.records, []ShellTerminalRecord{wantRecord})
+	}
+	if !reflect.DeepEqual(rt.sent, []sentInput{{handleID: term.HandleID, input: "/login\r"}}) {
+		t.Errorf("sent = %#v, want one unchanged trusted input", rt.sent)
+	}
+}
+
+func TestOpenCommandTerminalDestroysRuntimeWhenPersistFails(t *testing.T) {
+	rt := newFakeShellRuntime()
+	st := &fakeShellTerminalStore{insertErr: errors.New("disk full")}
+	svc := newTestService(rt, st, &fakeProjectRootLocator{})
+
+	if _, err := svc.OpenCommandTerminal(context.Background(), OpenCommandTerminalInput{Argv: []string{"pi"}, Title: "Log in to Pi"}); err == nil {
+		t.Fatal("OpenCommandTerminal succeeded despite a failed insert")
+	}
+	if !reflect.DeepEqual(rt.destroyed, []string{"shellterm-test1"}) {
+		t.Errorf("destroyed = %#v, want rollback of the created runtime", rt.destroyed)
+	}
+	if len(st.records) != 0 {
+		t.Errorf("records = %#v, want no persisted terminal", st.records)
+	}
+}
+
+func TestOpenCommandTerminalDestroysRuntimeWhenInitialInputFails(t *testing.T) {
+	rt := newFakeShellRuntime()
+	rt.sendErr = errors.New("runtime input failed")
+	st := &fakeShellTerminalStore{}
+	svc := newTestService(rt, st, &fakeProjectRootLocator{})
+
+	if _, err := svc.OpenCommandTerminal(context.Background(), OpenCommandTerminalInput{Argv: []string{"pi"}, Title: "Log in to Pi", InitialInput: "/login\r"}); err == nil {
+		t.Fatal("OpenCommandTerminal succeeded despite an initial-input failure")
+	}
+	if !reflect.DeepEqual(rt.destroyed, []string{"shellterm-test1"}) {
+		t.Errorf("destroyed = %#v, want rollback of the created runtime", rt.destroyed)
+	}
+	if len(st.records) != 0 {
+		t.Errorf("records = %#v, want no persisted terminal", st.records)
+	}
+}
+
+func TestOpenCommandTerminalDestroysRuntimeWhenInitialInputWaitIsCanceled(t *testing.T) {
+	rt := newFakeShellRuntime()
+	st := &fakeShellTerminalStore{}
+	svc := newTestService(rt, st, &fakeProjectRootLocator{})
+	svc.initialInputDelay = time.Hour
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if _, err := svc.OpenCommandTerminal(ctx, OpenCommandTerminalInput{Argv: []string{"pi"}, Title: "Log in to Pi", InitialInput: "/login\r"}); err == nil {
+		t.Fatal("OpenCommandTerminal succeeded despite a canceled initial-input wait")
+	}
+	if !reflect.DeepEqual(rt.destroyed, []string{"shellterm-test1"}) {
+		t.Errorf("destroyed = %#v, want rollback of the created runtime", rt.destroyed)
+	}
+	if len(st.records) != 0 {
+		t.Errorf("records = %#v, want no persisted terminal", st.records)
+	}
+	if len(rt.sent) != 0 {
+		t.Errorf("sent = %#v, want no input sent after canceled wait", rt.sent)
+	}
+}
+
+func TestOpenCommandTerminalRejectsInvalidInput(t *testing.T) {
+	cases := []OpenCommandTerminalInput{
+		{Title: "Log in to Pi"},
+		{Argv: []string{"pi"}},
+		{Argv: []string{"pi"}, Title: "   "},
+		{Argv: []string{"pi"}, Title: string(make([]rune, maxShellTerminalTitleLen+1))},
+	}
+	for _, in := range cases {
+		t.Run(in.Title, func(t *testing.T) {
+			rt := newFakeShellRuntime()
+			svc := newTestService(rt, &fakeShellTerminalStore{}, &fakeProjectRootLocator{})
+			if _, err := svc.OpenCommandTerminal(context.Background(), in); err == nil {
+				t.Fatal("OpenCommandTerminal succeeded with invalid input")
+			}
+			if len(rt.created) != 0 {
+				t.Errorf("created = %#v, want no runtime", rt.created)
+			}
+		})
+	}
+}
+
+func TestOpenShellTerminalStillStartsResolvedLoginShellInProjectRoot(t *testing.T) {
 	rt := newFakeShellRuntime()
 	st := &fakeShellTerminalStore{}
 	projects := &fakeProjectRootLocator{roots: map[domain.ProjectID]string{"portfolio": "/repos/portfolio"}}

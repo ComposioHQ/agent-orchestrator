@@ -25,6 +25,7 @@ type ShellRuntime interface {
 	Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error)
 	Destroy(ctx context.Context, handle ports.RuntimeHandle) error
 	IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool, error)
+	SendInput(ctx context.Context, handle ports.RuntimeHandle, input string) error
 }
 
 // ProjectRootLocator resolves a project id to the directory a shell should
@@ -60,8 +61,9 @@ type Service struct {
 
 	// now and newHandleID are injectable so tests can assert on exact ids and
 	// timestamps without a clock or entropy dependency.
-	now         func() time.Time
-	newHandleID func() (string, error)
+	now               func() time.Time
+	newHandleID       func() (string, error)
+	initialInputDelay time.Duration
 
 	// gatesMu guards gates itself (the map), not the individual gate mutexes it
 	// holds.
@@ -151,16 +153,17 @@ func NewService(runtime ShellRuntime, store Store, projects ProjectRootLocator, 
 		log = slog.Default()
 	}
 	return &Service{
-		runtime:     runtime,
-		store:       store,
-		projects:    projects,
-		sessions:    sessions,
-		dataDir:     dataDir,
-		appRunID:    appRunID,
-		log:         log,
-		now:         time.Now,
-		newHandleID: newShellTerminalHandleID,
-		gates:       map[domain.SessionID]*sessionGate{},
+		runtime:           runtime,
+		store:             store,
+		projects:          projects,
+		sessions:          sessions,
+		dataDir:           dataDir,
+		appRunID:          appRunID,
+		log:               log,
+		now:               time.Now,
+		newHandleID:       newShellTerminalHandleID,
+		initialInputDelay: 500 * time.Millisecond,
+		gates:             map[domain.SessionID]*sessionGate{},
 	}
 }
 
@@ -236,6 +239,42 @@ func (s *Service) OpenShellTerminal(ctx context.Context, in OpenShellTerminalInp
 		return ShellTerminal{}, apierr.Internal("SHELL_TERMINAL_NO_SHELL",
 			"Could not determine a shell to launch. Set SHELL (macOS/Linux) or ComSpec (Windows).")
 	}
+	return s.openTerminal(ctx, openTerminalConfig{
+		argv:       argv,
+		projectID:  projectID,
+		sessionID:  in.SessionID,
+		workingDir: workingDir,
+		title:      nextShellTerminalTitle(openTerminals),
+	})
+}
+
+// OpenCommandTerminal opens a daemon-trusted command in a standalone terminal.
+// Unlike OpenShellTerminal, it never receives public HTTP input and always
+// starts in the daemon data directory.
+func (s *Service) OpenCommandTerminal(ctx context.Context, in OpenCommandTerminalInput) (ShellTerminal, error) {
+	if err := validateOpenCommandTerminalInput(in); err != nil {
+		return ShellTerminal{}, err
+	}
+	return s.openTerminal(ctx, openTerminalConfig{
+		argv:         in.Argv,
+		workingDir:   s.dataDir,
+		title:        in.Title,
+		initialInput: in.InitialInput,
+	})
+}
+
+type openTerminalConfig struct {
+	argv         []string
+	projectID    domain.ProjectID
+	sessionID    domain.SessionID
+	workingDir   string
+	title        string
+	initialInput string
+}
+
+// openTerminal creates and persists a terminal, rolling the runtime back on
+// every failure after Create so an untracked PTY cannot leak.
+func (s *Service) openTerminal(ctx context.Context, cfg openTerminalConfig) (ShellTerminal, error) {
 	handleID, err := s.newHandleID()
 	if err != nil {
 		return ShellTerminal{}, fmt.Errorf("open shell terminal: handle id: %w", err)
@@ -246,36 +285,45 @@ func (s *Service) OpenShellTerminal(ctx context.Context, in OpenShellTerminalInp
 	// shellterm- prefix keeps the two namespaces disjoint.
 	handle, err := s.runtime.Create(ctx, ports.RuntimeConfig{
 		SessionID:     domain.SessionID(handleID),
-		WorkspacePath: workingDir,
-		Argv:          argv,
+		WorkspacePath: cfg.workingDir,
+		Argv:          cfg.argv,
 	})
 	if err != nil {
 		return ShellTerminal{}, fmt.Errorf("open shell terminal %s: runtime: %w", handleID, err)
 	}
-
-	rec := ShellTerminalRecord{
-		HandleID: handle.ID,
-		// The resolved project, not the requested one: a session-scoped open
-		// that named no project still belongs to the session's project, and
-		// persisting "" there would leave the row unattributable on the board.
-		ProjectID:  projectID,
-		SessionID:  in.SessionID,
-		WorkingDir: workingDir,
-		Title:      nextShellTerminalTitle(openTerminals),
-		AppRunID:   s.appRunID,
-		CreatedAt:  s.now().UTC(),
-	}
-	if err := s.store.InsertShellTerminal(ctx, rec); err != nil {
-		// Roll back the PTY: an unrecorded runtime would never be reaped,
-		// leaking a tmux session / pty-host for the life of the machine.
+	rollback := func() {
 		if destroyErr := s.runtime.Destroy(context.WithoutCancel(ctx), handle); destroyErr != nil {
 			s.log.Warn("shell terminal rollback failed; runtime may be orphaned",
 				"handleId", handle.ID, "error", destroyErr)
 		}
+	}
+
+	if cfg.initialInput != "" {
+		if err := waitForInitialInput(ctx, s.initialInputDelay); err != nil {
+			rollback()
+			return ShellTerminal{}, fmt.Errorf("open shell terminal %s: wait for initial input: %w", handle.ID, err)
+		}
+		if err := s.runtime.SendInput(ctx, handle, cfg.initialInput); err != nil {
+			rollback()
+			return ShellTerminal{}, fmt.Errorf("open shell terminal %s: send initial input: %w", handle.ID, err)
+		}
+	}
+
+	rec := ShellTerminalRecord{
+		HandleID:   handle.ID,
+		ProjectID:  cfg.projectID,
+		SessionID:  cfg.sessionID,
+		WorkingDir: cfg.workingDir,
+		Title:      cfg.title,
+		AppRunID:   s.appRunID,
+		CreatedAt:  s.now().UTC(),
+	}
+	if err := s.store.InsertShellTerminal(ctx, rec); err != nil {
+		rollback()
 		return ShellTerminal{}, fmt.Errorf("open shell terminal %s: persist: %w", handle.ID, err)
 	}
 
-	s.log.Info("shell terminal opened", "handleId", handle.ID, "workingDir", workingDir)
+	s.log.Info("shell terminal opened", "handleId", handle.ID, "workingDir", cfg.workingDir)
 	return shellTerminalFromRecord(rec), nil
 }
 
@@ -299,9 +347,34 @@ func nextShellTerminalTitle(terminals []ShellTerminalRecord) string {
 	return fmt.Sprintf("Terminal %d", maxNumber+1)
 }
 
+func waitForInitialInput(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
 // maxShellTerminalTitleLen bounds a user-supplied tab name. Tabs are truncated
 // in the UI anyway; this only stops an unbounded string reaching the DB.
 const maxShellTerminalTitleLen = 80
+
+func validateOpenCommandTerminalInput(in OpenCommandTerminalInput) error {
+	if len(in.Argv) == 0 {
+		return apierr.Invalid("SHELL_TERMINAL_COMMAND_REQUIRED", "A shell terminal command is required", nil)
+	}
+	if strings.TrimSpace(in.Title) == "" {
+		return apierr.Invalid("SHELL_TERMINAL_TITLE_REQUIRED", "A shell terminal title is required", nil)
+	}
+	if utf8.RuneCountInString(in.Title) > maxShellTerminalTitleLen {
+		return apierr.Invalid("SHELL_TERMINAL_TITLE_TOO_LONG",
+			fmt.Sprintf("A shell terminal title must be at most %d characters", maxShellTerminalTitleLen), nil)
+	}
+	return nil
+}
 
 // RenameShellTerminal sets a shell terminal's tab title. The title is trimmed
 // and must be non-empty and within the length bound; an unknown handle is a 404.
