@@ -30,7 +30,6 @@ import {
 	GitMerge,
 	Info,
 	Play,
-	Terminal,
 	Trash2,
 	Loader2,
 	MessageSquare,
@@ -1287,8 +1286,8 @@ function ReviewsSection({
 				setReviewNotice(t("inspector.reviewAlreadyRanForCommit"));
 				return;
 			}
-			if (data?.reviewerHandleId) {
-				const harness = started.latestRun.harness || "reviewer";
+			const harness = started.latestRun.harness || "reviewer";
+			if (data?.reviewerHandleId && harness !== "greptile") {
 				onOpenReviewerTerminal?.({ handleId: data.reviewerHandleId, harness });
 			}
 		},
@@ -1684,7 +1683,6 @@ function ReviewPanel({
 	agentCatalog,
 	reviewerOverride,
 	onReviewerOverrideChange,
-	onOpenTerminal,
 	onTrigger,
 	onCancel,
 	onAutoReviewChange,
@@ -1754,9 +1752,8 @@ function ReviewPanel({
 	const activeReviewerHarness = latest?.harness || effectiveReviewerHarness;
 	const autoReviewFailure =
 		latestAutoFailure && latestAutoFailure.id !== dismissedAutoFailureId ? latestAutoFailure.body.trim() : null;
-	const terminalEnabled = Boolean(reviewerHandleId && onOpenTerminal);
-	const openTerminalLabel = t("inspector.openTerminal");
-	const hasReviewerSession = reviewerHandleId.trim() !== "";
+	const canExposeReviewerTerminal = activeReviewerHarness !== "greptile";
+	const hasReviewerSession = canExposeReviewerTerminal && reviewerHandleId.trim() !== "";
 	const reviewRunning = reviewIsRunning(openReviewStates);
 	const displayedReviewerHarness = reviewRunning ? activeReviewerHarness : effectiveReviewerHarness;
 	const selectorDefaultHarness = reviewRunning ? activeReviewerHarness : resolvedDefaultHarness;
@@ -1770,10 +1767,6 @@ function ReviewPanel({
 			: t("inspector.review.cancel")
 		: runAction;
 	const killDisabled = autoReviewEnabled || isKilling || isTriggering || isSwitchingReviewer || !hasReviewerSession;
-	const openReviewerTerminal = () => {
-		if (!terminalEnabled) return;
-		onOpenTerminal?.({ handleId: reviewerHandleId, harness: activeReviewerHarness });
-	};
 
 	return (
 		<div className="mb-2.5 flex flex-col">
@@ -1884,23 +1877,6 @@ function ReviewPanel({
 							>
 								<Trash2 aria-hidden="true" />
 							</Button>
-							) : null}
-							{!reviewRunning && reviewHasRun && activeReviewerHarness === "greptile" ? (
-								<Button
-									aria-label={openTerminalLabel}
-									className="shrink-0 gap-1.5 [&_svg]:size-icon-sm"
-									disabled={!terminalEnabled}
-									onClick={openReviewerTerminal}
-									size="sm"
-									title={openTerminalLabel}
-									type="button"
-									variant="ghost"
-								>
-									<Terminal aria-hidden="true" />
-									<span className="review-run-action-label">
-										{openTerminalLabel}
-									</span>
-								</Button>
 							) : null}
 						</div>
 					</div>

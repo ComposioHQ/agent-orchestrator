@@ -357,7 +357,7 @@ func (e *Engine) TriggerWithSource(ctx stdctx.Context, workerID domain.SessionID
 		reviews = replaceReviewLatestRun(reviews, reviewState.PRURL, reviewState.TargetSHA, run)
 	}
 	if len(created) == 0 {
-		return TriggerResult{Run: firstReusableRun(reviews), ReviewerHandleID: reviewRow.ReviewerHandleID, Created: false, Reviews: reviews, Runs: runs}, nil
+		return TriggerResult{Run: firstReusableRun(reviews), ReviewerHandleID: exposedReviewerHandle(reviewRow.ReviewerHandleID, reviewRow.Harness), Created: false, Reviews: reviews, Runs: runs}, nil
 	}
 
 	failRuns := func(start int, err error) error {
@@ -411,7 +411,14 @@ func (e *Engine) TriggerWithSource(ctx stdctx.Context, workerID domain.SessionID
 	}
 	triggerRuns := append([]domain.ReviewRun{}, created...)
 	triggerRuns = append(triggerRuns, runs...)
-	return TriggerResult{Run: created[0], ReviewerHandleID: handleID, Created: true, Reviews: reviews, Runs: triggerRuns, CreatedRuns: created}, nil
+	return TriggerResult{Run: created[0], ReviewerHandleID: exposedReviewerHandle(handleID, harness), Created: true, Reviews: reviews, Runs: triggerRuns, CreatedRuns: created}, nil
+}
+
+func exposedReviewerHandle(handle string, harness domain.ReviewerHarness) string {
+	if harness == domain.ReviewerGreptile {
+		return ""
+	}
+	return handle
 }
 
 func autoReviewSessionReason(worker domain.SessionRecord, now time.Time) string {
@@ -869,12 +876,12 @@ func (e *Engine) listLocked(ctx stdctx.Context, workerID domain.SessionID, selec
 	if review, ok, err := e.store.GetReviewBySessionAndHarness(ctx, workerID, selectedHarness); err != nil {
 		return SessionReviews{}, err
 	} else if ok && review.ReviewerHandleID != "" {
-		handle = review.ReviewerHandleID
+		handle = exposedReviewerHandle(review.ReviewerHandleID, review.Harness)
 		reviewerHarness = review.Harness
 	} else if review, ok, err := e.store.GetReviewBySession(ctx, workerID); err != nil {
 		return SessionReviews{}, err
 	} else if ok && review.ReviewerHandleID != "" {
-		handle = review.ReviewerHandleID
+		handle = exposedReviewerHandle(review.ReviewerHandleID, review.Harness)
 		reviewerHarness = review.Harness
 	}
 	prs, err := e.prs.ListPRsBySession(ctx, workerID)

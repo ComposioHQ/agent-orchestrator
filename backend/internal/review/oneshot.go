@@ -36,12 +36,9 @@ func (l *agentLauncher) startOneShot(spec LaunchSpec, reviewer ports.OneShotRevi
 	handleID := reviewerHandleID(spec.WorkerID)
 	jobCtx, job := l.registerOneShotJob(handleID)
 
-	if terminalReviewer, terminalOK := reviewer.(ports.TerminalOneShotReviewer); terminalOK {
-		if _, runtimeOK := l.runtime.(reviewerTerminalRuntime); runtimeOK {
-			return l.startTerminalOneShot(jobCtx, handleID, job.id, spec, terminalReviewer)
-		}
-	}
-
+	// One-shot reviewers are background jobs, not user terminals. Keep the stable
+	// handle only for daemon-owned cancellation and completion tracking; do not
+	// create or expose a terminal pane for Greptile output.
 	go l.runOneShotBatch(jobCtx, handleID, job.id, spec, reviewer)
 	return LaunchResult{HandleID: handleID}, nil
 }

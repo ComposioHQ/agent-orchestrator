@@ -2896,16 +2896,13 @@ describe("SessionInspector summary reviews", () => {
     renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
     await openReviewsSection();
 
-    expect(
-      await screen.findByRole("button", { name: /Select reviewer agent/ }),
-    ).toHaveTextContent("Greptile CLI");
     expect(screen.getByText("Non-interactive")).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "Open terminal" }),
     ).not.toBeInTheDocument();
   });
 
-  it("opens the reusable Greptile terminal after the review completes", async () => {
+  it("does not expose a Greptile terminal after the review completes", async () => {
     mockCommonGets([], "reviewer-pane", [
       {
         ...reviewState(3, "up_to_date"),
@@ -2922,13 +2919,10 @@ describe("SessionInspector summary reviews", () => {
     );
     await openReviewsSection();
 
-    await userEvent.click(
-      await screen.findByRole("button", { name: "Open terminal" }),
-    );
-    expect(onOpenReviewerTerminal).toHaveBeenCalledWith({
-      handleId: "reviewer-pane",
-      harness: "greptile",
-    });
+    expect(
+      screen.queryByRole("button", { name: "Open terminal" }),
+    ).not.toBeInTheDocument();
+    expect(onOpenReviewerTerminal).not.toHaveBeenCalled();
   });
 
   it("keeps the Reviews tab available when the session has no PRs", async () => {
