@@ -319,9 +319,25 @@ beforeEach(() => {
 		isSidebarOpen: true,
 		newTaskRequest: null,
 		newShellTerminalNonce: 0,
+		agentAuthTerminalRequest: null,
+		activeShellTerminalHandleId: null,
 		settingsModal: null,
 		sidebarAutoCollapseOverride: false,
 		sidebarWorkspaceDemandPx: null,
+	});
+});
+
+describe("shell agent authentication terminal request", () => {
+	it("closes Settings and reveals the returned terminal handle", async () => {
+		await renderShell();
+		act(() => {
+			useUiStore.getState().openGlobalSettings();
+			useUiStore.getState().requestAgentAuthTerminal("shellterm-login");
+		});
+
+		await waitFor(() => expect(shellMocks.navigate).toHaveBeenCalledWith({ to: "/terminals" }));
+		expect(useUiStore.getState().activeShellTerminalHandleId).toBe("shellterm-login");
+		expect(useUiStore.getState().settingsModal).toBeNull();
 	});
 });
 

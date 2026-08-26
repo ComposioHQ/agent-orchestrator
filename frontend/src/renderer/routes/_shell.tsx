@@ -174,7 +174,9 @@ function ShellLayout() {
 	const requestCreateProjectFromPath = useUiStore((state) => state.requestCreateProjectFromPath);
 	const requestNewShellTerminal = useUiStore((state) => state.requestNewShellTerminal);
 	const newShellTerminalNonce = useUiStore((state) => state.newShellTerminalNonce);
+	const agentAuthTerminalRequest = useUiStore((state) => state.agentAuthTerminalRequest);
 	const setActiveShellTerminal = useUiStore((state) => state.setActiveShellTerminal);
+	const closeSettings = useUiStore((state) => state.closeSettings);
 	const openShellTerminal = useOpenShellTerminal();
 	// Session surfaces publish only their required center-workspace width. The
 	// persistent shell owns the single responsive decision, measured against the
@@ -232,6 +234,7 @@ function ShellLayout() {
 	}, [isFullScreen]);
 	// Seeded to the current value so a mount never opens a terminal unasked.
 	const handledShellNonceRef = useRef(newShellTerminalNonce);
+	const handledAgentAuthNonceRef = useRef(agentAuthTerminalRequest?.nonce ?? 0);
 	const [isKeyboardShortcutsOpen, setIsKeyboardShortcutsOpen] = useState(false);
 	const [isKeyboardShortcutsSettingsOpen, setIsKeyboardShortcutsSettingsOpen] = useState(false);
 	const routeParams = useParams({ strict: false }) as { projectId?: string; sessionId?: string };
@@ -766,6 +769,17 @@ function ShellLayout() {
 		navigate,
 		setActiveShellTerminal,
 	]);
+
+	// Authentication terminals are created by the daemon before this signal is
+	// raised. Reveal that exact trusted handle and close Settings so the user can
+	// finish the native browser/device/prompt flow without typing a command in AO.
+	useEffect(() => {
+		if (!agentAuthTerminalRequest || handledAgentAuthNonceRef.current === agentAuthTerminalRequest.nonce) return;
+		handledAgentAuthNonceRef.current = agentAuthTerminalRequest.nonce;
+		setActiveShellTerminal(agentAuthTerminalRequest.handleId);
+		closeSettings();
+		void navigate({ to: "/terminals" });
+	}, [agentAuthTerminalRequest, closeSettings, navigate, setActiveShellTerminal]);
 
 	useEffect(
 		() => aoBridge.app.onOpenSettingsShortcut(() => useUiStore.getState().openGlobalSettings()),

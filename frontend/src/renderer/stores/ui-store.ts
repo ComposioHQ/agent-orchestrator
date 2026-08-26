@@ -91,6 +91,9 @@ export type UiState = {
 	// the nonce always changes. The shell layout is its single consumer — it is
 	// mounted on every route, so the request is honoured from anywhere in the app.
 	newShellTerminalNonce: number;
+	// One-shot request to reveal a backend-created authentication terminal.
+	// The renderer carries only the returned terminal handle, never argv or credentials.
+	agentAuthTerminalRequest: { handleId: string; nonce: number } | null;
 	// The shell terminal the user most recently opened or selected. Both the
 	// session view (tabs beside the session's pane) and the standalone terminals
 	// view read it, so whichever one is on screen shows the same shell.
@@ -136,6 +139,7 @@ export type UiState = {
 	requestCreateProject: () => void;
 	requestCreateProjectFromPath: (path: string) => void;
 	requestNewShellTerminal: () => void;
+	requestAgentAuthTerminal: (handleId: string) => void;
 	setActiveShellTerminal: (handleId: string | null) => void;
 	setVisibleTerminalKind: (sessionId: string, kind: TerminalTarget["kind"]) => void;
 	clearVisibleTerminalKind: (sessionId: string) => void;
@@ -208,6 +212,7 @@ export const useUiStore = create<UiState>((set, get) => ({
 	createProjectNonce: 0,
 	folderDropRequest: null,
 	newShellTerminalNonce: 0,
+	agentAuthTerminalRequest: null,
 	activeShellTerminalHandleId: null,
 	visibleTerminalKindBySession: {},
 	setWorkbenchTab: (workbenchTab) => set({ workbenchTab }),
@@ -404,6 +409,13 @@ export const useUiStore = create<UiState>((set, get) => ({
 	requestCreateProjectFromPath: (path) =>
 		set((state) => ({ folderDropRequest: { path, nonce: (state.folderDropRequest?.nonce ?? 0) + 1 } })),
 	requestNewShellTerminal: () => set((state) => ({ newShellTerminalNonce: state.newShellTerminalNonce + 1 })),
+	requestAgentAuthTerminal: (handleId) =>
+		set((state) => ({
+			agentAuthTerminalRequest: {
+				handleId,
+				nonce: (state.agentAuthTerminalRequest?.nonce ?? 0) + 1,
+			},
+		})),
 	setActiveShellTerminal: (activeShellTerminalHandleId) => set({ activeShellTerminalHandleId }),
 	setVisibleTerminalKind: (sessionId, kind) =>
 		set((state) =>

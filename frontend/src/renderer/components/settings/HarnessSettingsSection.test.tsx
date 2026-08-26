@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { apiClient } from "../../lib/api-client";
 import { appI18n } from "../../i18n";
+import { useUiStore } from "../../stores/ui-store";
 import { HarnessSettingsSection } from "./HarnessSettingsSection";
 
 function catalogWithInstalled(...installed: string[]) {
@@ -24,6 +25,14 @@ function catalogWithInstalled(...installed: string[]) {
 }
 
 const catalog = catalogWithInstalled("claude-code");
+
+const authPlans = {
+	plans: [
+		{ agentId: "claude-code", action: "login", available: true, documentationUrl: "https://example.test/claude" },
+		{ agentId: "codex", action: "login", available: true, documentationUrl: "https://example.test/codex" },
+		{ agentId: "aider", action: "setup", available: true, documentationUrl: "https://example.test/aider" },
+	],
+};
 
 const plans = {
 	agents: [
@@ -71,10 +80,12 @@ describe("HarnessSettingsSection", () => {
 	beforeEach(async () => {
 		await appI18n.changeLanguage("en");
 		window.ao!.clipboard.writeText = vi.fn().mockResolvedValue(undefined);
+		useUiStore.setState({ agentAuthTerminalRequest: null });
 		vi.spyOn(apiClient, "GET").mockImplementation(async (path) => {
 			if (path === "/api/v1/agents/readiness") return { data: catalog } as never;
 			if (path === "/api/v1/agents/installers") return { data: plans } as never;
 			if (path === "/api/v1/agents/install-jobs") return { data: { jobs: [] } } as never;
+			if (path === "/api/v1/agents/auth-plans") return { data: authPlans } as never;
 			return { data: undefined } as never;
 		});
 		vi.spyOn(apiClient, "POST").mockImplementation(async (path) => {
@@ -89,13 +100,87 @@ describe("HarnessSettingsSection", () => {
 
 	afterEach(() => vi.restoreAllMocks());
 
-	it("shows installed harnesses and install actions without authentication UI", async () => {
+	it("keeps authentication controls hidden until a harness is installed", async () => {
 		renderSection();
 		await waitFor(() => expect(screen.getByText("1 of 27 installed")).toBeInTheDocument(), { timeout: 10_000 });
-		expect(screen.getByText("Claude Code")).toBeInTheDocument();
-		expect(screen.getAllByText("Installed").length).toBeGreaterThan(0);
-		expect(screen.getByText("Codex")).toBeInTheDocument();
-		expect(screen.queryByText(/sign in/i)).not.toBeInTheDocument();
+		const codexRow = screen.getByText("Codex").closest('[data-agent="codex"]');
+		expect(codexRow).not.toBeNull();
+		expect(within(codexRow as HTMLElement).getByRole("button", { name: "Install" })).toBeInTheDocument();
+		expect(within(codexRow as HTMLElement).queryByRole("button", { name: "Login" })).not.toBeInTheDocument();
+	});
+
+	it("shows login, setup, instructions, unavailable, and authorized states", async () => {
+		const rowCatalog = {
+			supported: [
+				{ id: "claude-code", label: "Claude Code" }, { id: "codex", label: "Codex" },
+				{ id: "aider", label: "Aider" }, { id: "devin", label: "Devin" }, { id: "goose", label: "Goose" },
+			],
+			installed: [
+				{ id: "claude-code", label: "Claude Code", authStatus: "authorized" },
+				{ id: "codex", label: "Codex", authStatus: "unauthorized" },
+				{ id: "aider", label: "Aider", authStatus: "unknown" },
+				{ id: "devin", label: "Devin", authStatus: "unknown" },
+				{ id: "goose", label: "Goose", authStatus: "unknown" },
+			],
+			authorized: [{ id: "claude-code", label: "Claude Code", authStatus: "authorized" }],
+		};
+		const rowPlans = { plans: [
+			{ agentId: "claude-code", action: "login", available: true, documentationUrl: "https://example.test/claude" },
+			{ agentId: "codex", action: "login", available: true, documentationUrl: "https://example.test/codex" },
+			{ agentId: "aider", action: "setup", available: true, documentationUrl: "https://example.test/aider" },
+			{ agentId: "devin", action: "instructions", available: true, documentationUrl: "https://example.test/devin" },
+			{ agentId: "goose", action: "setup", available: false, reason: "goose is not on PATH", documentationUrl: "https://example.test/goose" },
+		] };
+		vi.mocked(apiClient.GET).mockImplementation(async (path) => {
+			if (path === "/api/v1/agents") return { data: rowCatalog } as never;
+			if (path === "/api/v1/agents/installers") return { data: plans } as never;
+			if (path === "/api/v1/agents/auth-plans") return { data: rowPlans } as never;
+			return { data: undefined } as never;
+		});
+
+		renderSection();
+		const claudeRow = (await screen.findByText("Claude Code")).closest('[data-agent="claude-code"]') as HTMLElement;
+		const codexRow = screen.getByText("Codex").closest('[data-agent="codex"]') as HTMLElement;
+		const aiderRow = screen.getByText("Aider").closest('[data-agent="aider"]') as HTMLElement;
+		const devinRow = screen.getByText("Devin").closest('[data-agent="devin"]') as HTMLElement;
+		const gooseRow = screen.getByText("Goose").closest('[data-agent="goose"]') as HTMLElement;
+
+		await waitFor(() => expect(within(claudeRow).getAllByText("Logged in")).toHaveLength(2));
+		expect(within(claudeRow).getByRole("button", { name: "Check login" })).toBeInTheDocument();
+		expect(within(codexRow).getByRole("button", { name: "Login" })).toBeInTheDocument();
+		expect(within(codexRow).queryByRole("button", { name: "Check login" })).not.toBeInTheDocument();
+		expect(within(aiderRow).getByRole("button", { name: "Set up" })).toBeInTheDocument();
+		expect(within(aiderRow).getByRole("button", { name: "Check login" })).toBeInTheDocument();
+		expect(within(devinRow).getByRole("button", { name: "Instructions" })).toBeInTheDocument();
+		expect(within(gooseRow).getByRole("button", { name: "Set up" })).toBeDisabled();
+		expect(gooseRow).toHaveTextContent("goose is not on PATH");
+	});
+
+	it("requests the returned authentication terminal when Login is clicked", async () => {
+		const unauthorized = {
+			...catalog,
+			installed: [{ id: "codex", label: "Codex", authStatus: "unauthorized" }],
+			authorized: [],
+		};
+		vi.mocked(apiClient.GET).mockImplementation(async (path) => {
+			if (path === "/api/v1/agents") return { data: unauthorized } as never;
+			if (path === "/api/v1/agents/installers") return { data: plans } as never;
+			if (path === "/api/v1/agents/auth-plans") return { data: authPlans } as never;
+			return { data: undefined } as never;
+		});
+		vi.mocked(apiClient.POST).mockImplementation(async (path) => {
+			if (path === "/api/v1/agents/{agent}/auth") {
+				return { data: { agentId: "codex", action: "login", terminal: { handleId: "shellterm-login", workingDir: "/tmp/ao", title: "Log in to Codex", createdAt: new Date().toISOString() } } } as never;
+			}
+			return { data: undefined } as never;
+		});
+		const user = userEvent.setup();
+		renderSection();
+		const codexRow = (await screen.findByText("Codex")).closest('[data-agent="codex"]') as HTMLElement;
+
+		await user.click(await within(codexRow).findByRole("button", { name: "Login" }));
+
+		await waitFor(() => expect(useUiStore.getState().agentAuthTerminalRequest?.handleId).toBe("shellterm-login"));
 	});
 
 	it("starts the fixed daemon install route and exposes retry after failure", async () => {
