@@ -380,11 +380,11 @@ const kanbanColumnBases: Record<KanbanColumn, KanbanColumnBase> = {
 	validating: {
 		column: "validating",
 		labelKey: "column.validating",
-		glow: "color-mix(in srgb, var(--color-status-in-review) 5%, transparent)",
-		dot: "var(--color-status-in-review)",
+		glow: "color-mix(in srgb, var(--color-status-validating) 5%, transparent)",
+		dot: "var(--color-status-validating)",
 		dotGlow: false,
-		titleClassName: "text-status-in-review",
-		dotClassName: "bg-status-in-review",
+		titleClassName: "text-status-validating",
+		dotClassName: "bg-status-validating",
 	},
 	needs_review: {
 		column: "needs_review",
