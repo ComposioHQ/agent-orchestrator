@@ -14,6 +14,7 @@ import { motion, useReducedMotion } from "motion/react";
 import type { ExternalLinkComponent } from "./external-link";
 import { ChevronIcon, GitBranchIcon } from "./icons";
 import {
+	attentionZone,
 	getDisplayStatusLabel,
 	getKanbanColumnView,
 	getSessionStatusView,
@@ -143,7 +144,8 @@ function BoardColumnView<TSession extends BoardSessionPresentation>({
 }) {
 	const ordered = [...sessions].sort((left, right) => {
 		const attentionPriority =
-			Number(requiresHumanAction(right)) - Number(requiresHumanAction(left));
+			Number(attentionZone(right.status) === "action") -
+			Number(attentionZone(left.status) === "action");
 		return attentionPriority || right.updatedAt.localeCompare(left.updatedAt);
 	});
 	return (
@@ -176,7 +178,7 @@ function BoardColumnView<TSession extends BoardSessionPresentation>({
 }
 
 export type SessionCardViewProps = {
-	action?: ReactNode;
+		action?: ReactNode;
 	branchAction?: ReactNode;
 	branchIcon?: ReactNode;
 	error?: string;
@@ -219,7 +221,13 @@ export function SessionCardView({
 }: SessionCardViewProps) {
 	const badge = getSessionStatusView(session.status, translate);
 	const statusPresentation = session.statusPresentation;
-	const needsAttention = requiresHumanAction(session);
+	const agentProgressStatus = new Set(["Fixing CI failures", "Addressing comments", "Reviewing"]);
+	const needsAttention =
+		!agentProgressStatus.has(session.displayStatus ?? "") &&
+		(session.status === "ci_failed" ||
+			session.status === "changes_requested" ||
+			session.status === "review_pending" ||
+			session.activity?.state === "blocked");
 	const needsAttentionChip = needsAttention && !statusPresentation;
 	const column = getKanbanColumnView(toKanbanColumn(session.kanbanColumn, session.status), translate);
 	const statusTone = needsAttentionChip
@@ -303,9 +311,8 @@ export function SessionCardView({
 				<div className="flex min-w-0 flex-1">
 					<span
 						className={cn(
-							"inline-flex min-w-0 max-w-full items-center gap-1.5 px-1.5 py-0.5 text-2xs font-medium",
-							needsAttentionChip &&
-								"rounded-sm border border-[color-mix(in_srgb,var(--session-status-tone)_24%,transparent)] bg-[color-mix(in_srgb,var(--session-status-tone)_10%,transparent)]",
+							"inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-sm border border-[color-mix(in_srgb,var(--session-status-tone)_24%,transparent)] bg-[color-mix(in_srgb,var(--session-status-tone)_10%,transparent)] px-1.5 py-0.5 text-2xs font-medium",
+							!statusTone && "border-border bg-overlay",
 							needsAttentionChip ? "text-status-needs-you" : (statusPresentation?.className ?? column.titleClassName),
 						)}
 						data-kanban-column={statusPresentation ? undefined : column.column}
@@ -565,18 +572,4 @@ function sameLabel(a: string, b: string): boolean {
 			.replace(/^(feat|fix|chore|refactor|session)\//, "")
 			.replace(/[^a-z0-9]+/g, "");
 	return normalize(a) === normalize(b);
-}
-
-const agentProgressDisplayStatuses = new Set(["Fixing CI failures", "Addressing comments", "Reviewing"]);
-
-function requiresHumanAction(session: BoardSessionPresentation): boolean {
-	if (agentProgressDisplayStatuses.has(session.displayStatus ?? "")) {
-		return false;
-	}
-	return (
-		session.status === "ci_failed" ||
-		session.status === "changes_requested" ||
-		session.status === "review_pending" ||
-		session.activity?.state === "blocked"
-	);
 }
