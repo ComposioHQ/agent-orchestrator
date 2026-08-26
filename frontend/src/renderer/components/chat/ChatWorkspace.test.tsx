@@ -278,6 +278,156 @@ describe("HumanMessage attachments", () => {
 		expect(screen.queryByText("combined.png")).not.toBeInTheDocument();
 	});
 
+	it("renders a legacy unnamed combined image once when its MIME matches the staged path", () => {
+		render(
+			<HumanMessage
+				message={{
+					...humanMessage(
+						"inspect legacy delivery\n\nAttached files (read these files in the workspace):\n- .ao/attachments/attachment-ab12.png",
+					),
+					content: [{ type: "image", mimeType: "image/png" }],
+				}}
+				sessionId="ao-1"
+			/>,
+		);
+
+		const files = screen.getByRole("list", { name: "Attached files" });
+		expect(screen.getAllByRole("list", { name: "Attached files" })).toHaveLength(1);
+		expect(within(files).getAllByRole("listitem")).toHaveLength(1);
+		expect(screen.getByRole("img", { name: "attachment-ab12.png" })).toBeVisible();
+		expect(screen.queryByText("image/png")).not.toBeInTheDocument();
+	});
+
+	it("dedupes two legacy unnamed PNG blocks when the staged MIME multiset matches exactly", () => {
+		render(
+			<HumanMessage
+				message={{
+					...humanMessage(
+						"inspect two screenshots\n\nAttached files (read these files in the workspace):\n- .ao/attachments/attachment-ab12.png\n- .ao/attachments/attachment-cd34.png",
+					),
+					content: [
+						{ type: "image", mimeType: "image/png" },
+						{ type: "image", mimeType: "image/png" },
+					],
+				}}
+				sessionId="ao-1"
+			/>,
+		);
+
+		const files = screen.getByRole("list", { name: "Attached files" });
+		expect(screen.getAllByRole("list", { name: "Attached files" })).toHaveLength(1);
+		expect(within(files).getAllByRole("listitem")).toHaveLength(2);
+		expect(screen.getByRole("img", { name: "attachment-ab12.png" })).toBeVisible();
+		expect(screen.getByRole("img", { name: "attachment-cd34.png" })).toBeVisible();
+		expect(screen.queryByText("image/png")).not.toBeInTheDocument();
+	});
+
+	it("dedupes mixed legacy PNG and JPEG blocks when the staged MIME multiset matches exactly", () => {
+		render(
+			<HumanMessage
+				message={{
+					...humanMessage(
+						"inspect mixed screenshots\n\nAttached files (read these files in the workspace):\n- .ao/attachments/attachment-ab12.png\n- .ao/attachments/attachment-cd34.jpg",
+					),
+					content: [
+						{ type: "image", mimeType: "image/jpeg" },
+						{ type: "image", mimeType: "image/png" },
+					],
+				}}
+				sessionId="ao-1"
+			/>,
+		);
+
+		const files = screen.getByRole("list", { name: "Attached files" });
+		expect(screen.getAllByRole("list", { name: "Attached files" })).toHaveLength(1);
+		expect(within(files).getAllByRole("listitem")).toHaveLength(2);
+		expect(screen.getByRole("img", { name: "attachment-ab12.png" })).toBeVisible();
+		expect(screen.getByRole("img", { name: "attachment-cd34.jpg" })).toBeVisible();
+		expect(screen.queryByText("image/png")).not.toBeInTheDocument();
+		expect(screen.queryByText("image/jpeg")).not.toBeInTheDocument();
+	});
+
+	it("keeps an unmatched unnamed native image visible beside a staged image", () => {
+		render(
+			<HumanMessage
+				message={{
+					...humanMessage(
+						"compare formats\n\nAttached files (read these files in the workspace):\n- .ao/attachments/attachment-ab12.png",
+					),
+					content: [{ type: "image", mimeType: "image/jpeg" }],
+				}}
+				sessionId="ao-1"
+			/>,
+		);
+
+		expect(screen.getByRole("img", { name: "attachment-ab12.png" })).toBeVisible();
+		expect(screen.getByText("image/jpeg")).toBeVisible();
+		expect(screen.getAllByRole("listitem")).toHaveLength(2);
+	});
+
+	it("keeps unnamed native images visible when multiple content blocks make dedupe ambiguous", () => {
+		render(
+			<HumanMessage
+				message={{
+					...humanMessage(
+						"inspect every image\n\nAttached files (read these files in the workspace):\n- .ao/attachments/attachment-ab12.png",
+					),
+					content: [
+						{ type: "image", mimeType: "image/png" },
+						{ type: "image", mimeType: "image/jpeg" },
+					],
+				}}
+				sessionId="ao-1"
+			/>,
+		);
+
+		expect(screen.getByRole("img", { name: "attachment-ab12.png" })).toBeVisible();
+		expect(screen.getByText("image/png")).toBeVisible();
+		expect(screen.getByText("image/jpeg")).toBeVisible();
+		expect(screen.getAllByRole("listitem")).toHaveLength(3);
+	});
+
+	it("keeps every unnamed native image visible when one MIME is unsupported", () => {
+		render(
+			<HumanMessage
+				message={{
+					...humanMessage(
+						"inspect without guessing\n\nAttached files (read these files in the workspace):\n- .ao/attachments/attachment-ab12.png",
+					),
+					content: [
+						{ type: "image", mimeType: "image/png" },
+						{ type: "image", mimeType: "image/avif" },
+					],
+				}}
+				sessionId="ao-1"
+			/>,
+		);
+
+		expect(screen.getByRole("img", { name: "attachment-ab12.png" })).toBeVisible();
+		expect(screen.getByText("image/png")).toBeVisible();
+		expect(screen.getByText("image/avif")).toBeVisible();
+		expect(screen.getAllByRole("listitem")).toHaveLength(3);
+	});
+
+	it("keeps an unnamed native image visible when multiple staged paths make dedupe ambiguous", () => {
+		render(
+			<HumanMessage
+				message={{
+					...humanMessage(
+						"inspect staged images\n\nAttached files (read these files in the workspace):\n- .ao/attachments/attachment-ab12.png\n- .ao/attachments/attachment-cd34.png",
+					),
+					content: [{ type: "image", mimeType: "image/png" }],
+				}}
+				sessionId="ao-1"
+			/>,
+		);
+
+		expect(screen.getByRole("img", { name: "attachment-ab12.png" })).toBeVisible();
+		expect(screen.getByRole("img", { name: "attachment-cd34.png" })).toBeVisible();
+		expect(screen.getByText("image/png")).toBeVisible();
+		expect(screen.getAllByRole("listitem")).toHaveLength(3);
+	});
+
 	it("falls back to a safe image-type label when durable history has no filename", () => {
 		render(
 			<HumanMessage
@@ -297,9 +447,18 @@ describe("HumanMessage attachments", () => {
 	it("leaves ordinary user-authored path lists untouched", () => {
 		const text =
 			"Document this example:\n\nAttached files (read these files in the workspace):\n- docs/screenshot.png";
-		render(<HumanMessage message={humanMessage(text)} sessionId="ao-1" />);
+		render(
+			<HumanMessage
+				message={{
+					...humanMessage(text),
+					content: [{ type: "image", mimeType: "image/png" }],
+				}}
+				sessionId="ao-1"
+			/>,
+		);
 
 		expect(screen.queryByRole("img")).not.toBeInTheDocument();
+		expect(screen.getByText("image/png")).toBeVisible();
 		expect(document.body.textContent).toContain(text);
 	});
 });

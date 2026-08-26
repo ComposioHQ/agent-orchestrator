@@ -2,6 +2,8 @@ package controllers
 
 import (
 	"encoding/base64"
+	"path"
+	"strings"
 	"testing"
 )
 
@@ -152,6 +154,76 @@ func TestDecodeSpawnAttachments(t *testing.T) {
 			t.Errorf("attachment data mismatch: %q", out[0].Data)
 		}
 	})
+}
+
+func TestAttachmentDisplayNamesStayPortableForUntrustedMIMESubtypes(t *testing.T) {
+	tests := []struct {
+		name     string
+		mimeType string
+		wantExt  string
+	}{
+		{name: "slash traversal", mimeType: "application/../../outside", wantExt: ".bin"},
+		{name: "backslash separator", mimeType: `application/x\\outside`, wantExt: ".bin"},
+		{name: "dot traversal", mimeType: "application/x..outside", wantExt: ".bin"},
+		{name: "unsafe punctuation", mimeType: "application/x:outside", wantExt: ".bin"},
+		{name: "control byte", mimeType: "application/x\x00outside", wantExt: ".bin"},
+		{name: "overlong subtype", mimeType: "application/" + strings.Repeat("a", 300), wantExt: ".bin"},
+		{name: "known png", mimeType: "IMAGE/PNG", wantExt: ".png"},
+		{name: "known jpeg", mimeType: "image/jpeg", wantExt: ".jpg"},
+		{name: "known text with parameter", mimeType: "text/plain; charset=utf-8", wantExt: ".txt"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			input := AttachmentInput{
+				Name:     "folder/" + strings.Repeat("a", 400) + ".untrusted",
+				MimeType: tt.mimeType,
+				Data:     b64([]byte("payload")),
+			}
+			decoded, attachmentErr := decodeSpawnAttachments([]AttachmentInput{input})
+			if attachmentErr != nil {
+				t.Fatalf("decodeSpawnAttachments: %+v", attachmentErr)
+			}
+			if got := decoded[0].Ext; got != tt.wantExt {
+				t.Fatalf("extension = %q, want %q", got, tt.wantExt)
+			}
+
+			native, nativeErr := conversationContent(SendConversationMessageRequest{
+				Attachments: []ConversationImageContentRequest{{
+					Name: input.Name, MIMEType: input.MimeType, Data: input.Data,
+				}},
+			})
+			if nativeErr != nil {
+				t.Fatalf("conversationContent: %+v", nativeErr)
+			}
+			for label, name := range map[string]string{
+				"staged": decoded[0].Name,
+				"native": native[0].Name,
+			} {
+				if path.Base(name) != name || strings.ContainsAny(name, `/\\`) || strings.Contains(name, "..") {
+					t.Fatalf("%s display name is not a portable basename: %q", label, name)
+				}
+				for _, r := range name {
+					if r < 0x20 || r == 0x7f || r == ':' {
+						t.Fatalf("%s display name contains unsafe rune %q: %q", label, r, name)
+					}
+				}
+				storedName := "attachment-" + strings.Repeat("a", 32) + "-" + name
+				if len(storedName) > 255 {
+					t.Fatalf("%s stored name length = %d, exceeds 255: %q", label, len(storedName), storedName)
+				}
+			}
+		})
+	}
+}
+
+func TestDecodeSpawnAttachmentsBlocksParameterizedSVG(t *testing.T) {
+	_, err := decodeSpawnAttachments([]AttachmentInput{{
+		Name: "vector.svg", MimeType: "image/svg+xml; charset=utf-8", Data: b64([]byte("<svg/>")),
+	}})
+	if err == nil || err.code != "UNSUPPORTED_ATTACHMENT_TYPE" {
+		t.Fatalf("want UNSUPPORTED_ATTACHMENT_TYPE, got %+v", err)
+	}
 }
 
 func TestDecodeSpawnAttachmentsTrimsWhitespace(t *testing.T) {
