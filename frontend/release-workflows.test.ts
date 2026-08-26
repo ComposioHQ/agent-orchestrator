@@ -9,6 +9,9 @@ const releaseMutationPatterns = [
   /curl(?=[^\n]*(?:releases|git\/refs\/tags))(?=[^\n]*(?:(?:--request|-X)\s*(?:DELETE|PATCH|POST|PUT)))[^\n]*/,
   /github\.rest\.repos\.(?:createRelease|deleteRelease|updateRelease|uploadReleaseAsset)\b/,
   /uses:\s*(?:actions\/create-release|ncipollo\/release-action|softprops\/action-gh-release)@/,
+  /git tag\s+(?!-)\S+/,
+  /git tag\s+(?:-a|-s|-f|--annotate|--sign|--force)\s+\S+/,
+  /git push\b[^\n]*(?:--tags\b|refs\/tags\/|\btag\s+\S+|\bv?\d+\.\d+\.\d+(?:[-+][^\s]+)?\b)/,
   /electron-forge publish/,
   /npm run publish/,
 ];
@@ -92,6 +95,20 @@ describe("desktop release workflows", () => {
         name: "write-enabled-release.yml",
         contents: "name: Release publisher\npermissions:\n  contents: write\n",
       },
+      {
+        name: "direct-tag-publisher.yml",
+        contents:
+          "permissions: { contents: write }\nrun: git tag v1.2.3 && git push origin v1.2.3\n",
+      },
+      {
+        name: "tag-ref-publisher.yml",
+        contents:
+          "permissions: { contents: write }\nrun: git push origin HEAD:refs/tags/v1.2.3\n",
+      },
+      {
+        name: "flow-write-release.yml",
+        contents: "name: Release publisher\npermissions: { contents: write }\n",
+      },
     ];
     const allowed = [
       {
@@ -111,9 +128,16 @@ run: |
         contents:
           "name: Label issue\npermissions:\n  contents: write\nrun: gh api -X POST repos/o/r/issues/1/labels\n",
       },
+      {
+        name: "unrelated-git-push.yml",
+        contents:
+          "permissions: { contents: write }\nrun: |\n  git tag --list\n  git push origin HEAD:automation-results\n",
+      },
     ];
 
-    expect(findReleaseMutationViolations(forbidden)).toHaveLength(3);
+    for (const workflow of forbidden) {
+      expect(findReleaseMutationViolations([workflow])).not.toEqual([]);
+    }
     expect(findReleaseMutationViolations(allowed)).toEqual([]);
   });
 
