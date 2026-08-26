@@ -135,17 +135,20 @@ type DraftMutationKind = "composer" | "inline-edit";
 type ChatDraftRuntime = {
 	sessionId: string;
 	listeners: Set<() => void>;
-	settledEvictionTimer?: ReturnType<typeof setTimeout>;
-	sequence: number;
 	composerToken?: ChatDraftMutationToken;
 	inlineEditToken?: ChatDraftMutationToken;
+	composerReceiptOrder?: number;
+	inlineEditReceiptOrder?: number;
 	composer: ChatDraftMutationSnapshot<number>;
 	inlineEdit: ChatDraftMutationSnapshot<string>;
 };
 
+const MAX_UNACKNOWLEDGED_DRAFT_RECEIPTS = 64;
 const EMPTY_COMPOSER_MUTATION: ChatDraftMutationSnapshot<number> = { pending: false };
 const EMPTY_INLINE_EDIT_MUTATION: ChatDraftMutationSnapshot<string> = { pending: false };
 const draftRuntimes = new Map<string, ChatDraftRuntime>();
+let draftReceiptOrder = 0;
+let draftMutationSequence = 0;
 
 function normalizeScope(scope: ChatDraftScopeInput): ChatDraftScope {
 	return typeof scope === "string"
@@ -179,10 +182,6 @@ function draftRuntimeKey(scope: ChatDraftScopeInput): string {
 function purgeDraftRuntimes(sessionId: string): void {
 	for (const [key, runtime] of draftRuntimes) {
 		if (runtime.sessionId !== sessionId) continue;
-		if (runtime.settledEvictionTimer !== undefined) {
-			clearTimeout(runtime.settledEvictionTimer);
-			runtime.settledEvictionTimer = undefined;
-		}
 		runtime.composerToken = undefined;
 		runtime.inlineEditToken = undefined;
 		runtime.composer = EMPTY_COMPOSER_MUTATION;
@@ -199,7 +198,6 @@ function draftRuntime(scope: ChatDraftScopeInput): ChatDraftRuntime {
 		runtime = {
 			sessionId: identity.sessionId,
 			listeners: new Set(),
-			sequence: 0,
 			composer: EMPTY_COMPOSER_MUTATION,
 			inlineEdit: EMPTY_INLINE_EDIT_MUTATION,
 		};
@@ -208,41 +206,73 @@ function draftRuntime(scope: ChatDraftScopeInput): ChatDraftRuntime {
 	return runtime;
 }
 
-function cancelSettledDraftRuntimeEviction(runtime: ChatDraftRuntime): void {
-	if (runtime.settledEvictionTimer === undefined) return;
-	clearTimeout(runtime.settledEvictionTimer);
-	runtime.settledEvictionTimer = undefined;
-}
-
-function evictSettledDraftRuntime(
-	key: string,
-	runtime: ChatDraftRuntime,
-	preserveAcceptanceForSubscription = false,
-): void {
+function evictSettledDraftRuntime(key: string, runtime: ChatDraftRuntime): void {
 	if (
 		runtime.listeners.size > 0 ||
 		runtime.composer.pending ||
 		runtime.inlineEdit.pending ||
+		runtime.composer.accepted ||
+		runtime.inlineEdit.accepted ||
 		draftRuntimes.get(key) !== runtime
 	) return;
-	// useSyncExternalStore reads a snapshot during render and subscribes only at
-	// commit. A send can settle between those steps after the prior surface has
-	// unsubscribed. Keep the accepted receipt through that turn so the remount can
-	// consume the clear result, then evict it if no subscriber claims it.
-	if (
-		preserveAcceptanceForSubscription &&
-		(runtime.composer.accepted || runtime.inlineEdit.accepted)
-	) {
-		if (runtime.settledEvictionTimer === undefined) {
-			runtime.settledEvictionTimer = setTimeout(() => {
-				runtime.settledEvictionTimer = undefined;
-				evictSettledDraftRuntime(key, runtime);
-			}, 0);
-		}
+	draftRuntimes.delete(key);
+}
+
+function clearDraftMutationReceipt(
+	runtime: ChatDraftRuntime,
+	kind: DraftMutationKind,
+	pending?: boolean,
+): void {
+	if (kind === "composer") {
+		runtime.composer = { pending: pending ?? runtime.composer.pending };
+		runtime.composerReceiptOrder = undefined;
 		return;
 	}
-	cancelSettledDraftRuntimeEviction(runtime);
-	draftRuntimes.delete(key);
+	runtime.inlineEdit = { pending: pending ?? runtime.inlineEdit.pending };
+	runtime.inlineEditReceiptOrder = undefined;
+}
+
+function boundUnacknowledgedDraftReceipts(): void {
+	const candidates: Array<{
+		key: string;
+		runtime: ChatDraftRuntime;
+		kind: DraftMutationKind;
+		order: number;
+	}> = [];
+	for (const [key, runtime] of draftRuntimes) {
+		if (runtime.listeners.size > 0) continue;
+		if (
+			runtime.composer.accepted &&
+			runtime.composerReceiptOrder !== undefined
+		) {
+			candidates.push({
+				key,
+				runtime,
+				kind: "composer",
+				order: runtime.composerReceiptOrder,
+			});
+		}
+		if (
+			runtime.inlineEdit.accepted &&
+			runtime.inlineEditReceiptOrder !== undefined
+		) {
+			candidates.push({
+				key,
+				runtime,
+				kind: "inline-edit",
+				order: runtime.inlineEditReceiptOrder,
+			});
+		}
+	}
+	if (candidates.length <= MAX_UNACKNOWLEDGED_DRAFT_RECEIPTS) return;
+	candidates.sort((left, right) => left.order - right.order);
+	for (const candidate of candidates.slice(
+		0,
+		candidates.length - MAX_UNACKNOWLEDGED_DRAFT_RECEIPTS,
+	)) {
+		clearDraftMutationReceipt(candidate.runtime, candidate.kind);
+		evictSettledDraftRuntime(candidate.key, candidate.runtime);
+	}
 }
 
 function emitDraftRuntime(runtime: ChatDraftRuntime): void {
@@ -253,10 +283,10 @@ export function subscribeChatDraftRuntime(scope: ChatDraftScopeInput, listener: 
 	if (!normalizeScope(scope).sessionId) return () => undefined;
 	const key = draftRuntimeKey(scope);
 	const runtime = draftRuntime(scope);
-	cancelSettledDraftRuntimeEviction(runtime);
 	runtime.listeners.add(listener);
 	return () => {
 		runtime.listeners.delete(listener);
+		boundUnacknowledgedDraftReceipts();
 		evictSettledDraftRuntime(key, runtime);
 	};
 }
@@ -264,13 +294,17 @@ export function subscribeChatDraftRuntime(scope: ChatDraftScopeInput, listener: 
 export function getChatComposerMutation(
 	scope: ChatDraftScopeInput,
 ): ChatDraftMutationSnapshot<number> {
-	return draftRuntimes.get(draftRuntimeKey(scope))?.composer ?? EMPTY_COMPOSER_MUTATION;
+	const runtime = draftRuntimes.get(draftRuntimeKey(scope));
+	if (!runtime) return EMPTY_COMPOSER_MUTATION;
+	return runtime.composer;
 }
 
 export function getChatInlineEditMutation(
 	scope: ChatDraftScopeInput,
 ): ChatDraftMutationSnapshot<string> {
-	return draftRuntimes.get(draftRuntimeKey(scope))?.inlineEdit ?? EMPTY_INLINE_EDIT_MUTATION;
+	const runtime = draftRuntimes.get(draftRuntimeKey(scope));
+	if (!runtime) return EMPTY_INLINE_EDIT_MUTATION;
+	return runtime.inlineEdit;
 }
 
 function beginDraftMutation(
@@ -280,16 +314,18 @@ function beginDraftMutation(
 	if (!normalizeScope(scope).sessionId) return undefined;
 	const runtime = draftRuntime(scope);
 	if (kind === "composer") {
-		if (runtime.composer.pending) return undefined;
+		if (runtime.composer.pending || runtime.composer.accepted) return undefined;
 		const token = Symbol("chat-composer-mutation");
 		runtime.composerToken = token;
+		runtime.composerReceiptOrder = undefined;
 		runtime.composer = { pending: true };
 		emitDraftRuntime(runtime);
 		return token;
 	}
-	if (runtime.inlineEdit.pending) return undefined;
+	if (runtime.inlineEdit.pending || runtime.inlineEdit.accepted) return undefined;
 	const token = Symbol("chat-inline-edit-mutation");
 	runtime.inlineEditToken = token;
+	runtime.inlineEditReceiptOrder = undefined;
 	runtime.inlineEdit = { pending: true };
 	emitDraftRuntime(runtime);
 	return token;
@@ -314,14 +350,14 @@ function cancelDraftMutation(
 	if (kind === "composer") {
 		if (runtime.composerToken !== token) return;
 		runtime.composerToken = undefined;
-		runtime.composer = EMPTY_COMPOSER_MUTATION;
+		clearDraftMutationReceipt(runtime, "composer", false);
 	} else {
 		if (runtime.inlineEditToken !== token) return;
 		runtime.inlineEditToken = undefined;
-		runtime.inlineEdit = EMPTY_INLINE_EDIT_MUTATION;
+		clearDraftMutationReceipt(runtime, "inline-edit", false);
 	}
 	emitDraftRuntime(runtime);
-	evictSettledDraftRuntime(key, runtime, true);
+	evictSettledDraftRuntime(key, runtime);
 }
 
 export function cancelChatComposerMutation(
@@ -348,13 +384,15 @@ export function finishChatComposerMutation(
 	const runtime = draftRuntimes.get(key);
 	if (!runtime || runtime.composerToken !== token) return;
 	runtime.composerToken = undefined;
-	runtime.sequence += 1;
+	const sequence = ++draftMutationSequence;
 	runtime.composer = {
 		pending: false,
-		accepted: { sequence: runtime.sequence, revision, result },
+		accepted: { sequence, revision, result },
 	};
+	runtime.composerReceiptOrder = ++draftReceiptOrder;
 	emitDraftRuntime(runtime);
-	evictSettledDraftRuntime(key, runtime, true);
+	boundUnacknowledgedDraftReceipts();
+	evictSettledDraftRuntime(key, runtime);
 }
 
 export function finishChatInlineEditMutation(
@@ -367,13 +405,55 @@ export function finishChatInlineEditMutation(
 	const runtime = draftRuntimes.get(key);
 	if (!runtime || runtime.inlineEditToken !== token) return;
 	runtime.inlineEditToken = undefined;
-	runtime.sequence += 1;
+	const sequence = ++draftMutationSequence;
 	runtime.inlineEdit = {
 		pending: false,
-		accepted: { sequence: runtime.sequence, revision, result },
+		accepted: { sequence, revision, result },
 	};
+	runtime.inlineEditReceiptOrder = ++draftReceiptOrder;
 	emitDraftRuntime(runtime);
-	evictSettledDraftRuntime(key, runtime, true);
+	boundUnacknowledgedDraftReceipts();
+	evictSettledDraftRuntime(key, runtime);
+}
+
+function acknowledgeDraftMutation(
+	scope: ChatDraftScopeInput,
+	kind: DraftMutationKind,
+	sequence: number,
+): void {
+	const key = draftRuntimeKey(scope);
+	const runtime = draftRuntimes.get(key);
+	if (!runtime) return;
+	if (kind === "composer") {
+		if (runtime.composer.accepted?.sequence !== sequence) return;
+		clearDraftMutationReceipt(runtime, "composer");
+	} else {
+		if (runtime.inlineEdit.accepted?.sequence !== sequence) return;
+		clearDraftMutationReceipt(runtime, "inline-edit");
+	}
+	emitDraftRuntime(runtime);
+	evictSettledDraftRuntime(key, runtime);
+}
+
+/**
+ * Release a settled composer receipt only after a committed subscriber applied
+ * it. No task-duration timer decides this lifetime: acknowledgement, a newer
+ * mutation, or a scope purge normally retires it. A deterministic oldest-first
+ * cap bounds abandoned receipts that have neither subscribers nor acknowledgements.
+ */
+export function acknowledgeChatComposerMutation(
+	scope: ChatDraftScopeInput,
+	sequence: number,
+): void {
+	acknowledgeDraftMutation(scope, "composer", sequence);
+}
+
+/** See acknowledgeChatComposerMutation. */
+export function acknowledgeChatInlineEditMutation(
+	scope: ChatDraftScopeInput,
+	sequence: number,
+): void {
+	acknowledgeDraftMutation(scope, "inline-edit", sequence);
 }
 
 function invalidateAcceptedDraftMutation(scope: ChatDraftScopeInput, kind: DraftMutationKind): void {
@@ -382,13 +462,13 @@ function invalidateAcceptedDraftMutation(scope: ChatDraftScopeInput, kind: Draft
 	if (!runtime) return;
 	if (kind === "composer") {
 		if (!runtime.composer.accepted) return;
-		runtime.composer = { pending: runtime.composer.pending };
+		clearDraftMutationReceipt(runtime, "composer");
 	} else {
 		if (!runtime.inlineEdit.accepted) return;
-		runtime.inlineEdit = { pending: runtime.inlineEdit.pending };
+		clearDraftMutationReceipt(runtime, "inline-edit");
 	}
 	emitDraftRuntime(runtime);
-	evictSettledDraftRuntime(key, runtime, true);
+	evictSettledDraftRuntime(key, runtime);
 }
 
 function storageKey(sessionId: string): string {

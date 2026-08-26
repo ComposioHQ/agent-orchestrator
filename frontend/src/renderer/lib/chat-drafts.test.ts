@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+	acknowledgeChatComposerMutation,
+	acknowledgeChatInlineEditMutation,
 	activateChatDraftScope,
 	beginChatComposerMutation,
 	beginChatInlineEditMutation,
@@ -769,62 +771,136 @@ describe("Chat draft storage", () => {
 		cancelChatInlineEditMutation(sessionId, inlineToken!);
 		expect(getChatInlineEditMutation(sessionId)).toEqual({ pending: false });
 
+		acknowledgeChatComposerMutation(
+			sessionId,
+			getChatComposerMutation(sessionId).accepted!.sequence,
+		);
 		unsubscribeRemount();
 		expect(getChatComposerMutation(sessionId)).toEqual({ pending: false });
 		expect(getChatInlineEditMutation(sessionId)).toEqual({ pending: false });
 	});
 
-	it("keeps an accepted send through the render-to-subscribe remount window", async () => {
-		vi.useFakeTimers();
-		try {
-			const storage = new MemoryStorage();
-			const sessionId = "runtime-render-subscribe-gap";
-			const revision = writeChatComposerText(sessionId, "send exactly once", storage).draft
-				.composer.revision;
-			const unsubscribeFirstMount = subscribeChatDraftRuntime(sessionId, () => undefined);
-			const token = beginChatComposerMutation(sessionId)!;
-			unsubscribeFirstMount();
+	it("keeps an accepted send when the old passive cleanup runs before the replacement subscribes", () => {
+		const storage = new MemoryStorage();
+		const sessionId = "runtime-old-cleanup-before-new-subscribe";
+		const revision = writeChatComposerText(sessionId, "send exactly once", storage).draft
+			.composer.revision;
+		const unsubscribeFirstMount = subscribeChatDraftRuntime(sessionId, () => undefined);
+		const token = beginChatComposerMutation(sessionId)!;
 
-			// useSyncExternalStore reads during render before installing its subscription.
-			// The accepted result must remain observable if delivery settles in that gap.
-			expect(getChatComposerMutation(sessionId)).toEqual({ pending: true });
-			const result = clearAcceptedChatComposer(sessionId, revision, storage);
-			finishChatComposerMutation(sessionId, token, revision, result);
-			expect(getChatComposerMutation(sessionId).accepted?.result).toBe(result);
+		// React has rendered the replacement from this in-flight snapshot, but its
+		// passive subscription is not installed yet. The request settles while the
+		// old subscription still owns the runtime.
+		expect(getChatComposerMutation(sessionId)).toEqual({ pending: true });
+		const result = clearAcceptedChatComposer(sessionId, revision, storage);
+		finishChatComposerMutation(sessionId, token, revision, result);
+		expect(getChatComposerMutation(sessionId).accepted?.result).toBe(result);
 
-			await Promise.resolve();
-			const unsubscribeRemount = subscribeChatDraftRuntime(sessionId, () => undefined);
-			expect(getChatComposerMutation(sessionId).accepted?.result).toBe(result);
-			vi.runOnlyPendingTimers();
-			expect(getChatComposerMutation(sessionId).accepted?.result).toBe(result);
-
-			unsubscribeRemount();
-			expect(getChatComposerMutation(sessionId)).toEqual({ pending: false });
-		} finally {
-			vi.useRealTimers();
-		}
+		// Passive unmount cleanup precedes passive mount subscription. It must not
+		// discard the receipt that reconciles the replacement's stale render.
+		unsubscribeFirstMount();
+		const unsubscribeRemount = subscribeChatDraftRuntime(sessionId, () => undefined);
+		expect(getChatComposerMutation(sessionId).accepted?.result).toBe(result);
+		acknowledgeChatComposerMutation(
+			sessionId,
+			getChatComposerMutation(sessionId).accepted!.sequence,
+		);
+		expect(getChatComposerMutation(sessionId)).toEqual({ pending: false });
+		unsubscribeRemount();
 	});
 
-	it("evicts an unobserved accepted result after its remount grace window", () => {
+	it("keeps an accepted send when a task elapses between replacement render and subscribe", () => {
 		vi.useFakeTimers();
 		try {
 			const storage = new MemoryStorage();
-			const sessionId = "runtime-unobserved-acceptance";
+			const sessionId = "runtime-task-between-render-and-subscribe";
 			const revision = writeChatComposerText(sessionId, "accepted", storage).draft.composer
 				.revision;
 			const token = beginChatComposerMutation(sessionId)!;
 			const result = clearAcceptedChatComposer(sessionId, revision, storage);
 			finishChatComposerMutation(sessionId, token, revision, result);
 
+			// useSyncExternalStore reads during render, then React may yield to other
+			// tasks for an arbitrary duration before installing the subscription.
 			expect(getChatComposerMutation(sessionId).accepted?.result).toBe(result);
 			vi.runOnlyPendingTimers();
+			const unsubscribeRemount = subscribeChatDraftRuntime(sessionId, () => undefined);
+			expect(getChatComposerMutation(sessionId).accepted?.result).toBe(result);
+			acknowledgeChatComposerMutation(
+				sessionId,
+				getChatComposerMutation(sessionId).accepted!.sequence,
+			);
 			expect(getChatComposerMutation(sessionId)).toEqual({ pending: false });
+			unsubscribeRemount();
 		} finally {
 			vi.useRealTimers();
 		}
 	});
 
-	it("evicts a failed clear and its full draft after the final subscriber leaves", () => {
+	it("does not let a stale acknowledgement clear a newer accepted send", () => {
+		const storage = new MemoryStorage();
+		const sessionId = "runtime-stale-acknowledgement";
+		const firstRevision = writeChatComposerText(sessionId, "first send", storage).draft.composer
+			.revision;
+		const firstToken = beginChatComposerMutation(sessionId)!;
+		finishChatComposerMutation(
+			sessionId,
+			firstToken,
+			firstRevision,
+			clearAcceptedChatComposer(sessionId, firstRevision, storage),
+		);
+		const firstSequence = getChatComposerMutation(sessionId).accepted!.sequence;
+		expect(beginChatComposerMutation(sessionId)).toBeUndefined();
+
+		const secondRevision = writeChatComposerText(sessionId, "second send", storage).draft.composer
+			.revision;
+		const secondToken = beginChatComposerMutation(sessionId)!;
+		finishChatComposerMutation(
+			sessionId,
+			secondToken,
+			secondRevision,
+			clearAcceptedChatComposer(sessionId, secondRevision, storage),
+		);
+		const secondReceipt = getChatComposerMutation(sessionId).accepted!;
+		expect(secondReceipt.sequence).toBeGreaterThan(firstSequence);
+
+		acknowledgeChatComposerMutation(sessionId, firstSequence);
+		expect(getChatComposerMutation(sessionId).accepted).toBe(secondReceipt);
+		acknowledgeChatComposerMutation(sessionId, secondReceipt.sequence);
+		expect(getChatComposerMutation(sessionId)).toEqual({ pending: false });
+	});
+
+	it("bounds never-acknowledged settled receipts without depending on elapsed time", () => {
+		const storage = new MemoryStorage();
+		const receiptCapacity = 64;
+		const sessionIds = Array.from(
+			{ length: receiptCapacity + 1 },
+			(_, index) => `runtime-unobserved-capacity-${index}`,
+		);
+		for (const sessionId of sessionIds) {
+			const revision = writeChatComposerText(sessionId, "accepted", storage).draft.composer
+				.revision;
+			const token = beginChatComposerMutation(sessionId)!;
+			finishChatComposerMutation(
+				sessionId,
+				token,
+				revision,
+				clearAcceptedChatComposer(sessionId, revision, storage),
+			);
+		}
+
+		// The oldest unacknowledged receipt is the deterministic capacity victim. The
+		// newest remains available without a TTL or render-scheduling assumption.
+		expect(getChatComposerMutation(sessionIds[0])).toEqual({ pending: false });
+		expect(getChatComposerMutation(sessionIds.at(-1)!).accepted).toBeDefined();
+
+		for (const sessionId of sessionIds) {
+			const accepted = getChatComposerMutation(sessionId).accepted;
+			if (accepted) acknowledgeChatComposerMutation(sessionId, accepted.sequence);
+		}
+	});
+
+	it("evicts an acknowledged failed-clear receipt after the final subscriber leaves", () => {
 		const backing = new MemoryStorage();
 		const sessionId = "runtime-failed-clear";
 		const revision = writeChatComposerText(sessionId, "accepted but still durable", backing).draft
@@ -847,50 +923,59 @@ describe("Chat draft storage", () => {
 		finishChatComposerMutation(sessionId, token!, revision, result);
 		expect(getChatComposerMutation(sessionId).accepted?.result).toBe(result);
 
+		acknowledgeChatComposerMutation(
+			sessionId,
+			getChatComposerMutation(sessionId).accepted!.sequence,
+		);
 		unsubscribe();
 		expect(getChatComposerMutation(sessionId)).toEqual({ pending: false });
 	});
 
-	it("waits for every mutation to settle before evicting an unmounted runtime", () => {
-		vi.useFakeTimers();
-		try {
-			const storage = new MemoryStorage();
-			const sessionId = "runtime-two-pending-mutations";
-			const composerRevision = writeChatComposerText(sessionId, "send once", storage).draft
-				.composer.revision;
-			const inlineRevision = writeChatInlineEdit(
-				sessionId,
-				{ turnId: "turn-1", text: "edit once", content: [] },
-				storage,
-			).draft.inlineEdit!.revision;
-			const unsubscribe = subscribeChatDraftRuntime(sessionId, () => undefined);
-			const composerToken = beginChatComposerMutation(sessionId)!;
-			const inlineToken = beginChatInlineEditMutation(sessionId)!;
-			unsubscribe();
+	it("waits for every mutation receipt to be acknowledged before evicting an unmounted runtime", () => {
+		const storage = new MemoryStorage();
+		const sessionId = "runtime-two-pending-mutations";
+		const composerRevision = writeChatComposerText(sessionId, "send once", storage).draft
+			.composer.revision;
+		const inlineRevision = writeChatInlineEdit(
+			sessionId,
+			{ turnId: "turn-1", text: "edit once", content: [] },
+			storage,
+		).draft.inlineEdit!.revision;
+		const unsubscribe = subscribeChatDraftRuntime(sessionId, () => undefined);
+		const composerToken = beginChatComposerMutation(sessionId)!;
+		const inlineToken = beginChatInlineEditMutation(sessionId)!;
+		unsubscribe();
 
-			finishChatComposerMutation(
-				sessionId,
-				composerToken,
-				composerRevision,
-				clearAcceptedChatComposer(sessionId, composerRevision, storage),
-			);
-			expect(getChatComposerMutation(sessionId).accepted?.revision).toBe(composerRevision);
-			expect(getChatInlineEditMutation(sessionId).pending).toBe(true);
+		finishChatComposerMutation(
+			sessionId,
+			composerToken,
+			composerRevision,
+			clearAcceptedChatComposer(sessionId, composerRevision, storage),
+		);
+		expect(getChatComposerMutation(sessionId).accepted?.revision).toBe(composerRevision);
+		expect(getChatInlineEditMutation(sessionId).pending).toBe(true);
 
-			finishChatInlineEditMutation(
-				sessionId,
-				inlineToken,
-				inlineRevision,
-				clearAcceptedChatInlineEdit(sessionId, inlineRevision, storage),
-			);
-			expect(getChatComposerMutation(sessionId).accepted?.revision).toBe(composerRevision);
-			expect(getChatInlineEditMutation(sessionId).accepted?.revision).toBe(inlineRevision);
-			vi.runOnlyPendingTimers();
-			expect(getChatComposerMutation(sessionId)).toEqual({ pending: false });
-			expect(getChatInlineEditMutation(sessionId)).toEqual({ pending: false });
-		} finally {
-			vi.useRealTimers();
-		}
+		finishChatInlineEditMutation(
+			sessionId,
+			inlineToken,
+			inlineRevision,
+			clearAcceptedChatInlineEdit(sessionId, inlineRevision, storage),
+		);
+		expect(getChatComposerMutation(sessionId).accepted?.revision).toBe(composerRevision);
+		expect(getChatInlineEditMutation(sessionId).accepted?.revision).toBe(inlineRevision);
+
+		acknowledgeChatComposerMutation(
+			sessionId,
+			getChatComposerMutation(sessionId).accepted!.sequence,
+		);
+		expect(getChatComposerMutation(sessionId)).toEqual({ pending: false });
+		expect(getChatInlineEditMutation(sessionId).accepted?.revision).toBe(inlineRevision);
+		acknowledgeChatInlineEditMutation(
+			sessionId,
+			getChatInlineEditMutation(sessionId).accepted!.sequence,
+		);
+		expect(getChatComposerMutation(sessionId)).toEqual({ pending: false });
+		expect(getChatInlineEditMutation(sessionId)).toEqual({ pending: false });
 	});
 
 	it("does not let a deleted runtime's late unsubscribe evict a later in-flight owner", () => {

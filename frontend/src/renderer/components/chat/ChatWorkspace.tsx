@@ -38,6 +38,7 @@ import {
 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import {
+	acknowledgeChatInlineEditMutation,
 	beginChatInlineEditMutation,
 	cancelChatInlineEditMutation,
 	clearAcceptedChatInlineEdit,
@@ -1661,10 +1662,7 @@ function Timeline({
 					delivery.revision,
 					result,
 				);
-				const acceptedRuntime = getChatInlineEditMutation(draftScope).accepted;
-				if (acceptedRuntime?.revision === delivery.revision) {
-					setAppliedEditAcceptanceSequence(acceptedRuntime.sequence);
-				}
+				return result.ok;
 			}
 			applyAcceptedInlineEditResult(result);
 			return result.ok;
@@ -1709,7 +1707,13 @@ function Timeline({
 		if (!accepted || accepted.sequence <= appliedEditAcceptanceSequence) return;
 		applyAcceptedInlineEditResult(accepted.result);
 		setAppliedEditAcceptanceSequence(accepted.sequence);
-	}, [appliedEditAcceptanceSequence, applyAcceptedInlineEditResult, inlineEditMutation.accepted]);
+		acknowledgeChatInlineEditMutation(draftScope, accepted.sequence);
+	}, [
+		appliedEditAcceptanceSequence,
+		applyAcceptedInlineEditResult,
+		draftScope,
+		inlineEditMutation.accepted,
+	]);
 
 	const startMessageEdit = useCallback((message: ConversationMessage) => {
 		if (!message.turnId || inlineEditLocked) return;

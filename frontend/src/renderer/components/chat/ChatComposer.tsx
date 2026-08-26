@@ -62,6 +62,7 @@ import {
 import { File } from "lucide-react";
 import type { ChatSkill, ChatSteerOutcome } from "../../types/conversation";
 import {
+	acknowledgeChatComposerMutation,
 	beginChatComposerMutation,
 	cancelChatComposerMutation,
 	chatDraftScopeKey,
@@ -545,10 +546,7 @@ export function ChatComposer({
 					acceptedRevision,
 					result,
 				);
-				const accepted = getChatComposerMutation(draftScope).accepted;
-				if (accepted?.revision === acceptedRevision) {
-					setAppliedAcceptanceSequence(accepted.sequence);
-				}
+				return result.ok && result.cleared;
 			}
 			return applyAcceptedDraftResult(result);
 		},
@@ -608,7 +606,13 @@ export function ChatComposer({
 		if (!accepted || accepted.sequence <= appliedAcceptanceSequence) return;
 		applyAcceptedDraftResult(accepted.result);
 		setAppliedAcceptanceSequence(accepted.sequence);
-	}, [appliedAcceptanceSequence, applyAcceptedDraftResult, composerMutation.accepted]);
+		if (draftScope) acknowledgeChatComposerMutation(draftScope, accepted.sequence);
+	}, [
+		appliedAcceptanceSequence,
+		applyAcceptedDraftResult,
+		composerMutation.accepted,
+		draftScope,
+	]);
 
 	useEffect(() => {
 		if (draftSeedText === undefined) {
