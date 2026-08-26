@@ -24,8 +24,11 @@ func (f executableFinderFunc) LookPath(name string) (string, error) { return f(n
 type Action string
 
 const (
-	ActionLogin        Action = "login"
-	ActionSetup        Action = "setup"
+	// ActionLogin opens an agent's native login flow.
+	ActionLogin Action = "login"
+	// ActionSetup opens an agent's native provider/setup flow.
+	ActionSetup Action = "setup"
+	// ActionInstructions points the user to agent-owned setup documentation.
 	ActionInstructions Action = "instructions"
 )
 
