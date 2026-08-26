@@ -5,18 +5,8 @@ package conpty
 import (
 	"context"
 	"path/filepath"
-	"regexp"
 	"strings"
-	"time"
 )
-
-// readyRE matches the "READY:<pid> <port>" line printed by RunHost.
-var readyRE = regexp.MustCompile(`READY:(\d+) (\d+)`)
-
-const spawnReadyTimeout = 10 * time.Second
-
-// maxCapturedStderr bounds how much pty-host stderr we retain for diagnostics.
-const maxCapturedStderr = 8192
 
 // hostSpawner starts a detached pty-host for the session and returns its
 // loopback address ("127.0.0.1:PORT") and OS pid once it prints READY.
