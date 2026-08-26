@@ -110,6 +110,102 @@ describe("useFileAttachments", () => {
 		expect(result.current.preparing).toBe(false);
 	});
 
+	it("releases a source File after durable staging without dropping fresh native bytes", async () => {
+		const prepareAttachments = vi.fn(async (attachments: FileAttachment[]) =>
+			attachments.map((attachment) => ({
+				...attachment,
+				stagedPath: `.ao/attachments/${attachment.name}`,
+			})),
+		);
+		const owner = renderHook(() =>
+			useFileAttachments({
+				initialKey: "release-durable-source",
+				prepareAttachments,
+			}),
+		);
+		await act(async () => {
+			await owner.result.current.addFiles([file("durable.txt")]);
+		});
+		const id = owner.result.current.attachments[0]?.id ?? "";
+		await expect(owner.result.current.toSettledPayload()).resolves.toEqual([
+			{ mimeType: "text/plain", data: "AQEBAQEBAQE=", name: "durable.txt" },
+		]);
+		expect(prepareAttachments).toHaveBeenCalledTimes(1);
+
+		owner.unmount();
+		const restored = renderHook(() =>
+			useFileAttachments({
+				initialKey: "release-durable-source",
+				prepareAttachments,
+			}),
+		);
+		await waitFor(() => expect(restored.result.current.attachments).toHaveLength(1));
+		let retried = true;
+		await act(async () => {
+			retried = await restored.result.current.retry(id);
+		});
+		expect(retried).toBe(false);
+		expect(prepareAttachments).toHaveBeenCalledTimes(1);
+		act(() => restored.result.current.clear());
+	});
+
+	it("rereads a retained source to recover staging after a warm remount", async () => {
+		const prepareAttachments = vi
+			.fn<(attachments: FileAttachment[]) => Promise<FileAttachment[]>>()
+			.mockRejectedValueOnce(new Error("first staging attempt failed"))
+			.mockImplementation(async (attachments) =>
+				attachments.map((attachment) => ({
+					...attachment,
+					stagedPath: `.ao/attachments/${attachment.name}`,
+				})),
+			);
+		const owner = renderHook(() =>
+			useFileAttachments({
+				initialKey: "recover-staging-after-warm-remount",
+				prepareAttachments,
+			}),
+		);
+		await act(async () => {
+			await owner.result.current.addFiles([file("recover.txt")]);
+		});
+		expect(owner.result.current.attachments).toMatchObject([
+			{ name: "recover.txt", status: "ready" },
+		]);
+		expect(owner.result.current.attachments[0]?.stagedPath).toBeUndefined();
+		expect(owner.result.current.error).toMatch(/couldn.t be saved/i);
+		owner.unmount();
+
+		const restored = renderHook(() =>
+			useFileAttachments({
+				initialKey: "recover-staging-after-warm-remount",
+				prepareAttachments,
+			}),
+		);
+		await waitFor(() =>
+			expect(restored.result.current.attachments).toMatchObject([
+				{ name: "recover.txt", status: "ready" },
+			]),
+		);
+		expect(restored.result.current.attachments[0]?.data).toBeUndefined();
+		expect(restored.result.current.attachments[0]?.stagedPath).toBeUndefined();
+		let settled: unknown;
+		await act(async () => {
+			settled = await restored.result.current.toSettledPayload();
+		});
+		expect(settled).toEqual([]);
+		expect(prepareAttachments).toHaveBeenCalledTimes(2);
+		expect(prepareAttachments.mock.calls[1]?.[0]).toMatchObject([
+			{ mimeType: "text/plain", data: "AQEBAQEBAQE=", name: "recover.txt" },
+		]);
+		expect(restored.result.current.attachments[0]).toMatchObject({
+			status: "ready",
+			stagedPath: ".ao/attachments/recover.txt",
+		});
+		expect(restored.result.current.attachments[0]?.data).toBeUndefined();
+		expect(restored.result.current.error).toBeNull();
+		act(() => restored.result.current.clear());
+	});
+
 	it("keeps a failed read visible for retry and removal", async () => {
 		let failRead!: () => void;
 		let finishRetry!: () => void;
@@ -168,6 +264,94 @@ describe("useFileAttachments", () => {
 
 		act(() => result.current.remove(id));
 		expect(result.current.attachments).toEqual([]);
+	});
+
+	it("serializes retry staging with its original add and stages each file once", async () => {
+		let failFirstRead!: () => void;
+		let finishFirstRetry!: () => void;
+		let finishSecondRead!: () => void;
+		const readAttempts = new Map<string, number>();
+		class OverlappingFileReader {
+			error: Error | null = null;
+			result: string | ArrayBuffer | null = null;
+			onerror: (() => void) | null = null;
+			onload: (() => void) | null = null;
+
+			readAsDataURL(selected: File) {
+				const attempt = (readAttempts.get(selected.name) ?? 0) + 1;
+				readAttempts.set(selected.name, attempt);
+				if (selected.name === "first.txt" && attempt === 1) {
+					failFirstRead = () => {
+						this.error = new Error("first read failed");
+						this.onerror?.();
+					};
+					return;
+				}
+				const finish = () => {
+					this.result = `data:${selected.type};base64,UkVBRFk=`;
+					this.onload?.();
+				};
+				if (selected.name === "first.txt") finishFirstRetry = finish;
+				else finishSecondRead = finish;
+			}
+		}
+		vi.stubGlobal("FileReader", OverlappingFileReader);
+
+		let activePreparations = 0;
+		let maxActivePreparations = 0;
+		const stagedNames: string[] = [];
+		const releases: Array<() => void> = [];
+		const prepareAttachments = vi.fn(
+			(attachments: FileAttachment[]) =>
+				new Promise<FileAttachment[]>((resolve) => {
+					activePreparations += 1;
+					maxActivePreparations = Math.max(maxActivePreparations, activePreparations);
+					stagedNames.push(...attachments.map(({ name }) => name));
+					releases.push(() => {
+						activePreparations -= 1;
+						resolve(
+							attachments.map((attachment) => ({
+								...attachment,
+								stagedPath: `.ao/attachments/${attachment.name}`,
+							})),
+						);
+					});
+				}),
+		);
+		const { result } = renderHook(() =>
+			useFileAttachments({
+				initialKey: "serialize-retry-with-original-add",
+				prepareAttachments,
+			}),
+		);
+		let adding!: Promise<void>;
+		act(() => {
+			adding = result.current.addFiles([file("first.txt"), file("second.txt")]);
+		});
+		await act(async () => failFirstRead());
+		await waitFor(() =>
+			expect(result.current.attachments[0]).toMatchObject({ status: "failed" }),
+		);
+
+		const firstID = result.current.attachments[0]?.id ?? "";
+		let retrying!: Promise<boolean>;
+		act(() => {
+			retrying = result.current.retry(firstID);
+		});
+		await act(async () => finishFirstRetry());
+		await waitFor(() => expect(prepareAttachments).toHaveBeenCalledTimes(1));
+		await act(async () => finishSecondRead());
+
+		await act(async () => releases.shift()?.());
+		await waitFor(() => expect(prepareAttachments).toHaveBeenCalledTimes(2));
+		await act(async () => {
+			releases.shift()?.();
+			await Promise.all([adding, retrying]);
+		});
+
+		expect(maxActivePreparations).toBe(1);
+		expect(stagedNames.filter((name) => name === "first.txt")).toHaveLength(1);
+		expect(stagedNames.filter((name) => name === "second.txt")).toHaveLength(1);
 	});
 
 	it("keeps the whole read-and-stage window pending and serializes concurrent batches", async () => {
@@ -399,6 +583,33 @@ describe("useFileAttachments", () => {
 		expect(owner.result.current.attachments).toMatchObject([
 			{ name: "first.txt", status: "ready" },
 		]);
+	});
+
+	it("preserves an undurable retry that settles after capture but before discard", async () => {
+		const sessionId = "preserve-settled-post-confirmation-retry";
+		const prepareAttachments = vi.fn().mockRejectedValue(new Error("disk full"));
+		const owner = renderHook(() =>
+			useFileAttachments({ initialKey: sessionId, prepareAttachments }),
+		);
+		await act(async () => {
+			await owner.result.current.addFiles([file("retry-after-confirmation.txt")]);
+		});
+		const id = owner.result.current.attachments[0]?.id ?? "";
+		const captured = capturePendingFileAttachmentsForSession(sessionId);
+
+		let retried = true;
+		await act(async () => {
+			retried = await owner.result.current.retry(id);
+		});
+		expect(retried).toBe(false);
+		expect(prepareAttachments).toHaveBeenCalledTimes(2);
+		act(() => discardCapturedPendingFileAttachments(captured));
+
+		expect(owner.result.current.attachments).toMatchObject([
+			{ id, name: "retry-after-confirmation.txt", status: "ready" },
+		]);
+		expect(owner.result.current.attachments[0]?.stagedPath).toBeUndefined();
+		act(() => owner.result.current.clear());
 	});
 
 	it("ignores a discarded completion that resolves after a replacement attachment", async () => {

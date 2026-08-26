@@ -126,10 +126,15 @@ function attachmentDeliveryLabel(
 	if (attachment.status === "reading") return "Reading…";
 	if (attachment.status === "failed") return "Read failed · retry or remove";
 	const deliversNativeImage =
-		nativeImages && isSupportedImageAttachment(attachment.mimeType);
-	if (canStage && deliversNativeImage) return "Worktree path + native image";
+		nativeImages &&
+		attachment.data !== undefined &&
+		isSupportedImageAttachment(attachment.mimeType);
+	const hasWorktreePath = Boolean(attachment.stagedPath);
+	if (hasWorktreePath && deliversNativeImage) return "Worktree path + native image";
+	if (deliversNativeImage && canStage) return "Native image · worktree save pending";
 	if (deliversNativeImage) return "Native image";
-	if (canStage) return "Worktree path · agent must read";
+	if (hasWorktreePath) return "Worktree path · agent must read";
+	if (canStage) return "Worktree save pending";
 	return "Cannot be delivered";
 }
 
@@ -1301,7 +1306,9 @@ export function ChatComposer({
 										{file.name}
 									</span>
 									<span
-										role={file.status === "reading" ? "status" : undefined}
+										role="status"
+										aria-live="polite"
+										aria-atomic="true"
 										className="truncate text-[10px] leading-tight text-muted-foreground"
 									>
 										{attachmentDeliveryLabel(file, canStageAttachments, Boolean(nativeImages))}

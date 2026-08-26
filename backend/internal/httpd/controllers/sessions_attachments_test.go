@@ -218,11 +218,28 @@ func TestAttachmentDisplayNamesStayPortableForUntrustedMIMESubtypes(t *testing.T
 }
 
 func TestDecodeSpawnAttachmentsBlocksParameterizedSVG(t *testing.T) {
-	_, err := decodeSpawnAttachments([]AttachmentInput{{
-		Name: "vector.svg", MimeType: "image/svg+xml; charset=utf-8", Data: b64([]byte("<svg/>")),
-	}})
-	if err == nil || err.code != "UNSUPPORTED_ATTACHMENT_TYPE" {
-		t.Fatalf("want UNSUPPORTED_ATTACHMENT_TYPE, got %+v", err)
+	for _, mimeType := range []string{
+		"image/svg+xml; charset=utf-8",
+		"image/svg+xml; =bad",
+		" IMAGE/SVG+XML ; broken",
+	} {
+		t.Run(mimeType, func(t *testing.T) {
+			input := AttachmentInput{
+				Name: "vector.svg", MimeType: mimeType, Data: b64([]byte("<svg/>")),
+			}
+			_, err := decodeSpawnAttachments([]AttachmentInput{input})
+			if err == nil || err.code != "UNSUPPORTED_ATTACHMENT_TYPE" {
+				t.Fatalf("spawn: want UNSUPPORTED_ATTACHMENT_TYPE, got %+v", err)
+			}
+			_, err = conversationContent(SendConversationMessageRequest{
+				Attachments: []ConversationImageContentRequest{{
+					Name: input.Name, MIMEType: input.MimeType, Data: input.Data,
+				}},
+			})
+			if err == nil || err.code != "UNSUPPORTED_ATTACHMENT_TYPE" {
+				t.Fatalf("conversation: want UNSUPPORTED_ATTACHMENT_TYPE, got %+v", err)
+			}
+		})
 	}
 }
 

@@ -64,7 +64,9 @@ type SharedAttachmentEntry = {
 	pending: Map<symbol, Set<string>>;
 	generation: number;
 	listeners: Map<symbol, (update: SharedAttachmentUpdate) => void>;
+	stagingQueue: Promise<void>;
 	attachments?: FileAttachment[];
+	descriptorVersions: Map<string, number>;
 	error?: string | null;
 	sources: Map<string, File>;
 };
@@ -75,11 +77,12 @@ type CapturedPendingFileAttachmentEntry = {
 	key: string;
 	generation: number;
 	tokens: readonly symbol[];
+	undurable: readonly { id: string; version: number }[];
 };
 
 const pendingFileAttachmentCaptureEntries = Symbol("pending-file-attachment-capture");
 
-/** Opaque handle for attachment work that was pending at a user-approved boundary. */
+/** Opaque handle for pending work and undurable drafts at a user-approved boundary. */
 export type PendingFileAttachmentCapture = {
 	readonly [pendingFileAttachmentCaptureEntries]: readonly CapturedPendingFileAttachmentEntry[];
 };
@@ -104,7 +107,14 @@ const sharedAttachmentEntries = new Map<string, SharedAttachmentEntry>();
 function sharedEntry(key: string): SharedAttachmentEntry {
 	let entry = sharedAttachmentEntries.get(key);
 	if (!entry) {
-		entry = { pending: new Map(), generation: 0, listeners: new Map(), sources: new Map() };
+		entry = {
+			pending: new Map(),
+			generation: 0,
+			listeners: new Map(),
+			stagingQueue: Promise.resolve(),
+			descriptorVersions: new Map(),
+			sources: new Map(),
+		};
 		sharedAttachmentEntries.set(key, entry);
 	}
 	return entry;
@@ -117,7 +127,31 @@ function notifySharedAttachmentEntry(
 ): void {
 	const entry = sharedAttachmentEntries.get(key);
 	if (!entry) return;
-	if (update.attachments !== undefined) entry.attachments = update.attachments;
+	if (update.attachments !== undefined) {
+		const previous = new Map(entry.attachments?.map((attachment) => [attachment.id, attachment]));
+		const nextIDs = new Set<string>();
+		for (const attachment of update.attachments) {
+			nextIDs.add(attachment.id);
+			const before = previous.get(attachment.id);
+			if (
+				!before ||
+				before.mimeType !== attachment.mimeType ||
+				before.bytes !== attachment.bytes ||
+				before.name !== attachment.name ||
+				before.status !== attachment.status ||
+				before.stagedPath !== attachment.stagedPath
+			) {
+				entry.descriptorVersions.set(
+					attachment.id,
+					(entry.descriptorVersions.get(attachment.id) ?? 0) + 1,
+				);
+			}
+		}
+		for (const id of entry.descriptorVersions.keys()) {
+			if (!nextIDs.has(id)) entry.descriptorVersions.delete(id);
+		}
+		entry.attachments = update.attachments;
+	}
 	if (update.error !== undefined) entry.error = update.error;
 	const notification = { pending: entry.pending.size, ...update };
 	for (const [token, listener] of entry.listeners) {
@@ -165,7 +199,10 @@ function discardSharedAttachmentTokens(
 		}
 		const abandonedIds = new Set([...discardedIds].filter((id) => !stillOwned.has(id)));
 		entry.attachments = entry.attachments?.filter(({ id }) => !abandonedIds.has(id)) ?? [];
-		for (const id of abandonedIds) entry.sources.delete(id);
+		for (const id of abandonedIds) {
+			entry.descriptorVersions.delete(id);
+			entry.sources.delete(id);
+		}
 	}
 	return changed;
 }
@@ -234,21 +271,64 @@ function attachmentKeyBelongsToSession(key: string, sessionId: string): boolean 
 	return key === sessionId || chatDraftScopeSessionId(key) === sessionId;
 }
 
-/** Capture only the work that is pending when the user confirms leaving Chat. */
+/** Capture pending work and settled-undurable drafts when leaving is confirmed. */
 export function capturePendingFileAttachmentsForSession(
 	sessionId: string,
 ): PendingFileAttachmentCapture {
 	const entries: CapturedPendingFileAttachmentEntry[] = [];
 	for (const [key, entry] of sharedAttachmentEntries) {
-		if (!attachmentKeyBelongsToSession(key, sessionId) || entry.pending.size === 0) continue;
-		entries.push({ key, generation: entry.generation, tokens: [...entry.pending.keys()] });
+		if (!attachmentKeyBelongsToSession(key, sessionId)) continue;
+		const undurable =
+			entry.attachments?.flatMap((attachment) =>
+				attachment.stagedPath
+					? []
+					: [{ id: attachment.id, version: entry.descriptorVersions.get(attachment.id) ?? 0 }],
+			) ?? [];
+		if (entry.pending.size === 0 && undurable.length === 0) continue;
+		entries.push({
+			key,
+			generation: entry.generation,
+			tokens: [...entry.pending.keys()],
+			undurable,
+		});
 	}
 	return { [pendingFileAttachmentCaptureEntries]: entries };
 }
 
+function discardCapturedUndurableAttachments(
+	entry: SharedAttachmentEntry,
+	captured: CapturedPendingFileAttachmentEntry,
+): boolean {
+	const stillOwned = new Set<string>();
+	for (const owned of entry.pending.values()) {
+		for (const id of owned) stillOwned.add(id);
+	}
+	const capturedVersions = new Map(captured.undurable.map(({ id, version }) => [id, version]));
+	const abandoned = new Set<string>();
+	for (const attachment of entry.attachments ?? []) {
+		const capturedVersion = capturedVersions.get(attachment.id);
+		if (
+			capturedVersion === undefined ||
+			attachment.stagedPath ||
+			stillOwned.has(attachment.id) ||
+			entry.descriptorVersions.get(attachment.id) !== capturedVersion
+		) {
+			continue;
+		}
+		abandoned.add(attachment.id);
+	}
+	if (abandoned.size === 0) return false;
+	entry.attachments = entry.attachments?.filter(({ id }) => !abandoned.has(id)) ?? [];
+	for (const id of abandoned) {
+		entry.descriptorVersions.delete(id);
+		entry.sources.delete(id);
+	}
+	return true;
+}
+
 /**
- * Cancel exactly the pending work represented by a prior confirmation. Work
- * begun afterward remains current and can finish into the recoverable draft.
+ * Abandon exactly the pending work and unchanged undurable descriptors from a
+ * prior confirmation. Work begun afterward remains recoverable.
  */
 export function discardCapturedPendingFileAttachments(
 	capture: PendingFileAttachmentCapture,
@@ -256,9 +336,13 @@ export function discardCapturedPendingFileAttachments(
 	for (const captured of capture[pendingFileAttachmentCaptureEntries]) {
 		const entry = sharedAttachmentEntries.get(captured.key);
 		if (!entry || entry.generation !== captured.generation) continue;
-		const changed = discardSharedAttachmentTokens(entry, captured.tokens);
-		if (!changed) continue;
-		notifySharedAttachmentEntry(captured.key, { attachments: entry.attachments ?? [] });
+		const discardedPending = discardSharedAttachmentTokens(entry, captured.tokens);
+		const discardedUndurable = discardCapturedUndurableAttachments(entry, captured);
+		if (!discardedPending && !discardedUndurable) continue;
+		notifySharedAttachmentEntry(captured.key, {
+			attachments: entry.attachments ?? [],
+			...(discardedUndurable ? { error: null } : {}),
+		});
 		if (
 			entry.pending.size === 0 &&
 			entry.listeners.size === 0 &&
@@ -353,6 +437,7 @@ export function useFileAttachments(options: FileAttachmentOptions = {}) {
 	const pendingReadsRef = useRef<Map<string, Promise<void>>>(new Map());
 	const pendingRetriesRef = useRef<Set<Promise<boolean>>>(new Set());
 	const addQueueRef = useRef<Promise<void>>(Promise.resolve());
+	const stagingQueueRef = useRef<Promise<void>>(Promise.resolve());
 	const queuedAddsRef = useRef(0);
 
 	const commitAttachments = useCallback(
@@ -461,26 +546,47 @@ export function useFileAttachments(options: FileAttachmentOptions = {}) {
 	);
 
 	const stageReadyAttachments = useCallback(
-		async (ids?: ReadonlySet<string>, sharedWork?: SharedAttachmentWork): Promise<void> => {
-			if (!prepareAttachments) return;
-			if (initialKey && sharedWork && !sharedAttachmentWorkIsCurrent(initialKey, sharedWork)) return;
-			const ready = attachmentsRef.current.filter(
-				(attachment) =>
-					(ids === undefined || ids.has(attachment.id)) &&
-					attachment.status === "ready" &&
-					!attachment.stagedPath &&
-					attachment.data !== undefined,
+		(ids?: ReadonlySet<string>, sharedWork?: SharedAttachmentWork): Promise<void> => {
+			if (!prepareAttachments) return Promise.resolve();
+			const shared = initialKey ? sharedEntry(initialKey) : undefined;
+			const queue = shared?.stagingQueue ?? stagingQueueRef.current;
+			const run = queue.then(async () => {
+				if (initialKey && sharedWork && !sharedAttachmentWorkIsCurrent(initialKey, sharedWork)) return;
+				// Select work only after earlier staging settles. A retry can otherwise
+				// overlap its original add and stage the same attachment twice.
+				const ready = attachmentsRef.current.filter(
+					(attachment) =>
+						(ids === undefined || ids.has(attachment.id)) &&
+						attachment.status === "ready" &&
+						!attachment.stagedPath &&
+						attachment.data !== undefined,
+				);
+				if (ready.length === 0) return;
+				const prepared = await prepareAttachments(ready);
+				if (initialKey && sharedWork && !sharedAttachmentWorkIsCurrent(initialKey, sharedWork)) return;
+				if (prepared.length !== ready.length) {
+					throw new Error("Attachment staging returned an incomplete result");
+				}
+				const preparedByID = new Map(prepared.map((attachment) => [attachment.id, attachment]));
+				commitAttachments(
+					attachmentsRef.current.map((attachment) => preparedByID.get(attachment.id) ?? attachment),
+				);
+				// The staged descriptor is now the durable retry boundary. Keep the
+				// decoded bytes on the fresh attachment for native delivery, but release
+				// the original File so a session-scoped registry cannot pin its Blob.
+				for (const attachment of prepared) {
+					if (!attachment.stagedPath) continue;
+					sourceFilesRef.current.delete(attachment.id);
+					shared?.sources.delete(attachment.id);
+				}
+			});
+			const nextQueue = run.then(
+				() => undefined,
+				() => undefined,
 			);
-			if (ready.length === 0) return;
-			const prepared = await prepareAttachments(ready);
-			if (initialKey && sharedWork && !sharedAttachmentWorkIsCurrent(initialKey, sharedWork)) return;
-			if (prepared.length !== ready.length) {
-				throw new Error("Attachment staging returned an incomplete result");
-			}
-			const preparedByID = new Map(prepared.map((attachment) => [attachment.id, attachment]));
-			commitAttachments(
-				attachmentsRef.current.map((attachment) => preparedByID.get(attachment.id) ?? attachment),
-			);
+			if (shared) shared.stagingQueue = nextQueue;
+			else stagingQueueRef.current = nextQueue;
+			return run;
 		},
 		[commitAttachments, initialKey, prepareAttachments],
 	);
@@ -740,22 +846,61 @@ export function useFileAttachments(options: FileAttachmentOptions = {}) {
 		if (prepareAttachments && currentBeforeStage.some(({ stagedPath }) => !stagedPath)) {
 			const sharedKey = initialKey;
 			const sharedWork = sharedKey ? beginSharedAttachmentWork(sharedKey) : undefined;
+			const unstaged = currentBeforeStage.filter(({ stagedPath }) => !stagedPath);
 			if (sharedKey && sharedWork) {
 				registerSharedAttachmentWorkIds(
 					sharedKey,
 					sharedWork,
-					currentBeforeStage.filter(({ stagedPath }) => !stagedPath).map(({ id }) => id),
+					unstaged.map(({ id }) => id),
 				);
 			}
 			setPreparing(true);
+			const rehydratedIDs = new Set<string>();
 			try {
+				// A failed staging attempt keeps the source for retry, while shared
+				// descriptors intentionally omit native bytes. Rehydrate those bytes at
+				// the next approved send boundary before trying durable staging again.
+				await Promise.all(
+					unstaged.flatMap((attachment) => {
+						if (attachment.data !== undefined) return [];
+						const source = sourceFilesRef.current.get(attachment.id);
+						if (!source) return [];
+						rehydratedIDs.add(attachment.id);
+						updateAttachment(attachment.id, (current) => ({
+							...current,
+							status: "reading",
+							dataUrl: undefined,
+							data: undefined,
+						}));
+						return [readAttachment(attachment.id, source, sharedWork)];
+					}),
+				);
+				if (attachmentsRef.current.some(({ status }) => status === "failed")) {
+					throw new Error("Attachment source could not be reread");
+				}
 				await stageReadyAttachments(undefined, sharedWork);
+				if (attachmentsRef.current.some(({ stagedPath }) => !stagedPath)) {
+					throw new Error("Attachment staging did not produce durable paths");
+				}
 				commitError(null);
 			} catch {
-				const message = "The files could not be attached. Nothing was sent.";
+				const message = attachmentsRef.current.some(({ status }) => status === "failed")
+					? "Some files couldn't be read. Retry or remove them before sending."
+					: "The files could not be attached. Nothing was sent.";
 				commitError(message);
 				throw new Error(message);
 			} finally {
+				if (rehydratedIDs.size > 0) {
+					// Bytes recovered solely for warm-remount staging never become a
+					// provider payload, even when this staging attempt fails again.
+					commitAttachments(
+						attachmentsRef.current.map((attachment) =>
+							rehydratedIDs.has(attachment.id)
+								? { ...attachment, data: undefined, dataUrl: undefined }
+								: attachment,
+						),
+					);
+				}
 				if (sharedKey && sharedWork) endSharedAttachmentWork(sharedKey, sharedWork.token);
 				else {
 					setPreparing(queuedAddsRef.current > 0 || pendingRetriesRef.current.size > 0);
@@ -766,7 +911,16 @@ export function useFileAttachments(options: FileAttachmentOptions = {}) {
 			throw new Error("The files are not durably available. Nothing was sent.");
 		}
 		return payloadsFor(attachmentsRef.current);
-	}, [commitError, initialKey, payloadsFor, prepareAttachments, stageReadyAttachments]);
+	}, [
+		commitAttachments,
+		commitError,
+		initialKey,
+		payloadsFor,
+		prepareAttachments,
+		readAttachment,
+		stageReadyAttachments,
+		updateAttachment,
+	]);
 
 	const hasAttachments = useCallback(() => attachmentsRef.current.length > 0, []);
 	const currentAttachments = useCallback(() => attachmentsRef.current, []);

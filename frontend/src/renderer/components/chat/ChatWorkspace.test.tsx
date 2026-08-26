@@ -1956,11 +1956,15 @@ describe("ChatWorkspace message actions", () => {
 			},
 		});
 		await waitFor(() => expect(onStageAttachments).toHaveBeenCalledTimes(1));
-		expect(screen.getByRole("status")).toHaveTextContent("Saving attachments");
+		expect(
+			screen.getByText("Saving attachments… Wait before leaving this chat."),
+		).toHaveAttribute("role", "status");
 		firstView.unmount();
 
 		render(<ChatWorkspace {...common} />);
-		expect(screen.getByRole("status")).toHaveTextContent("Saving attachments");
+		expect(
+			screen.getByText("Saving attachments… Wait before leaving this chat."),
+		).toHaveAttribute("role", "status");
 		await act(async () => finishStaging([".ao/attachments/attachment-pending.txt"]));
 
 		expect(await screen.findByLabelText("Remove pending.txt")).toBeInTheDocument();

@@ -82,11 +82,12 @@ func TestStageAttachmentsRejectsWhatSpawnRejects(t *testing.T) {
 	srv := stagingServer(t, newFakeSessionService())
 
 	for name, payload := range map[string]string{
-		"svg":            `{"attachments":[{"mimeType":"image/svg+xml","data":"PHN2Zy8+"}]}`,
-		"bad base64":     `{"attachments":[{"mimeType":"image/png","data":"!!!"}]}`,
-		"empty payload":  `{"attachments":[{"mimeType":"image/png","data":""}]}`,
-		"too many":       pngBody(9),
-		"no attachments": `{"attachments":[]}`,
+		"svg":                  `{"attachments":[{"mimeType":"image/svg+xml","data":"PHN2Zy8+"}]}`,
+		"malformed svg params": `{"attachments":[{"mimeType":"image/svg+xml; =bad","data":"PHN2Zy8+"}]}`,
+		"bad base64":           `{"attachments":[{"mimeType":"image/png","data":"!!!"}]}`,
+		"empty payload":        `{"attachments":[{"mimeType":"image/png","data":""}]}`,
+		"too many":             pngBody(9),
+		"no attachments":       `{"attachments":[]}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			body, status, _ := doRequest(t, srv, http.MethodPost,

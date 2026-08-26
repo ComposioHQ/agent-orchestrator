@@ -302,6 +302,17 @@ func normalizeAttachmentMIMEType(raw string) (string, bool) {
 	return strings.ToLower(mediaType), true
 }
 
+// attachmentMIMETypeIsBlocked fails closed when a blocked base media type has
+// malformed parameters. ParseMediaType rejects the whole declaration in that
+// case, but downstream consumers may still interpret the base type as SVG.
+func attachmentMIMETypeIsBlocked(raw string) bool {
+	if mediaType, ok := normalizeAttachmentMIMEType(raw); ok {
+		return blockedAttachmentMimes[mediaType]
+	}
+	base, _, _ := strings.Cut(strings.TrimSpace(raw), ";")
+	return blockedAttachmentMimes[strings.ToLower(strings.TrimSpace(base))]
+}
+
 // normalizeAttachmentExtension accepts only portable, bounded basename
 // characters. The leading dot is required; additional dots are allowed for
 // conventional compound extensions but never consecutively or at the edges.
@@ -428,8 +439,7 @@ func sanitizeAttachmentDisplayName(raw, ext string) string {
 // the blocked-MIME-type rule and per-file size cap. Callers handling multiple
 // attachments are responsible for the count and total-size caps.
 func decodeAttachment(a AttachmentInput) (ports.SpawnAttachment, *attachmentError) {
-	mimeType, validMIMEType := normalizeAttachmentMIMEType(a.MimeType)
-	if validMIMEType && blockedAttachmentMimes[mimeType] {
+	if attachmentMIMETypeIsBlocked(a.MimeType) {
 		return ports.SpawnAttachment{}, &attachmentError{"UNSUPPORTED_ATTACHMENT_TYPE", "unsupported attachment type"}
 	}
 	ext := extensionForMimeType(a.MimeType)

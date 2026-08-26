@@ -1471,7 +1471,7 @@ describe("attachments", () => {
 		]);
 	});
 
-	it("discloses path-only and combined delivery before send", async () => {
+	it("keeps fresh path-only and combined disclosures aligned with outgoing payloads", async () => {
 		const first = renderComposer({
 			onStageAttachments: vi.fn().mockResolvedValue([".ao/attachments/path-only.png"]),
 		});
@@ -1479,6 +1479,11 @@ describe("attachments", () => {
 		const pathOnly = await screen.findByRole("listitem");
 		await waitFor(() => expect(pathOnly).toHaveTextContent(/worktree path.*agent must read/i));
 		expect(pathOnly).not.toHaveTextContent(/native image/i);
+		await typeInComposer(first.field, "Inspect by path");
+		await userEvent.keyboard("{Enter}");
+		await waitFor(() => expect(first.onSend).toHaveBeenCalledTimes(1));
+		expect(first.onSend.mock.calls[0]?.[0]).toContain(".ao/attachments/path-only.png");
+		expect(first.onSend.mock.calls[0]?.[1]).toBeUndefined();
 
 		cleanup();
 		const second = renderComposer({
@@ -1490,6 +1495,100 @@ describe("attachments", () => {
 		await waitFor(() =>
 			expect(combined).toHaveTextContent(/worktree path.*native image|native image.*worktree path/i),
 		);
+		await typeInComposer(second.field, "Inspect both ways");
+		await userEvent.keyboard("{Enter}");
+		await waitFor(() => expect(second.onSend).toHaveBeenCalledTimes(1));
+		expect(second.onSend.mock.calls[0]?.[0]).toContain(".ao/attachments/combined.png");
+		expect(second.onSend.mock.calls[0]?.[1]).toEqual([
+			{ mimeType: "image/png", data: expect.any(String), name: "combined.png" },
+		]);
+	});
+
+	it("shows path-only delivery after a combined image remount drops native bytes", async () => {
+		const sessionId = "combined-image-remount-delivery";
+		const onSend = vi.fn();
+		const stage = vi.fn().mockResolvedValue([".ao/attachments/remounted-combined.png"]);
+		const props = {
+			onSend,
+			onStageAttachments: stage,
+			nativeImages: true,
+			draftSessionId: sessionId,
+		};
+		const firstView = render(<ChatComposer {...props} />);
+		fireEvent.paste(screen.getByLabelText("Message the agent"), {
+			clipboardData: clipboardData([png("remounted-combined.png")]),
+		});
+		await waitFor(() => expect(stage).toHaveBeenCalledTimes(1));
+		await waitFor(() =>
+			expect(screen.getByRole("listitem")).toHaveTextContent(
+				"Worktree path + native image",
+			),
+		);
+
+		firstView.unmount();
+		render(<ChatComposer {...props} />);
+		const restored = await screen.findByRole("listitem");
+		expect(restored).toHaveTextContent("Worktree path · agent must read");
+		expect(restored).not.toHaveTextContent("native image");
+
+		const field = screen.getByLabelText("Message the agent");
+		await typeInComposer(field, "Inspect the remounted image");
+		await userEvent.keyboard("{Enter}");
+		await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+		expect(onSend.mock.calls[0]?.[0]).toContain(".ao/attachments/remounted-combined.png");
+		expect(onSend.mock.calls[0]?.[1]).toBeUndefined();
+	});
+
+	it("shows path-only delivery after a cold reload restores only durable metadata", async () => {
+		const sessionId = "combined-image-cold-reload-delivery";
+		writeChatAttachments(sessionId, [
+			{
+				id: "cold-restored-image",
+				path: ".ao/attachments/cold-restored-combined.png",
+				name: "cold-restored-combined.png",
+				mimeType: "image/png",
+				bytes: 4,
+			},
+		]);
+		const onSend = vi.fn();
+		const stage = vi.fn();
+		render(
+			<ChatComposer
+				onSend={onSend}
+				onStageAttachments={stage}
+				nativeImages
+				draftSessionId={sessionId}
+			/>,
+		);
+		const restored = await screen.findByRole("listitem");
+		expect(restored).toHaveTextContent("Worktree path · agent must read");
+		expect(restored).not.toHaveTextContent("native image");
+
+		const field = screen.getByLabelText("Message the agent");
+		await typeInComposer(field, "Inspect after a cold reload");
+		await userEvent.keyboard("{Enter}");
+		await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+		expect(stage).not.toHaveBeenCalled();
+		expect(onSend.mock.calls[0]?.[0]).toContain(
+			".ao/attachments/cold-restored-combined.png",
+		);
+		expect(onSend.mock.calls[0]?.[1]).toBeUndefined();
+	});
+
+	it("keeps delivery route changes in a persistent polite status", async () => {
+		const staged = deferred<string[]>();
+		const { field } = renderComposer({ onStageAttachments: () => staged.promise });
+		fireEvent.paste(field, { clipboardData: clipboardData([png("announced.png")]) });
+		const chip = await screen.findByRole("listitem");
+		await waitFor(() => expect(chip).toHaveTextContent("Worktree save pending"));
+		const delivery = within(chip).getByText("Worktree save pending");
+		expect(delivery).toHaveAttribute("role", "status");
+		expect(delivery).toHaveAttribute("aria-live", "polite");
+		expect(delivery).toHaveAttribute("aria-atomic", "true");
+
+		act(() => staged.resolve([".ao/attachments/announced.png"]));
+		await waitFor(() => expect(delivery).toHaveTextContent("Worktree path · agent must read"));
+		expect(delivery).toHaveAttribute("role", "status");
 	});
 
 	it("waits for a pending reader and never sends existing text early", async () => {
@@ -1640,11 +1739,23 @@ describe("attachments", () => {
 		expect(screen.getAllByRole("status")).toHaveLength(2);
 
 		await act(async () => finishFirstRetry());
-		await waitFor(() => expect(screen.getAllByRole("status")).toHaveLength(1));
+		await waitFor(() =>
+			expect(
+				within(screen.getAllByRole("listitem")[0]).getByRole("status"),
+			).not.toHaveTextContent("Reading…"),
+		);
+		expect(within(screen.getAllByRole("listitem")[1]).getByRole("status")).toHaveTextContent(
+			"Reading…",
+		);
 		expect(screen.getByRole("alert")).toHaveTextContent("2 files couldn't be read");
 
 		await act(async () => failSecondRetry());
-		await waitFor(() => expect(screen.queryByRole("status")).not.toBeInTheDocument());
+		await waitFor(() =>
+			expect(within(screen.getAllByRole("listitem")[1]).getByRole("status")).toHaveTextContent(
+				"Read failed",
+			),
+		);
+		expect(screen.getAllByRole("status")).toHaveLength(2);
 		expect(screen.getByRole("alert")).toHaveTextContent(
 			"second.png couldn't be read. Retry or remove it.",
 		);
@@ -1720,7 +1831,7 @@ describe("attachments", () => {
 		fireEvent.paste(field, { clipboardData: clipboardData([png("a.png"), png("b.png")]) });
 
 		await waitFor(() => expect(screen.getAllByRole("listitem")).toHaveLength(2));
-		expect(screen.getByLabelText("Remove a.png")).toBeTruthy();
+		await waitFor(() => expect(screen.getByLabelText("Remove a.png")).toBeEnabled());
 
 		await userEvent.click(screen.getByLabelText("Remove a.png"));
 		await waitFor(() => expect(screen.getAllByRole("listitem")).toHaveLength(1));
@@ -1827,7 +1938,10 @@ describe("attachments", () => {
 		);
 		expect(stage).toHaveBeenCalledTimes(1);
 		expect(onSend).not.toHaveBeenCalled();
-		expect(screen.getByRole("listitem")).toHaveTextContent("shot.png");
+		const pendingChip = screen.getByRole("listitem");
+		expect(pendingChip).toHaveTextContent("shot.png");
+		expect(pendingChip).toHaveTextContent("Worktree save pending");
+		expect(pendingChip).not.toHaveTextContent("Worktree path");
 		expect(field.textContent).toBe("");
 
 		await userEvent.keyboard("{Enter}");
@@ -1835,6 +1949,53 @@ describe("attachments", () => {
 		expect(stage).toHaveBeenCalledTimes(2);
 		expect(onSend.mock.calls[0]?.[0]).toContain("attachment-retry-after-stage.png");
 		await waitFor(() => expect(screen.queryByRole("listitem")).not.toBeInTheDocument());
+	});
+
+	it("keeps fail-fail-success warm-remount recovery path-only", async () => {
+		const stage = vi
+			.fn()
+			.mockRejectedValueOnce(new Error("disk full"))
+			.mockRejectedValueOnce(new Error("disk still full"))
+			.mockResolvedValueOnce([".ao/attachments/attachment-warm-recovery.png"]);
+		const onSend = vi.fn();
+		const props = {
+			onSend,
+			onStageAttachments: stage,
+			nativeImages: true,
+			draftSessionId: "warm-remount-staging-recovery",
+		};
+		const firstView = render(<ChatComposer {...props} />);
+		fireEvent.paste(screen.getByLabelText("Message the agent"), {
+			clipboardData: clipboardData([png("warm-recovery.png")]),
+		});
+		expect(await screen.findByRole("alert")).toHaveTextContent(
+			"Files couldn’t be saved. Retry sending to save them again.",
+		);
+		expect(screen.getByRole("listitem")).toHaveTextContent(
+			"Native image · worktree save pending",
+		);
+		firstView.unmount();
+
+		render(<ChatComposer {...props} />);
+		const restored = await screen.findByRole("listitem");
+		expect(restored).toHaveTextContent("Worktree save pending");
+		expect(restored).not.toHaveTextContent("Worktree path");
+		expect(restored).not.toHaveTextContent("Native image");
+		const field = screen.getByLabelText("Message the agent");
+		await typeInComposer(field, "Inspect the recovered image");
+		await userEvent.keyboard("{Enter}");
+		await waitFor(() => expect(stage).toHaveBeenCalledTimes(2));
+		expect(onSend).not.toHaveBeenCalled();
+		expect(restored).toHaveTextContent("Worktree save pending");
+		expect(restored).not.toHaveTextContent("Native image");
+
+		await userEvent.keyboard("{Enter}");
+		await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+		expect(stage).toHaveBeenCalledTimes(3);
+		expect(onSend.mock.calls[0]?.[0]).toContain(
+			".ao/attachments/attachment-warm-recovery.png",
+		);
+		expect(onSend.mock.calls[0]?.[1]).toBeUndefined();
 	});
 
 	it("keeps attachments after a failed send and reuses their staged paths on retry", async () => {
