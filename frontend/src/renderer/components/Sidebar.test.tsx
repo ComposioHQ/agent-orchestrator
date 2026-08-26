@@ -22,10 +22,21 @@ import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { agentsQueryKey } from "../hooks/useAgentsQuery";
 import { useUiStore } from "../stores/ui-store";
 
+type DragOverTestEvent = {
+	active: {
+		id: string;
+		rect: { current: { initial: null; translated: null } };
+	};
+	activatorEvent: null;
+	delta: { x: number; y: number };
+	over: { id: string; rect: { height: number; top: number } } | null;
+};
+
 const {
 	checkUpdateMock,
 	cloudSessionState,
 	dragEnds,
+	dragOvers,
 	dragStarts,
 	downloadUpdateMock,
 	getMock,
@@ -45,6 +56,7 @@ const {
 			signOut: vi.fn().mockResolvedValue(undefined),
 		},
 		dragEnds: new Map<string, (event: { active: { id: string }; over: { id: string } | null }) => void>(),
+		dragOvers: new Map<string, (event: DragOverTestEvent) => void>(),
 		dragStarts: new Map<string, (event: { active: { id: string } }) => void>(),
 		getMock: vi.fn(),
 		navigateMock: vi.fn(),
@@ -62,13 +74,15 @@ vi.mock("@dnd-kit/core", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("@dnd-kit/core")>();
 	return {
 		...actual,
-		DndContext: ({ children, id, onDragEnd, onDragStart }: {
+		DndContext: ({ children, id, onDragEnd, onDragOver, onDragStart }: {
 			children: React.ReactNode;
 			id?: string;
 			onDragEnd?: (event: { active: { id: string }; over: { id: string } | null }) => void;
+			onDragOver?: (event: DragOverTestEvent) => void;
 			onDragStart?: (event: { active: { id: string } }) => void;
 		}) => {
 			if (id && onDragEnd) dragEnds.set(id, onDragEnd);
+			if (id && onDragOver) dragOvers.set(id, onDragOver);
 			if (id && onDragStart) dragStarts.set(id, onDragStart);
 			return children;
 		},
@@ -298,6 +312,7 @@ async function openCreateProjectDialog(
 beforeEach(() => {
 	window.localStorage.clear();
 	dragEnds.clear();
+	dragOvers.clear();
 	dragStarts.clear();
 	document.documentElement.style.removeProperty("--ao-sidebar-w");
 	commandPaletteEnabled.current = true;
@@ -533,6 +548,19 @@ describe("Sidebar", () => {
 		expect(screen.queryByLabelText("Open Project One dashboard")).not.toBeInTheDocument();
 		expect(screen.getByLabelText("Spawn Project One orchestrator")).toBeInTheDocument();
 		expect(screen.getByLabelText("Project actions for Project One")).toBeInTheDocument();
+	});
+
+	it("keeps project disclosure and row actions in the keyboard tab order", () => {
+		renderSidebar({ workspaces: [{ ...workspace, sessions: [session] }] });
+
+		const disclosure = screen.getByRole("button", { name: "Toggle Project One sessions" });
+		expect(disclosure.tagName).toBe("BUTTON");
+		expect(disclosure).toHaveProperty("tabIndex", 0);
+		expect(screen.getByLabelText("Spawn Project One orchestrator")).toHaveProperty("tabIndex", 0);
+		expect(screen.getByLabelText("Project actions for Project One")).toHaveProperty("tabIndex", 0);
+		expect(screen.getByLabelText("Pin session")).toHaveProperty("tabIndex", 0);
+		expect(screen.getByLabelText("Rename fix login")).toHaveProperty("tabIndex", 0);
+		expect(screen.getByLabelText("Kill session")).toHaveProperty("tabIndex", 0);
 	});
 
 	it("toggles project sessions from the folder icon without selecting the project first", async () => {
@@ -1895,5 +1923,48 @@ describe("Sidebar", () => {
 		act(() => dragStarts.get("sidebar-projects")?.({ active: { id: "proj-1" } }));
 
 		expect(document.querySelector("[data-project-drag-overlay]")).toHaveTextContent(/Project One.*Second.*First/);
+	});
+
+	it("keeps hidden sessions out of compact project drag previews", () => {
+		renderSidebar({
+			autoCompact: true,
+			initialOpen: false,
+			workspaces: [{ ...workspace, sessions: [session] }],
+		});
+
+		act(() => dragStarts.get("sidebar-projects")?.({ active: { id: "proj-1" } }));
+
+		const overlay = document.querySelector("[data-project-drag-overlay]");
+		expect(overlay).toHaveTextContent("Project One");
+		expect(overlay).not.toHaveTextContent("fix login");
+	});
+
+	it.each(["light", "dark"] as const)("uses a visible project drop indicator in the %s theme", (theme) => {
+		document.documentElement.classList.toggle("dark", theme === "dark");
+		try {
+			renderSidebar({
+				workspaces: [
+					{ ...workspace, id: "alpha", name: "Alpha" },
+					{ ...workspace, id: "bravo", name: "Bravo" },
+				],
+			});
+
+			act(() => dragStarts.get("sidebar-projects")?.({ active: { id: "bravo" } }));
+			act(() => dragOvers.get("sidebar-projects")?.({
+				active: {
+					id: "bravo",
+					rect: { current: { initial: null, translated: null } },
+				},
+				activatorEvent: null,
+				delta: { x: 0, y: 0 },
+				over: { id: "alpha", rect: { height: 32, top: 0 } },
+			}));
+
+			const indicator = document.querySelector("[data-project-drop-indicator]");
+			expect(indicator).toHaveClass("bg-foreground");
+			expect(indicator).not.toHaveClass("bg-white");
+		} finally {
+			document.documentElement.classList.remove("dark");
+		}
 	});
 });

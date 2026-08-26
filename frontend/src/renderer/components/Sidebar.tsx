@@ -788,7 +788,19 @@ export function Sidebar({
 									{isCollapsed && <CreateProjectListItem />}
 								</SidebarMenu>
 								<DragOverlay adjustScale={false} dropAnimation={null} modifiers={[restrictProjectOverlayToRows]} style={PROJECT_DRAG_OVERLAY_STYLE} zIndex={60}>
-									{activeDragWorkspace ? <ProjectDragPreview expanded={expandedIds.has(activeDragWorkspace.id) || (initialActiveSessionProjectId === activeDragWorkspace.id && !dismissedInitialActiveProjectIds.has(activeDragWorkspace.id))} selection={selection} sessions={activeDragSessions} workspace={activeDragWorkspace} /> : null}
+									{activeDragWorkspace ? (
+										<ProjectDragPreview
+											expanded={
+												!isCollapsed &&
+												(expandedIds.has(activeDragWorkspace.id) ||
+													(initialActiveSessionProjectId === activeDragWorkspace.id &&
+														!dismissedInitialActiveProjectIds.has(activeDragWorkspace.id)))
+											}
+											selection={selection}
+											sessions={activeDragSessions}
+											workspace={activeDragWorkspace}
+										/>
+									) : null}
 								</DragOverlay>
 							</DndContext>
 						)}
@@ -1232,7 +1244,7 @@ const ProjectItemContent = memo(function ProjectItemContent({
 								</SidebarMenuButton>
 								{/* Folder disclosure toggle: sibling of the nav button, absolutely positioned over
 	    the icon area so it intercepts clicks there without nesting buttons. */}
-								<div
+								<button
 									aria-label={t("shell.toggleProject", {
 										name: workspace.name,
 									})}
@@ -1241,8 +1253,7 @@ const ProjectItemContent = memo(function ProjectItemContent({
 									data-project-folder=""
 									{...listeners}
 									onClick={onFolderClick}
-									role="button"
-									tabIndex={-1}
+									type="button"
 								/>
 							</div>
 							{/* Per-project actions: orchestrator and kebab menu. Inside the scaled visual
@@ -1271,11 +1282,10 @@ const ProjectItemContent = memo(function ProjectItemContent({
 															name: workspace.name,
 														})
 											}
-														className={cn(HOVER_ACTION_CLASS, orchestratorActive && "text-foreground")}
-														disabled={isSpawning || isProjectRestarting}
-														onClick={() => void openOrchestrator()}
-														tabIndex={-1}
-														type="button"
+											className={cn(HOVER_ACTION_CLASS, orchestratorActive && "text-foreground")}
+											disabled={isSpawning || isProjectRestarting}
+											onClick={() => void openOrchestrator()}
+											type="button"
 										>
 											<OrchestratorIcon aria-hidden="true" strokeWidth={orchestratorActive ? 2.5 : 2} />
 										</button>
@@ -1296,9 +1306,8 @@ const ProjectItemContent = memo(function ProjectItemContent({
 											aria-label={t("shell.projectActions", {
 												name: workspace.name,
 											})}
-													className={HOVER_ACTION_CLASS}
-													tabIndex={-1}
-													type="button"
+											className={HOVER_ACTION_CLASS}
+											type="button"
 										>
 											<MoreVertical aria-hidden="true" />
 										</button>
@@ -1738,8 +1747,7 @@ const SessionActions = memo(function SessionActions({
 		>
 			<button
 				aria-label={session.isPinned ? t("shell.unpinSession") : t("shell.pinSession")}
-								className={cn(SESSION_ACTION_CLASS, session.isPinned && "text-foreground")}
-								tabIndex={-1}
+				className={cn(SESSION_ACTION_CLASS, session.isPinned && "text-foreground")}
 				onClick={(event) => {
 					event.stopPropagation();
 					session.isPinned ? unpinSession(session) : pinSession(session);
@@ -1750,8 +1758,7 @@ const SessionActions = memo(function SessionActions({
 			</button>
 			<button
 				aria-label={t("shell.renameSession", { title: session.title })}
-								className={SESSION_ACTION_CLASS}
-								tabIndex={-1}
+				className={SESSION_ACTION_CLASS}
 				onClick={(event) => {
 					event.stopPropagation();
 					onStartEditing();
@@ -1762,9 +1769,8 @@ const SessionActions = memo(function SessionActions({
 			</button>
 			<button
 				aria-label={t("shell.killSession")}
-								className={cn(SESSION_ACTION_CLASS, "hover:text-destructive")}
-								disabled={isKilling}
-								tabIndex={-1}
+				className={cn(SESSION_ACTION_CLASS, "hover:text-destructive")}
+				disabled={isKilling}
 				onClick={(event) => {
 					event.stopPropagation();
 					terminateSession(session);
