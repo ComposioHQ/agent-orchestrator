@@ -235,8 +235,18 @@ describe("SessionsBoardView", () => {
 			/>,
 		);
 
-		expect(screen.getByLabelText("#10, #11 open")).toHaveTextContent("PR#10,#11open");
-		expect(screen.getByLabelText("#12 merged")).toHaveTextContent("PR#12merged");
+		expect(screen.getByRole("link", { name: "PR #10 open" })).toHaveAttribute(
+			"href",
+			"https://example.com/pull/10",
+		);
+		expect(screen.getByRole("link", { name: "PR #11 open" })).toHaveAttribute(
+			"href",
+			"https://example.com/pull/11",
+		);
+		expect(screen.getByRole("link", { name: "PR #12 merged" })).toHaveAttribute(
+			"href",
+			"https://example.com/pull/12",
+		);
 		expect(screen.getByText("12.4K tok")).toHaveAccessibleName("12,400 tokens");
 		expect(screen.getByText("feat/portable")).toHaveClass("text-muted-foreground");
 		expect(screen.getByText("5m ago")).toHaveAttribute("title", "Updated 2026-08-09T10:00:00Z");
