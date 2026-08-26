@@ -1056,12 +1056,9 @@ describe("SessionsBoard", () => {
 
 	it("highlights every user-attention status while leaving ordinary cards neutral", () => {
 		const attentionStatuses = [
-			"needs_input",
-			"exited",
-			"no_signal",
 			"ci_failed",
 			"changes_requested",
-			"unknown",
+			"review_pending",
 		] as const;
 		workspaceQueryMock.mockReturnValue({
 			data: [

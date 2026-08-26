@@ -36,6 +36,7 @@ import { TopbarButton, TopbarKillError, topbarProjectLabelClass } from "./Topbar
 import { isChatPreflightError, spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
 import { usesPreviewWorkspaceData } from "../lib/preview-mode";
+import { demoBoardSessions } from "../lib/demo-board-sessions";
 import { isLinuxPlatform, isMacPlatform, usesBoardActionsInPanel } from "../lib/platform";
 import { cn } from "../lib/utils";
 import { useUiStore } from "../stores/ui-store";
@@ -93,7 +94,10 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const workspace = projectId ? workspaces[0] : undefined;
 	// Board chrome stays route-oriented; project context remains in the sidebar.
 	const boardLabel = t("shell.board");
-	const sessions = workspaces.flatMap((workspace) => workerSessions(workspace.sessions));
+	const liveSessions = workspaces.flatMap((workspace) => workerSessions(workspace.sessions));
+	const sessions = usesPreviewWorkspaceData && projectId && liveSessions.length === 0
+		? demoBoardSessions(projectId)
+		: liveSessions;
 	const orchestrator = projectId ? newestActiveOrchestrator(workspaces[0]?.sessions ?? []) : undefined;
 	const orchestratorActivityLabel = orchestrator ? getAgentActivityView(orchestrator.activity, t).label : undefined;
 	const [isSpawning, setIsSpawning] = useState(false);

@@ -181,7 +181,6 @@ export type SessionCardViewProps = {
 		action?: ReactNode;
 	branchAction?: ReactNode;
 	branchIcon?: ReactNode;
-	details?: ReactNode;
 	error?: string;
 	externalLink: ExternalLinkComponent;
 	footer?: ReactNode;
@@ -206,7 +205,6 @@ export function SessionCardView({
 	action,
 	branchAction,
 	branchIcon,
-	details,
 	error,
 	externalLink,
 	footer,
@@ -222,7 +220,11 @@ export function SessionCardView({
 	usage,
 }: SessionCardViewProps) {
 	const badge = getSessionStatusView(session.status, translate);
-	const needsAttention = attentionZone(session.status) === "action";
+	const needsAttention =
+		session.status === "ci_failed" ||
+		session.status === "changes_requested" ||
+		session.status === "review_pending" ||
+		session.activity?.state === "blocked";
 	const statusPresentation = session.statusPresentation;
 	const needsAttentionChip = needsAttention && !statusPresentation;
 	const column = getKanbanColumnView(toKanbanColumn(session.kanbanColumn, session.status), translate);
@@ -330,7 +332,6 @@ export function SessionCardView({
 						))}
 					</div>
 				)}
-				{details}
 				{session.trackerIssueId && (
 					<span
 						className="col-span-2 inline-flex max-w-branch-chip items-center self-start truncate rounded-sm bg-accent/12 px-1.5 py-0.5 font-mono text-micro text-accent"
