@@ -3,6 +3,8 @@ import { act } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+	capturePendingFileAttachmentsForSession,
+	discardCapturedPendingFileAttachments,
 	discardPendingFileAttachments,
 	discardPendingFileAttachmentsForSession,
 	MAX_ATTACHMENTS,
@@ -260,6 +262,68 @@ describe("useFileAttachments", () => {
 		expect(replacement.result.current.attachments).toEqual([]);
 		expect(other.result.current.attachments.map((attachment) => attachment.name)).toEqual([
 			"other.txt",
+		]);
+	});
+
+	it("discards only work captured before confirmation and preserves later attachments", async () => {
+		const sessionId = "discard-confirmed-attachment-work-only";
+		const key = chatDraftScopeKey({
+			sessionId,
+			incarnation: "2026-08-26T12:00:00.000Z",
+		});
+		const releases: Array<(attachments: FileAttachment[]) => void> = [];
+		const prepareAttachments = vi.fn(
+			() =>
+				new Promise<FileAttachment[]>((resolve) => {
+					releases.push(resolve);
+				}),
+		);
+		const staging = renderHook(() =>
+			useFileAttachments({ initialKey: key, prepareAttachments }),
+		);
+		let beforeConfirmation!: Promise<void>;
+		act(() => {
+			beforeConfirmation = staging.result.current.addFiles([file("before-confirmation.txt")]);
+		});
+		await waitFor(() => expect(prepareAttachments).toHaveBeenCalledTimes(1));
+
+		const confirmedWork = capturePendingFileAttachmentsForSession(sessionId);
+		let afterConfirmation!: Promise<void>;
+		act(() => {
+			afterConfirmation = staging.result.current.addFiles([file("after-confirmation.txt")]);
+			discardCapturedPendingFileAttachments(confirmedWork);
+		});
+		expect(staging.result.current.preparing).toBe(true);
+
+		await act(async () => {
+			releases[0]?.([
+				{
+					id: "before-confirmation",
+					mimeType: "text/plain",
+					bytes: 8,
+					name: "before-confirmation.txt",
+					stagedPath: ".ao/attachments/before-confirmation.txt",
+				},
+			]);
+			await beforeConfirmation;
+		});
+		await waitFor(() => expect(prepareAttachments).toHaveBeenCalledTimes(2));
+		await act(async () => {
+			releases[1]?.([
+				{
+					id: "after-confirmation",
+					mimeType: "text/plain",
+					bytes: 8,
+					name: "after-confirmation.txt",
+					stagedPath: ".ao/attachments/after-confirmation.txt",
+				},
+			]);
+			await afterConfirmation;
+		});
+
+		expect(staging.result.current.preparing).toBe(false);
+		expect(staging.result.current.attachments.map((attachment) => attachment.name)).toEqual([
+			"after-confirmation.txt",
 		]);
 	});
 
