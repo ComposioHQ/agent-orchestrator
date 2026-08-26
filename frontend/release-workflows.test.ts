@@ -96,8 +96,15 @@ describe("desktop release workflows", () => {
     const allowed = [
       {
         name: "release-monitor.yml",
-        contents:
-          "permissions:\n  contents: read\nrun: gh release view v1.2.3\n",
+        contents: String.raw`permissions:
+  contents: read
+run: |
+  gh api \
+    repos/o/r/releases/latest
+  curl \
+    -X GET \
+    https://api.github.com/repos/o/r/releases/latest
+  gh release view v1.2.3`,
       },
       {
         name: "unrelated-write.yml",
