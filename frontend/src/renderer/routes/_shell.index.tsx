@@ -12,6 +12,11 @@ function ShellIndex() {
 	const navigate = useNavigate();
 	const workspaceQuery = useWorkspaceQuery();
 
+	// TODO: remove — temporary redirect to preview onboarding prototype
+	useEffect(() => {
+		void navigate({ to: "/onboarding", replace: true });
+	}, [navigate]);
+
 	useEffect(() => {
 		if (!workspaceQuery.isSuccess) return;
 		const workspaces = workspaceQuery.data ?? [];

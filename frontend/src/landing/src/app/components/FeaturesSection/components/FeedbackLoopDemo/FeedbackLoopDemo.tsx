@@ -1,7 +1,6 @@
 "use client";
 
 import { AnimatePresence, domAnimation, LazyMotion, m, motion } from "motion/react";
-import { GeistMono } from "geist/font/mono";
 import {
 	ArrowUpRight,
 	Bell,
@@ -255,7 +254,7 @@ function normalizeMarker(marker?: string) {
 
 /* ── Main component ────────────────────────────────────────────────────────── */
 
-export function FeedbackLoopDemo() {
+export function FeedbackLoopDemo({ agentIcon = "/app-icons/agents/claude-code.svg" }: { agentIcon?: string }) {
 	const [lines, setLines] = useState<DisplayLine[]>([]);
 	const [typingText, setTypingText] = useState<{ marker?: string; chars: string; highlight?: boolean } | null>(null);
 	const [streamingText, setStreamingText] = useState<string | null>(null);
@@ -419,9 +418,9 @@ export function FeedbackLoopDemo() {
 					@media (prefers-reduced-motion: reduce) { .ao-blink { animation: none; } }
 				`}</style>
 				<div className="flex h-full min-w-0 flex-col">
-					<SessionTopbar phase={phase} />
+					<SessionTopbar phase={phase} agentIcon={agentIcon} />
 					<div className="flex min-h-0 min-w-0 flex-1">
-						<TerminalPane lines={lines} typingText={typingText} streamingText={streamingText} />
+						<TerminalPane agentIcon={agentIcon} lines={lines} typingText={typingText} streamingText={streamingText} />
 						<Inspector phase={phase} mergeState={mergeState} />
 					</div>
 				</div>
@@ -509,7 +508,7 @@ function DemoCursor({ rootRef, target, pressed }: { rootRef: React.RefObject<HTM
 
 /* ── Session topbar ────────────────────────────────────────────────────────── */
 
-function SessionTopbar({ phase }: { phase: Phase }) {
+function SessionTopbar({ phase, agentIcon }: { phase: Phase; agentIcon: string }) {
 	return (
 		<div className="flex h-9 w-full shrink-0 items-stretch border-b border-[var(--preview-border)] bg-[var(--preview-background)]">
 			<div className="flex min-w-0 flex-1 items-stretch">
@@ -517,7 +516,7 @@ function SessionTopbar({ phase }: { phase: Phase }) {
 					<div className="flex min-w-0 flex-1 self-stretch items-center">
 						<span className="relative inline-flex min-w-0 shrink-0 self-stretch items-center gap-1.5 border-r border-[var(--preview-border)] bg-[var(--preview-overlay)] px-2.5 after:absolute after:inset-x-0 after:-bottom-px after:h-px after:bg-[#fafafa]">
 							<img
-								src="/app-icons/agents/claude-code.svg"
+								src={agentIcon}
 								alt=""
 								aria-hidden="true"
 								className="size-[13px] shrink-0 object-contain"
@@ -566,23 +565,25 @@ function SessionTopbar({ phase }: { phase: Phase }) {
 
 /* ── Terminal pane ──────────────────────────────────────────────────────────── */
 
-function TerminalPane({ lines, typingText, streamingText }: { lines: DisplayLine[]; typingText: { marker?: string; chars: string; highlight?: boolean } | null; streamingText: string | null }) {
+function TerminalPane({ agentIcon, lines, typingText, streamingText }: { agentIcon: string; lines: DisplayLine[]; typingText: { marker?: string; chars: string; highlight?: boolean } | null; streamingText: string | null }) {
 	const scrollRef = useRef<HTMLDivElement>(null);
 
 	useEffect(() => {
-		scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+		const terminal = scrollRef.current;
+		if (!terminal) return;
+		terminal.scrollTop = terminal.scrollHeight;
 	}, [lines.length, typingText, streamingText]);
 
 	return (
 		<main
 			ref={scrollRef}
-			className={`${GeistMono.className} flex min-h-0 min-w-0 flex-1 flex-col justify-end overflow-hidden bg-[var(--preview-terminal)] px-3 py-2.5`}
-			style={{ fontFamily: "var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace", fontVariantEmoji: "text" }}
+			className="flex min-h-0 min-w-0 flex-1 flex-col justify-end overflow-hidden bg-[var(--preview-terminal)] px-3 py-2.5 font-mono"
+			style={{ fontFamily: "var(--font-family-mono), 'Geist Mono Variable', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace", fontVariantEmoji: "text" }}
 		>
 			{/* Claude Code header */}
 			<div className="mb-2 flex items-start gap-2">
 				<img
-					src="/app-icons/agents/claude-code.svg"
+					src={agentIcon}
 					alt=""
 					aria-hidden="true"
 					className="mt-0.5 size-[22px] shrink-0"

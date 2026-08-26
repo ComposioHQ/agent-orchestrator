@@ -1,7 +1,7 @@
 "use client";
 
 import { AnimatePresence, LayoutGroup, motion } from "motion/react";
-import { useEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useRef, useState, type ImgHTMLAttributes } from "react";
 import { featurePreviewTokens } from "../FeaturePreviewShell";
 import { usePreviewScale } from "../usePreviewScale";
 
@@ -9,6 +9,16 @@ import { usePreviewScale } from "../usePreviewScale";
 
 type ColumnId = "working" | "staging" | "in_review" | "merge";
 type ActivityState = "running" | "passed" | "reviewing" | "waiting";
+
+export type FleetBoardAssets = Readonly<Record<string, string>>;
+
+const FleetBoardAssetsContext = createContext<FleetBoardAssets>({});
+
+function FleetBoardImage({ src, ...props }: ImgHTMLAttributes<HTMLImageElement>) {
+	const assets = useContext(FleetBoardAssetsContext);
+	const resolvedSrc = typeof src === "string" ? (assets[src] ?? src) : src;
+	return <img {...props} src={resolvedSrc} />;
+}
 
 interface Card {
 	id: string;
@@ -302,7 +312,7 @@ function BoardCard({ card, isPulsing }: { card: Card; isPulsing: boolean }) {
 			{/* Title row */}
 			<div className="flex items-start gap-2 px-2.5 pb-2 pt-2.5">
 				<div className="relative mt-0.5 h-3 w-3 shrink-0">
-					<img src={card.icon} alt="" width={12} height={12}
+					<FleetBoardImage src={card.icon} alt="" width={12} height={12}
 						aria-hidden="true" draggable="false" className="h-3 w-3" />
 					{isWaiting ? (
 						<span aria-hidden="true"
@@ -337,7 +347,7 @@ function BoardCard({ card, isPulsing }: { card: Card; isPulsing: boolean }) {
 						{card.reviewers && card.reviewers.length > 0 ? (
 							<div className="flex -space-x-1">
 								{card.reviewers.slice(0, 3).map((src) => (
-									<img key={src} src={src} alt="" width={14} height={14}
+									<FleetBoardImage key={src} src={src} alt="" width={14} height={14}
 										aria-hidden="true" draggable="false"
 										className="h-[14px] w-[14px] rounded-full ring-1 ring-[var(--preview-card)]" />
 								))}
@@ -414,7 +424,7 @@ function BoardColumn({ cards, color, title }: { cards: Card[]; color: string; ti
 
 // ── FleetBoardDemo ────────────────────────────────────────────────────────────
 
-export function FleetBoardDemo() {
+export function FleetBoardDemo({ assets = {} }: { assets?: FleetBoardAssets }) {
 	const [cards, setCards] = useState<Card[]>(INITIAL_CARDS);
 	const incomingIdx = useRef(0);
 	const { viewportRef, viewportStyle, canvasStyle } = usePreviewScale(570, 318);
@@ -521,6 +531,7 @@ export function FleetBoardDemo() {
 	}));
 
 	return (
+		<FleetBoardAssetsContext.Provider value={assets}>
 		<div
 			ref={viewportRef}
 			className="relative mx-auto w-full min-w-0 max-w-[570px]"
@@ -547,5 +558,6 @@ export function FleetBoardDemo() {
 				</LayoutGroup>
 			</div>
 		</div>
+		</FleetBoardAssetsContext.Provider>
 	);
 }
