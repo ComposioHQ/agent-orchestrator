@@ -2733,7 +2733,12 @@ type TimelineGroup = {
   anchor: number;
   items: ConversationItem[];
   outcome?: {
-    state: "completed" | "recovered" | "interrupted" | "failed";
+    state:
+      | "completed"
+      | "recovered"
+      | "interrupted"
+      | "queue_cancelled"
+      | "failed";
     durationMs?: number;
     error?: string;
   };
@@ -2926,7 +2931,10 @@ function groupByTurn(snapshot: ConversationSnapshot): TimelineGroup[] {
     if (turn.state === "running" || turn.state === "queued") continue;
     group.rollbackable = Boolean(turn.providerTurnId);
     group.outcome = {
-      state: turn.state,
+      state:
+        turn.state === "interrupted" && !turn.startedAt
+          ? "queue_cancelled"
+          : turn.state,
       durationMs:
         turn.completedAt && turn.startedAt
           ? new Date(turn.completedAt).getTime() -

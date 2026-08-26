@@ -263,6 +263,7 @@ describe("ChatWorkspace steering", () => {
 		const stableDialog = screen.getByRole("dialog", {
 			name: "Stop turn and cancel 2 queued messages?",
 		});
+		expect(screen.getByText("This queued message was cancelled")).toBeInTheDocument();
 		await userEvent.click(within(stableDialog).getByRole("button", { name: "Stop all" }));
 		expect(onInterrupt).toHaveBeenCalledWith(["queued-1", "queued-2"]);
 	});
