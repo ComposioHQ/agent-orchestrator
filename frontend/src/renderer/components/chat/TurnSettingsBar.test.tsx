@@ -137,6 +137,47 @@ describe("ACP session config options", () => {
 		expect(onChange).toHaveBeenCalledWith("fast-mode", { value: "on" });
 	});
 
+	it("keeps unclassified provider options accessible", async () => {
+		const user = userEvent.setup();
+		render(
+			<TurnSettingsBar
+				models={[]}
+				settings={{}}
+				configOptions={[
+					OPTIONS[0],
+					{
+						id: "verbosity",
+						name: "Verbosity",
+						type: "select",
+						currentValue: "high",
+						choices: [
+							{ value: "low", name: "Low" },
+							{ value: "high", name: "High" },
+						],
+					},
+				]}
+				onChangeConfigOption={vi.fn()}
+			/>,
+		);
+
+		await user.click(screen.getByRole("button", { name: "Model and reasoning effort for the next turn" }));
+		expect(screen.getByText("More")).toBeInTheDocument();
+	});
+
+	it("disables provider controls while a catalog-replacing change is in flight", () => {
+		render(
+			<TurnSettingsBar
+				models={[]}
+				settings={{}}
+				configOptions={[OPTIONS[0]]}
+				configPending
+				onChangeConfigOption={vi.fn()}
+			/>,
+		);
+
+		expect(screen.getByRole("button", { name: "Model" })).toBeDisabled();
+	});
+
 	it("hides permissions while the provider is in plan mode", () => {
 		render(
 			<TurnSettingsBar

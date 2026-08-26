@@ -164,6 +164,10 @@ type Controller struct {
 	// sendMu serializes command dispatch so only one operation mutates the
 	// provider conversation at a time.
 	sendMu sync.Mutex
+	// configMu serializes live provider setting changes. Each response replaces
+	// the complete option catalog and updates durable next-turn settings, so
+	// concurrent writes could otherwise persist an older catalog last.
+	configMu sync.Mutex
 
 	mu sync.Mutex
 	// activeTurn maps a provider turn id to AO's turn id for the turn currently

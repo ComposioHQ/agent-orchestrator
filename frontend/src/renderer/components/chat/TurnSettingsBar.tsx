@@ -83,6 +83,7 @@ export function TurnSettingsBar({
 	onChange,
 	configOptions,
 	onChangeConfigOption,
+	configPending,
 	error,
 	disabled,
 	children,
@@ -105,6 +106,8 @@ export function TurnSettingsBar({
 		optionId: string,
 		value: ChatConfigOptionValue,
 	) => Promise<unknown> | void;
+	/** Prevent overlapping writes because provider responses replace the catalog. */
+	configPending?: boolean;
 	error?: string;
 	disabled?: boolean;
 	/** Inline controls on the right model row, before the mode/approval picker — queue vs steer. */
@@ -129,7 +132,7 @@ export function TurnSettingsBar({
 		? `${modelLabel} ${capitalize(effortLabel)}`
 		: modelLabel;
 	const grouped = partitionConfigOptions(configOptions ?? []);
-	const optionDisabled = Boolean(disabled);
+	const optionDisabled = Boolean(disabled || configPending);
 	const applyOption = (optionId: string, value: ChatConfigOptionValue) => {
 		if (!onChangeConfigOption) return;
 		void Promise.resolve(onChangeConfigOption(optionId, value)).catch(() => {});
@@ -153,7 +156,7 @@ export function TurnSettingsBar({
 							models={models}
 							settings={settings}
 							onChange={onChange}
-							disabled={disabled}
+							disabled={optionDisabled}
 							modelLabel={modelLabel}
 							groupLabel={modelGroupLabel}
 							effortLabel={effortLabel}
@@ -163,6 +166,7 @@ export function TurnSettingsBar({
 							chosenLabel={chosenLabel}
 							executionMode={grouped.executionMode}
 							toggles={grouped.toggles}
+							extraOptions={grouped.extra}
 							onChangeConfigOption={onChangeConfigOption ? applyOption : undefined}
 						/>
 					) : null}
@@ -173,6 +177,7 @@ export function TurnSettingsBar({
 							effortOptions={grouped.effort}
 							executionMode={grouped.executionMode}
 							toggles={grouped.toggles}
+							extraOptions={grouped.extra}
 							disabled={optionDisabled}
 							onChange={applyOption}
 						/>
@@ -240,6 +245,7 @@ function ModelEffortPicker({
 	chosenLabel,
 	executionMode,
 	toggles = [],
+	extraOptions = [],
 	onChangeConfigOption,
 }: {
 	models: ChatModel[];
@@ -255,6 +261,7 @@ function ModelEffortPicker({
 	chosenLabel: string;
 	executionMode?: ChatConfigOption;
 	toggles?: ChatConfigOption[];
+	extraOptions?: ChatConfigOption[];
 	onChangeConfigOption?: (optionId: string, value: ChatConfigOptionValue) => void;
 }) {
 	const modelScrollRef = useRef<HTMLDivElement>(null);
@@ -380,6 +387,9 @@ function ModelEffortPicker({
 				{toggles.map((option) => (
 					<ConfigToggle key={option.id} option={option} onChange={onChangeConfigOption!} />
 				))}
+				{extraOptions.length > 0 && onChangeConfigOption ? (
+					<MoreOptionsSubmenu options={extraOptions} onChange={onChangeConfigOption} />
+				) : null}
 			</OptionMenuContent>
 		</OptionMenu>
 	);
@@ -390,6 +400,7 @@ function ClubbedConfigPicker({
 	effortOptions,
 	executionMode,
 	toggles,
+	extraOptions,
 	disabled,
 	onChange,
 }: {
@@ -397,6 +408,7 @@ function ClubbedConfigPicker({
 	effortOptions: ChatConfigOption[];
 	executionMode?: ChatConfigOption;
 	toggles: ChatConfigOption[];
+	extraOptions: ChatConfigOption[];
 	disabled?: boolean;
 	onChange: (optionId: string, value: ChatConfigOptionValue) => void;
 }) {
@@ -406,10 +418,10 @@ function ClubbedConfigPicker({
 	const effortLabel = primaryEffort ? optionCurrentLabel(primaryEffort) : undefined;
 	const groupLabel = [modelLabel, effortLabel].filter(Boolean).join(" ") || "More";
 	const leftCount =
-		modelOptions.length + effortOptions.length + Number(Boolean(executionMode)) + toggles.length;
+		modelOptions.length + effortOptions.length + Number(Boolean(executionMode)) + toggles.length + extraOptions.length;
 	if (leftCount === 1) {
 		if (executionMode) return <ExecutionModePicker option={executionMode} onChange={onChange} />;
-		const option = primaryModel ?? primaryEffort ?? executionMode ?? toggles[0];
+		const option = primaryModel ?? primaryEffort ?? executionMode ?? toggles[0] ?? extraOptions[0];
 		if (!option) return null;
 		return (
 			<ConfigOptionPicker
@@ -442,6 +454,9 @@ function ClubbedConfigPicker({
 				{toggles.map((option) => (
 					<ConfigToggle key={option.id} option={option} onChange={onChange} />
 				))}
+				{extraOptions.length > 0 ? (
+					<MoreOptionsSubmenu options={extraOptions} onChange={onChange} />
+				) : null}
 			</OptionMenuContent>
 		</OptionMenu>
 	);
@@ -541,6 +556,25 @@ function ExecutionModePicker({
 				<PlanModeToggle option={option} onChange={onChange} />
 			</OptionMenuContent>
 		</OptionMenu>
+	);
+}
+
+function MoreOptionsSubmenu({
+	options,
+	onChange,
+}: {
+	options: ChatConfigOption[];
+	onChange: (optionId: string, value: ChatConfigOptionValue) => void;
+}) {
+	return (
+		<OptionMenuSub>
+			<OptionMenuSubTrigger label="More" />
+			<OptionMenuSubContent className={CHAT_MENU_CLASS}>
+				{options.map((option) => (
+					<OptionSubmenu key={option.id} option={option} onChange={onChange} />
+				))}
+			</OptionMenuSubContent>
+		</OptionMenuSub>
 	);
 }
 

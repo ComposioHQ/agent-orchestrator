@@ -1095,6 +1095,8 @@ func (s *Service) SetConfigOption(
 	if !ok {
 		return nil, ErrConfigOptionsUnsupported
 	}
+	controller.configMu.Lock()
+	defer controller.configMu.Unlock()
 	options, err := configurer.SetConfigOption(ctx, configID, value)
 	if err != nil {
 		return nil, err

@@ -307,6 +307,7 @@ export function SessionChatSurface({
 				onChooseSettings={hasProviderMode ? undefined : commands.chooseSettings}
 				configOptions={configOptions.options}
 				onChooseConfigOption={configOptions.setOption}
+				configOptionPending={configOptions.pending}
 				configOptionError={configOptions.error}
 				onCompact={commands.compact}
 				compacting={commands.compacting}

@@ -221,6 +221,8 @@ export interface ChatWorkspaceProps {
 		optionId: string,
 		value: ChatConfigOptionValue,
 	) => Promise<unknown> | void;
+	/** A provider option change is in flight; live catalogs replace wholesale. */
+	configOptionPending?: boolean;
 	configOptionError?: string;
 	/** Summarize earlier history to reclaim context. */
 	onCompact?: () => void;
@@ -324,6 +326,7 @@ export function ChatWorkspace({
 	onChooseSettings,
 	configOptions,
 	onChooseConfigOption,
+	configOptionPending,
 	configOptionError,
 	onCompact,
 	compacting,
@@ -825,7 +828,8 @@ export function ChatWorkspace({
 													reroute={snapshot.modelReroute}
 													onChange={onChooseSettings}
 													configOptions={configOptions ?? []}
-												onChangeConfigOption={onChooseConfigOption}
+													onChangeConfigOption={onChooseConfigOption}
+													configPending={configOptionPending}
 													error={configOptionError}
 												disabled={
 														snapshot.controller.state === "stopped"
