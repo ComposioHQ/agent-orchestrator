@@ -465,16 +465,7 @@ export function ChatComposer({
 			: willQueue
 				? "⏎ queue"
 				: "Enter to send";
-	const persistedContent = persistedDraft
-		? {
-				text: persistedDraft.composer.text,
-				tokens: persistedDraft.composer.tokens,
-			}
-		: undefined;
 	const draftSeedId = draftSeed?.id ?? (draftScopeKey ? `session:${draftScopeKey}` : undefined);
-	const draftSeedContent = draftSeed
-		? { text: draftSeed.text, tokens: [] }
-		: persistedContent;
 	const draftPersistenceError =
 		textDraftPersistenceError ?? attachmentDraftPersistenceError;
 
@@ -662,8 +653,10 @@ export function ChatComposer({
 				})),
 			);
 		}
-		let committedSeedContent = draftSeedContent;
-		if (!draftSeed && committedDraft) {
+		let committedSeedContent: ComposerDraftContent | undefined;
+		if (draftSeed) {
+			committedSeedContent = { text: draftSeed.text, tokens: [] };
+		} else if (committedDraft) {
 			const committedComposer = committedDraft.composer;
 			committedSeedContent = {
 				text: committedComposer.text,
@@ -699,13 +692,7 @@ export function ChatComposer({
 					: "Draft couldn’t be saved. Keep this chat open or copy it before leaving.",
 			);
 		}
-	}, [
-		draftScope,
-		draftSeed,
-		draftSeedContent,
-		draftSeedId,
-		fileAttachments.reconcilePersistedAttachments,
-	]);
+	}, [draftScope, draftSeed, draftSeedId, fileAttachments.reconcilePersistedAttachments]);
 
 	useEffect(() => {
 		if (!durableDelivery || !draftScope) return;
