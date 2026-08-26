@@ -253,7 +253,7 @@ func (s *Service) spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	if err != nil {
 		apiErr := toSpawnAPIError(err)
 		s.emitSpawnFailed(cfg, apiErr, s.now().Sub(start).Milliseconds())
-		if toAPIError(err) == err && s.logger != nil {
+		if errors.Is(toAPIError(err), err) && s.logger != nil {
 			s.logger.Error("spawn: unclassified internal error",
 				"projectID", cfg.ProjectID,
 				"kind", cfg.Kind,

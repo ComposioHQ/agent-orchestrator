@@ -4418,7 +4418,7 @@ func TestToAPIError_KnownSentinelsAreNotUnclassified(t *testing.T) {
 	}
 	for _, sentinel := range sentinels {
 		result := toAPIError(sentinel)
-		if result == sentinel {
+		if errors.Is(result, sentinel) {
 			t.Errorf("toAPIError(%v) returned the sentinel unchanged; it must be mapped to a typed API error", sentinel)
 		}
 	}
