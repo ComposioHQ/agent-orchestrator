@@ -38,6 +38,14 @@ var (
 	ErrAgentExited      = errors.New("session: agent exited")
 	ErrAgentNotExited   = errors.New("session: agent has not exited")
 	ErrIncompleteHandle = errors.New("session: incomplete teardown handle")
+	// ErrIncompleteSpawn identifies a session whose spawn never completed. The
+	// session row exists and is not terminated, but WorkspacePath and/or
+	// RuntimeHandleID were never written — either because the daemon crashed
+	// mid-spawn or because MarkSpawned failed after runtime.Create. Boot-time
+	// reconciliation (reconcileLive) detects and terminates these sessions.
+	// The API maps it to a 409 Conflict so the caller knows the session is
+	// unrecoverable and must spawn a fresh one.
+	ErrIncompleteSpawn = errors.New("session: spawn did not complete")
 	// ErrProjectNotResolvable means the spawn's project has no usable repo
 	// (unregistered, archived, or missing a path). The API maps it to a 400.
 	ErrProjectNotResolvable = errors.New("session: project repo not resolvable")
@@ -2242,7 +2250,48 @@ func (m *Manager) reconcileLive(ctx context.Context, rec domain.SessionRecord) e
 		return err
 	}
 	projectKind := project.Kind.WithDefault()
-	if rec.Metadata.WorkspacePath == "" || (rec.Metadata.Branch == "" && projectKind != domain.ProjectKindScratch) {
+
+	// Detect sessions whose spawn never completed. These fall into two sub-cases
+	// distinguished by whether runtime.Create had already been called:
+	//
+	//  1. Pure zombie: WorkspacePath and RuntimeHandleID are both empty. The row
+	//     was created by CreateSession but spawn failed before createSessionWorkspace
+	//     returned. There is no workspace on disk and no runtime process — only the
+	//     DB row. Terminate it outright so it does not appear live on the dashboard.
+	//
+	//  2. Partial spawn: WorkspacePath is empty but RuntimeHandleID is set. Spawn
+	//     called runtime.Create successfully but then MarkSpawned (or an earlier
+	//     step that writes WorkspacePath to metadata) failed. A real process may
+	//     be running orphaned. Destroy it before terminating so it does not leak.
+	//
+	// Both cases must never reach the normal relaunch/adopt logic below, which
+	// assumes a real worktree exists and is safe to stash or attach to.
+	if rec.Metadata.WorkspacePath == "" {
+		handle := runtimeHandle(rec.Metadata)
+		if handle.ID != "" {
+			// Partial spawn: an orphaned runtime process may be running.
+			// Destroy it best-effort; a failure here is logged but must not
+			// prevent the session from being terminated, since there is no
+			// workspace to restore and the session is unrecoverable regardless.
+			if err := m.runtime.Destroy(ctx, handle); err != nil {
+				m.logger.Warn("reconcile: failed to destroy orphaned runtime for partial-spawn session; terminating anyway",
+					"sessionID", rec.ID, "handleID", handle.ID, "error", err)
+			}
+		} else {
+			m.logger.Warn("reconcile: incomplete-spawn zombie has no workspace or runtime; terminating",
+				"sessionID", rec.ID)
+		}
+		if err := m.lcm.MarkTerminated(ctx, rec.ID); err != nil {
+			return fmt.Errorf("%w: %w", ErrIncompleteSpawn, err)
+		}
+		return nil
+	}
+
+	// From here WorkspacePath is set: the spawn completed far enough that a real
+	// worktree exists. The existing Branch guard below still applies for non-scratch
+	// projects — a missing Branch with a present WorkspacePath is an edge case
+	// (e.g. interrupted just after workspace create), treated the same way.
+	if rec.Metadata.Branch == "" && projectKind != domain.ProjectKindScratch {
 		return nil
 	}
 	// A chat controller is an in-process child of the daemon, so unlike tmux it can

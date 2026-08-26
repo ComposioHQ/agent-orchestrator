@@ -251,8 +251,15 @@ func (s *Service) spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	cfg = s.withIssueContext(ctx, cfg, project)
 	rec, promptBytes, systemPromptBytes, err := s.manager.Spawn(ctx, cfg)
 	if err != nil {
-		apiErr := toSpawnAPIError(err)
-		s.emitSpawnFailed(cfg, apiErr, s.now().Sub(start).Milliseconds())
+	apiErr := toSpawnAPIError(err)
+			s.emitSpawnFailed(cfg, apiErr, s.now().Sub(start).Milliseconds())
+			if toAPIError(err) == err && s.logger != nil {
+				s.logger.Error("spawn: unclassified internal error",
+					"projectID", cfg.ProjectID,
+					"kind", cfg.Kind,
+					"harness", cfg.Harness,
+					"error", err)
+			}
 		return domain.Session{}, 0, 0, apiErr
 	}
 	s.emitSpawned(rec, s.now().Sub(start).Milliseconds())
@@ -941,6 +948,9 @@ func toAPIError(err error) error {
 			"Session agent is still starting; retry after the agent prompt is ready", nil)
 	case errors.Is(err, sessionmanager.ErrIncompleteHandle):
 		return apierr.Conflict("SESSION_INCOMPLETE_HANDLE", "Session is missing runtime or workspace handles", nil)
+	case errors.Is(err, sessionmanager.ErrIncompleteSpawn):
+		return apierr.Conflict("SESSION_SPAWN_INCOMPLETE",
+			"Session spawn did not complete; the session has been terminated. Spawn a new session.", nil)
 	case errors.Is(err, sessionmanager.ErrNotResumable):
 		return apierr.Conflict("SESSION_NOT_RESUMABLE",
 			"This session has no saved agent session or prompt to resume from", nil)
