@@ -398,23 +398,27 @@ function BoardPullRequestGroup({
 	labels: BoardPullRequestLabels;
 }) {
 	const statusLabel = labels.states[group.state];
-	return (
-		<span
-			aria-label={`${group.prs.map((pr) => `#${pr.number}`).join(", ")} ${statusLabel}`}
-			className="flex w-full min-w-0 items-center gap-x-2"
-		>
+	const singlePullRequest = group.prs.length === 1;
+	const linkClassName =
+		"rounded-sm border border-transparent transition-colors hover:border-border-strong hover:bg-interactive-hover";
+	const details = (
+		<>
 			<PullRequestLifecycleIcon state={group.state} />
 			<span className="sr-only">{labels.short}</span>
 			<span className="inline-flex min-w-0 items-center gap-x-1 font-mono text-xs">
 				{group.prs.map((pr, index) => (
 					<span className="inline-flex items-center" key={pr.url || pr.number}>
-						<ExternalLink
-							className="font-medium text-foreground underline-offset-2 transition-colors hover:underline"
-							href={pr.url}
-							stopPropagation
-						>
-							#{pr.number}
-						</ExternalLink>
+						{singlePullRequest ? (
+							<span>#{pr.number}</span>
+						) : (
+							<ExternalLink
+								className={cn("font-medium text-foreground underline-offset-2 hover:underline", linkClassName)}
+								href={pr.url}
+								stopPropagation
+							>
+								#{pr.number}
+							</ExternalLink>
+						)}
 						{index < group.prs.length - 1 ? "," : null}
 					</span>
 				))}
@@ -433,11 +437,48 @@ function BoardPullRequestGroup({
 						/>
 					))}
 			</div>
-			<span className="ml-auto inline-flex shrink-0 items-center gap-1 text-xs tabular-nums text-muted-foreground" aria-label={`${group.prs.reduce((count, pr) => count + (pr.commentCount ?? 0), 0)} comments`}>
+			<span className="ml-auto inline-flex shrink-0 items-center gap-1 text-xs tabular-nums text-muted-foreground">
 				<MessageSquareIcon aria-hidden="true" className="size-icon-2xs" />
-				{group.prs.reduce((count, pr) => count + (pr.commentCount ?? 0), 0)}
+				{singlePullRequest ? (
+					<span>{group.prs[0]?.commentCount ?? 0}</span>
+				) : (
+					<span className="inline-flex items-center gap-1">
+						{group.prs.map((pr, index) => (
+							<span className="inline-flex items-center" key={`comments-${pr.url || pr.number}`}>
+								<ExternalLink
+									ariaLabel={`${pr.commentCount ?? 0} comments on PR #${pr.number}`}
+									className={cn("font-medium text-foreground underline-offset-2 hover:underline", linkClassName)}
+									href={pr.url}
+									stopPropagation
+								>
+									{pr.commentCount ?? 0}
+								</ExternalLink>
+								{index < group.prs.length - 1 ? "," : null}
+							</span>
+						))}
+					</span>
+				)}
 			</span>
-		</span>
+		</>
+	);
+	return (
+		<div
+			aria-label={`${group.prs.map((pr) => `#${pr.number}`).join(", ")} ${statusLabel}`}
+			className="flex min-w-0"
+		>
+			{singlePullRequest ? (
+				<ExternalLink
+					ariaLabel={`PR #${group.prs[0]?.number} ${statusLabel}`}
+					className={cn("flex w-full min-w-0 items-center gap-x-2 px-1 py-0.5", linkClassName)}
+					href={group.prs[0]?.url ?? "#"}
+					stopPropagation
+				>
+					{details}
+				</ExternalLink>
+			) : (
+				<div className="flex w-full min-w-0 items-center gap-x-2">{details}</div>
+			)}
+		</div>
 	);
 }
 
