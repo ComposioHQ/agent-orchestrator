@@ -228,15 +228,19 @@ restarts into a pending update and shows what is running. Dev builds
   lacks the native code it needs. `npx expo-updates runtimeversion:resolve --platform ios`
   prints the current value.
 - **Channels** follow the `eas.json` build profiles: `preview` and `production`.
-- **Publishing:** every push to `main` that touches this package publishes to `preview`
-  (`.github/workflows/mobile-update.yml`, needs the `EXPO_TOKEN` secret). Production is
-  a manual run of that workflow with the channel set to `production`, or locally:
+- **Publishing** is a deliberate local step, like builds. There is no CI publish, so
+  no Expo token lives in the repo:
 
   ```bash
-  eas update --channel production --message "fix: ..."
+  eas update --channel preview --environment preview -m "fix: ..."
+  eas update --channel production --environment production -m "fix: ..." --rollout-percentage 10
   ```
 
-  Staged rollouts and rollbacks are done from the EAS dashboard (`eas update:rollback`).
+  `--environment` selects the EAS environment variables and is required from SDK 55.
+  Start production at a partial rollout and widen it from the EAS dashboard once it looks healthy.
+  Publish from the machine that builds, so the fingerprint is computed with the same
+  inputs. `eas update:list --channel production` shows what is live,
+  `eas update:insights` shows adoption, and `eas update:rollback` reverts.
 
 ## Troubleshooting
 
