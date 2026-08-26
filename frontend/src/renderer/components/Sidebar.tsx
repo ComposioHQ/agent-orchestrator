@@ -1146,7 +1146,7 @@ const ProjectItemContent = memo(function ProjectItemContent({
 						<div
 							aria-hidden="true"
 							className={cn(
-								"pointer-events-none absolute inset-x-0 z-[70] h-px bg-white",
+								"pointer-events-none absolute inset-x-0 z-[70] h-px bg-foreground",
 								dropIndicator === "before" ? "top-0" : "bottom-0",
 							)}
 							data-project-drop-indicator={dropIndicator}
