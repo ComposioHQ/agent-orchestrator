@@ -1649,7 +1649,7 @@ textarea,
 	background-color: color-mix(in srgb, var(--color-status-needs-you) 9%, transparent);
 	pointer-events: none;
 	content: "";
-	animation: attention-card-pulse 5.5s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+	animation: attention-card-pulse 3.5s cubic-bezier(0.45, 0, 0.55, 1) infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {
