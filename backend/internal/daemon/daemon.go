@@ -171,7 +171,7 @@ func Run() error {
 		return err
 	}
 
-	// Terminal streaming: the selected runtime (tmux on macOS/Linux, conpty on Windows) supplies the
+	// Terminal streaming: the selected platform runtime supplies the
 	// attach Stream and liveness; the CDC broadcaster feeds the session-state channel. The manager
 	// is handed to httpd, which mounts it at /mux. Raw PTY bytes never flow
 	// through the CDC change_log -- only session-state events do.
