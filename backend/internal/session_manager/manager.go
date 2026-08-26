@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -198,6 +199,8 @@ const (
 	EnvSupervisedProcess = "AO_SUPERVISED_PROCESS"
 	// EnvDataDir tells a spawned agent's AO hook commands where the store lives.
 	EnvDataDir = "AO_DATA_DIR"
+	// EnvPermissionMode tells hook commands which AO approval policy applies.
+	EnvPermissionMode = "AO_PERMISSION_MODE"
 	// EnvRunFile tells spawned AO hook commands which live daemon owns the
 	// session. AO_DATA_DIR is durable storage, not daemon discovery; custom and
 	// isolated daemons therefore need this coordinate explicitly.
@@ -902,6 +905,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.SessionRecord{}, 0, 0, wrapSpawnStage(id, ErrSpawnBrowser, err)
 	}
 	m.augmentAgentRuntimeEnv(agent, env)
+	pinRuntimePermissionEnv(env, adapterConfig.Permissions)
 	if err := m.prepareWorkspace(ctx, agent, id, ws.Path, systemPrompt, systemPromptFile, adapterConfig, env); err != nil {
 		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, false)
 		return domain.SessionRecord{}, 0, 0, wrapSpawnStage(id, ErrSpawnPrepare, err)
@@ -1511,6 +1515,7 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 	if !ok {
 		return false, nil // already gone: benign race
 	}
+	m.cleanupTerminalHistoryForSession(context.WithoutCancel(ctx), id)
 	m.stopPreviewBestEffort(ctx, id)
 	m.destroyBrowserBestEffort(ctx, id)
 	handle := runtimeHandle(rec.Metadata)
@@ -1931,10 +1936,14 @@ func (m *Manager) ResumeAgentWithMode(ctx context.Context, id domain.SessionID) 
 }
 
 func (m *Manager) relaunchSession(ctx context.Context, operation string, rec domain.SessionRecord, project domain.ProjectRecord, ws ports.WorkspaceInfo, restartHandle *ports.RuntimeHandle) (RestoreResult, error) {
-	return m.relaunchSessionWithPolicy(ctx, operation, rec, project, ws, restartHandle, false, false)
+	terminalHistoryPath, err := m.recoveryTerminalHistoryPath(ctx, rec)
+	if err != nil {
+		return RestoreResult{}, fmt.Errorf("%s %s: terminal history recovery: %w", operation, rec.ID, err)
+	}
+	return m.relaunchSessionWithPolicy(ctx, operation, rec, project, ws, restartHandle, false, false, terminalHistoryPath)
 }
 
-func (m *Manager) relaunchSessionWithPolicy(ctx context.Context, operation string, rec domain.SessionRecord, project domain.ProjectRecord, ws ports.WorkspaceInfo, restartHandle *ports.RuntimeHandle, forceFresh, requireNativeHistory bool) (RestoreResult, error) {
+func (m *Manager) relaunchSessionWithPolicy(ctx context.Context, operation string, rec domain.SessionRecord, project domain.ProjectRecord, ws ports.WorkspaceInfo, restartHandle *ports.RuntimeHandle, forceFresh, requireNativeHistory bool, terminalHistoryPath string) (RestoreResult, error) {
 	// Relaunch dispatches from the currently committed persisted mode, never from
 	// a caller hint. The interface-transition coordinator changes that fact only
 	// after stopping the old controller, then reuses this ordinary restore path.
@@ -1979,6 +1988,7 @@ func (m *Manager) relaunchSessionWithPolicy(ctx context.Context, operation strin
 		return RestoreResult{}, fmt.Errorf("%s %s: persist browser capability: %w", operation, rec.ID, err)
 	}
 	m.augmentAgentRuntimeEnv(agent, env)
+	pinRuntimePermissionEnv(env, agentConfig.Permissions)
 	if err := m.prepareWorkspace(ctx, agent, rec.ID, ws.Path, systemPrompt, systemPromptFile, agentConfig, env); err != nil {
 		return RestoreResult{}, fmt.Errorf("%s %s: %w", operation, rec.ID, err)
 	}
@@ -2001,7 +2011,15 @@ func (m *Manager) relaunchSessionWithPolicy(ctx context.Context, operation strin
 		return RestoreResult{}, fmt.Errorf("%s %s: %w", operation, rec.ID, err)
 	}
 	m.augmentRuntimePATHForLaunchBinary(ctx, env, argv)
-	argv, launchID, err := m.superviseAgentProcess(agent, rec.ID, env, argv)
+	var launchID string
+	if terminalHistoryPath == "" {
+		argv, launchID, err = m.superviseAgentProcess(agent, rec.ID, env, argv)
+	} else {
+		argv, launchID, err = m.superviseAgentProcessMode(agent, rec.ID, env, argv, true)
+		if err == nil {
+			argv, err = addTerminalHistoryToSupervisedArgv(argv, terminalHistoryPath)
+		}
+	}
 	if err != nil {
 		m.cleanupSystemPromptDir(rec.ID)
 		return RestoreResult{}, fmt.Errorf("%s %s: supervisor: %w", operation, rec.ID, err)
@@ -2076,6 +2094,18 @@ func (m *Manager) relaunchSessionWithPolicy(ctx context.Context, operation strin
 		return RestoreResult{}, err
 	}
 	return RestoreResult{Session: updated, Mode: mode}, nil
+}
+
+func addTerminalHistoryToSupervisedArgv(argv []string, historyPath string) ([]string, error) {
+	separator := slices.Index(argv, "--")
+	if separator < 0 {
+		return nil, errors.New("supervised launch omitted command separator")
+	}
+	withHistory := make([]string, 0, len(argv)+2)
+	withHistory = append(withHistory, argv[:separator]...)
+	withHistory = append(withHistory, "--terminal-history", historyPath)
+	withHistory = append(withHistory, argv[separator:]...)
+	return withHistory, nil
 }
 
 func (m *Manager) restartRuntime(ctx context.Context, handle ports.RuntimeHandle, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
@@ -3775,6 +3805,16 @@ func (m *Manager) runtimeEnv(id domain.SessionID, project domain.ProjectID, issu
 	}
 	env["PATH"] = path
 	return env
+}
+
+// pinRuntimePermissionEnv exposes the session's AO approval policy to hook
+// commands so adapters like Cursor can decide whether a tool attempt needs
+// user approval before returning a native permission response.
+func pinRuntimePermissionEnv(env map[string]string, mode domain.PermissionMode) {
+	if env == nil {
+		return
+	}
+	env[EnvPermissionMode] = string(ports.NormalizePermissionMode(mode))
 }
 
 func (m *Manager) launchRuntimeEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueID, projectEnv map[string]string) (map[string]string, string, error) {

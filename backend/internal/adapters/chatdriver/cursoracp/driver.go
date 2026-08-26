@@ -34,8 +34,9 @@ func New(plugin nativeacp.Plugin, log *slog.Logger) ports.ChatDriver {
 			askQuestionMethod: "_cursor/ask_question",
 			createPlanMethod:  "_cursor/create_plan",
 		},
-		ValidateTurnSettings: validateTurnSettings,
-		VersionProbe:         versionProbe,
+		ValidateTurnSettings:   validateTurnSettings,
+		NativeHistoryAugmenter: augmentCursorHandoffHistory,
+		VersionProbe:           versionProbe,
 	}, log)
 }
 

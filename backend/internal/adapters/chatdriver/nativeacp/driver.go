@@ -50,6 +50,7 @@ type Config struct {
 	ClientExtension        acpdriver.ClientExtensionHandler
 	ClientExtensionAliases map[string]string
 	ValidateTurnSettings   acpdriver.TurnSettingsValidator
+	NativeHistoryAugmenter acpdriver.NativeHistoryAugmenter
 	// VersionProbe optionally gates admission on a minimum binary version.
 	VersionProbe VersionProbe
 }
@@ -140,5 +141,6 @@ func buildConfig(plugin Plugin, cfg Config, log *slog.Logger) acpdriver.Config {
 		ClientExtension:        cfg.ClientExtension,
 		ClientExtensionAliases: cfg.ClientExtensionAliases,
 		ValidateTurnSettings:   cfg.ValidateTurnSettings,
+		NativeHistoryAugmenter: cfg.NativeHistoryAugmenter,
 	}
 }

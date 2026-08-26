@@ -354,6 +354,7 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 			SystemPrompt:           cfg.SystemPrompt,
 			AdditionalDirectories:  cfg.AdditionalDirectories,
 			MCPServers:             cfg.MCPServers,
+			RequireNativeHistory:   cfg.RequireNativeHistory,
 		})
 	} else {
 		conv, err = driver.Start(ctx, ports.ChatStartConfig{
@@ -604,6 +605,27 @@ func (s *Service) PrepareChatHandoff(
 		return err
 	}
 	return controller.BeginHandoff(ctx, policy)
+}
+
+// InterfaceHandoffMessages returns the durable user/assistant transcript that
+// AO may render into a target terminal's scrollback. It is display-only: the
+// messages are never submitted to the provider as a continuation prompt.
+func (s *Service) InterfaceHandoffMessages(
+	ctx context.Context,
+	id domain.SessionID,
+) ([]domain.ConversationMessage, error) {
+	conversation, err := s.store.ConversationForSession(ctx, id)
+	if errors.Is(err, domain.ErrNoConversation) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("conversation for %s: %w", id, err)
+	}
+	rows, err := s.reader.LoadConversationSnapshot(ctx, conversation.ID)
+	if err != nil {
+		return nil, fmt.Errorf("load conversation %s: %w", conversation.ID, err)
+	}
+	return rows.Messages, nil
 }
 
 // AbortChatHandoff reopens the existing controller when the user cancels before

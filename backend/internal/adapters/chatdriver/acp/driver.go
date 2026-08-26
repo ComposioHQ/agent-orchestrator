@@ -33,14 +33,25 @@ type Launch struct {
 // construct its process. It intentionally contains no install mechanism: binary
 // ownership stays with the existing agent plugin.
 type LaunchConfig struct {
-	SessionID     domain.SessionID
-	DataDir       string
-	WorkspacePath string
-	Env           map[string]string
-	Model         string
-	Permissions   ports.PermissionMode
-	SystemPrompt  string
+	SessionID            domain.SessionID
+	DataDir              string
+	WorkspacePath        string
+	Env                  map[string]string
+	Model                string
+	Permissions          ports.PermissionMode
+	SystemPrompt         string
+	RequireNativeHistory bool
 }
+
+// NativeHistoryAugmenter lets one ACP binding supplement an incomplete
+// session/load replay with provider-owned local history. It is invoked only for
+// an explicit interface handoff; ordinary resumes keep the protocol replay as-is.
+type NativeHistoryAugmenter func(
+	context.Context,
+	LaunchConfig,
+	string,
+	[]ports.ChatEvent,
+) ([]ports.ChatEvent, error)
 
 // Config binds one harness to an ACP agent implementation.
 type Config struct {
@@ -75,7 +86,8 @@ type Config struct {
 	ClientExtensionAliases map[string]string
 	// ValidateTurnSettings rejects provider settings that cannot be applied to a
 	// live process. The initial permission mode is the launch-time value.
-	ValidateTurnSettings TurnSettingsValidator
+	ValidateTurnSettings   TurnSettingsValidator
+	NativeHistoryAugmenter NativeHistoryAugmenter
 }
 
 // TurnSettingsValidator validates live turn settings against launch-time state.
@@ -221,6 +233,7 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 	launchCfg := LaunchConfig{
 		SessionID: cfg.SessionID, DataDir: cfg.DataDir, WorkspacePath: cfg.WorkspacePath,
 		Env: cfg.Env, Model: cfg.Model, Permissions: cfg.Permissions, SystemPrompt: cfg.SystemPrompt,
+		RequireNativeHistory: cfg.RequireNativeHistory,
 	}
 	conv, init, err := d.connect(ctx, launchCfg)
 	if err != nil {
@@ -268,6 +281,19 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 			return nil, fmt.Errorf("%w: %w", ports.ErrChatResumeFailed, normalizeACPError("ACP session/load", err))
 		}
 		conv.finishHistoryReplay()
+		if cfg.RequireNativeHistory && d.cfg.NativeHistoryAugmenter != nil {
+			history, historyErr := conv.ReadHistory(resumeCtx)
+			if historyErr == nil {
+				history, historyErr = d.cfg.NativeHistoryAugmenter(
+					resumeCtx, launchCfg, cfg.ProviderConversationID, history,
+				)
+			}
+			if historyErr != nil {
+				_ = conv.Close()
+				return nil, fmt.Errorf("%w: augment ACP native history: %w", ports.ErrChatResumeFailed, historyErr)
+			}
+			conv.replaceHistoryEvents(history)
+		}
 		configOptions = resp.ConfigOptions
 		modes = resp.Modes
 	} else {

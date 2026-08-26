@@ -111,6 +111,14 @@ func (c *conversation) ReadHistory(ctx context.Context) ([]ports.ChatEvent, erro
 	return append([]ports.ChatEvent(nil), c.historyEvents...), nil
 }
 
+func (c *conversation) replaceHistoryEvents(events []ports.ChatEvent) {
+	c.historyMu.Lock()
+	c.historyEvents = append([]ports.ChatEvent(nil), events...)
+	c.historyErr = nil
+	c.historyLoaded = true
+	c.historyMu.Unlock()
+}
+
 // prepareHistoryUpdate handles the one replay notification that the ordinary live
 // path intentionally ignores: user_message_chunk. For all other replay updates it
 // establishes the reconstructed turn, then lets SessionUpdate's existing ACP -> AO

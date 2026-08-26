@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -27,6 +28,7 @@ func newAgentProcessCommand(ctx *commandContext) *cobra.Command {
 func newAgentProcessSuperviseCommand(ctx *commandContext) *cobra.Command {
 	var sessionID string
 	var launchID string
+	var terminalHistoryPath string
 	cmd := &cobra.Command{
 		Use:    "supervise --session <id> --launch <id> -- <command> [args...]",
 		Short:  "Supervise one managed agent process (internal)",
@@ -46,16 +48,24 @@ func newAgentProcessSuperviseCommand(ctx *commandContext) *cobra.Command {
 			if !sessionIDPattern.MatchString(launchID) {
 				return usageError{fmt.Errorf("invalid launch id")}
 			}
-			ctx.runSupervisedProcess(cmd.Context(), sessionID, launchID, args)
+			ctx.runSupervisedProcess(cmd.Context(), sessionID, launchID, terminalHistoryPath, args)
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&sessionID, "session", "", "AO session id")
 	cmd.Flags().StringVar(&launchID, "launch", "", "AO process launch id")
+	cmd.Flags().StringVar(&terminalHistoryPath, "terminal-history", "", "render an AO-owned conversation snapshot before starting the agent")
 	return cmd
 }
 
-func (c *commandContext) runSupervisedProcess(ctx context.Context, sessionID, launchID string, argv []string) {
+func (c *commandContext) runSupervisedProcess(ctx context.Context, sessionID, launchID, terminalHistoryPath string, argv []string) {
+	if terminalHistoryPath != "" {
+		if err := renderTerminalHistory(c.deps.Out, terminalHistoryPath); err != nil {
+			_, _ = fmt.Fprintf(c.deps.Err, "ao: render terminal history: %v\n", err)
+			c.reportSupervisedExit(sessionID, launchID)
+			return
+		}
+	}
 	child := exec.CommandContext(ctx, argv[0], argv[1:]...) //nolint:gosec // argv is constructed by the selected agent adapter.
 	child.Stdin = c.deps.In
 	child.Stdout = c.deps.Out
@@ -76,6 +86,27 @@ func (c *commandContext) runSupervisedProcess(ctx context.Context, sessionID, la
 	signal.Stop(interrupts)
 
 	c.reportSupervisedExit(sessionID, launchID)
+}
+
+func renderTerminalHistory(out io.Writer, path string) error {
+	history, err := os.ReadFile(path) //nolint:gosec // internal path is created by Session Manager under AO_DATA_DIR.
+	if err != nil {
+		return err
+	}
+	for len(history) > 0 {
+		written, writeErr := out.Write(history)
+		if writeErr != nil {
+			return writeErr
+		}
+		if written <= 0 || written > len(history) {
+			return io.ErrShortWrite
+		}
+		history = history[written:]
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove rendered snapshot: %w", err)
+	}
+	return nil
 }
 
 func (c *commandContext) reportSupervisedExit(sessionID, launchID string) {

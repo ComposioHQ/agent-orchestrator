@@ -242,6 +242,9 @@ type ChatResumeConfig struct {
 	SystemPrompt          string
 	AdditionalDirectories []string
 	MCPServers            []ChatMCPServerConfig
+	// RequireNativeHistory makes a missing typed provider replay fatal. Interface
+	// transitions set this for TUI -> Chat handoffs that must import history.
+	RequireNativeHistory bool
 }
 
 // ChatMCPServerConfig is the provider-neutral session-setup shape for a tool

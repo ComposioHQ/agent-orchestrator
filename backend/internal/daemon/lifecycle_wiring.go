@@ -454,10 +454,15 @@ var _ interface {
 	ArmChatHandoff(context.Context, domain.SessionID, domain.SessionInterfaceTransitionPolicy) error
 	PrepareChatHandoff(context.Context, domain.SessionID, domain.SessionInterfaceTransitionPolicy) error
 	AbortChatHandoff(domain.SessionID)
+	InterfaceHandoffMessages(context.Context, domain.SessionID) ([]domain.ConversationMessage, error)
 } = chatLauncher{}
 
 func (c chatLauncher) SupportsChat(harness domain.AgentHarness) bool {
 	return c.svc.SupportsChat(harness)
+}
+
+func (c chatLauncher) InterfaceHandoffMessages(ctx context.Context, id domain.SessionID) ([]domain.ConversationMessage, error) {
+	return c.svc.InterfaceHandoffMessages(ctx, id)
 }
 
 func (c chatLauncher) PreflightChat(

@@ -15,7 +15,9 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/activitydispatch"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/cursor"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 // sessionIDPattern bounds the AO_SESSION_ID we will place in a request path to
@@ -253,6 +255,10 @@ type sessionStartHookOutput struct {
 	} `json:"hookSpecificOutput"`
 }
 
+type cursorPermissionHookOutput struct {
+	Permission string `json:"permission"`
+}
+
 // newHooksCommand builds the hidden `ao hooks <agent> <event>` command that
 // agent CLIs invoke from their workspace-local hook config. It reads the native
 // hook payload from stdin and the AO session id from AO_SESSION_ID, derives an
@@ -303,6 +309,9 @@ func (c *commandContext) runHook(ctx context.Context, agent, event string) error
 	if shouldEmitSessionStartContext(agent, event) {
 		c.emitSessionStartContext(agent, event, sessionID)
 	}
+	if isCursorPermissionHook(agent, event) {
+		return c.runCursorPermissionHook(ctx, agent, event, sessionID, payload)
+	}
 
 	state, hasActivity := activitydispatch.Derive(agent, event, payload)
 	agentSessionID := ""
@@ -346,6 +355,46 @@ func (c *commandContext) runHook(ctx context.Context, agent, event string) error
 		// Surface the failure for diagnosis, but exit 0: a failed activity
 		// report must not disrupt the agent.
 		c.reportHookFailure(agent, event, sessionID, err)
+	}
+	return nil
+}
+
+func isCursorPermissionHook(agent, event string) bool {
+	if domain.AgentHarness(agent) != domain.HarnessCursor {
+		return false
+	}
+	switch event {
+	case "before-shell-execution", "before-mcp-execution":
+		return true
+	default:
+		return false
+	}
+}
+
+func (c *commandContext) runCursorPermissionHook(ctx context.Context, agent, event, sessionID string, payload []byte) error {
+	mode := ports.PermissionMode(strings.TrimSpace(os.Getenv(cursor.EnvPermissionMode)))
+	decision := cursor.EvaluatePermission(mode, event, payload)
+
+	launchID := validLaunchID(os.Getenv("AO_RUNTIME_LAUNCH_ID"))
+	if launchID == "" {
+		launchID = validLaunchID(hookLaunchID(payload))
+	}
+
+	path := "sessions/" + url.PathEscape(sessionID) + "/activity"
+	req := setActivityAPIRequest{
+		State:          string(decision.State),
+		Event:          event,
+		ToolName:       cursor.HookToolName(event, payload),
+		AgentSessionID: hookAgentSessionID(payload),
+		LaunchID:       launchID,
+	}
+	if err := c.postJSON(ctx, path, req, nil); err != nil {
+		c.reportHookFailure(agent, event, sessionID, err)
+	}
+
+	out := cursorPermissionHookOutput{Permission: decision.Permission}
+	if err := json.NewEncoder(c.deps.Out).Encode(out); err != nil {
+		c.reportHookFailure(agent, event, sessionID, fmt.Errorf("write permission response: %w", err))
 	}
 	return nil
 }

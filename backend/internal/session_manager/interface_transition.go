@@ -2,10 +2,14 @@ package sessionmanager
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -51,6 +55,10 @@ type chatHandoffLauncher interface {
 	ArmChatHandoff(context.Context, domain.SessionID, domain.SessionInterfaceTransitionPolicy) error
 	PrepareChatHandoff(context.Context, domain.SessionID, domain.SessionInterfaceTransitionPolicy) error
 	AbortChatHandoff(domain.SessionID)
+}
+
+type chatHandoffMessageReader interface {
+	InterfaceHandoffMessages(context.Context, domain.SessionID) ([]domain.ConversationMessage, error)
 }
 
 type runtimeInterrupter interface {
@@ -162,6 +170,10 @@ func (m *Manager) StartInterfaceTransition(
 	if err != nil {
 		return domain.SessionInterfaceTransition{}, err
 	}
+	previous, previousFound, err := store.GetLatestSessionInterfaceTransition(ctx, id)
+	if err != nil {
+		return domain.SessionInterfaceTransition{}, err
+	}
 	now := m.clock()
 	transition, created, err := store.CreateSessionInterfaceTransition(ctx, domain.SessionInterfaceTransition{
 		ID: m.newLaunchID(), SessionID: id, SourceMode: source, TargetMode: target,
@@ -173,6 +185,9 @@ func (m *Manager) StartInterfaceTransition(
 	}
 	if !created {
 		return transition, ErrInterfaceTransitionInProgress
+	}
+	if previousFound {
+		_ = os.Remove(m.terminalHistoryPath(previous.ID))
 	}
 	if source == domain.SessionModeChat {
 		handoff, ok := m.chat.(chatHandoffLauncher)
@@ -314,8 +329,14 @@ func (m *Manager) runInterfaceTransition(
 	sourcePrepared := transition.SourceMode == domain.SessionModeChat
 	sourceStopped := false
 	modeChanged := false
+	var terminalHistory []byte
+	terminalHistoryPath := ""
 	var sourceRuntimeHandle ports.RuntimeHandle
 	fail := func(code string, cause error) {
+		if terminalHistoryPath != "" && !sourceStopped {
+			_ = os.Remove(terminalHistoryPath)
+			terminalHistoryPath = ""
+		}
 		if sourcePrepared && !sourceStopped {
 			m.abortSourceHandoff(transition)
 		}
@@ -325,7 +346,7 @@ func (m *Manager) runInterfaceTransition(
 			return
 		}
 		if sourceStopped {
-			m.rollbackInterfaceTransition(transition, sourceRuntimeHandle, modeChanged, code, cause)
+			m.rollbackInterfaceTransition(transition, sourceRuntimeHandle, modeChanged, terminalHistoryPath, code, cause)
 			return
 		}
 		_ = m.finishInterfaceTransition(transition.ID, domain.SessionInterfaceTransitionFailed, code, cause.Error())
@@ -378,6 +399,21 @@ func (m *Manager) runInterfaceTransition(
 		return
 	}
 	sourcePrepared = true
+	if transition.SourceMode == domain.SessionModeChat &&
+		transition.TargetMode == domain.SessionModeTUI && rec.Harness == domain.HarnessCursor {
+		terminalHistory, err = m.cursorTerminalHistory(ctx, rec.ID)
+		if err != nil {
+			fail("SOURCE_HISTORY_UNAVAILABLE", err)
+			return
+		}
+		if len(terminalHistory) > 0 {
+			terminalHistoryPath, err = m.writeTerminalHistory(transition.ID, terminalHistory)
+			if err != nil {
+				fail("SOURCE_HISTORY_UNAVAILABLE", err)
+				return
+			}
+		}
+	}
 	// A promptless TUI may not create a provider conversation until its first
 	// submitted turn. When the transition was admitted from positive initial-
 	// composer proof, resolve again after input is frozen and drain is complete.
@@ -425,6 +461,10 @@ func (m *Manager) runInterfaceTransition(
 	// be proven stopped, do not launch either controller: recovery is safer than
 	// two writers racing on one native conversation.
 	if err := m.stopSourceControllerConclusive(rec); err != nil {
+		if terminalHistoryPath != "" {
+			_ = os.Remove(terminalHistoryPath)
+			terminalHistoryPath = ""
+		}
 		detail := "AO could not prove that the old controller stopped. Restart AO to reconcile this session before sending more work: " + err.Error()
 		_ = m.finishInterfaceTransition(transition.ID, domain.SessionInterfaceTransitionRecovery,
 			"SOURCE_STOP_UNCERTAIN", detail)
@@ -453,7 +493,7 @@ func (m *Manager) runInterfaceTransition(
 		fail("TRANSITION_STATE_FAILED", err)
 		return
 	}
-	if err := m.startTransitionTarget(ctx, rec.ID, transition.NativeConversationID == "", true); err != nil {
+	if err := m.startTransitionTarget(ctx, rec.ID, transition.NativeConversationID == "", true, terminalHistoryPath); err != nil {
 		code := "TARGET_RESUME_FAILED"
 		switch {
 		case errors.Is(err, ports.ErrChatHistoryUnavailable):
@@ -970,7 +1010,7 @@ func (m *Manager) stopSourceControllerConclusive(rec domain.SessionRecord) error
 	return fmt.Errorf("could not prove the source controller stopped after retry: %w", errors.Join(failures...))
 }
 
-func (m *Manager) startTransitionTarget(ctx context.Context, id domain.SessionID, fresh, requireNativeHistory bool) error {
+func (m *Manager) startTransitionTarget(ctx context.Context, id domain.SessionID, fresh, requireNativeHistory bool, terminalHistoryPath string) error {
 	ctx, cancel := context.WithTimeout(ctx, interfaceTransitionStepLimit)
 	defer cancel()
 	rec, ok, err := m.store.GetSession(ctx, id)
@@ -990,7 +1030,7 @@ func (m *Manager) startTransitionTarget(ctx context.Context, id domain.SessionID
 	// daemon restore deliberately use the normal context-resume policy.
 	_, err = m.relaunchSessionWithPolicy(
 		ctx, "switch interface", rec, project, ws, nil,
-		fresh, requireNativeHistory && !fresh,
+		fresh, requireNativeHistory && !fresh, terminalHistoryPath,
 	)
 	return err
 }
@@ -999,11 +1039,16 @@ func (m *Manager) rollbackInterfaceTransition(
 	transition domain.SessionInterfaceTransition,
 	sourceRuntimeHandle ports.RuntimeHandle,
 	modeChanged bool,
+	terminalHistoryPath string,
 	code string,
 	cause error,
 ) {
 	ctx, cancel := context.WithTimeout(context.Background(), interfaceTransitionStepLimit)
 	defer cancel()
+	if !modeChanged && transition.SourceMode == domain.SessionModeChat && terminalHistoryPath != "" {
+		_ = os.Remove(terminalHistoryPath)
+		terminalHistoryPath = ""
+	}
 	if modeChanged {
 		// A target may have partially started. Stop whatever its committed mode can
 		// identify before restoring the old writer.
@@ -1027,6 +1072,10 @@ func (m *Manager) rollbackInterfaceTransition(
 				"RECOVERY_REQUIRED", detail)
 			return
 		}
+		if transition.SourceMode == domain.SessionModeChat && terminalHistoryPath != "" {
+			_ = os.Remove(terminalHistoryPath)
+			terminalHistoryPath = ""
+		}
 	}
 	// A conclusive liveness probe can prove the source process exited even when
 	// its first teardown timed out. Clear any stale runtime registration using
@@ -1039,7 +1088,7 @@ func (m *Manager) rollbackInterfaceTransition(
 			return
 		}
 	}
-	if err := m.startTransitionTarget(ctx, transition.SessionID, transition.NativeConversationID == "", false); err != nil {
+	if err := m.startTransitionTarget(ctx, transition.SessionID, transition.NativeConversationID == "", false, ""); err != nil {
 		_ = m.finishInterfaceTransition(transition.ID, domain.SessionInterfaceTransitionRecovery,
 			"RECOVERY_REQUIRED", cause.Error()+"; source restore: "+err.Error())
 		return
@@ -1346,6 +1395,18 @@ func (m *Manager) recoverInterruptedInterfaceTransitions(
 	for i := range active {
 		transition := &active[i]
 		detail := "The daemon restarted during the interface switch; AO recovered the session from its last committed mode."
+		if transition.SourceMode == domain.SessionModeChat && transition.TargetMode == domain.SessionModeTUI {
+			rec, found, readErr := m.store.GetSession(ctx, transition.SessionID)
+			if readErr != nil {
+				return nil, readErr
+			}
+			// This snapshot is needed only after the controller epoch committed to
+			// TUI. An earlier crash recovers in Chat and must erase the plaintext
+			// artifact instead of leaving it behind indefinitely.
+			if !found || rec.IsTerminated || domain.NormalizeSessionMode(rec.Mode) != transition.TargetMode {
+				_ = os.Remove(m.terminalHistoryPath(transition.ID))
+			}
+		}
 		if transition.SourceMode == domain.SessionModeTUI && transition.TargetMode == domain.SessionModeChat {
 			rec, found, readErr := m.store.GetSession(ctx, transition.SessionID)
 			if readErr != nil {
@@ -1394,7 +1455,248 @@ func (m *Manager) recoverInterruptedInterfaceTransitions(
 		transition.UpdatedAt = m.clock()
 		transition.CompletedAt = transition.UpdatedAt
 	}
+	if err := m.sweepTerminalHistoryArtifacts(ctx); err != nil {
+		return nil, err
+	}
 	return active, nil
+}
+
+const interfaceTerminalHistoryMaxBytes = 256 << 10
+
+func (m *Manager) cursorTerminalHistory(ctx context.Context, id domain.SessionID) ([]byte, error) {
+	reader, ok := m.chat.(chatHandoffMessageReader)
+	if !ok {
+		return nil, errors.New("Cursor Chat history reader is unavailable")
+	}
+	messages, err := reader.InterfaceHandoffMessages(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("read Cursor Chat history: %w", err)
+	}
+	blocks := make([]string, 0, len(messages))
+	for _, message := range messages {
+		text := cleanCursorTerminalHistoryText(message.Text)
+		if text == "" {
+			continue
+		}
+		switch message.Role {
+		case domain.MessageRoleUser:
+			if message.Origin != "" && message.Origin != domain.MessageOriginHuman {
+				continue
+			}
+			blocks = append(blocks, boundedTerminalHistoryBlock("You", text))
+		case domain.MessageRoleAssistant:
+			if message.Origin != "" && message.Origin != domain.MessageOriginProvider {
+				continue
+			}
+			blocks = append(blocks, boundedTerminalHistoryBlock("Cursor", text))
+		default:
+			continue
+		}
+	}
+	if len(blocks) == 0 {
+		return nil, nil
+	}
+	const fullHeader = "Previous conversation\n\n"
+	const truncatedHeader = "Previous conversation (earlier messages omitted)\n\n"
+	used := len(truncatedHeader)
+	first := len(blocks)
+	for first > 0 {
+		next := len(blocks[first-1])
+		if used+next > interfaceTerminalHistoryMaxBytes {
+			break
+		}
+		used += next
+		first--
+	}
+	header := fullHeader
+	if first > 0 {
+		header = truncatedHeader
+	}
+	var body strings.Builder
+	body.Grow(len(header) + used)
+	body.WriteString(header)
+	for _, block := range blocks[first:] {
+		body.WriteString(block)
+	}
+	return []byte(body.String()), nil
+}
+
+func boundedTerminalHistoryBlock(label, text string) string {
+	const marker = "\n[... message truncated for terminal display ...]"
+	prefix := label + "\n"
+	suffix := "\n\n"
+	budget := interfaceTerminalHistoryMaxBytes - len("Previous conversation (earlier messages omitted)\n\n") - len(prefix) - len(marker) - len(suffix)
+	if len(text) > budget {
+		text = truncateUTF8Prefix(text, budget) + marker
+	}
+	return prefix + text + suffix
+}
+
+func truncateUTF8Prefix(text string, byteLimit int) string {
+	if len(text) <= byteLimit {
+		return text
+	}
+	used := 0
+	for index, r := range text {
+		size := len(string(r))
+		if used+size > byteLimit {
+			return text[:index]
+		}
+		used += size
+	}
+	return text
+}
+
+func cleanCursorTerminalHistoryText(text string) string {
+	text = ansiOSC.ReplaceAllString(text, "")
+	text = ansiCSI.ReplaceAllString(text, "")
+	text = strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\t' {
+			return r
+		}
+		if unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, text)
+	lines := strings.Split(strings.TrimSpace(text), "\n")
+	kept := lines[:0]
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "[REDACTED]" {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	return strings.TrimSpace(strings.Join(kept, "\n"))
+}
+
+func (m *Manager) writeTerminalHistory(transitionID string, history []byte) (string, error) {
+	dir := filepath.Join(m.dataDir, "interface-handoffs")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", fmt.Errorf("create terminal history directory: %w", err)
+	}
+	path := m.terminalHistoryPath(transitionID)
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return "", fmt.Errorf("write terminal history: %w", err)
+	}
+	if _, err := file.Write(history); err != nil {
+		_ = file.Close()
+		_ = os.Remove(path)
+		return "", fmt.Errorf("write terminal history: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		_ = os.Remove(path)
+		return "", fmt.Errorf("close terminal history: %w", err)
+	}
+	return path, nil
+}
+
+func (m *Manager) terminalHistoryPath(transitionID string) string {
+	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(transitionID)))
+	return filepath.Join(m.dataDir, "interface-handoffs", digest+".txt")
+}
+
+func (m *Manager) cleanupTerminalHistoryForSession(ctx context.Context, id domain.SessionID) {
+	store, ok := m.store.(interfaceTransitionStore)
+	if !ok {
+		return
+	}
+	transition, found, err := store.GetLatestSessionInterfaceTransition(ctx, id)
+	if err == nil && found {
+		_ = os.Remove(m.terminalHistoryPath(transition.ID))
+	}
+}
+
+func (m *Manager) recoveryTerminalHistoryPath(ctx context.Context, rec domain.SessionRecord) (string, error) {
+	if rec.Harness != domain.HarnessCursor || domain.NormalizeSessionMode(rec.Mode) != domain.SessionModeTUI {
+		return "", nil
+	}
+	store, ok := m.store.(interfaceTransitionStore)
+	if !ok {
+		return "", nil
+	}
+	transition, found, err := store.GetLatestSessionInterfaceTransition(ctx, rec.ID)
+	if err != nil || !found {
+		return "", err
+	}
+	if transition.SourceMode != domain.SessionModeChat || transition.TargetMode != domain.SessionModeTUI {
+		return "", nil
+	}
+	path := m.terminalHistoryPath(transition.ID)
+	info, err := os.Stat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if !info.Mode().IsRegular() {
+		return "", errors.New("terminal history recovery path is not a regular file")
+	}
+	return path, nil
+}
+
+func (m *Manager) sweepTerminalHistoryArtifacts(ctx context.Context) error {
+	dir := filepath.Join(m.dataDir, "interface-handoffs")
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read terminal history directory: %w", err)
+	}
+	keep := make(map[string]bool)
+	sessions, err := m.store.ListAllSessions(ctx)
+	if err != nil {
+		return err
+	}
+	store, ok := m.store.(interfaceTransitionStore)
+	if !ok {
+		return nil
+	}
+	for _, rec := range sessions {
+		if rec.Harness != domain.HarnessCursor || domain.NormalizeSessionMode(rec.Mode) != domain.SessionModeTUI {
+			continue
+		}
+		if rec.IsTerminated {
+			rows, rowsErr := m.store.ListSessionWorktrees(ctx, rec.ID)
+			if rowsErr != nil {
+				return rowsErr
+			}
+			if len(restorableWorktreeRows(rows)) == 0 {
+				continue
+			}
+		}
+		transition, found, readErr := store.GetLatestSessionInterfaceTransition(ctx, rec.ID)
+		if readErr != nil {
+			return readErr
+		}
+		if found && transition.SourceMode == domain.SessionModeChat && transition.TargetMode == domain.SessionModeTUI {
+			keep[filepath.Base(m.terminalHistoryPath(transition.ID))] = true
+		}
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.Type().IsRegular() && terminalHistoryFilename(name) && !keep[name] {
+			if err := os.Remove(filepath.Join(dir, name)); err != nil && !os.IsNotExist(err) {
+				return fmt.Errorf("remove stale terminal history %s: %w", name, err)
+			}
+		}
+	}
+	return nil
+}
+
+func terminalHistoryFilename(name string) bool {
+	if len(name) != 68 || !strings.HasSuffix(name, ".txt") {
+		return false
+	}
+	for _, r := range strings.TrimSuffix(name, ".txt") {
+		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f')) {
+			return false
+		}
+	}
+	return true
 }
 
 func oppositeSessionMode(mode domain.SessionMode) domain.SessionMode {
