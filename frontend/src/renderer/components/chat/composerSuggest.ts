@@ -169,7 +169,10 @@ export function rankFiles(paths: readonly string[], query: string): Suggestion[]
 	const scored: { suggestion: Suggestion; score: number; path: string }[] = [];
 
 	for (const path of paths) {
-		if (!path) continue;
+		// A line break is legal in a Unix filename, but the plain-text composer uses
+		// line breaks as paragraph boundaries. Until the wire format can escape that
+		// ambiguity, do not offer a value that cannot survive as one atomic chip.
+		if (!path || /[\r\n]/.test(path)) continue;
 		// Split explicitly rather than with slice(lastIndexOf(...)): a file at the repo
 		// root has no slash, and the negative index silently truncates its own name
 		// into a parent directory that does not exist.

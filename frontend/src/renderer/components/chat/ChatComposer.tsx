@@ -45,6 +45,10 @@ import {
 import { ArrowUp, Command, CornerDownLeft, Loader2, Plus, Square, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "../ui/button";
+import {
+	EMPTY_COMPOSER_CONTENT,
+	type ComposerDraftContent,
+} from "../../lib/composer-content";
 import { cn } from "../../lib/utils";
 import { ComposerSuggestMenu } from "./ComposerSuggestMenu";
 import {
@@ -77,7 +81,7 @@ import {
 	readChatSessionDraft,
 	subscribeChatDraftRuntime,
 	writeChatAttachments,
-	writeChatComposerText,
+	writeChatComposerContent,
 	type ChatDraftMutationToken,
 	type ChatComposerDelivery,
 	type ChatDraftScope,
@@ -263,7 +267,8 @@ export function ChatComposer({
 	);
 	// The DOM event is the source of truth while React catches up with the draft
 	// transition. This keeps Enter-after-fast-typing from observing stale state.
-	const textRef = useRef("");
+	const contentRef = useRef<ComposerDraftContent>(EMPTY_COMPOSER_CONTENT);
+	const submitInFlight = useRef<Promise<void> | null>(null);
 	/**
 	 * What Enter does while the agent is working.
 	 *
@@ -460,9 +465,16 @@ export function ChatComposer({
 			: willQueue
 				? "⏎ queue"
 				: "Enter to send";
-	const persistedText = persistedDraft?.composer.text;
+	const persistedContent = persistedDraft
+		? {
+				text: persistedDraft.composer.text,
+				tokens: persistedDraft.composer.tokens,
+			}
+		: undefined;
 	const draftSeedId = draftSeed?.id ?? (draftScopeKey ? `session:${draftScopeKey}` : undefined);
-	const draftSeedText = draftSeed?.text ?? persistedText;
+	const draftSeedContent = draftSeed
+		? { text: draftSeed.text, tokens: [] }
+		: persistedContent;
 	const draftPersistenceError =
 		textDraftPersistenceError ?? attachmentDraftPersistenceError;
 
@@ -512,7 +524,7 @@ export function ChatComposer({
 	}, [autoFocus, focusEditor]);
 
 	const clearEditorView = useCallback(() => {
-		textRef.current = "";
+		contentRef.current = EMPTY_COMPOSER_CONTENT;
 		hasTextRef.current = false;
 		setHasText(false);
 		setTrigger(undefined);
@@ -635,8 +647,9 @@ export function ChatComposer({
 		// A concurrent replacement can render this memoized seed, remain disconnected,
 		// and commit only after another surface accepted and cleared the draft. Read the
 		// session record again at the effect/commit boundary so acknowledgement cannot
-		// turn the runtime snapshot into an ABA that resurrects accepted text or staged
-		// attachment descriptors.
+		// turn the runtime snapshot into an ABA that resurrects accepted content or staged
+		// attachment descriptors. An explicit history seed is a new user action and
+		// remains authoritative.
 		const committedDraft = draftScope ? readChatSessionDraft(draftScope) : undefined;
 		if (committedDraft) {
 			fileAttachments.reconcilePersistedAttachments(
@@ -649,20 +662,25 @@ export function ChatComposer({
 				})),
 			);
 		}
-		const committedSeedText =
-			draftSeed?.text ??
-			(committedDraft ? committedDraft.composer.text : draftSeedText);
-		if (committedSeedText === undefined) {
+		let committedSeedContent = draftSeedContent;
+		if (!draftSeed && committedDraft) {
+			const committedComposer = committedDraft.composer;
+			committedSeedContent = {
+				text: committedComposer.text,
+				tokens: committedComposer.tokens,
+			};
+		}
+		if (committedSeedContent === undefined) {
 			restoredSeedKey.current = undefined;
 			return;
 		}
-		const seedKey = JSON.stringify([draftSeedId, committedSeedText]);
+		const seedKey = JSON.stringify([draftSeedId, committedSeedContent]);
 		if (restoredSeedKey.current === seedKey) return;
 		restoredSeedKey.current = seedKey;
-		textRef.current = committedSeedText;
-		hasTextRef.current = committedSeedText.trim().length > 0;
+		contentRef.current = committedSeedContent;
+		hasTextRef.current = committedSeedContent.text.trim().length > 0;
 		setHasText(hasTextRef.current);
-		editor.current?.setText(committedSeedText);
+		editor.current?.replaceContent(committedSeedContent);
 		dismissedKeyRef.current = null;
 		setDismissedKey(null);
 		highlightedRef.current = 0;
@@ -673,7 +691,7 @@ export function ChatComposer({
 		// A session restore is already durable; writing it again here needlessly
 		// changes the accepted-send revision during mount.
 		if (draftScope && draftSeed) {
-			const result = writeChatComposerText(draftScope, committedSeedText);
+			const result = writeChatComposerContent(draftScope, committedSeedContent);
 			composerRevision.current = result.draft.composer.revision;
 			setTextDraftPersistenceError(
 				result.ok
@@ -684,8 +702,8 @@ export function ChatComposer({
 	}, [
 		draftScope,
 		draftSeed,
+		draftSeedContent,
 		draftSeedId,
-		draftSeedText,
 		fileAttachments.reconcilePersistedAttachments,
 	]);
 
@@ -711,13 +729,14 @@ export function ChatComposer({
 		const wasActive = previousApprovalActive.current;
 		previousApprovalActive.current = approvalActive;
 		if (!wasActive || approvalActive) return;
-		editor.current?.setText(textRef.current);
+		editor.current?.replaceContent(contentRef.current);
 	}, [approvalActive]);
 
 	const onEditorChange = useCallback((snapshot: ComposerEditorSnapshot) => {
-		textRef.current = snapshot.text;
+		const content = { text: snapshot.text, tokens: snapshot.tokens };
+		contentRef.current = content;
 		if (draftScope) {
-			const result = writeChatComposerText(draftScope, snapshot.text);
+			const result = writeChatComposerContent(draftScope, content);
 			composerRevision.current = result.draft.composer.revision;
 			// A disabled Lexical editor can still publish an internal state update
 			// while its editability changes. It must not erase the recovery notice
@@ -805,7 +824,23 @@ export function ChatComposer({
 
 	async function submit(event?: FormEvent, forceSteer?: boolean) {
 		event?.preventDefault();
-		const currentText = textRef.current;
+		// React cannot publish the next busy prop until after this event returns. A
+		// second Enter in that gap joins the accepted submission instead of opening a
+		// second transport whose local admission rejection would look like a real
+		// provider failure.
+		if (submitInFlight.current) return submitInFlight.current;
+		const pending = performSubmit(forceSteer);
+		submitInFlight.current = pending;
+		const release = () => {
+			if (submitInFlight.current === pending) submitInFlight.current = null;
+		};
+		void pending.then(release, release);
+		return pending;
+	}
+
+	async function performSubmit(forceSteer?: boolean) {
+		const currentContent = contentRef.current;
+		const currentText = currentContent.text;
 		const recoveringDelivery = durableDelivery;
 		const canSubmitNow =
 			((currentText.trim().length > 0 || staged) || Boolean(recoveringDelivery)) &&
@@ -909,7 +944,7 @@ export function ChatComposer({
 				: withAttachmentReferences(body, acceptedPaths);
 		const prepared = prepareChatComposerDelivery(draftScope, {
 			kind: recoveringDelivery?.kind ?? (shouldSteer ? "steer" : "send"),
-			composerText: currentText,
+			composerContent: currentContent,
 			attachments: fileAttachments.attachments.flatMap((attachment) =>
 				attachment.stagedPath
 					? [{
@@ -1005,7 +1040,7 @@ export function ChatComposer({
 		snapshot: ComposerEditorSnapshot,
 		event: globalThis.KeyboardEvent,
 	): boolean {
-		textRef.current = snapshot.text;
+		contentRef.current = { text: snapshot.text, tokens: snapshot.tokens };
 		const wantsSteer = (event.metaKey || event.ctrlKey) && canSteerDraft;
 		void submit(undefined, wantsSteer);
 		return true;
@@ -1019,14 +1054,16 @@ export function ChatComposer({
 		// already current. Using the rendered `menuOpen` in that window sent the draft
 		// instead of accepting the visible completion.
 		const liveSnapshot = editor.current?.getSnapshot();
-		if (liveSnapshot) textRef.current = liveSnapshot.text;
+		if (liveSnapshot) {
+			contentRef.current = { text: liveSnapshot.text, tokens: liveSnapshot.tokens };
+		}
 		const liveTrigger = liveSnapshot?.trigger;
 		const liveSuggestions = suggestionsFor(liveTrigger);
 		if (liveSuggestions.length > 0) {
 			// `/compact` takes no arguments. Once its exact name is present, Enter
 			// executes it directly instead of merely accepting the highlighted row and
 			// requiring a second Enter on the inserted trailing space.
-			if (event.key === "Enter" && textRef.current.trim() === "/compact" && onCompact) {
+			if (event.key === "Enter" && contentRef.current.text.trim() === "/compact" && onCompact) {
 				event.preventDefault();
 				void submit();
 				return;

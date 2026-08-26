@@ -8,6 +8,7 @@ import type { ChatSkill } from "../../types/conversation";
 import {
 	prepareChatComposerDelivery,
 	readChatSessionDraft,
+	writeChatComposerContent,
 	writeChatComposerText,
 } from "../../lib/chat-drafts";
 import {
@@ -116,9 +117,85 @@ describe("send keys", () => {
 		expect(document.activeElement).toBe(field);
 	});
 
-	it("does not focus the hidden or inactive chat composer", () => {
+	it("does not focus the hidden or inactive chat composer after content restoration settles", async () => {
 		const { field } = renderComposer({ autoFocus: false, autoFocusKey: "session-1" });
+		await act(async () => {
+			await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+		});
 		expect(document.activeElement).not.toBe(field);
+	});
+
+	it("does not steal focus while restoring a semantic draft into an inactive composer", async () => {
+		const sessionId = "inactive-semantic-composer";
+		const path = "backend/internal/config.ts";
+		writeChatComposerContent(sessionId, {
+			text: `${path} `,
+			tokens: [{ kind: "file", value: path, start: 0, end: path.length }],
+		});
+		render(
+			<>
+				<button type="button">Outside</button>
+				<ChatComposer onSend={vi.fn()} draftSessionId={sessionId} autoFocus={false} />
+			</>,
+		);
+		const outside = screen.getByRole("button", { name: "Outside" });
+		outside.focus();
+		const field = screen.getByLabelText("Message the agent");
+		await waitFor(() =>
+			expect(field.querySelector('[data-composer-token="file"]')).toHaveAttribute(
+				"data-value",
+				path,
+			),
+		);
+		await act(async () => {
+			await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+		});
+		expect(outside).toHaveFocus();
+	});
+
+	it("keeps the post-decorator caret frame through focus and ignores it after unmount", async () => {
+		const sessionId = "unmounted-semantic-composer";
+		const path = "backend/internal/config.ts";
+		writeChatComposerContent(sessionId, {
+			text: `${path} `,
+			tokens: [{ kind: "file", value: path, start: 0, end: path.length }],
+		});
+		const frames: FrameRequestCallback[] = [];
+		const cancelledFrames = new Set<number>();
+		const requestFrame = vi
+			.spyOn(window, "requestAnimationFrame")
+			.mockImplementation((callback) => {
+				frames.push(callback);
+				return frames.length;
+			});
+		const cancelFrame = vi
+			.spyOn(window, "cancelAnimationFrame")
+			.mockImplementation((frame) => void cancelledFrames.add(frame));
+
+		try {
+			const view = render(
+				<ChatComposer onSend={vi.fn()} draftSessionId={sessionId} autoFocus={false} />,
+			);
+			const field = screen.getByLabelText("Message the agent");
+			await waitFor(() =>
+				expect(field.querySelector('[data-composer-token="file"]')).toHaveAttribute(
+					"data-value",
+					path,
+				),
+			);
+			expect(frames.length).toBeGreaterThan(0);
+			const pendingFrame = frames.length;
+			field.focus();
+			expect(cancelledFrames).not.toContain(pendingFrame);
+			view.unmount();
+
+			expect(() => {
+				for (const frame of frames) frame(performance.now());
+			}).not.toThrow();
+		} finally {
+			cancelFrame.mockRestore();
+			requestFrame.mockRestore();
+		}
 	});
 
 	it("applies the natural-growth and seven-line scroll-cap styles", () => {
@@ -355,7 +432,7 @@ describe("send keys", () => {
 		const sessionId = "composer-restored-delivery-boundary";
 		prepareChatComposerDelivery(sessionId, {
 			kind: "send",
-			composerText: "recover this message",
+			composerContent: { text: "recover this message", tokens: [] },
 			attachments: [],
 			requestText: "recover this message",
 			clientMessageId: "composer-restored-delivery-id",
@@ -388,7 +465,7 @@ describe("send keys", () => {
 
 		render(<ChatComposer onSend={onSend} draftSessionId={sessionId} />);
 		const restored = screen.getByLabelText("Message the agent");
-		expect(restored).toHaveTextContent("later revision");
+		await waitFor(() => expect(restored).toHaveTextContent("later revision"));
 		expect(restored).toHaveAttribute("contenteditable", "false");
 
 		await act(async () => acceptSend());
@@ -714,8 +791,10 @@ describe("steering", () => {
 				draftSessionId={sessionId}
 			/>,
 		);
-		expect(screen.getByLabelText("Message the agent")).toHaveTextContent(
-			"send this normally instead",
+		await waitFor(() =>
+			expect(screen.getByLabelText("Message the agent")).toHaveTextContent(
+				"send this normally instead",
+			),
 		);
 		expect(screen.getByLabelText("Message the agent")).toHaveAttribute("contenteditable", "true");
 		expect(screen.queryByRole("button", { name: "Retry message safely" })).not.toBeInTheDocument();
@@ -793,7 +872,7 @@ describe("steering", () => {
 
 		render(<ChatComposer {...props} />);
 		const restored = screen.getByLabelText("Message the agent");
-		expect(restored).toHaveTextContent("possibly delivered guidance");
+		await waitFor(() => expect(restored).toHaveTextContent("possibly delivered guidance"));
 		expect(restored).toHaveAttribute("contenteditable", "false");
 		expect(onSteer).toHaveBeenCalledTimes(1);
 
@@ -1145,6 +1224,101 @@ describe("file mentions", () => {
 		expect(token).toHaveFocus();
 		expect(await screen.findByRole("tooltip")).toHaveTextContent(
 			/Path reference only: backend\/internal\/config\.ts\./,
+		);
+	});
+
+	it("restores a selected duplicate-path chip after the session composer remounts", async () => {
+		const sessionId = "composer-restored-duplicate-file-chip";
+		const firstView = render(
+			<ChatComposer
+				onSend={vi.fn()}
+				draftSessionId={sessionId}
+				fileCatalog={fileCatalog(["frontend/src/config.ts", "backend/internal/config.ts"])}
+			/>,
+		);
+		const firstField = screen.getByLabelText("Message the agent");
+		await typeInComposer(firstField, "Review @config");
+		await userEvent.click(screen.getByRole("option", { name: /backend\/internal/ }));
+		await waitFor(() =>
+			expect(readChatSessionDraft(sessionId).composer.text).toBe(
+				"Review backend/internal/config.ts ",
+			),
+		);
+		firstView.unmount();
+
+		render(
+			<ChatComposer
+				onSend={vi.fn()}
+				draftSessionId={sessionId}
+				fileCatalog={fileCatalog([])}
+			/>,
+		);
+		const restoredField = screen.getByLabelText("Message the agent");
+		await waitFor(() =>
+			expect(composerWireText(restoredField)).toBe("Review backend/internal/config.ts "),
+		);
+		const restoredToken = restoredField.querySelector<HTMLElement>(
+			'[data-composer-token="file"]',
+		);
+		expect(restoredToken).toHaveAttribute("data-value", "backend/internal/config.ts");
+		expect(restoredToken).toHaveAccessibleName("config.ts path reference");
+		expect(restoredToken).toHaveAccessibleDescription(
+			/Path reference only: backend\/internal\/config\.ts\./,
+		);
+		expect(restoredToken).toHaveAttribute("tabindex", "0");
+	});
+
+	it("does not infer a chip from ordinary persisted path text", async () => {
+		const sessionId = "composer-plain-path-stays-plain";
+		writeChatComposerText(sessionId, "Review backend/internal/config.ts");
+
+		render(
+			<ChatComposer
+				onSend={vi.fn()}
+				draftSessionId={sessionId}
+				fileCatalog={fileCatalog(["backend/internal/config.ts"])}
+			/>,
+		);
+		const field = screen.getByLabelText("Message the agent");
+		await waitFor(() =>
+			expect(composerWireText(field)).toBe("Review backend/internal/config.ts"),
+		);
+		expect(field.querySelector('[data-composer-token="file"]')).toBeNull();
+	});
+
+	it("restores semantic chips after an approval temporarily replaces the editor", async () => {
+		const onSend = vi.fn();
+		const catalog = fileCatalog(["backend/internal/config.ts"]);
+		const view = render(
+			<ChatComposer onSend={onSend} fileCatalog={catalog} draftSessionId="chip-approval" />,
+		);
+		const field = screen.getByLabelText("Message the agent");
+		await typeInComposer(field, "Review @config");
+		await userEvent.keyboard("{Enter}");
+		expect(field.querySelector('[data-composer-token="file"]')).toHaveAttribute(
+			"data-value",
+			"backend/internal/config.ts",
+		);
+
+		view.rerender(
+			<ChatComposer
+				onSend={onSend}
+				fileCatalog={catalog}
+				draftSessionId="chip-approval"
+				approval={<div>Approve this tool?</div>}
+			/>,
+		);
+		expect(screen.queryByLabelText("Message the agent")).toBeNull();
+
+		view.rerender(
+			<ChatComposer onSend={onSend} fileCatalog={catalog} draftSessionId="chip-approval" />,
+		);
+		const restoredField = screen.getByLabelText("Message the agent");
+		await waitFor(() =>
+			expect(restoredField.querySelector('[data-composer-token="file"]')).toHaveAttribute(
+				"data-value",
+				"backend/internal/config.ts",
+			),
 		);
 	});
 
@@ -1639,7 +1813,7 @@ describe("attachments", () => {
 			sessionId,
 			{
 				kind: "send",
-				composerText: "restored exact draft",
+				composerContent: { text: "restored exact draft", tokens: [] },
 				attachments: [],
 				requestText: "restored exact draft",
 				clientMessageId: "restored-client-id",
