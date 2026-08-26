@@ -1340,6 +1340,7 @@ func TestManager_AddWorkspaceAcceptsChildWithoutOriginAsNeedsInit(t *testing.T) 
 	}
 	if needsInitRepo == nil {
 		t.Fatalf("expected a needs_init child")
+		return
 	}
 	if needsInitRepo.Repo != "" {
 		t.Fatalf("Repo = %q, want empty", needsInitRepo.Repo)
@@ -1578,6 +1579,7 @@ func TestManager_AddWorkspaceNonGitChildWithNestedRepo(t *testing.T) {
 	}
 	if pkgsRepo == nil {
 		t.Fatalf("packages not in WorkspaceRepos = %#v", proj.WorkspaceRepos)
+		return
 	}
 	if pkgsRepo.GitStatus != string(domain.GitStatusNeedsInit) {
 		t.Fatalf("packages GitStatus = %q, want %q", pkgsRepo.GitStatus, domain.GitStatusNeedsInit)

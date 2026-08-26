@@ -50,6 +50,7 @@ type lifecycleStack struct {
 	autoReviewDone <-chan struct{}
 	scmDone        <-chan struct{}
 	trackerDone    <-chan struct{}
+	automationDone <-chan struct{}
 }
 
 // startLifecycle constructs the Lifecycle Manager over the store and starts the
@@ -132,6 +133,9 @@ func (l *lifecycleStack) Stop() {
 	}
 	if l.trackerDone != nil {
 		<-l.trackerDone
+	}
+	if l.automationDone != nil {
+		<-l.automationDone
 	}
 }
 

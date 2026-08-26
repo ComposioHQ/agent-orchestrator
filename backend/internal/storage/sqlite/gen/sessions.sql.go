@@ -116,7 +116,8 @@ SELECT id, project_id, num, issue_id, kind, harness,
     workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref,
     reviewer_harness, is_pinned, pinned_at,
     session_mode, provider_conversation_id, controller_generation, browser_capability_verifier,
-    latest_user_prompt, latest_assistant_update, native_transcript_path, auto_inject_review, auto_inject_ci, auto_review_enabled, model
+    latest_user_prompt, latest_assistant_update, native_transcript_path, auto_inject_review, auto_inject_ci, auto_review_enabled, model,
+    automation_run_id, automation_launch_completed
 FROM sessions WHERE id = ?
 `
 
@@ -162,6 +163,8 @@ type GetSessionRow struct {
 	AutoInjectCI              bool
 	AutoReviewEnabled         bool
 	Model                     string
+	AutomationRunID           *domain.AutomationRunID
+	AutomationLaunchCompleted bool
 }
 
 func (q *Queries) GetSession(ctx context.Context, id domain.SessionID) (GetSessionRow, error) {
@@ -209,6 +212,119 @@ func (q *Queries) GetSession(ctx context.Context, id domain.SessionID) (GetSessi
 		&i.AutoInjectCI,
 		&i.AutoReviewEnabled,
 		&i.Model,
+		&i.AutomationRunID,
+		&i.AutomationLaunchCompleted,
+	)
+	return i, err
+}
+
+const getSessionByAutomationRunID = `-- name: GetSessionByAutomationRunID :one
+SELECT id, project_id, num, issue_id, kind, harness,
+    activity_state, activity_last_at, is_terminated, branch, workspace_path,
+    runtime_handle_id, agent_session_id, agent_session_id_launch_id, prompt,
+    created_at, updated_at, display_name, first_signal_at, preview_url,
+    preview_revision, cleanup_generation, runtime_launch_id,
+    workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref,
+    reviewer_harness, is_pinned, pinned_at,
+    session_mode, provider_conversation_id, controller_generation, browser_capability_verifier,
+    latest_user_prompt, latest_assistant_update, native_transcript_path, auto_inject_review, auto_inject_ci, auto_review_enabled, model,
+    automation_run_id, automation_launch_completed
+FROM sessions WHERE automation_run_id = ?
+`
+
+type GetSessionByAutomationRunIDRow struct {
+	ID                        domain.SessionID
+	ProjectID                 domain.ProjectID
+	Num                       int64
+	IssueID                   domain.IssueID
+	Kind                      domain.SessionKind
+	Harness                   domain.AgentHarness
+	ActivityState             domain.ActivityState
+	ActivityLastAt            time.Time
+	IsTerminated              bool
+	Branch                    string
+	WorkspacePath             string
+	RuntimeHandleID           string
+	AgentSessionID            string
+	AgentSessionIDLaunchID    string
+	Prompt                    string
+	CreatedAt                 time.Time
+	UpdatedAt                 time.Time
+	DisplayName               string
+	FirstSignalAt             sql.NullTime
+	PreviewURL                string
+	PreviewRevision           int64
+	CleanupGeneration         int64
+	RuntimeLaunchID           string
+	WorkspaceRepoPath         string
+	TerminateOnPRMerge        bool
+	DiffBaseSha               string
+	DiffBaseRef               string
+	ReviewerHarness           domain.ReviewerHarness
+	IsPinned                  bool
+	PinnedAt                  sql.NullTime
+	SessionMode               domain.SessionMode
+	ProviderConversationID    string
+	ControllerGeneration      string
+	BrowserCapabilityVerifier string
+	LatestUserPrompt          string
+	LatestAssistantUpdate     string
+	NativeTranscriptPath      string
+	AutoInjectReview          bool
+	AutoInjectCI              bool
+	AutoReviewEnabled         bool
+	Model                     string
+	AutomationRunID           *domain.AutomationRunID
+	AutomationLaunchCompleted bool
+}
+
+func (q *Queries) GetSessionByAutomationRunID(ctx context.Context, automationRunID *domain.AutomationRunID) (GetSessionByAutomationRunIDRow, error) {
+	row := q.db.QueryRowContext(ctx, getSessionByAutomationRunID, automationRunID)
+	var i GetSessionByAutomationRunIDRow
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Num,
+		&i.IssueID,
+		&i.Kind,
+		&i.Harness,
+		&i.ActivityState,
+		&i.ActivityLastAt,
+		&i.IsTerminated,
+		&i.Branch,
+		&i.WorkspacePath,
+		&i.RuntimeHandleID,
+		&i.AgentSessionID,
+		&i.AgentSessionIDLaunchID,
+		&i.Prompt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DisplayName,
+		&i.FirstSignalAt,
+		&i.PreviewURL,
+		&i.PreviewRevision,
+		&i.CleanupGeneration,
+		&i.RuntimeLaunchID,
+		&i.WorkspaceRepoPath,
+		&i.TerminateOnPRMerge,
+		&i.DiffBaseSha,
+		&i.DiffBaseRef,
+		&i.ReviewerHarness,
+		&i.IsPinned,
+		&i.PinnedAt,
+		&i.SessionMode,
+		&i.ProviderConversationID,
+		&i.ControllerGeneration,
+		&i.BrowserCapabilityVerifier,
+		&i.LatestUserPrompt,
+		&i.LatestAssistantUpdate,
+		&i.NativeTranscriptPath,
+		&i.AutoInjectReview,
+		&i.AutoInjectCI,
+		&i.AutoReviewEnabled,
+		&i.Model,
+		&i.AutomationRunID,
+		&i.AutomationLaunchCompleted,
 	)
 	return i, err
 }
@@ -222,12 +338,13 @@ INSERT INTO sessions (
     latest_user_prompt, latest_assistant_update, native_transcript_path,
     preview_url, preview_revision, terminate_on_pr_merge, cleanup_generation, browser_capability_verifier,
     session_mode, provider_conversation_id, controller_generation, model,
-    created_at, updated_at, is_pinned, pinned_at, auto_inject_review, auto_inject_ci
+    created_at, updated_at, is_pinned, pinned_at, auto_inject_review, auto_inject_ci,
+    automation_run_id, automation_launch_completed
 ) VALUES (
     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 )
 `
 
@@ -273,6 +390,8 @@ type InsertSessionParams struct {
 	PinnedAt                  sql.NullTime
 	AutoInjectReview          bool
 	AutoInjectCI              bool
+	AutomationRunID           *domain.AutomationRunID
+	AutomationLaunchCompleted bool
 }
 
 func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) error {
@@ -318,6 +437,8 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) er
 		arg.PinnedAt,
 		arg.AutoInjectReview,
 		arg.AutoInjectCI,
+		arg.AutomationRunID,
+		arg.AutomationLaunchCompleted,
 	)
 	return err
 }
@@ -331,7 +452,8 @@ SELECT id, project_id, num, issue_id, kind, harness,
     workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref,
     reviewer_harness, is_pinned, pinned_at,
     session_mode, provider_conversation_id, controller_generation, browser_capability_verifier,
-    latest_user_prompt, latest_assistant_update, native_transcript_path, auto_inject_review, auto_inject_ci, auto_review_enabled, model
+    latest_user_prompt, latest_assistant_update, native_transcript_path, auto_inject_review, auto_inject_ci, auto_review_enabled, model,
+    automation_run_id, automation_launch_completed
 FROM sessions ORDER BY project_id, num
 `
 
@@ -377,6 +499,8 @@ type ListAllSessionsRow struct {
 	AutoInjectCI              bool
 	AutoReviewEnabled         bool
 	Model                     string
+	AutomationRunID           *domain.AutomationRunID
+	AutomationLaunchCompleted bool
 }
 
 func (q *Queries) ListAllSessions(ctx context.Context) ([]ListAllSessionsRow, error) {
@@ -430,6 +554,8 @@ func (q *Queries) ListAllSessions(ctx context.Context) ([]ListAllSessionsRow, er
 			&i.AutoInjectCI,
 			&i.AutoReviewEnabled,
 			&i.Model,
+			&i.AutomationRunID,
+			&i.AutomationLaunchCompleted,
 		); err != nil {
 			return nil, err
 		}
@@ -453,7 +579,8 @@ SELECT id, project_id, num, issue_id, kind, harness,
     workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref,
     reviewer_harness, is_pinned, pinned_at,
     session_mode, provider_conversation_id, controller_generation, browser_capability_verifier,
-    latest_user_prompt, latest_assistant_update, native_transcript_path, auto_inject_review, auto_inject_ci, auto_review_enabled, model
+    latest_user_prompt, latest_assistant_update, native_transcript_path, auto_inject_review, auto_inject_ci, auto_review_enabled, model,
+    automation_run_id, automation_launch_completed
 FROM sessions WHERE project_id = ? ORDER BY num
 `
 
@@ -499,6 +626,8 @@ type ListSessionsByProjectRow struct {
 	AutoInjectCI              bool
 	AutoReviewEnabled         bool
 	Model                     string
+	AutomationRunID           *domain.AutomationRunID
+	AutomationLaunchCompleted bool
 }
 
 func (q *Queries) ListSessionsByProject(ctx context.Context, projectID domain.ProjectID) ([]ListSessionsByProjectRow, error) {
@@ -552,6 +681,8 @@ func (q *Queries) ListSessionsByProject(ctx context.Context, projectID domain.Pr
 			&i.AutoInjectCI,
 			&i.AutoReviewEnabled,
 			&i.Model,
+			&i.AutomationRunID,
+			&i.AutomationLaunchCompleted,
 		); err != nil {
 			return nil, err
 		}
@@ -790,7 +921,8 @@ UPDATE sessions SET
     preview_url = ?, preview_revision = ?, terminate_on_pr_merge = ?,
     cleanup_generation = ?, browser_capability_verifier = ?,
     provider_conversation_id = ?, controller_generation = ?, model = ?, updated_at = ?,
-    is_pinned = ?, pinned_at = ?, auto_inject_review = ?, auto_inject_ci = ?
+    is_pinned = ?, pinned_at = ?, auto_inject_review = ?, auto_inject_ci = ?,
+    automation_launch_completed = ?
 WHERE id = ?
 `
 
@@ -831,6 +963,7 @@ type UpdateSessionParams struct {
 	PinnedAt                  sql.NullTime
 	AutoInjectReview          bool
 	AutoInjectCI              bool
+	AutomationLaunchCompleted bool
 	ID                        domain.SessionID
 }
 
@@ -872,6 +1005,7 @@ func (q *Queries) UpdateSession(ctx context.Context, arg UpdateSessionParams) er
 		arg.PinnedAt,
 		arg.AutoInjectReview,
 		arg.AutoInjectCI,
+		arg.AutomationLaunchCompleted,
 		arg.ID,
 	)
 	return err

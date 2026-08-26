@@ -386,6 +386,8 @@ func Run() error {
 		}
 		return fmt.Errorf("reconcile sessions on boot: %w", reconcileErr)
 	}
+	automationSvc, automationDone := startAutomations(ctx, store, sessionSvc, log)
+	lcStack.automationDone = automationDone
 	autoReview := autoreview.New(store, reviewSvc, autoreview.Config{Logger: log})
 	lcStack.autoReviewDone = autoReview.Start(ctx)
 	// Push-device registry: persisted phones that receive OS push notifications.
@@ -434,6 +436,7 @@ func Run() error {
 		SystemChecks:       systemChecks,
 		Installer:          systemInstall,
 		Sessions:           sessionSvc,
+		Automations:        automationSvc,
 		DesktopWorkspaces:  sessionSvc,
 		PRs:                prActions,
 		Reviews:            reviewSvc,

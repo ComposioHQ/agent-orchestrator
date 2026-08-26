@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
 import {
 	AlertTriangle,
+	CalendarClock,
 	ChevronRight,
 	Download,
 	Folder,
@@ -152,9 +153,11 @@ function useSelection() {
 	const pathname = useRouterState({ select: (state) => state.location.pathname });
 	return {
 		isHome: pathname === "/",
+		isAutomations: pathname === "/automations",
 		activeProjectId: params.projectId,
 		activeSessionId: params.sessionId,
 		goHome: () => void navigate({ to: "/" }),
+		goAutomations: () => void navigate({ to: "/automations" }),
 		// Settings is a modal — open it in place so the current page (session
 		// terminal, board, etc.) stays underneath.
 		goGlobalSettings: () => openGlobalSettings(),
@@ -369,6 +372,20 @@ export function Sidebar({
 						</SidebarGroupContent>
 					</SidebarGroup>
 				) : null}
+				<SidebarMenu className="mb-3 gap-0.5 group-data-[collapsible=icon]:gap-1">
+					<SidebarMenuItem>
+						<SidebarMenuButton
+							aria-label={t("automations.title")}
+							className={NAV_ROW_CLASS}
+							isActive={selection.isAutomations}
+							onClick={selection.goAutomations}
+							tooltip={isCollapsed ? t("automations.title") : undefined}
+						>
+							<CalendarClock aria-hidden="true" />
+							<span className="sidebar-expanded-chrome group-data-[collapsible=icon]:hidden">{t("automations.title")}</span>
+						</SidebarMenuButton>
+					</SidebarMenuItem>
+				</SidebarMenu>
 
 				{/* Pinned — collapsible; hidden when empty. */}
 				{pinnedSessions.length > 0 && (

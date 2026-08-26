@@ -313,6 +313,7 @@ type Store interface {
 	GetProject(ctx context.Context, id string) (domain.ProjectRecord, bool, error)
 	ListWorkspaceRepos(ctx context.Context, projectID string) ([]domain.WorkspaceRepoRecord, error)
 	CreateSession(ctx context.Context, rec domain.SessionRecord) (domain.SessionRecord, error)
+	CreateAutomationSession(ctx context.Context, rec domain.SessionRecord) (domain.SessionRecord, bool, error)
 	UpdateSession(ctx context.Context, rec domain.SessionRecord) error
 	GetSession(ctx context.Context, id domain.SessionID) (domain.SessionRecord, bool, error)
 	ListSessions(ctx context.Context, project domain.ProjectID) ([]domain.SessionRecord, error)
@@ -820,7 +821,20 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	promptBytes := len(prompt)
 	systemPromptBytes := len(systemPrompt)
 
-	rec, err := m.store.CreateSession(ctx, seedRecord(cfg, project.Config, m.clock()))
+	seed := seedRecord(cfg, project.Config, m.clock())
+	var rec domain.SessionRecord
+	if cfg.AutomationRunID != nil {
+		var fresh bool
+		rec, fresh, err = m.store.CreateAutomationSession(ctx, seed)
+		if err == nil && !fresh {
+			if rec.AutomationLaunchCompleted {
+				return rec, promptBytes, systemPromptBytes, nil
+			}
+			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: automation session %s has an incomplete prior launch", rec.ID)
+		}
+	} else {
+		rec, err = m.store.CreateSession(ctx, seed)
+	}
 	if err != nil {
 		return domain.SessionRecord{}, 0, 0, wrapSpawnStageEarly(ErrSpawnCreate, err)
 	}
@@ -843,6 +857,18 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		// in session lists (e.g. when gitworktree refuses the branch).
 		m.rollbackSpawnSeedRow(ctx, id)
 		return domain.SessionRecord{}, 0, 0, wrapSpawnStage(id, ErrWorkspaceCreate, err)
+	}
+	if cfg.AutomationRunID != nil {
+		rec.Metadata.Branch = ws.Branch
+		rec.Metadata.WorkspacePath = ws.Path
+		rec.Metadata.WorkspaceRepoPath = ws.RepoPath
+		rec.Metadata.Prompt = prompt
+		rec.Metadata.LatestUserPrompt = prompt
+		rec.UpdatedAt = m.clock()
+		if err := m.store.UpdateSession(ctx, rec); err != nil {
+			m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, false)
+			return domain.SessionRecord{}, 0, 0, wrapSpawnStage(id, ErrSpawnCommit, err)
+		}
 	}
 
 	// Per-project workspace provisioning: symlink shared files, then run any
@@ -982,6 +1008,16 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	}
 	if projectKind == domain.ProjectKindSingleRepo {
 		metadata.DiffBaseSHA, metadata.DiffBaseRef = resolveSpawnDiffBase(ctx, ws.Path, ws.BaseRef)
+	}
+	if cfg.AutomationRunID != nil {
+		rec.Metadata = metadata
+		rec.UpdatedAt = m.clock()
+		if err := m.store.UpdateSession(ctx, rec); err != nil {
+			runtimeDestroyed := m.runtime.Destroy(ctx, handle) == nil
+			m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject, runtimeDestroyed)
+			m.markSpawnFailedTerminated(ctx, id)
+			return domain.SessionRecord{}, 0, 0, wrapSpawnStage(id, ErrSpawnCommit, err)
+		}
 	}
 	if err := m.lcm.MarkSpawned(ctx, id, metadata); err != nil {
 		runtimeDestroyed := m.runtime.Destroy(ctx, handle) == nil
@@ -3347,14 +3383,15 @@ func (m *Manager) cleanupRecords(ctx context.Context, project domain.ProjectID) 
 
 func seedRecord(cfg ports.SpawnConfig, projectConfig domain.ProjectConfig, now time.Time) domain.SessionRecord {
 	return domain.SessionRecord{
-		ProjectID:   cfg.ProjectID,
-		IssueID:     cfg.IssueID,
-		Kind:        cfg.Kind,
-		CreatedAt:   now,
-		UpdatedAt:   now,
-		Harness:     cfg.Harness,
-		DisplayName: cfg.DisplayName,
-		Activity:    domain.Activity{State: domain.ActivityIdle, LastActivityAt: now},
+		ProjectID:       cfg.ProjectID,
+		IssueID:         cfg.IssueID,
+		AutomationRunID: cfg.AutomationRunID,
+		Kind:            cfg.Kind,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+		Harness:         cfg.Harness,
+		DisplayName:     cfg.DisplayName,
+		Activity:        domain.Activity{State: domain.ActivityIdle, LastActivityAt: now},
 		// Resolved before this point and persisted here. There is no UPDATE
 		// statement that can change it afterwards.
 		Mode:              domain.NormalizeSessionMode(cfg.RequestedMode),

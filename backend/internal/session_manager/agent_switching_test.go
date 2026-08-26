@@ -3021,6 +3021,7 @@ func TestWaitForTargetAcknowledgementOwnsIndependentDeliveryWindow(t *testing.T)
 	}
 	if admitted == nil {
 		t.Fatal("new switch admission returned no execution carrier")
+		return
 	}
 	admitted.store = switchContextAwareDeliveryStore{AgentSwitchStore: admitted.store}
 

@@ -14,6 +14,9 @@ var ErrSessionNotFound = errors.New("session not found")
 type SpawnConfig struct {
 	ProjectID domain.ProjectID
 	IssueID   domain.IssueID
+	// AutomationRunID makes one scheduled occurrence idempotent across daemon
+	// restarts. Ordinary interactive spawns leave this unset.
+	AutomationRunID *domain.AutomationRunID
 	// TrackerProvider is the issue-tracker provider hint from the CLI's
 	// --tracker-provider flag (defaults to "github"). It is used as a fallback
 	// when the project's SCM origin cannot be classified by the configured

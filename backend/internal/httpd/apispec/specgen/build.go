@@ -61,6 +61,8 @@ func Build() ([]byte, error) {
 			"Project registry, configuration, and lifecycle administration"),
 		*(&openapi31.Tag{Name: "sessions"}).WithDescription(
 			"Agent session lifecycle and messaging"),
+		*(&openapi31.Tag{Name: "automations"}).WithDescription(
+			"Recurring daemon-owned session schedules and durable run history"),
 		*(&openapi31.Tag{Name: "prs"}).WithDescription(
 			"Pull-request actions (SCM lane)"),
 		*(&openapi31.Tag{Name: "reviews"}).WithDescription(
@@ -186,6 +188,17 @@ var schemaNames = map[string]string{
 	"ControllersSteerConversationRequest":             "SteerConversationRequest",
 	"ControllersSteerConversationResponse":            "SteerConversationResponse",
 	"ControllersPromoteQueuedTurnResponse":            "PromoteQueuedTurnResponse",
+	"ControllersAutomationIDParam":                    "AutomationIDParam",
+	"ControllersListAutomationsQuery":                 "ListAutomationsQuery",
+	"ControllersListAutomationRunsQuery":              "ListAutomationRunsQuery",
+	"ControllersCreateAutomationRequest":              "CreateAutomationRequest",
+	"ControllersUpdateAutomationRequest":              "UpdateAutomationRequest",
+	"ControllersAutomationRunSummaryResponse":         "AutomationRunSummaryResponse",
+	"ControllersAutomationResponse":                   "AutomationResponse",
+	"ControllersAutomationEnvelope":                   "AutomationEnvelope",
+	"ControllersListAutomationsResponse":              "ListAutomationsResponse",
+	"ControllersAutomationRunResponse":                "AutomationRunResponse",
+	"ControllersListAutomationRunsResponse":           "ListAutomationRunsResponse",
 	// httpd/envelope
 	"EnvelopeAPIError": "APIError",
 	// domain
@@ -461,6 +474,7 @@ func operations() []operation {
 	ops = append(ops, agentOperations()...)
 	ops = append(ops, projectOperations()...)
 	ops = append(ops, sessionOperations()...)
+	ops = append(ops, automationOperations()...)
 	ops = append(ops, prOperations()...)
 	ops = append(ops, reviewOperations()...)
 	ops = append(ops, notificationOperations()...)
@@ -474,6 +488,24 @@ func operations() []operation {
 	ops = append(ops, shellTerminalOperations()...)
 	ops = append(ops, systemOperations()...)
 	return ops
+}
+
+func automationOperations() []operation {
+	id := []any{controllers.AutomationIDParam{}}
+	commonErrors := []respUnit{
+		{http.StatusBadRequest, envelope.APIError{}},
+		{http.StatusNotFound, envelope.APIError{}},
+		{http.StatusInternalServerError, envelope.APIError{}},
+		{http.StatusNotImplemented, envelope.APIError{}},
+	}
+	return []operation{
+		{method: http.MethodGet, path: "/api/v1/automations", id: "listAutomations", tag: "automations", summary: "List recurring automations", pathParams: []any{controllers.ListAutomationsQuery{}}, resps: append([]respUnit{{http.StatusOK, controllers.ListAutomationsResponse{}}}, commonErrors...)},
+		{method: http.MethodPost, path: "/api/v1/automations", id: "createAutomation", tag: "automations", summary: "Create a recurring automation", reqBody: controllers.CreateAutomationRequest{}, resps: append([]respUnit{{http.StatusCreated, controllers.AutomationEnvelope{}}}, commonErrors...)},
+		{method: http.MethodGet, path: "/api/v1/automations/{automationId}", id: "getAutomation", tag: "automations", summary: "Get one recurring automation", pathParams: id, resps: append([]respUnit{{http.StatusOK, controllers.AutomationEnvelope{}}}, commonErrors...)},
+		{method: http.MethodPatch, path: "/api/v1/automations/{automationId}", id: "updateAutomation", tag: "automations", summary: "Update a recurring automation", pathParams: id, reqBody: controllers.UpdateAutomationRequest{}, resps: append([]respUnit{{http.StatusOK, controllers.AutomationEnvelope{}}}, commonErrors...)},
+		{method: http.MethodDelete, path: "/api/v1/automations/{automationId}", id: "deleteAutomation", tag: "automations", summary: "Delete an automation and its run history", pathParams: id, resps: append([]respUnit{{http.StatusNoContent, nil}}, commonErrors...)},
+		{method: http.MethodGet, path: "/api/v1/automations/{automationId}/runs", id: "listAutomationRuns", tag: "automations", summary: "List durable automation run history", pathParams: []any{controllers.AutomationIDParam{}, controllers.ListAutomationRunsQuery{}}, resps: append([]respUnit{{http.StatusOK, controllers.ListAutomationRunsResponse{}}}, commonErrors...)},
+	}
 }
 
 // systemOperations declares the startup requirements gate the desktop loading
