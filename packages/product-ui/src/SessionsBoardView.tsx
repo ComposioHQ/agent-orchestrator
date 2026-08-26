@@ -324,7 +324,7 @@ export function SessionCardView({
 					<span
 						className={cn(
 							"inline-flex min-w-0 max-w-full items-center text-2xs font-medium",
-							needsAttentionChip ? "text-status-needs-you" : (statusPresentation?.className ?? column.titleClassName),
+							needsAttentionChip ? "text-status-needs-you" : "text-muted-foreground",
 						)}
 						data-kanban-column={statusPresentation ? undefined : column.column}
 						data-testid="session-status"
