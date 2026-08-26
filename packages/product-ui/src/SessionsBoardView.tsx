@@ -437,28 +437,32 @@ function BoardPullRequestGroup({
 						/>
 					))}
 			</div>
-			<span className="ml-auto inline-flex shrink-0 items-center gap-1 text-xs tabular-nums text-muted-foreground">
-				<MessageSquareIcon aria-hidden="true" className="size-icon-2xs" />
-				{singlePullRequest ? (
-					<span>{group.prs[0]?.commentCount ?? 0}</span>
-				) : (
-					<span className="inline-flex items-center gap-1">
-						{group.prs.map((pr, index) => (
-							<span className="inline-flex items-center" key={`comments-${pr.url || pr.number}`}>
-								<ExternalLink
-									ariaLabel={`${pr.commentCount ?? 0} comments on PR #${pr.number}`}
-									className={cn("font-medium text-foreground underline-offset-2 hover:underline", linkClassName)}
-									href={pr.url}
-									stopPropagation
-								>
-									{pr.commentCount ?? 0}
-								</ExternalLink>
-								{index < group.prs.length - 1 ? "," : null}
-							</span>
-						))}
-					</span>
-				)}
-			</span>
+			{group.prs.some((pr) => (pr.commentCount ?? 0) > 0) ? (
+				<span className="ml-auto inline-flex shrink-0 items-center gap-1 text-xs tabular-nums text-muted-foreground">
+					<MessageSquareIcon aria-hidden="true" className="size-icon-2xs" />
+					{singlePullRequest ? (
+						<span>{group.prs[0]?.commentCount}</span>
+					) : (
+						<span className="inline-flex items-center gap-1">
+							{group.prs
+								.filter((pr) => (pr.commentCount ?? 0) > 0)
+								.map((pr, index, comments) => (
+									<span className="inline-flex items-center" key={`comments-${pr.url || pr.number}`}>
+										<ExternalLink
+											ariaLabel={`${pr.commentCount} comments on PR #${pr.number}`}
+											className={cn("font-medium text-foreground underline-offset-2 hover:underline", linkClassName)}
+											href={pr.url}
+											stopPropagation
+										>
+											{pr.commentCount}
+										</ExternalLink>
+										{index < comments.length - 1 ? "," : null}
+									</span>
+								))}
+						</span>
+					)}
+				</span>
+			) : null}
 		</>
 	);
 	return (
