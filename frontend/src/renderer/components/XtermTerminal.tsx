@@ -22,7 +22,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { useTranslation } from "react-i18next";
-import { CanvasAddon } from "@xterm/addon-canvas";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
@@ -83,43 +82,24 @@ export type XtermTerminalProps = {
 	onReady?: (terminal: AttachableTerminal) => void;
 };
 
-// Prefer the WebGL renderer, fall back to 2D canvas — the same renderer choice
-// VS Code and Superset ship. Both draw the grid onto a GPU-composited surface,
-// so a repaint is a texture update instead of the DOM renderer's relayout of
-// every row span (which reads as the whole terminal "reloading" on resize).
-// Both also rasterize box-drawing glyphs themselves onto a fixed cell grid;
-// the DOM renderer does not, so TUI borders would drift. Loaded once after
-// open(), for the terminal's whole lifetime — a visibility-scoped variant was
-// tried and reverted: releasing the context while a pane was reported
-// not-visible could leave an on-screen pane on the DOM renderer, which the
-// user immediately noticed as the terminal "looking different".
+// Prefer WebGL and let xterm fall back to its built-in renderer when WebGL is
+// unavailable. The old Canvas addon only supports xterm 5 and cannot be loaded
+// with the 6.1 line. WebGL stays loaded for the terminal's whole lifetime — a
+// visibility-scoped variant was tried and reverted because releasing the
+// context could visibly change an on-screen terminal's rendering.
 function loadRenderer(term: Terminal): void {
-	let fallbackLoaded = false;
-	const loadCanvasFallback = () => {
-		if (fallbackLoaded) return;
-		fallbackLoaded = true;
-		try {
-			term.loadAddon(new CanvasAddon());
-			diag(`renderer=canvas dpr=${window.devicePixelRatio}`);
-		} catch (error) {
-			diag(`renderer=DOM dpr=${window.devicePixelRatio} (webgl and canvas failed)`);
-			console.warn("xterm: WebGL and canvas renderers unavailable; box-drawing may drift", error);
-		}
-	};
 	try {
 		const webgl = new WebglAddon();
 		webgl.onContextLoss(() => {
-			diag("gpu CONTEXT LOSS -> canvas fallback");
+			diag("gpu CONTEXT LOSS -> built-in renderer fallback");
 			webgl.dispose();
-			loadCanvasFallback();
 		});
 		term.loadAddon(webgl);
 		diag(`renderer=webgl dpr=${window.devicePixelRatio}`);
 		return;
 	} catch {
-		// WebGL context unavailable — fall through to the canvas renderer.
+		diag(`renderer=built-in dpr=${window.devicePixelRatio} (webgl unavailable)`);
 	}
-	loadCanvasFallback();
 }
 
 // xterm palette tracks the app theme (see lib/terminal-themes.ts + tokens.css).
@@ -220,32 +200,12 @@ function terminalHasFocus(host: HTMLElement): boolean {
 type XtermInternal = Terminal & {
 	_core?: {
 		element?: HTMLElement;
-		viewport?: {
-			scrollBarWidth: number;
-		};
 		_selectionService?: {
 			enable: () => void;
 			shouldForceSelection: (event: MouseEvent) => boolean;
 		};
-		_renderService?: {
-			_renderRows?: (start: number, end: number) => void;
-		};
 	};
 };
-
-// Backport of xterm.js#5529 (shipped in 6.1, which Superset runs): resizing the
-// WebGL canvas clears it synchronously but repaints through an animation-frame
-// debouncer, so every resize composites one blank frame first — the flicker of
-// xterm.js#4922. Rendering synchronously right after a resize paints the new
-// canvas in the same frame. ResizeObserver callbacks run before paint, so a fit
-// plus this call never lets the cleared canvas reach the screen.
-function forceSyncRender(term: Terminal): void {
-	try {
-		(term as XtermInternal)._core?._renderService?._renderRows?.(0, term.rows - 1);
-	} catch {
-		// Private API: on an xterm upgrade this degrades to the debounced repaint.
-	}
-}
 
 type DevXtermHost = HTMLDivElement & {
 	__aoXtermForTest?: Terminal;
@@ -296,11 +256,6 @@ function forceSelectionMode(term: Terminal): void {
 	selectionService.shouldForceSelection = () => true;
 	selectionService.enable();
 	element.classList.remove("enable-mouse-events");
-}
-
-function removeHiddenScrollbarReservation(term: Terminal): void {
-	const viewport = (term as XtermInternal)._core?.viewport;
-	if (viewport) viewport.scrollBarWidth = 0;
 }
 
 export function XtermTerminal(props: XtermTerminalProps) {
@@ -445,6 +400,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 					'ui-monospace, Menlo, Monaco, "Courier New", monospace',
 				fontSize: props.fontSize ?? TERMINAL_FONT_SIZE_DEFAULT,
 				lineHeight: 1.35,
+				scrollbar: { showScrollbar: false },
 				linkHandler: { activate: activateLink, hover: trackHover, leave: clearHover },
 				// Preserve standard terminal semantics: many agent TUIs use bold ANSI
 				// colors specifically to select the bright palette.
@@ -491,11 +447,6 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		if (import.meta.env.DEV) {
 			(host as DevXtermHost).__aoXtermForTest = term;
 		}
-		// xterm reserves a 15px fallback for macOS overlay scrollbars even when CSS
-		// hides the scrollbar entirely. FitAddon subtracts that private value from
-		// every width proposal, leaving a conspicuous empty strip on the right. The
-		// viewport still scrolls normally without the invisible reservation.
-		removeHiddenScrollbarReservation(term);
 		loadRenderer(term);
 		term.options.macOptionClickForcesSelection = true;
 		forceSelectionMode(term);
@@ -672,7 +623,6 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				// on every observed frame of a drag — measurable lag on iGPUs.
 				if (`${term.cols}x${term.rows}` !== before) {
 					diag(`fit ${before} -> ${term.cols}x${term.rows}`);
-					forceSyncRender(term);
 				}
 			} catch {
 				// Container momentarily has no size (hidden/unmounting) — a later
@@ -687,8 +637,8 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		// - Normal buffer at/over 200 lines → the column reflow rewraps all of
 		//   scrollback, so rows still apply live but columns wait for a 100ms quiet
 		//   window (flushed early on pointer release).
-		// Each geometry change is followed by forceSyncRender so the resized canvas
-		// never composites blank (xterm.js#4922 / #5529).
+		// xterm 6.1 renders synchronously after each geometry change, preventing the
+		// blank canvas frame from xterm.js#4922 (fixed upstream by #5529).
 		const CHEAP_RESIZE_NORMAL_BUFFER_LINES = 200;
 		const FIT_QUIET_MS = 100;
 		// Hidden activation must reveal promptly even if its slot never goes quiet.
@@ -714,7 +664,6 @@ export function XtermTerminal(props: XtermTerminalProps) {
 					fit.fit();
 					if (`${term.cols}x${term.rows}` !== before) {
 						diag(`debounced-fit ${before} -> ${term.cols}x${term.rows} hidden=${fitAllowsHidden}`);
-						forceSyncRender(term);
 					}
 				} catch {
 					// The next observer/window event retries if the host is transiently
@@ -744,7 +693,6 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			if (!proposed || !proposed.cols || !proposed.rows) return;
 			if (proposed.rows !== term.rows) {
 				term.resize(term.cols, proposed.rows);
-				forceSyncRender(term);
 			}
 		};
 		// While activation preparation is pending, observer/window events must keep

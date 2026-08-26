@@ -89,11 +89,10 @@ All renderer-side, in `frontend/src/renderer`:
    lines → rows live, columns after a 100ms quiet window, flushed immediately
    on `pointerup`/`pointercancel`.
 
-3. **Sync-render backport of xterm#5529.** `forceSyncRender()` calls the
-   private `_core._renderService._renderRows(0, rows-1)` right after every
-   fit/resize, inside the pre-paint `ResizeObserver` callback — the resized
-   canvas is repainted in the same frame, so the blank frame never reaches the
-   screen. Guarded so an xterm upgrade degrades to the debounced repaint.
+3. **xterm 6.1 sync-render fix.** The terminal and compatible addons are pinned
+   to the 6.1 beta line, which includes upstream xterm#5529. xterm now repaints
+   synchronously after resize, so AO no longer reaches through
+   `_core._renderService` to force a private render.
 
 4. **Gesture-paced PTY resizes** (`hooks/useTerminalSession.ts`).
    `useResizable` marks separator drags with `body.is-resizing-x`; OS
@@ -114,17 +113,22 @@ All renderer-side, in `frontend/src/renderer`:
    frame. (The old `data-terminal-live-resize` marker became
    `data-inspector-transition` and now only locks label modes.)
 
+7. **Public scrollbar sizing.** xterm 6 exposes
+   `scrollbar.showScrollbar`; AO sets it to `false`, and FitAddon therefore
+   reserves zero scrollbar width. The old `_core.viewport.scrollBarWidth`
+   mutation is gone.
+
 ### Renderer decision (and a reverted experiment)
 
-The WebGL renderer (canvas 2D fallback) is loaded once per terminal at mount
-and kept for its lifetime — the same as before this branch. A visibility-scoped
-variant (release the GPU context while parked, to stay under Chromium's
-~16-per-process WebGL context cap) was tried and **reverted**: any window where
-an on-screen pane reported "not visible" (activation phases do) left it on the
-DOM renderer, which users immediately notice as different text rendering. If
-context-cap pressure resurfaces with many cached terminals, fix it in the
-cache (evict/limit retained xterms), not by swapping renderers under a visible
-pane.
+The WebGL renderer is loaded once per terminal at mount and kept for its
+lifetime. xterm's Canvas addon only supports xterm 5, so xterm 6 falls back to
+its built-in renderer when WebGL is unavailable or its context is lost. A
+visibility-scoped variant (release the GPU context while parked, to stay under
+Chromium's ~16-per-process WebGL context cap) was tried and **reverted**: any
+window where an on-screen pane reported "not visible" (activation phases do)
+could visibly change its text rendering. If context-cap pressure resurfaces
+with many cached terminals, fix it in the cache (evict/limit retained xterms),
+not by swapping renderers under a visible pane.
 
 ### What is inherent and will not go away
 
@@ -167,10 +171,7 @@ Short answer: **no drop-in exists; the practical path is xterm.js 6.1.**
   native-surface problem inside Electron; it's an architecture for native
   apps.
 - **hterm** (ChromeOS): DOM-based, dated, weaker TUI fidelity than xterm.js.
-- **xterm.js 6.1 beta** — what Superset ships. Gets the real #5529 fix (our
-  backport becomes unnecessary), years of renderer work, and DEC 2026
-  synchronized-output support (would make repaint transactions protocol-level
-  instead of heuristic). Migration note: AO's
-  `removeHiddenScrollbarReservation` touches `_core.viewport.scrollBarWidth`,
-  which changed in the 6.x viewport rewrite — that workaround must be
-  re-validated. This is the recommended follow-up.
+- **xterm.js 6.1 beta** — what Superset ships and AO now pins. It provides the
+  real #5529 resize fix and DEC mode 2026 synchronized-output support. The
+  migration removed AO's private sync-render backport and replaced its private
+  scrollbar-width mutation with the public `scrollbar.showScrollbar` option.

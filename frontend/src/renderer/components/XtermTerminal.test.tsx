@@ -6,7 +6,8 @@ import { XtermTerminal } from "./XtermTerminal";
 
 const state = vi.hoisted(() => ({
 	fit: vi.fn(),
-	webglAddons: [] as Array<{ disposed: boolean }>,
+	webglAddons: [] as Array<{ disposed: boolean; loseContext: () => void }>,
+	webglShouldFail: false,
 	linkHandler: null as null | ((event: MouseEvent, uri: string) => void),
 	lastTerminal: null as null | {
 		keyHandler?: (event: KeyboardEvent) => boolean;
@@ -26,7 +27,6 @@ const state = vi.hoisted(() => ({
 		selectionListeners: Set<() => void>;
 		_core: {
 			element: { classList: { add: ReturnType<typeof vi.fn>; remove: ReturnType<typeof vi.fn> } };
-			viewport: { scrollBarWidth: number };
 			_selectionService: {
 				enable: ReturnType<typeof vi.fn>;
 				shouldForceSelection: (event: MouseEvent) => boolean;
@@ -56,7 +56,6 @@ vi.mock("@xterm/xterm", () => ({
 		selectionListeners = new Set<() => void>();
 		_core = {
 			element: { classList: { add: vi.fn(), remove: vi.fn() } },
-			viewport: { scrollBarWidth: 15 },
 			_selectionService: {
 				enable: vi.fn(),
 				shouldForceSelection: () => false,
@@ -136,17 +135,20 @@ vi.mock("@xterm/addon-web-links", () => ({
 	},
 }));
 
-vi.mock("@xterm/addon-canvas", () => ({
-	CanvasAddon: class FakeCanvasAddon {},
-}));
-
 vi.mock("@xterm/addon-webgl", () => ({
 	WebglAddon: class FakeWebglAddon {
 		disposed = false;
+		contextLossListener: (() => void) | undefined;
 		constructor() {
+			if (state.webglShouldFail) throw new Error("WebGL unavailable");
 			state.webglAddons.push(this);
 		}
-		onContextLoss() {}
+		onContextLoss(listener: () => void) {
+			this.contextLossListener = listener;
+		}
+		loseContext() {
+			this.contextLossListener?.();
+		}
 		dispose() {
 			this.disposed = true;
 		}
@@ -168,6 +170,7 @@ describe("XtermTerminal", () => {
 	beforeEach(() => {
 		state.fit.mockReset();
 		state.webglAddons = [];
+		state.webglShouldFail = false;
 		state.lastTerminal = null;
 		state.linkHandler = null;
 		setNavigatorPlatform("Linux x86_64");
@@ -190,6 +193,25 @@ describe("XtermTerminal", () => {
 		rerender(<XtermTerminal isVisible theme="dark" />);
 		expect(state.webglAddons).toHaveLength(1);
 		expect(state.webglAddons[0]!.disposed).toBe(false);
+	});
+
+	it("uses xterm's built-in renderer when WebGL is unavailable", () => {
+		state.webglShouldFail = true;
+
+		render(<XtermTerminal theme="dark" />);
+
+		expect(state.lastTerminal).not.toBeNull();
+		expect(state.webglAddons).toHaveLength(0);
+	});
+
+	it("returns to xterm's built-in renderer when the WebGL context is lost", () => {
+		render(<XtermTerminal theme="dark" />);
+		const webgl = state.webglAddons[0]!;
+
+		webgl.loseContext();
+
+		expect(webgl.disposed).toBe(true);
+		expect(state.lastTerminal).not.toBeNull();
 	});
 
 	// VS Code TerminalResizeDebouncer semantics. A small normal buffer (the
@@ -384,10 +406,10 @@ describe("XtermTerminal", () => {
 		}
 	});
 
-	it("does not reserve width for the hidden terminal scrollbar", () => {
+	it("disables the hidden terminal scrollbar through the public option", () => {
 		render(<XtermTerminal theme="dark" />);
 
-		expect(state.lastTerminal!._core.viewport.scrollBarWidth).toBe(0);
+		expect(state.lastTerminal!.options.scrollbar).toEqual({ showScrollbar: false });
 	});
 
 	it("copies selected terminal text on the terminal copy shortcut", () => {
