@@ -566,7 +566,6 @@ function steerNonAcceptance(error: unknown): ChatSteerOutcome | undefined {
 
 const DEFINITIVE_EDIT_NON_ACCEPTANCE_CODES = new Set([
 	"CHAT_EDIT_REJECTED",
-	"CHAT_EDIT_IDEMPOTENCY_CONFLICT",
 	"CHAT_EDIT_UNSUPPORTED",
 	"CHAT_EDIT_BUSY",
 	"CHAT_EDIT_TURN_INVALID",

@@ -328,6 +328,24 @@ describe("send keys", () => {
 		}
 	});
 
+	it("reports a restored delivery as pending recovery without claiming persistence failed", async () => {
+		const sessionId = "composer-restored-delivery-boundary";
+		prepareChatComposerDelivery(sessionId, {
+			kind: "send",
+			composerText: "recover this message",
+			attachments: [],
+			requestText: "recover this message",
+			clientMessageId: "composer-restored-delivery-id",
+		});
+
+		render(<ChatComposer onSend={vi.fn()} draftSessionId={sessionId} />);
+
+		expect(await screen.findByRole("alert")).toHaveTextContent(
+			"Message delivery wasn’t confirmed before Chat restarted",
+		);
+		await waitFor(() => expect(getChatDraftBoundaries(sessionId)).toEqual(["pending-delivery"]));
+	});
+
 	it("reconciles an accepted delivery without clearing or blocking a later draft revision", async () => {
 		const sessionId = "composer-later-revision";
 		let acceptSend!: () => void;

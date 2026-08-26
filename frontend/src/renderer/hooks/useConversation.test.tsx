@@ -274,6 +274,17 @@ describe("conversation branching commands", () => {
 		).rejects.toBe(failure);
 	});
 
+	it("keeps an idempotency-conflicted inline edit locked for same-id recovery", async () => {
+		apiErrorCodeMock.mockReturnValue("CHAT_EDIT_IDEMPOTENCY_CONFLICT");
+		const failure = { code: "CHAT_EDIT_IDEMPOTENCY_CONFLICT" };
+		postMock.mockResolvedValue({ data: undefined, error: failure });
+		const { result } = renderHook(() => useConversationCommands("ao-1"), { wrapper });
+
+		await expect(
+			result.current.editMessage("turn-2", "do not unlock this edit", "edit-conflict-1"),
+		).rejects.toBe(failure);
+	});
+
 	it("activates an existing branch", async () => {
 		postMock.mockResolvedValue({ data: {}, error: undefined });
 		const { result } = renderHook(() => useConversationCommands("ao-1"), { wrapper });

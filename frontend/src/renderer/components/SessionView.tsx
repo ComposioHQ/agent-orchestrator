@@ -360,6 +360,10 @@ function SessionInspectorRail({
 // profile before the conversation can become unusably narrow.
 export function SessionView({ sessionId }: SessionViewProps) {
 	const { t } = useTranslation();
+	const [confirmedDraftDiscard, setConfirmedDraftDiscard] = useState<{
+		sessionId: string;
+		transitionId: string;
+	}>();
 	const getCurrentChatDraftBoundaries = useCallback(
 		() => getChatDraftBoundaries(sessionId),
 		[sessionId],
@@ -369,19 +373,25 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		getCurrentChatDraftBoundaries,
 		getCurrentChatDraftBoundaries,
 	);
-	const confirmUnsafeDraftLeave = useCallback(() => {
+	const confirmUnsafeDraftLeave = useCallback((): "safe" | "confirmed" | "cancelled" => {
 		const activeBoundaries = getChatDraftBoundaries(sessionId);
-		if (activeBoundaries.length === 0) return true;
-		if (!confirmDiscardChatDrafts(activeBoundaries)) return false;
-		// This only invalidates renderer-owned in-flight generations. Bytes that
-		// already reached the daemon/worktree remain outside this discard boundary.
-		discardPendingFileAttachmentsForSession(sessionId);
-		return true;
+		if (activeBoundaries.length === 0) return "safe";
+		return confirmDiscardChatDrafts(activeBoundaries) ? "confirmed" : "cancelled";
 	}, [sessionId]);
 	useBlocker({
 		disabled: chatDraftBoundaries.length === 0,
 		enableBeforeUnload: chatDraftBoundaries.length > 0,
-		shouldBlockFn: () => !confirmUnsafeDraftLeave(),
+		shouldBlockFn: () => {
+			const decision = confirmUnsafeDraftLeave();
+			if (decision === "cancelled") return true;
+			if (decision === "confirmed") {
+				// Route navigation is the boundary itself, so confirmed in-flight file
+				// work can be invalidated now. Interface switches defer this until the
+				// exact durable transition reports completed.
+				discardPendingFileAttachmentsForSession(sessionId);
+			}
+			return false;
+		},
 	});
 	useEffect(() => {
 		aoBridge.app.setChatDraftRisk?.(chatDraftBoundaries);
@@ -457,6 +467,27 @@ export function SessionView({ sessionId }: SessionViewProps) {
 
 	const session = workspaces.flatMap((workspace) => workspace.sessions).find((s) => s.id === sessionId);
 	const interfaceSwitch = useSessionInterfaceTransition(session?.id);
+	useEffect(() => {
+		setConfirmedDraftDiscard(undefined);
+	}, [sessionId]);
+	useEffect(() => {
+		if (!confirmedDraftDiscard || confirmedDraftDiscard.sessionId !== sessionId) return;
+		const transition = interfaceSwitch.transition;
+		if (!transition || transition.id !== confirmedDraftDiscard.transitionId) return;
+		switch (transition.phase) {
+			case "completed":
+				// This only invalidates renderer-owned in-flight generations. Bytes that
+				// already reached the daemon/worktree remain outside this discard boundary.
+				discardPendingFileAttachmentsForSession(sessionId);
+				setConfirmedDraftDiscard(undefined);
+				break;
+			case "failed":
+			case "cancelled":
+			case "recovery_required":
+				setConfirmedDraftDiscard(undefined);
+				break;
+		}
+	}, [confirmedDraftDiscard, interfaceSwitch.transition, sessionId]);
 	const reviewerQuery = useQuery({
 		queryKey: ["session-reviews", sessionId],
 		enabled: Boolean(
@@ -730,18 +761,29 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	);
 	const beginInterfaceSwitch = useCallback(
 		async (policy: "drain" | "interrupt") => {
-			if (chatToTerminal && !confirmUnsafeDraftLeave()) {
-				return;
-			}
+			const draftLeaveDecision = chatToTerminal ? confirmUnsafeDraftLeave() : "safe";
+			if (draftLeaveDecision === "cancelled") return;
 			try {
-				await interfaceSwitch.start({ targetMode: interfaceTarget, policy });
+				const response = await interfaceSwitch.start({ targetMode: interfaceTarget, policy });
+				if (draftLeaveDecision === "confirmed" && response?.transition?.id) {
+					setConfirmedDraftDiscard({
+						sessionId,
+						transitionId: response.transition.id,
+					});
+				}
 				setInterfaceSwitchDialogOpen(false);
 			} catch {
 				// The mutation owns the typed error. A policy dialog that was already
 				// open stays open; a direct switch must not open one on failure.
 			}
 		},
-		[chatToTerminal, confirmUnsafeDraftLeave, interfaceSwitch, interfaceTarget],
+		[
+			chatToTerminal,
+			confirmUnsafeDraftLeave,
+			interfaceSwitch,
+			interfaceTarget,
+			sessionId,
+		],
 	);
 	const requestInterfaceSwitch = useCallback(() => {
 		interfaceSwitch.resetStartError();
