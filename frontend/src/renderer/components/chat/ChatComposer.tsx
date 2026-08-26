@@ -22,8 +22,8 @@
  *
  * Every affordance is conditional on being able to deliver. The `/` menu only opens
  * when the provider actually reported skills, and the attach control only appears
- * when a caller supplied somewhere to put the bytes — a control that cannot do what
- * it says should not be drawn.
+ * when a caller can stage worktree files or deliver native image blocks — a control
+ * that cannot do what it says should not be drawn.
  */
 
 import {
@@ -118,6 +118,21 @@ function withAttachmentReferences(text: string, paths: string[]): string {
 	return `${lead}Attached files (read these files in the workspace):\n${paths.map((path) => `- ${path}`).join("\n")}`;
 }
 
+function attachmentDeliveryLabel(
+	attachment: FileAttachment,
+	canStage: boolean,
+	nativeImages: boolean,
+): string {
+	if (attachment.status === "reading") return "Reading…";
+	if (attachment.status === "failed") return "Read failed · retry or remove";
+	const deliversNativeImage =
+		nativeImages && isSupportedImageAttachment(attachment.mimeType);
+	if (canStage && deliversNativeImage) return "Worktree path + native image";
+	if (deliversNativeImage) return "Native image";
+	if (canStage) return "Worktree path · agent must read";
+	return "Cannot be delivered";
+}
+
 function restoredDeliveryNotice(delivery: ChatComposerDelivery | undefined): string | null {
 	if (!delivery) return null;
 	if (delivery.state === "accepted") {
@@ -177,8 +192,8 @@ export function ChatComposer({
 	fileCatalog?: WorkspaceFileCatalog;
 	/**
 	 * Writes staged files into the worktree and answers with the paths the agent
-	 * can open. Absent means files cannot be delivered, and no attach control is
-	 * offered at all.
+	 * can open. When absent, supported images can still be delivered if native
+	 * image blocks were negotiated.
 	 */
 	onStageAttachments?: (attachments: FileAttachmentPayload[]) => Promise<string[]>;
 	/** Send the same staged bytes as native ACP image blocks when negotiated. */
@@ -248,6 +263,7 @@ export function ChatComposer({
 	const [isComposing, setIsComposing] = useState(false);
 	const [dragging, setDragging] = useState(false);
 	const [sendError, setSendError] = useState<string | null>(null);
+	const [retryPendingError, setRetryPendingError] = useState<string | null>(null);
 	const [steerOutcomeNotice, setSteerOutcomeNotice] = useState<string | null>(null);
 	const [deliveryRecoveryNotice, setDeliveryRecoveryNotice] = useState<string | null>(null);
 	const [deliveryUncertain, setDeliveryUncertain] = useState(
@@ -279,6 +295,7 @@ export function ChatComposer({
 
 	const editor = useRef<ComposerEditorHandle>(null);
 	const filePicker = useRef<HTMLInputElement>(null);
+	const retryPendingIdsRef = useRef<Set<string>>(new Set());
 	const menuId = useId();
 	const previousTrigger = useRef<ComposerTrigger | undefined>(undefined);
 	const triggerRef = useRef<ComposerTrigger | undefined>(undefined);
@@ -311,6 +328,7 @@ export function ChatComposer({
 				name: attachment.name,
 				mimeType: attachment.mimeType,
 				bytes: attachment.bytes,
+				status: "ready",
 				stagedPath: attachment.path,
 			})) ?? [],
 		[persistedDraft],
@@ -345,8 +363,8 @@ export function ChatComposer({
 		async (attachments: FileAttachment[]): Promise<FileAttachment[]> => {
 			if (!onStageAttachments) throw new Error("Attachment staging is unavailable");
 			const paths = await onStageAttachments(
-				attachments.flatMap(({ mimeType, data }) =>
-					data ? [{ mimeType, data }] : [],
+				attachments.flatMap(({ mimeType, data, name }) =>
+					data ? [{ mimeType, data, name }] : [],
 				),
 			);
 			if (paths.length !== attachments.length) {
@@ -378,7 +396,8 @@ export function ChatComposer({
 		prepareAttachments: onStageAttachments ? prepareAttachments : undefined,
 		onAttachmentsChange: persistAttachments,
 	});
-	const canAttach = Boolean(onStageAttachments);
+	const canAttach = Boolean(onStageAttachments || nativeImages);
+	const canStageAttachments = Boolean(onStageAttachments);
 
 	const slashCommands = useMemo<ChatSkill[]>(() => {
 		if (!onCompact || compactUnavailable === "This agent cannot compact its history") return skills;
@@ -443,9 +462,8 @@ export function ChatComposer({
 		!disabled &&
 		!steerPending &&
 		!draftMutationPending &&
-			!acceptedClearFailed &&
-			!durableDelivery &&
-			!fileAttachments.preparing;
+		!acceptedClearFailed &&
+		!durableDelivery;
 	const sendActionEnabled = canSend || canRecoverDelivery;
 	const sendActionLabel = durableDelivery
 		? durableDelivery.state === "accepted"
@@ -468,6 +486,8 @@ export function ChatComposer({
 	const draftSeedId = draftSeed?.id ?? (draftScopeKey ? `session:${draftScopeKey}` : undefined);
 	const draftPersistenceError =
 		textDraftPersistenceError ?? attachmentDraftPersistenceError;
+	const attachmentPersistenceAtRisk =
+		fileAttachments.hasUndurableAttachments && !fileAttachments.preparing;
 
 	useEffect(() => {
 		if (!draftSessionId) return;
@@ -475,12 +495,20 @@ export function ChatComposer({
 			draftSessionId,
 			"composer",
 			[
-				...(draftPersistenceError ? (["persistence-failed"] as const) : []),
+				...(draftPersistenceError || attachmentPersistenceAtRisk
+					? (["persistence-failed"] as const)
+					: []),
 				...(durableDelivery ? (["pending-delivery"] as const) : []),
 				...(fileAttachments.preparing ? (["pending-attachments"] as const) : []),
 			],
 		);
-	}, [draftPersistenceError, draftSessionId, durableDelivery, fileAttachments.preparing]);
+	}, [
+		attachmentPersistenceAtRisk,
+		draftPersistenceError,
+		draftSessionId,
+		durableDelivery,
+		fileAttachments.preparing,
+	]);
 
 	useEffect(
 		() => () => {
@@ -838,17 +866,13 @@ export function ChatComposer({
 			!composerMutation.pending &&
 			(!draftMutationPending || Boolean(recoveringDelivery)) &&
 			(Boolean(recoveringDelivery) ||
-				getChatComposerMutation(draftScope ?? "").accepted?.result.ok !== false) &&
-			!fileAttachments.preparing;
+				getChatComposerMutation(draftScope ?? "").accepted?.result.ok !== false);
 		if (!canSubmitNow) return;
 		setSendError(null);
 		setSteerOutcomeNotice(null);
 
 		const shouldSteer = forceSteer ?? false;
 		const body = currentText.trim();
-		const acceptedPaths = fileAttachments.attachments.flatMap((attachment) =>
-			attachment.stagedPath ? [attachment.stagedPath] : [],
-		);
 
 		if (!recoveringDelivery && body === "/compact" && onCompact) {
 			const mutationToken = draftScope
@@ -886,22 +910,69 @@ export function ChatComposer({
 			return;
 		}
 
+		const attachmentSignature = staged ? fileAttachments.signature() : "";
+		let settledPayloads = fileAttachments.toPayload();
+		if (!recoveringDelivery && staged) {
+			setSubmitting(true);
+			try {
+				// The selected revision owns the whole send boundary. Readers and durable
+				// staging finish before any text or native bytes can reach the provider.
+				settledPayloads = await fileAttachments.toSettledPayload();
+			} catch (error) {
+				setSendError(
+					error instanceof Error
+						? error.message
+						: "Some files couldn't be read. Retry or remove them before sending.",
+				);
+				setSubmitting(false);
+				return;
+			}
+			if (fileAttachments.signature() !== attachmentSignature) {
+				setSendError("Attachments changed before delivery. Review the draft and send again.");
+				setSubmitting(false);
+				return;
+			}
+		}
+		const settledAttachments = fileAttachments.currentAttachments();
+		const acceptedPaths = settledAttachments.flatMap((attachment) =>
+			attachment.stagedPath ? [attachment.stagedPath] : [],
+		);
+		const nativePayloads = nativeImages
+			? settledPayloads.filter((attachment) => isSupportedImageAttachment(attachment.mimeType))
+			: [];
+		if (
+			!recoveringDelivery &&
+			staged &&
+			!onStageAttachments &&
+			nativePayloads.length !== settledPayloads.length
+		) {
+			setSendError(
+				"This agent can receive attached images natively, but not other file types. Remove unsupported files before sending.",
+			);
+			setSubmitting(false);
+			return;
+		}
+		if (!recoveringDelivery && draftScope && staged && !onStageAttachments) {
+			setSendError(
+				"These native-only attachments cannot be recovered safely after a restart. Attach them in a session with worktree staging.",
+			);
+			setSubmitting(false);
+			return;
+		}
+
 		if (!draftScope) {
 			setSubmitting(true);
 			try {
 				if (shouldSteer && onSteer) {
 					if (body === "") return;
 					await onSteer(body);
-				} else if (staged && onStageAttachments) {
-					if (acceptedPaths.length !== fileAttachments.attachments.length) {
+				} else if (staged) {
+					if (onStageAttachments && acceptedPaths.length !== settledAttachments.length) {
 						setSendError("The files are not durably available. Nothing was sent.");
 						return;
 					}
 					const message = withAttachmentReferences(body, acceptedPaths);
-					const nativePayloads = fileAttachments
-						.toPayload()
-						.filter((attachment) => isSupportedImageAttachment(attachment.mimeType));
-					if (nativeImages && nativePayloads.length > 0) await onSend(message, nativePayloads);
+					if (nativePayloads.length > 0) await onSend(message, nativePayloads);
 					else await onSend(message);
 				} else {
 					await onSend(body);
@@ -920,8 +991,9 @@ export function ChatComposer({
 			return;
 		}
 
-		if (!recoveringDelivery && staged && acceptedPaths.length !== fileAttachments.attachments.length) {
+		if (!recoveringDelivery && staged && acceptedPaths.length !== settledAttachments.length) {
 			setSendError("The files are not durably available. Nothing was sent.");
+			setSubmitting(false);
 			return;
 		}
 		const requestText = recoveringDelivery
@@ -932,7 +1004,7 @@ export function ChatComposer({
 		const prepared = prepareChatComposerDelivery(draftScope, {
 			kind: recoveringDelivery?.kind ?? (shouldSteer ? "steer" : "send"),
 			composerContent: currentContent,
-			attachments: fileAttachments.attachments.flatMap((attachment) =>
+			attachments: settledAttachments.flatMap((attachment) =>
 				attachment.stagedPath
 					? [{
 							id: attachment.id,
@@ -950,6 +1022,7 @@ export function ChatComposer({
 			setTextDraftPersistenceError(
 				"This exact draft and its recovery ID couldn’t be saved locally. Nothing was sent. Restore local storage and try again.",
 			);
+			setSubmitting(false);
 			return;
 		}
 		const delivery = prepared.mutation;
@@ -964,13 +1037,17 @@ export function ChatComposer({
 		);
 		if (delivery.state === "accepted") {
 			acceptAndClearDurableDelivery(delivery);
+			setSubmitting(false);
 			return;
 		}
 
-		const mutationToken = beginChatComposerMutation(draftScope);
-		if (!mutationToken) return;
-		let mutationFinished = false;
 		setSubmitting(true);
+		const mutationToken = beginChatComposerMutation(draftScope);
+		if (!mutationToken) {
+			setSubmitting(false);
+			return;
+		}
+		let mutationFinished = false;
 		try {
 			if (delivery.kind === "steer") {
 				if (!onSteer) throw new Error("Steering is unavailable");
@@ -995,14 +1072,10 @@ export function ChatComposer({
 					return;
 				}
 			} else {
-				const nativePayloads = prepared.recovered
-					? []
-					: fileAttachments
-							.toPayload()
-							.filter((attachment) => isSupportedImageAttachment(attachment.mimeType));
+				const deliveryNativePayloads = prepared.recovered ? [] : nativePayloads;
 				await onSend(
 					delivery.requestText,
-					nativeImages && nativePayloads.length > 0 ? nativePayloads : undefined,
+					deliveryNativePayloads.length > 0 ? deliveryNativePayloads : undefined,
 					delivery.clientMessageId,
 				);
 			}
@@ -1132,13 +1205,16 @@ export function ChatComposer({
 	const activeDelivery = metaHeld && canSteerDraft ? "steer" : "queue";
 
 	const attachmentError =
+		retryPendingError ??
 		fileAttachments.error ??
 		draftPersistenceError ??
 		deliveryRecoveryNotice ??
 		sendError ??
 		commandError;
 	const deliveryChoice =
-		canSteer && onSteer ? <DeliveryChoice value={activeDelivery} disabled={steerPending} /> : null;
+		canSteer && onSteer ? (
+			<DeliveryChoice value={activeDelivery} disabled={steerPending || submitting} />
+		) : null;
 	const settingsNode =
 		settings && deliveryChoice && isValidElement(settings)
 			? cloneElement(settings, undefined, deliveryChoice)
@@ -1172,6 +1248,7 @@ export function ChatComposer({
 				// beside it says. Reading the same armed state the chip paints keeps the
 				// pointer and keyboard paths from disagreeing about where the message goes.
 				onSubmit={(event) => void submit(event, activeDelivery === "steer")}
+				aria-busy={submitting || undefined}
 				onDragOver={(event) => {
 					if (!canAttach) return;
 					event.preventDefault();
@@ -1219,18 +1296,54 @@ export function ChatComposer({
 										<File aria-hidden="true" className="size-3.5 text-muted-foreground" />
 									</div>
 								)}
-								<span
-									className="max-w-[120px] truncate text-[11px] text-muted-foreground"
-									title={file.name}
-								>
-									{file.name}
-								</span>
+								<div className="flex min-w-0 max-w-[150px] flex-col">
+									<span className="truncate text-[11px] text-muted-foreground" title={file.name}>
+										{file.name}
+									</span>
+									<span
+										role={file.status === "reading" ? "status" : undefined}
+										className="truncate text-[10px] leading-tight text-muted-foreground"
+									>
+										{attachmentDeliveryLabel(file, canStageAttachments, Boolean(nativeImages))}
+									</span>
+								</div>
+								{file.status === "failed" ? (
+									<button
+										type="button"
+										disabled={disabled || draftMutationPending}
+										onClick={() => {
+											const firstPendingRetry = retryPendingIdsRef.current.size === 0;
+											retryPendingIdsRef.current.add(file.id);
+											if (firstPendingRetry) {
+												setRetryPendingError(fileAttachments.error ?? sendError);
+											}
+											void fileAttachments.retry(file.id).then((succeeded) => {
+												retryPendingIdsRef.current.delete(file.id);
+												if (retryPendingIdsRef.current.size === 0) setRetryPendingError(null);
+												if (succeeded) setSendError(null);
+											});
+										}}
+										aria-label={`Retry ${file.name}`}
+										className="inline-flex min-h-6 min-w-6 items-center justify-center rounded px-1 text-[10px] text-muted-foreground hover:bg-interactive-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:opacity-50"
+									>
+										Retry
+									</button>
+								) : null}
 								<button
 									type="button"
-									onClick={() => fileAttachments.remove(file.id)}
-									disabled={disabled || draftMutationPending || fileAttachments.preparing}
+									onClick={() => {
+										retryPendingIdsRef.current.delete(file.id);
+										if (retryPendingIdsRef.current.size === 0) setRetryPendingError(null);
+										setSendError(null);
+										fileAttachments.remove(file.id);
+									}}
+									disabled={
+										disabled ||
+										draftMutationPending ||
+										(fileAttachments.preparing && file.status !== "failed")
+									}
 									aria-label={`Remove ${file.name}`}
-									className="text-muted-foreground hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+									className="inline-flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-interactive-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:opacity-50"
 								>
 									<X aria-hidden="true" className="size-3" />
 								</button>
@@ -1303,7 +1416,8 @@ export function ChatComposer({
 						</Button>
 					</div>
 				) : null}
-				{fileAttachments.preparing ? (
+				{fileAttachments.preparing &&
+				!fileAttachments.attachments.some(({ status }) => status === "reading") ? (
 					<p role="status" className="px-1.5 text-[11px] leading-snug text-muted-foreground">
 						Saving attachments… Wait before leaving this chat.
 					</p>
@@ -1375,7 +1489,7 @@ export function ChatComposer({
 						>
 							{canStopTurn ? (
 								<Square aria-hidden="true" className="size-2.5 fill-current" />
-							) : steerPending ? (
+							) : steerPending || submitting ? (
 								<Loader2 aria-hidden="true" className="size-3.5 animate-spin" />
 							) : (
 								<ArrowUp aria-hidden="true" className="size-3.5" />

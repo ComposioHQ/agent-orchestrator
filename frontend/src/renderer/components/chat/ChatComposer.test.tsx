@@ -1,13 +1,14 @@
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Activity, Profiler } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { appI18n } from "../../i18n/instance";
 import { ChatComposer, type WorkspaceFileCatalog } from "./ChatComposer";
 import type { ChatSkill } from "../../types/conversation";
 import {
 	prepareChatComposerDelivery,
 	readChatSessionDraft,
+	writeChatAttachments,
 	writeChatComposerContent,
 	writeChatComposerText,
 } from "../../lib/chat-drafts";
@@ -74,6 +75,10 @@ function clipboardData(files: File[]) {
 const png = (name = "shot.png") =>
 	new File([new Uint8Array([137, 80, 78, 71])], name, { type: "image/png" });
 const textFile = (name = "notes.txt") => new File(["hello"], name, { type: "text/plain" });
+
+afterEach(() => {
+	vi.unstubAllGlobals();
+});
 
 /* ---- the keyboard contract the composer already had ---------------------- */
 
@@ -1449,6 +1454,262 @@ describe("attachments", () => {
 		expect(screen.getByLabelText("Attach a file")).toBeTruthy();
 	});
 
+	it("offers native-only image delivery and preserves the original name", async () => {
+		const { onSend, field } = renderComposer({ nativeImages: true });
+		expect(screen.getByLabelText("Attach a file")).toBeTruthy();
+
+		fireEvent.paste(field, { clipboardData: clipboardData([png("native-only.png")]) });
+		const attachment = await screen.findByRole("listitem");
+		await waitFor(() => expect(attachment).toHaveTextContent(/native image/i));
+		expect(attachment).not.toHaveTextContent(/worktree path/i);
+
+		await typeInComposer(field, "inspect natively");
+		await userEvent.keyboard("{Enter}");
+		await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+		expect(onSend).toHaveBeenCalledWith("inspect natively", [
+			{ mimeType: "image/png", data: expect.any(String), name: "native-only.png" },
+		]);
+	});
+
+	it("discloses path-only and combined delivery before send", async () => {
+		const first = renderComposer({
+			onStageAttachments: vi.fn().mockResolvedValue([".ao/attachments/path-only.png"]),
+		});
+		fireEvent.paste(first.field, { clipboardData: clipboardData([png("path-only.png")]) });
+		const pathOnly = await screen.findByRole("listitem");
+		await waitFor(() => expect(pathOnly).toHaveTextContent(/worktree path.*agent must read/i));
+		expect(pathOnly).not.toHaveTextContent(/native image/i);
+
+		cleanup();
+		const second = renderComposer({
+			onStageAttachments: vi.fn().mockResolvedValue([".ao/attachments/combined.png"]),
+			nativeImages: true,
+		});
+		fireEvent.paste(second.field, { clipboardData: clipboardData([png("combined.png")]) });
+		const combined = await screen.findByRole("listitem");
+		await waitFor(() =>
+			expect(combined).toHaveTextContent(/worktree path.*native image|native image.*worktree path/i),
+		);
+	});
+
+	it("waits for a pending reader and never sends existing text early", async () => {
+		let finishRead!: () => void;
+		class SlowFileReader {
+			error: Error | null = null;
+			result: string | ArrayBuffer | null = null;
+			onerror: (() => void) | null = null;
+			onload: (() => void) | null = null;
+
+			readAsDataURL(selected: File) {
+				finishRead = () => {
+					this.result = `data:${selected.type};base64,U0xPVw==`;
+					this.onload?.();
+				};
+			}
+		}
+		vi.stubGlobal("FileReader", SlowFileReader);
+		const stage = vi.fn().mockResolvedValue([".ao/attachments/attachment-slow.png"]);
+		const { onSend, field } = renderComposer({ onStageAttachments: stage });
+
+		await typeInComposer(field, "Inspect this image");
+		fireEvent.paste(field, { clipboardData: clipboardData([png("slow.png")]) });
+		expect(screen.getByRole("status")).toHaveTextContent("Reading…");
+		const form = field.closest("form");
+		if (!form) throw new Error("composer form missing");
+		fireEvent.submit(form);
+		fireEvent.submit(form);
+
+		expect(stage).not.toHaveBeenCalled();
+		expect(onSend).not.toHaveBeenCalled();
+		expect(form).toHaveAttribute("aria-busy", "true");
+		expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+
+		await act(async () => finishRead());
+		await waitFor(() => expect(stage).toHaveBeenCalledTimes(1));
+		await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+		expect(onSend.mock.calls[0]?.[0]).toContain("attachment-slow.png");
+	});
+
+	it("keeps a failed read retryable, then stages and sends the same draft", async () => {
+		let failRead!: () => void;
+		let finishRetry!: () => void;
+		let reads = 0;
+		class RetryableFileReader {
+			error: Error | null = null;
+			result: string | ArrayBuffer | null = null;
+			onerror: (() => void) | null = null;
+			onload: (() => void) | null = null;
+
+			readAsDataURL(selected: File) {
+				reads += 1;
+				if (reads === 1) {
+					failRead = () => {
+						this.error = new Error("read failed");
+						this.onerror?.();
+					};
+					return;
+				}
+				finishRetry = () => {
+					this.result = `data:${selected.type};base64,UkVUUll`;
+					this.onload?.();
+				};
+			}
+		}
+		vi.stubGlobal("FileReader", RetryableFileReader);
+		const stage = vi.fn().mockResolvedValue([".ao/attachments/recovered.png"]);
+		const { onSend, field } = renderComposer({ onStageAttachments: stage });
+
+		await typeInComposer(field, "Keep this prompt");
+		fireEvent.paste(field, { clipboardData: clipboardData([png("recovered.png")]) });
+		await act(async () => failRead());
+		await userEvent.keyboard("{Enter}");
+		expect(onSend).not.toHaveBeenCalled();
+		expect(screen.getByRole("alert")).toHaveTextContent(/retry or remove/i);
+		const retryButton = screen.getByRole("button", { name: "Retry recovered.png" });
+		expect(retryButton).toBeEnabled();
+		expect(retryButton).toHaveClass("min-h-6", "min-w-6", "focus-visible:ring-2");
+		const removeButton = screen.getByRole("button", { name: "Remove recovered.png" });
+		expect(removeButton).toBeEnabled();
+		expect(removeButton).toHaveClass("size-6", "focus-visible:ring-2");
+
+		await userEvent.click(retryButton);
+		expect(screen.getByRole("status")).toHaveTextContent("Reading…");
+		await act(async () => finishRetry());
+		await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+		expect(field.textContent).toBe("Keep this prompt");
+
+		fireEvent.submit(field.closest("form") as HTMLFormElement);
+		await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+		expect(stage).toHaveBeenCalledTimes(1);
+		expect(onSend.mock.calls[0]?.[0]).toContain(".ao/attachments/recovered.png");
+	});
+
+	it("keeps failure feedback stable while concurrent retries settle", async () => {
+		let failFirstRead!: () => void;
+		let failSecondRead!: () => void;
+		let finishFirstRetry!: () => void;
+		let failSecondRetry!: () => void;
+		const reads = new Map<string, number>();
+		class ConcurrentRetryFileReader {
+			error: Error | null = null;
+			result: string | ArrayBuffer | null = null;
+			onerror: (() => void) | null = null;
+			onload: (() => void) | null = null;
+
+			readAsDataURL(selected: File) {
+				const attempt = (reads.get(selected.name) ?? 0) + 1;
+				reads.set(selected.name, attempt);
+				const fail = () => {
+					this.error = new Error(`${selected.name} read ${attempt} failed`);
+					this.onerror?.();
+				};
+				if (attempt === 1) {
+					if (selected.name === "first.png") failFirstRead = fail;
+					else failSecondRead = fail;
+					return;
+				}
+				if (selected.name === "first.png") {
+					finishFirstRetry = () => {
+						this.result = `data:${selected.type};base64,RklSU1Q=`;
+						this.onload?.();
+					};
+				} else {
+					failSecondRetry = fail;
+				}
+			}
+		}
+		vi.stubGlobal("FileReader", ConcurrentRetryFileReader);
+		const { field } = renderComposer({ onStageAttachments: vi.fn() });
+
+		await typeInComposer(field, "Keep both attachments");
+		fireEvent.paste(field, {
+			clipboardData: clipboardData([png("first.png"), png("second.png")]),
+		});
+		await act(async () => {
+			failFirstRead();
+			failSecondRead();
+		});
+		await waitFor(() =>
+			expect(screen.getByRole("alert")).toHaveTextContent("2 files couldn't be read"),
+		);
+		await userEvent.keyboard("{Enter}");
+
+		await userEvent.click(screen.getByRole("button", { name: "Retry first.png" }));
+		await userEvent.click(screen.getByRole("button", { name: "Retry second.png" }));
+		expect(screen.getByRole("alert")).toHaveTextContent("2 files couldn't be read");
+		expect(screen.getAllByRole("status")).toHaveLength(2);
+
+		await act(async () => finishFirstRetry());
+		await waitFor(() => expect(screen.getAllByRole("status")).toHaveLength(1));
+		expect(screen.getByRole("alert")).toHaveTextContent("2 files couldn't be read");
+
+		await act(async () => failSecondRetry());
+		await waitFor(() => expect(screen.queryByRole("status")).not.toBeInTheDocument());
+		expect(screen.getByRole("alert")).toHaveTextContent(
+			"second.png couldn't be read. Retry or remove it.",
+		);
+		expect(screen.getByRole("button", { name: "Retry second.png" })).toBeEnabled();
+	});
+
+	it("clears failed-read feedback when the user removes that attachment", async () => {
+		let failRead!: () => void;
+		class FailingFileReader {
+			error: Error | null = null;
+			result: string | ArrayBuffer | null = null;
+			onerror: (() => void) | null = null;
+			onload: (() => void) | null = null;
+
+			readAsDataURL() {
+				failRead = () => {
+					this.error = new Error("read failed");
+					this.onerror?.();
+				};
+			}
+		}
+		vi.stubGlobal("FileReader", FailingFileReader);
+		const { field } = renderComposer({ onStageAttachments: vi.fn() });
+
+		await typeInComposer(field, "Keep this text");
+		fireEvent.paste(field, { clipboardData: clipboardData([png("remove-me.png")]) });
+		await act(async () => failRead());
+		await userEvent.keyboard("{Enter}");
+		expect(screen.getByRole("alert")).toHaveTextContent(/retry or remove/i);
+
+		await userEvent.click(screen.getByRole("button", { name: "Remove remove-me.png" }));
+		expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+		expect(screen.queryByText("remove-me.png")).not.toBeInTheDocument();
+		expect(field.textContent).toBe("Keep this text");
+	});
+
+	it("restores a staged descriptor, sends its path, and clears only after acceptance", async () => {
+		const sessionId = "restored-staged-attachment";
+		writeChatAttachments(sessionId, [
+			{
+				id: "restored-file",
+				path: ".ao/attachments/restored-original.png",
+				name: "original.png",
+				mimeType: "image/png",
+				bytes: 4,
+			},
+		]);
+		const stage = vi.fn();
+		const { onSend, field } = renderComposer({
+			draftSessionId: sessionId,
+			onStageAttachments: stage,
+		});
+		const restored = await screen.findByRole("listitem");
+		expect(restored).toHaveTextContent("original.png");
+		expect(restored).toHaveTextContent(/worktree path.*agent must read/i);
+
+		await typeInComposer(field, "Inspect restored file");
+		await userEvent.keyboard("{Enter}");
+		await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+		expect(stage).not.toHaveBeenCalled();
+		expect(onSend.mock.calls[0]?.[0]).toContain(".ao/attachments/restored-original.png");
+		await waitFor(() => expect(screen.queryByRole("listitem")).not.toBeInTheDocument());
+		expect(readChatSessionDraft(sessionId).composer.attachments).toEqual([]);
+	});
+
 	it("shows a removable chip per pasted image", async () => {
 		const { field } = renderComposer({
 			onStageAttachments: vi.fn().mockResolvedValue([
@@ -1485,7 +1746,7 @@ describe("attachments", () => {
 
 		await waitFor(() => expect(stage).toHaveBeenCalledTimes(1));
 		expect(stage.mock.calls[0]?.[0]).toEqual([
-			{ mimeType: "image/png", data: expect.any(String) },
+			{ mimeType: "image/png", data: expect.any(String), name: "shot.png" },
 		]);
 		await waitFor(() =>
 			expect(onSend).toHaveBeenCalledWith(
@@ -1523,7 +1784,7 @@ describe("attachments", () => {
 		await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
 		expect(onSend.mock.calls[0]?.[0]).toContain(".ao/attachments/attachment-native.png");
 		expect(onSend.mock.calls[0]?.[1]).toEqual([
-			{ mimeType: "image/png", data: expect.any(String) },
+			{ mimeType: "image/png", data: expect.any(String), name: "shot.png" },
 		]);
 	});
 
@@ -1548,23 +1809,32 @@ describe("attachments", () => {
 		await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
 		expect(onSend.mock.calls[0]?.[0]).toContain(".ao/attachments/notes.txt");
 		expect(onSend.mock.calls[0]?.[1]).toEqual([
-			{ mimeType: "image/png", data: expect.any(String) },
+			{ mimeType: "image/png", data: expect.any(String), name: "shot.png" },
 		]);
 	});
 
 	// A message claiming an attachment the agent cannot open is worse than a refusal.
-	it("does not accept a chip when durable staging fails, and says so", async () => {
-		const stage = vi.fn().mockRejectedValue(new Error("disk full"));
+	it("keeps a readable chip when durable staging fails and retries it at send", async () => {
+		const stage = vi
+			.fn()
+			.mockRejectedValueOnce(new Error("disk full"))
+			.mockResolvedValueOnce([".ao/attachments/attachment-retry-after-stage.png"]);
 		const { onSend, field } = renderComposer({ onStageAttachments: stage });
 
 		fireEvent.paste(field, { clipboardData: clipboardData([png()]) });
 		expect(await screen.findByRole("alert")).toHaveTextContent(
-			"Files couldn’t be saved. Nothing was attached.",
+			"Files couldn’t be saved. Retry sending to save them again.",
 		);
 		expect(stage).toHaveBeenCalledTimes(1);
 		expect(onSend).not.toHaveBeenCalled();
-		expect(screen.queryByRole("listitem")).not.toBeInTheDocument();
+		expect(screen.getByRole("listitem")).toHaveTextContent("shot.png");
 		expect(field.textContent).toBe("");
+
+		await userEvent.keyboard("{Enter}");
+		await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+		expect(stage).toHaveBeenCalledTimes(2);
+		expect(onSend.mock.calls[0]?.[0]).toContain("attachment-retry-after-stage.png");
+		await waitFor(() => expect(screen.queryByRole("listitem")).not.toBeInTheDocument());
 	});
 
 	it("keeps attachments after a failed send and reuses their staged paths on retry", async () => {

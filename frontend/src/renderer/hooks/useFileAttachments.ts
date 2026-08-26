@@ -11,6 +11,8 @@ export const MAX_ATTACHMENTS_BYTES = 25 * 1024 * 1024;
 
 const mb = (bytes: number) => Math.round(bytes / (1024 * 1024));
 
+export type FileAttachmentStatus = "reading" | "ready" | "failed";
+
 /** A single file staged for a task/orchestrator brief. */
 export type FileAttachment = {
 	/** Stable id for list keys and removal. */
@@ -21,6 +23,8 @@ export type FileAttachment = {
 	bytes: number;
 	/** File name for display. */
 	name: string;
+	/** FileReader lifecycle. Failed entries stay in the draft for retry/removal. */
+	status?: FileAttachmentStatus;
 	/** data: URL used to render the thumbnail preview (for images only). */
 	dataUrl?: string;
 	/** Base64 payload without the "data:...;base64," prefix, for upload. */
@@ -42,8 +46,8 @@ export type FileAttachmentOptions = {
 	/** Changes when the hook must replace its state with initialAttachments. */
 	initialKey?: string;
 	/**
-	 * Make newly accepted bytes durable before their chips become visible. A
-	 * rejection leaves the existing attachment list untouched.
+	 * Make newly read bytes durable before preparation settles. Reading and failed
+	 * chips stay visible so the user can see, retry, or remove the exact file.
 	 */
 	prepareAttachments?: (attachments: FileAttachment[]) => Promise<FileAttachment[]>;
 	/** Called after an accepted add, removal, or clear. */
@@ -57,11 +61,12 @@ type SharedAttachmentUpdate = {
 };
 
 type SharedAttachmentEntry = {
-	pending: Set<symbol>;
+	pending: Map<symbol, Set<string>>;
 	generation: number;
 	listeners: Map<symbol, (update: SharedAttachmentUpdate) => void>;
 	attachments?: FileAttachment[];
 	error?: string | null;
+	sources: Map<string, File>;
 };
 
 type SharedAttachmentWork = { token: symbol; generation: number };
@@ -80,11 +85,12 @@ export type PendingFileAttachmentCapture = {
 };
 
 function sharedAttachmentDescriptors(attachments: FileAttachment[]): FileAttachment[] {
-	return attachments.map(({ id, mimeType, bytes, name, stagedPath }) => ({
+	return attachments.map(({ id, mimeType, bytes, name, status, stagedPath }) => ({
 		id,
 		mimeType,
 		bytes,
 		name,
+		status,
 		...(stagedPath ? { stagedPath } : {}),
 	}));
 }
@@ -98,7 +104,7 @@ const sharedAttachmentEntries = new Map<string, SharedAttachmentEntry>();
 function sharedEntry(key: string): SharedAttachmentEntry {
 	let entry = sharedAttachmentEntries.get(key);
 	if (!entry) {
-		entry = { pending: new Set(), generation: 0, listeners: new Map() };
+		entry = { pending: new Map(), generation: 0, listeners: new Map(), sources: new Map() };
 		sharedAttachmentEntries.set(key, entry);
 	}
 	return entry;
@@ -122,9 +128,46 @@ function notifySharedAttachmentEntry(
 function beginSharedAttachmentWork(key: string): SharedAttachmentWork {
 	const entry = sharedEntry(key);
 	const work = { token: Symbol("chat-attachment-work"), generation: entry.generation };
-	entry.pending.add(work.token);
+	entry.pending.set(work.token, new Set());
 	notifySharedAttachmentEntry(key);
 	return work;
+}
+
+function registerSharedAttachmentWorkIds(
+	key: string,
+	work: SharedAttachmentWork,
+	ids: Iterable<string>,
+): void {
+	const entry = sharedAttachmentEntries.get(key);
+	if (!entry || entry.generation !== work.generation) return;
+	const owned = entry.pending.get(work.token);
+	if (!owned) return;
+	for (const id of ids) owned.add(id);
+}
+
+function discardSharedAttachmentTokens(
+	entry: SharedAttachmentEntry,
+	tokens: Iterable<symbol>,
+): boolean {
+	const discardedIds = new Set<string>();
+	let changed = false;
+	for (const token of tokens) {
+		const owned = entry.pending.get(token);
+		if (!owned) continue;
+		for (const id of owned) discardedIds.add(id);
+		entry.pending.delete(token);
+		changed = true;
+	}
+	if (discardedIds.size > 0) {
+		const stillOwned = new Set<string>();
+		for (const owned of entry.pending.values()) {
+			for (const id of owned) stillOwned.add(id);
+		}
+		const abandonedIds = new Set([...discardedIds].filter((id) => !stillOwned.has(id)));
+		entry.attachments = entry.attachments?.filter(({ id }) => !abandonedIds.has(id)) ?? [];
+		for (const id of abandonedIds) entry.sources.delete(id);
+	}
+	return changed;
 }
 
 function endSharedAttachmentWork(key: string, token: symbol): void {
@@ -135,7 +178,8 @@ function endSharedAttachmentWork(key: string, token: symbol): void {
 	if (
 		entry.pending.size === 0 &&
 		entry.listeners.size === 0 &&
-		(entry.attachments?.length ?? 0) === 0
+		(entry.attachments?.length ?? 0) === 0 &&
+		entry.sources.size === 0
 	) {
 		sharedAttachmentEntries.delete(key);
 	}
@@ -158,7 +202,8 @@ function subscribeSharedAttachmentWork(
 		if (
 			entry.pending.size === 0 &&
 			entry.listeners.size === 0 &&
-			(entry.attachments?.length ?? 0) === 0
+			(entry.attachments?.length ?? 0) === 0 &&
+			entry.sources.size === 0
 		) {
 			sharedAttachmentEntries.delete(key);
 		}
@@ -178,8 +223,11 @@ export function discardPendingFileAttachments(key: string): void {
 	const entry = sharedAttachmentEntries.get(key);
 	if (!entry) return;
 	entry.generation += 1;
-	entry.pending.clear();
-	notifySharedAttachmentEntry(key, { error: null });
+	discardSharedAttachmentTokens(entry, [...entry.pending.keys()]);
+	notifySharedAttachmentEntry(key, {
+		attachments: entry.attachments ?? [],
+		error: null,
+	});
 }
 
 function attachmentKeyBelongsToSession(key: string, sessionId: string): boolean {
@@ -193,7 +241,7 @@ export function capturePendingFileAttachmentsForSession(
 	const entries: CapturedPendingFileAttachmentEntry[] = [];
 	for (const [key, entry] of sharedAttachmentEntries) {
 		if (!attachmentKeyBelongsToSession(key, sessionId) || entry.pending.size === 0) continue;
-		entries.push({ key, generation: entry.generation, tokens: [...entry.pending] });
+		entries.push({ key, generation: entry.generation, tokens: [...entry.pending.keys()] });
 	}
 	return { [pendingFileAttachmentCaptureEntries]: entries };
 }
@@ -208,16 +256,14 @@ export function discardCapturedPendingFileAttachments(
 	for (const captured of capture[pendingFileAttachmentCaptureEntries]) {
 		const entry = sharedAttachmentEntries.get(captured.key);
 		if (!entry || entry.generation !== captured.generation) continue;
-		let changed = false;
-		for (const token of captured.tokens) {
-			changed = entry.pending.delete(token) || changed;
-		}
+		const changed = discardSharedAttachmentTokens(entry, captured.tokens);
 		if (!changed) continue;
-		notifySharedAttachmentEntry(captured.key);
+		notifySharedAttachmentEntry(captured.key, { attachments: entry.attachments ?? [] });
 		if (
 			entry.pending.size === 0 &&
 			entry.listeners.size === 0 &&
-			(entry.attachments?.length ?? 0) === 0
+			(entry.attachments?.length ?? 0) === 0 &&
+			entry.sources.size === 0
 		) {
 			sharedAttachmentEntries.delete(captured.key);
 		}
@@ -240,6 +286,7 @@ export function purgeFileAttachmentsForSession(sessionId: string): void {
 		if (!attachmentKeyBelongsToSession(key, sessionId)) continue;
 		entry.generation += 1;
 		entry.pending.clear();
+		entry.sources.clear();
 		notifySharedAttachmentEntry(key, { attachments: [], error: null });
 		if (entry.listeners.size === 0) sharedAttachmentEntries.delete(key);
 	}
@@ -287,37 +334,156 @@ export function useFileAttachments(options: FileAttachmentOptions = {}) {
 		prepareAttachments,
 		onAttachmentsChange,
 	} = options;
-	const [attachments, setAttachments] = useState<FileAttachment[]>(() => initialAttachments);
-	const [error, setError] = useState<string | null>(null);
+	const normalizeInitial = useCallback(
+		(items: FileAttachment[]): FileAttachment[] =>
+			items.map((attachment) => ({ ...attachment, status: attachment.status ?? "ready" })),
+		[],
+	);
+	const [attachments, setAttachments] = useState<FileAttachment[]>(() =>
+		normalizeInitial(initialAttachments),
+	);
+	const [validationError, setValidationError] = useState<string | null>(null);
 	const [preparing, setPreparing] = useState(() => sharedAttachmentPending(initialKey));
-	const attachmentsRef = useRef<FileAttachment[]>(initialAttachments);
+	const attachmentsRef = useRef<FileAttachment[]>(normalizeInitial(initialAttachments));
 	const initialKeyRef = useRef(initialKey);
 	const listenerTokenRef = useRef(Symbol("file-attachment-listener"));
-	const pendingReadsRef = useRef<Set<Promise<unknown>>>(new Set());
+	const sourceFilesRef = useRef<Map<string, File>>(
+		initialKey ? sharedEntry(initialKey).sources : new Map(),
+	);
+	const pendingReadsRef = useRef<Map<string, Promise<void>>>(new Map());
+	const pendingRetriesRef = useRef<Set<Promise<boolean>>>(new Set());
 	const addQueueRef = useRef<Promise<void>>(Promise.resolve());
 	const queuedAddsRef = useRef(0);
+
+	const commitAttachments = useCallback(
+		(next: FileAttachment[]) => {
+			attachmentsRef.current = next;
+			setAttachments(next);
+			onAttachmentsChange?.(next);
+			if (initialKey) {
+				notifySharedAttachmentEntry(
+					initialKey,
+					{ attachments: sharedAttachmentDescriptors(next) },
+					listenerTokenRef.current,
+				);
+			}
+		},
+		[initialKey, onAttachmentsChange],
+	);
+
+	const commitError = useCallback(
+		(next: string | null) => {
+			setValidationError(next);
+			if (initialKey) notifySharedAttachmentEntry(initialKey, { error: next });
+		},
+		[initialKey],
+	);
+
+	const updateAttachment = useCallback(
+		(id: string, update: (attachment: FileAttachment) => FileAttachment) => {
+			const index = attachmentsRef.current.findIndex((attachment) => attachment.id === id);
+			if (index < 0) return;
+			const next = [...attachmentsRef.current];
+			next[index] = update(next[index]);
+			commitAttachments(next);
+		},
+		[commitAttachments],
+	);
 
 	useEffect(() => {
 		if (initialKeyRef.current === initialKey) return;
 		initialKeyRef.current = initialKey;
-		attachmentsRef.current = initialAttachments;
-		setAttachments(initialAttachments);
-		setError(null);
+		const restored = normalizeInitial(initialAttachments);
+		attachmentsRef.current = restored;
+		setAttachments(restored);
+		sourceFilesRef.current = initialKey ? sharedEntry(initialKey).sources : new Map();
+		setValidationError(null);
 		setPreparing(sharedAttachmentPending(initialKey));
-	}, [initialAttachments, initialKey]);
+	}, [initialAttachments, initialKey, normalizeInitial]);
 
 	useEffect(() => {
 		if (!initialKey) return;
 		return subscribeSharedAttachmentWork(initialKey, listenerTokenRef.current, (update) => {
 			if (update.attachments) {
-				attachmentsRef.current = update.attachments;
-				setAttachments(update.attachments);
-				onAttachmentsChange?.(update.attachments);
+				const restored = normalizeInitial(update.attachments);
+				attachmentsRef.current = restored;
+				setAttachments(restored);
+				onAttachmentsChange?.(restored);
 			}
-			if (update.error !== undefined) setError(update.error);
+			if (update.error !== undefined) setValidationError(update.error);
 			setPreparing(update.pending > 0);
 		});
-	}, [initialKey, onAttachmentsChange]);
+	}, [initialKey, normalizeInitial, onAttachmentsChange]);
+
+	const readAttachment = useCallback(
+		(id: string, file: File, sharedWork?: SharedAttachmentWork): Promise<void> => {
+			let pending: Promise<void>;
+			pending = readFileAsBase64(file)
+				.then((result) => {
+					if (
+						initialKey &&
+						sharedWork &&
+						!sharedAttachmentWorkIsCurrent(initialKey, sharedWork)
+					) {
+						return;
+					}
+					const isImage = file.type.startsWith("image/") && isSupportedImageAttachment(file.type);
+					updateAttachment(id, (attachment) => ({
+						...attachment,
+						status: "ready",
+						dataUrl: isImage ? result.dataUrl : undefined,
+						data: result.data,
+					}));
+				})
+				.catch(() => {
+					if (
+						initialKey &&
+						sharedWork &&
+						!sharedAttachmentWorkIsCurrent(initialKey, sharedWork)
+					) {
+						return;
+					}
+					updateAttachment(id, (attachment) => ({
+						...attachment,
+						status: "failed",
+						dataUrl: undefined,
+						data: undefined,
+						stagedPath: undefined,
+					}));
+				})
+				.finally(() => {
+					if (pendingReadsRef.current.get(id) === pending) pendingReadsRef.current.delete(id);
+				});
+			pendingReadsRef.current.set(id, pending);
+			return pending;
+		},
+		[initialKey, updateAttachment],
+	);
+
+	const stageReadyAttachments = useCallback(
+		async (ids?: ReadonlySet<string>, sharedWork?: SharedAttachmentWork): Promise<void> => {
+			if (!prepareAttachments) return;
+			if (initialKey && sharedWork && !sharedAttachmentWorkIsCurrent(initialKey, sharedWork)) return;
+			const ready = attachmentsRef.current.filter(
+				(attachment) =>
+					(ids === undefined || ids.has(attachment.id)) &&
+					attachment.status === "ready" &&
+					!attachment.stagedPath &&
+					attachment.data !== undefined,
+			);
+			if (ready.length === 0) return;
+			const prepared = await prepareAttachments(ready);
+			if (initialKey && sharedWork && !sharedAttachmentWorkIsCurrent(initialKey, sharedWork)) return;
+			if (prepared.length !== ready.length) {
+				throw new Error("Attachment staging returned an incomplete result");
+			}
+			const preparedByID = new Map(prepared.map((attachment) => [attachment.id, attachment]));
+			commitAttachments(
+				attachmentsRef.current.map((attachment) => preparedByID.get(attachment.id) ?? attachment),
+			);
+		},
+		[commitAttachments, initialKey, prepareAttachments],
+	);
 
 	const processFiles = useCallback(async (files: File[], sharedWork?: SharedAttachmentWork) => {
 		if (initialKey && sharedWork && !sharedAttachmentWorkIsCurrent(initialKey, sharedWork)) return;
@@ -354,91 +520,61 @@ export function useFileAttachments(options: FileAttachmentOptions = {}) {
 			return true;
 		});
 
-		const pendingReads = Promise.all(
-			readable.map((file) =>
-				readFileAsBase64(file).catch(() => null).then((result) => ({ file, result })),
-			),
-		);
-		pendingReadsRef.current.add(pendingReads);
-		const results = await pendingReads;
-		pendingReadsRef.current.delete(pendingReads);
-		if (initialKey && sharedWork && !sharedAttachmentWorkIsCurrent(initialKey, sharedWork)) return;
-
-		const fresh: FileAttachment[] = [];
-		for (const { file, result } of results) {
-			if (!result) {
-				errors.add(`Some files couldn't be read and were skipped.`);
-				continue;
-			}
-			const isImage = file.type.startsWith("image/") && isSupportedImageAttachment(file.type);
-			fresh.push({
-				id:
-					typeof crypto !== "undefined" && "randomUUID" in crypto
-						? crypto.randomUUID()
-						: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-				mimeType: file.type || "application/octet-stream",
-				bytes: file.size,
-				name: file.name,
-				dataUrl: isImage ? result.dataUrl : undefined,
-				data: result.data,
-			});
-		}
-
 		const accepted = [...attachmentsRef.current];
-		const acceptedFresh: FileAttachment[] = [];
-		let total = accepted.reduce((sum, a) => sum + a.bytes, 0);
-		for (const a of fresh) {
-			if (accepted.length >= MAX_ATTACHMENTS) {
+		let total = accepted.reduce((sum, attachment) => sum + attachment.bytes, 0);
+		const fresh: Array<{ attachment: FileAttachment; file: File }> = [];
+		for (const file of readable) {
+			if (accepted.length + fresh.length >= MAX_ATTACHMENTS) {
 				errors.add(`You can attach up to ${MAX_ATTACHMENTS} files.`);
 				break;
 			}
-			if (total + a.bytes > MAX_ATTACHMENTS_BYTES) {
+			if (total + file.size > MAX_ATTACHMENTS_BYTES) {
 				// Only this file is refused: the remaining budget cannot absorb it,
-				// but a later file in the same batch still can. Aborting here (break)
-				// would silently drop every smaller file staged after it.
+				// but a later file in the same batch still can.
 				errors.add(`Attachments must total under ${mb(MAX_ATTACHMENTS_BYTES)} MB.`);
 				continue;
 			}
-			accepted.push(a);
-			acceptedFresh.push(a);
-			total += a.bytes;
+			const id =
+				typeof crypto !== "undefined" && "randomUUID" in crypto
+					? crypto.randomUUID()
+					: `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+			const attachment: FileAttachment = {
+				id,
+				mimeType: file.type || "application/octet-stream",
+				bytes: file.size,
+				name: file.name,
+				status: "reading",
+			};
+			fresh.push({ attachment, file });
+			sourceFilesRef.current.set(id, file);
+			if (initialKey) sharedEntry(initialKey).sources.set(id, file);
+			total += file.size;
 		}
-		if (acceptedFresh.length > 0) {
-			let prepared = acceptedFresh;
-			if (prepareAttachments) {
-				try {
-					prepared = await prepareAttachments(acceptedFresh);
-					if (initialKey && sharedWork && !sharedAttachmentWorkIsCurrent(initialKey, sharedWork)) return;
-					if (prepared.length !== acceptedFresh.length) {
-						throw new Error("Attachment staging returned an incomplete result");
-					}
-				} catch {
-					if (initialKey && sharedWork && !sharedAttachmentWorkIsCurrent(initialKey, sharedWork)) return;
-					errors.add("Files couldn’t be saved. Nothing was attached.");
-					const message = Array.from(errors).join(" ");
-					setError(message);
-					if (initialKey) notifySharedAttachmentEntry(initialKey, { error: message });
-					return;
-				}
-			}
-			// Read the live list after async preparation. A removal that happened while
-			// bytes were being staged must not resurrect an older attachment snapshot.
-			const next = [...attachmentsRef.current, ...prepared];
-			attachmentsRef.current = next;
-			setAttachments(next);
-			onAttachmentsChange?.(next);
-			if (initialKey) {
-				notifySharedAttachmentEntry(
+		if (fresh.length > 0) {
+			if (initialKey && sharedWork) {
+				registerSharedAttachmentWorkIds(
 					initialKey,
-					{ attachments: sharedAttachmentDescriptors(next) },
-					listenerTokenRef.current,
+					sharedWork,
+					fresh.map(({ attachment }) => attachment.id),
 				);
 			}
+			commitAttachments([...accepted, ...fresh.map(({ attachment }) => attachment)]);
 		}
-		const nextError = errors.size > 0 ? Array.from(errors).join(" ") : null;
-		setError(nextError);
-		if (initialKey) notifySharedAttachmentEntry(initialKey, { error: nextError });
-	}, [initialKey, onAttachmentsChange, prepareAttachments]);
+		commitError(errors.size > 0 ? Array.from(errors).join(" ") : null);
+		await Promise.all(
+			fresh.map(({ attachment, file }) => readAttachment(attachment.id, file, sharedWork)),
+		);
+		if (initialKey && sharedWork && !sharedAttachmentWorkIsCurrent(initialKey, sharedWork)) return;
+		try {
+			await stageReadyAttachments(
+				new Set(fresh.map(({ attachment }) => attachment.id)),
+				sharedWork,
+			);
+		} catch {
+			if (initialKey && sharedWork && !sharedAttachmentWorkIsCurrent(initialKey, sharedWork)) return;
+			commitError("Files couldn’t be saved. Retry sending to save them again.");
+		}
+	}, [commitAttachments, commitError, initialKey, readAttachment, stageReadyAttachments]);
 
 	const addFiles = useCallback((files: Iterable<File>): Promise<void> => {
 		// Serialize batches. Two paste/drop events can arrive before React publishes
@@ -459,45 +595,107 @@ export function useFileAttachments(options: FileAttachmentOptions = {}) {
 				: addQueueRef.current.then(() => processFiles(batch, sharedWork));
 		const settled = run
 			.catch(() => {
-				setError("Some files couldn’t be prepared and were skipped.");
+				commitError("Some files couldn’t be prepared and were skipped.");
 			})
 			.finally(() => {
 				queuedAddsRef.current = Math.max(0, queuedAddsRef.current - 1);
 				if (sharedKey && sharedWork) endSharedAttachmentWork(sharedKey, sharedWork.token);
-				else if (queuedAddsRef.current === 0) setPreparing(false);
+				else if (queuedAddsRef.current === 0 && pendingRetriesRef.current.size === 0) {
+					setPreparing(false);
+				}
 			});
 		addQueueRef.current = settled;
 		return settled;
-	}, [initialKey, processFiles]);
+	}, [commitError, initialKey, processFiles]);
+
+	const performRetry = useCallback(
+		async (id: string): Promise<boolean> => {
+			const file = sourceFilesRef.current.get(id);
+			if (!file) return false;
+			const existing = pendingReadsRef.current.get(id);
+			if (existing) {
+				await existing;
+				const current = attachmentsRef.current.find((attachment) => attachment.id === id);
+				return Boolean(current?.status === "ready" && (!prepareAttachments || current.stagedPath));
+			}
+			const sharedKey = initialKey;
+			const sharedWork = sharedKey ? beginSharedAttachmentWork(sharedKey) : undefined;
+			if (sharedKey && sharedWork) registerSharedAttachmentWorkIds(sharedKey, sharedWork, [id]);
+			setPreparing(true);
+			commitError(null);
+			updateAttachment(id, (attachment) => ({
+				...attachment,
+				status: "reading",
+				dataUrl: undefined,
+				data: undefined,
+				stagedPath: undefined,
+			}));
+			try {
+				await readAttachment(id, file, sharedWork);
+				if (sharedKey && sharedWork && !sharedAttachmentWorkIsCurrent(sharedKey, sharedWork)) {
+					return false;
+				}
+				if (attachmentsRef.current.find((attachment) => attachment.id === id)?.status === "ready") {
+					try {
+						await stageReadyAttachments(new Set([id]), sharedWork);
+					} catch {
+						commitError("Files couldn’t be saved. Retry sending to save them again.");
+					}
+				}
+				const current = attachmentsRef.current.find((attachment) => attachment.id === id);
+				return Boolean(current?.status === "ready" && (!prepareAttachments || current.stagedPath));
+			} finally {
+				if (sharedKey && sharedWork) endSharedAttachmentWork(sharedKey, sharedWork.token);
+			}
+		},
+		[
+			commitError,
+			initialKey,
+			prepareAttachments,
+			readAttachment,
+			stageReadyAttachments,
+			updateAttachment,
+		],
+	);
+	const retry = useCallback(
+		(id: string): Promise<boolean> => {
+			let pending: Promise<boolean>;
+			pending = performRetry(id).finally(() => {
+				pendingRetriesRef.current.delete(pending);
+				if (!initialKey && queuedAddsRef.current === 0 && pendingRetriesRef.current.size === 0) {
+					setPreparing(false);
+				}
+			});
+			pendingRetriesRef.current.add(pending);
+			return pending;
+		},
+		[initialKey, performRetry],
+	);
 
 	const remove = useCallback((id: string) => {
 		const next = attachmentsRef.current.filter((a) => a.id !== id);
-		attachmentsRef.current = next;
-		setAttachments(next);
-		onAttachmentsChange?.(next);
-		if (initialKey) {
-			notifySharedAttachmentEntry(
-				initialKey,
-				{ attachments: sharedAttachmentDescriptors(next), error: null },
-				listenerTokenRef.current,
-			);
-		}
-		setError(null);
-	}, [initialKey, onAttachmentsChange]);
+		sourceFilesRef.current.delete(id);
+		pendingReadsRef.current.delete(id);
+		if (initialKey) sharedEntry(initialKey).sources.delete(id);
+		commitAttachments(next);
+		commitError(null);
+	}, [commitAttachments, commitError, initialKey]);
 
 	const clear = useCallback(() => {
-		attachmentsRef.current = [];
-		setAttachments([]);
-		onAttachmentsChange?.([]);
-		if (initialKey) {
-			notifySharedAttachmentEntry(
-				initialKey,
-				{ attachments: [], error: null },
-				listenerTokenRef.current,
-			);
-		}
-		setError(null);
-	}, [initialKey, onAttachmentsChange]);
+		sourceFilesRef.current.clear();
+		pendingReadsRef.current.clear();
+		if (initialKey) sharedEntry(initialKey).sources.clear();
+		commitAttachments([]);
+		commitError(null);
+	}, [commitAttachments, commitError, initialKey]);
+
+	const payloadsFor = useCallback(
+		(current: FileAttachment[]): FileAttachmentPayload[] =>
+			current.flatMap(({ mimeType, data, name, status }) =>
+				status === "ready" && data !== undefined ? [{ mimeType, data, name }] : [],
+			),
+		[],
+	);
 
 	const reconcilePersistedAttachments = useCallback((persisted: FileAttachment[]) => {
 		// A hidden React Activity renders before its effects subscribe. By the time it
@@ -514,11 +712,8 @@ export function useFileAttachments(options: FileAttachmentOptions = {}) {
 	}, [initialKey]);
 
 	const toPayload = useCallback(
-		(): FileAttachmentPayload[] =>
-			attachments.flatMap(({ mimeType, data }) =>
-				data ? [{ mimeType, data }] : [],
-			),
-		[attachments],
+		(): FileAttachmentPayload[] => payloadsFor(attachments),
+		[attachments, payloadsFor],
 	);
 
 	const toSettledPayload = useCallback(async (): Promise<FileAttachmentPayload[]> => {
@@ -528,22 +723,81 @@ export function useFileAttachments(options: FileAttachmentOptions = {}) {
 			if (queued === addQueueRef.current && queuedAddsRef.current === 0) break;
 		}
 		while (pendingReadsRef.current.size > 0) {
-			await Promise.allSettled(Array.from(pendingReadsRef.current));
+			await Promise.allSettled(Array.from(pendingReadsRef.current.values()));
 		}
-		return attachmentsRef.current.flatMap(({ mimeType, data }) =>
-			data ? [{ mimeType, data }] : [],
-		);
-	}, []);
+		while (pendingRetriesRef.current.size > 0) {
+			const pending = [...pendingRetriesRef.current];
+			await Promise.allSettled(pending);
+			if (pendingRetriesRef.current.size === 0) break;
+		}
+		const currentBeforeStage = attachmentsRef.current;
+		if (currentBeforeStage.some(({ status }) => status === "failed")) {
+			throw new Error("Some files couldn't be read. Retry or remove them before sending.");
+		}
+		if (currentBeforeStage.some(({ status }) => status !== "ready")) {
+			throw new Error("Some files are still being read. Wait before sending.");
+		}
+		if (prepareAttachments && currentBeforeStage.some(({ stagedPath }) => !stagedPath)) {
+			const sharedKey = initialKey;
+			const sharedWork = sharedKey ? beginSharedAttachmentWork(sharedKey) : undefined;
+			if (sharedKey && sharedWork) {
+				registerSharedAttachmentWorkIds(
+					sharedKey,
+					sharedWork,
+					currentBeforeStage.filter(({ stagedPath }) => !stagedPath).map(({ id }) => id),
+				);
+			}
+			setPreparing(true);
+			try {
+				await stageReadyAttachments(undefined, sharedWork);
+				commitError(null);
+			} catch {
+				const message = "The files could not be attached. Nothing was sent.";
+				commitError(message);
+				throw new Error(message);
+			} finally {
+				if (sharedKey && sharedWork) endSharedAttachmentWork(sharedKey, sharedWork.token);
+				else {
+					setPreparing(queuedAddsRef.current > 0 || pendingRetriesRef.current.size > 0);
+				}
+			}
+		}
+		if (prepareAttachments && attachmentsRef.current.some(({ stagedPath }) => !stagedPath)) {
+			throw new Error("The files are not durably available. Nothing was sent.");
+		}
+		return payloadsFor(attachmentsRef.current);
+	}, [commitError, initialKey, payloadsFor, prepareAttachments, stageReadyAttachments]);
+
+	const hasAttachments = useCallback(() => attachmentsRef.current.length > 0, []);
+	const currentAttachments = useCallback(() => attachmentsRef.current, []);
+	const signature = useCallback(
+		() => attachmentsRef.current.map((attachment) => attachment.id).join(":"),
+		[],
+	);
+	const hasUndurableAttachments = attachments.some(({ stagedPath }) => !stagedPath);
+	const failed = attachments.filter(({ status }) => status === "failed");
+	const readError =
+		failed.length === 0
+			? null
+			: failed.length === 1
+				? `${failed[0].name} couldn't be read. Retry or remove it.`
+				: `${failed.length} files couldn't be read. Retry or remove them.`;
+	const error = readError ?? validationError;
 
 	return {
 		attachments,
 		error,
 		preparing,
 		addFiles,
+		retry,
 		remove,
 		clear,
 		reconcilePersistedAttachments,
 		toPayload,
 		toSettledPayload,
+		hasAttachments,
+		currentAttachments,
+		signature,
+		hasUndurableAttachments,
 	};
 }
