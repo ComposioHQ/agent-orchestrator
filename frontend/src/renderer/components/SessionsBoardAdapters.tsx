@@ -225,7 +225,6 @@ function DesktopSessionCard({
 	);
 }
 
-
 function pullRequestLabels(t: TFunction): BoardPullRequestLabels {
 	return {
 		short: t("pr.short"),
