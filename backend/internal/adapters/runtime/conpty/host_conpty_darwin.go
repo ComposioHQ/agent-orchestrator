@@ -3,6 +3,7 @@
 package conpty
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -85,11 +86,10 @@ func (c *darwinPTYConn) Close() error {
 			default:
 				// The PTY child is a session leader. Signal its process group so
 				// descendants cannot outlive a terminal AO explicitly destroys.
-				_ = syscall.Kill(-c.cmd.Process.Pid, syscall.SIGTERM)
-				select {
-				case <-c.doneC:
-				case <-time.After(darwinPTYCloseGrace):
-					_ = syscall.Kill(-c.cmd.Process.Pid, syscall.SIGKILL)
+				pgid := c.cmd.Process.Pid
+				_ = syscall.Kill(-pgid, syscall.SIGTERM)
+				if !waitForDarwinProcessGroupExit(pgid, darwinPTYCloseGrace) {
+					_ = syscall.Kill(-pgid, syscall.SIGKILL)
 					select {
 					case <-c.doneC:
 					case <-time.After(darwinPTYCloseGrace):
@@ -100,6 +100,28 @@ func (c *darwinPTYConn) Close() error {
 		closeErr = c.pty.Close()
 	})
 	return closeErr
+}
+
+func waitForDarwinProcessGroupExit(pgid int, timeout time.Duration) bool {
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if !darwinProcessGroupAlive(pgid) {
+			return true
+		}
+		select {
+		case <-deadline.C:
+			return !darwinProcessGroupAlive(pgid)
+		case <-ticker.C:
+		}
+	}
+}
+
+func darwinProcessGroupAlive(pgid int) bool {
+	err := syscall.Kill(-pgid, 0)
+	return err == nil || errors.Is(err, syscall.EPERM)
 }
 
 func (c *darwinPTYConn) Done() <-chan struct{} { return c.doneC }

@@ -133,3 +133,32 @@ func TestDarwinDefaultSpawnHostEndToEnd(t *testing.T) {
 		t.Fatalf("detached pty-host pid %d survived kill", hostPID)
 	}
 }
+
+func TestDarwinPTYCloseReapsTermIgnoringProcessGroup(t *testing.T) {
+	conn, err := newConPTY(t.TempDir(), "/bin/sh", []string{
+		"-c", `trap '' TERM; (trap '' TERM; printf 'child-ready\n'; sleep 30) & wait`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pgid := conn.PID()
+	if !darwinProcessGroupAlive(pgid) {
+		t.Fatalf("process group %d was not alive after launch", pgid)
+	}
+	ready := make([]byte, 128)
+	n, err := conn.Read(ready)
+	if err != nil || !strings.Contains(string(ready[:n]), "child-ready") {
+		t.Fatalf("waiting for process-group fixture readiness: output=%q err=%v", ready[:n], err)
+	}
+
+	if err := conn.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for darwinProcessGroupAlive(pgid) && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if darwinProcessGroupAlive(pgid) {
+		t.Fatalf("process group %d survived PTY close", pgid)
+	}
+}
