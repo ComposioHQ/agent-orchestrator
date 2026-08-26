@@ -429,6 +429,7 @@ func Run() error {
 	}
 
 	srv, err := httpd.NewWithDeps(cfg, log, termMgr, httpd.APIDeps{
+		ReadyCheck:         store.Ping,
 		Projects:           projectSvc,
 		Agents:             agentSvc,
 		SystemChecks:       systemChecks,
