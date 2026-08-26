@@ -274,6 +274,100 @@ describe("mobile Chat API boundaries", () => {
 		expect(received).toEqual([1]);
 		expect(cursor).toBe(1);
 	});
+
+	it("surfaces an in-stream cursor reset to onCursorReset instead of onEvent", async () => {
+		vi.mocked(expoFetch).mockResolvedValue(new Response([
+			'event: events_cursor_reset\nid: 500\ndata: {"requested":5,"after":500}\n\n',
+			'id: 501\ndata: {"seq":501,"projectId":"p-1","sessionId":"w-1","type":"session_updated","payload":{"conversationId":"c-1"},"createdAt":"2026-08-11"}\n\n',
+		].join("")) as unknown as Awaited<ReturnType<typeof expoFetch>>);
+		const resets: number[] = [];
+		const events: number[] = [];
+
+		const cursor = await chatApi.streamGlobalConversationEvents(
+			cfg,
+			5,
+			new AbortController().signal,
+			(event) => events.push(event.seq),
+			(reset) => resets.push(reset),
+		);
+
+		expect(resets).toEqual([500]);
+		expect(events).toEqual([501]);
+		expect(cursor).toBe(501);
+	});
+
+	it("preserves reset delivery while cooperative replay yielding is enabled", async () => {
+		vi.mocked(expoFetch).mockResolvedValue(
+			new Response(
+				[
+					'event: events_cursor_reset\nid: 500\ndata: {"requested":5,"after":500}\n\n',
+					'id: 501\ndata: {"seq":501,"projectId":"p-1","sessionId":"w-1","type":"session_updated","payload":{"conversationId":"c-1"},"createdAt":"2026-08-11"}\n\n',
+				].join(""),
+			) as unknown as Awaited<ReturnType<typeof expoFetch>>,
+		);
+		const resets: number[] = [];
+		const events: number[] = [];
+		let eventLoopGotATurn = false;
+
+		const streaming = chatApi.streamGlobalConversationEvents(
+			cfg,
+			5,
+			new AbortController().signal,
+			(event) => events.push(event.seq),
+			(reset) => resets.push(reset),
+			{ yieldEvery: 1, wantsPayload: () => true },
+		);
+		setTimeout(() => {
+			eventLoopGotATurn = true;
+		}, 0);
+
+		const cursor = await streaming;
+
+		expect(resets).toEqual([500]);
+		expect(events).toEqual([501]);
+		expect(cursor).toBe(501);
+		expect(eventLoopGotATurn).toBe(true);
+	});
+
+	it("omits the cursor for a fresh client and deduplicates header plus reset frame", async () => {
+		vi.mocked(expoFetch).mockResolvedValue(new Response([
+			'event: events_cursor_reset\nid: 500\ndata: {"requested":0,"after":500}\n\n',
+			'id: 501\ndata: {"seq":501,"projectId":"p-1","sessionId":"w-1","type":"session_updated","createdAt":"2026-08-11"}\n\n',
+		].join(""), {
+			headers: { "X-AO-Event-After": "500" },
+		}) as unknown as Awaited<ReturnType<typeof expoFetch>>);
+		const resets: number[] = [];
+
+		const cursor = await chatApi.streamGlobalConversationEvents(
+			cfg,
+			undefined,
+			new AbortController().signal,
+			() => {},
+			(reset) => resets.push(reset),
+		);
+
+		expect(vi.mocked(expoFetch).mock.calls.at(-1)?.[0]).toBe("http://ao.test:3011/api/v1/events");
+		expect(resets).toEqual([500]);
+		expect(cursor).toBe(501);
+	});
+
+	it("deduplicates a reset advertised by both the header and control frame", async () => {
+		vi.mocked(expoFetch).mockResolvedValue(new Response(
+			'event: events_cursor_reset\nid: 500\ndata: {"requested":5,"after":500}\n\n',
+			{ headers: { "X-AO-Event-After": "500" } },
+		) as unknown as Awaited<ReturnType<typeof expoFetch>>);
+		const resets: number[] = [];
+
+		await chatApi.streamGlobalConversationEvents(
+			cfg,
+			5,
+			new AbortController().signal,
+			() => {},
+			(reset) => resets.push(reset),
+		);
+
+		expect(resets).toEqual([500]);
+	});
 });
 
 /** `count` well-formed SSE frames with sequences 1..count. */

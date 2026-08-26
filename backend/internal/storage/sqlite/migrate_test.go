@@ -38,6 +38,90 @@ var expectedUsageTableColumns = map[string][]string{
 	},
 }
 
+func TestMigrateEnablesIncrementalAutoVacuum(t *testing.T) {
+	db := openMigratedTestDB(t)
+
+	var mode int
+	if err := db.QueryRow(`PRAGMA auto_vacuum`).Scan(&mode); err != nil {
+		t.Fatalf("read auto_vacuum mode: %v", err)
+	}
+	if mode != 2 {
+		t.Fatalf("auto_vacuum = %d, want 2 (INCREMENTAL)", mode)
+	}
+}
+
+func TestMigration0109KeepsNewestHundredThousandRowsAcrossSequenceGaps(t *testing.T) {
+	db := openMigration108TestDB(t)
+	seedMigrationChangeLog(t, db, 100_005)
+	// Simulate gaps left by session deletion. There are 100,002 actual rows, so
+	// migration 0109 must delete the two oldest remaining rows (seq 1 and 3)
+	// rather than deriving a boundary from MAX(seq).
+	if _, err := db.Exec(`DELETE FROM change_log WHERE seq IN (2, 4, 6)`); err != nil {
+		t.Fatalf("seed change_log gaps: %v", err)
+	}
+
+	if err := migrate(db); err != nil {
+		t.Fatalf("migrate v108 database: %v", err)
+	}
+
+	var count, oldest, newest int64
+	if err := db.QueryRow(`SELECT COUNT(*), MIN(seq), MAX(seq) FROM change_log`).Scan(&count, &oldest, &newest); err != nil {
+		t.Fatalf("read retained change_log: %v", err)
+	}
+	if count != 100_000 || oldest != 5 || newest != 100_005 {
+		t.Fatalf("retained change_log = count:%d oldest:%d newest:%d, want 100000/5/100005", count, oldest, newest)
+	}
+}
+
+func TestMigration0109LeavesBelowCapChangeLogUntouched(t *testing.T) {
+	db := openMigration108TestDB(t)
+	seedMigrationChangeLog(t, db, 10)
+
+	if err := migrate(db); err != nil {
+		t.Fatalf("migrate v108 database: %v", err)
+	}
+
+	var count, oldest, newest int64
+	if err := db.QueryRow(`SELECT COUNT(*), MIN(seq), MAX(seq) FROM change_log`).Scan(&count, &oldest, &newest); err != nil {
+		t.Fatalf("read below-cap change_log: %v", err)
+	}
+	if count != 10 || oldest != 1 || newest != 10 {
+		t.Fatalf("below-cap change_log = count:%d oldest:%d newest:%d, want 10/1/10", count, oldest, newest)
+	}
+}
+
+func openMigration108TestDB(t *testing.T) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "ao.db")+pragmas)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	db.SetMaxOpenConns(1)
+	t.Cleanup(func() { _ = db.Close() })
+	upTo(t, db, 108)
+	return db
+}
+
+func seedMigrationChangeLog(t *testing.T, db *sql.DB, rows int64) {
+	t.Helper()
+	if _, err := db.Exec(`
+INSERT INTO projects (id, path, display_name, registered_at)
+VALUES ('retention-migration', '/tmp/retention-migration', 'retention', '2026-08-24T00:00:00Z')`); err != nil {
+		t.Fatalf("seed retention project: %v", err)
+	}
+	if _, err := db.Exec(`
+WITH RECURSIVE seqs(seq) AS (
+    SELECT 1
+    UNION ALL
+    SELECT seq + 1 FROM seqs WHERE seq < ?
+)
+INSERT INTO change_log (seq, project_id, event_type, payload, created_at)
+SELECT seq, 'retention-migration', 'session_updated', '{}', '2026-08-24T00:00:00Z'
+FROM seqs`, rows); err != nil {
+		t.Fatalf("seed %d change_log rows: %v", rows, err)
+	}
+}
+
 func TestMigrateDefaultsSessionInterfaceToChat(t *testing.T) {
 	db := openMigratedTestDB(t)
 

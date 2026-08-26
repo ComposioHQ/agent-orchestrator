@@ -112,6 +112,9 @@ func Build() ([]byte, error) {
 			if op.contentTypes != nil && op.contentTypes[resp.status] != "" {
 				opts = append(opts, openapi.WithContentType(op.contentTypes[resp.status]))
 			}
+			if op.responseCustomizers != nil && op.responseCustomizers[resp.status] != nil {
+				opts = append(opts, openapi.WithCustomize(op.responseCustomizers[resp.status]))
+			}
 			oc.AddRespStructure(resp.body, opts...)
 		}
 		if err := r.AddOperation(oc); err != nil {
@@ -454,6 +457,9 @@ type operation struct {
 	optionalReqBody bool
 	resps           []respUnit
 	contentTypes    map[int]string // optional non-JSON response content types by status
+	// responseCustomizers models response metadata (such as headers) that is
+	// not part of the response body reflected by AddRespStructure.
+	responseCustomizers map[int]func(openapi.ContentOrReference)
 }
 
 func operations() []operation {
@@ -1305,7 +1311,7 @@ func reviewOperations() []operation {
 }
 
 type eventsQuery struct {
-	After *int64 `query:"after,omitempty" minimum:"0" description:"Replay events with seq greater than this cursor. When omitted, clients may send Last-Event-ID instead."`
+	After *int64 `query:"after,omitempty" minimum:"0" description:"Replay events with seq greater than this cursor. When omitted, clients may send Last-Event-ID instead. Cursors that are missing, beyond the head, or more than a bounded catch-up window behind it snap to the current head (the stream is an invalidation feed; clients refetch state on connect); the effective start cursor is returned in X-AO-Event-After, and an events_cursor_reset control event is emitted before live delivery whenever payloads were skipped so clients can refetch targeted projections."`
 }
 
 func eventOperations() []operation {
@@ -1321,8 +1327,31 @@ func eventOperations() []operation {
 				{status: http.StatusNotImplemented, body: envelope.APIError{}},
 			},
 			contentTypes: map[int]string{http.StatusOK: "text/event-stream"},
+			responseCustomizers: map[int]func(openapi.ContentOrReference){
+				http.StatusOK: addEventAfterResponseHeader,
+			},
 		},
 	}
+}
+
+func addEventAfterResponseHeader(cor openapi.ContentOrReference) {
+	response, ok := cor.(*openapi31.ResponseOrReference)
+	if !ok || response.Response == nil {
+		return
+	}
+	description := "Effective replay cursor selected by the daemon. Clients must adopt it when it differs from their requested cursor."
+	required := true
+	response.Response.WithHeadersItem("X-AO-Event-After", openapi31.HeaderOrReference{
+		Header: &openapi31.Header{
+			Description: &description,
+			Required:    &required,
+			Schema: map[string]interface{}{
+				"type":    "integer",
+				"format":  "int64",
+				"minimum": 0,
+			},
+		},
+	})
 }
 
 // projectOperations declares the canonical /projects operations. The set must

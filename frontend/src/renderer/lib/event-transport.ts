@@ -38,6 +38,11 @@ const CDC_EVENT_TYPES = [
 	"review_run_updated",
 ] as const;
 
+// Control event the daemon emits when it snapped our replay cursor (missing,
+// future, or deep-gap): durable payloads were skipped, so every projection
+// whose targeted invalidations ride on those payloads must be refetched.
+const EVENTS_CURSOR_RESET = "events_cursor_reset";
+
 /**
  * Wires live server state into the TanStack Query cache. Two sources feed it:
  *   - daemon lifecycle over Electron IPC (coming up/down changes session availability)
@@ -53,10 +58,11 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 			const pendingInterfaceTransitionSessions = new Set<string>();
 			let workspaceInvalidationPending = false;
 			let allConversationsInvalidationPending = false;
+			let allInterfaceTransitionsInvalidationPending = false;
 			let retryTimer: ReturnType<typeof setTimeout> | undefined;
 			let source: EventSource | undefined;
 			let sourceBaseUrl: string | undefined;
-			const refreshWorkspaces = (event?: Event) => {
+			const refreshWorkspaces = (event?: Event, resetTargetedProjections = false) => {
 				let conversationOnly = false;
 				if (event === undefined) {
 					// A lifecycle refresh -- reconnect, daemon status change, base-URL change --
@@ -67,6 +73,7 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 					// leaving an open chat frozen on its pre-gap snapshot.
 					allConversationsInvalidationPending = true;
 				}
+				if (resetTargetedProjections) allInterfaceTransitionsInvalidationPending = true;
 				if (event && "data" in event) {
 					try {
 						const decoded = JSON.parse(String((event as MessageEvent).data)) as {
@@ -83,7 +90,7 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 								? (decoded.payload as {
 										conversationId?: unknown;
 										interfaceTransitionId?: unknown;
-								  })
+									})
 								: undefined;
 						if (
 							typeof decoded.sessionId === "string" &&
@@ -111,26 +118,46 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 				if (debounce) clearTimeout(debounce);
 				debounce = setTimeout(() => {
 					if (allConversationsInvalidationPending) {
-						void queryClient.invalidateQueries({ queryKey: conversationQueryRoot });
+						void queryClient.invalidateQueries({
+							queryKey: conversationQueryRoot,
+						});
 						allConversationsInvalidationPending = false;
+						pendingConversationSessions.clear();
+					} else {
+						for (const sessionId of pendingConversationSessions) {
+							void queryClient.invalidateQueries({
+								queryKey: conversationQueryKey(sessionId),
+							});
+						}
+						pendingConversationSessions.clear();
 					}
 					if (workspaceInvalidationPending) {
 						void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
-						void queryClient.invalidateQueries({ queryKey: agentSwitchesQueryRoot });
-						void queryClient.invalidateQueries({ queryKey: sessionScmSummaryQueryKey() });
-						void queryClient.invalidateQueries({ queryKey: sessionUsageQueryRoot });
+						void queryClient.invalidateQueries({
+							queryKey: agentSwitchesQueryRoot,
+						});
+						void queryClient.invalidateQueries({
+							queryKey: sessionScmSummaryQueryKey(),
+						});
+						void queryClient.invalidateQueries({
+							queryKey: sessionUsageQueryRoot,
+						});
 						workspaceInvalidationPending = false;
 					}
-					for (const sessionId of pendingConversationSessions) {
-						void queryClient.invalidateQueries({ queryKey: conversationQueryKey(sessionId) });
-					}
-					pendingConversationSessions.clear();
-					for (const sessionId of pendingInterfaceTransitionSessions) {
+					if (allInterfaceTransitionsInvalidationPending) {
 						void queryClient.invalidateQueries({
-							queryKey: ["session-interface-transition", sessionId],
+							queryKey: ["session-interface-transition"],
 						});
+						allInterfaceTransitionsInvalidationPending = false;
+						pendingInterfaceTransitionSessions.clear();
+					} else {
+						for (const sessionId of pendingInterfaceTransitionSessions) {
+							void queryClient.invalidateQueries({
+								queryKey: ["session-interface-transition", sessionId],
+							});
+						}
+						pendingInterfaceTransitionSessions.clear();
 					}
-					pendingInterfaceTransitionSessions.clear();
 				}, INVALIDATE_DEBOUNCE_MS);
 			};
 
@@ -140,6 +167,13 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 					retryTimer = undefined;
 					connectSource();
 				}, SSE_RETRY_MS);
+			};
+
+			// A cursor reset skipped durable payloads. Queue all invalidations through
+			// the same debounce as onopen so reset + reconnect cannot refetch every
+			// conversation twice.
+			const handleCursorReset = () => {
+				refreshWorkspaces(undefined, true);
 			};
 
 			const connectSource = () => {
@@ -177,6 +211,7 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 					for (const type of CDC_EVENT_TYPES) {
 						source.addEventListener(type, refreshWorkspaces);
 					}
+					source.addEventListener(EVENTS_CURSOR_RESET, handleCursorReset);
 					// EventSource auto-reconnects and resumes via Last-Event-ID while
 					// CONNECTING; scheduleRetry only covers the terminal CLOSED state.
 				} catch {

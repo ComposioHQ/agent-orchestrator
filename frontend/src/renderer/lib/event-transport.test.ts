@@ -136,10 +136,53 @@ describe("createEventTransport", () => {
 			onStatusHandler();
 			expect(queryClient.invalidateQueries).not.toHaveBeenCalled();
 			vi.advanceTimersByTime(200);
-			expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["workspaces"] });
-			expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["session-agent-switches"] });
-			expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["session-scm-summary"] });
-			expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["session-usage"] });
+			expect(queryClient.invalidateQueries).toHaveBeenCalledWith({
+				queryKey: ["workspaces"],
+			});
+			expect(queryClient.invalidateQueries).toHaveBeenCalledWith({
+				queryKey: ["session-agent-switches"],
+			});
+			expect(queryClient.invalidateQueries).toHaveBeenCalledWith({
+				queryKey: ["session-scm-summary"],
+			});
+			expect(queryClient.invalidateQueries).toHaveBeenCalledWith({
+				queryKey: ["session-usage"],
+			});
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("invalidates conversation and interface-transition caches on a cursor reset", () => {
+		vi.useFakeTimers();
+		try {
+			const queryClient = fakeQueryClient();
+			createEventTransport(queryClient).connect();
+			const source = EventSourceStub.instances[0];
+
+			// The reset control event must be subscribed by name.
+			expect(source.listeners).toContain("events_cursor_reset");
+
+			// Native EventSource opens before the server delivers its reset frame.
+			// The two signals must coalesce instead of refetching every root twice.
+			source.onopen?.();
+			source.emit("events_cursor_reset", JSON.stringify({ requested: 5, after: 20000 }));
+
+			// Reset and onopen share one debounce; nothing refetches immediately.
+			expect(queryClient.invalidateQueries).not.toHaveBeenCalled();
+			vi.advanceTimersByTime(200);
+
+			// Targeted projections whose invalidations rode on skipped payloads.
+			expect(queryClient.invalidateQueries).toHaveBeenCalledWith({
+				queryKey: ["conversation"],
+			});
+			expect(queryClient.invalidateQueries).toHaveBeenCalledWith({
+				queryKey: ["session-interface-transition"],
+			});
+			expect(queryClient.invalidateQueries).toHaveBeenCalledWith({
+				queryKey: ["workspaces"],
+			});
+			expect(queryClient.invalidateQueries).toHaveBeenCalledTimes(6);
 		} finally {
 			vi.useRealTimers();
 		}
@@ -147,9 +190,8 @@ describe("createEventTransport", () => {
 
 	// A reconnect resumes via Last-Event-ID. When the event log has been truncated
 	// or replaced, that cursor is ahead of head and the daemon starts the client at
-	// head instead of replaying — correct, but it means no conversation CDC arrives
-	// to invalidate an open chat. EventSource cannot read the response header that
-	// reports the clamp, so reopening must refresh conversations unconditionally.
+	// head instead of replaying. EventSource cannot read the response header, so
+	// reopening must refresh conversations unconditionally.
 	it("refreshes open conversations on reopen, not just workspaces", () => {
 		vi.useFakeTimers();
 		try {
@@ -159,7 +201,9 @@ describe("createEventTransport", () => {
 
 			vi.advanceTimersByTime(200);
 
-			expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["conversation"] });
+			expect(queryClient.invalidateQueries).toHaveBeenCalledWith({
+				queryKey: ["conversation"],
+			});
 		} finally {
 			vi.useRealTimers();
 		}
@@ -192,7 +236,9 @@ describe("createEventTransport", () => {
 			expect(queryClient.invalidateQueries).toHaveBeenCalledWith({
 				queryKey: ["conversation", "chat-1"],
 			});
-			expect(queryClient.invalidateQueries).not.toHaveBeenCalledWith({ queryKey: ["workspaces"] });
+			expect(queryClient.invalidateQueries).not.toHaveBeenCalledWith({
+				queryKey: ["workspaces"],
+			});
 			expect(queryClient.invalidateQueries).not.toHaveBeenCalledWith({
 				queryKey: ["session-scm-summary"],
 			});

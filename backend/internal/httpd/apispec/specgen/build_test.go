@@ -60,6 +60,36 @@ func TestBuild_DelegateAgentEnumIncludesPrimeAgent(t *testing.T) {
 	}
 }
 
+func TestBuild_EventsResponseDeclaresEffectiveCursorHeader(t *testing.T) {
+	got, err := specgen.Build()
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	var doc struct {
+		Paths map[string]struct {
+			Get struct {
+				Responses map[string]struct {
+					Headers map[string]struct {
+						Required bool `yaml:"required"`
+						Schema   struct {
+							Type    string `yaml:"type"`
+							Format  string `yaml:"format"`
+							Minimum int    `yaml:"minimum"`
+						} `yaml:"schema"`
+					} `yaml:"headers"`
+				} `yaml:"responses"`
+			} `yaml:"get"`
+		} `yaml:"paths"`
+	}
+	if err := yaml.Unmarshal(got, &doc); err != nil {
+		t.Fatalf("parse generated OpenAPI: %v", err)
+	}
+	header := doc.Paths["/api/v1/events"].Get.Responses["200"].Headers["X-AO-Event-After"]
+	if !header.Required || header.Schema.Type != "integer" || header.Schema.Format != "int64" || header.Schema.Minimum != 0 {
+		t.Fatalf("X-AO-Event-After header = %+v, want required non-negative int64", header)
+	}
+}
+
 func TestBuild_OMPIsPubliclySpawnable(t *testing.T) {
 	doc := buildSchemas(t)
 	harnesses := doc.Components.Schemas["SpawnSessionRequest"].Properties["harness"].Enum

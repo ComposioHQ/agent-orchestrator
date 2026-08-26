@@ -5,20 +5,26 @@ const { parseSseFrame, takeSseFrames } = sse;
 
 describe("mobile conversation SSE", () => {
 	it("keeps an incomplete tail while reading multiple LF frames", () => {
-		const result = takeSseFrames("id: 1\ndata: {\"seq\":1}\n\nid: 2\ndata: {\"seq\":2}\n\nid: 3\nda");
+		const result = takeSseFrames('id: 1\ndata: {"seq":1}\n\nid: 2\ndata: {"seq":2}\n\nid: 3\nda');
 		expect(result.frames).toHaveLength(2);
 		expect(result.remainder).toBe("id: 3\nda");
 	});
 
 	it("accepts CRLF boundaries from proxies", () => {
-		const result = takeSseFrames("id: 4\r\ndata: {\"seq\":4}\r\n\r\n");
-		expect(result.frames).toEqual(["id: 4\r\ndata: {\"seq\":4}"]);
+		const result = takeSseFrames('id: 4\r\ndata: {"seq":4}\r\n\r\n');
+		expect(result.frames).toEqual(['id: 4\r\ndata: {"seq":4}']);
 		expect(parseSseFrame(result.frames[0])?.seq).toBe(4);
 	});
 
 	it("uses the SSE id when old daemons omit seq and ignores malformed data", () => {
 		expect(parseSseFrame('id: 9\ndata: {"projectId":"p","type":"session_updated"}')?.seq).toBe(9);
 		expect(parseSseFrame("id: 10\ndata: nope")).toBeUndefined();
+	});
+
+	it("captures the event name of control frames", () => {
+		const parsed = parseSseFrame('event: events_cursor_reset\nid: 20000\ndata: {"requested":5,"after":20000}');
+		expect(parsed?.event).toBe("events_cursor_reset");
+		expect(parsed?.seq).toBe(20000);
 	});
 
 	// The cursor only needs the `id:` line. Skipping JSON.parse for frames nobody is
@@ -79,7 +85,9 @@ describe("conversation cursor persistence", () => {
 	it("persists progress by event count while timers are starved", () => {
 		vi.useFakeTimers();
 		const persisted: number[] = [];
-		const persister = sse.createCursorPersister((cursor) => { persisted.push(cursor); });
+		const persister = sse.createCursorPersister((cursor) => {
+			persisted.push(cursor);
+		});
 
 		for (let seq = 1; seq <= sse.CURSOR_PERSIST_EVENTS; seq++) persister.update(seq);
 
@@ -90,7 +98,9 @@ describe("conversation cursor persistence", () => {
 	it("replaces a higher persisted cursor when the daemon reports a reset", () => {
 		vi.useFakeTimers();
 		const persisted: number[] = [];
-		const persister = sse.createCursorPersister((cursor) => { persisted.push(cursor); });
+		const persister = sse.createCursorPersister((cursor) => {
+			persisted.push(cursor);
+		});
 
 		persister.update(100);
 		vi.advanceTimersByTime(500);
@@ -150,6 +160,17 @@ describe("conversation event subscriptions", () => {
 		registry?.publish(event("session-1", 5));
 
 		expect(received).toEqual([]);
+	});
+
+	it("fans a cursor reset out to every session's listeners", () => {
+		const registry = sse.createConversationEventRegistry();
+		const received: string[] = [];
+		registry.subscribe("session-1", (next) => received.push(`1:${next.type}:${next.seq}`));
+		registry.subscribe("session-2", (next) => received.push(`2:${next.type}:${next.seq}`));
+
+		registry.publishReset(20000);
+
+		expect(received).toEqual(["1:events_cursor_reset:20000", "2:events_cursor_reset:20000"]);
 	});
 });
 

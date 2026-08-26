@@ -19,6 +19,19 @@ const (
 	eventsReplayBatch = 512
 	eventsLiveBuffer  = 1024
 	eventAfterHeader  = "X-AO-Event-After"
+	// maxReplayGap bounds durable catch-up: a cursor further than this many
+	// events behind the head snaps forward to the head instead of replaying.
+	// Genuine small-gap resumes (EventSource auto-reconnect Last-Event-ID) stay
+	// well under it; anything deeper means the client was gone far too long to
+	// meaningfully replay and will refetch state anyway.
+	maxReplayGap = 10_000
+
+	// eventsCursorResetEvent is the control event emitted when the server snaps
+	// a client's cursor. Its payload names the requested and effective cursors;
+	// clients must refetch every projection whose targeted invalidations ride on
+	// skipped CDC payloads (conversations, interface transitions), then adopt
+	// the effective cursor.
+	eventsCursorResetEvent = "events_cursor_reset"
 )
 
 type cdcSubscriber interface {
@@ -43,24 +56,28 @@ func (c *EventsController) stream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	after, err := parseEventsAfter(r)
+	after, positioned, err := parseEventsAfter(r)
 	if err != nil {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_AFTER",
 			"after must be a non-negative integer", nil)
 		return
 	}
+	requested := after
 	latestSeq, err := c.Source.LatestSeq(r.Context())
 	if err != nil {
 		envelope.WriteAPIError(w, r, http.StatusInternalServerError, "internal", "EVENT_CURSOR_FAILED",
 			"Could not inspect the event cursor", nil)
 		return
 	}
-	// A cursor ahead of head means the change_log was truncated or replaced. Fall
-	// back to head rather than zero: replaying from zero costs the client the whole
-	// backlog, and since every connected client is reset at the same moment, they
-	// stampede together. Falling back to head loses at most the events in the gap,
-	// which clients recover from their next snapshot fetch.
-	if after > latestSeq {
+	// The log is an invalidation feed: clients refetch state on connect (the
+	// renderer invalidates its queries in onopen), so a missing, stale, or
+	// deep-gap cursor must never trigger a whole-log replay. Snap those to the
+	// head; only genuine small-gap resumes replay durable history. A cursor ahead
+	// of head means the log was truncated or replaced and must also land at head,
+	// never zero. Unbounded replay here re-marshaled the entire change_log on
+	// every cursor-less UI reconnect and starved the writer under GC/mutex load
+	// (#3963, #4276).
+	if !positioned || after > latestSeq || latestSeq-after > maxReplayGap {
 		after = latestSeq
 	}
 
@@ -91,9 +108,21 @@ func (c *EventsController) stream(w http.ResponseWriter, r *http.Request) {
 	h.Set("Cache-Control", "no-cache")
 	h.Set("Connection", "keep-alive")
 	h.Set("X-Accel-Buffering", "no")
+	// Advertise the effective start cursor so clients can detect a snap (their
+	// Last-Event-ID was too stale to replay) and refetch instead of waiting.
 	h.Set(eventAfterHeader, strconv.FormatInt(after, 10))
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
+
+	// A snapped cursor means durable payloads were skipped: tell the client so
+	// it can refetch targeted projections (conversations, interface
+	// transitions) before live delivery resumes. The id field adopts the
+	// effective cursor for native EventSource auto-reconnect.
+	if after != requested {
+		if err := writeSSEReset(ctx, w, flusher, requested, after); err != nil {
+			return
+		}
+	}
 
 	sentSeq := after
 	if err := c.replay(ctx, w, flusher, &sentSeq); err != nil {
@@ -132,19 +161,49 @@ func (c *EventsController) replay(ctx context.Context, w http.ResponseWriter, fl
 	}
 }
 
-func parseEventsAfter(r *http.Request) (int64, error) {
+// parseEventsAfter returns the requested cursor and whether the client actually
+// supplied one. Cursor presence matters: numeric zero is a valid positioned
+// cursor, while a fresh EventSource supplies no cursor and must snap to head.
+func parseEventsAfter(r *http.Request) (int64, bool, error) {
 	raw := r.URL.Query().Get("after")
 	if raw == "" {
 		raw = r.Header.Get("Last-Event-ID")
 	}
 	if raw == "" {
-		return 0, nil
+		return 0, false, nil
 	}
 	seq, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil || seq < 0 {
-		return 0, fmt.Errorf("invalid after: %q", raw)
+		return 0, false, fmt.Errorf("invalid after: %q", raw)
 	}
-	return seq, nil
+	return seq, true, nil
+}
+
+// writeSSEReset emits the cursor-reset control event. It carries no CDC
+// payload; its id adopts the effective cursor so reconnects resume from there.
+func writeSSEReset(
+	ctx context.Context,
+	w http.ResponseWriter,
+	flusher http.Flusher,
+	requested, after int64,
+) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	data, err := json.Marshal(struct {
+		Requested int64 `json:"requested"`
+		After     int64 `json:"after"`
+	}{Requested: requested, After: after})
+	if err != nil {
+		return err
+	}
+	// #nosec G705 -- the frame carries two JSON-marshaled int64 cursors; no
+	// request-controlled strings reach the response body.
+	if _, err := fmt.Fprintf(w, "event: %s\nid: %d\ndata: %s\n\n", eventsCursorResetEvent, after, data); err != nil {
+		return err
+	}
+	flusher.Flush()
+	return ctx.Err()
 }
 
 func writeSSEEvent(w http.ResponseWriter, flusher http.Flusher, e cdc.Event, sentSeq *int64) error {

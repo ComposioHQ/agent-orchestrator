@@ -3815,7 +3815,7 @@ export interface operations {
     streamEvents: {
         parameters: {
             query?: {
-                /** @description Replay events with seq greater than this cursor. When omitted, clients may send Last-Event-ID instead. */
+                /** @description Replay events with seq greater than this cursor. When omitted, clients may send Last-Event-ID instead. Cursors that are missing, beyond the head, or more than a bounded catch-up window behind it snap to the current head (the stream is an invalidation feed; clients refetch state on connect); the effective start cursor is returned in X-AO-Event-After, and an events_cursor_reset control event is emitted before live delivery whenever payloads were skipped so clients can refetch targeted projections. */
                 after?: null | number;
             };
             header?: never;
@@ -3827,6 +3827,8 @@ export interface operations {
             /** @description OK */
             200: {
                 headers: {
+                    /** @description Effective replay cursor selected by the daemon. Clients must adopt it when it differs from their requested cursor. */
+                    "X-AO-Event-After": number;
                     [name: string]: unknown;
                 };
                 content: {
