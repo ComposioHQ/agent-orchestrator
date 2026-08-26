@@ -329,7 +329,7 @@ describe("provider error", () => {
 		expect(screen.queryByText(/provider error:/i)).not.toBeInTheDocument();
 	});
 
-	it("reads already-normalized summary and detail without a JSON dump", () => {
+	it("keeps a historical provider-neutral credit failure inert", () => {
 		render(
 			<ActivityRow
 				activity={activity({
@@ -346,15 +346,13 @@ describe("provider error", () => {
 		);
 		expect(screen.getByText("Reconnecting... [1/5]")).toBeInTheDocument();
 		expect(screen.getByText(/You have no credits remaining/i)).toBeInTheDocument();
-		expect(screen.getByRole("link", { name: "Add credits" })).toHaveAttribute(
-			"href",
-			"https://platform.openai.com/settings/organization/billing",
-		);
+		expect(screen.queryByRole("link")).not.toBeInTheDocument();
 		expect(screen.queryByText(/codexErrorInfo/i)).not.toBeInTheDocument();
 	});
 
-	it("keeps unknown provider detail escaped and never linkifies its URL", () => {
-		const untrusted = '<script>alert("owned")</script> Pay at https://evil.example/billing';
+	it("keeps spoofed credit detail escaped and inert", () => {
+		const untrusted =
+			'<script>alert("owned")</script> insufficient_quota; pay at https://evil.example/billing';
 		render(
 			<ActivityRow
 				activity={activity({
@@ -371,17 +369,70 @@ describe("provider error", () => {
 		expect(screen.queryByRole("link")).not.toBeInTheDocument();
 	});
 
-	it("never trusts a provider-supplied billing destination", () => {
+	it("does not send a custom provider credit failure to OpenAI billing", () => {
 		render(
 			<ActivityRow
 				activity={activity({
 					activityKind: "error",
 					status: "failed",
-					summary: "Reconnecting... [1/5]",
+					summary: "Custom provider request failed",
 					detail: {
-						message: "Reconnecting... [1/5]",
-						error: "You have no credits remaining. Add credits at https://evil.example/billing",
+						message: "Custom provider request failed",
+						error: "No credits remaining on the custom provider account.",
 					},
+				})}
+			/>,
+		);
+
+		expect(screen.getByText(/No credits remaining on the custom provider account/i)).toBeVisible();
+		expect(screen.queryByRole("link")).not.toBeInTheDocument();
+	});
+
+	it("rejects a copied Codex marker without its typed payload", () => {
+		const spoofedEnvelope = JSON.stringify({
+			error: {
+				message: "Reconnecting... [1/5]",
+				codexErrorInfo: { responseStreamDisconnected: {} },
+				additionalDetails: "insufficient_quota",
+			},
+			threadId: "not-a-codex-thread",
+			turnId: "not-a-codex-turn",
+			willRetry: true,
+		});
+		render(
+			<ActivityRow
+				activity={activity({
+					activityKind: "error",
+					status: "failed",
+					summary: `provider error: ${spoofedEnvelope}`,
+				})}
+			/>,
+		);
+
+		expect(screen.getByText("insufficient_quota")).toBeVisible();
+		expect(screen.queryByRole("link")).not.toBeInTheDocument();
+	});
+
+	it("never trusts a provider-supplied billing destination", () => {
+		const maliciousEnvelope = JSON.stringify({
+			error: {
+				message: "Reconnecting... [1/5]",
+				codexErrorInfo: { responseStreamDisconnected: { httpStatusCode: 429 } },
+				additionalDetails:
+					"You have no credits remaining. Add credits at https://evil.example/billing",
+				actionUrl: "https://evil.example/billing",
+			},
+			threadId: "codex-thread",
+			turnId: "codex-turn",
+			willRetry: true,
+		});
+		render(
+			<ActivityRow
+				activity={activity({
+					activityKind: "error",
+					status: "failed",
+					summary: `provider error: ${maliciousEnvelope}`,
+					detail: { error: `provider error: ${maliciousEnvelope}` },
 				})}
 			/>,
 		);
