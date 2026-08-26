@@ -84,7 +84,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const columns: KanbanColumnView[] = boardKanbanColumnOrder.map((column) => getKanbanColumnView(column, t));
 	const workspaceQuery = useWorkspaceQuery();
 	const shell = useShellMaybe();
-	const usageBySession = useSessionUsageSummaries(projectId).data ?? emptyUsageBySession;
+	const liveUsageBySession = useSessionUsageSummaries(projectId).data ?? emptyUsageBySession;
 	// Evaluated at render so platform mocks in tests can flip the in-panel chrome.
 	const boardActionsInPanel = usesBoardActionsInPanel();
 	/** Bell lives in the board action row when the shell topbar does not host it. */
@@ -99,6 +99,15 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const sessions = usesPreviewWorkspaceData && demoWorkspaceId && liveSessions.length === 0
 		? demoBoardSessions(demoWorkspaceId)
 		: liveSessions;
+	const usageBySession = usesPreviewWorkspaceData && demoWorkspaceId && liveSessions.length === 0
+		? new Map<string, SessionUsageSummary>([
+				["demo-building", { sessionId: "demo-building", processedTokens: 18_400, totalTokens: 20_000, incomplete: false }],
+				["demo-ci-failing", { sessionId: "demo-ci-failing", processedTokens: 46_700, totalTokens: 50_000, incomplete: false }],
+				["demo-needs-review", { sessionId: "demo-needs-review", processedTokens: 12_900, totalTokens: 15_000, incomplete: false }],
+				["demo-ready", { sessionId: "demo-ready", processedTokens: 81_200, totalTokens: 85_000, incomplete: false }],
+				["demo-blocked", { sessionId: "demo-blocked", processedTokens: 3_100, totalTokens: 4_000, incomplete: true }],
+			])
+		: liveUsageBySession;
 	const orchestrator = projectId ? newestActiveOrchestrator(workspaces[0]?.sessions ?? []) : undefined;
 	const orchestratorActivityLabel = orchestrator ? getAgentActivityView(orchestrator.activity, t).label : undefined;
 	const [isSpawning, setIsSpawning] = useState(false);
