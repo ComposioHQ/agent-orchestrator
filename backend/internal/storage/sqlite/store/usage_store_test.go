@@ -1940,3 +1940,83 @@ func TestApplyUsageChunkRehomesAnInferredDuplicateToTheReplacementSource(t *test
 		t.Fatalf("the retired generation kept %d open events", len(stranded))
 	}
 }
+
+// Break caught: replay used to compare the inferred provider with the newly
+// observed provider before rehoming the stable event, rejecting the evidence
+// that should replace the inference and its provider-specific cost.
+func TestApplyUsageChunkPromotesRehomedInferenceToObservedProvider(t *testing.T) {
+	dataDir := t.TempDir()
+	s := sqlitetest.MustOpenAt(t, dataDir)
+	ctx := context.Background()
+	sess := seedUsageSession(t, s, domain.HarnessClaudeCode)
+	now := time.Unix(1700000000, 0).UTC()
+	retired := seedUsageSource(t, s, sess, now)
+
+	anthropicInputCost, anthropicCachedCost, anthropicOutputCost, anthropicTotal := int64(11), int64(3), int64(5), int64(19)
+	inferred := anthropicUsageEvent("provider-promotion", 5, 10, 5, 4)
+	inferred.BillingProviderID = "anthropic"
+	inferred.BillingProviderSource = domain.UsageBillingProviderInferred
+	inferred.Costs = domain.UsageEventCosts{
+		InputCostNanos:       &anthropicInputCost,
+		CachedInputCostNanos: &anthropicCachedCost,
+		OutputCostNanos:      &anthropicOutputCost,
+		EstimatedCostNanos:   &anthropicTotal,
+		PricingVersion:       "anthropic-v1",
+	}
+	mustNoError(t, s.ApplyUsageChunk(ctx, retired.ID, 0, retired.UpdatedAt, domain.SourceCursorState{
+		ByteOffset: 10, State: domain.UsageSourceActive, UpdatedAt: now,
+	}, []domain.ModelUsageEvent{inferred}), "seed inferred Anthropic event")
+
+	replacement, err := s.ReplaceUsageSource(ctx, retired.ID, domain.UsageErrorArtifactReplaced, domain.UsageSourceRecord{
+		BindingID:       retired.BindingID,
+		Kind:            retired.Kind,
+		NativeSessionID: retired.NativeSessionID,
+		ArtifactPath:    retired.ArtifactPath,
+		FileIdentity:    retired.FileIdentity + "-next",
+		Generation:      retired.Generation + 1,
+		State:           domain.UsageSourcePending,
+		UpdatedAt:       now.Add(time.Second),
+	}, now.Add(time.Second))
+	mustNoError(t, err, "replace source")
+
+	zaiInputCost, zaiCachedCost, zaiOutputCost, zaiTotal := int64(23), int64(3), int64(5), int64(31)
+	observed := inferred
+	observed.BillingProviderID = "zai"
+	observed.BillingProviderSource = domain.UsageBillingProviderObserved
+	observed.Costs = domain.UsageEventCosts{
+		InputCostNanos:       &zaiInputCost,
+		CachedInputCostNanos: &zaiCachedCost,
+		OutputCostNanos:      &zaiOutputCost,
+		EstimatedCostNanos:   &zaiTotal,
+		PricingVersion:       "zai-v2",
+	}
+	mustNoError(t, s.ApplyUsageChunk(ctx, replacement.ID, 0, replacement.UpdatedAt, domain.SourceCursorState{
+		ByteOffset: 10, State: domain.UsageSourceActive, UpdatedAt: now.Add(2 * time.Second),
+	}, []domain.ModelUsageEvent{observed}), "promote replayed event to observed Z.AI")
+
+	raw, err := sql.Open("sqlite", "file:"+filepath.Join(dataDir, "ao.db"))
+	mustNoError(t, err, "open raw sqlite")
+	t.Cleanup(func() { _ = raw.Close() })
+	var sourceID, inputCost, cachedCost, outputCost, total int64
+	var provider, providerSource, version string
+	mustNoError(t, raw.QueryRow(`
+SELECT usage_source_id, billing_provider_id, billing_provider_source,
+       input_cost_nanos, cached_input_cost_nanos, output_cost_nanos,
+       estimated_cost_nanos, pricing_version
+FROM model_usage_events
+WHERE source_event_key = 'provider-promotion'`).Scan(
+		&sourceID, &provider, &providerSource, &inputCost, &cachedCost, &outputCost, &total, &version,
+	), "read promoted event")
+	if sourceID != replacement.ID || provider != "zai" || providerSource != "observed" ||
+		inputCost != zaiInputCost || cachedCost != zaiCachedCost || outputCost != zaiOutputCost ||
+		total != zaiTotal || version != "zai-v2" {
+		t.Fatalf("promoted event = source %d provider %q/%q costs %d/%d/%d/%d version %q; want source %d zai/observed costs %d/%d/%d/%d version zai-v2",
+			sourceID, provider, providerSource, inputCost, cachedCost, outputCost, total, version,
+			replacement.ID, zaiInputCost, zaiCachedCost, zaiOutputCost, zaiTotal)
+	}
+	open, err := s.HasOpenUsageAttribution(ctx, replacement.ID)
+	mustNoError(t, err, "check promoted attribution")
+	if open {
+		t.Fatal("observed replacement remains open for attribution repair")
+	}
+}

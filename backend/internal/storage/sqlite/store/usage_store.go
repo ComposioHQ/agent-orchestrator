@@ -400,7 +400,8 @@ func (s *Store) ApplyUsageChunk(
 				return err
 			}
 			if err == nil {
-				if !usageEventMatches(existing, ev) {
+				matches, promoteAttribution := usageEventReplayDisposition(existing, ev)
+				if !matches {
 					return fmt.Errorf("%w: binding %d event %q", domain.ErrUsageSourceEventConflict, source.BindingID, ev.SourceEventKey)
 				}
 				// A replaced transcript re-emits the same logical event under
@@ -418,6 +419,26 @@ func (s *Store) ApplyUsageChunk(
 					); err != nil {
 						return err
 					}
+				}
+				if promoteAttribution {
+					rows, err := q.PromoteInferredUsageEventToObserved(ctx, gen.PromoteInferredUsageEventToObservedParams{
+						BillingProviderID:         stringOrNull(ev.BillingProviderID),
+						InputCostNanos:            ptrInt64ToNull(ev.Costs.InputCostNanos),
+						CachedInputCostNanos:      ptrInt64ToNull(ev.Costs.CachedInputCostNanos),
+						OutputCostNanos:           ptrInt64ToNull(ev.Costs.OutputCostNanos),
+						EstimatedCostNanos:        ptrInt64ToNull(ev.Costs.EstimatedCostNanos),
+						PricingVersion:            ev.Costs.PricingVersion,
+						ID:                        existing.ID,
+						ExpectedUsageSourceID:     sourceID,
+						ExpectedBillingProviderID: existing.BillingProviderID,
+					})
+					if err != nil {
+						return err
+					}
+					if rows != 1 {
+						return fmt.Errorf("%w: binding %d event %q attribution changed", domain.ErrUsageSourceEventConflict, source.BindingID, ev.SourceEventKey)
+					}
+					insertedEvent = true
 				}
 				if existing.ProviderUsageJson.Valid || ev.ProviderUsageJSON == "" {
 					continue
@@ -900,7 +921,7 @@ func (s *Store) HasOpenUsageAttribution(ctx context.Context, sourceID int64) (bo
 	return open != 0, nil
 }
 
-func usageEventMatches(existing gen.GetModelUsageEventByKeyRow, event domain.ModelUsageEvent) bool {
+func usageEventReplayDisposition(existing gen.GetModelUsageEventByKeyRow, event domain.ModelUsageEvent) (matches, promoteAttribution bool) {
 	genericMatches := existing.ProviderID == string(event.ProviderID) && existing.ModelID == event.ModelID &&
 		existing.UsageMeasurementKind == string(event.MeasurementKind) &&
 		existing.InputTokens == ptrInt64ToNull(event.Tokens.InputTokens) &&
@@ -916,9 +937,15 @@ func usageEventMatches(existing gen.GetModelUsageEventByKeyRow, event domain.Mod
 	// token-only comparable so replay never rejects it; the legacy repairer owns
 	// filling that column in.
 	if !genericMatches || !existing.BillingProviderID.Valid {
-		return genericMatches
+		return genericMatches, false
 	}
-	return existing.BillingProviderID.String == event.BillingProviderID
+	// An inference is intentionally replaceable by the first observation. That
+	// observation also replaces every cost derived from the inferred provider.
+	if existing.BillingProviderSource.String == string(domain.UsageBillingProviderInferred) &&
+		event.BillingProviderSource == domain.UsageBillingProviderObserved {
+		return true, true
+	}
+	return existing.BillingProviderID.String == event.BillingProviderID, false
 }
 
 func usageAggregateFromGen(row gen.AggregateUsageBySessionHarnessModelRow) domain.UsageModelAggregate {

@@ -280,7 +280,7 @@ func (q *Queries) FinalizeUsageBindingsForSessionLaunch(ctx context.Context, arg
 const getModelUsageEventByKey = `-- name: GetModelUsageEventByKey :one
 SELECT
     event.id, event.usage_source_id, event.provider_id, event.billing_provider_id,
-    event.model_id, event.usage_measurement_kind,
+    event.billing_provider_source, event.model_id, event.usage_measurement_kind,
     event.input_tokens, event.cached_input_tokens,
     event.uncached_input_tokens, event.output_tokens,
     event.provider_usage_json, event.created_at
@@ -294,18 +294,19 @@ type GetModelUsageEventByKeyParams struct {
 }
 
 type GetModelUsageEventByKeyRow struct {
-	ID                   int64
-	UsageSourceID        int64
-	ProviderID           string
-	BillingProviderID    sql.NullString
-	ModelID              string
-	UsageMeasurementKind string
-	InputTokens          sql.NullInt64
-	CachedInputTokens    sql.NullInt64
-	UncachedInputTokens  sql.NullInt64
-	OutputTokens         sql.NullInt64
-	ProviderUsageJson    sql.NullString
-	CreatedAt            sql.NullTime
+	ID                    int64
+	UsageSourceID         int64
+	ProviderID            string
+	BillingProviderID     sql.NullString
+	BillingProviderSource sql.NullString
+	ModelID               string
+	UsageMeasurementKind  string
+	InputTokens           sql.NullInt64
+	CachedInputTokens     sql.NullInt64
+	UncachedInputTokens   sql.NullInt64
+	OutputTokens          sql.NullInt64
+	ProviderUsageJson     sql.NullString
+	CreatedAt             sql.NullTime
 }
 
 func (q *Queries) GetModelUsageEventByKey(ctx context.Context, arg GetModelUsageEventByKeyParams) (GetModelUsageEventByKeyRow, error) {
@@ -316,6 +317,7 @@ func (q *Queries) GetModelUsageEventByKey(ctx context.Context, arg GetModelUsage
 		&i.UsageSourceID,
 		&i.ProviderID,
 		&i.BillingProviderID,
+		&i.BillingProviderSource,
 		&i.ModelID,
 		&i.UsageMeasurementKind,
 		&i.InputTokens,
@@ -1278,6 +1280,55 @@ func (q *Queries) ListWatchableUsageSources(ctx context.Context) ([]UsageSource,
 		return nil, err
 	}
 	return items, nil
+}
+
+const promoteInferredUsageEventToObserved = `-- name: PromoteInferredUsageEventToObserved :execrows
+UPDATE model_usage_events
+SET billing_provider_id = ?1,
+    billing_provider_source = 'observed',
+    input_cost_nanos = ?2,
+    cached_input_cost_nanos = ?3,
+    output_cost_nanos = ?4,
+    estimated_cost_nanos = ?5,
+    pricing_version = ?6
+WHERE id = ?7
+  AND usage_source_id = ?8
+  AND billing_provider_id = ?9
+  AND billing_provider_source = 'inferred'
+`
+
+type PromoteInferredUsageEventToObservedParams struct {
+	BillingProviderID         sql.NullString
+	InputCostNanos            sql.NullInt64
+	CachedInputCostNanos      sql.NullInt64
+	OutputCostNanos           sql.NullInt64
+	EstimatedCostNanos        sql.NullInt64
+	PricingVersion            string
+	ID                        int64
+	ExpectedUsageSourceID     int64
+	ExpectedBillingProviderID sql.NullString
+}
+
+// A later observation supersedes an inferred billing provider and every cost
+// derived from that inference. ApplyUsageChunk rehomes replacement-generation
+// rows before this statement, so the source guard also prevents promotion on a
+// stale generation.
+func (q *Queries) PromoteInferredUsageEventToObserved(ctx context.Context, arg PromoteInferredUsageEventToObservedParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, promoteInferredUsageEventToObserved,
+		arg.BillingProviderID,
+		arg.InputCostNanos,
+		arg.CachedInputCostNanos,
+		arg.OutputCostNanos,
+		arg.EstimatedCostNanos,
+		arg.PricingVersion,
+		arg.ID,
+		arg.ExpectedUsageSourceID,
+		arg.ExpectedBillingProviderID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const rehomeOpenUsageEventToReplacementSource = `-- name: RehomeOpenUsageEventToReplacementSource :execrows

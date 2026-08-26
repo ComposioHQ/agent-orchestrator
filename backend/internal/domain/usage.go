@@ -191,11 +191,10 @@ type UsageEventCosts struct {
 
 // ModelUsageEvent is one append-only normalized usage fact.
 //
-// ProviderID is the provider *vocabulary* the counters were normalized into and
-// selects which ProviderDetails block applies. BillingProviderID is the exact
-// catalog provider the event is priced against and is empty until attribution
-// proves it; the two differ whenever an Anthropic-vocabulary transcript is
-// served by another billing provider such as z.ai.
+// ProviderID identifies the provider vocabulary into which token counters were
+// normalized. BillingProviderID identifies the exact catalog provider used for
+// pricing and is empty until attribution proves it; the two differ whenever an
+// Anthropic-vocabulary transcript is served by another provider such as z.ai.
 //
 // ProviderUsageJSON is the bounded usage object the CLI emitted, stored
 // verbatim so optional and future provider fields survive. It is empty when the

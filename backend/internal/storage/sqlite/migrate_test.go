@@ -30,14 +30,14 @@ var expectedUsageTableColumns = map[string][]string{
 		"source_event_key", "created_at",
 		"input_cost_nanos", "cached_input_cost_nanos", "output_cost_nanos",
 		"estimated_cost_nanos", "pricing_version",
-		// 0111 appends: ALTER TABLE has no way to place a column mid-row, and a
+		// 0112 appends: ALTER TABLE has no way to place a column mid-row, and a
 		// second full rebuild to move it beside billing_provider_id would cost
 		// more than the adjacency is worth.
 		"billing_provider_source",
 	},
 }
 
-// The provider detail tables were the shape 0110 replaced with one bounded
+// The provider detail tables were the shape 0111 replaced with one bounded
 // provider usage object. Nothing may recreate them.
 var retiredUsageTables = []string{"openai_usage_event_details", "anthropic_usage_event_details"}
 
@@ -352,8 +352,8 @@ FROM model_usage_events WHERE source_event_key = ?`, test.key).Scan(
 	}
 }
 
-// TestUsageMeasurementMigrationFoldsCostsAndRetiresDetailTables covers 0110
-// directly: a pre-0110 profile is seeded through the migrations that shipped
+// TestUsageMeasurementMigrationFoldsCostsAndRetiresDetailTables covers 0111
+// directly: a pre-0111 profile is seeded through the migrations that shipped
 // before it, then upgraded.
 func TestUsageMeasurementMigrationFoldsCostsAndRetiresDetailTables(t *testing.T) {
 	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "ao.db")+pragmas)
@@ -362,7 +362,7 @@ func TestUsageMeasurementMigrationFoldsCostsAndRetiresDetailTables(t *testing.T)
 	}
 	db.SetMaxOpenConns(1)
 	t.Cleanup(func() { _ = db.Close() })
-	upTo(t, db, 109)
+	upTo(t, db, 110)
 
 	now := time.Now().UTC().Format(time.RFC3339)
 	if _, err := db.Exec(`

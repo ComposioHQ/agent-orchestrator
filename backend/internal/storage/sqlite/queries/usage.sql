@@ -341,7 +341,7 @@ WHERE id = sqlc.arg(usage_binding_id)
 -- name: GetModelUsageEventByKey :one
 SELECT
     event.id, event.usage_source_id, event.provider_id, event.billing_provider_id,
-    event.model_id, event.usage_measurement_kind,
+    event.billing_provider_source, event.model_id, event.usage_measurement_kind,
     event.input_tokens, event.cached_input_tokens,
     event.uncached_input_tokens, event.output_tokens,
     event.provider_usage_json, event.created_at
@@ -385,6 +385,24 @@ WHERE model_usage_events.id = sqlc.arg(id)
       WHERE replacement.id = sqlc.arg(usage_source_id)
         AND replacement.binding_id = model_usage_events.binding_id
   );
+
+-- name: PromoteInferredUsageEventToObserved :execrows
+-- A later observation supersedes an inferred billing provider and every cost
+-- derived from that inference. ApplyUsageChunk rehomes replacement-generation
+-- rows before this statement, so the source guard also prevents promotion on a
+-- stale generation.
+UPDATE model_usage_events
+SET billing_provider_id = sqlc.arg(billing_provider_id),
+    billing_provider_source = 'observed',
+    input_cost_nanos = sqlc.narg(input_cost_nanos),
+    cached_input_cost_nanos = sqlc.narg(cached_input_cost_nanos),
+    output_cost_nanos = sqlc.narg(output_cost_nanos),
+    estimated_cost_nanos = sqlc.narg(estimated_cost_nanos),
+    pricing_version = sqlc.arg(pricing_version)
+WHERE id = sqlc.arg(id)
+  AND usage_source_id = sqlc.arg(expected_usage_source_id)
+  AND billing_provider_id = sqlc.arg(expected_billing_provider_id)
+  AND billing_provider_source = 'inferred';
 
 -- name: HasOpenUsageAttribution :one
 -- Whether this source still owns an event a repair pass could finish. Cheaper
