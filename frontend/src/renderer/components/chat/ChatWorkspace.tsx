@@ -1126,7 +1126,7 @@ function ChatHeader({
 			>
 				<div
 					className={cn(
-						"session-topbar-terminal-region flex min-w-0 shrink items-center pr-3",
+						"session-topbar-terminal-region flex min-w-0 flex-1 items-center pr-3",
 						!inline && isSidebarCompact && isMac && "session-topbar-traffic-light-clearance-mac",
 						!isSidebarOpen && isMac && "session-topbar-titlebar-clearance-mac",
 						!isSidebarOpen && isLinux && "session-topbar-titlebar-clearance-linux",
