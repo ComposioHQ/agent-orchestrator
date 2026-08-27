@@ -231,6 +231,37 @@ describe("useTerminalSession", () => {
 		expect(muxes[0].resizes).toContainEqual(["handle-1", 120, 40]);
 	});
 
+	// ConPTY answers every resize with a full viewport repaint, so PTY resizes
+	// are PACED during a layout drag (body.is-resizing-x): the first settled
+	// grid goes out (fresh content early), rapid intermediates are skipped, and
+	// the final grid lands right after the gesture ends.
+	it("paces PTY resizes during a layout drag and publishes the final grid on release", () => {
+		const { terminal, muxes } = setup();
+		act(() => muxes[0].emitOpened("handle-1"));
+		const initialResizes = muxes[0].resizes.length;
+
+		document.body.classList.add("is-resizing-x");
+		try {
+			// A drag with pauses long enough for the quiet debounce to fire.
+			terminal.emitResize(110, 30);
+			act(() => void vi.advanceTimersByTime(200));
+			terminal.emitResize(100, 30);
+			act(() => void vi.advanceTimersByTime(200));
+			terminal.emitResize(90, 30);
+			act(() => void vi.advanceTimersByTime(200));
+		} finally {
+			document.body.classList.remove("is-resizing-x");
+		}
+		act(() => void vi.advanceTimersByTime(300));
+
+		// First settled grid published, middle one paced away, final one landed.
+		const sent = muxes[0].resizes.slice(initialResizes);
+		expect(sent[0]).toEqual(["handle-1", 110, 30]);
+		expect(sent.at(-1)).toEqual(["handle-1", 90, 30]);
+		expect(sent).not.toContainEqual(["handle-1", 100, 30]);
+		expect(sent.length).toBeLessThanOrEqual(2);
+	});
+
 	it("forwards every explicit input source after the attachment opens", () => {
 		const { terminal, muxes } = setup();
 		act(() => muxes[0].emitOpened("handle-1"));

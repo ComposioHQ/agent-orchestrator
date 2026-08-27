@@ -136,6 +136,25 @@ export default defineConfig({
 		},
 	},
 	plugins: [
+		// TEMPORARY: prints renderer-side terminal diagnostics (src/renderer/lib/
+		// diag.ts) into the dev terminal, so resize event ordering is visible
+		// without devtools. Dev-server only; remove together with diag.ts.
+		{
+			name: "ao-diag-logger",
+			configureServer(server) {
+				server.middlewares.use("/__ao_diag", (req, res) => {
+					let body = "";
+					req.on("data", (chunk) => {
+						body += chunk;
+					});
+					req.on("end", () => {
+						console.log(`[ao-diag] ${body}`);
+						res.statusCode = 204;
+						res.end();
+					});
+				});
+			},
+		} satisfies Plugin,
 		TanStackRouterVite({
 			routesDirectory: "./src/renderer/routes",
 			generatedRouteTree: "./src/renderer/routeTree.gen.ts",

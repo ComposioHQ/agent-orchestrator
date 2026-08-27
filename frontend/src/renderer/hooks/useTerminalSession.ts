@@ -15,6 +15,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { getApiBaseUrl } from "../lib/api-client";
+import { diag } from "../lib/diag";
 import { captureRendererEvent } from "../lib/telemetry";
 import { createTerminalMux, muxUrlFromApiBase, type TerminalMux } from "../lib/terminal-mux";
 import { sessionIsActive, type WorkspaceSession } from "../types/workspace";
@@ -93,10 +94,45 @@ const RETRY_MAX_MS = 8_000;
 // "terminal attached" (a worker ready at 17s would wait for the 23s attempt).
 const CLOUD_CONNECT_RETRY_MS = 1_000;
 const OPEN_TIMEOUT_MS = 3_000;
-// Trailing debounce on grid changes: a pane drag emits a burst of intermediate
-// sizes; the attached program should get one SIGWINCH when the drag settles,
-// not dozens (yyork's terminal-panel does the same at its socket layer).
-const RESIZE_DEBOUNCE_MS = 100;
+// Ceiling on the post-resize hold below, so a TUI that keeps streaming through
+// the quiet window cannot grow the buffer without bound.
+const LIVE_WRITE_MAX_BYTES = 1024 * 1024;
+// ConPTY answers a resize with a clear sequence followed by a full viewport
+// rewrite split across several transport frames; full-screen TUIs add their own
+// SIGWINCH redraw behind it. Hold *only that* burst until it goes quiet so the
+// cleared grid is never painted on its own. 40ms proved too tight — a scheduling
+// gap between the clear frame and the content frames split the burst into two
+// paints, a brief blink at drag release — so the window is generous and the cap
+// bounds the added latency to one gesture, never steady-state output, which is
+// written straight through (buffering it would add a frame of latency to every
+// keystroke echo for no benefit).
+const RESIZE_REPAINT_QUIET_MS = 80;
+const RESIZE_REPAINT_CAP_MS = 300;
+const PTY_RESIZE_QUIET_MS = 75;
+// While body.is-resizing-x marks an active layout drag, a due PTY resize
+// re-checks on this interval instead of publishing (see publishGrid).
+const LAYOUT_DRAG_RECHECK_MS = 100;
+// Minimum spacing between PTY resizes while a gesture is active. Each publish
+// costs a full ConPTY viewport repaint on Windows, so pace them to pauses; the
+// gesture's final grid always lands right after release via the recheck loop.
+const GESTURE_PUBLISH_INTERVAL_MS = 350;
+// An OS window-edge drag streams window resize events with no pointer signal
+// the renderer can observe, so unlike separator drags there is no marker class.
+// Treat the window as mid-gesture until its resize events go quiet — otherwise
+// each mid-drag pause publishes a grid and ConPTY answers with a full repaint.
+const WINDOW_RESIZE_GESTURE_QUIET_MS = 250;
+let lastWindowResizeAt = Number.NEGATIVE_INFINITY;
+if (typeof window !== "undefined") {
+	window.addEventListener("resize", () => {
+		lastWindowResizeAt = performance.now();
+	});
+}
+function resizeGestureActive(): boolean {
+	return (
+		document.body.classList.contains("is-resizing-x") ||
+		performance.now() - lastWindowResizeAt < WINDOW_RESIZE_GESTURE_QUIET_MS
+	);
+}
 // Initial-replay gate. On attach the runtime replays the pane's state, and the
 // daemon pumps it in 32KB reads (attachment.go copyOut) — so the renderer gets
 // N WebSocket frames, N `write()` calls, and N separate event-loop turns. xterm
@@ -211,9 +247,11 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		// The current attachment's flush, published so teardown can land buffered
 		// bytes instead of discarding them (the closure lives inside connect).
 		flushReplay: null as ((preserveBeforeTeardown?: boolean) => void) | null,
+		flushLiveOutput: null as (() => void) | null,
 	});
 
 	const transition = useCallback((next: TerminalSessionState) => {
+		diag(`session-state ${stateRef.current} -> ${next}`);
 		stateRef.current = next;
 		setState(next);
 	}, []);
@@ -257,6 +295,8 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		// closed or already superseded.
 		r.flushReplay?.(true);
 		r.flushReplay = null;
+		r.flushLiveOutput?.();
+		r.flushLiveOutput = null;
 		clearReplayTimers();
 		r.replayBuffering = false;
 		r.replayChunks = [];
@@ -346,6 +386,7 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		// Flush the outgoing attachment BEFORE bumping the generation: past that
 		// point its own guard rejects the flush and its buffered bytes are lost.
 		r.flushReplay?.(true);
+		r.flushLiveOutput?.();
 		const generation = r.generation + 1;
 		r.generation = generation;
 		r.inputReady = false;
@@ -363,6 +404,67 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		let replayBatchTimer: ReturnType<typeof setTimeout> | null = null;
 		let replayBatchDone: (() => void) | null = null;
 		let replayWritesPreserved = false;
+		let liveWriteBytes = 0;
+		let liveWriteChunks: Uint8Array[] = [];
+		let resizeRepaintPending = false;
+		let resizeRepaintQuietTimer: ReturnType<typeof setTimeout> | null = null;
+		let resizeRepaintCapTimer: ReturnType<typeof setTimeout> | null = null;
+
+		const clearResizeRepaintTimers = () => {
+			if (resizeRepaintQuietTimer !== null) {
+				clearTimeout(resizeRepaintQuietTimer);
+				resizeRepaintQuietTimer = null;
+			}
+			if (resizeRepaintCapTimer !== null) {
+				clearTimeout(resizeRepaintCapTimer);
+				resizeRepaintCapTimer = null;
+			}
+		};
+
+		const flushLiveOutput = () => {
+			clearResizeRepaintTimers();
+			resizeRepaintPending = false;
+			if (liveWriteBytes === 0) return;
+			let output: Uint8Array;
+			if (liveWriteChunks.length === 1) {
+				output = liveWriteChunks[0]!;
+			} else {
+				output = new Uint8Array(liveWriteBytes);
+				let offset = 0;
+				for (const chunk of liveWriteChunks) {
+					output.set(chunk, offset);
+					offset += chunk.length;
+				}
+			}
+			liveWriteChunks = [];
+			liveWriteBytes = 0;
+			diag(`resize-repaint flush ${output.length}B handle=${handle}`);
+			terminal.write(output);
+		};
+		const queueLiveOutput = (bytes: Uint8Array) => {
+			// Outside the post-resize window this is a plain passthrough — ordering and
+			// echo latency stay exactly as they were before the repaint gate existed.
+			if (!resizeRepaintPending) {
+				terminal.write(bytes);
+				return;
+			}
+			liveWriteChunks.push(bytes);
+			liveWriteBytes += bytes.length;
+			if (liveWriteBytes >= LIVE_WRITE_MAX_BYTES) {
+				flushLiveOutput();
+				return;
+			}
+			if (resizeRepaintQuietTimer !== null) clearTimeout(resizeRepaintQuietTimer);
+			resizeRepaintQuietTimer = setTimeout(flushLiveOutput, RESIZE_REPAINT_QUIET_MS);
+		};
+		const beginResizeRepaint = () => {
+			// Preserve output that predates the resize. Only the TUI's response to the
+			// new grid belongs to this atomic paint transaction.
+			flushLiveOutput();
+			resizeRepaintPending = true;
+			resizeRepaintCapTimer = setTimeout(flushLiveOutput, RESIZE_REPAINT_CAP_MS);
+		};
+		r.flushLiveOutput = flushLiveOutput;
 
 		// Reveal only after xterm has parsed the coalesced replay and any late tail
 		// frames have gone quiet. The tail itself streams straight into xterm behind
@@ -569,7 +671,7 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 					drainPostReplayWrites();
 					return;
 				}
-				terminal.write(bytes);
+				queueLiveOutput(bytes);
 			}),
 			mux.onOpened(handle, () => {
 				if (!isCurrentAttachment(generation, handle, mux)) return;
@@ -607,6 +709,7 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 				// Land whatever was buffered before the notice, and lift the cover:
 				// a pane that exits mid-replay must never be left behind it.
 				flushReplay(false, true);
+				flushLiveOutput();
 				terminal.writeln("\r\n\x1b[2m[process exited]\x1b[0m");
 				transition("exited");
 				// Preserve xterm scrollback, but release the attachment: an exited
@@ -619,6 +722,7 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 				clearOpenTimer(generation);
 				r.inputReady = false;
 				flushReplay(false, true);
+				flushLiveOutput();
 				terminal.writeln(`\r\n\x1b[2m[terminal error] ${message}\x1b[0m`);
 				setError(message);
 				transition("error");
@@ -664,23 +768,50 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 			else revealReplayTail();
 			mux.sendInput(handle, data);
 		});
-		// xterm only fires onResize when the grid actually changed; the debounce
-		// additionally collapses a drag/fullscreen/layout burst into one PTY
-		// resize. The last published grid is checked again at send time because a
-		// retained activation can report the same final grid through several paths.
+		// The DOM grid follows the host every frame, while the PTY receives only the
+		// final settled size — and never an intermediate one during a layout drag.
+		// ConPTY (the Windows PTY) answers EVERY resize with a full clear-and-
+		// repaint of its viewport, so letting even debounced mid-drag grids through
+		// makes the terminal visibly "reload" once per pause in the drag. Unix PTYs
+		// only deliver SIGWINCH, but one final resize is equally correct there.
+		// useResizable marks the whole gesture with body.is-resizing-x (sidebar and
+		// inspector drags alike); while it is present the publish re-checks on a
+		// short interval and the final grid goes out right after release.
+		// Mid-gesture publishes are paced, not blocked outright: a fully held PTY
+		// leaves the TUI's old-size frame being cropped/blank-padded by the live
+		// local fits for the whole drag, then one big late repaint — which reads
+		// as the terminal reloading. Letting a settled grid through every
+		// GESTURE_PUBLISH_INTERVAL_MS refreshes real content at every pause of a
+		// slow drag (each repaint lands atomically via the gate below), while a
+		// fast drag still produces only the final publish.
+		let lastGesturePublishAt = Number.NEGATIVE_INFINITY;
+		const publishGrid = (cols: number, rows: number) => {
+			if (!isCurrentAttachment(generation, handle, mux)) return;
+			if (optionsRef.current.isVisible === false) return;
+			if (resizeGestureActive() && performance.now() - lastGesturePublishAt < GESTURE_PUBLISH_INTERVAL_MS) {
+				diag(`pty-resize paced mid-gesture ${cols}x${rows} handle=${handle}`);
+				r.resizeTimer = setTimeout(() => {
+					r.resizeTimer = null;
+					publishGrid(cols, rows);
+				}, LAYOUT_DRAG_RECHECK_MS);
+				return;
+			}
+			const published = r.lastPublishedGrid;
+			if (published?.cols === cols && published.rows === rows) return;
+			diag(`pty-resize send ${cols}x${rows} handle=${handle}`);
+			lastGesturePublishAt = performance.now();
+			beginResizeRepaint();
+			mux.resize(handle, cols, rows);
+			r.lastPublishedGrid = { cols, rows };
+		};
 		const resize = terminal.onResize(({ cols, rows }) => {
 			if (!isCurrentAttachment(generation, handle, mux)) return;
 			if (optionsRef.current.isVisible === false) return;
 			if (r.resizeTimer) clearTimeout(r.resizeTimer);
 			r.resizeTimer = setTimeout(() => {
 				r.resizeTimer = null;
-				if (!isCurrentAttachment(generation, handle, mux)) return;
-				if (optionsRef.current.isVisible === false) return;
-				const published = r.lastPublishedGrid;
-				if (published?.cols === cols && published.rows === rows) return;
-				mux.resize(handle, cols, rows);
-				r.lastPublishedGrid = { cols, rows };
-			}, RESIZE_DEBOUNCE_MS);
+				publishGrid(cols, rows);
+			}, PTY_RESIZE_QUIET_MS);
 		});
 		r.disposers.push(
 			() => input.dispose(),
@@ -773,6 +904,7 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 				// it and the buffered bytes (and any URL in them) are lost. This is
 				// the session-switch path, so it is the one that matters most.
 				r.flushReplay?.(true);
+				r.flushLiveOutput?.();
 				r.generation += 1;
 				r.detached = true;
 				teardownMux();
@@ -808,11 +940,11 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		) {
 			return;
 		}
+		r.needsVisibleSizeSync = false;
 		if (r.resizeTimer) {
 			clearTimeout(r.resizeTimer);
 			r.resizeTimer = null;
 		}
-		r.needsVisibleSizeSync = false;
 		const published = r.lastPublishedGrid;
 		if (published?.cols === cols && published.rows === rows) return;
 		r.mux.resize(r.handle, cols, rows);
@@ -831,10 +963,10 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 	}, [daemonReady, connect]);
 
 	// A parked cache entry keeps parsing output, but it must be inert as a PTY
-	// client. Cancel resize work queued while it was visible and remember that a
-	// hidden local refit cannot be forwarded. useLayoutEffect runs before the
-	// cache's activation preparation, so the first visible frame always publishes
-	// its final positive grid even when xterm's local size no longer changes.
+	// client. Remember that a hidden local refit cannot be forwarded. This layout
+	// effect runs before the cache's activation preparation, so the first visible
+	// frame always publishes its final positive grid even when xterm's local size
+	// no longer changes.
 	const isVisible = options.isVisible !== false;
 	useLayoutEffect(() => {
 		if (isVisible) return;
@@ -883,6 +1015,7 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 			const r = runtime.current;
 			// Same ordering rule as the detach path above.
 			r.flushReplay?.(true);
+			r.flushLiveOutput?.();
 			r.generation += 1;
 			r.detached = true;
 			r.inputReady = false;
