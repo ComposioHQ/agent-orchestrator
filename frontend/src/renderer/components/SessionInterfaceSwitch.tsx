@@ -356,12 +356,12 @@ export function SessionInterfaceTransitionNotice({
 					</div>
 				) : null}
 				{recoveryError ? (
-					<p role="alert" aria-live="assertive" className="mt-1 text-[11px] leading-4 text-destructive">
+					<p className="mt-1 text-[11px] leading-4 text-destructive">
 						Recovery attempt failed: {recoveryError}
 					</p>
 				) : null}
 				{dismissError ? (
-					<p role="alert" className="mt-1 text-[11px] leading-4 text-destructive">
+					<p className="mt-1 text-[11px] leading-4 text-destructive">
 						Could not dismiss this message. Try again.
 					</p>
 				) : null}

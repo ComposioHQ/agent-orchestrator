@@ -200,7 +200,7 @@ describe("SessionInterfaceTransitionNotice", () => {
 		expect(onDismiss).toHaveBeenCalledOnce();
 	});
 
-	it("announces a rejected recovery attempt inside AO-2L", () => {
+	it("announces a rejected recovery attempt once inside AO-2L", () => {
 		render(
 			<SessionInterfaceTransitionNotice
 				transition={{
@@ -214,8 +214,31 @@ describe("SessionInterfaceTransitionNotice", () => {
 			/>,
 		);
 
-		expect(screen.getByText(/Recovery attempt failed/)).toHaveAttribute("role", "alert");
-		expect(screen.getByText(/Recovery attempt failed/)).toHaveTextContent("Terminal history changed");
+		const [announcement] = screen.getAllByRole("alert");
+		expect(screen.getAllByRole("alert")).toHaveLength(1);
+		expect(announcement).toHaveTextContent("Interface switch failed (AO-2L).");
+		expect(announcement).toHaveTextContent(
+			"Recovery attempt failed: Terminal history changed; retry with a fresh choice.",
+		);
+	});
+
+	it("announces a notice dismissal failure once inside AO-2L", () => {
+		render(
+			<SessionInterfaceTransitionNotice
+				transition={{
+					...transition("failed"),
+					errorCode: "TARGET_HISTORY_UNSETTLED",
+					errorDetail: "Interface switch failed (AO-2L).",
+				}}
+				onDismiss={vi.fn()}
+				dismissError="Dismiss request was rejected."
+			/>,
+		);
+
+		const [announcement] = screen.getAllByRole("alert");
+		expect(screen.getAllByRole("alert")).toHaveLength(1);
+		expect(announcement).toHaveTextContent("Interface switch failed (AO-2L).");
+		expect(announcement).toHaveTextContent("Could not dismiss this message. Try again.");
 	});
 
 	it("offers an explicit discard action when drain preserves a draft", () => {
