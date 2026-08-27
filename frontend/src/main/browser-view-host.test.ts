@@ -225,10 +225,13 @@ describe("browser scrollbar styling", () => {
 		expect(insertCSS).toHaveBeenCalledOnce();
 		const css = insertCSS.mock.calls[0]?.[0] ?? "";
 		expect(insertCSS.mock.calls[0]?.[1]).toEqual({ cssOrigin: "user" });
-		expect(css).toContain("scrollbar-width: thin");
-		expect(css).toContain("scrollbar-color: rgba(232, 232, 232, 0.26) transparent");
-		expect(css).not.toContain("::-webkit-scrollbar");
-		expect(css).not.toMatch(/^\s*(?:width|height):/m);
+		expect(css).toContain("::-webkit-scrollbar-thumb");
+		expect(css).toContain("border-radius: 999px");
+		expect(css).toContain("background: rgba(232, 232, 232, 0.72)");
+		expect(css).toContain("::-webkit-scrollbar-track");
+		expect(css).toContain("background: transparent");
+		expect(css).toContain("width: 8px");
+		expect(css).toContain("height: 8px");
 		expect(css).not.toContain("min-height");
 		expect(css).not.toContain("min-width");
 
