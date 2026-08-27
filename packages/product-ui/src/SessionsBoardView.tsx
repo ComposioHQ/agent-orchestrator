@@ -151,8 +151,8 @@ function BoardColumnView<TSession extends BoardSessionPresentation>({
 }) {
 	const ordered = [...sessions].sort((left, right) => {
 		const attentionPriority =
-			Number(attentionZone(right.status) === "action") -
-			Number(attentionZone(left.status) === "action");
+			Number(attentionZone(right.status) === "action" || right.activity?.state === "blocked") -
+			Number(attentionZone(left.status) === "action" || left.activity?.state === "blocked");
 		return attentionPriority || right.updatedAt.localeCompare(left.updatedAt);
 	});
 	return (
