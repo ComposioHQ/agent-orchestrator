@@ -890,6 +890,38 @@ describe("SessionView", () => {
 		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 	});
 
+	it("does not let a completed switch close another session's newer consent dialog", async () => {
+		interfaceTransitionState.status = { supported: true, targetMode: "tui" };
+		for (const sessionId of ["sess-1", "sess-2"]) {
+			const session = workerSession(sessionId);
+			session.mode = "chat";
+			session.status = "working";
+			session.activity = { state: "active", lastActivityAt: "2026-08-06T00:00:00Z" };
+		}
+		let finishFirstSwitch!: () => void;
+		interfaceTransitionMock.start.mockImplementationOnce(
+			() => new Promise<void>((resolve) => {
+				finishFirstSwitch = resolve;
+			}),
+		);
+		const view = render(<SessionView sessionId="sess-1" />);
+
+		fireEvent.click(screen.getByRole("button", { name: "Switch to terminal UI" }));
+		fireEvent.click(screen.getByRole("button", { name: /^Stop now and switch/ }));
+		expect(interfaceTransitionMock.start).toHaveBeenCalledWith({
+			targetMode: "tui",
+			policy: "interrupt",
+		});
+
+		view.rerender(<SessionView sessionId="sess-2" />);
+		fireEvent.click(screen.getByRole("button", { name: "Switch to terminal UI" }));
+		expect(screen.getByRole("dialog", { name: "Switch to Terminal UI?" })).toBeInTheDocument();
+
+		await act(async () => finishFirstSwitch());
+
+		expect(screen.getByRole("dialog", { name: "Switch to Terminal UI?" })).toBeInTheDocument();
+	});
+
 	it("discards switch consent when the requested target changes", () => {
 		interfaceTransitionState.status = { supported: true, targetMode: "tui" };
 		const session = workerSession("sess-1");

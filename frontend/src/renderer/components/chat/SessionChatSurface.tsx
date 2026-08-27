@@ -115,22 +115,21 @@ export function SessionChatSurface({
 	// boundary that decides whether switching to Terminal needs user consent.
 	const snapshot = queriedSnapshot?.sessionId === session.id ? queriedSnapshot : undefined;
 	const commands = useConversationCommands(session.id);
-	const { acknowledgeAcceptedSend, pendingAcceptedSendTurnId } = commands;
+	const { acknowledgeAcceptedTurn, pendingAcceptedTurnId } = commands;
 	const conversationWorkKnown = Boolean(snapshot);
-	const acceptedSendObserved = Boolean(
-		pendingAcceptedSendTurnId &&
-			snapshot?.turns.some((turn) => turn.id === pendingAcceptedSendTurnId),
+	const acceptedLocalTurnObserved = Boolean(
+		pendingAcceptedTurnId && snapshot?.turns.some((turn) => turn.id === pendingAcceptedTurnId),
 	);
-	const acceptedSendPending = Boolean(pendingAcceptedSendTurnId && !acceptedSendObserved);
+	const acceptedLocalWorkPending = Boolean(pendingAcceptedTurnId && !acceptedLocalTurnObserved);
 	const controllerBusy =
-		snapshot?.controller?.state === "busy" || commands.busy || acceptedSendPending;
+		snapshot?.controller?.state === "busy" || commands.busy || acceptedLocalWorkPending;
 	const hasRunningTurn = Boolean(snapshot?.turns.some((turn) => turn.state === "running"));
 	const queuedTurnCount = snapshot?.turns.filter((turn) => turn.state === "queued").length ?? 0;
 	useEffect(() => {
-		if (acceptedSendObserved && pendingAcceptedSendTurnId) {
-			acknowledgeAcceptedSend(pendingAcceptedSendTurnId);
+		if (acceptedLocalTurnObserved && pendingAcceptedTurnId) {
+			acknowledgeAcceptedTurn(pendingAcceptedTurnId);
 		}
-	}, [acceptedSendObserved, acknowledgeAcceptedSend, pendingAcceptedSendTurnId]);
+	}, [acceptedLocalTurnObserved, acknowledgeAcceptedTurn, pendingAcceptedTurnId]);
 	useEffect(() => {
 		if (!conversationWorkKnown) return;
 		onConversationWorkChange?.({ controllerBusy, hasRunningTurn, queuedTurnCount });

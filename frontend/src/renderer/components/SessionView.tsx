@@ -784,10 +784,18 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			session.activity?.state === "blocked"),
 	);
 	const beginInterfaceSwitch = useCallback(
-		async (policy: "drain" | "interrupt", targetMode: "chat" | "tui") => {
+		async (
+			policy: "drain" | "interrupt",
+			targetMode: "chat" | "tui",
+			dialogScope?: InterfaceSwitchDialogScope,
+		) => {
 			try {
 				await interfaceSwitch.start({ targetMode, policy });
-				setInterfaceSwitchDialogScope(undefined);
+				if (dialogScope) {
+					setInterfaceSwitchDialogScope((current) =>
+						current === dialogScope ? undefined : current,
+					);
+				}
 			} catch {
 				// The mutation owns the typed error. A policy dialog that was already
 				// open stays open; a direct switch must not open one on failure.
@@ -815,7 +823,11 @@ export function SessionView({ sessionId }: SessionViewProps) {
 				setInterfaceSwitchDialogScope(undefined);
 				return;
 			}
-			void beginInterfaceSwitch(policy, interfaceSwitchDialogScope.targetMode);
+			void beginInterfaceSwitch(
+				policy,
+				interfaceSwitchDialogScope.targetMode,
+				interfaceSwitchDialogScope,
+			);
 		},
 		[beginInterfaceSwitch, interfaceSwitchDialogScope, interfaceTarget, session],
 	);

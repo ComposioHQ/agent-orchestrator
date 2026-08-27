@@ -18,7 +18,6 @@ vi.mock("../lib/api-client", () => ({
 }));
 
 import {
-	forgetConversationSendTrackingForDeletedSession,
 	useConversation,
 	useConversationCommands,
 } from "./useConversation";
@@ -127,9 +126,9 @@ describe("accepted conversation sends", () => {
 			await firstSend;
 		});
 
-		expect(result.current.pendingAcceptedSendTurnId).toBe("turn-2");
+		expect(result.current.pendingAcceptedTurnId).toBe("turn-2");
 		rerender({ sessionId: "ao-1" });
-		expect(result.current.pendingAcceptedSendTurnId).toBe("turn-1");
+		expect(result.current.pendingAcceptedTurnId).toBe("turn-1");
 	});
 
 	it("retains an in-flight send when Chat unmounts before the response", async () => {
@@ -153,7 +152,6 @@ describe("accepted conversation sends", () => {
 			sendRequest = firstMount.result.current.send("still posting");
 		});
 		await waitFor(() => {
-			expect(firstMount.result.current.pendingLocalSend).toBe(true);
 			expect(firstMount.result.current.busy).toBe(true);
 		});
 		firstMount.unmount();
@@ -161,16 +159,15 @@ describe("accepted conversation sends", () => {
 		const secondMount = renderHook(() => useConversationCommands("ao-in-flight-remount"), {
 			wrapper: HookWrapper,
 		});
-		expect(secondMount.result.current.pendingLocalSend).toBe(true);
 		expect(secondMount.result.current.busy).toBe(true);
-		expect(secondMount.result.current.pendingAcceptedSendTurnId).toBeUndefined();
+		expect(secondMount.result.current.pendingAcceptedTurnId).toBeUndefined();
 
 		response.resolve({ data: { turnId: "turn-after-deferred-response" }, error: undefined });
 		await act(async () => {
 			await sendRequest;
 		});
 		await waitFor(() => {
-			expect(secondMount.result.current.pendingAcceptedSendTurnId).toBe(
+			expect(secondMount.result.current.pendingAcceptedTurnId).toBe(
 				"turn-after-deferred-response",
 			);
 		});
@@ -196,8 +193,7 @@ describe("accepted conversation sends", () => {
 		});
 
 		await waitFor(() => {
-			expect(result.current.pendingLocalSend).toBe(false);
-			expect(result.current.pendingAcceptedSendTurnId).toBeUndefined();
+			expect(result.current.pendingAcceptedTurnId).toBeUndefined();
 			expect(result.current.busy).toBe(false);
 		});
 	});
@@ -225,8 +221,7 @@ describe("accepted conversation sends", () => {
 			wrapper: HookWrapper,
 		});
 
-		expect(secondMount.result.current.pendingLocalSend).toBe(false);
-		expect(secondMount.result.current.pendingAcceptedSendTurnId).toBeUndefined();
+		expect(secondMount.result.current.pendingAcceptedTurnId).toBeUndefined();
 		expect(secondMount.result.current.busy).toBe(false);
 	});
 
@@ -260,7 +255,7 @@ describe("accepted conversation sends", () => {
 		const secondMount = renderHook(() => useConversationCommands("ao-refresh-failure"), {
 			wrapper: HookWrapper,
 		});
-		expect(secondMount.result.current.pendingAcceptedSendTurnId).toBe("turn-refresh-failed");
+		expect(secondMount.result.current.pendingAcceptedTurnId).toBe("turn-refresh-failed");
 		expect(secondMount.result.current.busy).toBe(true);
 	});
 
@@ -305,7 +300,7 @@ describe("accepted conversation sends", () => {
 		expect(postMock).toHaveBeenCalledTimes(1);
 		expect(secondOutcome).toBeInstanceOf(Error);
 		await waitFor(() => {
-			expect(result.current.pendingAcceptedSendTurnId).toBe("turn-overlap-first");
+			expect(result.current.pendingAcceptedTurnId).toBe("turn-overlap-first");
 		});
 	});
 
@@ -328,70 +323,23 @@ describe("accepted conversation sends", () => {
 			await firstMount.result.current.send("keep this work visible");
 		});
 		await waitFor(() => {
-			expect(firstMount.result.current.pendingAcceptedSendTurnId).toBe("turn-after-remount");
+			expect(firstMount.result.current.pendingAcceptedTurnId).toBe("turn-after-remount");
 		});
 		firstMount.unmount();
 
 		const secondMount = renderHook(() => useConversationCommands("ao-remount"), {
 			wrapper: HookWrapper,
 		});
-		expect(secondMount.result.current.pendingAcceptedSendTurnId).toBe("turn-after-remount");
+		expect(secondMount.result.current.pendingAcceptedTurnId).toBe("turn-after-remount");
 
 		act(() => {
-			secondMount.result.current.acknowledgeAcceptedSend("turn-after-remount");
+			secondMount.result.current.acknowledgeAcceptedTurn("turn-after-remount");
 		});
 		await waitFor(() => {
-			expect(secondMount.result.current.pendingAcceptedSendTurnId).toBeUndefined();
+			expect(secondMount.result.current.pendingAcceptedTurnId).toBeUndefined();
 		});
 	});
 
-	it("forgets only a session whose durable row was explicitly deleted", async () => {
-		postMock.mockImplementation(
-			(_path: string, request: { params: { path: { sessionId: string } } }) =>
-				Promise.resolve({
-					data: {
-						duplicate: false,
-						turnId: `turn-${request.params.path.sessionId}`,
-					},
-					error: undefined,
-				}),
-		);
-		const queryClient = new QueryClient({
-			defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-		});
-		const HookWrapper = ({ children }: { children: ReactNode }) => (
-			<QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
-		);
-		const deletedMount = renderHook(
-			() => useConversationCommands("ao-durably-deleted"),
-			{ wrapper: HookWrapper },
-		);
-		await act(async () => {
-			await deletedMount.result.current.send("deleted session work");
-		});
-		deletedMount.unmount();
-		const retainedMount = renderHook(() => useConversationCommands("ao-still-present"), {
-			wrapper: HookWrapper,
-		});
-		await act(async () => {
-			await retainedMount.result.current.send("retained session work");
-		});
-		retainedMount.unmount();
-
-		forgetConversationSendTrackingForDeletedSession(queryClient, "ao-durably-deleted");
-
-		const deletedAgain = renderHook(
-			() => useConversationCommands("ao-durably-deleted"),
-			{ wrapper: HookWrapper },
-		);
-		const retainedAgain = renderHook(() => useConversationCommands("ao-still-present"), {
-			wrapper: HookWrapper,
-		});
-		expect(deletedAgain.result.current.pendingLocalSend).toBe(false);
-		expect(retainedAgain.result.current.pendingAcceptedSendTurnId).toBe(
-			"turn-ao-still-present",
-		);
-	});
 });
 
 describe("session-scoped conversation commands", () => {
@@ -429,7 +377,7 @@ describe("session-scoped conversation commands", () => {
 		});
 		expect(invalidate).toHaveBeenCalledWith({ queryKey: ["conversation", "ao-send-a"] });
 		expect(invalidate).not.toHaveBeenCalledWith({ queryKey: ["conversation", "ao-send-b"] });
-		expect(result.current.pendingAcceptedSendTurnId).toBeUndefined();
+		expect(result.current.pendingAcceptedTurnId).toBeUndefined();
 	});
 
 	it("does not publish an initiating session's pending state, error, or refresh after navigation", async () => {
@@ -467,6 +415,123 @@ describe("session-scoped conversation commands", () => {
 		expect(result.current.busy).toBe(false);
 		expect(result.current.error).toBeUndefined();
 	});
+
+	it.each(["retry", "edit"] as const)(
+		"keeps pending and accepted %s work attached to its initiating session",
+		async (operation) => {
+			const response = deferred<{
+				data: {
+					activeBranchId?: string;
+					sourceBranchId?: string;
+					turnId: string;
+				};
+				error: undefined;
+			}>();
+			postMock.mockReturnValue(response.promise);
+			const queryClient = new QueryClient({
+				defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+			});
+			const invalidate = vi.spyOn(queryClient, "invalidateQueries").mockResolvedValue(undefined);
+			const HookWrapper = ({ children }: { children: ReactNode }) => (
+				<QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+			);
+			const { result, rerender } = renderHook(
+				({ sessionId }) => useConversationCommands(sessionId),
+				{ initialProps: { sessionId: "ao-turn-a" }, wrapper: HookWrapper },
+			);
+
+			let request!: Promise<unknown>;
+			act(() => {
+				request =
+					operation === "retry"
+						? result.current.retryControl.retry("turn-source")
+						: result.current.editMessage("turn-source", "edited prompt");
+			});
+			await waitFor(() => {
+				expect(result.current.busy).toBe(true);
+				expect(result.current.pendingAcceptedTurnId).toBeUndefined();
+			});
+
+			rerender({ sessionId: "ao-turn-b" });
+			expect(result.current.busy).toBe(false);
+			expect(result.current.pendingAcceptedTurnId).toBeUndefined();
+
+			const acceptedTurnId = `turn-${operation}-accepted`;
+			response.resolve({
+				data: {
+					...(operation === "edit"
+						? { activeBranchId: "branch-edit", sourceBranchId: "branch-root" }
+						: {}),
+					turnId: acceptedTurnId,
+				},
+				error: undefined,
+			});
+			await act(async () => {
+				await request;
+			});
+
+			expect(invalidate).toHaveBeenCalledWith({ queryKey: ["conversation", "ao-turn-a"] });
+			expect(invalidate).not.toHaveBeenCalledWith({ queryKey: ["conversation", "ao-turn-b"] });
+			expect(result.current.busy).toBe(false);
+			expect(result.current.pendingAcceptedTurnId).toBeUndefined();
+
+			act(() => result.current.acknowledgeAcceptedTurn(acceptedTurnId));
+			expect(result.current.pendingAcceptedTurnId).toBeUndefined();
+
+			rerender({ sessionId: "ao-turn-a" });
+			expect(result.current.busy).toBe(true);
+			expect(result.current.pendingAcceptedTurnId).toBe(acceptedTurnId);
+
+			act(() => result.current.acknowledgeAcceptedTurn("turn-from-another-session"));
+			expect(result.current.busy).toBe(true);
+			expect(result.current.pendingAcceptedTurnId).toBe(acceptedTurnId);
+
+			act(() => result.current.acknowledgeAcceptedTurn(acceptedTurnId));
+			await waitFor(() => {
+				expect(result.current.busy).toBe(false);
+				expect(result.current.pendingAcceptedTurnId).toBeUndefined();
+			});
+		},
+	);
+
+	it.each(["retry", "edit"] as const)(
+		"clears pending %s work after the initiating request fails",
+		async (operation) => {
+			const response = deferred<{
+				data: undefined;
+				error: { code: string };
+			}>();
+			postMock.mockReturnValue(response.promise);
+			const queryClient = new QueryClient({
+				defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+			});
+			const HookWrapper = ({ children }: { children: ReactNode }) => (
+				<QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+			);
+			const { result } = renderHook(() => useConversationCommands("ao-turn-failure"), {
+				wrapper: HookWrapper,
+			});
+
+			let request!: Promise<unknown>;
+			act(() => {
+				request = (
+					operation === "retry"
+						? result.current.retryControl.retry("turn-source")
+						: result.current.editMessage("turn-source", "edited prompt")
+				).catch(() => {});
+			});
+			await waitFor(() => expect(result.current.busy).toBe(true));
+
+			response.resolve({ data: undefined, error: { code: "CHAT_TURN_FAILED" } });
+			await act(async () => {
+				await request;
+			});
+			await waitFor(() => {
+				expect(result.current.busy).toBe(false);
+				expect(result.current.pendingAcceptedTurnId).toBeUndefined();
+			});
+		},
+	);
 });
 
 describe("useConversation snapshot mapping", () => {

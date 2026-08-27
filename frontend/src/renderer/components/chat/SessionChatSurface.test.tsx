@@ -43,8 +43,8 @@ const {
 	agentSwitchState: { data: [] as AgentSwitchSummary[] },
 	conversationCommandState: {
 		busy: false,
-		pendingAcceptedSendTurnId: undefined as string | undefined,
-		acknowledgeAcceptedSend: vi.fn(),
+		pendingAcceptedTurnId: undefined as string | undefined,
+		acknowledgeAcceptedTurn: vi.fn(),
 	},
 	conversationState: {
 		snapshot: { capabilities: [] } as
@@ -160,8 +160,8 @@ beforeEach(() => {
 	conversationState.isLoadingOlder = false;
 	conversationState.loadOlder = vi.fn();
 	conversationCommandState.busy = false;
-	conversationCommandState.pendingAcceptedSendTurnId = undefined;
-	conversationCommandState.acknowledgeAcceptedSend.mockReset();
+	conversationCommandState.pendingAcceptedTurnId = undefined;
+	conversationCommandState.acknowledgeAcceptedTurn.mockReset();
 	agentSwitchState.data = [];
 	useUiStore.setState({ inspectorSessions: {} });
 });
@@ -252,13 +252,43 @@ describe("SessionChatSurface link routing", () => {
 		});
 	});
 
-	it("reports an accepted local send while the conversation snapshot is still stale", async () => {
+	it("reports pending local work while the cached conversation snapshot is idle", async () => {
 		conversationState.snapshot = {
 			capabilities: [],
 			controller: { state: "ready" },
 			turns: [],
 		};
-		conversationCommandState.pendingAcceptedSendTurnId = "turn-accepted";
+		conversationCommandState.busy = true;
+		const onConversationWorkChange = vi.fn();
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+		});
+
+		render(
+			<Wrapper client={queryClient}>
+				<SessionChatSurface
+					session={session}
+					onConversationWorkChange={onConversationWorkChange}
+				/>
+			</Wrapper>,
+		);
+
+		await waitFor(() => {
+			expect(onConversationWorkChange).toHaveBeenLastCalledWith({
+				controllerBusy: true,
+				hasRunningTurn: false,
+				queuedTurnCount: 0,
+			});
+		});
+	});
+
+	it("reports an accepted local turn while the conversation snapshot is still stale", async () => {
+		conversationState.snapshot = {
+			capabilities: [],
+			controller: { state: "ready" },
+			turns: [],
+		};
+		conversationCommandState.pendingAcceptedTurnId = "turn-accepted";
 		const onConversationWorkChange = vi.fn();
 		const queryClient = new QueryClient({
 			defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -294,7 +324,7 @@ describe("SessionChatSurface link routing", () => {
 				},
 			],
 		};
-		conversationCommandState.pendingAcceptedSendTurnId = "turn-accepted";
+		conversationCommandState.pendingAcceptedTurnId = "turn-accepted";
 		const onConversationWorkChange = vi.fn();
 		const queryClient = new QueryClient({
 			defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -310,7 +340,7 @@ describe("SessionChatSurface link routing", () => {
 		);
 
 		await waitFor(() => {
-			expect(conversationCommandState.acknowledgeAcceptedSend).toHaveBeenCalledWith(
+			expect(conversationCommandState.acknowledgeAcceptedTurn).toHaveBeenCalledWith(
 				"turn-accepted",
 			);
 			expect(onConversationWorkChange).toHaveBeenLastCalledWith({
