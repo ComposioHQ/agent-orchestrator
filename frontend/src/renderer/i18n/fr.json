@@ -781,7 +781,6 @@
 	"settings.updates.updateToLatest": "Mettre à jour vers la dernière",
 	"session.notFound": "Session introuvable. Elle a peut-être été nettoyée — choisissez-en une autre dans la barre latérale.",
 	"settings.updates.updateFailed": "Échec de la mise à jour.",
-	"shell.agentCredentials": "Identifiants de l'agent de code",
 	"switchAgent.action": "Changer d’agent",
 	"switchAgent.checkingStatus": "Vérification de l’état du changement…",
 	"switchAgent.compact.switching": "Passage à {{target}}",

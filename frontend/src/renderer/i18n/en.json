@@ -827,7 +827,6 @@
 	"switchAgent.switching": "Switching…",
 	"switchAgent.targetLabel": "Target agent",
 	"switchAgent.title": "Switch agent",
-	"shell.agentCredentials": "Coding agent credentials",
 	"shell.archive": "Archive",
 	"shell.archiveSessionsAria_one": "Archive, {{count}} session",
 	"shell.archiveSessionsAria_other": "Archive, {{count}} sessions",

@@ -781,7 +781,6 @@
 	"settings.updates.updateToLatest": "Atualizar para a mais recente",
 	"session.notFound": "Sessão não encontrada. Ela pode ter sido limpa — escolha outra na barra lateral.",
 	"settings.updates.updateFailed": "Falha na atualização.",
-	"shell.agentCredentials": "Credenciais do agente de código",
 	"switchAgent.action": "Trocar agente",
 	"switchAgent.checkingStatus": "Verificando o status da troca…",
 	"switchAgent.compact.switching": "Trocando para {{target}}",
