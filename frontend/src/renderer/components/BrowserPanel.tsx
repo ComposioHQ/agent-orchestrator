@@ -445,6 +445,42 @@ export function BrowserPanelView({
 			ref={panelRef}
 			role="tabpanel"
 		>
+			<div
+				aria-label={t("browser.tabs")}
+				className="browser-panel__tab-strip"
+				role="tablist"
+			>
+				{tabs.map((tab) => {
+					const label = browserTabLabel(tab.title, tab.url);
+					const selected = tab.id === activeTabId;
+					return (
+						<div className={cn("browser-panel__tab", selected && "browser-panel__tab--active")} key={tab.id}>
+							<button
+								aria-selected={selected}
+								className="browser-panel__tab-select"
+								onClick={() => void selectTab(tab.id)}
+								role="tab"
+								tabIndex={selected ? 0 : -1}
+								title={label.title}
+								type="button"
+							>
+								<Globe2 aria-hidden="true" className="browser-panel__tab-icon" />
+								<span className="browser-panel__tab-title">{label.title}</span>
+							</button>
+							<button
+								aria-label={t("browser.closeTab", { title: label.title })}
+								className="browser-panel__tab-close"
+								disabled={tabs.length === 1}
+								onClick={() => void closeTab(tab.id)}
+								title={tabs.length === 1 ? t("browser.onlyTab") : t("browser.closeTab", { title: label.title })}
+								type="button"
+							>
+								<X aria-hidden="true" className="size-icon-sm" />
+							</button>
+						</div>
+					);
+				})}
+			</div>
 			<form
 				className="browser-panel__toolbar flex shrink-0 min-w-0 items-center gap-1 border-b border-border bg-surface"
 				data-testid="browser-toolbar"
