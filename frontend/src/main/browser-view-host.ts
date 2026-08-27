@@ -21,7 +21,6 @@ import type {
 	BrowserAnnotationSubmitPayload,
 } from "../shared/browser-annotations";
 import { attachAppShortcuts } from "./app-shortcuts";
-import { MAX_BROWSER_TABS } from "../shared/browser-tabs";
 import type { KeybindingOverrides } from "../shared/shortcuts";
 import type { AgentBrowserRuntime } from "./agent-browser-runtime";
 import type { AgentBrowserTarget, AgentBrowserTargetProvider } from "./agent-browser-cdp-bridge";
@@ -482,9 +481,6 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	};
 
 	const createTab = (session: BrowserSessionEntry, activate: boolean, syncNativeOnActivate = false): BrowserEntry => {
-		if (session.tabs.size >= MAX_BROWSER_TABS) {
-			throw browserError("BROWSER_TAB_LIMIT", `Browser tab limit of ${MAX_BROWSER_TABS} reached`);
-		}
 		const view = new options.WebContentsView({
 			webPreferences: {
 				contextIsolation: true,
@@ -550,11 +546,10 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				// Created window should be connected to webContents passed with options
 				// object" and crashes the whole app on every link click. Deny the guest
 				// window outright and open (and navigate) our own tab instead; openTab
-				// already handles URL validation, tab-limit, and the "popup" tabs-state
+				// already handles URL validation and the "popup" tabs-state
 				// event this used to push manually.
 				void openTab(session, url, true, "popup", true).catch(() => undefined);
 			},
-			() => session.tabs.size < MAX_BROWSER_TABS,
 		);
 		wireNavEvents(
 			view.webContents,
@@ -828,7 +823,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 
 	// Re-verified 2026-08-19: a long-session report claimed tab close buttons
 	// eventually "stop working" (tab stays in the rail / count badge doesn't
-	// decrement). An accelerated stress repro -- open to MAX_BROWSER_TABS and
+	// decrement). An accelerated stress repro -- open many tabs and
 	// close back to one, 20 cycles, interleaving selectTab/DevTools
 	// open-close/annotation-mode toggles -- against this real closeTab/
 	// destroyTabView path (see "browser tab lifecycle stress" in
@@ -1776,10 +1771,9 @@ function hardenWebContents(
 	options: BrowserViewHostOptions,
 	entry: BrowserEntry,
 	openPopup: (url: string) => void,
-	canCreatePopup: () => boolean,
 ): void {
 	contents.setWindowOpenHandler(({ url }) => {
-		if (!isAllowedBrowserURL(url, options.rendererOrigin) || !canCreatePopup()) {
+		if (!isAllowedBrowserURL(url, options.rendererOrigin)) {
 			return { action: "deny" };
 		}
 		// Always deny — never return createWindow. See the call site's comment for

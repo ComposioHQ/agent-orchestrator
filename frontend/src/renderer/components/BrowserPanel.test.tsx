@@ -5,7 +5,6 @@ import { BrowserPanel, BrowserPanelView, useBrowserAnnotationQueue } from "./Bro
 import { reorderBrowserTabs } from "../lib/browser-tab-order";
 import { useBrowserView, type BrowserNavState } from "../hooks/useBrowserView";
 import { OPEN_BROWSER_OVERLAY_SELECTOR } from "../lib/dom-selectors";
-import { MAX_BROWSER_TABS } from "../../shared/browser-tabs";
 import type { WorkspaceSession } from "../types/workspace";
 import type {
 	BrowserAnnotationCancelPayload,
@@ -666,11 +665,8 @@ describe("BrowserPanel", () => {
 		expect(row.querySelector("img")).toHaveAttribute("src", "http://localhost:5173/favicon.ico");
 	});
 
-	// Regression: reopening a closed tab at the cap used to silently drop it
-	// from the list and open nothing — gate the row the same way the "+"
-	// button already gates new tabs.
-	it("disables reopening a recently closed tab once the tab cap is reached", async () => {
-		hookState.tabs = Array.from({ length: MAX_BROWSER_TABS }, (_, i) => ({
+	it("keeps opening and reopening tabs available beyond the former cap", async () => {
+		hookState.tabs = Array.from({ length: 20 }, (_, i) => ({
 			id: `t${i}`,
 			url: `http://localhost:3000/${i}`,
 			title: `Tab ${i}`,
@@ -690,9 +686,10 @@ describe("BrowserPanel", () => {
 		}
 
 		const row = screen.getByRole("button", { name: "Reopen Closed app" });
-		expect(row).toBeDisabled();
-		await userEvent.click(row, { pointerEventsCheck: 0 });
-		expect(hookState.reopenClosedTab).not.toHaveBeenCalled();
+		expect(row).toBeEnabled();
+		await userEvent.click(row);
+		expect(hookState.reopenClosedTab).toHaveBeenCalledWith("closed");
+		expect(screen.getAllByRole("button", { name: "Open new tab" }).every((button) => !button.hasAttribute("disabled"))).toBe(true);
 	});
 
 	it("keeps the hover flyout open after closing a tab, since the cursor is still over it", async () => {

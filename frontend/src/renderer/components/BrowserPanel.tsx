@@ -36,7 +36,6 @@ import {
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { useBrowserView, type BrowserViewModel } from "../hooks/useBrowserView";
 import { formatBrowserAnnotationMessage, type BrowserAnnotationSubmitPayload } from "../../shared/browser-annotations";
-import { MAX_BROWSER_TABS } from "../../shared/browser-tabs";
 import type { WorkspaceSession } from "../types/workspace";
 import { Button } from "./ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "./ui/dropdown-menu";
@@ -336,7 +335,6 @@ export function BrowserPanelView({
 	const showStaticPreview = !hasNativeBrowser && navState.url !== "";
 	const canAnnotate = Boolean(window.ao?.browser && viewId && navState.url);
 	const canRetryAnnotation = status === "error" && queuedCount > 0;
-	const canOpenTab = tabs.length < MAX_BROWSER_TABS;
 	const [devicePreset, setDevicePreset] = useState<string | null>(null);
 	const [customDeviceWidth, setCustomDeviceWidth] = useState("390");
 	const deviceFrameWidth =
@@ -513,7 +511,6 @@ export function BrowserPanelView({
 				<button
 					aria-label={t("browser.openNewTab")}
 					className="browser-panel__tab-new"
-					disabled={!canOpenTab}
 					onClick={() => void handleOpenTab()}
 					title={t("browser.openNewTab")}
 					type="button"
@@ -771,7 +768,6 @@ export function BrowserPanelView({
 					<div className="browser-panel__toolbar-new-tab flex w-8 shrink-0 items-center justify-center self-stretch border-l border-border">
 						<Button
 							aria-label={t("browser.openNewTab")}
-							disabled={!canOpenTab}
 							onClick={() => void handleOpenTab()}
 							size="icon-sm"
 							title={t("browser.openNewTab")}
