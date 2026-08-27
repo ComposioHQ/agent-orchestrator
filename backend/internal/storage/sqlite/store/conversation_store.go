@@ -750,6 +750,7 @@ func (s *Store) ConversationForSession(
 	return conversationToDomain(row), nil
 }
 
+// ConversationForReview looks up a reviewer's conversation.
 func (s *Store) ConversationForReview(ctx context.Context, reviewID string) (domain.ConversationRecord, error) {
 	row, err := s.qr.SelectConversationByReview(ctx, nullableString(reviewID))
 	if errors.Is(err, sql.ErrNoRows) {
@@ -965,6 +966,7 @@ func (s *Store) AdoptProviderTurn(
 	return nil
 }
 
+// AdoptProviderReviewTurn records a provider-owned turn for a reviewer.
 func (s *Store) AdoptProviderReviewTurn(
 	ctx context.Context,
 	conversationID string,
@@ -1153,6 +1155,7 @@ func (s *Store) SettleOrphanedTurns(ctx context.Context, session domain.SessionI
 	return nil
 }
 
+// SettleOrphanedReviewTurns closes work left by an earlier reviewer controller.
 func (s *Store) SettleOrphanedReviewTurns(ctx context.Context, reviewID string, now time.Time) error {
 	q, unlock := s.conversationWriter(ctx)
 	defer unlock()
@@ -2162,6 +2165,7 @@ func (s *Store) ProjectProviderEvent(
 	return true, nil
 }
 
+// ProjectReviewProviderEvent archives and projects one reviewer provider event.
 func (s *Store) ProjectReviewProviderEvent(
 	ctx context.Context,
 	conversationID string,

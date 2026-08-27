@@ -163,6 +163,7 @@ type ChatCapabilities map[ChatCapability]bool
 // approval for network access needed to post a review.
 type ChatWorkspaceAccess string
 
+// Chat workspace access modes.
 const (
 	ChatWorkspaceWritable ChatWorkspaceAccess = "writable"
 	ChatWorkspaceReadOnly ChatWorkspaceAccess = "read_only"

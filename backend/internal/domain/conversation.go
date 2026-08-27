@@ -29,6 +29,7 @@ import (
 // session ids even when their strings happen to match.
 type ConversationOwnerKind string
 
+// Conversation owner kinds.
 const (
 	ConversationOwnerSession ConversationOwnerKind = "session"
 	ConversationOwnerReview  ConversationOwnerKind = "review"
@@ -42,10 +43,12 @@ type ConversationOwner struct {
 	ID   string                `json:"id"`
 }
 
+// SessionConversationOwner returns the controller identity for a worker session.
 func SessionConversationOwner(id SessionID) ConversationOwner {
 	return ConversationOwner{Kind: ConversationOwnerSession, ID: string(id)}
 }
 
+// ReviewConversationOwner returns the controller identity for a reviewer.
 func ReviewConversationOwner(id string) ConversationOwner {
 	return ConversationOwner{Kind: ConversationOwnerReview, ID: id}
 }

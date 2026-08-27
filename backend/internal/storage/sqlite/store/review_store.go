@@ -20,19 +20,19 @@ func (s *Store) UpsertReview(ctx context.Context, r domain.Review) error {
 		r.InterfaceMode = domain.ReviewerInterfaceTUI
 	}
 	return s.qw.UpsertReview(ctx, gen.UpsertReviewParams{
-		ID:               r.ID,
-		SessionID:        r.SessionID,
-		ProjectID:        r.ProjectID,
-		Harness:          r.Harness,
-		PRURL:            r.PRURL,
-		ReviewerHandleID: r.ReviewerHandleID,
-		AgentSessionID:   r.AgentSessionID,
+		ID:                     r.ID,
+		SessionID:              r.SessionID,
+		ProjectID:              r.ProjectID,
+		Harness:                r.Harness,
+		PRURL:                  r.PRURL,
+		ReviewerHandleID:       r.ReviewerHandleID,
+		AgentSessionID:         r.AgentSessionID,
 		InterfaceMode:          r.InterfaceMode,
 		ProviderConversationID: r.ProviderConversationID,
 		ControllerGeneration:   r.ControllerGeneration,
 		ControllerError:        r.ControllerError,
-		CreatedAt:        r.CreatedAt,
-		UpdatedAt:        r.UpdatedAt,
+		CreatedAt:              r.CreatedAt,
+		UpdatedAt:              r.UpdatedAt,
 	})
 }
 
@@ -62,6 +62,7 @@ func (s *Store) ClaimReviewChatController(ctx context.Context, id, providerID, g
 	return n > 0, err
 }
 
+// RecordReviewChatControllerError records a failed reviewer controller start.
 func (s *Store) RecordReviewChatControllerError(ctx context.Context, id, message string, now time.Time) (bool, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
@@ -73,6 +74,7 @@ func (s *Store) RecordReviewChatControllerError(ctx context.Context, id, message
 	return n > 0, err
 }
 
+// ClearReviewChatController clears the durable reviewer controller lease.
 func (s *Store) ClearReviewChatController(ctx context.Context, id string, now time.Time) (bool, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
@@ -80,6 +82,7 @@ func (s *Store) ClearReviewChatController(ctx context.Context, id string, now ti
 	return n > 0, err
 }
 
+// ListRecoverableChatReviews returns Chat reviewers eligible for daemon recovery.
 func (s *Store) ListRecoverableChatReviews(ctx context.Context) ([]domain.Review, error) {
 	rows, err := s.qr.ListRecoverableChatReviews(ctx)
 	if err != nil {
@@ -367,19 +370,19 @@ func reviewFromListReviewsBySessionRow(r gen.Review) domain.Review {
 
 func reviewFromReview(r gen.Review) domain.Review {
 	return domain.Review{
-		ID:               r.ID,
-		SessionID:        r.SessionID,
-		ProjectID:        r.ProjectID,
-		Harness:          r.Harness,
-		PRURL:            r.PRURL,
-		ReviewerHandleID: r.ReviewerHandleID,
-		AgentSessionID:   r.AgentSessionID,
+		ID:                     r.ID,
+		SessionID:              r.SessionID,
+		ProjectID:              r.ProjectID,
+		Harness:                r.Harness,
+		PRURL:                  r.PRURL,
+		ReviewerHandleID:       r.ReviewerHandleID,
+		AgentSessionID:         r.AgentSessionID,
 		InterfaceMode:          r.InterfaceMode,
 		ProviderConversationID: r.ProviderConversationID,
 		ControllerGeneration:   r.ControllerGeneration,
 		ControllerError:        r.ControllerError,
-		CreatedAt:        r.CreatedAt,
-		UpdatedAt:        r.UpdatedAt,
+		CreatedAt:              r.CreatedAt,
+		UpdatedAt:              r.UpdatedAt,
 	}
 }
 

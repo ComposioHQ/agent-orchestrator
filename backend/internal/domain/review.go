@@ -24,19 +24,20 @@ type Review struct {
 	PRURL     string          `json:"prUrl"`
 	// ReviewerHandleID is the runtime handle of the live reviewer pane, reused
 	// across passes and exposed so the UI can attach its terminal.
-	ReviewerHandleID string    `json:"reviewerHandleId"`
-	AgentSessionID   string    `json:"agentSessionId"`
+	ReviewerHandleID       string                `json:"reviewerHandleId"`
+	AgentSessionID         string                `json:"agentSessionId"`
 	InterfaceMode          ReviewerInterfaceMode `json:"interfaceMode"`
 	ProviderConversationID string                `json:"providerConversationId"`
 	ControllerGeneration   string                `json:"controllerGeneration"`
 	ControllerError        string                `json:"controllerError"`
-	CreatedAt        time.Time `json:"createdAt"`
-	UpdatedAt        time.Time `json:"updatedAt"`
+	CreatedAt              time.Time             `json:"createdAt"`
+	UpdatedAt              time.Time             `json:"updatedAt"`
 }
 
 // ReviewerInterfaceMode is the controller surface committed for one reviewer.
 type ReviewerInterfaceMode string
 
+// Reviewer interface modes.
 const (
 	ReviewerInterfaceTUI  ReviewerInterfaceMode = "tui"
 	ReviewerInterfaceChat ReviewerInterfaceMode = "chat"

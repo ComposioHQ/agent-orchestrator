@@ -146,10 +146,6 @@ func (s *Service) controllerGateForOwner(owner domain.ConversationOwner) control
 	return gate
 }
 
-func (s *Service) controllerGate(id domain.SessionID) controllerGate {
-	return s.controllerGateForOwner(domain.SessionConversationOwner(id))
-}
-
 // StartConfig opens a controller for a session.
 type StartConfig struct {
 	Owner                 domain.ConversationOwner
@@ -248,15 +244,9 @@ func cloneStartConfig(cfg StartConfig) StartConfig {
 	return cloned
 }
 
-// settleOrphanedWork closes out anything a previous controller left behind.
-//
-// Best-effort by design: a failure here must not stop a session from coming back,
-// because a session the user cannot reopen is worse than a stale row. Both
-// failures are logged rather than swallowed.
-func (s *Service) settleOrphanedWork(ctx context.Context, session domain.SessionID, conversationID string) {
-	s.settleOrphanedWorkForOwner(ctx, domain.SessionConversationOwner(session), session, conversationID)
-}
-
+// settleOrphanedWorkForOwner closes out anything a previous controller left
+// behind. Failures are logged because stale rows must not prevent a controller
+// from restarting.
 func (s *Service) settleOrphanedWorkForOwner(ctx context.Context, owner domain.ConversationOwner, session domain.SessionID, conversationID string) {
 	now := s.now()
 	var settleErr error
@@ -630,6 +620,7 @@ func (s *Service) Controller(sessionID domain.SessionID) (*Controller, error) {
 	return s.ControllerForOwner(domain.SessionConversationOwner(sessionID))
 }
 
+// ControllerForOwner returns a session or review owner's live controller.
 func (s *Service) ControllerForOwner(owner domain.ConversationOwner) (*Controller, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -648,6 +639,8 @@ func (s *Service) HasLiveChatController(sessionID domain.SessionID) bool {
 	return s.HasLiveControllerForOwner(domain.SessionConversationOwner(sessionID))
 }
 
+// HasLiveControllerForOwner reports whether an owner's controller can still
+// process provider events.
 func (s *Service) HasLiveControllerForOwner(owner domain.ConversationOwner) bool {
 	s.mu.RLock()
 	controller := s.controllers[keyFor(owner)]
@@ -687,6 +680,7 @@ func (s *Service) Send(
 	return controller.Send(ctx, msg)
 }
 
+// SendForOwner delivers a message to a session or review owner.
 func (s *Service) SendForOwner(ctx context.Context, owner domain.ConversationOwner, msg ports.ChatUserMessage) (domain.ConversationTurn, error) {
 	controller, err := s.ControllerForOwner(owner)
 	if err != nil {
@@ -712,6 +706,7 @@ func (s *Service) Resolve(
 	return controller.Resolve(ctx, requestID, decision)
 }
 
+// ResolveForOwner answers an owner's pending approval.
 func (s *Service) ResolveForOwner(ctx context.Context, owner domain.ConversationOwner, requestID string, decision ports.ChatDecision) error {
 	controller, err := s.ControllerForOwner(owner)
 	if err != nil {
@@ -739,6 +734,7 @@ func (s *Service) ResolveInput(
 	return controller.ResolveInput(ctx, requestID, response)
 }
 
+// ResolveInputForOwner answers an owner's structured user-input request.
 func (s *Service) ResolveInputForOwner(ctx context.Context, owner domain.ConversationOwner, requestID string, response ports.ChatInputResponse) error {
 	controller, err := s.ControllerForOwner(owner)
 	if err != nil {
@@ -759,6 +755,7 @@ func (s *Service) Interrupt(ctx context.Context, id domain.SessionID) error {
 	return controller.Interrupt(ctx)
 }
 
+// InterruptForOwner cancels an owner's in-flight turn.
 func (s *Service) InterruptForOwner(ctx context.Context, owner domain.ConversationOwner) error {
 	controller, err := s.ControllerForOwner(owner)
 	if err != nil {
@@ -820,6 +817,7 @@ func (s *Service) Stop(ctx context.Context, id domain.SessionID) error {
 	return s.StopForOwner(ctx, domain.SessionConversationOwner(id))
 }
 
+// StopForOwner closes an owner's controller. It is safe when none exists.
 func (s *Service) StopForOwner(ctx context.Context, owner domain.ConversationOwner) error {
 	key := keyFor(owner)
 	gate := s.controllerGateForOwner(owner)
@@ -1102,6 +1100,7 @@ func (s *Service) SnapshotPage(ctx context.Context, id domain.SessionID, beforeS
 	}, nil
 }
 
+// SnapshotPageForReview returns one paginated reviewer conversation snapshot.
 func (s *Service) SnapshotPageForReview(ctx context.Context, reviewID string, beforeSequence, limit int64) (Snapshot, error) {
 	if s.pageReader == nil {
 		return s.SnapshotForReview(ctx, reviewID)
