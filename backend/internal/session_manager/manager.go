@@ -232,12 +232,13 @@ type lifecycleRecorder interface {
 	ConfirmAgentSwitchSourceStopped(ctx context.Context, confirmation domain.AgentSwitchSourceStopConfirmation) (bool, error)
 	ActivateAgentSwitchTarget(ctx context.Context, activation domain.AgentSwitchTargetActivation) (bool, error)
 	ActivateChatAgentSwitchTarget(ctx context.Context, activation domain.AgentSwitchChatTargetActivation) (bool, error)
+	ApplyActivitySignal(ctx context.Context, id domain.SessionID, signal ports.ActivitySignal) error
 	MarkTerminated(ctx context.Context, id domain.SessionID) error
 }
 
 // ShellTerminalCloser gates a session's scoped shell terminals around every
 // path that releases its worktree (Kill, Cleanup, RetireForReplacement, the
-// reconcile/shutdown save-and-teardown path), so none of them removes a
+// explicit shutdown save-and-teardown path), so none of them removes a
 // worktree out from under a shell whose cwd still points into it — on Windows
 // an open handle on that directory can even make the removal itself fail.
 //
@@ -2142,7 +2143,7 @@ func (m *Manager) SaveAndTeardownAll(ctx context.Context) error {
 		if rec.Metadata.WorkspacePath == "" || rec.Metadata.Branch == "" {
 			continue
 		}
-		if err := m.saveAndTeardownOne(ctx, rec, true); err != nil {
+		if err := m.saveAndTeardownOne(ctx, rec); err != nil {
 			m.logger.Error("save-teardown-all: session failed, skipping", "sessionID", rec.ID, "error", err)
 		}
 	}
@@ -2153,11 +2154,10 @@ func (m *Manager) SaveAndTeardownAll(ctx context.Context) error {
 // session. The DB write (UpsertSessionWorktree) is committed before
 // ForceDestroy; if either capture or the DB write fails, ForceDestroy is
 // not called.
-func (m *Manager) saveAndTeardownOne(ctx context.Context, rec domain.SessionRecord, destroyRuntime bool) error {
+func (m *Manager) saveAndTeardownOne(ctx context.Context, rec domain.SessionRecord) error {
 	// Gate shut this session's scoped shell terminals before either branch
-	// below force-removes its worktree. Both SaveAndTeardownAll and
-	// reconcileLive only reach here for a session with a real workspace, so
-	// there is always a worktree to protect.
+	// below force-removes its worktree. SaveAndTeardownAll only reaches here for
+	// a session with a real workspace, so there is always a worktree to protect.
 	release, closeErr := m.beginShellTerminalTeardown(ctx, rec.ID)
 	if closeErr != nil {
 		return fmt.Errorf("save %s: %w", rec.ID, closeErr)
@@ -2175,7 +2175,7 @@ func (m *Manager) saveAndTeardownOne(ctx context.Context, rec domain.SessionReco
 	if rows, ok, err := m.workspaceProjectRows(ctx, rec); err != nil {
 		return fmt.Errorf("save %s: workspace rows: %w", rec.ID, err)
 	} else if ok {
-		return m.saveAndTeardownWorkspaceProject(ctx, rec, rows, destroyRuntime)
+		return m.saveAndTeardownWorkspaceProject(ctx, rec, rows)
 	}
 
 	// 1. Capture uncommitted work (ref may be "" for clean worktrees).
@@ -2214,7 +2214,7 @@ func (m *Manager) saveAndTeardownOne(ctx context.Context, rec domain.SessionReco
 
 	// 5. Runtime teardown (best-effort; same pattern as Kill).
 	handle := runtimeHandle(rec.Metadata)
-	if destroyRuntime && handle.ID != "" {
+	if handle.ID != "" {
 		if err := m.runtime.Destroy(ctx, handle); err != nil {
 			m.logger.Warn("save-teardown-all: runtime destroy failed", "sessionID", rec.ID, "error", err)
 		}
@@ -2237,9 +2237,9 @@ func (m *Manager) saveAndTeardownOne(ctx context.Context, rec domain.SessionReco
 // ordinary daemon restart must not turn every live session into a serial
 // stash/remove/recreate cycle before the HTTP listener can bind.
 //
-// The old capture-and-teardown path remains the safety fallback when in-place
-// recovery fails. It records a durable restore marker before removing anything,
-// so RestoreAll can retry without risking uncommitted work.
+// If in-place recovery fails, preserve the live record, worktree, and native
+// conversation identity. A restart-time dependency failure is not user intent
+// to terminate the session; the controller can be retried through Resume Agent.
 func (m *Manager) reconcileLive(ctx context.Context, rec domain.SessionRecord) error {
 	project, err := m.loadProject(ctx, rec.ProjectID)
 	if err != nil {
@@ -2292,14 +2292,22 @@ func (m *Manager) reconcileLive(ctx context.Context, rec domain.SessionRecord) e
 		}
 		restoreErr = relaunchErr
 	}
-	m.logger.Warn("reconcile: in-place relaunch failed; falling back to save-and-teardown", "sessionID", rec.ID, "error", restoreErr)
-	if err := m.saveAndTeardownOne(ctx, rec, false); err != nil {
-		m.logger.Warn("reconcile: save-and-teardown failed; terminating without restore marker", "sessionID", rec.ID, "error", err)
-		if mErr := m.lcm.MarkTerminated(ctx, rec.ID); mErr != nil {
-			return fmt.Errorf("reconcile %s: mark terminated: %w", rec.ID, mErr)
-		}
+	// A provider or runtime dependency can be temporarily unavailable during an
+	// app restart (for example, a GUI-launched daemon may have a sparse PATH).
+	// That is not user intent to terminate the AO session, remove its worktree,
+	// or retire an orchestrator. Preserve the durable session and native resume
+	// identity, but expose the stopped controller as an exited workload so the
+	// existing Resume Agent path can retry it in place.
+	if err := m.lcm.ApplyActivitySignal(ctx, rec.ID, ports.ActivitySignal{
+		Valid:                true,
+		State:                domain.ActivityExited,
+		LaunchID:             rec.Metadata.RuntimeLaunchID,
+		ControllerGeneration: rec.Metadata.ControllerGeneration,
+		ExpectedUpdatedAt:    rec.UpdatedAt,
+	}); err != nil {
+		return fmt.Errorf("reconcile %s: preserve failed relaunch: %w", rec.ID, err)
 	}
-	return nil
+	return fmt.Errorf("reconcile %s: relaunch controller: %w", rec.ID, restoreErr)
 }
 
 func (m *Manager) liveRelaunchCommitted(ctx context.Context, before domain.SessionRecord) (bool, error) {
@@ -2361,7 +2369,8 @@ func (m *Manager) reconcileReap(ctx context.Context, rec domain.SessionRecord) e
 // crash), live reality matches the DB:
 //
 //  1. Live pass: for each non-terminated session, adopt it if its runtime
-//     survived, else capture work and mark terminated (reconcileLive).
+//     survived, else relaunch in place while preserving failed attempts as
+//     recoverable exited sessions (reconcileLive).
 //  2. Reap pass: for each terminated session whose runtime leaked, kill it
 //     (reconcileReap). Runs before restore so a restored session does not
 //     collide with a leaked tmux of the same name.
@@ -2450,7 +2459,17 @@ func (m *Manager) reconcileLivePass(ctx context.Context, recs []domain.SessionRe
 		go func() {
 			defer wg.Done()
 			for rec := range jobs {
-				if err := m.reconcileLive(ctx, rec); err != nil {
+				// Reconciliation replaces a dead controller under the same durable
+				// session. Fence the periodic reaper and user input for the whole
+				// attempt so a slow provider preflight cannot be mistaken for a
+				// confirmed session death halfway through startup.
+				if err := m.beginAgentOperation(ctx, rec.ID, agentOperationReconcile); err != nil {
+					m.logger.Warn("reconcile: session became busy, skipping", "sessionID", rec.ID, "error", err)
+					continue
+				}
+				err := m.reconcileLive(ctx, rec)
+				m.endAgentOperation(rec.ID, agentOperationReconcile)
+				if err != nil {
 					m.logger.Error("reconcile: live pass failed, skipping", "sessionID", rec.ID, "error", err)
 				}
 			}
@@ -2777,7 +2796,7 @@ func (m *Manager) sessionWorktreeRowsToRepoInfos(ctx context.Context, project do
 	return out, nil
 }
 
-func (m *Manager) saveAndTeardownWorkspaceProject(ctx context.Context, rec domain.SessionRecord, rows []ports.WorkspaceRepoInfo, destroyRuntime bool) error {
+func (m *Manager) saveAndTeardownWorkspaceProject(ctx context.Context, rec domain.SessionRecord, rows []ports.WorkspaceRepoInfo) error {
 	for _, row := range rows {
 		ref, err := m.workspace.StashUncommitted(ctx, workspaceInfoFromRepoInfo(row))
 		if err != nil {
@@ -2803,7 +2822,7 @@ func (m *Manager) saveAndTeardownWorkspaceProject(ctx context.Context, rec domai
 		return fmt.Errorf("save %s: mark terminated: %w", rec.ID, err)
 	}
 	handle := runtimeHandle(rec.Metadata)
-	if destroyRuntime && handle.ID != "" {
+	if handle.ID != "" {
 		if err := m.runtime.Destroy(ctx, handle); err != nil {
 			m.logger.Warn("save-teardown-all: runtime destroy failed", "sessionID", rec.ID, "error", err)
 		}

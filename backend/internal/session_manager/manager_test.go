@@ -205,6 +205,22 @@ func (l *fakeLCM) MarkChatSpawned(
 	return l.MarkSpawned(ctx, id, metadata)
 }
 
+func (l *fakeLCM) ApplyActivitySignal(_ context.Context, id domain.SessionID, signal ports.ActivitySignal) error {
+	rec, ok := l.store.sessions[id]
+	if !ok {
+		return ports.ErrSessionNotFound
+	}
+	if rec.IsTerminated || !signal.Valid {
+		return nil
+	}
+	if !signal.ExpectedUpdatedAt.IsZero() && !rec.UpdatedAt.Equal(signal.ExpectedUpdatedAt) {
+		return nil
+	}
+	rec.Activity = domain.Activity{State: signal.State, LastActivityAt: time.Now()}
+	l.store.sessions[id] = rec
+	return nil
+}
+
 func (l *fakeLCM) CommitControllerEpoch(
 	_ context.Context,
 	id domain.SessionID,
@@ -5585,7 +5601,7 @@ func TestSaveAndTeardownOne_NativeTerminationFailurePreservesWorkspace(t *testin
 	}
 	st.sessions[rec.ID] = rec
 
-	err := m.saveAndTeardownOne(ctx, rec, true)
+	err := m.saveAndTeardownOne(ctx, rec)
 	if err == nil || !strings.Contains(err.Error(), "prime stop failed") {
 		t.Fatalf("err=%v, want native termination error", err)
 	}
@@ -5612,7 +5628,7 @@ func TestSaveAndTeardownOne_UnknownHarnessSkipsNativeTerminationAndTearsDown(t *
 	}
 	st.sessions[rec.ID] = rec
 
-	if err := m.saveAndTeardownOne(ctx, rec, true); err != nil {
+	if err := m.saveAndTeardownOne(ctx, rec); err != nil {
 		t.Fatalf("saveAndTeardownOne err = %v", err)
 	}
 	if rt.destroyed != 1 || !st.sessions[rec.ID].IsTerminated {
@@ -5636,7 +5652,7 @@ func TestSaveAndTeardownOne_WorkspaceProjectNativeTerminationFailurePreservesRep
 	ws.stashRef = "refs/ao/preserved/mer-1"
 	rec := seedNativeWorkspaceProject(st, "mer-1", domain.KindWorker)
 
-	err := m.saveAndTeardownOne(ctx, rec, true)
+	err := m.saveAndTeardownOne(ctx, rec)
 	if err == nil || !strings.Contains(err.Error(), "prime stop failed") {
 		t.Fatalf("err=%v, want native termination error", err)
 	}
@@ -5659,7 +5675,7 @@ func TestSaveAndTeardownOne_WorkspaceProjectTerminatesNativeSessionOnce(t *testi
 	m.agents = singleAgent{agent: agent}
 	rec := seedNativeWorkspaceProject(st, "mer-1", domain.KindWorker)
 
-	if err := m.saveAndTeardownOne(ctx, rec, true); err != nil {
+	if err := m.saveAndTeardownOne(ctx, rec); err != nil {
 		t.Fatalf("saveAndTeardownOne err = %v", err)
 	}
 	if agent.calls != 1 {
@@ -7314,7 +7330,7 @@ func TestReconcileLive_PreservesScopedShellTerminalsWithExistingWorktree(t *test
 	}
 }
 
-func TestReconcileLive_RelaunchFailureFallsBackToCapturedTeardown(t *testing.T) {
+func TestReconcileLive_RelaunchFailureLeavesSessionExitedAndRecoverable(t *testing.T) {
 	st := newFakeStore()
 	st.projects["p1"] = domain.ProjectRecord{ID: "p1", Config: testRoleAgents()}
 	rt := &fakeRuntime{aliveByHandle: map[string]bool{}}
@@ -7336,24 +7352,23 @@ func TestReconcileLive_RelaunchFailureFallsBackToCapturedTeardown(t *testing.T) 
 	}
 	st.sessions[rec.ID] = rec
 
-	if err := m.reconcileLive(context.Background(), rec); err != nil {
-		t.Fatalf("reconcileLive: %v", err)
+	if err := m.reconcileLive(context.Background(), rec); err == nil || !strings.Contains(err.Error(), "worktree cannot be reattached") {
+		t.Fatalf("reconcileLive error = %v, want relaunch failure", err)
 	}
-	if ws.stashCalls != 1 || lcm.terminated[rec.ID] != 1 {
-		t.Fatalf("fallback must capture and terminate: stash=%d terminated=%d", ws.stashCalls, lcm.terminated[rec.ID])
+	got := st.sessions[rec.ID]
+	if got.IsTerminated || got.Activity.State != domain.ActivityExited {
+		t.Fatalf("failed relaunch session = %+v, want live/exited", got)
 	}
-	rows := st.worktrees[rec.ID]
-	if len(rows) != 1 || rows[0].PreservedRef != ws.stashRef {
-		t.Fatalf("fallback restore marker = %+v, want preserve ref %q", rows, ws.stashRef)
+	if ws.stashCalls != 0 || lcm.terminated[rec.ID] != 0 {
+		t.Fatalf("failed relaunch changed durable lifecycle: stash=%d terminated=%d", ws.stashCalls, lcm.terminated[rec.ID])
 	}
-	foundForceDestroy := false
 	for _, call := range ws.calls {
 		if call == "ForceDestroy:s1" {
-			foundForceDestroy = true
+			t.Fatalf("failed relaunch destroyed recoverable worktree; calls=%v", ws.calls)
 		}
 	}
-	if !foundForceDestroy {
-		t.Fatalf("fallback must remove the captured worktree; calls=%v", ws.calls)
+	if rows := st.worktrees[rec.ID]; len(rows) != 0 {
+		t.Fatalf("failed relaunch wrote shutdown restore markers: %+v", rows)
 	}
 }
 
@@ -7455,9 +7470,19 @@ func TestReconcile_LivePassUsesConfiguredConcurrency(t *testing.T) {
 			t.Fatalf("live probes did not overlap; entered = %v", seen)
 		}
 	}
+	for id := range seen {
+		if !m.SessionMutationInProgress(id) {
+			t.Fatalf("session %s was not lifecycle-fenced during startup reconcile", id)
+		}
+	}
 	releaseAll()
 	if err := <-done; err != nil {
 		t.Fatalf("Reconcile: %v", err)
+	}
+	for id := range seen {
+		if m.SessionMutationInProgress(id) {
+			t.Fatalf("session %s reconcile fence leaked after completion", id)
+		}
 	}
 }
 

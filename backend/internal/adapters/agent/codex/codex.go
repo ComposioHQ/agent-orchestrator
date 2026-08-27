@@ -372,7 +372,7 @@ func ResolveCodexBinary(ctx context.Context) (string, error) {
 	}
 
 	if path, err := exec.LookPath("codex"); err == nil && path != "" {
-		return path, nil
+		return resolveNativeUnixCodex(path), nil
 	}
 
 	candidates := []string{
@@ -396,7 +396,7 @@ func ResolveCodexBinary(ctx context.Context) (string, error) {
 
 	for _, candidate := range candidates {
 		if fileExists(candidate) {
-			return candidate, nil
+			return resolveNativeUnixCodex(candidate), nil
 		}
 		if err := ctx.Err(); err != nil {
 			return "", err
@@ -404,6 +404,38 @@ func ResolveCodexBinary(ctx context.Context) (string, error) {
 	}
 
 	return "", fmt.Errorf("codex: %w", ports.ErrAgentBinaryNotFound)
+}
+
+// resolveNativeUnixCodex replaces the npm JavaScript launcher with the native
+// executable shipped in the same package when it is available. Finder-launched
+// desktop processes can inherit a PATH without the npm install's Node runtime;
+// executing the absolute JavaScript launcher then still fails in /usr/bin/env
+// with exit 127. The native binary is the same payload that launcher selects,
+// and mirrors the existing Windows shim resolution above.
+func resolveNativeUnixCodex(path string) string {
+	if runtime.GOOS == "windows" {
+		return path
+	}
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil || filepath.Base(resolved) != "codex.js" || filepath.Base(filepath.Dir(resolved)) != "bin" {
+		return path
+	}
+	packageRoot := filepath.Dir(filepath.Dir(resolved))
+	arch := runtime.GOARCH
+	if arch == "amd64" {
+		arch = "x64"
+	}
+	packageDir := filepath.Join(packageRoot, "node_modules", "@openai", "codex-"+runtime.GOOS+"-"+arch)
+	candidates, err := filepath.Glob(filepath.Join(packageDir, "vendor", "*", "bin", "codex"))
+	if err != nil {
+		return path
+	}
+	for _, candidate := range candidates {
+		if fileExists(candidate) {
+			return candidate
+		}
+	}
+	return path
 }
 
 func resolveNativeWindowsCodex(path string) string {

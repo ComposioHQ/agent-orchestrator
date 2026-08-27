@@ -3,6 +3,7 @@ package sessionmanager
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -173,6 +174,82 @@ func TestReconcileLive_ChatRelaunchesInExistingWorktree(t *testing.T) {
 	}
 	if len(ws.restoreConfigs) != 1 || ws.restoreConfigs[0].Path != rec.Metadata.WorkspacePath {
 		t.Fatalf("Restore configs = %+v, want existing Chat worktree", ws.restoreConfigs)
+	}
+}
+
+func TestReconcileLive_ChatCompatibilityFailureLeavesNativeResumeRecoverable(t *testing.T) {
+	launcher := &recordingLauncher{startErr: fmt.Errorf("read Codex version: exit status 127: %w", ports.ErrChatDriverIncompatible)}
+	m, st, rt := newChatManager(launcher)
+	ws := m.workspace.(*fakeWorkspace)
+	lcm := m.lcm.(*fakeLCM)
+	rec := domain.SessionRecord{
+		ID: "mer-1", ProjectID: chatTestProject, Kind: domain.KindWorker,
+		Harness: domain.HarnessCodex, Mode: domain.SessionModeChat,
+		Activity: domain.Activity{State: domain.ActivityActive},
+		Metadata: domain.SessionMetadata{
+			Branch: "ao/mer-1/root", WorkspacePath: "/ws/mer-1",
+			ProviderConversationID: "01a03c61-23a9-7111-95e9-2bacb04eb064",
+		},
+	}
+	st.sessions[rec.ID] = rec
+
+	err := m.reconcileLive(context.Background(), rec)
+	if !errors.Is(err, ports.ErrChatDriverIncompatible) {
+		t.Fatalf("reconcileLive error = %v, want ErrChatDriverIncompatible", err)
+	}
+	got := st.sessions[rec.ID]
+	if got.IsTerminated || got.Activity.State != domain.ActivityExited {
+		t.Fatalf("failed Chat resume = %+v, want live/exited", got)
+	}
+	if got.Metadata.ProviderConversationID != rec.Metadata.ProviderConversationID {
+		t.Fatalf("provider conversation id = %q, want preserved %q", got.Metadata.ProviderConversationID, rec.Metadata.ProviderConversationID)
+	}
+	if rt.created != 0 || rt.destroyed != 0 || ws.stashCalls != 0 || lcm.terminated[rec.ID] != 0 {
+		t.Fatalf("failed Chat resume tore down state: runtime=(%d,%d) stash=%d terminated=%d",
+			rt.created, rt.destroyed, ws.stashCalls, lcm.terminated[rec.ID])
+	}
+
+	launcher.startErr = nil
+	if _, err := m.ResumeAgentWithMode(context.Background(), rec.ID); err != nil {
+		t.Fatalf("ResumeAgentWithMode after dependency recovery: %v", err)
+	}
+}
+
+func TestRestoreTerminatedChatOrchestratorAfterCompatibilityRecoveryKeepsIdentity(t *testing.T) {
+	launcher := &recordingLauncher{startErr: fmt.Errorf("read Codex version: exit status 127: %w", ports.ErrChatDriverIncompatible)}
+	m, st, rt := newChatManager(launcher)
+	rec := domain.SessionRecord{
+		ID: "mer-176", ProjectID: chatTestProject, Kind: domain.KindOrchestrator,
+		Harness: domain.HarnessCodex, Mode: domain.SessionModeChat,
+		IsTerminated: true, Activity: domain.Activity{State: domain.ActivityExited},
+		Metadata: domain.SessionMetadata{
+			Branch: "main", WorkspacePath: "/ws/mer-176",
+			ProviderConversationID: "01a03c61-23a9-7111-95e9-2bacb04eb064",
+		},
+	}
+	st.sessions[rec.ID] = rec
+
+	if _, err := m.RestoreWithMode(context.Background(), rec.ID); !errors.Is(err, ports.ErrChatDriverIncompatible) {
+		t.Fatalf("first RestoreWithMode error = %v, want ErrChatDriverIncompatible", err)
+	}
+	afterFailure := st.sessions[rec.ID]
+	if !afterFailure.IsTerminated || afterFailure.Metadata.ProviderConversationID != rec.Metadata.ProviderConversationID ||
+		afterFailure.Metadata.WorkspacePath != rec.Metadata.WorkspacePath {
+		t.Fatalf("failed restore changed recoverable orchestrator: %+v", afterFailure)
+	}
+
+	launcher.startErr = nil
+	result, err := m.RestoreWithMode(context.Background(), rec.ID)
+	if err != nil {
+		t.Fatalf("RestoreWithMode after dependency recovery: %v", err)
+	}
+	if result.Session.ID != rec.ID || result.Session.IsTerminated || result.Mode != RestoreModeNative {
+		t.Fatalf("restored orchestrator = %+v mode=%q, want original live session with native resume", result.Session, result.Mode)
+	}
+	resumed := launcher.started[len(launcher.started)-1]
+	if resumed.ProviderConversationID != rec.Metadata.ProviderConversationID || rt.created != 0 {
+		t.Fatalf("restore continuity = provider %q runtime creates %d, want %q and no terminal runtime",
+			resumed.ProviderConversationID, rt.created, rec.Metadata.ProviderConversationID)
 	}
 }
 
