@@ -391,7 +391,8 @@ func TestHooks_UserPromptSubmitReportsOnlyMainUserCheckpoint(t *testing.T) {
 	if err := json.Unmarshal([]byte(capture.body), &req); err != nil {
 		t.Fatal(err)
 	}
-	if req.LatestUserPrompt != "finish the regression test" || req.LatestAssistantUpdate != "" {
+	if req.LatestUserPrompt != "finish the regression test" || req.LatestAssistantUpdate != "" ||
+		req.ConversationCheckpointOrigin != domain.ConversationCheckpointOriginHuman {
 		t.Fatalf("conversation facts = %#v", req)
 	}
 }
@@ -464,7 +465,8 @@ func TestHooks_InternalContinuationStopCannotReportConversationCheckpoint(t *tes
 	if err := json.Unmarshal([]byte(capture.body), &req); err != nil {
 		t.Fatal(err)
 	}
-	if req.LatestUserPrompt != "" || req.LatestAssistantUpdate != "" {
+	if req.LatestUserPrompt != "" || req.LatestAssistantUpdate != "" ||
+		req.ConversationCheckpointOrigin != domain.ConversationCheckpointOriginCoordination {
 		t.Fatalf("internal continuation escaped onto the completed checkpoint: %#v", req)
 	}
 }

@@ -478,6 +478,9 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 	s.TranscriptPath = strings.TrimSpace(s.TranscriptPath)
 	s.LaunchID = strings.TrimSpace(s.LaunchID)
 	s.ControllerGeneration = strings.TrimSpace(s.ControllerGeneration)
+	if !s.ConversationCheckpointOrigin.Valid() {
+		s.ConversationCheckpointOrigin = domain.ConversationCheckpointOriginUnknown
+	}
 	// The hook event is the provenance boundary for provider text. Native hook
 	// payloads repeat similarly named aliases on tool, lifecycle, and subagent
 	// events, so accepting a field merely because it is non-empty can promote an
@@ -618,23 +621,42 @@ retryProjection:
 	}
 	switch s.Event {
 	case "user-prompt-submit":
-		checkpoint.LatestUserPrompt = s.LatestUserPrompt
-		checkpoint.LatestUserPromptAt = timeOr(s.Timestamp, now)
-		checkpoint.LatestAssistantUpdate = ""
-		checkpoint.ConversationCheckpointGeneration = ""
-		checkpoint.ConversationCheckpointNativeID = ""
-		if ownerGeneration != "" && checkpointNativeID != "" {
-			checkpoint.ConversationCheckpointState = domain.ConversationCheckpointPrompt
+		if s.ConversationCheckpointOrigin == domain.ConversationCheckpointOriginCoordination {
+			// Preserve the last real human facts and their timestamp, but durably
+			// mark this owner turn as coordination so a promptless Stop cannot
+			// promote its response. Chat replay excludes this state entirely.
+			checkpoint.ConversationCheckpointState = domain.ConversationCheckpointCoordination
 			checkpoint.ConversationCheckpointGeneration = ownerGeneration
 			checkpoint.ConversationCheckpointNativeID = checkpointNativeID
 		} else {
-			// An unowned event is retained conservatively for an ordinary strict
-			// switch, but explicit provider-history recovery may identify it as
-			// untrusted. It must not be upgraded by a later Stop.
-			checkpoint.ConversationCheckpointState = domain.ConversationCheckpointLegacy
+			checkpoint.LatestUserPrompt = s.LatestUserPrompt
+			checkpoint.LatestUserPromptAt = timeOr(s.Timestamp, now)
+			checkpoint.LatestAssistantUpdate = ""
+			checkpoint.ConversationCheckpointGeneration = ""
+			checkpoint.ConversationCheckpointNativeID = ""
+			if ownerGeneration != "" && checkpointNativeID != "" {
+				checkpoint.ConversationCheckpointState = domain.ConversationCheckpointPrompt
+				checkpoint.ConversationCheckpointGeneration = ownerGeneration
+				checkpoint.ConversationCheckpointNativeID = checkpointNativeID
+			} else {
+				// An unowned event is retained conservatively for an ordinary strict
+				// switch, but explicit provider-history recovery may identify it as
+				// untrusted. It must not be upgraded by a later Stop.
+				checkpoint.ConversationCheckpointState = domain.ConversationCheckpointLegacy
+			}
 		}
 	case "stop":
-		if checkpoint.ConversationCheckpointState == domain.ConversationCheckpointPrompt &&
+		coordinationStop := s.ConversationCheckpointOrigin == domain.ConversationCheckpointOriginCoordination ||
+			(checkpoint.ConversationCheckpointState == domain.ConversationCheckpointCoordination &&
+				ownerGeneration != "" && checkpointNativeID != "" &&
+				checkpoint.ConversationCheckpointGeneration == ownerGeneration &&
+				checkpoint.ConversationCheckpointNativeID == checkpointNativeID)
+		if coordinationStop {
+			s.LatestAssistantUpdate = ""
+			checkpoint.ConversationCheckpointState = domain.ConversationCheckpointCoordination
+			checkpoint.ConversationCheckpointGeneration = ownerGeneration
+			checkpoint.ConversationCheckpointNativeID = checkpointNativeID
+		} else if checkpoint.ConversationCheckpointState == domain.ConversationCheckpointPrompt &&
 			ownerGeneration != "" && checkpointNativeID != "" &&
 			checkpoint.ConversationCheckpointGeneration == ownerGeneration &&
 			checkpoint.ConversationCheckpointNativeID == checkpointNativeID {

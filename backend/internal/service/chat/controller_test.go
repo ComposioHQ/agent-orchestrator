@@ -1535,6 +1535,42 @@ func TestInterfaceHandoffExplicitProviderHistoryIgnoresOnlyLegacyText(t *testing
 	}
 }
 
+func TestInterfaceHandoffStrictReplayExcludesCoordinationCheckpoint(t *testing.T) {
+	st := openStore(t)
+	rec, found, err := st.GetSession(context.Background(), testSession)
+	if err != nil || !found {
+		t.Fatalf("load session: found=%v err=%v", found, err)
+	}
+	rec.Metadata.LatestUserPrompt = "last real user direction before AO coordination"
+	rec.Metadata.LatestAssistantUpdate = "AO continuation acknowledged"
+	rec.Metadata.ConversationCheckpointState = domain.ConversationCheckpointCoordination
+	rec.Metadata.ConversationCheckpointGeneration = "terminal-generation"
+	rec.Metadata.ConversationCheckpointNativeID = "thread-1"
+	if err := st.UpdateSession(context.Background(), rec); err != nil {
+		t.Fatalf("seed coordination checkpoint: %v", err)
+	}
+	conv := &nativeHistoryConversation{fakeConversation: newFakeConversation()}
+	svc := chatsvc.New(chatsvc.Options{
+		Store: st, Sessions: st,
+		Drivers: fakeRegistry{driver: fakeDriver{conv: conv}},
+		Log:     slog.New(slog.DiscardHandler),
+		NewID:   func() string { return fmt.Sprintf("coordination-history-%d", time.Now().UnixNano()) },
+	})
+	t.Cleanup(func() { _ = svc.Stop(context.Background(), testSession) })
+
+	ctrl, err := svc.Start(context.Background(), chatsvc.StartConfig{
+		SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex,
+		WorkspacePath: t.TempDir(), ProviderConversationID: "thread-1", RequireNativeHistory: true,
+		HistoryPolicy: domain.SessionInterfaceTransitionHistoryStrict,
+	})
+	if err != nil {
+		t.Fatalf("strict replay enforced AO coordination text: %v", err)
+	}
+	if ctrl == nil {
+		t.Fatal("strict replay returned no controller")
+	}
+}
+
 func TestInterfaceHandoffProviderHistoryCannotWaiveTrustedText(t *testing.T) {
 	st := openStore(t)
 	rec, found, err := st.GetSession(context.Background(), testSession)

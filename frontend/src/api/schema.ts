@@ -2952,6 +2952,11 @@ export interface components {
         SetActivityRequest: {
             /** @description Native agent session identifier used to resume its transcript. */
             agentSessionId?: string;
+            /**
+             * @description Whether the main-turn boundary came from a human or AO coordination.
+             * @enum {string}
+             */
+            conversationCheckpointOrigin?: "human" | "coordination";
             /** @description AO hook sub-command that produced this state (e.g. post-tool-use). */
             event?: string;
             /** @description Latest assistant update exposed by the provider hook. */

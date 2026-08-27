@@ -275,6 +275,10 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 		trusted := trustedProvenance &&
 			rec.Metadata.ConversationCheckpointNativeID == cfg.ProviderConversationID
 		switch {
+		case checkpointState == domain.ConversationCheckpointCoordination:
+			// AO-authored handoff/continuation turns are present in provider
+			// history but are never human replay evidence. The durable state is
+			// what carries this decision across a promptless Stop and restart.
 		case trustedProvenance && !trusted:
 			// A trusted checkpoint belongs to one exact provider-native thread.
 			// Explicit provider-history consent can waive ambiguous legacy text,

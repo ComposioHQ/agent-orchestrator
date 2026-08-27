@@ -7,7 +7,7 @@
 -- provenance.
 ALTER TABLE sessions
 ADD COLUMN conversation_checkpoint_state TEXT NOT NULL DEFAULT 'legacy'
-    CHECK (conversation_checkpoint_state IN ('legacy', 'empty', 'prompt', 'complete'));
+    CHECK (conversation_checkpoint_state IN ('legacy', 'empty', 'coordination', 'prompt', 'complete'));
 ALTER TABLE sessions
 ADD COLUMN conversation_checkpoint_generation TEXT NOT NULL DEFAULT '';
 ALTER TABLE sessions

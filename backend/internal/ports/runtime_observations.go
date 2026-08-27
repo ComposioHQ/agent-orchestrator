@@ -54,6 +54,10 @@ type ActivitySignal struct {
 	// and internal <ao-...> coordination turns are filtered by the hook client.
 	LatestUserPrompt      string
 	LatestAssistantUpdate string
+	// ConversationCheckpointOrigin distinguishes real human turns from AO's
+	// own coordination. Lifecycle persists coordination provenance across the
+	// prompt-submit/Stop boundary; an empty value is an older hook client.
+	ConversationCheckpointOrigin domain.ConversationCheckpointOrigin
 	// TranscriptPath is a read-only provider-native transcript reference when
 	// the hook exposes one. AO stores the path, never rewrites the transcript.
 	TranscriptPath string

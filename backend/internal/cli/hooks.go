@@ -41,16 +41,17 @@ const (
 // native payload when present. All four are optional: an old daemon decodes
 // the body leniently and simply ignores them.
 type setActivityAPIRequest struct {
-	State                 string             `json:"state,omitempty"`
-	Event                 string             `json:"event,omitempty"`
-	ToolName              string             `json:"toolName,omitempty"`
-	ToolUseID             string             `json:"toolUseId,omitempty"`
-	AgentSessionID        string             `json:"agentSessionId,omitempty"`
-	LatestUserPrompt      string             `json:"latestUserPrompt,omitempty"`
-	LatestAssistantUpdate string             `json:"latestAssistantUpdate,omitempty"`
-	TranscriptPath        string             `json:"transcriptPath,omitempty"`
-	LaunchID              string             `json:"launchId,omitempty"`
-	Usage                 *usageHookMetadata `json:"usage,omitempty"`
+	State                        string                              `json:"state,omitempty"`
+	Event                        string                              `json:"event,omitempty"`
+	ToolName                     string                              `json:"toolName,omitempty"`
+	ToolUseID                    string                              `json:"toolUseId,omitempty"`
+	AgentSessionID               string                              `json:"agentSessionId,omitempty"`
+	LatestUserPrompt             string                              `json:"latestUserPrompt,omitempty"`
+	LatestAssistantUpdate        string                              `json:"latestAssistantUpdate,omitempty"`
+	ConversationCheckpointOrigin domain.ConversationCheckpointOrigin `json:"conversationCheckpointOrigin,omitempty"`
+	TranscriptPath               string                              `json:"transcriptPath,omitempty"`
+	LaunchID                     string                              `json:"launchId,omitempty"`
+	Usage                        *usageHookMetadata                  `json:"usage,omitempty"`
 }
 
 type usageHookMetadata struct {
@@ -182,6 +183,7 @@ func hookUsageMetadata(agent string, payload []byte) *usageHookMetadata {
 type hookConversationSnapshot struct {
 	LatestUserPrompt      string
 	LatestAssistantUpdate string
+	CheckpointOrigin      domain.ConversationCheckpointOrigin
 	TranscriptPath        string
 }
 
@@ -198,6 +200,7 @@ func hookConversationFacts(agent domain.AgentHarness, event string, payload []by
 	_ = json.Unmarshal(payload, &p)
 	observedPrompt := firstHookValue(p.Prompt, p.UserPrompt, p.UserPromptCamel)
 	var userPrompt, assistant string
+	origin := domain.ConversationCheckpointOriginUnknown
 	// Conversation checkpoints are trusted only at the main-turn boundaries that
 	// own each fact. Several Claude payloads repeat prompt/assistant aliases on
 	// unrelated events, and SubagentStop uses the same shape as the main Stop.
@@ -207,6 +210,7 @@ func hookConversationFacts(agent domain.AgentHarness, event string, payload []by
 		switch event {
 		case "user-prompt-submit":
 			userPrompt = observedPrompt
+			origin = domain.ConversationCheckpointOriginHuman
 		case "stop":
 			// Claude documents last_assistant_message on Stop. Similar-looking
 			// fields from Codex and other providers do not carry the same main-turn
@@ -222,10 +226,14 @@ func hookConversationFacts(agent domain.AgentHarness, event string, payload []by
 	if isAOCoordinationMessage(observedPrompt) {
 		userPrompt = ""
 		assistant = ""
+		if event == "user-prompt-submit" || event == "stop" {
+			origin = domain.ConversationCheckpointOriginCoordination
+		}
 	}
 	return hookConversationSnapshot{
 		LatestUserPrompt:      capHookText(userPrompt, maxHookInteractionLen),
 		LatestAssistantUpdate: capHookText(assistant, maxHookInteractionLen),
+		CheckpointOrigin:      origin,
 		TranscriptPath:        capHookText(firstHookValue(p.TranscriptPath, p.TranscriptPathCamel), maxHookTranscriptPath),
 	}
 }
@@ -343,15 +351,16 @@ func (c *commandContext) runHook(ctx context.Context, agent, event string) error
 	}
 	path := "sessions/" + url.PathEscape(sessionID) + "/activity"
 	req := setActivityAPIRequest{
-		Event:                 event,
-		ToolName:              toolName,
-		ToolUseID:             toolUseID,
-		AgentSessionID:        agentSessionID,
-		LatestUserPrompt:      conversation.LatestUserPrompt,
-		LatestAssistantUpdate: conversation.LatestAssistantUpdate,
-		TranscriptPath:        conversation.TranscriptPath,
-		LaunchID:              launchID,
-		Usage:                 usage,
+		Event:                        event,
+		ToolName:                     toolName,
+		ToolUseID:                    toolUseID,
+		AgentSessionID:               agentSessionID,
+		LatestUserPrompt:             conversation.LatestUserPrompt,
+		LatestAssistantUpdate:        conversation.LatestAssistantUpdate,
+		ConversationCheckpointOrigin: conversation.CheckpointOrigin,
+		TranscriptPath:               conversation.TranscriptPath,
+		LaunchID:                     launchID,
+		Usage:                        usage,
 	}
 	if hasActivity {
 		req.State = string(state)

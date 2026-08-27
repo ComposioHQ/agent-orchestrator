@@ -1339,6 +1339,52 @@ func TestActivity_MainPromptWithoutTextInvalidatesPriorConversationCheckpoint(t 
 	}
 }
 
+func TestActivity_CoordinationPromptFollowedByPromptlessStopDoesNotAdvanceCheckpoint(t *testing.T) {
+	m, store, _ := newManager()
+	previousPromptAt := time.Unix(122, 0).UTC()
+	coordinationPromptAt := previousPromptAt.Add(time.Minute)
+	rec := working("mer-1")
+	rec.Metadata.RuntimeLaunchID = "terminal-generation"
+	rec.Metadata.AgentSessionID = "native-1"
+	rec.Metadata.AgentSessionIDLaunchID = "terminal-generation"
+	rec.Metadata.LatestUserPrompt = "last real user direction"
+	rec.Metadata.LatestUserPromptAt = previousPromptAt
+	rec.Metadata.LatestAssistantUpdate = "last real assistant update"
+	rec.Metadata.ConversationCheckpointState = domain.ConversationCheckpointComplete
+	rec.Metadata.ConversationCheckpointGeneration = "terminal-generation"
+	rec.Metadata.ConversationCheckpointNativeID = "native-1"
+	store.sessions[rec.ID] = rec
+
+	// The hook client recognizes AO's continuation kickoff and therefore omits
+	// its text. Lifecycle must still carry that ineligible turn boundary across
+	// to the provider's later Stop, which need not echo the prompt.
+	if err := m.ApplyActivitySignal(ctx, rec.ID, ports.ActivitySignal{
+		Valid: true, State: domain.ActivityActive, Event: "user-prompt-submit",
+		LaunchID: "terminal-generation", AgentSessionID: "native-1",
+		Timestamp:                    coordinationPromptAt,
+		ConversationCheckpointOrigin: domain.ConversationCheckpointOriginCoordination,
+	}); err != nil {
+		t.Fatalf("apply coordination prompt boundary: %v", err)
+	}
+	if err := m.ApplyActivitySignal(ctx, rec.ID, ports.ActivitySignal{
+		Valid: true, State: domain.ActivityIdle, Event: "stop",
+		LaunchID: "terminal-generation", AgentSessionID: "native-1",
+		LatestAssistantUpdate: "AO continuation acknowledged",
+		Timestamp:             coordinationPromptAt.Add(time.Second),
+	}); err != nil {
+		t.Fatalf("apply promptless coordination Stop: %v", err)
+	}
+
+	got := store.sessions[rec.ID].Metadata
+	if got.LatestUserPrompt != rec.Metadata.LatestUserPrompt ||
+		!got.LatestUserPromptAt.Equal(previousPromptAt) ||
+		got.LatestAssistantUpdate != rec.Metadata.LatestAssistantUpdate ||
+		got.ConversationCheckpointState != domain.ConversationCheckpointCoordination {
+		t.Fatalf("coordination turn advanced user checkpoint: got %+v, want prior human facts at %s",
+			got, previousPromptAt)
+	}
+}
+
 func TestActivity_StopWithoutCurrentPromptNeverPairsWithPriorTurn(t *testing.T) {
 	m, store, _ := newManager()
 	rec := working("mer-1")

@@ -8530,6 +8530,12 @@ components:
         agentSessionId:
           description: Native agent session identifier used to resume its transcript.
           type: string
+        conversationCheckpointOrigin:
+          description: Whether the main-turn boundary came from a human or AO coordination.
+          enum:
+          - human
+          - coordination
+          type: string
         event:
           description: AO hook sub-command that produced this state (e.g. post-tool-use).
           type: string

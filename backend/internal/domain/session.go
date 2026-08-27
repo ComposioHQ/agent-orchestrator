@@ -32,16 +32,39 @@ type ConversationCheckpointState string
 // Conversation checkpoint states, from unscoped legacy data through a fully
 // observed main-turn boundary.
 const (
-	ConversationCheckpointLegacy   ConversationCheckpointState = "legacy"
-	ConversationCheckpointEmpty    ConversationCheckpointState = "empty"
-	ConversationCheckpointPrompt   ConversationCheckpointState = "prompt"
-	ConversationCheckpointComplete ConversationCheckpointState = "complete"
+	ConversationCheckpointLegacy ConversationCheckpointState = "legacy"
+	ConversationCheckpointEmpty  ConversationCheckpointState = "empty"
+	// ConversationCheckpointCoordination records an AO-authored turn boundary.
+	// It carries across a prompt-submit/Stop pair so provider coordination can
+	// never be promoted into replay evidence, even when Stop omits the prompt.
+	ConversationCheckpointCoordination ConversationCheckpointState = "coordination"
+	ConversationCheckpointPrompt       ConversationCheckpointState = "prompt"
+	ConversationCheckpointComplete     ConversationCheckpointState = "complete"
 )
 
 // Trusted reports whether the checkpoint was collected by the scoped
 // main-turn state machine rather than inherited from pre-provenance storage.
 func (s ConversationCheckpointState) Trusted() bool {
 	return s == ConversationCheckpointPrompt || s == ConversationCheckpointComplete
+}
+
+// ConversationCheckpointOrigin classifies the main-turn boundary reported by
+// a provider hook. Empty preserves compatibility with older hook clients.
+type ConversationCheckpointOrigin string
+
+// Conversation checkpoint origins distinguish compatibility traffic, real
+// human turns, and AO-authored coordination turns.
+const (
+	ConversationCheckpointOriginUnknown      ConversationCheckpointOrigin = ""
+	ConversationCheckpointOriginHuman        ConversationCheckpointOrigin = "human"
+	ConversationCheckpointOriginCoordination ConversationCheckpointOrigin = "coordination"
+)
+
+// Valid reports whether an activity request carries a supported origin.
+func (o ConversationCheckpointOrigin) Valid() bool {
+	return o == ConversationCheckpointOriginUnknown ||
+		o == ConversationCheckpointOriginHuman ||
+		o == ConversationCheckpointOriginCoordination
 }
 
 // SessionMetadata is the typed, off-status metadata for a session: operational
