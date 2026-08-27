@@ -46,6 +46,7 @@ func TestSummaryReaderListCompactUsesOneBatchRead(t *testing.T) {
 			SessionID: "partial", ProcessedTokens: &partialProcessed, Incomplete: true,
 			Cost: domain.UsageCostAggregate{
 				EventCount:                    1,
+				ObservedCostEventCount:        1,
 				KnownInputCount:               1,
 				KnownInputNanos:               30,
 				UnpricedKnownInputNanos:       30,
@@ -98,6 +99,7 @@ func TestSummaryReaderGetPreservesStrongestPartialLowerBoundWithoutDoubleCountin
 				Tokens: testUsageMetrics(100, 20, 80, 25),
 				Cost: domain.UsageCostAggregate{
 					EventCount:               1,
+					ObservedCostEventCount:   1,
 					KnownInputCount:          1,
 					KnownInputNanos:          30,
 					UnpricedKnownInputNanos:  30,
@@ -155,6 +157,41 @@ func TestSummaryReaderGetPreservesStrongestPartialLowerBoundWithoutDoubleCountin
 	}
 	if store.calls != [4]int{0, 1, 1, 1} {
 		t.Fatalf("store calls = %v", store.calls)
+	}
+}
+
+// Break caught: inferred prices were aggregated into the same dollar value as
+// observed prices without preserving the distinction the UI needs to explain
+// that the billing provider has not been confirmed.
+func TestSummaryReaderReportsCostProviderAttributionAtEveryScope(t *testing.T) {
+	observed := completeCostAggregate(1, 100, 20, 10, 70)
+	inferred := completeCostAggregate(1, 200, 40, 20, 140)
+	inferred.ObservedCostEventCount = 0
+	inferred.InferredCostEventCount = 1
+	store := &usageSummaryStoreStub{
+		found:   true,
+		session: domain.SessionRecord{ID: "reverb-12", Harness: domain.HarnessClaudeCode},
+		models: []domain.UsageModelAggregate{
+			{Harness: domain.HarnessClaudeCode, ModelID: "claude-observed", Tokens: testUsageMetrics(1, 0, 1, 1), Cost: observed},
+			{Harness: domain.HarnessClaudeCode, ModelID: "claude-inferred", Tokens: testUsageMetrics(1, 0, 1, 1), Cost: inferred},
+		},
+	}
+
+	got, err := NewSummaryReader(store).Get(context.Background(), "reverb-12")
+	mustNoError(t, err)
+	if got.Totals.EstimatedCost == nil ||
+		got.Totals.EstimatedCost.ProviderAttribution != domain.EstimatedCostProviderAttributionMixed {
+		t.Fatalf("session attribution = %+v, want mixed", got.Totals.EstimatedCost)
+	}
+	if len(got.Harnesses) != 1 || got.Harnesses[0].Totals.EstimatedCost == nil ||
+		got.Harnesses[0].Totals.EstimatedCost.ProviderAttribution != domain.EstimatedCostProviderAttributionMixed {
+		t.Fatalf("harness attribution = %+v, want mixed", got.Harnesses)
+	}
+	models := got.Harnesses[0].Models
+	if len(models) != 2 || models[0].Totals.EstimatedCost == nil || models[1].Totals.EstimatedCost == nil ||
+		models[0].Totals.EstimatedCost.ProviderAttribution != domain.EstimatedCostProviderAttributionObserved ||
+		models[1].Totals.EstimatedCost.ProviderAttribution != domain.EstimatedCostProviderAttributionInferred {
+		t.Fatalf("model attributions = %+v, want observed then inferred", models)
 	}
 }
 
@@ -226,7 +263,8 @@ func TestSummaryReaderGetReturnsUnavailableMetricsWithoutEvents(t *testing.T) {
 func completeCostAggregate(events, total, input, cachedInput, output int64) domain.UsageCostAggregate {
 	return domain.UsageCostAggregate{
 		EventCount: events, PricedEventCount: events, PricedTotalNanos: total,
-		KnownInputCount: events, KnownInputNanos: input,
+		ObservedCostEventCount: events,
+		KnownInputCount:        events, KnownInputNanos: input,
 		KnownCachedInputCount: events, KnownCachedInputNanos: cachedInput,
 		KnownOutputCount: events, KnownOutputNanos: output,
 	}

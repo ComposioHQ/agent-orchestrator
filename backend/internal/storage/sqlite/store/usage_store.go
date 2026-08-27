@@ -783,6 +783,7 @@ func (s *Store) ListCompactSessionUsageAggregates(ctx context.Context, projectID
 			Incomplete:      row.Incomplete != 0,
 			Cost: domain.UsageCostAggregate{
 				EventCount: row.EventCount, PricedEventCount: row.PricedEventCount, PricedTotalNanos: row.PricedTotalNanos,
+				ObservedCostEventCount: row.ObservedCostEventCount, InferredCostEventCount: row.InferredCostEventCount,
 				KnownInputCount: row.KnownInputCount, KnownInputNanos: row.KnownInputNanos,
 				UnpricedKnownInputNanos: row.UnpricedKnownInputNanos,
 				KnownCachedInputCount:   row.KnownCachedInputCount, KnownCachedInputNanos: row.KnownCachedInputNanos,
@@ -962,6 +963,7 @@ func usageAggregateFromGen(row gen.AggregateUsageBySessionHarnessModelRow) domai
 		},
 		Cost: domain.UsageCostAggregate{
 			EventCount: row.EventCount, PricedEventCount: row.PricedEventCount, PricedTotalNanos: row.PricedTotalNanos,
+			ObservedCostEventCount: row.ObservedCostEventCount, InferredCostEventCount: row.InferredCostEventCount,
 			KnownInputCount: row.KnownInputCount, KnownInputNanos: row.KnownInputNanos,
 			UnpricedKnownInputNanos: row.UnpricedKnownInputNanos,
 			KnownCachedInputCount:   row.KnownCachedInputCount, KnownCachedInputNanos: row.KnownCachedInputNanos,

@@ -1040,11 +1040,12 @@ type ListUsageSessionsQuery struct {
 // contextual disclosure; it is never a pricing label or a mathematical
 // qualifier on the presented value.
 type EstimatedCostResponse struct {
-	TotalNanos       int64  `json:"totalNanos" minimum:"0" format:"int64"`
-	InputNanos       *int64 `json:"inputNanos" minimum:"0" format:"int64" description:"Every non-cache-read input charge, cache writes included."`
-	CachedInputNanos *int64 `json:"cachedInputNanos" minimum:"0" format:"int64"`
-	OutputNanos      *int64 `json:"outputNanos" minimum:"0" format:"int64"`
-	Coverage         string `json:"coverage" enum:"complete,partial"`
+	TotalNanos          int64  `json:"totalNanos" minimum:"0" format:"int64"`
+	InputNanos          *int64 `json:"inputNanos" minimum:"0" format:"int64" description:"Every non-cache-read input charge, cache writes included."`
+	CachedInputNanos    *int64 `json:"cachedInputNanos" minimum:"0" format:"int64"`
+	OutputNanos         *int64 `json:"outputNanos" minimum:"0" format:"int64"`
+	Coverage            string `json:"coverage" enum:"complete,partial"`
+	ProviderAttribution string `json:"providerAttribution" enum:"observed,inferred,mixed" description:"Whether contributing billing providers were detected, inferred from model ownership, or both."`
 }
 
 // CompactSessionUsageResponse is one session card's usage summary.

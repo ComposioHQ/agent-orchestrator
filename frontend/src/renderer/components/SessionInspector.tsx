@@ -820,6 +820,11 @@ function UsageCostValue({ cost }: { cost: EstimatedCost | null }) {
 function EstimatedCostInfo({ cost }: { cost: EstimatedCost | null }) {
 	const { t } = useTranslation();
 	const label = t("usage.estimatedCostInfoLabel");
+	const providerInfoKey = cost?.providerAttribution === "inferred"
+		? "usage.estimatedCostInfoInferred"
+		: cost?.providerAttribution === "mixed"
+			? "usage.estimatedCostInfoMixed"
+			: "usage.estimatedCostInfo";
 	return (
 		<Tooltip>
 			<TooltipTrigger asChild>
@@ -834,7 +839,7 @@ function EstimatedCostInfo({ cost }: { cost: EstimatedCost | null }) {
 			{/* Opens upward: the figure it explains sits directly under the heading,
 			    so a downward tooltip covers the very number the reader came for. */}
 			<TooltipContent className="max-w-64 text-left" side="top">
-				<p>{t("usage.estimatedCostInfo")}</p>
+				<p>{t(providerInfoKey)}</p>
 				{cost?.coverage === "partial" ? (
 					<p className="mt-1.5">{t("usage.estimatedCostInfoPartial")}</p>
 				) : null}

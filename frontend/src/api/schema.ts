@@ -2334,6 +2334,11 @@ export interface components {
             inputNanos: null | number;
             /** Format: int64 */
             outputNanos: null | number;
+            /**
+             * @description Whether contributing billing providers were detected, inferred from model ownership, or both.
+             * @enum {string}
+             */
+            providerAttribution: "observed" | "inferred" | "mixed";
             /** Format: int64 */
             totalNanos: number;
         };

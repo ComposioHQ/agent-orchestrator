@@ -50,7 +50,8 @@ func TestUsageAPIListsCompactProjectUsage(t *testing.T) {
 			SessionID: "reverb-12", ProcessedTokens: &processed, Incomplete: true,
 			EstimatedCost: &domain.EstimatedCost{
 				TotalNanos: 420000000, InputNanos: &inputCost,
-				Coverage: domain.EstimatedCostCoveragePartial,
+				Coverage:            domain.EstimatedCostCoveragePartial,
+				ProviderAttribution: domain.EstimatedCostProviderAttributionInferred,
 			},
 		},
 		{SessionID: "unavailable", ProcessedTokens: &unavailableProcessed},
@@ -80,14 +81,15 @@ func TestUsageAPIListsCompactProjectUsage(t *testing.T) {
 		t.Fatalf("response = %+v", got)
 	}
 	var cost struct {
-		TotalNanos       int64  `json:"totalNanos"`
-		InputNanos       *int64 `json:"inputNanos"`
-		CachedInputNanos *int64 `json:"cachedInputNanos"`
-		Coverage         string `json:"coverage"`
+		TotalNanos          int64  `json:"totalNanos"`
+		InputNanos          *int64 `json:"inputNanos"`
+		CachedInputNanos    *int64 `json:"cachedInputNanos"`
+		Coverage            string `json:"coverage"`
+		ProviderAttribution string `json:"providerAttribution"`
 	}
 	mustJSON(t, got.Sessions[0].EstimatedCost, &cost)
 	if cost.TotalNanos != 420000000 || cost.InputNanos == nil || *cost.InputNanos != 300000000 ||
-		cost.CachedInputNanos != nil || cost.Coverage != "partial" {
+		cost.CachedInputNanos != nil || cost.Coverage != "partial" || cost.ProviderAttribution != "inferred" {
 		t.Fatalf("estimated cost = %+v", cost)
 	}
 	if string(got.Sessions[1].EstimatedCost) != "null" {
@@ -110,6 +112,7 @@ func TestUsageAPIShowsDetailedEstimatedCostAndProviderAttribution(t *testing.T) 
 			EstimatedCost: &domain.EstimatedCost{
 				TotalNanos: 135, InputNanos: &input, CachedInputNanos: &zero,
 				OutputNanos: &output, Coverage: domain.EstimatedCostCoveragePartial,
+				ProviderAttribution: domain.EstimatedCostProviderAttributionMixed,
 			},
 		},
 		Harnesses: []domain.HarnessUsageSummary{{
@@ -119,6 +122,7 @@ func TestUsageAPIShowsDetailedEstimatedCostAndProviderAttribution(t *testing.T) 
 				Totals: domain.UsageMetricTotals{EstimatedCost: &domain.EstimatedCost{
 					TotalNanos: 0, InputNanos: &zero, CachedInputNanos: &zero,
 					OutputNanos: &zero, Coverage: domain.EstimatedCostCoverageComplete,
+					ProviderAttribution: domain.EstimatedCostProviderAttributionObserved,
 				}},
 			}},
 		}},
@@ -153,10 +157,11 @@ func TestUsageAPIShowsDetailedEstimatedCostAndProviderAttribution(t *testing.T) 
 			ProcessedTokens     int64 `json:"processedTokens"`
 			CacheReadTokens     int64 `json:"cacheReadTokens"`
 			EstimatedCost       struct {
-				TotalNanos       int64  `json:"totalNanos"`
-				InputNanos       *int64 `json:"inputNanos"`
-				CachedInputNanos *int64 `json:"cachedInputNanos"`
-				Coverage         string `json:"coverage"`
+				TotalNanos          int64  `json:"totalNanos"`
+				InputNanos          *int64 `json:"inputNanos"`
+				CachedInputNanos    *int64 `json:"cachedInputNanos"`
+				Coverage            string `json:"coverage"`
+				ProviderAttribution string `json:"providerAttribution"`
 			} `json:"estimatedCost"`
 		} `json:"totals"`
 		Harnesses []struct {
@@ -165,8 +170,9 @@ func TestUsageAPIShowsDetailedEstimatedCostAndProviderAttribution(t *testing.T) 
 				ModelID    string `json:"modelId"`
 				Totals     struct {
 					EstimatedCost struct {
-						TotalNanos int64  `json:"totalNanos"`
-						Coverage   string `json:"coverage"`
+						TotalNanos          int64  `json:"totalNanos"`
+						Coverage            string `json:"coverage"`
+						ProviderAttribution string `json:"providerAttribution"`
 					} `json:"estimatedCost"`
 				} `json:"totals"`
 			} `json:"models"`
@@ -178,13 +184,15 @@ func TestUsageAPIShowsDetailedEstimatedCostAndProviderAttribution(t *testing.T) 
 		got.Totals.EstimatedCost.InputNanos == nil || *got.Totals.EstimatedCost.InputNanos != 1000 ||
 		got.Totals.EstimatedCost.CachedInputNanos == nil || *got.Totals.EstimatedCost.CachedInputNanos != 0 ||
 		got.Totals.EstimatedCost.Coverage != "partial" ||
+		got.Totals.EstimatedCost.ProviderAttribution != "mixed" ||
 		got.Totals.CachedInputTokens != 400 || got.Totals.UncachedInputTokens != 600 ||
 		got.Totals.OutputTokens != 200 ||
 		got.Totals.ProcessedTokens != 1200 || got.Totals.CacheReadTokens != 400 ||
 		len(got.Harnesses) != 1 || len(got.Harnesses[0].Models) != 1 ||
 		got.Harnesses[0].Models[0].ModelID != "gpt-5.6" ||
 		got.Harnesses[0].Models[0].Totals.EstimatedCost.TotalNanos != 0 ||
-		got.Harnesses[0].Models[0].Totals.EstimatedCost.Coverage != "complete" {
+		got.Harnesses[0].Models[0].Totals.EstimatedCost.Coverage != "complete" ||
+		got.Harnesses[0].Models[0].Totals.EstimatedCost.ProviderAttribution != "observed" {
 		t.Fatalf("response = %+v", got)
 	}
 }

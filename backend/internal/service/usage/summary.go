@@ -193,13 +193,31 @@ func estimatedCost(raw domain.UsageCostAggregate) (*domain.EstimatedCost, error)
 			return nil, nil
 		}
 	}
+	providerAttribution, err := estimatedCostProviderAttribution(raw)
+	if err != nil {
+		return nil, err
+	}
 	return &domain.EstimatedCost{
-		TotalNanos:       total,
-		InputNanos:       knownComponent(raw.EventCount, raw.KnownInputCount, raw.KnownInputNanos),
-		CachedInputNanos: knownComponent(raw.EventCount, raw.KnownCachedInputCount, raw.KnownCachedInputNanos),
-		OutputNanos:      knownComponent(raw.EventCount, raw.KnownOutputCount, raw.KnownOutputNanos),
-		Coverage:         coverage,
+		TotalNanos:          total,
+		InputNanos:          knownComponent(raw.EventCount, raw.KnownInputCount, raw.KnownInputNanos),
+		CachedInputNanos:    knownComponent(raw.EventCount, raw.KnownCachedInputCount, raw.KnownCachedInputNanos),
+		OutputNanos:         knownComponent(raw.EventCount, raw.KnownOutputCount, raw.KnownOutputNanos),
+		Coverage:            coverage,
+		ProviderAttribution: providerAttribution,
 	}, nil
+}
+
+func estimatedCostProviderAttribution(raw domain.UsageCostAggregate) (domain.EstimatedCostProviderAttribution, error) {
+	switch {
+	case raw.ObservedCostEventCount > 0 && raw.InferredCostEventCount > 0:
+		return domain.EstimatedCostProviderAttributionMixed, nil
+	case raw.InferredCostEventCount > 0:
+		return domain.EstimatedCostProviderAttributionInferred, nil
+	case raw.ObservedCostEventCount > 0:
+		return domain.EstimatedCostProviderAttributionObserved, nil
+	default:
+		return "", fmt.Errorf("usage estimated cost has no provider attribution")
+	}
 }
 
 func knownComponent(eventCount, knownCount, value int64) *int64 {
@@ -221,6 +239,8 @@ func mergeUsageCostAggregate(dst *domain.UsageCostAggregate, src domain.UsageCos
 		{"cost event count", &dst.EventCount, src.EventCount},
 		{"priced event count", &dst.PricedEventCount, src.PricedEventCount},
 		{"priced total cost", &dst.PricedTotalNanos, src.PricedTotalNanos},
+		{"observed cost event count", &dst.ObservedCostEventCount, src.ObservedCostEventCount},
+		{"inferred cost event count", &dst.InferredCostEventCount, src.InferredCostEventCount},
 		{"known input count", &dst.KnownInputCount, src.KnownInputCount},
 		{"known input cost", &dst.KnownInputNanos, src.KnownInputNanos},
 		{"unpriced known input cost", &dst.UnpricedKnownInputNanos, src.UnpricedKnownInputNanos},
@@ -247,6 +267,7 @@ func validateUsageCostAggregate(raw domain.UsageCostAggregate) error {
 		value int64
 	}{
 		{"event count", raw.EventCount}, {"priced event count", raw.PricedEventCount}, {"priced total cost", raw.PricedTotalNanos},
+		{"observed cost event count", raw.ObservedCostEventCount}, {"inferred cost event count", raw.InferredCostEventCount},
 		{"known input count", raw.KnownInputCount}, {"known input cost", raw.KnownInputNanos}, {"unpriced known input cost", raw.UnpricedKnownInputNanos},
 		{"known cached input count", raw.KnownCachedInputCount}, {"known cached input cost", raw.KnownCachedInputNanos}, {"unpriced known cached input cost", raw.UnpricedKnownCachedInputNanos},
 		{"known output count", raw.KnownOutputCount}, {"known output cost", raw.KnownOutputNanos}, {"unpriced known output cost", raw.UnpricedKnownOutputNanos},
@@ -257,7 +278,9 @@ func validateUsageCostAggregate(raw domain.UsageCostAggregate) error {
 		}
 	}
 	if raw.PricedEventCount > raw.EventCount || raw.KnownInputCount > raw.EventCount ||
-		raw.KnownCachedInputCount > raw.EventCount || raw.KnownOutputCount > raw.EventCount {
+		raw.KnownCachedInputCount > raw.EventCount || raw.KnownOutputCount > raw.EventCount ||
+		raw.ObservedCostEventCount > raw.EventCount || raw.InferredCostEventCount > raw.EventCount ||
+		raw.InferredCostEventCount > raw.EventCount-raw.ObservedCostEventCount {
 		return fmt.Errorf("usage cost coverage count exceeds event count")
 	}
 	if raw.UnpricedKnownInputNanos > raw.KnownInputNanos ||

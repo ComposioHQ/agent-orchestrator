@@ -1407,7 +1407,7 @@ func TestUsageAggregatesMergeProvidersPerModelAndPreserveCostCoverageFacts(t *te
 		},
 		{
 			ProviderID: domain.UsageProviderOpenAI, BillingProviderID: "zai",
-			BillingProviderSource: domain.UsageBillingProviderObserved,
+			BillingProviderSource: domain.UsageBillingProviderInferred,
 			ModelID:               "shared-model", SourceEventKey: "partial",
 			MeasurementKind: domain.UsageMeasurementNativeReported,
 			Tokens:          canonicalUsageTokens(5, 0, 5, 1),
@@ -1434,6 +1434,7 @@ func TestUsageAggregatesMergeProvidersPerModelAndPreserveCostCoverageFacts(t *te
 	}
 	cost := models[0].Cost
 	if cost.EventCount != 2 || cost.PricedEventCount != 1 || cost.PricedTotalNanos != 100 ||
+		cost.ObservedCostEventCount != 1 || cost.InferredCostEventCount != 1 ||
 		cost.KnownInputCount != 2 || cost.KnownInputNanos != 50 || cost.UnpricedKnownInputNanos != 30 ||
 		cost.KnownCachedInputCount != 1 || cost.KnownCachedInputNanos != 10 ||
 		cost.KnownOutputCount != 2 || cost.KnownOutputNanos != 75 || cost.UnpricedKnownOutputNanos != 5 {
@@ -1449,6 +1450,7 @@ func TestUsageAggregatesMergeProvidersPerModelAndPreserveCostCoverageFacts(t *te
 	// the model row merging into one.
 	compactCost := compact[0].Cost
 	if compactCost.EventCount != 2 || compactCost.PricedEventCount != 1 || compactCost.PricedTotalNanos != 100 ||
+		compactCost.ObservedCostEventCount != 1 || compactCost.InferredCostEventCount != 1 ||
 		compactCost.KnownInputCount != 2 || compactCost.KnownInputNanos != 50 || compactCost.UnpricedKnownInputNanos != 30 ||
 		compactCost.KnownCachedInputCount != 1 || compactCost.KnownOutputNanos != 75 || compactCost.UnpricedKnownOutputNanos != 5 {
 		t.Fatalf("compact cost facts = %+v", compactCost)

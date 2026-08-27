@@ -102,6 +102,7 @@ func estimatedCostResponse(cost *domain.EstimatedCost) *EstimatedCostResponse {
 	return &EstimatedCostResponse{
 		TotalNanos: cost.TotalNanos, InputNanos: cost.InputNanos,
 		CachedInputNanos: cost.CachedInputNanos, OutputNanos: cost.OutputNanos,
-		Coverage: string(cost.Coverage),
+		Coverage:            string(cost.Coverage),
+		ProviderAttribution: string(cost.ProviderAttribution),
 	}
 }

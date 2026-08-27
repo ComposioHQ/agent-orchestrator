@@ -89,7 +89,7 @@ func TestBuild_UsageEstimatedCostIsNamedReusableAndNullable(t *testing.T) {
 	if !ok {
 		t.Fatal("EstimatedCostResponse is not a named schema")
 	}
-	for _, field := range []string{"totalNanos", "inputNanos", "cachedInputNanos", "outputNanos", "coverage"} {
+	for _, field := range []string{"totalNanos", "inputNanos", "cachedInputNanos", "outputNanos", "coverage", "providerAttribution"} {
 		if !slices.Contains(cost.Required, field) {
 			t.Fatalf("EstimatedCostResponse required = %v, missing %s", cost.Required, field)
 		}
@@ -101,6 +101,9 @@ func TestBuild_UsageEstimatedCostIsNamedReusableAndNullable(t *testing.T) {
 	}
 	if want := []string{"complete", "partial"}; !slices.Equal(cost.Properties["coverage"].Enum, want) {
 		t.Fatalf("coverage enum = %v, want %v", cost.Properties["coverage"].Enum, want)
+	}
+	if want := []string{"observed", "inferred", "mixed"}; !slices.Equal(cost.Properties["providerAttribution"].Enum, want) {
+		t.Fatalf("provider attribution enum = %v, want %v", cost.Properties["providerAttribution"].Enum, want)
 	}
 
 	const costRef = "#/components/schemas/EstimatedCostResponse"

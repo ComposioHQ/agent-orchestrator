@@ -577,6 +577,42 @@ func TestLegacyRepairerDoesNotInferOverAnUnidentifiedRoute(t *testing.T) {
 	}
 }
 
+// Break caught: an unidentified hook route erased a useful model-based lower
+// bound even though it supplied no replacement price. Keep the inference until
+// a named route arrives; the UI discloses that the provider is unconfirmed.
+func TestLegacyRepairerKeepsExistingInferenceWhenRouteIsUnidentified(t *testing.T) {
+	ctx := context.Background()
+	dataDir := t.TempDir()
+	store, source, path, now := seedClaudeIngestionSource(t, dataDir, "")
+	mustNoError(t, os.WriteFile(path, []byte(legacyClaudeTranscript("claude-test")), 0o600))
+	snapshot := claudePricingSnapshot(t)
+	ingestSourceFully(ctx, t, NewIngestor(store, IngestorConfig{
+		Clock:   func() time.Time { return now },
+		Pricing: pricing.NewManager(snapshot),
+	}), source.ID)
+	repairer := NewLegacyRepairer(store, pricing.NewManager(snapshot), LegacyRepairerConfig{
+		Clock: func() time.Time { return now.Add(time.Hour) },
+	})
+	mustNoError(t, repairer.Run(ctx))
+	assertLegacyRepair(t, dataDir, source.ID, "anthropic", domain.UsageBillingProviderInferred,
+		795_000, snapshot.ProviderVersion("anthropic"))
+
+	sessionID := sourceSessionID(t, store, source.ID)
+	binding, ok, err := store.GetUsageBinding(ctx, sessionID, domain.HarnessClaudeCode, "claude-root")
+	mustNoError(t, err)
+	if !ok {
+		t.Fatal("usage binding disappeared")
+	}
+	binding.ProviderHint = pricing.UnidentifiedBillingRoute
+	binding.UpdatedAt = now.Add(2 * time.Hour)
+	_, err = store.UpsertUsageBinding(ctx, binding)
+	mustNoError(t, err)
+
+	mustNoError(t, repairer.Run(ctx))
+	assertLegacyRepair(t, dataDir, source.ID, "anthropic", domain.UsageBillingProviderInferred,
+		795_000, snapshot.ProviderVersion("anthropic"))
+}
+
 func seedClaudeIngestionSource(
 	t *testing.T, dataDir, providerHint string,
 ) (*sqlite.Store, domain.UsageSourceRecord, string, time.Time) {

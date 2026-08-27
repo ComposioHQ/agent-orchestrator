@@ -881,6 +881,7 @@ describe("SessionInspector usage", () => {
 			coverage: "complete",
 			inputNanos: 540_000_000,
 			outputNanos: 600_000_000,
+			providerAttribution: "observed",
 			totalNanos: 1_240_000_000,
 		};
 		mockUsage(completeCost, [
@@ -916,6 +917,54 @@ describe("SessionInspector usage", () => {
 		expect(tooltip).not.toHaveTextContent(/could not be priced/);
 	});
 
+	it("explains when the displayed price uses an inferred billing provider", async () => {
+		useUiStore.getState().setDeveloperMode(true);
+		mockUsage({
+			cachedInputNanos: 100_000_000,
+			coverage: "complete",
+			inputNanos: 540_000_000,
+			outputNanos: 600_000_000,
+			providerAttribution: "inferred",
+			totalNanos: 1_240_000_000,
+		});
+
+		renderWithQuery(<SessionInspector session={session([])} />);
+
+		const section = (await screen.findByText("Usage & cost")).closest(
+			"[data-testid='inspector-section']",
+		) as HTMLElement;
+		expect(within(section).getAllByText("$1.24").length).toBeGreaterThan(0);
+
+		await userEvent.hover(within(section).getByRole("button", { name: "About estimated cost" }));
+		const tooltip = await screen.findByRole("tooltip");
+		expect(tooltip).toHaveTextContent(/Billing provider not confirmed/);
+		expect(tooltip).toHaveTextContent(/inferred from the model/);
+		expect(tooltip).toHaveTextContent(/Actual charges may differ/);
+	});
+
+	it("explains when an aggregate mixes detected and inferred providers", async () => {
+		useUiStore.getState().setDeveloperMode(true);
+		mockUsage({
+			cachedInputNanos: 100_000_000,
+			coverage: "complete",
+			inputNanos: 540_000_000,
+			outputNanos: 600_000_000,
+			providerAttribution: "mixed",
+			totalNanos: 1_240_000_000,
+		});
+
+		renderWithQuery(<SessionInspector session={session([])} />);
+		const section = (await screen.findByText("Usage & cost")).closest(
+			"[data-testid='inspector-section']",
+		) as HTMLElement;
+		await userEvent.hover(within(section).getByRole("button", { name: "About estimated cost" }));
+
+		const tooltip = await screen.findByRole("tooltip");
+		expect(tooltip).toHaveTextContent(/Some billing providers were detected/);
+		expect(tooltip).toHaveTextContent(/others inferred from their models/);
+		expect(tooltip).toHaveTextContent(/actual charges may differ/i);
+	});
+
 	it("presents a partial total as a plain value and discloses the gap in words", async () => {
 		useUiStore.getState().setDeveloperMode(true);
 		mockUsage({
@@ -923,6 +972,7 @@ describe("SessionInspector usage", () => {
 			coverage: "partial",
 			inputNanos: 2_000_000,
 			outputNanos: 5_000_000,
+			providerAttribution: "observed",
 			totalNanos: 7_000_000,
 		});
 
@@ -970,6 +1020,7 @@ describe("SessionInspector usage", () => {
 			coverage: "complete",
 			inputNanos: 540_000_000,
 			outputNanos: 600_000_000,
+			providerAttribution: "observed",
 			totalNanos: 1_240_000_000,
 		});
 		const unpriced = tokenTotals(null);

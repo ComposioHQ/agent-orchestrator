@@ -279,22 +279,42 @@ const (
 	EstimatedCostCoveragePartial EstimatedCostCoverage = "partial"
 )
 
+// EstimatedCostProviderAttribution describes whether the billing providers
+// behind an estimate were observed from routing evidence or inferred from the
+// model catalog.
+type EstimatedCostProviderAttribution string
+
+const (
+	// EstimatedCostProviderAttributionObserved means every contributing price
+	// used a billing provider named by routing evidence.
+	EstimatedCostProviderAttributionObserved EstimatedCostProviderAttribution = "observed"
+	// EstimatedCostProviderAttributionInferred means every contributing price
+	// used a billing provider inferred from model ownership.
+	EstimatedCostProviderAttributionInferred EstimatedCostProviderAttribution = "inferred"
+	// EstimatedCostProviderAttributionMixed means the estimate combines prices
+	// from observed and inferred billing providers.
+	EstimatedCostProviderAttributionMixed EstimatedCostProviderAttribution = "mixed"
+)
+
 // EstimatedCost is the user-facing nano-USD estimate for one usage scope.
 // Components remain nullable when only part of that component is known.
 type EstimatedCost struct {
-	TotalNanos       int64
-	InputNanos       *int64
-	CachedInputNanos *int64
-	OutputNanos      *int64
-	Coverage         EstimatedCostCoverage
+	TotalNanos          int64
+	InputNanos          *int64
+	CachedInputNanos    *int64
+	OutputNanos         *int64
+	Coverage            EstimatedCostCoverage
+	ProviderAttribution EstimatedCostProviderAttribution
 }
 
 // UsageCostAggregate contains the independent SQL sums and coverage counts
 // needed to derive a scope estimate without double-counting priced events.
 type UsageCostAggregate struct {
-	EventCount       int64
-	PricedEventCount int64
-	PricedTotalNanos int64
+	EventCount             int64
+	PricedEventCount       int64
+	PricedTotalNanos       int64
+	ObservedCostEventCount int64
+	InferredCostEventCount int64
 
 	KnownInputCount               int64
 	KnownInputNanos               int64

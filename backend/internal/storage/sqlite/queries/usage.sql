@@ -569,6 +569,14 @@ SELECT
     CAST(COUNT(mue.output_tokens) AS INTEGER) AS known_output_token_count,
     CAST(COUNT(mue.estimated_cost_nanos) AS INTEGER) AS priced_event_count,
     CAST(COALESCE(SUM(mue.estimated_cost_nanos), 0) AS INTEGER) AS priced_total_nanos,
+    CAST(COUNT(CASE WHEN mue.billing_provider_source = 'observed' AND (
+        mue.estimated_cost_nanos IS NOT NULL OR mue.input_cost_nanos IS NOT NULL OR
+        mue.cached_input_cost_nanos IS NOT NULL OR mue.output_cost_nanos IS NOT NULL
+    ) THEN 1 END) AS INTEGER) AS observed_cost_event_count,
+    CAST(COUNT(CASE WHEN mue.billing_provider_source = 'inferred' AND (
+        mue.estimated_cost_nanos IS NOT NULL OR mue.input_cost_nanos IS NOT NULL OR
+        mue.cached_input_cost_nanos IS NOT NULL OR mue.output_cost_nanos IS NOT NULL
+    ) THEN 1 END) AS INTEGER) AS inferred_cost_event_count,
     CAST(COUNT(mue.input_cost_nanos) AS INTEGER) AS known_input_count,
     CAST(COALESCE(SUM(mue.input_cost_nanos), 0) AS INTEGER) AS known_input_nanos,
     CAST(COALESCE(SUM(CASE WHEN mue.estimated_cost_nanos IS NULL THEN mue.input_cost_nanos END), 0) AS INTEGER) AS unpriced_known_input_nanos,
@@ -602,6 +610,14 @@ SELECT
     CAST(COUNT(*) AS INTEGER) AS event_count,
     CAST(COUNT(mue.estimated_cost_nanos) AS INTEGER) AS priced_event_count,
     CAST(COALESCE(SUM(mue.estimated_cost_nanos), 0) AS INTEGER) AS priced_total_nanos,
+    CAST(COUNT(CASE WHEN mue.billing_provider_source = 'observed' AND (
+        mue.estimated_cost_nanos IS NOT NULL OR mue.input_cost_nanos IS NOT NULL OR
+        mue.cached_input_cost_nanos IS NOT NULL OR mue.output_cost_nanos IS NOT NULL
+    ) THEN 1 END) AS INTEGER) AS observed_cost_event_count,
+    CAST(COUNT(CASE WHEN mue.billing_provider_source = 'inferred' AND (
+        mue.estimated_cost_nanos IS NOT NULL OR mue.input_cost_nanos IS NOT NULL OR
+        mue.cached_input_cost_nanos IS NOT NULL OR mue.output_cost_nanos IS NOT NULL
+    ) THEN 1 END) AS INTEGER) AS inferred_cost_event_count,
     CAST(COUNT(mue.input_cost_nanos) AS INTEGER) AS known_input_count,
     CAST(COALESCE(SUM(mue.input_cost_nanos), 0) AS INTEGER) AS known_input_nanos,
     CAST(COALESCE(SUM(CASE WHEN mue.estimated_cost_nanos IS NULL THEN mue.input_cost_nanos END), 0) AS INTEGER) AS unpriced_known_input_nanos,

@@ -18,6 +18,7 @@ describe("formatEstimatedCost", () => {
 				coverage,
 				inputNanos: null,
 				outputNanos: null,
+				providerAttribution: "observed",
 				totalNanos,
 			}),
 		).toBe(expected);

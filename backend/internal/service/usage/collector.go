@@ -342,9 +342,11 @@ func (c *Collector) RecordHook(ctx context.Context, sessionID domain.SessionID, 
 	if session.Harness == domain.HarnessCodex && strings.TrimSpace(signal.TranscriptPath) == "" {
 		lastErrorCode = domain.UsageErrorSourceDiscoveryPending
 	}
-	// A binding that already existed without a route, and now has one, owns
-	// history that could never be attributed until this moment.
-	routeResolved := exists && existing.ProviderHint == "" && signal.ProviderHint != ""
+	// A binding that existed without a billable route, and now has one, owns
+	// history whose inferred or unavailable price can be corrected immediately.
+	routeResolved := exists && signal.ProviderHint != "" &&
+		(existing.ProviderHint == "" || existing.ProviderHint == pricing.UnidentifiedBillingRoute) &&
+		existing.ProviderHint != signal.ProviderHint
 	binding, err := c.store.UpsertUsageBinding(ctx, domain.UsageBindingRecord{
 		SessionID:      sessionID,
 		Harness:        session.Harness,

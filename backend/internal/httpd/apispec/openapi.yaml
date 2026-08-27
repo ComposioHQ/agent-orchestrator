@@ -6901,6 +6901,14 @@ components:
           type:
           - "null"
           - integer
+        providerAttribution:
+          description: Whether contributing billing providers were detected, inferred
+            from model ownership, or both.
+          enum:
+          - observed
+          - inferred
+          - mixed
+          type: string
         totalNanos:
           format: int64
           minimum: 0
@@ -6911,6 +6919,7 @@ components:
       - cachedInputNanos
       - outputNanos
       - coverage
+      - providerAttribution
       type: object
     ImportReport:
       properties:
