@@ -1333,6 +1333,9 @@ type MobileStatusResponse struct {
 	// preference order. The phone races them; Host/TailscaleHost below are the
 	// head of each kind, kept for the existing renderer.
 	Endpoints []mobilebridge.Endpoint `json:"endpoints"`
+	// HostID is this machine's stable identity, echoed into the pairing code.
+	// The phone checks every endpoint it races against this value.
+	HostID string `json:"hostId"`
 	// Tunnel is the managed remote-access connector's state, so the desktop can
 	// show progress during the tens of seconds before it is advertisable.
 	Tunnel mobilebridge.TunnelStatus `json:"tunnel"`

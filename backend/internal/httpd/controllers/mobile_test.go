@@ -614,3 +614,25 @@ func TestMobileWorksWithNoTunnelConfigured(t *testing.T) {
 		t.Fatalf("disable: %v", err)
 	}
 }
+
+// The desktop builds the pairing code, and the code must carry the machine's
+// identity so the phone can verify every endpoint it later races. Without it
+// here the renderer would have to make a second call to /api/v1/identity just
+// to draw a QR.
+func TestMobileStatusCarriesTheHostIdentity(t *testing.T) {
+	b := &BridgeService{
+		LAN:                &fakeLAN{running: true},
+		ConfigPath:         filepath.Join(t.TempDir(), "mobile", "config.json"),
+		DefaultPort:        3011,
+		HostID:             "h_b3e07f31",
+		PickLANHosts:       func() []string { return []string{"192.168.1.42"} },
+		PickTailscaleHosts: func() []string { return nil },
+	}
+	if _, err := b.Enable(); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+
+	if got := b.Status().HostID; got != "h_b3e07f31" {
+		t.Fatalf("HostID = %q want h_b3e07f31", got)
+	}
+}

@@ -7663,6 +7663,8 @@ components:
           type: array
         host:
           type: string
+        hostId:
+          type: string
         password:
           type: string
         port:
@@ -7678,6 +7680,7 @@ components:
       required:
       - enabled
       - endpoints
+      - hostId
       - tunnel
       - host
       - tailscaleHost

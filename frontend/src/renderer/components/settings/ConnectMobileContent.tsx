@@ -17,6 +17,12 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../ui/
 const QR_CODE_SIZE = 204;
 const TESTFLIGHT_QR_SIZE = 140;
 
+import {
+	buildPairingOffer,
+	pairingCodeUrl,
+	type PairingEndpoint,
+} from "../../lib/pairing-payload";
+
 export const mobileStatusQueryKey = ["mobile-status"] as const;
 
 // One scan gives the mobile app every value required to connect. Keep the
@@ -25,6 +31,47 @@ export const mobileStatusQueryKey = ["mobile-status"] as const;
 export function pairingPayload(host: string, port: number, password: string, secure?: boolean): string {
 	return JSON.stringify(secure ? { v: 1, host, port, password, secure: true } : { v: 1, host, port, password });
 }
+
+/**
+ * The value encoded into the pairing QR.
+ *
+ * Prefers the v2 deep link, which carries every endpoint the daemon advertises
+ * so the phone can race them, and opens the app straight from the system
+ * camera. The payload rides in the fragment, so the connection token never
+ * reaches a server even when the link is opened in a browser.
+ *
+ * Falls back to the v1 payload when the daemon advertises no endpoints — an
+ * older daemon, or one whose network is not up yet. Showing a dead v2 QR there
+ * would be worse than the pairing that already works.
+ */
+export function qrValueFor(input: {
+	hostId: string;
+	host: string;
+	platform: string;
+	password: string;
+	endpoints: readonly PairingEndpoint[];
+	/** Legacy fallback only: the port and TLS flag of the chosen address. */
+	port?: number;
+	secure?: boolean;
+}): string {
+	if (input.endpoints.length > 0) {
+		return pairingCodeUrl(
+			buildPairingOffer({
+				endpoints: input.endpoints,
+				password: input.password,
+				hostId: input.hostId,
+				name: input.host,
+				platform: input.platform,
+			}),
+			PAIRING_LINK_BASE,
+		);
+	}
+	return pairingPayload(input.host, input.port ?? 3011, input.password, input.secure);
+}
+
+/** Custom scheme rather than the https universal link: it works today, with no
+ * association files to host and no store listing required. */
+const PAIRING_LINK_BASE = "ao://pair";
 
 /** Static junk payload for the blurred placeholder QR — deliberately not a
  *  real pairing payload so a sneaky scan through the blur gets nothing. */
@@ -55,6 +102,22 @@ const STEP_LINK_CLASS =
 
 interface MobileStatus {
 	enabled: boolean;
+	/** This machine's stable identity, echoed into the pairing code so the phone
+	 * can verify the endpoints it races. Optional: a daemon predating the
+	 * endpoint race does not send it, and the QR falls back to the v1 payload. */
+	hostId?: string;
+	/** Every advertised way to reach this daemon, in preference order. Optional
+	 * for the same reason as hostId. */
+	endpoints?: PairingEndpoint[];
+	/** Managed remote-access connector state, for showing progress while the
+	 * tunnel comes up. */
+	tunnel?: {
+		running: boolean;
+		ready: boolean;
+		hostname: string;
+		location: string;
+		lastError: string;
+	};
 	host: string;
 	tailscaleHost: string;
 	port: number;
@@ -226,6 +289,19 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 	if (!status) return null;
 
 	const showRealQR = enabled && activeHost && !secureBlocked;
+	// v2 when the daemon advertises endpoints, v1 otherwise. Computed once so
+	// the rendered QR and its data attribute cannot drift apart.
+	const qrValue = showRealQR
+		? qrValueFor({
+				hostId: status?.hostId ?? "",
+				host: activeHost,
+				platform: "",
+				password: status?.password ?? "",
+				endpoints: status?.endpoints ?? [],
+				port: activePort,
+				secure: secureActive,
+			})
+		: undefined;
 	const secureReasonText = reasonMessage(status.securePairing?.reason ?? "", t);
 
 	return (
@@ -417,8 +493,8 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 									aria-hidden={!showRealQR}
 								>
 									<StyledQRCode
-										value={showRealQR ? pairingPayload(activeHost, activePort, status.password, secureActive) : PLACEHOLDER_QR_VALUE}
-										data-qr-value={showRealQR ? pairingPayload(activeHost, activePort, status.password, secureActive) : undefined}
+										value={qrValue ?? PLACEHOLDER_QR_VALUE}
+										data-qr-value={qrValue}
 										size={QR_CODE_SIZE}
 										className="block size-full p-4 [&_svg]:size-full"
 									/>

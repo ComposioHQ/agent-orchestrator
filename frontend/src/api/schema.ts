@@ -2623,6 +2623,7 @@ export interface components {
             enabled: boolean;
             endpoints: components["schemas"]["MobileEndpoint"][];
             host: string;
+            hostId: string;
             password: string;
             port: number;
             securePairing: components["schemas"]["ControllersSecurePairingStatus"];

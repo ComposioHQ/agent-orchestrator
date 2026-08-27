@@ -130,6 +130,11 @@ type BridgeService struct {
 	QueryTS     func() mobilebridge.TailscaleInfo
 	ServeTarget func() int
 
+	// HostID is this machine's stable identity, echoed into the pairing code so
+	// the phone can verify every endpoint it races against the machine it
+	// actually paired with.
+	HostID string
+
 	// Tunnel is the managed remote-access connector. Nil when remote access is
 	// unavailable — no usable cloudflared, or the feature switched off — in
 	// which case the bridge behaves exactly as the LAN-only version did.
@@ -182,6 +187,7 @@ func (b *BridgeService) Status() MobileStatusResponse {
 			Tunnel:         b.tunnelEndpoint(),
 		}),
 		Tunnel: b.tunnelStatus(),
+		HostID: b.HostID,
 	}
 	// Only surface the password while the bridge is actually enabled. This route
 	// is reachable only on the loopback listener (the LAN listener 404s

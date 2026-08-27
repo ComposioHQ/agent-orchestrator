@@ -38,7 +38,7 @@ vi.mock("../lib/api-client", () => ({
 	apiErrorMessage: () => "failed",
 }));
 
-import { ConnectMobileContent, pairingPayload } from "./settings/ConnectMobileContent";
+import { ConnectMobileContent, pairingPayload, qrValueFor } from "./settings/ConnectMobileContent";
 
 function renderMobileSettings() {
 	const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -237,4 +237,48 @@ test("shows an error message when the secure-pairing toggle fails", async () => 
 	await userEvent.click(secureSwitch);
 
 	await waitFor(() => expect(screen.getByText("failed")).toBeInTheDocument());
+});
+
+// The QR value is the wire contract with the phone. These cover the switch to
+// the v2 code without disturbing the v1 fallback above, which still has to work
+// for phones that have not updated.
+test("emits a v2 deep link carrying every endpoint once the daemon advertises them", () => {
+	const value = qrValueFor({
+		hostId: "h_b3e07f31",
+		host: "192.168.1.42",
+		platform: "darwin",
+		password: "pw",
+		endpoints: [
+			{ kind: "lan", host: "192.168.1.42", port: 3011, secure: false },
+			{ kind: "tunnel", host: "abc.trycloudflare.com", port: 443, secure: true },
+		],
+	});
+
+	expect(value.startsWith("ao://pair#")).toBe(true);
+	const code = value.slice(value.indexOf("#") + 1);
+	const b64 = code.replace(/-/g, "+").replace(/_/g, "/");
+	const decoded = JSON.parse(atob(b64 + "=".repeat((4 - (b64.length % 4)) % 4)));
+	expect(decoded.v).toBe(2);
+	expect(decoded.hostId).toBe("h_b3e07f31");
+	expect(decoded.endpoints).toHaveLength(2);
+});
+
+// The token must never sit in the part of a URL that reaches a server.
+test("keeps the connection token out of everything before the fragment", () => {
+	const value = qrValueFor({
+		hostId: "h_x", host: "192.168.1.42", platform: "darwin", password: "super-secret",
+		endpoints: [{ kind: "lan", host: "192.168.1.42", port: 3011, secure: false }],
+	});
+
+	expect(value.split("#")[0]).not.toContain("super-secret");
+});
+
+// A daemon that has not been updated advertises no endpoints. Falling back to
+// the v1 payload keeps that pairing working instead of showing a dead QR.
+test("falls back to the v1 payload when the daemon advertises no endpoints", () => {
+	const value = qrValueFor({
+		hostId: "", host: "192.168.1.42", platform: "", password: "pw", endpoints: [],
+	});
+
+	expect(JSON.parse(value)).toEqual({ v: 1, host: "192.168.1.42", port: 3011, password: "pw" });
 });
