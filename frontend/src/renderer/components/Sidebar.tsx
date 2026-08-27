@@ -1620,7 +1620,13 @@ function SessionRow({
 	if (isEditing) {
 		return (
 			<SidebarMenuSubItem className={cn(indented && "pl-0.5")}>
-				<div className="relative flex h-8 w-full items-center gap-1.5 rounded-lg py-0 pl-1.5 pr-1">
+				<div
+					className={cn(
+						"relative flex h-8 w-full items-center gap-1.5 rounded-lg py-0 pl-1.5 pr-1",
+						active && "bg-interactive-active text-foreground",
+					)}
+					data-session-row=""
+				>
 					<SessionStatusDot session={session} />
 					<input
 						aria-label={t("shell.renameSession", { title: session.title })}
