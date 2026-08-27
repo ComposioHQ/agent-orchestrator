@@ -1146,6 +1146,11 @@ func (s *Service) Models(ctx context.Context, id domain.SessionID) ([]ports.Chat
 	if !ok {
 		return nil, controller.Settings(), ErrModelsUnsupported
 	}
+	releaseOwnership, err := controller.acquireProjectOwnership(ctx)
+	if err != nil {
+		return nil, controller.Settings(), err
+	}
+	defer releaseOwnership()
 	models, err := lister.ListModels(ctx)
 	if err != nil {
 		return nil, controller.Settings(), err
@@ -1169,6 +1174,11 @@ func (s *Service) ConfigOptions(ctx context.Context, id domain.SessionID) ([]por
 	if !ok {
 		return nil, ErrConfigOptionsUnsupported
 	}
+	releaseOwnership, err := controller.acquireProjectOwnership(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer releaseOwnership()
 	return configurer.ListConfigOptions(ctx)
 }
 
@@ -1200,6 +1210,11 @@ func (s *Service) SetConfigOption(
 	if err := controller.requireNoInterruptPendingLocked(); err != nil {
 		return nil, err
 	}
+	releaseOwnership, err := controller.acquireProjectOwnership(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer releaseOwnership()
 	return configurer.SetConfigOption(ctx, configID, value)
 }
 

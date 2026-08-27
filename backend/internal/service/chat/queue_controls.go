@@ -37,6 +37,11 @@ func (c *Controller) CancelQueuedTurn(ctx context.Context, turnID string) error 
 	if c.interruptPendingLocked() {
 		return fmt.Errorf("%w: %s", ErrTurnNotQueued, turnID)
 	}
+	releaseOwnership, err := c.acquireProjectOwnership(ctx)
+	if err != nil {
+		return err
+	}
+	defer releaseOwnership()
 
 	turn, err := c.store.TurnByID(ctx, turnID)
 	if err != nil {

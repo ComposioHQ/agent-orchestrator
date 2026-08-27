@@ -11,9 +11,11 @@ import type { ServerConfig } from "./config";
 
 const {
 	acknowledgeSessionInterfaceTransitionNotice,
+	cancelQueuedConversationTurn,
 	getConversationPage,
 	getWorkspacePaths,
 	interruptConversation,
+	promoteQueuedConversationTurn,
 } = chatApi;
 
 const cfg: ServerConfig = { host: "ao.test", httpPort: "3011", muxPort: "3011", secure: false, password: "secret12" };
@@ -205,6 +207,33 @@ describe("mobile Chat API boundaries", () => {
 				url: "http://ao.test:3011/api/v1/sessions/w%2F1/conversation/interrupt",
 				method: "POST",
 				body: { queuedTurnIds: [] },
+			},
+		]);
+	});
+
+	it("targets one queued turn for cancel and promote independently", async () => {
+		vi.mocked(fetch)
+			.mockResolvedValueOnce(response(undefined, 204))
+			.mockResolvedValueOnce(response({
+				sourceTurnId: "queued/two",
+				providerTurnId: "running-1",
+				activityId: "steer-1",
+			}, 202));
+
+		await cancelQueuedConversationTurn(cfg, "w/1", "queued/one");
+		await promoteQueuedConversationTurn(cfg, "w/1", "queued/two");
+
+		expect(vi.mocked(fetch).mock.calls.map(([url, init]) => ({
+			url,
+			method: init?.method,
+		}))).toEqual([
+			{
+				url: "http://ao.test:3011/api/v1/sessions/w%2F1/conversation/turns/queued%2Fone/cancel",
+				method: "POST",
+			},
+			{
+				url: "http://ao.test:3011/api/v1/sessions/w%2F1/conversation/turns/queued%2Ftwo/steer",
+				method: "POST",
 			},
 		]);
 	});

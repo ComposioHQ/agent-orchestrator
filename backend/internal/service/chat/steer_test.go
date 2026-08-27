@@ -725,6 +725,41 @@ func TestPromoteQueuedTurnFencesProjectRebindThroughProviderOutcome(t *testing.T
 	}
 }
 
+func TestRetiredProjectControllerCannotPromoteReplacementQueue(t *testing.T) {
+	provider := newSteerRecorder()
+	h := newProjectHarnessWithConversation(t, provider)
+	ctx := context.Background()
+	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "old owner running", ClientMessageID: "old-owner-running",
+		Origin: domain.MessageOriginHuman,
+	}); err != nil {
+		t.Fatalf("start old owner turn: %v", err)
+	}
+	provider.emit(ports.ChatEvent{
+		Kind: ports.ChatEventTurnStarted, ProviderTurnID: "provider-turn-1",
+	})
+	h.awaitSnapshot(t, func(snapshot store.ConversationSnapshot) bool {
+		return turnStateByText(t, snapshot)["old owner running"] == domain.TurnStateRunning
+	})
+
+	const replacementTurnID = "replacement-queued-promotion"
+	rebindProjectConversationAndQueue(t, h, replacementTurnID, "replacement-owned work")
+	_, err := h.svc.PromoteQueuedTurn(ctx, testSession, replacementTurnID)
+	if !errors.Is(err, chatsvc.ErrControllerHandoff) {
+		t.Fatalf("retired PromoteQueuedTurn = %v, want ErrControllerHandoff", err)
+	}
+	if calls := provider.steers(); len(calls) != 0 {
+		t.Fatalf("retired provider received replacement promotion: %+v", calls)
+	}
+	turn, err := h.st.TurnByID(ctx, replacementTurnID)
+	if err != nil {
+		t.Fatalf("load replacement turn: %v", err)
+	}
+	if turn.State != domain.TurnStateQueued {
+		t.Fatalf("replacement turn state = %q, want queued", turn.State)
+	}
+}
+
 // A provider refusal has not delivered anything, so the exact selected message
 // must return to its original queue position instead of being lost or failed.
 func TestPromoteQueuedTurnRefusalRestoresItsQueuePosition(t *testing.T) {

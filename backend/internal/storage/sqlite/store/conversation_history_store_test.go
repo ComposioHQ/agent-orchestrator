@@ -1167,7 +1167,9 @@ func TestDeletingInterruptReservationOwnerSettlesScopeBeforeForeignKeysClearIt(t
 	}
 	created, err := s.AppendUserMessage(ctx, conversation.ID, owner.ID, "dead-generation",
 		domain.ConversationMessage{
-			ID: "owner-delete-message", Text: "confirmed before deletion", Origin: domain.MessageOriginHuman,
+			// A seed rollback can have daemon-owned queue work, but a human prompt is
+			// now an observable session fact and intentionally makes the row immutable.
+			ID: "owner-delete-message", Text: "confirmed before deletion", Origin: domain.MessageOriginDaemon,
 		}, "owner-delete-turn", histClock)
 	if err != nil || !created {
 		t.Fatalf("append owner turn: created=%v err=%v", created, err)

@@ -72,6 +72,25 @@ func TestCancelSelectedQueuedTurnPreservesActiveTurnAndSiblingQueue(t *testing.T
 	}
 }
 
+func TestRetiredProjectControllerCannotCancelReplacementQueue(t *testing.T) {
+	h := newProjectHarnessWithConversation(t, nil)
+	ctx := context.Background()
+	const replacementTurnID = "replacement-queued-cancel"
+	rebindProjectConversationAndQueue(t, h, replacementTurnID, "replacement-owned work")
+
+	err := h.svc.CancelQueuedTurn(ctx, testSession, replacementTurnID)
+	if !errors.Is(err, chatsvc.ErrControllerHandoff) {
+		t.Fatalf("retired CancelQueuedTurn = %v, want ErrControllerHandoff", err)
+	}
+	turn, err := h.st.TurnByID(ctx, replacementTurnID)
+	if err != nil {
+		t.Fatalf("load replacement turn: %v", err)
+	}
+	if turn.State != domain.TurnStateQueued {
+		t.Fatalf("replacement turn state = %q, want queued", turn.State)
+	}
+}
+
 // Stop confirmation is a compare-and-set over the complete durable queue. If
 // anything arrived, disappeared, or changed order while the dialog was open,
 // the provider and every queued row must remain untouched until the user reviews

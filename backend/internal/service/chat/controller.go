@@ -117,6 +117,7 @@ type Store interface {
 	ResolveApproval(ctx context.Context, conversationID, requestID, detailJSON string, now time.Time) error
 	FailPendingApprovals(ctx context.Context, conversationID string, now time.Time) error
 	FailPendingInputs(ctx context.Context, conversationID string, now time.Time) error
+	FailPendingInteractionsForController(ctx context.Context, conversationID string, session domain.SessionID, generation string, now time.Time) (bool, error)
 
 	ProjectProviderEvent(ctx context.Context, conversationID string, session domain.SessionID, generation, providerEventID, method, payloadJSON string, now time.Time, project func(context.Context) error) (bool, error)
 }
@@ -1188,6 +1189,19 @@ func (c *Controller) Settings() domain.ConversationSettings {
 // The row is written first: if that fails, the in-memory copy must not move, or a
 // restart would silently revert a choice the user watched take effect.
 func (c *Controller) SetSettings(ctx context.Context, settings domain.ConversationSettings) error {
+	c.sendMu.Lock()
+	defer c.sendMu.Unlock()
+	if c.handoffActive() {
+		return ErrControllerHandoff
+	}
+	if err := c.requireNoInterruptPendingLocked(); err != nil {
+		return err
+	}
+	releaseOwnership, err := c.acquireProjectOwnership(ctx)
+	if err != nil {
+		return err
+	}
+	defer releaseOwnership()
 	if err := c.store.SetConversationSettings(ctx, c.conversation.ID, settings, c.now()); err != nil {
 		return fmt.Errorf("record conversation settings: %w", err)
 	}
@@ -1265,6 +1279,25 @@ func (c *Controller) requireNoInterruptPendingLocked() error {
 	return nil
 }
 
+// acquireProjectOwnership pins this controller as the current project narrative
+// owner until the caller has completed its provider and durable outcome. Session-
+// scoped conversations have no cross-session owner to fence.
+func (c *Controller) acquireProjectOwnership(ctx context.Context) (func(), error) {
+	if c.conversation.Scope != domain.ConversationScopeProject {
+		return func() {}, nil
+	}
+	release, err := c.store.AcquireProjectConversationDispatch(
+		ctx, c.conversation.ID, c.conversation.ProjectID, c.sessionID,
+	)
+	if errors.Is(err, domain.ErrConversationOwnerChanged) {
+		return nil, fmt.Errorf("%w: %w", ErrControllerHandoff, err)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("verify project conversation owner: %w", err)
+	}
+	return release, nil
+}
+
 // dispatch hands a recorded turn to the provider. Callers must hold sendMu.
 func (c *Controller) dispatch(
 	ctx context.Context,
@@ -1272,18 +1305,11 @@ func (c *Controller) dispatch(
 	msg ports.ChatUserMessage,
 	requestedAt time.Time,
 ) (domain.ConversationTurn, error) {
-	if c.conversation.Scope == domain.ConversationScopeProject {
-		release, err := c.store.AcquireProjectConversationDispatch(
-			ctx, c.conversation.ID, c.conversation.ProjectID, c.sessionID,
-		)
-		if errors.Is(err, domain.ErrConversationOwnerChanged) {
-			return domain.ConversationTurn{}, fmt.Errorf("%w: %w", ErrControllerHandoff, err)
-		}
-		if err != nil {
-			return domain.ConversationTurn{}, fmt.Errorf("verify project conversation owner: %w", err)
-		}
-		defer release()
+	releaseOwnership, err := c.acquireProjectOwnership(ctx)
+	if err != nil {
+		return domain.ConversationTurn{}, err
 	}
+	defer releaseOwnership()
 	// Every dispatch carries the conversation's choices, including one AO makes on
 	// the user's behalf: a queued message draining, or a relay from `ao send`. A
 	// setting that only applied when the user pressed send would silently stop
@@ -1490,6 +1516,11 @@ func (c *Controller) BeginHandoff(
 	if err := c.ArmHandoff(ctx, policy); err != nil {
 		return err
 	}
+	releaseOwnership, err := c.acquireProjectOwnership(ctx)
+	if err != nil {
+		return err
+	}
+	defer releaseOwnership()
 
 	if policy == domain.SessionInterfaceTransitionInterrupt {
 		// Target preflight has succeeded. Settle every accepted queue row while
@@ -1616,6 +1647,11 @@ func (c *Controller) Resolve(ctx context.Context, requestID string, decision por
 	if err := c.requireNoInterruptPendingLocked(); err != nil {
 		return err
 	}
+	releaseOwnership, err := c.acquireProjectOwnership(ctx)
+	if err != nil {
+		return err
+	}
+	defer releaseOwnership()
 	if err := c.conv.ResolveRequest(ctx, requestID, decision); err != nil {
 		return fmt.Errorf("resolve request %s: %w", requestID, err)
 	}
@@ -1647,6 +1683,11 @@ func (c *Controller) ResolveInput(
 	if err := c.requireNoInterruptPendingLocked(); err != nil {
 		return err
 	}
+	releaseOwnership, err := c.acquireProjectOwnership(ctx)
+	if err != nil {
+		return err
+	}
+	defer releaseOwnership()
 	if err := responder.ResolveInput(ctx, requestID, response); err != nil {
 		return fmt.Errorf("resolve input %s: %w", requestID, err)
 	}
@@ -1707,6 +1748,11 @@ func (c *Controller) Compact(ctx context.Context) (ports.ChatCompactionResult, e
 	if err := c.requireNoInterruptPendingLocked(); err != nil {
 		return ports.ChatCompactionResult{}, err
 	}
+	releaseOwnership, err := c.acquireProjectOwnership(ctx)
+	if err != nil {
+		return ports.ChatCompactionResult{}, err
+	}
+	defer releaseOwnership()
 
 	if c.busy() {
 		return ports.ChatCompactionResult{}, ErrCompactionWhileBusy
@@ -1777,6 +1823,12 @@ func (c *Controller) Interrupt(ctx context.Context, expectedQueuedTurnIDs []stri
 		c.sendMu.Unlock()
 		return ErrQueueScopeChanged
 	}
+	releaseOwnership, err := c.acquireProjectOwnership(ctx)
+	if err != nil {
+		c.sendMu.Unlock()
+		return err
+	}
+	defer releaseOwnership()
 	reservationID := c.newID()
 	matched, err := c.store.ReserveQueuedTurnsForInterrupt(
 		ctx, c.conversation.ID, expectedQueuedTurnIDs, reservationID,
@@ -2131,6 +2183,11 @@ func (c *Controller) Rollback(ctx context.Context, turnID string) (int, error) {
 	if err := c.requireNoInterruptPendingLocked(); err != nil {
 		return 0, err
 	}
+	releaseOwnership, err := c.acquireProjectOwnership(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer releaseOwnership()
 
 	if c.busy() {
 		// Not a failure and not permanent: the agent is mid-thought, and the same
@@ -2945,6 +3002,11 @@ func (c *Controller) ReloadMCPServers(ctx context.Context) ([]domain.Conversatio
 	if err := c.requireNoInterruptPendingLocked(); err != nil {
 		return nil, err
 	}
+	releaseOwnership, err := c.acquireProjectOwnership(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer releaseOwnership()
 
 	if c.busy() {
 		return nil, ErrTurnRunning

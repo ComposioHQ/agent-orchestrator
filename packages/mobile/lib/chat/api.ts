@@ -166,6 +166,28 @@ export async function interruptConversation(
 	});
 }
 
+export async function cancelQueuedConversationTurn(
+	cfg: ServerConfig,
+	sessionId: string,
+	turnId: string,
+): Promise<void> {
+	await apiRequest(cfg, conversationPath(
+		sessionId,
+		`/turns/${encodeURIComponent(turnId)}/cancel`,
+	), { method: "POST" });
+}
+
+export async function promoteQueuedConversationTurn(
+	cfg: ServerConfig,
+	sessionId: string,
+	turnId: string,
+): Promise<void> {
+	await apiRequest(cfg, conversationPath(
+		sessionId,
+		`/turns/${encodeURIComponent(turnId)}/steer`,
+	), { method: "POST" });
+}
+
 export async function compactConversation(cfg: ServerConfig, sessionId: string): Promise<void> {
 	await apiRequest(cfg, conversationPath(sessionId, "/compact"), { method: "POST" });
 }

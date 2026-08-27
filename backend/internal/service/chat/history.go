@@ -136,6 +136,11 @@ func (s *Service) ForkConversation(ctx context.Context, id domain.SessionID) (st
 	if !ok {
 		return "", ErrForkUnsupported
 	}
+	releaseOwnership, err := controller.acquireProjectOwnership(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer releaseOwnership()
 	forked, err := forker.Fork(ctx, nil)
 	if err != nil {
 		return "", classify(fmt.Errorf("fork conversation for %s: %w", id, err))
@@ -159,6 +164,11 @@ func (s *Service) EditMessage(
 	if err != nil {
 		return EditMessageResult{}, err
 	}
+	releaseOwnership, err := source.acquireProjectOwnership(ctx)
+	if err != nil {
+		return EditMessageResult{}, err
+	}
+	defer releaseOwnership()
 	forker, canFork := source.conv.(ports.ChatForker)
 	canReplay := supportsApproximateReplay(source.conv)
 	anchor, err := s.store.ConversationEditAnchor(ctx, source.conversation.ID, turnID)
@@ -501,6 +511,11 @@ func (s *Service) ActivateBranch(ctx context.Context, id domain.SessionID, branc
 	if err != nil {
 		return "", err
 	}
+	releaseOwnership, err := source.acquireProjectOwnership(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer releaseOwnership()
 	branch, err := s.store.ConversationBranch(ctx, source.conversation.ID, branchID)
 	if err != nil {
 		return "", err
@@ -638,6 +653,11 @@ func (c *Controller) setTitle(ctx context.Context, title string) error {
 	if err := c.requireNoInterruptPendingLocked(); err != nil {
 		return err
 	}
+	releaseOwnership, err := c.acquireProjectOwnership(ctx)
+	if err != nil {
+		return err
+	}
+	defer releaseOwnership()
 	return renamer.SetTitle(ctx, title)
 }
 

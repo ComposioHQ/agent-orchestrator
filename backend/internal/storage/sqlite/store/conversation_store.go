@@ -2208,6 +2208,53 @@ func (s *Store) FailPendingInputs(ctx context.Context, conversationID string, no
 	return nil
 }
 
+// FailPendingInteractionsForController closes requests only while the named
+// controller still owns their narrative. Project orchestrators share one
+// conversation row across replacements, so conversation id alone is not an
+// ownership proof when an old provider stream ends late.
+func (s *Store) FailPendingInteractionsForController(
+	ctx context.Context,
+	conversationID string,
+	session domain.SessionID,
+	generation string,
+	now time.Time,
+) (bool, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
+	current := false
+	err := s.inTx(ctx, "fail pending interactions for controller", func(q *gen.Queries) error {
+		owner, err := q.GetSession(ctx, session)
+		if err != nil {
+			return fmt.Errorf("read controller generation for %s: %w", session, err)
+		}
+		if owner.ControllerGeneration != generation {
+			return nil
+		}
+		conversation, err := q.SelectConversationByID(ctx, conversationID)
+		if err != nil {
+			return fmt.Errorf("read conversation owner for controller cleanup: %w", err)
+		}
+		if conversation.Scope == domain.ConversationScopeProject &&
+			(conversation.CurrentSessionID == nil || *conversation.CurrentSessionID != session) {
+			return nil
+		}
+		current = true
+		if err := q.FailPendingConversationApprovals(ctx, gen.FailPendingConversationApprovalsParams{
+			UpdatedAt: now, ConversationID: conversationID,
+		}); err != nil {
+			return fmt.Errorf("fail pending approvals for %s: %w", conversationID, err)
+		}
+		if err := q.FailPendingConversationInputs(ctx, gen.FailPendingConversationInputsParams{
+			UpdatedAt: now, ConversationID: conversationID,
+		}); err != nil {
+			return fmt.Errorf("fail pending inputs for %s: %w", conversationID, err)
+		}
+		return nil
+	})
+	return current, err
+}
+
 // ProjectProviderEvent commits a raw provider event and the durable projection
 // derived from it together. A real provider event identity deduplicates the
 // entire unit; an empty identity is deliberately never deduplicated.
@@ -2233,6 +2280,14 @@ func (s *Store) ProjectProviderEvent(
 		return false, fmt.Errorf("read controller generation for %s: %w", session, err)
 	}
 	if owner.ControllerGeneration != generation {
+		return false, nil
+	}
+	conversation, err := q.SelectConversationByID(ctx, conversationID)
+	if err != nil {
+		return false, fmt.Errorf("read conversation owner for provider event: %w", err)
+	}
+	if conversation.Scope == domain.ConversationScopeProject &&
+		(conversation.CurrentSessionID == nil || *conversation.CurrentSessionID != session) {
 		return false, nil
 	}
 	inserted, err := q.InsertConversationProviderEvent(ctx, gen.InsertConversationProviderEventParams{

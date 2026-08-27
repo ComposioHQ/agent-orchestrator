@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppState } from "react-native";
 import type { ServerConfig } from "../config";
 import {
+	cancelQueuedConversationTurn,
 	compactConversation,
 	getConversationConfigOptions,
 	getConversationModels,
@@ -19,6 +20,7 @@ import {
 	stageConversationAttachments,
 	steerConversation,
 	interruptConversation,
+	promoteQueuedConversationTurn,
 	type ConversationPage,
 } from "./api";
 import type { ChatConfigOption, ChatImage, ChatModel, ChatResource, ChatSkill, ConversationSnapshot, TurnSettings } from "./types";
@@ -29,6 +31,7 @@ import { createAsyncValueCache } from "./asyncValueCache";
 import { createRequestGate } from "./requestGate";
 import { runConversationStop } from "./stopAction";
 import { loadTurnOptionCatalog } from "./turnOptionsCatalog";
+import { applyQueuedTurnAction } from "./queuedTurnControls";
 
 const REFRESH_DEBOUNCE_MS = 120;
 const conversationPageCache = createMobileConversationPageCache();
@@ -80,6 +83,8 @@ export type MobileConversation = {
 	discardSend(id: string): void;
 	steer(text: string): Promise<void>;
 	interrupt(queuedTurnIds: string[]): Promise<void>;
+	cancelQueuedTurn(turnId: string): Promise<void>;
+	promoteQueuedTurn(turnId: string): Promise<void>;
 	resolveApproval(requestId: string, decisionId: string): Promise<void>;
 	resolveInput(requestId: string, action: "accept" | "decline" | "cancel", content?: Record<string, unknown>): Promise<void>;
 	compact(): Promise<void>;
@@ -309,6 +314,22 @@ export function useMobileConversation(
 		)),
 		[cfg, refresh, runAction, sessionId],
 	);
+	const cancelQueuedTurn = useCallback(
+		(turnId: string) => applyQueuedTurnAction(
+			turnId,
+			(selected) => requireConfig(cfg, (c) => cancelQueuedConversationTurn(c, sessionId, selected)),
+			refresh,
+		),
+		[cfg, refresh, sessionId],
+	);
+	const promoteQueuedTurn = useCallback(
+		(turnId: string) => applyQueuedTurnAction(
+			turnId,
+			(selected) => requireConfig(cfg, (c) => promoteQueuedConversationTurn(c, sessionId, selected)),
+			refresh,
+		),
+		[cfg, refresh, sessionId],
+	);
 	const resolveApprovalAction = useCallback(
 		(requestId: string, decisionId: string) =>
 			runAction("approval", () => requireConfig(cfg, (c) => resolveApproval(c, sessionId, requestId, decisionId))),
@@ -378,6 +399,8 @@ export function useMobileConversation(
 		discardSend,
 		steer,
 		interrupt,
+		cancelQueuedTurn,
+		promoteQueuedTurn,
 		resolveApproval: resolveApprovalAction,
 		resolveInput: resolveInputAction,
 		compact,

@@ -155,18 +155,11 @@ func (c *Controller) PromoteQueuedTurn(
 	if !ok {
 		return PromoteQueuedTurnResult{}, ErrNoActiveTurn
 	}
-	if c.conversation.Scope == domain.ConversationScopeProject {
-		releaseDispatch, acquireErr := c.store.AcquireProjectConversationDispatch(
-			ctx, c.conversation.ID, c.conversation.ProjectID, c.sessionID,
-		)
-		if errors.Is(acquireErr, domain.ErrConversationOwnerChanged) {
-			return PromoteQueuedTurnResult{}, fmt.Errorf("%w: %w", ErrControllerHandoff, acquireErr)
-		}
-		if acquireErr != nil {
-			return PromoteQueuedTurnResult{}, fmt.Errorf("verify project conversation owner: %w", acquireErr)
-		}
-		defer releaseDispatch()
+	releaseOwnership, err := c.acquireProjectOwnership(ctx)
+	if err != nil {
+		return PromoteQueuedTurnResult{}, err
 	}
+	defer releaseOwnership()
 	queued, err := c.store.ReserveQueuedTurnForPromotion(ctx, c.conversation.ID, turnID, c.now())
 	if err != nil {
 		return PromoteQueuedTurnResult{}, fmt.Errorf("%w: %s: %w", ErrTurnNotQueued, turnID, err)
@@ -270,6 +263,11 @@ func (c *Controller) Steer(ctx context.Context, msg ports.ChatUserMessage) (Stee
 	if err := c.requireNoInterruptPendingLocked(); err != nil {
 		return SteerResult{}, err
 	}
+	releaseOwnership, err := c.acquireProjectOwnership(ctx)
+	if err != nil {
+		return SteerResult{}, err
+	}
+	defer releaseOwnership()
 
 	turn, ok := c.awaitAcknowledgedTurn(ctx)
 	if !ok {

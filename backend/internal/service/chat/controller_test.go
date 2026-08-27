@@ -2202,10 +2202,26 @@ func newHarnessWithConversation(t *testing.T, conv ports.ChatConversation) *harn
 	return newHarnessWithConversationAndStore(t, conv, func(st *sqlite.Store) chatsvc.Store { return st })
 }
 
+func newProjectHarnessWithConversation(t *testing.T, conv ports.ChatConversation) *harness {
+	t.Helper()
+	return newHarnessWithConversationAndStoreKind(
+		t, conv, func(st *sqlite.Store) chatsvc.Store { return st }, domain.KindOrchestrator,
+	)
+}
+
 func newHarnessWithConversationAndStore(
 	t *testing.T,
 	conv ports.ChatConversation,
 	wrapStore func(*sqlite.Store) chatsvc.Store,
+) *harness {
+	return newHarnessWithConversationAndStoreKind(t, conv, wrapStore, "")
+}
+
+func newHarnessWithConversationAndStoreKind(
+	t *testing.T,
+	conv ports.ChatConversation,
+	wrapStore func(*sqlite.Store) chatsvc.Store,
+	kind domain.SessionKind,
 ) *harness {
 	t.Helper()
 	st := openStore(t)
@@ -2250,6 +2266,7 @@ func newHarnessWithConversationAndStore(
 	ctrl, err := svc.Start(context.Background(), chatsvc.StartConfig{
 		SessionID:     testSession,
 		ProjectID:     testProject,
+		Kind:          kind,
 		Harness:       domain.HarnessCodex,
 		WorkspacePath: t.TempDir(),
 	})
@@ -2260,6 +2277,56 @@ func newHarnessWithConversationAndStore(
 
 	h.svc, h.ctrl = svc, ctrl
 	return h
+}
+
+func rebindProjectConversationAndQueue(
+	t *testing.T,
+	h *harness,
+	turnID string,
+	text string,
+) domain.SessionID {
+	t.Helper()
+	ctx := context.Background()
+	now := h.now().Add(time.Minute)
+	replacement, err := h.st.CreateSession(ctx, domain.SessionRecord{
+		ProjectID: testProject,
+		Kind:      domain.KindOrchestrator,
+		Harness:   domain.HarnessCodex,
+		Mode:      domain.SessionModeChat,
+		CreatedAt: now,
+		UpdatedAt: now,
+	})
+	if err != nil {
+		t.Fatalf("create replacement project owner: %v", err)
+	}
+	if _, err := h.st.CreateConversation(
+		ctx, "unused-replacement-conversation", domain.ConversationScopeProject,
+		testProject, replacement.ID, now,
+	); err != nil {
+		t.Fatalf("rebind project conversation: %v", err)
+	}
+	const generation = "replacement-generation"
+	if err := h.st.ClaimChatControllerGeneration(ctx, replacement.ID, generation, now); err != nil {
+		t.Fatalf("claim replacement controller generation: %v", err)
+	}
+	created, err := h.st.AppendUserMessage(
+		ctx, h.ctrl.ConversationID(), replacement.ID, generation,
+		domain.ConversationMessage{
+			ID:              turnID + "-message",
+			Text:            text,
+			Origin:          domain.MessageOriginHuman,
+			ClientMessageID: turnID + "-client",
+		},
+		turnID,
+		now,
+	)
+	if err != nil {
+		t.Fatalf("queue replacement work: %v", err)
+	}
+	if !created {
+		t.Fatal("replacement queue item was not created")
+	}
+	return replacement.ID
 }
 
 // awaitSnapshot polls until pred holds, so a test does not race the projector.
@@ -2307,6 +2374,83 @@ func TestStaleControllerEventsDoNotReachTheTimeline(t *testing.T) {
 	for _, message := range snapshot.Messages {
 		if message.Text == "must not survive" {
 			t.Fatalf("stale controller message was projected: %+v", message)
+		}
+	}
+}
+
+func TestRetiredProjectControllerCannotInterruptReplacementQueue(t *testing.T) {
+	provider := newInterruptRecorder()
+	h := newProjectHarnessWithConversation(t, provider)
+	ctx := context.Background()
+	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "old owner running", ClientMessageID: "old-owner-running-interrupt",
+		Origin: domain.MessageOriginHuman,
+	}); err != nil {
+		t.Fatalf("start old owner turn: %v", err)
+	}
+	provider.markActive("provider-turn-1")
+	provider.emit(ports.ChatEvent{
+		Kind: ports.ChatEventTurnStarted, ProviderTurnID: "provider-turn-1",
+	})
+	h.awaitSnapshot(t, func(snapshot store.ConversationSnapshot) bool {
+		return turnStateByText(t, snapshot)["old owner running"] == domain.TurnStateRunning
+	})
+
+	const replacementTurnID = "replacement-queued-interrupt"
+	rebindProjectConversationAndQueue(t, h, replacementTurnID, "replacement-owned work")
+	err := h.svc.Interrupt(ctx, testSession, []string{replacementTurnID})
+	if !errors.Is(err, chatsvc.ErrControllerHandoff) {
+		t.Fatalf("retired Interrupt = %v, want ErrControllerHandoff", err)
+	}
+	if attempts := provider.attemptCount(); attempts != 0 {
+		t.Fatalf("retired provider interrupt attempts = %d, want 0", attempts)
+	}
+	turn, err := h.st.TurnByID(ctx, replacementTurnID)
+	if err != nil {
+		t.Fatalf("load replacement turn: %v", err)
+	}
+	if turn.State != domain.TurnStateQueued {
+		t.Fatalf("replacement turn state = %q, want queued", turn.State)
+	}
+}
+
+func TestRetiredProjectControllerEventsDoNotReachReplacementNarrative(t *testing.T) {
+	h := newProjectHarnessWithConversation(t, nil)
+	ctx := context.Background()
+	rebindProjectConversationAndQueue(t, h, "replacement-queued-event", "replacement-owned work")
+	if err := h.st.UpsertActivity(ctx, h.ctrl.ConversationID(), "", domain.ConversationActivity{
+		ID:             "replacement-approval",
+		Kind:           domain.ActivityKindApproval,
+		Status:         domain.ActivityStatusPending,
+		Summary:        "Replacement needs approval",
+		RequestID:      "replacement-request",
+		ProviderItemID: "replacement-approval-item",
+	}, h.now().Add(2*time.Minute)); err != nil {
+		t.Fatalf("seed replacement approval: %v", err)
+	}
+
+	h.conv.emit(ports.ChatEvent{
+		Kind:           ports.ChatEventMessageCompleted,
+		ProviderTurnID: "provider-turn-late",
+		ProviderItemID: "provider-item-late",
+		Text:           "late answer from retired provider",
+	})
+	if err := h.svc.Stop(ctx, testSession); err != nil {
+		t.Fatalf("stop retired controller after late event: %v", err)
+	}
+
+	snapshot, err := h.st.LoadConversationSnapshot(ctx, h.ctrl.ConversationID())
+	if err != nil {
+		t.Fatalf("load replacement narrative: %v", err)
+	}
+	for _, message := range snapshot.Messages {
+		if message.Text == "late answer from retired provider" {
+			t.Fatalf("retired provider event reached replacement narrative: %+v", message)
+		}
+	}
+	for _, activity := range snapshot.Activities {
+		if activity.RequestID == "replacement-request" && activity.Status != domain.ActivityStatusPending {
+			t.Fatalf("retired controller cleanup settled replacement approval: %+v", activity)
 		}
 	}
 }
