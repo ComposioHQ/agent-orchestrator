@@ -4006,6 +4006,7 @@ body:has(#root .platform-linux) > .browser-popout-overlay {
 }
 
 .browser-panel__tab {
+	position: relative;
 	display: flex;
 	width: 220px;
 	min-width: 52px;
@@ -4018,6 +4019,27 @@ body:has(#root .platform-linux) > .browser-popout-overlay {
 	border-radius: 7px 7px 0 0;
 	color: var(--fg-muted);
 	background: transparent;
+}
+
+.browser-panel__tab:not(:last-child)::after {
+	position: absolute;
+	top: 8px;
+	right: -2px;
+	width: 1px;
+	height: 16px;
+	background: color-mix(in srgb, var(--color-border) 68%, transparent);
+	content: "";
+	opacity: 0.82;
+	transition: opacity 120ms ease-out;
+}
+
+.browser-panel__tab--active::after,
+.browser-panel__tab:has(+ .browser-panel__tab--active)::after,
+.browser-panel__tab:hover::after,
+.browser-panel__tab:has(+ .browser-panel__tab:hover)::after,
+.browser-panel__tab--dragging::after,
+.browser-panel__tab:has(+ .browser-panel__tab--dragging)::after {
+	opacity: 0;
 }
 
 .browser-panel__tab:hover {

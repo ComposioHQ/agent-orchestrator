@@ -869,7 +869,11 @@ function SortableBrowserTopTab({
 	const closeLabel = t("browser.closeTab", { title: label.title });
 	return (
 		<div
-			className={cn("browser-panel__tab", selected && "browser-panel__tab--active", isDragging && "z-chrome opacity-80")}
+			className={cn(
+				"browser-panel__tab",
+				selected && "browser-panel__tab--active",
+				isDragging && "browser-panel__tab--dragging z-chrome opacity-80",
+			)}
 			ref={setNodeRef}
 			style={{ transform: CSS.Transform.toString(transform), transition }}
 		>
