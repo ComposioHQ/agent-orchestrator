@@ -1321,7 +1321,11 @@ describe("ChatWorkspace message actions", () => {
 		await user.type(editor, "Replace the first prompt exactly.");
 		await user.click(screen.getByRole("button", { name: "Send edited message" }));
 
-		expect(onEditMessage).toHaveBeenCalledWith("turn-1", "Replace the first prompt exactly.");
+		expect(onEditMessage).toHaveBeenCalledWith(
+			"turn-1",
+			"Replace the first prompt exactly.",
+			expect.any(String),
+		);
 	});
 
 	it("uses the server's first eligible prompt after a provider boundary", () => {
