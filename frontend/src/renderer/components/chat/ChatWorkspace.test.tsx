@@ -1851,7 +1851,7 @@ describe("ChatWorkspace reviewer tabs", () => {
 		sessionId: chatSession.id,
 	};
 
-	it("selects the Reviewer tab while keeping the worker Chat available", () => {
+	it("selects Reviewer while keeping the worker mounted but inaccessible", () => {
 		const onSelectChat = vi.fn();
 		render(
 			<ChatWorkspace
@@ -1865,7 +1865,10 @@ describe("ChatWorkspace reviewer tabs", () => {
 		const workerTab = screen.getByRole("tab", { name: "Codex" });
 		expect(workerTab).toHaveAttribute("aria-selected", "false");
 		expect(screen.getByRole("tab", { name: "Reviewer" })).toHaveAttribute("aria-selected", "true");
-		expect(screen.getByTestId("chat-conversation-panel")).toHaveAttribute("hidden");
+		const workerConversation = screen.getByTestId("chat-conversation-panel");
+		expect(workerConversation).toHaveAttribute("hidden");
+		expect(workerConversation).toHaveAttribute("aria-hidden", "true");
+		expect(workerConversation).toHaveAttribute("inert");
 
 		fireEvent.click(workerTab);
 		expect(onSelectChat).toHaveBeenCalledOnce();

@@ -560,7 +560,7 @@ func (e *Engine) RecoverChatReviewers(ctx stdctx.Context) error {
 	}
 	var recoveryErrors []error
 	for _, review := range reviews {
-		if _, restoreErr := e.RestoreReviewer(ctx, review.SessionID); restoreErr != nil {
+		if _, restoreErr := e.restoreRecoverableChatReviewer(ctx, review); restoreErr != nil {
 			_, recordErr := store.RecordReviewChatControllerError(ctx, review.ID, restoreErr.Error(), e.clock())
 			if recordErr != nil {
 				recoveryErrors = append(recoveryErrors, fmt.Errorf("record reviewer %s recovery error: %w", review.ID, recordErr))
@@ -569,6 +569,26 @@ func (e *Engine) RecoverChatReviewers(ctx stdctx.Context) error {
 		}
 	}
 	return errors.Join(recoveryErrors...)
+}
+
+func (e *Engine) restoreRecoverableChatReviewer(ctx stdctx.Context, review domain.Review) (RestoreReviewerResult, error) {
+	unlock := e.lockWorker(review.SessionID)
+	defer unlock()
+	worker, ok, err := e.sessions.GetSession(ctx, review.SessionID)
+	if err != nil {
+		return RestoreReviewerResult{}, err
+	}
+	if !ok {
+		return RestoreReviewerResult{}, fmt.Errorf("%w: worker session %q", ErrNotFound, review.SessionID)
+	}
+	if worker.IsTerminated || worker.Metadata.WorkspacePath == "" {
+		return RestoreReviewerResult{}, nil
+	}
+	runs, err := e.store.ListReviewRunsBySession(ctx, review.SessionID)
+	if err != nil {
+		return RestoreReviewerResult{}, err
+	}
+	return e.restorePersistedReviewerLocked(ctx, worker, review, reviewRunsForReview(runs, review.ID))
 }
 
 func (e *Engine) restoreReviewerLocked(ctx stdctx.Context, workerID domain.SessionID, worker domain.SessionRecord, harness domain.ReviewerHarness) (RestoreReviewerResult, error) {
@@ -591,7 +611,17 @@ func (e *Engine) restoreReviewerLocked(ctx stdctx.Context, workerID domain.Sessi
 	if !hasReview && len(previousRuns) == 0 {
 		return RestoreReviewerResult{}, nil
 	}
-	if hasReview && reviewRow.ReviewerHandleID != "" {
+	if !hasReview {
+		reviewRow, err = e.upsertReview(ctx, worker, harness, "", "", e.clock())
+		if err != nil {
+			return RestoreReviewerResult{}, err
+		}
+	}
+	return e.restorePersistedReviewerLocked(ctx, worker, reviewRow, previousRuns)
+}
+
+func (e *Engine) restorePersistedReviewerLocked(ctx stdctx.Context, worker domain.SessionRecord, reviewRow domain.Review, previousRuns []domain.ReviewRun) (RestoreReviewerResult, error) {
+	if reviewRow.ReviewerHandleID != "" {
 		alive, err := e.launcher.Alive(ctx, reviewRow.ReviewerHandleID)
 		if err != nil {
 			return RestoreReviewerResult{}, err
@@ -600,32 +630,24 @@ func (e *Engine) restoreReviewerLocked(ctx stdctx.Context, workerID domain.Sessi
 			return RestoreReviewerResult{ReviewerHandleID: reviewRow.ReviewerHandleID, Restored: false}, nil
 		}
 	}
-	agentSessionID := ""
-	if hasReview {
-		agentSessionID = reviewRow.AgentSessionID
-	} else {
-		reviewRow, err = e.upsertReview(ctx, worker, harness, "", "", e.clock())
-		if err != nil {
-			return RestoreReviewerResult{}, err
-		}
-	}
 	launch, err := e.launcher.RestoreTerminal(ctx, LaunchSpec{
 		ReviewSessionID:        reviewRow.ID,
 		WorkerID:               worker.ID,
 		ProjectID:              worker.ProjectID,
-		Harness:                harness,
+		Harness:                reviewRow.Harness,
 		WorkspacePath:          worker.Metadata.WorkspacePath,
-		AgentSessionID:         agentSessionID,
+		AgentSessionID:         reviewRow.AgentSessionID,
 		ProviderConversationID: reviewRow.ProviderConversationID,
 		PreviousRuns:           previousRuns,
 	})
 	if err != nil {
 		return RestoreReviewerResult{}, fmt.Errorf("restore reviewer: %w", err)
 	}
+	agentSessionID := reviewRow.AgentSessionID
 	if launch.AgentSessionID != "" {
 		agentSessionID = launch.AgentSessionID
 	}
-	if _, err := e.upsertReview(ctx, worker, harness, launch.HandleID, agentSessionID, e.clock()); err != nil {
+	if _, err := e.upsertReview(ctx, worker, reviewRow.Harness, launch.HandleID, agentSessionID, e.clock()); err != nil {
 		_ = e.launcher.Destroy(ctx, launch.HandleID)
 		return RestoreReviewerResult{}, err
 	}
@@ -677,6 +699,16 @@ func reviewRunsForHarness(runs []domain.ReviewRun, harness domain.ReviewerHarnes
 	out := make([]domain.ReviewRun, 0, len(runs))
 	for _, run := range runs {
 		if run.Harness == harness {
+			out = append(out, run)
+		}
+	}
+	return out
+}
+
+func reviewRunsForReview(runs []domain.ReviewRun, reviewID string) []domain.ReviewRun {
+	out := make([]domain.ReviewRun, 0, len(runs))
+	for _, run := range runs {
+		if run.ReviewID == reviewID {
 			out = append(out, run)
 		}
 	}

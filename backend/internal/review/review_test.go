@@ -18,6 +18,8 @@ import (
 type fakeStore struct {
 	review               *domain.Review
 	reviews              map[domain.ReviewerHarness]domain.Review
+	recoverableReviews   []domain.Review
+	recoveryErrors       map[string]string
 	runs                 []domain.ReviewRun
 	listAllReviewRunHits int
 	// insertErr, when set, makes the next InsertReviewRun model a concurrent
@@ -26,6 +28,18 @@ type fakeStore struct {
 	// insertErr instead of recording the caller's run.
 	insertErr              error
 	insertErrWinnerAtFront bool
+}
+
+func (f *fakeStore) ListRecoverableChatReviews(context.Context) ([]domain.Review, error) {
+	return append([]domain.Review(nil), f.recoverableReviews...), nil
+}
+
+func (f *fakeStore) RecordReviewChatControllerError(_ context.Context, id, message string, _ time.Time) (bool, error) {
+	if f.recoveryErrors == nil {
+		f.recoveryErrors = make(map[string]string)
+	}
+	f.recoveryErrors[id] = message
+	return true, nil
 }
 
 func (f *fakeStore) UpsertReview(_ context.Context, r domain.Review) error {
@@ -268,6 +282,7 @@ type fakeLauncher struct {
 	spawnStarted     chan struct{}
 	unblockSpawn     <-chan struct{}
 	destroyCalled    chan string
+	onRestore        func(LaunchSpec)
 }
 
 type chatSurfaceLauncher struct{ *fakeLauncher }
@@ -296,6 +311,9 @@ func (f *fakeLauncher) RestoreTerminal(_ context.Context, spec LaunchSpec) (Laun
 	f.restored = true
 	f.gotSpec = spec
 	f.specs = append(f.specs, spec)
+	if f.onRestore != nil {
+		f.onRestore(spec)
+	}
 	if f.spawnErr != nil {
 		return LaunchResult{}, f.spawnErr
 	}
@@ -435,6 +453,87 @@ func TestRestoreReviewerRestoresDeadReviewerFromHistory(t *testing.T) {
 	}
 	if store.review.ReviewerHandleID != "review-chat:rev-1" {
 		t.Fatalf("stored reviewer handle = %q", store.review.ReviewerHandleID)
+	}
+}
+
+func TestRecoverChatReviewersRestoresConcreteReviewAfterPreferenceChanges(t *testing.T) {
+	codexReview := domain.Review{
+		ID: "rev-codex", SessionID: "mer-1", ProjectID: "mer",
+		Harness: domain.ReviewerCodex, ReviewerHandleID: "review-chat:rev-codex",
+		InterfaceMode: domain.ReviewerInterfaceChat, ProviderConversationID: "codex-thread",
+	}
+	store := &fakeStore{
+		review:             &codexReview,
+		recoverableReviews: []domain.Review{codexReview},
+		reviews: map[domain.ReviewerHarness]domain.Review{
+			domain.ReviewerCodex: codexReview,
+			domain.ReviewerOpenCode: {
+				ID: "rev-opencode", SessionID: "mer-1", ProjectID: "mer",
+				Harness: domain.ReviewerOpenCode, ReviewerHandleID: "review-chat:rev-opencode",
+				InterfaceMode: domain.ReviewerInterfaceChat, ProviderConversationID: "opencode-thread",
+			},
+		},
+		runs: []domain.ReviewRun{{
+			ID: "run-codex", ReviewID: "rev-codex", SessionID: "mer-1",
+			Harness: domain.ReviewerCodex, Status: domain.ReviewRunRunning,
+		}},
+	}
+	worker := liveWorker()
+	worker.ReviewerHarness = domain.ReviewerOpenCode
+	baseLauncher := &fakeLauncher{handle: "review-chat:rev-codex", agentSessionID: "codex-thread"}
+	launcher := &chatSurfaceLauncher{fakeLauncher: baseLauncher}
+	eng := newEngineForTest(store, fakeSessions{rec: worker, ok: true}, prAt("sha1"), fakeProjects{}, launcher)
+
+	if err := eng.RecoverChatReviewers(context.Background()); err != nil {
+		t.Fatalf("RecoverChatReviewers: %v", err)
+	}
+	if !launcher.restored {
+		t.Fatal("expected the recoverable reviewer to be restored")
+	}
+	if launcher.gotSpec.ReviewSessionID != "rev-codex" || launcher.gotSpec.Harness != domain.ReviewerCodex || launcher.gotSpec.ProviderConversationID != "codex-thread" {
+		t.Fatalf("restore spec = %+v, want concrete Codex review", launcher.gotSpec)
+	}
+	if launcher.destroyed {
+		t.Fatalf("recovery destroyed an unrelated reviewer: %+v", launcher)
+	}
+}
+
+func TestRecoverChatReviewersPreservesControllerClaimFromRestore(t *testing.T) {
+	staleReview := domain.Review{
+		ID: "rev-codex", SessionID: "mer-1", ProjectID: "mer",
+		Harness: domain.ReviewerCodex, ReviewerHandleID: "review-chat:rev-codex",
+		InterfaceMode: domain.ReviewerInterfaceChat, ProviderConversationID: "old-thread",
+		ControllerGeneration: "old-generation", ControllerError: "old failure",
+	}
+	store := &fakeStore{
+		review:             &staleReview,
+		recoverableReviews: []domain.Review{staleReview},
+		reviews:            map[domain.ReviewerHarness]domain.Review{domain.ReviewerCodex: staleReview},
+		runs: []domain.ReviewRun{{
+			ID: "run-codex", ReviewID: "rev-codex", SessionID: "mer-1",
+			Harness: domain.ReviewerCodex, Status: domain.ReviewRunRunning,
+		}},
+	}
+	baseLauncher := &fakeLauncher{
+		handle: "review-chat:rev-codex",
+		onRestore: func(LaunchSpec) {
+			claimed := store.reviews[domain.ReviewerCodex]
+			claimed.ProviderConversationID = "new-thread"
+			claimed.ControllerGeneration = "new-generation"
+			claimed.ControllerError = ""
+			store.reviews[domain.ReviewerCodex] = claimed
+			store.review = &claimed
+		},
+	}
+	launcher := &chatSurfaceLauncher{fakeLauncher: baseLauncher}
+	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
+
+	if err := eng.RecoverChatReviewers(context.Background()); err != nil {
+		t.Fatalf("RecoverChatReviewers: %v", err)
+	}
+	got := store.reviews[domain.ReviewerCodex]
+	if got.ProviderConversationID != "new-thread" || got.ControllerGeneration != "new-generation" || got.ControllerError != "" {
+		t.Fatalf("controller claim after recovery = provider %q generation %q error %q", got.ProviderConversationID, got.ControllerGeneration, got.ControllerError)
 	}
 }
 

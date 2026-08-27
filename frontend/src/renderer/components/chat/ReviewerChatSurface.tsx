@@ -5,7 +5,7 @@ import { ChatWorkspace } from "./ChatWorkspace";
 
 export function ReviewerChatSurface({ reviewId, hideHeader = false }: { reviewId: string; hideHeader?: boolean }) {
 	const { t } = useTranslation();
-	const { snapshot, isLoading, error } = useReviewerConversation(reviewId);
+	const { snapshot, isLoading, error, hasOlder, isLoadingOlder, loadOlder } = useReviewerConversation(reviewId);
 	const commands = useReviewerConversationCommands(reviewId);
 	if (isLoading) return <Centered><Loader2 className="size-4 animate-spin" />{t("inspector.loadingSession")}</Centered>;
 	if (error || !snapshot) return <Centered><AlertTriangle className="size-4 text-destructive" />{error ?? t("shell.couldNotLoadSessions")}</Centered>;
@@ -17,6 +17,9 @@ export function ReviewerChatSurface({ reviewId, hideHeader = false }: { reviewId
 			hideHeader={hideHeader}
 			busy={commands.busy}
 			commandError={commands.error}
+			hasOlder={hasOlder}
+			loadingOlder={isLoadingOlder}
+			onLoadOlder={loadOlder}
 			onSend={(text, attachments) => commands.send({ text, attachments })}
 			onDecide={commands.resolve}
 			onResolveInput={commands.resolveInput}

@@ -887,7 +887,7 @@ export function toSnapshot(wire: WireSnapshot): ConversationSnapshot {
 }
 
 /** Merge the newest live page with any older pages loaded on demand. */
-function mergeConversationPages(pages: ConversationSnapshot[]): ConversationSnapshot | undefined {
+export function mergeConversationPages(pages: ConversationSnapshot[]): ConversationSnapshot | undefined {
 	const live = pages[0];
 	if (!live) return undefined;
 

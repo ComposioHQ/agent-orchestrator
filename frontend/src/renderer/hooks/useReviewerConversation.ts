@@ -1,29 +1,43 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useCallback } from "react";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import type { ConversationSnapshot } from "../types/conversation";
-import { toSnapshot, type ConversationSendInput } from "./useConversation";
+import {
+	mergeConversationPages,
+	toSnapshot,
+	type ConversationSendInput,
+} from "./useConversation";
 
 type WireSnapshot = components["schemas"]["ConversationSnapshotResponse"];
+const REVIEWER_CONVERSATION_PAGE_SIZE = 200;
 
 export function reviewerConversationQueryKey(reviewId: string) {
 	return ["reviewer-conversation", reviewId] as const;
 }
 
 export function useReviewerConversation(reviewId: string | undefined) {
-	const query = useQuery({
+	const query = useInfiniteQuery({
 		queryKey: reviewerConversationQueryKey(reviewId ?? ""),
 		enabled: Boolean(reviewId),
-		queryFn: async () => {
+		initialPageParam: undefined as number | undefined,
+		queryFn: async ({ pageParam }) => {
 			const { data, error } = await apiClient.GET("/api/v1/reviews/{reviewId}/conversation", {
-				params: { path: { reviewId: reviewId as string }, query: { limit: 200 } },
+				params: {
+					path: { reviewId: reviewId as string },
+					query: {
+						beforeSequence: pageParam,
+						limit: REVIEWER_CONVERSATION_PAGE_SIZE,
+					},
+				},
 			});
 			if (error) throw error;
 			return toSnapshot(data as WireSnapshot);
 		},
+		getNextPageParam: (page) => (page.hasMoreBefore ? page.oldestSequence : undefined),
+		select: (data) => mergeConversationPages(data.pages),
 		refetchInterval: (query) => {
-			const snapshot = query.state.data as ConversationSnapshot | undefined;
+			const snapshot = (query.state.data as { pages?: ConversationSnapshot[] } | undefined)?.pages?.[0];
 			return snapshot?.controller.state === "busy" ? 500 : 2_000;
 		},
 	});
@@ -31,6 +45,11 @@ export function useReviewerConversation(reviewId: string | undefined) {
 		snapshot: query.data,
 		isLoading: query.isLoading,
 		error: query.error ? apiErrorMessage(query.error) : undefined,
+		hasOlder: query.hasNextPage,
+		isLoadingOlder: query.isFetchingNextPage,
+		loadOlder: () => {
+			void query.fetchNextPage();
+		},
 	};
 }
 
