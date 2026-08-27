@@ -1,8 +1,10 @@
 package mobilebridge
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -294,5 +296,203 @@ func TestReapStaleTunnelIsANoOpWithoutAPIDFile(t *testing.T) {
 	}
 	if killed {
 		t.Fatal("killed something with no pid file present")
+	}
+}
+
+func TestTunnelRuntimeAdvertisesNothingBeforeReady(t *testing.T) {
+	r := &TunnelRuntime{}
+	if r.Endpoint() != nil {
+		t.Fatal("advertised an endpoint before the connector started")
+	}
+
+	r.Started()
+	r.Line(`2026-08-26T20:07:38Z INF |  https://abc.trycloudflare.com  |`)
+
+	// Hostname known, no connection registered yet: this is the ~5s window in
+	// which the address answers HTTP 530.
+	if got := r.Endpoint(); got != nil {
+		t.Fatalf("advertised %+v during the pre-registration window", got)
+	}
+}
+
+func TestTunnelRuntimeAdvertisesOnceRegistered(t *testing.T) {
+	r := &TunnelRuntime{}
+	r.Started()
+	r.Line(`INF |  https://abc.trycloudflare.com  |`)
+	r.Line(`INF Registered tunnel connection connIndex=0 location=pnq01 protocol=quic`)
+	r.Settled()
+
+	got := r.Endpoint()
+	if got == nil {
+		t.Fatal("no endpoint after the connector registered and was confirmed")
+	}
+	if !got.Ready || got.Hostname != "abc.trycloudflare.com" {
+		t.Fatalf("got %+v", got)
+	}
+}
+
+// The endpoint must disappear the moment the connector dies, or the phone keeps
+// racing an address that is now dead and every attempt costs a full timeout.
+func TestTunnelRuntimeStopsAdvertisingAfterExit(t *testing.T) {
+	r := &TunnelRuntime{}
+	r.Started()
+	r.Line(`INF |  https://abc.trycloudflare.com  |`)
+	r.Line(`INF Registered tunnel connection connIndex=0`)
+	r.Settled()
+	if r.Endpoint() == nil {
+		t.Fatal("precondition: expected a live endpoint")
+	}
+
+	r.Exited(errors.New("signal: killed"))
+
+	if got := r.Endpoint(); got != nil {
+		t.Fatalf("still advertising %+v after the connector exited", got)
+	}
+}
+
+// Quick tunnel hostnames rotate on every start. Carrying the previous one into
+// a restart would advertise a dead address that answers 530.
+func TestTunnelRuntimeForgetsTheOldHostnameOnRestart(t *testing.T) {
+	r := &TunnelRuntime{}
+	r.Started()
+	r.Line(`INF |  https://first-name.trycloudflare.com  |`)
+	r.Line(`INF Registered tunnel connection connIndex=0`)
+	r.Settled()
+	r.Exited(nil)
+
+	r.Started()
+	if got := r.Endpoint(); got != nil {
+		t.Fatalf("restart inherited %+v from the previous run", got)
+	}
+
+	r.Line(`INF |  https://second-name.trycloudflare.com  |`)
+	r.Line(`INF Registered tunnel connection connIndex=0`)
+	r.Settled()
+
+	got := r.Endpoint()
+	if got == nil || got.Hostname != "second-name.trycloudflare.com" {
+		t.Fatalf("got %+v want the new hostname", got)
+	}
+}
+
+func TestTunnelRuntimeSnapshotReportsWhyItIsDown(t *testing.T) {
+	r := &TunnelRuntime{}
+	r.Started()
+	r.Exited(errors.New("exit status 1"))
+
+	s := r.Snapshot()
+	if s.Running {
+		t.Error("Running true after exit")
+	}
+	if s.LastError != "exit status 1" {
+		t.Errorf("LastError = %q", s.LastError)
+	}
+}
+
+func TestCloudflaredArgsTargetLoopback(t *testing.T) {
+	// The connector must reach the daemon over loopback. Pointing it at the LAN
+	// bind address would route tunnel traffic back out across the network for
+	// no reason, and would break if the LAN listener is later restricted.
+	args := CloudflaredArgs(3011, 20241)
+
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "--url http://127.0.0.1:3011") {
+		t.Errorf("args do not target loopback: %v", args)
+	}
+	if !strings.Contains(joined, "--metrics 127.0.0.1:20241") {
+		t.Errorf("metrics endpoint missing or not loopback-bound: %v", args)
+	}
+	if !strings.Contains(joined, "--no-autoupdate") {
+		t.Errorf("autoupdate not disabled — a self-update would swap the binary "+
+			"under a pinned log-format contract: %v", args)
+	}
+}
+
+func TestTunnelBackoffGrowsAndCaps(t *testing.T) {
+	first := TunnelBackoff(0)
+	second := TunnelBackoff(1)
+	if second <= first {
+		t.Errorf("backoff did not grow: %v then %v", first, second)
+	}
+
+	// A connector that cannot start must not be retried forever at speed; the
+	// ceiling keeps a broken install from becoming a busy loop.
+	for _, attempt := range []int{10, 50, 1000} {
+		if got := TunnelBackoff(attempt); got > MaxTunnelBackoff {
+			t.Errorf("attempt %d backed off %v, above the %v cap", attempt, got, MaxTunnelBackoff)
+		}
+	}
+	if got := TunnelBackoff(1000); got != MaxTunnelBackoff {
+		t.Errorf("attempt 1000 = %v, want the cap %v", got, MaxTunnelBackoff)
+	}
+}
+
+func TestTunnelBackoffTreatsNegativeAttemptsAsFirst(t *testing.T) {
+	if got, want := TunnelBackoff(-3), TunnelBackoff(0); got != want {
+		t.Errorf("got %v want %v", got, want)
+	}
+}
+
+// Measured against real cloudflared: the connector reports a registered
+// connection several seconds before its brand-new hostname resolves in DNS. A
+// phone handed the endpoint in that window gets "no such host", so a registered
+// connection is necessary but not sufficient — the address has to be confirmed
+// reachable before it is advertised.
+func TestTunnelRuntimeWaitsForTheHostnameToSettle(t *testing.T) {
+	r := &TunnelRuntime{}
+	r.Started()
+	r.Line(`INF |  https://abc.trycloudflare.com  |`)
+	r.Line(`INF Registered tunnel connection connIndex=0 location=pnq01`)
+
+	if got := r.Endpoint(); got != nil {
+		t.Fatalf("advertised %+v before the hostname had time to propagate", got)
+	}
+
+	r.Settled()
+
+	got := r.Endpoint()
+	if got == nil || got.Hostname != "abc.trycloudflare.com" {
+		t.Fatalf("got %+v want the settled endpoint", got)
+	}
+}
+
+// Each run gets a different hostname, so reachability proven for the previous
+// one says nothing about the new one.
+func TestTunnelRuntimeRequiresSettlingAgainAfterRestart(t *testing.T) {
+	r := &TunnelRuntime{}
+	r.Started()
+	r.Line(`INF |  https://first.trycloudflare.com  |`)
+	r.Line(`INF Registered tunnel connection connIndex=0`)
+	r.Settled()
+	r.Exited(nil)
+
+	r.Started()
+	r.Line(`INF |  https://second.trycloudflare.com  |`)
+	r.Line(`INF Registered tunnel connection connIndex=0`)
+
+	if got := r.Endpoint(); got != nil {
+		t.Fatalf("carried the previous run's settling over to %+v", got)
+	}
+}
+
+// UnsettledHostname is what the runner waits out. Only meaningful once the
+// connector has registered.
+func TestTunnelRuntimeUnsettledHostnameOnlyAfterRegistration(t *testing.T) {
+	r := &TunnelRuntime{}
+	r.Started()
+	r.Line(`INF |  https://abc.trycloudflare.com  |`)
+	if got := r.UnsettledHostname(); got != "" {
+		t.Errorf("UnsettledHostname = %q before registration", got)
+	}
+
+	r.Line(`INF Registered tunnel connection connIndex=0`)
+	if got := r.UnsettledHostname(); got != "abc.trycloudflare.com" {
+		t.Errorf("UnsettledHostname = %q want abc.trycloudflare.com", got)
+	}
+
+	// Once settled there is nothing left to wait on.
+	r.Settled()
+	if got := r.UnsettledHostname(); got != "" {
+		t.Errorf("UnsettledHostname = %q after settling", got)
 	}
 }

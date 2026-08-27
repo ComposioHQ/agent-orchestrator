@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -271,6 +272,171 @@ func ReapStaleTunnel(path string, isOurs func(pid int) bool, kill func(pid int) 
 	}
 	if err := kill(pid); err != nil {
 		return fmt.Errorf("kill stale tunnel %d: %w", pid, err)
+	}
+	return nil
+}
+
+// TunnelStatus is the connector's observable state, for the desktop's Connect
+// Mobile panel.
+type TunnelStatus struct {
+	Running   bool   `json:"running"`
+	Ready     bool   `json:"ready"`
+	Hostname  string `json:"hostname"`
+	Location  string `json:"location"`
+	LastError string `json:"lastError"`
+}
+
+// TunnelRuntime tracks one managed connector across restarts. It owns the rule
+// that decides when the tunnel may be advertised, and nothing else — spawning
+// and restarting live in the runner above it, so this stays testable without a
+// process.
+//
+// Safe for concurrent use: log lines arrive on the reader goroutine while
+// Endpoint is read by whatever is assembling the status response.
+type TunnelRuntime struct {
+	mu      sync.Mutex
+	log     TunnelLog
+	running bool
+	// settled records that this run's hostname has had time to appear in DNS.
+	// A registered connection is not enough: measured against real cloudflared,
+	// a brand-new quick tunnel hostname takes roughly twenty more seconds to
+	// resolve, and a phone handed the address before then gets "no such host".
+	settled bool
+	lastErr string
+}
+
+// Started marks a fresh connector process.
+//
+// It resets the parsed log, which matters: quick tunnel hostnames rotate on
+// every start, so carrying the previous one into a restart would advertise a
+// dead address that answers HTTP 530.
+func (r *TunnelRuntime) Started() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.log = TunnelLog{}
+	r.running = true
+	r.settled = false
+	r.lastErr = ""
+}
+
+// Line feeds one line of connector output.
+func (r *TunnelRuntime) Line(line string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.log.Feed(line)
+}
+
+// Exited marks the connector gone, with the reason if there was one.
+func (r *TunnelRuntime) Exited(err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.running = false
+	if err != nil {
+		r.lastErr = err.Error()
+	}
+}
+
+// Endpoint is the advertisable tunnel, or nil when there is nothing safe to
+// advertise: not started, not yet registered with an edge, or exited.
+func (r *TunnelRuntime) Endpoint() *TunnelEndpoint {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.running || !r.log.Ready() || !r.settled {
+		return nil
+	}
+	return &TunnelEndpoint{Ready: true, Hostname: hostnameOf(r.log.URL)}
+}
+
+// Settled marks this run's hostname as old enough to have propagated. Called
+// by the runner once the settling window has elapsed since registration.
+//
+// Deliberately a delay rather than a probe. A probe from the daemon tests the
+// daemon's resolver, not the phone's, and querying the name before the record
+// exists caches an NXDOMAIN locally that outlives propagation — measured: after
+// an early probe, curl on this machine still failed thirty seconds after dig
+// had begun resolving the same name.
+func (r *TunnelRuntime) Settled() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.settled = true
+}
+
+// UnsettledHostname is a registered hostname still inside its settling window,
+// or "" when nothing is waiting — not registered yet, or already settled.
+func (r *TunnelRuntime) UnsettledHostname() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.running || !r.log.Ready() || r.settled {
+		return ""
+	}
+	return hostnameOf(r.log.URL)
+}
+
+// Snapshot is the current state, for display.
+func (r *TunnelRuntime) Snapshot() TunnelStatus {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return TunnelStatus{
+		Running:   r.running,
+		Ready:     r.running && r.log.Ready() && r.settled,
+		Hostname:  hostnameOf(r.log.URL),
+		Location:  r.log.Location,
+		LastError: r.lastErr,
+	}
+}
+
+// hostnameOf strips the scheme from a tunnel URL. Endpoints carry a host and a
+// port separately, so the scheme would be doubled up by the client.
+func hostnameOf(rawURL string) string {
+	return strings.TrimPrefix(strings.TrimPrefix(rawURL, "https://"), "http://")
+}
+
+// Backoff bounds for connector restarts.
+const (
+	// BaseTunnelBackoff is the pause after the first failed start.
+	BaseTunnelBackoff = 2 * time.Second
+	// MaxTunnelBackoff is the ceiling, so a broken install degrades to an
+	// occasional retry rather than a busy loop.
+	MaxTunnelBackoff = 2 * time.Minute
+)
+
+// TunnelBackoff is how long to wait before restart attempt n (0-based).
+func TunnelBackoff(attempt int) time.Duration {
+	if attempt < 0 {
+		attempt = 0
+	}
+	d := BaseTunnelBackoff
+	for range attempt {
+		d *= 2
+		if d >= MaxTunnelBackoff {
+			return MaxTunnelBackoff
+		}
+	}
+	return d
+}
+
+// CloudflaredArgs builds the connector's command line.
+//
+// The connector targets loopback: sending it at the LAN bind address would
+// route tunnel traffic back out over the network for no reason. Autoupdate is
+// off because the hostname is only available by scraping the log, and a
+// self-update could swap the binary out from under that pinned format. The
+// metrics listener is what /ready is polled on, which is a far more reliable
+// readiness signal than the log alone.
+func CloudflaredArgs(localPort, metricsPort int) []string {
+	return []string{
+		"tunnel",
+		"--url", fmt.Sprintf("http://127.0.0.1:%d", localPort),
+		"--metrics", fmt.Sprintf("127.0.0.1:%d", metricsPort),
+		"--no-autoupdate",
+	}
+}
+
+// RemoveTunnelPIDFile clears the recorded pid after a clean stop.
+func RemoveTunnelPIDFile(path string) error {
+	err := os.Remove(path)
+	if err != nil && !os.IsNotExist(err) {
+		return err
 	}
 	return nil
 }
