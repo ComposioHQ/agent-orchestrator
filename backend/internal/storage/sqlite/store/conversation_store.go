@@ -605,7 +605,7 @@ func (s *Store) appendUserMessage(
 			return fmt.Errorf("insert turn: %w", err)
 		}
 
-		return q.InsertConversationMessage(ctx, gen.InsertConversationMessageParams{
+		if err := q.InsertConversationMessage(ctx, gen.InsertConversationMessageParams{
 			ID:                  msg.ID,
 			ConversationID:      conversationID,
 			TurnID:              sql.NullString{String: turnID, Valid: true},
@@ -618,7 +618,19 @@ func (s *Store) appendUserMessage(
 			DeliveryContentJson: msg.DeliveryContentJSON,
 			CreatedAt:           now,
 			UpdatedAt:           now,
-		})
+		}); err != nil {
+			return err
+		}
+		if msg.Origin == domain.MessageOriginHuman {
+			if _, err := q.RecordSessionHumanMessage(ctx, gen.RecordSessionHumanMessageParams{
+				ID:                 session,
+				LatestUserPrompt:   msg.Text,
+				LatestUserPromptAt: timeToNullTime(now),
+			}); err != nil {
+				return fmt.Errorf("record latest human message: %w", err)
+			}
+		}
+		return nil
 	})
 	if err != nil {
 		return false, err

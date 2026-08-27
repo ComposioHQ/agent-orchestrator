@@ -70,6 +70,38 @@ func turnIDs(turns []domain.ConversationTurn) []string {
 	return out
 }
 
+func TestAppendUserMessageTracksOnlyLatestHumanMessage(t *testing.T) {
+	s, sessionID, conversationID := conversationFixture(t)
+	ctx := context.Background()
+	humanAt := histClock.Add(time.Minute)
+
+	created, err := s.AppendUserMessage(ctx, conversationID, sessionID, "gen-1", domain.ConversationMessage{
+		ID: "human-message", Text: "please tighten the sidebar", Origin: domain.MessageOriginHuman,
+	}, "human-turn", humanAt)
+	if err != nil || !created {
+		t.Fatalf("append human message: created=%v err=%v", created, err)
+	}
+	rec, ok, err := s.GetSession(ctx, sessionID)
+	if err != nil || !ok {
+		t.Fatalf("get session after human message: ok=%v err=%v", ok, err)
+	}
+	if rec.Metadata.LatestUserPrompt != "please tighten the sidebar" || !rec.Metadata.LatestUserPromptAt.Equal(humanAt) {
+		t.Fatalf("latest human message = %q at %s", rec.Metadata.LatestUserPrompt, rec.Metadata.LatestUserPromptAt)
+	}
+
+	automationAt := humanAt.Add(time.Minute)
+	created, err = s.AppendUserMessage(ctx, conversationID, sessionID, "gen-1", domain.ConversationMessage{
+		ID: "automation-message", Text: "automated review follow-up", Origin: domain.MessageOriginAutomation,
+	}, "automation-turn", automationAt)
+	if err != nil || !created {
+		t.Fatalf("append automation message: created=%v err=%v", created, err)
+	}
+	rec, _, _ = s.GetSession(ctx, sessionID)
+	if rec.Metadata.LatestUserPrompt != "please tighten the sidebar" || !rec.Metadata.LatestUserPromptAt.Equal(humanAt) {
+		t.Fatalf("automation replaced latest human message = %q at %s", rec.Metadata.LatestUserPrompt, rec.Metadata.LatestUserPromptAt)
+	}
+}
+
 func TestProjectConversationRebindsAcrossOrchestratorReplacement(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

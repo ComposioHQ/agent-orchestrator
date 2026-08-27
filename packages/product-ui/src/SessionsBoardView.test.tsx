@@ -66,7 +66,7 @@ const baseSession: BoardSessionPresentation = {
 	provider: "codex",
 	status: "idle",
 	title: "portable task",
-	updatedAt: "2026-08-09T10:00:00Z",
+	lastUserMessageAt: "2026-08-09T10:00:00Z",
 };
 
 describe("SessionsBoardView", () => {
@@ -116,7 +116,7 @@ describe("SessionsBoardView", () => {
 						short: "PR",
 						states: { closed: "closed", draft: "draft", merged: "merged", open: "open" },
 					},
-					updatedAt: (timestamp) => `Updated ${timestamp}`,
+					lastUserMessageAt: (timestamp) => `Last message ${timestamp}`,
 				}}
 				onOpen={onOpen}
 				prs={[
@@ -136,7 +136,8 @@ describe("SessionsBoardView", () => {
 		// the compact form is hidden so it is not read out alongside it.
 		expect(screen.getByText("12,400 tokens")).toHaveClass("sr-only");
 		expect(screen.getByText("12.4K tok")).toHaveAttribute("aria-hidden", "true");
-		expect(screen.getByText("5m ago")).toHaveAttribute("title", "Updated 2026-08-09T10:00:00Z");
+		expect(screen.getByText("5m ago")).toHaveAttribute("title", "Last message 2026-08-09T10:00:00Z");
+		expect(screen.getByText("5m ago").tagName).toBe("TIME");
 		expect(screen.getByText("github:42")).toHaveAttribute("title", "Issue github:42");
 
 		fireEvent.click(screen.getByRole("button", { name: "portable task" }));
@@ -154,7 +155,7 @@ describe("SessionsBoardView", () => {
 						short: "PR",
 						states: { closed: "closed", draft: "draft", merged: "merged", open: "open" },
 					},
-					updatedAt: (timestamp) => `Updated ${timestamp}`,
+					lastUserMessageAt: (timestamp) => `Last message ${timestamp}`,
 				}}
 				renderAvatar={(provider) => <span role="img" aria-label={provider}>C</span>}
 				session={{ ...baseSession, status: "review_pending" }}

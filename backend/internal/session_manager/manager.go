@@ -980,6 +980,9 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		// Model override exists it wins; otherwise fall back to the resolved Mode.
 		Model: resolvedModelForMetadata(cfg.Harness, agentConfig, adapterConfig),
 	}
+	if prompt != "" {
+		metadata.LatestUserPromptAt = m.clock()
+	}
 	if projectKind == domain.ProjectKindSingleRepo {
 		metadata.DiffBaseSHA, metadata.DiffBaseRef = resolveSpawnDiffBase(ctx, ws.Path, ws.BaseRef)
 	}

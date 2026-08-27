@@ -419,6 +419,7 @@ type Session struct {
 	AutoReviewEnabled         bool
 	AgentSessionIDLaunchID    string
 	Model                     string
+	LatestUserPromptAt        sql.NullTime
 }
 
 type SessionCleanupFact struct {

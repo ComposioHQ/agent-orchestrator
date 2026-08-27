@@ -1990,6 +1990,8 @@ export interface components {
             isTerminated: boolean;
             issueId?: string;
             kind: string;
+            /** Format: date-time */
+            lastUserMessageAt?: null | string;
             /** @enum {string} */
             mode: "chat" | "tui";
             model?: string;
