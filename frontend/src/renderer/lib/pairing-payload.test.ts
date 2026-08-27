@@ -49,12 +49,12 @@ describe("pairingCodeUrl", () => {
 
 	it("survives a round trip back to the original offer", () => {
 		const offer = buildPairingOffer(base);
-		expect(decodeFragment(pairingCodeUrl(offer, "ao://pair"))).toEqual(offer);
+		expect(decodeFragment(pairingCodeUrl(offer, "aomobile://pair"))).toEqual(offer);
 	});
 
 	// Padding is stripped to keep the QR small; the phone restores it.
 	it("emits unpadded base64url so the QR stays small", () => {
-		const code = pairingCodeUrl(buildPairingOffer(base), "ao://pair").split("#")[1];
+		const code = pairingCodeUrl(buildPairingOffer(base), "aomobile://pair").split("#")[1];
 
 		expect(code).not.toContain("=");
 		expect(code).not.toContain("+");

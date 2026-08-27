@@ -27,7 +27,7 @@ describe("parsePairingCode", () => {
 	// rides in the fragment, which browsers never send to a server, keeping the
 	// token out of web logs and referrer headers.
 	it("reads the payload out of a deep link fragment", () => {
-		const got = parsePairingCode(pairingUrl(offer, "ao://pair"));
+		const got = parsePairingCode(pairingUrl(offer, "aomobile://pair"));
 
 		expect(got?.hostId).toBe("h_b3e07f31");
 	});
@@ -90,5 +90,21 @@ describe("parsePairingCode", () => {
 	it("decodes a payload whose base64 padding was stripped", () => {
 		const padded = encodePairingCode(offer);
 		expect(parsePairingCode(padded.replace(/=+$/, ""))?.hostId).toBe("h_b3e07f31");
+	});
+});
+
+// A scheme mismatch between the desktop's QR and the app's registered scheme
+// fails silently: the camera opens nothing and there is no error anywhere. Pin
+// the parser to what app.json actually registers.
+describe("deep link scheme", () => {
+	it("matches the scheme the app registers in app.json", async () => {
+		const appConfig = (await import("../app.json")) as unknown as {
+			default: { expo: { scheme: string } };
+		};
+		const scheme = appConfig.default.expo.scheme;
+
+		const got = parsePairingCode(pairingUrl(offer, `${scheme}://pair`));
+
+		expect(got?.hostId).toBe("h_b3e07f31");
 	});
 });

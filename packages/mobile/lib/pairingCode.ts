@@ -69,7 +69,7 @@ function extractCode(input: string): string | null {
 	if (hash !== -1) {
 		// Only our own links. Another app's deep link with a fragment must not
 		// be treated as a pairing code.
-		if (!/^(ao:\/\/pair|https?:\/\/[^/]+\/pair)/i.test(trimmed)) return null;
+		if (!/^(aomobile:\/\/pair|https?:\/\/[^/]+\/pair)/i.test(trimmed)) return null;
 		return trimmed.slice(hash + 1) || null;
 	}
 	if (/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)) return null; // a URL with no payload

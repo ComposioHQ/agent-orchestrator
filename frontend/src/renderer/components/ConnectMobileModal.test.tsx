@@ -254,7 +254,7 @@ test("emits a v2 deep link carrying every endpoint once the daemon advertises th
 		],
 	});
 
-	expect(value.startsWith("ao://pair#")).toBe(true);
+	expect(value.startsWith("aomobile://pair#")).toBe(true);
 	const code = value.slice(value.indexOf("#") + 1);
 	const b64 = code.replace(/-/g, "+").replace(/_/g, "/");
 	const decoded = JSON.parse(atob(b64 + "=".repeat((4 - (b64.length % 4)) % 4)));

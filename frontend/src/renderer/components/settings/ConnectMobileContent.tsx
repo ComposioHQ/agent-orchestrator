@@ -69,9 +69,10 @@ export function qrValueFor(input: {
 	return pairingPayload(input.host, input.port ?? 3011, input.password, input.secure);
 }
 
-/** Custom scheme rather than the https universal link: it works today, with no
- * association files to host and no store listing required. */
-const PAIRING_LINK_BASE = "ao://pair";
+/** The app's registered scheme (app.json `expo.scheme`), not a universal link:
+ * it works today, with no association files to host and no store listing
+ * required. Universal links can be added later without changing the payload. */
+const PAIRING_LINK_BASE = "aomobile://pair";
 
 /** Static junk payload for the blurred placeholder QR — deliberately not a
  *  real pairing payload so a sneaky scan through the blur gets nothing. */
