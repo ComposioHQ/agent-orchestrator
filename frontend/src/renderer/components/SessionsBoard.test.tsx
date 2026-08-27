@@ -137,7 +137,10 @@ describe("SessionsBoard", () => {
 		try {
 			renderBoard("p1");
 			expect(screen.getByRole("button", { name: "终止 localized worker" })).toBeInTheDocument();
-			expect(screen.getByLabelText("#42 已打开")).toHaveTextContent("已打开");
+			expect(screen.getByRole("link", { name: "PR #42 已打开" })).toHaveAttribute(
+				"href",
+				"https://github.com/acme/repo/pull/42",
+			);
 		} finally {
 			await appI18n.changeLanguage("en");
 		}
@@ -373,15 +376,9 @@ describe("SessionsBoard", () => {
 		const card = screen.getByText("active-card-task").closest('[data-testid="board-session-card"]') as HTMLElement;
 		const working = within(card).getByText("Working").parentElement as HTMLElement;
 		expect(working).toHaveAttribute("data-kanban-column", "building");
-		expect(working).toHaveClass("text-status-working");
-		expect(working.style.getPropertyValue("--session-status-tone")).toBe(
-			"var(--color-status-working)",
-		);
-		expect(working.querySelector('[aria-hidden="true"]')).toHaveClass(
-			"size-[var(--size-swatch)]",
-			"rounded-[var(--radius-swatch)]",
-		);
-		expect(working.querySelector('[aria-hidden="true"]')).not.toHaveClass("animate-status-pulse");
+		expect(working).toHaveClass("text-muted-foreground");
+		expect(working.style.getPropertyValue("--session-status-tone")).toBe("");
+		expect(working.querySelector('[aria-hidden="true"]')).toHaveClass("animate-spin");
 	});
 
 	it("keeps a spawning card labeled Working when raw activity has not become active", () => {
@@ -427,12 +424,10 @@ describe("SessionsBoard", () => {
 
 		const card = screen.getByText("switching worker").closest('[data-testid="board-session-card"]') as HTMLElement;
 		const status = within(card).getByText("Switching to Codex").parentElement as HTMLElement;
-		expect(status).toHaveClass("text-status-working");
+		expect(status).toHaveClass("text-muted-foreground");
 		expect(status).not.toHaveAttribute("data-kanban-column");
-		expect(status.style.getPropertyValue("--session-status-tone")).toBe(
-			"var(--color-status-working)",
-		);
-		expect(status.querySelector("span")).toHaveClass("animate-status-pulse");
+		expect(status.style.getPropertyValue("--session-status-tone")).toBe("");
+		expect(status.querySelector(".animate-status-pulse")).toBeNull();
 		expect(within(card).queryByText("Exited")).not.toBeInTheDocument();
 	});
 
@@ -676,21 +671,20 @@ describe("SessionsBoard", () => {
 		// Agent shown as its brand logo with an accessible name (not a text label).
 		expect(within(terminatedCard!).getByRole("img", { name: "claude-code" })).toBeInTheDocument();
 		expect(screen.getByText("ao/dead-worker")).toBeInTheDocument();
-		expect(screen.getByText("github:INT-17")).toBeInTheDocument();
-		const prStatus = screen.getByLabelText("#42 merged");
-		expect(prStatus).toHaveTextContent("PR#42merged");
-		expect(within(prStatus).getByText("merged")).toHaveClass("text-status-merged");
-		const openPrStatus = screen.getByLabelText("#41 open");
-		expect(openPrStatus.parentElement).toBe(prStatus.parentElement);
-		expect(prStatus.parentElement).toHaveClass("flex-wrap");
-		expect(within(terminatedCard!).getByRole("link", { name: "#42" })).toHaveAttribute(
+		expect(within(terminatedCard!).queryByText("github:INT-17")).not.toBeInTheDocument();
+		expect(within(terminatedCard!).getByRole("link", { name: "PR #42 merged" })).toHaveAttribute(
 			"href",
 			"https://github.com/example/radic/pull/42",
+		);
+		expect(within(terminatedCard!).getByRole("link", { name: "PR #41 open" })).toHaveAttribute(
+			"href",
+			"https://github.com/example/radic/pull/41",
 		);
 		expect(within(terminatedCard!).getByRole("button", { name: "Copy branch ao/dead-worker" })).toBeInTheDocument();
 		const divider = terminatedCard!.querySelector("div.border-t.border-border");
 		expect(divider).not.toBeNull();
-		expect(divider!.compareDocumentPosition(prStatus) & Node.DOCUMENT_POSITION_PRECEDING).not.toBe(0);
+		const mergedPrLink = within(terminatedCard!).getByRole("link", { name: "PR #42 merged" });
+		expect(divider!.compareDocumentPosition(mergedPrLink) & Node.DOCUMENT_POSITION_PRECEDING).not.toBe(0);
 		expect(
 			screen.getByText("ao/dead-worker").compareDocumentPosition(divider!) & Node.DOCUMENT_POSITION_FOLLOWING,
 		).not.toBe(0);
@@ -1051,7 +1045,8 @@ describe("SessionsBoard", () => {
 
 		renderBoard("p1");
 
-		expect(screen.getByText("Fixing CI failures")).toBeInTheDocument();
+		expect(screen.getByText("CI failing")).toBeInTheDocument();
+		expect(screen.queryByText("Fixing CI failures")).not.toBeInTheDocument();
 	});
 
 	it("highlights every user-attention status while leaving ordinary cards neutral", () => {
