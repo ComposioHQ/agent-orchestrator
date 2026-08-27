@@ -465,6 +465,7 @@ export function HumanMessage({
 	onEdit,
 	editing = false,
 	editText,
+	editReconstructedContext = false,
 	onEditStart,
 	onEditDraftChange,
 	onEditCancel,
@@ -488,6 +489,7 @@ export function HumanMessage({
 	onEdit?: (turnId: string, text: string) => Promise<unknown> | void;
 	editing?: boolean;
 	editText?: string;
+	editReconstructedContext?: boolean;
 	onEditStart?: () => void;
 	onEditDraftChange?: (text: string) => void;
 	onEditCancel?: () => void;
@@ -510,6 +512,7 @@ export function HumanMessage({
 					content={message.content ?? []}
 					pending={editPending}
 					busy={editBusy}
+					reconstructedContext={editReconstructedContext}
 					error={editError}
 					onDraftChange={onEditDraftChange}
 					onCancel={() => onEditCancel?.()}

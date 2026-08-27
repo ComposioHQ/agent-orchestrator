@@ -152,6 +152,10 @@ type ConversationBranch struct {
 	SessionID              sql.NullString
 	ReviewID               sql.NullString
 	ProviderConversationID string
+	Strategy               string
+	ReplayCutoffSequence   int64
+	ReplayTruncated        int64
+	ProviderScopeID        string
 	ParentBranchID         sql.NullString
 	ForkAfterTurnID        sql.NullString
 	ReplacedTurnID         sql.NullString

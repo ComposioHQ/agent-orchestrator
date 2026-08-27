@@ -1921,35 +1921,40 @@ function UpdateStatusRow({ status, tabIndex }: { status: UpdateStatus; tabIndex:
 						? t("shell.downloadUpdateVersion", { version: status.version })
 						: t("shell.downloadUpdate")
 				}
-				className={cn(
-					"flex w-full items-center gap-2.5 rounded-lg p-2.5 text-left text-control font-medium transition-colors",
-					"text-passive hover:bg-interactive-hover hover:text-foreground [&_svg]:text-passive",
-				)}
+				className={cn(NAV_ROW_CLASS, "flex w-full items-center text-left [&_svg]:size-icon-md [&_svg]:shrink-0")}
 				onClick={() => void aoBridge.updates.download()}
 				tabIndex={tabIndex}
 				type="button"
 			>
 				<Download aria-hidden="true" className="size-icon-lg shrink-0" />
-				<span className="min-w-0 flex-1">
-					<span className="block truncate tracking-tight">{t("shell.updateAvailable")}</span>
-					{status.version && (
-						<span className="block truncate text-caption font-normal text-passive">
-							{t("shell.versionAvailable", { version: status.version })}
-						</span>
-					)}
-				</span>
-				<span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full bg-passive" />
+				<span className="min-w-0 flex-1 truncate tracking-tight">{t("shell.updateAvailable")}</span>
+				{status.version && <span className="sr-only">{t("shell.versionAvailable", { version: status.version })}</span>}
+				<span aria-hidden="true" className="h-2 w-2 shrink-0 rounded-full bg-red-500" />
 			</button>
 		);
 	}
 	if (status.state === "downloading") {
+		const percent = Math.min(100, Math.max(0, status.percent ?? 0));
 		return (
 			<div
 				aria-live="polite"
-				className="flex w-full items-center gap-2.5 rounded-lg p-2.5 text-left text-control font-medium text-passive"
+				className={cn(NAV_ROW_CLASS, "relative flex w-full items-center text-left [&_svg]:size-icon-md [&_svg]:shrink-0")}
 				role="status"
 			>
-				<Download aria-hidden="true" className="size-icon-lg shrink-0" />
+				<span className="relative grid size-icon-lg shrink-0 place-items-center" aria-hidden="true">
+					<svg className="absolute inset-0 size-full -rotate-90" viewBox="0 0 24 24" fill="none">
+						<circle cx="12" cy="12" r="9" className="stroke-current/15" strokeWidth="2.5" />
+						<circle
+							cx="12"
+							cy="12"
+							r="9"
+							className="stroke-primary transition-[stroke-dasharray] duration-300"
+							strokeWidth="2.5"
+							strokeLinecap="round"
+							strokeDasharray={`${percent * 0.5655} 56.55`}
+						/>
+					</svg>
+				</span>
 				<span className="min-w-0 flex-1 truncate tabular-nums">
 					{t("settings.updates.downloading", { percent: status.percent ?? 0 })}
 				</span>
@@ -1989,28 +1994,18 @@ function UpdateStatusRow({ status, tabIndex }: { status: UpdateStatus; tabIndex:
 					: t("shell.restartInstallUpdate")
 			}
 			className={cn(
-				"flex w-full items-center gap-2.5 rounded-lg p-2.5 text-left text-control font-medium transition-colors",
-				escalated
-					? "border border-working/35 bg-working/12 text-working hover:bg-working/18 [&_svg]:text-working"
-					: "text-passive hover:bg-interactive-hover hover:text-foreground [&_svg]:text-passive",
+				NAV_ROW_CLASS,
+				"flex w-full items-center text-left [&_svg]:size-icon-md [&_svg]:shrink-0",
+				escalated && "text-working hover:text-working [&_svg]:text-working",
 			)}
 			onClick={() => void aoBridge.updates.install()}
 			tabIndex={tabIndex}
 			type="button"
 		>
 			<RefreshCw aria-hidden="true" className="size-icon-lg shrink-0" />
-			<span className="min-w-0 flex-1">
-				<span className="block truncate tracking-tight">{t("shell.restartToUpdate")}</span>
-				{status.version && (
-					<span className={cn("block truncate text-caption font-normal", escalated ? "text-working" : "text-passive")}>
-						{t("shell.versionReady", { version: status.version })}
-					</span>
-				)}
-			</span>
-			<span
-				aria-hidden="true"
-				className={cn("h-1.5 w-1.5 shrink-0 rounded-full", escalated ? "bg-working" : "bg-passive")}
-			/>
+			<span className="min-w-0 flex-1 truncate tracking-tight">{t("shell.restartToUpdate")}</span>
+			{status.version && <span className="sr-only">{t("shell.versionReady", { version: status.version })}</span>}
+			<span aria-hidden="true" className={cn("h-2 w-2 shrink-0 rounded-full", escalated ? "bg-working" : "bg-red-500")} />
 		</button>
 	);
 }

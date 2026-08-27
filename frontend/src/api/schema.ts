@@ -841,7 +841,7 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        /** Set the automatic CI-failure injection default for new session PRs */
+        /** Set automatic CI-failure injection for a session and its PRs */
         patch: operations["setSessionAutoInjectCI"];
         trace?: never;
     };
@@ -1702,6 +1702,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sessions/{sessionId}/workspace/tree": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List one directory level of a session workspace's full file tree, git-status decorated */
+        get: operations["listSessionWorkspaceTree"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sessions/cleanup": {
         parameters: {
             query?: never;
@@ -2136,6 +2153,11 @@ export interface components {
             summary: string;
             turnId?: string;
         };
+        ConversationBranchMaterializationResponse: {
+            replayTruncated: boolean;
+            /** @enum {string} */
+            strategy: "native" | "approximate_context";
+        };
         ConversationBranchPointResponse: {
             nextBranchId?: string;
             position: number;
@@ -2268,6 +2290,7 @@ export interface components {
             account?: components["schemas"]["ConversationAccountPayload"];
             activeBranchId?: string;
             activities: components["schemas"]["ConversationActivityResponse"][];
+            branchMaterialization?: components["schemas"]["ConversationBranchMaterializationResponse"];
             branchPoints?: components["schemas"]["ConversationBranchPointResponse"][];
             branchedFromEarlierMessage: boolean;
             capabilities?: string[];
@@ -2284,6 +2307,8 @@ export interface components {
             /** @enum {string} */
             mode: "chat" | "tui";
             modelReroute?: components["schemas"]["ConversationModelReroutePayload"];
+            /** Format: int64 */
+            nativeForkAvailableAfterSequence: number;
             /** Format: int64 */
             oldestSequence?: number;
             rateLimits?: components["schemas"]["ConversationRateLimitsPayload"];
@@ -2528,6 +2553,12 @@ export interface components {
             sections: components["schemas"]["WorkspaceFileSections"];
             sessionId: string;
             summary: components["schemas"]["WorkspaceSummary"];
+            truncated: boolean;
+        };
+        ListWorkspaceTreeResponse: {
+            entries: components["schemas"]["WorkspaceTreeEntry"][];
+            path: string;
+            sessionId: string;
             truncated: boolean;
         };
         MarkAllNotificationsReadRequest: {
@@ -3384,6 +3415,18 @@ export interface components {
             additions: number;
             deletions: number;
             files: number;
+        };
+        WorkspaceTreeEntry: {
+            binary?: boolean;
+            hasChanges?: boolean;
+            name: string;
+            path: string;
+            /** Format: int64 */
+            size?: number;
+            /** @enum {string} */
+            status?: "unmodified" | "modified" | "added" | "deleted" | "renamed";
+            /** @enum {string} */
+            type: "file" | "dir";
         };
     };
     responses: never;
@@ -9859,6 +9902,68 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ListWorkspaceFilesResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    listSessionWorkspaceTree: {
+        parameters: {
+            query?: {
+                /** @description Directory path relative to the session workspace root. Empty or omitted lists the root. */
+                path?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListWorkspaceTreeResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
                 };
             };
             /** @description Not Found */

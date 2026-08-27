@@ -1,4 +1,4 @@
--- Native Chat conversations owned by durable reviewer rows (version 110).
+-- Native Chat conversations owned by durable reviewer rows (version 112).
 
 -- +goose NO TRANSACTION
 
@@ -108,8 +108,12 @@ CREATE TABLE conversation_branches_next (
     conversation_id          TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
     session_id               TEXT REFERENCES sessions(id) ON DELETE SET NULL,
     review_id                TEXT REFERENCES review(id) ON DELETE SET NULL,
-    provider_conversation_id TEXT NOT NULL DEFAULT '',
-    parent_branch_id         TEXT REFERENCES conversation_branches_next(id) ON DELETE RESTRICT,
+	provider_conversation_id TEXT NOT NULL DEFAULT '',
+	strategy                 TEXT NOT NULL DEFAULT 'native',
+	replay_cutoff_sequence   INTEGER NOT NULL DEFAULT 0,
+	replay_truncated         INTEGER NOT NULL DEFAULT 0,
+	provider_scope_id        TEXT NOT NULL DEFAULT '',
+	parent_branch_id         TEXT REFERENCES conversation_branches_next(id) ON DELETE RESTRICT,
     fork_after_turn_id       TEXT REFERENCES conversation_turns(id) ON DELETE RESTRICT,
     replaced_turn_id         TEXT REFERENCES conversation_turns(id) ON DELETE RESTRICT,
     replacement_turn_id      TEXT REFERENCES conversation_turns(id) ON DELETE SET NULL,
@@ -118,12 +122,14 @@ CREATE TABLE conversation_branches_next (
 );
 
 INSERT INTO conversation_branches_next (
-    id, conversation_id, session_id, review_id, provider_conversation_id,
-    parent_branch_id, fork_after_turn_id, replaced_turn_id,
+	id, conversation_id, session_id, review_id, provider_conversation_id,
+	strategy, replay_cutoff_sequence, replay_truncated, provider_scope_id,
+	parent_branch_id, fork_after_turn_id, replaced_turn_id,
     replacement_turn_id, fork_after_sequence, created_at
 )
 SELECT id, conversation_id, session_id, NULL, provider_conversation_id,
-       parent_branch_id, fork_after_turn_id, replaced_turn_id,
+	   strategy, replay_cutoff_sequence, replay_truncated, provider_scope_id,
+	   parent_branch_id, fork_after_turn_id, replaced_turn_id,
        replacement_turn_id, fork_after_sequence, created_at
 FROM conversation_branches;
 

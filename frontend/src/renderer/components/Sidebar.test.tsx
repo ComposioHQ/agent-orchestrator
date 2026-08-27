@@ -1965,7 +1965,7 @@ describe("Sidebar", () => {
 		const buttons = await screen.findAllByLabelText("Restart to install update v9.9.9");
 		expect(buttons.length).toBeGreaterThan(0);
 		for (const button of buttons) {
-			expect(button).toHaveClass("text-working", "bg-working/12");
+		expect(button).toHaveClass("text-working");
 		}
 		expect(screen.getByText("v9.9.9 ready")).toBeInTheDocument();
 	});
