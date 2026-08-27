@@ -565,11 +565,13 @@ retryProjection:
 		return nil
 	}
 	mode := domain.NormalizeSessionMode(rec.Mode)
-	// A tagged callback must name the live controller owner for the committed
-	// interface. In particular, CommitControllerEpoch clears RuntimeLaunchID;
+	// Once a terminal launch owns the committed TUI interface, every callback
+	// must name that exact owner. An untagged legacy callback cannot prove that it
+	// belongs to the current launch, just as a tagged callback from an older
+	// launch cannot. In particular, CommitControllerEpoch clears RuntimeLaunchID;
 	// that is not permission for a delayed terminal Stop to mutate the new Chat
 	// epoch.
-	if s.LaunchID != "" &&
+	if (s.LaunchID != "" || rec.Metadata.RuntimeLaunchID != "") &&
 		(mode != domain.SessionModeTUI || rec.Metadata.RuntimeLaunchID == "" ||
 			s.LaunchID != rec.Metadata.RuntimeLaunchID) {
 		m.mu.Unlock()
@@ -662,10 +664,24 @@ retryProjection:
 			checkpoint.ConversationCheckpointNativeID == checkpointNativeID {
 			checkpoint.LatestAssistantUpdate = s.LatestAssistantUpdate
 			checkpoint.ConversationCheckpointState = domain.ConversationCheckpointComplete
+		} else if checkpoint.ConversationCheckpointState != domain.ConversationCheckpointLegacy &&
+			ownerGeneration != "" && checkpointNativeID != "" && s.LatestAssistantUpdate != "" {
+			// A scoped Stop is durable evidence that a newer provider turn completed
+			// even when its prompt hook was lost. Replace, rather than splice with,
+			// any older prompt. The assistant-only complete checkpoint makes replay
+			// reach this latest completed turn or fail closed. A legacy checkpoint is
+			// excluded because it may be a newer pane-delivered prompt whose hook has
+			// not arrived; a Stop cannot safely be ordered after that fallback.
+			checkpoint.LatestUserPrompt = ""
+			checkpoint.LatestUserPromptAt = time.Time{}
+			checkpoint.LatestAssistantUpdate = s.LatestAssistantUpdate
+			checkpoint.ConversationCheckpointState = domain.ConversationCheckpointComplete
+			checkpoint.ConversationCheckpointGeneration = ownerGeneration
+			checkpoint.ConversationCheckpointNativeID = checkpointNativeID
 		} else if checkpoint.LatestUserPrompt == "" && s.LatestAssistantUpdate != "" {
-			// A standalone Stop can still be useful display/recovery context, but it
-			// has no turn boundary that would make it a trusted history gate. Retain
-			// it as legacy text without ever borrowing an earlier user prompt.
+			// An unowned standalone Stop can still be useful display/recovery context,
+			// but it has no owner boundary that would make it a trusted history gate.
+			// Retain it as legacy text without ever borrowing an earlier user prompt.
 			checkpoint.LatestAssistantUpdate = s.LatestAssistantUpdate
 			checkpoint.ConversationCheckpointState = domain.ConversationCheckpointLegacy
 			checkpoint.ConversationCheckpointGeneration = ""

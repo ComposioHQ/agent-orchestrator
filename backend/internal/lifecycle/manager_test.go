@@ -1400,7 +1400,8 @@ func TestActivity_StopWithoutCurrentPromptNeverPairsWithPriorTurn(t *testing.T) 
 	store.sessions[rec.ID] = rec
 
 	// The current turn's UserPromptSubmit was lost. Stop must not combine its
-	// assistant with the only prompt AO has, which belongs to the prior turn.
+	// assistant with the only prompt AO has, which belongs to the prior turn. Its
+	// scoped assistant evidence must still replace the older replay checkpoint.
 	if err := m.ApplyActivitySignal(ctx, rec.ID, ports.ActivitySignal{
 		Valid: true, State: domain.ActivityIdle, Event: "stop",
 		LaunchID: "launch-current", AgentSessionID: "native-current",
@@ -1409,10 +1410,12 @@ func TestActivity_StopWithoutCurrentPromptNeverPairsWithPriorTurn(t *testing.T) 
 		t.Fatalf("ApplyActivitySignal stop: %v", err)
 	}
 	got := store.sessions[rec.ID].Metadata
-	if got.LatestUserPrompt != "prior turn prompt" || !got.LatestUserPromptAt.Equal(rec.Metadata.LatestUserPromptAt) ||
-		got.LatestAssistantUpdate != "prior turn answer" ||
-		got.ConversationCheckpointState != domain.ConversationCheckpointComplete {
-		t.Fatalf("out-of-order Stop corrupted prior checkpoint: %+v", got)
+	if got.LatestUserPrompt != "" || !got.LatestUserPromptAt.IsZero() ||
+		got.LatestAssistantUpdate != "new turn answer with missing prompt boundary" ||
+		got.ConversationCheckpointState != domain.ConversationCheckpointComplete ||
+		got.ConversationCheckpointGeneration != "launch-current" ||
+		got.ConversationCheckpointNativeID != "native-current" {
+		t.Fatalf("out-of-order Stop did not retain scoped assistant checkpoint: %+v", got)
 	}
 }
 
@@ -1521,6 +1524,34 @@ func TestActivity_OldRuntimeGenerationCannotReplaceConversationCheckpoint(t *tes
 	}
 	if got := store.sessions[rec.ID]; got != rec {
 		t.Fatalf("old generation mutated current checkpoint: got %+v, want %+v", got, rec)
+	}
+}
+
+func TestActivity_UntaggedTUIHookCannotMutateLaunchedRuntime(t *testing.T) {
+	m, store, _ := newManager()
+	rec := working("mer-1")
+	rec.Mode = domain.SessionModeTUI
+	rec.Metadata.RuntimeLaunchID = "launch-current"
+	rec.Metadata.AgentSessionID = "native-current"
+	rec.Metadata.AgentSessionIDLaunchID = "launch-current"
+	rec.Metadata.LatestUserPrompt = "current prompt"
+	rec.Metadata.LatestAssistantUpdate = "current answer"
+	rec.Metadata.ConversationCheckpointState = domain.ConversationCheckpointComplete
+	rec.Metadata.ConversationCheckpointGeneration = "launch-current"
+	rec.Metadata.ConversationCheckpointNativeID = "native-current"
+	store.sessions[rec.ID] = rec
+
+	// Once a runtime launch owns the TUI session, an untagged legacy callback
+	// cannot prove that it belongs to that generation. A delayed callback from a
+	// prior launch must therefore be ignored in its entirety.
+	if err := m.ApplyActivitySignal(ctx, rec.ID, ports.ActivitySignal{
+		Valid: true, State: domain.ActivityIdle, Event: "stop",
+		AgentSessionID: "native-old", LatestAssistantUpdate: "late untagged answer",
+	}); err != nil {
+		t.Fatalf("ApplyActivitySignal: %v", err)
+	}
+	if got := store.sessions[rec.ID]; got != rec {
+		t.Fatalf("untagged callback mutated launched runtime: got %+v, want %+v", got, rec)
 	}
 }
 

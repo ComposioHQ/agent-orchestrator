@@ -475,10 +475,11 @@ func (p nativeHistoryCheckpoint) mismatches(
 	// A trusted checkpoint describes one main-thread turn. Selecting the latest
 	// user and assistant independently can splice an older repeated answer onto a
 	// newer incomplete turn and incorrectly admit a truncated provider replay.
-	// The checkpoint does not have to be the final replay turn: lifecycle keeps
-	// the prior coherent pair when a later turn's prompt boundary was lost. Admit
-	// that history only when both checkpoint fields match together inside one
-	// completed, non-coordination turn.
+	// The checkpoint does not have to be the final replay turn when lifecycle saw
+	// no comparable evidence for later work. Admit an older coherent pair only
+	// when both fields match together inside one completed, non-coordination turn.
+	// A scoped Stop whose prompt hook was lost is stored assistant-only and follows
+	// the latest-turn gate below, so replay still has to reach that newer boundary.
 	latestText := turnText[latestCompletedTurnID]
 	checkpointMatched := p.latestUserPrompt == "" && p.latestAssistantUpdate == ""
 	if p.latestUserPrompt != "" && p.latestAssistantUpdate != "" {
@@ -494,8 +495,8 @@ func (p nativeHistoryCheckpoint) mismatches(
 			}
 		}
 	} else {
-		// An incomplete or legacy single-sided checkpoint has no coherent pair
-		// that can identify an older turn safely, so retain the latest-turn gate.
+		// A single-sided checkpoint has no coherent pair that can identify an older
+		// turn safely, so retain the latest-turn gate.
 		checkpointMatched =
 			(p.latestUserPrompt == "" || nativeHistoryTextMatches(p.latestUserPrompt, latestText.user.Text)) &&
 				(p.latestAssistantUpdate == "" || nativeHistoryTextMatches(p.latestAssistantUpdate, latestText.assistant.Text))

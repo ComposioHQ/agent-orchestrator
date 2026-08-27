@@ -1617,10 +1617,9 @@ func TestInterfaceHandoffTrustedCheckpointMayPrecedeLaterCompletedTurn(t *testin
 	if err != nil || !found {
 		t.Fatalf("load session: found=%v err=%v", found, err)
 	}
-	// The later turn's UserPromptSubmit hook can be lost even though the provider
-	// durably completed and replays that turn. Lifecycle intentionally preserves
-	// this earlier coherent checkpoint rather than pairing the later Stop with the
-	// wrong prompt. The checkpoint therefore need not be the replay's final turn.
+	// AO may have no hook evidence at all for a later provider turn. In that case
+	// the earlier coherent checkpoint still need not be the replay's final turn.
+	// A later scoped Stop is covered separately and becomes a latest-turn gate.
 	rec.Metadata.LatestUserPrompt = "trusted checkpoint user"
 	rec.Metadata.LatestAssistantUpdate = "trusted checkpoint assistant"
 	rec.Metadata.ConversationCheckpointState = domain.ConversationCheckpointComplete
@@ -1664,6 +1663,129 @@ func TestInterfaceHandoffTrustedCheckpointMayPrecedeLaterCompletedTurn(t *testin
 	}
 	if len(snapshot.Turns) != 2 || len(snapshot.Messages) != 4 {
 		t.Fatalf("replayed snapshot = %d turns, %d messages; want both completed turns", len(snapshot.Turns), len(snapshot.Messages))
+	}
+}
+
+func TestInterfaceHandoffMissedPromptHookCannotAcceptHistoryBeforeObservedStop(t *testing.T) {
+	st := openStore(t)
+	changed, err := st.CommitSessionControllerEpoch(
+		context.Background(), testSession, domain.SessionModeChat, domain.SessionModeTUI,
+		"thread-1", time.Now().UTC(),
+	)
+	if err != nil || !changed {
+		t.Fatalf("commit initial TUI mode: changed=%v err=%v", changed, err)
+	}
+	rec, found, err := st.GetSession(context.Background(), testSession)
+	if err != nil || !found {
+		t.Fatalf("load session: found=%v err=%v", found, err)
+	}
+	rec.Metadata.RuntimeLaunchID = "terminal-generation"
+	rec.Metadata.AgentSessionID = "thread-1"
+	rec.Metadata.AgentSessionIDLaunchID = "terminal-generation"
+	rec.Metadata.LatestUserPrompt = "trusted checkpoint user"
+	rec.Metadata.LatestAssistantUpdate = "trusted checkpoint assistant"
+	rec.Metadata.ConversationCheckpointState = domain.ConversationCheckpointComplete
+	rec.Metadata.ConversationCheckpointGeneration = "terminal-generation"
+	rec.Metadata.ConversationCheckpointNativeID = "thread-1"
+	if err := st.UpdateSession(context.Background(), rec); err != nil {
+		t.Fatalf("seed trusted checkpoint: %v", err)
+	}
+
+	// The provider completed another turn, but its UserPromptSubmit hook was
+	// missed. The Stop still proves that provider history must advance beyond the
+	// earlier coherent pair before Chat can safely attach.
+	lifecycleManager := lifecycle.New(st, nil)
+	if err := lifecycleManager.ApplyActivitySignal(context.Background(), testSession, ports.ActivitySignal{
+		Valid: true, State: domain.ActivityIdle, Event: "stop",
+		LaunchID: "terminal-generation", AgentSessionID: "thread-1",
+		LatestAssistantUpdate: "later answer whose prompt hook was lost",
+	}); err != nil {
+		t.Fatalf("apply later Stop: %v", err)
+	}
+	rec, found, err = st.GetSession(context.Background(), testSession)
+	if err != nil || !found {
+		t.Fatalf("reload session: found=%v err=%v", found, err)
+	}
+	if rec.Metadata.LatestUserPrompt != "" ||
+		rec.Metadata.LatestAssistantUpdate != "later answer whose prompt hook was lost" ||
+		rec.Metadata.ConversationCheckpointState != domain.ConversationCheckpointComplete {
+		t.Fatalf("later Stop checkpoint = %+v, want trusted assistant-only completion", rec.Metadata)
+	}
+	changed, err = st.CommitSessionControllerEpoch(
+		context.Background(), testSession, domain.SessionModeTUI, domain.SessionModeChat,
+		"thread-1", time.Now().UTC(),
+	)
+	if err != nil || !changed {
+		t.Fatalf("commit Chat mode: changed=%v err=%v", changed, err)
+	}
+
+	conv := &nativeHistoryConversation{
+		fakeConversation: newFakeConversation(),
+		events: []ports.ChatEvent{
+			{Kind: ports.ChatEventTurnStarted, ProviderEventID: "checkpoint-start", ProviderTurnID: "checkpoint-turn"},
+			{Kind: ports.ChatEventUserMessageCompleted, ProviderEventID: "checkpoint-user", ProviderTurnID: "checkpoint-turn", ProviderItemID: "checkpoint-user-item", Text: "trusted checkpoint user"},
+			{Kind: ports.ChatEventMessageCompleted, ProviderEventID: "checkpoint-assistant", ProviderTurnID: "checkpoint-turn", ProviderItemID: "checkpoint-assistant-item", Text: "trusted checkpoint assistant"},
+			{Kind: ports.ChatEventTurnCompleted, ProviderEventID: "checkpoint-complete", ProviderTurnID: "checkpoint-turn", TurnState: domain.TurnStateCompleted},
+		},
+	}
+	svc := chatsvc.New(chatsvc.Options{
+		Store: st, Sessions: st,
+		Drivers: fakeRegistry{driver: fakeDriver{conv: conv}},
+		Log:     slog.New(slog.DiscardHandler),
+		NewID:   func() string { return fmt.Sprintf("missed-prompt-%d", time.Now().UnixNano()) },
+	})
+	t.Cleanup(func() { _ = svc.Stop(context.Background(), testSession) })
+
+	_, err = svc.Start(context.Background(), chatsvc.StartConfig{
+		SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex,
+		WorkspacePath: t.TempDir(), ProviderConversationID: "thread-1", RequireNativeHistory: true,
+		HistoryPolicy: domain.SessionInterfaceTransitionHistoryProvider,
+	})
+	if !errors.Is(err, ports.ErrChatHistoryUnsettled) {
+		t.Fatalf("Start error = %v, want replay to reject history ending before observed Stop", err)
+	}
+	if ports.ChatHistoryMismatchOnlyUntrustedText(err) {
+		t.Fatalf("observed Stop mismatch was incorrectly recoverable: %v", err)
+	}
+}
+
+func TestInterfaceHandoffAssistantOnlyCheckpointAcceptsLatestCompletedTurn(t *testing.T) {
+	st := openStore(t)
+	rec, found, err := st.GetSession(context.Background(), testSession)
+	if err != nil || !found {
+		t.Fatalf("load session: found=%v err=%v", found, err)
+	}
+	rec.Metadata.LatestAssistantUpdate = "later answer whose prompt hook was lost"
+	rec.Metadata.ConversationCheckpointState = domain.ConversationCheckpointComplete
+	rec.Metadata.ConversationCheckpointGeneration = "terminal-generation"
+	rec.Metadata.ConversationCheckpointNativeID = "thread-1"
+	if err := st.UpdateSession(context.Background(), rec); err != nil {
+		t.Fatalf("seed assistant-only checkpoint: %v", err)
+	}
+
+	conv := &nativeHistoryConversation{
+		fakeConversation: newFakeConversation(),
+		events: []ports.ChatEvent{
+			{Kind: ports.ChatEventTurnStarted, ProviderEventID: "later-start", ProviderTurnID: "later-turn"},
+			{Kind: ports.ChatEventUserMessageCompleted, ProviderEventID: "later-user", ProviderTurnID: "later-turn", ProviderItemID: "later-user-item", Text: "later prompt whose hook was lost"},
+			{Kind: ports.ChatEventMessageCompleted, ProviderEventID: "later-assistant", ProviderTurnID: "later-turn", ProviderItemID: "later-assistant-item", Text: "later answer whose prompt hook was lost"},
+			{Kind: ports.ChatEventTurnCompleted, ProviderEventID: "later-complete", ProviderTurnID: "later-turn", TurnState: domain.TurnStateCompleted},
+		},
+	}
+	svc := chatsvc.New(chatsvc.Options{
+		Store: st, Sessions: st,
+		Drivers: fakeRegistry{driver: fakeDriver{conv: conv}},
+		Log:     slog.New(slog.DiscardHandler),
+		NewID:   func() string { return fmt.Sprintf("assistant-checkpoint-%d", time.Now().UnixNano()) },
+	})
+	t.Cleanup(func() { _ = svc.Stop(context.Background(), testSession) })
+
+	if _, err := svc.Start(context.Background(), chatsvc.StartConfig{
+		SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex,
+		WorkspacePath: t.TempDir(), ProviderConversationID: "thread-1", RequireNativeHistory: true,
+		HistoryPolicy: domain.SessionInterfaceTransitionHistoryStrict,
+	}); err != nil {
+		t.Fatalf("Start with observed Stop in latest completed turn: %v", err)
 	}
 }
 
