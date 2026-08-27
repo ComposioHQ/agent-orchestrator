@@ -160,6 +160,7 @@ type BrowserWebContents = Pick<
 	| "loadURL"
 	| "on"
 	| "reload"
+	| "removeInsertedCSS"
 	| "send"
 	| "setWindowOpenHandler"
 	| "stop"
@@ -530,9 +531,18 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		view.setBorderRadius?.(BROWSER_VIEW_BORDER_RADIUS);
 		view.webContents.session?.setPermissionCheckHandler?.(() => false);
 		view.webContents.session?.setPermissionRequestHandler?.((_contents, _permission, callback) => callback(false));
+		let scrollbarStyleKey: string | undefined;
+		let scrollbarStyleUpdate = Promise.resolve();
 		const applyScrollbarStyle = (): void => {
-			void view.webContents
-				.insertCSS(browserScrollbarCSS(view.webContents.getZoomFactor()), { cssOrigin: "user" })
+			scrollbarStyleUpdate = scrollbarStyleUpdate
+				.then(async () => {
+					const previousKey = scrollbarStyleKey;
+					scrollbarStyleKey = await view.webContents.insertCSS(
+						browserScrollbarCSS(view.webContents.getZoomFactor()),
+						{ cssOrigin: "user" },
+					);
+					if (previousKey) await view.webContents.removeInsertedCSS(previousKey);
+				})
 				.catch(() => undefined);
 		};
 		view.webContents.on("dom-ready", applyScrollbarStyle);

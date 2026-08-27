@@ -29,6 +29,9 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 	const openDevTools = vi.fn();
 	const closeDevTools = vi.fn();
 	const insertCSS = vi.fn(async (_css: string, _options?: { cssOrigin?: "author" | "user" }) => "ao-browser-scrollbars");
+	let insertedStyleNumber = 0;
+	insertCSS.mockImplementation(async () => `ao-browser-scrollbars-${++insertedStyleNumber}`);
+	const removeInsertedCSS = vi.fn(async (_key: string) => undefined);
 	const debuggerSendCommand = vi.fn(async (method: string, params?: Record<string, unknown>): Promise<unknown> => {
 		if (method === "Page.navigate" && typeof params?.url === "string") currentURL = params.url;
 		return {};
@@ -66,6 +69,7 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 		goForward: () => undefined,
 		isLoading: () => false,
 		insertCSS,
+		removeInsertedCSS,
 		loadURL: vi.fn(async (url: string) => {
 			currentURL = url;
 		}),
@@ -209,6 +213,7 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 		openDevTools,
 		closeDevTools,
 		insertCSS,
+		removeInsertedCSS,
 		setBrowserZoomFactor: (zoomFactor: number) => {
 			browserZoomFactor = zoomFactor;
 		},
@@ -222,12 +227,12 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 
 describe("browser scrollbar styling", () => {
 	it("injects AO-styled horizontal and vertical scrollbars whenever a browser page becomes ready", async () => {
-		const { insertCSS, invoke, setBrowserZoomFactor, webContentsListeners } = setupHost();
+		const { insertCSS, invoke, removeInsertedCSS, setBrowserZoomFactor, webContentsListeners } = setupHost();
 
 		await invoke("browser:ensure", "sess-1");
 		webContentsListeners.get("dom-ready")?.();
 
-		expect(insertCSS).toHaveBeenCalledOnce();
+		await vi.waitFor(() => expect(insertCSS).toHaveBeenCalledOnce());
 		const css = insertCSS.mock.calls[0]?.[0] ?? "";
 		expect(insertCSS.mock.calls[0]?.[1]).toEqual({ cssOrigin: "user" });
 		expect(css).toContain("::-webkit-scrollbar-thumb");
@@ -241,14 +246,15 @@ describe("browser scrollbar styling", () => {
 		expect(css).not.toContain("min-width");
 
 		webContentsListeners.get("dom-ready")?.();
-		expect(insertCSS).toHaveBeenCalledTimes(2);
+		await vi.waitFor(() => expect(insertCSS).toHaveBeenCalledTimes(2));
 
 		setBrowserZoomFactor(4);
 		webContentsListeners.get("zoom-changed")?.();
-		expect(insertCSS).toHaveBeenCalledTimes(3);
+		await vi.waitFor(() => expect(insertCSS).toHaveBeenCalledTimes(3));
 		const zoomedCss = insertCSS.mock.calls[2]?.[0] ?? "";
 		expect(zoomedCss).toContain("width: 2px");
 		expect(zoomedCss).toContain("height: 2px");
+		await vi.waitFor(() => expect(removeInsertedCSS).toHaveBeenCalledWith("ao-browser-scrollbars-2"));
 	});
 });
 
