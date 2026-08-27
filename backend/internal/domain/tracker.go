@@ -105,15 +105,25 @@ type ListFilter struct {
 type TrackerIntakeConfig struct {
 	Enabled bool `json:"enabled,omitempty"`
 	// Provider defaults to github when Enabled is true. Supported values:
-	// "github" and "gitlab".
-	Provider TrackerProvider `json:"provider,omitempty" enum:"github,gitlab"`
+	// "github", "gitlab" and "onedev".
+	Provider TrackerProvider `json:"provider,omitempty" enum:"github,gitlab,onedev"`
 	// Repo is the provider-native repository key ("owner/repo" for GitHub,
-	// "group/project" for GitLab). When empty, the intake loop derives it from
-	// the project's repo origin URL.
+	// "group/project" for GitLab, a project path for OneDev — which may be a
+	// single segment). When empty, the intake loop derives it from the
+	// project's repo origin URL.
 	Repo string `json:"repo,omitempty"`
 	// Assignee narrows eligible issues to one assignee. Provider-specific values
 	// such as "*" are passed through unchanged.
 	Assignee string `json:"assignee,omitempty"`
+}
+
+// supportedIntakeProviders is the set of providers issue intake can resolve an
+// adapter for. It is a set rather than a chain of comparisons so adding a
+// provider is one line and cannot be half-added.
+var supportedIntakeProviders = map[TrackerProvider]bool{
+	TrackerProviderGitHub: true,
+	TrackerProviderGitLab: true,
+	TrackerProviderOneDev: true,
 }
 
 // WithDefaults fills the provider only when intake is enabled. Disabled intake
@@ -131,7 +141,7 @@ func (c TrackerIntakeConfig) Validate() error {
 		return nil
 	}
 	c = c.WithDefaults()
-	if c.Enabled && c.Provider != TrackerProviderGitHub && c.Provider != TrackerProviderGitLab {
+	if !supportedIntakeProviders[c.Provider] {
 		return fmt.Errorf("trackerIntake.provider: unsupported provider %q", c.Provider)
 	}
 	if err := validateNoWhitespaceField("trackerIntake.repo", c.Repo); err != nil {
