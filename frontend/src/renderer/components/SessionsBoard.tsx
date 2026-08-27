@@ -36,6 +36,7 @@ import { TopbarActionError, TopbarButton, topbarProjectLabelClass } from "./Topb
 import { isChatPreflightError, spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
 import { usesPreviewWorkspaceData } from "../lib/preview-mode";
+import { demoBoardSessions } from "../lib/demo-board-sessions";
 import { isLinuxPlatform, isMacPlatform, usesBoardActionsInPanel } from "../lib/platform";
 import { cn } from "../lib/utils";
 import { useUiStore } from "../stores/ui-store";
@@ -83,7 +84,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const columns: KanbanColumnView[] = boardKanbanColumnOrder.map((column) => getKanbanColumnView(column, t));
 	const workspaceQuery = useWorkspaceQuery();
 	const shell = useShellMaybe();
-	const usageBySession = useSessionUsageSummaries(projectId).data ?? emptyUsageBySession;
+	const liveUsageBySession = useSessionUsageSummaries(projectId).data ?? emptyUsageBySession;
 	// Evaluated at render so platform mocks in tests can flip the in-panel chrome.
 	const boardActionsInPanel = usesBoardActionsInPanel();
 	/** Bell lives in the board action row when the shell topbar does not host it. */
@@ -93,7 +94,24 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const workspace = projectId ? workspaces[0] : undefined;
 	// Board chrome stays route-oriented; project context remains in the sidebar.
 	const boardLabel = t("shell.board");
-	const sessions = workspaces.flatMap((workspace) => workerSessions(workspace.sessions));
+	const liveSessions = workspaces.flatMap((workspace) => workerSessions(workspace.sessions));
+	const demoWorkspaceId = projectId ?? workspaces[0]?.id;
+	const sessions = usesPreviewWorkspaceData && demoWorkspaceId && liveSessions.length === 0
+		? demoBoardSessions(demoWorkspaceId)
+		: liveSessions;
+	const usageBySession = usesPreviewWorkspaceData
+		? new Map<string, SessionUsageSummary>(
+				sessions.map((session, index) => [
+					session.id,
+					liveUsageBySession.get(session.id) ?? {
+						sessionId: session.id,
+						processedTokens: [18_400, 46_700, 12_900, 81_200, 3_100][index % 5],
+						totalTokens: 100_000,
+						incomplete: false,
+					},
+				]),
+			)
+		: liveUsageBySession;
 	const orchestrator = projectId ? newestActiveOrchestrator(workspaces[0]?.sessions ?? []) : undefined;
 	const orchestratorActivityLabel = orchestrator ? getAgentActivityView(orchestrator.activity, t).label : undefined;
 	const [isSpawning, setIsSpawning] = useState(false);

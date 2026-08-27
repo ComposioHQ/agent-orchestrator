@@ -11,9 +11,17 @@ import {
 } from "react";
 import { motion, useReducedMotion } from "motion/react";
 import type { ExternalLinkComponent } from "./external-link";
-import { ChevronIcon, GitBranchIcon } from "./icons";
 import {
+	ChevronIcon,
+	GitBranchIcon,
+	GitPullRequestIcon,
+	LoaderCircleIcon,
+	MessageSquareIcon,
+} from "./icons";
+import {
+	attentionZone,
 	getDisplayStatusLabel,
+	getKanbanColumnView,
 	getSessionStatusView,
 	toKanbanColumn,
 	type KanbanColumnView,
@@ -38,10 +46,10 @@ export type BoardSessionPresentation = {
 	 * the card's status text. Translated via `getDisplayStatusLabel` for known
 	 * phrases (see {@link DisplayStatus}); an unrecognized one -- a newer
 	 * daemon that shipped a phrase before this build -- renders as the raw,
-	 * already-renderable English text the API guarantees. Rendered as plain,
-	 * uncolored text for now; the Figma visual treatment is tracked separately
-	 * in #4264. A daemon too old to send one falls back to the translated
-	 * {@link status} label.
+	 * already-renderable English text the API guarantees. The card styles the
+	 * phrase with its daemon-owned Kanban column, so presentation never has to
+	 * infer lifecycle semantics from human-readable copy. A daemon too old to
+	 * send one falls back to the translated {@link status} label.
 	 */
 	displayStatus?: string;
 	provider: string;
@@ -49,6 +57,7 @@ export type BoardSessionPresentation = {
 	statusPresentation?: BoardSessionStatusPresentation;
 	title: string;
 	trackerIssueId?: string;
+	updatedAt: string;
 	lastUserMessageAt?: string;
 };
 
@@ -56,12 +65,15 @@ export type BoardSessionStatusPresentation = {
 	className: string;
 	indicatorClassName: string;
 	label: string;
+	tone?: string;
 };
 
 export type BoardPullRequestState = "closed" | "open" | "draft" | "merged";
 
 export type BoardPullRequestPresentation = {
+	commentCount?: number;
 	number: number;
+	reviewerAvatars?: string[];
 	state: BoardPullRequestState;
 	url: string;
 };
@@ -138,7 +150,12 @@ function BoardColumnView<TSession extends BoardSessionPresentation>({
 	renderSessionCard: (session: TSession) => ReactNode;
 	sessions: TSession[];
 }) {
-	const ordered = [...sessions].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+	const ordered = [...sessions].sort((left, right) => {
+		const attentionPriority =
+			Number(attentionZone(right.status) === "action" || right.activity?.state === "blocked") -
+			Number(attentionZone(left.status) === "action" || left.activity?.state === "blocked");
+		return attentionPriority || right.updatedAt.localeCompare(left.updatedAt);
+	});
 	return (
 		<section
 			aria-label={labels.columnAria(column.label)}
@@ -148,20 +165,16 @@ function BoardColumnView<TSession extends BoardSessionPresentation>({
 		>
 			<div className="flex h-12 shrink-0 items-center gap-2.5 px-4">
 				<span
-					className="size-dot-sm rounded-full"
-					style={{
-						background: column.dot,
-						boxShadow: column.dotGlow
-							? `0 0 7px color-mix(in srgb, ${column.dot} 60%, transparent)`
-							: undefined,
-					}}
+					data-testid="board-column-swatch"
+					className="size-[var(--size-swatch)] rounded-full"
+					style={{ backgroundColor: column.dot }}
 				/>
-				<span className={cn("font-mono text-2xs font-medium uppercase tracking-wide-sm", column.titleClassName)}>
+				<span className={cn("text-xs font-medium", column.titleClassName)}>
 					{column.label}
 				</span>
-				<span className="ml-auto font-mono text-2xs leading-none text-passive">{ordered.length}</span>
+				<span className="ml-auto tabular-nums text-xs leading-none text-passive">{ordered.length}</span>
 			</div>
-			<div className="board-scrollbar min-h-0 flex-1 overflow-y-auto px-3 pb-3 pt-3">
+			<div className="board-scrollbar min-h-0 flex-1 overflow-y-auto pl-3 pr-2 pb-3 pt-3">
 				<div className="flex min-h-full flex-col gap-2.5">
 					{ordered.map((session) => (
 						<Fragment key={session.id}>{renderSessionCard(session)}</Fragment>
@@ -173,7 +186,7 @@ function BoardColumnView<TSession extends BoardSessionPresentation>({
 }
 
 export type SessionCardViewProps = {
-	action?: ReactNode;
+		action?: ReactNode;
 	branchAction?: ReactNode;
 	branchIcon?: ReactNode;
 	error?: string;
@@ -184,7 +197,7 @@ export type SessionCardViewProps = {
 		formatTime: (timestamp: string) => string;
 		intakeIssue: (id: string) => string;
 		pr: BoardPullRequestLabels;
-		lastUserMessageAt: (timestamp: string) => string;
+		updatedAt: (timestamp: string) => string;
 	};
 	onOpen?: () => void;
 	overlay?: ReactNode;
@@ -216,18 +229,37 @@ export function SessionCardView({
 }: SessionCardViewProps) {
 	const badge = getSessionStatusView(session.status, translate);
 	const statusPresentation = session.statusPresentation;
+	const needsAttention =
+		session.status === "ci_failed" ||
+		session.status === "changes_requested" ||
+		session.activity?.state === "blocked";
+	const needsAttentionChip = needsAttention;
+	const column = getKanbanColumnView(toKanbanColumn(session.kanbanColumn, session.status), translate);
 	const branch = session.branch ?? "";
 	const showBranch = branch !== "" && !sameLabel(branch, session.title) && !sameLabel(branch, session.id);
+	const renderedStatusLabel =
+		statusPresentation?.label ??
+		(session.displayStatus ? getDisplayStatusLabel(session.displayStatus, translate) : badge.label);
+	const showStatusLoader =
+		!needsAttention &&
+		session.displayStatus !== "Needs human review" &&
+		(session.status === "working" ||
+			session.status === "review_pending" ||
+			session.displayStatus === "Fixing CI failures" ||
+			session.displayStatus === "Addressing comments" ||
+			session.displayStatus === "Reviewing");
 
 	return (
 		<div
 			onClick={interactive ? onOpen : undefined}
 			role={interactive ? undefined : "listitem"}
 			className={cn(
-				"group relative w-full rounded-lg border text-left transition-[border-color,box-shadow]",
+				"group relative w-full rounded-lg border border-border text-left transition-[background-color,box-shadow,transform] duration-[120ms] ease-out",
 				badge.cardClassName ?? "border-border bg-surface",
 				interactive &&
-					"cursor-pointer hover:border-border-strong hover:shadow-sm focus-within:border-border-strong focus-within:ring-2 focus-within:ring-ring/60",
+					"cursor-pointer hover:bg-interactive-hover focus-within:bg-interactive-hover active:scale-[0.99] has-[.pr-link:active]:scale-100",
+				needsAttention &&
+					"animate-attention-card-pulse border-status-needs-you bg-[color-mix(in_srgb,var(--color-status-needs-you)_8%,var(--color-surface))]",
 			)}
 			data-testid="board-session-card"
 			data-session-id={session.id}
@@ -235,88 +267,85 @@ export function SessionCardView({
 			{interactive && onOpen ? (
 				<button
 					aria-label={session.title}
-					className="pointer-events-none absolute inset-0 rounded-lg outline-none"
+					className="pointer-events-none absolute inset-0 outline-none"
 					type="button"
 				/>
 			) : null}
 			{overlay}
 			{action ? <div className="absolute right-2 top-1.5 z-10">{action}</div> : null}
-			<div className="flex items-start gap-2.5 px-3.5 pb-2.5 pt-3">
-				{renderAvatar(session.provider)}
-				<div className="min-w-0 flex-1">
-					<div
-						className={cn(
-							"line-clamp-2 overflow-hidden text-sm-md font-semibold leading-tight tracking-tight text-foreground",
-							(overlay || action) && "pr-6",
-						)}
-						title={session.title}
-					>
-						{session.title}
+			<div className="px-3.5 pb-2.5 pt-3">
+				<div className="flex min-w-0 items-start gap-2.5">
+					{renderAvatar(session.provider)}
+					<div className="min-w-0 flex-1">
+						<div
+							className={cn(
+								"line-clamp-2 overflow-hidden text-balance text-sm-md font-semibold leading-tight tracking-tight text-foreground",
+								(overlay || action) && "pr-6",
+							)}
+							title={session.title}
+						>
+							{session.title}
+						</div>
 					</div>
-					{showBranch && (
-						<div className="mt-1.5 flex min-w-0 items-center gap-1.5 font-mono text-2xs text-passive">
-							{branchIcon ?? <GitBranchIcon aria-hidden="true" className="size-icon-2xs shrink-0" />}
-							<span className="truncate">{branch}</span>
-							{branchAction}
+				</div>
+				{showBranch && (
+					<div className="mt-1.5 flex min-w-0 items-center gap-1.5 font-mono text-2xs text-muted-foreground">
+						{branchIcon ?? <GitBranchIcon aria-hidden="true" className="size-icon-2xs shrink-0" />}
+						<span className="truncate text-muted-foreground">{branch}</span>
+						{branchAction}
+					</div>
+				)}
+			</div>
+			{prs.length > 0 && (
+				<div className="flex min-w-0 flex-col gap-1.5 px-3.5 pb-1">
+					{prs.length > 0 && (
+						<div className="flex min-w-0 flex-col gap-y-1 font-mono text-2xs text-muted-foreground">
+							{groupBoardPullRequests(prs).flatMap((group) => {
+								const compact = group.prs.filter((pr) => (pr.commentCount ?? 0) === 0);
+								const commented = group.prs.filter((pr) => (pr.commentCount ?? 0) > 0);
+								return [
+									...(compact.length > 0 ? [{ ...group, prs: compact }] : []),
+									...commented.map((pr) => ({ ...group, prs: [pr] })),
+								];
+							}).map((group) => (
+								<BoardPullRequestGroup
+									externalLink={externalLink}
+									group={group}
+									key={`${group.state}-${group.prs.map((pr) => pr.url || pr.number).join("-")}`}
+									labels={labels.pr}
+								/>
+							))}
 						</div>
 					)}
 				</div>
-			</div>
-			<div aria-hidden="true" className="mx-3.5 my-px h-px bg-border" />
-			<div className="flex flex-col gap-1.5 px-3.5 py-2">
-				<div className="flex items-center gap-2">
+			)}
+			<div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2 border-t border-border px-3.5 py-2.5">
+				<div className="flex min-w-0 flex-1">
 					<span
 						className={cn(
-							"inline-flex min-w-0 flex-1 items-center gap-1.5 text-2xs font-medium",
-							statusPresentation?.className ?? "text-passive",
+							"inline-flex min-w-0 max-w-full items-center text-2xs font-medium",
+							needsAttentionChip
+								? "text-status-needs-you"
+								: session.status === "mergeable" || session.displayStatus === "Mergeable"
+									? "text-success"
+									: (statusPresentation?.className ?? column.titleClassName),
 						)}
+						data-kanban-column={statusPresentation ? undefined : column.column}
+						data-testid="session-status"
 					>
-						{statusPresentation && (
-							<span
-								aria-hidden="true"
-								className={cn("size-dot-sm shrink-0 rounded-full", statusPresentation.indicatorClassName)}
-							/>
-						)}
+						{showStatusLoader ? <LoaderCircleIcon aria-hidden="true" className="mr-1 size-icon-2xs animate-spin" /> : null}
 						<span className="min-w-0 truncate">
-							{statusPresentation?.label ??
-								(session.displayStatus
-									? getDisplayStatusLabel(session.displayStatus, translate)
-									: badge.label)}
+							{renderedStatusLabel}
 						</span>
 					</span>
-					<div className="ml-auto flex shrink-0 items-center gap-1.5 whitespace-nowrap font-mono text-2xs text-passive">
-						{usage ? renderUsage(usage) : null}
-						{usage && session.lastUserMessageAt ? <span aria-hidden="true">·</span> : null}
-						{session.lastUserMessageAt ? (
-							<time
-								dateTime={session.lastUserMessageAt}
-								title={labels.lastUserMessageAt(session.lastUserMessageAt)}
-							>
-								{labels.formatTime(session.lastUserMessageAt)}
-							</time>
-						) : null}
-					</div>
 				</div>
-				{prs.length > 0 && (
-					<div className="flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-2xs text-passive">
-						{groupBoardPullRequests(prs).map((group) => (
-							<BoardPullRequestGroup
-								externalLink={externalLink}
-								group={group}
-								key={group.state}
-								labels={labels.pr}
-							/>
-						))}
-					</div>
-				)}
-				{session.trackerIssueId && (
-					<span
-						className="inline-flex max-w-branch-chip items-center self-start truncate rounded-sm bg-accent/12 px-1.5 py-0.5 font-mono text-micro text-accent"
-						title={labels.intakeIssue(session.trackerIssueId)}
-					>
-						{session.trackerIssueId}
+				<div className="ml-auto flex shrink-0 items-center gap-2 whitespace-nowrap text-2xs text-muted-foreground">
+					{usage ? renderUsage(usage) : null}
+					{usage ? <span aria-hidden="true" className="text-border-strong">·</span> : null}
+					<span className="tabular-nums text-muted-foreground" title={labels.updatedAt(session.updatedAt)}>
+						{labels.formatTime(session.updatedAt)}
 					</span>
-				)}
+				</div>
 			</div>
 			{error ? (
 				<div className="border-t border-border px-3.5 py-1.5 text-2xs text-destructive" role="alert">
@@ -361,27 +390,59 @@ function BoardPullRequestGroup({
 	labels: BoardPullRequestLabels;
 }) {
 	const statusLabel = labels.states[group.state];
+	const linkClassName = "pr-link hover:underline";
 	return (
-		<span
-			aria-label={`${group.prs.map((pr) => `#${pr.number}`).join(", ")} ${statusLabel}`}
-			className="inline-flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1"
-		>
-			<span>{labels.short}</span>
-			{group.prs.map((pr, index) => (
-				<span className="inline-flex items-center" key={pr.url || pr.number}>
-					<ExternalLink
-						className="text-passive underline-offset-2 transition-colors hover:text-foreground hover:underline"
-						href={pr.url}
-						stopPropagation
-					>
-						#{pr.number}
-					</ExternalLink>
-					{index < group.prs.length - 1 ? "," : null}
-				</span>
-			))}
-			<span className={cn("font-medium", lifecycleClassName(group.state))}>{statusLabel}</span>
-		</span>
+		<div className="flex min-w-0 items-center gap-x-2">
+			{group.prs.map((pr) => {
+				const hasComments = (pr.commentCount ?? 0) > 0;
+				return (
+					<Fragment key={pr.url || pr.number}>
+						<ExternalLink
+							ariaLabel={`PR #${pr.number} ${statusLabel}`}
+							className={cn("inline-flex min-w-0 items-center gap-x-2 py-0.5", linkClassName)}
+							href={pr.url}
+							stopPropagation
+						>
+			<PullRequestLifecycleIcon state={group.state} />
+			<span className="sr-only">{labels.short}</span>
+			<span className="font-mono text-xs font-medium text-foreground">#{pr.number}</span>
+			<span className="sr-only">{statusLabel}</span>
+			{hasComments ? (
+				<div className="-ml-0.5 flex shrink-0 items-center pl-1">
+					{(pr.reviewerAvatars ?? [])
+						.slice(0, 3)
+						.map((avatar, index) => (
+							<img
+								alt=""
+								className={cn("size-5 rounded-full border-2 border-surface object-cover ring-1 ring-border", index > 0 && "-ml-1.5")}
+								key={`${avatar}-${index}`}
+								src={avatar}
+							/>
+						))}
+				</div>
+			) : null}
+						</ExternalLink>
+						{hasComments ? (
+							<ExternalLink
+								ariaLabel={`${pr.commentCount} comments on PR #${pr.number}`}
+								className={cn("ml-auto inline-flex shrink-0 items-center gap-1 text-xs tabular-nums text-muted-foreground", linkClassName)}
+								href={pr.url}
+								stopPropagation
+							>
+								<MessageSquareIcon aria-hidden="true" className="size-icon-2xs" />
+								{pr.commentCount}
+							</ExternalLink>
+						) : null}
+					</Fragment>
+				);
+			})}
+		</div>
 	);
+}
+
+function PullRequestLifecycleIcon({ state }: { state: BoardPullRequestState }) {
+	const className = cn("size-icon-sm shrink-0", lifecycleClassName(state));
+	return <GitPullRequestIcon aria-hidden="true" className={className} />;
 }
 
 export function groupBoardPullRequests(

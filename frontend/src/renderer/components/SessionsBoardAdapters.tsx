@@ -4,7 +4,6 @@ import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import {
 	SessionCardView,
-	SessionUsageMetricView,
 	type BoardPullRequestLabels,
 	type BoardSessionPresentation,
 	type BoardColumnLabels,
@@ -23,7 +22,7 @@ import {
 } from "../lib/agent-switch-presentation";
 import type { WorkspaceSession } from "../types/workspace";
 import { canonicalTrackerIssueId } from "../types/workspace";
-import { useSessionScmSummary } from "../hooks/useSessionScmSummary";
+import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
 import type { SessionUsageSummary } from "../hooks/useSessionUsageSummaries";
 import {
 	clearTerminateSessionState,
@@ -55,6 +54,7 @@ export function toBoardSessionPresentation(
 						className: switchVisual.className,
 						indicatorClassName: `${switchVisual.indicatorClassName}${switchVisual.breathe ? " animate-status-pulse" : ""}`,
 						label: t(switchPresentation.compactLabelKey, switchPresentation.values),
+						tone: switchVisual.tone,
 					}
 				: undefined,
 		title: session.title,
@@ -212,7 +212,11 @@ function DesktopSessionCard({
 			onOpen={onOpen}
 			overlay={terminationOverlay}
 			prs={summaries.map((pr) => ({
+				commentCount: pr.review.unresolvedBy.reduce((count, reviewer) => count + reviewer.count, 0),
 				number: pr.number,
+				reviewerAvatars: (pr.review.reviews ?? [])
+					.map((review) => reviewerAvatarUrl(pr, review.reviewerId))
+					.filter((url): url is string => Boolean(url)),
 				state: pr.state,
 				url: prBrowserUrl(pr),
 			}))}
@@ -237,6 +241,20 @@ function pullRequestLabels(t: TFunction): BoardPullRequestLabels {
 	};
 }
 
+function reviewerAvatarUrl(pr: SessionPRSummary, reviewerId: string): string | undefined {
+	let origin: string;
+	try {
+		origin = new URL(prBrowserUrl(pr)).origin;
+	} catch {
+		return undefined;
+	}
+
+	const encodedReviewer = encodeURIComponent(reviewerId);
+	if (pr.provider === "github") return `${origin}/${encodedReviewer}.png`;
+	if (pr.provider === "gitlab") return `${origin}/-/avatar?username=${encodedReviewer}`;
+	return undefined;
+}
+
 function toUsagePresentation(
 	usage: SessionUsageSummary | undefined,
 	t: TFunction,
@@ -247,7 +265,7 @@ function toUsagePresentation(
 		accessibleLabel: t("shell.usageProcessed", {
 			count: usage.processedTokens.toLocaleString("en-US"),
 		}),
-		compactLabel: t("shell.usageProcessedCompact", { count: compactCount }),
+		compactLabel: compactCount,
 	};
 }
 
@@ -255,7 +273,12 @@ function DesktopUsageMetric({ usage }: { usage: BoardUsagePresentation }) {
 	return (
 		<Tooltip>
 			<TooltipTrigger asChild>
-				<SessionUsageMetricView usage={usage} />
+				<span
+					aria-label={usage.accessibleLabel}
+					className="inline-flex shrink-0 items-center whitespace-nowrap font-mono text-2xs tabular-nums text-muted-foreground"
+				>
+					{usage.compactLabel}
+				</span>
 			</TooltipTrigger>
 			<TooltipContent side="top">{usage.accessibleLabel}</TooltipContent>
 		</Tooltip>

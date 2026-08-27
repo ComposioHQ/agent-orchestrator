@@ -58,7 +58,7 @@ const baseSession: BoardSessionPresentation = {
 	provider: "codex",
 	status: "idle",
 	title: "portable task",
-	lastUserMessageAt: "2026-08-09T10:00:00Z",
+	updatedAt: "2026-08-09T10:00:00Z",
 };
 
 describe("SessionsBoardView", () => {
@@ -89,6 +89,17 @@ describe("SessionsBoardView", () => {
 		);
 
 		const buildingLane = screen.getByRole("region", { name: "Building sessions" });
+		const buildingHeader = buildingLane.firstElementChild as HTMLElement;
+		expect(buildingHeader).not.toHaveAttribute("style");
+		const swatch = within(buildingLane).getByTestId("board-column-swatch");
+		expect(swatch).toHaveClass("size-[var(--size-swatch)]", "rounded-full");
+		expect(swatch.style.boxShadow).toBe("");
+		const title = within(buildingLane).getByText("Building");
+		expect(title).toHaveClass("text-xs", "font-medium");
+		expect(title).not.toHaveClass("font-mono", "uppercase", "tracking-wide-sm");
+		const count = within(buildingLane).getByText("2");
+		expect(count).toHaveClass("tabular-nums", "text-xs");
+		expect(count).not.toHaveClass("font-mono");
 		expect(
 			within(buildingLane)
 				.getAllByTestId(/^card-/)
@@ -101,6 +112,99 @@ describe("SessionsBoardView", () => {
 		expect(screen.getByRole("region", { name: "Validating sessions" })).toBeInTheDocument();
 		expect(screen.getByRole("region", { name: "In review sessions" })).toBeInTheDocument();
 		expect(screen.getByTestId("board-horizontal-scroll")).toHaveClass("board-horizontal-scrollbar");
+	});
+
+	it("pins attention-required sessions first inside every lane without changing lanes", () => {
+		const columns = boardKanbanColumnOrder.map((column) => getKanbanColumnView(column));
+		const sessions: BoardSessionPresentation[] = columns.flatMap(({ column }, index) => [
+			{
+				...baseSession,
+				id: `${column}-newer`,
+				kanbanColumn: column,
+				status: column === "ready" ? "mergeable" : "idle",
+				title: `${column} newer`,
+				updatedAt: `2026-08-09T1${index}:00:00Z`,
+			},
+			{
+				...baseSession,
+				id: `${column}-attention`,
+				kanbanColumn: column,
+				status: "needs_input",
+				title: `${column} attention`,
+				updatedAt: "2026-08-08T09:00:00Z",
+			},
+		]);
+
+		render(
+			<SessionsBoardGridView
+				columns={columns}
+				labels={columnLabels}
+				renderSessionCard={(session) => <div data-testid={`card-${session.id}`}>{session.title}</div>}
+				sessions={sessions}
+			/>,
+		);
+
+		for (const column of columns) {
+			const lane = screen.getByRole("region", { name: `${column.label} sessions` });
+			expect(
+				within(lane)
+					.getAllByTestId(/^card-/)
+					.map((card) => card.textContent),
+			).toEqual([`${column.column} attention`, `${column.column} newer`]);
+		}
+	});
+
+	it.each(["ci_failed", "changes_requested"] as const)(
+		"gives %s cards the persistent orange attention treatment",
+		(status) => {
+			render(
+				<SessionCardView
+					externalLink={ExternalLink}
+					labels={{
+						formatTime: () => "5m ago",
+						intakeIssue: (id) => `Issue ${id}`,
+						pr: {
+							short: "PR",
+							states: { closed: "closed", draft: "draft", merged: "merged", open: "open" },
+						},
+						updatedAt: (timestamp) => `Updated ${timestamp}`,
+					}}
+					renderAvatar={(provider) => <span role="img" aria-label={provider}>C</span>}
+					session={{ ...baseSession, status }}
+				/>,
+			);
+
+			const card = screen.getByTestId("board-session-card");
+			expect(card).toHaveClass(
+				"animate-attention-card-pulse",
+				"border-status-needs-you",
+				"bg-[color-mix(in_srgb,var(--color-status-needs-you)_8%,var(--color-surface))]",
+			);
+		},
+	);
+
+	it("leaves ordinary cards on the neutral surface", () => {
+		render(
+			<SessionCardView
+				externalLink={ExternalLink}
+				labels={{
+					formatTime: () => "5m ago",
+					intakeIssue: (id) => `Issue ${id}`,
+					pr: {
+						short: "PR",
+						states: { closed: "closed", draft: "draft", merged: "merged", open: "open" },
+					},
+					updatedAt: (timestamp) => `Updated ${timestamp}`,
+				}}
+				renderAvatar={(provider) => <span role="img" aria-label={provider}>C</span>}
+				session={baseSession}
+			/>,
+		);
+
+		const card = screen.getByTestId("board-session-card");
+		expect(card).toHaveClass("border", "border-border", "bg-surface");
+		expect(card).toHaveClass("rounded-lg");
+		expect(card).not.toHaveClass("animate-attention-card-pulse", "border-status-needs-you");
 	});
 
 	it("renders a neutral card with grouped multi-PR, usage, and action presentation", () => {
@@ -117,7 +221,7 @@ describe("SessionsBoardView", () => {
 						short: "PR",
 						states: { closed: "closed", draft: "draft", merged: "merged", open: "open" },
 					},
-					lastUserMessageAt: (timestamp) => `Last message ${timestamp}`,
+					updatedAt: (timestamp) => `Updated ${timestamp}`,
 				}}
 				onOpen={onOpen}
 				prs={[
@@ -131,12 +235,23 @@ describe("SessionsBoardView", () => {
 			/>,
 		);
 
-		expect(screen.getByLabelText("#10, #11 open")).toHaveTextContent("PR#10,#11open");
-		expect(screen.getByLabelText("#12 merged")).toHaveTextContent("PR#12merged");
+		expect(screen.getByRole("link", { name: "PR #10 open" })).toHaveAttribute(
+			"href",
+			"https://example.com/pull/10",
+		);
+		expect(screen.getByRole("link", { name: "PR #11 open" })).toHaveAttribute(
+			"href",
+			"https://example.com/pull/11",
+		);
+		expect(screen.getByRole("link", { name: "PR #12 merged" })).toHaveAttribute(
+			"href",
+			"https://example.com/pull/12",
+		);
 		expect(screen.getByText("12.4K tok")).toHaveAccessibleName("12,400 tokens");
-		expect(screen.getByText("5m ago")).toHaveAttribute("title", "Last message 2026-08-09T10:00:00Z");
-		expect(screen.getByText("5m ago").tagName).toBe("TIME");
-		expect(screen.getByText("github:42")).toHaveAttribute("title", "Issue github:42");
+		expect(screen.getByText("feat/portable")).toHaveClass("text-muted-foreground");
+		expect(screen.getByText("5m ago")).toHaveAttribute("title", "Updated 2026-08-09T10:00:00Z");
+		expect(screen.getByText("5m ago")).toHaveClass("tabular-nums", "text-muted-foreground");
+		expect(screen.queryByText("github:42")).not.toBeInTheDocument();
 
 		fireEvent.click(screen.getByRole("button", { name: "portable task" }));
 		expect(onOpen).toHaveBeenCalledOnce();
@@ -153,7 +268,7 @@ describe("SessionsBoardView", () => {
 						short: "PR",
 						states: { closed: "closed", draft: "draft", merged: "merged", open: "open" },
 					},
-					lastUserMessageAt: (timestamp) => `Last message ${timestamp}`,
+					updatedAt: (timestamp) => `Updated ${timestamp}`,
 				}}
 				renderAvatar={(provider) => <span role="img" aria-label={provider}>C</span>}
 				session={{ ...baseSession, status: "review_pending" }}
@@ -163,10 +278,12 @@ describe("SessionsBoardView", () => {
 
 		const statusLabel = screen.getByText("Review pending");
 		const status = statusLabel.parentElement;
-		const metadataRow = status?.parentElement;
+		const statusSlot = status?.parentElement;
+		const metadataRow = statusSlot?.parentElement;
 		expect(statusLabel).toHaveClass("min-w-0", "truncate");
-		expect(status).toHaveClass("min-w-0", "flex-1");
-		expect(metadataRow).toHaveClass("flex", "items-center", "gap-2");
+		expect(status).toHaveClass("min-w-0", "max-w-full");
+		expect(statusSlot).toHaveClass("min-w-0", "flex-1");
+		expect(metadataRow).toHaveClass("grid", "grid-cols-[minmax(0,1fr)_auto]", "items-center");
 		expect(metadataRow).not.toHaveClass("flex-wrap");
 		expect(screen.getByText("24.6M tok").parentElement).toHaveClass("shrink-0", "whitespace-nowrap");
 	});
@@ -186,11 +303,15 @@ describe("SessionsBoardView", () => {
 				externalLink={ExternalLink}
 				labels={labels}
 				renderAvatar={(provider) => <span role="img" aria-label={provider}>C</span>}
-				session={{ ...baseSession, displayStatus: "Fixing CI failures", status: "ci_failed" }}
+				session={{
+					...baseSession,
+					displayStatus: "Fixing CI failures",
+					kanbanColumn: "validating",
+					status: "ci_failed",
+				}}
 			/>,
 		);
 		expect(screen.getByText("Fixing CI failures")).toBeInTheDocument();
-		expect(screen.queryByText("CI failed")).not.toBeInTheDocument();
 
 		// A daemon too old to derive one leaves the status badge in charge.
 		rerender(
@@ -219,13 +340,17 @@ describe("SessionsBoardView", () => {
 					updatedAt: (timestamp) => `Updated ${timestamp}`,
 				}}
 				renderAvatar={(provider) => <span role="img" aria-label={provider}>C</span>}
-				session={{ ...baseSession, displayStatus: "Fixing CI failures", status: "ci_failed" }}
+				session={{
+					...baseSession,
+					displayStatus: "Fixing CI failures",
+					kanbanColumn: "validating",
+					status: "ci_failed",
+				}}
 				translate={(key) => (key === "displayStatus.fixingCiFailures" ? "CI-Fehler werden behoben" : key)}
 			/>,
 		);
 
 		expect(screen.getByText("CI-Fehler werden behoben")).toBeInTheDocument();
-		expect(screen.queryByText("Fixing CI failures")).not.toBeInTheDocument();
 	});
 
 	it("shows a display status this build does not recognize as raw English rather than a key", () => {
@@ -250,7 +375,7 @@ describe("SessionsBoardView", () => {
 		expect(screen.getByText("Rebasing onto main")).toBeInTheDocument();
 	});
 
-	it("renders the display status as plain uncolored text with no dot, ahead of the design pass", () => {
+	it("styles the display status with the daemon-owned Kanban column", () => {
 		render(
 			<SessionCardView
 				externalLink={ExternalLink}
@@ -264,14 +389,22 @@ describe("SessionsBoardView", () => {
 					updatedAt: (timestamp) => `Updated ${timestamp}`,
 				}}
 				renderAvatar={(provider) => <span role="img" aria-label={provider}>C</span>}
-				session={{ ...baseSession, displayStatus: "Fixing CI failures", status: "ci_failed" }}
+				session={{
+					...baseSession,
+					displayStatus: "Fixing CI failures",
+					kanbanColumn: "validating",
+					status: "ci_failed",
+				}}
 			/>,
 		);
 
 		const label = screen.getByText("Fixing CI failures");
-		expect(label.parentElement).toHaveClass("text-passive");
-		expect(label.parentElement).not.toHaveClass("bg-current");
-		expect(label.parentElement?.querySelector(".rounded-full")).toBeNull();
+		const status = label.parentElement;
+		expect(status).toHaveAttribute("data-kanban-column", "validating");
+		expect(status).toHaveClass("text-status-needs-you");
+		expect(status).not.toHaveClass("rounded-sm", "border");
+		expect(status?.style.getPropertyValue("--session-status-tone")).toBe("");
+		expect(status?.querySelector(".rounded-full")).toBeNull();
 	});
 
 	it("keeps archive toggle height and board offset classes in lockstep", () => {
