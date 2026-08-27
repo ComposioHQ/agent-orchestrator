@@ -1625,7 +1625,8 @@ function SessionRow({
 					<input
 						aria-label={t("shell.renameSession", { title: session.title })}
 						autoFocus
-						className="min-w-0 flex-1 rounded-xs border border-accent bg-transparent px-1 py-px text-sm text-foreground outline-none focus-visible:ring-1 focus-visible:ring-accent"
+						className="h-full min-w-0 flex-1 appearance-none border-0 bg-transparent! p-0 text-sm text-foreground outline-none ring-0 focus:outline-none focus:ring-0"
+						data-session-inline-editor=""
 						maxLength={MAX_DISPLAY_NAME_LEN}
 						onBlur={() => void commit()}
 						onChange={(e) => setDraft(e.target.value)}
