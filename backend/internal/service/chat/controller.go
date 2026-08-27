@@ -448,35 +448,66 @@ func (p nativeHistoryCheckpoint) mismatches(
 		}
 	}
 
+	type replayTurnText struct {
+		user      ports.ChatEvent
+		assistant ports.ChatEvent
+	}
+	turnText := make(map[string]replayTurnText)
 	latestCompletedTurnID := ""
 	for _, event := range events {
 		if event.Kind == ports.ChatEventTurnCompleted && event.ProviderTurnID != "" &&
 			!coordinationTurns[event.ProviderTurnID] {
 			latestCompletedTurnID = event.ProviderTurnID
 		}
+		if event.ProviderTurnID == "" {
+			continue
+		}
+		text := turnText[event.ProviderTurnID]
+		switch event.Kind {
+		case ports.ChatEventUserMessageCompleted:
+			text.user = event
+		case ports.ChatEventMessageCompleted:
+			text.assistant = event
+		}
+		turnText[event.ProviderTurnID] = text
 	}
 
 	// A trusted checkpoint describes one main-thread turn. Selecting the latest
 	// user and assistant independently can splice an older repeated answer onto a
 	// newer incomplete turn and incorrectly admit a truncated provider replay.
-	var latestUser, latestAssistant ports.ChatEvent
-	for _, event := range events {
-		if event.ProviderTurnID != latestCompletedTurnID {
-			continue
+	// The checkpoint does not have to be the final replay turn: lifecycle keeps
+	// the prior coherent pair when a later turn's prompt boundary was lost. Admit
+	// that history only when both checkpoint fields match together inside one
+	// completed, non-coordination turn.
+	latestText := turnText[latestCompletedTurnID]
+	checkpointMatched := p.latestUserPrompt == "" && p.latestAssistantUpdate == ""
+	if p.latestUserPrompt != "" && p.latestAssistantUpdate != "" {
+		for turnID := range completedTurns {
+			if coordinationTurns[turnID] {
+				continue
+			}
+			text := turnText[turnID]
+			if nativeHistoryTextMatches(p.latestUserPrompt, text.user.Text) &&
+				nativeHistoryTextMatches(p.latestAssistantUpdate, text.assistant.Text) {
+				checkpointMatched = true
+				break
+			}
 		}
-		switch event.Kind {
-		case ports.ChatEventUserMessageCompleted:
-			latestUser = event
-		case ports.ChatEventMessageCompleted:
-			latestAssistant = event
-		}
+	} else {
+		// An incomplete or legacy single-sided checkpoint has no coherent pair
+		// that can identify an older turn safely, so retain the latest-turn gate.
+		checkpointMatched =
+			(p.latestUserPrompt == "" || nativeHistoryTextMatches(p.latestUserPrompt, latestText.user.Text)) &&
+				(p.latestAssistantUpdate == "" || nativeHistoryTextMatches(p.latestAssistantUpdate, latestText.assistant.Text))
 	}
 	mismatches := append([]ports.ChatHistoryMismatchDimension(nil), p.hardMismatches...)
-	if p.latestUserPrompt != "" && !nativeHistoryTextMatches(p.latestUserPrompt, latestUser.Text) {
-		mismatches = append(mismatches, p.userMismatch)
-	}
-	if p.latestAssistantUpdate != "" && !nativeHistoryTextMatches(p.latestAssistantUpdate, latestAssistant.Text) {
-		mismatches = append(mismatches, p.assistantMismatch)
+	if !checkpointMatched {
+		if p.latestUserPrompt != "" && !nativeHistoryTextMatches(p.latestUserPrompt, latestText.user.Text) {
+			mismatches = append(mismatches, p.userMismatch)
+		}
+		if p.latestAssistantUpdate != "" && !nativeHistoryTextMatches(p.latestAssistantUpdate, latestText.assistant.Text) {
+			mismatches = append(mismatches, p.assistantMismatch)
+		}
 	}
 
 	highWater := p.aoHighWater
