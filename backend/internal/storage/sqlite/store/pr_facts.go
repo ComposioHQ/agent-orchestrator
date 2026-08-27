@@ -40,6 +40,9 @@ func (s *Store) ListPRFactsForSession(ctx context.Context, id domain.SessionID) 
 	return out, nil
 }
 
+// ListPRFactsForSessions batches ListPRFactsForSession for session-list reads.
+// It returns every requested session id in the map, using an empty slice when
+// a session owns no PRs.
 func (s *Store) ListPRFactsForSessions(ctx context.Context, ids []domain.SessionID) (map[domain.SessionID][]domain.PRFacts, error) {
 	out := make(map[domain.SessionID][]domain.PRFacts, len(ids))
 	if len(ids) == 0 {

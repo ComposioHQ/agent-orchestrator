@@ -364,6 +364,9 @@ func (s *Store) ListCurrentHeadReviewRunsForSession(ctx context.Context, id doma
 	return out, nil
 }
 
+// ListCurrentHeadReviewRunsForSessions batches
+// ListCurrentHeadReviewRunsForSession for session-list reads, returning every
+// requested session id with an empty slice when the current head has no runs.
 func (s *Store) ListCurrentHeadReviewRunsForSessions(ctx context.Context, ids []domain.SessionID) (map[domain.SessionID][]domain.CurrentHeadReviewRun, error) {
 	out := make(map[domain.SessionID][]domain.CurrentHeadReviewRun, len(ids))
 	if len(ids) == 0 {
