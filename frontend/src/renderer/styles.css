@@ -3990,22 +3990,29 @@ body:has(#root .platform-linux) > .browser-popout-overlay {
 
 .browser-panel__tab-strip {
 	display: flex;
+	width: fit-content;
+	max-width: calc(100% - 34px);
 	min-width: 0;
 	align-items: end;
 	gap: 2px;
-	flex: 1;
+	flex: 0 1 auto;
 	overflow-x: auto;
 	overflow-y: hidden;
-	scrollbar-width: thin;
+	scrollbar-width: none;
+}
+
+.browser-panel__tab-strip::-webkit-scrollbar {
+	display: none;
 }
 
 .browser-panel__tab {
 	display: flex;
-	min-width: 112px;
+	width: 220px;
+	min-width: 52px;
 	max-width: 220px;
 	height: 32px;
 	align-items: center;
-	flex: 1 1 180px;
+	flex: 1 1 220px;
 	border: 1px solid transparent;
 	border-bottom: 0;
 	border-radius: 7px 7px 0 0;
@@ -4081,6 +4088,14 @@ body:has(#root .platform-linux) > .browser-popout-overlay {
 
 .browser-panel__tab-close:disabled {
 	display: none;
+}
+
+.browser-panel__tab-strip:has(.browser-panel__tab:nth-child(8)) .browser-panel__tab-close {
+	display: none;
+}
+
+.browser-panel__tab-strip:has(.browser-panel__tab:nth-child(8)) .browser-panel__tab--active .browser-panel__tab-close {
+	display: grid;
 }
 
 .browser-panel__tab-new {

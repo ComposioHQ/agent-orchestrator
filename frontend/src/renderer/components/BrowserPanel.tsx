@@ -1,6 +1,22 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import {
+	DndContext,
+	KeyboardSensor,
+	PointerSensor,
+	closestCenter,
+	useSensor,
+	useSensors,
+	type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+	SortableContext,
+	horizontalListSortingStrategy,
+	sortableKeyboardCoordinates,
+	useSortable,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import {
 	ArrowLeft,
 	ArrowRight,
 	Bug,
@@ -29,6 +45,7 @@ import { BrowserTabsRail, type BrowserTabsRailHandle } from "./BrowserTabsRail";
 import { cn } from "../lib/utils";
 import { appI18n, type MessageKey } from "../i18n";
 import { browserTabLabel } from "../lib/browser-tab-label";
+import { reorderBrowserTabs } from "../lib/browser-tab-order";
 import { handleTabListKeyDown } from "../lib/terminal-tabs";
 
 // One-click viewport width presets for responsive testing — height is shown
@@ -331,6 +348,24 @@ export function BrowserPanelView({
 	const urlInputRef = useRef<HTMLInputElement>(null);
 	const [pinned, setPinned] = useState(() => window.localStorage.getItem(RAIL_PINNED_STORAGE_KEY) === "1");
 	const showTabsTrigger = !poppedOut && !pinned && tabs.length >= 2;
+	const [topTabDragActive, setTopTabDragActive] = useState(false);
+	const tabSensors = useSensors(
+		useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+		useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+	);
+	const handleTopTabDragEnd = useCallback(
+		(event: DragEndEvent) => {
+			setTopTabDragActive(false);
+			if (!event.over) return;
+			const orderedIds = reorderBrowserTabs(
+				tabs.map((tab) => tab.id),
+				String(event.active.id),
+				String(event.over.id),
+			);
+			if (orderedIds) reorderTabs(orderedIds);
+		},
+		[reorderTabs, tabs],
+	);
 
 	const handlePinnedChange = useCallback((next: boolean) => {
 		setPinned(next);
@@ -448,43 +483,33 @@ export function BrowserPanelView({
 			role="tabpanel"
 		>
 			<div className="browser-panel__tab-bar" data-testid="browser-tab-bar">
-				<div
-					aria-label={t("browser.tabs")}
-					className="browser-panel__tab-strip"
-					onKeyDown={handleTabListKeyDown}
-					role="tablist"
+				<DndContext
+					collisionDetection={closestCenter}
+					onDragCancel={() => setTopTabDragActive(false)}
+					onDragEnd={handleTopTabDragEnd}
+					onDragStart={() => setTopTabDragActive(true)}
+					sensors={tabSensors}
 				>
-					{tabs.map((tab) => {
-						const label = browserTabLabel(tab.title, tab.url);
-						const selected = tab.id === activeTabId;
-						return (
-							<div className={cn("browser-panel__tab", selected && "browser-panel__tab--active")} key={tab.id}>
-								<button
-									aria-selected={selected}
-									className="browser-panel__tab-select"
-									onClick={() => void handleSelectTab(tab.id)}
-									role="tab"
-									tabIndex={selected ? 0 : -1}
-									title={label.title}
-									type="button"
-								>
-									<Globe2 aria-hidden="true" className="browser-panel__tab-icon" />
-									<span className="browser-panel__tab-title">{label.title}</span>
-								</button>
-								<button
-									aria-label={t("browser.closeTab", { title: label.title })}
-									className="browser-panel__tab-close"
-									disabled={tabs.length === 1}
-									onClick={() => void closeTab(tab.id)}
-									title={tabs.length === 1 ? t("browser.onlyTab") : t("browser.closeTab", { title: label.title })}
-									type="button"
-								>
-									<X aria-hidden="true" className="size-icon-sm" />
-								</button>
-							</div>
-						);
-					})}
-				</div>
+					<SortableContext items={tabs.map((tab) => tab.id)} strategy={horizontalListSortingStrategy}>
+						<div
+							aria-label={t("browser.tabs")}
+							className="browser-panel__tab-strip"
+							onKeyDown={topTabDragActive ? undefined : handleTabListKeyDown}
+							role="tablist"
+						>
+							{tabs.map((tab) => (
+								<SortableBrowserTopTab
+									key={tab.id}
+									onClose={() => void closeTab(tab.id)}
+									onSelect={() => void handleSelectTab(tab.id)}
+									onlyTab={tabs.length === 1}
+									selected={tab.id === activeTabId}
+									tab={tab}
+								/>
+							))}
+						</div>
+					</SortableContext>
+				</DndContext>
 				<button
 					aria-label={t("browser.openNewTab")}
 					className="browser-panel__tab-new"
@@ -825,6 +850,61 @@ export function BrowserPanelView({
 					tabs={tabs}
 				/>
 			</div>
+		</div>
+	);
+}
+
+function SortableBrowserTopTab({
+	tab,
+	selected,
+	onlyTab,
+	onSelect,
+	onClose,
+}: {
+	tab: BrowserViewModel["tabs"][number];
+	selected: boolean;
+	onlyTab: boolean;
+	onSelect: () => void;
+	onClose: () => void;
+}) {
+	const { t } = useTranslation();
+	const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: tab.id });
+	const label = browserTabLabel(tab.title, tab.url);
+	const closeLabel = t("browser.closeTab", { title: label.title });
+	return (
+		<div
+			className={cn("browser-panel__tab", selected && "browser-panel__tab--active", isDragging && "z-chrome opacity-80")}
+			ref={setNodeRef}
+			style={{ transform: CSS.Transform.toString(transform), transition }}
+		>
+			<button
+				{...attributes}
+				{...listeners}
+				aria-selected={selected}
+				className="browser-panel__tab-select"
+				onClick={onSelect}
+				role="tab"
+				tabIndex={selected ? 0 : -1}
+				title={label.title}
+				type="button"
+			>
+				{tab.favicon ? (
+					<img alt="" className="browser-panel__tab-icon object-cover" src={tab.favicon} />
+				) : (
+					<Globe2 aria-hidden="true" className="browser-panel__tab-icon" />
+				)}
+				<span className="browser-panel__tab-title">{label.title}</span>
+			</button>
+			<button
+				aria-label={closeLabel}
+				className="browser-panel__tab-close"
+				disabled={onlyTab}
+				onClick={onClose}
+				title={onlyTab ? t("browser.onlyTab") : closeLabel}
+				type="button"
+			>
+				<X aria-hidden="true" className="size-icon-sm" />
+			</button>
 		</div>
 	);
 }

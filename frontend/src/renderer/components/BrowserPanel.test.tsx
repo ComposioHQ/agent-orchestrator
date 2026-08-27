@@ -2,6 +2,7 @@ import { act, fireEvent, render, renderHook, screen, waitFor, within } from "@te
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { BrowserPanel, BrowserPanelView, useBrowserAnnotationQueue } from "./BrowserPanel";
+import { reorderBrowserTabs } from "../lib/browser-tab-order";
 import { useBrowserView, type BrowserNavState } from "../hooks/useBrowserView";
 import { OPEN_BROWSER_OVERLAY_SELECTOR } from "../lib/dom-selectors";
 import { MAX_BROWSER_TABS } from "../../shared/browser-tabs";
@@ -98,6 +99,11 @@ const session: WorkspaceSession = {
 	updatedAt: "2026-06-15T00:00:00Z",
 	prs: [],
 };
+
+it("reorders horizontal browser tabs around the drop target", () => {
+	expect(reorderBrowserTabs(["t1", "t2", "t3"], "t1", "t3")).toEqual(["t2", "t3", "t1"]);
+	expect(reorderBrowserTabs(["t1", "t2", "t3"], "t2", "missing")).toBeNull();
+});
 
 type ElementAnnotationPayload = BrowserAnnotationSubmitPayload & {
 	selection: { kind: "element"; context: BrowserAnnotationContext };
