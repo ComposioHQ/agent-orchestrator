@@ -122,6 +122,12 @@ export type WorkspaceSession = {
 	 * done server-side, so {@link status} already reflects all of these.
 	 */
 	prs: PullRequestFacts[];
+	/**
+	 * Present only for sessions that run in a control-plane sandbox. Carries the
+	 * org the session is scoped to so its terminal can be opened against the CP;
+	 * absent for local sessions, which route through the local daemon.
+	 */
+	cloud?: { orgId: string };
 };
 
 // Tracker providers whose ids the intake daemon stamps sessions with, in
@@ -268,7 +274,13 @@ export type { AttentionZone } from "../lib/session-presentation";
 export type WorkspaceSummary = {
 	id: string;
 	name: string;
-	kind?: ProjectKind;
+	/**
+	 * Discriminator for where the project lives. Local projects carry the
+	 * daemon's ProjectKind (or undefined for older daemons); projects hosted by
+	 * the AO cloud control plane carry "cloud" — branch on `kind === "cloud"`.
+	 */
+	kind?: ProjectKind | "cloud";
+	/** Local checkout path; empty string for cloud projects (no local folder). */
 	path: string;
 	workspaceRepos?: WorkspaceRepoSummary[];
 	type?: "main" | "worktree";

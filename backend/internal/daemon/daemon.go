@@ -224,10 +224,12 @@ func Run() error {
 	chatDrivers := chatdriverregistry.Build(log)
 
 	// Daemon-owned preferences. The store's type is field-compatible with the
-	// service's, adapted here so neither package imports the other.
+	// service's, adapted here so neither package imports the other. Offering
+	// gates ride along: they are boot-time config, not stored preferences.
 	settingsSvc := settingssvc.New(
 		settingsStore{store: store},
 		chatDrivers,
+		settingssvc.OfferingFromConfig(cfg),
 		func() time.Time { return time.Now().UTC() },
 	)
 
