@@ -1883,6 +1883,13 @@ body.is-resizing-x .session-split[data-workspace-resizing="true"] [data-slot="in
 	box-shadow: none !important;
 }
 
+/* A reorder can leave its source row, so lock the renderer cursor until the
+   drag ends or is cancelled. */
+html.sidebar-reordering,
+html.sidebar-reordering * {
+	cursor: grabbing !important;
+}
+
 /* No blue focus rings anywhere — hover/active carry interaction feedback.
    !important beats Tailwind focus / focus-visible ring and outline utilities. */
 :focus,
