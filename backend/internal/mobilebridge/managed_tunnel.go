@@ -69,16 +69,23 @@ func (m *ManagedTunnel) Start(localPort int) {
 	}()
 }
 
-// Stop ends the connector and clears the advertised endpoint. Safe to call when
-// nothing is running, and safe to call twice.
+// Stop ends the connector and withdraws the advertised endpoint. Safe to call
+// when nothing is running, and safe to call twice.
+//
+// Returns as soon as the connector is cancelled rather than waiting for its
+// goroutine to finish. Disable runs inside an HTTP handler with a deadline, and
+// a connector can take seconds to wind down — killing the process, draining its
+// stderr, reaping it — which blew that budget and failed the request with the
+// bridge left half-disabled.
+//
+// Not waiting is safe: exec.CommandContext kills the process on cancellation,
+// and if the daemon dies before the goroutine finishes, the pid file and the
+// startup reaper clean up whatever is left. The endpoint is withdrawn
+// synchronously below, so nothing hands out a dead address after this returns.
 func (m *ManagedTunnel) Stop() {
 	m.mu.Lock()
-	done := m.done
+	defer m.mu.Unlock()
 	m.stopLocked()
-	m.mu.Unlock()
-	if done != nil {
-		<-done
-	}
 }
 
 // stopLocked cancels any running connector. Caller holds mu.

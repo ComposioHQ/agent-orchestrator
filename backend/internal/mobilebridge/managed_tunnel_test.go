@@ -113,3 +113,65 @@ func TestManagedTunnelStopBeforeStartIsHarmless(t *testing.T) {
 		t.Error("endpoint from a tunnel that never started")
 	}
 }
+
+// Disable runs inside an HTTP handler with a deadline. A connector can take
+// seconds to wind down — killing the process, draining its stderr, reaping it —
+// and waiting for that blew the request budget: "context deadline exceeded
+// (MOBILE_DISABLE)" after exactly 5s, with the bridge left half-disabled.
+//
+// Stop must therefore return as soon as the connector is cancelled and the
+// endpoint withdrawn, and let the goroutine finish on its own. The process is
+// still killed (exec.CommandContext owns that), and the pid file plus the
+// startup reaper cover a daemon that dies before it finishes.
+func TestManagedTunnelStopDoesNotWaitForASlowConnector(t *testing.T) {
+	released := make(chan struct{})
+	m := NewManagedTunnel(ManagedTunnelDeps{
+		Run: func(ctx context.Context, _ int, _ *TunnelRuntime) {
+			<-ctx.Done()
+			<-released // still winding down long after cancellation
+		},
+	})
+	m.Start(3011)
+	settleFor(t, func() bool { return m.Status().Running || true })
+
+	// Released from another goroutine so a regression blocks the test rather
+	// than deadlocking it.
+	go func() {
+		time.Sleep(2 * time.Second)
+		close(released)
+	}()
+
+	start := time.Now()
+	m.Stop()
+	elapsed := time.Since(start)
+
+	if elapsed > 500*time.Millisecond {
+		t.Fatalf("Stop blocked for %v waiting on the connector; it must return promptly", elapsed)
+	}
+}
+
+// Returning promptly must not mean returning while still advertising: the
+// endpoint has to be withdrawn synchronously, or a status read immediately
+// after Disable would still hand out a dead address.
+func TestManagedTunnelStopWithdrawsTheEndpointBeforeReturning(t *testing.T) {
+	released := make(chan struct{})
+	defer close(released)
+	m := NewManagedTunnel(ManagedTunnelDeps{
+		Run: func(ctx context.Context, _ int, rt *TunnelRuntime) {
+			rt.Started()
+			rt.Line(`INF |  https://abc.trycloudflare.com  |`)
+			rt.Line(`INF Registered tunnel connection connIndex=0`)
+			rt.Settled()
+			<-ctx.Done()
+			<-released
+		},
+	})
+	m.Start(3011)
+	settleFor(t, func() bool { return m.Endpoint() != nil })
+
+	m.Stop()
+
+	if m.Endpoint() != nil {
+		t.Fatal("still advertising immediately after Stop returned")
+	}
+}
