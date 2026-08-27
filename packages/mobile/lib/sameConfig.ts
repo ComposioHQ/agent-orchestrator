@@ -15,6 +15,10 @@ export function sameServerConfig(a: ServerConfig | null, b: ServerConfig | null)
 		a.host === b.host &&
 		a.httpPort === b.httpPort &&
 		Boolean(a.secure) === Boolean(b.secure) &&
-		a.password === b.password
+		a.password === b.password &&
+		// Included because it keys per-machine state: a migrated pairing that
+		// adopts an identity must rebuild the connections that depend on it, even
+		// though the address it answers on has not moved.
+		(a.hostId ?? "") === (b.hostId ?? "")
 	);
 }

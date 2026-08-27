@@ -35,7 +35,7 @@ export async function pairFromCode(raw: string, deps: PairDeps): Promise<PairRes
 	const outcome = await deps.race(offer.endpoints, offer.hostId);
 	if (!outcome.ok) return { ok: false, reason: outcome.reason };
 
-	const config = configForEndpoint(outcome.endpoint, offer.token);
+	const config = configForEndpoint(outcome.endpoint, offer.token, offer.hostId || outcome.hostId);
 	try {
 		await deps.verify(config);
 	} catch {

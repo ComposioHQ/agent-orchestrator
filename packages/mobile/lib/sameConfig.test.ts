@@ -32,6 +32,19 @@ describe("sameServerConfig", () => {
 		expect(sameServerConfig(cfg(), cfg(over))).toBe(false);
 	});
 
+	// A machine migrated from the single-server config connects once without an
+	// identity and adopts one. Everything else about the endpoint is unchanged,
+	// so without comparing this the app would keep the previous object and the
+	// event stream would carry on using the address-keyed cursor it should have
+	// just graduated from.
+	it("treats gaining a host identity as a change", () => {
+		expect(sameServerConfig(cfg({ hostId: undefined }), cfg({ hostId: "h_abc" }))).toBe(false);
+	});
+
+	it("treats a different machine on the same address as a change", () => {
+		expect(sameServerConfig(cfg({ hostId: "h_abc" }), cfg({ hostId: "h_xyz" }))).toBe(false);
+	});
+
 	it("handles a missing previous config", () => {
 		expect(sameServerConfig(null, cfg())).toBe(false);
 	});

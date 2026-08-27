@@ -10,13 +10,16 @@ import type { RaceOutcome } from "./race";
  * ServerConfig, so the race hands back one of those rather than threading a new
  * type through every call site.
  */
-export function configForEndpoint(endpoint: Endpoint, token: string): ServerConfig {
+export function configForEndpoint(endpoint: Endpoint, token: string, hostId = ""): ServerConfig {
 	return {
 		...DEFAULT_CONFIG,
 		host: endpoint.host,
 		httpPort: String(endpoint.port),
 		secure: endpoint.secure,
 		password: token,
+		// Carried so per-machine state — the chat event cursor above all — keys on
+		// the machine rather than whichever address won the race.
+		...(hostId ? { hostId } : {}),
 	};
 }
 
@@ -51,7 +54,8 @@ export async function connectHost(id: string, deps: ConnectDeps): Promise<Connec
 	const outcome = await deps.race(host);
 	if (!outcome.ok) return { ok: false, reason: outcome.reason };
 
-	const config = configForEndpoint(outcome.endpoint, host.token);
+	const hostKeyForConfig = host.id === "" ? outcome.hostId : host.id;
+	const config = configForEndpoint(outcome.endpoint, host.token, hostKeyForConfig);
 
 	// A machine migrated from the single-server config has no id until it
 	// connects once. This is where it learns one, and it is verified from here on.

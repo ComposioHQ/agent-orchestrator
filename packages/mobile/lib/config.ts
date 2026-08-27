@@ -15,6 +15,13 @@ export type ServerConfig = {
 	muxPort: string; // legacy separate mux port - unused against the Go daemon
 	secure?: boolean; // use https/wss instead of http/ws (TLS / Tailscale funnel)
 	password: string; // daemon connection password for Authorization header
+	/**
+	 * The machine's stable identity, when known. Used to key per-machine state
+	 * (the chat event cursor) so it survives the address changing as the app
+	 * races between LAN, Tailscale and the tunnel. Absent for a pairing migrated
+	 * from the single-server config until its first connect.
+	 */
+	hostId?: string;
 };
 
 export const DEFAULT_CONFIG: ServerConfig = {
