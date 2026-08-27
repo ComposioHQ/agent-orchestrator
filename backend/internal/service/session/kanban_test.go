@@ -3,8 +3,12 @@ package session
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
+	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite/sqlitetest"
 	"github.com/aoagents/agent-orchestrator/backend/pkg/contract"
 )
 
@@ -189,5 +193,73 @@ func TestSessionKanbanExternalChangesStayPersonOwned(t *testing.T) {
 	}
 	if got.DisplayStatus != contract.DisplayAddressingComments {
 		t.Fatalf("display status = %q, want %q", got.DisplayStatus, contract.DisplayAddressingComments)
+	}
+}
+
+func TestSessionGetUsesLatestCurrentHeadRunPerHarness(t *testing.T) {
+	st := newSQLiteKanbanTestStore(t)
+	ctx := context.Background()
+	seedKanbanTestProject(t, st, "mer")
+	now := time.Now().UTC().Truncate(time.Second)
+
+	rec, err := st.CreateSession(ctx, domain.SessionRecord{
+		ProjectID:         "mer",
+		Kind:              domain.KindWorker,
+		Harness:           domain.HarnessClaudeCode,
+		AutoReviewEnabled: true,
+		AutoInjectReview:  true,
+		CreatedAt:         now,
+		UpdatedAt:         now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.WriteSCMObservation(ctx, domain.PullRequest{
+		URL: "pr/1", SessionID: rec.ID, Number: 1, HeadSHA: "head1", UpdatedAt: now, ObservedAt: now,
+	}, nil, nil, nil, nil, ports.ReviewWritePreserve); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpsertReview(ctx, domain.Review{
+		ID: "rev", SessionID: rec.ID, ProjectID: "mer", Harness: "claude-code",
+		PRURL: "pr/1", CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	insert := func(id string, createdAt time.Time, verdict domain.ReviewVerdict) {
+		t.Helper()
+		if err := st.InsertReviewRun(ctx, domain.ReviewRun{
+			ID: id, ReviewID: "rev", SessionID: rec.ID, Harness: "claude-code",
+			PRURL: "pr/1", TargetSHA: "head1", Status: domain.ReviewRunComplete,
+			Verdict: verdict, CreatedAt: createdAt, AutoInjectReview: true,
+		}); err != nil {
+			t.Fatalf("insert %s: %v", id, err)
+		}
+	}
+	insert("old", now, domain.VerdictChangesRequested)
+	insert("new", now.Add(time.Second), domain.VerdictApproved)
+
+	got, err := (&Service{store: st}).Get(ctx, rec.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.KanbanColumn != domain.KanbanNeedsReview {
+		t.Fatalf("kanban column = %q, want %q after approved rerun on same head", got.KanbanColumn, domain.KanbanNeedsReview)
+	}
+	if got.DisplayStatus != contract.DisplayNeedsHumanReview {
+		t.Fatalf("display status = %q, want %q after approved rerun on same head", got.DisplayStatus, contract.DisplayNeedsHumanReview)
+	}
+}
+
+func newSQLiteKanbanTestStore(t *testing.T) *sqlite.Store {
+	t.Helper()
+	return sqlitetest.MustOpen(t)
+}
+
+func seedKanbanTestProject(t *testing.T, st *sqlite.Store, id string) {
+	t.Helper()
+	if err := st.UpsertProject(context.Background(), domain.ProjectRecord{
+		ID: id, Path: "/tmp/" + id, RegisteredAt: time.Now().UTC().Truncate(time.Second),
+	}); err != nil {
+		t.Fatalf("seed project %s: %v", id, err)
 	}
 }

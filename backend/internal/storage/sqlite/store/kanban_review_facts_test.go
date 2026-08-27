@@ -50,6 +50,56 @@ func TestListCurrentHeadReviewRunsForSessionDropsStaleSHAs(t *testing.T) {
 	}
 }
 
+func TestListCurrentHeadReviewRunsForSessionKeepsLatestRunPerHarness(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	r, _ := s.CreateSession(ctx, sampleRecord("mer"))
+	now := time.Now().UTC().Truncate(time.Second)
+
+	if err := s.WriteSCMObservation(ctx, domain.PullRequest{
+		URL: "pr/1", SessionID: r.ID, Number: 1, HeadSHA: "head1", UpdatedAt: now, ObservedAt: now,
+	}, nil, nil, nil, nil, ports.ReviewWritePreserve); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertReview(ctx, domain.Review{
+		ID: "rev", SessionID: r.ID, ProjectID: "mer", Harness: "claude-code",
+		PRURL: "pr/1", CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	insert := func(id string, harness domain.ReviewerHarness, createdAt time.Time, verdict domain.ReviewVerdict) {
+		t.Helper()
+		if err := s.InsertReviewRun(ctx, domain.ReviewRun{
+			ID: id, ReviewID: "rev", SessionID: r.ID, Harness: harness,
+			PRURL: "pr/1", TargetSHA: "head1", Status: domain.ReviewRunComplete,
+			Verdict: verdict, CreatedAt: createdAt,
+		}); err != nil {
+			t.Fatalf("insert %s: %v", id, err)
+		}
+	}
+	insert("old", "claude-code", now, domain.VerdictChangesRequested)
+	insert("other", "codex", now.Add(time.Second), domain.VerdictApproved)
+	insert("new", "claude-code", now.Add(2*time.Second), domain.VerdictApproved)
+
+	runs, err := s.ListCurrentHeadReviewRunsForSession(ctx, r.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 2 {
+		t.Fatalf("runs = %+v, want latest run per harness", runs)
+	}
+
+	byHarness := map[domain.ReviewerHarness]domain.ReviewVerdict{}
+	for _, run := range runs {
+		byHarness[run.Harness] = run.Verdict
+	}
+	if byHarness["claude-code"] != domain.VerdictApproved || byHarness["codex"] != domain.VerdictApproved {
+		t.Fatalf("runs = %+v, want latest approved run per harness", runs)
+	}
+}
+
 // The aggregate review_decision mixes AO's own provider reviews with everyone
 // else's, so the PR facts must expose the human-only verdicts separately. AO's
 // review is matched by the review id it recorded when it posted.
