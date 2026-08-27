@@ -354,6 +354,7 @@ export function SessionCardView({
 }
 
 function boardSessionNeedsAttention(session: BoardSessionPresentation): boolean {
+	if (session.statusPresentation) return false;
 	switch (session.displayStatus) {
 		case "Blocked":
 		case "Checks failing":

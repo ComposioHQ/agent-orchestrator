@@ -273,6 +273,39 @@ describe("SessionsBoardView", () => {
 		);
 	});
 
+	it("does not show attention styling when a custom status presentation overrides the card", () => {
+		render(
+			<SessionCardView
+				externalLink={ExternalLink}
+				labels={{
+					formatTime: () => "5m ago",
+					intakeIssue: (id) => `Issue ${id}`,
+					pr: {
+						short: "PR",
+						states: { closed: "closed", draft: "draft", merged: "merged", open: "open" },
+					},
+					updatedAt: (timestamp) => `Updated ${timestamp}`,
+				}}
+				renderAvatar={(provider) => <span role="img" aria-label={provider}>C</span>}
+				session={{
+					...baseSession,
+					status: "changes_requested",
+					displayStatus: "Changes requested",
+					statusPresentation: {
+						className: "text-status-working",
+						indicatorClassName: "bg-status-working",
+						label: "Switching to Codex",
+					},
+				}}
+			/>,
+		);
+
+		expect(screen.getByTestId("board-session-card")).not.toHaveClass(
+			"animate-attention-card-pulse",
+			"border-status-needs-you",
+		);
+	});
+
 	it("renders a neutral card with grouped multi-PR, usage, and action presentation", () => {
 		const onOpen = vi.fn();
 		render(
