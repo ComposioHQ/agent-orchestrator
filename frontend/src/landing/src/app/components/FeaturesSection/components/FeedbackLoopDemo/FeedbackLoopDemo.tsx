@@ -4,13 +4,16 @@ import { AnimatePresence, domAnimation, LazyMotion, m, motion } from "motion/rea
 import {
 	ArrowUpRight,
 	Bell,
+	ChevronDown,
+	Code2,
 	Files,
 	GitMerge,
 	GitPullRequest,
 	MessageSquare,
 	Network,
-	PanelRightClose,
+	PanelRight,
 	Plus,
+	Repeat2,
 	Trash2,
 } from "lucide-react";
 import { useEffect, useRef, useState, useCallback, type CSSProperties, type ReactNode } from "react";
@@ -418,12 +421,12 @@ export function FeedbackLoopDemo({ agentIcon = "/app-icons/agents/claude-code.sv
 					.ao-blink { animation: ao-step-blink 1s step-end infinite; }
 					@media (prefers-reduced-motion: reduce) { .ao-blink { animation: none; } }
 				`}</style>
-				<div className="flex h-full min-w-0 flex-col">
-					<SessionTopbar phase={phase} agentIcon={agentIcon} />
-					<div className="flex min-h-0 min-w-0 flex-1">
+				<div className="flex h-full min-w-0">
+					<div className="flex min-h-0 min-w-0 flex-1 flex-col">
+						<SessionTopbar phase={phase} agentIcon={agentIcon} />
 						<TerminalPane agentIcon={agentIcon} lines={lines} typingText={typingText} streamingText={streamingText} />
-						<Inspector phase={phase} mergeState={mergeState} />
 					</div>
+					<Inspector phase={phase} mergeState={mergeState} />
 				</div>
 				<DemoCursor rootRef={rootRef} target={cursorTarget ?? "idle-rest"} pressed={cursorPressed} />
 			</div>
@@ -512,55 +515,77 @@ function DemoCursor({ rootRef, target, pressed }: { rootRef: React.RefObject<HTM
 function SessionTopbar({ phase, agentIcon }: { phase: Phase; agentIcon: string }) {
 	return (
 		<div className="flex h-9 w-full shrink-0 items-stretch border-b border-[var(--preview-border)] bg-[var(--preview-background)]">
-			<div className="flex min-w-0 flex-1 items-stretch">
-				<div className="flex min-w-0 flex-1 items-center">
-					<div className="flex min-w-0 flex-1 self-stretch items-center">
-						<span className="relative inline-flex min-w-0 shrink-0 self-stretch items-center gap-1.5 border-r border-[var(--preview-border)] bg-[var(--preview-overlay)] px-2.5 after:absolute after:inset-x-0 after:-bottom-px after:h-px after:bg-[#fafafa]">
-							<img
-								src={agentIcon}
-								alt=""
-								aria-hidden="true"
-								className="size-[13px] shrink-0 object-contain"
-								draggable={false}
-							/>
-							<span className="inline-flex items-center gap-1.5 text-[10.5px] font-medium leading-none text-[var(--preview-foreground)]">
-								<span className="truncate">github-auth</span>
-								<span
-									className={`size-[5px] shrink-0 rounded-full ${phase.activity.breathe ? "animate-pulse" : ""}`}
-									style={{ background: phase.activity.tone }}
-								/>
-							</span>
-						</span>
+			<div className="flex min-w-0 flex-1 items-center">
+				<span className="relative inline-flex min-w-0 shrink self-stretch items-center gap-1.5 border-r border-[var(--preview-border)] bg-[var(--preview-overlay)] px-2.5 after:absolute after:inset-x-0 after:-bottom-px after:h-px after:bg-[var(--preview-foreground)]/80">
+					<img
+						src={agentIcon}
+						alt=""
+						aria-hidden="true"
+						className="size-[13px] shrink-0 object-contain"
+						draggable={false}
+					/>
+					<span className="inline-flex min-w-0 items-center gap-1.5 text-[10.5px] font-medium leading-none text-[var(--preview-foreground)]">
+						<span className="truncate">github-auth</span>
 						<span
-							aria-label="New terminal"
-							className="ml-auto mr-2 grid size-[21px] shrink-0 place-items-center rounded-[5px] border border-[var(--preview-border)] text-[var(--preview-muted-foreground)]"
-						>
-							<Plus aria-hidden="true" className="size-3" />
+							className={`size-[5px] shrink-0 rounded-full ${phase.activity.breathe ? "animate-pulse" : ""}`}
+							style={{ background: phase.activity.tone }}
+						/>
+					</span>
+				</span>
+				<div className="ml-auto flex shrink-0 items-center gap-1 px-1.5 text-[var(--preview-muted-foreground)]">
+					<SessionTopbarButton label="Switch agent">
+						<Repeat2 aria-hidden="true" className="size-[13px]" />
+					</SessionTopbarButton>
+					<span className="inline-flex h-[22px] items-center overflow-hidden rounded-[5px] border border-[var(--preview-border)] bg-[var(--preview-input)]">
+						<span className="grid size-[21px] place-items-center text-[var(--preview-foreground)]">
+							<Code2 aria-hidden="true" className="size-[12px]" />
 						</span>
-					</div>
+						<span className="grid h-full w-3 place-items-center border-l border-[var(--preview-border)]">
+							<ChevronDown aria-hidden="true" className="size-2.5" />
+						</span>
+					</span>
+					<SessionTopbarButton label="New terminal">
+						<Plus aria-hidden="true" className="size-[13px]" />
+					</SessionTopbarButton>
+					<SessionTopbarButton label="Switch to chat UI">
+						<MessageSquare aria-hidden="true" className="size-[13px]" />
+					</SessionTopbarButton>
+					<SessionTopbarButton label="Kill session" danger>
+						<Trash2 aria-hidden="true" className="size-[13px]" />
+					</SessionTopbarButton>
+					<SessionTopbarButton label="Open orchestrator">
+						<Network aria-hidden="true" className="size-[13px]" />
+					</SessionTopbarButton>
 				</div>
 			</div>
-			<div
-				className="shrink-0 items-center justify-end gap-1 border-l border-[var(--preview-border)] px-1.5 flex"
-				style={{ width: RAIL_WIDTH }}
-			>
-				<span
-					className="grid size-[22px] shrink-0 place-items-center rounded-[7px]"
-					style={{ color: `color-mix(in srgb, ${status.exited} 80%, transparent)` }}
-				>
-					<Trash2 aria-hidden="true" className="size-[13px]" />
-				</span>
-				<span className="grid size-[22px] shrink-0 place-items-center rounded-[7px] bg-[var(--preview-primary)] text-[var(--preview-primary-foreground)]">
-					<Network aria-hidden="true" className="size-[13px]" />
-				</span>
-				<span className="grid size-[22px] shrink-0 place-items-center rounded-[7px] text-[var(--preview-muted-foreground)]">
-					<PanelRightClose aria-hidden="true" className="size-[15px]" />
-				</span>
-				<span className="grid size-[22px] shrink-0 place-items-center rounded-[7px] text-[var(--preview-muted-foreground)]">
-					<Bell aria-hidden="true" className="size-[15px]" />
-				</span>
-			</div>
 		</div>
+	);
+}
+
+function SessionTopbarButton({
+	active = false,
+	children,
+	danger = false,
+	label,
+}: {
+	active?: boolean;
+	children: ReactNode;
+	danger?: boolean;
+	label: string;
+}) {
+	return (
+		<span
+			aria-label={label}
+			className={`grid size-[22px] shrink-0 place-items-center rounded-[5px] ${
+				active
+					? "bg-[var(--preview-interactive-active)] text-[var(--preview-foreground)]"
+					: danger
+						? "text-[#fb8e8a]"
+						: "text-[var(--preview-muted-foreground)]"
+			}`}
+		>
+			{children}
+		</span>
 	);
 }
 
@@ -668,19 +693,29 @@ function Inspector({ phase, mergeState }: { phase: Phase; mergeState: "idle" | "
 			className="flex shrink-0 flex-col overflow-hidden border-l border-[var(--preview-border)]"
 			style={{ width: RAIL_WIDTH }}
 		>
-			<div className="flex h-[34px] shrink-0 items-center gap-1 border-b border-[var(--preview-border)] px-1.5">
-				<InspectorTab active label="Summary">
-					<SummaryIcon />
-				</InspectorTab>
-				<InspectorTab label="Reviews">
-					<MessageSquare aria-hidden="true" className="size-3" />
-				</InspectorTab>
-				<InspectorTab label="Browser">
-					<BrowserIcon />
-				</InspectorTab>
-				<InspectorTab label={`${phase.diff.files} Files`}>
-					<Files aria-hidden="true" className="size-3" />
-				</InspectorTab>
+			<div className="flex h-9 shrink-0 items-center border-b border-[var(--preview-border)] pl-1.5">
+				<div className="flex min-w-0 flex-1 items-center gap-0.5">
+					<InspectorTab active label="Summary">
+						<SummaryIcon />
+					</InspectorTab>
+					<InspectorTab label="Reviews">
+						<MessageSquare aria-hidden="true" className="size-3" />
+					</InspectorTab>
+					<InspectorTab label="Browser">
+						<BrowserIcon />
+					</InspectorTab>
+					<InspectorTab label={`${phase.diff.files} Files`}>
+						<Files aria-hidden="true" className="size-3" />
+					</InspectorTab>
+				</div>
+				<div className="flex shrink-0 items-center gap-1 px-1.5">
+					<SessionTopbarButton active label="Close inspector">
+						<PanelRight aria-hidden="true" className="size-[13px]" />
+					</SessionTopbarButton>
+					<SessionTopbarButton label="Notifications">
+						<Bell aria-hidden="true" className="size-[13px]" />
+					</SessionTopbarButton>
+				</div>
 			</div>
 
 			<div className="min-h-0 flex-1 overflow-hidden px-3 pb-3 pt-2">
@@ -705,14 +740,14 @@ function InspectorTab({ active = false, children, label }: { active?: boolean; c
 	return (
 		<span
 			aria-hidden="true"
-			className={`inline-flex h-6 min-w-0 flex-1 items-center justify-center gap-1 rounded-md px-1 text-[8.5px] font-semibold ${
+			className={`inline-flex size-[22px] shrink-0 items-center justify-center rounded-[5px] text-[var(--preview-passive)] ${
 				active
 					? "bg-[var(--preview-interactive-active)] text-[var(--preview-foreground)]"
-					: "text-[var(--preview-passive)]"
+					: ""
 			}`}
 		>
 			{children}
-			<span>{label}</span>
+			<span className="sr-only">{label}</span>
 		</span>
 	);
 }
