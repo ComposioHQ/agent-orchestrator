@@ -771,7 +771,7 @@ func TestWiring_NewMultiTracker_NeverTypedNilWhenNoGitHubToken(t *testing.T) {
 	t.Setenv("GITHUB_TOKEN", "")
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	tracker := newMultiTracker(config.GitLabConfig{}, log)
+	tracker := newMultiTracker(config.GitLabConfig{}, config.OneDevConfig{}, log)
 	// The key assertion: tracker is either truly nil or truly non-nil — never
 	// a typed-nil. Go's interface == nil check covers both cases correctly here
 	// because newMultiTracker returns a bare nil or a *trackermulti.Tracker.
@@ -794,7 +794,7 @@ func TestWiring_NewMultiTracker_ReturnsNonNilWhenGitHubHasToken(t *testing.T) {
 	t.Setenv("GITLAB_TOKEN", "")
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	tracker := newMultiTracker(config.GitLabConfig{}, log)
+	tracker := newMultiTracker(config.GitLabConfig{}, config.OneDevConfig{}, log)
 	if tracker == nil {
 		t.Fatal("newMultiTracker = nil, want non-nil when GitHub token is available")
 	}
