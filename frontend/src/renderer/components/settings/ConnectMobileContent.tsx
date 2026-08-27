@@ -70,6 +70,26 @@ export function qrValueFor(input: {
 }
 
 /**
+ * How often to re-read mobile status, or false to stop.
+ *
+ * The connector takes roughly half a minute to become advertisable, and the
+ * status query is otherwise fetched once on open and refetched only after a
+ * mutation. Without this the modal would sit on "Preparing remote access…"
+ * indefinitely while the daemon had long since finished.
+ *
+ * Polls only while there is a transient state to wait out, so an idle modal
+ * does not keep hitting the daemon for the rest of the session.
+ */
+export function mobileStatusRefetchInterval(
+	status: { tunnel?: { running: boolean; ready: boolean } } | undefined,
+): number | false {
+	const tunnel = status?.tunnel;
+	return tunnel?.running && !tunnel.ready ? MOBILE_STATUS_POLL_MS : false;
+}
+
+const MOBILE_STATUS_POLL_MS = 2_000;
+
+/**
  * Whether the pairing QR is safe to show.
  *
  * The connector takes roughly thirty seconds after the listener comes up
@@ -199,6 +219,9 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 		queryKey: mobileStatusQueryKey,
 		queryFn: fetchMobileStatus,
 		enabled: active,
+		// Only while the connector is coming up — see
+		// mobileStatusRefetchInterval.
+		refetchInterval: (q) => mobileStatusRefetchInterval(q.state.data),
 	});
 
 	const reportedOpen = useRef(false);

@@ -38,7 +38,13 @@ vi.mock("../lib/api-client", () => ({
 	apiErrorMessage: () => "failed",
 }));
 
-import { ConnectMobileContent, pairingPayload, qrIsReady, qrValueFor } from "./settings/ConnectMobileContent";
+import {
+	ConnectMobileContent,
+	mobileStatusRefetchInterval,
+	pairingPayload,
+	qrIsReady,
+	qrValueFor,
+} from "./settings/ConnectMobileContent";
 
 function renderMobileSettings() {
 	const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -332,4 +338,27 @@ test("holds the QR back when nothing is reachable yet", () => {
 // reachable" — that would block pairing against every older daemon.
 test("shows the QR for a daemon that does not report endpoints", () => {
 	expect(qrIsReady({ enabled: true, endpoints: undefined, tunnel: undefined })).toBe(true);
+});
+
+// The QR gate introduced a state the renderer has to wait out. The status query
+// is fetched once on open and refetched only after a mutation, so without
+// polling the modal sits on "Preparing remote access…" forever even though the
+// daemon went advertisable seconds later.
+test("polls while the connector is starting", () => {
+	expect(
+		mobileStatusRefetchInterval({ tunnel: { running: true, ready: false } }),
+	).toBeGreaterThan(0);
+});
+
+// Polling only while there is something to wait for: once the tunnel is up
+// there is no transient state left, and the modal should not keep hitting the
+// daemon for the rest of the session.
+test("stops polling once the tunnel is advertisable", () => {
+	expect(mobileStatusRefetchInterval({ tunnel: { running: true, ready: true } })).toBe(false);
+});
+
+test("does not poll when there is no tunnel to wait for", () => {
+	expect(mobileStatusRefetchInterval({ tunnel: { running: false, ready: false } })).toBe(false);
+	expect(mobileStatusRefetchInterval({ tunnel: undefined })).toBe(false);
+	expect(mobileStatusRefetchInterval(undefined)).toBe(false);
 });
