@@ -92,6 +92,59 @@ describe("session-scoped interface transition mutations", () => {
 		});
 	});
 
+	it("keeps each session busy while overlapping starts are pending", async () => {
+		const responseA = deferred<{
+			data: { ok: boolean };
+			error: undefined;
+		}>();
+		const responseB = deferred<{
+			data: { ok: boolean };
+			error: undefined;
+		}>();
+		getMock.mockResolvedValue({
+			data: { supported: true, targetMode: "tui" },
+			error: undefined,
+		});
+		postMock.mockImplementation(
+			(_path: string, request: { params: { path: { sessionId: string } } }) =>
+				request.params.path.sessionId === "session-a"
+					? responseA.promise
+					: responseB.promise,
+		);
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+		});
+		const HookWrapper = ({ children }: { children: ReactNode }) => (
+			<QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+		);
+		const { result, rerender } = renderHook(
+			({ sessionId }) => useSessionInterfaceTransition(sessionId),
+			{ initialProps: { sessionId: "session-a" }, wrapper: HookWrapper },
+		);
+
+		let startA!: Promise<unknown>;
+		act(() => {
+			startA = result.current.start({ targetMode: "tui", policy: "drain" });
+		});
+		await waitFor(() => expect(result.current.starting).toBe(true));
+
+		rerender({ sessionId: "session-b" });
+		let startB!: Promise<unknown>;
+		act(() => {
+			startB = result.current.start({ targetMode: "tui", policy: "drain" });
+		});
+		await waitFor(() => expect(result.current.starting).toBe(true));
+
+		rerender({ sessionId: "session-a" });
+		expect(result.current.starting).toBe(true);
+
+		responseA.resolve({ data: { ok: true }, error: undefined });
+		responseB.resolve({ data: { ok: true }, error: undefined });
+		await act(async () => {
+			await Promise.all([startA, startB]);
+		});
+	});
+
 	it("keeps a deferred cancellation attached to its initiating session after navigation", async () => {
 		const response = deferred<{
 			data: undefined;
