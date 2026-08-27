@@ -1791,7 +1791,14 @@ func sessionView(s domain.Session) SessionView {
 		PreviewURL:      s.Metadata.PreviewURL,
 		PreviewRevision: s.Metadata.PreviewRevision,
 		Model:           s.Metadata.Model,
-		PRs:             sessionPRFacts(s.PRs),
+		LastUserMessageAt: func() *time.Time {
+			if s.Metadata.LatestUserPromptAt.IsZero() {
+				return nil
+			}
+			at := s.Metadata.LatestUserPromptAt
+			return &at
+		}(),
+		PRs: sessionPRFacts(s.PRs),
 	}
 	if s.ActiveAgentSwitch != nil {
 		active := agentSwitchView(*s.ActiveAgentSwitch)
