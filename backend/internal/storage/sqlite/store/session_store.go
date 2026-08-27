@@ -53,6 +53,7 @@ func (s *Store) UpdateSessionFromActivitySignal(ctx context.Context, rec domain.
 		AgentSessionID:               rec.Metadata.AgentSessionID,
 		AgentSessionIDLaunchID:       rec.Metadata.AgentSessionIDLaunchID,
 		LatestUserPrompt:             rec.Metadata.LatestUserPrompt,
+		LatestUserPromptAt:           timeToNullTime(rec.Metadata.LatestUserPromptAt),
 		LatestAssistantUpdate:        rec.Metadata.LatestAssistantUpdate,
 		NativeTranscriptPath:         rec.Metadata.NativeTranscriptPath,
 		UpdatedAt:                    rec.UpdatedAt,
@@ -75,7 +76,7 @@ func (s *Store) RecordSessionLatestUserPrompt(ctx context.Context, id domain.Ses
 	defer s.writeMu.Unlock()
 	rows, err := s.qw.RecordSessionLatestUserPrompt(ctx, gen.RecordSessionLatestUserPromptParams{
 		LatestUserPrompt: prompt,
-		UpdatedAt:        updatedAt,
+		UpdatedAt:        timeToNullTime(updatedAt),
 		ID:               id,
 	})
 	if err != nil {
@@ -192,20 +193,38 @@ func (s *Store) SetSessionAutoInjectReview(ctx context.Context, id domain.Sessio
 	return rows > 0, nil
 }
 
-// SetSessionAutoInjectCI persists the default CI-failure injection policy that
-// newly created PRs snapshot. Existing PR rows retain their original value.
+// SetSessionAutoInjectCI persists the CI-failure injection policy for the
+// session and every PR currently owned by it. Future PRs still inherit this
+// value from the session row when first observed.
 func (s *Store) SetSessionAutoInjectCI(ctx context.Context, id domain.SessionID, autoInject bool, updatedAt time.Time) (bool, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	rows, err := s.qw.SetSessionAutoInjectCI(ctx, gen.SetSessionAutoInjectCIParams{
-		ID:           id,
-		AutoInjectCI: autoInject,
-		UpdatedAt:    updatedAt,
+	var updated bool
+	err := s.inTx(ctx, fmt.Sprintf("set auto-inject CI for session %s", id), func(q *gen.Queries) error {
+		rows, err := q.SetSessionAutoInjectCI(ctx, gen.SetSessionAutoInjectCIParams{
+			ID:           id,
+			AutoInjectCI: autoInject,
+			UpdatedAt:    updatedAt,
+		})
+		if err != nil {
+			return err
+		}
+		if rows == 0 {
+			return nil
+		}
+		updated = true
+		if err := q.SetPRAutoInjectCIBySession(ctx, gen.SetPRAutoInjectCIBySessionParams{
+			AutoInjectCI: autoInject,
+			SessionID:    id,
+		}); err != nil {
+			return err
+		}
+		return nil
 	})
 	if err != nil {
-		return false, fmt.Errorf("set auto-inject CI for session %s: %w", id, err)
+		return false, err
 	}
-	return rows > 0, nil
+	return updated, nil
 }
 
 // SetSessionReviewerHarness persists the reviewer preference for one session.
@@ -395,6 +414,7 @@ func rowToRecord(row gen.GetSessionRow) domain.SessionRecord {
 			AgentSessionIDLaunchID:    row.AgentSessionIDLaunchID,
 			Prompt:                    row.Prompt,
 			LatestUserPrompt:          row.LatestUserPrompt,
+			LatestUserPromptAt:        nullTimeToTime(row.LatestUserPromptAt),
 			LatestAssistantUpdate:     row.LatestAssistantUpdate,
 			NativeTranscriptPath:      row.NativeTranscriptPath,
 			PreviewURL:                row.PreviewURL,
@@ -451,6 +471,7 @@ func recordToInsert(rec domain.SessionRecord, num int64) gen.InsertSessionParams
 		AgentSessionIDLaunchID:    rec.Metadata.AgentSessionIDLaunchID,
 		Prompt:                    rec.Metadata.Prompt,
 		LatestUserPrompt:          rec.Metadata.LatestUserPrompt,
+		LatestUserPromptAt:        timeToNullTime(rec.Metadata.LatestUserPromptAt),
 		LatestAssistantUpdate:     rec.Metadata.LatestAssistantUpdate,
 		NativeTranscriptPath:      rec.Metadata.NativeTranscriptPath,
 		PreviewURL:                rec.Metadata.PreviewURL,
@@ -496,6 +517,7 @@ func recordToUpdate(rec domain.SessionRecord) gen.UpdateSessionParams {
 		AgentSessionIDLaunchID:    rec.Metadata.AgentSessionIDLaunchID,
 		Prompt:                    rec.Metadata.Prompt,
 		LatestUserPrompt:          rec.Metadata.LatestUserPrompt,
+		LatestUserPromptAt:        timeToNullTime(rec.Metadata.LatestUserPromptAt),
 		LatestAssistantUpdate:     rec.Metadata.LatestAssistantUpdate,
 		NativeTranscriptPath:      rec.Metadata.NativeTranscriptPath,
 		PreviewURL:                rec.Metadata.PreviewURL,

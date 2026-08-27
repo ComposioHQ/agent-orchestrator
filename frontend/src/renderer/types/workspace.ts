@@ -88,12 +88,14 @@ export type WorkspaceSession = {
 	terminateOnPrMerge?: boolean;
 	/** Whether SCM review feedback is automatically injected into the worker. */
 	autoInjectReview?: boolean;
-	/** Default captured by newly created PRs for automatic CI-failure injection. */
+	/** Whether CI failures are automatically injected into the worker. */
 	autoInjectCI?: boolean;
 	/** ISO timestamp from the daemon — used for relative time in the inspector. */
 	createdAt?: string;
 	/** ISO timestamp from the daemon. */
 	updatedAt: string;
+	/** ISO timestamp of the latest real user-authored message, when known. */
+	lastUserMessageAt?: string;
 	isPinned?: boolean;
 	pinnedAt?: string;
 	/** Raw agent lifecycle activity from the daemon. */

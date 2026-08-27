@@ -29,7 +29,6 @@ import {
 	LogIn,
 	LogOut,
 	MoreVertical,
-	Pencil,
 	Pin,
 	PinOff,
 	Plus,
@@ -74,6 +73,7 @@ import { usePinSession, useUnpinSession } from "../hooks/usePinSession";
 import { spawnCloudOrchestrator } from "../lib/cloud-orchestrator";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { renameSession } from "../lib/rename-session";
+import { formatTimeCompact, formatTimeTerse } from "../lib/format-time";
 import { useTerminateSession } from "../hooks/useTerminateSession";
 import { useResizable } from "../hooks/useResizable";
 import { useCloudGate } from "../hooks/useCloudGate";
@@ -135,9 +135,8 @@ const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperti
 const HOVER_ACTION_CLASS =
 	"grid size-5 shrink-0 place-items-center rounded-md bg-transparent text-passive hover:bg-transparent focus:bg-transparent focus-visible:bg-transparent active:bg-transparent data-[state=open]:bg-transparent hover:text-foreground disabled:pointer-events-none disabled:opacity-50 data-[state=open]:text-foreground [&_svg]:size-icon-lg";
 
-// Session actions keep a stable hit strip, but the controls themselves are
-// quiet glyphs. Opacity is the only hover transition; the row should not gain
-// three filled icon-button pills or reflow its label when the strip appears.
+// Session actions overlay the row without changing its footprint. The primary
+// label only yields their width while the row is hovered or contains focus.
 const SESSION_ACTION_CLASS =
 	"grid size-5 shrink-0 place-items-center rounded-md bg-transparent p-1 text-passive hover:bg-transparent focus:bg-transparent focus-visible:bg-transparent active:bg-transparent data-[state=open]:bg-transparent hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:pointer-events-none disabled:opacity-50 [&_svg]:size-3!";
 
@@ -1503,7 +1502,7 @@ const ProjectDragPreview = memo(function ProjectDragPreview({ workspace, expande
 						return (
 							<div className="pl-4.5" key={session.id}>
 								<div className={cn("flex h-8 w-full items-center rounded-lg", active && "bg-interactive-active text-foreground")}>
-									<div className="flex h-8 min-w-0 flex-1 items-center gap-1.5 px-2.5 pr-[70px] text-sm">
+									<div className="flex h-8 min-w-0 flex-1 items-center gap-1.5 px-2.5 text-sm">
 										<SessionStatusDot session={session} />
 										<span className="flex min-w-0 flex-1 items-center gap-1.5">
 											<span className={cn("min-w-0 flex-1 truncate", active ? "text-foreground" : "text-muted-foreground")}>
@@ -1585,9 +1584,9 @@ type SessionReorder = Pick<SortableRow, "isDragging" | "listeners" | "setActivat
 	dropTransitionDisabled: boolean;
 };
 
-// One worker-session row. Reads as a link by default; a hover-revealed pencil
-// flips the label into an inline input (Enter/blur saves, Escape cancels) that
-// persists through the daemon rename endpoint, so the new name survives reload.
+// One worker-session row. Reads as a link by default; double-click/double-tap
+// on the name or F2 flips the label into an inline input (Enter/blur saves,
+// Escape cancels) that persists through the daemon rename endpoint.
 function SessionRow({
 	session,
 	active,
@@ -1618,6 +1617,8 @@ function SessionRow({
 	const [isEditing, setIsEditing] = useState(false);
 	const [draft, setDraft] = useState(session.title);
 	const [sessionPressed, setSessionPressed] = useState(false);
+	const lastTouchAtRef = useRef(0);
+	const suppressTouchOpenRef = useRef(false);
 	// Escape must not be swallowed by the blur-to-save path: the keydown handler
 	// blurs the input, so it flags a cancel here for onBlur to honour.
 	const cancelledRef = useRef(false);
@@ -1648,13 +1649,23 @@ function SessionRow({
 
 	if (isEditing) {
 		return (
-			<SidebarMenuSubItem className={cn(indented && "pl-4.5")}>
-				<div className="relative flex h-8 w-full items-center gap-1.5 rounded-lg px-2.5 py-0">
+			<SidebarMenuSubItem className={cn(indented && "pl-0.5")}>
+				<div
+					className={cn(
+						"relative flex h-8 w-full items-center gap-1.5 rounded-lg py-0 pl-1.5 pr-1",
+						active && "bg-interactive-active text-foreground",
+					)}
+					data-session-row=""
+				>
 					<SessionStatusDot session={session} />
 					<input
 						aria-label={t("shell.renameSession", { title: session.title })}
 						autoFocus
-						className="min-w-0 flex-1 rounded-xs border border-accent bg-transparent px-1 py-px text-sm text-foreground outline-none focus-visible:ring-1 focus-visible:ring-accent"
+						className={cn(
+							"h-full min-w-0 flex-1 appearance-none border-0 bg-transparent! p-0 text-sm text-foreground outline-none ring-0 focus:outline-none focus:ring-0",
+							session.lastUserMessageAt && "pr-[36px]",
+						)}
+						data-session-inline-editor=""
 						maxLength={MAX_DISPLAY_NAME_LEN}
 						onBlur={() => void commit()}
 						onChange={(e) => setDraft(e.target.value)}
@@ -1671,6 +1682,7 @@ function SessionRow({
 						}}
 						value={draft}
 					/>
+					<SessionMessageAge session={session} />
 				</div>
 			</SidebarMenuSubItem>
 		);
@@ -1678,7 +1690,7 @@ function SessionRow({
 
 	return (
 		<SidebarMenuSubItem
-			className={cn(indented && "pl-4.5", reorder?.isDragging && "z-chrome cursor-grabbing opacity-60")}
+			className={cn(indented && "pl-0.5", reorder?.isDragging && "z-chrome cursor-grabbing opacity-60")}
 			data-dragging={reorder?.isDragging ? "true" : undefined}
 			ref={reorder?.setNodeRef}
 			style={reorder ? sortableRowStyle(reorder) : undefined}
@@ -1708,14 +1720,35 @@ function SessionRow({
 						<button
 							aria-current={active ? "page" : undefined}
 							aria-describedby={describedBy}
+							aria-keyshortcuts="F2"
 							aria-label={t("shell.openSession", { title: session.title })}
 							className={cn(
-							"flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-lg px-2.5 py-0 pr-[70px] text-left text-sm outline-hidden focus-visible:ring-2 focus-visible:ring-sidebar-ring",
+								"flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-lg py-0 pl-1.5 text-left text-sm outline-hidden focus-visible:ring-2 focus-visible:ring-sidebar-ring",
+								session.lastUserMessageAt ? "pr-[36px]" : "pr-2.5",
+								!reorder?.isDragging &&
+									"group-hover/session-row:pr-[50px] group-focus-within/session-row:pr-[50px]",
 								reorder && "cursor-grab active:cursor-grabbing",
 								reorder?.isDragging && "!cursor-grabbing",
 							)}
 							{...(reorder?.listeners ?? {})}
-							onClick={onOpen}
+							onClick={(event) => {
+								if (
+									event.detail > 1 &&
+									(event.target as HTMLElement).closest("[data-session-name]")
+								) {
+									return;
+								}
+								if (suppressTouchOpenRef.current) {
+									suppressTouchOpenRef.current = false;
+									return;
+								}
+								onOpen();
+							}}
+							onKeyDown={(event) => {
+								if (event.key !== "F2") return;
+								event.preventDefault();
+								startEditing();
+							}}
 							ref={reorder?.setActivatorNodeRef}
 							type="button"
 						>
@@ -1726,6 +1759,21 @@ function SessionRow({
 										"min-w-0 flex-1 truncate",
 										active ? "text-foreground" : "text-muted-foreground group-hover/session-row:text-foreground",
 									)}
+									data-session-name=""
+									onDoubleClick={(event) => {
+										event.preventDefault();
+										event.stopPropagation();
+										startEditing();
+									}}
+									onPointerUp={(event) => {
+										if (event.pointerType !== "touch") return;
+										const now = Date.now();
+										if (now - lastTouchAtRef.current <= 500) {
+											suppressTouchOpenRef.current = true;
+											startEditing();
+										}
+										lastTouchAtRef.current = now;
+									}}
 								>
 									{session.title}
 								</span>
@@ -1737,12 +1785,10 @@ function SessionRow({
 							</span>
 						</button>
 					</div>
-					{/* Pin, rename, kill stay in a reserved strip so showing them never
-				    changes the label width. The strip fades as a group; its glyphs
-				    remain transparent/no-fill until focused or hovered. */}
+					{/* The timestamp is stable at the right edge. Pin and kill use label
+					    space while idle, then reveal without changing the row footprint. */}
 					<SessionActions
 						isDragging={Boolean(reorder?.isDragging)}
-						onStartEditing={startEditing}
 						session={session}
 					/>
 				</div>
@@ -1751,14 +1797,28 @@ function SessionRow({
 	);
 }
 
+const SessionMessageAge = memo(function SessionMessageAge({ session }: { session: WorkspaceSession }) {
+	const { t } = useTranslation();
+	if (!session.lastUserMessageAt) return null;
+
+	return (
+		<time
+			className="absolute inset-y-0 right-1.5 flex min-w-0 shrink-0 items-center whitespace-nowrap font-mono text-micro text-passive opacity-100 transition-opacity duration-100 ease-out group-hover/session-row:opacity-0 group-focus-within/session-row:opacity-0"
+			data-session-message-age=""
+			dateTime={session.lastUserMessageAt}
+			title={t("shell.lastMessageAt", { time: formatTimeCompact(session.lastUserMessageAt) })}
+		>
+			{formatTimeTerse(session.lastUserMessageAt)}
+		</time>
+	);
+});
+
 const SessionActions = memo(function SessionActions({
 	session,
 	isDragging,
-	onStartEditing,
 }: {
 	session: WorkspaceSession;
 	isDragging: boolean;
-	onStartEditing: () => void;
 }) {
 	const { t } = useTranslation();
 	const { mutate: pinSession } = usePinSession();
@@ -1767,48 +1827,43 @@ const SessionActions = memo(function SessionActions({
 
 	return (
 		<div
-			className={cn(
-				"pointer-events-none absolute inset-y-0 right-0 z-chrome flex items-center gap-px px-1 opacity-0",
-				!isDragging &&
-					"group-hover/session-row:pointer-events-auto group-hover/session-row:opacity-100 group-focus-within/session-row:pointer-events-auto group-focus-within/session-row:opacity-100",
-			)}
+			className="pointer-events-none absolute inset-y-0 right-0 z-chrome"
 			data-session-actions=""
 			onPointerDown={(event) => event.stopPropagation()}
 		>
-			<button
-				aria-label={session.isPinned ? t("shell.unpinSession") : t("shell.pinSession")}
-				className={cn(SESSION_ACTION_CLASS, session.isPinned && "text-foreground")}
-				onClick={(event) => {
-					event.stopPropagation();
-					session.isPinned ? unpinSession(session) : pinSession(session);
-				}}
-				type="button"
+			<div
+				className={cn(
+					"absolute inset-y-0 right-0.5 flex items-center gap-px opacity-0 transition-opacity duration-100 ease-out",
+					!isDragging &&
+						"group-hover/session-row:pointer-events-auto group-hover/session-row:opacity-100 group-focus-within/session-row:pointer-events-auto group-focus-within/session-row:opacity-100",
+				)}
+				data-session-action-buttons=""
 			>
-				{session.isPinned ? <PinOff aria-hidden="true" /> : <Pin aria-hidden="true" />}
-			</button>
-			<button
-				aria-label={t("shell.renameSession", { title: session.title })}
-				className={SESSION_ACTION_CLASS}
-				onClick={(event) => {
-					event.stopPropagation();
-					onStartEditing();
-				}}
-				type="button"
-			>
-				<Pencil aria-hidden="true" />
-			</button>
-			<button
-				aria-label={t("shell.killSession")}
-				className={cn(SESSION_ACTION_CLASS, "hover:text-destructive")}
-				disabled={isKilling}
-				onClick={(event) => {
-					event.stopPropagation();
-					terminateSession(session);
-				}}
-				type="button"
-			>
-				<Trash2 aria-hidden="true" />
-			</button>
+				<button
+					aria-label={session.isPinned ? t("shell.unpinSession") : t("shell.pinSession")}
+					className={cn(SESSION_ACTION_CLASS, session.isPinned && "text-foreground")}
+					onClick={(event) => {
+						event.stopPropagation();
+						session.isPinned ? unpinSession(session) : pinSession(session);
+					}}
+					type="button"
+				>
+					{session.isPinned ? <PinOff aria-hidden="true" /> : <Pin aria-hidden="true" />}
+				</button>
+				<button
+					aria-label={t("shell.killSession")}
+					className={cn(SESSION_ACTION_CLASS, "hover:text-destructive")}
+					disabled={isKilling}
+					onClick={(event) => {
+						event.stopPropagation();
+						terminateSession(session);
+					}}
+					type="button"
+				>
+					<Trash2 aria-hidden="true" />
+				</button>
+			</div>
+			<SessionMessageAge session={session} />
 		</div>
 	);
 });
@@ -1949,35 +2004,40 @@ function UpdateStatusRow({ status, tabIndex }: { status: UpdateStatus; tabIndex:
 						? t("shell.downloadUpdateVersion", { version: status.version })
 						: t("shell.downloadUpdate")
 				}
-				className={cn(
-					"flex w-full items-center gap-2.5 rounded-lg p-2.5 text-left text-control font-medium transition-colors",
-					"text-passive hover:bg-interactive-hover hover:text-foreground [&_svg]:text-passive",
-				)}
+				className={cn(NAV_ROW_CLASS, "flex w-full items-center text-left [&_svg]:size-icon-md [&_svg]:shrink-0")}
 				onClick={() => void aoBridge.updates.download()}
 				tabIndex={tabIndex}
 				type="button"
 			>
 				<Download aria-hidden="true" className="size-icon-lg shrink-0" />
-				<span className="min-w-0 flex-1">
-					<span className="block truncate tracking-tight">{t("shell.updateAvailable")}</span>
-					{status.version && (
-						<span className="block truncate text-caption font-normal text-passive">
-							{t("shell.versionAvailable", { version: status.version })}
-						</span>
-					)}
-				</span>
-				<span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full bg-passive" />
+				<span className="min-w-0 flex-1 truncate tracking-tight">{t("shell.updateAvailable")}</span>
+				{status.version && <span className="sr-only">{t("shell.versionAvailable", { version: status.version })}</span>}
+				<span aria-hidden="true" className="h-2 w-2 shrink-0 rounded-full bg-red-500" />
 			</button>
 		);
 	}
 	if (status.state === "downloading") {
+		const percent = Math.min(100, Math.max(0, status.percent ?? 0));
 		return (
 			<div
 				aria-live="polite"
-				className="flex w-full items-center gap-2.5 rounded-lg p-2.5 text-left text-control font-medium text-passive"
+				className={cn(NAV_ROW_CLASS, "relative flex w-full items-center text-left [&_svg]:size-icon-md [&_svg]:shrink-0")}
 				role="status"
 			>
-				<Download aria-hidden="true" className="size-icon-lg shrink-0" />
+				<span className="relative grid size-icon-lg shrink-0 place-items-center" aria-hidden="true">
+					<svg className="absolute inset-0 size-full -rotate-90" viewBox="0 0 24 24" fill="none">
+						<circle cx="12" cy="12" r="9" className="stroke-current/15" strokeWidth="2.5" />
+						<circle
+							cx="12"
+							cy="12"
+							r="9"
+							className="stroke-primary transition-[stroke-dasharray] duration-300"
+							strokeWidth="2.5"
+							strokeLinecap="round"
+							strokeDasharray={`${percent * 0.5655} 56.55`}
+						/>
+					</svg>
+				</span>
 				<span className="min-w-0 flex-1 truncate tabular-nums">
 					{t("settings.updates.downloading", { percent: status.percent ?? 0 })}
 				</span>
@@ -2017,28 +2077,18 @@ function UpdateStatusRow({ status, tabIndex }: { status: UpdateStatus; tabIndex:
 					: t("shell.restartInstallUpdate")
 			}
 			className={cn(
-				"flex w-full items-center gap-2.5 rounded-lg p-2.5 text-left text-control font-medium transition-colors",
-				escalated
-					? "border border-working/35 bg-working/12 text-working hover:bg-working/18 [&_svg]:text-working"
-					: "text-passive hover:bg-interactive-hover hover:text-foreground [&_svg]:text-passive",
+				NAV_ROW_CLASS,
+				"flex w-full items-center text-left [&_svg]:size-icon-md [&_svg]:shrink-0",
+				escalated && "text-working hover:text-working [&_svg]:text-working",
 			)}
 			onClick={() => void aoBridge.updates.install()}
 			tabIndex={tabIndex}
 			type="button"
 		>
 			<RefreshCw aria-hidden="true" className="size-icon-lg shrink-0" />
-			<span className="min-w-0 flex-1">
-				<span className="block truncate tracking-tight">{t("shell.restartToUpdate")}</span>
-				{status.version && (
-					<span className={cn("block truncate text-caption font-normal", escalated ? "text-working" : "text-passive")}>
-						{t("shell.versionReady", { version: status.version })}
-					</span>
-				)}
-			</span>
-			<span
-				aria-hidden="true"
-				className={cn("h-1.5 w-1.5 shrink-0 rounded-full", escalated ? "bg-working" : "bg-passive")}
-			/>
+			<span className="min-w-0 flex-1 truncate tracking-tight">{t("shell.restartToUpdate")}</span>
+			{status.version && <span className="sr-only">{t("shell.versionReady", { version: status.version })}</span>}
+			<span aria-hidden="true" className={cn("h-2 w-2 shrink-0 rounded-full", escalated ? "bg-working" : "bg-red-500")} />
 		</button>
 	);
 }
