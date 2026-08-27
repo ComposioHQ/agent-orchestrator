@@ -1454,6 +1454,16 @@ func (c *Controller) drainOwned(ctx context.Context) {
 // uses it so committing the completion, clearing primary ownership, and claiming
 // the next queued request are one serialized lifecycle transition.
 func (c *Controller) drainLocked(ctx context.Context) {
+	// BeginHandoff owns the project lease for the whole drain transition. A turn
+	// completion still holds sendMu here; recursively acquiring the lease from the
+	// projector can deadlock behind a waiting project rebind. Yield the accepted
+	// queue to BeginHandoff's owned drain instead.
+	c.mu.Lock()
+	handoffOwnsDrain := c.handoff == controllerHandoffInterfaceDrain
+	c.mu.Unlock()
+	if handoffOwnsDrain {
+		return
+	}
 	c.drainLockedWithDispatch(ctx, c.dispatch)
 }
 

@@ -29,6 +29,7 @@ type writerPreferenceStore struct {
 	writerDone        chan struct{}
 	lateReaderAttempt chan struct{}
 	allowLateReader   chan struct{}
+	acquireObserved   chan struct{}
 	writerOnce        sync.Once
 	lateReaderOnce    sync.Once
 	writerBlockedOnce sync.Once
@@ -85,6 +86,13 @@ func (s *writerPreferenceStore) AcquireProjectConversationDispatch(
 		s.releaseReader()
 		return nil, err
 	}
+	s.mu.Lock()
+	observed := s.acquireObserved
+	s.acquireObserved = nil
+	s.mu.Unlock()
+	if observed != nil {
+		close(observed)
+	}
 	var once sync.Once
 	return func() {
 		once.Do(func() {
@@ -92,6 +100,13 @@ func (s *writerPreferenceStore) AcquireProjectConversationDispatch(
 			s.releaseReader()
 		})
 	}, nil
+}
+
+func (s *writerPreferenceStore) observeNextOwnershipAcquire() <-chan struct{} {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.acquireObserved = make(chan struct{})
+	return s.acquireObserved
 }
 
 func (s *writerPreferenceStore) releaseReader() {
@@ -411,6 +426,96 @@ func TestHandoffDrainDoesNotReacquireOwnedProjectLease(t *testing.T) {
 	select {
 	case <-ownedStore.lateReaderAttempt:
 		t.Fatal("handoff drain recursively acquired project ownership behind a waiting rebind")
+	default:
+	}
+}
+
+func TestRunningHandoffCompletionDoesNotReacquireOwnedProjectLease(t *testing.T) {
+	provider := newFakeConversation()
+	var ownedStore *writerPreferenceStore
+	h := newHarnessWithConversationAndStoreKind(
+		t,
+		provider,
+		func(st *sqlite.Store) chatsvc.Store {
+			ownedStore = newWriterPreferenceStore(st)
+			return ownedStore
+		},
+		domain.KindOrchestrator,
+	)
+	ctx := context.Background()
+	if _, err := h.ctrl.Send(ctx, ports.ChatUserMessage{
+		Text: "running root", ClientMessageID: "running-root", Origin: domain.MessageOriginHuman,
+	}); err != nil {
+		t.Fatalf("send running root: %v", err)
+	}
+	if _, err := h.ctrl.Send(ctx, ports.ChatUserMessage{
+		Text: "accepted queue", ClientMessageID: "running-queue", Origin: domain.MessageOriginHuman,
+	}); err != nil {
+		t.Fatalf("queue accepted turn: %v", err)
+	}
+
+	ownershipAcquired := ownedStore.observeNextOwnershipAcquire()
+	t.Cleanup(func() { closeGate(ownedStore.allowLateReader) })
+	handoffDone := make(chan error, 1)
+	go func() {
+		handoffDone <- h.svc.PrepareChatHandoff(
+			ctx, testSession, domain.SessionInterfaceTransitionDrain,
+		)
+	}()
+	select {
+	case <-ownershipAcquired:
+	case err := <-handoffDone:
+		t.Fatalf("handoff returned before acquiring project ownership: %v", err)
+	case <-time.After(4 * time.Second):
+		t.Fatal("handoff did not acquire project ownership")
+	}
+
+	replacement, err := h.st.CreateSession(ctx, domain.SessionRecord{
+		ProjectID: testProject, Kind: domain.KindOrchestrator, Harness: domain.HarnessCodex,
+		Mode: domain.SessionModeChat, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("create replacement owner: %v", err)
+	}
+	rebindDone := make(chan error, 1)
+	go func() { rebindDone <- ownedStore.rebind(ctx, replacement.ID, time.Now().UTC()) }()
+	<-ownedStore.writerQueued
+	<-ownedStore.writerBlocked
+
+	provider.emit(ports.ChatEvent{
+		Kind: ports.ChatEventTurnCompleted, ProviderTurnID: "provider-turn-1",
+		TurnState: domain.TurnStateCompleted,
+	})
+	reacquired := false
+	deadline := time.Now().Add(4 * time.Second)
+	for len(provider.sentTexts()) < 2 && time.Now().Before(deadline) {
+		select {
+		case <-ownedStore.lateReaderAttempt:
+			reacquired = true
+			closeGate(ownedStore.allowLateReader)
+		default:
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if sent := provider.sentTexts(); len(sent) != 2 || sent[1] != "accepted queue" {
+		t.Fatalf("handoff provider sends = %v, want accepted queue after root", sent)
+	}
+	provider.emit(ports.ChatEvent{
+		Kind: ports.ChatEventTurnCompleted, ProviderTurnID: "provider-turn-2",
+		TurnState: domain.TurnStateCompleted,
+	})
+	if err := <-handoffDone; err != nil {
+		t.Fatalf("PrepareChatHandoff: %v", err)
+	}
+	if err := <-rebindDone; err != nil {
+		t.Fatalf("rebind after running handoff: %v", err)
+	}
+	if reacquired {
+		t.Fatal("running completion recursively acquired project ownership behind a waiting rebind")
+	}
+	select {
+	case <-ownedStore.lateReaderAttempt:
+		t.Fatal("running completion recursively acquired project ownership behind a waiting rebind")
 	default:
 	}
 }
