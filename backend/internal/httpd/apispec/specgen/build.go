@@ -255,6 +255,9 @@ var schemaNames = map[string]string{
 	"ControllersWorkspaceCommitSummary":                   "WorkspaceCommitSummary",
 	"ControllersWorkspaceSummary":                         "WorkspaceSummary",
 	"ControllersWorkspaceFileResponse":                    "WorkspaceFileResponse",
+	"ControllersWorkspaceTreeQuery":                       "WorkspaceTreeQuery",
+	"ControllersListWorkspaceTreeResponse":                "ListWorkspaceTreeResponse",
+	"ControllersWorkspaceTreeEntry":                       "WorkspaceTreeEntry",
 	"ControllersListEditorsResponse":                      "ListEditorsResponse",
 	"ControllersEditorSummary":                            "EditorSummary",
 	"ControllersOpenSessionEditorRequest":                 "OpenSessionEditorRequest",
@@ -1638,6 +1641,18 @@ func sessionOperations() []operation {
 			contentTypes: map[int]string{http.StatusOK: "application/octet-stream"},
 		},
 		{
+			method: http.MethodGet, path: "/api/v1/sessions/{sessionId}/workspace/tree", id: "listSessionWorkspaceTree", tag: "sessions",
+			summary:    "List one directory level of a session workspace's full file tree, git-status decorated",
+			pathParams: []any{controllers.SessionIDParam{}, controllers.WorkspaceTreeQuery{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ListWorkspaceTreeResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
 			method: http.MethodGet, path: "/api/v1/sessions/{sessionId}/pr", id: "listSessionPRs", tag: "sessions",
 			summary:    "List pull requests owned by a session",
 			pathParams: []any{controllers.SessionIDParam{}},
@@ -1703,7 +1718,7 @@ func sessionOperations() []operation {
 		},
 		{
 			method: http.MethodPatch, path: "/api/v1/sessions/{sessionId}/auto-inject-ci", id: "setSessionAutoInjectCI", tag: "sessions",
-			summary:    "Set the automatic CI-failure injection default for new session PRs",
+			summary:    "Set automatic CI-failure injection for a session and its PRs",
 			pathParams: []any{controllers.SessionIDParam{}},
 			reqBody:    controllers.SetSessionAutoInjectCIRequest{},
 			resps: []respUnit{
