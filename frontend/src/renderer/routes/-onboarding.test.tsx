@@ -93,9 +93,12 @@ describe("onboarding route", () => {
 
 		expect(screen.getByRole("heading", { name: "Stop babysitting agents." })).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Back" })).toBeDisabled();
+		expect(screen.getByText("Board")).toBeInTheDocument();
+		expect(screen.getByText("Idle / Working")).toBeInTheDocument();
 
 		await user.click(screen.getByRole("button", { name: "Continue" }));
 		expect(await screen.findByRole("heading", { name: "Keep the loop moving." })).toBeInTheDocument();
+		expect(screen.getAllByText("Reviews")).not.toHaveLength(0);
 
 		await user.click(screen.getByRole("button", { name: "Choose agents" }));
 		expect(await screen.findByRole("heading", { name: "Pick your orchestrator agent." })).toBeInTheDocument();

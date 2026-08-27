@@ -7,6 +7,7 @@ import {
 	Files,
 	GitMerge,
 	GitPullRequest,
+	MessageSquare,
 	Network,
 	PanelRightClose,
 	Plus,
@@ -667,9 +668,12 @@ function Inspector({ phase, mergeState }: { phase: Phase; mergeState: "idle" | "
 			className="flex shrink-0 flex-col overflow-hidden border-l border-[var(--preview-border)]"
 			style={{ width: RAIL_WIDTH }}
 		>
-			<div className="flex h-[30px] shrink-0 items-center gap-0.5 border-b border-[var(--preview-border)] px-1">
+			<div className="flex h-[34px] shrink-0 items-center gap-1 border-b border-[var(--preview-border)] px-1.5">
 				<InspectorTab active label="Summary">
 					<SummaryIcon />
+				</InspectorTab>
+				<InspectorTab label="Reviews">
+					<MessageSquare aria-hidden="true" className="size-3" />
 				</InspectorTab>
 				<InspectorTab label="Browser">
 					<BrowserIcon />
@@ -679,7 +683,7 @@ function Inspector({ phase, mergeState }: { phase: Phase; mergeState: "idle" | "
 				</InspectorTab>
 			</div>
 
-			<div className="min-h-0 flex-1 overflow-hidden px-1.5 pb-3 pt-1.5">
+			<div className="min-h-0 flex-1 overflow-hidden px-3 pb-3 pt-2">
 				<Section title="Pull request">
 					<PRSummaryCard phase={phase} mergeState={mergeState} />
 				</Section>
@@ -701,7 +705,7 @@ function InspectorTab({ active = false, children, label }: { active?: boolean; c
 	return (
 		<span
 			aria-hidden="true"
-			className={`inline-flex h-6 shrink-0 items-center gap-1 rounded-md px-1.5 text-[9px] font-semibold ${
+			className={`inline-flex h-6 min-w-0 flex-1 items-center justify-center gap-1 rounded-md px-1 text-[8.5px] font-semibold ${
 				active
 					? "bg-[var(--preview-interactive-active)] text-[var(--preview-foreground)]"
 					: "text-[var(--preview-passive)]"
@@ -715,13 +719,11 @@ function InspectorTab({ active = false, children, label }: { active?: boolean; c
 
 function Section({ children, title }: { children: ReactNode; title: string }) {
 	return (
-		<section className="mb-1 last:mb-0">
-			<div className="overflow-hidden rounded-[13px] px-2 py-1.5">
-				<div className="mb-1.5 text-[8.5px] font-bold uppercase tracking-[0.06em] text-[var(--preview-muted-foreground)]">
-					{title}
-				</div>
-				{children}
+		<section className="mb-3 last:mb-0">
+			<div className="mb-1.5 text-[8.5px] font-bold uppercase tracking-[0.06em] text-[var(--preview-muted-foreground)]">
+				{title}
 			</div>
+			{children}
 		</section>
 	);
 }

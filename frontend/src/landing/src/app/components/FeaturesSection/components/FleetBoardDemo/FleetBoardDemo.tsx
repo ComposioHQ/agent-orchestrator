@@ -39,10 +39,10 @@ interface Card {
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const COLUMN_CONFIG: Record<ColumnId, { title: string; color: string; weight: number }> = {
-	working:   { title: "Pending Work",   color: "#60a5fa", weight: 4 },
-	staging:   { title: "Iterating",      color: "#a78bfa", weight: 3 },
-	in_review: { title: "In Review",      color: "#facc15", weight: 2 },
-	merge:     { title: "Ready to merge", color: "#4ade80", weight: 1 },
+	working:   { title: "Idle / Working", color: "#60a5fa", weight: 4 },
+	staging:   { title: "Needs you",      color: "#fb923c", weight: 3 },
+	in_review: { title: "In review",      color: "#facc15", weight: 2 },
+	merge:     { title: "Ready / Merged", color: "#4ade80", weight: 1 },
 };
 
 const COLUMN_ORDER: ColumnId[] = ["working", "staging", "in_review", "merge"];
@@ -400,9 +400,9 @@ function BoardColumn({ cards, color, title }: { cards: Card[]; color: string; ti
 
 	return (
 		<section className="flex min-h-0 min-w-0 snap-start flex-col border-r border-[var(--preview-border)] last:border-r-0">
-			<div className="flex h-9 shrink-0 items-center gap-2 border-b border-[var(--preview-border)] px-3">
+			<div className="flex h-10 shrink-0 items-center gap-2 border-b border-[var(--preview-border)] px-3">
 				<span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: color }} />
-				<div className="truncate text-[8px] font-medium tracking-wide text-[var(--preview-muted-foreground)]">{title}</div>
+				<div className="truncate font-mono text-[7.5px] font-medium uppercase tracking-wide text-[var(--preview-muted-foreground)]">{title}</div>
 				<div className="ml-auto font-mono text-[8px] leading-none text-[var(--preview-muted-foreground)] opacity-60">{cards.length}</div>
 				{extraWaiting > 0 ? (
 					<div className="inline-flex items-center gap-1 rounded-[3px] bg-[#fb923c]/10 px-1 py-0.5 text-[7px] font-semibold text-[#fb923c]">
@@ -549,13 +549,22 @@ export function FleetBoardDemo({ assets = {} }: { assets?: FleetBoardAssets }) {
 					.ao-attention-pulse { animation: ao-attention-pulse-frames 2.2s ease-in-out infinite; }
 					@media (prefers-reduced-motion: reduce) { .ao-attention-pulse { animation: none; } }
 				`}</style>
-				<LayoutGroup>
-					<div className="grid h-full min-h-0 grid-cols-4 divide-x divide-[var(--preview-border)] overflow-hidden">
-						{boardColumns.map((col) => (
-							<BoardColumn key={col.id} cards={col.cards} color={col.color} title={col.title} />
-						))}
+				<div className="flex h-full min-h-0 flex-col">
+					<div className="flex h-9 shrink-0 items-center border-b border-[var(--preview-border)] px-3">
+						<span className="text-[9px] font-semibold text-[var(--preview-foreground)]">Board</span>
+						<div className="ml-auto flex items-center gap-1.5">
+							<span className="rounded-[4px] bg-[var(--preview-primary)] px-2 py-1 text-[7.5px] font-semibold text-[var(--preview-primary-foreground)]">+ Task</span>
+							<span className="rounded-[4px] bg-[var(--preview-input)] px-2 py-1 text-[7.5px] text-[var(--preview-muted-foreground)]">Orchestrator</span>
+						</div>
 					</div>
-				</LayoutGroup>
+					<LayoutGroup>
+						<div className="grid min-h-0 flex-1 grid-cols-4 divide-x divide-[var(--preview-border)] overflow-hidden">
+							{boardColumns.map((col) => (
+								<BoardColumn key={col.id} cards={col.cards} color={col.color} title={col.title} />
+							))}
+						</div>
+					</LayoutGroup>
+				</div>
 			</div>
 		</div>
 		</FleetBoardAssetsContext.Provider>
