@@ -50,6 +50,7 @@ export function conversationSnapshot(
 		oldestSequence: 0,
 		hasMoreBefore: false,
 		turns: [],
+		queuedTurns: [],
 		messages: [],
 		activities: [],
 		branchPoints: [],
@@ -332,6 +333,25 @@ export class ChatUIRegressionHarness {
 				return;
 			}
 			if (method === "POST" && pathname.endsWith("/conversation/interrupt")) {
+				const body = (this.requests.at(-1)?.body ?? {}) as JsonObject;
+				const queuedTurnIds = Array.isArray(body.queuedTurnIds)
+					? body.queuedTurnIds.filter((id): id is string => typeof id === "string")
+					: [];
+				const queuedScope = new Set(queuedTurnIds);
+				const turns = Array.isArray(this.conversation.turns)
+					? (this.conversation.turns as JsonObject[])
+					: [];
+				const queuedTurns = Array.isArray(this.conversation.queuedTurns)
+					? (this.conversation.queuedTurns as JsonObject[])
+					: [];
+				this.conversation.turns = turns.map((entry) =>
+					entry.state === "running" || queuedScope.has(String(entry.id ?? ""))
+						? { ...entry, state: "interrupted", completedAt: now }
+						: entry,
+				);
+				this.conversation.queuedTurns = queuedTurns.filter(
+					(entry) => !queuedScope.has(String(entry.turnId ?? "")),
+				);
 				await route.fulfill({ json: { status: "accepted" } });
 				return;
 			}
@@ -358,10 +378,14 @@ export class ChatUIRegressionHarness {
 				const activities = Array.isArray(this.conversation.activities)
 					? (this.conversation.activities as JsonObject[])
 					: [];
+				const queuedTurns = Array.isArray(this.conversation.queuedTurns)
+					? (this.conversation.queuedTurns as JsonObject[])
+					: [];
 				const source = messages.find((entry) => entry.turnId === turnId);
 				const sequence = Number(this.conversation.latestSequence ?? 0) + 1;
 				this.conversation.turns = turns.filter((turn) => turn.id !== turnId);
 				this.conversation.messages = messages.filter((entry) => entry.turnId !== turnId);
+				this.conversation.queuedTurns = queuedTurns.filter((entry) => entry.turnId !== turnId);
 				this.conversation.activities = [
 					...activities,
 					{
@@ -405,8 +429,12 @@ export class ChatUIRegressionHarness {
 				const messages = Array.isArray(this.conversation.messages)
 					? (this.conversation.messages as JsonObject[])
 					: [];
+				const queuedTurns = Array.isArray(this.conversation.queuedTurns)
+					? (this.conversation.queuedTurns as JsonObject[])
+					: [];
 				this.conversation.turns = turns.filter((turn) => turn.id !== turnId);
 				this.conversation.messages = messages.filter((entry) => entry.turnId !== turnId);
+				this.conversation.queuedTurns = queuedTurns.filter((entry) => entry.turnId !== turnId);
 				await route.fulfill({ json: { status: "accepted", turnId } });
 				return;
 			}

@@ -42,24 +42,29 @@ test.describe("ChatUI conversation integrity", () => {
 
 	test.describe("MQA-02 queued-turn controls", () => {
 		test.use({ chatUIOptions: { sessionId: "chatui-queued-turns", status: "working", activity: "active" } });
+		const conversationWithQueue = (base: JsonObject): JsonObject => ({
+			...base,
+			controller: "busy",
+			latestSequence: 3,
+			oldestSequence: 1,
+			turns: [
+				turn("turn-running", "running"),
+				turn("turn-queued-one", "queued"),
+				turn("turn-queued-two", "queued"),
+			],
+			queuedTurns: [
+				{ turnId: "turn-queued-one", text: "First queued follow-up", origin: "human" },
+				{ turnId: "turn-queued-two", text: "Second queued follow-up", origin: "human" },
+			],
+			messages: [
+				message("message-running", "turn-running", 1, "user", "Active work"),
+				message("message-queued-one", "turn-queued-one", 2, "user", "First queued follow-up"),
+				message("message-queued-two", "turn-queued-two", 3, "user", "Second queued follow-up"),
+			],
+		});
 
 		test("keeps queue-only actions separate from destructive Stop", async ({ chatUI, page }) => {
-			chatUI.conversation = {
-				...chatUI.conversation,
-				controller: "busy",
-				latestSequence: 3,
-				oldestSequence: 1,
-				turns: [
-					turn("turn-running", "running"),
-					turn("turn-queued-one", "queued"),
-					turn("turn-queued-two", "queued"),
-				],
-				messages: [
-					message("message-running", "turn-running", 1, "user", "Active work"),
-					message("message-queued-one", "turn-queued-one", 2, "user", "First queued follow-up"),
-					message("message-queued-two", "turn-queued-two", 3, "user", "Second queued follow-up"),
-				],
-			};
+			chatUI.conversation = conversationWithQueue(chatUI.conversation);
 
 			await chatUI.open();
 			await expect(page.getByTestId("queued-message-dock")).toBeVisible();
@@ -88,7 +93,7 @@ test.describe("ChatUI conversation integrity", () => {
 			expect(chatUI.requestsMatching("POST", "/conversation/interrupt")).toHaveLength(0);
 			await expect(page.getByText("Active work", { exact: true })).toBeVisible();
 			await expect(page.getByText("First queued follow-up", { exact: true })).toHaveCount(0);
-			await expect(page.getByText("Second queued follow-up", { exact: true })).toBeVisible();
+			await expect(page.getByTestId("queued-message-turn-queued-two")).toBeVisible();
 
 			await page
 				.getByRole("button", { name: "Use as next message: Second queued follow-up" })
@@ -107,6 +112,23 @@ test.describe("ChatUI conversation integrity", () => {
 			await expect(page.getByTestId("queued-message-turn-queued-two")).toHaveCount(0);
 			await expect(page.getByTestId("queued-message-dock")).toHaveCount(0);
 			await expect(page.getByText("Second queued follow-up", { exact: true })).toBeVisible();
+		});
+
+		test("confirms destructive Stop and submits the exact queued scope", async ({ chatUI, page }) => {
+			chatUI.conversation = conversationWithQueue(chatUI.conversation);
+
+			await chatUI.open();
+			await page.getByRole("button", { name: "Stop turn" }).click();
+			await expect(
+				page.getByRole("dialog", { name: "Stop turn and cancel 2 queued messages?" }),
+			).toBeVisible();
+			await page.getByRole("button", { name: "Stop all" }).click();
+
+			await expect.poll(() => chatUI.requestsMatching("POST", "/conversation/interrupt").length).toBe(1);
+			expect(chatUI.requestsMatching("POST", "/conversation/interrupt")[0]?.body).toEqual({
+				queuedTurnIds: ["turn-queued-one", "turn-queued-two"],
+			});
+			await expect(page.getByTestId("queued-message-dock")).toHaveCount(0);
 		});
 	});
 
