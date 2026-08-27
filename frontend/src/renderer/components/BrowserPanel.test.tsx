@@ -1,4 +1,4 @@
-import { act, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { BrowserPanel, BrowserPanelView, useBrowserAnnotationQueue } from "./BrowserPanel";
@@ -400,6 +400,56 @@ describe("BrowserPanel", () => {
 		await userEvent.click(screen.getByRole("button", { name: "First app" }));
 
 		await waitFor(() => expect(hookState.selectTab).toHaveBeenCalledWith("t1"));
+	});
+
+	it("shows browser tabs in a horizontal tab strip and selects them", async () => {
+		hookState.tabs = [
+			{ id: "t1", url: "http://localhost:3000/", title: "First app", active: false },
+			{ id: "t2", url: "http://localhost:4173/", title: "Second app", active: true },
+		];
+		hookState.activeTabId = "t2";
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		const tabList = screen.getByRole("tablist", { name: "Browser tabs" });
+		const firstTab = within(tabList).getByRole("tab", { name: "First app" });
+		const secondTab = within(tabList).getByRole("tab", { name: "Second app" });
+
+		expect(firstTab).toHaveAttribute("aria-selected", "false");
+		expect(secondTab).toHaveAttribute("aria-selected", "true");
+		await userEvent.click(firstTab);
+		expect(hookState.selectTab).toHaveBeenCalledWith("t1");
+	});
+
+	it("moves browser tab focus and selection with arrow keys", async () => {
+		hookState.tabs = [
+			{ id: "t1", url: "http://localhost:3000/", title: "First app", active: true },
+			{ id: "t2", url: "http://localhost:4173/", title: "Second app", active: false },
+		];
+		hookState.activeTabId = "t1";
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		const tabList = screen.getByRole("tablist", { name: "Browser tabs" });
+		const firstTab = within(tabList).getByRole("tab", { name: "First app" });
+		const secondTab = within(tabList).getByRole("tab", { name: "Second app" });
+		firstTab.focus();
+		await userEvent.keyboard("{ArrowRight}");
+
+		expect(secondTab).toHaveFocus();
+		expect(hookState.selectTab).toHaveBeenCalledWith("t2");
+	});
+
+	it("closes a browser tab from the horizontal tab strip", async () => {
+		hookState.tabs = [
+			{ id: "t1", url: "http://localhost:3000/", title: "First app", active: true },
+			{ id: "t2", url: "http://localhost:4173/", title: "Second app", active: false },
+		];
+		hookState.activeTabId = "t1";
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		const tabList = screen.getByRole("tablist", { name: "Browser tabs" });
+		await userEvent.click(within(tabList).getByRole("button", { name: "Close tab Second app" }));
+
+		expect(hookState.closeTab).toHaveBeenCalledWith("t2");
 	});
 
 	it("does not render a tab-specific agent marker", async () => {

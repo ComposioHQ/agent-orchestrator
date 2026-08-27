@@ -28,6 +28,7 @@ import { Input } from "./ui/input";
 import { BrowserTabsRail, type BrowserTabsRailHandle } from "./BrowserTabsRail";
 import { cn } from "../lib/utils";
 import { appI18n, type MessageKey } from "../i18n";
+import { handleTabListKeyDown } from "../lib/terminal-tabs";
 
 // One-click viewport width presets for responsive testing — height is shown
 // for reference but not enforced (only width drives CSS breakpoints, and
@@ -448,6 +449,7 @@ export function BrowserPanelView({
 			<div
 				aria-label={t("browser.tabs")}
 				className="browser-panel__tab-strip"
+				onKeyDown={handleTabListKeyDown}
 				role="tablist"
 			>
 				{tabs.map((tab) => {
