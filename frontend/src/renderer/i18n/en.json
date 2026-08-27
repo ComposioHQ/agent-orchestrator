@@ -481,6 +481,8 @@
 	"newTask.autoModel": "Auto",
 	"newTask.emptyHint": "Start now — details can come later.",
 	"newTask.newlineHint": "Shift+Enter for a new line",
+	"settings.cloud": "Cloud",
+	"settings.cloudAgents.signIn": "Sign in to AO Cloud (left sidebar) to manage coding agent credentials.",
 	"settings.models.refreshList": "Refresh list",
 	"settings.models.refreshing": "Refreshing...",
 	"newTask.selectAgent": "Select agent",

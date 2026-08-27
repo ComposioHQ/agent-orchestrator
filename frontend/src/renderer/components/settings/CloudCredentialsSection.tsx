@@ -37,9 +37,16 @@ function CloudCredentialsSectionInner({ titleHidden }: { titleHidden?: boolean }
 	const connections = useProviderConnections(org?.id);
 	const openCredentialDialog = useCredentialDialogStore((s) => s.openDialog);
 
-	// Managing credentials needs the signed-in org; mirror the account menu and
-	// stay out of the way until then.
-	if (status !== "authenticated") return null;
+	// Managing credentials needs the signed-in org. The Cloud settings page is
+	// reachable while signed out, so say why it is empty instead of rendering a
+	// blank pane.
+	if (status !== "authenticated") {
+		return (
+			<SettingsSection title={t("settings.cloudAgents")} sectionId="cloud-agents" titleHidden={titleHidden}>
+				<p className="px-3 text-xs leading-relaxed text-muted-foreground">{t("settings.cloudAgents.signIn")}</p>
+			</SettingsSection>
+		);
+	}
 
 	const rows = connections.data ?? [];
 	return (

@@ -41,7 +41,7 @@ export function GlobalSettingsForm({
 		>
 			{(all || section === "general") && <GeneralSettingsSection titleHidden={titleHidden} />}
 
-			{all && <CloudCredentialsSection titleHidden={titleHidden} />}
+			{(all || section === "cloud") && <CloudCredentialsSection titleHidden={titleHidden} />}
 
 			{(all || section === "mobile") && (
 				<SettingsSection title={t("settings.mobile")} titleHidden={titleHidden}>
