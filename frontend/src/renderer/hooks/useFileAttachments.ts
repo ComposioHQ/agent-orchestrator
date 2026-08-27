@@ -77,6 +77,8 @@ type SharedAttachmentEntry = {
 	stagingQueue: Promise<void>;
 	attachments?: FileAttachment[];
 	descriptorVersions: Map<string, number>;
+	/** Latest attachment work whose descriptor lineage owns each id. */
+	descriptorWorkTokens: Map<string, symbol>;
 	/** Exact descriptor versions proven written to the renderer's local draft. */
 	persistedDescriptorVersions: Map<string, number>;
 	removalTombstones: Map<
@@ -132,6 +134,7 @@ function sharedEntry(key: string): SharedAttachmentEntry {
 			listeners: new Map(),
 			stagingQueue: Promise.resolve(),
 			descriptorVersions: new Map(),
+			descriptorWorkTokens: new Map(),
 			persistedDescriptorVersions: new Map(),
 			removalTombstones: new Map(),
 			sources: new Map(),
@@ -170,6 +173,9 @@ function notifySharedAttachmentEntry(
 		}
 		for (const id of entry.persistedDescriptorVersions.keys()) {
 			if (!nextIDs.has(id)) entry.persistedDescriptorVersions.delete(id);
+		}
+		for (const id of entry.descriptorWorkTokens.keys()) {
+			if (!nextIDs.has(id)) entry.descriptorWorkTokens.delete(id);
 		}
 		entry.attachments = update.attachments;
 		entry.revision += 1;
@@ -355,7 +361,10 @@ function registerSharedAttachmentWorkIds(
 	if (!entry || entry.generation !== work.generation) return;
 	const owned = entry.pending.get(work.token);
 	if (!owned) return;
-	for (const id of ids) owned.add(id);
+	for (const id of ids) {
+		owned.add(id);
+		entry.descriptorWorkTokens.set(id, work.token);
+	}
 }
 
 function discardSharedAttachmentTokens(
@@ -379,6 +388,7 @@ function discardSharedAttachmentTokens(
 		const abandonedIds = new Set([...discardedIds].filter((id) => !stillOwned.has(id)));
 		entry.attachments = entry.attachments?.filter(({ id }) => !abandonedIds.has(id)) ?? [];
 		for (const id of abandonedIds) {
+			entry.descriptorWorkTokens.delete(id);
 			entry.persistedDescriptorVersions.delete(id);
 			entry.sources.delete(id);
 		}
@@ -490,14 +500,20 @@ function discardCapturedUnpersistedAttachments(
 	const capturedVersions = new Map(
 		captured.locallyUnpersisted.map(({ id, version }) => [id, version]),
 	);
+	const capturedTokens = new Set(captured.tokens);
 	const abandoned = new Set<string>();
 	for (const attachment of entry.attachments ?? []) {
 		const capturedVersion = capturedVersions.get(attachment.id);
+		const currentVersion = entry.descriptorVersions.get(attachment.id);
+		const persistedVersion = entry.persistedDescriptorVersions.get(attachment.id);
+		const descriptorWorkToken = entry.descriptorWorkTokens.get(attachment.id);
+		const ownedByCapturedWork =
+			descriptorWorkToken !== undefined && capturedTokens.has(descriptorWorkToken);
 		if (
 			capturedVersion === undefined ||
 			stillOwned.has(attachment.id) ||
-			entry.descriptorVersions.get(attachment.id) !== capturedVersion ||
-			entry.persistedDescriptorVersions.get(attachment.id) === capturedVersion
+			(currentVersion !== undefined && persistedVersion === currentVersion) ||
+			(currentVersion !== capturedVersion && !ownedByCapturedWork)
 		) {
 			continue;
 		}
@@ -506,6 +522,7 @@ function discardCapturedUnpersistedAttachments(
 	if (abandoned.size === 0) return false;
 	entry.attachments = entry.attachments?.filter(({ id }) => !abandoned.has(id)) ?? [];
 	for (const id of abandoned) {
+		entry.descriptorWorkTokens.delete(id);
 		entry.persistedDescriptorVersions.delete(id);
 		entry.sources.delete(id);
 	}
@@ -577,6 +594,7 @@ export function purgeFileAttachmentsForSession(sessionId: string): void {
 		entry.pending.clear();
 		settleSharedAttachmentWork(entry);
 		entry.sources.clear();
+		entry.descriptorWorkTokens.clear();
 		entry.persistedDescriptorVersions.clear();
 		entry.removalTombstones.clear();
 		notifySharedAttachmentEntry(key, { attachments: [], error: null });

@@ -526,6 +526,55 @@ describe("useFileAttachments", () => {
 		expect(replacement.result.current.preparing).toBe(false);
 	});
 
+	it("discards captured work that settles undurable before the transition completes", async () => {
+		const sessionId = "discard-captured-settled-undurable-attachment";
+		let finishRead!: () => void;
+		class SlowFileReader {
+			error: Error | null = null;
+			result: string | ArrayBuffer | null = null;
+			onerror: (() => void) | null = null;
+			onload: (() => void) | null = null;
+
+			readAsDataURL(selected: File) {
+				finishRead = () => {
+					this.result = `data:${selected.type};base64,VU5EVVJBQkxF`;
+					this.onload?.();
+				};
+			}
+		}
+		vi.stubGlobal("FileReader", SlowFileReader);
+		const prepareAttachments = vi.fn().mockRejectedValue(new Error("disk full"));
+		const owner = renderHook(() =>
+			useFileAttachments({ initialKey: sessionId, prepareAttachments }),
+		);
+		let adding!: Promise<void>;
+		act(() => {
+			adding = owner.result.current.addFiles([file("captured-undurable.txt")]);
+		});
+		expect(owner.result.current.attachments).toMatchObject([
+			{ name: "captured-undurable.txt", status: "reading" },
+		]);
+		const captured = capturePendingFileAttachmentsForSession(sessionId);
+
+		await act(async () => {
+			finishRead();
+			await adding;
+		});
+		expect(prepareAttachments).toHaveBeenCalledTimes(1);
+		expect(owner.result.current.attachments).toMatchObject([
+			{ name: "captured-undurable.txt", status: "ready" },
+		]);
+		expect(owner.result.current.attachments[0]?.stagedPath).toBeUndefined();
+
+		act(() => discardCapturedPendingFileAttachments(captured));
+		expect(owner.result.current.attachments).toEqual([]);
+		owner.unmount();
+
+		const replacement = renderHook(() => useFileAttachments({ initialKey: sessionId }));
+		expect(replacement.result.current.attachments).toEqual([]);
+		expect(replacement.result.current.preparing).toBe(false);
+	});
+
 	it("preserves retry work started after an earlier pending boundary was captured", async () => {
 		const sessionId = "preserve-post-confirmation-retry";
 		let failFirstRead!: () => void;
