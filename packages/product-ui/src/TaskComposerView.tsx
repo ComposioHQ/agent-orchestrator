@@ -10,7 +10,7 @@ import {
 	useRef,
 	useState,
 } from "react";
-import { AnimatePresence, motion } from "motion/react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import {
 	FileTextIcon as FileText,
 	LoaderCircleIcon as Loader2,
@@ -191,6 +191,7 @@ export function TaskComposerView({
 	const agentId = useId();
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const promptRef = useRef(initialPrompt);
+	const prefersReducedMotion = useReducedMotion();
 	const [isDragging, setIsDragging] = useState(false);
 	const handlePromptChange = useCallback(
 		(value: string) => {
@@ -252,10 +253,12 @@ export function TaskComposerView({
 				{attachments.items.length > 0 ? (
 					<motion.div
 						className="overflow-hidden"
-						initial={{ height: 0 }}
+						initial={prefersReducedMotion ? false : { height: 0 }}
 						animate={{ height: ATTACHMENT_ROW_HEIGHT }}
 						exit={{ height: 0 }}
-						transition={{ type: "spring", duration: 0.3, bounce: 0 }}
+						transition={
+							prefersReducedMotion ? { duration: 0 } : { type: "spring", duration: 0.3, bounce: 0 }
+						}
 					>
 						<ul className="scrollbar-none flex w-full flex-row flex-nowrap items-center gap-2 overflow-x-auto px-3 pt-1.5 pb-2">
 							{attachments.items.map((attachment) => (
