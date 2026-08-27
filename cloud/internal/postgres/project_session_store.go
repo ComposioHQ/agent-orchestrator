@@ -607,7 +607,8 @@ func createSessionTx(
 	if err := tx.QueryRow(
 		ctx,
 		`SELECT count(*) FROM ao_sandboxes
-		WHERE org_id = $1 AND observed_state <> 'deleted'`,
+		WHERE org_id = $1
+			AND observed_state NOT IN ('deleted', 'deleting', 'terminated', 'failed')`,
 		orgID,
 	).Scan(&activeSandboxes); err != nil {
 		return domain.Session{}, err

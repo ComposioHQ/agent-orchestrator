@@ -24,8 +24,10 @@ import (
 )
 
 // DefaultMaxSandboxesPerOrg caps how much provider capacity one organization
-// can hold at once.
-const DefaultMaxSandboxesPerOrg = 10
+// can hold at once. Counts only live/idle sandboxes (terminal states like
+// terminated/failed/deleting are excluded from the quota), so dead sandboxes
+// never block new sessions.
+const DefaultMaxSandboxesPerOrg = 1000
 
 type Store interface {
 	Ping(context.Context) error
