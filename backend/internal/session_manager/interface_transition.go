@@ -35,6 +35,10 @@ var (
 // Production's SQLite store implements the full capability.
 type interfaceTransitionStore interface {
 	CreateSessionInterfaceTransition(context.Context, domain.SessionInterfaceTransition) (domain.SessionInterfaceTransition, bool, error)
+	// CreateSessionInterfaceTransitionAfter atomically verifies the exact latest
+	// terminal predecessor and claims the next transition. predecessorMatched is
+	// false when another saga superseded the user's recovery consent.
+	CreateSessionInterfaceTransitionAfter(context.Context, domain.SessionInterfaceTransition, string) (domain.SessionInterfaceTransition, bool, bool, error)
 	GetSessionInterfaceTransition(context.Context, string) (domain.SessionInterfaceTransition, bool, error)
 	GetActiveSessionInterfaceTransition(context.Context, domain.SessionID) (domain.SessionInterfaceTransition, bool, error)
 	GetLatestSessionInterfaceTransition(context.Context, domain.SessionID) (domain.SessionInterfaceTransition, bool, error)
@@ -166,6 +170,7 @@ func (m *Manager) StartInterfaceTransition(
 	if err != nil {
 		return domain.SessionInterfaceTransition{}, err
 	}
+	expectedPredecessorID := ""
 	if historyPolicy == domain.SessionInterfaceTransitionHistoryProvider {
 		latest, found, latestErr := store.GetLatestSessionInterfaceTransition(ctx, id)
 		if latestErr != nil {
@@ -175,13 +180,27 @@ func (m *Manager) StartInterfaceTransition(
 			!providerHistoryRecoveryAuthorized(id, nativeID, latest, found) {
 			return domain.SessionInterfaceTransition{}, ErrInterfaceProviderHistoryRecoveryUnavailable
 		}
+		expectedPredecessorID = latest.ID
 	}
 	now := m.clock()
-	transition, created, err := store.CreateSessionInterfaceTransition(ctx, domain.SessionInterfaceTransition{
+	pending := domain.SessionInterfaceTransition{
 		ID: m.newLaunchID(), SessionID: id, SourceMode: source, TargetMode: target,
 		Policy: policy, HistoryPolicy: historyPolicy, Phase: domain.SessionInterfaceTransitionRequested,
 		NativeConversationID: nativeID, CreatedAt: now, UpdatedAt: now,
-	})
+	}
+	var transition domain.SessionInterfaceTransition
+	var created bool
+	if expectedPredecessorID != "" {
+		var predecessorMatched bool
+		transition, created, predecessorMatched, err = store.CreateSessionInterfaceTransitionAfter(
+			ctx, pending, expectedPredecessorID,
+		)
+		if err == nil && !predecessorMatched {
+			return domain.SessionInterfaceTransition{}, ErrInterfaceProviderHistoryRecoveryUnavailable
+		}
+	} else {
+		transition, created, err = store.CreateSessionInterfaceTransition(ctx, pending)
+	}
 	if err != nil {
 		return domain.SessionInterfaceTransition{}, err
 	}

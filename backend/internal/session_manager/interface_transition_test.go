@@ -28,6 +28,7 @@ type transitionStore struct {
 	activeErr      error
 	messenger      *fakeMessenger
 	markMessageErr error
+	beforeCreate   func(domain.SessionInterfaceTransition)
 }
 
 func newTransitionStore() *transitionStore {
@@ -39,8 +40,43 @@ func newTransitionStore() *transitionStore {
 }
 
 func (s *transitionStore) CreateSessionInterfaceTransition(_ context.Context, rec domain.SessionInterfaceTransition) (domain.SessionInterfaceTransition, bool, error) {
+	s.runBeforeCreate(rec)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.createSessionInterfaceTransitionLocked(rec)
+}
+
+func (s *transitionStore) CreateSessionInterfaceTransitionAfter(
+	_ context.Context,
+	rec domain.SessionInterfaceTransition,
+	expectedPredecessorID string,
+) (domain.SessionInterfaceTransition, bool, bool, error) {
+	s.runBeforeCreate(rec)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var latest domain.SessionInterfaceTransition
+	found := false
+	for _, existing := range s.transitions {
+		if existing.SessionID == rec.SessionID && (!found || existing.CreatedAt.After(latest.CreatedAt)) {
+			latest, found = existing, true
+		}
+	}
+	if !found || latest.ID != expectedPredecessorID {
+		return domain.SessionInterfaceTransition{}, false, false, nil
+	}
+	transition, created, err := s.createSessionInterfaceTransitionLocked(rec)
+	return transition, created, true, err
+}
+
+func (s *transitionStore) runBeforeCreate(rec domain.SessionInterfaceTransition) {
+	if s.beforeCreate != nil {
+		hook := s.beforeCreate
+		s.beforeCreate = nil
+		hook(rec)
+	}
+}
+
+func (s *transitionStore) createSessionInterfaceTransitionLocked(rec domain.SessionInterfaceTransition) (domain.SessionInterfaceTransition, bool, error) {
 	for _, existing := range s.transitions {
 		if existing.SessionID == rec.SessionID && existing.Active() {
 			return existing, false, nil
@@ -994,6 +1030,50 @@ func TestInterfaceTransitionProviderHistoryRecoveryRequiresTypedLegacyFailure(t 
 	}
 	if got := fmt.Sprint(chat.policies); got != "[strict strict provider_history]" {
 		t.Fatalf("target history policies = %s", got)
+	}
+}
+
+func TestInterfaceTransitionProviderHistoryRecoveryRejectsNewerStrictSagaAtAdmission(t *testing.T) {
+	manager, store, runtime, chat, _ := newTransitionManager(t, domain.SessionModeTUI)
+	runtime.aliveByHandle = map[string]bool{"runtime-1": true}
+	now := time.Now().UTC()
+	store.transitions["authorized-failure"] = domain.SessionInterfaceTransition{
+		ID: "authorized-failure", SessionID: "session-1",
+		SourceMode: domain.SessionModeTUI, TargetMode: domain.SessionModeChat,
+		Policy:               domain.SessionInterfaceTransitionDrain,
+		HistoryPolicy:        domain.SessionInterfaceTransitionHistoryStrict,
+		Phase:                domain.SessionInterfaceTransitionFailed,
+		NativeConversationID: "native-1",
+		ErrorCode:            "TARGET_HISTORY_UNTRUSTED_TEXT_MISMATCH",
+		CreatedAt:            now.Add(-time.Minute), UpdatedAt: now.Add(-time.Minute),
+	}
+	store.beforeCreate = func(domain.SessionInterfaceTransition) {
+		store.mu.Lock()
+		defer store.mu.Unlock()
+		store.transitions["newer-strict-saga"] = domain.SessionInterfaceTransition{
+			ID: "newer-strict-saga", SessionID: "session-1",
+			SourceMode: domain.SessionModeTUI, TargetMode: domain.SessionModeChat,
+			Policy:               domain.SessionInterfaceTransitionDrain,
+			HistoryPolicy:        domain.SessionInterfaceTransitionHistoryStrict,
+			Phase:                domain.SessionInterfaceTransitionCompleted,
+			NativeConversationID: "native-1",
+			CreatedAt:            now, UpdatedAt: now, CompletedAt: now,
+		}
+	}
+
+	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1",
+		domain.SessionModeChat, domain.SessionInterfaceTransitionDrain,
+		domain.SessionInterfaceTransitionHistoryProvider)
+	if err == nil {
+		settled := awaitTransition(t, store, transition.ID)
+		t.Fatalf("stale provider-history consent started a recovery after a newer strict saga: %+v", settled)
+	}
+	if !errors.Is(err, ErrInterfaceProviderHistoryRecoveryUnavailable) {
+		t.Fatalf("provider-history admission error = %v, want recovery unavailable", err)
+	}
+	if runtime.destroyed != 0 || chat.start.ProviderConversationID != "" {
+		t.Fatalf("rejected stale recovery touched controllers: destroyed=%d chat=%+v",
+			runtime.destroyed, chat.start)
 	}
 }
 

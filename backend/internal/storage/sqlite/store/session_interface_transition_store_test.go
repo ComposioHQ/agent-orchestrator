@@ -171,6 +171,57 @@ func TestSessionInterfaceTransitionClaimModeCASAndOutbox(t *testing.T) {
 	}
 }
 
+func TestSessionInterfaceTransitionRecoveryClaimRequiresExactLatestPredecessor(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, st, "recovery-predecessor")
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	rec := sampleRecord("recovery-predecessor")
+	rec.Mode = domain.SessionModeTUI
+	createdSession, err := st.CreateSession(ctx, rec)
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	createTerminal := func(id string, at time.Time) {
+		t.Helper()
+		transition, created, createErr := st.CreateSessionInterfaceTransition(ctx, domain.SessionInterfaceTransition{
+			ID: id, SessionID: createdSession.ID,
+			SourceMode: domain.SessionModeTUI, TargetMode: domain.SessionModeChat,
+			Policy: domain.SessionInterfaceTransitionDrain, HistoryPolicy: domain.SessionInterfaceTransitionHistoryStrict,
+			Phase: domain.SessionInterfaceTransitionRequested, NativeConversationID: "native-1",
+			CreatedAt: at, UpdatedAt: at,
+		})
+		if createErr != nil || !created {
+			t.Fatalf("create %s: created=%v err=%v", id, created, createErr)
+		}
+		moved, moveErr := st.AdvanceSessionInterfaceTransition(ctx, transition.ID,
+			domain.SessionInterfaceTransitionRequested, domain.SessionInterfaceTransitionFailed,
+			"native-1", "TARGET_HISTORY_UNTRUSTED_TEXT_MISMATCH", "legacy mismatch", at)
+		if moveErr != nil || !moved {
+			t.Fatalf("settle %s: moved=%v err=%v", id, moved, moveErr)
+		}
+	}
+	createTerminal("authorized-failure", now)
+	createTerminal("newer-strict-saga", now.Add(time.Second))
+
+	pending := domain.SessionInterfaceTransition{
+		ID: "recovery", SessionID: createdSession.ID,
+		SourceMode: domain.SessionModeTUI, TargetMode: domain.SessionModeChat,
+		Policy: domain.SessionInterfaceTransitionDrain, HistoryPolicy: domain.SessionInterfaceTransitionHistoryProvider,
+		Phase: domain.SessionInterfaceTransitionRequested, NativeConversationID: "native-1",
+		CreatedAt: now.Add(2 * time.Second), UpdatedAt: now.Add(2 * time.Second),
+	}
+	_, created, matched, err := st.CreateSessionInterfaceTransitionAfter(ctx, pending, "authorized-failure")
+	if err != nil || created || matched {
+		t.Fatalf("stale predecessor claim: created=%v matched=%v err=%v", created, matched, err)
+	}
+	transition, created, matched, err := st.CreateSessionInterfaceTransitionAfter(ctx, pending, "newer-strict-saga")
+	if err != nil || !created || !matched || transition.ID != pending.ID {
+		t.Fatalf("latest predecessor claim: transition=%+v created=%v matched=%v err=%v",
+			transition, created, matched, err)
+	}
+}
+
 func TestCommitSessionControllerEpochRetiresCheckpointWithoutErasingLastHumanTime(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()

@@ -49,6 +49,59 @@ func (s *Store) CreateSessionInterfaceTransition(
 	return interfaceTransitionToDomain(existing), false, nil
 }
 
+// CreateSessionInterfaceTransitionAfter claims a provider-history recovery
+// only while expectedPredecessorID is still the exact latest saga. The read and
+// insert share the writer transaction and lock, closing the consent TOCTOU gap.
+func (s *Store) CreateSessionInterfaceTransitionAfter(
+	ctx context.Context,
+	rec domain.SessionInterfaceTransition,
+	expectedPredecessorID string,
+) (transition domain.SessionInterfaceTransition, created, predecessorMatched bool, err error) {
+	if !rec.HistoryPolicy.Valid() {
+		return domain.SessionInterfaceTransition{}, false, false,
+			fmt.Errorf("create interface transition: history policy %q is invalid", rec.HistoryPolicy)
+	}
+	if expectedPredecessorID == "" {
+		return domain.SessionInterfaceTransition{}, false, false,
+			fmt.Errorf("create interface transition: expected predecessor is empty")
+	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	err = s.inTx(ctx, "create interface transition after predecessor", func(q *gen.Queries) error {
+		latest, lookupErr := q.GetLatestSessionInterfaceTransition(ctx, rec.SessionID)
+		if errors.Is(lookupErr, sql.ErrNoRows) {
+			return nil
+		}
+		if lookupErr != nil {
+			return fmt.Errorf("read latest interface transition for %s: %w", rec.SessionID, lookupErr)
+		}
+		if latest.ID != expectedPredecessorID {
+			return nil
+		}
+		predecessorMatched = true
+		row, insertErr := q.InsertSessionInterfaceTransition(ctx, gen.InsertSessionInterfaceTransitionParams{
+			ID: rec.ID, SessionID: rec.SessionID, SourceMode: rec.SourceMode,
+			TargetMode: rec.TargetMode, Policy: rec.Policy, HistoryPolicy: rec.HistoryPolicy,
+			Phase: rec.Phase, NativeConversationID: rec.NativeConversationID,
+			CreatedAt: rec.CreatedAt, UpdatedAt: rec.UpdatedAt,
+		})
+		if insertErr == nil {
+			transition, created = interfaceTransitionToDomain(row), true
+			return nil
+		}
+		if !isSQLiteUnique(insertErr) {
+			return fmt.Errorf("create interface transition for %s: %w", rec.SessionID, insertErr)
+		}
+		existing, activeErr := q.GetActiveSessionInterfaceTransition(ctx, rec.SessionID)
+		if activeErr != nil {
+			return fmt.Errorf("read winning interface transition for %s: %w", rec.SessionID, activeErr)
+		}
+		transition = interfaceTransitionToDomain(existing)
+		return nil
+	})
+	return transition, created, predecessorMatched, err
+}
+
 // GetSessionInterfaceTransition reads one interface transition by id.
 func (s *Store) GetSessionInterfaceTransition(
 	ctx context.Context,
