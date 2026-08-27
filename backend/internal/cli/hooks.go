@@ -219,11 +219,9 @@ func hookConversationFacts(agent domain.AgentHarness, event string, payload []by
 	// AO's own handoff request and continuation kickoff are coordination turns,
 	// not the latest real user instruction. They remain in provider history but
 	// must not overwrite deterministic user intent.
-	if strings.HasPrefix(strings.TrimSpace(observedPrompt), "<ao-handoff-request") {
-		assistant = ""
-	}
-	if isAOCoordinationMessage(userPrompt) {
+	if isAOCoordinationMessage(observedPrompt) {
 		userPrompt = ""
+		assistant = ""
 	}
 	return hookConversationSnapshot{
 		LatestUserPrompt:      capHookText(userPrompt, maxHookInteractionLen),

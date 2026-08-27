@@ -444,6 +444,31 @@ func TestHooks_InternalHandoffStopCannotReportAssistantCheckpoint(t *testing.T) 
 	}
 }
 
+func TestHooks_InternalContinuationStopCannotReportConversationCheckpoint(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "ao-7")
+	t.Setenv("AO_RUNTIME_LAUNCH_ID", "launch-3")
+	cfg := setConfigEnv(t)
+	srv, capture := activityServer(t, http.StatusOK, `{"ok":true}`)
+	writeRunFileFor(t, cfg, srv)
+
+	prompt := "AO transferred the previous agent's context in hidden system instructions. Continue a clear, safe, already-authorized unfinished action; otherwise, acknowledge the current objective and wait for the user."
+	payload := `{"session_id":"native-main","prompt":` + mustJSONString(t, prompt) + `,"last_assistant_message":"AO continuation acknowledged","transcript_path":"/tmp/provider/session.jsonl"}`
+	_, _, err := executeCLI(t, Deps{
+		In:           strings.NewReader(payload),
+		ProcessAlive: func(int) bool { return true },
+	}, "hooks", "claude-code", "stop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var req setActivityAPIRequest
+	if err := json.Unmarshal([]byte(capture.body), &req); err != nil {
+		t.Fatal(err)
+	}
+	if req.LatestUserPrompt != "" || req.LatestAssistantUpdate != "" {
+		t.Fatalf("internal continuation escaped onto the completed checkpoint: %#v", req)
+	}
+}
+
 func TestHookConversationFactsTrustsOnlyDocumentedClaudeStopAssistantField(t *testing.T) {
 	tests := []struct {
 		name    string
