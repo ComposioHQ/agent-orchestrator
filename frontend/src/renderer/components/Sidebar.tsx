@@ -28,7 +28,6 @@ import {
 	FolderOpen,
 	LogOut,
 	MoreVertical,
-	Pencil,
 	Pin,
 	PinOff,
 	Plus,
@@ -72,6 +71,7 @@ import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { usePinSession, useUnpinSession } from "../hooks/usePinSession";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { renameSession } from "../lib/rename-session";
+import { formatTimeCompact, formatTimeTerse } from "../lib/format-time";
 import { useTerminateSession } from "../hooks/useTerminateSession";
 import { useResizable } from "../hooks/useResizable";
 import { useShellMaybe } from "../lib/shell-context";
@@ -1554,9 +1554,9 @@ type SessionReorder = Pick<SortableRow, "isDragging" | "listeners" | "setActivat
 	dropTransitionDisabled: boolean;
 };
 
-// One worker-session row. Reads as a link by default; a hover-revealed pencil
-// flips the label into an inline input (Enter/blur saves, Escape cancels) that
-// persists through the daemon rename endpoint, so the new name survives reload.
+// One worker-session row. Reads as a link by default; double-click/double-tap
+// on the name or F2 flips the label into an inline input (Enter/blur saves,
+// Escape cancels) that persists through the daemon rename endpoint.
 function SessionRow({
 	session,
 	active,
@@ -1587,6 +1587,8 @@ function SessionRow({
 	const [isEditing, setIsEditing] = useState(false);
 	const [draft, setDraft] = useState(session.title);
 	const [sessionPressed, setSessionPressed] = useState(false);
+	const lastTouchAtRef = useRef(0);
+	const suppressTouchOpenRef = useRef(false);
 	// Escape must not be swallowed by the blur-to-save path: the keydown handler
 	// blurs the input, so it flags a cancel here for onBlur to honour.
 	const cancelledRef = useRef(false);
@@ -1617,8 +1619,8 @@ function SessionRow({
 
 	if (isEditing) {
 		return (
-			<SidebarMenuSubItem className={cn(indented && "pl-4.5")}>
-				<div className="relative flex h-8 w-full items-center gap-1.5 rounded-lg px-2.5 py-0">
+			<SidebarMenuSubItem className={cn(indented && "pl-0.5")}>
+				<div className="relative flex h-8 w-full items-center gap-1.5 rounded-lg py-0 pl-1.5 pr-2.5">
 					<SessionStatusDot session={session} />
 					<input
 						aria-label={t("shell.renameSession", { title: session.title })}
@@ -1647,7 +1649,7 @@ function SessionRow({
 
 	return (
 		<SidebarMenuSubItem
-			className={cn(indented && "pl-4.5", reorder?.isDragging && "z-chrome cursor-grabbing opacity-60")}
+			className={cn(indented && "pl-0.5", reorder?.isDragging && "z-chrome cursor-grabbing opacity-60")}
 			data-dragging={reorder?.isDragging ? "true" : undefined}
 			ref={reorder?.setNodeRef}
 			style={reorder ? sortableRowStyle(reorder) : undefined}
@@ -1677,16 +1679,37 @@ function SessionRow({
 						<button
 							aria-current={active ? "page" : undefined}
 							aria-describedby={describedBy}
+							aria-keyshortcuts="F2"
 							aria-label={t("shell.openSession", { title: session.title })}
 							className={cn(
-								"flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-lg px-2.5 py-0 text-left text-sm outline-hidden focus-visible:ring-2 focus-visible:ring-sidebar-ring",
+								"flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-lg py-0 pl-1.5 text-left text-sm outline-hidden focus-visible:ring-2 focus-visible:ring-sidebar-ring",
+								session.lastUserMessageAt ? "pr-[34px]" : "pr-2.5",
 								!reorder?.isDragging &&
-									"group-hover/session-row:pr-[70px] group-focus-within/session-row:pr-[70px]",
+									(session.lastUserMessageAt
+										? "group-hover/session-row:pr-[78px] group-focus-within/session-row:pr-[78px]"
+										: "group-hover/session-row:pr-[52px] group-focus-within/session-row:pr-[52px]"),
 								reorder && "cursor-grab active:cursor-grabbing",
 								reorder?.isDragging && "!cursor-grabbing",
 							)}
 							{...(reorder?.listeners ?? {})}
-							onClick={onOpen}
+							onClick={(event) => {
+								if (
+									event.detail > 1 &&
+									(event.target as HTMLElement).closest("[data-session-name]")
+								) {
+									return;
+								}
+								if (suppressTouchOpenRef.current) {
+									suppressTouchOpenRef.current = false;
+									return;
+								}
+								onOpen();
+							}}
+							onKeyDown={(event) => {
+								if (event.key !== "F2") return;
+								event.preventDefault();
+								startEditing();
+							}}
 							ref={reorder?.setActivatorNodeRef}
 							type="button"
 						>
@@ -1697,6 +1720,21 @@ function SessionRow({
 										"min-w-0 flex-1 truncate",
 										active ? "text-foreground" : "text-muted-foreground group-hover/session-row:text-foreground",
 									)}
+									data-session-name=""
+									onDoubleClick={(event) => {
+										event.preventDefault();
+										event.stopPropagation();
+										startEditing();
+									}}
+									onPointerUp={(event) => {
+										if (event.pointerType !== "touch") return;
+										const now = Date.now();
+										if (now - lastTouchAtRef.current <= 500) {
+											suppressTouchOpenRef.current = true;
+											startEditing();
+										}
+										lastTouchAtRef.current = now;
+									}}
 								>
 									{session.title}
 								</span>
@@ -1708,11 +1746,10 @@ function SessionRow({
 							</span>
 						</button>
 					</div>
-					{/* Pin, rename, and kill overlay the row. The label uses this space
-					    while idle, then yields it when hover or focus reveals the strip. */}
+					{/* The timestamp is stable at the right edge. Pin and kill use label
+					    space while idle, then reveal without changing the row footprint. */}
 					<SessionActions
 						isDragging={Boolean(reorder?.isDragging)}
-						onStartEditing={startEditing}
 						session={session}
 					/>
 				</div>
@@ -1724,11 +1761,9 @@ function SessionRow({
 const SessionActions = memo(function SessionActions({
 	session,
 	isDragging,
-	onStartEditing,
 }: {
 	session: WorkspaceSession;
 	isDragging: boolean;
-	onStartEditing: () => void;
 }) {
 	const { t } = useTranslation();
 	const { mutate: pinSession } = usePinSession();
@@ -1737,48 +1772,51 @@ const SessionActions = memo(function SessionActions({
 
 	return (
 		<div
-			className={cn(
-				"pointer-events-none absolute inset-y-0 right-0 z-chrome flex items-center gap-px px-1 opacity-0",
-				!isDragging &&
-					"group-hover/session-row:pointer-events-auto group-hover/session-row:opacity-100 group-focus-within/session-row:pointer-events-auto group-focus-within/session-row:opacity-100",
-			)}
+			className="pointer-events-none absolute inset-y-0 right-1 z-chrome flex items-center gap-1"
 			data-session-actions=""
 			onPointerDown={(event) => event.stopPropagation()}
 		>
-			<button
-				aria-label={session.isPinned ? t("shell.unpinSession") : t("shell.pinSession")}
-				className={cn(SESSION_ACTION_CLASS, session.isPinned && "text-foreground")}
-				onClick={(event) => {
-					event.stopPropagation();
-					session.isPinned ? unpinSession(session) : pinSession(session);
-				}}
-				type="button"
+			<div
+				className={cn(
+					"flex items-center gap-px opacity-0",
+					!isDragging &&
+						"group-hover/session-row:pointer-events-auto group-hover/session-row:opacity-100 group-focus-within/session-row:pointer-events-auto group-focus-within/session-row:opacity-100",
+				)}
+				data-session-action-buttons=""
 			>
-				{session.isPinned ? <PinOff aria-hidden="true" /> : <Pin aria-hidden="true" />}
-			</button>
-			<button
-				aria-label={t("shell.renameSession", { title: session.title })}
-				className={SESSION_ACTION_CLASS}
-				onClick={(event) => {
-					event.stopPropagation();
-					onStartEditing();
-				}}
-				type="button"
-			>
-				<Pencil aria-hidden="true" />
-			</button>
-			<button
-				aria-label={t("shell.killSession")}
-				className={cn(SESSION_ACTION_CLASS, "hover:text-destructive")}
-				disabled={isKilling}
-				onClick={(event) => {
-					event.stopPropagation();
-					terminateSession(session);
-				}}
-				type="button"
-			>
-				<Trash2 aria-hidden="true" />
-			</button>
+				<button
+					aria-label={session.isPinned ? t("shell.unpinSession") : t("shell.pinSession")}
+					className={cn(SESSION_ACTION_CLASS, session.isPinned && "text-foreground")}
+					onClick={(event) => {
+						event.stopPropagation();
+						session.isPinned ? unpinSession(session) : pinSession(session);
+					}}
+					type="button"
+				>
+					{session.isPinned ? <PinOff aria-hidden="true" /> : <Pin aria-hidden="true" />}
+				</button>
+				<button
+					aria-label={t("shell.killSession")}
+					className={cn(SESSION_ACTION_CLASS, "hover:text-destructive")}
+					disabled={isKilling}
+					onClick={(event) => {
+						event.stopPropagation();
+						terminateSession(session);
+					}}
+					type="button"
+				>
+					<Trash2 aria-hidden="true" />
+				</button>
+			</div>
+			{session.lastUserMessageAt ? (
+				<time
+					className="min-w-0 shrink-0 whitespace-nowrap font-mono text-micro text-passive"
+					dateTime={session.lastUserMessageAt}
+					title={t("shell.lastMessageAt", { time: formatTimeCompact(session.lastUserMessageAt) })}
+				>
+					{formatTimeTerse(session.lastUserMessageAt)}
+				</time>
+			) : null}
 		</div>
 	);
 });

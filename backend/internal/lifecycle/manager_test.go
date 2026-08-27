@@ -230,6 +230,7 @@ func (f *fakeAgentSwitchLifecycleStore) UpdateSessionFromActivitySignal(_ contex
 	current.Metadata.AgentSessionID = rec.Metadata.AgentSessionID
 	current.Metadata.AgentSessionIDLaunchID = rec.Metadata.AgentSessionIDLaunchID
 	current.Metadata.LatestUserPrompt = rec.Metadata.LatestUserPrompt
+	current.Metadata.LatestUserPromptAt = rec.Metadata.LatestUserPromptAt
 	current.Metadata.LatestAssistantUpdate = rec.Metadata.LatestAssistantUpdate
 	current.Metadata.NativeTranscriptPath = rec.Metadata.NativeTranscriptPath
 	current.UpdatedAt = rec.UpdatedAt
@@ -757,6 +758,37 @@ func TestActivity_MetadataOnlyStoresAgentSessionIDWithoutChangingActivity(t *tes
 	}
 	if !got.FirstSignalAt.Equal(rec.FirstSignalAt) {
 		t.Fatalf("metadata-only hook changed FirstSignalAt: got %v, want %v", got.FirstSignalAt, rec.FirstSignalAt)
+	}
+}
+
+func TestActivity_UserPromptStoresItsSignalTimestamp(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.Metadata.RuntimeLaunchID = "launch-1"
+	rec.FirstSignalAt = time.Now().Add(-time.Minute)
+	st.sessions[rec.ID] = rec
+	signalAt := time.Unix(456, 0).UTC()
+
+	if err := m.ApplyActivitySignal(ctx, rec.ID, ports.ActivitySignal{
+		LaunchID: "launch-1", LatestUserPrompt: "keep the row compact", Timestamp: signalAt,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got := st.sessions[rec.ID]
+	if got.Metadata.LatestUserPrompt != "keep the row compact" || !got.Metadata.LatestUserPromptAt.Equal(signalAt) {
+		t.Fatalf("latest user prompt = %q at %s", got.Metadata.LatestUserPrompt, got.Metadata.LatestUserPromptAt)
+	}
+
+	repeatedAt := signalAt.Add(time.Minute)
+	if err := m.ApplyActivitySignal(ctx, rec.ID, ports.ActivitySignal{
+		Valid: true, State: got.Activity.State, Event: "user-prompt-submit", LaunchID: "launch-1",
+		LatestUserPrompt: "keep the row compact", Timestamp: repeatedAt,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got = st.sessions[rec.ID]
+	if !got.Metadata.LatestUserPromptAt.Equal(repeatedAt) {
+		t.Fatalf("repeated user prompt timestamp = %s, want %s", got.Metadata.LatestUserPromptAt, repeatedAt)
 	}
 }
 

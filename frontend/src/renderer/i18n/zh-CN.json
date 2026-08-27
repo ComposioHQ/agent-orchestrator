@@ -864,6 +864,7 @@
 	"shell.updateAvailable": "有可用更新",
 	"shell.updateCheckFailed": "检查更新失败",
 	"shell.updatedAt": "更新于 {{time}}",
+	"shell.lastMessageAt": "最后消息：{{time}}",
 	"shell.usageProcessed": "已处理 {{count}} 个令牌",
 	"shell.usageProcessedCompact": "{{count}} 已处理",
 	"shell.versionAvailable": "v{{version}}",

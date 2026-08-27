@@ -889,6 +889,7 @@
 	"shell.updateAvailable": "Mise à jour disponible",
 	"shell.updateCheckFailed": "Échec de la recherche de mise à jour",
 	"shell.updatedAt": "Mis à jour {{time}}",
+	"shell.lastMessageAt": "Dernier message {{time}}",
 	"shell.versionAvailable": "v{{version}}",
 	"shell.versionReady": "v{{version}} prête",
 	"shell.workingSessions": "Sessions en cours",

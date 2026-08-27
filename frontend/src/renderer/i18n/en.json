@@ -881,6 +881,7 @@
 	"shell.updateAvailable": "Update available",
 	"shell.updateCheckFailed": "Update check failed",
 	"shell.updatedAt": "Updated {{time}}",
+	"shell.lastMessageAt": "Last message {{time}}",
 	"shell.usageProcessed": "{{count}} tokens processed",
 	"shell.usageProcessedCompact": "{{count}} processed",
 	"shell.versionAvailable": "v{{version}}",

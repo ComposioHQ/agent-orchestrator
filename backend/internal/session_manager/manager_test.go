@@ -82,6 +82,7 @@ func (f *fakeStore) RecordSessionLatestUserPrompt(_ context.Context, id domain.S
 		return false, nil
 	}
 	rec.Metadata.LatestUserPrompt = prompt
+	rec.Metadata.LatestUserPromptAt = updatedAt
 	rec.UpdatedAt = updatedAt
 	f.sessions[id] = rec
 	return true, nil
@@ -7834,6 +7835,9 @@ func TestSend_RecordsDeliveredUserInput(t *testing.T) {
 	}
 	if got := st.sessions["s1"].Metadata.LatestUserPrompt; got != "continue with the migration" {
 		t.Fatalf("LatestUserPrompt = %q, want delivered user input", got)
+	}
+	if got := st.sessions["s1"].Metadata.LatestUserPromptAt; got.IsZero() {
+		t.Fatal("LatestUserPromptAt is zero after delivered user input")
 	}
 }
 

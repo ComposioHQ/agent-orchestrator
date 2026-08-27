@@ -559,32 +559,40 @@ describe("Sidebar", () => {
 		expect(screen.getByLabelText("Spawn Project One orchestrator")).toHaveProperty("tabIndex", 0);
 		expect(screen.getByLabelText("Project actions for Project One")).toHaveProperty("tabIndex", 0);
 		expect(screen.getByLabelText("Pin session")).toHaveProperty("tabIndex", 0);
-		expect(screen.getByLabelText("Rename fix login")).toHaveProperty("tabIndex", 0);
+		expect(screen.queryByRole("button", { name: "Rename fix login" })).not.toBeInTheDocument();
 		expect(screen.getByLabelText("Kill session")).toHaveProperty("tabIndex", 0);
 	});
 
-	it("lets an idle session label use the action strip and yields it on hover or focus", () => {
-		renderSidebar({ workspaces: [{ ...workspace, sessions: [session] }] });
+	it("keeps the message age visible while the label yields only the hover action space", () => {
+		const lastUserMessageAt = "2026-06-29T23:55:00Z";
+		renderSidebar({
+			workspaces: [{ ...workspace, sessions: [{ ...session, lastUserMessageAt }] }],
+		});
 
 		const openSession = screen.getByLabelText("Open fix login");
 		const label = within(openSession).getByText("fix login");
-		const actions = screen.getByLabelText("Pin session").parentElement;
+		const actions = screen.getByLabelText("Pin session").closest("[data-session-actions]");
+		const actionButtons = screen.getByLabelText("Pin session").parentElement;
+		const time = actions?.querySelector("time");
 
-		expect(openSession).not.toHaveClass("pr-[70px]");
+		expect(openSession).toHaveClass("pr-[34px]");
 		expect(openSession).toHaveClass(
-			"group-hover/session-row:pr-[70px]",
-			"group-focus-within/session-row:pr-[70px]",
+			"group-hover/session-row:pr-[78px]",
+			"group-focus-within/session-row:pr-[78px]",
 		);
 		expect(label).toHaveClass("min-w-0", "flex-1", "truncate");
 		expect(actions).toHaveAttribute("data-session-actions");
-		expect(actions).toHaveClass(
-			"pointer-events-none",
+		expect(actionButtons).toHaveClass(
 			"opacity-0",
 			"group-hover/session-row:pointer-events-auto",
 			"group-hover/session-row:opacity-100",
 			"group-focus-within/session-row:pointer-events-auto",
 			"group-focus-within/session-row:opacity-100",
 		);
+		expect(time).toHaveAttribute("datetime", lastUserMessageAt);
+		expect(time).not.toHaveClass("opacity-0");
+		expect(openSession).toHaveClass("pl-1.5");
+		expect(openSession.closest("li")).toHaveClass("pl-0.5");
 	});
 
 	it("keeps session status and actions stable when an action receives keyboard focus", async () => {
@@ -618,7 +626,7 @@ describe("Sidebar", () => {
 		fireEvent.pointerUp(openSession);
 		expect(row).not.toHaveClass("scale-[0.97]");
 
-		fireEvent.pointerDown(screen.getByLabelText("Rename fix login"));
+		fireEvent.pointerDown(screen.getByLabelText("Pin session"));
 		expect(row).not.toHaveClass("scale-[0.97]");
 	});
 
@@ -1415,12 +1423,12 @@ describe("Sidebar", () => {
 		expect(dialog).toHaveTextContent("repository folder");
 	});
 
-	it("renames a session inline and persists via the daemon", async () => {
+	it("renames a session inline by double-clicking its name", async () => {
 		const user = userEvent.setup();
 		const workspaceWithSession = { ...workspace, sessions: [session] };
 		renderSidebar({ workspaces: [workspaceWithSession] });
 
-		await user.click(screen.getByLabelText("Rename fix login"));
+		await user.dblClick(screen.getByText("fix login"));
 		const input = screen.getByLabelText("Rename fix login");
 		await user.clear(input);
 		await user.type(input, "polish login{Enter}");
@@ -1433,8 +1441,30 @@ describe("Sidebar", () => {
 		const workspaceWithSession = { ...workspace, sessions: [session] };
 		renderSidebar({ workspaces: [workspaceWithSession] });
 
-		await user.click(screen.getByLabelText("Rename fix login"));
+		await user.dblClick(screen.getByText("fix login"));
 		expect(screen.getByLabelText("Rename fix login")).toHaveAttribute("maxlength", "20");
+	});
+
+	it("offers F2 as a keyboard rename path", async () => {
+		const user = userEvent.setup();
+		renderSidebar({ workspaces: [{ ...workspace, sessions: [session] }] });
+
+		const openSession = screen.getByLabelText("Open fix login");
+		expect(openSession).toHaveAttribute("aria-keyshortcuts", "F2");
+		openSession.focus();
+		await user.keyboard("{F2}");
+
+		expect(screen.getByLabelText("Rename fix login")).toHaveFocus();
+	});
+
+	it("retains a double-tap rename path for touch", () => {
+		renderSidebar({ workspaces: [{ ...workspace, sessions: [session] }] });
+
+		const label = screen.getByText("fix login");
+		fireEvent.pointerUp(label, { pointerType: "touch" });
+		fireEvent.pointerUp(label, { pointerType: "touch" });
+
+		expect(screen.getByLabelText("Rename fix login")).toBeInTheDocument();
 	});
 
 	it("cancels the inline rename on Escape without calling the daemon", async () => {
@@ -1442,7 +1472,7 @@ describe("Sidebar", () => {
 		const workspaceWithSession = { ...workspace, sessions: [session] };
 		renderSidebar({ workspaces: [workspaceWithSession] });
 
-		await user.click(screen.getByLabelText("Rename fix login"));
+		await user.dblClick(screen.getByText("fix login"));
 		const input = screen.getByLabelText("Rename fix login");
 		await user.clear(input);
 		await user.type(input, "discard me{Escape}");

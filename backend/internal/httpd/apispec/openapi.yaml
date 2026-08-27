@@ -5954,6 +5954,11 @@ components:
           type: string
         kind:
           type: string
+        lastUserMessageAt:
+          format: date-time
+          type:
+          - "null"
+          - string
         mode:
           enum:
           - chat

@@ -550,9 +550,11 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 	// rule, while their tracking side effects still land. Untagged signals
 	// (old CLIs, adapters without tool identity) pass through untouched —
 	// last-writer-wins, exactly as before.
+	promptAt := timeOr(s.Timestamp, now)
 	metadataChanged := (s.AgentSessionID != "" && rec.Metadata.AgentSessionID != s.AgentSessionID) ||
 		(s.AgentSessionID != "" && rec.Metadata.AgentSessionIDLaunchID != s.LaunchID) ||
-		(s.LatestUserPrompt != "" && rec.Metadata.LatestUserPrompt != s.LatestUserPrompt) ||
+		(s.LatestUserPrompt != "" && (rec.Metadata.LatestUserPrompt != s.LatestUserPrompt ||
+			(s.Event == "user-prompt-submit" && promptAt.After(rec.Metadata.LatestUserPromptAt)))) ||
 		(s.LatestAssistantUpdate != "" && rec.Metadata.LatestAssistantUpdate != s.LatestAssistantUpdate) ||
 		(s.TranscriptPath != "" && rec.Metadata.NativeTranscriptPath != s.TranscriptPath)
 	if s.Valid {
@@ -563,7 +565,7 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 		return nil
 	}
 	if !s.Valid {
-		applyActivityMetadata(&rec.Metadata, s)
+		applyActivityMetadata(&rec.Metadata, s, now)
 		rec.UpdatedAt = now
 		_, err := m.store.UpdateSessionFromActivitySignal(ctx, rec)
 		m.mu.Unlock()
@@ -572,7 +574,7 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 	if metadataChanged {
 		// Fold metadata into rec before copying it into next below, so the
 		// activity and resume handle land in one store update.
-		applyActivityMetadata(&rec.Metadata, s)
+		applyActivityMetadata(&rec.Metadata, s, now)
 	}
 	prevState := rec.Activity.State
 	prevAt := rec.Activity.LastActivityAt
@@ -1294,6 +1296,9 @@ func mergeMetadata(base, in domain.SessionMetadata) domain.SessionMetadata {
 	set(&base.AgentSessionIDLaunchID, in.AgentSessionIDLaunchID)
 	set(&base.Prompt, in.Prompt)
 	set(&base.LatestUserPrompt, in.LatestUserPrompt)
+	if !in.LatestUserPromptAt.IsZero() {
+		base.LatestUserPromptAt = in.LatestUserPromptAt
+	}
 	set(&base.LatestAssistantUpdate, in.LatestAssistantUpdate)
 	set(&base.NativeTranscriptPath, in.NativeTranscriptPath)
 	set(&base.BrowserCapabilityVerifier, in.BrowserCapabilityVerifier)
@@ -1308,13 +1313,14 @@ func mergeMetadata(base, in domain.SessionMetadata) domain.SessionMetadata {
 	return base
 }
 
-func applyActivityMetadata(meta *domain.SessionMetadata, signal ports.ActivitySignal) {
+func applyActivityMetadata(meta *domain.SessionMetadata, signal ports.ActivitySignal, receivedAt time.Time) {
 	if signal.AgentSessionID != "" {
 		meta.AgentSessionID = signal.AgentSessionID
 		meta.AgentSessionIDLaunchID = signal.LaunchID
 	}
 	if signal.LatestUserPrompt != "" {
 		meta.LatestUserPrompt = signal.LatestUserPrompt
+		meta.LatestUserPromptAt = timeOr(signal.Timestamp, receivedAt)
 	}
 	if signal.LatestAssistantUpdate != "" {
 		meta.LatestAssistantUpdate = signal.LatestAssistantUpdate

@@ -878,6 +878,7 @@
 	"shell.updateAvailable": "업데이트 사용 가능",
 	"shell.updateCheckFailed": "업데이트 확인 실패",
 	"shell.updatedAt": "업데이트: {{time}}",
+	"shell.lastMessageAt": "마지막 메시지: {{time}}",
 	"shell.versionAvailable": "v{{version}}",
 	"shell.versionReady": "v{{version}} 준비됨",
 	"shell.workingSessions": "작업 중 세션",

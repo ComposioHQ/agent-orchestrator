@@ -878,6 +878,7 @@
 	"shell.updateAvailable": "アップデートがあります",
 	"shell.updateCheckFailed": "アップデートの確認に失敗しました",
 	"shell.updatedAt": "更新: {{time}}",
+	"shell.lastMessageAt": "最終メッセージ: {{time}}",
 	"shell.versionAvailable": "v{{version}}",
 	"shell.versionReady": "v{{version}} の準備完了",
 	"shell.workingSessions": "作業中セッション",
