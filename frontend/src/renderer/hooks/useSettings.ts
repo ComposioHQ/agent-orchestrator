@@ -21,6 +21,8 @@ export interface Settings {
 	client: string;
 	/** Whether the local offering is available on this daemon. */
 	localEnabled: boolean;
+	/** The user's persisted cloud toggle (Settings, Developer Mode). */
+	cloudOffering: boolean;
 	/** Whether the cloud offering is available (flag + entitled client + control plane). */
 	cloudEnabled: boolean;
 	/** Cloud control plane base URL; empty when cloud is not configured. */
@@ -47,6 +49,7 @@ export function useSettings() {
 				// Offering gates fail closed for cloud and open for local, so a daemon
 				// that predates them behaves like a plain local install.
 				localEnabled: data?.localEnabled ?? true,
+				cloudOffering: data?.cloudOffering ?? false,
 				cloudEnabled: data?.cloudEnabled ?? false,
 				cloudControlPlaneUrl: data?.cloudControlPlaneUrl ?? "",
 			};
@@ -77,6 +80,28 @@ export function useUpdateSessionInterface() {
 
 	return {
 		update: (mode: SessionMode) => mutation.mutate(mode),
+		saving: mutation.isPending,
+		error: mutation.error ? apiErrorMessage(mutation.error) : undefined,
+	};
+}
+
+export function useUpdateCloudOffering() {
+	const queryClient = useQueryClient();
+	const mutation = useMutation({
+		mutationFn: async (enabled: boolean) => {
+			const { data, error } = await apiClient.PATCH("/api/v1/settings/cloud-offering", {
+				body: { enabled },
+			});
+			if (error) throw error;
+			return data;
+		},
+		// Refetch rather than writing the value in locally: the daemon is the source
+		// of truth, and the control must not claim a change it did not persist.
+		onSuccess: () => queryClient.invalidateQueries({ queryKey: settingsQueryKey }),
+	});
+
+	return {
+		update: (enabled: boolean) => mutation.mutate(enabled),
 		saving: mutation.isPending,
 		error: mutation.error ? apiErrorMessage(mutation.error) : undefined,
 	};

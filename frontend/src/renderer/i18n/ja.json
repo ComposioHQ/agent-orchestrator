@@ -488,6 +488,7 @@
 	"settings.cloudAgents.empty": "有効な認証情報がまだ接続されていません。クラウドセッションには必要です。",
 	"settings.cloudAgents.signIn": "コーディングエージェントの認証情報を管理するには、AO Cloud にサインインしてください（左サイドバー）。",
 	"settings.cloudAgents.valid": "有効",
+	"settings.cloudToggleHint": "分離されたクラウドサンドボックスでセッションを実行します。AO Cloud へのサインインが必要です。",
 	"settings.models.refreshList": "リストを更新",
 	"settings.models.refreshing": "更新中…",
 	"newTask.selectAgent": "エージェントを選択",

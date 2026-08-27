@@ -9,7 +9,7 @@ import { SettingsRow } from "./SettingsRow";
 import { SettingsSection } from "./SettingsSection";
 import { Switch } from "../ui/switch";
 import { cn } from "../../lib/utils";
-import { useSettings, useUpdateSessionInterface } from "../../hooks/useSettings";
+import { useSettings, useUpdateCloudOffering, useUpdateSessionInterface } from "../../hooks/useSettings";
 import type { SessionMode } from "../../types/workspace";
 
 /**
@@ -173,7 +173,38 @@ export function GeneralSettingsSection({
 						onCheckedChange={setDeveloperMode}
 					/>
 				</SettingsRow>
+				{developerMode && <CloudOfferingRow />}
 			</SettingsSection>
 		</>
+	);
+}
+
+/**
+ * Developer Mode-only toggle for the cloud offering. Persisted daemon-side (a
+ * preference, not renderer state) so every surface resolves the same gate; the
+ * daemon combines it with its baked control-plane URL into cloudEnabled, which
+ * is what reveals sign-in, cloud projects, and sandbox sessions.
+ */
+function CloudOfferingRow() {
+	const { t } = useTranslation();
+	const { settings, isLoading } = useSettings();
+	const { update, saving, error } = useUpdateCloudOffering();
+	return (
+		<div className="flex w-full flex-col">
+			<SettingsRow label={t("settings.cloud")}>
+				<Switch
+					aria-label={t("settings.cloud")}
+					checked={settings?.cloudOffering ?? false}
+					disabled={isLoading || saving}
+					onCheckedChange={(enabled) => update(enabled)}
+				/>
+			</SettingsRow>
+			<p className="px-3 pb-2 text-xs leading-relaxed text-muted-foreground">{t("settings.cloudToggleHint")}</p>
+			{error ? (
+				<p role="alert" className="px-3 pb-2 text-caption leading-4 text-error">
+					{error}
+				</p>
+			) : null}
+		</div>
 	);
 }

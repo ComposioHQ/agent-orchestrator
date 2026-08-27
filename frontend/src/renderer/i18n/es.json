@@ -490,6 +490,7 @@
 	"settings.cloudAgents.empty": "Aún no hay una credencial válida conectada. Las sesiones en la nube necesitan una.",
 	"settings.cloudAgents.signIn": "Inicia sesión en AO Cloud (barra lateral izquierda) para gestionar las credenciales de agentes de código.",
 	"settings.cloudAgents.valid": "Válida",
+	"settings.cloudToggleHint": "Ejecuta sesiones en entornos aislados en la nube. Requiere iniciar sesión en AO Cloud.",
 	"settings.models.refreshList": "Actualizar lista",
 	"settings.models.refreshing": "Actualizando...",
 	"newTask.selectAgent": "Seleccionar agente",

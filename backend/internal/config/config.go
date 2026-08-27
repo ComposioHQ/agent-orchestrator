@@ -43,6 +43,10 @@ const (
 	// the single place the identity is spelled out; gating logic must compare
 	// against this constant, never a string literal.
 	ClientElevenX = "eleven_x"
+
+	// defaultCloudControlPlaneURL is the control plane a build talks to when no
+	// override is set. Staging while the offering is in its dogfooding phase.
+	defaultCloudControlPlaneURL = "https://staging-api.aoagents.dev"
 )
 
 // TelemetryRemote selects the remote telemetry exporter.
@@ -347,6 +351,11 @@ func Load() (Config, error) {
 		}
 		cfg.LocalOffering = v
 	}
+	// The control-plane URL is public client configuration (like the WorkOS
+	// client id), so it ships as a baked default and the env var is only a
+	// development override. Users never configure it; the Settings toggle is
+	// the sole cloud switch.
+	cfg.CloudControlPlaneURL = defaultCloudControlPlaneURL
 	if raw := os.Getenv("AO_CLOUD_CONTROL_PLANE_URL"); strings.TrimSpace(raw) != "" {
 		u, err := parseCloudControlPlaneURL(raw)
 		if err != nil {

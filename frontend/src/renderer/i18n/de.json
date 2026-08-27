@@ -488,6 +488,7 @@
 	"settings.cloudAgents.empty": "Noch keine gültigen Zugangsdaten verbunden. Cloud-Sitzungen benötigen welche.",
 	"settings.cloudAgents.signIn": "Melde dich bei AO Cloud an (linke Seitenleiste), um Coding-Agent-Zugangsdaten zu verwalten.",
 	"settings.cloudAgents.valid": "Gültig",
+	"settings.cloudToggleHint": "Sitzungen in isolierten Cloud-Sandboxes ausführen. Erfordert die Anmeldung bei AO Cloud.",
 	"settings.models.refreshList": "Liste aktualisieren",
 	"settings.models.refreshing": "Wird aktualisiert...",
 	"newTask.selectAgent": "Agent auswählen",

@@ -1949,8 +1949,11 @@ type SettingsResponse struct {
 	Client string `json:"client"`
 	// LocalEnabled reports whether the local offering is available.
 	LocalEnabled bool `json:"localEnabled"`
-	// CloudEnabled reports whether the cloud offering is available: the cloud
-	// flag, the entitled client, and a configured control plane must all hold.
+	// CloudOffering is the user's persisted cloud toggle (Settings, Developer
+	// Mode). Distinct from CloudEnabled, which is the effective gate.
+	CloudOffering bool `json:"cloudOffering"`
+	// CloudEnabled reports whether the cloud offering is effectively available:
+	// the user's toggle (or the env override) plus a configured control plane.
 	CloudEnabled bool `json:"cloudEnabled"`
 	// CloudControlPlaneURL is the cloud control plane base URL; empty when no
 	// control plane is configured.
@@ -1960,6 +1963,12 @@ type SettingsResponse struct {
 // UpdateSessionInterfaceRequest changes the default interface for new sessions.
 type UpdateSessionInterfaceRequest struct {
 	DefaultSessionMode string `json:"defaultSessionMode" enum:"chat,tui"`
+}
+
+// UpdateCloudOfferingRequest flips the user's cloud toggle.
+type UpdateCloudOfferingRequest struct {
+	// Enabled turns the cloud offering on or off for this machine's user.
+	Enabled *bool `json:"enabled"`
 }
 
 // capabilityNames lists the abilities a provider has, sorted so a client sees a

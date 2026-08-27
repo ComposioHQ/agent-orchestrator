@@ -488,6 +488,7 @@
 	"settings.cloudAgents.empty": "아직 유효한 자격 증명이 연결되지 않았습니다. 클라우드 세션에는 필요합니다.",
 	"settings.cloudAgents.signIn": "코딩 에이전트 자격 증명을 관리하려면 AO Cloud에 로그인하세요(왼쪽 사이드바).",
 	"settings.cloudAgents.valid": "유효",
+	"settings.cloudToggleHint": "격리된 클라우드 샌드박스에서 세션을 실행합니다. AO Cloud 로그인이 필요합니다.",
 	"settings.models.refreshList": "목록 새로고침",
 	"settings.models.refreshing": "새로고침 중…",
 	"newTask.selectAgent": "에이전트 선택",

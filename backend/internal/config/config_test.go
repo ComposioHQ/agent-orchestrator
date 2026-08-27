@@ -254,8 +254,8 @@ func TestLoadOfferingDefaults(t *testing.T) {
 	if !cfg.LocalOffering {
 		t.Error("LocalOffering = false, want true by default")
 	}
-	if cfg.CloudControlPlaneURL != "" {
-		t.Errorf("CloudControlPlaneURL = %q, want empty", cfg.CloudControlPlaneURL)
+	if cfg.CloudControlPlaneURL != "https://staging-api.aoagents.dev" {
+		t.Errorf("CloudControlPlaneURL = %q, want the baked default", cfg.CloudControlPlaneURL)
 	}
 }
 
