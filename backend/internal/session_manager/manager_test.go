@@ -82,6 +82,7 @@ func (f *fakeStore) RecordSessionLatestUserPrompt(_ context.Context, id domain.S
 		return false, nil
 	}
 	rec.Metadata.LatestUserPrompt = prompt
+	rec.Metadata.LatestUserPromptAt = updatedAt
 	rec.UpdatedAt = updatedAt
 	f.sessions[id] = rec
 	return true, nil
@@ -164,10 +165,11 @@ func (f *fakeStore) DeleteSessionWorktrees(_ context.Context, id domain.SessionI
 }
 
 type fakeLCM struct {
-	store     *fakeStore
-	completed int
-	prepared  []string
-	cancelled []string
+	store          *fakeStore
+	completed      int
+	prepared       []string
+	cancelled      []string
+	chatBoundaries []domain.ConversationBranch
 	// terminated counts MarkTerminated calls per session id.
 	terminated map[domain.SessionID]int
 }
@@ -191,6 +193,16 @@ func (l *fakeLCM) MarkSpawned(_ context.Context, id domain.SessionID, metadata d
 	rec.Metadata = metadata
 	l.store.sessions[id] = rec
 	return nil
+}
+
+func (l *fakeLCM) MarkChatSpawned(
+	ctx context.Context,
+	id domain.SessionID,
+	metadata domain.SessionMetadata,
+	boundary domain.ConversationBranch,
+) error {
+	l.chatBoundaries = append(l.chatBoundaries, boundary)
+	return l.MarkSpawned(ctx, id, metadata)
 }
 
 func (l *fakeLCM) CommitControllerEpoch(
@@ -978,12 +990,12 @@ func (m *fakeMessenger) Send(_ context.Context, id domain.SessionID, msg string)
 
 func TestSend_WrapsCopilotOrchestratorMessageWithDelegationDirective(t *testing.T) {
 	st := newFakeStore()
-	st.sessions["mer-1"] = domain.SessionRecord{
+	st.sessions["mer-1"] = pastStartupGate(domain.SessionRecord{
 		ID:        "mer-1",
 		ProjectID: "mer",
 		Kind:      domain.KindOrchestrator,
 		Harness:   domain.HarnessCopilot,
-	}
+	})
 	msg := &fakeMessenger{}
 	m := New(Deps{Store: st, Messenger: msg})
 
@@ -1009,12 +1021,12 @@ func TestSend_WrapsCopilotOrchestratorMessageWithDelegationDirective(t *testing.
 
 func TestSend_DoesNotWrapCopilotWorkerMessage(t *testing.T) {
 	st := newFakeStore()
-	st.sessions["mer-2"] = domain.SessionRecord{
+	st.sessions["mer-2"] = pastStartupGate(domain.SessionRecord{
 		ID:        "mer-2",
 		ProjectID: "mer",
 		Kind:      domain.KindWorker,
 		Harness:   domain.HarnessCopilot,
-	}
+	})
 	msg := &fakeMessenger{}
 	m := New(Deps{Store: st, Messenger: msg})
 
@@ -1028,12 +1040,12 @@ func TestSend_DoesNotWrapCopilotWorkerMessage(t *testing.T) {
 
 func TestSend_DoesNotWrapNonCopilotOrchestratorMessage(t *testing.T) {
 	st := newFakeStore()
-	st.sessions["mer-1"] = domain.SessionRecord{
+	st.sessions["mer-1"] = pastStartupGate(domain.SessionRecord{
 		ID:        "mer-1",
 		ProjectID: "mer",
 		Kind:      domain.KindOrchestrator,
 		Harness:   domain.HarnessClaudeCode,
-	}
+	})
 	msg := &fakeMessenger{}
 	m := New(Deps{Store: st, Messenger: msg})
 
@@ -1048,13 +1060,13 @@ func TestSend_DoesNotWrapNonCopilotOrchestratorMessage(t *testing.T) {
 func TestSend_WritesAttachmentAndAppendsReference(t *testing.T) {
 	dir := t.TempDir()
 	st := newFakeStore()
-	st.sessions["mer-1"] = domain.SessionRecord{
+	st.sessions["mer-1"] = pastStartupGate(domain.SessionRecord{
 		ID:        "mer-1",
 		ProjectID: "mer",
 		Kind:      domain.KindWorker,
 		Harness:   domain.HarnessClaudeCode,
 		Metadata:  domain.SessionMetadata{WorkspacePath: dir},
-	}
+	})
 	msg := &fakeMessenger{}
 	ws := &fakeWorkspace{}
 	m := New(Deps{Store: st, Messenger: msg, Workspace: ws, DataDir: t.TempDir()})
@@ -1101,7 +1113,7 @@ func TestSend_WritesAttachmentAndAppendsReference(t *testing.T) {
 
 func TestSend_WithoutAttachmentSkipsWorkspaceWrite(t *testing.T) {
 	st := newFakeStore()
-	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker}
+	st.sessions["mer-1"] = pastStartupGate(domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker})
 	msg := &fakeMessenger{}
 	ws := &fakeWorkspace{}
 	m := New(Deps{Store: st, Messenger: msg, Workspace: ws})
@@ -7756,6 +7768,10 @@ type signalingAgent struct{ fakeAgent }
 func (signalingAgent) EmitsSubmitActivity() bool  { return true }
 func (signalingAgent) EmitsBlockedActivity() bool { return true }
 
+type startupReadySignalingAgent struct{ fakeAgent }
+
+func (startupReadySignalingAgent) FirstSignalProvesInputReady() bool { return true }
+
 // submitOnlyAgent advertises a prompt-submit signal but NOT a blocked one — a
 // harness like goose/opencode/agy that submits yet installs no permission hook.
 // confirmActive must refuse to nudge it (it could Enter into a decision the
@@ -7789,12 +7805,21 @@ func newSendTestManager(t *testing.T, agent ports.Agent, messenger ports.AgentMe
 	return m
 }
 
+// pastStartupGate marks a TUI session as having received its first hook
+// callback so send-path tests exercise post-startup behavior.
+func pastStartupGate(rec domain.SessionRecord) domain.SessionRecord {
+	if rec.FirstSignalAt.IsZero() {
+		rec.FirstSignalAt = time.Now()
+	}
+	return rec
+}
+
 func TestSend_SkipsConfirmForHooklessHarness(t *testing.T) {
 	// A harness whose adapter does NOT implement the activity-signal interfaces (plain
 	// fakeAgent) must skip confirmActive entirely: one Send, no nudges, and the
 	// call returns immediately without polling.
 	st := newFakeStore()
-	st.sessions["s1"] = domain.SessionRecord{ID: "s1", Harness: "claude-code"}
+	st.sessions["s1"] = pastStartupGate(domain.SessionRecord{ID: "s1", Harness: "claude-code"})
 	msg := &fakeMessenger{}
 	m := newSendTestManager(t, fakeAgent{}, msg, st)
 
@@ -7813,7 +7838,7 @@ func TestSend_SkipsConfirmForHooklessHarness(t *testing.T) {
 
 func TestSend_RecordsDeliveredUserInput(t *testing.T) {
 	st := newFakeStore()
-	st.sessions["s1"] = domain.SessionRecord{ID: "s1", Harness: "claude-code"}
+	st.sessions["s1"] = pastStartupGate(domain.SessionRecord{ID: "s1", Harness: "claude-code"})
 	m := newSendTestManager(t, fakeAgent{}, &fakeMessenger{}, st)
 
 	if err := m.Send(context.Background(), "s1", "continue with the migration", nil); err != nil {
@@ -7822,6 +7847,9 @@ func TestSend_RecordsDeliveredUserInput(t *testing.T) {
 	if got := st.sessions["s1"].Metadata.LatestUserPrompt; got != "continue with the migration" {
 		t.Fatalf("LatestUserPrompt = %q, want delivered user input", got)
 	}
+	if got := st.sessions["s1"].Metadata.LatestUserPromptAt; got.IsZero() {
+		t.Fatal("LatestUserPromptAt is zero after delivered user input")
+	}
 }
 
 func TestSend_ConfirmsAndNudgesUntilActive(t *testing.T) {
@@ -7829,8 +7857,8 @@ func TestSend_ConfirmsAndNudgesUntilActive(t *testing.T) {
 	// flip the session active, after which confirmActive stops. Net: the
 	// initial message plus exactly one nudge.
 	st := newFakeStore()
-	st.sessions["s1"] = domain.SessionRecord{ID: "s1", Harness: "claude-code",
-		Activity: domain.Activity{State: domain.ActivityIdle}}
+	st.sessions["s1"] = pastStartupGate(domain.SessionRecord{ID: "s1", Harness: "claude-code",
+		Activity: domain.Activity{State: domain.ActivityIdle}})
 	// A messenger that flips the session active on the first Enter-only nudge,
 	// mimicking the agent accepting the prompt.
 	msg := &flipOnNudgeMessenger{sessionID: "s1", store: st}
@@ -7857,8 +7885,8 @@ func TestSend_ConfirmBudgetCapsRetries(t *testing.T) {
 	// A signaling harness that never goes active must still terminate: at most
 	// maxAttempts Sends (initial + maxAttempts-1 nudges), and Send never errors.
 	st := newFakeStore()
-	st.sessions["s1"] = domain.SessionRecord{ID: "s1", Harness: "claude-code",
-		Activity: domain.Activity{State: domain.ActivityIdle}}
+	st.sessions["s1"] = pastStartupGate(domain.SessionRecord{ID: "s1", Harness: "claude-code",
+		Activity: domain.Activity{State: domain.ActivityIdle}})
 	msg := &fakeMessenger{}
 	m := newSendTestManager(t, signalingAgent{}, msg, st)
 	var logBuf bytes.Buffer
@@ -7888,8 +7916,8 @@ func TestSend_BlockedSessionRejectsDelivery(t *testing.T) {
 	// Send surfaces ErrAwaitingDecision (the API's 409) and the messenger is
 	// never called, so nothing — message or nudge — reaches the pane.
 	st := newFakeStore()
-	st.sessions["s1"] = domain.SessionRecord{ID: "s1", Harness: "claude-code",
-		Activity: domain.Activity{State: domain.ActivityBlocked}}
+	st.sessions["s1"] = pastStartupGate(domain.SessionRecord{ID: "s1", Harness: "claude-code",
+		Activity: domain.Activity{State: domain.ActivityBlocked}})
 	msg := &fakeMessenger{}
 	m := newSendTestManager(t, signalingAgent{}, msg, st)
 
@@ -7918,13 +7946,50 @@ func TestSend_ExitedAgentRejectsDelivery(t *testing.T) {
 	}
 }
 
+func TestSend_TUIStartupPendingRejectsDelivery(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["s1"] = domain.SessionRecord{
+		ID: "s1", Harness: domain.HarnessCursor, Mode: domain.SessionModeTUI,
+		Activity: domain.Activity{State: domain.ActivityIdle},
+		Metadata: domain.SessionMetadata{RuntimeHandleID: "h1"},
+	}
+	msg := &fakeMessenger{}
+	m := newSendTestManager(t, startupReadySignalingAgent{}, msg, st)
+
+	err := m.Send(context.Background(), "s1", "follow-up after spawn", nil)
+	if !errors.Is(err, ErrStartupPending) {
+		t.Fatalf("Send error = %v, want ErrStartupPending", err)
+	}
+	if len(msg.msgs) != 0 {
+		t.Fatalf("Send calls = %d, want 0 before first hook signal", len(msg.msgs))
+	}
+}
+
+func TestSend_HooklessTUIStartupAllowsDelivery(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["s1"] = domain.SessionRecord{
+		ID: "s1", Harness: domain.HarnessAider, Mode: domain.SessionModeTUI,
+		Activity: domain.Activity{State: domain.ActivityIdle},
+		Metadata: domain.SessionMetadata{RuntimeHandleID: "h1"},
+	}
+	msg := &fakeMessenger{}
+	m := newSendTestManager(t, fakeAgent{}, msg, st)
+
+	if err := m.Send(context.Background(), "s1", "follow-up after spawn", nil); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if len(msg.msgs) != 1 {
+		t.Fatalf("Send calls = %d, want 1 for hookless TUI harness", len(msg.msgs))
+	}
+}
+
 func TestSend_NoNudgeWhenBlockedAppearsMidWait(t *testing.T) {
 	// The permission dialog can appear between polls (e.g. the delivered prompt
 	// itself triggered a tool approval). The confirm loop must abort on the
 	// first blocked observation instead of nudging after the deadline.
 	st := newFakeStore()
-	st.sessions["s1"] = domain.SessionRecord{ID: "s1", Harness: "claude-code",
-		Activity: domain.Activity{State: domain.ActivityIdle}}
+	st.sessions["s1"] = pastStartupGate(domain.SessionRecord{ID: "s1", Harness: "claude-code",
+		Activity: domain.Activity{State: domain.ActivityIdle}})
 	msg := &blockOnSendMessenger{sessionID: "s1", store: st}
 	m := newSendTestManager(t, signalingAgent{}, msg, st)
 
@@ -7941,8 +8006,8 @@ func TestSend_StillNudgesWhenWaitingInput(t *testing.T) {
 	// PRIMARY nudge scenario: a long-idle worker with an unsubmitted pasted
 	// draft. The decision-safety guard must not disable it.
 	st := newFakeStore()
-	st.sessions["s1"] = domain.SessionRecord{ID: "s1", Harness: "claude-code",
-		Activity: domain.Activity{State: domain.ActivityWaitingInput}}
+	st.sessions["s1"] = pastStartupGate(domain.SessionRecord{ID: "s1", Harness: "claude-code",
+		Activity: domain.Activity{State: domain.ActivityWaitingInput}})
 	msg := &flipOnNudgeMessenger{sessionID: "s1", store: st}
 	m := newSendTestManager(t, signalingAgent{}, msg, st)
 
@@ -7981,8 +8046,8 @@ func TestSend_NoNudgeWhenBlockedAppearsBeforeNudge(t *testing.T) {
 	// before the Enter-only nudge. The just-in-time re-read in confirmActive
 	// must catch it — exactly one Send, no nudge.
 	st := newFakeStore()
-	st.sessions["s1"] = domain.SessionRecord{ID: "s1", Harness: "claude-code",
-		Activity: domain.Activity{State: domain.ActivityIdle}}
+	st.sessions["s1"] = pastStartupGate(domain.SessionRecord{ID: "s1", Harness: "claude-code",
+		Activity: domain.Activity{State: domain.ActivityIdle}})
 	// blockAfterFirstReadStore flips the session to blocked on read #4. The
 	// deterministic read sequence (attemptDeadline 0 makes waitForActive do
 	// exactly one poll): #1 Deliver's pre-paste read, #2 Send's harness lookup,
@@ -8014,8 +8079,8 @@ func TestSend_SkipsConfirmForSubmitOnlyHarness(t *testing.T) {
 	// NOT nudge-safe: confirmActive must be skipped entirely, so an Enter can
 	// never reach a permission dialog the harness could not have signalled.
 	st := newFakeStore()
-	st.sessions["s1"] = domain.SessionRecord{ID: "s1", Harness: "goose",
-		Activity: domain.Activity{State: domain.ActivityIdle}}
+	st.sessions["s1"] = pastStartupGate(domain.SessionRecord{ID: "s1", Harness: "goose",
+		Activity: domain.Activity{State: domain.ActivityIdle}})
 	msg := &fakeMessenger{}
 	m := newSendTestManager(t, submitOnlyAgent{}, msg, st)
 

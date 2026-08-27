@@ -312,6 +312,15 @@ type BlockedActivitySignaler interface {
 	EmitsBlockedActivity() bool
 }
 
+// StartupInputReadinessSignaler is an OPTIONAL capability for a TUI adapter
+// whose first lifecycle hook cannot arrive until native startup dialogs have
+// cleared and the agent can safely accept pane input. AO gates user and
+// automation writes on FirstSignalAt only for adapters that opt in here;
+// hookless adapters must remain usable without manufacturing a signal.
+type StartupInputReadinessSignaler interface {
+	FirstSignalProvesInputReady() bool
+}
+
 // ActiveTurnSteerer is an OPTIONAL capability an Agent adapter implements when
 // submitting input while its harness is mid-turn STEERS the running turn rather
 // than being swallowed, queued, or applied to a dialog. AO uses it to decide

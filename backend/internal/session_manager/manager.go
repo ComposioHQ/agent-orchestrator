@@ -141,6 +141,10 @@ var (
 	// would answer it on the user's behalf. The API maps it to a 409; the
 	// caller retries once the user has answered in the terminal.
 	ErrAwaitingDecision = errors.New("session: awaiting a user decision")
+	// ErrStartupPending means a TUI session has not yet received its first
+	// agent hook callback, so the native startup sequence (including pre-session
+	// approval dialogs) may still be consuming pane input.
+	ErrStartupPending = errors.New("session: agent startup not ready for input")
 
 	// Spawn-stage sentinels. Each is the existing log word after "spawn" /
 	// "spawn <id>:" so wrapping them does not change daemon-log wording, while
@@ -223,6 +227,7 @@ type lifecycleRecorder interface {
 	CancelLaunch(id domain.SessionID, launchID string)
 	ReleaseLaunch(id domain.SessionID, launchID string)
 	MarkSpawned(ctx context.Context, id domain.SessionID, metadata domain.SessionMetadata) error
+	MarkChatSpawned(ctx context.Context, id domain.SessionID, metadata domain.SessionMetadata, boundary domain.ConversationBranch) error
 	CommitControllerEpoch(ctx context.Context, id domain.SessionID, source, target domain.SessionMode, nativeConversationID string, startFresh bool) (bool, error)
 	ConfirmAgentSwitchSourceStopped(ctx context.Context, confirmation domain.AgentSwitchSourceStopConfirmation) (bool, error)
 	ActivateAgentSwitchTarget(ctx context.Context, activation domain.AgentSwitchTargetActivation) (bool, error)
@@ -727,6 +732,7 @@ func New(d Deps) *Manager {
 	// is built after the logger default).
 	m.messenger = sessionguard.New(d.Store, d.Messenger, m.logger)
 	m.messenger.SetInputLease(m)
+	m.messenger.SetStartupSignalGate(m.harnessStartupSignalGatesInput)
 	return m
 }
 
@@ -974,6 +980,9 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		// Mode for adapters whose catalog is a mode list (e.g. Amp). If an explicit
 		// Model override exists it wins; otherwise fall back to the resolved Mode.
 		Model: resolvedModelForMetadata(cfg.Harness, agentConfig, adapterConfig),
+	}
+	if prompt != "" {
+		metadata.LatestUserPromptAt = m.clock()
 	}
 	if projectKind == domain.ProjectKindSingleRepo {
 		metadata.DiffBaseSHA, metadata.DiffBaseRef = resolveSpawnDiffBase(ctx, ws.Path, ws.BaseRef)
@@ -2986,6 +2995,8 @@ func (m *Manager) send(ctx context.Context, id domain.SessionID, message, client
 		return fmt.Errorf("send %s: %w", id, ErrAgentExited)
 	case sessionguard.SuppressedAwaitingUser:
 		return fmt.Errorf("send %s: %w", id, ErrAwaitingDecision)
+	case sessionguard.SuppressedStartupPending:
+		return fmt.Errorf("send %s: %w", id, ErrStartupPending)
 	case sessionguard.SuppressedInputGated:
 		return fmt.Errorf("send %s: %w", id, ErrSwitchInProgress)
 	}
@@ -3066,6 +3077,18 @@ func (m *Manager) harnessNudgeSafe(harness domain.AgentHarness) bool {
 	}
 	blk, ok := agent.(ports.BlockedActivitySignaler)
 	return ok && blk.EmitsBlockedActivity()
+}
+
+func (m *Manager) harnessStartupSignalGatesInput(harness domain.AgentHarness) bool {
+	if m.agents == nil {
+		return false
+	}
+	agent, ok := m.agents.Agent(harness)
+	if !ok {
+		return false
+	}
+	signaler, ok := agent.(ports.StartupInputReadinessSignaler)
+	return ok && signaler.FirstSignalProvesInputReady()
 }
 
 // waitOutcome is one poll round's verdict on whether confirmActive should
@@ -4053,6 +4076,8 @@ func (m *Manager) deliverAfterStartPrompt(ctx context.Context, agent ports.Agent
 		return fmt.Errorf("send %s: %w", id, ErrAgentExited)
 	case sessionguard.SuppressedAwaitingUser:
 		return fmt.Errorf("send %s: %w", id, ErrAwaitingDecision)
+	case sessionguard.SuppressedStartupPending:
+		return fmt.Errorf("send %s: %w", id, ErrStartupPending)
 	case sessionguard.SuppressedInputGated:
 		return fmt.Errorf("send %s: %w", id, ErrSwitchInProgress)
 	case sessionguard.SuppressedUnknown:
