@@ -215,12 +215,16 @@ func (s *Service) EditMessage(
 		}
 		if domain.NormalizeConversationBranchStrategy(branch.Strategy) == domain.ConversationBranchStrategyApproximateContext {
 			if !canReplay {
-				return EditMessageResult{}, ErrForkUnsupported
+				return s.rejectUndispatchedEditDelivery(
+					ctx, source.conversation.ID, msg.ClientMessageID,
+					ErrForkUnsupported)
 			}
 			replay, _, replayErr := s.approximateReplayContent(
 				ctx, source.conversation.ID, anchor.ReplayFloorSequence, branch.ReplayCutoffSequence)
 			if replayErr != nil {
-				return EditMessageResult{}, fmt.Errorf("prepare edited conversation retry: %w", replayErr)
+				return s.rejectUndispatchedEditDelivery(
+					ctx, source.conversation.ID, msg.ClientMessageID,
+					fmt.Errorf("prepare edited conversation retry: %w", replayErr))
 			}
 			msg.Content = append([]ports.ChatContent{replay}, msg.Content...)
 		}
@@ -276,7 +280,9 @@ func (s *Service) EditMessage(
 			replayContent, replayTruncated, replayErr = s.approximateReplayContent(
 				ctx, source.conversation.ID, anchor.ReplayFloorSequence, anchor.ForkAfterSequence)
 			if replayErr != nil {
-				return EditMessageResult{}, fmt.Errorf("prepare edited conversation: %w", replayErr)
+				return s.rejectUndispatchedEditDelivery(
+					ctx, source.conversation.ID, msg.ClientMessageID,
+					fmt.Errorf("prepare edited conversation: %w", replayErr))
 			}
 		}
 		provider, err = driver.Start(ctx, ports.ChatStartConfig{
@@ -300,7 +306,9 @@ func (s *Service) EditMessage(
 	}
 	if replayContent.Type != "" && !supportsApproximateReplay(provider) {
 		_ = provider.Close()
-		return EditMessageResult{}, ErrForkUnsupported
+		return s.rejectUndispatchedEditDelivery(
+			ctx, source.conversation.ID, msg.ClientMessageID,
+			ErrForkUnsupported)
 	}
 
 	branchID := s.newID()
@@ -645,13 +653,46 @@ func (s *Service) rejectEditDelivery(
 	if !definitive {
 		return result, fmt.Errorf("%w: %w", ErrEditDeliveryUncertain, classified)
 	}
+	return s.persistRejectedEditDelivery(
+		ctx, conversationID, clientMessageID, result, kind, classified)
+}
+
+// rejectUndispatchedEditDelivery settles a reserved edit after local preparation
+// proves that the edited prompt never reached Controller.Send. Generic provider
+// and transport errors after Send remain uncertain; local replay/capability
+// failures are safe to record as rejected so the same delivery ID cannot become
+// permanently reserved after a lost response or restart.
+func (s *Service) rejectUndispatchedEditDelivery(
+	ctx context.Context,
+	conversationID, clientMessageID string,
+	cause error,
+) (EditMessageResult, error) {
+	if clientMessageID == "" {
+		return EditMessageResult{}, cause
+	}
+	kind, definitive, classified := classifyEditRejection(cause)
+	if !definitive {
+		kind = domain.ConversationEditRejectedProviderFailure
+		classified = classify(cause)
+	}
+	return s.persistRejectedEditDelivery(
+		ctx, conversationID, clientMessageID, EditMessageResult{}, kind, classified)
+}
+
+func (s *Service) persistRejectedEditDelivery(
+	ctx context.Context,
+	conversationID, clientMessageID string,
+	result EditMessageResult,
+	kind domain.ConversationEditRejectionKind,
+	cause error,
+) (EditMessageResult, error) {
 	if err := s.store.RejectEditDelivery(
 		context.WithoutCancel(ctx), conversationID, clientMessageID,
-		kind, classified.Error(), s.now()); err != nil {
+		kind, cause.Error(), s.now()); err != nil {
 		return result, fmt.Errorf("%w: persist rejected result: %w",
 			ErrEditDeliveryUncertain, err)
 	}
-	return result, classified
+	return result, cause
 }
 
 // ActivateBranch resumes a durable provider branch in the same worktree and

@@ -729,11 +729,25 @@ func TestEditMessageRejectsReplayWhenFreshProviderNegotiatesFewerCapabilities(t 
 	delete(capabilities, ports.ChatCapabilityEmbeddedContext)
 	driver.fresh.setCapabilities(capabilities)
 
-	_, err = h.svc.EditMessage(ctx, testSession, second, ports.ChatUserMessage{
-		Text: "B edited", Origin: domain.MessageOriginHuman,
-	})
+	edit := ports.ChatUserMessage{
+		Text: "B edited", ClientMessageID: "fresh-capability-rejection", Origin: domain.MessageOriginHuman,
+	}
+	_, err = h.svc.EditMessage(ctx, testSession, second, edit)
 	if !errors.Is(err, chatsvc.ErrForkUnsupported) {
 		t.Fatalf("EditMessage error = %v, want ErrForkUnsupported", err)
+	}
+	driver.mu.Lock()
+	startsAfterRejection := driver.startCalls
+	driver.mu.Unlock()
+	_, retryErr := h.svc.EditMessage(ctx, testSession, second, edit)
+	if !errors.Is(retryErr, chatsvc.ErrForkUnsupported) {
+		t.Fatalf("same-controller replay error = %v, want ErrForkUnsupported", retryErr)
+	}
+	driver.mu.Lock()
+	startsAfterReplay := driver.startCalls
+	driver.mu.Unlock()
+	if startsAfterReplay != startsAfterRejection {
+		t.Fatalf("same-controller replay started provider: calls %d -> %d", startsAfterRejection, startsAfterReplay)
 	}
 	after, snapshotErr := h.st.LoadConversationSnapshot(ctx, h.ctrl.ConversationID())
 	if snapshotErr != nil {
@@ -751,6 +765,21 @@ func TestEditMessageRejectsReplayWhenFreshProviderNegotiatesFewerCapabilities(t 
 	}
 	if len(branches) != 1 {
 		t.Fatalf("branches = %d, want only source after capability refusal: %#v", len(branches), branches)
+	}
+
+	restarted, provider, driverCalls := restartEditServiceWithDriverCalls(t, h)
+	startsBefore, resumesBefore := driverCalls.counts()
+	_, restartErr := restarted.EditMessage(ctx, testSession, second, edit)
+	if !errors.Is(restartErr, chatsvc.ErrForkUnsupported) {
+		t.Fatalf("restart replay error = %v, want ErrForkUnsupported", restartErr)
+	}
+	startsAfter, resumesAfter := driverCalls.counts()
+	if startsAfter != startsBefore || resumesAfter != resumesBefore {
+		t.Fatalf("restart replay reached driver: starts %d->%d resumes %d->%d",
+			startsBefore, startsAfter, resumesBefore, resumesAfter)
+	}
+	if sends := provider.sendCallCount(); sends != 0 {
+		t.Fatalf("restart replay sent %d prompts, want none", sends)
 	}
 }
 

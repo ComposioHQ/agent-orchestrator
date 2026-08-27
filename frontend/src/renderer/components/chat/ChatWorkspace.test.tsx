@@ -2379,7 +2379,8 @@ describe("ChatWorkspace message actions", () => {
 		expect(screen.getByText(/Reconstructed context:/)).toBeVisible();
 
 		// An ambiguous provider failure can durably activate the replacement branch.
-		// Once that refetch arrives, the source-branch draft is stale and must close.
+		// Keep its journal actionable when that branch refetch arrives: the user still
+		// needs the exact editor to retry with the same ID or abandon recovery.
 		view.rerender(
 			<ChatWorkspace
 				snapshot={{
@@ -2393,8 +2394,13 @@ describe("ChatWorkspace message actions", () => {
 				editMessageError="branch failed"
 			/>,
 		);
+		const recoveringEditor = await screen.findByRole("textbox", { name: "Edit message" });
+		expect(recoveringEditor).toBeDisabled();
+		expect(recoveringEditor).toHaveValue("keep this draft");
+		expect(screen.getByRole("button", { name: "Retry edit safely" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Abandon edit recovery" })).toBeInTheDocument();
 		await waitFor(() =>
-			expect(screen.queryByRole("textbox", { name: "Edit message" })).not.toBeInTheDocument(),
+			expect(getChatDraftBoundary(approximateSnapshot.sessionId)).toBe("pending-delivery"),
 		);
 	});
 

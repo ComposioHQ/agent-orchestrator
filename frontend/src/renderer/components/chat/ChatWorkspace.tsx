@@ -1697,10 +1697,14 @@ function Timeline({
 		snapshot.turns,
 	]);
 
-	// An edit draft belongs to the branch where it began. A replacement branch can
-	// become active even when the provider send ends ambiguously; once that durable
-	// state arrives, the old prompt is no longer the message being edited.
-	useEffect(() => setMessageEdit(undefined), [snapshot.activeBranchId, snapshot.sessionId]);
+	// An ordinary branch change hides an edit that belongs to the previous branch.
+	// An unresolved delivery is different: its exact persisted editor owns the only
+	// Retry/Abandon controls, so keep it actionable when an ambiguous send activates
+	// and refetches the replacement branch.
+	useEffect(() => {
+		if (readChatSessionDraft(draftScope).inlineEditDelivery) return;
+		setMessageEdit(undefined);
+	}, [draftScope, snapshot.activeBranchId, snapshot.sessionId]);
 	const consumedRetrySources = useMemo(() => retrySourceTurnIds(snapshot), [snapshot]);
 	const retryableTurns = useMemo(
 		() =>
@@ -1863,12 +1867,12 @@ function Timeline({
 		if (inlineEditLocked) return;
 		const current = messageEditRef.current;
 		if (!current) return;
-			const result = writeChatInlineEdit(draftScope, {
-				turnId: current.turnId,
-				text,
-				content: current.content,
-				reconstructedContext: current.reconstructedContext,
-			});
+		const result = writeChatInlineEdit(draftScope, {
+			turnId: current.turnId,
+			text,
+			content: current.content,
+			reconstructedContext: current.reconstructedContext,
+		});
 		const next = result.draft.inlineEdit;
 		if (!next) return;
 		messageEditRef.current = next;
