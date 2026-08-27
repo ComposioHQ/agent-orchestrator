@@ -27,6 +27,7 @@ import {
 	Folder,
 	FolderOpen,
 	LogIn,
+	KeyRound,
 	LogOut,
 	MoreVertical,
 	Pencil,
@@ -72,6 +73,7 @@ import { useCommandPaletteEnabled } from "../hooks/useCommandPaletteEnabled";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { usePinSession, useUnpinSession } from "../hooks/usePinSession";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
+import { useCredentialDialogStore } from "../stores/credential-dialog-store";
 import { renameSession } from "../lib/rename-session";
 import { useTerminateSession } from "../hooks/useTerminateSession";
 import { useResizable } from "../hooks/useResizable";
@@ -1853,6 +1855,7 @@ function CloudAccountRow({ tabIndex }: { tabIndex: number }) {
 	const { t } = useTranslation();
 	const { cloudEnabled } = useCloudGate();
 	const { configured, session, status, signOut } = useCloudSession();
+	const openCredentialDialog = useCredentialDialogStore((s) => s.openDialog);
 	if (!configured || !cloudEnabled || status !== "authenticated") return null;
 
 	return (
@@ -1873,6 +1876,10 @@ function CloudAccountRow({ tabIndex }: { tabIndex: number }) {
 				</button>
 			</DropdownMenuTrigger>
 			<DropdownMenuContent side="top" align="start" className="min-w-44">
+				<DropdownMenuItem onSelect={() => openCredentialDialog()}>
+					<KeyRound aria-hidden="true" />
+					{t("shell.agentCredentials")}
+				</DropdownMenuItem>
 				<DropdownMenuItem
 					className="text-destructive focus:text-destructive [&_svg]:text-destructive"
 					onSelect={() => void signOut()}
