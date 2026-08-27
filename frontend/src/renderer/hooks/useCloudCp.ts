@@ -74,20 +74,25 @@ export interface UseCloudCpResult {
 	baseUrl: string;
 }
 
+/**
+ * Non-hook client constructor for event handlers that resolve the base URL
+ * lazily (e.g. from the settings query cache) instead of subscribing via
+ * hooks. Same transport and token delegation as useCloudCp.
+ */
+export function createRendererCloudCpClient(baseUrl: string): CloudCpClient {
+	return createCloudCpClient({
+		baseUrl,
+		getToken: async () => MAIN_PROCESS_TOKEN,
+		fetchImpl: cloudCpFetch,
+	});
+}
+
 export function useCloudCp(): UseCloudCpResult {
 	const { settings } = useSettings();
 	const { cloudEnabled } = useCloudGate();
 	const { status } = useCloudSession();
 	const baseUrl = settings?.cloudControlPlaneUrl ?? "";
-	const client = useMemo(
-		() =>
-			createCloudCpClient({
-				baseUrl,
-				getToken: async () => MAIN_PROCESS_TOKEN,
-				fetchImpl: cloudCpFetch,
-			}),
-		[baseUrl],
-	);
+	const client = useMemo(() => createRendererCloudCpClient(baseUrl), [baseUrl]);
 	return {
 		client,
 		ready: cloudEnabled && status === "authenticated" && baseUrl !== "",

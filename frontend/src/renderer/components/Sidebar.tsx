@@ -70,8 +70,9 @@ import { getSessionStatusDotView } from "../lib/session-presentation";
 import { deriveSessionAgentSwitchPresentation } from "../lib/agent-switch-presentation";
 import { aoBridge } from "../lib/bridge";
 import { useCommandPaletteEnabled } from "../hooks/useCommandPaletteEnabled";
-import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import { cloudSessionsQueryKey, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { usePinSession, useUnpinSession } from "../hooks/usePinSession";
+import { spawnCloudOrchestrator } from "../lib/cloud-orchestrator";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { useCredentialDialogStore } from "../stores/credential-dialog-store";
 import { renameSession } from "../lib/rename-session";
@@ -1076,6 +1077,22 @@ const ProjectItemContent = memo(function ProjectItemContent({
 		if (!expanded) toggleDisclosure();
 		if (orchestrator) {
 			selection.goSession(workspace.id, orchestrator.id);
+			return;
+		}
+		// A cloud project has no local orchestrator-agent config, so the settings
+		// fallback below would dead-end it. Spawn the orchestrator as a cloud
+		// session in its own sandbox instead.
+		if (workspace.kind === "cloud") {
+			setIsSpawning(true);
+			try {
+				const sessionId = await spawnCloudOrchestrator(queryClient, workspace.id);
+				await queryClient.invalidateQueries({ queryKey: cloudSessionsQueryKey });
+				selection.goSession(workspace.id, sessionId);
+			} catch (err) {
+				console.error("Failed to spawn cloud orchestrator:", err);
+			} finally {
+				setIsSpawning(false);
+			}
 			return;
 		}
 		if (!hasConfiguredOrchestratorAgent(workspace)) {
