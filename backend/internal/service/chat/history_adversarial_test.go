@@ -43,21 +43,23 @@ func TestEditMessagePrefersNativeForkWhenReplayIsAlsoAvailable(t *testing.T) {
 	driver.mu.Lock()
 	starts := append([]ports.ChatStartConfig(nil), driver.startConfigs...)
 	resumes := append([]ports.ChatResumeConfig(nil), driver.resumeCalls...)
-	replacement := driver.resumed["thread-forked"]
 	driver.mu.Unlock()
 	if len(starts) != 1 {
 		t.Fatalf("provider Start calls = %d, want only the initial start", len(starts))
 	}
-	if len(resumes) != 1 || resumes[0].ProviderConversationID != "thread-forked" {
-		t.Fatalf("provider Resume calls = %#v, want one native fork resume", resumes)
+	if len(resumes) != 0 {
+		t.Fatalf("provider Resume calls = %#v, want native fork on its existing writer", resumes)
 	}
-	sent := replacement.sentMessages()
-	if len(sent) != 1 || sent[0].Text != "B edited" {
+	if bound := source.boundProviderThreads(); len(bound) != 1 || bound[0] != "thread-forked" {
+		t.Fatalf("provider bindings = %#v, want thread-forked", bound)
+	}
+	sent := source.sentMessages()
+	if len(sent) != 3 || sent[2].Text != "B edited" {
 		t.Fatalf("native replacement sends = %#v", sent)
 	}
-	for _, content := range sent[0].Content {
+	for _, content := range sent[2].Content {
 		if ports.IsInternalReplayContent(content) {
-			t.Fatalf("native fork received approximate replay content: %#v", sent[0].Content)
+			t.Fatalf("native fork received approximate replay content: %#v", sent[2].Content)
 		}
 	}
 	branch, err := h.st.ConversationBranch(ctx, h.ctrl.ConversationID(), result.ActiveBranchID)
