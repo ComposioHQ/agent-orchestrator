@@ -1348,6 +1348,46 @@ describe("attachments", () => {
 		expect(screen.queryByLabelText("Remove locked.png")).not.toBeInTheDocument();
 	});
 
+	it("releases the unsafe boundary before an accepted send appears cleared", async () => {
+		const sessionId = "composer-accepted-boundary-order";
+		let acceptSend!: () => void;
+		const onSend = vi.fn(
+			() =>
+				new Promise<void>((resolve) => {
+					acceptSend = resolve;
+				}),
+		);
+		render(<ChatComposer onSend={onSend} draftSessionId={sessionId} />);
+		const field = screen.getByLabelText("Message the agent");
+		await typeInComposer(field, "accepted message");
+		await userEvent.click(screen.getByRole("button", { name: "Send message" }));
+		await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+		await waitFor(() => expect(getChatDraftBoundaries(sessionId)).toEqual(["pending-delivery"]));
+
+		let boundariesWhenCleared: readonly string[] | undefined;
+		const observer = new MutationObserver(() => {
+			if (composerWireText(field) === "") {
+				boundariesWhenCleared = [...getChatDraftBoundaries(sessionId)];
+			}
+		});
+		observer.observe(field, { childList: true, characterData: true, subtree: true });
+		try {
+			await act(async () => acceptSend());
+			await waitFor(() => expect(composerWireText(field)).toBe(""));
+			expect({
+				boundariesAfterSettlement: getChatDraftBoundaries(sessionId),
+				boundariesWhenCleared,
+				persistedComposer: readChatSessionDraft(sessionId).composer,
+			}).toEqual({
+				boundariesAfterSettlement: [],
+				boundariesWhenCleared: [],
+				persistedComposer: expect.objectContaining({ text: "", attachments: [] }),
+			});
+		} finally {
+			observer.disconnect();
+		}
+	});
+
 	it("keeps a failed text-durability boundary after attachment persistence succeeds", async () => {
 		const sessionId = "composer-text-storage-failure";
 		const durableStorage = window.localStorage;

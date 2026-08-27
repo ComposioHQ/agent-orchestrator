@@ -282,6 +282,7 @@ export function ChatComposer({
 	);
 	const [appliedAcceptanceSequence, setAppliedAcceptanceSequence] = useState(0);
 	const composerRevision = useRef(persistedDraft?.composer.revision ?? 0);
+	const synchronouslyClearedDeliveryRevision = useRef<number | undefined>(undefined);
 	const restoredAttachments = useMemo<FileAttachment[]>(
 		() =>
 			persistedDraft?.composer.attachments.map((attachment) => ({
@@ -340,6 +341,7 @@ export function ChatComposer({
 	useEffect(() => {
 		if (restoredSessionId.current === draftScopeKey) return;
 		restoredSessionId.current = draftScopeKey;
+		synchronouslyClearedDeliveryRevision.current = undefined;
 		const currentDraft = draftScope ? readChatSessionDraft(draftScope) : undefined;
 		composerRevision.current = currentDraft?.composer.revision ?? 0;
 		setDurableDelivery(currentDraft?.composer.delivery);
@@ -451,12 +453,20 @@ export function ChatComposer({
 
 	useEffect(() => {
 		if (!draftSessionId) return;
+		const deliveryWasSynchronouslyCleared = Boolean(
+			durableDelivery &&
+				synchronouslyClearedDeliveryRevision.current === durableDelivery.revision,
+		);
 		setChatDraftBoundary(
 			draftSessionId,
 			"composer",
 			[
-				...(draftPersistenceError ? (["persistence-failed"] as const) : []),
-				...(durableDelivery ? (["pending-delivery"] as const) : []),
+				...(draftPersistenceError && !deliveryWasSynchronouslyCleared
+					? (["persistence-failed"] as const)
+					: []),
+				...(durableDelivery && !deliveryWasSynchronouslyCleared
+					? (["pending-delivery"] as const)
+					: []),
 				...(fileAttachments.preparing ? (["pending-attachments"] as const) : []),
 			],
 		);
@@ -539,6 +549,13 @@ export function ChatComposer({
 				return true;
 			}
 			const result = clearAcceptedChatComposer(draftScope, acceptedRevision);
+			// A successful durable clear can synchronously trigger a replacement
+			// surface before React applies the acceptance receipt. Release the route
+			// boundary first so cleared UI never exposes stale unsafe-draft state.
+			if (result.ok && result.cleared && draftSessionId) {
+				synchronouslyClearedDeliveryRevision.current = acceptedRevision;
+				setChatDraftBoundary(draftSessionId, "composer", undefined);
+			}
 			if (mutationToken) {
 				finishChatComposerMutation(
 					draftScope,
@@ -550,7 +567,13 @@ export function ChatComposer({
 			}
 			return applyAcceptedDraftResult(result);
 		},
-		[applyAcceptedDraftResult, clearEditorView, draftScope, fileAttachments],
+		[
+			applyAcceptedDraftResult,
+			clearEditorView,
+			draftScope,
+			draftSessionId,
+			fileAttachments,
+		],
 	);
 
 	const acceptAndClearDurableDelivery = useCallback(
@@ -914,6 +937,7 @@ export function ChatComposer({
 			return;
 		}
 		const delivery = prepared.mutation;
+		synchronouslyClearedDeliveryRevision.current = undefined;
 		setDeliveryUncertain(false);
 		composerRevision.current = prepared.draft.composer.revision;
 		setDurableDelivery(delivery);
