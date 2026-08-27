@@ -1160,38 +1160,46 @@ export function SessionView({ sessionId }: SessionViewProps) {
 						<div className="relative min-h-0 flex-1">
 							{/* The committed mode owns the agent surface. Auxiliary shell and
 							    reviewer targets remain terminal surfaces in either mode. */}
-							{reviewerChatId ? (
+							{showChatSurface ? (
+								<>
+									<SessionChatSurface
+										session={session}
+										reviewerChat={reviewerChat}
+										onOpenReviewerChat={(target) => selectReviewerChat(target.reviewId)}
+										reviewerChatSelected={Boolean(reviewerChatId)}
+										reviewerTerminal={reviewerTerminal}
+										onOpenReviewerTerminal={selectReviewerTerminal}
+										reviewerTarget={
+											routedTerminalTarget.kind === "reviewer" ? routedTerminalTarget : undefined
+										}
+										onSelectChat={selectSessionTerminal}
+										shellTerminals={shellTerminals}
+										shellTarget={
+											routedTerminalTarget.kind === "shell" ? routedTerminalTarget : undefined
+										}
+										onSelectShellTerminal={selectShellTerminal}
+										onCloseShellTerminal={closeShellTerminalByHandle}
+										onRenameShellTerminal={renameShellTerminalByHandle}
+										daemonReady={daemonStatus.state === "ready"}
+										theme={theme}
+										headerActions={sessionHeaderActions}
+										controllerTransitioning={chatControllerTransitioning}
+										onOpenShell={addShellTerminal}
+										openingShell={openShellTerminal.isPending}
+										shellError={
+											openShellTerminal.error ? apiErrorMessage(openShellTerminal.error) : undefined
+										}
+										onOpenFiles={handleOpenFiles}
+										onOpenFile={handleOpenFile}
+									/>
+									{reviewerChatId ? (
+										<div className="absolute inset-0">
+											<ReviewerChatSurface hideHeader reviewId={reviewerChatId} />
+										</div>
+									) : null}
+								</>
+							) : reviewerChatId ? (
 								<ReviewerChatSurface reviewId={reviewerChatId} />
-							) : showChatSurface ? (
-								<SessionChatSurface
-									session={session}
-									reviewerChat={reviewerChat}
-									onOpenReviewerChat={(target) => selectReviewerChat(target.reviewId)}
-									reviewerTerminal={reviewerTerminal}
-									onOpenReviewerTerminal={selectReviewerTerminal}
-									reviewerTarget={
-										routedTerminalTarget.kind === "reviewer" ? routedTerminalTarget : undefined
-									}
-									onSelectChat={selectSessionTerminal}
-									shellTerminals={shellTerminals}
-									shellTarget={
-										routedTerminalTarget.kind === "shell" ? routedTerminalTarget : undefined
-									}
-									onSelectShellTerminal={selectShellTerminal}
-									onCloseShellTerminal={closeShellTerminalByHandle}
-									onRenameShellTerminal={renameShellTerminalByHandle}
-									daemonReady={daemonStatus.state === "ready"}
-									theme={theme}
-									headerActions={sessionHeaderActions}
-									controllerTransitioning={chatControllerTransitioning}
-									onOpenShell={addShellTerminal}
-									openingShell={openShellTerminal.isPending}
-									shellError={
-										openShellTerminal.error ? apiErrorMessage(openShellTerminal.error) : undefined
-									}
-									onOpenFiles={handleOpenFiles}
-									onOpenFile={handleOpenFile}
-								/>
 							) : (
 								<CenterPane
 									agentInputDisabled={

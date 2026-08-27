@@ -1311,6 +1311,26 @@ describe("ChatWorkspace reviewer tabs", () => {
 		sessionId: chatSession.id,
 	};
 
+	it("selects the Reviewer tab while keeping the worker Chat available", () => {
+		const onSelectChat = vi.fn();
+		render(
+			<ChatWorkspace
+				snapshot={idleSnapshot()}
+				reviewerChat={{ reviewId: "review-chat-1", harness: "codex" }}
+				reviewerChatSelected
+				onSelectChat={onSelectChat}
+			/>,
+		);
+
+		const workerTab = screen.getByRole("tab", { name: chatFixture.sessionId });
+		expect(workerTab).toHaveAttribute("aria-selected", "false");
+		expect(screen.getByRole("tab", { name: "Reviewer" })).toHaveAttribute("aria-selected", "true");
+		expect(screen.getByTestId("chat-conversation-panel")).toHaveAttribute("hidden");
+
+		fireEvent.click(workerTab);
+		expect(onSelectChat).toHaveBeenCalledOnce();
+	});
+
 	it("keeps the chat draft, attachments, edit, and scroll state mounted while Reviewer is selected", async () => {
 		const user = userEvent.setup();
 		const common = {

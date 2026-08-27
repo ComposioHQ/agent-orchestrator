@@ -176,6 +176,7 @@ vi.mock("./chat/SessionChatSurface", () => ({
 		reviewerTerminal,
 		onOpenReviewerTerminal,
 		reviewerTarget,
+		reviewerChatSelected,
 		onSelectChat,
 		shellTerminals = [],
 		shellTarget,
@@ -188,6 +189,7 @@ vi.mock("./chat/SessionChatSurface", () => ({
 		reviewerTerminal?: { handleId: string; harness: string };
 		onOpenReviewerTerminal?: (target: { handleId: string; harness: string }) => void;
 		reviewerTarget?: { kind: "reviewer"; handleId: string; harness: string; sessionId: string };
+		reviewerChatSelected?: boolean;
 		onSelectChat?: () => void;
 		shellTerminals?: Array<{ handleId: string; title: string }>;
 		shellTarget?: { kind: "shell"; handleId: string };
@@ -207,7 +209,7 @@ vi.mock("./chat/SessionChatSurface", () => ({
 			{reviewerTarget ? (
 				<div data-testid="terminal-target">reviewer</div>
 			) : null}
-			{reviewerTarget ? (
+			{reviewerTarget || reviewerChatSelected ? (
 				<button type="button" onClick={onSelectChat}>
 					select chat tab
 				</button>
@@ -1004,6 +1006,36 @@ describe("SessionView", () => {
 
 		expect(screen.getByTestId("reviewer-chat-surface")).toHaveTextContent("review-1");
 		expect(screen.queryByTestId("terminal-target")).not.toBeInTheDocument();
+	});
+
+	it("keeps the worker Chat mounted and returns to it from Reviewer", async () => {
+		const worker = workerSession("sess-1");
+		worker.mode = "chat";
+		worker.prs = [{
+			url: "https://github.com/acme/repo/pull/7",
+			number: 7,
+			state: "open",
+			ci: "passing",
+			review: "none",
+			mergeability: "mergeable",
+			reviewComments: false,
+			updatedAt: "2026-06-15T00:00:00Z",
+		}];
+		reviewGetMock.mockResolvedValueOnce({
+			data: { reviewerHandleId: "review-sess-1", reviewerHarness: "codex", reviews: [], runs: [] },
+			error: undefined,
+		});
+
+		render(<SessionView sessionId="sess-1" />);
+		fireEvent.click(await screen.findByRole("button", { name: "start review" }));
+
+		expect(screen.getByTestId("chat-surface")).toBeInTheDocument();
+		expect(screen.getByTestId("reviewer-chat-surface")).toHaveTextContent("review-1");
+
+		fireEvent.click(screen.getByRole("button", { name: "select chat tab" }));
+
+		expect(screen.getByTestId("chat-surface")).toBeInTheDocument();
+		expect(screen.queryByTestId("reviewer-chat-surface")).not.toBeInTheDocument();
 	});
 
 	it("keeps a persisted reviewer Chat reachable after returning to the worker", async () => {

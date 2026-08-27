@@ -168,6 +168,10 @@ export interface ChatWorkspaceProps {
 	onOpenReviewerTerminal?: (target: { handleId: string; harness: string }) => void;
 	reviewerChat?: { reviewId: string; harness: string };
 	onOpenReviewerChat?: (target: { reviewId: string; harness: string }) => void;
+	/** A separate reviewer conversation owns the body while this worker Chat stays mounted. */
+	reviewerChatSelected?: boolean;
+	/** The parent surface owns the shared session tab strip. */
+	hideHeader?: boolean;
 	/** Older durable history is available but not loaded into the DOM yet. */
 	hasOlder?: boolean;
 	loadingOlder?: boolean;
@@ -299,6 +303,8 @@ export function ChatWorkspace({
 	onOpenReviewerTerminal,
 	reviewerChat,
 	onOpenReviewerChat,
+	reviewerChatSelected = false,
+	hideHeader = false,
 	session,
 	reviewerTarget,
 	onSelectChat,
@@ -406,7 +412,7 @@ export function ChatWorkspace({
 	// Selection is durable UI state; availability only controls whether the tab is
 	// offered. Keeping these separate preserves a selected reviewer while an active
 	// session temporarily becomes terminated and later returns.
-	const reviewerActive = Boolean(reviewerTarget && session);
+	const reviewerActive = reviewerChatSelected || Boolean(reviewerTarget && session);
 	const shellActive = Boolean(shellTarget && session);
 	const queuedMessages = useMemo(() => {
 		const messagesByTurn = new Map(
@@ -698,26 +704,28 @@ export function ChatWorkspace({
 			data-session-role={sessionRole}
 			style={{ "--chat-font-size": `${CHAT_FONT_SIZE_DEFAULT}px` } as CSSProperties}
 		>
-			<ChatHeader
-				snapshot={snapshot}
-				sessionTitle={sessionTitle}
-				reviewerTerminal={reviewerTerminal}
-				onOpenReviewerTerminal={onOpenReviewerTerminal}
-				reviewerChat={reviewerChat}
-				onOpenReviewerChat={onOpenReviewerChat}
-				reviewerActive={reviewerActive}
-				onSelectChat={onSelectChat}
-				shellTerminals={shellTerminals}
-				shellActiveHandleId={shellActive ? shellTarget?.handleId : undefined}
-				onSelectShellTerminal={onSelectShellTerminal}
-				onCloseShellTerminal={onCloseShellTerminal}
-				onRenameShellTerminal={onRenameShellTerminal}
-				onTabsKeyDown={handleChatTabsKeyDown}
-				switchAgentControl={switchAgentControl}
-				headerActions={headerActions}
-				inline={isFullscreen}
-				topbarBounds={topbarBounds}
-			/>
+			{hideHeader ? null : (
+				<ChatHeader
+					snapshot={snapshot}
+					sessionTitle={sessionTitle}
+					reviewerTerminal={reviewerTerminal}
+					onOpenReviewerTerminal={onOpenReviewerTerminal}
+					reviewerChat={reviewerChat}
+					onOpenReviewerChat={onOpenReviewerChat}
+					reviewerActive={reviewerActive}
+					onSelectChat={onSelectChat}
+					shellTerminals={shellTerminals}
+					shellActiveHandleId={shellActive ? shellTarget?.handleId : undefined}
+					onSelectShellTerminal={onSelectShellTerminal}
+					onCloseShellTerminal={onCloseShellTerminal}
+					onRenameShellTerminal={onRenameShellTerminal}
+					onTabsKeyDown={handleChatTabsKeyDown}
+					switchAgentControl={switchAgentControl}
+					headerActions={headerActions}
+					inline={isFullscreen}
+					topbarBounds={topbarBounds}
+				/>
+			)}
 			{/* The body host anchors the agent-switch dialog and holds whichever tab is
 			    active: the reviewer pane, a shell pane, or the chat timeline. The
 			    container ref is handed up so the surface (not this pure view) owns the
