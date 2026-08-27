@@ -22,7 +22,7 @@ import {
 } from "../lib/agent-switch-presentation";
 import type { WorkspaceSession } from "../types/workspace";
 import { canonicalTrackerIssueId } from "../types/workspace";
-import { useSessionScmSummary } from "../hooks/useSessionScmSummary";
+import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
 import type { SessionUsageSummary } from "../hooks/useSessionUsageSummaries";
 import {
 	clearTerminateSessionState,
@@ -214,7 +214,9 @@ function DesktopSessionCard({
 			prs={summaries.map((pr) => ({
 				commentCount: pr.review.unresolvedBy.reduce((count, reviewer) => count + reviewer.count, 0),
 				number: pr.number,
-				reviewerAvatars: (pr.review.reviews ?? []).map((review) => `https://github.com/${review.reviewerId}.png`),
+				reviewerAvatars: (pr.review.reviews ?? [])
+					.map((review) => reviewerAvatarUrl(pr, review.reviewerId))
+					.filter((url): url is string => Boolean(url)),
 				state: pr.state,
 				url: prBrowserUrl(pr),
 			}))}
@@ -237,6 +239,20 @@ function pullRequestLabels(t: TFunction): BoardPullRequestLabels {
 			open: t("pr.state.open"),
 		},
 	};
+}
+
+function reviewerAvatarUrl(pr: SessionPRSummary, reviewerId: string): string | undefined {
+	let origin: string;
+	try {
+		origin = new URL(prBrowserUrl(pr)).origin;
+	} catch {
+		return undefined;
+	}
+
+	const encodedReviewer = encodeURIComponent(reviewerId);
+	if (pr.provider === "github") return `${origin}/${encodedReviewer}.png`;
+	if (pr.provider === "gitlab") return `${origin}/-/avatar?username=${encodedReviewer}`;
+	return undefined;
 }
 
 function toUsagePresentation(
