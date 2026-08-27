@@ -199,6 +199,17 @@ func (b *BridgeService) Status() MobileStatusResponse {
 	return res
 }
 
+// AdvertisedEndpoints reports how this daemon can currently be reached, for
+// the phone's refresh route. Same list Status carries, so the two cannot drift.
+func (b *BridgeService) AdvertisedEndpoints() []mobilebridge.Endpoint {
+	return mobilebridge.Endpoints(mobilebridge.EndpointInputs{
+		LANHosts:       b.lanHosts(),
+		TailscaleHosts: b.tailscaleHosts(),
+		Port:           b.LAN.BoundPort(),
+		Tunnel:         b.tunnelEndpoint(),
+	})
+}
+
 func (b *BridgeService) tunnelEndpoint() *mobilebridge.TunnelEndpoint {
 	if b.Tunnel == nil {
 		return nil

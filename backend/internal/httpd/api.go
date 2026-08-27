@@ -53,7 +53,10 @@ type APIDeps struct {
 	// HostID is this machine's stable, machine-bound identity, served by the
 	// unauthenticated GET /api/v1/identity probe so a phone can confirm which
 	// machine answered before presenting a credential.
-	HostID    string
+	HostID string
+	// Endpoints reports how this daemon can currently be reached, for the
+	// phone's endpoint-refresh route.
+	Endpoints controllers.EndpointSource
 	Installer controllers.Installer
 
 	// Presence tracks which mobile devices are currently running the app.
@@ -114,6 +117,7 @@ type API struct {
 	browser       *controllers.BrowserController
 	system        *controllers.SystemController
 	identity      *controllers.IdentityController
+	endpoints     *controllers.EndpointsController
 	systemInstall *controllers.SystemInstallController
 	events        *EventsController
 }
@@ -153,6 +157,7 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 		browser:       &controllers.BrowserController{Svc: deps.Browser},
 		system:        &controllers.SystemController{Checks: deps.SystemChecks},
 		identity:      &controllers.IdentityController{HostID: deps.HostID},
+		endpoints:     &controllers.EndpointsController{Source: deps.Endpoints},
 		systemInstall: &controllers.SystemInstallController{Installer: deps.Installer},
 		events:        &EventsController{Source: deps.CDC, Live: deps.Events},
 	}
@@ -189,6 +194,7 @@ func (a *API) Register(root chi.Router) {
 			a.browser.Register(r)
 			a.system.Register(r)
 			a.identity.Register(r)
+			a.endpoints.Register(r)
 			a.systemInstall.Register(r)
 			// Sibling REST controllers plug in here.
 		})

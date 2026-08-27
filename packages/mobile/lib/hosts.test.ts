@@ -218,3 +218,41 @@ describe("migration from the single-server config", () => {
 		expect(got[0].id).toBe("h_real");
 	});
 });
+
+describe("adopting an identity", () => {
+	beforeEach(() => {
+		plain.clear();
+		secure.clear();
+		vi.resetModules();
+	});
+
+	// A machine migrated from the single-server config connects once with no id
+	// and learns one. Its token has to move with it, or the next connect finds
+	// a machine it cannot authenticate to.
+	it("rekeys a migrated machine and carries its token across", async () => {
+		const { saveHost, adoptHostIdentity, loadHosts } = await mod();
+		await saveHost({
+			id: "", name: "192.168.1.42", platform: "",
+			endpoints: [lan("192.168.1.42")], token: "legacy-pw", lastConnected: 1,
+		});
+
+		await adoptHostIdentity("", "h_learned");
+
+		const got = await loadHosts();
+		expect(got).toHaveLength(1);
+		expect(got[0].id).toBe("h_learned");
+		expect(got[0].token).toBe("legacy-pw");
+	});
+
+	it("leaves an already-identified machine alone", async () => {
+		const { saveHost, adoptHostIdentity, loadHosts } = await mod();
+		await saveHost({
+			id: "h_real", name: "a", platform: "darwin",
+			endpoints: [], token: "pw", lastConnected: 1,
+		});
+
+		await adoptHostIdentity("h_real", "h_something_else");
+
+		expect((await loadHosts())[0].id).toBe("h_real");
+	});
+})

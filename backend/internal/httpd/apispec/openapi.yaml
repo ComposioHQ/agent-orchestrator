@@ -410,6 +410,25 @@ paths:
       summary: Run the developer project-registry import through the daemon store
       tags:
       - dev
+  /api/v1/endpoints:
+    get:
+      operationId: getEndpoints
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EndpointsResponse'
+          description: OK
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: List the ways this daemon can currently be reached
+      tags:
+      - identity
   /api/v1/events:
     get:
       operationId: streamEvents
@@ -7169,6 +7188,15 @@ components:
           type: string
       required:
       - text
+      type: object
+    EndpointsResponse:
+      properties:
+        endpoints:
+          items:
+            $ref: '#/components/schemas/MobileEndpoint'
+          type: array
+      required:
+      - endpoints
       type: object
     EstimatedCostResponse:
       properties:

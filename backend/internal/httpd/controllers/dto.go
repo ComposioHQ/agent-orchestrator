@@ -1315,6 +1315,13 @@ type ResolveCommentsResponse struct {
 	Resolved int  `json:"resolved"`
 }
 
+// EndpointsResponse is the body of GET /api/v1/endpoints. The phone re-reads
+// it after every successful connect, so a rotated tunnel hostname or a changed
+// LAN address is picked up without re-pairing.
+type EndpointsResponse struct {
+	Endpoints []mobilebridge.Endpoint `json:"endpoints"`
+}
+
 // IdentityResponse is the body of the unauthenticated GET /api/v1/identity
 // probe. It is deliberately minimal: the route is reachable without the
 // connection password, so it must carry nothing but an opaque host id and the

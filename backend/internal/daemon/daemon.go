@@ -502,6 +502,7 @@ func Run() error {
 	srv, err := httpd.NewWithDeps(cfg, log, termMgr, httpd.APIDeps{
 		Projects:           projectSvc,
 		HostID:             hostIdentity.HostID,
+		Endpoints:          bs,
 		Agents:             agentSvc,
 		SystemChecks:       systemChecks,
 		Installer:          systemInstall,

@@ -171,3 +171,33 @@ export async function migrateLegacyConfig(): Promise<void> {
 		lastConnected: Date.now(),
 	});
 }
+
+/**
+ * Gives a migrated machine the identity it just reported.
+ *
+ * A pairing carried over from the single-server config has no id — the daemon
+ * only began issuing them alongside the endpoint race — so it connects once
+ * unverified and adopts one here. From then on every endpoint it races is
+ * checked against this value.
+ *
+ * The token is moved to the new key as part of the same operation. Leaving it
+ * under the old one would strand it, and the next connect would find a machine
+ * it cannot authenticate to.
+ *
+ * Only rekeys a machine that genuinely has no identity; a machine that already
+ * has one must never be renamed by whatever answered.
+ */
+export async function adoptHostIdentity(oldId: string, hostId: string): Promise<void> {
+	if (oldId !== "" || hostId === "") return;
+
+	const stored = await readStored();
+	const target = stored.find((h) => h.id === "");
+	if (!target) return;
+
+	const token = (await SecureStore.getItemAsync(tokenKey(""))) ?? "";
+	await writeStored(stored.map((h) => (h.id === "" ? { ...h, id: hostId } : h)));
+	if (token) {
+		await SecureStore.setItemAsync(tokenKey(hostId), token);
+		await SecureStore.deleteItemAsync(tokenKey(""));
+	}
+}

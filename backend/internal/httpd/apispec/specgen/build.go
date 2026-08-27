@@ -360,6 +360,7 @@ var schemaNames = map[string]string{
 	"MobilebridgeEndpoint":             "MobileEndpoint",
 	"MobilebridgeTunnelStatus":         "MobileTunnelStatus",
 	"ControllersIdentityResponse":      "IdentityResponse",
+	"ControllersEndpointsResponse":     "EndpointsResponse",
 	"ControllersMobileDeviceResponse":  "MobileDeviceResponse",
 	"ControllersMobileDevicesResponse": "MobileDevicesResponse",
 	"ControllersMuteDeviceRequest":     "MuteDeviceRequest",
@@ -496,7 +497,24 @@ func operations() []operation {
 	ops = append(ops, shellTerminalOperations()...)
 	ops = append(ops, systemOperations()...)
 	ops = append(ops, identityOperations()...)
+	ops = append(ops, endpointsOperations()...)
 	return ops
+}
+
+// endpointsOperations declares the phone's endpoint refresh. Not under
+// /api/v1/mobile, which lanControlBlock 404s on the only listener a phone can
+// reach.
+func endpointsOperations() []operation {
+	return []operation{
+		{
+			method: http.MethodGet, path: "/api/v1/endpoints", id: "getEndpoints", tag: "identity",
+			summary: "List the ways this daemon can currently be reached",
+			resps: []respUnit{
+				{http.StatusOK, controllers.EndpointsResponse{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+	}
 }
 
 // identityOperations declares the unauthenticated host-identity probe. It is
