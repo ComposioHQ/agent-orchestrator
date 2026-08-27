@@ -216,9 +216,31 @@ func (l *fakeLCM) ApplyActivitySignal(_ context.Context, id domain.SessionID, si
 	if !signal.ExpectedUpdatedAt.IsZero() && !rec.UpdatedAt.Equal(signal.ExpectedUpdatedAt) {
 		return nil
 	}
+	if signal.LaunchID != "" && signal.LaunchID != rec.Metadata.RuntimeLaunchID {
+		return nil
+	}
+	if signal.ControllerGeneration != "" &&
+		(domain.NormalizeSessionMode(rec.Mode) != domain.SessionModeChat ||
+			signal.ControllerGeneration != rec.Metadata.ControllerGeneration) {
+		return nil
+	}
 	rec.Activity = domain.Activity{State: signal.State, LastActivityAt: time.Now()}
 	l.store.sessions[id] = rec
 	return nil
+}
+
+type contendedActivityLCM struct {
+	*fakeLCM
+	calls  int
+	before func(call int, id domain.SessionID, signal ports.ActivitySignal)
+}
+
+func (l *contendedActivityLCM) ApplyActivitySignal(ctx context.Context, id domain.SessionID, signal ports.ActivitySignal) error {
+	l.calls++
+	if l.before != nil {
+		l.before(l.calls, id, signal)
+	}
+	return l.fakeLCM.ApplyActivitySignal(ctx, id, signal)
 }
 
 func (l *fakeLCM) CommitControllerEpoch(
@@ -7428,6 +7450,71 @@ func TestReconcileLive_RuntimeFailureAfterLaunchMetadataUpdateLeavesSessionResum
 	resumed := st.sessions[rec.ID]
 	if resumed.IsTerminated || resumed.Metadata.AgentSessionID != "native-conversation-1" {
 		t.Fatalf("resumed session lost durable identity: %+v", resumed)
+	}
+}
+
+func TestPreserveFailedReconcileRelaunchRetriesContendedCAS(t *testing.T) {
+	st := newFakeStore()
+	now := time.Date(2026, time.August, 27, 16, 54, 0, 0, time.UTC)
+	rec := domain.SessionRecord{
+		ID: "s1", Activity: domain.Activity{State: domain.ActivityActive}, UpdatedAt: now,
+		Metadata: domain.SessionMetadata{RuntimeHandleID: "old", RuntimeLaunchID: "old-launch"},
+	}
+	st.sessions[rec.ID] = rec
+	lcm := &contendedActivityLCM{fakeLCM: &fakeLCM{store: st}}
+	lcm.before = func(call int, id domain.SessionID, signal ports.ActivitySignal) {
+		if call != 1 {
+			return
+		}
+		current := st.sessions[id]
+		current.UpdatedAt = signal.ExpectedUpdatedAt.Add(time.Nanosecond)
+		st.sessions[id] = current
+	}
+	m := New(Deps{Store: st, Lifecycle: lcm})
+
+	committed, err := m.preserveFailedReconcileRelaunch(context.Background(), rec)
+	if err != nil {
+		t.Fatalf("preserveFailedReconcileRelaunch: %v", err)
+	}
+	if committed {
+		t.Fatal("failed controller was reported committed")
+	}
+	if lcm.calls != 2 {
+		t.Fatalf("ApplyActivitySignal calls = %d, want retry after one CAS loss", lcm.calls)
+	}
+	if got := st.sessions[rec.ID].Activity.State; got != domain.ActivityExited {
+		t.Fatalf("activity = %q, want exited after retry", got)
+	}
+}
+
+func TestPreserveFailedReconcileRelaunchBoundsPersistentCASContention(t *testing.T) {
+	st := newFakeStore()
+	now := time.Date(2026, time.August, 27, 16, 54, 0, 0, time.UTC)
+	rec := domain.SessionRecord{
+		ID: "s1", Activity: domain.Activity{State: domain.ActivityActive}, UpdatedAt: now,
+		Metadata: domain.SessionMetadata{RuntimeHandleID: "old", RuntimeLaunchID: "old-launch"},
+	}
+	st.sessions[rec.ID] = rec
+	lcm := &contendedActivityLCM{fakeLCM: &fakeLCM{store: st}}
+	lcm.before = func(_ int, id domain.SessionID, signal ports.ActivitySignal) {
+		current := st.sessions[id]
+		current.UpdatedAt = signal.ExpectedUpdatedAt.Add(time.Nanosecond)
+		st.sessions[id] = current
+	}
+	m := New(Deps{Store: st, Lifecycle: lcm})
+
+	committed, err := m.preserveFailedReconcileRelaunch(context.Background(), rec)
+	if err == nil || !strings.Contains(err.Error(), "session changed") {
+		t.Fatalf("preserveFailedReconcileRelaunch error = %v, want bounded contention error", err)
+	}
+	if committed {
+		t.Fatal("contended failed controller was reported committed")
+	}
+	if lcm.calls != 3 {
+		t.Fatalf("ApplyActivitySignal calls = %d, want bounded 3 attempts", lcm.calls)
+	}
+	if got := st.sessions[rec.ID].Activity.State; got != domain.ActivityActive {
+		t.Fatalf("activity = %q, want unchanged after persistent contention", got)
 	}
 }
 

@@ -2300,13 +2300,19 @@ func (m *Manager) reconcileLive(ctx context.Context, rec domain.SessionRecord) e
 	return fmt.Errorf("reconcile %s: relaunch controller: %w", rec.ID, restoreErr)
 }
 
-func relaunchCommitted(before, after domain.SessionRecord) bool {
+func (m *Manager) relaunchCommitted(before, after domain.SessionRecord) bool {
 	if after.IsTerminated {
 		return false
 	}
 	if domain.NormalizeSessionMode(before.Mode) == domain.SessionModeChat {
 		generation := after.Metadata.ControllerGeneration
-		return generation != "" && generation != before.Metadata.ControllerGeneration
+		// Chat Service durably claims a generation before native-history import
+		// and ControllerReady. A changed generation alone therefore proves only
+		// that launch began, not that a controller reached the published registry.
+		// Require both durable epoch movement and live registry ownership before
+		// treating an error returned after launch as a committed controller.
+		return generation != "" && generation != before.Metadata.ControllerGeneration &&
+			m.chat != nil && m.chat.HasLiveChatController(before.ID)
 	}
 	launchID := after.Metadata.RuntimeLaunchID
 	if launchID != "" && launchID != before.Metadata.RuntimeLaunchID {
@@ -2333,7 +2339,7 @@ func (m *Manager) preserveFailedReconcileRelaunch(ctx context.Context, before do
 		if !ok {
 			return false, ErrNotFound
 		}
-		if relaunchCommitted(before, current) {
+		if m.relaunchCommitted(before, current) {
 			return true, nil
 		}
 		if current.IsTerminated || current.Activity.State == domain.ActivityExited {
@@ -2361,7 +2367,7 @@ func (m *Manager) preserveFailedReconcileRelaunch(ctx context.Context, before do
 		if !ok {
 			return false, ErrNotFound
 		}
-		if relaunchCommitted(before, after) {
+		if m.relaunchCommitted(before, after) {
 			return true, nil
 		}
 		if after.IsTerminated || after.Activity.State == domain.ActivityExited {

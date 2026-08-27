@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -142,6 +144,22 @@ func (l *recordingLauncher) AbortChatHandoff(id domain.SessionID) {
 	l.aborted = append(l.aborted, id)
 }
 
+type generationClaimFailureLauncher struct {
+	*recordingLauncher
+	store      *fakeStore
+	generation string
+	err        error
+}
+
+func (l *generationClaimFailureLauncher) StartChat(_ context.Context, cfg ChatStart) (ChatStarted, error) {
+	l.started = append(l.started, cfg)
+	rec := l.store.sessions[cfg.SessionID]
+	rec.Metadata.ControllerGeneration = l.generation
+	rec.UpdatedAt = rec.UpdatedAt.Add(time.Second)
+	l.store.sessions[cfg.SessionID] = rec
+	return ChatStarted{}, l.err
+}
+
 func TestReconcileLive_ChatRelaunchesInExistingWorktree(t *testing.T) {
 	launcher := &recordingLauncher{}
 	m, st, rt := newChatManager(launcher)
@@ -212,6 +230,53 @@ func TestReconcileLive_ChatCompatibilityFailureLeavesNativeResumeRecoverable(t *
 	launcher.startErr = nil
 	if _, err := m.ResumeAgentWithMode(context.Background(), rec.ID); err != nil {
 		t.Fatalf("ResumeAgentWithMode after dependency recovery: %v", err)
+	}
+}
+
+func TestReconcileLive_ChatFailureAfterGenerationClaimLeavesSessionExited(t *testing.T) {
+	base := &recordingLauncher{}
+	m, st, rt := newChatManager(base)
+	launcher := &generationClaimFailureLauncher{
+		recordingLauncher: base,
+		store:             st,
+		generation:        "claimed-generation",
+		err:               errors.New("read native history: provider unavailable"),
+	}
+	m.chat = launcher
+	ws := m.workspace.(*fakeWorkspace)
+	lcm := m.lcm.(*fakeLCM)
+	now := time.Date(2026, time.August, 27, 16, 54, 0, 0, time.UTC)
+	rec := domain.SessionRecord{
+		ID: "mer-1", ProjectID: chatTestProject, Kind: domain.KindWorker,
+		Harness: domain.HarnessCodex, Mode: domain.SessionModeChat,
+		Activity: domain.Activity{State: domain.ActivityActive}, UpdatedAt: now,
+		Metadata: domain.SessionMetadata{
+			Branch: "ao/mer-1/root", WorkspacePath: "/ws/mer-1",
+			ProviderConversationID: "thread-existing", ControllerGeneration: "old-generation",
+		},
+	}
+	st.sessions[rec.ID] = rec
+
+	err := m.reconcileLive(context.Background(), rec)
+	if err == nil || !strings.Contains(err.Error(), "read native history") {
+		t.Fatalf("reconcileLive error = %v, want post-claim history failure", err)
+	}
+	got := st.sessions[rec.ID]
+	if got.IsTerminated || got.Activity.State != domain.ActivityExited {
+		t.Fatalf("post-claim Chat failure = %+v, want live/exited", got)
+	}
+	if got.Metadata.ControllerGeneration != "claimed-generation" {
+		t.Fatalf("controller generation = %q, want claimed epoch retained as stale-signal fence", got.Metadata.ControllerGeneration)
+	}
+	if launcher.HasLiveChatController(rec.ID) {
+		t.Fatal("failed post-claim launch unexpectedly published a live controller")
+	}
+	if got.Metadata.ProviderConversationID != rec.Metadata.ProviderConversationID || got.Metadata.WorkspacePath != rec.Metadata.WorkspacePath {
+		t.Fatalf("post-claim failure lost native identity/worktree: %+v", got.Metadata)
+	}
+	if rt.created != 0 || rt.destroyed != 0 || ws.stashCalls != 0 || lcm.terminated[rec.ID] != 0 {
+		t.Fatalf("post-claim Chat failure tore down state: runtime=(%d,%d) stash=%d terminated=%d",
+			rt.created, rt.destroyed, ws.stashCalls, lcm.terminated[rec.ID])
 	}
 }
 
