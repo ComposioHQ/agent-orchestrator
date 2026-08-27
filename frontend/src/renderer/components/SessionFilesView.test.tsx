@@ -784,7 +784,7 @@ describe("SessionFilesView", () => {
 		expect(addedRow?.querySelector(".grid-cols-2")).toBeNull();
 	});
 
-	it("sends inline line feedback to the session agent with precise diff context", async () => {
+	it("queues feedback across targets and sends the reviewed batch in order", async () => {
 		renderWithQuery(<SessionFilesView sessionId="sess-1" />);
 		await userEvent.click(await screen.findByRole("button", { name: "Expand src/App.tsx" }));
 		await screen.findByText(diffLine("const value = 1;"));
@@ -795,19 +795,183 @@ describe("SessionFilesView", () => {
 		await userEvent.click(feedbackButton);
 		const feedback = screen.getByRole("textbox", { name: "Feedback for src/App.tsx · new line 1" });
 		await userEvent.type(feedback, "Reuse the shared value instead.");
-		await userEvent.click(screen.getByRole("button", { name: "Send feedback" }));
+		await userEvent.click(screen.getByRole("button", { name: "Add to review" }));
+
+		await userEvent.click(screen.getByRole("button", { name: "Add feedback for file docs/guide.md" }));
+		await userEvent.type(
+			screen.getByRole("textbox", { name: "Feedback for docs/guide.md · whole file" }),
+			"Add an example to this guide.",
+		);
+		await userEvent.click(screen.getByRole("button", { name: "Add to review" }));
+
+		expect(postMock).not.toHaveBeenCalled();
+		expect(screen.getByRole("textbox", { name: "Edit feedback for src/App.tsx · new line 1" })).toHaveValue(
+			"Reuse the shared value instead.",
+		);
+		expect(screen.getByRole("textbox", { name: "Edit feedback for docs/guide.md · whole file" })).toHaveValue(
+			"Add an example to this guide.",
+		);
+
+		await userEvent.click(screen.getByRole("button", { name: "Send all feedback" }));
+
+		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(2));
+		const firstBody = postMock.mock.calls[0][1].body as { message: string };
+		expect(firstBody.message).toContain("Reuse the shared value instead.");
+		expect(firstBody.message).toContain("- Path: src/App.tsx");
+		expect(firstBody.message).toContain("- Location: New side, line 1");
+		expect(firstBody.message).toContain("- Code: const value = 1;");
+		const secondBody = postMock.mock.calls[1][1].body as { message: string };
+		expect(secondBody.message).toContain("Add an example to this guide.");
+		expect(secondBody.message).toContain("- Path: docs/guide.md");
+	});
+
+	it("freezes every item captured by an active batch until delivery finishes", async () => {
+		let releaseFirstSend!: () => void;
+		postMock
+			.mockImplementationOnce(
+				() =>
+					new Promise((resolve) => {
+						releaseFirstSend = () => resolve({ data: {} });
+					}),
+			)
+			.mockResolvedValueOnce({ data: {} });
+		renderWithQuery(<SessionFilesView sessionId="sess-1" />);
+		await screen.findByRole("button", { name: "Expand src/App.tsx" });
+
+		for (const file of ["src/App.tsx", "docs/guide.md"]) {
+			await userEvent.click(screen.getByRole("button", { name: `Add feedback for file ${file}` }));
+			await userEvent.type(
+				screen.getByRole("textbox", { name: `Feedback for ${file} · whole file` }),
+				`Review ${file}.`,
+			);
+			await userEvent.click(screen.getByRole("button", { name: "Add to review" }));
+		}
+
+		await userEvent.click(screen.getByRole("button", { name: "Send all feedback" }));
+		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
+
+		expect(screen.getByRole("textbox", { name: "Edit feedback for docs/guide.md · whole file" })).toBeDisabled();
+		expect(
+			screen.getByRole("button", { name: "Remove feedback for docs/guide.md · whole file" }),
+		).toBeDisabled();
+
+		releaseFirstSend();
+		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(2));
+	});
+
+	it("edits and removes pending feedback before sending", async () => {
+		renderWithQuery(<SessionFilesView sessionId="sess-1" />);
+		await screen.findByRole("button", { name: "Expand src/App.tsx" });
+
+		await userEvent.click(screen.getByRole("button", { name: "Add feedback for file src/App.tsx" }));
+		await userEvent.type(
+			screen.getByRole("textbox", { name: "Feedback for src/App.tsx · whole file" }),
+			"Use the first approach.",
+		);
+		await userEvent.click(screen.getByRole("button", { name: "Add to review" }));
+		await userEvent.click(screen.getByRole("button", { name: "Add feedback for file docs/guide.md" }));
+		await userEvent.type(
+			screen.getByRole("textbox", { name: "Feedback for docs/guide.md · whole file" }),
+			"Remove this feedback.",
+		);
+		await userEvent.click(screen.getByRole("button", { name: "Add to review" }));
+
+		const editable = screen.getByRole("textbox", { name: "Edit feedback for src/App.tsx · whole file" });
+		await userEvent.clear(editable);
+		await userEvent.type(editable, "Use the revised approach.");
+		await userEvent.click(
+			screen.getByRole("button", { name: "Remove feedback for docs/guide.md · whole file" }),
+		);
+
+		expect(
+			screen.queryByRole("textbox", { name: "Edit feedback for docs/guide.md · whole file" }),
+		).not.toBeInTheDocument();
+		await userEvent.click(screen.getByRole("button", { name: "Send all feedback" }));
+
+		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
+		const body = postMock.mock.calls[0][1].body as { message: string };
+		expect(body.message).toContain("Use the revised approach.");
+		expect(body.message).not.toContain("Use the first approach.");
+	});
+
+	it("does not send a pending item after its feedback is cleared", async () => {
+		renderWithQuery(<SessionFilesView sessionId="sess-1" />);
+		await screen.findByRole("button", { name: "Expand src/App.tsx" });
+		await userEvent.click(screen.getByRole("button", { name: "Add feedback for file src/App.tsx" }));
+		await userEvent.type(
+			screen.getByRole("textbox", { name: "Feedback for src/App.tsx · whole file" }),
+			"Remove this text.",
+		);
+		await userEvent.click(screen.getByRole("button", { name: "Add to review" }));
+
+		await userEvent.clear(screen.getByRole("textbox", { name: "Edit feedback for src/App.tsx · whole file" }));
+
+		expect(screen.getByRole("button", { name: "Send all feedback" })).toBeDisabled();
+		expect(postMock).not.toHaveBeenCalled();
+	});
+
+	it("keeps failed feedback for retry without resending successful items", async () => {
+		postMock
+			.mockResolvedValueOnce({ error: { message: "AO daemon is not ready." } })
+			.mockResolvedValueOnce({ data: {} })
+			.mockResolvedValueOnce({ data: {} })
+			.mockResolvedValueOnce({ data: {} });
+		renderWithQuery(<SessionFilesView sessionId="sess-1" />);
+		await screen.findByRole("button", { name: "Expand src/App.tsx" });
+
+		for (const [file, feedback] of [
+			["src/App.tsx", "Retry this item."],
+			["docs/guide.md", "Send this item once."],
+		] as const) {
+			await userEvent.click(screen.getByRole("button", { name: `Add feedback for file ${file}` }));
+			await userEvent.type(screen.getByRole("textbox", { name: `Feedback for ${file} · whole file` }), feedback);
+			await userEvent.click(screen.getByRole("button", { name: "Add to review" }));
+		}
+
+		await userEvent.click(screen.getByRole("button", { name: "Send all feedback" }));
+
+		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(2));
+		expect(screen.getByRole("alert")).toHaveTextContent("AO daemon is not ready.");
+		expect(screen.getByText("Sent")).toBeInTheDocument();
+		await userEvent.click(screen.getByRole("button", { name: "Add feedback for file src/App.tsx" }));
+		await userEvent.type(
+			screen.getByRole("textbox", { name: "Feedback for src/App.tsx · whole file" }),
+			"Keep this newly queued item pending.",
+		);
+		await userEvent.click(screen.getByRole("button", { name: "Add to review" }));
+		await userEvent.click(screen.getByRole("button", { name: "Retry failed feedback" }));
+
+		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(3));
+		const retryBody = postMock.mock.calls[2][1].body as { message: string };
+		expect(retryBody.message).toContain("Retry this item.");
+		expect(postMock.mock.calls.filter((call) => JSON.stringify(call[1]).includes("Send this item once."))).toHaveLength(1);
+		expect(
+			postMock.mock.calls.filter((call) => JSON.stringify(call[1]).includes("Keep this newly queued item pending.")),
+		).toHaveLength(0);
+
+		await userEvent.click(screen.getByRole("button", { name: "Send all feedback" }));
+		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(4));
+		const queuedBody = postMock.mock.calls[3][1].body as { message: string };
+		expect(queuedBody.message).toContain("Keep this newly queued item pending.");
+	});
+
+	it("clears pending feedback when the inspected session changes", async () => {
+		const view = renderWithQuery(<SessionFilesView sessionId="sess-1" />);
+		await screen.findByRole("button", { name: "Expand src/App.tsx" });
+		await userEvent.click(screen.getByRole("button", { name: "Add feedback for file src/App.tsx" }));
+		await userEvent.type(
+			screen.getByRole("textbox", { name: "Feedback for src/App.tsx · whole file" }),
+			"Only send this to session one.",
+		);
+		await userEvent.click(screen.getByRole("button", { name: "Add to review" }));
+		expect(screen.getByRole("complementary", { name: "Pending feedback review" })).toBeInTheDocument();
+
+		view.rerender(<SessionFilesView sessionId="sess-2" />);
 
 		await waitFor(() =>
-			expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/send", {
-				params: { path: { sessionId: "sess-1" } },
-				body: { message: expect.stringContaining("Reuse the shared value instead.") },
-			}),
+			expect(screen.queryByRole("complementary", { name: "Pending feedback review" })).not.toBeInTheDocument(),
 		);
-		const body = postMock.mock.calls[0][1].body as { message: string };
-		expect(body.message).toContain("- Path: src/App.tsx");
-		expect(body.message).toContain("- Location: New side, line 1");
-		expect(body.message).toContain("- Code: const value = 1;");
-		expect(await screen.findByText("Sent to agent")).toBeInTheDocument();
+		expect(postMock).not.toHaveBeenCalled();
 	});
 
 	it("opens whole-file feedback and cancels it with Escape", async () => {

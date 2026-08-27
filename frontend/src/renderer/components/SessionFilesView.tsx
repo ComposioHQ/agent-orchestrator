@@ -16,7 +16,6 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import {
-	Check,
 	ChevronDown,
 	ChevronRight,
 	ChevronsDownUp,
@@ -28,6 +27,7 @@ import {
 	Rows3,
 	Search,
 	Send as SendIcon,
+	X,
 } from "lucide-react";
 import type { components } from "../../api/schema";
 import { formatFileAnnotationMessage, type FileAnnotationTarget } from "../../shared/file-annotations";
@@ -69,16 +69,21 @@ type WorkspaceFileDetail = components["schemas"]["WorkspaceFileResponse"] & {
 type WorkspaceFileStatus = WorkspaceFileSummary["status"];
 
 type ActiveFileAnnotationTarget = FileAnnotationTarget & { rowIndex?: number };
-type FileAnnotationStatus = "idle" | "sending" | "sent" | "error";
 type FileAnnotationModel = {
 	target: ActiveFileAnnotationTarget | null;
 	draft: string;
-	status: FileAnnotationStatus;
-	error: string;
 	begin: (target: ActiveFileAnnotationTarget) => void;
 	setDraft: (draft: string) => void;
 	cancel: () => void;
-	submit: () => Promise<void>;
+	queue: () => void;
+};
+type PendingFileAnnotationStatus = "queued" | "sending" | "sent" | "error";
+type PendingFileAnnotation = {
+	id: number;
+	target: ActiveFileAnnotationTarget;
+	feedback: string;
+	status: PendingFileAnnotationStatus;
+	error: string;
 };
 
 type SessionFilesViewProps = {
@@ -148,10 +153,10 @@ export function SessionFilesView({
 	const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set());
 	const [annotationTarget, setAnnotationTarget] = useState<ActiveFileAnnotationTarget | null>(null);
 	const [annotationDraft, setAnnotationDraft] = useState("");
-	const [annotationStatus, setAnnotationStatus] = useState<FileAnnotationStatus>("idle");
-	const [annotationError, setAnnotationError] = useState("");
-	const annotationGenerationRef = useRef(0);
-	const annotationSentTimerRef = useRef<number | null>(null);
+	const [pendingAnnotations, setPendingAnnotations] = useState<PendingFileAnnotation[]>([]);
+	const [isSendingAnnotations, setIsSendingAnnotations] = useState(false);
+	const nextAnnotationIdRef = useRef(1);
+	const annotationBatchGenerationRef = useRef(0);
 	const rootRef = useRef<HTMLElement>(null);
 
 	const workspaceConnectionState = useWorkspaceFileConnectionState(sessionId);
@@ -201,13 +206,13 @@ export function SessionFilesView({
 	}, [changedFiles, revealFile]);
 
 	useEffect(() => {
-		annotationGenerationRef.current += 1;
+		annotationBatchGenerationRef.current += 1;
 		setExpandedPaths(new Set());
 		setFilter("");
 		setAnnotationTarget(null);
 		setAnnotationDraft("");
-		setAnnotationStatus("idle");
-		setAnnotationError("");
+		setPendingAnnotations([]);
+		setIsSendingAnnotations(false);
 	}, [sessionId]);
 
 	// Chat (and similar) can ask the Files rail to open on a specific path. Match
@@ -236,13 +241,6 @@ export function SessionFilesView({
 		});
 	}, [changedFiles, filesQuery.isSuccess, focusPath, onFocusPathConsumed]);
 
-	useEffect(
-		() => () => {
-			if (annotationSentTimerRef.current !== null) window.clearTimeout(annotationSentTimerRef.current);
-		},
-		[],
-	);
-
 	useEffect(() => {
 		const root = rootRef.current;
 		if (!root) return;
@@ -267,55 +265,74 @@ export function SessionFilesView({
 	}, []);
 
 	const beginAnnotation = (target: ActiveFileAnnotationTarget) => {
-		annotationGenerationRef.current += 1;
-		if (annotationSentTimerRef.current !== null) window.clearTimeout(annotationSentTimerRef.current);
-		annotationSentTimerRef.current = null;
 		setAnnotationTarget(target);
 		setAnnotationDraft("");
-		setAnnotationStatus("idle");
-		setAnnotationError("");
 	};
 	const cancelAnnotation = () => {
-		annotationGenerationRef.current += 1;
 		setAnnotationTarget(null);
 		setAnnotationDraft("");
-		setAnnotationStatus("idle");
-		setAnnotationError("");
 	};
-	const submitAnnotation = async () => {
-		if (!annotationTarget || !annotationDraft.trim() || annotationStatus === "sending") return;
-		const sendGeneration = annotationGenerationRef.current;
-		const sendTarget = annotationTarget;
-		const sendFeedback = annotationDraft;
-		setAnnotationStatus("sending");
-		setAnnotationError("");
-		try {
-			const { error } = await apiClient.POST("/api/v1/sessions/{sessionId}/send", {
-				params: { path: { sessionId } },
-				body: { message: formatFileAnnotationMessage(sendTarget, sendFeedback) },
-			});
-			if (sendGeneration !== annotationGenerationRef.current) return;
-			if (error) throw new Error(apiErrorMessage(error, t("files.feedbackError")));
-			setAnnotationStatus("sent");
-			annotationSentTimerRef.current = window.setTimeout(() => {
-				annotationSentTimerRef.current = null;
-				cancelAnnotation();
-			}, 1_200);
-		} catch (error) {
-			if (sendGeneration !== annotationGenerationRef.current) return;
-			setAnnotationStatus("error");
-			setAnnotationError(apiErrorMessage(error, t("files.feedbackError")));
+	const queueAnnotation = () => {
+		if (!annotationTarget || !annotationDraft.trim()) return;
+		setPendingAnnotations((current) => [
+			...current,
+			{
+				id: nextAnnotationIdRef.current++,
+				target: annotationTarget,
+				feedback: annotationDraft.trim(),
+				status: "queued",
+				error: "",
+			},
+		]);
+		cancelAnnotation();
+	};
+	const sendAnnotations = async (onlyFailed = false) => {
+		if (isSendingAnnotations) return;
+		const annotations = pendingAnnotations.filter((item) =>
+			onlyFailed ? item.status === "error" : item.status === "queued" || item.status === "error",
+		);
+		if (annotations.length === 0 || annotations.some((item) => !item.feedback.trim())) return;
+		const sendGeneration = annotationBatchGenerationRef.current;
+		setIsSendingAnnotations(true);
+		for (const item of annotations) {
+			if (sendGeneration !== annotationBatchGenerationRef.current) return;
+			setPendingAnnotations((current) =>
+				current.map((candidate) =>
+					candidate.id === item.id ? { ...candidate, status: "sending", error: "" } : candidate,
+				),
+			);
+			try {
+				const { error } = await apiClient.POST("/api/v1/sessions/{sessionId}/send", {
+					params: { path: { sessionId } },
+					body: { message: formatFileAnnotationMessage(item.target, item.feedback) },
+				});
+				if (sendGeneration !== annotationBatchGenerationRef.current) return;
+				if (error) throw new Error(apiErrorMessage(error, t("files.feedbackError")));
+				setPendingAnnotations((current) =>
+					current.map((candidate) =>
+						candidate.id === item.id ? { ...candidate, status: "sent", error: "" } : candidate,
+					),
+				);
+			} catch (error) {
+				if (sendGeneration !== annotationBatchGenerationRef.current) return;
+				setPendingAnnotations((current) =>
+					current.map((candidate) =>
+						candidate.id === item.id
+							? { ...candidate, status: "error", error: apiErrorMessage(error, t("files.feedbackError")) }
+							: candidate,
+					),
+				);
+			}
 		}
+		if (sendGeneration === annotationBatchGenerationRef.current) setIsSendingAnnotations(false);
 	};
 	const annotation: FileAnnotationModel = {
 		target: annotationTarget,
 		draft: annotationDraft,
-		status: annotationStatus,
-		error: annotationError,
 		begin: beginAnnotation,
 		setDraft: setAnnotationDraft,
 		cancel: cancelAnnotation,
-		submit: submitAnnotation,
+		queue: queueAnnotation,
 	};
 
 	const normalizedFilter = filter.trim().toLowerCase();
@@ -445,6 +462,21 @@ export function SessionFilesView({
 					</Button>
 				) : null}
 			</header>
+			{pendingAnnotations.length > 0 ? (
+				<FileAnnotationReview
+					annotations={pendingAnnotations}
+					isSending={isSendingAnnotations}
+					onRemove={(id) => setPendingAnnotations((current) => current.filter((item) => item.id !== id))}
+					onSend={(onlyFailed) => void sendAnnotations(onlyFailed)}
+					onUpdate={(id, feedback) =>
+						setPendingAnnotations((current) =>
+							current.map((item) =>
+								item.id === id ? { ...item, feedback, status: "queued", error: "" } : item,
+							),
+						)
+					}
+				/>
+			) : null}
 
 			<div
 				className="board-scrollbar min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain bg-background"
@@ -1881,12 +1913,8 @@ function FileAnnotationComposer({ annotation }: { annotation: FileAnnotationMode
 	const { t } = useTranslation();
 	const target = annotation.target;
 	if (!target) return null;
-	const side = target.side === "file" ? "" : t(target.side === "old" ? "files.oldSide" : "files.newSide");
-	const targetLabel =
-		target.side === "file"
-			? t("files.fileFeedbackTarget", { file: target.path })
-			: t("files.lineFeedbackTarget", { file: target.path, line: target.line, side });
-	const submit = () => void annotation.submit();
+	const targetLabel = fileAnnotationTargetLabel(t, target);
+	const submit = annotation.queue;
 
 	return (
 		<form
@@ -1898,18 +1926,11 @@ function FileAnnotationComposer({ annotation }: { annotation: FileAnnotationMode
 		>
 			<div className="mb-1.5 flex items-center justify-between gap-2">
 				<span className="min-w-0 truncate font-mono text-caption text-passive">{targetLabel}</span>
-				{annotation.status === "sent" ? (
-					<span className="inline-flex items-center gap-1 text-caption text-success" role="status">
-						<Check className="size-icon-sm" aria-hidden="true" />
-						{t("files.feedbackSent")}
-					</span>
-				) : null}
 			</div>
 			<textarea
 				aria-label={t("files.feedbackLabel", { target: targetLabel })}
 				autoFocus
 				className="min-h-20 w-full resize-y rounded-md border border-input bg-background px-2.5 py-2 text-sm text-foreground outline-none placeholder:text-passive focus-visible:outline-none disabled:opacity-60"
-				disabled={annotation.status === "sending" || annotation.status === "sent"}
 				onChange={(event) => annotation.setDraft(event.target.value)}
 				onKeyDown={(event) => {
 					if (event.key === "Escape") {
@@ -1923,15 +1944,9 @@ function FileAnnotationComposer({ annotation }: { annotation: FileAnnotationMode
 				placeholder={t("files.feedbackPlaceholder")}
 				value={annotation.draft}
 			/>
-			{annotation.status === "error" ? (
-				<p className="mt-1.5 text-xs text-error" role="alert">
-					{annotation.error}
-				</p>
-			) : null}
 			<div className="mt-2 flex items-center justify-end gap-1.5">
 				<span className="mr-auto text-caption text-passive">{t("files.feedbackShortcut")}</span>
 				<Button
-					disabled={annotation.status === "sending" || annotation.status === "sent"}
 					onClick={annotation.cancel}
 					size="sm"
 					type="button"
@@ -1940,16 +1955,106 @@ function FileAnnotationComposer({ annotation }: { annotation: FileAnnotationMode
 					{t("files.cancelFeedback")}
 				</Button>
 				<Button
-					disabled={!annotation.draft.trim() || annotation.status === "sending" || annotation.status === "sent"}
+					disabled={!annotation.draft.trim()}
 					size="sm"
 					type="submit"
 				>
-					<SendIcon className="size-icon-sm" aria-hidden="true" />
-					{annotation.status === "sending" ? t("files.sendingFeedback") : t("files.sendFeedback")}
+					{t("files.addToReview")}
 				</Button>
 			</div>
 		</form>
 	);
+}
+
+function FileAnnotationReview({
+	annotations,
+	isSending,
+	onRemove,
+	onSend,
+	onUpdate,
+}: {
+	annotations: PendingFileAnnotation[];
+	isSending: boolean;
+	onRemove: (id: number) => void;
+	onSend: (onlyFailed: boolean) => void;
+	onUpdate: (id: number, feedback: string) => void;
+}) {
+	const { t } = useTranslation();
+	const hasErrors = annotations.some((item) => item.status === "error");
+	const actionableAnnotations = annotations.filter((item) =>
+		hasErrors ? item.status === "error" : item.status === "queued" || item.status === "error",
+	);
+	const hasBlankFeedback = actionableAnnotations.some((item) => !item.feedback.trim());
+	return (
+		<aside aria-label={t("files.reviewBatch")} className="shrink-0 border-b border-border bg-surface px-3 py-2">
+			<div className="flex items-center justify-between gap-3">
+				<h2 className="text-sm font-medium">{t("files.reviewFeedback", { count: annotations.length })}</h2>
+				<Button
+					disabled={isSending || actionableAnnotations.length === 0 || hasBlankFeedback}
+					onClick={() => onSend(hasErrors)}
+					size="sm"
+					type="button"
+				>
+					<SendIcon className="size-icon-sm" aria-hidden="true" />
+					{isSending
+						? t("files.sendingFeedback")
+						: hasErrors
+							? t("files.retryFailedFeedback")
+							: t("files.sendAllFeedback")}
+				</Button>
+			</div>
+			<div className="board-scrollbar mt-2 flex max-h-56 flex-col gap-2 overflow-y-auto">
+				{annotations.map((item) => {
+					const targetLabel = fileAnnotationTargetLabel(t, item.target);
+					return (
+						<div className="rounded-md border border-border bg-background p-2" key={item.id}>
+							<div className="mb-1.5 flex items-center gap-2">
+								<span className="min-w-0 flex-1 truncate font-mono text-caption text-passive">{targetLabel}</span>
+								<span
+									className={cn(
+										"text-caption",
+										item.status === "sent" && "text-success",
+										item.status === "error" && "text-error",
+									)}
+									role="status"
+								>
+									{t(`files.feedbackStatus.${item.status}`)}
+								</span>
+								<Button
+									aria-label={t("files.removeFeedback", { target: targetLabel })}
+									disabled={isSending}
+									onClick={() => onRemove(item.id)}
+									size="icon-sm"
+									type="button"
+									variant="ghost"
+								>
+									<X className="size-icon-sm" aria-hidden="true" />
+								</Button>
+							</div>
+							<textarea
+								aria-label={t("files.editFeedback", { target: targetLabel })}
+								className="min-h-16 w-full resize-y rounded-md border border-input bg-background px-2.5 py-2 text-sm text-foreground outline-none placeholder:text-passive focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30 disabled:opacity-60"
+								disabled={isSending || item.status === "sent"}
+								onChange={(event) => onUpdate(item.id, event.target.value)}
+								value={item.feedback}
+							/>
+							{item.error ? (
+								<p className="mt-1 text-xs text-error" role="alert">
+									{item.error}
+								</p>
+							) : null}
+						</div>
+					);
+				})}
+			</div>
+		</aside>
+	);
+}
+
+function fileAnnotationTargetLabel(t: TFunction, target: ActiveFileAnnotationTarget): string {
+	if (target.side === "file") return t("files.fileFeedbackTarget", { file: target.path });
+	const side = t(target.side === "old" ? "files.oldSide" : "files.newSide");
+	return t("files.lineFeedbackTarget", { file: target.path, line: target.line, side });
 }
 
 // Renders a diff line's composed runs: a highlight.js class when the line could
