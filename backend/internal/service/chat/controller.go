@@ -484,9 +484,10 @@ func (p nativeHistoryCheckpoint) mismatches(
 		return mismatches
 	}
 	mappedHighWaterTurns := make(map[string]bool)
-	for replayTurnID, candidate := range mapNativeHistoryTurns(
+	mappedTurns, _ := mapNativeHistoryTurns(
 		events, existingTurns, existingMessages, existingActivities,
-	) {
+	)
+	for replayTurnID, candidate := range mappedTurns {
 		if candidate.providerTurnID == highWater.providerTurnID && completedTurns[replayTurnID] {
 			mappedHighWaterTurns[replayTurnID] = true
 		}
@@ -662,10 +663,10 @@ func mapNativeHistoryTurns(
 	existingTurns []domain.ConversationTurn,
 	existingMessages []domain.ConversationMessage,
 	existingActivities []domain.ConversationActivity,
-) map[string]*nativeHistoryTurn {
+) (map[string]*nativeHistoryTurn, map[string]*nativeHistoryTurn) {
 	mapped := make(map[string]*nativeHistoryTurn)
 	if len(events) == 0 || len(existingTurns) == 0 {
-		return mapped
+		return mapped, nil
 	}
 
 	byAOTurnID := make(map[string]*nativeHistoryTurn, len(existingTurns))
@@ -686,7 +687,7 @@ func mapNativeHistoryTurns(
 		ordered = append(ordered, candidate)
 	}
 	if len(ordered) == 0 {
-		return mapped
+		return mapped, nil
 	}
 
 	// A provider item is useful only when it identifies exactly one durable turn.
@@ -758,21 +759,6 @@ func mapNativeHistoryTurns(
 		}
 		return match
 	}
-	providerItemAliasCandidate := func(event ports.ChatEvent) *nativeHistoryTurn {
-		var match *nativeHistoryTurn
-		for _, identity := range event.ProviderItemAliases {
-			candidate := providerItems[identity]
-			if candidate == nil {
-				continue
-			}
-			if match != nil && match != candidate {
-				return nil
-			}
-			match = candidate
-		}
-		return match
-	}
-
 	// Gather mappings from the complete replay before rewriting TurnStarted, which
 	// necessarily arrives before the assistant/tool item that can identify it.
 	for _, event := range events {
@@ -828,7 +814,7 @@ func mapNativeHistoryTurns(
 		}
 		bind(event.ProviderTurnID, match)
 	}
-	return mapped
+	return mapped, providerItems
 }
 
 // reconcileNativeHistory maps a provider replay onto AO's existing durable
@@ -850,9 +836,23 @@ func reconcileNativeHistory(
 		return events
 	}
 
-	mapped := mapNativeHistoryTurns(events, existingTurns, existingMessages, existingActivities)
+	mapped, providerItems := mapNativeHistoryTurns(events, existingTurns, existingMessages, existingActivities)
 	if len(mapped) == 0 {
 		return events
+	}
+	providerItemAliasCandidate := func(event ports.ChatEvent) *nativeHistoryTurn {
+		var match *nativeHistoryTurn
+		for _, identity := range event.ProviderItemAliases {
+			candidate := providerItems[identity]
+			if candidate == nil {
+				continue
+			}
+			if match != nil && match != candidate {
+				return nil
+			}
+			match = candidate
+		}
+		return match
 	}
 	// A native provider may omit persisted item ids even though its live stream
 	// supplied them. Codex does this today: a live assistant message can be

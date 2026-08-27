@@ -471,6 +471,24 @@ func (l *sqliteTransitionLifecycle) MarkSpawned(
 	rec.FirstSignalAt = time.Now()
 	return l.store.UpdateSession(ctx, rec)
 }
+func (l *sqliteTransitionLifecycle) MarkChatSpawned(
+	ctx context.Context,
+	id domain.SessionID,
+	metadata domain.SessionMetadata,
+	boundary domain.ConversationBranch,
+) error {
+	rec, ok, err := l.store.GetSession(ctx, id)
+	if err != nil || !ok {
+		if err != nil {
+			return err
+		}
+		return ErrNotFound
+	}
+	rec.Metadata = preserveCheckpointOnFakeMarkSpawned(rec.Metadata, metadata)
+	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: time.Now()}
+	rec.FirstSignalAt = time.Now()
+	return l.store.CommitChatSpawn(ctx, rec, boundary)
+}
 func (l *sqliteTransitionLifecycle) CommitControllerEpoch(
 	ctx context.Context,
 	id domain.SessionID,
