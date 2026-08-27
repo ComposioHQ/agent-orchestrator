@@ -98,6 +98,11 @@ func (s *Store) createConversation(
 	ctx context.Context,
 	options conversationCreateOptions,
 ) (domain.ConversationRecord, error) {
+	if options.scope == domain.ConversationScopeProject {
+		ownership := s.projectConversationLock(options.project)
+		ownership.Lock()
+		defer ownership.Unlock()
+	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 
@@ -243,6 +248,34 @@ func (s *Store) createConversation(
 		CreatedAt:      options.now,
 		UpdatedAt:      options.now,
 	}, nil
+}
+
+// AcquireProjectConversationDispatch pins the authoritative project owner from
+// the final durable check through provider admission. Rebinding takes the write
+// side of this project's lock: whichever side wins is fully ordered before the
+// other, so a retired controller can never contact its provider after ownership
+// has moved. The caller must invoke the returned release function.
+func (s *Store) AcquireProjectConversationDispatch(
+	ctx context.Context,
+	conversationID string,
+	projectID domain.ProjectID,
+	sessionID domain.SessionID,
+) (func(), error) {
+	ownership := s.projectConversationLock(projectID)
+	ownership.RLock()
+	conversation, err := s.qr.SelectConversationByID(ctx, conversationID)
+	if err != nil {
+		ownership.RUnlock()
+		return nil, fmt.Errorf("select conversation owner before dispatch: %w", err)
+	}
+	if conversation.Scope != domain.ConversationScopeProject ||
+		conversation.ProjectID != projectID ||
+		conversation.CurrentSessionID == nil ||
+		*conversation.CurrentSessionID != sessionID {
+		ownership.RUnlock()
+		return nil, domain.ErrConversationOwnerChanged
+	}
+	return ownership.RUnlock, nil
 }
 
 // CreateConversationBranch records a provider-thread child without changing the
@@ -789,6 +822,14 @@ func (s *Store) appendUserMessage(
 	}
 
 	err = s.inTx(ctx, "append user message", func(q *gen.Queries) error {
+		conversation, err := q.SelectConversationByID(ctx, conversationID)
+		if err != nil {
+			return fmt.Errorf("select conversation owner: %w", err)
+		}
+		if conversation.Scope == domain.ConversationScopeProject &&
+			(conversation.CurrentSessionID == nil || *conversation.CurrentSessionID != session) {
+			return domain.ErrConversationOwnerChanged
+		}
 		sequence, err := q.NextConversationSequence(ctx, gen.NextConversationSequenceParams{
 			UpdatedAt: now,
 			ID:        conversationID,

@@ -607,11 +607,12 @@ func TestProjectConversationQueueOperationsStayWithinCurrentOwner(t *testing.T) 
 		t.Fatalf("rebind project conversation: %v", err)
 	}
 
-	if _, err := s.AppendUserMessage(ctx, conversation.ID, first.ID, "retired-generation",
+	if created, err := s.AppendUserMessage(ctx, conversation.ID, first.ID, "retired-generation",
 		domain.ConversationMessage{
 			ID: "retired-owner-message", Text: "retired owner work", Origin: domain.MessageOriginHuman,
-		}, "retired-owner-turn", histClock.Add(2*time.Minute)); err != nil {
-		t.Fatalf("append retired owner race: %v", err)
+		}, "retired-owner-turn", histClock.Add(2*time.Minute)); created ||
+		!errors.Is(err, domain.ErrConversationOwnerChanged) {
+		t.Fatalf("append retired owner race: created=%v err=%v, want owner-changed rejection", created, err)
 	}
 	if _, err := s.AppendUserMessage(ctx, conversation.ID, second.ID, "current-generation",
 		domain.ConversationMessage{
@@ -663,9 +664,8 @@ func TestProjectConversationQueueOperationsStayWithinCurrentOwner(t *testing.T) 
 	if err != nil || current.State != domain.TurnStateInterrupted {
 		t.Fatalf("current owner turn = %#v err=%v, want interrupted", current, err)
 	}
-	retired, err := s.TurnByID(ctx, "retired-owner-turn")
-	if err != nil || retired.State != domain.TurnStateQueued {
-		t.Fatalf("retired owner turn = %#v err=%v, want untouched queued", retired, err)
+	if _, err := s.TurnByID(ctx, "retired-owner-turn"); !errors.Is(err, domain.ErrNoConversationTurn) {
+		t.Fatalf("retired owner turn was durably admitted: %v", err)
 	}
 }
 

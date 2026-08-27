@@ -1943,6 +1943,157 @@ func TestFreshProjectControllerRecordsNativeContextBoundary(t *testing.T) {
 	}
 }
 
+func TestRetiredProjectControllerRejectsSendAfterConversationRebind(t *testing.T) {
+	st := openStore(t)
+	ctx := context.Background()
+	provider := newFakeConversation()
+	var nextID atomic.Int32
+	svc := chatsvc.New(chatsvc.Options{
+		Store: st, Sessions: st,
+		Drivers: fakeRegistry{driver: fakeDriver{conv: provider}},
+		Log:     slog.New(slog.DiscardHandler),
+		NewID: func() string {
+			return fmt.Sprintf("retired-send-%d", nextID.Add(1))
+		},
+	})
+	t.Cleanup(func() { _ = svc.Stop(context.Background(), testSession) })
+
+	if _, err := svc.Start(ctx, chatsvc.StartConfig{
+		SessionID: testSession, ProjectID: testProject, Kind: domain.KindOrchestrator,
+		Harness: domain.HarnessCodex, WorkspacePath: t.TempDir(),
+	}); err != nil {
+		t.Fatalf("Start first project controller: %v", err)
+	}
+	replacement, err := st.CreateSession(ctx, domain.SessionRecord{
+		ProjectID: testProject, Kind: domain.KindOrchestrator, Harness: domain.HarnessCodex,
+		Mode: domain.SessionModeChat, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("create replacement orchestrator: %v", err)
+	}
+	if _, err := st.CreateConversation(
+		ctx, "unused-replacement-conversation", domain.ConversationScopeProject,
+		testProject, replacement.ID, time.Now().UTC(),
+	); err != nil {
+		t.Fatalf("rebind project conversation: %v", err)
+	}
+
+	_, err = svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "must not reach the retired agent", ClientMessageID: "retired-send",
+		Origin: domain.MessageOriginHuman,
+	})
+	if !errors.Is(err, chatsvc.ErrControllerHandoff) {
+		t.Fatalf("Send through retired project controller = %v, want ErrControllerHandoff", err)
+	}
+	if got := provider.sentTexts(); len(got) != 0 {
+		t.Fatalf("retired provider received work after rebind: %v", got)
+	}
+}
+
+type pauseAfterAppendStore struct {
+	*sqlite.Store
+	appended chan struct{}
+	release  chan struct{}
+	once     sync.Once
+}
+
+func (s *pauseAfterAppendStore) AppendUserMessage(
+	ctx context.Context,
+	conversationID string,
+	session domain.SessionID,
+	generation string,
+	message domain.ConversationMessage,
+	turnID string,
+	now time.Time,
+) (bool, error) {
+	created, err := s.Store.AppendUserMessage(
+		ctx, conversationID, session, generation, message, turnID, now,
+	)
+	if err == nil && created {
+		s.once.Do(func() { close(s.appended) })
+		<-s.release
+	}
+	return created, err
+}
+
+func TestProjectRebindAfterAppendPreventsRetiredProviderDispatch(t *testing.T) {
+	st := openStore(t)
+	ctx := context.Background()
+	provider := newFakeConversation()
+	pausedStore := &pauseAfterAppendStore{
+		Store: st, appended: make(chan struct{}), release: make(chan struct{}),
+	}
+	var nextID atomic.Int32
+	svc := chatsvc.New(chatsvc.Options{
+		Store: pausedStore, Sessions: st,
+		Drivers: fakeRegistry{driver: fakeDriver{conv: provider}},
+		Log:     slog.New(slog.DiscardHandler),
+		NewID: func() string {
+			return fmt.Sprintf("rebind-after-append-%d", nextID.Add(1))
+		},
+	})
+	t.Cleanup(func() { _ = svc.Stop(context.Background(), testSession) })
+	// Release the seam before stopping the service if an earlier assertion fails.
+	// Cleanups run in reverse registration order, and Stop also needs sendMu.
+	t.Cleanup(func() {
+		select {
+		case <-pausedStore.release:
+		default:
+			close(pausedStore.release)
+		}
+	})
+	controller, err := svc.Start(ctx, chatsvc.StartConfig{
+		SessionID: testSession, ProjectID: testProject, Kind: domain.KindOrchestrator,
+		Harness: domain.HarnessCodex, WorkspacePath: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("Start first project controller: %v", err)
+	}
+
+	sendDone := make(chan error, 1)
+	go func() {
+		_, sendErr := svc.Send(ctx, testSession, ports.ChatUserMessage{
+			Text: "admitted before project rebind", ClientMessageID: "rebind-after-append",
+			Origin: domain.MessageOriginHuman,
+		})
+		sendDone <- sendErr
+	}()
+	select {
+	case <-pausedStore.appended:
+	case <-time.After(4 * time.Second):
+		t.Fatal("Send did not durably append before the rebind")
+	}
+
+	replacement, err := st.CreateSession(ctx, domain.SessionRecord{
+		ProjectID: testProject, Kind: domain.KindOrchestrator, Harness: domain.HarnessCodex,
+		Mode: domain.SessionModeChat, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("create replacement orchestrator: %v", err)
+	}
+	if _, err := st.CreateConversation(
+		ctx, "unused-racing-replacement", domain.ConversationScopeProject,
+		testProject, replacement.ID, time.Now().UTC(),
+	); err != nil {
+		t.Fatalf("rebind project conversation after append: %v", err)
+	}
+	close(pausedStore.release)
+
+	if err := <-sendDone; !errors.Is(err, chatsvc.ErrControllerHandoff) {
+		t.Fatalf("Send after losing project ownership = %v, want ErrControllerHandoff", err)
+	}
+	if got := provider.sentTexts(); len(got) != 0 {
+		t.Fatalf("retired provider received work after rebind: %v", got)
+	}
+	snapshot, err := st.LoadConversationSnapshot(ctx, controller.ConversationID())
+	if err != nil {
+		t.Fatalf("LoadConversationSnapshot: %v", err)
+	}
+	if got := turnStateByText(t, snapshot)["admitted before project rebind"]; got != domain.TurnStateFailed {
+		t.Fatalf("admitted turn after project rebind = %q, want failed", got)
+	}
+}
+
 func TestFreshProjectControllerStartFailureKeepsPreviousHistoryHidden(t *testing.T) {
 	st := openStore(t)
 	ctx := context.Background()

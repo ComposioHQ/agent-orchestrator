@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite/gen"
 )
 
@@ -24,6 +25,9 @@ type Store struct {
 	qw      *gen.Queries // bound to the single writer connection
 	qr      *gen.Queries // bound to the reader pool
 	writeMu sync.Mutex
+
+	projectConversationMu    sync.Mutex
+	projectConversationLocks map[domain.ProjectID]*sync.RWMutex
 }
 
 type conversationProjectionTxKey struct{}
@@ -48,13 +52,31 @@ func (s *Store) conversationReader(ctx context.Context) *gen.Queries {
 	return s.qr
 }
 
+// projectConversationLock linearizes project-conversation rebinding with the
+// brief provider admission boundary. Locks are per project, so one agent's
+// provider startup never stalls an unrelated project's conversation.
+func (s *Store) projectConversationLock(projectID domain.ProjectID) *sync.RWMutex {
+	s.projectConversationMu.Lock()
+	defer s.projectConversationMu.Unlock()
+	if s.projectConversationLocks == nil {
+		s.projectConversationLocks = make(map[domain.ProjectID]*sync.RWMutex)
+	}
+	lock := s.projectConversationLocks[projectID]
+	if lock == nil {
+		lock = &sync.RWMutex{}
+		s.projectConversationLocks[projectID] = lock
+	}
+	return lock
+}
+
 // NewStore wraps an opened writer + reader *sql.DB (see Open) as a Store.
 func NewStore(writeDB, readDB *sql.DB) *Store {
 	return &Store{
-		writeDB: writeDB,
-		readDB:  readDB,
-		qw:      gen.New(writeDB),
-		qr:      gen.New(readDB),
+		writeDB:                  writeDB,
+		readDB:                   readDB,
+		qw:                       gen.New(writeDB),
+		qr:                       gen.New(readDB),
+		projectConversationLocks: make(map[domain.ProjectID]*sync.RWMutex),
 	}
 }
 

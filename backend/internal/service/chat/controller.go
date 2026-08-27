@@ -55,6 +55,7 @@ type Store interface {
 
 	AppendUserMessage(ctx context.Context, conversationID string, session domain.SessionID, generation string, msg domain.ConversationMessage, turnID string, now time.Time) (bool, error)
 	AppendRetryUserMessage(ctx context.Context, conversationID string, session domain.SessionID, generation string, msg domain.ConversationMessage, turnID, retryOfTurnID string, now time.Time) (bool, error)
+	AcquireProjectConversationDispatch(ctx context.Context, conversationID string, projectID domain.ProjectID, sessionID domain.SessionID) (func(), error)
 	BindTurnToProvider(ctx context.Context, turnID, providerTurnID string, now time.Time) error
 	SettleTurn(ctx context.Context, conversationID, providerTurnID string, state domain.TurnState, errMessage string, now time.Time) error
 	SettleTurnByID(ctx context.Context, turnID string, state domain.TurnState, errMessage string, now time.Time) error
@@ -993,6 +994,9 @@ func (c *Controller) Send(ctx context.Context, msg ports.ChatUserMessage) (domai
 	created, err := c.store.AppendUserMessage(
 		ctx, c.conversation.ID, c.sessionID, c.generation, record, turnID, now)
 	if err != nil {
+		if errors.Is(err, domain.ErrConversationOwnerChanged) {
+			return domain.ConversationTurn{}, fmt.Errorf("%w: %w", ErrControllerHandoff, err)
+		}
 		return domain.ConversationTurn{}, fmt.Errorf("record user message: %w", err)
 	}
 	if !created {
@@ -1104,6 +1108,9 @@ func (c *Controller) RetryTurn(ctx context.Context, turnID string) (domain.Conve
 			DeliveryContentJSON: prompt.DeliveryContentJSON,
 		}, newTurnID, turnID, now)
 	if err != nil {
+		if errors.Is(err, domain.ErrConversationOwnerChanged) {
+			return domain.ConversationTurn{}, fmt.Errorf("%w: %w", ErrControllerHandoff, err)
+		}
 		return domain.ConversationTurn{}, fmt.Errorf("record retried message: %w", err)
 	}
 	if !created {
@@ -1265,6 +1272,18 @@ func (c *Controller) dispatch(
 	msg ports.ChatUserMessage,
 	requestedAt time.Time,
 ) (domain.ConversationTurn, error) {
+	if c.conversation.Scope == domain.ConversationScopeProject {
+		release, err := c.store.AcquireProjectConversationDispatch(
+			ctx, c.conversation.ID, c.conversation.ProjectID, c.sessionID,
+		)
+		if errors.Is(err, domain.ErrConversationOwnerChanged) {
+			return domain.ConversationTurn{}, fmt.Errorf("%w: %w", ErrControllerHandoff, err)
+		}
+		if err != nil {
+			return domain.ConversationTurn{}, fmt.Errorf("verify project conversation owner: %w", err)
+		}
+		defer release()
+	}
 	// Every dispatch carries the conversation's choices, including one AO makes on
 	// the user's behalf: a queued message draining, or a relay from `ao send`. A
 	// setting that only applied when the user pressed send would silently stop
