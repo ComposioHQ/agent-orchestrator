@@ -1,6 +1,7 @@
 "use client";
 
 import { AnimatePresence, LayoutGroup, motion } from "motion/react";
+import { Bell, LayoutDashboard, Network, Plus } from "lucide-react";
 import { createContext, useContext, useEffect, useRef, useState, type ImgHTMLAttributes } from "react";
 import { featurePreviewTokens } from "../FeaturePreviewShell";
 import { usePreviewScale } from "../usePreviewScale";
@@ -280,138 +281,105 @@ function AnimatedTestCount({ testResults }: { testResults: { pass: number; total
 function BoardCard({ card, isPulsing }: { card: Card; isPulsing: boolean }) {
 	const prMatch = card.pr.match(/PR\s+#(\d+)/i);
 	const isWaiting = card.activityState === "waiting";
-	const isReviewFlag = isWaiting && card.column === "in_review";
-
-	const activityColor =
-		card.activityState === "passed" ? "text-[#4ade80]"
-		: card.activityState === "waiting" ? (isReviewFlag ? "text-[#f87171]" : "text-[#fb923c]")
-		: card.activityState === "reviewing" ? "text-[#facc15]"
-		: "text-[var(--preview-muted-foreground)]";
-
-	const attentionBorder = isWaiting
-		? isReviewFlag ? "border-[#f87171]/70" : "border-[#fb923c]/60"
-		: "border-[var(--preview-border)]";
-	const badgeColor = isReviewFlag ? "bg-[#f87171]" : "bg-[#fb923c]";
-	const attentionAnim = isWaiting && isPulsing ? "ao-attention-pulse" : "";
-	const isTestCard = card.column === "staging" && !!card.testResults;
+	const activityTone =
+		card.activityState === "passed" ? "#4ade80"
+		: card.activityState === "waiting" ? "#fb923c"
+		: card.activityState === "reviewing" ? "#facc15"
+		: "#60a5fa";
 
 	return (
-		<motion.div
+		<motion.article
 			layout
 			layoutId={`${card.id}-${card.column}`}
-			initial={{ opacity: 0, scale: 0.98, y: -8 }}
-			animate={card.merging ? { opacity: 0, scale: 0.96, y: -8 } : { opacity: 1, scale: 1, y: 0 }}
-			exit={{ opacity: 0, scale: 0.96, y: -8 }}
+			initial={{ opacity: 0 }}
+			animate={card.merging ? { opacity: 0 } : { opacity: 1 }}
+			exit={{ opacity: 0 }}
 			transition={{
-				duration: 0.45,
-				ease: [0.22, 1, 0.36, 1],
-				layout: { duration: 0.55, ease: [0.22, 1, 0.36, 1] },
+				duration: 0.22,
+				ease: "easeOut",
+				layout: { duration: 0.22, ease: "easeOut" },
 			}}
-			className={`rounded-[6px] border ${attentionBorder} bg-[var(--preview-card)] shadow-[0_1px_1px_rgba(0,0,0,0.05)] ${attentionAnim}`}
+			className={`relative w-full overflow-hidden rounded-lg border bg-[var(--preview-card)] ${
+				isWaiting ? "border-[#fb923c]/60" : "border-[var(--preview-border)]"
+			}`}
 		>
-			{/* Title row */}
-			<div className="flex items-start gap-2 px-2.5 pb-2 pt-2.5">
-				<div className="relative mt-0.5 h-3 w-3 shrink-0">
-					<FleetBoardImage src={card.icon} alt="" width={12} height={12}
-						aria-hidden="true" draggable="false" className="h-3 w-3" />
-					{isWaiting ? (
-						<span aria-hidden="true"
-							className={`pointer-events-none absolute -right-0.5 -top-0.5 flex h-2 w-2 items-center justify-center rounded-full ${badgeColor} text-[6px] font-black leading-none text-white shadow-[0_0_0_1px_var(--preview-card)]`}>
-							!
-						</span>
-					) : null}
-				</div>
-				<div className="line-clamp-2 min-w-0 text-[8px] font-semibold leading-tight tracking-tight text-[var(--preview-card-foreground)]">
+			<div className="flex items-start gap-2.5 px-3.5 pb-2.5 pt-3">
+				<FleetBoardImage
+					src={card.icon}
+					alt=""
+					width={16}
+					height={16}
+					aria-hidden="true"
+					draggable="false"
+					className="mt-0.5 size-4 shrink-0 object-contain"
+				/>
+				<div className="min-w-0 flex-1">
+					<div className="line-clamp-2 text-[11px] font-semibold leading-[1.2] tracking-tight text-[var(--preview-card-foreground)]">
 					{card.title}
 				</div>
+					<div className="mt-1.5 flex min-w-0 items-center gap-1.5 font-mono text-[9px] text-[var(--preview-muted-foreground)]">
+						<BranchIcon className="size-2.5 shrink-0" />
+						<span className="truncate">{card.branch}</span>
+					</div>
+				</div>
 			</div>
-
-			{/* Branch + PR rows */}
-			<div className="px-2.5 text-[8px] leading-[14px] text-[var(--preview-muted-foreground)]">
-				<div className="flex items-center gap-1 py-0.5">
-					<BranchIcon className="h-2.5 w-2.5 shrink-0" />
-					<span className="truncate font-mono">{card.branch}</span>
+			<div aria-hidden="true" className="mx-3.5 h-px bg-[var(--preview-border)]" />
+			<div className="flex items-center gap-2 px-3.5 py-2 text-[9px]">
+				<span className="inline-flex min-w-0 flex-1 items-center gap-1.5" style={{ color: activityTone }}>
+					<span
+						aria-hidden="true"
+						className={`size-1.5 shrink-0 rounded-full ${isPulsing ? "animate-pulse" : ""}`}
+						style={{ background: activityTone }}
+					/>
+					<span className="truncate font-medium">{card.activity}</span>
+				</span>
+				<div className="ml-auto flex shrink-0 items-center gap-1.5 font-mono text-[8.5px] text-[var(--preview-muted-foreground)]">
+					{prMatch ? <span>#{prMatch[1]}</span> : null}
+					<span>{card.time}</span>
 				</div>
-				{prMatch ? (
-					<div className="flex items-center gap-1 py-0.5 text-[var(--preview-muted-foreground)]">
-						<PullRequestIcon className="h-2.5 w-2.5 shrink-0" />
-						<span className="font-mono">#{prMatch[1]}</span>
-					</div>
-				) : null}
 			</div>
-
-			{/* Reviewer avatars + PR comments (in_review / merge) */}
-			{(card.column === "in_review" || card.column === "merge") ? (
-				<div className="flex items-center justify-between px-2.5 pb-1.5 pt-1">
-					<div className="flex items-center gap-1">
-						{card.reviewers && card.reviewers.length > 0 ? (
-							<div className="flex -space-x-1">
-								{card.reviewers.slice(0, 3).map((src) => (
-									<FleetBoardImage key={src} src={src} alt="" width={14} height={14}
-										aria-hidden="true" draggable="false"
-										className="h-[14px] w-[14px] rounded-full ring-1 ring-[var(--preview-card)]" />
-								))}
-							</div>
-						) : null}
-					</div>
-					{card.prComments !== undefined ? (
-						<span className={`text-[8px] ${card.prComments > 0 ? "text-[#fb923c]" : "text-[var(--preview-muted-foreground)]"}`}>
-							{card.prComments === 0 ? "0 cmt" : `${card.prComments} cmt`}
-						</span>
-					) : null}
-				</div>
-			) : null}
-
-			{/* Activity / action row */}
-			{card.column === "merge" ? (
-				<div className="flex items-center justify-between gap-2 border-t border-[var(--preview-border)] px-2.5 py-2">
-					<div className="inline-flex h-5 items-center justify-center whitespace-nowrap rounded-[4px] bg-[var(--preview-primary)] px-2 text-[8.5px] font-semibold text-[var(--preview-primary-foreground)]">
-						Merge PR
-					</div>
-					<span className="shrink-0 font-mono text-[7.5px] text-[var(--preview-muted-foreground)]">{card.time}</span>
-				</div>
-			) : (
-				<div className={`flex items-center gap-1.5 border-t border-[var(--preview-border)] px-2.5 py-2 ${activityColor}`}>
-					<span className="inline-flex min-w-0 flex-1 items-center gap-1.5 text-[8px]">
-						{isTestCard ? (
-							<AnimatedTestCount testResults={card.testResults!} />
-						) : (
-							<>
-								<ActivityIcon state={card.activityState} />
-								<span className="truncate">{card.activity}</span>
-							</>
-						)}
-					</span>
-					<span className="shrink-0 font-mono text-[7.5px] text-[var(--preview-muted-foreground)]">{card.time}</span>
-				</div>
-			)}
-		</motion.div>
+		</motion.article>
 	);
 }
 
 // ── BoardColumn ───────────────────────────────────────────────────────────────
 
-function BoardColumn({ cards, color, title }: { cards: Card[]; color: string; title: string }) {
+function BoardColumn({ cards, id, title }: { cards: Card[]; id: ColumnId; title: string }) {
 	const attentionCards = cards.filter((c) => c.activityState === "waiting");
 	const normalCards = cards.filter((c) => c.activityState !== "waiting");
 	const sorted = [...attentionCards, ...normalCards];
 	const pulsingId = attentionCards[0]?.id ?? null;
-	const extraWaiting = Math.max(0, attentionCards.length - 1);
+	const splitLane = id === "working" || id === "merge";
+	const primaryLabel = id === "working" ? "Idle" : "Ready";
+	const secondaryLabel = id === "working" ? "Working" : "Merged";
+	const primaryTone = id === "working" ? "var(--preview-muted-foreground)" : "#4ade80";
+	const secondaryTone = id === "working" ? "#60a5fa" : "#4ade80";
+	const primaryCount = id === "working" ? cards.filter((card) => card.activityState === "waiting").length : cards.length;
+	const secondaryCount = id === "working" ? cards.length - primaryCount : 0;
 
 	return (
-		<section className="flex min-h-0 min-w-0 snap-start flex-col border-r border-[var(--preview-border)] last:border-r-0">
-			<div className="flex h-10 shrink-0 items-center gap-2 border-b border-[var(--preview-border)] px-3">
-				<span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: color }} />
-				<div className="truncate font-mono text-[7.5px] font-medium uppercase tracking-wide text-[var(--preview-muted-foreground)]">{title}</div>
-				<div className="ml-auto font-mono text-[8px] leading-none text-[var(--preview-muted-foreground)] opacity-60">{cards.length}</div>
-				{extraWaiting > 0 ? (
-					<div className="inline-flex items-center gap-1 rounded-[3px] bg-[#fb923c]/10 px-1 py-0.5 text-[7px] font-semibold text-[#fb923c]">
-						<WaitingIcon className="h-2 w-2" />
-						{extraWaiting} waiting
-					</div>
-				) : null}
+		<section className="flex min-h-0 min-w-0 flex-col border-r border-[var(--preview-border)] last:border-r-0">
+			<div className="flex h-12 shrink-0 items-center gap-2 px-4">
+				{splitLane ? (
+					<>
+						<div className="flex min-w-0 items-center gap-2 font-mono text-[9px] font-medium uppercase tracking-wide">
+							<LaneLabel color={primaryTone} label={primaryLabel} />
+							<span className="text-[var(--preview-passive)]">/</span>
+							<LaneLabel color={secondaryTone} label={secondaryLabel} />
+						</div>
+						<div className="ml-auto flex shrink-0 items-center gap-1.5 font-mono text-[9px] text-[var(--preview-muted-foreground)]">
+							<span>{primaryCount}</span><span>/</span><span>{secondaryCount}</span>
+						</div>
+					</>
+				) : (
+					<>
+						<span className="size-1.5 rounded-full" style={{ background: id === "staging" ? "#fb923c" : "#facc15" }} />
+						<span className="truncate font-mono text-[9px] font-medium uppercase tracking-wide text-[var(--preview-muted-foreground)]">{title}</span>
+						<span className="ml-auto font-mono text-[9px] leading-none text-[var(--preview-muted-foreground)]">{cards.length}</span>
+					</>
+				)}
 			</div>
-			<div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto px-2 pb-2 pt-2 scrollbar-hide">
+			<div className="min-h-0 flex-1 space-y-2.5 overflow-hidden px-3 pb-3 pt-3">
 				<AnimatePresence initial={false}>
 					{sorted.map((card) => (
 						<BoardCard key={card.id} card={card} isPulsing={card.id === pulsingId} />
@@ -422,12 +390,21 @@ function BoardColumn({ cards, color, title }: { cards: Card[]; color: string; ti
 	);
 }
 
+function LaneLabel({ color, label }: { color: string; label: string }) {
+	return (
+		<span className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap" style={{ color }}>
+			<span className="size-1.5 rounded-full" style={{ background: color }} />
+			{label}
+		</span>
+	);
+}
+
 // ── FleetBoardDemo ────────────────────────────────────────────────────────────
 
 export function FleetBoardDemo({ assets = {} }: { assets?: FleetBoardAssets }) {
 	const [cards, setCards] = useState<Card[]>(INITIAL_CARDS);
 	const incomingIdx = useRef(0);
-	const { viewportRef, viewportStyle, canvasStyle } = usePreviewScale(570, 318);
+	const { viewportRef, viewportStyle, canvasStyle } = usePreviewScale(620, 408);
 
 	// Remove a merged card after its exit animation
 	const mergeCard = (id: string) => {
@@ -534,7 +511,7 @@ export function FleetBoardDemo({ assets = {} }: { assets?: FleetBoardAssets }) {
 		<FleetBoardAssetsContext.Provider value={assets}>
 		<div
 			ref={viewportRef}
-			className="relative mx-auto w-full min-w-0 max-w-[570px]"
+			className="relative mx-auto w-full min-w-0 max-w-[620px]"
 			style={viewportStyle}
 		>
 			<div
@@ -550,23 +527,44 @@ export function FleetBoardDemo({ assets = {} }: { assets?: FleetBoardAssets }) {
 					@media (prefers-reduced-motion: reduce) { .ao-attention-pulse { animation: none; } }
 				`}</style>
 				<div className="flex h-full min-h-0 flex-col">
-					<div className="flex h-9 shrink-0 items-center border-b border-[var(--preview-border)] px-3">
-						<span className="text-[9px] font-semibold text-[var(--preview-foreground)]">Board</span>
-						<div className="ml-auto flex items-center gap-1.5">
-							<span className="rounded-[4px] bg-[var(--preview-primary)] px-2 py-1 text-[7.5px] font-semibold text-[var(--preview-primary-foreground)]">+ Task</span>
-							<span className="rounded-[4px] bg-[var(--preview-input)] px-2 py-1 text-[7.5px] text-[var(--preview-muted-foreground)]">Orchestrator</span>
-						</div>
-					</div>
+					<BoardTopbar />
 					<LayoutGroup>
-						<div className="grid min-h-0 flex-1 grid-cols-4 divide-x divide-[var(--preview-border)] overflow-hidden">
-							{boardColumns.map((col) => (
-								<BoardColumn key={col.id} cards={col.cards} color={col.color} title={col.title} />
-							))}
+						<div className="min-h-0 flex-1 overflow-hidden">
+							<div className="grid h-full w-[1024px] grid-cols-4 divide-x divide-[var(--preview-border)]">
+								{boardColumns.map((col) => (
+									<BoardColumn key={col.id} cards={col.cards} id={col.id} title={col.title} />
+								))}
+							</div>
 						</div>
 					</LayoutGroup>
 				</div>
 			</div>
 		</div>
 		</FleetBoardAssetsContext.Provider>
+	);
+}
+
+function BoardTopbar() {
+	return (
+		<div className="flex h-9 shrink-0 items-center gap-2 border-b border-[var(--preview-border)] px-3">
+			<span className="inline-flex items-center gap-1.5 text-[10px] font-semibold tracking-tight text-[var(--preview-foreground)]">
+				<LayoutDashboard aria-hidden="true" className="size-3.5 text-[var(--preview-muted-foreground)]" />
+				Board
+			</span>
+			<div className="ml-auto flex shrink-0 items-center gap-1.5">
+				<span className="inline-flex h-7 items-center gap-1.5 whitespace-nowrap rounded-[5px] border border-[var(--preview-border)] bg-[var(--preview-input)] px-2.5 text-[9px] font-semibold text-[var(--preview-muted-foreground)]">
+					<Plus aria-hidden="true" className="size-3" />
+					Task
+				</span>
+				<span className="inline-flex h-7 items-center gap-1.5 whitespace-nowrap rounded-[5px] bg-[var(--preview-primary)] px-2.5 text-[9px] font-semibold text-[var(--preview-primary-foreground)]">
+					<Network aria-hidden="true" className="size-3" />
+					Orchestrator
+				</span>
+				<span aria-hidden="true" className="mx-0.5 h-3.5 w-px bg-[var(--preview-border)]" />
+				<span className="grid size-7 place-items-center rounded-[5px] text-[var(--preview-muted-foreground)]">
+					<Bell aria-hidden="true" className="size-3.5" />
+				</span>
+			</div>
+		</div>
 	);
 }
