@@ -12,6 +12,8 @@ import (
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
 type projectAddOptions struct {
@@ -139,6 +141,7 @@ type projectSetConfigOptions struct {
 	symlink           []string
 	postCreate        []string
 	trackerIntake     bool
+	trackerProvider   string
 	trackerRepo       string
 	trackerAssignee   string
 	reviewers         []string
@@ -330,9 +333,10 @@ func newProjectSetConfigCommand(ctx *commandContext) *cobra.Command {
 	f.StringArrayVar(&opts.env, "env", nil, "Env var KEY=VALUE forwarded into sessions (repeatable)")
 	f.StringArrayVar(&opts.symlink, "symlink", nil, "Repo-relative path to symlink into workspaces (repeatable)")
 	f.StringArrayVar(&opts.postCreate, "post-create", nil, "Command to run after workspace creation (repeatable)")
-	f.BoolVar(&opts.trackerIntake, "tracker-intake", false, "Enable GitHub issue intake for matching issues")
-	f.StringVar(&opts.trackerRepo, "tracker-repo", "", "GitHub repo for issue intake (owner/repo; default: derive from git origin)")
-	f.StringVar(&opts.trackerAssignee, "tracker-assignee", "", "GitHub issue assignee required for intake eligibility")
+	f.BoolVar(&opts.trackerIntake, "tracker-intake", false, "Enable issue intake for matching issues")
+	f.StringVar(&opts.trackerProvider, "tracker-provider", "", "Issue-intake provider: "+trackerProviderChoices()+" (default: github)")
+	f.StringVar(&opts.trackerRepo, "tracker-repo", "", "Provider-native repo for issue intake (\"owner/repo\" for GitHub, \"group/project\" for GitLab, a project path for OneDev; default: derive from git origin)")
+	f.StringVar(&opts.trackerAssignee, "tracker-assignee", "", "Issue assignee required for intake eligibility")
 	f.StringArrayVar(&opts.reviewers, "reviewer", nil, "Reviewer harness that reviews worker PRs (repeatable; e.g. claude-code)")
 	f.StringVar(&opts.configJSON, "config-json", "", "Full config as a JSON object (overrides field flags)")
 	f.BoolVar(&opts.clear, "clear", false, "Clear all config")
@@ -360,6 +364,10 @@ func buildProjectConfig(opts projectSetConfigOptions) (projectConfig, error) {
 	if err != nil {
 		return projectConfig{}, err
 	}
+	trackerProvider, err := trackerProviderForFlags(opts)
+	if err != nil {
+		return projectConfig{}, err
+	}
 	cfg := projectConfig{
 		DefaultBranch:     opts.defaultBranch,
 		SessionPrefix:     opts.sessionPrefix,
@@ -374,7 +382,7 @@ func buildProjectConfig(opts projectSetConfigOptions) (projectConfig, error) {
 		Orchestrator:      roleOverride{Agent: opts.orchestratorAgent},
 		TrackerIntake: trackerIntakeConfig{
 			Enabled:  opts.trackerIntake,
-			Provider: trackerProviderForFlags(opts),
+			Provider: trackerProvider,
 			Repo:     opts.trackerRepo,
 			Assignee: opts.trackerAssignee,
 		},
@@ -386,11 +394,33 @@ func buildProjectConfig(opts projectSetConfigOptions) (projectConfig, error) {
 	return cfg, nil
 }
 
-func trackerProviderForFlags(opts projectSetConfigOptions) string {
-	if opts.trackerIntake || opts.trackerRepo != "" || opts.trackerAssignee != "" {
-		return "github"
+// trackerProviderForFlags resolves --tracker-provider against the domain's
+// supported-provider set. An explicit value is validated; otherwise the
+// provider is only defaulted once some other tracker flag is in play, so a
+// config built from unrelated flags stays empty.
+func trackerProviderForFlags(opts projectSetConfigOptions) (string, error) {
+	provider := strings.TrimSpace(opts.trackerProvider)
+	if provider != "" {
+		if !domain.IsSupportedIntakeProvider(domain.TrackerProvider(provider)) {
+			return "", usageError{fmt.Errorf("invalid --tracker-provider %q: expected one of %s", opts.trackerProvider, trackerProviderChoices())}
+		}
+		return provider, nil
 	}
-	return ""
+	if opts.trackerIntake || opts.trackerRepo != "" || opts.trackerAssignee != "" {
+		return string(domain.TrackerProviderGitHub), nil
+	}
+	return "", nil
+}
+
+// trackerProviderChoices renders the supported intake providers for help text
+// and error messages.
+func trackerProviderChoices() string {
+	providers := domain.SupportedIntakeProviders()
+	names := make([]string, 0, len(providers))
+	for _, provider := range providers {
+		names = append(names, string(provider))
+	}
+	return strings.Join(names, ", ")
 }
 
 // reviewersForFlags turns repeated --reviewer harness values into the config
