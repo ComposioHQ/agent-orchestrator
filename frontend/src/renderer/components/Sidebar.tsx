@@ -131,9 +131,8 @@ const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperti
 const HOVER_ACTION_CLASS =
 	"grid size-5 shrink-0 place-items-center rounded-md bg-transparent text-passive hover:bg-transparent focus:bg-transparent focus-visible:bg-transparent active:bg-transparent data-[state=open]:bg-transparent hover:text-foreground disabled:pointer-events-none disabled:opacity-50 data-[state=open]:text-foreground [&_svg]:size-icon-lg";
 
-// Session actions keep a stable hit strip, but the controls themselves are
-// quiet glyphs. Opacity is the only hover transition; the row should not gain
-// three filled icon-button pills or reflow its label when the strip appears.
+// Session actions overlay the row without changing its footprint. The primary
+// label only yields their width while the row is hovered or contains focus.
 const SESSION_ACTION_CLASS =
 	"grid size-5 shrink-0 place-items-center rounded-md bg-transparent p-1 text-passive hover:bg-transparent focus:bg-transparent focus-visible:bg-transparent active:bg-transparent data-[state=open]:bg-transparent hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:pointer-events-none disabled:opacity-50 [&_svg]:size-3!";
 
@@ -1473,7 +1472,7 @@ const ProjectDragPreview = memo(function ProjectDragPreview({ workspace, expande
 						return (
 							<div className="pl-4.5" key={session.id}>
 								<div className={cn("flex h-8 w-full items-center rounded-lg", active && "bg-interactive-active text-foreground")}>
-									<div className="flex h-8 min-w-0 flex-1 items-center gap-1.5 px-2.5 pr-[70px] text-sm">
+									<div className="flex h-8 min-w-0 flex-1 items-center gap-1.5 px-2.5 text-sm">
 										<SessionStatusDot session={session} />
 										<span className="flex min-w-0 flex-1 items-center gap-1.5">
 											<span className={cn("min-w-0 flex-1 truncate", active ? "text-foreground" : "text-muted-foreground")}>
@@ -1680,7 +1679,9 @@ function SessionRow({
 							aria-describedby={describedBy}
 							aria-label={t("shell.openSession", { title: session.title })}
 							className={cn(
-							"flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-lg px-2.5 py-0 pr-[70px] text-left text-sm outline-hidden focus-visible:ring-2 focus-visible:ring-sidebar-ring",
+								"flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-lg px-2.5 py-0 text-left text-sm outline-hidden focus-visible:ring-2 focus-visible:ring-sidebar-ring",
+								!reorder?.isDragging &&
+									"group-hover/session-row:pr-[70px] group-focus-within/session-row:pr-[70px]",
 								reorder && "cursor-grab active:cursor-grabbing",
 								reorder?.isDragging && "!cursor-grabbing",
 							)}
@@ -1707,9 +1708,8 @@ function SessionRow({
 							</span>
 						</button>
 					</div>
-					{/* Pin, rename, kill stay in a reserved strip so showing them never
-				    changes the label width. The strip fades as a group; its glyphs
-				    remain transparent/no-fill until focused or hovered. */}
+					{/* Pin, rename, and kill overlay the row. The label uses this space
+					    while idle, then yields it when hover or focus reveals the strip. */}
 					<SessionActions
 						isDragging={Boolean(reorder?.isDragging)}
 						onStartEditing={startEditing}

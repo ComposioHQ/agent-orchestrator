@@ -563,6 +563,65 @@ describe("Sidebar", () => {
 		expect(screen.getByLabelText("Kill session")).toHaveProperty("tabIndex", 0);
 	});
 
+	it("lets an idle session label use the action strip and yields it on hover or focus", () => {
+		renderSidebar({ workspaces: [{ ...workspace, sessions: [session] }] });
+
+		const openSession = screen.getByLabelText("Open fix login");
+		const label = within(openSession).getByText("fix login");
+		const actions = screen.getByLabelText("Pin session").parentElement;
+
+		expect(openSession).not.toHaveClass("pr-[70px]");
+		expect(openSession).toHaveClass(
+			"group-hover/session-row:pr-[70px]",
+			"group-focus-within/session-row:pr-[70px]",
+		);
+		expect(label).toHaveClass("min-w-0", "flex-1", "truncate");
+		expect(actions).toHaveAttribute("data-session-actions");
+		expect(actions).toHaveClass(
+			"pointer-events-none",
+			"opacity-0",
+			"group-hover/session-row:pointer-events-auto",
+			"group-hover/session-row:opacity-100",
+			"group-focus-within/session-row:pointer-events-auto",
+			"group-focus-within/session-row:opacity-100",
+		);
+	});
+
+	it("keeps session status and actions stable when an action receives keyboard focus", async () => {
+		const user = userEvent.setup();
+		renderSidebar({ workspaces: [{ ...workspace, sessions: [session] }] });
+
+		const openSession = screen.getByLabelText("Open fix login");
+		const row = openSession.closest<HTMLElement>("[data-session-row]");
+		const status = openSession.querySelector("[data-session-status]");
+
+		if (!row) throw new Error("Session row not found");
+		expect(status).toBeInTheDocument();
+		openSession.focus();
+		await user.tab();
+
+		expect(screen.getByLabelText("Pin session")).toHaveFocus();
+		expect(row).toContainElement(openSession);
+		expect(row).toContainElement(status as HTMLElement);
+		expect(row).toContainElement(screen.getByLabelText("Pin session"));
+	});
+
+	it("keeps action pointer presses from triggering the session press surface", () => {
+		renderSidebar({ workspaces: [{ ...workspace, sessions: [session] }] });
+
+		const openSession = screen.getByLabelText("Open fix login");
+		const row = openSession.closest<HTMLElement>("[data-session-row]");
+		if (!row) throw new Error("Session row not found");
+
+		fireEvent.pointerDown(openSession);
+		expect(row).toHaveClass("scale-[0.97]");
+		fireEvent.pointerUp(openSession);
+		expect(row).not.toHaveClass("scale-[0.97]");
+
+		fireEvent.pointerDown(screen.getByLabelText("Rename fix login"));
+		expect(row).not.toHaveClass("scale-[0.97]");
+	});
+
 	it("toggles project sessions from the folder icon without selecting the project first", async () => {
 		const user = userEvent.setup();
 		const other: WorkspaceSummary = {
