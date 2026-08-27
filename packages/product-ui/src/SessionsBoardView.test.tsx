@@ -311,7 +311,7 @@ describe("SessionsBoardView", () => {
 				}}
 			/>,
 		);
-		expect(screen.getByText("CI failing")).toBeInTheDocument();
+		expect(screen.getByText(getSessionStatusView("ci_failed").label)).toBeInTheDocument();
 		expect(screen.queryByText("Fixing CI failures")).not.toBeInTheDocument();
 
 		// A daemon too old to derive one leaves the status badge in charge.
@@ -324,7 +324,7 @@ describe("SessionsBoardView", () => {
 			/>,
 		);
 		expect(screen.queryByText("Fixing CI failures")).not.toBeInTheDocument();
-		expect(screen.getByText("CI failing")).toBeInTheDocument();
+		expect(screen.getByText(getSessionStatusView("ci_failed").label)).toBeInTheDocument();
 	});
 
 	it("translates the daemon's display status instead of printing raw English", () => {
@@ -351,7 +351,7 @@ describe("SessionsBoardView", () => {
 			/>,
 		);
 
-		expect(screen.getByText("CI failing")).toBeInTheDocument();
+		expect(screen.getByText("status.ci_failed")).toBeInTheDocument();
 		expect(screen.queryByText("CI-Fehler werden behoben")).not.toBeInTheDocument();
 	});
 
@@ -400,7 +400,7 @@ describe("SessionsBoardView", () => {
 			/>,
 		);
 
-		const label = screen.getByText("CI failing");
+		const label = screen.getByText(getSessionStatusView("ci_failed").label);
 		const status = label.parentElement;
 		expect(status).toHaveAttribute("data-kanban-column", "validating");
 		expect(status).toHaveClass("text-status-needs-you");
