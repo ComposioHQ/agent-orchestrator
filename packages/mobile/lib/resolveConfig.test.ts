@@ -32,10 +32,31 @@ const deps = (over: Record<string, unknown> = {}) => ({
 		hostId: id,
 	})),
 	loadLegacyConfig: vi.fn(async () => legacy),
+	persist: vi.fn(async () => {}),
 	...over,
 });
 
 describe("resolveActiveConfig", () => {
+	// The terminal and other long-lived surfaces read the persisted config
+	// directly rather than the store's copy. Without writing the winner back,
+	// a phone that raced onto Tailscale after losing Wi-Fi kept pointing them
+	// at the dead LAN address: REST recovered, the terminal did not.
+	it("persists the endpoint that won so other surfaces follow", async () => {
+		const d = deps();
+		await resolveActiveConfig(d);
+
+		expect(d.persist).toHaveBeenCalledWith(
+			expect.objectContaining({ host: "192.168.1.42" }),
+		);
+	});
+
+	it("does not persist anything when the race fails", async () => {
+		const d = deps({ connect: vi.fn(async () => ({ ok: false as const, reason: "none-reachable" as const })) });
+		await resolveActiveConfig(d);
+
+		expect(d.persist).not.toHaveBeenCalled();
+	});
+
 	it("connects to the most recently used machine", async () => {
 		const d = deps({ loadHosts: vi.fn(async () => [host({ id: "h_new", lastConnected: 9 }), host({ id: "h_old", lastConnected: 1 })]) });
 		const got = await resolveActiveConfig(d);

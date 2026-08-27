@@ -1,5 +1,5 @@
 import type { ConnectResult } from "./connect";
-import { loadConfig, type ServerConfig } from "./config";
+import { loadConfig, saveConfig, type ServerConfig } from "./config";
 import type { Host } from "./hosts";
 import { loadHosts, migrateLegacyConfig } from "./hosts";
 import { connectToHost } from "./connectRuntime";
@@ -9,6 +9,8 @@ export type ResolveDeps = {
 	loadHosts: () => Promise<Host[]>;
 	connect: (hostId: string) => Promise<ConnectResult>;
 	loadLegacyConfig: () => Promise<ServerConfig>;
+	/** Writes the winning endpoint back to storage. */
+	persist: (config: ServerConfig) => Promise<void>;
 };
 
 /**
@@ -34,7 +36,15 @@ export async function resolveActiveConfig(deps: ResolveDeps): Promise<ServerConf
 		if (hosts.length > 0) {
 			// loadHosts is ordered most-recent-first.
 			const result = await deps.connect(hosts[0].id);
-			if (result.ok) return result.config;
+			if (result.ok) {
+				// Persist the winner. Long-lived surfaces — the terminal mux above
+				// all — read the stored config directly rather than the store's
+				// copy, so without this a phone that raced onto Tailscale after
+				// losing Wi-Fi would leave them pointed at the dead LAN address:
+				// REST recovers, the terminal does not.
+				await deps.persist(result.config);
+				return result.config;
+			}
 		}
 	} catch {
 		// Falling through to the stored config: a resolution failure must not
@@ -50,5 +60,6 @@ export function runtimeResolveDeps(): ResolveDeps {
 		loadHosts,
 		connect: connectToHost,
 		loadLegacyConfig: loadConfig,
+		persist: saveConfig,
 	};
 }
