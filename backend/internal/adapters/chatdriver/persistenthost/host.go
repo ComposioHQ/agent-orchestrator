@@ -1,0 +1,664 @@
+// Package persistenthost keeps a provider stdio process alive while AO's daemon
+// is replaced. The host is deliberately provider-neutral: it forwards newline-
+// delimited protocol frames and knows only how to authenticate one controller,
+// replay output produced while detached, and terminate explicitly.
+package persistenthost
+
+import (
+	"bufio"
+	"context"
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/processalive"
+)
+
+const (
+	// ProtocolVersion fences daemon/host control-plane compatibility.
+	ProtocolVersion  = 1
+	maxDetachedBytes = 32 << 20
+	startupTimeout   = 10 * time.Second
+)
+
+var (
+	// ErrAttached reports that another daemon controller owns the host.
+	ErrAttached = errors.New("chat host already has a controller")
+	// ErrUnauthorized reports an invalid host capability.
+	ErrUnauthorized = errors.New("chat host authentication failed")
+	// ErrIncompatible reports a control-plane protocol version mismatch.
+	ErrIncompatible = errors.New("chat host protocol incompatible")
+	// ErrHostExists reports an atomic per-session launch-lock conflict.
+	ErrHostExists = errors.New("chat host already exists")
+)
+
+// Descriptor is the private connection record published by a running host.
+type Descriptor struct {
+	Version   int       `json:"version"`
+	SessionID string    `json:"sessionId"`
+	Address   string    `json:"address"`
+	Token     string    `json:"token"`
+	PID       int       `json:"pid"`
+	StartedAt time.Time `json:"startedAt"`
+}
+
+// Config identifies one provider process and its AO session ownership.
+type Config struct {
+	SessionID string
+	DataDir   string
+	Workdir   string
+	Env       []string
+	Argv      []string
+}
+
+// Transport is one authenticated attachment to a persistent provider host.
+type Transport struct {
+	Stdin         io.WriteCloser
+	Stdout        io.Reader
+	Reconnected   bool
+	NextRequestID int64
+}
+
+type hello struct {
+	Version int    `json:"version"`
+	Token   string `json:"token"`
+	Action  string `json:"action"`
+}
+
+type helloResponse struct {
+	OK            bool   `json:"ok"`
+	Error         string `json:"error,omitempty"`
+	NextRequestID int64  `json:"nextRequestId,omitempty"`
+}
+
+func hostDir(dataDir, sessionID string) (string, error) {
+	if sessionID == "" || filepath.Base(sessionID) != sessionID || strings.ContainsAny(sessionID, `/\\`) {
+		return "", errors.New("invalid chat host session id")
+	}
+	if !filepath.IsAbs(dataDir) {
+		return "", errors.New("chat host data dir must be absolute")
+	}
+	return filepath.Join(dataDir, "chat-hosts", sessionID), nil
+}
+
+func descriptorPath(dataDir, sessionID string) (string, error) {
+	dir, err := hostDir(dataDir, sessionID)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "host.json"), nil
+}
+
+func lockPath(dataDir, sessionID string) (string, error) {
+	dir, err := hostDir(dataDir, sessionID)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "host.lock"), nil
+}
+
+func acquireHostLock(dataDir, sessionID string) (func(), error) {
+	dir, err := hostDir(dataDir, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, err
+	}
+	if err := os.Chmod(dir, 0o700); err != nil { //nolint:gosec // Directories need execute permission; access is owner-only.
+		return nil, err
+	}
+	path, _ := lockPath(dataDir, sessionID)
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) //nolint:gosec // AO-owned capability directory.
+	if errors.Is(err, os.ErrExist) {
+		return nil, ErrHostExists
+	}
+	if err != nil {
+		return nil, err
+	}
+	if _, err := fmt.Fprintf(f, "%d\n", os.Getpid()); err != nil {
+		_ = f.Close()
+		_ = os.Remove(path)
+		return nil, err
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(path)
+		return nil, err
+	}
+	return func() { _ = os.Remove(path) }, nil
+}
+
+func readDescriptor(dataDir, sessionID string) (Descriptor, error) {
+	path, err := descriptorPath(dataDir, sessionID)
+	if err != nil {
+		return Descriptor{}, err
+	}
+	b, err := os.ReadFile(path) //nolint:gosec // AO-owned path derived from validated session id.
+	if err != nil {
+		return Descriptor{}, err
+	}
+	var d Descriptor
+	if err := json.Unmarshal(b, &d); err != nil {
+		return Descriptor{}, fmt.Errorf("decode chat host descriptor: %w", err)
+	}
+	if d.SessionID != sessionID || d.Address == "" || d.Token == "" {
+		return Descriptor{}, errors.New("invalid chat host descriptor")
+	}
+	return d, nil
+}
+
+func writeDescriptor(dataDir string, d Descriptor) error {
+	dir, err := hostDir(dataDir, d.SessionID)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	if err := os.Chmod(dir, 0o700); err != nil { //nolint:gosec // Directories need execute permission; access is owner-only.
+		return err
+	}
+	b, err := json.Marshal(d)
+	if err != nil {
+		return err
+	}
+	tmp := filepath.Join(dir, ".host.json.tmp-"+strconv.Itoa(os.Getpid()))
+	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+		return err
+	}
+	path := filepath.Join(dir, "host.json")
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return os.Chmod(path, 0o600)
+}
+
+func randomToken() (string, error) {
+	var b [32]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b[:]), nil
+}
+
+// ConnectOrStart attaches to an existing compatible host or starts one with the
+// current AO executable. Failed/incompatible probes never terminate that host.
+func ConnectOrStart(ctx context.Context, cfg Config) (*Transport, error) {
+	if d, err := readDescriptor(cfg.DataDir, cfg.SessionID); err == nil {
+		transport, attachErr := attach(ctx, d, true)
+		if attachErr == nil {
+			return transport, nil
+		}
+		if errors.Is(attachErr, ErrAttached) {
+			// Desktop updater handoff can briefly start the replacement daemon
+			// before the old controller has detached. Wait for exclusive ownership;
+			// never turn that overlap into a competing provider process.
+			deadline := time.Now().Add(startupTimeout)
+			for time.Now().Before(deadline) && processalive.Alive(d.PID) {
+				timer := time.NewTimer(20 * time.Millisecond)
+				select {
+				case <-ctx.Done():
+					timer.Stop()
+					return nil, ctx.Err()
+				case <-timer.C:
+				}
+				transport, attachErr = attach(ctx, d, true)
+				if attachErr == nil {
+					return transport, nil
+				}
+				if !errors.Is(attachErr, ErrAttached) {
+					break
+				}
+			}
+		}
+		// A failed socket probe is not proof that a provider is dead. Only an OS
+		// process observation permits clearing the descriptor and falling back to
+		// native resume in a new host.
+		if processalive.Alive(d.PID) {
+			return nil, attachErr
+		}
+		path, _ := descriptorPath(cfg.DataDir, cfg.SessionID)
+		_ = os.Remove(path)
+		lock, _ := lockPath(cfg.DataDir, cfg.SessionID)
+		_ = os.Remove(lock)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		// A malformed or unreadable ownership record is not proof that no host
+		// exists. Fail closed instead of launching a competing process.
+		return nil, err
+	}
+	if len(cfg.Argv) == 0 || !filepath.IsAbs(cfg.Workdir) {
+		return nil, errors.New("chat host start requires provider argv and absolute workdir")
+	}
+	if err := spawnDetached(cfg); err != nil {
+		return nil, err
+	}
+	deadline := time.Now().Add(startupTimeout)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		d, err := readDescriptor(cfg.DataDir, cfg.SessionID)
+		if err == nil {
+			transport, attachErr := attach(ctx, d, false)
+			if attachErr == nil {
+				return transport, nil
+			}
+			lastErr = attachErr
+		} else {
+			lastErr = err
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	return nil, fmt.Errorf("start chat host: %w", lastErr)
+}
+
+// Reconcile terminates compatible authenticated hosts whose durable session no
+// longer exists. Live-session hosts, incompatible hosts, and inconclusive probes
+// are preserved.
+func Reconcile(ctx context.Context, dataDir string, keep map[string]struct{}) error {
+	root := filepath.Join(dataDir, "chat-hosts")
+	entries, err := os.ReadDir(root)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		sessionID := entry.Name()
+		if _, ok := keep[sessionID]; ok {
+			continue
+		}
+		d, readErr := readDescriptor(dataDir, sessionID)
+		if readErr != nil {
+			continue
+		}
+		if d.Version != ProtocolVersion {
+			continue
+		}
+		if !processalive.Alive(d.PID) {
+			path, _ := descriptorPath(dataDir, sessionID)
+			_ = os.Remove(path)
+			lock, _ := lockPath(dataDir, sessionID)
+			_ = os.Remove(lock)
+			continue
+		}
+		if shutdownErr := Shutdown(ctx, dataDir, sessionID); shutdownErr != nil {
+			errs = append(errs, fmt.Errorf("reap chat host %s: %w", sessionID, shutdownErr))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func attach(ctx context.Context, d Descriptor, reconnected bool) (*Transport, error) {
+	if d.Version != ProtocolVersion {
+		return nil, fmt.Errorf("%w: host=%d daemon=%d", ErrIncompatible, d.Version, ProtocolVersion)
+	}
+	dialer := net.Dialer{}
+	conn, err := dialer.DialContext(ctx, "tcp", d.Address)
+	if err != nil {
+		return nil, err
+	}
+	reader := bufio.NewReader(conn)
+	if err := json.NewEncoder(conn).Encode(hello{Version: ProtocolVersion, Token: d.Token, Action: "attach"}); err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	var response helloResponse
+	line, err := reader.ReadBytes('\n')
+	if err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	if err := json.Unmarshal(line, &response); err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	if !response.OK {
+		_ = conn.Close()
+		switch response.Error {
+		case ErrAttached.Error():
+			return nil, ErrAttached
+		case ErrUnauthorized.Error():
+			return nil, ErrUnauthorized
+		default:
+			return nil, errors.New(response.Error)
+		}
+	}
+	return &Transport{Stdin: conn, Stdout: reader, Reconnected: reconnected, NextRequestID: response.NextRequestID}, nil
+}
+
+// Shutdown terminates an authenticated host. Missing or unreachable hosts are
+// harmless; callers use this only for explicit session destruction/orphan reap.
+func Shutdown(ctx context.Context, dataDir, sessionID string) error {
+	d, err := readDescriptor(dataDir, sessionID)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", d.Address)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = conn.Close() }()
+	if err := json.NewEncoder(conn).Encode(hello{Version: ProtocolVersion, Token: d.Token, Action: "shutdown"}); err != nil {
+		return err
+	}
+	var response helloResponse
+	if err := json.NewDecoder(conn).Decode(&response); err != nil {
+		return err
+	}
+	if !response.OK {
+		return errors.New(response.Error)
+	}
+	return nil
+}
+
+// Run owns the provider until it exits or an authenticated shutdown arrives.
+func Run(cfg Config) error {
+	if len(cfg.Argv) == 0 || !filepath.IsAbs(cfg.Workdir) {
+		return errors.New("chat host requires provider argv and absolute workdir")
+	}
+	releaseLock, err := acquireHostLock(cfg.DataDir, cfg.SessionID)
+	if err != nil {
+		return err
+	}
+	defer releaseLock()
+	token, err := randomToken()
+	if err != nil {
+		return err
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = listener.Close() }()
+
+	child := exec.Command(cfg.Argv[0], cfg.Argv[1:]...) //nolint:gosec // provider argv is constructed by AO's driver.
+	child.Dir = cfg.Workdir
+	child.Env = cfg.Env
+	stdin, err := child.StdinPipe()
+	if err != nil {
+		return err
+	}
+	stdout, err := child.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	child.Stderr = io.Discard
+	if err := child.Start(); err != nil {
+		return err
+	}
+
+	d := Descriptor{Version: ProtocolVersion, SessionID: cfg.SessionID, Address: listener.Addr().String(), Token: token, PID: os.Getpid(), StartedAt: time.Now().UTC()}
+	if err := writeDescriptor(cfg.DataDir, d); err != nil {
+		_ = child.Process.Kill()
+		return err
+	}
+	path, _ := descriptorPath(cfg.DataDir, cfg.SessionID)
+	defer func() { _ = os.Remove(path) }()
+
+	h := &host{
+		listener: listener, child: child, stdin: stdin, token: token,
+		detached: make([][]byte, 0, 64), pendingRequests: make(map[string]*pendingRequest),
+		shutdown: make(chan struct{}),
+	}
+	h.cond = sync.NewCond(&h.mu)
+	providerDone := make(chan error, 1)
+	go func() { providerDone <- h.forwardProvider(stdout) }()
+	acceptDone := make(chan error, 1)
+	go func() { acceptDone <- h.accept() }()
+
+	select {
+	case <-providerDone:
+	case <-h.shutdown:
+		_ = stdin.Close()
+		select {
+		case <-providerDone:
+		case <-time.After(3 * time.Second):
+			_ = child.Process.Kill()
+		}
+	case err := <-acceptDone:
+		if err != nil && !errors.Is(err, net.ErrClosed) {
+			_ = child.Process.Kill()
+			return err
+		}
+	}
+	_ = listener.Close()
+	_ = child.Wait()
+	return nil
+}
+
+type host struct {
+	listener net.Listener
+	child    *exec.Cmd
+	stdin    io.WriteCloser
+	token    string
+
+	mu              sync.Mutex
+	cond            *sync.Cond
+	client          net.Conn
+	detached        [][]byte
+	detachedBytes   int
+	pendingRequests map[string]*pendingRequest
+	pendingOrder    []string
+	maxRequestID    int64
+	shutdown        chan struct{}
+	shutdownOnce    sync.Once
+}
+
+type pendingRequest struct {
+	frame    []byte
+	buffered bool
+}
+
+func (h *host) accept() error {
+	for {
+		conn, err := h.listener.Accept()
+		if err != nil {
+			return err
+		}
+		go h.handle(conn)
+	}
+}
+
+func (h *host) handle(conn net.Conn) {
+	reader := bufio.NewReader(conn)
+	var request hello
+	if err := json.NewDecoder(reader).Decode(&request); err != nil {
+		_ = conn.Close()
+		return
+	}
+	if request.Version != ProtocolVersion {
+		_ = json.NewEncoder(conn).Encode(helloResponse{Error: ErrIncompatible.Error()})
+		_ = conn.Close()
+		return
+	}
+	if subtle.ConstantTimeCompare([]byte(request.Token), []byte(h.token)) != 1 {
+		_ = json.NewEncoder(conn).Encode(helloResponse{Error: ErrUnauthorized.Error()})
+		_ = conn.Close()
+		return
+	}
+	if request.Action == "shutdown" {
+		_ = json.NewEncoder(conn).Encode(helloResponse{OK: true})
+		_ = conn.Close()
+		h.shutdownOnce.Do(func() { close(h.shutdown) })
+		return
+	}
+	if request.Action != "attach" {
+		_ = json.NewEncoder(conn).Encode(helloResponse{Error: "unknown chat host action"})
+		_ = conn.Close()
+		return
+	}
+
+	h.mu.Lock()
+	if h.client != nil {
+		h.mu.Unlock()
+		_ = json.NewEncoder(conn).Encode(helloResponse{Error: ErrAttached.Error()})
+		_ = conn.Close()
+		return
+	}
+	h.client = conn
+	writeErr := json.NewEncoder(conn).Encode(helloResponse{OK: true, NextRequestID: h.maxRequestID})
+	if writeErr == nil {
+		for _, frame := range h.detached {
+			if _, writeErr = conn.Write(frame); writeErr != nil {
+				break
+			}
+		}
+	}
+	if writeErr == nil {
+		h.detached = h.detached[:0]
+		h.detachedBytes = 0
+		for _, pending := range h.pendingRequests {
+			pending.buffered = false
+		}
+		h.cond.Broadcast()
+	}
+	h.mu.Unlock()
+	if writeErr != nil {
+		h.detach(conn)
+		return
+	}
+
+	for {
+		frame, readErr := reader.ReadBytes('\n')
+		if len(frame) > 0 {
+			if _, err := h.stdin.Write(frame); err != nil {
+				readErr = err
+			} else {
+				h.observeClientFrame(frame)
+			}
+		}
+		if readErr != nil {
+			h.detach(conn)
+			return
+		}
+	}
+}
+
+func (h *host) observeClientFrame(frame []byte) {
+	var value struct {
+		ID     json.RawMessage `json:"id"`
+		Method string          `json:"method"`
+	}
+	if json.Unmarshal(frame, &value) != nil || len(value.ID) == 0 {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if value.Method != "" {
+		var id int64
+		if json.Unmarshal(value.ID, &id) == nil && id > h.maxRequestID {
+			h.maxRequestID = id
+		}
+		return
+	}
+	requestID := string(value.ID)
+	if _, ok := h.pendingRequests[requestID]; ok {
+		delete(h.pendingRequests, requestID)
+		for i, id := range h.pendingOrder {
+			if id == requestID {
+				h.pendingOrder = append(h.pendingOrder[:i], h.pendingOrder[i+1:]...)
+				break
+			}
+		}
+	}
+}
+
+func (h *host) detach(conn net.Conn) {
+	h.mu.Lock()
+	if h.client == conn {
+		h.client = nil
+		h.bufferPendingRequestsLocked()
+	}
+	h.mu.Unlock()
+	_ = conn.Close()
+}
+
+func (h *host) forwardProvider(stdout io.Reader) error {
+	reader := bufio.NewReader(stdout)
+	for {
+		frame, err := reader.ReadBytes('\n')
+		if len(frame) > 0 {
+			h.mu.Lock()
+			if requestID, ok := serverRequestID(frame); ok {
+				if _, exists := h.pendingRequests[requestID]; !exists {
+					h.pendingRequests[requestID] = &pendingRequest{frame: append([]byte(nil), frame...)}
+					h.pendingOrder = append(h.pendingOrder, requestID)
+				}
+			}
+			for h.client == nil && h.detachedBytes+len(frame) > maxDetachedBytes {
+				h.cond.Wait()
+			}
+			if h.client != nil {
+				if _, writeErr := h.client.Write(frame); writeErr != nil {
+					_ = h.client.Close()
+					h.client = nil
+					h.bufferPendingRequestsLocked()
+					if _, pending := serverRequestID(frame); !pending {
+						h.bufferFrameLocked(frame)
+					}
+				}
+			} else {
+				if requestID, pending := serverRequestID(frame); !pending || !h.pendingRequests[requestID].buffered {
+					h.bufferFrameLocked(frame)
+					if pending {
+						h.pendingRequests[requestID].buffered = true
+					}
+				}
+			}
+			h.mu.Unlock()
+		}
+		if err != nil {
+			return err
+		}
+	}
+}
+
+func serverRequestID(frame []byte) (string, bool) {
+	var value struct {
+		ID     json.RawMessage `json:"id"`
+		Method string          `json:"method"`
+	}
+	if json.Unmarshal(frame, &value) != nil || len(value.ID) == 0 || value.Method == "" {
+		return "", false
+	}
+	return string(value.ID), true
+}
+
+func (h *host) bufferPendingRequestsLocked() {
+	for _, requestID := range h.pendingOrder {
+		pending := h.pendingRequests[requestID]
+		if pending == nil || pending.buffered {
+			continue
+		}
+		h.bufferFrameLocked(pending.frame)
+		pending.buffered = true
+	}
+}
+
+func (h *host) bufferFrameLocked(frame []byte) {
+	h.detached = append(h.detached, append([]byte(nil), frame...))
+	h.detachedBytes += len(frame)
+}

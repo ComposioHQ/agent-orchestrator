@@ -172,6 +172,22 @@ type stuckConversation struct {
 
 func (s *stuckConversation) Close() error { return s.closeErr }
 
+type terminatingConversation struct {
+	*fakeConversation
+	terminated atomic.Bool
+}
+
+func (c *terminatingConversation) Terminate() error {
+	c.terminated.Store(true)
+	return c.Close()
+}
+
+func (c *terminatingConversation) PreservesProviderOnClose() bool { return true }
+
+type liveReconnectedConversation struct{ *nativeHistoryConversation }
+
+func (c *liveReconnectedConversation) ReconnectedLive() bool { return true }
+
 func (f *deferredConversation) StartDeferredTurn(providerTurnID string) error {
 	return f.start(providerTurnID)
 }
@@ -3548,6 +3564,78 @@ func TestServiceStopRetainsControllerUntilItsEventStreamActuallyEnds(t *testing.
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatal("controller registry did not release the stopped stream")
+}
+
+func TestServiceStopTerminatesPersistentConversation(t *testing.T) {
+	provider := &terminatingConversation{fakeConversation: newFakeConversation()}
+	h := newHarnessWithConversation(t, provider)
+	if err := h.svc.Stop(context.Background(), testSession); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	if !provider.terminated.Load() {
+		t.Fatal("explicit session stop detached persistent conversation instead of terminating it")
+	}
+}
+
+func TestServiceStopAllOnlyDetachesPersistentConversation(t *testing.T) {
+	provider := &terminatingConversation{fakeConversation: newFakeConversation()}
+	h := newHarnessWithConversation(t, provider)
+	turn, err := h.ctrl.Send(context.Background(), ports.ChatUserMessage{Text: "keep working"})
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	provider.emit(ports.ChatEvent{
+		Kind: ports.ChatEventTurnStarted, ProviderTurnID: turn.ProviderTurnID,
+		ProviderConversationID: provider.ProviderConversationID(),
+	})
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		for _, candidate := range s.Turns {
+			if candidate.ID == turn.ID {
+				return candidate.State == domain.TurnStateRunning
+			}
+		}
+		return false
+	})
+	h.svc.StopAll(context.Background())
+	if provider.terminated.Load() {
+		t.Fatal("daemon-wide shutdown terminated persistent conversation")
+	}
+	rec, found, err := h.st.GetSession(context.Background(), testSession)
+	if err != nil || !found {
+		t.Fatalf("GetSession: found=%v err=%v", found, err)
+	}
+	if rec.Activity.State == domain.ActivityExited {
+		t.Fatal("daemon detach projected a false provider exit")
+	}
+	snapshot, err := h.st.LoadConversationSnapshot(context.Background(), h.ctrl.ConversationID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, candidate := range snapshot.Turns {
+		if candidate.ID == turn.ID && candidate.State != domain.TurnStateRunning {
+			t.Fatalf("in-flight turn settled on daemon detach: %s", candidate.State)
+		}
+	}
+}
+
+func TestServiceLiveReconnectSkipsSettledHistoryBarrier(t *testing.T) {
+	st := openStore(t)
+	native := &nativeHistoryConversation{fakeConversation: newFakeConversation(), err: ports.ErrChatHistoryUnsettled}
+	provider := &liveReconnectedConversation{nativeHistoryConversation: native}
+	svc := chatsvc.New(chatsvc.Options{
+		Store: st, Sessions: st, Drivers: fakeRegistry{driver: fakeDriver{conv: provider}},
+		Log: slog.New(slog.DiscardHandler), NewID: func() string { return "live-reconnect-id" },
+	})
+	if _, err := svc.Start(context.Background(), chatsvc.StartConfig{
+		SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex,
+		WorkspacePath: t.TempDir(), ProviderConversationID: "thread-1",
+	}); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer svc.StopAll(context.Background())
+	if reads := native.historyReads(); reads != 0 {
+		t.Fatalf("native history reads = %d, live reconnect must not wait for active turn to settle", reads)
+	}
 }
 
 func TestStartWaitsForStoppedControllerCleanupBeforeRelaunch(t *testing.T) {

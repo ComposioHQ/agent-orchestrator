@@ -103,6 +103,10 @@ type conn struct {
 const notificationBuffer = 4096
 
 func newConn(w io.WriteCloser, r io.Reader, log *slog.Logger, onReq serverRequestHandler) *conn {
+	return newConnAt(w, r, log, onReq, 0)
+}
+
+func newConnAt(w io.WriteCloser, r io.Reader, log *slog.Logger, onReq serverRequestHandler, nextID int64) *conn {
 	c := &conn{
 		w:               w,
 		log:             log,
@@ -111,6 +115,7 @@ func newConn(w io.WriteCloser, r io.Reader, log *slog.Logger, onReq serverReques
 		onServerRequest: onReq,
 		done:            make(chan struct{}),
 	}
+	c.nextID.Store(nextID)
 	go c.readLoop(r)
 	return c
 }
@@ -235,7 +240,18 @@ func (c *conn) deliver(f frame) {
 // own goroutine so a slow decision (a user staring at an approval card) does not
 // stall the read loop and starve streaming deltas.
 func (c *conn) answer(req serverRequest) {
-	result, err := c.onServerRequest(context.Background(), req)
+	ctx, cancel := context.WithCancel(context.Background())
+	finished := make(chan struct{})
+	go func() {
+		select {
+		case <-c.done:
+			cancel()
+		case <-finished:
+		}
+	}()
+	result, err := c.onServerRequest(ctx, req)
+	close(finished)
+	cancel()
 
 	reply := map[string]any{"id": req.ID}
 	if err != nil {
