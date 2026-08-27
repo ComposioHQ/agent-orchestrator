@@ -8,7 +8,7 @@ import {
 function viewProps(overrides: Partial<TaskComposerViewProps> = {}): TaskComposerViewProps {
 	return {
 		canSubmit: true,
-		prompt: "",
+		initialPrompt: "",
 		onPromptChange: vi.fn(),
 		labels: {
 			addFile: "Add file",
@@ -88,6 +88,16 @@ describe("TaskComposerView", () => {
 		expect(screen.getByRole("group", { name: "Runs with" })).toHaveClass("composer-run-controls");
 	});
 
+	it("keeps the surrounding controls stable while typing", () => {
+		const renderAgentControl = vi.fn((control) => <button type="button">{control.value}</button>);
+		render(<TaskComposerView {...viewProps({ renderAgentControl })} />);
+		renderAgentControl.mockClear();
+
+		fireEvent.change(screen.getByRole("textbox", { name: "Task" }), { target: { value: "Fast draft" } });
+
+		expect(renderAgentControl).not.toHaveBeenCalled();
+	});
+
 	it("submits on the button or unmodified Enter and respects project availability", () => {
 		const props = viewProps();
 		const { rerender } = render(<TaskComposerView {...props} />);
@@ -138,6 +148,28 @@ describe("TaskComposerView", () => {
 			dataTransfer: { files: [file] },
 		});
 		expect(onAddFiles).toHaveBeenLastCalledWith([file]);
+	});
+
+	it("keeps attachment previews hidden until a file is selected", () => {
+		const { container, rerender } = render(<TaskComposerView {...viewProps()} />);
+
+		const addFile = screen.getByRole("button", { name: "Add file" });
+		expect(addFile.closest(".composer-toolbar")).not.toBeNull();
+		expect(container.querySelector("ul")).toBeNull();
+
+		rerender(
+			<TaskComposerView
+				{...viewProps({
+					attachments: {
+						items: [{ id: "attachment-1", name: "notes.txt" }],
+						onAddFiles: vi.fn(),
+						onRemove: vi.fn(),
+					},
+				})}
+			/>,
+		);
+
+		expect(container.querySelector("ul")).not.toBeNull();
 	});
 
 	it("shows attachment and submission errors with a fallback action", () => {
