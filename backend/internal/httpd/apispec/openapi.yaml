@@ -7637,10 +7637,30 @@ components:
       required:
       - devices
       type: object
+    MobileEndpoint:
+      properties:
+        host:
+          type: string
+        kind:
+          type: string
+        port:
+          type: integer
+        secure:
+          type: boolean
+      required:
+      - kind
+      - host
+      - port
+      - secure
+      type: object
     MobileStatusResponse:
       properties:
         enabled:
           type: boolean
+        endpoints:
+          items:
+            $ref: '#/components/schemas/MobileEndpoint'
+          type: array
         host:
           type: string
         password:
@@ -7655,6 +7675,7 @@ components:
           type: string
       required:
       - enabled
+      - endpoints
       - host
       - tailscaleHost
       - port

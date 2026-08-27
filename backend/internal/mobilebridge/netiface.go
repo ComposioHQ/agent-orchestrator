@@ -138,3 +138,29 @@ func AutopickTailscaleIP() string {
 	}
 	return c[0]
 }
+
+// LocalPrivateIPv4s returns every private IPv4 address of this machine's
+// suitable interfaces. Unlike AutopickLANIP it keeps them all: the phone races
+// every advertised endpoint, so a machine on both Wi-Fi and Ethernet must
+// advertise both.
+func LocalPrivateIPv4s() []string {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return nil
+	}
+	return PrivateIPv4Candidates(ifaces, func(i net.Interface) ([]net.Addr, error) {
+		return i.Addrs()
+	})
+}
+
+// LocalTailscaleIPv4s returns every Tailscale IPv4 address of this machine, or
+// nil when Tailscale is not installed, not running, or logged out.
+func LocalTailscaleIPv4s() []string {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return nil
+	}
+	return TailscaleIPv4Candidates(ifaces, func(i net.Interface) ([]net.Addr, error) {
+		return i.Addrs()
+	})
+}

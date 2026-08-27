@@ -100,12 +100,17 @@ type BridgeService struct {
 	LAN         LANController
 	ConfigPath  string
 	DefaultPort int
-	// PickLANHost and PickTailscaleHost resolve the advertised addresses. Both
-	// are nil in production (daemon.go) and fall back to the real autopickers;
-	// tests inject stubs so status output does not depend on the host machine's
-	// real network interfaces.
-	PickLANHost       func() string
-	PickTailscaleHost func() string
+	// PickLANHosts and PickTailscaleHosts resolve every advertised address.
+	// Both are nil in production (daemon.go) and fall back to the real
+	// candidate scans; tests inject stubs so status output does not depend on
+	// the host machine's real network interfaces.
+	//
+	// Lists, not single addresses: the phone races every endpoint, so a machine
+	// on both Wi-Fi and Ethernet must advertise both. Host and TailscaleHost are
+	// derived from the head of each list so the singular fields and the list can
+	// never disagree.
+	PickLANHosts       func() []string
+	PickTailscaleHosts func() []string
 	// Secure-pairing collaborators. All nil in production (daemon.go wires the
 	// real ones); tests inject fakes so no test shells out to the tailscale CLI.
 	ApplyServe  func(port int) error
@@ -117,18 +122,27 @@ type BridgeService struct {
 	serveErr error
 }
 
-func (b *BridgeService) currentHost() string {
-	if b.PickLANHost != nil {
-		return b.PickLANHost()
+func (b *BridgeService) lanHosts() []string {
+	if b.PickLANHosts != nil {
+		return b.PickLANHosts()
 	}
-	return mobilebridge.AutopickLANIP()
+	return mobilebridge.LocalPrivateIPv4s()
 }
 
-func (b *BridgeService) currentTailscaleHost() string {
-	if b.PickTailscaleHost != nil {
-		return b.PickTailscaleHost()
+func (b *BridgeService) tailscaleHosts() []string {
+	if b.PickTailscaleHosts != nil {
+		return b.PickTailscaleHosts()
 	}
-	return mobilebridge.AutopickTailscaleIP()
+	return mobilebridge.LocalTailscaleIPv4s()
+}
+
+// first is the head of a candidate list, or "" when there is none. Callers use
+// it for the legacy singular Host/TailscaleHost fields.
+func first(hosts []string) string {
+	if len(hosts) == 0 {
+		return ""
+	}
+	return hosts[0]
 }
 
 // Status reports the current bridge state, host, and port. The plaintext
@@ -136,12 +150,19 @@ func (b *BridgeService) currentTailscaleHost() string {
 func (b *BridgeService) Status() MobileStatusResponse {
 	st, _ := mobilebridge.Load(b.ConfigPath)
 	enabled := st.Enabled && b.LAN.Running()
+	lan := b.lanHosts()
+	ts := b.tailscaleHosts()
 	res := MobileStatusResponse{
 		Enabled:       enabled,
-		Host:          b.currentHost(),
-		TailscaleHost: b.currentTailscaleHost(),
+		Host:          first(lan),
+		TailscaleHost: first(ts),
 		Port:          b.LAN.BoundPort(),
 		Warning:       mobileUnencryptedWarning,
+		Endpoints: mobilebridge.Endpoints(mobilebridge.EndpointInputs{
+			LANHosts:       lan,
+			TailscaleHosts: ts,
+			Port:           b.LAN.BoundPort(),
+		}),
 	}
 	// Only surface the password while the bridge is actually enabled. This route
 	// is reachable only on the loopback listener (the LAN listener 404s

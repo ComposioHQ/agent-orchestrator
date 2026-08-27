@@ -2613,8 +2613,15 @@ export interface components {
         MobileDevicesResponse: {
             devices: components["schemas"]["MobileDeviceResponse"][];
         };
+        MobileEndpoint: {
+            host: string;
+            kind: string;
+            port: number;
+            secure: boolean;
+        };
         MobileStatusResponse: {
             enabled: boolean;
+            endpoints: components["schemas"]["MobileEndpoint"][];
             host: string;
             password: string;
             port: number;

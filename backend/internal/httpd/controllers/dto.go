@@ -15,6 +15,8 @@ import (
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
 	"github.com/aoagents/agent-orchestrator/backend/internal/service/systemcheck"
 	"github.com/aoagents/agent-orchestrator/backend/internal/service/systeminstall"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/mobilebridge"
 )
 
 // HTTP response envelopes for the projects surface — the SINGLE definition of
@@ -1326,8 +1328,12 @@ type IdentityResponse struct {
 // regenerate endpoints. Password is populated only transiently, on enable and
 // regenerate responses (empty otherwise) — it is never persisted in plaintext.
 type MobileStatusResponse struct {
-	Enabled bool   `json:"enabled"`
-	Host    string `json:"host"`
+	Enabled bool `json:"enabled"`
+	// Endpoints is every way the phone can reach this daemon, in the client's
+	// preference order. The phone races them; Host/TailscaleHost below are the
+	// head of each kind, kept for the existing renderer.
+	Endpoints []mobilebridge.Endpoint `json:"endpoints"`
+	Host      string                  `json:"host"`
 	// TailscaleHost is this machine's 100.64.0.0/10 Tailscale address, or "" when
 	// Tailscale is not up. The renderer encodes it into the pairing QR when the
 	// user selects the Tailscale tab, and shows a hint instead when it is empty.

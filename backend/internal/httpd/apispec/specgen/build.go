@@ -357,6 +357,7 @@ var schemaNames = map[string]string{
 	"ControllersDevImportProjectsResponse": "DevImportProjectsResponse",
 	// httpd/controllers: mobile wire envelopes
 	"ControllersMobileStatusResponse":  "MobileStatusResponse",
+	"MobilebridgeEndpoint":             "MobileEndpoint",
 	"ControllersIdentityResponse":      "IdentityResponse",
 	"ControllersMobileDeviceResponse":  "MobileDeviceResponse",
 	"ControllersMobileDevicesResponse": "MobileDevicesResponse",
