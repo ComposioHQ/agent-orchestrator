@@ -155,6 +155,7 @@ type BrowserWebContents = Pick<
 	| "goBack"
 	| "goForward"
 	| "isLoading"
+	| "insertCSS"
 	| "loadURL"
 	| "on"
 	| "reload"
@@ -167,6 +168,36 @@ type BrowserWebContents = Pick<
 	close?: () => void;
 	session?: Pick<Session, "setPermissionCheckHandler" | "setPermissionRequestHandler" | "webRequest">;
 };
+
+const BROWSER_SCROLLBAR_CSS = `
+	::-webkit-scrollbar {
+		width: 10px;
+		height: 10px;
+	}
+
+	::-webkit-scrollbar-button {
+		display: none;
+		width: 0;
+		height: 0;
+	}
+
+	::-webkit-scrollbar-track,
+	::-webkit-scrollbar-corner {
+		background: #16191d;
+	}
+
+	::-webkit-scrollbar-thumb {
+		min-width: 24px;
+		min-height: 24px;
+		border: 2px solid #16191d;
+		border-radius: 999px;
+		background: #4b515a;
+	}
+
+	::-webkit-scrollbar-thumb:hover {
+		background: #69717d;
+	}
+`;
 
 type BrowserViewLike = View & {
 	webContents: BrowserWebContents;
@@ -499,6 +530,9 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		view.setBorderRadius?.(BROWSER_VIEW_BORDER_RADIUS);
 		view.webContents.session?.setPermissionCheckHandler?.(() => false);
 		view.webContents.session?.setPermissionRequestHandler?.((_contents, _permission, callback) => callback(false));
+		view.webContents.on("dom-ready", () => {
+			void view.webContents.insertCSS(BROWSER_SCROLLBAR_CSS, { cssOrigin: "user" }).catch(() => undefined);
+		});
 
 		const tabId = `t${session.nextTabNumber++}`;
 		const state: BrowserNavState = emptyNavState(session.viewId);

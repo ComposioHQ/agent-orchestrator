@@ -27,6 +27,7 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 	let debuggerAttached = false;
 	const openDevTools = vi.fn();
 	const closeDevTools = vi.fn();
+	const insertCSS = vi.fn(async (_css: string, _options?: { cssOrigin?: "author" | "user" }) => "ao-browser-scrollbars");
 	const debuggerSendCommand = vi.fn(async (method: string, params?: Record<string, unknown>): Promise<unknown> => {
 		if (method === "Page.navigate" && typeof params?.url === "string") currentURL = params.url;
 		return {};
@@ -62,6 +63,7 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 		goBack: () => undefined,
 		goForward: () => undefined,
 		isLoading: () => false,
+		insertCSS,
 		loadURL: vi.fn(async (url: string) => {
 			currentURL = url;
 		}),
@@ -204,6 +206,7 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 		shellSend,
 		openDevTools,
 		closeDevTools,
+		insertCSS,
 		view,
 		webContents,
 		webContentsListeners,
@@ -211,6 +214,25 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 		debuggerSendCommand,
 	};
 }
+
+describe("browser scrollbar styling", () => {
+	it("injects AO-styled horizontal and vertical scrollbars whenever a browser page becomes ready", async () => {
+		const { insertCSS, invoke, webContentsListeners } = setupHost();
+
+		await invoke("browser:ensure", "sess-1");
+		webContentsListeners.get("dom-ready")?.();
+
+		expect(insertCSS).toHaveBeenCalledOnce();
+		const css = insertCSS.mock.calls[0]?.[0] ?? "";
+		expect(insertCSS.mock.calls[0]?.[1]).toEqual({ cssOrigin: "user" });
+		expect(css).toContain("::-webkit-scrollbar");
+		expect(css).toContain("::-webkit-scrollbar-thumb");
+		expect(css).toContain("::-webkit-scrollbar-corner");
+
+		webContentsListeners.get("dom-ready")?.();
+		expect(insertCSS).toHaveBeenCalledTimes(2);
+	});
+});
 
 function setupTabHost() {
 	const constructorOptions: Array<{ webPreferences: { partition?: string } }> = [];
