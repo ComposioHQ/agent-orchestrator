@@ -156,6 +156,8 @@ export interface ChatWorkspaceProps {
 	agentInputDisabled?: boolean;
 	reviewerTerminal?: { handleId: string; harness: string };
 	onOpenReviewerTerminal?: (target: { handleId: string; harness: string }) => void;
+	reviewerChat?: { reviewId: string; harness: string };
+	onOpenReviewerChat?: (target: { reviewId: string; harness: string }) => void;
 	/** Older durable history is available but not loaded into the DOM yet. */
 	hasOlder?: boolean;
 	loadingOlder?: boolean;
@@ -279,6 +281,8 @@ export function ChatWorkspace({
 	agentInputDisabled = false,
 	reviewerTerminal,
 	onOpenReviewerTerminal,
+	reviewerChat,
+	onOpenReviewerChat,
 	session,
 	reviewerTarget,
 	onSelectChat,
@@ -460,7 +464,7 @@ export function ChatWorkspace({
 	const selectAdjacentTab = useCallback((direction: -1 | 1) => {
 		const tabs = [
 			{ kind: "chat" as const },
-			...(reviewerTerminal ? [{ kind: "reviewer" as const }] : []),
+			...(reviewerTerminal || reviewerChat ? [{ kind: "reviewer" as const }] : []),
 			...(shellTerminals ?? []).map((shell) => ({ kind: "shell" as const, handleId: shell.handleId })),
 		];
 		if (tabs.length <= 1) return;
@@ -478,15 +482,18 @@ export function ChatWorkspace({
 		}
 		if (next.kind === "reviewer") {
 			if (reviewerTerminal) onOpenReviewerTerminal?.(reviewerTerminal);
+			else if (reviewerChat) onOpenReviewerChat?.(reviewerChat);
 			return;
 		}
 		onSelectShellTerminal?.(next.handleId);
 	}, [
 		onOpenReviewerTerminal,
+		onOpenReviewerChat,
 		onSelectChat,
 		onSelectShellTerminal,
 		reviewerActive,
 		reviewerTerminal,
+		reviewerChat,
 		shellActive,
 		shellTarget,
 		shellTerminals,
@@ -635,6 +642,8 @@ export function ChatWorkspace({
 				sessionTitle={sessionTitle}
 				reviewerTerminal={reviewerTerminal}
 				onOpenReviewerTerminal={onOpenReviewerTerminal}
+				reviewerChat={reviewerChat}
+				onOpenReviewerChat={onOpenReviewerChat}
 				reviewerActive={reviewerActive}
 				onSelectChat={onSelectChat}
 				shellTerminals={shellTerminals}
@@ -993,6 +1002,8 @@ function ChatHeader({
 	sessionTitle,
 	reviewerTerminal,
 	onOpenReviewerTerminal,
+	reviewerChat,
+	onOpenReviewerChat,
 	reviewerActive,
 	onSelectChat,
 	shellTerminals,
@@ -1010,6 +1021,8 @@ function ChatHeader({
 	sessionTitle?: string;
 	reviewerTerminal?: { handleId: string; harness: string };
 	onOpenReviewerTerminal?: (target: { handleId: string; harness: string }) => void;
+	reviewerChat?: { reviewId: string; harness: string };
+	onOpenReviewerChat?: (target: { reviewId: string; harness: string }) => void;
 	/** The reviewer tab is selected; the chat tab is the clickable alternative. */
 	reviewerActive?: boolean;
 	/** Return the tab strip to the chat tab. */
@@ -1074,14 +1087,14 @@ function ChatHeader({
 								)}
 								onClick={timelineActive ? undefined : onSelectChat}
 								role="tab"
-								tabIndex={timelineActive || (!reviewerTerminal && !shellTerminals?.length) ? 0 : -1}
+							tabIndex={timelineActive || (!reviewerTerminal && !reviewerChat && !shellTerminals?.length) ? 0 : -1}
 								title={label}
 								type="button"
 							>
 								<span className="truncate">{label}</span>
 							</button>
 						</span>
-						{reviewerTerminal ? (
+						{reviewerTerminal || reviewerChat ? (
 							<span
 								className={cn(
 									"group relative inline-flex min-w-shell-tab-min self-stretch items-center gap-1.5 border-r border-border px-3",
@@ -1090,7 +1103,7 @@ function ChatHeader({
 										: "text-muted-foreground hover:bg-raised hover:text-foreground",
 								)}
 							>
-								<AgentAvatar className="size-icon-base" decorative provider={reviewerTerminal.harness} />
+									<AgentAvatar className="size-icon-base" decorative provider={(reviewerTerminal ?? reviewerChat)?.harness ?? "codex"} />
 								<button
 									aria-current={reviewerActive ? true : undefined}
 									aria-label="Reviewer"
@@ -1099,10 +1112,12 @@ function ChatHeader({
 										"inline-flex min-w-flex-min max-w-shell-tab-max items-center gap-1.5 text-control font-medium leading-none",
 										reviewerActive ? "text-foreground" : "text-muted-foreground",
 									)}
-									onClick={() => onOpenReviewerTerminal?.(reviewerTerminal)}
+										onClick={() => reviewerTerminal
+											? onOpenReviewerTerminal?.(reviewerTerminal)
+											: reviewerChat && onOpenReviewerChat?.(reviewerChat)}
 									role="tab"
 									tabIndex={reviewerActive ? 0 : -1}
-									title={reviewerTerminal.harness}
+										title={(reviewerTerminal ?? reviewerChat)?.harness}
 									type="button"
 								>
 									<span className="truncate">Reviewer</span>

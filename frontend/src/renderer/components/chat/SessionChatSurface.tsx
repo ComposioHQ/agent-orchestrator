@@ -44,6 +44,8 @@ import { ChatWorkspace } from "./ChatWorkspace";
 
 export function SessionChatSurface({
 	session,
+	reviewerChat,
+	onOpenReviewerChat,
 	reviewerTerminal,
 	onOpenReviewerTerminal,
 	reviewerTarget,
@@ -64,6 +66,8 @@ export function SessionChatSurface({
 	controllerTransitioning,
 }: {
 	session: WorkspaceSession;
+	reviewerChat?: { reviewId: string; harness: string };
+	onOpenReviewerChat?: (target: { reviewId: string; harness: string }) => void;
 	reviewerTerminal?: { handleId: string; harness: string };
 	onOpenReviewerTerminal?: (target: { handleId: string; harness: string }) => void;
 	reviewerTarget?: Extract<TerminalTarget, { kind: "reviewer" }>;
@@ -260,7 +264,9 @@ export function SessionChatSurface({
 				onLinkOpen={openLinkInBrowser}
 				sessionTitle={session.title}
 				sessionRole={session.kind}
-				session={session}
+				 session={session}
+				reviewerChat={reviewerChat}
+				onOpenReviewerChat={onOpenReviewerChat}
 				reviewerTerminal={reviewerTerminal}
 				onOpenReviewerTerminal={onOpenReviewerTerminal}
 				reviewerTarget={reviewerTarget}

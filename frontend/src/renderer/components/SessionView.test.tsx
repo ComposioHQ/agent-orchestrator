@@ -53,6 +53,7 @@ vi.mock("../lib/platform", () => ({
 	// Exercise the macOS shell layout without changing the existing Ctrl-based
 	// shortcut assertions in this suite.
 	hidesShellTopbar: () => true,
+	isLinuxPlatform: () => false,
 	isMacPlatform: () => false,
 }));
 vi.mock("../hooks/useWindowFullScreen", () => ({
@@ -170,6 +171,8 @@ vi.mock("./chat/SessionChatSurface", () => ({
 	SessionChatSurface: ({
 		onOpenShell,
 		headerActions,
+		reviewerChat,
+		onOpenReviewerChat,
 		reviewerTerminal,
 		onOpenReviewerTerminal,
 		reviewerTarget,
@@ -180,6 +183,8 @@ vi.mock("./chat/SessionChatSurface", () => ({
 	}: {
 		onOpenShell?: () => void;
 		headerActions?: ReactNode;
+		reviewerChat?: { reviewId: string; harness: string };
+		onOpenReviewerChat?: (target: { reviewId: string; harness: string }) => void;
 		reviewerTerminal?: { handleId: string; harness: string };
 		onOpenReviewerTerminal?: (target: { handleId: string; harness: string }) => void;
 		reviewerTarget?: { kind: "reviewer"; handleId: string; harness: string; sessionId: string };
@@ -191,6 +196,9 @@ vi.mock("./chat/SessionChatSurface", () => ({
 		<div data-testid="chat-surface">
 			chat surface
 			{headerActions}
+			{reviewerChat ? (
+				<button type="button" onClick={() => onOpenReviewerChat?.(reviewerChat)}>Reviewer</button>
+			) : null}
 			{reviewerTerminal ? (
 				<button type="button" onClick={() => onOpenReviewerTerminal?.(reviewerTerminal)}>
 					Reviewer
@@ -227,6 +235,11 @@ vi.mock("./chat/SessionChatSurface", () => ({
 		</div>
 	),
 }));
+vi.mock("./chat/ReviewerChatSurface", () => ({
+	ReviewerChatSurface: ({ reviewId }: { reviewId: string }) => (
+		<div data-testid="reviewer-chat-surface">reviewer chat {reviewId}</div>
+	),
+}));
 vi.mock("./CenterPane", () => ({
 	CenterPane: ({
 		session,
@@ -235,8 +248,10 @@ vi.mock("./CenterPane", () => ({
 		onSelectShellTerminal,
 		onSelectSessionTerminal,
 		onSelectReviewerTerminal,
+		onSelectReviewerChat,
 		topbarActions,
 		reviewerTerminal,
+		reviewerChat,
 		terminalTarget,
 	}: {
 		session?: WorkspaceSession;
@@ -245,8 +260,10 @@ vi.mock("./CenterPane", () => ({
 		onSelectShellTerminal?: (handleId: string) => void;
 		onSelectSessionTerminal?: () => void;
 		onSelectReviewerTerminal?: (target: { handleId: string; harness: string }) => void;
+		onSelectReviewerChat?: (target: { reviewId: string; harness: string }) => void;
 		topbarActions?: ReactNode;
 		reviewerTerminal?: { handleId: string; harness: string };
+		reviewerChat?: { reviewId: string; harness: string };
 		terminalTarget?: { kind: string; handleId?: string };
 	}) => (
 		<div>
@@ -261,6 +278,9 @@ vi.mock("./CenterPane", () => ({
 				<button type="button" onClick={() => onSelectReviewerTerminal?.(reviewerTerminal)}>
 					select reviewer tab
 				</button>
+			) : null}
+			{reviewerChat ? (
+				<button type="button" onClick={() => onSelectReviewerChat?.(reviewerChat)}>select reviewer chat tab</button>
 			) : null}
 			<div data-testid="shell-tabs">{shellTerminals.map((s) => s.title).join(",")}</div>
 			{shellTerminals.map((s) => (
@@ -363,7 +383,7 @@ vi.mock("./SessionInspector", () => ({
 		isInspectorVisible = true,
 		onOpenFiles,
 		onOpenReviewFile,
-		onOpenReviewerTerminal,
+		onOpenReviewerChat,
 		onWorkerMessageSent,
 		onToggleBrowserPopOut,
 		view,
@@ -373,6 +393,7 @@ vi.mock("./SessionInspector", () => ({
 		onOpenFiles?: () => void;
 		onOpenReviewFile?: (target: { line?: number; path: string }) => void;
 		onOpenReviewerTerminal?: (target: { handleId: string; harness: string }) => void;
+		onOpenReviewerChat?: (reviewId: string) => void;
 		onWorkerMessageSent?: () => void;
 		onToggleBrowserPopOut?: () => void;
 		view?: string;
@@ -391,7 +412,7 @@ vi.mock("./SessionInspector", () => ({
 				</button>
 				<button
 					type="button"
-					onClick={() => onOpenReviewerTerminal?.({ handleId: "review-sess-1", harness: "codex" })}
+					onClick={() => onOpenReviewerChat?.("review-1")}
 				>
 					start review
 				</button>
@@ -939,7 +960,7 @@ describe("SessionView", () => {
 		expect(screen.getByTestId("chat-surface")).toBeInTheDocument();
 	});
 
-	it("keeps the rendered Chat surface selected when a review starts", async () => {
+	it("opens a typed reviewer conversation when a review starts", async () => {
 		const worker = workerSession("sess-1");
 		worker.mode = "chat";
 		worker.prs = [{
@@ -961,8 +982,32 @@ describe("SessionView", () => {
 		await screen.findByRole("button", { name: "Reviewer" });
 		fireEvent.click(screen.getByRole("button", { name: "start review" }));
 
-		expect(screen.getByTestId("chat-surface")).toBeInTheDocument();
+		expect(screen.getByTestId("reviewer-chat-surface")).toHaveTextContent("review-1");
 		expect(screen.queryByTestId("terminal-target")).not.toBeInTheDocument();
+	});
+
+	it("keeps a persisted reviewer Chat reachable after returning to the worker", async () => {
+		const worker = workerSession("sess-1");
+		worker.mode = "chat";
+		worker.prs = [{
+			url: "https://github.com/acme/repo/pull/7", number: 7, state: "open", ci: "passing",
+			review: "none", mergeability: "mergeable", reviewComments: false,
+			updatedAt: "2026-06-15T00:00:00Z",
+		}];
+		reviewGetMock.mockResolvedValueOnce({
+			data: {
+				reviewerHandleId: "",
+				reviewerHarness: "codex",
+				reviewerSurface: { mode: "chat", reviewId: "review-persisted", harness: "codex" },
+				reviews: [], runs: [],
+			},
+			error: undefined,
+		});
+
+		render(<SessionView sessionId="sess-1" />);
+		fireEvent.click(await screen.findByRole("button", { name: "Reviewer" }));
+
+		expect(screen.getByTestId("reviewer-chat-surface")).toHaveTextContent("review-persisted");
 	});
 
 	it.each([

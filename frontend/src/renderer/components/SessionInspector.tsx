@@ -147,6 +147,7 @@ export function SessionInspector({
 	onToggleBrowserPopOut,
 	onOpenFiles,
 	onOpenReviewFile,
+	onOpenReviewerChat,
 	onWorkerMessageSent,
 	filesView,
 	browserView,
@@ -161,6 +162,7 @@ export function SessionInspector({
 	onToggleBrowserPopOut?: (next: boolean) => void;
 	onOpenFiles?: () => void;
 	onOpenReviewFile?: (target: { line?: number; path: string }) => void;
+	onOpenReviewerChat?: (reviewId: string) => void;
 	onWorkerMessageSent?: () => void;
 	filesView?: ReactNode;
 	browserView?: BrowserViewModel;
@@ -235,7 +237,15 @@ export function SessionInspector({
 				loadingText={session ? undefined : t("inspector.loadingSession")}
 				onViewChange={setView}
 				reviewsView={
-					session ? <ReviewsView onOpenReviewFile={onOpenReviewFile} onOpenReviewerTerminal={onOpenReviewerTerminal} onWorkerMessageSent={onWorkerMessageSent} session={session} /> : undefined
+					session ? (
+						<ReviewsView
+							onOpenReviewFile={onOpenReviewFile}
+							onOpenReviewerTerminal={onOpenReviewerTerminal}
+							onOpenReviewerChat={onOpenReviewerChat}
+							onWorkerMessageSent={onWorkerMessageSent}
+							session={session}
+						/>
+					) : undefined
 				}
 				summaryView={
 					session ? <SummaryView canOpenReviews={reviewsAvailable} onOpenReviews={() => setView("reviews")} session={session} /> : undefined
@@ -332,16 +342,24 @@ function ReviewsView({
 	session,
 	onOpenReviewFile,
 	onOpenReviewerTerminal,
+	onOpenReviewerChat,
 	onWorkerMessageSent,
 }: {
 	session: WorkspaceSession;
 	onOpenReviewFile?: (target: { line?: number; path: string }) => void;
 	onOpenReviewerTerminal?: OpenReviewerTerminal;
+	onOpenReviewerChat?: (reviewId: string) => void;
 	onWorkerMessageSent?: () => void;
 }) {
 	return (
 		<div role="tabpanel">
-			<ReviewsSection onOpenReviewFile={onOpenReviewFile} onOpenReviewerTerminal={onOpenReviewerTerminal} onWorkerMessageSent={onWorkerMessageSent} session={session} />
+			<ReviewsSection
+				onOpenReviewFile={onOpenReviewFile}
+				onOpenReviewerTerminal={onOpenReviewerTerminal}
+				onOpenReviewerChat={onOpenReviewerChat}
+				onWorkerMessageSent={onWorkerMessageSent}
+				session={session}
+			/>
 		</div>
 	);
 }
@@ -1378,11 +1396,13 @@ function ReviewsSection({
 	session,
 	onOpenReviewFile,
 	onOpenReviewerTerminal,
+	onOpenReviewerChat,
 	onWorkerMessageSent,
 }: {
 	session: WorkspaceSession;
 	onOpenReviewFile?: (target: { line?: number; path: string }) => void;
 	onOpenReviewerTerminal?: OpenReviewerTerminal;
+	onOpenReviewerChat?: (reviewId: string) => void;
 	onWorkerMessageSent?: () => void;
 }) {
 	const { t } = useTranslation();
@@ -1472,7 +1492,9 @@ function ReviewsSection({
 				setReviewNotice(t("inspector.reviewAlreadyRanForCommit"));
 				return;
 			}
-			if (session.mode !== "chat" && data?.reviewerHandleId) {
+			if (data?.reviewerSurface?.mode === "chat" && data.reviewerSurface.reviewId) {
+				onOpenReviewerChat?.(data.reviewerSurface.reviewId);
+			} else if (data?.reviewerHandleId) {
 				const harness = started.latestRun.harness || "reviewer";
 				onOpenReviewerTerminal?.({ handleId: data.reviewerHandleId, harness });
 			}

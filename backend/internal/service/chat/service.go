@@ -44,12 +44,36 @@ type Service struct {
 	now        Clock
 
 	mu           sync.RWMutex
-	controllers  map[domain.SessionID]*Controller
-	startConfigs map[domain.SessionID]StartConfig
+	controllers  map[controllerKey]*Controller
+	startConfigs map[controllerKey]StartConfig
 	gateMu       sync.Mutex
-	gates        map[domain.SessionID]controllerGate
+	gates        map[controllerKey]controllerGate
 	probeMu      sync.Mutex
 	probed       map[domain.AgentHarness]ports.ChatCapabilities
+}
+
+type controllerKey struct {
+	Kind domain.ConversationOwnerKind
+	ID   string
+}
+
+func normalizeOwner(owner domain.ConversationOwner, sessionID domain.SessionID) domain.ConversationOwner {
+	if owner.ID == "" {
+		return domain.SessionConversationOwner(sessionID)
+	}
+	return owner
+}
+
+func keyFor(owner domain.ConversationOwner) controllerKey {
+	return controllerKey{Kind: owner.Kind, ID: owner.ID}
+}
+
+type reviewerChatStore interface {
+	CreateReviewConversation(context.Context, string, string, domain.ProjectID, time.Time) (domain.ConversationRecord, error)
+	ConversationForReview(context.Context, string) (domain.ConversationRecord, error)
+	GetReviewByID(context.Context, string) (domain.Review, bool, error)
+	ClaimReviewChatController(context.Context, string, string, string, time.Time) (bool, error)
+	RecordReviewChatControllerError(context.Context, string, string, time.Time) (bool, error)
 }
 
 // controllerGate serializes start/stop for one session without making provider
@@ -103,26 +127,32 @@ func New(opts Options) *Service {
 		log:          log,
 		newID:        opts.NewID,
 		now:          now,
-		controllers:  make(map[domain.SessionID]*Controller),
-		startConfigs: make(map[domain.SessionID]StartConfig),
-		gates:        make(map[domain.SessionID]controllerGate),
+		controllers:  make(map[controllerKey]*Controller),
+		startConfigs: make(map[controllerKey]StartConfig),
+		gates:        make(map[controllerKey]controllerGate),
 		probed:       make(map[domain.AgentHarness]ports.ChatCapabilities),
 	}
 }
 
-func (s *Service) controllerGate(id domain.SessionID) controllerGate {
+func (s *Service) controllerGateForOwner(owner domain.ConversationOwner) controllerGate {
 	s.gateMu.Lock()
 	defer s.gateMu.Unlock()
-	gate := s.gates[id]
+	key := keyFor(owner)
+	gate := s.gates[key]
 	if gate == nil {
 		gate = make(controllerGate, 1)
-		s.gates[id] = gate
+		s.gates[key] = gate
 	}
 	return gate
 }
 
+func (s *Service) controllerGate(id domain.SessionID) controllerGate {
+	return s.controllerGateForOwner(domain.SessionConversationOwner(id))
+}
+
 // StartConfig opens a controller for a session.
 type StartConfig struct {
+	Owner                 domain.ConversationOwner
 	SessionID             domain.SessionID
 	ProjectID             domain.ProjectID
 	Kind                  domain.SessionKind
@@ -132,6 +162,7 @@ type StartConfig struct {
 	Env                   map[string]string
 	Model                 string
 	Permissions           ports.PermissionMode
+	WorkspaceAccess       ports.ChatWorkspaceAccess
 	SystemPrompt          string
 	AdditionalDirectories []string
 	MCPServers            []ports.ChatMCPServerConfig
@@ -211,9 +242,23 @@ func cloneStartConfig(cfg StartConfig) StartConfig {
 // because a session the user cannot reopen is worse than a stale row. Both
 // failures are logged rather than swallowed.
 func (s *Service) settleOrphanedWork(ctx context.Context, session domain.SessionID, conversationID string) {
+	s.settleOrphanedWorkForOwner(ctx, domain.SessionConversationOwner(session), session, conversationID)
+}
+
+func (s *Service) settleOrphanedWorkForOwner(ctx context.Context, owner domain.ConversationOwner, session domain.SessionID, conversationID string) {
 	now := s.now()
-	if err := s.store.SettleOrphanedTurns(ctx, session, now); err != nil {
-		s.log.Error("chat start: settle orphaned turns", "session", session, "error", err)
+	var settleErr error
+	if owner.Kind == domain.ConversationOwnerReview {
+		if reviewStore, ok := s.store.(reviewConversationStore); ok {
+			settleErr = reviewStore.SettleOrphanedReviewTurns(ctx, owner.ID, now)
+		} else {
+			settleErr = errors.New("reviewer conversation store is unavailable")
+		}
+	} else {
+		settleErr = s.store.SettleOrphanedTurns(ctx, session, now)
+	}
+	if settleErr != nil {
+		s.log.Error("chat start: settle orphaned turns", "session", session, "error", settleErr)
 	}
 	// An approval left pending can never be answered: the provider call it was
 	// blocking died with the process that was holding it.
@@ -231,7 +276,10 @@ func (s *Service) settleOrphanedWork(ctx context.Context, session domain.Session
 // conversation: presenting unrelated history as continuous is worse than an error
 // the user can act on.
 func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, error) {
-	gate := s.controllerGate(cfg.SessionID)
+	owner := normalizeOwner(cfg.Owner, cfg.SessionID)
+	cfg.Owner = owner
+	key := keyFor(owner)
+	gate := s.controllerGateForOwner(owner)
 	if err := gate.lock(ctx); err != nil {
 		return nil, err
 	}
@@ -254,7 +302,7 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	}
 
 	s.mu.RLock()
-	existing := s.controllers[cfg.SessionID]
+	existing := s.controllers[key]
 	s.mu.RUnlock()
 	if existing != nil {
 		if existing.State() != ports.ChatControllerStopped {
@@ -270,8 +318,8 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 			return nil, ctx.Err()
 		}
 		s.mu.Lock()
-		if current := s.controllers[cfg.SessionID]; current == existing {
-			delete(s.controllers, cfg.SessionID)
+		if current := s.controllers[key]; current == existing {
+			delete(s.controllers, key)
 		}
 		s.mu.Unlock()
 	}
@@ -294,6 +342,8 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	scope := domain.ConversationScopeSession
 	if cfg.Kind == domain.KindOrchestrator {
 		scope = domain.ConversationScopeProject
+	} else if owner.Kind == domain.ConversationOwnerReview {
+		scope = domain.ConversationScopeReview
 	}
 	now := s.now()
 	var resetBoundary domain.ConversationActivity
@@ -317,7 +367,13 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	}
 	conversationID := s.newID()
 	var conversation domain.ConversationRecord
-	if freshProjectContext {
+	if scope == domain.ConversationScopeReview {
+		reviewStore, ok := s.store.(reviewerChatStore)
+		if !ok {
+			return nil, errors.New("reviewer conversation store is unavailable")
+		}
+		conversation, err = reviewStore.CreateReviewConversation(ctx, conversationID, owner.ID, cfg.ProjectID, now)
+	} else if freshProjectContext {
 		conversation, err = s.store.CreateProjectConversationWithContextReset(
 			ctx, conversationID, cfg.ProjectID, cfg.SessionID, resetBoundary, now)
 	} else {
@@ -342,27 +398,33 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	}
 
 	var conv ports.ChatConversation
+	driverSessionID := cfg.SessionID
+	if owner.Kind == domain.ConversationOwnerReview {
+		driverSessionID = domain.SessionID(owner.ID)
+	}
 	if cfg.ProviderConversationID != "" {
 		conv, err = driver.Resume(ctx, ports.ChatResumeConfig{
-			SessionID:              cfg.SessionID,
+			SessionID:              driverSessionID,
 			ProviderConversationID: cfg.ProviderConversationID,
 			DataDir:                cfg.DataDir,
 			WorkspacePath:          cfg.WorkspacePath,
 			Env:                    cfg.Env,
 			Model:                  cfg.Model,
 			Permissions:            cfg.Permissions,
+			WorkspaceAccess:        cfg.WorkspaceAccess,
 			SystemPrompt:           cfg.SystemPrompt,
 			AdditionalDirectories:  cfg.AdditionalDirectories,
 			MCPServers:             cfg.MCPServers,
 		})
 	} else {
 		conv, err = driver.Start(ctx, ports.ChatStartConfig{
-			SessionID:             cfg.SessionID,
+			SessionID:             driverSessionID,
 			DataDir:               cfg.DataDir,
 			WorkspacePath:         cfg.WorkspacePath,
 			Env:                   cfg.Env,
 			Model:                 cfg.Model,
 			Permissions:           cfg.Permissions,
+			WorkspaceAccess:       cfg.WorkspaceAccess,
 			SystemPrompt:          cfg.SystemPrompt,
 			AdditionalDirectories: cfg.AdditionalDirectories,
 			MCPServers:            cfg.MCPServers,
@@ -379,7 +441,20 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	if generation == "" {
 		generation = s.newID()
 	}
-	if err := s.store.ClaimChatControllerGeneration(ctx, cfg.SessionID, generation, s.now()); err != nil {
+	if owner.Kind == domain.ConversationOwnerReview {
+		reviewStore, ok := s.store.(reviewerChatStore)
+		if !ok {
+			_ = conv.Close()
+			return nil, errors.New("reviewer conversation store is unavailable")
+		}
+		if claimed, claimErr := reviewStore.ClaimReviewChatController(ctx, owner.ID, conv.ProviderConversationID(), generation, s.now()); claimErr != nil || !claimed {
+			_ = conv.Close()
+			if claimErr != nil {
+				return nil, fmt.Errorf("claim reviewer chat controller: %w", claimErr)
+			}
+			return nil, errors.New("reviewer is no longer committed to chat mode")
+		}
+	} else if err := s.store.ClaimChatControllerGeneration(ctx, cfg.SessionID, generation, s.now()); err != nil {
 		_ = conv.Close()
 		return nil, fmt.Errorf("claim chat controller: %w", err)
 	}
@@ -393,11 +468,11 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	// behind a controller that no longer existed. Nothing would ever have corrected
 	// it. Settling here covers every way a controller can come up, and is a no-op
 	// for a session that has none of it.
-	s.settleOrphanedWork(ctx, cfg.SessionID, conversation.ID)
+	s.settleOrphanedWorkForOwner(ctx, owner, cfg.SessionID, conversation.ID)
 	// A fresh generation per launch, so events from the controller this one
 	// replaced can be told apart from the current one's.
 	controller := newController(
-		cfg.SessionID, conversation, generation, conv, s.store, s.activity, s.log, s.newID, s.now)
+		cfg.SessionID, owner, cfg.WorkspaceAccess, conversation, generation, conv, s.store, s.activity, s.log, s.newID, s.now)
 	if cfg.ProviderConversationID != "" && !cfg.SkipNativeHistoryImport {
 		// The provider's native thread is the continuity authority across TUI and
 		// Chat. Import it before the live projector starts so the first notification
@@ -446,8 +521,8 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 		controller.settings = commit.Conversation.Settings
 	}
 	s.mu.Lock()
-	s.controllers[cfg.SessionID] = controller
-	s.startConfigs[cfg.SessionID] = cloneStartConfig(cfg)
+	s.controllers[key] = controller
+	s.startConfigs[key] = cloneStartConfig(cfg)
 	controller.start()
 	s.mu.Unlock()
 
@@ -456,8 +531,8 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	go func() {
 		controller.Wait()
 		s.mu.Lock()
-		if current, ok := s.controllers[cfg.SessionID]; ok && current == controller {
-			delete(s.controllers, cfg.SessionID)
+		if current, ok := s.controllers[key]; ok && current == controller {
+			delete(s.controllers, key)
 		}
 		s.mu.Unlock()
 	}()
@@ -467,9 +542,13 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 
 // Controller returns a session's live controller.
 func (s *Service) Controller(sessionID domain.SessionID) (*Controller, error) {
+	return s.ControllerForOwner(domain.SessionConversationOwner(sessionID))
+}
+
+func (s *Service) ControllerForOwner(owner domain.ConversationOwner) (*Controller, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	controller, ok := s.controllers[sessionID]
+	controller, ok := s.controllers[keyFor(owner)]
 	if !ok {
 		return nil, ErrNoController
 	}
@@ -481,8 +560,12 @@ func (s *Service) Controller(sessionID domain.SessionID) (*Controller, error) {
 // briefly while its final cleanup lands; Start waits for that cleanup before
 // replacing it rather than treating the dead entry as a successful resume.
 func (s *Service) HasLiveChatController(sessionID domain.SessionID) bool {
+	return s.HasLiveControllerForOwner(domain.SessionConversationOwner(sessionID))
+}
+
+func (s *Service) HasLiveControllerForOwner(owner domain.ConversationOwner) bool {
 	s.mu.RLock()
-	controller := s.controllers[sessionID]
+	controller := s.controllers[keyFor(owner)]
 	s.mu.RUnlock()
 	return controller != nil && controller.State() != ports.ChatControllerStopped
 }
@@ -519,6 +602,14 @@ func (s *Service) Send(
 	return controller.Send(ctx, msg)
 }
 
+func (s *Service) SendForOwner(ctx context.Context, owner domain.ConversationOwner, msg ports.ChatUserMessage) (domain.ConversationTurn, error) {
+	controller, err := s.ControllerForOwner(owner)
+	if err != nil {
+		return domain.ConversationTurn{}, err
+	}
+	return controller.Send(ctx, msg)
+}
+
 // Resolve answers a pending approval.
 func (s *Service) Resolve(
 	ctx context.Context,
@@ -530,6 +621,14 @@ func (s *Service) Resolve(
 		return err
 	}
 	controller, err := s.Controller(id)
+	if err != nil {
+		return err
+	}
+	return controller.Resolve(ctx, requestID, decision)
+}
+
+func (s *Service) ResolveForOwner(ctx context.Context, owner domain.ConversationOwner, requestID string, decision ports.ChatDecision) error {
+	controller, err := s.ControllerForOwner(owner)
 	if err != nil {
 		return err
 	}
@@ -555,12 +654,28 @@ func (s *Service) ResolveInput(
 	return controller.ResolveInput(ctx, requestID, response)
 }
 
+func (s *Service) ResolveInputForOwner(ctx context.Context, owner domain.ConversationOwner, requestID string, response ports.ChatInputResponse) error {
+	controller, err := s.ControllerForOwner(owner)
+	if err != nil {
+		return err
+	}
+	return controller.ResolveInput(ctx, requestID, response)
+}
+
 // Interrupt cancels a session's in-flight turn.
 func (s *Service) Interrupt(ctx context.Context, id domain.SessionID) error {
 	if _, err := s.requireChatSession(ctx, id); err != nil {
 		return err
 	}
 	controller, err := s.Controller(id)
+	if err != nil {
+		return err
+	}
+	return controller.Interrupt(ctx)
+}
+
+func (s *Service) InterruptForOwner(ctx context.Context, owner domain.ConversationOwner) error {
+	controller, err := s.ControllerForOwner(owner)
 	if err != nil {
 		return err
 	}
@@ -617,18 +732,23 @@ func (s *Service) AbortChatHandoff(id domain.SessionID) {
 
 // Stop closes a session's controller. Safe to call for a session that has none.
 func (s *Service) Stop(ctx context.Context, id domain.SessionID) error {
-	gate := s.controllerGate(id)
+	return s.StopForOwner(ctx, domain.SessionConversationOwner(id))
+}
+
+func (s *Service) StopForOwner(ctx context.Context, owner domain.ConversationOwner) error {
+	key := keyFor(owner)
+	gate := s.controllerGateForOwner(owner)
 	if err := gate.lock(ctx); err != nil {
 		return err
 	}
 	defer gate.unlock()
 
 	s.mu.RLock()
-	controller, ok := s.controllers[id]
+	controller, ok := s.controllers[key]
 	s.mu.RUnlock()
 	if !ok {
 		s.mu.Lock()
-		delete(s.startConfigs, id)
+		delete(s.startConfigs, key)
 		s.mu.Unlock()
 		return nil
 	}
@@ -641,10 +761,10 @@ func (s *Service) Stop(ctx context.Context, id domain.SessionID) error {
 	select {
 	case <-controller.stopped:
 		s.mu.Lock()
-		if current, found := s.controllers[id]; found && current == controller {
-			delete(s.controllers, id)
+		if current, found := s.controllers[key]; found && current == controller {
+			delete(s.controllers, key)
 		}
-		delete(s.startConfigs, id)
+		delete(s.startConfigs, key)
 		s.mu.Unlock()
 	default:
 	}
@@ -783,6 +903,55 @@ func (s *Service) Snapshot(ctx context.Context, id domain.SessionID) (Snapshot, 
 	}, nil
 }
 
+// SnapshotForReview reads a reviewer-owned Chat narrative without treating the
+// reviewer as an AO session.
+func (s *Service) SnapshotForReview(ctx context.Context, reviewID string) (Snapshot, error) {
+	reviewStore, ok := s.store.(reviewerChatStore)
+	if !ok {
+		return Snapshot{}, errors.New("reviewer conversation store is unavailable")
+	}
+	review, found, err := reviewStore.GetReviewByID(ctx, reviewID)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	if !found {
+		return Snapshot{}, ports.ErrSessionNotFound
+	}
+	if review.InterfaceMode != domain.ReviewerInterfaceChat {
+		return Snapshot{}, ErrNotChatMode
+	}
+	conversation, err := reviewStore.ConversationForReview(ctx, reviewID)
+	if errors.Is(err, domain.ErrNoConversation) {
+		return Snapshot{SessionID: review.SessionID, Harness: domain.AgentHarness(review.Harness), Mode: domain.SessionModeChat, Controller: ports.ChatControllerStopped}, nil
+	}
+	if err != nil {
+		return Snapshot{}, err
+	}
+	rows, err := s.reader.LoadConversationSnapshot(ctx, conversation.ID)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	state := ports.ChatControllerStopped
+	var caps ports.ChatCapabilities
+	if controller, controllerErr := s.ControllerForOwner(domain.ReviewConversationOwner(reviewID)); controllerErr == nil {
+		state = controller.State()
+		caps = controller.Capabilities()
+	}
+	return snapshotFromRows(rows, review.SessionID, domain.AgentHarness(review.Harness), state, caps), nil
+}
+
+func snapshotFromRows(rows ConversationRows, sessionID domain.SessionID, harness domain.AgentHarness, state ports.ChatControllerState, caps ports.ChatCapabilities) Snapshot {
+	return Snapshot{
+		Conversation: rows.Conversation, SessionID: sessionID, Harness: harness,
+		Mode: domain.SessionModeChat, Controller: state, Turns: rows.Turns,
+		Messages: rows.Messages, Activities: rows.Activities,
+		BranchPoints:               rows.BranchPoints,
+		BranchedFromEarlierMessage: rows.BranchedFromEarlierMessage,
+		OldestSequence:             rows.OldestSequence, HasMoreBefore: rows.HasMoreBefore,
+		Capabilities: caps, Usage: rows.Conversation.Usage, RateLimits: rows.Conversation.RateLimits,
+	}
+}
+
 // SnapshotPage reads one bounded timeline page. The live conversation metadata
 // remains current on every page; only turns/messages/activities are windowed.
 func (s *Service) SnapshotPage(ctx context.Context, id domain.SessionID, beforeSequence, limit int64) (Snapshot, error) {
@@ -834,6 +1003,43 @@ func (s *Service) SnapshotPage(ctx context.Context, id domain.SessionID, beforeS
 		Usage:                      rows.Conversation.Usage,
 		RateLimits:                 rows.Conversation.RateLimits,
 	}, nil
+}
+
+func (s *Service) SnapshotPageForReview(ctx context.Context, reviewID string, beforeSequence, limit int64) (Snapshot, error) {
+	if s.pageReader == nil {
+		return s.SnapshotForReview(ctx, reviewID)
+	}
+	reviewStore, ok := s.store.(reviewerChatStore)
+	if !ok {
+		return Snapshot{}, errors.New("reviewer conversation store is unavailable")
+	}
+	review, found, err := reviewStore.GetReviewByID(ctx, reviewID)
+	if err != nil || !found {
+		if err != nil {
+			return Snapshot{}, err
+		}
+		return Snapshot{}, ports.ErrSessionNotFound
+	}
+	if review.InterfaceMode != domain.ReviewerInterfaceChat {
+		return Snapshot{}, ErrNotChatMode
+	}
+	conversation, err := reviewStore.ConversationForReview(ctx, reviewID)
+	if errors.Is(err, domain.ErrNoConversation) {
+		return s.SnapshotForReview(ctx, reviewID)
+	}
+	if err != nil {
+		return Snapshot{}, err
+	}
+	rows, err := s.pageReader.LoadConversationSnapshotPage(ctx, conversation.ID, beforeSequence, limit)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	state := ports.ChatControllerStopped
+	var caps ports.ChatCapabilities
+	if controller, controllerErr := s.ControllerForOwner(domain.ReviewConversationOwner(reviewID)); controllerErr == nil {
+		state, caps = controller.State(), controller.Capabilities()
+	}
+	return snapshotFromRows(rows, review.SessionID, domain.AgentHarness(review.Harness), state, caps), nil
 }
 
 // SnapshotReaderFunc adapts a plain function to SnapshotReader. The daemon wiring
@@ -952,6 +1158,7 @@ func (s *Service) StartChat(ctx context.Context, cfg StartRequest) (StartResult,
 // StartRequest mirrors session_manager.ChatStart. Duplicated rather than
 // imported so the manager and this service do not depend on each other's types.
 type StartRequest struct {
+	Owner                 domain.ConversationOwner
 	SessionID             domain.SessionID
 	ProjectID             domain.ProjectID
 	Kind                  domain.SessionKind
@@ -961,6 +1168,7 @@ type StartRequest struct {
 	Env                   map[string]string
 	Model                 string
 	Permissions           ports.PermissionMode
+	WorkspaceAccess       ports.ChatWorkspaceAccess
 	SystemPrompt          string
 	AdditionalDirectories []string
 	MCPServers            []ports.ChatMCPServerConfig

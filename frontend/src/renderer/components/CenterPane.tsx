@@ -57,6 +57,8 @@ type CenterPaneProps = {
 	terminalTarget?: TerminalTarget;
 	reviewerTerminal?: { handleId: string; harness: string };
 	onSelectReviewerTerminal?: (target: { handleId: string; harness: string }) => void;
+	reviewerChat?: { reviewId: string; harness: string };
+	onSelectReviewerChat?: (target: { reviewId: string; harness: string }) => void;
 	/** Standalone shells to render as tabs beside the session's own pane. */
 	shellTerminals?: ShellTerminal[];
 	onSelectSessionTerminal?: () => void;
@@ -71,6 +73,7 @@ type CenterPaneProps = {
 
 type AuxiliaryTerminal =
 	| { key: string; kind: "reviewer"; terminal: NonNullable<CenterPaneProps["reviewerTerminal"]> }
+	| { key: string; kind: "reviewer-chat"; terminal: NonNullable<CenterPaneProps["reviewerChat"]> }
 	| { key: string; kind: "shell"; terminal: ShellTerminal };
 
 type TerminalOrder = { sessionId: string; keys: string[] };
@@ -122,7 +125,9 @@ export function CenterPane({
 	daemonReady,
 	terminalTarget,
 	reviewerTerminal,
+	reviewerChat,
 	onSelectReviewerTerminal,
+	onSelectReviewerChat,
 	shellTerminals = [],
 	onSelectSessionTerminal,
 	onSelectShellTerminal,
@@ -155,9 +160,12 @@ export function CenterPane({
 						},
 					]
 				: []),
+			...(!reviewerTerminal && reviewerChat
+				? [{ key: `reviewer-chat:${reviewerChat.reviewId}`, kind: "reviewer-chat" as const, terminal: reviewerChat }]
+				: []),
 			...shellTerminals.map((terminal) => ({ key: terminal.handleId, kind: "shell" as const, terminal })),
 		],
-		[reviewerTerminal, shellTerminals],
+		[reviewerChat, reviewerTerminal, shellTerminals],
 	);
 	const availableAuxiliaryKeys = useMemo(() => auxiliaryTerminals.map((terminal) => terminal.key), [auxiliaryTerminals]);
 	const orderedAuxiliaryTerminals = useMemo(() => {
@@ -316,10 +324,12 @@ export function CenterPane({
 			}
 			const nextTerminal = orderedAuxiliaryTerminals[nextIndex - 1];
 			if (nextTerminal?.kind === "reviewer") onSelectReviewerTerminal?.(nextTerminal.terminal);
+			if (nextTerminal?.kind === "reviewer-chat") onSelectReviewerChat?.(nextTerminal.terminal);
 			if (nextTerminal?.kind === "shell") onSelectShellTerminal?.(nextTerminal.terminal.handleId);
 		},
 		[
 			onSelectReviewerTerminal,
+			onSelectReviewerChat,
 			onSelectSessionTerminal,
 			onSelectShellTerminal,
 			orderedAuxiliaryTerminals,
@@ -565,7 +575,7 @@ export function CenterPane({
 								>
 									{orderedAuxiliaryTerminals.map((terminal) => (
 										<DraggableTerminalTab key={terminal.key} value={terminal.key}>
-											{terminal.kind === "reviewer" ? (
+											{terminal.kind === "reviewer" || terminal.kind === "reviewer-chat" ? (
 												<SessionPaneTab
 													appearance="connected"
 													icon={
@@ -577,7 +587,9 @@ export function CenterPane({
 													}
 													isActive={target.kind === "reviewer"}
 													label={t("terminal.reviewer")}
-													onSelect={() => onSelectReviewerTerminal?.(terminal.terminal)}
+													onSelect={() => terminal.kind === "reviewer"
+														? onSelectReviewerTerminal?.(terminal.terminal)
+														: onSelectReviewerChat?.(terminal.terminal)}
 													title={terminal.terminal.harness}
 												/>
 											) : (

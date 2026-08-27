@@ -1648,14 +1648,17 @@ describe("SessionInspector summary reviews", () => {
       response: { status: 201 },
       data: {
         reviewerHandleId: "reviewer-pane",
+        reviewerSurface: { mode: "chat", reviewId: "review-1", harness: "codex" },
         reviews: [{ ...reviewState(3, "running"), latestRun: runningReview }],
       },
     });
     const onOpenReviewerTerminal = vi.fn();
+    const onOpenReviewerChat = vi.fn();
 
     renderWithQuery(
       <SessionInspector
         onOpenReviewerTerminal={onOpenReviewerTerminal}
+        onOpenReviewerChat={onOpenReviewerChat}
         session={session([pr(3, "open")], { mode: "chat" })}
       />,
     );
@@ -1674,6 +1677,7 @@ describe("SessionInspector summary reviews", () => {
       ),
     );
     expect(onOpenReviewerTerminal).not.toHaveBeenCalled();
+    expect(onOpenReviewerChat).toHaveBeenCalledWith("review-1");
   });
 
   it("shows the worker-compatible default reviewer before a run exists", async () => {

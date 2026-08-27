@@ -21,6 +21,89 @@ type fakeReviewer struct {
 	env              map[string]string
 }
 
+type fakeChatReviewer struct{ fakeReviewer }
+
+func (*fakeChatReviewer) ReviewChatHarness() domain.AgentHarness { return domain.HarnessCodex }
+
+type fakeReviewerChat struct {
+	started  ReviewerChatStart
+	restored ReviewerChatStart
+	sentID   string
+	sent     string
+}
+
+func (f *fakeReviewerChat) PreflightReviewChat(context.Context, domain.AgentHarness) error {
+	return nil
+}
+func (f *fakeReviewerChat) StartReviewChat(_ context.Context, cfg ReviewerChatStart) (string, error) {
+	f.started = cfg
+	return "thread-1", nil
+}
+func (f *fakeReviewerChat) RestoreReviewChat(_ context.Context, cfg ReviewerChatStart) (string, error) {
+	f.restored = cfg
+	return cfg.ProviderConversationID, nil
+}
+func (f *fakeReviewerChat) SendReviewChat(_ context.Context, id, message string) error {
+	f.sentID, f.sent = id, message
+	return nil
+}
+func (*fakeReviewerChat) ReviewChatAlive(string) bool                       { return true }
+func (*fakeReviewerChat) InterruptReviewChat(context.Context, string) error { return nil }
+func (*fakeReviewerChat) StopReviewChat(context.Context, string) error      { return nil }
+
+func TestLauncherUsesTypedChatForCapableReviewer(t *testing.T) {
+	reviewer := &fakeChatReviewer{}
+	chat := &fakeReviewerChat{}
+	runtime := &fakeRuntime{}
+	launcher := NewLauncher(
+		fakeReviewerResolver{reviewer: reviewer, ok: true}, runtime, t.TempDir(),
+		WithReviewerChat(chat),
+	)
+
+	result, err := launcher.Spawn(context.Background(), launchSpec())
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if result.HandleID != "review-chat:review-1" || result.AgentSessionID != "thread-1" {
+		t.Fatalf("result = %+v", result)
+	}
+	if chat.started.ReviewID != "review-1" || chat.started.Harness != domain.HarnessCodex {
+		t.Fatalf("chat start = %+v", chat.started)
+	}
+	if !strings.Contains(chat.started.SystemPrompt, "You are an AO code reviewer") ||
+		!strings.Contains(chat.started.SystemPrompt, "Do not run project programs") {
+		t.Fatalf("chat reviewer system prompt lost review-only policy: %q", chat.started.SystemPrompt)
+	}
+	if runtime.created {
+		t.Fatal("terminal runtime was created for a Chat reviewer")
+	}
+}
+
+func TestLauncherRestoresTypedChatWithoutSendingReviewTask(t *testing.T) {
+	chat := &fakeReviewerChat{}
+	runtime := &fakeRuntime{}
+	launcher := NewLauncher(
+		fakeReviewerResolver{reviewer: &fakeChatReviewer{}, ok: true}, runtime, t.TempDir(),
+		WithReviewerChat(chat),
+	)
+	spec := launchSpec()
+	spec.ProviderConversationID = "thread-existing"
+
+	result, err := launcher.RestoreTerminal(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("RestoreTerminal: %v", err)
+	}
+	if result.HandleID != "review-chat:review-1" || result.AgentSessionID != "thread-existing" {
+		t.Fatalf("result = %+v", result)
+	}
+	if chat.restored.ProviderConversationID != "thread-existing" || chat.started.ReviewID != "" || chat.sent != "" {
+		t.Fatalf("review chat calls = started %+v restored %+v sent %q", chat.started, chat.restored, chat.sent)
+	}
+	if runtime.created {
+		t.Fatal("terminal runtime was created while restoring a Chat reviewer")
+	}
+}
+
 func (f *fakeReviewer) ReviewCommand(_ context.Context, inv ports.ReviewInvocation) (ports.ReviewCommandSpec, error) {
 	f.gotInv = inv
 	return ports.ReviewCommandSpec{Argv: []string{"greptile", "review"}, Env: f.env, WorkingDirectory: f.workingDirectory}, nil

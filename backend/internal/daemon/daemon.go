@@ -358,6 +358,11 @@ func Run() error {
 		}
 		return fmt.Errorf("reconcile sessions on boot: %w", reconcileErr)
 	}
+	if recovery, ok := reviewSvc.(interface{ RecoverChatReviewers(context.Context) error }); ok {
+		if recoverErr := recovery.RecoverChatReviewers(ctx); recoverErr != nil {
+			log.Error("recover reviewer chat controllers on boot failed", "err", recoverErr)
+		}
+	}
 	if reconcileErr := lcStack.ReconcileRuntime(ctx); reconcileErr != nil {
 		log.Error("reconcile agent processes on boot failed", "err", reconcileErr)
 	}

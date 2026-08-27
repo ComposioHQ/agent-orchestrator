@@ -24,15 +24,42 @@ import (
 // are authoritative for what AO renders and for delivery state — AO never
 // maintains a second independently writable model transcript.
 
+// ConversationOwnerKind identifies the durable entity whose controller owns a
+// conversation. Reviewer ids deliberately occupy a separate namespace from AO
+// session ids even when their strings happen to match.
+type ConversationOwnerKind string
+
+const (
+	ConversationOwnerSession ConversationOwnerKind = "session"
+	ConversationOwnerReview  ConversationOwnerKind = "review"
+)
+
+// ConversationOwner is the typed controller identity used by Chat lifecycle and
+// persistence. ID is a session id for session owners and a review row id for
+// review owners.
+type ConversationOwner struct {
+	Kind ConversationOwnerKind `json:"kind"`
+	ID   string                `json:"id"`
+}
+
+func SessionConversationOwner(id SessionID) ConversationOwner {
+	return ConversationOwner{Kind: ConversationOwnerSession, ID: string(id)}
+}
+
+func ReviewConversationOwner(id string) ConversationOwner {
+	return ConversationOwner{Kind: ConversationOwnerReview, ID: id}
+}
+
 // ConversationScope says whether a conversation belongs to a project (the
-// orchestrator narrative, which outlives any single orchestrator session) or to
-// one session (a worker).
+// orchestrator narrative, which outlives any single orchestrator session), one
+// session (a worker), or one durable reviewer.
 type ConversationScope string
 
 // Conversation scopes.
 const (
 	ConversationScopeSession ConversationScope = "session"
 	ConversationScopeProject ConversationScope = "project"
+	ConversationScopeReview  ConversationScope = "review"
 )
 
 // ConversationContextResetProviderItemID returns the durable identity of the
@@ -151,6 +178,7 @@ type ConversationRecord struct {
 	// on clean replacement while the conversation identity remains stable.
 	ProjectID ProjectID `json:"projectId"`
 	SessionID SessionID `json:"sessionId,omitempty"`
+	ReviewID  string    `json:"reviewId,omitempty"`
 	// ActiveBranchID identifies the one provider-thread lineage the session may
 	// write. Sibling branches remain durable and are selected by moving this head;
 	// display status is still derived independently at read time.
@@ -205,6 +233,7 @@ type ConversationBranch struct {
 	ID                     string    `json:"id"`
 	ConversationID         string    `json:"conversationId"`
 	SessionID              SessionID `json:"sessionId"`
+	ReviewID               string    `json:"reviewId,omitempty"`
 	ProviderConversationID string    `json:"-"`
 	// ProviderScopeID is the root created for one provider ownership epoch. Agent
 	// switches start a new scope while keeping older AO history visible.
@@ -447,6 +476,7 @@ type ConversationTurn struct {
 	// project-scoped conversation this changes when the orchestrator is
 	// replaced; the conversation identity does not.
 	HandledBySessionID SessionID `json:"handledBySessionId"`
+	HandledByReviewID  string    `json:"handledByReviewId,omitempty"`
 	// ProviderTurnID correlates back to the provider's own turn. Opaque.
 	ProviderTurnID string    `json:"providerTurnId,omitempty"`
 	State          TurnState `json:"state"`

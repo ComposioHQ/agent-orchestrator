@@ -69,6 +69,60 @@ func (s *Store) CreateConversation(
 	})
 }
 
+// CreateReviewConversation opens the one durable Chat narrative owned by a
+// reviewer row. The parent worker supplies project/worktree context but is not
+// installed as the conversation controller.
+func (s *Store) CreateReviewConversation(
+	ctx context.Context,
+	id string,
+	reviewID string,
+	project domain.ProjectID,
+	now time.Time,
+) (domain.ConversationRecord, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
+	if existing, err := s.qw.SelectConversationByReview(ctx, nullableString(reviewID)); err == nil {
+		return conversationToDomain(existing), nil
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return domain.ConversationRecord{}, fmt.Errorf("select conversation for reviewer %s: %w", reviewID, err)
+	}
+	reviewer, err := s.qw.GetReviewByID(ctx, reviewID)
+	if err != nil {
+		return domain.ConversationRecord{}, fmt.Errorf("select reviewer %s: %w", reviewID, err)
+	}
+	rootBranchID := id + ":root"
+	err = s.inTx(ctx, "insert reviewer conversation", func(q *gen.Queries) error {
+		if err := q.InsertReviewConversation(ctx, gen.InsertReviewConversationParams{
+			ID:              id,
+			ProjectID:       project,
+			ReviewID:        nullableString(reviewID),
+			CurrentReviewID: nullableString(reviewID),
+			ActiveBranchID:  rootBranchID,
+			CreatedAt:       now,
+			UpdatedAt:       now,
+		}); err != nil {
+			return err
+		}
+		return q.InsertReviewConversationBranch(ctx, gen.InsertReviewConversationBranchParams{
+			ID:                     rootBranchID,
+			ConversationID:         id,
+			SessionID:              nullableString(string(reviewer.SessionID)),
+			ReviewID:               nullableString(reviewID),
+			ProviderConversationID: reviewer.ProviderConversationID,
+			ForkAfterSequence:      0,
+			CreatedAt:              now,
+		})
+	})
+	if err != nil {
+		return domain.ConversationRecord{}, fmt.Errorf("insert reviewer conversation %s: %w", id, err)
+	}
+	return domain.ConversationRecord{
+		ID: id, Scope: domain.ConversationScopeReview, ProjectID: project,
+		ReviewID: reviewID, ActiveBranchID: rootBranchID, CreatedAt: now, UpdatedAt: now,
+	}, nil
+}
+
 // CreateProjectConversationWithContextReset rebinds an existing project
 // conversation and records the fresh-context boundary in the same transaction.
 // The boundary is written before provider startup so paged readers never expose
@@ -511,6 +565,17 @@ func (s *Store) ConversationForSession(
 	return conversationToDomain(row), nil
 }
 
+func (s *Store) ConversationForReview(ctx context.Context, reviewID string) (domain.ConversationRecord, error) {
+	row, err := s.qr.SelectConversationByReview(ctx, nullableString(reviewID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.ConversationRecord{}, ErrConversationNotFound
+	}
+	if err != nil {
+		return domain.ConversationRecord{}, fmt.Errorf("select conversation for reviewer %s: %w", reviewID, err)
+	}
+	return conversationToDomain(row), nil
+}
+
 // AppendUserMessage records an inbound message and the turn it opens.
 //
 // Idempotent on clientMessageID: a retried send returns the message and turn that
@@ -584,6 +649,53 @@ func (s *Store) AppendUserMessage(
 	return true, nil
 }
 
+// AppendReviewUserMessage records a reviewer-owned request while retaining the
+// parent worker id solely as worktree/project context.
+func (s *Store) AppendReviewUserMessage(
+	ctx context.Context,
+	conversationID string,
+	parentSession domain.SessionID,
+	reviewID, generation string,
+	msg domain.ConversationMessage,
+	turnID string,
+	now time.Time,
+) (created bool, err error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	if msg.ClientMessageID != "" {
+		_, lookupErr := s.qr.SelectConversationMessageByClientID(ctx, gen.SelectConversationMessageByClientIDParams{
+			ConversationID: conversationID, ClientMessageID: msg.ClientMessageID,
+		})
+		if lookupErr == nil {
+			return false, nil
+		}
+		if !errors.Is(lookupErr, sql.ErrNoRows) {
+			return false, fmt.Errorf("lookup reviewer client message %s: %w", msg.ClientMessageID, lookupErr)
+		}
+	}
+	err = s.inTx(ctx, "append reviewer user message", func(q *gen.Queries) error {
+		sequence, err := q.NextConversationSequence(ctx, gen.NextConversationSequenceParams{UpdatedAt: now, ID: conversationID})
+		if err != nil {
+			return fmt.Errorf("allocate reviewer sequence: %w", err)
+		}
+		if err := q.InsertReviewConversationTurn(ctx, gen.InsertReviewConversationTurnParams{
+			ID: turnID, ConversationID: conversationID, HandledBySessionID: parentSession,
+			HandledByReviewID: nullableString(reviewID), ControllerGeneration: generation,
+			State: domain.TurnStateQueued, RequestedAt: now,
+		}); err != nil {
+			return fmt.Errorf("insert reviewer turn: %w", err)
+		}
+		return q.InsertConversationMessage(ctx, gen.InsertConversationMessageParams{
+			ID: msg.ID, ConversationID: conversationID,
+			TurnID: sql.NullString{String: turnID, Valid: true}, Sequence: sequence,
+			Role: domain.MessageRoleUser, Origin: msg.Origin, Text: msg.Text,
+			ClientMessageID: msg.ClientMessageID, DeliveryContentJson: msg.DeliveryContentJSON,
+			CreatedAt: now, UpdatedAt: now,
+		})
+	})
+	return err == nil, err
+}
+
 // AdoptProviderTurn records a turn the provider started that AO never dispatched.
 //
 // A compaction runs as its own provider turn, and so does work the provider
@@ -610,6 +722,26 @@ func (s *Store) AdoptProviderTurn(
 		StartedAt:            sql.NullTime{Time: now, Valid: true},
 	}); err != nil {
 		return fmt.Errorf("adopt provider turn %s: %w", providerTurnID, err)
+	}
+	return nil
+}
+
+func (s *Store) AdoptProviderReviewTurn(
+	ctx context.Context,
+	conversationID string,
+	parentSession domain.SessionID,
+	reviewID, generation, turnID, providerTurnID string,
+	now time.Time,
+) error {
+	q, unlock := s.conversationWriter(ctx)
+	defer unlock()
+	if err := q.AdoptProviderReviewConversationTurn(ctx, gen.AdoptProviderReviewConversationTurnParams{
+		ID: turnID, ConversationID: conversationID, HandledBySessionID: parentSession,
+		HandledByReviewID: nullableString(reviewID), ProviderTurnID: providerTurnID,
+		ControllerGeneration: generation, RequestedAt: now,
+		StartedAt: sql.NullTime{Time: now, Valid: true},
+	}); err != nil {
+		return fmt.Errorf("adopt reviewer provider turn %s: %w", providerTurnID, err)
 	}
 	return nil
 }
@@ -778,6 +910,22 @@ func (s *Store) SettleOrphanedTurns(ctx context.Context, session domain.SessionI
 			HandledBySessionID: session,
 		}); err != nil {
 		return fmt.Errorf("settle orphaned turns for %s: %w", session, err)
+	}
+	return nil
+}
+
+func (s *Store) SettleOrphanedReviewTurns(ctx context.Context, reviewID string, now time.Time) error {
+	q, unlock := s.conversationWriter(ctx)
+	defer unlock()
+	if err := q.FailOrphanedReviewConversationActivities(ctx, gen.FailOrphanedReviewConversationActivitiesParams{
+		UpdatedAt: now, HandledByReviewID: nullableString(reviewID),
+	}); err != nil {
+		return fmt.Errorf("settle orphaned reviewer activities for %s: %w", reviewID, err)
+	}
+	if err := q.SettleOrphanedReviewConversationTurns(ctx, gen.SettleOrphanedReviewConversationTurnsParams{
+		CompletedAt: sql.NullTime{Time: now, Valid: true}, HandledByReviewID: nullableString(reviewID),
+	}); err != nil {
+		return fmt.Errorf("settle orphaned reviewer turns for %s: %w", reviewID, err)
 	}
 	return nil
 }
@@ -1704,6 +1852,53 @@ func (s *Store) ProjectProviderEvent(
 	return true, nil
 }
 
+func (s *Store) ProjectReviewProviderEvent(
+	ctx context.Context,
+	conversationID string,
+	parentSession domain.SessionID,
+	reviewID, generation, providerEventID, method, payloadJSON string,
+	now time.Time,
+	project func(context.Context) error,
+) (bool, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	tx, err := s.writeDB.BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("begin reviewer provider event projection: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	q := s.qw.WithTx(tx)
+	owner, err := q.GetReviewByID(ctx, reviewID)
+	if err != nil {
+		return false, fmt.Errorf("read reviewer controller generation for %s: %w", reviewID, err)
+	}
+	if owner.ControllerGeneration != generation {
+		return false, nil
+	}
+	inserted, err := q.InsertReviewConversationProviderEvent(ctx, gen.InsertReviewConversationProviderEventParams{
+		ConversationID: conversationID, SessionID: parentSession,
+		ReviewID: nullableString(reviewID), ProviderEventID: providerEventID,
+		Method: method, PayloadJson: payloadJSON, ReceivedAt: now,
+	})
+	if err != nil {
+		return false, fmt.Errorf("archive reviewer provider event %s: %w", method, err)
+	}
+	if inserted == 0 {
+		if err := tx.Commit(); err != nil {
+			return false, fmt.Errorf("commit duplicate reviewer provider event %s: %w", method, err)
+		}
+		return false, nil
+	}
+	txCtx := context.WithValue(ctx, conversationProjectionTxKey{}, q)
+	if err := project(txCtx); err != nil {
+		return false, fmt.Errorf("project reviewer provider event %s: %w", method, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("commit reviewer provider event %s: %w", method, err)
+	}
+	return true, nil
+}
+
 // ErrConversationTurnNotFound reports a turn id that is not in the conversation it
 // was named against. Distinct from a rollback the provider refused: the caller
 // pointed at nothing. It aliases the domain sentinel so a service can recognize it
@@ -2281,6 +2476,9 @@ func conversationToDomain(row gen.Conversation) domain.ConversationRecord {
 	if row.CurrentSessionID != nil {
 		rec.SessionID = *row.CurrentSessionID
 	}
+	if row.CurrentReviewID.Valid {
+		rec.ReviewID = row.CurrentReviewID.String
+	}
 	rec.Usage = usageFromRow(row)
 	rec.RateLimits = rateLimitsFromRow(row)
 	if row.CompactedAt.Valid {
@@ -2301,6 +2499,7 @@ func conversationBranchToDomain(row gen.SelectConversationBranchRow) domain.Conv
 		ID:                     row.ID,
 		ConversationID:         row.ConversationID,
 		SessionID:              domain.SessionID(row.SessionID.String),
+		ReviewID:               row.ReviewID.String,
 		ProviderConversationID: row.ProviderConversationID,
 		ProviderScopeID:        row.ProviderScopeID,
 		ParentBranchID:         row.ParentBranchID.String,
@@ -2318,6 +2517,7 @@ func conversationBranchListToDomain(row gen.SelectConversationBranchesRow) domai
 		ID:                     row.ID,
 		ConversationID:         row.ConversationID,
 		SessionID:              domain.SessionID(row.SessionID.String),
+		ReviewID:               row.ReviewID.String,
 		ProviderConversationID: row.ProviderConversationID,
 		ProviderScopeID:        row.ProviderScopeID,
 		ParentBranchID:         row.ParentBranchID.String,
@@ -2406,6 +2606,7 @@ func turnToDomain(row gen.ConversationTurn) domain.ConversationTurn {
 		ConversationID:     row.ConversationID,
 		BranchID:           row.BranchID,
 		HandledBySessionID: row.HandledBySessionID,
+		HandledByReviewID:  row.HandledByReviewID.String,
 		ProviderTurnID:     row.ProviderTurnID,
 		State:              row.State,
 		ErrorMessage:       row.ErrorMessage,

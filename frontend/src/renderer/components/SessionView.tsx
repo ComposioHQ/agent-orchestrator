@@ -19,6 +19,7 @@ import { defaultShortcutBindings, shortcutBindingLabel } from "../../shared/shor
 import { BrowserPanelView, useBrowserAnnotationQueue } from "./BrowserPanel";
 import { CenterPane } from "./CenterPane";
 import { SessionChatSurface } from "./chat/SessionChatSurface";
+import { ReviewerChatSurface } from "./chat/ReviewerChatSurface";
 import { NotificationCenter } from "./NotificationCenter";
 import { ResizeHandle } from "./ResizeHandle";
 import { SessionFilesView, type ReviewFileTarget } from "./SessionFilesView";
@@ -78,6 +79,7 @@ const newTerminalShortcutLabel = shortcutBindingLabel(defaultShortcutBindings("n
 
 type ReviewsResponse = components["schemas"]["ListReviewsResponse"];
 type ReviewerTerminalTarget = { handleId: string; harness: string };
+type ReviewerChatTarget = { reviewId: string; harness: string };
 
 function inspectorMaxWidthPx(availableWidth?: number): number | undefined {
 	if (!Number.isFinite(availableWidth) || !availableWidth || availableWidth <= 0) return undefined;
@@ -112,10 +114,17 @@ function browserIsVisible(sessionId: string, browserPoppedOut: boolean): boolean
 }
 
 function reviewerTerminalFromReviews(data?: ReviewsResponse): ReviewerTerminalTarget | undefined {
+	if (data?.reviewerSurface?.mode === "chat") return undefined;
 	const handleId = data?.reviewerHandleId?.trim();
 	if (!handleId) return undefined;
 	const latest = data?.reviews?.find((review) => review.latestRun)?.latestRun;
 	return { handleId, harness: data?.reviewerHarness || latest?.harness || "codex" };
+}
+
+function reviewerChatFromReviews(data?: ReviewsResponse): ReviewerChatTarget | undefined {
+	const surface = data?.reviewerSurface;
+	if (surface?.mode !== "chat" || !surface.reviewId) return undefined;
+	return { reviewId: surface.reviewId, harness: surface.harness || "codex" };
 }
 
 type SessionViewProps = {
@@ -258,6 +267,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const [inspectorSettledClosed, setInspectorSettledClosed] = useState(!isInspectorOpen);
 	const inspectorPanelVisible = isInspectorOpen || !inspectorSettledClosed;
 	const [terminalTarget, setTerminalTarget] = useState<TerminalTarget>({ kind: "worker" });
+	const [reviewerChatId, setReviewerChatId] = useState<string | null>(null);
 	const [browserPopOutState, setBrowserPopOutState] = useState({ sessionId, poppedOut: false });
 	const [filesPoppedOut, setFilesPoppedOut] = useState(false);
 	const [reviewFileTarget, setReviewFileTarget] = useState<ReviewFileTarget | undefined>();
@@ -318,6 +328,8 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	});
 	const availableReviewerTerminal = reviewerTerminalFromReviews(reviewerQuery.data);
 	const reviewerTerminal = session && sessionIsActive(session) ? availableReviewerTerminal : undefined;
+	const availableReviewerChat = reviewerChatFromReviews(reviewerQuery.data);
+	const reviewerChat = session && sessionIsActive(session) ? availableReviewerChat : undefined;
 
 	// Shell terminals opened inside a session live beside its pane as extra tabs,
 	// scoped to the session on screen so each session has its own shell set.
@@ -363,6 +375,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		(handleId: string) => {
 			const shell = shellTerminals.find((s) => s.handleId === handleId);
 			if (!shell) return;
+			setReviewerChatId(null);
 			setActiveShellTerminal(shell.handleId);
 			setTerminalTarget({
 				generation: shell.createdAt,
@@ -416,11 +429,18 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const selectSessionTerminal = useCallback(() => {
 		setActiveShellTerminal(null);
 		setTerminalTarget({ kind: "worker" });
+		setReviewerChatId(null);
 	}, [setActiveShellTerminal]);
 	const selectReviewerTerminal = useCallback((target: ReviewerTerminalTarget) => {
+		setReviewerChatId(null);
 		setActiveShellTerminal(null);
 		setTerminalTarget({ kind: "reviewer", handleId: target.handleId, harness: target.harness, sessionId });
 	}, [sessionId, setActiveShellTerminal]);
+	const selectReviewerChat = useCallback((reviewId: string) => {
+		setActiveShellTerminal(null);
+		setTerminalTarget({ kind: "worker" });
+		setReviewerChatId(reviewId);
+	}, [setActiveShellTerminal]);
 
 	// The shell layout owns opening (it is mounted on every route, so the button
 	// and ⌘T / Ctrl+T work everywhere); this view only follows the result. When a new
@@ -613,6 +633,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 
 	useLayoutEffect(() => {
 		setTerminalTarget({ kind: "worker" });
+		setReviewerChatId(null);
 		setBrowserPopOutState({ sessionId, poppedOut: false });
 		setFilesPoppedOut(false);
 		setFilesFocusPath(null);
@@ -642,9 +663,9 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	// Publish which one is showing: the notification runtime lives outside this
 	// subtree and must not treat "on the session route" as "watching the agent".
 	useEffect(() => {
-		setVisibleTerminalKind(sessionId, routedTerminalTarget.kind);
+		setVisibleTerminalKind(sessionId, reviewerChatId ? "reviewer" : routedTerminalTarget.kind);
 		return () => clearVisibleTerminalKind(sessionId);
-	}, [clearVisibleTerminalKind, routedTerminalTarget.kind, sessionId, setVisibleTerminalKind]);
+	}, [clearVisibleTerminalKind, reviewerChatId, routedTerminalTarget.kind, sessionId, setVisibleTerminalKind]);
 
 	const handleOpenFiles = useCallback(() => {
 		setBrowserPopOutState({ sessionId, poppedOut: false });
@@ -856,9 +877,13 @@ export function SessionView({ sessionId }: SessionViewProps) {
 						<div className="relative min-h-0 flex-1">
 							{/* The committed mode owns the agent surface. Auxiliary shell and
 							    reviewer targets remain terminal surfaces in either mode. */}
-							{showChatSurface ? (
+							{reviewerChatId ? (
+								<ReviewerChatSurface reviewId={reviewerChatId} />
+							) : showChatSurface ? (
 								<SessionChatSurface
 									session={session}
+									reviewerChat={reviewerChat}
+									onOpenReviewerChat={(target) => selectReviewerChat(target.reviewId)}
 									reviewerTerminal={reviewerTerminal}
 									onOpenReviewerTerminal={selectReviewerTerminal}
 									reviewerTarget={
@@ -893,9 +918,11 @@ export function SessionView({ sessionId }: SessionViewProps) {
 									onCloseShellTerminal={closeShellTerminalByHandle}
 									onRenameShellTerminal={renameShellTerminalByHandle}
 									onSelectSessionTerminal={selectSessionTerminal}
+									onSelectReviewerChat={(target) => selectReviewerChat(target.reviewId)}
 									onSelectReviewerTerminal={selectReviewerTerminal}
 									onSelectShellTerminal={selectShellTerminal}
 									reviewerTerminal={reviewerTerminal}
+									reviewerChat={reviewerChat}
 									session={session}
 									shellTerminals={shellTerminals}
 									terminalTarget={routedTerminalTarget}
@@ -947,8 +974,9 @@ export function SessionView({ sessionId }: SessionViewProps) {
 							isInspectorVisible={inspectorPanelVisible}
 							onOpenFiles={handleOpenFiles}
 							onOpenReviewFile={handleOpenReviewFile}
-							onOpenReviewerTerminal={showChatSurface ? undefined : selectReviewerTerminal}
-							onWorkerMessageSent={showChatSurface ? selectSessionTerminal : undefined}
+							onOpenReviewerTerminal={selectReviewerTerminal}
+							onOpenReviewerChat={selectReviewerChat}
+							onWorkerMessageSent={showChatSurface || reviewerChatId ? selectSessionTerminal : undefined}
 							onToggleBrowserPopOut={handleToggleBrowserPopOut}
 							onViewChange={(next: InspectorView) => setInspectorViewForSession(sessionId, next)}
 							view={inspectorView}

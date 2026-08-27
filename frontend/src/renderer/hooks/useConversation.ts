@@ -697,7 +697,7 @@ export function useStageAttachments(sessionId: string | undefined) {
  * reader sees one sequence — which is why sequence is conversation-scoped rather
  * than per-table.
  */
-function toSnapshot(wire: WireSnapshot): ConversationSnapshot {
+export function toSnapshot(wire: WireSnapshot): ConversationSnapshot {
 	const items: ConversationItem[] = [
 		...(wire.messages ?? []).map(toMessage),
 		...(wire.activities ?? []).map(toActivity),
