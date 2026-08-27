@@ -1877,6 +1877,7 @@ export interface components {
         AttachmentInput: {
             data: string;
             mimeType?: string;
+            name?: string;
         };
         BrowserCommandRequest: {
             action: string;
@@ -2097,6 +2098,7 @@ export interface components {
         ConversationImageContentRequest: {
             data: string;
             mimeType: string;
+            name?: string;
         };
         ConversationMCPServerPayload: {
             error?: string;

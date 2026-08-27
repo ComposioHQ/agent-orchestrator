@@ -3,8 +3,12 @@ package sessionmanager
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/attachmentstore"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -560,6 +564,38 @@ func TestChatSpawnStartsControllerAndNoRuntime(t *testing.T) {
 
 	if len(launcher.turns) != 1 || launcher.turns[0] == "" {
 		t.Fatalf("initial prompt was not delivered as a turn: %v", launcher.turns)
+	}
+}
+
+func TestChatSpawnInitialTurnPreservesTheAttachmentDisplayName(t *testing.T) {
+	launcher := &recordingLauncher{}
+	mgr, _, _ := newChatManager(launcher)
+	dataDir := t.TempDir()
+	workspace := t.TempDir()
+	mgr.dataDir = dataDir
+	mgr.attachments = attachmentstore.New(dataDir)
+	mgr.workspace.(*fakeWorkspace).path = workspace
+
+	_, _, _, err := mgr.Spawn(context.Background(), ports.SpawnConfig{
+		ProjectID:     chatTestProject,
+		Kind:          domain.KindWorker,
+		Harness:       domain.HarnessCodex,
+		Prompt:        "inspect this",
+		RequestedMode: domain.SessionModeChat,
+		Attachments: []ports.SpawnAttachment{
+			{Name: "original.png", Ext: ".png", Data: []byte("image")},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+
+	want := ".ao/attachments/attachment-1-original.png"
+	if len(launcher.turns) != 1 || !strings.Contains(launcher.turns[0], want) {
+		t.Fatalf("initial Chat turn = %q, want named attachment %q", launcher.turns, want)
+	}
+	if _, err := os.Stat(filepath.Join(workspace, filepath.FromSlash(want))); err != nil {
+		t.Fatalf("named attachment missing from Chat worktree: %v", err)
 	}
 }
 
