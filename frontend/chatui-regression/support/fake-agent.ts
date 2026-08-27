@@ -11,6 +11,7 @@ import { coerceUiSettings, DEFAULT_UI_SETTINGS } from "../../src/shared/ui-local
 export type FakeWorker = {
 	id: string;
 	title: string;
+	createdAt?: string;
 	mode?: "chat" | "tui";
 	provider?: string;
 	branch?: string;
@@ -95,7 +96,7 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 				mode: w.mode ?? "tui",
 				branch: w.branch ?? `session/${w.id}`,
 				status: w.status ?? "working",
-				createdAt: nowIso,
+				createdAt: w.createdAt ?? nowIso,
 				updatedAt: new Date().toISOString(),
 				activity: { state: w.activity ?? "active", lastActivityAt: new Date().toISOString() },
 				previewUrl: w.previewUrl,
