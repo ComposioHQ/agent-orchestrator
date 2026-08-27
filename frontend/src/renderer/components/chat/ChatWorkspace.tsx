@@ -748,7 +748,7 @@ export function ChatWorkspace({
 						onWheelCapture={handleWheelZoom}
 						role="tabpanel"
 					>
-						<div className="h-full min-h-0 pl-2" data-testid="chat-reviewer-terminal">
+						<div className="h-full min-h-0" data-testid="chat-reviewer-terminal">
 							<TerminalPane
 								daemonReady={Boolean(daemonReady)}
 								fontSize={terminalFontSize}
@@ -770,7 +770,7 @@ export function ChatWorkspace({
 						onWheelCapture={handleWheelZoom}
 						role="tabpanel"
 					>
-						<div className="h-full min-h-0 pl-2" data-testid="chat-shell-terminal">
+						<div className="h-full min-h-0" data-testid="chat-shell-terminal">
 							<TerminalPane
 								daemonReady={Boolean(daemonReady)}
 								fontSize={terminalFontSize}

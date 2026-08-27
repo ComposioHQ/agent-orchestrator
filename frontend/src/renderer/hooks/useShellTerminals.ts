@@ -5,7 +5,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { components } from "../../api/schema";
-import { apiClient, hasTrustedApiBaseUrl } from "../lib/api-client";
+import { apiClient, apiErrorCode, hasTrustedApiBaseUrl } from "../lib/api-client";
 import { mockShellTerminals } from "../lib/mock-data";
 
 export type ShellTerminal = {
@@ -121,6 +121,22 @@ export function useCloseShellTerminal() {
 				params: { path: { handleId } },
 			});
 			if (error) throw error;
+		},
+		onMutate: async (handleId) => {
+			await queryClient.cancelQueries({ queryKey: shellTerminalsQueryKey });
+			const previous = queryClient.getQueryData<ShellTerminal[]>(shellTerminalsQueryKey);
+			queryClient.setQueryData<ShellTerminal[]>(shellTerminalsQueryKey, (current) =>
+				current?.filter((shell) => shell.handleId !== handleId),
+			);
+			return { previous };
+		},
+		onError: (error, _handleId, context) => {
+			// A 404 means the daemon has already removed the shell, so restoring its
+			// stale tab would be misleading. Other failures put the tab back so the
+			// user can retry instead of losing access to a still-live PTY.
+			if (apiErrorCode(error) !== "SHELL_TERMINAL_NOT_FOUND" && context?.previous) {
+				queryClient.setQueryData(shellTerminalsQueryKey, context.previous);
+			}
 		},
 		// Settled, not success: a close that 404s means the daemon already lost
 		// the shell, and the stale tab still needs to disappear.
