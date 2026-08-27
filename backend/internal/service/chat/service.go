@@ -344,6 +344,26 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	if err != nil {
 		return nil, fmt.Errorf("open conversation: %w", err)
 	}
+	// CreateConversation is the durable project-owner bind, but a different
+	// session can rebind the same project as soon as that transaction returns.
+	// Pin this owner through settings, provider startup, orphan settlement, and
+	// controller publication so a retired Start cannot mutate or publish after a
+	// newer owner has taken over. Session-scoped starts keep their per-session gate
+	// and do not participate in this cross-session fence.
+	releaseProjectOwnership := func() {}
+	if conversation.Scope == domain.ConversationScopeProject {
+		releaseProjectOwnership, err = s.store.AcquireProjectConversationDispatch(
+			ctx, conversation.ID, conversation.ProjectID, cfg.SessionID,
+		)
+		if errors.Is(err, domain.ErrConversationOwnerChanged) {
+			return nil, fmt.Errorf("%w: %w", ErrControllerHandoff, err)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("verify project conversation owner after bind: %w", err)
+		}
+	}
+	defer releaseProjectOwnership()
+
 	repairedBranch, restoredProviderOwner, err := s.store.RepairIncompleteConversationEdit(
 		ctx, cfg.SessionID, conversation.ID, s.now())
 	if err != nil {

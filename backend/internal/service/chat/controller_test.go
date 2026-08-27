@@ -1943,6 +1943,170 @@ func TestFreshProjectControllerRecordsNativeContextBoundary(t *testing.T) {
 	}
 }
 
+type pauseAfterProjectBindStore struct {
+	*sqlite.Store
+	session domain.SessionID
+	bound   chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (s *pauseAfterProjectBindStore) CreateProjectConversationWithContextReset(
+	ctx context.Context,
+	id string,
+	project domain.ProjectID,
+	session domain.SessionID,
+	reset domain.ConversationActivity,
+	now time.Time,
+) (domain.ConversationRecord, error) {
+	conversation, err := s.Store.CreateProjectConversationWithContextReset(
+		ctx, id, project, session, reset, now,
+	)
+	if err == nil && session == s.session {
+		s.once.Do(func() { close(s.bound) })
+		<-s.release
+	}
+	return conversation, err
+}
+
+func TestOverlappingProjectStartsCannotPublishRetiredOwner(t *testing.T) {
+	st := openStore(t)
+	ctx := context.Background()
+	now := time.Date(2026, 8, 27, 9, 0, 0, 0, time.UTC)
+	original, err := st.CreateConversation(
+		ctx, "overlap-project-conversation", domain.ConversationScopeProject,
+		testProject, testSession, now,
+	)
+	if err != nil {
+		t.Fatalf("seed project conversation: %v", err)
+	}
+	var owners []domain.SessionID
+	for _, requestedID := range []domain.SessionID{"overlap-start-b", "overlap-start-c"} {
+		record, err := st.CreateSession(ctx, domain.SessionRecord{
+			ID: requestedID, ProjectID: testProject, Kind: domain.KindOrchestrator,
+			Harness: domain.HarnessCodex, Mode: domain.SessionModeChat,
+			CreatedAt: now, UpdatedAt: now,
+		})
+		if err != nil {
+			t.Fatalf("seed session %s: %v", requestedID, err)
+		}
+		owners = append(owners, record.ID)
+	}
+	retired, current := owners[0], owners[1]
+
+	paused := &pauseAfterProjectBindStore{
+		Store: st, session: retired, bound: make(chan struct{}), release: make(chan struct{}),
+	}
+	var (
+		providerStarts atomic.Int32
+		providersMu    sync.Mutex
+		providers      []*fakeConversation
+		nextID         atomic.Int32
+	)
+	driver := fakeDriver{start: func(ports.ChatStartConfig) (ports.ChatConversation, error) {
+		providerStarts.Add(1)
+		conversation := newFakeConversation()
+		providersMu.Lock()
+		providers = append(providers, conversation)
+		providersMu.Unlock()
+		return conversation, nil
+	}}
+	svc := chatsvc.New(chatsvc.Options{
+		Store: paused, Sessions: st,
+		Drivers: fakeRegistry{driver: driver},
+		Log:     slog.New(slog.DiscardHandler),
+		NewID: func() string {
+			return fmt.Sprintf("overlap-start-%d", nextID.Add(1))
+		},
+		Now: func() time.Time { return now.Add(time.Minute) },
+	})
+	t.Cleanup(func() {
+		select {
+		case <-paused.release:
+		default:
+			close(paused.release)
+		}
+		_ = svc.Stop(context.Background(), retired)
+		_ = svc.Stop(context.Background(), current)
+		providersMu.Lock()
+		defer providersMu.Unlock()
+		for _, conversation := range providers {
+			_ = conversation.Close()
+		}
+	})
+	retiredWorkspace := t.TempDir()
+	currentWorkspace := t.TempDir()
+
+	retiredDone := make(chan error, 1)
+	go func() {
+		_, startErr := svc.Start(ctx, chatsvc.StartConfig{
+			SessionID: retired, ProjectID: testProject, Kind: domain.KindOrchestrator,
+			Harness: domain.HarnessCodex, WorkspacePath: retiredWorkspace, Model: "retired-b",
+		})
+		retiredDone <- startErr
+	}()
+	select {
+	case <-paused.bound:
+	case err := <-retiredDone:
+		t.Fatalf("retired Start returned before post-bind pause: %v", err)
+	case <-time.After(4 * time.Second):
+		t.Fatal("retired Start did not pause after binding project ownership")
+	}
+
+	if _, err := svc.Start(ctx, chatsvc.StartConfig{
+		SessionID: current, ProjectID: testProject, Kind: domain.KindOrchestrator,
+		Harness: domain.HarnessCodex, WorkspacePath: currentWorkspace, Model: "current-c",
+	}); err != nil {
+		t.Fatalf("Start current owner: %v", err)
+	}
+	conversation, err := st.ConversationForSession(ctx, current)
+	if err != nil {
+		t.Fatalf("ConversationForSession(current): %v", err)
+	}
+	if conversation.ID != original.ID {
+		t.Fatalf("current conversation = %q, want shared project narrative %q", conversation.ID, original.ID)
+	}
+	for _, activity := range []domain.ConversationActivity{
+		{ID: "current-approval", Kind: domain.ActivityKindApproval, Status: domain.ActivityStatusPending,
+			Summary: "Approve current work", RequestID: "current-approval", ProviderItemID: "current-approval"},
+		{ID: "current-input", Kind: domain.ActivityKindUserInput, Status: domain.ActivityStatusPending,
+			Summary: "Answer current question", RequestID: "current-input", ProviderItemID: "current-input"},
+	} {
+		if err := st.UpsertActivity(ctx, conversation.ID, "", activity, now.Add(2*time.Minute)); err != nil {
+			t.Fatalf("seed %s: %v", activity.Kind, err)
+		}
+	}
+
+	close(paused.release)
+	select {
+	case err := <-retiredDone:
+		if !errors.Is(err, chatsvc.ErrControllerHandoff) {
+			t.Fatalf("retired Start = %v, want ErrControllerHandoff", err)
+		}
+	case <-time.After(4 * time.Second):
+		t.Fatal("retired Start did not abort after losing project ownership")
+	}
+
+	snapshot, err := st.LoadConversationSnapshot(ctx, conversation.ID)
+	if err != nil {
+		t.Fatalf("LoadConversationSnapshot: %v", err)
+	}
+	if snapshot.Conversation.Settings.Model != "current-c" {
+		t.Fatalf("conversation model = %q, want current-c", snapshot.Conversation.Settings.Model)
+	}
+	states := make(map[string]domain.ActivityStatus, len(snapshot.Activities))
+	for _, activity := range snapshot.Activities {
+		states[activity.ID] = activity.Status
+	}
+	if states["current-approval"] != domain.ActivityStatusPending ||
+		states["current-input"] != domain.ActivityStatusPending {
+		t.Fatalf("current pending interactions = %#v, want both pending", states)
+	}
+	if got := providerStarts.Load(); got != 1 {
+		t.Fatalf("provider starts = %d, want only current owner", got)
+	}
+}
+
 func TestRetiredProjectControllerRejectsSendAfterConversationRebind(t *testing.T) {
 	st := openStore(t)
 	ctx := context.Background()
