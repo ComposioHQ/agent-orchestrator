@@ -2281,14 +2281,6 @@ func (m *Manager) reconcileLive(ctx context.Context, rec domain.SessionRecord) e
 		if relaunchErr == nil {
 			return nil
 		}
-		committed, verifyErr := m.liveRelaunchCommitted(ctx, rec)
-		if verifyErr != nil {
-			return fmt.Errorf("reconcile %s: relaunch failed (%w), then commit state became uncertain: %w", rec.ID, relaunchErr, verifyErr)
-		}
-		if committed {
-			m.logger.Warn("reconcile: relaunch reported an error after the controller commit; preserving the live session", "sessionID", rec.ID, "error", relaunchErr)
-			return nil
-		}
 		restoreErr = relaunchErr
 	}
 	// A provider or runtime dependency can be temporarily unavailable during an
@@ -2297,39 +2289,86 @@ func (m *Manager) reconcileLive(ctx context.Context, rec domain.SessionRecord) e
 	// or retire an orchestrator. Preserve the durable session and native resume
 	// identity, but expose the stopped controller as an exited workload so the
 	// existing Resume Agent path can retry it in place.
-	if err := m.lcm.ApplyActivitySignal(ctx, rec.ID, ports.ActivitySignal{
-		Valid:                true,
-		State:                domain.ActivityExited,
-		LaunchID:             rec.Metadata.RuntimeLaunchID,
-		ControllerGeneration: rec.Metadata.ControllerGeneration,
-		ExpectedUpdatedAt:    rec.UpdatedAt,
-	}); err != nil {
-		return fmt.Errorf("reconcile %s: preserve failed relaunch: %w", rec.ID, err)
+	committed, preserveErr := m.preserveFailedReconcileRelaunch(ctx, rec)
+	if preserveErr != nil {
+		return fmt.Errorf("reconcile %s: relaunch failed and commit state became uncertain: %w", rec.ID, errors.Join(restoreErr, preserveErr))
+	}
+	if committed {
+		m.logger.Warn("reconcile: relaunch reported an error after the controller commit; preserving the live session", "sessionID", rec.ID, "error", restoreErr)
+		return nil
 	}
 	return fmt.Errorf("reconcile %s: relaunch controller: %w", rec.ID, restoreErr)
 }
 
-func (m *Manager) liveRelaunchCommitted(ctx context.Context, before domain.SessionRecord) (bool, error) {
-	after, ok, err := m.store.GetSession(ctx, before.ID)
-	if err != nil {
-		return false, err
-	}
-	if !ok {
-		return false, ErrNotFound
-	}
+func relaunchCommitted(before, after domain.SessionRecord) bool {
 	if after.IsTerminated {
-		return false, nil
+		return false
 	}
 	if domain.NormalizeSessionMode(before.Mode) == domain.SessionModeChat {
 		generation := after.Metadata.ControllerGeneration
-		return generation != "" && generation != before.Metadata.ControllerGeneration, nil
+		return generation != "" && generation != before.Metadata.ControllerGeneration
 	}
 	launchID := after.Metadata.RuntimeLaunchID
 	if launchID != "" && launchID != before.Metadata.RuntimeLaunchID {
-		return true, nil
+		return true
 	}
 	handleID := after.Metadata.RuntimeHandleID
-	return handleID != "" && handleID != before.Metadata.RuntimeHandleID, nil
+	return handleID != "" && handleID != before.Metadata.RuntimeHandleID
+}
+
+// preserveFailedReconcileRelaunch transitions the current controller epoch to
+// exited without using the boot snapshot as a CAS token. Launch preparation can
+// legitimately persist metadata (notably the browser capability verifier)
+// before runtime creation fails, so the current row must be read immediately
+// before the activity signal. Since ApplyActivitySignal intentionally treats a
+// stale CAS as a no-op, reread and retry rather than claiming recovery succeeded
+// while the session is still active and exposed to the reaper.
+func (m *Manager) preserveFailedReconcileRelaunch(ctx context.Context, before domain.SessionRecord) (bool, error) {
+	const maxAttempts = 3
+	for range maxAttempts {
+		current, ok, err := m.store.GetSession(ctx, before.ID)
+		if err != nil {
+			return false, err
+		}
+		if !ok {
+			return false, ErrNotFound
+		}
+		if relaunchCommitted(before, current) {
+			return true, nil
+		}
+		if current.IsTerminated || current.Activity.State == domain.ActivityExited {
+			return false, nil
+		}
+
+		signal := ports.ActivitySignal{
+			Valid:             true,
+			State:             domain.ActivityExited,
+			ExpectedUpdatedAt: current.UpdatedAt,
+		}
+		if domain.NormalizeSessionMode(current.Mode) == domain.SessionModeChat {
+			signal.ControllerGeneration = current.Metadata.ControllerGeneration
+		} else {
+			signal.LaunchID = current.Metadata.RuntimeLaunchID
+		}
+		if err := m.lcm.ApplyActivitySignal(ctx, before.ID, signal); err != nil {
+			return false, err
+		}
+
+		after, ok, err := m.store.GetSession(ctx, before.ID)
+		if err != nil {
+			return false, err
+		}
+		if !ok {
+			return false, ErrNotFound
+		}
+		if relaunchCommitted(before, after) {
+			return true, nil
+		}
+		if after.IsTerminated || after.Activity.State == domain.ActivityExited {
+			return false, nil
+		}
+	}
+	return false, errors.New("session changed while recording failed relaunch")
 }
 
 // reconcileReap kills the leaked tmux session of a session the DB already marks
@@ -2433,12 +2472,33 @@ func (m *Manager) ReconcileBackground(ctx context.Context) error {
 }
 
 func (m *Manager) reconcileLivePass(ctx context.Context, recs []domain.SessionRecord) {
-	live := make([]domain.SessionRecord, 0, len(recs))
+	candidates := make([]domain.SessionRecord, 0, len(recs))
+	ids := make([]domain.SessionID, 0, len(recs))
 	for _, rec := range recs {
 		if rec.IsTerminated {
 			continue
 		}
-		if m.SessionMutationInProgress(rec.ID) {
+		candidates = append(candidates, rec)
+		ids = append(ids, rec.ID)
+	}
+	if len(candidates) == 0 {
+		return
+	}
+	// Reserve every candidate before starting the bounded worker pool. Otherwise
+	// sessions queued behind slow probes remain open to input and the periodic
+	// reaper until a worker dequeues them.
+	acquired, err := m.beginAgentOperations(ctx, ids, agentOperationReconcile)
+	if err != nil {
+		m.logger.Warn("reconcile: could not fence live sessions", "error", err)
+		return
+	}
+	acquiredSet := make(map[domain.SessionID]struct{}, len(acquired))
+	for _, id := range acquired {
+		acquiredSet[id] = struct{}{}
+	}
+	live := make([]domain.SessionRecord, 0, len(acquired))
+	for _, rec := range candidates {
+		if _, ok := acquiredSet[rec.ID]; !ok {
 			m.logger.Warn("reconcile: session remains input-gated pending unambiguous agent-switch recovery", "sessionID", rec.ID)
 			continue
 		}
@@ -2458,16 +2518,10 @@ func (m *Manager) reconcileLivePass(ctx context.Context, recs []domain.SessionRe
 		go func() {
 			defer wg.Done()
 			for rec := range jobs {
-				// Reconciliation replaces a dead controller under the same durable
-				// session. Fence the periodic reaper and user input for the whole
-				// attempt so a slow provider preflight cannot be mistaken for a
-				// confirmed session death halfway through startup.
-				if err := m.beginAgentOperation(ctx, rec.ID, agentOperationReconcile); err != nil {
-					m.logger.Warn("reconcile: session became busy, skipping", "sessionID", rec.ID, "error", err)
-					continue
-				}
-				err := m.reconcileLive(ctx, rec)
-				m.endAgentOperation(rec.ID, agentOperationReconcile)
+				err := func() error {
+					defer m.endAgentOperation(rec.ID, agentOperationReconcile)
+					return m.reconcileLive(ctx, rec)
+				}()
 				if err != nil {
 					m.logger.Error("reconcile: live pass failed, skipping", "sessionID", rec.ID, "error", err)
 				}
