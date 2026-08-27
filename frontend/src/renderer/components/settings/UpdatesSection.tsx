@@ -46,6 +46,7 @@ export function UpdatesSection({ titleHidden }: { titleHidden?: boolean } = {}) 
 	const [savingFields, setSavingFields] = useState<Set<"automatic" | "channel">>(new Set());
 	const latestSaveByFieldRef = useRef<Record<"automatic" | "channel", number>>({ automatic: 0, channel: 0 });
 	const saveSequenceRef = useRef(0);
+	const pendingSaveCountRef = useRef(0);
 	const [pendingPin, setPendingPin] = useState<{ pr: number; title: string } | null>(null);
 	const [manualCheckRequestId, setManualCheckRequestId] = useState<string | null>(null);
 	const [channelSwitch, setChannelSwitch] = useState<{ channel: UpdateChannel; requestId: string } | null>(null);
@@ -98,7 +99,7 @@ export function UpdatesSection({ titleHidden }: { titleHidden?: boolean } = {}) 
 	const handledStatusRef = useRef<UpdateState | null>(null);
 
 	useEffect(() => {
-		if (query.data) setForm(query.data);
+		if (query.data && pendingSaveCountRef.current === 0) setForm(query.data);
 	}, [query.data]);
 
 	useEffect(() => {
@@ -122,16 +123,22 @@ export function UpdatesSection({ titleHidden }: { titleHidden?: boolean } = {}) 
 			return next;
 		},
 		onSuccess: (next, { field, intent }) => {
+			pendingSaveCountRef.current -= 1;
 			setSavingFields((fields) => {
 				const nextFields = new Set(fields);
 				nextFields.delete(field);
 				return nextFields;
 			});
 			if (latestSaveByFieldRef.current[field] !== intent) return;
-			setForm(next);
+			setForm((current) =>
+				field === "automatic"
+					? { ...current, enabled: next.enabled }
+					: { ...current, channel: next.channel, nightlyAck: next.nightlyAck, feature: next.feature },
+			);
 			void queryClient.invalidateQueries({ queryKey: updateSettingsQueryKey });
 		},
 		onError: (_error, { field, intent }) => {
+			pendingSaveCountRef.current -= 1;
 			setSavingFields((fields) => {
 				const nextFields = new Set(fields);
 				nextFields.delete(field);
@@ -139,13 +146,21 @@ export function UpdatesSection({ titleHidden }: { titleHidden?: boolean } = {}) 
 			});
 			if (latestSaveByFieldRef.current[field] !== intent) return;
 			const previous = queryClient.getQueryData<UpdateSettings>(updateSettingsQueryKey);
-			if (previous) setForm(previous);
+			if (previous) {
+				setForm((current) =>
+					field === "automatic"
+						? { ...current, enabled: previous.enabled }
+						: { ...current, channel: previous.channel, nightlyAck: previous.nightlyAck, feature: previous.feature },
+				);
+			}
+			void queryClient.invalidateQueries({ queryKey: updateSettingsQueryKey });
 		},
 	});
 
 	const saveField = (field: "automatic" | "channel", next: UpdateSettings) => {
 		const intent = ++saveSequenceRef.current;
 		latestSaveByFieldRef.current[field] = intent;
+		pendingSaveCountRef.current += 1;
 		setSavingFields((fields) => new Set(fields).add(field));
 		setForm(next);
 		save.mutate({ next, field, intent });
@@ -250,6 +265,7 @@ export function UpdatesSection({ titleHidden }: { titleHidden?: boolean } = {}) 
 					startManualCheck={startManualCheck}
 					finishManualCheck={finishManualCheck}
 					channelSwitch={channelSwitch}
+					downloadedFrom={form.feature ? t("settings.updates.channel.feature") : form.channel === "nightly" ? t("settings.updates.channel.nightly") : t("settings.updates.channel.stable")}
 				/>
 
 				{featurePr != null && (
@@ -359,12 +375,14 @@ function UpdateActions({
 	startManualCheck,
 	finishManualCheck,
 	channelSwitch,
+	downloadedFrom,
 }: {
 	status: UpdateStatus;
 	manualCheckRequestId: string | null;
 	startManualCheck: (requestId: string) => void;
 	finishManualCheck: (requestId: string) => void;
 	channelSwitch: { channel: UpdateChannel; requestId: string } | null;
+	downloadedFrom: string;
 }) {
 	const { t, i18n } = useTranslation();
 	const version = useQuery({ queryKey: ["app-version"], queryFn: () => aoBridge.app.getVersion() });
@@ -440,7 +458,7 @@ function UpdateActions({
 							<span className="sr-only">{t("settings.updates.checking")}</span>
 						) : displayStatus.state !== "available" && displayStatus.state !== "idle" && displayStatus.state !== "downloading" ? (
 							<span className={checkedAt ? undefined : "sr-only"}>
-								<UpdateStatusLine status={displayStatus} />
+								<UpdateStatusLine status={displayStatus} downloadedFrom={downloadedFrom} />
 							</span>
 						) : null}
 						{channelSwitchMessage && <p className="mt-1 text-xs leading-4 text-settings-muted">{channelSwitchMessage}</p>}
@@ -470,7 +488,7 @@ function UpdateActions({
 									exit={{ opacity: 0, filter: "blur(4px)" }}
 									className="absolute inset-0 flex items-center"
 								>
-									<UpdateStatusLine status={displayStatus} />
+									<UpdateStatusLine status={displayStatus} downloadedFrom={downloadedFrom} />
 								</motion.span>
 							)}
 						</AnimatePresence>
@@ -552,7 +570,7 @@ function installedUpdateChannel(version: string | undefined): InstalledChannel {
 	return /^\d+\.\d+\.\d+(?:\+[0-9A-Za-z.-]+)?$/.test(version) ? "latest" : "unknown";
 }
 
-function UpdateStatusLine({ status }: { status: UpdateStatus }) {
+function UpdateStatusLine({ status, downloadedFrom }: { status: UpdateStatus; downloadedFrom?: string }) {
 	const { t } = useTranslation();
 	let className = "text-settings-muted";
 	let label: string;
@@ -571,7 +589,7 @@ function UpdateStatusLine({ status }: { status: UpdateStatus }) {
 			break;
 		case "downloaded":
 			className = "text-success";
-			label = t("settings.updates.downloaded");
+			label = downloadedFrom ? t("settings.updates.downloadedFrom", { channel: downloadedFrom }) : t("settings.updates.downloaded");
 			break;
 		case "not-available":
 			className = "text-success";
