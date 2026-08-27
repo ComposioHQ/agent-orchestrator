@@ -911,6 +911,12 @@ func (c *Controller) readRateLimits() {
 
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(context.Background()), rateLimitReadTimeout)
 	defer cancel()
+	releaseOwnership, err := c.acquireProjectOwnership(ctx)
+	if err != nil {
+		c.log.Debug("chat rate limit read lost project ownership", "session", c.sessionID, "error", err)
+		return
+	}
+	defer releaseOwnership()
 
 	limits, err := reporter.ReadRateLimits(ctx)
 	if err != nil {
@@ -965,6 +971,21 @@ func (c *Controller) Capabilities() ports.ChatCapabilities {
 // concurrent turn is not a thing it can run, and a queued row is a promise AO can
 // keep across a restart, which a message dropped into a busy provider is not.
 func (c *Controller) Send(ctx context.Context, msg ports.ChatUserMessage) (domain.ConversationTurn, error) {
+	return c.send(ctx, msg, false)
+}
+
+// sendOwned is Send for a service operation that already pins project ownership
+// across a larger provider/durable transaction. It must not recursively acquire
+// the writer-preferring project lease during dispatch.
+func (c *Controller) sendOwned(ctx context.Context, msg ports.ChatUserMessage) (domain.ConversationTurn, error) {
+	return c.send(ctx, msg, true)
+}
+
+func (c *Controller) send(
+	ctx context.Context,
+	msg ports.ChatUserMessage,
+	projectOwnershipHeld bool,
+) (domain.ConversationTurn, error) {
 	c.sendMu.Lock()
 	defer c.sendMu.Unlock()
 	c.mu.Lock()
@@ -1020,6 +1041,9 @@ func (c *Controller) Send(ctx context.Context, msg ports.ChatUserMessage) (domai
 		}, nil
 	}
 
+	if projectOwnershipHeld {
+		return c.dispatchOwned(ctx, turnID, msg, now)
+	}
 	return c.dispatch(ctx, turnID, msg, now)
 }
 
@@ -1310,6 +1334,18 @@ func (c *Controller) dispatch(
 		return domain.ConversationTurn{}, err
 	}
 	defer releaseOwnership()
+	return c.dispatchOwned(ctx, turnID, msg, requestedAt)
+}
+
+// dispatchOwned crosses the provider boundary while its caller holds project
+// ownership and sendMu. Keeping the owned path explicit prevents a recursive
+// RLock from deadlocking behind a queued project rebind.
+func (c *Controller) dispatchOwned(
+	ctx context.Context,
+	turnID string,
+	msg ports.ChatUserMessage,
+	requestedAt time.Time,
+) (domain.ConversationTurn, error) {
 	// Every dispatch carries the conversation's choices, including one AO makes on
 	// the user's behalf: a queued message draining, or a relay from `ao send`. A
 	// setting that only applied when the user pressed send would silently stop
@@ -1407,10 +1443,30 @@ func (c *Controller) drain(ctx context.Context) {
 	c.drainLocked(ctx)
 }
 
+// drainOwned is drain for an operation that already pins project ownership.
+func (c *Controller) drainOwned(ctx context.Context) {
+	c.sendMu.Lock()
+	defer c.sendMu.Unlock()
+	c.drainLockedOwned(ctx)
+}
+
 // drainLocked is drain with the dispatch lock already held. Turn completion
 // uses it so committing the completion, clearing primary ownership, and claiming
 // the next queued request are one serialized lifecycle transition.
 func (c *Controller) drainLocked(ctx context.Context) {
+	c.drainLockedWithDispatch(ctx, c.dispatch)
+}
+
+// drainLockedOwned avoids reacquiring project ownership when its caller already
+// holds the lease across a larger handoff or interrupt outcome.
+func (c *Controller) drainLockedOwned(ctx context.Context) {
+	c.drainLockedWithDispatch(ctx, c.dispatchOwned)
+}
+
+func (c *Controller) drainLockedWithDispatch(
+	ctx context.Context,
+	dispatch func(context.Context, string, ports.ChatUserMessage, time.Time) (domain.ConversationTurn, error),
+) {
 	if c.interruptPendingLocked() {
 		// A provider completion can arrive before its Interrupt response. Until
 		// that response says success or failure, neither the confirmed scope nor
@@ -1450,7 +1506,7 @@ func (c *Controller) drainLocked(ctx context.Context) {
 			return
 		}
 	}
-	if _, err := c.dispatch(ctx, queued.TurnID, ports.ChatUserMessage{
+	if _, err := dispatch(ctx, queued.TurnID, ports.ChatUserMessage{
 		Text:            queued.Text,
 		Content:         content,
 		Origin:          queued.Origin,
@@ -1555,7 +1611,7 @@ func (c *Controller) BeginHandoff(
 		// A queued row can exist in the narrow gap after a completion was
 		// projected and before its drain ran. Claim it now so drain mode cannot
 		// report quiescent while accepted work is still waiting.
-		c.drain(ctx)
+		c.drainOwned(ctx)
 	}
 
 	ticker := time.NewTicker(50 * time.Millisecond)
@@ -1580,7 +1636,7 @@ func (c *Controller) BeginHandoff(
 				c.AbortHandoff()
 				return fmt.Errorf("check queued turns before handoff: %w", err)
 			case policy == domain.SessionInterfaceTransitionDrain:
-				c.drainLocked(ctx)
+				c.drainLockedOwned(ctx)
 			}
 		}
 		c.sendMu.Unlock()
@@ -2042,7 +2098,7 @@ func (c *Controller) finishInterruptQueueLocked(ctx context.Context, interrupted
 		// the survivor's new provider turn. Once the fence is safely committed, an
 		// expiring Stop request must not turn accepted post-Stop work into a failed
 		// dispatch. The ordinary provider lifecycle owns this detached send.
-		c.drainLocked(context.WithoutCancel(ctx))
+		c.drainLockedOwned(context.WithoutCancel(ctx))
 	}
 	return nil
 }

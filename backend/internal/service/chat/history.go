@@ -454,7 +454,7 @@ func (s *Service) sendEditedMessage(
 	msg ports.ChatUserMessage,
 	restoreConclusiveFailure bool,
 ) (EditMessageResult, error) {
-	turn, sendErr := controller.Send(ctx, msg)
+	turn, sendErr := controller.sendOwned(ctx, msg)
 	result := EditMessageResult{
 		SourceBranchID: sourceBranchID,
 		ActiveBranchID: activeBranchID,
