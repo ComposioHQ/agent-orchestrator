@@ -1346,6 +1346,7 @@ func TestActivity_StopWithoutCurrentPromptNeverPairsWithPriorTurn(t *testing.T) 
 	rec.Metadata.AgentSessionID = "native-current"
 	rec.Metadata.AgentSessionIDLaunchID = "launch-current"
 	rec.Metadata.LatestUserPrompt = "prior turn prompt"
+	rec.Metadata.LatestUserPromptAt = time.Unix(122, 0).UTC()
 	rec.Metadata.LatestAssistantUpdate = "prior turn answer"
 	rec.Metadata.ConversationCheckpointState = domain.ConversationCheckpointComplete
 	rec.Metadata.ConversationCheckpointGeneration = "launch-current"
@@ -1362,7 +1363,8 @@ func TestActivity_StopWithoutCurrentPromptNeverPairsWithPriorTurn(t *testing.T) 
 		t.Fatalf("ApplyActivitySignal stop: %v", err)
 	}
 	got := store.sessions[rec.ID].Metadata
-	if got.LatestUserPrompt != "prior turn prompt" || got.LatestAssistantUpdate != "prior turn answer" ||
+	if got.LatestUserPrompt != "prior turn prompt" || !got.LatestUserPromptAt.Equal(rec.Metadata.LatestUserPromptAt) ||
+		got.LatestAssistantUpdate != "prior turn answer" ||
 		got.ConversationCheckpointState != domain.ConversationCheckpointComplete {
 		t.Fatalf("out-of-order Stop corrupted prior checkpoint: %+v", got)
 	}
@@ -1375,6 +1377,7 @@ func TestActivity_NonBoundaryEventCannotReplaceConversationCheckpoint(t *testing
 	rec.Metadata.AgentSessionID = "native-current"
 	rec.Metadata.AgentSessionIDLaunchID = "launch-current"
 	rec.Metadata.LatestUserPrompt = "trusted prompt"
+	rec.Metadata.LatestUserPromptAt = time.Unix(123, 0).UTC()
 	rec.Metadata.LatestAssistantUpdate = "trusted answer"
 	store.sessions[rec.ID] = rec
 
@@ -1386,7 +1389,8 @@ func TestActivity_NonBoundaryEventCannotReplaceConversationCheckpoint(t *testing
 		t.Fatalf("ApplyActivitySignal: %v", err)
 	}
 	got := store.sessions[rec.ID].Metadata
-	if got.LatestUserPrompt != "trusted prompt" || got.LatestAssistantUpdate != "trusted answer" {
+	if got.LatestUserPrompt != "trusted prompt" || !got.LatestUserPromptAt.Equal(rec.Metadata.LatestUserPromptAt) ||
+		got.LatestAssistantUpdate != "trusted answer" {
 		t.Fatalf("non-boundary event replaced the trusted checkpoint: %+v", got)
 	}
 }

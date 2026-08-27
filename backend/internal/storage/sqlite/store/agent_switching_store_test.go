@@ -48,6 +48,7 @@ func TestActivateChatAgentSwitchTargetKeepsRuntimeEmptyAcrossNativeSwitchBack(t 
 	rec.Metadata.ProviderConversationID = "source-chat-native"
 	rec.Metadata.ControllerGeneration = "source-chat-generation"
 	rec.Metadata.LatestUserPrompt = "source Chat user checkpoint"
+	rec.Metadata.LatestUserPromptAt = now
 	rec.Metadata.LatestAssistantUpdate = "source Chat assistant checkpoint"
 	rec.Metadata.ConversationCheckpointState = domain.ConversationCheckpointLegacy
 	session, err := s.CreateSession(ctx, rec)
@@ -165,6 +166,9 @@ func TestActivateChatAgentSwitchTargetKeepsRuntimeEmptyAcrossNativeSwitchBack(t 
 		got.Metadata.ConversationCheckpointGeneration != "" ||
 		got.Metadata.ConversationCheckpointNativeID != "" {
 		t.Fatalf("Chat target activation retained source replay checkpoint: %+v", got.Metadata)
+	}
+	if want := now.Add(600 * time.Millisecond); !got.Metadata.LatestUserPromptAt.Equal(want) {
+		t.Fatalf("Chat target activation last human message at = %s, want %s", got.Metadata.LatestUserPromptAt, want)
 	}
 	conversation, err = s.ConversationForSession(ctx, session.ID)
 	if err != nil {
@@ -1218,6 +1222,7 @@ func TestAgentSwitchSourceStopAndTargetActivationAreAtomicAndNarrow(t *testing.T
 	rec.Metadata.NativeTranscriptPath = "/claude/source.jsonl"
 	rec.Metadata.Prompt = "original task"
 	rec.Metadata.LatestUserPrompt = "latest user direction"
+	rec.Metadata.LatestUserPromptAt = now
 	rec.Metadata.LatestAssistantUpdate = "latest assistant update"
 	rec.Metadata.PreviewURL = "http://localhost:3000"
 	session, err := s.CreateSession(ctx, rec)
@@ -1388,6 +1393,9 @@ func TestAgentSwitchSourceStopAndTargetActivationAreAtomicAndNarrow(t *testing.T
 		activated.Metadata.ConversationCheckpointGeneration != "" ||
 		activated.Metadata.ConversationCheckpointNativeID != "" {
 		t.Fatalf("target activation retained source replay checkpoint: %+v", activated.Metadata)
+	}
+	if !activated.Metadata.LatestUserPromptAt.Equal(rec.Metadata.LatestUserPromptAt) {
+		t.Fatalf("target activation last human message at = %s, want %s", activated.Metadata.LatestUserPromptAt, rec.Metadata.LatestUserPromptAt)
 	}
 	activatedConversation, err := s.ConversationForSession(ctx, session.ID)
 	if err != nil {

@@ -171,6 +171,45 @@ func TestSessionInterfaceTransitionClaimModeCASAndOutbox(t *testing.T) {
 	}
 }
 
+func TestCommitSessionControllerEpochRetiresCheckpointWithoutErasingLastHumanTime(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, st, "checkpoint-time")
+	now := time.Now().UTC().Truncate(time.Second)
+	rec := sampleRecord("checkpoint-time")
+	rec.Mode = domain.SessionModeChat
+	rec.Metadata.LatestUserPrompt = "source provider prompt"
+	rec.Metadata.LatestUserPromptAt = now
+	rec.Metadata.LatestAssistantUpdate = "source provider answer"
+	rec.Metadata.ConversationCheckpointState = domain.ConversationCheckpointComplete
+	rec.Metadata.ConversationCheckpointGeneration = "chat-generation"
+	rec.Metadata.ConversationCheckpointNativeID = "chat-native"
+	created, err := st.CreateSession(ctx, rec)
+	if err != nil {
+		t.Fatalf("create Chat session: %v", err)
+	}
+
+	changed, err := st.CommitSessionControllerEpoch(
+		ctx, created.ID, domain.SessionModeChat, domain.SessionModeTUI, "", now.Add(time.Second),
+	)
+	if err != nil || !changed {
+		t.Fatalf("commit Terminal epoch: changed=%v err=%v", changed, err)
+	}
+	after, ok, err := st.GetSession(ctx, created.ID)
+	if err != nil || !ok {
+		t.Fatalf("get committed session: ok=%v err=%v", ok, err)
+	}
+	if after.Metadata.LatestUserPrompt != "" || after.Metadata.LatestAssistantUpdate != "" ||
+		after.Metadata.ConversationCheckpointState != domain.ConversationCheckpointEmpty ||
+		after.Metadata.ConversationCheckpointGeneration != "" ||
+		after.Metadata.ConversationCheckpointNativeID != "" {
+		t.Fatalf("Terminal epoch retained source replay checkpoint: %+v", after.Metadata)
+	}
+	if !after.Metadata.LatestUserPromptAt.Equal(now) {
+		t.Fatalf("last human message at = %s, want %s", after.Metadata.LatestUserPromptAt, now)
+	}
+}
+
 func TestSessionInterfaceTransitionNoticeAcknowledgementRoundTripAndCDC(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
