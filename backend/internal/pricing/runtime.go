@@ -557,35 +557,91 @@ func checkedCostSum(values ...int64) (int64, error) {
 func costPointer(value int64) *int64 { return &value }
 
 // ActivationFence serializes snapshot activation with ingestion/backfill
-// critical sections while allowing waiting callers to cancel.
+// critical sections while allowing waiting callers to cancel. Explicit FIFO
+// admission prevents a newly arriving page from overtaking a catalog swap that
+// is already waiting at the transaction boundary.
 type ActivationFence struct {
-	token chan struct{}
+	mu      sync.Mutex
+	held    bool
+	waiters []*activationFenceWaiter
+}
+
+type activationFenceWaiter struct {
+	ready   chan struct{}
+	granted bool
 }
 
 // NewActivationFence creates an unlocked activation fence.
 func NewActivationFence() *ActivationFence {
-	fence := &ActivationFence{token: make(chan struct{}, 1)}
-	fence.token <- struct{}{}
-	return fence
+	return &ActivationFence{}
 }
 
 // Acquire waits for exclusive admission or returns the context error. The
 // returned release function is idempotent.
 func (f *ActivationFence) Acquire(ctx context.Context) (func(), error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+	waiter := &activationFenceWaiter{ready: make(chan struct{})}
+	f.mu.Lock()
+	if !f.held && len(f.waiters) == 0 {
+		f.held = true
+		waiter.granted = true
+		close(waiter.ready)
+	} else {
+		f.waiters = append(f.waiters, waiter)
+	}
+	f.mu.Unlock()
+
+	// Recheck after registering so cancellation cannot strand a waiter, and so
+	// release always observes the same FIFO order callers entered here.
 	if err := ctx.Err(); err != nil {
+		f.cancelOrRelease(waiter)
 		return nil, err
 	}
 	select {
 	case <-ctx.Done():
+		f.cancelOrRelease(waiter)
 		return nil, ctx.Err()
-	case <-f.token:
+	case <-waiter.ready:
 		if err := ctx.Err(); err != nil {
-			f.token <- struct{}{}
+			f.release()
 			return nil, err
 		}
 		var once sync.Once
-		return func() { once.Do(func() { f.token <- struct{}{} }) }, nil
+		return func() { once.Do(f.release) }, nil
 	}
+}
+
+func (f *ActivationFence) cancelOrRelease(waiter *activationFenceWaiter) {
+	f.mu.Lock()
+	if waiter.granted {
+		f.mu.Unlock()
+		f.release()
+		return
+	}
+	for index, queued := range f.waiters {
+		if queued == waiter {
+			f.waiters = append(f.waiters[:index], f.waiters[index+1:]...)
+			break
+		}
+	}
+	f.mu.Unlock()
+}
+
+func (f *ActivationFence) release() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.waiters) == 0 {
+		f.held = false
+		return
+	}
+	next := f.waiters[0]
+	f.waiters = f.waiters[1:]
+	next.granted = true
+	close(next.ready)
 }
 
 // ProviderActivation identifies one provider version made active by a swap.

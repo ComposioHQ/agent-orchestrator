@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
+	"sync"
 	"testing"
 	"time"
 
@@ -265,6 +266,70 @@ func TestActivationFenceAdmissionHonorsContext(t *testing.T) {
 		t.Fatalf("Acquire after release: %v", err)
 	}
 	second()
+}
+
+// Break caught: a waiter that arrived while the fence was held could lose the
+// released token to a later caller. That let an old backfill job reacquire the
+// fence for another page before an already-pending catalog activation.
+func TestActivationFenceAdmitsWaitersInArrivalOrder(t *testing.T) {
+	fence := NewActivationFence()
+	release, err := fence.Acquire(context.Background())
+	if err != nil {
+		t.Fatalf("hold fence: %v", err)
+	}
+
+	firstAdmitted := make(chan struct{})
+	allowFirstToWait := make(chan struct{})
+	firstCtx := &fenceAdmissionContext{
+		Context:  context.Background(),
+		admitted: firstAdmitted,
+		proceed:  allowFirstToWait,
+	}
+	secondAdmitted := make(chan struct{})
+	secondCtx := &fenceAdmissionContext{Context: context.Background(), admitted: secondAdmitted}
+	order := make(chan int, 2)
+	errs := make(chan error, 2)
+	wait := func(ctx context.Context, id int) {
+		nextRelease, acquireErr := fence.Acquire(ctx)
+		if acquireErr == nil {
+			order <- id
+			nextRelease()
+		}
+		errs <- acquireErr
+	}
+
+	go wait(firstCtx, 1)
+	<-firstAdmitted
+	go wait(secondCtx, 2)
+	<-secondAdmitted
+	close(allowFirstToWait)
+	release()
+
+	if first, second := <-order, <-order; first != 1 || second != 2 {
+		t.Fatalf("admission order = [%d %d], want [1 2]", first, second)
+	}
+	for range 2 {
+		if err := <-errs; err != nil {
+			t.Fatalf("Acquire: %v", err)
+		}
+	}
+}
+
+type fenceAdmissionContext struct {
+	context.Context
+	admitted chan struct{}
+	proceed  <-chan struct{}
+	once     sync.Once
+}
+
+func (c *fenceAdmissionContext) Err() error {
+	c.once.Do(func() {
+		close(c.admitted)
+		if c.proceed != nil {
+			<-c.proceed
+		}
+	})
+	return c.Context.Err()
 }
 
 func TestActivationFenceNeverAdmitsAlreadyCanceledContext(t *testing.T) {
