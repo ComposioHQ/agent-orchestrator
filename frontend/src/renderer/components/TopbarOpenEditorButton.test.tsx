@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { EditorHandoffState, OpenSessionTargetInput } from "../../shared/editor-handoff";
@@ -31,12 +31,19 @@ function setState(state: EditorHandoffState) {
 	window.ao!.editorHandoff.open = openMock;
 }
 
-function renderButton() {
+function renderButton(
+	{ sessionCreatedAt, sessionTerminated }: { sessionCreatedAt?: string; sessionTerminated?: boolean } = {},
+) {
 	const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
 	return render(
 		<QueryClientProvider client={client}>
 			<TooltipProvider>
-				<TopbarOpenEditorButton sessionId="sess-1" projectId="proj-1" />
+			<TopbarOpenEditorButton
+				sessionId="sess-1"
+				projectId="proj-1"
+				sessionCreatedAt={sessionCreatedAt}
+				sessionTerminated={sessionTerminated}
+			/>
 			</TooltipProvider>
 		</QueryClientProvider>,
 	);
@@ -158,6 +165,51 @@ describe("TopbarOpenEditorButton", () => {
 		expect(await screen.findByRole("alert")).toHaveTextContent("Session workspace is not available.");
 		expect(screen.getByRole("button", { name: "Open in Cursor" })).toBeDisabled();
 		expect(screen.getByRole("button", { name: "Open workspace options" })).toBeDisabled();
+	});
+
+	it("keeps a fresh session neutral while bounded readiness polling recovers", async () => {
+		vi.useFakeTimers();
+		try {
+			const getState = vi
+				.fn()
+				.mockResolvedValueOnce({
+					...availableState,
+					workspaceAvailable: false,
+					unavailableReason: "Session workspace is not available.",
+				})
+				.mockResolvedValue(availableState);
+			window.ao!.editorHandoff.getState = getState;
+			renderButton({ sessionCreatedAt: new Date().toISOString() });
+
+			await act(async () => {});
+			expect(getState).toHaveBeenCalledTimes(1);
+			expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+			expect(screen.getByRole("button", { name: "Preparing workspace…" })).toBeDisabled();
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(500);
+			});
+			await act(async () => {
+				await vi.runOnlyPendingTimersAsync();
+			});
+			expect(getState).toHaveBeenCalledTimes(2);
+			expect(screen.getByRole("button", { name: "Open in Cursor" })).toBeEnabled();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("does not poll a terminated session whose workspace is gone", async () => {
+		const getState = vi.fn().mockResolvedValue({
+			...availableState,
+			workspaceAvailable: false,
+			unavailableReason: "Session workspace is not available.",
+		});
+		window.ao!.editorHandoff.getState = getState;
+		renderButton({ sessionCreatedAt: new Date().toISOString(), sessionTerminated: true });
+
+		expect(await screen.findByRole("alert")).toHaveTextContent("Session workspace is not available.");
+		expect(getState).toHaveBeenCalledTimes(1);
 	});
 
 	it("opens safe native fallbacks from the menu", async () => {
