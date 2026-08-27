@@ -1,9 +1,11 @@
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { ThemePreference, ThemeStyle } from "../../lib/theme";
 import type { AppLocale } from "../../i18n";
 import { useLocaleStore } from "../../stores/locale-store";
 import { useSoundNotificationsStore } from "../../stores/sound-notifications-store";
 import { useUiStore } from "../../stores/ui-store";
+import { ConfirmDialog } from "../ConfirmDialog";
 import { SettingsOptionMenu, type SettingsOption } from "./SettingsOptionMenu";
 import { SettingsRow } from "./SettingsRow";
 import { SettingsSection } from "./SettingsSection";
@@ -189,6 +191,9 @@ function CloudOfferingRow() {
 	const { t } = useTranslation();
 	const { settings, isLoading } = useSettings();
 	const { update, saving, error } = useUpdateCloudOffering();
+	// Enabling requires an explicit confirmation (the offering is an unstable
+	// preview); disabling never does.
+	const [confirmOpen, setConfirmOpen] = useState(false);
 	return (
 		<div className="flex w-full flex-col">
 			<SettingsRow label={t("settings.cloud")}>
@@ -196,9 +201,28 @@ function CloudOfferingRow() {
 					aria-label={t("settings.cloud")}
 					checked={settings?.cloudOffering ?? false}
 					disabled={isLoading || saving}
-					onCheckedChange={(enabled) => update(enabled)}
+					onCheckedChange={(enabled) => {
+						if (enabled) {
+							setConfirmOpen(true);
+							return;
+						}
+						update(false);
+					}}
 				/>
 			</SettingsRow>
+			<ConfirmDialog
+				open={confirmOpen}
+				title={t("settings.cloudConfirm.title")}
+				description={t("settings.cloudConfirm.description")}
+				confirmLabel={t("settings.cloudConfirm.confirm")}
+				destructive
+				busy={saving}
+				onConfirm={() => {
+					update(true);
+					setConfirmOpen(false);
+				}}
+				onOpenChange={setConfirmOpen}
+			/>
 			<p className="px-3 pb-2 text-xs leading-relaxed text-muted-foreground">{t("settings.cloudToggleHint")}</p>
 			{error ? (
 				<p role="alert" className="px-3 pb-2 text-caption leading-4 text-error">
