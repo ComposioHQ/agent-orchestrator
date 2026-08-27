@@ -130,6 +130,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	// Whether the most recent poll reached the daemon. Distinct from openRef,
 	// which latches on first connect and never clears.
 	const lastTickOkRef = useRef(false);
+	// Whether the last failure had no HTTP status — nothing answered at all,
+	// which is what leaving a network looks like.
+	const lastFailUnreachableRef = useRef(false);
 	const everConnectedRef = useRef(false);
 	// Mirrors appActive for code that runs mid-flight, where reading the state
 	// value would see a stale closure. fetchAll consults it between requests so a
@@ -252,6 +255,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			// like "401 - missing or invalid connection password". Null means the
 			// server was never reached (DNS failure, refused, timeout).
 			const status = e instanceof ApiError ? e.status : undefined;
+			// No status means the server was never reached. That is the signal to
+			// race again immediately rather than ride out another poll.
+			lastFailUnreachableRef.current = status === undefined;
 			setErrorStatus(status ?? null);
 			openRef.current = false;
 			setConnection("closed");
@@ -296,7 +302,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			}
 			failStreak.current += 1;
 			const now = Date.now();
-			if (shouldReRace({ consecutiveFailures: failStreak.current, lastReRaceAt: lastReRaceAt.current, now })) {
+			if (
+				shouldReRace({
+					consecutiveFailures: failStreak.current,
+					lastReRaceAt: lastReRaceAt.current,
+					now,
+					unreachable: lastFailUnreachableRef.current,
+				})
+			) {
 				lastReRaceAt.current = now;
 				failStreak.current = 0;
 				void reloadConfig();

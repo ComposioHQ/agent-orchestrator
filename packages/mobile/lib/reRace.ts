@@ -32,10 +32,25 @@ export type ReRaceState = {
 	/** Epoch ms of the last race, or 0 if there has not been one. */
 	lastReRaceAt: number;
 	now: number;
+	/**
+	 * The last failure had no HTTP status: nothing answered at all.
+	 *
+	 * This is what leaving a network looks like, and it is qualitatively
+	 * different from a server replying with an error — that server is reachable,
+	 * so racing would rediscover the same endpoint and change nothing.
+	 */
+	unreachable: boolean;
 };
 
 export function shouldReRace(state: ReRaceState): boolean {
-	if (state.consecutiveFailures < RE_RACE_AFTER_FAILURES) return false;
+	// An unreachable endpoint is not a blip to ride out. Waiting for a second
+	// failure costs another poll interval plus another request timeout — up to
+	// forty seconds of the app looking broken while a working endpoint sits
+	// unused.
+	const enough = state.unreachable
+		? state.consecutiveFailures >= 1
+		: state.consecutiveFailures >= RE_RACE_AFTER_FAILURES;
+	if (!enough) return false;
 	// A first failure run has nothing to wait behind.
 	if (state.lastReRaceAt === 0) return true;
 	return state.now - state.lastReRaceAt >= RE_RACE_COOLDOWN_MS;

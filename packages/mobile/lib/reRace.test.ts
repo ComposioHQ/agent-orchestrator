@@ -5,6 +5,7 @@ const at = (over: Partial<Parameters<typeof shouldReRace>[0]> = {}) => ({
 	consecutiveFailures: RE_RACE_AFTER_FAILURES,
 	lastReRaceAt: 0,
 	now: 100_000,
+	unreachable: false,
 	...over,
 });
 
@@ -35,6 +36,28 @@ describe("shouldReRace", () => {
 
 	it("re-races again once the cooldown has passed", () => {
 		expect(shouldReRace(at({ lastReRaceAt: 100_000 - RE_RACE_COOLDOWN_MS - 1 }))).toBe(true);
+	});
+
+	// Leaving a network makes requests fail with no HTTP status at all — there
+	// was no server to answer. That is not a blip to ride out, it is the signal
+	// that the endpoint is gone, so racing on the very first one saves waiting
+	// out another poll interval and another timeout: up to forty seconds of the
+	// app looking broken.
+	it("races immediately when the endpoint is unreachable", () => {
+		expect(shouldReRace(at({ consecutiveFailures: 1, unreachable: true }))).toBe(true);
+	});
+
+	// A server that answered — 401, 500, a lockout — is reachable. Racing would
+	// find the same endpoint and change nothing.
+	it("does not race when the server answered with an error", () => {
+		expect(shouldReRace(at({ consecutiveFailures: 1, unreachable: false }))).toBe(false);
+	});
+
+	// The cooldown still applies, or an offline phone would race on every poll.
+	it("respects the cooldown even when unreachable", () => {
+		expect(
+			shouldReRace(at({ consecutiveFailures: 1, unreachable: true, lastReRaceAt: 100_000 - 1_000 })),
+		).toBe(false);
 	});
 
 	// First ever failure run: there is no previous attempt to wait behind.
