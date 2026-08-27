@@ -228,6 +228,8 @@ describe("browser scrollbar styling", () => {
 		expect(css).toContain("::-webkit-scrollbar");
 		expect(css).toContain("::-webkit-scrollbar-thumb");
 		expect(css).toContain("::-webkit-scrollbar-corner");
+		expect(css).not.toContain("min-height");
+		expect(css).not.toContain("min-width");
 
 		webContentsListeners.get("dom-ready")?.();
 		expect(insertCSS).toHaveBeenCalledTimes(2);

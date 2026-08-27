@@ -187,8 +187,6 @@ const BROWSER_SCROLLBAR_CSS = `
 	}
 
 	::-webkit-scrollbar-thumb {
-		min-width: 24px;
-		min-height: 24px;
 		border: 2px solid #16191d;
 		border-radius: 999px;
 		background: #4b515a;
