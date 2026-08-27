@@ -2627,7 +2627,15 @@ export interface components {
             port: number;
             securePairing: components["schemas"]["ControllersSecurePairingStatus"];
             tailscaleHost: string;
+            tunnel: components["schemas"]["MobileTunnelStatus"];
             warning: string;
+        };
+        MobileTunnelStatus: {
+            hostname: string;
+            lastError: string;
+            location: string;
+            ready: boolean;
+            running: boolean;
         };
         MuteDeviceRequest: {
             /** @description True to stop sending push notifications to this device. */

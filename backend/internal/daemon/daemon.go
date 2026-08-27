@@ -468,6 +468,25 @@ func Run() error {
 		go dispatcher.Run(ctx)
 	}
 
+	// Managed remote-access connector. Reap first: a daemon that died without
+	// stopping its connector leaves a public tunnel to this machine running
+	// with nobody watching it.
+	tunnelPID := mobilebridge.TunnelPIDPath(cfg.DataDir)
+	if reapErr := mobilebridge.ReapStaleTunnel(tunnelPID, mobilebridge.IsLiveCloudflared, mobilebridge.KillProcess); reapErr != nil {
+		log.Warn("could not reap a stale mobile tunnel", "error", reapErr)
+	}
+	if res := mobilebridge.ResolveCloudflared(mobilebridge.LocalCloudflaredLookup(cfg.DataDir)); !res.NeedsInstall {
+		log.Info("mobile remote access available", "cloudflared", res.Path, "source", res.Source)
+		bs.Tunnel = mobilebridge.NewManagedTunnel(mobilebridge.ManagedTunnelDeps{
+			Binary: res.Path, PIDPath: tunnelPID, Log: log,
+		})
+	} else {
+		// Not fatal: the LAN and Tailscale endpoints still work, and Connect
+		// Mobile behaves exactly as it did before remote access existed.
+		log.Info("mobile remote access unavailable; cloudflared not installed",
+			"rejectedSystemPath", res.SystemPath)
+	}
+
 	// Stable, machine-bound host identity, served by the unauthenticated
 	// GET /api/v1/identity probe. A failure here is not fatal: the probe then
 	// answers 501 and the phone falls back to pairing without identity

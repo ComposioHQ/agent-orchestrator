@@ -1333,7 +1333,10 @@ type MobileStatusResponse struct {
 	// preference order. The phone races them; Host/TailscaleHost below are the
 	// head of each kind, kept for the existing renderer.
 	Endpoints []mobilebridge.Endpoint `json:"endpoints"`
-	Host      string                  `json:"host"`
+	// Tunnel is the managed remote-access connector's state, so the desktop can
+	// show progress during the tens of seconds before it is advertisable.
+	Tunnel mobilebridge.TunnelStatus `json:"tunnel"`
+	Host   string                    `json:"host"`
 	// TailscaleHost is this machine's 100.64.0.0/10 Tailscale address, or "" when
 	// Tailscale is not up. The renderer encodes it into the pairing QR when the
 	// user selects the Tailscale tab, and shows a hint instead when it is empty.

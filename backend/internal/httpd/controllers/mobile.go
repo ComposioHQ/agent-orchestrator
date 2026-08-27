@@ -94,6 +94,18 @@ type LANController interface {
 	PasswordHash() string
 }
 
+// TunnelController is the managed remote-access connector, as the bridge sees
+// it. Start is idempotent and returns immediately; the connector takes tens of
+// seconds to become advertisable, so callers must not block on it.
+type TunnelController interface {
+	Start(localPort int)
+	Stop()
+	// Endpoint is the advertisable tunnel, or nil while it is starting,
+	// settling, or down.
+	Endpoint() *mobilebridge.TunnelEndpoint
+	Status() mobilebridge.TunnelStatus
+}
+
 // BridgeService is the production mobileBridge. It persists state and drives
 // the LAN listener. Password plaintext exists only transiently in the response.
 type BridgeService struct {
@@ -117,6 +129,11 @@ type BridgeService struct {
 	ClearServe  func() error
 	QueryTS     func() mobilebridge.TailscaleInfo
 	ServeTarget func() int
+
+	// Tunnel is the managed remote-access connector. Nil when remote access is
+	// unavailable — no usable cloudflared, or the feature switched off — in
+	// which case the bridge behaves exactly as the LAN-only version did.
+	Tunnel TunnelController
 
 	// serveErr records the last Apply failure so Status can report serve_failed.
 	serveErr error
@@ -162,7 +179,9 @@ func (b *BridgeService) Status() MobileStatusResponse {
 			LANHosts:       lan,
 			TailscaleHosts: ts,
 			Port:           b.LAN.BoundPort(),
+			Tunnel:         b.tunnelEndpoint(),
 		}),
+		Tunnel: b.tunnelStatus(),
 	}
 	// Only surface the password while the bridge is actually enabled. This route
 	// is reachable only on the loopback listener (the LAN listener 404s
@@ -172,6 +191,20 @@ func (b *BridgeService) Status() MobileStatusResponse {
 	}
 	res.SecurePairing = b.securePairingStatus(st.SecurePairing, enabled)
 	return res
+}
+
+func (b *BridgeService) tunnelEndpoint() *mobilebridge.TunnelEndpoint {
+	if b.Tunnel == nil {
+		return nil
+	}
+	return b.Tunnel.Endpoint()
+}
+
+func (b *BridgeService) tunnelStatus() mobilebridge.TunnelStatus {
+	if b.Tunnel == nil {
+		return mobilebridge.TunnelStatus{}
+	}
+	return b.Tunnel.Status()
 }
 
 func (b *BridgeService) queryTS() mobilebridge.TailscaleInfo {
@@ -306,6 +339,14 @@ func (b *BridgeService) enableWithPassword(pw string) (MobileStatusResponse, err
 	if st, _ := mobilebridge.Load(b.ConfigPath); st.SecurePairing {
 		b.serveErr = b.applyServe(port)
 	}
+	// Point the connector at the port Start actually bound, not DefaultPort:
+	// Start falls back to an ephemeral port when the default is taken, and a
+	// connector aimed at the wrong port tunnels nothing. Start is idempotent
+	// and returns immediately — the connector needs tens of seconds to become
+	// advertisable, and Status reports that progress meanwhile.
+	if b.Tunnel != nil {
+		b.Tunnel.Start(port)
+	}
 	return b.Status(), nil
 }
 
@@ -356,6 +397,12 @@ func (b *BridgeService) Regenerate() (MobileStatusResponse, error) {
 func (b *BridgeService) Disable() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	// Stop the connector first. Leaving it up after the user turned Connect
+	// Mobile off would keep the machine reachable from the internet while the
+	// UI says it is not.
+	if b.Tunnel != nil {
+		b.Tunnel.Stop()
+	}
 	if err := b.LAN.Stop(ctx); err != nil {
 		return err
 	}

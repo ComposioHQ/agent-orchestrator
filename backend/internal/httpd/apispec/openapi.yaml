@@ -7671,17 +7671,39 @@ components:
           $ref: '#/components/schemas/ControllersSecurePairingStatus'
         tailscaleHost:
           type: string
+        tunnel:
+          $ref: '#/components/schemas/MobileTunnelStatus'
         warning:
           type: string
       required:
       - enabled
       - endpoints
+      - tunnel
       - host
       - tailscaleHost
       - port
       - password
       - warning
       - securePairing
+      type: object
+    MobileTunnelStatus:
+      properties:
+        hostname:
+          type: string
+        lastError:
+          type: string
+        location:
+          type: string
+        ready:
+          type: boolean
+        running:
+          type: boolean
+      required:
+      - running
+      - ready
+      - hostname
+      - location
+      - lastError
       type: object
     MuteDeviceRequest:
       properties:

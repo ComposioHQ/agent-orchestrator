@@ -484,3 +484,133 @@ func TestMobileStatusEndpointsEmptyWithoutNetwork(t *testing.T) {
 		t.Errorf("Host = %q want empty", got.Host)
 	}
 }
+
+type fakeTunnel struct {
+	startedOn int
+	stops     int
+	endpoint  *mobilebridge.TunnelEndpoint
+	status    mobilebridge.TunnelStatus
+}
+
+func (f *fakeTunnel) Start(localPort int) { f.startedOn = localPort }
+func (f *fakeTunnel) Stop()               { f.stops++ }
+func (f *fakeTunnel) Endpoint() *mobilebridge.TunnelEndpoint {
+	return f.endpoint
+}
+func (f *fakeTunnel) Status() mobilebridge.TunnelStatus { return f.status }
+
+func TestMobileEnableStartsTheTunnelOnTheBoundPort(t *testing.T) {
+	// The connector must target the port the listener actually bound, not the
+	// configured default: Start falls back to an ephemeral port when the
+	// default is taken, and a connector pointed at the wrong port tunnels
+	// nothing.
+	tun := &fakeTunnel{}
+	b := &BridgeService{
+		LAN:                &fakeLAN{},
+		ConfigPath:         filepath.Join(t.TempDir(), "mobile", "config.json"),
+		DefaultPort:        3011,
+		PickLANHosts:       func() []string { return []string{"192.168.1.42"} },
+		PickTailscaleHosts: func() []string { return nil },
+		Tunnel:             tun,
+	}
+	if _, err := b.Enable(); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+	if tun.startedOn != 3011 {
+		t.Fatalf("tunnel started on %d, want the bound port 3011", tun.startedOn)
+	}
+}
+
+func TestMobileDisableStopsTheTunnel(t *testing.T) {
+	// Leaving a public tunnel up after the user turned Connect Mobile off would
+	// keep the machine reachable from the internet with the UI saying it is not.
+	tun := &fakeTunnel{}
+	b := &BridgeService{
+		LAN:                &fakeLAN{},
+		ConfigPath:         filepath.Join(t.TempDir(), "mobile", "config.json"),
+		DefaultPort:        3011,
+		PickLANHosts:       func() []string { return []string{"192.168.1.42"} },
+		PickTailscaleHosts: func() []string { return nil },
+		Tunnel:             tun,
+	}
+	if _, err := b.Enable(); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+	if err := b.Disable(); err != nil {
+		t.Fatalf("disable: %v", err)
+	}
+	if tun.stops != 1 {
+		t.Fatalf("tunnel stopped %d times, want 1", tun.stops)
+	}
+}
+
+func TestMobileStatusIncludesAReadyTunnelEndpoint(t *testing.T) {
+	tun := &fakeTunnel{
+		endpoint: &mobilebridge.TunnelEndpoint{Ready: true, Hostname: "abc.trycloudflare.com"},
+		status:   mobilebridge.TunnelStatus{Running: true, Ready: true, Hostname: "abc.trycloudflare.com"},
+	}
+	b := &BridgeService{
+		LAN:                &fakeLAN{running: true},
+		ConfigPath:         filepath.Join(t.TempDir(), "mobile", "config.json"),
+		DefaultPort:        3011,
+		PickLANHosts:       func() []string { return []string{"192.168.1.42"} },
+		PickTailscaleHosts: func() []string { return nil },
+		Tunnel:             tun,
+	}
+	if _, err := b.Enable(); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+
+	got := b.Status()
+	last := got.Endpoints[len(got.Endpoints)-1]
+	if last.Kind != mobilebridge.KindTunnel || last.Host != "abc.trycloudflare.com" {
+		t.Fatalf("last endpoint = %+v, want the tunnel", last)
+	}
+	if !got.Tunnel.Ready {
+		t.Error("Tunnel status not surfaced; the desktop cannot show progress")
+	}
+}
+
+func TestMobileStatusOmitsATunnelThatIsNotReady(t *testing.T) {
+	// Still settling. The desktop should say "preparing", and the QR must not
+	// carry an address that answers 530.
+	tun := &fakeTunnel{status: mobilebridge.TunnelStatus{Running: true}}
+	b := &BridgeService{
+		LAN:                &fakeLAN{running: true},
+		ConfigPath:         filepath.Join(t.TempDir(), "mobile", "config.json"),
+		DefaultPort:        3011,
+		PickLANHosts:       func() []string { return []string{"192.168.1.42"} },
+		PickTailscaleHosts: func() []string { return nil },
+		Tunnel:             tun,
+	}
+	if _, err := b.Enable(); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+
+	for _, e := range b.Status().Endpoints {
+		if e.Kind == mobilebridge.KindTunnel {
+			t.Fatalf("advertised %+v while the tunnel was not ready", e)
+		}
+	}
+}
+
+func TestMobileWorksWithNoTunnelConfigured(t *testing.T) {
+	// Remote access unavailable (no cloudflared, or the feature off) must leave
+	// the LAN bridge behaving exactly as it did before.
+	b := &BridgeService{
+		LAN:                &fakeLAN{running: true},
+		ConfigPath:         filepath.Join(t.TempDir(), "mobile", "config.json"),
+		DefaultPort:        3011,
+		PickLANHosts:       func() []string { return []string{"192.168.1.42"} },
+		PickTailscaleHosts: func() []string { return nil },
+	}
+	if _, err := b.Enable(); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+	if got := b.Status(); len(got.Endpoints) != 1 || got.Endpoints[0].Kind != mobilebridge.KindLAN {
+		t.Fatalf("endpoints = %+v, want just the LAN one", got.Endpoints)
+	}
+	if err := b.Disable(); err != nil {
+		t.Fatalf("disable: %v", err)
+	}
+}
