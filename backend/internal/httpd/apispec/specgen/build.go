@@ -357,6 +357,7 @@ var schemaNames = map[string]string{
 	"ControllersDevImportProjectsResponse": "DevImportProjectsResponse",
 	// httpd/controllers: mobile wire envelopes
 	"ControllersMobileStatusResponse":  "MobileStatusResponse",
+	"ControllersIdentityResponse":      "IdentityResponse",
 	"ControllersMobileDeviceResponse":  "MobileDeviceResponse",
 	"ControllersMobileDevicesResponse": "MobileDevicesResponse",
 	"ControllersMuteDeviceRequest":     "MuteDeviceRequest",
@@ -492,7 +493,25 @@ func operations() []operation {
 	ops = append(ops, browserOperations()...)
 	ops = append(ops, shellTerminalOperations()...)
 	ops = append(ops, systemOperations()...)
+	ops = append(ops, identityOperations()...)
 	return ops
+}
+
+// identityOperations declares the unauthenticated host-identity probe. It is
+// the one route the Connect Mobile LAN listener serves without the connection
+// password, so the phone can confirm which machine answered before presenting
+// a credential. See docs/adr/0003-unauthenticated-identity-probe.md.
+func identityOperations() []operation {
+	return []operation{
+		{
+			method: http.MethodGet, path: "/api/v1/identity", id: "getIdentity", tag: "identity",
+			summary: "Identify the daemon so a client can confirm which machine answered",
+			resps: []respUnit{
+				{http.StatusOK, controllers.IdentityResponse{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+	}
 }
 
 // systemOperations declares the startup requirements gate the desktop loading

@@ -468,8 +468,18 @@ func Run() error {
 		go dispatcher.Run(ctx)
 	}
 
+	// Stable, machine-bound host identity, served by the unauthenticated
+	// GET /api/v1/identity probe. A failure here is not fatal: the probe then
+	// answers 501 and the phone falls back to pairing without identity
+	// verification, which is how it behaved before the probe existed.
+	hostIdentity, identityErr := mobilebridge.EnsureLocalIdentity(cfg.DataDir)
+	if identityErr != nil {
+		log.Warn("could not establish host identity; /api/v1/identity will report unimplemented", "error", identityErr)
+	}
+
 	srv, err := httpd.NewWithDeps(cfg, log, termMgr, httpd.APIDeps{
 		Projects:           projectSvc,
+		HostID:             hostIdentity.HostID,
 		Agents:             agentSvc,
 		SystemChecks:       systemChecks,
 		Installer:          systemInstall,

@@ -1313,6 +1313,15 @@ type ResolveCommentsResponse struct {
 	Resolved int  `json:"resolved"`
 }
 
+// IdentityResponse is the body of the unauthenticated GET /api/v1/identity
+// probe. It is deliberately minimal: the route is reachable without the
+// connection password, so it must carry nothing but an opaque host id and the
+// mobile contract version.
+type IdentityResponse struct {
+	HostID     string `json:"hostId"`
+	APIVersion int    `json:"apiVersion"`
+}
+
 // MobileStatusResponse is the body of the Connect Mobile status/enable/disable/
 // regenerate endpoints. Password is populated only transiently, on enable and
 // regenerate responses (empty otherwise) — it is never persisted in plaintext.
