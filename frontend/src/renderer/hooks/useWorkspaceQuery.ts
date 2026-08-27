@@ -245,7 +245,7 @@ export function useWorkspaceQuery() {
 	const local = useQuery(workspaceQueryOptions);
 	const cloud = useCloudProjectsQuery();
 	const cloudSessions = useCloudSessionsQuery();
-	const { org } = useCloudOrg();
+	const { org, ready } = useCloudOrg();
 	const orgId = org?.id;
 	const localData = local.data;
 	const cloudData = cloud.data;
@@ -254,9 +254,12 @@ export function useWorkspaceQuery() {
 		// Local stays authoritative for loading/error semantics: cloud items only
 		// render once the local list exists, and never replace it.
 		if (localData === undefined || cloudData === undefined || cloudData.length === 0) return localData;
-		if (orgId === undefined) return localData;
+		// Signing out (or turning the offering off) disables the cloud queries,
+		// but react-query keeps their last data; without this gate the stale
+		// cloud projects would keep rendering for a signed-out user.
+		if (!ready || orgId === undefined) return localData;
 		const sessions = cloudSessionData ?? [];
 		return [...localData, ...cloudData.map((project) => toCloudWorkspace(project, sessions, orgId))];
-	}, [localData, cloudData, cloudSessionData, orgId]);
+	}, [localData, cloudData, cloudSessionData, orgId, ready]);
 	return { ...local, data };
 }
