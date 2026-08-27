@@ -49,8 +49,14 @@ func (f *fakeLAN) Stop(ctx context.Context) error {
 	f.running = false
 	return nil
 }
-func (f *fakeLAN) Running() bool            { return f.running }
-func (f *fakeLAN) BoundPort() int           { return 3011 }
+func (f *fakeLAN) Running() bool { return f.running }
+func (f *fakeLAN) BoundPort() int {
+	// Mirrors the real listener: no bound port until it is actually running.
+	if !f.running {
+		return 0
+	}
+	return 3011
+}
 func (f *fakeLAN) SetPasswordHash(h string) { f.hash = h }
 func (f *fakeLAN) PasswordHash() string     { return f.hash }
 
@@ -634,5 +640,26 @@ func TestMobileStatusCarriesTheHostIdentity(t *testing.T) {
 
 	if got := b.Status().HostID; got != "h_b3e07f31" {
 		t.Fatalf("HostID = %q want h_b3e07f31", got)
+	}
+}
+
+// Found by running the daemon: with Connect Mobile off there is no bound port,
+// so every endpoint was advertised as host:0. A phone would dutifully race
+// addresses that cannot work. Nothing is reachable until the bridge is up, so
+// the honest answer is an empty list.
+func TestMobileAdvertisesNothingWhileTheBridgeIsOff(t *testing.T) {
+	b := &BridgeService{
+		LAN:                &fakeLAN{running: false},
+		ConfigPath:         filepath.Join(t.TempDir(), "mobile", "config.json"),
+		DefaultPort:        3011,
+		PickLANHosts:       func() []string { return []string{"192.168.1.42"} },
+		PickTailscaleHosts: func() []string { return []string{"100.72.46.7"} },
+	}
+
+	if got := b.AdvertisedEndpoints(); len(got) != 0 {
+		t.Fatalf("advertised %+v while the bridge was disabled", got)
+	}
+	if got := b.Status().Endpoints; len(got) != 0 {
+		t.Fatalf("status advertised %+v while the bridge was disabled", got)
 	}
 }

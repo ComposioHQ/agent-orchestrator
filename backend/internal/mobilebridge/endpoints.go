@@ -45,8 +45,17 @@ type EndpointInputs struct {
 }
 
 // Endpoints builds the candidate list the phone races.
+//
+// A zero port means the LAN listener is not bound — Connect Mobile is off, or
+// still starting — so there is nothing to advertise at all. Emitting host:0
+// entries would have the phone race addresses that cannot work, and the tunnel
+// is no exception: it forwards to that same port, so with no listener behind it
+// there is nothing for it to reach.
 func Endpoints(in EndpointInputs) []Endpoint {
 	var out []Endpoint
+	if in.Port <= 0 {
+		return nil
+	}
 	for _, h := range in.LANHosts {
 		out = append(out, Endpoint{Kind: KindLAN, Host: h, Port: in.Port})
 	}
