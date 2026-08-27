@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -42,6 +45,42 @@ type steerRecorder struct {
 type cancelAfterSteerRecorder struct {
 	*steerRecorder
 	cancel context.CancelFunc
+}
+
+// blockingSteerRecorder holds a successful provider admission open so a test can
+// race project ownership replacement against the whole promotion outcome.
+type blockingSteerRecorder struct {
+	*steerRecorder
+	started     chan struct{}
+	release     chan struct{}
+	startOnce   sync.Once
+	releaseOnce sync.Once
+}
+
+func newBlockingSteerRecorder() *blockingSteerRecorder {
+	return &blockingSteerRecorder{
+		steerRecorder: newSteerRecorder(),
+		started:       make(chan struct{}),
+		release:       make(chan struct{}),
+	}
+}
+
+func (s *blockingSteerRecorder) Steer(
+	ctx context.Context,
+	providerTurnID string,
+	msg ports.ChatUserMessage,
+) (ports.ChatTurnRef, error) {
+	s.startOnce.Do(func() { close(s.started) })
+	select {
+	case <-s.release:
+		return s.steerRecorder.Steer(ctx, providerTurnID, msg)
+	case <-ctx.Done():
+		return ports.ChatTurnRef{}, ctx.Err()
+	}
+}
+
+func (s *blockingSteerRecorder) releaseSteer() {
+	s.releaseOnce.Do(func() { close(s.release) })
 }
 
 type cancelAfterInterruptRecorder struct {
@@ -560,6 +599,129 @@ func TestPromoteSelectedQueuedTurnIntoTheRunningTurn(t *testing.T) {
 	}
 	if next.TurnID != first.ID {
 		t.Fatalf("remaining queue head = %q, want %q", next.TurnID, first.ID)
+	}
+}
+
+// A project rebind is an ownership transfer, so it cannot commit while the old
+// controller has a reserved queue item crossing the provider boundary. The
+// promotion must either finish under owner A or observe owner B before provider
+// contact; completing the rebind between provider admission and AO's durable
+// outcome would make the timeline disagree with which agent received the work.
+func TestPromoteQueuedTurnFencesProjectRebindThroughProviderOutcome(t *testing.T) {
+	st := openStore(t)
+	ctx := context.Background()
+	provider := newBlockingSteerRecorder()
+
+	var nextID atomic.Int32
+	svc := chatsvc.New(chatsvc.Options{
+		Store: st, Sessions: st,
+		Drivers: fakeRegistry{driver: fakeDriver{conv: provider}},
+		Log:     slog.New(slog.DiscardHandler),
+		NewID: func() string {
+			return fmt.Sprintf("promotion-rebind-%d", nextID.Add(1))
+		},
+	})
+	t.Cleanup(func() { _ = svc.Stop(context.Background(), testSession) })
+	// Release provider admission before Stop waits for the controller command lock.
+	// Cleanups run in reverse registration order.
+	t.Cleanup(provider.releaseSteer)
+	controller, err := svc.Start(ctx, chatsvc.StartConfig{
+		SessionID: testSession, ProjectID: testProject, Kind: domain.KindOrchestrator,
+		Harness: domain.HarnessCodex, WorkspacePath: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("Start project controller: %v", err)
+	}
+
+	if _, err := svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "running", ClientMessageID: "promotion-rebind-running",
+		Origin: domain.MessageOriginHuman,
+	}); err != nil {
+		t.Fatalf("Send running turn: %v", err)
+	}
+	provider.emit(ports.ChatEvent{
+		Kind: ports.ChatEventTurnStarted, ProviderTurnID: "provider-turn-1",
+	})
+	queued, err := svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "promote before replacement", ClientMessageID: "promotion-rebind-queued",
+		Origin: domain.MessageOriginHuman,
+	})
+	if err != nil {
+		t.Fatalf("Send queued turn: %v", err)
+	}
+
+	promotionDone := make(chan struct {
+		result chatsvc.PromoteQueuedTurnResult
+		err    error
+	}, 1)
+	go func() {
+		result, promoteErr := svc.PromoteQueuedTurn(ctx, testSession, queued.ID)
+		promotionDone <- struct {
+			result chatsvc.PromoteQueuedTurnResult
+			err    error
+		}{result: result, err: promoteErr}
+	}()
+	select {
+	case <-provider.started:
+	case <-time.After(4 * time.Second):
+		t.Fatal("queued promotion did not reach provider admission")
+	}
+
+	replacement, err := st.CreateSession(ctx, domain.SessionRecord{
+		ProjectID: testProject, Kind: domain.KindOrchestrator, Harness: domain.HarnessCodex,
+		Mode: domain.SessionModeChat, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("create replacement orchestrator: %v", err)
+	}
+	rebindDone := make(chan error, 1)
+	go func() {
+		_, rebindErr := st.CreateConversation(
+			ctx, "unused-promotion-replacement", domain.ConversationScopeProject,
+			testProject, replacement.ID, time.Now().UTC(),
+		)
+		rebindDone <- rebindErr
+	}()
+	select {
+	case rebindErr := <-rebindDone:
+		t.Fatalf("project rebind completed before provider outcome: %v", rebindErr)
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	provider.releaseSteer()
+	var promotion struct {
+		result chatsvc.PromoteQueuedTurnResult
+		err    error
+	}
+	select {
+	case promotion = <-promotionDone:
+	case <-time.After(4 * time.Second):
+		t.Fatal("queued promotion did not complete after provider release")
+	}
+	if promotion.err != nil {
+		t.Fatalf("PromoteQueuedTurn: %v", promotion.err)
+	}
+	if promotion.result.SourceTurnID != queued.ID || promotion.result.ActivityID == "" {
+		t.Fatalf("promotion result = %+v, want durable source and activity", promotion.result)
+	}
+	select {
+	case rebindErr := <-rebindDone:
+		if rebindErr != nil {
+			t.Fatalf("rebind after promotion outcome: %v", rebindErr)
+		}
+	case <-time.After(4 * time.Second):
+		t.Fatal("project rebind remained blocked after promotion completed")
+	}
+
+	if calls := provider.steers(); len(calls) != 1 || calls[0].msg.Text != "promote before replacement" {
+		t.Fatalf("provider promotions = %+v, want one admitted under the original owner", calls)
+	}
+	snapshot, err := st.LoadConversationSnapshot(ctx, controller.ConversationID())
+	if err != nil {
+		t.Fatalf("LoadConversationSnapshot: %v", err)
+	}
+	if got := len(steerMarkers(snapshot)); got != 1 {
+		t.Fatalf("durable promotion markers = %d, want one before ownership transfer", got)
 	}
 }
 
