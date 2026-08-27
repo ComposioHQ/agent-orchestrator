@@ -585,6 +585,12 @@ func (c *Controller) importNativeHistory(
 	required bool,
 	checkpoint nativeHistoryCheckpoint,
 ) error {
+	if required && len(checkpoint.hardMismatches) > 0 {
+		return fmt.Errorf("native conversation history cannot satisfy durable checkpoint: %w",
+			&ports.ChatHistoryUnsettledError{
+				Dimensions: append([]ports.ChatHistoryMismatchDimension(nil), checkpoint.hardMismatches...),
+			})
+	}
 	reader, ok := c.conv.(ports.ChatHistoryReader)
 	if !ok {
 		if required {

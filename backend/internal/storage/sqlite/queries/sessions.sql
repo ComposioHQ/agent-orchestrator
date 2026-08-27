@@ -45,7 +45,6 @@ UPDATE sessions SET
     conversation_checkpoint_state = 'legacy',
     conversation_checkpoint_generation = '',
     conversation_checkpoint_native_id = '',
-    conversation_checkpoint_unsettled = 0,
     updated_at = sqlc.arg(updated_at)
 WHERE id = sqlc.arg(id)
   AND is_terminated = 0
@@ -62,7 +61,6 @@ UPDATE sessions SET
     conversation_checkpoint_state = 'legacy',
     conversation_checkpoint_generation = '',
     conversation_checkpoint_native_id = '',
-    conversation_checkpoint_unsettled = 0,
     updated_at = MAX(updated_at, sqlc.arg(latest_user_prompt_at))
 WHERE id = sqlc.arg(id)
   AND is_terminated = 0

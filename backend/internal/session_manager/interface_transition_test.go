@@ -31,6 +31,98 @@ type transitionStore struct {
 	beforeCreate   func(domain.SessionInterfaceTransition)
 }
 
+type blockingRestoreLifecycle struct {
+	*lifecycle.Manager
+	restored chan struct{}
+	release  chan struct{}
+}
+
+type transitionLifecycleStore struct {
+	*transitionStore
+}
+
+func (s *transitionLifecycleStore) GetPR(context.Context, string) (domain.PullRequest, bool, error) {
+	return domain.PullRequest{}, false, nil
+}
+
+func (s *transitionLifecycleStore) ListPRsBySession(context.Context, domain.SessionID) ([]domain.PullRequest, error) {
+	return nil, nil
+}
+
+func (s *transitionLifecycleStore) ListPRReviews(context.Context, string) ([]domain.PullRequestReview, error) {
+	return nil, nil
+}
+
+func (s *transitionLifecycleStore) ListPRComments(context.Context, string) ([]domain.PullRequestComment, error) {
+	return nil, nil
+}
+
+func (s *transitionLifecycleStore) GetPRLastNudgeSignature(context.Context, string) (string, error) {
+	return "", nil
+}
+
+func (s *transitionLifecycleStore) UpdatePRLastNudgeSignature(context.Context, string, string) error {
+	return nil
+}
+
+func (s *transitionLifecycleStore) UpdateSessionFromActivitySignal(
+	_ context.Context,
+	rec domain.SessionRecord,
+	expectedUpdatedAt time.Time,
+) (bool, error) {
+	current, ok := s.sessions[rec.ID]
+	if !ok || !current.UpdatedAt.Equal(expectedUpdatedAt) {
+		return false, nil
+	}
+	s.sessions[rec.ID] = rec
+	return true, nil
+}
+
+func (s *transitionLifecycleStore) CommitSessionControllerEpoch(
+	_ context.Context,
+	id domain.SessionID,
+	source, target domain.SessionMode,
+	nativeConversationID string,
+	_ time.Time,
+) (bool, error) {
+	return (&fakeLCM{store: s.fakeStore}).changeControllerEpoch(
+		id, source, target, nativeConversationID, false,
+	)
+}
+
+func (s *transitionLifecycleStore) RestoreSessionControllerEpoch(
+	_ context.Context,
+	id domain.SessionID,
+	source, target domain.SessionMode,
+	nativeConversationID string,
+	_ time.Time,
+) (bool, error) {
+	return (&fakeLCM{store: s.fakeStore}).changeControllerEpoch(
+		id, source, target, nativeConversationID, true,
+	)
+}
+
+func (l *blockingRestoreLifecycle) RestoreControllerEpoch(
+	ctx context.Context,
+	id domain.SessionID,
+	source, target domain.SessionMode,
+	nativeConversationID string,
+	startFresh bool,
+) (bool, error) {
+	changed, err := l.Manager.RestoreControllerEpoch(
+		ctx, id, source, target, nativeConversationID, startFresh,
+	)
+	if err == nil && changed {
+		close(l.restored)
+		select {
+		case <-ctx.Done():
+			return false, ctx.Err()
+		case <-l.release:
+		}
+	}
+	return changed, err
+}
+
 func newTransitionStore() *transitionStore {
 	return &transitionStore{
 		fakeStore:   newFakeStore(),
@@ -949,6 +1041,52 @@ func TestInterfaceTransitionRollbackClearsStaleTUIRuntimeBeforeRestore(t *testin
 	wantLog := "[stop:tui:runtime-1 start:chat stop:chat stop:tui:runtime-1 start:tui]"
 	if got := fmt.Sprint(*log); got != wantLog {
 		t.Fatalf("controller order = %s, want %s", got, wantLog)
+	}
+}
+
+func TestInterfaceTransitionRollbackRejectsOwnerlessTUIHooksBeforeRelaunch(t *testing.T) {
+	manager, store, runtime, chat, _ := newTransitionManager(t, domain.SessionModeTUI)
+	runtime.aliveByHandle = map[string]bool{"runtime-1": true}
+	chat.startErr = errors.New("ACP session/new: spawn EINVAL")
+
+	recorder := &blockingRestoreLifecycle{
+		Manager:  lifecycle.New(&transitionLifecycleStore{transitionStore: store}, nil),
+		restored: make(chan struct{}),
+		release:  make(chan struct{}),
+	}
+	manager.lcm = recorder
+
+	transition, err := manager.StartInterfaceTransition(
+		context.Background(), "session-1", domain.SessionModeChat,
+		domain.SessionInterfaceTransitionDrain, domain.SessionInterfaceTransitionHistoryStrict,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-recorder.restored:
+	case <-time.After(time.Second):
+		t.Fatal("rollback did not restore the ownerless TUI epoch")
+	}
+
+	before := store.sessions["session-1"]
+	if before.Mode != domain.SessionModeTUI || before.Metadata.RuntimeLaunchID != "" {
+		t.Fatalf("rollback barrier session = %+v, want ownerless TUI epoch", before)
+	}
+	if err := recorder.ApplyActivitySignal(context.Background(), "session-1", ports.ActivitySignal{
+		Valid: true, State: domain.ActivityIdle, Event: "stop",
+		AgentSessionID: "native-1", LatestAssistantUpdate: "late callback from the stopped TUI",
+	}); err != nil {
+		t.Fatalf("apply delayed ownerless hook: %v", err)
+	}
+	if after := store.sessions["session-1"]; after != before {
+		t.Fatalf("ownerless rollback hook mutated session: got %+v, want %+v", after, before)
+	}
+
+	close(recorder.release)
+	settled := awaitTransition(t, store, transition.ID)
+	if settled.Phase != domain.SessionInterfaceTransitionFailed {
+		t.Fatalf("transition = %+v, want failed target with restored source", settled)
 	}
 }
 

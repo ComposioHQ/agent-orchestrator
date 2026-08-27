@@ -89,7 +89,6 @@ func (f *fakeStore) RecordSessionLatestUserPrompt(_ context.Context, id domain.S
 	rec.Metadata.ConversationCheckpointState = domain.ConversationCheckpointLegacy
 	rec.Metadata.ConversationCheckpointGeneration = ""
 	rec.Metadata.ConversationCheckpointNativeID = ""
-	rec.Metadata.ConversationCheckpointUnsettled = false
 	rec.UpdatedAt = updatedAt
 	f.sessions[id] = rec
 	return true, nil

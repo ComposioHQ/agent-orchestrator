@@ -68,6 +68,16 @@ type controllerEpochStore interface {
 	) (bool, error)
 }
 
+// interfaceTransitionReader lets the activity reducer reject ownerless TUI
+// callbacks while an interface handoff is restoring that controller. It stays
+// optional so focused reducer fakes do not need the transition saga surface.
+type interfaceTransitionReader interface {
+	GetActiveSessionInterfaceTransition(
+		context.Context,
+		domain.SessionID,
+	) (domain.SessionInterfaceTransition, bool, error)
+}
+
 // chatSpawnStore commits the lifecycle facts and the provider boundary in one
 // transaction. A fresh provider must never become the durable session owner
 // while the conversation head still names the provider it replaced.
@@ -565,6 +575,24 @@ retryProjection:
 		return nil
 	}
 	mode := domain.NormalizeSessionMode(rec.Mode)
+	// Rollback restores the TUI mode before its replacement runtime has a launch
+	// generation. While the durable transition remains active, an untagged hook
+	// can only belong to the stopped source runtime and must not claim this brief
+	// ownerless epoch. Once relaunch commits RuntimeLaunchID, the normal generation
+	// fence below takes over.
+	if mode == domain.SessionModeTUI && rec.Metadata.RuntimeLaunchID == "" && s.LaunchID == "" {
+		if reader, ok := m.store.(interfaceTransitionReader); ok {
+			_, active, transitionErr := reader.GetActiveSessionInterfaceTransition(ctx, id)
+			if transitionErr != nil {
+				m.mu.Unlock()
+				return fmt.Errorf("lifecycle: read active interface transition: %w", transitionErr)
+			}
+			if active {
+				m.mu.Unlock()
+				return nil
+			}
+		}
+	}
 	// Once a terminal launch owns the committed TUI interface, every callback
 	// must name that exact owner. An untagged legacy callback cannot prove that it
 	// belongs to the current launch, just as a tagged callback from an older
@@ -596,8 +624,10 @@ retryProjection:
 	// generation, and main turn. Reduce it as one durable state machine so a Stop
 	// whose UserPromptSubmit was lost can never borrow the prior turn's prompt.
 	checkpoint := rec.Metadata
+	nativeIdentityChanged := s.AgentSessionID != "" && rec.Metadata.AgentSessionID != "" &&
+		s.AgentSessionID != rec.Metadata.AgentSessionID
 	resetConversationCheckpoint :=
-		(s.AgentSessionID != "" && s.AgentSessionID != rec.Metadata.AgentSessionID) ||
+		nativeIdentityChanged ||
 			(s.AgentSessionID != "" && s.LaunchID != "" &&
 				s.LaunchID != rec.Metadata.AgentSessionIDLaunchID) ||
 			(s.Event == "session-start" && s.LaunchID != "" &&
@@ -608,7 +638,9 @@ retryProjection:
 		checkpoint.ConversationCheckpointState = domain.ConversationCheckpointEmpty
 		checkpoint.ConversationCheckpointGeneration = ""
 		checkpoint.ConversationCheckpointNativeID = ""
-		checkpoint.ConversationCheckpointUnsettled = false
+		if nativeIdentityChanged {
+			checkpoint.ConversationCheckpointUnsettled = false
+		}
 	}
 	ownerGeneration := ""
 	switch mode {

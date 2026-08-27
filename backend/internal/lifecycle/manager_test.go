@@ -1486,6 +1486,7 @@ func TestActivity_NewRuntimeLaunchClearsPriorConversationCheckpoint(t *testing.T
 	rec.Metadata.LatestUserPrompt = "old launch prompt"
 	rec.Metadata.LatestAssistantUpdate = "old launch answer"
 	rec.Metadata.ConversationCheckpointState = domain.ConversationCheckpointComplete
+	rec.Metadata.ConversationCheckpointUnsettled = true
 	store.sessions[rec.ID] = rec
 
 	// A SessionStart hook proves that this native conversation belongs to the
@@ -1506,6 +1507,9 @@ func TestActivity_NewRuntimeLaunchClearsPriorConversationCheckpoint(t *testing.T
 	}
 	if got.ConversationCheckpointState != domain.ConversationCheckpointEmpty {
 		t.Fatalf("new launch checkpoint state = %q, want empty", got.ConversationCheckpointState)
+	}
+	if !got.ConversationCheckpointUnsettled {
+		t.Fatal("same-native runtime restart erased unresolved provider turn boundary")
 	}
 }
 

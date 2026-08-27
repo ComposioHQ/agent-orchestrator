@@ -643,7 +643,6 @@ UPDATE sessions SET
     conversation_checkpoint_state = 'legacy',
     conversation_checkpoint_generation = '',
     conversation_checkpoint_native_id = '',
-    conversation_checkpoint_unsettled = 0,
     updated_at = MAX(updated_at, ?2)
 WHERE id = ?3
   AND is_terminated = 0
@@ -675,7 +674,6 @@ UPDATE sessions SET
     conversation_checkpoint_state = 'legacy',
     conversation_checkpoint_generation = '',
     conversation_checkpoint_native_id = '',
-    conversation_checkpoint_unsettled = 0,
     updated_at = ?2
 WHERE id = ?3
   AND is_terminated = 0

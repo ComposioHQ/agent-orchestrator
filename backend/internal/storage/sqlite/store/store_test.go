@@ -239,7 +239,7 @@ func TestRecordSessionLatestUserPromptIsNarrowAndMonotonic(t *testing.T) {
 		current.Metadata.ConversationCheckpointState != domain.ConversationCheckpointLegacy ||
 		current.Metadata.ConversationCheckpointGeneration != "" ||
 		current.Metadata.ConversationCheckpointNativeID != "" ||
-		current.Metadata.ConversationCheckpointUnsettled {
+		!current.Metadata.ConversationCheckpointUnsettled {
 		t.Fatalf("pane prompt checkpoint or owner facts = %+v", current)
 	}
 

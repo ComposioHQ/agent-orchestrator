@@ -1707,6 +1707,13 @@ func TestInterfaceHandoffPanePromptWithMissedHookCannotAcceptHistoryBeforeObserv
 	}); err != nil {
 		t.Fatalf("apply later Stop: %v", err)
 	}
+	// Another pane send is not a canonical provider prompt boundary. If its hook
+	// is missed too, it must not erase the hard evidence established by Stop.
+	if changed, err := st.RecordSessionLatestUserPrompt(
+		context.Background(), testSession, "third prompt whose hook was also lost", time.Now().UTC(),
+	); err != nil || !changed {
+		t.Fatalf("record later pane-delivered prompt: changed=%v err=%v", changed, err)
+	}
 	changed, err = st.CommitSessionControllerEpoch(
 		context.Background(), testSession, domain.SessionModeTUI, domain.SessionModeChat,
 		"thread-1", time.Now().UTC(),
@@ -1742,6 +1749,49 @@ func TestInterfaceHandoffPanePromptWithMissedHookCannotAcceptHistoryBeforeObserv
 	}
 	if ports.ChatHistoryMismatchOnlyUntrustedText(err) {
 		t.Fatalf("observed Stop mismatch was incorrectly recoverable: %v", err)
+	}
+}
+
+func TestInterfaceHandoffImmutableBoundaryFailsBeforeReadingProviderHistory(t *testing.T) {
+	st := openStore(t)
+	rec, found, err := st.GetSession(context.Background(), testSession)
+	if err != nil || !found {
+		t.Fatalf("load session: found=%v err=%v", found, err)
+	}
+	rec.Metadata.ConversationCheckpointUnsettled = true
+	if err := st.UpdateSession(context.Background(), rec); err != nil {
+		t.Fatalf("seed unresolved boundary: %v", err)
+	}
+
+	conv := &convergingHistoryConversation{
+		fakeConversation: newFakeConversation(),
+		initialSettled:   true,
+	}
+	svc := chatsvc.New(chatsvc.Options{
+		Store: st, Sessions: st,
+		Drivers: fakeRegistry{driver: fakeDriver{conv: conv}},
+		Log:     slog.New(slog.DiscardHandler),
+		NewID:   func() string { return fmt.Sprintf("immutable-boundary-%d", time.Now().UnixNano()) },
+	})
+	t.Cleanup(func() { _ = svc.Stop(context.Background(), testSession) })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	defer cancel()
+	_, err = svc.Start(ctx, chatsvc.StartConfig{
+		SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex,
+		WorkspacePath: t.TempDir(), ProviderConversationID: "thread-1", RequireNativeHistory: true,
+		HistoryPolicy: domain.SessionInterfaceTransitionHistoryProvider,
+	})
+	if !errors.Is(err, ports.ErrChatHistoryUnsettled) {
+		t.Fatalf("Start error = %v, want immutable unresolved-boundary mismatch", err)
+	}
+	if ports.ChatHistoryMismatchOnlyUntrustedText(err) {
+		t.Fatalf("immutable boundary was incorrectly recoverable: %v", err)
+	}
+	reads, refreshes := conv.historyAttempts()
+	if reads != 0 || refreshes != 0 {
+		t.Fatalf("history attempts = %d reads, %d refreshes; immutable boundary should fail before provider polling",
+			reads, refreshes)
 	}
 }
 
