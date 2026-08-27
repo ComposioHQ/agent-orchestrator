@@ -407,7 +407,7 @@ export function ShellTopbar({
 									<span className="inline-flex" style={noDragStyle}>
 										<TopbarButton
 											aria-label={t("shell.openOrchestrator")}
-											className="topbar-control--labeled mr-1"
+											className="topbar-control--labeled -mr-1"
 											data-priority="secondary"
 											disabled={isSpawning || isProjectRestarting}
 											onClick={() => void openOrchestrator()}
