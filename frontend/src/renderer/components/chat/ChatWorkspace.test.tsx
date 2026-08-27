@@ -1906,7 +1906,7 @@ describe("ChatWorkspace reviewer tabs", () => {
 		};
 		const view = render(<ChatWorkspace {...common} />);
 		const chatTab = screen.getByRole("tab", {
-			name: chatFixture.sessionId,
+			name: "Codex",
 		});
 		const reviewerTab = screen.getByRole("tab", { name: "Reviewer" });
 		expect(chatTab).toHaveAttribute("tabindex", "0");
@@ -1930,7 +1930,7 @@ describe("ChatWorkspace reviewer tabs", () => {
 
 		view.rerender(<ChatWorkspace {...common} reviewerTarget={reviewerTarget} />);
 		const activeReviewerTab = screen.getByRole("tab", { name: "Reviewer" });
-		expect(screen.getByRole("tab", { name: chatFixture.sessionId })).toHaveAttribute(
+		expect(screen.getByRole("tab", { name: "Codex" })).toHaveAttribute(
 			"tabindex",
 			"-1",
 		);
@@ -1939,7 +1939,7 @@ describe("ChatWorkspace reviewer tabs", () => {
 		activeReviewerTab.focus();
 		fireEvent.keyDown(activeReviewerTab, { key: "Home" });
 		expect(onSelectChat).toHaveBeenCalledOnce();
-		expect(screen.getByRole("tab", { name: chatFixture.sessionId })).toHaveFocus();
+		expect(screen.getByRole("tab", { name: "Codex" })).toHaveFocus();
 
 		onSelectChat.mockClear();
 		activeReviewerTab.focus();
@@ -2107,7 +2107,7 @@ describe("ChatWorkspace shell tabs", () => {
 			/>,
 		);
 
-		const workerTab = screen.getByRole("tab", { name: "ao-14" });
+		const workerTab = screen.getByRole("tab", { name: "Codex" });
 		workerTab.focus();
 		fireEvent.keyDown(workerTab, { key: "Tab", ctrlKey: true });
 
