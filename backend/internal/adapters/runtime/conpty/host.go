@@ -351,7 +351,7 @@ func (h *host) handleConn(conn net.Conn) {
 	// in this snapshot or queued strictly after it. The writer goroutine keeps
 	// the socket itself outside this critical section.
 	h.mu.Lock()
-	snap := h.cfg.Ring.Snapshot()
+	snap := h.cfg.Ring.Replay()
 	if len(snap) > 0 {
 		snapFrame, err := EncodeMessage(MsgTerminalData, snap)
 		if err != nil || !client.enqueue(snapFrame) {
