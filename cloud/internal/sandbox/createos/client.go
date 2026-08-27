@@ -6,6 +6,8 @@ package createos
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -297,13 +299,15 @@ type execRequest struct {
 	Args []string `json:"args,omitempty"`
 }
 
+type execResult struct {
+	Stdout   string `json:"stdout"`
+	Stderr   string `json:"stderr"`
+	ExitCode int    `json:"exit_code"`
+	Error    string `json:"error"`
+}
+
 type execResponse struct {
-	Result struct {
-		Stdout   string `json:"stdout"`
-		Stderr   string `json:"stderr"`
-		ExitCode int    `json:"exit_code"`
-		Error    string `json:"error"`
-	} `json:"result"`
+	Result execResult `json:"result"`
 }
 
 // BootstrapWorker uploads the AO worker into a live sandbox and launches it.
@@ -325,6 +329,15 @@ func (c *Client) BootstrapWorker(
 	if len(bootstrap.HelperBinary) > 0 &&
 		(helperDestination == "" || !strings.HasPrefix(helperDestination, "/")) {
 		return fmt.Errorf("createos: worker helper destination %q must be an absolute path", bootstrap.HelperDestination)
+	}
+
+	// Fast path: a template that pre-bakes these exact binaries lets the whole
+	// bootstrap collapse to one exec (hash check + launch), skipping both
+	// multi-megabyte uploads - the dominant cost of a fresh-sandbox bootstrap.
+	// Any miss (older template, corrupted file, exec hiccup) falls through to
+	// the plain upload path below, so a stale template self-heals.
+	if c.launchBakedWorker(ctx, id, bootstrap, destination, helperDestination) {
+		return nil
 	}
 
 	// The binaries go up as file PUTs and stay their own requests. Their parents
@@ -404,6 +417,83 @@ func (c *Client) BootstrapWorker(
 	}
 	script.WriteString("nohup " + command + " >> /var/log/ao-worker.log 2>&1 &")
 	return c.exec(ctx, id, "bash", []string{"-c", script.String()})
+}
+
+// launchBakedWorker launches template-baked binaries when their content hashes
+// match exactly what this control plane would upload. One exec verifies and
+// launches; the stop/user/launch tail mirrors BootstrapWorker's upload path
+// (kept in step by hand - the upload path additionally stages and swaps files,
+// so the two cannot share one literal script). Returns true only when the
+// baked launch actually happened; every other outcome (hash miss, missing
+// binary, exec error) reports false so the caller uploads as before.
+func (c *Client) launchBakedWorker(
+	ctx context.Context,
+	id sandbox.ID,
+	bootstrap sandbox.WorkerBootstrap,
+	destination, helperDestination string,
+) bool {
+	hashGuard := func(path string, binary []byte) string {
+		sum := sha256.Sum256(binary)
+		return "[ -x " + shellQuote(path) + " ] && " +
+			"[ \"$(sha256sum " + shellQuote(path) + " | cut -d\" \" -f1)\" = " +
+			shellQuote(hex.EncodeToString(sum[:])) + " ]"
+	}
+	var script strings.Builder
+	script.WriteString("set -e; ")
+	script.WriteString("if ! { " + hashGuard(destination, bootstrap.Binary))
+	if len(bootstrap.HelperBinary) > 0 {
+		script.WriteString(" && " + hashGuard(helperDestination, bootstrap.HelperBinary))
+	}
+	script.WriteString("; }; then echo AO_BAKED_MISS; exit 0; fi; ")
+	script.WriteString("{ pkill -f " + shellQuote("^"+destination+"( |$)") + " || true; }; ")
+	command := launchEnvironment(bootstrap.Environment) + shellQuote(destination)
+	if user := strings.TrimSpace(bootstrap.User); user != "" {
+		quotedUser := shellQuote(user)
+		script.WriteString("id -u " + quotedUser + " >/dev/null 2>&1 || " +
+			"useradd --create-home --home-dir /workspace/.ao/home --shell /bin/bash " +
+			quotedUser + "; ")
+		script.WriteString("chown -R " + quotedUser + ":" + quotedUser + " /workspace; ")
+		command = "runuser --user " + quotedUser + " -- " + command
+	}
+	script.WriteString("nohup " + command + " >> /var/log/ao-worker.log 2>&1 & ")
+	script.WriteString("echo AO_BAKED_OK")
+	result, err := c.execCapture(ctx, id, "bash", []string{"-c", script.String()})
+	if err != nil {
+		return false
+	}
+	return strings.Contains(result.Stdout, "AO_BAKED_OK")
+}
+
+// execCapture runs a command and returns its captured result, failing on a
+// nonzero exit like exec does.
+func (c *Client) execCapture(
+	ctx context.Context,
+	id sandbox.ID,
+	cmd string,
+	args []string,
+) (execResult, error) {
+	var response execResponse
+	if err := c.do(
+		ctx,
+		http.MethodPost,
+		"/v1/sandboxes/"+url.PathEscape(string(id))+"/exec",
+		execRequest{Cmd: cmd, Args: args},
+		&response,
+	); err != nil {
+		return execResult{}, err
+	}
+	if response.Result.Error != "" {
+		return execResult{}, fmt.Errorf("createos: %s could not start: %s", cmd, response.Result.Error)
+	}
+	if response.Result.ExitCode != 0 {
+		return execResult{}, fmt.Errorf(
+			"createos: %s exited %d: %s",
+			cmd,
+			response.Result.ExitCode,
+			truncate(strings.TrimSpace(response.Result.Stderr), 512),
+		)
+	}
+	return response.Result, nil
 }
 
 func (c *Client) exec(ctx context.Context, id sandbox.ID, cmd string, args []string) error {

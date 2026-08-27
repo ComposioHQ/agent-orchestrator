@@ -117,6 +117,12 @@ const (
 	bootstrapTicketTTL             = 10 * time.Minute
 	capacityRetryBackoff           = 15 * time.Second
 	dockerBootCrashWindow          = 20 * time.Second
+	// Inline wait after Create for the sandbox to reach running so the worker
+	// launches within the same reconcile claim (NodeOps takes ~2s). Bounded well
+	// under the claim lease; a slower provider falls back to tick-driven
+	// supervision.
+	inlineRunningWait = 6 * time.Second
+	inlineRunningPoll = 300 * time.Millisecond
 )
 
 // Reconciler converges durable sandbox intent with provider state.
@@ -921,13 +927,46 @@ func (r *Reconciler) provision(
 		"duration_ms", time.Since(startedAt).Milliseconds(),
 	)
 
-	// The worker is bootstrapped once the sandbox is actually running (see
-	// superviseRunning), not here. A provider like NodeOps accepts Create before
-	// the VM's network is up, and a worker launched that early cannot reach the
-	// control plane or clone the repository, so it never sends its first
-	// heartbeat and the reconciler would wait out the whole startup deadline
-	// before repairing it. Deferring to StateRunning lets the first attempt
-	// succeed.
+	// The worker is bootstrapped once the sandbox is actually running, not at
+	// create time. A provider like NodeOps accepts Create before the VM's
+	// network is up, and a worker launched that early cannot reach the control
+	// plane or clone the repository, so it never sends its first heartbeat and
+	// the reconciler would wait out the whole startup deadline before repairing
+	// it. NodeOps reaches running in about two seconds, so a short bounded wait
+	// here lets the worker launch inside this same reconcile claim instead of
+	// paying two more tick round-trips (observe provisioning, re-claim, observe
+	// running) first. A provider slower than the budget falls back to the
+	// supervise-on-running path unchanged.
+	if bootstrapper, ok := provider.(sandbox.Bootstrapper); ok && len(r.options.WorkerBinary) > 0 {
+		deadline := time.Now().Add(inlineRunningWait)
+		for environment.State != sandbox.StateRunning && time.Now().Before(deadline) && ctx.Err() == nil {
+			time.Sleep(inlineRunningPoll)
+			refreshed, err := provider.Get(ctx, sandbox.ID(environment.ID))
+			if err != nil {
+				break
+			}
+			environment = refreshed
+		}
+		if environment.State == sandbox.StateRunning {
+			r.log.Info("bootstrapping worker in freshly provisioned sandbox",
+				"session_id", record.SessionID,
+				"provider", record.Provider,
+				"provider_id", environment.ID,
+			)
+			if err := bootstrapper.BootstrapWorker(ctx, environment.ID, sandbox.WorkerBootstrap{
+				Binary:            r.options.WorkerBinary,
+				Destination:       r.options.WorkerDestination,
+				HelperBinary:      r.options.WorkerHelperBinary,
+				HelperDestination: r.options.WorkerHelperDestination,
+				User:              r.options.WorkerUser,
+				Environment:       spec.Environment,
+			}); err != nil {
+				return r.fail(ctx, record, err)
+			}
+			return r.observe(ctx, record, string(environment.ID),
+				domain.SandboxObservedBootstrapping, "", r.options.Interval)
+		}
+	}
 	return r.observe(ctx, record, string(environment.ID), domain.SandboxObservedProvisioning, "", 2*time.Second)
 }
 

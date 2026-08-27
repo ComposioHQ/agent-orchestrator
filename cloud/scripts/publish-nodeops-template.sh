@@ -4,13 +4,69 @@ set -euo pipefail
 AWS_PROFILE="${AWS_PROFILE:-ao-cloud}"
 AWS_REGION="${AWS_REGION:-eu-north-1}"
 NODEOPS_SECRET_ID="${AO_CLOUD_NODEOPS_SECRET_ID:-ao-cloud/staging/nodeops}"
-TEMPLATE_NAME="${AO_CLOUD_NODEOPS_TEMPLATE_NAME:-ao-worker-20260814}"
+TEMPLATE_NAME="${AO_CLOUD_NODEOPS_TEMPLATE_NAME:-ao-worker-$(date +%Y%m%d)-baked-v1}"
 DOCKERFILE="${AO_CLOUD_NODEOPS_DOCKERFILE:-nodeops/Sandbox.Dockerfile}"
+# Control-plane image to bake the worker binaries from. Using the image (not a
+# fresh local build) guarantees the baked bytes hash-match exactly what that
+# control plane uploads, which is what lets its bootstrap fast-path skip the
+# uploads. Republish the template whenever a deploy changes the worker; an
+# out-of-date template still works, it just falls back to the upload path.
+CP_IMAGE="${AO_CLOUD_CP_IMAGE:-}"
+ARTIFACTS_BUCKET="${AO_CLOUD_ARTIFACTS_BUCKET:-ao-cloud-staging-artifacts}"
 
 if [[ ! -f "$DOCKERFILE" ]]; then
     echo "NodeOps template Dockerfile not found: $DOCKERFILE" >&2
     exit 1
 fi
+if [[ -z "$CP_IMAGE" ]]; then
+    echo "Set AO_CLOUD_CP_IMAGE to the control-plane image (tag or digest) whose worker binaries should be baked." >&2
+    exit 1
+fi
+
+# Extract the exact worker binaries the control plane serves.
+workdir="$(mktemp -d)"
+trap 'rm -rf "$workdir"' EXIT
+container="$(docker create "$CP_IMAGE")"
+docker cp "$container:/ao-worker" "$workdir/ao-worker" >/dev/null
+docker cp "$container:/ao" "$workdir/ao" >/dev/null
+docker rm "$container" >/dev/null
+worker_sha="$(shasum -a 256 "$workdir/ao-worker" | cut -d' ' -f1)"
+helper_sha="$(shasum -a 256 "$workdir/ao" | cut -d' ' -f1)"
+echo "Baking ao-worker ${worker_sha:0:12} and ao ${helper_sha:0:12} from $CP_IMAGE"
+
+# Stage the binaries where the NodeOps builder can fetch them. The template
+# build takes only dockerfile text (no build context), so a short-lived
+# presigned URL is the transport. Keys are content-addressed.
+if ! AWS_PROFILE="$AWS_PROFILE" aws s3api head-bucket --bucket "$ARTIFACTS_BUCKET" --region "$AWS_REGION" >/dev/null 2>&1; then
+    AWS_PROFILE="$AWS_PROFILE" aws s3api create-bucket \
+        --bucket "$ARTIFACTS_BUCKET" --region "$AWS_REGION" \
+        --create-bucket-configuration LocationConstraint="$AWS_REGION" >/dev/null
+    AWS_PROFILE="$AWS_PROFILE" aws s3api put-public-access-block \
+        --bucket "$ARTIFACTS_BUCKET" --region "$AWS_REGION" \
+        --public-access-block-configuration BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true >/dev/null
+    echo "Created artifacts bucket $ARTIFACTS_BUCKET"
+fi
+AWS_PROFILE="$AWS_PROFILE" aws s3 cp --region "$AWS_REGION" --only-show-errors \
+    "$workdir/ao-worker" "s3://$ARTIFACTS_BUCKET/worker/$worker_sha/ao-worker"
+AWS_PROFILE="$AWS_PROFILE" aws s3 cp --region "$AWS_REGION" --only-show-errors \
+    "$workdir/ao" "s3://$ARTIFACTS_BUCKET/worker/$helper_sha/ao"
+worker_url="$(AWS_PROFILE="$AWS_PROFILE" aws s3 presign --region "$AWS_REGION" \
+    --expires-in 3600 "s3://$ARTIFACTS_BUCKET/worker/$worker_sha/ao-worker")"
+helper_url="$(AWS_PROFILE="$AWS_PROFILE" aws s3 presign --region "$AWS_REGION" \
+    --expires-in 3600 "s3://$ARTIFACTS_BUCKET/worker/$helper_sha/ao")"
+
+# Append the bake layer to the base Dockerfile text. sha256 checks make a
+# corrupted fetch fail the template build instead of shipping a broken worker.
+bake_layer="$(cat <<EOF
+
+RUN curl --fail --location --silent --show-error -o /usr/local/bin/ao-worker '$worker_url' && \\
+    echo "$worker_sha  /usr/local/bin/ao-worker" | sha256sum -c - && \\
+    chmod 0755 /usr/local/bin/ao-worker && \\
+    curl --fail --location --silent --show-error -o /usr/local/bin/ao '$helper_url' && \\
+    echo "$helper_sha  /usr/local/bin/ao" | sha256sum -c - && \\
+    chmod 0755 /usr/local/bin/ao
+EOF
+)"
 
 secret="$(AWS_PROFILE="$AWS_PROFILE" aws secretsmanager get-secret-value \
     --region "$AWS_REGION" \
@@ -26,9 +82,13 @@ if [[ -z "$base_url" || -z "$api_key" ]]; then
     exit 1
 fi
 
+composed="$workdir/Dockerfile"
+cat "$DOCKERFILE" > "$composed"
+printf '%s\n' "$bake_layer" >> "$composed"
+
 payload="$(jq -n \
     --arg name "$TEMPLATE_NAME" \
-    --rawfile dockerfile "$DOCKERFILE" \
+    --rawfile dockerfile "$composed" \
     '{name: $name, dockerfile: $dockerfile}')"
 response="$(curl --fail --silent --show-error \
     -X POST "$base_url/v1/templates" \
