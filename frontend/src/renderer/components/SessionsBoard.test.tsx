@@ -3,7 +3,7 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
-import { getSessionStatusView, toKanbanColumn } from "@aoagents/product-ui";
+import { toKanbanColumn } from "@aoagents/product-ui";
 import { appI18n } from "../i18n";
 
 // Instant motion updates so height tweens do not leave tests waiting on timers.
@@ -376,7 +376,7 @@ describe("SessionsBoard", () => {
 		const card = screen.getByText("active-card-task").closest('[data-testid="board-session-card"]') as HTMLElement;
 		const working = within(card).getByText("Working").parentElement as HTMLElement;
 		expect(working).toHaveAttribute("data-kanban-column", "building");
-		expect(working).toHaveClass("text-muted-foreground");
+		expect(working).toHaveClass("text-status-working");
 		expect(working.style.getPropertyValue("--session-status-tone")).toBe("");
 		expect(working.querySelector('[aria-hidden="true"]')).toHaveClass("animate-spin");
 	});
@@ -424,7 +424,7 @@ describe("SessionsBoard", () => {
 
 		const card = screen.getByText("switching worker").closest('[data-testid="board-session-card"]') as HTMLElement;
 		const status = within(card).getByText("Switching to Codex").parentElement as HTMLElement;
-		expect(status).toHaveClass("text-muted-foreground");
+		expect(status).toHaveClass("text-status-working");
 		expect(status).not.toHaveAttribute("data-kanban-column");
 		expect(status.style.getPropertyValue("--session-status-tone")).toBe("");
 		expect(status.querySelector(".animate-status-pulse")).toBeNull();
@@ -1045,8 +1045,8 @@ describe("SessionsBoard", () => {
 
 		renderBoard("p1");
 
-		expect(screen.getByText(getSessionStatusView("ci_failed").label)).toBeInTheDocument();
-		expect(screen.queryByText("Fixing CI failures")).not.toBeInTheDocument();
+		expect(screen.getByText("Fixing CI failures")).toBeInTheDocument();
+		expect(screen.queryByText("CI failed")).not.toBeInTheDocument();
 	});
 
 	it("highlights every user-attention status while leaving ordinary cards neutral", () => {
