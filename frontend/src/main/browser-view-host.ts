@@ -152,6 +152,7 @@ type BrowserWebContents = Pick<
 	| "mainFrame"
 	| "getTitle"
 	| "getURL"
+	| "getZoomFactor"
 	| "goBack"
 	| "goForward"
 	| "isLoading"
@@ -169,10 +170,13 @@ type BrowserWebContents = Pick<
 	session?: Pick<Session, "setPermissionCheckHandler" | "setPermissionRequestHandler" | "webRequest">;
 };
 
-const BROWSER_SCROLLBAR_CSS = `
+const browserScrollbarCSS = (zoomFactor: number): string => {
+	const effectiveZoom = Number.isFinite(zoomFactor) && zoomFactor > 0 ? zoomFactor : 1;
+	const thickness = Number((8 / effectiveZoom).toFixed(3));
+	return `
 	::-webkit-scrollbar {
-		width: 8px;
-		height: 8px;
+		width: ${thickness}px;
+		height: ${thickness}px;
 	}
 
 	::-webkit-scrollbar-button {
@@ -193,6 +197,7 @@ const BROWSER_SCROLLBAR_CSS = `
 		background: rgba(232, 232, 232, 0.86);
 	}
 `;
+};
 
 type BrowserViewLike = View & {
 	webContents: BrowserWebContents;
@@ -525,9 +530,13 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		view.setBorderRadius?.(BROWSER_VIEW_BORDER_RADIUS);
 		view.webContents.session?.setPermissionCheckHandler?.(() => false);
 		view.webContents.session?.setPermissionRequestHandler?.((_contents, _permission, callback) => callback(false));
-		view.webContents.on("dom-ready", () => {
-			void view.webContents.insertCSS(BROWSER_SCROLLBAR_CSS, { cssOrigin: "user" }).catch(() => undefined);
-		});
+		const applyScrollbarStyle = (): void => {
+			void view.webContents
+				.insertCSS(browserScrollbarCSS(view.webContents.getZoomFactor()), { cssOrigin: "user" })
+				.catch(() => undefined);
+		};
+		view.webContents.on("dom-ready", applyScrollbarStyle);
+		view.webContents.on("zoom-changed", applyScrollbarStyle);
 
 		const tabId = `t${session.nextTabNumber++}`;
 		const state: BrowserNavState = emptyNavState(session.viewId);

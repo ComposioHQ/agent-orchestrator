@@ -22,6 +22,7 @@ type EventHandler = (event: { sender: { id: number; getZoomFactor?: () => number
 
 function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").AgentBrowserRuntime) {
 	let currentURL = "";
+	let browserZoomFactor = 1;
 	const webContentsListeners = new Map<string, (...args: never[]) => void>();
 	const debuggerListeners = new Map<string, (...args: never[]) => void>();
 	let debuggerAttached = false;
@@ -60,6 +61,7 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 		clearHistory: () => undefined,
 		getTitle: () => "",
 		getURL: () => currentURL,
+		getZoomFactor: () => browserZoomFactor,
 		goBack: () => undefined,
 		goForward: () => undefined,
 		isLoading: () => false,
@@ -207,6 +209,9 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 		openDevTools,
 		closeDevTools,
 		insertCSS,
+		setBrowserZoomFactor: (zoomFactor: number) => {
+			browserZoomFactor = zoomFactor;
+		},
 		view,
 		webContents,
 		webContentsListeners,
@@ -217,7 +222,7 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 
 describe("browser scrollbar styling", () => {
 	it("injects AO-styled horizontal and vertical scrollbars whenever a browser page becomes ready", async () => {
-		const { insertCSS, invoke, webContentsListeners } = setupHost();
+		const { insertCSS, invoke, setBrowserZoomFactor, webContentsListeners } = setupHost();
 
 		await invoke("browser:ensure", "sess-1");
 		webContentsListeners.get("dom-ready")?.();
@@ -237,6 +242,13 @@ describe("browser scrollbar styling", () => {
 
 		webContentsListeners.get("dom-ready")?.();
 		expect(insertCSS).toHaveBeenCalledTimes(2);
+
+		setBrowserZoomFactor(4);
+		webContentsListeners.get("zoom-changed")?.();
+		expect(insertCSS).toHaveBeenCalledTimes(3);
+		const zoomedCss = insertCSS.mock.calls[2]?.[0] ?? "";
+		expect(zoomedCss).toContain("width: 2px");
+		expect(zoomedCss).toContain("height: 2px");
 	});
 });
 
