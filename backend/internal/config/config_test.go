@@ -235,6 +235,95 @@ func TestLoadTelemetryDisabledEventsBlankIsInert(t *testing.T) {
 	}
 }
 
+func TestLoadOfferingDefaults(t *testing.T) {
+	// Clear the offering vars so we observe pure defaults: no client identity,
+	// cloud off, local on.
+	for _, k := range []string{"AO_CLIENT", "AO_CLOUD_OFFERING", "AO_LOCAL_OFFERING", "AO_CLOUD_CONTROL_PLANE_URL"} {
+		t.Setenv(k, "")
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Client != "" {
+		t.Errorf("Client = %q, want empty", cfg.Client)
+	}
+	if cfg.CloudOffering {
+		t.Error("CloudOffering = true, want false by default")
+	}
+	if !cfg.LocalOffering {
+		t.Error("LocalOffering = false, want true by default")
+	}
+	if cfg.CloudControlPlaneURL != "https://staging-api.aoagents.dev" {
+		t.Errorf("CloudControlPlaneURL = %q, want the baked default", cfg.CloudControlPlaneURL)
+	}
+}
+
+func TestLoadOfferingOverrides(t *testing.T) {
+	t.Setenv("AO_CLIENT", "  eleven_x  ")
+	t.Setenv("AO_CLOUD_OFFERING", "true")
+	t.Setenv("AO_LOCAL_OFFERING", "false")
+	t.Setenv("AO_CLOUD_CONTROL_PLANE_URL", " https://cp.example.com ")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Client != "eleven_x" {
+		t.Errorf("Client = %q, want trimmed eleven_x", cfg.Client)
+	}
+	if !cfg.CloudOffering {
+		t.Error("CloudOffering = false, want true")
+	}
+	if cfg.LocalOffering {
+		t.Error("LocalOffering = true, want explicit false to stick")
+	}
+	if cfg.CloudControlPlaneURL != "https://cp.example.com" {
+		t.Errorf("CloudControlPlaneURL = %q, want trimmed https://cp.example.com", cfg.CloudControlPlaneURL)
+	}
+}
+
+// The offering toggles must accept the numeric spellings the supervisor may
+// hand down: 1 switches cloud on, 0 is the only way local goes off.
+func TestLoadOfferingNumericToggles(t *testing.T) {
+	t.Setenv("AO_CLOUD_OFFERING", "1")
+	t.Setenv("AO_LOCAL_OFFERING", "0")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.CloudOffering {
+		t.Error("CloudOffering = false, want true for AO_CLOUD_OFFERING=1")
+	}
+	if cfg.LocalOffering {
+		t.Error("LocalOffering = true, want false for AO_LOCAL_OFFERING=0")
+	}
+}
+
+func TestLoadOfferingInvalid(t *testing.T) {
+	tests := []struct {
+		name string
+		env  map[string]string
+	}{
+		{"bad cloud offering toggle", map[string]string{"AO_CLOUD_OFFERING": "maybe"}},
+		{"bad local offering toggle", map[string]string{"AO_LOCAL_OFFERING": "maybe"}},
+		{"control plane without scheme", map[string]string{"AO_CLOUD_CONTROL_PLANE_URL": "cp.example.com"}},
+		{"control plane non-http scheme", map[string]string{"AO_CLOUD_CONTROL_PLANE_URL": "ftp://cp.example.com"}},
+		{"control plane without host", map[string]string{"AO_CLOUD_CONTROL_PLANE_URL": "https://"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			for k, v := range tc.env {
+				t.Setenv(k, v)
+			}
+			if _, err := Load(); err == nil {
+				t.Fatal("Load() = nil error, want error")
+			}
+		})
+	}
+}
+
 func TestLoadGitLabDefaults(t *testing.T) {
 	// Clear the GitLab config vars so we observe pure defaults.
 	for _, k := range []string{"AO_GITLAB_ALLOWED_HOSTS", "AO_GITLAB_HOST_TOKENS"} {
