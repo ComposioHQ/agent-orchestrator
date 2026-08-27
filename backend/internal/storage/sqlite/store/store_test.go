@@ -136,6 +136,7 @@ func TestSessionPersistsDeterministicHandoffInputs(t *testing.T) {
 	rec.Metadata.ConversationCheckpointState = domain.ConversationCheckpointComplete
 	rec.Metadata.ConversationCheckpointGeneration = "launch-1"
 	rec.Metadata.ConversationCheckpointNativeID = "native-session-1"
+	rec.Metadata.ConversationCheckpointUnsettled = true
 
 	created, err := s.CreateSession(ctx, rec)
 	if err != nil {
@@ -152,7 +153,8 @@ func TestSessionPersistsDeterministicHandoffInputs(t *testing.T) {
 		got.Metadata.AgentSessionIDLaunchID != rec.Metadata.AgentSessionIDLaunchID ||
 		got.Metadata.ConversationCheckpointState != rec.Metadata.ConversationCheckpointState ||
 		got.Metadata.ConversationCheckpointGeneration != rec.Metadata.ConversationCheckpointGeneration ||
-		got.Metadata.ConversationCheckpointNativeID != rec.Metadata.ConversationCheckpointNativeID {
+		got.Metadata.ConversationCheckpointNativeID != rec.Metadata.ConversationCheckpointNativeID ||
+		got.Metadata.ConversationCheckpointUnsettled != rec.Metadata.ConversationCheckpointUnsettled {
 		t.Fatalf("handoff inputs after create = %+v", got.Metadata)
 	}
 
@@ -164,6 +166,7 @@ func TestSessionPersistsDeterministicHandoffInputs(t *testing.T) {
 	got.Metadata.ConversationCheckpointState = domain.ConversationCheckpointPrompt
 	got.Metadata.ConversationCheckpointGeneration = "launch-2"
 	got.Metadata.ConversationCheckpointNativeID = "native-session-1"
+	got.Metadata.ConversationCheckpointUnsettled = false
 	got.UpdatedAt = got.UpdatedAt.Add(time.Second)
 	if err := s.UpdateSession(ctx, got); err != nil {
 		t.Fatalf("update session: %v", err)
@@ -179,7 +182,8 @@ func TestSessionPersistsDeterministicHandoffInputs(t *testing.T) {
 		updated.Metadata.AgentSessionIDLaunchID != got.Metadata.AgentSessionIDLaunchID ||
 		updated.Metadata.ConversationCheckpointState != got.Metadata.ConversationCheckpointState ||
 		updated.Metadata.ConversationCheckpointGeneration != got.Metadata.ConversationCheckpointGeneration ||
-		updated.Metadata.ConversationCheckpointNativeID != got.Metadata.ConversationCheckpointNativeID {
+		updated.Metadata.ConversationCheckpointNativeID != got.Metadata.ConversationCheckpointNativeID ||
+		updated.Metadata.ConversationCheckpointUnsettled != got.Metadata.ConversationCheckpointUnsettled {
 		t.Fatalf("handoff inputs after update = %+v", updated.Metadata)
 	}
 	listed, err := s.ListSessions(ctx, created.ProjectID)
@@ -207,6 +211,7 @@ func TestRecordSessionLatestUserPromptIsNarrowAndMonotonic(t *testing.T) {
 	created.Metadata.ConversationCheckpointState = domain.ConversationCheckpointComplete
 	created.Metadata.ConversationCheckpointGeneration = "target-generation"
 	created.Metadata.ConversationCheckpointNativeID = "target-native"
+	created.Metadata.ConversationCheckpointUnsettled = true
 	created.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: ownerAt}
 	created.UpdatedAt = ownerAt
 	if err := s.UpdateSession(ctx, created); err != nil {
@@ -233,7 +238,8 @@ func TestRecordSessionLatestUserPromptIsNarrowAndMonotonic(t *testing.T) {
 		current.Metadata.RuntimeLaunchID != "target-generation" || current.Metadata.LatestAssistantUpdate != "" ||
 		current.Metadata.ConversationCheckpointState != domain.ConversationCheckpointLegacy ||
 		current.Metadata.ConversationCheckpointGeneration != "" ||
-		current.Metadata.ConversationCheckpointNativeID != "" {
+		current.Metadata.ConversationCheckpointNativeID != "" ||
+		current.Metadata.ConversationCheckpointUnsettled {
 		t.Fatalf("pane prompt checkpoint or owner facts = %+v", current)
 	}
 

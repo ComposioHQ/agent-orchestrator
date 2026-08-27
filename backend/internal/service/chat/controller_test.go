@@ -1666,7 +1666,7 @@ func TestInterfaceHandoffTrustedCheckpointMayPrecedeLaterCompletedTurn(t *testin
 	}
 }
 
-func TestInterfaceHandoffMissedPromptHookCannotAcceptHistoryBeforeObservedStop(t *testing.T) {
+func TestInterfaceHandoffPanePromptWithMissedHookCannotAcceptHistoryBeforeObservedStop(t *testing.T) {
 	st := openStore(t)
 	changed, err := st.CommitSessionControllerEpoch(
 		context.Background(), testSession, domain.SessionModeChat, domain.SessionModeTUI,
@@ -1690,10 +1690,15 @@ func TestInterfaceHandoffMissedPromptHookCannotAcceptHistoryBeforeObservedStop(t
 	if err := st.UpdateSession(context.Background(), rec); err != nil {
 		t.Fatalf("seed trusted checkpoint: %v", err)
 	}
+	if changed, err := st.RecordSessionLatestUserPrompt(
+		context.Background(), testSession, "later prompt whose hook was lost", time.Now().UTC(),
+	); err != nil || !changed {
+		t.Fatalf("record pane-delivered prompt: changed=%v err=%v", changed, err)
+	}
 
-	// The provider completed another turn, but its UserPromptSubmit hook was
-	// missed. The Stop still proves that provider history must advance beyond the
-	// earlier coherent pair before Chat can safely attach.
+	// AO delivered another pane turn, but its UserPromptSubmit hook was missed.
+	// The Stop still proves there is an unresolved completed boundary that
+	// provider-history recovery must not waive.
 	lifecycleManager := lifecycle.New(st, nil)
 	if err := lifecycleManager.ApplyActivitySignal(context.Background(), testSession, ports.ActivitySignal{
 		Valid: true, State: domain.ActivityIdle, Event: "stop",
@@ -1701,15 +1706,6 @@ func TestInterfaceHandoffMissedPromptHookCannotAcceptHistoryBeforeObservedStop(t
 		LatestAssistantUpdate: "later answer whose prompt hook was lost",
 	}); err != nil {
 		t.Fatalf("apply later Stop: %v", err)
-	}
-	rec, found, err = st.GetSession(context.Background(), testSession)
-	if err != nil || !found {
-		t.Fatalf("reload session: found=%v err=%v", found, err)
-	}
-	if rec.Metadata.LatestUserPrompt != "" ||
-		rec.Metadata.LatestAssistantUpdate != "later answer whose prompt hook was lost" ||
-		rec.Metadata.ConversationCheckpointState != domain.ConversationCheckpointComplete {
-		t.Fatalf("later Stop checkpoint = %+v, want trusted assistant-only completion", rec.Metadata)
 	}
 	changed, err = st.CommitSessionControllerEpoch(
 		context.Background(), testSession, domain.SessionModeTUI, domain.SessionModeChat,
@@ -1749,13 +1745,13 @@ func TestInterfaceHandoffMissedPromptHookCannotAcceptHistoryBeforeObservedStop(t
 	}
 }
 
-func TestInterfaceHandoffAssistantOnlyCheckpointAcceptsLatestCompletedTurn(t *testing.T) {
+func TestInterfaceHandoffAssistantOnlyCheckpointFailsClosedOnRepeatedText(t *testing.T) {
 	st := openStore(t)
 	rec, found, err := st.GetSession(context.Background(), testSession)
 	if err != nil || !found {
 		t.Fatalf("load session: found=%v err=%v", found, err)
 	}
-	rec.Metadata.LatestAssistantUpdate = "later answer whose prompt hook was lost"
+	rec.Metadata.LatestAssistantUpdate = "Done."
 	rec.Metadata.ConversationCheckpointState = domain.ConversationCheckpointComplete
 	rec.Metadata.ConversationCheckpointGeneration = "terminal-generation"
 	rec.Metadata.ConversationCheckpointNativeID = "thread-1"
@@ -1767,8 +1763,8 @@ func TestInterfaceHandoffAssistantOnlyCheckpointAcceptsLatestCompletedTurn(t *te
 		fakeConversation: newFakeConversation(),
 		events: []ports.ChatEvent{
 			{Kind: ports.ChatEventTurnStarted, ProviderEventID: "later-start", ProviderTurnID: "later-turn"},
-			{Kind: ports.ChatEventUserMessageCompleted, ProviderEventID: "later-user", ProviderTurnID: "later-turn", ProviderItemID: "later-user-item", Text: "later prompt whose hook was lost"},
-			{Kind: ports.ChatEventMessageCompleted, ProviderEventID: "later-assistant", ProviderTurnID: "later-turn", ProviderItemID: "later-assistant-item", Text: "later answer whose prompt hook was lost"},
+			{Kind: ports.ChatEventUserMessageCompleted, ProviderEventID: "prior-user", ProviderTurnID: "later-turn", ProviderItemID: "prior-user-item", Text: "prior prompt"},
+			{Kind: ports.ChatEventMessageCompleted, ProviderEventID: "prior-assistant", ProviderTurnID: "later-turn", ProviderItemID: "prior-assistant-item", Text: "Done."},
 			{Kind: ports.ChatEventTurnCompleted, ProviderEventID: "later-complete", ProviderTurnID: "later-turn", TurnState: domain.TurnStateCompleted},
 		},
 	}
@@ -1780,12 +1776,16 @@ func TestInterfaceHandoffAssistantOnlyCheckpointAcceptsLatestCompletedTurn(t *te
 	})
 	t.Cleanup(func() { _ = svc.Stop(context.Background(), testSession) })
 
-	if _, err := svc.Start(context.Background(), chatsvc.StartConfig{
+	_, err = svc.Start(context.Background(), chatsvc.StartConfig{
 		SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex,
 		WorkspacePath: t.TempDir(), ProviderConversationID: "thread-1", RequireNativeHistory: true,
-		HistoryPolicy: domain.SessionInterfaceTransitionHistoryStrict,
-	}); err != nil {
-		t.Fatalf("Start with observed Stop in latest completed turn: %v", err)
+		HistoryPolicy: domain.SessionInterfaceTransitionHistoryProvider,
+	})
+	if !errors.Is(err, ports.ErrChatHistoryUnsettled) {
+		t.Fatalf("Start error = %v, want ambiguous assistant-only checkpoint to fail closed", err)
+	}
+	if ports.ChatHistoryMismatchOnlyUntrustedText(err) {
+		t.Fatalf("ambiguous assistant-only checkpoint was incorrectly recoverable: %v", err)
 	}
 }
 

@@ -478,8 +478,9 @@ func (p nativeHistoryCheckpoint) mismatches(
 	// The checkpoint does not have to be the final replay turn when lifecycle saw
 	// no comparable evidence for later work. Admit an older coherent pair only
 	// when both fields match together inside one completed, non-coordination turn.
-	// A scoped Stop whose prompt hook was lost is stored assistant-only and follows
-	// the latest-turn gate below, so replay still has to reach that newer boundary.
+	// A scoped Stop whose prompt hook was lost is fenced separately by the hard
+	// unresolved-boundary witness assembled by Service.Start, so an older pair
+	// cannot satisfy replay after AO has observed evidence of newer work.
 	latestText := turnText[latestCompletedTurnID]
 	checkpointMatched := p.latestUserPrompt == "" && p.latestAssistantUpdate == ""
 	if p.latestUserPrompt != "" && p.latestAssistantUpdate != "" {

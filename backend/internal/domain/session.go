@@ -101,6 +101,11 @@ type SessionMetadata struct {
 	ConversationCheckpointState      ConversationCheckpointState `json:"-"`
 	ConversationCheckpointGeneration string                      `json:"-"`
 	ConversationCheckpointNativeID   string                      `json:"-"`
+	// ConversationCheckpointUnsettled records a scoped Stop that could not be
+	// correlated with a prompt boundary. Without a provider turn identity there
+	// is no collision-safe way to prove native replay crossed that boundary, so a
+	// Chat handoff must fail closed until a newer canonical prompt supersedes it.
+	ConversationCheckpointUnsettled bool `json:"-"`
 	// NativeTranscriptPath is the read-only transcript path for the currently
 	// active native agent session when its provider exposes one. Retained
 	// provider-specific paths also live on AgentNativeSession records.

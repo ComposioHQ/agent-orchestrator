@@ -85,6 +85,7 @@ const (
 	ChatHistoryMismatchTrustedAssistantText   ChatHistoryMismatchDimension = "trusted_assistant_text"
 	ChatHistoryMismatchNativeIdentity         ChatHistoryMismatchDimension = "native_identity"
 	ChatHistoryMismatchAOHighWater            ChatHistoryMismatchDimension = "ao_high_water"
+	ChatHistoryMismatchUnsettledBoundary      ChatHistoryMismatchDimension = "unsettled_turn_boundary"
 )
 
 // ChatHistoryUnsettledError preserves mismatch dimensions while unwrapping to

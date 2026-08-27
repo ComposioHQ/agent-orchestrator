@@ -89,6 +89,7 @@ func (f *fakeStore) RecordSessionLatestUserPrompt(_ context.Context, id domain.S
 	rec.Metadata.ConversationCheckpointState = domain.ConversationCheckpointLegacy
 	rec.Metadata.ConversationCheckpointGeneration = ""
 	rec.Metadata.ConversationCheckpointNativeID = ""
+	rec.Metadata.ConversationCheckpointUnsettled = false
 	rec.UpdatedAt = updatedAt
 	f.sessions[id] = rec
 	return true, nil
@@ -226,6 +227,7 @@ func preserveCheckpointOnFakeMarkSpawned(
 	launched.ConversationCheckpointState = base.ConversationCheckpointState
 	launched.ConversationCheckpointGeneration = base.ConversationCheckpointGeneration
 	launched.ConversationCheckpointNativeID = base.ConversationCheckpointNativeID
+	launched.ConversationCheckpointUnsettled = base.ConversationCheckpointUnsettled
 	return launched
 }
 
@@ -271,6 +273,7 @@ func (l *fakeLCM) changeControllerEpoch(
 		rec.Metadata.ConversationCheckpointState = domain.ConversationCheckpointEmpty
 		rec.Metadata.ConversationCheckpointGeneration = ""
 		rec.Metadata.ConversationCheckpointNativeID = ""
+		rec.Metadata.ConversationCheckpointUnsettled = false
 	}
 	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: time.Now()}
 	l.store.sessions[id] = rec
@@ -7973,7 +7976,8 @@ func TestSend_PaneFallbackCannotPairLostPromptHookWithPriorTrustedAssistant(t *t
 		t.Fatalf("read after delayed Stop: ok=%v err=%v", ok, err)
 	}
 	if afterDelayedStop.Metadata.LatestAssistantUpdate != "" ||
-		afterDelayedStop.Metadata.ConversationCheckpointState != domain.ConversationCheckpointLegacy {
+		afterDelayedStop.Metadata.ConversationCheckpointState != domain.ConversationCheckpointLegacy ||
+		!afterDelayedStop.Metadata.ConversationCheckpointUnsettled {
 		t.Fatalf("delayed Stop paired with pane fallback: %+v", afterDelayedStop.Metadata)
 	}
 
@@ -7999,7 +8003,8 @@ func TestSend_PaneFallbackCannotPairLostPromptHookWithPriorTrustedAssistant(t *t
 		promoted.LatestAssistantUpdate != "new trusted answer" ||
 		promoted.ConversationCheckpointState != domain.ConversationCheckpointComplete ||
 		promoted.ConversationCheckpointGeneration != "terminal-generation" ||
-		promoted.ConversationCheckpointNativeID != "native-1" {
+		promoted.ConversationCheckpointNativeID != "native-1" ||
+		promoted.ConversationCheckpointUnsettled {
 		t.Fatalf("canonical hook promotion = %+v", promoted)
 	}
 }
@@ -8230,7 +8235,8 @@ func TestSend_PaneFallbackWinsAgainstStaleLifecycleProjection(t *testing.T) {
 		checkpoint.LatestAssistantUpdate != "" ||
 		checkpoint.ConversationCheckpointState != domain.ConversationCheckpointLegacy ||
 		checkpoint.ConversationCheckpointGeneration != "" ||
-		checkpoint.ConversationCheckpointNativeID != "" {
+		checkpoint.ConversationCheckpointNativeID != "" ||
+		!checkpoint.ConversationCheckpointUnsettled {
 		t.Fatalf("stale lifecycle projection resurrected trusted checkpoint: %+v", checkpoint)
 	}
 
@@ -8254,7 +8260,8 @@ func TestSend_PaneFallbackWinsAgainstStaleLifecycleProjection(t *testing.T) {
 		promoted.Metadata.LatestAssistantUpdate != "later canonical answer" ||
 		promoted.Metadata.ConversationCheckpointState != domain.ConversationCheckpointComplete ||
 		promoted.Metadata.ConversationCheckpointGeneration != "terminal-generation" ||
-		promoted.Metadata.ConversationCheckpointNativeID != "native-1" {
+		promoted.Metadata.ConversationCheckpointNativeID != "native-1" ||
+		promoted.Metadata.ConversationCheckpointUnsettled {
 		t.Fatalf("later canonical hook promotion = %+v", promoted.Metadata)
 	}
 }

@@ -23,6 +23,7 @@ func TestSessionInterfaceTransitionClaimModeCASAndOutbox(t *testing.T) {
 	rec.Metadata.LatestUserPrompt = "poisoned user checkpoint"
 	rec.Metadata.LatestAssistantUpdate = "poisoned assistant checkpoint"
 	rec.Metadata.ConversationCheckpointState = domain.ConversationCheckpointLegacy
+	rec.Metadata.ConversationCheckpointUnsettled = true
 	createdSession, err := st.CreateSession(ctx, rec)
 	if err != nil {
 		t.Fatalf("create session: %v", err)
@@ -30,6 +31,7 @@ func TestSessionInterfaceTransitionClaimModeCASAndOutbox(t *testing.T) {
 	createdSession.Metadata.LatestUserPrompt = rec.Metadata.LatestUserPrompt
 	createdSession.Metadata.LatestAssistantUpdate = rec.Metadata.LatestAssistantUpdate
 	createdSession.Metadata.ConversationCheckpointState = rec.Metadata.ConversationCheckpointState
+	createdSession.Metadata.ConversationCheckpointUnsettled = rec.Metadata.ConversationCheckpointUnsettled
 	if err := st.UpdateSession(ctx, createdSession); err != nil {
 		t.Fatalf("seed replay checkpoint: %v", err)
 	}
@@ -39,7 +41,8 @@ func TestSessionInterfaceTransitionClaimModeCASAndOutbox(t *testing.T) {
 	}
 	if seeded.Metadata.ConversationCheckpointState != domain.ConversationCheckpointLegacy ||
 		seeded.Metadata.LatestUserPrompt != "poisoned user checkpoint" ||
-		seeded.Metadata.LatestAssistantUpdate != "poisoned assistant checkpoint" {
+		seeded.Metadata.LatestAssistantUpdate != "poisoned assistant checkpoint" ||
+		!seeded.Metadata.ConversationCheckpointUnsettled {
 		t.Fatalf("seeded replay checkpoint = %+v", seeded.Metadata)
 	}
 	if _, _, err := st.CreateSessionInterfaceTransition(ctx, domain.SessionInterfaceTransition{
@@ -105,7 +108,8 @@ func TestSessionInterfaceTransitionClaimModeCASAndOutbox(t *testing.T) {
 	}
 	if afterRestore.Metadata.ConversationCheckpointState != domain.ConversationCheckpointLegacy ||
 		afterRestore.Metadata.LatestUserPrompt != "poisoned user checkpoint" ||
-		afterRestore.Metadata.LatestAssistantUpdate != "poisoned assistant checkpoint" {
+		afterRestore.Metadata.LatestAssistantUpdate != "poisoned assistant checkpoint" ||
+		!afterRestore.Metadata.ConversationCheckpointUnsettled {
 		t.Fatalf("restored source lost replay checkpoint: %+v", afterRestore.Metadata)
 	}
 	changed, err = st.CommitSessionControllerEpoch(ctx, createdSession.ID,
@@ -237,6 +241,7 @@ func TestCommitSessionControllerEpochRetiresCheckpointWithoutErasingLastHumanTim
 	rec.Metadata.ConversationCheckpointState = domain.ConversationCheckpointComplete
 	rec.Metadata.ConversationCheckpointGeneration = "chat-generation"
 	rec.Metadata.ConversationCheckpointNativeID = "chat-native"
+	rec.Metadata.ConversationCheckpointUnsettled = true
 	created, err := st.CreateSession(ctx, rec)
 	if err != nil {
 		t.Fatalf("create Chat session: %v", err)
@@ -255,7 +260,8 @@ func TestCommitSessionControllerEpochRetiresCheckpointWithoutErasingLastHumanTim
 	if after.Metadata.LatestUserPrompt != "" || after.Metadata.LatestAssistantUpdate != "" ||
 		after.Metadata.ConversationCheckpointState != domain.ConversationCheckpointEmpty ||
 		after.Metadata.ConversationCheckpointGeneration != "" ||
-		after.Metadata.ConversationCheckpointNativeID != "" {
+		after.Metadata.ConversationCheckpointNativeID != "" ||
+		after.Metadata.ConversationCheckpointUnsettled {
 		t.Fatalf("Terminal epoch retained source replay checkpoint: %+v", after.Metadata)
 	}
 	if !after.Metadata.LatestUserPromptAt.Equal(now) {

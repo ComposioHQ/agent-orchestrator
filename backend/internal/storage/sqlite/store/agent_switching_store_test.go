@@ -51,6 +51,7 @@ func TestActivateChatAgentSwitchTargetKeepsRuntimeEmptyAcrossNativeSwitchBack(t 
 	rec.Metadata.LatestUserPromptAt = now
 	rec.Metadata.LatestAssistantUpdate = "source Chat assistant checkpoint"
 	rec.Metadata.ConversationCheckpointState = domain.ConversationCheckpointLegacy
+	rec.Metadata.ConversationCheckpointUnsettled = true
 	session, err := s.CreateSession(ctx, rec)
 	if err != nil {
 		t.Fatalf("create Chat session: %v", err)
@@ -164,7 +165,8 @@ func TestActivateChatAgentSwitchTargetKeepsRuntimeEmptyAcrossNativeSwitchBack(t 
 	if got.Metadata.LatestUserPrompt != "" || got.Metadata.LatestAssistantUpdate != "" ||
 		got.Metadata.ConversationCheckpointState != domain.ConversationCheckpointEmpty ||
 		got.Metadata.ConversationCheckpointGeneration != "" ||
-		got.Metadata.ConversationCheckpointNativeID != "" {
+		got.Metadata.ConversationCheckpointNativeID != "" ||
+		got.Metadata.ConversationCheckpointUnsettled {
 		t.Fatalf("Chat target activation retained source replay checkpoint: %+v", got.Metadata)
 	}
 	if want := now.Add(600 * time.Millisecond); !got.Metadata.LatestUserPromptAt.Equal(want) {
@@ -1224,6 +1226,7 @@ func TestAgentSwitchSourceStopAndTargetActivationAreAtomicAndNarrow(t *testing.T
 	rec.Metadata.LatestUserPrompt = "latest user direction"
 	rec.Metadata.LatestUserPromptAt = now
 	rec.Metadata.LatestAssistantUpdate = "latest assistant update"
+	rec.Metadata.ConversationCheckpointUnsettled = true
 	rec.Metadata.PreviewURL = "http://localhost:3000"
 	session, err := s.CreateSession(ctx, rec)
 	if err != nil {
@@ -1391,7 +1394,8 @@ func TestAgentSwitchSourceStopAndTargetActivationAreAtomicAndNarrow(t *testing.T
 	if activated.Metadata.LatestUserPrompt != "" || activated.Metadata.LatestAssistantUpdate != "" ||
 		activated.Metadata.ConversationCheckpointState != domain.ConversationCheckpointEmpty ||
 		activated.Metadata.ConversationCheckpointGeneration != "" ||
-		activated.Metadata.ConversationCheckpointNativeID != "" {
+		activated.Metadata.ConversationCheckpointNativeID != "" ||
+		activated.Metadata.ConversationCheckpointUnsettled {
 		t.Fatalf("target activation retained source replay checkpoint: %+v", activated.Metadata)
 	}
 	if !activated.Metadata.LatestUserPromptAt.Equal(rec.Metadata.LatestUserPromptAt) {

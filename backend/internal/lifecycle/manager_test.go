@@ -1271,6 +1271,7 @@ func TestActivity_MainPromptStartsNewConversationCheckpoint(t *testing.T) {
 	rec.Metadata.ConversationCheckpointState = domain.ConversationCheckpointComplete
 	rec.Metadata.ConversationCheckpointGeneration = "launch-current"
 	rec.Metadata.ConversationCheckpointNativeID = "native-current"
+	rec.Metadata.ConversationCheckpointUnsettled = true
 	store.sessions[rec.ID] = rec
 
 	if err := m.ApplyActivitySignal(ctx, rec.ID, ports.ActivitySignal{
@@ -1287,7 +1288,8 @@ func TestActivity_MainPromptStartsNewConversationCheckpoint(t *testing.T) {
 	}
 	if got.ConversationCheckpointState != domain.ConversationCheckpointPrompt ||
 		got.ConversationCheckpointGeneration != "launch-current" ||
-		got.ConversationCheckpointNativeID != "native-current" {
+		got.ConversationCheckpointNativeID != "native-current" ||
+		got.ConversationCheckpointUnsettled {
 		t.Fatalf("prompt provenance = state:%q generation:%q native:%q", got.ConversationCheckpointState,
 			got.ConversationCheckpointGeneration, got.ConversationCheckpointNativeID)
 	}
@@ -1400,8 +1402,9 @@ func TestActivity_StopWithoutCurrentPromptNeverPairsWithPriorTurn(t *testing.T) 
 	store.sessions[rec.ID] = rec
 
 	// The current turn's UserPromptSubmit was lost. Stop must not combine its
-	// assistant with the only prompt AO has, which belongs to the prior turn. Its
-	// scoped assistant evidence must still replace the older replay checkpoint.
+	// assistant with the only prompt AO has, which belongs to the prior turn. The
+	// older coherent checkpoint stays intact while a hard unresolved-boundary
+	// witness records that replay cannot safely stop there.
 	if err := m.ApplyActivitySignal(ctx, rec.ID, ports.ActivitySignal{
 		Valid: true, State: domain.ActivityIdle, Event: "stop",
 		LaunchID: "launch-current", AgentSessionID: "native-current",
@@ -1410,12 +1413,13 @@ func TestActivity_StopWithoutCurrentPromptNeverPairsWithPriorTurn(t *testing.T) 
 		t.Fatalf("ApplyActivitySignal stop: %v", err)
 	}
 	got := store.sessions[rec.ID].Metadata
-	if got.LatestUserPrompt != "" || !got.LatestUserPromptAt.IsZero() ||
-		got.LatestAssistantUpdate != "new turn answer with missing prompt boundary" ||
+	if got.LatestUserPrompt != "prior turn prompt" || !got.LatestUserPromptAt.Equal(rec.Metadata.LatestUserPromptAt) ||
+		got.LatestAssistantUpdate != "prior turn answer" ||
 		got.ConversationCheckpointState != domain.ConversationCheckpointComplete ||
 		got.ConversationCheckpointGeneration != "launch-current" ||
-		got.ConversationCheckpointNativeID != "native-current" {
-		t.Fatalf("out-of-order Stop did not retain scoped assistant checkpoint: %+v", got)
+		got.ConversationCheckpointNativeID != "native-current" ||
+		!got.ConversationCheckpointUnsettled {
+		t.Fatalf("out-of-order Stop did not retain unresolved boundary: %+v", got)
 	}
 }
 
@@ -1578,6 +1582,33 @@ func TestActivity_LaunchTaggedTUIStopAfterChatEpochCannotMutateSession(t *testin
 	}
 	if got := store.sessions[rec.ID]; got != rec {
 		t.Fatalf("late TUI Stop mutated Chat owner: got %+v, want %+v", got, rec)
+	}
+}
+
+func TestActivity_UntaggedTUIStopAfterChatEpochCannotMutateSession(t *testing.T) {
+	m, store, _ := newManager()
+	rec := working("mer-1")
+	rec.Mode = domain.SessionModeChat
+	rec.Metadata.RuntimeHandleID = ""
+	rec.Metadata.RuntimeLaunchID = ""
+	rec.Metadata.ProviderConversationID = "native-current"
+	rec.Metadata.ControllerGeneration = "chat-current"
+	rec.Metadata.AgentSessionID = "native-current"
+	rec.Metadata.LatestUserPrompt = "trusted terminal prompt"
+	rec.Metadata.LatestAssistantUpdate = "trusted terminal answer"
+	rec.Metadata.ConversationCheckpointState = domain.ConversationCheckpointComplete
+	rec.Metadata.ConversationCheckpointGeneration = "tui-launch"
+	rec.Metadata.ConversationCheckpointNativeID = "native-current"
+	store.sessions[rec.ID] = rec
+
+	if err := m.ApplyActivitySignal(ctx, rec.ID, ports.ActivitySignal{
+		Valid: true, State: domain.ActivityIdle, Event: "stop",
+		AgentSessionID: "native-current", LatestAssistantUpdate: "late untagged terminal stop",
+	}); err != nil {
+		t.Fatalf("ApplyActivitySignal: %v", err)
+	}
+	if got := store.sessions[rec.ID]; got != rec {
+		t.Fatalf("untagged late TUI Stop mutated Chat owner: got %+v, want %+v", got, rec)
 	}
 }
 

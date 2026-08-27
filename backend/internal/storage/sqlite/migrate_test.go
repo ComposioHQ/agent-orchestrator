@@ -85,8 +85,8 @@ func TestMigrateCheckpointProvenanceAfterLatestPromptTimestamp(t *testing.T) {
 	if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name LIKE 'conversation_checkpoint_%'`).Scan(&checkpointColumns); err != nil {
 		t.Fatalf("read checkpoint columns: %v", err)
 	}
-	if applied != 4 || steerTables != 1 || editTables != 1 || checkpointColumns != 3 {
-		t.Fatalf("upgraded schema applied=%d steer=%d edit=%d checkpoint=%d, want 4,1,1,3", applied, steerTables, editTables, checkpointColumns)
+	if applied != 4 || steerTables != 1 || editTables != 1 || checkpointColumns != 4 {
+		t.Fatalf("upgraded schema applied=%d steer=%d edit=%d checkpoint=%d, want 4,1,1,4", applied, steerTables, editTables, checkpointColumns)
 	}
 }
 

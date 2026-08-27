@@ -9,12 +9,13 @@ INSERT INTO sessions (
     runtime_launch_id, agent_session_id, agent_session_id_launch_id, prompt,
     latest_user_prompt, latest_user_prompt_at, latest_assistant_update,
     conversation_checkpoint_state, conversation_checkpoint_generation, conversation_checkpoint_native_id,
+    conversation_checkpoint_unsettled,
     native_transcript_path,
     preview_url, preview_revision, terminate_on_pr_merge, cleanup_generation, browser_capability_verifier,
     session_mode, provider_conversation_id, controller_generation, model,
     created_at, updated_at, is_pinned, pinned_at, auto_inject_review, auto_inject_ci
 ) VALUES (
-    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
@@ -28,6 +29,7 @@ UPDATE sessions SET
     runtime_launch_id = ?, agent_session_id = ?, agent_session_id_launch_id = ?, prompt = ?,
     latest_user_prompt = ?, latest_user_prompt_at = ?, latest_assistant_update = ?,
     conversation_checkpoint_state = ?, conversation_checkpoint_generation = ?, conversation_checkpoint_native_id = ?,
+    conversation_checkpoint_unsettled = ?,
     native_transcript_path = ?,
     preview_url = ?, preview_revision = ?, terminate_on_pr_merge = ?,
     cleanup_generation = ?, browser_capability_verifier = ?,
@@ -43,6 +45,7 @@ UPDATE sessions SET
     conversation_checkpoint_state = 'legacy',
     conversation_checkpoint_generation = '',
     conversation_checkpoint_native_id = '',
+    conversation_checkpoint_unsettled = 0,
     updated_at = sqlc.arg(updated_at)
 WHERE id = sqlc.arg(id)
   AND is_terminated = 0
@@ -59,6 +62,7 @@ UPDATE sessions SET
     conversation_checkpoint_state = 'legacy',
     conversation_checkpoint_generation = '',
     conversation_checkpoint_native_id = '',
+    conversation_checkpoint_unsettled = 0,
     updated_at = MAX(updated_at, sqlc.arg(latest_user_prompt_at))
 WHERE id = sqlc.arg(id)
   AND is_terminated = 0
@@ -95,6 +99,7 @@ SET session_mode = sqlc.arg(target_mode),
     conversation_checkpoint_state = CASE WHEN sqlc.arg(target_mode) = 'tui' THEN 'empty' ELSE conversation_checkpoint_state END,
     conversation_checkpoint_generation = CASE WHEN sqlc.arg(target_mode) = 'tui' THEN '' ELSE conversation_checkpoint_generation END,
     conversation_checkpoint_native_id = CASE WHEN sqlc.arg(target_mode) = 'tui' THEN '' ELSE conversation_checkpoint_native_id END,
+    conversation_checkpoint_unsettled = CASE WHEN sqlc.arg(target_mode) = 'tui' THEN 0 ELSE conversation_checkpoint_unsettled END,
     activity_state = 'idle',
     activity_last_at = sqlc.arg(activity_last_at),
     updated_at = sqlc.arg(updated_at)
@@ -128,6 +133,7 @@ SELECT id, project_id, num, issue_id, kind, harness,
     session_mode, provider_conversation_id, controller_generation, browser_capability_verifier,
     latest_user_prompt, latest_user_prompt_at, latest_assistant_update,
     conversation_checkpoint_state, conversation_checkpoint_generation, conversation_checkpoint_native_id,
+    conversation_checkpoint_unsettled,
     native_transcript_path, auto_inject_review, auto_inject_ci, auto_review_enabled, model
 FROM sessions WHERE id = ?;
 
@@ -142,6 +148,7 @@ SELECT id, project_id, num, issue_id, kind, harness,
     session_mode, provider_conversation_id, controller_generation, browser_capability_verifier,
     latest_user_prompt, latest_user_prompt_at, latest_assistant_update,
     conversation_checkpoint_state, conversation_checkpoint_generation, conversation_checkpoint_native_id,
+    conversation_checkpoint_unsettled,
     native_transcript_path, auto_inject_review, auto_inject_ci, auto_review_enabled, model
 FROM sessions WHERE project_id = ? ORDER BY num;
 
@@ -156,6 +163,7 @@ SELECT id, project_id, num, issue_id, kind, harness,
     session_mode, provider_conversation_id, controller_generation, browser_capability_verifier,
     latest_user_prompt, latest_user_prompt_at, latest_assistant_update,
     conversation_checkpoint_state, conversation_checkpoint_generation, conversation_checkpoint_native_id,
+    conversation_checkpoint_unsettled,
     native_transcript_path, auto_inject_review, auto_inject_ci, auto_review_enabled, model
 FROM sessions ORDER BY project_id, num;
 

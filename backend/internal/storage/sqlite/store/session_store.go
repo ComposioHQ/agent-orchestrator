@@ -62,6 +62,7 @@ func (s *Store) UpdateSessionFromActivitySignal(
 		ConversationCheckpointState:      normalizedConversationCheckpointState(rec.Metadata),
 		ConversationCheckpointGeneration: rec.Metadata.ConversationCheckpointGeneration,
 		ConversationCheckpointNativeID:   rec.Metadata.ConversationCheckpointNativeID,
+		ConversationCheckpointUnsettled:  rec.Metadata.ConversationCheckpointUnsettled,
 		NativeTranscriptPath:             rec.Metadata.NativeTranscriptPath,
 		UpdatedAt:                        rec.UpdatedAt,
 		ID:                               rec.ID,
@@ -79,8 +80,9 @@ func (s *Store) UpdateSessionFromActivitySignal(
 
 // RecordSessionLatestUserPrompt persists pane-delivered user direction without
 // rewriting lifecycle ownership. Because the provider hook may be lost, the
-// same atomic write clears any prior assistant pairing and trusted checkpoint
-// provenance; a later canonical main-turn hook may promote the new turn.
+// same atomic write clears any prior assistant pairing, trusted checkpoint
+// provenance, and older unresolved Stop boundary; a later canonical main-turn
+// hook may promote the new turn.
 func (s *Store) RecordSessionLatestUserPrompt(ctx context.Context, id domain.SessionID, prompt string, updatedAt time.Time) (bool, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
@@ -430,6 +432,7 @@ func rowToRecord(row gen.GetSessionRow) domain.SessionRecord {
 			ConversationCheckpointState:      row.ConversationCheckpointState,
 			ConversationCheckpointGeneration: row.ConversationCheckpointGeneration,
 			ConversationCheckpointNativeID:   row.ConversationCheckpointNativeID,
+			ConversationCheckpointUnsettled:  row.ConversationCheckpointUnsettled,
 			NativeTranscriptPath:             row.NativeTranscriptPath,
 			PreviewURL:                       row.PreviewURL,
 			PreviewRevision:                  row.PreviewRevision,
@@ -490,6 +493,7 @@ func recordToInsert(rec domain.SessionRecord, num int64) gen.InsertSessionParams
 		ConversationCheckpointState:      normalizedConversationCheckpointState(rec.Metadata),
 		ConversationCheckpointGeneration: rec.Metadata.ConversationCheckpointGeneration,
 		ConversationCheckpointNativeID:   rec.Metadata.ConversationCheckpointNativeID,
+		ConversationCheckpointUnsettled:  rec.Metadata.ConversationCheckpointUnsettled,
 		NativeTranscriptPath:             rec.Metadata.NativeTranscriptPath,
 		PreviewURL:                       rec.Metadata.PreviewURL,
 		PreviewRevision:                  rec.Metadata.PreviewRevision,
@@ -539,6 +543,7 @@ func recordToUpdate(rec domain.SessionRecord) gen.UpdateSessionParams {
 		ConversationCheckpointState:      normalizedConversationCheckpointState(rec.Metadata),
 		ConversationCheckpointGeneration: rec.Metadata.ConversationCheckpointGeneration,
 		ConversationCheckpointNativeID:   rec.Metadata.ConversationCheckpointNativeID,
+		ConversationCheckpointUnsettled:  rec.Metadata.ConversationCheckpointUnsettled,
 		NativeTranscriptPath:             rec.Metadata.NativeTranscriptPath,
 		PreviewURL:                       rec.Metadata.PreviewURL,
 		PreviewRevision:                  rec.Metadata.PreviewRevision,

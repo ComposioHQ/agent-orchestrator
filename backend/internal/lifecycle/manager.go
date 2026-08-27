@@ -571,6 +571,10 @@ retryProjection:
 	// launch cannot. In particular, CommitControllerEpoch clears RuntimeLaunchID;
 	// that is not permission for a delayed terminal Stop to mutate the new Chat
 	// epoch.
+	if mode == domain.SessionModeChat && s.ControllerGeneration == "" {
+		m.mu.Unlock()
+		return nil
+	}
 	if (s.LaunchID != "" || rec.Metadata.RuntimeLaunchID != "") &&
 		(mode != domain.SessionModeTUI || rec.Metadata.RuntimeLaunchID == "" ||
 			s.LaunchID != rec.Metadata.RuntimeLaunchID) {
@@ -604,6 +608,7 @@ retryProjection:
 		checkpoint.ConversationCheckpointState = domain.ConversationCheckpointEmpty
 		checkpoint.ConversationCheckpointGeneration = ""
 		checkpoint.ConversationCheckpointNativeID = ""
+		checkpoint.ConversationCheckpointUnsettled = false
 	}
 	ownerGeneration := ""
 	switch mode {
@@ -634,6 +639,7 @@ retryProjection:
 			checkpoint.LatestUserPrompt = s.LatestUserPrompt
 			checkpoint.LatestUserPromptAt = timeOr(s.Timestamp, now)
 			checkpoint.LatestAssistantUpdate = ""
+			checkpoint.ConversationCheckpointUnsettled = false
 			checkpoint.ConversationCheckpointGeneration = ""
 			checkpoint.ConversationCheckpointNativeID = ""
 			if ownerGeneration != "" && checkpointNativeID != "" {
@@ -664,20 +670,15 @@ retryProjection:
 			checkpoint.ConversationCheckpointNativeID == checkpointNativeID {
 			checkpoint.LatestAssistantUpdate = s.LatestAssistantUpdate
 			checkpoint.ConversationCheckpointState = domain.ConversationCheckpointComplete
-		} else if checkpoint.ConversationCheckpointState != domain.ConversationCheckpointLegacy &&
-			ownerGeneration != "" && checkpointNativeID != "" && s.LatestAssistantUpdate != "" {
-			// A scoped Stop is durable evidence that a newer provider turn completed
-			// even when its prompt hook was lost. Replace, rather than splice with,
-			// any older prompt. The assistant-only complete checkpoint makes replay
-			// reach this latest completed turn or fail closed. A legacy checkpoint is
-			// excluded because it may be a newer pane-delivered prompt whose hook has
-			// not arrived; a Stop cannot safely be ordered after that fallback.
-			checkpoint.LatestUserPrompt = ""
-			checkpoint.LatestUserPromptAt = time.Time{}
-			checkpoint.LatestAssistantUpdate = s.LatestAssistantUpdate
-			checkpoint.ConversationCheckpointState = domain.ConversationCheckpointComplete
-			checkpoint.ConversationCheckpointGeneration = ownerGeneration
-			checkpoint.ConversationCheckpointNativeID = checkpointNativeID
+		} else if ownerGeneration != "" && checkpointNativeID != "" {
+			// A scoped Stop without its prompt boundary proves some completed turn
+			// exists, but neither text nor arrival order can identify it safely in a
+			// provider replay: repeated answers collide, and a delayed prior Stop may
+			// arrive after a pane-delivered prompt. Preserve the existing checkpoint
+			// and retain a hard unresolved-boundary witness instead. A later canonical
+			// prompt supersedes it; until then Chat replay must fail closed.
+			checkpoint.ConversationCheckpointUnsettled = true
+			s.LatestAssistantUpdate = ""
 		} else if checkpoint.LatestUserPrompt == "" && s.LatestAssistantUpdate != "" {
 			// An unowned standalone Stop can still be useful display/recovery context,
 			// but it has no owner boundary that would make it a trusted history gate.
@@ -710,7 +711,8 @@ retryProjection:
 		checkpoint.LatestAssistantUpdate != rec.Metadata.LatestAssistantUpdate ||
 		checkpoint.ConversationCheckpointState != rec.Metadata.ConversationCheckpointState ||
 		checkpoint.ConversationCheckpointGeneration != rec.Metadata.ConversationCheckpointGeneration ||
-		checkpoint.ConversationCheckpointNativeID != rec.Metadata.ConversationCheckpointNativeID
+		checkpoint.ConversationCheckpointNativeID != rec.Metadata.ConversationCheckpointNativeID ||
+		checkpoint.ConversationCheckpointUnsettled != rec.Metadata.ConversationCheckpointUnsettled
 	metadataChanged := (s.AgentSessionID != "" && rec.Metadata.AgentSessionID != s.AgentSessionID) ||
 		(s.AgentSessionID != "" && rec.Metadata.AgentSessionIDLaunchID != s.LaunchID) ||
 		(s.TranscriptPath != "" && rec.Metadata.NativeTranscriptPath != s.TranscriptPath) ||
@@ -1396,6 +1398,7 @@ func (m *Manager) changeControllerEpoch(
 		next.Metadata.ConversationCheckpointState = domain.ConversationCheckpointEmpty
 		next.Metadata.ConversationCheckpointGeneration = ""
 		next.Metadata.ConversationCheckpointNativeID = ""
+		next.Metadata.ConversationCheckpointUnsettled = false
 	}
 	next.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}
 	next.UpdatedAt = now

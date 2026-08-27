@@ -274,6 +274,16 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 			rec.Metadata.ConversationCheckpointNativeID != ""
 		trusted := trustedProvenance &&
 			rec.Metadata.ConversationCheckpointNativeID == cfg.ProviderConversationID
+		if rec.Metadata.ConversationCheckpointUnsettled ||
+			(checkpointState == domain.ConversationCheckpointComplete &&
+				strings.TrimSpace(rec.Metadata.LatestUserPrompt) == "" &&
+				strings.TrimSpace(rec.Metadata.LatestAssistantUpdate) != "") {
+			// A Stop without its prompt/turn identity cannot be matched safely by
+			// text: two turns may have identical answers. This hard gate is never
+			// waived by provider-history recovery.
+			replayCheckpoint.hardMismatches = append(replayCheckpoint.hardMismatches,
+				ports.ChatHistoryMismatchUnsettledBoundary)
+		}
 		switch {
 		case checkpointState == domain.ConversationCheckpointCoordination:
 			// AO-authored handoff/continuation turns are present in provider

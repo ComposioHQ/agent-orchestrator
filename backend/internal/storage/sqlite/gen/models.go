@@ -468,6 +468,7 @@ type Session struct {
 	ConversationCheckpointState      domain.ConversationCheckpointState
 	ConversationCheckpointGeneration string
 	ConversationCheckpointNativeID   string
+	ConversationCheckpointUnsettled  bool
 }
 
 type SessionCleanupFact struct {
