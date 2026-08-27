@@ -154,6 +154,42 @@ describe("SessionsBoardView", () => {
 		}
 	});
 
+	it("pins display-status attention cards first inside the lane", () => {
+		render(
+			<SessionsBoardGridView
+				columns={boardKanbanColumnOrder.map((column) => getKanbanColumnView(column))}
+				labels={columnLabels}
+				renderSessionCard={(session) => <div data-testid={`card-${session.id}`}>{session.title}</div>}
+				sessions={[
+					{
+						...baseSession,
+						id: "newer-neutral",
+						kanbanColumn: "needs_review",
+						status: "idle",
+						title: "newer neutral",
+						updatedAt: "2026-08-09T12:00:00Z",
+					},
+					{
+						...baseSession,
+						id: "older-attention",
+						displayStatus: "Changes requested",
+						kanbanColumn: "needs_review",
+						status: "idle",
+						title: "older attention",
+						updatedAt: "2026-08-08T09:00:00Z",
+					},
+				]}
+			/>,
+		);
+
+		const lane = screen.getByRole("region", { name: "In review sessions" });
+		expect(
+			within(lane)
+				.getAllByTestId(/^card-/)
+				.map((card) => card.textContent),
+		).toEqual(["older attention", "newer neutral"]);
+	});
+
 	it.each([
 		{ displayStatus: "Blocked", status: "idle" as const },
 		{ displayStatus: "Checks failing", status: "idle" as const },

@@ -152,8 +152,7 @@ function BoardColumnView<TSession extends BoardSessionPresentation>({
 }) {
 	const ordered = [...sessions].sort((left, right) => {
 		const attentionPriority =
-			Number(attentionZone(right.status) === "action" || right.activity?.state === "blocked") -
-			Number(attentionZone(left.status) === "action" || left.activity?.state === "blocked");
+			Number(boardSessionNeedsAttention(right)) - Number(boardSessionNeedsAttention(left));
 		return attentionPriority || right.updatedAt.localeCompare(left.updatedAt);
 	});
 	return (
@@ -362,9 +361,7 @@ function boardSessionNeedsAttention(session: BoardSessionPresentation): boolean 
 			return true;
 		case undefined:
 			return (
-				session.status === "ci_failed" ||
-				session.status === "changes_requested" ||
-				session.activity?.state === "blocked"
+				attentionZone(session.status) === "action" || session.activity?.state === "blocked"
 			);
 		default:
 			return false;
