@@ -19,6 +19,7 @@ import {
 import {
 	capturePendingFileAttachmentsForSession,
 	discardCapturedPendingFileAttachments,
+	type FileAttachmentPayload,
 } from "../../hooks/useFileAttachments";
 import {
 	lexicalEditorText,
@@ -2045,6 +2046,84 @@ describe("attachments", () => {
 			undefined,
 			expect.any(String),
 		);
+	});
+
+	it("does not resurrect a durably removed attachment when a hidden replacement activates later", async () => {
+		const sessionId = "removed-attachment-delayed-replacement";
+		const removedPath = ".ao/attachments/removed-before-delayed-activation.png";
+		const removedName = "removed-before-delayed-activation.png";
+		writeChatAttachments(sessionId, [
+			{
+				id: "removed-before-delayed-activation",
+				path: removedPath,
+				name: removedName,
+				mimeType: "image/png",
+				bytes: 4,
+			},
+		]);
+		const onSend = vi.fn<
+			(
+				text: string,
+				attachments?: FileAttachmentPayload[],
+				clientMessageId?: string,
+			) => Promise<void>
+		>(async () => undefined);
+		const onStageAttachments = vi.fn();
+		const props = {
+			onSend,
+			draftSessionId: sessionId,
+			onStageAttachments,
+			nativeImages: true,
+		};
+		const surfaces = (
+			showOriginal: boolean,
+			replacementMode: "hidden" | "visible",
+		) => (
+			<>
+				{showOriginal ? (
+					<div data-testid="original-delayed-attachment-composer">
+						<ChatComposer {...props} />
+					</div>
+				) : null}
+				<Activity key="replacement" mode={replacementMode}>
+					<div data-testid="replacement-delayed-attachment-composer">
+						<ChatComposer {...props} />
+					</div>
+				</Activity>
+			</>
+		);
+
+		const view = render(surfaces(true, "hidden"));
+		const original = within(screen.getByTestId("original-delayed-attachment-composer"));
+		await userEvent.click(original.getByLabelText(`Remove ${removedName}`));
+		await waitFor(() =>
+			expect(readChatSessionDraft(sessionId).composer.attachments).toEqual([]),
+		);
+
+		// Leave only the disconnected replacement, then cross both the registry's
+		// eviction microtask and a later task before activating its stale render.
+		view.rerender(surfaces(false, "hidden"));
+		await act(async () => {
+			await new Promise<void>((resolve) => setTimeout(resolve, 0));
+		});
+		expect(readChatSessionDraft(sessionId).composer.attachments).toEqual([]);
+
+		view.rerender(surfaces(false, "visible"));
+		const replacement = within(
+			screen.getByTestId("replacement-delayed-attachment-composer"),
+		);
+		expect(replacement.queryByLabelText(`Remove ${removedName}`)).not.toBeInTheDocument();
+
+		const field = replacement.getByLabelText("Message the agent");
+		await typeInComposer(field, "send after durable attachment removal");
+		fireEvent.keyDown(field, { key: "Enter" });
+
+		await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+		const [requestText, nativePayloads] = onSend.mock.calls[0] ?? [];
+		expect(requestText).toBe("send after durable attachment removal");
+		expect(requestText).not.toContain(removedPath);
+		expect(nativePayloads).toBeUndefined();
+		expect(onStageAttachments).not.toHaveBeenCalled();
 	});
 
 	it("shows a removable chip per pasted image", async () => {

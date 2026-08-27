@@ -45,6 +45,8 @@ export type FileAttachmentOptions = {
 	initialAttachments?: FileAttachment[];
 	/** Changes when the hook must replace its state with initialAttachments. */
 	initialKey?: string;
+	/** Reads the latest durable descriptors when a retained surface activates. */
+	readPersistedAttachments?: () => FileAttachment[];
 	/**
 	 * Make newly read bytes durable before preparation settles. Reading and failed
 	 * chips stay visible so the user can see, retry, or remove the exact file.
@@ -621,6 +623,7 @@ export function useFileAttachments(options: FileAttachmentOptions = {}) {
 	const {
 		initialAttachments = [],
 		initialKey,
+		readPersistedAttachments,
 		prepareAttachments,
 		onAttachmentsChange,
 	} = options;
@@ -725,6 +728,7 @@ export function useFileAttachments(options: FileAttachmentOptions = {}) {
 		if (!initialKey) return;
 		let activated = false;
 		return subscribeSharedAttachmentWork(initialKey, listenerTokenRef.current, (update) => {
+			const activating = !activated;
 			const renderedRevision =
 				renderedSharedRevisionRef.current.key === initialKey
 					? renderedSharedRevisionRef.current.revision
@@ -734,7 +738,15 @@ export function useFileAttachments(options: FileAttachmentOptions = {}) {
 				update.revision > renderedRevision ||
 				update.persistedRevision !== update.revision;
 			activated = true;
-			if (update.attachments && shouldApplyAttachments) {
+			if (activating && readPersistedAttachments) {
+				// Activity can retain a render longer than the shared registry's empty
+				// snapshot. Re-read the durable draft at commit so an evicted receipt
+				// cannot leave stale render-time attachments active and resendable.
+				const restored = restoreInitial(readPersistedAttachments());
+				attachmentsRef.current = restored;
+				setAttachments(restored);
+			}
+			if (update.attachments !== undefined && shouldApplyAttachments) {
 				const restored = normalizeInitial(update.attachments);
 				attachmentsRef.current = restored;
 				setAttachments(restored);
@@ -743,7 +755,7 @@ export function useFileAttachments(options: FileAttachmentOptions = {}) {
 			if (update.error !== undefined) setValidationError(update.error);
 			setPreparing(update.pending > 0);
 		});
-	}, [initialKey, normalizeInitial, reportAttachmentsChange]);
+	}, [initialKey, normalizeInitial, readPersistedAttachments, reportAttachmentsChange, restoreInitial]);
 
 	const readAttachment = useCallback(
 		(id: string, file: File, sharedWork?: SharedAttachmentWork): Promise<void> => {

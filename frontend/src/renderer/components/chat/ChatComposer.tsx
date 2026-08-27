@@ -83,6 +83,7 @@ import {
 	writeChatAttachments,
 	writeChatComposerContent,
 	type ChatDraftMutationToken,
+	type ChatDraftAttachment,
 	type ChatComposerDelivery,
 	type ChatDraftScope,
 	type DraftClearResult,
@@ -116,6 +117,17 @@ function withAttachmentReferences(text: string, paths: string[]): string {
 	if (paths.length === 0) return text;
 	const lead = text.trim() === "" ? "" : `${text}\n\n`;
 	return `${lead}Attached files (read these files in the workspace):\n${paths.map((path) => `- ${path}`).join("\n")}`;
+}
+
+function restoreFileAttachments(attachments: readonly ChatDraftAttachment[]): FileAttachment[] {
+	return attachments.map((attachment) => ({
+		id: attachment.id,
+		name: attachment.name,
+		mimeType: attachment.mimeType,
+		bytes: attachment.bytes,
+		status: "ready",
+		stagedPath: attachment.path,
+	}));
 }
 
 function attachmentDeliveryLabel(
@@ -327,16 +339,15 @@ export function ChatComposer({
 	const [appliedAcceptanceSequence, setAppliedAcceptanceSequence] = useState(0);
 	const composerRevision = useRef(persistedDraft?.composer.revision ?? 0);
 	const restoredAttachments = useMemo<FileAttachment[]>(
-		() =>
-			persistedDraft?.composer.attachments.map((attachment) => ({
-				id: attachment.id,
-				name: attachment.name,
-				mimeType: attachment.mimeType,
-				bytes: attachment.bytes,
-				status: "ready",
-				stagedPath: attachment.path,
-			})) ?? [],
+		() => restoreFileAttachments(persistedDraft?.composer.attachments ?? []),
 		[persistedDraft],
+	);
+	const readPersistedAttachments = useCallback(
+		() =>
+			restoreFileAttachments(
+				draftScope ? readChatSessionDraft(draftScope).composer.attachments : [],
+			),
+		[draftScope],
 	);
 	const persistAttachments = useCallback(
 		(attachments: FileAttachment[]) => {
@@ -399,6 +410,7 @@ export function ChatComposer({
 	const fileAttachments = useFileAttachments({
 		initialAttachments: restoredAttachments,
 		initialKey: draftScopeKey,
+		readPersistedAttachments,
 		prepareAttachments: onStageAttachments ? prepareAttachments : undefined,
 		onAttachmentsChange: persistAttachments,
 	});
