@@ -237,7 +237,6 @@ export function SessionCardView({
 	const branch = session.branch ?? "";
 	const showBranch = branch !== "" && !sameLabel(branch, session.title) && !sameLabel(branch, session.id);
 	const renderedStatusLabel =
-		(needsAttention ? alertStatusLabel(session, translate) : undefined) ??
 		statusPresentation?.label ??
 		(session.displayStatus ? getDisplayStatusLabel(session.displayStatus, translate) : badge.label);
 	const showStatusLoader =
@@ -328,7 +327,7 @@ export function SessionCardView({
 								? "text-status-needs-you"
 								: session.status === "mergeable" || session.displayStatus === "Mergeable"
 									? "text-success"
-									: "text-muted-foreground",
+									: (statusPresentation?.className ?? column.titleClassName),
 						)}
 						data-kanban-column={statusPresentation ? undefined : column.column}
 						data-testid="session-status"
@@ -355,14 +354,6 @@ export function SessionCardView({
 			{footer}
 		</div>
 	);
-}
-
-function alertStatusLabel(session: BoardSessionPresentation, translate?: ProductUITranslator): string | undefined {
-	if (session.activity?.state === "blocked") return getDisplayStatusLabel("Blocked", translate);
-	if (session.status === "changes_requested" || session.status === "ci_failed") {
-		return getSessionStatusView(session.status, translate).label;
-	}
-	return undefined;
 }
 
 export const SessionUsageMetricView = forwardRef<
