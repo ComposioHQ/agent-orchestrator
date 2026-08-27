@@ -4504,6 +4504,114 @@ func TestProviderRefusalPreservesMessageQueuedAfterStop(t *testing.T) {
 	}
 }
 
+// A provider can report shutdown or close its stream while Stop is waiting on the
+// provider RPC. Neither cleanup path may settle the reserved queue or release its
+// global fence before Stop commits the provider outcome; doing so makes Stop's
+// reservation CAS fail and strands both the durable fence and its in-memory mirror.
+func TestProviderShutdownWaitsForPendingInterruptQueueReconciliation(t *testing.T) {
+	tests := []struct {
+		name           string
+		reportShutdown func(*testing.T, *blockingInterruptRefusalConversation)
+		streamClosed   bool
+	}{
+		{
+			name: "controller stopped event",
+			reportShutdown: func(_ *testing.T, conv *blockingInterruptRefusalConversation) {
+				conv.emit(ports.ChatEvent{
+					Kind: ports.ChatEventControllerState, ControllerState: ports.ChatControllerStopped,
+				})
+			},
+		},
+		{
+			name: "event stream closed",
+			reportShutdown: func(t *testing.T, conv *blockingInterruptRefusalConversation) {
+				t.Helper()
+				if err := conv.Close(); err != nil {
+					t.Fatalf("close provider stream: %v", err)
+				}
+			},
+			streamClosed: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			conv := newBlockingInterruptRefusalConversation()
+			t.Cleanup(conv.unblock)
+			var recordingStore *recordingCleanupStore
+			h := newHarnessWithConversationAndStore(t, conv, func(st *sqlite.Store) chatsvc.Store {
+				recordingStore = &recordingCleanupStore{Store: st, called: make(chan struct{}, 2)}
+				return recordingStore
+			})
+			ctx := context.Background()
+
+			if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+				Text: "running", ClientMessageID: "shutdown-stop-running",
+			}); err != nil {
+				t.Fatalf("Send running: %v", err)
+			}
+			conv.emit(ports.ChatEvent{
+				Kind: ports.ChatEventTurnStarted, ProviderTurnID: "provider-turn-1",
+			})
+			h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+				return len(s.Turns) == 1 && s.Turns[0].State == domain.TurnStateRunning
+			})
+			queued, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+				Text: "queued", ClientMessageID: "shutdown-stop-queued",
+			})
+			if err != nil || queued.State != domain.TurnStateQueued {
+				t.Fatalf("Send queued = %+v, %v; want queued", queued, err)
+			}
+
+			interruptDone := make(chan error, 1)
+			go func() {
+				interruptDone <- h.svc.Interrupt(ctx, testSession, []string{queued.ID})
+			}()
+			select {
+			case <-conv.started:
+			case <-time.After(4 * time.Second):
+				t.Fatal("provider interrupt did not start")
+			}
+			tt.reportShutdown(t, conv)
+			select {
+			case <-recordingStore.called:
+				t.Fatal("controller cleanup ran before Stop reconciled its durable queue reservation")
+			case <-time.After(100 * time.Millisecond):
+			}
+
+			conv.unblock()
+			if err := <-interruptDone; err != nil {
+				t.Fatalf("Interrupt after provider shutdown: %v", err)
+			}
+			select {
+			case <-recordingStore.called:
+			case <-time.After(4 * time.Second):
+				t.Fatal("controller cleanup did not run after Stop reconciliation")
+			}
+			if tt.streamClosed {
+				h.ctrl.Wait()
+			} else {
+				deadline := time.Now().Add(4 * time.Second)
+				for h.ctrl.State() != ports.ChatControllerStopped && time.Now().Before(deadline) {
+					time.Sleep(10 * time.Millisecond)
+				}
+			}
+			if got := h.ctrl.State(); got != ports.ChatControllerStopped {
+				t.Fatalf("controller state = %q, want stopped after provider shutdown", got)
+			}
+			snapshot, err := h.st.LoadConversationSnapshot(ctx, h.ctrl.ConversationID())
+			if err != nil {
+				t.Fatalf("load snapshot: %v", err)
+			}
+			states := turnStateByText(t, snapshot)
+			if states["running"] != domain.TurnStateInterrupted ||
+				states["queued"] != domain.TurnStateInterrupted {
+				t.Fatalf("states after shutdown during Stop = %#v, want both interrupted", states)
+			}
+		})
+	}
+}
+
 // A provider can publish completion just before its interrupt call reports that
 // no active turn remains. If that completion commits first, reconciliation must
 // not overwrite it or the queue transition it already performed.

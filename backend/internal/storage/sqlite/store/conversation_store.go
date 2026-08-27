@@ -1150,18 +1150,8 @@ func cleanupOwnedControllerWork(
 	if owner.ControllerGeneration != generation {
 		return false, nil
 	}
-	if err := q.FailOrphanedConversationActivities(ctx,
-		gen.FailOrphanedConversationActivitiesParams{
-			UpdatedAt: now, HandledBySessionID: session,
-		}); err != nil {
-		return false, fmt.Errorf("settle orphaned activities for %s: %w", session, err)
-	}
-	if err := q.SettleOrphanedConversationTurns(ctx,
-		gen.SettleOrphanedConversationTurnsParams{
-			CompletedAt:        sql.NullTime{Time: now, Valid: true},
-			HandledBySessionID: session,
-		}); err != nil {
-		return false, fmt.Errorf("settle orphaned turns for %s: %w", session, err)
+	if err := settleOrphanedTurnsWithQueries(ctx, q, session, now); err != nil {
+		return false, err
 	}
 	if err := q.FailPendingConversationRequestsForSession(ctx,
 		gen.FailPendingConversationRequestsForSessionParams{

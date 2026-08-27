@@ -1707,6 +1707,44 @@ func TestCleanupOwnedControllerWorkIsGenerationFenced(t *testing.T) {
 	assertCleanupState(domain.TurnStateFailed, domain.ActivityStatusFailed)
 }
 
+func TestCleanupOwnedControllerWorkReleasesInterruptFence(t *testing.T) {
+	s, session, conversation := conversationFixture(t)
+	ctx := context.Background()
+	created, err := s.AppendUserMessage(ctx, conversation, session, "gen-1", domain.ConversationMessage{
+		ID: "reserved-cleanup-message", Text: "confirmed for Stop", Origin: domain.MessageOriginHuman,
+		ClientMessageID: "reserved-cleanup-client",
+	}, "reserved-cleanup-turn", histClock)
+	if err != nil || !created {
+		t.Fatalf("AppendUserMessage: created=%v err=%v", created, err)
+	}
+	matched, err := s.ReserveQueuedTurnsForInterrupt(
+		ctx, conversation, []string{"reserved-cleanup-turn"}, "cleanup-reservation",
+	)
+	if err != nil || !matched {
+		t.Fatalf("ReserveQueuedTurnsForInterrupt: matched=%v err=%v", matched, err)
+	}
+
+	owned, err := s.CleanupOwnedControllerWork(
+		ctx, session, conversation, "gen-1", histClock.Add(time.Minute),
+	)
+	if err != nil || !owned {
+		t.Fatalf("CleanupOwnedControllerWork: owned=%v err=%v", owned, err)
+	}
+	turn, err := s.TurnByID(ctx, "reserved-cleanup-turn")
+	if err != nil || turn.State != domain.TurnStateInterrupted {
+		t.Fatalf("reserved turn = %+v, %v; want interrupted", turn, err)
+	}
+	matched, err = s.ReserveQueuedTurnsForInterrupt(ctx, conversation, nil, "proof-reservation")
+	if err != nil || !matched {
+		t.Fatalf("cleanup left the global Stop fence behind: matched=%v err=%v", matched, err)
+	}
+	if err := s.ReleaseQueuedTurnsForInterrupt(
+		ctx, conversation, nil, "proof-reservation",
+	); err != nil {
+		t.Fatalf("release proof reservation: %v", err)
+	}
+}
+
 func TestCleanupOwnedControllerWorkOnlySettlesReboundSessionWork(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

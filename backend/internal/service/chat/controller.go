@@ -172,6 +172,11 @@ type Controller struct {
 	// sendMu serializes command dispatch so only one operation mutates the
 	// provider conversation at a time.
 	sendMu sync.Mutex
+	// interruptLifecycleMu keeps controller-death cleanup from settling and
+	// releasing Stop's durable reservation while its provider outcome is still
+	// being reconciled. Interrupt takes a read lock so concurrent Stop attempts
+	// retain their existing sendMu/queue-scope behavior; cleanup takes the writer.
+	interruptLifecycleMu sync.RWMutex
 
 	mu sync.Mutex
 	// activeTurn maps a provider turn id to AO's turn id for the turn currently
@@ -1875,6 +1880,9 @@ func (c *Controller) interruptForHandoff(ctx context.Context) error {
 //     "no active turn" would leave the user staring at a Working bar they cannot
 //     dismiss. Reconcile the durable row instead.
 func (c *Controller) Interrupt(ctx context.Context, expectedQueuedTurnIDs []string) error {
+	c.interruptLifecycleMu.RLock()
+	defer c.interruptLifecycleMu.RUnlock()
+
 	// Stop's linearization point is the dispatch lock. A Send that acquired the
 	// lock first is existing work Stop should cancel; a Send that acquires it after
 	// the durable reservation is post-Stop work that queues behind the pending
@@ -2339,8 +2347,16 @@ func (c *Controller) project() {
 		// conversation is busy. Holding the same lock Send/dispatch use closes the
 		// window between the durable projection and the in-memory ownership update.
 		lifecycle := event.Kind == ports.ChatEventTurnStarted || event.Kind == ports.ChatEventTurnCompleted
+		stoppedController := event.Kind == ports.ChatEventControllerState &&
+			event.ControllerState == ports.ChatControllerStopped
 		if lifecycle {
 			c.sendMu.Lock()
+		}
+		// Wait outside ProjectProviderEvent's SQLite transaction. Acquiring this
+		// writer after the transaction starts can deadlock with Interrupt, which
+		// needs a store write before it can release its read lock.
+		if stoppedController {
+			c.interruptLifecycleMu.Lock()
 		}
 		projected, primaryTurn, err := c.projectEvent(ctx, event)
 		if err != nil {
@@ -2354,6 +2370,9 @@ func (c *Controller) project() {
 		}
 		if lifecycle {
 			c.sendMu.Unlock()
+		}
+		if stoppedController {
+			c.interruptLifecycleMu.Unlock()
 		}
 	}
 
@@ -2377,11 +2396,28 @@ func (c *Controller) project() {
 	// does not remain durably active, idle, or blocked after its controller died.
 	// ControllerGeneration fences this write from a replacement controller.
 	c.reportActivity(ctx, domain.ActivityExited, "chat.controller.stopped", now)
-	if _, err := c.store.CleanupOwnedControllerWork(
-		ctx, c.sessionID, c.conversation.ID, c.generation, now,
-	); err != nil {
+	if err := c.cleanupStoppedControllerWork(ctx, now); err != nil {
 		c.log.Error("failed to clean up stopped controller work", "session", c.sessionID, "error", err)
 	}
+	// Stop reconciliation can legitimately finish after the stream closed and set
+	// the controller ready while settling its last turn. Reassert the terminal
+	// state after serialized cleanup so a dead provider is never exposed as ready.
+	c.mu.Lock()
+	c.state = ports.ChatControllerStopped
+	c.mu.Unlock()
+}
+
+// cleanupStoppedControllerWork waits for every in-flight Stop reconciliation
+// before settling controller-owned work. Stop releases sendMu around the provider
+// RPC so lifecycle events can project; this separate boundary prevents a stream
+// close in that window from clearing the durable queue fence underneath Stop.
+func (c *Controller) cleanupStoppedControllerWork(ctx context.Context, now time.Time) error {
+	c.interruptLifecycleMu.Lock()
+	defer c.interruptLifecycleMu.Unlock()
+	_, err := c.store.CleanupOwnedControllerWork(
+		ctx, c.sessionID, c.conversation.ID, c.generation, now,
+	)
+	return err
 }
 
 // projectEvent archives one normalized provider event and applies its durable
