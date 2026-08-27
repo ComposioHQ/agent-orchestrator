@@ -663,3 +663,43 @@ func TestMobileAdvertisesNothingWhileTheBridgeIsOff(t *testing.T) {
 		t.Fatalf("status advertised %+v while the bridge was disabled", got)
 	}
 }
+
+// Found by running the desktop app: enabling Connect Mobile started the
+// connector, but restarting the daemon restored only the LAN listener. Remote
+// access then stayed silently off — the UI showed the bridge enabled while the
+// tunnel never came back — until the user toggled it off and on.
+//
+// A restart does not go through enableWithPassword (there is no password to
+// rotate), so RestoreOnBoot has to mirror its post-Start work.
+func TestMobileRestoreOnBootStartsTheTunnel(t *testing.T) {
+	tun := &fakeTunnel{}
+	b := &BridgeService{
+		LAN:                &fakeLAN{},
+		ConfigPath:         filepath.Join(t.TempDir(), "mobile", "config.json"),
+		DefaultPort:        3011,
+		PickLANHosts:       func() []string { return []string{"192.168.1.42"} },
+		PickTailscaleHosts: func() []string { return nil },
+		Tunnel:             tun,
+	}
+
+	if err := b.RestoreOnBoot(mobilebridge.State{Enabled: true, Password: "pw", LastPort: 3011}); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+
+	if tun.startedOn != 3011 {
+		t.Fatalf("tunnel started on %d, want the restored port 3011", tun.startedOn)
+	}
+}
+
+func TestMobileRestoreOnBootWithoutATunnelIsHarmless(t *testing.T) {
+	b := &BridgeService{
+		LAN:                &fakeLAN{},
+		ConfigPath:         filepath.Join(t.TempDir(), "mobile", "config.json"),
+		DefaultPort:        3011,
+		PickLANHosts:       func() []string { return []string{"192.168.1.42"} },
+		PickTailscaleHosts: func() []string { return nil },
+	}
+	if err := b.RestoreOnBoot(mobilebridge.State{Enabled: true, Password: "pw", LastPort: 3011}); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+}

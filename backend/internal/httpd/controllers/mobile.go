@@ -387,6 +387,13 @@ func (b *BridgeService) RestoreOnBoot(state mobilebridge.State) error {
 	if state.SecurePairing {
 		b.serveErr = b.applyServe(port)
 	}
+	// A restart does not go through enableWithPassword — there is no password to
+	// rotate — so the connector has to be started here too. Without it the
+	// bridge comes back LAN-only and the UI shows Connect Mobile enabled while
+	// remote access is silently gone until the user toggles it off and on.
+	if b.Tunnel != nil {
+		b.Tunnel.Start(port)
+	}
 	return nil
 }
 
