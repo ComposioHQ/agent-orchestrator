@@ -1995,6 +1995,8 @@ export interface components {
             isTerminated: boolean;
             issueId?: string;
             kind: string;
+            /** Format: date-time */
+            lastUserMessageAt?: null | string;
             /** @enum {string} */
             mode: "chat" | "tui";
             model?: string;
@@ -2048,6 +2050,11 @@ export interface components {
             status: "running" | "completed" | "recovered" | "failed" | "cancelled" | "pending" | "resolved";
             summary: string;
             turnId?: string;
+        };
+        ConversationBranchMaterializationResponse: {
+            replayTruncated: boolean;
+            /** @enum {string} */
+            strategy: "native" | "approximate_context";
         };
         ConversationBranchPointResponse: {
             nextBranchId?: string;
@@ -2181,6 +2188,7 @@ export interface components {
             account?: components["schemas"]["ConversationAccountPayload"];
             activeBranchId?: string;
             activities: components["schemas"]["ConversationActivityResponse"][];
+            branchMaterialization?: components["schemas"]["ConversationBranchMaterializationResponse"];
             branchPoints?: components["schemas"]["ConversationBranchPointResponse"][];
             branchedFromEarlierMessage: boolean;
             capabilities?: string[];
@@ -2197,6 +2205,8 @@ export interface components {
             /** @enum {string} */
             mode: "chat" | "tui";
             modelReroute?: components["schemas"]["ConversationModelReroutePayload"];
+            /** Format: int64 */
+            nativeForkAvailableAfterSequence: number;
             /** Format: int64 */
             oldestSequence?: number;
             rateLimits?: components["schemas"]["ConversationRateLimitsPayload"];
