@@ -13,9 +13,10 @@ const state = vi.hoisted(() => ({
 		selection: string;
 		options: Record<string, unknown>;
 		modes: { bracketedPasteMode: boolean; mouseTrackingMode: string };
-		buffer: { active: { type: string } };
+		buffer: { active: { baseY: number; type: string; viewportY: number } };
 		scrollLines: ReturnType<typeof vi.fn>;
 		scrollToBottom: ReturnType<typeof vi.fn>;
+		scrollToLine: ReturnType<typeof vi.fn>;
 		refresh: ReturnType<typeof vi.fn>;
 		clear: ReturnType<typeof vi.fn>;
 		focus: ReturnType<typeof vi.fn>;
@@ -43,9 +44,10 @@ vi.mock("@xterm/xterm", () => ({
 		keyHandler?: (event: KeyboardEvent) => boolean;
 		wheelHandler?: (event: WheelEvent) => boolean;
 		modes = { bracketedPasteMode: false, mouseTrackingMode: "vt200" };
-		buffer = { active: { type: "normal" } };
+		buffer = { active: { baseY: 0, type: "normal", viewportY: 0 } };
 		scrollLines = vi.fn();
 		scrollToBottom = vi.fn();
+		scrollToLine = vi.fn();
 		refresh = vi.fn();
 		clear = vi.fn();
 		focus = vi.fn();
@@ -82,6 +84,9 @@ vi.mock("@xterm/xterm", () => ({
 			return { dispose: () => undefined };
 		}
 		onRender() {
+			return { dispose: () => undefined };
+		}
+		onScroll() {
 			return { dispose: () => undefined };
 		}
 		onKey(listener: (event: { key: string }) => void) {
@@ -304,10 +309,20 @@ describe("XtermTerminal", () => {
 		}
 	});
 
-	it("does not reserve width for the hidden terminal scrollbar", () => {
-		render(<XtermTerminal theme="dark" />);
+	it("does not reserve width for the hidden terminal scrollbar outside macOS", () => {
+		const { container } = render(<XtermTerminal theme="dark" />);
 
 		expect(state.lastTerminal!._core.viewport.scrollBarWidth).toBe(0);
+		expect(container.querySelector(".terminal-scrollbar")).toBeNull();
+	});
+
+	it("reserves a slim draggable scrollbar gutter on macOS", () => {
+		setNavigatorPlatform("MacIntel");
+		const { container } = render(<XtermTerminal theme="dark" />);
+
+		expect(state.lastTerminal!._core.viewport.scrollBarWidth).toBe(7);
+		expect(container.querySelector(".terminal-xterm-host--mac")).not.toBeNull();
+		expect(container.querySelector(".terminal-scrollbar")).not.toBeNull();
 	});
 
 	it("copies selected terminal text on the terminal copy shortcut", () => {
