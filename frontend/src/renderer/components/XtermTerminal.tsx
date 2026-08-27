@@ -254,6 +254,7 @@ function sgrWheelReport(button: number, count: number): string {
 // already scrolls a full screen, so scaling by line count would over-scroll.
 const PAGE_UP = "\x1b[5~";
 const PAGE_DOWN = "\x1b[6~";
+const MAC_TERMINAL_SCROLLBAR_WIDTH = 7;
 
 function pageKeyReport(lines: number): string {
 	return lines < 0 ? PAGE_UP : PAGE_DOWN;
@@ -269,16 +270,19 @@ function forceSelectionMode(term: Terminal): void {
 	element.classList.remove("enable-mouse-events");
 }
 
-function removeHiddenScrollbarReservation(term: Terminal): void {
+function configureScrollbarReservation(term: Terminal): void {
 	const viewport = (term as XtermInternal)._core?.viewport;
-	if (viewport) viewport.scrollBarWidth = 0;
+	if (viewport) viewport.scrollBarWidth = isMacPlatform() ? MAC_TERMINAL_SCROLLBAR_WIDTH : 0;
 }
 
 export function XtermTerminal(props: XtermTerminalProps) {
 	const { t } = useTranslation();
 	const themeStyle = useUiStore((state) => state.themeStyle);
+	const macPlatform = isMacPlatform();
 	const shellRef = useRef<HTMLDivElement | null>(null);
 	const hostRef = useRef<HTMLDivElement | null>(null);
+	const scrollbarTrackRef = useRef<HTMLDivElement | null>(null);
+	const scrollbarThumbRef = useRef<HTMLDivElement | null>(null);
 	const termRef = useRef<Terminal | null>(null);
 	const fitRef = useRef<(() => void) | null>(null);
 	const contextMenuActionsRef = useRef<TerminalContextMenuActions | null>(null);
@@ -429,8 +433,9 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				// only matters for normal-buffer panes that print their transcript and
 				// rely on the terminal's scrollback (codex, a plain shell). Keep it > 0
 				// so that history survives to be scrolled locally (see the wheel
-				// handler's normal-buffer branch). The scrollbar itself is hidden in
-				// CSS; its matching FitAddon reservation is removed after open() below.
+				// handler's normal-buffer branch). macOS exposes that history through a
+				// slim draggable scrollbar; other platforms retain the existing hidden
+				// scrollbar behavior for now.
 				scrollback: 5000,
 				theme: props.theme === "dark" ? dark : light,
 			});
@@ -462,14 +467,84 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		if (import.meta.env.DEV) {
 			(host as DevXtermHost).__aoXtermForTest = term;
 		}
-		// xterm reserves a 15px fallback for macOS overlay scrollbars even when CSS
-		// hides the scrollbar entirely. FitAddon subtracts that private value from
-		// every width proposal, leaving a conspicuous empty strip on the right. The
-		// viewport still scrolls normally without the invisible reservation.
-		removeHiddenScrollbarReservation(term);
+		// xterm 5 has no public scrollbar-width option. Keep its private FitAddon
+		// reservation aligned with our CSS: a stable 7px macOS gutter, and no
+		// reservation on platforms where the scrollbar remains hidden.
+		configureScrollbarReservation(term);
 		loadRenderer(term);
 		term.options.macOptionClickForcesSelection = true;
 		forceSelectionMode(term);
+
+		// xterm 5's native viewport scrollbar follows macOS's system auto-hide
+		// preference even when its WebKit pseudo-elements are styled. Keep the
+		// native viewport hidden and mirror its normal-buffer geometry into a small
+		// app-owned thumb so the affordance is reliably visible and draggable.
+		const scrollbarTrack = scrollbarTrackRef.current;
+		const scrollbarThumb = scrollbarThumbRef.current;
+		let scrollbarFrame: number | null = null;
+		const updateScrollbar = () => {
+			scrollbarFrame = null;
+			if (!scrollbarTrack || !scrollbarThumb) return;
+			const buffer = term.buffer.active;
+			const maxScrollLine = buffer.type === "normal" ? buffer.baseY : 0;
+			const trackHeight = scrollbarTrack.clientHeight;
+			if (maxScrollLine <= 0 || trackHeight <= 0) {
+				scrollbarTrack.dataset.scrollable = "false";
+				return;
+			}
+			const totalLines = maxScrollLine + term.rows;
+			const thumbHeight = Math.max(24, (trackHeight * term.rows) / totalLines);
+			const travel = Math.max(0, trackHeight - thumbHeight);
+			const thumbTop = travel * (buffer.viewportY / maxScrollLine);
+			scrollbarThumb.style.height = `${thumbHeight}px`;
+			scrollbarThumb.style.transform = `translateY(${thumbTop}px)`;
+			scrollbarTrack.dataset.scrollable = "true";
+		};
+		const scheduleScrollbarUpdate = () => {
+			if (!scrollbarTrack || scrollbarFrame !== null) return;
+			scrollbarFrame = requestAnimationFrame(updateScrollbar);
+		};
+		const scrollPositionChange = scrollbarTrack ? term.onScroll(scheduleScrollbarUpdate) : null;
+		const scrollbarResize = scrollbarTrack ? term.onResize(scheduleScrollbarUpdate) : null;
+		let scrollbarDrag: { pointerId: number; startLine: number; startY: number } | null = null;
+		const scrollToPointer = (clientY: number) => {
+			if (!scrollbarTrack || !scrollbarThumb) return;
+			const maxScrollLine = term.buffer.active.type === "normal" ? term.buffer.active.baseY : 0;
+			const trackRect = scrollbarTrack.getBoundingClientRect();
+			const travel = trackRect.height - scrollbarThumb.getBoundingClientRect().height;
+			if (maxScrollLine <= 0 || travel <= 0) return;
+			const thumbTop = Math.min(travel, Math.max(0, clientY - trackRect.top - scrollbarThumb.offsetHeight / 2));
+			term.scrollToLine(Math.round((thumbTop / travel) * maxScrollLine));
+		};
+		const scrollbarPointerDown = (event: PointerEvent) => {
+			if (!scrollbarTrack || !scrollbarThumb || scrollbarTrack.dataset.scrollable !== "true") return;
+			event.preventDefault();
+			scrollbarTrack.setPointerCapture(event.pointerId);
+			if (event.target !== scrollbarThumb) scrollToPointer(event.clientY);
+			scrollbarDrag = {
+				pointerId: event.pointerId,
+				startLine: term.buffer.active.viewportY,
+				startY: event.clientY,
+			};
+		};
+		const scrollbarPointerMove = (event: PointerEvent) => {
+			if (!scrollbarDrag || scrollbarDrag.pointerId !== event.pointerId || !scrollbarTrack || !scrollbarThumb) return;
+			const maxScrollLine = term.buffer.active.type === "normal" ? term.buffer.active.baseY : 0;
+			const travel = scrollbarTrack.clientHeight - scrollbarThumb.offsetHeight;
+			if (maxScrollLine <= 0 || travel <= 0) return;
+			const lineDelta = ((event.clientY - scrollbarDrag.startY) / travel) * maxScrollLine;
+			term.scrollToLine(Math.round(scrollbarDrag.startLine + lineDelta));
+		};
+		const scrollbarPointerUp = (event: PointerEvent) => {
+			if (!scrollbarDrag || scrollbarDrag.pointerId !== event.pointerId) return;
+			scrollbarDrag = null;
+			if (scrollbarTrack?.hasPointerCapture(event.pointerId)) scrollbarTrack.releasePointerCapture(event.pointerId);
+		};
+		scrollbarTrack?.addEventListener("pointerdown", scrollbarPointerDown);
+		scrollbarTrack?.addEventListener("pointermove", scrollbarPointerMove);
+		scrollbarTrack?.addEventListener("pointerup", scrollbarPointerUp);
+		scrollbarTrack?.addEventListener("pointercancel", scrollbarPointerUp);
+		scheduleScrollbarUpdate();
 
 		let lastCopiedSelection = "";
 		const copySelection = (options?: { clipboardData?: DataTransfer | null; dedupe?: boolean }) => {
@@ -896,6 +971,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			const viewport = host.querySelector<HTMLElement>(".xterm-viewport");
 			if (!viewport) return;
 			viewport.scrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
+			scheduleScrollbarUpdate();
 		};
 
 		let cancelActivationPreparation: (() => void) | null = null;
@@ -948,8 +1024,12 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			// Forward xterm's write callback: it fires once THIS chunk has been
 			// parsed into the buffer, which is what lets the attachment reveal the
 			// pane at the replay's settled scroll position (issue #3160).
-			write: (data, done) => term.write(data, done),
-			writeln: (line) => term.writeln(line),
+			write: (data, done) =>
+				term.write(data, () => {
+					scheduleScrollbarUpdate();
+					done?.();
+				}),
+			writeln: (line) => term.writeln(line, scheduleScrollbarUpdate),
 			showLatestOutput,
 			prepareForActivation,
 			onUserInput: (listener) => {
@@ -976,6 +1056,13 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			fitSettledListeners.clear();
 			observer.disconnect();
 			stabilizer.dispose();
+			scrollPositionChange?.dispose();
+			scrollbarResize?.dispose();
+			if (scrollbarFrame !== null) cancelAnimationFrame(scrollbarFrame);
+			scrollbarTrack?.removeEventListener("pointerdown", scrollbarPointerDown);
+			scrollbarTrack?.removeEventListener("pointermove", scrollbarPointerMove);
+			scrollbarTrack?.removeEventListener("pointerup", scrollbarPointerUp);
+			scrollbarTrack?.removeEventListener("pointercancel", scrollbarPointerUp);
 			window.removeEventListener("resize", scheduleVisibleFit);
 			shell.removeEventListener("copy", copyInput);
 			window.removeEventListener("keydown", copyShortcut, true);
@@ -1056,6 +1143,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			>
 				<div
 					ref={hostRef}
+					className={macPlatform ? "terminal-xterm-host terminal-xterm-host--mac" : "terminal-xterm-host"}
 					style={{
 						backgroundColor: "var(--color-bg-terminal-opaque)",
 						height: "100%",
@@ -1063,6 +1151,11 @@ export function XtermTerminal(props: XtermTerminalProps) {
 						width: "100%",
 					}}
 				/>
+				{macPlatform ? (
+					<div aria-hidden="true" className="terminal-scrollbar" data-scrollable="false" ref={scrollbarTrackRef}>
+						<div className="terminal-scrollbar__thumb" ref={scrollbarThumbRef} />
+					</div>
+				) : null}
 				{copiedToast && props.isVisible !== false ? (
 					<div
 						aria-live="polite"
