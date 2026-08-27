@@ -170,30 +170,9 @@ type BrowserWebContents = Pick<
 };
 
 const BROWSER_SCROLLBAR_CSS = `
-	::-webkit-scrollbar {
-		width: 10px;
-		height: 10px;
-	}
-
-	::-webkit-scrollbar-button {
-		display: none;
-		width: 0;
-		height: 0;
-	}
-
-	::-webkit-scrollbar-track,
-	::-webkit-scrollbar-corner {
-		background: #16191d;
-	}
-
-	::-webkit-scrollbar-thumb {
-		border: 2px solid #16191d;
-		border-radius: 999px;
-		background: #4b515a;
-	}
-
-	::-webkit-scrollbar-thumb:hover {
-		background: #69717d;
+	* {
+		scrollbar-width: thin;
+		scrollbar-color: #4b515a #16191d;
 	}
 `;
 
