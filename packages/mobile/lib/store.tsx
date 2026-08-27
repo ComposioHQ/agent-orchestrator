@@ -25,6 +25,7 @@ import {
 import { isConfigured, loadConfig, type ServerConfig } from "./config";
 import { resolveActiveConfig, runtimeResolveDeps } from "./resolveConfig";
 import { shouldReRace } from "./reRace";
+import { sameServerConfig } from "./sameConfig";
 import { shouldKeepPolling } from "./connectionError";
 import { primeInstallId } from "./installId";
 import { collectPRs } from "./prView";
@@ -179,8 +180,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
 		// else without the user choosing. Always resolves to something: every
 		// failure path inside falls back to the last stored config.
 		const c = (await resolveActiveConfig(runtimeResolveDeps())) ?? (await loadConfig());
-		cfgRef.current = c;
-		setConfig(c);
+		// Keep the previous object when the endpoint has not actually changed.
+		// Resolution builds a fresh one every time, and the live conversation
+		// stream, the poll loop and the terminal mux all key on this value's
+		// identity — handing them a new object for the same endpoint tears them
+		// down and rebuilds them, which showed up as chat replies arriving only
+		// on the next poll instead of streaming in.
+		const prev = cfgRef.current;
+		const next = sameServerConfig(prev, c) ? (prev as typeof c) : c;
+		cfgRef.current = next;
+		setConfig(next);
 	}, []);
 
 	useEffect(() => {
