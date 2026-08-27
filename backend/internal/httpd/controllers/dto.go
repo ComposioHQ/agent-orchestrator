@@ -175,7 +175,10 @@ type SessionView struct {
 	PreviewRevision int64 `json:"previewRevision,omitempty"`
 	// Model is the agent model this session resolved to at spawn time. Empty
 	// means the agent's default model. Pulled from the json:"-" domain Metadata.
-	Model             string           `json:"model,omitempty"`
+	Model string `json:"model,omitempty"`
+	// LastUserMessageAt is the latest real user-authored task direction time.
+	// Lifecycle and internal automation updates do not advance it.
+	LastUserMessageAt *time.Time       `json:"lastUserMessageAt,omitempty"`
 	PRs               []SessionPRFacts `json:"prs"`
 	ActiveAgentSwitch *AgentSwitchView `json:"activeAgentSwitch,omitempty"`
 }
