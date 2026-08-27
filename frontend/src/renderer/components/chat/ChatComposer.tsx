@@ -618,10 +618,23 @@ export function ChatComposer({
 		// A concurrent replacement can render this memoized seed, remain disconnected,
 		// and commit only after another surface accepted and cleared the draft. Read the
 		// session record again at the effect/commit boundary so acknowledgement cannot
-		// turn the runtime snapshot into an ABA that resurrects accepted text.
+		// turn the runtime snapshot into an ABA that resurrects accepted text or staged
+		// attachment descriptors.
+		const committedDraft = draftScope ? readChatSessionDraft(draftScope) : undefined;
+		if (committedDraft) {
+			fileAttachments.reconcilePersistedAttachments(
+				committedDraft.composer.attachments.map((attachment) => ({
+					id: attachment.id,
+					name: attachment.name,
+					mimeType: attachment.mimeType,
+					bytes: attachment.bytes,
+					stagedPath: attachment.path,
+				})),
+			);
+		}
 		const committedSeedText =
 			draftSeed?.text ??
-			(draftScope ? readChatSessionDraft(draftScope).composer.text : draftSeedText);
+			(committedDraft ? committedDraft.composer.text : draftSeedText);
 		if (committedSeedText === undefined) {
 			restoredSeedKey.current = undefined;
 			return;
@@ -651,7 +664,13 @@ export function ChatComposer({
 					: "Draft couldn’t be saved. Keep this chat open or copy it before leaving.",
 			);
 		}
-	}, [draftScope, draftSeed, draftSeedId, draftSeedText]);
+	}, [
+		draftScope,
+		draftSeed,
+		draftSeedId,
+		draftSeedText,
+		fileAttachments.reconcilePersistedAttachments,
+	]);
 
 	useEffect(() => {
 		if (!durableDelivery || !draftScope) return;
