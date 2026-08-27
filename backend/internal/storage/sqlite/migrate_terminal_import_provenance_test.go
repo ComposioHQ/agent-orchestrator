@@ -36,7 +36,7 @@ INSERT INTO conversation_turns (
     'recovered', CURRENT_TIMESTAMP, 'conversation-1:root'
 );`)
 
-	upTo(t, db, 112)
+	upTo(t, db, 114)
 
 	var existing bool
 	if err := db.QueryRow(`

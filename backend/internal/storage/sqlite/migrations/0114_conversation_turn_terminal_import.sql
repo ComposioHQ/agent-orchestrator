@@ -1,5 +1,6 @@
 -- +goose Up
 -- +goose StatementBegin
+-- Version 0114 follows the Chat draft and checkpoint provenance migrations.
 -- A recovered outcome says only that the provider omitted portable completion
 -- metadata. Record the TUI-to-Chat source separately so ordinary Chat resume
 -- cannot be mislabeled as a Terminal import.
