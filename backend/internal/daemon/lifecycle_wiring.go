@@ -229,7 +229,7 @@ func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.
 		Logger:              log,
 		ReconcileWorkers:    startupReconcileWorkers,
 	})
-	scmProvider := newMultiSCMProvider(cfg.GitLab, log)
+	scmProvider := newMultiSCMProvider(cfg.GitLab, cfg.OneDev, log)
 	// Build the multi-tracker dispatching to both GitHub and GitLab. The
 	// multi-tracker returns a true nil ports.Tracker when no provider has
 	// usable credentials, preserving the `s.tracker == nil` guard in
