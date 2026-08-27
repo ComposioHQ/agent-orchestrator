@@ -468,7 +468,7 @@ func (s *Service) sendEditedMessage(
 			sendErr = errors.New("edited message was not dispatched")
 		}
 		if restoreConclusiveFailure {
-			if _, err := s.ActivateBranch(ctx, controller.sessionID, sourceBranchID); err != nil {
+			if _, err := s.activateBranchOwned(ctx, controller.sessionID, controller, sourceBranchID); err != nil {
 				sendErr = errors.Join(sendErr, fmt.Errorf("restore source after undispatched edit: %w", err))
 			}
 		}
@@ -480,7 +480,7 @@ func (s *Service) sendEditedMessage(
 		}
 		var refusal providerRefusal
 		if restoreConclusiveFailure && errors.As(sendErr, &refusal) && refusal.ChatRefusal() {
-			if _, err := s.ActivateBranch(ctx, controller.sessionID, sourceBranchID); err != nil {
+			if _, err := s.activateBranchOwned(ctx, controller.sessionID, controller, sourceBranchID); err != nil {
 				sendErr = errors.Join(sendErr, fmt.Errorf("restore source after refused edit: %w", err))
 			}
 		}
@@ -516,6 +516,19 @@ func (s *Service) ActivateBranch(ctx context.Context, id domain.SessionID, branc
 		return "", err
 	}
 	defer releaseOwnership()
+	return s.activateBranchOwned(ctx, id, source, branchID)
+}
+
+// activateBranchOwned resumes a branch while the caller holds the project
+// conversation lease. Edit recovery already owns that lease for the complete
+// replacement attempt, so routing through the public method would recursively
+// acquire its writer-preferring RLock and can deadlock behind a queued rebind.
+func (s *Service) activateBranchOwned(
+	ctx context.Context,
+	id domain.SessionID,
+	source *Controller,
+	branchID string,
+) (string, error) {
 	branch, err := s.store.ConversationBranch(ctx, source.conversation.ID, branchID)
 	if err != nil {
 		return "", err

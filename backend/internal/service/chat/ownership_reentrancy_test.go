@@ -250,7 +250,7 @@ func TestEditMessageNewBranchDoesNotReacquireOwnedProjectLease(t *testing.T) {
 			Text: "edited first", ClientMessageID: "owned-new-branch", Origin: domain.MessageOriginHuman,
 		})
 		return err
-	})
+	}, nil)
 }
 
 func TestEditMessageActiveBranchRetryDoesNotReacquireOwnedProjectLease(t *testing.T) {
@@ -290,7 +290,50 @@ func TestEditMessageActiveBranchRetryDoesNotReacquireOwnedProjectLease(t *testin
 			Text: "edited second", ClientMessageID: "owned-retry", Origin: domain.MessageOriginHuman,
 		})
 		return err
+	}, nil)
+}
+
+func TestEditMessageRefusedRetryRestoresBranchWithoutReacquiringOwnedProjectLease(t *testing.T) {
+	st := openStore(t)
+	ownedStore := newWriterPreferenceStore(st)
+	h, _, _ := newEditHarnessWithStore(t, st, ownedStore, domain.KindOrchestrator, false)
+	ctx := context.Background()
+	completeTurn(t, h, "first", "provider-turn-1")
+	h.awaitSnapshot(t, func(snapshot store.ConversationSnapshot) bool {
+		return len(snapshot.Messages) == 2
 	})
+	second := completeTurn(t, h, "second", "provider-turn-2")
+	h.awaitSnapshot(t, func(snapshot store.ConversationSnapshot) bool {
+		return len(snapshot.Messages) == 4
+	})
+	conversation, err := st.ConversationForSession(ctx, testSession)
+	if err != nil {
+		t.Fatalf("ConversationForSession: %v", err)
+	}
+	anchor, err := st.ConversationEditAnchor(ctx, conversation.ID, second)
+	if err != nil {
+		t.Fatalf("ConversationEditAnchor: %v", err)
+	}
+	incomplete := domain.ConversationBranch{
+		ID: "owned-incomplete-edit", ConversationID: conversation.ID, SessionID: testSession,
+		ProviderConversationID: h.ctrl.ProviderConversationID(), ParentBranchID: conversation.ActiveBranchID,
+		ReplacedTurnID: second, ForkAfterSequence: anchor.ForkAfterSequence,
+		Strategy: domain.ConversationBranchStrategyNative, CreatedAt: time.Now().UTC(),
+	}
+	if err := st.CreateAndActivateConversationBranch(
+		ctx, testSession, incomplete, h.ctrl.Generation(), incomplete.CreatedAt); err != nil {
+		t.Fatalf("CreateAndActivateConversationBranch: %v", err)
+	}
+	h.conv.mu.Lock()
+	h.conv.sendErr = refusedError{msg: "provider declined edit retry"}
+	h.conv.mu.Unlock()
+
+	exerciseEditAgainstWaitingRebind(t, st, ownedStore, func() error {
+		_, err := h.svc.EditMessage(ctx, testSession, second, ports.ChatUserMessage{
+			Text: "edited second", ClientMessageID: "owned-refusal-retry", Origin: domain.MessageOriginHuman,
+		})
+		return err
+	}, chatsvc.ErrProviderRefused)
 }
 
 func exerciseEditAgainstWaitingRebind(
@@ -298,6 +341,7 @@ func exerciseEditAgainstWaitingRebind(
 	st *sqlite.Store,
 	ownedStore *writerPreferenceStore,
 	edit func() error,
+	wantErr error,
 ) {
 	t.Helper()
 	ctx := context.Background()
@@ -331,18 +375,15 @@ func exerciseEditAgainstWaitingRebind(
 	select {
 	case <-ownedStore.lateReaderAttempt:
 		closeGate(ownedStore.allowLateReader)
-		editErr := <-editDone
-		rebindErr := <-rebindDone
-		if editErr != nil {
-			t.Fatalf("unwind EditMessage: %v", editErr)
-		}
-		if rebindErr != nil {
-			t.Fatalf("unwind rebind: %v", rebindErr)
-		}
+		<-editDone
+		<-rebindDone
 		t.Fatal("EditMessage recursively acquired project ownership behind a waiting rebind")
 	case editErr := <-editDone:
-		if editErr != nil {
+		if wantErr == nil && editErr != nil {
 			t.Fatalf("EditMessage: %v", editErr)
+		}
+		if wantErr != nil && !errors.Is(editErr, wantErr) {
+			t.Fatalf("EditMessage error = %v, want %v", editErr, wantErr)
 		}
 	}
 	if err := <-rebindDone; err != nil {
