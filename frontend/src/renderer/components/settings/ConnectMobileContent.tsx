@@ -69,6 +69,33 @@ export function qrValueFor(input: {
 	return pairingPayload(input.host, input.port ?? 3011, input.password, input.secure);
 }
 
+/**
+ * Whether the pairing QR is safe to show.
+ *
+ * The connector takes roughly thirty seconds after the listener comes up
+ * before its hostname resolves. A code scanned inside that window carries no
+ * tunnel endpoint, so the pairing works on this network and fails everywhere
+ * else — with nothing on either side to indicate why. Holding the code back is
+ * the same discipline the daemon already applies to advertising the endpoint.
+ *
+ * A tunnel that is not running at all is not worth waiting for: LAN-only is a
+ * legitimate setup, and blocking pairing forever would be worse than the wait.
+ *
+ * A daemon that does not report endpoints at all predates the endpoint race.
+ * It has no tunnel to wait for, and its QR still works, so it is shown — the
+ * absence of the field is not the same as an empty list.
+ */
+export function qrIsReady(status: {
+	enabled: boolean;
+	endpoints?: readonly PairingEndpoint[];
+	tunnel?: { running: boolean; ready: boolean; [k: string]: unknown };
+}): boolean {
+	if (!status.enabled) return false;
+	if (status.endpoints && status.endpoints.length === 0) return false;
+	if (status.tunnel?.running && !status.tunnel.ready) return false;
+	return true;
+}
+
 /** The app's registered scheme (app.json `expo.scheme`), not a universal link:
  * it works today, with no association files to host and no store listing
  * required. Universal links can be added later without changing the payload. */
@@ -289,7 +316,12 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 	}
 	if (!status) return null;
 
-	const showRealQR = enabled && activeHost && !secureBlocked;
+	const tunnelStarting = Boolean(status?.tunnel?.running) && !status?.tunnel?.ready;
+	const showRealQR =
+		enabled &&
+		activeHost &&
+		!secureBlocked &&
+		qrIsReady({ enabled, endpoints: status?.endpoints, tunnel: status?.tunnel });
 	// v2 when the daemon advertises endpoints, v1 otherwise. Computed once so
 	// the rendered QR and its data attribute cannot drift apart.
 	const qrValue = showRealQR
@@ -478,7 +510,16 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 				    the content's right edge so bottom/right spacing match. */}
 				<div className="flex w-full shrink-0 flex-col gap-3 self-start sm:w-60">
 					<div className="relative aspect-square w-full overflow-hidden rounded-md">
-						{enabled && !activeHost ? (
+						{enabled && tunnelStarting ? (
+							// Held deliberately: a code scanned before the connector is
+							// advertisable carries no tunnel endpoint, so the pairing would
+							// work here and fail on every other network.
+							<div className="flex size-full items-center justify-center bg-(--color-bg-settings-input) p-4">
+								<p className="text-center text-caption leading-(--leading-settings-mobile-hint) text-settings-muted">
+									{t("mobile.tunnelStarting")}
+								</p>
+							</div>
+						) : enabled && !activeHost ? (
 							<div className="flex size-full items-center justify-center bg-(--color-bg-settings-input) p-4">
 								<p className="text-center text-caption leading-(--leading-settings-mobile-hint) text-settings-muted">
 									{mode === "tailscale" ? t("mobile.noTailscaleHost") : t("mobile.noPairingHost")}

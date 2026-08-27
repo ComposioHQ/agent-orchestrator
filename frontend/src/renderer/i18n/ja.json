@@ -435,6 +435,7 @@
 	"mobile.lan.step3": "下のコードをスキャンすると、アドレスとパスワードが自動入力されます。",
 	"mobile.loadFailed": "モバイルステータスの読み込みに失敗しました。",
 	"mobile.noPairingHost": "このコンピュータのネットワークアドレスが見つかりません。Wi-Fi またはイーサネットに接続するか、Tailscale を設定してください。",
+	"mobile.tunnelStarting": "リモートアクセスを準備しています… このネットワークの外からマシンに到達できるようになるとコードが表示されます。",
 	"mobile.noTailscaleHost": "このコンピュータで Tailscale が実行されていません。インストールしてサインインしてから、このウィンドウを開き直してください。",
 	"mobile.password": "パスワード",
 	"mobile.passwordCopied": "パスワードをコピーしました",

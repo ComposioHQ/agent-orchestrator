@@ -9,7 +9,13 @@
 export type PairingEndpointKind = "lan" | "tailscale" | "tunnel" | "relay";
 
 export type PairingEndpoint = {
-	kind: PairingEndpointKind;
+	/**
+	 * Typed as a plain string, not the union above, to match what the daemon's
+	 * generated schema produces. The desktop only passes the value through into
+	 * the pairing code — the phone is what validates it — so narrowing here
+	 * would reject a newer daemon advertising a kind this build predates.
+	 */
+	kind: string;
 	host: string;
 	port: number;
 	secure: boolean;

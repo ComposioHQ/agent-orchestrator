@@ -435,6 +435,7 @@
 	"mobile.lan.step3": "아래 코드를 스캔하면 주소와 비밀번호가 자동으로 입력됩니다.",
 	"mobile.loadFailed": "모바일 상태를 불러오지 못했습니다.",
 	"mobile.noPairingHost": "이 컴퓨터의 네트워크 주소를 찾을 수 없습니다. Wi-Fi 또는 이더넷에 연결하거나 Tailscale을 설정하세요.",
+	"mobile.tunnelStarting": "원격 액세스를 준비하는 중… 이 네트워크 외부에서 컴퓨터에 연결할 수 있게 되면 코드가 표시됩니다.",
 	"mobile.noTailscaleHost": "이 컴퓨터에서 Tailscale이 실행되고 있지 않습니다. 설치하고 로그인한 뒤 이 창을 다시 여세요.",
 	"mobile.password": "비밀번호",
 	"mobile.passwordCopied": "비밀번호가 복사되었습니다",

@@ -435,6 +435,7 @@
 	"mobile.lan.step3": "Scan the code below — address and password fill in automatically.",
 	"mobile.loadFailed": "Failed to load mobile status.",
 	"mobile.noPairingHost": "No network address found for this computer. Connect to Wi-Fi or Ethernet, or set up Tailscale.",
+	"mobile.tunnelStarting": "Preparing remote access… the code will appear once your machine is reachable from outside this network.",
 	"mobile.noTailscaleHost": "Tailscale isn't running on this computer. Install it and sign in, then reopen this window.",
 	"mobile.password": "Password",
 	"mobile.passwordCopied": "Password copied",

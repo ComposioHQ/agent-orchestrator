@@ -24,6 +24,7 @@ import {
 } from "./api";
 import { isConfigured, loadConfig, type ServerConfig } from "./config";
 import { resolveActiveConfig, runtimeResolveDeps } from "./resolveConfig";
+import { shouldReRace } from "./reRace";
 import { shouldKeepPolling } from "./connectionError";
 import { primeInstallId } from "./installId";
 import { collectPRs } from "./prView";
@@ -125,6 +126,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	// never on every poll tick. openRef tracks the current state; everConnectedRef
 	// tells a fresh launch apart from a later reconnect.
 	const openRef = useRef(false);
+	// Whether the most recent poll reached the daemon. Distinct from openRef,
+	// which latches on first connect and never clears.
+	const lastTickOkRef = useRef(false);
 	const everConnectedRef = useRef(false);
 	// Mirrors appActive for code that runs mid-flight, where reading the state
 	// value would see a stale closure. fetchAll consults it between requests so a
@@ -164,6 +168,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			if (v) setActiveProjectId(v);
 		});
 	}, []);
+
+	// Tracks a run of failed polls so a dead endpoint can trigger another race.
+	const failStreak = useRef(0);
+	const lastReRaceAt = useRef(0);
 
 	const reloadConfig = useCallback(async () => {
 		// Races the active machine's endpoints rather than reading one stored
@@ -205,6 +213,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			setError(null);
 			setErrorStatus(null);
 			setConnection("open");
+			lastTickOkRef.current = true;
 			if (!openRef.current) {
 				openRef.current = true;
 				const trigger = everConnectedRef.current ? "reconnect" : "launch";
@@ -226,6 +235,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			}
 			return true;
 		} catch (e) {
+			lastTickOkRef.current = false;
 			const msg = e instanceof Error ? e.message : "Failed to load";
 			setError(msg);
 			// Keep the HTTP status alongside the raw message so screens can render
@@ -263,7 +273,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
 		const tick = async () => {
 			if (stopped) return;
 			const keepGoing = await fetchAll();
-			if (!keepGoing) stopped = true;
+			if (!keepGoing) {
+				stopped = true;
+				return;
+			}
+			// fetchAll reports success by opening the connection. A run of
+			// failures means the endpoint we raced onto is gone — the usual cause
+			// is leaving the Wi-Fi network the LAN address belonged to — so race
+			// the candidates again and pick up the tunnel.
+			if (lastTickOkRef.current) {
+				failStreak.current = 0;
+				return;
+			}
+			failStreak.current += 1;
+			const now = Date.now();
+			if (shouldReRace({ consecutiveFailures: failStreak.current, lastReRaceAt: lastReRaceAt.current, now })) {
+				lastReRaceAt.current = now;
+				failStreak.current = 0;
+				void reloadConfig();
+			}
 		};
 		void tick();
 		const poll = setInterval(() => void tick(), POLL_INTERVAL_MS);
@@ -276,7 +304,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			// boundary instead of one whole request-timeout later.
 			stopped = true;
 		};
-	}, [config, fetchAll, appActive]);
+	}, [config, fetchAll, appActive, reloadConfig]);
 
 	const setActiveProject = useCallback((id: string) => {
 		setActiveProjectId(id);

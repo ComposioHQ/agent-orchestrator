@@ -435,6 +435,7 @@
 	"mobile.lan.step3": "扫描下方二维码 — 地址和密码会自动填入。",
 	"mobile.loadFailed": "无法加载手机连接状态。",
 	"mobile.noPairingHost": "未找到此电脑的网络地址。请连接 Wi-Fi 或以太网，或设置 Tailscale。",
+	"mobile.tunnelStarting": "正在准备远程访问……当你的电脑可以从此网络之外访问时，二维码将会出现。",
 	"mobile.noTailscaleHost": "此电脑未运行 Tailscale。请安装并登录后重新打开此窗口。",
 	"mobile.password": "密码",
 	"mobile.passwordCopied": "密码已复制",

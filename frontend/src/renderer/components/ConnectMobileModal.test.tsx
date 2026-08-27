@@ -38,7 +38,7 @@ vi.mock("../lib/api-client", () => ({
 	apiErrorMessage: () => "failed",
 }));
 
-import { ConnectMobileContent, pairingPayload, qrValueFor } from "./settings/ConnectMobileContent";
+import { ConnectMobileContent, pairingPayload, qrIsReady, qrValueFor } from "./settings/ConnectMobileContent";
 
 function renderMobileSettings() {
 	const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -281,4 +281,55 @@ test("falls back to the v1 payload when the daemon advertises no endpoints", () 
 	});
 
 	expect(JSON.parse(value)).toEqual({ v: 1, host: "192.168.1.42", port: 3011, password: "pw" });
+});
+
+// The trap that produced a pairing which worked on Wi-Fi and failed on
+// cellular: the QR renders as soon as the LAN listener is up, but the tunnel
+// takes ~30s more to become advertisable. A code scanned in that window
+// carries no tunnel endpoint at all, so the phone has nothing to fall back to
+// once it leaves the network.
+test("holds the QR back while remote access is still starting", () => {
+	expect(
+		qrIsReady({
+			enabled: true,
+			endpoints: [{ kind: "lan", host: "192.168.1.42", port: 3011, secure: false }],
+			tunnel: { running: true, ready: false, hostname: "", location: "", lastError: "" },
+		}),
+	).toBe(false);
+});
+
+test("shows the QR once the tunnel is advertisable", () => {
+	expect(
+		qrIsReady({
+			enabled: true,
+			endpoints: [
+				{ kind: "lan", host: "192.168.1.42", port: 3011, secure: false },
+				{ kind: "tunnel", host: "abc.trycloudflare.com", port: 443, secure: true },
+			],
+			tunnel: { running: true, ready: true, hostname: "abc.trycloudflare.com", location: "", lastError: "" },
+		}),
+	).toBe(true);
+});
+
+// Remote access unavailable entirely (no cloudflared) must not block pairing —
+// LAN-only is a legitimate setup and waiting forever would be worse.
+test("shows the QR when there is no tunnel to wait for", () => {
+	expect(
+		qrIsReady({
+			enabled: true,
+			endpoints: [{ kind: "lan", host: "192.168.1.42", port: 3011, secure: false }],
+			tunnel: { running: false, ready: false, hostname: "", location: "", lastError: "" },
+		}),
+	).toBe(true);
+});
+
+test("holds the QR back when nothing is reachable yet", () => {
+	expect(qrIsReady({ enabled: true, endpoints: [], tunnel: undefined })).toBe(false);
+});
+
+// A daemon predating the endpoint race reports no endpoints field at all. Its
+// pairing still works, so an absent field must not be read as "nothing
+// reachable" — that would block pairing against every older daemon.
+test("shows the QR for a daemon that does not report endpoints", () => {
+	expect(qrIsReady({ enabled: true, endpoints: undefined, tunnel: undefined })).toBe(true);
 });
