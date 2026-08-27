@@ -1633,7 +1633,7 @@ function SessionRow({
 						autoFocus
 						className={cn(
 							"h-full min-w-0 flex-1 appearance-none border-0 bg-transparent! p-0 text-sm text-foreground outline-none ring-0 focus:outline-none focus:ring-0",
-							session.lastUserMessageAt && "pr-[34px]",
+							session.lastUserMessageAt && "pr-[36px]",
 						)}
 						data-session-inline-editor=""
 						maxLength={MAX_DISPLAY_NAME_LEN}
@@ -1694,9 +1694,9 @@ function SessionRow({
 							aria-label={t("shell.openSession", { title: session.title })}
 							className={cn(
 								"flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-lg py-0 pl-1.5 text-left text-sm outline-hidden focus-visible:ring-2 focus-visible:ring-sidebar-ring",
-								session.lastUserMessageAt ? "pr-[34px]" : "pr-2.5",
+								session.lastUserMessageAt ? "pr-[36px]" : "pr-2.5",
 								!reorder?.isDragging &&
-									"group-hover/session-row:pr-[52px] group-focus-within/session-row:pr-[52px]",
+									"group-hover/session-row:pr-[50px] group-focus-within/session-row:pr-[50px]",
 								reorder && "cursor-grab active:cursor-grabbing",
 								reorder?.isDragging && "!cursor-grabbing",
 							)}
@@ -1773,7 +1773,7 @@ const SessionMessageAge = memo(function SessionMessageAge({ session }: { session
 
 	return (
 		<time
-			className="absolute inset-y-0 right-0 flex min-w-0 shrink-0 items-center whitespace-nowrap font-mono text-micro text-passive opacity-100 transition-opacity duration-100 ease-out group-hover/session-row:opacity-0 group-focus-within/session-row:opacity-0"
+			className="absolute inset-y-0 right-1.5 flex min-w-0 shrink-0 items-center whitespace-nowrap font-mono text-micro text-passive opacity-100 transition-opacity duration-100 ease-out group-hover/session-row:opacity-0 group-focus-within/session-row:opacity-0"
 			data-session-message-age=""
 			dateTime={session.lastUserMessageAt}
 			title={t("shell.lastMessageAt", { time: formatTimeCompact(session.lastUserMessageAt) })}
@@ -1797,13 +1797,13 @@ const SessionActions = memo(function SessionActions({
 
 	return (
 		<div
-			className="pointer-events-none absolute inset-y-0 right-1 z-chrome"
+			className="pointer-events-none absolute inset-y-0 right-0 z-chrome"
 			data-session-actions=""
 			onPointerDown={(event) => event.stopPropagation()}
 		>
 			<div
 				className={cn(
-					"absolute inset-y-0 right-0 flex items-center gap-px opacity-0 transition-opacity duration-100 ease-out",
+					"absolute inset-y-0 right-0.5 flex items-center gap-px opacity-0 transition-opacity duration-100 ease-out",
 					!isDragging &&
 						"group-hover/session-row:pointer-events-auto group-hover/session-row:opacity-100 group-focus-within/session-row:pointer-events-auto group-focus-within/session-row:opacity-100",
 				)}

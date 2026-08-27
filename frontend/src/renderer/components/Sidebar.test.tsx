@@ -575,16 +575,16 @@ describe("Sidebar", () => {
 		const actionButtons = screen.getByLabelText("Pin session").parentElement;
 		const time = actions?.querySelector("time");
 
-		expect(openSession).toHaveClass("pr-[34px]");
+		expect(openSession).toHaveClass("pr-[36px]");
 		expect(openSession).toHaveClass(
-			"group-hover/session-row:pr-[52px]",
-			"group-focus-within/session-row:pr-[52px]",
+			"group-hover/session-row:pr-[50px]",
+			"group-focus-within/session-row:pr-[50px]",
 		);
 		expect(label).toHaveClass("min-w-0", "flex-1", "truncate");
 		expect(actions).toHaveAttribute("data-session-actions");
 		expect(actionButtons).toHaveClass(
 			"absolute",
-			"right-0",
+			"right-0.5",
 			"opacity-0",
 			"group-hover/session-row:pointer-events-auto",
 			"group-hover/session-row:opacity-100",
@@ -594,7 +594,7 @@ describe("Sidebar", () => {
 		expect(time).toHaveAttribute("datetime", lastUserMessageAt);
 		expect(time).toHaveClass(
 			"absolute",
-			"right-0",
+			"right-1.5",
 			"opacity-100",
 			"group-hover/session-row:opacity-0",
 			"group-focus-within/session-row:opacity-0",
