@@ -1390,8 +1390,8 @@ textarea,
 
 /* xterm 5's native scrollbar obeys macOS's system auto-hide preference even
    when its WebKit pseudo-elements are styled. Mirror normal-buffer geometry in
-   an app-owned thumb so it is always visible, while alternate-screen TUIs (and
-   their tmux copy-mode chrome) have no thumb at all. */
+   an app-owned overlay that fades after scrolling, while alternate-screen TUIs
+   (and their tmux copy-mode chrome) have no thumb at all. */
 .terminal-scrollbar {
 	position: absolute;
 	top: 0;
@@ -1405,8 +1405,13 @@ textarea,
 }
 
 .terminal-scrollbar[data-scrollable="true"] {
-	opacity: 1;
 	pointer-events: auto;
+}
+
+.terminal-scrollbar[data-scrollable="true"][data-active="true"],
+.terminal-scrollbar[data-scrollable="true"]:hover,
+.terminal-scrollbar[data-scrollable="true"]:active {
+	opacity: 1;
 }
 
 .terminal-scrollbar__thumb {

@@ -24,6 +24,7 @@ const state = vi.hoisted(() => ({
 		dataListeners: Set<(data: string) => void>;
 		keyListeners: Set<(event: { key: string }) => void>;
 		selectionListeners: Set<() => void>;
+		scrollListeners: Set<() => void>;
 		_core: {
 			element: { classList: { add: ReturnType<typeof vi.fn>; remove: ReturnType<typeof vi.fn> } };
 			viewport: { scrollBarWidth: number };
@@ -55,6 +56,7 @@ vi.mock("@xterm/xterm", () => ({
 		dataListeners = new Set<(data: string) => void>();
 		keyListeners = new Set<(event: { key: string }) => void>();
 		selectionListeners = new Set<() => void>();
+		scrollListeners = new Set<() => void>();
 		_core = {
 			element: { classList: { add: vi.fn(), remove: vi.fn() } },
 			viewport: { scrollBarWidth: 15 },
@@ -86,8 +88,9 @@ vi.mock("@xterm/xterm", () => ({
 		onRender() {
 			return { dispose: () => undefined };
 		}
-		onScroll() {
-			return { dispose: () => undefined };
+		onScroll(listener: () => void) {
+			this.scrollListeners.add(listener);
+			return { dispose: () => this.scrollListeners.delete(listener) };
 		}
 		onKey(listener: (event: { key: string }) => void) {
 			this.keyListeners.add(listener);
@@ -323,6 +326,24 @@ describe("XtermTerminal", () => {
 		expect(state.lastTerminal!._core.viewport.scrollBarWidth).toBe(7);
 		expect(container.querySelector(".terminal-xterm-host--mac")).not.toBeNull();
 		expect(container.querySelector(".terminal-scrollbar")).not.toBeNull();
+	});
+
+	it("fades the macOS scrollbar after scrolling goes idle", () => {
+		setNavigatorPlatform("MacIntel");
+		const { container } = render(<XtermTerminal theme="dark" />);
+		const scrollbar = container.querySelector<HTMLElement>(".terminal-scrollbar")!;
+		scrollbar.dataset.scrollable = "true";
+		vi.useFakeTimers();
+
+		act(() => state.lastTerminal!.scrollListeners.forEach((listener) => listener()));
+		expect(scrollbar.dataset.active).toBe("true");
+
+		act(() => vi.advanceTimersByTime(699));
+		expect(scrollbar.dataset.active).toBe("true");
+		act(() => vi.advanceTimersByTime(1));
+		expect(scrollbar.dataset.active).toBe("false");
+
+		vi.useRealTimers();
 	});
 
 	it("copies selected terminal text on the terminal copy shortcut", () => {
