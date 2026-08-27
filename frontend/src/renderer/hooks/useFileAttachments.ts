@@ -1084,10 +1084,10 @@ export function useFileAttachments(options: FileAttachmentOptions = {}) {
 		const shared = initialKey
 			? sharedAttachmentEntries.get(initialKey)?.attachments
 			: undefined;
-		const next = shared ?? persisted;
+		const next = restoreInitial(shared ?? persisted);
 		attachmentsRef.current = next;
 		setAttachments(next);
-	}, [initialKey]);
+	}, [initialKey, restoreInitial]);
 
 	const toPayload = useCallback(
 		(): FileAttachmentPayload[] => payloadsFor(attachments),

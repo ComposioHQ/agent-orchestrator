@@ -609,7 +609,7 @@ describe("send keys", () => {
 		await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
 		expect(onSend.mock.calls[0]?.[0]).toContain(".ao/attachments/accepted-once.png");
 		expect(onSend.mock.calls[0]?.[1]).toEqual([
-			{ mimeType: "image/png", data: expect.any(String) },
+			{ mimeType: "image/png", data: expect.any(String), name: "accepted-once.png" },
 		]);
 
 		view.rerender(surfaces(true, "hidden"));
