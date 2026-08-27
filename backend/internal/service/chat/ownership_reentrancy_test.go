@@ -238,7 +238,7 @@ func (s *writerPreferenceStore) NextQueuedTurn(
 func TestEditMessageNewBranchDoesNotReacquireOwnedProjectLease(t *testing.T) {
 	st := openStore(t)
 	ownedStore := newWriterPreferenceStore(st)
-	h, _, _ := newEditHarnessWithStore(t, st, ownedStore, domain.KindOrchestrator)
+	h, _, _ := newEditHarnessWithStore(t, st, ownedStore, domain.KindOrchestrator, false)
 	ctx := context.Background()
 	first := completeTurn(t, h, "first", "provider-turn-1")
 	h.awaitSnapshot(t, func(snapshot store.ConversationSnapshot) bool {
@@ -256,7 +256,7 @@ func TestEditMessageNewBranchDoesNotReacquireOwnedProjectLease(t *testing.T) {
 func TestEditMessageActiveBranchRetryDoesNotReacquireOwnedProjectLease(t *testing.T) {
 	st := openStore(t)
 	ownedStore := newWriterPreferenceStore(st)
-	h, _, driver := newEditHarnessWithStore(t, st, ownedStore, domain.KindOrchestrator)
+	h, _, driver := newEditHarnessWithStore(t, st, ownedStore, domain.KindOrchestrator, true)
 	ctx := context.Background()
 	completeTurn(t, h, "first", "provider-turn-1")
 	h.awaitSnapshot(t, func(snapshot store.ConversationSnapshot) bool {
@@ -267,22 +267,26 @@ func TestEditMessageActiveBranchRetryDoesNotReacquireOwnedProjectLease(t *testin
 		return len(snapshot.Messages) == 4
 	})
 	driver.mu.Lock()
-	replacement := driver.resumed["thread-forked"]
+	replacement := driver.fresh
 	replacement.mu.Lock()
 	replacement.sendErr = errors.New("provider unavailable")
 	replacement.mu.Unlock()
 	driver.mu.Unlock()
-	if _, err := h.svc.EditMessage(ctx, testSession, second, ports.ChatUserMessage{
+	failed, err := h.svc.EditMessage(ctx, testSession, second, ports.ChatUserMessage{
 		Text: "edited second", ClientMessageID: "owned-retry-seed", Origin: domain.MessageOriginHuman,
-	}); err == nil {
+	})
+	if err == nil {
 		t.Fatal("seed EditMessage succeeded despite provider refusal")
+	}
+	if failed.Turn.ID == "" {
+		t.Fatalf("seed EditMessage did not preserve its durable retry turn: %+v", failed)
 	}
 	replacement.mu.Lock()
 	replacement.sendErr = nil
 	replacement.mu.Unlock()
 
 	exerciseEditAgainstWaitingRebind(t, st, ownedStore, func() error {
-		_, err := h.svc.EditMessage(ctx, testSession, second, ports.ChatUserMessage{
+		_, err := h.svc.EditMessage(ctx, testSession, failed.Turn.ID, ports.ChatUserMessage{
 			Text: "edited second", ClientMessageID: "owned-retry", Origin: domain.MessageOriginHuman,
 		})
 		return err

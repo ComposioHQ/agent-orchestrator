@@ -538,7 +538,7 @@ type editDriverState struct {
 func newEditHarness(t *testing.T, supportsPromptReplay bool) (*harness, *historyRecorder, *editDriverState) {
 	t.Helper()
 	st := openStore(t)
-	return newEditHarnessWithStore(t, st, st, domain.KindWorker)
+	return newEditHarnessWithStore(t, st, st, domain.KindWorker, supportsPromptReplay)
 }
 
 func newEditHarnessWithStore(
@@ -546,6 +546,7 @@ func newEditHarnessWithStore(
 	st *sqlite.Store,
 	serviceStore chatsvc.Store,
 	kind domain.SessionKind,
+	supportsPromptReplay bool,
 ) (*harness, *historyRecorder, *editDriverState) {
 	t.Helper()
 	source := newHistoryRecorder()
