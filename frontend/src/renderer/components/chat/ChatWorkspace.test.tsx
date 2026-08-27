@@ -112,7 +112,12 @@ beforeEach(() => {
 	terminalPaneState.props = undefined;
 	window.localStorage.clear();
 	setApiBaseUrl("http://127.0.0.1:3001");
-	useUiStore.setState({ isSidebarOpen: true, inspectorSessions: {} });
+	useUiStore.setState({
+		isSidebarOpen: true,
+		isSidebarAutoCollapsed: false,
+		sidebarAutoCollapseOverride: false,
+		inspectorSessions: {},
+	});
 });
 
 afterEach(() => setApiBaseUrl(null));
@@ -313,6 +318,16 @@ describe("ChatWorkspace timeline", () => {
 
 		expect(screen.getByTestId("session-terminal-region")).not.toHaveClass(
 			"session-topbar-titlebar-clearance-mac",
+		);
+	});
+
+	it("reserves the macOS traffic-light notch while the sidebar is compact", () => {
+		useUiStore.setState({ isSidebarAutoCollapsed: true });
+		render(<ChatWorkspace snapshot={chatFixture} />);
+
+		expect(screen.getByTestId("session-terminal-region")).toHaveClass(
+			"session-topbar-terminal-region",
+			"session-topbar-traffic-light-clearance-mac",
 		);
 	});
 
