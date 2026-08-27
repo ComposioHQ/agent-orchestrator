@@ -1447,14 +1447,21 @@ describe("Sidebar", () => {
 
 	it("renders rename as an unboxed inline label editor", async () => {
 		const user = userEvent.setup();
-		renderSidebar({ workspaces: [{ ...workspace, sessions: [session] }] });
+		const lastUserMessageAt = "2026-06-29T23:55:00Z";
+		renderSidebar({
+			workspaces: [{ ...workspace, sessions: [{ ...session, lastUserMessageAt }] }],
+		});
 
 		await user.dblClick(screen.getByText("fix login"));
 		const input = screen.getByLabelText("Rename fix login");
+		const time = input.parentElement?.querySelector("time");
 
 		expect(input).toHaveAttribute("data-session-inline-editor");
 		expect(input).toHaveClass("border-0", "bg-transparent!", "p-0", "ring-0");
 		expect(input).not.toHaveClass("rounded-xs", "border-accent", "px-1", "focus-visible:ring-1");
+		expect(input.parentElement).toHaveClass("pr-1");
+		expect(time).toHaveAttribute("data-session-message-age", "");
+		expect(time).toHaveAttribute("datetime", lastUserMessageAt);
 	});
 
 	it("offers F2 as a keyboard rename path", async () => {

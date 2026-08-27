@@ -1620,7 +1620,7 @@ function SessionRow({
 	if (isEditing) {
 		return (
 			<SidebarMenuSubItem className={cn(indented && "pl-0.5")}>
-				<div className="relative flex h-8 w-full items-center gap-1.5 rounded-lg py-0 pl-1.5 pr-2.5">
+				<div className="relative flex h-8 w-full items-center gap-1.5 rounded-lg py-0 pl-1.5 pr-1">
 					<SessionStatusDot session={session} />
 					<input
 						aria-label={t("shell.renameSession", { title: session.title })}
@@ -1643,6 +1643,7 @@ function SessionRow({
 						}}
 						value={draft}
 					/>
+					<SessionMessageAge session={session} />
 				</div>
 			</SidebarMenuSubItem>
 		);
@@ -1759,6 +1760,22 @@ function SessionRow({
 	);
 }
 
+const SessionMessageAge = memo(function SessionMessageAge({ session }: { session: WorkspaceSession }) {
+	const { t } = useTranslation();
+	if (!session.lastUserMessageAt) return null;
+
+	return (
+		<time
+			className="min-w-0 shrink-0 whitespace-nowrap font-mono text-micro text-passive"
+			data-session-message-age=""
+			dateTime={session.lastUserMessageAt}
+			title={t("shell.lastMessageAt", { time: formatTimeCompact(session.lastUserMessageAt) })}
+		>
+			{formatTimeTerse(session.lastUserMessageAt)}
+		</time>
+	);
+});
+
 const SessionActions = memo(function SessionActions({
 	session,
 	isDragging,
@@ -1809,15 +1826,7 @@ const SessionActions = memo(function SessionActions({
 					<Trash2 aria-hidden="true" />
 				</button>
 			</div>
-			{session.lastUserMessageAt ? (
-				<time
-					className="min-w-0 shrink-0 whitespace-nowrap font-mono text-micro text-passive"
-					dateTime={session.lastUserMessageAt}
-					title={t("shell.lastMessageAt", { time: formatTimeCompact(session.lastUserMessageAt) })}
-				>
-					{formatTimeTerse(session.lastUserMessageAt)}
-				</time>
-			) : null}
+			<SessionMessageAge session={session} />
 		</div>
 	);
 });
