@@ -84,12 +84,14 @@ vi.mock("./ChatWorkspace", async () => {
 	return {
 		ChatWorkspace: ({
 			agentInputDisabled,
+			newWorkDisabled,
 			onLinkOpen,
 			snapshot,
 			switchAgentControl,
 			shellTarget,
 		}: {
 			agentInputDisabled?: boolean;
+			newWorkDisabled?: boolean;
 			onLinkOpen?: (url: string) => void;
 			snapshot: { sessionId?: string };
 			switchAgentControl?: ReactNode;
@@ -101,6 +103,10 @@ vi.mock("./ChatWorkspace", async () => {
 					<div
 						data-testid="chat-agent-input"
 						data-disabled={agentInputDisabled ? "true" : "false"}
+					/>
+					<div
+						data-testid="chat-new-work"
+						data-disabled={newWorkDisabled ? "true" : "false"}
 					/>
 					{snapshot.sessionId ? <div>Mounted {mountedSessionId}</div> : null}
 					{snapshot.sessionId ? <div>Rendered {snapshot.sessionId}</div> : null}
@@ -116,11 +122,17 @@ vi.mock("./ChatWorkspace", async () => {
 });
 
 vi.mock("../TerminalSwitchAgentButton", () => ({
-	TerminalSwitchAgentButton: ({ presentation }: { presentation?: { outcome: string } }) => (
+	TerminalSwitchAgentButton: ({
+		disabled,
+		presentation,
+	}: {
+		disabled?: boolean;
+		presentation?: { outcome: string };
+	}) => (
 		<button
 			aria-label="Switch agent"
 			data-outcome={presentation?.outcome}
-			disabled={presentation?.outcome === "in_progress"}
+			disabled={disabled || presentation?.outcome === "in_progress"}
 			type="button"
 		/>
 	),
@@ -389,6 +401,21 @@ describe("SessionChatSurface link routing", () => {
 		);
 
 		expect(screen.getByRole("button", { name: "Switch agent" })).toBeInTheDocument();
+	});
+
+	it("fences new work and agent switching without applying the decision-blocking agent lock", () => {
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+		});
+		render(
+			<Wrapper client={queryClient}>
+				<SessionChatSurface session={session} newWorkDisabled />
+			</Wrapper>,
+		);
+
+		expect(screen.getByTestId("chat-agent-input")).toHaveAttribute("data-disabled", "false");
+		expect(screen.getByTestId("chat-new-work")).toHaveAttribute("data-disabled", "true");
+		expect(screen.getByRole("button", { name: "Switch agent" })).toBeDisabled();
 	});
 
 	it.each([

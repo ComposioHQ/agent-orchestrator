@@ -192,7 +192,7 @@ export function useSessionInterfaceTransition(sessionId: string | undefined) {
 			return data;
 		},
 		onSuccess: (_data, variables) => {
-			void queryClient.invalidateQueries({
+			return queryClient.invalidateQueries({
 				queryKey: sessionInterfaceTransitionQueryKey(variables.targetSessionId),
 			});
 		},

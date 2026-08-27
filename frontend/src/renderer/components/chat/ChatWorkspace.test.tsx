@@ -317,6 +317,38 @@ describe("ChatWorkspace timeline", () => {
 		expect(screen.getByTestId("chat-conversation-panel")).toHaveAttribute("inert");
 	});
 
+	it("fences new work during a drain while keeping the current turn's approval interactive", async () => {
+		const user = userEvent.setup();
+		const onDecide = vi.fn();
+		const view = render(<ChatWorkspace snapshot={idleSnapshot()} newWorkDisabled />);
+
+		expect(screen.getByTestId("chat-conversation-panel")).not.toHaveAttribute("inert");
+		expect(screen.getByLabelText("Message the agent")).toHaveAttribute("aria-disabled", "true");
+
+		const snapshot = structuredClone(chatFixture);
+		snapshot.items.push({
+			kind: "activity",
+			id: "drain-approval",
+			sequence: 99,
+			revision: 1,
+			turnId: "turn-2",
+			activityKind: "approval",
+			status: "pending",
+			summary: "Run command",
+			requestId: "drain-approval",
+			decisions: [{ id: "allow_once", label: "Allow Once", kind: "allow_once" }],
+			detail: { command: "npm test" },
+			createdAt: "2026-08-08T00:00:00Z",
+		});
+		view.rerender(
+			<ChatWorkspace snapshot={snapshot} newWorkDisabled onDecide={onDecide} />,
+		);
+
+		const approval = screen.getByRole("group", { name: "Approval request drain-approval" });
+		await user.click(within(approval).getByRole("button", { name: /Allow once/ }));
+		expect(onDecide).toHaveBeenCalledWith("drain-approval", "allow_once");
+	});
+
 	it("uses the shared session topbar chrome for workers and orchestrators", () => {
 		const view = render(<ChatWorkspace snapshot={chatFixture} sessionRole="worker" />);
 

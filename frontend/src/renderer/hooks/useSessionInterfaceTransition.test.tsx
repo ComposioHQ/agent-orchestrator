@@ -92,6 +92,44 @@ describe("session-scoped interface transition mutations", () => {
 		});
 	});
 
+	it("keeps start pending until the accepted transition refetch is visible", async () => {
+		const invalidation = deferred<void>();
+		getMock.mockResolvedValue({
+			data: { supported: true, targetMode: "tui" },
+			error: undefined,
+		});
+		postMock.mockResolvedValue({ data: { ok: true }, error: undefined });
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+		});
+		const invalidate = vi
+			.spyOn(queryClient, "invalidateQueries")
+			.mockReturnValue(invalidation.promise);
+		const HookWrapper = ({ children }: { children: ReactNode }) => (
+			<QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+		);
+		const { result } = renderHook(() => useSessionInterfaceTransition("session-a"), {
+			wrapper: HookWrapper,
+		});
+
+		let startRequest!: Promise<unknown>;
+		act(() => {
+			startRequest = result.current.start({ targetMode: "tui", policy: "drain" });
+		});
+		await waitFor(() => {
+			expect(invalidate).toHaveBeenCalledWith({
+				queryKey: ["session-interface-transition", "session-a"],
+			});
+		});
+		expect(result.current.starting).toBe(true);
+
+		invalidation.resolve();
+		await act(async () => {
+			await startRequest;
+		});
+		await waitFor(() => expect(result.current.starting).toBe(false));
+	});
+
 	it("keeps each session busy while overlapping starts are pending", async () => {
 		const responseA = deferred<{
 			data: { ok: boolean };

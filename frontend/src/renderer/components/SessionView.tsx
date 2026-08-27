@@ -749,7 +749,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const interfaceTarget =
 		(activeInterfaceTransition ? interfaceSwitch.transition?.targetMode : interfaceSwitch.status?.targetMode) ??
 		(session?.mode === "chat" ? "tui" : "chat");
-	const chatAgentInputDisabled = Boolean(
+	const chatNewWorkDisabled = Boolean(
 		session?.mode === "chat" &&
 			((interfaceSwitch.starting && interfaceTarget === "tui") ||
 				(interfaceSwitch.transition?.targetMode === "tui" &&
@@ -1297,7 +1297,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 									workspaceTabs={centerFileTabs}
 									workspaceFileActive={Boolean(fileTabs.activePath)}
 									controllerTransitioning={chatControllerTransitioning}
-									agentInputDisabled={chatAgentInputDisabled}
+									newWorkDisabled={chatNewWorkDisabled}
 									onConversationWorkChange={handleConversationWorkChange}
 									onOpenShell={addShellTerminal}
 									openingShell={openShellTerminal.isPending}

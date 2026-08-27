@@ -70,7 +70,7 @@ export function SessionChatSurface({
 	workspaceTabs,
 	workspaceFileActive,
 	controllerTransitioning,
-	agentInputDisabled,
+	newWorkDisabled,
 	onConversationWorkChange,
 }: {
 	session: WorkspaceSession;
@@ -99,8 +99,8 @@ export function SessionChatSurface({
 	workspaceFileActive?: boolean;
 	/** The target controller is being installed by an interface handoff. */
 	controllerTransitioning?: boolean;
-	/** A durable session handoff owns the agent's Chat input. */
-	agentInputDisabled?: boolean;
+	/** An interface handoff fences new agent work while current-turn decisions remain available. */
+	newWorkDisabled?: boolean;
 	/** Reports accepted Chat work that must inform an interface-switch policy choice. */
 	onConversationWorkChange?: (state: ConversationWorkState) => void;
 }) {
@@ -167,6 +167,9 @@ export function SessionChatSurface({
 	// dialog anchors to (the workspace body, handed up by ChatWorkspace).
 	const [switchSelectorOpen, setSwitchSelectorOpen] = useState(false);
 	const [switchSelectorContainer, setSwitchSelectorContainer] = useState<HTMLDivElement | null>(null);
+	useEffect(() => {
+		if (newWorkDisabled) setSwitchSelectorOpen(false);
+	}, [newWorkDisabled]);
 	const switchMutation = useSwitchAgentState(session.id);
 	const agentSwitches = useAgentSwitches(session.id).data ?? [];
 	const activeHistorySwitch = findActiveAgentSwitch(agentSwitches);
@@ -294,7 +297,8 @@ export function SessionChatSurface({
 			<ChatWorkspace
 				key={session.id}
 				snapshot={renderSnapshot}
-				agentInputDisabled={agentInputDisabled || switchLocksChat || switchSelectorOpen}
+				agentInputDisabled={switchLocksChat || switchSelectorOpen}
+				newWorkDisabled={newWorkDisabled}
 				onLinkOpen={openLinkInBrowser}
 				sessionTitle={session.title}
 				sessionRole={session.kind}
@@ -312,8 +316,9 @@ export function SessionChatSurface({
 					<TerminalSwitchAgentButton
 						agentSwitch={selectedDurableAgentSwitch}
 						container={switchSelectorContainer}
+						disabled={newWorkDisabled}
 						onOpenChange={setSwitchSelectorOpen}
-						open={switchSelectorOpen}
+						open={switchSelectorOpen && !newWorkDisabled}
 						presentation={switchControlPresentation}
 						session={session}
 						switchError={switchMutation.error}

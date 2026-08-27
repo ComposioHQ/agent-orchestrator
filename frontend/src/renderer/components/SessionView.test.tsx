@@ -182,7 +182,7 @@ vi.mock("./chat/SessionChatSurface", () => ({
 		shellTarget,
 		onSelectShellTerminal,
 		workspaceTabs,
-		agentInputDisabled,
+		newWorkDisabled,
 		onConversationWorkChange,
 	}: {
 		onOpenShell?: () => void;
@@ -195,11 +195,11 @@ vi.mock("./chat/SessionChatSurface", () => ({
 		shellTarget?: { kind: "shell"; handleId: string };
 		onSelectShellTerminal?: (handleId: string) => void;
 		workspaceTabs?: ReactNode;
-		agentInputDisabled?: boolean;
+		newWorkDisabled?: boolean;
 		onConversationWorkChange?: (state: typeof chatSurfaceWorkState) => void;
 	}) => (
 		<div
-			data-agent-input-disabled={agentInputDisabled ? "true" : "false"}
+			data-new-work-disabled={newWorkDisabled ? "true" : "false"}
 			data-testid="chat-surface"
 		>
 			chat surface
@@ -517,12 +517,12 @@ describe("SessionView", () => {
 		browserViewState.url = "";
 		browserViewState.agentBrowserActive = false;
 		shellTerminalsState.data = [];
-	navigateMock.mockReset();
-	openShellTerminalMock.mockReset();
-	closeShellTerminalMock.mockReset();
-	interfaceTransitionMock.start.mockReset();
+		navigateMock.mockReset();
+		openShellTerminalMock.mockReset();
+		closeShellTerminalMock.mockReset();
+		interfaceTransitionMock.start.mockReset();
 		interfaceTransitionMock.resetStartError.mockReset();
-interfaceTransitionMock.cancel.mockReset();
+		interfaceTransitionMock.cancel.mockReset();
 		interfaceTransitionMock.acknowledgeNotice.mockReset();
 		interfaceTransitionState.starting = false;
 		interfaceTransitionState.settling = false;
@@ -884,7 +884,7 @@ interfaceTransitionMock.cancel.mockReset();
 
 		const view = render(<SessionView sessionId="sess-1" />);
 		const chatSurface = () => screen.getByTestId("chat-surface");
-		expect(chatSurface()).toHaveAttribute("data-agent-input-disabled", "false");
+		expect(chatSurface()).toHaveAttribute("data-new-work-disabled", "false");
 
 		fireEvent.click(screen.getByRole("button", { name: "Switch to terminal UI" }));
 		fireEvent.click(screen.getByRole("button", { name: /^Finish work, then switch/ }));
@@ -892,7 +892,7 @@ interfaceTransitionMock.cancel.mockReset();
 
 		interfaceTransitionState.starting = true;
 		view.rerender(<SessionView sessionId="sess-1" />);
-		expect(chatSurface()).toHaveAttribute("data-agent-input-disabled", "true");
+		expect(chatSurface()).toHaveAttribute("data-new-work-disabled", "true");
 
 		interfaceTransitionState.starting = false;
 		interfaceTransitionState.status = {
@@ -910,16 +910,16 @@ interfaceTransitionMock.cancel.mockReset();
 			},
 		};
 		view.rerender(<SessionView sessionId="sess-1" />);
-		expect(chatSurface()).toHaveAttribute("data-agent-input-disabled", "true");
+		expect(chatSurface()).toHaveAttribute("data-new-work-disabled", "true");
 
 		interfaceTransitionState.status.transition!.phase = "completed";
 		interfaceTransitionState.settling = true;
 		view.rerender(<SessionView sessionId="sess-1" />);
-		expect(chatSurface()).toHaveAttribute("data-agent-input-disabled", "true");
+		expect(chatSurface()).toHaveAttribute("data-new-work-disabled", "true");
 
 		interfaceTransitionState.settling = false;
 		view.rerender(<SessionView sessionId="sess-1" />);
-		expect(chatSurface()).toHaveAttribute("data-agent-input-disabled", "false");
+		expect(chatSurface()).toHaveAttribute("data-new-work-disabled", "false");
 	});
 
 	it("discards one session's switch consent dialog when navigating to another session", () => {
