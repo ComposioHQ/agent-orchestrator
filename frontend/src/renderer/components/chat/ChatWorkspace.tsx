@@ -130,12 +130,6 @@ type ShellTerminalTarget = Extract<TerminalTarget, { kind: "shell" }>;
 const isMac = isMacPlatform();
 const isLinux = isLinuxPlatform();
 
-type TopbarBounds = {
-	leftInset: number;
-	rightInset: number;
-	width: number;
-};
-
 type MessageEditDraft = {
 	turnId: string;
 	text: string;
@@ -431,40 +425,6 @@ export function ChatWorkspace({
 	const wheelZoomRemainderRef = useRef(0);
 	const [terminalFontSize, setTerminalFontSize] = useState(initialTerminalFontSize);
 	const [isFullscreen, setIsFullscreen] = useState(false);
-	const [topbarBounds, setTopbarBounds] = useState<TopbarBounds>({
-		leftInset: 0,
-		rightInset: 0,
-		width: 0,
-	});
-
-	useEffect(() => {
-		const surface = surfaceRef.current;
-		if (!surface) return;
-		const workspaceSurface = surface.closest<HTMLElement>(".center-panel-surface");
-		const measure = () => {
-			const surfaceRect = surface.getBoundingClientRect();
-			const workspaceRect = workspaceSurface?.getBoundingClientRect() ?? surfaceRect;
-			const next = {
-				leftInset: workspaceRect.left,
-				rightInset: Math.max(0, window.innerWidth - workspaceRect.right),
-				width: surfaceRect.width,
-			};
-			setTopbarBounds((current) =>
-				current.leftInset === next.leftInset &&
-				current.rightInset === next.rightInset &&
-				current.width === next.width
-					? current
-					: next,
-			);
-		};
-		measure();
-		if (typeof ResizeObserver === "undefined") return;
-		const observer = new ResizeObserver(measure);
-		observer.observe(surface);
-		if (workspaceSurface) observer.observe(workspaceSurface);
-		return () => observer.disconnect();
-	}, []);
-
 	useEffect(() => {
 		const handleFullscreenChange = () => {
 			setIsFullscreen(document.fullscreenElement === surfaceRef.current);
@@ -719,7 +679,6 @@ export function ChatWorkspace({
 				workspaceTabs={workspaceTabs}
 				workspaceFileActive={workspaceFileActive}
 				inline={isFullscreen}
-				topbarBounds={topbarBounds}
 			/>
 			{/* The body host anchors the agent-switch dialog and holds whichever tab is
 			    active: the reviewer pane, a shell pane, or the chat timeline. The
@@ -1065,7 +1024,6 @@ function ChatHeader({
 	workspaceTabs,
 	workspaceFileActive = false,
 	inline,
-	topbarBounds,
 }: {
 	snapshot: ConversationSnapshot;
 	reviewerTerminal?: { handleId: string; harness: string };
@@ -1089,7 +1047,6 @@ function ChatHeader({
 	workspaceFileActive?: boolean;
 	/** Fullscreen content cannot see the normal topbar portal outside its subtree. */
 	inline?: boolean;
-	topbarBounds: TopbarBounds;
 }) {
 	const label = agentLabel(snapshot.harness);
 	// The chat tab is "selected" only when neither terminal pane is the body.
@@ -1113,9 +1070,6 @@ function ChatHeader({
 						!isSidebarOpen && isLinux && "session-topbar-titlebar-clearance-linux",
 					)}
 					data-testid="session-terminal-region"
-					style={{
-						width: topbarBounds.width > 0 ? topbarBounds.width : "100%",
-					}}
 				>
 					<div
 						aria-label="Chat tabs"

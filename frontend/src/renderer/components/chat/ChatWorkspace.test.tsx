@@ -401,6 +401,7 @@ describe("ChatWorkspace timeline", () => {
 
 		const terminalRegion = screen.getByTestId("session-terminal-region");
 		expect(terminalRegion).toHaveClass("min-w-0", "flex-1");
+		expect(terminalRegion.style.width).toBe("");
 		expect(terminalRegion).toContainElement(screen.getByRole("tablist", { name: "Chat tabs" }));
 		expect(terminalRegion).not.toContainElement(
 			screen.queryByRole("button", { name: "New terminal" }),

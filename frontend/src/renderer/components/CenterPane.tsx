@@ -142,7 +142,6 @@ export function CenterPane({
 	const lastWheelZoomAtRef = useRef(0);
 	const [fontSize, setFontSize] = useState(initialTerminalFontSize);
 	const [isFullscreen, setIsFullscreen] = useState(false);
-	const [terminalBounds, setTerminalBounds] = useState({ leftInset: 0, rightInset: 0, width: 0 });
 	const [switchSelectorOpen, setSwitchSelectorOpen] = useState(false);
 	const [switchSelectorContainer, setSwitchSelectorContainer] = useState<HTMLDivElement | null>(null);
 	const [terminalOrder, setTerminalOrder] = useState<TerminalOrder | null>(null);
@@ -454,33 +453,6 @@ export function CenterPane({
 		scrollRegion.scrollTo({ behavior: "smooth", left: Math.max(0, nextScrollLeft) });
 	}, [orderedAuxiliaryTerminals, target]);
 
-	useEffect(() => {
-		const pane = paneRef.current;
-		if (!pane) return;
-		const workspaceSurface = pane.closest<HTMLElement>(".center-panel-surface");
-		const measure = () => {
-			const paneRect = pane.getBoundingClientRect();
-			// leftInset/rightInset are kept for the terminal region width calculation
-			// but no longer used for viewport-alignment padding (topbar is inside the surface).
-			const workspaceRect = workspaceSurface?.getBoundingClientRect() ?? paneRect;
-			const next = {
-				leftInset: workspaceRect.left,
-				rightInset: Math.max(0, window.innerWidth - workspaceRect.right),
-				width: paneRect.width,
-			};
-			setTerminalBounds((current) =>
-				current.leftInset === next.leftInset && current.rightInset === next.rightInset && current.width === next.width
-					? current
-					: next,
-			);
-		};
-		measure();
-		const observer = new ResizeObserver(measure);
-		observer.observe(pane);
-		if (workspaceSurface) observer.observe(workspaceSurface);
-		return () => observer.disconnect();
-	}, []);
-
 	const updateFontSize = useCallback((delta: number) => {
 		setFontSize((current) => {
 			const next = clampTerminalFontSize(current + delta);
@@ -537,9 +509,6 @@ export function CenterPane({
 						!isFullscreen && !isSidebarOpen && isLinux && "session-topbar-titlebar-clearance-linux",
 					)}
 					data-testid="session-terminal-region"
-					style={{
-						width: terminalBounds.width > 0 ? terminalBounds.width : "100%",
-					}}
 				>
 					<div
 							aria-label={t("terminal.tabsAria")}

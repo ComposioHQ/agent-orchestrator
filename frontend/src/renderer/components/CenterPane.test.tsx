@@ -793,6 +793,7 @@ describe("CenterPane toolbar session label", () => {
 		const workspaceTopbar = screen.getByTestId("session-workspace-topbar");
 		expect(workspaceTopbar).toHaveClass("session-topbar-surface");
 		expect(terminalRegion).toHaveClass("min-w-0", "flex-1");
+		expect(terminalRegion.style.width).toBe("");
 		expect(workspaceTopbar).toContainElement(terminalRegion);
 		expect(terminalRegion).toContainElement(screen.getByRole("tablist", { name: "Open terminals" }));
 		expect(terminalRegion).not.toContainElement(screen.queryByRole("button", { name: "New terminal" }));
