@@ -287,7 +287,7 @@ func (q *Queries) InsertReviewRun(ctx context.Context, arg InsertReviewRunParams
 }
 
 const listCurrentHeadReviewRunsBySession = `-- name: ListCurrentHeadReviewRunsBySession :many
-SELECT review_run.pr_url, review_run.status, review_run.verdict
+SELECT review_run.harness, review_run.pr_url, review_run.status, review_run.verdict
 FROM review_run
 JOIN pr ON pr.url = review_run.pr_url
 WHERE review_run.session_id = ?
@@ -296,6 +296,7 @@ WHERE review_run.session_id = ?
 `
 
 type ListCurrentHeadReviewRunsBySessionRow struct {
+	Harness domain.ReviewerHarness
 	PRURL   string
 	Status  domain.ReviewRunStatus
 	Verdict domain.ReviewVerdict
@@ -313,7 +314,77 @@ func (q *Queries) ListCurrentHeadReviewRunsBySession(ctx context.Context, sessio
 	items := []ListCurrentHeadReviewRunsBySessionRow{}
 	for rows.Next() {
 		var i ListCurrentHeadReviewRunsBySessionRow
-		if err := rows.Scan(&i.PRURL, &i.Status, &i.Verdict); err != nil {
+		if err := rows.Scan(
+			&i.Harness,
+			&i.PRURL,
+			&i.Status,
+			&i.Verdict,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listCurrentHeadReviewRunsBySessions = `-- name: ListCurrentHeadReviewRunsBySessions :many
+WITH wanted_session AS (
+    SELECT CAST(j.value AS TEXT) AS session_id
+    FROM json_each(?) AS j
+)
+SELECT review_run.session_id, review_run.harness, review_run.pr_url, review_run.status, review_run.verdict
+FROM review_run
+JOIN pr ON pr.url = review_run.pr_url
+JOIN wanted_session ON wanted_session.session_id = review_run.session_id
+WHERE pr.head_sha != ''
+  AND review_run.target_sha = pr.head_sha
+  AND NOT EXISTS (
+      SELECT 1
+      FROM review_run newer
+      WHERE newer.session_id = review_run.session_id
+        AND newer.pr_url = review_run.pr_url
+        AND newer.target_sha = review_run.target_sha
+        AND newer.harness = review_run.harness
+        AND (
+            newer.created_at > review_run.created_at
+            OR (newer.created_at = review_run.created_at AND newer.id > review_run.id)
+        )
+  )
+`
+
+type ListCurrentHeadReviewRunsBySessionsRow struct {
+	SessionID domain.SessionID
+	Harness   domain.ReviewerHarness
+	PRURL     string
+	Status    domain.ReviewRunStatus
+	Verdict   domain.ReviewVerdict
+}
+
+// Batch form of ListCurrentHeadReviewRunsBySession for session-list reads.
+// The latest same-head pass per (session, pr, harness) wins, so the board does
+// not read a superseded retry beside the run that replaced it.
+func (q *Queries) ListCurrentHeadReviewRunsBySessions(ctx context.Context, jsonEach interface{}) ([]ListCurrentHeadReviewRunsBySessionsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listCurrentHeadReviewRunsBySessions, jsonEach)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListCurrentHeadReviewRunsBySessionsRow{}
+	for rows.Next() {
+		var i ListCurrentHeadReviewRunsBySessionsRow
+		if err := rows.Scan(
+			&i.SessionID,
+			&i.Harness,
+			&i.PRURL,
+			&i.Status,
+			&i.Verdict,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

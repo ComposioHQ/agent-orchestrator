@@ -80,9 +80,36 @@ FROM review_run WHERE session_id = ? AND batch_id = ? ORDER BY created_at ASC, i
 -- AO review passes recorded against each PR's CURRENT head commit. Passes for
 -- an earlier head are excluded here so a stale run can never decide the
 -- session's Kanban column.
-SELECT review_run.pr_url, review_run.status, review_run.verdict
+SELECT review_run.harness, review_run.pr_url, review_run.status, review_run.verdict
 FROM review_run
 JOIN pr ON pr.url = review_run.pr_url
 WHERE review_run.session_id = ?
   AND pr.head_sha != ''
   AND review_run.target_sha = pr.head_sha;
+
+-- name: ListCurrentHeadReviewRunsBySessions :many
+-- Batch form of ListCurrentHeadReviewRunsBySession for session-list reads.
+-- The latest same-head pass per (session, pr, harness) wins, so the board does
+-- not read a superseded retry beside the run that replaced it.
+WITH wanted_session AS (
+    SELECT CAST(j.value AS TEXT) AS session_id
+    FROM json_each(?) AS j
+)
+SELECT review_run.session_id, review_run.harness, review_run.pr_url, review_run.status, review_run.verdict
+FROM review_run
+JOIN pr ON pr.url = review_run.pr_url
+JOIN wanted_session ON wanted_session.session_id = review_run.session_id
+WHERE pr.head_sha != ''
+  AND review_run.target_sha = pr.head_sha
+  AND NOT EXISTS (
+      SELECT 1
+      FROM review_run newer
+      WHERE newer.session_id = review_run.session_id
+        AND newer.pr_url = review_run.pr_url
+        AND newer.target_sha = review_run.target_sha
+        AND newer.harness = review_run.harness
+        AND (
+            newer.created_at > review_run.created_at
+            OR (newer.created_at = review_run.created_at AND newer.id > review_run.id)
+        )
+  );

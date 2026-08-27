@@ -109,7 +109,7 @@ func TestDeriveKanbanColumnSinglePR(t *testing.T) {
 			want: contract.KanbanValidating,
 		},
 		{
-			name:    "ao addressing human changes request is validating",
+			name:    "human changes request stays person-owned even with auto-inject on",
 			session: contract.KanbanSessionFacts{AutoInjectReview: true},
 			pr: contract.KanbanPRFacts{
 				URL:            "pr/1",
@@ -117,7 +117,7 @@ func TestDeriveKanbanColumnSinglePR(t *testing.T) {
 				ExternalReview: contract.KanbanExternalReviewFacts{ChangesRequested: true},
 				ReviewRun:      contract.KanbanReviewRunFacts{Present: true},
 			},
-			want: contract.KanbanValidating,
+			want: contract.KanbanNeedsReview,
 		},
 		{
 			name:    "ao fixing ci is validating",
@@ -471,14 +471,14 @@ func TestDeriveKanbanPresentationSinglePR(t *testing.T) {
 			want:       contract.DisplayChangesRequested,
 		},
 		{
-			name:    "an external changes request with auto-inject on is being addressed",
+			name:    "an external changes request with auto-inject on stays in review while being addressed",
 			session: contract.KanbanSessionFacts{AutoInjectReview: true},
 			pr: contract.KanbanPRFacts{
 				URL:            "pr/1",
 				Review:         contract.ReviewChangesRequest,
 				ExternalReview: contract.KanbanExternalReviewFacts{ChangesRequested: true},
 			},
-			wantColumn: contract.KanbanValidating,
+			wantColumn: contract.KanbanNeedsReview,
 			want:       contract.DisplayAddressingComments,
 		},
 

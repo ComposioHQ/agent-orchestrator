@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -352,7 +353,43 @@ func (s *Store) ListCurrentHeadReviewRunsForSession(ctx context.Context, id doma
 	}
 	out := make([]domain.CurrentHeadReviewRun, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, domain.CurrentHeadReviewRun{PRURL: r.PRURL, Status: r.Status, Verdict: r.Verdict})
+		out = append(out, domain.CurrentHeadReviewRun{
+			SessionID: id,
+			Harness:   r.Harness,
+			PRURL:     r.PRURL,
+			Status:    r.Status,
+			Verdict:   r.Verdict,
+		})
+	}
+	return out, nil
+}
+
+func (s *Store) ListCurrentHeadReviewRunsForSessions(ctx context.Context, ids []domain.SessionID) (map[domain.SessionID][]domain.CurrentHeadReviewRun, error) {
+	out := make(map[domain.SessionID][]domain.CurrentHeadReviewRun, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	encoded, err := json.Marshal(ids)
+	if err != nil {
+		return nil, fmt.Errorf("marshal session ids: %w", err)
+	}
+	rows, err := s.qr.ListCurrentHeadReviewRunsBySessions(ctx, string(encoded))
+	if err != nil {
+		return nil, fmt.Errorf("list current-head review runs for sessions: %w", err)
+	}
+	for _, r := range rows {
+		out[r.SessionID] = append(out[r.SessionID], domain.CurrentHeadReviewRun{
+			SessionID: r.SessionID,
+			Harness:   r.Harness,
+			PRURL:     r.PRURL,
+			Status:    r.Status,
+			Verdict:   r.Verdict,
+		})
+	}
+	for _, id := range ids {
+		if out[id] == nil {
+			out[id] = []domain.CurrentHeadReviewRun{}
+		}
 	}
 	return out, nil
 }

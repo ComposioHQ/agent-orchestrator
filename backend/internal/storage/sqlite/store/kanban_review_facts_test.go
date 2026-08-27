@@ -199,3 +199,68 @@ func TestListPRFactsForSessionKeepsHumanVerdictOverLaterAOReview(t *testing.T) {
 		t.Fatalf("AO's own approval dismissed a human changes request: %+v", facts[0])
 	}
 }
+
+func TestListCurrentHeadReviewRunsForSessionsKeepsLatestRunPerHarness(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	first, _ := s.CreateSession(ctx, sampleRecord("mer"))
+	second, _ := s.CreateSession(ctx, sampleRecord("mer"))
+	now := time.Now().UTC().Truncate(time.Second)
+
+	seedReview := func(rec domain.SessionRecord) {
+		t.Helper()
+		prURL := "pr/" + string(rec.ID)
+		reviewID := "rev-" + string(rec.ID)
+		if err := s.WriteSCMObservation(ctx, domain.PullRequest{
+			URL: prURL, SessionID: rec.ID, Number: 1, HeadSHA: "head1", UpdatedAt: now, ObservedAt: now,
+		}, nil, nil, nil, nil, ports.ReviewWritePreserve); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.UpsertReview(ctx, domain.Review{
+			ID: reviewID, SessionID: rec.ID, ProjectID: "mer", Harness: "claude-code",
+			PRURL: prURL, CreatedAt: now, UpdatedAt: now,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	seedReview(first)
+	seedReview(second)
+
+	insert := func(id string, sessionID domain.SessionID, reviewID string, harness domain.ReviewerHarness, createdAt time.Time, verdict domain.ReviewVerdict) {
+		t.Helper()
+		if err := s.InsertReviewRun(ctx, domain.ReviewRun{
+			ID: id, ReviewID: reviewID, SessionID: sessionID, Harness: harness,
+			PRURL: "pr/" + string(sessionID), TargetSHA: "head1", Status: domain.ReviewRunComplete,
+			Verdict: verdict, CreatedAt: createdAt,
+		}); err != nil {
+			t.Fatalf("insert %s: %v", id, err)
+		}
+	}
+	insert("run-old", first.ID, "rev-"+string(first.ID), "claude-code", now, domain.VerdictChangesRequested)
+	insert("run-new", first.ID, "rev-"+string(first.ID), "codex", now.Add(time.Second), domain.VerdictApproved)
+	insert("run-other", first.ID, "rev-"+string(first.ID), "claude-code", now.Add(2*time.Second), domain.VerdictApproved)
+	insert("run-second", second.ID, "rev-"+string(second.ID), "claude-code", now, domain.VerdictApproved)
+
+	got, err := s.ListCurrentHeadReviewRunsForSessions(ctx, []domain.SessionID{first.ID, second.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got[first.ID]) != 2 || len(got[second.ID]) != 1 {
+		t.Fatalf("batched runs = %+v", got)
+	}
+
+	byHarness := map[domain.ReviewerHarness]domain.ReviewVerdict{}
+	for _, run := range got[first.ID] {
+		if run.SessionID != first.ID {
+			t.Fatalf("run session = %q, want %q", run.SessionID, first.ID)
+		}
+		byHarness[run.Harness] = run.Verdict
+	}
+	if byHarness["claude-code"] != domain.VerdictApproved || byHarness["codex"] != domain.VerdictApproved {
+		t.Fatalf("first session runs = %+v, want latest per harness", got[first.ID])
+	}
+	if got[second.ID][0].Verdict != domain.VerdictApproved {
+		t.Fatalf("second session verdict = %+v, want approved", got[second.ID][0])
+	}
+}

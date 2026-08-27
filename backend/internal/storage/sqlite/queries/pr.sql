@@ -289,6 +289,89 @@ FROM pr
 WHERE pr.session_id = ?
 ORDER BY pr.updated_at DESC;
 
+-- name: ListPRFactsBySessions :many
+-- Batch form of ListPRFactsBySession for board/session-list reads. The JSON
+-- array of session ids keeps the list path bounded instead of issuing one PR
+-- query per card.
+WITH wanted_session AS (
+    SELECT CAST(j.value AS TEXT) AS session_id
+    FROM json_each(?) AS j
+),
+external_review AS (
+    -- Each human reviewer's CURRENT verdict: their most recent decisive review,
+    -- with AO's own provider reviews removed by the id AO recorded when it
+    -- posted. Raw existence would be wrong: a reviewer who requests changes and
+    -- later approves leaves both rows behind, and the superseded changes request
+    -- would outlive the approval that replaced it. Only another human review
+    -- supersedes a human verdict, so AO's reviews are excluded from both sides.
+    -- Keep this query body ASCII. A multi-byte character anywhere in it makes
+    -- sqlc 1.31 truncate the tail of the generated SQL by the extra byte count
+    -- (an em dash here silently cut `DESC` to `DE`), the same class of parser
+    -- bug documented in queries/sessions.sql and queries/changelog.sql.
+    SELECT pr_reviews.pr_url, pr_reviews.state
+    FROM pr_reviews
+    WHERE pr_reviews.is_bot = 0
+      AND pr_reviews.state IN ('approved', 'changes_requested')
+      AND NOT EXISTS (
+          SELECT 1
+          FROM review_run
+          WHERE review_run.github_review_id != ''
+            AND review_run.github_review_id = pr_reviews.review_id
+      )
+      AND NOT EXISTS (
+          SELECT 1
+          FROM pr_reviews newer
+          WHERE newer.pr_url = pr_reviews.pr_url
+            AND newer.author = pr_reviews.author
+            AND newer.is_bot = 0
+            AND newer.state IN ('approved', 'changes_requested')
+            AND (
+                newer.submitted_at > pr_reviews.submitted_at
+                OR (newer.submitted_at = pr_reviews.submitted_at AND newer.review_id > pr_reviews.review_id)
+            )
+            AND NOT EXISTS (
+                SELECT 1
+                FROM review_run
+                WHERE review_run.github_review_id != ''
+                  AND review_run.github_review_id = newer.review_id
+            )
+      )
+)
+SELECT
+    pr.session_id,
+    pr.url,
+    pr.number,
+    pr.pr_state,
+    pr.review_decision,
+    pr.ci_state,
+    pr.mergeability,
+    pr.source_branch,
+    pr.target_branch,
+    pr.head_sha,
+    pr.updated_at,
+    EXISTS (
+        SELECT 1
+        FROM pr_comment
+        WHERE pr_comment.pr_url = pr.url
+          AND pr_comment.resolved = 0
+          AND pr_comment.is_bot = 0
+    ) AS review_comments,
+    EXISTS (
+        SELECT 1
+        FROM external_review
+        WHERE external_review.pr_url = pr.url
+          AND external_review.state = 'approved'
+    ) AS external_approved,
+    EXISTS (
+        SELECT 1
+        FROM external_review
+        WHERE external_review.pr_url = pr.url
+          AND external_review.state = 'changes_requested'
+    ) AS external_changes_requested
+FROM pr
+JOIN wanted_session ON wanted_session.session_id = pr.session_id
+ORDER BY pr.session_id, pr.updated_at DESC;
+
 -- name: ClaimPRForSession :exec
 INSERT INTO pr (url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at, state_changed_at, auto_inject_ci)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?,

@@ -170,3 +170,24 @@ func TestSessionListDerivesDisplayStatus(t *testing.T) {
 		})
 	}
 }
+
+func TestSessionKanbanExternalChangesStayPersonOwned(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", AutoInjectReview: true,
+	}
+	st.pr["mer-1"] = domain.PRFacts{
+		URL: "pr1", HeadSHA: "head1", Review: domain.ReviewChangesRequest, ExternalChangesRequested: true,
+	}
+
+	got, err := (&Service{store: st}).Get(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.KanbanColumn != domain.KanbanNeedsReview {
+		t.Fatalf("kanban column = %q, want %q", got.KanbanColumn, domain.KanbanNeedsReview)
+	}
+	if got.DisplayStatus != contract.DisplayAddressingComments {
+		t.Fatalf("display status = %q, want %q", got.DisplayStatus, contract.DisplayAddressingComments)
+	}
+}

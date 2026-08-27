@@ -529,6 +529,145 @@ func (q *Queries) ListPRFactsBySession(ctx context.Context, sessionID domain.Ses
 	return items, nil
 }
 
+const listPRFactsBySessions = `-- name: ListPRFactsBySessions :many
+WITH wanted_session AS (
+    SELECT CAST(j.value AS TEXT) AS session_id
+    FROM json_each(?) AS j
+),
+external_review AS (
+    -- Each human reviewer's CURRENT verdict: their most recent decisive review,
+    -- with AO's own provider reviews removed by the id AO recorded when it
+    -- posted. Raw existence would be wrong: a reviewer who requests changes and
+    -- later approves leaves both rows behind, and the superseded changes request
+    -- would outlive the approval that replaced it. Only another human review
+    -- supersedes a human verdict, so AO's reviews are excluded from both sides.
+    -- Keep this query body ASCII. A multi-byte character anywhere in it makes
+    -- sqlc 1.31 truncate the tail of the generated SQL by the extra byte count
+    -- (an em dash here silently cut ` + "`" + `DESC` + "`" + ` to ` + "`" + `DE` + "`" + `), the same class of parser
+    -- bug documented in queries/sessions.sql and queries/changelog.sql.
+    SELECT pr_reviews.pr_url, pr_reviews.state
+    FROM pr_reviews
+    WHERE pr_reviews.is_bot = 0
+      AND pr_reviews.state IN ('approved', 'changes_requested')
+      AND NOT EXISTS (
+          SELECT 1
+          FROM review_run
+          WHERE review_run.github_review_id != ''
+            AND review_run.github_review_id = pr_reviews.review_id
+      )
+      AND NOT EXISTS (
+          SELECT 1
+          FROM pr_reviews newer
+          WHERE newer.pr_url = pr_reviews.pr_url
+            AND newer.author = pr_reviews.author
+            AND newer.is_bot = 0
+            AND newer.state IN ('approved', 'changes_requested')
+            AND (
+                newer.submitted_at > pr_reviews.submitted_at
+                OR (newer.submitted_at = pr_reviews.submitted_at AND newer.review_id > pr_reviews.review_id)
+            )
+            AND NOT EXISTS (
+                SELECT 1
+                FROM review_run
+                WHERE review_run.github_review_id != ''
+                  AND review_run.github_review_id = newer.review_id
+            )
+      )
+)
+SELECT
+    pr.session_id,
+    pr.url,
+    pr.number,
+    pr.pr_state,
+    pr.review_decision,
+    pr.ci_state,
+    pr.mergeability,
+    pr.source_branch,
+    pr.target_branch,
+    pr.head_sha,
+    pr.updated_at,
+    EXISTS (
+        SELECT 1
+        FROM pr_comment
+        WHERE pr_comment.pr_url = pr.url
+          AND pr_comment.resolved = 0
+          AND pr_comment.is_bot = 0
+    ) AS review_comments,
+    EXISTS (
+        SELECT 1
+        FROM external_review
+        WHERE external_review.pr_url = pr.url
+          AND external_review.state = 'approved'
+    ) AS external_approved,
+    EXISTS (
+        SELECT 1
+        FROM external_review
+        WHERE external_review.pr_url = pr.url
+          AND external_review.state = 'changes_requested'
+    ) AS external_changes_requested
+FROM pr
+JOIN wanted_session ON wanted_session.session_id = pr.session_id
+ORDER BY pr.session_id, pr.updated_at DESC
+`
+
+type ListPRFactsBySessionsRow struct {
+	SessionID                domain.SessionID
+	URL                      string
+	Number                   int64
+	PRState                  domain.PRState
+	ReviewDecision           domain.ReviewDecision
+	CIState                  domain.CIState
+	Mergeability             domain.Mergeability
+	SourceBranch             string
+	TargetBranch             string
+	HeadSha                  string
+	UpdatedAt                time.Time
+	ReviewComments           bool
+	ExternalApproved         bool
+	ExternalChangesRequested bool
+}
+
+// Batch form of ListPRFactsBySession for board/session-list reads. The JSON
+// array of session ids keeps the list path bounded instead of issuing one PR
+// query per card.
+func (q *Queries) ListPRFactsBySessions(ctx context.Context, jsonEach interface{}) ([]ListPRFactsBySessionsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listPRFactsBySessions, jsonEach)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListPRFactsBySessionsRow{}
+	for rows.Next() {
+		var i ListPRFactsBySessionsRow
+		if err := rows.Scan(
+			&i.SessionID,
+			&i.URL,
+			&i.Number,
+			&i.PRState,
+			&i.ReviewDecision,
+			&i.CIState,
+			&i.Mergeability,
+			&i.SourceBranch,
+			&i.TargetBranch,
+			&i.HeadSha,
+			&i.UpdatedAt,
+			&i.ReviewComments,
+			&i.ExternalApproved,
+			&i.ExternalChangesRequested,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPRsBySession = `-- name: ListPRsBySession :many
 SELECT url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at, provider, host, repo, source_branch, target_branch, head_sha, title, additions, deletions, changed_files, author, base_sha, merge_commit_sha, is_draft, is_merged, is_closed, provider_state, provider_mergeable, provider_merge_state_status, html_url, created_at_provider, updated_at_provider, merged_at_provider, closed_at_provider, metadata_hash, ci_hash, review_hash, observed_at, ci_observed_at, review_observed_at, last_nudge_signature, state_changed_at, auto_inject_ci, provider_id FROM pr
 WHERE session_id = ?

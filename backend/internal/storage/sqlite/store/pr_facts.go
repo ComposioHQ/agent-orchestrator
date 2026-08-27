@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -34,26 +35,73 @@ func (s *Store) ListPRFactsForSession(ctx context.Context, id domain.SessionID) 
 	}
 	out := make([]domain.PRFacts, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, domain.PRFacts{
-			URL:            r.URL,
-			Number:         int(r.Number),
-			Draft:          r.PRState == domain.PRStateDraft,
-			Merged:         r.PRState == domain.PRStateMerged,
-			Closed:         r.PRState == domain.PRStateClosed,
-			CI:             r.CIState,
-			Review:         r.ReviewDecision,
-			Mergeability:   r.Mergeability,
-			ReviewComments: r.ReviewComments,
-			SourceBranch:   r.SourceBranch,
-			TargetBranch:   r.TargetBranch,
-			HeadSHA:        r.HeadSha,
-			UpdatedAt:      r.UpdatedAt,
-
-			ExternalApproved:         r.ExternalApproved,
-			ExternalChangesRequested: r.ExternalChangesRequested,
-		})
+		out = append(out, prFactsFromListRow(r))
 	}
 	return out, nil
+}
+
+func (s *Store) ListPRFactsForSessions(ctx context.Context, ids []domain.SessionID) (map[domain.SessionID][]domain.PRFacts, error) {
+	out := make(map[domain.SessionID][]domain.PRFacts, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	encoded, err := json.Marshal(ids)
+	if err != nil {
+		return nil, fmt.Errorf("marshal session ids: %w", err)
+	}
+	rows, err := s.qr.ListPRFactsBySessions(ctx, string(encoded))
+	if err != nil {
+		return nil, fmt.Errorf("list pr facts for sessions: %w", err)
+	}
+	for _, r := range rows {
+		out[r.SessionID] = append(out[r.SessionID], prFactsFromBatchRow(r))
+	}
+	for _, id := range ids {
+		if out[id] == nil {
+			out[id] = []domain.PRFacts{}
+		}
+	}
+	return out, nil
+}
+
+func prFactsFromListRow(r gen.ListPRFactsBySessionRow) domain.PRFacts {
+	return domain.PRFacts{
+		URL:                      r.URL,
+		Number:                   int(r.Number),
+		Draft:                    r.PRState == domain.PRStateDraft,
+		Merged:                   r.PRState == domain.PRStateMerged,
+		Closed:                   r.PRState == domain.PRStateClosed,
+		CI:                       r.CIState,
+		Review:                   r.ReviewDecision,
+		Mergeability:             r.Mergeability,
+		ReviewComments:           r.ReviewComments,
+		SourceBranch:             r.SourceBranch,
+		TargetBranch:             r.TargetBranch,
+		HeadSHA:                  r.HeadSha,
+		UpdatedAt:                r.UpdatedAt,
+		ExternalApproved:         r.ExternalApproved,
+		ExternalChangesRequested: r.ExternalChangesRequested,
+	}
+}
+
+func prFactsFromBatchRow(r gen.ListPRFactsBySessionsRow) domain.PRFacts {
+	return domain.PRFacts{
+		URL:                      r.URL,
+		Number:                   int(r.Number),
+		Draft:                    r.PRState == domain.PRStateDraft,
+		Merged:                   r.PRState == domain.PRStateMerged,
+		Closed:                   r.PRState == domain.PRStateClosed,
+		CI:                       r.CIState,
+		Review:                   r.ReviewDecision,
+		Mergeability:             r.Mergeability,
+		ReviewComments:           r.ReviewComments,
+		SourceBranch:             r.SourceBranch,
+		TargetBranch:             r.TargetBranch,
+		HeadSHA:                  r.HeadSha,
+		UpdatedAt:                r.UpdatedAt,
+		ExternalApproved:         r.ExternalApproved,
+		ExternalChangesRequested: r.ExternalChangesRequested,
+	}
 }
 
 func prFactsFromGen(r gen.GetDisplayPRFactsBySessionRow) domain.PRFacts {

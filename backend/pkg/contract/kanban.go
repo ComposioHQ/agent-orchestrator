@@ -134,7 +134,7 @@ func aoOwnsNextStep(session KanbanSessionFacts, pr KanbanPRFacts) bool {
 	if pr.ReviewRun.Running {
 		return true
 	}
-	if session.AutoInjectReview && (pr.ReviewRun.ChangesRequested || pr.ExternalReview.ChangesRequested) {
+	if session.AutoInjectReview && pr.ReviewRun.ChangesRequested {
 		return true
 	}
 	return session.AutoInjectCI && pr.CI == CIFailing
