@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionView } from "./SessionView";
 import { SessionTopbarProvider } from "./SessionTopbarPortal";
 import { TooltipProvider } from "./ui/tooltip";
+import type { SessionInterfaceTransitionStatus } from "../hooks/useSessionInterfaceTransition";
 import { useUiStore } from "../stores/ui-store";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 
@@ -19,28 +20,9 @@ const interfaceTransitionMock = vi.hoisted(() => ({
 	acknowledgeNotice: vi.fn(),
 }));
 const interfaceTransitionState = vi.hoisted(() => ({
-	status: undefined as
-		| {
-				supported: boolean;
-				targetMode?: "chat" | "tui";
-				reason?: string;
-				reasonCode?: string;
-				transition?: {
-					id: string;
-					sessionId: string;
-					sourceMode: "chat" | "tui";
-					targetMode: "chat" | "tui";
-					policy: "drain" | "interrupt";
-					phase: "failed" | "recovery_required";
-					errorCode?: string;
-					errorDetail?: string;
-					createdAt: string;
-					updatedAt: string;
-					completedAt?: string;
-					noticeAcknowledgedAt?: string;
-				};
-		  }
-		| undefined,
+	starting: false,
+	settling: false,
+	status: undefined as SessionInterfaceTransitionStatus | undefined,
 }));
 const reviewGetMock = vi.hoisted(() => vi.fn());
 const inspectorVisibilityRenders = vi.hoisted(() => [] as boolean[]);
@@ -64,7 +46,23 @@ vi.mock("../hooks/useWindowFullScreen", () => ({
 	useWindowFullScreen: () => nativeFullScreenMock(),
 }));
 vi.mock("../hooks/useSessionInterfaceTransition", () => ({
-	interfaceTransitionIsActive: () => false,
+	interfaceTransitionIsActive: (transition?: { phase?: string }) =>
+		Boolean(
+			transition &&
+				[
+					"requested",
+					"preflighting",
+					"draining",
+					"source_stopping",
+					"source_stopped",
+					"target_starting",
+					"activating",
+				].includes(transition.phase ?? ""),
+		),
+	interfaceTransitionIsCancellable: (transition?: { phase?: string }) =>
+		Boolean(
+			transition && ["requested", "preflighting", "draining"].includes(transition.phase ?? ""),
+		),
 	interfaceTransitionHasUnacknowledgedNotice: (transition?: {
 		phase?: string;
 		noticeAcknowledgedAt?: string;
@@ -80,7 +78,8 @@ vi.mock("../hooks/useSessionInterfaceTransition", () => ({
 		isLoading: false,
 		statusError: undefined,
 		start: interfaceTransitionMock.start,
-		starting: false,
+		starting: interfaceTransitionState.starting,
+		settling: interfaceTransitionState.settling,
 		startError: undefined,
 		resetStartError: interfaceTransitionMock.resetStartError,
 		cancel: interfaceTransitionMock.cancel,
@@ -183,6 +182,7 @@ vi.mock("./chat/SessionChatSurface", () => ({
 		shellTarget,
 		onSelectShellTerminal,
 		workspaceTabs,
+		agentInputDisabled,
 		onConversationWorkChange,
 	}: {
 		onOpenShell?: () => void;
@@ -195,9 +195,13 @@ vi.mock("./chat/SessionChatSurface", () => ({
 		shellTarget?: { kind: "shell"; handleId: string };
 		onSelectShellTerminal?: (handleId: string) => void;
 		workspaceTabs?: ReactNode;
+		agentInputDisabled?: boolean;
 		onConversationWorkChange?: (state: typeof chatSurfaceWorkState) => void;
 	}) => (
-		<div data-testid="chat-surface">
+		<div
+			data-agent-input-disabled={agentInputDisabled ? "true" : "false"}
+			data-testid="chat-surface"
+		>
 			chat surface
 			{headerActions}
 			<div role="tablist">{workspaceTabs}</div>
@@ -518,8 +522,10 @@ describe("SessionView", () => {
 	closeShellTerminalMock.mockReset();
 	interfaceTransitionMock.start.mockReset();
 		interfaceTransitionMock.resetStartError.mockReset();
-	interfaceTransitionMock.cancel.mockReset();
+interfaceTransitionMock.cancel.mockReset();
 		interfaceTransitionMock.acknowledgeNotice.mockReset();
+		interfaceTransitionState.starting = false;
+		interfaceTransitionState.settling = false;
 		interfaceTransitionState.status = undefined;
 		chatSurfaceWorkState.controllerBusy = false;
 		chatSurfaceWorkState.hasRunningTurn = false;
@@ -867,6 +873,53 @@ describe("SessionView", () => {
 
 		expect(interfaceTransitionMock.start).toHaveBeenCalledOnce();
 		expect(interfaceTransitionMock.start).toHaveBeenCalledWith({ targetMode: "tui", policy });
+	});
+
+	it("disables Chat input while an accepted Chat-to-Terminal drain starts, runs, or settles", () => {
+		interfaceTransitionState.status = { supported: true, targetMode: "tui" };
+		const session = workerSession("sess-1");
+		session.mode = "chat";
+		session.status = "working";
+		session.activity = { state: "active", lastActivityAt: "2026-08-06T00:00:00Z" };
+
+		const view = render(<SessionView sessionId="sess-1" />);
+		const chatSurface = () => screen.getByTestId("chat-surface");
+		expect(chatSurface()).toHaveAttribute("data-agent-input-disabled", "false");
+
+		fireEvent.click(screen.getByRole("button", { name: "Switch to terminal UI" }));
+		fireEvent.click(screen.getByRole("button", { name: /^Finish work, then switch/ }));
+		expect(interfaceTransitionMock.start).toHaveBeenCalledWith({ targetMode: "tui", policy: "drain" });
+
+		interfaceTransitionState.starting = true;
+		view.rerender(<SessionView sessionId="sess-1" />);
+		expect(chatSurface()).toHaveAttribute("data-agent-input-disabled", "true");
+
+		interfaceTransitionState.starting = false;
+		interfaceTransitionState.status = {
+			supported: true,
+			targetMode: "tui",
+			transition: {
+				id: "switch-chat-to-tui",
+				sessionId: "sess-1",
+				sourceMode: "chat",
+				targetMode: "tui",
+				policy: "drain",
+				phase: "draining",
+				createdAt: "2026-08-06T00:00:00Z",
+				updatedAt: "2026-08-06T00:00:01Z",
+			},
+		};
+		view.rerender(<SessionView sessionId="sess-1" />);
+		expect(chatSurface()).toHaveAttribute("data-agent-input-disabled", "true");
+
+		interfaceTransitionState.status.transition!.phase = "completed";
+		interfaceTransitionState.settling = true;
+		view.rerender(<SessionView sessionId="sess-1" />);
+		expect(chatSurface()).toHaveAttribute("data-agent-input-disabled", "true");
+
+		interfaceTransitionState.settling = false;
+		view.rerender(<SessionView sessionId="sess-1" />);
+		expect(chatSurface()).toHaveAttribute("data-agent-input-disabled", "false");
 	});
 
 	it("discards one session's switch consent dialog when navigating to another session", () => {

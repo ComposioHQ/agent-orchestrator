@@ -70,6 +70,7 @@ export function SessionChatSurface({
 	workspaceTabs,
 	workspaceFileActive,
 	controllerTransitioning,
+	agentInputDisabled,
 	onConversationWorkChange,
 }: {
 	session: WorkspaceSession;
@@ -98,6 +99,8 @@ export function SessionChatSurface({
 	workspaceFileActive?: boolean;
 	/** The target controller is being installed by an interface handoff. */
 	controllerTransitioning?: boolean;
+	/** A durable session handoff owns the agent's Chat input. */
+	agentInputDisabled?: boolean;
 	/** Reports accepted Chat work that must inform an interface-switch policy choice. */
 	onConversationWorkChange?: (state: ConversationWorkState) => void;
 }) {
@@ -291,7 +294,7 @@ export function SessionChatSurface({
 			<ChatWorkspace
 				key={session.id}
 				snapshot={renderSnapshot}
-				agentInputDisabled={switchLocksChat || switchSelectorOpen}
+				agentInputDisabled={agentInputDisabled || switchLocksChat || switchSelectorOpen}
 				onLinkOpen={openLinkInBrowser}
 				sessionTitle={session.title}
 				sessionRole={session.kind}
