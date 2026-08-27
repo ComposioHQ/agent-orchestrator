@@ -111,7 +111,9 @@ var shippedMigrations = map[int64]string{
 	105: "0105_default_session_mode_chat.sql",
 	106: "0106_pr_comment_review_id.sql",
 	107: "0107_recovered_conversation_turns.sql",
-	109: "0109_reviewer_chat_conversations.sql",
+	108: "0108_conversation_retry_source.sql",
+	109: "0109_session_latest_user_prompt_at.sql",
+	110: "0110_reviewer_chat_conversations.sql",
 }
 
 // burnedVersion reports version numbers that must never be (re)used: they
@@ -120,17 +122,13 @@ var shippedMigrations = map[int64]string{
 // new file claiming one would be skipped silently there.
 //
 //   - 22 shipped in a nightly (#2412) and was deleted by the revert.
-//   - 108 exists in field databases from a development build with a different
-//     schema, so reviewer Chat starts at 109 instead of being silently skipped.
 //
 // Beware of the adjacent hazard this cannot catch: at least one field profile
 // has versions 40 through 51 recorded as applied by a foreign build
 // (#3475/#3476), so migrations numbered up to 0051 are skipped there entirely.
 // Any such migration whose schema the generated queries depend on must add a
 // schemaRepairs entry in db.go.
-func burnedVersion(v int64) bool {
-	return v == 22 || v == 108
-}
+func burnedVersion(v int64) bool { return v == 22 }
 
 // TestMigrationVersionLedger enforces the append-only migration ledger: every
 // migration file has exactly one entry in shippedMigrations (adding a

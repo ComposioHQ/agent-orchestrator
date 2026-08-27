@@ -40,6 +40,8 @@ func (c *conversation) SetConfigOption(
 	c.mu.Lock()
 	sessionID := c.sessionID
 	closed := c.closed
+	legacyModel := c.legacyModel
+	legacyMode := c.legacyMode
 	var option *ports.ChatConfigOption
 	for i := range c.configOptions {
 		if c.configOptions[i].ID == id {
@@ -58,6 +60,28 @@ func (c *conversation) SetConfigOption(
 	}
 	if option == nil {
 		return nil, fmt.Errorf("%w: unknown ACP session config option %q", ports.ErrChatConfigOptionInvalid, id)
+	}
+	if id == "model" && legacyModel {
+		if value.Boolean != nil || !choiceOffered(option.Choices, value.Select) {
+			return nil, fmt.Errorf("%w: ACP session config option %q does not offer value %q", ports.ErrChatConfigOptionInvalid, id, value.Select)
+		}
+		if err := c.legacyWire.setModel(ctx, sessionID, value.Select); err != nil {
+			return nil, fmt.Errorf("set ACP legacy session model %q: %w", value.Select, err)
+		}
+		c.applyAcceptedConfigOption(id, value)
+		return c.ListConfigOptions(ctx)
+	}
+	if id == "mode" && legacyMode {
+		if value.Boolean != nil || !choiceOffered(option.Choices, value.Select) {
+			return nil, fmt.Errorf("%w: ACP session config option %q does not offer value %q", ports.ErrChatConfigOptionInvalid, id, value.Select)
+		}
+		if _, err := c.conn.SetSessionMode(ctx, acpsdk.SetSessionModeRequest{
+			SessionId: acpsdk.SessionId(sessionID), ModeId: acpsdk.SessionModeId(value.Select),
+		}); err != nil {
+			return nil, fmt.Errorf("set ACP legacy session mode %q: %w", value.Select, err)
+		}
+		c.applyAcceptedConfigOption(id, value)
+		return c.ListConfigOptions(ctx)
 	}
 
 	request := acpsdk.SetSessionConfigOptionRequest{}
@@ -176,6 +200,43 @@ func normalizeConfigOptions(options []acpsdk.SessionConfigOption) []ports.ChatCo
 				},
 			})
 		}
+	}
+	return out
+}
+
+func normalizeSessionOptions(
+	options []acpsdk.SessionConfigOption,
+	models *legacySessionModelState,
+	modes *acpsdk.SessionModeState,
+) []ports.ChatConfigOption {
+	out := normalizeConfigOptions(options)
+	seen := make(map[string]bool, len(out))
+	for _, option := range out {
+		seen[option.ID] = true
+	}
+	if models != nil && !seen["model"] {
+		choices := make([]ports.ChatConfigOptionChoice, 0, len(models.Available))
+		for _, model := range models.Available {
+			choices = append(choices, ports.ChatConfigOptionChoice{
+				Value: model.ModelID, Name: model.Name, Description: stringValue(model.Description),
+			})
+		}
+		out = append(out, ports.ChatConfigOption{
+			ID: "model", Name: "Model", Category: "model", Type: ports.ChatConfigOptionSelect,
+			Current: ports.ChatConfigOptionValue{Select: models.CurrentModelID}, Choices: choices,
+		})
+	}
+	if modes != nil && !seen["mode"] {
+		choices := make([]ports.ChatConfigOptionChoice, 0, len(modes.AvailableModes))
+		for _, mode := range modes.AvailableModes {
+			choices = append(choices, ports.ChatConfigOptionChoice{
+				Value: string(mode.Id), Name: mode.Name, Description: stringValue(mode.Description),
+			})
+		}
+		out = append(out, ports.ChatConfigOption{
+			ID: "mode", Name: "Mode", Category: "mode", Type: ports.ChatConfigOptionSelect,
+			Current: ports.ChatConfigOptionValue{Select: string(modes.CurrentModeId)}, Choices: choices,
+		})
 	}
 	return out
 }

@@ -3,7 +3,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { agentModelsQueryKey } from "../hooks/useAgentModelsQuery";
-import type { WorkspaceSession } from "../types/workspace";
+import type { AgentSwitchSummary, WorkspaceSession } from "../types/workspace";
 import { SwitchAgentDialog } from "./SwitchAgentDialog";
 
 const switchMocks = vi.hoisted(() => ({
@@ -47,7 +47,11 @@ const worker: WorkspaceSession = {
 	workspaceName: "my-app",
 };
 
-function renderDialog(session: WorkspaceSession = worker, onOpenChange = vi.fn()) {
+function renderDialog(
+	session: WorkspaceSession = worker,
+	onOpenChange = vi.fn(),
+	agentSwitch?: AgentSwitchSummary,
+) {
 	const queryClient = new QueryClient({
 		defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
 	});
@@ -70,7 +74,13 @@ function renderDialog(session: WorkspaceSession = worker, onOpenChange = vi.fn()
 	}
 	const result = render(
 		<QueryClientProvider client={queryClient}>
-			<SwitchAgentDialog container={document.body} onOpenChange={onOpenChange} open session={session} />
+			<SwitchAgentDialog
+				agentSwitch={agentSwitch}
+				container={document.body}
+				onOpenChange={onOpenChange}
+				open
+				session={session}
+			/>
 		</QueryClientProvider>,
 	);
 	return { ...result, onOpenChange, queryClient };
@@ -286,5 +296,30 @@ describe("SwitchAgentDialog", () => {
 			sessionId: "sess-1",
 			switchId: "switch-source-stop-recovery",
 		});
+	});
+
+	it("releases stale recovery UI when switch history observes terminal recovery", () => {
+		const recoverySession = {
+			...worker,
+			activeAgentSwitch: {
+				agentHandoffStatus: "received",
+				errorCode: "source_stop_unconfirmed",
+				fromHarness: "claude-code",
+				id: "switch-source-stop-recovery",
+				state: "stopping_source",
+				targetHarness: "codex",
+			},
+		} satisfies WorkspaceSession;
+		const recoveredSwitch = {
+			...recoverySession.activeAgentSwitch,
+			state: "failed",
+		} satisfies AgentSwitchSummary;
+
+		renderDialog(recoverySession, vi.fn(), recoveredSwitch);
+		const dialog = screen.getByRole("dialog", { name: "Switch agent" });
+
+		expect(within(dialog).queryByText("Claude Code status could not be confirmed")).not.toBeInTheDocument();
+		expect(within(dialog).queryByRole("button", { name: "Check Claude Code" })).not.toBeInTheDocument();
+		expect(within(dialog).getByRole("button", { name: "Target agent" })).toBeInTheDocument();
 	});
 });

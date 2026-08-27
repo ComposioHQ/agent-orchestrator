@@ -314,6 +314,29 @@ func TestGetAgentHooksInstallsSystemPromptInstructions(t *testing.T) {
 	}
 }
 
+func TestPrepareACPInstructionsHonorsCanceledContextBeforeFilesystemWrites(t *testing.T) {
+	workspace := t.TempDir()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := PrepareACPInstructions(ctx, workspace, "AO worker instructions")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("PrepareACPInstructions error = %v, want context.Canceled", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(workspace, kimiInstructionsDirName)); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("Kimi instruction directory was created after cancellation: %v", statErr)
+	}
+}
+
+func TestKimiInstructionsPathUsesProviderDiscoveredDirectory(t *testing.T) {
+	workspace := t.TempDir()
+	got := kimiInstructionsPath(workspace)
+	want := filepath.Join(workspace, ".kimi", "AGENTS.md")
+	if got != want {
+		t.Fatalf("kimiInstructionsPath = %q, want provider-discovered path %q", got, want)
+	}
+}
+
 func TestGetAgentHooksInstallsKimiConfigHooksWithoutSystemPrompt(t *testing.T) {
 	workspace := t.TempDir()
 	kimiHome := t.TempDir()

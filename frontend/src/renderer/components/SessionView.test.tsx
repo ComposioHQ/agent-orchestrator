@@ -386,6 +386,7 @@ vi.mock("./SessionInspector", () => ({
 		onOpenReviewerChat,
 		onWorkerMessageSent,
 		onToggleBrowserPopOut,
+		onViewChange,
 		view,
 	}: {
 		filesView?: ReactNode;
@@ -395,15 +396,30 @@ vi.mock("./SessionInspector", () => ({
 		onOpenReviewerTerminal?: (target: { handleId: string; harness: string }) => void;
 		onOpenReviewerChat?: (reviewId: string) => void;
 		onWorkerMessageSent?: () => void;
-		onToggleBrowserPopOut?: () => void;
+		onToggleBrowserPopOut?: (next: boolean, sourceRect?: DOMRectReadOnly) => void;
+		onViewChange?: (view: "summary" | "browser") => void;
 		view?: string;
 	}) => {
 		inspectorVisibilityRenders.push(isInspectorVisible);
 		return (
 			<div>
-				<button type="button" data-view={view} onClick={onToggleBrowserPopOut}>
-					pop browser
+				<button role="tab" type="button" onClick={() => onViewChange?.("summary")}>
+					Summary
 				</button>
+				<button role="tab" type="button" onClick={() => onViewChange?.("browser")}>
+					Browser
+				</button>
+				<div data-browser-dock-target="">
+					<button
+						type="button"
+						data-view={view}
+						onClick={(event) =>
+							onToggleBrowserPopOut?.(true, event.currentTarget.parentElement?.getBoundingClientRect())
+						}
+					>
+						pop browser
+					</button>
+				</div>
 				<button type="button" onClick={onOpenFiles}>
 					open files
 				</button>
@@ -498,6 +514,10 @@ describe("SessionView", () => {
 		useUiStore.setState({
 			activeShellTerminalHandleId: null,
 			inspectorSessions: {},
+			isSidebarOpen: true,
+			isSidebarAutoCollapsed: false,
+			sidebarAutoCollapseOverride: false,
+			sidebarWorkspaceDemandPx: null,
 			visibleTerminalKindBySession: {},
 		});
 		browserDestroy.mockReset();
@@ -1123,7 +1143,7 @@ describe("SessionView", () => {
 		render(<SessionView sessionId="sess-1" />);
 
 		expect(screen.getByTestId("panel-group")).toHaveStyle({
-			"--session-inspector-motion-duration": "400ms",
+			"--session-inspector-motion-duration": "300ms",
 			"--session-inspector-motion-easing":
 				"linear(0, 0.333 12.5%, 0.642 25%, 0.813 37.5%, 0.902 50%, 0.949 62.5%, 0.974 75%, 0.986 87.5%, 1)",
 		});
@@ -1220,7 +1240,7 @@ describe("SessionView", () => {
 			expect(split).toHaveAttribute("data-terminal-live-resize", "true");
 			expect(split).toHaveAttribute("data-topbar-secondary-label-mode", "expanded");
 
-			act(() => vi.advanceTimersByTime(399));
+			act(() => vi.advanceTimersByTime(299));
 			expect(split).toHaveAttribute("data-terminal-live-resize", "true");
 			expect(split).toHaveAttribute("data-topbar-secondary-label-mode", "expanded");
 
@@ -1245,7 +1265,7 @@ describe("SessionView", () => {
 			expect(split).toHaveAttribute("data-inspector-label-mode", "expanded");
 			expect(split).toHaveAttribute("data-topbar-secondary-label-mode", "compact");
 
-			act(() => vi.advanceTimersByTime(399));
+			act(() => vi.advanceTimersByTime(299));
 			expect(split).toHaveAttribute("data-inspector-label-mode", "expanded");
 			expect(split).toHaveAttribute("data-topbar-secondary-label-mode", "compact");
 
@@ -1335,7 +1355,81 @@ describe("SessionView", () => {
 		window.localStorage.setItem("ao.inspector.widthPx", "240");
 		act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
 		render(<SessionView sessionId="sess-1" />);
-		expect(document.documentElement.style.getPropertyValue("--ao-inspector-w")).toBe("280px");
+		expect(document.documentElement.style.getPropertyValue("--ao-inspector-w")).toBe("340px");
+	});
+
+	it("grows Browser into a co-work canvas while utility surfaces stay consistent", async () => {
+		render(<SessionView sessionId="sess-1" />);
+		expect(screen.getByTestId("panel-group")).toHaveAttribute("data-workspace-mode", "utility");
+		expect(document.documentElement.style.getPropertyValue("--ao-inspector-w")).toBe("500px");
+
+		act(() => useUiStore.getState().setInspectorView("sess-1", "browser"));
+		await waitFor(() => {
+			expect(screen.getByTestId("panel-group")).toHaveAttribute("data-workspace-mode", "browser");
+			expect(document.documentElement.style.getPropertyValue("--ao-inspector-w")).toBe("900px");
+			expect(
+				screen.getByTestId("panel-group").style.getPropertyValue("--session-inspector-max-width"),
+			).toBe("min(68%, max(300px, calc(100% - 440px)))");
+		});
+
+		act(() => useUiStore.getState().setInspectorView("sess-1", "files"));
+		await waitFor(() => {
+			expect(screen.getByTestId("panel-group")).toHaveAttribute("data-workspace-mode", "files");
+			expect(document.documentElement.style.getPropertyValue("--ao-inspector-w")).toBe("500px");
+			expect(
+				screen.getByTestId("panel-group").style.getPropertyValue("--session-inspector-max-width"),
+			).toBe("min(55%, max(300px, calc(100% - 560px)))");
+		});
+	});
+
+	it("keeps Browser entry and utility return on one complete workspace spring", () => {
+		vi.useFakeTimers();
+		try {
+			render(<SessionView sessionId="sess-1" />);
+			fireEvent.click(screen.getByRole("tab", { name: "Browser" }));
+
+			const split = screen.getByTestId("panel-group");
+			expect(split).toHaveAttribute("data-workspace-resizing", "true");
+			expect(document.documentElement.style.getPropertyValue("--ao-inspector-w")).toBe("900px");
+			act(() => vi.advanceTimersByTime(300));
+			expect(split).not.toHaveAttribute("data-workspace-resizing");
+
+			fireEvent.click(screen.getByRole("tab", { name: "Summary" }));
+			expect(split).toHaveAttribute("data-workspace-resizing", "true");
+			expect(document.documentElement.style.getPropertyValue("--ao-inspector-w")).toBe("500px");
+			act(() => vi.advanceTimersByTime(300));
+			expect(split).not.toHaveAttribute("data-workspace-resizing");
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("restores a separate user-sized Browser workspace without changing utility width", () => {
+		window.localStorage.setItem("ao.workspace.browser.canvasWidthPx", "820");
+		render(<SessionView sessionId="sess-1" />);
+
+		fireEvent.click(screen.getByRole("tab", { name: "Browser" }));
+		expect(document.documentElement.style.getPropertyValue("--ao-inspector-w")).toBe("820px");
+		expect(useUiStore.getState().sidebarWorkspaceDemandPx).toBe(1548);
+
+		fireEvent.click(screen.getByRole("tab", { name: "Summary" }));
+		expect(document.documentElement.style.getPropertyValue("--ao-inspector-w")).toBe("500px");
+	});
+
+	it("raises shell pressure for Browser comfort and restores utility pressure on exit", async () => {
+		render(<SessionView sessionId="sess-1" />);
+		expect(useUiStore.getState().sidebarWorkspaceDemandPx).toBe(1068);
+
+		fireEvent.click(screen.getByRole("tab", { name: "Browser" }));
+		expect(useUiStore.getState().sidebarWorkspaceDemandPx).toBe(1628);
+
+		fireEvent.click(screen.getByRole("tab", { name: "Summary" }));
+		expect(useUiStore.getState().sidebarWorkspaceDemandPx).toBe(1068);
+
+		fireEvent.click(screen.getByRole("tab", { name: "Browser" }));
+
+		fireEvent.click(screen.getByRole("button", { name: "Close inspector panel" }));
+		await waitFor(() => expect(useUiStore.getState().sidebarWorkspaceDemandPx).toBeNull());
 	});
 
 	it("mounts the inspector in sync when navigating from an orchestrator session", () => {
@@ -1379,22 +1473,52 @@ describe("SessionView", () => {
 		expect(useUiStore.getState().inspectorSessions["sess-orch"]).toBeUndefined();
 	});
 
-	it("maximizes the browser over the whole app window and returns to the rail", () => {
+	it("smoothly morphs the browser over the whole app window and back to its dock", async () => {
+		const dockRect = {
+			x: 780,
+			y: 96,
+			top: 96,
+			left: 780,
+			right: 1280,
+			bottom: 796,
+			width: 500,
+			height: 700,
+			toJSON: () => ({}),
+		} as DOMRect;
+		const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(dockRect);
 		act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
-		render(<SessionView sessionId="sess-1" />);
+		try {
+			render(<SessionView sessionId="sess-1" />);
 
-		expect(screen.getByText("terminal center")).toBeInTheDocument();
-		fireEvent.click(screen.getByRole("button", { name: "pop browser" }));
+			expect(screen.getByText("terminal center")).toBeInTheDocument();
+			fireEvent.click(screen.getByRole("button", { name: "pop browser" }));
 
-		// The maximized overlay appears; the terminal stays mounted behind it.
-		expect(screen.getByRole("button", { name: "browser center" })).toBeInTheDocument();
-		expect(document.querySelector(".browser-popout-overlay")).toHaveClass("browser-popout-overlay--mac-windowed");
-		expect(screen.getByText("terminal center")).toBeInTheDocument();
+			// The portal begins exactly where the docked browser was, then expands.
+			const overlay = document.querySelector(".browser-popout-overlay");
+			expect(overlay).toHaveAttribute("data-phase", "opening");
+			expect(overlay).toHaveStyle({ "--browser-popout-dock-left": "780px", "--browser-popout-dock-width": "500px" });
+			expect(overlay).toHaveClass("browser-popout-overlay--mac-windowed");
+			expect(screen.getByRole("button", { name: "browser center" })).toBeInTheDocument();
+			expect(screen.getByText("terminal center")).toBeInTheDocument();
+			await waitFor(() => expect(overlay).toHaveAttribute("data-phase", "open"));
 
-		fireEvent.click(screen.getByRole("button", { name: "browser center" }));
-		expect(screen.queryByRole("button", { name: "browser center" })).not.toBeInTheDocument();
-		expect(screen.getByText("terminal center")).toBeInTheDocument();
-		expect(browserDestroy).not.toHaveBeenCalled();
+			fireEvent.click(screen.getByRole("button", { name: "browser center" }));
+			expect(overlay).toHaveAttribute("data-phase", "closing");
+			expect(screen.getByRole("button", { name: "browser center" })).toBeInTheDocument();
+			fireEvent.transitionEnd(overlay?.querySelector(".browser-popout-frame") as Element, {
+				propertyName: "width",
+			});
+			// Keep the portal alive briefly at the destination so the native browser
+			// can commit its final bounds before React hands ownership back to the dock.
+			expect(screen.getByRole("button", { name: "browser center" })).toBeInTheDocument();
+			await waitFor(() =>
+				expect(screen.queryByRole("button", { name: "browser center" })).not.toBeInTheDocument(),
+			);
+			expect(screen.getByText("terminal center")).toBeInTheDocument();
+			expect(browserDestroy).not.toHaveBeenCalled();
+		} finally {
+			rect.mockRestore();
+		}
 	});
 
 	it("does not reserve the traffic-light band during native macOS fullscreen", () => {
@@ -1525,6 +1649,44 @@ describe("SessionView", () => {
 		rerender(<SessionView sessionId="sess-2" />);
 		expect(inspectorButton()).toHaveAttribute("data-view", "summary");
 		expect(browserUnseen("sess-2")).toBe(true);
+	});
+
+	// Regression: the session-entry effect that defaults a brand-new session to
+	// Summary tracked only the single most-recently-initialized session ID, so
+	// re-entering ANY session that was not the immediately preceding one looked
+	// identical to a first-ever visit and forced it back to Summary — silently
+	// discarding whatever tab (Files, Browser) the user had left it on.
+	it("remembers the tab a session was left on when returning to it after visiting another session", () => {
+		const { rerender } = render(<SessionView sessionId="sess-1" />);
+		expect(inspectorButton()).toHaveAttribute("data-view", "summary");
+
+		fireEvent.click(screen.getByRole("button", { name: "open files" }));
+		expect(inspectorButton()).toHaveAttribute("data-view", "files");
+
+		rerender(<SessionView sessionId="sess-2" />);
+		expect(inspectorButton()).toHaveAttribute("data-view", "summary");
+
+		rerender(<SessionView sessionId="sess-1" />);
+		expect(inspectorButton()).toHaveAttribute("data-view", "files");
+	});
+
+	// Regression: the "initialized" marker used to live in a component-local
+	// ref, which is recreated whenever SessionView unmounts. Remounting an
+	// already-visited session (e.g. across a route transition) then looked
+	// identical to a first-ever visit and forced the tab back to Summary. The
+	// marker now lives in the ui-store's persisted inspectorSessions state, so
+	// it survives unmount/remount, not just re-renders of one mounted instance.
+	it("remembers the tab a session was left on after unmounting and remounting the view", () => {
+		const view = render(<SessionView sessionId="sess-1" />);
+		expect(inspectorButton()).toHaveAttribute("data-view", "summary");
+
+		fireEvent.click(screen.getByRole("button", { name: "open files" }));
+		expect(inspectorButton()).toHaveAttribute("data-view", "files");
+
+		view.unmount();
+
+		render(<SessionView sessionId="sess-1" />);
+		expect(inspectorButton()).toHaveAttribute("data-view", "files");
 	});
 
 	it("keeps Summary selected when preview content arrives with the async workspace response", () => {

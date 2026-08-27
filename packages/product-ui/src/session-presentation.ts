@@ -129,28 +129,31 @@ export function isAgentActivityWorking(activity?: SessionActivity | null): boole
 export type SessionStatusView = {
 	label: string;
 	className: string;
+	/** Same tone as `className`, for surfaces that paint a dot instead of text. */
+	dotClassName: string;
 	cardClassName?: string;
 };
 
 const sessionStatusStyles: Record<SessionStatus, Omit<SessionStatusView, "label">> = {
-	working: { className: "text-status-working" },
-	idle: { className: "text-status-idle" },
-	needs_input: { className: "text-status-needs-you" },
-	exited: { className: "text-status-exited" },
-	no_signal: { className: "text-status-unknown" },
-	ci_failed: { className: "text-status-exited" },
-	changes_requested: { className: "text-status-needs-you" },
-	review_pending: { className: "text-status-in-review" },
-	draft: { className: "text-status-in-review" },
-	pr_open: { className: "text-status-in-review" },
-	approved: { className: "text-status-ready" },
-	mergeable: { className: "text-status-ready" },
-	merged: { className: "text-status-merged" },
+	working: { className: "text-status-working", dotClassName: "bg-status-working" },
+	idle: { className: "text-status-idle", dotClassName: "bg-status-idle" },
+	needs_input: { className: "text-status-needs-you", dotClassName: "bg-status-needs-you" },
+	exited: { className: "text-status-exited", dotClassName: "bg-status-exited" },
+	no_signal: { className: "text-status-unknown", dotClassName: "bg-status-unknown" },
+	ci_failed: { className: "text-status-exited", dotClassName: "bg-status-exited" },
+	changes_requested: { className: "text-status-needs-you", dotClassName: "bg-status-needs-you" },
+	review_pending: { className: "text-status-in-review", dotClassName: "bg-status-in-review" },
+	draft: { className: "text-status-in-review", dotClassName: "bg-status-in-review" },
+	pr_open: { className: "text-status-in-review", dotClassName: "bg-status-in-review" },
+	approved: { className: "text-status-ready", dotClassName: "bg-status-ready" },
+	mergeable: { className: "text-status-ready", dotClassName: "bg-status-ready" },
+	merged: { className: "text-status-merged", dotClassName: "bg-status-merged" },
 	terminated: {
 		className: "text-status-terminated-foreground",
+		dotClassName: "bg-status-terminated",
 		cardClassName: "session-card-terminated",
 	},
-	unknown: { className: "text-status-unknown" },
+	unknown: { className: "text-status-unknown", dotClassName: "bg-status-unknown" },
 };
 
 export function getSessionStatusView(

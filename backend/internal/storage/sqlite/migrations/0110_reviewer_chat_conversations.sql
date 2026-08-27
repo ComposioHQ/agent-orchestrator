@@ -1,4 +1,4 @@
--- Native Chat conversations owned by durable reviewer rows (version 109).
+-- Native Chat conversations owned by durable reviewer rows (version 110).
 
 -- +goose NO TRANSACTION
 
@@ -153,19 +153,21 @@ CREATE TABLE conversation_turns_next (
     plan_json              TEXT NOT NULL DEFAULT '',
     branch_id              TEXT NOT NULL DEFAULT '',
     promotion_started_at   TIMESTAMP,
-    promoted_to_turn_id    TEXT REFERENCES conversation_turns_next(id) ON DELETE SET NULL
+    promoted_to_turn_id    TEXT REFERENCES conversation_turns_next(id) ON DELETE SET NULL,
+    retry_of_turn_id       TEXT REFERENCES conversation_turns_next(id) ON DELETE RESTRICT
 );
 
 INSERT INTO conversation_turns_next (
     id, conversation_id, handled_by_session_id, handled_by_review_id,
     provider_turn_id, controller_generation, state, error_message,
     requested_at, started_at, completed_at, diff_json, rolled_back_at,
-    plan_json, branch_id, promotion_started_at, promoted_to_turn_id
+    plan_json, branch_id, promotion_started_at, promoted_to_turn_id,
+    retry_of_turn_id
 )
 SELECT id, conversation_id, handled_by_session_id, NULL, provider_turn_id,
        controller_generation, state, error_message, requested_at, started_at,
        completed_at, diff_json, rolled_back_at, plan_json, branch_id,
-       promotion_started_at, promoted_to_turn_id
+       promotion_started_at, promoted_to_turn_id, retry_of_turn_id
 FROM conversation_turns ORDER BY rowid;
 
 DROP TABLE conversation_turns;
@@ -177,6 +179,9 @@ CREATE UNIQUE INDEX idx_conversation_turns_provider
     WHERE provider_turn_id <> '';
 CREATE INDEX idx_conversation_turns_branch
     ON conversation_turns(branch_id, requested_at);
+CREATE UNIQUE INDEX idx_conversation_turns_retry_source
+    ON conversation_turns(conversation_id, retry_of_turn_id)
+    WHERE retry_of_turn_id IS NOT NULL;
 
 CREATE TABLE conversation_provider_events_next (
     id                 INTEGER PRIMARY KEY AUTOINCREMENT,

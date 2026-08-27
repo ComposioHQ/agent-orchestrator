@@ -2,17 +2,12 @@
 	"expo": {
 		"name": "AO",
 		"slug": "ao-mobile",
-		"version": "1.2.0",
+		"version": "1.2.1",
 		"orientation": "portrait",
 		"icon": "./assets/icon.png",
 		"userInterfaceStyle": "automatic",
 		"backgroundColor": "#0a0b0d",
 		"scheme": "aomobile",
-		"splash": {
-			"image": "./assets/splash-icon.png",
-			"resizeMode": "contain",
-			"backgroundColor": "#0a0b0d"
-		},
 		"ios": {
 			"icon": "./assets/AO.icon",
 			"supportsTablet": true,
@@ -82,7 +77,17 @@
 					"color": "#4d8dff"
 				}
 			],
-			"expo-secure-store"
+			"expo-secure-store",
+			"expo-status-bar",
+			"expo-font",
+			[
+				"expo-splash-screen",
+				{
+					"image": "./assets/splash-icon.png",
+					"resizeMode": "contain",
+					"backgroundColor": "#0a0b0d"
+				}
+			]
 		],
 		"extra": {
 			"router": {},

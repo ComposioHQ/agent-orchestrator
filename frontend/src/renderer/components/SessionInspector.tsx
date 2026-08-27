@@ -39,6 +39,7 @@ import {
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import { captureRendererEvent } from "../lib/telemetry";
 import { formatTimeCompact } from "../lib/format-time";
 import { AgentAvatar } from "./AgentAvatar";
 import { ProductExternalLink } from "./ProductExternalLink";
@@ -75,6 +76,7 @@ import {
 	openReviewStatesFor,
 	reviewIsRunning,
 	reviewRunDisabled,
+	reviewRunActionKind,
 	reviewSessionRunAction,
 	sessionReviewsQueryOptions,
 	type PRReviewState,
@@ -159,7 +161,7 @@ export function SessionInspector({
 	browserPoppedOut?: boolean;
 	browserAnnotationQueue?: BrowserAnnotationQueueModel;
 	isInspectorVisible?: boolean;
-	onToggleBrowserPopOut?: (next: boolean) => void;
+	onToggleBrowserPopOut?: (next: boolean, sourceRect?: DOMRectReadOnly) => void;
 	onOpenFiles?: () => void;
 	onOpenReviewFile?: (target: { line?: number; path: string }) => void;
 	onOpenReviewerChat?: (reviewId: string) => void;
@@ -1460,6 +1462,9 @@ function ReviewsSection({
 	});
 	const saveAutoReview = useMutation({
 		mutationFn: async (enabled: boolean) => {
+			// Intent, not effect: emitted before the PUT, so a failed save still
+			// counts as the user reaching for the switch.
+			void captureRendererEvent("ao.renderer.review_auto_review_toggled", { enabled });
 			const { error } = await apiClient.PUT("/api/v1/sessions/{sessionId}/auto-review", {
 				params: { path: { sessionId: session.id } },
 				body: { enabled },
@@ -1472,6 +1477,13 @@ function ReviewsSection({
 	});
 	const triggerReview = useMutation({
 		mutationFn: async () => {
+			// Emitted before the request: these renderer events count INTENT, and the
+			// daemon's ao.review.* events are the ground truth for what actually ran.
+			void captureRendererEvent("ao.renderer.review_triggered", {
+				action: reviewRunActionKind(openReviewStatesFor(session, reviewsQuery.data?.reviews ?? []), false),
+				has_override: reviewerOverride !== "",
+				source: "inspector",
+			});
 			// No override sends no body at all, leaving the default path on the wire
 			// exactly as it was.
 			const { data, error, response } = await apiClient.POST("/api/v1/sessions/{sessionId}/reviews/trigger", {
@@ -2177,7 +2189,7 @@ function ReviewPanel({
 					</TooltipProvider>
 				) : null}
 				<div className="review-run-controls-container min-w-0 divide-y divide-border/70 text-xs">
-					<div className="flex min-h-10 min-w-0 items-center justify-between gap-3 py-2 @max-[420px]/inspector:flex-col @max-[420px]/inspector:items-stretch @max-[420px]/inspector:gap-2">
+					<div className="flex min-h-10 min-w-0 items-center justify-between gap-3 py-2">
 						<span className="min-w-0 text-xs font-medium text-foreground">
 							{t("inspector.selectReviewerAgent")}
 						</span>
@@ -2191,7 +2203,7 @@ function ReviewPanel({
 							installed={agentCatalog?.installed}
 							onChange={(next) => onReviewerOverrideChange(next as ReviewerHarness | "")}
 							supported={agentCatalog?.supported}
-							triggerClassName="review-run-agent-select ml-auto h-control-md w-auto min-w-0 max-w-[11rem] shrink-0 justify-end px-2 text-right text-xs @max-[420px]/inspector:ml-0 @max-[420px]/inspector:w-full @max-[420px]/inspector:max-w-none @max-[420px]/inspector:justify-between @max-[420px]/inspector:text-left"
+							triggerClassName="review-run-agent-select ml-auto h-control-md w-auto min-w-0 max-w-[11rem] shrink-0 justify-end px-2 text-right text-xs"
 							value={reviewerOverride}
 							excludedHarness={resolvedDefaultHarness}
 							showDefaultOption
@@ -2206,30 +2218,34 @@ function ReviewPanel({
 						onCheckedChange={onAutoReviewChange}
 						tooltipClassName="max-w-64"
 					/>
-					<div className="flex min-h-10 min-w-0 items-center justify-between gap-3 py-2 @max-[420px]/inspector:flex-col @max-[420px]/inspector:items-stretch @max-[420px]/inspector:gap-2">
+					<div className="flex min-h-10 min-w-0 items-center justify-between gap-3 py-2">
 						<span className="text-xs font-medium text-foreground">{t("inspector.review.session")}</span>
 						<div className="flex min-w-0 items-center justify-end gap-1.5">
-							<Button
-								aria-label={primaryReviewActionLabel}
-								className="shrink-0 gap-1 px-1.5 text-xs [&_svg]:size-icon-sm"
-								disabled={reviewRunning ? isCancelling || isKilling || isSwitchingReviewer : runDisabled || autoReviewEnabled}
-								onClick={reviewRunning ? onCancel : onTrigger}
-								size="sm"
-								title={primaryReviewActionLabel}
-								type="button"
-								variant={reviewRunning ? "ghost" : reviewHasRun ? "secondary" : "primary"}
-							>
-								{reviewRunning && isCancelling ? (
-									<Loader2 aria-hidden="true" className="animate-spin" />
-								) : reviewRunning ? (
-									<X aria-hidden="true" />
-								) : (
-									<Play aria-hidden="true" />
-								)}
-								<span className={cn("review-run-action-label", reviewRunning && "review-run-action-label--running")}>
-									{reviewRunning ? (isCancelling ? primaryReviewActionLabel : runningReviewLabel) : primaryReviewActionLabel}
-								</span>
-							</Button>
+							<Tooltip>
+								<TooltipTrigger asChild>
+									<Button
+										aria-label={primaryReviewActionLabel}
+										className="shrink-0 gap-1 px-1.5 text-xs [&_svg]:size-icon-sm"
+										disabled={reviewRunning ? isCancelling || isKilling || isSwitchingReviewer : runDisabled || autoReviewEnabled}
+										onClick={reviewRunning ? onCancel : onTrigger}
+										size="sm"
+										type="button"
+										variant={reviewRunning ? "ghost" : reviewHasRun ? "secondary" : "primary"}
+									>
+										{reviewRunning && isCancelling ? (
+											<Loader2 aria-hidden="true" className="animate-spin" />
+										) : reviewRunning ? (
+											<X aria-hidden="true" />
+										) : (
+											<Play aria-hidden="true" />
+										)}
+										<span className={cn("review-run-action-label", reviewRunning && "review-run-action-label--running")}>
+											{reviewRunning ? (isCancelling ? primaryReviewActionLabel : runningReviewLabel) : primaryReviewActionLabel}
+										</span>
+									</Button>
+								</TooltipTrigger>
+								<TooltipContent side="top">{primaryReviewActionLabel}</TooltipContent>
+							</Tooltip>
 							{hasReviewerSession ? (
 								<Button
 								aria-label={isKilling ? t("inspector.review.killingSession") : t("inspector.review.killSession")}
@@ -2372,7 +2388,7 @@ function BrowserView({
 	isActive: boolean;
 	browserPoppedOut: boolean;
 	browserAnnotationQueue?: BrowserAnnotationQueueModel;
-	onTogglePopOut?: (next: boolean) => void;
+	onTogglePopOut?: (next: boolean, sourceRect?: DOMRectReadOnly) => void;
 	browserView?: BrowserViewModel;
 }) {
 	// While maximized, the browser is a full-window overlay that covers the rail,
@@ -2382,7 +2398,7 @@ function BrowserView({
 	const { t } = useTranslation();
 	if (browserPoppedOut) {
 		return (
-			<div role="tabpanel">
+			<div className="h-full min-h-0" data-browser-dock-target="" role="tabpanel">
 				<div className={cn(inspectorEmptyClass, "flex flex-col items-center gap-2 py-10 px-5 text-center")}>
 					<p className="text-md-sm text-muted-foreground">{t("inspector.browserInCenter")}</p>
 					<Button onClick={() => onTogglePopOut?.(false)} size="sm" type="button" variant="outline">
@@ -2402,7 +2418,7 @@ function BrowserView({
 			active={isActive}
 			annotationQueue={browserAnnotationQueue}
 			browserView={browserView}
-			onTogglePopOut={(next) => onTogglePopOut?.(next)}
+			onTogglePopOut={(next, sourceRect) => onTogglePopOut?.(next, sourceRect)}
 			poppedOut={false}
 			session={session}
 		/>

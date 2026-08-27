@@ -193,7 +193,11 @@
 	--spacing-window-titlebar: var(--size-window-titlebar);
 	--spacing-titlebar-content-offset: var(--size-titlebar-content-offset);
 	--spacing-titlebar-cluster-left: var(--size-titlebar-cluster-left);
+	/* Linux has no traffic lights — the cluster sits at the sidebar's own inset,
+	 * and clears the framed panel border when the sidebar is off-canvas. */
 	--spacing-titlebar-cluster-left-linux: var(--size-titlebar-cluster-left-linux);
+	--spacing-titlebar-cluster-left-linux-panel: var(--size-titlebar-cluster-left-linux-panel);
+	--spacing-titlebar-content-offset-linux: var(--size-titlebar-content-offset-linux);
 	/* Fullscreen has no traffic lights — align the cluster to sidebar content. */
 	--spacing-titlebar-cluster-left-fullscreen: var(--space-2);
 	--spacing-traffic-light-clearance: var(--size-traffic-light-clearance);
@@ -623,18 +627,10 @@
 	border-block-start: 0 !important;
 }
 
-/* The updater is a compact instrument panel: status owns the visual hierarchy,
- * while the dotted field and state rail make activity legible without adding
- * decorative chrome. */
+/* Keep updater state legible without tinting the whole surface. The glyph is
+ * the single state-colored affordance; the panel otherwise matches Settings. */
 .update-status-panel {
 	--update-status-tone: var(--muted-foreground);
-	position: relative;
-	isolation: isolate;
-	overflow: hidden;
-	border: 1px solid color-mix(in oklch, var(--update-status-tone) 24%, var(--color-border-settings-dialog));
-	background:
-		linear-gradient(108deg, color-mix(in oklch, var(--update-status-tone) 9%, transparent), transparent 48%),
-		var(--color-bg-settings-input);
 	box-shadow: inset 0 1px 0 color-mix(in oklch, var(--foreground) 5%, transparent);
 }
 
@@ -654,81 +650,11 @@
 	--update-status-tone: var(--color-error);
 }
 
-.update-status-panel::before {
-	position: absolute;
-	inset-block: 0;
-	inset-inline-start: 0;
-	width: 2px;
-	background: var(--update-status-tone);
-	content: "";
-}
-
-.update-status-panel::after {
-	position: absolute;
-	inset-block: 0;
-	inset-inline-end: 0;
-	width: 46%;
-	background-image: radial-gradient(
-		circle,
-		color-mix(in oklch, var(--update-status-tone) 27%, transparent) 0.7px,
-		transparent 0.8px
-	);
-	background-size: 14px 14px;
-	content: "";
-	mask-image: linear-gradient(to left, rgb(0 0 0 / 0.72), transparent);
-	pointer-events: none;
-}
-
 .update-status-glyph {
 	border: 1px solid color-mix(in oklch, var(--update-status-tone) 30%, transparent);
 	background: color-mix(in oklch, var(--update-status-tone) 11%, transparent);
 	color: var(--update-status-tone);
 	box-shadow: inset 0 1px 0 color-mix(in oklch, var(--foreground) 5%, transparent);
-}
-
-.update-status-content {
-	animation: update-status-content-in 180ms var(--ease-out);
-}
-
-.update-download-progress {
-	transition: transform 240ms var(--ease-out);
-}
-
-.update-policy-details {
-	animation: update-policy-details-in 160ms var(--ease-out);
-}
-
-@keyframes update-status-content-in {
-	from {
-		opacity: 0.45;
-		transform: translateY(3px);
-	}
-	to {
-		opacity: 1;
-		transform: translateY(0);
-	}
-}
-
-@keyframes update-policy-details-in {
-	from {
-		opacity: 0;
-		transform: translateY(-3px);
-	}
-	to {
-		opacity: 1;
-		transform: translateY(0);
-	}
-}
-
-@media (prefers-reduced-motion: reduce) {
-	.update-status-content,
-	.update-policy-details {
-		animation: none;
-	}
-
-	.update-download-progress {
-		transition: none;
-	}
 }
 
 /* Tailwind preflight clears button backgrounds; keep settings rows filled. */
@@ -1509,6 +1435,28 @@ textarea,
 	background: transparent;
 }
 
+.settings-thin-scrollbar {
+	scrollbar-width: thin;
+	scrollbar-color: color-mix(in srgb, var(--color-scrollbar) 16%, transparent) transparent;
+}
+
+.settings-thin-scrollbar::-webkit-scrollbar {
+	width: 3px;
+}
+
+.settings-thin-scrollbar::-webkit-scrollbar-track {
+	background: transparent;
+}
+
+.settings-thin-scrollbar::-webkit-scrollbar-thumb {
+	border-radius: 999px;
+	background-color: color-mix(in srgb, var(--color-scrollbar) 16%, transparent);
+}
+
+.settings-thin-scrollbar:hover::-webkit-scrollbar-thumb {
+	background-color: color-mix(in srgb, var(--color-scrollbar) 28%, transparent);
+}
+
 /* Chromium uses the desktop theme's chunky native horizontal scrollbar on
    Linux. Keep the board scroller compact and rounded there without changing
    macOS overlay scrollbars or Windows behavior. */
@@ -1755,10 +1703,12 @@ textarea,
 }
 
 .ao-startup-screen {
-	position: relative;
-	flex: 1 1 0%;
-	min-width: 0;
-	min-height: 0;
+	/* Startup precedes all app chrome, so it must not inherit the inset center
+	 * panel's asymmetric frame. Cover the renderer viewport until the board is
+	 * ready, including the sidebar and titlebar-adjacent space. */
+	position: fixed;
+	inset: 0;
+	z-index: 50;
 }
 
 .ao-startup-logo {
@@ -1902,11 +1852,42 @@ body.is-resizing-x [data-slot="inspector-container"] {
 	transition: none;
 }
 
+/* Browser is an automatic co-work canvas, while Summary/Reviews/Files retain
+ * the utility rail width. Interpolate the shared gap + panel boxes together;
+ * direct pointer resizing remains immediate. */
+.session-split[data-workspace-resizing="true"] [data-slot="inspector-gap"],
+.session-split[data-workspace-resizing="true"] [data-slot="inspector-container"] {
+	transition:
+		width var(--session-inspector-motion-duration, 300ms)
+			var(--session-inspector-motion-easing, ease-out),
+		max-width var(--session-inspector-motion-duration, 300ms)
+			var(--session-inspector-motion-easing, ease-out);
+}
+
+body.is-resizing-x .session-split[data-workspace-resizing="true"] [data-slot="inspector-gap"],
+body.is-resizing-x .session-split[data-workspace-resizing="true"] [data-slot="inspector-container"] {
+	transition: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.session-split[data-workspace-resizing="true"] [data-slot="inspector-gap"],
+	.session-split[data-workspace-resizing="true"] [data-slot="inspector-container"] {
+		transition: none;
+	}
+}
+
 /* Keep keyboard focus visible without adding a ring to the sidebar chrome. */
 .sidebar-focusless :focus-visible {
 	background-color: var(--color-interactive-hover) !important;
 	outline: none !important;
 	box-shadow: none !important;
+}
+
+/* A reorder can leave its source row, so lock the renderer cursor until the
+   drag ends or is cancelled. */
+html.sidebar-reordering,
+html.sidebar-reordering * {
+	cursor: grabbing !important;
 }
 
 /* No blue focus rings anywhere — hover/active carry interaction feedback.
@@ -1978,6 +1959,30 @@ body.is-resizing-x [data-slot="inspector-container"] {
 	border-color: var(--color-border) !important;
 }
 
+/* Keep every chat control tactile, including the small native buttons embedded
+   in message rows and activity summaries. The shared Button primitive owns its
+   own transition, but this makes the same interaction contract hold at the
+   thinner timeline boundaries too. */
+.cursor-chat-surface button:not(:disabled) {
+	transition-property: background-color, border-color, color, box-shadow, transform, opacity;
+	transition-duration: 100ms;
+	transition-timing-function: ease-out;
+}
+
+.cursor-chat-surface button:not(:disabled):active {
+	transform: scale(0.96);
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.cursor-chat-surface button:not(:disabled) {
+		transition: none;
+	}
+
+	.cursor-chat-surface button:not(:disabled):active {
+		transform: none;
+	}
+}
+
 .cursor-chat-header {
 	border-bottom: 1px solid var(--color-border);
 	background: transparent;
@@ -2034,10 +2039,30 @@ body.is-resizing-x [data-slot="inspector-container"] {
 	font-size: var(--chat-readable-code-font-size);
 }
 
+.cursor-chat-timeline .cursor-chat-human-message {
+	font-size: 14px;
+}
+
 /* The dock is layout only. The composer paints its own surface, so a filled
    strip behind it read as a second black box around the rounded prompt. */
 .cursor-chat-composer-dock {
+	position: relative;
+	z-index: 1;
 	background: transparent;
+}
+
+.chat-composer-fade {
+	position: absolute;
+	right: 0;
+	bottom: 100%;
+	left: 0;
+	height: 10px;
+	background: linear-gradient(to top, var(--color-bg-primary), transparent);
+	pointer-events: none;
+}
+
+.cursor-chat-composer textarea {
+	font-size: 16px !important;
 }
 
 /* FLIP docking uses transform only so the move stays on the compositor. */
@@ -2132,6 +2157,23 @@ body.is-resizing-x [data-slot="inspector-container"] {
 	border-color: color-mix(in srgb, var(--color-border-strong) 85%, transparent);
 }
 
+.chat-human-message-enter {
+	animation: chat-human-message-in 180ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes chat-human-message-in {
+	from {
+		opacity: 0;
+		transform: scale(0.9);
+		transform-origin: 100% 100%;
+	}
+	to {
+		opacity: 1;
+		transform: scale(1);
+		transform-origin: 100% 100%;
+	}
+}
+
 .cursor-chat-origin-message,
 .cursor-chat-activity-panel {
 	background: color-mix(in srgb, var(--color-bg-secondary) 62%, transparent);
@@ -2216,19 +2258,6 @@ body.is-resizing-x [data-slot="inspector-container"] {
 	color: color-mix(in oklch, var(--color-text-primary) 58%, transparent);
 }
 
-/* The live caret belongs to the text being written. A separate block after the
-   markdown looked like an empty automation row, especially between tool calls. */
-.chat-assistant-streaming .chat-md > :last-child::after {
-	display: inline-block;
-	width: 2px;
-	height: 1em;
-	margin-left: 0.25rem;
-	vertical-align: -0.12em;
-	background: var(--color-text-muted);
-	content: "";
-	animation: pulse 1.5s ease-in-out infinite;
-}
-
 .chat-md-emoji {
 	display: inline-block;
 	font-size: 0.86em;
@@ -2253,11 +2282,11 @@ body.is-resizing-x [data-slot="inspector-container"] {
 
 .chat-scroll-marker {
 	position: absolute;
-	left: 50%;
+	right: 0;
 	top: 50%;
 	width: 7px;
 	height: 2px;
-	transform: translate(-50%, -50%);
+	transform: translateY(-50%);
 	border-radius: 999px;
 	background: color-mix(in srgb, var(--color-text-muted) 54%, transparent);
 	opacity: 0.76;
@@ -2314,20 +2343,7 @@ body.is-resizing-x [data-slot="inspector-container"] {
 }
 
 .chat-scroll-preview {
-	transform: translate(-6px, -50%) scale(0.98);
-	transform-origin: right center;
-	animation: chat-scroll-preview-in 140ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
-}
-
-@keyframes chat-scroll-preview-in {
-	from {
-		opacity: 0;
-		transform: translate(2px, -50%) scale(0.98);
-	}
-	to {
-		opacity: 1;
-		transform: translate(-6px, -50%) scale(1);
-	}
+	transform: translate(-6px, -50%);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -2335,10 +2351,8 @@ body.is-resizing-x [data-slot="inspector-container"] {
 		transition: none;
 	}
 
-	.chat-scroll-preview {
+	.chat-human-message-enter {
 		animation: none;
-		opacity: 1;
-		transform: translate(-6px, -50%);
 	}
 }
 
@@ -3834,7 +3848,6 @@ body.is-resizing-x [data-slot="inspector-container"] {
    hides the shell topbar; windowed mode reserves the native traffic-light band,
    while native fullscreen keeps a 0px top inset. Linux keeps its ShellTopbar
    offset below. */
-.browser-popout-overlay,
 .files-popout-overlay {
 	position: fixed;
 	inset: env(titlebar-area-height, 0px) 0 0;
@@ -3846,10 +3859,80 @@ body.is-resizing-x [data-slot="inspector-container"] {
 	-webkit-app-region: no-drag;
 }
 
-/* Keep native browser/files surfaces below the custom Windows titlebar. */
+/* Browser maximize is a real geometry transition, not a full-screen layer that
+   appears after the docked panel disappears. The portal spans the viewport;
+   its frame begins at the measured inspector rect and the native browser slot
+   follows that box on every animation frame. */
+.browser-popout-overlay {
+	--browser-popout-top: env(titlebar-area-height, 0px);
+	--browser-popout-easing: linear(0, 0.333 12.5%, 0.642 25%, 0.813 37.5%, 0.902 50%, 0.949 62.5%, 0.974 75%, 0.986 87.5%, 1);
+	position: fixed;
+	inset: var(--browser-popout-top) 0 0;
+	z-index: 40;
+	overflow: hidden;
+	background: transparent;
+	-webkit-app-region: no-drag;
+}
+
+.browser-popout-backdrop {
+	position: absolute;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	left: 0;
+	background: color-mix(in srgb, var(--bg) 94%, black);
+	opacity: 1;
+	transition: opacity 240ms ease-out;
+}
+
+.browser-popout-frame {
+	position: absolute;
+	top: 0;
+	left: 0;
+	width: 100vw;
+	height: 100%;
+	overflow: hidden;
+	border-radius: 0;
+	background: var(--bg);
+	box-shadow: none;
+	transition:
+		top 320ms var(--browser-popout-easing),
+		left 320ms var(--browser-popout-easing),
+		width 320ms var(--browser-popout-easing),
+		height 320ms var(--browser-popout-easing),
+		border-radius 240ms ease-out,
+		box-shadow 240ms ease-out;
+	will-change: top, left, width, height, border-radius;
+}
+
+.browser-popout-overlay[data-phase="opening"] .browser-popout-frame,
+.browser-popout-overlay[data-phase="closing"] .browser-popout-frame {
+	top: calc(
+		var(--browser-popout-dock-top, var(--browser-popout-top)) - var(--browser-popout-top)
+	);
+	left: var(--browser-popout-dock-left, 0px);
+	width: var(--browser-popout-dock-width, 100vw);
+	height: var(--browser-popout-dock-height, 100%);
+	border-radius: var(--radius-lg);
+	box-shadow: 0 18px 55px color-mix(in srgb, black 30%, transparent);
+}
+
+.browser-popout-overlay[data-phase="opening"] .browser-popout-frame {
+	transition: none;
+}
+
+.browser-popout-overlay[data-phase="opening"] .browser-popout-backdrop,
+.browser-popout-overlay[data-phase="closing"] .browser-popout-backdrop {
+	opacity: 0;
+}
+
+/* Keep native browser/files surfaces below the custom Windows titlebar. The
+   Browser frame is positioned inside that inset overlay, so its measured dock
+   top subtracts this same value during the geometry transition. */
 html[data-native-browser-composition="true"][data-ao-platform="win32"] .browser-popout-overlay,
 html[data-native-browser-composition="true"][data-ao-platform="win32"] .files-popout-overlay {
 	top: var(--size-window-titlebar);
+	--browser-popout-top: var(--size-window-titlebar);
 }
 
 /* Web preview has no preload platform attribute. The popouts are direct body
@@ -3858,6 +3941,7 @@ html[data-native-browser-composition="true"][data-ao-platform="win32"] .files-po
 body:has(#root .platform-windows) > .browser-popout-overlay,
 body:has(#root .platform-windows) > .files-popout-overlay {
 	top: var(--size-window-titlebar);
+	--browser-popout-top: var(--size-window-titlebar);
 }
 
 /* macOS keeps the native traffic lights visible while the window is not in
@@ -3865,6 +3949,7 @@ body:has(#root .platform-windows) > .files-popout-overlay {
 .browser-popout-overlay--mac-windowed,
 .files-popout-overlay--mac-windowed {
 	top: var(--size-traffic-light-clearance);
+	--browser-popout-top: var(--size-traffic-light-clearance);
 }
 
 .browser-popout-overlay .browser-panel__toolbar,
@@ -3875,6 +3960,12 @@ body:has(#root .platform-windows) > .files-popout-overlay {
 .platform-linux .browser-popout-overlay,
 .platform-linux .files-popout-overlay {
 	top: var(--size-shell-topbar);
+	--browser-popout-top: var(--size-shell-topbar);
+}
+
+body:has(#root .platform-linux) > .browser-popout-overlay {
+	top: var(--size-shell-topbar);
+	--browser-popout-top: var(--size-shell-topbar);
 }
 
 .browser-popout-overlay .browser-panel {
@@ -4140,20 +4231,14 @@ html[data-native-browser-composition="true"] .browser-popout-overlay {
 	background: transparent;
 }
 
-@keyframes browser-popout-in {
-	from {
-		opacity: 0.94;
-		transform: scale(0.992);
-	}
-	to {
-		opacity: 1;
-		transform: scale(1);
-	}
+html[data-native-browser-composition="true"] .browser-popout-backdrop {
+	background: transparent;
 }
 
 @media (prefers-reduced-motion: reduce) {
-	.browser-popout-overlay {
-		animation: none;
+	.browser-popout-frame,
+	.browser-popout-backdrop {
+		transition: none;
 	}
 
 	.browser-panel,

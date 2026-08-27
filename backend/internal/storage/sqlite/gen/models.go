@@ -208,6 +208,7 @@ type ConversationTurn struct {
 	BranchID             string
 	PromotionStartedAt   sql.NullTime
 	PromotedToTurnID     sql.NullString
+	RetryOfTurnID        sql.NullString
 }
 
 type ModelUsageEvent struct {
@@ -437,6 +438,7 @@ type Session struct {
 	AutoReviewEnabled         bool
 	AgentSessionIDLaunchID    string
 	Model                     string
+	LatestUserPromptAt        sql.NullTime
 }
 
 type SessionCleanupFact struct {

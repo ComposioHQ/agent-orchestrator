@@ -230,6 +230,7 @@ func (f *fakeAgentSwitchLifecycleStore) UpdateSessionFromActivitySignal(_ contex
 	current.Metadata.AgentSessionID = rec.Metadata.AgentSessionID
 	current.Metadata.AgentSessionIDLaunchID = rec.Metadata.AgentSessionIDLaunchID
 	current.Metadata.LatestUserPrompt = rec.Metadata.LatestUserPrompt
+	current.Metadata.LatestUserPromptAt = rec.Metadata.LatestUserPromptAt
 	current.Metadata.LatestAssistantUpdate = rec.Metadata.LatestAssistantUpdate
 	current.Metadata.NativeTranscriptPath = rec.Metadata.NativeTranscriptPath
 	current.UpdatedAt = rec.UpdatedAt
@@ -378,7 +379,12 @@ func newManager() (*Manager, *fakeStore, *fakeMessenger) {
 }
 
 func working(id domain.SessionID) domain.SessionRecord {
-	return domain.SessionRecord{ID: id, ProjectID: "mer", Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: time.Now()}, AutoInjectReview: true}
+	return domain.SessionRecord{
+		ID: id, ProjectID: "mer",
+		Activity:         domain.Activity{State: domain.ActivityActive, LastActivityAt: time.Now()},
+		AutoInjectReview: true,
+		FirstSignalAt:    time.Now(),
+	}
 }
 
 func TestRuntimeObservation_ConfirmedRuntimeDeathTerminates(t *testing.T) {
@@ -752,6 +758,37 @@ func TestActivity_MetadataOnlyStoresAgentSessionIDWithoutChangingActivity(t *tes
 	}
 	if !got.FirstSignalAt.Equal(rec.FirstSignalAt) {
 		t.Fatalf("metadata-only hook changed FirstSignalAt: got %v, want %v", got.FirstSignalAt, rec.FirstSignalAt)
+	}
+}
+
+func TestActivity_UserPromptStoresItsSignalTimestamp(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.Metadata.RuntimeLaunchID = "launch-1"
+	rec.FirstSignalAt = time.Now().Add(-time.Minute)
+	st.sessions[rec.ID] = rec
+	signalAt := time.Unix(456, 0).UTC()
+
+	if err := m.ApplyActivitySignal(ctx, rec.ID, ports.ActivitySignal{
+		LaunchID: "launch-1", LatestUserPrompt: "keep the row compact", Timestamp: signalAt,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got := st.sessions[rec.ID]
+	if got.Metadata.LatestUserPrompt != "keep the row compact" || !got.Metadata.LatestUserPromptAt.Equal(signalAt) {
+		t.Fatalf("latest user prompt = %q at %s", got.Metadata.LatestUserPrompt, got.Metadata.LatestUserPromptAt)
+	}
+
+	repeatedAt := signalAt.Add(time.Minute)
+	if err := m.ApplyActivitySignal(ctx, rec.ID, ports.ActivitySignal{
+		Valid: true, State: got.Activity.State, Event: "user-prompt-submit", LaunchID: "launch-1",
+		LatestUserPrompt: "keep the row compact", Timestamp: repeatedAt,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got = st.sessions[rec.ID]
+	if !got.Metadata.LatestUserPromptAt.Equal(repeatedAt) {
+		t.Fatalf("repeated user prompt timestamp = %s, want %s", got.Metadata.LatestUserPromptAt, repeatedAt)
 	}
 }
 
@@ -2605,6 +2642,39 @@ func TestLifecycleNudgeUsesLateBoundSessionInputLease(t *testing.T) {
 	}
 	if len(msg.msgs) != 0 {
 		t.Fatalf("lifecycle nudge bypassed closed input lease: %v", msg.msgs)
+	}
+}
+
+func TestLifecycleNudgeStartupGateUsesAdapterCapability(t *testing.T) {
+	tests := []struct {
+		name     string
+		harness  domain.AgentHarness
+		gate     bool
+		wantSent bool
+	}{
+		{name: "startup-signaling adapter is gated", harness: domain.HarnessCursor, gate: true, wantSent: false},
+		{name: "hookless adapter remains deliverable", harness: domain.HarnessAider, gate: false, wantSent: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			st := newFakeStore()
+			msg := &fakeMessenger{}
+			m := New(st, msg, WithStartupSignalGate(func(harness domain.AgentHarness) bool {
+				return harness == tt.harness && tt.gate
+			}))
+			st.sessions["mer-1"] = domain.SessionRecord{
+				ID: "mer-1", Harness: tt.harness, Mode: domain.SessionModeTUI,
+				Activity: domain.Activity{State: domain.ActivityIdle},
+			}
+
+			outcome, err := m.sendOnce(ctx, "mer-1", "", "tracker-comment:1", "1", "review this", 0)
+			if err != nil {
+				t.Fatalf("sendOnce: %v", err)
+			}
+			if got := len(msg.msgs) == 1; got != tt.wantSent {
+				t.Fatalf("sent = %v, want %v (outcome %v)", got, tt.wantSent, outcome)
+			}
+		})
 	}
 }
 
