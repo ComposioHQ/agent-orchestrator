@@ -47,6 +47,9 @@ func TestActivateChatAgentSwitchTargetKeepsRuntimeEmptyAcrossNativeSwitchBack(t 
 	rec.Metadata.RuntimeLaunchID = ""
 	rec.Metadata.ProviderConversationID = "source-chat-native"
 	rec.Metadata.ControllerGeneration = "source-chat-generation"
+	rec.Metadata.LatestUserPrompt = "source Chat user checkpoint"
+	rec.Metadata.LatestAssistantUpdate = "source Chat assistant checkpoint"
+	rec.Metadata.ConversationCheckpointState = domain.ConversationCheckpointLegacy
 	session, err := s.CreateSession(ctx, rec)
 	if err != nil {
 		t.Fatalf("create Chat session: %v", err)
@@ -156,6 +159,12 @@ func TestActivateChatAgentSwitchTargetKeepsRuntimeEmptyAcrossNativeSwitchBack(t 
 		got.Metadata.ProviderConversationID != "target-chat-native" ||
 		got.Metadata.ControllerGeneration != "target-chat-generation" {
 		t.Fatalf("activated Chat session = %+v", got)
+	}
+	if got.Metadata.LatestUserPrompt != "" || got.Metadata.LatestAssistantUpdate != "" ||
+		got.Metadata.ConversationCheckpointState != domain.ConversationCheckpointEmpty ||
+		got.Metadata.ConversationCheckpointGeneration != "" ||
+		got.Metadata.ConversationCheckpointNativeID != "" {
+		t.Fatalf("Chat target activation retained source replay checkpoint: %+v", got.Metadata)
 	}
 	conversation, err = s.ConversationForSession(ctx, session.ID)
 	if err != nil {
@@ -1370,6 +1379,16 @@ func TestAgentSwitchSourceStopAndTargetActivationAreAtomicAndNarrow(t *testing.T
 	if !activated.FirstSignalAt.IsZero() {
 		t.Fatalf("target activation retained old hook receipt: %v", activated.FirstSignalAt)
 	}
+	// The checkpoint belongs to the source provider. If Claude's text survives
+	// the ownership transfer, an immediate Codex TUI -> Chat transition compares
+	// that text against Codex history and fails as an untrusted mismatch before
+	// the target has emitted a new main-turn hook.
+	if activated.Metadata.LatestUserPrompt != "" || activated.Metadata.LatestAssistantUpdate != "" ||
+		activated.Metadata.ConversationCheckpointState != domain.ConversationCheckpointEmpty ||
+		activated.Metadata.ConversationCheckpointGeneration != "" ||
+		activated.Metadata.ConversationCheckpointNativeID != "" {
+		t.Fatalf("target activation retained source replay checkpoint: %+v", activated.Metadata)
+	}
 	activatedConversation, err := s.ConversationForSession(ctx, session.ID)
 	if err != nil {
 		t.Fatalf("get activated conversation: %v", err)
@@ -1380,8 +1399,7 @@ func TestAgentSwitchSourceStopAndTargetActivationAreAtomicAndNarrow(t *testing.T
 	if activated.IsTerminated || activated.DisplayName != rec.DisplayName ||
 		activated.TerminateOnPRMerge != rec.TerminateOnPRMerge || activated.CleanupGeneration != rec.CleanupGeneration ||
 		activated.Metadata.Branch != rec.Metadata.Branch || activated.Metadata.WorkspacePath != rec.Metadata.WorkspacePath ||
-		activated.Metadata.Prompt != rec.Metadata.Prompt || activated.Metadata.LatestUserPrompt != rec.Metadata.LatestUserPrompt ||
-		activated.Metadata.LatestAssistantUpdate != rec.Metadata.LatestAssistantUpdate || activated.Metadata.PreviewURL != rec.Metadata.PreviewURL {
+		activated.Metadata.Prompt != rec.Metadata.Prompt || activated.Metadata.PreviewURL != rec.Metadata.PreviewURL {
 		t.Fatalf("target activation changed unrelated session facts: %+v", activated)
 	}
 	lateSource.Activity = domain.Activity{State: domain.ActivityActive, LastActivityAt: now.Add(5 * time.Second)}

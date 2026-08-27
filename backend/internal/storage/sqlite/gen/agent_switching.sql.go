@@ -61,6 +61,8 @@ UPDATE sessions SET
     conversation_checkpoint_state = 'empty',
     conversation_checkpoint_generation = '',
     conversation_checkpoint_native_id = '',
+    latest_user_prompt = '',
+    latest_assistant_update = '',
     native_transcript_path = '',
     provider_conversation_id = ?4,
     controller_generation = ?5,
@@ -113,6 +115,8 @@ UPDATE sessions SET
     conversation_checkpoint_state = 'empty',
     conversation_checkpoint_generation = '',
     conversation_checkpoint_native_id = '',
+    latest_user_prompt = '',
+    latest_assistant_update = '',
     native_transcript_path = ?6,
     updated_at = ?2
 WHERE id = ?7
