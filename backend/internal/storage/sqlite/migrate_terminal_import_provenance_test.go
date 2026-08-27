@@ -2,7 +2,7 @@ package sqlite
 
 import "testing"
 
-func TestMigration0112AddsTerminalImportProvenanceWithoutReclassifyingExistingTurns(t *testing.T) {
+func TestMigration0114AddsTerminalImportProvenanceWithoutReclassifyingExistingTurns(t *testing.T) {
 	db := openTestDB(t)
 	upTo(t, db, 108)
 	mustExec(t, db, `
