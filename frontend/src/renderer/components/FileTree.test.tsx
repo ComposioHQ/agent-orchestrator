@@ -126,6 +126,29 @@ describe("FileTree", () => {
 		expect(onSelectPath).toHaveBeenCalledWith(expect.objectContaining({ path: "README.md", type: "file" }));
 	});
 
+	it("loads nested directories while searching before they have been expanded", async () => {
+		getMock.mockImplementation(async (_path: string, options: unknown) => {
+			const query = (options as { params?: { query?: { path?: string } } }).params?.query?.path;
+			if (!query) return treeResponse("", [{ name: "src", path: "src", type: "dir", hasChanges: false }]);
+			if (query === "src") {
+				return treeResponse("src", [{ name: "nested", path: "src/nested", type: "dir", hasChanges: false }]);
+			}
+			if (query === "src/nested") {
+				return treeResponse("src/nested", [{ name: "target.ts", path: "src/nested/target.ts", type: "file", status: "unmodified" }]);
+			}
+			return treeResponse(query, []);
+		});
+
+		renderWithQuery(
+			<FileTree changedOnly={false} changedOnlyData={[]} onSelectPath={vi.fn()} selectedPath={null} sessionId="sess-1" filterText="target" />,
+		);
+
+		expect(await screen.findByText("target.ts")).toBeInTheDocument();
+		expect(getMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/workspace/tree", {
+			params: { path: { sessionId: "sess-1" }, query: { path: "src/nested" } },
+		});
+	});
+
 	it("renders the precomputed changed-only tree without calling the tree endpoint", async () => {
 		const changedOnlyData: TreeNode[] = [{ name: "notes.txt", path: "notes.txt", type: "file", status: "added" }];
 

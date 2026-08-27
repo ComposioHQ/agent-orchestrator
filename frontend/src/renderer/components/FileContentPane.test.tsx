@@ -16,7 +16,6 @@ vi.mock("../lib/api-client", () => ({
 		return fallback;
 	},
 }));
-vi.mock("../hooks/useShikiHtml", () => ({ useShikiHtml: () => null }));
 
 function renderWithQuery(children: ReactNode) {
 	const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });

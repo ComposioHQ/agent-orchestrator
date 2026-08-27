@@ -42,6 +42,17 @@ function withChildrenAt(nodes: TreeNode[], dir: string, children: TreeNode[]): T
 	});
 }
 
+function mergeRootEntries(current: TreeNode[], entries: WorkspaceTreeEntry[]): TreeNode[] {
+	const currentByPath = new Map(current.map((node) => [node.path, node]));
+	return entries.map((entry) => {
+		const next = entryToNode(entry);
+		const previous = currentByPath.get(next.path);
+		return next.type === "dir" && previous?.type === "dir"
+			? { ...next, children: previous.children }
+			: next;
+	});
+}
+
 function useContainerSize(): [RefObject<HTMLDivElement | null>, { width: number; height: number }] {
 	const ref = useRef<HTMLDivElement>(null);
 	const [size, setSize] = useState({ width: 0, height: 0 });
@@ -91,8 +102,36 @@ export function FileTree({
 	useEffect(() => {
 		if (changedOnly || !rootQuery.data) return;
 		loadedDirsRef.current.add("");
-		setLazyData(rootQuery.data.entries.map(entryToNode));
+		setLazyData((current) => mergeRootEntries(current, rootQuery.data.entries));
 	}, [changedOnly, rootQuery.data]);
+
+	useEffect(() => {
+		if (changedOnly || !filterText.trim() || !rootQuery.data) return;
+		let cancelled = false;
+		const loadDirectory = async (entries: WorkspaceTreeEntry[]): Promise<TreeNode[]> =>
+			Promise.all(
+				entries.map(async (entry) => {
+					const node = entryToNode(entry);
+					if (node.type !== "dir") return node;
+					const result = await queryClient.fetchQuery(
+						sessionWorkspaceTreeQueryOptions(sessionId, node.path, t("files.error.loadWorkspaceTree")),
+					);
+					loadedDirsRef.current.add(node.path);
+					return { ...node, children: await loadDirectory(result.entries) };
+				}),
+			);
+		void loadDirectory(rootQuery.data.entries)
+			.then((nodes) => {
+				if (!cancelled) setLazyData(nodes);
+			})
+			.catch(() => {
+				// Keep the already loaded tree usable; React Query retains the
+				// request error so a later search can retry the missing branch.
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [changedOnly, filterText, queryClient, rootQuery.data, sessionId, t]);
 
 	const loadChildren = useCallback(
 		async (dir: string) => {

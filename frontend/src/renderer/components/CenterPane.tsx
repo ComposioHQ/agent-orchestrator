@@ -279,14 +279,14 @@ export function CenterPane({
 	const sessionTabLabel = session
 		? isOrchestratorSession(session)
 			? t("shell.orchestrator")
-			: session.title
+			: agentLabel(session.provider)
 		: t("terminal.noSession");
 	const activeTerminalLabel =
 		target.kind === "shell"
 			? (shellTerminals.find((shell) => shell.handleId === target.handleId)?.title ?? target.title)
 			: target.kind === "reviewer"
 				? `${t("terminal.reviewer")} · ${target.harness}`
-				: sessionTabLabel;
+				: (session?.title ?? sessionTabLabel);
 	useEffect(() => {
 		setSwitchSelectorOpen(false);
 	}, [session?.id]);

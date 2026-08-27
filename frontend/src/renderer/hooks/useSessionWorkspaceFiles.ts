@@ -13,6 +13,9 @@ export type WorkspaceCompareMode = "base" | "head_fallback";
 export type WorkspaceFileSummary = components["schemas"]["WorkspaceFileSummary"] & {
 	previousPath?: string;
 };
+export type WorkspaceFileSections = components["schemas"]["WorkspaceFileSections"];
+export type WorkspaceCommitSummary = components["schemas"]["WorkspaceCommitSummary"];
+export type WorkspaceSummary = components["schemas"]["WorkspaceSummary"];
 export type WorkspaceFilesResponse = components["schemas"]["ListWorkspaceFilesResponse"] & {
 	compareMode?: WorkspaceCompareMode;
 };
@@ -29,7 +32,14 @@ async function fetchSessionWorkspaceFiles(sessionId: string, errorMessage: strin
 		params: { path: { sessionId } },
 	});
 	if (error) throw new Error(apiErrorMessage(error, errorMessage));
-	return (data ?? { sessionId, files: [], truncated: false }) as WorkspaceFilesResponse;
+	return (data ?? {
+		sessionId,
+		files: [],
+		truncated: false,
+		sections: { staged: [], unstaged: [], untracked: [], committed: [] },
+		commits: [],
+		summary: { files: 0, additions: 0, deletions: 0 },
+	}) as WorkspaceFilesResponse;
 }
 
 export const sessionWorkspaceFileQueryKey = (sessionId: string, path: string) =>

@@ -107,7 +107,7 @@ type SessionService interface {
 	StageAttachments(ctx context.Context, id domain.SessionID, attachments []ports.SpawnAttachment) ([]string, error)
 	WorkspaceWatchPaths(ctx context.Context, id domain.SessionID) ([]string, error)
 	ListWorkspaceFiles(ctx context.Context, id domain.SessionID) (sessionsvc.WorkspaceFiles, error)
-	GetWorkspaceFile(ctx context.Context, id domain.SessionID, path string) (sessionsvc.WorkspaceFileDetail, error)
+	GetWorkspaceFile(ctx context.Context, id domain.SessionID, path string, section sessionsvc.WorkspaceFileSection) (sessionsvc.WorkspaceFileDetail, error)
 	GetWorkspaceFileBlob(ctx context.Context, id domain.SessionID, path string, side sessionsvc.WorkspaceFileBlobSide) (sessionsvc.WorkspaceFileBlob, error)
 	ListWorkspaceTree(ctx context.Context, id domain.SessionID, path string) (sessionsvc.WorkspaceTree, error)
 	InvalidateWorkspaceCache(id domain.SessionID)
@@ -565,7 +565,8 @@ func (c *SessionsController) getWorkspaceFile(w http.ResponseWriter, r *http.Req
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "WORKSPACE_PATH_REQUIRED", "path is required", nil)
 		return
 	}
-	file, err := c.Svc.GetWorkspaceFile(r.Context(), sessionID(r), relPath)
+	section := sessionsvc.WorkspaceFileSection(strings.TrimSpace(r.URL.Query().Get("section")))
+	file, err := c.Svc.GetWorkspaceFile(r.Context(), sessionID(r), relPath, section)
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return
@@ -1810,7 +1811,14 @@ func sessionView(s domain.Session) SessionView {
 		PreviewURL:      s.Metadata.PreviewURL,
 		PreviewRevision: s.Metadata.PreviewRevision,
 		Model:           s.Metadata.Model,
-		PRs:             sessionPRFacts(s.PRs),
+		LastUserMessageAt: func() *time.Time {
+			if s.Metadata.LatestUserPromptAt.IsZero() {
+				return nil
+			}
+			at := s.Metadata.LatestUserPromptAt
+			return &at
+		}(),
+		PRs: sessionPRFacts(s.PRs),
 	}
 	if s.ActiveAgentSwitch != nil {
 		active := agentSwitchView(*s.ActiveAgentSwitch)
@@ -1869,26 +1877,61 @@ func sessionPRSummaries(prs []sessionsvc.PRSummary) []SessionPRSummary {
 }
 
 func workspaceFilesResponse(files sessionsvc.WorkspaceFiles) ListWorkspaceFilesResponse {
-	out := make([]WorkspaceFileSummary, 0, len(files.Files))
-	for _, file := range files.Files {
-		out = append(out, WorkspaceFileSummary{
-			Path:         file.Path,
-			PreviousPath: file.PreviousPath,
-			Status:       file.Status,
-			Additions:    file.Additions,
-			Deletions:    file.Deletions,
-			Size:         file.Size,
-			Binary:       file.Binary,
-		})
-	}
 	return ListWorkspaceFilesResponse{
 		SessionID:      files.SessionID,
 		CompareBaseSHA: files.CompareBaseSHA,
 		CompareBaseRef: files.CompareBaseRef,
 		CompareMode:    files.CompareMode,
-		Files:          out,
+		Files:          workspaceFileSummariesResponse(files.Files),
 		Truncated:      files.Truncated,
+		Sections:       workspaceFileSectionsResponse(files.Sections),
+		Commits:        workspaceCommitsResponse(files.Commits),
+		Summary:        WorkspaceSummary(files.Summary),
+		Ahead:          files.Ahead,
+		Behind:         files.Behind,
 	}
+}
+
+func workspaceFileSummaryResponse(file sessionsvc.WorkspaceFileSummary) WorkspaceFileSummary {
+	return WorkspaceFileSummary{
+		Path:         file.Path,
+		PreviousPath: file.PreviousPath,
+		Status:       file.Status,
+		Additions:    file.Additions,
+		Deletions:    file.Deletions,
+		Size:         file.Size,
+		Binary:       file.Binary,
+	}
+}
+
+func workspaceFileSummariesResponse(files []sessionsvc.WorkspaceFileSummary) []WorkspaceFileSummary {
+	out := make([]WorkspaceFileSummary, 0, len(files))
+	for _, file := range files {
+		out = append(out, workspaceFileSummaryResponse(file))
+	}
+	return out
+}
+
+func workspaceFileSectionsResponse(sections sessionsvc.WorkspaceFileSections) WorkspaceFileSections {
+	return WorkspaceFileSections{
+		Staged:    workspaceFileSummariesResponse(sections.Staged),
+		Unstaged:  workspaceFileSummariesResponse(sections.Unstaged),
+		Untracked: workspaceFileSummariesResponse(sections.Untracked),
+		Committed: workspaceFileSummariesResponse(sections.Committed),
+	}
+}
+
+func workspaceCommitsResponse(commits []sessionsvc.CommitSummary) []WorkspaceCommitSummary {
+	out := make([]WorkspaceCommitSummary, 0, len(commits))
+	for _, commit := range commits {
+		out = append(out, WorkspaceCommitSummary{
+			SHA:       commit.SHA,
+			Subject:   commit.Subject,
+			Author:    commit.Author,
+			Timestamp: commit.Timestamp,
+		})
+	}
+	return out
 }
 
 func workspaceFileResponse(file sessionsvc.WorkspaceFileDetail) WorkspaceFileResponse {
