@@ -5,6 +5,7 @@ import { useTruncatedText } from "../hooks/useTruncatedText";
 import type { ShellTerminal } from "../hooks/useShellTerminals";
 import { isWindowsPlatform } from "../lib/platform";
 import { cn } from "../lib/utils";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 type ShellTerminalTabProps = {
 	shell: ShellTerminal;
@@ -168,28 +169,32 @@ export function ShellTerminalTab({
 					{shell.title}
 				</button>
 			)}
-			<button
-				aria-label={t("terminal.closeNamed", { title: shell.title })}
-				data-terminal-tab-action
-				className={cn(
-					"inline-flex h-control-sm shrink-0 items-center justify-center overflow-hidden rounded-sm text-passive transition-[width,margin,background,color,opacity] hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50",
-					appearance === "connected"
-						? isActive
-							? "ml-1 mr-1 w-control-sm opacity-100"
-							: "ml-0 mr-1 w-0 opacity-0 group-hover:ml-1 group-hover:w-control-sm group-hover:opacity-100 group-focus-within:ml-1 group-focus-within:w-control-sm group-focus-within:opacity-100"
-						: "w-control-sm opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
-				)}
-				onClick={(event) => {
-					event.stopPropagation();
-					onClose();
-				}}
-				onDoubleClick={(event) => event.stopPropagation()}
-				onContextMenu={(event) => event.stopPropagation()}
-				title={t("terminal.close")}
-				type="button"
-			>
-				<X aria-hidden="true" className="size-icon-sm" />
-			</button>
+			<Tooltip>
+				<TooltipTrigger asChild>
+					<button
+						aria-label={t("terminal.closeNamed", { title: shell.title })}
+						data-terminal-tab-action
+						className={cn(
+							"inline-flex h-control-sm shrink-0 items-center justify-center overflow-hidden rounded-sm text-passive transition-[width,margin,background,color,opacity] hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50",
+							appearance === "connected"
+								? isActive
+									? "ml-1 mr-1 w-control-sm opacity-100"
+									: "ml-0 mr-1 w-0 opacity-0 group-hover:ml-1 group-hover:w-control-sm group-hover:opacity-100 group-focus-within:ml-1 group-focus-within:w-control-sm group-focus-within:opacity-100"
+								: "w-control-sm opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
+						)}
+						onClick={(event) => {
+							event.stopPropagation();
+							onClose();
+						}}
+						onDoubleClick={(event) => event.stopPropagation()}
+						onContextMenu={(event) => event.stopPropagation()}
+						type="button"
+					>
+						<X aria-hidden="true" className="size-icon-sm" />
+					</button>
+				</TooltipTrigger>
+				<TooltipContent side="bottom">{t("terminal.closeNamed", { title: shell.title })}</TooltipContent>
+			</Tooltip>
 		</span>
 	);
 }

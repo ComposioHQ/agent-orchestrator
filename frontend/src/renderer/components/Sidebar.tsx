@@ -1300,17 +1300,26 @@ const ProjectItemContent = memo(function ProjectItemContent({
 									</TooltipContent>
 								</Tooltip>
 								<DropdownMenu>
-									<DropdownMenuTrigger asChild>
-										<button
-											aria-label={t("shell.projectActions", {
+									<Tooltip>
+										<TooltipTrigger asChild>
+											<DropdownMenuTrigger asChild>
+												<button
+													aria-label={t("shell.projectActions", {
+														name: workspace.name,
+													})}
+													className={HOVER_ACTION_CLASS}
+													type="button"
+												>
+													<MoreVertical aria-hidden="true" />
+												</button>
+											</DropdownMenuTrigger>
+										</TooltipTrigger>
+										<TooltipContent>
+											{t("shell.projectActions", {
 												name: workspace.name,
 											})}
-											className={HOVER_ACTION_CLASS}
-											type="button"
-										>
-											<MoreVertical aria-hidden="true" />
-										</button>
-									</DropdownMenuTrigger>
+										</TooltipContent>
+									</Tooltip>
 									<DropdownMenuContent side="right" align="start" className="min-w-44">
 										<DropdownMenuItem disabled={isProjectRestarting} onSelect={() => requestNewTask(workspace.id)}>
 											<Plus aria-hidden="true" />

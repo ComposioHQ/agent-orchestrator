@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { EditorHandoffState, OpenSessionTargetInput } from "../../shared/editor-handoff";
 import { TopbarOpenEditorButton } from "./TopbarOpenEditorButton";
+import { TooltipProvider } from "./ui/tooltip";
 
 vi.mock("../lib/telemetry", () => ({ captureRendererEvent: vi.fn() }));
 
@@ -34,7 +35,9 @@ function renderButton() {
 	const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
 	return render(
 		<QueryClientProvider client={client}>
-			<TopbarOpenEditorButton sessionId="sess-1" projectId="proj-1" />
+			<TooltipProvider>
+				<TopbarOpenEditorButton sessionId="sess-1" projectId="proj-1" />
+			</TooltipProvider>
 		</QueryClientProvider>,
 	);
 }

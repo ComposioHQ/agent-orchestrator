@@ -2159,36 +2159,37 @@ function ReviewPanel({
 					<div className="flex min-h-10 min-w-0 items-center justify-between gap-3 py-2">
 						<span className="text-xs font-medium text-foreground">{t("inspector.review.session")}</span>
 						<div className="flex min-w-0 items-center justify-end gap-1.5">
-							<Tooltip>
-								<TooltipTrigger asChild>
-									<Button
-										aria-label={primaryReviewActionLabel}
-										className="shrink-0 gap-1 px-1.5 text-xs [&_svg]:size-icon-sm"
-										disabled={reviewRunning ? isCancelling || isKilling || isSwitchingReviewer : runDisabled || autoReviewEnabled}
-										onClick={reviewRunning ? onCancel : onTrigger}
-										size="sm"
-										type="button"
-										variant={reviewRunning ? "ghost" : reviewHasRun ? "secondary" : "primary"}
-									>
-										{reviewRunning ? <X aria-hidden="true" /> : <Play aria-hidden="true" />}
-										<span className="review-run-action-label">{primaryReviewActionLabel}</span>
-									</Button>
-								</TooltipTrigger>
-								<TooltipContent side="top">{primaryReviewActionLabel}</TooltipContent>
-							</Tooltip>
-							{hasReviewerSession ? (
-								<Button
-								aria-label={isKilling ? t("inspector.review.killingSession") : t("inspector.review.killSession")}
-								className="h-control-md w-control-md shrink-0 p-0 text-error [&_svg]:size-icon-sm"
-								disabled={killDisabled}
-								onClick={onKill}
+							<Button
+								aria-label={primaryReviewActionLabel}
+								className="shrink-0 gap-1 px-1.5 text-xs [&_svg]:size-icon-sm"
+								disabled={reviewRunning ? isCancelling || isKilling || isSwitchingReviewer : runDisabled || autoReviewEnabled}
+								onClick={reviewRunning ? onCancel : onTrigger}
 								size="sm"
-								title={isKilling ? t("inspector.review.killingSession") : t("inspector.review.killSession")}
 								type="button"
-								variant="ghost"
+								variant={reviewRunning ? "ghost" : reviewHasRun ? "secondary" : "primary"}
 							>
-								<Trash2 aria-hidden="true" />
+								{reviewRunning ? <X aria-hidden="true" /> : <Play aria-hidden="true" />}
+								<span className="review-run-action-label">{primaryReviewActionLabel}</span>
 							</Button>
+							{hasReviewerSession ? (
+								<Tooltip>
+									<TooltipTrigger asChild>
+										<Button
+											aria-label={isKilling ? t("inspector.review.killingSession") : t("inspector.review.killSession")}
+											className="h-control-md w-control-md shrink-0 p-0 text-error [&_svg]:size-icon-sm"
+											disabled={killDisabled}
+											onClick={onKill}
+											size="sm"
+											type="button"
+											variant="ghost"
+										>
+											<Trash2 aria-hidden="true" />
+										</Button>
+									</TooltipTrigger>
+									<TooltipContent side="bottom">
+										{isKilling ? t("inspector.review.killingSession") : t("inspector.review.killSession")}
+									</TooltipContent>
+								</Tooltip>
 							) : null}
 						</div>
 					</div>

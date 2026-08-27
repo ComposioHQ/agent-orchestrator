@@ -282,18 +282,22 @@ export const BrowserTabsRail = forwardRef<BrowserTabsRailHandle, BrowserTabsRail
 					<span className="truncate">{t("browser.newTab")}</span>
 				</button>
 			) : pinned ? (
-				<button
-					aria-label={t("browser.unpinTabs")}
-					className={cn(
-						"flex h-8 w-full shrink-0 items-center justify-center border-b border-border p-1.5 transition-colors",
-						"text-muted-foreground hover:bg-interactive-hover hover:text-foreground",
-					)}
-					onClick={() => onPinnedChange(false)}
-					title={t("browser.unpinTabs")}
-					type="button"
-				>
-					<PinOff aria-hidden="true" className="size-icon-base" />
-				</button>
+				<Tooltip>
+					<TooltipTrigger asChild>
+						<button
+							aria-label={t("browser.unpinTabs")}
+							className={cn(
+								"flex h-8 w-full shrink-0 items-center justify-center border-b border-border p-1.5 transition-colors",
+								"text-muted-foreground hover:bg-interactive-hover hover:text-foreground",
+							)}
+							onClick={() => onPinnedChange(false)}
+							type="button"
+						>
+							<PinOff aria-hidden="true" className="size-icon-base" />
+						</button>
+					</TooltipTrigger>
+					<TooltipContent side="bottom">{t("browser.unpinTabs")}</TooltipContent>
+				</Tooltip>
 			) : null}
 			<nav aria-label={t("browser.tabsAria", { count: tabs.length })} className="min-h-0 flex-1 overflow-y-auto">
 				{collapsed ? null : (
@@ -301,7 +305,7 @@ export const BrowserTabsRail = forwardRef<BrowserTabsRailHandle, BrowserTabsRail
 						<SortableContext items={tabIds} strategy={verticalListSortingStrategy}>
 							{/* No app-wide TooltipProvider exists (each site mounts its own),
 							    so the pinned rail's favicon tooltips need one here. */}
-							<TooltipProvider delayDuration={250}>
+							<TooltipProvider>
 							<div className="flex flex-col">
 								{tabs.map((tab) =>
 									expanded ? (
@@ -548,24 +552,28 @@ function ExpandedTabRow({ active, chrome, closeTitle, onClose, onSelect, onlyTab
 					{label.title}
 				</span>
 			</button>
-			<button
-				aria-label={closeLabel}
-				className={cn(
-					"mr-1.5 grid size-control-sm shrink-0 place-items-center overflow-hidden rounded-sm text-passive opacity-0",
-					"transition-[opacity,background-color,color] hover:bg-interactive-hover hover:text-foreground",
-					"group-hover/tab-row:opacity-100 group-focus-within/tab-row:opacity-100",
-					"disabled:pointer-events-none",
-				)}
-				disabled={onlyTab}
-				onClick={(event) => {
-					event.stopPropagation();
-					onClose();
-				}}
-				title={onlyTab ? closeTitle : closeLabel}
-				type="button"
-			>
-				<X aria-hidden="true" className="size-icon-sm" />
-			</button>
+			<Tooltip>
+				<TooltipTrigger asChild>
+					<button
+						aria-label={closeLabel}
+						className={cn(
+							"mr-1.5 grid size-control-sm shrink-0 place-items-center overflow-hidden rounded-sm text-passive opacity-0",
+							"transition-[opacity,background-color,color] hover:bg-interactive-hover hover:text-foreground",
+							"group-hover/tab-row:opacity-100 group-focus-within/tab-row:opacity-100",
+							"disabled:pointer-events-none",
+						)}
+						disabled={onlyTab}
+						onClick={(event) => {
+							event.stopPropagation();
+							onClose();
+						}}
+						type="button"
+					>
+						<X aria-hidden="true" className="size-icon-sm" />
+					</button>
+				</TooltipTrigger>
+				<TooltipContent side="bottom">{onlyTab ? closeTitle : closeLabel}</TooltipContent>
+			</Tooltip>
 		</div>
 	);
 }

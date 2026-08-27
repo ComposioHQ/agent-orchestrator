@@ -35,6 +35,7 @@ import {
 import { ShellTopbar } from "./ShellTopbar";
 import { SessionTopbarHost } from "./SessionTopbarPortal";
 import { TopbarButton } from "./TopbarButton";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import { useBrowserView } from "../hooks/useBrowserView";
 import { useFileAnnotation } from "../hooks/useFileAnnotation";
 import { useResizable } from "../hooks/useResizable";
@@ -791,16 +792,22 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const sessionLocalActions = session ? (
 		<SessionInterfaceActionGroup>
 			{!isOrchestrator ? (
-				<TopbarButton
-					aria-label={t("shortcut.new-shell-terminal")}
-					disabled={openShellTerminal.isPending}
-					onClick={addShellTerminal}
-					title={newTerminalError ?? t("terminal.newWithShortcut", { shortcut: newTerminalShortcutLabel })}
-					type="button"
-					variant="icon"
-				>
-					<Plus aria-hidden="true" className="size-icon-md" />
-				</TopbarButton>
+				<Tooltip>
+					<TooltipTrigger asChild>
+						<TopbarButton
+							aria-label={t("shortcut.new-shell-terminal")}
+							disabled={openShellTerminal.isPending}
+							onClick={addShellTerminal}
+							type="button"
+							variant="icon"
+						>
+							<Plus aria-hidden="true" className="size-icon-md" />
+						</TopbarButton>
+					</TooltipTrigger>
+					<TooltipContent side="bottom">
+						{newTerminalError ?? t("terminal.newWithShortcut", { shortcut: newTerminalShortcutLabel })}
+					</TooltipContent>
+				</Tooltip>
 			) : null}
 			{interfaceSwitchAction}
 		</SessionInterfaceActionGroup>
@@ -1312,16 +1319,22 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			</div>
 			{hasInspector ? (
 				<div className="session-pinned-actions" data-testid="session-pinned-actions" style={noDragStyle}>
-					<TopbarButton
-						aria-label={isInspectorOpen ? t("shell.closeInspector") : t("shell.openInspector")}
-						aria-pressed={isInspectorOpen}
-						onClick={handleToggleInspector}
-						style={noDragStyle}
-						title={isInspectorOpen ? t("shell.closeInspectorTitle") : t("shell.openInspectorTitle")}
-						variant="icon"
-					>
-						<PanelRight className="size-icon-md" aria-hidden="true" />
-					</TopbarButton>
+					<Tooltip>
+						<TooltipTrigger asChild>
+							<TopbarButton
+								aria-label={isInspectorOpen ? t("shell.closeInspector") : t("shell.openInspector")}
+								aria-pressed={isInspectorOpen}
+								onClick={handleToggleInspector}
+								style={noDragStyle}
+								variant="icon"
+							>
+								<PanelRight className="size-icon-md" aria-hidden="true" />
+							</TopbarButton>
+						</TooltipTrigger>
+						<TooltipContent side="bottom">
+							{isInspectorOpen ? t("shell.closeInspectorTitle") : t("shell.openInspectorTitle")}
+						</TooltipContent>
+					</Tooltip>
 					{/* Keep the global notification action trailing at the window edge. */}
 					<NotificationCenter style={noDragStyle} />
 				</div>

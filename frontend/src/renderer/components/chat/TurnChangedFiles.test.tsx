@@ -1,9 +1,15 @@
-import { render, screen } from "@testing-library/react";
+import { render as rtlRender, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { ReactElement } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { ActivityRow, TurnChangedFiles } from "./ChatTimelineItems";
 import { ActivityRun } from "./ActivityRun";
 import type { ConversationActivity, TurnDiff } from "../../types/conversation";
+import { TooltipProvider } from "../ui/tooltip";
+
+function render(ui: ReactElement) {
+	return rtlRender(<TooltipProvider>{ui}</TooltipProvider>);
+}
 
 // These cover the two signal rules this surface exists to keep: a changed-file
 // list never claims to be complete when it was cut, and command output only adds
