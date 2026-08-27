@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -67,10 +68,14 @@ type Config struct {
 	// refreshes CI, review, and mergeability state from GitHub.
 	PRStatusPollInterval time.Duration
 
-	NodeOpsBaseURL          string
-	NodeOpsAPIKey           string
-	NodeOpsDefaultShape     string
-	NodeOpsDefaultRootFS    string
+	NodeOpsBaseURL       string
+	NodeOpsAPIKey        string
+	NodeOpsDefaultShape  string
+	NodeOpsDefaultRootFS string
+	// NodeOpsRootFSByHarness maps a harness to a slimmer per-harness template
+	// (AO_CLOUD_NODEOPS_ROOTFS_BY_HARNESS, JSON object). Optional; unmapped
+	// harnesses use NodeOpsDefaultRootFS.
+	NodeOpsRootFSByHarness  map[string]string
 	NodeOpsIngress          string
 	NodeOpsSSHKeyPath       string
 	NodeOpsRegion           string
@@ -127,6 +132,13 @@ func Load() (Config, error) {
 	if environment == "development" || environment == "test" {
 		defaultHTTPAddress = "127.0.0.1:8080"
 	}
+	rootFSByHarnessEnv := map[string]string{}
+	if raw := strings.TrimSpace(os.Getenv("AO_CLOUD_NODEOPS_ROOTFS_BY_HARNESS")); raw != "" {
+		if err := json.Unmarshal([]byte(raw), &rootFSByHarnessEnv); err != nil {
+			return Config{}, fmt.Errorf("invalid AO_CLOUD_NODEOPS_ROOTFS_BY_HARNESS: %w", err)
+		}
+	}
+
 	cfg := Config{
 		Environment:            environment,
 		HTTPAddress:            envOrDefault("AO_CLOUD_HTTP_ADDRESS", defaultHTTPAddress),
@@ -167,13 +179,14 @@ func Load() (Config, error) {
 		IdlePauseThreshold:     durationEnv("AO_CLOUD_IDLE_PAUSE_THRESHOLD", defaultIdlePauseThreshold),
 		PRStatusPollInterval:   durationEnv("AO_CLOUD_PR_STATUS_POLL_INTERVAL", defaultPRStatusPollInterval),
 
-		NodeOpsBaseURL:       strings.TrimSpace(os.Getenv("AO_CLOUD_NODEOPS_BASE_URL")),
-		NodeOpsAPIKey:        strings.TrimSpace(os.Getenv("AO_CLOUD_NODEOPS_API_KEY")),
-		NodeOpsDefaultShape:  strings.TrimSpace(os.Getenv("AO_CLOUD_NODEOPS_DEFAULT_SHAPE")),
-		NodeOpsDefaultRootFS: strings.TrimSpace(os.Getenv("AO_CLOUD_NODEOPS_DEFAULT_ROOTFS")),
-		NodeOpsIngress:       strings.TrimSpace(os.Getenv("AO_CLOUD_NODEOPS_INGRESS")),
-		NodeOpsSSHKeyPath:    strings.TrimSpace(os.Getenv("AO_CLOUD_NODEOPS_SSH_KEY_PATH")),
-		NodeOpsRegion:        strings.TrimSpace(os.Getenv("AO_CLOUD_NODEOPS_REGION")),
+		NodeOpsBaseURL:         strings.TrimSpace(os.Getenv("AO_CLOUD_NODEOPS_BASE_URL")),
+		NodeOpsAPIKey:          strings.TrimSpace(os.Getenv("AO_CLOUD_NODEOPS_API_KEY")),
+		NodeOpsDefaultShape:    strings.TrimSpace(os.Getenv("AO_CLOUD_NODEOPS_DEFAULT_SHAPE")),
+		NodeOpsDefaultRootFS:   strings.TrimSpace(os.Getenv("AO_CLOUD_NODEOPS_DEFAULT_ROOTFS")),
+		NodeOpsRootFSByHarness: rootFSByHarnessEnv,
+		NodeOpsIngress:         strings.TrimSpace(os.Getenv("AO_CLOUD_NODEOPS_INGRESS")),
+		NodeOpsSSHKeyPath:      strings.TrimSpace(os.Getenv("AO_CLOUD_NODEOPS_SSH_KEY_PATH")),
+		NodeOpsRegion:          strings.TrimSpace(os.Getenv("AO_CLOUD_NODEOPS_REGION")),
 		NodeOpsAutoPauseSeconds: intEnvOrDefault(
 			"AO_CLOUD_NODEOPS_AUTO_PAUSE_SECONDS", defaultNodeOpsAutoPauseSeconds),
 		NodeOpsWorkerTokenTTL: durationEnv(
@@ -307,6 +320,7 @@ func Load() (Config, error) {
 			APIKey:           cfg.NodeOpsAPIKey,
 			DefaultShape:     cfg.NodeOpsDefaultShape,
 			DefaultRootFS:    cfg.NodeOpsDefaultRootFS,
+			RootFSByHarness:  cfg.NodeOpsRootFSByHarness,
 			Ingress:          cfg.NodeOpsIngress,
 			SSHKeyPath:       cfg.NodeOpsSSHKeyPath,
 			WorkerTokenTTL:   cfg.NodeOpsWorkerTokenTTL,

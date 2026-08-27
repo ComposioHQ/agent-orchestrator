@@ -426,7 +426,7 @@ func (s *Server) createEnvironmentScratchProject(
 		writeError(w, r, http.StatusUnprocessableEntity, "validation_error", "Project configuration is invalid.")
 		return
 	}
-	plan, err := s.provisioning.SessionPlan()
+	plan, err := s.provisioning.SessionPlan(request.Orchestrator.Harness)
 	if err != nil {
 		writeError(w, r, http.StatusInternalServerError, "internal_error", "Sandbox provisioning is misconfigured.")
 		return

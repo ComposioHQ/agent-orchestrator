@@ -290,7 +290,7 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 	// The plan is resolved once, here, and stamped onto the sandbox row. The
 	// reconciler reads it back from the row rather than from configuration, so
 	// a later config change cannot disturb a session already in flight.
-	plan, err := s.provisioning.SessionPlan()
+	plan, err := s.provisioning.SessionPlan(request.Harness)
 	if err != nil {
 		s.logger.Error("resolve sandbox provisioning plan", "error", err, "request_id", requestID(r))
 		writeError(

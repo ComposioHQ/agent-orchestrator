@@ -523,7 +523,7 @@ func (s *Server) createGitHubScratchProject(
 		writeError(w, r, http.StatusUnprocessableEntity, "validation_error", "The scratch project request is invalid.")
 		return
 	}
-	plan, err := s.provisioning.SessionPlan()
+	plan, err := s.provisioning.SessionPlan(request.Orchestrator.Harness)
 	if err != nil {
 		s.logger.Error("resolve scratch provisioning plan", "error", err, "request_id", requestID(r))
 		writeError(w, r, http.StatusInternalServerError, "internal_error", "Sandbox provisioning is misconfigured.")

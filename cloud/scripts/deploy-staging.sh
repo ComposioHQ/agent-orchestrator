@@ -78,6 +78,11 @@ worker_settings="$(
 		--query SecretString \
 		--output text
 )"
+# Optional per-harness template mapping (JSON object as a string value in the
+# nodeops secret). Plain env rather than an ECS secret ref so a missing key
+# cannot block container start; empty mapping means every harness uses
+# default_rootfs.
+rootfs_by_harness="$(jq -r '.rootfs_by_harness // "{}"' <<<"$nodeops_settings")"
 ./scripts/validate-hosted-settings.py \
 	--nodeops <(printf '%s' "$nodeops_settings") \
 	--worker <(printf '%s' "$worker_settings")
@@ -200,6 +205,7 @@ register_task_definition() {
 			--set-environment AO_CLOUD_PUBLIC_URL=https://staging-api.aoagents.dev
 			--set-environment AO_CLOUD_REPOSITORY_BROKER_URL=https://api.aoagents.dev
 			--set-environment AO_CLOUD_ALLOW_ANONYMOUS_GITHUB_CHECKOUT=true
+			--set-environment "AO_CLOUD_NODEOPS_ROOTFS_BY_HARNESS=${rootfs_by_harness}"
 			--set-secret "AO_CLOUD_PROVIDER_SECRET_KEY=${provider_secret_arn}"
 			--set-secret "AO_CLOUD_REPOSITORY_BROKER_TOKEN=${broker_secret_arn}:auth_token::"
 			--set-secret "AO_CLOUD_ENV_CONTROL_TOKEN=${broker_secret_arn}:staging_control_token::"

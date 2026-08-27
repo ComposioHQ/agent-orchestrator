@@ -20,14 +20,28 @@ const (
 )
 
 type NodeOpsConfig struct {
-	BaseURL          string
-	APIKey           string
-	DefaultShape     string
-	DefaultRootFS    string
+	BaseURL       string
+	APIKey        string
+	DefaultShape  string
+	DefaultRootFS string
+	// RootFSByHarness maps a coding-agent harness (e.g. "claude-code") to a
+	// slimmer template that bakes only that agent. A session whose harness has
+	// a mapping provisions from it; anything unmapped falls back to
+	// DefaultRootFS. Smaller templates shrink the provider's cold-host image
+	// pull, which dominates worst-case sandbox creation time.
+	RootFSByHarness  map[string]string
 	Ingress          string
 	SSHKeyPath       string
 	WorkerTokenTTL   time.Duration
 	AutoPauseSeconds int
+}
+
+// rootFSForHarness resolves the template one session provisions from.
+func (c NodeOpsConfig) rootFSForHarness(harness string) string {
+	if rootFS := strings.TrimSpace(c.RootFSByHarness[strings.TrimSpace(harness)]); rootFS != "" {
+		return rootFS
+	}
+	return strings.TrimSpace(c.DefaultRootFS)
 }
 
 type DockerConfig struct {
@@ -92,7 +106,11 @@ type Plan struct {
 	BootstrapContext json.RawMessage
 }
 
-func (d ProvisioningDefaults) SessionPlan() (Plan, error) {
+// SessionPlan stamps the provisioning plan one session's sandbox runs from.
+// The harness selects the rootfs template when a per-harness mapping exists
+// (see NodeOpsConfig.RootFSByHarness); the plan is stored on the sandbox row,
+// so the choice sticks for the session's whole life, including recreates.
+func (d ProvisioningDefaults) SessionPlan(harness string) (Plan, error) {
 	provider := normalizeProvider(d.Provider)
 	if provider == "" {
 		provider = DefaultProvider
@@ -113,10 +131,11 @@ func (d ProvisioningDefaults) SessionPlan() (Plan, error) {
 		if err := d.NodeOps.Validate(); err != nil {
 			return Plan{}, err
 		}
+		rootFS := d.NodeOps.rootFSForHarness(harness)
 		resourceProfile["nodeOps"] = map[string]any{
 			"baseUrl":               strings.TrimSpace(d.NodeOps.BaseURL),
 			"defaultShape":          strings.TrimSpace(d.NodeOps.DefaultShape),
-			"defaultRootFs":         strings.TrimSpace(d.NodeOps.DefaultRootFS),
+			"defaultRootFs":         rootFS,
 			"ingress":               strings.TrimSpace(d.NodeOps.Ingress),
 			"sshKeyPath":            strings.TrimSpace(d.NodeOps.SSHKeyPath),
 			"workerTokenTtlSeconds": int64(d.NodeOps.WorkerTokenTTL / time.Second),
@@ -125,7 +144,7 @@ func (d ProvisioningDefaults) SessionPlan() (Plan, error) {
 		bootstrapContext["nodeOps"] = map[string]any{
 			"baseUrl":               strings.TrimSpace(d.NodeOps.BaseURL),
 			"defaultShape":          strings.TrimSpace(d.NodeOps.DefaultShape),
-			"defaultRootFs":         strings.TrimSpace(d.NodeOps.DefaultRootFS),
+			"defaultRootFs":         rootFS,
 			"ingress":               strings.TrimSpace(d.NodeOps.Ingress),
 			"sshKeyPath":            strings.TrimSpace(d.NodeOps.SSHKeyPath),
 			"workerTokenTtlSeconds": int64(d.NodeOps.WorkerTokenTTL / time.Second),

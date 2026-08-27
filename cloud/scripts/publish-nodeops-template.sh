@@ -4,8 +4,21 @@ set -euo pipefail
 AWS_PROFILE="${AWS_PROFILE:-ao-cloud}"
 AWS_REGION="${AWS_REGION:-eu-north-1}"
 NODEOPS_SECRET_ID="${AO_CLOUD_NODEOPS_SECRET_ID:-ao-cloud/staging/nodeops}"
-TEMPLATE_NAME="${AO_CLOUD_NODEOPS_TEMPLATE_NAME:-ao-worker-$(date +%Y%m%d)-baked-v1}"
+# HARNESS selects the template flavor: one of claude-code | codex | cursor for
+# a slim single-agent template (Sandbox.base.Dockerfile + the matching
+# nodeops/harness/*.Dockerfile layer), or "all" for the legacy all-agents
+# template built from Sandbox.Dockerfile.
+HARNESS="${AO_CLOUD_NODEOPS_HARNESS:-all}"
+case "$HARNESS" in
+    all) harness_suffix="baked" ;;
+    claude-code) harness_suffix="claude" ;;
+    codex) harness_suffix="codex" ;;
+    cursor) harness_suffix="cursor" ;;
+    *) echo "AO_CLOUD_NODEOPS_HARNESS must be all|claude-code|codex|cursor, got: $HARNESS" >&2; exit 1 ;;
+esac
+TEMPLATE_NAME="${AO_CLOUD_NODEOPS_TEMPLATE_NAME:-ao-worker-$(date +%Y%m%d)-${harness_suffix}-v1}"
 DOCKERFILE="${AO_CLOUD_NODEOPS_DOCKERFILE:-nodeops/Sandbox.Dockerfile}"
+BASE_DOCKERFILE="${AO_CLOUD_NODEOPS_BASE_DOCKERFILE:-nodeops/Sandbox.base.Dockerfile}"
 # Control-plane image to bake the worker binaries from. Using the image (not a
 # fresh local build) guarantees the baked bytes hash-match exactly what that
 # control plane uploads, which is what lets its bootstrap fast-path skip the
@@ -83,7 +96,18 @@ if [[ -z "$base_url" || -z "$api_key" ]]; then
 fi
 
 composed="$workdir/Dockerfile"
-cat "$DOCKERFILE" > "$composed"
+if [[ "$HARNESS" == "all" ]]; then
+    cat "$DOCKERFILE" > "$composed"
+else
+    harness_layer="nodeops/harness/$HARNESS.Dockerfile"
+    if [[ ! -f "$BASE_DOCKERFILE" || ! -f "$harness_layer" ]]; then
+        echo "Missing $BASE_DOCKERFILE or $harness_layer" >&2
+        exit 1
+    fi
+    cat "$BASE_DOCKERFILE" > "$composed"
+    printf '\n' >> "$composed"
+    cat "$harness_layer" >> "$composed"
+fi
 printf '%s\n' "$bake_layer" >> "$composed"
 
 payload="$(jq -n \

@@ -60,6 +60,7 @@ func provisioningDefaults(cfg config.Config) sandbox.ProvisioningDefaults {
 			APIKey:           cfg.NodeOpsAPIKey,
 			DefaultShape:     cfg.NodeOpsDefaultShape,
 			DefaultRootFS:    cfg.NodeOpsDefaultRootFS,
+			RootFSByHarness:  cfg.NodeOpsRootFSByHarness,
 			Ingress:          cfg.NodeOpsIngress,
 			SSHKeyPath:       cfg.NodeOpsSSHKeyPath,
 			WorkerTokenTTL:   cfg.NodeOpsWorkerTokenTTL,

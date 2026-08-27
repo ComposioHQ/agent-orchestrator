@@ -129,7 +129,7 @@ func (s *Server) createWorkerChild(w http.ResponseWriter, r *http.Request) {
 		)
 		return
 	}
-	plan, err := s.provisioning.SessionPlan()
+	plan, err := s.provisioning.SessionPlan(request.Harness)
 	if err != nil {
 		s.logger.Error("resolve child sandbox provisioning plan", "error", err, "request_id", requestID(r))
 		writeError(w, r, http.StatusInternalServerError, "internal_error", "Sandbox provisioning is misconfigured.")
