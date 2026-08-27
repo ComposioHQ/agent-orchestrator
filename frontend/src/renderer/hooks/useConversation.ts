@@ -9,12 +9,7 @@
  * in bounded pages only when the reader asks for it.
  */
 
-import {
-	useInfiniteQuery,
-	useMutation,
-	useQuery,
-	useQueryClient,
-} from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useState } from "react";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorCode, apiErrorMessage } from "../lib/api-client";
@@ -49,10 +44,8 @@ import type {
 type WireSnapshot = components["schemas"]["ConversationSnapshotResponse"];
 type WireMessage = components["schemas"]["ConversationMessageResponse"];
 type WireActivity = components["schemas"]["ConversationActivityResponse"];
-type WireImageContent =
-	components["schemas"]["ConversationImageContentRequest"];
-type WireResourceContent =
-	components["schemas"]["ConversationResourceContentRequest"];
+type WireImageContent = components["schemas"]["ConversationImageContentRequest"];
+type WireResourceContent = components["schemas"]["ConversationResourceContentRequest"];
 
 export interface ConversationSendInput {
 	text: string;
@@ -100,31 +93,25 @@ export interface ConversationQueryResult {
 	loadOlder: () => void;
 }
 
-export function useConversation(
-	sessionId: string | undefined,
-): ConversationQueryResult {
+export function useConversation(sessionId: string | undefined): ConversationQueryResult {
 	const query = useInfiniteQuery({
 		queryKey: conversationQueryKey(sessionId ?? ""),
 		enabled: Boolean(sessionId),
 		initialPageParam: undefined as number | undefined,
 		queryFn: async ({ pageParam }) => {
-			const { data, error } = await apiClient.GET(
-				"/api/v1/sessions/{sessionId}/conversation",
-				{
-					params: {
-						path: { sessionId: sessionId as string },
-						query: {
-							beforeSequence: pageParam,
-							limit: CONVERSATION_PAGE_SIZE,
-						},
+			const { data, error } = await apiClient.GET("/api/v1/sessions/{sessionId}/conversation", {
+				params: {
+					path: { sessionId: sessionId as string },
+					query: {
+						beforeSequence: pageParam,
+						limit: CONVERSATION_PAGE_SIZE,
 					},
 				},
-			);
+			});
 			if (error) throw error;
 			return toSnapshot(data as WireSnapshot);
 		},
-		getNextPageParam: (page) =>
-			page.hasMoreBefore ? page.oldestSequence : undefined,
+		getNextPageParam: (page) => (page.hasMoreBefore ? page.oldestSequence : undefined),
 		select: (data) => mergeConversationPages(data.pages),
 		// A mode mismatch is authoritative for this committed controller epoch, so
 		// retrying the same request cannot help and would leave the surface loading
@@ -142,10 +129,7 @@ export function useConversation(
 		// The session is currently owned by Terminal UI (or its Chat controller is
 		// absent). A deliberate interface switch can change that later, but this
 		// request cannot, so explain it rather than retrying.
-		if (
-			code === "SESSION_MODE_MISMATCH" ||
-			code === "CHAT_CONTROLLER_NOT_READY"
-		) {
+		if (code === "SESSION_MODE_MISMATCH" || code === "CHAT_CONTROLLER_NOT_READY") {
 			return {
 				isLoading: false,
 				unavailable: { code, message: apiErrorMessage(query.error) },
@@ -274,9 +258,7 @@ export function useConversationCommands(sessionId: string | undefined) {
 				},
 			);
 			if (error)
-				throw new Error(
-					apiErrorMessage(error, `Failed to resume agent (${response.status})`),
-				);
+				throw new Error(apiErrorMessage(error, `Failed to resume agent (${response.status})`));
 			return data;
 		},
 		onSuccess: () => {
@@ -479,8 +461,7 @@ export function useConversationCommands(sessionId: string | undefined) {
 	return {
 		send: (input: string | ConversationSendInput) =>
 			send.mutateAsync(typeof input === "string" ? { text: input } : input),
-		resolve: (requestId: string, decisionId: string) =>
-			resolve.mutate({ requestId, decisionId }),
+		resolve: (requestId: string, decisionId: string) => resolve.mutate({ requestId, decisionId }),
 		resolveInput: (
 			requestId: string,
 			action: "accept" | "decline" | "cancel",
@@ -521,20 +502,14 @@ export function useConversationCommands(sessionId: string | undefined) {
 			error: retryTurn.error ? apiErrorMessage(retryTurn.error) : undefined,
 			turnId: retryTurn.variables,
 		},
-		editMessage: (turnId: string, text: string) =>
-			editMessage.mutateAsync({ turnId, text }),
+		editMessage: (turnId: string, text: string) => editMessage.mutateAsync({ turnId, text }),
 		editMessagePending: editMessage.isPending,
-		editMessageError: editMessage.error
-			? apiErrorMessage(editMessage.error)
-			: undefined,
+		editMessageError: editMessage.error ? apiErrorMessage(editMessage.error) : undefined,
 		activateBranch: (branchId: string) => activateBranch.mutateAsync(branchId),
 		activateBranchPending: activateBranch.isPending,
-		activateBranchError: activateBranch.error
-			? apiErrorMessage(activateBranch.error)
-			: undefined,
+		activateBranchError: activateBranch.error ? apiErrorMessage(activateBranch.error) : undefined,
 		steer: (text: string) => steer.mutateAsync(text),
-		promoteQueuedTurn: (turnId: string) =>
-			promoteQueuedTurn.mutateAsync(turnId),
+		promoteQueuedTurn: (turnId: string) => promoteQueuedTurn.mutateAsync(turnId),
 		cancelQueuedTurn: (turnId: string) => cancelQueuedTurn.mutateAsync(turnId),
 		steerPending: steer.isPending,
 		/**
@@ -551,26 +526,15 @@ export function useConversationCommands(sessionId: string | undefined) {
 		steerUnsupported: apiErrorCode(steer.error) === "CHAT_STEER_UNSUPPORTED",
 		reloadMcpServers: () => reloadMcp.mutateAsync(),
 		reloadingMcpServers: reloadMcp.isPending,
-		mcpReloadUnsupported:
-			apiErrorCode(reloadMcp.error) === "CHAT_MCP_RELOAD_UNSUPPORTED",
+		mcpReloadUnsupported: apiErrorCode(reloadMcp.error) === "CHAT_MCP_RELOAD_UNSUPPORTED",
 		mcpReloadError:
-			reloadMcp.error &&
-			apiErrorCode(reloadMcp.error) !== "CHAT_MCP_RELOAD_UNSUPPORTED"
+			reloadMcp.error && apiErrorCode(reloadMcp.error) !== "CHAT_MCP_RELOAD_UNSUPPORTED"
 				? apiErrorMessage(reloadMcp.error)
 				: undefined,
-		busy:
-			send.isPending ||
-			resolve.isPending ||
-			resolveInput.isPending ||
-			interrupt.isPending,
+		busy: send.isPending || resolve.isPending || resolveInput.isPending || interrupt.isPending,
 		error:
 			send.error || resolve.error || interrupt.error || chooseSettings.error
-				? apiErrorMessage(
-						send.error ??
-							resolve.error ??
-							interrupt.error ??
-							chooseSettings.error,
-					)
+				? apiErrorMessage(send.error ?? resolve.error ?? interrupt.error ?? chooseSettings.error)
 				: undefined,
 	};
 }
@@ -607,10 +571,7 @@ function steerRefusal(error: unknown): string | undefined {
  * session is open: the catalog depends on the account's entitlements, which the
  * provider knows and AO does not.
  */
-export function useConversationModels(
-	sessionId: string | undefined,
-	enabled: boolean,
-) {
+export function useConversationModels(sessionId: string | undefined, enabled: boolean) {
 	const query = useQuery({
 		queryKey: conversationModelsQueryKey(sessionId ?? ""),
 		enabled: Boolean(sessionId) && enabled,
@@ -644,10 +605,7 @@ export function useConversationModels(
  * the effort choices, for example). The daemon therefore returns the complete
  * catalog after every mutation and that response replaces the cache atomically.
  */
-export function useConversationConfigOptions(
-	sessionId: string | undefined,
-	enabled: boolean,
-) {
+export function useConversationConfigOptions(sessionId: string | undefined, enabled: boolean) {
 	const queryClient = useQueryClient();
 	const queryKey = conversationConfigOptionsQueryKey(sessionId ?? "");
 	// Set for as long as a selection is being written. Cancelling in-flight reads
@@ -680,13 +638,7 @@ export function useConversationConfigOptions(
 		// so no poll can start or land inside that window.
 		onMutate: () => setWriting(true),
 		onSettled: () => setWriting(false),
-		mutationFn: async ({
-			optionId,
-			value,
-		}: {
-			optionId: string;
-			value: ChatConfigOptionValue;
-		}) => {
+		mutationFn: async ({ optionId, value }: { optionId: string; value: ChatConfigOptionValue }) => {
 			// A read already in flight when the user picked would otherwise land
 			// after this mutation's setQueryData and put the pre-change catalog
 			// back, reverting the picker to the old value until the next poll.
@@ -729,10 +681,7 @@ export function useConversationConfigOptions(
  * from a failure — with no skills, `/` has to stay an ordinary character rather than
  * opening an empty menu.
  */
-export function useConversationSkills(
-	sessionId: string | undefined,
-	enabled: boolean,
-) {
+export function useConversationSkills(sessionId: string | undefined, enabled: boolean) {
 	const query = useQuery({
 		queryKey: ["conversation-skills", sessionId ?? ""],
 		enabled: Boolean(sessionId) && enabled,
@@ -767,10 +716,7 @@ export function useConversationSkills(
  * The endpoint caps itself, and `truncated` is respected rather than presented as a
  * complete list.
  */
-export function useWorkspaceFilePaths(
-	sessionId: string | undefined,
-	enabled: boolean,
-) {
+export function useWorkspaceFilePaths(sessionId: string | undefined, enabled: boolean) {
 	const query = useQuery({
 		queryKey: ["workspace-file-paths", sessionId ?? ""],
 		enabled: Boolean(sessionId) && enabled,
@@ -780,12 +726,9 @@ export function useWorkspaceFilePaths(
 		staleTime: 30 * 1000,
 		retry: false,
 		queryFn: async () => {
-			const { data, error } = await apiClient.GET(
-				"/api/v1/sessions/{sessionId}/workspace/files",
-				{
-					params: { path: { sessionId: sessionId as string } },
-				},
-			);
+			const { data, error } = await apiClient.GET("/api/v1/sessions/{sessionId}/workspace/files", {
+				params: { path: { sessionId: sessionId as string } },
+			});
 			if (error) throw error;
 			return {
 				// A deleted path cannot be read, so offering it would insert a
@@ -813,17 +756,12 @@ export function useWorkspaceFilePaths(
  */
 export function useStageAttachments(sessionId: string | undefined) {
 	return useCallback(
-		async (
-			attachments: { mimeType: string; data: string }[],
-		): Promise<string[]> => {
+		async (attachments: { mimeType: string; data: string }[]): Promise<string[]> => {
 			if (!sessionId || attachments.length === 0) return [];
-			const { data, error } = await apiClient.POST(
-				"/api/v1/sessions/{sessionId}/attachments",
-				{
-					params: { path: { sessionId } },
-					body: { attachments },
-				},
-			);
+			const { data, error } = await apiClient.POST("/api/v1/sessions/{sessionId}/attachments", {
+				params: { path: { sessionId } },
+				body: { attachments },
+			});
 			if (error) throw error;
 			return data?.paths ?? [];
 		},
@@ -855,13 +793,11 @@ function toSnapshot(wire: WireSnapshot): ConversationSnapshot {
 		latestSequence: wire.latestSequence,
 		oldestSequence: wire.oldestSequence ?? wire.latestSequence + 1,
 		hasMoreBefore: wire.hasMoreBefore ?? false,
-		nativeForkAvailableAfterSequence:
-			wire.nativeForkAvailableAfterSequence ?? 0,
+		nativeForkAvailableAfterSequence: wire.nativeForkAvailableAfterSequence ?? 0,
 		settings: {
 			model: wire.settings?.model || undefined,
 			reasoningEffort: wire.settings?.reasoningEffort || undefined,
-			approvalMode:
-				(wire.settings?.approvalMode as ApprovalMode | undefined) || undefined,
+			approvalMode: (wire.settings?.approvalMode as ApprovalMode | undefined) || undefined,
 		},
 		// Absent means the provider has not reported, which the meter renders as
 		// nothing rather than as an empty bar.
@@ -893,11 +829,8 @@ function toSnapshot(wire: WireSnapshot): ConversationSnapshot {
 		// answer different questions and routinely disagree.
 		threadState: wire.threadState
 			? {
-					status:
-						(wire.threadState.status as ThreadStatus | undefined) || undefined,
-					waitingOn: wire.threadState.waitingOn?.length
-						? wire.threadState.waitingOn
-						: undefined,
+					status: (wire.threadState.status as ThreadStatus | undefined) || undefined,
+					waitingOn: wire.threadState.waitingOn?.length ? wire.threadState.waitingOn : undefined,
 					archivedAt: wire.threadState.archivedAt ?? undefined,
 					closedAt: wire.threadState.closedAt ?? undefined,
 				}
@@ -980,9 +913,7 @@ function toSnapshot(wire: WireSnapshot): ConversationSnapshot {
 }
 
 /** Merge the newest live page with any older pages loaded on demand. */
-function mergeConversationPages(
-	pages: ConversationSnapshot[],
-): ConversationSnapshot | undefined {
+function mergeConversationPages(pages: ConversationSnapshot[]): ConversationSnapshot | undefined {
 	const live = pages[0];
 	if (!live) return undefined;
 
@@ -1001,9 +932,7 @@ function mergeConversationPages(
 		oldestSequence: oldest.oldestSequence,
 		hasMoreBefore: oldest.hasMoreBefore,
 		items: [...items.values()].sort((a, b) => a.sequence - b.sequence),
-		turns: [...turns.values()].sort((a, b) =>
-			a.requestedAt.localeCompare(b.requestedAt),
-		),
+		turns: [...turns.values()].sort((a, b) => a.requestedAt.localeCompare(b.requestedAt)),
 	};
 }
 
@@ -1051,9 +980,7 @@ function toActivity(wire: WireActivity): ConversationActivity {
 	};
 }
 
-function readDecisions(
-	detail: Record<string, unknown>,
-): DecisionOption[] | undefined {
+function readDecisions(detail: Record<string, unknown>): DecisionOption[] | undefined {
 	const raw = detail.decisions;
 	if (!Array.isArray(raw)) return undefined;
 	const options: DecisionOption[] = [];
@@ -1068,10 +995,7 @@ function readDecisions(
 				const kind = isDecisionKind(option.kind) ? option.kind : undefined;
 				options.push({
 					id: option.id,
-					label:
-						typeof option.label === "string" && option.label
-							? option.label
-							: option.id,
+					label: typeof option.label === "string" && option.label ? option.label : option.id,
 					kind,
 				});
 			}
@@ -1080,9 +1004,7 @@ function readDecisions(
 	return options.length > 0 ? options : undefined;
 }
 
-function isDecisionKind(
-	value: unknown,
-): value is NonNullable<DecisionOption["kind"]> {
+function isDecisionKind(value: unknown): value is NonNullable<DecisionOption["kind"]> {
 	return (
 		value === "allow_once" ||
 		value === "allow_always" ||
