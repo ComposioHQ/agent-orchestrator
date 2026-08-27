@@ -447,6 +447,103 @@ describe("send keys", () => {
 		expect(onSend).toHaveBeenCalledTimes(1);
 	});
 
+	it("does not resurrect accepted attachments when a same-session replacement rendered before settlement", async () => {
+		const sessionId = "composer-attachment-replacement-before-settlement";
+		let acceptSend!: () => void;
+		const onSend = vi
+			.fn()
+			.mockImplementationOnce(
+				() =>
+					new Promise<void>((resolve) => {
+						acceptSend = resolve;
+					}),
+			)
+			.mockResolvedValue(undefined);
+		const common = {
+			onSend,
+			draftSessionId: sessionId,
+			nativeImages: true,
+			onStageAttachments: vi
+				.fn()
+				.mockResolvedValue([".ao/attachments/accepted-once.png"]),
+		};
+		const surfaces = (
+			showOriginal: boolean,
+			replacementMode?: "hidden" | "visible",
+		) => (
+			<>
+				{showOriginal ? (
+					<div data-testid="original-attachment-composer-surface">
+						<ChatComposer {...common} />
+					</div>
+				) : null}
+				{replacementMode ? (
+					<Activity key="attachment-replacement" mode={replacementMode}>
+						<div data-testid="replacement-attachment-composer-surface">
+							<ChatComposer {...common} />
+						</div>
+					</Activity>
+				) : null}
+			</>
+		);
+
+		const view = render(surfaces(true));
+		const originalSurface = screen.getByTestId("original-attachment-composer-surface");
+		const original = within(originalSurface).getByLabelText("Message the agent");
+		fireEvent.paste(original, {
+			clipboardData: clipboardData([png("accepted-once.png")]),
+		});
+		await within(originalSurface).findByLabelText("Remove accepted-once.png");
+		await typeInComposer(original, "inspect this once");
+		fireEvent.keyDown(original, { key: "Enter" });
+		await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+		expect(onSend.mock.calls[0]?.[0]).toContain(".ao/attachments/accepted-once.png");
+		expect(onSend.mock.calls[0]?.[1]).toEqual([
+			{ mimeType: "image/png", data: expect.any(String) },
+		]);
+
+		view.rerender(surfaces(true, "hidden"));
+		const renderedReplacementSurface = await screen.findByTestId(
+			"replacement-attachment-composer-surface",
+		);
+		expect(
+			within(renderedReplacementSurface).getByLabelText("Remove accepted-once.png"),
+		).toBeInTheDocument();
+
+		await act(async () => acceptSend());
+		await waitFor(() =>
+			expect(readChatSessionDraft(sessionId).composer).toMatchObject({
+				text: "",
+				attachments: [],
+			}),
+		);
+		await waitFor(() =>
+			expect(
+				within(originalSurface).queryByLabelText("Remove accepted-once.png"),
+			).not.toBeInTheDocument(),
+		);
+
+		view.rerender(surfaces(false, "visible"));
+		const committedReplacementSurface = screen.getByTestId(
+			"replacement-attachment-composer-surface",
+		);
+		const committedReplacement = within(committedReplacementSurface).getByLabelText(
+			"Message the agent",
+		);
+		expect(
+			within(committedReplacementSurface).queryByLabelText("Remove accepted-once.png"),
+		).not.toBeInTheDocument();
+		fireEvent.keyDown(committedReplacement, { key: "Enter" });
+		expect(onSend).toHaveBeenCalledTimes(1);
+
+		await typeInComposer(committedReplacement, "fresh follow-up");
+		fireEvent.keyDown(committedReplacement, { key: "Enter" });
+		await waitFor(() => expect(onSend).toHaveBeenCalledTimes(2));
+		expect(onSend.mock.calls[1]?.[0]).toBe("fresh follow-up");
+		expect(onSend.mock.calls[1]?.[0]).not.toContain(".ao/attachments/accepted-once.png");
+		expect(onSend.mock.calls[1]?.[1]).toBeUndefined();
+	});
+
 	it("renders command failures from the live surface", () => {
 		render(<ChatComposer onSend={vi.fn()} commandError="The approval could not be submitted" />);
 		expect(screen.getByRole("alert")).toHaveTextContent("The approval could not be submitted");

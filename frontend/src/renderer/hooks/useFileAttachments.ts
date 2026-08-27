@@ -499,6 +499,20 @@ export function useFileAttachments(options: FileAttachmentOptions = {}) {
 		setError(null);
 	}, [initialKey, onAttachmentsChange]);
 
+	const reconcilePersistedAttachments = useCallback((persisted: FileAttachment[]) => {
+		// A hidden React Activity renders before its effects subscribe. By the time it
+		// reconnects, another same-scope surface may have accepted and cleared the
+		// durable draft. Prefer a live shared descriptor snapshot when one exists (it
+		// owns pending work and failed-persistence recovery); otherwise re-seed from
+		// storage at the commit boundary instead of reviving render-time descriptors.
+		const shared = initialKey
+			? sharedAttachmentEntries.get(initialKey)?.attachments
+			: undefined;
+		const next = shared ?? persisted;
+		attachmentsRef.current = next;
+		setAttachments(next);
+	}, [initialKey]);
+
 	const toPayload = useCallback(
 		(): FileAttachmentPayload[] =>
 			attachments.flatMap(({ mimeType, data }) =>
@@ -521,5 +535,15 @@ export function useFileAttachments(options: FileAttachmentOptions = {}) {
 		);
 	}, []);
 
-	return { attachments, error, preparing, addFiles, remove, clear, toPayload, toSettledPayload };
+	return {
+		attachments,
+		error,
+		preparing,
+		addFiles,
+		remove,
+		clear,
+		reconcilePersistedAttachments,
+		toPayload,
+		toSettledPayload,
+	};
 }
