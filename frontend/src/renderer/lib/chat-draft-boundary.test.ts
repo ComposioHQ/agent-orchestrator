@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
 	CHAT_DRAFT_BOUNDARY_COPY,
+	chatDraftDiscardWarning,
 	confirmDiscardChatDraft,
 	confirmDiscardChatDrafts,
 	getChatDraftBoundary,
@@ -100,5 +101,14 @@ describe("Chat draft destructive-boundary state", () => {
 		const warning = confirm.mock.calls[0]?.[0];
 		expect(warning).toContain(CHAT_DRAFT_BOUNDARY_COPY["pending-delivery"]);
 		expect(warning).toContain(CHAT_DRAFT_BOUNDARY_COPY["pending-attachments"]);
+	});
+
+	it("builds reusable app-rendered warning copy without duplicate risks", () => {
+		expect(chatDraftDiscardWarning([])).toBeUndefined();
+		expect(
+			chatDraftDiscardWarning(["pending-delivery", "pending-delivery"]),
+		).toBe(
+			`${CHAT_DRAFT_BOUNDARY_COPY["pending-delivery"]}\n\nLeave this chat anyway?`,
+		);
 	});
 });

@@ -673,7 +673,11 @@ func (s *Service) rejectUndispatchedEditDelivery(
 	kind, definitive, classified := classifyEditRejection(cause)
 	if !definitive {
 		kind = domain.ConversationEditRejectedProviderFailure
-		classified = classify(cause)
+		diagnostic := classify(cause)
+		classified = storedEditRejection{
+			message: diagnostic.Error(),
+			cause:   ErrEditDeliveryRejected,
+		}
 	}
 	return s.persistRejectedEditDelivery(
 		ctx, conversationID, clientMessageID, EditMessageResult{}, kind, classified)

@@ -1294,6 +1294,8 @@
 	"chat.edit.abandonRecovery": "Bearbeitungswiederherstellung aufgeben",
 	"chat.edit.send": "Bearbeitete Nachricht senden",
 	"chat.edit.sendShortcut": "Bearbeitete Nachricht senden (⌘/Strg+Enter)",
+	"chat.draftDiscard.title": "Unsicheren Chat-Entwurf verwerfen?",
+	"chat.draftDiscard.leave": "Chat verlassen",
 	"pr.card.reviewStatus": "Review status",
 	"pr.merge.checkingDetail": "Waiting for the latest checks and review state.",
 	"pr.merge.checkingReadiness": "Checking merge readiness",

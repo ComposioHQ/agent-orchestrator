@@ -21,6 +21,7 @@ import { defaultShortcutBindings, shortcutBindingLabel } from "../../shared/shor
 import { BrowserPanelView, useBrowserAnnotationQueue } from "./BrowserPanel";
 import { CenterPane } from "./CenterPane";
 import { SessionChatSurface } from "./chat/SessionChatSurface";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { NotificationCenter } from "./NotificationCenter";
 import { ResizeHandle } from "./ResizeHandle";
 import { SessionFileExplorer } from "./SessionFileExplorer";
@@ -61,9 +62,10 @@ import {
 	type PendingFileAttachmentCapture,
 } from "../hooks/useFileAttachments";
 import {
-	confirmDiscardChatDrafts,
+	chatDraftDiscardWarning,
 	getChatDraftBoundaries,
 	subscribeChatDraftBoundaries,
+	type ChatDraftBoundaryKind,
 } from "../lib/chat-draft-boundary";
 import { SHELL_PANEL_SPRING } from "../lib/motion-spring";
 import {
@@ -134,6 +136,12 @@ type UnsafeDraftLeaveDecision =
 	| { kind: "safe" }
 	| { kind: "cancelled" }
 	| { kind: "confirmed"; pendingAttachments: PendingFileAttachmentCapture };
+
+type PendingUnsafeDraftLeave = {
+	sessionId: string;
+	promise: Promise<UnsafeDraftLeaveDecision>;
+	resolve: (decision: UnsafeDraftLeaveDecision) => void;
+};
 
 type ChatLeaveLock = {
 	sessionId: string;
@@ -414,6 +422,11 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	}>();
 	const [chatLeaveLock, setChatLeaveLock] = useState<ChatLeaveLock>();
 	const chatLeaveRequestIdRef = useRef(0);
+	const pendingUnsafeDraftLeaveRef = useRef<PendingUnsafeDraftLeave | undefined>(undefined);
+	const [unsafeDraftLeaveConfirmation, setUnsafeDraftLeaveConfirmation] = useState<{
+		sessionId: string;
+		boundaries: readonly ChatDraftBoundaryKind[];
+	}>();
 	const getCurrentChatDraftBoundaries = useCallback(
 		() => getChatDraftBoundaries(sessionId),
 		[sessionId],
@@ -423,20 +436,50 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		getCurrentChatDraftBoundaries,
 		getCurrentChatDraftBoundaries,
 	);
-	const confirmUnsafeDraftLeave = useCallback((): UnsafeDraftLeaveDecision => {
+	const confirmUnsafeDraftLeave = useCallback((): Promise<UnsafeDraftLeaveDecision> => {
 		const activeBoundaries = getChatDraftBoundaries(sessionId);
-		if (activeBoundaries.length === 0) return { kind: "safe" };
-		if (!confirmDiscardChatDrafts(activeBoundaries)) return { kind: "cancelled" };
-		return {
-			kind: "confirmed",
-			pendingAttachments: capturePendingFileAttachmentsForSession(sessionId),
-		};
+		if (activeBoundaries.length === 0) return Promise.resolve({ kind: "safe" });
+		const pending = pendingUnsafeDraftLeaveRef.current;
+		if (pending?.sessionId === sessionId) return pending.promise;
+		if (pending) pending.resolve({ kind: "cancelled" });
+		let resolve!: (decision: UnsafeDraftLeaveDecision) => void;
+		const promise = new Promise<UnsafeDraftLeaveDecision>((settle) => {
+			resolve = settle;
+		});
+		pendingUnsafeDraftLeaveRef.current = { sessionId, promise, resolve };
+		setUnsafeDraftLeaveConfirmation({ sessionId, boundaries: [...activeBoundaries] });
+		return promise;
 	}, [sessionId]);
+	const settleUnsafeDraftLeave = useCallback((confirmed: boolean) => {
+		const pending = pendingUnsafeDraftLeaveRef.current;
+		if (!pending) return;
+		pendingUnsafeDraftLeaveRef.current = undefined;
+		setUnsafeDraftLeaveConfirmation((current) =>
+			current?.sessionId === pending.sessionId ? undefined : current,
+		);
+		pending.resolve(
+			confirmed
+				? {
+						kind: "confirmed",
+						pendingAttachments: capturePendingFileAttachmentsForSession(pending.sessionId),
+					}
+				: { kind: "cancelled" },
+		);
+	}, []);
+	useEffect(
+		() => () => {
+			const pending = pendingUnsafeDraftLeaveRef.current;
+			if (pending?.sessionId !== sessionId) return;
+			pendingUnsafeDraftLeaveRef.current = undefined;
+			pending.resolve({ kind: "cancelled" });
+		},
+		[sessionId],
+	);
 	useBlocker({
 		disabled: chatDraftBoundaries.length === 0,
 		enableBeforeUnload: chatDraftBoundaries.length > 0,
-		shouldBlockFn: () => {
-			const decision = confirmUnsafeDraftLeave();
+		shouldBlockFn: async () => {
+			const decision = await confirmUnsafeDraftLeave();
 			if (decision.kind === "cancelled") return true;
 			if (decision.kind === "confirmed") {
 				// Route navigation is the boundary itself, so confirmed in-flight file
@@ -940,7 +983,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const beginInterfaceSwitch = useCallback(
 		async (policy: "drain" | "interrupt") => {
 			const draftLeaveDecision = chatToTerminal
-				? confirmUnsafeDraftLeave()
+				? await confirmUnsafeDraftLeave()
 				: ({ kind: "safe" } satisfies UnsafeDraftLeaveDecision);
 			if (draftLeaveDecision.kind === "cancelled") return;
 			const chatLeaveRequestId = chatToTerminal
@@ -1586,6 +1629,21 @@ export function SessionView({ sessionId }: SessionViewProps) {
 				error={interfaceSwitch.startError}
 				onOpenChange={setInterfaceSwitchDialogOpen}
 				onChoose={(policy) => void beginInterfaceSwitch(policy)}
+			/>
+			<ConfirmDialog
+				open={unsafeDraftLeaveConfirmation?.sessionId === sessionId}
+				title={t("chat.draftDiscard.title")}
+				description={
+					<p className="whitespace-pre-line">
+						{chatDraftDiscardWarning(unsafeDraftLeaveConfirmation?.boundaries ?? [])}
+					</p>
+				}
+				confirmLabel={t("chat.draftDiscard.leave")}
+				destructive
+				onConfirm={() => settleUnsafeDraftLeave(true)}
+				onOpenChange={(open) => {
+					if (!open) settleUnsafeDraftLeave(false);
+				}}
 			/>
 			{filesPoppedOut && session
 				? createPortal(

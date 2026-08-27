@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -546,6 +547,18 @@ func newEditHarnessWithStore(
 	supportsPromptReplay bool,
 	wrapStore func(*store.Store) chatsvc.Store,
 ) (*harness, *historyRecorder, *editDriverState) {
+	return newEditHarnessWithStoreAndReader(
+		t, supportsPromptReplay, wrapStore, func(reader chatsvc.SnapshotReader) chatsvc.SnapshotReader {
+			return reader
+		})
+}
+
+func newEditHarnessWithStoreAndReader(
+	t *testing.T,
+	supportsPromptReplay bool,
+	wrapStore func(*store.Store) chatsvc.Store,
+	wrapReader func(chatsvc.SnapshotReader) chatsvc.SnapshotReader,
+) (*harness, *historyRecorder, *editDriverState) {
 	t.Helper()
 	st := openStore(t)
 	source := newHistoryRecorder()
@@ -621,20 +634,21 @@ func newEditHarnessWithStore(
 	clock := time.Date(2026, 8, 9, 15, 0, 0, 0, time.UTC)
 	var idMu sync.Mutex
 	nextID := 0
+	reader := chatsvc.SnapshotReaderFunc(func(ctx context.Context, conversationID string) (chatsvc.ConversationRows, error) {
+		snapshot, err := st.LoadConversationSnapshot(ctx, conversationID)
+		if err != nil {
+			return chatsvc.ConversationRows{}, err
+		}
+		return chatsvc.ConversationRows{
+			Conversation: snapshot.Conversation, ActiveBranch: snapshot.ActiveBranch,
+			Turns: snapshot.Turns, Messages: snapshot.Messages,
+			Activities: snapshot.Activities, BranchPoints: snapshot.BranchPoints,
+			BranchedFromEarlierMessage: snapshot.BranchedFromEarlierMessage,
+		}, nil
+	})
 	svc := chatsvc.New(chatsvc.Options{
 		Store: wrapStore(st), Sessions: st,
-		Reader: chatsvc.SnapshotReaderFunc(func(ctx context.Context, conversationID string) (chatsvc.ConversationRows, error) {
-			snapshot, err := st.LoadConversationSnapshot(ctx, conversationID)
-			if err != nil {
-				return chatsvc.ConversationRows{}, err
-			}
-			return chatsvc.ConversationRows{
-				Conversation: snapshot.Conversation, ActiveBranch: snapshot.ActiveBranch,
-				Turns: snapshot.Turns, Messages: snapshot.Messages,
-				Activities: snapshot.Activities, BranchPoints: snapshot.BranchPoints,
-				BranchedFromEarlierMessage: snapshot.BranchedFromEarlierMessage,
-			}, nil
-		}),
+		Reader:  wrapReader(reader),
 		Drivers: fakeRegistry{driver: driver},
 		Log:     slog.New(slog.DiscardHandler),
 		NewID: func() string {
@@ -780,6 +794,50 @@ func TestEditMessageRejectsReplayWhenFreshProviderNegotiatesFewerCapabilities(t 
 	}
 	if sends := provider.sendCallCount(); sends != 0 {
 		t.Fatalf("restart replay sent %d prompts, want none", sends)
+	}
+}
+
+func TestEditMessageReportsUndispatchedReplayPreparationFailureAsRejected(t *testing.T) {
+	var failReplay atomic.Bool
+	h, _, driver := newEditHarnessWithStoreAndReader(
+		t,
+		true,
+		func(st *store.Store) chatsvc.Store { return st },
+		func(reader chatsvc.SnapshotReader) chatsvc.SnapshotReader {
+			return chatsvc.SnapshotReaderFunc(func(ctx context.Context, conversationID string) (chatsvc.ConversationRows, error) {
+				if failReplay.Load() {
+					return chatsvc.ConversationRows{}, errors.New("read replay transcript")
+				}
+				return reader.LoadConversationSnapshot(ctx, conversationID)
+			})
+		},
+	)
+	ctx := context.Background()
+	completeTurn(t, h, "A", "provider-turn-1")
+	h.awaitSnapshot(t, func(snapshot store.ConversationSnapshot) bool { return len(snapshot.Messages) == 2 })
+	second := completeTurn(t, h, "B", "provider-turn-2")
+	h.awaitSnapshot(t, func(snapshot store.ConversationSnapshot) bool { return len(snapshot.Messages) == 4 })
+	failReplay.Store(true)
+
+	edit := ports.ChatUserMessage{
+		Text: "B edited", ClientMessageID: "replay-preparation-rejection", Origin: domain.MessageOriginHuman,
+	}
+	_, err := h.svc.EditMessage(ctx, testSession, second, edit)
+	if !errors.Is(err, chatsvc.ErrEditDeliveryRejected) {
+		t.Fatalf("first response error = %v, want ErrEditDeliveryRejected", err)
+	}
+	if errors.Is(err, chatsvc.ErrEditDeliveryUncertain) {
+		t.Fatalf("first response error = %v, must not claim delivery uncertainty", err)
+	}
+	_, retryErr := h.svc.EditMessage(ctx, testSession, second, edit)
+	if !errors.Is(retryErr, chatsvc.ErrEditDeliveryRejected) {
+		t.Fatalf("same-ID replay error = %v, want ErrEditDeliveryRejected", retryErr)
+	}
+	driver.mu.Lock()
+	startCalls := driver.startCalls
+	driver.mu.Unlock()
+	if startCalls != 1 {
+		t.Fatalf("provider Start calls = %d, want no replacement provider start", startCalls)
 	}
 }
 

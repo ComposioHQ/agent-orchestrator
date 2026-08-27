@@ -1294,6 +1294,8 @@
 	"chat.edit.abandonRecovery": "編集の復旧を中止",
 	"chat.edit.send": "編集したメッセージを送信",
 	"chat.edit.sendShortcut": "編集したメッセージを送信（⌘/Ctrl+Enter）",
+	"chat.draftDiscard.title": "安全に保存されていないチャットの下書きを破棄しますか？",
+	"chat.draftDiscard.leave": "チャットを離れる",
 	"pr.card.reviewStatus": "Review status",
 	"pr.merge.checkingDetail": "Waiting for the latest checks and review state.",
 	"pr.merge.checkingReadiness": "Checking merge readiness",

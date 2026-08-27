@@ -94,16 +94,23 @@ export function subscribeChatDraftBoundaries(listener: () => void): () => void {
 
 export function confirmDiscardChatDraft(
 	kind: ChatDraftBoundaryKind,
-	confirm: (message: string) => boolean = (message) => window.confirm(message),
+	confirm: (message: string) => boolean,
 ): boolean {
 	return confirmDiscardChatDrafts([kind], confirm);
 }
 
+export function chatDraftDiscardWarning(
+	kinds: Iterable<ChatDraftBoundaryKind>,
+): string | undefined {
+	const warnings = [...new Set(kinds)].map((kind) => CHAT_DRAFT_BOUNDARY_COPY[kind]);
+	if (warnings.length === 0) return undefined;
+	return `${warnings.join("\n\n")}\n\nLeave this chat anyway?`;
+}
+
 export function confirmDiscardChatDrafts(
 	kinds: Iterable<ChatDraftBoundaryKind>,
-	confirm: (message: string) => boolean = (message) => window.confirm(message),
+	confirm: (message: string) => boolean,
 ): boolean {
-	const warnings = [...new Set(kinds)].map((kind) => CHAT_DRAFT_BOUNDARY_COPY[kind]);
-	if (warnings.length === 0) return true;
-	return confirm(`${warnings.join("\n\n")}\n\nLeave this chat anyway?`);
+	const warning = chatDraftDiscardWarning(kinds);
+	return warning ? confirm(warning) : true;
 }

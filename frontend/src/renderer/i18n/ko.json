@@ -1294,6 +1294,8 @@
 	"chat.edit.abandonRecovery": "편집 복구 포기",
 	"chat.edit.send": "편집한 메시지 보내기",
 	"chat.edit.sendShortcut": "편집한 메시지 보내기(⌘/Ctrl+Enter)",
+	"chat.draftDiscard.title": "안전하게 저장되지 않은 채팅 초안을 삭제할까요?",
+	"chat.draftDiscard.leave": "채팅 나가기",
 	"pr.card.reviewStatus": "Review status",
 	"pr.merge.checkingDetail": "Waiting for the latest checks and review state.",
 	"pr.merge.checkingReadiness": "Checking merge readiness",

@@ -505,6 +505,16 @@ function inspectorButton(): HTMLElement {
 	return button;
 }
 
+async function unsafeChatLeaveDialog(): Promise<HTMLElement> {
+	return screen.findByRole("dialog", { name: "Discard unsafe Chat draft state?" });
+}
+
+async function confirmUnsafeChatLeave(): Promise<HTMLElement> {
+	const dialog = await unsafeChatLeaveDialog();
+	fireEvent.click(within(dialog).getByRole("button", { name: "Leave chat" }));
+	return dialog;
+}
+
 function render(ui: ReactNode) {
 	const client = new QueryClient({
 		defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -736,7 +746,7 @@ describe("SessionView", () => {
 	it.each([
 		["worker", "sess-1"],
 		["orchestrator", "sess-orch"],
-	] as const)("uses interrupt for an idle Chat %s switching to Terminal UI", (_label, sessionId) => {
+	] as const)("uses interrupt for an idle Chat %s switching to Terminal UI", async (_label, sessionId) => {
 		interfaceTransitionState.status = { supported: true, targetMode: "tui" };
 		const session = workerSession(sessionId);
 		session.mode = "chat";
@@ -748,7 +758,12 @@ describe("SessionView", () => {
 		fireEvent.click(screen.getByRole("button", { name: "Switch to terminal UI" }));
 
 		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-		expect(interfaceTransitionMock.start).toHaveBeenCalledWith({ targetMode: "tui", policy: "interrupt" });
+		await waitFor(() =>
+			expect(interfaceTransitionMock.start).toHaveBeenCalledWith({
+				targetMode: "tui",
+				policy: "interrupt",
+			}),
+		);
 	});
 
 	it("keeps the policy dialog closed when an idle direct switch fails", async () => {
@@ -810,20 +825,28 @@ describe("SessionView", () => {
 		["active activity", "sess-1", "idle", "active"],
 		["waiting-input activity", "sess-orch", "idle", "waiting_input"],
 		["blocked activity", "sess-1", "idle", "blocked"],
-	] as const)("interrupts a busy Chat session for %s and switches directly to Terminal UI", (_label, sessionId, status, activityState) => {
-		interfaceTransitionState.status = { supported: true, targetMode: "tui" };
-		const session = workerSession(sessionId);
-		session.mode = "chat";
-		session.status = status;
-		session.activity = { state: activityState, lastActivityAt: "2026-08-06T00:00:00Z" };
+	] as const)(
+		"interrupts a busy Chat session for %s and switches directly to Terminal UI",
+		async (_label, sessionId, status, activityState) => {
+			interfaceTransitionState.status = { supported: true, targetMode: "tui" };
+			const session = workerSession(sessionId);
+			session.mode = "chat";
+			session.status = status;
+			session.activity = { state: activityState, lastActivityAt: "2026-08-06T00:00:00Z" };
 
-		render(<SessionView sessionId={sessionId} />);
+			render(<SessionView sessionId={sessionId} />);
 
-		fireEvent.click(screen.getByRole("button", { name: "Switch to terminal UI" }));
+			fireEvent.click(screen.getByRole("button", { name: "Switch to terminal UI" }));
 
-		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-		expect(interfaceTransitionMock.start).toHaveBeenCalledWith({ targetMode: "tui", policy: "interrupt" });
-	});
+			expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+			await waitFor(() =>
+				expect(interfaceTransitionMock.start).toHaveBeenCalledWith({
+					targetMode: "tui",
+					policy: "interrupt",
+				}),
+			);
+		},
+	);
 
 	it("blocks route unload while a Chat draft is unsafe and uses explicit discard copy", async () => {
 		let finishStaging!: (attachments: FileAttachment[]) => void;
@@ -847,18 +870,27 @@ describe("SessionView", () => {
 		});
 		await waitFor(() => expect(finishStaging).toBeTypeOf("function"));
 		setChatDraftBoundary("sess-1", "composer", "persistence-failed");
-		const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
 		render(<SessionView sessionId="sess-1" />);
 
 		expect(routeBlockerState.options).toMatchObject({
 			disabled: false,
 			enableBeforeUnload: true,
 		});
-		expect(await routeBlockerState.options?.shouldBlockFn()).toBe(true);
-		expect(confirm).toHaveBeenCalledWith(expect.stringContaining("discard the unsaved changes"));
+		let blocked!: Promise<boolean>;
+		act(() => {
+			blocked = Promise.resolve(routeBlockerState.options!.shouldBlockFn());
+		});
+		const cancelled = await unsafeChatLeaveDialog();
+		expect(cancelled).toHaveTextContent("discard the unsaved changes");
+		fireEvent.click(within(cancelled).getByRole("button", { name: "Cancel" }));
+		expect(await blocked).toBe(true);
 
-		confirm.mockReturnValue(true);
-		expect(await routeBlockerState.options?.shouldBlockFn()).toBe(false);
+		let allowed!: Promise<boolean>;
+		act(() => {
+			allowed = Promise.resolve(routeBlockerState.options!.shouldBlockFn());
+		});
+		await confirmUnsafeChatLeave();
+		expect(await allowed).toBe(false);
 		await waitFor(() => expect(staging.result.current.preparing).toBe(false));
 		await act(async () => {
 			finishStaging([
@@ -878,7 +910,6 @@ describe("SessionView", () => {
 			disabled: true,
 			enableBeforeUnload: false,
 		});
-		confirm.mockRestore();
 	});
 
 	it("publishes the full stable native risk set and clears it only on unmount", async () => {
@@ -911,26 +942,33 @@ describe("SessionView", () => {
 		publishRisk.mockRestore();
 	});
 
-	it("does not start a Chat-to-Terminal switch until unsafe-draft discard is confirmed", () => {
+	it("uses an app-rendered confirmation before leaving unsafe Chat for Terminal", async () => {
 		interfaceTransitionState.status = { supported: true, targetMode: "tui" };
 		const session = workerSession("sess-1");
 		session.mode = "chat";
 		setChatDraftBoundary("sess-1", "composer", "pending-attachments");
-		const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+		const nativeConfirm = vi.spyOn(window, "confirm");
 		render(<SessionView sessionId="sess-1" />);
 
 		fireEvent.click(screen.getByRole("button", { name: "Switch to terminal UI" }));
 		expect(interfaceTransitionMock.start).not.toHaveBeenCalled();
-		expect(confirm).toHaveBeenCalledWith(expect.stringContaining("still being saved"));
+		const cancelled = await screen.findByRole("dialog", { name: "Discard unsafe Chat draft state?" });
+		expect(cancelled).toHaveTextContent("Attachments are still being saved");
+		fireEvent.click(within(cancelled).getByRole("button", { name: "Cancel" }));
+		expect(interfaceTransitionMock.start).not.toHaveBeenCalled();
 
-		confirm.mockReturnValue(true);
 		fireEvent.click(screen.getByRole("button", { name: "Switch to terminal UI" }));
-		expect(interfaceTransitionMock.start).toHaveBeenCalledWith({
-			targetMode: "tui",
-			policy: "interrupt",
-		});
+		const confirmed = await screen.findByRole("dialog", { name: "Discard unsafe Chat draft state?" });
+		fireEvent.click(within(confirmed).getByRole("button", { name: "Leave chat" }));
+		await waitFor(() =>
+			expect(interfaceTransitionMock.start).toHaveBeenCalledWith({
+				targetMode: "tui",
+				policy: "interrupt",
+			}),
+		);
+		expect(nativeConfirm).not.toHaveBeenCalled();
 		setChatDraftBoundary("sess-1", "composer", undefined);
-		confirm.mockRestore();
+		nativeConfirm.mockRestore();
 	});
 
 	it("cancels pending attachments only after the exact interface transition completes", async () => {
@@ -962,10 +1000,10 @@ describe("SessionView", () => {
 		});
 		await waitFor(() => expect(finishStaging).toBeTypeOf("function"));
 		act(() => setChatDraftBoundary(session.id, "composer", "pending-attachments"));
-		const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
 		const view = render(<SessionView sessionId={session.id} />);
 
 		fireEvent.click(screen.getByRole("button", { name: "Switch to terminal UI" }));
+		await confirmUnsafeChatLeave();
 		expect(interfaceTransitionMock.start).toHaveBeenCalledWith({
 			targetMode: "tui",
 			policy: "interrupt",
@@ -1004,7 +1042,6 @@ describe("SessionView", () => {
 		});
 		expect(staging.result.current.attachments).toEqual([]);
 		act(() => setChatDraftBoundary(session.id, "composer", undefined));
-		confirm.mockRestore();
 	});
 
 	it("preserves attachment work started after the switch confirmation", async () => {
@@ -1019,10 +1056,10 @@ describe("SessionView", () => {
 		const session = workerSession("sess-1");
 		session.mode = "chat";
 		act(() => setChatDraftBoundary(session.id, "composer", "persistence-failed"));
-		const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
 		const view = render(<SessionView sessionId={session.id} />);
 
 		fireEvent.click(screen.getByRole("button", { name: "Switch to terminal UI" }));
+		await confirmUnsafeChatLeave();
 		await waitFor(() => expect(interfaceTransitionMock.start).toHaveBeenCalledTimes(1));
 		await waitFor(() =>
 			expect(screen.getByTestId("chat-surface")).toHaveAttribute("data-transitioning", "true"),
@@ -1076,7 +1113,6 @@ describe("SessionView", () => {
 			"after-confirmation.txt",
 		]);
 		act(() => setChatDraftBoundary(session.id, "composer", undefined));
-		confirm.mockRestore();
 	});
 
 	it("unlocks Chat when a pending Chat-to-Terminal request is rejected", async () => {
@@ -1196,10 +1232,10 @@ describe("SessionView", () => {
 		});
 		await waitFor(() => expect(finishStaging).toBeTypeOf("function"));
 		act(() => setChatDraftBoundary(session.id, "composer", "pending-attachments"));
-		const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
 		const view = render(<SessionView sessionId={session.id} />);
 
 		fireEvent.click(screen.getByRole("button", { name: "Switch to terminal UI" }));
+		await confirmUnsafeChatLeave();
 		await waitFor(() => expect(interfaceTransitionMock.refreshStatus).toHaveBeenCalledTimes(1));
 		expect(screen.getByTestId("chat-surface")).toHaveAttribute("data-transitioning", "true");
 		expect(staging.result.current.preparing).toBe(true);
@@ -1234,7 +1270,6 @@ describe("SessionView", () => {
 		});
 		expect(staging.result.current.attachments).toEqual([]);
 		act(() => setChatDraftBoundary(session.id, "composer", undefined));
-		confirm.mockRestore();
 	});
 
 	it("preserves pending attachments when starting the confirmed interface switch rejects", async () => {
@@ -1265,10 +1300,10 @@ describe("SessionView", () => {
 		});
 		await waitFor(() => expect(finishStaging).toBeTypeOf("function"));
 		act(() => setChatDraftBoundary(session.id, "composer", "pending-attachments"));
-		const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
 		render(<SessionView sessionId={session.id} />);
 
 		fireEvent.click(screen.getByRole("button", { name: "Switch to terminal UI" }));
+		await confirmUnsafeChatLeave();
 		await waitFor(() => expect(interfaceTransitionMock.start).toHaveBeenCalledTimes(1));
 		expect(staging.result.current.preparing).toBe(true);
 
@@ -1286,7 +1321,6 @@ describe("SessionView", () => {
 		});
 		expect(staging.result.current.attachments).toHaveLength(1);
 		act(() => setChatDraftBoundary(session.id, "composer", undefined));
-		confirm.mockRestore();
 	});
 
 	it("preserves pending attachments when an admitted switch later fails", async () => {
@@ -1318,10 +1352,10 @@ describe("SessionView", () => {
 		});
 		await waitFor(() => expect(finishStaging).toBeTypeOf("function"));
 		act(() => setChatDraftBoundary(session.id, "composer", "pending-attachments"));
-		const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
 		const view = render(<SessionView sessionId={session.id} />);
 
 		fireEvent.click(screen.getByRole("button", { name: "Switch to terminal UI" }));
+		await confirmUnsafeChatLeave();
 		await waitFor(() => expect(interfaceTransitionMock.start).toHaveBeenCalledTimes(1));
 		session.mode = "tui";
 		interfaceTransitionState.status = {
@@ -1346,7 +1380,6 @@ describe("SessionView", () => {
 		});
 		expect(staging.result.current.attachments).toHaveLength(1);
 		act(() => setChatDraftBoundary(session.id, "composer", undefined));
-		confirm.mockRestore();
 	});
 
 	it("cancels hidden attachment work after a confirmed mixed-risk leave without resurrection", async () => {
@@ -1384,13 +1417,15 @@ describe("SessionView", () => {
 			setChatDraftBoundary(session.id, "inline-edit", "pending-delivery");
 			setChatDraftBoundary(session.id, "composer", "pending-attachments");
 		});
-		const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
 		const view = render(<SessionView sessionId={session.id} />);
 
 		fireEvent.click(screen.getByRole("button", { name: "Switch to terminal UI" }));
-		const warning = confirm.mock.calls[0]?.[0] ?? "";
+		const dialog = await unsafeChatLeaveDialog();
+		const warning = dialog.textContent ?? "";
 		expect(warning).toContain("delivery recovery is still pending");
 		expect(warning).toContain("Attachments are still being saved");
+		fireEvent.click(within(dialog).getByRole("button", { name: "Leave chat" }));
+		await waitFor(() => expect(interfaceTransitionMock.start).toHaveBeenCalledTimes(1));
 		expect(interfaceTransitionMock.start).toHaveBeenCalledWith({
 			targetMode: "tui",
 			policy: "interrupt",
@@ -1427,7 +1462,6 @@ describe("SessionView", () => {
 			setChatDraftBoundary(session.id, "inline-edit", undefined);
 			setChatDraftBoundary(session.id, "composer", undefined);
 		});
-		confirm.mockRestore();
 	});
 
 	it("checks only the selected session when deciding whether to show the policy dialog", () => {
