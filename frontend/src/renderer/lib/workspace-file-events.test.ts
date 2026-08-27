@@ -15,7 +15,11 @@ vi.mock("./api-client", () => ({
 	subscribeApiBaseUrl: subscribeApiBaseUrlMock,
 }));
 
-import { getWorkspaceFileConnectionState, subscribeWorkspaceFileChanges } from "./workspace-file-events";
+import {
+	getWorkspaceFileConnectionState,
+	subscribeWorkspaceFileChanges,
+	workspaceFilePathsQueryKey,
+} from "./workspace-file-events";
 
 let baseUrlListener: (() => void) | undefined;
 
@@ -108,9 +112,12 @@ describe("subscribeWorkspaceFileChanges", () => {
 		expect(queryClient.invalidateQueries).not.toHaveBeenCalled();
 		vi.advanceTimersByTime(1);
 
-		expect(queryClient.invalidateQueries).toHaveBeenCalledTimes(2);
+		expect(queryClient.invalidateQueries).toHaveBeenCalledTimes(3);
 		expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["session-workspace-files", "sess-1"] });
 		expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["session-workspace-file", "sess-1"] });
+		expect(queryClient.invalidateQueries).toHaveBeenCalledWith({
+			queryKey: workspaceFilePathsQueryKey("sess-1"),
+		});
 		unsubscribe();
 	});
 

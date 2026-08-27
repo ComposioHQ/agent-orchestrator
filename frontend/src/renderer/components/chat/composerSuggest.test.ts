@@ -127,6 +127,14 @@ describe("rankSkills", () => {
 });
 
 describe("rankFiles", () => {
+	it("does not offer paths whose line breaks cannot round-trip as one atomic chip", () => {
+		expect(
+			rankFiles(["safe/name.ts", "odd\nname.ts", "odd\rname.ts"], "name").map(
+				(item) => item.value,
+			),
+		).toEqual(["safe/name.ts"]);
+	});
+
 	const paths = [
 		"AGENTS.md",
 		"backend/internal/ports/chat.go",

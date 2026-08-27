@@ -8,6 +8,7 @@ import {
 	$getNodeByKey,
 	$getRoot,
 	$getSelection,
+	$isElementNode,
 	$isRangeSelection,
 	$isTextNode,
 	$createParagraphNode,
@@ -29,12 +30,22 @@ import {
 	useCallback,
 	useEffect,
 	useImperativeHandle,
+	useRef,
 	type ClipboardEvent,
 	type JSX,
 	type KeyboardEvent,
 } from "react";
 import { Box } from "lucide-react";
+import { useTranslation } from "react-i18next";
+import {
+	EMPTY_COMPOSER_CONTENT,
+	composerTokenWire,
+	normalizeComposerDraftContent,
+	type ComposerDraftContent,
+	type ComposerTokenKind,
+} from "../../lib/composer-content";
 import { cn } from "../../lib/utils";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../ui/tooltip";
 import { composerFileIcon } from "./composerFileIcon";
 import { findActiveTrigger, type TriggerKind } from "./composerSuggest";
 
@@ -47,8 +58,7 @@ export type ComposerTrigger = {
 	query: string;
 };
 
-export type ComposerEditorSnapshot = {
-	text: string;
+export type ComposerEditorSnapshot = ComposerDraftContent & {
 	hasText: boolean;
 	trigger?: ComposerTrigger;
 };
@@ -56,19 +66,17 @@ export type ComposerEditorSnapshot = {
 export type ComposerEditorHandle = {
 	focus(): void;
 	clear(): void;
-	setText(text: string): void;
+	replaceContent(content: ComposerDraftContent): void;
 	insertToken(trigger: ComposerTrigger, value: string): void;
 	getSnapshot(): ComposerEditorSnapshot;
 };
-
-type TokenKind = "skill" | "file";
 
 const completionHandledEvents = new WeakSet<Event>();
 const PROGRAMMATIC_TEXT_UPDATE_TAG = "ao:composer-programmatic-text";
 
 type SerializedComposerTokenNode = Spread<
 	{
-		kind: TokenKind;
+		kind: ComposerTokenKind;
 		value: string;
 		display: string;
 		wire: string;
@@ -76,8 +84,51 @@ type SerializedComposerTokenNode = Spread<
 	SerializedLexicalNode
 >;
 
+function ComposerToken({
+	kind,
+	value,
+	display,
+}: {
+	kind: ComposerTokenKind;
+	value: string;
+	display: string;
+}) {
+	const { t } = useTranslation();
+	const Icon = kind === "skill" ? Box : composerFileIcon(value);
+	const pathReferenceDescription =
+		kind === "file" ? t("chat.composer.pathReferenceDescription", { path: value }) : undefined;
+	const token = (
+		<span
+			data-composer-token={kind}
+			data-value={value}
+			aria-label={
+				kind === "file" ? t("chat.composer.pathReferenceLabel", { file: display }) : undefined
+			}
+			aria-description={pathReferenceDescription}
+			tabIndex={kind === "file" ? 0 : undefined}
+			contentEditable={false}
+			className={cn(
+				"mx-0.5 inline-flex items-center gap-1 rounded-md border border-border-strong bg-interactive-hover px-1.5 py-0.5 align-middle text-[0.9em] leading-none select-none",
+				kind === "skill" ? "text-logo-accent" : "text-foreground",
+			)}
+		>
+			<Icon aria-hidden="true" className="size-3 shrink-0" />
+			{display}
+		</span>
+	);
+	if (kind !== "file") return token;
+	return (
+		<Tooltip>
+			<TooltipTrigger asChild>{token}</TooltipTrigger>
+			<TooltipContent side="top" className="max-w-sm leading-normal">
+				{pathReferenceDescription}
+			</TooltipContent>
+		</Tooltip>
+	);
+}
+
 class ComposerTokenNode extends DecoratorNode<JSX.Element> {
-	__kind: TokenKind;
+	__kind: ComposerTokenKind;
 	__value: string;
 	__display: string;
 	__wire: string;
@@ -105,7 +156,7 @@ class ComposerTokenNode extends DecoratorNode<JSX.Element> {
 		);
 	}
 
-	constructor(kind: TokenKind, value: string, display: string, wire: string, key?: NodeKey) {
+	constructor(kind: ComposerTokenKind, value: string, display: string, wire: string, key?: NodeKey) {
 		super(key);
 		this.__kind = kind;
 		this.__value = value;
@@ -145,39 +196,48 @@ class ComposerTokenNode extends DecoratorNode<JSX.Element> {
 		return this.__wire;
 	}
 
+	getKind(): ComposerTokenKind {
+		return this.getLatest().__kind;
+	}
+
+	getValue(): string {
+		return this.getLatest().__value;
+	}
+
 	decorate(): JSX.Element {
-		const Icon = this.__kind === "skill" ? Box : composerFileIcon(this.__value);
 		return (
-			<span
-				data-composer-token={this.__kind}
-				data-value={this.__value}
-				contentEditable={false}
-				className={cn(
-					"mx-0.5 inline-flex items-center gap-1 rounded-md border border-border-strong bg-interactive-hover px-1.5 py-0.5 align-middle text-[0.9em] leading-none select-none",
-					this.__kind === "skill"
-						? "text-logo-accent"
-						: "text-foreground",
-				)}
-			>
-				<Icon aria-hidden="true" className="size-3 shrink-0" />
-				{this.__display}
-			</span>
+			<ComposerToken kind={this.__kind} value={this.__value} display={this.__display} />
 		);
 	}
 }
 
-function $createComposerTokenNode(kind: TokenKind, value: string): ComposerTokenNode {
-	const wire = kind === "skill" ? `/${value}` : /\s/.test(value) ? `"${value}"` : value;
+function $createComposerTokenNode(kind: ComposerTokenKind, value: string): ComposerTokenNode {
+	const wire = composerTokenWire(kind, value);
 	const slash = value.lastIndexOf("/");
 	const display = kind === "skill" ? wire : slash >= 0 ? value.slice(slash + 1) : value;
 	return new ComposerTokenNode(kind, value, display, wire);
 }
 
-function $serializeComposer(): string {
-	return $getRoot()
-		.getChildren()
-		.map((child) => child.getTextContent())
-		.join("\n");
+function $serializeComposerContent(): ComposerDraftContent {
+	let text = "";
+	const tokens: ComposerDraftContent["tokens"] = [];
+	for (const [blockIndex, block] of $getRoot().getChildren().entries()) {
+		if (blockIndex > 0) text += "\n";
+		const children = $isElementNode(block) ? block.getChildren() : [block];
+		for (const child of children) {
+			const start = text.length;
+			text += child.getTextContent();
+			if (child instanceof ComposerTokenNode) {
+				tokens.push({
+					kind: child.getKind(),
+					value: child.getValue(),
+					start,
+					end: text.length,
+				});
+			}
+		}
+	}
+	return { text, tokens };
 }
 
 function $insertComposerToken(trigger: ComposerTrigger, value: string): boolean {
@@ -203,35 +263,47 @@ function $insertComposerToken(trigger: ComposerTrigger, value: string): boolean 
 	return true;
 }
 
-function $replaceEditorText(text: string): void {
+function $replaceEditorContent(content: ComposerDraftContent): void {
+	const normalized = normalizeComposerDraftContent(content);
 	const root = $getRoot();
 	root.clear();
-	for (const line of text.split("\n")) {
+	let lineStart = 0;
+	for (const line of normalized.text.split("\n")) {
+		const lineEnd = lineStart + line.length;
 		const paragraph = $createParagraphNode();
-		if (line !== "") paragraph.append($createTextNode(line));
+		let cursor = lineStart;
+		for (const token of normalized.tokens) {
+			if (token.start < lineStart || token.end > lineEnd) continue;
+			if (token.start > cursor) {
+				paragraph.append($createTextNode(normalized.text.slice(cursor, token.start)));
+			}
+			paragraph.append($createComposerTokenNode(token.kind, token.value));
+			cursor = token.end;
+		}
+		if (cursor < lineEnd) paragraph.append($createTextNode(normalized.text.slice(cursor, lineEnd)));
 		root.append(paragraph);
+		lineStart = lineEnd + 1;
 	}
-	root.selectEnd();
 }
 
 function editorSnapshot(): ComposerEditorSnapshot {
-	const text = $serializeComposer();
+	const content = $serializeComposerContent();
 	const selection = $getSelection();
 	if (!$isRangeSelection(selection) || !selection.isCollapsed()) {
-		return { text, hasText: text.trim().length > 0 };
+		return { ...content, hasText: content.text.trim().length > 0 };
 	}
 
 	const anchor = selection.anchor;
 	const node = anchor.getNode();
 	if (!$isTextNode(node) || anchor.type !== "text") {
-		return { text, hasText: text.trim().length > 0 };
+		return { ...content, hasText: content.text.trim().length > 0 };
 	}
 
 	const active = findActiveTrigger(node.getTextContent(), anchor.offset);
-	if (!active) return { text, hasText: text.trim().length > 0 };
+	if (!active) return { ...content, hasText: content.text.trim().length > 0 };
 	return {
-		text,
-		hasText: text.trim().length > 0,
+		...content,
+		hasText: content.text.trim().length > 0,
 		trigger: {
 			...active,
 			key: `${node.getKey()}:${active.start}`,
@@ -259,39 +331,120 @@ const EditorBridge = forwardRef<
 	}
 >(function EditorBridge({ disabled, onChange, onComplete, onEnter }, ref) {
 	const [editor] = useLexicalComposerContext();
+	const restoreGeneration = useRef(0);
+	const restoreSelectionFrame = useRef<number | undefined>(undefined);
+	const restoreCaretPending = useRef(false);
+	const cancelPendingRestoreSelection = useCallback(() => {
+		restoreGeneration.current += 1;
+		restoreCaretPending.current = false;
+		if (restoreSelectionFrame.current !== undefined) {
+			cancelAnimationFrame(restoreSelectionFrame.current);
+			restoreSelectionFrame.current = undefined;
+		}
+	}, []);
+	const applyPendingRestoreSelection = useCallback((consume = true) => {
+		if (!restoreCaretPending.current) return false;
+		const rootElement = editor.getRootElement();
+		if (!rootElement || document.activeElement !== rootElement) return false;
+
+		if (consume) {
+			restoreCaretPending.current = false;
+			if (restoreSelectionFrame.current !== undefined) {
+				cancelAnimationFrame(restoreSelectionFrame.current);
+				restoreSelectionFrame.current = undefined;
+			}
+		}
+		editor.update(() => $getRoot().selectEnd(), {
+			discrete: true,
+			tag: PROGRAMMATIC_TEXT_UPDATE_TAG,
+		});
+		return true;
+	}, [editor]);
+	const handleRestorePointerDown = useCallback(
+		() => cancelPendingRestoreSelection(),
+		[cancelPendingRestoreSelection],
+	);
+	const handleRestoreFocus = useCallback(
+		// Focus may arrive before React mounts the restored DecoratorNodes. Put
+		// the caret at the intended position now, but retain the scheduled frame
+		// so their later DOM commit cannot leave the native selection at the start.
+		() => void applyPendingRestoreSelection(false),
+		[applyPendingRestoreSelection],
+	);
+	const handleRestoreKeyDown = useCallback(
+		() => void applyPendingRestoreSelection(),
+		[applyPendingRestoreSelection],
+	);
 
 	useEffect(() => editor.setEditable(!disabled), [disabled, editor]);
+	// Do not clear the pending caret from a passive-effect cleanup: React Strict
+	// Mode rehearses that cleanup while the editor is still mounted. The frame is
+	// already inert after a real unmount because applying requires a live, active
+	// root; normal replace/clear/insert/pointer paths cancel it by generation.
+	useEffect(
+		() =>
+			editor.registerRootListener((rootElement, previousRootElement) => {
+				previousRootElement?.removeEventListener("pointerdown", handleRestorePointerDown);
+				previousRootElement?.removeEventListener("focus", handleRestoreFocus);
+				previousRootElement?.removeEventListener("keydown", handleRestoreKeyDown, true);
+				rootElement?.addEventListener("pointerdown", handleRestorePointerDown);
+				rootElement?.addEventListener("focus", handleRestoreFocus);
+				rootElement?.addEventListener("keydown", handleRestoreKeyDown, true);
+			}),
+		[
+			editor,
+			handleRestoreFocus,
+			handleRestoreKeyDown,
+			handleRestorePointerDown,
+		],
+	);
 
 	useImperativeHandle(
 		ref,
 		() => ({
 			focus: () => focusEditor(editor),
 			clear: () => {
+				cancelPendingRestoreSelection();
 				editor.update(() => {
-					$replaceEditorText("");
+					$replaceEditorContent(EMPTY_COMPOSER_CONTENT);
 					editor.dispatchCommand(CLEAR_HISTORY_COMMAND, undefined);
 				}, {
-					discrete: true,
 					tag: PROGRAMMATIC_TEXT_UPDATE_TAG,
 				});
 			},
-			setText: (text) => {
+			replaceContent: (content) => {
+				cancelPendingRestoreSelection();
+				const generation = restoreGeneration.current;
 				editor.update(() => {
-					$replaceEditorText(text);
+					$replaceEditorContent(content);
 					editor.dispatchCommand(CLEAR_HISTORY_COMMAND, undefined);
 				}, {
-					discrete: true,
+					onUpdate: () => {
+						if (restoreGeneration.current !== generation) return;
+						restoreCaretPending.current = true;
+						// The content restore and React's DecoratorNode reconciliation finish
+						// on separate schedules. Reassert the intended caret after the browser
+						// has received both commits. If this composer is inactive, leave the
+						// caret pending until keyboard/programmatic focus; pointer focus cancels
+						// it so a user's clicked location always wins.
+						restoreSelectionFrame.current = requestAnimationFrame(() => {
+							restoreSelectionFrame.current = undefined;
+							if (restoreGeneration.current !== generation) return;
+							applyPendingRestoreSelection();
+						});
+					},
 					tag: PROGRAMMATIC_TEXT_UPDATE_TAG,
 				});
 			},
 			insertToken: (trigger, value) => {
+				cancelPendingRestoreSelection();
 				editor.update(() => {
 					$insertComposerToken(trigger, value);
 				}, { discrete: true });
 			},
 			getSnapshot: () => editor.getEditorState().read(editorSnapshot),
 		}),
-		[editor],
+		[applyPendingRestoreSelection, cancelPendingRestoreSelection, editor],
 	);
 
 	useEffect(
@@ -399,48 +552,50 @@ export const ComposerEditor = forwardRef<
 	);
 
 	return (
-		<LexicalComposer initialConfig={initialConfig}>
-			<div className="relative">
-				<PlainTextPlugin
-					contentEditable={
-						<ContentEditable
-							aria-label={label}
-							aria-placeholder={placeholder}
-							placeholder={placeholderNode}
-							aria-disabled={disabled || undefined}
-							role="combobox"
-							aria-expanded={menuOpen}
-							aria-controls={menuOpen ? menuId : undefined}
-							aria-activedescendant={
-								menuOpen ? `${menuId}-option-${activeIndex}` : undefined
-							}
-							aria-autocomplete="list"
-							onCompositionStart={() => onCompositionChange(true)}
-							onCompositionEnd={() => onCompositionChange(false)}
-							onKeyDown={(event) => {
-								if (!completionHandledEvents.has(event.nativeEvent)) onKeyDown(event);
-							}}
-							onPasteCapture={(event) => {
-								onPaste(event);
-								if (event.defaultPrevented) event.stopPropagation();
-							}}
-							className={cn(
-								"chat-composer-scrollbar max-h-40 min-h-[4.5rem] w-full overflow-y-auto overscroll-contain bg-transparent py-1 pl-[7px] pr-0 text-base! leading-relaxed text-foreground caret-foreground outline-none selection:bg-foreground selection:text-background",
-								disabled && "opacity-50",
-							)}
-						/>
-					}
-					ErrorBoundary={LexicalErrorBoundary}
-				/>
-				<HistoryPlugin />
-				<EditorBridge
-					ref={ref}
-					disabled={disabled}
-					onChange={onChange}
-					onComplete={onComplete}
-					onEnter={onEnter}
-				/>
-			</div>
-		</LexicalComposer>
+		<TooltipProvider delayDuration={200}>
+			<LexicalComposer initialConfig={initialConfig}>
+				<div className="relative">
+					<PlainTextPlugin
+						contentEditable={
+							<ContentEditable
+								aria-label={label}
+								aria-placeholder={placeholder}
+								placeholder={placeholderNode}
+								aria-disabled={disabled || undefined}
+								role="combobox"
+								aria-expanded={menuOpen}
+								aria-controls={menuOpen ? menuId : undefined}
+								aria-activedescendant={
+									menuOpen ? `${menuId}-option-${activeIndex}` : undefined
+								}
+								aria-autocomplete="list"
+								onCompositionStart={() => onCompositionChange(true)}
+								onCompositionEnd={() => onCompositionChange(false)}
+								onKeyDown={(event) => {
+									if (!completionHandledEvents.has(event.nativeEvent)) onKeyDown(event);
+								}}
+								onPasteCapture={(event) => {
+									onPaste(event);
+									if (event.defaultPrevented) event.stopPropagation();
+								}}
+								className={cn(
+									"chat-composer-scrollbar max-h-40 min-h-[4.5rem] w-full overflow-y-auto overscroll-contain bg-transparent py-1 pl-[7px] pr-0 text-base! leading-relaxed text-foreground caret-foreground outline-none selection:bg-foreground selection:text-background",
+									disabled && "opacity-50",
+								)}
+							/>
+						}
+						ErrorBoundary={LexicalErrorBoundary}
+					/>
+					<HistoryPlugin />
+					<EditorBridge
+						ref={ref}
+						disabled={disabled}
+						onChange={onChange}
+						onComplete={onComplete}
+						onEnter={onEnter}
+					/>
+				</div>
+			</LexicalComposer>
+		</TooltipProvider>
 	);
 });

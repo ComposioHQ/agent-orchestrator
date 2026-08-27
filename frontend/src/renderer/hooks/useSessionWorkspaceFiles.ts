@@ -47,8 +47,11 @@ export function sessionWorkspaceFilesQueryOptions(sessionId: string, errorMessag
 	};
 }
 
-export function workspaceFilesRefetchInterval(state: WorkspaceFileConnectionState): false | number {
-	return state === "degraded" ? WORKSPACE_FILES_DEGRADED_REFETCH_MS : false;
+export function workspaceFilesRefetchInterval(
+	state: WorkspaceFileConnectionState,
+	recoveryNeeded = false,
+): false | number {
+	return state === "degraded" || recoveryNeeded ? WORKSPACE_FILES_DEGRADED_REFETCH_MS : false;
 }
 
 export function useWorkspaceFileConnectionState(sessionId: string): WorkspaceFileConnectionState {

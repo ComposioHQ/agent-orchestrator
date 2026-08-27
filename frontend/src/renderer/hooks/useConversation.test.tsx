@@ -4,11 +4,22 @@ import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 
-const { getMock, postMock, apiErrorCodeMock, apiErrorMessageMock } = vi.hoisted(() => ({
+const {
+	getMock,
+	postMock,
+	apiErrorCodeMock,
+	apiErrorMessageMock,
+	subscribeWorkspaceFileChangesMock,
+	getWorkspaceFileConnectionStateMock,
+	subscribeWorkspaceFileConnectionStateMock,
+} = vi.hoisted(() => ({
 	getMock: vi.fn(),
 	postMock: vi.fn(),
 	apiErrorCodeMock: vi.fn(),
 	apiErrorMessageMock: vi.fn(),
+	subscribeWorkspaceFileChangesMock: vi.fn(() => vi.fn()),
+	getWorkspaceFileConnectionStateMock: vi.fn(() => "connected"),
+	subscribeWorkspaceFileConnectionStateMock: vi.fn(() => vi.fn()),
 }));
 
 vi.mock("../lib/api-client", () => ({
@@ -17,7 +28,14 @@ vi.mock("../lib/api-client", () => ({
 	apiErrorMessage: apiErrorMessageMock,
 }));
 
-import { useConversation, useConversationCommands } from "./useConversation";
+vi.mock("../lib/workspace-file-events", () => ({
+	subscribeWorkspaceFileChanges: subscribeWorkspaceFileChangesMock,
+	getWorkspaceFileConnectionState: getWorkspaceFileConnectionStateMock,
+	subscribeWorkspaceFileConnectionState: subscribeWorkspaceFileConnectionStateMock,
+	workspaceFilePathsQueryKey: (sessionId: string) => ["workspace-file-paths", sessionId] as const,
+}));
+
+import { useConversation, useConversationCommands, useWorkspaceFilePaths } from "./useConversation";
 import { workspaceQueryKey } from "./useWorkspaceQuery";
 
 function wrapper({ children }: { children: ReactNode }) {
@@ -25,6 +43,12 @@ function wrapper({ children }: { children: ReactNode }) {
 		defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
 	});
 	return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
+}
+
+function wrapperFor(queryClient: QueryClient) {
+	return function QueryWrapper({ children }: { children: ReactNode }) {
+		return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
+	};
 }
 
 /** The provider state the daemon now serves, in wire shape. */
@@ -77,6 +101,82 @@ beforeEach(() => {
 	postMock.mockReset();
 	apiErrorCodeMock.mockReset().mockReturnValue(undefined);
 	apiErrorMessageMock.mockReset().mockReturnValue("failed");
+	subscribeWorkspaceFileChangesMock.mockClear();
+	getWorkspaceFileConnectionStateMock.mockReset().mockReturnValue("connected");
+	subscribeWorkspaceFileConnectionStateMock.mockClear();
+});
+
+describe("workspace file references", () => {
+	it("loads readable paths and subscribes them to workspace changes", async () => {
+		getMock.mockResolvedValue({
+			data: {
+				files: [
+					{ path: "src/live.ts", status: "modified" },
+					{ path: "src/deleted.ts", status: "deleted" },
+				],
+				truncated: true,
+			},
+			error: undefined,
+		});
+
+		const { result } = renderHook(() => useWorkspaceFilePaths("ao-1", true), { wrapper });
+		await waitFor(() => expect(result.current.paths).toEqual(["src/live.ts"]));
+
+		expect(result.current.truncated).toBe(true);
+		expect(result.current.error).toBeUndefined();
+		expect(subscribeWorkspaceFileChangesMock).toHaveBeenCalledWith(
+			"ao-1",
+			expect.any(QueryClient),
+		);
+	});
+
+	it("exposes a catalog failure instead of silently presenting an empty worktree", async () => {
+		getMock.mockResolvedValue({ data: undefined, error: { code: "WORKSPACE_OFFLINE" } });
+		apiErrorMessageMock.mockReturnValue("workspace index is offline");
+
+		const { result } = renderHook(() => useWorkspaceFilePaths("ao-1", true), { wrapper });
+		await waitFor(() => expect(result.current.error).toBe("workspace index is offline"));
+		expect(result.current.paths).toEqual([]);
+	});
+
+	it("marks suggestions as potentially stale while workspace events are degraded", async () => {
+		getWorkspaceFileConnectionStateMock.mockReturnValue("degraded");
+		getMock.mockResolvedValue({
+			data: { files: [{ path: "src/cached.ts", status: "modified" }], truncated: false },
+			error: undefined,
+		});
+
+		const { result } = renderHook(() => useWorkspaceFilePaths("ao-1", true), { wrapper });
+		await waitFor(() => expect(result.current.paths).toEqual(["src/cached.ts"]));
+		expect(result.current.refreshDegraded).toBe(true);
+	});
+
+	it("keeps cached paths usable when a later catalog refresh fails", async () => {
+		getMock
+			.mockResolvedValueOnce({
+				data: { files: [{ path: "src/cached.ts", status: "modified" }], truncated: false },
+				error: undefined,
+			})
+			.mockResolvedValueOnce({ data: undefined, error: { code: "WORKSPACE_OFFLINE" } });
+		apiErrorMessageMock.mockReturnValue("workspace refresh is offline");
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+		});
+
+		const { result } = renderHook(() => useWorkspaceFilePaths("ao-1", true), {
+			wrapper: wrapperFor(queryClient),
+		});
+		await waitFor(() => expect(result.current.paths).toEqual(["src/cached.ts"]));
+
+		await act(async () => {
+			await queryClient.invalidateQueries({ queryKey: ["workspace-file-paths", "ao-1"] });
+		});
+
+		await waitFor(() => expect(result.current.refreshFailed).toBe(true));
+		expect(result.current.failed).toBe(false);
+		expect(result.current.paths).toEqual(["src/cached.ts"]);
+		expect(result.current.refreshError).toBe("workspace refresh is offline");
+	});
 });
 
 describe("useConversation snapshot mapping", () => {

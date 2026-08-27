@@ -1,4 +1,10 @@
 import type { ConversationContentSummary } from "../types/conversation";
+import {
+	composerDraftContentEqual,
+	normalizeComposerDraftContent,
+	type ComposerDraftContent,
+	type ComposerDraftToken,
+} from "./composer-content";
 
 /**
  * Renderer-owned, session-scoped Chat drafts.
@@ -10,7 +16,7 @@ import type { ConversationContentSummary } from "../types/conversation";
  * the daemon has durably staged those bytes in the session worktree.
  */
 
-export const CHAT_DRAFT_SCHEMA_VERSION = 2 as const;
+export const CHAT_DRAFT_SCHEMA_VERSION = 3 as const;
 const CHAT_DRAFT_SCOPE_SCHEMA_VERSION = 1 as const;
 
 /**
@@ -83,9 +89,10 @@ export interface ChatSessionDraft {
 	sessionId: string;
 	incarnation: string;
 	composer: {
-		/** Changes whenever text or attachments change. Used for accepted-send CAS. */
+		/** Changes whenever text, semantic tokens, or attachments change. Used for accepted-send CAS. */
 		revision: number;
 		text: string;
+		tokens: ComposerDraftToken[];
 		attachments: ChatDraftAttachment[];
 		/** Durable delivery journal. Present until acceptance is durably cleared. */
 		delivery?: ChatComposerDelivery;
@@ -109,7 +116,7 @@ export type DraftDeliveryResult<Mutation> =
 
 export interface PrepareChatComposerDeliveryInput {
 	kind: ChatComposerDelivery["kind"];
-	composerText: string;
+	composerContent: ComposerDraftContent;
 	attachments: ChatDraftAttachment[];
 	requestText: string;
 	clientMessageId: string;
@@ -613,7 +620,7 @@ function emptyDraft(scope: ChatDraftScopeInput): ChatSessionDraft {
 		schemaVersion: CHAT_DRAFT_SCHEMA_VERSION,
 		sessionId: identity.sessionId,
 		incarnation: identity.incarnation,
-		composer: { revision: 0, text: "", attachments: [] },
+		composer: { revision: 0, text: "", tokens: [], attachments: [] },
 	};
 }
 
@@ -698,25 +705,50 @@ function inlineEditRevision(): string {
 	return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-function isChatSessionDraft(value: unknown, scope: ChatDraftScope): value is ChatSessionDraft {
-	if (!value || typeof value !== "object") return false;
-	const draft = value as Partial<ChatSessionDraft>;
+function decodeChatSessionDraft(
+	value: unknown,
+	scope: ChatDraftScope,
+): ChatSessionDraft | undefined {
+	if (!value || typeof value !== "object") return undefined;
+	const draft = value as Partial<ChatSessionDraft> & { schemaVersion?: unknown };
 	const composer = draft.composer as Partial<ChatSessionDraft["composer"]> | undefined;
-	return (
-		draft.schemaVersion === CHAT_DRAFT_SCHEMA_VERSION &&
-		draft.sessionId === scope.sessionId &&
-		draft.incarnation === scope.incarnation &&
-		Boolean(composer) &&
-		typeof composer?.revision === "number" &&
-		Number.isInteger(composer.revision) &&
-		composer.revision >= 0 &&
-		typeof composer.text === "string" &&
-		Array.isArray(composer.attachments) &&
-		composer.attachments.every(isAttachment) &&
-		(composer.delivery === undefined || isComposerDelivery(composer.delivery)) &&
-		(draft.inlineEdit === undefined || isInlineEdit(draft.inlineEdit)) &&
-		(draft.inlineEditDelivery === undefined || isInlineEditDelivery(draft.inlineEditDelivery))
-	);
+	if (
+		(draft.schemaVersion !== CHAT_DRAFT_SCHEMA_VERSION && draft.schemaVersion !== 2) ||
+		draft.sessionId !== scope.sessionId ||
+		draft.incarnation !== scope.incarnation ||
+		!composer ||
+		typeof composer.revision !== "number" ||
+		!Number.isInteger(composer.revision) ||
+		composer.revision < 0 ||
+		typeof composer.text !== "string" ||
+		!Array.isArray(composer.attachments) ||
+		!composer.attachments.every(isAttachment) ||
+		(composer.delivery !== undefined && !isComposerDelivery(composer.delivery)) ||
+		(draft.inlineEdit !== undefined && !isInlineEdit(draft.inlineEdit)) ||
+		(draft.inlineEditDelivery !== undefined && !isInlineEditDelivery(draft.inlineEditDelivery))
+	) {
+		return undefined;
+	}
+	const content = normalizeComposerDraftContent({
+		text: composer.text,
+		tokens: draft.schemaVersion === CHAT_DRAFT_SCHEMA_VERSION ? composer.tokens : [],
+	});
+	return {
+		schemaVersion: CHAT_DRAFT_SCHEMA_VERSION,
+		sessionId: scope.sessionId,
+		incarnation: scope.incarnation,
+		composer: {
+			revision: composer.revision,
+			text: content.text,
+			tokens: content.tokens,
+			attachments: composer.attachments,
+			...(composer.delivery ? { delivery: composer.delivery } : {}),
+		},
+		...(draft.inlineEdit ? { inlineEdit: draft.inlineEdit } : {}),
+		...(draft.inlineEditDelivery
+			? { inlineEditDelivery: draft.inlineEditDelivery }
+			: {}),
+	};
 }
 
 type DraftReadResult = { ok: true; draft: ChatSessionDraft } | { ok: false; draft: ChatSessionDraft };
@@ -755,10 +787,7 @@ function loadChatSessionDraft(scopeInput: ChatDraftScopeInput, storage: DraftSto
 		"incarnation" in parsed &&
 		(parsed as { incarnation?: unknown }).incarnation !== scope.incarnation
 	) return { ok: false, draft: empty };
-	return {
-		ok: true,
-		draft: isChatSessionDraft(parsed, scope) ? parsed : empty,
-	};
+	return { ok: true, draft: decodeChatSessionDraft(parsed, scope) ?? empty };
 }
 
 export function readChatSessionDraft(
@@ -771,6 +800,7 @@ export function readChatSessionDraft(
 function hasContent(draft: ChatSessionDraft): boolean {
 	return (
 		draft.composer.text !== "" ||
+		draft.composer.tokens.length > 0 ||
 		draft.composer.attachments.length > 0 ||
 		Boolean(draft.composer.delivery) ||
 		Boolean(draft.inlineEdit) ||
@@ -886,8 +916,15 @@ export function prepareChatComposerDelivery(
 			? { ok: true, recovered: true, draft: proof.draft, mutation: existing }
 			: { ok: false, recovered: true, draft: loaded.draft };
 	}
+	const normalizedContent = normalizeComposerDraftContent(input.composerContent);
 	const exact =
-		loaded.draft.composer.text === input.composerText &&
+		composerDraftContentEqual(
+			{
+				text: loaded.draft.composer.text,
+				tokens: loaded.draft.composer.tokens,
+			},
+			normalizedContent,
+		) &&
 		attachmentsEqual(loaded.draft.composer.attachments, input.attachments);
 	const revision = exact
 		? loaded.draft.composer.revision
@@ -903,7 +940,8 @@ export function prepareChatComposerDelivery(
 		...loaded.draft,
 		composer: {
 			revision,
-			text: input.composerText,
+			text: normalizedContent.text,
+			tokens: normalizedContent.tokens,
 			attachments: input.attachments,
 			delivery: mutation,
 		},
@@ -972,6 +1010,7 @@ export function clearRejectedChatComposerDelivery(
 		composer: {
 			revision: loaded.draft.composer.revision,
 			text: loaded.draft.composer.text,
+			tokens: loaded.draft.composer.tokens,
 			attachments: loaded.draft.composer.attachments,
 		},
 	};
@@ -1008,6 +1047,7 @@ export function clearUncertainChatComposerDelivery(
 		composer: {
 			revision: loaded.draft.composer.revision,
 			text: loaded.draft.composer.text,
+			tokens: loaded.draft.composer.tokens,
 			attachments: loaded.draft.composer.attachments,
 		},
 	};
@@ -1151,9 +1191,26 @@ export function writeChatComposerText(
 	text: string,
 	storage: DraftStorage | undefined = rendererStorage(),
 ): DraftWriteResult {
+	return writeChatComposerContent(scope, { text, tokens: [] }, storage);
+}
+
+/** Persist the editor's canonical text and semantic tokens as one CAS revision. */
+export function writeChatComposerContent(
+	scope: ChatDraftScopeInput,
+	content: ComposerDraftContent,
+	storage: DraftStorage | undefined = rendererStorage(),
+): DraftWriteResult {
+	const normalized = normalizeComposerDraftContent(content);
 	const loaded = loadChatSessionDraft(scope, storage);
-	if (loaded.ok && loaded.draft.composer.text === text) {
-		return { ok: true, draft: loaded.draft };
+	const current = loaded.draft;
+	if (
+		loaded.ok &&
+		composerDraftContentEqual(
+			{ text: current.composer.text, tokens: current.composer.tokens },
+			normalized,
+		)
+	) {
+		return { ok: true, draft: current };
 	}
 	const result = mutateDraft(
 		scope,
@@ -1162,7 +1219,8 @@ export function writeChatComposerText(
 			composer: {
 				...draft.composer,
 				revision: draft.composer.revision + 1,
-				text,
+				text: normalized.text,
+				tokens: normalized.tokens,
 			},
 		}),
 		storage,
@@ -1276,6 +1334,7 @@ export function clearAcceptedChatComposer(
 			composer: {
 				revision: current.composer.revision,
 				text: current.composer.text,
+				tokens: current.composer.tokens,
 				attachments: current.composer.attachments,
 			},
 		};
@@ -1289,6 +1348,7 @@ export function clearAcceptedChatComposer(
 		composer: {
 			revision: current.composer.revision + 1,
 			text: "",
+			tokens: [],
 			attachments: [],
 		},
 	};

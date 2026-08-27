@@ -119,7 +119,7 @@ export function SessionChatSurface({
 		Boolean(snapshot) && !hasProviderModel,
 	);
 	const { skills } = useConversationSkills(session.id, Boolean(snapshot));
-	const { paths, truncated } = useWorkspaceFilePaths(session.id, Boolean(snapshot));
+	const fileCatalog = useWorkspaceFilePaths(session.id, Boolean(snapshot));
 	const stageAttachments = useStageAttachments(session.id);
 	const openLinkInBrowser = useSessionBrowserLink(session);
 	// In-place agent switching is the same session-level operation in either
@@ -326,8 +326,7 @@ export function SessionChatSurface({
 				activateBranchPending={commands.activateBranchPending}
 				activateBranchError={commands.activateBranchError}
 				skills={skills}
-				filePaths={paths}
-				filePathsTruncated={truncated}
+				fileCatalog={fileCatalog}
 				onStageAttachments={stageAttachments}
 				nativeImages={can(renderSnapshot, "images")}
 				// Gated on what the daemon advertises, so the control is never drawn for a

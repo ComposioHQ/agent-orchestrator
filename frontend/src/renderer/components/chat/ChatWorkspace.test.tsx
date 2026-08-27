@@ -1107,11 +1107,15 @@ describe("ChatWorkspace message actions", () => {
 		secondView.unmount();
 
 		const restoredA = render(<ChatWorkspace snapshot={sessionA} onSend={vi.fn()} />);
-		expect(screen.getByLabelText("Message the agent")).toHaveTextContent("session A draft");
+		await waitFor(() =>
+			expect(screen.getByLabelText("Message the agent")).toHaveTextContent("session A draft"),
+		);
 		restoredA.unmount();
 
 		render(<ChatWorkspace snapshot={sessionB} onSend={vi.fn()} />);
-		expect(screen.getByLabelText("Message the agent")).toHaveTextContent("session B draft");
+		await waitFor(() =>
+			expect(screen.getByLabelText("Message the agent")).toHaveTextContent("session B draft"),
+		);
 	});
 
 	it("lets only the newest daemon session incarnation own restored drafts", async () => {
@@ -1231,7 +1235,7 @@ describe("ChatWorkspace message actions", () => {
 
 		const retryView = render(<ChatWorkspace snapshot={snapshot} onSend={onSend} />);
 		const restored = screen.getByLabelText("Message the agent");
-		expect(restored).toHaveTextContent("retry this exact draft");
+		await waitFor(() => expect(restored).toHaveTextContent("retry this exact draft"));
 		await userEvent.click(screen.getByRole("button", { name: "Retry message safely" }));
 		await waitFor(() => expect(onSend).toHaveBeenCalledTimes(2));
 		expect(onSend.mock.calls[1]?.[2]).toBe(firstClientMessageId);
@@ -1263,7 +1267,7 @@ describe("ChatWorkspace message actions", () => {
 
 		render(<ChatWorkspace snapshot={snapshot} onSend={onSend} />);
 		const replacement = screen.getByLabelText("Message the agent");
-		expect(replacement).toHaveTextContent("send exactly once");
+		await waitFor(() => expect(replacement).toHaveTextContent("send exactly once"));
 		expect(replacement).toHaveAttribute("contenteditable", "false");
 		fireEvent.keyDown(replacement, { key: "Enter" });
 		expect(onSend).toHaveBeenCalledTimes(1);
@@ -1291,8 +1295,10 @@ describe("ChatWorkspace message actions", () => {
 		firstView.unmount();
 
 		const restoredView = render(<ChatWorkspace {...common} />);
-		expect(screen.getByLabelText("Message the agent")).toHaveTextContent(
-			"independent composer draft",
+		await waitFor(() =>
+			expect(screen.getByLabelText("Message the agent")).toHaveTextContent(
+				"independent composer draft",
+			),
 		);
 		expect(await screen.findByRole("textbox", { name: "Edit message" })).toHaveValue(
 			"persist this inline edit",
@@ -1306,8 +1312,10 @@ describe("ChatWorkspace message actions", () => {
 
 		render(<ChatWorkspace {...common} />);
 		expect(screen.queryByRole("textbox", { name: "Edit message" })).not.toBeInTheDocument();
-		expect(screen.getByLabelText("Message the agent")).toHaveTextContent(
-			"independent composer draft",
+		await waitFor(() =>
+			expect(screen.getByLabelText("Message the agent")).toHaveTextContent(
+				"independent composer draft",
+			),
 		);
 	});
 
