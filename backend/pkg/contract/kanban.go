@@ -88,10 +88,10 @@ type KanbanPRFacts struct {
 
 func derivePRKanbanColumn(session KanbanSessionFacts, pr KanbanPRFacts) KanbanColumn {
 	switch {
-	case pr.Draft:
-		return KanbanValidating
 	case pr.Merged || pr.Closed:
 		return KanbanReady
+	case pr.Draft:
+		return KanbanValidating
 	case externallyApproved(pr) || pr.Mergeability == MergeMergeable:
 		return KanbanReady
 	case aoOwnsNextStep(session, pr):

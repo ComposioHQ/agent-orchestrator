@@ -67,6 +67,11 @@ func TestDeriveKanbanColumnSinglePR(t *testing.T) {
 			want: contract.KanbanReady,
 		},
 		{
+			name: "closed draft is still ready",
+			pr:   contract.KanbanPRFacts{URL: "pr/1", Closed: true, Draft: true},
+			want: contract.KanbanReady,
+		},
+		{
 			name: "mergeable is ready",
 			pr:   contract.KanbanPRFacts{URL: "pr/1", Mergeability: contract.MergeMergeable},
 			want: contract.KanbanReady,
