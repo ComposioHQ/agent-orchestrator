@@ -367,7 +367,7 @@ describe("ChatWorkspace timeline", () => {
 
 		expect(screen.getByLabelText("Chat")).toHaveAttribute("data-session-role", "orchestrator");
 		expect(screen.getByTestId("session-workspace-topbar")).toBeInTheDocument();
-		expect(screen.getByTestId("session-action-region")).toBeInTheDocument();
+		expect(screen.getByTestId("session-action-region")).toHaveClass("shrink-0");
 	});
 
 	it("clears the fixed titlebar nav when the sidebar is collapsed, like the terminal session", () => {
@@ -400,6 +400,7 @@ describe("ChatWorkspace timeline", () => {
 		render(<ChatWorkspace snapshot={chatFixture} onOpenShell={vi.fn()} />);
 
 		const terminalRegion = screen.getByTestId("session-terminal-region");
+		expect(terminalRegion).toHaveClass("min-w-0", "flex-1");
 		expect(terminalRegion).toContainElement(screen.getByRole("tablist", { name: "Chat tabs" }));
 		expect(terminalRegion).not.toContainElement(
 			screen.queryByRole("button", { name: "New terminal" }),

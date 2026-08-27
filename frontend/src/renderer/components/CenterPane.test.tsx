@@ -792,12 +792,14 @@ describe("CenterPane toolbar session label", () => {
 		const terminalRegion = screen.getByTestId("session-terminal-region");
 		const workspaceTopbar = screen.getByTestId("session-workspace-topbar");
 		expect(workspaceTopbar).toHaveClass("session-topbar-surface");
+		expect(terminalRegion).toHaveClass("min-w-0", "flex-1");
 		expect(workspaceTopbar).toContainElement(terminalRegion);
 		expect(terminalRegion).toContainElement(screen.getByRole("tablist", { name: "Open terminals" }));
 		expect(terminalRegion).not.toContainElement(screen.queryByRole("button", { name: "New terminal" }));
 		expect(screen.queryByRole("toolbar", { name: "Terminal display controls" })).not.toBeInTheDocument();
 		expect(terminalRegion).not.toContainElement(screen.getByTestId("session-action-region"));
 		const actionRegion = screen.getByTestId("session-action-region");
+		expect(actionRegion).toHaveClass("shrink-0");
 		expect(actionRegion).not.toHaveClass("border-l");
 		expect(actionRegion).toContainElement(
 			screen.getByRole("button", { name: "Session action" }),

@@ -531,7 +531,7 @@ export function CenterPane({
 			<div className="session-topbar-surface flex min-w-0 flex-1" data-testid="session-workspace-topbar">
 				<div
 					className={cn(
-						"session-topbar-terminal-region flex min-w-0 shrink items-center pr-3",
+						"session-topbar-terminal-region flex min-w-0 flex-1 items-center pr-3",
 						!isFullscreen && isSidebarCompact && isMac && "session-topbar-traffic-light-clearance-mac",
 						!isFullscreen && !isSidebarOpen && isMac && "session-topbar-titlebar-clearance-mac",
 						!isFullscreen && !isSidebarOpen && isLinux && "session-topbar-titlebar-clearance-linux",
