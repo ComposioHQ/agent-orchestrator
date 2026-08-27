@@ -920,12 +920,16 @@ function bannerText(
 	state: TerminalSessionState,
 	t: TFunction,
 	hasAttached: boolean,
+	isCloud: boolean,
 	error?: string,
 ): string | undefined {
-	// Before the first successful open (e.g. a cloud sandbox worker still coming
-	// up), show a calm "Connecting…" rather than the alarming "disconnected —
-	// reattaching", which is reserved for a genuine mid-session drop.
-	if (state === "reattaching") return hasAttached ? t("terminal.reattaching") : t("terminal.connecting");
+	// Cloud only: before the first successful open (the sandbox worker is still
+	// coming up), show a calm "Connecting…" rather than the alarming
+	// "disconnected — reattaching". A local terminal keeps its original wording
+	// verbatim, so local behavior is unchanged.
+	if (state === "reattaching") {
+		return isCloud && !hasAttached ? t("terminal.connecting") : t("terminal.reattaching");
+	}
 	if (state === "error") return t("terminal.error", { error: error ?? t("terminal.connectionFailed") });
 	return undefined;
 }
@@ -1069,7 +1073,7 @@ function AttachedTerminal({
 		);
 	}
 
-	const banner = bannerText(state, t, hasAttached, error);
+	const banner = bannerText(state, t, hasAttached, Boolean(attachSession?.cloud), error);
 	const showEmptyState = !handleId;
 	// Cover xterm while the attachment buffers the initial replay, so the pane
 	// appears already drawn at the tail instead of visibly scrolling down to it.
