@@ -23,6 +23,7 @@ import {
 	type SessionMode,
 } from "./api";
 import { isConfigured, loadConfig, type ServerConfig } from "./config";
+import { resolveActiveConfig, runtimeResolveDeps } from "./resolveConfig";
 import { shouldKeepPolling } from "./connectionError";
 import { primeInstallId } from "./installId";
 import { collectPRs } from "./prView";
@@ -165,7 +166,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	}, []);
 
 	const reloadConfig = useCallback(async () => {
-		const c = await loadConfig();
+		// Races the active machine's endpoints rather than reading one stored
+		// address, so the app lands on LAN at home and the tunnel from anywhere
+		// else without the user choosing. Always resolves to something: every
+		// failure path inside falls back to the last stored config.
+		const c = (await resolveActiveConfig(runtimeResolveDeps())) ?? (await loadConfig());
 		cfgRef.current = c;
 		setConfig(c);
 	}, []);
