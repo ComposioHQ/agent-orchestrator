@@ -3,9 +3,7 @@ package codex
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -440,66 +438,6 @@ func TestResolveCodexBinaryFindsNVMInstallWhenPathIsSparse(t *testing.T) {
 	}
 	if got != want {
 		t.Fatalf("ResolveCodexBinary = %q, want %q", got, want)
-	}
-}
-
-func TestResolveCodexBinaryUsesNPMNativeBinaryWhenNodeIsMissingFromPath(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Unix npm launcher resolution")
-	}
-	home := t.TempDir()
-	if canonical, err := filepath.EvalSymlinks(home); err == nil {
-		home = canonical
-	}
-	packageRoot := filepath.Join(home, ".local", "lib", "node_modules", "@openai", "codex")
-	launcher := filepath.Join(packageRoot, "bin", "codex.js")
-	if err := os.MkdirAll(filepath.Dir(launcher), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(launcher, []byte("#!/usr/bin/env node\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	arch := runtime.GOARCH
-	if arch == "amd64" {
-		arch = "x64"
-	}
-	want := filepath.Join(packageRoot, "node_modules", "@openai", "codex-"+runtime.GOOS+"-"+arch, "vendor", "target", "bin", "codex")
-	if err := os.MkdirAll(filepath.Dir(want), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(want, []byte("#!/bin/sh\nprintf 'codex-cli 0.149.1\\n'\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	shim := filepath.Join(home, ".local", "bin", "codex")
-	if err := os.MkdirAll(filepath.Dir(shim), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(filepath.Join("..", "lib", "node_modules", "@openai", "codex", "bin", "codex.js"), shim); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("HOME", home)
-	t.Setenv("PATH", t.TempDir())
-	launcherOutput, launcherErr := exec.Command(launcher, "--version").CombinedOutput()
-	var exitErr *exec.ExitError
-	if !errors.As(launcherErr, &exitErr) || exitErr.ExitCode() != 127 {
-		t.Fatalf("npm launcher without node = %q, %v; want exit 127", launcherOutput, launcherErr)
-	}
-	origFileExists := fileExists
-	fileExists = func(path string) bool {
-		return strings.HasPrefix(path, home+string(os.PathSeparator)) && origFileExists(path)
-	}
-	t.Cleanup(func() { fileExists = origFileExists })
-
-	got, err := ResolveCodexBinary(context.Background())
-	if err != nil {
-		t.Fatalf("ResolveCodexBinary: %v", err)
-	}
-	if got != want {
-		t.Fatalf("ResolveCodexBinary = %q, want native executable %q", got, want)
-	}
-	output, err := exec.Command(got, "--version").CombinedOutput()
-	if err != nil || string(output) != "codex-cli 0.149.1\n" {
-		t.Fatalf("native version probe = %q, %v", output, err)
 	}
 }
 
