@@ -62,8 +62,12 @@ func TestPlansMatchAuthenticationMatrix(t *testing.T) {
 		if got.AgentID != want.id || got.Action != want.action || !got.Available || got.Guidance != want.guidance || got.DocumentationURL != want.docs {
 			t.Fatalf("plan %d = %#v, want id=%q action=%q available=true guidance=%q docs=%q", i, got, want.id, want.action, want.guidance, want.docs)
 		}
-		if got.title != want.title || got.DisplayCommand != strings.Join(want.argv, " ") || !reflect.DeepEqual(got.command, want.argv) || got.initialInput != want.initialInput {
-			t.Fatalf("plan %q terminal = title %q display %q argv %#v initialInput %q, want title %q display %q argv %#v initialInput %q", want.id, got.title, got.DisplayCommand, got.command, got.initialInput, want.title, strings.Join(want.argv, " "), want.argv, want.initialInput)
+		wantCommand := append([]string(nil), want.argv...)
+		if len(wantCommand) > 0 {
+			wantCommand[0] = "/test/bin/" + want.executable
+		}
+		if got.title != want.title || got.DisplayCommand != strings.Join(want.argv, " ") || !reflect.DeepEqual(got.command, wantCommand) || got.initialInput != want.initialInput {
+			t.Fatalf("plan %q terminal = title %q display %q argv %#v initialInput %q, want title %q display %q argv %#v initialInput %q", want.id, got.title, got.DisplayCommand, got.command, got.initialInput, want.title, strings.Join(want.argv, " "), wantCommand, want.initialInput)
 		}
 		data, err := json.Marshal(got)
 		if err != nil {

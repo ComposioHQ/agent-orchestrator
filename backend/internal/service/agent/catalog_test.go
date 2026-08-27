@@ -1009,6 +1009,20 @@ func harnessAuthAgent(id, label string, status ports.AgentAuthStatus, err error)
 	}
 }
 
+func TestResolveAgentBinaryUsesRequestedAdapter(t *testing.T) {
+	t.Parallel()
+
+	svc := NewWithAgents([]agentregistry.HarnessAgent{harnessAgent("codex", "Codex", nil)})
+
+	path, err := svc.ResolveAgentBinary(context.Background(), "codex")
+	if err != nil {
+		t.Fatalf("ResolveAgentBinary(codex): %v", err)
+	}
+	if path != "agent" {
+		t.Fatalf("ResolveAgentBinary(codex) = %q, want adapter-resolved path", path)
+	}
+}
+
 func TestModelsFingerprintsTheSameInputsDiscoveryReads(t *testing.T) {
 	projects := &fakeProjectLookup{records: map[string]domain.ProjectRecord{
 		"proj-1": {

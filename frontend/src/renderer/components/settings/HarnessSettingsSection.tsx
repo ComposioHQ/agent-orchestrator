@@ -69,6 +69,8 @@ export function HarnessSettingsSection({ titleHidden = false }: { titleHidden?: 
 	const authPlans = useAgentAuthPlans();
 	const startAgentAuth = useStartAgentAuth();
 	const requestAgentAuthTerminal = useUiStore((state) => state.requestAgentAuthTerminal);
+	const agentAuthCheckRequest = useUiStore((state) => state.agentAuthCheckRequest);
+	const completeAgentAuthCheck = useUiStore((state) => state.completeAgentAuthCheck);
 	const [search, setSearch] = useState("");
 	const [authStates, setAuthStates] = useState<AgentAuthStates>({});
 	const [refreshError, setRefreshError] = useState<string | null>(null);
@@ -126,7 +128,10 @@ export function HarnessSettingsSection({ titleHidden = false }: { titleHidden?: 
 				} catch {
 					await queryClient.invalidateQueries({ queryKey: agentReadinessQueryKey });
 				} finally {
-					await queryClient.invalidateQueries({ queryKey: installerQueryKey });
+					await Promise.all([
+						queryClient.invalidateQueries({ queryKey: installerQueryKey }),
+						queryClient.invalidateQueries({ queryKey: agentAuthPlansQueryKey }),
+					]);
 				}
 			});
 		}
@@ -194,7 +199,7 @@ export function HarnessSettingsSection({ titleHidden = false }: { titleHidden?: 
 		updateAuthState(agentId, { pending: true, error: null });
 		try {
 			const result = await startAgentAuth.mutateAsync(agentId);
-			requestAgentAuthTerminal(result.terminal.handleId);
+			requestAgentAuthTerminal(agentId, result.terminal.handleId);
 		} catch (error) {
 			updateAuthState(agentId, { error: error instanceof Error ? error.message : t("settings.harness.authFailed") });
 		} finally {
@@ -202,7 +207,7 @@ export function HarnessSettingsSection({ titleHidden = false }: { titleHidden?: 
 		}
 	};
 
-	const checkAuth = async (agentId: AgentId) => {
+	const checkAuth = useCallback(async (agentId: AgentId) => {
 		updateAuthState(agentId, { checking: true, error: null });
 		try {
 			await probeAgentAuth(agentId);
@@ -213,7 +218,13 @@ export function HarnessSettingsSection({ titleHidden = false }: { titleHidden?: 
 		} finally {
 			updateAuthState(agentId, { checking: false });
 		}
-	};
+	}, [queryClient, t, updateAuthState]);
+
+	useEffect(() => {
+		if (!agentAuthCheckRequest || !agents.data) return;
+		const { agentId, nonce } = agentAuthCheckRequest;
+		void checkAuth(agentId as AgentId).finally(() => completeAgentAuthCheck(nonce));
+	}, [agentAuthCheckRequest, agents.data, checkAuth, completeAgentAuthCheck]);
 
 	const refresh = async () => {
 		setRefreshError(null);
@@ -291,11 +302,13 @@ export function HarnessSettingsSection({ titleHidden = false }: { titleHidden?: 
 									{isInstalled
 										? (authState?.error
 											? authState.error
-											: authPlan && !authPlan.available
-												? (authPlan.reason ?? t("settings.harness.authFailed"))
-												: authStatus === "authorized"
-													? t("settings.harness.loggedIn")
-													: t("settings.harness.notLoggedIn"))
+											: authStatus === "authorized"
+												? t("settings.harness.loggedIn")
+												: authPlan && !authPlan.available
+													? (authPlan.reason ?? t("settings.harness.authFailed"))
+													: authStatus === "unauthorized"
+														? t("settings.harness.notLoggedIn")
+														: t("settings.harness.loginUnknown"))
 										: actionError ?? (job?.status === "interrupted" ? t("settings.harness.interrupted") : failed ? (job?.error ?? t("settings.harness.installFailed")) : plan?.available ? t("settings.harness.availableWith", { method: methodLabel }) : (plan?.reason ?? t("settings.harness.manualRequired")))}
 								</p>
 							</div>
@@ -339,7 +352,7 @@ export function HarnessSettingsSection({ titleHidden = false }: { titleHidden?: 
 															: t("settings.harness.login")}
 												</Button>
 											)}
-											{authPlan.available && authStatus !== "unauthorized" ? (
+											{authPlan.available && authStatus === "unknown" ? (
 												<Button disabled={authState?.checking} size="sm" variant="outline" onClick={() => void checkAuth(agentId)}>
 													{authState?.checking ? <LoaderCircle className="animate-spin" aria-hidden="true" /> : <RefreshCw aria-hidden="true" />}
 													{authState?.checking ? t("settings.harness.checkingLogin") : t("settings.harness.checkLogin")}

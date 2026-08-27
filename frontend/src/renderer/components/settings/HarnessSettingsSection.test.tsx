@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { apiClient } from "../../lib/api-client";
 import { appI18n } from "../../i18n";
+import { agentsQueryKey, type AgentCatalog } from "../../hooks/useAgentsQuery";
 import { useUiStore } from "../../stores/ui-store";
 import { HarnessSettingsSection } from "./HarnessSettingsSection";
 
@@ -69,18 +70,19 @@ const plans = {
 
 function renderSection() {
 	const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-	return render(
+	const view = render(
 		<QueryClientProvider client={client}>
 			<HarnessSettingsSection />
 		</QueryClientProvider>,
 	);
+	return { ...view, queryClient: client };
 }
 
 describe("HarnessSettingsSection", () => {
 	beforeEach(async () => {
 		await appI18n.changeLanguage("en");
 		window.ao!.clipboard.writeText = vi.fn().mockResolvedValue(undefined);
-		useUiStore.setState({ agentAuthTerminalRequest: null });
+		useUiStore.setState({ agentAuthTerminalRequest: null, agentAuthCheckRequest: null });
 		vi.spyOn(apiClient, "GET").mockImplementation(async (path) => {
 			if (path === "/api/v1/agents/readiness") return { data: catalog } as never;
 			if (path === "/api/v1/agents/installers") return { data: plans } as never;
@@ -137,6 +139,10 @@ describe("HarnessSettingsSection", () => {
 			if (path === "/api/v1/agents/auth-plans") return { data: rowPlans } as never;
 			return { data: undefined } as never;
 		});
+		vi.mocked(apiClient.POST).mockImplementation(async (path) => {
+			if (path === "/api/v1/agents/refresh") return { data: rowCatalog } as never;
+			return { data: undefined } as never;
+		});
 
 		renderSection();
 		const claudeRow = (await screen.findByText("Claude Code")).closest('[data-agent="claude-code"]') as HTMLElement;
@@ -146,11 +152,12 @@ describe("HarnessSettingsSection", () => {
 		const gooseRow = screen.getByText("Goose").closest('[data-agent="goose"]') as HTMLElement;
 
 		await waitFor(() => expect(within(claudeRow).getAllByText("Logged in")).toHaveLength(2));
-		expect(within(claudeRow).getByRole("button", { name: "Check login" })).toBeInTheDocument();
+		expect(within(claudeRow).queryByRole("button", { name: "Check login" })).not.toBeInTheDocument();
 		expect(within(codexRow).getByRole("button", { name: "Login" })).toBeInTheDocument();
 		expect(within(codexRow).queryByRole("button", { name: "Check login" })).not.toBeInTheDocument();
 		expect(within(aiderRow).getByRole("button", { name: "Set up" })).toBeInTheDocument();
 		expect(within(aiderRow).getByRole("button", { name: "Check login" })).toBeInTheDocument();
+		expect(aiderRow).toHaveTextContent("Login status unknown");
 		expect(within(devinRow).getByRole("button", { name: "Instructions" })).toBeInTheDocument();
 		expect(within(gooseRow).getByRole("button", { name: "Set up" })).toBeDisabled();
 		expect(gooseRow).toHaveTextContent("goose is not on PATH");
@@ -181,7 +188,100 @@ describe("HarnessSettingsSection", () => {
 		await user.click(await within(codexRow).findByRole("button", { name: "Login" }));
 
 		await waitFor(() => expect(useUiStore.getState().agentAuthTerminalRequest?.handleId).toBe("shellterm-login"));
+		expect(useUiStore.getState().agentAuthTerminalRequest?.agentId).toBe("codex");
 	});
+
+	it("rechecks the selected agent when Settings reopens after login", async () => {
+		let currentCatalog = {
+			...catalog,
+			installed: [{ id: "codex", label: "Codex", authStatus: "unauthorized" }],
+			authorized: [] as typeof catalog.authorized,
+		};
+		vi.mocked(apiClient.GET).mockImplementation(async (path) => {
+			if (path === "/api/v1/agents") return { data: currentCatalog } as never;
+			if (path === "/api/v1/agents/installers") return { data: plans } as never;
+			if (path === "/api/v1/agents/auth-plans") return { data: authPlans } as never;
+			return { data: undefined } as never;
+		});
+		vi.mocked(apiClient.POST).mockImplementation(async (path) => {
+			if (path === "/api/v1/agents/refresh") return { data: currentCatalog } as never;
+			if (path === "/api/v1/agents/{agent}/auth") {
+				return { data: { agentId: "codex", action: "login", terminal: { handleId: "shellterm-login", workingDir: "/tmp/ao", title: "Log in to Codex", createdAt: new Date().toISOString() } } } as never;
+			}
+			if (path === "/api/v1/agents/{agent}/probe") {
+				const agent = { id: "codex", label: "Codex", authStatus: "authorized" };
+				currentCatalog = { ...currentCatalog, installed: [agent], authorized: [agent] };
+				return { data: { agent, supported: true, installed: true } } as never;
+			}
+			return { data: undefined } as never;
+		});
+		const user = userEvent.setup();
+		const first = renderSection();
+		const firstCodexRow = (await screen.findByText("Codex")).closest('[data-agent="codex"]') as HTMLElement;
+		await user.click(await within(firstCodexRow).findByRole("button", { name: "Login" }));
+		await waitFor(() => expect(useUiStore.getState().agentAuthTerminalRequest?.handleId).toBe("shellterm-login"));
+		first.unmount();
+
+		useUiStore.getState().openGlobalSettings();
+		expect(useUiStore.getState().agentAuthCheckRequest?.agentId).toBe("codex");
+		const second = renderSection();
+
+		await screen.findByText("Codex");
+		await waitFor(() => expect(apiClient.POST).toHaveBeenCalledWith("/api/v1/agents/{agent}/probe", {
+			params: { path: { agent: "codex" } },
+		}));
+		await waitFor(() => expect((second.queryClient.getQueryData<AgentCatalog>(agentsQueryKey)?.installed[0])?.authStatus).toBe("authorized"));
+		await waitFor(() => {
+			const codexRow = screen.getByText("Codex").closest('[data-agent="codex"]') as HTMLElement;
+			expect(within(codexRow).getAllByText("Logged in")).toHaveLength(2);
+		});
+		expect(useUiStore.getState().agentAuthCheckRequest).toBeNull();
+	});
+
+	it("refreshes authentication availability after installation succeeds", async () => {
+		let authPlanRequests = 0;
+		let currentCatalog = {
+			supported: [{ id: "codex", label: "Codex" }],
+			installed: [] as typeof catalog.installed,
+			authorized: [] as typeof catalog.authorized,
+		};
+		vi.mocked(apiClient.GET).mockImplementation(async (path) => {
+			if (path === "/api/v1/agents") return { data: currentCatalog } as never;
+			if (path === "/api/v1/agents/installers") return { data: plans } as never;
+			if (path === "/api/v1/agents/auth-plans") {
+				authPlanRequests += 1;
+				return { data: { plans: [{
+					agentId: "codex", action: "login", available: authPlanRequests > 1,
+					reason: authPlanRequests > 1 ? undefined : "codex was not found on PATH.",
+					documentationUrl: "https://example.test/codex",
+				}] } } as never;
+			}
+			if (path === "/api/v1/agents/{agent}/install") {
+				return { data: { target: "codex", status: "succeeded" } } as never;
+			}
+			return { data: undefined } as never;
+		});
+		vi.mocked(apiClient.POST).mockImplementation(async (path) => {
+			if (path === "/api/v1/agents/refresh") return { data: currentCatalog } as never;
+			if (path === "/api/v1/agents/{agent}/install") {
+				return { data: { target: "codex", status: "running" } } as never;
+			}
+			if (path === "/api/v1/agents/{agent}/probe") {
+				const agent = { id: "codex", label: "Codex", authStatus: "unknown" };
+				currentCatalog = { ...currentCatalog, installed: [agent] };
+				return { data: { agent, supported: true, installed: true } } as never;
+			}
+			return { data: undefined } as never;
+		});
+		const user = userEvent.setup();
+		renderSection();
+		const codexRow = (await screen.findByText("Codex")).closest('[data-agent="codex"]') as HTMLElement;
+
+		await user.click(await within(codexRow).findByRole("button", { name: "Install" }));
+
+		await waitFor(() => expect(authPlanRequests).toBeGreaterThanOrEqual(2), { timeout: 4_000 });
+		expect(within(codexRow).getByRole("button", { name: "Login" })).toBeEnabled();
+	}, 6_000);
 
 	it("starts the fixed daemon install route and exposes retry after failure", async () => {
 		const user = userEvent.setup();

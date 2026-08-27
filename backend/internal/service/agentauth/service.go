@@ -16,6 +16,13 @@ type ExecutableFinder interface {
 	LookPath(string) (string, error)
 }
 
+// AgentBinaryResolver resolves an agent through the same adapter-aware search
+// used by normal session startup, including managed install locations outside
+// the daemon PATH.
+type AgentBinaryResolver interface {
+	ResolveAgentBinary(context.Context, string) (string, error)
+}
+
 type executableFinderFunc func(string) (string, error)
 
 func (f executableFinderFunc) LookPath(name string) (string, error) { return f(name) }
@@ -66,19 +73,26 @@ type StartResult struct {
 // Service resolves the fixed authentication registry against the host PATH.
 type Service struct {
 	executables ExecutableFinder
+	agents      AgentBinaryResolver
 	terminals   TerminalOpener
 }
 
 // New creates an authentication-plan service.
 func New(executables ExecutableFinder, terminals TerminalOpener) *Service {
-	return &Service{executables: executables, terminals: terminals}
+	return NewWithAgentResolver(executables, nil, terminals)
+}
+
+// NewWithAgentResolver creates a service that falls back to AO's adapter-aware
+// binary resolver when an installed harness is not visible on the daemon PATH.
+func NewWithAgentResolver(executables ExecutableFinder, agents AgentBinaryResolver, terminals TerminalOpener) *Service {
+	return &Service{executables: executables, agents: agents, terminals: terminals}
 }
 
 // Plans returns every known harness plan in stable Harness settings order.
 func (s *Service) Plans() []Plan {
 	out := make([]Plan, 0, len(plans))
 	for _, plan := range plans {
-		out = append(out, s.resolve(plan))
+		out = append(out, s.resolve(context.Background(), plan))
 	}
 	return out
 }
@@ -89,17 +103,18 @@ func (s *Service) Plan(agentID string) (Plan, error) {
 	if !ok {
 		return Plan{}, apierr.Invalid("AGENT_AUTH_TARGET_UNKNOWN", fmt.Sprintf("unknown agent authentication target %q", agentID), nil)
 	}
-	return s.resolve(plan), nil
+	return s.resolve(context.Background(), plan), nil
 }
 
 // Start opens the reviewed native authentication flow for agentID. Callers
 // choose only the registry key; command and terminal input come exclusively
 // from the resolved private plan fields.
 func (s *Service) Start(ctx context.Context, agentID string) (StartResult, error) {
-	plan, err := s.Plan(agentID)
-	if err != nil {
-		return StartResult{}, err
+	plan, ok := planByAgentID[agentID]
+	if !ok {
+		return StartResult{}, apierr.Invalid("AGENT_AUTH_TARGET_UNKNOWN", fmt.Sprintf("unknown agent authentication target %q", agentID), nil)
 	}
+	plan = s.resolve(ctx, plan)
 	if !plan.Available {
 		return StartResult{}, apierr.Invalid("AGENT_AUTH_UNAVAILABLE", plan.Reason, nil)
 	}
@@ -125,7 +140,7 @@ func (s *Service) Start(ctx context.Context, agentID string) (StartResult, error
 	}, nil
 }
 
-func (s *Service) resolve(plan Plan) Plan {
+func (s *Service) resolve(ctx context.Context, plan Plan) Plan {
 	plan.command = append([]string(nil), plan.command...)
 	if len(plan.command) == 0 {
 		plan.Available = true
@@ -136,10 +151,14 @@ func (s *Service) resolve(plan Plan) Plan {
 		return plan
 	}
 	path, err := s.executables.LookPath(plan.command[0])
+	if (err != nil || path == "") && s.agents != nil {
+		path, err = s.agents.ResolveAgentBinary(ctx, plan.AgentID)
+	}
 	if err != nil || path == "" {
 		plan.Reason = fmt.Sprintf("%s was not found on PATH.", plan.command[0])
 		return plan
 	}
+	plan.command[0] = path
 	plan.Available = true
 	return plan
 }

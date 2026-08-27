@@ -93,7 +93,11 @@ export type UiState = {
 	newShellTerminalNonce: number;
 	// One-shot request to reveal a backend-created authentication terminal.
 	// The renderer carries only the returned terminal handle, never argv or credentials.
-	agentAuthTerminalRequest: { handleId: string; nonce: number } | null;
+	agentAuthTerminalRequest: { agentId: string; handleId: string; nonce: number } | null;
+	// Raised only when Settings is reopened after an authentication terminal was
+	// requested, so the Harness page can re-probe that one agent after the user
+	// has had a chance to complete the native flow.
+	agentAuthCheckRequest: { agentId: string; nonce: number } | null;
 	// The shell terminal the user most recently opened or selected. Both the
 	// session view (tabs beside the session's pane) and the standalone terminals
 	// view read it, so whichever one is on screen shows the same shell.
@@ -139,7 +143,8 @@ export type UiState = {
 	requestCreateProject: () => void;
 	requestCreateProjectFromPath: (path: string) => void;
 	requestNewShellTerminal: () => void;
-	requestAgentAuthTerminal: (handleId: string) => void;
+	requestAgentAuthTerminal: (agentId: string, handleId: string) => void;
+	completeAgentAuthCheck: (nonce: number) => void;
 	setActiveShellTerminal: (handleId: string | null) => void;
 	setVisibleTerminalKind: (sessionId: string, kind: TerminalTarget["kind"]) => void;
 	clearVisibleTerminalKind: (sessionId: string) => void;
@@ -213,6 +218,7 @@ export const useUiStore = create<UiState>((set, get) => ({
 	folderDropRequest: null,
 	newShellTerminalNonce: 0,
 	agentAuthTerminalRequest: null,
+	agentAuthCheckRequest: null,
 	activeShellTerminalHandleId: null,
 	visibleTerminalKindBySession: {},
 	setWorkbenchTab: (workbenchTab) => set({ workbenchTab }),
@@ -237,7 +243,16 @@ export const useUiStore = create<UiState>((set, get) => ({
 		getLocalStorage()?.setItem(developerModeStorageKey, String(developerMode));
 		set({ developerMode });
 	},
-	openGlobalSettings: (section) => set({ settingsModal: { scope: "global", section } }),
+	openGlobalSettings: (section) =>
+		set((state) => ({
+			settingsModal: { scope: "global", section },
+			agentAuthCheckRequest: state.agentAuthTerminalRequest
+				? {
+					agentId: state.agentAuthTerminalRequest.agentId,
+					nonce: (state.agentAuthCheckRequest?.nonce ?? 0) + 1,
+				}
+				: state.agentAuthCheckRequest,
+		})),
 	openProjectSettings: (projectId) => set({ settingsModal: { scope: "project", projectId } }),
 	closeSettings: () => set({ settingsModal: null }),
 	syncSystemTheme: () => {
@@ -409,13 +424,18 @@ export const useUiStore = create<UiState>((set, get) => ({
 	requestCreateProjectFromPath: (path) =>
 		set((state) => ({ folderDropRequest: { path, nonce: (state.folderDropRequest?.nonce ?? 0) + 1 } })),
 	requestNewShellTerminal: () => set((state) => ({ newShellTerminalNonce: state.newShellTerminalNonce + 1 })),
-	requestAgentAuthTerminal: (handleId) =>
+	requestAgentAuthTerminal: (agentId, handleId) =>
 		set((state) => ({
 			agentAuthTerminalRequest: {
+				agentId,
 				handleId,
 				nonce: (state.agentAuthTerminalRequest?.nonce ?? 0) + 1,
 			},
 		})),
+	completeAgentAuthCheck: (nonce) =>
+		set((state) => state.agentAuthCheckRequest?.nonce === nonce
+			? { agentAuthCheckRequest: null, agentAuthTerminalRequest: null }
+			: {}),
 	setActiveShellTerminal: (activeShellTerminalHandleId) => set({ activeShellTerminalHandleId }),
 	setVisibleTerminalKind: (sessionId, kind) =>
 		set((state) =>

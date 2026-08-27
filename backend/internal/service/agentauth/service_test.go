@@ -56,7 +56,7 @@ func TestStartOpensResolvedPlanAndReturnsSafeTerminal(t *testing.T) {
 		t.Fatalf("OpenCommandTerminal calls = %d, want 1", opener.calls)
 	}
 	wantInput := shellterm.OpenCommandTerminalInput{
-		Argv:         []string{"pi"},
+		Argv:         []string{"/test/bin/pi"},
 		Title:        "Log in to Pi",
 		InitialInput: "/login\r",
 	}
@@ -75,10 +75,42 @@ func TestStartOpensResolvedPlanAndReturnsSafeTerminal(t *testing.T) {
 	}
 }
 
+func TestStartFallsBackToAgentResolvedBinaryOutsidePATH(t *testing.T) {
+	t.Parallel()
+
+	opener := &recordingTerminalOpener{}
+	resolver := managedExecutableResolver{agentID: "claude-code", path: "/Users/test/.claude/local/claude"}
+	svc := NewWithAgentResolver(resolver, resolver, opener)
+
+	_, err := svc.Start(context.Background(), "claude-code")
+	if err != nil {
+		t.Fatalf("Start(claude-code): %v", err)
+	}
+	if got := opener.input.Argv; !reflect.DeepEqual(got, []string{"/Users/test/.claude/local/claude", "auth", "login"}) {
+		t.Fatalf("terminal argv = %#v, want adapter-resolved Claude binary", got)
+	}
+}
+
 type recordingTerminalOpener struct {
 	calls    int
 	input    shellterm.OpenCommandTerminalInput
 	terminal shellterm.ShellTerminal
+}
+
+type managedExecutableResolver struct {
+	agentID string
+	path    string
+}
+
+func (m managedExecutableResolver) LookPath(string) (string, error) {
+	return "", errors.New("not found on PATH")
+}
+
+func (m managedExecutableResolver) ResolveAgentBinary(_ context.Context, agentID string) (string, error) {
+	if agentID != m.agentID {
+		return "", errors.New("unknown agent")
+	}
+	return m.path, nil
 }
 
 func foundExecutable(executable string) ExecutableFinder {

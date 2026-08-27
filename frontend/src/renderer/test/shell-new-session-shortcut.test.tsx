@@ -320,6 +320,7 @@ beforeEach(() => {
 		newTaskRequest: null,
 		newShellTerminalNonce: 0,
 		agentAuthTerminalRequest: null,
+		agentAuthCheckRequest: null,
 		activeShellTerminalHandleId: null,
 		settingsModal: null,
 		sidebarAutoCollapseOverride: false,
@@ -332,7 +333,7 @@ describe("shell agent authentication terminal request", () => {
 		await renderShell();
 		act(() => {
 			useUiStore.getState().openGlobalSettings();
-			useUiStore.getState().requestAgentAuthTerminal("shellterm-login");
+			useUiStore.getState().requestAgentAuthTerminal("codex", "shellterm-login");
 		});
 
 		await waitFor(() => expect(shellMocks.navigate).toHaveBeenCalledWith({ to: "/terminals" }));
