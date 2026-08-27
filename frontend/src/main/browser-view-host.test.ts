@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { net } from "electron";
 import {
 	type BrowserNavState,
 	type BrowserTabsState,
@@ -10,6 +11,11 @@ import {
 } from "./browser-view-host";
 import { MAX_BROWSER_TABS } from "../shared/browser-tabs";
 import { NEW_SESSION_SHORTCUT_CHANNEL } from "../shared/shortcuts";
+
+vi.mock("electron", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("electron")>();
+	return { ...actual, net: { fetch: vi.fn() } };
+});
 
 type InvokeHandler = (event: unknown, ...args: unknown[]) => unknown;
 type EventHandler = (event: { sender: { id: number; getZoomFactor?: () => number } }, ...args: unknown[]) => unknown;
@@ -220,6 +226,7 @@ function setupTabHost() {
 			closeDevTools: ReturnType<typeof vi.fn>;
 			openWindow: (url: string) => void;
 			close: ReturnType<typeof vi.fn>;
+			emitConsoleMessage: (level: number, message: string, line?: number, sourceId?: string) => void;
 			session: {
 				webRequest: {
 					onCompleted: ReturnType<typeof vi.fn>;
@@ -375,6 +382,9 @@ function setupTabHost() {
 		annotatePreloadPath: "/preload.js",
 		rendererOrigin: "http://localhost:5173",
 		agentBrowserRuntime: runtime,
+		// Kept only as a regression tripwire: the removed auto-send path used
+		// this option to discover the daemon before calling net.fetch.
+		...({ getDaemonPort: () => 43123 } as Record<string, unknown>),
 	});
 	const invoke = (channel: string, ...args: unknown[]) =>
 		handlers.get(channel)!({ sender: { id: 1 } }, ...args) as Promise<unknown>;
@@ -1184,6 +1194,72 @@ describe("agent browser runtime", () => {
 			expect.any(Function),
 		);
 		expect(views[0].webContents.session.webRequest.onErrorOccurred).toHaveBeenCalledTimes(1);
+	});
+
+	it("keeps browser failures available for an explicit errors query after the old auto-send window", async () => {
+		vi.useFakeTimers();
+		const fetchSpy = vi.mocked(net.fetch).mockResolvedValue(new Response());
+		try {
+			const { host, views } = setupTabHost();
+			await host.execute("sess-1", "open", { url: "http://localhost:3000" });
+
+			views[0].webContents.emitConsoleMessage(3, "render failed", 42, "http://localhost:3000/app.js");
+			const onErrorOccurred = views[0].webContents.session.webRequest.onErrorOccurred.mock.calls[0]?.[1] as
+				| ((details: {
+						resourceType: string;
+						method: string;
+						url: string;
+						error: string;
+				  }) => void)
+				| undefined;
+			onErrorOccurred?.({
+				resourceType: "xhr",
+				method: "GET",
+				url: "http://localhost:3000/api/data",
+				error: "net::ERR_CONNECTION_REFUSED",
+			});
+
+			await vi.advanceTimersByTimeAsync(5_000);
+			expect(fetchSpy).not.toHaveBeenCalled();
+			const result = (await host.execute("sess-1", "errors")) as {
+				messages: Array<{ level: string; message: string }>;
+			};
+
+			expect(result.messages).toHaveLength(2);
+			expect(result.messages[0]).toMatchObject({ level: "error" });
+			expect(result.messages[0]?.message).toContain(
+				"render failed (http://localhost:3000/app.js:42)",
+			);
+			expect(result.messages[1]).toMatchObject({ level: "error" });
+			expect(result.messages[1]?.message).toContain(
+				"GET http://localhost:3000/api/data failed: net::ERR_CONNECTION_REFUSED",
+			);
+		} finally {
+			fetchSpy.mockReset();
+			vi.useRealTimers();
+		}
+	});
+
+	it("caps each stored browser failure before retaining it", async () => {
+		const { host, views } = setupTabHost();
+		await host.execute("sess-1", "open", { url: "http://localhost:3000" });
+
+		views[0].webContents.emitConsoleMessage(3, "x".repeat(20_000));
+		const result = (await host.execute("sess-1", "errors")) as {
+			messages: Array<{ message: string }>;
+		};
+
+		expect(result.messages[0]?.message).toContain("[Content truncated at 16384 bytes]");
+	});
+
+	it("detaches browser failure listeners when their session is destroyed", async () => {
+		const { host, views } = setupTabHost();
+		await host.execute("sess-1", "open", { url: "http://localhost:3000" });
+
+		await host.execute("sess-1", "__destroy-session");
+
+		expect(views[0].webContents.session.webRequest.onCompleted).toHaveBeenLastCalledWith(null);
+		expect(views[0].webContents.session.webRequest.onErrorOccurred).toHaveBeenLastCalledWith(null);
 	});
 
 	it("exposes owned tab state and manual tab actions to the renderer", async () => {
