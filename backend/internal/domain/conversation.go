@@ -735,9 +735,10 @@ const (
 	ConversationEditRejectedBusy                ConversationEditRejectionKind = "busy"
 	ConversationEditRejectedInterfaceTransition ConversationEditRejectionKind = "interface_transition"
 	ConversationEditRejectedByProvider          ConversationEditRejectionKind = "provider_refused"
-	// ConversationEditRejectedProviderFailure is retained only to replay
-	// reservations settled by builds that treated a generic provider/transport
-	// error as definitive.
+	// ConversationEditRejectedProviderFailure records a generic local preparation
+	// failure when AO can prove provider dispatch never occurred. It also replays
+	// reservations settled by older builds that treated generic provider/transport
+	// errors as definitive.
 	ConversationEditRejectedProviderFailure ConversationEditRejectionKind = "provider_failure"
 )
 

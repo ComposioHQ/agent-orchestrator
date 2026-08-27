@@ -61,8 +61,9 @@ var (
 	// ErrEditIdempotencyConflict refuses reuse of one edit handle for a different
 	// source prompt or replacement payload.
 	ErrEditIdempotencyConflict = errors.New("edit idempotency handle belongs to a different request")
-	// ErrEditDeliveryRejected replays a legacy provider/transport failure that an
-	// earlier build durably rejected. New ambiguous failures remain reserved.
+	// ErrEditDeliveryRejected reports a durably rejected generic failure, including
+	// local preparation failures that prove the replacement prompt was not sent.
+	// Ambiguous failures after provider dispatch remain reserved.
 	ErrEditDeliveryRejected = errors.New("edit delivery was rejected")
 	// ErrBranchProviderMismatch refuses a historical branch whose opaque provider
 	// conversation id belongs to an earlier agent ownership epoch.
