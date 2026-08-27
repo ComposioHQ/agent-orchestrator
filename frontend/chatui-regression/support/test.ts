@@ -505,12 +505,11 @@ export class ChatUIRegressionHarness {
 		}, hash);
 		await expect.poll(() => this.page.evaluate(() => window.location.hash)).toBe(hash);
 		await expect(this.page.getByRole("region", { name: "Chat" })).toBeVisible();
-		const expectedTabName =
-			sessionId === this.sessionId ? "ChatUI regression worker" : "ChatUI regression secondary worker";
-		await expect(this.page.getByRole("tab", { name: expectedTabName })).toHaveAttribute(
-			"aria-selected",
-			"true",
-		);
+		const sessionTab = this.page
+			.getByRole("tablist", { name: "Chat tabs" })
+			.getByRole("tab", { selected: true });
+		await expect(sessionTab).toHaveCount(1);
+		await expect(sessionTab).toHaveAccessibleName(this.provider === "claude-code" ? "Claude Code" : "Codex");
 	}
 
 	requestsMatching(method: string, suffix: string): RecordedRequest[] {

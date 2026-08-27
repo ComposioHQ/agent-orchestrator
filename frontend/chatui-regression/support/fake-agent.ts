@@ -306,6 +306,7 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 				isLoading: false,
 				...(error ? { error } : {}),
 			});
+			const chatDraftRiskBridge = { setChatDraftRisk: () => undefined };
 			const ao = {
 				app: {
 					getVersion: async () => version,
@@ -320,6 +321,7 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					onNewShellTerminalShortcut: unsubscribe,
 					onCloseShellTerminalShortcut: unsubscribe,
 					setCloseShellTerminalShortcutEnabled: () => undefined,
+					...chatDraftRiskBridge,
 					onOpenSettingsShortcut: unsubscribe,
 					onPreviousSessionShortcut: unsubscribe,
 					onNextSessionShortcut: unsubscribe,
