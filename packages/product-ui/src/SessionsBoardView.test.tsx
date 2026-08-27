@@ -154,9 +154,15 @@ describe("SessionsBoardView", () => {
 		}
 	});
 
-	it.each(["ci_failed", "changes_requested"] as const)(
+	it.each([
+		{ displayStatus: "Blocked", status: "idle" as const },
+		{ displayStatus: "Checks failing", status: "idle" as const },
+		{ displayStatus: "Changes requested", status: "idle" as const },
+		{ displayStatus: undefined, status: "ci_failed" as const },
+		{ displayStatus: undefined, status: "changes_requested" as const },
+	] as const)(
 		"gives %s cards the persistent orange attention treatment",
-		(status) => {
+		({ displayStatus, status }) => {
 			render(
 				<SessionCardView
 					externalLink={ExternalLink}
@@ -170,7 +176,7 @@ describe("SessionsBoardView", () => {
 						updatedAt: (timestamp) => `Updated ${timestamp}`,
 					}}
 					renderAvatar={(provider) => <span role="img" aria-label={provider}>C</span>}
-					session={{ ...baseSession, status }}
+					session={{ ...baseSession, status, displayStatus }}
 				/>,
 			);
 
@@ -205,6 +211,30 @@ describe("SessionsBoardView", () => {
 		expect(card).toHaveClass("border", "border-border", "bg-surface");
 		expect(card).toHaveClass("rounded-lg");
 		expect(card).not.toHaveClass("animate-attention-card-pulse", "border-status-needs-you");
+	});
+
+	it("does not show the attention border for non-attention display statuses", () => {
+		render(
+			<SessionCardView
+				externalLink={ExternalLink}
+				labels={{
+					formatTime: () => "5m ago",
+					intakeIssue: (id) => `Issue ${id}`,
+					pr: {
+						short: "PR",
+						states: { closed: "closed", draft: "draft", merged: "merged", open: "open" },
+					},
+					updatedAt: (timestamp) => `Updated ${timestamp}`,
+				}}
+				renderAvatar={(provider) => <span role="img" aria-label={provider}>C</span>}
+				session={{ ...baseSession, status: "changes_requested", displayStatus: "Needs human review" }}
+			/>,
+		);
+
+		expect(screen.getByTestId("board-session-card")).not.toHaveClass(
+			"animate-attention-card-pulse",
+			"border-status-needs-you",
+		);
 	});
 
 	it("renders a neutral card with grouped multi-PR, usage, and action presentation", () => {
@@ -401,7 +431,7 @@ describe("SessionsBoardView", () => {
 		const label = screen.getByText("Fixing CI failures");
 		const status = label.parentElement;
 		expect(status).toHaveAttribute("data-kanban-column", "validating");
-		expect(status).toHaveClass("text-status-needs-you");
+		expect(status).toHaveClass("text-status-validating");
 		expect(status).not.toHaveClass("rounded-sm", "border");
 		expect(status?.style.getPropertyValue("--session-status-tone")).toBe("");
 		expect(status?.querySelector(".rounded-full")).toBeNull();

@@ -229,10 +229,7 @@ export function SessionCardView({
 }: SessionCardViewProps) {
 	const badge = getSessionStatusView(session.status, translate);
 	const statusPresentation = session.statusPresentation;
-	const needsAttention =
-		session.status === "ci_failed" ||
-		session.status === "changes_requested" ||
-		session.activity?.state === "blocked";
+	const needsAttention = boardSessionNeedsAttention(session);
 	const needsAttentionChip = needsAttention;
 	const column = getKanbanColumnView(toKanbanColumn(session.kanbanColumn, session.status), translate);
 	const branch = session.branch ?? "";
@@ -355,6 +352,23 @@ export function SessionCardView({
 			{footer}
 		</div>
 	);
+}
+
+function boardSessionNeedsAttention(session: BoardSessionPresentation): boolean {
+	switch (session.displayStatus) {
+		case "Blocked":
+		case "Checks failing":
+		case "Changes requested":
+			return true;
+		case undefined:
+			return (
+				session.status === "ci_failed" ||
+				session.status === "changes_requested" ||
+				session.activity?.state === "blocked"
+			);
+		default:
+			return false;
+	}
 }
 
 export const SessionUsageMetricView = forwardRef<
