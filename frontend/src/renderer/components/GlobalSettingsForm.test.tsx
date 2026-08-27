@@ -339,6 +339,12 @@ describe("GlobalSettingsForm", () => {
 		expect(await screen.findByTestId("installed-update-channel")).toHaveTextContent("Nightly (Pre-release)");
 	});
 
+	it("labels an installed feature build separately from Stable", async () => {
+		getVersion.mockResolvedValue("1.4.0-pr4536.202608271030");
+		renderForm();
+		expect(await screen.findByTestId("installed-update-channel")).toHaveTextContent("Feature Releases");
+	});
+
 	it("shows an explicit idle update state and triggers a manual check", async () => {
 		renderForm();
 		expect(await screen.findByTestId("app-version")).toHaveTextContent("v1.4.0");

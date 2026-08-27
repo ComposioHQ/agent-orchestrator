@@ -43,7 +43,9 @@ export function UpdatesSection({ titleHidden }: { titleHidden?: boolean } = {}) 
 	const formRef = useRef(form);
 	formRef.current = form;
 	const [showFeature, setShowFeature] = useState(false);
-	const [savingField, setSavingField] = useState<"automatic" | "channel" | null>(null);
+	const [savingFields, setSavingFields] = useState<Set<"automatic" | "channel">>(new Set());
+	const latestSaveByFieldRef = useRef<Record<"automatic" | "channel", number>>({ automatic: 0, channel: 0 });
+	const saveSequenceRef = useRef(0);
 	const [pendingPin, setPendingPin] = useState<{ pr: number; title: string } | null>(null);
 	const [manualCheckRequestId, setManualCheckRequestId] = useState<string | null>(null);
 	const [channelSwitch, setChannelSwitch] = useState<{ channel: UpdateChannel; requestId: string } | null>(null);
@@ -115,21 +117,39 @@ export function UpdatesSection({ titleHidden }: { titleHidden?: boolean } = {}) 
 	}, [status]);
 
 	const save = useMutation({
-		mutationFn: async (next: UpdateSettings) => {
+		mutationFn: async ({ next }: { next: UpdateSettings; field: "automatic" | "channel"; intent: number }) => {
 			await aoBridge.updateSettings.set(next);
 			return next;
 		},
-		onSuccess: (next) => {
-			setSavingField(null);
+		onSuccess: (next, { field, intent }) => {
+			setSavingFields((fields) => {
+				const nextFields = new Set(fields);
+				nextFields.delete(field);
+				return nextFields;
+			});
+			if (latestSaveByFieldRef.current[field] !== intent) return;
 			setForm(next);
 			void queryClient.invalidateQueries({ queryKey: updateSettingsQueryKey });
 		},
-		onError: () => {
-			setSavingField(null);
+		onError: (_error, { field, intent }) => {
+			setSavingFields((fields) => {
+				const nextFields = new Set(fields);
+				nextFields.delete(field);
+				return nextFields;
+			});
+			if (latestSaveByFieldRef.current[field] !== intent) return;
 			const previous = queryClient.getQueryData<UpdateSettings>(updateSettingsQueryKey);
 			if (previous) setForm(previous);
 		},
 	});
+
+	const saveField = (field: "automatic" | "channel", next: UpdateSettings) => {
+		const intent = ++saveSequenceRef.current;
+		latestSaveByFieldRef.current[field] = intent;
+		setSavingFields((fields) => new Set(fields).add(field));
+		setForm(next);
+		save.mutate({ next, field, intent });
+	};
 
 	const channelOptions: { value: PrimaryValue; label: string }[] = [
 		{ value: "latest", label: t("settings.updates.channel.stable") },
@@ -139,10 +159,8 @@ export function UpdatesSection({ titleHidden }: { titleHidden?: boolean } = {}) 
 	const primaryValue: PrimaryValue = developerMode && (form.feature !== null || showFeature) ? "feature" : form.channel;
 
 	const setEnabled = (enabled: boolean) => {
-		setSavingField("automatic");
 		const next = { ...formRef.current, enabled };
-		setForm(next);
-		save.mutate(next);
+		saveField("automatic", next);
 	};
 
 	const handlePrimaryChannel = (value: PrimaryValue) => {
@@ -151,7 +169,6 @@ export function UpdatesSection({ titleHidden }: { titleHidden?: boolean } = {}) 
 			return;
 		}
 		setShowFeature(false);
-		setSavingField("channel");
 		const next = {
 			...formRef.current,
 			channel: value,
@@ -160,8 +177,7 @@ export function UpdatesSection({ titleHidden }: { titleHidden?: boolean } = {}) 
 		};
 		const from = releaseChannelFrom(formRef.current);
 		const to = releaseChannelFrom(next);
-		setForm(next);
-		save.mutate(next);
+		saveField("channel", next);
 		if (from !== to) {
 			// Reported on the switch rather than inferred later, because someone who
 			// moves to nightly and does not update yet is on nightly by intent while
@@ -260,7 +276,7 @@ export function UpdatesSection({ titleHidden }: { titleHidden?: boolean } = {}) 
 						aria-label={t("settings.updates.automatic")}
 						checked={form.enabled}
 						onCheckedChange={setEnabled}
-						disabled={savingField === "automatic"}
+						disabled={savingFields.has("automatic")}
 					/>
 				</SettingsRow>
 
@@ -270,7 +286,7 @@ export function UpdatesSection({ titleHidden }: { titleHidden?: boolean } = {}) 
 						value={primaryValue}
 						options={developerMode ? channelOptions : channelOptions.filter((option) => option.value !== "feature")}
 						onChange={handlePrimaryChannel}
-						disabled={savingField === "channel"}
+						disabled={savingFields.has("channel")}
 					/>
 				</SettingsRow>
 
@@ -398,9 +414,18 @@ function UpdateActions({
 						>
 							{version.data ? `v${version.data}` : "…"}
 						</span>
-						<Badge data-testid="installed-update-channel" variant={installedChannel === "nightly" ? "warning" : "neutral"}>
-							{installedChannel === "nightly" ? t("settings.updates.channel.nightly") : t("settings.updates.channel.stable")}
-						</Badge>
+						{installedChannel !== "unknown" && (
+							<Badge
+								data-testid="installed-update-channel"
+								variant={installedChannel === "nightly" ? "warning" : installedChannel === "feature" ? "accent" : "neutral"}
+							>
+								{installedChannel === "nightly"
+									? t("settings.updates.channel.nightly")
+									: installedChannel === "feature"
+										? t("settings.updates.channel.feature")
+										: t("settings.updates.channel.stable")}
+							</Badge>
+						)}
 					</div>
 
 					<div
@@ -414,7 +439,9 @@ function UpdateActions({
 						{displayStatus.state === "checking" ? (
 							<span className="sr-only">{t("settings.updates.checking")}</span>
 						) : displayStatus.state !== "available" && displayStatus.state !== "idle" && displayStatus.state !== "downloading" ? (
-							<UpdateStatusLine status={displayStatus} />
+							<span className={checkedAt ? undefined : "sr-only"}>
+								<UpdateStatusLine status={displayStatus} />
+							</span>
 						) : null}
 						{channelSwitchMessage && <p className="mt-1 text-xs leading-4 text-settings-muted">{channelSwitchMessage}</p>}
 					</div>
@@ -435,17 +462,17 @@ function UpdateActions({
 										{t("settings.updates.lastChecked", { time: checkedAt })}
 									</span>
 								</motion.div>
-							) : displayStatus.state === "idle" ? (
+							) : (
 								<motion.span
-									key="not-checked"
+									key={displayStatus.state}
 									initial={{ opacity: 1, filter: "blur(0px)" }}
 									animate={{ opacity: 1, filter: "blur(0px)" }}
 									exit={{ opacity: 0, filter: "blur(4px)" }}
-									className="absolute inset-0"
+									className="absolute inset-0 flex items-center"
 								>
-									{t("settings.updates.notChecked")}
+									<UpdateStatusLine status={displayStatus} />
 								</motion.span>
-							) : null}
+							)}
 						</AnimatePresence>
 					</div>
 				</div>
@@ -516,8 +543,13 @@ function DownloadProgressIcon({ percent }: { percent: number }) {
 	);
 }
 
-function installedUpdateChannel(version: string | undefined): UpdateChannel {
-	return /-nightly(?:[.+]|$)/.test(version ?? "") ? "nightly" : "latest";
+type InstalledChannel = UpdateChannel | "feature" | "unknown";
+
+function installedUpdateChannel(version: string | undefined): InstalledChannel {
+	if (!version) return "unknown";
+	if (/-nightly(?:[.+]|$)/.test(version)) return "nightly";
+	if (/-pr\d+(?:[.+]|$)/.test(version)) return "feature";
+	return /^\d+\.\d+\.\d+(?:\+[0-9A-Za-z.-]+)?$/.test(version) ? "latest" : "unknown";
 }
 
 function UpdateStatusLine({ status }: { status: UpdateStatus }) {

@@ -188,6 +188,7 @@ describe("startAutoUpdates", () => {
   const stateDir = "/tmp/ao-state";
 
   afterEach(() => {
+    rmSync(stateDir, { recursive: true, force: true });
     vi.useRealTimers();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
