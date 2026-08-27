@@ -3978,17 +3978,24 @@ body:has(#root .platform-linux) > .browser-popout-overlay {
 	container-type: inline-size;
 }
 
-.browser-panel__tab-strip {
+.browser-panel__tab-bar {
 	display: none;
 	height: 38px;
 	min-width: 0;
 	align-items: end;
-	gap: 2px;
 	padding: 6px 8px 0;
-	overflow-x: auto;
-	overflow-y: hidden;
 	border-bottom: 1px solid color-mix(in srgb, var(--color-border) 72%, transparent);
 	background: color-mix(in srgb, var(--surface) 92%, var(--bg));
+}
+
+.browser-panel__tab-strip {
+	display: flex;
+	min-width: 0;
+	align-items: end;
+	gap: 2px;
+	flex: 1;
+	overflow-x: auto;
+	overflow-y: hidden;
 	scrollbar-width: thin;
 }
 
@@ -4076,12 +4083,37 @@ body:has(#root .platform-linux) > .browser-popout-overlay {
 	display: none;
 }
 
+.browser-panel__tab-new {
+	display: grid;
+	width: 30px;
+	height: 30px;
+	place-items: center;
+	flex: none;
+	margin: 0 0 1px 4px;
+	border: 0;
+	border-radius: 7px;
+	color: var(--fg-muted);
+	background: transparent;
+}
+
+.browser-panel__tab-new:not(:disabled):hover {
+	color: var(--fg);
+	background: var(--surface-hover);
+}
+
+.browser-panel__tab-new:focus-visible {
+	outline: 2px solid var(--color-accent);
+	outline-offset: -2px;
+}
+
 @container browser-panel (min-width: 640px) {
-	.browser-panel__tab-strip {
+	.browser-panel__tab-bar {
 		display: flex;
 	}
 
-	.browser-panel__tabs-trigger {
+	.browser-panel__toolbar-new-tab,
+	.browser-panel__toolbar-tabs-trigger,
+	.browser-tabs-rail {
 		display: none;
 	}
 }

@@ -452,6 +452,14 @@ describe("BrowserPanel", () => {
 		expect(hookState.closeTab).toHaveBeenCalledWith("t2");
 	});
 
+	it("opens a new browser tab from the horizontal tab strip", async () => {
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		await userEvent.click(within(screen.getByTestId("browser-tab-bar")).getByRole("button", { name: "Open new tab" }));
+
+		expect(hookState.openTab).toHaveBeenCalledOnce();
+	});
+
 	it("does not render a tab-specific agent marker", async () => {
 		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
 		hookState.tabs = [
@@ -593,7 +601,9 @@ describe("BrowserPanel", () => {
 			vi.useRealTimers();
 		}
 
-		await userEvent.click(screen.getByRole("button", { name: "Close tab First app" }));
+		await userEvent.click(
+			within(screen.getByTestId("browser-tabs-flyout")).getByRole("button", { name: "Close tab First app" }),
+		);
 
 		expect(hookState.closeTab).toHaveBeenCalledWith("t1");
 	});
@@ -698,7 +708,9 @@ describe("BrowserPanel", () => {
 			vi.useRealTimers();
 		}
 
-		await userEvent.click(screen.getByRole("button", { name: "Close tab First app" }));
+		await userEvent.click(
+			within(screen.getByTestId("browser-tabs-flyout")).getByRole("button", { name: "Close tab First app" }),
+		);
 
 		expect(flyout).toHaveAttribute("data-state", "open");
 	});

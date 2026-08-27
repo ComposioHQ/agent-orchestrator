@@ -28,6 +28,7 @@ import { Input } from "./ui/input";
 import { BrowserTabsRail, type BrowserTabsRailHandle } from "./BrowserTabsRail";
 import { cn } from "../lib/utils";
 import { appI18n, type MessageKey } from "../i18n";
+import { browserTabLabel } from "../lib/browser-tab-label";
 import { handleTabListKeyDown } from "../lib/terminal-tabs";
 
 // One-click viewport width presets for responsive testing — height is shown
@@ -446,42 +447,54 @@ export function BrowserPanelView({
 			ref={panelRef}
 			role="tabpanel"
 		>
-			<div
-				aria-label={t("browser.tabs")}
-				className="browser-panel__tab-strip"
-				onKeyDown={handleTabListKeyDown}
-				role="tablist"
-			>
-				{tabs.map((tab) => {
-					const label = browserTabLabel(tab.title, tab.url);
-					const selected = tab.id === activeTabId;
-					return (
-						<div className={cn("browser-panel__tab", selected && "browser-panel__tab--active")} key={tab.id}>
-							<button
-								aria-selected={selected}
-								className="browser-panel__tab-select"
-								onClick={() => void selectTab(tab.id)}
-								role="tab"
-								tabIndex={selected ? 0 : -1}
-								title={label.title}
-								type="button"
-							>
-								<Globe2 aria-hidden="true" className="browser-panel__tab-icon" />
-								<span className="browser-panel__tab-title">{label.title}</span>
-							</button>
-							<button
-								aria-label={t("browser.closeTab", { title: label.title })}
-								className="browser-panel__tab-close"
-								disabled={tabs.length === 1}
-								onClick={() => void closeTab(tab.id)}
-								title={tabs.length === 1 ? t("browser.onlyTab") : t("browser.closeTab", { title: label.title })}
-								type="button"
-							>
-								<X aria-hidden="true" className="size-icon-sm" />
-							</button>
-						</div>
-					);
-				})}
+			<div className="browser-panel__tab-bar" data-testid="browser-tab-bar">
+				<div
+					aria-label={t("browser.tabs")}
+					className="browser-panel__tab-strip"
+					onKeyDown={handleTabListKeyDown}
+					role="tablist"
+				>
+					{tabs.map((tab) => {
+						const label = browserTabLabel(tab.title, tab.url);
+						const selected = tab.id === activeTabId;
+						return (
+							<div className={cn("browser-panel__tab", selected && "browser-panel__tab--active")} key={tab.id}>
+								<button
+									aria-selected={selected}
+									className="browser-panel__tab-select"
+									onClick={() => void handleSelectTab(tab.id)}
+									role="tab"
+									tabIndex={selected ? 0 : -1}
+									title={label.title}
+									type="button"
+								>
+									<Globe2 aria-hidden="true" className="browser-panel__tab-icon" />
+									<span className="browser-panel__tab-title">{label.title}</span>
+								</button>
+								<button
+									aria-label={t("browser.closeTab", { title: label.title })}
+									className="browser-panel__tab-close"
+									disabled={tabs.length === 1}
+									onClick={() => void closeTab(tab.id)}
+									title={tabs.length === 1 ? t("browser.onlyTab") : t("browser.closeTab", { title: label.title })}
+									type="button"
+								>
+									<X aria-hidden="true" className="size-icon-sm" />
+								</button>
+							</div>
+						);
+					})}
+				</div>
+				<button
+					aria-label={t("browser.openNewTab")}
+					className="browser-panel__tab-new"
+					disabled={!canOpenTab}
+					onClick={() => void handleOpenTab()}
+					title={t("browser.openNewTab")}
+					type="button"
+				>
+					<Plus aria-hidden="true" className="size-icon-base" />
+				</button>
 			</div>
 			<form
 				className="browser-panel__toolbar flex shrink-0 min-w-0 items-center gap-1 border-b border-border bg-surface"
@@ -702,7 +715,7 @@ export function BrowserPanelView({
 				    DOM subtrees (toolbar row vs. body row) — see BrowserTabsRail.tsx's
 				    BrowserTabsRailHandle for why the close side stays debounced here. */}
 				{showTabsTrigger ? (
-					<div className="flex w-8 shrink-0 items-center justify-center self-stretch border-l border-border">
+					<div className="browser-panel__toolbar-tabs-trigger flex w-8 shrink-0 items-center justify-center self-stretch border-l border-border">
 						<Button
 							aria-label={t("browser.tabsTitle", { count: tabs.length })}
 							className="relative"
@@ -730,7 +743,7 @@ export function BrowserPanelView({
 				    with the docked rail directly below it. Popped-out has no icon rail
 				    to align with, and gets its own "+" row inside BrowserTabsRail. */}
 				{!poppedOut ? (
-					<div className="flex w-8 shrink-0 items-center justify-center self-stretch border-l border-border">
+					<div className="browser-panel__toolbar-new-tab flex w-8 shrink-0 items-center justify-center self-stretch border-l border-border">
 						<Button
 							aria-label={t("browser.openNewTab")}
 							disabled={!canOpenTab}
