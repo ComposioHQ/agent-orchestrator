@@ -11,6 +11,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -271,25 +272,74 @@ func (s *Service) run(plan Plan, job *Job) {
 		job.Error = runErr.Error()
 		return
 	}
-	// Verify the target is now usable. Most installs are confirmed via PATH;
-	// the gh direct-download fallback instead produces a known binary at
-	// InstalledBinaryPath, which we trust directly because its destination may
-	// not yet be on the daemon's PATH on stripped/no-winget Windows (#4449
-	// review).
-	if path, err := s.executables.LookPath(string(job.Target)); err == nil && path != "" {
-		job.Status = StatusSucceeded
+	if err := s.verifyInstalled(plan, string(job.Target)); err != nil {
+		job.Status = StatusFailed
+		job.Error = err.Error()
 		return
 	}
-	if plan.InstalledBinaryPath != "" {
-		if _, statErr := os.Stat(plan.InstalledBinaryPath); statErr == nil {
-			job.Status = StatusSucceeded
+	job.Status = StatusSucceeded
+}
+
+// verifyInstalled reports whether target is usable after its install command
+// finished. The PATH lookup is the primary signal for most targets; the gh
+// direct-download fallback writes to a directory that may not be on this
+// process's PATH yet, so it additionally proves the recorded binary actually
+// executes (not just that a file exists) and registers its directory on the
+// current process PATH so child processes spawned from this already-running
+// daemon inherit it too (#4449 review).
+func (s *Service) verifyInstalled(plan Plan, target string) error {
+	if path, err := s.executables.LookPath(target); err == nil && path != "" {
+		return nil
+	}
+	if plan.InstalledBinaryPath == "" {
+		return fmt.Errorf("install command finished but %s is still not in PATH", target)
+	}
+	if err := s.probeInstalledBinary(plan.InstalledBinaryPath); err != nil {
+		return fmt.Errorf("install command finished but %s is still not on PATH and %s did not run: %w", target, plan.InstalledBinaryPath, err)
+	}
+	registerOnProcessPath(filepath.Dir(plan.InstalledBinaryPath))
+	return nil
+}
+
+// probeInstalledBinary executes the installed binary with a version probe to
+// confirm it is present and actually runs, rather than merely existing on
+// disk. Only the gh fallback sets InstalledBinaryPath today, for which
+// --version is a stable, exit-0 probe; the argv is fixed and never takes
+// caller input.
+func (s *Service) probeInstalledBinary(binPath string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	return s.commands.Run(ctx, []string{binPath, "--version"}, io.Discard, io.Discard) //nolint:gosec // G204: fixed argv from a hardcoded plan path, never caller input
+}
+
+// registerOnProcessPath appends dir to the current process's PATH if it isn't
+// already there, so LookPath and child processes spawned after this point can
+// resolve binaries a just-finished installer dropped into dir. The install
+// script separately persists the entry in the User PATH, but that only applies
+// to processes started after an environment refresh — this updates the running
+// daemon for the rest of its lifetime.
+func registerOnProcessPath(dir string) {
+	if dir == "" {
+		return
+	}
+	pathVal := os.Getenv("PATH")
+	for _, entry := range strings.Split(pathVal, string(os.PathListSeparator)) {
+		if strings.EqualFold(entry, dir) {
 			return
 		}
-		job.Error = fmt.Sprintf("install command finished but %s is still not on PATH and %s does not exist", job.Target, plan.InstalledBinaryPath)
-	} else {
-		job.Error = fmt.Sprintf("install command finished but %s is still not in PATH", job.Target)
 	}
-	job.Status = StatusFailed
+	var updated string
+	if pathVal == "" {
+		updated = dir
+	} else {
+		updated = pathVal + string(os.PathListSeparator) + dir
+	}
+	if err := os.Setenv("PATH", updated); err != nil {
+		// The PATH we hand to children of this process just won't include the
+		// fresh install dir; the job itself is already verified as succeeded via
+		// the binary probe, so this is non-fatal.
+		return
+	}
 }
 
 func displayCommand(plan Plan) string {
@@ -406,10 +456,13 @@ Remove-Item -Force "$stage.zip"
 if (-not (Test-Path (Join-Path $dest 'gh.exe'))) { throw 'gh.exe was not found after extraction; install failed' }
 # Register the destination on the user PATH so future sessions and child shells
 # (e.g. terminals AO spawns for the agent) can find gh even when WindowsApps is
-# absent from the default PATH on stripped/no-winget images.
+# absent from the default PATH on stripped/no-winget images. The User-scope Path
+# can be unset on a fresh/stripped profile, so coalesce it to '' before use.
 $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+if (-not $userPath) { $userPath = '' }
 if ($userPath -notlike "*$dest*") {
-    [Environment]::SetEnvironmentVariable('Path', ($userPath.TrimEnd(';') + ';' + $dest), 'User')
+    $newPath = if ($userPath -eq '') { $dest } else { $userPath.TrimEnd(';') + ';' + $dest }
+    [Environment]::SetEnvironmentVariable('Path', $newPath, 'User')
 }
 Write-Output ("installed gh " + $release.tag_name + " to " + $dest)`
 

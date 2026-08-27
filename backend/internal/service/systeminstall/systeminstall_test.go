@@ -213,6 +213,10 @@ func TestGHWindowsFallsBackToDirectDownload(t *testing.T) {
 		"https://api.github.com/repos/cli/cli/releases/latest",
 		"gh_*_windows_amd64.zip",
 		"Microsoft\\WindowsApps",
+		// The User-scope Path can be unset on a fresh/stripped profile, so the
+		// script must coalesce it to '' before appending, or the fallback
+		// throws after gh.exe was already copied (#4449 review).
+		"$userPath = ''",
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("download script missing %q:\n%s", want, script)
@@ -228,11 +232,12 @@ func TestGHWindowsFallsBackToDirectDownload(t *testing.T) {
 	}
 }
 
-// TestRun_SucceedsOnConcreteInstalledBinaryPath covers the reviewer concern from
-// #4449: when LookPath can't see the target on PATH but the fallback produced
-// the exact binary at InstalledBinaryPath, run() must report success instead of
-// a false "still not in PATH" failure.
-func TestRun_SucceedsOnConcreteInstalledBinaryPath(t *testing.T) {
+// TestRun_SucceedsWhenInstalledBinaryRuns covers the reviewer concern from
+// #4449: merely existing on disk is not enough — run() must confirm the
+// installed binary actually executes, and register its directory on the current
+// process PATH so child shells spawned from this already-running daemon inherit
+// it, before reporting success.
+func TestRun_SucceedsWhenInstalledBinaryRuns(t *testing.T) {
 	s := newTestService("windows") // no winget -> gh resolves to the direct-download fallback
 	plan := s.planFor(TargetGH)
 	if plan.Unsupported {
@@ -245,34 +250,60 @@ func TestRun_SucceedsOnConcreteInstalledBinaryPath(t *testing.T) {
 	if err := os.WriteFile(binPath, []byte("fake"), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
-	plan.InstalledBinaryPath = binPath // emulate a successful download landing the file
-	s.commands = testCommandRunner(func(context.Context, []string) *exec.Cmd { return exec.Command("true") })
+	plan.InstalledBinaryPath = binPath
+
+	var ran [][]string
+	s.commands = commandRunnerFunc(func(_ context.Context, argv []string, _, _ io.Writer) error {
+		ran = append(ran, argv)
+		return nil // install script and the version probe both "succeed"
+	})
+	origPath := os.Getenv("PATH")
+	defer os.Setenv("PATH", origPath)
 
 	job := &Job{Target: TargetGH}
 	s.run(plan, job)
 	if job.Status != StatusSucceeded {
 		t.Fatalf("Status = %q, want %q (error=%q)", job.Status, StatusSucceeded, job.Error)
 	}
+	if len(ran) != 2 {
+		t.Fatalf("commands run = %d (%v), want 2 (install then version probe)", len(ran), ran)
+	}
+	probe := ran[len(ran)-1]
+	if probe[0] != binPath || len(probe) != 2 || probe[1] != "--version" {
+		t.Fatalf("probe argv = %v, want [%s --version]", probe, binPath)
+	}
+	if !strings.Contains(os.Getenv("PATH"), filepath.Dir(binPath)) {
+		t.Fatalf("PATH = %q, want it to include %s for child processes spawned from this daemon", os.Getenv("PATH"), filepath.Dir(binPath))
+	}
 }
 
-// TestRun_FailsWhenConcreteBinaryMissing confirms that if neither PATH nor the
-// recorded binary path yields the installed tool, the job is reported failed
-// (and the error names the missing path so the user sees what went wrong).
-func TestRun_FailsWhenConcreteBinaryMissing(t *testing.T) {
+// TestRun_FailsWhenInstalledBinaryCannotRun confirms that if neither PATH nor a
+// runnable installed binary yields the tool, the job is reported failed (and
+// the error names the missing binary so the user sees what went wrong).
+func TestRun_FailsWhenInstalledBinaryCannotRun(t *testing.T) {
 	s := newTestService("windows")
 	plan := s.planFor(TargetGH)
 	if plan.InstalledBinaryPath == "" {
 		t.Fatal("want InstalledBinaryPath set by the fallback")
 	}
-	plan.InstalledBinaryPath = filepath.Join(t.TempDir(), "does-not-exist-gh.exe")
-	s.commands = testCommandRunner(func(context.Context, []string) *exec.Cmd { return exec.Command("true") })
+	missing := filepath.Join(t.TempDir(), "does-not-exist-gh.exe")
+	plan.InstalledBinaryPath = missing
+
+	s.commands = commandRunnerFunc(func(_ context.Context, argv []string, _, _ io.Writer) error {
+		if argv[0] == plan.Command[0] {
+			return nil // install script succeeds
+		}
+		return errors.New("exec: no such file or directory") // version probe of the missing binary fails
+	})
+	origPath := os.Getenv("PATH")
+	defer os.Setenv("PATH", origPath)
 
 	job := &Job{Target: TargetGH}
 	s.run(plan, job)
 	if job.Status != StatusFailed {
 		t.Fatalf("Status = %q, want %q", job.Status, StatusFailed)
 	}
-	if !strings.Contains(job.Error, plan.InstalledBinaryPath) {
+	if !strings.Contains(job.Error, missing) {
 		t.Fatalf("Error = %q, want it to name the missing binary path", job.Error)
 	}
 }
