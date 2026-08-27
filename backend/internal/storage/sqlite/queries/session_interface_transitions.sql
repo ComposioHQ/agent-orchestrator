@@ -31,7 +31,10 @@ SELECT id, session_id, source_mode, target_mode, policy, phase,
        created_at, updated_at, completed_at, notice_acknowledged_at, history_policy
 FROM session_interface_transitions
 WHERE session_id = ?
-ORDER BY created_at DESC
+-- Tests and injected clocks can assign multiple sagas the same timestamp.
+-- This rowid table is append-only for a surviving session, so descending rowid
+-- is the unique insertion-order tie-break that identifies the newer saga.
+ORDER BY created_at DESC, rowid DESC
 LIMIT 1;
 
 -- name: ListActiveSessionInterfaceTransitions :many

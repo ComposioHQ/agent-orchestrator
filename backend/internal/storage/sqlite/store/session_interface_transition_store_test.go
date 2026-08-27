@@ -202,7 +202,9 @@ func TestSessionInterfaceTransitionRecoveryClaimRequiresExactLatestPredecessor(t
 		}
 	}
 	createTerminal("authorized-failure", now)
-	createTerminal("newer-strict-saga", now.Add(time.Second))
+	// Transition creation can share one injected/truncated clock tick. The
+	// second insert is still the newer saga and must supersede stale consent.
+	createTerminal("newer-strict-saga", now)
 
 	pending := domain.SessionInterfaceTransition{
 		ID: "recovery", SessionID: createdSession.ID,
