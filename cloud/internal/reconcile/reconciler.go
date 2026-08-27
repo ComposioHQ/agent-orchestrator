@@ -691,6 +691,37 @@ func (r *Reconciler) superviseRunning(
 	heartbeatExpired := record.WorkerLastSeenAt != nil &&
 		time.Since(*record.WorkerLastSeenAt) >= r.options.HeartbeatTimeout
 
+	// First worker install: the sandbox is now running (network ready), so this
+	// is the earliest point a worker can actually reach the control plane and
+	// clone the repository. Bootstrapping here instead of at provision time is
+	// what lets the first attempt check in, rather than launching on a not-yet-
+	// networked VM and forcing a full startup-deadline wait before repair.
+	if record.ObservedState == domain.SandboxObservedProvisioning && record.WorkerLastSeenAt == nil {
+		if bootstrapper, ok := provider.(sandbox.Bootstrapper); ok && len(r.options.WorkerBinary) > 0 {
+			spec, err := r.workerSpec(ctx, record)
+			if err != nil {
+				return r.fail(ctx, record, err)
+			}
+			r.log.Info("bootstrapping worker in running sandbox",
+				"session_id", record.SessionID,
+				"provider", record.Provider,
+				"provider_id", environment.ID,
+			)
+			if err := bootstrapper.BootstrapWorker(ctx, environment.ID, sandbox.WorkerBootstrap{
+				Binary:            r.options.WorkerBinary,
+				Destination:       r.options.WorkerDestination,
+				HelperBinary:      r.options.WorkerHelperBinary,
+				HelperDestination: r.options.WorkerHelperDestination,
+				User:              r.options.WorkerUser,
+				Environment:       spec.Environment,
+			}); err != nil {
+				return r.fail(ctx, record, err)
+			}
+			return r.observe(ctx, record, string(environment.ID),
+				domain.SandboxObservedBootstrapping, "", r.options.Interval)
+		}
+	}
+
 	if record.ObservedState == domain.SandboxObservedFailed || startupExpired || heartbeatExpired {
 		// Repairing in place is cheaper than replacing compute, so prefer the
 		// bootstrapper when the provider exposes one.
@@ -890,20 +921,13 @@ func (r *Reconciler) provision(
 		"duration_ms", time.Since(startedAt).Milliseconds(),
 	)
 
-	if bootstrapper, ok := provider.(sandbox.Bootstrapper); ok && len(r.options.WorkerBinary) > 0 {
-		if err := bootstrapper.BootstrapWorker(ctx, environment.ID, sandbox.WorkerBootstrap{
-			Binary:            r.options.WorkerBinary,
-			Destination:       r.options.WorkerDestination,
-			HelperBinary:      r.options.WorkerHelperBinary,
-			HelperDestination: r.options.WorkerHelperDestination,
-			User:              r.options.WorkerUser,
-			Environment:       spec.Environment,
-		}); err != nil {
-			return r.fail(ctx, record, err)
-		}
-		return r.observe(ctx, record, string(environment.ID),
-			domain.SandboxObservedBootstrapping, "", r.options.Interval)
-	}
+	// The worker is bootstrapped once the sandbox is actually running (see
+	// superviseRunning), not here. A provider like NodeOps accepts Create before
+	// the VM's network is up, and a worker launched that early cannot reach the
+	// control plane or clone the repository, so it never sends its first
+	// heartbeat and the reconciler would wait out the whole startup deadline
+	// before repairing it. Deferring to StateRunning lets the first attempt
+	// succeed.
 	return r.observe(ctx, record, string(environment.ID), domain.SandboxObservedProvisioning, "", 2*time.Second)
 }
 
