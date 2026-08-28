@@ -130,6 +130,63 @@ describe("session-scoped interface transition mutations", () => {
 		await waitFor(() => expect(result.current.starting).toBe(false));
 	});
 
+	it.each([
+		["does not refetch an inactive query", false],
+		["fails to refetch the active query", true],
+	] as const)(
+		"keeps the accepted transition cached when invalidation %s",
+		async (_scenario, invalidationFails) => {
+			const accepted = {
+				id: "accepted-transition",
+				sessionId: "session-a",
+				sourceMode: "chat" as const,
+				targetMode: "tui" as const,
+				policy: "drain" as const,
+				phase: "draining" as const,
+				createdAt: "2026-08-28T10:00:00Z",
+				updatedAt: "2026-08-28T10:00:01Z",
+			};
+			getMock.mockResolvedValue({
+				data: { supported: true, targetMode: "tui" },
+				error: undefined,
+			});
+			postMock.mockResolvedValue({
+				data: { ok: true, sessionId: "session-a", transition: accepted },
+				error: undefined,
+			});
+			const queryClient = new QueryClient({
+				defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+			});
+			vi.spyOn(queryClient, "invalidateQueries").mockImplementation(() =>
+				invalidationFails
+					? Promise.reject(new Error("refetch failed"))
+					: Promise.resolve(),
+			);
+			const HookWrapper = ({ children }: { children: ReactNode }) => (
+				<QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+			);
+			const { result } = renderHook(
+				() => useSessionInterfaceTransition("session-a"),
+				{ wrapper: HookWrapper },
+			);
+
+			await waitFor(() => expect(result.current.status?.supported).toBe(true));
+			let startRequest!: Promise<unknown>;
+			act(() => {
+				startRequest = result.current.start({ targetMode: "tui", policy: "drain" });
+			});
+			await act(async () => {
+				await startRequest.catch(() => undefined);
+			});
+
+			expect(result.current.starting).toBe(false);
+			expect(result.current.startError).toBeUndefined();
+			await waitFor(() =>
+				expect(result.current.transition?.id).toBe("accepted-transition"),
+			);
+		},
+	);
+
 	it("keeps each session busy while overlapping starts are pending", async () => {
 		const responseA = deferred<{
 			data: { ok: boolean };
@@ -396,6 +453,122 @@ describe("session-scoped interface transition mutations", () => {
 });
 
 describe("interface switch readiness", () => {
+	it("clears settling after navigating away and back during refresh", async () => {
+		const refresh = deferred<void>();
+		const settled = {
+			id: "settled-session-a",
+			sessionId: "session-a",
+			sourceMode: "tui" as const,
+			targetMode: "chat" as const,
+			policy: "drain" as const,
+			phase: "completed" as const,
+			createdAt: "2026-08-28T10:00:00Z",
+			updatedAt: "2026-08-28T10:00:01Z",
+		};
+		getMock.mockImplementation(
+			(_path: string, request: { params: { path: { sessionId: string } } }) =>
+				Promise.resolve({
+					data:
+						request.params.path.sessionId === "session-a"
+							? { supported: true, targetMode: "tui", transition: settled }
+							: { supported: true, targetMode: "chat" },
+					error: undefined,
+				}),
+		);
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+		});
+		vi.spyOn(queryClient, "invalidateQueries").mockReturnValue(refresh.promise);
+		const HookWrapper = ({ children }: { children: ReactNode }) => (
+			<QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+		);
+		const { result, rerender } = renderHook(
+			({ sessionId }) => useSessionInterfaceTransition(sessionId),
+			{ initialProps: { sessionId: "session-a" }, wrapper: HookWrapper },
+		);
+
+		await waitFor(() => expect(result.current.settling).toBe(true));
+		rerender({ sessionId: "session-b" });
+		await waitFor(() => expect(result.current.transition).toBeUndefined());
+		rerender({ sessionId: "session-a" });
+		await waitFor(() =>
+			expect(result.current.transition?.id).toBe("settled-session-a"),
+		);
+		expect(result.current.settling).toBe(true);
+
+		await act(async () => {
+			refresh.resolve();
+			await refresh.promise;
+		});
+		await waitFor(() => expect(result.current.settling).toBe(false));
+	});
+
+	it("does not let an older refresh clear a restarted session settlement", async () => {
+		const firstARefresh = deferred<void>();
+		const bRefresh = deferred<void>();
+		const secondARefresh = deferred<void>();
+		getMock.mockImplementation(
+			(_path: string, request: { params: { path: { sessionId: string } } }) => {
+				const sessionId = request.params.path.sessionId;
+				return Promise.resolve({
+					data: {
+						supported: true,
+						targetMode: "chat",
+						transition: {
+							id: `settled-${sessionId}`,
+							sessionId,
+							sourceMode: "tui",
+							targetMode: "chat",
+							policy: "drain",
+							phase: "completed",
+							createdAt: "2026-08-28T10:00:00Z",
+							updatedAt: "2026-08-28T10:00:01Z",
+						},
+					},
+					error: undefined,
+				});
+			},
+		);
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+		});
+		const invalidate = vi
+			.spyOn(queryClient, "invalidateQueries")
+			.mockReturnValueOnce(firstARefresh.promise)
+			.mockReturnValueOnce(firstARefresh.promise)
+			.mockReturnValueOnce(bRefresh.promise)
+			.mockReturnValueOnce(bRefresh.promise)
+			.mockReturnValueOnce(secondARefresh.promise)
+			.mockReturnValueOnce(secondARefresh.promise);
+		const HookWrapper = ({ children }: { children: ReactNode }) => (
+			<QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+		);
+		const { result, rerender } = renderHook(
+			({ sessionId }) => useSessionInterfaceTransition(sessionId),
+			{ initialProps: { sessionId: "session-a" }, wrapper: HookWrapper },
+		);
+
+		await waitFor(() => expect(invalidate).toHaveBeenCalledTimes(2));
+		rerender({ sessionId: "session-b" });
+		await waitFor(() => expect(invalidate).toHaveBeenCalledTimes(4));
+		rerender({ sessionId: "session-a" });
+		await waitFor(() => expect(invalidate).toHaveBeenCalledTimes(6));
+		expect(result.current.settling).toBe(true);
+
+		await act(async () => {
+			firstARefresh.resolve();
+			await firstARefresh.promise;
+		});
+		expect(result.current.settling).toBe(true);
+
+		await act(async () => {
+			secondARefresh.resolve();
+			await secondARefresh.promise;
+		});
+		await waitFor(() => expect(result.current.settling).toBe(false));
+		bRefresh.resolve();
+	});
+
 	it.each(["NATIVE_SESSION_MISSING", "NATIVE_SESSION_UNVERIFIED"])(
 		"rechecks transient native-session readiness (%s) until the switch becomes supported",
 		async (reasonCode) => {

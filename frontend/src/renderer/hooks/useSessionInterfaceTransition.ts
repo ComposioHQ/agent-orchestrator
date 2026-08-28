@@ -148,7 +148,11 @@ export function sessionInterfaceTransitionQueryKey(sessionId: string) {
 export function useSessionInterfaceTransition(sessionId: string | undefined) {
 	const queryClient = useQueryClient();
 	const settledRef = useRef<string>("");
-	const [refreshingTransitionID, setRefreshingTransitionID] = useState("");
+	const refreshAttemptRef = useRef(0);
+	const [refreshingTransition, setRefreshingTransition] = useState<{
+		attempt: number;
+		key: string;
+	}>();
 	const query = useQuery({
 		queryKey: sessionInterfaceTransitionQueryKey(sessionId ?? ""),
 		enabled: Boolean(sessionId && hasTrustedApiBaseUrl()),
@@ -191,10 +195,25 @@ export function useSessionInterfaceTransition(sessionId: string | undefined) {
 			if (error) throw error;
 			return data;
 		},
-		onSuccess: (_data, variables) => {
-			return queryClient.invalidateQueries({
-				queryKey: sessionInterfaceTransitionQueryKey(variables.targetSessionId),
-			});
+		onSuccess: (response, variables) => {
+			// The POST response is the durable acceptance boundary. Refreshing may
+			// be a no-op for an inactive query or fail transiently, but neither case
+			// may turn an accepted handoff back into an available Chat composer.
+			if (response?.transition) {
+				queryClient.setQueryData<SessionInterfaceTransitionStatus>(
+					sessionInterfaceTransitionQueryKey(variables.targetSessionId),
+					{
+						supported: true,
+						targetMode: response.transition.targetMode,
+						transition: response.transition,
+					},
+				);
+			}
+			return queryClient
+				.invalidateQueries({
+					queryKey: sessionInterfaceTransitionQueryKey(variables.targetSessionId),
+				})
+				.catch(() => undefined);
 		},
 	});
 
@@ -268,6 +287,8 @@ export function useSessionInterfaceTransition(sessionId: string | undefined) {
 	const transition = query.data?.transition;
 	const transitionActive = interfaceTransitionIsActive(transition);
 	const transitionID = transition?.id;
+	const transitionKey =
+		sessionId && transitionID ? JSON.stringify([sessionId, transitionID]) : "";
 	// A completed handoff is not visually settled until the queries invalidated by
 	// it have returned. In particular, switching TUI -> Chat necessarily has a
 	// small interval after mode=chat commits and before the Chat controller is in
@@ -275,29 +296,28 @@ export function useSessionInterfaceTransition(sessionId: string | undefined) {
 	// but rendering it as a controller failure is a lie: the transition worker is
 	// still starting the target. Keep that state distinct through the final refetch.
 	const settling = Boolean(
-		transitionID &&
+		transitionKey &&
 			!transitionActive &&
-			(settledRef.current !== transitionID || refreshingTransitionID === transitionID),
+			(settledRef.current !== transitionKey ||
+				refreshingTransition?.key === transitionKey),
 	);
 	useEffect(() => {
-		if (!sessionId || !transitionID || transitionActive) return;
-		if (settledRef.current === transitionID) return;
-		settledRef.current = transitionID;
-		setRefreshingTransitionID(transitionID);
-		let current = true;
+		if (!sessionId || !transitionKey || transitionActive) return;
+		if (settledRef.current === transitionKey) return;
+		settledRef.current = transitionKey;
+		const attempt = ++refreshAttemptRef.current;
+		setRefreshingTransition({ attempt, key: transitionKey });
 		void Promise.all([
 			queryClient.invalidateQueries({ queryKey: workspaceQueryKey }),
 			queryClient.invalidateQueries({ queryKey: conversationQueryKey(sessionId) }),
 		]).finally(() => {
-			if (!current) return;
-			setRefreshingTransitionID((refreshing) =>
-				refreshing === transitionID ? "" : refreshing,
+			setRefreshingTransition((refreshing) =>
+				refreshing?.key === transitionKey && refreshing.attempt === attempt
+					? undefined
+					: refreshing,
 			);
 		});
-		return () => {
-			current = false;
-		};
-	}, [queryClient, sessionId, transitionActive, transitionID]);
+	}, [queryClient, sessionId, transitionActive, transitionKey]);
 	return {
 		status: query.data,
 		transition,
