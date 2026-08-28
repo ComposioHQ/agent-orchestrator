@@ -3,7 +3,10 @@ package sessionmanager
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -43,11 +46,12 @@ func (d fixedSessionModeDefaults) DefaultSessionMode(context.Context) domain.Ses
 // chat launcher. Anything else means two writers on one conversation.
 
 type recordingLauncher struct {
-	preflightErr error
-	startErr     error
-	turnErr      error
-	live         bool
-	afterReady   func()
+	preflightErr     error
+	startErr         error
+	turnErr          error
+	live             bool
+	afterReady       func()
+	providerBoundary *domain.ConversationBranch
 
 	preflighted          []domain.AgentHarness
 	preflightPermissions []ports.PermissionMode
@@ -61,6 +65,36 @@ type recordingLauncher struct {
 	armed    []domain.SessionID
 	prepared []domain.SessionID
 	aborted  []domain.SessionID
+}
+
+type historicalChatRestoreStore struct {
+	*transitionStore
+	conversation    domain.ConversationRecord
+	activeBranch    domain.ConversationBranch
+	conversationErr error
+}
+
+func (s *historicalChatRestoreStore) ConversationForSession(
+	_ context.Context,
+	id domain.SessionID,
+) (domain.ConversationRecord, error) {
+	if s.conversationErr != nil {
+		return domain.ConversationRecord{}, s.conversationErr
+	}
+	if s.conversation.SessionID != id {
+		return domain.ConversationRecord{}, domain.ErrNoConversation
+	}
+	return s.conversation, nil
+}
+
+func (s *historicalChatRestoreStore) ConversationBranch(
+	_ context.Context,
+	conversationID, branchID string,
+) (domain.ConversationBranch, error) {
+	if s.activeBranch.ConversationID != conversationID || s.activeBranch.ID != branchID {
+		return domain.ConversationBranch{}, domain.ErrNoConversationBranch
+	}
+	return s.activeBranch, nil
 }
 
 func (l *recordingLauncher) SupportsChat(_ domain.AgentHarness) bool { return true }
@@ -83,6 +117,7 @@ func (l *recordingLauncher) StartChat(_ context.Context, cfg ChatStart) (ChatSta
 	started := ChatStarted{
 		ProviderConversationID: "thread-1",
 		ControllerGeneration:   "gen-1",
+		ProviderBoundary:       l.providerBoundary,
 	}
 	if cfg.ControllerGeneration != "" {
 		started.ControllerGeneration = cfg.ControllerGeneration
@@ -139,6 +174,22 @@ func (l *recordingLauncher) AbortChatHandoff(id domain.SessionID) {
 	l.aborted = append(l.aborted, id)
 }
 
+type generationClaimFailureLauncher struct {
+	*recordingLauncher
+	store      *fakeStore
+	generation string
+	err        error
+}
+
+func (l *generationClaimFailureLauncher) StartChat(_ context.Context, cfg ChatStart) (ChatStarted, error) {
+	l.started = append(l.started, cfg)
+	rec := l.store.sessions[cfg.SessionID]
+	rec.Metadata.ControllerGeneration = l.generation
+	rec.UpdatedAt = rec.UpdatedAt.Add(time.Second)
+	l.store.sessions[cfg.SessionID] = rec
+	return ChatStarted{}, l.err
+}
+
 func TestReconcileLive_ChatRelaunchesInExistingWorktree(t *testing.T) {
 	launcher := &recordingLauncher{}
 	m, st, rt := newChatManager(launcher)
@@ -171,6 +222,288 @@ func TestReconcileLive_ChatRelaunchesInExistingWorktree(t *testing.T) {
 	}
 	if len(ws.restoreConfigs) != 1 || ws.restoreConfigs[0].Path != rec.Metadata.WorkspacePath {
 		t.Fatalf("Restore configs = %+v, want existing Chat worktree", ws.restoreConfigs)
+	}
+}
+
+func TestReconcileLive_ChatCompatibilityFailureLeavesNativeResumeRecoverable(t *testing.T) {
+	launcher := &recordingLauncher{startErr: fmt.Errorf("read Codex version: exit status 127: %w", ports.ErrChatDriverIncompatible)}
+	m, st, rt := newChatManager(launcher)
+	ws := m.workspace.(*fakeWorkspace)
+	lcm := m.lcm.(*fakeLCM)
+	rec := domain.SessionRecord{
+		ID: "mer-1", ProjectID: chatTestProject, Kind: domain.KindWorker,
+		Harness: domain.HarnessCodex, Mode: domain.SessionModeChat,
+		Activity: domain.Activity{State: domain.ActivityActive},
+		Metadata: domain.SessionMetadata{
+			Branch: "ao/mer-1/root", WorkspacePath: "/ws/mer-1",
+			ProviderConversationID: "01a03c61-23a9-7111-95e9-2bacb04eb064",
+		},
+	}
+	st.sessions[rec.ID] = rec
+
+	err := m.reconcileLive(context.Background(), rec)
+	if !errors.Is(err, ports.ErrChatDriverIncompatible) {
+		t.Fatalf("reconcileLive error = %v, want ErrChatDriverIncompatible", err)
+	}
+	got := st.sessions[rec.ID]
+	if got.IsTerminated || got.Activity.State != domain.ActivityExited {
+		t.Fatalf("failed Chat resume = %+v, want live/exited", got)
+	}
+	if got.Metadata.ProviderConversationID != rec.Metadata.ProviderConversationID {
+		t.Fatalf("provider conversation id = %q, want preserved %q", got.Metadata.ProviderConversationID, rec.Metadata.ProviderConversationID)
+	}
+	if rt.created != 0 || rt.destroyed != 0 || ws.stashCalls != 0 || lcm.terminated[rec.ID] != 0 {
+		t.Fatalf("failed Chat resume tore down state: runtime=(%d,%d) stash=%d terminated=%d",
+			rt.created, rt.destroyed, ws.stashCalls, lcm.terminated[rec.ID])
+	}
+
+	launcher.startErr = nil
+	if _, err := m.ResumeAgentWithMode(context.Background(), rec.ID); err != nil {
+		t.Fatalf("ResumeAgentWithMode after dependency recovery: %v", err)
+	}
+}
+
+func TestReconcileLive_ChatFailureAfterGenerationClaimLeavesSessionExited(t *testing.T) {
+	base := &recordingLauncher{}
+	m, st, rt := newChatManager(base)
+	launcher := &generationClaimFailureLauncher{
+		recordingLauncher: base,
+		store:             st,
+		generation:        "claimed-generation",
+		err:               errors.New("read native history: provider unavailable"),
+	}
+	m.chat = launcher
+	ws := m.workspace.(*fakeWorkspace)
+	lcm := m.lcm.(*fakeLCM)
+	now := time.Date(2026, time.August, 27, 16, 54, 0, 0, time.UTC)
+	rec := domain.SessionRecord{
+		ID: "mer-1", ProjectID: chatTestProject, Kind: domain.KindWorker,
+		Harness: domain.HarnessCodex, Mode: domain.SessionModeChat,
+		Activity: domain.Activity{State: domain.ActivityActive}, UpdatedAt: now,
+		Metadata: domain.SessionMetadata{
+			Branch: "ao/mer-1/root", WorkspacePath: "/ws/mer-1",
+			ProviderConversationID: "thread-existing", ControllerGeneration: "old-generation",
+		},
+	}
+	st.sessions[rec.ID] = rec
+
+	err := m.reconcileLive(context.Background(), rec)
+	if err == nil || !strings.Contains(err.Error(), "read native history") {
+		t.Fatalf("reconcileLive error = %v, want post-claim history failure", err)
+	}
+	got := st.sessions[rec.ID]
+	if got.IsTerminated || got.Activity.State != domain.ActivityExited {
+		t.Fatalf("post-claim Chat failure = %+v, want live/exited", got)
+	}
+	if got.Metadata.ControllerGeneration != "claimed-generation" {
+		t.Fatalf("controller generation = %q, want claimed epoch retained as stale-signal fence", got.Metadata.ControllerGeneration)
+	}
+	if launcher.HasLiveChatController(rec.ID) {
+		t.Fatal("failed post-claim launch unexpectedly published a live controller")
+	}
+	if got.Metadata.ProviderConversationID != rec.Metadata.ProviderConversationID || got.Metadata.WorkspacePath != rec.Metadata.WorkspacePath {
+		t.Fatalf("post-claim failure lost native identity/worktree: %+v", got.Metadata)
+	}
+	if rt.created != 0 || rt.destroyed != 0 || ws.stashCalls != 0 || lcm.terminated[rec.ID] != 0 {
+		t.Fatalf("post-claim Chat failure tore down state: runtime=(%d,%d) stash=%d terminated=%d",
+			rt.created, rt.destroyed, ws.stashCalls, lcm.terminated[rec.ID])
+	}
+}
+
+func TestRestoreTerminatedChatOrchestratorAfterCompatibilityRecoveryKeepsIdentity(t *testing.T) {
+	launcher := &recordingLauncher{startErr: fmt.Errorf("read Codex version: exit status 127: %w", ports.ErrChatDriverIncompatible)}
+	m, st, rt := newChatManager(launcher)
+	rec := domain.SessionRecord{
+		ID: "mer-176", ProjectID: chatTestProject, Kind: domain.KindOrchestrator,
+		Harness: domain.HarnessCodex, Mode: domain.SessionModeChat,
+		IsTerminated: true, Activity: domain.Activity{State: domain.ActivityExited},
+		Metadata: domain.SessionMetadata{
+			Branch: "main", WorkspacePath: "/ws/mer-176",
+			ProviderConversationID: "01a03c61-23a9-7111-95e9-2bacb04eb064",
+		},
+	}
+	st.sessions[rec.ID] = rec
+
+	if _, err := m.RestoreWithMode(context.Background(), rec.ID); !errors.Is(err, ports.ErrChatDriverIncompatible) {
+		t.Fatalf("first RestoreWithMode error = %v, want ErrChatDriverIncompatible", err)
+	}
+	afterFailure := st.sessions[rec.ID]
+	if !afterFailure.IsTerminated || afterFailure.Metadata.ProviderConversationID != rec.Metadata.ProviderConversationID ||
+		afterFailure.Metadata.WorkspacePath != rec.Metadata.WorkspacePath {
+		t.Fatalf("failed restore changed recoverable orchestrator: %+v", afterFailure)
+	}
+
+	launcher.startErr = nil
+	result, err := m.RestoreWithMode(context.Background(), rec.ID)
+	if err != nil {
+		t.Fatalf("RestoreWithMode after dependency recovery: %v", err)
+	}
+	if result.Session.ID != rec.ID || result.Session.IsTerminated || result.Mode != RestoreModeNative {
+		t.Fatalf("restored orchestrator = %+v mode=%q, want original live session with native resume", result.Session, result.Mode)
+	}
+	resumed := launcher.started[len(launcher.started)-1]
+	if resumed.ProviderConversationID != rec.Metadata.ProviderConversationID || rt.created != 0 {
+		t.Fatalf("restore continuity = provider %q runtime creates %d, want %q and no terminal runtime",
+			resumed.ProviderConversationID, rt.created, rec.Metadata.ProviderConversationID)
+	}
+}
+
+func TestHistoricalChatProviderScopeRequiresLatestCompletedMatchingHandoff(t *testing.T) {
+	const (
+		sessionID = domain.SessionID("mer-248")
+		provider  = "native-248"
+	)
+	newStore := func() *historicalChatRestoreStore {
+		transitions := newTransitionStore()
+		return &historicalChatRestoreStore{
+			transitionStore: transitions,
+			conversation: domain.ConversationRecord{
+				ID: "project-conversation", Scope: domain.ConversationScopeProject,
+				ProjectID: chatTestProject, SessionID: sessionID, ActiveBranchID: "old-root",
+			},
+			activeBranch: domain.ConversationBranch{
+				ID: "old-root", ConversationID: "project-conversation",
+				SessionID: "mer-88", ProviderConversationID: "native-88", Active: true,
+			},
+		}
+	}
+	record := domain.SessionRecord{
+		ID: sessionID, ProjectID: chatTestProject, Kind: domain.KindOrchestrator,
+		Harness: domain.HarnessCodex, Mode: domain.SessionModeChat, IsTerminated: true,
+		Metadata: domain.SessionMetadata{ProviderConversationID: provider},
+	}
+	now := time.Date(2026, 8, 28, 7, 0, 0, 0, time.UTC)
+
+	t.Run("matching latest transition reserves deterministic boundary", func(t *testing.T) {
+		st := newStore()
+		st.transitions["handoff-248"] = domain.SessionInterfaceTransition{
+			ID: "handoff-248", SessionID: sessionID,
+			SourceMode: domain.SessionModeTUI, TargetMode: domain.SessionModeChat,
+			Phase: domain.SessionInterfaceTransitionCompleted, NativeConversationID: provider,
+			CreatedAt: now, CompletedAt: now,
+		}
+		m := New(Deps{Store: st})
+		got, err := m.historicalChatProviderScopeID(context.Background(), record)
+		if err != nil {
+			t.Fatalf("historicalChatProviderScopeID: %v", err)
+		}
+		if got != "handoff-248:provider" {
+			t.Fatalf("provider scope = %q, want deterministic handoff boundary", got)
+		}
+	})
+
+	t.Run("newer transition prevents stale proof", func(t *testing.T) {
+		st := newStore()
+		st.transitions["matching-old"] = domain.SessionInterfaceTransition{
+			ID: "matching-old", SessionID: sessionID,
+			SourceMode: domain.SessionModeTUI, TargetMode: domain.SessionModeChat,
+			Phase: domain.SessionInterfaceTransitionCompleted, NativeConversationID: provider,
+			CreatedAt: now,
+		}
+		st.transitions["newer-other-provider"] = domain.SessionInterfaceTransition{
+			ID: "newer-other-provider", SessionID: sessionID,
+			SourceMode: domain.SessionModeTUI, TargetMode: domain.SessionModeChat,
+			Phase: domain.SessionInterfaceTransitionCompleted, NativeConversationID: "native-other",
+			CreatedAt: now.Add(time.Minute),
+		}
+		m := New(Deps{Store: st})
+		got, err := m.historicalChatProviderScopeID(context.Background(), record)
+		if err != nil {
+			t.Fatalf("historicalChatProviderScopeID: %v", err)
+		}
+		if got != "" {
+			t.Fatalf("provider scope = %q, want no repair from stale transition proof", got)
+		}
+	})
+
+	t.Run("current owner is never forked", func(t *testing.T) {
+		st := newStore()
+		st.transitions["handoff-current"] = domain.SessionInterfaceTransition{
+			ID: "handoff-current", SessionID: sessionID,
+			SourceMode: domain.SessionModeTUI, TargetMode: domain.SessionModeChat,
+			Phase: domain.SessionInterfaceTransitionCompleted, NativeConversationID: provider,
+			CreatedAt: now,
+		}
+		st.activeBranch.SessionID = sessionID
+		st.activeBranch.ProviderConversationID = provider
+		m := New(Deps{Store: st})
+		got, err := m.historicalChatProviderScopeID(context.Background(), record)
+		if err != nil {
+			t.Fatalf("historicalChatProviderScopeID: %v", err)
+		}
+		if got != "" {
+			t.Fatalf("provider scope = %q, want ordinary idempotent resume", got)
+		}
+	})
+
+	t.Run("matching proof cannot rebind a newer owner", func(t *testing.T) {
+		st := newStore()
+		st.transitions["handoff-no-owner"] = domain.SessionInterfaceTransition{
+			ID: "handoff-no-owner", SessionID: sessionID,
+			SourceMode: domain.SessionModeTUI, TargetMode: domain.SessionModeChat,
+			Phase: domain.SessionInterfaceTransitionCompleted, NativeConversationID: provider,
+			CreatedAt: now,
+		}
+		st.conversationErr = domain.ErrNoConversation
+		m := New(Deps{Store: st})
+		if _, err := m.historicalChatProviderScopeID(context.Background(), record); !errors.Is(err, domain.ErrNoConversation) {
+			t.Fatalf("historicalChatProviderScopeID error = %v, want current-owner proof failure", err)
+		}
+	})
+}
+
+func TestRestoreTerminatedChatOrchestratorPassesProvenProviderBoundary(t *testing.T) {
+	const sessionID = domain.SessionID("mer-248")
+	st := &historicalChatRestoreStore{
+		transitionStore: newTransitionStore(),
+		conversation: domain.ConversationRecord{
+			ID: "project-conversation", Scope: domain.ConversationScopeProject,
+			ProjectID: chatTestProject, SessionID: sessionID, ActiveBranchID: "old-root",
+		},
+		activeBranch: domain.ConversationBranch{
+			ID: "old-root", ConversationID: "project-conversation",
+			SessionID: "mer-88", ProviderConversationID: "native-88", Active: true,
+		},
+	}
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	rec := domain.SessionRecord{
+		ID: sessionID, ProjectID: chatTestProject, Kind: domain.KindOrchestrator,
+		Harness: domain.HarnessCodex, Mode: domain.SessionModeChat, IsTerminated: true,
+		Activity: domain.Activity{State: domain.ActivityExited},
+		Metadata: domain.SessionMetadata{
+			Branch: "ao/orchestrator", WorkspacePath: "/ws/mer-248",
+			ProviderConversationID: "native-248",
+		},
+	}
+	st.sessions[sessionID] = rec
+	st.transitions["handoff-248"] = domain.SessionInterfaceTransition{
+		ID: "handoff-248", SessionID: sessionID,
+		SourceMode: domain.SessionModeTUI, TargetMode: domain.SessionModeChat,
+		Phase:                domain.SessionInterfaceTransitionCompleted,
+		NativeConversationID: rec.Metadata.ProviderConversationID,
+		CreatedAt:            time.Now().UTC(), CompletedAt: time.Now().UTC(),
+	}
+	providerErr := errors.New("provider unavailable")
+	launcher := &recordingLauncher{startErr: providerErr}
+	m := New(Deps{
+		Runtime: &fakeRuntime{}, Agents: fakeAgents{}, Workspace: &fakeWorkspace{},
+		Store: st, Messenger: &fakeMessenger{}, Chat: launcher,
+		Lifecycle: &fakeLCM{store: st.fakeStore}, DataDir: "/ao-test-data",
+	})
+
+	if _, err := m.RestoreWithMode(context.Background(), sessionID); !errors.Is(err, providerErr) {
+		t.Fatalf("RestoreWithMode error = %v, want provider failure", err)
+	}
+	if len(launcher.started) != 1 {
+		t.Fatalf("Chat starts = %d, want 1", len(launcher.started))
+	}
+	start := launcher.started[0]
+	if start.ProviderConversationID != "native-248" || start.ProviderScopeID != "handoff-248:provider" {
+		t.Fatalf("historical restore start = provider %q scope %q",
+			start.ProviderConversationID, start.ProviderScopeID)
+	}
+	if got := st.sessions[sessionID]; !got.IsTerminated || got.Metadata.ProviderConversationID != "native-248" {
+		t.Fatalf("failed provider resume changed terminated target: %+v", got)
 	}
 }
 
@@ -560,6 +893,30 @@ func TestChatSpawnStartsControllerAndNoRuntime(t *testing.T) {
 
 	if len(launcher.turns) != 1 || launcher.turns[0] == "" {
 		t.Fatalf("initial prompt was not delivered as a turn: %v", launcher.turns)
+	}
+}
+
+func TestChatSpawnCommitsReservedProviderBoundaryWithLifecycleOwner(t *testing.T) {
+	boundary := &domain.ConversationBranch{
+		ID: "fresh-provider-boundary", ConversationID: "project-conversation", SessionID: "mer-1",
+		ProviderConversationID: "thread-1", ParentBranchID: "source-provider-boundary",
+		ProviderScopeID: "fresh-provider-boundary",
+	}
+	launcher := &recordingLauncher{providerBoundary: boundary}
+	mgr, _, _ := newChatManager(launcher)
+	lcm := mgr.lcm.(*fakeLCM)
+
+	if _, _, _, err := mgr.Spawn(context.Background(), ports.SpawnConfig{
+		ProjectID: chatTestProject, Kind: domain.KindOrchestrator, Harness: domain.HarnessCodex,
+		RequestedMode: domain.SessionModeChat,
+	}); err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if len(lcm.chatBoundaries) != 1 || lcm.chatBoundaries[0].ID != boundary.ID {
+		t.Fatalf("lifecycle Chat boundaries = %+v, want %q", lcm.chatBoundaries, boundary.ID)
+	}
+	if lcm.completed != 1 {
+		t.Fatalf("completed lifecycle launches = %d, want 1 atomic Chat commit", lcm.completed)
 	}
 }
 

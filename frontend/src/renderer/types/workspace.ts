@@ -88,12 +88,14 @@ export type WorkspaceSession = {
 	terminateOnPrMerge?: boolean;
 	/** Whether SCM review feedback is automatically injected into the worker. */
 	autoInjectReview?: boolean;
-	/** Default captured by newly created PRs for automatic CI-failure injection. */
+	/** Whether CI failures are automatically injected into the worker. */
 	autoInjectCI?: boolean;
 	/** ISO timestamp from the daemon — used for relative time in the inspector. */
 	createdAt?: string;
 	/** ISO timestamp from the daemon. */
 	updatedAt: string;
+	/** ISO timestamp of the latest real user-authored message, when known. */
+	lastUserMessageAt?: string;
 	isPinned?: boolean;
 	pinnedAt?: string;
 	/** Raw agent lifecycle activity from the daemon. */
@@ -120,6 +122,12 @@ export type WorkspaceSession = {
 	 * done server-side, so {@link status} already reflects all of these.
 	 */
 	prs: PullRequestFacts[];
+	/**
+	 * Present only for sessions that run in a control-plane sandbox. Carries the
+	 * org the session is scoped to so its terminal can be opened against the CP;
+	 * absent for local sessions, which route through the local daemon.
+	 */
+	cloud?: { orgId: string };
 };
 
 // Tracker providers whose ids the intake daemon stamps sessions with, in
@@ -266,7 +274,13 @@ export type { AttentionZone } from "../lib/session-presentation";
 export type WorkspaceSummary = {
 	id: string;
 	name: string;
-	kind?: ProjectKind;
+	/**
+	 * Discriminator for where the project lives. Local projects carry the
+	 * daemon's ProjectKind (or undefined for older daemons); projects hosted by
+	 * the AO cloud control plane carry "cloud" — branch on `kind === "cloud"`.
+	 */
+	kind?: ProjectKind | "cloud";
+	/** Local checkout path; empty string for cloud projects (no local folder). */
 	path: string;
 	workspaceRepos?: WorkspaceRepoSummary[];
 	type?: "main" | "worktree";

@@ -1,10 +1,10 @@
-import { act, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { BrowserPanel, BrowserPanelView, useBrowserAnnotationQueue } from "./BrowserPanel";
+import { reorderBrowserTabs } from "../lib/browser-tab-order";
 import { useBrowserView, type BrowserNavState } from "../hooks/useBrowserView";
 import { OPEN_BROWSER_OVERLAY_SELECTOR } from "../lib/dom-selectors";
-import { MAX_BROWSER_TABS } from "../../shared/browser-tabs";
 import type { WorkspaceSession } from "../types/workspace";
 import type {
 	BrowserAnnotationCancelPayload,
@@ -98,6 +98,11 @@ const session: WorkspaceSession = {
 	updatedAt: "2026-06-15T00:00:00Z",
 	prs: [],
 };
+
+it("reorders horizontal browser tabs around the drop target", () => {
+	expect(reorderBrowserTabs(["t1", "t2", "t3"], "t1", "t3")).toEqual(["t2", "t3", "t1"]);
+	expect(reorderBrowserTabs(["t1", "t2", "t3"], "t2", "missing")).toBeNull();
+});
 
 type ElementAnnotationPayload = BrowserAnnotationSubmitPayload & {
 	selection: { kind: "element"; context: BrowserAnnotationContext };
@@ -402,6 +407,64 @@ describe("BrowserPanel", () => {
 		await waitFor(() => expect(hookState.selectTab).toHaveBeenCalledWith("t1"));
 	});
 
+	it("shows browser tabs in a horizontal tab strip and selects them", async () => {
+		hookState.tabs = [
+			{ id: "t1", url: "http://localhost:3000/", title: "First app", active: false },
+			{ id: "t2", url: "http://localhost:4173/", title: "Second app", active: true },
+		];
+		hookState.activeTabId = "t2";
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		const tabList = screen.getByRole("tablist", { name: "Browser tabs" });
+		const firstTab = within(tabList).getByRole("tab", { name: "First app" });
+		const secondTab = within(tabList).getByRole("tab", { name: "Second app" });
+
+		expect(firstTab).toHaveAttribute("aria-selected", "false");
+		expect(secondTab).toHaveAttribute("aria-selected", "true");
+		await userEvent.click(firstTab);
+		expect(hookState.selectTab).toHaveBeenCalledWith("t1");
+	});
+
+	it("moves browser tab focus and selection with arrow keys", async () => {
+		hookState.tabs = [
+			{ id: "t1", url: "http://localhost:3000/", title: "First app", active: true },
+			{ id: "t2", url: "http://localhost:4173/", title: "Second app", active: false },
+		];
+		hookState.activeTabId = "t1";
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		const tabList = screen.getByRole("tablist", { name: "Browser tabs" });
+		const firstTab = within(tabList).getByRole("tab", { name: "First app" });
+		const secondTab = within(tabList).getByRole("tab", { name: "Second app" });
+		firstTab.focus();
+		await userEvent.keyboard("{ArrowRight}");
+
+		expect(secondTab).toHaveFocus();
+		expect(hookState.selectTab).toHaveBeenCalledWith("t2");
+	});
+
+	it("closes a browser tab from the horizontal tab strip", async () => {
+		hookState.tabs = [
+			{ id: "t1", url: "http://localhost:3000/", title: "First app", active: true },
+			{ id: "t2", url: "http://localhost:4173/", title: "Second app", active: false },
+		];
+		hookState.activeTabId = "t1";
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		const tabList = screen.getByRole("tablist", { name: "Browser tabs" });
+		await userEvent.click(within(tabList).getByRole("button", { name: "Close tab Second app" }));
+
+		expect(hookState.closeTab).toHaveBeenCalledWith("t2");
+	});
+
+	it("opens a new browser tab from the horizontal tab strip", async () => {
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		await userEvent.click(within(screen.getByTestId("browser-tab-bar")).getByRole("button", { name: "Open new tab" }));
+
+		expect(hookState.openTab).toHaveBeenCalledOnce();
+	});
+
 	it("does not render a tab-specific agent marker", async () => {
 		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
 		hookState.tabs = [
@@ -543,7 +606,9 @@ describe("BrowserPanel", () => {
 			vi.useRealTimers();
 		}
 
-		await userEvent.click(screen.getByRole("button", { name: "Close tab First app" }));
+		await userEvent.click(
+			within(screen.getByTestId("browser-tabs-flyout")).getByRole("button", { name: "Close tab First app" }),
+		);
 
 		expect(hookState.closeTab).toHaveBeenCalledWith("t1");
 	});
@@ -600,11 +665,8 @@ describe("BrowserPanel", () => {
 		expect(row.querySelector("img")).toHaveAttribute("src", "http://localhost:5173/favicon.ico");
 	});
 
-	// Regression: reopening a closed tab at the cap used to silently drop it
-	// from the list and open nothing — gate the row the same way the "+"
-	// button already gates new tabs.
-	it("disables reopening a recently closed tab once the tab cap is reached", async () => {
-		hookState.tabs = Array.from({ length: MAX_BROWSER_TABS }, (_, i) => ({
+	it("keeps opening and reopening tabs available beyond the former cap", async () => {
+		hookState.tabs = Array.from({ length: 20 }, (_, i) => ({
 			id: `t${i}`,
 			url: `http://localhost:3000/${i}`,
 			title: `Tab ${i}`,
@@ -624,9 +686,10 @@ describe("BrowserPanel", () => {
 		}
 
 		const row = screen.getByRole("button", { name: "Reopen Closed app" });
-		expect(row).toBeDisabled();
-		await userEvent.click(row, { pointerEventsCheck: 0 });
-		expect(hookState.reopenClosedTab).not.toHaveBeenCalled();
+		expect(row).toBeEnabled();
+		await userEvent.click(row);
+		expect(hookState.reopenClosedTab).toHaveBeenCalledWith("closed");
+		expect(screen.getAllByRole("button", { name: "Open new tab" }).every((button) => !button.hasAttribute("disabled"))).toBe(true);
 	});
 
 	it("keeps the hover flyout open after closing a tab, since the cursor is still over it", async () => {
@@ -648,7 +711,9 @@ describe("BrowserPanel", () => {
 			vi.useRealTimers();
 		}
 
-		await userEvent.click(screen.getByRole("button", { name: "Close tab First app" }));
+		await userEvent.click(
+			within(screen.getByTestId("browser-tabs-flyout")).getByRole("button", { name: "Close tab First app" }),
+		);
 
 		expect(flyout).toHaveAttribute("data-state", "open");
 	});

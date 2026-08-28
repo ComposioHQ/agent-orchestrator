@@ -3,6 +3,7 @@ package sqlite
 import (
 	"database/sql"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -112,6 +113,14 @@ var shippedMigrations = map[int64]string{
 	106: "0106_pr_comment_review_id.sql",
 	107: "0107_recovered_conversation_turns.sql",
 	108: "0108_conversation_retry_source.sql",
+	109: "0109_session_latest_user_prompt_at.sql",
+	110: "0110_approximate_conversation_branches.sql",
+	111: "0111_pr_auto_inject_ci_cdc.sql",
+	112: "0112_app_settings_cloud_offering.sql",
+	113: "0113_usage_cost_estimation.sql",
+	114: "0114_usage_cost_candidate_canonical_index.sql",
+	115: "0115_usage_measurement_and_provider_usage.sql",
+	116: "0116_usage_billing_provider_source.sql",
 }
 
 // burnedVersion reports version numbers that must never be (re)used: they
@@ -153,6 +162,13 @@ func TestMigrationVersionLedger(t *testing.T) {
 			t.Errorf("migration %q has no version goose can parse: %v", e.Name(), err)
 			continue
 		}
+		// Two files claiming one number is the failure this ledger exists to
+		// prevent, and it is easy to reach from a branch: goose refuses to
+		// start at all, so it takes down the daemon rather than one query.
+		if other, clash := present[version]; clash {
+			t.Errorf("migrations %q and %q both claim version %d: goose refuses to start on a duplicate version",
+				other, e.Name(), version)
+		}
 		present[version] = e.Name()
 
 		if burnedVersion(version) {
@@ -174,6 +190,47 @@ func TestMigrationVersionLedger(t *testing.T) {
 		if _, ok := present[version]; !ok {
 			t.Errorf("ledgered migration %q (version %d) was deleted: installs that have not applied it yet will silently miss its schema, and the number is burned for reuse", name, version)
 		}
+	}
+}
+
+// A concurrently approved branch can claim the next free number first, so this
+// branch's migrations have to survive being applied to a database that already
+// records a version they never shipped. goose runs with WithAllowMissing, which
+// is what makes the resulting gap harmless.
+func TestMigrationsApplyOverAForeignInterleavedVersion(t *testing.T) {
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "ao.db")+pragmas)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	db.SetMaxOpenConns(1)
+	t.Cleanup(func() { _ = db.Close() })
+	upTo(t, db, 103)
+
+	// Stand in for the other branch's migration: applied here, absent from this
+	// tree, and numbered below everything this branch adds.
+	if _, err := db.Exec(
+		`INSERT INTO goose_db_version (version_id, is_applied) VALUES (104, 1)`,
+	); err != nil {
+		t.Fatalf("seed foreign migration: %v", err)
+	}
+
+	if err := migrate(db); err != nil {
+		t.Fatalf("migrate over a foreign interleaved version: %v", err)
+	}
+	for table, wantColumns := range expectedUsageTableColumns {
+		if got := tableColumns(t, db, table); !reflect.DeepEqual(got, wantColumns) {
+			t.Errorf("%s columns = %v, want %v", table, got, wantColumns)
+		}
+	}
+	var duplicates int
+	if err := db.QueryRow(`
+SELECT COUNT(*) FROM (
+    SELECT version_id FROM goose_db_version GROUP BY version_id HAVING COUNT(*) > 1
+)`).Scan(&duplicates); err != nil || duplicates != 0 {
+		t.Fatalf("duplicate applied versions = %d, err = %v", duplicates, err)
+	}
+	if err := migrate(db); err != nil {
+		t.Fatalf("repeat migration over a foreign interleaved version: %v", err)
 	}
 }
 

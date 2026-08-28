@@ -32,7 +32,7 @@ export type BoardSessionPresentation = {
 	statusPresentation?: BoardSessionStatusPresentation;
 	title: string;
 	trackerIssueId?: string;
-	updatedAt: string;
+	lastUserMessageAt?: string;
 };
 
 export type BoardSessionStatusPresentation = {
@@ -157,10 +157,14 @@ function BoardColumnView<TSession extends BoardSessionPresentation>({
 	if (column.zone === "merge") {
 		const mergedSessions = sessions
 			.filter((session) => session.status === "merged")
-			.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+			.sort((left, right) =>
+				(right.lastUserMessageAt ?? "").localeCompare(left.lastUserMessageAt ?? ""),
+			);
 		const readySessions = sessions
 			.filter((session) => session.status !== "merged")
-			.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+			.sort((left, right) =>
+				(right.lastUserMessageAt ?? "").localeCompare(left.lastUserMessageAt ?? ""),
+			);
 		return (
 			<SplitLaneColumnView
 				ariaLabel={labels.readyMergedAria}
@@ -399,7 +403,7 @@ export type SessionCardViewProps = {
 		formatTime: (timestamp: string) => string;
 		intakeIssue: (id: string) => string;
 		pr: BoardPullRequestLabels;
-		updatedAt: (timestamp: string) => string;
+		lastUserMessageAt: (timestamp: string) => string;
 	};
 	onOpen?: () => void;
 	overlay?: ReactNode;
@@ -501,8 +505,15 @@ export function SessionCardView({
 					</span>
 					<div className="ml-auto flex shrink-0 items-center gap-1.5 whitespace-nowrap font-mono text-2xs text-passive">
 						{usage ? renderUsage(usage) : null}
-						{usage ? <span aria-hidden="true">·</span> : null}
-						<span title={labels.updatedAt(session.updatedAt)}>{labels.formatTime(session.updatedAt)}</span>
+						{usage && session.lastUserMessageAt ? <span aria-hidden="true">·</span> : null}
+						{session.lastUserMessageAt ? (
+							<time
+								dateTime={session.lastUserMessageAt}
+								title={labels.lastUserMessageAt(session.lastUserMessageAt)}
+							>
+								{labels.formatTime(session.lastUserMessageAt)}
+							</time>
+						) : null}
 					</div>
 				</div>
 				{prs.length > 0 && (
@@ -542,14 +553,17 @@ export const SessionUsageMetricView = forwardRef<
 >(({ className, usage, ...props }, ref) => (
 	<span
 		{...props}
-		aria-label={usage.accessibleLabel}
 		className={cn(
 			"inline-flex shrink-0 items-center gap-1 whitespace-nowrap font-mono text-2xs text-muted-foreground",
 			className,
 		)}
 		ref={ref}
 	>
-		{usage.compactLabel}
+		{/* aria-label on a generic span is not reliably exposed, so the full
+		    label is real text placed off-screen and the compact form is hidden
+		    from assistive technology rather than read out twice. */}
+		<span className="sr-only">{usage.accessibleLabel}</span>
+		<span aria-hidden="true">{usage.compactLabel}</span>
 	</span>
 ));
 SessionUsageMetricView.displayName = "SessionUsageMetricView";
