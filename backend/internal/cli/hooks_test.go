@@ -1326,10 +1326,28 @@ func TestHooks_CursorTerminalFailureReportsCorrelatedCompletion(t *testing.T) {
 			wantTool:  "go test ./...",
 		},
 		{
+			name:      "mcp permission denied",
+			payload:   `{"tool_name":"MCP:deploy","failure_type":"permission_denied"}`,
+			wantEvent: "cursor-mcp-terminal-failure",
+			wantTool:  "deploy",
+		},
+		{
+			name:      "mcp error",
+			payload:   `{"tool_name":"MCP:search","failure_type":"error"}`,
+			wantEvent: "cursor-mcp-terminal-failure",
+			wantTool:  "search",
+		},
+		{
 			name:      "mcp timeout",
 			payload:   `{"tool_name":"MCP:deploy","tool_input":{"environment":"prod"},"failure_type":"timeout"}`,
 			wantEvent: "cursor-mcp-terminal-failure",
 			wantTool:  "deploy",
+		},
+		{
+			name:      "mcp interrupt",
+			payload:   `{"tool_name":"MCP:fetch","is_interrupt":true}`,
+			wantEvent: "cursor-mcp-terminal-failure",
+			wantTool:  "fetch",
 		},
 	}
 	for _, tt := range tests {

@@ -553,7 +553,15 @@ func cursorManagedEvents() []string {
 }
 
 func isCursorManagedHook(command string) bool {
-	return strings.HasPrefix(command, cursorHookCommandPrefix)
+	if command == cursorLegacyPermissionHookCommand {
+		return true
+	}
+	for _, spec := range cursorManagedHooks {
+		if command == spec.Command {
+			return true
+		}
+	}
+	return false
 }
 
 // removeCursorManagedHooks strips AO hook entries from an event's array,

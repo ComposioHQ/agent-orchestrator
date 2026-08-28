@@ -571,11 +571,16 @@ func TestUninstallHooksRemovesOnlyAOHooks(t *testing.T) {
 	ctx := context.Background()
 	cfg := ports.WorkspaceHookConfig{DataDir: t.TempDir(), SessionID: "sess-1", WorkspacePath: workspace}
 
-	// Pre-seed a user's own stop hook; it must survive uninstall.
+	// Pre-seed user-owned hooks, including a command that shares AO's prefix;
+	// every field must survive install and uninstall unchanged.
 	if err := os.MkdirAll(filepath.Dir(hooksPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	existing := `{"version":1,"hooks":{"stop":[{"command":"custom stop hook"}]}}`
+	existing := `{"version":1,"hooks":{"stop":[` +
+		`{"command":"custom stop hook"},` +
+		`{"command":"ao hooks cursor custom-handler","matcher":"Shell","timeout":17},` +
+		`{"type":"prompt","prompt":"Keep this prompt?","timeout":23}` +
+		`]}}`
 	if err := os.WriteFile(hooksPath, []byte(existing), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -609,6 +614,21 @@ func TestUninstallHooksRemovesOnlyAOHooks(t *testing.T) {
 	}
 	if countCursorHookCommand(config.Hooks["stop"], "custom stop hook") != 1 {
 		t.Fatalf("user stop hook not preserved: %#v", config.Hooks["stop"])
+	}
+
+	var rawConfig struct {
+		Hooks map[string][]map[string]any `json:"hooks"`
+	}
+	if err := json.Unmarshal(data, &rawConfig); err != nil {
+		t.Fatal(err)
+	}
+	wantUserHooks := []map[string]any{
+		{"command": "custom stop hook"},
+		{"command": "ao hooks cursor custom-handler", "matcher": "Shell", "timeout": float64(17)},
+		{"type": "prompt", "prompt": "Keep this prompt?", "timeout": float64(23)},
+	}
+	if got := rawConfig.Hooks["stop"]; !reflect.DeepEqual(got, wantUserHooks) {
+		t.Fatalf("user hooks after uninstall = %#v, want %#v", got, wantUserHooks)
 	}
 }
 
