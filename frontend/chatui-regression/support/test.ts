@@ -257,6 +257,20 @@ export class ChatUIRegressionHarness {
 				});
 				return;
 			}
+			if (method === "GET" && pathname === "/api/v1/settings") {
+				await route.fulfill({
+					json: {
+						defaultSessionMode: "tui",
+						chatHarnesses: ["codex", "claude-code"],
+						client: "",
+						localEnabled: true,
+						cloudOffering: false,
+						cloudEnabled: false,
+						cloudControlPlaneUrl: "",
+					},
+				});
+				return;
+			}
 			if (method === "GET" && pathname === "/api/v1/agents") {
 				const agents = [
 					{ id: "codex", label: "Codex", authStatus: "authorized" },
