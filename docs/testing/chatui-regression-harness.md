@@ -99,22 +99,26 @@ startup errors, zero matching tests, and missing evidence are infrastructure
 failures rather than captured product failures.
 
 The Go lane is equally explicit: the runner consumes `go test -json` output and
-requires start plus terminal results for both named tagged contracts in an
-unfiltered run, or each mapped contract selected by `--grep`. A compile failure,
-zero-test match, skipped test, or interrupted/incomplete test is an infrastructure
-failure even if capture mode was requested.
+requires start plus terminal results for all three configured backend contracts
+in an unfiltered run, or each mapped contract selected by `--grep`. A compile
+failure, zero-test match, skipped test, or interrupted/incomplete test is an
+infrastructure failure even if capture mode was requested.
 
 The deterministic runner does not short-circuit after the first red step. An
 unfiltered run executes the local-only frontend ChatUI typecheck, every
-Playwright contract, and every tagged Go contract so one failure cannot conceal
+Playwright contract, and every configured Go contract so one failure cannot conceal
 another. With `--grep`, the same expression selects Playwright contracts and any
-tagged Go contracts mapped to those scenarios; a scenario with no backend
-companion omits the Go step. The tagged backend contracts can also be run
+configured Go contracts mapped to those scenarios; a scenario with no backend
+companion omits the Go step. The backend contracts can also be run
 directly:
 
 ```bash
 cd backend
-go test -tags chatui_regression ./internal/httpd/controllers ./internal/session_manager -count=1 -run TestChatUIRegression -v
+go test -tags chatui_regression \
+  ./internal/httpd/controllers ./internal/session_manager ./internal/service/chat \
+  -count=1 \
+  -run '^(TestChatUIRegressionEncodedSyntheticBranchIDIsDecoded|TestChatUIRegressionTUIToChatRetriesFreshTargetAfterUnsettledHistory|TestInterfaceHandoffImportsOutcomeUnknownNativeHistoryAsRecovered)$' \
+  -v
 ```
 
 ## Artifacts
