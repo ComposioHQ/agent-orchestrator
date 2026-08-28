@@ -581,6 +581,13 @@ func (l *sqliteTransitionLifecycle) MarkChatSpawned(
 	rec.FirstSignalAt = time.Now()
 	return l.store.CommitChatSpawn(ctx, rec, boundary)
 }
+func (l *sqliteTransitionLifecycle) ApplyActivitySignal(
+	ctx context.Context,
+	id domain.SessionID,
+	signal ports.ActivitySignal,
+) error {
+	return lifecycle.New(l.store, nil).ApplyActivitySignal(ctx, id, signal)
+}
 func (l *sqliteTransitionLifecycle) CommitControllerEpoch(
 	ctx context.Context,
 	id domain.SessionID,
