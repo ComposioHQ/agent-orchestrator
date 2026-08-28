@@ -28,9 +28,7 @@ import {
 	type ReactNode,
 	type WheelEvent as ReactWheelEvent,
 } from "react";
-import type { TFunction } from "i18next";
-import { useTranslation } from "react-i18next";
-import { ArrowDown, CornerDownRight, GitBranch, Loader2, TriangleAlert, Undo2 } from "lucide-react";
+import { ArrowDown, CornerDownRight, Loader2, TriangleAlert, Undo2 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { sameContent, useStableList } from "../../lib/stable-list";
 import { getApiBaseUrl, subscribeApiBaseUrl } from "../../lib/api-client";
@@ -124,21 +122,6 @@ function initialTerminalFontSize(): number {
 	const parsed = raw === null ? Number.NaN : Number(raw);
 	if (!Number.isFinite(parsed)) return TERMINAL_FONT_SIZE_DEFAULT;
 	return clampTerminalFontSize(parsed);
-}
-
-function branchContextNotice(snapshot: ConversationSnapshot, t: TFunction): string {
-	const materialization = snapshot.branchMaterialization;
-	if (materialization?.strategy === "native") {
-		return t("chat.branch.context.native");
-	}
-	if (materialization?.strategy === "approximate_context") {
-		return t(
-			materialization.replayTruncated
-				? "chat.branch.context.approximateTruncated"
-				: "chat.branch.context.approximate",
-		);
-	}
-	return t("chat.branch.context.fallback");
 }
 
 type ReviewerTerminalTarget = Extract<TerminalTarget, { kind: "reviewer" }>;
@@ -368,7 +351,6 @@ export function ChatWorkspace({
 	reloadingMcpServers,
 	mcpReloadError,
 }: ChatWorkspaceProps) {
-	const { t } = useTranslation();
 	const turn = activeTurn(snapshot);
 	const hasPendingInteraction = snapshot.items.some(
 		(item) =>
@@ -852,17 +834,6 @@ export function ChatWorkspace({
 								className="mx-auto flex w-full max-w-3xl flex-col gap-2 transition-[max-width] duration-500 ease-out data-[empty]:max-w-2xl"
 							>
 								{discarded > 0 ? <RolledBackNotice count={discarded} /> : null}
-								{snapshot.branchedFromEarlierMessage ? (
-									<p
-										role="status"
-										aria-live="polite"
-										aria-atomic="true"
-										className="flex items-center gap-1.5 text-pretty text-[11px] text-muted-foreground"
-									>
-										<GitBranch aria-hidden="true" className="size-3 shrink-0" />
-										{branchContextNotice(snapshot, t)}
-									</p>
-								) : null}
 								<ChatComposer
 									attachedTop={turn?.state === "running" && queuedMessages.length > 0}
 									queuedDock={

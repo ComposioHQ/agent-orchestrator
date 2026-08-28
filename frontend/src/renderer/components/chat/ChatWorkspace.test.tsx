@@ -1653,7 +1653,7 @@ describe("ChatWorkspace message actions", () => {
 		expect(screen.getByRole("textbox", { name: "Edit message" })).toBeVisible();
 	});
 
-	it("navigates prompt branches and explains that files are unchanged", async () => {
+	it("navigates prompt branches without a persistent context notice", async () => {
 		const user = userEvent.setup();
 		const onActivateBranch = vi.fn(async () => undefined);
 		const snapshot = {
@@ -1677,20 +1677,16 @@ describe("ChatWorkspace message actions", () => {
 		render(<ChatWorkspace snapshot={snapshot} onActivateBranch={onActivateBranch} />);
 
 		expect(screen.getByText("2 / 3")).toBeVisible();
-		expect(screen.getByRole("status")).toHaveAttribute("aria-live", "polite");
-		expect(screen.getByRole("status")).toHaveAttribute("aria-atomic", "true");
+		expect(screen.queryByText(/Reconstructed context/)).not.toBeInTheDocument();
 		await user.click(
 			screen.getByRole("button", {
 				name: "Previous conversation branch",
 			}),
 		);
 		expect(onActivateBranch).toHaveBeenCalledWith("branch-previous");
-		expect(screen.getByText(/Reconstructed context/)).toHaveTextContent(
-			"Reconstructed context · Text messages were replayed. Some text was omitted to fit the context limit. Tool activity and workspace history were not replayed; current worktree files remain unchanged.",
-		);
 	});
 
-	it("labels a provider-native branch as exact context", () => {
+	it("does not label a provider-native branch as exact context", () => {
 		render(
 			<ChatWorkspace
 				snapshot={{
@@ -1704,29 +1700,7 @@ describe("ChatWorkspace message actions", () => {
 			/>,
 		);
 
-		expect(screen.getByText(/Exact context/)).toHaveTextContent(
-			"Exact context · Provider history was preserved; current worktree files remain unchanged.",
-		);
-	});
-
-	it("localizes the active branch fidelity and truncation notice", async () => {
-		await act(() => appI18n.changeLanguage("zh-CN"));
-		render(
-			<ChatWorkspace
-				snapshot={{
-					...idleSnapshot(),
-					branchedFromEarlierMessage: true,
-					branchMaterialization: {
-						strategy: "approximate_context",
-						replayTruncated: true,
-					},
-				}}
-			/>,
-		);
-
-		expect(screen.getByRole("status")).toHaveTextContent(
-			"重建上下文 · 已重放文本消息。为符合上下文限制，部分文本已省略。未重放工具活动和工作区历史；当前工作树文件保持不变。",
-		);
+		expect(screen.queryByText(/Exact context/)).not.toBeInTheDocument();
 	});
 
 	it("copies an assistant message as the markdown the agent wrote", async () => {
