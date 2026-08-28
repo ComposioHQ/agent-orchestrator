@@ -48,7 +48,6 @@ import { AgentSwitchProgressTrack } from "./AgentSwitchProgressTrack";
 import { ShellTerminalTab } from "./ShellTerminalTab";
 import { TerminalPane } from "./TerminalPane";
 import { SessionTopbarPortal } from "./SessionTopbarPortal";
-import { TerminalSwitchAgentButton } from "./TerminalSwitchAgentButton";
 
 type CenterPaneProps = {
 	session?: WorkspaceSession;
@@ -65,6 +64,7 @@ type CenterPaneProps = {
 	onRenameShellTerminal?: (handleId: string, title: string) => void;
 	/** Session actions consolidated into the terminal bar by SessionView. */
 	topbarActions?: ReactNode;
+	handoffDialogOpen?: boolean;
 	workspaceTabs?: ReactNode;
 	workspaceFileActive?: boolean;
 	/** Stop forwarding the agent pane's keystrokes while its controller drains. */
@@ -131,6 +131,7 @@ export function CenterPane({
 	onCloseShellTerminal,
 	onRenameShellTerminal,
 	topbarActions,
+	handoffDialogOpen = false,
 	workspaceTabs,
 	workspaceFileActive = false,
 	agentInputDisabled = false,
@@ -143,8 +144,6 @@ export function CenterPane({
 	const [fontSize, setFontSize] = useState(initialTerminalFontSize);
 	const [isFullscreen, setIsFullscreen] = useState(false);
 	const [terminalBounds, setTerminalBounds] = useState({ leftInset: 0, rightInset: 0, width: 0 });
-	const [switchSelectorOpen, setSwitchSelectorOpen] = useState(false);
-	const [switchSelectorContainer, setSwitchSelectorContainer] = useState<HTMLDivElement | null>(null);
 	const [terminalOrder, setTerminalOrder] = useState<TerminalOrder | null>(null);
 	const isSidebarOpen = useUiStore(sidebarOccupiesLayout);
 	const sessionId = session?.id;
@@ -264,7 +263,7 @@ export function CenterPane({
 		presentation?.lockAgentTerminal && !presentation.allowSourceInput,
 	);
 	const workerInputDisabled =
-		target.kind === "worker" && (agentInputDisabled || switchLocksWorkerInput || switchSelectorOpen);
+		target.kind === "worker" && (agentInputDisabled || switchLocksWorkerInput || handoffDialogOpen);
 	const shownPresentation =
 		presentation?.outcome === "failure" && dismissedFailureSwitchId === agentSwitch?.id
 			? undefined
@@ -274,8 +273,6 @@ export function CenterPane({
 				: undefined
 			: presentation ?? displayedSuccessNotice?.presentation;
 	const shownAgentSwitch = agentSwitch ?? displayedSuccessNotice?.agentSwitch;
-	const switchControlPresentation =
-		presentation ?? displayedSuccessNotice?.presentation;
 	const sessionTabLabel = session
 		? isOrchestratorSession(session)
 			? t("shell.orchestrator")
@@ -287,10 +284,6 @@ export function CenterPane({
 			: target.kind === "reviewer"
 				? `${t("terminal.reviewer")} · ${target.harness}`
 				: (session?.title ?? sessionTabLabel);
-	useEffect(() => {
-		setSwitchSelectorOpen(false);
-	}, [session?.id]);
-
 	const reorderAuxiliaryTerminals = useCallback(
 		(nextKeys: string[]) => {
 			if (!sessionId) return;
@@ -610,18 +603,6 @@ export function CenterPane({
 						className="ml-auto flex shrink-0 items-center px-3"
 			data-testid="session-action-region"
 		>
-			{session ? (
-				<TerminalSwitchAgentButton
-					key={session.id}
-					agentSwitch={selectedCurrentAgentSwitch}
-					container={switchSelectorContainer}
-					onOpenChange={setSwitchSelectorOpen}
-					open={switchSelectorOpen}
-					presentation={switchControlPresentation}
-					session={session}
-					switchError={switchMutation.error}
-				/>
-			) : null}
 			{topbarActions}
 					</div>
 				)}
@@ -637,7 +618,6 @@ export function CenterPane({
 		>
 			{isFullscreen ? terminalTopbar : <SessionTopbarPortal>{terminalTopbar}</SessionTopbarPortal>}
 			<div
-				ref={setSwitchSelectorContainer}
 				aria-label={t("terminal.panelAria", { title: activeTerminalLabel })}
 				className="relative min-h-0 flex-1"
 				role="tabpanel"
@@ -663,7 +643,7 @@ export function CenterPane({
 						theme={theme}
 					/>
 				</div>
-				{switchSelectorOpen ? null : shownPresentation && shownAgentSwitch && target.kind === "worker" ? (
+				{handoffDialogOpen ? null : shownPresentation && shownAgentSwitch && target.kind === "worker" ? (
 					<AgentSwitchTerminalOverlay
 						agentSwitch={shownAgentSwitch}
 						onDismiss={

@@ -45,6 +45,11 @@ const interfaceTransitionState = vi.hoisted(() => ({
 const reviewGetMock = vi.hoisted(() => vi.fn());
 const inspectorVisibilityRenders = vi.hoisted(() => [] as boolean[]);
 
+function chooseSessionAction(name: string) {
+	fireEvent.click(screen.getByRole("button", { name: "Session actions" }));
+	fireEvent.click(screen.getByRole("menuitem", { name }));
+}
+
 vi.mock("@tanstack/react-router", () => ({
 	useNavigate: () => navigateMock,
 }));
@@ -669,7 +674,7 @@ describe("SessionView", () => {
 
 		render(<SessionView sessionId={sessionId} />);
 
-		fireEvent.click(screen.getByRole("button", { name: buttonName }));
+		chooseSessionAction(buttonName);
 
 		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 		expect(interfaceTransitionMock.start).toHaveBeenCalledWith({ targetMode, policy: "drain" });
@@ -687,7 +692,7 @@ describe("SessionView", () => {
 
 		render(<SessionView sessionId={sessionId} />);
 
-		fireEvent.click(screen.getByRole("button", { name: "Switch to terminal UI" }));
+		chooseSessionAction("Switch to terminal UI");
 
 		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 		expect(interfaceTransitionMock.start).toHaveBeenCalledWith({ targetMode: "tui", policy: "interrupt" });
@@ -703,7 +708,7 @@ describe("SessionView", () => {
 		render(<SessionView sessionId="sess-1" />);
 
 		await act(async () => {
-			fireEvent.click(screen.getByRole("button", { name: "Switch to chat UI" }));
+			chooseSessionAction("Switch to chat UI");
 		});
 
 		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
@@ -720,7 +725,7 @@ describe("SessionView", () => {
 		render(<SessionView sessionId="sess-1" />);
 
 		await act(async () => {
-			fireEvent.click(screen.getByRole("button", { name: "Switch to terminal UI" }));
+			chooseSessionAction("Switch to terminal UI");
 		});
 
 		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
@@ -740,7 +745,7 @@ describe("SessionView", () => {
 
 		render(<SessionView sessionId={sessionId} />);
 
-		fireEvent.click(screen.getByRole("button", { name: buttonName }));
+		chooseSessionAction(buttonName);
 
 		expect(screen.getByRole("dialog")).toBeInTheDocument();
 		expect(interfaceTransitionMock.start).not.toHaveBeenCalled();
@@ -761,7 +766,7 @@ describe("SessionView", () => {
 
 		render(<SessionView sessionId={sessionId} />);
 
-		fireEvent.click(screen.getByRole("button", { name: "Switch to terminal UI" }));
+		chooseSessionAction("Switch to terminal UI");
 
 		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 		expect(interfaceTransitionMock.start).toHaveBeenCalledWith({ targetMode: "tui", policy: "interrupt" });
@@ -778,7 +783,7 @@ describe("SessionView", () => {
 
 		render(<SessionView sessionId="sess-1" />);
 
-		fireEvent.click(screen.getByRole("button", { name: "Switch to chat UI" }));
+		chooseSessionAction("Switch to chat UI");
 
 		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 		expect(interfaceTransitionMock.start).toHaveBeenCalledWith({ targetMode: "chat", policy: "drain" });
@@ -854,7 +859,8 @@ describe("SessionView", () => {
 
 		render(<SessionView sessionId={sessionId} />);
 
-		expect(screen.queryByRole("button", { name: "Switch to chat UI" })).not.toBeInTheDocument();
+		fireEvent.click(screen.getByRole("button", { name: "Session actions" }));
+		expect(screen.queryByRole("menuitem", { name: "Switch to chat UI" })).not.toBeInTheDocument();
 	});
 
 	it("shows the switch button when the adapter only reports a generic unsupported reason", () => {
@@ -866,7 +872,8 @@ describe("SessionView", () => {
 
 		render(<SessionView sessionId="sess-1" />);
 
-		expect(screen.getByRole("button", { name: "Switch to chat UI" })).toBeInTheDocument();
+		fireEvent.click(screen.getByRole("button", { name: "Session actions" }));
+		expect(screen.getByRole("menuitem", { name: "Switch to chat UI" })).toBeInTheDocument();
 	});
 
 	it("walks backward through auxiliary terminals before returning to the permanent terminal", () => {

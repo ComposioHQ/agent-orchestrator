@@ -780,6 +780,7 @@
 	"settings.updates.updateTo": "Update to {{version}}",
 	"settings.updates.updateToLatest": "Update to latest",
 	"session.notFound": "Session not found. It may have been cleaned up — pick another from the sidebar.",
+	"session.actionsMenu": "Session actions",
 	"settings.updates.updateFailed": "Update failed.",
 	"switchAgent.action": "Switch agent",
 	"switchAgent.checkingStatus": "Checking switch status…",

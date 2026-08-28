@@ -8,7 +8,7 @@
  */
 
 import { AlertTriangle, CheckCircle2, Loader2, X } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import {
 	findActiveAgentSwitch,
@@ -39,7 +39,6 @@ import type { ConversationSnapshot } from "../../types/conversation";
 import type { TerminalTarget } from "../../types/terminal";
 import type { AgentSwitchSummary, WorkspaceSession } from "../../types/workspace";
 import { AgentSwitchProgressTrack } from "../AgentSwitchProgressTrack";
-import { TerminalSwitchAgentButton } from "../TerminalSwitchAgentButton";
 import { ChatWorkspace } from "./ChatWorkspace";
 
 export function SessionChatSurface({
@@ -61,6 +60,7 @@ export function SessionChatSurface({
 	onOpenFiles,
 	onOpenFile,
 	headerActions,
+	handoffDialogOpen = false,
 	workspaceTabs,
 	workspaceFileActive,
 	controllerTransitioning,
@@ -87,6 +87,7 @@ export function SessionChatSurface({
 	/** Opens the Files inspector focused on one changed path. */
 	onOpenFile?: (path: string) => void;
 	headerActions?: ReactNode;
+	handoffDialogOpen?: boolean;
 	workspaceTabs?: ReactNode;
 	workspaceFileActive?: boolean;
 	/** The target controller is being installed by an interface handoff. */
@@ -126,12 +127,7 @@ export function SessionChatSurface({
 	const { paths, truncated } = useWorkspaceFilePaths(session.id, Boolean(snapshot));
 	const stageAttachments = useStageAttachments(session.id);
 	const openLinkInBrowser = useSessionBrowserLink(session);
-	// In-place agent switching is the same session-level operation in either
-	// interface; the chat header offers the same entry point the terminal pane's
-	// tab strip does. Mirrors CenterPane: dialog open flag plus the element the
-	// dialog anchors to (the workspace body, handed up by ChatWorkspace).
-	const [switchSelectorOpen, setSwitchSelectorOpen] = useState(false);
-	const [switchSelectorContainer, setSwitchSelectorContainer] = useState<HTMLDivElement | null>(null);
+	// Agent-switch presentation for the chat surface progress track and input locks.
 	const switchMutation = useSwitchAgentState(session.id);
 	const agentSwitches = useAgentSwitches(session.id).data ?? [];
 	const activeHistorySwitch = findActiveAgentSwitch(agentSwitches);
@@ -203,8 +199,6 @@ export function SessionChatSurface({
 					? transientSuccessNotice?.presentation
 					: undefined
 				: switchPresentation ?? transientSuccessNotice?.presentation;
-	const switchControlPresentation =
-		switchPresentation ?? transientSuccessNotice?.presentation;
 	const switchLocksChat = Boolean(
 		switchPresentation?.lockAgentTerminal && !switchPresentation.allowSourceInput,
 	);
@@ -260,7 +254,7 @@ export function SessionChatSurface({
 			<ChatWorkspace
 				key={session.id}
 				snapshot={renderSnapshot}
-				agentInputDisabled={switchLocksChat || switchSelectorOpen}
+				agentInputDisabled={switchLocksChat || handoffDialogOpen}
 				onLinkOpen={openLinkInBrowser}
 				sessionTitle={session.title}
 				sessionRole={session.kind}
@@ -274,18 +268,6 @@ export function SessionChatSurface({
 				onSelectShellTerminal={onSelectShellTerminal}
 				onCloseShellTerminal={onCloseShellTerminal}
 				onRenameShellTerminal={onRenameShellTerminal}
-				switchAgentControl={
-					<TerminalSwitchAgentButton
-						agentSwitch={selectedDurableAgentSwitch}
-						container={switchSelectorContainer}
-						onOpenChange={setSwitchSelectorOpen}
-						open={switchSelectorOpen}
-						presentation={switchControlPresentation}
-						session={session}
-						switchError={switchMutation.error}
-					/>
-				}
-				switchDialogContainer={setSwitchSelectorContainer}
 				daemonReady={daemonReady}
 				theme={theme}
 				headerActions={headerActions}

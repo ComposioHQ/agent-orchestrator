@@ -218,11 +218,6 @@ export interface ChatWorkspaceProps {
 	onSelectShellTerminal?: (handleId: string) => void;
 	onCloseShellTerminal?: (handleId: string) => void;
 	onRenameShellTerminal?: (handleId: string, title: string) => void;
-	/** The in-place agent-switch control. Owned by the surface (which owns query
-	    wiring) so this pure view stays renderable without query providers. */
-	switchAgentControl?: ReactNode;
-	/** Receives the body element the agent-switch dialog anchors to. */
-	switchDialogContainer?: (node: HTMLDivElement | null) => void;
 	/** Daemon readiness for the reviewer terminal pane. */
 	daemonReady?: boolean;
 	/** Resolved color theme for the reviewer terminal pane. */
@@ -315,8 +310,6 @@ export function ChatWorkspace({
 	onSelectShellTerminal,
 	onCloseShellTerminal,
 	onRenameShellTerminal,
-	switchAgentControl,
-	switchDialogContainer,
 	daemonReady,
 	theme,
 	hasOlder,
@@ -728,18 +721,13 @@ export function ChatWorkspace({
 				onCloseShellTerminal={onCloseShellTerminal}
 				onRenameShellTerminal={onRenameShellTerminal}
 				onTabsKeyDown={handleChatTabsKeyDown}
-				switchAgentControl={switchAgentControl}
 				headerActions={headerActions}
 				workspaceTabs={workspaceTabs}
 				workspaceFileActive={workspaceFileActive}
 				inline={isFullscreen}
 				topbarBounds={topbarBounds}
 			/>
-			{/* The body host anchors the agent-switch dialog and holds whichever tab is
-			    active: the reviewer pane, a shell pane, or the chat timeline. The
-			    container ref is handed up so the surface (not this pure view) owns the
-			    dialog's state. */}
-			<div className="relative flex min-h-0 flex-1 flex-col" ref={switchDialogContainer}>
+			<div className="relative flex min-h-0 flex-1 flex-col">
 				{reviewerTarget && session ? (
 					<div
 						aria-label="Reviewer terminal"
@@ -1079,7 +1067,6 @@ function ChatHeader({
 	onCloseShellTerminal,
 	onRenameShellTerminal,
 	onTabsKeyDown,
-	switchAgentControl,
 	headerActions,
 	workspaceTabs,
 	workspaceFileActive = false,
@@ -1101,8 +1088,6 @@ function ChatHeader({
 	onCloseShellTerminal?: (handleId: string) => void;
 	onRenameShellTerminal?: (handleId: string, title: string) => void;
 	onTabsKeyDown?: (event: ReactKeyboardEvent<HTMLDivElement>) => void;
-	/** The in-place agent-switch control, same entry point as the terminal pane. */
-	switchAgentControl?: ReactNode;
 	headerActions?: ReactNode;
 	workspaceTabs?: ReactNode;
 	workspaceFileActive?: boolean;
@@ -1223,7 +1208,6 @@ function ChatHeader({
 					className="ml-auto flex shrink-0 items-center gap-1 px-3"
 					data-testid="session-action-region"
 				>
-					{switchAgentControl}
 					{headerActions}
 				</div>
 			</div>
