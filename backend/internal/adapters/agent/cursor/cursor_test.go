@@ -371,7 +371,7 @@ func TestGetAgentHooksInstallsCursorHooks(t *testing.T) {
 	}
 }
 
-func TestGetAgentHooksMigratesLegacyPermissionCallbacks(t *testing.T) {
+func TestGetAgentHooksMigratesLegacyPermissionCallbacksWithoutRewritingUserHooks(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "cursor-agent"}
 	workspace := t.TempDir()
 	hooksDir := filepath.Join(workspace, ".cursor")
@@ -379,7 +379,11 @@ func TestGetAgentHooksMigratesLegacyPermissionCallbacks(t *testing.T) {
 		t.Fatal(err)
 	}
 	hooksPath := filepath.Join(hooksDir, "hooks.json")
-	existing := `{"version":1,"hooks":{"beforeShellExecution":[{"command":"ao hooks cursor permission-request"},{"command":"custom permission hook","failClosed":true}]}}`
+	existing := `{"version":1,"hooks":{"beforeShellExecution":[` +
+		`{"command":"ao hooks cursor permission-request"},` +
+		`{"command":"custom permission hook","failClosed":true,"matcher":"git push","timeout":17},` +
+		`{"type":"prompt","prompt":"Allow this command?","timeout":23}` +
+		`]}}`
 	if err := os.WriteFile(hooksPath, []byte(existing), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -409,6 +413,35 @@ func TestGetAgentHooksMigratesLegacyPermissionCallbacks(t *testing.T) {
 		if entry.Command == "custom permission hook" && !entry.FailClosed {
 			t.Fatalf("custom hook lost failClosed during migration: %#v", entry)
 		}
+	}
+
+	var rawConfig struct {
+		Hooks map[string][]map[string]any `json:"hooks"`
+	}
+	if err := json.Unmarshal(data, &rawConfig); err != nil {
+		t.Fatal(err)
+	}
+	wantCustom := map[string]any{
+		"command": "custom permission hook", "failClosed": true,
+		"matcher": "git push", "timeout": float64(17),
+	}
+	wantPrompt := map[string]any{
+		"type": "prompt", "prompt": "Allow this command?", "timeout": float64(23),
+	}
+	var gotCustom, gotPrompt map[string]any
+	for _, entry := range rawConfig.Hooks["beforeShellExecution"] {
+		if entry["command"] == "custom permission hook" {
+			gotCustom = entry
+		}
+		if entry["type"] == "prompt" {
+			gotPrompt = entry
+		}
+	}
+	if !reflect.DeepEqual(gotCustom, wantCustom) {
+		t.Fatalf("custom command hook = %#v, want %#v", gotCustom, wantCustom)
+	}
+	if !reflect.DeepEqual(gotPrompt, wantPrompt) {
+		t.Fatalf("custom prompt hook = %#v, want %#v", gotPrompt, wantPrompt)
 	}
 }
 

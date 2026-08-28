@@ -811,9 +811,9 @@ func cursorResolvedExecutionKey(s ports.ActivitySignal) (string, bool) {
 		return "", false
 	}
 	switch s.Event {
-	case "after-shell-execution", "cursor-shell-permission-denied":
+	case "after-shell-execution", "cursor-shell-terminal-failure":
 		return "shell\x00" + s.ToolName, true
-	case "after-mcp-execution", "cursor-mcp-permission-denied":
+	case "after-mcp-execution", "cursor-mcp-terminal-failure":
 		return "mcp\x00" + s.ToolName, true
 	default:
 		return "", false

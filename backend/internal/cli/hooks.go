@@ -388,9 +388,9 @@ func (c *commandContext) runHook(ctx context.Context, agent, event string) error
 
 	toolName, toolUseID := activityMeta(payload)
 	if domain.AgentHarness(agent) == domain.HarnessCursor && event == "post-tool-use-failure" {
-		if denialEvent, denialTool, ok := cursor.PermissionDenialCorrelation(payload); ok {
-			event = denialEvent
-			toolName = denialTool
+		if failureEvent, failureTool, ok := cursor.TerminalFailureCorrelation(payload); ok {
+			event = failureEvent
+			toolName = failureTool
 		}
 	}
 	conversation := hookConversationSnapshot{}
@@ -452,6 +452,9 @@ func (c *commandContext) runCursorPermissionHook(ctx context.Context, agent, eve
 	}
 	if err := c.postJSON(ctx, path, req, nil); err != nil {
 		c.reportHookFailure(agent, event, sessionID, err)
+		if decision.Permission == "ask" {
+			return fmt.Errorf("persist blocked Cursor activity: %w", err)
+		}
 	}
 
 	out := cursorPermissionHookOutput{Permission: decision.Permission}

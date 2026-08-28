@@ -1242,6 +1242,40 @@ func TestHooks_CursorBeforeShellAutoModeReportsActive(t *testing.T) {
 	}
 }
 
+func TestHooks_CursorAskFailsClosedWhenBlockedActivityWriteFails(t *testing.T) {
+	tests := []struct {
+		name        string
+		status      int
+		closeServer bool
+	}{
+		{name: "daemon 500", status: http.StatusInternalServerError},
+		{name: "daemon unreachable", status: http.StatusOK, closeServer: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("AO_SESSION_ID", "ao-7")
+			t.Setenv("AO_PERMISSION_MODE", "default")
+			cfg := setConfigEnv(t)
+			srv, _ := activityServer(t, tt.status, `{"ok":false,"code":"WRITE_FAILED","message":"write failed"}`)
+			writeRunFileFor(t, cfg, srv)
+			if tt.closeServer {
+				srv.Close()
+			}
+
+			stdout, _, err := executeCLI(t, Deps{
+				In:           strings.NewReader(`{"command":"git push"}`),
+				ProcessAlive: func(int) bool { return true },
+			}, "hooks", "cursor", "before-shell-execution")
+			if err == nil {
+				t.Fatal("permission hook error = nil, want fail-closed error")
+			}
+			if strings.TrimSpace(stdout) != "" {
+				t.Fatalf("permission hook stdout = %q, want no permission response", stdout)
+			}
+		})
+	}
+}
+
 func TestHooks_CursorAfterShellExecutionReportsActive(t *testing.T) {
 	t.Setenv("AO_SESSION_ID", "ao-7")
 	cfg := setConfigEnv(t)
@@ -1260,7 +1294,7 @@ func TestHooks_CursorAfterShellExecutionReportsActive(t *testing.T) {
 	}
 }
 
-func TestHooks_CursorPermissionDenialReportsCorrelatedCompletion(t *testing.T) {
+func TestHooks_CursorTerminalFailureReportsCorrelatedCompletion(t *testing.T) {
 	tests := []struct {
 		name      string
 		payload   string
@@ -1268,15 +1302,33 @@ func TestHooks_CursorPermissionDenialReportsCorrelatedCompletion(t *testing.T) {
 		wantTool  string
 	}{
 		{
-			name:      "shell",
+			name:      "shell permission denied",
 			payload:   `{"tool_name":"Shell","tool_input":{"command":"git push"},"failure_type":"permission_denied"}`,
-			wantEvent: "cursor-shell-permission-denied",
+			wantEvent: "cursor-shell-terminal-failure",
 			wantTool:  "git push",
 		},
 		{
-			name:      "mcp",
-			payload:   `{"tool_name":"MCP:deploy","tool_input":{"environment":"prod"},"failure_type":"permission_denied"}`,
-			wantEvent: "cursor-mcp-permission-denied",
+			name:      "shell error",
+			payload:   `{"tool_name":"Shell","tool_input":{"command":"npm test"},"failure_type":"error"}`,
+			wantEvent: "cursor-shell-terminal-failure",
+			wantTool:  "npm test",
+		},
+		{
+			name:      "shell timeout",
+			payload:   `{"tool_name":"Shell","tool_input":{"command":"sleep 60"},"failure_type":"timeout"}`,
+			wantEvent: "cursor-shell-terminal-failure",
+			wantTool:  "sleep 60",
+		},
+		{
+			name:      "shell interrupt",
+			payload:   `{"tool_name":"Shell","tool_input":{"command":"go test ./..."},"is_interrupt":true}`,
+			wantEvent: "cursor-shell-terminal-failure",
+			wantTool:  "go test ./...",
+		},
+		{
+			name:      "mcp timeout",
+			payload:   `{"tool_name":"MCP:deploy","tool_input":{"environment":"prod"},"failure_type":"timeout"}`,
+			wantEvent: "cursor-mcp-terminal-failure",
 			wantTool:  "deploy",
 		},
 	}
@@ -1303,7 +1355,7 @@ func TestHooks_CursorPermissionDenialReportsCorrelatedCompletion(t *testing.T) {
 				t.Fatalf("decode body: %v\nbody=%s", err, capture.body)
 			}
 			if req.State != "active" || req.Event != tt.wantEvent || req.ToolName != tt.wantTool {
-				t.Fatalf("denial activity = %+v, want state=active event=%q toolName=%q", req, tt.wantEvent, tt.wantTool)
+				t.Fatalf("terminal-failure activity = %+v, want state=active event=%q toolName=%q", req, tt.wantEvent, tt.wantTool)
 			}
 		})
 	}

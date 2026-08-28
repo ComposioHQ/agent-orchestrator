@@ -131,13 +131,13 @@ func TestToolPrecedence_CursorConcurrentDialogsRemainBlockedUntilAllComplete(t *
 	}
 }
 
-func TestToolPrecedence_CursorDeniedDialogClearsOnlyMatchingPendingRequest(t *testing.T) {
+func TestToolPrecedence_CursorTerminalFailureClearsOnlyMatchingPendingRequest(t *testing.T) {
 	m, st, _ := newManager()
 	seedSignaled(st, "mer-1", domain.ActivityActive)
 
 	mustApply(t, m, "mer-1", sig(domain.ActivityBlocked, "before-shell-execution", "git push", ""))
 	mustApply(t, m, "mer-1", sig(domain.ActivityBlocked, "before-mcp-execution", "deploy", ""))
-	mustApply(t, m, "mer-1", sig(domain.ActivityActive, "cursor-shell-permission-denied", "git push", ""))
+	mustApply(t, m, "mer-1", sig(domain.ActivityActive, "cursor-shell-terminal-failure", "git push", ""))
 	if got := stateOf(st, "mer-1"); got != domain.ActivityBlocked {
 		t.Fatalf("state after one Cursor denial = %q, want blocked while MCP dialog remains", got)
 	}

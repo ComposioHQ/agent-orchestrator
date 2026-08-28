@@ -81,30 +81,43 @@ func HookToolName(event string, payload []byte) string {
 	}
 }
 
-// PermissionDenialCorrelation converts Cursor's generic postToolUseFailure
+// TerminalFailureCorrelation converts Cursor's generic postToolUseFailure
 // payload into the same execution family/name pair captured by the specialized
 // before-execution hook. Missing correlation stays unresolved so lifecycle
 // tracking fails closed.
-func PermissionDenialCorrelation(payload []byte) (event, toolName string, ok bool) {
+func TerminalFailureCorrelation(payload []byte) (event, toolName string, ok bool) {
 	var p struct {
 		ToolName    string `json:"tool_name"`
 		FailureType string `json:"failure_type"`
+		IsInterrupt bool   `json:"is_interrupt"`
 		ToolInput   struct {
 			Command string `json:"command"`
 		} `json:"tool_input"`
 	}
-	if err := json.Unmarshal(payload, &p); err != nil || p.FailureType != "permission_denied" {
+	if err := json.Unmarshal(payload, &p); err != nil || !terminalFailure(p.FailureType, p.IsInterrupt) {
 		return "", "", false
 	}
 	switch {
 	case p.ToolName == "Shell":
 		command := capHookField(p.ToolInput.Command)
-		return "cursor-shell-permission-denied", command, command != ""
+		return "cursor-shell-terminal-failure", command, command != ""
 	case strings.HasPrefix(p.ToolName, "MCP:"):
 		name := capHookField(strings.TrimPrefix(p.ToolName, "MCP:"))
-		return "cursor-mcp-permission-denied", name, name != ""
+		return "cursor-mcp-terminal-failure", name, name != ""
 	default:
 		return "", "", false
+	}
+}
+
+func terminalFailure(failureType string, isInterrupt bool) bool {
+	if isInterrupt {
+		return true
+	}
+	switch failureType {
+	case "permission_denied", "error", "timeout":
+		return true
+	default:
+		return false
 	}
 }
 

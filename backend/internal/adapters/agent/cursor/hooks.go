@@ -36,16 +36,69 @@ const (
 )
 
 // cursorHookFile is the on-disk shape of .cursor/hooks.json. It is used by tests
-// to decode the written file. Cursor keys hooks by camelCase native event name;
-// each value is an array of objects carrying a "command" string.
+// to decode the written file. Cursor keys hooks by camelCase native event name.
 type cursorHookFile struct {
 	Version int                          `json:"version"`
 	Hooks   map[string][]cursorHookEntry `json:"hooks"`
 }
 
 type cursorHookEntry struct {
-	Command    string `json:"command"`
-	FailClosed bool   `json:"failClosed,omitempty"`
+	Command    string
+	FailClosed bool
+	raw        json.RawMessage
+}
+
+func (e *cursorHookEntry) UnmarshalJSON(data []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	e.raw = append(e.raw[:0], data...)
+	e.Command = ""
+	e.FailClosed = false
+	_ = json.Unmarshal(fields["command"], &e.Command)
+	_ = json.Unmarshal(fields["failClosed"], &e.FailClosed)
+	return nil
+}
+
+func (e cursorHookEntry) MarshalJSON() ([]byte, error) {
+	return e.raw, nil
+}
+
+func newCursorHookEntry(command string, failClosed bool) (cursorHookEntry, error) {
+	commandJSON, err := json.Marshal(command)
+	if err != nil {
+		return cursorHookEntry{}, err
+	}
+	fields := map[string]json.RawMessage{"command": commandJSON}
+	raw, err := json.Marshal(fields)
+	if err != nil {
+		return cursorHookEntry{}, err
+	}
+	entry := cursorHookEntry{Command: command, raw: raw}
+	if err := entry.setFailClosed(failClosed); err != nil {
+		return cursorHookEntry{}, err
+	}
+	return entry, nil
+}
+
+func (e *cursorHookEntry) setFailClosed(failClosed bool) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(e.raw, &fields); err != nil {
+		return err
+	}
+	e.FailClosed = failClosed
+	if failClosed {
+		fields["failClosed"] = json.RawMessage("true")
+	} else {
+		delete(fields, "failClosed")
+	}
+	raw, err := json.Marshal(fields)
+	if err != nil {
+		return err
+	}
+	e.raw = raw
+	return nil
 }
 
 // cursorHookSpec describes one hook AO installs, defined in code rather than
@@ -101,9 +154,15 @@ func (p *Plugin) GetAgentHooks(ctx context.Context, cfg ports.WorkspaceHookConfi
 		existing = removeCursorLegacyPermissionHooks(event, existing)
 		for _, spec := range specs {
 			if index := cursorHookCommandIndex(existing, spec.Command); index >= 0 {
-				existing[index].FailClosed = spec.FailClosed
+				if err := existing[index].setFailClosed(spec.FailClosed); err != nil {
+					return fmt.Errorf("cursor.GetAgentHooks: update %s hook: %w", event, err)
+				}
 			} else {
-				existing = append(existing, cursorHookEntry{Command: spec.Command, FailClosed: spec.FailClosed})
+				entry, err := newCursorHookEntry(spec.Command, spec.FailClosed)
+				if err != nil {
+					return fmt.Errorf("cursor.GetAgentHooks: create %s hook: %w", event, err)
+				}
+				existing = append(existing, entry)
 			}
 		}
 		if err := marshalCursorHookEvent(rawHooks, event, existing); err != nil {
