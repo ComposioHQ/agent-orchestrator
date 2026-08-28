@@ -169,6 +169,7 @@ vi.mock("./TerminalSwitchAgentButton", () => ({
 vi.mock("./chat/SessionChatSurface", () => ({
 	SessionChatSurface: ({
 		onOpenShell,
+		onOpenFile,
 		headerActions,
 		reviewerTerminal,
 		onOpenReviewerTerminal,
@@ -180,6 +181,7 @@ vi.mock("./chat/SessionChatSurface", () => ({
 		workspaceTabs,
 	}: {
 		onOpenShell?: () => void;
+		onOpenFile?: (path: string) => void;
 		headerActions?: ReactNode;
 		reviewerTerminal?: { handleId: string; harness: string };
 		onOpenReviewerTerminal?: (target: { handleId: string; harness: string }) => void;
@@ -194,6 +196,11 @@ vi.mock("./chat/SessionChatSurface", () => ({
 			chat surface
 			{headerActions}
 			<div role="tablist">{workspaceTabs}</div>
+			{onOpenFile ? (
+				<button type="button" onClick={() => onOpenFile("notes.txt")}>
+					open chat basename
+				</button>
+			) : null}
 			{reviewerTerminal ? (
 				<button type="button" onClick={() => onOpenReviewerTerminal?.(reviewerTerminal)}>
 					Reviewer
@@ -413,6 +420,9 @@ vi.mock("./SessionInspector", () => ({
 				<button type="button" onClick={() => onOpenReviewFile?.({ path: "src/panel.tsx", line: 42 })}>
 					view review file
 				</button>
+				<button type="button" onClick={() => onOpenReviewFile?.({ path: "notes.txt" })}>
+					view review basename
+				</button>
 				{view === "files" ? filesView : null}
 			</div>
 		);
@@ -512,7 +522,22 @@ describe("SessionView", () => {
 		interfaceTransitionMock.acknowledgeNotice.mockReset();
 		interfaceTransitionState.status = undefined;
 		reviewGetMock.mockReset();
-		reviewGetMock.mockResolvedValue({ data: { reviewerHandleId: "", reviews: [], runs: [] }, error: undefined });
+		reviewGetMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/sessions/{sessionId}/workspace/files") {
+				return {
+					data: {
+						sessionId: "sess-1",
+						files: [],
+						truncated: false,
+						sections: { staged: [], unstaged: [], untracked: [], committed: [] },
+						commits: [],
+						summary: { files: 0, additions: 0, deletions: 0 },
+					},
+					error: undefined,
+				};
+			}
+			return { data: { reviewerHandleId: "", reviews: [], runs: [] }, error: undefined };
+		});
 	});
 
 	// Regression: shell terminals are an app-wide list, so without a per-session
@@ -1467,16 +1492,93 @@ describe("SessionView", () => {
 		expect(screen.getByRole("tab", { name: "App.tsx" })).toHaveAttribute("aria-selected", "false");
 	});
 
-	it("opens a review file target in a center tab and keeps the Files inspector visible", () => {
+	it("opens a review file target in a center tab and keeps the Files inspector visible", async () => {
 		act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
 		render(<SessionView sessionId="sess-1" />);
 
 		fireEvent.click(screen.getByRole("button", { name: "view review file" }));
 
-		expect(screen.getByRole("tab", { name: "panel.tsx" })).toHaveAttribute("aria-selected", "true");
-		expect(screen.getByTestId("session-file-workspace")).toHaveTextContent("src/panel.tsx");
+		await waitFor(() => {
+			expect(screen.getByRole("tab", { name: "panel.tsx" })).toHaveAttribute("aria-selected", "true");
+			expect(screen.getByTestId("session-file-workspace")).toHaveTextContent("src/panel.tsx");
+		});
 		expect(useUiStore.getState().inspectorSessions["sess-1"]?.view).toBe("files");
 		expect(screen.queryByRole("button", { name: "files center" })).not.toBeInTheDocument();
+	});
+
+	it("resolves a basename against workspace files before opening on a cold cache", async () => {
+		reviewGetMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/sessions/{sessionId}/workspace/files") {
+				return {
+					data: {
+						sessionId: "sess-1",
+						files: [
+							{
+								path: "docs/notes.txt",
+								status: "added",
+								additions: 1,
+								deletions: 0,
+								binary: false,
+								size: 10,
+							},
+						],
+						truncated: false,
+						sections: { staged: [], unstaged: [], untracked: [], committed: [] },
+						commits: [],
+						summary: { files: 1, additions: 1, deletions: 0 },
+					},
+					error: undefined,
+				};
+			}
+			return { data: { reviewerHandleId: "", reviews: [], runs: [] }, error: undefined };
+		});
+
+		act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
+		render(<SessionView sessionId="sess-1" />);
+
+		fireEvent.click(screen.getByRole("button", { name: "view review basename" }));
+
+		await waitFor(() => {
+			expect(screen.getByTestId("session-file-workspace")).toHaveTextContent("docs/notes.txt");
+		});
+	});
+
+	it("resolves a chat basename against workspace files before opening on a cold cache", async () => {
+		workspaces[0].sessions[0].mode = "chat";
+		reviewGetMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/sessions/{sessionId}/workspace/files") {
+				return {
+					data: {
+						sessionId: "sess-1",
+						files: [
+							{
+								path: "docs/notes.txt",
+								status: "added",
+								additions: 1,
+								deletions: 0,
+								binary: false,
+								size: 10,
+							},
+						],
+						truncated: false,
+						sections: { staged: [], unstaged: [], untracked: [], committed: [] },
+						commits: [],
+						summary: { files: 1, additions: 1, deletions: 0 },
+					},
+					error: undefined,
+				};
+			}
+			return { data: { reviewerHandleId: "", reviews: [], runs: [] }, error: undefined };
+		});
+
+		act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
+		render(<SessionView sessionId="sess-1" />);
+
+		fireEvent.click(screen.getByRole("button", { name: "open chat basename" }));
+
+		await waitFor(() => {
+			expect(screen.getByTestId("session-file-workspace")).toHaveTextContent("docs/notes.txt");
+		});
 	});
 
 	it("maximizes files over the whole app window and returns to the rail", () => {

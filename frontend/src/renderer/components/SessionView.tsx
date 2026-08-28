@@ -52,11 +52,7 @@ import {
 import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
 import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
-import {
-	sessionWorkspaceFilesQueryKey,
-	sessionWorkspaceFilesQueryOptions,
-	type WorkspaceFilesResponse,
-} from "../hooks/useSessionWorkspaceFiles";
+import { sessionWorkspaceFilesQueryOptions } from "../hooks/useSessionWorkspaceFiles";
 import { matchWorkspaceFilePath } from "../lib/workspace-file-path";
 import { SHELL_PANEL_SPRING } from "../lib/motion-spring";
 import {
@@ -902,61 +898,47 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		return () => clearVisibleTerminalKind(sessionId);
 	}, [clearVisibleTerminalKind, routedTerminalTarget.kind, sessionId, setVisibleTerminalKind]);
 
-	const resolveWorkspaceFilePath = useCallback(
-		(rawPath: string) => {
-			const files =
-				queryClient.getQueryData<WorkspaceFilesResponse>(sessionWorkspaceFilesQueryKey(sessionId))
-					?.files ?? [];
-			return matchWorkspaceFilePath(rawPath, files);
+	const prepareFilesInspector = useCallback(() => {
+		setBrowserPopOutState({ sessionId, phase: "docked" });
+		setFilesPoppedOut(false);
+		setFilesChangedOnly(sessionId, true);
+		transitionInspectorView("files");
+		setInspectorOpenForSession(sessionId, true);
+	}, [sessionId, setFilesChangedOnly, setInspectorOpenForSession, transitionInspectorView]);
+
+	const fetchWorkspaceFiles = useCallback(async () => {
+		return queryClient.fetchQuery(
+			sessionWorkspaceFilesQueryOptions(sessionId, t("files.error.loadWorkspace")),
+		);
+	}, [queryClient, sessionId, t]);
+
+	const openResolvedWorkspaceFile = useCallback(
+		async (rawPath: string) => {
+			const data = await fetchWorkspaceFiles();
+			openCenterFile(matchWorkspaceFilePath(rawPath, data.files ?? []));
 		},
-		[queryClient, sessionId],
+		[fetchWorkspaceFiles, openCenterFile],
 	);
 
 	const handleOpenFiles = useCallback(() => {
-		setBrowserPopOutState({ sessionId, phase: "docked" });
-		setFilesPoppedOut(false);
-		setFilesChangedOnly(sessionId, true);
-		transitionInspectorView("files");
-		setInspectorOpenForSession(sessionId, true);
-		void queryClient.prefetchQuery(
-			sessionWorkspaceFilesQueryOptions(sessionId, t("files.error.loadWorkspace")),
-		);
-	}, [
-		queryClient,
-		sessionId,
-		setFilesChangedOnly,
-		setInspectorOpenForSession,
-		t,
-		transitionInspectorView,
-	]);
+		prepareFilesInspector();
+		void fetchWorkspaceFiles();
+	}, [fetchWorkspaceFiles, prepareFilesInspector]);
 
-	const handleOpenReviewFile = useCallback((target: { line?: number; path: string }) => {
-		setBrowserPopOutState({ sessionId, phase: "docked" });
-		setFilesPoppedOut(false);
-		setFilesChangedOnly(sessionId, true);
-		transitionInspectorView("files");
-		setInspectorOpenForSession(sessionId, true);
-		openCenterFile(resolveWorkspaceFilePath(target.path));
-		void queryClient.prefetchQuery(
-			sessionWorkspaceFilesQueryOptions(sessionId, t("files.error.loadWorkspace")),
-		);
-	}, [
-		openCenterFile,
-		queryClient,
-		resolveWorkspaceFilePath,
-		sessionId,
-		setFilesChangedOnly,
-		setInspectorOpenForSession,
-		t,
-		transitionInspectorView,
-	]);
+	const handleOpenReviewFile = useCallback(
+		(target: { line?: number; path: string }) => {
+			prepareFilesInspector();
+			void openResolvedWorkspaceFile(target.path);
+		},
+		[openResolvedWorkspaceFile, prepareFilesInspector],
+	);
 
 	const handleOpenFile = useCallback(
 		(path: string) => {
-			handleOpenFiles();
-			openCenterFile(resolveWorkspaceFilePath(path));
+			prepareFilesInspector();
+			void openResolvedWorkspaceFile(path);
 		},
-		[handleOpenFiles, openCenterFile, resolveWorkspaceFilePath],
+		[openResolvedWorkspaceFile, prepareFilesInspector],
 	);
 
 	const handleToggleFilesPopOut = useCallback(

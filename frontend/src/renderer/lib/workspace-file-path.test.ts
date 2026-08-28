@@ -26,4 +26,14 @@ describe("matchWorkspaceFilePath", () => {
 	it("falls back to the normalized request when nothing matches", () => {
 		expect(matchWorkspaceFilePath("missing.txt", files)).toBe("missing.txt");
 	});
+
+	it("disambiguates duplicate basenames with a path suffix", () => {
+		const duplicateFiles = [
+			...files,
+			{ path: "frontend/index.ts", status: "modified" as const, additions: 1, deletions: 0, binary: false, size: 12 },
+			{ path: "backend/index.ts", status: "modified" as const, additions: 1, deletions: 0, binary: false, size: 12 },
+		];
+		expect(matchWorkspaceFilePath("frontend/index.ts", duplicateFiles)).toBe("frontend/index.ts");
+		expect(matchWorkspaceFilePath("backend/index.ts", duplicateFiles)).toBe("backend/index.ts");
+	});
 });

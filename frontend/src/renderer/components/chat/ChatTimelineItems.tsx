@@ -85,6 +85,7 @@ import {
 	type ConversationItem,
 	type TurnDiff,
 } from "../../types/conversation";
+import { resolveTurnFilePath, turnFileOpenPath, turnPathHints } from "../../lib/turn-file-open-path";
 
 const timeFormatter = new Intl.DateTimeFormat(undefined, {
 	hour: "2-digit",
@@ -2379,66 +2380,6 @@ function FileLocationLabel({
 
 function fileLocationLabel(path: string, oldPath?: string): string {
 	return oldPath ? `${shortenPaths(oldPath)} → ${shortenPaths(path)}` : shortenPaths(path);
-}
-
-/**
- * Absolute paths and a worktree cwd gathered from the same turn's activities, so a
- * turn-diff basename can be shown like the Edited tooltip.
- */
-type TurnPathHints = {
-	byBase: Map<string, string | undefined>;
-	cwd?: string;
-};
-
-function rememberTurnPathHint(byBase: Map<string, string | undefined>, absolutePath: string) {
-	const base = fileBasename(absolutePath);
-	if (!byBase.has(base)) {
-		byBase.set(base, absolutePath);
-		return;
-	}
-	if (byBase.get(base) !== absolutePath) byBase.set(base, undefined);
-}
-
-function turnPathHints(items: ConversationItem[] | undefined): TurnPathHints {
-	const byBase = new Map<string, string | undefined>();
-	let cwd: string | undefined;
-	if (!items?.length) return { byBase, cwd };
-
-	for (const item of items) {
-		if (item.kind !== "activity") continue;
-		if (!cwd && item.detail?.cwd) cwd = item.detail.cwd;
-		if (item.activityKind !== "file_change") continue;
-		for (const file of fileChangeFiles(item)) {
-			if (looksAbsolutePath(file.path)) rememberTurnPathHint(byBase, file.path);
-			if (file.oldPath && looksAbsolutePath(file.oldPath)) rememberTurnPathHint(byBase, file.oldPath);
-		}
-	}
-	return { byBase, cwd };
-}
-
-function looksAbsolutePath(path: string): boolean {
-	return path.startsWith("/") || path.startsWith("~") || /^[A-Za-z]:[\\/]/.test(path);
-}
-
-/** Prefer an absolute path from the turn; otherwise join the worktree cwd. */
-function resolveTurnFilePath(path: string, hints: TurnPathHints): string {
-	if (looksAbsolutePath(path)) return path;
-	const fromBasename = hints.byBase.get(fileBasename(path));
-	if (fromBasename) return fromBasename;
-	if (hints.cwd) {
-		const rel = path.replace(/^\.\//, "");
-		return `${hints.cwd.replace(/\/$/, "")}/${rel}`;
-	}
-	return path;
-}
-
-/** Workspace-relative path to open in the Files panel from a turn diff row. */
-function turnFileOpenPath(path: string, hints: TurnPathHints): string {
-	const normalized = path.replace(/^\.\//, "");
-	if (!looksAbsolutePath(normalized)) return normalized;
-	const resolved = resolveTurnFilePath(path, hints);
-	if (!looksAbsolutePath(resolved)) return resolved.replace(/^\.\//, "");
-	return fileBasename(resolved);
 }
 
 /** Basename only — the row is too narrow for a full path; the tooltip carries that. */
