@@ -253,10 +253,7 @@ describe("useBrowserView", () => {
 		expect(result.current.closedTabs).toEqual([]);
 	});
 
-	// Regression: reopenClosedTab used to drop the entry from closedTabs before
-	// awaiting openTab, which throws BROWSER_TAB_LIMIT at the cap — losing the
-	// entry with no rollback and opening nothing.
-	it("refuses to reopen a closed tab at the tab cap, keeping the entry instead of losing it", async () => {
+	it("reopens a closed tab beyond the former tab cap", async () => {
 		const bridge = setupBridge();
 		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
 
@@ -275,8 +272,7 @@ describe("useBrowserView", () => {
 		await act(() => result.current.closeTab("t2"));
 		expect(result.current.closedTabs).toHaveLength(1);
 
-		// Simulate 16 other tabs having opened since (e.g. via agent activity),
-		// hitting MAX_BROWSER_TABS.
+		// Simulate many other tabs having opened since (e.g. via agent activity).
 		act(() =>
 			bridge.emitTabs({
 				viewId: "42:sess-1",
@@ -292,9 +288,8 @@ describe("useBrowserView", () => {
 
 		await act(() => result.current.reopenClosedTab("t2"));
 
-		expect(bridge.openTab).not.toHaveBeenCalled();
-		expect(result.current.closedTabs).toHaveLength(1);
-		expect(result.current.tabNotice).toBe("Reached the tab limit");
+		expect(bridge.openTab).toHaveBeenCalledWith({ viewId: "42:sess-1", url: "http://localhost:4173/" });
+		expect(result.current.closedTabs).toHaveLength(0);
 	});
 
 	// Regression: the same drop-before-await bug also loses the entry on any
@@ -319,7 +314,7 @@ describe("useBrowserView", () => {
 		await act(() => result.current.closeTab("t2"));
 		expect(result.current.closedTabs).toHaveLength(1);
 
-		bridge.openTab.mockRejectedValueOnce(Object.assign(new Error("Browser tab limit reached"), { code: "BROWSER_TAB_LIMIT" }));
+		bridge.openTab.mockRejectedValueOnce(new Error("Browser tab creation failed"));
 		await act(() => result.current.reopenClosedTab("t2"));
 
 		expect(result.current.closedTabs).toHaveLength(1);

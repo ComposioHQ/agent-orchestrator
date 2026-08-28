@@ -82,6 +82,7 @@ func (f *fakeStore) RecordSessionLatestUserPrompt(_ context.Context, id domain.S
 		return false, nil
 	}
 	rec.Metadata.LatestUserPrompt = prompt
+	rec.Metadata.LatestUserPromptAt = updatedAt
 	rec.UpdatedAt = updatedAt
 	f.sessions[id] = rec
 	return true, nil
@@ -164,10 +165,11 @@ func (f *fakeStore) DeleteSessionWorktrees(_ context.Context, id domain.SessionI
 }
 
 type fakeLCM struct {
-	store     *fakeStore
-	completed int
-	prepared  []string
-	cancelled []string
+	store          *fakeStore
+	completed      int
+	prepared       []string
+	cancelled      []string
+	chatBoundaries []domain.ConversationBranch
 	// terminated counts MarkTerminated calls per session id.
 	terminated map[domain.SessionID]int
 }
@@ -191,6 +193,54 @@ func (l *fakeLCM) MarkSpawned(_ context.Context, id domain.SessionID, metadata d
 	rec.Metadata = metadata
 	l.store.sessions[id] = rec
 	return nil
+}
+
+func (l *fakeLCM) MarkChatSpawned(
+	ctx context.Context,
+	id domain.SessionID,
+	metadata domain.SessionMetadata,
+	boundary domain.ConversationBranch,
+) error {
+	l.chatBoundaries = append(l.chatBoundaries, boundary)
+	return l.MarkSpawned(ctx, id, metadata)
+}
+
+func (l *fakeLCM) ApplyActivitySignal(_ context.Context, id domain.SessionID, signal ports.ActivitySignal) error {
+	rec, ok := l.store.sessions[id]
+	if !ok {
+		return ports.ErrSessionNotFound
+	}
+	if rec.IsTerminated || !signal.Valid {
+		return nil
+	}
+	if !signal.ExpectedUpdatedAt.IsZero() && !rec.UpdatedAt.Equal(signal.ExpectedUpdatedAt) {
+		return nil
+	}
+	if signal.LaunchID != "" && signal.LaunchID != rec.Metadata.RuntimeLaunchID {
+		return nil
+	}
+	if signal.ControllerGeneration != "" &&
+		(domain.NormalizeSessionMode(rec.Mode) != domain.SessionModeChat ||
+			signal.ControllerGeneration != rec.Metadata.ControllerGeneration) {
+		return nil
+	}
+	rec.Activity = domain.Activity{State: signal.State, LastActivityAt: time.Now()}
+	l.store.sessions[id] = rec
+	return nil
+}
+
+type contendedActivityLCM struct {
+	*fakeLCM
+	calls  int
+	before func(call int, id domain.SessionID, signal ports.ActivitySignal)
+}
+
+func (l *contendedActivityLCM) ApplyActivitySignal(ctx context.Context, id domain.SessionID, signal ports.ActivitySignal) error {
+	l.calls++
+	if l.before != nil {
+		l.before(l.calls, id, signal)
+	}
+	return l.fakeLCM.ApplyActivitySignal(ctx, id, signal)
 }
 
 func (l *fakeLCM) CommitControllerEpoch(
@@ -5573,7 +5623,7 @@ func TestSaveAndTeardownOne_NativeTerminationFailurePreservesWorkspace(t *testin
 	}
 	st.sessions[rec.ID] = rec
 
-	err := m.saveAndTeardownOne(ctx, rec, true)
+	err := m.saveAndTeardownOne(ctx, rec)
 	if err == nil || !strings.Contains(err.Error(), "prime stop failed") {
 		t.Fatalf("err=%v, want native termination error", err)
 	}
@@ -5600,7 +5650,7 @@ func TestSaveAndTeardownOne_UnknownHarnessSkipsNativeTerminationAndTearsDown(t *
 	}
 	st.sessions[rec.ID] = rec
 
-	if err := m.saveAndTeardownOne(ctx, rec, true); err != nil {
+	if err := m.saveAndTeardownOne(ctx, rec); err != nil {
 		t.Fatalf("saveAndTeardownOne err = %v", err)
 	}
 	if rt.destroyed != 1 || !st.sessions[rec.ID].IsTerminated {
@@ -5624,7 +5674,7 @@ func TestSaveAndTeardownOne_WorkspaceProjectNativeTerminationFailurePreservesRep
 	ws.stashRef = "refs/ao/preserved/mer-1"
 	rec := seedNativeWorkspaceProject(st, "mer-1", domain.KindWorker)
 
-	err := m.saveAndTeardownOne(ctx, rec, true)
+	err := m.saveAndTeardownOne(ctx, rec)
 	if err == nil || !strings.Contains(err.Error(), "prime stop failed") {
 		t.Fatalf("err=%v, want native termination error", err)
 	}
@@ -5647,7 +5697,7 @@ func TestSaveAndTeardownOne_WorkspaceProjectTerminatesNativeSessionOnce(t *testi
 	m.agents = singleAgent{agent: agent}
 	rec := seedNativeWorkspaceProject(st, "mer-1", domain.KindWorker)
 
-	if err := m.saveAndTeardownOne(ctx, rec, true); err != nil {
+	if err := m.saveAndTeardownOne(ctx, rec); err != nil {
 		t.Fatalf("saveAndTeardownOne err = %v", err)
 	}
 	if agent.calls != 1 {
@@ -7302,7 +7352,7 @@ func TestReconcileLive_PreservesScopedShellTerminalsWithExistingWorktree(t *test
 	}
 }
 
-func TestReconcileLive_RelaunchFailureFallsBackToCapturedTeardown(t *testing.T) {
+func TestReconcileLive_RelaunchFailureLeavesSessionExitedAndRecoverable(t *testing.T) {
 	st := newFakeStore()
 	st.projects["p1"] = domain.ProjectRecord{ID: "p1", Config: testRoleAgents()}
 	rt := &fakeRuntime{aliveByHandle: map[string]bool{}}
@@ -7324,24 +7374,147 @@ func TestReconcileLive_RelaunchFailureFallsBackToCapturedTeardown(t *testing.T) 
 	}
 	st.sessions[rec.ID] = rec
 
-	if err := m.reconcileLive(context.Background(), rec); err != nil {
-		t.Fatalf("reconcileLive: %v", err)
+	if err := m.reconcileLive(context.Background(), rec); err == nil || !strings.Contains(err.Error(), "worktree cannot be reattached") {
+		t.Fatalf("reconcileLive error = %v, want relaunch failure", err)
 	}
-	if ws.stashCalls != 1 || lcm.terminated[rec.ID] != 1 {
-		t.Fatalf("fallback must capture and terminate: stash=%d terminated=%d", ws.stashCalls, lcm.terminated[rec.ID])
+	got := st.sessions[rec.ID]
+	if got.IsTerminated || got.Activity.State != domain.ActivityExited {
+		t.Fatalf("failed relaunch session = %+v, want live/exited", got)
 	}
-	rows := st.worktrees[rec.ID]
-	if len(rows) != 1 || rows[0].PreservedRef != ws.stashRef {
-		t.Fatalf("fallback restore marker = %+v, want preserve ref %q", rows, ws.stashRef)
+	if ws.stashCalls != 0 || lcm.terminated[rec.ID] != 0 {
+		t.Fatalf("failed relaunch changed durable lifecycle: stash=%d terminated=%d", ws.stashCalls, lcm.terminated[rec.ID])
 	}
-	foundForceDestroy := false
 	for _, call := range ws.calls {
 		if call == "ForceDestroy:s1" {
-			foundForceDestroy = true
+			t.Fatalf("failed relaunch destroyed recoverable worktree; calls=%v", ws.calls)
 		}
 	}
-	if !foundForceDestroy {
-		t.Fatalf("fallback must remove the captured worktree; calls=%v", ws.calls)
+	if rows := st.worktrees[rec.ID]; len(rows) != 0 {
+		t.Fatalf("failed relaunch wrote shutdown restore markers: %+v", rows)
+	}
+}
+
+func TestReconcileLive_RuntimeFailureAfterLaunchMetadataUpdateLeavesSessionResumable(t *testing.T) {
+	st := newFakeStore()
+	st.projects["p1"] = domain.ProjectRecord{ID: "p1", Config: testRoleAgents()}
+	rt := &fakeRuntime{
+		createErr:     errors.New("runtime create failed"),
+		aliveByHandle: map[string]bool{"old": false},
+	}
+	ws := &fakeWorkspace{}
+	lcm := &fakeLCM{store: st}
+	bootUpdatedAt := time.Date(2026, time.August, 27, 16, 54, 0, 0, time.UTC)
+	launchUpdatedAt := bootUpdatedAt.Add(time.Second)
+	m := New(Deps{
+		Runtime: rt, Agents: fakeAgents{}, Workspace: ws, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: lcm,
+		BrowserCapabilities: fixedBrowserCapability("capability-1"),
+		Clock:               func() time.Time { return launchUpdatedAt },
+		LookPath:            func(string) (string, error) { return "/bin/true", nil },
+	})
+	rec := domain.SessionRecord{
+		ID: "s1", ProjectID: "p1", Harness: domain.HarnessCodex,
+		Activity:  domain.Activity{State: domain.ActivityActive, LastActivityAt: bootUpdatedAt},
+		UpdatedAt: bootUpdatedAt,
+		Metadata: domain.SessionMetadata{
+			Branch: "ao/s1/root", WorkspacePath: "/wt/s1", RuntimeHandleID: "old",
+			RuntimeLaunchID: "old-launch", AgentSessionID: "native-conversation-1",
+		},
+	}
+	st.sessions[rec.ID] = rec
+
+	err := m.reconcileLive(context.Background(), rec)
+	if err == nil || !strings.Contains(err.Error(), "runtime create failed") {
+		t.Fatalf("reconcileLive error = %v, want runtime create failure", err)
+	}
+	failed := st.sessions[rec.ID]
+	if failed.IsTerminated || failed.Activity.State != domain.ActivityExited {
+		t.Fatalf("failed relaunch session = %+v, want live/exited", failed)
+	}
+	if failed.Metadata.BrowserCapabilityVerifier != "verifier-1" {
+		t.Fatalf("browser capability verifier = %q, want launch metadata persisted", failed.Metadata.BrowserCapabilityVerifier)
+	}
+	if !failed.UpdatedAt.Equal(launchUpdatedAt) {
+		t.Fatalf("UpdatedAt = %v, want launch metadata timestamp %v", failed.UpdatedAt, launchUpdatedAt)
+	}
+	if failed.Metadata.AgentSessionID != "native-conversation-1" || failed.Metadata.WorkspacePath != "/wt/s1" {
+		t.Fatalf("native identity/worktree changed after failed relaunch: %+v", failed.Metadata)
+	}
+
+	// The failed startup attempt must land in the ordinary Resume Agent state,
+	// even though launch preparation advanced UpdatedAt before runtime.Create.
+	rt.createErr = nil
+	if _, err := m.ResumeAgentWithMode(context.Background(), rec.ID); err != nil {
+		t.Fatalf("ResumeAgentWithMode after dependency recovery: %v", err)
+	}
+	resumed := st.sessions[rec.ID]
+	if resumed.IsTerminated || resumed.Metadata.AgentSessionID != "native-conversation-1" {
+		t.Fatalf("resumed session lost durable identity: %+v", resumed)
+	}
+}
+
+func TestPreserveFailedReconcileRelaunchRetriesContendedCAS(t *testing.T) {
+	st := newFakeStore()
+	now := time.Date(2026, time.August, 27, 16, 54, 0, 0, time.UTC)
+	rec := domain.SessionRecord{
+		ID: "s1", Activity: domain.Activity{State: domain.ActivityActive}, UpdatedAt: now,
+		Metadata: domain.SessionMetadata{RuntimeHandleID: "old", RuntimeLaunchID: "old-launch"},
+	}
+	st.sessions[rec.ID] = rec
+	lcm := &contendedActivityLCM{fakeLCM: &fakeLCM{store: st}}
+	lcm.before = func(call int, id domain.SessionID, signal ports.ActivitySignal) {
+		if call != 1 {
+			return
+		}
+		current := st.sessions[id]
+		current.UpdatedAt = signal.ExpectedUpdatedAt.Add(time.Nanosecond)
+		st.sessions[id] = current
+	}
+	m := New(Deps{Store: st, Lifecycle: lcm})
+
+	committed, err := m.preserveFailedReconcileRelaunch(context.Background(), rec)
+	if err != nil {
+		t.Fatalf("preserveFailedReconcileRelaunch: %v", err)
+	}
+	if committed {
+		t.Fatal("failed controller was reported committed")
+	}
+	if lcm.calls != 2 {
+		t.Fatalf("ApplyActivitySignal calls = %d, want retry after one CAS loss", lcm.calls)
+	}
+	if got := st.sessions[rec.ID].Activity.State; got != domain.ActivityExited {
+		t.Fatalf("activity = %q, want exited after retry", got)
+	}
+}
+
+func TestPreserveFailedReconcileRelaunchBoundsPersistentCASContention(t *testing.T) {
+	st := newFakeStore()
+	now := time.Date(2026, time.August, 27, 16, 54, 0, 0, time.UTC)
+	rec := domain.SessionRecord{
+		ID: "s1", Activity: domain.Activity{State: domain.ActivityActive}, UpdatedAt: now,
+		Metadata: domain.SessionMetadata{RuntimeHandleID: "old", RuntimeLaunchID: "old-launch"},
+	}
+	st.sessions[rec.ID] = rec
+	lcm := &contendedActivityLCM{fakeLCM: &fakeLCM{store: st}}
+	lcm.before = func(_ int, id domain.SessionID, signal ports.ActivitySignal) {
+		current := st.sessions[id]
+		current.UpdatedAt = signal.ExpectedUpdatedAt.Add(time.Nanosecond)
+		st.sessions[id] = current
+	}
+	m := New(Deps{Store: st, Lifecycle: lcm})
+
+	committed, err := m.preserveFailedReconcileRelaunch(context.Background(), rec)
+	if err == nil || !strings.Contains(err.Error(), "session changed") {
+		t.Fatalf("preserveFailedReconcileRelaunch error = %v, want bounded contention error", err)
+	}
+	if committed {
+		t.Fatal("contended failed controller was reported committed")
+	}
+	if lcm.calls != 3 {
+		t.Fatalf("ApplyActivitySignal calls = %d, want bounded 3 attempts", lcm.calls)
+	}
+	if got := st.sessions[rec.ID].Activity.State; got != domain.ActivityActive {
+		t.Fatalf("activity = %q, want unchanged after persistent contention", got)
 	}
 }
 
@@ -7408,7 +7581,8 @@ func TestReconcileLive_AliveSessionAdoptedNoop(t *testing.T) {
 func TestReconcile_LivePassUsesConfiguredConcurrency(t *testing.T) {
 	st := newFakeStore()
 	st.projects["p1"] = domain.ProjectRecord{ID: "p1", Config: testRoleAgents()}
-	for _, id := range []domain.SessionID{"s1", "s2"} {
+	ids := []domain.SessionID{"s1", "s2", "s3"}
+	for _, id := range ids {
 		st.sessions[id] = domain.SessionRecord{
 			ID: id, ProjectID: "p1", Harness: domain.HarnessClaudeCode,
 			Metadata: domain.SessionMetadata{
@@ -7443,9 +7617,21 @@ func TestReconcile_LivePassUsesConfiguredConcurrency(t *testing.T) {
 			t.Fatalf("live probes did not overlap; entered = %v", seen)
 		}
 	}
+	// The third session is still queued behind the two blocked probes. It must
+	// already be fenced so neither input nor the periodic reaper can mutate it.
+	for _, id := range ids {
+		if !m.SessionMutationInProgress(id) {
+			t.Fatalf("session %s was not lifecycle-fenced during startup reconcile", id)
+		}
+	}
 	releaseAll()
 	if err := <-done; err != nil {
 		t.Fatalf("Reconcile: %v", err)
+	}
+	for _, id := range ids {
+		if m.SessionMutationInProgress(id) {
+			t.Fatalf("session %s reconcile fence leaked after completion", id)
+		}
 	}
 }
 
@@ -7834,6 +8020,9 @@ func TestSend_RecordsDeliveredUserInput(t *testing.T) {
 	}
 	if got := st.sessions["s1"].Metadata.LatestUserPrompt; got != "continue with the migration" {
 		t.Fatalf("LatestUserPrompt = %q, want delivered user input", got)
+	}
+	if got := st.sessions["s1"].Metadata.LatestUserPromptAt; got.IsZero() {
+		t.Fatal("LatestUserPromptAt is zero after delivered user input")
 	}
 }
 
