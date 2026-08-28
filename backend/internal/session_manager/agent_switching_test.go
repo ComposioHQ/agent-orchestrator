@@ -409,7 +409,7 @@ func (s *switchTestStore) ActivateChatAgentSwitchTarget(_ context.Context, activ
 	if !ok || rec.IsTerminated || rec.Activity.State != domain.ActivityExited ||
 		domain.NormalizeSessionMode(rec.Mode) != domain.SessionModeChat ||
 		rec.Harness != activation.SourceHarness ||
-		rec.Metadata.ControllerGeneration != activation.ControllerGeneration {
+		rec.Metadata.ControllerGeneration != activation.ExpectedSourceControllerGeneration {
 		return false, nil
 	}
 	native, ok := s.native[activation.TargetNativeSessionRef]
@@ -499,11 +499,6 @@ func (l *switchAgentChatLauncher) StartChat(_ context.Context, cfg ChatStart) (C
 		ProviderConversationID: providerID,
 		ControllerGeneration:   generation,
 	}
-	l.store.mu.Lock()
-	rec := l.store.sessions[cfg.SessionID]
-	rec.Metadata.ControllerGeneration = generation
-	l.store.sessions[cfg.SessionID] = rec
-	l.store.mu.Unlock()
 	if cfg.ControllerReady != nil {
 		if _, err := cfg.ControllerReady(started); err != nil {
 			return ChatStarted{}, err
@@ -909,7 +904,7 @@ func TestSwitchAgentAdmitsChatSessionWithoutRuntimeHandle(t *testing.T) {
 	}
 }
 
-func TestSwitchAgentChatSessionKeepsChatModeAndNeedsNoRuntime(t *testing.T) {
+func TestAgentSwitchChatControllerReadyUsesSourceGenerationCAS(t *testing.T) {
 	manager, store, _ := newSwitchTestManager(t, &fakeRestartRuntime{fakeRuntime: &fakeRuntime{}})
 	rec := store.sessions["proj-1"]
 	rec.Mode = domain.SessionModeChat

@@ -353,7 +353,8 @@ func (m *Manager) executeChatAgentSwitch(
 			activation := domain.AgentSwitchChatTargetActivation{
 				SwitchID: result.ID, SessionID: id,
 				SourceHarness: rec.Harness, SourceGenerationID: result.SourceGenerationID,
-				TargetHarness: cfg.TargetHarness, TargetNativeSessionRef: stored.ID,
+				ExpectedSourceControllerGeneration: rec.Metadata.ControllerGeneration,
+				TargetHarness:                      cfg.TargetHarness, TargetNativeSessionRef: stored.ID,
 				TargetGenerationID:     targetGeneration,
 				ProviderConversationID: started.ProviderConversationID,
 				ControllerGeneration:   started.ControllerGeneration,
@@ -720,6 +721,6 @@ func (m *Manager) resolveChatTargetActivationOutcome(
 		domain.NormalizeSessionMode(session.Mode) == domain.SessionModeChat &&
 		session.Harness == activation.SourceHarness &&
 		session.Metadata.ProviderConversationID == source.Metadata.ProviderConversationID &&
-		session.Metadata.ControllerGeneration == activation.ControllerGeneration
+		session.Metadata.ControllerGeneration == activation.ExpectedSourceControllerGeneration
 	return current, false, sourceStillOwns, nil
 }

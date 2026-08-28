@@ -632,10 +632,11 @@ func (s *Store) ActivateChatAgentSwitchTarget(ctx context.Context, activation do
 
 	n, err := q.ActivateChatSessionAgentSwitchTarget(ctx, gen.ActivateChatSessionAgentSwitchTargetParams{
 		TargetHarness: activation.TargetHarness, ActivatedAt: activation.ActivatedAt,
-		TargetNativeSessionID:  targetNative.NativeSessionID,
-		ProviderConversationID: activation.ProviderConversationID,
-		ControllerGeneration:   activation.ControllerGeneration,
-		SessionID:              activation.SessionID, ExpectedSourceHarness: activation.SourceHarness,
+		TargetNativeSessionID:      targetNative.NativeSessionID,
+		ProviderConversationID:     activation.ProviderConversationID,
+		TargetControllerGeneration: activation.ControllerGeneration,
+		SessionID:                  activation.SessionID, ExpectedSourceHarness: activation.SourceHarness,
+		ExpectedSourceControllerGeneration: activation.ExpectedSourceControllerGeneration,
 	})
 	if err != nil {
 		return false, fmt.Errorf("activate Chat agent switch target %s: transfer session owner: %w", activation.SwitchID, err)
@@ -813,6 +814,7 @@ func validateAgentSwitchTargetActivation(activation domain.AgentSwitchTargetActi
 
 func validateAgentSwitchChatTargetActivation(activation domain.AgentSwitchChatTargetActivation) error {
 	if activation.SwitchID == "" || activation.SessionID == "" || activation.SourceGenerationID == "" ||
+		strings.TrimSpace(activation.ExpectedSourceControllerGeneration) == "" ||
 		activation.TargetNativeSessionRef == "" || activation.TargetGenerationID == "" ||
 		strings.TrimSpace(activation.ProviderConversationID) == "" ||
 		strings.TrimSpace(activation.ControllerGeneration) == "" || activation.ActivatedAt.IsZero() {

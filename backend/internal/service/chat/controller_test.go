@@ -2552,6 +2552,49 @@ func TestControllerReadyRunsBeforeStreamProjection(t *testing.T) {
 	t.Fatalf("stream closure was not projected after controller-ready: %+v", activity.snapshot())
 }
 
+func TestSwitchControllerReadyLeavesSourceGenerationForAtomicActivation(t *testing.T) {
+	st := openStore(t)
+	ctx := context.Background()
+	record, found, err := st.GetSession(ctx, testSession)
+	if err != nil || !found {
+		t.Fatalf("get source Chat session: found=%v err=%v", found, err)
+	}
+	record.Harness = domain.HarnessClaudeCode
+	record.Metadata.ProviderConversationID = "source-provider"
+	record.Metadata.ControllerGeneration = "source-generation"
+	if err := st.UpdateSession(ctx, record); err != nil {
+		t.Fatalf("seed source Chat owner: %v", err)
+	}
+
+	conv := newFakeConversation()
+	readyErr := errors.New("stop after source-generation assertion")
+	svc := chatsvc.New(chatsvc.Options{
+		Store: st, Sessions: st,
+		Drivers:  fakeRegistry{driver: fakeDriver{conv: conv}},
+		Activity: &recordingActivity{}, Log: slog.New(slog.DiscardHandler),
+		NewID: func() string { return "switch-controller-ready" },
+	})
+
+	_, err = svc.Start(ctx, chatsvc.StartConfig{
+		SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex,
+		WorkspacePath: t.TempDir(), ProviderScopeID: "switch-1:provider",
+		ControllerGeneration: "target-generation",
+		ControllerReady: func(chatsvc.StartResult) (chatsvc.ControllerCommit, error) {
+			current, found, readErr := st.GetSession(ctx, testSession)
+			if readErr != nil || !found {
+				t.Fatalf("get owner in ControllerReady: found=%v err=%v", found, readErr)
+			}
+			if current.Metadata.ControllerGeneration != "source-generation" {
+				t.Fatalf("ControllerReady preclaimed generation %q, want source-generation", current.Metadata.ControllerGeneration)
+			}
+			return chatsvc.ControllerCommit{}, readyErr
+		},
+	})
+	if !errors.Is(err, readyErr) {
+		t.Fatalf("Start error = %v, want ControllerReady assertion failure", err)
+	}
+}
+
 func TestControllerReadyDurableSettingsRefreshBeforeFirstDispatch(t *testing.T) {
 	st := openStore(t)
 	ctx := context.Background()

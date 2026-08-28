@@ -413,19 +413,20 @@ type AgentSwitchSourceStopConfirmation struct {
 }
 
 // AgentSwitchChatTargetActivation transfers a stopped Chat session to a fresh
-// structured controller. Chat Service has already claimed ControllerGeneration
-// before this command runs, but it has not started consuming provider events.
+// structured controller. The stopped source controller generation remains the
+// durable owner until this command atomically commits the target generation.
 type AgentSwitchChatTargetActivation struct {
-	SwitchID               AgentSwitchID
-	SessionID              SessionID
-	SourceHarness          AgentHarness
-	SourceGenerationID     AgentGenerationID
-	TargetHarness          AgentHarness
-	TargetNativeSessionRef AgentNativeSessionID
-	TargetGenerationID     AgentGenerationID
-	ProviderConversationID string
-	ControllerGeneration   string
-	ActivatedAt            time.Time
+	SwitchID                           AgentSwitchID
+	SessionID                          SessionID
+	SourceHarness                      AgentHarness
+	SourceGenerationID                 AgentGenerationID
+	ExpectedSourceControllerGeneration string
+	TargetHarness                      AgentHarness
+	TargetNativeSessionRef             AgentNativeSessionID
+	TargetGenerationID                 AgentGenerationID
+	ProviderConversationID             string
+	ControllerGeneration               string
+	ActivatedAt                        time.Time
 }
 
 var (

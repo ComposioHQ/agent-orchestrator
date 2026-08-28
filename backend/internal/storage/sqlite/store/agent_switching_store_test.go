@@ -34,7 +34,7 @@ func advanceAgentSwitchFixtureWithMutation(ctx context.Context, t *testing.T, s 
 	}
 }
 
-func TestActivateChatAgentSwitchTargetKeepsRuntimeEmptyAcrossNativeSwitchBack(t *testing.T) {
+func TestActivateChatAgentSwitchTargetMovesSourceGenerationToTarget(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	seedProject(t, s, "chat-switch")
@@ -133,14 +133,12 @@ func TestActivateChatAgentSwitchTargetKeepsRuntimeEmptyAcrossNativeSwitchBack(t 
 	advanceAgentSwitchFixtureWithMutation(ctx, t, s, &sw, domain.AgentSwitchStartingTarget, now.Add(3*time.Second), func(next *domain.AgentSwitch) {
 		next.TargetNativeSessionRef = &target.ID
 	})
-	if err := s.ClaimChatControllerGeneration(ctx, session.ID, "target-chat-generation", now.Add(4*time.Second)); err != nil {
-		t.Fatalf("claim target Chat generation: %v", err)
-	}
 	activatedAt := now.Add(5 * time.Second)
 	if ok, err := s.ActivateChatAgentSwitchTarget(ctx, domain.AgentSwitchChatTargetActivation{
 		SwitchID: sw.ID, SessionID: session.ID,
 		SourceHarness: domain.HarnessClaudeCode, SourceGenerationID: "source-chat-generation",
-		TargetHarness: domain.HarnessCodex, TargetNativeSessionRef: target.ID,
+		ExpectedSourceControllerGeneration: "source-chat-generation",
+		TargetHarness:                      domain.HarnessCodex, TargetNativeSessionRef: target.ID,
 		TargetGenerationID:     "target-chat-generation",
 		ProviderConversationID: "target-chat-native", ControllerGeneration: "target-chat-generation",
 		ActivatedAt: activatedAt,
@@ -283,13 +281,11 @@ func TestActivateChatAgentSwitchTargetKeepsRuntimeEmptyAcrossNativeSwitchBack(t 
 	advanceAgentSwitchFixtureWithMutation(ctx, t, s, &returnSwitch, domain.AgentSwitchStartingTarget, now.Add(13*time.Second), func(next *domain.AgentSwitch) {
 		next.TargetNativeSessionRef = &returnTarget.ID
 	})
-	if err := s.ClaimChatControllerGeneration(ctx, session.ID, "return-chat-generation", now.Add(14*time.Second)); err != nil {
-		t.Fatalf("claim return Chat generation: %v", err)
-	}
 	if ok, err := s.ActivateChatAgentSwitchTarget(ctx, domain.AgentSwitchChatTargetActivation{
 		SwitchID: returnSwitch.ID, SessionID: session.ID,
 		SourceHarness: domain.HarnessCodex, SourceGenerationID: "target-chat-generation",
-		TargetHarness: domain.HarnessClaudeCode, TargetNativeSessionRef: returnTarget.ID,
+		ExpectedSourceControllerGeneration: "target-chat-generation",
+		TargetHarness:                      domain.HarnessClaudeCode, TargetNativeSessionRef: returnTarget.ID,
 		TargetGenerationID:     "return-chat-generation",
 		ProviderConversationID: "source-chat-edited-native", ControllerGeneration: "return-chat-generation",
 		ActivatedAt: now.Add(15 * time.Second),

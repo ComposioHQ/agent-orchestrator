@@ -51,45 +51,47 @@ func (q *Queries) AcknowledgeAgentSwitchTarget(ctx context.Context, arg Acknowle
 const activateChatSessionAgentSwitchTarget = `-- name: ActivateChatSessionAgentSwitchTarget :execrows
 UPDATE sessions SET
     harness = ?1,
+    controller_generation = ?2,
+    provider_conversation_id = ?3,
+    agent_session_id = ?4,
     activity_state = 'idle',
-    activity_last_at = ?2,
+    activity_last_at = ?5,
     first_signal_at = NULL,
     runtime_handle_id = '',
     runtime_launch_id = '',
-    agent_session_id = ?3,
     agent_session_id_launch_id = '',
     native_transcript_path = '',
-    provider_conversation_id = ?4,
-    controller_generation = ?5,
-    updated_at = ?2
+    updated_at = ?5
 WHERE id = ?6
   AND is_terminated = 0
   AND session_mode = 'chat'
   AND activity_state = 'exited'
   AND harness = ?7
-  AND controller_generation = ?5
-  AND activity_last_at <= ?2
+  AND controller_generation = ?8
+  AND activity_last_at <= ?5
 `
 
 type ActivateChatSessionAgentSwitchTargetParams struct {
-	TargetHarness          domain.AgentHarness
-	ActivatedAt            time.Time
-	TargetNativeSessionID  string
-	ProviderConversationID string
-	ControllerGeneration   string
-	SessionID              domain.SessionID
-	ExpectedSourceHarness  domain.AgentHarness
+	TargetHarness                      domain.AgentHarness
+	TargetControllerGeneration         string
+	ProviderConversationID             string
+	TargetNativeSessionID              string
+	ActivatedAt                        time.Time
+	SessionID                          domain.SessionID
+	ExpectedSourceHarness              domain.AgentHarness
+	ExpectedSourceControllerGeneration string
 }
 
 func (q *Queries) ActivateChatSessionAgentSwitchTarget(ctx context.Context, arg ActivateChatSessionAgentSwitchTargetParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, activateChatSessionAgentSwitchTarget,
 		arg.TargetHarness,
-		arg.ActivatedAt,
-		arg.TargetNativeSessionID,
+		arg.TargetControllerGeneration,
 		arg.ProviderConversationID,
-		arg.ControllerGeneration,
+		arg.TargetNativeSessionID,
+		arg.ActivatedAt,
 		arg.SessionID,
 		arg.ExpectedSourceHarness,
+		arg.ExpectedSourceControllerGeneration,
 	)
 	if err != nil {
 		return 0, err
