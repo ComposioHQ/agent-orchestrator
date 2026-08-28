@@ -5,11 +5,11 @@ import (
 	"time"
 )
 
-// TestMigration0110DownPreservesKimiAndPiUsage catches rolling back Qwen by
+// TestMigration0117DownPreservesKimiAndPiUsage catches rolling back Qwen by
 // deleting sibling-provider usage owned by still-applied migrations.
-func TestMigration0110DownPreservesKimiAndPiUsage(t *testing.T) {
+func TestMigration0117DownPreservesKimiAndPiUsage(t *testing.T) {
 	db := openTestDB(t)
-	upTo(t, db, 110)
+	upTo(t, db, 117)
 	now := time.Date(2026, 8, 24, 10, 0, 0, 0, time.UTC)
 	if _, err := db.Exec(`INSERT INTO projects (id, path, display_name, registered_at) VALUES ('usage-migration', '/tmp/usage-migration', 'usage', ?)`, now); err != nil {
 		t.Fatal(err)
@@ -30,17 +30,19 @@ func TestMigration0110DownPreservesKimiAndPiUsage(t *testing.T) {
 			t.Fatalf("seed %s source: %v", harness, err)
 		}
 		sourceID, _ := result.LastInsertId()
-		result, err = db.Exec(`INSERT INTO model_usage_events (binding_id, usage_source_id, provider_id, model_id, input_tokens, input_provenance, cached_input_tokens, cached_input_provenance, uncached_input_tokens, uncached_input_provenance, output_tokens, output_provenance, source_event_key, created_at) VALUES (?, ?, 'openai', 'model', 3, 'reported', 1, 'reported', 2, 'reported', 1, 'reported', ?, ?)`, bindingID, sourceID, "event-"+harness, now)
+		_, err = db.Exec(`INSERT INTO model_usage_events (
+            binding_id, usage_source_id, provider_id, model_id,
+            usage_measurement_kind, input_tokens, cached_input_tokens,
+            uncached_input_tokens, output_tokens, provider_usage_json,
+            source_event_key, created_at
+        ) VALUES (?, ?, 'openai', 'model', 'native_reported', 3, 1, 2, 1,
+                  '{"totalTokens":4}', ?, ?)`, bindingID, sourceID, "event-"+harness, now)
 		if err != nil {
 			t.Fatalf("seed %s event: %v", harness, err)
 		}
-		eventID, _ := result.LastInsertId()
-		if _, err := db.Exec(`INSERT INTO openai_usage_event_details (event_id, openai_reported_total_tokens) VALUES (?, 4)`, eventID); err != nil {
-			t.Fatalf("seed %s details: %v", harness, err)
-		}
 	}
 
-	downTo(t, db, 107)
+	downTo(t, db, 116)
 	counts := map[string]int{}
 	for _, harness := range harnesses {
 		var count int

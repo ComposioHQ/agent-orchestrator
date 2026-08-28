@@ -18,6 +18,7 @@ CREATE TABLE usage_bindings_next (
     state              TEXT NOT NULL CHECK (state IN ('discovering', 'active', 'finalizing', 'complete', 'partial')),
     last_error_code    TEXT NOT NULL DEFAULT '',
     updated_at         TIMESTAMP NOT NULL,
+    provider_hint      TEXT NOT NULL DEFAULT '',
     UNIQUE (session_id, harness, native_root_id)
 );
 
@@ -46,7 +47,7 @@ CREATE TABLE usage_sources_next (
 
 INSERT INTO usage_bindings_next
 SELECT id, session_id, harness, native_root_id, initial_model_id,
-       state, last_error_code, updated_at
+       state, last_error_code, updated_at, provider_hint
 FROM usage_bindings;
 
 INSERT INTO usage_sources_next
@@ -101,18 +102,6 @@ DROP TRIGGER IF EXISTS usage_bindings_cdc_insert;
 DROP TRIGGER IF EXISTS usage_bindings_cdc_update;
 DROP TRIGGER IF EXISTS usage_sources_cdc_update;
 
-DELETE FROM anthropic_usage_event_details
-WHERE event_id IN (
-    SELECT event.id FROM model_usage_events event
-    JOIN usage_bindings binding ON binding.id = event.binding_id
-    WHERE binding.harness = 'qwen'
-);
-DELETE FROM openai_usage_event_details
-WHERE event_id IN (
-    SELECT event.id FROM model_usage_events event
-    JOIN usage_bindings binding ON binding.id = event.binding_id
-    WHERE binding.harness = 'qwen'
-);
 DELETE FROM model_usage_events
 WHERE binding_id IN (
     SELECT id FROM usage_bindings WHERE harness = 'qwen'
@@ -127,6 +116,7 @@ CREATE TABLE usage_bindings_previous (
     state              TEXT NOT NULL CHECK (state IN ('discovering', 'active', 'finalizing', 'complete', 'partial')),
     last_error_code    TEXT NOT NULL DEFAULT '',
     updated_at         TIMESTAMP NOT NULL,
+    provider_hint      TEXT NOT NULL DEFAULT '',
     UNIQUE (session_id, harness, native_root_id)
 );
 
@@ -155,7 +145,7 @@ CREATE TABLE usage_sources_previous (
 
 INSERT INTO usage_bindings_previous
 SELECT id, session_id, harness, native_root_id, initial_model_id,
-       state, last_error_code, updated_at
+       state, last_error_code, updated_at, provider_hint
 FROM usage_bindings
 WHERE harness IN ('claude-code', 'codex', 'kimi', 'pi');
 

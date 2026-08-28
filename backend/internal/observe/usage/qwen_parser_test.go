@@ -26,15 +26,18 @@ func TestParseQwenUsageForBoundSession(t *testing.T) {
 		event.CreatedAt != time.Date(2026, 8, 9, 10, 0, 0, 0, time.UTC) || event.SourceEventKey == "" {
 		t.Fatalf("event = %+v", event)
 	}
-	assertQwenMetric(t, "input", event.Tokens.InputTokens, 30, event.Tokens.Provenance.InputTokens, domain.UsageMetricReported)
-	assertQwenMetric(t, "cached input", event.Tokens.CachedInputTokens, 9, event.Tokens.Provenance.CachedInputTokens, domain.UsageMetricReported)
-	assertQwenMetric(t, "uncached input", event.Tokens.UncachedInputTokens, 21, event.Tokens.Provenance.UncachedInputTokens, domain.UsageMetricDerived)
-	assertQwenMetric(t, "output", event.Tokens.OutputTokens, 16, event.Tokens.Provenance.OutputTokens, domain.UsageMetricReported)
-	details := event.ProviderDetails.OpenAI
-	if details == nil || details.ReasoningOutputTokens == nil || *details.ReasoningOutputTokens != 4 ||
-		details.ReportedTotalTokens == nil || *details.ReportedTotalTokens != 46 ||
-		event.ProviderDetails.Anthropic != nil {
-		t.Fatalf("provider details = %+v", event.ProviderDetails)
+	if tokenValue(event.Tokens.InputTokens) != 30 ||
+		tokenValue(event.Tokens.CachedInputTokens) != 9 ||
+		tokenValue(event.Tokens.UncachedInputTokens) != 21 ||
+		tokenValue(event.Tokens.OutputTokens) != 16 {
+		t.Fatalf("tokens = %+v", event.Tokens)
+	}
+	if event.MeasurementKind != domain.UsageMeasurementNativeReported {
+		t.Fatalf("measurement kind = %q, want native_reported", event.MeasurementKind)
+	}
+	if providerUsageTokens(t, event.ProviderUsageJSON, "thoughtsTokens") != 4 ||
+		providerUsageTokens(t, event.ProviderUsageJSON, "totalTokens") != 46 {
+		t.Fatalf("provider usage = %s", event.ProviderUsageJSON)
 	}
 }
 
@@ -59,19 +62,5 @@ func TestParseQwenAllowsOmittedTotalTokens(t *testing.T) {
 	result := parseRecords(source, []jsonlRecord{record}, 100, time.Now())
 	if result.err != nil || len(result.Events) != 1 {
 		t.Fatalf("result = %+v", result)
-	}
-}
-
-func assertQwenMetric(
-	t *testing.T,
-	name string,
-	value *int64,
-	want int64,
-	provenance domain.UsageMetricProvenance,
-	wantProvenance domain.UsageMetricProvenance,
-) {
-	t.Helper()
-	if value == nil || *value != want || provenance != wantProvenance {
-		t.Fatalf("%s = %v (%s), want %d (%s)", name, value, provenance, want, wantProvenance)
 	}
 }

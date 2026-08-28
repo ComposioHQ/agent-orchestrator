@@ -79,12 +79,60 @@ func DefaultSourceRoots(ctx context.Context) (SourceRoots, error) {
 	if codexHome == "" {
 		codexHome = filepath.Join(home, ".codex")
 	}
+	qwenRuntime := qwenRuntimeBaseDir(home)
 	return SourceRoots{
 		ClaudeProjects: filepath.Join(home, ".claude", "projects"),
 		CodexSessions:  filepath.Join(codexHome, "sessions"),
 		CodexArchived:  filepath.Join(codexHome, "archived_sessions"),
-		QwenUsage:      filepath.Join(home, ".qwen", "usage"),
+		QwenUsage:      filepath.Join(qwenRuntime, "usage"),
 	}, nil
+}
+
+func qwenRuntimeBaseDir(home string) string {
+	if runtimeDir := strings.TrimSpace(os.Getenv("QWEN_RUNTIME_DIR")); runtimeDir != "" {
+		return resolveQwenStoragePath(runtimeDir, home)
+	}
+
+	qwenHome := filepath.Join(home, ".qwen")
+	if configuredHome := strings.TrimSpace(os.Getenv("QWEN_HOME")); configuredHome != "" {
+		qwenHome = resolveQwenStoragePath(configuredHome, home)
+	}
+
+	data, err := os.ReadFile(filepath.Join(qwenHome, "settings.json"))
+	if err == nil {
+		var settings struct {
+			Advanced struct {
+				RuntimeOutputDir string `json:"runtimeOutputDir"`
+			} `json:"advanced"`
+		}
+		if json.Unmarshal(data, &settings) == nil {
+			if runtimeDir := strings.TrimSpace(settings.Advanced.RuntimeOutputDir); runtimeDir != "" {
+				return resolveQwenStoragePath(runtimeDir, home)
+			}
+		}
+	}
+	return qwenHome
+}
+
+func resolveQwenStoragePath(path, home string) string {
+	path = strings.TrimSpace(path)
+	if path == "~" {
+		return home
+	}
+	if strings.HasPrefix(path, "~/") || strings.HasPrefix(path, `~\`) {
+		segments := strings.FieldsFunc(path[2:], func(r rune) bool {
+			return r == '/' || r == '\\'
+		})
+		return filepath.Join(append([]string{home}, segments...)...)
+	}
+	if filepath.IsAbs(path) {
+		return filepath.Clean(path)
+	}
+	resolved, err := filepath.Abs(path)
+	if err != nil {
+		return filepath.Clean(path)
+	}
+	return resolved
 }
 
 type collectorStore interface {

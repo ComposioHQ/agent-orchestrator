@@ -43,23 +43,25 @@ func parseQwen(source domain.UsageSourceContext, records []jsonlRecord, result *
 			recordMalformed(result)
 			continue
 		}
-		reportedTotal := int64(0)
-		if native.TotalTokens != nil {
-			reportedTotal = *native.TotalTokens
+		computedTotal, ok := sumNonNegative(native.InputTokens, output)
+		if !ok || native.TotalTokens != nil && (*native.TotalTokens < 0 || *native.TotalTokens != computedTotal) {
+			recordMalformed(result)
+			continue
 		}
-		tokens, details, ok := normalizeOpenAIUsage(
-			native.InputTokens, native.CachedTokens, 0, output, native.ThoughtsTokens, reportedTotal,
+		tokens, ok := normalizeOpenAIUsage(
+			native.InputTokens, native.CachedTokens, 0, output,
 		)
 		if !ok {
 			recordMalformed(result)
 			continue
 		}
 		event := domain.ModelUsageEvent{
-			ProviderID:      domain.UsageProviderOpenAI,
-			ModelID:         model,
-			Tokens:          tokens,
-			ProviderDetails: domain.UsageProviderDetails{OpenAI: &details},
-			CreatedAt:       parseUsageTimestamp(native.Timestamp),
+			ProviderID:        domain.UsageProviderOpenAI,
+			ModelID:           model,
+			MeasurementKind:   domain.UsageMeasurementNativeReported,
+			Tokens:            tokens,
+			ProviderUsageJSON: boundedProviderUsage(record.Data),
+			CreatedAt:         parseUsageTimestamp(native.Timestamp),
 			SourceEventKey: stableSourceEventKey(
 				"qwen", source.NativeRootID, identity, model,
 			),

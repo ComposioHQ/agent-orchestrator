@@ -2,6 +2,8 @@ package usage
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -13,11 +15,67 @@ func TestDefaultSourceRootsIncludesQwenUsage(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("CODEX_HOME", "")
+	t.Setenv("QWEN_HOME", "")
+	t.Setenv("QWEN_RUNTIME_DIR", "")
 
 	got, err := DefaultSourceRoots(context.Background())
 	mustNoError(t, err)
 	if got.QwenUsage != filepath.Join(home, ".qwen", "usage") {
 		t.Fatalf("Qwen usage root = %q", got.QwenUsage)
+	}
+}
+
+func TestDefaultSourceRootsUsesQwenHome(t *testing.T) {
+	home := t.TempDir()
+	qwenHome := filepath.Join(t.TempDir(), "qwen-home")
+	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", "")
+	t.Setenv("QWEN_HOME", qwenHome)
+	t.Setenv("QWEN_RUNTIME_DIR", "")
+
+	got, err := DefaultSourceRoots(context.Background())
+	mustNoError(t, err)
+	if got.QwenUsage != filepath.Join(qwenHome, "usage") {
+		t.Fatalf("Qwen usage root = %q, want QWEN_HOME usage", got.QwenUsage)
+	}
+}
+
+func TestDefaultSourceRootsUsesConfiguredQwenRuntimeDirectory(t *testing.T) {
+	home := t.TempDir()
+	qwenHome := filepath.Join(t.TempDir(), "qwen-home")
+	runtimeDir := filepath.Join(t.TempDir(), "qwen-runtime")
+	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", "")
+	t.Setenv("QWEN_HOME", qwenHome)
+	t.Setenv("QWEN_RUNTIME_DIR", "")
+	if err := os.MkdirAll(qwenHome, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	settings := []byte(`{"advanced":{"runtimeOutputDir":` + fmt.Sprintf("%q", runtimeDir) + `}}`)
+	if err := os.WriteFile(filepath.Join(qwenHome, "settings.json"), settings, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := DefaultSourceRoots(context.Background())
+	mustNoError(t, err)
+	if got.QwenUsage != filepath.Join(runtimeDir, "usage") {
+		t.Fatalf("Qwen usage root = %q, want configured runtime usage", got.QwenUsage)
+	}
+}
+
+func TestDefaultSourceRootsQwenRuntimeEnvironmentTakesPrecedence(t *testing.T) {
+	home := t.TempDir()
+	qwenHome := filepath.Join(t.TempDir(), "qwen-home")
+	runtimeDir := filepath.Join(t.TempDir(), "qwen-runtime")
+	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", "")
+	t.Setenv("QWEN_HOME", qwenHome)
+	t.Setenv("QWEN_RUNTIME_DIR", runtimeDir)
+
+	got, err := DefaultSourceRoots(context.Background())
+	mustNoError(t, err)
+	if got.QwenUsage != filepath.Join(runtimeDir, "usage") {
+		t.Fatalf("Qwen usage root = %q, want QWEN_RUNTIME_DIR usage", got.QwenUsage)
 	}
 }
 
