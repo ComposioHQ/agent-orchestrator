@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite/store"
 )
 
@@ -32,6 +33,39 @@ func advanceAgentSwitchFixtureWithMutation(ctx context.Context, t *testing.T, s 
 	if ok, err := s.UpdateAgentSwitch(ctx, *sw, expectedState, sw.SourceGenerationID, expectedTarget); err != nil || !ok {
 		t.Fatalf("advance switch %s -> %s: ok=%v err=%v", expectedState, next, ok, err)
 	}
+}
+
+func applyReportableAgentSwitchFixture(
+	ctx context.Context,
+	t *testing.T,
+	s ports.AgentSwitchFaultStore,
+	rec domain.AgentSwitch,
+	expectedState domain.AgentSwitchState,
+	expectedTarget domain.AgentGenerationID,
+	unacknowledged bool,
+) bool {
+	t.Helper()
+	// These compatibility fixtures exercise durable saga behavior rather than
+	// enrollment. A deliberately empty typed fault proves observability-local
+	// validation cannot veto the winning core mutation.
+	fault := domain.AgentSwitchFault{}
+	mutation := ports.AgentSwitchMutation{
+		Record: rec, ExpectedState: expectedState,
+		ExpectedSourceGenerationID: rec.SourceGenerationID,
+		ExpectedTargetGenerationID: expectedTarget,
+		Fault:                      &fault,
+	}
+	var result ports.AgentSwitchMutationResult
+	var err error
+	if unacknowledged {
+		result, err = s.FailAgentSwitchIfUnacknowledgedWithFault(ctx, mutation)
+	} else {
+		result, err = s.ApplyAgentSwitchMutation(ctx, mutation)
+	}
+	if err != nil {
+		t.Fatalf("apply reportable switch fixture: %v", err)
+	}
+	return result.CoreChanged
 }
 
 func TestActivateChatAgentSwitchTargetMovesSourceGenerationToTarget(t *testing.T) {
@@ -362,8 +396,8 @@ func TestListActiveAgentSwitchesExcludesTerminalRows(t *testing.T) {
 	failed.State = domain.AgentSwitchFailed
 	failed.ErrorCode = domain.AgentSwitchErrorSwitchFailed
 	failed.UpdatedAt = now.Add(time.Second)
-	if updated, err := s.UpdateAgentSwitch(ctx, failed, domain.AgentSwitchPreparingHandoff, failed.SourceGenerationID, ""); err != nil || !updated {
-		t.Fatalf("fail terminal switch: updated=%v err=%v", updated, err)
+	if updated := applyReportableAgentSwitchFixture(ctx, t, s, failed, domain.AgentSwitchPreparingHandoff, "", false); !updated {
+		t.Fatal("fail terminal switch: core mutation did not change")
 	}
 
 	got, err := s.ListActiveAgentSwitches(ctx)
@@ -684,8 +718,8 @@ func TestAgentSwitchTargetStartUnconfirmedMarkerIsNonTerminalAndMonotonic(t *tes
 
 	sw.ErrorCode = domain.AgentSwitchErrorTargetStartUnconfirmed
 	sw.UpdatedAt = now.Add(4 * time.Second)
-	if ok, err := s.UpdateAgentSwitch(ctx, sw, domain.AgentSwitchStartingTarget, "source-generation", "target-generation"); err != nil || !ok {
-		t.Fatalf("persist recovery marker: ok=%v err=%v", ok, err)
+	if ok := applyReportableAgentSwitchFixture(ctx, t, s, sw, domain.AgentSwitchStartingTarget, "target-generation", false); !ok {
+		t.Fatal("persist recovery marker: core mutation did not change")
 	}
 	marked, ok, err := s.GetActiveAgentSwitch(ctx, session.ID)
 	if err != nil || !ok || !marked.RequiresRecovery() || marked.State.Terminal() {
@@ -747,8 +781,8 @@ func TestAgentSwitchSourceStopMarkerCanAdvanceOnlyThroughConfirmedBoundary(t *te
 	})
 	sw.ErrorCode = domain.AgentSwitchErrorSourceStopUnconfirmed
 	sw.UpdatedAt = now.Add(2 * time.Second)
-	if ok, err := s.UpdateAgentSwitch(ctx, sw, domain.AgentSwitchStoppingSource, "source-generation", "target-generation"); err != nil || !ok {
-		t.Fatalf("persist source-stop marker: ok=%v err=%v", ok, err)
+	if ok := applyReportableAgentSwitchFixture(ctx, t, s, sw, domain.AgentSwitchStoppingSource, "target-generation", false); !ok {
+		t.Fatal("persist source-stop marker: core mutation did not change")
 	}
 	marked, ok, err := s.GetActiveAgentSwitch(ctx, session.ID)
 	if err != nil || !ok || !marked.RequiresRecovery() || marked.State.Terminal() {
@@ -849,8 +883,8 @@ func TestAgentSwitchSourceRestoreMarkerCanSettleOnlyAsTerminalFailure(t *testing
 	sw, _, _ = s.GetAgentSwitch(ctx, sw.ID)
 	sw.ErrorCode = domain.AgentSwitchErrorSourceRestoreUnconfirmed
 	sw.UpdatedAt = now.Add(3 * time.Second)
-	if ok, err := s.UpdateAgentSwitch(ctx, sw, domain.AgentSwitchSourceStopped, "source-generation", "target-generation"); err != nil || !ok {
-		t.Fatalf("persist source-restore marker: ok=%v err=%v", ok, err)
+	if ok := applyReportableAgentSwitchFixture(ctx, t, s, sw, domain.AgentSwitchSourceStopped, "target-generation", false); !ok {
+		t.Fatal("persist source-restore marker: core mutation did not change")
 	}
 	marked, ok, err := s.GetActiveAgentSwitch(ctx, session.ID)
 	if err != nil || !ok || !marked.RequiresSourceRestore() || marked.State.Terminal() {
@@ -867,8 +901,8 @@ func TestAgentSwitchSourceRestoreMarkerCanSettleOnlyAsTerminalFailure(t *testing
 	failed.State = domain.AgentSwitchFailed
 	failed.ErrorCode = domain.AgentSwitchErrorDaemonRestartPostStop
 	failed.UpdatedAt = now.Add(5 * time.Second)
-	if changed, err := s.UpdateAgentSwitch(ctx, failed, domain.AgentSwitchSourceStopped, "source-generation", "target-generation"); err != nil || !changed {
-		t.Fatalf("terminal source-restore settlement: changed=%v err=%v", changed, err)
+	if changed := applyReportableAgentSwitchFixture(ctx, t, s, failed, domain.AgentSwitchSourceStopped, "target-generation", false); !changed {
+		t.Fatal("terminal source-restore settlement: core mutation did not change")
 	}
 }
 
@@ -1213,9 +1247,12 @@ func TestAgentSwitchDeliveryFailureIsAtomicWithAcknowledgement(t *testing.T) {
 			if ok, err := s.UpdateAgentSwitch(ctx, failure, domain.AgentSwitchDelivering, "source-generation", "target-generation"); err == nil || ok {
 				t.Fatalf("generic delivery failure bypassed acknowledgement CAS: ok=%v err=%v", ok, err)
 			}
-			failed, err := s.FailAgentSwitchIfUnacknowledged(ctx, failure)
-			if err != nil || failed != tt.wantFailed {
-				t.Fatalf("fail unacknowledged delivery: failed=%v want=%v err=%v", failed, tt.wantFailed, err)
+			if ok, err := s.FailAgentSwitchIfUnacknowledged(ctx, failure); err == nil || ok {
+				t.Fatalf("legacy delivery failure bypassed typed observability contract: ok=%v err=%v", ok, err)
+			}
+			failed := applyReportableAgentSwitchFixture(ctx, t, s, failure, domain.AgentSwitchDelivering, "target-generation", true)
+			if failed != tt.wantFailed {
+				t.Fatalf("fail unacknowledged delivery: failed=%v want=%v", failed, tt.wantFailed)
 			}
 			if !tt.acknowledgesFirst {
 				if ok, err := s.AcknowledgeAgentSwitchTarget(ctx, sw.ID, session.ID, "target-generation", failedAt.Add(time.Second)); err != nil || ok {

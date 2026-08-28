@@ -240,6 +240,9 @@ func (s *Store) ListAgentSwitches(ctx context.Context, sessionID domain.SessionI
 // This rejects stale source hooks and late target callbacks from abandoned
 // starts without deriving liveness from their arrival.
 func (s *Store) UpdateAgentSwitch(ctx context.Context, rec domain.AgentSwitch, expectedState domain.AgentSwitchState, expectedSourceGenerationID, expectedTargetGenerationID domain.AgentGenerationID) (bool, error) {
+	if rec.State == domain.AgentSwitchFailed || rec.ErrorCode.RetainedRecoveryMarker() {
+		return false, fmt.Errorf("update agent switch %s: reportable transition requires ApplyAgentSwitchMutation", rec.ID)
+	}
 	if rec.ErrorCode == "" {
 		rec.FailurePoint = ""
 	}
@@ -290,25 +293,7 @@ func (s *Store) UpdateAgentSwitch(ctx context.Context, rec domain.AgentSwitch, e
 // failure updates share the store write lock and opposing SQL predicates, so
 // exactly one outcome wins even when the target hook arrives at the deadline.
 func (s *Store) FailAgentSwitchIfUnacknowledged(ctx context.Context, rec domain.AgentSwitch) (bool, error) {
-	if err := validateAgentSwitch(rec, false); err != nil {
-		return false, err
-	}
-	if rec.State != domain.AgentSwitchFailed || rec.TargetGenerationID == "" || rec.TargetAcknowledgedAt != nil {
-		return false, fmt.Errorf("fail unacknowledged agent switch %s: failed state and unacknowledged target generation are required", rec.ID)
-	}
-
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
-	n, err := s.qw.FailAgentSwitchIfUnacknowledged(ctx, gen.FailAgentSwitchIfUnacknowledgedParams{
-		ErrorCode: string(rec.ErrorCode), FailurePoint: string(rec.FailurePoint), FailedAt: rec.UpdatedAt,
-		ID: rec.ID, SessionID: rec.SessionID,
-		ExpectedSourceGenerationID: rec.SourceGenerationID,
-		ExpectedTargetGenerationID: rec.TargetGenerationID,
-	})
-	if err != nil {
-		return false, fmt.Errorf("fail unacknowledged agent switch %s: %w", rec.ID, err)
-	}
-	return n > 0, nil
+	return false, fmt.Errorf("fail unacknowledged agent switch %s: reportable transition requires FailAgentSwitchIfUnacknowledgedWithFault", rec.ID)
 }
 
 // RecordAgentHandoff records optional semantic enrichment for the source

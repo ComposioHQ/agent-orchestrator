@@ -30,6 +30,7 @@ type switchTestStore struct {
 	branches                      map[string]domain.ConversationBranch
 	switches                      map[domain.AgentSwitchID]domain.AgentSwitch
 	ackBeforeDeliveryFailure      bool
+	ackForceNoChange              bool
 	confirmHook                   func(context.Context)
 	confirmErr                    error
 	activateErr                   error
@@ -393,6 +394,9 @@ func (s *switchTestStore) AcknowledgeAgentSwitchTarget(_ context.Context, id dom
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	sw, ok := s.switches[id]
+	if s.ackForceNoChange {
+		return false, nil
+	}
 	if !ok || sw.SessionID != sessionID || sw.State != domain.AgentSwitchDelivering ||
 		sw.TargetGenerationID != targetGenerationID || sw.TargetAcknowledgedAt != nil {
 		return false, nil
@@ -402,6 +406,55 @@ func (s *switchTestStore) AcknowledgeAgentSwitchTarget(_ context.Context, id dom
 	sw.UpdatedAt = acknowledgedAt
 	s.switches[id] = sw
 	return true, nil
+}
+
+func TestAcknowledgeAgentSwitchTargetWithReadbackClassifiesChangedFalse(t *testing.T) {
+	now := time.Date(2026, 8, 28, 10, 0, 0, 0, time.UTC)
+	base := domain.AgentSwitch{
+		ID: "switch-ack-readback", SessionID: "session-ack-readback",
+		FromHarness: domain.HarnessClaudeCode, TargetHarness: domain.HarnessCodex,
+		State: domain.AgentSwitchDelivering, SourceGenerationID: "source-generation", TargetGenerationID: "target-generation",
+		RequestedAt: now.Add(-time.Minute), UpdatedAt: now,
+	}
+
+	t.Run("duplicate acknowledgement is proof and emits no fault", func(t *testing.T) {
+		store := newSwitchTestStore()
+		acknowledgedAt := now.Add(-time.Second)
+		duplicate := base
+		duplicate.TargetAcknowledgedAt = &acknowledgedAt
+		store.switches[base.ID] = duplicate
+		m := New(Deps{Store: store})
+		got, acknowledged, err := m.acknowledgeAgentSwitchTargetWithReadback(context.Background(), store, base, base.TargetGenerationID, now)
+		if err != nil || !acknowledged || got.TargetAcknowledgedAt == nil {
+			t.Fatalf("duplicate acknowledgement = (%+v, %v, %v)", got, acknowledged, err)
+		}
+		if len(store.faultMutations) != 0 || len(store.operationalFaults) != 0 {
+			t.Fatalf("duplicate acknowledgement emitted faults: mutations=%+v operational=%+v", store.faultMutations, store.operationalFaults)
+		}
+	})
+
+	t.Run("timeout-won terminal state is suppressed", func(t *testing.T) {
+		store := newSwitchTestStore()
+		terminal := base
+		terminal.State = domain.AgentSwitchFailed
+		terminal.ErrorCode = domain.AgentSwitchErrorDeliveryUnconfirmed
+		store.switches[base.ID] = terminal
+		m := New(Deps{Store: store})
+		got, acknowledged, err := m.acknowledgeAgentSwitchTargetWithReadback(context.Background(), store, base, base.TargetGenerationID, now)
+		if err != nil || acknowledged || got.State != domain.AgentSwitchFailed {
+			t.Fatalf("timeout-won acknowledgement = (%+v, %v, %v)", got, acknowledged, err)
+		}
+	})
+
+	t.Run("unchanged exact predicate is impossible", func(t *testing.T) {
+		store := newSwitchTestStore()
+		store.switches[base.ID] = base
+		store.ackForceNoChange = true
+		m := New(Deps{Store: store})
+		if _, _, err := m.acknowledgeAgentSwitchTargetWithReadback(context.Background(), store, base, base.TargetGenerationID, now); err == nil {
+			t.Fatal("changed=false exact predicate returned nil")
+		}
+	})
 }
 
 func (s *switchTestStore) ActivateAgentSwitchTarget(_ context.Context, activation domain.AgentSwitchTargetActivation) (bool, error) {
@@ -3363,6 +3416,14 @@ func TestSwitchAgentWaitsForDelayedExactGenerationAcknowledgement(t *testing.T) 
 	}
 	if sw.State != domain.AgentSwitchCompleted || sw.TargetAcknowledgedAt == nil {
 		t.Fatalf("switch = state %q acknowledgement %v, want completed acknowledgement", sw.State, sw.TargetAcknowledgedAt)
+	}
+	for _, mutation := range store.faultMutations {
+		if mutation.Fault != nil {
+			t.Fatalf("successful switch enrolled fault %+v", *mutation.Fault)
+		}
+	}
+	if len(store.operationalFaults) != 0 || len(store.daemonFaults) != 0 {
+		t.Fatalf("successful switch enqueued operational faults: operational=%+v daemon=%+v", store.operationalFaults, store.daemonFaults)
 	}
 }
 

@@ -101,6 +101,58 @@ func agentSwitchFailureStreamDisabled(disabled []string) bool {
 	return false
 }
 
+type agentSwitchDaemonFaultEnqueuer interface {
+	EnqueueAgentSwitchDaemonFault(context.Context, ports.AgentSwitchDaemonFault) (ports.AgentSwitchMutationResult, error)
+}
+
+func agentSwitchWorkerWaitTimedOut(err error) bool {
+	return errors.Is(err, context.DeadlineExceeded)
+}
+
+func enqueueAgentSwitchWorkerShutdownTimeout(
+	ctx context.Context,
+	store agentSwitchDaemonFaultEnqueuer,
+	policy ports.AgentSwitchReportingPolicy,
+	daemonRunID string,
+	at time.Time,
+) error {
+	if store == nil || policy == nil || strings.TrimSpace(daemonRunID) == "" {
+		return nil
+	}
+	fault := domain.AgentSwitchFault{
+		ReportKind:           domain.AgentSwitchReportDaemonLifecycleFailure,
+		FailurePoint:         domain.AgentSwitchFailureShutdownWorkerTimeout,
+		ClassifierCallsite:   domain.AgentSwitchClassifierDaemonShutdown,
+		Phase:                domain.AgentSwitchStateNotApplicable,
+		ErrorCode:            domain.AgentSwitchErrorNotApplicable,
+		FaultCode:            domain.AgentSwitchFaultShutdownWorkersTimedOut,
+		Execution:            domain.AgentSwitchExecutionDaemonShutdown,
+		Mode:                 domain.SessionModeNotApplicable,
+		FromHarness:          domain.HarnessNotApplicable,
+		TargetHarness:        domain.HarnessNotApplicable,
+		TargetStartMode:      domain.AgentSwitchTargetStartNotApplicable,
+		RuntimeBackend:       domain.AgentSwitchRuntimeNotApplicable,
+		CallOutcome:          domain.AgentSwitchCallTimedOut,
+		Ownership:            domain.AgentSwitchOwnershipNotApplicable,
+		Compensation:         domain.AgentSwitchCompensationNotApplicable,
+		UserImpact:           domain.AgentSwitchUserImpactNotApplicable,
+		SourceStopConfirmed:  domain.AgentSwitchTriNotApplicable,
+		TargetOwnerCommitted: domain.AgentSwitchTriNotApplicable,
+		GateRetained:         domain.AgentSwitchTriNotApplicable,
+		OccurredAt:           at,
+		Frames: []domain.AgentSwitchStackFrame{{
+			Package: "daemon", Function: "Run",
+			Filename: "backend/internal/daemon/daemon.go", Line: 1,
+		}},
+	}
+	_, err := store.EnqueueAgentSwitchDaemonFault(ctx, ports.AgentSwitchDaemonFault{
+		DaemonRunID:   daemonRunID,
+		Fault:         fault,
+		Authorization: policy.Authorization(),
+	})
+	return err
+}
+
 // Run starts the daemon and blocks until it exits. SIGINT/SIGTERM drive
 // graceful shutdown through the HTTP server and background workers.
 func Run() error {
@@ -680,6 +732,13 @@ func Run() error {
 	}
 	switchStopCtx, switchCancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	if err := sessMgr.WaitAgentSwitchWorkers(switchStopCtx); err != nil {
+		if agentSwitchWorkerWaitTimedOut(err) {
+			enqueueCtx, enqueueCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			if enqueueErr := enqueueAgentSwitchWorkerShutdownTimeout(enqueueCtx, store, policyCoordinator, cfg.AppRunID, time.Now().UTC()); enqueueErr != nil {
+				log.Error("agent switch worker shutdown observability enqueue", "error", enqueueErr)
+			}
+			enqueueCancel()
+		}
 		log.Error("agent switch worker shutdown", "err", err)
 	}
 	switchCancel()

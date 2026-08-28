@@ -350,6 +350,7 @@ type Manager struct {
 	// agentSwitchReporting supplies the exact authorization snapshot immediately
 	// before each failure-aware store transaction. Nil is fail-closed.
 	agentSwitchReporting ports.AgentSwitchReportingPolicy
+	daemonRunID          string
 	// messenger is a sessionguard.Guard wrapping the raw messenger, so every
 	// pane write is guarded (re-read state, refuse a blocked session) without
 	// each call site re-deriving the check. Send/confirmActive use Deliver for
@@ -615,6 +616,7 @@ type Deps struct {
 	Workspace       ports.Workspace
 	Store           Store
 	ReportingPolicy ports.AgentSwitchReportingPolicy
+	DaemonRunID     string
 	Messenger       ports.AgentMessenger
 	// Defaults supplies the daemon-owned default session interface for spawns that
 	// name no mode. Nil means always use the compatibility default.
@@ -665,6 +667,7 @@ func New(d Deps) *Manager {
 		workspace:                    d.Workspace,
 		store:                        d.Store,
 		agentSwitchReporting:         d.ReportingPolicy,
+		daemonRunID:                  strings.TrimSpace(d.DaemonRunID),
 		defaults:                     d.Defaults,
 		chat:                         d.Chat,
 		lcm:                          d.Lifecycle,

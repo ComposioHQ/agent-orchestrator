@@ -4,36 +4,13 @@ import (
 	"context"
 	"errors"
 	"runtime"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
-
-// postAdmissionAgentSwitchError marks the exact point after CreateAgentSwitch
-// has been proven durable. Task 10 translates this internal marker into the
-// public observability owner; admission read-back ambiguity deliberately never
-// receives it.
-type postAdmissionAgentSwitchError struct{ err error }
-
-func (e *postAdmissionAgentSwitchError) Error() string { return e.err.Error() }
-func (e *postAdmissionAgentSwitchError) Unwrap() error { return e.err }
-
-func markPostAdmissionAgentSwitchError(err error) error {
-	if err == nil {
-		return nil
-	}
-	var marked *postAdmissionAgentSwitchError
-	if errors.As(err, &marked) {
-		return err
-	}
-	return &postAdmissionAgentSwitchError{err: err}
-}
-
-func isPostAdmissionAgentSwitchError(err error) bool {
-	var marked *postAdmissionAgentSwitchError
-	return errors.As(err, &marked)
-}
 
 // agentSwitchFlightRecorder retains only closed, privacy-safe observations for
 // one admitted execution. It is deliberately not a breadcrumb trail: raw
@@ -55,6 +32,36 @@ type agentSwitchFlightRecorder struct {
 	runtimeBackend           domain.AgentSwitchRuntimeBackend
 }
 
+type agentSwitchPanicCause struct {
+	failurePoint     domain.AgentSwitchFailurePoint
+	executionAttempt string
+	frames           []domain.AgentSwitchStackFrame
+}
+
+type agentSwitchPanicCauseContextKey struct{}
+
+func withAgentSwitchPanicCause(ctx context.Context, cause agentSwitchPanicCause) context.Context {
+	return context.WithValue(ctx, agentSwitchPanicCauseContextKey{}, cause)
+}
+
+// agentSwitchAdmissionFailure carries only the closed classification needed at
+// the HTTP ownership boundary. It is deliberately not reportable by the saga:
+// durable admission has not been proven at these call sites.
+type agentSwitchAdmissionFailure struct {
+	point domain.AgentSwitchFailurePoint
+	err   error
+}
+
+func (e *agentSwitchAdmissionFailure) Error() string { return e.err.Error() }
+func (e *agentSwitchAdmissionFailure) Unwrap() error { return e.err }
+
+func classifyAgentSwitchAdmissionFailure(point domain.AgentSwitchFailurePoint, err error) error {
+	if err == nil {
+		return nil
+	}
+	return &agentSwitchAdmissionFailure{point: point, err: err}
+}
+
 func newAgentSwitchFlightRecorder(sw domain.AgentSwitch, mode domain.SessionMode, execution domain.AgentSwitchExecution) agentSwitchFlightRecorder {
 	backend := domain.AgentSwitchRuntimeTMUX
 	if mode == domain.SessionModeChat {
@@ -62,7 +69,7 @@ func newAgentSwitchFlightRecorder(sw domain.AgentSwitch, mode domain.SessionMode
 	} else if runtime.GOOS == "windows" {
 		backend = domain.AgentSwitchRuntimeConPTY
 	}
-	return agentSwitchFlightRecorder{
+	recorder := agentSwitchFlightRecorder{
 		lastDurablePhase:     sw.State,
 		callOutcome:          domain.AgentSwitchCallNoEffectFailure,
 		ownership:            domain.AgentSwitchOwnershipSource,
@@ -75,6 +82,8 @@ func newAgentSwitchFlightRecorder(sw domain.AgentSwitch, mode domain.SessionMode
 		mode:                 mode,
 		runtimeBackend:       backend,
 	}
+	recorder.durable(sw)
+	return recorder
 }
 
 func (r *agentSwitchFlightRecorder) boundary(point domain.AgentSwitchFailurePoint) {
@@ -85,8 +94,12 @@ func (r *agentSwitchFlightRecorder) boundary(point domain.AgentSwitchFailurePoin
 func (r *agentSwitchFlightRecorder) durable(sw domain.AgentSwitch) {
 	r.lastDurablePhase = sw.State
 	if sw.State == domain.AgentSwitchSourceStopped || sw.State == domain.AgentSwitchStartingTarget ||
-		sw.State == domain.AgentSwitchTargetReady || sw.State == domain.AgentSwitchDelivering {
+		sw.State == domain.AgentSwitchTargetReady || sw.State == domain.AgentSwitchDelivering || sw.State == domain.AgentSwitchCompleted {
 		r.sourceStopConfirmed = domain.AgentSwitchTriTrue
+	}
+	if sw.State == domain.AgentSwitchSourceStopped || sw.State == domain.AgentSwitchStartingTarget {
+		r.ownership = domain.AgentSwitchOwnershipNone
+		r.userImpact = domain.AgentSwitchUserImpactNoLiveOwner
 	}
 	if sw.State == domain.AgentSwitchTargetReady || sw.State == domain.AgentSwitchDelivering || sw.State == domain.AgentSwitchCompleted {
 		r.targetOwnerCommitted = domain.AgentSwitchTriTrue
@@ -140,6 +153,37 @@ func (m *Manager) faultFromRecorder(sw domain.AgentSwitch, code domain.AgentSwit
 	}
 }
 
+// semanticFaultFromRecorder promotes a worker panic into the single fault
+// enrolled by a winning terminal/marker mutation. The raw panic value has no
+// representation here; only a bounded execution token and sanitized frames
+// cross the store boundary.
+func (m *Manager) semanticFaultFromRecorder(
+	ctx context.Context,
+	sw domain.AgentSwitch,
+	code domain.AgentSwitchErrorCode,
+	reportKind domain.AgentSwitchReportKind,
+	recorder agentSwitchFlightRecorder,
+) domain.AgentSwitchFault {
+	fault := m.faultFromRecorder(sw, code, reportKind, recorder)
+	cause, ok := ctx.Value(agentSwitchPanicCauseContextKey{}).(agentSwitchPanicCause)
+	if !ok || cause.failurePoint == "" || cause.executionAttempt == "" || len(cause.frames) == 0 {
+		return fault
+	}
+	entry, known := domain.AgentSwitchFailureTaxonomy(cause.failurePoint)
+	if !known {
+		return fault
+	}
+	fault.ReportKind = domain.AgentSwitchReportPanic
+	fault.FailurePoint = cause.failurePoint
+	fault.ClassifierCallsite = entry.ClassifierCallsite
+	fault.ErrorCode = domain.AgentSwitchErrorNotApplicable
+	fault.FaultCode = domain.AgentSwitchFaultWorkerPanic
+	fault.CallOutcome = domain.AgentSwitchCallPanic
+	fault.ExecutionAttemptID = cause.executionAttempt
+	fault.Frames = append([]domain.AgentSwitchStackFrame(nil), cause.frames...)
+	return fault
+}
+
 // settleAgentSwitchFault is the only Session Manager adapter from a semantic
 // classification to the atomic store contract. Enrollment status is never
 // interpreted here: CoreChanged alone decides saga behavior.
@@ -161,14 +205,7 @@ func (m *Manager) settleAgentSwitchFault(
 	}
 	faultStore, ok := store.(ports.AgentSwitchFaultStore)
 	if !ok {
-		var changed bool
-		var err error
-		if unacknowledged {
-			changed, err = store.FailAgentSwitchIfUnacknowledged(ctx, *next)
-		} else {
-			changed, err = store.UpdateAgentSwitch(ctx, *next, expectedState, next.SourceGenerationID, expectedTargetGeneration)
-		}
-		return ports.AgentSwitchMutationResult{CoreChanged: changed, Enrollment: domain.AgentSwitchEnrollmentDisabled}, err
+		return ports.AgentSwitchMutationResult{}, errors.New("agent switch store does not support typed failure settlement")
 	}
 	if unacknowledged {
 		return faultStore.FailAgentSwitchIfUnacknowledgedWithFault(ctx, mutation)
@@ -218,7 +255,11 @@ func filepathFromRepository(filename string) string {
 	filename = strings.ReplaceAll(filename, `\`, "/")
 	for _, root := range []string{"/backend/", "/frontend/"} {
 		if idx := strings.LastIndex(filename, root); idx >= 0 {
-			return filename[idx+1:]
+			relative := filename[idx+1:]
+			if len(relative) <= 512 {
+				return relative
+			}
+			return ""
 		}
 	}
 	return ""
@@ -249,5 +290,178 @@ func safeGoFrameFunction(full string) (string, string) {
 			pkg = prefix[idx+len("/frontend/"):] + "/" + pkgLeaf
 		}
 	}
+	if len(pkg) > 128 || len(function) > 128 {
+		return "", ""
+	}
 	return pkg, function
+}
+
+func sanitizeAgentSwitchPanicStack(stack []byte) []domain.AgentSwitchStackFrame {
+	lines := strings.Split(strings.ReplaceAll(string(stack), `\`, "/"), "\n")
+	out := make([]domain.AgentSwitchStackFrame, 0, 12)
+	for i := 0; i+1 < len(lines) && len(out) < 12; i++ {
+		functionLine := strings.TrimSpace(lines[i])
+		fileLine := strings.TrimSpace(lines[i+1])
+		if functionLine == "" || !strings.Contains(fileLine, ".go:") {
+			continue
+		}
+		if idx := strings.LastIndex(functionLine, "("); idx >= 0 {
+			functionLine = functionLine[:idx]
+		}
+		colon := strings.LastIndex(fileLine, ":")
+		if colon < 0 {
+			continue
+		}
+		lineText := fileLine[colon+1:]
+		if space := strings.IndexByte(lineText, ' '); space >= 0 {
+			lineText = lineText[:space]
+		}
+		line, err := strconv.Atoi(lineText)
+		if err != nil || line <= 0 {
+			continue
+		}
+		filename := filepathFromRepository(fileLine[:colon])
+		pkg, function := safeGoFrameFunction(functionLine)
+		if filename == "" || pkg == "" || function == "" {
+			continue
+		}
+		out = append(out, domain.AgentSwitchStackFrame{Package: pkg, Function: function, Filename: filename, Line: line})
+		i++
+	}
+	return out
+}
+
+func (m *Manager) observeAgentSwitchRecoveryFailure(
+	ctx context.Context,
+	store ports.AgentSwitchStore,
+	before domain.AgentSwitch,
+	mode domain.SessionMode,
+	execution domain.AgentSwitchExecution,
+	recoveryErr error,
+) {
+	if recoveryErr == nil || errors.Is(recoveryErr, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
+		return
+	}
+	reloadCtx, cancel := agentSwitchDetachedContext(ctx)
+	current, found, err := store.GetAgentSwitch(reloadCtx, before.ID)
+	cancel()
+	if err != nil || !found || current.State != before.State || current.ErrorCode != before.ErrorCode ||
+		current.FailurePoint != before.FailurePoint || !current.UpdatedAt.Equal(before.UpdatedAt) {
+		return
+	}
+	m.observeUnchangedAgentSwitchRecoveryFailure(ctx, store, current, mode, execution)
+}
+
+func (m *Manager) observeUnchangedAgentSwitchRecoveryFailure(
+	ctx context.Context,
+	store ports.AgentSwitchStore,
+	sw domain.AgentSwitch,
+	mode domain.SessionMode,
+	execution domain.AgentSwitchExecution,
+) {
+	if !sw.ErrorCode.RetainedRecoveryMarker() {
+		return
+	}
+	faultStore, ok := store.(ports.AgentSwitchFaultStore)
+	if !ok {
+		return
+	}
+	recorder := newAgentSwitchFlightRecorder(sw, mode, execution)
+	recorder.failurePoint = domain.AgentSwitchFailureRecoveryExistingMarker
+	recorder.callOutcome = domain.AgentSwitchCallNoEffectFailure
+	recorder.compensation = domain.AgentSwitchCompensationUncertain
+	recorder.retain(sw.RequiresTargetStartRecovery())
+	recorder.durable(sw)
+	fault := m.faultFromRecorder(sw, sw.ErrorCode, domain.AgentSwitchReportRecoveryAttemptFailed, recorder)
+	fault.FaultCode = domain.AgentSwitchFaultRecoveryUnresolved
+	enqueueCtx, cancel := agentSwitchDetachedContext(ctx)
+	defer cancel()
+	result, err := faultStore.EnqueueAgentSwitchOperationalFault(enqueueCtx, ports.AgentSwitchOperationalFault{
+		SwitchID: sw.ID, ExpectedState: sw.State, ExpectedErrorCode: sw.ErrorCode,
+		ExpectedFailurePoint: sw.FailurePoint, ExpectedUpdatedAt: sw.UpdatedAt,
+		Fault: fault, Authorization: m.agentSwitchAuthorization(),
+	})
+	if err != nil {
+		m.logger.Warn("agent switch recovery observability enqueue failed", "state", sw.State, "errorCode", sw.ErrorCode, "error", err)
+		return
+	}
+	if result.Enrollment == domain.AgentSwitchEnrollmentLocalInvariantFailed {
+		m.logger.Warn("agent switch recovery observability invariant failed", "state", sw.State, "errorCode", sw.ErrorCode)
+	}
+}
+
+func (m *Manager) enqueueAgentSwitchPanic(
+	ctx context.Context,
+	store ports.AgentSwitchStore,
+	sw domain.AgentSwitch,
+	mode domain.SessionMode,
+	execution domain.AgentSwitchExecution,
+	attemptID string,
+	point domain.AgentSwitchFailurePoint,
+	frames []domain.AgentSwitchStackFrame,
+) {
+	faultStore, ok := store.(ports.AgentSwitchFaultStore)
+	if !ok || len(frames) == 0 {
+		return
+	}
+	recorder := newAgentSwitchFlightRecorder(sw, mode, execution)
+	recorder.failurePoint = point
+	recorder.callOutcome = domain.AgentSwitchCallPanic
+	recorder.retain(sw.RequiresRecovery())
+	recorder.durable(sw)
+	fault := m.faultFromRecorder(sw, domain.AgentSwitchErrorNotApplicable, domain.AgentSwitchReportPanic, recorder)
+	fault.FaultCode = domain.AgentSwitchFaultWorkerPanic
+	fault.ExecutionAttemptID = attemptID
+	fault.Frames = append([]domain.AgentSwitchStackFrame(nil), frames...)
+	enqueueCtx, cancel := agentSwitchDetachedContext(ctx)
+	defer cancel()
+	_, err := faultStore.EnqueueAgentSwitchOperationalFault(enqueueCtx, ports.AgentSwitchOperationalFault{
+		SwitchID: sw.ID, ExpectedState: sw.State, ExpectedErrorCode: sw.ErrorCode,
+		ExpectedFailurePoint: sw.FailurePoint, ExpectedUpdatedAt: sw.UpdatedAt,
+		Fault: fault, Authorization: m.agentSwitchAuthorization(),
+	})
+	if err != nil {
+		m.logger.Warn("agent switch panic observability enqueue failed", "state", sw.State, "errorCode", sw.ErrorCode, "error", err)
+	}
+}
+
+func (m *Manager) observeTerminalAgentSwitchMaintenanceFailure(
+	ctx context.Context,
+	store ports.AgentSwitchStore,
+	sw domain.AgentSwitch,
+	mode domain.SessionMode,
+	execution domain.AgentSwitchExecution,
+) {
+	if !sw.State.Terminal() || strings.TrimSpace(m.daemonRunID) == "" {
+		return
+	}
+	faultStore, ok := store.(ports.AgentSwitchFaultStore)
+	if !ok {
+		return
+	}
+	recorder := newAgentSwitchFlightRecorder(sw, mode, execution)
+	recorder.failurePoint = domain.AgentSwitchFailureTerminalArtifactCleanup
+	recorder.callOutcome = domain.AgentSwitchCallCleanupFailed
+	recorder.compensation = domain.AgentSwitchCompensationFailed
+	recorder.durable(sw)
+	code := sw.ErrorCode
+	if sw.State == domain.AgentSwitchCompleted {
+		code = domain.AgentSwitchErrorNotApplicable
+	}
+	fault := m.faultFromRecorder(sw, code, domain.AgentSwitchReportMaintenanceFailure, recorder)
+	fault.FaultCode = domain.AgentSwitchFaultTerminalCleanupFailed
+	enqueueCtx, cancel := agentSwitchDetachedContext(ctx)
+	defer cancel()
+	_, err := faultStore.EnqueueAgentSwitchOperationalFault(enqueueCtx, ports.AgentSwitchOperationalFault{
+		SwitchID: sw.ID, ExpectedState: sw.State, ExpectedErrorCode: sw.ErrorCode,
+		ExpectedFailurePoint: sw.FailurePoint, ExpectedUpdatedAt: sw.UpdatedAt,
+		DaemonRunID: m.daemonRunID, Fault: fault, Authorization: m.agentSwitchAuthorization(),
+	})
+	if err != nil {
+		m.logger.Warn("agent switch maintenance observability enqueue failed", "state", sw.State, "errorCode", sw.ErrorCode, "error", err)
+	}
+}
+
+func agentSwitchDetachedContext(parent context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(parent), 5*time.Second)
 }

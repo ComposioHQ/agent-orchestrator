@@ -726,11 +726,25 @@ func (m *Manager) acknowledgeAgentSwitchTarget(ctx context.Context, id domain.Se
 	if !found || sw.State != domain.AgentSwitchDelivering {
 		return nil
 	}
-	_, err = store.AcknowledgeAgentSwitchTarget(ctx, sw.ID, id, domain.AgentGenerationID(signal.LaunchID), at)
-	if err != nil {
-		return fmt.Errorf("lifecycle: acknowledge agent switch %s target: %w", sw.ID, err)
+	changed, ackErr := store.AcknowledgeAgentSwitchTarget(ctx, sw.ID, id, domain.AgentGenerationID(signal.LaunchID), at)
+	if changed && ackErr == nil {
+		return nil
 	}
-	return nil
+	current, found, readErr := store.GetAgentSwitch(ctx, sw.ID)
+	if readErr != nil {
+		return fmt.Errorf("lifecycle: read back agent switch %s acknowledgement: %w", sw.ID, readErr)
+	}
+	if !found || current.State.Terminal() || current.State != domain.AgentSwitchDelivering ||
+		current.TargetGenerationID != domain.AgentGenerationID(signal.LaunchID) || current.TargetAcknowledgedAt != nil {
+		return nil
+	}
+	if ackErr != nil {
+		return fmt.Errorf("lifecycle: acknowledge agent switch %s target: %w", sw.ID, ackErr)
+	}
+	if changed {
+		return fmt.Errorf("lifecycle: acknowledge agent switch %s target: commit was not observable", sw.ID)
+	}
+	return fmt.Errorf("lifecycle: acknowledge agent switch %s target: changed=false with unchanged durable predicate", sw.ID)
 }
 
 // toolFlight tracks one session's in-flight tool executions and the pending

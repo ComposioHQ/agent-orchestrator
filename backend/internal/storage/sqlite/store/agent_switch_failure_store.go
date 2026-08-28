@@ -145,7 +145,7 @@ func validateFailureAwareMutation(m ports.AgentSwitchMutation, unacknowledged bo
 		if err := domain.ValidateAgentSwitchFault(*m.Fault); err == nil {
 			binding := rec
 			binding.State = m.ExpectedState
-			if err := validateAgentSwitchFaultBinding(binding, *m.Fault, true); err != nil {
+			if err := validateAgentSwitchFaultBinding(binding, *m.Fault, false); err != nil {
 				return fmt.Errorf("apply agent switch mutation %s: %w", rec.ID, err)
 			}
 		}

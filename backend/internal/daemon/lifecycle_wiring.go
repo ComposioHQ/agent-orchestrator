@@ -217,6 +217,7 @@ func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.
 		Workspace:           ws,
 		Store:               store,
 		ReportingPolicy:     reportingPolicy,
+		DaemonRunID:         cfg.AppRunID,
 		Messenger:           messenger,
 		Chat:                chat,
 		Defaults:            defaults,
