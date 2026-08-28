@@ -26,6 +26,7 @@ import {
 	useStageAttachments,
 	useWorkspaceFilePaths,
 } from "../../hooks/useConversation";
+import { useAgentSwitchProviderCatalogs } from "../../hooks/useAgentSwitchProviderCatalogs";
 import { useSessionBrowserLink } from "../../hooks/useSessionBrowserLink";
 import type { ShellTerminal } from "../../hooks/useShellTerminals";
 import {
@@ -149,9 +150,13 @@ export function SessionChatSurface({
 		if (!conversationWorkKnown) return;
 		onConversationWorkChange?.({ controllerBusy, hasRunningTurn, queuedTurnCount });
 	}, [controllerBusy, conversationWorkKnown, hasRunningTurn, onConversationWorkChange, queuedTurnCount]);
+	const targetChatControllerReady =
+		snapshot?.harness === session.provider &&
+		(snapshot.controller?.state === "ready" || snapshot.controller?.state === "busy");
+	const { catalogsEnabled } = useAgentSwitchProviderCatalogs(session, targetChatControllerReady);
 	const configOptions = useConversationConfigOptions(
 		session.id,
-		Boolean(snapshot && can(snapshot, "config_options")),
+		catalogsEnabled && Boolean(snapshot && can(snapshot, "config_options")),
 	);
 	// A provider config catalog may cover only model, only mode, or both.
 	// Suppress native controls only for dimensions the provider catalog replaces;
@@ -167,9 +172,9 @@ export function SessionChatSurface({
 	// from the live controller, so there is nothing to fetch before then.
 	const { models } = useConversationModels(
 		session.id,
-		Boolean(snapshot) && !hasProviderModel,
+		catalogsEnabled && Boolean(snapshot) && !hasProviderModel,
 	);
-	const { skills } = useConversationSkills(session.id, Boolean(snapshot));
+	const { skills } = useConversationSkills(session.id, catalogsEnabled && Boolean(snapshot));
 	const { paths, truncated } = useWorkspaceFilePaths(session.id, Boolean(snapshot));
 	const stageAttachments = useStageAttachments(session.id);
 	const openLinkInBrowser = useSessionBrowserLink(session);
@@ -214,8 +219,6 @@ export function SessionChatSurface({
 			}
 			: undefined;
 	const agentSwitch = durableAgentSwitch ?? admissionAgentSwitch ?? observedTerminalSwitch;
-	const targetChatControllerReady =
-		snapshot?.controller?.state === "ready" || snapshot?.controller?.state === "busy";
 	const switchPresentation = agentSwitch
 		? deriveAgentSwitchPresentation({
 				agentSwitch,
