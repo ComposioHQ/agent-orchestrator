@@ -571,14 +571,44 @@ func TestAgentSwitchEventMetadataUsesClosedAllowlists(t *testing.T) {
 			})
 		}
 	}
+}
 
-	for _, release := range []string{"1.2.3", "v1.2.3", "1.2.3-nightly.20260828+abc1234"} {
+func TestAgentSwitchReleaseRequiresStrictSemVer2(t *testing.T) {
+	for _, release := range []string{
+		"0.0.0",
+		"1.2.3",
+		"1.2.3-alpha",
+		"1.2.3-alpha-beta",
+		"1.2.3-alpha.1",
+		"1.2.3-0.3.7",
+		"1.2.3-x.7.z.92",
+		"1.2.3+build-7",
+		"1.2.3+001",
+		"1.2.3-alpha-beta+build-7.sha",
+		"1.2.3+" + strings.Repeat("a", 90),
+	} {
 		input := completeSafeBuildInput(completeSafeFaultFixture())
 		input.Release = release
 		_, err := BuildAgentSwitchCanonicalEvent(input)
 		require.NoError(t, err)
 	}
-	for _, release := range []string{"01.2.3", "1.2", "1.2.3-", "1.2.3+", strings.Repeat("1", 97)} {
+	for _, release := range []string{
+		"v1.2.3",
+		"01.2.3",
+		"1.02.3",
+		"1.2.03",
+		"1.2",
+		"1.2.3-",
+		"1.2.3+",
+		"1.2.3-alpha..1",
+		"1.2.3+build..7",
+		"1.2.3-01",
+		"1.2.3-alpha.01",
+		"1.2.3-alpha_beta",
+		"1.2.3+build_7",
+		"1.2.3 alpha",
+		"1.2.3+" + strings.Repeat("a", 91),
+	} {
 		input := completeSafeBuildInput(completeSafeFaultFixture())
 		input.Release = release
 		_, err := BuildAgentSwitchCanonicalEvent(input)

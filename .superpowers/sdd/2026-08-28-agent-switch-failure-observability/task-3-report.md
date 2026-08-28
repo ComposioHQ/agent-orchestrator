@@ -96,3 +96,10 @@ Fix-round-2 static inspection:
 - `git diff --check` reported no whitespace errors.
 - Fixture JSON shape/privacy, the 71-point taxonomy parity, production-disable constant, provider-neutral ports, and absence of Sentry imports were re-inspected without invoking a compiler.
 - Runtime/compiler verification remains deferred under the explicit consolidated-verification instruction.
+
+## Fix round 3
+
+- Replaced the release-token pattern with bounded strict SemVer 2.0 validation: no `v` prefix; no leading zeroes in core or numeric prerelease identifiers; nonempty dot-separated prerelease/build identifiers; and the exact ASCII alphanumeric/hyphen identifier alphabet. Hyphenated prerelease and build identifiers remain valid.
+- Added focused positive and negative cases for core versions, numeric prerelease zero rules, empty identifiers, invalid characters, the 96-byte boundary, `1.2.3-alpha-beta`, and `1.2.3+build-7`.
+- The frozen fixture remains unchanged because its `1.2.3` release is valid strict SemVer and canonical field ordering is unaffected.
+- `gofmt` and static diff inspection were repeated; runtime/compiler verification remains deferred as instructed.

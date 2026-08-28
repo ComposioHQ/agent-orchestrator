@@ -804,7 +804,8 @@ type AgentSwitchFailureEvent struct {
 var (
 	agentSwitchEventIDPattern  = regexp.MustCompile(`^[0-9a-f]{32}$`)
 	agentSwitchTokenPattern    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+:-]*$`)
-	agentSwitchReleasePattern  = regexp.MustCompile(`^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?(?:\+[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?$`)
+	agentSwitchReleasePattern  = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$`)
+	agentSwitchNumericPattern  = regexp.MustCompile(`^[0-9]+$`)
 	agentSwitchPackagePattern  = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(?:[./][A-Za-z_][A-Za-z0-9_]*)*$`)
 	agentSwitchFunctionPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$`)
 	agentSwitchFilenamePattern = regexp.MustCompile(`^(backend|frontend)(/[A-Za-z_][A-Za-z0-9_]*)*/[A-Za-z_][A-Za-z0-9_.-]*\.(go|ts|tsx|js|jsx|mjs|cjs)$`)
@@ -1081,8 +1082,8 @@ func BuildAgentSwitchCanonicalEvent(input AgentSwitchEventBuildInput) ([]byte, e
 	if err := ValidateAgentSwitchFault(input.Fault); err != nil {
 		return nil, err
 	}
-	if input.Release == "" || len(input.Release) > 96 || !agentSwitchReleasePattern.MatchString(input.Release) {
-		return nil, errors.New("release is not a bounded semantic release")
+	if !validAgentSwitchRelease(input.Release) {
+		return nil, errors.New("release is not bounded strict SemVer 2.0")
 	}
 	if !input.Environment.Valid() || !input.Channel.Valid() || !input.Platform.Valid() || !input.OS.Valid() || !input.ElapsedTimeBucket.Valid() {
 		return nil, errors.New("agent switch event metadata is outside its closed allowlist")
@@ -1135,6 +1136,24 @@ func BuildAgentSwitchCanonicalEvent(input AgentSwitchEventBuildInput) ([]byte, e
 		return nil, errors.New("canonical agent switch event exceeds 60 KiB")
 	}
 	return raw, nil
+}
+
+func validAgentSwitchRelease(release string) bool {
+	if release == "" || len(release) > 96 {
+		return false
+	}
+	parts := agentSwitchReleasePattern.FindStringSubmatch(release)
+	if parts == nil {
+		return false
+	}
+	// SemVer permits leading zeroes in build metadata but not in numeric
+	// prerelease identifiers. The core version's zero rule is in the regex.
+	for _, identifier := range strings.Split(parts[4], ".") {
+		if len(identifier) > 1 && identifier[0] == '0' && agentSwitchNumericPattern.MatchString(identifier) {
+			return false
+		}
+	}
+	return true
 }
 
 type AgentSwitchDedupeScope struct {
