@@ -42,6 +42,10 @@ var (
 	ErrIncompatible = errors.New("chat host protocol incompatible")
 	// ErrHostExists reports an atomic per-session launch-lock conflict.
 	ErrHostExists = errors.New("chat host already exists")
+	// ErrOwnershipInconclusive means a descriptor or live host exists, but this
+	// client could not prove that it is safe to replace. Callers must preserve the
+	// durable session rather than treating the failed attachment as provider death.
+	ErrOwnershipInconclusive = errors.New("chat host ownership is inconclusive")
 )
 
 // Descriptor is the private connection record published by a running host.
@@ -123,7 +127,21 @@ func acquireHostLock(dataDir, sessionID string) (func(), error) {
 	path, _ := lockPath(dataDir, sessionID)
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) //nolint:gosec // AO-owned capability directory.
 	if errors.Is(err, os.ErrExist) {
-		return nil, ErrHostExists
+		owner, readErr := os.ReadFile(path) //nolint:gosec // AO-owned path derived from validated session id.
+		pid, parseErr := strconv.Atoi(strings.TrimSpace(string(owner)))
+		if readErr != nil || parseErr != nil || pid <= 0 || processalive.Alive(pid) {
+			return nil, ErrHostExists
+		}
+		// A host can die after atomically creating its launch lock but before it
+		// publishes host.json. Reclaim only a lock whose recorded owner is proven
+		// dead, then retry the same O_EXCL acquisition once.
+		if removeErr := os.Remove(path); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+			return nil, ErrHostExists
+		}
+		f, err = os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) //nolint:gosec // AO-owned capability directory.
+		if errors.Is(err, os.ErrExist) {
+			return nil, ErrHostExists
+		}
 	}
 	if err != nil {
 		return nil, err
@@ -228,7 +246,7 @@ func ConnectOrStart(ctx context.Context, cfg Config) (*Transport, error) {
 		// process observation permits clearing the descriptor and falling back to
 		// native resume in a new host.
 		if processalive.Alive(d.PID) {
-			return nil, attachErr
+			return nil, fmt.Errorf("%w: %w", ErrOwnershipInconclusive, attachErr)
 		}
 		path, _ := descriptorPath(cfg.DataDir, cfg.SessionID)
 		_ = os.Remove(path)
@@ -237,12 +255,12 @@ func ConnectOrStart(ctx context.Context, cfg Config) (*Transport, error) {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		// A malformed or unreadable ownership record is not proof that no host
 		// exists. Fail closed instead of launching a competing process.
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", ErrOwnershipInconclusive, err)
 	}
 	if len(cfg.Argv) == 0 || !filepath.IsAbs(cfg.Workdir) {
 		return nil, errors.New("chat host start requires provider argv and absolute workdir")
 	}
-	if err := spawnDetached(cfg); err != nil {
+	if err := spawnDetached(ctx, cfg); err != nil {
 		return nil, err
 	}
 	deadline := time.Now().Add(startupTimeout)
@@ -262,6 +280,9 @@ func ConnectOrStart(ctx context.Context, cfg Config) (*Transport, error) {
 			lastErr = err
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+	if d, readErr := readDescriptor(cfg.DataDir, cfg.SessionID); readErr == nil && processalive.Alive(d.PID) {
+		return nil, fmt.Errorf("%w: %w", ErrOwnershipInconclusive, lastErr)
 	}
 	return nil, fmt.Errorf("start chat host: %w", lastErr)
 }
@@ -375,7 +396,7 @@ func Shutdown(ctx context.Context, dataDir, sessionID string) error {
 }
 
 // Run owns the provider until it exits or an authenticated shutdown arrives.
-func Run(cfg Config) error {
+func Run(ctx context.Context, cfg Config) error {
 	if len(cfg.Argv) == 0 || !filepath.IsAbs(cfg.Workdir) {
 		return errors.New("chat host requires provider argv and absolute workdir")
 	}
@@ -429,15 +450,22 @@ func Run(cfg Config) error {
 	acceptDone := make(chan error, 1)
 	go func() { acceptDone <- h.accept() }()
 
-	select {
-	case <-providerDone:
-	case <-h.shutdown:
+	stopProvider := func() {
 		_ = stdin.Close()
 		select {
 		case <-providerDone:
 		case <-time.After(3 * time.Second):
 			_ = child.Process.Kill()
 		}
+	}
+	var runErr error
+	select {
+	case <-providerDone:
+	case <-h.shutdown:
+		stopProvider()
+	case <-ctx.Done():
+		runErr = ctx.Err()
+		stopProvider()
 	case err := <-acceptDone:
 		if err != nil && !errors.Is(err, net.ErrClosed) {
 			_ = child.Process.Kill()
@@ -446,7 +474,7 @@ func Run(cfg Config) error {
 	}
 	_ = listener.Close()
 	_ = child.Wait()
-	return nil
+	return runErr
 }
 
 type host struct {

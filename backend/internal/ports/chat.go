@@ -38,6 +38,11 @@ var (
 	// resumed. Callers must surface a recovery choice, never silently start a
 	// new provider conversation.
 	ErrChatResumeFailed = errors.New("chat conversation resume failed")
+	// ErrChatRecoveryInconclusive means a detached provider host may still own
+	// live work, but this daemon could not safely attach to it. Startup recovery
+	// must preserve the durable session and worktree rather than treating the
+	// failed attachment as proof that the provider died.
+	ErrChatRecoveryInconclusive = errors.New("chat conversation recovery is inconclusive")
 	// ErrChatNoActiveTurn means an interrupt found nothing to cancel — either AO
 	// has no turn in flight, or the provider no longer considers the named turn
 	// active. A driver must translate its provider's refusal into this rather than
@@ -922,6 +927,24 @@ type ChatConversation interface {
 	Events() <-chan ChatEvent
 	// Close releases the controller. It does not delete provider-side history.
 	Close() error
+}
+
+// ChatProviderPreserver is optionally implemented when Close only detaches the
+// daemon-side controller and deliberately leaves provider work alive.
+type ChatProviderPreserver interface {
+	PreservesProviderOnClose() bool
+}
+
+// ChatProviderTerminator is optionally implemented when explicit session
+// destruction must do more than detach the controller.
+type ChatProviderTerminator interface {
+	Terminate() error
+}
+
+// ChatLiveReconnector identifies attachment to the same initialized provider
+// process, as distinct from native resume in a replacement process.
+type ChatLiveReconnector interface {
+	ReconnectedLive() bool
 }
 
 // ChatHistoryReader is optionally implemented by a conversation whose native

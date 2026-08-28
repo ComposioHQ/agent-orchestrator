@@ -3,13 +3,17 @@
 package persistenthost
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"syscall"
 )
 
-func spawnDetached(cfg Config) error {
+func spawnDetached(ctx context.Context, cfg Config) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	exe, err := os.Executable()
 	if err != nil {
 		return err

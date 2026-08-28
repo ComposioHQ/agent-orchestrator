@@ -312,6 +312,29 @@ func newController(
 	return c
 }
 
+// restoreLiveTurnOwnership rebuilds the volatile busy gate from durable facts
+// before a replacement daemon publishes a reconnected controller. The provider
+// kept running while AO was detached, so forgetting this turn would let a new
+// Send start a second root turn on the same native conversation.
+func (c *Controller) restoreLiveTurnOwnership(turns []domain.ConversationTurn) {
+	var latest *domain.ConversationTurn
+	for i := range turns {
+		turn := &turns[i]
+		if turn.State != domain.TurnStateRunning || turn.ProviderTurnID == "" || turn.RolledBackAt != nil {
+			continue
+		}
+		if latest == nil || turn.RequestedAt.After(latest.RequestedAt) {
+			latest = turn
+		}
+	}
+	if latest == nil {
+		return
+	}
+	c.pendingTurnID = latest.ProviderTurnID
+	c.ackedTurnID = latest.ProviderTurnID
+	c.state = ports.ChatControllerBusy
+}
+
 // start begins live provider consumption after any durable native history has
 // been imported. Keeping construction and consumption separate prevents a resume
 // notification from racing ahead of the older turns it follows.
@@ -1996,7 +2019,7 @@ func (c *Controller) Rollback(ctx context.Context, turnID string) (int, error) {
 // output and unresolved provider requests to the replacement controller.
 func (c *Controller) Close(ctx context.Context) error {
 	c.once.Do(func() {
-		if preserver, ok := c.conv.(interface{ PreservesProviderOnClose() bool }); ok && preserver.PreservesProviderOnClose() {
+		if preserver, ok := c.conv.(ports.ChatProviderPreserver); ok && preserver.PreservesProviderOnClose() {
 			c.mu.Lock()
 			c.preserveProviderOnStop = true
 			c.mu.Unlock()
@@ -2019,7 +2042,7 @@ func (c *Controller) Close(ctx context.Context) error {
 // and controller replacement use Terminate.
 func (c *Controller) Terminate(ctx context.Context) error {
 	c.once.Do(func() {
-		if terminator, ok := c.conv.(interface{ Terminate() error }); ok {
+		if terminator, ok := c.conv.(ports.ChatProviderTerminator); ok {
 			c.closeErr = terminator.Terminate()
 		} else {
 			c.closeErr = c.conv.Close()

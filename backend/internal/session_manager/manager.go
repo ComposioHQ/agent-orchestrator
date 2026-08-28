@@ -2279,6 +2279,9 @@ func (m *Manager) reconcileLive(ctx context.Context, rec domain.SessionRecord) e
 		if relaunchErr == nil {
 			return nil
 		}
+		if errors.Is(relaunchErr, ports.ErrChatRecoveryInconclusive) {
+			return fmt.Errorf("reconcile %s: preserve detached Chat provider: %w", rec.ID, relaunchErr)
+		}
 		restoreErr = relaunchErr
 	}
 	// A provider or runtime dependency can be temporarily unavailable during an

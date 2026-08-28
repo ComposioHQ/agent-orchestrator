@@ -70,6 +70,25 @@ func TestCommandsRejectUnexpectedArgs(t *testing.T) {
 	}
 }
 
+func TestChatHostRejectsMalformedInternalArgumentsAsUsage(t *testing.T) {
+	setConfigEnv(t)
+	for _, args := range [][]string{
+		{"chat-host"},
+		{"chat-host", "session", "/tmp/data", "/tmp/work", "provider"},
+		{"chat-host", "session", "/tmp/data", "/tmp/work", "not-a-separator", "provider"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			_, _, err := executeCLI(t, Deps{}, args...)
+			if err == nil {
+				t.Fatal("expected usage error")
+			}
+			if got := ExitCode(err); got != 2 {
+				t.Fatalf("ExitCode(%v) = %d, want 2", err, got)
+			}
+		})
+	}
+}
+
 func TestVersionEmitsCLIInvocationBestEffort(t *testing.T) {
 	t.Setenv("AO_SESSION_ID", "")
 	cfg := setConfigEnv(t)

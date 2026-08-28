@@ -15,7 +15,7 @@ import (
 
 func TestMain(m *testing.M) {
 	if len(os.Args) >= 6 && os.Args[1] == "chat-host" && os.Args[5] == "--" {
-		err := Run(Config{
+		err := Run(context.Background(), Config{
 			SessionID: os.Args[2], DataDir: os.Args[3], Workdir: os.Args[4],
 			Env: os.Environ(), Argv: os.Args[6:],
 		})
@@ -70,7 +70,7 @@ func TestHostReconnectsSameProviderAndReplaysDetachedOutput(t *testing.T) {
 		Argv:      []string{os.Args[0], "-test.run=TestProviderHelper"},
 	}
 	hostDone := make(chan error, 1)
-	go func() { hostDone <- Run(cfg) }()
+	go func() { hostDone <- Run(context.Background(), cfg) }()
 
 	d := awaitDescriptor(t, dataDir, cfg.SessionID)
 	first, err := attach(context.Background(), d, false)
@@ -182,7 +182,7 @@ func TestHostReplaysUnansweredServerRequestAfterDetach(t *testing.T) {
 		Env:  append(os.Environ(), "AO_CHAT_HOST_PROVIDER_HELPER=1"),
 		Argv: []string{os.Args[0], "-test.run=TestProviderHelper"}}
 	done := make(chan error, 1)
-	go func() { done <- Run(cfg) }()
+	go func() { done <- Run(context.Background(), cfg) }()
 	d := awaitDescriptor(t, dataDir, cfg.SessionID)
 	first, err := attach(context.Background(), d, false)
 	if err != nil {
@@ -227,7 +227,7 @@ func TestAttachRejectsBadCapabilityAndVersion(t *testing.T) {
 		Env:  append(os.Environ(), "AO_CHAT_HOST_PROVIDER_HELPER=1"),
 		Argv: []string{os.Args[0], "-test.run=TestProviderHelper"}}
 	done := make(chan error, 1)
-	go func() { done <- Run(cfg) }()
+	go func() { done <- Run(context.Background(), cfg) }()
 	d := awaitDescriptor(t, dataDir, cfg.SessionID)
 	bad := d
 	bad.Token = "wrong"
@@ -253,7 +253,7 @@ func TestReconcileKeepsDurableSessionAndStopsOrphan(t *testing.T) {
 		cfg := Config{SessionID: sessionID, DataDir: dataDir, Workdir: workdir,
 			Env:  append(os.Environ(), "AO_CHAT_HOST_PROVIDER_HELPER=1"),
 			Argv: []string{os.Args[0], "-test.run=TestProviderHelper"}}
-		go func() { done <- Run(cfg) }()
+		go func() { done <- Run(context.Background(), cfg) }()
 		_ = awaitDescriptor(t, dataDir, sessionID)
 		return done
 	}
@@ -290,9 +290,9 @@ func TestHostLaunchLockFencesConcurrentProvider(t *testing.T) {
 		Env:  append(os.Environ(), "AO_CHAT_HOST_PROVIDER_HELPER=1"),
 		Argv: []string{os.Args[0], "-test.run=TestProviderHelper"}}
 	firstDone := make(chan error, 1)
-	go func() { firstDone <- Run(cfg) }()
+	go func() { firstDone <- Run(context.Background(), cfg) }()
 	d := awaitDescriptor(t, dataDir, cfg.SessionID)
-	if err := Run(cfg); !errors.Is(err, ErrHostExists) {
+	if err := Run(context.Background(), cfg); !errors.Is(err, ErrHostExists) {
 		t.Fatalf("second Run error = %v, want ErrHostExists", err)
 	}
 	if err := Shutdown(context.Background(), dataDir, cfg.SessionID); err != nil {
@@ -306,13 +306,38 @@ func TestHostLaunchLockFencesConcurrentProvider(t *testing.T) {
 	}
 }
 
+func TestAcquireHostLockReclaimsDeadOwner(t *testing.T) {
+	dataDir := t.TempDir()
+	sessionID := "stale-lock"
+	dir, err := hostDir(dataDir, sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path, err := lockPath(dataDir, sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("2147483647\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	release, err := acquireHostLock(dataDir, sessionID)
+	if err != nil {
+		t.Fatalf("acquire stale host lock: %v", err)
+	}
+	release()
+}
+
 func TestConnectOrStartWaitsForOldControllerToDetach(t *testing.T) {
 	dataDir := t.TempDir()
 	cfg := Config{SessionID: "overlap", DataDir: dataDir, Workdir: t.TempDir(),
 		Env:  append(os.Environ(), "AO_CHAT_HOST_PROVIDER_HELPER=1"),
 		Argv: []string{os.Args[0], "-test.run=TestProviderHelper"}}
 	done := make(chan error, 1)
-	go func() { done <- Run(cfg) }()
+	go func() { done <- Run(context.Background(), cfg) }()
 	d := awaitDescriptor(t, dataDir, cfg.SessionID)
 	old, err := attach(context.Background(), d, false)
 	if err != nil {

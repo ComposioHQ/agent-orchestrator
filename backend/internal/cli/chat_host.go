@@ -16,11 +16,11 @@ func newChatHostCommand() *cobra.Command {
 		Short:              "Run a persistent Chat provider host (internal)",
 		Hidden:             true,
 		DisableFlagParsing: true,
-		RunE: func(_ *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) < 5 || args[3] != "--" {
-				return errors.New("chat-host requires <session> <data-dir> <workdir> -- <provider> [args...]")
+				return usageError{errors.New("chat-host requires <session> <data-dir> <workdir> -- <provider> [args...]")}
 			}
-			return persistenthost.Run(persistenthost.Config{
+			return persistenthost.Run(cmd.Context(), persistenthost.Config{
 				SessionID: strings.TrimSpace(args[0]),
 				DataDir:   args[1],
 				Workdir:   args[2],

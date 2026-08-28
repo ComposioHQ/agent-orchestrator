@@ -58,6 +58,20 @@ func openStore(t *testing.T) *sqlite.Store {
 	return st
 }
 
+func fullSnapshotReader(st *sqlite.Store) chatsvc.SnapshotReader {
+	return chatsvc.SnapshotReaderFunc(func(ctx context.Context, conversationID string) (chatsvc.ConversationRows, error) {
+		rows, err := st.LoadConversationSnapshot(ctx, conversationID)
+		if err != nil {
+			return chatsvc.ConversationRows{}, err
+		}
+		return chatsvc.ConversationRows{
+			Conversation: rows.Conversation, Turns: rows.Turns,
+			Messages: rows.Messages, Activities: rows.Activities,
+			BranchPoints: rows.BranchPoints, BranchedFromEarlierMessage: rows.BranchedFromEarlierMessage,
+		}, nil
+	})
+}
+
 /* ---- a fake conversation the controller can drive ---------------------- */
 
 type fakeConversation struct {
@@ -3623,7 +3637,7 @@ func TestServiceLiveReconnectSkipsSettledHistoryBarrier(t *testing.T) {
 	native := &nativeHistoryConversation{fakeConversation: newFakeConversation(), err: ports.ErrChatHistoryUnsettled}
 	provider := &liveReconnectedConversation{nativeHistoryConversation: native}
 	svc := chatsvc.New(chatsvc.Options{
-		Store: st, Sessions: st, Drivers: fakeRegistry{driver: fakeDriver{conv: provider}},
+		Store: st, Reader: fullSnapshotReader(st), Sessions: st, Drivers: fakeRegistry{driver: fakeDriver{conv: provider}},
 		Log: slog.New(slog.DiscardHandler), NewID: func() string { return "live-reconnect-id" },
 	})
 	if _, err := svc.Start(context.Background(), chatsvc.StartConfig{
@@ -3635,6 +3649,71 @@ func TestServiceLiveReconnectSkipsSettledHistoryBarrier(t *testing.T) {
 	defer svc.StopAll(context.Background())
 	if reads := native.historyReads(); reads != 0 {
 		t.Fatalf("native history reads = %d, live reconnect must not wait for active turn to settle", reads)
+	}
+}
+
+func TestServiceLiveReconnectKeepsDurableRunningTurnBusy(t *testing.T) {
+	st := openStore(t)
+	reader := fullSnapshotReader(st)
+	var ids atomic.Int32
+	newID := func() string { return fmt.Sprintf("reconnect-%d", ids.Add(1)) }
+	firstProvider := &terminatingConversation{fakeConversation: newFakeConversation()}
+	first := chatsvc.New(chatsvc.Options{
+		Store: st, Reader: reader, Sessions: st,
+		Drivers: fakeRegistry{driver: fakeDriver{conv: firstProvider}},
+		Log:     slog.New(slog.DiscardHandler), NewID: newID,
+	})
+	firstController, err := first.Start(context.Background(), chatsvc.StartConfig{
+		SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex,
+		WorkspacePath: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("first Start: %v", err)
+	}
+	turn, err := firstController.Send(context.Background(), ports.ChatUserMessage{Text: "keep working"})
+	if err != nil {
+		t.Fatalf("first Send: %v", err)
+	}
+	firstProvider.emit(ports.ChatEvent{
+		Kind: ports.ChatEventTurnStarted, ProviderTurnID: turn.ProviderTurnID,
+		ProviderConversationID: firstProvider.ProviderConversationID(),
+	})
+	h := &harness{st: st, ctrl: firstController}
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		for _, candidate := range s.Turns {
+			if candidate.ID == turn.ID {
+				return candidate.State == domain.TurnStateRunning
+			}
+		}
+		return false
+	})
+	first.StopAll(context.Background())
+
+	secondProvider := &liveReconnectedConversation{nativeHistoryConversation: &nativeHistoryConversation{
+		fakeConversation: newFakeConversation(),
+	}}
+	second := chatsvc.New(chatsvc.Options{
+		Store: st, Reader: reader, Sessions: st,
+		Drivers: fakeRegistry{driver: fakeDriver{conv: secondProvider}},
+		Log:     slog.New(slog.DiscardHandler), NewID: newID,
+	})
+	t.Cleanup(func() { second.StopAll(context.Background()) })
+	secondController, err := second.Start(context.Background(), chatsvc.StartConfig{
+		SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex,
+		WorkspacePath: t.TempDir(), ProviderConversationID: firstProvider.ProviderConversationID(),
+	})
+	if err != nil {
+		t.Fatalf("reconnect Start: %v", err)
+	}
+	queued, err := secondController.Send(context.Background(), ports.ChatUserMessage{Text: "after restart"})
+	if err != nil {
+		t.Fatalf("reconnect Send: %v", err)
+	}
+	if queued.State != domain.TurnStateQueued {
+		t.Fatalf("reconnect Send state = %s, want queued behind surviving turn", queued.State)
+	}
+	if got := secondProvider.sentTexts(); len(got) != 0 {
+		t.Fatalf("reconnected provider received concurrent turns: %v", got)
 	}
 }
 

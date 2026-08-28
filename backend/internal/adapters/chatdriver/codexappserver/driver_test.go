@@ -324,6 +324,9 @@ func TestResumeDoesNotCompeteWithAttachedHostDuringDaemonOverlap(t *testing.T) {
 	if err == nil || !errors.Is(err, persistenthost.ErrAttached) {
 		t.Fatalf("Resume error = %v, want attached-host refusal", err)
 	}
+	if !errors.Is(err, ports.ErrChatRecoveryInconclusive) {
+		t.Fatalf("Resume error = %v, want recovery-inconclusive classification", err)
+	}
 	if srv.sentMethod("initialize") || srv.sentMethod("thread/resume") {
 		t.Fatal("daemon overlap launched a competing direct provider")
 	}

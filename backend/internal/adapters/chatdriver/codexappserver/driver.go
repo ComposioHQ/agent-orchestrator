@@ -370,28 +370,9 @@ func (d *Driver) connect(ctx context.Context, workdir string, env map[string]str
 	}
 
 	conv := newConversation(proc, d.log)
-
-	initCtx, cancel := context.WithTimeout(ctx, handshakeTimeout)
-	defer cancel()
-	if err := conv.conn.request(initCtx, "initialize", map[string]any{
-		"clientInfo": map[string]any{
-			"name":    clientName,
-			"title":   clientTitle,
-			"version": clientVersion,
-		},
-		"capabilities": map[string]any{
-			"experimentalApi":           true,
-			"optOutNotificationMethods": nil,
-		},
-	}, nil); err != nil {
+	if err := d.initialize(ctx, conv); err != nil {
 		_ = conv.Close()
-		// A handshake the provider rejects means a protocol AO cannot speak.
-		return nil, fmt.Errorf("%w: initialize: %w", ports.ErrChatDriverIncompatible, err)
-	}
-
-	if err := conv.conn.notify("initialized", nil); err != nil {
-		_ = conv.Close()
-		return nil, fmt.Errorf("notify initialized: %w", err)
+		return nil, err
 	}
 	return conv, nil
 }
@@ -429,6 +410,12 @@ func (d *Driver) connectSession(
 		if allowConcurrentHostReplacement && errors.Is(err, persistenthost.ErrAttached) {
 			conv, directErr := d.connect(ctx, workdir, env)
 			return conv, false, directErr
+		}
+		if errors.Is(err, persistenthost.ErrOwnershipInconclusive) ||
+			errors.Is(err, persistenthost.ErrAttached) ||
+			errors.Is(err, persistenthost.ErrIncompatible) ||
+			errors.Is(err, persistenthost.ErrUnauthorized) {
+			return nil, false, fmt.Errorf("%w: persistent host: %w", ports.ErrChatRecoveryInconclusive, err)
 		}
 		return nil, false, fmt.Errorf("%w: persistent host: %w", ports.ErrChatDriverUnavailable, err)
 	}
