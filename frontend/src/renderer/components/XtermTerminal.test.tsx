@@ -494,13 +494,16 @@ describe("XtermTerminal", () => {
 		expect(trigger.style.top).toBe("88px");
 	});
 
-	it("opens terminal search from the context menu", async () => {
-		const { container } = render(<XtermTerminal theme="dark" />);
+	it("opens terminal search from the context menu with readable light-theme query text", async () => {
+		const { container } = render(<XtermTerminal theme="light" />);
 
 		fireEvent.contextMenu(container.firstElementChild!);
 		fireEvent.click(await screen.findByText("Search terminal"));
 
-		expect(await screen.findByRole("searchbox", { name: "Search terminal" })).toHaveFocus();
+		const input = await screen.findByRole("searchbox", { name: "Search terminal" });
+		expect(input).toHaveFocus();
+		expect(input).toHaveClass("text-foreground");
+		expect(input).not.toHaveClass("text-terminal");
 	});
 
 	it.each([

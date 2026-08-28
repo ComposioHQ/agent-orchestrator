@@ -158,7 +158,7 @@ export function TerminalSearch({ onClose, onReturnFocus, open, searchAddon }: Te
 			<input
 				aria-label={t("terminal.search")}
 				aria-invalid={!queryIsValid || undefined}
-				className="h-7 min-w-0 flex-1 bg-transparent px-2 font-mono text-xs text-terminal outline-none placeholder:text-terminal-dim aria-invalid:text-destructive"
+				className="h-7 min-w-0 flex-1 bg-transparent px-2 font-mono text-xs text-foreground outline-none placeholder:text-terminal-dim aria-invalid:text-destructive"
 				maxLength={512}
 				onChange={(event) => setQuery(event.target.value)}
 				placeholder={t("terminal.searchPlaceholder")}
