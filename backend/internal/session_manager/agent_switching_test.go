@@ -1010,6 +1010,34 @@ func TestResolveChatTargetActivationOutcomeRejectsIncompleteOwnershipTuples(t *t
 		t.Fatalf("incomplete target tuple resolved = committed %v sourceStillOwns %v err %v, want neither", committed, sourceStillOwns, err)
 	}
 
+	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: activation.ActivatedAt}
+	rec.Metadata.AgentSessionID = activation.ProviderConversationID
+	store.sessions[rec.ID] = rec
+	store.native[activation.TargetNativeSessionRef] = domain.AgentNativeSession{
+		ID: activation.TargetNativeSessionRef, AOSessionID: activation.SessionID,
+		Harness: activation.TargetHarness, NativeSessionID: activation.ProviderConversationID,
+		LastGenerationID: activation.TargetGenerationID,
+	}
+	boundaryID := chatSwitchProviderBoundaryID(activation.SwitchID)
+	store.conversations[activation.SessionID] = domain.ConversationRecord{
+		ID: "conversation-1", SessionID: activation.SessionID, ActiveBranchID: boundaryID,
+	}
+	store.branches[boundaryID] = domain.ConversationBranch{
+		ID: boundaryID, ConversationID: "conversation-1", SessionID: activation.SessionID,
+		ProviderConversationID: activation.ProviderConversationID,
+		ProviderScopeID:        boundaryID, Active: true,
+	}
+	_, committed, sourceStillOwns, err = manager.resolveChatTargetActivationOutcome(context.Background(), store, domain.SessionRecord{}, activation)
+	if err != nil || !committed || sourceStillOwns {
+		t.Fatalf("complete target tuple resolved = committed %v sourceStillOwns %v err %v, want committed", committed, sourceStillOwns, err)
+	}
+	rec.Metadata.AgentSessionID = "different-target-native"
+	store.sessions[rec.ID] = rec
+	_, committed, sourceStillOwns, err = manager.resolveChatTargetActivationOutcome(context.Background(), store, domain.SessionRecord{}, activation)
+	if err != nil || committed || sourceStillOwns {
+		t.Fatalf("target tuple with mismatched session native ID resolved = committed %v sourceStillOwns %v err %v, want neither", committed, sourceStillOwns, err)
+	}
+
 	switchRecord := store.switches[activation.SwitchID]
 	switchRecord.State = domain.AgentSwitchStartingTarget
 	store.switches[activation.SwitchID] = switchRecord

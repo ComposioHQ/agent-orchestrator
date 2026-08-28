@@ -721,7 +721,8 @@ func (m *Manager) resolveChatTargetActivationOutcome(
 		if !nativeFound || targetNative.AOSessionID != activation.SessionID ||
 			targetNative.Harness != activation.TargetHarness ||
 			targetNative.LastGenerationID != activation.TargetGenerationID ||
-			targetNative.NativeSessionID != activation.ProviderConversationID {
+			targetNative.NativeSessionID != activation.ProviderConversationID ||
+			session.Metadata.AgentSessionID != targetNative.NativeSessionID {
 			return current, false, false, nil
 		}
 		conversationStore, ok := m.store.(interface {
