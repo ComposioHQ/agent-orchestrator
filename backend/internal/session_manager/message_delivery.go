@@ -36,6 +36,7 @@ func (m *Manager) WaitForMessageDeliveryReady(ctx context.Context, id domain.Ses
 
 	mode := domain.NormalizeSessionMode(rec.Mode)
 	var detector ports.TerminalActivityDetector
+	var emptyComposerDetector ports.EmptyComposerDetector
 	var handle ports.RuntimeHandle
 	requireFirstSignal := false
 	if mode == domain.SessionModeTUI {
@@ -47,6 +48,7 @@ func (m *Manager) WaitForMessageDeliveryReady(ctx context.Context, id domain.Ses
 			return fmt.Errorf("%w: %s", ErrUnknownHarness, rec.Harness)
 		}
 		detector, _ = agent.(ports.TerminalActivityDetector)
+		emptyComposerDetector, _ = agent.(ports.EmptyComposerDetector)
 		signaler, signalsReadiness := agent.(ports.StartupInputReadinessSignaler)
 		requireFirstSignal = signalsReadiness && signaler.FirstSignalProvesInputReady()
 		handle = runtimeHandle(rec.Metadata)
@@ -79,6 +81,9 @@ func (m *Manager) WaitForMessageDeliveryReady(ctx context.Context, id domain.Ses
 				if output, outputErr := m.runtime.GetOutput(ctx, handle, messageDeliveryReadyLines); outputErr == nil {
 					state, authoritative := detector.DetectTerminalActivity(output)
 					ready = authoritative && state == domain.ActivityIdle
+					if !authoritative && rec.Activity.State == domain.ActivityIdle && emptyComposerDetector != nil {
+						ready = emptyComposerDetector.ComposerIsEmpty(output)
+					}
 				}
 			} else {
 				// MarkSpawned records idle before the TUI is necessarily ready.

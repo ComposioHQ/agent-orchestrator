@@ -13,6 +13,22 @@ var continueTerminalEscape = regexp.MustCompile(`\x1b(?:\[[\x30-\x3f]*[\x20-\x2f
 // because its structured question picker can appear without an activity hook.
 func (p *Plugin) ContinuouslyDetectTerminalActivity() bool { return true }
 
+// ComposerIsEmpty proves that Continue's current composer is visible without
+// draft text. Message delivery uses this narrower terminal fact before writing
+// unsolicited coordination into the TUI.
+func (p *Plugin) ComposerIsEmpty(output string) bool {
+	lines := continueTerminalLines(output)
+	for i := len(lines) - 1; i >= 0; i-- {
+		if continueIdleComposerAt(lines[i]) {
+			return true
+		}
+		if strings.Contains(lines[i], "❯") {
+			return false
+		}
+	}
+	return false
+}
+
 // DetectTerminalActivity recognizes authoritative markers in Continue's TUI.
 // The newest marker wins so an old picker retained in scrollback cannot keep a
 // session waiting once Continue returns to active work.
@@ -30,7 +46,7 @@ func (p *Plugin) DetectTerminalActivity(output string) (domain.ActivityState, bo
 	for i := len(recent) - 1; i >= 0; i-- {
 		line := strings.ToLower(recent[i])
 		if continueIdleComposerAt(recent[i]) {
-			return "", false
+			return domain.ActivityIdle, true
 		}
 		if continueQuestionPickerAt(recent, i) {
 			return domain.ActivityWaitingInput, true

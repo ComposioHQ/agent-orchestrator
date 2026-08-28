@@ -63,8 +63,8 @@ func TestDetectTerminalActivityContinueIgnoresCompletedQuestionInIdleComposer(t 
 ╰───────────────────────────────────────────────────────────────────────────────╯
 `
 	got, ok := (&Plugin{}).DetectTerminalActivity(output)
-	if ok {
-		t.Fatalf("DetectTerminalActivity() = (%q, true), want no signal", got)
+	if !ok || got != domain.ActivityIdle {
+		t.Fatalf("DetectTerminalActivity() = (%q, %v), want (%q, true)", got, ok, domain.ActivityIdle)
 	}
 }
 
@@ -84,7 +84,17 @@ func TestDetectTerminalActivityContinueIgnoresCompletedQuestionSpinnerBeforeIdle
 ╰───────────────────────────────────────────────────────────────────────────────╯
 `
 	got, ok := (&Plugin{}).DetectTerminalActivity(output)
-	if ok {
-		t.Fatalf("DetectTerminalActivity() = (%q, true), want no signal", got)
+	if !ok || got != domain.ActivityIdle {
+		t.Fatalf("DetectTerminalActivity() = (%q, %v), want (%q, true)", got, ok, domain.ActivityIdle)
+	}
+}
+
+func TestComposerIsEmpty(t *testing.T) {
+	idle := "│  ❯                                                                            │\n"
+	if !(&Plugin{}).ComposerIsEmpty(idle) {
+		t.Fatal("ComposerIsEmpty(idle composer) = false, want true")
+	}
+	if (&Plugin{}).ComposerIsEmpty("│  ❯ finish the fix                                                            │\n") {
+		t.Fatal("ComposerIsEmpty(draft) = true, want false")
 	}
 }

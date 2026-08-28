@@ -38,6 +38,16 @@ func (terminalReadyAgent) DetectTerminalActivity(output string) (domain.Activity
 	return "", false
 }
 
+type emptyComposerReadyAgent struct{ fakeAgent }
+
+func (emptyComposerReadyAgent) DetectTerminalActivity(string) (domain.ActivityState, bool) {
+	return "", false
+}
+
+func (emptyComposerReadyAgent) ComposerIsEmpty(output string) bool {
+	return output == "empty-composer"
+}
+
 func TestWaitForMessageDeliveryReadyWaitsForTerminalIdleMarker(t *testing.T) {
 	st := newFakeStore()
 	st.sessions["orch"] = domain.SessionRecord{
@@ -78,6 +88,25 @@ func TestWaitForMessageDeliveryReadyHonorsContextWhileTerminalStarts(t *testing.
 	err := m.WaitForMessageDeliveryReady(ctx, "orch")
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("WaitForMessageDeliveryReady error = %v, want context deadline", err)
+	}
+}
+
+func TestWaitForMessageDeliveryReadyAcceptsProvenEmptyComposer(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["orch"] = domain.SessionRecord{
+		ID:        "orch",
+		ProjectID: "ao",
+		Kind:      domain.KindOrchestrator,
+		Harness:   domain.HarnessContinue,
+		Mode:      domain.SessionModeTUI,
+		Activity:  domain.Activity{State: domain.ActivityIdle},
+		Metadata:  domain.SessionMetadata{RuntimeHandleID: "orch"},
+	}
+	runtime := &fakeRuntime{outputs: []string{"empty-composer"}}
+	m := New(Deps{Runtime: runtime, Agents: singleAgent{agent: emptyComposerReadyAgent{}}, Store: st})
+
+	if err := m.WaitForMessageDeliveryReady(context.Background(), "orch"); err != nil {
+		t.Fatalf("WaitForMessageDeliveryReady: %v", err)
 	}
 }
 

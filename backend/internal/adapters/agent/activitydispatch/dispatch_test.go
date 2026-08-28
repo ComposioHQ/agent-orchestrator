@@ -63,7 +63,7 @@ func TestSignalCoverageForHarness(t *testing.T) {
 		want    SignalCoverage
 	}{
 		{domain.HarnessClaudeCode, SignalCoverageComplete},
-		{domain.HarnessContinue, SignalCoverageComplete},
+		{domain.HarnessContinue, SignalCoveragePartial},
 		{domain.HarnessAider, SignalCoveragePartial},
 		{domain.HarnessCrush, SignalCoverageNone},
 	}
@@ -78,8 +78,11 @@ func TestSignalCoverageForHarness(t *testing.T) {
 }
 
 func TestFullySupportsHarnessRequiresCompleteCoverage(t *testing.T) {
-	if !FullySupportsHarness(domain.HarnessContinue) {
-		t.Fatal("FullySupportsHarness(continue) = false, want true")
+	if !FullySupportsHarness(domain.HarnessClaudeCode) {
+		t.Fatal("FullySupportsHarness(claude-code) = false, want true")
+	}
+	if FullySupportsHarness(domain.HarnessContinue) {
+		t.Fatal("FullySupportsHarness(continue) = true, want false for version-dependent hooks")
 	}
 	if FullySupportsHarness(domain.HarnessAider) {
 		t.Fatal("FullySupportsHarness(aider) = true, want false for completion-only signals")

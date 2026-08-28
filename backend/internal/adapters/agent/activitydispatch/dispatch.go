@@ -84,10 +84,12 @@ const (
 )
 
 // signalCoverageOverrides records harnesses whose callback coverage cannot be
-// inferred from a same-named Derivers entry. Aider has a same-named deriver but
-// only a completion callback.
+// inferred from a same-named Derivers entry. Aider has only a completion
+// callback. Continue's Claude-compatible hooks vary by installed CLI version,
+// so its terminal fallback is useful without treating hook silence as broken.
 var signalCoverageOverrides = map[domain.AgentHarness]SignalCoverage{
-	domain.HarnessAider: SignalCoveragePartial,
+	domain.HarnessAider:    SignalCoveragePartial,
+	domain.HarnessContinue: SignalCoveragePartial,
 }
 
 // CoverageForHarness returns the activity-signal coverage for a selectable

@@ -54,3 +54,23 @@ func TestContinuouslyDetectTerminalActivity(t *testing.T) {
 		t.Fatal("ContinuouslyDetectTerminalActivity() = false, want true")
 	}
 }
+
+func TestComposerIsEmpty(t *testing.T) {
+	tests := []struct {
+		name   string
+		output string
+		want   bool
+	}{
+		{name: "default prompt", output: "> \n", want: true},
+		{name: "chat prompt", output: "ask> \n", want: true},
+		{name: "submitted prompt", output: "> Fix the failing test\n", want: false},
+		{name: "no prompt", output: "Loading model...\n", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := (&Plugin{}).ComposerIsEmpty(tt.output); got != tt.want {
+				t.Fatalf("ComposerIsEmpty() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

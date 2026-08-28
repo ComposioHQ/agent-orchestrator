@@ -17,6 +17,20 @@ var (
 // observes its submitted prompt while the non-streaming response is in flight.
 func (p *Plugin) ContinuouslyDetectTerminalActivity() bool { return true }
 
+// ComposerIsEmpty proves that Aider's newest prompt is visible without a
+// submitted message. Activity reconciliation leaves this state to the
+// completion hook, while message delivery uses it as an input-readiness guard.
+func (p *Plugin) ComposerIsEmpty(output string) bool {
+	lines := aiderTerminalLines(output)
+	for i := len(lines) - 1; i >= 0; i-- {
+		match := aiderPromptLine.FindStringSubmatch(lines[i])
+		if match != nil {
+			return len(match) < 2 || strings.TrimSpace(match[1]) == ""
+		}
+	}
+	return false
+}
+
 // DetectTerminalActivity reports active when Aider's newest prompt contains a
 // submitted message. A bare prompt emits no signal: startup must remain idle,
 // while the notification hook owns the completed-turn waiting-input state.
