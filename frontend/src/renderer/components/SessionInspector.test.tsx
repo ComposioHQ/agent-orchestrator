@@ -16,6 +16,7 @@ import type { SessionPRSummary } from "../hooks/useSessionScmSummary";
 import { sessionScmSummaryQueryKey } from "../hooks/useSessionScmSummary";
 import { sessionWorkspaceFilesQueryKey } from "../hooks/useSessionWorkspaceFiles";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import { agentReadiness } from "../test/agent-readiness-fixtures";
 import { useUiStore } from "../stores/ui-store";
 import type {
   PRState,
@@ -176,14 +177,9 @@ function mockCommonGets(
   reviews: unknown[] = [],
 ) {
   getMock.mockImplementation(async (path: string) => {
-    if (path === "/api/v1/agents") {
-      const agents = ["claude-code", "codex", "opencode"].map((id) => ({
-        id,
-        label: id,
-      }));
-      return {
-        data: { supported: agents, installed: agents, authorized: agents },
-      };
+    if (path === "/api/v1/agents/readiness") {
+      const agents = ["claude-code", "codex", "opencode"].map((id) => agentReadiness(id));
+      return { data: { agents } };
     }
     if (path === "/api/v1/sessions/{sessionId}/workspace/files") {
       return {
@@ -1858,14 +1854,9 @@ describe("SessionInspector summary reviews", () => {
   // alongside the catalog's properly-cased "Claude Code".
   it("labels the default reviewer with its display name, not the raw id", async () => {
     getMock.mockImplementation(async (path: string) => {
-      if (path === "/api/v1/agents") {
-        const agents = ["claude-code", "codex", "opencode"].map((id) => ({
-          id,
-          label: id,
-        }));
-        return {
-          data: { supported: agents, installed: agents, authorized: agents },
-        };
+      if (path === "/api/v1/agents/readiness") {
+        const agents = ["claude-code", "codex", "opencode"].map((id) => agentReadiness(id));
+        return { data: { agents } };
       }
       if (path === "/api/v1/sessions/{sessionId}/workspace/files") {
         return {
@@ -1911,14 +1902,9 @@ describe("SessionInspector summary reviews", () => {
 
   it("configures session auto-review and disables manual controls", async () => {
     getMock.mockImplementation(async (path: string) => {
-      if (path === "/api/v1/agents") {
-        const agents = ["claude-code", "codex", "opencode"].map((id) => ({
-          id,
-          label: id,
-        }));
-        return {
-          data: { supported: agents, installed: agents, authorized: agents },
-        };
+      if (path === "/api/v1/agents/readiness") {
+        const agents = ["claude-code", "codex", "opencode"].map((id) => agentReadiness(id));
+        return { data: { agents } };
       }
       if (path === "/api/v1/sessions/{sessionId}/reviews") {
         return {
@@ -2004,14 +1990,9 @@ describe("SessionInspector summary reviews", () => {
       body: "",
     };
     getMock.mockImplementation(async (path: string) => {
-      if (path === "/api/v1/agents") {
-        const agents = ["claude-code", "codex", "opencode"].map((id) => ({
-          id,
-          label: id,
-        }));
-        return {
-          data: { supported: agents, installed: agents, authorized: agents },
-        };
+      if (path === "/api/v1/agents/readiness") {
+        const agents = ["claude-code", "codex", "opencode"].map((id) => agentReadiness(id));
+        return { data: { agents } };
       }
       if (path === "/api/v1/sessions/{sessionId}/reviews") {
         return {

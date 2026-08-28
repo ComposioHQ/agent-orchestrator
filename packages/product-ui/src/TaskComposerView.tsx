@@ -24,20 +24,28 @@ import {
 const ATTACHMENT_ROW_HEIGHT = 70;
 
 export type TaskComposerAgentOption = {
-	authStatus?: "authorized" | "unauthorized" | "unknown";
+	authentication: {
+		state: "authorized" | "unauthorized" | "unknown" | "not_applicable";
+		freshness: "fresh" | "stale" | "checking";
+	};
+	effectiveReadiness: "ready" | "not_ready" | "unknown";
 	id: string;
+	installation: {
+		state: "installed" | "not_installed" | "unknown";
+		freshness: "fresh" | "stale" | "checking";
+	};
 	label: string;
+	lastUsedAt?: string | null;
+	usageCount: number;
 };
 
 export type TaskComposerAgentControl = {
-	authorized?: TaskComposerAgentOption[];
+	agents?: TaskComposerAgentOption[];
 	disabled: boolean;
 	id: string;
-	installed?: TaskComposerAgentOption[];
 	label: string;
 	onChange: (value: string) => void;
 	placeholder: string;
-	supported?: TaskComposerAgentOption[];
 	value: string;
 };
 

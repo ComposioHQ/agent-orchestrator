@@ -8,14 +8,14 @@ const h = vi.hoisted(() => ({
 	get: vi.fn(),
 	post: vi.fn(),
 	capture: vi.fn(),
+	ensureReadiness: vi.fn(),
 	agentValues: [] as string[],
 }));
 
-vi.mock("../hooks/useAgentsQuery", () => ({
-	agentsQueryKey: ["agents"],
-	agentsQueryOptions: { queryKey: ["agents"], queryFn: async () => ({}) },
-	refreshAgents: vi.fn(),
-	refreshAgentsIfStale: vi.fn(async () => undefined),
+vi.mock("../hooks/useAgentReadinessQuery", () => ({
+	agentReadinessQueryKey: ["agent-readiness"],
+	useAgentReadinessQuery: () => ({ data: undefined, isFetching: false }),
+	useEnsureAgentReadiness: h.ensureReadiness,
 }));
 
 vi.mock("./CreateProjectAgentSheet", () => ({
@@ -83,11 +83,25 @@ afterEach(() => {
 	h.get.mockReset();
 	h.post.mockReset();
 	h.capture.mockReset();
+	h.ensureReadiness.mockReset();
 	vi.unstubAllGlobals();
 	h.agentValues.length = 0;
 });
 
 describe("TaskComposer", () => {
+	it("ensures the selected harness when agent selection changes", async () => {
+		render(
+			<Wrap>
+				<TaskComposer projectId="proj-1" onCreated={vi.fn()} />
+			</Wrap>,
+		);
+
+		fireEvent.click(screen.getByLabelText("Agent"));
+		await waitFor(() =>
+			expect(h.ensureReadiness).toHaveBeenCalledWith({ agentIds: ["codex"] }),
+		);
+	});
+
 	it("starts a promptless worker when the task is empty", async () => {
 		const onCreated = vi.fn();
 		h.post.mockResolvedValueOnce({ data: { workerId: "sess-empty" } });

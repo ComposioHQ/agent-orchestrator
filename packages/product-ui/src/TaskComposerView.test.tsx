@@ -44,7 +44,14 @@ function viewProps(overrides: Partial<TaskComposerViewProps> = {}): TaskComposer
 			label: "Agent",
 			placeholder: "Select agent",
 			disabled: false,
-			supported: [{ id: "codex", label: "Codex" }],
+			agents: [{
+				id: "codex",
+				label: "Codex",
+				installation: { state: "installed", freshness: "fresh" },
+				authentication: { state: "authorized", freshness: "fresh" },
+				effectiveReadiness: "ready",
+				usageCount: 0,
+			}],
 			onChange: vi.fn(),
 		},
 		model: {
