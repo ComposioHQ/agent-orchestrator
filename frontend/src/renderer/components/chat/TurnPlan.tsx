@@ -48,7 +48,7 @@ export const TurnPlan = memo(function TurnPlan({
 					onClick={() => setExpanded((open) => !open)}
 					aria-expanded={expanded}
 					aria-label={expanded ? "Collapse plan" : "Expand plan"}
-					className="shrink-0 rounded-sm text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+					className="inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 				>
 					<ListChecks aria-hidden="true" className="size-4" />
 				</button>
