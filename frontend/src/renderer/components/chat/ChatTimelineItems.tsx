@@ -866,7 +866,7 @@ function GenericActivityRow({ activity }: { activity: ConversationActivity }) {
 							// Said explicitly rather than implied by the label: "Ran command"
 							// alone never tells the reader what ran, and the collapsed row
 							// deliberately keeps only the category.
-							<pre className="overflow-x-auto rounded-md border border-border bg-background px-2.5 py-1.5 font-mono text-[10.5px] leading-relaxed text-foreground">
+							<pre className="scrollbar-none overflow-x-auto rounded-md border border-border bg-background px-2.5 py-1.5 font-mono text-[10.5px] leading-relaxed text-foreground">
 								{detail.command}
 							</pre>
 						) : null}
@@ -969,7 +969,7 @@ function TerminalInput({ text, truncated }: { text: string; truncated?: boolean 
 				<Keyboard aria-hidden="true" className="size-3" />
 				Agent typed
 			</span>
-			<pre className="overflow-x-auto rounded-md border border-dashed border-border-strong bg-background px-2.5 py-1.5 font-mono text-[10.5px] leading-relaxed text-accent">
+			<pre className="scrollbar-none overflow-x-auto rounded-md border border-dashed border-border-strong bg-background px-2.5 py-1.5 font-mono text-[10.5px] leading-relaxed text-accent">
 				{shown}
 			</pre>
 			{truncated ? (
@@ -1031,7 +1031,7 @@ function CommandOutput({
 				ref={pre}
 				aria-live={streaming ? "polite" : undefined}
 				className={cn(
-					"max-h-64 overflow-auto font-mono leading-relaxed text-muted-foreground",
+					"scrollbar-none max-h-64 overflow-auto font-mono leading-relaxed text-muted-foreground",
 					embedded
 						? "cursor-chat-explore-output px-3 py-2 text-[11px]"
 						: "rounded-md border border-border bg-background px-2.5 py-2 text-[10.5px]",
@@ -1255,7 +1255,7 @@ function Patch({ patch, truncated }: { patch: string; truncated?: boolean }) {
 		// `chat-code` is what the token colours are scoped to, so a patch without it
 		// tokenizes correctly and renders in one flat colour.
 		<div className="chat-code mb-1 mt-0.5 overflow-hidden rounded-md border border-border bg-background">
-			<pre className="max-h-72 overflow-auto px-2.5 py-2">
+			<pre className="scrollbar-none max-h-72 overflow-auto px-2.5 py-2">
 				<code className="font-mono text-[10.5px] leading-[1.55] text-foreground">
 					<HighlightedCode code={patch} language="diff" />
 				</code>
@@ -1427,7 +1427,7 @@ function McpToolRow({ activity }: { activity: ConversationActivity }) {
 							<span className="text-[10px] uppercase tracking-[0.08em] text-muted-foreground/70">
 								Progress
 							</span>
-							<pre className="max-h-40 overflow-auto rounded-md border border-border bg-background px-2.5 py-1.5 font-mono text-[10.5px] leading-relaxed text-muted-foreground">
+							<pre className="scrollbar-none max-h-40 overflow-auto rounded-md border border-border bg-background px-2.5 py-1.5 font-mono text-[10.5px] leading-relaxed text-muted-foreground">
 								{detail.progress}
 							</pre>
 						</div>
@@ -1928,7 +1928,7 @@ export function ApprovalCard({
 					{detail?.reason ?? approvalPrompt(subjectKind)}
 				</p>
 
-				<pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border/70 bg-background/45 px-2.5 py-1.5 font-mono text-[12px] leading-[1.45] text-muted-foreground">
+				<pre className="mt-2 scrollbar-none max-h-32 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border/70 bg-background/45 px-2.5 py-1.5 font-mono text-[12px] leading-[1.45] text-muted-foreground">
 					{detail?.rawCommand ?? command}
 				</pre>
 
