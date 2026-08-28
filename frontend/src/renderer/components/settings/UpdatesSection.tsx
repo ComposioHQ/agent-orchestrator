@@ -367,9 +367,12 @@ function UpdateActions({
 			}).format(effectiveStatus.checkedAt)
 			: null;
 	const channelSwitchInFlight = channelSwitch !== null && (!status.requestId || status.requestId === channelSwitch.requestId);
+	// Use the live updater state, not displayStatus: the manual-check minimum
+	// spinner time forces displayStatus back to "checking" even after a channel
+	// switch finds an update, which would hide this guidance until the timer fires.
 	const channelSwitchMessage = channelSwitchInFlight &&
-		(displayStatus.state === "available" || displayStatus.state === "downloading" || displayStatus.state === "downloaded")
-		? t(displayStatus.state === "downloaded" ? "settings.updates.channelSwitchRestart" : "settings.updates.channelSwitchUpdate", {
+		(effectiveStatus.state === "available" || effectiveStatus.state === "downloading" || effectiveStatus.state === "downloaded")
+		? t(effectiveStatus.state === "downloaded" ? "settings.updates.channelSwitchRestart" : "settings.updates.channelSwitchUpdate", {
 			channel: channelSwitch.channel === "nightly" ? t("settings.updates.channel.nightly") : t("settings.updates.channel.stable"),
 		})
 		: null;
