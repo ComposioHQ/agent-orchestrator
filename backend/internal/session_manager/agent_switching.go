@@ -123,9 +123,9 @@ func (m *Manager) SwitchAgent(ctx context.Context, id domain.SessionID, cfg Swit
 	return record, nil
 }
 
-// RecoverAgentSwitch retries only a durable source-side recovery boundary. It
-// never retries target startup and returns after daemon-owned recovery is
-// accepted.
+// RecoverAgentSwitch schedules reconciliation only for a durable source-side
+// recovery boundary. Ambiguous source restoration is retained without replay;
+// target startup is never retried.
 func (m *Manager) RecoverAgentSwitch(ctx context.Context, id domain.SessionID, switchID domain.AgentSwitchID) (domain.AgentSwitch, error) {
 	if err := m.beginAgentSwitchAttempt(); err != nil {
 		return domain.AgentSwitch{}, err
@@ -435,7 +435,13 @@ func (m *Manager) executeAgentSwitch(ctx context.Context, admitted *admittedAgen
 		}
 		if retErr != nil && !result.State.Terminal() && skipTerminalization && !result.RequiresRecovery() {
 			markerCtx, markerCancel := switchDurableContext(workerCtx)
-			marked, markerErr := m.markRetainedSourceRecovery(markerCtx, store, result, targetRuntimeAmbiguous)
+			var marked domain.AgentSwitch
+			var markerErr error
+			if targetRuntimeAmbiguous && result.State == domain.AgentSwitchStartingTarget {
+				marked, markerErr = m.markTargetStartUnconfirmed(markerCtx, store, result)
+			} else {
+				marked, markerErr = m.markRetainedSourceRecovery(markerCtx, store, result, targetRuntimeAmbiguous)
+			}
 			markerCancel()
 			if markerErr != nil {
 				retErr = errors.Join(retErr, fmt.Errorf("persist retained switch recovery marker: %w", markerErr))
@@ -779,13 +785,8 @@ func (m *Manager) executeAgentSwitch(ctx context.Context, admitted *admittedAgen
 		return result, fmt.Errorf("switch agent %s: target generation exited before activation", id)
 	}
 	if err := m.waitForTargetNativeIdentity(ctx, store, &target); err != nil {
-		if cleanupErr := m.cleanupUnactivatedTarget(ctx, ports.FencedRuntimeRef{
-			Handle: handle, SessionID: id, Generation: string(target.launchID), NativeIdentity: target.native.NativeSessionID,
-		}); cleanupErr != nil {
-			targetRuntimeAmbiguous = true
-			skipTerminalization = true
-			return result, fmt.Errorf("switch agent %s: await target native session identity: %w", id, errors.Join(err, cleanupErr))
-		}
+		targetRuntimeAmbiguous = true
+		skipTerminalization = true
 		return result, fmt.Errorf("switch agent %s: await target native session identity: %w", id, err)
 	}
 
@@ -2966,6 +2967,9 @@ func (m *Manager) reconcileOwnedAgentSwitchOnce(ctx context.Context, store ports
 }
 
 func (m *Manager) reconcileAgentSwitch(ctx context.Context, store ports.AgentSwitchStore, rec domain.SessionRecord, sw domain.AgentSwitch) (bool, error) {
+	if sw.RequiresSourceRestore() {
+		return false, fmt.Errorf("reconcile agent switch %s: source restoration remains unconfirmed", sw.ID)
+	}
 	if domain.NormalizeSessionMode(rec.Mode) == domain.SessionModeChat {
 		return m.reconcileChatAgentSwitch(ctx, store, rec, sw)
 	}
@@ -3150,12 +3154,6 @@ func (m *Manager) reconcileStoppingSource(ctx context.Context, store ports.Agent
 }
 
 func (m *Manager) reconcileStartingTarget(ctx context.Context, store ports.AgentSwitchStore, rec domain.SessionRecord, sw domain.AgentSwitch) (bool, error) {
-	if sw.RequiresSourceRestore() {
-		if cleanupErr := m.cleanupRecoveredTargetWorkspace(ctx, rec, sw); cleanupErr != nil {
-			return false, cleanupErr
-		}
-		return m.failRecoveredSwitchWithSourceRollback(ctx, store, rec, sw)
-	}
 	targetHandleID := strings.TrimSpace(sw.TargetRuntimeHandleID)
 	if targetHandleID == "" {
 		if _, err := m.markTargetStartUnconfirmed(ctx, store, sw); err != nil {
@@ -3194,27 +3192,15 @@ func (m *Manager) reconcileStartingTarget(ctx context.Context, store ports.Agent
 		return false, fmt.Errorf("reconcile agent switch %s: invalid target ownership result %q", sw.ID, probe.Liveness)
 	}
 	if sw.TargetNativeSessionRef == nil {
-		if err := m.runtime.Destroy(ctx, handle); err != nil {
-			return false, err
-		}
-		if cleanupErr := m.cleanupRecoveredTargetWorkspace(ctx, rec, sw); cleanupErr != nil {
-			return false, cleanupErr
-		}
-		return m.failRecoveredSwitchWithSourceRollback(ctx, store, rec, sw)
+		return m.retainRecoveredTargetIdentityAmbiguity(ctx, store, sw, errors.New("target native session reference is missing"))
 	}
 	targetNative, found, err := store.GetAgentNativeSession(ctx, *sw.TargetNativeSessionRef)
 	if err != nil {
-		return false, err
+		return m.retainRecoveredTargetIdentityAmbiguity(ctx, store, sw, fmt.Errorf("read target native session: %w", err))
 	}
 	if !found || targetNative.AOSessionID != rec.ID || targetNative.Harness != sw.TargetHarness ||
 		targetNative.LastGenerationID != sw.TargetGenerationID || strings.TrimSpace(targetNative.NativeSessionID) == "" {
-		if destroyErr := m.runtime.Destroy(ctx, handle); destroyErr != nil {
-			return false, destroyErr
-		}
-		if cleanupErr := m.cleanupRecoveredTargetWorkspace(ctx, rec, sw); cleanupErr != nil {
-			return false, cleanupErr
-		}
-		return m.failRecoveredSwitchWithSourceRollback(ctx, store, rec, sw)
+		return m.retainRecoveredTargetIdentityAmbiguity(ctx, store, sw, errors.New("target native session identity is absent or does not match the reserved generation"))
 	}
 	activated, err := m.lcm.ActivateAgentSwitchTarget(ctx, domain.AgentSwitchTargetActivation{
 		SwitchID:                      sw.ID,
@@ -3240,6 +3226,16 @@ func (m *Manager) reconcileStartingTarget(ctx context.Context, store ports.Agent
 	}
 	_, err = m.failAgentSwitch(ctx, store, current, domain.AgentSwitchErrorDaemonRestartBeforeDelivery)
 	return err == nil, err
+}
+
+func (m *Manager) retainRecoveredTargetIdentityAmbiguity(
+	ctx context.Context,
+	store ports.AgentSwitchStore,
+	sw domain.AgentSwitch,
+	cause error,
+) (bool, error) {
+	_, markerErr := m.markTargetStartUnconfirmed(ctx, store, sw)
+	return false, errors.Join(cause, markerErr)
 }
 
 func (m *Manager) failRecoveredSwitchWithSourceRollback(

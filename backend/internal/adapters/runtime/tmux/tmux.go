@@ -598,18 +598,20 @@ func (r *Runtime) ProbeFencedRuntime(ctx context.Context, ref ports.FencedRuntim
 	if err != nil {
 		return ports.FencedProbeResult{Liveness: ports.FencedUnknown, Reason: ports.FencedReasonProbeFailed}
 	}
-	if containsExactSupervisedWorkload(entries, panePID, string(ref.SessionID), ref.Generation) {
-		return ports.FencedProbeResult{Liveness: ports.FencedAlive, Reason: ports.FencedReasonExactMatch}
-	}
 	descendants := descendantPIDs(entries, panePID)
+	exactSupervisorFound := false
 	for _, entry := range entries {
 		if entry.pid == panePID || !descendants[entry.pid] || !isAnySupervisorCommand(entry.command) {
 			continue
 		}
 		if isSupervisorCommand(entry.command, string(ref.SessionID), ref.Generation) {
-			return ports.FencedProbeResult{Liveness: ports.FencedDead, Reason: ports.FencedReasonExactAbsent}
+			exactSupervisorFound = true
+			continue
 		}
 		return ports.FencedProbeResult{Liveness: ports.FencedUnknown, Reason: ports.FencedReasonGenerationMismatch}
+	}
+	if exactSupervisorFound && containsExactSupervisedWorkload(entries, panePID, string(ref.SessionID), ref.Generation) {
+		return ports.FencedProbeResult{Liveness: ports.FencedAlive, Reason: ports.FencedReasonExactMatch}
 	}
 	return ports.FencedProbeResult{Liveness: ports.FencedDead, Reason: ports.FencedReasonExactAbsent}
 }
@@ -991,12 +993,16 @@ type processEntry struct {
 }
 
 func parseProcessTable(out string) ([]processEntry, error) {
-	lines := strings.Split(strings.TrimSpace(out), "\n")
+	trimmed := strings.TrimSpace(out)
+	if trimmed == "" {
+		return nil, nil
+	}
+	lines := strings.Split(trimmed, "\n")
 	entries := make([]processEntry, 0, len(lines))
 	for _, line := range lines {
 		fields := strings.Fields(line)
 		if len(fields) < 3 {
-			continue
+			return nil, fmt.Errorf("incomplete process row %q", line)
 		}
 		pid, err := strconv.Atoi(fields[0])
 		if err != nil {
