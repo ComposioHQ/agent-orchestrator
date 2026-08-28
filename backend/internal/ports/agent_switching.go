@@ -79,6 +79,10 @@ type AgentSwitchFailurePolicy struct {
 	UpdatedAt     time.Time
 }
 
+type AgentSwitchFailureEventMetadataStore interface {
+	ConfigureAgentSwitchFailureEventMetadata(context.Context, domain.AgentSwitchEventMetadata) error
+}
+
 type AgentSwitchFailureRecoveryEnrollment struct {
 	Authorization domain.AgentSwitchReportingAuthorization
 	EnrolledAt    time.Time

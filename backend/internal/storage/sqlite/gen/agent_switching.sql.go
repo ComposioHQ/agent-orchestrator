@@ -1061,6 +1061,16 @@ WHERE id = ?9
       target_runtime_handle_id = ''
       OR target_runtime_handle_id = ?5
   )
+  AND NOT (
+      target_native_session_ref IS ?1
+      AND target_start_mode = ?2
+      AND state = ?3
+      AND target_generation_id = ?4
+      AND target_runtime_handle_id = ?5
+      AND error_code = ?6
+      AND failure_point = ?7
+      AND updated_at = ?8
+  )
 `
 
 type UpdateAgentSwitchParams struct {

@@ -795,6 +795,29 @@ type AgentSwitchEventBuildInput struct {
 	ElapsedTimeBucket AgentSwitchElapsedTimeBucket
 }
 
+// AgentSwitchEventMetadata is the authoritative process/build context frozen
+// into every persisted failure event. The composition root must configure it
+// before any enrollment or startup reconciliation can occur.
+type AgentSwitchEventMetadata struct {
+	Release           string
+	Environment       AgentSwitchEnvironment
+	Channel           AgentSwitchChannel
+	Platform          AgentSwitchPlatform
+	OS                AgentSwitchOS
+	ElapsedTimeBucket AgentSwitchElapsedTimeBucket
+}
+
+func ValidateAgentSwitchEventMetadata(metadata AgentSwitchEventMetadata) error {
+	if !validAgentSwitchRelease(metadata.Release) {
+		return errors.New("release is not bounded strict SemVer 2.0")
+	}
+	if !metadata.Environment.Valid() || !metadata.Channel.Valid() || !metadata.Platform.Valid() ||
+		!metadata.OS.Valid() || !metadata.ElapsedTimeBucket.Valid() {
+		return errors.New("agent switch event metadata is outside its closed allowlist")
+	}
+	return nil
+}
+
 type AgentSwitchFailureEvent struct {
 	EventID                 string
 	EnvelopeEncodingVersion int

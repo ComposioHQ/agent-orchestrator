@@ -302,3 +302,53 @@ INSERT INTO agent_switches (
 		t.Fatalf("foreign key violations = %d, err=%v", fkViolations, err)
 	}
 }
+
+func TestMigration0117CopiesEveryExistingAgentSwitchColumn(t *testing.T) {
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "ao.db")+pragmas)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	upTo(t, db, 116)
+
+	now := time.Date(2026, time.August, 28, 10, 0, 0, 0, time.UTC)
+	if _, err := db.Exec(`
+INSERT INTO projects (id,path,registered_at) VALUES ('copy-project','/repos/copy-project',?);
+INSERT INTO sessions (id,project_id,num,harness,activity_last_at,created_at,updated_at)
+VALUES ('copy-session','copy-project',1,'claude-code',?,?,?);
+INSERT INTO agent_switches (
+ id,session_id,idempotency_key,request_fingerprint,from_harness,target_harness,
+ target_native_session_ref,target_start_mode,state,agent_handoff_status,
+ source_transcript_status,semantic_handoff_included,agent_handoff_path,agent_handoff_hash,
+ source_generation_id,target_generation_id,target_runtime_handle_id,target_acknowledged_at,
+ error_code,requested_at,updated_at,final_handoff_path,final_handoff_hash
+) VALUES (
+ 'copy-switch','copy-session','copy-key',?,'claude-code','codex',NULL,'resumed','failed','received',
+ 'available',1,'handoff.json',?,'source-copy','target-copy','handle-copy',?,
+ 'delivery_unconfirmed',?,?, 'final.json',?
+)`, now, now, now, now, "v1:"+strings.Repeat("c", 64), strings.Repeat("a", 64),
+		now.Add(time.Second), now, now.Add(2*time.Second), strings.Repeat("b", 64)); err != nil {
+		t.Fatalf("seed pre-0117 switch: %v", err)
+	}
+	const projection = `json_array(
+ id,session_id,idempotency_key,request_fingerprint,from_harness,target_harness,
+ target_native_session_ref,target_start_mode,state,agent_handoff_status,
+ source_transcript_status,semantic_handoff_included,agent_handoff_path,agent_handoff_hash,
+ source_generation_id,target_generation_id,target_runtime_handle_id,target_acknowledged_at,
+ error_code,requested_at,updated_at,final_handoff_path,final_handoff_hash)`
+	var before string
+	if err := db.QueryRow(`SELECT ` + projection + ` FROM agent_switches WHERE id='copy-switch'`).Scan(&before); err != nil {
+		t.Fatalf("read switch before 0117: %v", err)
+	}
+	upTo(t, db, 117)
+	var after, failurePoint string
+	if err := db.QueryRow(`SELECT `+projection+`,failure_point FROM agent_switches WHERE id='copy-switch'`).Scan(&after, &failurePoint); err != nil {
+		t.Fatalf("read switch after 0117: %v", err)
+	}
+	if after != before {
+		t.Fatalf("0117 changed an existing switch column:\nbefore=%s\nafter=%s", before, after)
+	}
+	if failurePoint != "" {
+		t.Fatalf("migrated failure_point = %q, want empty", failurePoint)
+	}
+}

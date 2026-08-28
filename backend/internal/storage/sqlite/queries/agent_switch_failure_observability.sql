@@ -131,6 +131,8 @@ WHERE agent_switch_failure_outbox.id = sqlc.arg(id)
   AND agent_switch_failure_outbox.lease_consent_generation = sqlc.arg(consent_generation)
   AND agent_switch_failure_outbox.lease_delivery_epoch = sqlc.arg(delivery_epoch)
   AND agent_switch_failure_outbox.destination_fingerprint = sqlc.arg(destination_fingerprint)
+  AND agent_switch_failure_outbox.lease_expires_at IS NOT NULL
+  AND agent_switch_failure_outbox.lease_expires_at > sqlc.arg(now)
   AND agent_switch_failure_outbox.expires_at > sqlc.arg(now)
   AND agent_switch_failure_outbox.delivered_at IS NULL
   AND agent_switch_failure_outbox.discarded_at IS NULL

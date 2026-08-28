@@ -78,6 +78,8 @@ WHERE agent_switch_failure_outbox.id = ?2
   AND agent_switch_failure_outbox.lease_consent_generation = ?4
   AND agent_switch_failure_outbox.lease_delivery_epoch = ?5
   AND agent_switch_failure_outbox.destination_fingerprint = ?6
+  AND agent_switch_failure_outbox.lease_expires_at IS NOT NULL
+  AND agent_switch_failure_outbox.lease_expires_at > ?1
   AND agent_switch_failure_outbox.expires_at > ?1
   AND agent_switch_failure_outbox.delivered_at IS NULL
   AND agent_switch_failure_outbox.discarded_at IS NULL

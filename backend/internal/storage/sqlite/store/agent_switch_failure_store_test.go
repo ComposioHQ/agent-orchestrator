@@ -1,8 +1,11 @@
 package store_test
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -23,6 +26,18 @@ type agentSwitchFailureFixture struct {
 }
 
 func openAgentSwitchFailureFixture(t *testing.T) agentSwitchFailureFixture {
+	return openAgentSwitchFailureFixtureWithMetadata(t, true)
+}
+
+func testAgentSwitchFailureEventMetadata() domain.AgentSwitchEventMetadata {
+	return domain.AgentSwitchEventMetadata{
+		Release: "1.2.3", Environment: domain.AgentSwitchEnvironmentDevelopment,
+		Channel: domain.AgentSwitchChannelPreview, Platform: domain.AgentSwitchPlatformDaemon,
+		OS: domain.AgentSwitchOSLinux, ElapsedTimeBucket: domain.AgentSwitchElapsedNotApplicable,
+	}
+}
+
+func openAgentSwitchFailureFixtureWithMetadata(t *testing.T, configureMetadata bool) agentSwitchFailureFixture {
 	t.Helper()
 	dataDir := t.TempDir()
 	st, err := sqlite.Open(dataDir)
@@ -50,6 +65,11 @@ func openAgentSwitchFailureFixture(t *testing.T) agentSwitchFailureFixture {
 	})
 	if err != nil {
 		t.Fatalf("seed session: %v", err)
+	}
+	if configureMetadata {
+		if err := st.ConfigureAgentSwitchFailureEventMetadata(context.Background(), testAgentSwitchFailureEventMetadata()); err != nil {
+			t.Fatalf("configure event metadata: %v", err)
+		}
 	}
 	sw := domain.AgentSwitch{
 		ID: "switch-1", SessionID: session.ID, IdempotencyKey: "switch-key-1",
@@ -145,6 +165,15 @@ func TestFailedMutationAndOutboxCommitAtomically(t *testing.T) {
 	if got := countFailureRows(t, f.db, "agent_switch_failure_receipts"); got != 1 {
 		t.Fatalf("receipt rows = %d, want 1", got)
 	}
+	var canonical []byte
+	if err := f.db.QueryRow(`SELECT canonical_event_json FROM agent_switch_failure_outbox`).Scan(&canonical); err != nil {
+		t.Fatalf("read frozen canonical event: %v", err)
+	}
+	for _, field := range [][]byte{[]byte(`"release":"1.2.3"`), []byte(`"environment":"development"`), []byte(`"channel":"preview"`), []byte(`"os":"linux"`)} {
+		if !bytes.Contains(canonical, field) {
+			t.Fatalf("canonical event does not contain configured metadata %s: %s", field, canonical)
+		}
+	}
 	var cdcAfter int
 	if err := f.db.QueryRow(`SELECT count(*) FROM change_log WHERE session_id=?`, f.sw.SessionID).Scan(&cdcAfter); err != nil {
 		t.Fatalf("count CDC after mutation: %v", err)
@@ -184,6 +213,75 @@ func TestAgentSwitchFailurePolicyDisabledAndStaleGenerationCommitCoreOnly(t *tes
 				t.Fatal("disabled or stale policy enrolled telemetry")
 			}
 		})
+	}
+}
+
+func TestMissingEventMetadataIsTelemetryLocalAndCoreCommits(t *testing.T) {
+	f := openAgentSwitchFailureFixtureWithMetadata(t, false)
+	invalid := testAgentSwitchFailureEventMetadata()
+	invalid.Release = "0.0"
+	if err := f.store.ConfigureAgentSwitchFailureEventMetadata(context.Background(), invalid); err == nil {
+		t.Fatal("invalid event metadata was accepted")
+	}
+	f.enablePolicy(t)
+	result, err := f.store.ApplyAgentSwitchMutation(context.Background(), failedMutation(f))
+	if err != nil || !result.CoreChanged || result.Enrollment != domain.AgentSwitchEnrollmentLocalInvariantFailed {
+		t.Fatalf("missing-metadata result = %+v, err=%v", result, err)
+	}
+	stored, ok, err := f.store.GetAgentSwitch(context.Background(), f.sw.ID)
+	if err != nil || !ok || stored.State != domain.AgentSwitchFailed || stored.FailurePoint != domain.AgentSwitchFailureWorkerStartRefused {
+		t.Fatalf("core mutation after missing metadata = %+v, ok=%v err=%v", stored, ok, err)
+	}
+	if countFailureRows(t, f.db, "agent_switch_failure_outbox") != 0 || countFailureRows(t, f.db, "agent_switch_failure_receipts") != 0 {
+		t.Fatal("missing metadata left telemetry rows")
+	}
+}
+
+func TestSeparatelyValidMismatchedFaultIsRejectedBeforeMutation(t *testing.T) {
+	f := openAgentSwitchFailureFixture(t)
+	f.enablePolicy(t)
+	mutation := failedMutation(f)
+	mutation.Fault.FromHarness = domain.HarnessCodex
+	if _, err := f.store.ApplyAgentSwitchMutation(context.Background(), mutation); err == nil {
+		t.Fatal("mismatched fault unexpectedly mutated the switch")
+	}
+	stored, ok, err := f.store.GetAgentSwitch(context.Background(), f.sw.ID)
+	if err != nil || !ok || stored.State != domain.AgentSwitchPreparingHandoff {
+		t.Fatalf("switch changed after mismatched fault: %+v, ok=%v err=%v", stored, ok, err)
+	}
+}
+
+func TestReceiptResolutionFailureRollsBackTelemetryOnly(t *testing.T) {
+	f := openAgentSwitchFailureFixture(t)
+	if _, err := f.db.Exec(`
+INSERT INTO agent_switch_failure_receipts (
+ dedupe_key,switch_id,report_kind,durable_state_fingerprint,recorded_at,retain_until
+) VALUES ('unresolved-before-progress',?,'recovery_required','v1:old',?,NULL)`, f.sw.ID, f.now); err != nil {
+		t.Fatalf("seed unresolved receipt: %v", err)
+	}
+	if _, err := f.db.Exec(`
+CREATE TRIGGER abort_agent_switch_failure_receipt_resolution
+BEFORE UPDATE ON agent_switch_failure_receipts
+BEGIN SELECT RAISE(ABORT, 'injected receipt resolution failure'); END;`); err != nil {
+		t.Fatalf("install receipt resolution trigger: %v", err)
+	}
+	rec := f.sw
+	rec.State = domain.AgentSwitchStoppingSource
+	rec.UpdatedAt = f.now.Add(time.Second)
+	result, err := f.store.ApplyAgentSwitchMutation(context.Background(), ports.AgentSwitchMutation{
+		Record: rec, ExpectedState: domain.AgentSwitchPreparingHandoff,
+		ExpectedSourceGenerationID: rec.SourceGenerationID,
+	})
+	if err != nil || !result.CoreChanged || result.Enrollment != domain.AgentSwitchEnrollmentLocalInvariantFailed {
+		t.Fatalf("ordinary progress result = %+v, err=%v", result, err)
+	}
+	stored, ok, err := f.store.GetAgentSwitch(context.Background(), f.sw.ID)
+	if err != nil || !ok || stored.State != domain.AgentSwitchStoppingSource {
+		t.Fatalf("core progress did not survive receipt failure: %+v, ok=%v err=%v", stored, ok, err)
+	}
+	var retainUntil sql.NullTime
+	if err := f.db.QueryRow(`SELECT retain_until FROM agent_switch_failure_receipts WHERE dedupe_key='unresolved-before-progress'`).Scan(&retainUntil); err != nil || retainUntil.Valid {
+		t.Fatalf("failed resolution changed receipt: %+v err=%v", retainUntil, err)
 	}
 }
 
@@ -260,6 +358,31 @@ BEGIN SELECT RAISE(ABORT, 'injected outbox failure'); END;
 	}
 	if countFailureRows(t, f.db, "agent_switch_failure_outbox") != 0 || countFailureRows(t, f.db, "agent_switch_failure_receipts") != 0 {
 		t.Fatal("telemetry savepoint left partial rows")
+	}
+}
+
+func TestAgentSwitchFailureSerializationFailureIsTelemetryLocal(t *testing.T) {
+	f := openAgentSwitchFailureFixture(t)
+	f.enablePolicy(t)
+	mutation := failedMutation(f)
+	frame := domain.AgentSwitchStackFrame{
+		Package: "session_manager", Function: "Manager.workerStart",
+		Filename: "backend/internal/session_manager/agent_switching.go", Line: 1,
+	}
+	mutation.Fault.Frames = make([]domain.AgentSwitchStackFrame, 500)
+	for i := range mutation.Fault.Frames {
+		mutation.Fault.Frames[i] = frame
+	}
+	result, err := f.store.ApplyAgentSwitchMutation(context.Background(), mutation)
+	if err != nil || !result.CoreChanged || result.Enrollment != domain.AgentSwitchEnrollmentLocalInvariantFailed {
+		t.Fatalf("oversized serialization result = %+v, err=%v", result, err)
+	}
+	stored, ok, err := f.store.GetAgentSwitch(context.Background(), f.sw.ID)
+	if err != nil || !ok || stored.State != domain.AgentSwitchFailed || stored.FailurePoint == "" {
+		t.Fatalf("core mutation did not survive serialization failure: %+v ok=%v err=%v", stored, ok, err)
+	}
+	if countFailureRows(t, f.db, "agent_switch_failure_outbox") != 0 || countFailureRows(t, f.db, "agent_switch_failure_receipts") != 0 {
+		t.Fatal("serialization failure left partial telemetry rows")
 	}
 }
 
@@ -396,6 +519,26 @@ func TestStandaloneEnqueueDeletionOrdersAndReceiptCascade(t *testing.T) {
 	}
 }
 
+func TestStandaloneEnqueueRejectsFaultThatDoesNotMatchDurableSwitch(t *testing.T) {
+	f := openAgentSwitchFailureFixture(t)
+	f.enablePolicy(t)
+	if _, err := f.store.ApplyAgentSwitchMutation(context.Background(), failedMutation(f)); err != nil {
+		t.Fatalf("terminalize switch: %v", err)
+	}
+	stored, ok, err := f.store.GetAgentSwitch(context.Background(), f.sw.ID)
+	if err != nil || !ok {
+		t.Fatalf("read terminal switch: ok=%v err=%v", ok, err)
+	}
+	op := maintenanceFault(f, stored)
+	op.Fault.FromHarness = domain.HarnessCodex
+	if _, err := f.store.EnqueueAgentSwitchOperationalFault(context.Background(), op); err == nil {
+		t.Fatal("standalone enqueue accepted a mismatched harness direction")
+	}
+	if got := countFailureRows(t, f.db, "agent_switch_failure_outbox"); got != 1 {
+		t.Fatalf("mismatched standalone fault changed outbox rows to %d", got)
+	}
+}
+
 func maintenanceFault(f agentSwitchFailureFixture, sw domain.AgentSwitch) ports.AgentSwitchOperationalFault {
 	fault := terminalFault(f.now.Add(2 * time.Second))
 	fault.ReportKind = domain.AgentSwitchReportMaintenanceFailure
@@ -422,8 +565,13 @@ func TestResolveReceiptsExpiryPurgeAndDestinationQuarantine(t *testing.T) {
 		t.Fatalf("enroll unresolved marker: %v", err)
 	}
 	var unresolved sql.NullTime
-	if err := f.db.QueryRow(`SELECT retain_until FROM agent_switch_failure_receipts LIMIT 1`).Scan(&unresolved); err != nil || unresolved.Valid {
+	var fingerprint string
+	if err := f.db.QueryRow(`SELECT retain_until,durable_state_fingerprint FROM agent_switch_failure_receipts LIMIT 1`).Scan(&unresolved, &fingerprint); err != nil || unresolved.Valid {
 		t.Fatalf("unresolved receipt retention = %+v, err=%v", unresolved, err)
+	}
+	wantFingerprint := sha256.Sum256([]byte("stopping_source|source_stop_unconfirmed|source_runtime_probe"))
+	if want := fmt.Sprintf("v1:%x", wantFingerprint); fingerprint != want {
+		t.Fatalf("durable fingerprint = %q, want %q", fingerprint, want)
 	}
 	if _, err := f.store.ResolveAgentSwitchFailureReceipts(context.Background(), ports.AgentSwitchFailureReceiptResolution{
 		SwitchID: f.sw.ID, DurableStateFingerprint: "new-fingerprint", ResolvedAt: f.now.Add(time.Hour),
@@ -466,6 +614,10 @@ func TestResolveReceiptsExpiryPurgeAndDestinationQuarantine(t *testing.T) {
 	daemonFault.SourceStopConfirmed = domain.AgentSwitchTriNotApplicable
 	daemonFault.TargetOwnerCommitted = domain.AgentSwitchTriNotApplicable
 	daemonFault.GateRetained = domain.AgentSwitchTriNotApplicable
+	daemonFault.Frames = []domain.AgentSwitchStackFrame{{
+		Package: "daemon", Function: "Daemon.waitAgentSwitchWorkers",
+		Filename: "backend/internal/daemon/daemon.go", Line: 1,
+	}}
 	if _, err := f.store.EnqueueAgentSwitchDaemonFault(context.Background(), ports.AgentSwitchDaemonFault{
 		DaemonRunID: "daemon-run-2", Fault: daemonFault, Authorization: f.authorization(),
 	}); err != nil {
@@ -570,6 +722,7 @@ func TestFinalAttemptRequiresLeaseGenerationEpochDestinationThrottleAndTTL(t *te
 		func(a *ports.AgentSwitchFailureAttempt) { a.ConsentGeneration = "wrong" },
 		func(a *ports.AgentSwitchFailureAttempt) { a.DeliveryEpoch++ },
 		func(a *ports.AgentSwitchFailureAttempt) { a.DestinationFingerprint = "wrong" },
+		func(a *ports.AgentSwitchFailureAttempt) { a.Now = f.now.Add(time.Minute + 30*time.Second) },
 		func(a *ports.AgentSwitchFailureAttempt) { a.Now = claim.ExpiresAt },
 	} {
 		attempt := ports.AgentSwitchFailureAttempt{
@@ -601,6 +754,82 @@ ON CONFLICT(destination_fingerprint) DO UPDATE SET all_not_before=excluded.all_n
 	}
 	if changed, err := f.store.BeginAgentSwitchFailureAttempt(context.Background(), attempt); err != nil || !changed {
 		t.Fatalf("fully fenced final attempt changed=%v err=%v", changed, err)
+	}
+}
+
+func TestSettlementCASPrecedesAndAtomicallyCommitsThrottle(t *testing.T) {
+	f := openAgentSwitchFailureFixture(t)
+	f.enablePolicy(t)
+	if _, err := f.store.ApplyAgentSwitchMutation(context.Background(), failedMutation(f)); err != nil {
+		t.Fatalf("enroll: %v", err)
+	}
+	claim, ok, err := f.store.ClaimAgentSwitchFailure(context.Background(), ports.AgentSwitchFailureClaimRequest{
+		Authorization: f.authorization(), DeliveryEpoch: 9, LeaseToken: "lease-9",
+		Now: f.now.Add(time.Minute), LeaseExpiresAt: f.now.Add(2 * time.Minute),
+	})
+	if err != nil || !ok {
+		t.Fatalf("claim = %+v, ok=%v err=%v", claim, ok, err)
+	}
+	settlement := ports.AgentSwitchFailureSettlement{
+		ID: claim.ID, LeaseToken: "stale-lease", ConsentGeneration: claim.ConsentGeneration,
+		DeliveryEpoch: claim.DeliveryEpoch, DestinationFingerprint: claim.DestinationFingerprint,
+		SettledAt: f.now.Add(90 * time.Second),
+		Result: ports.DeliveryResult{Outcome: ports.DeliveryAccepted, Class: ports.DeliveryErrorNone,
+			RetryNotBefore: f.now.Add(time.Hour), ThrottleScope: ports.DeliveryThrottleAll},
+	}
+	if changed, err := f.store.SettleAgentSwitchFailureDelivery(context.Background(), settlement); err != nil || changed {
+		t.Fatalf("stale settlement changed=%v err=%v", changed, err)
+	}
+	if got := countFailureRows(t, f.db, "agent_switch_failure_delivery_state"); got != 0 {
+		t.Fatalf("stale settlement wrote %d throttle rows", got)
+	}
+	settlement.LeaseToken = claim.LeaseToken
+	if changed, err := f.store.SettleAgentSwitchFailureDelivery(context.Background(), settlement); err != nil || !changed {
+		t.Fatalf("valid accepted settlement changed=%v err=%v", changed, err)
+	}
+	var delivered, allNotBefore sql.NullTime
+	if err := f.db.QueryRow(`
+SELECT o.delivered_at,d.all_not_before
+FROM agent_switch_failure_outbox o
+JOIN agent_switch_failure_delivery_state d ON d.destination_fingerprint=o.destination_fingerprint
+WHERE o.id=?`, claim.ID).Scan(&delivered, &allNotBefore); err != nil || !delivered.Valid || !allNotBefore.Valid {
+		t.Fatalf("accepted settlement/throttle not atomic: delivered=%+v throttle=%+v err=%v", delivered, allNotBefore, err)
+	}
+}
+
+func TestSettlementThrottleFailureRollsBackOutboxCAS(t *testing.T) {
+	f := openAgentSwitchFailureFixture(t)
+	f.enablePolicy(t)
+	if _, err := f.store.ApplyAgentSwitchMutation(context.Background(), failedMutation(f)); err != nil {
+		t.Fatalf("enroll: %v", err)
+	}
+	claim, ok, err := f.store.ClaimAgentSwitchFailure(context.Background(), ports.AgentSwitchFailureClaimRequest{
+		Authorization: f.authorization(), DeliveryEpoch: 10, LeaseToken: "lease-10",
+		Now: f.now.Add(time.Minute), LeaseExpiresAt: f.now.Add(2 * time.Minute),
+	})
+	if err != nil || !ok {
+		t.Fatalf("claim = %+v, ok=%v err=%v", claim, ok, err)
+	}
+	if _, err := f.db.Exec(`
+CREATE TRIGGER abort_agent_switch_failure_throttle
+BEFORE INSERT ON agent_switch_failure_delivery_state
+BEGIN SELECT RAISE(ABORT, 'injected throttle failure'); END;`); err != nil {
+		t.Fatalf("install throttle abort trigger: %v", err)
+	}
+	changed, err := f.store.SettleAgentSwitchFailureDelivery(context.Background(), ports.AgentSwitchFailureSettlement{
+		ID: claim.ID, LeaseToken: claim.LeaseToken, ConsentGeneration: claim.ConsentGeneration,
+		DeliveryEpoch: claim.DeliveryEpoch, DestinationFingerprint: claim.DestinationFingerprint,
+		SettledAt: f.now.Add(90 * time.Second),
+		Result: ports.DeliveryResult{Outcome: ports.DeliveryAccepted, Class: ports.DeliveryErrorNone,
+			RetryNotBefore: f.now.Add(time.Hour), ThrottleScope: ports.DeliveryThrottleAll},
+	})
+	if err == nil || changed {
+		t.Fatalf("throttle failure settlement changed=%v err=%v", changed, err)
+	}
+	var delivered sql.NullTime
+	var lease sql.NullString
+	if err := f.db.QueryRow(`SELECT delivered_at,lease_token FROM agent_switch_failure_outbox WHERE id=?`, claim.ID).Scan(&delivered, &lease); err != nil || delivered.Valid || !lease.Valid || lease.String != claim.LeaseToken {
+		t.Fatalf("outbox CAS survived throttle rollback: delivered=%+v lease=%+v err=%v", delivered, lease, err)
 	}
 }
 

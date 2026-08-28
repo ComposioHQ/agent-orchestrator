@@ -154,6 +154,16 @@ WHERE id = sqlc.arg(id)
   AND (
       target_runtime_handle_id = ''
       OR target_runtime_handle_id = sqlc.arg(next_target_runtime_handle_id)
+  )
+  AND NOT (
+      target_native_session_ref IS sqlc.narg(target_native_session_ref)
+      AND target_start_mode = sqlc.arg(target_start_mode)
+      AND state = sqlc.arg(next_state)
+      AND target_generation_id = sqlc.arg(next_target_generation_id)
+      AND target_runtime_handle_id = sqlc.arg(next_target_runtime_handle_id)
+      AND error_code = sqlc.arg(error_code)
+      AND failure_point = sqlc.arg(failure_point)
+      AND updated_at = sqlc.arg(updated_at)
   );
 
 -- name: FailAgentSwitchIfUnacknowledged :execrows

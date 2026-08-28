@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"runtime"
 	"strings"
 	"time"
 
@@ -24,9 +23,23 @@ const (
 )
 
 var (
-	_ ports.AgentSwitchFaultStore         = (*Store)(nil)
-	_ ports.AgentSwitchFailureOutboxStore = (*Store)(nil)
+	_ ports.AgentSwitchFaultStore                = (*Store)(nil)
+	_ ports.AgentSwitchFailureOutboxStore        = (*Store)(nil)
+	_ ports.AgentSwitchFailureEventMetadataStore = (*Store)(nil)
 )
+
+func (s *Store) ConfigureAgentSwitchFailureEventMetadata(ctx context.Context, metadata domain.AgentSwitchEventMetadata) error {
+	if err := domain.ValidateAgentSwitchEventMetadata(metadata); err != nil {
+		return fmt.Errorf("configure agent switch failure event metadata: %w", err)
+	}
+	if err := s.writeMu.LockContext(ctx); err != nil {
+		return err
+	}
+	defer s.writeMu.Unlock()
+	copy := metadata
+	s.agentSwitchFailureEventMetadata = &copy
+	return nil
+}
 
 func (s *Store) ApplyAgentSwitchMutation(ctx context.Context, mutation ports.AgentSwitchMutation) (ports.AgentSwitchMutationResult, error) {
 	return s.applyAgentSwitchMutation(ctx, mutation, false)
@@ -88,20 +101,12 @@ func (s *Store) applyAgentSwitchMutation(ctx context.Context, mutation ports.Age
 		return ports.AgentSwitchMutationResult{Enrollment: domain.AgentSwitchEnrollmentDeduped}, nil
 	}
 
-	if _, err := tx.ExecContext(ctx, `
-UPDATE agent_switch_failure_receipts SET retain_until=?
-WHERE switch_id=? AND retain_until IS NULL AND durable_state_fingerprint<>?`,
-		rec.UpdatedAt.Add(agentSwitchFailureTTL), rec.ID, agentSwitchDurableFingerprint(rec)); err != nil {
-		return ports.AgentSwitchMutationResult{}, fmt.Errorf("resolve prior agent switch receipts %s: %w", rec.ID, err)
-	}
-
 	result := ports.AgentSwitchMutationResult{CoreChanged: true, Enrollment: domain.AgentSwitchEnrollmentDeduped}
-	if mutation.Fault != nil {
-		result.Enrollment = enrollFaultSavepoint(ctx, tx, failureEnrollmentInput{
-			Switch: &rec, Fault: *mutation.Fault, Authorization: mutation.Authorization,
-		})
-	}
-	if err := tx.Commit(); err != nil {
+	result.Enrollment = s.enrollFaultSavepoint(ctx, tx, failureEnrollmentInput{
+		Switch: &rec, Fault: mutation.Fault, Authorization: mutation.Authorization,
+		FaultPhase: mutation.ExpectedState, ResolveReceipts: true,
+	})
+	if err := s.agentSwitchFailureCommit(tx); err != nil {
 		return ports.AgentSwitchMutationResult{}, fmt.Errorf("commit agent switch fault mutation %s: %w", rec.ID, err)
 	}
 	return result, nil
@@ -111,7 +116,7 @@ func normalizeAgentSwitchMutationPoint(rec *domain.AgentSwitch, fault *domain.Ag
 	if fault == nil {
 		return
 	}
-	point := fault.FailurePoint
+	point := rec.FailurePoint
 	if _, ok := domain.AgentSwitchFailureTaxonomy(point); !ok {
 		point = domain.AgentSwitchFailureClassificationUnknown
 	}
@@ -136,6 +141,15 @@ func validateFailureAwareMutation(m ports.AgentSwitchMutation, unacknowledged bo
 	} else if m.Fault != nil {
 		return fmt.Errorf("apply agent switch mutation %s: ordinary progress cannot carry a fault", rec.ID)
 	}
+	if m.Fault != nil {
+		if err := domain.ValidateAgentSwitchFault(*m.Fault); err == nil {
+			binding := rec
+			binding.State = m.ExpectedState
+			if err := validateAgentSwitchFaultBinding(binding, *m.Fault, true); err != nil {
+				return fmt.Errorf("apply agent switch mutation %s: %w", rec.ID, err)
+			}
+		}
+	}
 	if unacknowledged {
 		if rec.State != domain.AgentSwitchFailed || m.ExpectedState != domain.AgentSwitchDelivering || rec.TargetGenerationID == "" || rec.TargetAcknowledgedAt != nil {
 			return fmt.Errorf("fail unacknowledged agent switch %s: exact unacknowledged delivery facts are required", rec.ID)
@@ -149,12 +163,14 @@ func validateFailureAwareMutation(m ports.AgentSwitchMutation, unacknowledged bo
 type failureEnrollmentInput struct {
 	Switch             *domain.AgentSwitch
 	DaemonRunID        string
-	Fault              domain.AgentSwitchFault
+	Fault              *domain.AgentSwitchFault
 	Authorization      domain.AgentSwitchReportingAuthorization
 	GuardCurrentSwitch bool
+	ResolveReceipts    bool
+	FaultPhase         domain.AgentSwitchState
 }
 
-func enrollFaultSavepoint(ctx context.Context, tx *sql.Tx, input failureEnrollmentInput) (status domain.AgentSwitchEnrollmentStatus) {
+func (s *Store) enrollFaultSavepoint(ctx context.Context, tx *sql.Tx, input failureEnrollmentInput) (status domain.AgentSwitchEnrollmentStatus) {
 	status = domain.AgentSwitchEnrollmentLocalInvariantFailed
 	if _, err := tx.ExecContext(ctx, `SAVEPOINT agent_switch_telemetry`); err != nil {
 		logAgentSwitchEnrollmentInvariant(input.Fault, "savepoint_begin")
@@ -175,7 +191,7 @@ func enrollFaultSavepoint(ctx context.Context, tx *sql.Tx, input failureEnrollme
 		}
 	}()
 
-	status, err := enrollFaultTx(ctx, tx, input)
+	status, err := s.enrollFaultTx(ctx, tx, input)
 	if err != nil {
 		logAgentSwitchEnrollmentInvariant(input.Fault, "validate_serialize_or_insert")
 		return domain.AgentSwitchEnrollmentLocalInvariantFailed
@@ -188,17 +204,42 @@ func enrollFaultSavepoint(ctx context.Context, tx *sql.Tx, input failureEnrollme
 	return status
 }
 
-func logAgentSwitchEnrollmentInvariant(fault domain.AgentSwitchFault, stage string) {
+func logAgentSwitchEnrollmentInvariant(fault *domain.AgentSwitchFault, stage string) {
+	point, kind := domain.AgentSwitchFailurePoint(""), domain.AgentSwitchReportKind("")
+	if fault != nil {
+		point, kind = fault.FailurePoint, fault.ReportKind
+	}
 	slog.Default().Error("agent switch telemetry local invariant", "stage", stage,
-		"failure_point", fault.FailurePoint, "report_kind", fault.ReportKind)
+		"failure_point", point, "report_kind", kind)
 }
 
-func enrollFaultTx(ctx context.Context, tx *sql.Tx, input failureEnrollmentInput) (domain.AgentSwitchEnrollmentStatus, error) {
+func (s *Store) enrollFaultTx(ctx context.Context, tx *sql.Tx, input failureEnrollmentInput) (domain.AgentSwitchEnrollmentStatus, error) {
+	if input.ResolveReceipts && input.Switch != nil {
+		if _, err := tx.ExecContext(ctx, `
+UPDATE agent_switch_failure_receipts SET retain_until=?
+WHERE switch_id=? AND retain_until IS NULL AND durable_state_fingerprint<>?`,
+			input.Switch.UpdatedAt.Add(agentSwitchFailureTTL), input.Switch.ID, agentSwitchDurableFingerprint(*input.Switch)); err != nil {
+			return domain.AgentSwitchEnrollmentLocalInvariantFailed, err
+		}
+	}
+	if input.Fault == nil {
+		return domain.AgentSwitchEnrollmentDeduped, nil
+	}
+	fault := *input.Fault
 	if !input.Authorization.Enabled {
 		return domain.AgentSwitchEnrollmentDisabled, nil
 	}
-	if err := domain.ValidateAgentSwitchFault(input.Fault); err != nil {
+	if err := domain.ValidateAgentSwitchFault(fault); err != nil {
 		return domain.AgentSwitchEnrollmentLocalInvariantFailed, err
+	}
+	if input.Switch != nil {
+		binding := *input.Switch
+		if input.FaultPhase != "" {
+			binding.State = input.FaultPhase
+		}
+		if err := validateAgentSwitchFaultBinding(binding, fault, false); err != nil {
+			return domain.AgentSwitchEnrollmentLocalInvariantFailed, err
+		}
 	}
 	var enabled bool
 	var generation, destination string
@@ -224,35 +265,42 @@ func enrollFaultTx(ctx context.Context, tx *sql.Tx, input failureEnrollmentInput
 		requestedAt = sql.NullTime{Time: input.Switch.RequestedAt, Valid: true}
 		durableFingerprint = agentSwitchDurableFingerprint(*input.Switch)
 	}
-	dedupeKey, err := domain.AgentSwitchDedupeKey(scope, input.Fault)
+	dedupeKey, err := domain.AgentSwitchDedupeKey(scope, fault)
 	if err != nil {
 		return domain.AgentSwitchEnrollmentLocalInvariantFailed, err
 	}
 	eventID := domain.StableAgentSwitchEventID(dedupeKey)
-	canonical, err := domain.BuildAgentSwitchCanonicalEvent(domain.AgentSwitchEventBuildInput{
-		EventID: eventID, Fault: input.Fault, Release: "0.0.0",
-		Environment: domain.AgentSwitchEnvironmentDevelopment, Channel: domain.AgentSwitchChannelPreview,
-		Platform: domain.AgentSwitchPlatformDaemon, OS: currentAgentSwitchOS(),
-		ElapsedTimeBucket: domain.AgentSwitchElapsedNotApplicable,
+	if s.agentSwitchFailureEventMetadata == nil {
+		return domain.AgentSwitchEnrollmentLocalInvariantFailed, errors.New("agent switch failure event metadata is not configured")
+	}
+	metadata := *s.agentSwitchFailureEventMetadata
+	if err := domain.ValidateAgentSwitchEventMetadata(metadata); err != nil {
+		return domain.AgentSwitchEnrollmentLocalInvariantFailed, err
+	}
+	canonical, err := s.agentSwitchFailureEventBuilder(domain.AgentSwitchEventBuildInput{
+		EventID: eventID, Fault: fault, Release: metadata.Release,
+		Environment: metadata.Environment, Channel: metadata.Channel,
+		Platform: metadata.Platform, OS: metadata.OS,
+		ElapsedTimeBucket: metadata.ElapsedTimeBucket,
 	})
 	if err != nil {
 		return domain.AgentSwitchEnrollmentLocalInvariantFailed, err
 	}
-	frames, err := json.Marshal(input.Fault.Frames)
+	frames, err := json.Marshal(fault.Frames)
 	if err != nil {
 		return domain.AgentSwitchEnrollmentLocalInvariantFailed, err
 	}
 	retainUntil := sql.NullTime{}
-	if input.Fault.ReportKind != domain.AgentSwitchReportRecoveryRequired && input.Fault.ReportKind != domain.AgentSwitchReportRecoveryAttemptFailed {
-		retainUntil = sql.NullTime{Time: input.Fault.OccurredAt.Add(agentSwitchFailureTTL), Valid: true}
+	if fault.ReportKind != domain.AgentSwitchReportRecoveryRequired && fault.ReportKind != domain.AgentSwitchReportRecoveryAttemptFailed {
+		retainUntil = sql.NullTime{Time: fault.OccurredAt.Add(agentSwitchFailureTTL), Valid: true}
 	}
 
 	q := gen.New(tx)
 	var receiptRows int64
 	if input.GuardCurrentSwitch && input.Switch != nil {
 		receiptRows, err = q.InsertAgentSwitchFailureReceiptForCurrentSwitch(ctx, gen.InsertAgentSwitchFailureReceiptForCurrentSwitchParams{
-			DedupeKey: dedupeKey, ReportKind: string(input.Fault.ReportKind),
-			DurableStateFingerprint: durableFingerprint, RecordedAt: input.Fault.OccurredAt,
+			DedupeKey: dedupeKey, ReportKind: string(fault.ReportKind),
+			DurableStateFingerprint: durableFingerprint, RecordedAt: fault.OccurredAt,
 			RetainUntil: retainUntil, SwitchID: input.Switch.ID, ExpectedState: input.Switch.State,
 			ExpectedErrorCode: string(input.Switch.ErrorCode), ExpectedFailurePoint: string(input.Switch.FailurePoint),
 			ExpectedUpdatedAt: input.Switch.UpdatedAt, ConsentGeneration: generation,
@@ -260,8 +308,8 @@ func enrollFaultTx(ctx context.Context, tx *sql.Tx, input failureEnrollmentInput
 		})
 	} else {
 		receiptRows, err = q.InsertAgentSwitchFailureReceipt(ctx, gen.InsertAgentSwitchFailureReceiptParams{
-			DedupeKey: dedupeKey, SwitchID: switchID, ReportKind: string(input.Fault.ReportKind),
-			DurableStateFingerprint: durableFingerprint, RecordedAt: input.Fault.OccurredAt,
+			DedupeKey: dedupeKey, SwitchID: switchID, ReportKind: string(fault.ReportKind),
+			DurableStateFingerprint: durableFingerprint, RecordedAt: fault.OccurredAt,
 			RetainUntil: retainUntil, ConsentGeneration: generation, DestinationFingerprint: destination,
 		})
 	}
@@ -271,23 +319,23 @@ func enrollFaultTx(ctx context.Context, tx *sql.Tx, input failureEnrollmentInput
 	if receiptRows == 0 {
 		return domain.AgentSwitchEnrollmentDeduped, nil
 	}
-	expiresAt := input.Fault.OccurredAt.Add(agentSwitchFailureTTL)
+	expiresAt := fault.OccurredAt.Add(agentSwitchFailureTTL)
 	payloadRows, err := q.InsertAgentSwitchFailurePayload(ctx, gen.InsertAgentSwitchFailurePayloadParams{
 		ID: eventID, SchemaVersion: agentSwitchFailureSchemaVersion,
 		EnvelopeEncodingVersion: domain.AgentSwitchEnvelopeEncodingV1,
 		DedupeKey:               dedupeKey, DestinationFingerprint: destination, SwitchID: switchID,
-		ReportKind: string(input.Fault.ReportKind), Scope: scopeName,
-		FailurePoint: string(input.Fault.FailurePoint), ClassifierCallsite: string(input.Fault.ClassifierCallsite),
-		Phase: string(input.Fault.Phase), ErrorCode: string(input.Fault.ErrorCode), FaultCode: string(input.Fault.FaultCode),
-		Execution: string(input.Fault.Execution), ExecutionAttemptID: input.Fault.ExecutionAttemptID,
-		Mode: string(input.Fault.Mode), FromHarness: string(input.Fault.FromHarness), TargetHarness: string(input.Fault.TargetHarness),
-		TargetStartMode: string(input.Fault.TargetStartMode), RuntimeBackend: string(input.Fault.RuntimeBackend),
-		CallOutcome: string(input.Fault.CallOutcome), Ownership: string(input.Fault.Ownership),
-		Compensation: string(input.Fault.Compensation), UserImpact: string(input.Fault.UserImpact),
-		SourceStopConfirmed: string(input.Fault.SourceStopConfirmed), TargetOwnerCommitted: string(input.Fault.TargetOwnerCommitted),
-		GateRetained: string(input.Fault.GateRetained), RequestedAt: requestedAt, OccurredAt: input.Fault.OccurredAt,
-		SanitizedStack: frames, StackFingerprint: domain.AgentSwitchStackFingerprint(input.Fault.Frames),
-		CanonicalEventJson: canonical, ExpiresAt: expiresAt, AvailableAt: input.Fault.OccurredAt,
+		ReportKind: string(fault.ReportKind), Scope: scopeName,
+		FailurePoint: string(fault.FailurePoint), ClassifierCallsite: string(fault.ClassifierCallsite),
+		Phase: string(fault.Phase), ErrorCode: string(fault.ErrorCode), FaultCode: string(fault.FaultCode),
+		Execution: string(fault.Execution), ExecutionAttemptID: fault.ExecutionAttemptID,
+		Mode: string(fault.Mode), FromHarness: string(fault.FromHarness), TargetHarness: string(fault.TargetHarness),
+		TargetStartMode: string(fault.TargetStartMode), RuntimeBackend: string(fault.RuntimeBackend),
+		CallOutcome: string(fault.CallOutcome), Ownership: string(fault.Ownership),
+		Compensation: string(fault.Compensation), UserImpact: string(fault.UserImpact),
+		SourceStopConfirmed: string(fault.SourceStopConfirmed), TargetOwnerCommitted: string(fault.TargetOwnerCommitted),
+		GateRetained: string(fault.GateRetained), RequestedAt: requestedAt, OccurredAt: fault.OccurredAt,
+		SanitizedStack: frames, StackFingerprint: domain.AgentSwitchStackFingerprint(fault.Frames),
+		CanonicalEventJson: canonical, ExpiresAt: expiresAt, AvailableAt: fault.OccurredAt,
 		ConsentGeneration: generation,
 	})
 	if err != nil {
@@ -299,21 +347,44 @@ func enrollFaultTx(ctx context.Context, tx *sql.Tx, input failureEnrollmentInput
 	return domain.AgentSwitchEnrollmentEnrolled, nil
 }
 
-func currentAgentSwitchOS() domain.AgentSwitchOS {
-	switch runtime.GOOS {
-	case "darwin":
-		return domain.AgentSwitchOSDarwin
-	case "windows":
-		return domain.AgentSwitchOSWindows
-	default:
-		return domain.AgentSwitchOSLinux
-	}
-}
-
 func agentSwitchDurableFingerprint(sw domain.AgentSwitch) string {
-	value := strings.Join([]string{string(sw.State), string(sw.ErrorCode), string(sw.FailurePoint), sw.UpdatedAt.UTC().Format(time.RFC3339Nano)}, "|")
+	value := strings.Join([]string{string(sw.State), string(sw.ErrorCode), string(sw.FailurePoint)}, "|")
 	digest := sha256.Sum256([]byte(value))
 	return "v1:" + hex.EncodeToString(digest[:])
+}
+
+func validateAgentSwitchFaultBinding(sw domain.AgentSwitch, fault domain.AgentSwitchFault, strictSemantic bool) error {
+	if fault.Phase != sw.State {
+		return fmt.Errorf("fault phase %q does not match durable state %q", fault.Phase, sw.State)
+	}
+	if fault.FromHarness != sw.FromHarness || fault.TargetHarness != sw.TargetHarness {
+		return errors.New("fault harness direction does not match durable switch")
+	}
+	expectedStart := sw.TargetStartMode
+	if expectedStart == "" {
+		expectedStart = domain.AgentSwitchTargetStartReportedPending
+	}
+	if fault.TargetStartMode != expectedStart {
+		return fmt.Errorf("fault target start mode %q does not match durable mode %q", fault.TargetStartMode, expectedStart)
+	}
+	semantic := strictSemantic || fault.ReportKind == domain.AgentSwitchReportTerminalFailure || fault.ReportKind == domain.AgentSwitchReportRecoveryRequired
+	if semantic {
+		pointMatches := fault.FailurePoint == sw.FailurePoint
+		if sw.FailurePoint == "" && fault.FailurePoint == domain.AgentSwitchFailureRecoveryExistingMarker {
+			pointMatches = true
+		}
+		if !pointMatches {
+			return fmt.Errorf("fault failure point %q does not match durable point %q", fault.FailurePoint, sw.FailurePoint)
+		}
+		if fault.ErrorCode != sw.ErrorCode {
+			return fmt.Errorf("fault error code %q does not match durable code %q", fault.ErrorCode, sw.ErrorCode)
+		}
+	} else if fault.ReportKind == domain.AgentSwitchReportRecoveryAttemptFailed || fault.ReportKind == domain.AgentSwitchReportMaintenanceFailure {
+		if fault.ErrorCode != sw.ErrorCode {
+			return fmt.Errorf("fault error code %q does not match durable code %q", fault.ErrorCode, sw.ErrorCode)
+		}
+	}
+	return nil
 }
 
 func (s *Store) EnqueueAgentSwitchOperationalFault(ctx context.Context, input ports.AgentSwitchOperationalFault) (ports.AgentSwitchMutationResult, error) {
@@ -345,8 +416,13 @@ FROM agent_switches WHERE id=? AND state=? AND error_code=? AND failure_point=? 
 		}
 		return ports.AgentSwitchMutationResult{Enrollment: domain.AgentSwitchEnrollmentDeduped}, nil
 	}
-	status := enrollFaultSavepoint(ctx, tx, failureEnrollmentInput{
-		Switch: &sw, DaemonRunID: input.DaemonRunID, Fault: input.Fault, Authorization: input.Authorization,
+	if err := domain.ValidateAgentSwitchFault(input.Fault); err == nil {
+		if err := validateAgentSwitchFaultBinding(sw, input.Fault, false); err != nil {
+			return ports.AgentSwitchMutationResult{}, fmt.Errorf("enqueue agent switch operational fault: %w", err)
+		}
+	}
+	status := s.enrollFaultSavepoint(ctx, tx, failureEnrollmentInput{
+		Switch: &sw, DaemonRunID: input.DaemonRunID, Fault: &input.Fault, Authorization: input.Authorization,
 		GuardCurrentSwitch: true,
 	})
 	if err := tx.Commit(); err != nil {
@@ -385,6 +461,17 @@ func (s *Store) EnqueueAgentSwitchDaemonFault(ctx context.Context, input ports.A
 	if strings.TrimSpace(input.DaemonRunID) == "" {
 		return ports.AgentSwitchMutationResult{}, errors.New("enqueue daemon agent switch fault: daemon run ID is required")
 	}
+	if err := domain.ValidateAgentSwitchFault(input.Fault); err == nil {
+		if input.Fault.Phase != domain.AgentSwitchStateNotApplicable || input.Fault.ErrorCode != domain.AgentSwitchErrorNotApplicable ||
+			input.Fault.Mode != domain.SessionModeNotApplicable || input.Fault.FromHarness != domain.HarnessNotApplicable ||
+			input.Fault.TargetHarness != domain.HarnessNotApplicable || input.Fault.TargetStartMode != domain.AgentSwitchTargetStartNotApplicable ||
+			input.Fault.RuntimeBackend != domain.AgentSwitchRuntimeNotApplicable || input.Fault.Ownership != domain.AgentSwitchOwnershipNotApplicable ||
+			input.Fault.Compensation != domain.AgentSwitchCompensationNotApplicable || input.Fault.UserImpact != domain.AgentSwitchUserImpactNotApplicable ||
+			input.Fault.SourceStopConfirmed != domain.AgentSwitchTriNotApplicable || input.Fault.TargetOwnerCommitted != domain.AgentSwitchTriNotApplicable ||
+			input.Fault.GateRetained != domain.AgentSwitchTriNotApplicable {
+			return ports.AgentSwitchMutationResult{}, errors.New("enqueue daemon agent switch fault: switch-only fields must be explicit not_applicable")
+		}
+	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	tx, err := s.writeDB.BeginTx(ctx, nil)
@@ -392,8 +479,8 @@ func (s *Store) EnqueueAgentSwitchDaemonFault(ctx context.Context, input ports.A
 		return ports.AgentSwitchMutationResult{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	status := enrollFaultSavepoint(ctx, tx, failureEnrollmentInput{
-		DaemonRunID: input.DaemonRunID, Fault: input.Fault, Authorization: input.Authorization,
+	status := s.enrollFaultSavepoint(ctx, tx, failureEnrollmentInput{
+		DaemonRunID: input.DaemonRunID, Fault: &input.Fault, Authorization: input.Authorization,
 	})
 	if err := tx.Commit(); err != nil {
 		return ports.AgentSwitchMutationResult{}, fmt.Errorf("commit daemon agent switch fault: %w", err)
@@ -508,6 +595,9 @@ WHERE a.state NOT IN ('completed','failed')
 		if m.state == domain.AgentSwitchStartingTarget && start == domain.AgentSwitchTargetStartPending {
 			continue
 		}
+		if start == "" {
+			start = domain.AgentSwitchTargetStartReportedPending
+		}
 		fault := domain.AgentSwitchFault{
 			ReportKind: domain.AgentSwitchReportRecoveryRequired, FailurePoint: point,
 			ClassifierCallsite: entry.ClassifierCallsite, Phase: m.state,
@@ -521,8 +611,12 @@ WHERE a.state NOT IN ('completed','failed')
 			OccurredAt: input.EnrolledAt,
 			Frames:     []domain.AgentSwitchStackFrame{{Package: "storage.sqlite.store", Function: "Store.EnrollCurrentAgentSwitchRecoveryMarkers", Filename: "backend/internal/storage/sqlite/store/agent_switch_failure_store.go", Line: 1}},
 		}
-		sw := domain.AgentSwitch{ID: m.id, SessionID: m.sessionID, State: m.state, ErrorCode: m.code, FailurePoint: m.point, RequestedAt: m.requestedAt, UpdatedAt: m.updatedAt}
-		status := enrollFaultSavepoint(ctx, tx, failureEnrollmentInput{Switch: &sw, Fault: fault, Authorization: input.Authorization, GuardCurrentSwitch: true})
+		sw := domain.AgentSwitch{
+			ID: m.id, SessionID: m.sessionID, State: m.state, ErrorCode: m.code,
+			FailurePoint: m.point, FromHarness: m.from, TargetHarness: m.target,
+			TargetStartMode: m.start, RequestedAt: m.requestedAt, UpdatedAt: m.updatedAt,
+		}
+		status := s.enrollFaultSavepoint(ctx, tx, failureEnrollmentInput{Switch: &sw, Fault: &fault, Authorization: input.Authorization, GuardCurrentSwitch: true})
 		if status == domain.AgentSwitchEnrollmentEnrolled {
 			enrolled++
 		}
@@ -611,11 +705,11 @@ func (s *Store) BeginAgentSwitchFailureAttempt(ctx context.Context, input ports.
 	result, err := s.writeDB.ExecContext(ctx, `
 UPDATE agent_switch_failure_outbox SET attempt_count=attempt_count+1,last_attempt_at=?
 WHERE id=? AND lease_token=? AND lease_consent_generation=? AND lease_delivery_epoch=? AND destination_fingerprint=?
- AND expires_at>? AND delivered_at IS NULL AND discarded_at IS NULL
- AND EXISTS(SELECT 1 FROM agent_switch_failure_policy p WHERE p.singleton=1 AND p.enabled=1 AND p.consent_generation=? AND p.destination_fingerprint=?)
- AND NOT EXISTS(SELECT 1 FROM agent_switch_failure_delivery_state d WHERE d.destination_fingerprint=? AND ((d.error_not_before IS NOT NULL AND d.error_not_before>?) OR (d.all_not_before IS NOT NULL AND d.all_not_before>?)))`,
+	 AND lease_expires_at IS NOT NULL AND lease_expires_at>? AND expires_at>? AND delivered_at IS NULL AND discarded_at IS NULL
+	 AND EXISTS(SELECT 1 FROM agent_switch_failure_policy p WHERE p.singleton=1 AND p.enabled=1 AND p.consent_generation=? AND p.destination_fingerprint=?)
+	 AND NOT EXISTS(SELECT 1 FROM agent_switch_failure_delivery_state d WHERE d.destination_fingerprint=? AND ((d.error_not_before IS NOT NULL AND d.error_not_before>?) OR (d.all_not_before IS NOT NULL AND d.all_not_before>?)))`,
 		input.Now, input.ID, input.LeaseToken, input.ConsentGeneration, input.DeliveryEpoch,
-		input.DestinationFingerprint, input.Now, input.ConsentGeneration, input.DestinationFingerprint,
+		input.DestinationFingerprint, input.Now, input.Now, input.ConsentGeneration, input.DestinationFingerprint,
 		input.DestinationFingerprint, input.Now, input.Now)
 	if err != nil {
 		return false, err
@@ -632,21 +726,6 @@ func (s *Store) SettleAgentSwitchFailureDelivery(ctx context.Context, input port
 		return false, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if input.Result.RetryNotBefore.After(input.SettledAt) && input.Result.ThrottleScope != ports.DeliveryThrottleNone {
-		var errorUntil, allUntil any
-		if input.Result.ThrottleScope == ports.DeliveryThrottleErrorCategory {
-			errorUntil = input.Result.RetryNotBefore
-		} else {
-			allUntil = input.Result.RetryNotBefore
-		}
-		if _, err := tx.ExecContext(ctx, `
-INSERT INTO agent_switch_failure_delivery_state(destination_fingerprint,error_not_before,all_not_before) VALUES(?,?,?)
-ON CONFLICT(destination_fingerprint) DO UPDATE SET
- error_not_before=CASE WHEN excluded.error_not_before IS NULL THEN error_not_before WHEN error_not_before IS NULL OR excluded.error_not_before>error_not_before THEN excluded.error_not_before ELSE error_not_before END,
- all_not_before=CASE WHEN excluded.all_not_before IS NULL THEN all_not_before WHEN all_not_before IS NULL OR excluded.all_not_before>all_not_before THEN excluded.all_not_before ELSE all_not_before END`, input.DestinationFingerprint, errorUntil, allUntil); err != nil {
-			return false, err
-		}
-	}
 	baseArgs := []any{input.ID, input.LeaseToken, input.ConsentGeneration, input.DeliveryEpoch, input.DestinationFingerprint}
 	var result sql.Result
 	switch input.Result.Outcome {
@@ -672,10 +751,28 @@ ON CONFLICT(destination_fingerprint) DO UPDATE SET
 	if err != nil {
 		return false, err
 	}
+	if n != 1 {
+		return false, nil
+	}
+	if input.Result.RetryNotBefore.After(input.SettledAt) && input.Result.ThrottleScope != ports.DeliveryThrottleNone {
+		var errorUntil, allUntil any
+		if input.Result.ThrottleScope == ports.DeliveryThrottleErrorCategory {
+			errorUntil = input.Result.RetryNotBefore
+		} else {
+			allUntil = input.Result.RetryNotBefore
+		}
+		if _, err := tx.ExecContext(ctx, `
+INSERT INTO agent_switch_failure_delivery_state(destination_fingerprint,error_not_before,all_not_before) VALUES(?,?,?)
+ON CONFLICT(destination_fingerprint) DO UPDATE SET
+ error_not_before=CASE WHEN excluded.error_not_before IS NULL THEN error_not_before WHEN error_not_before IS NULL OR excluded.error_not_before>error_not_before THEN excluded.error_not_before ELSE error_not_before END,
+ all_not_before=CASE WHEN excluded.all_not_before IS NULL THEN all_not_before WHEN all_not_before IS NULL OR excluded.all_not_before>all_not_before THEN excluded.all_not_before ELSE all_not_before END`, input.DestinationFingerprint, errorUntil, allUntil); err != nil {
+			return false, err
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return false, err
 	}
-	return n == 1, nil
+	return true, nil
 }
 
 func (s *Store) ExpireAgentSwitchFailurePayloads(ctx context.Context, now time.Time) (int64, error) {
