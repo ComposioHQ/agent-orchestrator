@@ -30,6 +30,7 @@ import { loadHosts } from "./hosts";
 import { shouldReRace } from "./reRace";
 import { shouldRaceForUpgrade, UPGRADE_RACE_CHECK_MS } from "./upgradeRace";
 import { sameServerConfig } from "./sameConfig";
+import { shouldShowLoading } from "./configLoading";
 import { shouldKeepPolling } from "./connectionError";
 import { primeInstallId } from "./installId";
 import { collectPRs } from "./prView";
@@ -110,6 +111,9 @@ export function usePRs() {
 
 export function AppProvider({ children }: { children: ReactNode }) {
 	const [config, setConfig] = useState<ServerConfig | null>(null);
+	// Whether resolution has finished at least once. Distinguishes "no config
+	// yet" from "no machine paired" — identical as state, opposite to the user.
+	const [configResolved, setConfigResolved] = useState(false);
 	const [projects, setProjects] = useState<ProjectInfo[]>([]);
 	const [sessions, setSessions] = useState<DashboardSession[]>([]);
 	const [orchestrators, setOrchestrators] = useState<OrchestratorLink[]>([]);
@@ -191,7 +195,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
 		// address, so the app lands on LAN at home and the tunnel from anywhere
 		// else without the user choosing. Always resolves to something: every
 		// failure path inside falls back to the last stored config.
-		const c = (await resolveActiveConfig(runtimeResolveDeps())) ?? (await loadConfig());
+		// Marked resolved whatever happens below. An unhandled failure here would
+		// otherwise leave the loader up forever, which is a worse failure than
+		// the blank screen this flag exists to prevent.
+		try {
+			const c = (await resolveActiveConfig(runtimeResolveDeps())) ?? (await loadConfig());
 		// Keep the previous object when the endpoint has not actually changed.
 		// Resolution builds a fresh one every time, and the live conversation
 		// stream, the poll loop and the terminal mux all key on this value's
@@ -201,11 +209,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
 		// Stamped here so every race counts towards the cooldown, however it was
 		// triggered — otherwise a failure race and an upgrade race can fire back
 		// to back and thrash the connection.
-		lastReRaceAt.current = Date.now();
-		const prev = cfgRef.current;
-		const next = sameServerConfig(prev, c) ? (prev as typeof c) : c;
-		cfgRef.current = next;
-		setConfig(next);
+			lastReRaceAt.current = Date.now();
+			const prev = cfgRef.current;
+			const next = sameServerConfig(prev, c) ? (prev as typeof c) : c;
+			cfgRef.current = next;
+			setConfig(next);
+		} finally {
+			setConfigResolved(true);
+		}
 	}, []);
 
 	useEffect(() => {
@@ -333,7 +344,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
 		openRef.current = false;
 		if (!config || !isConfigured(config)) {
 			setConnection("closed");
-			setLoading(false);
+			// Not simply false: until resolution has finished this is "still
+			// finding a path", and turning the loader off here left the screen
+			// rendering an empty list — a black screen — for the whole race.
+			setLoading(shouldShowLoading({ resolved: configResolved, configured: false }));
 			return;
 		}
 		if (!appActive) return; // backgrounded: stop polling, stop heartbeating
@@ -385,7 +399,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			// boundary instead of one whole request-timeout later.
 			stopped = true;
 		};
-	}, [config, fetchAll, appActive, reloadConfig]);
+	}, [config, fetchAll, appActive, reloadConfig, configResolved]);
 
 	const setActiveProject = useCallback((id: string) => {
 		setActiveProjectId(id);
