@@ -29,6 +29,11 @@ import (
 // graceful detach path as an explicit client close. Windows uses a ConPTY path
 // (see spawn_windows.go).
 func Spawn(ctx context.Context, argv, env []string, rows, cols uint16) (ports.Stream, error) {
+	return SpawnInDir(ctx, argv, env, "", rows, cols)
+}
+
+// SpawnInDir is Spawn with an explicit child working directory.
+func SpawnInDir(ctx context.Context, argv, env []string, workingDir string, rows, cols uint16) (ports.Stream, error) {
 	if len(argv) == 0 {
 		return nil, errors.New("ptyexec: empty attach command")
 	}
@@ -36,6 +41,7 @@ func Spawn(ctx context.Context, argv, env []string, rows, cols uint16) (ports.St
 		return nil, err
 	}
 	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd.Dir = workingDir
 	if env != nil {
 		cmd.Env = env
 	}

@@ -63,28 +63,6 @@ var commandSpecs = map[string]commandSpec{
 func Base(agentID string) ports.AgentModelCatalog {
 	now := time.Now().UTC()
 	switch agentID {
-	case "claude-code":
-		return catalog(agentID, "official-aliases", true, now,
-			model("sonnet", "Sonnet", false),
-			model("opus", "Opus", false),
-			model("haiku", "Haiku", false),
-		)
-	case "codex":
-		return catalog(agentID, "official-catalog", true, now,
-			model("gpt-5.6-sol", "GPT-5.6 Sol", true),
-			model("gpt-5.6-terra", "GPT-5.6 Terra", false),
-			model("gpt-5.6-luna", "GPT-5.6 Luna", false),
-			model("gpt-5.5", "GPT-5.5", false),
-			model("gpt-5.4", "GPT-5.4", false),
-			model("gpt-5.4-mini", "GPT-5.4 mini", false),
-			model("gpt-5.3-codex", "GPT-5.3-Codex", false),
-		)
-	case "muse":
-		return catalog(agentID, "official-catalog", true, now,
-			model("muse-spark", "Muse Spark", true),
-			model("muse-spark-1.1", "Muse Spark 1.1", false),
-			model("muse-spark-1.2", "Muse Spark 1.2", false),
-		)
 	case "amp":
 		c := catalog(agentID, "official-modes", false, now,
 			model("low", "Low", false),
@@ -123,11 +101,23 @@ func Manual(agentID string) ports.AgentModelCatalog {
 }
 
 // Discoverer implements the model-discovery port for production daemon wiring.
-type Discoverer struct{}
+type Discoverer struct {
+	TerminalSpawner TerminalSpawnFunc
+	CodexModels     CodexModelListFunc
+}
 
-// Discover executes a documented non-interactive model-list command when the
-// agent exposes one. Static catalogs are returned without executing the binary.
-func (Discoverer) Discover(ctx context.Context, request ports.AgentModelDiscoveryRequest) (ports.AgentModelCatalog, error) {
+// CodexModelListFunc obtains Codex's account-scoped app-server catalog without
+// opening a provider thread.
+type CodexModelListFunc func(context.Context, ports.AgentModelDiscoveryRequest) ([]ports.ChatModel, error)
+
+// Discover uses the agent-owned model surface configured for this adapter.
+func (d Discoverer) Discover(ctx context.Context, request ports.AgentModelDiscoveryRequest) (ports.AgentModelCatalog, error) {
+	if request.AgentID == "claude-code" || request.AgentID == "muse" {
+		return discoverTerminalCatalog(ctx, request, d.TerminalSpawner)
+	}
+	if request.AgentID == "codex" {
+		return discoverCodexCatalog(ctx, request, d.CodexModels)
+	}
 	return Discover(ctx, request.AgentID, request.Binary, request.WorkingDir, request.Env)
 }
 
@@ -145,8 +135,11 @@ func (Discoverer) Manual(agentID string) ports.AgentModelCatalog { return Manual
 // Discover executes model catalog discovery for an agent binary.
 func Discover(ctx context.Context, agentID, binary, workingDir string, env map[string]string) (ports.AgentModelCatalog, error) {
 	base := Base(agentID)
-	if agentID == "claude-code" {
-		return withClaudeCodeDefault(base, workingDir, env), nil
+	if agentID == "claude-code" || agentID == "muse" {
+		return base, errors.New("interactive model discovery requires a private terminal")
+	}
+	if agentID == "codex" {
+		return base, errors.New("codex model discovery requires app-server")
 	}
 	spec, ok := commandSpecs[agentID]
 	if !ok {
@@ -176,37 +169,43 @@ func Discover(ctx context.Context, agentID, binary, workingDir string, env map[s
 	return base, nil
 }
 
+func discoverCodexCatalog(ctx context.Context, request ports.AgentModelDiscoveryRequest, list CodexModelListFunc) (ports.AgentModelCatalog, error) {
+	base := Base(request.AgentID)
+	if list == nil {
+		return base, errors.New("codex app-server model discovery is unavailable")
+	}
+	models, err := list(ctx, request)
+	if err != nil {
+		return base, fmt.Errorf("codex model discovery: %w", err)
+	}
+	normalized := make([]ports.AgentModelInfo, 0, len(models))
+	for _, item := range models {
+		id := strings.TrimSpace(item.ID)
+		if id == "" {
+			continue
+		}
+		label := strings.TrimSpace(item.DisplayName)
+		if label == "" {
+			label = id
+		}
+		provider := ""
+		if prefix, _, ok := strings.Cut(id, "/"); ok {
+			provider = prefix
+		}
+		normalized = append(normalized, ports.AgentModelInfo{ID: id, Label: label, Provider: provider, IsDefault: item.Default})
+	}
+	if len(normalized) == 0 {
+		return base, errors.New("codex model discovery returned no models")
+	}
+	base.Models = normalize(normalized)
+	base.Source = "cli"
+	base.FetchedAt = time.Now().UTC()
+	return base, nil
+}
+
 // claudeCodeSettingsReadLimit bounds how much of a settings file AO parses. The
 // documented files are small; a pathological one must not stall discovery.
 const claudeCodeSettingsReadLimit = 1 << 20
-
-// withClaudeCodeDefault flags the model Claude Code will actually run with.
-// Claude Code exposes no non-interactive command that reports its resolved
-// model, but the value it resolves is readable: AO passes no --model, so the
-// choice comes from ANTHROPIC_MODEL or the "model" key in the settings files,
-// nearest scope first. When none of them set a model the CLI picks internally
-// and AO must not guess, so the catalog keeps no default and the picker keeps
-// showing "Agent default".
-func withClaudeCodeDefault(base ports.AgentModelCatalog, workingDir string, env map[string]string) ports.AgentModelCatalog {
-	resolved := claudeCodeResolvedModel(workingDir, env)
-	if resolved == "" {
-		return base
-	}
-	models := make([]ports.AgentModelInfo, len(base.Models))
-	copy(models, base.Models)
-	base.Models = models
-	for i := range base.Models {
-		if strings.EqualFold(base.Models[i].ID, resolved) {
-			base.Models[i].IsDefault = true
-			return base
-		}
-	}
-	// A configured model that is not one of the published aliases (an explicit
-	// snapshot id, or an alias variant such as "opus[1m]") still has to be
-	// selectable, otherwise the picker would show a default it cannot round-trip.
-	base.Models = append(base.Models, model(resolved, resolved, true))
-	return base
-}
 
 // claudeCodeResolvedModel returns the configured Claude Code model, or "" when
 // no scope sets one. Order mirrors Claude Code's own precedence, narrowed to the
@@ -259,6 +258,10 @@ func claudeCodeSettingsModel(path string) string {
 }
 
 func hasDiscoverySource(agentID string) bool {
+	switch agentID {
+	case "claude-code", "codex", "muse":
+		return true
+	}
 	_, hasCommand := commandSpecs[agentID]
 	return hasCommand
 }

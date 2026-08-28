@@ -303,6 +303,21 @@ func turnSandboxPolicy(sandbox string) map[string]any {
 // account, and gated by entitlement that AO cannot see. A table in AO would be
 // wrong within a week.
 func (c *conversation) ListModels(ctx context.Context) ([]ports.ChatModel, error) {
+	models, err := listModels(ctx, c.conn)
+	if err != nil {
+		return nil, err
+	}
+	// Thread settings include the user's config; model/list only has generic defaults.
+	for i := range models {
+		if models[i].ID == c.threadModel && c.threadEffort != "" {
+			models[i].DefaultEffort = c.threadEffort
+			break
+		}
+	}
+	return models, nil
+}
+
+func listModels(ctx context.Context, connection *conn) ([]ports.ChatModel, error) {
 	var resp struct {
 		Data []struct {
 			ID          string `json:"id"`
@@ -317,7 +332,7 @@ func (c *conversation) ListModels(ctx context.Context) ([]ports.ChatModel, error
 			} `json:"supportedReasoningEfforts"`
 		} `json:"data"`
 	}
-	if err := c.conn.request(ctx, "model/list", map[string]any{}, &resp); err != nil {
+	if err := connection.request(ctx, "model/list", map[string]any{}, &resp); err != nil {
 		return nil, fmt.Errorf("model/list: %w", err)
 	}
 
@@ -353,13 +368,6 @@ func (c *conversation) ListModels(ctx context.Context) ([]ports.ChatModel, error
 			Efforts:       efforts,
 			DefaultEffort: entry.DefaultEff,
 		})
-	}
-	// Thread settings include the user's config; model/list only has generic defaults.
-	for i := range models {
-		if models[i].ID == c.threadModel && c.threadEffort != "" {
-			models[i].DefaultEffort = c.threadEffort
-			break
-		}
 	}
 	return models, nil
 }

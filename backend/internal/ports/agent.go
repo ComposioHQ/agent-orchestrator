@@ -176,6 +176,7 @@ type AgentInventoryCache interface {
 // restarts. Implementations must treat agent+project as the logical key.
 type AgentModelCatalogCache interface {
 	GetAgentModelCatalog(ctx context.Context, agentID, projectID string) (CachedAgentModelCatalog, bool, error)
+	ListAgentModelCatalogsByAgent(ctx context.Context, agentID string) ([]CachedAgentModelCatalog, error)
 	UpsertAgentModelCatalog(ctx context.Context, record CachedAgentModelCatalog) error
 }
 

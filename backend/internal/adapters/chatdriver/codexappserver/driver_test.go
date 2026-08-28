@@ -1015,6 +1015,22 @@ func TestListModelsKeepsCatalogAndUsesThreadEffort(t *testing.T) {
 	}
 }
 
+func TestDiscoverModelsReadsCatalogWithoutOpeningThread(t *testing.T) {
+	d, srv := newTestDriver(t)
+	srv.reply("model/list", `{"data":[{"id":"gpt-visible","displayName":"GPT Visible","isDefault":true,"hidden":false},{"id":"gpt-hidden","displayName":"GPT Hidden","hidden":true}]}`)
+
+	models, err := d.DiscoverModels(context.Background(), "/tmp/ws", map[string]string{"CODEX_HOME": "/tmp/codex-home"})
+	if err != nil {
+		t.Fatalf("DiscoverModels: %v", err)
+	}
+	if len(models) != 1 || models[0].ID != "gpt-visible" || models[0].DisplayName != "GPT Visible" || !models[0].Default {
+		t.Fatalf("models = %#v", models)
+	}
+	if srv.sentMethod("thread/start") {
+		t.Fatal("model discovery opened a provider thread")
+	}
+}
+
 // The on-demand quota read. The reply below is the verbatim account/rateLimits/read
 // result from a live pro account, on ONE line: readFrame is line-delimited, so a
 // pretty-printed reply hangs the test forever rather than failing it.

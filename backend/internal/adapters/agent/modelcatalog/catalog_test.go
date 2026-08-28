@@ -81,10 +81,10 @@ func TestBaseClassifiesStaticTextAndModeAgents(t *testing.T) {
 		mode  ports.ModelSelectionMode
 		count int
 	}{
-		{agent: "claude-code", mode: ports.ModelSelectionCatalog, count: 3},
-		{agent: "codex", mode: ports.ModelSelectionCatalog, count: 7},
+		{agent: "claude-code", mode: ports.ModelSelectionCatalog},
+		{agent: "codex", mode: ports.ModelSelectionCatalog},
 		{agent: "amp", mode: ports.ModelSelectionModeList, count: 4},
-		{agent: "muse", mode: ports.ModelSelectionCatalog, count: 3},
+		{agent: "muse", mode: ports.ModelSelectionCatalog},
 		{agent: "aider", mode: ports.ModelSelectionCatalog},
 		{agent: "autohand", mode: ports.ModelSelectionCatalog},
 		{agent: "kimchi", mode: ports.ModelSelectionCatalog},
@@ -131,19 +131,37 @@ openai     gpt-5.6-sol           400K     128K     yes       yes
 	}
 }
 
-func TestBaseMuseCatalogAllowsCustomModels(t *testing.T) {
-	got := Base("muse")
-	if got.SelectionMode != ports.ModelSelectionCatalog {
-		t.Fatalf("SelectionMode = %q, want catalog", got.SelectionMode)
+func TestBaseDiscoverableCatalogsContainNoAOOwnedModelIDs(t *testing.T) {
+	for _, agentID := range []string{"claude-code", "codex", "muse"} {
+		t.Run(agentID, func(t *testing.T) {
+			got := Base(agentID)
+			if got.SelectionMode != ports.ModelSelectionCatalog || !got.AllowCustom || got.Source != "cli" {
+				t.Fatalf("Base(%q) = %#v", agentID, got)
+			}
+			if len(got.Models) != 0 {
+				t.Fatalf("Base(%q) models = %#v, want no AO-owned model IDs", agentID, got.Models)
+			}
+		})
 	}
-	if !got.AllowCustom {
-		t.Fatal("AllowCustom = false, want true")
+}
+
+func TestCodexDiscoveryUsesStructuredProviderCatalog(t *testing.T) {
+	discoverer := Discoverer{CodexModels: func(context.Context, ports.AgentModelDiscoveryRequest) ([]ports.ChatModel, error) {
+		return []ports.ChatModel{
+			{ID: "gpt-current", DisplayName: "GPT Current", Default: true},
+			{ID: "gpt-other", DisplayName: "GPT Other"},
+		}, nil
+	}}
+	got, err := discoverer.Discover(context.Background(), ports.AgentModelDiscoveryRequest{AgentID: "codex", Binary: "/bin/codex"})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if got.Source != "official-catalog" {
-		t.Fatalf("Source = %q, want official-catalog", got.Source)
+	want := []ports.AgentModelInfo{
+		{ID: "gpt-current", Label: "GPT Current", IsDefault: true},
+		{ID: "gpt-other", Label: "GPT Other"},
 	}
-	if len(got.Models) != 3 || got.Models[0].ID != "muse-spark" || !got.Models[0].IsDefault {
-		t.Fatalf("models = %#v", got.Models)
+	if !reflect.DeepEqual(got.Models, want) || got.Source != "cli" {
+		t.Fatalf("catalog = %#v, want models %#v", got, want)
 	}
 }
 
@@ -350,118 +368,6 @@ func writeClaudeSettings(t *testing.T, dir, model string) {
 	}
 	if err := os.WriteFile(filepath.Join(settingsDir, "settings.json"), []byte(body), 0o600); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func claudeDefaultID(catalog ports.AgentModelCatalog) string {
-	for _, item := range catalog.Models {
-		if item.IsDefault {
-			return item.ID
-		}
-	}
-	return ""
-}
-
-func TestClaudeCodeDiscoveryFlagsTheConfiguredAliasAsDefault(t *testing.T) {
-	t.Setenv("ANTHROPIC_MODEL", "")
-	dir := t.TempDir()
-	writeClaudeSettings(t, dir, "opus")
-
-	got, err := Discover(context.Background(), "claude-code", "", dir, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if id := claudeDefaultID(got); id != "opus" {
-		t.Fatalf("default = %q, want opus (models %#v)", id, got.Models)
-	}
-	if len(got.Models) != 3 {
-		t.Fatalf("models = %#v, want the three published aliases", got.Models)
-	}
-}
-
-func TestClaudeCodeDiscoveryAddsAConfiguredModelOutsideTheAliases(t *testing.T) {
-	t.Setenv("ANTHROPIC_MODEL", "")
-	dir := t.TempDir()
-	writeClaudeSettings(t, dir, "opus[1m]")
-
-	got, err := Discover(context.Background(), "claude-code", "", dir, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Without the appended entry the picker would name a default it cannot select.
-	if id := claudeDefaultID(got); id != "opus[1m]" {
-		t.Fatalf("default = %q, want opus[1m] (models %#v)", id, got.Models)
-	}
-	if len(got.Models) != 4 {
-		t.Fatalf("models = %#v, want the aliases plus the configured model", got.Models)
-	}
-}
-
-func TestClaudeCodeDiscoveryPrefersNearerScopesAndProjectEnv(t *testing.T) {
-	t.Setenv("ANTHROPIC_MODEL", "")
-	dir := t.TempDir()
-	writeClaudeSettings(t, dir, "haiku")
-	local := filepath.Join(dir, ".claude", "settings.local.json")
-	if err := os.WriteFile(local, []byte(`{"model": "sonnet"}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	got, err := Discover(context.Background(), "claude-code", "", dir, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if id := claudeDefaultID(got); id != "sonnet" {
-		t.Fatalf("default = %q, want the local settings model", id)
-	}
-
-	// The project's own environment outranks every settings file.
-	got, err = Discover(context.Background(), "claude-code", "", dir, map[string]string{"ANTHROPIC_MODEL": "haiku"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if id := claudeDefaultID(got); id != "haiku" {
-		t.Fatalf("default = %q, want the project env model", id)
-	}
-}
-
-func TestClaudeCodeDiscoveryKeepsNoDefaultWhenNothingConfigured(t *testing.T) {
-	t.Setenv("ANTHROPIC_MODEL", "")
-	t.Setenv("HOME", t.TempDir())
-	dir := t.TempDir()
-	writeClaudeSettings(t, dir, "")
-
-	got, err := Discover(context.Background(), "claude-code", "", dir, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// AO passes no --model, so the CLI decides. Guessing here would assert a
-	// default AO cannot verify.
-	if id := claudeDefaultID(got); id != "" {
-		t.Fatalf("default = %q, want none", id)
-	}
-	if len(got.Models) != 3 {
-		t.Fatalf("models = %#v, want the three published aliases", got.Models)
-	}
-}
-
-func TestClaudeCodeDiscoveryIgnoresMalformedSettings(t *testing.T) {
-	t.Setenv("ANTHROPIC_MODEL", "")
-	t.Setenv("HOME", t.TempDir())
-	dir := t.TempDir()
-	settingsDir := filepath.Join(dir, ".claude")
-	if err := os.MkdirAll(settingsDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(settingsDir, "settings.json"), []byte(`{"model": `), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	got, err := Discover(context.Background(), "claude-code", "", dir, nil)
-	if err != nil {
-		t.Fatalf("malformed settings must not fail discovery: %v", err)
-	}
-	if id := claudeDefaultID(got); id != "" {
-		t.Fatalf("default = %q, want none", id)
 	}
 }
 

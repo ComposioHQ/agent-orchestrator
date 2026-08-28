@@ -29,6 +29,9 @@ var (
 	// revalidate in the background. Long, because rediscovery runs an agent CLI:
 	// this covers drift a fingerprint cannot see, not routine correctness.
 	modelCatalogTrustWindow = 6 * time.Hour
+	// Suppress repeated successful terminal probes across rapid daemon restarts.
+	// Failed validations are stale and remain eligible for the next startup.
+	modelCatalogStartupGuard = 10 * time.Minute
 )
 
 // catalogNeedsRevalidation reports whether a cached catalog is old enough to
@@ -162,6 +165,38 @@ func newService(agents []agentregistry.HarnessAgent, cache ports.AgentModelCatal
 		Installed:  []Info{},
 		Authorized: []Info{},
 	}}
+}
+
+// WarmModelCatalogs starts a non-blocking, sequential refresh of the Claude
+// Code and Muse scopes that already have durable cache records. Unseen scopes
+// remain lazy and are discovered only when their picker is first opened.
+func (s *Service) WarmModelCatalogs(ctx context.Context) {
+	if s.cache == nil || s.discoverer == nil {
+		return
+	}
+	go s.warmModelCatalogs(ctx)
+}
+
+func (s *Service) warmModelCatalogs(ctx context.Context) {
+	for _, agentID := range []string{"claude-code", "muse"} {
+		records, err := s.cache.ListAgentModelCatalogsByAgent(ctx, agentID)
+		if err != nil {
+			continue
+		}
+		for _, record := range records {
+			if err := ctx.Err(); err != nil {
+				return
+			}
+			var cached ports.AgentModelCatalog
+			if err := json.Unmarshal([]byte(record.CatalogJSON), &cached); err != nil {
+				continue
+			}
+			if !cached.Stale && !cached.ValidatedAt.IsZero() && time.Since(cached.ValidatedAt) < modelCatalogStartupGuard {
+				continue
+			}
+			_, _ = s.RevalidateModels(ctx, agentID, record.ProjectID)
+		}
+	}
 }
 
 // List returns the cached agent inventory without running probes. Installed and

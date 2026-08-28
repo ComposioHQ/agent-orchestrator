@@ -119,10 +119,20 @@ type fakeModelDiscoverer struct {
 	lastRequest            ports.AgentModelDiscoveryRequest
 	fingerprintRequests    atomic.Int32
 	lastFingerprintRequest atomic.Pointer[ports.AgentModelDiscoveryRequest]
+	delay                  time.Duration
+	active                 atomic.Int32
+	overlap                atomic.Bool
 }
 
 func (f *fakeModelDiscoverer) Discover(_ context.Context, request ports.AgentModelDiscoveryRequest) (ports.AgentModelCatalog, error) {
 	f.discoverCalls.Add(1)
+	if f.active.Add(1) != 1 {
+		f.overlap.Store(true)
+	}
+	defer f.active.Add(-1)
+	if f.delay > 0 {
+		time.Sleep(f.delay)
+	}
 	f.lastRequest = request
 	catalog := f.catalog
 	if catalog.AgentID == "" {
@@ -156,6 +166,15 @@ func (f *fakeModelDiscoverer) Manual(agentID string) ports.AgentModelCatalog {
 
 var testModelDiscoverer ports.AgentModelDiscoverer = modelcatalog.Discoverer{}
 
+func successfulModelDiscoverer() *fakeModelDiscoverer {
+	return &fakeModelDiscoverer{version: "v1", catalog: ports.AgentModelCatalog{
+		SelectionMode: ports.ModelSelectionCatalog,
+		Models:        []ports.AgentModelInfo{{ID: "model-one", Label: "Model One"}},
+		AllowCustom:   true,
+		Source:        "cli",
+	}}
+}
+
 func (f *fakeProjectLookup) GetProject(_ context.Context, id string) (domain.ProjectRecord, bool, error) {
 	f.gotID = id
 	if f.err != nil {
@@ -168,6 +187,16 @@ func (f *fakeProjectLookup) GetProject(_ context.Context, id string) (domain.Pro
 func (f *fakeModelCache) GetAgentModelCatalog(_ context.Context, agentID, projectID string) (ports.CachedAgentModelCatalog, bool, error) {
 	record, ok := f.records[agentID+"\x00"+projectID]
 	return record, ok, nil
+}
+
+func (f *fakeModelCache) ListAgentModelCatalogsByAgent(_ context.Context, agentID string) ([]ports.CachedAgentModelCatalog, error) {
+	records := make([]ports.CachedAgentModelCatalog, 0)
+	for _, record := range f.records {
+		if record.AgentID == agentID {
+			records = append(records, record)
+		}
+	}
+	return records, nil
 }
 
 func (f *fakeModelCache) UpsertAgentModelCatalog(_ context.Context, record ports.CachedAgentModelCatalog) error {
@@ -808,11 +837,11 @@ func TestProbeReportsUnsupportedAndMissingAgent(t *testing.T) {
 	}
 }
 
-func TestModelsCachesStaticCatalogByProject(t *testing.T) {
+func TestModelsCachesDiscoveredCatalogByProject(t *testing.T) {
 	cache := &fakeModelCache{}
 	svc := newService([]agentregistry.HarnessAgent{
 		harnessAgent("codex", "Codex", nil),
-	}, cache, nil, testModelDiscoverer)
+	}, cache, nil, successfulModelDiscoverer())
 
 	first, err := svc.Models(context.Background(), "codex", "proj-1", false)
 	if err != nil {
@@ -924,7 +953,7 @@ func TestModelsLeaderCancellationDoesNotCancelCoalescedLoad(t *testing.T) {
 		Harness:  domain.AgentHarness("codex"),
 		Manifest: adapters.Manifest{ID: "codex", Name: "Codex"},
 		Agent:    agent,
-	}}, nil, nil, testModelDiscoverer)
+	}}, nil, nil, successfulModelDiscoverer())
 
 	leaderCtx, cancelLeader := context.WithCancel(context.Background())
 	leaderErr := make(chan error, 1)
@@ -1074,7 +1103,7 @@ func TestModelsReturnsDiscoveredCatalogWhenCacheWriteFails(t *testing.T) {
 	cache := &fakeModelCache{putErr: errors.New("database unavailable")}
 	svc := newService([]agentregistry.HarnessAgent{
 		harnessAgent("codex", "Codex", nil),
-	}, cache, nil, testModelDiscoverer)
+	}, cache, nil, successfulModelDiscoverer())
 
 	got, err := svc.Models(context.Background(), "codex", "", true)
 	if err != nil {
@@ -1263,5 +1292,91 @@ func TestRevalidateModelsRediscoversAnAgedCatalog(t *testing.T) {
 	}
 	if got.RefreshRecommended {
 		t.Fatal("revalidated catalog still recommends refresh")
+	}
+}
+
+func cachedModelRecord(t *testing.T, agentID, projectID string, validatedAt time.Time, stale bool) ports.CachedAgentModelCatalog {
+	t.Helper()
+	catalog := ports.AgentModelCatalog{
+		AgentID: agentID, SelectionMode: ports.ModelSelectionCatalog,
+		Models: []ports.AgentModelInfo{{ID: "cached-model"}}, AllowCustom: true,
+		Source: "cli", FetchedAt: validatedAt, ValidatedAt: validatedAt, Stale: stale,
+	}
+	data, err := json.Marshal(catalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ports.CachedAgentModelCatalog{AgentID: agentID, ProjectID: projectID, CatalogJSON: string(data), FetchedAt: validatedAt}
+}
+
+func TestWarmModelCatalogsRevalidatesOnlyCachedClaudeAndMuseScopesSequentially(t *testing.T) {
+	old := time.Now().Add(-time.Hour)
+	cache := &fakeModelCache{records: map[string]ports.CachedAgentModelCatalog{
+		"claude-code\x00project-a": cachedModelRecord(t, "claude-code", "project-a", old, false),
+		"muse\x00project-b":        cachedModelRecord(t, "muse", "project-b", old, false),
+		"codex\x00project-c":       cachedModelRecord(t, "codex", "project-c", old, false),
+	}}
+	discoverer := &fakeModelDiscoverer{delay: 10 * time.Millisecond, catalog: ports.AgentModelCatalog{
+		SelectionMode: ports.ModelSelectionCatalog, Models: []ports.AgentModelInfo{{ID: "fresh-model"}}, Source: "cli",
+	}}
+	svc := newService([]agentregistry.HarnessAgent{
+		harnessAgent("claude-code", "Claude Code", nil),
+		harnessAgent("muse", "Muse", nil),
+		harnessAgent("codex", "Codex", nil),
+	}, cache, nil, discoverer)
+
+	svc.warmModelCatalogs(context.Background())
+	if got := discoverer.discoverCalls.Load(); got != 2 {
+		t.Fatalf("discovery calls = %d, want cached Claude and Muse scopes only", got)
+	}
+	if discoverer.overlap.Load() {
+		t.Fatal("startup model discoveries overlapped")
+	}
+}
+
+func TestWarmModelCatalogsSuppressesOnlyRecentSuccessfulValidation(t *testing.T) {
+	recent := time.Now().Add(-time.Minute)
+	cache := &fakeModelCache{records: map[string]ports.CachedAgentModelCatalog{
+		"claude-code\x00fresh": cachedModelRecord(t, "claude-code", "fresh", recent, false),
+		"claude-code\x00stale": cachedModelRecord(t, "claude-code", "stale", recent, true),
+	}}
+	discoverer := &fakeModelDiscoverer{catalog: ports.AgentModelCatalog{
+		SelectionMode: ports.ModelSelectionCatalog, Models: []ports.AgentModelInfo{{ID: "fresh-model"}}, Source: "cli",
+	}}
+	svc := newService([]agentregistry.HarnessAgent{harnessAgent("claude-code", "Claude Code", nil)}, cache, nil, discoverer)
+
+	svc.warmModelCatalogs(context.Background())
+	if got := discoverer.discoverCalls.Load(); got != 1 {
+		t.Fatalf("discovery calls = %d, want only stale scope revalidated", got)
+	}
+}
+
+func TestWarmModelCatalogsStartsAsynchronously(t *testing.T) {
+	old := time.Now().Add(-time.Hour)
+	cache := &fakeModelCache{records: map[string]ports.CachedAgentModelCatalog{
+		"muse\x00project-a": cachedModelRecord(t, "muse", "project-a", old, false),
+	}}
+	discoverer := &fakeModelDiscoverer{delay: 100 * time.Millisecond, catalog: ports.AgentModelCatalog{
+		SelectionMode: ports.ModelSelectionCatalog, Models: []ports.AgentModelInfo{{ID: "fresh-model"}}, Source: "cli",
+	}}
+	svc := newService([]agentregistry.HarnessAgent{harnessAgent("muse", "Muse", nil)}, cache, nil, discoverer)
+
+	started := time.Now()
+	svc.WarmModelCatalogs(context.Background())
+	if elapsed := time.Since(started); elapsed > 50*time.Millisecond {
+		t.Fatalf("WarmModelCatalogs blocked for %s", elapsed)
+	}
+	deadline := time.Now().Add(time.Second)
+	for discoverer.discoverCalls.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if discoverer.discoverCalls.Load() == 0 {
+		t.Fatal("background warm did not start")
+	}
+	for discoverer.active.Load() != 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if discoverer.active.Load() != 0 {
+		t.Fatal("background warm did not finish")
 	}
 }

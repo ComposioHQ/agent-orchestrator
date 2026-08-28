@@ -50,9 +50,9 @@ Parsing is all-or-nothing. Every selectable row must yield a unique non-empty al
 
 ## Codex Discovery
 
-Codex exposes `model/list` through its local app-server protocol. AO extends the existing structured Codex account transport with a read-only model-list operation so model discovery initializes app-server, requests `model/list`, normalizes the response, and closes the process without creating a thread or sending a prompt.
+Codex exposes `model/list` through its local app-server protocol. AO adds a read-only operation to the existing Codex app-server driver so model discovery initializes app-server, requests `model/list`, normalizes the response, and closes the process without creating a thread or sending a prompt.
 
-The catalog uses provider-returned IDs, display names, default flags, and availability. Hidden entries are excluded. AO does not filter the result through a static allowlist. The discovery process uses the same resolved Codex binary, profile home, authentication, and environment boundary already used by structured Codex account operations.
+The catalog uses provider-returned IDs, display names, default flags, and availability. Hidden entries are excluded. AO does not filter the result through a static allowlist. The discovery process uses the same resolved Codex binary and environment boundary as normal Codex app-server sessions.
 
 Codex discovery failure follows the shared cached/manual fallback. The existing model cache and six-hour lazy revalidation apply; no separate startup refresh is required for Codex.
 

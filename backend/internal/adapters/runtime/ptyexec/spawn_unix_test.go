@@ -4,10 +4,28 @@ package ptyexec
 
 import (
 	"context"
+	"io"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestSpawnInDirUsesRequestedWorkingDirectory(t *testing.T) {
+	dir := t.TempDir()
+	p, err := SpawnInDir(context.Background(), []string{"/bin/pwd"}, nil, dir, 24, 80)
+	if err != nil {
+		t.Fatalf("SpawnInDir: %v", err)
+	}
+	defer p.Close()
+	output, err := io.ReadAll(p)
+	if err != nil {
+		t.Fatalf("read output: %v", err)
+	}
+	if strings.TrimSpace(string(output)) != filepath.Clean(dir) {
+		t.Fatalf("pwd = %q, want %q", strings.TrimSpace(string(output)), filepath.Clean(dir))
+	}
+}
 
 // TestCreackPTYCloseIsIdempotent guards the shutdown deadlock: the session run
 // loop and session.close both call Close on the same PTY, so cmd.Wait must run

@@ -17,8 +17,11 @@ import (
 
 	"github.com/google/uuid"
 
+	codexagent "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/codex"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/modelcatalog"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/codexappserver"
 	chatdriverregistry "github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/registry"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/ptyexec"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/runtimeselect"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/systemexec"
 	"github.com/aoagents/agent-orchestrator/backend/internal/autoreview"
@@ -311,7 +314,15 @@ func Run() error {
 	}
 	lcStack.trackerDone = startTrackerIntake(ctx, store, sessionSvc, log)
 
-	agentSvc := agentsvc.NewWithDeps(agentsvc.Deps{Cache: store, InventoryCache: store, Discoverer: modelcatalog.Discoverer{}, Projects: store, Sessions: store})
+	codexModelDriver := codexappserver.New(codexagent.New(), log)
+	modelDiscoverer := modelcatalog.Discoverer{
+		TerminalSpawner: ptyexec.SpawnInDir,
+		CodexModels: func(listCtx context.Context, request ports.AgentModelDiscoveryRequest) ([]ports.ChatModel, error) {
+			return codexModelDriver.DiscoverModels(listCtx, request.WorkingDir, request.Env)
+		},
+	}
+	agentSvc := agentsvc.NewWithDeps(agentsvc.Deps{Cache: store, InventoryCache: store, Discoverer: modelDiscoverer, Projects: store, Sessions: store})
+	agentSvc.WarmModelCatalogs(ctx)
 	hostCommands := systemexec.Adapter{}
 	systemChecks := systemcheck.New(agentSvc, hostCommands)
 	systemInstall := systeminstall.New(hostCommands, hostCommands)
