@@ -36,12 +36,12 @@ test.describe("ChatUI truthful controls and operability", () => {
 			];
 			await chatUI.open();
 
-			await page.getByRole("button", { name: "Provider execution mode" }).click();
+			await page.getByRole("button", { name: "Claude Code permission mode" }).click();
 			const menu = page.getByRole("menu");
 			await expect(menu).toBeVisible();
 			await expect.soft(menu).not.toContainText("no actual tool execution");
 			await expect.soft(menu).toContainText(
-				"Provider-native Plan mode may still read or write files and use tools under normal permissions.",
+				"Claude Code Plan mode may inspect files, use tools, and write provider-owned plan artifacts outside the workspace. AO does not enforce a no-tool or no-write boundary.",
 			);
 		});
 	});
