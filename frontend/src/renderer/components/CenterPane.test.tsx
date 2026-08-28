@@ -616,7 +616,7 @@ describe("CenterPane toolbar session label", () => {
 		expect(within(mainContainer as HTMLElement).queryByTestId("terminal-switch-agent")).toBeNull();
 	});
 
-	it("keeps the compact owner card before the scrollable terminal list while allowing it to shrink", () => {
+	it("keeps the pinned owner tabs before the scrollable terminal list", () => {
 		const [shell] = makeShells(1);
 		renderCenterPane({ session: worker, shellTerminals: [shell] });
 
@@ -630,7 +630,7 @@ describe("CenterPane toolbar session label", () => {
 		expect(ownerCard).not.toHaveClass("min-w-shell-tab-min", "shrink-0");
 		expect(ownerTab).toHaveClass("min-w-0");
 		expect(ownerTab).not.toHaveClass("min-w-flex-min");
-		expect(ownerCard?.parentElement).toHaveClass("min-w-0");
+		expect(ownerCard?.parentElement).toHaveClass("min-w-0", "shrink-0");
 		expect(ownerCard?.parentElement).not.toHaveClass("min-w-flex-min");
 		expect(scrollRegion?.contains(ownerCard)).toBe(false);
 		expect(avatar?.classList.contains("size-terminal-agent-icon")).toBe(true);

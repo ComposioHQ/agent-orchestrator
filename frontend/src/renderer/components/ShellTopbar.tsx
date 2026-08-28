@@ -73,9 +73,11 @@ const PADDING_CLEARANCE_LINUX = 114;
 export function ShellTopbar({
 	embedded = false,
 	sessionAction,
+	compactActions = false,
 }: {
 	embedded?: boolean;
 	sessionAction?: ReactNode;
+	compactActions?: boolean;
 } = {}) {
 	const { t } = useTranslation();
 	const navigate = useNavigate();
@@ -252,7 +254,11 @@ export function ShellTopbar({
 
 			{!embedded ? <div className="min-w-0 flex-1" /> : null}
 
-			<div className="workspace-topbar-actions flex shrink-0 items-center" data-testid="workspace-topbar-actions">
+			<div
+				className="workspace-topbar-actions flex shrink-0 items-center"
+				data-compact-actions={compactActions ? "true" : "false"}
+				data-testid="workspace-topbar-actions"
+			>
 				{!boardActionsInPanel && isProjectBoardRoute ? (
 					<>
 						{boardSpawnError ? (

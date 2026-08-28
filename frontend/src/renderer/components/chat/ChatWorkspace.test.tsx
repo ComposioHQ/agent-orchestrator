@@ -2027,6 +2027,8 @@ describe("ChatWorkspace reviewer tabs", () => {
 		const reviewerTab = screen.getByRole("tab", { name: "Reviewer" });
 		const shellTab = screen.getByRole("tab", { name: "chat worktree shell" });
 
+		expect(chatTab.parentElement?.parentElement).toHaveClass("shrink-0");
+		expect(reviewerTab.parentElement?.parentElement).toHaveClass("shrink-0");
 		expect(scrollRegion?.contains(chatTab.parentElement)).toBe(false);
 		expect(scrollRegion?.contains(reviewerTab.parentElement)).toBe(false);
 		expect(scrollRegion?.contains(shellTab.parentElement)).toBe(true);

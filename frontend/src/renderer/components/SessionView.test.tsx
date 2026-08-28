@@ -158,8 +158,16 @@ const { workspaces, workspaceQueryState, shellTerminalsState } = vi.hoisted(() =
 // the split under test. (ShellTopbar is shell-owned on Win/Linux; when the
 // platform hides the shell topbar, SessionView mounts it in-panel.)
 vi.mock("./ShellTopbar", () => ({
-	ShellTopbar: ({ sessionAction }: { sessionAction?: ReactNode }) => (
-		<div data-testid="mock-session-topbar">{sessionAction}</div>
+	ShellTopbar: ({
+		sessionAction,
+		compactActions,
+	}: {
+		sessionAction?: ReactNode;
+		compactActions?: boolean;
+	}) => (
+		<div data-compact-actions={compactActions ? "true" : "false"} data-testid="mock-session-topbar">
+			{sessionAction}
+		</div>
 	),
 }));
 vi.mock("./NotificationCenter", () => ({
@@ -1501,6 +1509,23 @@ describe("SessionView", () => {
 		expect(screen.getByRole("button", { name: "Notifications" })).toBe(notification);
 		expect(screen.getByRole("button", { name: "Open inspector panel" })).toBe(toggle);
 		expect(toggle).toHaveAttribute("aria-pressed", "false");
+	});
+
+	it("compacts non-primary session chrome when Browser pressure collapses the sidebar", () => {
+		useUiStore.setState({
+			isSidebarOpen: true,
+			isSidebarAutoCollapsed: true,
+			sidebarAutoCollapseOverride: false,
+			inspectorSessions: { "sess-1": { initialized: true, isOpen: true, view: "browser" } },
+		});
+
+		render(<SessionView sessionId="sess-1" />);
+
+		expect(screen.getByTestId("mock-session-topbar")).toHaveAttribute("data-compact-actions", "true");
+		expect(screen.getByLabelText("ao/sess-1").closest("[data-compact-session-chrome]")).toHaveAttribute(
+			"data-compact-session-chrome",
+			"true",
+		);
 	});
 
 	it("restores and clamps the persisted inspector width in pixels", () => {

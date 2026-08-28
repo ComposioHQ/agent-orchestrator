@@ -891,11 +891,15 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			{interfaceSwitchAction}
 		</SessionInterfaceActionGroup>
 	) : null;
+	const compactSessionChrome = adaptiveWorkspaceActive;
 	const sessionHeaderActions = (
-		<>
-			<SessionBranchBadge branch={session?.branch} />
-			<ShellTopbar embedded sessionAction={sessionLocalActions} />
-		</>
+		<div
+			className="session-topbar-session-chrome flex shrink-0 items-center"
+			data-compact-session-chrome={compactSessionChrome ? "true" : "false"}
+		>
+			<SessionBranchBadge branch={session?.branch} compact={compactSessionChrome} />
+			<ShellTopbar compactActions={compactSessionChrome} embedded sessionAction={sessionLocalActions} />
+		</div>
 	);
 	const fileAnnotation = useFileAnnotation(sessionId);
 	const centerFileTabs = (

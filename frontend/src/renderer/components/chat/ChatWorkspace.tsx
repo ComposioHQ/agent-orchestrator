@@ -1077,7 +1077,7 @@ function ChatHeader({
 						onKeyDown={onTabsKeyDown ?? handleTerminalTabListKeyDown}
 						role="tablist"
 					>
-						<div className="flex min-w-0 shrink items-stretch">
+						<div className="flex min-w-0 shrink-0 items-stretch">
 							<span
 								data-terminal-role="primary"
 								className={cn(
