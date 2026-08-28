@@ -361,6 +361,7 @@ describe("CenterPane toolbar session label", () => {
 
 		expect(screen.getByTestId("terminal-interaction-surface")).not.toHaveAttribute("inert");
 		expect(screen.getByText("terminal body")).toHaveAttribute("data-input-disabled", "false");
+		expect(screen.getByText("terminal body")).toHaveAttribute("data-focus-requested", "true");
 		expect(screen.queryByTestId("agent-switch-terminal-overlay")).not.toBeInTheDocument();
 		await userEvent.click(screen.getByRole("button", { name: "Back to agent terminal" }));
 		expect(onSelectSessionTerminal).toHaveBeenCalledOnce();

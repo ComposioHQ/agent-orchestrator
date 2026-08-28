@@ -26,6 +26,7 @@ const closeShellTerminalListeners = new Set<() => void>();
 const closeShellTerminalShortcutStates: boolean[] = [];
 type TerminalPaneTestProps = {
 	fontSize?: number;
+	focusRequested?: boolean;
 	isFullscreen?: boolean;
 	onChangeFontSize?: (delta: number) => void;
 	onToggleFullscreen?: () => Promise<void> | void;
@@ -2047,6 +2048,7 @@ describe("ChatWorkspace shell tabs", () => {
 			/>,
 		);
 		expect(terminalPaneState.props).toMatchObject({
+			focusRequested: true,
 			terminalTarget: shellTarget("shell-2"),
 		});
 	});

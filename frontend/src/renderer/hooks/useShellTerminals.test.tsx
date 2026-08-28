@@ -3,16 +3,21 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { deleteMock } = vi.hoisted(() => ({ deleteMock: vi.fn() }));
+const { deleteMock, postMock } = vi.hoisted(() => ({ deleteMock: vi.fn(), postMock: vi.fn() }));
 
 vi.mock("../lib/api-client", () => ({
-	apiClient: { DELETE: deleteMock },
+	apiClient: { DELETE: deleteMock, POST: postMock },
 	apiErrorCode: (error: unknown) =>
 		typeof error === "object" && error !== null && "code" in error ? (error as { code?: string }).code : undefined,
 	hasTrustedApiBaseUrl: () => true,
 }));
 
-import { type ShellTerminal, shellTerminalsQueryKey, useCloseShellTerminal } from "./useShellTerminals";
+import {
+	type ShellTerminal,
+	shellTerminalsQueryKey,
+	useCloseShellTerminal,
+	useOpenShellTerminal,
+} from "./useShellTerminals";
 
 const shells: ShellTerminal[] = [
 	{
@@ -45,20 +50,55 @@ function queryClientWithShells() {
 
 beforeEach(() => {
 	deleteMock.mockReset();
+	postMock.mockReset();
+});
+
+describe("useOpenShellTerminal", () => {
+	it("publishes the returned shell immediately without waiting for a list refetch", async () => {
+		const shell = shells[0];
+		postMock.mockResolvedValue({
+			data: {
+				shellTerminal: {
+					createdAt: shell.createdAt,
+					handleId: shell.handleId,
+					title: shell.title,
+					workingDir: shell.workingDir,
+				},
+			},
+		});
+		const queryClient = new QueryClient({
+			defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
+		});
+		queryClient.setQueryData(shellTerminalsQueryKey, []);
+		const { result } = renderHook(() => useOpenShellTerminal(), { wrapper: wrapper(queryClient) });
+
+		await act(async () => result.current.mutateAsync({}));
+
+		expect(queryClient.getQueryData(shellTerminalsQueryKey)).toEqual([shell]);
+	});
 });
 
 describe("useCloseShellTerminal", () => {
-	it("removes the terminal tab optimistically while the daemon closes its PTY", async () => {
+	it("removes the terminal tab before an in-flight list request finishes cancelling", async () => {
+		let finishCancel!: () => void;
 		let finishDelete!: (result: { error?: unknown }) => void;
 		deleteMock.mockReturnValue(new Promise((resolve) => (finishDelete = resolve)));
 		const queryClient = queryClientWithShells();
+		vi.spyOn(queryClient, "cancelQueries").mockReturnValue(
+			new Promise<void>((resolve) => {
+				finishCancel = resolve;
+			}),
+		);
 		const { result } = renderHook(() => useCloseShellTerminal(), { wrapper: wrapper(queryClient) });
 
 		act(() => result.current.mutate(shells[0].handleId));
 
 		await waitFor(() => expect(queryClient.getQueryData(shellTerminalsQueryKey)).toEqual([shells[1]]));
+		expect(deleteMock).not.toHaveBeenCalled();
 		expect(result.current.isPending).toBe(true);
 
+		act(() => finishCancel());
+		await waitFor(() => expect(deleteMock).toHaveBeenCalled());
 		act(() => finishDelete({}));
 		await waitFor(() => expect(result.current.isPending).toBe(false));
 	});

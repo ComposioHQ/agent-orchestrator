@@ -651,8 +651,9 @@ export function CenterPane({
 						daemonReady={daemonReady}
 						fontSize={fontSize}
 						focusRequested={
-							target.kind === "worker" &&
-							(Boolean(presentation?.allowSourceInput) || Boolean(displayedSuccessNotice))
+							target.kind === "shell" ||
+							(target.kind === "worker" &&
+								(Boolean(presentation?.allowSourceInput) || Boolean(displayedSuccessNotice)))
 						}
 						isFullscreen={isFullscreen}
 						inputDisabled={workerInputDisabled}

@@ -774,6 +774,7 @@ export function ChatWorkspace({
 							<TerminalPane
 								daemonReady={Boolean(daemonReady)}
 								fontSize={terminalFontSize}
+								focusRequested
 								isFullscreen={isFullscreen}
 								onChangeFontSize={updateTerminalFontSize}
 								onToggleFullscreen={toggleFullscreen}

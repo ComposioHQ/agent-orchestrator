@@ -97,7 +97,15 @@ export function useOpenShellTerminal() {
 			if (!data) throw new Error("Daemon returned no shell terminal");
 			return toShellTerminal(data.shellTerminal);
 		},
-		onSuccess: () => {
+		onSuccess: (shell) => {
+			// The POST already returned the authoritative terminal. Publish it to the
+			// shared list immediately so its tab can render and receive focus without
+			// waiting for a second daemon round trip. The background refetch still
+			// reconciles concurrent changes from another window.
+			queryClient.setQueryData<ShellTerminal[]>(shellTerminalsQueryKey, (current) => {
+				if (current?.some((candidate) => candidate.handleId === shell.handleId)) return current;
+				return [...(current ?? []), shell];
+			});
 			void queryClient.invalidateQueries({ queryKey: shellTerminalsQueryKey });
 		},
 		// Without this, a failed open (worktree gone, no shell resolvable, daemon
@@ -123,11 +131,19 @@ export function useCloseShellTerminal() {
 			if (error) throw error;
 		},
 		onMutate: async (handleId) => {
-			await queryClient.cancelQueries({ queryKey: shellTerminalsQueryKey });
 			const previous = queryClient.getQueryData<ShellTerminal[]>(shellTerminalsQueryKey);
-			queryClient.setQueryData<ShellTerminal[]>(shellTerminalsQueryKey, (current) =>
-				current?.filter((shell) => shell.handleId !== handleId),
-			);
+			const removeClosedShell = () => {
+				queryClient.setQueryData<ShellTerminal[]>(shellTerminalsQueryKey, (current) =>
+					current?.filter((shell) => shell.handleId !== handleId),
+				);
+			};
+			// Remove the pill synchronously. Waiting for cancellation first leaves the
+			// closed tab visible for the duration of an in-flight list request.
+			removeClosedShell();
+			await queryClient.cancelQueries({ queryKey: shellTerminalsQueryKey });
+			// A request that resolved while cancellation was being scheduled may have
+			// restored its stale snapshot; make the optimistic state authoritative.
+			removeClosedShell();
 			return { previous };
 		},
 		onError: (error, _handleId, context) => {
