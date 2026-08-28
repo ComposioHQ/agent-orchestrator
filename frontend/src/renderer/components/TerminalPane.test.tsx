@@ -23,6 +23,7 @@ const {
 	terminalError,
 	terminalState,
 	replaySettled,
+	hasAttached,
 	terminalSessionOptions,
 	xtermMounts,
 	xtermUnmounts,
@@ -35,6 +36,7 @@ const {
 		terminalError: { value: undefined as string | undefined },
 		terminalState: { value: "idle" },
 		replaySettled: { value: true },
+		hasAttached: { value: false },
 		terminalSessionOptions: [] as Array<{ coverInitialReplay?: boolean }>,
 		xtermMounts: { value: 0 },
 		xtermUnmounts: { value: 0 },
@@ -95,6 +97,7 @@ vi.mock("../hooks/useTerminalSession", () => ({
 			state: terminalState.value,
 			error: terminalError.value,
 			replaySettled: replaySettled.value,
+			hasAttached: hasAttached.value,
 		};
 	},
 }));
@@ -126,6 +129,7 @@ beforeEach(() => {
 	terminalError.value = undefined;
 	terminalState.value = "idle";
 	replaySettled.value = true;
+	hasAttached.value = false;
 	terminalLinkHandler = undefined;
 	terminalSessionOptions.length = 0;
 	attachMock.mockClear();
@@ -284,8 +288,8 @@ describe("TerminalPane replay cover", () => {
 		try {
 			const cover = screen.getByTestId("terminal-replay-cover");
 			expect(cover).toBeInTheDocument();
-			expect(cover).toHaveClass("terminal-surface", "pointer-events-none");
-			expect(cover).not.toHaveClass("bg-terminal");
+			expect(cover).toHaveClass("bg-terminal-opaque", "pointer-events-none");
+			expect(cover).not.toHaveClass("terminal-surface");
 			// xterm keeps rendering underneath — covered, never unmounted, so the
 			// grid it measures stays correct.
 			expect(screen.getByTestId("xterm")).toBeInTheDocument();
@@ -351,6 +355,7 @@ describe("TerminalPane replay cover", () => {
 	it("stays out of the way while the pane is visibly reattaching", () => {
 		replaySettled.value = false;
 		terminalState.value = "reattaching";
+		hasAttached.value = true;
 		const view = renderPane({ ...worker, terminalHandleId: "term-1" });
 		try {
 			// An open timeout lifts the cover and the backoff reconnect would pull
