@@ -37,12 +37,24 @@ func (m *Manager) executeChatAgentSwitch(
 	targetOwnershipAmbiguous := false
 	skipTerminalization := false
 	targetEnv := m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env)
+	managedCodexProfile := false
+	if admitted.config.TargetHarness == domain.HarnessCodex {
+		launchContext, launchErr := m.codexLaunchForRecord(ctx, &rec)
+		if launchErr != nil {
+			return result, launchErr
+		}
+		if launchContext != nil {
+			m.applyCodexLaunchEnvironment(rec.ID, targetEnv, *launchContext)
+			managedCodexProfile = launchContext.Managed
+		}
+	}
 	m.augmentAgentRuntimeEnv(targetAgent, targetEnv)
 
 	defer func() {
 		if panicValue := recover(); panicValue != nil {
 			retErr = fmt.Errorf("switch Chat agent %s panicked: %v", id, panicValue)
 		}
+		m.invalidateCodexAuthenticationAfterFailure(rec, retErr)
 		if retErr != nil && !sourceStopped && !sourceStopConclusive {
 			m.abortChatAgentSwitchHandoff(rec)
 		}
@@ -300,6 +312,7 @@ func (m *Manager) executeChatAgentSwitch(
 		DataDir:                 m.dataDir,
 		WorkspacePath:           rec.Metadata.WorkspacePath,
 		Env:                     targetEnv,
+		ManagedCodexProfile:     managedCodexProfile,
 		Model:                   agentConfig.Model,
 		Permissions:             agentConfig.Permissions,
 		SystemPrompt:            finalSystemPrompt,
@@ -500,6 +513,15 @@ func (m *Manager) rollbackStoppedChatAgentSwitchSource(
 	}
 	agentConfig := effectiveAgentConfig(rec.Kind, project.Config)
 	env := m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env)
+	if rec.Harness == domain.HarnessCodex {
+		launchContext, launchErr := m.codexLaunchForRecord(ctx, &current)
+		if launchErr != nil {
+			return launchErr
+		}
+		if launchContext != nil {
+			m.applyCodexLaunchEnvironment(rec.ID, env, *launchContext)
+		}
+	}
 	m.augmentAgentRuntimeEnv(sourceAgent, env)
 	if err := m.prepareWorkspace(
 		ctx, sourceAgent, rec.ID, rec.Metadata.WorkspacePath,

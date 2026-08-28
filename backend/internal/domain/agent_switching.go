@@ -43,6 +43,25 @@ func ComputeAgentSwitchRequestFingerprint(sessionID SessionID, targetHarness Age
 	return AgentSwitchRequestFingerprint(agentSwitchRequestFingerprintPrefix + hex.EncodeToString(sum[:]))
 }
 
+// ComputeAgentSwitchRequestFingerprintWithProfile extends the stable request
+// tuple only when a profile is explicitly supplied. Empty-profile requests use
+// the byte-for-byte v1 encoding so retries created before profile selection
+// remain compatible.
+func ComputeAgentSwitchRequestFingerprintWithProfile(sessionID SessionID, targetHarness AgentHarness, model, profileID string) AgentSwitchRequestFingerprint {
+	profileID = strings.TrimSpace(profileID)
+	if profileID == "" {
+		return ComputeAgentSwitchRequestFingerprint(sessionID, targetHarness, model)
+	}
+	payload, _ := json.Marshal(struct {
+		SessionID     SessionID    `json:"sessionId"`
+		TargetHarness AgentHarness `json:"targetHarness"`
+		Model         string       `json:"model"`
+		ProfileID     string       `json:"profileId"`
+	}{sessionID, targetHarness, strings.TrimSpace(model), profileID})
+	sum := sha256.Sum256(payload)
+	return AgentSwitchRequestFingerprint("v2:" + hex.EncodeToString(sum[:]))
+}
+
 // MatchesRequest preserves idempotent note-free retries created before model
 // selection became part of the switch request.
 func (f AgentSwitchRequestFingerprint) MatchesRequest(sessionID SessionID, targetHarness AgentHarness, model string) bool {
@@ -65,15 +84,27 @@ func (f AgentSwitchRequestFingerprint) MatchesRequest(sessionID SessionID, targe
 	return f == AgentSwitchRequestFingerprint(agentSwitchRequestFingerprintPrefix+hex.EncodeToString(sum[:]))
 }
 
+// MatchesRequestWithProfile preserves all v1 compatibility behavior for an
+// omitted profile and requires an exact v2 tuple for explicit selection.
+func (f AgentSwitchRequestFingerprint) MatchesRequestWithProfile(sessionID SessionID, targetHarness AgentHarness, model, profileID string) bool {
+	if strings.TrimSpace(profileID) == "" {
+		return f.MatchesRequest(sessionID, targetHarness, model)
+	}
+	return f == ComputeAgentSwitchRequestFingerprintWithProfile(sessionID, targetHarness, model, profileID)
+}
+
 // Valid reports whether a persisted fingerprint uses AO's current canonical
 // encoding. Lowercase hex is required so one digest has one representation.
 func (f AgentSwitchRequestFingerprint) Valid() bool {
 	value := string(f)
-	if len(value) != len(agentSwitchRequestFingerprintPrefix)+sha256.Size*2 ||
-		!strings.HasPrefix(value, agentSwitchRequestFingerprintPrefix) {
+	prefix := agentSwitchRequestFingerprintPrefix
+	if strings.HasPrefix(value, "v2:") {
+		prefix = "v2:"
+	}
+	if len(value) != len(prefix)+sha256.Size*2 || !strings.HasPrefix(value, prefix) {
 		return false
 	}
-	digest := strings.TrimPrefix(value, agentSwitchRequestFingerprintPrefix)
+	digest := strings.TrimPrefix(value, prefix)
 	if digest != strings.ToLower(digest) {
 		return false
 	}

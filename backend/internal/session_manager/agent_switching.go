@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/sessionguard"
 )
@@ -50,6 +51,7 @@ var (
 // replacement.
 type SwitchAgentConfig struct {
 	TargetHarness  domain.AgentHarness
+	ProfileID      string
 	Model          string
 	IdempotencyKey string
 }
@@ -77,6 +79,7 @@ type preparedTargetActivation struct {
 	native                   domain.AgentNativeSession
 	nativeExpectedGeneration domain.AgentGenerationID
 	startMode                domain.AgentSwitchTargetStartMode
+	managedCodexProfile      bool
 }
 
 type prFactReader interface {
@@ -169,13 +172,17 @@ func (m *Manager) admitAgentSwitch(ctx context.Context, id domain.SessionID, cfg
 	}
 	cfg.TargetHarness = domain.AgentHarness(strings.TrimSpace(string(cfg.TargetHarness)))
 	cfg.Model = strings.TrimSpace(cfg.Model)
+	cfg.ProfileID = strings.TrimSpace(cfg.ProfileID)
 	cfg.IdempotencyKey = strings.TrimSpace(cfg.IdempotencyKey)
-	requestFingerprint := domain.ComputeAgentSwitchRequestFingerprint(id, cfg.TargetHarness, cfg.Model)
+	if cfg.ProfileID != "" && cfg.TargetHarness != domain.HarnessCodex {
+		return domain.AgentSwitch{}, nil, apierr.Invalid("CODEX_PROFILE_REQUIRES_CODEX", "A Codex profile can only be used with the Codex harness", map[string]any{"profileId": cfg.ProfileID})
+	}
+	requestFingerprint := domain.ComputeAgentSwitchRequestFingerprintWithProfile(id, cfg.TargetHarness, cfg.Model, cfg.ProfileID)
 	if cfg.IdempotencyKey != "" {
 		if existing, ok, err := store.GetAgentSwitchByIdempotencyKey(ctx, id, cfg.IdempotencyKey); err != nil {
 			return domain.AgentSwitch{}, nil, fmt.Errorf("switch agent %s: idempotency lookup: %w", id, err)
 		} else if ok {
-			if !existing.RequestFingerprint.MatchesRequest(id, cfg.TargetHarness, cfg.Model) {
+			if !existing.RequestFingerprint.MatchesRequestWithProfile(id, cfg.TargetHarness, cfg.Model, cfg.ProfileID) {
 				return existing, nil, fmt.Errorf("switch agent %s: %w", id, domain.ErrAgentSwitchIdempotencyConflict)
 			}
 			if !existing.State.Terminal() && m.agentSwitchRetained(id) {
@@ -255,6 +262,11 @@ func (m *Manager) admitAgentSwitch(ctx context.Context, id domain.SessionID, cfg
 	if rec.Harness == cfg.TargetHarness {
 		return domain.AgentSwitch{}, nil, fmt.Errorf("switch agent %s: %w: %s", id, ErrAlreadyUsingHarness, cfg.TargetHarness)
 	}
+	if cfg.TargetHarness == domain.HarnessCodex {
+		if _, err := m.codexLaunchForSwitch(ctx, &rec, cfg.ProfileID); err != nil {
+			return domain.AgentSwitch{}, nil, fmt.Errorf("switch agent %s: %w", id, err)
+		}
+	}
 	if mode == domain.SessionModeChat {
 		if m.chat == nil || !m.chat.SupportsChat(rec.Harness) || !m.chat.SupportsChat(cfg.TargetHarness) {
 			return domain.AgentSwitch{}, nil, fmt.Errorf("switch agent %s: %w: source and target require Chat drivers", id, ErrUnsupportedSwitchHarness)
@@ -293,6 +305,15 @@ func (m *Manager) admitAgentSwitch(ctx context.Context, id domain.SessionID, cfg
 		sourceGeneration = domain.AgentGenerationID("legacy-" + uuid.NewString())
 	}
 	sourceEnv := m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env)
+	if rec.Harness == domain.HarnessCodex {
+		launch, launchErr := m.codexLaunchForRecord(ctx, &rec)
+		if launchErr != nil {
+			return domain.AgentSwitch{}, nil, fmt.Errorf("switch agent %s: source profile: %w", id, launchErr)
+		}
+		if launch != nil {
+			m.applyCodexLaunchEnvironment(rec.ID, sourceEnv, *launch)
+		}
+	}
 	m.augmentAgentRuntimeEnv(sourceAgent, sourceEnv)
 	sourceRecord := rec
 	if mode == domain.SessionModeChat {
@@ -1122,19 +1143,22 @@ func (m *Manager) preserveCurrentNativeSession(ctx context.Context, store ports.
 
 func (m *Manager) prepareTargetActivation(ctx context.Context, store ports.AgentSwitchStore, rec domain.SessionRecord, project domain.ProjectRecord, agent ports.Agent, caps ports.ContinuationCapabilities, sw domain.AgentSwitch, modelOverride string) (preparedTargetActivation, error) {
 	harness := sw.TargetHarness
-	if m.agentReadiness != nil {
+	useLegacyAuthentication := harness != domain.HarnessCodex || m.codexProfiles == nil
+	if useLegacyAuthentication && m.agentReadiness != nil {
 		readiness, readinessErr := m.agentReadiness.EnsureAgentReadiness(ctx, string(harness), domain.AgentReadinessPurposeLaunch)
 		if readinessErr != nil {
 			m.logger.Warn("agent switch: target readiness check failed; launch remains authoritative", "sessionID", rec.ID, "harness", harness, "error", readinessErr)
 		} else if readiness.Authentication.State == domain.AgentAuthenticationUnauthorized {
 			return preparedTargetActivation{}, ErrTargetAgentUnauthorized
 		}
-	} else if checker, ok := agent.(ports.AgentAuthChecker); ok {
-		status, authErr := checker.AuthStatus(ctx)
-		if authErr != nil {
-			m.logger.Warn("agent switch: target auth probe failed; launch remains authoritative", "sessionID", rec.ID, "harness", harness, "error", authErr)
-		} else if status == ports.AgentAuthStatusUnauthorized {
-			return preparedTargetActivation{}, ErrTargetAgentUnauthorized
+	} else if useLegacyAuthentication {
+		if checker, ok := agent.(ports.AgentAuthChecker); ok {
+			status, authErr := checker.AuthStatus(ctx)
+			if authErr != nil {
+				m.logger.Warn("agent switch: target auth probe failed; launch remains authoritative", "sessionID", rec.ID, "harness", harness, "error", authErr)
+			} else if status == ports.AgentAuthStatusUnauthorized {
+				return preparedTargetActivation{}, ErrTargetAgentUnauthorized
+			}
 		}
 	}
 	systemPrompt, err := m.buildSystemPrompt(ctx, rec.Kind, rec.ProjectID)
@@ -1155,6 +1179,17 @@ func (m *Manager) prepareTargetActivation(ctx context.Context, store ports.Agent
 		config.Model = model
 	}
 	env := m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env)
+	managedCodexProfile := false
+	if harness == domain.HarnessCodex {
+		launchContext, launchErr := m.codexLaunchForRecord(ctx, &rec)
+		if launchErr != nil {
+			return preparedTargetActivation{}, launchErr
+		}
+		if launchContext != nil {
+			m.applyCodexLaunchEnvironment(rec.ID, env, *launchContext)
+			managedCodexProfile = launchContext.Managed
+		}
+	}
 	m.augmentAgentRuntimeEnv(agent, env)
 	configDir, err := nativeConfigDir(ctx, agent, env)
 	if err != nil {
@@ -1211,6 +1246,7 @@ func (m *Manager) prepareTargetActivation(ctx context.Context, store ports.Agent
 			return preparedTargetActivation{}, fmt.Errorf("launch command: %w", err)
 		}
 	}
+	argv = isolateManagedCodexCommand(argv, managedCodexProfile)
 	if err := m.validateAgentBinary(argv); err != nil {
 		return preparedTargetActivation{}, err
 	}
@@ -1236,7 +1272,8 @@ func (m *Manager) prepareTargetActivation(ctx context.Context, store ports.Agent
 	return preparedTargetActivation{
 		agent: agent, harness: harness, env: env, launch: launch, argv: argv,
 		launchID: launchID, native: candidate, nativeExpectedGeneration: expectedGeneration,
-		startMode: mode,
+		startMode:           mode,
+		managedCodexProfile: managedCodexProfile,
 	}, nil
 }
 
@@ -1345,6 +1382,7 @@ func (m *Manager) prepareTargetLaunchPrompt(ctx context.Context, rec domain.Sess
 	if err := m.validateAgentBinary(raw); err != nil {
 		return err
 	}
+	raw = isolateManagedCodexCommand(raw, target.managedCodexProfile)
 	m.augmentRuntimePATHForLaunchBinary(ctx, target.env, raw)
 	wrapped, err := m.wrapAgentProcessWithLaunchID(target.agent, rec.ID, target.env, raw, string(target.launchID), true)
 	if err != nil {
@@ -1425,6 +1463,7 @@ func (m *Manager) findTargetResumeCandidate(ctx context.Context, store ports.Age
 		return domain.AgentNativeSession{}, false, err
 	}
 	sort.SliceStable(records, func(i, j int) bool { return records[i].LastUsedAt.After(records[j].LastUsedAt) })
+	definitivelyMissing := false
 	for _, candidate := range records {
 		if candidate.Harness != harness || candidate.ConfigDir != configDir || candidate.NativeSessionID == "" {
 			continue
@@ -1436,6 +1475,9 @@ func (m *Manager) findTargetResumeCandidate(ctx context.Context, store ports.Age
 			availability = ports.NativeSessionAvailabilityUnknown
 		}
 		if availability != ports.NativeSessionAvailabilityAvailable {
+			if harness == domain.HarnessCodex && availability == ports.NativeSessionAvailabilityUnavailable {
+				definitivelyMissing = true
+			}
 			continue
 		}
 		if locator, ok := agent.(ports.AgentTranscriptLocator); ok {
@@ -1444,6 +1486,9 @@ func (m *Manager) findTargetResumeCandidate(ctx context.Context, store ports.Age
 			}
 		}
 		return candidate, true, nil
+	}
+	if definitivelyMissing {
+		return domain.AgentNativeSession{}, false, ErrCodexNativeHistoryUnavailable
 	}
 	return domain.AgentNativeSession{}, false, nil
 }
@@ -3051,6 +3096,15 @@ func (m *Manager) cleanupRecoveredTargetWorkspace(ctx context.Context, rec domai
 		return fmt.Errorf("agent switch recovery: load project for target workspace cleanup: %w", err)
 	}
 	env := m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env)
+	if sw.TargetHarness == domain.HarnessCodex {
+		launchContext, launchErr := m.codexLaunchForRecord(ctx, &rec)
+		if launchErr != nil {
+			return launchErr
+		}
+		if launchContext != nil {
+			m.applyCodexLaunchEnvironment(rec.ID, env, *launchContext)
+		}
+	}
 	m.augmentAgentRuntimeEnv(agent, env)
 	if err := m.cleanupPreparedAgentWorkspaceStrict(ctx, agent, rec.ID, rec.Metadata.WorkspacePath, env); err != nil {
 		return fmt.Errorf("agent switch recovery: clean target workspace state: %w", err)

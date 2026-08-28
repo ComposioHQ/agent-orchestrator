@@ -211,6 +211,10 @@ func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.
 		Scratch:  scratchWS,
 		Projects: store,
 	})
+	var codexProfiles ports.CodexProfileLaunchResolver
+	if resolver, ok := agentReadiness.(ports.CodexProfileLaunchResolver); ok {
+		codexProfiles = resolver
+	}
 	mgr := sessionmanager.New(sessionmanager.Deps{
 		Runtime:             runtime,
 		Agents:              agents,
@@ -223,6 +227,7 @@ func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.
 		Preview:             previewLifecycle,
 		Browser:             browserLifecycle,
 		BrowserCapabilities: browserCapabilities,
+		CodexProfiles:       codexProfiles,
 		DataDir:             cfg.DataDir,
 		RunFilePath:         cfg.RunFilePath,
 		BackgroundContext:   ctx,
@@ -267,6 +272,7 @@ func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.
 		Projects: store,
 		Launcher: reviewcore.NewLauncher(reviewers, runtime, cfg.DataDir,
 			reviewcore.WithRunFilePath(cfg.RunFilePath),
+			reviewcore.WithCodexProfileLaunches(mgr),
 			reviewcore.WithAgentAuth(reviewerAgentAuth{readiness: agentReadiness})),
 	})
 	reviewOpts := []reviewsvc.Option{
@@ -281,6 +287,7 @@ func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.
 	}
 	reviewSvc := reviewsvc.New(reviewEngine, store, reviewOpts...)
 	mgr.SetReviewerTerminator(reviewSvc)
+	mgr.WarmCodexBindings(ctx)
 	return sessionSvc, reviewSvc, mgr, nil
 }
 
@@ -499,6 +506,7 @@ func (c chatLauncher) StartChat(ctx context.Context, cfg sessionmanager.ChatStar
 		DataDir:                 cfg.DataDir,
 		WorkspacePath:           cfg.WorkspacePath,
 		Env:                     cfg.Env,
+		ManagedCodexProfile:     cfg.ManagedCodexProfile,
 		Model:                   cfg.Model,
 		Permissions:             cfg.Permissions,
 		SystemPrompt:            cfg.SystemPrompt,

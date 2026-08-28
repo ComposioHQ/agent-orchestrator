@@ -104,6 +104,7 @@ type agentLauncher struct {
 	dataDir    string
 	runFile    string
 	auth       agentAuthResolver
+	codex      codexReviewerLaunchResolver
 	executable func() (string, error)
 }
 
@@ -119,6 +120,10 @@ type agentAuthResolver interface {
 	AuthStatus(ctx context.Context, harness domain.ReviewerHarness) (ports.AgentAuthStatus, bool, error)
 }
 
+type codexReviewerLaunchResolver interface {
+	ResolveCodexReviewerLaunch(ctx context.Context, sessionID domain.SessionID) (domain.CodexLaunchContext, error)
+}
+
 // LauncherOption configures reviewer launcher behavior.
 type LauncherOption func(*agentLauncher)
 
@@ -128,6 +133,14 @@ type LauncherOption func(*agentLauncher)
 func WithAgentAuth(auth agentAuthResolver) LauncherOption {
 	return func(l *agentLauncher) {
 		l.auth = auth
+	}
+}
+
+// WithCodexProfileLaunches routes every Codex reviewer through the worker's
+// immutable profile binding before a process starts.
+func WithCodexProfileLaunches(resolver codexReviewerLaunchResolver) LauncherOption {
+	return func(l *agentLauncher) {
+		l.codex = resolver
 	}
 }
 
@@ -190,9 +203,13 @@ func (l *agentLauncher) Preflight(ctx context.Context, harness domain.ReviewerHa
 	if _, err := exec.LookPath(bin); err != nil {
 		return fmt.Errorf("reviewer binary %q not found: %w", bin, err)
 	}
-	authStatus, authKnown, err := l.agentAuthStatus(ctx, harness)
-	if err != nil {
-		return err
+	var authStatus ports.AgentAuthStatus
+	var authKnown bool
+	if harness != domain.ReviewerCodex {
+		authStatus, authKnown, err = l.agentAuthStatus(ctx, harness)
+		if err != nil {
+			return err
+		}
 	}
 	if authKnown && authStatus == ports.AgentAuthStatusUnauthorized {
 		return fmt.Errorf("agent auth catalog reports reviewer harness %q is unauthorized", harness)
@@ -419,6 +436,18 @@ func (l *agentLauncher) launchReviewerTerminalWithMode(ctx context.Context, spec
 			return LaunchResult{}, fmt.Errorf("reviewer command: %w", err)
 		}
 	}
+	var codexLaunch *domain.CodexLaunchContext
+	if spec.Harness == domain.ReviewerCodex {
+		if l.codex == nil {
+			return LaunchResult{}, fmt.Errorf("codex profile launch resolver is unavailable")
+		}
+		resolved, err := l.codex.ResolveCodexReviewerLaunch(ctx, spec.WorkerID)
+		if err != nil {
+			return LaunchResult{}, fmt.Errorf("resolve reviewer Codex profile: %w", err)
+		}
+		codexLaunch = &resolved
+		cmd.Argv = isolateManagedReviewerCodexCommand(cmd.Argv, resolved.Managed)
+	}
 	handleID := reviewerHandleID(spec.WorkerID)
 	// The reviewer handle is stable per worker, so a still-live pane from a
 	// previous pass would otherwise block `tmux new-session` (duplicate name) or,
@@ -433,11 +462,15 @@ func (l *agentLauncher) launchReviewerTerminalWithMode(ctx context.Context, spec
 	if workingDirectory == "" {
 		workingDirectory = spec.WorkspacePath
 	}
+	env := l.runtimeEnv(ctx, spec, cmd.Argv, cmd.Env)
+	if codexLaunch != nil {
+		env["CODEX_HOME"] = codexLaunch.Binding.Home
+	}
 	handle, err := l.runtime.Create(ctx, ports.RuntimeConfig{
 		SessionID:     domain.SessionID(handleID),
 		WorkspacePath: workingDirectory,
 		Argv:          cmd.Argv,
-		Env:           l.runtimeEnv(ctx, spec, cmd.Argv, cmd.Env),
+		Env:           env,
 	})
 	if err != nil {
 		return LaunchResult{}, fmt.Errorf("reviewer runtime: %w", err)
@@ -455,6 +488,32 @@ func (l *agentLauncher) launchReviewerTerminalWithMode(ctx context.Context, spec
 		agentSessionID = strings.TrimSpace(spec.AgentSessionID)
 	}
 	return LaunchResult{HandleID: handle.ID, AgentSessionID: agentSessionID}, nil
+}
+
+func isolateManagedReviewerCodexCommand(argv []string, managed bool) []string {
+	if !managed || len(argv) == 0 {
+		return argv
+	}
+	index := 0
+	if filepath.Base(argv[0]) == "env" {
+		index++
+		for index < len(argv) && strings.Contains(argv[index], "=") {
+			index++
+		}
+	}
+	if index >= len(argv) || filepath.Base(argv[index]) != "codex" {
+		return argv
+	}
+	for i := index + 1; i+1 < len(argv); i++ {
+		if argv[i] == "-c" && argv[i+1] == `cli_auth_credentials_store="file"` {
+			return argv
+		}
+	}
+	out := make([]string, 0, len(argv)+2)
+	out = append(out, argv[:index+1]...)
+	out = append(out, "-c", `cli_auth_credentials_store="file"`)
+	out = append(out, argv[index+1:]...)
+	return out
 }
 
 func (l *agentLauncher) waitForPromptReadiness(ctx context.Context, reviewer ports.Reviewer, handle ports.RuntimeHandle) error {
