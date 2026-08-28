@@ -26,6 +26,7 @@ const closeShellTerminalListeners = new Set<() => void>();
 const closeShellTerminalShortcutStates: boolean[] = [];
 type TerminalPaneTestProps = {
 	fontSize?: number;
+	focusRequested?: boolean;
 	isFullscreen?: boolean;
 	onChangeFontSize?: (delta: number) => void;
 	onToggleFullscreen?: () => Promise<void> | void;
@@ -1780,6 +1781,32 @@ describe("ChatWorkspace reviewer tabs", () => {
 		sessionId: chatSession.id,
 	};
 
+	it("makes each full-height tile its semantic click target", () => {
+		const onOpenReviewerTerminal = vi.fn();
+		render(
+			<ChatWorkspace
+				snapshot={idleSnapshot()}
+				session={chatSession}
+				reviewerTerminal={reviewerTerminal}
+				onOpenReviewerTerminal={onOpenReviewerTerminal}
+			/>,
+		);
+
+		const chatTab = screen.getByRole("tab", { name: "Codex" });
+		const reviewerTab = screen.getByRole("tab", { name: "Reviewer" });
+		expect(chatTab).toHaveClass("self-stretch", "px-3", "cursor-pointer");
+		expect(reviewerTab).toHaveClass(
+			"self-stretch",
+			"px-3",
+			"cursor-pointer",
+			"focus-visible:outline-2",
+		);
+		expect(reviewerTab.querySelector("img")).toBeInTheDocument();
+
+		fireEvent.click(reviewerTab);
+		expect(onOpenReviewerTerminal).toHaveBeenCalledWith(reviewerTerminal);
+	});
+
 	it("keeps the chat draft, attachments, edit, and scroll state mounted while Reviewer is selected", async () => {
 		const user = userEvent.setup();
 		const common = {
@@ -1848,6 +1875,7 @@ describe("ChatWorkspace reviewer tabs", () => {
 		};
 		const view = render(<ChatWorkspace {...common} reviewerTerminal={reviewerTerminal} />);
 		expect(screen.getByTestId("chat-reviewer-terminal")).toBeInTheDocument();
+		expect(screen.getByTestId("chat-reviewer-terminal")).not.toHaveClass("pl-2");
 
 		view.rerender(<ChatWorkspace {...common} reviewerTerminal={undefined} />);
 
@@ -1906,7 +1934,7 @@ describe("ChatWorkspace reviewer tabs", () => {
 		};
 		const view = render(<ChatWorkspace {...common} />);
 		const chatTab = screen.getByRole("tab", {
-			name: chatFixture.sessionId,
+			name: "Codex",
 		});
 		const reviewerTab = screen.getByRole("tab", { name: "Reviewer" });
 		expect(chatTab).toHaveAttribute("tabindex", "0");
@@ -1930,7 +1958,7 @@ describe("ChatWorkspace reviewer tabs", () => {
 
 		view.rerender(<ChatWorkspace {...common} reviewerTarget={reviewerTarget} />);
 		const activeReviewerTab = screen.getByRole("tab", { name: "Reviewer" });
-		expect(screen.getByRole("tab", { name: chatFixture.sessionId })).toHaveAttribute(
+		expect(screen.getByRole("tab", { name: "Codex" })).toHaveAttribute(
 			"tabindex",
 			"-1",
 		);
@@ -1939,7 +1967,7 @@ describe("ChatWorkspace reviewer tabs", () => {
 		activeReviewerTab.focus();
 		fireEvent.keyDown(activeReviewerTab, { key: "Home" });
 		expect(onSelectChat).toHaveBeenCalledOnce();
-		expect(screen.getByRole("tab", { name: chatFixture.sessionId })).toHaveFocus();
+		expect(screen.getByRole("tab", { name: "Codex" })).toHaveFocus();
 
 		onSelectChat.mockClear();
 		activeReviewerTab.focus();
@@ -2022,6 +2050,7 @@ describe("ChatWorkspace shell tabs", () => {
 			/>,
 		);
 		expect(screen.getByTestId("chat-shell-terminal")).toBeInTheDocument();
+		expect(screen.getByTestId("chat-shell-terminal")).not.toHaveClass("pl-2");
 		expect(screen.getByTestId("chat-conversation-panel")).toHaveAttribute("hidden");
 		expect(screen.getByTestId("chat-conversation-panel")).toHaveAttribute("inert");
 
@@ -2045,6 +2074,7 @@ describe("ChatWorkspace shell tabs", () => {
 			/>,
 		);
 		expect(terminalPaneState.props).toMatchObject({
+			focusRequested: true,
 			terminalTarget: shellTarget("shell-2"),
 		});
 	});
@@ -2107,7 +2137,7 @@ describe("ChatWorkspace shell tabs", () => {
 			/>,
 		);
 
-		const workerTab = screen.getByRole("tab", { name: "ao-14" });
+		const workerTab = screen.getByRole("tab", { name: "Codex" });
 		workerTab.focus();
 		fireEvent.keyDown(workerTab, { key: "Tab", ctrlKey: true });
 

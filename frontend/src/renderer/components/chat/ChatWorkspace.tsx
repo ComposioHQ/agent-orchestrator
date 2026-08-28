@@ -43,6 +43,7 @@ import {
 } from "../../lib/design-tokens";
 import { isLinuxPlatform, isMacPlatform } from "../../lib/platform";
 import { handleTerminalTabListKeyDown } from "../../lib/terminal-tabs";
+import { agentLabel } from "../../lib/agent-options";
 import type { ShellTerminal } from "../../hooks/useShellTerminals";
 import { sidebarOccupiesLayout, useUiStore } from "../../stores/ui-store";
 import type { TerminalTarget } from "../../types/terminal";
@@ -167,6 +168,9 @@ export interface ChatWorkspaceProps {
 	sessionRole?: SessionKind;
 	/** Session-level actions owned above the conversation surface. */
 	headerActions?: ReactNode;
+	/** File tabs coordinated by SessionView, appended to the native chat tab strip. */
+	workspaceTabs?: ReactNode;
+	workspaceFileActive?: boolean;
 	/** Suppress a transient stopped snapshot while a mode handoff installs Chat. */
 	controllerTransitioning?: boolean;
 	/** Freeze agent-owned Chat controls while a durable session mutation owns input. */
@@ -295,9 +299,10 @@ export interface ChatWorkspaceProps {
 
 export function ChatWorkspace({
 	snapshot,
-	sessionTitle,
 	sessionRole = "worker",
 	headerActions,
+	workspaceTabs,
+	workspaceFileActive = false,
 	controllerTransitioning,
 	agentInputDisabled = false,
 	reviewerTerminal,
@@ -713,7 +718,6 @@ export function ChatWorkspace({
 		>
 			<ChatHeader
 				snapshot={snapshot}
-				sessionTitle={sessionTitle}
 				reviewerTerminal={reviewerTerminal}
 				onOpenReviewerTerminal={onOpenReviewerTerminal}
 				reviewerActive={reviewerActive}
@@ -726,6 +730,8 @@ export function ChatWorkspace({
 				onTabsKeyDown={handleChatTabsKeyDown}
 				switchAgentControl={switchAgentControl}
 				headerActions={headerActions}
+				workspaceTabs={workspaceTabs}
+				workspaceFileActive={workspaceFileActive}
 				inline={isFullscreen}
 				topbarBounds={topbarBounds}
 			/>
@@ -742,7 +748,7 @@ export function ChatWorkspace({
 						onWheelCapture={handleWheelZoom}
 						role="tabpanel"
 					>
-						<div className="h-full min-h-0 pl-2" data-testid="chat-reviewer-terminal">
+						<div className="h-full min-h-0" data-testid="chat-reviewer-terminal">
 							<TerminalPane
 								daemonReady={Boolean(daemonReady)}
 								fontSize={terminalFontSize}
@@ -764,10 +770,11 @@ export function ChatWorkspace({
 						onWheelCapture={handleWheelZoom}
 						role="tabpanel"
 					>
-						<div className="h-full min-h-0 pl-2" data-testid="chat-shell-terminal">
+						<div className="h-full min-h-0" data-testid="chat-shell-terminal">
 							<TerminalPane
 								daemonReady={Boolean(daemonReady)}
 								fontSize={terminalFontSize}
+								focusRequested
 								isFullscreen={isFullscreen}
 								onChangeFontSize={updateTerminalFontSize}
 								onToggleFullscreen={toggleFullscreen}
@@ -1063,7 +1070,6 @@ function readableItems(snapshot: ConversationSnapshot): ConversationItem[] {
 
 function ChatHeader({
 	snapshot,
-	sessionTitle,
 	reviewerTerminal,
 	onOpenReviewerTerminal,
 	reviewerActive,
@@ -1076,11 +1082,12 @@ function ChatHeader({
 	onTabsKeyDown,
 	switchAgentControl,
 	headerActions,
+	workspaceTabs,
+	workspaceFileActive = false,
 	inline,
 	topbarBounds,
 }: {
 	snapshot: ConversationSnapshot;
-	sessionTitle?: string;
 	reviewerTerminal?: { handleId: string; harness: string };
 	onOpenReviewerTerminal?: (target: { handleId: string; harness: string }) => void;
 	/** The reviewer tab is selected; the chat tab is the clickable alternative. */
@@ -1098,13 +1105,15 @@ function ChatHeader({
 	/** The in-place agent-switch control, same entry point as the terminal pane. */
 	switchAgentControl?: ReactNode;
 	headerActions?: ReactNode;
+	workspaceTabs?: ReactNode;
+	workspaceFileActive?: boolean;
 	/** Fullscreen content cannot see the normal topbar portal outside its subtree. */
 	inline?: boolean;
 	topbarBounds: TopbarBounds;
 }) {
-	const label = sessionTitle || snapshot.title || snapshot.sessionId;
+	const label = agentLabel(snapshot.harness);
 	// The chat tab is "selected" only when neither terminal pane is the body.
-	const timelineActive = !reviewerActive && !shellActiveHandleId;
+	const timelineActive = !workspaceFileActive && !reviewerActive && !shellActiveHandleId;
 	// Match CenterPane: when the sidebar is off-canvas, the fixed TitlebarNav
 	// cluster sits over the session tab strip. Terminal already reserves that
 	// space; chat must too or the back/forward buttons land on the tab label.
@@ -1132,64 +1141,50 @@ function ChatHeader({
 						onKeyDown={onTabsKeyDown ?? handleTerminalTabListKeyDown}
 						role="tablist"
 					>
-						<span
+						<button
+							aria-current={timelineActive ? true : undefined}
+							aria-label={label}
+							aria-selected={timelineActive}
 							data-terminal-role="primary"
 							className={cn(
-								"group relative inline-flex min-w-shell-tab-min self-stretch items-center gap-1.5 border-r border-border px-3",
+								"group relative inline-flex min-w-shell-tab-min max-w-shell-tab-max self-stretch cursor-pointer items-center gap-1.5 border-r border-border px-3 text-control font-medium leading-none transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent/50",
 								timelineActive
 									? "bg-overlay text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80"
 									: "text-muted-foreground hover:bg-raised hover:text-foreground",
 							)}
+							onClick={timelineActive ? undefined : onSelectChat}
+							role="tab"
+							tabIndex={timelineActive || (!reviewerTerminal && !shellTerminals?.length) ? 0 : -1}
+							title={label}
+							type="button"
 						>
 							<AgentAvatar className="size-icon-base" decorative provider={snapshot.harness} />
-							<button
-								aria-current={timelineActive ? true : undefined}
-								aria-label={label}
-								aria-selected={timelineActive}
-								className={cn(
-									"inline-flex min-w-flex-min max-w-shell-tab-max items-center gap-1.5 text-control font-medium leading-none transition-colors",
-									timelineActive ? "text-foreground" : "text-muted-foreground",
-								)}
-								onClick={timelineActive ? undefined : onSelectChat}
-								role="tab"
-								tabIndex={timelineActive || (!reviewerTerminal && !shellTerminals?.length) ? 0 : -1}
-								title={label}
-								type="button"
-							>
-								<span className="truncate">{label}</span>
-							</button>
-						</span>
+							<span className="truncate">{label}</span>
+						</button>
 						{reviewerTerminal ? (
-							<span
+							<button
+								aria-current={reviewerActive ? true : undefined}
+								aria-label="Reviewer"
+								aria-selected={Boolean(reviewerActive)}
 								className={cn(
-									"group relative inline-flex min-w-shell-tab-min self-stretch items-center gap-1.5 border-r border-border px-3",
+									"group relative inline-flex min-w-shell-tab-min max-w-shell-tab-max self-stretch cursor-pointer items-center gap-1.5 border-r border-border px-3 text-control font-medium leading-none transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent/50",
 									reviewerActive
 										? "bg-overlay text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80"
 										: "text-muted-foreground hover:bg-raised hover:text-foreground",
 								)}
+								onClick={() => onOpenReviewerTerminal?.(reviewerTerminal)}
+								role="tab"
+								tabIndex={reviewerActive ? 0 : -1}
+								title={reviewerTerminal.harness}
+								type="button"
 							>
 								<AgentAvatar
 									className="size-icon-base"
 									decorative
 									provider={reviewerTerminal.harness}
 								/>
-								<button
-									aria-current={reviewerActive ? true : undefined}
-									aria-label="Reviewer"
-									aria-selected={Boolean(reviewerActive)}
-									className={cn(
-										"inline-flex min-w-flex-min max-w-shell-tab-max items-center gap-1.5 text-control font-medium leading-none",
-										reviewerActive ? "text-foreground" : "text-muted-foreground",
-									)}
-									onClick={() => onOpenReviewerTerminal?.(reviewerTerminal)}
-									role="tab"
-									tabIndex={reviewerActive ? 0 : -1}
-									title={reviewerTerminal.harness}
-									type="button"
-								>
-									<span className="truncate">Reviewer</span>
-								</button>
-							</span>
+								<span className="truncate">Reviewer</span>
+							</button>
 						) : null}
 						{/* The same shared shell tab the terminal pane strip and the
 						    standalone terminals screen use, so all three never drift. */}
@@ -1208,6 +1203,7 @@ function ChatHeader({
 								shell={shell}
 							/>
 						))}
+						{workspaceTabs}
 					</div>
 				</div>
 				<div

@@ -47,11 +47,10 @@ func NewLANManager(handler http.Handler, state *authState, defaultPort int, log 
 // the telemetry routes under /internal/, and the Connect Mobile control
 // surface under /api/v1/mobile, developer maintenance routes under /api/v1/dev,
 // and host-mutating installer routes under /api/v1/system/install. Some routes
-// are gated in the shared router by localControlRequest,
-// which trusts the client-supplied Host header (and RealIP, which trusts
-// X-Forwarded-For/X-Real-IP) — both spoofable by any LAN client. The LAN
-// listener is the one thing a caller cannot spoof: it is the physical socket the
-// request arrived on. So the block below is applied only to the LAN-served
+// are gated in the shared router by localControlRequest, which trusts the
+// client-supplied Host header. That header is spoofable by any LAN client. The
+// LAN listener is the one thing a caller cannot spoof: it is the physical socket
+// the request arrived on. So the block below is applied only to the LAN-served
 // handler, outermost (wrapping authMiddleware), independent of any header.
 var lanControlBlockedPrefixes = []string{
 	"/shutdown",

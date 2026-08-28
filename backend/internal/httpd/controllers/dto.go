@@ -156,6 +156,36 @@ type WorkspaceFileBlobQuery struct {
 	V    string `query:"v,omitempty" description:"Cache-busting token. Ignored by the server; the response is never cached."`
 }
 
+// WorkspaceTreeQuery is the query string accepted by GET /api/v1/sessions/{sessionId}/workspace/tree.
+type WorkspaceTreeQuery struct {
+	Path string `query:"path,omitempty" description:"Directory path relative to the session workspace root. Empty or omitted lists the root."`
+}
+
+// ListWorkspaceTreeResponse is the body of GET /api/v1/sessions/{sessionId}/workspace/tree.
+// Unlike ListWorkspaceFilesResponse (every changed file, whole worktree), this
+// is one directory level of the full worktree — tracked and
+// untracked-but-not-ignored — for lazily expanding a file explorer.
+type ListWorkspaceTreeResponse struct {
+	SessionID domain.SessionID     `json:"sessionId"`
+	Path      string               `json:"path"`
+	Entries   []WorkspaceTreeEntry `json:"entries"`
+	Truncated bool                 `json:"truncated"`
+}
+
+// WorkspaceTreeEntry is one immediate child of a listed directory.
+type WorkspaceTreeEntry struct {
+	Name string                            `json:"name"`
+	Path string                            `json:"path"`
+	Type sessionsvc.WorkspaceTreeEntryType `json:"type" enum:"file,dir"`
+	// Status is set for files only; omitted for directories.
+	Status sessionsvc.WorkspaceFileStatus `json:"status,omitempty" enum:"unmodified,modified,added,deleted,renamed"`
+	// HasChanges is set for directories only: true when a descendant file is
+	// non-unmodified, so a collapsed folder can still show it contains changes.
+	HasChanges bool  `json:"hasChanges,omitempty"`
+	Size       int64 `json:"size,omitempty"`
+	Binary     bool  `json:"binary,omitempty"`
+}
+
 // SessionView is the session wire shape: the domain read model plus the
 // display-safe branch name and the session's attributed pull requests in the
 // curated SessionPRFacts shape. One session can own many PRs (e.g. a stack), so
@@ -537,13 +567,13 @@ type SetSessionAutoInjectReviewResponse struct {
 	Session          SessionView      `json:"session"`
 }
 
-// SetSessionAutoInjectCIRequest updates the default automatic CI delivery
-// policy captured by PRs created after the change.
+// SetSessionAutoInjectCIRequest updates automatic CI delivery for a session
+// and every PR currently owned by it.
 type SetSessionAutoInjectCIRequest struct {
 	AutoInjectCI bool `json:"autoInjectCI"`
 }
 
-// SetSessionAutoInjectCIResponse confirms the persisted session default.
+// SetSessionAutoInjectCIResponse confirms the persisted session policy.
 type SetSessionAutoInjectCIResponse struct {
 	OK           bool             `json:"ok"`
 	SessionID    domain.SessionID `json:"sessionId"`
@@ -938,6 +968,7 @@ type SetActivityRequest struct {
 // response content.
 type UsageHookMetadata struct {
 	Harness                domain.AgentHarness `json:"harness" enum:"claude-code,codex"`
+	ProviderID             string              `json:"providerId,omitempty" description:"Canonical provider routing hint derived by the trusted local Claude hook."`
 	TranscriptPath         string              `json:"transcriptPath,omitempty"`
 	ModelID                string              `json:"modelId,omitempty"`
 	SubagentID             string              `json:"subagentId,omitempty"`
@@ -1037,12 +1068,26 @@ type ListUsageSessionsQuery struct {
 	ProjectID domain.ProjectID `query:"projectId,omitempty" description:"Optional project id filter for dashboard cards."`
 }
 
-// CompactSessionUsageResponse is one session card's token-only usage summary.
+// EstimatedCostResponse is a nano-USD estimate reused at every usage summary
+// scope. Coverage stays an API fact for aggregation, catalog backfills, and
+// contextual disclosure; it is never a pricing label or a mathematical
+// qualifier on the presented value.
+type EstimatedCostResponse struct {
+	TotalNanos          int64  `json:"totalNanos" minimum:"0" format:"int64"`
+	InputNanos          *int64 `json:"inputNanos" minimum:"0" format:"int64" description:"Every non-cache-read input charge, cache writes included."`
+	CachedInputNanos    *int64 `json:"cachedInputNanos" minimum:"0" format:"int64"`
+	OutputNanos         *int64 `json:"outputNanos" minimum:"0" format:"int64"`
+	Coverage            string `json:"coverage" enum:"complete,partial"`
+	ProviderAttribution string `json:"providerAttribution" enum:"observed,inferred,mixed" description:"Whether contributing billing providers were detected, inferred from model ownership, or both."`
+}
+
+// CompactSessionUsageResponse is one session card's usage summary.
 type CompactSessionUsageResponse struct {
-	SessionID       domain.SessionID `json:"sessionId"`
-	ProcessedTokens *int64           `json:"processedTokens" minimum:"0" description:"Canonical input plus output. Null when either component is unknown."`
-	TotalTokens     int64            `json:"totalTokens" minimum:"0" description:"Deprecated compatibility alias for processedTokens."`
-	Incomplete      bool             `json:"incomplete"`
+	SessionID       domain.SessionID       `json:"sessionId"`
+	ProcessedTokens *int64                 `json:"processedTokens" minimum:"0" description:"Canonical input plus output. Null when either component is unknown."`
+	TotalTokens     int64                  `json:"totalTokens" minimum:"0" description:"Deprecated compatibility alias for processedTokens."`
+	Incomplete      bool                   `json:"incomplete"`
+	EstimatedCost   *EstimatedCostResponse `json:"estimatedCost"`
 }
 
 // ListCompactSessionUsageResponse is the batch dashboard usage response.
@@ -1050,50 +1095,25 @@ type ListCompactSessionUsageResponse struct {
 	Sessions []CompactSessionUsageResponse `json:"sessions"`
 }
 
-// UsageMetricProvenanceResponse records how each canonical metric was obtained.
-type UsageMetricProvenanceResponse struct {
-	InputTokens         domain.UsageMetricProvenance `json:"inputTokens" enum:"reported,derived,unsupported,unknown"`
-	CachedInputTokens   domain.UsageMetricProvenance `json:"cachedInputTokens" enum:"reported,derived,unsupported,unknown"`
-	UncachedInputTokens domain.UsageMetricProvenance `json:"uncachedInputTokens" enum:"reported,derived,unsupported,unknown"`
-	OutputTokens        domain.UsageMetricProvenance `json:"outputTokens" enum:"reported,derived,unsupported,unknown"`
-}
-
-// OpenAIUsageDetailsResponse exposes namespaced counters outside the shared
-// four-metric vocabulary.
-type OpenAIUsageDetailsResponse struct {
-	OpenAIReasoningOutputTokens *int64 `json:"openaiReasoningOutputTokens" minimum:"0"`
-	OpenAICacheWriteInputTokens *int64 `json:"openaiCacheWriteInputTokens" minimum:"0"`
-}
-
-// AnthropicUsageDetailsResponse exposes namespaced prompt-cache components.
-type AnthropicUsageDetailsResponse struct {
-	AnthropicDirectUncachedInputTokens  *int64 `json:"anthropicDirectUncachedInputTokens" minimum:"0"`
-	AnthropicCacheCreationInputTokens   *int64 `json:"anthropicCacheCreationInputTokens" minimum:"0"`
-	AnthropicCacheCreation5mInputTokens *int64 `json:"anthropicCacheCreation5mInputTokens" minimum:"0"`
-	AnthropicCacheCreation1hInputTokens *int64 `json:"anthropicCacheCreation1hInputTokens" minimum:"0"`
-}
-
-// UsageProviderDetailsResponse groups optional provider-native counters.
-type UsageProviderDetailsResponse struct {
-	OpenAI    *OpenAIUsageDetailsResponse    `json:"openai,omitempty"`
-	Anthropic *AnthropicUsageDetailsResponse `json:"anthropic,omitempty"`
-}
-
 // UsageTotalsResponse is the canonical telemetry aggregate for one scope.
+//
+// Provider-specific counters are no longer projected here: they live verbatim
+// in each event's bounded provider usage object, where a field the provider
+// adds later survives without a schema change on this boundary.
 type UsageTotalsResponse struct {
-	InputTokens         *int64                        `json:"inputTokens" minimum:"0" description:"Total input, including cached and uncached input."`
-	CachedInputTokens   *int64                        `json:"cachedInputTokens" minimum:"0" description:"Input read from an existing provider cache. Cache hit percentage uses cachedInputTokens divided by inclusive inputTokens."`
-	UncachedInputTokens *int64                        `json:"uncachedInputTokens" minimum:"0" description:"Input not read from an existing provider cache."`
-	OutputTokens        *int64                        `json:"outputTokens" minimum:"0" description:"Total output, including provider-specific subsets such as reasoning output."`
-	ProcessedTokens     *int64                        `json:"processedTokens" minimum:"0" description:"Canonical input plus output. Null when either component is unknown."`
-	CacheReadTokens     *int64                        `json:"cacheReadTokens" minimum:"0" description:"Deprecated compatibility alias for cachedInputTokens."`
-	CacheWriteTokens    *int64                        `json:"cacheWriteTokens" minimum:"0" description:"Deprecated compatibility aggregate of provider cache-write input counters."`
-	ReasoningTokens     *int64                        `json:"reasoningTokens" minimum:"0" description:"Deprecated compatibility alias for the OpenAI reasoning-output subset."`
-	Provenance          UsageMetricProvenanceResponse `json:"provenance"`
-	ProviderDetails     UsageProviderDetailsResponse  `json:"providerDetails"`
+	InputTokens         *int64                 `json:"inputTokens" minimum:"0" description:"Total input, including cached and uncached input."`
+	CachedInputTokens   *int64                 `json:"cachedInputTokens" minimum:"0" description:"Input read from an existing provider cache. Cache hit percentage uses cachedInputTokens divided by inclusive inputTokens."`
+	UncachedInputTokens *int64                 `json:"uncachedInputTokens" minimum:"0" description:"Input not read from an existing provider cache. Includes cache writes."`
+	OutputTokens        *int64                 `json:"outputTokens" minimum:"0" description:"Total output, including provider-specific subsets such as reasoning output."`
+	ProcessedTokens     *int64                 `json:"processedTokens" minimum:"0" description:"Canonical input plus output. Null when either component is unknown."`
+	CacheReadTokens     *int64                 `json:"cacheReadTokens" minimum:"0" description:"Deprecated compatibility alias for cachedInputTokens."`
+	EstimatedCost       *EstimatedCostResponse `json:"estimatedCost"`
 }
 
-// UsageModelResponse is telemetry grouped by exact model id.
+// UsageModelResponse is telemetry grouped by model. The billing provider is a
+// pricing input rather than a product distinction: each event was costed
+// against its own provider's rates before reaching this aggregate, so one model
+// stays one row even when more than one provider served it.
 type UsageModelResponse struct {
 	ModelID string              `json:"modelId"`
 	Totals  UsageTotalsResponse `json:"totals"`
@@ -1965,11 +1985,30 @@ type SettingsResponse struct {
 	// ChatHarnesses are the agents that can run in chat mode today. Empty means
 	// chat cannot be used yet, which a client should say plainly.
 	ChatHarnesses []string `json:"chatHarnesses"`
+	// Client is the deployment's client identity (AO_CLIENT); empty when unset.
+	Client string `json:"client"`
+	// LocalEnabled reports whether the local offering is available.
+	LocalEnabled bool `json:"localEnabled"`
+	// CloudOffering is the user's persisted cloud toggle (Settings, Developer
+	// Mode). Distinct from CloudEnabled, which is the effective gate.
+	CloudOffering bool `json:"cloudOffering"`
+	// CloudEnabled reports whether the cloud offering is effectively available:
+	// the user's toggle (or the env override) plus a configured control plane.
+	CloudEnabled bool `json:"cloudEnabled"`
+	// CloudControlPlaneURL is the cloud control plane base URL; empty when no
+	// control plane is configured.
+	CloudControlPlaneURL string `json:"cloudControlPlaneUrl"`
 }
 
 // UpdateSessionInterfaceRequest changes the default interface for new sessions.
 type UpdateSessionInterfaceRequest struct {
 	DefaultSessionMode string `json:"defaultSessionMode" enum:"chat,tui"`
+}
+
+// UpdateCloudOfferingRequest flips the user's cloud toggle.
+type UpdateCloudOfferingRequest struct {
+	// Enabled turns the cloud offering on or off for this machine's user.
+	Enabled *bool `json:"enabled"`
 }
 
 // capabilityNames lists the abilities a provider has, sorted so a client sees a
