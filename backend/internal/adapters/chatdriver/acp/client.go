@@ -810,7 +810,10 @@ func (c *conversation) sessionFailureEvent(
 	event := ports.ChatEvent{
 		Kind:           ports.ChatEventActivityStarted,
 		ProviderTurnID: turnID,
-		ProviderItemID: c.providerItemID("session-failure:" + id),
+		// Some adapters mint a fresh extension incident id for every retry when
+		// their provider turn id is not known yet. AO already has the durable turn
+		// boundary, so key the live failure to that boundary and update one row.
+		ProviderItemID: c.providerItemID("session-failure:" + turnID),
 		ActivityKind:   domain.ActivityKindSystem,
 		ActivityStatus: domain.ActivityStatusRunning,
 		Summary:        title,

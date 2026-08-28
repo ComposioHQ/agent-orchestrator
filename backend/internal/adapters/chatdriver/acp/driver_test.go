@@ -1582,9 +1582,10 @@ func TestACPDriverNormalizesClaudeRetryStatus(t *testing.T) {
 	}
 
 	var retry ports.ChatEvent
+	retryItemID := "session-failure:" + ref.ProviderTurnID
 	for retry.Kind == "" {
 		event := nextEvent(t, opened.Events())
-		if event.Kind == ports.ChatEventActivityStarted && event.ProviderItemID == "session-failure:claude-turn:error" {
+		if event.Kind == ports.ChatEventActivityStarted && event.ProviderItemID == retryItemID {
 			retry = event
 		}
 	}
@@ -1603,6 +1604,38 @@ func TestACPDriverNormalizesClaudeRetryStatus(t *testing.T) {
 		detail["severity"] != "warning" ||
 		detail["text"] != "The API request failed. Trying again in 4s." {
 		t.Fatalf("retry detail = %#v", detail)
+	}
+
+	// Claude can use a new extension incident id for each attempt before its
+	// provider turn id is available. AO must still update one per-turn activity.
+	if err := agent.conn.SessionUpdate(context.Background(), acpsdk.SessionNotification{
+		SessionId: acpsdk.SessionId(opened.ProviderConversationID()),
+		Update: acpsdk.SessionUpdate{SessionInfoUpdate: &acpsdk.SessionSessionInfoUpdate{
+			SessionUpdate: "session_info_update",
+			Meta: map[string]any{
+				"jetbrains": map[string]any{
+					"air": map[string]any{
+						"version": float64(1),
+						"sessionFailure": map[string]any{
+							"id":       "another-incident-id",
+							"revision": float64(1),
+							"category": "connection",
+							"severity": "warning",
+							"title":    "Reconnecting to Claude, attempt 3 of 10.",
+							"details":  "Connection error. Trying again in 8s.",
+						},
+					},
+				},
+			},
+		}},
+	}); err != nil {
+		t.Fatalf("next session retry update: %v", err)
+	}
+	nextRetry := nextEvent(t, opened.Events())
+	if nextRetry.Kind != ports.ChatEventActivityStarted ||
+		nextRetry.ProviderItemID != retry.ProviderItemID ||
+		nextRetry.Summary != "Reconnecting to Claude, attempt 3 of 10." {
+		t.Fatalf("next retry event = %#v", nextRetry)
 	}
 
 	if err := agent.conn.SessionUpdate(context.Background(), acpsdk.SessionNotification{
