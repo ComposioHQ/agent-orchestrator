@@ -17,8 +17,8 @@ import (
 
 const reviewMaxNudge = 3
 
-// ReviewDeliveryOutcome reports what ApplyReviewResult did with a completed
-// AO-internal review pass.
+// ReviewDeliveryOutcome reports what ApplyReviewBatch did with completed
+// AO-internal review passes.
 type ReviewDeliveryOutcome string
 
 const (
@@ -172,6 +172,15 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 	if cannotNudge(rec) {
 		return nil
 	}
+	reviews, err := m.store.ListPRReviews(ctx, o.URL)
+	if err != nil {
+		return fmt.Errorf("list persisted reviews for %s: %w", o.URL, err)
+	}
+	comments, err := m.store.ListPRComments(ctx, o.URL)
+	if err != nil {
+		return fmt.Errorf("list persisted comments for %s: %w", o.URL, err)
+	}
+	o.Comments = prCommentObservations(comments)
 	// A single PR can trip several actionable conditions at once (failing CI,
 	// unresolved review comments, a merge conflict). Queue every applicable nudge
 	// and send them together, so each surfaces independently instead of one
@@ -181,35 +190,68 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 	// persisted their own dedup signature so the next poll retries only the rest.
 	ident := prIdentity(o)
 	var nudges []pendingNudge
+	var ciPolicyErr error
 
 	if o.CI == domain.CIFailing {
-		checks := failedPRChecks(o.Checks)
-		if len(checks) > 0 {
-			msg := formatCIFailureMessage(checks)
+		pr, ok, err := m.store.GetPR(ctx, o.URL)
+		switch {
+		case err != nil:
+			ciPolicyErr = fmt.Errorf("load CI injection policy for %s: %w", o.URL, err)
+		case !ok:
+			ciPolicyErr = fmt.Errorf("load CI injection policy for %s: PR not found", o.URL)
+		case pr.AutoInjectCI:
+			checks := failedPRChecks(o.Checks)
+			if len(checks) > 0 {
+				msg := formatCIFailureMessage(checks)
+				if ident != "your PR" {
+					msg = strings.Replace(msg, "your PR", ident, 1)
+				}
+				if o.URL != "" {
+					msg += "\nPR: " + domain.SanitizeControlChars(o.URL)
+				}
+				nudges = append(nudges, pendingNudge{key: "ci:" + o.URL, sig: ciFailureSignature(checks), msg: msg, maxAttempts: 0})
+			}
+		}
+	}
+
+	if hasUnresolvedComments(o.Comments) {
+		comments := unresolvedReviewComments(o.Comments)
+		for _, comment := range comments {
+			if !comment.AutoInjectReview {
+				continue
+			}
+			commentSlice := []ports.PRCommentObservation{comment}
+			msg := formatReviewCommentsMessage(commentSlice)
 			if ident != "your PR" {
 				msg = strings.Replace(msg, "your PR", ident, 1)
 			}
 			if o.URL != "" {
 				msg += "\nPR: " + domain.SanitizeControlChars(o.URL)
 			}
-			nudges = append(nudges, pendingNudge{key: "ci:" + o.URL, sig: ciFailureSignature(checks), msg: msg, maxAttempts: 0})
+			sig := reviewCommentsSignature(commentSlice)
+			if sig == "" {
+				sig = string(o.Review)
+			}
+			nudges = append(nudges, pendingNudge{key: "comment:" + o.URL, sig: sig, msg: msg, maxAttempts: reviewMaxNudge})
 		}
 	}
-	if o.Review == domain.ReviewChangesRequest || hasUnresolvedComments(o.Comments) {
-		comments := unresolvedReviewComments(o.Comments)
-		msg := formatReviewCommentsMessage(comments)
-		if ident != "your PR" {
-			msg = strings.Replace(msg, "your PR", ident, 1)
+
+	if o.Review == domain.ReviewChangesRequest {
+		for _, review := range reviews {
+			if review.State != domain.ReviewChangesRequest || !review.AutoInjectReview {
+				continue
+			}
+			msg := formatReviewChangesRequestedMessage(review)
+			if ident != "your PR" {
+				msg = strings.Replace(msg, "your PR", ident, 1)
+			}
+			if o.URL != "" && review.URL == "" {
+				msg += "\nPR: " + domain.SanitizeControlChars(o.URL)
+			}
+			nudges = append(nudges, pendingNudge{key: "review:" + o.URL + ":" + review.ID, sig: string(review.State), msg: msg, maxAttempts: reviewMaxNudge})
 		}
-		if o.URL != "" {
-			msg += "\nPR: " + domain.SanitizeControlChars(o.URL)
-		}
-		sig := reviewCommentsSignature(comments)
-		if sig == "" {
-			sig = string(o.Review)
-		}
-		nudges = append(nudges, pendingNudge{key: "review:" + o.URL, sig: sig, msg: msg, maxAttempts: reviewMaxNudge})
 	}
+
 	// Only the merge-conflict nudge needs a store read (the parent-stack check).
 	// A read error there must NOT discard the CI/review nudges already queued
 	// above — returning early here would re-introduce the "one condition
@@ -242,12 +284,18 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 			return err
 		}
 	}
-	// Surface a deferred parent-stack read error only after the independent
-	// CI/review nudges have been sent, so none of them are lost to it.
+	// Surface deferred policy/parent-stack read errors only after independent
+	// nudges have been sent, so one failed lookup cannot hide another reaction.
+	if ciPolicyErr != nil {
+		return ciPolicyErr
+	}
 	return blockedCheckErr
 }
 
 func (m *Manager) terminateCompletedSession(ctx context.Context, id domain.SessionID) error {
+	if m.sessionMutationInProgress(id) {
+		return nil
+	}
 	m.mu.Lock()
 	terminator := m.completionTerminator
 	m.mu.Unlock()
@@ -258,47 +306,6 @@ func (m *Manager) terminateCompletedSession(ctx context.Context, id domain.Sessi
 		return fmt.Errorf("terminate completed session %s: %w", id, err)
 	}
 	return nil
-}
-
-// ApplyReviewResult reacts to a completed AO-internal review pass after the
-// review service has persisted the run result. It mirrors ApplyPRObservation:
-// no change_log reads, no review_run writes, only lifecycle side effects.
-func (m *Manager) ApplyReviewResult(ctx context.Context, workerID domain.SessionID, r ReviewResult) (ReviewDeliveryOutcome, error) {
-	if r.Verdict != domain.VerdictChangesRequested || r.DeliveredAt != nil {
-		return ReviewDeliveryNoop, nil
-	}
-	rec, ok, err := m.store.GetSession(ctx, workerID)
-	if err != nil || !ok {
-		return ReviewDeliveryNoop, err
-	}
-	if cannotNudge(rec) {
-		return ReviewDeliveryNoop, nil
-	}
-	if m.guard == nil {
-		return ReviewDeliveryNoop, nil
-	}
-	msg := fmt.Sprintf("[AO reviewer] AO's internal code reviewer submitted a review.\n\nPR: %s\nVerdict: %s", domain.SanitizeControlChars(r.PRURL), domain.SanitizeControlChars(string(r.Verdict)))
-	if r.GithubReviewID != "" {
-		safeReviewID := domain.SanitizeControlChars(r.GithubReviewID)
-		msg += fmt.Sprintf("\nGitHub review: %s", safeReviewID)
-		msg += fmt.Sprintf("\n\nOnce you have addressed it, reply on GitHub review %s with how you addressed it, then resolve the review comment threads you addressed.", safeReviewID)
-	}
-	if r.Body != "" {
-		msg += "\n\nReview body:\n" + domain.SanitizeControlChars(r.Body)
-	}
-	key := "review:" + r.PRURL + ":ao:" + r.RunID
-	sig := strings.Join([]string{r.TargetSHA, r.RunID, r.GithubReviewID, r.Body}, "\x00")
-	outcome, err := m.sendOnce(ctx, workerID, r.PRURL, key, sig, msg, reviewMaxNudge)
-	if err != nil {
-		return ReviewDeliveryNoop, err
-	}
-	if outcome == sendOnceSuppressed {
-		// Suppressed by the just-in-time guard (worker went terminated/exited/needs-
-		// input): the review feedback did not reach the worker, so leave the run
-		// undelivered to re-fire on the next observation.
-		return ReviewDeliveryNoop, nil
-	}
-	return ReviewDeliverySent, nil
 }
 
 // sessionComplete reports whether the session has reached the multi-PR
@@ -361,7 +368,24 @@ func (m *Manager) ApplySCMObservation(ctx context.Context, id domain.SessionID, 
 		return err
 	}
 	m.emitNotification(ctx, intent)
+	m.resolveNotifications(ctx, readyToMergeResolutions(id, o, m.clock())...)
 	return nil
+}
+
+// readyToMergeResolutions reports the ready-to-merge notification this
+// observation made stale. The PR either got merged/closed, or stopped being
+// mergeable — either way the "this is ready for you to merge" ping no longer
+// describes anything the user can act on.
+func readyToMergeResolutions(id domain.SessionID, o ports.SCMObservation, now time.Time) []ports.NotificationResolution {
+	if scmObservationIsReadyToMerge(o) {
+		return nil
+	}
+	return []ports.NotificationResolution{{
+		Type:       domain.NotificationReadyToMerge,
+		SessionID:  id,
+		PRURL:      firstSCMNonEmpty(o.PR.URL, o.PR.HTMLURL),
+		ResolvedAt: timeOr(o.ObservedAt, now),
+	}}
 }
 
 func (m *Manager) notificationIntentForCurrentSCM(ctx context.Context, id domain.SessionID, o ports.SCMObservation) (*ports.NotificationIntent, error) {
@@ -409,22 +433,20 @@ func (m *Manager) notificationIntentForSCM(rec domain.SessionRecord, o ports.SCM
 	return &base
 }
 
+// scmObservationIsReadyToMerge projects a live observation into the shared
+// readiness rule (domain.MergeReadiness). Startup reconciliation applies the
+// same rule to the stored facts, so the two paths cannot disagree about what
+// "ready to merge" means.
 func scmObservationIsReadyToMerge(o ports.SCMObservation) bool {
-	if o.PR.Merged || o.PR.Closed || o.PR.Draft {
-		return false
-	}
-	ci := domain.CIState(o.CI.Summary)
-	if ci == "" {
-		ci = domain.CIUnknown
-	}
-	switch ci {
-	case domain.CIFailing, domain.CIPending, domain.CIUnknown:
-		return false
-	}
-	if domain.ReviewDecision(o.Review.Decision) == domain.ReviewChangesRequest || hasUnresolvedSCMComments(o.Review.Threads) {
-		return false
-	}
-	return domain.Mergeability(o.Mergeability.State) == domain.MergeMergeable
+	return domain.MergeReadiness{
+		Draft:              o.PR.Draft,
+		Merged:             o.PR.Merged,
+		Closed:             o.PR.Closed,
+		CI:                 domain.CIState(o.CI.Summary),
+		Review:             domain.ReviewDecision(o.Review.Decision),
+		Mergeability:       domain.Mergeability(o.Mergeability.State),
+		UnresolvedComments: hasUnresolvedSCMComments(o.Review.Threads),
+	}.ReadyToMerge()
 }
 
 func hasUnresolvedSCMComments(threads []ports.SCMReviewThreadObservation) bool {
@@ -465,6 +487,7 @@ func scmToPRObservation(o ports.SCMObservation) ports.PRObservation {
 	if pr.Mergeability == "" {
 		pr.Mergeability = domain.MergeUnknown
 	}
+
 	checkCommit := firstSCMNonEmpty(o.CI.HeadSHA, o.PR.HeadSHA)
 	for _, ch := range o.CI.FailedChecks {
 		status := domain.PRCheckStatus(ch.Status)
@@ -483,27 +506,29 @@ func scmToPRObservation(o ports.SCMObservation) ports.PRObservation {
 			LogTail:    logTail,
 		})
 	}
-	for _, th := range o.Review.Threads {
-		if th.Resolved || th.IsBot {
+	return pr
+}
+
+func prCommentObservations(comments []domain.PullRequestComment) []ports.PRCommentObservation {
+	out := make([]ports.PRCommentObservation, 0, len(comments))
+	for _, comment := range comments {
+		if comment.Resolved || comment.IsBot {
 			continue
 		}
-		for _, c := range th.Comments {
-			if c.IsBot {
-				continue
-			}
-			pr.Comments = append(pr.Comments, ports.PRCommentObservation{
-				ID:       c.ID,
-				ThreadID: th.ID,
-				Author:   c.Author,
-				File:     th.Path,
-				Line:     th.Line,
-				Body:     c.Body,
-				URL:      c.URL,
-				Resolved: th.Resolved,
-			})
-		}
+		out = append(out, ports.PRCommentObservation{
+			ID:               comment.ID,
+			ThreadID:         comment.ThreadID,
+			ReviewID:         comment.ReviewID,
+			Author:           comment.Author,
+			File:             comment.File,
+			Line:             comment.Line,
+			Body:             comment.Body,
+			URL:              comment.URL,
+			Resolved:         comment.Resolved,
+			AutoInjectReview: comment.AutoInjectReview,
+		})
 	}
-	return pr
+	return out
 }
 
 // ApplyTrackerFacts reacts to a fetched Tracker issue observation. It owns the
@@ -527,6 +552,9 @@ func (m *Manager) ApplyTrackerFacts(ctx context.Context, id domain.SessionID, o 
 		return nil
 	}
 	if isTerminalTrackerState(o.Issue.State) {
+		if m.sessionMutationInProgress(id) {
+			return nil
+		}
 		return m.MarkTerminated(ctx, id)
 	}
 	rec, ok, err := m.store.GetSession(ctx, id)
@@ -702,6 +730,26 @@ func reviewCommentsSignature(comments []ports.PRCommentObservation) string {
 	}
 	sort.Strings(parts)
 	return strings.Join(parts, "\x01")
+}
+
+func formatReviewChangesRequestedMessage(review domain.PullRequestReview) string {
+	var msg strings.Builder
+	author := domain.SanitizeControlChars(review.Author)
+	if strings.TrimSpace(author) == "" {
+		author = "unknown reviewer"
+	}
+	fmt.Fprintf(&msg, "A changes-requested review from @%s is on your PR.", author)
+	if body := domain.SanitizeControlChars(review.Body); strings.TrimSpace(body) != "" {
+		fmt.Fprintf(&msg, "\n\nReview body:\n%s", body)
+	}
+	if review.URL != "" {
+		fmt.Fprintf(&msg, "\n\nReview URL: %s", domain.SanitizeControlChars(review.URL))
+	}
+	if review.ID != "" {
+		fmt.Fprintf(&msg, "\nReview ID: %s", domain.SanitizeControlChars(review.ID))
+	}
+	msg.WriteString("\n\nAddress the requested changes and push. You should not need to re-fetch the review unless you need additional context beyond what AO has provided here.")
+	return msg.String()
 }
 
 func formatReviewCommentsMessage(comments []ports.PRCommentObservation) string {

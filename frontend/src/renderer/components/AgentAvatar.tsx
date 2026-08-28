@@ -1,30 +1,40 @@
-import { cn } from "../lib/utils";
+import {
+	AgentAvatar as ProductAgentAvatar,
+	type AgentAvatarProps,
+	type AgentLogoSources,
+} from "@aoagents/product-ui";
+import agyLogo from "../assets/agents/agy.png";
 import aiderLogo from "../assets/agents/aider.png";
 import ampLogo from "../assets/agents/amp.svg";
+import auggieLogo from "../assets/agents/auggie.svg";
+import autohandLogo from "../assets/agents/autohand.svg";
 import clineLogo from "../assets/agents/cline.svg";
 import claudeLogo from "../assets/agents/claude.svg";
 import claudeCodeLogo from "../assets/agents/claude-code.svg";
 import codexLogo from "../assets/agents/codex.svg";
 import continueLogo from "../assets/agents/continue.png";
-import copilotLogo from "../assets/agents/copilot.png";
+import copilotLogo from "../assets/agents/copilot.svg";
 import crushLogo from "../assets/agents/crush.png";
 import cursorLogo from "../assets/agents/cursor.svg";
 import devinLogo from "../assets/agents/devin.png";
 import droidLogo from "../assets/agents/droid.png";
-import gooseLogo from "../assets/agents/goose.png";
+import gooseLogo from "../assets/agents/goose.svg";
 import grokLogo from "../assets/agents/grok.png";
-import kilocodeLogo from "../assets/agents/kilocode.png";
+import kilocodeLogo from "../assets/agents/kilocode.svg";
 import kimiLogo from "../assets/agents/kimi.png";
+import kimchiLogo from "../assets/agents/kimchi.svg";
 import kiroLogo from "../assets/agents/kiro.png";
+import museLogo from "../assets/agents/muse.png";
+import ompLogo from "../assets/agents/omp.png";
 import opencodeLogo from "../assets/agents/opencode.svg";
 import piLogo from "../assets/agents/pi.png";
+import primeAgentLogo from "../assets/agents/prime-agent.png";
 import qwenLogo from "../assets/agents/qwen.png";
 import vibeLogo from "../assets/agents/vibe.png";
 
 // Real brand logos keyed by the harness name AO stores on session.provider.
-// Agents without an asset fall back to a lettered tile (agy, auggie, autohand,
-// fake).
-const LOGOS: Record<string, string> = {
+// Agents without an asset fall back to a lettered tile (fake).
+const LOGOS: AgentLogoSources = {
 	codex: codexLogo,
 	"claude-code": claudeCodeLogo,
 	claude: claudeLogo,
@@ -40,19 +50,19 @@ const LOGOS: Record<string, string> = {
 	continue: continueLogo,
 	devin: devinLogo,
 	kimi: kimiLogo,
+	muse: museLogo,
+	omp: ompLogo,
 	kiro: kiroLogo,
 	kilocode: kilocodeLogo,
 	vibe: vibeLogo,
 	pi: piLogo,
+	kimchi: kimchiLogo,
+	"prime-agent": primeAgentLogo,
 	amp: ampLogo,
 	cline: clineLogo,
-};
-
-type AgentAvatarProps = {
-	provider: string;
-	className?: string;
-	/** When true, the logo is purely decorative (label is shown beside it). */
-	decorative?: boolean;
+	agy: agyLogo,
+	auggie: auggieLogo,
+	autohand: autohandLogo,
 };
 
 /**
@@ -66,30 +76,7 @@ type AgentAvatarProps = {
  * e.g. the archive cards — still name the agent for screen readers.
  */
 export function AgentAvatar({ provider, className, decorative = false }: AgentAvatarProps) {
-	const logo = LOGOS[provider];
-	if (logo) {
-		return (
-			<img
-				src={logo}
-				alt={decorative ? "" : provider}
-				aria-hidden={decorative || undefined}
-				className={cn("size-icon-xl shrink-0 object-contain", className)}
-				draggable={false}
-				title={decorative ? undefined : provider}
-			/>
-		);
-	}
-	return (
-		<span
-			role="img"
-			aria-label={provider}
-			className={cn(
-				"inline-flex size-icon-xl shrink-0 items-center justify-center text-caption font-bold uppercase leading-none text-muted-foreground",
-				className,
-			)}
-			title={provider}
-		>
-			{provider.charAt(0) || "?"}
-		</span>
-	);
+	return <ProductAgentAvatar className={className} decorative={decorative} logoSources={LOGOS} provider={provider} />;
 }
+
+export type { AgentAvatarProps };

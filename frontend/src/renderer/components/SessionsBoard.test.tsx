@@ -3,12 +3,30 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
+import { appI18n } from "../i18n";
 
-const { navigateMock, notificationShowMock, postMock, workspaceQueryMock, boardActionsInPanelMock } = vi.hoisted(() => ({
+// Instant motion updates so height tweens do not leave tests waiting on timers.
+vi.mock("motion/react", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("motion/react")>();
+	return {
+		...actual,
+		AnimatePresence: ({ children }: { children: React.ReactNode }) => children,
+	};
+});
+
+const {
+	navigateMock,
+	notificationShowMock,
+	postMock,
+	workspaceQueryMock,
+	usageQueryMock,
+	boardActionsInPanelMock,
+} = vi.hoisted(() => ({
 	navigateMock: vi.fn(),
 	notificationShowMock: vi.fn(),
 	postMock: vi.fn(),
 	workspaceQueryMock: vi.fn(),
+	usageQueryMock: vi.fn(),
 	boardActionsInPanelMock: vi.fn(() => false),
 }));
 
@@ -19,6 +37,10 @@ vi.mock("@tanstack/react-router", () => ({
 vi.mock("../hooks/useWorkspaceQuery", () => ({
 	workspaceQueryKey: ["workspaces"],
 	useWorkspaceQuery: workspaceQueryMock,
+}));
+
+vi.mock("../hooks/useSessionUsageSummaries", () => ({
+	useSessionUsageSummaries: usageQueryMock,
 }));
 
 vi.mock("../lib/api-client", () => ({
@@ -46,7 +68,9 @@ vi.mock("../lib/platform", async (importOriginal) => {
 	};
 });
 
+import { archiveToggleHeightClassName, archiveToggleOffsetClassName } from "@aoagents/product-ui";
 import { SessionsBoard } from "./SessionsBoard";
+import { toBoardSessionPresentation } from "./SessionsBoardAdapters";
 import { TooltipProvider } from "./ui/tooltip";
 
 function renderBoard(projectId?: string) {
@@ -65,23 +89,81 @@ function renderBoardWithClient(queryClient: QueryClient, projectId?: string) {
 	);
 }
 
+/** Archive cards mount on the next frame via startTransition — wait for the list. */
+async function expandArchive() {
+	await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+	return screen.findByRole("list", { name: "Archived sessions" });
+}
+
 beforeEach(() => {
 	navigateMock.mockReset();
 	notificationShowMock.mockReset().mockResolvedValue(undefined);
 	postMock.mockReset().mockResolvedValue({ data: {} });
 	workspaceQueryMock.mockReset().mockReturnValue({ data: [], isError: false });
+	usageQueryMock.mockReset().mockReturnValue({ data: new Map() });
 	window.localStorage.removeItem("ao.board.archive.layout");
 	boardActionsInPanelMock.mockReset().mockReturnValue(false);
 });
 
 describe("SessionsBoard", () => {
+	it("uses the last human message time rather than generic session updatedAt", () => {
+		const presentation = toBoardSessionPresentation(
+			boardSession({
+				id: "timestamp-session",
+				lastUserMessageAt: "2026-01-01T09:00:00Z",
+				status: "idle",
+				title: "timestamp task",
+				updatedAt: "2026-01-01T10:00:00Z",
+			}),
+		);
+
+		expect(presentation.lastUserMessageAt).toBe("2026-01-01T09:00:00Z");
+	});
+
+	it("localizes dynamic card actions and pull request lifecycle labels", async () => {
+		await appI18n.changeLanguage("zh-CN");
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				workspaceWithSessions([
+					boardSession({
+						id: "s-localized",
+						title: "localized worker",
+						status: "pr_open",
+						prs: [
+							{
+								url: "https://github.com/acme/repo/pull/42",
+								number: 42,
+								state: "open",
+								ci: "passing",
+								review: "approved",
+								mergeability: "mergeable",
+								reviewComments: false,
+								updatedAt: "2026-01-01T00:00:00Z",
+							},
+						],
+					}),
+				]),
+			],
+			isError: false,
+			isSuccess: true,
+		});
+
+		try {
+			renderBoard("p1");
+			expect(screen.getByRole("button", { name: "终止 localized worker" })).toBeInTheDocument();
+			expect(screen.getByLabelText("#42 已打开")).toHaveTextContent("已打开");
+		} finally {
+			await appI18n.changeLanguage("en");
+		}
+	});
+
 	it("does not show an agent setup warning on the board", () => {
 		renderBoard();
 
 		expect(screen.queryByText(/reload agents/i)).not.toBeInTheDocument();
 	});
 
-	it("shows the project name in the in-panel board chrome when actions live in the panel", () => {
+	it("shows the Board identity and compact actions in the in-panel board chrome", () => {
 		boardActionsInPanelMock.mockReturnValue(true);
 		workspaceQueryMock.mockReturnValue({
 			data: [
@@ -111,8 +193,14 @@ describe("SessionsBoard", () => {
 
 		renderBoard("p1");
 
-		expect(screen.getByText("solkit-ui")).toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "New task" })).toBeInTheDocument();
+		expect(screen.getByTestId("board-topbar-label").textContent).toContain("Board");
+		expect(screen.queryByText("solkit-ui")).toBeNull();
+		expect(screen.getByRole("button", { name: "New task" }).closest(".center-panel-titlebar")).toHaveClass(
+			"workspace-topbar-container",
+		);
+		expect(
+			within(screen.getByRole("button", { name: "New task" })).getByText("Task").hasAttribute("data-compact-label"),
+		).toBe(true);
 	});
 
 	it.each([
@@ -151,6 +239,7 @@ describe("SessionsBoard", () => {
 
 		const button = screen.getByRole("button", { name: `Orchestrator, ${label}` });
 		const indicator = button.querySelector("span.size-dot-sm") as HTMLElement;
+		expect(within(button).getByText("Orchestrator").hasAttribute("data-compact-label")).toBe(true);
 		expect(indicator).toHaveAttribute("aria-hidden", "true");
 		expect(indicator).toHaveClass(tone);
 		expect(indicator).toHaveClass(pulses ? "animate-status-pulse" : "size-dot-sm");
@@ -212,8 +301,231 @@ describe("SessionsBoard", () => {
 		const terminateButton = within(idleCard).getByRole("button", { name: "Terminate brand-font-pipeline" });
 		expect(terminateButton).toHaveClass("opacity-0", "group-hover:opacity-100", "group-focus-within:opacity-100");
 		expect(terminateButton.querySelector("svg")).toHaveClass("lucide-trash-2");
-		expect(within(idleCard).getByText("Idle").parentElement).toHaveClass("flex", "justify-between");
+		expect(within(idleCard).getByText("Idle").parentElement?.parentElement).toHaveClass("flex");
 		expect(within(idleCard).getByText("brand-font-pipeline")).toHaveClass("font-semibold", "line-clamp-2");
+	});
+
+	it("shows coverage-aware cost with tokens on active and archived cards", async () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				workspaceWithSessions([
+					boardSession({ id: "s-active", title: "active worker", status: "idle" }),
+					boardSession({ id: "s-empty", title: "empty worker", status: "idle" }),
+					boardSession({ id: "s-tokens", title: "tokens worker", status: "idle" }),
+					terminatedSession(),
+				]),
+			],
+			isError: false,
+			isSuccess: true,
+		});
+		usageQueryMock.mockReturnValue({
+			data: new Map([
+				[
+					"s-active",
+					{
+						estimatedCost: {
+							cachedInputNanos: 100_000_000,
+							coverage: "complete",
+							inputNanos: 540_000_000,
+							outputNanos: 600_000_000,
+							providerAttribution: "observed",
+							totalNanos: 1_240_000_000,
+						},
+						sessionId: "s-active",
+						processedTokens: 12_300,
+						totalTokens: 12_400,
+						incomplete: false,
+					},
+				],
+				[
+					"s-empty",
+					{
+						estimatedCost: null,
+						sessionId: "s-empty",
+						processedTokens: 0,
+						totalTokens: 0,
+						incomplete: false,
+					},
+				],
+				[
+					"s-tokens",
+					{
+						estimatedCost: null,
+						sessionId: "s-tokens",
+						processedTokens: 800,
+						totalTokens: 800,
+						incomplete: false,
+					},
+				],
+				[
+					"s-dead",
+					{
+						estimatedCost: {
+							cachedInputNanos: null,
+							coverage: "partial",
+							inputNanos: 5_000_000,
+							outputNanos: 15_000_000,
+							providerAttribution: "inferred",
+							totalNanos: 20_000_000,
+						},
+						sessionId: "s-dead",
+						processedTokens: 1_900,
+						totalTokens: 2_000,
+						incomplete: true,
+					},
+				],
+			]),
+		});
+
+		renderBoard("p1");
+
+		// The card shows cost and tokens and nothing else. The word "processed"
+		// only survives where a screen reader needs the count named.
+		const activeUsage = screen.getByText("$1.24 · 12.3K");
+		expect(activeUsage).toHaveAttribute("aria-hidden", "true");
+		expect(screen.getByText("$1.24 · 12,300 tokens")).toHaveClass("sr-only");
+		expect(screen.queryByText(/processed/i)).not.toBeInTheDocument();
+		// A null estimate stays explicit even when the summary has no tokens.
+		const emptyCard = screen.getByText("empty worker").closest('[data-testid="board-session-card"]') as HTMLElement;
+		const emptyCost = within(emptyCard).getAllByText("Unavailable");
+		expect(emptyCost).toHaveLength(2);
+		expect(emptyCost.some((node) => node.getAttribute("aria-hidden") === "true")).toBe(true);
+		expect(emptyCost.some((node) => node.classList.contains("sr-only"))).toBe(true);
+		const tokensOnlyCard = screen.getByText("tokens worker").closest('[data-testid="board-session-card"]') as HTMLElement;
+		expect(within(tokensOnlyCard).getByText("Unavailable · 800")).toHaveAttribute("aria-hidden", "true");
+		expect(within(tokensOnlyCard).getByText("Unavailable · 800 tokens")).toHaveClass("sr-only");
+		expect(tokensOnlyCard).not.toHaveTextContent(/[≈≥]\$/);
+		expect(usageQueryMock).toHaveBeenCalledWith("p1");
+
+		const archive = await expandArchive();
+		expect(within(archive).getByText("$0.02 · 1,900 tokens")).toHaveClass("sr-only");
+	});
+
+	// The breakdown lived behind a tooltip whose trigger was a real button, so
+	// every priced card added a tab stop between the terminate control and the
+	// next card. A board is for scanning; the per-component figures belong on
+	// the session's own surface, so the metric is plain text again.
+	it("shows the usage metric as plain text without a tab stop or tooltip", async () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				workspaceWithSessions([
+					boardSession({ id: "s-keyboard", title: "keyboard worker", status: "idle" }),
+				]),
+			],
+			isError: false,
+			isSuccess: true,
+		});
+		usageQueryMock.mockReturnValue({
+			data: new Map([
+				[
+					"s-keyboard",
+					{
+						estimatedCost: {
+							cachedInputNanos: 100_000_000,
+							coverage: "complete",
+							inputNanos: 540_000_000,
+							outputNanos: 600_000_000,
+							providerAttribution: "observed",
+							totalNanos: 1_240_000_000,
+						},
+						incomplete: false,
+						sessionId: "s-keyboard",
+						processedTokens: 12_400,
+						totalTokens: 12_400,
+					},
+				],
+			]),
+		});
+
+		renderBoard("p1");
+
+		const card = screen.getByText("keyboard worker").closest('[data-testid="board-session-card"]') as HTMLElement;
+		const usage = within(card).getByText("$1.24 · 12.4K");
+		expect(usage.tagName).toBe("SPAN");
+		// The compact text is decorative; the full label is real off-screen text
+		// rather than an aria-label on a generic span, which is not reliably
+		// exposed. Neither is a tab stop and neither opens a tooltip.
+		expect(usage).toHaveAttribute("aria-hidden", "true");
+		expect(within(card).getByText("$1.24 · 12,400 tokens")).toHaveClass("sr-only");
+		expect(within(card).queryByRole("button", { name: /Estimated cost/ })).not.toBeInTheDocument();
+
+		within(card).getByRole("button", { name: "keyboard worker" }).focus();
+		await userEvent.tab();
+		expect(within(card).getByRole("button", { name: "Terminate keyboard worker" })).toHaveFocus();
+
+		await userEvent.hover(usage);
+		expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+		expect(card).not.toHaveTextContent("Cached input");
+	});
+
+	it("pulses the shared activity indicator on an actively working session card", () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				workspaceWithSessions([
+					boardSession({
+						id: "s-active",
+						title: "active-card-task",
+						status: "working",
+						activity: { state: "active", lastActivityAt: "2026-01-01T00:00:00Z" },
+					}),
+				]),
+			],
+			isError: false,
+			isSuccess: true,
+		});
+
+		renderBoard("p1");
+		const card = screen.getByText("active-card-task").closest('[data-testid="board-session-card"]') as HTMLElement;
+		const working = within(card).getByText("Working").parentElement as HTMLElement;
+		expect(working.querySelector('[aria-hidden="true"]')).toHaveClass("bg-status-working", "animate-status-pulse");
+	});
+
+	it("keeps a spawning card labeled Working when raw activity has not become active", () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				workspaceWithSessions([
+					boardSession({
+						id: "s-spawning",
+						title: "spawning-card-task",
+						status: "working",
+						activity: { state: "exited", lastActivityAt: "2026-01-01T00:00:00Z" },
+					}),
+				]),
+			],
+			isError: false,
+			isSuccess: true,
+		});
+
+		renderBoard("p1");
+		const card = screen.getByText("spawning-card-task").closest('[data-testid="board-session-card"]') as HTMLElement;
+		expect(within(card).getByText("Working")).toBeInTheDocument();
+		expect(within(card).queryByText("Exited")).not.toBeInTheDocument();
+	});
+
+	it("shows switch progress instead of the exited source on a card", () => {
+		const worker = boardSession({
+			id: "s-switching",
+			title: "switching worker",
+			status: "exited",
+			activity: {
+				state: "exited",
+				lastActivityAt: "2026-01-01T00:00:00Z",
+			},
+		});
+		worker.activeAgentSwitch = activeAgentSwitch(worker.id);
+		workspaceQueryMock.mockReturnValue({
+			data: [workspaceWithSessions([worker])],
+			isError: false,
+			isSuccess: true,
+		});
+
+		renderBoard("p1");
+
+		const card = screen.getByText("switching worker").closest('[data-testid="board-session-card"]') as HTMLElement;
+		const status = within(card).getByText("Switching to Codex").parentElement as HTMLElement;
+		expect(status).toHaveClass("text-status-working");
+		expect(status.querySelector("span")).toHaveClass("animate-status-pulse");
+		expect(within(card).queryByText("Exited")).not.toBeInTheDocument();
 	});
 
 	it("uses distinct card badge tones for idle, no signal, and draft PR sessions", () => {
@@ -271,9 +583,9 @@ describe("SessionsBoard", () => {
 		const noSignalCard = screen.getByText("no-signal-card-task").closest('[data-testid="board-session-card"]') as HTMLElement;
 		const draftCard = screen.getByText("draft-card-task").closest('[data-testid="board-session-card"]') as HTMLElement;
 
-		expect(within(idleCard).getByText("Idle").closest("span")).toHaveClass("text-status-idle");
-		expect(within(noSignalCard).getByText("No signal").closest("span")).toHaveClass("text-status-unknown");
-		expect(within(draftCard).getByText("Draft PR").closest("span")).toHaveClass("text-status-in-review");
+		expect(within(idleCard).getByText("Idle").parentElement).toHaveClass("text-status-idle");
+		expect(within(noSignalCard).getByText("No signal").parentElement).toHaveClass("text-status-unknown");
+		expect(within(draftCard).getByText("Draft PR").parentElement).toHaveClass("text-status-in-review");
 	});
 
 	it("places an exited live session in Needs you with an Exited badge", () => {
@@ -303,7 +615,7 @@ describe("SessionsBoard", () => {
 		const needsYouColumn = screen.getByText("Needs you").closest("section") as HTMLElement;
 		expect(needsYouColumn.firstElementChild).toHaveClass("h-12");
 		expect(within(needsYouColumn).getByText("agent-exited-task")).toBeInTheDocument();
-		expect(within(needsYouColumn).getByText("Exited").closest("span")).toHaveClass("text-status-exited");
+		expect(within(needsYouColumn).getByText("Exited").parentElement).toHaveClass("text-status-exited");
 	});
 
 	it("renders an idle-first work lane with a separate lower working section", () => {
@@ -367,10 +679,12 @@ describe("SessionsBoard", () => {
 		expect(within(workLane).getByLabelText("2 idle sessions")).toHaveTextContent("2");
 		expect(within(workLane).getByLabelText("1 working session")).toHaveTextContent("1");
 		expect(screen.queryByRole("button", { name: /idle sessions/i })).not.toBeInTheDocument();
-		expect(idleRegion).toHaveClass("flex-[3]");
-		expect(workingRegion.className).toContain("flex-[2]");
-		expect(workingRegion.className).toContain("border-t");
+		expect(workLane.querySelectorAll(".overflow-y-auto")).toHaveLength(1);
+		expect(idleRegion).toHaveClass("flex-none");
+		expect(idleRegion).not.toHaveClass("overflow-y-auto", "board-scrollbar");
+		expect(workingRegion).toHaveClass("flex-1", "border-t");
 		expect(workingRegion.className).not.toContain("rounded-t");
+		expect(workingRegion).not.toHaveClass("overflow-y-auto", "board-scrollbar");
 		expect(within(idleRegion).getByText("idle-no-pr-task")).toBeInTheDocument();
 		expect(within(idleRegion).getByText("second-idle-task")).toBeInTheDocument();
 		expect(within(workingRegion).getByText("active-task")).toBeInTheDocument();
@@ -378,9 +692,51 @@ describe("SessionsBoard", () => {
 		expect(within(workLane).queryByText("idle-with-pr-task")).not.toBeInTheDocument();
 
 		const idleCard = screen.getByText("idle-no-pr-task").closest('[data-testid="board-session-card"]') as HTMLElement;
-		const badge = within(idleCard).getByText("Idle").closest("span");
+		const badge = within(idleCard).getByText("Idle").parentElement;
 		expect(badge).toHaveClass("text-status-idle");
 		expect(badge).not.toHaveClass("text-status-working");
+	});
+
+	it("uses one shared scrollbar when a short idle section sits above many working sessions", () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				workspaceWithSessions([
+					boardSession({
+						id: "s-idle",
+						title: "single-idle-task",
+						status: "idle",
+						activity: { state: "idle", lastActivityAt: "2026-01-01T00:00:00Z" },
+					}),
+					...Array.from({ length: 7 }, (_, index) =>
+						boardSession({
+							id: `s-working-${index + 1}`,
+							title: `working-task-${index + 1}`,
+							status: "working",
+							activity: { state: "active", lastActivityAt: "2026-01-01T00:00:00Z" },
+						}),
+					),
+				]),
+			],
+			isError: false,
+		});
+
+		renderBoard("p1");
+
+		const workLane = screen.getByRole("region", { name: "Idle / Working sessions" });
+		const idleRegion = within(workLane).getByRole("region", { name: "Idle sessions" });
+		const workingRegion = within(workLane).getByRole("region", { name: "Working sessions" });
+		const laneScrollers = Array.from(workLane.querySelectorAll<HTMLElement>(".overflow-y-auto"));
+
+		expect(laneScrollers).toHaveLength(1);
+		expect(laneScrollers[0]).toHaveClass("board-scrollbar", "overflow-y-auto");
+		expect(laneScrollers[0]).toContainElement(idleRegion);
+		expect(laneScrollers[0]).toContainElement(workingRegion);
+		expect(idleRegion).toHaveClass("flex-none");
+		expect(workingRegion).toHaveClass("flex-1");
+		expect(idleRegion.querySelector(".overflow-y-auto")).not.toBeInTheDocument();
+		expect(workingRegion.querySelector(".overflow-y-auto")).not.toBeInTheDocument();
+		expect(within(idleRegion).getByText("single-idle-task")).toBeInTheDocument();
+		expect(within(workingRegion).getAllByTestId("board-session-card")).toHaveLength(7);
 	});
 
 	it("lets idle sessions fill the lane when no working sessions exist", () => {
@@ -439,6 +795,7 @@ describe("SessionsBoard", () => {
 		expect(within(workLane).queryByRole("region", { name: "Idle sessions" })).not.toBeInTheDocument();
 		expect(workingRegion).toHaveClass("flex-1");
 		expect(workingRegion).not.toHaveClass("flex-[2]", "border-t");
+		expect(workLane.querySelectorAll(".overflow-y-auto")).toHaveLength(1);
 		expect(within(workingRegion).getByText("first-working-task")).toBeInTheDocument();
 		expect(within(workingRegion).getByText("second-working-task")).toBeInTheDocument();
 	});
@@ -533,20 +890,44 @@ describe("SessionsBoard", () => {
 	});
 
 	it("shows a static archive card with a persistent restore action", async () => {
+		const archivedSession = terminatedSession();
+		const mergedPr = archivedSession.prs[0];
+		if (!mergedPr) throw new Error("Archived-session fixture requires a pull request");
+		archivedSession.prs = [
+			{
+				...mergedPr,
+				number: 41,
+				state: "open",
+				url: "https://github.com/example/radic/pull/41",
+			},
+			mergedPr,
+		];
 		workspaceQueryMock.mockReturnValue({
-			data: [workspaceWithSessions([terminatedSession()])],
+			data: [workspaceWithSessions([archivedSession])],
 			isError: false,
 			isSuccess: true,
 		});
 
 		renderBoard("p1");
 
-		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
-
-		const archive = screen.getByRole("list", { name: "Archived sessions" });
-		expect(archive).toHaveClass("board-scrollbar", "overflow-y-auto");
+		const archiveButton = screen.getByRole("button", { name: /archive/i });
+		expect(archiveButton).toHaveClass(archiveToggleHeightClassName, "w-full", "py-0");
+		const archiveLabel = within(archiveButton).getByText("Archive");
+		expect(archiveLabel).not.toHaveClass("font-mono", "uppercase");
+		expect(archiveLabel).toHaveClass("text-2xs", "font-medium");
+		// Expanded archive overlays the board instead of shrinking lanes (which would
+		// force a persistent Needs You column scrollbar gutter).
+		expect(archiveButton.parentElement).toHaveClass("absolute", "inset-x-0", "bottom-0", "bg-background");
+		expect(screen.getByTestId("board")).toHaveClass("relative");
+		expect(screen.getByTestId("board").querySelector(":scope > .min-h-0.flex-1")).toHaveClass(
+			archiveToggleOffsetClassName,
+		);
+		const archive = await expandArchive();
+		expect(archive).toHaveClass("scrollbar-none", "overflow-y-auto", "max-h-[28vh]");
 		const terminatedCard = within(archive).getByText("dead worker").closest<HTMLElement>("[role='listitem']");
 		expect(terminatedCard).not.toBeNull();
+		expect(terminatedCard).toHaveAttribute("data-testid", "board-session-card");
+		expect(terminatedCard).not.toHaveClass("min-h-28");
 		expect(within(terminatedCard!).queryByRole("button", { name: "Open dead worker" })).not.toBeInTheDocument();
 		expect(within(terminatedCard!).getByText("Terminated")).toBeInTheDocument();
 		// Agent shown as its brand logo with an accessible name (not a text label).
@@ -555,7 +936,16 @@ describe("SessionsBoard", () => {
 		expect(screen.getByText("github:INT-17")).toBeInTheDocument();
 		const prStatus = screen.getByLabelText("#42 merged");
 		expect(prStatus).toHaveTextContent("PR#42merged");
-		const divider = terminatedCard!.querySelector(".mx-3.my-px.h-px.bg-border");
+		expect(within(prStatus).getByText("merged")).toHaveClass("text-status-merged");
+		const openPrStatus = screen.getByLabelText("#41 open");
+		expect(openPrStatus.parentElement).toBe(prStatus.parentElement);
+		expect(prStatus.parentElement).toHaveClass("flex-wrap");
+		expect(within(terminatedCard!).getByRole("link", { name: "#42" })).toHaveAttribute(
+			"href",
+			"https://github.com/example/radic/pull/42",
+		);
+		expect(within(terminatedCard!).getByRole("button", { name: "Copy branch ao/dead-worker" })).toBeInTheDocument();
+		const divider = terminatedCard!.querySelector("div[aria-hidden='true'].h-px.bg-border");
 		expect(divider).not.toBeNull();
 		expect(divider!.compareDocumentPosition(prStatus) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
 		expect(
@@ -564,6 +954,35 @@ describe("SessionsBoard", () => {
 		expect(screen.getByRole("button", { name: "Restore dead worker" })).toBeInTheDocument();
 
 		expect(screen.queryByRole("group", { name: "Archive layout" })).not.toBeInTheDocument();
+	});
+
+	it("keeps archive cards mounted after collapse so reopen does not remount them", async () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [workspaceWithSessions([terminatedSession()])],
+			isError: false,
+			isSuccess: true,
+		});
+		renderBoard("p1");
+
+		const archiveButton = screen.getByRole("button", { name: /archive/i });
+		const archive = await expandArchive();
+		const card = within(archive).getByText("dead worker");
+
+		await userEvent.click(archiveButton);
+		expect(archiveButton).toHaveAttribute("aria-expanded", "false");
+		expect(archive).toBeInTheDocument();
+		expect(archive).toHaveAttribute("aria-hidden", "true");
+		expect(archive).toHaveAttribute("inert");
+		expect(archive).toHaveClass("pointer-events-none");
+		expect(screen.queryByRole("list", { name: "Archived sessions" })).not.toBeInTheDocument();
+
+		await userEvent.click(archiveButton);
+		expect(archiveButton).toHaveAttribute("aria-expanded", "true");
+		const reopened = screen.getByRole("list", { name: "Archived sessions" });
+		expect(reopened).toBe(archive);
+		expect(within(reopened).getByText("dead worker")).toBe(card);
+		expect(reopened).not.toHaveAttribute("inert");
+		expect(reopened).not.toHaveClass("pointer-events-none");
 	});
 
 	it("renders archived sessions as a grid even when rows were previously saved", async () => {
@@ -575,12 +994,12 @@ describe("SessionsBoard", () => {
 		});
 		renderBoard("p1");
 
-		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+		await expandArchive();
 		expect(screen.queryByRole("group", { name: "Archive layout" })).not.toBeInTheDocument();
 		const archive = screen.getByRole("list", { name: "Archived sessions" });
 		expect(archive).toHaveClass("grid");
 		const restore = screen.getByRole("button", { name: "Restore dead worker" });
-		expect(restore.parentElement).toContainElement(screen.getByText("Terminated"));
+		expect(restore.closest("[role='listitem']")).toContainElement(screen.getByText("Terminated"));
 		expect(screen.queryByRole("button", { name: "Open dead worker" })).not.toBeInTheDocument();
 	});
 
@@ -593,7 +1012,7 @@ describe("SessionsBoard", () => {
 		const queryClient = renderBoard("p1");
 		const invalidate = vi.spyOn(queryClient, "invalidateQueries").mockResolvedValue(undefined);
 
-		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+		await expandArchive();
 		await userEvent.click(screen.getByRole("button", { name: "Restore dead worker" }));
 
 		await waitFor(() =>
@@ -617,7 +1036,7 @@ describe("SessionsBoard", () => {
 		});
 		renderBoard("p1");
 
-		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+		await expandArchive();
 		await userEvent.click(screen.getByRole("button", { name: "Restore dead worker" }));
 
 		await waitFor(() =>
@@ -639,7 +1058,7 @@ describe("SessionsBoard", () => {
 		});
 		renderBoard("p1");
 
-		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+		await expandArchive();
 		await userEvent.click(screen.getByRole("button", { name: "Restore dead worker" }));
 
 		await waitFor(() => expect(postMock).toHaveBeenCalled());
@@ -661,7 +1080,7 @@ describe("SessionsBoard", () => {
 
 		renderBoard("p1");
 
-		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+		await expandArchive();
 		await userEvent.click(screen.getByRole("button", { name: "Restore dead worker" }));
 
 		const restoringButton = screen.getByRole("button", { name: "Restore dead worker" });
@@ -685,7 +1104,7 @@ describe("SessionsBoard", () => {
 
 		renderBoard("p1");
 
-		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+		await expandArchive();
 		await userEvent.click(screen.getByRole("button", { name: "Restore dead worker" }));
 
 		expect(await screen.findByText("Session can no longer be restored")).toBeInTheDocument();
@@ -701,7 +1120,7 @@ describe("SessionsBoard", () => {
 
 		renderBoard("p1");
 
-		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+		await expandArchive();
 		await userEvent.click(screen.getByRole("button", { name: "Restore dead worker" }));
 
 		expect(await screen.findByText("Unable to restore session")).toBeInTheDocument();
@@ -717,7 +1136,7 @@ describe("SessionsBoard", () => {
 
 		renderBoard("p1");
 
-		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+		await expandArchive();
 		await userEvent.click(screen.getByText("dead worker"));
 
 		expect(postMock).not.toHaveBeenCalled();
@@ -747,7 +1166,7 @@ describe("SessionsBoard", () => {
 		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 		const view = renderBoardWithClient(queryClient, "p1");
 
-		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+		await expandArchive();
 		await userEvent.click(screen.getByRole("button", { name: "Restore dead worker" }));
 
 		view.rerender(
@@ -788,7 +1207,7 @@ describe("SessionsBoard", () => {
 		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 		const view = renderBoardWithClient(queryClient, "p1");
 
-		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+		await expandArchive();
 		await userEvent.click(screen.getByRole("button", { name: "Restore dead worker" }));
 
 		view.rerender(
@@ -856,10 +1275,12 @@ describe("SessionsBoard", () => {
 		const mergedRegion = within(mergeLane).getByRole("region", { name: "Merged sessions" });
 		expect(within(mergeLane).getByLabelText("1 ready to merge session")).toHaveTextContent("1");
 		expect(within(mergeLane).getByLabelText("1 merged session")).toHaveTextContent("1");
-		expect(readyRegion).toHaveClass("flex-[3]");
-		expect(mergedRegion.className).toContain("flex-[2]");
-		expect(mergedRegion.className).toContain("border-t");
+		expect(mergeLane.querySelectorAll(".overflow-y-auto")).toHaveLength(1);
+		expect(readyRegion).toHaveClass("flex-none");
+		expect(readyRegion).not.toHaveClass("overflow-y-auto", "board-scrollbar");
+		expect(mergedRegion).toHaveClass("flex-1", "border-t");
 		expect(mergedRegion.className).not.toContain("rounded-t");
+		expect(mergedRegion).not.toHaveClass("overflow-y-auto", "board-scrollbar");
 		expect(within(readyRegion).getByText("ready worker")).toBeInTheDocument();
 		expect(within(mergedRegion).getByText("merged worker")).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: /archive/i })).not.toBeInTheDocument();
@@ -886,7 +1307,7 @@ describe("SessionsBoard", () => {
 		const laneScrollers = screen
 			.getAllByTestId("board-column")
 			.flatMap((column) => Array.from(column.querySelectorAll<HTMLElement>(".overflow-y-auto")));
-		expect(laneScrollers).toHaveLength(6);
+		expect(laneScrollers).toHaveLength(4);
 		for (const scroller of laneScrollers) {
 			expect(scroller).toHaveClass("board-scrollbar", "overflow-y-auto");
 		}
@@ -910,7 +1331,7 @@ describe("SessionsBoard", () => {
 		expect(within(mergedRegion).getByText("live merged worker")).toBeInTheDocument();
 		expect(within(mergedRegion).queryByText("archived merged worker")).not.toBeInTheDocument();
 
-		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+		await expandArchive();
 		const archive = screen.getByRole("list", { name: "Archived sessions" });
 		const archivedMergedCard = within(archive)
 			.getByText("archived merged worker")
@@ -922,7 +1343,7 @@ describe("SessionsBoard", () => {
 		expect(
 			within(archivedMergedCard!).queryByRole("button", { name: "Terminate archived merged worker" }),
 		).not.toBeInTheDocument();
-		expect(within(archivedMergedCard!).getByText("Merged").closest("span")).toHaveClass("text-status-merged");
+		expect(within(archivedMergedCard!).getByText("Merged").parentElement).toHaveClass("text-status-merged");
 		expect(within(archive).getByRole("button", { name: "Restore archived merged worker" })).toBeInTheDocument();
 	});
 
@@ -954,17 +1375,51 @@ describe("SessionsBoard", () => {
 		await userEvent.click(terminateButton);
 		expect(navigateMock).not.toHaveBeenCalled();
 		const dialog = screen.getByRole("dialog", { name: "Terminate merged worker?" });
-		await userEvent.click(within(dialog).getByRole("button", { name: "Terminate session" }));
+		await userEvent.click(within(dialog).getByRole("button", { name: "Yes, terminate session" }));
 
 		await waitFor(() =>
 			expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/kill", {
 				params: { path: { sessionId: "s-merged" } },
 			}),
 		);
+		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 		expect(navigateMock).not.toHaveBeenCalled();
 	});
 
-	it("keeps the merged-card confirmation open when termination fails", async () => {
+	it("keeps only the targeted card disabled while its termination is pending", async () => {
+		let finishKill!: (value: { data: { ok: boolean; sessionId: string }; error: undefined }) => void;
+		postMock.mockReturnValueOnce(
+			new Promise((resolve) => {
+				finishKill = resolve;
+			}),
+		);
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				workspaceWithSessions([
+					boardSession({ id: "s-one", title: "worker one", status: "working" }),
+					boardSession({ id: "s-two", title: "worker two", status: "merged" }),
+				]),
+			],
+			isError: false,
+			isSuccess: true,
+		});
+		renderBoard("p1");
+
+		await userEvent.click(screen.getByRole("button", { name: "Terminate worker one" }));
+		await userEvent.click(
+			within(screen.getByRole("dialog")).getByRole("button", { name: "Yes, terminate session" }),
+		);
+
+		expect(screen.getByRole("button", { name: "Killing worker one" })).toBeDisabled();
+		expect(screen.getByRole("button", { name: "Killing worker one" })).toHaveClass("opacity-100");
+		expect(screen.getByRole("button", { name: "Terminate worker two" })).toBeEnabled();
+		expect(postMock).toHaveBeenCalledTimes(1);
+
+		finishKill({ data: { ok: true, sessionId: "s-one" }, error: undefined });
+		await waitFor(() => expect(screen.getByRole("button", { name: "Terminate worker one" })).toBeEnabled());
+	});
+
+	it("keeps the merged-card confirmation dismissed and surfaces termination failures", async () => {
 		postMock.mockResolvedValueOnce({ error: { message: "runtime failed" }, response: { status: 500 } });
 		workspaceQueryMock.mockReturnValue({
 			data: [workspaceWithSessions([boardSession({ id: "s-merged", title: "merged worker", status: "merged" })])],
@@ -974,10 +1429,14 @@ describe("SessionsBoard", () => {
 		renderBoard("p1");
 
 		await userEvent.click(screen.getByRole("button", { name: "Terminate merged worker" }));
-		await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Terminate session" }));
+		await userEvent.click(
+			within(screen.getByRole("dialog")).getByRole("button", { name: "Yes, terminate session" }),
+		);
 
-		expect(await screen.findByText("Failed to terminate session (500)")).toBeInTheDocument();
-		expect(screen.getByRole("dialog")).toBeInTheDocument();
+		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
+		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+		expect(await screen.findByRole("alert")).toHaveTextContent("Failed to terminate session (500)");
+		expect(screen.getByRole("button", { name: "Terminate merged worker" })).toBeEnabled();
 	});
 });
 
@@ -1000,6 +1459,20 @@ function boardSession(
 		branch: `ao/${overrides.id}`,
 		updatedAt: "2026-01-01T00:00:00Z",
 		prs: [],
+		...overrides,
+	};
+}
+
+function activeAgentSwitch(
+	sessionId: string,
+	overrides: Partial<NonNullable<WorkspaceSession["activeAgentSwitch"]>> = {},
+): NonNullable<WorkspaceSession["activeAgentSwitch"]> {
+	return {
+		agentHandoffStatus: "received",
+		fromHarness: "claude-code",
+		id: `switch-${sessionId}`,
+		state: "starting_target",
+		targetHarness: "codex",
 		...overrides,
 	};
 }

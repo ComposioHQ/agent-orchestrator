@@ -1,72 +1,64 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
+import { sidebarIsCompact, sidebarIsVisible, useUiStore } from "./ui-store";
 
-// developerMode initializes from localStorage at module load, so each case resets
-// modules and re-imports to exercise the real initialization path.
-describe("ui-store developerMode persistence", () => {
+describe("sidebar workspace pressure", () => {
 	beforeEach(() => {
 		window.localStorage.clear();
-		vi.resetModules();
-	});
-
-	it("defaults to off when nothing is stored", async () => {
-		const { useUiStore } = await import("./ui-store");
-		expect(useUiStore.getState().developerMode).toBe(false);
-	});
-
-	it("restores an enabled flag from stored ao.developerMode=true", async () => {
-		window.localStorage.setItem("ao.developerMode", "true");
-		const { useUiStore } = await import("./ui-store");
-		expect(useUiStore.getState().developerMode).toBe(true);
-	});
-
-	it('treats any non-"true" stored value as off', async () => {
-		window.localStorage.setItem("ao.developerMode", "1");
-		const { useUiStore } = await import("./ui-store");
-		expect(useUiStore.getState().developerMode).toBe(false);
-	});
-
-	it("setDeveloperMode writes localStorage and updates state", async () => {
-		const { useUiStore } = await import("./ui-store");
-		useUiStore.getState().setDeveloperMode(true);
-		expect(useUiStore.getState().developerMode).toBe(true);
-		expect(window.localStorage.getItem("ao.developerMode")).toBe("true");
-		useUiStore.getState().setDeveloperMode(false);
-		expect(useUiStore.getState().developerMode).toBe(false);
-		expect(window.localStorage.getItem("ao.developerMode")).toBe("false");
-	});
-});
-
-describe("ui-store session tab persistence", () => {
-	beforeEach(() => {
-		window.localStorage.clear();
-		vi.resetModules();
-	});
-
-	it("keeps added tabs isolated by owner session and restores them", async () => {
-		let store = (await import("./ui-store")).useUiStore;
-		store.getState().addSessionTab("session-a", "session-c");
-		store.getState().addSessionTab("session-a", "session-d");
-		store.getState().addSessionTab("session-b", "session-c");
-
-		expect(store.getState().sessionTabsByOwner).toEqual({
-			"session-a": ["session-c", "session-d"],
-			"session-b": ["session-c"],
+		useUiStore.setState({
+			isSidebarOpen: true,
+			isSidebarAutoCollapsed: false,
+			sidebarAutoCollapseOverride: false,
+			sidebarWorkspaceDemandPx: null,
 		});
-
-		vi.resetModules();
-		store = (await import("./ui-store")).useUiStore;
-		expect(store.getState().sessionTabsByOwner["session-a"]).toEqual(["session-c", "session-d"]);
 	});
 
-	it("deduplicates additions and removes only the requested owner's tab", async () => {
-		const { useUiStore: store } = await import("./ui-store");
-		store.getState().addSessionTab("session-a", "session-c");
-		store.getState().addSessionTab("session-a", "session-c");
-		store.getState().addSessionTab("session-b", "session-c");
-		store.getState().removeSessionTab("session-a", "session-c");
+	it("temporarily compacts navigation without changing the saved preference", () => {
+		useUiStore.getState().setSidebarAutoCollapsed(true);
 
-		expect(store.getState().sessionTabsByOwner).toEqual({
-			"session-b": ["session-c"],
-		});
+		const state = useUiStore.getState();
+		expect(state.isSidebarOpen).toBe(true);
+		expect(sidebarIsCompact(state)).toBe(true);
+		expect(sidebarIsVisible(state)).toBe(false);
+		expect(window.localStorage.getItem("ao.sidebar.open")).toBeNull();
+
+		useUiStore.getState().setSidebarAutoCollapsed(false);
+		expect(sidebarIsVisible(useUiStore.getState())).toBe(true);
+	});
+
+	it("lets the user reveal and close the sidebar under active pressure", () => {
+		useUiStore.getState().setSidebarAutoCollapsed(true);
+		useUiStore.getState().toggleSidebar();
+
+		let state = useUiStore.getState();
+		expect(state.isSidebarOpen).toBe(true);
+		expect(state.sidebarAutoCollapseOverride).toBe(true);
+		expect(sidebarIsVisible(state)).toBe(true);
+
+		useUiStore.getState().toggleSidebar();
+		state = useUiStore.getState();
+		expect(state.isSidebarOpen).toBe(false);
+		expect(sidebarIsCompact(state)).toBe(false);
+		expect(state.sidebarAutoCollapseOverride).toBe(false);
+		expect(sidebarIsVisible(state)).toBe(false);
+		expect(window.localStorage.getItem("ao.sidebar.open")).toBe("false");
+	});
+
+	it("does not revoke an explicit expansion when pressure fluctuates during motion", () => {
+		useUiStore.getState().setSidebarAutoCollapsed(true);
+		useUiStore.getState().toggleSidebar();
+		useUiStore.getState().setSidebarAutoCollapsed(false);
+		useUiStore.getState().setSidebarAutoCollapsed(true);
+
+		let state = useUiStore.getState();
+		expect(state.isSidebarAutoCollapsed).toBe(true);
+		expect(state.sidebarAutoCollapseOverride).toBe(true);
+		expect(sidebarIsVisible(state)).toBe(true);
+
+		useUiStore.getState().clearSidebarAutoCollapse();
+
+		state = useUiStore.getState();
+		expect(state.isSidebarOpen).toBe(true);
+		expect(state.sidebarAutoCollapseOverride).toBe(false);
+		expect(sidebarIsVisible(state)).toBe(true);
 	});
 });

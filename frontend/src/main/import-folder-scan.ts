@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { readdir, stat } from "node:fs/promises";
+import { realpathSync } from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
 
@@ -14,6 +15,7 @@ export type GitRepoScanResult = {
 	hasRemote: boolean;
 	status: "ok" | "error";
 	reason?: string;
+	needsGitInit?: boolean;
 };
 
 export type ImportFolderScanResult = {
@@ -50,7 +52,12 @@ async function gitOutput(cwd: string, args: string[], options: ScanOptions = {})
 
 function comparablePath(value: string): string {
 	const resolved = path.resolve(value);
-	return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+	try {
+		const real = realpathSync(resolved);
+		return process.platform === "win32" ? real.toLowerCase() : real;
+	} catch {
+		return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+	}
 }
 
 function samePath(a: string, b: string): boolean {
@@ -78,7 +85,7 @@ function projectSetupSafetyReason(repoPath: string, options: ScanOptions = {}): 
 	return undefined;
 }
 
-async function ancestorRepositorySetupWarning(repoPath: string, options: ScanOptions = {}): Promise<string | undefined> {
+export async function ancestorRepositorySetupWarning(repoPath: string, options: ScanOptions = {}): Promise<string | undefined> {
 	try {
 		const top = normalizeGitReportedPath(repoPath, await gitOutput(repoPath, ["rev-parse", "--show-toplevel"], options));
 		if (top && !samePath(top, repoPath)) {
@@ -106,15 +113,9 @@ async function resolveDefaultBranch(repoPath: string, options: ScanOptions = {})
 		const ref = await gitOutput(repoPath, ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], options);
 		if (ref) return ref.replace(/^origin\//, "");
 	} catch {
-		// Fall back to the checked-out branch when origin/HEAD is unavailable.
+		// The current checkout may be temporary and is not a repository default.
 	}
-	try {
-		const branch = await gitOutput(repoPath, ["branch", "--show-current"], options);
-		if (branch) return branch;
-	} catch {
-		// Detached or unreadable HEAD is represented below.
-	}
-	return "HEAD";
+	return "auto";
 }
 
 async function scanGitRepo(
@@ -131,11 +132,11 @@ async function scanGitRepo(
 				name,
 				path: repoPath,
 				relativePath,
-				branch: "HEAD",
+				branch: "",
 				remote: "",
 				hasRemote: false,
-				status: "error",
-				reason: "Linked worktree children cannot be imported.",
+				status: "ok",
+				needsGitInit: true,
 			};
 		}
 	} catch {
@@ -153,48 +154,43 @@ async function scanGitRepo(
 				};
 			}
 		} catch {
-			// Not a git repository.
+			// Not a git repository — surface as needs-init.
 		}
-		return null;
+		return {
+			name,
+			path: repoPath,
+			relativePath,
+			branch: "",
+			remote: "",
+			hasRemote: false,
+			status: "ok",
+			needsGitInit: true,
+		};
 	}
 	if (!(await isGitRepo(repoPath, options))) return null;
-	const [branchResult, remoteResult, bareResult, headResult] = await Promise.allSettled([
+	const [branchResult, remoteResult, headResult] = await Promise.allSettled([
 		resolveDefaultBranch(repoPath, options),
 		gitOutput(repoPath, ["remote", "get-url", "origin"], options),
-		gitOutput(repoPath, ["rev-parse", "--is-bare-repository"], options),
 		gitOutput(repoPath, ["rev-parse", "--verify", "HEAD"], options),
 	]);
-	const validationReason = scanRepoValidationReason(
-		name,
-		branchResult.status === "fulfilled" && branchResult.value ? branchResult.value : "HEAD",
-		remoteResult.status === "fulfilled" && remoteResult.value.length > 0,
-		bareResult.status === "fulfilled" && bareResult.value === "true",
-		headResult.status === "fulfilled",
-	);
+	const hasHead = headResult.status === "fulfilled";
+	const hasRemote = remoteResult.status === "fulfilled" && remoteResult.value.length > 0;
+	const validationReason = scanRepoValidationReason(name);
 	return {
 		name,
 		path: repoPath,
 		relativePath,
 		branch: branchResult.status === "fulfilled" && branchResult.value ? branchResult.value : "HEAD",
 		remote: remoteResult.status === "fulfilled" ? remoteResult.value : "",
-		hasRemote: remoteResult.status === "fulfilled" && remoteResult.value.length > 0,
+		hasRemote,
 		status: validationReason ? "error" : "ok",
 		reason: validationReason,
+		needsGitInit: !validationReason && (!hasHead || !hasRemote),
 	};
 }
 
-function scanRepoValidationReason(
-	name: string,
-	branch: string,
-	hasRemote: boolean,
-	isBare: boolean,
-	hasHead: boolean,
-): string | undefined {
+function scanRepoValidationReason(name: string): string | undefined {
 	if (name === "__root__") return "Repository name is reserved by AO.";
-	if (isBare) return "Bare repositories cannot be imported.";
-	if (!hasHead) return "Repository must have at least one commit.";
-	if (branch === "HEAD") return "Repository must have a checked-out branch.";
-	if (!hasRemote) return "Origin remote is required.";
 	return undefined;
 }
 
@@ -237,25 +233,32 @@ export async function scanImportFolder(
 				],
 			};
 		}
-		const repo = await scanGitRepo(rootPath, rootPath, options);
-		if (repo) return { path: rootPath, repos: [repo] };
-		return {
-			path: rootPath,
-			repos: [],
-			setupWarning: await ancestorRepositorySetupWarning(rootPath, options),
-		};
+	const repo = await scanGitRepo(rootPath, rootPath, options);
+	if (repo && !repo.needsGitInit) return { path: rootPath, repos: [repo] };
+	const setupWarning = await ancestorRepositorySetupWarning(rootPath, options);
+	return {
+		path: rootPath,
+		repos: repo ? [repo] : [],
+		...(setupWarning ? { setupWarning } : {}),
+	};
 	}
 
-	const entries = (await readdir(rootPath, { withFileTypes: true }))
-		.filter((entry) => entry.isDirectory() && !IMPORT_SCAN_SKIP_DIRS.has(entry.name))
-		.slice(0, IMPORT_SCAN_MAX_ENTRIES);
-	const repos = await mapLimited(entries, IMPORT_SCAN_CONCURRENCY, (entry) =>
-		scanGitRepo(path.join(rootPath, entry.name), rootPath, options),
+	const [entries, ancestorWarning] = await Promise.all([
+		readdir(rootPath, { withFileTypes: true }),
+		ancestorRepositorySetupWarning(rootPath, options),
+	]);
+	const repos = await mapLimited(
+		entries
+			.filter((entry) => entry.isDirectory() && !IMPORT_SCAN_SKIP_DIRS.has(entry.name))
+			.slice(0, IMPORT_SCAN_MAX_ENTRIES),
+		IMPORT_SCAN_CONCURRENCY,
+		(entry) => scanGitRepo(path.join(rootPath, entry.name), rootPath, options),
 	);
 	return {
 		path: rootPath,
 		repos: repos
 			.filter((repo): repo is GitRepoScanResult => repo !== null)
 			.sort((a, b) => a.name.localeCompare(b.name)),
+		...(ancestorWarning ? { setupWarning: ancestorWarning } : {}),
 	};
 }

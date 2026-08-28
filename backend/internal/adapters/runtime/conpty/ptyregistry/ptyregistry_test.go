@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
+	"sync"
 	"testing"
 	"time"
 )
@@ -23,6 +25,16 @@ func setupHome(t *testing.T) string {
 	t.Setenv("HOME", dir)
 	t.Setenv("USERPROFILE", dir)
 	return filepath.Join(dir, ".ao", "windows-pty-hosts.json")
+}
+
+// withRunFilePath sets the instance-scoped registry override for the
+// duration of the test and restores the previous value on cleanup, mirroring
+// withFakePidAlive above.
+func withRunFilePath(t *testing.T, path string) {
+	t.Helper()
+	orig := overrideDir
+	SetRunFilePath(path)
+	t.Cleanup(func() { overrideDir = orig })
 }
 
 func nowRFC3339() string {
@@ -69,6 +81,42 @@ func TestRegisterReplaceSameID(t *testing.T) {
 	}
 	if got[0].PtyHostPID != 222 {
 		t.Fatalf("expected PID 222, got %d", got[0].PtyHostPID)
+	}
+}
+
+func TestConcurrentRegistersPreserveEveryHost(t *testing.T) {
+	setupHome(t)
+	withFakePidAlive(t, func(int) bool { return true })
+
+	const count = 16
+	var wg sync.WaitGroup
+	errs := make(chan error, count)
+	for i := 0; i < count; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			errs <- Register(Entry{
+				SessionID:    "session-" + strconv.Itoa(i),
+				PtyHostPID:   1000 + i,
+				PipePath:     "127.0.0.1:" + strconv.Itoa(50000+i),
+				RegisteredAt: nowRFC3339(),
+			})
+		}(i)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	entries, err := List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != count {
+		t.Fatalf("registry has %d entries, want %d: %v", len(entries), count, entries)
 	}
 }
 
@@ -226,5 +274,83 @@ func TestAtomicWriteProducesValidJSON(t *testing.T) {
 	}
 	if len(entries) != 1 || entries[0].PtyHostPID != 99 {
 		t.Fatalf("unexpected entries: %v", entries)
+	}
+}
+
+// TestSetRunFilePathScopesRegistryToInstanceDir verifies that pinning the
+// registry to a run-file's directory writes there instead of ~/.ao, even
+// though HOME still resolves to a different temp dir.
+func TestSetRunFilePathScopesRegistryToInstanceDir(t *testing.T) {
+	homeRegPath := setupHome(t)
+	withFakePidAlive(t, func(int) bool { return true })
+
+	instanceDir := t.TempDir()
+	withRunFilePath(t, filepath.Join(instanceDir, "running.json"))
+
+	e := Entry{SessionID: "s1", PtyHostPID: 1234, PipePath: "127.0.0.1:50000", RegisteredAt: nowRFC3339()}
+	if err := Register(e); err != nil {
+		t.Fatal(err)
+	}
+
+	wantPath := filepath.Join(instanceDir, "windows-pty-hosts.json")
+	if _, err := os.Stat(wantPath); err != nil {
+		t.Fatalf("expected registry at instance dir %s: %v", wantPath, err)
+	}
+	if _, err := os.Stat(homeRegPath); !os.IsNotExist(err) {
+		t.Fatalf("expected no registry written under HOME %s", homeRegPath)
+	}
+}
+
+// TestTwoInstancesWithDifferentRunFilePathsDoNotShareRegistry is the
+// regression test for the cross-instance session collision: two daemon
+// instances (e.g. a headless dev daemon and the desktop app) with different
+// AO_RUN_FILE locations must not clobber each other's same-named session
+// even though both resolve to one registry file today.
+func TestTwoInstancesWithDifferentRunFilePathsDoNotShareRegistry(t *testing.T) {
+	setupHome(t)
+	withFakePidAlive(t, func(int) bool { return true })
+
+	instanceA := t.TempDir()
+	instanceB := t.TempDir()
+
+	withRunFilePath(t, filepath.Join(instanceA, "running.json"))
+	if err := Register(Entry{SessionID: "demo-website-2", PtyHostPID: 100, PipePath: "127.0.0.1:50001", RegisteredAt: nowRFC3339()}); err != nil {
+		t.Fatal(err)
+	}
+
+	withRunFilePath(t, filepath.Join(instanceB, "running.json"))
+	if err := Register(Entry{SessionID: "demo-website-2", PtyHostPID: 200, PipePath: "127.0.0.1:50002", RegisteredAt: nowRFC3339()}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Instance A's own registration for the same session id must be
+	// untouched by instance B registering a session of the same name.
+	withRunFilePath(t, filepath.Join(instanceA, "running.json"))
+	got, err := List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].PtyHostPID != 100 {
+		t.Fatalf("expected instance A's own entry (pid 100) untouched by instance B, got %v", got)
+	}
+}
+
+// TestSetRunFilePathEmptyClearsOverride verifies the documented contract: an
+// empty path clears any override and reverts to the ~/.ao default. This is
+// what lets conpty.New(Options{}) -- the zero value used throughout this
+// package's own tests -- always start from a clean, deterministic registry
+// resolution regardless of what an earlier test configured.
+func TestSetRunFilePathEmptyClearsOverride(t *testing.T) {
+	regPath := setupHome(t)
+	withFakePidAlive(t, func(int) bool { return true })
+
+	withRunFilePath(t, filepath.Join(t.TempDir(), "running.json"))
+	withRunFilePath(t, "")
+
+	if err := Register(Entry{SessionID: "s1", PtyHostPID: 1, PipePath: "127.0.0.1:50000", RegisteredAt: nowRFC3339()}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(regPath); err != nil {
+		t.Fatalf("expected default HOME-based registry at %s: %v", regPath, err)
 	}
 }

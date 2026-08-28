@@ -1,18 +1,44 @@
 import type { ForgeConfig } from "@electron-forge/shared-types";
 import { VitePlugin } from "@electron-forge/plugin-vite";
 import MakerNSIS from "./makers/maker-nsis";
+import MakerDMG, { sealDmg, verifyDmg } from "./makers/maker-dmg";
 import MakerAppImage from "./makers/maker-appimage";
-import { writeFileSync } from "node:fs";
+import { existsSync, readdirSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import path from "node:path";
 
-// Default GitHub release target (production). aoagents was the temporary rewrite
-// home; releases land on AgentWrapper (spec §1.1).
-const DEFAULT_RELEASE_REPO = "AgentWrapper/agent-orchestrator";
+// Default GitHub release target (production). Releases land on Untrivial-ai
+// (the org the repo was transferred to in July 2026; AgentWrapper and aoagents
+// are prior homes). Builds cut by CI must NOT rely on this fallback: the
+// workflows set AO_RELEASE_REPO to the repo they run in, and build-artifacts.yml
+// asserts the baked app-update.yml matches it, so a future org/repo rename
+// fails the build instead of stranding the fleet on a redirect (#3523).
+const DEFAULT_RELEASE_REPO = "Untrivial-ai/agent-orchestrator";
 
 // The packaged binary name (no extension). Single source of truth: the packager
 // names the exe/ELF from this, and the NSIS + deb makers must point their
 // shortcut/launcher at the SAME name. Drift here means a broken Start menu
 // shortcut on Windows (#2414) or "could not find the Electron app binary" on deb.
 const EXECUTABLE_NAME = "agent-orchestrator";
+const AUTH_PROTOCOL = {
+	name: "Agent Orchestrator authentication callback",
+	schemes: ["ao-app"],
+};
+const AUTH_PROTOCOL_MIME_TYPE = "x-scheme-handler/ao-app";
+
+export function extraResourcesForPlatform(platform: NodeJS.Platform): string[] {
+	return [
+		"daemon",
+		"agent-browser",
+		"resources/acp-runtime",
+		...(platform === "darwin" || platform === "linux" ? ["tmux"] : []),
+		"assets/icon.png",
+		"assets/icon.ico",
+		"assets/trayIconTemplate.png",
+		"assets/trayIconTemplate@2x.png",
+		"app-update.yml",
+	];
+}
 
 // parseReleaseRepo turns an "owner/repo" string (from AO_RELEASE_REPO) into the
 // publisher-github { owner, name } shape, falling back to the production default
@@ -32,12 +58,13 @@ const config: ForgeConfig = {
 		appBundleId: "dev.agent-orchestrator.desktop",
 		name: "Agent Orchestrator",
 		executableName: EXECUTABLE_NAME,
+		protocols: [AUTH_PROTOCOL],
 		appCategoryType: "public.app-category.developer-tools",
 		// App icon. electron-packager appends the per-platform extension
 		// (.icns on macOS, .ico on Windows); Linux menu icons come from the
 		// deb/rpm makers below, and the runtime window icon from src/main.ts.
 		icon: "assets/icon",
-		extraResource: ["daemon", "assets/icon.png", "assets/icon.ico", "app-update.yml"],
+		extraResource: extraResourcesForPlatform(process.platform),
 		// Notarization. Two paths:
 		//  - CI: an App Store Connect API key. APPLE_API_KEY is a PATH to the .p8
 		//    (the workflow decodes APPLE_API_KEY_BASE64 to a temp file), plus the
@@ -80,6 +107,51 @@ const config: ForgeConfig = {
 			].join("\n");
 			writeFileSync("app-update.yml", yml);
 		},
+		// Assert the native resource survived Electron Packager's copy/asar/sign
+		// pipeline. A source build succeeding is not enough: a missing extraResource
+		// would otherwise publish an app that silently fell back to machine tmux.
+		postPackage: async (_forgeConfig, packageResult) => {
+			if (packageResult.platform !== "darwin" && packageResult.platform !== "linux") return;
+			for (const outputPath of packageResult.outputPaths) {
+				let resourcesPath = path.join(outputPath, "resources");
+				if (packageResult.platform === "darwin") {
+					const appBundle = readdirSync(outputPath).find((entry) => entry.endsWith(".app"));
+					if (!appBundle) throw new Error(`packaged macOS app bundle missing from ${outputPath}`);
+					resourcesPath = path.join(outputPath, appBundle, "Contents", "Resources");
+				}
+				const binary = path.join(resourcesPath, "tmux", "bin", "tmux");
+				if (!existsSync(binary)) throw new Error(`packaged tmux missing from ${binary}`);
+				const version = spawnSync(binary, ["-V"], { encoding: "utf8" });
+				if (version.status !== 0 || version.stdout.trim() !== "tmux 3.5a") {
+					throw new Error(`packaged tmux failed verification at ${binary}: ${version.stderr || version.stdout}`);
+				}
+			}
+		},
+		// The dmg container is NOT signed, notarized or stapled by any maker
+		// (neither Forge's maker-dmg nor app-builder-lib's dmg target does it), and
+		// the .app's own stapled ticket does not propagate through an unsealed
+		// container. So seal it here, after the maker has produced it, reusing the
+		// same credentials packagerConfig already consumes (#3267 decision 3).
+		// The .app inside was already signed + notarized + stapled by
+		// packagerConfig above, before any maker ran; nothing here touches it.
+		//
+		// Then PROVE the seal. sealDmg exiting 0 only says three commands ran on
+		// this machine; it does not say Gatekeeper accepts the published bytes with
+		// a stapled ticket. verify-mac-artifact.sh is the canonical gate for that
+		// (#3288 workstreams 1 and 2), and #3267 decision 3 step 4 asks for exactly
+		// this check on the dmg. Run only when sealDmg actually sealed: an unsigned
+		// local or desktop-testing build has nothing to verify and must keep
+		// producing its dmg.
+		postMake: async (_forgeConfig, makeResults) => {
+			for (const result of makeResults) {
+				if (result.platform !== "darwin") continue;
+				for (const artifact of result.artifacts) {
+					if (!artifact.endsWith(".dmg")) continue;
+					if (await sealDmg(artifact)) await verifyDmg(artifact);
+				}
+			}
+			return makeResults;
+		},
 	},
 	rebuildConfig: {},
 	makers: [
@@ -97,7 +169,21 @@ const config: ForgeConfig = {
 			},
 			["win32"],
 		),
+		// macOS auto-update artifact. This entry can NEVER be removed:
+		// MacUpdater.doDownloadUpdate looks for a "zip" and explicitly excludes
+		// .pkg/.dmg, throwing ERR_UPDATER_ZIP_FILE_NOT_FOUND otherwise, so the zip
+		// and latest-mac.yml must keep publishing forever (#3267 decision 2).
 		{ name: "@electron-forge/maker-zip", platforms: ["darwin"], config: {} },
+		// macOS FIRST-INSTALL artifact, additive to the zip above: a dmg has no
+		// user-driven extraction step, so a third-party unzip tool can no longer
+		// break the signature seal on the way in (see makers/maker-dmg.ts, #3267).
+		new MakerDMG(
+			{
+				appId: "dev.agent-orchestrator.desktop",
+				productName: "Agent Orchestrator",
+			},
+			["darwin"],
+		),
 		// Linux fetch-and-run artifact for `ao start`: a single self-contained
 		// AppImage the Go bootstrapper downloads and runs directly (see
 		// makers/maker-appimage.ts). The deb/rpm makers below stay for users who
@@ -107,6 +193,7 @@ const config: ForgeConfig = {
 				appId: "dev.agent-orchestrator.desktop",
 				productName: "Agent Orchestrator",
 				icon: "assets/icon.png",
+				protocols: [AUTH_PROTOCOL],
 			},
 			["linux"],
 		),
@@ -121,6 +208,7 @@ const config: ForgeConfig = {
 					icon: "assets/icon.png",
 					maintainer: "Agent Orchestrator",
 					homepage: "https://github.com/aoagents/agent-orchestrator",
+					mimeType: [AUTH_PROTOCOL_MIME_TYPE],
 				},
 			},
 		},
@@ -132,6 +220,7 @@ const config: ForgeConfig = {
 					// rpmbuild rejects a spec with an empty License field.
 					license: "MIT",
 					homepage: "https://github.com/aoagents/agent-orchestrator",
+					mimeType: [AUTH_PROTOCOL_MIME_TYPE],
 				},
 			},
 		},
@@ -143,8 +232,9 @@ const config: ForgeConfig = {
 			// fork without a source edit. AO_RELEASE_REPO is "owner/repo"; it defaults
 			// to the production target. The dev/test loop sets
 			// AO_RELEASE_REPO=harshitsinghbhandari/agent-orchestrator (spec §1.1, §8).
-			// Note: aoagents/agent-orchestrator was the temporary rewrite home and is
-			// intentionally NOT the default; releases land on AgentWrapper.
+			// Note: aoagents/agent-orchestrator and AgentWrapper/agent-orchestrator
+			// are prior homes and intentionally NOT the default; releases land on
+			// Untrivial-ai.
 			config: {
 				repository: parseReleaseRepo(process.env.AO_RELEASE_REPO),
 				prerelease: process.env.AO_RELEASE_PRERELEASE === "true",

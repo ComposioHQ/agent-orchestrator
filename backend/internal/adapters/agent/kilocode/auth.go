@@ -18,7 +18,9 @@ import (
 
 var _ ports.AgentAuthChecker = (*Plugin)(nil)
 
-// AuthStatus returns the plugin's local authentication status.
+// AuthStatus returns the plugin's local authentication status. Missing
+// credentials remain unknown because Kilo can still run eligible public free
+// models without a provider login.
 func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) {
 	binary, err := p.ResolveBinary(ctx)
 	if err != nil {
@@ -34,6 +36,9 @@ func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) 
 	defer cancel()
 	out, err := aoprocess.CommandContext(probeCtx, binary, "auth", "list").CombinedOutput()
 	if probeCtx.Err() != nil {
+		if probeCtx.Err() == context.DeadlineExceeded && ctx.Err() == nil {
+			return ports.AgentAuthStatusUnknown, nil
+		}
 		return ports.AgentAuthStatusUnknown, probeCtx.Err()
 	}
 	status, ok := kilocodeAuthListStatus(string(out))
@@ -188,7 +193,7 @@ func kilocodeAuthListStatus(output string) (ports.AgentAuthStatus, bool) {
 		return ports.AgentAuthStatusAuthorized, true
 	}
 	if strings.Contains(text, "0 credentials") && strings.Contains(text, "0 environment variable") {
-		return ports.AgentAuthStatusUnauthorized, true
+		return ports.AgentAuthStatusUnknown, true
 	}
 	return ports.AgentAuthStatusUnknown, false
 }

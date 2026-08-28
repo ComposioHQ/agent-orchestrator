@@ -18,6 +18,27 @@ export async function refreshAgents(): Promise<AgentCatalog> {
 	return data as AgentCatalog;
 }
 
+// Full agent discovery may start every supported CLI and check its auth state.
+// Keep that work off the startup path: surfaces that ask the user to pick an
+// agent freshen the inventory on open instead of offering a "Refresh agents"
+// link. Probing is the app's job, but only when the reader needs that catalog.
+// Throttled because a probe spawns one subprocess per supported agent.
+const AGENT_REFRESH_THROTTLE_MS = 5 * 60 * 1000;
+let lastAgentRefreshAt = 0;
+
+export async function refreshAgentsIfStale(): Promise<AgentCatalog | undefined> {
+	const now = Date.now();
+	if (now - lastAgentRefreshAt < AGENT_REFRESH_THROTTLE_MS) return undefined;
+	lastAgentRefreshAt = now;
+	try {
+		return await refreshAgents();
+	} catch {
+		// Opportunistic: the cached inventory still renders, and an agent the user
+		// picks anyway fails loudly at spawn time.
+		return undefined;
+	}
+}
+
 export const agentsQueryOptions = {
 	queryKey: agentsQueryKey,
 	queryFn: fetchAgents,

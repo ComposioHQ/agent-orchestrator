@@ -33,6 +33,8 @@ test("renderer: packaged bundle launches and paints @T0 @INS", async ({ page }) 
 	await page.goto("/");
 	await expect(page.getByTestId("board")).toBeVisible();
 	await page.goto("/#/settings");
+	await expect(page.getByTestId("settings-page")).toBeVisible();
+	await page.getByRole("button", { name: "Updates" }).click();
 	await expect(page.getByTestId("app-version")).toContainText(/v\d+\.\d+\.\d+/);
 });
 
@@ -45,6 +47,8 @@ test("renderer: update settings surface renders (feed/checksum checks are pod) @
 	// feed at all. Checksum + asset-existence verification stays in the pod.
 	await installFakeBridge(page, { version: "9.9.9-test" });
 	await page.goto("/#/settings");
+	await expect(page.getByTestId("settings-page")).toBeVisible();
+	await page.getByRole("button", { name: "Updates" }).click();
 	await expect(page.locator('[data-testid="settings-section"][data-section="updates"]')).toBeVisible();
 	await expect(page.getByTestId("app-version")).toContainText("v9.9.9-test");
 });
@@ -77,6 +81,8 @@ test("renderer: reflects a ready daemon (data dir + config initialized) @T0 @INS
 test("renderer: app version string renders as expected @T0 @INS", async ({ page }) => {
 	await installFakeBridge(page, { version: "9.9.9-test" });
 	await page.goto("/#/settings");
+	await expect(page.getByTestId("settings-page")).toBeVisible();
+	await page.getByRole("button", { name: "Updates" }).click();
 	await expect(page.getByTestId("app-version")).toContainText("v9.9.9-test");
 });
 
@@ -170,7 +176,7 @@ test("renderer: route nav home to board to session detail and back @T0 @BRD", as
 	await expect(page.getByTestId("board")).toBeVisible();
 
 	// → project board
-	await page.getByRole("button", { name: "Open ao-demo dashboard" }).click();
+	await page.locator('[data-sidebar="menu-button"]').filter({ hasText: "ao-demo" }).first().click();
 	await expect(page).toHaveURL(/projects\/ao-demo/);
 	await expect(page.getByTestId("board")).toBeVisible();
 
@@ -189,12 +195,12 @@ test("renderer: route nav home to board to session detail and back @T0 @BRD", as
 
 // #2483 SET-001.
 test("renderer: global settings page renders all sections @T0 @SET", async ({ page }) => {
-	// The settings revamp (#2797) reduced the page to General + Updates + Get
-	// help; the Migration section no longer renders there, so "all sections"
-	// means these. Updates keeps its per-section hook; General/help are asserted
-	// by their user-visible headings.
+	// The settings revamp (#2797) reduced the page to General + Updates + Help;
+	// Help now renders the report form inline rather than opening another dialog.
 	await page.goto("/#/settings");
 	await expect(page.getByTestId("settings-page")).toBeVisible();
+	await page.getByRole("button", { name: "Updates" }).click();
 	await expect(page.locator('[data-testid="settings-section"][data-section="updates"]')).toBeVisible();
-	await expect(page.getByRole("heading", { name: "Get help" })).toBeVisible();
+	await page.getByRole("button", { name: "Help" }).click();
+	await expect(page.getByLabel("Title")).toBeVisible();
 });

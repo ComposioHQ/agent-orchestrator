@@ -3,6 +3,7 @@ import type { paths } from "../../api/schema";
 import type { DaemonStatus } from "../../shared/daemon-status";
 import { daemonFailureMessage } from "./daemon-failure";
 import { captureRendererEvent } from "./telemetry";
+import { captureApiErrorToSentry } from "./sentry";
 
 function devApiBaseUrl(): string {
 	return typeof window === "undefined" ? "http://127.0.0.1:3001" : window.location.origin;
@@ -59,6 +60,12 @@ export function setApiDaemonStatus(nextStatus: DaemonStatus): void {
 // still normalizes IDs for every resource, including ones a segment heuristic
 // would miss (orchestrators/{id}). Keep in sync with schema.ts.
 const ROUTE_TEMPLATES = [
+	"/api/v1/agents",
+	"/api/v1/agents/refresh",
+	"/api/v1/agents/{agent}/models",
+	"/api/v1/agents/{agent}/models/refresh",
+	"/api/v1/agents/{agent}/probe",
+	"/api/v1/desktop/sessions/{sessionId}/workspace",
 	"/api/v1/events",
 	"/api/v1/import",
 	"/api/v1/notifications",
@@ -68,6 +75,8 @@ const ROUTE_TEMPLATES = [
 	"/api/v1/orchestrators",
 	"/api/v1/orchestrators/{id}",
 	"/api/v1/projects",
+	"/api/v1/projects/clone",
+	"/api/v1/projects/initialize",
 	"/api/v1/projects/{id}",
 	"/api/v1/projects/{id}/config",
 	"/api/v1/prs/{id}/merge",
@@ -75,19 +84,27 @@ const ROUTE_TEMPLATES = [
 	"/api/v1/sessions",
 	"/api/v1/sessions/{sessionId}",
 	"/api/v1/sessions/{sessionId}/activity",
+	"/api/v1/sessions/{sessionId}/agent-switches",
+	"/api/v1/sessions/{sessionId}/agent-switches/{switchId}/handoff",
+	"/api/v1/sessions/{sessionId}/agent-switches/{switchId}/recover",
+	"/api/v1/sessions/{sessionId}/interface-transition",
 	"/api/v1/sessions/{sessionId}/kill",
 	"/api/v1/sessions/{sessionId}/pr",
 	"/api/v1/sessions/{sessionId}/pr/claim",
 	"/api/v1/sessions/{sessionId}/preview",
 	"/api/v1/sessions/{sessionId}/preview/files/*",
+	"/api/v1/sessions/{sessionId}/preview/server",
 	"/api/v1/sessions/{sessionId}/resume-agent",
 	"/api/v1/sessions/{sessionId}/restore",
+	"/api/v1/sessions/{sessionId}/switch-agent",
 	"/api/v1/sessions/{sessionId}/reviews",
 	"/api/v1/sessions/{sessionId}/reviews/cancel",
+	"/api/v1/sessions/{sessionId}/reviews/comments/resolve",
 	"/api/v1/sessions/{sessionId}/reviews/submit",
 	"/api/v1/sessions/{sessionId}/reviews/trigger",
 	"/api/v1/sessions/{sessionId}/rollback",
 	"/api/v1/sessions/{sessionId}/send",
+	"/api/v1/sessions/{sessionId}/workspace/events",
 	"/api/v1/sessions/{sessionId}/workspace/file",
 	"/api/v1/sessions/{sessionId}/workspace/files",
 	"/api/v1/sessions/cleanup",
@@ -96,7 +113,15 @@ const ROUTE_TEMPLATES = [
 // Resource collections whose next path segment is an identifier. Only used as a
 // defensive fallback for paths not covered by ROUTE_TEMPLATES; keeps IDs out of
 // telemetry for known collections even if a route is ever missed above.
-const RESOURCE_SEGMENTS = new Set(["projects", "sessions", "notifications", "workspaces", "prs", "orchestrators"]);
+const RESOURCE_SEGMENTS = new Set([
+	"agents",
+	"projects",
+	"sessions",
+	"notifications",
+	"workspaces",
+	"prs",
+	"orchestrators",
+]);
 
 // Match a path against one template. `{param}` matches any single segment
 // (reported as `:id`), a trailing `*` matches the remaining path, and every
@@ -157,7 +182,13 @@ type ApiErrorCategory = "daemon_unavailable" | "network_error" | "http_4xx" | "h
 const API_ERROR_DEDUPE_MS = 30_000;
 const lastApiErrorAt = new Map<string, number>();
 
-function reportApiError(operation: string, category: ApiErrorCategory, status?: number): void {
+function reportApiError(
+	operation: string,
+	category: ApiErrorCategory,
+	status?: number,
+	code?: string,
+	requestId?: string,
+): void {
 	const key = `${operation}|${category}|${status ?? ""}`;
 	const now = Date.now();
 	const last = lastApiErrorAt.get(key);
@@ -168,6 +199,11 @@ function reportApiError(operation: string, category: ApiErrorCategory, status?: 
 		error_category: category,
 		status,
 	});
+	// Mirror into Sentry (no-op unless a DSN is configured). The daemon `code`
+	// is what drives the fine-grained severity/owner classification; `requestId`
+	// (when present) is tagged so a client event pivots to the daemon's own
+	// capture of the same request, which carries the matching request_id.
+	captureApiErrorToSentry(operation, category, status, code, requestId);
 }
 
 async function runtimeFetch(input: Request): Promise<Response> {
@@ -224,7 +260,18 @@ async function runtimeFetch(input: Request): Promise<Response> {
 		throw error;
 	}
 	if (!response.ok) {
-		reportApiError(operation, response.status >= 500 ? "http_5xx" : "http_4xx", response.status);
+		// Best-effort read the daemon error envelope's `code` (via a clone so the
+		// caller still gets an unconsumed body) to drive classification.
+		let code: string | undefined;
+		let requestId: string | undefined;
+		try {
+			const body = (await response.clone().json()) as { code?: unknown; requestId?: unknown };
+			if (typeof body?.code === "string" && body.code !== "") code = body.code;
+			if (typeof body?.requestId === "string" && body.requestId !== "") requestId = body.requestId;
+		} catch {
+			// Non-JSON or empty body: fall back to status-only classification.
+		}
+		reportApiError(operation, response.status >= 500 ? "http_5xx" : "http_4xx", response.status, code, requestId);
 	}
 	return response;
 }
@@ -248,11 +295,23 @@ export function apiErrorCode(error: unknown): string | undefined {
 	return undefined;
 }
 
+/** Correlation id from the daemon's stable error envelope. */
+export function apiErrorRequestId(error: unknown): string | undefined {
+	if (typeof error === "object" && error !== null) {
+		const body = error as { requestId?: unknown };
+		if (typeof body.requestId === "string" && body.requestId !== "") return body.requestId;
+	}
+	return undefined;
+}
+
 export function apiErrorMessage(error: unknown, fallback = "Request failed"): string {
 	if (error instanceof Error) return error.message;
 	if (typeof error === "string" && error !== "") return error;
 	if (typeof error === "object" && error !== null) {
 		const body = error as { code?: unknown; message?: unknown; error?: unknown };
+		if (typeof body.error === "object" && body.error !== null) {
+			return apiErrorMessage(body.error, fallback);
+		}
 		const code = typeof body.code === "string" && body.code !== "" ? body.code : "";
 		if (typeof body.message === "string" && body.message !== "") {
 			return code && !body.message.includes(code) ? `${body.message} (${code})` : body.message;

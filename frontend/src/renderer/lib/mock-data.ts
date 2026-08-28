@@ -165,6 +165,7 @@ export const mockWorkspaces: WorkspaceSummary[] = [
 				provider: "grok",
 				branch: "demo/new-task-flake",
 				status: "ci_failed",
+				autoInjectCI: false,
 				createdAt: hoursAgo(8),
 				updatedAt: minutesAgo(46),
 				activity: { state: "idle", lastActivityAt: minutesAgo(46) },
@@ -232,6 +233,7 @@ const prSummary = (sessionId: string, number: number, overrides: Partial<Session
 		deletions: 8,
 		changedFiles: 3,
 		ci: {
+			autoInjectCI: true,
 			state: facts?.ci === "failing" ? "failing" : facts?.ci === "pending" ? "pending" : "passing",
 			failingChecks: [],
 		},
@@ -271,6 +273,84 @@ const prSummary = (sessionId: string, number: number, overrides: Partial<Session
 };
 
 export const mockSessionScmSummaries: Record<string, SessionPRSummary[]> = {
+	"demo-ci-failed": [
+		prSummary("demo-ci-failed", 324, {
+			ci: {
+				autoInjectCI: false,
+				state: "failing",
+				failingChecks: [
+					{
+						name: "renderer smoke",
+						status: "failed",
+						conclusion: "failure",
+						url: "https://github.com/acme-inc/ao-demo/actions/runs/324001/job/1",
+					},
+				],
+			},
+		}),
+	],
+	// Carries human + bot PR reviews and an unresolved thread, so the Reviews
+	// tab's Pull request pane has something to show in the browser preview.
+	"demo-needs-input": [
+		prSummary("demo-needs-input", 318, {
+			changedFiles: 2,
+			additions: 68,
+			deletions: 12,
+			review: {
+				decision: "changes_requested",
+				hasUnresolvedHumanComments: true,
+				reviews: [
+					{
+						reviewerId: "prateek",
+						autoInjectReview: true,
+						verdict: "changes_requested",
+						submittedAt: minutesAgo(18),
+						reviewUrl: "https://github.com/acme-inc/ao-demo/pull/318#pullrequestreview-3101",
+						body: "The activity sample is **tighter**, but the toolbar density change needs a second look before this lands.\n\n- Check compact spacing\n- Keep button labels readable",
+					},
+					{
+						reviewerId: "codex",
+						autoInjectReview: true,
+						isBot: true,
+						verdict: "approved",
+						submittedAt: minutesAgo(15),
+						reviewUrl: "https://github.com/acme-inc/ao-demo/pull/318#pullrequestreview-3102",
+						body: "No issues found in the terminal pane changes.",
+					},
+					{
+						reviewerId: "aditi",
+						autoInjectReview: true,
+						verdict: "none",
+						submittedAt: minutesAgo(12),
+						reviewUrl: "https://github.com/acme-inc/ao-demo/pull/318#pullrequestreview-3103",
+						body: "The compact review layout reads well. One non-blocking spacing note remains for a later pass.",
+					},
+				],
+				unresolvedBy: [
+					{
+						reviewerId: "prateek",
+						count: 2,
+						reviewUrl: "https://github.com/acme-inc/ao-demo/pull/318#pullrequestreview-3101",
+						// Two comments, two separate threads — resolving addresses threads.
+						links: [
+							{ reviewId: "31801", file: "frontend/src/renderer/components/TerminalPane.tsx", line: 84, body: "The reviewer terminal header wraps awkwardly at this width. Please keep the role label and controls on one line.", autoInjectReview: true },
+							{ file: "frontend/src/renderer/styles.css", line: 219, body: "This spacing token makes the review controls look larger than the rest of the inspector controls.", autoInjectReview: true },
+						],
+					},
+				],
+				resolvedBy: [
+					{
+						reviewerId: "prateek",
+						count: 1,
+						reviewUrl: "https://github.com/acme-inc/ao-demo/pull/318#pullrequestreview-31801",
+						links: [
+							{ reviewId: "31801", file: "frontend/src/renderer/components/TerminalPane.tsx", line: 62, body: "This earlier toolbar alignment comment has been resolved.", autoInjectReview: true },
+						],
+					},
+				],
+			},
+		}),
+	],
 	"demo-review-stack": [
 		prSummary("demo-review-stack", 321, {
 			createdAt: hoursAgo(2),
@@ -304,6 +384,7 @@ export const mockSessionScmSummaries: Record<string, SessionPRSummary[]> = {
 			additions: 91,
 			deletions: 17,
 			ci: {
+				autoInjectCI: true,
 				state: "failing",
 				failingChecks: [
 					{
@@ -340,6 +421,7 @@ export const mockSessionScmSummaries: Record<string, SessionPRSummary[]> = {
 			additions: 74,
 			deletions: 22,
 			ci: {
+				autoInjectCI: true,
 				state: "failing",
 				failingChecks: [
 					{
@@ -384,6 +466,7 @@ export const mockSessionScmSummaries: Record<string, SessionPRSummary[]> = {
 				reviews: [
 					{
 						reviewerId: "prateek",
+						autoInjectReview: true,
 						verdict: "approved",
 						submittedAt: minutesAgo(41),
 						reviewUrl: "https://github.com/me/webgl-preview/pull/52#pullrequestreview-2001",
@@ -391,6 +474,7 @@ export const mockSessionScmSummaries: Record<string, SessionPRSummary[]> = {
 					},
 					{
 						reviewerId: "codex",
+						autoInjectReview: true,
 						isBot: true,
 						verdict: "approved",
 						submittedAt: minutesAgo(38),
@@ -413,6 +497,7 @@ export const mockSessionScmSummaries: Record<string, SessionPRSummary[]> = {
 				reviews: [
 					{
 						reviewerId: "maya",
+						autoInjectReview: true,
 						verdict: "changes_requested",
 						submittedAt: minutesAgo(24),
 						reviewUrl: "https://github.com/me/webgl-preview/pull/56#pullrequestreview-1001",
@@ -420,6 +505,7 @@ export const mockSessionScmSummaries: Record<string, SessionPRSummary[]> = {
 					},
 					{
 						reviewerId: "copilot",
+						autoInjectReview: true,
 						isBot: true,
 						verdict: "none",
 						submittedAt: minutesAgo(19),
@@ -437,11 +523,13 @@ export const mockSessionScmSummaries: Record<string, SessionPRSummary[]> = {
 								url: "https://github.com/me/webgl-preview/pull/56#discussion_r1001",
 								file: "src/input/pointer-lock.ts",
 								line: 88,
+								autoInjectReview: true,
 							},
 							{
 								url: "https://github.com/me/webgl-preview/pull/56#discussion_r1002",
 								file: "src/input/keyboard.ts",
 								line: 41,
+								autoInjectReview: true,
 							},
 						],
 					},

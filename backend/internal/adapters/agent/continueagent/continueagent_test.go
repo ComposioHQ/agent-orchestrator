@@ -30,19 +30,19 @@ func TestManifest(t *testing.T) {
 	}
 }
 
-func TestDoesNotImplementAuthChecker(t *testing.T) {
-	if _, ok := any(&Plugin{}).(ports.AgentAuthChecker); ok {
-		t.Fatal("Continue must not implement AgentAuthChecker; catalog refresh must not run model-call auth probes")
+func TestImplementsAuthChecker(t *testing.T) {
+	if _, ok := any(&Plugin{}).(ports.AgentAuthChecker); !ok {
+		t.Fatal("Continue must implement AgentAuthChecker using local credential evidence")
 	}
 }
 
-func TestGetConfigSpecEmpty(t *testing.T) {
+func TestGetConfigSpecReportsModel(t *testing.T) {
 	spec, err := (&Plugin{}).GetConfigSpec(context.Background())
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if len(spec.Fields) != 0 {
-		t.Fatalf("expected no fields, got %d", len(spec.Fields))
+	if len(spec.Fields) != 1 || spec.Fields[0].Key != "model" {
+		t.Fatalf("unexpected fields: %#v", spec.Fields)
 	}
 }
 
@@ -85,6 +85,21 @@ func TestGetLaunchCommandWorkerBypassIsInteractive(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 	want := []string{"cn", "--auto", "--", "do the thing"}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("cmd = %#v, want %#v", cmd, want)
+	}
+}
+
+func TestGetLaunchCommandForwardsModel(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "cn"}
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Config: ports.AgentConfig{Model: "  anthropic/claude-sonnet  "},
+		Prompt: "fix it",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"cn", "--model", "anthropic/claude-sonnet", "--", "fix it"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("cmd = %#v, want %#v", cmd, want)
 	}

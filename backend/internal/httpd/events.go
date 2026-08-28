@@ -18,6 +18,7 @@ import (
 const (
 	eventsReplayBatch = 512
 	eventsLiveBuffer  = 1024
+	eventAfterHeader  = "X-AO-Event-After"
 )
 
 type cdcSubscriber interface {
@@ -48,6 +49,20 @@ func (c *EventsController) stream(w http.ResponseWriter, r *http.Request) {
 			"after must be a non-negative integer", nil)
 		return
 	}
+	latestSeq, err := c.Source.LatestSeq(r.Context())
+	if err != nil {
+		envelope.WriteAPIError(w, r, http.StatusInternalServerError, "internal", "EVENT_CURSOR_FAILED",
+			"Could not inspect the event cursor", nil)
+		return
+	}
+	// A cursor ahead of head means the change_log was truncated or replaced. Fall
+	// back to head rather than zero: replaying from zero costs the client the whole
+	// backlog, and since every connected client is reset at the same moment, they
+	// stampede together. Falling back to head loses at most the events in the gap,
+	// which clients recover from their next snapshot fetch.
+	if after > latestSeq {
+		after = latestSeq
+	}
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -76,6 +91,7 @@ func (c *EventsController) stream(w http.ResponseWriter, r *http.Request) {
 	h.Set("Cache-Control", "no-cache")
 	h.Set("Connection", "keep-alive")
 	h.Set("X-Accel-Buffering", "no")
+	h.Set(eventAfterHeader, strconv.FormatInt(after, 10))
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
 

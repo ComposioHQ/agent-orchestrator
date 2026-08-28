@@ -89,11 +89,25 @@ func (s *Server) Handler() http.Handler { return s.http.Handler }
 // running.json before serving and removes it on the way out. Run blocks until
 // shutdown is complete.
 func (s *Server) Run(ctx context.Context) error {
+	return s.run(ctx, nil)
+}
+
+// RunWithReady is Run with a callback invoked after the listener has been
+// published and its serving goroutine has started. The callback must return
+// promptly; it is intended for boot work that can safely continue while the
+// daemon serves read-only durable state.
+func (s *Server) RunWithReady(ctx context.Context, onReady func()) error {
+	return s.run(ctx, onReady)
+}
+
+func (s *Server) run(ctx context.Context, onReady func()) error {
 	info := runfile.Info{
-		PID:       os.Getpid(),
-		Port:      s.boundPort(),
-		StartedAt: time.Now().UTC(),
-		Owner:     os.Getenv("AO_OWNER"),
+		PID:                   os.Getpid(),
+		Port:                  s.boundPort(),
+		StartedAt:             time.Now().UTC(),
+		Owner:                 os.Getenv("AO_OWNER"),
+		AppRunID:              s.cfg.AppRunID,
+		BrowserRuntimeAddress: os.Getenv("AO_BROWSER_RUNTIME_ADDRESS"),
 	}
 	if err := runfile.Write(s.cfg.RunFilePath, info); err != nil {
 		_ = s.listen.Close()
@@ -115,6 +129,9 @@ func (s *Server) Run(ctx context.Context) error {
 		}
 		serveErr <- nil
 	}()
+	if onReady != nil {
+		onReady()
+	}
 
 	select {
 	case err := <-serveErr:

@@ -1,11 +1,11 @@
 // Standalone shell terminals: shells the user opens by hand from the topbar or
-// Ctrl+`, with no agent session behind them. They are deliberately kept out of
+// ⌘T / Ctrl+T, with no agent session behind them. They are deliberately kept out of
 // the workspaces query — they are not sessions, never appear on the board, and
 // must not invalidate session state when they come and go.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { components } from "../../api/schema";
-import { apiClient, hasTrustedApiBaseUrl } from "../lib/api-client";
+import { apiClient, apiErrorCode, hasTrustedApiBaseUrl } from "../lib/api-client";
 import { mockShellTerminals } from "../lib/mock-data";
 
 export type ShellTerminal = {
@@ -97,8 +97,21 @@ export function useOpenShellTerminal() {
 			if (!data) throw new Error("Daemon returned no shell terminal");
 			return toShellTerminal(data.shellTerminal);
 		},
-		onSuccess: () => {
+		onSuccess: (shell) => {
+			// The POST already returned the authoritative terminal. Publish it to the
+			// shared list immediately so its tab can render and receive focus without
+			// waiting for a second daemon round trip. The background refetch still
+			// reconciles concurrent changes from another window.
+			queryClient.setQueryData<ShellTerminal[]>(shellTerminalsQueryKey, (current) => {
+				if (current?.some((candidate) => candidate.handleId === shell.handleId)) return current;
+				return [...(current ?? []), shell];
+			});
 			void queryClient.invalidateQueries({ queryKey: shellTerminalsQueryKey });
+		},
+		// Without this, a failed open (worktree gone, no shell resolvable, daemon
+		// busy) leaves the "+" button looking like it silently did nothing.
+		onError: (error) => {
+			console.error("Failed to open shell terminal:", error);
 		},
 	});
 }
@@ -116,6 +129,30 @@ export function useCloseShellTerminal() {
 				params: { path: { handleId } },
 			});
 			if (error) throw error;
+		},
+		onMutate: async (handleId) => {
+			const previous = queryClient.getQueryData<ShellTerminal[]>(shellTerminalsQueryKey);
+			const removeClosedShell = () => {
+				queryClient.setQueryData<ShellTerminal[]>(shellTerminalsQueryKey, (current) =>
+					current?.filter((shell) => shell.handleId !== handleId),
+				);
+			};
+			// Remove the pill synchronously. Waiting for cancellation first leaves the
+			// closed tab visible for the duration of an in-flight list request.
+			removeClosedShell();
+			await queryClient.cancelQueries({ queryKey: shellTerminalsQueryKey });
+			// A request that resolved while cancellation was being scheduled may have
+			// restored its stale snapshot; make the optimistic state authoritative.
+			removeClosedShell();
+			return { previous };
+		},
+		onError: (error, _handleId, context) => {
+			// A 404 means the daemon has already removed the shell, so restoring its
+			// stale tab would be misleading. Other failures put the tab back so the
+			// user can retry instead of losing access to a still-live PTY.
+			if (apiErrorCode(error) !== "SHELL_TERMINAL_NOT_FOUND" && context?.previous) {
+				queryClient.setQueryData(shellTerminalsQueryKey, context.previous);
+			}
 		},
 		// Settled, not success: a close that 404s means the daemon already lost
 		// the shell, and the stale tab still needs to disappear.
