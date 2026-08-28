@@ -156,6 +156,36 @@ type WorkspaceFileBlobQuery struct {
 	V    string `query:"v,omitempty" description:"Cache-busting token. Ignored by the server; the response is never cached."`
 }
 
+// WorkspaceTreeQuery is the query string accepted by GET /api/v1/sessions/{sessionId}/workspace/tree.
+type WorkspaceTreeQuery struct {
+	Path string `query:"path,omitempty" description:"Directory path relative to the session workspace root. Empty or omitted lists the root."`
+}
+
+// ListWorkspaceTreeResponse is the body of GET /api/v1/sessions/{sessionId}/workspace/tree.
+// Unlike ListWorkspaceFilesResponse (every changed file, whole worktree), this
+// is one directory level of the full worktree — tracked and
+// untracked-but-not-ignored — for lazily expanding a file explorer.
+type ListWorkspaceTreeResponse struct {
+	SessionID domain.SessionID     `json:"sessionId"`
+	Path      string               `json:"path"`
+	Entries   []WorkspaceTreeEntry `json:"entries"`
+	Truncated bool                 `json:"truncated"`
+}
+
+// WorkspaceTreeEntry is one immediate child of a listed directory.
+type WorkspaceTreeEntry struct {
+	Name string                            `json:"name"`
+	Path string                            `json:"path"`
+	Type sessionsvc.WorkspaceTreeEntryType `json:"type" enum:"file,dir"`
+	// Status is set for files only; omitted for directories.
+	Status sessionsvc.WorkspaceFileStatus `json:"status,omitempty" enum:"unmodified,modified,added,deleted,renamed"`
+	// HasChanges is set for directories only: true when a descendant file is
+	// non-unmodified, so a collapsed folder can still show it contains changes.
+	HasChanges bool  `json:"hasChanges,omitempty"`
+	Size       int64 `json:"size,omitempty"`
+	Binary     bool  `json:"binary,omitempty"`
+}
+
 // SessionView is the session wire shape: the domain read model plus the
 // display-safe branch name and the session's attributed pull requests in the
 // curated SessionPRFacts shape. One session can own many PRs (e.g. a stack), so
@@ -537,13 +567,13 @@ type SetSessionAutoInjectReviewResponse struct {
 	Session          SessionView      `json:"session"`
 }
 
-// SetSessionAutoInjectCIRequest updates the default automatic CI delivery
-// policy captured by PRs created after the change.
+// SetSessionAutoInjectCIRequest updates automatic CI delivery for a session
+// and every PR currently owned by it.
 type SetSessionAutoInjectCIRequest struct {
 	AutoInjectCI bool `json:"autoInjectCI"`
 }
 
-// SetSessionAutoInjectCIResponse confirms the persisted session default.
+// SetSessionAutoInjectCIResponse confirms the persisted session policy.
 type SetSessionAutoInjectCIResponse struct {
 	OK           bool             `json:"ok"`
 	SessionID    domain.SessionID `json:"sessionId"`
@@ -1724,14 +1754,21 @@ type ConversationSnapshotResponse struct {
 	Mode                       string `json:"mode" enum:"chat,tui"`
 	// Controller is reported separately from history so a client can tell "no
 	// messages yet" apart from "the agent is not running".
-	Controller     string                            `json:"controller" enum:"connecting,ready,busy,recovering,stopped"`
-	LatestSequence int64                             `json:"latestSequence"`
-	OldestSequence int64                             `json:"oldestSequence,omitempty"`
-	HasMoreBefore  bool                              `json:"hasMoreBefore"`
-	Turns          []ConversationTurnResponse        `json:"turns"`
-	Messages       []ConversationMessageResponse     `json:"messages"`
-	Activities     []ConversationActivityResponse    `json:"activities"`
-	BranchPoints   []ConversationBranchPointResponse `json:"branchPoints,omitempty"`
+	Controller     string `json:"controller" enum:"connecting,ready,busy,recovering,stopped"`
+	LatestSequence int64  `json:"latestSequence"`
+	OldestSequence int64  `json:"oldestSequence,omitempty"`
+	HasMoreBefore  bool   `json:"hasMoreBefore"`
+	// NativeForkAvailableAfterSequence is the first provider-backed human prompt
+	// in the active provider scope. It keeps edit gating exact across bounded pages.
+	NativeForkAvailableAfterSequence int64                             `json:"nativeForkAvailableAfterSequence"`
+	Turns                            []ConversationTurnResponse        `json:"turns"`
+	Messages                         []ConversationMessageResponse     `json:"messages"`
+	Activities                       []ConversationActivityResponse    `json:"activities"`
+	BranchPoints                     []ConversationBranchPointResponse `json:"branchPoints,omitempty"`
+	// BranchMaterialization says whether the selected provider branch preserved
+	// native history or was rebuilt from AO's bounded text transcript. Omitted for
+	// conversations that have no durable branch metadata yet.
+	BranchMaterialization *ConversationBranchMaterializationResponse `json:"branchMaterialization,omitempty"`
 	// Settings are the provider choices for the next turn. Carried on the snapshot
 	// the client already polls so the composer can label itself without a second
 	// request, and so a choice made on another client shows up here.
@@ -1776,6 +1813,13 @@ type ConversationSnapshotResponse struct {
 	// unstarted session's abilities are not yet known — and a client must treat
 	// absent as "do not offer yet" rather than as "cannot".
 	Capabilities []string `json:"capabilities,omitempty"`
+}
+
+// ConversationBranchMaterializationResponse describes the fidelity of the
+// active branch's provider context without exposing provider-owned identifiers.
+type ConversationBranchMaterializationResponse struct {
+	Strategy        string `json:"strategy" enum:"native,approximate_context"`
+	ReplayTruncated bool   `json:"replayTruncated"`
 }
 
 // ConversationBranchPointResponse describes sibling continuations at one prompt.
@@ -1938,11 +1982,30 @@ type SettingsResponse struct {
 	// ChatHarnesses are the agents that can run in chat mode today. Empty means
 	// chat cannot be used yet, which a client should say plainly.
 	ChatHarnesses []string `json:"chatHarnesses"`
+	// Client is the deployment's client identity (AO_CLIENT); empty when unset.
+	Client string `json:"client"`
+	// LocalEnabled reports whether the local offering is available.
+	LocalEnabled bool `json:"localEnabled"`
+	// CloudOffering is the user's persisted cloud toggle (Settings, Developer
+	// Mode). Distinct from CloudEnabled, which is the effective gate.
+	CloudOffering bool `json:"cloudOffering"`
+	// CloudEnabled reports whether the cloud offering is effectively available:
+	// the user's toggle (or the env override) plus a configured control plane.
+	CloudEnabled bool `json:"cloudEnabled"`
+	// CloudControlPlaneURL is the cloud control plane base URL; empty when no
+	// control plane is configured.
+	CloudControlPlaneURL string `json:"cloudControlPlaneUrl"`
 }
 
 // UpdateSessionInterfaceRequest changes the default interface for new sessions.
 type UpdateSessionInterfaceRequest struct {
 	DefaultSessionMode string `json:"defaultSessionMode" enum:"chat,tui"`
+}
+
+// UpdateCloudOfferingRequest flips the user's cloud toggle.
+type UpdateCloudOfferingRequest struct {
+	// Enabled turns the cloud offering on or off for this machine's user.
+	Enabled *bool `json:"enabled"`
 }
 
 // capabilityNames lists the abilities a provider has, sorted so a client sees a

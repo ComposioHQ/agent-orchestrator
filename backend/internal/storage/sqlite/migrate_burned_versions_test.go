@@ -114,10 +114,13 @@ var shippedMigrations = map[int64]string{
 	107: "0107_recovered_conversation_turns.sql",
 	108: "0108_conversation_retry_source.sql",
 	109: "0109_session_latest_user_prompt_at.sql",
-	110: "0110_usage_cost_estimation.sql",
-	111: "0111_usage_cost_candidate_canonical_index.sql",
-	112: "0112_usage_measurement_and_provider_usage.sql",
-	113: "0113_usage_billing_provider_source.sql",
+	110: "0110_approximate_conversation_branches.sql",
+	111: "0111_pr_auto_inject_ci_cdc.sql",
+	112: "0112_app_settings_cloud_offering.sql",
+	113: "0113_usage_cost_estimation.sql",
+	114: "0114_usage_cost_candidate_canonical_index.sql",
+	115: "0115_usage_measurement_and_provider_usage.sql",
+	116: "0116_usage_billing_provider_source.sql",
 }
 
 // burnedVersion reports version numbers that must never be (re)used: they
