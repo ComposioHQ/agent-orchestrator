@@ -43,7 +43,6 @@ type commandSpec struct {
 var ansiPattern = regexp.MustCompile(`\x1b\[[0-9;]*[[:alpha:]]`)
 
 var commandSpecs = map[string]commandSpec{
-	"claude-code": {args: []string{"-p", "/model"}, parser: parseClaudeModelCommand},
 	"aider":       {args: []string{"--no-check-update", "--no-git", "--no-gitignore", "--no-analytics", "--list-models", "."}, parser: parseIDLines},
 	"autohand":    {args: []string{"models", "list"}, parser: parseIDLines},
 	"opencode":    {args: []string{"--pure", "models"}, parser: parseIDLines},
@@ -113,7 +112,7 @@ type CodexModelListFunc func(context.Context, ports.AgentModelDiscoveryRequest) 
 
 // Discover uses the agent-owned model surface configured for this adapter.
 func (d Discoverer) Discover(ctx context.Context, request ports.AgentModelDiscoveryRequest) (ports.AgentModelCatalog, error) {
-	if request.AgentID == "muse" {
+	if request.AgentID == "claude-code" || request.AgentID == "muse" {
 		return discoverTerminalCatalog(ctx, request, d.TerminalSpawner)
 	}
 	if request.AgentID == "codex" {
@@ -136,7 +135,7 @@ func (Discoverer) Manual(agentID string) ports.AgentModelCatalog { return Manual
 // Discover executes model catalog discovery for an agent binary.
 func Discover(ctx context.Context, agentID, binary, workingDir string, env map[string]string) (ports.AgentModelCatalog, error) {
 	base := Base(agentID)
-	if agentID == "muse" {
+	if agentID == "claude-code" || agentID == "muse" {
 		return base, errors.New("interactive model discovery requires a private terminal")
 	}
 	if agentID == "codex" {
@@ -159,9 +158,6 @@ func Discover(ctx context.Context, agentID, binary, workingDir string, env map[s
 	models, err := spec.parser(output)
 	if err != nil {
 		return base, fmt.Errorf("%s model discovery: %w", agentID, err)
-	}
-	if agentID == "claude-code" {
-		models = applyClaudeConfiguredDefault(models, workingDir, env)
 	}
 	models = normalize(models)
 	if len(models) == 0 {
@@ -406,34 +402,6 @@ func parseGrokModels(output []byte) ([]ports.AgentModelInfo, error) {
 
 func parseCursorModels(output []byte) ([]ports.AgentModelInfo, error) {
 	return parseSectionModels(string(output), "Available models", "Tip:")
-}
-
-func parseClaudeModelCommand(output []byte) ([]ports.AgentModelInfo, error) {
-	text := ansiPattern.ReplaceAllString(string(output), "")
-	lower := strings.ToLower(text)
-	const marker = "available:"
-	start := strings.Index(lower, marker)
-	if start < 0 {
-		return nil, errors.New("claude /model output has no available-model list")
-	}
-	list := text[start+len(marker):]
-	if end := strings.Index(strings.ToLower(list), "or a full model id"); end >= 0 {
-		list = list[:end]
-	}
-
-	var models []ports.AgentModelInfo
-	for _, item := range strings.Split(strings.ReplaceAll(list, "\n", " "), ",") {
-		id := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(item), "or "))
-		id = strings.TrimRight(id, ".")
-		if id == "" || strings.EqualFold(id, "default") {
-			continue
-		}
-		models = append(models, ports.AgentModelInfo{ID: id, Label: id})
-	}
-	if len(models) == 0 {
-		return nil, errors.New("claude /model output has no selectable aliases")
-	}
-	return models, nil
 }
 
 func parseSectionModels(output, startMarker, stopMarker string) ([]ports.AgentModelInfo, error) {

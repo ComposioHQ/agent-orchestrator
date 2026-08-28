@@ -286,6 +286,37 @@ func TestDiscoverClaudeModelsUsesPrivateTerminalAndClosesIt(t *testing.T) {
 	}
 }
 
+func TestDiscovererRoutesClaudeThroughVisibleModelMenu(t *testing.T) {
+	stream := newScriptedModelStream("$\n", "1. Default — Default model\n2. Opus (1M context) — Opus 5\n3. Fable — Fable 5\n4. Sonnet — Sonnet 5\n5. Sonnet 5 (1M context) — Sonnet 5 long\n6. Haiku — Haiku 4.5\nEnter selection [1-6], or Escape to cancel:\n")
+	discoverer := Discoverer{TerminalSpawner: func(context.Context, []string, []string, string, uint16, uint16) (ports.Stream, error) {
+		return stream, nil
+	}}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	got, err := discoverer.Discover(ctx, ports.AgentModelDiscoveryRequest{AgentID: "claude-code", Binary: "/bin/claude"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"opus[1m]", "fable", "sonnet", "sonnet[1m]", "haiku"}
+	if len(got.Models) != len(want) {
+		t.Fatalf("models = %#v, want IDs %q", got.Models, want)
+	}
+	wantIDs := make(map[string]bool, len(want))
+	for _, id := range want {
+		wantIDs[id] = true
+	}
+	for _, model := range got.Models {
+		if !wantIDs[model.ID] {
+			t.Fatalf("unexpected model %#v; want IDs %q", model, want)
+		}
+		delete(wantIDs, model.ID)
+	}
+	if len(wantIDs) != 0 {
+		t.Fatalf("models = %#v, missing IDs %#v", got.Models, wantIDs)
+	}
+}
+
 func TestDiscoverMuseModelsUsesNoSessionLog(t *testing.T) {
 	stream := newScriptedModelStream("⟩\n status · muse-spark\n", "1. muse-spark ✓  Fast\n2. muse-pro  Capable\n")
 	var gotArgv []string

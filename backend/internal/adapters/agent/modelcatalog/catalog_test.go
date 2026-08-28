@@ -75,32 +75,6 @@ func TestAiderAndAutohandUseDocumentedDiscoveryCommands(t *testing.T) {
 	}
 }
 
-func TestClaudeDiscoveryUsesLocalModelSlashCommand(t *testing.T) {
-	spec, ok := commandSpecs["claude-code"]
-	if !ok {
-		t.Fatal("claude-code discovery command is missing")
-	}
-	wantArgs := []string{"-p", "/model"}
-	if !reflect.DeepEqual(spec.args, wantArgs) {
-		t.Fatalf("claude-code discovery args = %q, want %q", spec.args, wantArgs)
-	}
-
-	output := []byte("Current model: `Opus 5 (1M context)`\nUsage: /model <name>. Available: sonnet, opus, haiku, fable, best, sonnet[1m], opus[1m], fable[1m], opusplan, default, or a full model ID.\n")
-	got, err := spec.parser(output)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := []string{"sonnet", "opus", "haiku", "fable", "best", "sonnet[1m]", "opus[1m]", "fable[1m]", "opusplan"}
-	if len(got) != len(want) {
-		t.Fatalf("models = %#v, want IDs %q", got, want)
-	}
-	for i, model := range got {
-		if model.ID != want[i] || model.Label != want[i] {
-			t.Fatalf("models[%d] = %#v, want ID and label %q", i, model, want[i])
-		}
-	}
-}
-
 func TestBaseClassifiesStaticTextAndModeAgents(t *testing.T) {
 	tests := []struct {
 		agent string
