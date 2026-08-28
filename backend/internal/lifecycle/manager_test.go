@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-chi/chi/v5/middleware"
+
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -3794,5 +3796,52 @@ func TestActivitySignalRejectsStaleChatControllerGenerationAcrossHandoff(t *test
 	}
 	if got := st.sessions["mer-1"].Activity.State; got != domain.ActivityIdle {
 		t.Fatalf("old Chat controller changed TUI activity to %q", got)
+	}
+}
+
+// TestEmitTelemetryStampsRequestID covers the shared lifecycle emit path: an
+// HTTP-driven activity signal must tag its events with the request id so the
+// lifecycle rows join to the request, while reaper/poller ticks (a plain
+// background context) must keep an empty request id.
+func TestEmitTelemetryStampsRequestID(t *testing.T) {
+	cases := []struct {
+		name string
+		ctx  context.Context
+		want string
+	}{
+		{
+			name: "request scoped",
+			ctx:  context.WithValue(context.Background(), middleware.RequestIDKey, "req-1"),
+			want: "req-1",
+		},
+		{name: "background context", ctx: context.Background(), want: ""},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			st := newFakeStore()
+			sink := &telemetrySink{}
+			m := New(st, nil, WithTelemetry(sink))
+			now := time.Unix(100, 0).UTC()
+			m.clock = func() time.Time { return now }
+			st.sessions["mer-1"] = domain.SessionRecord{
+				ID:        "mer-1",
+				ProjectID: "mer",
+				Activity:  domain.Activity{State: domain.ActivityIdle, LastActivityAt: now.Add(-time.Minute)},
+			}
+
+			signal := ports.ActivitySignal{Valid: true, State: domain.ActivityWaitingInput, Timestamp: now}
+			if err := m.ApplyActivitySignal(tc.ctx, "mer-1", signal); err != nil {
+				t.Fatal(err)
+			}
+			if len(sink.events) == 0 {
+				t.Fatal("no telemetry events emitted")
+			}
+			for _, ev := range sink.events {
+				if ev.RequestID != tc.want {
+					t.Fatalf("%s RequestID = %q, want %q", ev.Name, ev.RequestID, tc.want)
+				}
+			}
+		})
 	}
 }

@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-chi/chi/v5/middleware"
+
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/gitdefault"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
@@ -277,7 +279,7 @@ func TestManager_CloneCleansUpFailedAndEmptyCheckouts(t *testing.T) {
 }
 
 func TestManager_AddEmitsProjectAndFirstProjectTelemetry(t *testing.T) {
-	ctx := context.Background()
+	ctx := context.WithValue(context.Background(), middleware.RequestIDKey, "req-1")
 	store, err := sqlitetest.Open(t.TempDir())
 	if err != nil {
 		t.Fatalf("open store: %v", err)
@@ -294,6 +296,14 @@ func TestManager_AddEmitsProjectAndFirstProjectTelemetry(t *testing.T) {
 	}
 	if sink.events[0].Name != "ao.projects.created" || sink.events[1].Name != "ao.onboarding.first_project_added" {
 		t.Fatalf("event names = %#v", []string{sink.events[0].Name, sink.events[1].Name})
+	}
+	// The emit path detaches from the request context on purpose; the request id
+	// must still be carried so the rows join to the HTTP request that added the
+	// project.
+	for _, ev := range sink.events {
+		if ev.RequestID != "req-1" {
+			t.Fatalf("%s RequestID = %q, want req-1", ev.Name, ev.RequestID)
+		}
 	}
 }
 

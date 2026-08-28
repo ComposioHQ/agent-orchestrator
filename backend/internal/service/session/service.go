@@ -15,6 +15,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	"github.com/aoagents/agent-orchestrator/backend/internal/reqid"
 	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
 	"github.com/aoagents/agent-orchestrator/backend/internal/telemetrymeta"
 )
@@ -252,12 +253,12 @@ func (s *Service) spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	rec, promptBytes, systemPromptBytes, err := s.manager.Spawn(ctx, cfg)
 	if err != nil {
 		apiErr := toSpawnAPIError(err)
-		s.emitSpawnFailed(cfg, apiErr, s.now().Sub(start).Milliseconds())
+		s.emitSpawnFailed(ctx, cfg, apiErr, s.now().Sub(start).Milliseconds())
 		return domain.Session{}, 0, 0, apiErr
 	}
-	s.emitSpawned(rec, s.now().Sub(start).Milliseconds())
+	s.emitSpawned(ctx, rec, s.now().Sub(start).Milliseconds())
 	if firstSession {
-		s.emitFirstSessionSpawned(rec, project)
+		s.emitFirstSessionSpawned(ctx, rec, project)
 	}
 	sess, err := s.toSession(ctx, rec)
 	if err != nil {
@@ -297,7 +298,7 @@ func (s *Service) isFirstSession(ctx context.Context) (bool, error) {
 	return len(rows) == 0, nil
 }
 
-func (s *Service) emitSpawned(rec domain.SessionRecord, durationMs int64) {
+func (s *Service) emitSpawned(ctx context.Context, rec domain.SessionRecord, durationMs int64) {
 	if s.telemetry == nil {
 		return
 	}
@@ -310,6 +311,7 @@ func (s *Service) emitSpawned(rec domain.SessionRecord, durationMs int64) {
 		Level:      ports.TelemetryLevelInfo,
 		ProjectID:  &projectID,
 		SessionID:  &sessionID,
+		RequestID:  reqid.FromContext(ctx),
 		Payload: map[string]any{
 			"kind":        string(rec.Kind),
 			"harness":     string(rec.Harness),
@@ -318,7 +320,7 @@ func (s *Service) emitSpawned(rec domain.SessionRecord, durationMs int64) {
 	})
 }
 
-func (s *Service) emitFirstSessionSpawned(rec domain.SessionRecord, project domain.ProjectRecord) {
+func (s *Service) emitFirstSessionSpawned(ctx context.Context, rec domain.SessionRecord, project domain.ProjectRecord) {
 	if s.telemetry == nil {
 		return
 	}
@@ -338,11 +340,12 @@ func (s *Service) emitFirstSessionSpawned(rec domain.SessionRecord, project doma
 		Level:      ports.TelemetryLevelInfo,
 		ProjectID:  &projectID,
 		SessionID:  &sessionID,
+		RequestID:  reqid.FromContext(ctx),
 		Payload:    payload,
 	})
 }
 
-func (s *Service) emitSpawnFailed(cfg ports.SpawnConfig, err error, durationMs int64) {
+func (s *Service) emitSpawnFailed(ctx context.Context, cfg ports.SpawnConfig, err error, durationMs int64) {
 	if s.telemetry == nil {
 		return
 	}
@@ -367,6 +370,7 @@ func (s *Service) emitSpawnFailed(cfg ports.SpawnConfig, err error, durationMs i
 		OccurredAt: s.now(),
 		Level:      ports.TelemetryLevelError,
 		ProjectID:  &projectID,
+		RequestID:  reqid.FromContext(ctx),
 		Payload:    payload,
 	})
 }
