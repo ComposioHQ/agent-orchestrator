@@ -513,6 +513,7 @@ func (c chatLauncher) StartChat(ctx context.Context, cfg sessionmanager.ChatStar
 				ControllerGeneration:   out.ControllerGeneration,
 				Conversation:           out.Conversation,
 				ProviderBoundary:       out.ProviderBoundary,
+				CommitProviderHistory:  out.CommitProviderHistory,
 			})
 			return chatsvc.ControllerCommit{Conversation: commit.Conversation}, err
 		},

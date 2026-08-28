@@ -67,6 +67,19 @@ type chatSpawnStore interface {
 	CommitChatSpawn(context.Context, domain.SessionRecord, domain.ConversationBranch) error
 }
 
+// preparedChatSpawnStore extends the atomic Chat publication boundary with
+// native-history projection. The callback runs on the same SQLite transaction
+// after the provider boundary and generation are staged, but before the live
+// session record is published. It remains optional for focused lifecycle fakes.
+type preparedChatSpawnStore interface {
+	CommitChatSpawnPrepared(
+		context.Context,
+		domain.SessionRecord,
+		domain.ConversationBranch,
+		func(context.Context) error,
+	) error
+}
+
 // agentSwitchSourceStopStore and agentSwitchTargetActivationStore are the
 // atomic persistence primitives used at the two agent-switch ownership
 // boundaries. They remain optional so focused lifecycle reducer fakes do not
@@ -982,7 +995,7 @@ func (m *Manager) resolveNotifications(ctx context.Context, resolutions ...ports
 
 // MarkSpawned marks a newly spawned or restored session live and stores runtime/workspace handles.
 func (m *Manager) MarkSpawned(ctx context.Context, id domain.SessionID, metadata domain.SessionMetadata) error {
-	return m.markSpawned(ctx, id, metadata, nil)
+	return m.markSpawned(ctx, id, metadata, nil, nil)
 }
 
 // MarkChatSpawned atomically marks a Chat controller live and publishes the
@@ -999,7 +1012,30 @@ func (m *Manager) MarkChatSpawned(
 		strings.TrimSpace(metadata.ControllerGeneration) == "" {
 		return fmt.Errorf("lifecycle: Chat provider boundary for %q has incomplete or mismatched ownership", id)
 	}
-	return m.markSpawned(ctx, id, metadata, &boundary)
+	return m.markSpawned(ctx, id, metadata, &boundary, nil)
+}
+
+// MarkChatSpawnedPrepared publishes native history together with its reserved
+// provider boundary and lifecycle owner. The preparation callback is executed
+// only by the storage transaction; no controller is registered and the session
+// remains externally unavailable until the complete unit commits.
+func (m *Manager) MarkChatSpawnedPrepared(
+	ctx context.Context,
+	id domain.SessionID,
+	metadata domain.SessionMetadata,
+	boundary domain.ConversationBranch,
+	prepare func(context.Context) error,
+) error {
+	if prepare == nil {
+		return errors.New("lifecycle: Chat provider-history preparation is missing")
+	}
+	if boundary.ID == "" || boundary.ConversationID == "" || boundary.SessionID != id ||
+		boundary.ProviderConversationID == "" || boundary.ProviderScopeID != boundary.ID ||
+		metadata.ProviderConversationID != boundary.ProviderConversationID ||
+		strings.TrimSpace(metadata.ControllerGeneration) == "" {
+		return fmt.Errorf("lifecycle: Chat provider boundary for %q has incomplete or mismatched ownership", id)
+	}
+	return m.markSpawned(ctx, id, metadata, &boundary, prepare)
 }
 
 func (m *Manager) markSpawned(
@@ -1007,6 +1043,7 @@ func (m *Manager) markSpawned(
 	id domain.SessionID,
 	metadata domain.SessionMetadata,
 	boundary *domain.ConversationBranch,
+	prepare func(context.Context) error,
 ) error {
 	launchID := strings.TrimSpace(metadata.RuntimeLaunchID)
 	reactivator, err := func() (sessionUsageReactivator, error) {
@@ -1033,12 +1070,20 @@ func (m *Manager) markSpawned(
 			if err := m.store.UpdateSession(ctx, rec); err != nil {
 				return nil, err
 			}
-		} else {
+		} else if prepare == nil {
 			writer, ok := m.store.(chatSpawnStore)
 			if !ok {
 				return nil, errors.New("lifecycle: atomic Chat spawn persistence is unavailable")
 			}
 			if err := writer.CommitChatSpawn(ctx, rec, *boundary); err != nil {
+				return nil, err
+			}
+		} else {
+			writer, ok := m.store.(preparedChatSpawnStore)
+			if !ok {
+				return nil, errors.New("lifecycle: atomic Chat provider-history persistence is unavailable")
+			}
+			if err := writer.CommitChatSpawnPrepared(ctx, rec, *boundary, prepare); err != nil {
 				return nil, err
 			}
 		}

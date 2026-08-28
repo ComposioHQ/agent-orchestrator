@@ -1351,10 +1351,9 @@ textarea,
 	height: 100%;
 }
 
-/* Normal-buffer panes (codex, a plain shell) now keep scrollback (scrollback:5000
-   in XtermTerminal), so the viewport becomes scrollable. Hide the scrollbar so it
-   doesn't reserve width and shift the cell grid; the wheel still scrolls via the
-   terminal's wheel handler. */
+/* Normal-buffer panes (codex, a plain shell) keep scrollback (scrollback:5000 in
+   XtermTerminal). Preserve the existing hidden-scrollbar behavior by default;
+   macOS opts into the slim, draggable gutter below. */
 .xterm .xterm-viewport {
 	scrollbar-width: none;
 }
@@ -1362,6 +1361,49 @@ textarea,
 .xterm .xterm-viewport::-webkit-scrollbar {
 	width: 0;
 	height: 0;
+}
+
+/* xterm 5's native scrollbar obeys macOS's system auto-hide preference even
+   when its WebKit pseudo-elements are styled. Mirror normal-buffer geometry in
+   an app-owned overlay that fades after scrolling, while alternate-screen TUIs
+   (and their tmux copy-mode chrome) have no thumb at all. */
+.terminal-scrollbar {
+	position: absolute;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	z-index: 4;
+	width: 7px;
+	opacity: 0;
+	pointer-events: none;
+	transition: opacity var(--duration-fast) ease-out;
+}
+
+.terminal-scrollbar[data-scrollable="true"] {
+	pointer-events: auto;
+}
+
+.terminal-scrollbar[data-scrollable="true"][data-active="true"],
+.terminal-scrollbar[data-scrollable="true"]:hover,
+.terminal-scrollbar[data-scrollable="true"]:active {
+	opacity: 1;
+}
+
+.terminal-scrollbar__thumb {
+	position: absolute;
+	top: 0;
+	right: 1px;
+	left: 1px;
+	min-height: 24px;
+	border-radius: 999px;
+	background-color: color-mix(in srgb, var(--color-text-terminal) 30%, transparent);
+	will-change: height, transform;
+}
+
+.terminal-scrollbar:hover .terminal-scrollbar__thumb,
+.terminal-scrollbar:active .terminal-scrollbar__thumb,
+.terminal-xterm-host--mac:focus-within + .terminal-scrollbar .terminal-scrollbar__thumb {
+	background-color: color-mix(in srgb, var(--color-text-terminal) 48%, transparent);
 }
 
 /* Scrollable region that must not show a scrollbar — the wheel/trackpad still
