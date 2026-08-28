@@ -2,11 +2,8 @@ package usage
 
 import (
 	"context"
-	"fmt"
-	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
@@ -50,19 +47,16 @@ func TestCollectorDiscoversPiSessionByHeaderID(t *testing.T) {
 	}
 }
 
-func TestCollectorReconcilePiPathMatchesLiveWorkspace(t *testing.T) {
+func TestCollectorReconcilePiPathMatchesDurableNativeID(t *testing.T) {
 	const nativeID = "pi-session-from-header"
 	store := collectorTestStore(t)
 	workspace := t.TempDir()
-	session := collectorTestSession(t, store, domain.HarnessPi, "", false)
+	session := collectorTestSession(t, store, domain.HarnessPi, nativeID, false)
 	session.Metadata.WorkspacePath = workspace
 	mustNoError(t, store.UpdateSession(context.Background(), session))
 	root := t.TempDir()
 	path := filepath.Join(root, "project", "session.jsonl")
-	writeUsageFixture(t, path, fmt.Sprintf(
-		`{"type":"session","id":%q,"timestamp":%q,"cwd":%q,"version":3}`+"\n",
-		nativeID, session.CreatedAt.Add(time.Second).Format(time.RFC3339Nano), workspace,
-	))
+	writeUsageFixture(t, path, `{"type":"session","id":"`+nativeID+`","cwd":"`+workspace+`","version":3}`+"\n")
 
 	collector := NewCollector(store, SourceRoots{PiSessions: root}, nil)
 	mustNoError(t, collector.ReconcilePath(context.Background(), path))
@@ -72,32 +66,29 @@ func TestCollectorReconcilePiPathMatchesLiveWorkspace(t *testing.T) {
 	}
 }
 
-// TestCollectorPiBackfillBindsOnlyCurrentWorkspaceSession catches importing
-// every historical Pi file merely because it shares the live AO workspace.
-func TestCollectorPiBackfillBindsOnlyCurrentWorkspaceSession(t *testing.T) {
+// TestCollectorPiBackfillRejectsUnrelatedSameWorkspaceSession catches binding
+// a later manual Pi invocation merely because it shares the live AO workspace.
+func TestCollectorPiBackfillRejectsUnrelatedSameWorkspaceSession(t *testing.T) {
 	store := collectorTestStore(t)
 	workspace := t.TempDir()
-	session := collectorTestSession(t, store, domain.HarnessPi, "", false)
+	session := collectorTestSession(t, store, domain.HarnessPi, "pi-current", false)
 	session.Metadata.WorkspacePath = workspace
 	mustNoError(t, store.UpdateSession(context.Background(), session))
 
 	root := t.TempDir()
-	oldPath := filepath.Join(root, "project", "old.jsonl")
 	currentPath := filepath.Join(root, "project", "current.jsonl")
-	writeUsageFixture(t, oldPath, fmt.Sprintf(
-		`{"type":"session","id":"pi-old","timestamp":%q,"cwd":%q,"version":3}`+"\n",
-		session.CreatedAt.Add(-time.Hour).Format(time.RFC3339Nano), workspace,
-	))
-	writeUsageFixture(t, currentPath, fmt.Sprintf(
-		`{"type":"session","id":"pi-current","timestamp":%q,"cwd":%q,"version":3}`+"\n",
-		session.CreatedAt.Add(time.Second).Format(time.RFC3339Nano), workspace,
-	))
-	mustNoError(t, os.Chtimes(oldPath, session.CreatedAt.Add(-time.Hour), session.CreatedAt.Add(-time.Hour)))
-	mustNoError(t, os.Chtimes(currentPath, session.CreatedAt.Add(time.Second), session.CreatedAt.Add(time.Second)))
+	manualPath := filepath.Join(root, "project", "manual.jsonl")
+	writeUsageFixture(t, currentPath, `{"type":"session","id":"pi-current","cwd":"`+workspace+`","version":3}`+"\n")
+	writeUsageFixture(t, manualPath, `{"type":"session","id":"pi-manual","cwd":"`+workspace+`","version":3}`+"\n")
 
 	collector := NewCollector(store, SourceRoots{PiSessions: root}, nil)
-	mustNoError(t, collector.BackfillActive(context.Background()))
+	mustNoError(t, collector.ReconcilePath(context.Background(), manualPath))
 	bindings, err := store.ListUsageBindingsForSession(context.Background(), session.ID)
+	if err != nil || len(bindings) != 0 {
+		t.Fatalf("manual same-workspace path created bindings=%+v err=%v", bindings, err)
+	}
+	mustNoError(t, collector.BackfillActive(context.Background()))
+	bindings, err = store.ListUsageBindingsForSession(context.Background(), session.ID)
 	if err != nil || len(bindings) != 1 || bindings[0].NativeRootID != "pi-current" {
 		t.Fatalf("bindings=%+v err=%v, want only current Pi session", bindings, err)
 	}

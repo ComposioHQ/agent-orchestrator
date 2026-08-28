@@ -211,17 +211,27 @@ func TestListLatestRetiredCodexReplacementClaimsByPath(t *testing.T) {
 	assertClaims()
 }
 
-func TestPiSessionWithoutBindingKeepsDiscoveryPending(t *testing.T) {
+func TestCurrentPiNativeIdentityWithoutBindingKeepsDiscoveryPending(t *testing.T) {
 	s := newTestStore(t)
 	session := seedUsageSession(t, s, domain.HarnessPi)
-	session.Metadata.WorkspacePath = t.TempDir()
+	session.Metadata.AgentSessionID = "pi-current"
+	session.Metadata.RuntimeLaunchID = "launch-current"
+	session.Metadata.AgentSessionIDLaunchID = "launch-current"
 	session.Activity.State = domain.ActivityIdle
 	mustNoError(t, s.UpdateSession(context.Background(), session))
 
 	pending, err := s.HasPendingUsageDiscovery(context.Background())
 	mustNoError(t, err)
 	if !pending {
-		t.Fatal("live Pi session without a usage binding did not request discovery")
+		t.Fatal("live Pi session with a current native identity did not request discovery")
+	}
+
+	session.Metadata.AgentSessionIDLaunchID = "launch-stale"
+	mustNoError(t, s.UpdateSession(context.Background(), session))
+	pending, err = s.HasPendingUsageDiscovery(context.Background())
+	mustNoError(t, err)
+	if pending {
+		t.Fatal("stale Pi native identity requested discovery for the current launch")
 	}
 }
 

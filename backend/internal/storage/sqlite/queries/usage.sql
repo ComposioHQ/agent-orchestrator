@@ -143,7 +143,11 @@ SELECT CAST(EXISTS (
     WHERE s.is_terminated = 0
       AND s.activity_state <> 'exited'
       AND s.harness = 'pi'
-      AND trim(s.workspace_path) <> ''
+      AND trim(s.agent_session_id) <> ''
+      AND (
+          trim(s.runtime_launch_id) = ''
+          OR s.agent_session_id_launch_id = s.runtime_launch_id
+      )
       AND NOT EXISTS (
           SELECT 1
           FROM usage_bindings ub

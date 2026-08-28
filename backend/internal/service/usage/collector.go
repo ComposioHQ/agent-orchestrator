@@ -158,10 +158,6 @@ func newContextMutex() contextMutex {
 	return contextMutex{token: token}
 }
 
-func (m *contextMutex) Lock() {
-	<-m.token
-}
-
 func (m *contextMutex) LockContext(ctx context.Context) error {
 	select {
 	case <-ctx.Done():
@@ -209,7 +205,9 @@ func (c *Collector) FinalizeSession(
 	expectedRuntimeLaunchID string,
 	expectedSessionRevision time.Time,
 ) error {
-	c.mu.Lock()
+	if err := c.mu.LockContext(ctx); err != nil {
+		return err
+	}
 	defer c.mu.Unlock()
 
 	now := c.now().UTC()
@@ -353,7 +351,9 @@ func (c *Collector) RecordHook(ctx context.Context, sessionID domain.SessionID, 
 		}
 	}
 
-	c.mu.Lock()
+	if err := c.mu.LockContext(ctx); err != nil {
+		return err
+	}
 	defer c.mu.Unlock()
 	session, proceed, err = c.hookSession(ctx, sessionID, signal, finalizing)
 	if err != nil || !proceed {
@@ -568,7 +568,9 @@ func (c *Collector) validateHookArtifact(
 // BackfillActive discovers transcript files only for live/resumable AO
 // sessions. It deliberately does not import terminated session history.
 func (c *Collector) BackfillActive(ctx context.Context) error {
-	c.mu.Lock()
+	if err := c.mu.LockContext(ctx); err != nil {
+		return err
+	}
 	defer c.mu.Unlock()
 
 	sessions, err := c.store.ListAllSessions(ctx)
@@ -724,7 +726,9 @@ func (c *Collector) backfillSession(ctx context.Context, session domain.SessionR
 // A negative limit reconciles every eligible binding; zero uses the bounded
 // default.
 func (c *Collector) ReconcileSources(ctx context.Context, limit int64) error {
-	c.mu.Lock()
+	if err := c.mu.LockContext(ctx); err != nil {
+		return err
+	}
 	defer c.mu.Unlock()
 
 	var errs []error
@@ -750,7 +754,9 @@ func (c *Collector) ReconcileSources(ctx context.Context, limit int64) error {
 // ReconcilePath uses Codex rollout metadata to validate replacements and reach
 // newly-created child bindings independently of the bounded discovery queue.
 func (c *Collector) ReconcilePath(ctx context.Context, path string) error {
-	c.mu.Lock()
+	if err := c.mu.LockContext(ctx); err != nil {
+		return err
+	}
 	defer c.mu.Unlock()
 	if pathWithinRoot(ctx, path, c.roots.PiSessions) {
 		return c.reconcilePiPath(ctx, path)
@@ -818,34 +824,26 @@ func (c *Collector) reconcilePiPath(ctx context.Context, path string) error {
 	if !ok {
 		return nil
 	}
-	startedAt, validTimestamp := piSessionStartedAt(meta)
-	if !validTimestamp {
-		return nil // Pi session attribution requires its provider timestamp.
-	}
-	workspace, err := filepath.EvalSymlinks(filepath.Clean(meta.CWD))
-	if err != nil {
-		return nil //nolint:nilerr // Ignore stale provider metadata.
-	}
 	sessions, err := c.store.ListAllSessions(ctx)
 	if err != nil {
 		return err
 	}
-	matches := make([]domain.SessionRecord, 0, 1)
+	var match *domain.SessionRecord
 	for _, session := range sessions {
 		if session.Harness != domain.HarnessPi || session.IsTerminated ||
-			session.Activity.State == domain.ActivityExited || session.Metadata.WorkspacePath == "" ||
-			startedAt.Before(session.CreatedAt.Add(-5*time.Second)) {
+			session.Activity.State == domain.ActivityExited || usageNativeSessionID(session) != meta.ID {
 			continue
 		}
-		candidate, candidateErr := filepath.EvalSymlinks(filepath.Clean(session.Metadata.WorkspacePath))
-		if candidateErr == nil && candidate == workspace {
-			matches = append(matches, session)
+		if match != nil {
+			return nil // Native identity must resolve to exactly one live AO session.
 		}
+		candidate := session
+		match = &candidate
 	}
-	if len(matches) != 1 {
+	if match == nil {
 		return nil
 	}
-	existing, err := c.store.ListUsageBindingsForSession(ctx, matches[0].ID)
+	existing, err := c.store.ListUsageBindingsForSession(ctx, match.ID)
 	if err != nil {
 		return err
 	}
@@ -856,7 +854,7 @@ func (c *Collector) reconcilePiPath(ctx context.Context, path string) error {
 	}
 	now := c.now().UTC()
 	binding, err := c.store.UpsertUsageBinding(ctx, domain.UsageBindingRecord{
-		SessionID: matches[0].ID, Harness: domain.HarnessPi, NativeRootID: meta.ID,
+		SessionID: match.ID, Harness: domain.HarnessPi, NativeRootID: meta.ID,
 		State: domain.UsageBindingActive, UpdatedAt: now,
 	})
 	if err != nil {
@@ -2133,14 +2131,6 @@ type piSessionMeta struct {
 	ID        string `json:"id"`
 	Timestamp string `json:"timestamp"`
 	CWD       string `json:"cwd"`
-}
-
-func piSessionStartedAt(meta piSessionMeta) (time.Time, bool) {
-	startedAt, err := time.Parse(time.RFC3339Nano, meta.Timestamp)
-	if err != nil {
-		return time.Time{}, false
-	}
-	return startedAt.UTC(), true
 }
 
 func readPiSessionMeta(ctx context.Context, path string) (piSessionMeta, bool) {

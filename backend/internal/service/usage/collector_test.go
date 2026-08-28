@@ -590,7 +590,7 @@ func TestCollectorReactivateSessionWaitsForLockAndHonorsCancellation(t *testing.
 	collector := NewCollector(store, SourceRoots{}, nil)
 
 	t.Run("waits and reports completion", func(t *testing.T) {
-		collector.mu.Lock()
+		mustNoError(t, collector.mu.LockContext(context.Background()))
 		done := make(chan error, 1)
 		go func() {
 			done <- collector.ReactivateSession(context.Background(), session.ID, "launch-current")
@@ -606,7 +606,7 @@ func TestCollectorReactivateSessionWaitsForLockAndHonorsCancellation(t *testing.
 	})
 
 	t.Run("canceled waiter returns context error", func(t *testing.T) {
-		collector.mu.Lock()
+		mustNoError(t, collector.mu.LockContext(context.Background()))
 		defer collector.mu.Unlock()
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
@@ -614,6 +614,31 @@ func TestCollectorReactivateSessionWaitsForLockAndHonorsCancellation(t *testing.
 			t.Fatalf("ReactivateSession error = %v, want context.Canceled", err)
 		}
 	})
+}
+
+func TestCollectorFinalizeSessionHonorsCancellationWhileWaitingForLock(t *testing.T) {
+	store := collectorTestStore(t)
+	session := collectorTestSession(t, store, domain.HarnessCodex, "native-contended", false)
+	collector := NewCollector(store, SourceRoots{}, nil)
+	mustNoError(t, collector.mu.LockContext(context.Background()))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- collector.FinalizeSession(ctx, session.ID, "", time.Time{})
+	}()
+	select {
+	case err := <-done:
+		collector.mu.Unlock()
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("FinalizeSession error = %v, want context.Canceled", err)
+		}
+	case <-time.After(time.Second):
+		collector.mu.Unlock()
+		<-done
+		t.Fatal("FinalizeSession did not observe cancellation while waiting for collector lock")
+	}
 }
 
 func TestCollectorHookLifecycleTransitions(t *testing.T) {

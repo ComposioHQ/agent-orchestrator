@@ -454,6 +454,7 @@ func cacheWriteSplitFor(event domain.ModelUsageEvent) cacheWriteSplit {
 	case domain.UsageProviderAnthropic:
 		var usage struct {
 			CacheCreationInputTokens *int64 `json:"cache_creation_input_tokens"`
+			PiCacheWrite             *int64 `json:"cacheWrite"`
 			CacheCreation            *struct {
 				Ephemeral5mInputTokens *int64 `json:"ephemeral_5m_input_tokens"`
 				Ephemeral1hInputTokens *int64 `json:"ephemeral_1h_input_tokens"`
@@ -462,7 +463,11 @@ func cacheWriteSplitFor(event domain.ModelUsageEvent) cacheWriteSplit {
 		if err := json.Unmarshal([]byte(event.ProviderUsageJSON), &usage); err != nil {
 			return cacheWriteSplit{}
 		}
-		split := cacheWriteSplit{total: usage.CacheCreationInputTokens}
+		total := usage.CacheCreationInputTokens
+		if total == nil {
+			total = usage.PiCacheWrite
+		}
+		split := cacheWriteSplit{total: total}
 		if usage.CacheCreation != nil {
 			split.fiveM = usage.CacheCreation.Ephemeral5mInputTokens
 			split.oneH = usage.CacheCreation.Ephemeral1hInputTokens
@@ -479,15 +484,19 @@ func cacheWriteSplitFor(event domain.ModelUsageEvent) cacheWriteSplit {
 			Last *struct {
 				CacheWriteInputTokens *int64 `json:"cache_write_input_tokens"`
 			} `json:"last_token_usage"`
-			Derived *int64 `json:"ao_derived_cache_write_input_tokens"`
+			Derived      *int64 `json:"ao_derived_cache_write_input_tokens"`
+			PiCacheWrite *int64 `json:"cacheWrite"`
 		}
 		if err := json.Unmarshal([]byte(event.ProviderUsageJSON), &usage); err != nil {
 			return cacheWriteSplit{}
 		}
-		if usage.Last != nil {
+		if usage.Last != nil && usage.Last.CacheWriteInputTokens != nil {
 			return cacheWriteSplit{total: usage.Last.CacheWriteInputTokens}
 		}
-		return cacheWriteSplit{total: usage.Derived}
+		if usage.Derived != nil {
+			return cacheWriteSplit{total: usage.Derived}
+		}
+		return cacheWriteSplit{total: usage.PiCacheWrite}
 	default:
 		return cacheWriteSplit{}
 	}

@@ -8,22 +8,27 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
+const piUnattributedUsageModel = "Tools/summaries"
+
 type piSessionRecord struct {
-	Type      string `json:"type"`
-	ID        string `json:"id"`
-	Timestamp string `json:"timestamp"`
+	Type      string          `json:"type"`
+	ID        string          `json:"id"`
+	Timestamp string          `json:"timestamp"`
+	Usage     json.RawMessage `json:"usage"`
 	Message   *struct {
-		Role     string `json:"role"`
-		Provider string `json:"provider"`
-		Model    string `json:"model"`
-		Usage    *struct {
-			Input       int64  `json:"input"`
-			Output      int64  `json:"output"`
-			CacheRead   int64  `json:"cacheRead"`
-			CacheWrite  int64  `json:"cacheWrite"`
-			TotalTokens *int64 `json:"totalTokens"`
-		} `json:"usage"`
+		Role          string          `json:"role"`
+		Provider      string          `json:"provider"`
+		Model         string          `json:"model"`
+		ResponseModel string          `json:"responseModel"`
+		Usage         json.RawMessage `json:"usage"`
 	} `json:"message"`
+}
+
+type piNativeUsage struct {
+	Input      int64 `json:"input"`
+	Output     int64 `json:"output"`
+	CacheRead  int64 `json:"cacheRead"`
+	CacheWrite int64 `json:"cacheWrite"`
 }
 
 func parsePi(source domain.UsageSourceContext, records []jsonlRecord, result *parseResult) {
@@ -34,62 +39,70 @@ func parsePi(source domain.UsageSourceContext, records []jsonlRecord, result *pa
 			recordMalformed(result)
 			continue
 		}
-		if native.Type != "message" || native.Message == nil || native.Message.Role != "assistant" {
+
+		var provider, model string
+		var usageRaw json.RawMessage
+		switch {
+		case native.Type == "message" && native.Message != nil && native.Message.Role == "assistant":
+			provider = strings.TrimSpace(native.Message.Provider)
+			model = firstNonEmpty(native.Message.ResponseModel, native.Message.Model)
+			usageRaw = native.Message.Usage
+			if model == "" || !jsonValueReported(usageRaw) {
+				recordMalformed(result)
+				continue
+			}
+		case native.Type == "message" && native.Message != nil && native.Message.Role == "toolResult" &&
+			jsonValueReported(native.Message.Usage):
+			model = piUnattributedUsageModel
+			usageRaw = native.Message.Usage
+		case (native.Type == "compaction" || native.Type == "branch_summary") && jsonValueReported(native.Usage):
+			model = piUnattributedUsageModel
+			usageRaw = native.Usage
+		default:
 			continue
 		}
-		message := native.Message
-		model := firstNonEmpty(message.Model)
-		if model == "" || message.Usage == nil {
+
+		var usage piNativeUsage
+		if err := json.Unmarshal(usageRaw, &usage); err != nil {
 			recordMalformed(result)
 			continue
 		}
-		provider := strings.TrimSpace(message.Provider)
-		if provider != "" {
-			model = provider + "/" + model
-		}
-		usage := message.Usage
 		input, ok := sumNonNegative(usage.Input, usage.CacheRead, usage.CacheWrite)
 		if !ok {
 			recordMalformed(result)
 			continue
 		}
 		providerID := domain.UsageProviderOpenAI
-		providerDetails := domain.UsageProviderDetails{}
 		var tokens domain.UsageTokenMetrics
 		if strings.EqualFold(provider, "anthropic") {
-			var details domain.AnthropicUsageDetails
-			tokens, details, ok = normalizeAnthropicUsage(
+			providerID = domain.UsageProviderAnthropic
+			tokens, ok = normalizeAnthropicUsage(
 				usage.Input, usage.CacheWrite, usage.CacheRead, usage.Output, nil, nil,
 			)
-			providerID = domain.UsageProviderAnthropic
-			providerDetails.Anthropic = &details
 		} else {
-			reportedTotal := int64(0)
-			if usage.TotalTokens != nil {
-				reportedTotal = *usage.TotalTokens
-			}
-			var details domain.OpenAIUsageDetails
-			tokens, details, ok = normalizeOpenAIUsage(
-				input, usage.CacheRead, usage.CacheWrite, usage.Output, 0, reportedTotal,
-			)
-			// Pi reports direct input and cache buckets separately, so its
-			// canonical total input is derived rather than directly reported.
-			tokens.Provenance.InputTokens = domain.UsageMetricDerived
-			providerDetails.OpenAI = &details
+			tokens, ok = normalizeOpenAIUsage(input, usage.CacheRead, usage.CacheWrite, usage.Output)
 		}
 		if !ok {
 			recordMalformed(result)
 			continue
 		}
+
+		billingProvider := ""
+		if model != piUnattributedUsageModel {
+			billingProvider = canonicalBillingProvider(provider)
+		}
 		identity := firstNonEmpty(native.ID, strconv.FormatInt(record.Offset, 10))
 		event := domain.ModelUsageEvent{
-			ProviderID:      providerID,
-			ModelID:         model,
-			Tokens:          tokens,
-			ProviderDetails: providerDetails,
-			CreatedAt:       parseUsageTimestamp(native.Timestamp),
+			ProviderID:            providerID,
+			BillingProviderID:     billingProvider,
+			BillingProviderSource: domain.ObservedBillingProviderSource(billingProvider),
+			ModelID:               model,
+			MeasurementKind:       domain.UsageMeasurementNativeReported,
+			Tokens:                tokens,
+			ProviderUsageJSON:     boundedProviderUsage(usageRaw),
+			CreatedAt:             parseUsageTimestamp(native.Timestamp),
 			SourceEventKey: stableSourceEventKey(
-				"pi", source.NativeRootID, identity, provider, strings.TrimSpace(message.Model),
+				"pi", source.NativeRootID, native.Type, identity,
 			),
 		}
 		if existing, duplicate := eventsByKey[event.SourceEventKey]; duplicate {
