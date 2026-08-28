@@ -78,3 +78,21 @@ Fix-round static inspection:
 - Approved taxonomy parity remained exact at 71 points with no `comm` difference.
 - Fixture prohibited-content search and domain/ports Sentry-import search returned no matches.
 - Runtime/compiler verification remains deferred under the same explicit no-test/no-build instruction.
+
+## Fix round 2
+
+Review corrections applied after commit `b5aaedf34`:
+
+- Unified frame requirements with the exact full-tuple `severityForFault` used by canonical event emission. Ownership ambiguity and owner-commit contradictions now require frames even at warning-default points, while proven safe missing-binary, unauthorized-target, pre-stop abort, rollback, and visibility cases remain stackless warnings. Panics still always require frames.
+- Restricted `recovery_attempt_failed` to one of the three unresolved retained markers at its exact durable phase. Added a semantic error/phase matrix that rejects impossible terminal classifications such as `delivery_unconfirmed` at `stopping_source`; recovery dedupe continues to include the unchanged current marker.
+- Replaced permissive function text with documented normalized dot-separated Go symbols. Raw receiver syntax, generic receiver syntax, parentheses, arguments, locals, and provider text cannot enter frames.
+- Replaced metadata token/denylist checks with exported closed environment, channel, platform, OS, and elapsed-bucket types. Platform is exactly `daemon|renderer`; preview feed names normalize to `preview`; release accepts only a bounded SemVer/build-release grammar.
+- Replaced free stack-string denylist filtering with strict package/function/repository-relative source-file grammars, and expanded negative tests across every metadata and frame string category, including artifact hashes, issue-like values, paths, URLs, UUIDs, and argument renderings.
+- Updated the golden fixture to the closed `stable` release environment. Local switch, daemon-run, and execution-attempt scope IDs remain excluded from canonical bytes.
+
+Fix-round-2 static inspection:
+
+- `gofmt` completed for the changed Go source and tests.
+- `git diff --check` reported no whitespace errors.
+- Fixture JSON shape/privacy, the 71-point taxonomy parity, production-disable constant, provider-neutral ports, and absence of Sentry imports were re-inspected without invoking a compiler.
+- Runtime/compiler verification remains deferred under the explicit consolidated-verification instruction.

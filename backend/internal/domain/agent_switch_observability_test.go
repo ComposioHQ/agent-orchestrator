@@ -268,6 +268,7 @@ func TestAgentSwitchReportKindCodeMatrix(t *testing.T) {
 		{"recovery-required wrong fault", completeRecoveryRequiredFaultFixture(), func(f *AgentSwitchFault) { f.FaultCode = AgentSwitchFaultRecoveryUnresolved }},
 		{"recovery wrong fault", completeRecoveryAttemptFaultFixture(), func(f *AgentSwitchFault) { f.FaultCode = AgentSwitchFaultWorkerPanic }},
 		{"recovery marker wrong phase", completeRecoveryAttemptFaultFixture(), func(f *AgentSwitchFault) { f.Phase = AgentSwitchStartingTarget }},
+		{"recovery non-marker error", completeRecoveryAttemptFaultFixture(), func(f *AgentSwitchFault) { f.ErrorCode = AgentSwitchErrorDeliveryUnconfirmed }},
 		{"completed maintenance semantic error", completeMaintenanceFaultFixture(), func(f *AgentSwitchFault) { f.ErrorCode = AgentSwitchErrorSwitchFailed }},
 		{"failed maintenance missing semantic error", completeFailedMaintenanceFaultFixture(), func(f *AgentSwitchFault) { f.ErrorCode = AgentSwitchErrorNotApplicable }},
 		{"visibility semantic error", completeVisibilityFaultFixture(), func(f *AgentSwitchFault) { f.ErrorCode = AgentSwitchErrorSwitchFailed }},
@@ -278,6 +279,88 @@ func TestAgentSwitchReportKindCodeMatrix(t *testing.T) {
 			tc.mutate(&tc.fault)
 			require.Error(t, ValidateAgentSwitchFault(tc.fault))
 		})
+	}
+}
+
+func TestAgentSwitchRecoveryAttemptRequiresExactRetainedMarkerPhase(t *testing.T) {
+	valid := []struct {
+		name  string
+		code  AgentSwitchErrorCode
+		phase AgentSwitchState
+	}{
+		{"source stop", AgentSwitchErrorSourceStopUnconfirmed, AgentSwitchStoppingSource},
+		{"source restore after stop", AgentSwitchErrorSourceRestoreUnconfirmed, AgentSwitchSourceStopped},
+		{"source restore during target start", AgentSwitchErrorSourceRestoreUnconfirmed, AgentSwitchStartingTarget},
+		{"target start", AgentSwitchErrorTargetStartUnconfirmed, AgentSwitchStartingTarget},
+	}
+	for _, tc := range valid {
+		t.Run(tc.name, func(t *testing.T) {
+			fault := completeRecoveryAttemptFaultFixture()
+			fault.ErrorCode = tc.code
+			fault.Phase = tc.phase
+			require.NoError(t, ValidateAgentSwitchFault(fault))
+		})
+	}
+
+	impossible := []struct {
+		code  AgentSwitchErrorCode
+		phase AgentSwitchState
+	}{
+		{AgentSwitchErrorSourceStopUnconfirmed, AgentSwitchStartingTarget},
+		{AgentSwitchErrorSourceRestoreUnconfirmed, AgentSwitchStoppingSource},
+		{AgentSwitchErrorTargetStartUnconfirmed, AgentSwitchStoppingSource},
+		{AgentSwitchErrorDeliveryUnconfirmed, AgentSwitchStoppingSource},
+	}
+	for _, tc := range impossible {
+		fault := completeRecoveryAttemptFaultFixture()
+		fault.ErrorCode = tc.code
+		fault.Phase = tc.phase
+		require.Error(t, ValidateAgentSwitchFault(fault))
+	}
+
+	terminal := completeRecoveryAttemptFaultFixture()
+	terminal.ReportKind = AgentSwitchReportTerminalFailure
+	terminal.ErrorCode = AgentSwitchErrorDeliveryUnconfirmed
+	terminal.FaultCode = AgentSwitchFaultNotApplicable
+	require.Error(t, ValidateAgentSwitchFault(terminal), "delivery_unconfirmed is impossible at stopping_source")
+}
+
+func TestAgentSwitchTerminalErrorPhaseMatrix(t *testing.T) {
+	allPhases := []AgentSwitchState{
+		AgentSwitchPreparingHandoff, AgentSwitchStoppingSource, AgentSwitchSourceStopped,
+		AgentSwitchStartingTarget, AgentSwitchTargetReady, AgentSwitchDelivering,
+		AgentSwitchCompleted, AgentSwitchFailed, AgentSwitchStateNotApplicable,
+	}
+	allowed := map[AgentSwitchErrorCode][]AgentSwitchState{
+		AgentSwitchErrorDaemonRestartPreStop:             {AgentSwitchPreparingHandoff, AgentSwitchStoppingSource},
+		AgentSwitchErrorDaemonRestartPostStop:            {AgentSwitchSourceStopped, AgentSwitchStartingTarget},
+		AgentSwitchErrorDaemonRestartUnrecoverableTarget: {AgentSwitchStartingTarget, AgentSwitchTargetReady, AgentSwitchDelivering},
+		AgentSwitchErrorDaemonRestartBeforeDelivery:      {AgentSwitchTargetReady},
+		AgentSwitchErrorDeliveryUnconfirmed:              {AgentSwitchDelivering},
+		AgentSwitchErrorSourceSessionTerminated:          {AgentSwitchStoppingSource},
+		AgentSwitchErrorTargetBinaryMissing:              {AgentSwitchPreparingHandoff, AgentSwitchStoppingSource, AgentSwitchSourceStopped, AgentSwitchStartingTarget},
+		AgentSwitchErrorTargetAgentUnauthorized:          {AgentSwitchPreparingHandoff, AgentSwitchStoppingSource, AgentSwitchSourceStopped, AgentSwitchStartingTarget},
+		AgentSwitchErrorRequestCancelled:                 {AgentSwitchPreparingHandoff, AgentSwitchStoppingSource, AgentSwitchSourceStopped, AgentSwitchStartingTarget, AgentSwitchTargetReady, AgentSwitchDelivering},
+		AgentSwitchErrorSourceBlocked:                    {AgentSwitchPreparingHandoff, AgentSwitchStoppingSource},
+		AgentSwitchErrorFailedPreStop:                    {AgentSwitchPreparingHandoff, AgentSwitchStoppingSource},
+		AgentSwitchErrorFailedPostStop:                   {AgentSwitchSourceStopped, AgentSwitchStartingTarget},
+		AgentSwitchErrorTargetReadyFailed:                {AgentSwitchStartingTarget, AgentSwitchTargetReady},
+		AgentSwitchErrorDeliveryFailed:                   {AgentSwitchDelivering},
+		AgentSwitchErrorSwitchFailed:                     {AgentSwitchPreparingHandoff, AgentSwitchStoppingSource, AgentSwitchSourceStopped, AgentSwitchStartingTarget, AgentSwitchTargetReady, AgentSwitchDelivering},
+	}
+	for code, validPhases := range allowed {
+		for _, phase := range allPhases {
+			require.Equal(t, contains(validPhases, phase), validTerminalErrorPhase(phase, code), "%s at %s", code, phase)
+		}
+	}
+	for _, marker := range []AgentSwitchErrorCode{
+		AgentSwitchErrorSourceStopUnconfirmed,
+		AgentSwitchErrorSourceRestoreUnconfirmed,
+		AgentSwitchErrorTargetStartUnconfirmed,
+	} {
+		for _, phase := range allPhases {
+			require.False(t, validTerminalErrorPhase(phase, marker), "retained marker %s must never be terminal at %s", marker, phase)
+		}
 	}
 }
 
@@ -308,6 +391,48 @@ func TestAgentSwitchStackApplicabilityUsesTaxonomyPriority(t *testing.T) {
 	p2.GateRetained = AgentSwitchTriNotApplicable
 	p2.Frames = nil
 	require.NoError(t, ValidateAgentSwitchFault(p2), "taxonomy P2 user/environment failures may omit stacks")
+
+	escalated := p2
+	escalated.Ownership = AgentSwitchOwnershipAmbiguous
+	escalated.UserImpact = AgentSwitchUserImpactOwnershipAmbiguous
+	require.Error(t, ValidateAgentSwitchFault(escalated), "full-tuple fatal escalation requires a stack even at a warning-default point")
+
+	escalated.Frames = completeSafeFaultFixture().Frames
+	raw := requireCanonicalEvent(t, escalated)
+	var event struct {
+		Level string `json:"level"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &event))
+	require.Equal(t, string(AgentSwitchSeverityFatal), event.Level)
+}
+
+func TestAgentSwitchP2UserAndEnvironmentFaultsAreStacklessWarnings(t *testing.T) {
+	tests := []struct {
+		name  string
+		fault AgentSwitchFault
+	}{
+		{"missing binary", completeTargetStartP2FaultFixture(AgentSwitchErrorTargetBinaryMissing)},
+		{"unauthorized target", completeTargetStartP2FaultFixture(AgentSwitchErrorTargetAgentUnauthorized)},
+		{"safe pre-stop abort", completePreflightP2FaultFixture(AgentSwitchErrorFailedPreStop)},
+		{"safe rollback", completeSafeRollbackFaultFixture()},
+		{"visibility", completeVisibilityFaultFixture()},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Empty(t, tc.fault.Frames)
+			entry, ok := AgentSwitchFailureTaxonomy(tc.fault.FailurePoint)
+			require.True(t, ok)
+			if tc.name == "missing binary" || tc.name == "unauthorized target" || tc.name == "safe rollback" {
+				require.Equal(t, AgentSwitchSeverityError, entry.DefaultSeverity, "full-tuple P2 classification must override an internal-point default")
+			}
+			require.NoError(t, ValidateAgentSwitchFault(tc.fault))
+			var event struct {
+				Level string `json:"level"`
+			}
+			require.NoError(t, json.Unmarshal(requireCanonicalEvent(t, tc.fault), &event))
+			require.Equal(t, string(AgentSwitchSeverityWarning), event.Level)
+		})
+	}
 }
 
 func TestValidateAgentSwitchFaultRejectsUnsafeFramesAndStackOverBound(t *testing.T) {
@@ -316,8 +441,13 @@ func TestValidateAgentSwitchFaultRejectsUnsafeFramesAndStackOverBound(t *testing
 		{Package: "internal/session_manager", Function: "execute", Filename: "../secret.go", Line: 1},
 		{Package: "internal/session manager", Function: "execute", Filename: "backend/file.go", Line: 1},
 		{Package: "internal/session_manager", Function: "execute(args)", Filename: "backend/file.go", Line: 1},
+		{Package: "internal/session_manager", Function: "(*Manager).execute", Filename: "backend/file.go", Line: 1},
+		{Package: "internal/session_manager", Function: "Manager[State].execute", Filename: "backend/file.go", Line: 1},
 		{Package: "internal/session_manager", Function: "execute", Filename: "backend/file.go", Line: 0},
 	}
+	validReceiver := completeSafeFaultFixture()
+	validReceiver.Frames[0].Function = "Manager.executeAgentSwitch"
+	require.NoError(t, ValidateAgentSwitchFault(validReceiver), "normalized dot-separated receiver symbols are safe")
 	for _, frame := range tests {
 		fault := completeSafeFaultFixture()
 		fault.Frames = []AgentSwitchStackFrame{frame}
@@ -403,7 +533,7 @@ func TestBuildAgentSwitchCanonicalEventRejectsInvalidEventIDAndMetadata(t *testi
 		"platform identifier": func(in *AgentSwitchEventBuildInput) { in.Platform = "switch-local-secret" },
 		"os UUID":             func(in *AgentSwitchEventBuildInput) { in.OS = "550e8400-e29b-41d4-a716-446655440000" },
 		"elapsed prompt":      func(in *AgentSwitchEventBuildInput) { in.ElapsedTimeBucket = "30 seconds of prompt text" },
-		"bounded OS":          func(in *AgentSwitchEventBuildInput) { in.OS = strings.Repeat("x", 129) },
+		"bounded OS":          func(in *AgentSwitchEventBuildInput) { in.OS = AgentSwitchOS(strings.Repeat("x", 129)) },
 	}
 	for name, mutate := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -415,11 +545,81 @@ func TestBuildAgentSwitchCanonicalEventRejectsInvalidEventIDAndMetadata(t *testi
 	}
 }
 
+func TestAgentSwitchEventMetadataUsesClosedAllowlists(t *testing.T) {
+	unsafeValues := []string{
+		"artifact-hash-deadbeef",
+		"issue-123",
+		"/Users/alice/private",
+		"https://telemetry.invalid/value",
+		"550e8400-e29b-41d4-a716-446655440000",
+	}
+	for _, value := range unsafeValues {
+		tests := map[string]func(*AgentSwitchEventBuildInput){
+			"environment": func(in *AgentSwitchEventBuildInput) { in.Environment = AgentSwitchEnvironment(value) },
+			"channel":     func(in *AgentSwitchEventBuildInput) { in.Channel = AgentSwitchChannel(value) },
+			"platform":    func(in *AgentSwitchEventBuildInput) { in.Platform = AgentSwitchPlatform(value) },
+			"os":          func(in *AgentSwitchEventBuildInput) { in.OS = AgentSwitchOS(value) },
+			"elapsed":     func(in *AgentSwitchEventBuildInput) { in.ElapsedTimeBucket = AgentSwitchElapsedTimeBucket(value) },
+			"release":     func(in *AgentSwitchEventBuildInput) { in.Release = value },
+		}
+		for field, mutate := range tests {
+			t.Run(value+"/"+field, func(t *testing.T) {
+				input := completeSafeBuildInput(completeSafeFaultFixture())
+				mutate(&input)
+				_, err := BuildAgentSwitchCanonicalEvent(input)
+				require.Error(t, err)
+			})
+		}
+	}
+
+	for _, release := range []string{"1.2.3", "v1.2.3", "1.2.3-nightly.20260828+abc1234"} {
+		input := completeSafeBuildInput(completeSafeFaultFixture())
+		input.Release = release
+		_, err := BuildAgentSwitchCanonicalEvent(input)
+		require.NoError(t, err)
+	}
+	for _, release := range []string{"01.2.3", "1.2", "1.2.3-", "1.2.3+", strings.Repeat("1", 97)} {
+		input := completeSafeBuildInput(completeSafeFaultFixture())
+		input.Release = release
+		_, err := BuildAgentSwitchCanonicalEvent(input)
+		require.Error(t, err)
+	}
+}
+
+func TestAgentSwitchMetadataEnumsAreClosed(t *testing.T) {
+	for _, value := range []AgentSwitchEnvironment{AgentSwitchEnvironmentStable, AgentSwitchEnvironmentNightly, AgentSwitchEnvironmentDevelopment} {
+		require.True(t, value.Valid())
+	}
+	for _, value := range []AgentSwitchChannel{AgentSwitchChannelStable, AgentSwitchChannelNightly, AgentSwitchChannelPreview} {
+		require.True(t, value.Valid())
+	}
+	for _, value := range []AgentSwitchPlatform{AgentSwitchPlatformDaemon, AgentSwitchPlatformRenderer} {
+		require.True(t, value.Valid())
+	}
+	for _, value := range []AgentSwitchOS{AgentSwitchOSDarwin, AgentSwitchOSLinux, AgentSwitchOSWindows} {
+		require.True(t, value.Valid())
+	}
+	for _, value := range []AgentSwitchElapsedTimeBucket{
+		AgentSwitchElapsedUnder1Second, AgentSwitchElapsedUnder5Seconds,
+		AgentSwitchElapsedUnder30Seconds, AgentSwitchElapsedUnder2Minutes,
+		AgentSwitchElapsed2MinutesOrMore, AgentSwitchElapsedNotApplicable,
+	} {
+		require.True(t, value.Valid())
+	}
+	require.False(t, AgentSwitchEnvironment("production").Valid())
+	require.False(t, AgentSwitchChannel("pr123").Valid())
+	require.False(t, AgentSwitchPlatform("browser").Valid())
+	require.False(t, AgentSwitchOS("win32").Valid())
+	require.False(t, AgentSwitchElapsedTimeBucket("31_seconds").Valid())
+}
+
 func TestBuildAgentSwitchCanonicalEventRejectsSensitiveFrameStrings(t *testing.T) {
 	tests := map[string]func(*AgentSwitchStackFrame){
 		"module absolute path": func(frame *AgentSwitchStackFrame) { frame.Package = "/Users/alice/reverb" },
 		"module URL":           func(frame *AgentSwitchStackFrame) { frame.Package = "https://host/repo" },
 		"function identifier":  func(frame *AgentSwitchStackFrame) { frame.Function = "session-local-secret" },
+		"function arguments":   func(frame *AgentSwitchStackFrame) { frame.Function = "execute(secret)" },
+		"function receiver":    func(frame *AgentSwitchStackFrame) { frame.Function = "(*Manager).execute" },
 		"filename local path":  func(frame *AgentSwitchStackFrame) { frame.Filename = "/Users/alice/reverb/file.go" },
 		"filename identifier":  func(frame *AgentSwitchStackFrame) { frame.Filename = "backend/session-local-secret/file.go" },
 		"filename URL":         func(frame *AgentSwitchStackFrame) { frame.Filename = "https://host/file.go" },
@@ -432,13 +632,38 @@ func TestBuildAgentSwitchCanonicalEventRejectsSensitiveFrameStrings(t *testing.T
 			require.Error(t, err)
 		})
 	}
+
+	unsafeValues := []string{
+		"/Users/alice/private.go",
+		"https://telemetry.invalid/file.go",
+		"550e8400-e29b-41d4-a716-446655440000",
+		"artifact-hash-deadbeef",
+		"issue-123",
+		"execute(args)",
+	}
+	for _, value := range unsafeValues {
+		fields := map[string]func(*AgentSwitchStackFrame){
+			"package":  func(frame *AgentSwitchStackFrame) { frame.Package = value },
+			"function": func(frame *AgentSwitchStackFrame) { frame.Function = value },
+			"filename": func(frame *AgentSwitchStackFrame) { frame.Filename = value },
+		}
+		for field, mutate := range fields {
+			t.Run(value+"/"+field, func(t *testing.T) {
+				input := completeSafeBuildInput(completeSafeFaultFixture())
+				mutate(&input.Fault.Frames[0])
+				_, err := BuildAgentSwitchCanonicalEvent(input)
+				require.Error(t, err)
+			})
+		}
+	}
 }
 
 func TestBuildAgentSwitchCanonicalEventEnforces60KiBBound(t *testing.T) {
+	require.Equal(t, 60<<10, AgentSwitchCanonicalEventMaxBytes)
 	input := completeSafeBuildInput(completeSafeFaultFixture())
 	input.Release = strings.Repeat("r", AgentSwitchCanonicalEventMaxBytes)
 	_, err := BuildAgentSwitchCanonicalEvent(input)
-	require.ErrorContains(t, err, "60 KiB")
+	require.Error(t, err, "closed release grammar rejects unbounded input before final event-size enforcement")
 }
 
 func TestAgentSwitchDedupeAndIssueFingerprintAreStable(t *testing.T) {
@@ -617,16 +842,74 @@ func completeVisibilityFaultFixture() AgentSwitchFault {
 	}
 }
 
+func completePreflightP2FaultFixture(code AgentSwitchErrorCode) AgentSwitchFault {
+	fault := completeSafeFaultFixture()
+	fault.FailurePoint = AgentSwitchFailureTargetPreflight
+	fault.ClassifierCallsite = AgentSwitchClassifierSettle
+	fault.Phase = AgentSwitchPreparingHandoff
+	fault.ErrorCode = code
+	fault.CallOutcome = AgentSwitchCallNoEffectFailure
+	fault.Ownership = AgentSwitchOwnershipSource
+	fault.Compensation = AgentSwitchCompensationNotNeeded
+	fault.UserImpact = AgentSwitchUserImpactTargetUnavailable
+	fault.TargetStartMode = AgentSwitchTargetStartReportedPending
+	fault.RuntimeBackend = AgentSwitchRuntimeNotApplicable
+	fault.SourceStopConfirmed = AgentSwitchTriFalse
+	fault.TargetOwnerCommitted = AgentSwitchTriFalse
+	fault.GateRetained = AgentSwitchTriFalse
+	fault.Frames = nil
+	return fault
+}
+
+func completeTargetStartP2FaultFixture(code AgentSwitchErrorCode) AgentSwitchFault {
+	fault := completeSafeFaultFixture()
+	fault.FailurePoint = AgentSwitchFailureTargetRuntimeCreate
+	fault.ClassifierCallsite = AgentSwitchClassifierExecuteTUI
+	fault.Phase = AgentSwitchStartingTarget
+	fault.ErrorCode = code
+	fault.Mode = SessionModeTUI
+	fault.TargetStartMode = AgentSwitchTargetStartFresh
+	fault.RuntimeBackend = AgentSwitchRuntimeTMUX
+	fault.CallOutcome = AgentSwitchCallNoEffectFailure
+	fault.Ownership = AgentSwitchOwnershipSource
+	fault.Compensation = AgentSwitchCompensationNotNeeded
+	fault.UserImpact = AgentSwitchUserImpactTargetUnavailable
+	fault.SourceStopConfirmed = AgentSwitchTriTrue
+	fault.TargetOwnerCommitted = AgentSwitchTriFalse
+	fault.GateRetained = AgentSwitchTriFalse
+	fault.Frames = nil
+	return fault
+}
+
+func completeSafeRollbackFaultFixture() AgentSwitchFault {
+	fault := completeSafeFaultFixture()
+	fault.FailurePoint = AgentSwitchFailureRecoverySettlement
+	fault.ClassifierCallsite = AgentSwitchClassifierReconcile
+	fault.Phase = AgentSwitchSourceStopped
+	fault.ErrorCode = AgentSwitchErrorFailedPostStop
+	fault.CallOutcome = AgentSwitchCallNoEffectFailure
+	fault.Ownership = AgentSwitchOwnershipSource
+	fault.Compensation = AgentSwitchCompensationSucceeded
+	fault.UserImpact = AgentSwitchUserImpactSourceAvailable
+	fault.TargetStartMode = AgentSwitchTargetStartReportedPending
+	fault.RuntimeBackend = AgentSwitchRuntimeNotApplicable
+	fault.SourceStopConfirmed = AgentSwitchTriTrue
+	fault.TargetOwnerCommitted = AgentSwitchTriFalse
+	fault.GateRetained = AgentSwitchTriFalse
+	fault.Frames = nil
+	return fault
+}
+
 func completeSafeBuildInput(fault AgentSwitchFault) AgentSwitchEventBuildInput {
 	return AgentSwitchEventBuildInput{
 		EventID:           "0123456789abcdef0123456789abcdef",
 		Fault:             fault,
 		Release:           "1.2.3",
-		Environment:       "production",
-		Channel:           "stable",
-		Platform:          "daemon",
-		OS:                "darwin",
-		ElapsedTimeBucket: "under_30s",
+		Environment:       AgentSwitchEnvironmentStable,
+		Channel:           AgentSwitchChannelStable,
+		Platform:          AgentSwitchPlatformDaemon,
+		OS:                AgentSwitchOSDarwin,
+		ElapsedTimeBucket: AgentSwitchElapsedUnder30Seconds,
 	}
 }
 

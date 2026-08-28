@@ -239,6 +239,80 @@ func (b AgentSwitchRuntimeBackend) valid() bool {
 	}
 }
 
+// AgentSwitchEnvironment is the closed set of release environments that may
+// leave the process. Adapters must normalize local configuration into one of
+// these values rather than forwarding configuration text.
+type AgentSwitchEnvironment string
+
+const (
+	AgentSwitchEnvironmentStable      AgentSwitchEnvironment = "stable"
+	AgentSwitchEnvironmentNightly     AgentSwitchEnvironment = "nightly"
+	AgentSwitchEnvironmentDevelopment AgentSwitchEnvironment = "development"
+)
+
+func (e AgentSwitchEnvironment) Valid() bool {
+	return e == AgentSwitchEnvironmentStable || e == AgentSwitchEnvironmentNightly || e == AgentSwitchEnvironmentDevelopment
+}
+
+// AgentSwitchChannel is the normalized release channel. Preview covers all
+// per-feature and pull-request release feeds without exporting their names.
+type AgentSwitchChannel string
+
+const (
+	AgentSwitchChannelStable  AgentSwitchChannel = "stable"
+	AgentSwitchChannelNightly AgentSwitchChannel = "nightly"
+	AgentSwitchChannelPreview AgentSwitchChannel = "preview"
+)
+
+func (c AgentSwitchChannel) Valid() bool {
+	return c == AgentSwitchChannelStable || c == AgentSwitchChannelNightly || c == AgentSwitchChannelPreview
+}
+
+type AgentSwitchPlatform string
+
+const (
+	AgentSwitchPlatformDaemon   AgentSwitchPlatform = "daemon"
+	AgentSwitchPlatformRenderer AgentSwitchPlatform = "renderer"
+)
+
+func (p AgentSwitchPlatform) Valid() bool {
+	return p == AgentSwitchPlatformDaemon || p == AgentSwitchPlatformRenderer
+}
+
+type AgentSwitchOS string
+
+const (
+	AgentSwitchOSDarwin  AgentSwitchOS = "darwin"
+	AgentSwitchOSLinux   AgentSwitchOS = "linux"
+	AgentSwitchOSWindows AgentSwitchOS = "windows"
+)
+
+func (o AgentSwitchOS) Valid() bool {
+	return o == AgentSwitchOSDarwin || o == AgentSwitchOSLinux || o == AgentSwitchOSWindows
+}
+
+type AgentSwitchElapsedTimeBucket string
+
+const (
+	AgentSwitchElapsedUnder1Second   AgentSwitchElapsedTimeBucket = "under_1s"
+	AgentSwitchElapsedUnder5Seconds  AgentSwitchElapsedTimeBucket = "under_5s"
+	AgentSwitchElapsedUnder30Seconds AgentSwitchElapsedTimeBucket = "under_30s"
+	AgentSwitchElapsedUnder2Minutes  AgentSwitchElapsedTimeBucket = "under_2m"
+	AgentSwitchElapsed2MinutesOrMore AgentSwitchElapsedTimeBucket = "2m_or_more"
+	AgentSwitchElapsedNotApplicable  AgentSwitchElapsedTimeBucket = "not_applicable"
+)
+
+func (b AgentSwitchElapsedTimeBucket) Valid() bool {
+	switch b {
+	case AgentSwitchElapsedUnder1Second, AgentSwitchElapsedUnder5Seconds,
+		AgentSwitchElapsedUnder30Seconds, AgentSwitchElapsedUnder2Minutes,
+		AgentSwitchElapsed2MinutesOrMore, AgentSwitchElapsedNotApplicable:
+		return true
+	default:
+		return false
+	}
+}
+
 // AgentSwitchClassifierCallsite is a stable, privacy-safe name for the code
 // location which owns the semantic classification.
 type AgentSwitchClassifierCallsite string
@@ -714,11 +788,11 @@ type AgentSwitchEventBuildInput struct {
 	EventID           string
 	Fault             AgentSwitchFault
 	Release           string
-	Environment       string
-	Channel           string
-	Platform          string
-	OS                string
-	ElapsedTimeBucket string
+	Environment       AgentSwitchEnvironment
+	Channel           AgentSwitchChannel
+	Platform          AgentSwitchPlatform
+	OS                AgentSwitchOS
+	ElapsedTimeBucket AgentSwitchElapsedTimeBucket
 }
 
 type AgentSwitchFailureEvent struct {
@@ -730,11 +804,11 @@ type AgentSwitchFailureEvent struct {
 var (
 	agentSwitchEventIDPattern  = regexp.MustCompile(`^[0-9a-f]{32}$`)
 	agentSwitchTokenPattern    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+:-]*$`)
-	agentSwitchPackagePattern  = regexp.MustCompile(`^[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*$`)
-	agentSwitchFunctionPattern = regexp.MustCompile(`^[A-Za-z0-9_.$<>*()\[\]-]+$`)
-	agentSwitchFilenamePattern = regexp.MustCompile(`^[A-Za-z0-9_./$@+-]+$`)
+	agentSwitchReleasePattern  = regexp.MustCompile(`^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?(?:\+[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?$`)
+	agentSwitchPackagePattern  = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(?:[./][A-Za-z_][A-Za-z0-9_]*)*$`)
+	agentSwitchFunctionPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$`)
+	agentSwitchFilenamePattern = regexp.MustCompile(`^(backend|frontend)(/[A-Za-z_][A-Za-z0-9_]*)*/[A-Za-z_][A-Za-z0-9_.-]*\.(go|ts|tsx|js|jsx|mjs|cjs)$`)
 	agentSwitchOpaqueIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$`)
-	agentSwitchUUIDPattern     = regexp.MustCompile(`(?i)[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}`)
 )
 
 func ValidateAgentSwitchFault(fault AgentSwitchFault) error {
@@ -780,7 +854,8 @@ func ValidateAgentSwitchFault(fault AgentSwitchFault) error {
 	if err := validateAgentSwitchFrames(fault.Frames); err != nil {
 		return err
 	}
-	if (entry.DefaultSeverity == AgentSwitchSeverityFatal || entry.DefaultSeverity == AgentSwitchSeverityError) && len(fault.Frames) == 0 {
+	severity := severityForFault(fault, entry.DefaultSeverity)
+	if (severity == AgentSwitchSeverityFatal || severity == AgentSwitchSeverityError) && len(fault.Frames) == 0 {
 		return errors.New("P0 and P1 internal agent switch reports require sanitized capture-site frames")
 	}
 	return nil
@@ -858,6 +933,9 @@ func validateReportApplicability(fault AgentSwitchFault) error {
 		if fault.ErrorCode == AgentSwitchErrorNotApplicable || fault.ErrorCode == "" || fault.ErrorCode.RetainedRecoveryMarker() || fault.FaultCode != AgentSwitchFaultNotApplicable {
 			return errors.New("terminal failure requires a non-retained semantic error and no operational fault code")
 		}
+		if !validTerminalErrorPhase(fault.Phase, fault.ErrorCode) {
+			return errors.New("terminal semantic error is not applicable to the classification phase")
+		}
 	case AgentSwitchReportRecoveryRequired:
 		if !fault.ErrorCode.RetainedRecoveryMarker() || fault.FaultCode != AgentSwitchFaultNotApplicable {
 			return errors.New("recovery-required report requires a retained recovery marker")
@@ -870,10 +948,10 @@ func validateReportApplicability(fault AgentSwitchFault) error {
 			return errors.New("panic report requires worker_panic, panic outcome, and sanitized frames")
 		}
 	case AgentSwitchReportRecoveryAttemptFailed:
-		if fault.FaultCode != AgentSwitchFaultRecoveryUnresolved || fault.Phase.Terminal() || fault.Phase == AgentSwitchStateNotApplicable {
-			return errors.New("recovery-attempt report requires an unresolved nonterminal switch")
+		if fault.FaultCode != AgentSwitchFaultRecoveryUnresolved || !fault.ErrorCode.RetainedRecoveryMarker() || fault.Phase.Terminal() || fault.Phase == AgentSwitchStateNotApplicable {
+			return errors.New("recovery-attempt report requires an unresolved nonterminal retained marker")
 		}
-		if fault.ErrorCode.RetainedRecoveryMarker() && !validRecoveryMarkerPhase(fault.Phase, fault.ErrorCode) {
+		if !validRecoveryMarkerPhase(fault.Phase, fault.ErrorCode) {
 			return errors.New("recovery-attempt marker is not applicable to the durable phase")
 		}
 	case AgentSwitchReportMaintenanceFailure:
@@ -913,6 +991,34 @@ func validRecoveryMarkerPhase(phase AgentSwitchState, code AgentSwitchErrorCode)
 	}
 }
 
+func validTerminalErrorPhase(phase AgentSwitchState, code AgentSwitchErrorCode) bool {
+	switch code {
+	case AgentSwitchErrorDaemonRestartPreStop, AgentSwitchErrorSourceBlocked, AgentSwitchErrorFailedPreStop:
+		return phase == AgentSwitchPreparingHandoff || phase == AgentSwitchStoppingSource
+	case AgentSwitchErrorSourceSessionTerminated:
+		return phase == AgentSwitchStoppingSource
+	case AgentSwitchErrorDaemonRestartPostStop, AgentSwitchErrorFailedPostStop:
+		return phase == AgentSwitchSourceStopped || phase == AgentSwitchStartingTarget
+	case AgentSwitchErrorDaemonRestartUnrecoverableTarget:
+		return phase == AgentSwitchStartingTarget || phase == AgentSwitchTargetReady || phase == AgentSwitchDelivering
+	case AgentSwitchErrorDaemonRestartBeforeDelivery:
+		return phase == AgentSwitchTargetReady
+	case AgentSwitchErrorDeliveryUnconfirmed, AgentSwitchErrorDeliveryFailed:
+		return phase == AgentSwitchDelivering
+	case AgentSwitchErrorTargetBinaryMissing, AgentSwitchErrorTargetAgentUnauthorized:
+		return phase == AgentSwitchPreparingHandoff || phase == AgentSwitchStoppingSource ||
+			phase == AgentSwitchSourceStopped || phase == AgentSwitchStartingTarget
+	case AgentSwitchErrorTargetReadyFailed:
+		return phase == AgentSwitchStartingTarget || phase == AgentSwitchTargetReady
+	case AgentSwitchErrorRequestCancelled, AgentSwitchErrorSwitchFailed:
+		return phase == AgentSwitchPreparingHandoff || phase == AgentSwitchStoppingSource ||
+			phase == AgentSwitchSourceStopped || phase == AgentSwitchStartingTarget ||
+			phase == AgentSwitchTargetReady || phase == AgentSwitchDelivering
+	default:
+		return false
+	}
+}
+
 func validObservedPhase(phase AgentSwitchState) bool {
 	return phase.Valid() || phase == AgentSwitchStateNotApplicable
 }
@@ -937,14 +1043,17 @@ func validObservedStartMode(mode AgentSwitchTargetStartMode) bool {
 func validateAgentSwitchFrames(frames []AgentSwitchStackFrame) error {
 	canonicalFrames := make([]canonicalAgentSwitchFrame, len(frames))
 	for i, frame := range frames {
-		if frame.Package == "" || len(frame.Package) > 128 || !agentSwitchPackagePattern.MatchString(frame.Package) || containsSensitiveFreeString(frame.Package) {
+		if frame.Package == "" || len(frame.Package) > 128 || !agentSwitchPackagePattern.MatchString(frame.Package) {
 			return errors.New("stack frame package is not privacy-safe")
 		}
-		if frame.Function == "" || len(frame.Function) > 128 || !agentSwitchFunctionPattern.MatchString(frame.Function) || containsSensitiveFreeString(frame.Function) {
+		// Capture adapters normalize Go receiver syntax to dot-separated
+		// identifiers (for example Manager.execute). Parentheses, type arguments,
+		// locals, and argument renderings are never retained.
+		if frame.Function == "" || len(frame.Function) > 128 || !agentSwitchFunctionPattern.MatchString(frame.Function) {
 			return errors.New("stack frame function is not privacy-safe")
 		}
 		if frame.Filename == "" || len(frame.Filename) > 512 || frame.Line <= 0 ||
-			!agentSwitchFilenamePattern.MatchString(frame.Filename) || containsSensitiveFreeString(frame.Filename) ||
+			!agentSwitchFilenamePattern.MatchString(frame.Filename) ||
 			strings.Contains(frame.Filename, `\`) || strings.Contains(frame.Filename, "://") ||
 			path.IsAbs(frame.Filename) || path.Clean(frame.Filename) != frame.Filename ||
 			strings.HasPrefix(frame.Filename, "../") {
@@ -972,17 +1081,11 @@ func BuildAgentSwitchCanonicalEvent(input AgentSwitchEventBuildInput) ([]byte, e
 	if err := ValidateAgentSwitchFault(input.Fault); err != nil {
 		return nil, err
 	}
-	if err := validateEventMetadata("release", input.Release, AgentSwitchCanonicalEventMaxBytes); err != nil {
-		return nil, err
+	if input.Release == "" || len(input.Release) > 96 || !agentSwitchReleasePattern.MatchString(input.Release) {
+		return nil, errors.New("release is not a bounded semantic release")
 	}
-	metadata := []struct{ name, value string }{
-		{"environment", input.Environment}, {"channel", input.Channel},
-		{"platform", input.Platform}, {"os", input.OS}, {"elapsed time bucket", input.ElapsedTimeBucket},
-	}
-	for _, field := range metadata {
-		if err := validateEventMetadata(field.name, field.value, 128); err != nil {
-			return nil, err
-		}
+	if !input.Environment.Valid() || !input.Channel.Valid() || !input.Platform.Valid() || !input.OS.Valid() || !input.ElapsedTimeBucket.Valid() {
+		return nil, errors.New("agent switch event metadata is outside its closed allowlist")
 	}
 
 	entry, _ := AgentSwitchFailureTaxonomy(input.Fault.FailurePoint)
@@ -1032,29 +1135,6 @@ func BuildAgentSwitchCanonicalEvent(input AgentSwitchEventBuildInput) ([]byte, e
 		return nil, errors.New("canonical agent switch event exceeds 60 KiB")
 	}
 	return raw, nil
-}
-
-func validateEventMetadata(name, value string, max int) error {
-	if value == "" || len(value) > max || !agentSwitchTokenPattern.MatchString(value) || containsSensitiveFreeString(value) {
-		return fmt.Errorf("%s is not a bounded privacy-safe token", name)
-	}
-	return nil
-}
-
-func containsSensitiveFreeString(value string) bool {
-	lower := strings.ToLower(value)
-	if agentSwitchUUIDPattern.MatchString(value) {
-		return true
-	}
-	for _, forbidden := range []string{
-		"session-", "switch-", "idempotency", "runtime-handle", "provider-conversation",
-		"prompt text", "://", "/users/", `c:\users\`, "../", "..\\",
-	} {
-		if strings.Contains(lower, forbidden) {
-			return true
-		}
-	}
-	return false
 }
 
 type AgentSwitchDedupeScope struct {
@@ -1138,6 +1218,16 @@ func severityForFault(fault AgentSwitchFault, fallback AgentSwitchSeverity) Agen
 		fault.GateRetained == AgentSwitchTriTrue {
 		return AgentSwitchSeverityError
 	}
+	if fault.ErrorCode == AgentSwitchErrorTargetBinaryMissing || fault.ErrorCode == AgentSwitchErrorTargetAgentUnauthorized {
+		return AgentSwitchSeverityWarning
+	}
+	if (fault.ErrorCode == AgentSwitchErrorFailedPreStop || fault.ErrorCode == AgentSwitchErrorSourceBlocked || fault.ErrorCode == AgentSwitchErrorRequestCancelled) &&
+		fault.Ownership == AgentSwitchOwnershipSource && fault.SourceStopConfirmed != AgentSwitchTriTrue {
+		return AgentSwitchSeverityWarning
+	}
+	if fault.Compensation == AgentSwitchCompensationSucceeded && fault.Ownership == AgentSwitchOwnershipSource && fault.GateRetained != AgentSwitchTriTrue {
+		return AgentSwitchSeverityWarning
+	}
 	return fallback
 }
 
@@ -1155,8 +1245,8 @@ type canonicalAgentSwitchEvent struct {
 	Timestamp   string                         `json:"timestamp"`
 	Message     string                         `json:"message"`
 	Level       string                         `json:"level"`
-	Platform    string                         `json:"platform"`
-	Environment string                         `json:"environment"`
+	Platform    AgentSwitchPlatform            `json:"platform"`
+	Environment AgentSwitchEnvironment         `json:"environment"`
 	Release     string                         `json:"release"`
 	Exception   canonicalAgentSwitchExceptions `json:"exception"`
 	Fingerprint []string                       `json:"fingerprint"`
@@ -1188,7 +1278,7 @@ type canonicalAgentSwitchFrame struct {
 
 type canonicalAgentSwitchTags struct {
 	Feature            string                        `json:"feature"`
-	Platform           string                        `json:"platform"`
+	Platform           AgentSwitchPlatform           `json:"platform"`
 	ReportKind         AgentSwitchReportKind         `json:"report_kind"`
 	Subsystem          string                        `json:"subsystem"`
 	Mode               SessionMode                   `json:"mode"`
@@ -1207,8 +1297,8 @@ type canonicalAgentSwitchTags struct {
 	UserImpact         AgentSwitchUserImpact         `json:"user_impact"`
 	Release            string                        `json:"release"`
 	ClassifierCallsite AgentSwitchClassifierCallsite `json:"classifier_callsite"`
-	Channel            string                        `json:"channel"`
-	OS                 string                        `json:"os"`
+	Channel            AgentSwitchChannel            `json:"channel"`
+	OS                 AgentSwitchOS                 `json:"os"`
 }
 
 type canonicalAgentSwitchContexts struct {
@@ -1216,10 +1306,10 @@ type canonicalAgentSwitchContexts struct {
 }
 
 type canonicalAgentSwitchContext struct {
-	SourceStopConfirmed  AgentSwitchTriState `json:"source_stop_confirmed"`
-	TargetOwnerCommitted AgentSwitchTriState `json:"target_owner_committed"`
-	GateRetained         AgentSwitchTriState `json:"gate_retained"`
-	ElapsedTimeBucket    string              `json:"elapsed_time_bucket"`
+	SourceStopConfirmed  AgentSwitchTriState          `json:"source_stop_confirmed"`
+	TargetOwnerCommitted AgentSwitchTriState          `json:"target_owner_committed"`
+	GateRetained         AgentSwitchTriState          `json:"gate_retained"`
+	ElapsedTimeBucket    AgentSwitchElapsedTimeBucket `json:"elapsed_time_bucket"`
 }
 
 // StableAgentSwitchEventID derives a Sentry-compatible EventID from an opaque
