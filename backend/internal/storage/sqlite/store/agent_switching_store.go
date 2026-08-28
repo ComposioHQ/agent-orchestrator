@@ -240,6 +240,9 @@ func (s *Store) ListAgentSwitches(ctx context.Context, sessionID domain.SessionI
 // This rejects stale source hooks and late target callbacks from abandoned
 // starts without deriving liveness from their arrival.
 func (s *Store) UpdateAgentSwitch(ctx context.Context, rec domain.AgentSwitch, expectedState domain.AgentSwitchState, expectedSourceGenerationID, expectedTargetGenerationID domain.AgentGenerationID) (bool, error) {
+	if rec.ErrorCode == "" {
+		rec.FailurePoint = ""
+	}
 	if err := validateAgentSwitch(rec, false); err != nil {
 		return false, err
 	}
@@ -267,6 +270,7 @@ func (s *Store) UpdateAgentSwitch(ctx context.Context, rec domain.AgentSwitch, e
 		NextTargetGenerationID:    rec.TargetGenerationID,
 		NextTargetRuntimeHandleID: rec.TargetRuntimeHandleID,
 		ErrorCode:                 string(rec.ErrorCode),
+		FailurePoint:              string(rec.FailurePoint),
 		UpdatedAt:                 rec.UpdatedAt,
 		ID:                        rec.ID, SessionID: rec.SessionID, ExpectedState: expectedState,
 		ExpectedSourceGenerationID: expectedSourceGenerationID,
@@ -296,7 +300,7 @@ func (s *Store) FailAgentSwitchIfUnacknowledged(ctx context.Context, rec domain.
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	n, err := s.qw.FailAgentSwitchIfUnacknowledged(ctx, gen.FailAgentSwitchIfUnacknowledgedParams{
-		ErrorCode: string(rec.ErrorCode), FailedAt: rec.UpdatedAt,
+		ErrorCode: string(rec.ErrorCode), FailurePoint: string(rec.FailurePoint), FailedAt: rec.UpdatedAt,
 		ID: rec.ID, SessionID: rec.SessionID,
 		ExpectedSourceGenerationID: rec.SourceGenerationID,
 		ExpectedTargetGenerationID: rec.TargetGenerationID,
@@ -734,6 +738,11 @@ func validateAgentSwitch(rec domain.AgentSwitch, create bool) error {
 	if !rec.ErrorCode.Valid() {
 		return fmt.Errorf("agent switch %s: invalid error code %q", rec.ID, rec.ErrorCode)
 	}
+	if rec.FailurePoint != "" {
+		if _, ok := domain.AgentSwitchFailureTaxonomy(rec.FailurePoint); !ok {
+			return fmt.Errorf("agent switch %s: invalid failure point %q", rec.ID, rec.FailurePoint)
+		}
+	}
 	recoveryRequired := rec.RequiresRecovery()
 	recoveryMarker := rec.ErrorCode.RetainedRecoveryMarker()
 	failureCode := rec.State == domain.AgentSwitchFailed && rec.ErrorCode != "" && !recoveryMarker
@@ -917,6 +926,7 @@ func agentSwitchToInsert(rec domain.AgentSwitch) gen.InsertAgentSwitchParams {
 		TargetRuntimeHandleID:   rec.TargetRuntimeHandleID,
 		TargetAcknowledgedAt:    timePtrToNull(rec.TargetAcknowledgedAt),
 		ErrorCode:               string(rec.ErrorCode),
+		FailurePoint:            string(rec.FailurePoint),
 		RequestedAt:             rec.RequestedAt, UpdatedAt: rec.UpdatedAt,
 	}
 }
@@ -940,6 +950,7 @@ func agentSwitchFromGen(row gen.AgentSwitch) domain.AgentSwitch {
 		TargetRuntimeHandleID:   row.TargetRuntimeHandleID,
 		TargetAcknowledgedAt:    nullTimeToPtr(row.TargetAcknowledgedAt),
 		ErrorCode:               domain.AgentSwitchErrorCode(row.ErrorCode),
+		FailurePoint:            domain.AgentSwitchFailurePoint(row.FailurePoint),
 		RequestedAt:             row.RequestedAt, UpdatedAt: row.UpdatedAt,
 	}
 }

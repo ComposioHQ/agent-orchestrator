@@ -50,11 +50,11 @@ INSERT INTO agent_switches (
     state, agent_handoff_status, source_transcript_status, semantic_handoff_included,
     agent_handoff_path, agent_handoff_hash,
     source_generation_id, target_generation_id, target_runtime_handle_id,
-    target_acknowledged_at, error_code,
+    target_acknowledged_at, error_code, failure_point,
     requested_at, updated_at,
     final_handoff_path, final_handoff_hash
 ) VALUES (
-    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 )
 ON CONFLICT DO NOTHING;
 
@@ -65,7 +65,7 @@ SELECT id, session_id, idempotency_key, request_fingerprint,
     state, agent_handoff_status, source_transcript_status, semantic_handoff_included,
     agent_handoff_path, agent_handoff_hash,
     source_generation_id, target_generation_id, target_runtime_handle_id,
-    target_acknowledged_at, error_code,
+    target_acknowledged_at, error_code, failure_point,
     requested_at, updated_at,
     final_handoff_path, final_handoff_hash
 FROM agent_switches
@@ -78,7 +78,7 @@ SELECT id, session_id, idempotency_key, request_fingerprint,
     state, agent_handoff_status, source_transcript_status, semantic_handoff_included,
     agent_handoff_path, agent_handoff_hash,
     source_generation_id, target_generation_id, target_runtime_handle_id,
-    target_acknowledged_at, error_code,
+    target_acknowledged_at, error_code, failure_point,
     requested_at, updated_at,
     final_handoff_path, final_handoff_hash
 FROM agent_switches
@@ -91,7 +91,7 @@ SELECT id, session_id, idempotency_key, request_fingerprint,
     state, agent_handoff_status, source_transcript_status, semantic_handoff_included,
     agent_handoff_path, agent_handoff_hash,
     source_generation_id, target_generation_id, target_runtime_handle_id,
-    target_acknowledged_at, error_code,
+    target_acknowledged_at, error_code, failure_point,
     requested_at, updated_at,
     final_handoff_path, final_handoff_hash
 FROM agent_switches
@@ -107,7 +107,7 @@ SELECT id, session_id, idempotency_key, request_fingerprint,
        agent_handoff_path, agent_handoff_hash,
        source_generation_id, target_generation_id,
        target_runtime_handle_id, target_acknowledged_at,
-       error_code, requested_at, updated_at,
+       error_code, failure_point, requested_at, updated_at,
        final_handoff_path, final_handoff_hash
 FROM agent_switches
 WHERE state NOT IN ('completed', 'failed');
@@ -119,7 +119,7 @@ SELECT id, session_id, idempotency_key, request_fingerprint,
     state, agent_handoff_status, source_transcript_status, semantic_handoff_included,
     agent_handoff_path, agent_handoff_hash,
     source_generation_id, target_generation_id, target_runtime_handle_id,
-    target_acknowledged_at, error_code,
+    target_acknowledged_at, error_code, failure_point,
     requested_at, updated_at,
     final_handoff_path, final_handoff_hash
 FROM agent_switches
@@ -134,6 +134,7 @@ UPDATE agent_switches SET
     target_generation_id = sqlc.arg(next_target_generation_id),
     target_runtime_handle_id = sqlc.arg(next_target_runtime_handle_id),
     error_code = sqlc.arg(error_code),
+    failure_point = sqlc.arg(failure_point),
     updated_at = sqlc.arg(updated_at)
 WHERE id = sqlc.arg(id)
   AND session_id = sqlc.arg(session_id)
@@ -159,6 +160,7 @@ WHERE id = sqlc.arg(id)
 UPDATE agent_switches SET
     state = 'failed',
     error_code = sqlc.arg(error_code),
+    failure_point = sqlc.arg(failure_point),
     updated_at = sqlc.arg(failed_at)
 WHERE id = sqlc.arg(id)
   AND session_id = sqlc.arg(session_id)
@@ -315,6 +317,7 @@ WHERE id = sqlc.arg(session_id)
 UPDATE agent_switches SET
     state = 'source_stopped',
 	error_code = '',
+	failure_point = '',
     updated_at = sqlc.arg(stopped_at)
 WHERE id = sqlc.arg(id)
   AND session_id = sqlc.arg(session_id)
@@ -369,6 +372,7 @@ WHERE id = sqlc.arg(session_id)
 -- name: MarkAgentSwitchTargetReady :execrows
 UPDATE agent_switches SET
     state = 'target_ready',
+	failure_point = '',
     updated_at = sqlc.arg(activated_at)
 WHERE id = sqlc.arg(id)
   AND session_id = sqlc.arg(session_id)

@@ -353,6 +353,7 @@ type AgentSwitch struct {
 	TargetRuntimeHandleID   string                            `json:"-"`
 	TargetAcknowledgedAt    *time.Time                        `json:"targetAcknowledgedAt,omitempty"`
 	ErrorCode               AgentSwitchErrorCode              `json:"errorCode,omitempty"`
+	FailurePoint            AgentSwitchFailurePoint           `json:"-"`
 	RequestedAt             time.Time                         `json:"requestedAt"`
 	UpdatedAt               time.Time                         `json:"updatedAt"`
 }

@@ -199,3 +199,106 @@ WHERE session_id = 'switch-session' AND event_type = 'session_updated';
 		t.Fatalf("switch CDC rows after update = %d, want %d", after, before+1)
 	}
 }
+
+func TestMigration0117AgentSwitchFailureConstraintCDCAndIndexes(t *testing.T) {
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "ao.db")+pragmas)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	upTo(t, db, 117)
+
+	now := time.Date(2026, time.August, 28, 9, 0, 0, 0, time.UTC)
+	if _, err := db.Exec(`
+INSERT INTO projects (id, path, registered_at) VALUES ('failure-schema', '/repos/failure-schema', ?);
+INSERT INTO sessions (id, project_id, num, harness, activity_last_at, created_at, updated_at)
+VALUES ('failure-session', 'failure-schema', 1, 'claude-code', ?, ?, ?);
+`, now, now, now, now); err != nil {
+		t.Fatalf("seed parents: %v", err)
+	}
+
+	type stateCase struct {
+		name, state, code, targetGeneration, targetHandle string
+		wantErr                                           bool
+	}
+	cases := []stateCase{
+		{name: "failed rejects source stop marker", state: "failed", code: "source_stop_unconfirmed", wantErr: true},
+		{name: "failed rejects source restore marker", state: "failed", code: "source_restore_unconfirmed", wantErr: true},
+		{name: "failed rejects target start marker", state: "failed", code: "target_start_unconfirmed", wantErr: true},
+		{name: "stopping source marker", state: "stopping_source", code: "source_stop_unconfirmed"},
+		{name: "source stopped restore marker", state: "source_stopped", code: "source_restore_unconfirmed"},
+		{name: "starting target restore marker", state: "starting_target", code: "source_restore_unconfirmed", targetGeneration: "target-1"},
+		{name: "starting target marker without handle", state: "starting_target", code: "target_start_unconfirmed", targetGeneration: "target-1"},
+		{name: "starting target marker rejects handle", state: "starting_target", code: "target_start_unconfirmed", targetGeneration: "target-1", targetHandle: "handle", wantErr: true},
+		{name: "delivery uncertainty remains terminal", state: "failed", code: "delivery_unconfirmed"},
+	}
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := db.Exec(`
+INSERT INTO agent_switches (
+ id,session_id,idempotency_key,request_fingerprint,from_harness,target_harness,state,
+ agent_handoff_status,source_generation_id,target_generation_id,target_runtime_handle_id,
+ error_code,failure_point,requested_at,updated_at
+) VALUES (?, 'failure-session', ?, ?, 'claude-code', 'codex', ?, 'not_attempted',
+          'source-1', ?, ?, ?, 'classification_unknown', ?, ?)`,
+				fmt.Sprintf("constraint-%d", i), fmt.Sprintf("key-%d", i), "v1:"+strings.Repeat("a", 64),
+				tc.state, tc.targetGeneration, tc.targetHandle, tc.code, now, now)
+			if tc.wantErr && err == nil {
+				t.Fatal("invalid state/error combination was accepted")
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("valid state/error combination was rejected: %v", err)
+			}
+			if !tc.wantErr {
+				_, _ = db.Exec(`DELETE FROM agent_switches WHERE id=?`, fmt.Sprintf("constraint-%d", i))
+			}
+		})
+	}
+
+	wantObjects := map[string]string{
+		"idx_agent_switches_one_active_per_session": "WHERE state NOT IN ('completed', 'failed')",
+		"idx_agent_switches_session_history":        "requested_at DESC, id DESC",
+		"agent_switches_target_native_scope_insert": "scope mismatch",
+		"agent_switches_target_native_scope_update": "scope mismatch",
+		"agent_switches_cdc_insert":                 "json_object('id', NEW.session_id)",
+		"agent_switches_cdc_update":                 "json_object('id', NEW.session_id)",
+	}
+	for name, fragment := range wantObjects {
+		var definition string
+		if err := db.QueryRow(`SELECT sql FROM sqlite_master WHERE name=?`, name).Scan(&definition); err != nil {
+			t.Errorf("read sqlite object %s: %v", name, err)
+			continue
+		}
+		if !strings.Contains(definition, fragment) {
+			t.Errorf("sqlite object %s does not preserve latest definition: %s", name, definition)
+		}
+	}
+
+	if _, err := db.Exec(`
+INSERT INTO agent_switches (
+ id,session_id,idempotency_key,request_fingerprint,from_harness,target_harness,state,
+ agent_handoff_status,source_generation_id,requested_at,updated_at
+) VALUES ('cdc-switch','failure-session','cdc-key',?,'claude-code','codex','preparing_handoff',
+          'not_attempted','source-1',?,?)`, "v1:"+strings.Repeat("b", 64), now, now); err != nil {
+		t.Fatalf("insert CDC switch: %v", err)
+	}
+	var before int
+	if err := db.QueryRow(`SELECT count(*) FROM change_log WHERE session_id='failure-session'`).Scan(&before); err != nil {
+		t.Fatalf("count CDC before: %v", err)
+	}
+	if _, err := db.Exec(`UPDATE agent_switches SET state='failed',error_code='failed_pre_stop',failure_point='worker_start_refused',updated_at=? WHERE id='cdc-switch'`, now.Add(time.Second)); err != nil {
+		t.Fatalf("update CDC switch: %v", err)
+	}
+	var after int
+	if err := db.QueryRow(`SELECT count(*) FROM change_log WHERE session_id='failure-session'`).Scan(&after); err != nil {
+		t.Fatalf("count CDC after: %v", err)
+	}
+	if after != before+1 {
+		t.Fatalf("switch mutation emitted %d change rows, want exactly one trigger-owned row", after-before)
+	}
+
+	var fkViolations int
+	if err := db.QueryRow(`SELECT count(*) FROM pragma_foreign_key_check`).Scan(&fkViolations); err != nil || fkViolations != 0 {
+		t.Fatalf("foreign key violations = %d, err=%v", fkViolations, err)
+	}
+}

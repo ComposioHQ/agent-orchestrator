@@ -59,10 +59,80 @@ type AgentSwitch struct {
 	TargetRuntimeHandleID   string
 	TargetAcknowledgedAt    sql.NullTime
 	ErrorCode               string
+	FailurePoint            string
 	RequestedAt             time.Time
 	UpdatedAt               time.Time
 	FinalHandoffPath        string
 	FinalHandoffHash        string
+}
+
+type AgentSwitchFailureDeliveryState struct {
+	DestinationFingerprint string
+	ErrorNotBefore         sql.NullTime
+	AllNotBefore           sql.NullTime
+}
+
+type AgentSwitchFailureOutbox struct {
+	ID                      string
+	SchemaVersion           int64
+	EnvelopeEncodingVersion int64
+	DedupeKey               string
+	DestinationFingerprint  string
+	SwitchID                sql.NullString
+	ReportKind              string
+	Scope                   string
+	FailurePoint            string
+	ClassifierCallsite      string
+	Phase                   string
+	ErrorCode               string
+	FaultCode               string
+	Execution               string
+	ExecutionAttemptID      string
+	Mode                    string
+	FromHarness             string
+	TargetHarness           string
+	TargetStartMode         string
+	RuntimeBackend          string
+	CallOutcome             string
+	Ownership               string
+	Compensation            string
+	UserImpact              string
+	SourceStopConfirmed     string
+	TargetOwnerCommitted    string
+	GateRetained            string
+	RequestedAt             sql.NullTime
+	OccurredAt              time.Time
+	SanitizedStack          []byte
+	StackFingerprint        string
+	CanonicalEventJson      []byte
+	ExpiresAt               time.Time
+	AvailableAt             time.Time
+	AttemptCount            int64
+	LastAttemptAt           sql.NullTime
+	LeaseToken              sql.NullString
+	LeaseConsentGeneration  sql.NullString
+	LeaseDeliveryEpoch      sql.NullInt64
+	LeaseExpiresAt          sql.NullTime
+	DeliveredAt             sql.NullTime
+	DiscardedAt             sql.NullTime
+	LastDeliveryErrorClass  string
+}
+
+type AgentSwitchFailurePolicy struct {
+	Singleton              int64
+	Enabled                bool
+	ConsentGeneration      string
+	DestinationFingerprint string
+	UpdatedAt              time.Time
+}
+
+type AgentSwitchFailureReceipt struct {
+	DedupeKey               string
+	SwitchID                sql.NullString
+	ReportKind              string
+	DurableStateFingerprint string
+	RecordedAt              time.Time
+	RetainUntil             sql.NullTime
 }
 
 type AppSetting struct {
