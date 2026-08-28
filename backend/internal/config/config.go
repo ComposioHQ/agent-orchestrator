@@ -127,6 +127,10 @@ type Config struct {
 	// DataDir is the directory holding durable SQLite state: DB and WAL files.
 	// It is created on first use by the storage layer.
 	DataDir string
+	// StateDir is the root for non-SQLite AO state. It defaults to ~/.ao. When
+	// AO_DATA_DIR is explicitly set, that override is also the state root so an
+	// isolated daemon never leaks profile state into the default home.
+	StateDir string
 	// Agent is the compatibility agent adapter id selected by AO_AGENT;
 	// startSession fails fast if no adapter with this id is registered.
 	Agent string
@@ -375,6 +379,11 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	cfg.DataDir = dataDir
+	if raw, ok := os.LookupEnv("AO_DATA_DIR"); ok && raw != "" {
+		cfg.StateDir = dataDir
+	} else {
+		cfg.StateDir = filepath.Dir(dataDir)
+	}
 
 	return cfg, nil
 }
