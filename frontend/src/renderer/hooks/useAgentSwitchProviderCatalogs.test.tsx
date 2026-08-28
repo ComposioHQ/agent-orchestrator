@@ -3,7 +3,6 @@ import { renderHook, waitFor } from "@testing-library/react";
 import { act, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChatConfigOption, ChatModel, ChatSkill } from "../types/conversation";
-import type { WorkspaceSession } from "../types/workspace";
 import {
 	conversationConfigOptionsQueryKey,
 	conversationModelsQueryKey,
@@ -13,28 +12,14 @@ import {
 	useConversationSkills,
 } from "./useConversation";
 
-const { getMock, patchMock, useAgentSwitchesMock, useSwitchAgentStateMock } = vi.hoisted(() => ({
+const { getMock, patchMock } = vi.hoisted(() => ({
 	getMock: vi.fn(),
 	patchMock: vi.fn(),
-	useAgentSwitchesMock: vi.fn(),
-	useSwitchAgentStateMock: vi.fn(),
 }));
 
 vi.mock("../lib/api-client", () => ({
 	apiClient: { GET: getMock, PATCH: patchMock },
 	apiErrorMessage: () => "failed",
-}));
-
-vi.mock("./useAgentSwitches", async (importOriginal) => {
-	const actual = await importOriginal<typeof import("./useAgentSwitches")>();
-	return {
-		...actual,
-		useAgentSwitches: useAgentSwitchesMock,
-	};
-});
-
-vi.mock("./useSwitchAgent", () => ({
-	useSwitchAgentState: useSwitchAgentStateMock,
 }));
 
 import { useAgentSwitchProviderCatalogs } from "./useAgentSwitchProviderCatalogs";
@@ -95,33 +80,15 @@ function wrapper(queryClient: QueryClient) {
 	};
 }
 
-/** Chat sessions intentionally have no terminal runtime metadata. */
-function chatSession(
-	provider: ProviderName,
-	activeAgentSwitch?: WorkspaceSession["activeAgentSwitch"],
-): WorkspaceSession {
-	return {
-		activity: { state: "active", lastActivityAt: "2026-06-10T00:00:00Z" },
-		branch: "ao/sess-1",
-		id: "sess-1",
-		kind: "worker",
-		provider,
-		prs: [],
-		status: "working",
-		title: "do the thing",
-		updatedAt: "2026-06-10T00:00:00Z",
-		workspaceId: "proj-1",
-		workspaceName: "my-app",
-		activeAgentSwitch,
-		terminalHandleId: undefined,
-	};
-}
-
-function catalogHarness(session: WorkspaceSession, targetChatControllerReady: boolean) {
-	const { catalogsEnabled } = useAgentSwitchProviderCatalogs(session, targetChatControllerReady);
-	const config = useConversationConfigOptions(session.id, catalogsEnabled);
-	const models = useConversationModels(session.id, catalogsEnabled);
-	const skills = useConversationSkills(session.id, catalogsEnabled);
+function catalogHarness(agentSwitching: boolean, observedSettledSwitchId?: string) {
+	const catalogsEnabled = useAgentSwitchProviderCatalogs({
+		sessionId: "sess-1",
+		agentSwitching,
+		observedSettledSwitchId,
+	});
+	const config = useConversationConfigOptions("sess-1", catalogsEnabled);
+	const models = useConversationModels("sess-1", catalogsEnabled);
+	const skills = useConversationSkills("sess-1", catalogsEnabled);
 	return {
 		catalogsEnabled,
 		models: models.models,
@@ -150,12 +117,6 @@ function serveCatalog(getCatalog: () => ProviderCatalog) {
 beforeEach(() => {
 	getMock.mockReset();
 	patchMock.mockReset();
-	useAgentSwitchesMock.mockReset().mockReturnValue({ data: [] });
-	useSwitchAgentStateMock.mockReset().mockReturnValue({
-		error: null,
-		input: undefined,
-		isPending: false,
-	});
 });
 
 describe("useAgentSwitchProviderCatalogs", () => {
@@ -170,24 +131,15 @@ describe("useAgentSwitchProviderCatalogs", () => {
 			});
 			let servedProvider: ProviderName = sourceProvider;
 			serveCatalog(() => PROVIDER_CATALOGS[servedProvider]);
-			const sourceSession = chatSession(sourceProvider);
-			const switchSummary = {
-				agentHandoffStatus: "received",
-				fromHarness: sourceProvider,
-				id: `switch-${sourceProvider}-${targetProvider}`,
-				state: "starting_target",
-				targetHarness: targetProvider,
-			} as const satisfies NonNullable<WorkspaceSession["activeAgentSwitch"]>;
+			const switchId = `switch-${sourceProvider}-${targetProvider}`;
 			const { rerender, result } = renderHook(
-				({
-					targetChatControllerReady,
-					session,
-				}: {
-					targetChatControllerReady: boolean;
-					session: WorkspaceSession;
-				}) => catalogHarness(session, targetChatControllerReady),
+				({ switching, settledSwitchId }: { switching: boolean; settledSwitchId?: string }) =>
+					catalogHarness(switching, settledSwitchId),
 				{
-					initialProps: { targetChatControllerReady: true, session: sourceSession },
+					initialProps: {
+						switching: false,
+						settledSwitchId: undefined as string | undefined,
+					},
 					wrapper: wrapper(queryClient),
 				},
 			);
@@ -222,11 +174,7 @@ describe("useAgentSwitchProviderCatalogs", () => {
 			});
 			await waitFor(() => expect(patchMock).toHaveBeenCalledOnce());
 
-			useAgentSwitchesMock.mockReturnValue({ data: [switchSummary] });
-			rerender({
-				targetChatControllerReady: false,
-				session: chatSession(sourceProvider, switchSummary),
-			});
+			rerender({ switching: true, settledSwitchId: undefined });
 			expect(result.current.catalogsEnabled).toBe(false);
 			await waitFor(() => {
 				expect(result.current.models).toEqual([]);
@@ -235,21 +183,12 @@ describe("useAgentSwitchProviderCatalogs", () => {
 			});
 
 			servedProvider = targetProvider;
-			useAgentSwitchesMock.mockReturnValue({
-				data: [{ ...switchSummary, state: "completed" as const }],
-			});
 			// Durable success alone is not enough: catalogs stay paused until the target
-			// controller is ready, even though Chat sessions have no terminal runtime.
-			rerender({
-				targetChatControllerReady: false,
-				session: chatSession(targetProvider),
-			});
+			// controller is ready and the canonical lifecycle reports settlement.
+			rerender({ switching: true, settledSwitchId: undefined });
 			expect(result.current.catalogsEnabled).toBe(false);
 
-			rerender({
-				targetChatControllerReady: true,
-				session: chatSession(targetProvider),
-			});
+			rerender({ switching: false, settledSwitchId: switchId });
 			await waitFor(() => {
 				expect(result.current.catalogsEnabled).toBe(true);
 				expect(result.current.models[0]?.id).toBe(PROVIDER_CATALOGS[targetProvider].models[0].id);
@@ -279,27 +218,13 @@ describe("useAgentSwitchProviderCatalogs", () => {
 			options: [{ ...CLAUDE_OPTIONS[0], currentValue: "opus-recovered" }],
 		} as const;
 		serveCatalog(() => (recovered ? recoveredCatalog : PROVIDER_CATALOGS["claude-code"]));
-		const recoverySwitch = {
-			agentHandoffStatus: "received",
-			errorCode: "target_start_unconfirmed",
-			fromHarness: "claude-code",
-			id: "switch-failed-recovery",
-			state: "starting_target",
-			targetHarness: "codex",
-		} as const satisfies NonNullable<WorkspaceSession["activeAgentSwitch"]>;
-		useAgentSwitchesMock.mockReturnValue({ data: [recoverySwitch] });
 		const { rerender, result } = renderHook(
-			({
-				targetChatControllerReady,
-				session,
-			}: {
-				targetChatControllerReady: boolean;
-				session: WorkspaceSession;
-			}) => catalogHarness(session, targetChatControllerReady),
+			({ switching, settledSwitchId }: { switching: boolean; settledSwitchId?: string }) =>
+				catalogHarness(switching, settledSwitchId),
 			{
 				initialProps: {
-					targetChatControllerReady: false,
-					session: chatSession("claude-code", recoverySwitch),
+					switching: true,
+					settledSwitchId: undefined as string | undefined,
 				},
 				wrapper: wrapper(queryClient),
 			},
@@ -307,13 +232,7 @@ describe("useAgentSwitchProviderCatalogs", () => {
 		expect(result.current.catalogsEnabled).toBe(false);
 
 		recovered = true;
-		useAgentSwitchesMock.mockReturnValue({
-			data: [{ ...recoverySwitch, errorCode: "target_start_failed", state: "failed" as const }],
-		});
-		rerender({
-			targetChatControllerReady: true,
-			session: chatSession("claude-code"),
-		});
+		rerender({ switching: false, settledSwitchId: "switch-failed-recovery" });
 
 		await waitFor(() => {
 			expect(result.current.catalogsEnabled).toBe(true);
@@ -328,36 +247,15 @@ describe("useAgentSwitchProviderCatalogs", () => {
 		const removeQueries = vi.spyOn(queryClient, "removeQueries");
 		const invalidateQueries = vi.spyOn(queryClient, "invalidateQueries");
 		serveCatalog(() => PROVIDER_CATALOGS["codex"]);
-		const sourceSession = chatSession("claude-code");
-		const switchSummary = {
-			agentHandoffStatus: "received",
-			fromHarness: "claude-code",
-			id: "switch-1",
-			state: "starting_target",
-			targetHarness: "codex",
-		} as const satisfies NonNullable<WorkspaceSession["activeAgentSwitch"]>;
-
-		useSwitchAgentStateMock.mockReturnValue({
-			error: null,
-			input: {
-				idempotencyKey: "switch-request-1",
-				model: "",
-				session: sourceSession,
-				targetHarness: "codex",
-			},
-			isPending: true,
-		});
 
 		const { rerender, result } = renderHook(
-			({
-				targetChatControllerReady,
-				session,
-			}: {
-				targetChatControllerReady: boolean;
-				session: WorkspaceSession;
-			}) => catalogHarness(session, targetChatControllerReady),
+			({ switching, settledSwitchId }: { switching: boolean; settledSwitchId?: string }) =>
+				catalogHarness(switching, settledSwitchId),
 			{
-				initialProps: { targetChatControllerReady: true, session: sourceSession },
+				initialProps: {
+					switching: true,
+					settledSwitchId: undefined as string | undefined,
+				},
 				wrapper: wrapper(queryClient),
 			},
 		);
@@ -371,31 +269,13 @@ describe("useAgentSwitchProviderCatalogs", () => {
 			queryKey: conversationConfigOptionsQueryKey("sess-1"),
 		});
 
-		useSwitchAgentStateMock.mockReturnValue({
-			error: null,
-			input: undefined,
-			isPending: false,
-		});
-		useAgentSwitchesMock.mockReturnValue({ data: [switchSummary] });
-		rerender({
-			targetChatControllerReady: false,
-			session: chatSession("claude-code", switchSummary),
-		});
+		rerender({ switching: true, settledSwitchId: undefined });
 		expect(result.current.catalogsEnabled).toBe(false);
 
-		useAgentSwitchesMock.mockReturnValue({
-			data: [{ ...switchSummary, state: "completed" as const }],
-		});
-		rerender({
-			targetChatControllerReady: false,
-			session: chatSession("codex"),
-		});
+		rerender({ switching: true, settledSwitchId: undefined });
 		expect(result.current.catalogsEnabled).toBe(false);
 
-		rerender({
-			targetChatControllerReady: true,
-			session: chatSession("codex"),
-		});
+		rerender({ switching: false, settledSwitchId: "switch-1" });
 		await waitFor(() => {
 			expect(result.current.catalogsEnabled).toBe(true);
 			expect(invalidateQueries).toHaveBeenCalledWith({
@@ -416,22 +296,17 @@ describe("useAgentSwitchProviderCatalogs", () => {
 			defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
 		});
 		queryClient.setQueryData(conversationConfigOptionsQueryKey("sess-1"), CLAUDE_OPTIONS);
-		const recoverySwitch = {
-			agentHandoffStatus: "received",
-			errorCode: "target_start_unconfirmed",
-			fromHarness: "claude-code",
-			id: "switch-recovery",
-			state: "starting_target",
-			targetHarness: "codex",
-		} as const satisfies NonNullable<WorkspaceSession["activeAgentSwitch"]>;
-		useAgentSwitchesMock.mockReturnValue({ data: [recoverySwitch] });
 
 		const { result } = renderHook(
-			() => useAgentSwitchProviderCatalogs(chatSession("claude-code", recoverySwitch), false),
+			() =>
+				useAgentSwitchProviderCatalogs({
+					sessionId: "sess-1",
+					agentSwitching: true,
+				}),
 			{ wrapper: wrapper(queryClient) },
 		);
 
-		expect(result.current.catalogsEnabled).toBe(false);
+		expect(result.current).toBe(false);
 		await waitFor(() => {
 			expect(queryClient.getQueryData(conversationConfigOptionsQueryKey("sess-1"))).toBeUndefined();
 		});

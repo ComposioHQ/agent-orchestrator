@@ -153,7 +153,75 @@ export function SessionChatSurface({
 	const targetChatControllerReady =
 		snapshot?.harness === session.provider &&
 		(snapshot.controller?.state === "ready" || snapshot.controller?.state === "busy");
-	const { catalogsEnabled } = useAgentSwitchProviderCatalogs(session, targetChatControllerReady);
+	const switchMutation = useSwitchAgentState(session.id);
+	const agentSwitches = useAgentSwitches(session.id).data ?? [];
+	const activeHistorySwitch = findActiveAgentSwitch(agentSwitches);
+	const selectedDurableAgentSwitch = selectDurableAgentSwitch(
+		session.activeAgentSwitch,
+		agentSwitches,
+	);
+	const admissionAgentSwitch: AgentSwitchSummary | undefined =
+		switchMutation.isPending && switchMutation.input
+			? {
+				agentHandoffStatus: "not_attempted",
+				fromHarness: switchMutation.input.session.provider,
+				id: `admission:${switchMutation.input.idempotencyKey}`,
+				state: "preparing_handoff",
+				targetHarness: switchMutation.input.targetHarness,
+			}
+			: undefined;
+	const {
+		dismissFailure: dismissAgentSwitchFailure,
+		dismissedFailureSwitchId,
+		isObserved: isAgentSwitchObserved,
+		isRetired: isAgentSwitchRetired,
+		observedTerminalSwitch,
+		settle: settleAgentSwitch,
+		transientSuccessNotice,
+		transientSuccessSwitchId,
+	} = useObservedAgentSwitchLifecycle({
+		sessionId: session.id,
+		agentSwitches,
+		nonterminalCandidates: [
+			session.activeAgentSwitch,
+			activeHistorySwitch,
+			selectedDurableAgentSwitch,
+			admissionAgentSwitch,
+		],
+	});
+	const durableAgentSwitch =
+		selectedDurableAgentSwitch && !isAgentSwitchRetired(selectedDurableAgentSwitch.id)
+			? selectedDurableAgentSwitch
+			: undefined;
+	const agentSwitch = durableAgentSwitch ?? admissionAgentSwitch ?? observedTerminalSwitch;
+	const switchPresentation = agentSwitch
+		? deriveAgentSwitchPresentation({
+				agentSwitch,
+				activityState: session.activity?.state,
+				currentHarness: session.provider,
+				isTerminated: Boolean(session.isTerminated),
+				// The shared presentation uses a live terminal handle as its TUI
+				// takeover proof. Chat has no terminal runtime, so its equivalent is
+				// the structured controller reaching a dispatchable state.
+				terminalHandleId: targetChatControllerReady ? "chat-controller" : undefined,
+			})
+		: undefined;
+	const agentSwitching = Boolean(
+		switchMutation.isPending ||
+			(switchPresentation?.outcome === "in_progress" ||
+				switchPresentation?.outcome === "recovery"),
+	);
+	const observedSettledSwitchId =
+		agentSwitch &&
+		(switchPresentation?.outcome === "success" || switchPresentation?.outcome === "failure") &&
+		isAgentSwitchObserved(agentSwitch.id)
+			? agentSwitch.id
+			: undefined;
+	const catalogsEnabled = useAgentSwitchProviderCatalogs({
+		sessionId: session.id,
+		agentSwitching,
+		observedSettledSwitchId,
+	});
 	const configOptions = useConversationConfigOptions(
 		session.id,
 		catalogsEnabled && Boolean(snapshot && can(snapshot, "config_options")),
@@ -178,68 +246,21 @@ export function SessionChatSurface({
 	const { paths, truncated } = useWorkspaceFilePaths(session.id, Boolean(snapshot));
 	const stageAttachments = useStageAttachments(session.id);
 	const openLinkInBrowser = useSessionBrowserLink(session);
-	// Agent-switch presentation for the chat surface progress track and input locks.
-	const switchMutation = useSwitchAgentState(session.id);
-	const agentSwitches = useAgentSwitches(session.id).data ?? [];
-	const activeHistorySwitch = findActiveAgentSwitch(agentSwitches);
-	const selectedDurableAgentSwitch = selectDurableAgentSwitch(
-		session.activeAgentSwitch,
-		agentSwitches,
-	);
-	const {
-		dismissFailure: dismissAgentSwitchFailure,
-		dismissedFailureSwitchId,
-		isObserved: isAgentSwitchObserved,
-		isRetired: isAgentSwitchRetired,
-		observedTerminalSwitch,
-		settle: settleAgentSwitch,
-		transientSuccessNotice,
-		transientSuccessSwitchId,
-	} = useObservedAgentSwitchLifecycle({
-		sessionId: session.id,
-		agentSwitches,
-		nonterminalCandidates: [
-			session.activeAgentSwitch,
-			activeHistorySwitch,
-			selectedDurableAgentSwitch,
-		],
-	});
-	const durableAgentSwitch =
-		selectedDurableAgentSwitch && !isAgentSwitchRetired(selectedDurableAgentSwitch.id)
-			? selectedDurableAgentSwitch
-			: undefined;
-	const admissionAgentSwitch: AgentSwitchSummary | undefined =
-		!durableAgentSwitch && switchMutation.isPending && switchMutation.input
-			? {
-				agentHandoffStatus: "not_attempted",
-				fromHarness: switchMutation.input.session.provider,
-				id: `admission:${switchMutation.input.idempotencyKey}`,
-				state: "preparing_handoff",
-				targetHarness: switchMutation.input.targetHarness,
-			}
-			: undefined;
-	const agentSwitch = durableAgentSwitch ?? admissionAgentSwitch ?? observedTerminalSwitch;
-	const switchPresentation = agentSwitch
-		? deriveAgentSwitchPresentation({
-				agentSwitch,
-				activityState: session.activity?.state,
-				currentHarness: session.provider,
-				isTerminated: Boolean(session.isTerminated),
-				// The shared presentation uses a live terminal handle as its TUI
-				// takeover proof. Chat has no terminal runtime, so its equivalent is
-				// the structured controller reaching a dispatchable state.
-				terminalHandleId: targetChatControllerReady ? "chat-controller" : undefined,
-			})
-		: undefined;
-	const observedSettledSwitch = Boolean(
+	// In-place agent switching is the same session-level operation in either
+	// interface; the chat header offers the same entry point the terminal pane's
+	// tab strip does. Mirrors CenterPane: dialog open flag plus the element the
+	// dialog anchors to (the workspace body, handed up by ChatWorkspace).
+	const [switchSelectorOpen, setSwitchSelectorOpen] = useState(false);
+	const [switchSelectorContainer, setSwitchSelectorContainer] = useState<HTMLDivElement | null>(null);
+	const observedSuccessfulSwitch = Boolean(
 		agentSwitch &&
-			switchPresentation?.outcome === "success" &&
-			isAgentSwitchObserved(agentSwitch.id),
+			observedSettledSwitchId === agentSwitch.id &&
+			switchPresentation?.outcome === "success",
 	);
 	useEffect(() => {
-		if (!observedSettledSwitch || !agentSwitch || !switchPresentation) return;
+		if (!observedSuccessfulSwitch || !agentSwitch || !switchPresentation) return;
 		settleAgentSwitch(agentSwitch, switchPresentation);
-	}, [agentSwitch, observedSettledSwitch, settleAgentSwitch, switchPresentation]);
+	}, [agentSwitch, observedSuccessfulSwitch, settleAgentSwitch, switchPresentation]);
 	const shownSwitchPresentation =
 		switchPresentation?.outcome === "failure" && dismissedFailureSwitchId === agentSwitch?.id
 			? undefined
