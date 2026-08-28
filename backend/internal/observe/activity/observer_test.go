@@ -158,24 +158,35 @@ func TestPollContinuouslyReconcilesMuse(t *testing.T) {
 }
 
 func TestPollReconcilesWaitingCrushAfterUserResponds(t *testing.T) {
-	now := time.Unix(500, 0).UTC()
-	session := activeSession(now, domain.HarnessCrush)
-	session.Activity = domain.Activity{State: domain.ActivityWaitingInput, LastActivityAt: now.Add(-time.Second)}
-	session.UpdatedAt = now.Add(-time.Second)
-	sink := &fakeSink{}
-	observer := New(
-		fakeSessions{rows: []domain.SessionRecord{session}},
-		sink,
-		&fakeRuntime{output: "> Working!\n"},
-		fakeAgents{domain.HarnessCrush: crush.New()},
-		Config{Clock: func() time.Time { return now }, Logger: testLogger()},
-	)
+	for _, tt := range []struct {
+		name   string
+		output string
+		want   domain.ActivityState
+	}{
+		{name: "resumed active", output: "> Working!\n", want: domain.ActivityActive},
+		{name: "resumed idle", output: "> Ready?\n", want: domain.ActivityIdle},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			now := time.Unix(500, 0).UTC()
+			session := activeSession(now, domain.HarnessCrush)
+			session.Activity = domain.Activity{State: domain.ActivityWaitingInput, LastActivityAt: now.Add(-time.Second)}
+			session.UpdatedAt = now.Add(-time.Second)
+			sink := &fakeSink{}
+			observer := New(
+				fakeSessions{rows: []domain.SessionRecord{session}},
+				sink,
+				&fakeRuntime{output: tt.output},
+				fakeAgents{domain.HarnessCrush: crush.New()},
+				Config{Clock: func() time.Time { return now }, Logger: testLogger()},
+			)
 
-	if err := observer.Poll(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if len(sink.signals) != 1 || sink.signals[0].State != domain.ActivityActive {
-		t.Fatalf("unexpected reconciliation: %+v", sink.signals)
+			if err := observer.Poll(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if len(sink.signals) != 1 || sink.signals[0].State != tt.want {
+				t.Fatalf("unexpected reconciliation: %+v", sink.signals)
+			}
+		})
 	}
 }
 
