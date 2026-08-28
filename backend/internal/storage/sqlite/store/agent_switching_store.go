@@ -735,8 +735,7 @@ func validateAgentSwitch(rec domain.AgentSwitch, create bool) error {
 		return fmt.Errorf("agent switch %s: invalid error code %q", rec.ID, rec.ErrorCode)
 	}
 	recoveryRequired := rec.RequiresRecovery()
-	recoveryMarker := rec.ErrorCode == domain.AgentSwitchErrorTargetStartUnconfirmed ||
-		rec.ErrorCode == domain.AgentSwitchErrorSourceRestoreUnconfirmed
+	recoveryMarker := rec.ErrorCode.RetainedRecoveryMarker()
 	failureCode := rec.State == domain.AgentSwitchFailed && rec.ErrorCode != "" && !recoveryMarker
 	if (rec.State == domain.AgentSwitchFailed) != failureCode || (rec.ErrorCode != "" && !failureCode && !recoveryRequired) {
 		return fmt.Errorf("agent switch %s: error code must describe a terminal failure or an exact recovery condition", rec.ID)

@@ -311,6 +311,21 @@ func (c AgentSwitchErrorCode) Valid() bool {
 	}
 }
 
+// RetainedRecoveryMarker reports whether this code belongs only to a
+// nonterminal ownership boundary. Such markers must never be stored on failed
+// rows because doing so would release the operation gate while ownership is
+// still unresolved.
+func (c AgentSwitchErrorCode) RetainedRecoveryMarker() bool {
+	switch c {
+	case AgentSwitchErrorSourceStopUnconfirmed,
+		AgentSwitchErrorTargetStartUnconfirmed,
+		AgentSwitchErrorSourceRestoreUnconfirmed:
+		return true
+	default:
+		return false
+	}
+}
+
 // AgentSwitch is one durable switch saga. The optional source-authored handoff
 // is tracked independently from the AO-finalized handoff that was actually
 // delivered to the target. The finalized artifact also exists for fallback-
@@ -351,7 +366,6 @@ func (s AgentSwitch) RequiresRecovery() bool {
 // RequiresTargetStartRecovery reports the ambiguous target-start boundary.
 func (s AgentSwitch) RequiresTargetStartRecovery() bool {
 	return s.State == AgentSwitchStartingTarget &&
-		s.TargetRuntimeHandleID == "" &&
 		s.ErrorCode == AgentSwitchErrorTargetStartUnconfirmed
 }
 

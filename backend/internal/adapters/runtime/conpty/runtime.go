@@ -19,7 +19,29 @@ const runtimeLaunchIDEnv = "AO_RUNTIME_LAUNCH_ID"
 
 // Ensure Runtime satisfies the port at compile time (Attach in attach.go).
 var _ ports.Runtime = (*Runtime)(nil)
+var _ ports.FencedRuntimeProber = (*Runtime)(nil)
 var _ ports.StyledTerminalOutputReader = (*Runtime)(nil)
+
+type runtimeEffectFailure struct {
+	err     error
+	handle  ports.RuntimeHandle
+	effect  ports.RuntimeEffectOutcome
+	cleanup ports.RuntimeCleanupOutcome
+}
+
+func (e runtimeEffectFailure) Error() string                               { return e.err.Error() }
+func (e runtimeEffectFailure) Unwrap() error                               { return e.err }
+func (e runtimeEffectFailure) PossibleHandle() ports.RuntimeHandle         { return e.handle }
+func (e runtimeEffectFailure) EffectOutcome() ports.RuntimeEffectOutcome   { return e.effect }
+func (e runtimeEffectFailure) CleanupOutcome() ports.RuntimeCleanupOutcome { return e.cleanup }
+
+func conptyCreateFailure(err error) error {
+	return runtimeEffectFailure{err: err, effect: ports.RuntimeEffectNone, cleanup: ports.RuntimeCleanupNotAttempted}
+}
+
+func conptyPartialCreateFailure(err error, handle ports.RuntimeHandle, cleanup ports.RuntimeCleanupOutcome) error {
+	return runtimeEffectFailure{err: err, handle: handle, effect: ports.RuntimeEffectPossible, cleanup: cleanup}
+}
 
 // validSessionID matches agent-orchestrator's assertValidSessionId.
 var validSessionID = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
@@ -85,19 +107,19 @@ func New(opts Options) *Runtime {
 func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
 	id := string(cfg.SessionID)
 	if !validSessionID.MatchString(id) {
-		return ports.RuntimeHandle{}, fmt.Errorf("conpty: invalid session id %q: must match ^[a-zA-Z0-9_-]+$", id)
+		return ports.RuntimeHandle{}, conptyCreateFailure(fmt.Errorf("conpty: invalid session id %q: must match ^[a-zA-Z0-9_-]+$", id))
 	}
 	if cfg.WorkspacePath == "" {
-		return ports.RuntimeHandle{}, fmt.Errorf("conpty: workspace path required")
+		return ports.RuntimeHandle{}, conptyCreateFailure(fmt.Errorf("conpty: workspace path required"))
 	}
 	if len(cfg.Argv) == 0 {
-		return ports.RuntimeHandle{}, fmt.Errorf("conpty: argv required")
+		return ports.RuntimeHandle{}, conptyCreateFailure(fmt.Errorf("conpty: argv required"))
 	}
 
 	r.mu.Lock()
 	if _, dup := r.sessions[id]; dup {
 		r.mu.Unlock()
-		return ports.RuntimeHandle{}, fmt.Errorf("conpty: session %q already exists; destroy before re-creating", id)
+		return ports.RuntimeHandle{}, conptyCreateFailure(fmt.Errorf("conpty: session %q already exists; destroy before re-creating", id))
 	}
 	// Reserve the slot before the async spawn so a concurrent Create for the
 	// same id fails immediately (no gap between check and set).
@@ -106,10 +128,30 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 
 	addr, pid, err := r.spawner(ctx, id, cfg.WorkspacePath, cfg.Argv, cfg.Env)
 	if err != nil {
+		cause := fmt.Errorf("conpty: spawn pty-host for %q: %w", id, err)
+		handle := ports.RuntimeHandle{ID: id}
+		if addr == "" && pid == 0 {
+			r.mu.Lock()
+			delete(r.sessions, id)
+			r.mu.Unlock()
+			return ports.RuntimeHandle{}, conptyCreateFailure(cause)
+		}
+		if addr == "" || pid <= 0 {
+			r.mu.Lock()
+			delete(r.sessions, id)
+			r.mu.Unlock()
+			return ports.RuntimeHandle{}, conptyPartialCreateFailure(cause, handle, ports.RuntimeCleanupFailed)
+		}
 		r.mu.Lock()
-		delete(r.sessions, id)
+		r.sessions[id] = &hostSession{addr: addr, pid: pid, launchID: cfg.Env[runtimeLaunchIDEnv]}
 		r.mu.Unlock()
-		return ports.RuntimeHandle{}, fmt.Errorf("conpty: spawn pty-host for %q: %w", id, err)
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
+		cleanupErr := r.Destroy(cleanupCtx, handle)
+		cancel()
+		if cleanupErr != nil {
+			return ports.RuntimeHandle{}, conptyPartialCreateFailure(errors.Join(cause, cleanupErr), handle, ports.RuntimeCleanupFailed)
+		}
+		return ports.RuntimeHandle{}, conptyPartialCreateFailure(cause, handle, ports.RuntimeCleanupSucceeded)
 	}
 
 	sess := &hostSession{
@@ -121,14 +163,23 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 	r.sessions[id] = sess
 	r.mu.Unlock()
 
-	// Register in B2 registry for daemon-restart recovery (best-effort).
-	_ = ptyregistry.Register(ptyregistry.Entry{
+	if err := ptyregistry.Register(ptyregistry.Entry{
 		SessionID:    id,
 		PtyHostPID:   pid,
 		PipePath:     addr, // ponytail: reuse PipePath field for loopback addr
 		LaunchID:     sess.launchID,
 		RegisteredAt: time.Now().UTC().Format(time.RFC3339),
-	})
+	}); err != nil {
+		handle := ports.RuntimeHandle{ID: id}
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
+		cleanupErr := r.Destroy(cleanupCtx, handle)
+		cancel()
+		cause := fmt.Errorf("conpty: register pty-host for %q: %w", id, err)
+		if cleanupErr != nil {
+			return ports.RuntimeHandle{}, conptyPartialCreateFailure(errors.Join(cause, cleanupErr), handle, ports.RuntimeCleanupFailed)
+		}
+		return ports.RuntimeHandle{}, conptyPartialCreateFailure(cause, handle, ports.RuntimeCleanupSucceeded)
+	}
 
 	return ports.RuntimeHandle{ID: id}, nil
 }
@@ -221,11 +272,45 @@ func (r *Runtime) waitForPIDExit(ctx context.Context, pid int) (bool, error) {
 // tmux returns a non-nil error for transient failures for the same
 // reason; conpty matches that contract here.
 func (r *Runtime) IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool, error) {
-	sess := r.resolve(handle.ID)
+	sess, err := r.resolveWithEvidence(handle.ID)
+	if err != nil {
+		return false, err
+	}
 	if sess == nil {
 		return false, nil // no in-memory entry, no registry entry -> definitively gone
 	}
 	return clientIsAlive(sess.addr)
+}
+
+func (r *Runtime) ProbeFencedRuntime(ctx context.Context, ref ports.FencedRuntimeRef) ports.FencedProbeResult {
+	if ref.Handle.ID == "" || ref.SessionID == "" || ref.Generation == "" || ref.Handle.ID != string(ref.SessionID) {
+		return ports.FencedProbeResult{Liveness: ports.FencedUnknown, Reason: ports.FencedReasonIdentityMissing}
+	}
+	sess, err := r.resolveWithEvidence(ref.Handle.ID)
+	if err != nil {
+		reason := ports.FencedReasonRegistryUnreadable
+		if errors.Is(err, ptyregistry.ErrRegistryMalformed) {
+			reason = ports.FencedReasonRegistryMalformed
+		}
+		return ports.FencedProbeResult{Liveness: ports.FencedUnknown, Reason: reason}
+	}
+	if sess == nil {
+		return ports.FencedProbeResult{Liveness: ports.FencedDead, Reason: ports.FencedReasonExactAbsent}
+	}
+	if sess.launchID == "" {
+		return ports.FencedProbeResult{Liveness: ports.FencedUnknown, Reason: ports.FencedReasonIdentityMissing}
+	}
+	if sess.launchID != ref.Generation {
+		return ports.FencedProbeResult{Liveness: ports.FencedUnknown, Reason: ports.FencedReasonGenerationMismatch}
+	}
+	status, hostAlive, err := clientStatusContext(ctx, sess.addr)
+	if err != nil || !hostAlive {
+		return ports.FencedProbeResult{Liveness: ports.FencedUnknown, Reason: ports.FencedReasonProbeFailed}
+	}
+	if status.Alive {
+		return ports.FencedProbeResult{Liveness: ports.FencedAlive, Reason: ports.FencedReasonExactMatch}
+	}
+	return ports.FencedProbeResult{Liveness: ports.FencedDead, Reason: ports.FencedReasonExactAbsent}
 }
 
 // IsSupervisedProcessAlive uses the pty-host's child status. For a supervised
@@ -359,17 +444,28 @@ func (r *Runtime) resolveHostProtocol(ctx context.Context, sess *hostSession) (i
 // resolve looks up a session by id: first the in-memory map, then the B2
 // registry (for daemon-restart recovery). Returns nil if not found either way.
 func (r *Runtime) resolve(id string) *hostSession {
+	sess, _ := r.resolveWithEvidence(id)
+	return sess
+}
+
+func (r *Runtime) resolveWithEvidence(id string) (*hostSession, error) {
 	r.mu.Lock()
-	sess := r.sessions[id]
+	sess, exists := r.sessions[id]
 	r.mu.Unlock()
 	if sess != nil {
-		return sess
+		return sess, nil
+	}
+	if exists {
+		return nil, errors.New("conpty: runtime creation is still unresolved")
 	}
 
 	// Registry fallback: scan for the entry by session id.
-	entries, err := ptyregistry.List()
+	entries, complete, err := ptyregistry.Scan()
 	if err != nil {
-		return nil
+		return nil, err
+	}
+	if !complete {
+		return nil, errors.New("conpty: pty registry scan incomplete")
 	}
 	for _, e := range entries {
 		if e.SessionID != id {
@@ -385,9 +481,9 @@ func (r *Runtime) resolve(id string) *hostSession {
 			recovered = r.sessions[id]
 		}
 		r.mu.Unlock()
-		return recovered
+		return recovered, nil
 	}
-	return nil
+	return nil, nil
 }
 
 // findProcess wraps os.FindProcess to make it swappable in tests.

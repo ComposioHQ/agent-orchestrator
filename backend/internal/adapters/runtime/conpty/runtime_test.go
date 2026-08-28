@@ -29,6 +29,76 @@ func livePID() int { return os.Getpid() }
 // ponytail: PID 2147483647 (MaxInt32) is never a real process; signal-0 returns ESRCH.
 func deadPID() int { return 2147483647 }
 
+func TestProbeFencedRuntimeCompleteRegistryAbsentIsDead(t *testing.T) {
+	isolateRegistry(t)
+	rt := New(Options{})
+
+	got := rt.ProbeFencedRuntime(context.Background(), ports.FencedRuntimeRef{
+		Handle: ports.RuntimeHandle{ID: "sess-absent"}, SessionID: "sess-absent", Generation: "launch-1",
+	})
+	if got.Liveness != ports.FencedDead || got.Reason != ports.FencedReasonExactAbsent {
+		t.Fatalf("ProbeFencedRuntime absent = %+v, want dead/exact_absent", got)
+	}
+}
+
+func TestProbeFencedRuntimeRegistryMalformedIsUnknown(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "windows-pty-hosts.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rt := New(Options{RunFilePath: filepath.Join(dir, "running.json")})
+
+	got := rt.ProbeFencedRuntime(context.Background(), ports.FencedRuntimeRef{
+		Handle: ports.RuntimeHandle{ID: "sess-malformed"}, SessionID: "sess-malformed", Generation: "launch-1",
+	})
+	if got.Liveness != ports.FencedUnknown || got.Reason != ports.FencedReasonRegistryMalformed {
+		t.Fatalf("ProbeFencedRuntime malformed = %+v, want unknown/registry_malformed", got)
+	}
+}
+
+func TestProbeFencedRuntimeGenerationMismatchIsUnknown(t *testing.T) {
+	isolateRegistry(t)
+	rt := New(Options{})
+	rt.sessions["sess-mismatch"] = &hostSession{addr: "127.0.0.1:1", pid: livePID(), launchID: "launch-old"}
+
+	got := rt.ProbeFencedRuntime(context.Background(), ports.FencedRuntimeRef{
+		Handle: ports.RuntimeHandle{ID: "sess-mismatch"}, SessionID: "sess-mismatch", Generation: "launch-new",
+	})
+	if got.Liveness != ports.FencedUnknown || got.Reason != ports.FencedReasonGenerationMismatch {
+		t.Fatalf("ProbeFencedRuntime mismatch = %+v, want unknown/generation_mismatch", got)
+	}
+}
+
+func TestPartialCreateCleanupFailureReturnsRuntimeEffectEvidence(t *testing.T) {
+	isolateRegistry(t)
+	createErr := errors.New("spawn response lost")
+	rt := New(Options{Spawner: func(context.Context, string, string, []string, map[string]string) (string, int, error) {
+		return "127.0.0.1:1", livePID(), createErr
+	}})
+	rt.killHost = func(string) error { return errors.New("cleanup denied") }
+	rt.pidIsAlive = func(int) bool { return true }
+	rt.processFinder = func(int) (processKiller, error) { return nil, errors.New("permission denied") }
+	rt.destroyWait = 0
+
+	handle, err := rt.Create(context.Background(), ports.RuntimeConfig{
+		SessionID: "sess-partial", WorkspacePath: "/tmp/ws", Argv: []string{"codex"},
+	})
+	if handle.ID != "" || err == nil {
+		t.Fatalf("Create partial = (%+v, %v), want empty direct handle and evidence error", handle, err)
+	}
+	var effect ports.RuntimeEffectError
+	if !errors.As(err, &effect) {
+		t.Fatalf("Create error %T does not implement RuntimeEffectError", err)
+	}
+	if effect.PossibleHandle().ID != "sess-partial" || effect.EffectOutcome() != ports.RuntimeEffectPossible || effect.CleanupOutcome() != ports.RuntimeCleanupFailed {
+		t.Fatalf("Create effect evidence = handle %+v effect %q cleanup %q", effect.PossibleHandle(), effect.EffectOutcome(), effect.CleanupOutcome())
+	}
+}
+
 func TestRuntimeProvidesStyledRenderedTerminalOutput(t *testing.T) {
 	isolateRegistry(t)
 	hosts := map[string]*inProcHost{}

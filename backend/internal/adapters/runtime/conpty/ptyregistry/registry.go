@@ -6,6 +6,7 @@ package ptyregistry
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 )
@@ -23,6 +24,12 @@ type Entry struct {
 // defaultPidAlive is provided in build-tagged files (pidalive_unix.go /
 // pidalive_windows.go).
 var pidAlive = defaultPidAlive
+
+// rewriteRegistry is the prune-write seam. Tests replace it to prove a write
+// or permission failure cannot be reported as a complete empty scan.
+var rewriteRegistry = writeRaw
+
+var ErrRegistryMalformed = errors.New("conpty pty registry malformed")
 
 // overrideDir, when set, is the directory the registry file lives in for
 // this daemon instance, taking precedence over the ~/.ao default. Set once by
@@ -66,35 +73,37 @@ func registryFile() (string, error) {
 	return filepath.Join(home, ".ao", "windows-pty-hosts.json"), nil
 }
 
-// readRaw reads and defensively parses the registry. Missing file or malformed
-// JSON both return an empty slice (mirrors readRaw in the TS source).
-func readRaw() []Entry {
+// readRaw reads and strictly parses the registry. A missing file is a complete
+// empty snapshot; read and parse failures are incomplete evidence and must
+// never be collapsed into absence.
+func readRaw() ([]Entry, bool, error) {
 	path, err := registryFile()
 	if err != nil {
-		return nil
+		return nil, false, err
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		// Missing file is fine.
-		return nil
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, true, nil
+		}
+		return nil, false, err
 	}
 	var parsed []json.RawMessage
 	if err := json.Unmarshal(data, &parsed); err != nil {
-		return nil
+		return nil, false, fmt.Errorf("%w: %v", ErrRegistryMalformed, err)
 	}
 	out := make([]Entry, 0, len(parsed))
 	for _, raw := range parsed {
 		var e Entry
 		if err := json.Unmarshal(raw, &e); err != nil {
-			continue
+			return out, false, fmt.Errorf("%w: %v", ErrRegistryMalformed, err)
 		}
-		// Drop entries missing required fields (mirrors TS filter).
 		if e.SessionID == "" || e.PtyHostPID == 0 || e.PipePath == "" {
-			continue
+			return out, false, fmt.Errorf("%w: entry is missing sessionId, ptyHostPid, or pipePath", ErrRegistryMalformed)
 		}
 		out = append(out, e)
 	}
-	return out
+	return out, true, nil
 }
 
 // writeRaw atomically writes entries to the registry file. When entries is
@@ -147,8 +156,12 @@ func writeRaw(entries []Entry) error {
 // Register adds or replaces the entry for entry.SessionID. registeredAt must
 // be set by the caller (e.g. time.Now().UTC().Format(time.RFC3339)).
 func Register(entry Entry) error {
+	all, complete, err := Scan()
+	if err != nil || !complete {
+		return errors.Join(err, errors.New("conpty pty registry scan incomplete"))
+	}
 	next := make([]Entry, 0)
-	for _, e := range readRaw() {
+	for _, e := range all {
 		if e.SessionID != entry.SessionID {
 			next = append(next, e)
 		}
@@ -159,7 +172,10 @@ func Register(entry Entry) error {
 
 // Unregister removes the entry for sessionID. No-op if absent.
 func Unregister(sessionID string) error {
-	all := readRaw()
+	all, complete, err := Scan()
+	if err != nil || !complete {
+		return errors.Join(err, errors.New("conpty pty registry scan incomplete"))
+	}
 	next := make([]Entry, 0, len(all))
 	for _, e := range all {
 		if e.SessionID != sessionID {
@@ -172,10 +188,14 @@ func Unregister(sessionID string) error {
 	return writeRaw(next)
 }
 
-// List returns all entries whose PtyHostPID is still alive, auto-pruning dead
-// ones. The file is rewritten if any entries were pruned.
-func List() ([]Entry, error) {
-	all := readRaw()
+// Scan returns the live registry entries and whether the scan is complete.
+// Dead entries are pruned only after a complete read and parse. Any read,
+// parse, or prune-write failure returns incomplete evidence.
+func Scan() (entries []Entry, complete bool, err error) {
+	all, complete, err := readRaw()
+	if err != nil || !complete {
+		return all, false, err
+	}
 	live := make([]Entry, 0, len(all))
 	for _, e := range all {
 		if pidAlive(e.PtyHostPID) {
@@ -183,11 +203,18 @@ func List() ([]Entry, error) {
 		}
 	}
 	if len(live) != len(all) {
-		if err := writeRaw(live); err != nil {
-			return live, err
+		if err := rewriteRegistry(live); err != nil {
+			return live, false, err
 		}
 	}
-	return live, nil
+	return live, true, nil
+}
+
+// List preserves the ordinary registry consumer API while surfacing every
+// incomplete scan as an error.
+func List() ([]Entry, error) {
+	entries, _, err := Scan()
+	return entries, err
 }
 
 // Clear deletes the registry file. Best-effort; used by tests and recovery.

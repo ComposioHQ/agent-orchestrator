@@ -532,7 +532,9 @@ func (m *Manager) executeAgentSwitch(ctx context.Context, admitted *admittedAgen
 	// Resolve it on a bounded daemon-owned context; ambiguous teardown remains
 	// nonterminal for boot/explicit recovery.
 	stopCtx, cancelStop := context.WithTimeout(workerCtx, switchSourceStopWait)
-	stopErr := m.stopSourceRuntime(stopCtx, sourceHandle)
+	stopErr := m.stopSourceRuntime(stopCtx, ports.FencedRuntimeRef{
+		Handle: sourceHandle, SessionID: id, Generation: string(sourceGeneration), NativeIdentity: sourceNative.NativeSessionID,
+	})
 	cancelStop()
 	if stopErr != nil {
 		if errors.Is(stopErr, ErrSwitchSourceStopUnconfirmed) {
@@ -693,7 +695,15 @@ func (m *Manager) executeAgentSwitch(ctx context.Context, admitted *admittedAgen
 		SessionID: id, WorkspacePath: rec.Metadata.WorkspacePath, Argv: target.argv, Env: target.env,
 	}
 	handle, createErr := m.runtime.Create(ctx, runtimeCfg)
+	var effectErr ports.RuntimeEffectError
+	hasEffectEvidence := createErr != nil && errors.As(createErr, &effectErr)
+	if strings.TrimSpace(handle.ID) == "" && hasEffectEvidence {
+		handle = effectErr.PossibleHandle()
+	}
 	if strings.TrimSpace(handle.ID) == "" {
+		if hasEffectEvidence && effectErr.EffectOutcome() == ports.RuntimeEffectNone {
+			return result, fmt.Errorf("switch agent %s: start target runtime: %w", id, createErr)
+		}
 		// Without an opaque target handle AO cannot safely prove or clean up a
 		// partially-created target. In particular, the source handle is already
 		// conclusively destroyed and must never be substituted here: probing it
@@ -717,16 +727,38 @@ func (m *Manager) executeAgentSwitch(ctx context.Context, admitted *admittedAgen
 	})
 	cancelRecordHandle()
 	if err != nil {
-		if cleanupErr := m.cleanupUnactivatedTarget(ctx, handle); cleanupErr != nil {
+		if cleanupErr := m.cleanupUnactivatedTarget(ctx, ports.FencedRuntimeRef{
+			Handle: handle, SessionID: id, Generation: string(target.launchID), NativeIdentity: target.native.NativeSessionID,
+		}); cleanupErr != nil {
 			targetRuntimeAmbiguous = true
 			skipTerminalization = true
 			return result, fmt.Errorf("switch agent %s: record target runtime handle: %w", id, errors.Join(err, cleanupErr))
 		}
 		return result, fmt.Errorf("switch agent %s: record target runtime handle: %w", id, err)
 	}
+	if hasEffectEvidence {
+		switch effectErr.CleanupOutcome() {
+		case ports.RuntimeCleanupFailed, ports.RuntimeCleanupNotAttempted:
+			if effectErr.CleanupOutcome() == ports.RuntimeCleanupFailed {
+				targetRuntimeAmbiguous = true
+				skipTerminalization = true
+				markCtx, cancelMark := switchDurableContext(ctx)
+				marked, markErr := m.markTargetStartUnconfirmed(markCtx, store, result)
+				cancelMark()
+				if markErr == nil {
+					result = marked
+				}
+				return result, fmt.Errorf("switch agent %s: start target runtime: %w", id, errors.Join(createErr, markErr))
+			}
+		case ports.RuntimeCleanupSucceeded:
+			return result, fmt.Errorf("switch agent %s: start target runtime: %w", id, createErr)
+		}
+	}
 	alive, probeErr := m.waitForTargetGeneration(ctx, handle, id, target.launchID)
 	if probeErr != nil {
-		if cleanupErr := m.cleanupUnactivatedTarget(ctx, handle); cleanupErr != nil {
+		if cleanupErr := m.cleanupUnactivatedTarget(ctx, ports.FencedRuntimeRef{
+			Handle: handle, SessionID: id, Generation: string(target.launchID), NativeIdentity: target.native.NativeSessionID,
+		}); cleanupErr != nil {
 			targetRuntimeAmbiguous = true
 			skipTerminalization = true
 			return result, fmt.Errorf("switch agent %s: verify target generation: %w", id, errors.Join(probeErr, cleanupErr))
@@ -734,7 +766,9 @@ func (m *Manager) executeAgentSwitch(ctx context.Context, admitted *admittedAgen
 		return result, fmt.Errorf("switch agent %s: verify target generation: %w", id, probeErr)
 	}
 	if !alive {
-		if cleanupErr := m.cleanupUnactivatedTarget(ctx, handle); cleanupErr != nil {
+		if cleanupErr := m.cleanupUnactivatedTarget(ctx, ports.FencedRuntimeRef{
+			Handle: handle, SessionID: id, Generation: string(target.launchID), NativeIdentity: target.native.NativeSessionID,
+		}); cleanupErr != nil {
 			targetRuntimeAmbiguous = true
 			skipTerminalization = true
 			return result, fmt.Errorf("switch agent %s: clean unactivated target: %w", id, cleanupErr)
@@ -745,7 +779,9 @@ func (m *Manager) executeAgentSwitch(ctx context.Context, admitted *admittedAgen
 		return result, fmt.Errorf("switch agent %s: target generation exited before activation", id)
 	}
 	if err := m.waitForTargetNativeIdentity(ctx, store, &target); err != nil {
-		if cleanupErr := m.cleanupUnactivatedTarget(ctx, handle); cleanupErr != nil {
+		if cleanupErr := m.cleanupUnactivatedTarget(ctx, ports.FencedRuntimeRef{
+			Handle: handle, SessionID: id, Generation: string(target.launchID), NativeIdentity: target.native.NativeSessionID,
+		}); cleanupErr != nil {
 			targetRuntimeAmbiguous = true
 			skipTerminalization = true
 			return result, fmt.Errorf("switch agent %s: await target native session identity: %w", id, errors.Join(err, cleanupErr))
@@ -782,7 +818,9 @@ func (m *Manager) executeAgentSwitch(ctx context.Context, admitted *admittedAgen
 			}
 			return result, fmt.Errorf("switch agent %s: activate target owner outcome is ambiguous: %w", id, errors.Join(cause, resolutionErr))
 		} else {
-			if cleanupErr := m.cleanupUnactivatedTarget(ctx, handle); cleanupErr != nil {
+			if cleanupErr := m.cleanupUnactivatedTarget(ctx, ports.FencedRuntimeRef{
+				Handle: handle, SessionID: id, Generation: string(target.launchID), NativeIdentity: target.native.NativeSessionID,
+			}); cleanupErr != nil {
 				targetRuntimeAmbiguous = true
 				skipTerminalization = true
 				return result, fmt.Errorf("switch agent %s: activate target owner: %w", id, errors.Join(activationErr, cleanupErr))
@@ -2322,63 +2360,65 @@ func switchDurableContext(parent context.Context) (context.Context, context.Canc
 // an authoritative liveness probe may prove the side effect committed. If
 // neither operation proves absence, callers must retain the saga and input
 // gate for recovery instead of exposing a possibly-live unowned process.
-func (m *Manager) cleanupUnactivatedTarget(parent context.Context, handle ports.RuntimeHandle) error {
+func (m *Manager) cleanupUnactivatedTarget(parent context.Context, ref ports.FencedRuntimeRef) error {
 	cleanupCtx, cancel := switchDurableContext(parent)
 	defer cancel()
-	destroyErr := m.runtime.Destroy(cleanupCtx, handle)
+	destroyErr := m.runtime.Destroy(cleanupCtx, ref.Handle)
 	if destroyErr == nil {
 		return nil
 	}
-	alive, probeErr := m.runtime.IsAlive(cleanupCtx, handle)
-	if probeErr == nil && !alive {
+	probe := m.runtime.ProbeFencedRuntime(cleanupCtx, ref)
+	if probe.Liveness == ports.FencedDead {
 		return nil
 	}
-	if probeErr == nil {
+	if probe.Liveness == ports.FencedAlive {
 		return fmt.Errorf("target runtime remains alive after cleanup: %w", destroyErr)
 	}
-	return errors.Join(destroyErr, probeErr)
+	return errors.Join(destroyErr, fmt.Errorf("target ownership probe is unknown: %s", probe.Reason))
 }
 
-func (m *Manager) stopSourceRuntime(ctx context.Context, handle ports.RuntimeHandle) error {
-	if strings.TrimSpace(handle.ID) == "" {
+func (m *Manager) stopSourceRuntime(ctx context.Context, ref ports.FencedRuntimeRef) error {
+	if strings.TrimSpace(ref.Handle.ID) == "" {
 		return ErrIncompleteHandle
 	}
-	firstErr := m.runtime.Destroy(ctx, handle)
+	firstErr := m.runtime.Destroy(ctx, ref.Handle)
 	if firstErr == nil {
 		return nil
 	}
 	if err := ctx.Err(); err != nil {
 		return errors.Join(ErrSwitchSourceStopUnconfirmed, firstErr, err)
 	}
-	alive, probeErr := m.runtime.IsAlive(ctx, handle)
-	if probeErr == nil && !alive {
+	probe := m.runtime.ProbeFencedRuntime(ctx, ref)
+	if probe.Liveness == ports.FencedDead {
 		// Teardown committed externally even though its response failed.
 		return nil
 	}
-	secondErr := m.runtime.Destroy(ctx, handle)
+	secondErr := m.runtime.Destroy(ctx, ref.Handle)
 	if secondErr == nil {
 		return nil
 	}
 	if err := ctx.Err(); err != nil {
-		return errors.Join(ErrSwitchSourceStopUnconfirmed, firstErr, probeErr, secondErr, err)
+		return errors.Join(ErrSwitchSourceStopUnconfirmed, firstErr, fmt.Errorf("first ownership probe: %s", probe.Reason), secondErr, err)
 	}
-	alive, secondProbeErr := m.runtime.IsAlive(ctx, handle)
-	if secondProbeErr == nil && !alive {
+	secondProbe := m.runtime.ProbeFencedRuntime(ctx, ref)
+	if secondProbe.Liveness == ports.FencedDead {
 		return nil
 	}
-	if secondProbeErr == nil && alive {
+	if secondProbe.Liveness == ports.FencedAlive {
 		return fmt.Errorf("%w: runtime remains alive after two destroy attempts: %w", ErrSwitchSourceStopUnconfirmed, errors.Join(firstErr, secondErr))
 	}
-	return errors.Join(ErrSwitchSourceStopUnconfirmed, firstErr, probeErr, secondErr, secondProbeErr)
+	return errors.Join(
+		ErrSwitchSourceStopUnconfirmed,
+		firstErr,
+		fmt.Errorf("first ownership probe: %s", probe.Reason),
+		secondErr,
+		fmt.Errorf("second ownership probe: %s", secondProbe.Reason),
+	)
 }
 
 func (m *Manager) waitForTargetGeneration(ctx context.Context, handle ports.RuntimeHandle, id domain.SessionID, generation domain.AgentGenerationID) (bool, error) {
 	if strings.TrimSpace(handle.ID) == "" || generation == "" {
 		return false, errors.New("target runtime handle and generation are required")
-	}
-	inspector, ok := m.runtime.(ports.ExactSupervisedProcessInspector)
-	if !ok {
-		return false, errors.New("runtime cannot inspect an exact supervised target generation")
 	}
 	wait := m.switchTargetStartWait
 	if wait <= 0 {
@@ -2390,15 +2430,16 @@ func (m *Manager) waitForTargetGeneration(ctx context.Context, handle ports.Runt
 	defer ticker.Stop()
 	var lastErr error
 	for {
-		alive, err := inspector.IsExactSupervisedProcessAlive(ctx, handle, ports.SupervisedProcessRef{
-			SessionID: id,
-			LaunchID:  string(generation),
+		probe := m.runtime.ProbeFencedRuntime(ctx, ports.FencedRuntimeRef{
+			Handle: handle, SessionID: id, Generation: string(generation),
 		})
-		if err == nil && alive {
+		if probe.Liveness == ports.FencedAlive {
 			return true, nil
 		}
-		if err != nil {
-			lastErr = err
+		if probe.Liveness == ports.FencedUnknown {
+			lastErr = fmt.Errorf("target ownership probe is unknown: %s", probe.Reason)
+		} else {
+			lastErr = nil
 		}
 		select {
 		case <-ctx.Done():
@@ -2545,8 +2586,8 @@ func (m *Manager) markTargetStartUnconfirmed(ctx context.Context, store ports.Ag
 	if sw.RequiresTargetStartRecovery() {
 		return sw, nil
 	}
-	if sw.State != domain.AgentSwitchStartingTarget || strings.TrimSpace(sw.TargetRuntimeHandleID) != "" {
-		return sw, fmt.Errorf("agent switch %s: target-start recovery marker requires starting_target without a runtime handle", sw.ID)
+	if sw.State != domain.AgentSwitchStartingTarget {
+		return sw, fmt.Errorf("agent switch %s: target-start recovery marker requires starting_target", sw.ID)
 	}
 	if err := m.advanceAgentSwitch(ctx, store, &sw, sw.State, func(next *domain.AgentSwitch) {
 		next.ErrorCode = domain.AgentSwitchErrorTargetStartUnconfirmed
@@ -3060,25 +3101,29 @@ func (m *Manager) reconcileStoppingSource(ctx context.Context, store ports.Agent
 		return failErr == nil, failErr
 	}
 	handle := ports.RuntimeHandle{ID: rec.Metadata.RuntimeHandleID}
-	alive, err := m.runtime.IsAlive(ctx, handle)
-	if err != nil {
-		// Target creation is ordered strictly after the source-stopped
-		// transaction, so an inconclusive source probe cannot imply dual
-		// ownership here. Keep the durable source owner/handle unchanged and close
-		// the switch instead of fencing the session forever. Do not retry Destroy
-		// or relaunch the source: a runtime-level outage can leave the original
-		// provider alive outside the terminal adapter, and guessing otherwise
-		// would create the duplicate controller this gate exists to prevent.
-		_, failErr := m.failAgentSwitch(ctx, store, sw, domain.AgentSwitchErrorSourceStopUnconfirmed)
-		return failErr == nil, failErr
-	}
-	if alive {
+	probe := m.runtime.ProbeFencedRuntime(ctx, ports.FencedRuntimeRef{
+		Handle: handle, SessionID: rec.ID, Generation: string(sw.SourceGenerationID), NativeIdentity: rec.Metadata.AgentSessionID,
+	})
+	switch probe.Liveness {
+	case ports.FencedUnknown:
+		if _, err := m.markSourceStopUnconfirmed(ctx, store, sw); err != nil {
+			return false, err
+		}
+		return false, fmt.Errorf("reconcile agent switch %s: source ownership is unknown: %s", sw.ID, probe.Reason)
+	case ports.FencedAlive:
 		// Target creation is ordered strictly after the source-stopped
 		// transaction. Therefore any surviving handle in stopping_source still
 		// belongs to the source side (provider process or preserved shell). Keep
 		// it; process-level inspection is unavailable for hook-native sources.
 		_, failErr := m.failAgentSwitch(ctx, store, sw, domain.AgentSwitchErrorDaemonRestartPreStop)
 		return failErr == nil, failErr
+	case ports.FencedDead:
+		// Exact absence is the only evidence that permits source restoration.
+	default:
+		if _, err := m.markSourceStopUnconfirmed(ctx, store, sw); err != nil {
+			return false, err
+		}
+		return false, fmt.Errorf("reconcile agent switch %s: invalid source ownership result %q", sw.ID, probe.Liveness)
 	}
 
 	stoppedAt := m.clock()
@@ -3118,53 +3163,21 @@ func (m *Manager) reconcileStartingTarget(ctx context.Context, store ports.Agent
 			// transient marker write must not prevent the daemon/API from starting.
 			// A later reconciliation can backfill the same monotonic marker.
 			m.logger.Warn("agent switch: could not persist target-start recovery marker", "sessionID", sw.SessionID, "switchID", sw.ID, "error", err)
-		}
-		return false, nil
-	}
-	handle := ports.RuntimeHandle{ID: targetHandleID}
-	alive, err := m.runtime.IsAlive(ctx, handle)
-	if err != nil {
-		if errors.Is(err, ports.ErrRuntimeProbeInconclusive) {
-			// The durable target handle may still own a live controller. Preserve
-			// the controller, workspace, switch facts, and input fence until a
-			// later reconciliation can inspect it conclusively.
 			return false, err
 		}
-		if destroyErr := m.runtime.Destroy(ctx, handle); destroyErr != nil {
-			// The target may exist and the durable row still names the source. Keep
-			// the input fence closed until a later daemon reconciliation can prove
-			// or remove this generation.
-			return false, errors.Join(err, destroyErr)
-		}
-		if cleanupErr := m.cleanupRecoveredTargetWorkspace(ctx, rec, sw); cleanupErr != nil {
-			return false, cleanupErr
-		}
-		return m.failRecoveredSwitchWithSourceRollback(ctx, store, rec, sw)
+		return false, fmt.Errorf("reconcile agent switch %s: target ownership is unknown: %s", sw.ID, ports.FencedReasonIdentityMissing)
 	}
-	if !alive {
-		if cleanupErr := m.cleanupRecoveredTargetWorkspace(ctx, rec, sw); cleanupErr != nil {
-			return false, cleanupErr
-		}
-		return m.failRecoveredSwitchWithSourceRollback(ctx, store, rec, sw)
-	}
-	inspector, ok := m.runtime.(ports.ExactSupervisedProcessInspector)
-	if !ok {
-		return false, errors.New("reconcile agent switch: runtime cannot inspect exact target generation")
-	}
-	targetAlive, err := inspector.IsExactSupervisedProcessAlive(ctx, handle, ports.SupervisedProcessRef{
-		SessionID: rec.ID,
-		LaunchID:  string(sw.TargetGenerationID),
+	handle := ports.RuntimeHandle{ID: targetHandleID}
+	probe := m.runtime.ProbeFencedRuntime(ctx, ports.FencedRuntimeRef{
+		Handle: handle, SessionID: rec.ID, Generation: string(sw.TargetGenerationID),
 	})
-	if err != nil {
-		if destroyErr := m.runtime.Destroy(ctx, handle); destroyErr != nil {
-			return false, errors.Join(err, destroyErr)
+	switch probe.Liveness {
+	case ports.FencedUnknown:
+		if _, err := m.markTargetStartUnconfirmed(ctx, store, sw); err != nil {
+			return false, err
 		}
-		if cleanupErr := m.cleanupRecoveredTargetWorkspace(ctx, rec, sw); cleanupErr != nil {
-			return false, cleanupErr
-		}
-		return m.failRecoveredSwitchWithSourceRollback(ctx, store, rec, sw)
-	}
-	if !targetAlive {
+		return false, fmt.Errorf("reconcile agent switch %s: target ownership is unknown: %s", sw.ID, probe.Reason)
+	case ports.FencedDead:
 		if err := m.runtime.Destroy(ctx, handle); err != nil {
 			return false, err
 		}
@@ -3172,6 +3185,13 @@ func (m *Manager) reconcileStartingTarget(ctx context.Context, store ports.Agent
 			return false, cleanupErr
 		}
 		return m.failRecoveredSwitchWithSourceRollback(ctx, store, rec, sw)
+	case ports.FencedAlive:
+		// Continue with durable native-identity validation and target activation.
+	default:
+		if _, err := m.markTargetStartUnconfirmed(ctx, store, sw); err != nil {
+			return false, err
+		}
+		return false, fmt.Errorf("reconcile agent switch %s: invalid target ownership result %q", sw.ID, probe.Liveness)
 	}
 	if sw.TargetNativeSessionRef == nil {
 		if err := m.runtime.Destroy(ctx, handle); err != nil {

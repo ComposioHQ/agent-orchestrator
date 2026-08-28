@@ -86,6 +86,78 @@ type Runtime interface {
 	IsAlive(ctx context.Context, handle RuntimeHandle) (bool, error)
 }
 
+// FencedLiveness is exact ownership evidence for one AO runtime generation.
+// Unknown is deliberately distinct from dead: callers must retain ownership
+// gates when an adapter cannot prove an exact match or exact absence.
+type FencedLiveness string
+
+const (
+	FencedAlive   FencedLiveness = "alive"
+	FencedDead    FencedLiveness = "dead"
+	FencedUnknown FencedLiveness = "unknown"
+)
+
+// FencedProbeReason explains the evidence behind a fenced liveness result.
+type FencedProbeReason string
+
+const (
+	FencedReasonExactMatch         FencedProbeReason = "exact_match"
+	FencedReasonExactAbsent        FencedProbeReason = "exact_absent"
+	FencedReasonIdentityMissing    FencedProbeReason = "identity_missing"
+	FencedReasonRegistryUnreadable FencedProbeReason = "registry_unreadable"
+	FencedReasonRegistryMalformed  FencedProbeReason = "registry_malformed"
+	FencedReasonProbeFailed        FencedProbeReason = "probe_failed"
+	FencedReasonGenerationMismatch FencedProbeReason = "generation_mismatch"
+)
+
+// FencedRuntimeRef identifies the exact AO-owned runtime generation whose
+// ownership must be proven. NativeIdentity is populated when the caller has a
+// provider-native identity that the adapter can inspect.
+type FencedRuntimeRef struct {
+	Handle         RuntimeHandle
+	SessionID      domain.SessionID
+	Generation     string
+	NativeIdentity string
+}
+
+type FencedProbeResult struct {
+	Liveness FencedLiveness
+	Reason   FencedProbeReason
+}
+
+type FencedRuntimeProber interface {
+	ProbeFencedRuntime(context.Context, FencedRuntimeRef) FencedProbeResult
+}
+
+// RuntimeEffectOutcome describes whether a failed runtime operation may have
+// applied an external side effect.
+type RuntimeEffectOutcome string
+
+const (
+	RuntimeEffectNone     RuntimeEffectOutcome = "none"
+	RuntimeEffectPossible RuntimeEffectOutcome = "possible"
+	RuntimeEffectApplied  RuntimeEffectOutcome = "applied"
+)
+
+// RuntimeCleanupOutcome describes cleanup performed after a failed runtime
+// operation that may have applied an external side effect.
+type RuntimeCleanupOutcome string
+
+const (
+	RuntimeCleanupNotAttempted RuntimeCleanupOutcome = "not_attempted"
+	RuntimeCleanupSucceeded    RuntimeCleanupOutcome = "succeeded"
+	RuntimeCleanupFailed       RuntimeCleanupOutcome = "failed"
+)
+
+// RuntimeEffectError preserves ownership evidence from a failed operation.
+// Callers must not replace PossibleHandle with a different persisted handle.
+type RuntimeEffectError interface {
+	error
+	PossibleHandle() RuntimeHandle
+	EffectOutcome() RuntimeEffectOutcome
+	CleanupOutcome() RuntimeCleanupOutcome
+}
+
 // StyledTerminalOutputReader is an optional runtime capability for safety
 // checks that must distinguish dim placeholder text from a human-authored
 // draft. Implementations return a bounded excerpt of the rendered current

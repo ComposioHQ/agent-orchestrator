@@ -774,6 +774,45 @@ func TestAgentSwitchSourceStopMarkerCanAdvanceOnlyThroughConfirmedBoundary(t *te
 	}
 }
 
+func TestAgentSwitchFailedRowRejectsRetainedMarkerCodes(t *testing.T) {
+	for _, code := range []domain.AgentSwitchErrorCode{
+		domain.AgentSwitchErrorSourceStopUnconfirmed,
+		domain.AgentSwitchErrorTargetStartUnconfirmed,
+		domain.AgentSwitchErrorSourceRestoreUnconfirmed,
+	} {
+		t.Run(string(code), func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := context.Background()
+			projectID := "failed-marker-validation-" + string(code)
+			seedProject(t, s, projectID)
+			rec := sampleRecord(projectID)
+			now := rec.CreatedAt
+			session, err := s.CreateSession(ctx, rec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			sw, created, err := s.CreateAgentSwitch(ctx, domain.AgentSwitch{
+				ID: domain.AgentSwitchID("switch-" + string(code)), SessionID: session.ID,
+				IdempotencyKey:     "key-" + string(code),
+				RequestFingerprint: domain.ComputeAgentSwitchRequestFingerprint(session.ID, domain.HarnessCodex, ""),
+				FromHarness:        domain.HarnessClaudeCode, TargetHarness: domain.HarnessCodex,
+				State: domain.AgentSwitchPreparingHandoff, TargetStartMode: domain.AgentSwitchTargetStartPending,
+				AgentHandoffStatus: domain.AgentHandoffNotAttempted, SourceGenerationID: "source-generation",
+				RequestedAt: now, UpdatedAt: now,
+			})
+			if err != nil || !created {
+				t.Fatalf("create switch: created=%v err=%v", created, err)
+			}
+			sw.State = domain.AgentSwitchFailed
+			sw.ErrorCode = code
+			sw.UpdatedAt = now.Add(time.Second)
+			if changed, err := s.UpdateAgentSwitch(ctx, sw, domain.AgentSwitchPreparingHandoff, "source-generation", ""); err == nil || changed {
+				t.Fatalf("failed row accepted retained marker %q: changed=%v err=%v", code, changed, err)
+			}
+		})
+	}
+}
+
 func TestAgentSwitchSourceRestoreMarkerCanSettleOnlyAsTerminalFailure(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

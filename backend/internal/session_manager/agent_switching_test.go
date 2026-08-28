@@ -547,6 +547,19 @@ type switchCreateErrorRuntime struct {
 	exactProbeHandles []string
 }
 
+type switchRuntimeEffectError struct {
+	err     error
+	handle  ports.RuntimeHandle
+	effect  ports.RuntimeEffectOutcome
+	cleanup ports.RuntimeCleanupOutcome
+}
+
+func (e switchRuntimeEffectError) Error() string                               { return e.err.Error() }
+func (e switchRuntimeEffectError) Unwrap() error                               { return e.err }
+func (e switchRuntimeEffectError) PossibleHandle() ports.RuntimeHandle         { return e.handle }
+func (e switchRuntimeEffectError) EffectOutcome() ports.RuntimeEffectOutcome   { return e.effect }
+func (e switchRuntimeEffectError) CleanupOutcome() ports.RuntimeCleanupOutcome { return e.cleanup }
+
 type switchRollbackCancellationRuntime struct {
 	*fakeRestartRuntime
 	cancel      context.CancelFunc
@@ -573,6 +586,14 @@ func (r *switchRollbackCancellationRuntime) IsExactSupervisedProcessAlive(contex
 	return false, nil
 }
 
+func (r *switchRollbackCancellationRuntime) ProbeFencedRuntime(context.Context, ports.FencedRuntimeRef) ports.FencedProbeResult {
+	if r.cancel != nil {
+		r.cancel()
+		r.cancel = nil
+	}
+	return ports.FencedProbeResult{Liveness: ports.FencedDead, Reason: ports.FencedReasonExactAbsent}
+}
+
 func (r *switchCreateErrorRuntime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
 	r.createCalls++
 	r.lastCfg = cfg
@@ -585,6 +606,11 @@ func (r *switchCreateErrorRuntime) Create(ctx context.Context, cfg ports.Runtime
 func (r *switchCreateErrorRuntime) IsExactSupervisedProcessAlive(ctx context.Context, handle ports.RuntimeHandle, ref ports.SupervisedProcessRef) (bool, error) {
 	r.exactProbeHandles = append(r.exactProbeHandles, handle.ID)
 	return r.fakeRestartRuntime.IsExactSupervisedProcessAlive(ctx, handle, ref)
+}
+
+func (r *switchCreateErrorRuntime) ProbeFencedRuntime(ctx context.Context, ref ports.FencedRuntimeRef) ports.FencedProbeResult {
+	r.exactProbeHandles = append(r.exactProbeHandles, ref.Handle.ID)
+	return r.fakeRestartRuntime.ProbeFencedRuntime(ctx, ref)
 }
 
 func (l *switchReleaseLCM) ReleaseLaunch(id domain.SessionID, launchID string) {
@@ -2222,6 +2248,39 @@ func TestSwitchAgentCreateErrorWithTargetHandleUsesConservativeCleanup(t *testin
 	}
 }
 
+func TestPartialCreateCleanupFailureRetainsEvidenceAndGate(t *testing.T) {
+	partialErr := switchRuntimeEffectError{
+		err:     errors.New("partial target create cleanup failed"),
+		handle:  ports.RuntimeHandle{ID: "target-partial"},
+		effect:  ports.RuntimeEffectPossible,
+		cleanup: ports.RuntimeCleanupFailed,
+	}
+	runtime := &switchCreateErrorRuntime{
+		fakeRestartRuntime: &fakeRestartRuntime{fakeRuntime: &fakeRuntime{}},
+		createErr:          partialErr,
+	}
+	manager, store, _ := newSwitchTestManager(t, runtime)
+
+	sw, err := switchAgentSynchronously(context.Background(), manager, "proj-1", SwitchAgentConfig{
+		TargetHarness: domain.HarnessCodex, IdempotencyKey: "partial-create-cleanup-failed",
+	})
+	if !errors.Is(err, partialErr.err) {
+		t.Fatalf("switch error = %v, want partial create error", err)
+	}
+	if sw.State != domain.AgentSwitchStartingTarget || sw.TargetRuntimeHandleID != "target-partial" || sw.ErrorCode != domain.AgentSwitchErrorTargetStartUnconfirmed {
+		t.Fatalf("retained switch = state %q handle %q code %q", sw.State, sw.TargetRuntimeHandleID, sw.ErrorCode)
+	}
+	if got := store.sessions["proj-1"]; got.Harness != domain.HarnessClaudeCode || got.Activity.State != domain.ActivityExited {
+		t.Fatalf("partial target changed source ownership: %+v", got)
+	}
+	if runtime.created != 0 || len(runtime.destroyedIDs) != 1 || runtime.destroyedIDs[0] != "proj-1" {
+		t.Fatalf("partial create recovery side effects: creates=%d destroys=%v", runtime.created, runtime.destroyedIDs)
+	}
+	if !manager.SessionMutationInProgress("proj-1") {
+		t.Fatal("partial create cleanup failure released the operation gate")
+	}
+}
+
 func TestSwitchAgentRestoresSourceAfterConclusivePreActivationTargetFailure(t *testing.T) {
 	runtime := &fakeRestartRuntime{fakeRuntime: &fakeRuntime{
 		createIDs:          []string{"target-handle", "source-rollback-handle"},
@@ -3417,7 +3476,7 @@ func TestSwitchAgentMarksAndRecoversUnconfirmedSourceStop(t *testing.T) {
 	}
 }
 
-func TestRecoverAgentSwitchReleasesSourceWhenProbeRemainsInconclusive(t *testing.T) {
+func TestRecoverAgentSwitchRetainsSourceWhenProbeRemainsInconclusive(t *testing.T) {
 	probeErr := errors.New("runtime probe unavailable")
 	runtime := &fakeRestartRuntime{fakeRuntime: &fakeRuntime{
 		destroyErr: errors.New("teardown unavailable"),
@@ -3442,8 +3501,8 @@ func TestRecoverAgentSwitchReleasesSourceWhenProbeRemainsInconclusive(t *testing
 	waitForSwitchWorkers(t, manager)
 
 	recovered := store.switches[sw.ID]
-	if recovered.State != domain.AgentSwitchFailed || recovered.ErrorCode != domain.AgentSwitchErrorSourceStopUnconfirmed {
-		t.Fatalf("recovered switch = state %q code %q, want failed/source_stop_unconfirmed",
+	if recovered.State != domain.AgentSwitchStoppingSource || recovered.ErrorCode != domain.AgentSwitchErrorSourceStopUnconfirmed {
+		t.Fatalf("recovered switch = state %q code %q, want stopping_source/source_stop_unconfirmed",
 			recovered.State, recovered.ErrorCode)
 	}
 	if got := store.sessions["proj-1"]; got.Harness != domain.HarnessClaudeCode || got.Metadata.RuntimeHandleID != "proj-1" {
@@ -3455,8 +3514,8 @@ func TestRecoverAgentSwitchReleasesSourceWhenProbeRemainsInconclusive(t *testing
 	if runtime.destroyed != destroyedBeforeRecovery {
 		t.Fatalf("recovery retried ambiguous teardown: destroy calls = %d, want %d", runtime.destroyed, destroyedBeforeRecovery)
 	}
-	if manager.SessionMutationInProgress("proj-1") {
-		t.Fatal("inconclusive source probe left the switch input gate closed")
+	if !manager.SessionMutationInProgress("proj-1") {
+		t.Fatal("inconclusive source probe released the switch input gate")
 	}
 }
 
@@ -3556,8 +3615,8 @@ func TestSwitchAgentRetainedProbeAndCleanupFailureRecoversUsingOpaqueHandle(t *t
 	sw, err := switchAgentSynchronously(context.Background(), manager, "proj-1", SwitchAgentConfig{
 		TargetHarness: domain.HarnessCodex, IdempotencyKey: "ambiguous-target-probe",
 	})
-	if !errors.Is(err, probeErr) || !errors.Is(err, cleanupErr) {
-		t.Fatalf("switch error = %v, want joined probe and cleanup failures", err)
+	if err == nil || !strings.Contains(err.Error(), string(ports.FencedReasonProbeFailed)) || !errors.Is(err, cleanupErr) {
+		t.Fatalf("switch error = %v, want typed unknown probe and cleanup failure", err)
 	}
 	if sw.State != domain.AgentSwitchStartingTarget || sw.TargetRuntimeHandleID != "h1" {
 		t.Fatalf("retained switch = state %q handle %q, want starting_target on h1", sw.State, sw.TargetRuntimeHandleID)
@@ -3677,9 +3736,9 @@ func TestReconcileAgentSwitchesUsesDurableBoundaries(t *testing.T) {
 		{name: "stopped source is restored", state: domain.AgentSwitchStoppingSource, runtimeAlive: false, wantState: domain.AgentSwitchFailed, wantHarness: domain.HarnessClaudeCode, wantErrorCode: "daemon_restart_post_stop", wantActivity: domain.ActivityIdle},
 		{name: "failed source restore remains recoverable", state: domain.AgentSwitchStoppingSource, runtimeAlive: false, rollbackErr: errors.New("source relaunch unavailable"), wantState: domain.AgentSwitchSourceStopped, wantHarness: domain.HarnessClaudeCode, wantErrorCode: domain.AgentSwitchErrorSourceRestoreUnconfirmed, wantError: "source relaunch unavailable", wantGated: true, wantActivity: domain.ActivityExited},
 		{name: "missing rollback project remains recoverable", state: domain.AgentSwitchStoppingSource, runtimeAlive: false, projectErr: errors.New("project unavailable"), wantState: domain.AgentSwitchSourceStopped, wantHarness: domain.HarnessClaudeCode, wantErrorCode: domain.AgentSwitchErrorSourceRestoreUnconfirmed, wantError: "project unavailable", wantGated: true, wantActivity: domain.ActivityExited},
-		{name: "inconclusive source probe returns ownership to source", state: domain.AgentSwitchStoppingSource, runtimeErr: errors.New("probe unavailable"), wantState: domain.AgentSwitchFailed, wantHarness: domain.HarnessClaudeCode, wantErrorCode: domain.AgentSwitchErrorSourceStopUnconfirmed},
+		{name: "inconclusive source probe retains ownership gate", state: domain.AgentSwitchStoppingSource, runtimeErr: errors.New("probe unavailable"), wantState: domain.AgentSwitchStoppingSource, wantHarness: domain.HarnessClaudeCode, wantErrorCode: domain.AgentSwitchErrorSourceStopUnconfirmed, wantError: "source ownership is unknown", wantGated: true, wantActivity: domain.ActivityExited},
 		{name: "exact starting target is adopted by opaque handle without delivery", state: domain.AgentSwitchStartingTarget, runtimeAlive: true, targetHandle: "opaque-target-handle", wantState: domain.AgentSwitchFailed, wantHarness: domain.HarnessCodex, wantHandle: "opaque-target-handle", wantErrorCode: "daemon_restart_before_delivery"},
-		{name: "starting target without a durable handle requires recovery", state: domain.AgentSwitchStartingTarget, runtimeAlive: true, wantState: domain.AgentSwitchStartingTarget, wantHarness: domain.HarnessClaudeCode, wantErrorCode: domain.AgentSwitchErrorTargetStartUnconfirmed, wantGated: true},
+		{name: "starting target without a durable handle requires recovery", state: domain.AgentSwitchStartingTarget, runtimeAlive: true, wantState: domain.AgentSwitchStartingTarget, wantHarness: domain.HarnessClaudeCode, wantErrorCode: domain.AgentSwitchErrorTargetStartUnconfirmed, wantError: "target ownership is unknown", wantGated: true},
 		{name: "acknowledged delivery completes", state: domain.AgentSwitchDelivering, runtimeAlive: true, acknowledged: true, wantState: domain.AgentSwitchCompleted, wantHarness: domain.HarnessCodex},
 		{name: "acknowledgement winning recovery failure CAS completes", state: domain.AgentSwitchDelivering, runtimeAlive: true, ackBeforeFail: true, wantState: domain.AgentSwitchCompleted, wantHarness: domain.HarnessCodex},
 		{name: "ambiguous delivery is not resent", state: domain.AgentSwitchDelivering, runtimeAlive: true, wantState: domain.AgentSwitchFailed, wantHarness: domain.HarnessCodex, wantErrorCode: "delivery_unconfirmed"},
@@ -3792,11 +3851,13 @@ func TestReconcileStartingTargetPreservesInconclusiveRuntime(t *testing.T) {
 	store.sessions[recBefore.ID] = recBefore
 
 	err := manager.ReconcileAgentSwitches(context.Background())
-	if !errors.Is(err, ports.ErrRuntimeProbeInconclusive) {
-		t.Fatalf("reconcile error = %v, want ErrRuntimeProbeInconclusive", err)
+	if err == nil || !strings.Contains(err.Error(), string(ports.FencedReasonProbeFailed)) {
+		t.Fatalf("reconcile error = %v, want typed unknown probe", err)
 	}
-	if got := store.switches[sw.ID]; got != sw {
-		t.Fatalf("inconclusive recovery mutated switch:\n got  %+v\n want %+v", got, sw)
+	wantSwitch := sw
+	wantSwitch.ErrorCode = domain.AgentSwitchErrorTargetStartUnconfirmed
+	if got := store.switches[sw.ID]; got.State != wantSwitch.State || got.ErrorCode != wantSwitch.ErrorCode || got.TargetRuntimeHandleID != wantSwitch.TargetRuntimeHandleID {
+		t.Fatalf("inconclusive recovery marker = state %q code %q handle %q", got.State, got.ErrorCode, got.TargetRuntimeHandleID)
 	}
 	if got := store.sessions[recBefore.ID]; !reflect.DeepEqual(got, recBefore) {
 		t.Fatalf("inconclusive recovery mutated session:\n got  %+v\n want %+v", got, recBefore)
@@ -3812,6 +3873,77 @@ func TestReconcileStartingTargetPreservesInconclusiveRuntime(t *testing.T) {
 	}
 	if !manager.SessionMutationInProgress(sw.SessionID) {
 		t.Fatal("inconclusive recovery reopened session input")
+	}
+}
+
+func TestReconcileStoppingSourceUnknownRetainsMarker(t *testing.T) {
+	runtime := &fakeRestartRuntime{fakeRuntime: &fakeRuntime{fencedResult: ports.FencedProbeResult{
+		Liveness: ports.FencedUnknown, Reason: ports.FencedReasonRegistryUnreadable,
+	}}}
+	manager, store, _ := newSwitchTestManager(t, runtime)
+	now := time.Now().UTC()
+	sw := domain.AgentSwitch{
+		ID: "switch-source-unknown", SessionID: "proj-1", IdempotencyKey: "source-unknown",
+		RequestFingerprint: domain.ComputeAgentSwitchRequestFingerprint("proj-1", domain.HarnessCodex, ""),
+		FromHarness:        domain.HarnessClaudeCode, TargetHarness: domain.HarnessCodex,
+		State: domain.AgentSwitchStoppingSource, AgentHandoffStatus: domain.AgentHandoffUnavailable,
+		SourceGenerationID: "source-generation", TargetGenerationID: "target-generation",
+		RequestedAt: now, UpdatedAt: now,
+	}
+	store.switches[sw.ID] = sw
+
+	for attempt := 0; attempt < 2; attempt++ {
+		resolved, err := manager.reconcileRetainedAgentSwitchOnce(context.Background(), store, sw.SessionID)
+		if err == nil || resolved {
+			t.Fatalf("reconcile attempt %d = resolved %v err %v, want unresolved error", attempt+1, resolved, err)
+		}
+		got := store.switches[sw.ID]
+		if got.State != domain.AgentSwitchStoppingSource || got.ErrorCode != domain.AgentSwitchErrorSourceStopUnconfirmed {
+			t.Fatalf("reconcile attempt %d switch = state %q code %q", attempt+1, got.State, got.ErrorCode)
+		}
+	}
+	if runtime.created != 0 || runtime.destroyed != 0 {
+		t.Fatalf("unknown source ownership caused side effects: creates=%d destroys=%d", runtime.created, runtime.destroyed)
+	}
+	if !manager.SessionMutationInProgress(sw.SessionID) {
+		t.Fatal("unknown source ownership released the operation gate")
+	}
+}
+
+func TestReconcileStartingTargetFencedUnknownRetainsMarker(t *testing.T) {
+	runtime := &fakeRestartRuntime{fakeRuntime: &fakeRuntime{fencedResult: ports.FencedProbeResult{
+		Liveness: ports.FencedUnknown, Reason: ports.FencedReasonProbeFailed,
+	}}}
+	manager, store, _ := newSwitchTestManager(t, runtime)
+	target := manager.agents.(switchTestAgents)[domain.HarnessCodex].(*switchTestAgent)
+	now := time.Now().UTC()
+	targetRef := domain.AgentNativeSessionID("native-target")
+	sw := domain.AgentSwitch{
+		ID: "switch-target-unknown", SessionID: "proj-1", IdempotencyKey: "target-unknown",
+		RequestFingerprint: domain.ComputeAgentSwitchRequestFingerprint("proj-1", domain.HarnessCodex, ""),
+		FromHarness:        domain.HarnessClaudeCode, TargetHarness: domain.HarnessCodex,
+		TargetNativeSessionRef: &targetRef, TargetStartMode: domain.AgentSwitchTargetStartFresh,
+		State: domain.AgentSwitchStartingTarget, AgentHandoffStatus: domain.AgentHandoffUnavailable,
+		SourceGenerationID: "source-generation", TargetGenerationID: "target-generation",
+		TargetRuntimeHandleID: "target-handle", RequestedAt: now, UpdatedAt: now,
+	}
+	store.switches[sw.ID] = sw
+
+	for attempt := 0; attempt < 2; attempt++ {
+		resolved, err := manager.reconcileRetainedAgentSwitchOnce(context.Background(), store, sw.SessionID)
+		if err == nil || resolved {
+			t.Fatalf("reconcile attempt %d = resolved %v err %v, want unresolved error", attempt+1, resolved, err)
+		}
+		got := store.switches[sw.ID]
+		if got.State != domain.AgentSwitchStartingTarget || got.ErrorCode != domain.AgentSwitchErrorTargetStartUnconfirmed || got.TargetRuntimeHandleID != "target-handle" {
+			t.Fatalf("reconcile attempt %d switch = state %q code %q handle %q", attempt+1, got.State, got.ErrorCode, got.TargetRuntimeHandleID)
+		}
+	}
+	if runtime.created != 0 || runtime.destroyed != 0 || target.cleanupCalls != 0 {
+		t.Fatalf("unknown target ownership caused side effects: creates=%d destroys=%d cleanups=%d", runtime.created, runtime.destroyed, target.cleanupCalls)
+	}
+	if !manager.SessionMutationInProgress(sw.SessionID) {
+		t.Fatal("unknown target ownership released the operation gate")
 	}
 }
 

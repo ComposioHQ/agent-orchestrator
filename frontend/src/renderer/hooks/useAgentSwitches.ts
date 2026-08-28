@@ -70,7 +70,7 @@ export function selectDurableAgentSwitch(
 }
 
 export function agentSwitchesRefetchInterval(agentSwitches: AgentSwitch[]): 1_000 | false {
-	return findActiveAgentSwitch(agentSwitches) || agentSwitches.some(agentSwitchNeedsSourceRecovery)
+	return findActiveAgentSwitch(agentSwitches) || agentSwitches.some(agentSwitchNeedsRecovery)
 		? 1_000
 		: false;
 }

@@ -2,6 +2,7 @@ package ptyregistry
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -14,6 +15,13 @@ func withFakePidAlive(t *testing.T, fn func(pid int) bool) {
 	orig := pidAlive
 	pidAlive = fn
 	t.Cleanup(func() { pidAlive = orig })
+}
+
+func withRegistryRewrite(t *testing.T, fn func([]Entry) error) {
+	t.Helper()
+	orig := rewriteRegistry
+	rewriteRegistry = fn
+	t.Cleanup(func() { rewriteRegistry = orig })
 }
 
 // setupHome points HOME at a temp dir and returns the expected registry path.
@@ -182,7 +190,7 @@ func TestClearDeletesFile(t *testing.T) {
 	}
 }
 
-func TestMalformedJSONReturnsEmpty(t *testing.T) {
+func TestRegistryMalformedIsUnknown(t *testing.T) {
 	setupHome(t)
 	withFakePidAlive(t, func(int) bool { return true })
 
@@ -195,25 +203,59 @@ func TestMalformedJSONReturnsEmpty(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := List()
-	if err != nil {
-		t.Fatal(err)
+	got, complete, err := Scan()
+	if err == nil || complete {
+		t.Fatalf("Scan malformed registry = (%v, %v, %v), want incomplete error", got, complete, err)
 	}
-	if len(got) != 0 {
-		t.Fatalf("expected empty on malformed JSON, got %v", got)
+	if !errors.Is(err, ErrRegistryMalformed) {
+		t.Fatalf("Scan malformed registry error = %v, want ErrRegistryMalformed", err)
 	}
 }
 
-func TestMissingFileReturnsEmpty(t *testing.T) {
+func TestRegistryMissingFileIsComplete(t *testing.T) {
 	setupHome(t)
 	withFakePidAlive(t, func(int) bool { return true })
 
-	got, err := List()
+	got, complete, err := Scan()
+	if err != nil || !complete || len(got) != 0 {
+		t.Fatalf("Scan missing registry = (%v, %v, %v), want empty complete scan", got, complete, err)
+	}
+}
+
+func TestRegistryUnreadableIsUnknown(t *testing.T) {
+	path := setupHome(t)
+	withFakePidAlive(t, func(int) bool { return true })
+	if err := os.MkdirAll(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	got, complete, err := Scan()
+	if err == nil || complete {
+		t.Fatalf("Scan unreadable registry = (%v, %v, %v), want incomplete error", got, complete, err)
+	}
+}
+
+func TestRegistryPruneWritePermissionFailureIsUnknown(t *testing.T) {
+	path := setupHome(t)
+	withFakePidAlive(t, func(int) bool { return false })
+	permissionErr := errors.New("permission denied")
+	withRegistryRewrite(t, func([]Entry) error { return permissionErr })
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal([]Entry{{
+		SessionID: "dead", PtyHostPID: 99, PipePath: `\\.\pipe\dead`, RegisteredAt: nowRFC3339(),
+	}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 0 {
-		t.Fatalf("expected empty for missing file, got %v", got)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, complete, err := Scan()
+	if !errors.Is(err, permissionErr) || complete || len(got) != 0 {
+		t.Fatalf("Scan prune write failure = (%v, %v, %v), want empty incomplete permission error", got, complete, err)
 	}
 }
 
