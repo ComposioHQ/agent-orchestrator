@@ -763,6 +763,7 @@
 	"settings.updates.updateTo": "更新至 {{version}}",
 	"settings.updates.updateToLatest": "更新至最新版本",
 	"session.notFound": "找不到会话。它可能已被清理——请从侧边栏选择另一个会话。",
+	"session.actionsMenu": "会话操作",
 	"settings.updates.updateFailed": "更新失败。",
 	"switchAgent.action": "切换代理",
 	"switchAgent.checkingStatus": "正在检查切换状态…",

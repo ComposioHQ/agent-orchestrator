@@ -141,10 +141,17 @@ function switchRecord(overrides: Partial<AgentSwitch> = {}): AgentSwitch {
 	};
 }
 
+const defaultSwitchAgentAction = (
+	<button aria-label="Switch agent" data-testid="terminal-switch-agent" type="button">
+		{worker.provider}
+	</button>
+);
+
 function renderCenterPane(props: Partial<ComponentProps<typeof CenterPane>> = {}) {
+	const { topbarActions = defaultSwitchAgentAction, ...rest } = props;
 	return render(
 		<TooltipProvider>
-			<CenterPane daemonReady theme="dark" {...props} />
+			<CenterPane daemonReady theme="dark" topbarActions={topbarActions} {...rest} />
 		</TooltipProvider>,
 	);
 }
@@ -180,10 +187,8 @@ describe("CenterPane toolbar session label", () => {
 		expect(screen.queryByTestId("agent-switch-terminal-overlay")).not.toBeInTheDocument();
 	});
 
-	it("blocks only the terminal interaction surface while the switch selector is open", async () => {
-		renderCenterPane({ session: worker });
-
-		await userEvent.click(screen.getByRole("button", { name: "Switch agent" }));
+	it("blocks only the terminal interaction surface while the switch selector is open", () => {
+		renderCenterPane({ session: worker, handoffDialogOpen: true });
 
 		expect(screen.getByTestId("terminal-interaction-surface")).toHaveAttribute("inert");
 		expect(screen.getByText("terminal body")).toHaveAttribute("data-input-disabled", "true");
@@ -253,7 +258,7 @@ describe("CenterPane toolbar session label", () => {
 		}
 	});
 
-	it("shows one terminal scrim while the selector is open during admission", async () => {
+	it("shows one terminal scrim while the selector is open during admission", () => {
 		agentSwitchMocks.mutation.input = {
 			idempotencyKey: "switch-request-1",
 			model: "",
@@ -262,10 +267,20 @@ describe("CenterPane toolbar session label", () => {
 		};
 		agentSwitchMocks.mutation.isPending = true;
 
-		renderCenterPane({ session: worker });
+		const view = renderCenterPane({ session: worker });
 		expect(screen.getByTestId("agent-switch-terminal-overlay")).toBeInTheDocument();
 
-		await userEvent.click(screen.getByRole("button", { name: "Switch agent" }));
+		view.rerender(
+			<TooltipProvider>
+				<CenterPane
+					daemonReady
+					theme="dark"
+					session={worker}
+					topbarActions={defaultSwitchAgentAction}
+					handoffDialogOpen
+				/>
+			</TooltipProvider>,
+		);
 
 		expect(screen.queryByTestId("agent-switch-terminal-overlay")).not.toBeInTheDocument();
 	});

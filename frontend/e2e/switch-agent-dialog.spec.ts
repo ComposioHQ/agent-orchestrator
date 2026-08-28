@@ -1,5 +1,6 @@
 import { expect, type Page, test } from "@playwright/test";
 import { installFakeAgent } from "./support/fake-bridge";
+import { openSwitchAgentDialog } from "./support/open-switch-agent-menu";
 
 const projectId = "switch-agent-dialog";
 
@@ -43,7 +44,6 @@ async function openSwitchAgentDialog(page: Page) {
 	});
 
 	await page.goto(`/#/projects/${projectId}/sessions/switch-worker`);
-	const switchAgentButton = page.getByRole("button", { name: "Switch agent", exact: true });
 	const primaryTerminalTab = page.locator('[data-terminal-role="primary"]');
 	const primaryTabBox = await primaryTerminalTab.boundingBox();
 	const terminalRegionBox = await page.getByTestId("session-terminal-region").boundingBox();
@@ -52,9 +52,7 @@ async function openSwitchAgentDialog(page: Page) {
 	expect(primaryTabBox!.x + primaryTabBox!.width).toBeLessThanOrEqual(
 		terminalRegionBox!.x + terminalRegionBox!.width,
 	);
-	await switchAgentButton.click();
-	const dialog = page.getByRole("dialog", { name: "Switch agent" });
-	await expect(dialog).toBeVisible();
+	const dialog = await openSwitchAgentDialog(page);
 	return {
 		dialog,
 		terminalPanel: page.getByRole("tabpanel", { name: "Switch worker terminal" }),

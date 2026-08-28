@@ -788,6 +788,7 @@
 	"settings.updates.updateTo": "Mettre à jour vers {{version}}",
 	"settings.updates.updateToLatest": "Mettre à jour vers la dernière",
 	"session.notFound": "Session introuvable. Elle a peut-être été nettoyée — choisissez-en une autre dans la barre latérale.",
+	"session.actionsMenu": "Actions de session",
 	"settings.updates.updateFailed": "Échec de la mise à jour.",
 	"switchAgent.action": "Changer d’agent",
 	"switchAgent.checkingStatus": "Vérification de l’état du changement…",

@@ -788,6 +788,7 @@
 	"settings.updates.updateTo": "Actualizar a {{version}}",
 	"settings.updates.updateToLatest": "Actualizar a la última",
 	"session.notFound": "Sesión no encontrada. Puede que se haya limpiado: elige otra en la barra lateral.",
+	"session.actionsMenu": "Acciones de sesión",
 	"settings.updates.updateFailed": "La actualización falló.",
 	"switchAgent.action": "Cambiar agente",
 	"switchAgent.checkingStatus": "Comprobando el estado del cambio…",
