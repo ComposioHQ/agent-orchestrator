@@ -368,6 +368,22 @@ the message for retry; Chat retries carry a stable idempotency key. Old Chat
 events are fenced by controller generation; old TUI hooks are fenced by runtime
 launch id.
 
+Orchestrator execution ownership is also project-scoped: no operation may
+activate a second live orchestrator for one project. Spawn, replacement,
+explicit restore, and startup restore share a per-project daemon lock from
+their final ownership read through controller publication. The daemon
+supervisor remains the process-level ownership boundary. Shutdown restore
+markers remain per-session for backward compatibility, but startup selects at
+most one marked orchestrator per project and never restores a historical marker
+while another orchestrator is live. When an older release left several saved
+candidates, the session bound as the durable project-conversation owner wins;
+creation time is only the fallback when no such Chat ownership exists. Existing
+live duplicates are repaired only when that exact conversation-owner proof is
+available: competing controllers are stopped and their rows are parked as
+recoverable history without touching the shared workspace or native ids. An
+ambiguous duplicate set is preserved for an explicit user decision rather than
+being destructively "cleaned up" by a timestamp heuristic.
+
 `drain` is loss-minimizing and may wait on an approval or user-input request;
 `interrupt` synchronously closes source intake and queue dispatch at transition
 acceptance. After target preflight succeeds, it settles queued Chat turns and

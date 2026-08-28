@@ -257,6 +257,40 @@ describe("SessionsBoard", () => {
 		if (!pulses) expect(indicator).not.toHaveClass("animate-status-pulse");
 	});
 
+	it("does not offer destructive restart as automatic duplicate-orchestrator cleanup", () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				workspaceWithSessions([
+					boardSession({
+						id: "orch-old",
+						title: "old orchestrator",
+						kind: "orchestrator",
+						status: "idle",
+						createdAt: "2026-01-01T00:00:00Z",
+					}),
+					boardSession({
+						id: "orch-new",
+						title: "new orchestrator",
+						kind: "orchestrator",
+						status: "idle",
+						createdAt: "2026-01-02T00:00:00Z",
+					}),
+				]),
+			],
+			isError: false,
+			isSuccess: true,
+		});
+
+		renderBoard("p1");
+
+		expect(
+			screen.getByText(
+				"Multiple orchestrators are active. AO could not safely determine which one owns this project, so automatic cleanup is disabled.",
+			),
+		).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Restart" })).not.toBeInTheDocument();
+	});
+
 	it("shows the Board crumb on the root board when actions live in the panel", () => {
 		boardActionsInPanelMock.mockReturnValue(true);
 		workspaceQueryMock.mockReturnValue({

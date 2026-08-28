@@ -2202,7 +2202,18 @@ type fakeCommander struct {
 	killsAtSpawn    int
 	restoreErr      error
 	restoreResult   sessionmanager.RestoreResult
+	restoreCalls    []domain.SessionID
 	readyErr        error
+}
+
+type projectLockCommander struct {
+	*fakeCommander
+	lockCalls []domain.ProjectID
+}
+
+func (f *projectLockCommander) LockOrchestratorProject(projectID domain.ProjectID) func() {
+	f.lockCalls = append(f.lockCalls, projectID)
+	return func() {}
 }
 
 func (f *fakeCommander) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.SessionRecord, int, int, error) {
@@ -2234,7 +2245,8 @@ func (*fakeCommander) ListAgentSwitches(context.Context, domain.SessionID) ([]do
 func (*fakeCommander) SubmitAgentHandoff(context.Context, domain.SessionID, domain.AgentSwitchID, domain.AgentGenerationID, json.RawMessage) (domain.AgentSwitch, error) {
 	return domain.AgentSwitch{}, nil
 }
-func (f *fakeCommander) RestoreWithMode(context.Context, domain.SessionID) (sessionmanager.RestoreResult, error) {
+func (f *fakeCommander) RestoreWithMode(_ context.Context, id domain.SessionID) (sessionmanager.RestoreResult, error) {
+	f.restoreCalls = append(f.restoreCalls, id)
 	if f.restoreErr != nil {
 		return sessionmanager.RestoreResult{}, f.restoreErr
 	}
@@ -3292,6 +3304,38 @@ func TestRestoreMapsManagerModeToServiceView(t *testing.T) {
 	}
 	if got.Mode != RestoreModeViewSavedPrompt {
 		t.Fatalf("mode = %q, want %q", got.Mode, RestoreModeViewSavedPrompt)
+	}
+}
+
+func TestRestoreRejectsHistoricalOrchestratorWhileReplacementIsLive(t *testing.T) {
+	st := newFakeStore()
+	target := domain.SessionRecord{
+		ID:           "mer-old",
+		ProjectID:    "mer",
+		Kind:         domain.KindOrchestrator,
+		IsTerminated: true,
+		Activity:     domain.Activity{State: domain.ActivityExited},
+	}
+	st.sessions[target.ID] = target
+	st.sessions["mer-new"] = domain.SessionRecord{
+		ID:        "mer-new",
+		ProjectID: "mer",
+		Kind:      domain.KindOrchestrator,
+		Activity:  domain.Activity{State: domain.ActivityIdle},
+	}
+	fc := &projectLockCommander{fakeCommander: &fakeCommander{}}
+	svc := &Service{manager: fc, store: st}
+
+	_, err := svc.Restore(context.Background(), target.ID)
+	var apiError *apierr.Error
+	if !errors.As(err, &apiError) || apiError.Kind != apierr.KindConflict || apiError.Code != "ORCHESTRATOR_ALREADY_ACTIVE" {
+		t.Fatalf("Restore error = %v, want conflict ORCHESTRATOR_ALREADY_ACTIVE", err)
+	}
+	if len(fc.restoreCalls) != 0 {
+		t.Fatalf("manager restore calls = %v, want none", fc.restoreCalls)
+	}
+	if len(fc.lockCalls) != 1 || fc.lockCalls[0] != "mer" {
+		t.Fatalf("manager project lock calls = %v, want [mer]", fc.lockCalls)
 	}
 }
 

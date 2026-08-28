@@ -27,17 +27,19 @@ import (
 var ctx = context.Background()
 
 type fakeStore struct {
-	sessions         map[domain.SessionID]domain.SessionRecord
-	pr               map[domain.SessionID]domain.PRFacts
-	projects         map[string]domain.ProjectRecord
-	workspaceRepo    map[string][]domain.WorkspaceRepoRecord
-	num              int
-	deleteErr        error
-	upsertWTErr      error
-	listAllErr       error
-	getProjectErr    error
-	getSessionErr    error
-	updateSessionErr error
+	sessions           map[domain.SessionID]domain.SessionRecord
+	pr                 map[domain.SessionID]domain.PRFacts
+	projects           map[string]domain.ProjectRecord
+	workspaceRepo      map[string][]domain.WorkspaceRepoRecord
+	num                int
+	deleteErr          error
+	upsertWTErr        error
+	listAllErr         error
+	getProjectErr      error
+	getSessionErr      error
+	updateSessionErr   error
+	conversationErr    error
+	conversationOwners map[domain.SessionID]domain.ConversationRecord
 	// agentSwitchStore is wired only by agent-switch tests so fakeLCM can model
 	// Lifecycle Manager's atomic ownership-boundary commands.
 	agentSwitchStore any
@@ -50,11 +52,12 @@ type fakeStore struct {
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{
-		sessions:      map[domain.SessionID]domain.SessionRecord{},
-		pr:            map[domain.SessionID]domain.PRFacts{},
-		projects:      map[string]domain.ProjectRecord{},
-		workspaceRepo: map[string][]domain.WorkspaceRepoRecord{},
-		worktrees:     map[domain.SessionID][]domain.SessionWorktreeRecord{},
+		sessions:           map[domain.SessionID]domain.SessionRecord{},
+		pr:                 map[domain.SessionID]domain.PRFacts{},
+		projects:           map[string]domain.ProjectRecord{},
+		workspaceRepo:      map[string][]domain.WorkspaceRepoRecord{},
+		worktrees:          map[domain.SessionID][]domain.SessionWorktreeRecord{},
+		conversationOwners: map[domain.SessionID]domain.ConversationRecord{},
 	}
 }
 func (f *fakeStore) GetProject(_ context.Context, id string) (domain.ProjectRecord, bool, error) {
@@ -112,6 +115,16 @@ func (f *fakeStore) GetSession(_ context.Context, id domain.SessionID) (domain.S
 	}
 	r, ok := f.sessions[id]
 	return r, ok, nil
+}
+func (f *fakeStore) ConversationForSession(_ context.Context, id domain.SessionID) (domain.ConversationRecord, error) {
+	if f.conversationErr != nil {
+		return domain.ConversationRecord{}, f.conversationErr
+	}
+	conversation, ok := f.conversationOwners[id]
+	if !ok {
+		return domain.ConversationRecord{}, domain.ErrNoConversation
+	}
+	return conversation, nil
 }
 func (f *fakeStore) ListSessions(_ context.Context, p domain.ProjectID) ([]domain.SessionRecord, error) {
 	var out []domain.SessionRecord
@@ -6976,6 +6989,340 @@ func TestRestoreAll_RestoresBothWorkerAndOrchestrator(t *testing.T) {
 	}
 	if st.sessions["mer-2"].IsTerminated {
 		t.Error("orchestrator session mer-2 must be live after RestoreAll")
+	}
+}
+
+func TestRestoreAllLeavesHistoricalOrchestratorTerminatedWhenReplacementIsLive(t *testing.T) {
+	m, st, rt, _ := newLifecycleManager()
+	now := time.Date(2026, time.August, 28, 9, 0, 0, 0, time.UTC)
+	st.sessions["mer-old"] = domain.SessionRecord{
+		ID:           "mer-old",
+		ProjectID:    "mer",
+		Kind:         domain.KindOrchestrator,
+		Harness:      domain.HarnessCodex,
+		Mode:         domain.SessionModeChat,
+		IsTerminated: true,
+		Metadata: domain.SessionMetadata{
+			WorkspacePath:          "/ws/mer-orchestrator",
+			Branch:                 "ao/mer-orchestrator",
+			ProviderConversationID: "native-old",
+		},
+		Activity:  domain.Activity{State: domain.ActivityExited},
+		CreatedAt: now.Add(-time.Hour),
+		UpdatedAt: now.Add(-time.Minute),
+	}
+	st.sessions["mer-new"] = domain.SessionRecord{
+		ID:        "mer-new",
+		ProjectID: "mer",
+		Kind:      domain.KindOrchestrator,
+		Harness:   domain.HarnessCodex,
+		Mode:      domain.SessionModeTUI,
+		Metadata: domain.SessionMetadata{
+			WorkspacePath:   "/ws/mer-orchestrator",
+			Branch:          "ao/mer-orchestrator",
+			RuntimeHandleID: "runtime-new",
+		},
+		Activity:  domain.Activity{State: domain.ActivityIdle},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	st.worktrees["mer-old"] = []domain.SessionWorktreeRecord{{
+		SessionID:    "mer-old",
+		RepoName:     domain.RootWorkspaceRepoName,
+		Branch:       "ao/mer-orchestrator",
+		WorktreePath: "/ws/mer-orchestrator",
+		State:        "removed",
+	}}
+
+	if err := m.RestoreAll(ctx); err != nil {
+		t.Fatalf("RestoreAll err = %v", err)
+	}
+	if rt.created != 0 {
+		t.Fatalf("runtime.Create calls = %d, want 0", rt.created)
+	}
+	if !st.sessions["mer-old"].IsTerminated {
+		t.Fatal("historical orchestrator must remain terminated while its replacement is live")
+	}
+	if rows := st.worktrees["mer-old"]; len(rows) != 1 || rows[0].State != "removed" {
+		t.Fatalf("historical restore marker = %+v, want preserved for an explicit decision", rows)
+	}
+	if st.sessions["mer-new"].IsTerminated {
+		t.Fatal("live replacement must remain live")
+	}
+}
+
+func TestReconcileBackgroundRestoresDurableOwnerAndParksLiveDuplicate(t *testing.T) {
+	launcher := &recordingLauncher{}
+	m, st, rt := newChatManager(launcher)
+	now := time.Date(2026, time.August, 28, 9, 0, 0, 0, time.UTC)
+	owner := domain.SessionRecord{
+		ID: "mer-owner", ProjectID: "mer", Kind: domain.KindOrchestrator,
+		Harness: domain.HarnessCodex, Mode: domain.SessionModeChat, IsTerminated: true,
+		Metadata: domain.SessionMetadata{
+			WorkspacePath: "/ws/mer-orchestrator", Branch: "ao/mer-orchestrator", ProviderConversationID: "thread-1",
+		},
+		Activity: domain.Activity{State: domain.ActivityExited}, CreatedAt: now.Add(-time.Hour), UpdatedAt: now.Add(-time.Minute),
+	}
+	duplicate := domain.SessionRecord{
+		ID: "mer-duplicate", ProjectID: "mer", Kind: domain.KindOrchestrator,
+		Harness: domain.HarnessCodex,
+		Metadata: domain.SessionMetadata{
+			WorkspacePath: "/ws/mer-orchestrator", Branch: "ao/mer-orchestrator",
+			RuntimeHandleID: "runtime-duplicate", AgentSessionID: "native-duplicate",
+		},
+		Activity: domain.Activity{State: domain.ActivityIdle}, CreatedAt: now, UpdatedAt: now,
+	}
+	st.sessions[owner.ID] = owner
+	st.sessions[duplicate.ID] = duplicate
+	st.worktrees[owner.ID] = []domain.SessionWorktreeRecord{{
+		SessionID: owner.ID, RepoName: domain.RootWorkspaceRepoName,
+		Branch: owner.Metadata.Branch, WorktreePath: owner.Metadata.WorkspacePath, State: "removed",
+	}}
+	st.conversationOwners[owner.ID] = domain.ConversationRecord{
+		ID: "project-conversation", Scope: domain.ConversationScopeProject,
+		ProjectID: owner.ProjectID, SessionID: owner.ID,
+	}
+	rt.aliveByHandle = map[string]bool{"runtime-duplicate": true}
+
+	if err := m.ReconcileBackground(ctx); err != nil {
+		t.Fatalf("ReconcileBackground err = %v", err)
+	}
+	if st.sessions[owner.ID].IsTerminated {
+		t.Fatal("durable project conversation owner must be restored")
+	}
+	if !st.sessions[duplicate.ID].IsTerminated {
+		t.Fatal("competing live orchestrator must be parked as recoverable terminated history")
+	}
+	if st.sessions[duplicate.ID].Metadata.AgentSessionID != "native-duplicate" ||
+		st.sessions[duplicate.ID].Metadata.WorkspacePath != owner.Metadata.WorkspacePath {
+		t.Fatalf("parked duplicate lost recoverable identity: %+v", st.sessions[duplicate.ID].Metadata)
+	}
+	if rt.destroyed != 1 || len(rt.destroyedIDs) != 1 || rt.destroyedIDs[0] != "runtime-duplicate" {
+		t.Fatalf("destroyed runtimes = count:%d ids:%v, want duplicate only", rt.destroyed, rt.destroyedIDs)
+	}
+	if rt.created != 0 || len(launcher.started) != 1 || launcher.started[0].SessionID != owner.ID ||
+		launcher.started[0].ProviderConversationID != "thread-1" {
+		t.Fatalf("restored Chat owner = runtime calls:%d starts:%+v", rt.created, launcher.started)
+	}
+	if st.sessions[owner.ID].Metadata.ProviderConversationID != "thread-1" {
+		t.Fatalf("owner provider conversation = %q, want thread-1", st.sessions[owner.ID].Metadata.ProviderConversationID)
+	}
+	if rows := st.worktrees[owner.ID]; len(rows) != 0 {
+		t.Fatalf("owner restore marker = %+v, want consumed", rows)
+	}
+}
+
+func TestReconcileBackgroundDoesNotParkDuplicateWhenControllerStopFails(t *testing.T) {
+	m, st, rt, _ := newLifecycleManager()
+	owner := domain.SessionRecord{
+		ID: "mer-owner", ProjectID: "mer", Kind: domain.KindOrchestrator,
+		Harness: domain.HarnessClaudeCode, IsTerminated: true,
+		Metadata: domain.SessionMetadata{
+			WorkspacePath: "/ws/mer-orchestrator", Branch: "ao/mer-orchestrator", AgentSessionID: "native-owner",
+		},
+		Activity: domain.Activity{State: domain.ActivityExited},
+	}
+	duplicate := domain.SessionRecord{
+		ID: "mer-duplicate", ProjectID: "mer", Kind: domain.KindOrchestrator,
+		Harness: domain.HarnessCodex,
+		Metadata: domain.SessionMetadata{
+			WorkspacePath: "/ws/mer-orchestrator", Branch: "ao/mer-orchestrator", RuntimeHandleID: "runtime-duplicate",
+		},
+		Activity: domain.Activity{State: domain.ActivityIdle},
+	}
+	st.sessions[owner.ID] = owner
+	st.sessions[duplicate.ID] = duplicate
+	st.worktrees[owner.ID] = []domain.SessionWorktreeRecord{{
+		SessionID: owner.ID, RepoName: domain.RootWorkspaceRepoName,
+		Branch: owner.Metadata.Branch, WorktreePath: owner.Metadata.WorkspacePath, State: "removed",
+	}}
+	st.conversationOwners[owner.ID] = domain.ConversationRecord{
+		ID: "project-conversation", Scope: domain.ConversationScopeProject,
+		ProjectID: owner.ProjectID, SessionID: owner.ID,
+	}
+	rt.destroyErr = errors.New("runtime still attached")
+	rt.aliveByHandle = map[string]bool{"runtime-duplicate": true}
+
+	if err := m.ReconcileBackground(ctx); err != nil {
+		t.Fatalf("ReconcileBackground err = %v", err)
+	}
+	if st.sessions[duplicate.ID].IsTerminated {
+		t.Fatal("failed controller stop must not publish terminated ownership")
+	}
+	if !st.sessions[owner.ID].IsTerminated {
+		t.Fatal("saved owner must remain terminated while competing controller is still live")
+	}
+}
+
+type restoreDiscoveryStore struct {
+	*fakeStore
+	listed chan struct{}
+	once   sync.Once
+}
+
+func (s *restoreDiscoveryStore) ListSessionWorktrees(ctx context.Context, id domain.SessionID) ([]domain.SessionWorktreeRecord, error) {
+	rows, err := s.fakeStore.ListSessionWorktrees(ctx, id)
+	s.once.Do(func() { close(s.listed) })
+	return rows, err
+}
+
+func TestRestoreAllRechecksOrchestratorOwnershipUnderSharedProjectLock(t *testing.T) {
+	m, st, rt, _ := newLifecycleManager()
+	now := time.Date(2026, time.August, 28, 9, 0, 0, 0, time.UTC)
+	target := domain.SessionRecord{
+		ID:           "mer-old",
+		ProjectID:    "mer",
+		Kind:         domain.KindOrchestrator,
+		Harness:      domain.HarnessClaudeCode,
+		IsTerminated: true,
+		Metadata: domain.SessionMetadata{
+			WorkspacePath:  "/ws/mer-orchestrator",
+			Branch:         "ao/mer-orchestrator",
+			AgentSessionID: "native-old",
+		},
+		Activity:  domain.Activity{State: domain.ActivityExited},
+		CreatedAt: now.Add(-time.Hour),
+		UpdatedAt: now.Add(-time.Minute),
+	}
+	st.sessions[target.ID] = target
+	st.worktrees[target.ID] = []domain.SessionWorktreeRecord{{
+		SessionID: target.ID, RepoName: domain.RootWorkspaceRepoName,
+		Branch: target.Metadata.Branch, WorktreePath: target.Metadata.WorkspacePath, State: "removed",
+	}}
+	discovery := &restoreDiscoveryStore{fakeStore: st, listed: make(chan struct{})}
+	m.store = discovery
+
+	// Model an API orchestrator operation that wins the shared project lock
+	// after RestoreAll's discovery snapshot but before its authoritative read.
+	unlock := m.LockOrchestratorProject(target.ProjectID)
+	done := make(chan error, 1)
+	go func() { done <- m.RestoreAll(ctx) }()
+	<-discovery.listed
+	st.sessions["mer-new"] = domain.SessionRecord{
+		ID: "mer-new", ProjectID: "mer", Kind: domain.KindOrchestrator,
+		Activity: domain.Activity{State: domain.ActivityIdle}, CreatedAt: now, UpdatedAt: now,
+	}
+	unlock()
+
+	if err := <-done; err != nil {
+		t.Fatalf("RestoreAll err = %v", err)
+	}
+	if rt.created != 0 {
+		t.Fatalf("runtime.Create calls = %d, want 0 after ownership changed", rt.created)
+	}
+	if !st.sessions[target.ID].IsTerminated {
+		t.Fatal("historical orchestrator must remain terminated after a concurrent replacement wins ownership")
+	}
+	if rows := st.worktrees[target.ID]; len(rows) != 1 {
+		t.Fatalf("historical restore marker = %+v, want preserved", rows)
+	}
+}
+
+func TestRestoreAllRestoresOnlyNewestSavedOrchestratorPerProject(t *testing.T) {
+	m, st, rt, _ := newLifecycleManager()
+	now := time.Date(2026, time.August, 28, 9, 0, 0, 0, time.UTC)
+	for i, id := range []domain.SessionID{"mer-old", "mer-new"} {
+		st.sessions[id] = domain.SessionRecord{
+			ID:           id,
+			ProjectID:    "mer",
+			Kind:         domain.KindOrchestrator,
+			Harness:      domain.HarnessClaudeCode,
+			IsTerminated: true,
+			Metadata: domain.SessionMetadata{
+				WorkspacePath:  "/ws/" + string(id),
+				Branch:         "ao/mer-orchestrator",
+				AgentSessionID: "native-" + string(id),
+			},
+			Activity:  domain.Activity{State: domain.ActivityExited},
+			CreatedAt: now.Add(time.Duration(i) * time.Minute),
+			UpdatedAt: now.Add(time.Duration(i) * time.Minute),
+		}
+		st.worktrees[id] = []domain.SessionWorktreeRecord{{
+			SessionID: id,
+			RepoName:  domain.RootWorkspaceRepoName,
+			State:     "removed",
+		}}
+	}
+
+	if err := m.RestoreAll(ctx); err != nil {
+		t.Fatalf("RestoreAll err = %v", err)
+	}
+	if rt.created != 1 {
+		t.Fatalf("runtime.Create calls = %d, want 1", rt.created)
+	}
+	if !st.sessions["mer-old"].IsTerminated {
+		t.Fatal("older saved orchestrator must remain terminated")
+	}
+	if st.sessions["mer-new"].IsTerminated {
+		t.Fatal("newest saved orchestrator must be restored")
+	}
+	if rows := st.worktrees["mer-old"]; len(rows) != 1 {
+		t.Fatalf("older restore marker = %+v, want preserved", rows)
+	}
+	if rows := st.worktrees["mer-new"]; len(rows) != 0 {
+		t.Fatalf("selected restore marker = %+v, want consumed", rows)
+	}
+}
+
+func TestRestoreAllPrefersDurableProjectConversationOwnerOverNewerDuplicate(t *testing.T) {
+	m, st, rt, _ := newLifecycleManager()
+	now := time.Date(2026, time.August, 28, 9, 0, 0, 0, time.UTC)
+	for i, id := range []domain.SessionID{"mer-owner", "mer-newer"} {
+		st.sessions[id] = domain.SessionRecord{
+			ID: id, ProjectID: "mer", Kind: domain.KindOrchestrator,
+			Harness: domain.HarnessClaudeCode, IsTerminated: true,
+			Metadata: domain.SessionMetadata{
+				WorkspacePath: "/ws/mer-orchestrator", Branch: "ao/mer-orchestrator",
+				AgentSessionID: "native-" + string(id),
+			},
+			Activity:  domain.Activity{State: domain.ActivityExited},
+			CreatedAt: now.Add(time.Duration(i) * time.Minute), UpdatedAt: now.Add(time.Duration(i) * time.Minute),
+		}
+		st.worktrees[id] = []domain.SessionWorktreeRecord{{
+			SessionID: id, RepoName: domain.RootWorkspaceRepoName,
+			Branch: "ao/mer-orchestrator", WorktreePath: "/ws/mer-orchestrator", State: "removed",
+		}}
+	}
+	st.conversationOwners["mer-owner"] = domain.ConversationRecord{
+		ID: "project-conversation", Scope: domain.ConversationScopeProject,
+		ProjectID: "mer", SessionID: "mer-owner",
+	}
+
+	if err := m.RestoreAll(ctx); err != nil {
+		t.Fatalf("RestoreAll err = %v", err)
+	}
+	if rt.created != 1 || rt.lastCfg.SessionID != "mer-owner" {
+		t.Fatalf("restored runtime = calls:%d session:%q, want one for durable owner mer-owner", rt.created, rt.lastCfg.SessionID)
+	}
+	if st.sessions["mer-owner"].IsTerminated {
+		t.Fatal("durable project conversation owner must be restored")
+	}
+	if !st.sessions["mer-newer"].IsTerminated {
+		t.Fatal("newer duplicate must remain terminated when it does not own the project conversation")
+	}
+}
+
+func TestRestoreAllLeavesSavedOrchestratorTerminatedWhenConversationOwnershipIsUnknown(t *testing.T) {
+	m, st, rt, _ := newLifecycleManager()
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Kind: domain.KindOrchestrator,
+		Harness: domain.HarnessClaudeCode, IsTerminated: true,
+		Metadata: domain.SessionMetadata{
+			WorkspacePath: "/ws/mer-orchestrator", Branch: "ao/mer-orchestrator", AgentSessionID: "native-1",
+		},
+		Activity: domain.Activity{State: domain.ActivityExited},
+	}
+	st.worktrees["mer-1"] = []domain.SessionWorktreeRecord{{
+		SessionID: "mer-1", RepoName: domain.RootWorkspaceRepoName,
+		Branch: "ao/mer-orchestrator", WorktreePath: "/ws/mer-orchestrator", State: "removed",
+	}}
+	st.conversationErr = errors.New("sqlite busy")
+
+	if err := m.RestoreAll(ctx); err != nil {
+		t.Fatalf("RestoreAll err = %v", err)
+	}
+	if rt.created != 0 || !st.sessions["mer-1"].IsTerminated {
+		t.Fatalf("unknown ownership restored session: runtime calls=%d session=%+v", rt.created, st.sessions["mer-1"])
 	}
 }
 

@@ -551,6 +551,16 @@ func sessionNewer(a, b domain.SessionRecord) bool {
 }
 
 func (s *Service) lockOrchestratorProject(projectID domain.ProjectID) func() {
+	// Production Session Manager owns the lock so startup reconciliation and
+	// HTTP operations share one project-scoped ownership boundary. Focused
+	// service fakes need not implement that optional capability; retain a local
+	// lock for them.
+	if locker, ok := s.manager.(interface {
+		LockOrchestratorProject(domain.ProjectID) func()
+	}); ok {
+		return locker.LockOrchestratorProject(projectID)
+	}
+
 	s.orchestratorLocksMu.Lock()
 	if s.orchestratorLocks == nil {
 		s.orchestratorLocks = make(map[domain.ProjectID]*sync.Mutex)
@@ -568,6 +578,28 @@ func (s *Service) lockOrchestratorProject(projectID domain.ProjectID) func() {
 
 // Restore relaunches a terminated session and returns the API-facing read model.
 func (s *Service) Restore(ctx context.Context, id domain.SessionID) (RestoreOutcome, error) {
+	if s.store != nil {
+		rec, found, err := s.store.GetSession(ctx, id)
+		if err != nil {
+			return RestoreOutcome{}, fmt.Errorf("get session %s before restore: %w", id, err)
+		}
+		if found && rec.Kind == domain.KindOrchestrator {
+			unlock := s.lockOrchestratorProject(rec.ProjectID)
+			defer unlock()
+
+			active, err := s.activeOrchestrators(ctx, rec.ProjectID)
+			if err != nil {
+				return RestoreOutcome{}, err
+			}
+			for _, orchestrator := range active {
+				if orchestrator.ID != id {
+					return RestoreOutcome{}, toAPIError(fmt.Errorf(
+						"restore %s while %s is live: %w", id, orchestrator.ID, sessionmanager.ErrOrchestratorAlreadyActive,
+					))
+				}
+			}
+		}
+	}
 	res, err := s.manager.RestoreWithMode(ctx, id)
 	if err != nil {
 		return RestoreOutcome{}, toAPIError(err)
@@ -1010,6 +1042,9 @@ func toAPIError(err error) error {
 		return apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
 	case errors.Is(err, sessionmanager.ErrNotRestorable):
 		return apierr.Conflict("SESSION_NOT_RESTORABLE", "Session is not restorable", nil)
+	case errors.Is(err, sessionmanager.ErrOrchestratorAlreadyActive):
+		return apierr.Conflict("ORCHESTRATOR_ALREADY_ACTIVE",
+			"Another orchestrator is already active for this project; AO will not restore a second one", nil)
 	case errors.Is(err, sessionmanager.ErrTerminated):
 		return apierr.Conflict("SESSION_TERMINATED", "Session is terminated", nil)
 	case errors.Is(err, sessionmanager.ErrAgentExited):

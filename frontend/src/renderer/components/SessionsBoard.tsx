@@ -364,7 +364,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 					<div className="mx-3 my-3 flex items-center gap-3 rounded-md border border-border bg-surface px-3 py-2 text-xs text-muted-foreground">
 						<AlertTriangle className="size-icon-base shrink-0 text-warning" aria-hidden="true" />
 						<span className="min-w-0 flex-1">{health.message}</span>
-						{health.state === "restart_needed" || health.state === "duplicates" ? (
+						{health.state === "restart_needed" ? (
 							<TopbarButton disabled={isProjectRestarting} onClick={() => void restartOrchestrator()} variant="primary">
 								<RotateCw className="size-3.5" aria-hidden="true" />
 								{t("shell.restart")}

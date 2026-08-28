@@ -242,7 +242,7 @@ describe("orchestratorHealth", () => {
 		).toEqual({
 			state: "duplicates",
 			message:
-				"Multiple orchestrators are active. The newest one is used; stale ones will be cleaned up on daemon reconcile.",
+				"Multiple orchestrators are active. AO could not safely determine which one owns this project, so automatic cleanup is disabled.",
 		});
 
 		expect(
