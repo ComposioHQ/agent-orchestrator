@@ -1,5 +1,6 @@
 import { DEFAULT_CONFIG, type ServerConfig } from "./config";
 import type { Endpoint } from "./endpoints";
+import { mergeEndpoints } from "./mergeEndpoints";
 import type { Host } from "./hosts";
 import type { RaceOutcome } from "./race";
 
@@ -69,7 +70,12 @@ export async function connectHost(id: string, deps: ConnectDeps): Promise<Connec
 	const hostKey = host.id === "" ? outcome.hostId : host.id;
 
 	try {
-		await deps.saveEndpoints(hostKey, await deps.refreshEndpoints(config));
+		// Merged, not replaced: a kind the daemon omits — a tunnel mid-restart,
+		// above all — is unknown rather than gone. See mergeEndpoints.
+		await deps.saveEndpoints(
+			hostKey,
+			mergeEndpoints(host.endpoints, await deps.refreshEndpoints(config)),
+		);
 	} catch {
 		// A failed refresh must not cost us a working connection: the endpoints
 		// already stored are what got us here and remain good enough.

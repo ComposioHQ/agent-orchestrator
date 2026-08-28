@@ -25,7 +25,10 @@ import {
 import { isConfigured, loadConfig, type ServerConfig } from "./config";
 import { resolveActiveConfig, runtimeResolveDeps } from "./resolveConfig";
 import { pollIntervalFor } from "./pollInterval";
+import type { Endpoint } from "./endpoints";
+import { loadHosts } from "./hosts";
 import { shouldReRace } from "./reRace";
+import { shouldRaceForUpgrade, UPGRADE_RACE_CHECK_MS } from "./upgradeRace";
 import { sameServerConfig } from "./sameConfig";
 import { shouldKeepPolling } from "./connectionError";
 import { primeInstallId } from "./installId";
@@ -149,6 +152,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	useEffect(() => {
 		const sub = RNAppState.addEventListener("change", (s) => {
 			const active = shouldPoll(s);
+			// Coming back to the foreground is the moment the phone is most
+			// likely to be on a different network than when it went away, so
+			// it is worth re-checking the path rather than waiting out a timer.
+			if (active && !pollActiveRef.current) resumedRef.current = true;
 			pollActiveRef.current = active;
 			setAppActive(active);
 		});
@@ -176,6 +183,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	// Tracks a run of failed polls so a dead endpoint can trigger another race.
 	const failStreak = useRef(0);
 	const lastReRaceAt = useRef(0);
+	// Set when the app returns to the foreground, consumed by the upgrade check.
+	const resumedRef = useRef(false);
 
 	const reloadConfig = useCallback(async () => {
 		// Races the active machine's endpoints rather than reading one stored
@@ -189,6 +198,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
 		// identity — handing them a new object for the same endpoint tears them
 		// down and rebuilds them, which showed up as chat replies arriving only
 		// on the next poll instead of streaming in.
+		// Stamped here so every race counts towards the cooldown, however it was
+		// triggered — otherwise a failure race and an upgrade race can fire back
+		// to back and thrash the connection.
+		lastReRaceAt.current = Date.now();
 		const prev = cfgRef.current;
 		const next = sameServerConfig(prev, c) ? (prev as typeof c) : c;
 		cfgRef.current = next;
@@ -198,6 +211,48 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	useEffect(() => {
 		reloadConfig();
 	}, [reloadConfig]);
+
+	// Nothing re-picks a path while the current one answers, so once the app
+	// fell to the tunnel it stayed there even after Wi-Fi came back — observed
+	// on device, holding a Cloudflare connection with a working LAN unused.
+	// This is the only thing that moves the app back up the preference order.
+	useEffect(() => {
+		if (!config || !isConfigured(config) || !appActive) return;
+		let stopped = false;
+		const check = async () => {
+			if (stopped) return;
+			const resumed = resumedRef.current;
+			resumedRef.current = false;
+			let known: Endpoint[] = [];
+			try {
+				// Most-recent-first, so the head is the machine in use.
+				known = (await loadHosts())[0]?.endpoints ?? [];
+			} catch {
+				return; // Storage unavailable: leave the working connection alone.
+			}
+			if (stopped) return;
+			if (
+				shouldRaceForUpgrade({
+					currentKind: config.endpointKind,
+					known,
+					lastRaceAt: lastReRaceAt.current,
+					now: Date.now(),
+					resumed,
+				})
+			) {
+				// Racing is safe even when nothing better answers: reloadConfig
+				// keeps the previous config object when the endpoint is unchanged,
+				// so the streams keyed on it are not torn down for nothing.
+				void reloadConfig();
+			}
+		};
+		void check();
+		const id = setInterval(check, UPGRADE_RACE_CHECK_MS);
+		return () => {
+			stopped = true;
+			clearInterval(id);
+		};
+	}, [config, appActive, reloadConfig]);
 
 	// fetchAll returns false when it hit an auth failure (missing/wrong password
 	// or a 429 lockout). The poll loop uses that to STOP hammering: a phone that

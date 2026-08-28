@@ -78,6 +78,27 @@ describe("connectHost", () => {
 		expect(d.saveEndpoints).toHaveBeenCalledWith("h_paired", [lan, tunnel]);
 	});
 
+	// A quick tunnel takes ~34s to restart and settle, and the daemon advertises
+	// no tunnel for that whole window. Replacing the stored list wholesale there
+	// erased the only endpoint that works away from home — and nothing refreshes
+	// again while the current one answers, so the phone kept the truncated list.
+	it("keeps a known tunnel when the daemon is mid-restart and advertises none", async () => {
+		const d = deps({ refreshEndpoints: vi.fn(async () => [lan]) });
+
+		await connectHost("h_paired", d);
+
+		expect(d.saveEndpoints).toHaveBeenCalledWith("h_paired", [lan, tunnel]);
+	});
+
+	it("still adopts a rotated tunnel hostname over the stored one", async () => {
+		const rotated: Endpoint = { kind: "tunnel", host: "xyz.trycloudflare.com", port: 443, secure: true };
+		const d = deps({ refreshEndpoints: vi.fn(async () => [lan, rotated]) });
+
+		await connectHost("h_paired", d);
+
+		expect(d.saveEndpoints).toHaveBeenCalledWith("h_paired", [lan, rotated]);
+	});
+
 	// A machine migrated from the single-server config has no id until it
 	// connects once; this is where it learns one.
 	it("records the identity a previously unverified machine reports", async () => {
