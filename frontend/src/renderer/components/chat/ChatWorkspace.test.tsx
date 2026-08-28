@@ -1804,7 +1804,7 @@ describe("ChatWorkspace reviewer tabs", () => {
 		sessionId: chatSession.id,
 	};
 
-	it("makes each full-height tile its semantic click target", () => {
+	it("opens reviewer from the pinned tab strip", () => {
 		const onOpenReviewerTerminal = vi.fn();
 		render(
 			<ChatWorkspace
@@ -1817,14 +1817,16 @@ describe("ChatWorkspace reviewer tabs", () => {
 
 		const chatTab = screen.getByRole("tab", { name: "Codex" });
 		const reviewerTab = screen.getByRole("tab", { name: "Reviewer" });
-		expect(chatTab).toHaveClass("self-stretch", "px-3", "cursor-pointer");
-		expect(reviewerTab).toHaveClass(
+		expect(chatTab.parentElement).toHaveClass("self-stretch", "px-3");
+		expect(reviewerTab.parentElement).toHaveClass(
 			"self-stretch",
 			"px-3",
-			"cursor-pointer",
-			"focus-visible:outline-2",
+			"border-r",
+			"overflow-hidden",
 		);
-		expect(reviewerTab.querySelector("img")).toBeInTheDocument();
+		expect(chatTab.parentElement?.parentElement).toHaveClass("shrink-0");
+		expect(reviewerTab.parentElement?.parentElement).toHaveClass("shrink-0");
+		expect(reviewerTab.parentElement?.querySelector("img")).toBeInTheDocument();
 
 		fireEvent.click(reviewerTab);
 		expect(onOpenReviewerTerminal).toHaveBeenCalledWith(reviewerTerminal);
