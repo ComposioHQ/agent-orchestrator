@@ -365,6 +365,7 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	// publication. Session-scoped starts keep their per-session gate and do not
 	// participate in this cross-session fence.
 	releaseProjectOwnership := func() {}
+	projectOwnershipHeld := false
 	if conversation.Scope == domain.ConversationScopeProject {
 		releaseProjectOwnership, err = s.store.AcquireProjectConversationDispatch(
 			ctx, conversation.ID, conversation.ProjectID, cfg.SessionID,
@@ -375,8 +376,13 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 		if err != nil {
 			return nil, fmt.Errorf("verify project conversation owner after bind: %w", err)
 		}
+		projectOwnershipHeld = true
 	}
-	defer func() { releaseProjectOwnership() }()
+	defer func() {
+		if projectOwnershipHeld {
+			releaseProjectOwnership()
+		}
+	}()
 
 	repairedBranch, restoredProviderOwner, err := s.store.RepairIncompleteConversationEdit(
 		ctx, cfg.SessionID, conversation.ID, s.now())
@@ -570,7 +576,7 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	// between a successful commit and publishing this controller.
 	if conversation.Scope == domain.ConversationScopeProject {
 		releaseProjectOwnership()
-		releaseProjectOwnership = func() {}
+		projectOwnershipHeld = false
 	}
 	commit, err := notifyControllerReady(
 		cfg, controller, providerBoundary, commitProviderHistory,
@@ -591,6 +597,7 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 			_ = conv.Close()
 			return nil, fmt.Errorf("verify project conversation owner before publish: %w", err)
 		}
+		projectOwnershipHeld = true
 	}
 	if providerBoundary != nil {
 		if cfg.ControllerReady == nil {
