@@ -86,6 +86,12 @@ export type UseTerminalSessionOptions = {
 
 const RETRY_BASE_MS = 500;
 const RETRY_MAX_MS = 8_000;
+// Flat retry while a cloud session has never attached: the control plane
+// answers the terminal-ticket mint with a cheap 409 until the sandbox worker
+// connects, so this is a poll for readiness, not a reconnect storm.
+// Exponential backoff here only adds dead seconds between "worker ready" and
+// "terminal attached" (a worker ready at 17s would wait for the 23s attempt).
+const CLOUD_CONNECT_RETRY_MS = 1_000;
 const OPEN_TIMEOUT_MS = 3_000;
 // Trailing debounce on grid changes: a pane drag emits a burst of intermediate
 // sizes; the attached program should get one SIGWINCH when the drag settles,
@@ -152,6 +158,11 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 	// False only while the initial replay is being buffered — the pane keeps a
 	// cover over xterm until the burst has been written and parsed.
 	const [replaySettled, setReplaySettled] = useState(true);
+	// True once this attachment has opened at least once. Lets the pane show a
+	// calm "Connecting…" during the first connect (e.g. a cloud sandbox worker
+	// still checking in) and reserve "disconnected — reattaching" for a genuine
+	// mid-session drop.
+	const [hasAttached, setHasAttached] = useState(false);
 
 	const sessionRef = useRef(session);
 	sessionRef.current = session;
@@ -177,6 +188,10 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		attempts: 0,
 		generation: 0,
 		inputReady: false,
+		// Mirrors the hasAttached state for callbacks: false until this
+		// attachment's first successful open, which switches the cloud pane's
+		// flat readiness polling over to exponential reconnect backoff.
+		hasAttachedOnce: false,
 		detached: true,
 		// True only after this attachment opens parked at 0×0. The next visible
 		// activation must promote it back to a positive primary grid.
@@ -300,13 +315,21 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		}
 		transition("reattaching");
 		// Not ready → no timer; the daemonReady effect reconnects when it flips.
-		if (!optionsRef.current.daemonReady) {
+		// A cloud pane targets its sandbox worker, not the local daemon, so it
+		// keeps retrying on its own backoff regardless of local daemon state.
+		if (!optionsRef.current.daemonReady && !sessionRef.current?.cloud) {
 			return;
 		}
 		if (r.retryTimer) {
 			return;
 		}
-		const delay = Math.min(RETRY_BASE_MS * 2 ** r.attempts, RETRY_MAX_MS);
+		// First connect of a cloud pane = polling for sandbox readiness; keep it
+		// flat (see CLOUD_CONNECT_RETRY_MS). After a real attachment, drops back
+		// to exponential backoff like every other reconnect.
+		const delay =
+			!r.hasAttachedOnce && sessionRef.current?.cloud
+				? CLOUD_CONNECT_RETRY_MS
+				: Math.min(RETRY_BASE_MS * 2 ** r.attempts, RETRY_MAX_MS);
 		r.attempts += 1;
 		r.retryTimer = setTimeout(() => {
 			r.retryTimer = null;
@@ -553,7 +576,9 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 				clearOpenTimer(generation);
 				r.inputReady = true;
 				r.attempts = 0;
+				r.hasAttachedOnce = true;
 				setError(undefined);
+				setHasAttached(true);
 				transition("attached");
 				// Bound the gate from here: the daemon fires onOpen from setPTY and
 				// starts copyOut immediately after, so the replay is imminent and
@@ -728,9 +753,13 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 			r.handle = handle;
 			r.detached = false;
 			r.attempts = 0;
+			r.hasAttachedOnce = false;
 			setError(undefined);
+			setHasAttached(false);
 			if (handle) {
-				if (optionsRef.current.daemonReady) {
+				// A cloud pane connects to its sandbox worker directly, so it must
+				// not wait on the LOCAL daemon being ready; only local panes do.
+				if (optionsRef.current.daemonReady || Boolean(sessionRef.current?.cloud)) {
 					transition("connecting");
 					connect();
 				} else {
@@ -862,5 +891,5 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		[teardownMux],
 	);
 
-	return { attach, state, error, replaySettled, syncVisibleSize };
+	return { attach, state, error, replaySettled, hasAttached, syncVisibleSize };
 }

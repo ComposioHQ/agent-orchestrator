@@ -82,6 +82,7 @@ func prFactsFromListRow(r gen.ListPRFactsBySessionRow) domain.PRFacts {
 		TargetBranch:             r.TargetBranch,
 		HeadSHA:                  r.HeadSha,
 		UpdatedAt:                r.UpdatedAt,
+		ExternalComments:         r.ExternalComments,
 		ExternalApproved:         r.ExternalApproved,
 		ExternalChangesRequested: r.ExternalChangesRequested,
 	}
@@ -102,6 +103,7 @@ func prFactsFromBatchRow(r gen.ListPRFactsBySessionsRow) domain.PRFacts {
 		TargetBranch:             r.TargetBranch,
 		HeadSHA:                  r.HeadSha,
 		UpdatedAt:                r.UpdatedAt,
+		ExternalComments:         r.ExternalComments,
 		ExternalApproved:         r.ExternalApproved,
 		ExternalChangesRequested: r.ExternalChangesRequested,
 	}

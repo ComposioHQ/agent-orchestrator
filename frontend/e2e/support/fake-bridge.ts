@@ -225,6 +225,12 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					signOut: async () => undefined,
 					onSessionChanged: unsubscribe,
 				},
+				cloudCp: {
+					request: async () => ({ status: 401, headers: {}, body: "" }),
+					openStream: async () => ({ streamId: "stream_test" }),
+					closeStream: () => undefined,
+					onStreamEvent: unsubscribe,
+				},
 			} satisfies AoBridge;
 			(window as unknown as { ao: unknown }).ao = ao;
 		},
@@ -688,6 +694,12 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					signIn: async () => undefined,
 					signOut: async () => undefined,
 					onSessionChanged: unsubscribe,
+				},
+				cloudCp: {
+					request: async () => ({ status: 401, headers: {}, body: "" }),
+					openStream: async () => ({ streamId: "stream_test" }),
+					closeStream: () => undefined,
+					onStreamEvent: unsubscribe,
 				},
 			} satisfies AoBridge;
 			(window as unknown as { ao: unknown }).ao = ao;

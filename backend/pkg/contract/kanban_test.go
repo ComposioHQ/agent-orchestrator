@@ -390,10 +390,10 @@ func TestDeriveKanbanPresentationSinglePR(t *testing.T) {
 			want:       contract.DisplayFixingCI,
 		},
 		{
-			name:       "failing ci on a draft with auto-fix off just fails checks",
+			name:       "failing ci on a draft with auto-fix off says ci failing",
 			pr:         contract.KanbanPRFacts{URL: "pr/1", Draft: true, CI: contract.CIFailing},
 			wantColumn: contract.KanbanValidating,
-			want:       contract.DisplayChecksFailing,
+			want:       contract.DisplayCIFailing,
 		},
 		{
 			name:    "an ao changes request with auto-inject on is being addressed",
@@ -460,10 +460,29 @@ func TestDeriveKanbanPresentationSinglePR(t *testing.T) {
 			want:       contract.DisplayNeedsHumanReview,
 		},
 		{
-			name:       "failing ci nobody is fixing fails checks",
+			name:       "failing ci nobody is fixing says ci failing",
 			pr:         contract.KanbanPRFacts{URL: "pr/1", CI: contract.CIFailing},
 			wantColumn: contract.KanbanNeedsReview,
-			want:       contract.DisplayChecksFailing,
+			want:       contract.DisplayCIFailing,
+		},
+		{
+			name: "external comments with auto-inject off are commented",
+			pr: contract.KanbanPRFacts{
+				URL:            "pr/1",
+				ExternalReview: contract.KanbanExternalReviewFacts{Comments: true},
+			},
+			wantColumn: contract.KanbanNeedsReview,
+			want:       contract.DisplayCommented,
+		},
+		{
+			name:    "external comments with auto-inject on are being addressed",
+			session: contract.KanbanSessionFacts{AutoInjectReview: true},
+			pr: contract.KanbanPRFacts{
+				URL:            "pr/1",
+				ExternalReview: contract.KanbanExternalReviewFacts{Comments: true},
+			},
+			wantColumn: contract.KanbanNeedsReview,
+			want:       contract.DisplayAddressingComments,
 		},
 		{
 			name: "an external changes request nobody is addressing requests changes",
@@ -506,7 +525,7 @@ func TestDeriveKanbanPresentationSinglePR(t *testing.T) {
 			want:       contract.DisplayApproved,
 		},
 		{
-			name: "an approved pr blocked by checks fails checks",
+			name: "an approved pr blocked by checks says ci failing",
 			pr: contract.KanbanPRFacts{
 				URL:            "pr/1",
 				Review:         contract.ReviewApproved,
@@ -515,7 +534,7 @@ func TestDeriveKanbanPresentationSinglePR(t *testing.T) {
 				ExternalReview: contract.KanbanExternalReviewFacts{Approved: true},
 			},
 			wantColumn: contract.KanbanReady,
-			want:       contract.DisplayChecksFailing,
+			want:       contract.DisplayCIFailing,
 		},
 		{
 			name:       "a merged pr is merged",

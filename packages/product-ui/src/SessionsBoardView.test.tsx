@@ -192,7 +192,7 @@ describe("SessionsBoardView", () => {
 
 	it.each([
 		{ displayStatus: "Blocked", status: "idle" as const },
-		{ displayStatus: "Checks failing", status: "idle" as const },
+		{ displayStatus: "CI failing", status: "idle" as const },
 		{ displayStatus: "Changes requested", status: "idle" as const },
 		{ displayStatus: undefined, status: "ci_failed" as const },
 		{ displayStatus: undefined, status: "changes_requested" as const },
@@ -346,9 +346,12 @@ describe("SessionsBoardView", () => {
 			"href",
 			"https://example.com/pull/12",
 		);
-		expect(screen.getByText("12.4K tok")).toHaveAccessibleName("12,400 tokens");
-		expect(screen.getByText("feat/portable")).toHaveClass("text-muted-foreground");
+		// The full label is real text, not an aria-label on a generic span, and
+		// the compact form is hidden so it is not read out alongside it.
+		expect(screen.getByText("12,400 tokens")).toHaveClass("sr-only");
+		expect(screen.getByText("12.4K tok")).toHaveAttribute("aria-hidden", "true");
 		expect(screen.getByText("5m ago")).toHaveAttribute("title", "Updated 2026-08-09T10:00:00Z");
+		expect(screen.getByText("feat/portable")).toHaveClass("text-muted-foreground");
 		expect(screen.getByText("5m ago")).toHaveClass("tabular-nums", "text-muted-foreground");
 		expect(screen.queryByText("github:42")).not.toBeInTheDocument();
 

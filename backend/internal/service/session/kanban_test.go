@@ -196,6 +196,27 @@ func TestSessionKanbanExternalChangesStayPersonOwned(t *testing.T) {
 	}
 }
 
+func TestSessionKanbanExternalCommentsDriveNeedsReviewDisplayStatus(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer",
+	}
+	st.pr["mer-1"] = domain.PRFacts{
+		URL: "pr1", HeadSHA: "head1", ReviewComments: true, ExternalComments: true,
+	}
+
+	got, err := (&Service{store: st}).Get(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.KanbanColumn != domain.KanbanNeedsReview {
+		t.Fatalf("kanban column = %q, want %q", got.KanbanColumn, domain.KanbanNeedsReview)
+	}
+	if got.DisplayStatus != contract.DisplayCommented {
+		t.Fatalf("display status = %q, want %q", got.DisplayStatus, contract.DisplayCommented)
+	}
+}
+
 func TestSessionGetUsesLatestCurrentHeadRunPerHarness(t *testing.T) {
 	st := newSQLiteKanbanTestStore(t)
 	ctx := context.Background()

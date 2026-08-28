@@ -250,6 +250,96 @@ func TestListPRFactsForSessionKeepsHumanVerdictOverLaterAOReview(t *testing.T) {
 	}
 }
 
+func TestListPRFactsForSessionSplitsExternalCommentsFromAOInjectedComments(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	r, _ := s.CreateSession(ctx, sampleRecord("mer"))
+	now := time.Now().UTC().Truncate(time.Second)
+
+	write := func(url string, comments []domain.PullRequestComment) {
+		t.Helper()
+		if err := s.WriteSCMObservation(ctx, domain.PullRequest{
+			URL: url, SessionID: r.ID, Number: 1, Review: domain.ReviewRequired,
+			HeadSHA: "head1", UpdatedAt: now, ObservedAt: now,
+		}, nil, nil, []domain.PullRequestReviewThread{
+			{ThreadID: "th-" + url, Path: "main.go", Line: 7, Resolved: false, UpdatedAt: now},
+		}, comments, ports.ReviewWriteReplace); err != nil {
+			t.Fatalf("write %s: %v", url, err)
+		}
+	}
+
+	write("pr/external", []domain.PullRequestComment{{
+		ThreadID: "th-pr/external", ID: "c-ext", Author: "maintainer", Body: "please fix",
+		Resolved: false, IsBot: false, CreatedAt: now, AutoInjectReview: false,
+	}})
+	write("pr/ao", []domain.PullRequestComment{{
+		ThreadID: "th-pr/ao", ID: "c-ao", Author: "ao", Body: "handled automatically",
+		Resolved: false, IsBot: false, CreatedAt: now, AutoInjectReview: true,
+	}})
+
+	facts, err := s.ListPRFactsForSession(ctx, r.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byURL := map[string]domain.PRFacts{}
+	for _, f := range facts {
+		byURL[f.URL] = f
+	}
+	if got := byURL["pr/external"]; !got.ReviewComments || !got.ExternalComments {
+		t.Fatalf("external unresolved comment should surface in both signals: %+v", got)
+	}
+	if got := byURL["pr/ao"]; !got.ReviewComments || got.ExternalComments {
+		t.Fatalf("AO-injected comment should not surface as external input: %+v", got)
+	}
+}
+
+func TestListPRFactsForSessionIgnoresHumanVerdictsFromAnOlderHead(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	r, _ := s.CreateSession(ctx, sampleRecord("mer"))
+	now := time.Now().UTC().Truncate(time.Second)
+
+	write := func(url, headSHA string, reviews []domain.PullRequestReview) {
+		t.Helper()
+		if err := s.WriteSCMObservation(ctx, domain.PullRequest{
+			URL: url, SessionID: r.ID, Number: 1, Review: domain.ReviewApproved,
+			HeadSHA: headSHA, UpdatedAt: now, ObservedAt: now,
+		}, nil, reviews, nil, nil, ports.ReviewWriteReplace); err != nil {
+			t.Fatalf("write %s: %v", url, err)
+		}
+	}
+
+	write("pr/stale", "head2", []domain.PullRequestReview{
+		{ID: "gh-stale", Author: "maintainer", State: domain.ReviewApproved, SubmittedAt: now, TargetSHA: "head1"},
+	})
+	write("pr/current", "head2", []domain.PullRequestReview{
+		{ID: "gh-current", Author: "maintainer", State: domain.ReviewApproved, SubmittedAt: now, TargetSHA: "head2"},
+	})
+	write("pr/legacy", "head2", []domain.PullRequestReview{
+		{ID: "gh-legacy", Author: "maintainer", State: domain.ReviewApproved, SubmittedAt: now, TargetSHA: ""},
+	})
+
+	facts, err := s.ListPRFactsForSession(ctx, r.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byURL := map[string]domain.PRFacts{}
+	for _, f := range facts {
+		byURL[f.URL] = f
+	}
+	if got := byURL["pr/stale"]; got.ExternalApproved {
+		t.Fatalf("stale approval on an older head counted for current readiness: %+v", got)
+	}
+	if got := byURL["pr/current"]; !got.ExternalApproved {
+		t.Fatalf("current-head approval was lost: %+v", got)
+	}
+	if got := byURL["pr/legacy"]; !got.ExternalApproved {
+		t.Fatalf("legacy approval with empty target_sha should remain compatible: %+v", got)
+	}
+}
+
 func TestListCurrentHeadReviewRunsForSessionsKeepsLatestRunPerHarness(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -312,5 +402,85 @@ func TestListCurrentHeadReviewRunsForSessionsKeepsLatestRunPerHarness(t *testing
 	}
 	if got[second.ID][0].Verdict != domain.VerdictApproved {
 		t.Fatalf("second session verdict = %+v, want approved", got[second.ID][0])
+	}
+}
+
+func TestListPRFactsForSessionsIgnoreOlderHeadHumanVerdicts(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	first, _ := s.CreateSession(ctx, sampleRecord("mer"))
+	second, _ := s.CreateSession(ctx, sampleRecord("mer"))
+	now := time.Now().UTC().Truncate(time.Second)
+
+	if err := s.WriteSCMObservation(ctx, domain.PullRequest{
+		URL: "pr/stale", SessionID: first.ID, Number: 1, Review: domain.ReviewApproved,
+		HeadSHA: "head2", UpdatedAt: now, ObservedAt: now,
+	}, nil, []domain.PullRequestReview{
+		{ID: "gh-stale", Author: "maintainer", State: domain.ReviewApproved, SubmittedAt: now, TargetSHA: "head1"},
+	}, nil, nil, ports.ReviewWriteReplace); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WriteSCMObservation(ctx, domain.PullRequest{
+		URL: "pr/current", SessionID: second.ID, Number: 2, Review: domain.ReviewApproved,
+		HeadSHA: "head2", UpdatedAt: now, ObservedAt: now,
+	}, nil, []domain.PullRequestReview{
+		{ID: "gh-current", Author: "maintainer", State: domain.ReviewApproved, SubmittedAt: now, TargetSHA: "head2"},
+	}, nil, nil, ports.ReviewWriteReplace); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.ListPRFactsForSessions(ctx, []domain.SessionID{first.ID, second.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if facts := got[first.ID]; len(facts) != 1 || facts[0].ExternalApproved {
+		t.Fatalf("stale batch approval counted: %+v", facts)
+	}
+	if facts := got[second.ID]; len(facts) != 1 || !facts[0].ExternalApproved {
+		t.Fatalf("current-head batch approval lost: %+v", facts)
+	}
+}
+
+func TestListPRFactsForSessionsSplitExternalCommentsFromAOInjectedComments(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	first, _ := s.CreateSession(ctx, sampleRecord("mer"))
+	second, _ := s.CreateSession(ctx, sampleRecord("mer"))
+	now := time.Now().UTC().Truncate(time.Second)
+
+	if err := s.WriteSCMObservation(ctx, domain.PullRequest{
+		URL: "pr/external", SessionID: first.ID, Number: 1, Review: domain.ReviewRequired,
+		HeadSHA: "head1", UpdatedAt: now, ObservedAt: now,
+	}, nil, nil, []domain.PullRequestReviewThread{
+		{ThreadID: "th-external", Path: "main.go", Line: 5, Resolved: false, UpdatedAt: now},
+	}, []domain.PullRequestComment{{
+		ThreadID: "th-external", ID: "c-ext", Author: "maintainer", Body: "please fix",
+		Resolved: false, IsBot: false, CreatedAt: now, AutoInjectReview: false,
+	}}, ports.ReviewWriteReplace); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WriteSCMObservation(ctx, domain.PullRequest{
+		URL: "pr/ao", SessionID: second.ID, Number: 2, Review: domain.ReviewRequired,
+		HeadSHA: "head1", UpdatedAt: now, ObservedAt: now,
+	}, nil, nil, []domain.PullRequestReviewThread{
+		{ThreadID: "th-ao", Path: "main.go", Line: 8, Resolved: false, UpdatedAt: now},
+	}, []domain.PullRequestComment{{
+		ThreadID: "th-ao", ID: "c-ao", Author: "ao", Body: "handled automatically",
+		Resolved: false, IsBot: false, CreatedAt: now, AutoInjectReview: true,
+	}}, ports.ReviewWriteReplace); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.ListPRFactsForSessions(ctx, []domain.SessionID{first.ID, second.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if facts := got[first.ID]; len(facts) != 1 || !facts[0].ExternalComments {
+		t.Fatalf("external batch comments lost: %+v", facts)
+	}
+	if facts := got[second.ID]; len(facts) != 1 || facts[0].ExternalComments || !facts[0].ReviewComments {
+		t.Fatalf("AO batch comments should stay non-external while review comments remain true: %+v", facts)
 	}
 }

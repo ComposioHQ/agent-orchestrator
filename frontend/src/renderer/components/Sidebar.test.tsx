@@ -34,6 +34,7 @@ type DragOverTestEvent = {
 
 const {
 	checkUpdateMock,
+	cloudGateState,
 	cloudSessionState,
 	dragEnds,
 	dragOvers,
@@ -48,6 +49,7 @@ const {
 	commandPaletteEnabled,
 } = vi.hoisted(
 	() => ({
+		cloudGateState: { cloudEnabled: true, localEnabled: true, client: "" },
 		cloudSessionState: {
 			configured: false,
 			session: null as null | { user: { email: string } },
@@ -93,6 +95,7 @@ vi.mock("@dnd-kit/core", async (importOriginal) => {
 vi.mock("../lib/rename-session", () => ({ renameSession: renameSessionMock }));
 vi.mock("../lib/spawn-orchestrator", () => ({ spawnOrchestrator: spawnMock }));
 vi.mock("../lib/cloud-session", () => ({ useCloudSession: () => cloudSessionState }));
+vi.mock("../hooks/useCloudGate", () => ({ useCloudGate: () => cloudGateState }));
 vi.mock("../hooks/useCommandPaletteEnabled", () => ({
 	useCommandPaletteEnabled: () => commandPaletteEnabled.current,
 }));
@@ -316,6 +319,9 @@ beforeEach(() => {
 	dragStarts.clear();
 	document.documentElement.style.removeProperty("--ao-sidebar-w");
 	commandPaletteEnabled.current = true;
+	cloudGateState.cloudEnabled = true;
+	cloudGateState.localEnabled = true;
+	cloudGateState.client = "";
 	cloudSessionState.configured = false;
 	cloudSessionState.session = null;
 	cloudSessionState.status = "unauthenticated";
@@ -355,12 +361,16 @@ afterEach(() => {
 });
 
 describe("Sidebar", () => {
-	it("does not show cloud sign-in controls while signed out", () => {
+	it("shows the cloud sign-in entry point while signed out", () => {
 		cloudSessionState.configured = true;
 		renderSidebar();
 
-		expect(screen.queryByLabelText("Sign in to AO Cloud")).not.toBeInTheDocument();
-		expect(screen.queryByText("Sign in")).not.toBeInTheDocument();
+		const signInControls = screen.getAllByLabelText("Sign in to AO Cloud");
+		expect(signInControls).toHaveLength(2);
+		const activeControl = signInControls.find((control) => control.tabIndex === 0);
+		expect(activeControl).toBeDefined();
+		fireEvent.click(activeControl!);
+		expect(cloudSessionState.signIn).toHaveBeenCalledOnce();
 	});
 
 	it("keeps cloud account controls visible while signed in", () => {
@@ -370,6 +380,16 @@ describe("Sidebar", () => {
 		renderSidebar();
 
 		expect(screen.getAllByLabelText("Signed in as user@example.com")).toHaveLength(2);
+	});
+
+	it("hides cloud account controls when the daemon reports the cloud offering off", () => {
+		cloudGateState.cloudEnabled = false;
+		cloudSessionState.configured = true;
+		cloudSessionState.status = "authenticated";
+		cloudSessionState.session = { user: { email: "user@example.com" } };
+		renderSidebar();
+
+		expect(screen.queryByLabelText("Signed in as user@example.com")).not.toBeInTheDocument();
 	});
 
 	it("suppresses focus chrome without removing keyboard focusability", () => {
@@ -563,7 +583,7 @@ describe("Sidebar", () => {
 		expect(screen.getByLabelText("Kill session")).toHaveProperty("tabIndex", 0);
 	});
 
-	it("keeps the message age visible while the label yields only the hover action space", () => {
+	it("fades the message age out in favor of the overlaid hover actions", () => {
 		const lastUserMessageAt = "2026-06-29T23:55:00Z";
 		renderSidebar({
 			workspaces: [{ ...workspace, sessions: [{ ...session, lastUserMessageAt }] }],
@@ -575,14 +595,16 @@ describe("Sidebar", () => {
 		const actionButtons = screen.getByLabelText("Pin session").parentElement;
 		const time = actions?.querySelector("time");
 
-		expect(openSession).toHaveClass("pr-[34px]");
+		expect(openSession).toHaveClass("pr-[36px]");
 		expect(openSession).toHaveClass(
-			"group-hover/session-row:pr-[78px]",
-			"group-focus-within/session-row:pr-[78px]",
+			"group-hover/session-row:pr-[50px]",
+			"group-focus-within/session-row:pr-[50px]",
 		);
 		expect(label).toHaveClass("min-w-0", "flex-1", "truncate");
 		expect(actions).toHaveAttribute("data-session-actions");
 		expect(actionButtons).toHaveClass(
+			"absolute",
+			"right-0.5",
 			"opacity-0",
 			"group-hover/session-row:pointer-events-auto",
 			"group-hover/session-row:opacity-100",
@@ -590,7 +612,13 @@ describe("Sidebar", () => {
 			"group-focus-within/session-row:opacity-100",
 		);
 		expect(time).toHaveAttribute("datetime", lastUserMessageAt);
-		expect(time).not.toHaveClass("opacity-0");
+		expect(time).toHaveClass(
+			"absolute",
+			"right-1.5",
+			"opacity-100",
+			"group-hover/session-row:opacity-0",
+			"group-focus-within/session-row:opacity-0",
+		);
 		expect(openSession).toHaveClass("pl-1.5");
 		expect(openSession.closest("li")).toHaveClass("pl-0.5");
 	});

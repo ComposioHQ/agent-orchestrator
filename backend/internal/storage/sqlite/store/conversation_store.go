@@ -362,6 +362,31 @@ func (s *Store) CommitChatSpawn(
 	rec domain.SessionRecord,
 	branch domain.ConversationBranch,
 ) error {
+	return s.commitChatSpawn(ctx, rec, branch, nil)
+}
+
+// CommitChatSpawnPrepared stages the reserved boundary and controller generation,
+// projects a reconciled native replay onto that branch, then publishes the live
+// session as one transaction. The staged ownership is invisible outside the
+// transaction, so input cannot reach the controller before its history exists.
+func (s *Store) CommitChatSpawnPrepared(
+	ctx context.Context,
+	rec domain.SessionRecord,
+	branch domain.ConversationBranch,
+	prepare func(context.Context) error,
+) error {
+	if prepare == nil {
+		return errors.New("commit Chat spawn: provider-history preparation is missing")
+	}
+	return s.commitChatSpawn(ctx, rec, branch, prepare)
+}
+
+func (s *Store) commitChatSpawn(
+	ctx context.Context,
+	rec domain.SessionRecord,
+	branch domain.ConversationBranch,
+	prepare func(context.Context) error,
+) error {
 	if rec.ID == "" || branch.ID == "" || branch.ConversationID == "" ||
 		branch.SessionID != rec.ID || branch.ParentBranchID == "" ||
 		branch.ProviderConversationID == "" ||
@@ -405,6 +430,27 @@ func (s *Store) CommitChatSpawn(
 		}
 		if rows != 1 {
 			return fmt.Errorf("move conversation head: conversation %s not found", branch.ConversationID)
+		}
+		if prepare != nil {
+			// Provider-event projection is fenced by controller generation. Stage
+			// that generation only inside this transaction, after the new branch is
+			// active, so the replay lands in the new provider namespace while the
+			// terminated target remains unavailable to every concurrent reader.
+			rows, err := q.ClaimChatControllerGeneration(ctx, gen.ClaimChatControllerGenerationParams{
+				ControllerGeneration: rec.Metadata.ControllerGeneration,
+				UpdatedAt:            rec.UpdatedAt,
+				ID:                   rec.ID,
+			})
+			if err != nil {
+				return fmt.Errorf("stage Chat controller generation: %w", err)
+			}
+			if rows != 1 {
+				return fmt.Errorf("stage Chat controller generation: Chat session %s not found", rec.ID)
+			}
+			txCtx := context.WithValue(ctx, conversationProjectionTxKey{}, q)
+			if err := prepare(txCtx); err != nil {
+				return fmt.Errorf("project native provider history: %w", err)
+			}
 		}
 		if err := q.UpdateSession(ctx, recordToUpdate(rec)); err != nil {
 			return fmt.Errorf("commit Chat session owner: %w", err)
@@ -1971,6 +2017,12 @@ func (s *Store) ProjectProviderEvent(
 	now time.Time,
 	project func(context.Context) error,
 ) (bool, error) {
+	if q, ok := ctx.Value(conversationProjectionTxKey{}).(*gen.Queries); ok && q != nil {
+		return projectProviderEventTx(
+			ctx, q, conversationID, session, generation,
+			providerEventID, method, payloadJSON, now, project,
+		)
+	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 
@@ -1980,6 +2032,28 @@ func (s *Store) ProjectProviderEvent(
 	}
 	defer func() { _ = tx.Rollback() }()
 	q := s.qw.WithTx(tx)
+	projected, err := projectProviderEventTx(
+		ctx, q, conversationID, session, generation,
+		providerEventID, method, payloadJSON, now, project,
+	)
+	if err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("commit provider event %s: %w", method, err)
+	}
+	return projected, nil
+}
+
+func projectProviderEventTx(
+	ctx context.Context,
+	q *gen.Queries,
+	conversationID string,
+	session domain.SessionID,
+	generation, providerEventID, method, payloadJSON string,
+	now time.Time,
+	project func(context.Context) error,
+) (bool, error) {
 	owner, err := q.GetSession(ctx, session)
 	if err != nil {
 		return false, fmt.Errorf("read controller generation for %s: %w", session, err)
@@ -1999,17 +2073,11 @@ func (s *Store) ProjectProviderEvent(
 		return false, fmt.Errorf("archive provider event %s: %w", method, err)
 	}
 	if inserted == 0 {
-		if err := tx.Commit(); err != nil {
-			return false, fmt.Errorf("commit duplicate provider event %s: %w", method, err)
-		}
 		return false, nil
 	}
 	txCtx := context.WithValue(ctx, conversationProjectionTxKey{}, q)
 	if err := project(txCtx); err != nil {
 		return false, fmt.Errorf("project provider event %s: %w", method, err)
-	}
-	if err := tx.Commit(); err != nil {
-		return false, fmt.Errorf("commit provider event %s: %w", method, err)
 	}
 	return true, nil
 }

@@ -176,7 +176,7 @@ DELETE FROM review_run WHERE pr_url = ?;
 
 -- name: ListPRsBySession :many
 SELECT * FROM pr
-WHERE session_id = ?
+WHERE pr.session_id = ?
 ORDER BY updated_at DESC;
 
 -- name: GetPRLastNudgeSignature :one
@@ -184,6 +184,9 @@ SELECT last_nudge_signature FROM pr WHERE url = ?;
 
 -- name: UpdatePRLastNudgeSignature :exec
 UPDATE pr SET last_nudge_signature = ? WHERE url = ?;
+
+-- name: SetPRAutoInjectCIBySession :exec
+UPDATE pr SET auto_inject_ci = ? WHERE session_id = ?;
 
 -- name: GetDisplayPRFactsBySession :one
 SELECT
@@ -195,6 +198,14 @@ SELECT
     pr.mergeability,
     pr.head_sha,
     pr.updated_at,
+    EXISTS (
+        SELECT 1
+        FROM pr_comment
+        WHERE pr_comment.pr_url = pr.url
+          AND pr_comment.resolved = 0
+          AND pr_comment.is_bot = 0
+          AND pr_comment.auto_inject_review = 0
+    ) AS external_comments,
     EXISTS (
         SELECT 1
         FROM pr_comment
@@ -215,45 +226,46 @@ LIMIT 1;
 -- AO did not author. The status aggregator filters open vs merged/closed in Go
 -- and derives stacks from the branches; the Kanban reducer needs the
 -- AO/external split because the aggregate review_decision mixes both sources.
-WITH external_review AS (
-    -- Each human reviewer's CURRENT verdict: their most recent decisive review,
-    -- with AO's own provider reviews removed by the id AO recorded when it
-    -- posted. Raw existence would be wrong: a reviewer who requests changes and
-    -- later approves leaves both rows behind, and the superseded changes request
-    -- would outlive the approval that replaced it. Only another human review
-    -- supersedes a human verdict, so AO's reviews are excluded from both sides.
-    -- Keep this query body ASCII. A multi-byte character anywhere in it makes
-    -- sqlc 1.31 truncate the tail of the generated SQL by the extra byte count
-    -- (an em dash here silently cut `DESC` to `DE`), the same class of parser
-    -- bug documented in queries/sessions.sql and queries/changelog.sql.
-    SELECT pr_reviews.pr_url, pr_reviews.state
+WITH current_pr AS (
+    SELECT url, head_sha
+    FROM pr
+    WHERE pr.session_id = sqlc.arg(session_id)
+),
+eligible_external_review AS (
+    -- Each human reviewer's CURRENT verdict on the PR's current head. Reviews
+    -- for an older explicit target_sha are stale and must not drive current
+    -- readiness. Empty target_sha is kept as a compatibility fallback for
+    -- older provider rows that did not record which head they reviewed.
+    SELECT pr_reviews.pr_url, pr_reviews.author, pr_reviews.review_id, pr_reviews.state, pr_reviews.submitted_at
     FROM pr_reviews
+    JOIN current_pr ON current_pr.url = pr_reviews.pr_url
     WHERE pr_reviews.is_bot = 0
       AND pr_reviews.state IN ('approved', 'changes_requested')
+      AND (pr_reviews.target_sha = '' OR pr_reviews.target_sha = current_pr.head_sha)
       AND NOT EXISTS (
           SELECT 1
           FROM review_run
           WHERE review_run.github_review_id != ''
             AND review_run.github_review_id = pr_reviews.review_id
       )
-      AND NOT EXISTS (
-          SELECT 1
-          FROM pr_reviews newer
-          WHERE newer.pr_url = pr_reviews.pr_url
-            AND newer.author = pr_reviews.author
-            AND newer.is_bot = 0
-            AND newer.state IN ('approved', 'changes_requested')
-            AND (
-                newer.submitted_at > pr_reviews.submitted_at
-                OR (newer.submitted_at = pr_reviews.submitted_at AND newer.review_id > pr_reviews.review_id)
-            )
-            AND NOT EXISTS (
-                SELECT 1
-                FROM review_run
-                WHERE review_run.github_review_id != ''
-                  AND review_run.github_review_id = newer.review_id
-            )
-      )
+),
+external_review AS (
+    -- Keep this query body ASCII. A multi-byte character anywhere in it makes
+    -- sqlc 1.31 truncate the tail of the generated SQL by the extra byte count
+    -- (an em dash here silently cut `DESC` to `DE`), the same class of parser
+    -- bug documented in queries/sessions.sql and queries/changelog.sql.
+    SELECT eligible_external_review.pr_url, eligible_external_review.state
+    FROM eligible_external_review
+    WHERE NOT EXISTS (
+        SELECT 1
+        FROM eligible_external_review newer
+        WHERE newer.pr_url = eligible_external_review.pr_url
+          AND newer.author = eligible_external_review.author
+          AND (
+              newer.submitted_at > eligible_external_review.submitted_at
+              OR (newer.submitted_at = eligible_external_review.submitted_at AND newer.review_id > eligible_external_review.review_id)
+          )
+    )
 )
 SELECT
     pr.url,
@@ -266,6 +278,14 @@ SELECT
     pr.target_branch,
     pr.head_sha,
     pr.updated_at,
+    EXISTS (
+        SELECT 1
+        FROM pr_comment
+        WHERE pr_comment.pr_url = pr.url
+          AND pr_comment.resolved = 0
+          AND pr_comment.is_bot = 0
+          AND pr_comment.auto_inject_review = 0
+    ) AS external_comments,
     EXISTS (
         SELECT 1
         FROM pr_comment
@@ -286,7 +306,7 @@ SELECT
           AND external_review.state = 'changes_requested'
     ) AS external_changes_requested
 FROM pr
-WHERE pr.session_id = ?
+WHERE pr.session_id = sqlc.arg(session_id)
 ORDER BY pr.updated_at DESC;
 
 -- name: ListPRFactsBySessions :many
@@ -297,45 +317,49 @@ WITH wanted_session AS (
     SELECT CAST(j.value AS TEXT) AS session_id
     FROM json_each(?) AS j
 ),
-external_review AS (
-    -- Each human reviewer's CURRENT verdict: their most recent decisive review,
-    -- with AO's own provider reviews removed by the id AO recorded when it
-    -- posted. Raw existence would be wrong: a reviewer who requests changes and
-    -- later approves leaves both rows behind, and the superseded changes request
-    -- would outlive the approval that replaced it. Only another human review
-    -- supersedes a human verdict, so AO's reviews are excluded from both sides.
-    -- Keep this query body ASCII. A multi-byte character anywhere in it makes
-    -- sqlc 1.31 truncate the tail of the generated SQL by the extra byte count
-    -- (an em dash here silently cut `DESC` to `DE`), the same class of parser
-    -- bug documented in queries/sessions.sql and queries/changelog.sql.
-    SELECT pr_reviews.pr_url, pr_reviews.state
+current_pr AS (
+    SELECT pr.session_id, pr.url, pr.head_sha
+    FROM pr
+    JOIN wanted_session ON wanted_session.session_id = pr.session_id
+),
+eligible_external_review AS (
+    -- Each human reviewer's CURRENT verdict on the PR's current head. Reviews
+    -- for an older explicit target_sha are stale and must not drive current
+    -- readiness. Empty target_sha is kept as a compatibility fallback for
+    -- older provider rows that did not record which head they reviewed.
+    SELECT current_pr.session_id, pr_reviews.pr_url, pr_reviews.author, pr_reviews.review_id, pr_reviews.state, pr_reviews.submitted_at
     FROM pr_reviews
+    JOIN current_pr ON current_pr.url = pr_reviews.pr_url
     WHERE pr_reviews.is_bot = 0
       AND pr_reviews.state IN ('approved', 'changes_requested')
+      AND (pr_reviews.target_sha = '' OR pr_reviews.target_sha = current_pr.head_sha)
       AND NOT EXISTS (
           SELECT 1
           FROM review_run
           WHERE review_run.github_review_id != ''
             AND review_run.github_review_id = pr_reviews.review_id
       )
-      AND NOT EXISTS (
-          SELECT 1
-          FROM pr_reviews newer
-          WHERE newer.pr_url = pr_reviews.pr_url
-            AND newer.author = pr_reviews.author
-            AND newer.is_bot = 0
-            AND newer.state IN ('approved', 'changes_requested')
-            AND (
-                newer.submitted_at > pr_reviews.submitted_at
-                OR (newer.submitted_at = pr_reviews.submitted_at AND newer.review_id > pr_reviews.review_id)
-            )
-            AND NOT EXISTS (
-                SELECT 1
-                FROM review_run
-                WHERE review_run.github_review_id != ''
-                  AND review_run.github_review_id = newer.review_id
-            )
-      )
+),
+external_review AS (
+    -- Keep this query body ASCII. A multi-byte character anywhere in it makes
+    -- sqlc 1.31 truncate the tail of the generated SQL by the extra byte count
+    -- (an em dash here silently cut `DESC` to `DE`), the same class of parser
+    -- bug documented in queries/sessions.sql and queries/changelog.sql.
+    SELECT
+        eligible_external_review.session_id,
+        eligible_external_review.pr_url,
+        eligible_external_review.state
+    FROM eligible_external_review
+    WHERE NOT EXISTS (
+        SELECT 1
+        FROM eligible_external_review newer
+        WHERE newer.pr_url = eligible_external_review.pr_url
+          AND newer.author = eligible_external_review.author
+          AND (
+              newer.submitted_at > eligible_external_review.submitted_at
+              OR (newer.submitted_at = eligible_external_review.submitted_at AND newer.review_id > eligible_external_review.review_id)
+          )
+    )
 )
 SELECT
     pr.session_id,
@@ -355,17 +379,27 @@ SELECT
         WHERE pr_comment.pr_url = pr.url
           AND pr_comment.resolved = 0
           AND pr_comment.is_bot = 0
+          AND pr_comment.auto_inject_review = 0
+    ) AS external_comments,
+    EXISTS (
+        SELECT 1
+        FROM pr_comment
+        WHERE pr_comment.pr_url = pr.url
+          AND pr_comment.resolved = 0
+          AND pr_comment.is_bot = 0
     ) AS review_comments,
     EXISTS (
         SELECT 1
         FROM external_review
         WHERE external_review.pr_url = pr.url
+          AND external_review.session_id = pr.session_id
           AND external_review.state = 'approved'
     ) AS external_approved,
     EXISTS (
         SELECT 1
         FROM external_review
         WHERE external_review.pr_url = pr.url
+          AND external_review.session_id = pr.session_id
           AND external_review.state = 'changes_requested'
     ) AS external_changes_requested
 FROM pr

@@ -70,6 +70,7 @@ type KanbanReviewRunFacts struct {
 type KanbanExternalReviewFacts struct {
 	Approved         bool
 	ChangesRequested bool
+	Comments         bool
 }
 
 // KanbanPRFacts are the per-PR facts the column reducer reads.
@@ -200,7 +201,8 @@ const (
 	DisplayReviewPending      DisplayStatus = "Review pending"
 	DisplayDraft              DisplayStatus = "Draft"
 	// In review.
-	DisplayChecksFailing    DisplayStatus = "Checks failing"
+	DisplayCIFailing        DisplayStatus = "CI failing"
+	DisplayCommented        DisplayStatus = "Commented"
 	DisplayChangesRequested DisplayStatus = "Changes requested"
 	DisplayNeedsHumanReview DisplayStatus = "Needs human review"
 	// Ready.
@@ -311,7 +313,7 @@ func validatingDisplayStatus(session KanbanSessionFacts, pr KanbanPRFacts) Displ
 	case pr.CI == CIFailing && session.AutoInjectCI:
 		return DisplayFixingCI
 	case pr.CI == CIFailing:
-		return DisplayChecksFailing
+		return DisplayCIFailing
 	case changesRequestedOn(pr) && session.AutoInjectReview:
 		return DisplayAddressingComments
 	case pr.ReviewRun.ChangesRequested:
@@ -343,11 +345,15 @@ func inReviewDisplayStatus(session KanbanSessionFacts, pr KanbanPRFacts) Display
 	case pr.CI == CIFailing && session.AutoInjectCI:
 		return DisplayFixingCI
 	case pr.CI == CIFailing:
-		return DisplayChecksFailing
+		return DisplayCIFailing
+	case pr.ExternalReview.Comments && session.AutoInjectReview:
+		return DisplayAddressingComments
 	case pr.ExternalReview.ChangesRequested && session.AutoInjectReview:
 		return DisplayAddressingComments
 	case pr.ExternalReview.ChangesRequested:
 		return DisplayChangesRequested
+	case pr.ExternalReview.Comments:
+		return DisplayCommented
 	default:
 		return DisplayNeedsHumanReview
 	}
@@ -371,7 +377,7 @@ func readyDisplayStatus(pr KanbanPRFacts) DisplayStatus {
 	case pr.Mergeability == MergeMergeable:
 		return DisplayMergeable
 	case pr.CI == CIFailing:
-		return DisplayChecksFailing
+		return DisplayCIFailing
 	default:
 		return DisplayApproved
 	}

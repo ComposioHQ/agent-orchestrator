@@ -30,6 +30,7 @@ type PRFacts struct {
 	// review-feedback loop is on.
 	ExternalApproved         bool
 	ExternalChangesRequested bool
+	ExternalComments         bool
 }
 
 // PullRequest is the app-level representation of one tracked pull request as
