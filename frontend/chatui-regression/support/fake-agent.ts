@@ -454,6 +454,12 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					signOut: async () => undefined,
 					onSessionChanged: unsubscribe,
 				},
+				cloudCp: {
+					request: async () => ({ status: 401, headers: {}, body: "" }),
+					openStream: async () => ({ streamId: "stream_test" }),
+					closeStream: () => undefined,
+					onStreamEvent: unsubscribe,
+				},
 			} satisfies AoBridge;
 			(window as unknown as { ao: unknown }).ao = ao;
 		},
