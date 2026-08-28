@@ -40,6 +40,7 @@ import { isMacPlatform } from "../lib/platform";
 import { applyDocumentTheme, applyDocumentThemeStyle } from "../lib/theme";
 import { buildTerminalThemes } from "../lib/terminal-themes";
 import { useUiStore, type Theme } from "../stores/ui-store";
+import { TerminalSearch } from "./TerminalSearch";
 import {
 	DropdownMenu,
 	DropdownMenuContent,
@@ -143,6 +144,13 @@ function isTerminalPasteShortcut(event: KeyboardEvent): boolean {
 	if (event.metaKey) return true;
 	if (event.ctrlKey && event.shiftKey && !event.altKey) return true;
 	return isWindowsPlatform() && event.ctrlKey && !event.shiftKey && !event.altKey && !event.metaKey;
+}
+
+function isTerminalSearchShortcut(event: KeyboardEvent): boolean {
+	if (event.altKey || event.shiftKey || event.key.toLowerCase() !== "f") return false;
+	return isMacPlatform()
+		? event.metaKey && !event.ctrlKey
+		: event.ctrlKey && !event.metaKey;
 }
 
 function consumeTerminalShortcut(event: KeyboardEvent): void {
@@ -285,6 +293,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 	const scrollbarTrackRef = useRef<HTMLDivElement | null>(null);
 	const scrollbarThumbRef = useRef<HTMLDivElement | null>(null);
 	const termRef = useRef<Terminal | null>(null);
+	const searchAddonRef = useRef<SearchAddon | null>(null);
 	const fitRef = useRef<(() => void) | null>(null);
 	const contextMenuActionsRef = useRef<TerminalContextMenuActions | null>(null);
 	const [contextMenu, setContextMenu] = useState<TerminalContextMenuState>({
@@ -295,6 +304,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		link: null,
 	});
 	const [copiedToast, setCopiedToast] = useState(false);
+	const [searchOpen, setSearchOpen] = useState(false);
 	const copiedToastTimerRef = useRef<number | undefined>(undefined);
 	const showCopiedToastRef = useRef<() => void>(() => undefined);
 	// The web link currently under the cursor, tracked via the link providers'
@@ -317,6 +327,13 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		},
 		[setContextMenuOpen],
 	);
+	const focusTerminal = useCallback(() => {
+		try {
+			termRef.current?.focus();
+		} catch {
+			// A retained terminal can be parked between closing search and this frame.
+		}
+	}, []);
 
 	callbacksRef.current = props;
 	showCopiedToastRef.current = () => {
@@ -459,7 +476,9 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		// empty open is dropped and clicks silently no-op. Pass the matched URL to
 		// window.open directly so the main process routes it to shell.openExternal.
 		term.loadAddon(new WebLinksAddon(activateLink, { hover: trackHover, leave: clearHover }));
-		term.loadAddon(new SearchAddon());
+		const searchAddon = new SearchAddon();
+		searchAddonRef.current = searchAddon;
+		term.loadAddon(searchAddon);
 
 		term.open(host);
 		// Browser integration tests need to wait on xterm's buffer state, not
@@ -660,6 +679,11 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			// paste, double word-delete, etc). keyup/keypress fall through to
 			// xterm's own default handling for that event type.
 			if (event.type === "keyup" || event.type === "keypress") return true;
+			if (isTerminalSearchShortcut(event)) {
+				consumeTerminalShortcut(event);
+				setSearchOpen(true);
+				return false;
+			}
 			// Shift+Enter → newline without submitting, matching Claude Code / Codex.
 			// A terminal normally sends the same CR for Enter and Shift+Enter, so the
 			// agent can't distinguish them; emit the meta-return (ESC+CR) that
@@ -1070,6 +1094,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			host.removeEventListener("focusout", handleFocusOut);
 			delete (host as DevXtermHost).__aoXtermForTest;
 			termRef.current = null;
+			if (searchAddonRef.current === searchAddon) searchAddonRef.current = null;
 			fitRef.current = null;
 			cancelAnimationFrame(raf);
 			for (const timer of settleTimers) window.clearTimeout(timer);
@@ -1121,6 +1146,8 @@ export function XtermTerminal(props: XtermTerminalProps) {
 
 	useLayoutEffect(() => {
 		if (props.isVisible === false) {
+			setSearchOpen(false);
+			searchAddonRef.current?.clearDecorations();
 			setContextMenuOpen(false);
 			setCopiedToast(false);
 			if (copiedToastTimerRef.current !== undefined) {
@@ -1185,6 +1212,12 @@ export function XtermTerminal(props: XtermTerminalProps) {
 						<div className="terminal-scrollbar__thumb" ref={scrollbarThumbRef} />
 					</div>
 				) : null}
+				<TerminalSearch
+					onClose={() => setSearchOpen(false)}
+					onReturnFocus={focusTerminal}
+					open={searchOpen && props.isVisible !== false}
+					searchAddon={searchAddonRef.current}
+				/>
 				{copiedToast && props.isVisible !== false ? (
 					<div
 						aria-live="polite"
@@ -1241,6 +1274,15 @@ export function XtermTerminal(props: XtermTerminalProps) {
 					</DropdownMenuItem>
 					<DropdownMenuItem onSelect={() => runContextMenuAction("paste")}>{t("titlebar.paste")}</DropdownMenuItem>
 					<DropdownMenuItem onSelect={() => runContextMenuAction("selectAll")}>{t("titlebar.selectAll")}</DropdownMenuItem>
+					<DropdownMenuSeparator />
+					<DropdownMenuItem
+						onSelect={() => {
+							setContextMenuOpen(false);
+							setSearchOpen(true);
+						}}
+					>
+						{t("terminal.search")}
+					</DropdownMenuItem>
 					{props.onToggleFullscreen ? (
 						<DropdownMenuItem
 							onSelect={() => {

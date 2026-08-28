@@ -2,11 +2,18 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AttachableTerminal } from "../hooks/useTerminalSession";
 import { useUiStore } from "../stores/ui-store";
+import { safeTerminalFind } from "./TerminalSearch";
 import { XtermTerminal } from "./XtermTerminal";
 
 const state = vi.hoisted(() => ({
 	fit: vi.fn(),
 	linkHandler: null as null | ((event: MouseEvent, uri: string) => void),
+	searchAddon: null as null | {
+		clearDecorations: ReturnType<typeof vi.fn>;
+		findNext: ReturnType<typeof vi.fn>;
+		findPrevious: ReturnType<typeof vi.fn>;
+		resultListeners: Set<(results: { resultCount: number; resultIndex: number }) => void>;
+	},
 	lastTerminal: null as null | {
 		keyHandler?: (event: KeyboardEvent) => boolean;
 		wheelHandler?: (event: WheelEvent) => boolean;
@@ -125,7 +132,21 @@ vi.mock("@xterm/addon-fit", () => ({
 }));
 
 vi.mock("@xterm/addon-search", () => ({
-	SearchAddon: class FakeSearchAddon {},
+	SearchAddon: class FakeSearchAddon {
+		clearDecorations = vi.fn();
+		findNext = vi.fn(() => true);
+		findPrevious = vi.fn(() => true);
+		resultListeners = new Set<(results: { resultCount: number; resultIndex: number }) => void>();
+
+		constructor() {
+			state.searchAddon = this;
+		}
+
+		onDidChangeResults(listener: (results: { resultCount: number; resultIndex: number }) => void) {
+			this.resultListeners.add(listener);
+			return { dispose: () => this.resultListeners.delete(listener) };
+		}
+	},
 }));
 
 vi.mock("@xterm/addon-unicode11", () => ({
@@ -167,6 +188,7 @@ describe("XtermTerminal", () => {
 		state.fit.mockReset();
 		state.lastTerminal = null;
 		state.linkHandler = null;
+		state.searchAddon = null;
 		setNavigatorPlatform("Linux x86_64");
 		window.ao!.clipboard.writeText = vi.fn().mockResolvedValue(undefined);
 		window.ao!.clipboard.readText = vi.fn().mockResolvedValue("");
@@ -470,6 +492,166 @@ describe("XtermTerminal", () => {
 		const trigger = container.querySelector("button[aria-hidden='true']") as HTMLButtonElement;
 		expect(trigger.style.left).toBe("120px");
 		expect(trigger.style.top).toBe("88px");
+	});
+
+	it("opens terminal search from the context menu", async () => {
+		const { container } = render(<XtermTerminal theme="dark" />);
+
+		fireEvent.contextMenu(container.firstElementChild!);
+		fireEvent.click(await screen.findByText("Search terminal"));
+
+		expect(await screen.findByRole("searchbox", { name: "Search terminal" })).toHaveFocus();
+	});
+
+	it.each([
+		["Command+F", "MacIntel", false, true],
+		["Ctrl+F", "Linux x86_64", true, false],
+	])("opens search with %s and consumes the terminal shortcut", async (_label, platform, ctrlKey, metaKey) => {
+		setNavigatorPlatform(platform);
+		render(<XtermTerminal theme="dark" />);
+		const event = {
+			altKey: false,
+			ctrlKey,
+			key: "f",
+			metaKey,
+			preventDefault: vi.fn(),
+			shiftKey: false,
+			stopPropagation: vi.fn(),
+			type: "keydown",
+		} as unknown as KeyboardEvent;
+
+		let allowed = true;
+		act(() => {
+			allowed = state.lastTerminal!.keyHandler!(event);
+		});
+
+		expect(allowed).toBe(false);
+		expect(event.preventDefault).toHaveBeenCalledOnce();
+		expect(event.stopPropagation).toHaveBeenCalledOnce();
+		expect(await screen.findByRole("searchbox", { name: "Search terminal" })).toHaveFocus();
+	});
+
+	it("searches incrementally, reports matches, and navigates in both directions", async () => {
+		setNavigatorPlatform("MacIntel");
+		render(<XtermTerminal theme="dark" />);
+		const shortcut = {
+			altKey: false,
+			ctrlKey: false,
+			key: "f",
+			metaKey: true,
+			preventDefault: vi.fn(),
+			shiftKey: false,
+			stopPropagation: vi.fn(),
+			type: "keydown",
+		} as unknown as KeyboardEvent;
+		act(() => state.lastTerminal!.keyHandler!(shortcut));
+		const input = await screen.findByRole("searchbox", { name: "Search terminal" });
+		state.searchAddon!.findNext.mockClear();
+
+		fireEvent.change(input, { target: { value: "needle" } });
+		await waitFor(() =>
+			expect(state.searchAddon!.findNext).toHaveBeenLastCalledWith(
+				"needle",
+				expect.objectContaining({ incremental: true, caseSensitive: false, regex: false }),
+			),
+		);
+
+		fireEvent.click(screen.getByRole("button", { name: "Match case" }));
+		fireEvent.click(screen.getByRole("button", { name: "Use regular expression" }));
+		await waitFor(() =>
+			expect(state.searchAddon!.findNext).toHaveBeenLastCalledWith(
+				"needle",
+				expect.objectContaining({ incremental: true, caseSensitive: true, regex: true }),
+			),
+		);
+
+		act(() =>
+			state.searchAddon!.resultListeners.forEach((listener) => listener({ resultCount: 3, resultIndex: 1 })),
+		);
+		expect(screen.getByText("2/3")).toHaveAccessibleName("Match 2 of 3");
+
+		state.searchAddon!.findNext.mockClear();
+		fireEvent.keyDown(input, { key: "Enter" });
+		expect(state.searchAddon!.findNext).toHaveBeenCalledWith(
+			"needle",
+			expect.objectContaining({ incremental: false, caseSensitive: true, regex: true }),
+		);
+
+		fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
+		expect(state.searchAddon!.findPrevious).toHaveBeenCalledWith(
+			"needle",
+			expect.objectContaining({ incremental: false, caseSensitive: true, regex: true }),
+		);
+
+		state.searchAddon!.findNext.mockClear();
+		fireEvent.keyDown(input, { key: "g", metaKey: true });
+		expect(state.searchAddon!.findNext).toHaveBeenCalledWith("needle", expect.anything());
+		state.searchAddon!.findPrevious.mockClear();
+		fireEvent.keyDown(input, { key: "g", metaKey: true, shiftKey: true });
+		expect(state.searchAddon!.findPrevious).toHaveBeenCalledWith("needle", expect.anything());
+	});
+
+	it("marks an invalid regular expression without calling xterm search", async () => {
+		setNavigatorPlatform("MacIntel");
+		render(<XtermTerminal theme="dark" />);
+		act(() =>
+			state.lastTerminal!.keyHandler!({
+				altKey: false,
+				ctrlKey: false,
+				key: "f",
+				metaKey: true,
+				preventDefault: vi.fn(),
+				shiftKey: false,
+				stopPropagation: vi.fn(),
+				type: "keydown",
+			} as unknown as KeyboardEvent),
+		);
+		const input = await screen.findByRole("searchbox", { name: "Search terminal" });
+		fireEvent.click(screen.getByRole("button", { name: "Use regular expression" }));
+		state.searchAddon!.findNext.mockClear();
+
+		fireEvent.change(input, { target: { value: "[" } });
+
+		expect(input).toHaveAttribute("aria-invalid", "true");
+		expect(screen.getByText("—")).toHaveAccessibleName("Invalid regular expression");
+		expect(state.searchAddon!.findNext).not.toHaveBeenCalledWith("[", expect.anything());
+	});
+
+	it("clears search highlights and returns focus to xterm on Escape", async () => {
+		setNavigatorPlatform("MacIntel");
+		render(<XtermTerminal theme="dark" />);
+		act(() =>
+			state.lastTerminal!.keyHandler!({
+				altKey: false,
+				ctrlKey: false,
+				key: "f",
+				metaKey: true,
+				preventDefault: vi.fn(),
+				shiftKey: false,
+				stopPropagation: vi.fn(),
+				type: "keydown",
+			} as unknown as KeyboardEvent),
+		);
+		const input = await screen.findByRole("searchbox", { name: "Search terminal" });
+
+		fireEvent.keyDown(input, { key: "Escape" });
+
+		expect(screen.queryByRole("searchbox", { name: "Search terminal" })).not.toBeInTheDocument();
+		expect(state.searchAddon!.clearDecorations).toHaveBeenCalled();
+		await waitFor(() => expect(state.lastTerminal!.focus).toHaveBeenCalled());
+	});
+
+	it("contains xterm's known decoration failure without hiding other search failures", () => {
+		expect(
+			safeTerminalFind(() => {
+				throw new Error("This API only accepts positive integers");
+			}, "needle"),
+		).toBe(false);
+		expect(() =>
+			safeTerminalFind(() => {
+				throw new Error("unexpected search failure");
+			}, "needle"),
+		).toThrow("unexpected search failure");
 	});
 
 	it("toggles terminal fullscreen from the right-click menu", async () => {
