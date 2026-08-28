@@ -363,7 +363,7 @@ func Run() error {
 		NewID:    uuid.NewString,
 	})
 
-	sessionSvc, reviewSvc, sessMgr, err := startSession(ctx, cfg, runtimeAdapter, store, lcStack.LCM, messenger, telemetrySink, agents, managedPreview, browserBroker, browserAuthority, chatLauncher{svc: chatSvc}, settingsSvc, log)
+	sessionSvc, reviewSvc, sessMgr, err := startSession(ctx, cfg, runtimeAdapter, store, lcStack.LCM, messenger, telemetrySink, agents, managedPreview, browserBroker, browserAuthority, chatLauncher{svc: chatSvc}, settingsSvc, policyCoordinator, log)
 	if err != nil {
 		stop()
 		lcStack.Stop()

@@ -347,6 +347,9 @@ type Manager struct {
 	agents    ports.AgentResolver
 	workspace ports.Workspace
 	store     Store
+	// agentSwitchReporting supplies the exact authorization snapshot immediately
+	// before each failure-aware store transaction. Nil is fail-closed.
+	agentSwitchReporting ports.AgentSwitchReportingPolicy
 	// messenger is a sessionguard.Guard wrapping the raw messenger, so every
 	// pane write is guarded (re-read state, refuse a blocked session) without
 	// each call site re-deriving the check. Send/confirmActive use Deliver for
@@ -607,11 +610,12 @@ const (
 
 // Deps are the collaborators a Session Manager needs; New wires them together.
 type Deps struct {
-	Runtime   runtimeController
-	Agents    ports.AgentResolver
-	Workspace ports.Workspace
-	Store     Store
-	Messenger ports.AgentMessenger
+	Runtime         runtimeController
+	Agents          ports.AgentResolver
+	Workspace       ports.Workspace
+	Store           Store
+	ReportingPolicy ports.AgentSwitchReportingPolicy
+	Messenger       ports.AgentMessenger
 	// Defaults supplies the daemon-owned default session interface for spawns that
 	// name no mode. Nil means always use the compatibility default.
 	Defaults SessionModeDefaults
@@ -660,6 +664,7 @@ func New(d Deps) *Manager {
 		agents:                       d.Agents,
 		workspace:                    d.Workspace,
 		store:                        d.Store,
+		agentSwitchReporting:         d.ReportingPolicy,
 		defaults:                     d.Defaults,
 		chat:                         d.Chat,
 		lcm:                          d.Lifecycle,

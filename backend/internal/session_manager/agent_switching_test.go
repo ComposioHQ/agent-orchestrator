@@ -41,6 +41,9 @@ type switchTestStore struct {
 	requestHandoffAfterCommitErr  error
 	requestHandoffNoop            bool
 	failTransitionErr             error
+	faultMutations                []ports.AgentSwitchMutation
+	operationalFaults             []ports.AgentSwitchOperationalFault
+	daemonFaults                  []ports.AgentSwitchDaemonFault
 	getSwitchErrOnceWhenRequested error
 	getSwitchErrOnce              error
 	getNativeErr                  error
@@ -260,6 +263,36 @@ func (s *switchTestStore) FailAgentSwitchIfUnacknowledged(_ context.Context, rec
 	}
 	s.switches[rec.ID] = rec
 	return true, nil
+}
+
+func (s *switchTestStore) ApplyAgentSwitchMutation(ctx context.Context, mutation ports.AgentSwitchMutation) (ports.AgentSwitchMutationResult, error) {
+	s.mu.Lock()
+	s.faultMutations = append(s.faultMutations, mutation)
+	s.mu.Unlock()
+	changed, err := s.UpdateAgentSwitch(ctx, mutation.Record, mutation.ExpectedState, mutation.ExpectedSourceGenerationID, mutation.ExpectedTargetGenerationID)
+	return ports.AgentSwitchMutationResult{CoreChanged: changed, Enrollment: domain.AgentSwitchEnrollmentEnrolled}, err
+}
+
+func (s *switchTestStore) FailAgentSwitchIfUnacknowledgedWithFault(ctx context.Context, mutation ports.AgentSwitchMutation) (ports.AgentSwitchMutationResult, error) {
+	s.mu.Lock()
+	s.faultMutations = append(s.faultMutations, mutation)
+	s.mu.Unlock()
+	changed, err := s.FailAgentSwitchIfUnacknowledged(ctx, mutation.Record)
+	return ports.AgentSwitchMutationResult{CoreChanged: changed, Enrollment: domain.AgentSwitchEnrollmentEnrolled}, err
+}
+
+func (s *switchTestStore) EnqueueAgentSwitchOperationalFault(_ context.Context, input ports.AgentSwitchOperationalFault) (ports.AgentSwitchMutationResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.operationalFaults = append(s.operationalFaults, input)
+	return ports.AgentSwitchMutationResult{CoreChanged: true, Enrollment: domain.AgentSwitchEnrollmentEnrolled}, nil
+}
+
+func (s *switchTestStore) EnqueueAgentSwitchDaemonFault(_ context.Context, input ports.AgentSwitchDaemonFault) (ports.AgentSwitchMutationResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.daemonFaults = append(s.daemonFaults, input)
+	return ports.AgentSwitchMutationResult{CoreChanged: true, Enrollment: domain.AgentSwitchEnrollmentEnrolled}, nil
 }
 
 func (s *switchTestStore) RecordAgentHandoff(_ context.Context, id domain.AgentSwitchID, source domain.AgentGenerationID, status domain.AgentHandoffStatus, path, hash string, at time.Time) (bool, error) {
