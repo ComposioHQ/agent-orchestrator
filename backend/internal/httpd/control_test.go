@@ -1,11 +1,15 @@
 package httpd
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
 // TestShutdownGuard verifies that POST /shutdown only fires for a trusted local
@@ -49,4 +53,52 @@ func TestShutdownGuard(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestAgentSwitchPolicyControlRoutesAreTypedAndLoopbackOnly(t *testing.T) {
+	policy := &policyControlFake{authorization: domain.AgentSwitchReportingAuthorization{ConsentGeneration: "generation-off"}}
+	r := NewRouterWithControl(config.Config{}, discardLogger(), nil, APIDeps{}, ControlDeps{AgentSwitchPolicy: policy})
+	prepare := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/internal/agent-switch-observability/prepare-disable", nil)
+	prepare.Host = "127.0.0.1"
+	prepared := httptest.NewRecorder()
+	r.ServeHTTP(prepared, prepare)
+	if prepared.Code != http.StatusOK || policy.prepared != 1 {
+		t.Fatalf("prepare status=%d calls=%d", prepared.Code, policy.prepared)
+	}
+	body, _ := json.Marshal(map[string]any{"consentGeneration": "generation-off", "eventsEnabled": false})
+	apply := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/internal/agent-switch-observability/apply-policy", bytes.NewReader(body))
+	apply.Host = "127.0.0.1"
+	applied := httptest.NewRecorder()
+	r.ServeHTTP(applied, apply)
+	if applied.Code != http.StatusOK || policy.appliedGeneration != "generation-off" || policy.appliedEnabled {
+		t.Fatalf("apply status=%d fake=%+v", applied.Code, policy)
+	}
+	remote := httptest.NewRequest(http.MethodPost, "http://evil.example/internal/agent-switch-observability/prepare-disable", nil)
+	remote.Host = "evil.example"
+	denied := httptest.NewRecorder()
+	r.ServeHTTP(denied, remote)
+	if denied.Code != http.StatusForbidden {
+		t.Fatalf("remote status=%d", denied.Code)
+	}
+}
+
+type policyControlFake struct {
+	authorization     domain.AgentSwitchReportingAuthorization
+	prepared          int
+	appliedGeneration string
+	appliedEnabled    bool
+}
+
+func (f *policyControlFake) PrepareDisable(context.Context) error {
+	f.prepared++
+	f.authorization.Enabled = false
+	return nil
+}
+func (f *policyControlFake) ApplyPolicy(_ context.Context, generation string, enabled bool) error {
+	f.appliedGeneration = generation
+	f.appliedEnabled = enabled
+	return nil
+}
+func (f *policyControlFake) Authorization() domain.AgentSwitchReportingAuthorization {
+	return f.authorization
 }

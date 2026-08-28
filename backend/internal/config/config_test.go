@@ -51,6 +51,9 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.Telemetry.Remote != TelemetryRemoteOff || cfg.Telemetry.PostHogHost != DefaultTelemetryPostHogHost {
 		t.Fatalf("Telemetry defaults = %+v", cfg.Telemetry)
 	}
+	if cfg.Telemetry.EventsExplicit {
+		t.Fatal("Telemetry.EventsExplicit = true for an absent setting")
+	}
 }
 
 func TestLoadAbsolutizesRelativeOverrides(t *testing.T) {
@@ -119,6 +122,9 @@ func TestLoadOverrides(t *testing.T) {
 	}
 	if !cfg.Telemetry.Events || cfg.Telemetry.Metrics {
 		t.Fatalf("Telemetry toggles = %+v", cfg.Telemetry)
+	}
+	if !cfg.Telemetry.EventsExplicit {
+		t.Fatal("Telemetry.EventsExplicit = false for AO_TELEMETRY_EVENTS=on")
 	}
 	if cfg.Telemetry.Remote != TelemetryRemotePostHog || cfg.Telemetry.PostHogKey != "phc_test" || cfg.Telemetry.PostHogHost != "https://eu.i.posthog.com" {
 		t.Fatalf("Telemetry remote = %+v", cfg.Telemetry)

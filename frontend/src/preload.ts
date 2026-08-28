@@ -22,6 +22,11 @@ import type {
 	OpenSessionTargetResult,
 } from "./shared/editor-handoff";
 import type { TelemetryBootstrap } from "./shared/telemetry";
+import {
+	TELEMETRY_POLICY_CHANGED_CHANNEL,
+	type RendererTelemetryCaptureInput,
+	type TelemetryPolicyView,
+} from "./shared/telemetry-policy";
 import type { MigrationState } from "./main/app-state";
 import type { UpdateSettings, UpdateStatus } from "./main/update-settings";
 import type { CloudAccount } from "./shared/cloud-account";
@@ -103,6 +108,13 @@ ipcRenderer.on("app:openFolderPath", (_event, path: string) => {
 	} else {
 		bufferedOpenFolderPath = path;
 	}
+});
+
+let currentTelemetryPolicy: TelemetryPolicyView | null = null;
+const telemetryPolicyListeners = new Set<(view: TelemetryPolicyView) => void>();
+ipcRenderer.on(TELEMETRY_POLICY_CHANGED_CHANNEL, (_event, view: TelemetryPolicyView) => {
+	currentTelemetryPolicy = view;
+	for (const listener of telemetryPolicyListeners) listener(view);
 });
 
 const api = {
@@ -274,7 +286,21 @@ const api = {
 			ipcRenderer.invoke("editorHandoff:open", input) as Promise<OpenSessionTargetResult>,
 	},
 	telemetry: {
-		getBootstrap: () => ipcRenderer.invoke("telemetry:getBootstrap") as Promise<TelemetryBootstrap | null>,
+		getBootstrap: async () => {
+			const bootstrap = await ipcRenderer.invoke("telemetry:getBootstrap") as TelemetryBootstrap | null;
+			if (bootstrap && currentTelemetryPolicy) currentTelemetryPolicy = { ...currentTelemetryPolicy, eventsEnabled: bootstrap.eventsEnabled, consentGeneration: bootstrap.consentGeneration };
+			return bootstrap;
+		},
+		getPolicy: async () => {
+			const view = await ipcRenderer.invoke("telemetry:getPolicy") as TelemetryPolicyView;
+			currentTelemetryPolicy = view; return view;
+		},
+		setEventsEnabled: (eventsEnabled: boolean) => ipcRenderer.invoke("telemetry:setEventsEnabled", { eventsEnabled, expectedGeneration: currentTelemetryPolicy?.consentGeneration ?? "" }) as Promise<TelemetryPolicyView>,
+		onPolicy: (listener: (view: TelemetryPolicyView) => void) => { telemetryPolicyListeners.add(listener); if (currentTelemetryPolicy) listener(currentTelemetryPolicy); return () => telemetryPolicyListeners.delete(listener); },
+		capture: (input: RendererTelemetryCaptureInput) => {
+			if (!currentTelemetryPolicy) return Promise.resolve(false);
+			return ipcRenderer.invoke("telemetry:capture", { ...input, consentGeneration: currentTelemetryPolicy.consentGeneration }) as Promise<boolean>;
+		},
 	},
 	browser: {
 		nativeCompositionEnabled: true,

@@ -34,6 +34,7 @@ await import("./preload");
 // is the always-on buffering listener preload.ts registers at module load,
 // not the per-call listener onOpenFolderPath registers when invoked.
 const openFolderPathBufferListener = electronMocks.listeners.get("app:openFolderPath");
+const telemetryPolicyBroadcastListener = electronMocks.listeners.get("telemetry:policyChanged");
 
 function exposedBridge(): AoBridge {
 	const call = electronMocks.exposeInMainWorld.mock.calls.find(([key]) => key === "ao");
@@ -60,6 +61,17 @@ describe("preload getPathForFile bridge", () => {
 		expect(path).toBe("/Users/x/dropped-folder");
 		expect(electronMocks.getPathForFile).toHaveBeenCalledWith(file);
 		expect(electronMocks.invoke).not.toHaveBeenCalled();
+	});
+});
+
+describe("preload telemetry generation bridge", () => {
+	it("tags captures with the latest broadcast generation without a renderer reload", async () => {
+		telemetryPolicyBroadcastListener?.({}, { eventsEnabled: false, consentGeneration: "generation-off", updatedAt: "2026-08-28T10:15:30.000Z", acknowledged: true, state: "applied", environmentVeto: false, durabilitySupported: true });
+		await exposedBridge().telemetry.capture({ kind: "message", message: "first" });
+		telemetryPolicyBroadcastListener?.({}, { eventsEnabled: true, consentGeneration: "generation-on", updatedAt: "2026-08-28T10:15:31.000Z", acknowledged: true, state: "applied", environmentVeto: false, durabilitySupported: true });
+		await exposedBridge().telemetry.capture({ kind: "message", message: "second" });
+		expect(electronMocks.invoke).toHaveBeenNthCalledWith(1, "telemetry:capture", { kind: "message", message: "first", consentGeneration: "generation-off" });
+		expect(electronMocks.invoke).toHaveBeenNthCalledWith(2, "telemetry:capture", { kind: "message", message: "second", consentGeneration: "generation-on" });
 	});
 });
 

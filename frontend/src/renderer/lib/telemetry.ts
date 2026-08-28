@@ -735,6 +735,7 @@ export async function initTelemetry(): Promise<boolean> {
 		// Null means the supervisor withheld it: no key, no data dir, or an
 		// unpackaged build that has not opted in. The client is never created.
 		if (!bootstrap) return false;
+		if (!bootstrap.eventsEnabled) return false;
 		disabledEventMatchers = bootstrap.disabledEvents ?? [];
 		const channel = releaseChannelFrom(await readUpdateSettingsForTelemetry());
 		telemetryContext = buildTelemetryContext(bootstrap.appVersion, bootstrap.platform, channel);
@@ -743,7 +744,8 @@ export async function initTelemetry(): Promise<boolean> {
 			...telemetryContext,
 			surface: "renderer",
 		});
-		// Same consent gate as PostHog. No-op unless VITE_AO_SENTRY_DSN is set.
+		// Typed renderer fault intake shares the same consent gate. Preload adds
+		// the latest main-owned generation; the renderer owns no Sentry SDK/DSN.
 		void initSentry({
 			release: bootstrap.appVersion,
 			channel,

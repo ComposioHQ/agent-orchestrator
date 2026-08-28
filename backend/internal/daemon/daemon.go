@@ -5,12 +5,14 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -30,6 +32,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/controllers"
 	"github.com/aoagents/agent-orchestrator/backend/internal/mobilebridge"
 	"github.com/aoagents/agent-orchestrator/backend/internal/notify"
+	agentswitchobs "github.com/aoagents/agent-orchestrator/backend/internal/observe/agentswitch"
 	"github.com/aoagents/agent-orchestrator/backend/internal/observe/sentryobs"
 	usagepipeline "github.com/aoagents/agent-orchestrator/backend/internal/observe/usage"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -69,6 +72,33 @@ func sentryEnvironment(version string) string {
 	default:
 		return "stable"
 	}
+}
+
+func agentSwitchEventMetadata(cfg config.Config) domain.AgentSwitchEventMetadata {
+	environment := domain.AgentSwitchEnvironmentStable
+	channel := domain.AgentSwitchChannelStable
+	version := strings.ToLower(strings.TrimSpace(cfg.Telemetry.AppVersion))
+	switch {
+	case strings.Contains(version, "nightly"):
+		environment, channel = domain.AgentSwitchEnvironmentNightly, domain.AgentSwitchChannelNightly
+	case strings.Contains(version, "edge"), strings.Contains(version, "-pr"):
+		environment, channel = domain.AgentSwitchEnvironmentDevelopment, domain.AgentSwitchChannelPreview
+	}
+	osName := domain.AgentSwitchOS(runtime.GOOS)
+	return domain.AgentSwitchEventMetadata{
+		Release: cfg.Telemetry.AppVersion, Environment: environment, Channel: channel,
+		Platform: domain.AgentSwitchPlatformDaemon, OS: osName,
+		ElapsedTimeBucket: domain.AgentSwitchElapsedNotApplicable,
+	}
+}
+
+func agentSwitchFailureStreamDisabled(disabled []string) bool {
+	for _, name := range disabled {
+		if name == "ao.agent_switch.failure" || name == "ao.agent_switch.*" || name == "*" {
+			return true
+		}
+	}
+	return false
 }
 
 // Run starts the daemon and blocks until it exits. SIGINT/SIGTERM drive
@@ -126,6 +156,26 @@ func Run() error {
 	}
 	defer func() { _ = store.Close() }()
 
+	// Consent and event metadata are established before any reporting surface or
+	// recovery enrollment exists. SQLite is forced off first on every boot so a
+	// stale enabled mirror can never authorize work after a restart.
+	destination, _ := sentryobs.ParseAgentSwitchDSN(cfg.Telemetry.SentryDSN, true)
+	policyCoordinator := agentswitchobs.NewPolicyCoordinator(store, agentswitchobs.PolicyOptions{
+		DataDir:                 cfg.DataDir,
+		TelemetryEvents:         cfg.Telemetry.Events,
+		TelemetryEventsExplicit: cfg.Telemetry.EventsExplicit,
+		DestinationFingerprint:  destination.Fingerprint,
+		StreamKillSwitched:      agentSwitchFailureStreamDisabled(cfg.Telemetry.DisabledEvents),
+		Metadata:                agentSwitchEventMetadata(cfg),
+		OnEventsChanged:         sentryobs.SetPolicyEnabled,
+	})
+	if err := policyCoordinator.ForceDisabled(context.Background()); err != nil {
+		return fmt.Errorf("force agent switch reporting disabled: %w", err)
+	}
+	if err := policyCoordinator.Synchronize(context.Background()); err != nil && !errors.Is(err, agentswitchobs.ErrPolicyUnavailable) {
+		return fmt.Errorf("synchronize agent switch reporting policy: %w", err)
+	}
+
 	// Refresh the embedded using-ao skill into the data dir so worker sessions
 	// in any project can read the ao CLI catalog from a stable absolute path.
 	// Non-fatal: the skill is an enhancement over `ao --help`, not required.
@@ -133,14 +183,16 @@ func Run() error {
 		log.Warn("install using-ao skill", "err", err)
 	}
 
-	telemetrySink := newTelemetrySink(cfg, store, log)
+	telemetryCfg := cfg
+	telemetryCfg.Telemetry.Events = policyCoordinator.EventsEnabled()
+	telemetrySink := newTelemetrySink(telemetryCfg, store, log)
 	defer func() { _ = telemetrySink.Close(context.Background()) }()
 	// Daemon Sentry: captures genuine 5xx/panics with their Go stack. Gated on
 	// the same consent switch as the remote telemetry sink (cfg.Telemetry.Events)
 	// so a user who has turned telemetry off never has faults reported, and a
 	// no-op besides unless a DSN is set. Flushed on shutdown so buffered faults
 	// send.
-	if cfg.Telemetry.Events {
+	if policyCoordinator.EventsEnabled() {
 		if err := sentryobs.Init(sentryobs.Config{
 			DSN:         cfg.Telemetry.SentryDSN,
 			Release:     cfg.Telemetry.AppVersion,
@@ -165,6 +217,8 @@ func Run() error {
 	// graceful shutdown inside Server.Run and stops the background goroutines.
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	policyCoordinator.StartWatcher(ctx)
+	defer func() { _ = policyCoordinator.CloseAndDrain(context.Background()) }()
 
 	cdcPipe, err := startCDC(ctx, store, log)
 	if err != nil {
@@ -500,6 +554,7 @@ func Run() error {
 		Browser:             browserService,
 		PreviewServer:       managedPreview,
 		SessionCapabilities: browserAuthority,
+		AgentSwitchPolicy:   policyCoordinator,
 	})
 	if err != nil {
 		stop()

@@ -61,11 +61,15 @@ const (
 
 // TelemetryConfig controls local and remote telemetry behavior.
 type TelemetryConfig struct {
-	Events      bool
-	Metrics     bool
-	Remote      TelemetryRemote
-	PostHogKey  string
-	PostHogHost string
+	Events bool
+	// EventsExplicit distinguishes an operator/supervisor choice from the
+	// default. A missing policy file may use a boot-scoped headless token only
+	// when AO_TELEMETRY_EVENTS was explicitly set to on.
+	EventsExplicit bool
+	Metrics        bool
+	Remote         TelemetryRemote
+	PostHogKey     string
+	PostHogHost    string
 	// DisabledEvents names event streams that must never reach the remote
 	// (billed) sink. This is the kill switch: a stream that turns out to be
 	// noisy or expensive can be silenced by configuration, without waiting for
@@ -277,12 +281,13 @@ func Load() (Config, error) {
 		cfg.AllowedOrigins = origins
 	}
 
-	if raw := os.Getenv("AO_TELEMETRY_EVENTS"); raw != "" {
+	if raw, present := os.LookupEnv("AO_TELEMETRY_EVENTS"); present && strings.TrimSpace(raw) != "" {
 		v, err := parseToggleEnv("AO_TELEMETRY_EVENTS", raw)
 		if err != nil {
 			return Config{}, err
 		}
 		cfg.Telemetry.Events = v
+		cfg.Telemetry.EventsExplicit = true
 	}
 	if raw := os.Getenv("AO_TELEMETRY_METRICS"); raw != "" {
 		v, err := parseToggleEnv("AO_TELEMETRY_METRICS", raw)

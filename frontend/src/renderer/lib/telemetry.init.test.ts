@@ -34,7 +34,7 @@ describe("initTelemetry recovery", () => {
 					getBootstrap: vi.fn(async () => {
 						calls++;
 						if (calls === 1) throw new Error("transient bootstrap failure");
-						return { appVersion: "1.2.3", platform: "darwin", distinctId: "ins_test", disabledEvents: [] };
+						return { appVersion: "1.2.3", platform: "darwin", distinctId: "ins_test", disabledEvents: [], eventsEnabled: true, consentGeneration: "generation-1" };
 					}),
 				},
 				updateSettings: { get: vi.fn(async () => ({})) },

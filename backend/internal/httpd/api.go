@@ -51,6 +51,7 @@ type APIDeps struct {
 	SessionCapabilities controllers.SessionCapabilityValidator
 	SystemChecks        controllers.SystemChecker
 	Installer           controllers.Installer
+	AgentSwitchPolicy   AgentSwitchPolicyControl
 
 	// Presence tracks which mobile devices are currently running the app.
 	// Nil disables presence tracking (the roster then reports every device offline).

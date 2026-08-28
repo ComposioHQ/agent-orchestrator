@@ -17,6 +17,7 @@ import { startUpdateTelemetry } from "./lib/update-telemetry";
 import { appI18n } from "./i18n";
 import { useLocaleStore } from "./stores/locale-store";
 import { useSoundNotificationsStore } from "./stores/sound-notifications-store";
+import { useTelemetryPolicyStore } from "./stores/telemetry-policy-store";
 
 const router = createAppRouter(queryClient);
 
@@ -72,6 +73,7 @@ declare module "@tanstack/react-router" {
 }
 
 async function renderApp(): Promise<void> {
+	void useTelemetryPolicyStore.getState().load();
 	// The persisted locale is cosmetic; do not leave a newly opened native
 	// window blank while its IPC read completes. The router's pending screen
 	// renders immediately, then i18n updates if the user chose another locale.

@@ -23,6 +23,7 @@ import (
 )
 
 var enabled atomic.Bool
+var policyEnabled atomic.Bool
 
 var (
 	homePath = regexp.MustCompile(`/(?:Users|home)/[^\s"']+`)
@@ -77,6 +78,11 @@ func Init(cfg Config) error {
 // Enabled reports whether Sentry is active (a DSN was configured).
 func Enabled() bool { return enabled.Load() }
 
+// SetPolicyEnabled mirrors the crash-durable telemetry authority. Capture
+// paths consult it synchronously so a watcher-observed opt-out closes intake
+// even when the SDK itself was initialized earlier in the process.
+func SetPolicyEnabled(value bool) { policyEnabled.Store(value) }
+
 func scrubEvent(event *sentry.Event) *sentry.Event {
 	event.Message = scrub(event.Message)
 	event.ServerName = "" // never leak the machine hostname
@@ -103,7 +109,7 @@ func ShouldCaptureStatus(status int) bool {
 // fingerprint identical to the PostHog grouping key. No-op when disabled or the
 // error is nil.
 func CaptureHTTPError(_ context.Context, err error, tags map[string]string, fingerprint string) {
-	if !enabled.Load() || err == nil {
+	if !enabled.Load() || !policyEnabled.Load() || err == nil {
 		return
 	}
 	sentry.WithScope(func(scope *sentry.Scope) {
@@ -119,7 +125,7 @@ func CaptureHTTPError(_ context.Context, err error, tags map[string]string, fing
 // CapturePanic captures a recovered panic with its Go stack (as scrubbed extra)
 // at fatal level. No-op when disabled.
 func CapturePanic(_ context.Context, recovered any, stack string, tags map[string]string, fingerprint string) {
-	if !enabled.Load() {
+	if !enabled.Load() || !policyEnabled.Load() {
 		return
 	}
 	sentry.WithScope(func(scope *sentry.Scope) {

@@ -3,6 +3,7 @@
 package httpd
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/daemonmeta"
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/controllers"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -25,7 +27,14 @@ import (
 // ControlDeps carries the daemon-control hooks the router exposes, such as the
 // callback that requests a graceful shutdown.
 type ControlDeps struct {
-	RequestShutdown func()
+	RequestShutdown   func()
+	AgentSwitchPolicy AgentSwitchPolicyControl
+}
+
+type AgentSwitchPolicyControl interface {
+	PrepareDisable(context.Context) error
+	ApplyPolicy(context.Context, string, bool) error
+	Authorization() domain.AgentSwitchReportingAuthorization
 }
 
 // NewRouterWithControl builds the root router with the standard middleware
@@ -63,12 +72,59 @@ func NewRouterWithControl(cfg config.Config, log *slog.Logger, termMgr *terminal
 	mountHealth(r, cfg)
 	mountTerminalMux(r, termMgr, log)
 	mountControl(r, control)
+	mountAgentSwitchPolicyControl(r, control.AgentSwitchPolicy)
 	mountTelemetry(r, cfg, deps.Telemetry)
 	mountMobile(r, deps.Mobile)
 	mountMobileDevices(r, &controllers.MobileDevicesController{Registry: deps.DeviceRoster, Presence: deps.DeviceLive})
 	api.Register(r)
 
 	return r
+}
+
+type applyAgentSwitchPolicyRequest struct {
+	ConsentGeneration string `json:"consentGeneration"`
+	EventsEnabled     bool   `json:"eventsEnabled"`
+}
+
+func mountAgentSwitchPolicyControl(r chi.Router, policy AgentSwitchPolicyControl) {
+	if policy == nil {
+		return
+	}
+	writeAck := func(w http.ResponseWriter, authorization domain.AgentSwitchReportingAuthorization) {
+		envelope.WriteJSON(w, http.StatusOK, map[string]any{
+			"status": "applied", "consentGeneration": authorization.ConsentGeneration,
+			"eventsEnabled": authorization.Enabled, "purgeConfirmed": !authorization.Enabled,
+		})
+	}
+	r.Post("/internal/agent-switch-observability/prepare-disable", func(w http.ResponseWriter, req *http.Request) {
+		if !localControlRequest(req) {
+			envelope.WriteJSON(w, http.StatusForbidden, map[string]any{"status": "forbidden"})
+			return
+		}
+		if err := policy.PrepareDisable(req.Context()); err != nil {
+			envelope.WriteJSON(w, http.StatusInternalServerError, map[string]any{"status": "failed"})
+			return
+		}
+		writeAck(w, policy.Authorization())
+	})
+	r.Post("/internal/agent-switch-observability/apply-policy", func(w http.ResponseWriter, req *http.Request) {
+		if !localControlRequest(req) {
+			envelope.WriteJSON(w, http.StatusForbidden, map[string]any{"status": "forbidden"})
+			return
+		}
+		decoder := json.NewDecoder(http.MaxBytesReader(w, req.Body, 4096))
+		decoder.DisallowUnknownFields()
+		var body applyAgentSwitchPolicyRequest
+		if err := decoder.Decode(&body); err != nil || body.ConsentGeneration == "" {
+			envelope.WriteJSON(w, http.StatusBadRequest, map[string]any{"status": "invalid_request"})
+			return
+		}
+		if err := policy.ApplyPolicy(req.Context(), body.ConsentGeneration, body.EventsEnabled); err != nil {
+			envelope.WriteJSON(w, http.StatusConflict, map[string]any{"status": "authority_mismatch"})
+			return
+		}
+		writeAck(w, policy.Authorization())
+	})
 }
 
 func previewOriginMiddleware(sessions *controllers.SessionsController) func(http.Handler) http.Handler {

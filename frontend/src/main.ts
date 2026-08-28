@@ -28,7 +28,10 @@ import {
 	type UpdateCheckOptions,
 } from "./main/auto-updater";
 import { listFeatureBuilds, getActiveFeatureBuild } from "./main/feature-builds";
-import { initMainSentry } from "./main/sentry-main";
+import { initMainSentry, rendererCaptureAllowed } from "./main/sentry-main";
+import { TelemetryPolicyAuthority, resolveDesktopDataDir } from "./main/telemetry-policy-file";
+import { DaemonTelemetryPolicyClient } from "./main/daemon-telemetry-policy-client";
+import { DesktopTelemetryController } from "./main/desktop-telemetry-controller";
 import { readUpdateSettings, type UpdateSettings, type UpdateStatus } from "./main/update-settings";
 import { readKeybindingOverrides, writeKeybindingOverrides } from "./main/keybinding-settings";
 import { readEditorSettings, writeEditorPreference } from "./main/editor-settings";
@@ -92,7 +95,8 @@ import {
 import { installCloudCpProxy } from "./main/cloud-cp-proxy";
 import { DEFAULT_POSTHOG_HOST, DEFAULT_POSTHOG_PROJECT_KEY } from "./shared/posthog-config";
 import { DEFAULT_SENTRY_DSN } from "./shared/sentry-config";
-import { buildTelemetryBootstrap } from "./shared/telemetry";
+import { buildTelemetryBootstrap, rendererTelemetryEnabled } from "./shared/telemetry";
+import { TELEMETRY_POLICY_CHANGED_CHANNEL, type RendererTelemetryCapture, type TelemetryPolicyView } from "./shared/telemetry-policy";
 import { createBrowserViewHost, type BrowserViewHost } from "./main/browser-view-host";
 import { createWindowComposition, type WindowComposition } from "./main/window-composition";
 import { AgentBrowserRuntime } from "./main/agent-browser-runtime";
@@ -161,11 +165,11 @@ app.setPath(
 	app.isPackaged ? path.join(os.homedir(), ".ao", "electron") : path.join(os.homedir(), ".ao", "dev", "electron"),
 );
 
-// Init main-process Sentry as early as possible so startup crashes are caught,
-// and after userData is pinned so its cache resolves under ~/.ao/electron. The
-// renderer SDK forwards over IPC to this main process, so this is required for
-// any desktop event to upload. No-op unless AO_SENTRY_DSN is set.
-void initMainSentry(app.getVersion());
+// Resolve once against the launch cwd, before the daemon can chdir. The exact
+// absolute value is shared by policy bootstrap and every daemon spawn.
+const desktopLaunchWorkingDirectory = process.cwd();
+const desktopDataDir = resolveDesktopDataDir(process.env, os.homedir(), desktopLaunchWorkingDirectory, app.isPackaged);
+let telemetryPolicyController: DesktopTelemetryController | null = null;
 
 let mainWindow: BaseWindow | null = null;
 let trayController: TrayController | null = null;
@@ -824,6 +828,7 @@ function daemonEnv(forceKeep = keepDaemonAlive(process.env)): NodeJS.ProcessEnv 
 	const bundledTmuxBinary = stagedBundledTmuxBinary;
 	const ownerTag = {
 		AO_OWNER,
+		AO_DATA_DIR: desktopDataDir,
 		AO_APP_RUN_ID: appRunId,
 		// The browser runtime token is handed over through the child's private
 		// stdin pipe below. Never put it in the daemon environment, where a
@@ -1768,9 +1773,23 @@ ipcMain.handle("menu:action", (_event, action: string) => {
 			return;
 	}
 });
-ipcMain.handle("telemetry:getBootstrap", () =>
-	buildTelemetryBootstrap(process.env, app.getVersion(), process.platform, os.homedir(), app.isPackaged),
-);
+ipcMain.handle("telemetry:getBootstrap", () => {
+	if (!telemetryPolicyController) return null;
+	return buildTelemetryBootstrap({ ...process.env, AO_DATA_DIR: desktopDataDir }, app.getVersion(), process.platform, os.homedir(), app.isPackaged, telemetryPolicyController.snapshot());
+});
+ipcMain.handle("telemetry:getPolicy", () => telemetryPolicyController?.snapshot() ?? failClosedTelemetryPolicyView());
+ipcMain.handle("telemetry:setEventsEnabled", (_event, input: { eventsEnabled?: unknown; expectedGeneration?: unknown }) => {
+	if (!telemetryPolicyController || typeof input?.eventsEnabled !== "boolean" || typeof input.expectedGeneration !== "string") throw new Error("invalid telemetry policy request");
+	return telemetryPolicyController.setEventsEnabled(input.eventsEnabled, input.expectedGeneration);
+});
+ipcMain.handle("telemetry:capture", (_event, request: RendererTelemetryCapture) => {
+	if (!telemetryPolicyController || !rendererCaptureAllowed(request)) return false;
+	return telemetryPolicyController.capture(request);
+});
+
+function failClosedTelemetryPolicyView(): TelemetryPolicyView {
+	return { eventsEnabled: false, consentGeneration: "unavailable", updatedAt: new Date(0).toISOString(), acknowledged: false, state: "cleanup_failed", environmentVeto: true, durabilitySupported: false, reason: "invalid_authority" };
+}
 async function chooseDirectory(title: string): Promise<string | null> {
 	const options: OpenDialogOptions = {
 		properties: ["openDirectory"],
@@ -2162,6 +2181,18 @@ async function writeAppStateOnLaunch(): Promise<void> {
 }
 
 app.whenReady().then(async () => {
+	const authority = new TelemetryPolicyAuthority({ dataDir: desktopDataDir, packagedDefault: app.isPackaged, platform: process.platform });
+	const daemonPolicy = new DaemonTelemetryPolicyClient(() => daemonStatus.state === "ready" && daemonStatus.port ? `http://127.0.0.1:${daemonStatus.port}` : null, (url, init) => net.fetch(url, init));
+	telemetryPolicyController = new DesktopTelemetryController({
+		authority,
+		daemon: daemonPolicy,
+		environmentAllowsEvents: rendererTelemetryEnabled(process.env, app.isPackaged),
+		transportFactory: () => initMainSentry(app.getVersion(), app.getPath("userData")),
+		broadcast: (view) => getShellWebContents()?.send(TELEMETRY_POLICY_CHANGED_CHANNEL, view),
+	});
+	try { await telemetryPolicyController.initialize(); }
+	catch (error) { console.error("telemetry policy bootstrap failed; reporting remains disabled:", error); }
+	setInterval(() => { if (telemetryPolicyController?.snapshot().state !== "applied") void telemetryPolicyController.retryPendingCleanup(); }, 1_000).unref();
 	// Capture install provenance BEFORE relocation. moveToApplicationsFolder()
 	// relaunches from /Applications WITHOUT forwarding our --installed-via arg, and
 	// code past a successful move never runs in this instance, so a post-move-only
