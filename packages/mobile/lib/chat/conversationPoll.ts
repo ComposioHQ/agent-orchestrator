@@ -15,6 +15,9 @@ import type { ServerConfig } from "../config";
  *
  * A stopgap for the same reason as the main poll: it costs battery and data,
  * and applies only while the tunnel is in use.
+ *
+ * See docs/adr/0004-cloudflare-tunnel-for-remote-mobile-access.md: carrying
+ * conversation events over the mux WebSocket removes it.
  */
 export const CONVERSATION_POLL_MS = 2_000;
 

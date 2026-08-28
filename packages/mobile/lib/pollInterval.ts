@@ -12,6 +12,9 @@ import type { ServerConfig } from "./config";
  * that took the agent two seconds sat unseen for over a minute, while the same
  * conversation was instant over the LAN. Until that path carries a stream —
  * a named tunnel, or a relay — polling faster is what keeps it usable.
+ *
+ * See docs/adr/0004-cloudflare-tunnel-for-remote-mobile-access.md — this is a
+ * stopgap; carrying conversation events over the mux WebSocket removes it.
  */
 
 /** Direct paths stream fine, so the poll stays cheap on battery and data. */
