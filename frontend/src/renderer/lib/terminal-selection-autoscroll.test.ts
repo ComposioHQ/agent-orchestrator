@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
 	edgeScrollLines,
+	isTerminalSelectionChrome,
 	screenSnapshotExtension,
 	SELECTION_SCROLL_INTERVAL_MS,
 	TerminalSelectionAutoscroll,
@@ -34,6 +35,39 @@ describe("terminal selection edge calculations", () => {
 			"muse-spark · high · ~/.ao/dev/data/worktrees/scratch-12",
 		] };
 		expect(screenSnapshotExtension(previous, { rows: ["one", "two", "three"] }, -1)).toEqual(["one"]);
+	});
+
+	it("preserves dividers, dim output, and prose that starts like a status", () => {
+		expect(screenSnapshotExtension(
+			{ rows: ["alpha"] },
+			{ rows: ["alpha", "---", "Working directory is dirty", "Loading state failed", "Generating report ok"] },
+			1,
+		)).toEqual(["---", "Working directory is dirty", "Loading state failed", "Generating report ok"]);
+		expect(screenSnapshotExtension(
+			{ rows: ["alpha"] },
+			{ rows: ["alpha", { text: "  at foo (bar.ts:12)" }] },
+			1,
+		)).toEqual(["  at foo (bar.ts:12)"]);
+	});
+
+	it("only treats styled terminal chrome as transient", () => {
+		expect(isTerminalSelectionChrome("Working directory is dirty", false)).toBe(false);
+		expect(isTerminalSelectionChrome("  at foo (bar.ts:12)", true)).toBe(false);
+		expect(isTerminalSelectionChrome("Thinking...", true)).toBe(true);
+		expect(isTerminalSelectionChrome("muse-spark · high · ~/.ao/session", false)).toBe(true);
+	});
+
+	it("does not mistake an in-place repaint for scroll movement", () => {
+		expect(screenSnapshotExtension(
+			{ rows: ["one", "partial"] },
+			{ rows: ["one", "partial text"] },
+			1,
+		)).toEqual([]);
+	});
+
+	it("keeps a newly revealed blank edge row", () => {
+		expect(screenSnapshotExtension({ rows: ["one", "two"] }, { rows: ["two", ""] }, 1)).toEqual([""]);
+		expect(screenSnapshotExtension({ rows: ["two", "three"] }, { rows: ["", "two"] }, -1)).toEqual([""]);
 	});
 });
 
@@ -97,6 +131,49 @@ describe("TerminalSelectionAutoscroll", () => {
 		machine.screenRendered();
 		machine.pointerUp();
 		expect(machine.getText()).toBe("one\ntwo\nthree");
+	});
+
+	it("accepts a full-page replacement only after a scroll tick", () => {
+		let tick: (() => void) | undefined;
+		const snapshot: TerminalScreenSnapshot = { rows: ["one", "two"] };
+		const machine = createMachine({
+			snapshot,
+			setInterval: (callback) => {
+				tick = callback;
+				return 1 as unknown as ReturnType<typeof setInterval>;
+			},
+			clearInterval: vi.fn(),
+		});
+		machine.pointerDown(true);
+		machine.pointerMove({ row: 1, col: 3 }, 550, 100, 400);
+		tick?.();
+		snapshot.rows = ["three", "four"];
+		machine.screenRendered();
+		machine.pointerUp();
+		expect(machine.getText()).toBe("one\ntwo\nthree\nfour");
+	});
+
+	it("ignores a repaint when page pacing did not emit a scroll", () => {
+		let tick: (() => void) | undefined;
+		const snapshot: TerminalScreenSnapshot = { rows: ["one", "partial"] };
+		const machine = createMachine({
+			native: "one\npartial",
+			range: { anchor: { row: 0, col: 0 }, focus: { row: 1, col: 7 } },
+			snapshot,
+			scroll: () => false,
+			setInterval: (callback) => {
+				tick = callback;
+				return 1 as unknown as ReturnType<typeof setInterval>;
+			},
+			clearInterval: vi.fn(),
+		});
+		machine.pointerDown(true);
+		machine.pointerMove({ row: 1, col: 7 }, 550, 100, 400);
+		tick?.();
+		snapshot.rows = ["one", "partial text"];
+		machine.screenRendered();
+		machine.pointerUp();
+		expect(machine.getText()).toBe("one\npartial");
 	});
 
 	it("retains the extended selection on mouseup for explicit copy", () => {
@@ -200,6 +277,21 @@ describe("TerminalSelectionAutoscroll", () => {
 		expect(machine.getText()).toBe("界");
 	});
 
+	it("highlights the full cell width of a line-ending wide character", () => {
+		const render = vi.fn();
+		const machine = createMachine({
+			native: "界",
+			range: { anchor: { row: 0, col: 0 }, focus: { row: 0, col: 2 } },
+			render,
+			snapshot: { rows: [{ text: "界", cellOffsets: [0, 1, 1], endCol: 2 }] },
+			setInterval: () => 1 as unknown as ReturnType<typeof setInterval>,
+			clearInterval: vi.fn(),
+		});
+		machine.pointerDown(true);
+		machine.pointerMove({ row: 0, col: 2 }, 550, 100, 400);
+		expect(render).toHaveBeenLastCalledWith({ highlights: [{ row: 0, startCol: 0, endCol: 2 }] });
+	});
+
 	it("shrinks the extended end when the pointer returns inside", () => {
 		const snapshot: TerminalScreenSnapshot = { rows: ["one"] };
 		const machine = createMachine({
@@ -259,6 +351,49 @@ describe("TerminalSelectionAutoscroll", () => {
 		expect(machine.getText()).toBe("zero");
 	});
 
+	it("re-enters after reversing and can extend down again without corrupting text", () => {
+		const snapshot: TerminalScreenSnapshot = { rows: ["one", "two", "three"] };
+		const machine = createMachine({
+			native: "one\ntwo\nthree",
+			range: { anchor: { row: 0, col: 0 }, focus: { row: 2, col: 5 } },
+			snapshot,
+			setInterval: () => 1 as unknown as ReturnType<typeof setInterval>,
+			clearInterval: vi.fn(),
+		});
+		machine.pointerDown(true);
+		machine.pointerMove({ row: 2, col: 5 }, 550, 100, 400);
+		snapshot.rows = ["two", "three", "four"];
+		machine.screenRendered();
+		machine.pointerMove({ row: 0, col: 0 }, 50, 100, 400);
+		machine.pointerMove({ row: 1, col: 5 }, 300, 100, 400);
+		machine.pointerMove({ row: 2, col: 4 }, 550, 100, 400);
+		snapshot.rows = ["three", "four", "five"];
+		machine.screenRendered();
+		machine.pointerUp();
+		expect(machine.getText()).toBe("one\ntwo\nthree\nfour\nfive");
+	});
+
+	it("remaps a completed highlight when the terminal repaints", () => {
+		const snapshot: TerminalScreenSnapshot = { rows: ["one", "two"] };
+		const render = vi.fn();
+		const machine = createMachine({
+			snapshot,
+			render,
+			setInterval: () => 1 as unknown as ReturnType<typeof setInterval>,
+			clearInterval: vi.fn(),
+		});
+		machine.pointerDown(true);
+		machine.pointerMove({ row: 1, col: 3 }, 550, 100, 400);
+		snapshot.rows = ["two", "three"];
+		machine.screenRendered();
+		machine.pointerUp();
+		render.mockClear();
+		snapshot.rows = ["three", "four"];
+		machine.screenRendered();
+		expect(render).toHaveBeenCalledWith({ highlights: [{ row: 0, startCol: 0, endCol: 5 }] });
+		expect(machine.getText()).toBe("one\ntwo\nthree");
+	});
+
 	it("shrinks the old side while reversing toward an offscreen anchor", () => {
 		const snapshot: TerminalScreenSnapshot = { rows: ["one", "two", "three"] };
 		const machine = createMachine({
@@ -298,16 +433,23 @@ describe("TerminalSelectionAutoscroll", () => {
 		expect(render).toHaveBeenLastCalledWith(null);
 	});
 
-	it("does not activate for ineligible panes or transient-only selections", () => {
+	it("does not activate for ineligible panes and preserves native status-like text", () => {
 		const scroll = vi.fn();
 		const ineligible = createMachine({ scroll });
 		ineligible.pointerDown(false);
 		expect(ineligible.pointerMove({ row: 0, col: 0 }, 50, 100, 400)).toBe(false);
 
-		const transient = createMachine({ native: "Thinking…\nscratch footer", scroll });
+		const transient = createMachine({
+			native: "Thinking…\nscratch footer",
+			scroll,
+			setInterval: () => 1 as unknown as ReturnType<typeof setInterval>,
+			clearInterval: vi.fn(),
+		});
 		transient.pointerDown(true);
-		expect(transient.pointerMove({ row: 0, col: 0 }, 50, 100, 400)).toBe(false);
+		expect(transient.pointerMove({ row: 0, col: 0 }, 50, 100, 400)).toBe(true);
+		expect(transient.getText()).toBe("Thinking…\nscratch footer");
 		expect(scroll).not.toHaveBeenCalled();
+		transient.pointerUp();
 	});
 
 	it("changes direction and speed while the pointer stays outside", () => {

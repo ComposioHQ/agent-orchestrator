@@ -2,7 +2,13 @@ export type TerminalSelectionPoint = { row: number; col: number };
 export type TerminalSelectionRange = { anchor: TerminalSelectionPoint; focus: TerminalSelectionPoint };
 export type NativeTerminalSelection = { text: string; range: TerminalSelectionRange };
 export type TerminalSelectionHighlight = { row: number; startCol: number; endCol: number };
-export type TerminalScreenRow = { text: string; cellOffsets?: number[]; selectable?: boolean; wrapped?: boolean };
+export type TerminalScreenRow = {
+	text: string;
+	cellOffsets?: number[];
+	endCol?: number;
+	selectable?: boolean;
+	wrapped?: boolean;
+};
 export type TerminalScreenSnapshot = { rows: Array<string | TerminalScreenRow> };
 export type TerminalLiveSelectionRender = { highlights: TerminalSelectionHighlight[] };
 
@@ -27,23 +33,24 @@ function screenRow(row: string | TerminalScreenRow): TerminalScreenRow {
 	return typeof row === "string" ? { text: row } : row;
 }
 
-function isTransientScreenText(text: string): boolean {
+export function isTerminalSelectionChrome(text: string, allTextIsDim: boolean): boolean {
 	const trimmed = text.trim();
-	return /^[─━═_\-=]+$/u.test(trimmed) ||
-		/^(?:Pouncing|Thinking|Working|Generating|Loading|Update available|Jump to bottom)(?:…|\.\.\.|\b)/iu.test(trimmed) ||
-		/Paste again to expand for editing/iu.test(trimmed) ||
+	if (/Paste again to expand for editing/iu.test(trimmed) ||
 		/^scratch(?:-\d+)? footer$/iu.test(trimmed) ||
-		/^[^·\n]+ · [^·\n]+ · (?:~|\/)\S+/u.test(trimmed);
+		/^[^·\n]+ · [^·\n]+ · (?:~|\/)\S+/u.test(trimmed)) return true;
+	if (!allTextIsDim) return false;
+	return /^[─━═]+$/u.test(trimmed) ||
+		/^(?:Pouncing|Thinking|Working|Generating|Loading|Update available|Jump to bottom)(?:…|\.\.\.)?$/iu.test(trimmed);
 }
 
 type SelectableScreenRow = TerminalSelectionHighlight & { cellOffsets?: number[]; text: string; wrapped: boolean };
 
 function selectableRow(value: string | TerminalScreenRow, row: number): SelectableScreenRow | null {
 	const current = screenRow(value);
-	if (current.selectable === false || isTransientScreenText(current.text)) return null;
+	if (current.selectable === false) return null;
 	const trailing = current.text.match(/\s*$/u)?.[0].length ?? 0;
 	const textEnd = Math.max(0, current.text.length - trailing);
-	const endCol = current.cellOffsets?.findIndex((offset) => offset >= textEnd) ?? textEnd;
+	const endCol = current.endCol ?? current.cellOffsets?.findIndex((offset) => offset >= textEnd) ?? textEnd;
 	return {
 		row,
 		startCol: 0,
@@ -96,15 +103,30 @@ function snapshotExtensionRows(
 	previous: TerminalScreenSnapshot,
 	next: TerminalScreenSnapshot,
 	direction: -1 | 1,
+	allowNoOverlap = false,
 ): SelectableScreenRow[] {
 	const before = selectableScreenRows(previous);
 	const after = selectableScreenRows(next);
 	if (direction < 0) {
 		const overlap = longestPrefixOverlap(after, before);
-		return after.slice(0, after.length - overlap);
+		if (overlap === 0 && before.length > 0 && after.length > 0) return allowNoOverlap ? after : [];
+		const extension = after.slice(0, after.length - overlap);
+		const previousEdge = screenRow(previous.rows[0] ?? "").text;
+		const nextEdge = screenRow(next.rows[0] ?? "").text;
+		if (extension.length === 0 && previousEdge !== "" && nextEdge === "") {
+			return [{ row: 0, startCol: 0, endCol: 0, text: "", wrapped: false }];
+		}
+		return extension;
 	}
 	const overlap = longestPrefixOverlap(before, after);
-	return after.slice(overlap);
+	if (overlap === 0 && before.length > 0 && after.length > 0) return allowNoOverlap ? after : [];
+	const extension = after.slice(overlap);
+	const previousEdge = screenRow(previous.rows.at(-1) ?? "").text;
+	const nextEdge = screenRow(next.rows.at(-1) ?? "").text;
+	if (extension.length === 0 && previousEdge !== "" && nextEdge === "") {
+		return [{ row: Math.max(0, next.rows.length - 1), startCol: 0, endCol: 0, text: "", wrapped: false }];
+	}
+	return extension;
 }
 
 export function screenSnapshotExtension(
@@ -120,14 +142,11 @@ function sameSnapshot(left: TerminalScreenSnapshot, right: TerminalScreenSnapsho
 	return left.rows.every((value, index) => {
 		const leftRow = screenRow(value);
 		const rightRow = screenRow(right.rows[index]);
-		return leftRow.text === rightRow.text && leftRow.selectable === rightRow.selectable && leftRow.wrapped === rightRow.wrapped;
+		return leftRow.text === rightRow.text &&
+			leftRow.endCol === rightRow.endCol &&
+			leftRow.selectable === rightRow.selectable &&
+			leftRow.wrapped === rightRow.wrapped;
 	});
-}
-
-function filteredNativeText(text: string): string {
-	return text.split("\n")
-		.filter((line) => line.trim().length === 0 || !isTransientScreenText(line))
-		.join("\n");
 }
 
 function textOffsetForCell(row: SelectableScreenRow, col: number): number {
@@ -151,7 +170,7 @@ export type TerminalSelectionAutoscrollOptions = {
 	readNativeSelection: () => NativeTerminalSelection | null;
 	readSnapshot: () => TerminalScreenSnapshot;
 	clearNativeSelection: () => void;
-	scroll: (direction: -1 | 1, lines: number) => void;
+	scroll: (direction: -1 | 1, lines: number) => boolean | void;
 	render: (state: TerminalLiveSelectionRender | null) => void;
 	setInterval?: (callback: () => void, ms: number) => TimerHandle;
 	clearInterval?: (handle: TimerHandle) => void;
@@ -178,6 +197,7 @@ export class TerminalSelectionAutoscroll {
 	private showInitialHighlights = false;
 	private insideFocus: TerminalSelectionPoint | null = null;
 	private trimmingToAnchor = false;
+	private scrollRequested = false;
 
 	constructor(private readonly options: TerminalSelectionAutoscrollOptions) {}
 
@@ -225,12 +245,17 @@ export class TerminalSelectionAutoscroll {
 	}
 
 	screenRendered(): void {
+		if (this.phase === "complete") {
+			this.previousSnapshot = cloneSnapshot(this.options.readSnapshot());
+			this.render();
+			return;
+		}
 		if (this.phase !== "active") return;
 		const snapshot = this.options.readSnapshot();
 		if (this.previousSnapshot && !sameSnapshot(this.previousSnapshot, snapshot)) {
 			this.showInitialHighlights = false;
 			if (this.edgeLines !== 0) {
-				let extension = snapshotExtensionRows(this.previousSnapshot, snapshot, this.direction);
+				let extension = snapshotExtensionRows(this.previousSnapshot, snapshot, this.direction, this.scrollRequested);
 				if (this.trimmingToAnchor && this.anchorPoint) {
 					const anchor = this.baseScreenRows.find((row) => row.row === this.anchorPoint?.row);
 					const visibleRows = selectableScreenRows(snapshot);
@@ -252,6 +277,7 @@ export class TerminalSelectionAutoscroll {
 				else this.suffix = appendUnique(this.suffix, extension);
 			}
 		}
+		this.scrollRequested = false;
 		this.previousSnapshot = cloneSnapshot(snapshot);
 		this.render();
 	}
@@ -274,8 +300,7 @@ export class TerminalSelectionAutoscroll {
 	private activate(): void {
 		const nativeSelection = this.options.readNativeSelection();
 		if (!nativeSelection || nativeSelection.text.length === 0) return;
-		const initialText = filteredNativeText(nativeSelection.text);
-		if (initialText.length === 0) return;
+		const initialText = nativeSelection.text;
 		const snapshot = this.options.readSnapshot();
 		const start = comparePoints(nativeSelection.range.anchor, nativeSelection.range.focus) <= 0
 			? nativeSelection.range.anchor
@@ -308,9 +333,34 @@ export class TerminalSelectionAutoscroll {
 
 	private moveFocusInside(point: TerminalSelectionPoint): void {
 		const current = selectableScreenRows(this.options.readSnapshot());
-		const target = current.find((row) => row.row === point.row);
+		const targetIndex = current.findIndex((row) => row.row === point.row);
+		const target = current[targetIndex];
 		if (!target) return;
 		this.insideFocus = point;
+		if (this.trimmingToAnchor && this.anchorPoint) {
+			const baseAnchorIndex = this.baseInitialRows.findIndex((row) => row.row === this.anchorPoint?.row);
+			const knownRows = [...this.prefix, ...this.baseInitialRows, ...this.suffix];
+			const anchorIndex = baseAnchorIndex < 0 ? -1 : this.prefix.length + baseAnchorIndex;
+			let knownTargetIndex = this.prefix.findIndex((row) => rowKey(row) === rowKey(target));
+			if (knownTargetIndex < 0) {
+				const baseTargetIndex = this.baseInitialRows.findIndex((row) => rowKey(row) === rowKey(target));
+				if (baseTargetIndex >= 0) knownTargetIndex = this.prefix.length + baseTargetIndex;
+			}
+			if (knownTargetIndex < 0) {
+				const suffixTargetIndex = lastMatchingRowIndex(this.suffix, target);
+				if (suffixTargetIndex >= 0) {
+					knownTargetIndex = this.prefix.length + this.baseInitialRows.length + suffixTargetIndex;
+				}
+			}
+			if (anchorIndex >= 0 && knownTargetIndex >= 0) {
+				this.selectKnownRange(knownRows, anchorIndex, knownTargetIndex, point);
+				this.direction = knownTargetIndex < anchorIndex ? -1 : 1;
+				this.trimmingToAnchor = false;
+				this.previousSnapshot = cloneSnapshot(this.options.readSnapshot());
+				this.render();
+				return;
+			}
+		}
 		if (this.direction > 0) {
 			const index = lastMatchingRowIndex(this.suffix, target);
 			if (index >= 0) {
@@ -348,8 +398,44 @@ export class TerminalSelectionAutoscroll {
 				}
 			}
 		}
+		this.trimmingToAnchor = false;
 		this.previousSnapshot = cloneSnapshot(this.options.readSnapshot());
 		this.render();
+	}
+
+	private selectKnownRange(
+		rows: SelectableScreenRow[],
+		anchorIndex: number,
+		focusIndex: number,
+		focus: TerminalSelectionPoint,
+	): void {
+		const anchor = this.anchorPoint;
+		if (!anchor) return;
+		const firstIndex = Math.min(anchorIndex, focusIndex);
+		const lastIndex = Math.max(anchorIndex, focusIndex);
+		const selected = rows.slice(firstIndex, lastIndex + 1).map((row) => ({ ...row }));
+		if (selected.length === 0) return;
+		if (anchorIndex === focusIndex) {
+			selected[0].startCol = Math.min(anchor.col, focus.col);
+			selected[0].endCol = Math.max(anchor.col, focus.col);
+		} else if (anchorIndex < focusIndex) {
+			selected[0].startCol = Math.min(selected[0].endCol, Math.max(selected[0].startCol, anchor.col));
+			selected[selected.length - 1].endCol = Math.min(
+				selected[selected.length - 1].endCol,
+				Math.max(selected[selected.length - 1].startCol, focus.col),
+			);
+		} else {
+			selected[0].startCol = Math.min(selected[0].endCol, Math.max(selected[0].startCol, focus.col));
+			selected[selected.length - 1].endCol = Math.min(
+				selected[selected.length - 1].endCol,
+				Math.max(selected[selected.length - 1].startCol, anchor.col),
+			);
+		}
+		this.prefix = [];
+		this.suffix = [];
+		this.initialRows = selected.filter((row) => row.endCol > row.startCol);
+		this.showInitialHighlights = false;
+		this.refreshInitialText();
 	}
 
 	private fillVisibleGap(point: TerminalSelectionPoint, direction: -1 | 1): void {
@@ -493,7 +579,7 @@ export class TerminalSelectionAutoscroll {
 	private tick(): void {
 		if (this.phase !== "active" || this.edgeLines === 0) return;
 		this.direction = Math.sign(this.edgeLines) as -1 | 1;
-		this.options.scroll(this.direction, Math.abs(this.edgeLines));
+		this.scrollRequested = this.options.scroll(this.direction, Math.abs(this.edgeLines)) !== false;
 	}
 
 	private render(): void {
@@ -549,6 +635,7 @@ export class TerminalSelectionAutoscroll {
 		this.showInitialHighlights = false;
 		this.insideFocus = null;
 		this.trimmingToAnchor = false;
+		this.scrollRequested = false;
 		this.options.render(null);
 	}
 }

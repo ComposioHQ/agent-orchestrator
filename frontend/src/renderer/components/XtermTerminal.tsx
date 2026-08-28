@@ -38,6 +38,7 @@ import { TERMINAL_FONT_SIZE_DEFAULT } from "../lib/design-tokens";
 import { isWebLink, openLinkInSystemBrowser } from "../lib/external-link-policy";
 import { isMacPlatform } from "../lib/platform";
 import {
+	isTerminalSelectionChrome,
 	TerminalSelectionAutoscroll,
 	type TerminalLiveSelectionRender,
 	type TerminalSelectionPoint,
@@ -667,6 +668,8 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				row: Math.min(term.rows - 1, Math.max(0, Math.floor(((event.clientY - rect.top) / rect.height) * term.rows))),
 			};
 		};
+		let keyboardSelectionScrollCarry = 0;
+		let keyboardSelectionScrollDirection: -1 | 1 = 1;
 		const extendedSelection = new TerminalSelectionAutoscroll({
 			readNativeSelection: () => {
 				const selection = term.getSelectionPosition();
@@ -685,24 +688,29 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				rows: Array.from({ length: term.rows }, (_, row) => {
 					const line = term.buffer.active.getLine(term.buffer.active.viewportY + row);
 					if (!line) return { text: "" };
-					let hasText = false;
 					let allTextIsDim = true;
+					let hasText = false;
 					let textOffset = 0;
+					let endCol = 0;
 					const cellOffsets = Array.from({ length: term.cols + 1 }, () => 0);
 					for (let col = 0; col < term.cols; col += 1) {
 						const cell = line.getCell(col);
 						cellOffsets[col] = textOffset;
 						const chars = cell?.getChars() ?? "";
 						textOffset += chars.length > 0 ? chars.length : cell?.getWidth() === 1 ? 1 : 0;
-						if (!chars.trim()) continue;
-						hasText = true;
-						allTextIsDim &&= Boolean(cell?.isDim());
+						if (chars.trim()) {
+							hasText = true;
+							allTextIsDim &&= Boolean(cell?.isDim());
+							endCol = col + Math.max(1, cell?.getWidth() ?? 1);
+						}
 					}
 					cellOffsets[term.cols] = textOffset;
+					const text = line.translateToString(true);
 					return {
-						text: line.translateToString(true),
+						text,
 						cellOffsets,
-						selectable: !hasText || !allTextIsDim,
+						endCol,
+						selectable: !isTerminalSelectionChrome(text, hasText && allTextIsDim),
 						wrapped: line.isWrapped,
 					};
 				}),
@@ -711,36 +719,52 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			scroll: (direction, lines) => {
 				const visibleLines = Math.min(lines, Math.max(1, term.rows - 1));
 				if (callbacksRef.current.paneScrollsByKeyboard) {
-					emitUserInput(pageKeyReport(direction), "wheel");
-					return;
+					if (direction !== keyboardSelectionScrollDirection) keyboardSelectionScrollCarry = 0;
+					keyboardSelectionScrollDirection = direction;
+					keyboardSelectionScrollCarry += visibleLines;
+					const pages = Math.floor(keyboardSelectionScrollCarry / Math.max(1, term.rows));
+					if (pages === 0) return false;
+					keyboardSelectionScrollCarry %= Math.max(1, term.rows);
+					emitUserInput(pageKeyReport(direction).repeat(pages), "wheel");
+					return true;
 				}
 				if (term.modes.mouseTrackingMode !== "none") {
 					const button = direction < 0 ? SGR_WHEEL_UP : SGR_WHEEL_DOWN;
 					emitUserInput(sgrWheelReport(button, visibleLines), "wheel");
-					return;
+					return true;
 				}
 				if (term.buffer.active.type === "normal") {
 					term.scrollLines(direction * visibleLines);
-					return;
+					return true;
 				}
 				emitUserInput(pageKeyReport(direction), "wheel");
+				return true;
 			},
 			render: renderExtendedSelection,
 		});
 		extendedSelectionRef.current = extendedSelection;
 		const selectionMouseDown = (event: MouseEvent) => {
 			if (event.button !== 0) return;
+			if (event.target instanceof Element && event.target.closest('[role="menu"]')) return;
+			keyboardSelectionScrollCarry = 0;
+			keyboardSelectionScrollDirection = 1;
 			const eligible =
 				event.detail === 1 &&
 				!event.altKey &&
 				!event.shiftKey &&
-				term.buffer.active.type === "alternate" &&
+				(term.buffer.active.type === "alternate" ||
+					term.modes.mouseTrackingMode !== "none" ||
+					callbacksRef.current.paneScrollsByKeyboard === true) &&
 				userInputListeners.size > 0 &&
 				Boolean(screen && event.target instanceof Node && screen.contains(event.target));
 			extendedSelection.pointerDown(eligible);
 		};
 		const selectionMouseMove = (event: MouseEvent) => {
-			if ((event.buttons & 1) === 0 || !screen) return;
+			if ((event.buttons & 1) === 0) {
+				extendedSelection.pointerUp();
+				return;
+			}
+			if (!screen) return;
 			const point = pointForMouse(event);
 			if (!point) return;
 			const rect = screen.getBoundingClientRect();
@@ -752,8 +776,11 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		const selectionMouseUp = (event: MouseEvent) => {
 			if (event.button === 0) extendedSelection.pointerUp();
 		};
-		const selectionBlur = () => extendedSelection.blur();
-		shell.addEventListener("mousedown", selectionMouseDown, true);
+		const selectionBlur = () => {
+			keyboardSelectionScrollCarry = 0;
+			extendedSelection.blur();
+		};
+		document.addEventListener("mousedown", selectionMouseDown, true);
 		document.addEventListener("mousemove", selectionMouseMove, true);
 		document.addEventListener("mouseup", selectionMouseUp, true);
 		window.addEventListener("blur", selectionBlur);
@@ -1274,7 +1301,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			scrollbarTrack?.removeEventListener("pointerup", scrollbarPointerUp);
 			scrollbarTrack?.removeEventListener("pointercancel", scrollbarPointerUp);
 			window.removeEventListener("resize", scheduleVisibleFit);
-			shell.removeEventListener("mousedown", selectionMouseDown, true);
+			document.removeEventListener("mousedown", selectionMouseDown, true);
 			document.removeEventListener("mousemove", selectionMouseMove, true);
 			document.removeEventListener("mouseup", selectionMouseUp, true);
 			window.removeEventListener("blur", selectionBlur);

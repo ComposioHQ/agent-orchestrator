@@ -34,7 +34,7 @@ const state = vi.hoisted(() => ({
 						isDim: () => boolean;
 					} | undefined;
 					isWrapped: boolean;
-					translateToString: () => string;
+					translateToString: (trimRight?: boolean) => string;
 				} | undefined;
 			};
 		};
@@ -815,8 +815,85 @@ describe("XtermTerminal", () => {
 
 		expect(window.ao!.clipboard.writeText).not.toHaveBeenCalled();
 		fireEvent.contextMenu(container.firstElementChild!);
-		fireEvent.click(await screen.findByText("Copy"));
+		const copyItem = await screen.findByText("Copy");
+		fireEvent.mouseDown(copyItem, { button: 0 });
+		fireEvent.click(copyItem);
 		await waitFor(() => expect(window.ao!.clipboard.writeText).toHaveBeenCalledWith("one\ntwo\nthree"));
+	});
+
+	it("extends selection in a normal-buffer pane that routes mouse input", async () => {
+		const onInput = vi.fn();
+		const { container } = render(
+			<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />,
+		);
+		const terminalScreen = container.querySelector<HTMLElement>(".xterm-screen")!;
+		terminalScreen.getBoundingClientRect = () => ({
+			bottom: 500,
+			height: 400,
+			left: 0,
+			right: 800,
+			top: 100,
+			width: 800,
+			x: 0,
+			y: 100,
+			toJSON: () => undefined,
+		});
+
+		fireEvent.mouseDown(terminalScreen, { button: 0, detail: 1 });
+		state.lastTerminal!.selection = "one\ntwo";
+		fireEvent.mouseMove(document, { buttons: 1, clientX: 40, clientY: 550 });
+		state.screenRows = ["two", "three"];
+		act(() => state.lastTerminal!.renderListeners.forEach((listener) => listener()));
+		fireEvent.mouseUp(document, { button: 0 });
+		state.lastTerminal!.keyHandler!({
+			altKey: false,
+			ctrlKey: false,
+			key: "c",
+			metaKey: true,
+			preventDefault: vi.fn(),
+			shiftKey: false,
+			stopPropagation: vi.fn(),
+			type: "keydown",
+		} as unknown as KeyboardEvent);
+
+		await waitFor(() => expect(window.ao!.clipboard.writeText).toHaveBeenCalledWith("one\ntwo\nthree"));
+	});
+
+	it("clears a completed edge selection when another document area is clicked", () => {
+		const { container } = render(
+			<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(vi.fn())} />,
+		);
+		state.lastTerminal!.buffer.active.type = "alternate";
+		const terminalScreen = container.querySelector<HTMLElement>(".xterm-screen")!;
+		terminalScreen.getBoundingClientRect = () => ({
+			bottom: 500,
+			height: 400,
+			left: 0,
+			right: 800,
+			top: 100,
+			width: 800,
+			x: 0,
+			y: 100,
+			toJSON: () => undefined,
+		});
+
+		fireEvent.mouseDown(terminalScreen, { button: 0, detail: 1 });
+		state.lastTerminal!.selection = "one\ntwo";
+		fireEvent.mouseMove(document, { buttons: 1, clientX: 40, clientY: 550 });
+		fireEvent.mouseUp(document, { button: 0 });
+		fireEvent.mouseDown(document.body, { button: 0, detail: 1 });
+		state.lastTerminal!.keyHandler!({
+			altKey: false,
+			ctrlKey: false,
+			key: "c",
+			metaKey: true,
+			preventDefault: vi.fn(),
+			shiftKey: false,
+			stopPropagation: vi.fn(),
+			type: "keydown",
+		} as unknown as KeyboardEvent);
+
+		expect(window.ao!.clipboard.writeText).not.toHaveBeenCalled();
 	});
 
 	it("maps untouched xterm gap cells when an edge selection returns inside", async () => {
@@ -1365,6 +1442,39 @@ describe("XtermTerminal", () => {
 
 		expect(state.lastTerminal!.wheelHandler!({ deltaY: -50 } as WheelEvent)).toBe(false);
 		expect(onInput).toHaveBeenLastCalledWith("\x1b[5~", "wheel");
+	});
+
+	it("paces edge selection in keyboard-scroll panes by terminal rows", () => {
+		vi.useFakeTimers();
+		try {
+			const onInput = vi.fn();
+			const { container } = render(
+				<XtermTerminal theme="dark" paneScrollsByKeyboard onReady={(terminal) => terminal.onUserInput(onInput)} />,
+			);
+			state.lastTerminal!.buffer.active.type = "alternate";
+			const terminalScreen = container.querySelector<HTMLElement>(".xterm-screen")!;
+			terminalScreen.getBoundingClientRect = () => ({
+				bottom: 500,
+				height: 400,
+				left: 0,
+				right: 800,
+				top: 100,
+				width: 800,
+				x: 0,
+				y: 100,
+				toJSON: () => undefined,
+			});
+
+			fireEvent.mouseDown(terminalScreen, { button: 0, detail: 1 });
+			state.lastTerminal!.selection = "one\ntwo";
+			fireEvent.mouseMove(document, { buttons: 1, clientX: 40, clientY: 501 });
+			act(() => vi.advanceTimersByTime(23 * 50));
+			expect(onInput).not.toHaveBeenCalled();
+			act(() => vi.advanceTimersByTime(50));
+			expect(onInput).toHaveBeenCalledWith("\x1b[6~", "wheel");
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 
 	it("routes web links to the AO browser and does not open the system browser", () => {
