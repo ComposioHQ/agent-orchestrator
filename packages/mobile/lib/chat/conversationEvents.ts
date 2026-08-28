@@ -48,6 +48,16 @@ export function useConversationEventTransport(cfg: ServerConfig | null): void {
 							cursor = resetCursor;
 							cursorPersister.replace(resetCursor);
 						},
+						{
+							// Only the chat screen currently on top subscribes, so most frames
+							// have no reader — and during a cold-start replay, when no chat is
+							// open at all, none of them do. Those only need to move the cursor.
+							wantsPayload: () => registry.hasListeners(),
+							onCursorAdvance: (seq) => {
+								cursor = Math.max(cursor, seq);
+								cursorPersister.update(cursor);
+							},
+						},
 					);
 					delay = RECONNECT_MIN_MS;
 				} catch {

@@ -250,6 +250,13 @@ type ContinuousTerminalActivityDetector interface {
 	ContinuouslyDetectTerminalActivity() bool
 }
 
+// WaitingTerminalActivityDetector is implemented by non-continuous terminal
+// detectors that can authoritatively recover from a durable waiting-input state.
+type WaitingTerminalActivityDetector interface {
+	TerminalActivityDetector
+	ContinuouslyDetectTerminalActivityWhileWaiting() bool
+}
+
 // PromptReadinessHints describes when an after-start prompt should be sent.
 // Empty patterns mean "send immediately" unless the adapter also implements
 // TerminalActivityDetector, in which case AO waits for an authoritative idle
@@ -310,6 +317,15 @@ type SubmitActivitySignaler interface {
 // blocked signal implement this interface to opt in.
 type BlockedActivitySignaler interface {
 	EmitsBlockedActivity() bool
+}
+
+// StartupInputReadinessSignaler is an OPTIONAL capability for a TUI adapter
+// whose first lifecycle hook cannot arrive until native startup dialogs have
+// cleared and the agent can safely accept pane input. AO gates user and
+// automation writes on FirstSignalAt only for adapters that opt in here;
+// hookless adapters must remain usable without manufacturing a signal.
+type StartupInputReadinessSignaler interface {
+	FirstSignalProvesInputReady() bool
 }
 
 // ActiveTurnSteerer is an OPTIONAL capability an Agent adapter implements when

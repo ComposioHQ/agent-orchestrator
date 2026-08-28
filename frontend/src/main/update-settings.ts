@@ -40,6 +40,12 @@ export interface UpdateStatus {
 	// with Chromium network-stack errors (net::ERR_*) — the app's network stack
 	// is wedged and restarting the app usually fixes it (#3526).
 	staleCheckNudge?: boolean;
+	// Present when several automatic checks in a row have failed, whatever the
+	// reason. Distinct from staleCheckNudge, which is specifically about a wedged
+	// network stack and tells the user to restart; this one only says update
+	// checks are not getting through, so the UI can offer a retry instead of
+	// rendering nothing at all.
+	checksFailing?: boolean;
 	// Present only when state === "error" and the failure is a Chromium
 	// network-stack error (net::ERR_*). The renderer localizes restart guidance
 	// from this flag instead of receiving pre-built English prose (#3526).

@@ -9,7 +9,6 @@ import type {
 	BrowserTabsState,
 } from "../../main/browser-view-host";
 import type { BrowserAnnotationCancelPayload, BrowserAnnotationSubmitPayload } from "../../shared/browser-annotations";
-import { MAX_BROWSER_TABS } from "../../shared/browser-tabs";
 import { OPEN_BROWSER_OVERLAY_SELECTOR } from "../lib/dom-selectors";
 
 export type { BrowserNavState };
@@ -658,19 +657,11 @@ export function useBrowserView({
 		async (tabId: string) => {
 			const entry = closedTabs.find((tab) => tab.id === tabId);
 			if (!entry) return;
-			// Gate on the same cap the "+" button already respects, instead of
-			// discovering BROWSER_TAB_LIMIT only after the entry is gone.
-			if (tabsStateRef.current.tabs.length >= MAX_BROWSER_TABS) {
-				showTabNotice("Reached the tab limit");
-				return;
-			}
 			updateClosedTabs((current) => current.filter((tab) => tab.id !== tabId));
 			try {
 				await openTab(entry.url);
 			} catch {
-				// Still possible to race the cap (e.g. the agent opens a tab between
-				// this row rendering and the click) — restore instead of losing the
-				// entry silently.
+				// Restore the entry instead of losing it when tab creation fails.
 				updateClosedTabs((current) => [entry, ...current.filter((tab) => tab.id !== tabId)].slice(0, MAX_CLOSED_TABS));
 				showTabNotice("Couldn't reopen that tab");
 			}

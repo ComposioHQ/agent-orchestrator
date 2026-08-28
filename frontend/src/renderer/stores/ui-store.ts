@@ -18,8 +18,10 @@ import {
 export type { Theme, ThemePreference, ThemeStyle } from "../lib/theme";
 export { readStoredThemePreference, readStoredThemeStyle, resolveTheme } from "../lib/theme";
 
+export type GlobalSettingsSection = "general" | "cloud" | "mobile" | "shortcuts" | "updates" | "help";
+
 export type SettingsModal =
-	| { scope: "global" }
+	| { scope: "global"; section?: GlobalSettingsSection }
 	| {
 			scope: "project";
 			projectId: string;
@@ -36,15 +38,26 @@ export type InspectorSessionState = {
 	browserContentRevealed?: boolean;
 	/** Real browser activity occurred while Browser was not visible. */
 	browserUnseen?: boolean;
+	/** Files tab: show only files the agent has touched. Defaults to false (full tree). */
+	filesChangedOnly?: boolean;
+	/** The session-entry defaulting (Summary tab, baseline browser reveal) has already run once for this session's lifetime. */
+	initialized?: boolean;
 };
 
 // Selection (which project/session is open) now lives in the URL — the router
 // is the single source of truth, read via route params. This store holds only
 // ephemeral UI: theme, sidebar collapse, command palette, per-session inspector
 // state, and the active workbench tab within a session.
-type UiState = {
+export type UiState = {
 	workbenchTab: WorkbenchTab;
+	/** The user's durable sidebar preference. Workspace pressure never mutates it. */
 	isSidebarOpen: boolean;
+	/** A live workspace may temporarily reclaim the sidebar's width. */
+	isSidebarAutoCollapsed: boolean;
+	/** The user explicitly reopened the sidebar while auto-collapse is active. */
+	sidebarAutoCollapseOverride: boolean;
+	/** Active workspace width needed beside a fully expanded sidebar; owned by the shell. */
+	sidebarWorkspaceDemandPx: number | null;
 	inspectorSessions: Record<string, InspectorSessionState>;
 	isCommandPaletteOpen: boolean;
 	settingsModal: SettingsModal | null;
@@ -92,17 +105,29 @@ type UiState = {
 	setThemePreference: (theme: ThemePreference) => void;
 	setThemeStyle: (style: ThemeStyle) => void;
 	setDeveloperMode: (enabled: boolean) => void;
-	openGlobalSettings: () => void;
+	openGlobalSettings: (section?: GlobalSettingsSection) => void;
 	openProjectSettings: (projectId: string) => void;
 	closeSettings: () => void;
 	/** Refresh resolvedTheme from OS without writing light/dark to storage. */
 	syncSystemTheme: () => void;
 	toggleSidebar: () => void;
+	setSidebarAutoCollapsed: (collapsed: boolean) => void;
+	clearSidebarAutoCollapse: () => void;
+	setSidebarWorkspaceDemand: (demandPx: number | null) => void;
 	setInspectorOpen: (sessionId: string, isOpen: boolean) => void;
 	toggleInspector: (sessionId: string) => void;
 	setInspectorView: (sessionId: string, view: InspectorView) => void;
+	/**
+	 * Runs the "entering this session" defaults — Summary tab, baseline browser
+	 * reveal — exactly once per session's lifetime. Backed by persisted store
+	 * state (not a component-local ref) so it stays a no-op across unmount and
+	 * remount of the session view, not just across re-renders of one mounted
+	 * instance.
+	 */
+	initializeInspectorSession: (sessionId: string, hasBrowserContent: boolean, hasInspector: boolean) => void;
 	setBrowserContentRevealed: (sessionId: string, revealed: boolean) => void;
 	setBrowserUnseen: (sessionId: string, unseen: boolean) => void;
+	setFilesChangedOnly: (sessionId: string, changedOnly: boolean) => void;
 	setCommandPaletteOpen: (open: boolean) => void;
 	setProjectRestarting: (projectId: string, restarting: boolean) => void;
 	setOrchestratorReplacementError: (projectId: string, failure: OrchestratorReplacementFailure | null) => void;
@@ -141,12 +166,34 @@ function inspectorState(sessions: Record<string, InspectorSessionState>, session
 	return sessions[sessionId] ?? { isOpen: true, view: "summary" };
 }
 
+/** Effective visibility keeps temporary workspace pressure out of the persisted preference. */
+export function sidebarIsVisible(
+	state: Pick<UiState, "isSidebarOpen" | "isSidebarAutoCollapsed" | "sidebarAutoCollapseOverride">,
+): boolean {
+	return state.isSidebarOpen && (!state.isSidebarAutoCollapsed || state.sidebarAutoCollapseOverride);
+}
+
+/** Auto pressure keeps navigation available as an icon rail; only the user's durable close hides it. */
+export function sidebarIsCompact(
+	state: Pick<UiState, "isSidebarOpen" | "isSidebarAutoCollapsed" | "sidebarAutoCollapseOverride">,
+): boolean {
+	return state.isSidebarOpen && state.isSidebarAutoCollapsed && !state.sidebarAutoCollapseOverride;
+}
+
+/** Expanded and compact rails both occupy shell layout; a durable user close does not. */
+export function sidebarOccupiesLayout(state: Pick<UiState, "isSidebarOpen">): boolean {
+	return state.isSidebarOpen;
+}
+
 const initialThemePreference = readStoredThemePreference();
 const initialThemeStyle = readStoredThemeStyle();
 
 export const useUiStore = create<UiState>((set, get) => ({
 	workbenchTab: "changes",
 	isSidebarOpen: initialSidebarOpen(),
+	isSidebarAutoCollapsed: false,
+	sidebarAutoCollapseOverride: false,
+	sidebarWorkspaceDemandPx: null,
 	inspectorSessions: {},
 	isCommandPaletteOpen: false,
 	settingsModal: null,
@@ -185,7 +232,7 @@ export const useUiStore = create<UiState>((set, get) => ({
 		getLocalStorage()?.setItem(developerModeStorageKey, String(developerMode));
 		set({ developerMode });
 	},
-	openGlobalSettings: () => set({ settingsModal: { scope: "global" } }),
+	openGlobalSettings: (section) => set({ settingsModal: { scope: "global", section } }),
 	openProjectSettings: (projectId) => set({ settingsModal: { scope: "project", projectId } }),
 	closeSettings: () => set({ settingsModal: null }),
 	syncSystemTheme: () => {
@@ -200,10 +247,32 @@ export const useUiStore = create<UiState>((set, get) => ({
 	},
 	toggleSidebar: () =>
 		set((state) => {
-			const isSidebarOpen = !state.isSidebarOpen;
+			const wasVisible = sidebarIsVisible(state);
+			const isSidebarOpen = !wasVisible;
 			getLocalStorage()?.setItem(sidebarStorageKey, String(isSidebarOpen));
-			return { isSidebarOpen };
+			return {
+				isSidebarOpen,
+				// Reopening under active workspace pressure is an explicit override.
+				// Closing clears it so the next open follows the current layout policy.
+				sidebarAutoCollapseOverride: isSidebarOpen && state.isSidebarAutoCollapsed,
+			};
 		}),
+	setSidebarAutoCollapsed: (isSidebarAutoCollapsed) =>
+		set((state) => {
+			if (state.isSidebarAutoCollapsed === isSidebarAutoCollapsed) return state;
+			// Pressure can cross its threshold while the rail is still moving. Never
+			// discard an explicit expansion here; the shell clears it only when the
+			// workspace that created the pressure actually closes.
+			return { isSidebarAutoCollapsed };
+		}),
+	clearSidebarAutoCollapse: () =>
+		set({ isSidebarAutoCollapsed: false, sidebarAutoCollapseOverride: false }),
+	setSidebarWorkspaceDemand: (sidebarWorkspaceDemandPx) =>
+		set((state) =>
+			state.sidebarWorkspaceDemandPx === sidebarWorkspaceDemandPx
+				? state
+				: { sidebarWorkspaceDemandPx },
+		),
 	setInspectorOpen: (sessionId, isOpen) =>
 		set((state) => {
 			const current = inspectorState(state.inspectorSessions, sessionId);
@@ -235,6 +304,26 @@ export const useUiStore = create<UiState>((set, get) => ({
 				},
 			};
 		}),
+	initializeInspectorSession: (sessionId, hasBrowserContent, hasInspector) =>
+		set((state) => {
+			// Sessions without an inspector (e.g. orchestrator sessions) must not
+			// gain a store entry at all — leave inspectorSessions[sessionId]
+			// undefined so callers that key off its presence stay correct.
+			if (!hasInspector) return state;
+			const current = inspectorState(state.inspectorSessions, sessionId);
+			if (current.initialized) return state;
+			return {
+				inspectorSessions: {
+					...state.inspectorSessions,
+					[sessionId]: {
+						...current,
+						initialized: true,
+						view: "summary",
+						browserContentRevealed: current.browserContentRevealed ?? hasBrowserContent,
+					},
+				},
+			};
+		}),
 	setBrowserContentRevealed: (sessionId, browserContentRevealed) =>
 		set((state) => {
 			const current = inspectorState(state.inspectorSessions, sessionId);
@@ -258,6 +347,17 @@ export const useUiStore = create<UiState>((set, get) => ({
 				inspectorSessions: {
 					...state.inspectorSessions,
 					[sessionId]: { ...current, browserUnseen },
+				},
+			};
+		}),
+	setFilesChangedOnly: (sessionId, filesChangedOnly) =>
+		set((state) => {
+			const current = inspectorState(state.inspectorSessions, sessionId);
+			if (Boolean(current.filesChangedOnly) === filesChangedOnly) return state;
+			return {
+				inspectorSessions: {
+					...state.inspectorSessions,
+					[sessionId]: { ...current, filesChangedOnly },
 				},
 			};
 		}),

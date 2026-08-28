@@ -15,7 +15,10 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/activitydispatch"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/cursor"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	"github.com/aoagents/agent-orchestrator/backend/internal/pricing"
 )
 
 // sessionIDPattern bounds the AO_SESSION_ID we will place in a request path to
@@ -55,6 +58,7 @@ type setActivityAPIRequest struct {
 
 type usageHookMetadata struct {
 	Harness                string `json:"harness"`
+	ProviderID             string `json:"providerId,omitempty"`
 	TranscriptPath         string `json:"transcriptPath,omitempty"`
 	ModelID                string `json:"modelId,omitempty"`
 	SubagentID             string `json:"subagentId,omitempty"`
@@ -176,7 +180,61 @@ func hookUsageMetadata(agent string, payload []byte) *usageHookMetadata {
 	if meta.TranscriptPath == "" && meta.SubagentTranscriptPath == "" && meta.ModelID == "" {
 		return nil
 	}
+	meta.ProviderID = claudeHookProviderHint(harness)
 	return meta
+}
+
+func claudeHookProviderHint(harness domain.AgentHarness) string {
+	if harness != domain.HarnessClaudeCode {
+		return ""
+	}
+	bedrock := hookRouteFlagEnabled(os.Getenv("CLAUDE_CODE_USE_BEDROCK"))
+	vertex := hookRouteFlagEnabled(os.Getenv("CLAUDE_CODE_USE_VERTEX"))
+	if bedrock != vertex {
+		if bedrock {
+			return "bedrock"
+		}
+		return "vertex_ai"
+	}
+	if bedrock {
+		// Both flags set: the route is certainly not plain Anthropic, so this
+		// still has to rule out inferring one from the model.
+		return pricing.UnidentifiedBillingRoute
+	}
+	baseURL := strings.TrimSpace(os.Getenv("ANTHROPIC_BASE_URL"))
+	if baseURL == "" {
+		return "anthropic"
+	}
+	// A base URL AO cannot name still rules out inferring one from the model:
+	// the session is routed somewhere, and reporting that is the difference
+	// between "no hook has run" and "a hook ran and the route is not ours".
+	parsed, err := url.Parse(baseURL)
+	if err != nil {
+		return pricing.UnidentifiedBillingRoute
+	}
+	if parsed.Hostname() == "" && !strings.Contains(baseURL, "://") {
+		parsed, err = url.Parse("https://" + baseURL)
+	}
+	if err != nil || parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return pricing.UnidentifiedBillingRoute
+	}
+	switch strings.ToLower(parsed.Hostname()) {
+	case "api.anthropic.com":
+		return "anthropic"
+	case "api.z.ai":
+		return "zai"
+	default:
+		return pricing.UnidentifiedBillingRoute
+	}
+}
+
+func hookRouteFlagEnabled(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 type hookConversationSnapshot struct {
@@ -253,6 +311,10 @@ type sessionStartHookOutput struct {
 	} `json:"hookSpecificOutput"`
 }
 
+type cursorPermissionHookOutput struct {
+	Permission string `json:"permission"`
+}
+
 // newHooksCommand builds the hidden `ao hooks <agent> <event>` command that
 // agent CLIs invoke from their workspace-local hook config. It reads the native
 // hook payload from stdin and the AO session id from AO_SESSION_ID, derives an
@@ -303,6 +365,9 @@ func (c *commandContext) runHook(ctx context.Context, agent, event string) error
 	if shouldEmitSessionStartContext(agent, event) {
 		c.emitSessionStartContext(agent, event, sessionID)
 	}
+	if isCursorPermissionHook(agent, event) {
+		return c.runCursorPermissionHook(ctx, agent, event, sessionID, payload)
+	}
 
 	state, hasActivity := activitydispatch.Derive(agent, event, payload)
 	agentSessionID := ""
@@ -322,6 +387,12 @@ func (c *commandContext) runHook(ctx context.Context, agent, event string) error
 	}
 
 	toolName, toolUseID := activityMeta(payload)
+	if domain.AgentHarness(agent) == domain.HarnessCursor && event == "post-tool-use-failure" {
+		if failureEvent, failureTool, ok := cursor.TerminalFailureCorrelation(payload); ok {
+			event = failureEvent
+			toolName = failureTool
+		}
+	}
 	conversation := hookConversationSnapshot{}
 	switch domain.AgentHarness(agent) {
 	case domain.HarnessClaudeCode, domain.HarnessCodex:
@@ -346,6 +417,49 @@ func (c *commandContext) runHook(ctx context.Context, agent, event string) error
 		// Surface the failure for diagnosis, but exit 0: a failed activity
 		// report must not disrupt the agent.
 		c.reportHookFailure(agent, event, sessionID, err)
+	}
+	return nil
+}
+
+func isCursorPermissionHook(agent, event string) bool {
+	if domain.AgentHarness(agent) != domain.HarnessCursor {
+		return false
+	}
+	switch event {
+	case "before-shell-execution", "before-mcp-execution":
+		return true
+	default:
+		return false
+	}
+}
+
+func (c *commandContext) runCursorPermissionHook(ctx context.Context, agent, event, sessionID string, payload []byte) error {
+	mode := ports.PermissionMode(strings.TrimSpace(os.Getenv(cursor.EnvPermissionMode)))
+	decision := cursor.EvaluatePermission(mode, event, payload)
+
+	launchID := validLaunchID(os.Getenv("AO_RUNTIME_LAUNCH_ID"))
+	if launchID == "" {
+		launchID = validLaunchID(hookLaunchID(payload))
+	}
+
+	path := "sessions/" + url.PathEscape(sessionID) + "/activity"
+	req := setActivityAPIRequest{
+		State:          string(decision.State),
+		Event:          event,
+		ToolName:       cursor.HookToolName(event, payload),
+		AgentSessionID: hookAgentSessionID(payload),
+		LaunchID:       launchID,
+	}
+	if err := c.postJSON(ctx, path, req, nil); err != nil {
+		c.reportHookFailure(agent, event, sessionID, err)
+		if decision.Permission == "ask" {
+			return fmt.Errorf("persist blocked Cursor activity: %w", err)
+		}
+	}
+
+	out := cursorPermissionHookOutput{Permission: decision.Permission}
+	if err := json.NewEncoder(c.deps.Out).Encode(out); err != nil {
+		c.reportHookFailure(agent, event, sessionID, fmt.Errorf("write permission response: %w", err))
 	}
 	return nil
 }

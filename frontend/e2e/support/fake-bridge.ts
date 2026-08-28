@@ -1,5 +1,6 @@
 import type { Page } from "@playwright/test";
 
+import type { UpdateSettings, UpdateStatus } from "../../src/main/update-settings";
 import type { AoBridge } from "../../src/preload";
 import type { DaemonStatus } from "../../src/shared/daemon-status";
 import { coerceUiSettings, DEFAULT_UI_SETTINGS } from "../../src/shared/ui-locale";
@@ -34,16 +35,25 @@ export type FakeBridgeOptions = {
 	daemonState?: "ready" | "starting" | "stopped" | "error";
 	/** REST port advertised when ready (mock data is served regardless). */
 	daemonPort?: number;
+	/** Desktop updater state surfaced in Settings > Updates. */
+	updateStatus?: UpdateStatus;
+	/** Persisted automatic-update policy surfaced in Settings > Updates. */
+	updateSettings?: UpdateSettings;
 };
 
 export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}): Promise<void> {
 	const version = opts.version ?? "9.9.9-test";
 	const daemonState = opts.daemonState ?? "ready";
 	const daemonPort = opts.daemonPort ?? 8080;
+	const updateStatus = opts.updateStatus ?? ({ state: "idle" } satisfies UpdateStatus);
+	const updateSettings =
+		opts.updateSettings ??
+		({ enabled: false, channel: "latest", nightlyAck: false, feature: null } satisfies UpdateSettings);
 
 	await page.addInitScript(
-		({ version, daemonState, daemonPort }) => {
+		({ version, daemonState, daemonPort, updateStatus, updateSettings }) => {
 			const unsubscribe = () => () => undefined;
+			let currentUpdateSettings = updateSettings;
 			const status: DaemonStatus =
 				daemonState === "ready" ? { state: "ready", port: daemonPort } : { state: daemonState };
 			const navState = (viewId: string) => ({
@@ -180,8 +190,10 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					setMigration: async () => undefined,
 				},
 				updateSettings: {
-					get: async () => ({ enabled: false, channel: "latest", nightlyAck: false, feature: null }),
-					set: async () => undefined,
+					get: async () => currentUpdateSettings,
+					set: async (next: UpdateSettings) => {
+						currentUpdateSettings = next;
+					},
 				},
 				uiSettings: {
 					get: async () => ({ ...DEFAULT_UI_SETTINGS }),
@@ -193,7 +205,7 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					setRecording: async () => undefined,
 				},
 				updates: {
-					getStatus: async () => ({ state: "idle" }),
+					getStatus: async () => updateStatus,
 					check: async () => undefined,
 					returnHome: async () => undefined,
 					download: async () => undefined,
@@ -213,10 +225,16 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					signOut: async () => undefined,
 					onSessionChanged: unsubscribe,
 				},
+				cloudCp: {
+					request: async () => ({ status: 401, headers: {}, body: "" }),
+					openStream: async () => ({ streamId: "stream_test" }),
+					closeStream: () => undefined,
+					onStreamEvent: unsubscribe,
+				},
 			} satisfies AoBridge;
 			(window as unknown as { ao: unknown }).ao = ao;
 		},
-		{ version, daemonState, daemonPort },
+		{ version, daemonState, daemonPort, updateStatus, updateSettings },
 	);
 }
 
@@ -649,6 +667,12 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					signIn: async () => undefined,
 					signOut: async () => undefined,
 					onSessionChanged: unsubscribe,
+				},
+				cloudCp: {
+					request: async () => ({ status: 401, headers: {}, body: "" }),
+					openStream: async () => ({ streamId: "stream_test" }),
+					closeStream: () => undefined,
+					onStreamEvent: unsubscribe,
 				},
 			} satisfies AoBridge;
 			(window as unknown as { ao: unknown }).ao = ao;

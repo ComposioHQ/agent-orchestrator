@@ -266,6 +266,46 @@ func TestProjectSetConfig_RulesFlags(t *testing.T) {
 	}
 }
 
+func TestProjectSetConfig_ReviewerJSON(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, capture := projectServer(t, http.StatusOK, `{"status":"ok","project":{"id":"demo","config":{"sessionPrefix":"work","reviewers":[{"harness":"claude-code"}]}}}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, errOut, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "project", "set-config", "demo", "--config-json", `{"reviewers":[{"harness":"claude-code"}],"sessionPrefix":"work"}`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	var got setConfigRequest
+	if err := json.Unmarshal(capture.body, &got); err != nil {
+		t.Fatalf("decode request body: %v\nbody=%s", err, capture.body)
+	}
+	if len(got.Config.Reviewers) != 1 || got.Config.Reviewers[0].Harness != "claude-code" {
+		t.Fatalf("reviewers config = %#v, want claude-code reviewer preserved", got.Config.Reviewers)
+	}
+}
+
+func TestProjectSetConfig_ReviewerFlags(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, capture := projectServer(t, http.StatusOK, `{"status":"ok","project":{"id":"demo"}}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, errOut, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "project", "set-config", "demo", "--reviewer", "claude-code")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	var got setConfigRequest
+	if err := json.Unmarshal(capture.body, &got); err != nil {
+		t.Fatalf("decode request body: %v\nbody=%s", err, capture.body)
+	}
+	if len(got.Config.Reviewers) != 1 || got.Config.Reviewers[0].Harness != "claude-code" {
+		t.Fatalf("reviewers config = %#v, want single claude-code reviewer", got.Config.Reviewers)
+	}
+}
+
 func TestProjectRemove_RequiresID(t *testing.T) {
 	setConfigEnv(t)
 	_, _, err := executeCLI(t, Deps{}, "project", "rm")

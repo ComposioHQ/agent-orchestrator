@@ -170,7 +170,7 @@ type ContainerReaper interface {
 
 // Stream is one live terminal attach: PTY-like bytes plus resize. Returned
 // already-open by a Runtime's Attach. tmux backs it with a local PTY around
-// their attach CLI; conpty backs it with a loopback connection to the pty-host.
+// its attach CLI; detached hosts use a loopback connection to the pty-host.
 type Stream interface {
 	io.ReadWriteCloser
 	Resize(rows, cols uint16) error
@@ -329,14 +329,17 @@ var (
 	// actionable apierr instead of letting it fall through to an opaque 500
 	// with no message (issue #2775).
 	ErrRuntimeWorkspaceCwdMismatch = errors.New("runtime: session working directory mismatch")
-	// ErrRuntimeUnavailable reports that a liveness probe could not reach the
-	// runtime infrastructure at all (e.g. tmux "no server running" or "error
-	// connecting"). It says nothing about any individual session, so callers
-	// must treat it as an inconclusive probe, never as per-session death
-	// (issue #3475: reading a server-level outage as N session deaths archived
-	// every session on the board). Adapters wrap this sentinel via fmt.Errorf
-	// so callers can match it with errors.Is.
+	// ErrRuntimeUnavailable reports that the runtime infrastructure is
+	// conclusively absent (for example tmux reports "no server running"). Some
+	// recovery callers intentionally use that evidence to recreate a runtime.
 	ErrRuntimeUnavailable = errors.New("runtime: infrastructure unavailable")
+	// ErrRuntimeProbeInconclusive reports that a liveness probe could not inspect
+	// a possibly-live runtime (for example a transient socket error, missing
+	// compatible client, or client/server protocol mismatch). Callers must
+	// preserve the existing controller and must not recreate, destroy, archive,
+	// or otherwise treat the session as dead. Adapters wrap this sentinel via
+	// fmt.Errorf so callers can match it with errors.Is.
+	ErrRuntimeProbeInconclusive = errors.New("runtime: liveness probe inconclusive")
 )
 
 // WorkspaceConfig is the spec for creating or restoring a session's workspace.

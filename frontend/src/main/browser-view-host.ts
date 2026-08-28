@@ -8,7 +8,7 @@ import type {
 	WebContents,
 	OpenDevToolsOptions,
 } from "electron";
-import { nativeImage, net } from "electron";
+import { nativeImage } from "electron";
 import { randomUUID } from "node:crypto";
 import type {
 	BrowserAnnotationCancelPayload,
@@ -21,7 +21,6 @@ import type {
 	BrowserAnnotationSubmitPayload,
 } from "../shared/browser-annotations";
 import { attachAppShortcuts } from "./app-shortcuts";
-import { MAX_BROWSER_TABS } from "../shared/browser-tabs";
 import type { KeybindingOverrides } from "../shared/shortcuts";
 import type { AgentBrowserRuntime } from "./agent-browser-runtime";
 import type { AgentBrowserTarget, AgentBrowserTargetProvider } from "./agent-browser-cdp-bridge";
@@ -152,12 +151,15 @@ type BrowserWebContents = Pick<
 	| "mainFrame"
 	| "getTitle"
 	| "getURL"
+	| "getZoomFactor"
 	| "goBack"
 	| "goForward"
 	| "isLoading"
+	| "insertCSS"
 	| "loadURL"
 	| "on"
 	| "reload"
+	| "removeInsertedCSS"
 	| "send"
 	| "setWindowOpenHandler"
 	| "stop"
@@ -166,6 +168,35 @@ type BrowserWebContents = Pick<
 	closeDevTools?: () => void;
 	close?: () => void;
 	session?: Pick<Session, "setPermissionCheckHandler" | "setPermissionRequestHandler" | "webRequest">;
+};
+
+const browserScrollbarCSS = (zoomFactor: number): string => {
+	const effectiveZoom = Number.isFinite(zoomFactor) && zoomFactor > 0 ? zoomFactor : 1;
+	const thickness = Number((8 / effectiveZoom).toFixed(3));
+	return `
+	::-webkit-scrollbar {
+		width: ${thickness}px;
+		height: ${thickness}px;
+	}
+
+	::-webkit-scrollbar-button {
+		display: none;
+	}
+
+	::-webkit-scrollbar-track,
+	::-webkit-scrollbar-corner {
+		background: transparent;
+	}
+
+	::-webkit-scrollbar-thumb {
+		border-radius: 999px;
+		background: rgba(232, 232, 232, 0.72);
+	}
+
+	::-webkit-scrollbar-thumb:hover {
+		background: rgba(232, 232, 232, 0.86);
+	}
+`;
 };
 
 type BrowserViewLike = View & {
@@ -206,10 +237,6 @@ export type BrowserViewHostOptions = {
 	isKeybindingRecording?: () => boolean;
 	agentBrowserRuntime?: AgentBrowserRuntime;
 	isCloseShellTerminalShortcutEnabled?: () => boolean;
-	// Lets browser-view-host report console errors / failed requests to the
-	// session's agent via the daemon's own HTTP API (see recordBrowserSignal).
-	// Undefined/no port yet (daemon not ready) just means signals are dropped.
-	getDaemonPort?: () => number | undefined;
 };
 
 export type BrowserViewHost = {
@@ -267,12 +294,11 @@ type BrowserSessionEntry = {
 	nativeActiveTabId?: string;
 	nativeOperationQueue: Promise<void>;
 	devtoolsPlacement: BrowserDevToolsPlacement;
-	// Buffered console-error / failed-request signals awaiting a debounced
-	// flush to the session's agent. See recordBrowserSignal/flushBrowserSignals.
+	// Bounded browser diagnostics exposed only through an explicit errors query.
 	signals: {
-		pending: BrowserSignalEntry[];
-		flushTimer: NodeJS.Timeout | null;
+		entries: BrowserSignalEntry[];
 		webRequestRegistered: boolean;
+		webRequest?: Session["webRequest"];
 	};
 	devtools?: {
 		contents: BrowserWebContents;
@@ -299,6 +325,7 @@ type BrowserLogEntry = {
 type BrowserSignalEntry = {
 	kind: "console-error" | "network-failure";
 	message: string;
+	timestamp: string;
 };
 
 type BrowserNetworkRequest = {
@@ -351,13 +378,10 @@ const BROWSER_VIEW_BORDER_RADIUS = 10;
 const DEFAULT_NETWORK_CAPTURE_SECONDS = 60;
 const MAX_NETWORK_CAPTURE_SECONDS = 300;
 const MAX_NETWORK_REQUESTS = 200;
-// Always-on console-error/failed-request reporting (distinct from the
-// on-demand capture above, which stays opt-in): same cap philosophy — bounded
-// buffer, no bodies — but debounced into a single message per burst instead
-// of accumulated for on-demand query.
+// Keep a bounded, metadata-only history for explicit errors queries. Browser
+// failures must never be pushed into an agent's live conversation on their own.
 const MAX_BROWSER_SIGNALS = MAX_NETWORK_REQUESTS;
-const BROWSER_SIGNAL_FLUSH_DELAY_MS = 5_000;
-const MAX_BROWSER_SIGNALS_PER_MESSAGE = 10;
+const MAX_BROWSER_SIGNAL_BYTES = 16 * 1024;
 const FAVICON_SIZE = 32;
 const MAX_FAVICON_BYTES = 256 * 1024;
 const DEFAULT_NATIVE_DEVTOOLS_PLACEMENT: BrowserDevToolsPlacement = "right";
@@ -489,9 +513,6 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	};
 
 	const createTab = (session: BrowserSessionEntry, activate: boolean, syncNativeOnActivate = false): BrowserEntry => {
-		if (session.tabs.size >= MAX_BROWSER_TABS) {
-			throw browserError("BROWSER_TAB_LIMIT", `Browser tab limit of ${MAX_BROWSER_TABS} reached`);
-		}
 		const view = new options.WebContentsView({
 			webPreferences: {
 				contextIsolation: true,
@@ -506,6 +527,22 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		view.setBorderRadius?.(BROWSER_VIEW_BORDER_RADIUS);
 		view.webContents.session?.setPermissionCheckHandler?.(() => false);
 		view.webContents.session?.setPermissionRequestHandler?.((_contents, _permission, callback) => callback(false));
+		let scrollbarStyleKey: string | undefined;
+		let scrollbarStyleUpdate = Promise.resolve();
+		const applyScrollbarStyle = (): void => {
+			scrollbarStyleUpdate = scrollbarStyleUpdate
+				.then(async () => {
+					const previousKey = scrollbarStyleKey;
+					scrollbarStyleKey = await view.webContents.insertCSS(
+						browserScrollbarCSS(view.webContents.getZoomFactor()),
+						{ cssOrigin: "user" },
+					);
+					if (previousKey) await view.webContents.removeInsertedCSS(previousKey);
+				})
+				.catch(() => undefined);
+		};
+		view.webContents.on("dom-ready", applyScrollbarStyle);
+		view.webContents.on("zoom-changed", applyScrollbarStyle);
 
 		const tabId = `t${session.nextTabNumber++}`;
 		const state: BrowserNavState = emptyNavState(session.viewId);
@@ -557,11 +594,10 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				// Created window should be connected to webContents passed with options
 				// object" and crashes the whole app on every link click. Deny the guest
 				// window outright and open (and navigate) our own tab instead; openTab
-				// already handles URL validation, tab-limit, and the "popup" tabs-state
+				// already handles URL validation and the "popup" tabs-state
 				// event this used to push manually.
 				void openTab(session, url, true, "popup", true).catch(() => undefined);
 			},
-			() => session.tabs.size < MAX_BROWSER_TABS,
 		);
 		wireNavEvents(
 			view.webContents,
@@ -632,7 +668,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				agentBrowserCommands: 0,
 				nativeOperationQueue: Promise.resolve(),
 				devtoolsPlacement: DEFAULT_NATIVE_DEVTOOLS_PLACEMENT,
-				signals: { pending: [], flushTimer: null, webRequestRegistered: false },
+				signals: { entries: [], webRequestRegistered: false },
 			};
 			entries.set(viewId, session);
 			viewIdsBySessionId.set(sessionId, viewId);
@@ -675,6 +711,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		// doubles that don't care about network-failure signals can omit it).
 		if (!electronSession?.webRequest) return;
 		session.signals.webRequestRegistered = true;
+		session.signals.webRequest = electronSession.webRequest;
 		const filter = { urls: ["*://*/*"] };
 		electronSession.webRequest.onCompleted(filter, (details) => {
 			if (details.resourceType !== "xhr" || details.statusCode < 400) return;
@@ -692,46 +729,17 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		});
 	};
 
-	// Debounces a burst of errors (a broken page often fires several at once)
-	// into a single agent-facing message instead of one message per error.
-	const recordBrowserSignal = (session: BrowserSessionEntry, entry: BrowserSignalEntry): void => {
-		const { pending } = session.signals;
-		pending.push(entry);
-		if (pending.length > MAX_BROWSER_SIGNALS) pending.splice(0, pending.length - MAX_BROWSER_SIGNALS);
-		if (session.signals.flushTimer) return;
-		session.signals.flushTimer = setTimeout(() => {
-			session.signals.flushTimer = null;
-			void flushBrowserSignals(session);
-		}, BROWSER_SIGNAL_FLUSH_DELAY_MS);
-	};
-
-	const flushBrowserSignals = async (session: BrowserSessionEntry): Promise<void> => {
-		const queued = session.signals.pending.splice(0, session.signals.pending.length);
-		if (queued.length === 0) return;
-		const port = options.getDaemonPort?.();
-		if (!port) return;
-		const shown = queued.slice(0, MAX_BROWSER_SIGNALS_PER_MESSAGE);
-		const omitted = queued.length - shown.length;
-		const lines = shown.map(
-			(entry) => `- [${entry.kind === "console-error" ? "console" : "network"}] ${entry.message}`,
-		);
-		const message = [
-			`Browser detected ${queued.length} issue${queued.length === 1 ? "" : "s"} on this page:`,
-			...lines,
-			omitted > 0 ? `…and ${omitted} more` : null,
-		]
-			.filter((line): line is string => line !== null)
-			.join("\n");
-		try {
-			await net.fetch(`http://127.0.0.1:${port}/api/v1/sessions/${encodeURIComponent(session.sessionId)}/send`, {
-				method: "POST",
-				headers: { "content-type": "application/json" },
-				body: JSON.stringify({ message }),
-			});
-		} catch {
-			// Best-effort notification. A delivery failure here must not surface as
-			// a browser error itself or disrupt the tab that triggered it.
-		}
+	const recordBrowserSignal = (
+		session: BrowserSessionEntry,
+		entry: Omit<BrowserSignalEntry, "timestamp">,
+	): void => {
+		const { entries } = session.signals;
+		entries.push({
+			...entry,
+			message: externalText(entry.message, MAX_BROWSER_SIGNAL_BYTES),
+			timestamp: new Date().toISOString(),
+		});
+		if (entries.length > MAX_BROWSER_SIGNALS) entries.splice(0, entries.length - MAX_BROWSER_SIGNALS);
 	};
 
 	const ensureNativeActiveTab = async (session: BrowserSessionEntry, signal?: AbortSignal): Promise<void> => {
@@ -863,7 +871,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 
 	// Re-verified 2026-08-19: a long-session report claimed tab close buttons
 	// eventually "stop working" (tab stays in the rail / count badge doesn't
-	// decrement). An accelerated stress repro -- open to MAX_BROWSER_TABS and
+	// decrement). An accelerated stress repro -- open many tabs and
 	// close back to one, 20 cycles, interleaving selectTab/DevTools
 	// open-close/annotation-mode toggles -- against this real closeTab/
 	// destroyTabView path (see "browser tab lifecycle stress" in
@@ -1185,6 +1193,10 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	const destroy = (viewId: string): void => {
 		const session = entries.get(viewId);
 		if (!session) return;
+		session.signals.entries.length = 0;
+		session.signals.webRequest?.onCompleted(null);
+		session.signals.webRequest?.onErrorOccurred(null);
+		session.signals.webRequest = undefined;
 		if (options.mainWindow.isDestroyed?.()) session.devtools = undefined;
 		else destroyDevTools(session);
 		void options.agentBrowserRuntime?.closeSession(session.sessionId);
@@ -1587,8 +1599,14 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				case "network-clear":
 					return clearNetworkCapture(networkEntryFor(session));
 				case "console":
-				case "errors":
 					return normalizeNativeMessages(await runNative(action), action);
+				case "errors": {
+					const native = normalizeNativeMessages(await runNative(action), action);
+					return {
+						...native,
+						messages: [...native.messages, ...browserSignalMessages(session)],
+					};
+				}
 				default:
 					throw browserError("INVALID_ARGUMENT", `Unsupported browser action: ${action}`);
 			}
@@ -1801,10 +1819,9 @@ function hardenWebContents(
 	options: BrowserViewHostOptions,
 	entry: BrowserEntry,
 	openPopup: (url: string) => void,
-	canCreatePopup: () => boolean,
 ): void {
 	contents.setWindowOpenHandler(({ url }) => {
-		if (!isAllowedBrowserURL(url, options.rendererOrigin) || !canCreatePopup()) {
+		if (!isAllowedBrowserURL(url, options.rendererOrigin)) {
 			return { action: "deny" };
 		}
 		// Always deny — never return createWindow. See the call site's comment for
@@ -2318,11 +2335,11 @@ function normalizeAgentBrowserURL(input: string): string {
 	return normalized.href;
 }
 
-function externalText(value: unknown): string {
+function externalText(value: unknown, maxBytes = MAX_EXTERNAL_TEXT_BYTES): string {
 	const raw = value == null ? "" : String(value);
 	const bytes = Buffer.from(raw, "utf8");
-	if (bytes.length <= MAX_EXTERNAL_TEXT_BYTES) return raw;
-	return `${bytes.subarray(0, MAX_EXTERNAL_TEXT_BYTES).toString("utf8")}\n[Content truncated at ${MAX_EXTERNAL_TEXT_BYTES} bytes]`;
+	if (bytes.length <= maxBytes) return raw;
+	return `${bytes.subarray(0, maxBytes).toString("utf8")}\n[Content truncated at ${maxBytes} bytes]`;
 }
 
 function markUntrusted(value: string): string {
@@ -2332,7 +2349,19 @@ function markUntrusted(value: string): string {
 	return `${UNTRUSTED_BEGIN}\n${escaped}\n${UNTRUSTED_END}`;
 }
 
-function normalizeNativeMessages(result: Record<string, unknown>, action: string): Record<string, unknown> {
+function browserSignalMessages(session: BrowserSessionEntry): BrowserLogEntry[] {
+	return session.signals.entries.map((entry) => ({
+		level: "error",
+		message: markUntrusted(externalText(entry.message)),
+		source: entry.kind === "console-error" ? "browser-console" : "browser-network",
+		timestamp: entry.timestamp,
+	}));
+}
+
+function normalizeNativeMessages(
+	result: Record<string, unknown>,
+	action: string,
+): { messages: BrowserLogEntry[]; untrustedExternalContent: true } {
 	const raw = Array.isArray(result.messages) ? result.messages : Array.isArray(result.value) ? result.value : [];
 	const messages = raw.map((item): BrowserLogEntry => {
 		if (typeof item === "string") {

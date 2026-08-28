@@ -1148,6 +1148,7 @@ func (m *Manager) prepareTargetActivation(ctx context.Context, store ports.Agent
 		config.Model = model
 	}
 	env := m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env)
+	pinRuntimePermissionEnv(env, config.Permissions)
 	m.augmentAgentRuntimeEnv(agent, env)
 	configDir, err := nativeConfigDir(ctx, agent, env)
 	if err != nil {
@@ -3124,6 +3125,12 @@ func (m *Manager) reconcileStartingTarget(ctx context.Context, store ports.Agent
 	handle := ports.RuntimeHandle{ID: targetHandleID}
 	alive, err := m.runtime.IsAlive(ctx, handle)
 	if err != nil {
+		if errors.Is(err, ports.ErrRuntimeProbeInconclusive) {
+			// The durable target handle may still own a live controller. Preserve
+			// the controller, workspace, switch facts, and input fence until a
+			// later reconciliation can inspect it conclusively.
+			return false, err
+		}
 		if destroyErr := m.runtime.Destroy(ctx, handle); destroyErr != nil {
 			// The target may exist and the durable row still names the source. Keep
 			// the input fence closed until a later daemon reconciliation can prove

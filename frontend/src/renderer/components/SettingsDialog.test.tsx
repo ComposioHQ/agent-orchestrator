@@ -30,15 +30,13 @@ vi.mock("./ProjectSettingsForm", () => ({
 }));
 
 vi.mock("./GlobalSettingsForm", () => ({
-	GlobalSettingsForm: () => <div>Global settings</div>,
+	GlobalSettingsForm: ({ section }: { section: string }) => <div data-testid="global-settings-section">{section}</div>,
 }));
 
-vi.mock("./settings/KeyboardShortcutsSettingsDialog", () => ({
-	KeyboardShortcutsSettingsDialog: () => null,
-}));
-
-vi.mock("./ConnectMobileModal", () => ({
-	ConnectMobileModal: () => null,
+// The dialog reads the cloud gate to decide whether the Cloud nav page exists;
+// mocked so these tests need no QueryClientProvider (same pattern as Sidebar).
+vi.mock("../hooks/useCloudGate", () => ({
+	useCloudGate: () => ({ cloudEnabled: false, localEnabled: true }),
 }));
 
 describe("SettingsDialog", () => {
@@ -56,5 +54,13 @@ describe("SettingsDialog", () => {
 
 		await userEvent.keyboard("{Escape}");
 		expect(useUiStore.getState().settingsModal).toEqual({ scope: "project", projectId: "proj-1" });
+	});
+
+	it("opens the requested global settings page", async () => {
+		useUiStore.getState().openGlobalSettings("mobile");
+		render(<SettingsDialog />);
+
+		expect(await screen.findByTestId("global-settings-section")).toHaveTextContent("mobile");
+		expect(screen.getByRole("button", { name: "Mobile" })).toHaveAttribute("aria-current", "page");
 	});
 });

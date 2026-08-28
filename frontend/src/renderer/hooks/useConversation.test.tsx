@@ -86,6 +86,10 @@ describe("useConversation snapshot mapping", () => {
 				...WIRE,
 				activeBranchId: "branch-child",
 				branchedFromEarlierMessage: true,
+				branchMaterialization: {
+					strategy: "approximate_context",
+					replayTruncated: true,
+				},
 				branchPoints: [
 					{
 						turnId: "turn-1",
@@ -123,6 +127,10 @@ describe("useConversation snapshot mapping", () => {
 		expect(result.current.snapshot).toMatchObject({
 			activeBranchId: "branch-child",
 			branchedFromEarlierMessage: true,
+			branchMaterialization: {
+				strategy: "approximate_context",
+				replayTruncated: true,
+			},
 			branchPoints: [{ turnId: "turn-1", position: 2, total: 3 }],
 		});
 		expect(result.current.snapshot!.items[0]).toMatchObject({
@@ -160,6 +168,30 @@ describe("useConversation snapshot mapping", () => {
 			{ text: "one", status: "completed" },
 			{ text: "two", status: "in_progress" },
 		]);
+	});
+
+	it("maps retry lineage and consumed-source facts from the daemon", async () => {
+		getMock.mockResolvedValue({
+			data: {
+				...WIRE,
+				turns: [
+					{
+						...WIRE.turns[0],
+						retryOfTurnId: "turn-source",
+						hasRetryAttempt: true,
+					},
+				],
+			},
+			error: undefined,
+		});
+
+		const { result } = renderHook(() => useConversation("ao-1"), { wrapper });
+		await waitFor(() => expect(result.current.snapshot).toBeDefined());
+
+		expect(result.current.snapshot!.turns[0]).toMatchObject({
+			retryOfTurnId: "turn-source",
+			hasRetryAttempt: true,
+		});
 	});
 
 	// Absent must stay absent: a client has to tell "the provider said nothing" from

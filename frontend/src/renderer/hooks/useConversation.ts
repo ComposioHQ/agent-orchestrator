@@ -52,8 +52,10 @@ export interface ConversationSendInput {
 	resources?: WireResourceContent[];
 }
 
+export const conversationQueryRoot = ["conversation"] as const;
+
 export function conversationQueryKey(sessionId: string) {
-	return ["conversation", sessionId] as const;
+	return [...conversationQueryRoot, sessionId] as const;
 }
 
 export function conversationModelsQueryKey(sessionId: string) {
@@ -99,7 +101,10 @@ export function useConversation(sessionId: string | undefined): ConversationQuer
 			const { data, error } = await apiClient.GET("/api/v1/sessions/{sessionId}/conversation", {
 				params: {
 					path: { sessionId: sessionId as string },
-					query: { beforeSequence: pageParam, limit: CONVERSATION_PAGE_SIZE },
+					query: {
+						beforeSequence: pageParam,
+						limit: CONVERSATION_PAGE_SIZE,
+					},
 				},
 			});
 			if (error) throw error;
@@ -160,7 +165,9 @@ export function useConversationCommands(sessionId: string | undefined) {
 			// Keep the mutation pending until the active conversation has refreshed. A
 			// queued message or landed steer should be visible before the composer clears,
 			// otherwise the action looks dropped even though the daemon accepted it.
-			await queryClient.invalidateQueries({ queryKey: conversationQueryKey(sessionId) });
+			await queryClient.invalidateQueries({
+				queryKey: conversationQueryKey(sessionId),
+			});
 		}
 	}, [queryClient, sessionId]);
 
@@ -186,7 +193,12 @@ export function useConversationCommands(sessionId: string | undefined) {
 			const { error } = await apiClient.POST(
 				"/api/v1/sessions/{sessionId}/conversation/approvals/{requestId}/resolve",
 				{
-					params: { path: { sessionId: sessionId as string, requestId: input.requestId } },
+					params: {
+						path: {
+							sessionId: sessionId as string,
+							requestId: input.requestId,
+						},
+					},
 					body: { decisionId: input.decisionId },
 				},
 			);
@@ -204,7 +216,12 @@ export function useConversationCommands(sessionId: string | undefined) {
 			const { error } = await apiClient.POST(
 				"/api/v1/sessions/{sessionId}/conversation/inputs/{requestId}/resolve",
 				{
-					params: { path: { sessionId: sessionId as string, requestId: input.requestId } },
+					params: {
+						path: {
+							sessionId: sessionId as string,
+							requestId: input.requestId,
+						},
+					},
 					body: { action: input.action, content: input.content },
 				},
 			);
@@ -217,7 +234,9 @@ export function useConversationCommands(sessionId: string | undefined) {
 		mutationFn: async () => {
 			const { error } = await apiClient.POST(
 				"/api/v1/sessions/{sessionId}/conversation/interrupt",
-				{ params: { path: { sessionId: sessionId as string } } },
+				{
+					params: { path: { sessionId: sessionId as string } },
+				},
 			);
 			if (error) throw error;
 		},
@@ -232,9 +251,12 @@ export function useConversationCommands(sessionId: string | undefined) {
 		mutationFn: async () => {
 			const { data, error, response } = await apiClient.POST(
 				"/api/v1/sessions/{sessionId}/resume-agent",
-				{ params: { path: { sessionId: sessionId as string } } },
+				{
+					params: { path: { sessionId: sessionId as string } },
+				},
 			);
-			if (error) throw new Error(apiErrorMessage(error, `Failed to resume agent (${response.status})`));
+			if (error)
+				throw new Error(apiErrorMessage(error, `Failed to resume agent (${response.status})`));
 			return data;
 		},
 		onSuccess: () => {
@@ -261,7 +283,9 @@ export function useConversationCommands(sessionId: string | undefined) {
 		mutationFn: async () => {
 			const { data, error } = await apiClient.POST(
 				"/api/v1/sessions/{sessionId}/conversation/compact",
-				{ params: { path: { sessionId: sessionId as string } } },
+				{
+					params: { path: { sessionId: sessionId as string } },
+				},
 			);
 			if (error) throw error;
 			return data;
@@ -273,7 +297,10 @@ export function useConversationCommands(sessionId: string | undefined) {
 		mutationFn: async (settings: TurnSettings) => {
 			const { error } = await apiClient.PATCH(
 				"/api/v1/sessions/{sessionId}/conversation/settings",
-				{ params: { path: { sessionId: sessionId as string } }, body: settings },
+				{
+					params: { path: { sessionId: sessionId as string } },
+					body: settings,
+				},
 			);
 			if (error) throw error;
 		},
@@ -319,7 +346,11 @@ export function useConversationCommands(sessionId: string | undefined) {
 		mutationFn: async (turnId: string) => {
 			const { data, error } = await apiClient.POST(
 				"/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/steer",
-				{ params: { path: { sessionId: sessionId as string, turnId } } },
+				{
+					params: {
+						path: { sessionId: sessionId as string, turnId },
+					},
+				},
 			);
 			if (error) throw error;
 			return data;
@@ -339,7 +370,9 @@ export function useConversationCommands(sessionId: string | undefined) {
 		mutationFn: async () => {
 			const { data, error } = await apiClient.POST(
 				"/api/v1/sessions/{sessionId}/conversation/mcp/reload",
-				{ params: { path: { sessionId: sessionId as string } } },
+				{
+					params: { path: { sessionId: sessionId as string } },
+				},
 			);
 			if (error) throw error;
 			return data;
@@ -351,7 +384,27 @@ export function useConversationCommands(sessionId: string | undefined) {
 		mutationFn: async (turnId: string) => {
 			const { data, error } = await apiClient.POST(
 				"/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/rollback",
-				{ params: { path: { sessionId: sessionId as string, turnId } } },
+				{
+					params: {
+						path: { sessionId: sessionId as string, turnId },
+					},
+				},
+			);
+			if (error) throw error;
+			return data;
+		},
+		onSuccess: invalidate,
+	});
+
+	const retryTurn = useMutation({
+		mutationFn: async (turnId: string) => {
+			const { data, error } = await apiClient.POST(
+				"/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/retry",
+				{
+					params: {
+						path: { sessionId: sessionId as string, turnId },
+					},
+				},
 			);
 			if (error) throw error;
 			return data;
@@ -364,7 +417,9 @@ export function useConversationCommands(sessionId: string | undefined) {
 			const { data, error } = await apiClient.POST(
 				"/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/edit",
 				{
-					params: { path: { sessionId: sessionId as string, turnId } },
+					params: {
+						path: { sessionId: sessionId as string, turnId },
+					},
 					body: { text, clientMessageId: crypto.randomUUID() },
 				},
 			);
@@ -378,7 +433,11 @@ export function useConversationCommands(sessionId: string | undefined) {
 		mutationFn: async (branchId: string) => {
 			const { data, error } = await apiClient.POST(
 				"/api/v1/sessions/{sessionId}/conversation/branches/{branchId}/activate",
-				{ params: { path: { sessionId: sessionId as string, branchId } } },
+				{
+					params: {
+						path: { sessionId: sessionId as string, branchId },
+					},
+				},
 			);
 			if (error) throw error;
 			return data;
@@ -419,14 +478,18 @@ export function useConversationCommands(sessionId: string | undefined) {
 		rollback: (turnId: string) => rollback.mutateAsync(turnId),
 		rollbackPending: rollback.isPending,
 		rollbackError: rollback.error ? apiErrorMessage(rollback.error) : undefined,
+		retryControl: {
+			retry: (turnId: string) => retryTurn.mutateAsync(turnId),
+			pending: retryTurn.isPending,
+			error: retryTurn.error ? apiErrorMessage(retryTurn.error) : undefined,
+			turnId: retryTurn.variables,
+		},
 		editMessage: (turnId: string, text: string) => editMessage.mutateAsync({ turnId, text }),
 		editMessagePending: editMessage.isPending,
 		editMessageError: editMessage.error ? apiErrorMessage(editMessage.error) : undefined,
 		activateBranch: (branchId: string) => activateBranch.mutateAsync(branchId),
 		activateBranchPending: activateBranch.isPending,
-		activateBranchError: activateBranch.error
-			? apiErrorMessage(activateBranch.error)
-			: undefined,
+		activateBranchError: activateBranch.error ? apiErrorMessage(activateBranch.error) : undefined,
 		steer: (text: string) => steer.mutateAsync(text),
 		promoteQueuedTurn: (turnId: string) => promoteQueuedTurn.mutateAsync(turnId),
 		steerPending: steer.isPending,
@@ -444,8 +507,7 @@ export function useConversationCommands(sessionId: string | undefined) {
 		steerUnsupported: apiErrorCode(steer.error) === "CHAT_STEER_UNSUPPORTED",
 		reloadMcpServers: () => reloadMcp.mutateAsync(),
 		reloadingMcpServers: reloadMcp.isPending,
-		mcpReloadUnsupported:
-			apiErrorCode(reloadMcp.error) === "CHAT_MCP_RELOAD_UNSUPPORTED",
+		mcpReloadUnsupported: apiErrorCode(reloadMcp.error) === "CHAT_MCP_RELOAD_UNSUPPORTED",
 		mcpReloadError:
 			reloadMcp.error && apiErrorCode(reloadMcp.error) !== "CHAT_MCP_RELOAD_UNSUPPORTED"
 				? apiErrorMessage(reloadMcp.error)
@@ -453,9 +515,7 @@ export function useConversationCommands(sessionId: string | undefined) {
 		busy: send.isPending || resolve.isPending || resolveInput.isPending || interrupt.isPending,
 		error:
 			send.error || resolve.error || interrupt.error || chooseSettings.error
-				? apiErrorMessage(
-						send.error ?? resolve.error ?? interrupt.error ?? chooseSettings.error,
-					)
+				? apiErrorMessage(send.error ?? resolve.error ?? interrupt.error ?? chooseSettings.error)
 				: undefined,
 	};
 }
@@ -502,7 +562,9 @@ export function useConversationModels(sessionId: string | undefined, enabled: bo
 		queryFn: async () => {
 			const { data, error } = await apiClient.GET(
 				"/api/v1/sessions/{sessionId}/conversation/models",
-				{ params: { path: { sessionId: sessionId as string } } },
+				{
+					params: { path: { sessionId: sessionId as string } },
+				},
 			);
 			if (error) throw error;
 			return (data?.models ?? []) as ChatModel[];
@@ -543,7 +605,9 @@ export function useConversationConfigOptions(sessionId: string | undefined, enab
 		queryFn: async () => {
 			const { data, error } = await apiClient.GET(
 				"/api/v1/sessions/{sessionId}/conversation/config-options",
-				{ params: { path: { sessionId: sessionId as string } } },
+				{
+					params: { path: { sessionId: sessionId as string } },
+				},
 			);
 			if (error) throw error;
 			return (data?.options ?? []) as ChatConfigOption[];
@@ -555,13 +619,7 @@ export function useConversationConfigOptions(sessionId: string | undefined, enab
 		// so no poll can start or land inside that window.
 		onMutate: () => setWriting(true),
 		onSettled: () => setWriting(false),
-		mutationFn: async ({
-			optionId,
-			value,
-		}: {
-			optionId: string;
-			value: ChatConfigOptionValue;
-		}) => {
+		mutationFn: async ({ optionId, value }: { optionId: string; value: ChatConfigOptionValue }) => {
 			// A read already in flight when the user picked would otherwise land
 			// after this mutation's setQueryData and put the pre-change catalog
 			// back, reverting the picker to the old value until the next poll.
@@ -570,7 +628,10 @@ export function useConversationConfigOptions(sessionId: string | undefined, enab
 				"/api/v1/sessions/{sessionId}/conversation/config-options/{configId}",
 				{
 					params: {
-						path: { sessionId: sessionId as string, configId: optionId },
+						path: {
+							sessionId: sessionId as string,
+							configId: optionId,
+						},
 					},
 					body: value,
 				},
@@ -616,7 +677,9 @@ export function useConversationSkills(sessionId: string | undefined, enabled: bo
 		queryFn: async () => {
 			const { data, error } = await apiClient.GET(
 				"/api/v1/sessions/{sessionId}/conversation/skills",
-				{ params: { path: { sessionId: sessionId as string } } },
+				{
+					params: { path: { sessionId: sessionId as string } },
+				},
 			);
 			if (error) throw error;
 			return (data?.skills ?? []) as ChatSkill[];
@@ -644,10 +707,9 @@ export function useWorkspaceFilePaths(sessionId: string | undefined, enabled: bo
 		staleTime: 30 * 1000,
 		retry: false,
 		queryFn: async () => {
-			const { data, error } = await apiClient.GET(
-				"/api/v1/sessions/{sessionId}/workspace/files",
-				{ params: { path: { sessionId: sessionId as string } } },
-			);
+			const { data, error } = await apiClient.GET("/api/v1/sessions/{sessionId}/workspace/files", {
+				params: { path: { sessionId: sessionId as string } },
+			});
 			if (error) throw error;
 			return {
 				// A deleted path cannot be read, so offering it would insert a
@@ -677,10 +739,10 @@ export function useStageAttachments(sessionId: string | undefined) {
 	return useCallback(
 		async (attachments: { mimeType: string; data: string }[]): Promise<string[]> => {
 			if (!sessionId || attachments.length === 0) return [];
-			const { data, error } = await apiClient.POST(
-				"/api/v1/sessions/{sessionId}/attachments",
-				{ params: { path: { sessionId } }, body: { attachments } },
-			);
+			const { data, error } = await apiClient.POST("/api/v1/sessions/{sessionId}/attachments", {
+				params: { path: { sessionId } },
+				body: { attachments },
+			});
 			if (error) throw error;
 			return data?.paths ?? [];
 		},
@@ -712,6 +774,7 @@ function toSnapshot(wire: WireSnapshot): ConversationSnapshot {
 		latestSequence: wire.latestSequence,
 		oldestSequence: wire.oldestSequence ?? wire.latestSequence + 1,
 		hasMoreBefore: wire.hasMoreBefore ?? false,
+		nativeForkAvailableAfterSequence: wire.nativeForkAvailableAfterSequence ?? 0,
 		settings: {
 			model: wire.settings?.model || undefined,
 			reasoningEffort: wire.settings?.reasoningEffort || undefined,
@@ -766,6 +829,12 @@ function toSnapshot(wire: WireSnapshot): ConversationSnapshot {
 		capabilities: wire.capabilities?.length ? wire.capabilities : undefined,
 		activeBranchId: wire.activeBranchId || undefined,
 		branchedFromEarlierMessage: wire.branchedFromEarlierMessage ?? undefined,
+		branchMaterialization: wire.branchMaterialization
+			? {
+					strategy: wire.branchMaterialization.strategy,
+					replayTruncated: wire.branchMaterialization.replayTruncated,
+				}
+			: undefined,
 		branchPoints: (wire.branchPoints ?? []).map((point) => ({
 			turnId: point.turnId,
 			position: point.position,
@@ -777,6 +846,8 @@ function toSnapshot(wire: WireSnapshot): ConversationSnapshot {
 			id: turn.id,
 			state: turn.state as TurnState,
 			providerTurnId: turn.providerTurnId,
+			retryOfTurnId: turn.retryOfTurnId,
+			hasRetryAttempt: turn.hasRetryAttempt,
 			errorMessage: turn.errorMessage,
 			requestedAt: turn.requestedAt,
 			startedAt: turn.startedAt ?? undefined,
@@ -816,9 +887,7 @@ function toSnapshot(wire: WireSnapshot): ConversationSnapshot {
 }
 
 /** Merge the newest live page with any older pages loaded on demand. */
-function mergeConversationPages(
-	pages: ConversationSnapshot[],
-): ConversationSnapshot | undefined {
+function mergeConversationPages(pages: ConversationSnapshot[]): ConversationSnapshot | undefined {
 	const live = pages[0];
 	if (!live) return undefined;
 
@@ -891,7 +960,11 @@ function readDecisions(detail: Record<string, unknown>): DecisionOption[] | unde
 	const options: DecisionOption[] = [];
 	for (const entry of raw) {
 		if (entry && typeof entry === "object" && "id" in entry) {
-			const option = entry as { id?: unknown; label?: unknown; kind?: unknown };
+			const option = entry as {
+				id?: unknown;
+				label?: unknown;
+				kind?: unknown;
+			};
 			if (typeof option.id === "string" && option.id !== "") {
 				const kind = isDecisionKind(option.kind) ? option.kind : undefined;
 				options.push({

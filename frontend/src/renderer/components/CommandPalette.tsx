@@ -5,9 +5,10 @@ import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObjec
 import { useTranslation } from "react-i18next";
 import { useCommandPaletteEnabled } from "../hooks/useCommandPaletteEnabled";
 import { useRestoreSession } from "../hooks/useRestoreSession";
-import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import { cloudSessionsQueryKey, useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { aoBridge } from "../lib/bridge";
+import { spawnCloudOrchestrator } from "../lib/cloud-orchestrator";
 import {
 	buildCommands,
 	buildSessionActions,
@@ -19,6 +20,7 @@ import {
 } from "../lib/command-palette";
 import { iconForCommand } from "../lib/command-palette-icons";
 import { isDialogOrMenuOpen } from "../lib/dom-selectors";
+import { captureRendererEvent } from "../lib/telemetry";
 import { isMacPlatform } from "../lib/platform";
 import { sessionReviewsQueryOptions, type PRReviewState } from "../lib/session-reviews";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
@@ -274,6 +276,16 @@ export function CommandPalette() {
 				return;
 			}
 			const workspace = workspaces.find((candidate) => candidate.id === projectId);
+			// Cloud projects carry no local orchestrator-agent config; spawn the
+			// orchestrator as a cloud session in its own sandbox instead of falling
+			// through to the project-settings page.
+			if (workspace?.kind === "cloud") {
+				const sessionId = await spawnCloudOrchestrator(queryClient, projectId);
+				await queryClient.invalidateQueries({ queryKey: cloudSessionsQueryKey });
+				navigateToTarget({ to: "/projects/$projectId/sessions/$sessionId", params: { projectId, sessionId } });
+				closePalette();
+				return;
+			}
 			if (!hasConfiguredOrchestratorAgent(workspace)) {
 				if (workspace) {
 					navigateToTarget({ to: "/projects/$projectId/settings", params: { projectId } });
@@ -331,6 +343,16 @@ export function CommandPalette() {
 					closePalette();
 					break;
 				case "trigger-review": {
+					// Emitted before the request, like the inspector's: these renderer
+					// events count INTENT, and the daemon's ao.review.* events are the
+					// ground truth for what actually ran.
+					void captureRendererEvent("ao.renderer.review_triggered", {
+						action: action.reviewAction,
+						// The palette sends no body, so it can never carry a per-session
+						// reviewer override.
+						has_override: false,
+						source: "command_palette",
+					});
 					const { error: triggerError } = await apiClient.POST("/api/v1/sessions/{sessionId}/reviews/trigger", {
 						params: { path: { sessionId: action.sessionId } },
 					});
