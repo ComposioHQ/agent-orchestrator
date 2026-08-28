@@ -188,6 +188,8 @@ export function buildDaemonEnv(
 	const merged: NodeJS.ProcessEnv = { TERM: "xterm-256color", ...(shellEnv ?? {}), ...processEnv };
 	merged.PATH = withFallbackPath(shellEnv?.PATH ?? processEnv.PATH);
 	merged.TERM = normalizeTerm(merged.TERM);
+	delete merged.TERMINFO;
+	delete merged.TERMINFO_DIRS;
 	return { ...merged, ...overrides };
 }
 

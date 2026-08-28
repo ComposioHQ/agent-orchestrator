@@ -115,6 +115,9 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 						issueId: session.issueId,
 						provider: toAgentProvider(session.harness),
 						reviewerHarness: toReviewerHarnessId(session.reviewerHarness),
+						reviewerConfig: session.reviewerConfig
+							? { model: session.reviewerConfig.model ?? undefined, mode: session.reviewerConfig.mode ?? undefined }
+							: undefined,
 						autoReviewEnabled: session.autoReviewEnabled ?? false,
 						kind: session.kind === "orchestrator" ? "orchestrator" : session.kind === "worker" ? "worker" : undefined,
 						// Carried through verbatim: the session surface must render from

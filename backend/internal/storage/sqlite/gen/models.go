@@ -425,6 +425,7 @@ type Session struct {
 	AgentSessionIDLaunchID    string
 	Model                     string
 	LatestUserPromptAt        sql.NullTime
+	ReviewerAgentConfig       string
 }
 
 type SessionCleanupFact struct {

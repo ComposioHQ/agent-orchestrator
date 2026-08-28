@@ -6309,6 +6309,8 @@ components:
           items:
             $ref: '#/components/schemas/SessionPRFacts'
           type: array
+        reviewerConfig:
+          $ref: '#/components/schemas/AgentConfig'
         reviewerHarness:
           enum:
           - claude-code
@@ -7223,6 +7225,8 @@ components:
       type: object
     DomainReviewerConfig:
       properties:
+        agentConfig:
+          $ref: '#/components/schemas/AgentConfig'
         harness:
           type: string
       required:
@@ -9119,6 +9123,8 @@ components:
       type: object
     SetSessionReviewerRequest:
       properties:
+        agentConfig:
+          $ref: '#/components/schemas/AgentConfig'
         harness:
           enum:
           - claude-code

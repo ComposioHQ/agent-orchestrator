@@ -161,6 +161,9 @@ func migrate(db *sql.DB) error {
 	if err := prepareQueuedTurnPromotionMigration(db); err != nil {
 		return fmt.Errorf("prepare queued-turn promotion migration: %w", err)
 	}
+	if err := prepareSessionReviewerAgentConfigMigration(db); err != nil {
+		return fmt.Errorf("prepare session reviewer agent-config migration: %w", err)
+	}
 	// Builds can advance a database past a migration that is added or
 	// renumbered later (notably across fast-moving Nightly releases). Apply
 	// those embedded migrations instead of permanently wedging daemon startup
@@ -320,6 +323,41 @@ SELECT COALESCE((
 // owns both numbers, so record the promotion schema as version 89. If version 88
 // came from the old promotion migration, remove that ledger entry so goose can
 // apply upstream's auto-inject-CI migration at its canonical version.
+// prepareSessionReviewerAgentConfigMigration preserves databases that
+// already have sessions.reviewer_agent_config from an in-flight local run but
+// do not yet record the canonical 0118 migration version. Recording that
+// physically present effect prevents goose from replaying the ALTER TABLE over
+// the existing column on the next startup.
+func prepareSessionReviewerAgentConfigMigration(db *sql.DB) error {
+	var gooseTable int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'goose_db_version'`,
+	).Scan(&gooseTable); err != nil {
+		return err
+	}
+	if gooseTable == 0 {
+		return nil
+	}
+
+	var applied, reviewerConfigColumn int
+	if err := db.QueryRow(`
+SELECT
+    COALESCE((
+        SELECT is_applied FROM goose_db_version
+        WHERE version_id = 118 ORDER BY id DESC LIMIT 1
+    ), 0),
+    (SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'reviewer_agent_config')
+`).Scan(&applied, &reviewerConfigColumn); err != nil {
+		return err
+	}
+	if applied != 0 || reviewerConfigColumn == 0 {
+		return nil
+	}
+
+	_, err := db.Exec(`INSERT INTO goose_db_version (version_id, is_applied) VALUES (118, 1)`)
+	return err
+}
+
 func prepareQueuedTurnPromotionMigration(db *sql.DB) error {
 	tx, err := db.Begin()
 	if err != nil {

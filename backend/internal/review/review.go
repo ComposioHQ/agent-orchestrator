@@ -32,7 +32,7 @@ var (
 // in production; tests use a fake.
 type Store interface {
 	UpsertReview(ctx stdctx.Context, r domain.Review) error
-	SetSessionReviewerHarness(ctx stdctx.Context, id domain.SessionID, harness domain.ReviewerHarness, updatedAt time.Time) (bool, error)
+	SetSessionReviewerConfig(ctx stdctx.Context, id domain.SessionID, harness domain.ReviewerHarness, config domain.AgentConfig, updatedAt time.Time) (bool, error)
 	GetReviewBySession(ctx stdctx.Context, id domain.SessionID) (domain.Review, bool, error)
 	ClearReviewerHandle(ctx stdctx.Context, id domain.SessionID) error
 	GetReviewBySessionAndHarness(ctx stdctx.Context, id domain.SessionID, harness domain.ReviewerHarness) (domain.Review, bool, error)
@@ -190,12 +190,12 @@ type RestoreReviewerResult struct {
 // this pass under it without editing project config, so picking a reviewer for
 // one session cannot change what any other session in the project runs. The
 // harness-change path below already handles the swap by respawning the pane.
-func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID, override domain.ReviewerHarness) (TriggerResult, error) {
-	return e.TriggerWithSource(ctx, workerID, override, domain.ReviewTriggerManual)
+func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID, override domain.ReviewerHarness, config domain.AgentConfig) (TriggerResult, error) {
+	return e.TriggerWithSource(ctx, workerID, override, config, domain.ReviewTriggerManual)
 }
 
 // TriggerWithSource starts a review and records who initiated the pass.
-func (e *Engine) TriggerWithSource(ctx stdctx.Context, workerID domain.SessionID, override domain.ReviewerHarness, source domain.ReviewTriggerSource) (TriggerResult, error) {
+func (e *Engine) TriggerWithSource(ctx stdctx.Context, workerID domain.SessionID, override domain.ReviewerHarness, config domain.AgentConfig, source domain.ReviewTriggerSource) (TriggerResult, error) {
 	if workerID == "" {
 		return TriggerResult{}, fmt.Errorf("%w: worker session id is required", ErrInvalid)
 	}
@@ -244,12 +244,17 @@ func (e *Engine) TriggerWithSource(ctx stdctx.Context, workerID domain.SessionID
 		return TriggerResult{}, err
 	}
 
-	harness, err := e.reviewerHarness(ctx, worker)
+	harness, config, err := e.reviewerSelection(ctx, worker)
 	if err != nil {
 		return TriggerResult{}, err
 	}
 	if override != "" {
 		harness = override
+		if config != (domain.AgentConfig{}) {
+			// pass-specific override wins when provided; otherwise keep the session/project default config
+		} else {
+			config = domain.AgentConfig{}
+		}
 	}
 	reviewRows, err := e.store.ListReviewsBySession(ctx, workerID)
 	if err != nil {
@@ -376,7 +381,7 @@ func (e *Engine) TriggerWithSource(ctx stdctx.Context, workerID domain.SessionID
 		if err := e.launcher.Preflight(ctx, harness, worker.Metadata.WorkspacePath); err != nil {
 			return TriggerResult{}, failRuns(0, fmt.Errorf("reviewer preflight: %w", err))
 		}
-		launch, err := e.launcher.Spawn(ctx, reviewLaunchSpec(worker, harness, created[0], queue, 0, reviewRow.AgentSessionID))
+		launch, err := e.launcher.Spawn(ctx, reviewLaunchSpec(worker, harness, config, created[0], queue, 0, reviewRow.AgentSessionID))
 		if err != nil {
 			return TriggerResult{}, failRuns(0, fmt.Errorf("launch reviewer: %w", err))
 		}
@@ -385,7 +390,7 @@ func (e *Engine) TriggerWithSource(ctx stdctx.Context, workerID domain.SessionID
 			reviewRow.AgentSessionID = launch.AgentSessionID
 		}
 	} else {
-		if err := e.launcher.Notify(ctx, handleID, reviewLaunchSpec(worker, harness, created[0], queue, 0, reviewRow.AgentSessionID)); err != nil {
+		if err := e.launcher.Notify(ctx, handleID, reviewLaunchSpec(worker, harness, config, created[0], queue, 0, reviewRow.AgentSessionID)); err != nil {
 			return TriggerResult{}, failRuns(0, fmt.Errorf("notify reviewer: %w", err))
 		}
 	}
@@ -420,12 +425,20 @@ func autoReviewSessionReason(worker domain.SessionRecord, now time.Time) string 
 
 // SwitchReviewer serializes reviewer preference changes with trigger/restore
 // and returns the authoritative post-switch review state.
-func (e *Engine) SwitchReviewer(ctx stdctx.Context, workerID domain.SessionID, harness domain.ReviewerHarness) (SessionReviews, error) {
+func (e *Engine) SwitchReviewer(
+	ctx stdctx.Context,
+	workerID domain.SessionID,
+	harness domain.ReviewerHarness,
+	config domain.AgentConfig,
+) (SessionReviews, error) {
 	if workerID == "" {
 		return SessionReviews{}, fmt.Errorf("%w: worker session id is required", ErrInvalid)
 	}
 	if harness != "" && !harness.IsKnown() {
 		return SessionReviews{}, fmt.Errorf("%w: unknown reviewer harness %q", ErrInvalid, harness)
+	}
+	if err := config.Validate(); err != nil {
+		return SessionReviews{}, fmt.Errorf("%w: reviewer config: %v", ErrInvalid, err)
 	}
 	unlock := e.lockWorker(workerID)
 	defer unlock()
@@ -437,13 +450,14 @@ func (e *Engine) SwitchReviewer(ctx stdctx.Context, workerID domain.SessionID, h
 	if !ok {
 		return SessionReviews{}, fmt.Errorf("%w: worker session %q", ErrNotFound, workerID)
 	}
-	if ok, err := e.store.SetSessionReviewerHarness(ctx, workerID, harness, e.clock()); err != nil {
+	if ok, err := e.store.SetSessionReviewerConfig(ctx, workerID, harness, config, e.clock()); err != nil {
 		return SessionReviews{}, err
 	} else if !ok {
 		return SessionReviews{}, fmt.Errorf("%w: worker session %q", ErrNotFound, workerID)
 	}
 	worker.ReviewerHarness = harness
-	selected, err := e.reviewerHarness(ctx, worker)
+	worker.ReviewerConfig = config
+	selected, selectedConfig, err := e.reviewerSelection(ctx, worker)
 	if err != nil {
 		return SessionReviews{}, err
 	}
@@ -454,7 +468,7 @@ func (e *Engine) SwitchReviewer(ctx stdctx.Context, workerID domain.SessionID, h
 	if err := e.destroyOtherReviewerHandles(ctx, workerID, selected, reviewRows); err != nil {
 		return SessionReviews{}, err
 	}
-	if _, err := e.restoreReviewerLocked(ctx, workerID, worker, selected); err != nil {
+	if _, err := e.restoreReviewerLocked(ctx, workerID, worker, selected, selectedConfig); err != nil {
 		return SessionReviews{}, err
 	}
 	return e.listLocked(ctx, workerID, selected)
@@ -514,14 +528,20 @@ func (e *Engine) RestoreReviewer(ctx stdctx.Context, workerID domain.SessionID) 
 	if worker.IsTerminated || worker.Metadata.WorkspacePath == "" {
 		return RestoreReviewerResult{}, nil
 	}
-	harness, err := e.reviewerHarness(ctx, worker)
+	harness, config, err := e.reviewerSelection(ctx, worker)
 	if err != nil {
 		return RestoreReviewerResult{}, err
 	}
-	return e.restoreReviewerLocked(ctx, workerID, worker, harness)
+	return e.restoreReviewerLocked(ctx, workerID, worker, harness, config)
 }
 
-func (e *Engine) restoreReviewerLocked(ctx stdctx.Context, workerID domain.SessionID, worker domain.SessionRecord, harness domain.ReviewerHarness) (RestoreReviewerResult, error) {
+func (e *Engine) restoreReviewerLocked(
+	ctx stdctx.Context,
+	workerID domain.SessionID,
+	worker domain.SessionRecord,
+	harness domain.ReviewerHarness,
+	config domain.AgentConfig,
+) (RestoreReviewerResult, error) {
 	reviewRows, err := e.store.ListReviewsBySession(ctx, workerID)
 	if err != nil {
 		return RestoreReviewerResult{}, err
@@ -564,6 +584,7 @@ func (e *Engine) restoreReviewerLocked(ctx stdctx.Context, workerID domain.Sessi
 		WorkerID:        worker.ID,
 		ProjectID:       worker.ProjectID,
 		Harness:         harness,
+		AgentConfig:     config,
 		WorkspacePath:   worker.Metadata.WorkspacePath,
 		AgentSessionID:  agentSessionID,
 		PreviousRuns:    previousRuns,
@@ -662,7 +683,15 @@ func (e *Engine) cancelStaleRunningRuns(ctx stdctx.Context, workerID domain.Sess
 	return true, nil
 }
 
-func reviewLaunchSpec(worker domain.SessionRecord, harness domain.ReviewerHarness, run domain.ReviewRun, queue []ports.ReviewTask, index int, agentSessionID string) LaunchSpec {
+func reviewLaunchSpec(
+	worker domain.SessionRecord,
+	harness domain.ReviewerHarness,
+	config domain.AgentConfig,
+	run domain.ReviewRun,
+	queue []ports.ReviewTask,
+	index int,
+	agentSessionID string,
+) LaunchSpec {
 	return LaunchSpec{
 		RunID:           run.ID,
 		BatchID:         run.BatchID,
@@ -670,6 +699,7 @@ func reviewLaunchSpec(worker domain.SessionRecord, harness domain.ReviewerHarnes
 		WorkerID:        worker.ID,
 		ProjectID:       worker.ProjectID,
 		Harness:         harness,
+		AgentConfig:     config,
 		WorkspacePath:   worker.Metadata.WorkspacePath,
 		AgentSessionID:  agentSessionID,
 		PreviousRuns:    nil,
@@ -743,7 +773,7 @@ func (e *Engine) List(ctx stdctx.Context, workerID domain.SessionID) (SessionRev
 	if !ok {
 		return SessionReviews{}, fmt.Errorf("%w: worker session %q", ErrNotFound, workerID)
 	}
-	selectedHarness, err := e.reviewerHarness(ctx, worker)
+	selectedHarness, _, err := e.reviewerSelection(ctx, worker)
 	if err != nil {
 		return SessionReviews{}, err
 	}
@@ -788,7 +818,7 @@ func (e *Engine) Cancel(ctx stdctx.Context, workerID domain.SessionID) (CancelRe
 	if !ok {
 		return CancelResult{}, fmt.Errorf("%w: worker session %q", ErrNotFound, workerID)
 	}
-	harness, err := e.reviewerHarness(ctx, worker)
+	harness, _, err := e.reviewerSelection(ctx, worker)
 	if err != nil {
 		return CancelResult{}, err
 	}
@@ -948,19 +978,40 @@ func (e *Engine) TerminateReviewer(ctx stdctx.Context, workerID domain.SessionID
 // reviewerHarness resolves which harness reviews the worker's PR: a persisted
 // session preference wins, then project configuration, then the worker's own
 // harness when supported, otherwise claude-code.
-func (e *Engine) reviewerHarness(ctx stdctx.Context, worker domain.SessionRecord) (domain.ReviewerHarness, error) {
-	if worker.ReviewerHarness != "" {
-		return worker.ReviewerHarness, nil
+func (e *Engine) reviewerSelection(
+	ctx stdctx.Context,
+	worker domain.SessionRecord,
+) (domain.ReviewerHarness, domain.AgentConfig, error) {
+	if worker.ReviewerHarness != "" || !worker.ReviewerConfig.IsZero() {
+		harness := worker.ReviewerHarness
+		if harness == "" {
+			var err error
+			harness, _, err = e.projectReviewerSelection(ctx, worker)
+			if err != nil {
+				return "", domain.AgentConfig{}, err
+			}
+		}
+		return harness, worker.ReviewerConfig, nil
 	}
+	return e.projectReviewerSelection(ctx, worker)
+}
+
+func (e *Engine) projectReviewerSelection(
+	ctx stdctx.Context,
+	worker domain.SessionRecord,
+) (domain.ReviewerHarness, domain.AgentConfig, error) {
 	var cfg domain.ProjectConfig
 	if e.projects != nil {
 		if proj, ok, err := e.projects.GetProject(ctx, string(worker.ProjectID)); err != nil {
-			return "", err
+			return "", domain.AgentConfig{}, err
 		} else if ok {
 			cfg = proj.Config
 		}
 	}
-	return cfg.ResolveReviewerHarness(worker.Harness), nil
+	if len(cfg.Reviewers) > 0 {
+		return cfg.Reviewers[0].Harness, cfg.Reviewers[0].AgentConfig, nil
+	}
+	return cfg.ResolveReviewerHarness(worker.Harness), domain.AgentConfig{}, nil
 }
 
 func (e *Engine) upsertReview(ctx stdctx.Context, worker domain.SessionRecord, harness domain.ReviewerHarness, handleID, agentSessionID string, now time.Time) (domain.Review, error) {

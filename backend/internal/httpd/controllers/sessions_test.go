@@ -296,12 +296,13 @@ func (f *fakeSessionService) Unpin(_ context.Context, id domain.SessionID) (doma
 	return s, nil
 }
 
-func (f *fakeSessionService) SetReviewerHarness(_ context.Context, id domain.SessionID, harness domain.ReviewerHarness) (domain.Session, error) {
+func (f *fakeSessionService) SetReviewerHarness(_ context.Context, id domain.SessionID, harness domain.ReviewerHarness, config domain.AgentConfig) (domain.Session, error) {
 	s, ok := f.sessions[id]
 	if !ok {
 		return domain.Session{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
 	}
 	s.ReviewerHarness = harness
+	s.ReviewerConfig = config
 	f.sessions[id] = s
 	return s, nil
 }

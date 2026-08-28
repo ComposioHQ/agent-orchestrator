@@ -103,6 +103,16 @@ describe("buildDaemonEnv", () => {
 		const env = buildDaemonEnv({ ...minimalProcessEnv, TERM: "dumb" }, null, {});
 		expect(env.TERM).toBe("xterm-256color");
 	});
+
+	it("drops broken terminfo overrides inherited by Electron", () => {
+		const env = buildDaemonEnv(
+			{ ...minimalProcessEnv, TERMINFO: "/tmp/missing", TERMINFO_DIRS: "/tmp/missing" },
+			null,
+			{},
+		);
+		expect(env.TERMINFO).toBeUndefined();
+		expect(env.TERMINFO_DIRS).toBeUndefined();
+	});
 });
 
 describe("resolveShellPath", () => {

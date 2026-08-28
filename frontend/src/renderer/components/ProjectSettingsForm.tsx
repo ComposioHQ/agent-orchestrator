@@ -149,6 +149,8 @@ function SettingsBody({
 		orchestratorMode: config.orchestrator?.agentConfig?.mode ?? config.agentConfig?.mode ?? "",
 		permissions: config.agentConfig?.permissions ?? "",
 		reviewerHarness: config.reviewers?.[0]?.harness ?? "",
+		reviewerModel: config.reviewers?.[0]?.agentConfig?.model ?? "",
+		reviewerMode: config.reviewers?.[0]?.agentConfig?.mode ?? "",
 		autoReview: config.autoReview ?? false,
 		intakeEnabled: intake.enabled ?? false,
 		intakeRepo: intake.repo ?? "",
@@ -160,6 +162,8 @@ function SettingsBody({
 	const [validationError, setValidationError] = useState<string | null>(null);
 	const initialOrchestratorAgent = config.orchestrator?.agent ?? "";
 	const initialReviewerHarness = config.reviewers?.[0]?.harness ?? "";
+	const initialReviewerModel = config.reviewers?.[0]?.agentConfig?.model ?? "";
+	const initialReviewerMode = config.reviewers?.[0]?.agentConfig?.mode ?? "";
 	const initialAutoReview = config.autoReview ?? false;
 	const missingRequiredAgent = form.workerAgent === "" || form.orchestratorAgent === "";
 	const agentsQuery = useQuery(agentsQueryOptions);
@@ -187,7 +191,10 @@ function SettingsBody({
 	// Compared against the values this form opened with, so a save that leaves the
 	// review controls alone is not reported as a review decision.
 	const reviewSettingsChanged =
-		form.autoReview !== initialAutoReview || form.reviewerHarness !== initialReviewerHarness;
+		form.autoReview !== initialAutoReview ||
+		form.reviewerHarness !== initialReviewerHarness ||
+		form.reviewerModel !== initialReviewerModel ||
+		form.reviewerMode !== initialReviewerMode;
 
 	const mutation = useMutation({
 		mutationFn: async () => {
@@ -245,7 +252,14 @@ function SettingsBody({
 							...sharedAgentConfig,
 							permissions: form.permissions || undefined,
 						}),
-						reviewers: form.reviewerHarness ? [{ harness: form.reviewerHarness }] : undefined,
+						reviewers: form.reviewerHarness
+							? [
+									{
+										harness: form.reviewerHarness,
+										agentConfig: buildRoleAgentConfig(undefined, form.reviewerModel, form.reviewerMode),
+									},
+								]
+							: undefined,
 						trackerIntake: buildIntake(intakeForm),
 						autoReview: form.autoReview,
 					};
@@ -511,6 +525,16 @@ function SettingsBody({
 							<ReviewerSelect
 								value={form.reviewerHarness}
 								onChange={(v) => setForm((f) => ({ ...f, reviewerHarness: v }))}
+								onConfigChange={(agentConfig) =>
+									setForm((f) => ({
+										...f,
+										reviewerModel: agentConfig.model ?? "",
+										reviewerMode: agentConfig.mode ?? "",
+									}))
+								}
+								model={form.reviewerModel}
+								mode={form.reviewerMode}
+								projectId={projectId}
 								ariaLabel={t("settings.project.defaultReviewer")}
 								authorized={agentCatalog?.authorized}
 								defaultOptionLabel={t("settings.project.default")}

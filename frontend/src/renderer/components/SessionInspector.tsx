@@ -1501,14 +1501,21 @@ function ReviewsSection({
 	const [reviewerOverride, setReviewerOverride] = useState<ReviewerHarness | "">(
 		session.reviewerHarness ?? "",
 	);
+	const [reviewerModel, setReviewerModel] = useState(session.reviewerConfig?.model ?? "");
+	const [reviewerMode, setReviewerMode] = useState(session.reviewerConfig?.mode ?? "");
 	useEffect(() => {
 		setReviewerOverride(session.reviewerHarness ?? "");
-	}, [session.id, session.reviewerHarness]);
+		setReviewerModel(session.reviewerConfig?.model ?? "");
+		setReviewerMode(session.reviewerConfig?.mode ?? "");
+	}, [session.id, session.reviewerConfig?.mode, session.reviewerConfig?.model, session.reviewerHarness]);
 	const saveReviewer = useMutation({
-		mutationFn: async (harness: ReviewerHarness | "") => {
+		mutationFn: async ({ harness, model, mode }: { harness: ReviewerHarness | ""; model: string; mode: string }) => {
 			const { data, error } = await apiClient.POST("/api/v1/sessions/{sessionId}/reviews/switch", {
 				params: { path: { sessionId: session.id } },
-				body: { harness: harness || undefined },
+				body: {
+					harness: harness || undefined,
+					agentConfig: model || mode ? { ...(model ? { model } : {}), ...(mode ? { mode } : {}) } : undefined,
+				},
 			});
 			if (error) throw new Error(apiErrorMessage(error, "Unable to save reviewer"));
 			if (data) queryClient.setQueryData(["session-reviews", session.id], data);
@@ -1544,9 +1551,12 @@ function ReviewsSection({
 			});
 			// No override sends no body at all, leaving the default path on the wire
 			// exactly as it was.
+			const reviewerConfig = reviewerModel || reviewerMode
+				? { ...(reviewerModel ? { model: reviewerModel } : {}), ...(reviewerMode ? { mode: reviewerMode } : {}) }
+				: undefined;
 			const { data, error, response } = await apiClient.POST("/api/v1/sessions/{sessionId}/reviews/trigger", {
 				params: { path: { sessionId: session.id } },
-				...(reviewerOverride ? { body: { harness: reviewerOverride } } : {}),
+				...(reviewerOverride || reviewerConfig ? { body: { ...(reviewerOverride ? { harness: reviewerOverride } : {}), ...(reviewerConfig ? { agentConfig: reviewerConfig } : {}) } } : {}),
 			});
 			if (error) throw new Error(apiErrorMessage(error, t("inspector.unableStartReview")));
 			return { data, reused: response?.status === 200 };
@@ -1636,9 +1646,13 @@ function ReviewsSection({
 				notice={reviewNotice}
 				agentCatalog={agentsQuery.data}
 				reviewerOverride={reviewerOverride}
-				onReviewerOverrideChange={(next) => {
+				reviewerModel={reviewerModel}
+				reviewerMode={reviewerMode}
+				onReviewerOverrideChange={(next, config) => {
 					setReviewerOverride(next);
-					saveReviewer.mutate(next);
+					setReviewerModel(config.model ?? "");
+					setReviewerMode(config.mode ?? "");
+					saveReviewer.mutate({ harness: next, model: config.model ?? "", mode: config.mode ?? "" });
 				}}
 				session={session}
 			/>
@@ -2085,6 +2099,8 @@ function ReviewPanel({
 	notice,
 	agentCatalog,
 	reviewerOverride,
+	reviewerModel,
+	reviewerMode,
 	onReviewerOverrideChange,
 	onTrigger,
 	onCancel,
@@ -2105,7 +2121,9 @@ function ReviewPanel({
 	notice: string | null;
 	agentCatalog?: AgentCatalog;
 	reviewerOverride: ReviewerHarness | "";
-	onReviewerOverrideChange: (next: ReviewerHarness | "") => void;
+	reviewerModel: string;
+	reviewerMode: string;
+	onReviewerOverrideChange: (next: ReviewerHarness | "", config: { model?: string; mode?: string }) => void;
 	onTrigger: () => void;
 	onCancel: () => void;
 	onAutoReviewChange: (enabled: boolean) => void;
@@ -2223,11 +2241,14 @@ function ReviewPanel({
 							defaultOptionLabel={agentLabel(resolvedDefaultHarness)}
 							disabled={reviewRunning || autoReviewEnabled || isKilling || isSwitchingReviewer || isTriggering || isCancelling}
 							installed={agentCatalog?.installed}
-							onChange={(next) => onReviewerOverrideChange(next as ReviewerHarness | "")}
+							onChange={(next) => onReviewerOverrideChange(next as ReviewerHarness | "", {})}
+							onConfigChange={(config) => onReviewerOverrideChange(reviewerOverride, config)}
+							model={reviewerModel}
+							mode={reviewerMode}
+							projectId={session.workspaceId}
 							supported={agentCatalog?.supported}
 							triggerClassName="review-run-agent-select ml-auto h-control-md w-auto min-w-0 max-w-[11rem] shrink-0 justify-end px-2 text-right text-xs"
 							value={reviewerOverride}
-							excludedHarness={resolvedDefaultHarness}
 							showDefaultOption
 						/>
 					</div>
