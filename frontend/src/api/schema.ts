@@ -1818,6 +1818,8 @@ export interface components {
             };
             error: string;
             message: string;
+            /** @enum {string} */
+            reporting_owner?: "http" | "agent_switch_saga";
             requestId?: string;
         };
         AcknowledgeSessionInterfaceTransitionNoticeResponse: {

@@ -14,6 +14,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
+	"github.com/aoagents/agent-orchestrator/backend/internal/observe/ownership"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
 	"github.com/aoagents/agent-orchestrator/backend/internal/telemetrymeta"
@@ -893,6 +894,11 @@ func (s *Service) Get(ctx context.Context, id domain.SessionID) (domain.Session,
 // toAPIError maps the session engine's sentinel errors to their REST API
 // equivalents; an unrecognized error passes through and surfaces as a 500.
 func toAPIError(err error) error {
+	original := ownership.Own(err, ownership.OwnerHTTP)
+	return ownership.Preserve(original, mapSessionError(original))
+}
+
+func mapSessionError(err error) error {
 	switch {
 	case err == nil:
 		return nil

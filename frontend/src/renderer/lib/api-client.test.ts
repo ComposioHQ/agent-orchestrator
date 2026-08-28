@@ -10,12 +10,18 @@ import {
 	subscribeApiBaseUrl,
 } from "./api-client";
 import { captureRendererEvent } from "./telemetry";
+import { captureApiErrorToSentry } from "./sentry";
 
 vi.mock("./telemetry", () => ({
 	captureRendererEvent: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock("./sentry", () => ({
+	captureApiErrorToSentry: vi.fn(),
+}));
+
 const captureMock = vi.mocked(captureRendererEvent);
+const sentryCaptureMock = vi.mocked(captureApiErrorToSentry);
 
 describe("apiClient runtime base URL", () => {
 	afterEach(() => {
@@ -239,6 +245,7 @@ describe("api error telemetry", () => {
 		clock += 10 * 60_000;
 		vi.setSystemTime(clock);
 		captureMock.mockClear();
+		sentryCaptureMock.mockClear();
 	});
 	afterEach(() => {
 		vi.useRealTimers();
@@ -258,6 +265,87 @@ describe("api error telemetry", () => {
 			error_category: "http_5xx",
 			status: 500,
 		});
+		expect(sentryCaptureMock).toHaveBeenCalledTimes(1);
+	});
+
+	it("does not send saga-owned API failures to generic Sentry capture", async () => {
+		vi.spyOn(globalThis, "fetch").mockResolvedValue(
+			new Response(
+				JSON.stringify({
+					error: "internal",
+					code: "AGENT_SWITCH_FAILED",
+					message: "Agent switch failed",
+					reporting_owner: "agent_switch_saga",
+				}),
+				{ status: 500, headers: { "Content-Type": "application/json" } },
+			),
+		);
+		setApiBaseUrl("http://127.0.0.1:3037");
+
+		const { error } = await apiClient.GET("/api/v1/projects");
+
+		expect(captureMock).toHaveBeenCalledTimes(1);
+		expect(sentryCaptureMock).not.toHaveBeenCalled();
+		expect(apiErrorMessage(error)).toBe("Agent switch failed (AGENT_SWITCH_FAILED)");
+	});
+
+	it("suppresses saga-owned 4xx responses without changing presentation", async () => {
+		vi.spyOn(globalThis, "fetch").mockResolvedValue(
+			new Response(
+				JSON.stringify({
+					error: "conflict",
+					code: "AGENT_SWITCH_DELIVERY_UNCONFIRMED",
+					message: "The target agent accepted an unconfirmed continuation",
+					reporting_owner: "agent_switch_saga",
+				}),
+				{ status: 409, headers: { "Content-Type": "application/json" } },
+			),
+		);
+		setApiBaseUrl("http://127.0.0.1:3037");
+
+		const { error } = await apiClient.GET("/api/v1/projects");
+
+		expect(sentryCaptureMock).not.toHaveBeenCalled();
+		expect(apiErrorMessage(error)).toBe(
+			"The target agent accepted an unconfirmed continuation (AGENT_SWITCH_DELIVERY_UNCONFIRMED)",
+		);
+	});
+
+	it("does not trust an unknown reporting owner", async () => {
+		vi.spyOn(globalThis, "fetch").mockResolvedValue(
+			new Response(
+				JSON.stringify({ code: "INTERNAL_ERROR", message: "Internal server error", reporting_owner: "renderer" }),
+				{ status: 500, headers: { "Content-Type": "application/json" } },
+			),
+		);
+		setApiBaseUrl("http://127.0.0.1:3037");
+
+		await apiClient.GET("/api/v1/projects");
+
+		expect(sentryCaptureMock).toHaveBeenCalledTimes(1);
+	});
+
+	it("does not let a saga-owned response dedupe a later HTTP-owned failure", async () => {
+		vi.spyOn(globalThis, "fetch")
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify({ reporting_owner: "agent_switch_saga" }), {
+					status: 500,
+					headers: { "Content-Type": "application/json" },
+				}),
+			)
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify({ reporting_owner: "http" }), {
+					status: 500,
+					headers: { "Content-Type": "application/json" },
+				}),
+			);
+		setApiBaseUrl("http://127.0.0.1:3037");
+
+		await apiClient.GET("/api/v1/projects");
+		await apiClient.GET("/api/v1/projects");
+
+		expect(captureMock).toHaveBeenCalledTimes(2);
+		expect(sentryCaptureMock).toHaveBeenCalledTimes(1);
 	});
 
 	it("reports http_4xx with ids stripped from the operation", async () => {

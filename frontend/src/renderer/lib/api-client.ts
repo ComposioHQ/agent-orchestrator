@@ -1,5 +1,5 @@
 import createClient from "openapi-fetch";
-import type { paths } from "../../api/schema";
+import type { components, paths } from "../../api/schema";
 import type { DaemonStatus } from "../../shared/daemon-status";
 import { daemonFailureMessage } from "./daemon-failure";
 import { captureRendererEvent } from "./telemetry";
@@ -175,6 +175,7 @@ export function normalizeApiOperation(method: string, pathname: string): string 
 }
 
 type ApiErrorCategory = "daemon_unavailable" | "network_error" | "http_4xx" | "http_5xx";
+type ReportingOwner = NonNullable<components["schemas"]["APIError"]["reporting_owner"]>;
 
 // One event per (operation, category, status) per window: a daemon outage
 // makes every polling query fail at once and on every retry — the failure
@@ -188,8 +189,13 @@ function reportApiError(
 	status?: number,
 	code?: string,
 	requestId?: string,
+	reportingOwner?: ReportingOwner,
 ): void {
-	const key = `${operation}|${category}|${status ?? ""}`;
+	// Treat an omitted owner as HTTP-owned for dedupe purposes. Saga-owned
+	// responses need their own bucket so suppressing one cannot hide a later
+	// generic HTTP failure from Sentry.
+	const ownerBucket = reportingOwner === "agent_switch_saga" ? "agent_switch_saga" : "http";
+	const key = `${operation}|${category}|${status ?? ""}|${ownerBucket}`;
 	const now = Date.now();
 	const last = lastApiErrorAt.get(key);
 	if (last !== undefined && now - last < API_ERROR_DEDUPE_MS) return;
@@ -203,7 +209,9 @@ function reportApiError(
 	// is what drives the fine-grained severity/owner classification; `requestId`
 	// (when present) is tagged so a client event pivots to the daemon's own
 	// capture of the same request, which carries the matching request_id.
-	captureApiErrorToSentry(operation, category, status, code, requestId);
+	if (reportingOwner !== "agent_switch_saga") {
+		captureApiErrorToSentry(operation, category, status, code, requestId);
+	}
 }
 
 async function runtimeFetch(input: Request): Promise<Response> {
@@ -264,14 +272,25 @@ async function runtimeFetch(input: Request): Promise<Response> {
 		// caller still gets an unconsumed body) to drive classification.
 		let code: string | undefined;
 		let requestId: string | undefined;
+		let reportingOwner: ReportingOwner | undefined;
 		try {
-			const body = (await response.clone().json()) as { code?: unknown; requestId?: unknown };
+			const body = (await response.clone().json()) as Partial<components["schemas"]["APIError"]>;
 			if (typeof body?.code === "string" && body.code !== "") code = body.code;
 			if (typeof body?.requestId === "string" && body.requestId !== "") requestId = body.requestId;
+			if (body?.reporting_owner === "http" || body?.reporting_owner === "agent_switch_saga") {
+				reportingOwner = body.reporting_owner;
+			}
 		} catch {
 			// Non-JSON or empty body: fall back to status-only classification.
 		}
-		reportApiError(operation, response.status >= 500 ? "http_5xx" : "http_4xx", response.status, code, requestId);
+		reportApiError(
+			operation,
+			response.status >= 500 ? "http_5xx" : "http_4xx",
+			response.status,
+			code,
+			requestId,
+			reportingOwner,
+		);
 	}
 	return response;
 }

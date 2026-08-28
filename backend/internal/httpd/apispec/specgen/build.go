@@ -191,6 +191,8 @@ var schemaNames = map[string]string{
 	"ControllersPromoteQueuedTurnResponse":                 "PromoteQueuedTurnResponse",
 	// httpd/envelope
 	"EnvelopeAPIError": "APIError",
+	// observe/ownership
+	"OwnershipOwner": "ReportingOwner",
 	// domain
 	"DomainProjectID":                 "ProjectID",
 	"DomainSessionID":                 "SessionID",
