@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -25,15 +26,15 @@ func TestManagedExtensionEmitsOMPLifecycleHooksAndIgnoresHookFailures(t *testing
 	fixtureDir := t.TempDir()
 	modulePath := writeExecutableOMPExtension(t, fixtureDir, ompActivityExtensionSource())
 	capturePath := filepath.Join(fixtureDir, "calls.jsonl")
-	writeOMPFixtureFile(t, filepath.Join(fixtureDir, "ao"), `#!/usr/bin/env node
-const fs = require("node:fs");
-let input = "";
-process.stdin.setEncoding("utf8");
-process.stdin.on("data", chunk => { input += chunk; });
-process.stdin.on("end", () => {
-  fs.appendFileSync(process.env.AO_TEST_CAPTURE, JSON.stringify({args: process.argv.slice(2), input}) + "\n");
-  process.exit(9);
-});
+	writeOMPFixtureFile(t, filepath.Join(fixtureDir, "ao"), `#!/bin/sh
+{
+  printf '%s\n' "$1"
+  printf '%s\n' "$2"
+  printf '%s\n' "$3"
+  IFS= read -r input
+  printf '%s\n' "$input"
+} >> "$AO_TEST_CAPTURE"
+exit 9
 `, 0o755)
 	harnessPath := filepath.Join(fixtureDir, "harness.mjs")
 	writeOMPFixtureFile(t, harnessPath, `import { pathToFileURL } from "node:url";
@@ -129,21 +130,30 @@ func TestManagedExtensionIgnoresHookTimeout(t *testing.T) {
 	}
 
 	fixtureDir := t.TempDir()
-	source := strings.Replace(ompActivityExtensionSource(), "const HOOK_TIMEOUT_MS = 5_000;", "const HOOK_TIMEOUT_MS = 20;", 1)
-	modulePath := writeExecutableOMPExtension(t, fixtureDir, source)
-	writeOMPFixtureFile(t, filepath.Join(fixtureDir, "ao"), "#!/usr/bin/env sh\nsleep 1\n", 0o755)
+	modulePath := writeExecutableOMPExtension(t, fixtureDir, ompActivityExtensionSource())
+	writeOMPFixtureFile(t, filepath.Join(fixtureDir, "ao"), "#!/bin/sh\nexec sleep 5\n", 0o755)
 	harnessPath := filepath.Join(fixtureDir, "timeout-harness.mjs")
 	writeOMPFixtureFile(t, harnessPath, `import { pathToFileURL } from "node:url";
 const handlers = new Map();
 const loaded = await import(pathToFileURL(process.argv[2]).href);
 loaded.default({ on(name, handler) { handlers.set(name, handler); } });
+const started = Date.now();
 await handlers.get("session_start")({}, { sessionManager: { getSessionId() { return "omp-native-timeout"; } } });
+console.log(Date.now() - started);
 `, 0o600)
 
 	cmd := exec.CommandContext(context.Background(), node, harnessPath, modulePath)
 	cmd.Env = append(os.Environ(), "PATH="+fixtureDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	if output, err := cmd.CombinedOutput(); err != nil {
+	output, err := cmd.CombinedOutput()
+	if err != nil {
 		t.Fatalf("extension harness failed on hook timeout: %v\n%s", err, output)
+	}
+	elapsedMS, err := strconv.Atoi(strings.TrimSpace(string(output)))
+	if err != nil {
+		t.Fatalf("parse extension handler duration %q: %v", output, err)
+	}
+	if elapsedMS >= 2_000 {
+		t.Fatalf("hung AO hook blocked OMP shutdown for %dms, want less than OMP's 2s shutdown budget", elapsedMS)
 	}
 }
 
@@ -173,16 +183,20 @@ func readOMPHookCalls(t *testing.T, path string) []ompHookCall {
 	}
 	defer file.Close()
 	var calls []ompHookCall
+	var record []string
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
-		var call ompHookCall
-		if err := json.Unmarshal(scanner.Bytes(), &call); err != nil {
-			t.Fatal(err)
+		record = append(record, scanner.Text())
+		if len(record) == 4 {
+			calls = append(calls, ompHookCall{Args: append([]string(nil), record[:3]...), Input: record[3] + "\n"})
+			record = record[:0]
 		}
-		calls = append(calls, call)
 	}
 	if err := scanner.Err(); err != nil {
 		t.Fatal(err)
+	}
+	if len(record) != 0 {
+		t.Fatalf("incomplete hook capture record: %#v", record)
 	}
 	return calls
 }

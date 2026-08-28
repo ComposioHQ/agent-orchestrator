@@ -66,7 +66,9 @@ func ompActivityExtensionSource() string {
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { spawnSync } from "node:child_process";
 
-const HOOK_TIMEOUT_MS = 5_000;
+// OMP caps session_shutdown handlers at 2s. Keep the synchronous AO delivery
+// comfortably below that budget so a hung hook cannot hold TUI teardown open.
+const HOOK_TIMEOUT_MS = 1_250;
 
 function callHookSync(hookName: string, payload: Record<string, unknown>) {
   try {
