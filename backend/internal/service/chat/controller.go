@@ -192,7 +192,8 @@ type Controller struct {
 	// Interface drain keeps dispatching accepted rows; interface interrupt and an
 	// idle branch mutation stop dispatch entirely. The target controller is not
 	// started until this controller reports quiescent and is closed.
-	handoff controllerHandoff
+	handoff           controllerHandoff
+	branchHandoffDone chan struct{}
 
 	// account, threadState and mcpServers are merged here before being written,
 	// because the provider reports each of them in pieces: account/updated carries
@@ -1542,6 +1543,7 @@ func (c *Controller) BeginIdleBranchHandoff(ctx context.Context) error {
 		return fmt.Errorf("check queue before branch handoff: %w", err)
 	}
 	c.handoff = controllerHandoffIdleBranch
+	c.branchHandoffDone = make(chan struct{})
 	return nil
 }
 
@@ -1551,10 +1553,27 @@ func (c *Controller) AbortHandoff() {
 	c.mu.Lock()
 	resumeDispatch := c.handoff == controllerHandoffInterfaceDrain ||
 		c.handoff == controllerHandoffInterfaceInterrupt
+	branchHandoffDone := c.branchHandoffDone
+	c.branchHandoffDone = nil
 	c.handoff = controllerHandoffNone
 	c.mu.Unlock()
+	if branchHandoffDone != nil {
+		close(branchHandoffDone)
+	}
 	if resumeDispatch {
 		go c.drain(context.WithoutCancel(context.Background()))
+	}
+}
+
+// waitForBranchHandoff keeps the registry's stopped-controller cleanup from
+// deleting a deliberately closed source while its forked replacement is being
+// resumed and installed. Ordinary stops have no latch and return immediately.
+func (c *Controller) waitForBranchHandoff() {
+	c.mu.Lock()
+	done := c.branchHandoffDone
+	c.mu.Unlock()
+	if done != nil {
+		<-done
 	}
 }
 

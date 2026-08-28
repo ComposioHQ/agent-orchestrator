@@ -219,17 +219,26 @@ func (s *Service) EditMessage(
 	var replayContent ports.ChatContent
 	var replayTruncated bool
 	var providerScopeID string
+	sourceClosed := false
 	if canNativeFork {
 		forkAnchor := anchor.PreviousProviderTurnID
 		providerConversationID, err = forker.Fork(ctx, &forkAnchor)
 		if err == nil {
-			provider, err = driver.Resume(ctx, ports.ChatResumeConfig{
-				SessionID: cfg.SessionID, ProviderConversationID: providerConversationID,
-				DataDir: cfg.DataDir, WorkspacePath: cfg.WorkspacePath, Env: cfg.Env,
-				Model: cfg.Model, Permissions: cfg.Permissions, SystemPrompt: cfg.SystemPrompt,
-				ProviderScopeID:       sourceBranch.ProviderScopeID,
-				AdditionalDirectories: cfg.AdditionalDirectories, MCPServers: cfg.MCPServers,
-			})
+			// Codex loads a fork into the source app-server, which remains that
+			// child's active writer until the process exits. Close the fenced, idle
+			// source before another driver process resumes the child.
+			if closeErr := source.Close(ctx); closeErr != nil {
+				err = fmt.Errorf("close source writer after fork: %w", closeErr)
+			} else {
+				sourceClosed = true
+				provider, err = driver.Resume(ctx, ports.ChatResumeConfig{
+					SessionID: cfg.SessionID, ProviderConversationID: providerConversationID,
+					DataDir: cfg.DataDir, WorkspacePath: cfg.WorkspacePath, Env: cfg.Env,
+					Model: cfg.Model, Permissions: cfg.Permissions, SystemPrompt: cfg.SystemPrompt,
+					ProviderScopeID:       sourceBranch.ProviderScopeID,
+					AdditionalDirectories: cfg.AdditionalDirectories, MCPServers: cfg.MCPServers,
+				})
+			}
 		}
 	} else {
 		// Every Start owns a fresh namespace for provider-issued turn/item IDs,
@@ -254,13 +263,27 @@ func (s *Service) EditMessage(
 		}
 	}
 	if err != nil {
-		return EditMessageResult{}, classify(fmt.Errorf("prepare edited conversation: %w", err))
+		prepareErr := classify(fmt.Errorf("prepare edited conversation: %w", err))
+		if sourceClosed {
+			if restoreErr := s.restoreClosedSourceController(
+				ctx, id, source, sourceBranch, cfg, driver); restoreErr != nil {
+				prepareErr = errors.Join(prepareErr, restoreErr)
+			}
+		}
+		return EditMessageResult{}, prepareErr
 	}
 	if provider == nil || providerConversationID == "" {
 		if provider != nil {
 			_ = provider.Close()
 		}
-		return EditMessageResult{}, errors.New("replacement provider conversation is not ready")
+		prepareErr := errors.New("replacement provider conversation is not ready")
+		if sourceClosed {
+			if restoreErr := s.restoreClosedSourceController(
+				ctx, id, source, sourceBranch, cfg, driver); restoreErr != nil {
+				prepareErr = errors.Join(prepareErr, restoreErr)
+			}
+		}
+		return EditMessageResult{}, prepareErr
 	}
 	if replayContent.Type != "" && !supportsApproximateReplay(provider) {
 		_ = provider.Close()
@@ -286,7 +309,14 @@ func (s *Service) EditMessage(
 	replacement := newController(id, conversation, generation, provider, s.store, s.activity, s.log, s.newID, s.now)
 	if err := s.store.CreateAndActivateConversationBranch(ctx, id, branch, generation, s.now()); err != nil {
 		_ = provider.Close()
-		return EditMessageResult{}, fmt.Errorf("activate edited conversation: %w", err)
+		activateErr := fmt.Errorf("activate edited conversation: %w", err)
+		if sourceClosed {
+			if restoreErr := s.restoreClosedSourceController(
+				ctx, id, source, sourceBranch, cfg, driver); restoreErr != nil {
+				activateErr = errors.Join(activateErr, restoreErr)
+			}
+		}
+		return EditMessageResult{}, activateErr
 	}
 	// Consume the replacement privately while its bootstrap prompt is recorded.
 	// The source remains the registry owner with its intake fence installed, so a
@@ -312,6 +342,12 @@ func (s *Service) EditMessage(
 		}
 		if err := replacement.Close(ctx); err != nil {
 			sendErr = errors.Join(sendErr, fmt.Errorf("close rejected edited conversation: %w", err))
+		}
+		if sourceClosed {
+			if restoreErr := s.restoreClosedSourceController(
+				ctx, id, source, sourceBranch, cfg, driver); restoreErr != nil {
+				sendErr = errors.Join(sendErr, restoreErr)
+			}
 		}
 		return result, sendErr
 	}
@@ -576,6 +612,44 @@ func (s *Service) branchLaunchConfig(
 	return cloneStartConfig(cfg), driver, nil
 }
 
+// restoreClosedSourceController reopens the original provider branch when a
+// native edit had to release its writer but the replacement could not be kept.
+// The new generation fences any late events from the process that was closed.
+func (s *Service) restoreClosedSourceController(
+	ctx context.Context,
+	id domain.SessionID,
+	source *Controller,
+	branch domain.ConversationBranch,
+	cfg StartConfig,
+	driver ports.ChatDriver,
+) error {
+	providerConversationID := source.ProviderConversationID()
+	provider, err := driver.Resume(ctx, ports.ChatResumeConfig{
+		SessionID: cfg.SessionID, ProviderConversationID: providerConversationID,
+		DataDir: cfg.DataDir, WorkspacePath: cfg.WorkspacePath, Env: cfg.Env,
+		Model: cfg.Model, Permissions: cfg.Permissions, SystemPrompt: cfg.SystemPrompt,
+		ProviderScopeID:       branch.ProviderScopeID,
+		AdditionalDirectories: cfg.AdditionalDirectories, MCPServers: cfg.MCPServers,
+	})
+	if err != nil {
+		return fmt.Errorf("resume source after failed native edit: %w", err)
+	}
+	generation := s.newID()
+	conversation := source.conversation
+	conversation.ActiveBranchID = branch.ID
+	replacement := newController(
+		id, conversation, generation, provider, s.store, s.activity, s.log, s.newID, s.now)
+	if err := s.store.ActivateConversationBranch(ctx, id, conversation.ID, branch.ID,
+		providerConversationID, generation, s.now()); err != nil {
+		_ = provider.Close()
+		return fmt.Errorf("reactivate source after failed native edit: %w", err)
+	}
+	if err := s.installBranchController(ctx, id, source, replacement, branch.ID); err != nil {
+		return fmt.Errorf("install source after failed native edit: %w", err)
+	}
+	return nil
+}
+
 func (s *Service) installBranchController(
 	ctx context.Context,
 	id domain.SessionID,
@@ -611,12 +685,14 @@ func (s *Service) installStartedBranchController(
 
 	go func() {
 		replacement.Wait()
+		replacement.waitForBranchHandoff()
 		s.mu.Lock()
 		if current := s.controllers[id]; current == replacement {
 			delete(s.controllers, id)
 		}
 		s.mu.Unlock()
 	}()
+	source.AbortHandoff()
 	if err := source.Close(ctx); err != nil {
 		s.log.Error("close source controller after branch swap", "session", id, "error", err)
 	}

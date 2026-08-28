@@ -530,6 +530,7 @@ type editDriverState struct {
 	startCalls   int
 	startConfigs []ports.ChatStartConfig
 	resumeCalls  []ports.ChatResumeConfig
+	beforeResume func(ports.ChatResumeConfig) error
 	fresh        *fakeConversation
 	resumed      map[string]*fakeConversation
 }
@@ -592,9 +593,15 @@ func newEditHarness(t *testing.T, supportsPromptReplay bool) (*harness, *history
 	}
 	driver.resume = func(cfg ports.ChatResumeConfig) (ports.ChatConversation, error) {
 		state.mu.Lock()
-		defer state.mu.Unlock()
 		state.resumeCalls = append(state.resumeCalls, cfg)
+		beforeResume := state.beforeResume
 		conv := state.resumed[cfg.ProviderConversationID]
+		state.mu.Unlock()
+		if beforeResume != nil {
+			if err := beforeResume(cfg); err != nil {
+				return nil, err
+			}
+		}
 		if conv == nil {
 			return nil, errors.New("unexpected provider conversation: " + cfg.ProviderConversationID)
 		}
@@ -1085,6 +1092,35 @@ func TestEditMessageAmbiguousApproximateFailureRemainsNavigableAcrossRestart(t *
 	}
 	requireMessageTexts(t, restartedSnapshot.Messages, []string{"A", "reply to A", "B edited"})
 	requireBranchPoint(t, restartedSnapshot, failed.Turn.ID, failed.SourceBranchID, "")
+}
+
+func TestEditMessageClosesSourceWriterBeforeResumingNativeFork(t *testing.T) {
+	h, source, driver := newEditHarness(t, false)
+	ctx := context.Background()
+	completeTurn(t, h, "A", "provider-turn-1")
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool { return len(s.Messages) == 2 })
+	second := completeTurn(t, h, "B", "provider-turn-2")
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool { return len(s.Messages) == 4 })
+
+	driver.mu.Lock()
+	driver.beforeResume = func(ports.ChatResumeConfig) error {
+		select {
+		case _, open := <-source.events:
+			if !open {
+				return nil
+			}
+			return errors.New("source writer emitted an unexpected event during handoff")
+		default:
+			return fmt.Errorf("%w: forked thread already has an active writer", ports.ErrChatResumeFailed)
+		}
+	}
+	driver.mu.Unlock()
+
+	if _, err := h.svc.EditMessage(ctx, testSession, second, ports.ChatUserMessage{
+		Text: "B edited", Origin: domain.MessageOriginHuman,
+	}); err != nil {
+		t.Fatalf("EditMessage: %v", err)
+	}
 }
 
 func TestEditMessageForksBeforeMiddlePromptAndReusesStoredContent(t *testing.T) {
