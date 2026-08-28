@@ -29,8 +29,60 @@ type blockingModelStream struct {
 	closeOnce sync.Once
 }
 
+type repaintingModelStream struct {
+	mu        sync.Mutex
+	readIndex int
+	writes    strings.Builder
+	wrote     chan struct{}
+	wroteOnce sync.Once
+	closed    chan struct{}
+	closeOnce sync.Once
+}
+
 func newBlockingModelStream() *blockingModelStream {
 	return &blockingModelStream{closed: make(chan struct{})}
+}
+
+func newRepaintingModelStream() *repaintingModelStream {
+	return &repaintingModelStream{
+		wrote:  make(chan struct{}),
+		closed: make(chan struct{}),
+	}
+}
+
+func (s *repaintingModelStream) Read(buf []byte) (int, error) {
+	s.mu.Lock()
+	readIndex := s.readIndex
+	s.readIndex++
+	s.mu.Unlock()
+
+	switch readIndex {
+	case 0:
+		return copy(buf, []byte("$\n")), nil
+	case 1:
+		<-s.wrote
+		return copy(buf, []byte("1. Default — Default model\n2. Fable — Fable 5\n3. Sonnet — Sonnet 5\nEnter selection [1-3], or Escape to cancel:\n")), nil
+	case 2:
+		return copy(buf, []byte("1. Default — Default model\n3. Sonnet — Sonnet 5\n")), nil
+	default:
+		<-s.closed
+		return 0, io.EOF
+	}
+}
+
+func (s *repaintingModelStream) Write(buf []byte) (int, error) {
+	s.mu.Lock()
+	n, err := s.writes.Write(buf)
+	s.mu.Unlock()
+	s.wroteOnce.Do(func() { close(s.wrote) })
+	return n, err
+}
+
+func (s *repaintingModelStream) Resize(uint16, uint16) error { return nil }
+
+func (s *repaintingModelStream) Close() error {
+	s.closeOnce.Do(func() { close(s.closed) })
+	return nil
 }
 
 func (s *blockingModelStream) Read(buf []byte) (int, error) {
@@ -124,6 +176,29 @@ func TestParseClaudeModelMenuUsesAgentOwnedOptions(t *testing.T) {
 	}
 }
 
+func TestParseClaudeModelMenuUsesLatestCompleteRepaint(t *testing.T) {
+	output := "1. Default — Default model\n" +
+		"2. Opus — Opus 5\n" +
+		"3. Sonnet — Sonnet 5\n" +
+		"Enter selection [1-3], or Escape to cancel:\n" +
+		"1. Default — Default model\n" +
+		"2. Fable — Fable 5\n" +
+		"3. Haiku — Haiku 4.5\n" +
+		"Enter selection [1-3], or Escape to cancel:\n"
+
+	got, err := parseClaudeModelMenu(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []ports.AgentModelInfo{
+		{ID: "fable", Label: "Fable"},
+		{ID: "haiku", Label: "Haiku"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("models = %#v, want %#v", got, want)
+	}
+}
+
 func TestParseClaudeModelMenuRejectsIncompleteNumbering(t *testing.T) {
 	_, err := parseClaudeModelMenu("1. Default  Default model\n2. Opus  Opus 5\n4. Sonnet  Sonnet 5\n")
 	if err == nil {
@@ -197,7 +272,7 @@ func TestDiscoverClaudeModelsUsesPrivateTerminalAndClosesIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(gotArgv, []string{"/bin/claude", "--ax-screen-reader", "--no-session-persistence"}) {
+	if !reflect.DeepEqual(gotArgv, []string{"/bin/claude", "--ax-screen-reader"}) {
 		t.Fatalf("argv = %q", gotArgv)
 	}
 	if gotDir != "/work/project" || !environmentContains(gotEnv, "AO_TEST=yes") {
@@ -230,6 +305,29 @@ func TestDiscoverMuseModelsUsesNoSessionLog(t *testing.T) {
 	}
 	if len(got.Models) != 2 || got.Models[0].ID != "muse-spark" || !got.Models[0].IsDefault {
 		t.Fatalf("catalog = %#v", got)
+	}
+}
+
+func TestDiscoverTerminalModelsKeepsCompleteMenuDuringPartialRepaint(t *testing.T) {
+	stream := newRepaintingModelStream()
+	spawn := func(context.Context, []string, []string, string, uint16, uint16) (ports.Stream, error) {
+		return stream, nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	got, err := discoverTerminalCatalog(ctx, ports.AgentModelDiscoveryRequest{
+		AgentID: "claude-code", Binary: "/bin/claude",
+	}, spawn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []ports.AgentModelInfo{
+		{ID: "fable", Label: "Fable"},
+		{ID: "sonnet", Label: "Sonnet"},
+	}
+	if !reflect.DeepEqual(got.Models, want) {
+		t.Fatalf("models = %#v, want %#v", got.Models, want)
 	}
 }
 

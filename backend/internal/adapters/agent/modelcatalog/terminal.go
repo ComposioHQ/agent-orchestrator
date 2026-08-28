@@ -53,7 +53,7 @@ func discoverTerminalCatalog(ctx context.Context, request ports.AgentModelDiscov
 	args := []string{request.Binary}
 	switch request.AgentID {
 	case "claude-code":
-		args = append(args, "--ax-screen-reader", "--no-session-persistence")
+		args = append(args, "--ax-screen-reader")
 	case "muse":
 		args = append(args, "--no-session-log")
 	default:
@@ -87,6 +87,10 @@ func discoverTerminalCatalog(ctx context.Context, request ports.AgentModelDiscov
 		case <-runCtx.Done():
 			return base, modelDiscoveryError(runCtx, request.AgentID, runCtx.Err())
 		case <-settle:
+			if len(discovered) == 0 {
+				settle = nil
+				continue
+			}
 			return terminalCatalog(base, discovered, request), nil
 		case read := <-reads:
 			if len(read.data) > 0 {
@@ -105,8 +109,18 @@ func discoverTerminalCatalog(ctx context.Context, request ports.AgentModelDiscov
 					commandSent = true
 				}
 				if commandSent {
-					discovered, lastParseErr = parseTerminalModels(request.AgentID, visible)
-					if lastParseErr == nil {
+					candidate, parseErr := parseTerminalModels(request.AgentID, visible)
+					if parseErr != nil {
+						if len(discovered) == 0 {
+							lastParseErr = parseErr
+						}
+					} else {
+						lastParseErr = nil
+						if len(candidate) >= len(discovered) {
+							discovered = candidate
+						}
+					}
+					if len(discovered) > 0 {
 						if settleTimer == nil {
 							settleTimer = time.NewTimer(modelMenuSettleDelay)
 						} else {
@@ -123,7 +137,7 @@ func discoverTerminalCatalog(ctx context.Context, request ports.AgentModelDiscov
 				}
 			}
 			if read.err != nil {
-				if errors.Is(read.err, io.EOF) && len(discovered) > 0 && lastParseErr == nil {
+				if errors.Is(read.err, io.EOF) && len(discovered) > 0 {
 					return terminalCatalog(base, discovered, request), nil
 				}
 				if lastParseErr != nil {
@@ -232,7 +246,7 @@ func parseClaudeModelMenu(output string) ([]ports.AgentModelInfo, error) {
 		return nil, err
 	}
 	boundary := fmt.Sprintf("enter selection [1-%d]", rows[len(rows)-1].number)
-	if !strings.Contains(strings.ToLower(terminalui.PlainTerminalText(output)), boundary) {
+	if !strings.Contains(strings.ToLower(latestNumberedModelMenuText(output)), boundary) {
 		return nil, errors.New("claude model menu boundary is incomplete")
 	}
 	models := make([]ports.AgentModelInfo, 0, len(rows))
@@ -297,6 +311,7 @@ func parseNumberedModelMenu(output string) ([]modelMenuRow, error) {
 	if unsafeModelDiscoveryScreen(plain) {
 		return nil, errors.New("agent requires trust or authentication before model discovery")
 	}
+	plain = latestNumberedModelMenuText(plain)
 	rows := make([]modelMenuRow, 0, 8)
 	for _, line := range strings.Split(plain, "\n") {
 		matches := modelMenuRowPattern.FindStringSubmatch(line)
@@ -321,6 +336,22 @@ func parseNumberedModelMenu(output string) ([]modelMenuRow, error) {
 		}
 	}
 	return rows, nil
+}
+
+func latestNumberedModelMenuText(output string) string {
+	plain := terminalui.PlainTerminalText(output)
+	lines := strings.Split(plain, "\n")
+	start := -1
+	for i, line := range lines {
+		matches := modelMenuRowPattern.FindStringSubmatch(line)
+		if len(matches) == 3 && matches[1] == "1" {
+			start = i
+		}
+	}
+	if start < 0 {
+		return plain
+	}
+	return strings.Join(lines[start:], "\n")
 }
 
 func unsafeModelDiscoveryScreen(output string) bool {
