@@ -1,6 +1,7 @@
 import { StrictMode, type ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render as rtlRender, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionView } from "./SessionView";
 import { SessionTopbarProvider } from "./SessionTopbarPortal";
@@ -45,9 +46,10 @@ const interfaceTransitionState = vi.hoisted(() => ({
 const reviewGetMock = vi.hoisted(() => vi.fn());
 const inspectorVisibilityRenders = vi.hoisted(() => [] as boolean[]);
 
-function chooseSessionAction(name: string) {
-	fireEvent.click(screen.getByRole("button", { name: "Session actions" }));
-	fireEvent.click(screen.getByRole("menuitem", { name }));
+async function chooseSessionAction(name: string) {
+	const user = userEvent.setup();
+	await user.click(screen.getByRole("button", { name: "Session actions" }));
+	await user.click(await screen.findByRole("menuitem", { name }));
 }
 
 vi.mock("@tanstack/react-router", () => ({
@@ -166,10 +168,16 @@ vi.mock("./ShellTopbar", () => ({
 vi.mock("./NotificationCenter", () => ({
 	NotificationCenter: () => <button type="button">Notifications</button>,
 }));
+vi.mock("../hooks/useSessionHandoffMenu", () => ({
+	useSessionHandoffMenu: () => ({
+		agentSwitch: undefined,
+		switchControlPresentation: undefined,
+		switchError: null,
+	}),
+}));
 vi.mock("./TerminalSwitchAgentButton", () => ({
-	TerminalSwitchAgentButton: () => (
-		<button aria-label="Switch agent" type="button" />
-	),
+	TerminalSwitchAgentButton: ({ variant }: { variant?: "icon" | "menu-item" }) =>
+		variant === "menu-item" ? null : <button aria-label="Switch agent" type="button" />,
 }));
 vi.mock("./chat/SessionChatSurface", () => ({
 	SessionChatSurface: ({
@@ -665,7 +673,7 @@ describe("SessionView", () => {
 	it.each([
 		["Terminal UI worker", "sess-1", "tui", "chat", "Switch to chat UI"],
 		["Terminal UI orchestrator", "sess-orch", "tui", "chat", "Switch to chat UI"],
-	] as const)("switches an idle %s directly with drain", (_label, sessionId, mode, targetMode, buttonName) => {
+	] as const)("switches an idle %s directly with drain", async (_label, sessionId, mode, targetMode, buttonName) => {
 		interfaceTransitionState.status = { supported: true, targetMode };
 		const session = workerSession(sessionId);
 		session.mode = mode;
@@ -674,7 +682,7 @@ describe("SessionView", () => {
 
 		render(<SessionView sessionId={sessionId} />);
 
-		chooseSessionAction(buttonName);
+		await chooseSessionAction(buttonName);
 
 		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 		expect(interfaceTransitionMock.start).toHaveBeenCalledWith({ targetMode, policy: "drain" });
@@ -683,7 +691,7 @@ describe("SessionView", () => {
 	it.each([
 		["worker", "sess-1"],
 		["orchestrator", "sess-orch"],
-	] as const)("uses interrupt for an idle Chat %s switching to Terminal UI", (_label, sessionId) => {
+	] as const)("uses interrupt for an idle Chat %s switching to Terminal UI", async (_label, sessionId) => {
 		interfaceTransitionState.status = { supported: true, targetMode: "tui" };
 		const session = workerSession(sessionId);
 		session.mode = "chat";
@@ -692,7 +700,7 @@ describe("SessionView", () => {
 
 		render(<SessionView sessionId={sessionId} />);
 
-		chooseSessionAction("Switch to terminal UI");
+		await chooseSessionAction("Switch to terminal UI");
 
 		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 		expect(interfaceTransitionMock.start).toHaveBeenCalledWith({ targetMode: "tui", policy: "interrupt" });
@@ -707,9 +715,7 @@ describe("SessionView", () => {
 
 		render(<SessionView sessionId="sess-1" />);
 
-		await act(async () => {
-			chooseSessionAction("Switch to chat UI");
-		});
+		await chooseSessionAction("Switch to chat UI");
 
 		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 	});
@@ -724,9 +730,7 @@ describe("SessionView", () => {
 
 		render(<SessionView sessionId="sess-1" />);
 
-		await act(async () => {
-			chooseSessionAction("Switch to terminal UI");
-		});
+		await chooseSessionAction("Switch to terminal UI");
 
 		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 		expect(interfaceTransitionMock.start).toHaveBeenCalledWith({ targetMode: "tui", policy: "interrupt" });
@@ -736,7 +740,7 @@ describe("SessionView", () => {
 		["working status", "sess-1", "tui", "chat", "Switch to chat UI", "working", "idle"],
 		["needs-input status", "sess-orch", "tui", "chat", "Switch to chat UI", "needs_input", "idle"],
 		["blocked activity", "sess-1", "tui", "chat", "Switch to chat UI", "idle", "blocked"],
-	] as const)("opens the switch policy dialog for %s", (_label, sessionId, mode, targetMode, buttonName, status, activityState) => {
+	] as const)("opens the switch policy dialog for %s", async (_label, sessionId, mode, targetMode, buttonName, status, activityState) => {
 		interfaceTransitionState.status = { supported: true, targetMode };
 		const session = workerSession(sessionId);
 		session.mode = mode;
@@ -745,7 +749,7 @@ describe("SessionView", () => {
 
 		render(<SessionView sessionId={sessionId} />);
 
-		chooseSessionAction(buttonName);
+		await chooseSessionAction(buttonName);
 
 		expect(screen.getByRole("dialog")).toBeInTheDocument();
 		expect(interfaceTransitionMock.start).not.toHaveBeenCalled();
@@ -757,7 +761,7 @@ describe("SessionView", () => {
 		["active activity", "sess-1", "idle", "active"],
 		["waiting-input activity", "sess-orch", "idle", "waiting_input"],
 		["blocked activity", "sess-1", "idle", "blocked"],
-	] as const)("interrupts a busy Chat session for %s and switches directly to Terminal UI", (_label, sessionId, status, activityState) => {
+	] as const)("interrupts a busy Chat session for %s and switches directly to Terminal UI", async (_label, sessionId, status, activityState) => {
 		interfaceTransitionState.status = { supported: true, targetMode: "tui" };
 		const session = workerSession(sessionId);
 		session.mode = "chat";
@@ -766,13 +770,13 @@ describe("SessionView", () => {
 
 		render(<SessionView sessionId={sessionId} />);
 
-		chooseSessionAction("Switch to terminal UI");
+		await chooseSessionAction("Switch to terminal UI");
 
 		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 		expect(interfaceTransitionMock.start).toHaveBeenCalledWith({ targetMode: "tui", policy: "interrupt" });
 	});
 
-	it("checks only the selected session when deciding whether to show the policy dialog", () => {
+	it("checks only the selected session when deciding whether to show the policy dialog", async () => {
 		interfaceTransitionState.status = { supported: true, targetMode: "chat" };
 		const selected = workerSession("sess-1");
 		selected.status = "idle";
@@ -783,7 +787,7 @@ describe("SessionView", () => {
 
 		render(<SessionView sessionId="sess-1" />);
 
-		chooseSessionAction("Switch to chat UI");
+		await chooseSessionAction("Switch to chat UI");
 
 		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 		expect(interfaceTransitionMock.start).toHaveBeenCalledWith({ targetMode: "chat", policy: "drain" });
@@ -850,7 +854,7 @@ describe("SessionView", () => {
 	it.each([
 		["worker", "sess-1"],
 		["orchestrator", "sess-orch"],
-	] as const)("hides the interface switch button for %s sessions when Chat UI is unsupported", (_label, sessionId) => {
+	] as const)("hides the interface switch button for %s sessions when Chat UI is unsupported", async (_label, sessionId) => {
 		interfaceTransitionState.status = { supported: false, targetMode: "chat", reasonCode: "CHAT_UNSUPPORTED" };
 		const session = workerSession(sessionId);
 		session.mode = "tui";
@@ -859,11 +863,11 @@ describe("SessionView", () => {
 
 		render(<SessionView sessionId={sessionId} />);
 
-		fireEvent.click(screen.getByRole("button", { name: "Session actions" }));
+		await userEvent.click(screen.getByRole("button", { name: "Session actions" }));
 		expect(screen.queryByRole("menuitem", { name: "Switch to chat UI" })).not.toBeInTheDocument();
 	});
 
-	it("shows the switch button when the adapter only reports a generic unsupported reason", () => {
+	it("shows the switch button when the adapter only reports a generic unsupported reason", async () => {
 		interfaceTransitionState.status = { supported: false, targetMode: "chat", reasonCode: "INTERFACE_HANDOFF_UNSUPPORTED" };
 		const session = workerSession("sess-1");
 		session.mode = "tui";
@@ -872,7 +876,7 @@ describe("SessionView", () => {
 
 		render(<SessionView sessionId="sess-1" />);
 
-		fireEvent.click(screen.getByRole("button", { name: "Session actions" }));
+		await userEvent.click(screen.getByRole("button", { name: "Session actions" }));
 		expect(screen.getByRole("menuitem", { name: "Switch to chat UI" })).toBeInTheDocument();
 	});
 
