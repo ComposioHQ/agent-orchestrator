@@ -44,7 +44,7 @@ it("shows signed-out existing profile and opens structured browser login", async
 	render(<QueryClientProvider client={queryClient}><CodexProfilesSection /></QueryClientProvider>);
 	await screen.findByText("Existing Codex profile");
 	expect(screen.getByText("Signed out")).toBeInTheDocument();
-	expect(screen.getByText("Used by current Codex sessions")).toBeInTheDocument();
+	expect(screen.getByText("Available for Codex task launches")).toBeInTheDocument();
 	fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
 	await waitFor(() => expect(openExternal).toHaveBeenCalledWith("https://auth.example.test"));
 	expect(postMock).toHaveBeenCalledWith("/api/v1/agents/codex/profiles/{profileId}/login", { params: { path: { profileId: "existing" } } });
@@ -52,7 +52,7 @@ it("shows signed-out existing profile and opens structured browser login", async
 });
 
 it("creates a managed profile, then explicitly starts its browser login", async () => {
-	const managed = { ...profileResponse.profiles[0], id: "72d4db6e-da2c-414c-a6a9-fdbd09a006b6", label: "Work", source: "managed", usableByCurrentLaunches: false };
+	const managed = { ...profileResponse.profiles[0], id: "72d4db6e-da2c-414c-a6a9-fdbd09a006b6", label: "Work", source: "managed", usableByCurrentLaunches: true };
 	postMock.mockImplementation((path: string) => {
 		if (path.endsWith("/ensure")) return Promise.resolve({ data: profileResponse });
 		if (path === "/api/v1/agents/codex/profiles") return Promise.resolve({ data: managed });
@@ -69,7 +69,7 @@ it("creates a managed profile, then explicitly starts its browser login", async 
 	await waitFor(() => expect(postMock).toHaveBeenCalledWith("/api/v1/agents/codex/profiles", { body: { label: "Work" } }));
 	await waitFor(() => expect(postMock).toHaveBeenCalledWith("/api/v1/agents/codex/profiles/{profileId}/login", { params: { path: { profileId: managed.id } } }));
 	expect(openExternal).toHaveBeenCalledWith("https://auth.example.test/work");
-	expect(await screen.findByText("Not available for task launch yet")).toBeInTheDocument();
+	expect((await screen.findAllByText("Available for Codex task launches"))).not.toHaveLength(0);
 	openExternal.mockRestore();
 });
 

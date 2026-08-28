@@ -197,11 +197,14 @@ describe("TerminalSwitchAgentButton", () => {
 		expect(within(dialog).queryByRole("textbox")).not.toBeInTheDocument();
 		await userEvent.click(within(dialog).getByRole("button", { name: "Switch" }));
 
-		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
+		await waitFor(() =>
+			expect(postMock.mock.calls.filter(([path]) => path === "/api/v1/sessions/{sessionId}/switch-agent")).toHaveLength(1),
+		);
 		expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/switch-agent", {
 			params: { path: { sessionId: "sess-1" } },
 			body: {
 				idempotencyKey: expect.any(String),
+				profileId: "existing",
 				targetHarness: "codex",
 			},
 		});
@@ -236,7 +239,9 @@ describe("TerminalSwitchAgentButton", () => {
 		await userEvent.click(await screen.findByRole("button", { name: "Switch agent" }));
 		await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Switch" }));
 
-		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
+		await waitFor(() =>
+			expect(postMock.mock.calls.filter(([path]) => path === "/api/v1/sessions/{sessionId}/switch-agent")).toHaveLength(1),
+		);
 		await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
 	});
 
@@ -247,7 +252,9 @@ describe("TerminalSwitchAgentButton", () => {
 		await userEvent.click(await screen.findByRole("button", { name: "Switch agent" }));
 		await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Switch" }));
 
-		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
+		await waitFor(() =>
+			expect(postMock.mock.calls.filter(([path]) => path === "/api/v1/sessions/{sessionId}/switch-agent")).toHaveLength(1),
+		);
 		const dialog = screen.getByRole("dialog", { name: "Switch agent" });
 		expect(within(dialog).getByRole("button", { name: "Starting..." })).toBeDisabled();
 		expect(within(dialog).getByRole("button", { name: "Close switch agent dialog" })).toBeDisabled();
@@ -317,17 +324,23 @@ describe("TerminalSwitchAgentButton", () => {
 	});
 
 	it("reopens a rejected switch and retries with a fresh idempotency key", async () => {
-		postMock
-			.mockResolvedValueOnce({
+		let switchAttempts = 0;
+		postMock.mockImplementation(async (path: string) => {
+			if (path !== "/api/v1/sessions/{sessionId}/switch-agent") {
+				return { data: { profiles: [] }, error: undefined, response: { status: 200 } };
+			}
+			switchAttempts += 1;
+			if (switchAttempts === 1) return {
 				data: undefined,
 				error: { message: "target agent is unavailable" },
 				response: { status: 409 },
-			})
-			.mockResolvedValueOnce({
+			};
+			return {
 				data: { switch: switchRecord({ id: "switch-2" }) },
 				error: undefined,
 				response: { status: 202 },
-			});
+			};
+		});
 		renderControl();
 
 		await userEvent.click(await screen.findByRole("button", { name: "Switch agent" }));
@@ -335,11 +348,15 @@ describe("TerminalSwitchAgentButton", () => {
 
 		const reopenedDialog = await screen.findByRole("dialog", { name: "Switch agent" });
 		expect(within(reopenedDialog).getByRole("alert")).toHaveTextContent("target agent is unavailable");
-		const firstIdempotencyKey = postMock.mock.calls[0]?.[1]?.body?.idempotencyKey;
+		const firstSwitchCall = postMock.mock.calls.find(([path]) => path === "/api/v1/sessions/{sessionId}/switch-agent");
+		const firstIdempotencyKey = firstSwitchCall?.[1]?.body?.idempotencyKey;
 		await userEvent.click(within(reopenedDialog).getByRole("button", { name: "Switch" }));
 
-		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(2));
-		const retryIdempotencyKey = postMock.mock.calls[1]?.[1]?.body?.idempotencyKey;
+		await waitFor(() =>
+			expect(postMock.mock.calls.filter(([path]) => path === "/api/v1/sessions/{sessionId}/switch-agent")).toHaveLength(2),
+		);
+		const switchCalls = postMock.mock.calls.filter(([path]) => path === "/api/v1/sessions/{sessionId}/switch-agent");
+		const retryIdempotencyKey = switchCalls[1]?.[1]?.body?.idempotencyKey;
 		expect(firstIdempotencyKey).toEqual(expect.any(String));
 		expect(retryIdempotencyKey).toEqual(expect.any(String));
 		expect(retryIdempotencyKey).not.toBe(firstIdempotencyKey);

@@ -98,6 +98,7 @@ func TestSessionSwitchAgentPostsRequestAndPrintsSwitch(t *testing.T) {
 	out, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }},
 		"session", "switch-agent", "demo-1", "codex",
 		"--idempotency-key", "switch-key",
+		"--profile", "managed-profile",
 	)
 	if err != nil {
 		t.Fatalf("session switch-agent failed: %v\nstderr=%s", err, errOut)
@@ -112,6 +113,7 @@ func TestSessionSwitchAgentPostsRequestAndPrintsSwitch(t *testing.T) {
 	}
 	want := switchAgentRequest{
 		TargetHarness:  "codex",
+		ProfileID:      "managed-profile",
 		IdempotencyKey: "switch-key",
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -121,6 +123,13 @@ func TestSessionSwitchAgentPostsRequestAndPrintsSwitch(t *testing.T) {
 		if !strings.Contains(out, needle) {
 			t.Errorf("output missing %q:\n%s", needle, out)
 		}
+	}
+}
+
+func TestSessionSwitchAgentRejectsProfileForNonCodexTarget(t *testing.T) {
+	_, _, err := executeCLI(t, Deps{}, "session", "switch-agent", "demo-1", "claude-code", "--profile", "existing")
+	if err == nil || !strings.Contains(err.Error(), "--profile requires target harness codex") {
+		t.Fatalf("err = %v, want profile usage error", err)
 	}
 }
 

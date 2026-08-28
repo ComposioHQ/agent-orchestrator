@@ -45,3 +45,17 @@ func TestAgentSwitchRequestFingerprintMatchesLegacyRequestWithoutModel(t *testin
 		t.Fatal("legacy fingerprint must not match a request with a model override")
 	}
 }
+
+func TestAgentSwitchRequestFingerprintProfilesKeepLegacyCompatibility(t *testing.T) {
+	legacy := ComputeAgentSwitchRequestFingerprint("session-1", HarnessCodex, "")
+	if got := ComputeAgentSwitchRequestFingerprintWithProfile("session-1", HarnessCodex, "", ""); got != legacy {
+		t.Fatalf("omitted profile fingerprint = %q, want legacy %q", got, legacy)
+	}
+	profiled := ComputeAgentSwitchRequestFingerprintWithProfile("session-1", HarnessCodex, "", "existing")
+	if profiled == legacy || !profiled.Valid() {
+		t.Fatalf("profile fingerprint = %q, want distinct valid v2", profiled)
+	}
+	if !profiled.MatchesRequestWithProfile("session-1", HarnessCodex, "", "existing") || profiled.MatchesRequestWithProfile("session-1", HarnessCodex, "", "other") {
+		t.Fatal("profile fingerprint did not enforce exact profile identity")
+	}
+}

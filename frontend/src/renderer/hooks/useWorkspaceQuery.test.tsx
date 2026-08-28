@@ -119,6 +119,12 @@ describe("useWorkspaceQuery", () => {
 								targetStartMode: "resumed",
 								updatedAt: "2026-06-10T15:32:00Z",
 							},
+							codexProfile: {
+								id: "existing",
+								label: "Existing Codex profile",
+								source: "existing",
+								availability: "available",
+							},
 							lastUserMessageAt: "2026-06-10T16:10:00Z",
 							updatedAt: "2026-06-10T16:15:04Z",
 						},

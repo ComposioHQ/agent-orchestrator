@@ -171,7 +171,7 @@ func newTestDriver(t *testing.T) (*Driver, *scriptedServer) {
 		versionProbe: func(context.Context, string) (string, error) {
 			return "codex-cli 0.146.0", nil
 		},
-		spawn: func(context.Context, string, string, []string) (*process, error) {
+		spawn: func(context.Context, string, string, []string, []string) (*process, error) {
 			return &process{
 				stdin:  clientWrites,
 				stdout: clientReads,
@@ -244,6 +244,28 @@ func TestStartCompletesHandshakeAndOpensThread(t *testing.T) {
 	// Default permissions must match what AO already gives a Codex TUI session.
 	if params.ApprovalPolicy != "never" || params.Sandbox != "danger-full-access" {
 		t.Errorf("default posture = %q/%q, want never/danger-full-access", params.ApprovalPolicy, params.Sandbox)
+	}
+}
+
+func TestManagedProfileStartForcesFileCredentialStore(t *testing.T) {
+	d, _ := newTestDriver(t)
+	originalSpawn := d.spawn
+	var capturedArgs []string
+	d.spawn = func(ctx context.Context, bin, workdir string, env, args []string) (*process, error) {
+		capturedArgs = append([]string(nil), args...)
+		return originalSpawn(ctx, bin, workdir, env, args)
+	}
+
+	conv, err := d.Start(context.Background(), ports.ChatStartConfig{
+		SessionID: "ao-1", WorkspacePath: "/tmp/ws", ManagedCodexProfile: true,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() { _ = conv.Close() }()
+	want := []string{"-c", `cli_auth_credentials_store="file"`, "app-server"}
+	if strings.Join(capturedArgs, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("args = %#v, want %#v", capturedArgs, want)
 	}
 }
 
@@ -630,13 +652,15 @@ func TestResumeRequiresStoredThreadID(t *testing.T) {
 	}
 }
 
-func TestProbeReportsAuthRequired(t *testing.T) {
-	d := &Driver{
-		plugin: fakePlugin{bin: "codex", authStatus: ports.AgentAuthStatusUnauthorized},
-		log:    slog.New(slog.DiscardHandler),
+func TestProbeDoesNotUseAmbientProfileAuthentication(t *testing.T) {
+	d, _ := newTestDriver(t)
+	d.plugin = fakePlugin{bin: "codex", authStatus: ports.AgentAuthStatusUnauthorized}
+	caps, err := d.Probe(context.Background())
+	if err != nil {
+		t.Fatalf("Probe: %v", err)
 	}
-	if _, err := d.Probe(context.Background()); !errors.Is(err, ports.ErrChatAuthRequired) {
-		t.Fatalf("err = %v, want ErrChatAuthRequired", err)
+	if missing := ports.MissingProductionCapabilities(caps); len(missing) != 0 {
+		t.Fatalf("codex is missing production capabilities: %v", missing)
 	}
 }
 

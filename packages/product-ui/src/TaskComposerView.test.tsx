@@ -129,6 +129,25 @@ describe("TaskComposerView", () => {
 		expect(renderAgentControl).not.toHaveBeenCalled();
 	});
 
+	it("adds a profile control only when the host supplies one", () => {
+		const onChange = vi.fn();
+		render(<TaskComposerView {...viewProps({
+			profile: {
+				disabled: false,
+				label: "Profile",
+				onChange,
+				onOpen: vi.fn(),
+				options: [{ id: "existing", label: "Existing Codex profile" }],
+				placeholder: "Select profile",
+				value: "existing",
+			},
+			renderProfileControl: (control) => <button type="button" aria-label={control.label} onClick={() => control.onChange("existing")}>{control.value}</button>,
+		})} />);
+		fireEvent.click(screen.getByRole("button", { name: "Profile" }));
+		expect(onChange).toHaveBeenCalledWith("existing");
+		expect(screen.getByRole("group", { name: "Runs with" }).querySelectorAll(".composer-toolbar-slot")).toHaveLength(3);
+	});
+
 	it("submits on the button or unmodified Enter and respects project availability", () => {
 		const props = viewProps();
 		const { rerender } = render(<TaskComposerView {...props} />);

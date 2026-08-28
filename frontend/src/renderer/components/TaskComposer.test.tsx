@@ -102,6 +102,47 @@ describe("TaskComposer", () => {
 		);
 	});
 
+	it("submits the selected profile for a local Codex task", async () => {
+		const profiles = {
+			profiles: [
+				{
+					id: "existing", label: "Existing Codex profile", source: "existing", status: "valid",
+					reasonCode: "profile_valid", reason: "Available.", usableByCurrentLaunches: true,
+					authentication: { state: "authorized", freshness: "fresh", reasonCode: "authorized", reason: "Signed in." },
+				},
+				{
+					id: "managed-profile", label: "Work", source: "managed", status: "valid",
+					reasonCode: "profile_valid", reason: "Available.", usableByCurrentLaunches: true,
+					authentication: { state: "authorized", freshness: "fresh", reasonCode: "authorized", reason: "Signed in." },
+				},
+			],
+			capabilities: {
+				accountRead: { state: "supported", reasonCode: "supported", reason: "Available." },
+				browserLogin: { state: "supported", reasonCode: "supported", reason: "Available." },
+			},
+		};
+		h.get.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/agents/codex/profiles") return { data: profiles };
+			if (path.includes("/models")) return { data: { agent: "codex", selectionMode: "text", models: [], allowCustom: true, refreshRecommended: false } };
+			return { data: { status: "ok", project: { agent: "codex", config: { worker: { agent: "codex" } } } } };
+		});
+		h.post.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/agents/codex/profiles/ensure") return { data: profiles };
+			return { data: { workerId: "sess-profile" } };
+		});
+
+		render(<Wrap><TaskComposer projectId="proj-1" onCreated={vi.fn()} /></Wrap>);
+		const profile = await screen.findByRole("button", { name: "Profile" });
+		await userEvent.click(profile);
+		await userEvent.click(screen.getByRole("menuitem", { name: "Work" }));
+		fireEvent.click(screen.getByRole("button", { name: "Start task" }));
+
+		await waitFor(() => expect(h.post).toHaveBeenCalledWith(
+			"/api/v1/orchestrators/delegate",
+			expect.objectContaining({ body: expect.objectContaining({ agent: "codex", profileId: "managed-profile" }) }),
+		));
+	});
+
 	it("starts a promptless worker when the task is empty", async () => {
 		const onCreated = vi.fn();
 		h.post.mockResolvedValueOnce({ data: { workerId: "sess-empty" } });

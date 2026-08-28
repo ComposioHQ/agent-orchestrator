@@ -28,7 +28,7 @@ func TestCodexProfileCatalogCreatesPrivateStrictDescriptor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if record.Snapshot.Label != "Work" || record.Snapshot.UsableByCurrentLaunches {
+	if record.Snapshot.Label != "Work" || !record.Snapshot.UsableByCurrentLaunches {
 		t.Fatalf("created profile = %#v", record.Snapshot)
 	}
 	profileDir := filepath.Join(root, record.Snapshot.ID)

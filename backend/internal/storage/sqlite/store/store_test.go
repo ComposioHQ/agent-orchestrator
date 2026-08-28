@@ -68,6 +68,40 @@ func TestSessionCreateAllowsPrimeAgentHarness(t *testing.T) {
 	}
 }
 
+func TestCodexSessionBindingIsAtomicImmutableAndJoined(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "codex-binding")
+	rec := sampleRecord("codex-binding")
+	rec.Harness = domain.HarnessCodex
+	rec.CodexProfileBinding = &domain.CodexSessionBinding{
+		ProfileID: "existing", Source: domain.CodexProfileSourceExisting,
+		Home: "/tmp/codex-existing", CreatedAt: rec.CreatedAt,
+	}
+	created, err := s.CreateSession(ctx, rec)
+	if err != nil {
+		t.Fatalf("create bound session: %v", err)
+	}
+	if created.CodexProfileBinding == nil || created.CodexProfileBinding.SessionID != created.ID || created.CodexProfileBinding.Home != "/tmp/codex-existing" {
+		t.Fatalf("created binding = %+v", created.CodexProfileBinding)
+	}
+	got, ok, err := s.GetSession(ctx, created.ID)
+	if err != nil || !ok || got.CodexProfileBinding == nil {
+		t.Fatalf("joined session binding: ok=%v err=%v binding=%+v", ok, err, got.CodexProfileBinding)
+	}
+	identical, inserted, err := s.BindCodexSessionProfile(ctx, *got.CodexProfileBinding)
+	if err != nil || inserted || identical.ProfileID != "existing" {
+		t.Fatalf("identical bind: inserted=%v binding=%+v err=%v", inserted, identical, err)
+	}
+	conflict := *got.CodexProfileBinding
+	conflict.ProfileID = "00000000-0000-4000-8000-000000000001"
+	conflict.Source = domain.CodexProfileSourceManaged
+	conflict.Home = "/tmp/codex-managed"
+	if _, _, err := s.BindCodexSessionProfile(ctx, conflict); err == nil {
+		t.Fatal("different immutable binding unexpectedly succeeded")
+	}
+}
+
 func TestSessionPersistsReviewerHarness(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

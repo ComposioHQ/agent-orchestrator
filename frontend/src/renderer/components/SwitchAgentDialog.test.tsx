@@ -141,6 +141,7 @@ describe("SwitchAgentDialog", () => {
 			{
 				idempotencyKey: "idempotency-1",
 				model: "gpt-5.4-mini",
+				profileId: "existing",
 				session: worker,
 				targetHarness: "codex",
 			},

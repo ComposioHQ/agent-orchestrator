@@ -79,4 +79,28 @@ describe("useSwitchAgent", () => {
 			expect(invalidate).toHaveBeenCalledWith({ queryKey: ["conversation-config-options", "sess-1"] });
 		});
 	});
+
+	it("sends an explicit Codex profile without changing omitted-profile retries", async () => {
+		postMock.mockResolvedValue({
+			data: { switch: { agentHandoffStatus: "not_attempted", fromHarness: "claude-code", id: "switch-2", state: "preparing_handoff", targetHarness: "codex" } },
+			error: undefined,
+			response: { status: 202 },
+		});
+		const queryClient = new QueryClient({ defaultOptions: { mutations: { retry: false }, queries: { retry: false } } });
+		const { result } = renderHook(() => useSwitchAgent(), { wrapper: wrapper(queryClient) });
+		await result.current.mutateAsync({
+			session: { ...session, provider: "claude-code" },
+			targetHarness: "codex",
+			profileId: "existing",
+			model: "",
+			idempotencyKey: "switch-request-2",
+		});
+		expect(postMock).toHaveBeenCalledWith(
+			"/api/v1/sessions/{sessionId}/switch-agent",
+			{
+				params: { path: { sessionId: "sess-1" } },
+				body: { targetHarness: "codex", profileId: "existing", idempotencyKey: "switch-request-2" },
+			},
+		);
+	});
 });
