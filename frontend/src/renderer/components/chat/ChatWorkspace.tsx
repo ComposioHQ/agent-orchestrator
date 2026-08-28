@@ -1073,55 +1073,73 @@ function ChatHeader({
 				>
 					<div
 						aria-label="Chat tabs"
-						className="scrollbar-none flex h-full min-w-flex-min flex-1 items-center overflow-x-auto"
+						className="flex h-full min-w-0 flex-1 items-center"
 						onKeyDown={onTabsKeyDown ?? handleTerminalTabListKeyDown}
 						role="tablist"
 					>
-						<button
-							aria-current={timelineActive ? true : undefined}
-							aria-label={label}
-							aria-selected={timelineActive}
-							data-terminal-role="primary"
-							className={cn(
-								"group relative inline-flex min-w-shell-tab-min max-w-shell-tab-max self-stretch cursor-pointer items-center gap-1.5 border-r border-border px-3 text-control font-medium leading-none transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent/50",
-								timelineActive
-									? "bg-overlay text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80"
-									: "text-muted-foreground hover:bg-raised hover:text-foreground",
-							)}
-							onClick={timelineActive ? undefined : onSelectChat}
-							role="tab"
-							tabIndex={timelineActive || (!reviewerTerminal && !shellTerminals?.length) ? 0 : -1}
-							title={label}
-							type="button"
-						>
-							<AgentAvatar className="size-icon-base" decorative provider={snapshot.harness} />
-							<span className="truncate">{label}</span>
-						</button>
-						{reviewerTerminal ? (
-							<button
-								aria-current={reviewerActive ? true : undefined}
-								aria-label="Reviewer"
-								aria-selected={Boolean(reviewerActive)}
+						<div className="flex min-w-0 shrink items-stretch">
+							<span
+								data-terminal-role="primary"
 								className={cn(
-									"group relative inline-flex min-w-shell-tab-min max-w-shell-tab-max self-stretch cursor-pointer items-center gap-1.5 border-r border-border px-3 text-control font-medium leading-none transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent/50",
-									reviewerActive
+									"group relative inline-flex min-w-0 shrink self-stretch items-center gap-1.5 overflow-hidden border-r border-border px-3",
+									timelineActive
 										? "bg-overlay text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80"
 										: "text-muted-foreground hover:bg-raised hover:text-foreground",
 								)}
-								onClick={() => onOpenReviewerTerminal?.(reviewerTerminal)}
-								role="tab"
-								tabIndex={reviewerActive ? 0 : -1}
-								title={reviewerTerminal.harness}
-								type="button"
 							>
-								<AgentAvatar
-									className="size-icon-base"
-									decorative
-									provider={reviewerTerminal.harness}
-								/>
-								<span className="truncate">Reviewer</span>
-							</button>
-						) : null}
+								<AgentAvatar className="size-icon-base" decorative provider={snapshot.harness} />
+								<button
+									aria-current={timelineActive ? true : undefined}
+									aria-label={label}
+									aria-selected={timelineActive}
+									className={cn(
+										"inline-flex min-w-0 max-w-shell-tab-max items-center gap-1.5 truncate text-control font-medium leading-none transition-colors",
+										timelineActive ? "text-foreground" : "text-muted-foreground",
+									)}
+									onClick={timelineActive ? undefined : onSelectChat}
+									role="tab"
+									tabIndex={timelineActive || (!reviewerTerminal && !shellTerminals?.length) ? 0 : -1}
+									title={label}
+									type="button"
+								>
+									<span className="truncate">{label}</span>
+								</button>
+							</span>
+							{reviewerTerminal ? (
+								<span
+									data-terminal-role="primary"
+									className={cn(
+										"group relative inline-flex min-w-0 shrink self-stretch items-center gap-1.5 overflow-hidden border-r border-border px-3",
+										reviewerActive
+											? "bg-overlay text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80"
+											: "text-muted-foreground hover:bg-raised hover:text-foreground",
+									)}
+								>
+									<AgentAvatar
+										className="size-icon-base"
+										decorative
+										provider={reviewerTerminal.harness}
+									/>
+									<button
+										aria-current={reviewerActive ? true : undefined}
+										aria-label="Reviewer"
+										aria-selected={Boolean(reviewerActive)}
+										className={cn(
+											"inline-flex min-w-0 max-w-shell-tab-max items-center gap-1.5 truncate text-control font-medium leading-none",
+											reviewerActive ? "text-foreground" : "text-muted-foreground",
+										)}
+										onClick={() => onOpenReviewerTerminal?.(reviewerTerminal)}
+										role="tab"
+										tabIndex={reviewerActive ? 0 : -1}
+										title={reviewerTerminal.harness}
+										type="button"
+									>
+										<span className="truncate">Reviewer</span>
+									</button>
+								</span>
+							) : null}
+						</div>
+						<div className="scrollbar-none flex h-full min-w-flex-min flex-1 items-center overflow-x-auto">
 						{/* The same shared shell tab the terminal pane strip and the
 						    standalone terminals screen use, so all three never drift. */}
 						{(shellTerminals ?? []).map((shell) => (
@@ -1140,6 +1158,7 @@ function ChatHeader({
 							/>
 						))}
 						{workspaceTabs}
+						</div>
 					</div>
 				</div>
 				<div
