@@ -47,25 +47,29 @@ type modelCatalogCall struct {
 // Service owns normalized harness readiness and the unchanged model catalog.
 // Consumers share coordinator checks instead of probing adapters directly.
 type Service struct {
-	agents      []agentregistry.HarnessAgent
-	readiness   *readinessCoordinator
-	cache       ports.AgentModelCatalogCache
-	discoverer  ports.AgentModelDiscoverer
-	projects    ProjectLookup
-	sessions    SessionUsageLookup
-	resolverMu  map[string]*sync.Mutex
-	modelCallMu sync.Mutex
-	modelCalls  map[string]*modelCatalogCall
+	agents        []agentregistry.HarnessAgent
+	readiness     *readinessCoordinator
+	cache         ports.AgentModelCatalogCache
+	discoverer    ports.AgentModelDiscoverer
+	projects      ProjectLookup
+	sessions      SessionUsageLookup
+	resolverMu    map[string]*sync.Mutex
+	modelCallMu   sync.Mutex
+	modelCalls    map[string]*modelCatalogCall
+	codexProfiles *codexProfileManager
 }
 
 // Deps contains optional durable dependencies for the agent catalog service.
 type Deps struct {
-	Cache      ports.AgentModelCatalogCache
-	Discoverer ports.AgentModelDiscoverer
-	Projects   ProjectLookup
-	Sessions   SessionUsageLookup
-	Context    context.Context
-	Logger     *slog.Logger
+	Cache            ports.AgentModelCatalogCache
+	Discoverer       ports.AgentModelDiscoverer
+	Projects         ProjectLookup
+	Sessions         SessionUsageLookup
+	Context          context.Context
+	Logger           *slog.Logger
+	CodexProfileRoot string
+	CodexHome        string
+	CodexAccounts    ports.CodexAccountClientFactory
 }
 
 // ProjectLookup resolves the registered working directory used for model
@@ -90,8 +94,12 @@ func New() *Service {
 func NewWithDeps(deps Deps) *Service {
 	agents := agentregistry.Harnessed()
 	svc := newService(agents, deps.Cache, deps.Projects, deps.Discoverer)
+	if deps.CodexProfileRoot != "" && deps.CodexHome != "" {
+		svc.codexProfiles = newCodexProfileManager(deps.Context, deps.CodexProfileRoot, deps.CodexHome, deps.CodexAccounts, deps.Logger)
+	}
 	svc.readiness = newReadinessCoordinator(readinessCoordinatorConfig{
 		Agents: agents, Factory: agentregistry.Harnessed, Context: deps.Context, Logger: deps.Logger,
+		AuthenticationCheck: svc.structuredCodexAuthentication,
 	})
 	svc.sessions = deps.Sessions
 	return svc
