@@ -1,10 +1,13 @@
-import { expect, type Page, test } from "@playwright/test";
+import { expect, type Locator, type Page, test } from "@playwright/test";
 import { installFakeAgent } from "./support/fake-bridge";
 import { openSwitchAgentDialog } from "./support/open-switch-agent-menu";
 
 const projectId = "switch-agent-dialog";
 
-async function openSwitchAgentDialog(page: Page) {
+async function setupSwitchAgentDialogTest(page: Page): Promise<{
+	dialog: Locator;
+	terminalPanel: Locator;
+}> {
 	await page.emulateMedia({ reducedMotion: "reduce" });
 	await installFakeAgent(page, {
 		projectId,
@@ -60,7 +63,7 @@ async function openSwitchAgentDialog(page: Page) {
 }
 
 test("renderer: switch-agent selector remains compact inside a wide terminal @T0", async ({ page }) => {
-	const { dialog, terminalPanel } = await openSwitchAgentDialog(page);
+	const { dialog, terminalPanel } = await setupSwitchAgentDialogTest(page);
 	await expect(dialog).toHaveCSS("width", "420px");
 	await expect
 		.poll(async () => (await terminalPanel.boundingBox())?.width ?? 0)
@@ -69,7 +72,7 @@ test("renderer: switch-agent selector remains compact inside a wide terminal @T0
 
 test("renderer: switch-agent selector stays inside a narrow terminal @T0", async ({ page }) => {
 	await page.setViewportSize({ width: 960, height: 720 });
-	const { dialog, terminalPanel } = await openSwitchAgentDialog(page);
+	const { dialog, terminalPanel } = await setupSwitchAgentDialogTest(page);
 	const dialogBox = await dialog.boundingBox();
 	const terminalBox = await terminalPanel.boundingBox();
 
