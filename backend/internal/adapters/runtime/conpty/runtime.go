@@ -15,7 +15,10 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
-const runtimeLaunchIDEnv = "AO_RUNTIME_LAUNCH_ID"
+const (
+	runtimeLaunchIDEnv    = "AO_RUNTIME_LAUNCH_ID"
+	unresolvedHostAddress = "ao-conpty://startup-unresolved"
+)
 
 // Ensure Runtime satisfies the port at compile time (Attach in attach.go).
 var _ ports.Runtime = (*Runtime)(nil)
@@ -136,6 +139,24 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 			r.mu.Unlock()
 			return ports.RuntimeHandle{}, conptyCreateFailure(cause)
 		}
+		if addr == "" && pid > 0 {
+			// The child started but its READY address was never observed and the
+			// spawner could not prove cleanup. Retain its PID and launch fence in
+			// both memory and the restart registry. The sentinel address prevents
+			// ordinary client traffic while keeping the possible handle probeable.
+			sess := &hostSession{addr: unresolvedHostAddress, pid: pid, launchID: cfg.Env[runtimeLaunchIDEnv]}
+			r.mu.Lock()
+			r.sessions[id] = sess
+			r.mu.Unlock()
+			registryErr := ptyregistry.Register(ptyregistry.Entry{
+				SessionID: id, PtyHostPID: pid, PipePath: unresolvedHostAddress,
+				LaunchID: sess.launchID, RegisteredAt: time.Now().UTC().Format(time.RFC3339),
+			})
+			if registryErr != nil {
+				cause = errors.Join(cause, fmt.Errorf("retain unresolved pty-host ownership for %q: %w", id, registryErr))
+			}
+			return ports.RuntimeHandle{}, conptyPartialCreateFailure(cause, handle, ports.RuntimeCleanupFailed)
+		}
 		if addr == "" || pid <= 0 {
 			r.mu.Lock()
 			delete(r.sessions, id)
@@ -194,8 +215,13 @@ func (r *Runtime) Destroy(ctx context.Context, handle ports.RuntimeHandle) error
 		return nil // unknown or already gone
 	}
 
-	// Ask host to shut down gracefully (triggers shutdown() in Serve).
-	gracefulErr := r.killHost(sess.addr)
+	// Ask a READY host to shut down gracefully (triggers shutdown() in Serve).
+	// A startup-unresolved host has no safe address; retain the PID fence and
+	// proceed directly to the force-kill path.
+	var gracefulErr error
+	if sess.addr != unresolvedHostAddress {
+		gracefulErr = r.killHost(sess.addr)
+	}
 	exited, waitErr := r.waitForPIDExit(ctx, sess.pid)
 	if waitErr != nil {
 		return errors.Join(gracefulErr, waitErr)
@@ -279,6 +305,12 @@ func (r *Runtime) IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool
 	if sess == nil {
 		return false, nil // no in-memory entry, no registry entry -> definitively gone
 	}
+	if sess.addr == unresolvedHostAddress {
+		if r.pidIsAlive(sess.pid) {
+			return false, fmt.Errorf("conpty: pty-host pid %d started without a READY address: %w", sess.pid, ports.ErrRuntimeProbeInconclusive)
+		}
+		return false, nil
+	}
 	return clientIsAlive(sess.addr)
 }
 
@@ -302,6 +334,12 @@ func (r *Runtime) ProbeFencedRuntime(ctx context.Context, ref ports.FencedRuntim
 	}
 	if sess.launchID != ref.Generation {
 		return ports.FencedProbeResult{Liveness: ports.FencedUnknown, Reason: ports.FencedReasonGenerationMismatch}
+	}
+	if sess.addr == unresolvedHostAddress {
+		if r.pidIsAlive(sess.pid) {
+			return ports.FencedProbeResult{Liveness: ports.FencedUnknown, Reason: ports.FencedReasonProbeFailed}
+		}
+		return ports.FencedProbeResult{Liveness: ports.FencedDead, Reason: ports.FencedReasonExactAbsent}
 	}
 	status, hostAlive, err := clientStatusContext(ctx, sess.addr)
 	if err != nil || !hostAlive {
