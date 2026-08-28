@@ -257,6 +257,20 @@ func TestListPRFactsForSessionSplitsExternalCommentsFromAOInjectedComments(t *te
 	r, _ := s.CreateSession(ctx, sampleRecord("mer"))
 	now := time.Now().UTC().Truncate(time.Second)
 
+	if err := s.UpsertReview(ctx, domain.Review{
+		ID: "rev-ao", SessionID: r.ID, ProjectID: "mer", Harness: "claude-code",
+		PRURL: "pr/ao", CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.InsertReviewRun(ctx, domain.ReviewRun{
+		ID: "run-ao", ReviewID: "rev-ao", SessionID: r.ID, Harness: "claude-code",
+		PRURL: "pr/ao", TargetSHA: "head1", Status: domain.ReviewRunComplete,
+		Verdict: domain.VerdictChangesRequested, GithubReviewID: "gh-ao", CreatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
 	write := func(url string, comments []domain.PullRequestComment) {
 		t.Helper()
 		if err := s.WriteSCMObservation(ctx, domain.PullRequest{
@@ -269,12 +283,16 @@ func TestListPRFactsForSessionSplitsExternalCommentsFromAOInjectedComments(t *te
 		}
 	}
 
-	write("pr/external", []domain.PullRequestComment{{
-		ThreadID: "th-pr/external", ID: "c-ext", Author: "maintainer", Body: "please fix",
+	write("pr/external-on", []domain.PullRequestComment{{
+		ThreadID: "th-pr/external-on", ID: "c-ext-on", ReviewID: "gh-human-on", Author: "maintainer", Body: "please fix",
+		Resolved: false, IsBot: false, CreatedAt: now, AutoInjectReview: true,
+	}})
+	write("pr/external-off", []domain.PullRequestComment{{
+		ThreadID: "th-pr/external-off", ID: "c-ext-off", ReviewID: "gh-human-off", Author: "maintainer", Body: "please fix",
 		Resolved: false, IsBot: false, CreatedAt: now, AutoInjectReview: false,
 	}})
 	write("pr/ao", []domain.PullRequestComment{{
-		ThreadID: "th-pr/ao", ID: "c-ao", Author: "ao", Body: "handled automatically",
+		ThreadID: "th-pr/ao", ID: "c-ao", ReviewID: "gh-ao", Author: "ao", Body: "handled automatically",
 		Resolved: false, IsBot: false, CreatedAt: now, AutoInjectReview: true,
 	}})
 
@@ -286,11 +304,14 @@ func TestListPRFactsForSessionSplitsExternalCommentsFromAOInjectedComments(t *te
 	for _, f := range facts {
 		byURL[f.URL] = f
 	}
-	if got := byURL["pr/external"]; !got.ReviewComments || !got.ExternalComments {
-		t.Fatalf("external unresolved comment should surface in both signals: %+v", got)
+	if got := byURL["pr/external-on"]; !got.ReviewComments || !got.ExternalComments {
+		t.Fatalf("external unresolved comment should stay external when auto inject is on: %+v", got)
+	}
+	if got := byURL["pr/external-off"]; !got.ReviewComments || !got.ExternalComments {
+		t.Fatalf("external unresolved comment should stay external when auto inject is off: %+v", got)
 	}
 	if got := byURL["pr/ao"]; !got.ReviewComments || got.ExternalComments {
-		t.Fatalf("AO-injected comment should not surface as external input: %+v", got)
+		t.Fatalf("AO-authored comment should not surface as external input: %+v", got)
 	}
 }
 
@@ -448,39 +469,67 @@ func TestListPRFactsForSessionsSplitExternalCommentsFromAOInjectedComments(t *te
 	seedProject(t, s, "mer")
 	first, _ := s.CreateSession(ctx, sampleRecord("mer"))
 	second, _ := s.CreateSession(ctx, sampleRecord("mer"))
+	third, _ := s.CreateSession(ctx, sampleRecord("mer"))
 	now := time.Now().UTC().Truncate(time.Second)
 
 	if err := s.WriteSCMObservation(ctx, domain.PullRequest{
-		URL: "pr/external", SessionID: first.ID, Number: 1, Review: domain.ReviewRequired,
+		URL: "pr/external-on", SessionID: first.ID, Number: 1, Review: domain.ReviewRequired,
 		HeadSHA: "head1", UpdatedAt: now, ObservedAt: now,
 	}, nil, nil, []domain.PullRequestReviewThread{
-		{ThreadID: "th-external", Path: "main.go", Line: 5, Resolved: false, UpdatedAt: now},
+		{ThreadID: "th-external-on", Path: "main.go", Line: 5, Resolved: false, UpdatedAt: now},
 	}, []domain.PullRequestComment{{
-		ThreadID: "th-external", ID: "c-ext", Author: "maintainer", Body: "please fix",
-		Resolved: false, IsBot: false, CreatedAt: now, AutoInjectReview: false,
-	}}, ports.ReviewWriteReplace); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.WriteSCMObservation(ctx, domain.PullRequest{
-		URL: "pr/ao", SessionID: second.ID, Number: 2, Review: domain.ReviewRequired,
-		HeadSHA: "head1", UpdatedAt: now, ObservedAt: now,
-	}, nil, nil, []domain.PullRequestReviewThread{
-		{ThreadID: "th-ao", Path: "main.go", Line: 8, Resolved: false, UpdatedAt: now},
-	}, []domain.PullRequestComment{{
-		ThreadID: "th-ao", ID: "c-ao", Author: "ao", Body: "handled automatically",
+		ThreadID: "th-external-on", ID: "c-ext-on", ReviewID: "gh-human-on", Author: "maintainer", Body: "please fix",
 		Resolved: false, IsBot: false, CreatedAt: now, AutoInjectReview: true,
 	}}, ports.ReviewWriteReplace); err != nil {
 		t.Fatal(err)
 	}
+	if err := s.WriteSCMObservation(ctx, domain.PullRequest{
+		URL: "pr/external-off", SessionID: second.ID, Number: 2, Review: domain.ReviewRequired,
+		HeadSHA: "head1", UpdatedAt: now, ObservedAt: now,
+	}, nil, nil, []domain.PullRequestReviewThread{
+		{ThreadID: "th-external-off", Path: "main.go", Line: 8, Resolved: false, UpdatedAt: now},
+	}, []domain.PullRequestComment{{
+		ThreadID: "th-external-off", ID: "c-ext-off", ReviewID: "gh-human-off", Author: "maintainer", Body: "please fix",
+		Resolved: false, IsBot: false, CreatedAt: now, AutoInjectReview: false,
+	}}, ports.ReviewWriteReplace); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertReview(ctx, domain.Review{
+		ID: "rev-ao", SessionID: third.ID, ProjectID: "mer", Harness: "claude-code",
+		PRURL: "pr/ao", CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.InsertReviewRun(ctx, domain.ReviewRun{
+		ID: "run-ao", ReviewID: "rev-ao", SessionID: third.ID, Harness: "claude-code",
+		PRURL: "pr/ao", TargetSHA: "head1", Status: domain.ReviewRunComplete,
+		Verdict: domain.VerdictChangesRequested, GithubReviewID: "gh-ao", CreatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WriteSCMObservation(ctx, domain.PullRequest{
+		URL: "pr/ao", SessionID: third.ID, Number: 3, Review: domain.ReviewRequired,
+		HeadSHA: "head1", UpdatedAt: now, ObservedAt: now,
+	}, nil, nil, []domain.PullRequestReviewThread{
+		{ThreadID: "th-ao", Path: "main.go", Line: 11, Resolved: false, UpdatedAt: now},
+	}, []domain.PullRequestComment{{
+		ThreadID: "th-ao", ID: "c-ao", ReviewID: "gh-ao", Author: "ao", Body: "handled automatically",
+		Resolved: false, IsBot: false, CreatedAt: now, AutoInjectReview: false,
+	}}, ports.ReviewWriteReplace); err != nil {
+		t.Fatal(err)
+	}
 
-	got, err := s.ListPRFactsForSessions(ctx, []domain.SessionID{first.ID, second.ID})
+	got, err := s.ListPRFactsForSessions(ctx, []domain.SessionID{first.ID, second.ID, third.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if facts := got[first.ID]; len(facts) != 1 || !facts[0].ExternalComments {
-		t.Fatalf("external batch comments lost: %+v", facts)
+		t.Fatalf("external batch comments lost when auto inject is on: %+v", facts)
 	}
-	if facts := got[second.ID]; len(facts) != 1 || facts[0].ExternalComments || !facts[0].ReviewComments {
+	if facts := got[second.ID]; len(facts) != 1 || !facts[0].ExternalComments {
+		t.Fatalf("external batch comments lost when auto inject is off: %+v", facts)
+	}
+	if facts := got[third.ID]; len(facts) != 1 || facts[0].ExternalComments || !facts[0].ReviewComments {
 		t.Fatalf("AO batch comments should stay non-external while review comments remain true: %+v", facts)
 	}
 }

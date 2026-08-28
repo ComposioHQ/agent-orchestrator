@@ -907,6 +907,7 @@ func (s *Service) Get(ctx context.Context, id domain.SessionID) (domain.Session,
 }
 
 func (s *Service) toSessionWithFacts(rec domain.SessionRecord, prs []domain.PRFacts, runs []domain.CurrentHeadReviewRun) (domain.Session, error) {
+	runs = canonicalizeCurrentHeadReviewRuns(prs, runs)
 	prs = deduplicatePRFacts(prs)
 	// Both derivations read the clock once, from the same instant: they share
 	// the no-signal rule, and two reads could put them either side of its grace

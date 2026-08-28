@@ -54,6 +54,39 @@ func deduplicatePRFacts(prs []domain.PRFacts) []domain.PRFacts {
 	return out
 }
 
+func canonicalizeCurrentHeadReviewRuns(prs []domain.PRFacts, runs []domain.CurrentHeadReviewRun) []domain.CurrentHeadReviewRun {
+	if len(prs) == 0 || len(runs) == 0 {
+		return append([]domain.CurrentHeadReviewRun(nil), runs...)
+	}
+
+	canonicalByURL := make(map[string]string, len(prs))
+	mergedByKey := make(map[string]domain.PRFacts, len(prs))
+	urlsByKey := make(map[string][]string, len(prs))
+	for _, pr := range prs {
+		key := pullRequestAliasKey(pr.URL, pr.Number, pr.SourceBranch, pr.TargetBranch, pr.HeadSHA)
+		if key == "" {
+			canonicalByURL[pr.URL] = pr.URL
+			continue
+		}
+		mergedByKey[key] = mergePRFacts(mergedByKey[key], pr)
+		urlsByKey[key] = append(urlsByKey[key], pr.URL)
+	}
+	for key, merged := range mergedByKey {
+		for _, rawURL := range urlsByKey[key] {
+			canonicalByURL[rawURL] = merged.URL
+		}
+	}
+
+	out := make([]domain.CurrentHeadReviewRun, len(runs))
+	for i, run := range runs {
+		out[i] = run
+		if canonicalURL, ok := canonicalByURL[run.PRURL]; ok {
+			out[i].PRURL = canonicalURL
+		}
+	}
+	return out
+}
+
 func mergePRFacts(current, next domain.PRFacts) domain.PRFacts {
 	if next.UpdatedAt.After(current.UpdatedAt) {
 		next.ReviewComments = current.ReviewComments || next.ReviewComments

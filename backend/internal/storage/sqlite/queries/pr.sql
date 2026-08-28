@@ -204,7 +204,13 @@ SELECT
         WHERE pr_comment.pr_url = pr.url
           AND pr_comment.resolved = 0
           AND pr_comment.is_bot = 0
-          AND pr_comment.auto_inject_review = 0
+          AND NOT EXISTS (
+              SELECT 1
+              FROM review_run
+              WHERE pr_comment.review_id != ''
+                AND review_run.github_review_id != ''
+                AND review_run.github_review_id = pr_comment.review_id
+          )
     ) AS external_comments,
     EXISTS (
         SELECT 1
@@ -284,7 +290,13 @@ SELECT
         WHERE pr_comment.pr_url = pr.url
           AND pr_comment.resolved = 0
           AND pr_comment.is_bot = 0
-          AND pr_comment.auto_inject_review = 0
+          AND NOT EXISTS (
+              SELECT 1
+              FROM review_run
+              WHERE pr_comment.review_id != ''
+                AND review_run.github_review_id != ''
+                AND review_run.github_review_id = pr_comment.review_id
+          )
     ) AS external_comments,
     EXISTS (
         SELECT 1
@@ -379,7 +391,13 @@ SELECT
         WHERE pr_comment.pr_url = pr.url
           AND pr_comment.resolved = 0
           AND pr_comment.is_bot = 0
-          AND pr_comment.auto_inject_review = 0
+          AND NOT EXISTS (
+              SELECT 1
+              FROM review_run
+              WHERE pr_comment.review_id != ''
+                AND review_run.github_review_id != ''
+                AND review_run.github_review_id = pr_comment.review_id
+          )
     ) AS external_comments,
     EXISTS (
         SELECT 1

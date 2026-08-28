@@ -34,6 +34,7 @@ type fakeStore struct {
 	activeSwitchGetErr  error
 	activeSwitchListErr error
 	pr                  map[domain.SessionID]domain.PRFacts
+	prFacts             map[domain.SessionID][]domain.PRFacts
 	prs                 map[domain.SessionID][]domain.PullRequest
 	projects            map[string]domain.ProjectRecord
 	worktrees           map[domain.SessionID][]domain.SessionWorktreeRecord
@@ -54,6 +55,7 @@ func newFakeStore() *fakeStore {
 		sessions:       map[domain.SessionID]domain.SessionRecord{},
 		activeSwitches: map[domain.SessionID]domain.AgentSwitch{},
 		pr:             map[domain.SessionID]domain.PRFacts{},
+		prFacts:        map[domain.SessionID][]domain.PRFacts{},
 		prs:            map[domain.SessionID][]domain.PullRequest{},
 		projects:       map[string]domain.ProjectRecord{},
 		worktrees:      map[domain.SessionID][]domain.SessionWorktreeRecord{},
@@ -297,6 +299,9 @@ func (f *fakeStore) ListPRsBySession(_ context.Context, id domain.SessionID) ([]
 
 func (f *fakeStore) ListPRFactsForSession(_ context.Context, id domain.SessionID) ([]domain.PRFacts, error) {
 	f.listPRFactsCalls++
+	if prs, ok := f.prFacts[id]; ok {
+		return append([]domain.PRFacts(nil), prs...), nil
+	}
 	pr, ok := f.pr[id]
 	if !ok {
 		return nil, nil
@@ -308,6 +313,10 @@ func (f *fakeStore) ListPRFactsForSessions(_ context.Context, ids []domain.Sessi
 	f.listPRFactsCalls++
 	out := make(map[domain.SessionID][]domain.PRFacts, len(ids))
 	for _, id := range ids {
+		if prs, ok := f.prFacts[id]; ok {
+			out[id] = append([]domain.PRFacts(nil), prs...)
+			continue
+		}
 		pr, ok := f.pr[id]
 		if ok {
 			out[id] = []domain.PRFacts{pr}
@@ -4353,6 +4362,60 @@ func TestDeduplicatePRFactsCollapsesTransferredRepoAliasesWithSameHead(t *testin
 		!got[0].ExternalComments ||
 		!got[0].ExternalApproved {
 		t.Fatalf("merged facts = %+v, want newest URL and preserved comments", got[0])
+	}
+}
+
+func TestToSessionWithFactsRemapsTransferredAliasReviewRuns(t *testing.T) {
+	st := newFakeStore()
+	rec := domain.SessionRecord{
+		ID:                "mer-1",
+		ProjectID:         "mer",
+		UpdatedAt:         time.Date(2026, 8, 28, 10, 0, 0, 0, time.UTC),
+		AutoReviewEnabled: true,
+		AutoInjectReview:  true,
+	}
+	oldURL := "https://github.com/AgentWrapper/agent-orchestrator/pull/3193"
+	newURL := "https://github.com/Untrivial-ai/agent-orchestrator/pull/3193"
+	st.prFacts[rec.ID] = []domain.PRFacts{
+		{
+			URL:                      oldURL,
+			Number:                   3193,
+			Review:                   domain.ReviewRequired,
+			SourceBranch:             "ao/mer-1/fix-sigpipe",
+			TargetBranch:             "main",
+			HeadSHA:                  "same-head",
+			UpdatedAt:                rec.UpdatedAt,
+			ExternalChangesRequested: false,
+		},
+		{
+			URL:          newURL,
+			Number:       3193,
+			Review:       domain.ReviewRequired,
+			SourceBranch: "ao/mer-1/fix-sigpipe",
+			TargetBranch: "main",
+			HeadSHA:      "same-head",
+			UpdatedAt:    rec.UpdatedAt.Add(time.Minute),
+		},
+	}
+	st.reviewRuns[rec.ID] = []domain.CurrentHeadReviewRun{{
+		SessionID: rec.ID,
+		Harness:   "claude-code",
+		PRURL:     oldURL,
+		Status:    domain.ReviewRunRunning,
+	}}
+
+	sess, err := (&Service{store: st, clock: func() time.Time { return rec.UpdatedAt.Add(2 * time.Minute) }}).toSessionWithFacts(rec, st.prFacts[rec.ID], st.reviewRuns[rec.ID])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.KanbanColumn != "validating" {
+		t.Fatalf("column = %q, want validating", sess.KanbanColumn)
+	}
+	if sess.DisplayStatus != "Reviewing" {
+		t.Fatalf("displayStatus = %q, want Reviewing", sess.DisplayStatus)
+	}
+	if len(sess.PRs) != 1 || sess.PRs[0].URL != newURL {
+		t.Fatalf("deduped PRs = %+v, want newest alias only", sess.PRs)
 	}
 }
 
