@@ -579,6 +579,11 @@ describe("XtermTerminal", () => {
 			"needle",
 			expect.objectContaining({ incremental: false, caseSensitive: true, regex: true }),
 		);
+		state.lastTerminal!.selection = "needle";
+		state.lastTerminal!.selectionListeners.forEach((listener) => listener());
+		await new Promise((resolve) => window.setTimeout(resolve, 0));
+		expect(window.ao!.clipboard.writeText).not.toHaveBeenCalled();
+		expect(screen.queryByRole("status")).not.toBeInTheDocument();
 
 		fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
 		expect(state.searchAddon!.findPrevious).toHaveBeenCalledWith(
@@ -721,35 +726,28 @@ describe("XtermTerminal", () => {
 		await waitFor(() => expect(onInput).toHaveBeenCalledWith("\x1b[200~bracketed\rpaste\x1b[201~", "paste"));
 	});
 
-	it("auto-copies new selections and retries explicit copy if the auto-copy failed", async () => {
+	it("does not copy terminal selections without an explicit copy action", async () => {
 		render(<XtermTerminal theme="dark" />);
-		const writeText = vi.fn().mockRejectedValueOnce(new Error("clipboard failed")).mockResolvedValueOnce(undefined);
-		window.ao!.clipboard.writeText = writeText;
 
-		state.lastTerminal!.selection = "retry me";
+		state.lastTerminal!.selection = "selected text";
 		state.lastTerminal!.selectionListeners.forEach((listener) => listener());
 		await new Promise((resolve) => window.setTimeout(resolve, 0));
 
-		const event = {
+		expect(window.ao!.clipboard.writeText).not.toHaveBeenCalled();
+		expect(screen.queryByRole("status")).not.toBeInTheDocument();
+	});
+
+	it("shows a copied toast after an explicit copy", async () => {
+		render(<XtermTerminal theme="dark" />);
+		state.lastTerminal!.selection = "toast selection";
+		state.lastTerminal!.keyHandler!({
 			key: "c",
 			metaKey: true,
 			ctrlKey: false,
 			shiftKey: false,
 			preventDefault: vi.fn(),
 			stopPropagation: vi.fn(),
-		} as unknown as KeyboardEvent;
-		const allowed = state.lastTerminal!.keyHandler!(event);
-
-		expect(allowed).toBe(false);
-		expect(writeText).toHaveBeenCalledTimes(2);
-		expect(writeText).toHaveBeenLastCalledWith("retry me");
-	});
-
-	it("shows a copied toast after a successful selection auto-copy", async () => {
-		render(<XtermTerminal theme="dark" />);
-		state.lastTerminal!.selection = "toast selection";
-		state.lastTerminal!.selectionListeners.forEach((listener) => listener());
-		await new Promise((resolve) => window.setTimeout(resolve, 0));
+		} as unknown as KeyboardEvent);
 
 		expect(await screen.findByRole("status")).toHaveTextContent("Copied to clipboard");
 	});
@@ -758,8 +756,14 @@ describe("XtermTerminal", () => {
 		window.ao!.clipboard.writeText = vi.fn().mockRejectedValue(new Error("clipboard failed"));
 		render(<XtermTerminal theme="dark" />);
 		state.lastTerminal!.selection = "failed selection";
-		state.lastTerminal!.selectionListeners.forEach((listener) => listener());
-		await new Promise((resolve) => window.setTimeout(resolve, 0));
+		state.lastTerminal!.keyHandler!({
+			key: "c",
+			metaKey: true,
+			ctrlKey: false,
+			shiftKey: false,
+			preventDefault: vi.fn(),
+			stopPropagation: vi.fn(),
+		} as unknown as KeyboardEvent);
 		await Promise.resolve();
 
 		expect(screen.queryByRole("status")).not.toBeInTheDocument();
@@ -771,8 +775,14 @@ describe("XtermTerminal", () => {
 			render(<XtermTerminal theme="dark" />);
 			state.lastTerminal!.selection = "timed selection";
 			await act(async () => {
-				state.lastTerminal!.selectionListeners.forEach((listener) => listener());
-				await vi.advanceTimersByTimeAsync(0);
+				state.lastTerminal!.keyHandler!({
+					key: "c",
+					metaKey: true,
+					ctrlKey: false,
+					shiftKey: false,
+					preventDefault: vi.fn(),
+					stopPropagation: vi.fn(),
+				} as unknown as KeyboardEvent);
 				await Promise.resolve();
 			});
 

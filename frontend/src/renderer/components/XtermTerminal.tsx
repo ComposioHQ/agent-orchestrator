@@ -587,24 +587,19 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		scrollbarTrack?.addEventListener("pointercancel", scrollbarPointerUp);
 		scheduleScrollbarUpdate();
 
-		let lastCopiedSelection = "";
-		const copySelection = (options?: { clipboardData?: DataTransfer | null; dedupe?: boolean }) => {
+		const copySelection = (options?: { clipboardData?: DataTransfer | null }) => {
 			const selection = term.getSelection();
-			if (!selection || (options?.dedupe && selection === lastCopiedSelection)) return false;
+			if (!selection) return false;
 			options?.clipboardData?.setData("text/plain", selection);
 			void aoBridge.clipboard
 				.writeText(selection)
 				.then(() => {
-					lastCopiedSelection = selection;
 					showCopiedToastRef.current();
 				})
 				.catch((error) => {
 					console.warn("Unable to copy terminal selection", error);
 				});
 			return true;
-		};
-		const clearCopiedSelection = () => {
-			lastCopiedSelection = "";
 		};
 		const userInputListeners = new Set<(data: string, source: TerminalUserInputSource) => void>();
 		const emitUserInput = (data: string, source: TerminalUserInputSource) => {
@@ -743,13 +738,6 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		};
 		shell.addEventListener("copy", copyInput);
 		window.addEventListener("keydown", copyShortcut, true);
-		const selectionChange = term.onSelectionChange(() => {
-			if (!term.hasSelection()) {
-				clearCopiedSelection();
-				return;
-			}
-			window.setTimeout(() => copySelection({ dedupe: true }), 0);
-		});
 
 		const fitTerminal = () => {
 			// Parked terminals keep their last measured box and continue parsing
@@ -1114,7 +1102,6 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			window.removeEventListener("resize", scheduleVisibleFit);
 			shell.removeEventListener("copy", copyInput);
 			window.removeEventListener("keydown", copyShortcut, true);
-			selectionChange.dispose();
 			shell.removeEventListener("contextmenu", openContextMenu);
 			shell.removeEventListener("paste", pasteInput, true);
 			shell.removeEventListener("compositionend", compositionInput, true);
