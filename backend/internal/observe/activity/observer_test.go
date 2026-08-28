@@ -10,6 +10,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/claudecode"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/codex"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/crush"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/droid"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/muse"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -153,6 +154,28 @@ func TestPollContinuouslyReconcilesMuse(t *testing.T) {
 				t.Fatalf("unexpected reconciliation: %+v", sink.signals)
 			}
 		})
+	}
+}
+
+func TestPollReconcilesWaitingCrushAfterUserResponds(t *testing.T) {
+	now := time.Unix(500, 0).UTC()
+	session := activeSession(now, domain.HarnessCrush)
+	session.Activity = domain.Activity{State: domain.ActivityWaitingInput, LastActivityAt: now.Add(-time.Second)}
+	session.UpdatedAt = now.Add(-time.Second)
+	sink := &fakeSink{}
+	observer := New(
+		fakeSessions{rows: []domain.SessionRecord{session}},
+		sink,
+		&fakeRuntime{output: "> Working!\n"},
+		fakeAgents{domain.HarnessCrush: crush.New()},
+		Config{Clock: func() time.Time { return now }, Logger: testLogger()},
+	)
+
+	if err := observer.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.signals) != 1 || sink.signals[0].State != domain.ActivityActive {
+		t.Fatalf("unexpected reconciliation: %+v", sink.signals)
 	}
 }
 
