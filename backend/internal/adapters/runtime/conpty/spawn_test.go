@@ -63,13 +63,13 @@ func TestStartedHostKillFailureRetainsPartialCreateEvidence(t *testing.T) {
 	isolateRegistry(t)
 	startupErr := errors.New("pty-host READY response unavailable")
 	killErr := errors.New("kill access denied")
-	addr, pid, spawnErr := cleanupStartedHostFailure(livePID(), startupErr, func() error { return killErr })
-	if addr != "" || pid != livePID() || !errors.Is(spawnErr, startupErr) || !errors.Is(spawnErr, killErr) {
-		t.Fatalf("started-host cleanup = (%q, %d, %v), want retained pid and joined startup/kill errors", addr, pid, spawnErr)
+	pid, spawnErr := cleanupStartedHostFailure(livePID(), startupErr, func() error { return killErr })
+	if pid != livePID() || !errors.Is(spawnErr, startupErr) || !errors.Is(spawnErr, killErr) {
+		t.Fatalf("started-host cleanup = (%d, %v), want retained pid and joined startup/kill errors", pid, spawnErr)
 	}
 
 	runtime := New(Options{Spawner: func(context.Context, string, string, []string, map[string]string) (string, int, error) {
-		return addr, pid, spawnErr
+		return "", pid, spawnErr
 	}})
 	_, err := runtime.Create(context.Background(), ports.RuntimeConfig{
 		SessionID: "sess-kill-failed", WorkspacePath: t.TempDir(), Argv: []string{"codex"},

@@ -28,6 +28,7 @@ var (
 	_ ports.AgentSwitchFailureEventMetadataStore = (*Store)(nil)
 )
 
+// ConfigureAgentSwitchFailureEventMetadata sets the process-local metadata used for new failure events.
 func (s *Store) ConfigureAgentSwitchFailureEventMetadata(ctx context.Context, metadata domain.AgentSwitchEventMetadata) error {
 	if err := domain.ValidateAgentSwitchEventMetadata(metadata); err != nil {
 		return fmt.Errorf("configure agent switch failure event metadata: %w", err)
@@ -36,15 +37,17 @@ func (s *Store) ConfigureAgentSwitchFailureEventMetadata(ctx context.Context, me
 		return err
 	}
 	defer s.writeMu.Unlock()
-	copy := metadata
-	s.agentSwitchFailureEventMetadata = &copy
+	metadataCopy := metadata
+	s.agentSwitchFailureEventMetadata = &metadataCopy
 	return nil
 }
 
+// ApplyAgentSwitchMutation atomically persists a switch mutation and its eligible failure event.
 func (s *Store) ApplyAgentSwitchMutation(ctx context.Context, mutation ports.AgentSwitchMutation) (ports.AgentSwitchMutationResult, error) {
 	return s.applyAgentSwitchMutation(ctx, mutation, false)
 }
 
+// FailAgentSwitchIfUnacknowledgedWithFault fails an unacknowledged switch and enrolls its eligible fault atomically.
 func (s *Store) FailAgentSwitchIfUnacknowledgedWithFault(ctx context.Context, mutation ports.AgentSwitchMutation) (ports.AgentSwitchMutationResult, error) {
 	return s.applyAgentSwitchMutation(ctx, mutation, true)
 }
@@ -388,6 +391,7 @@ func validateAgentSwitchFaultBinding(sw domain.AgentSwitch, fault domain.AgentSw
 	return nil
 }
 
+// EnqueueAgentSwitchOperationalFault enrolls an operational fault against an unchanged durable switch fingerprint.
 func (s *Store) EnqueueAgentSwitchOperationalFault(ctx context.Context, input ports.AgentSwitchOperationalFault) (ports.AgentSwitchMutationResult, error) {
 	if input.SwitchID == "" || input.ExpectedUpdatedAt.IsZero() {
 		return ports.AgentSwitchMutationResult{}, errors.New("enqueue agent switch operational fault: durable switch fingerprint is required")
@@ -458,6 +462,7 @@ func scanAgentSwitchFailureFingerprint(row *sql.Row) (domain.AgentSwitch, bool, 
 	return sw, true, nil
 }
 
+// EnqueueAgentSwitchDaemonFault enrolls a daemon-owned failure that is not bound to a switch row.
 func (s *Store) EnqueueAgentSwitchDaemonFault(ctx context.Context, input ports.AgentSwitchDaemonFault) (ports.AgentSwitchMutationResult, error) {
 	if strings.TrimSpace(input.DaemonRunID) == "" {
 		return ports.AgentSwitchMutationResult{}, errors.New("enqueue daemon agent switch fault: daemon run ID is required")
@@ -489,6 +494,7 @@ func (s *Store) EnqueueAgentSwitchDaemonFault(ctx context.Context, input ports.A
 	return ports.AgentSwitchMutationResult{CoreChanged: status == domain.AgentSwitchEnrollmentEnrolled, Enrollment: status}, nil
 }
 
+// ForceDisableAgentSwitchFailurePolicy disables failure delivery without requiring the current consent generation.
 func (s *Store) ForceDisableAgentSwitchFailurePolicy(ctx context.Context, updatedAt time.Time) error {
 	if updatedAt.IsZero() {
 		return errors.New("force-disable agent switch failure policy: timestamp is required")
@@ -499,6 +505,7 @@ func (s *Store) ForceDisableAgentSwitchFailurePolicy(ctx context.Context, update
 	return err
 }
 
+// ApplyAgentSwitchFailurePolicy persists delivery authorization and purges payloads when disabling it.
 func (s *Store) ApplyAgentSwitchFailurePolicy(ctx context.Context, policy ports.AgentSwitchFailurePolicy) error {
 	if policy.UpdatedAt.IsZero() {
 		return errors.New("apply agent switch failure policy: timestamp is required")
@@ -525,6 +532,7 @@ func (s *Store) ApplyAgentSwitchFailurePolicy(ctx context.Context, policy ports.
 	return tx.Commit()
 }
 
+// PurgeAgentSwitchFailurePayloads deletes every queued failure payload.
 func (s *Store) PurgeAgentSwitchFailurePayloads(ctx context.Context) (int64, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
@@ -535,6 +543,7 @@ func (s *Store) PurgeAgentSwitchFailurePayloads(ctx context.Context) (int64, err
 	return result.RowsAffected()
 }
 
+// EnrollCurrentAgentSwitchRecoveryMarkers enrolls eligible recovery markers that remain current.
 func (s *Store) EnrollCurrentAgentSwitchRecoveryMarkers(ctx context.Context, input ports.AgentSwitchFailureRecoveryEnrollment) (int64, error) {
 	if input.EnrolledAt.IsZero() {
 		return 0, errors.New("enroll current agent switch recovery markers: timestamp is required")
@@ -555,6 +564,7 @@ WHERE a.state NOT IN ('completed','failed')
 	if err != nil {
 		return 0, err
 	}
+	defer func() { _ = rows.Close() }()
 	type marker struct {
 		id                     domain.AgentSwitchID
 		sessionID              domain.SessionID
@@ -570,10 +580,12 @@ WHERE a.state NOT IN ('completed','failed')
 	for rows.Next() {
 		var m marker
 		if err := rows.Scan(&m.id, &m.sessionID, &m.requestedAt, &m.updatedAt, &m.state, &m.code, &m.point, &m.from, &m.target, &m.start, &m.mode); err != nil {
-			_ = rows.Close()
 			return 0, err
 		}
 		markers = append(markers, m)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
 	}
 	if err := rows.Close(); err != nil {
 		return 0, err
@@ -628,6 +640,7 @@ WHERE a.state NOT IN ('completed','failed')
 	return enrolled, nil
 }
 
+// ClaimAgentSwitchFailure leases the next authorized failure payload for delivery.
 func (s *Store) ClaimAgentSwitchFailure(ctx context.Context, input ports.AgentSwitchFailureClaimRequest) (ports.AgentSwitchFailureClaim, bool, error) {
 	if !input.Authorization.Enabled || input.LeaseToken == "" || input.Now.IsZero() || !input.LeaseExpiresAt.After(input.Now) {
 		return ports.AgentSwitchFailureClaim{}, false, nil
@@ -700,6 +713,7 @@ WHERE id=? AND destination_fingerprint=? AND delivered_at IS NULL AND discarded_
 	return claim, true, nil
 }
 
+// BeginAgentSwitchFailureAttempt records the start of a still-authorized leased delivery attempt.
 func (s *Store) BeginAgentSwitchFailureAttempt(ctx context.Context, input ports.AgentSwitchFailureAttempt) (bool, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
@@ -719,6 +733,7 @@ WHERE id=? AND lease_token=? AND lease_consent_generation=? AND lease_delivery_e
 	return n == 1, err
 }
 
+// SettleAgentSwitchFailureDelivery atomically records the outcome of a leased delivery attempt.
 func (s *Store) SettleAgentSwitchFailureDelivery(ctx context.Context, input ports.AgentSwitchFailureSettlement) (bool, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
@@ -792,6 +807,7 @@ ON CONFLICT(destination_fingerprint) DO UPDATE SET
 	return true, nil
 }
 
+// ExpireAgentSwitchFailurePayloads deletes queued payloads whose retention window has elapsed.
 func (s *Store) ExpireAgentSwitchFailurePayloads(ctx context.Context, now time.Time) (int64, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
@@ -802,6 +818,7 @@ func (s *Store) ExpireAgentSwitchFailurePayloads(ctx context.Context, now time.T
 	return result.RowsAffected()
 }
 
+// ResolveAgentSwitchFailureReceipts retires obsolete receipts and removes expired receipt metadata.
 func (s *Store) ResolveAgentSwitchFailureReceipts(ctx context.Context, input ports.AgentSwitchFailureReceiptResolution) (int64, error) {
 	if input.ResolvedAt.IsZero() {
 		return 0, errors.New("resolve agent switch failure receipts: timestamp is required")
@@ -835,6 +852,7 @@ func (s *Store) ResolveAgentSwitchFailureReceipts(ctx context.Context, input por
 	return n + d, nil
 }
 
+// AgentSwitchFailureBacklog summarizes queued, leased, delivered, and discarded failure payloads.
 func (s *Store) AgentSwitchFailureBacklog(ctx context.Context, now time.Time) (ports.AgentSwitchFailureBacklog, error) {
 	var out ports.AgentSwitchFailureBacklog
 	var oldest sql.NullTime

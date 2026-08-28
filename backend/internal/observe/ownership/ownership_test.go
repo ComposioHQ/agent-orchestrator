@@ -35,7 +35,7 @@ func TestOwnRejectsNilAndUnknownOwners(t *testing.T) {
 		t.Fatalf("Own(nil) = %v, want nil", got)
 	}
 	err := errors.New("boom")
-	if got := ownership.Own(err, ownership.Owner("untrusted")); got != err {
+	if got := ownership.Own(err, ownership.Owner("untrusted")); !errors.Is(got, err) {
 		t.Fatalf("Own() with an unknown owner replaced the original error: %v", got)
 	}
 	if got := ownership.OwnerOf(err); got != "" {

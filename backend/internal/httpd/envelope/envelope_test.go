@@ -36,7 +36,7 @@ func TestWriteErrorSerializesWrappedReportingOwner(t *testing.T) {
 		t.Fatalf("body = %+v, want normal API error presentation", body)
 	}
 	gotCapture := captured()
-	if gotCapture.Err != err || gotCapture.ReportingOwner != ownership.OwnerAgentSwitchSaga {
+	if !errors.Is(gotCapture.Err, err) || gotCapture.ReportingOwner != ownership.OwnerAgentSwitchSaga {
 		t.Fatalf("captured = %+v, want raw error and saga owner", gotCapture)
 	}
 }

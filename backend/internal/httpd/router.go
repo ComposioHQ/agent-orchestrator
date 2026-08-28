@@ -32,6 +32,8 @@ type ControlDeps struct {
 	AgentSwitchPolicy AgentSwitchPolicyControl
 }
 
+// AgentSwitchPolicyControl coordinates the daemon side of desktop telemetry
+// policy changes without exposing the concrete policy coordinator to HTTP.
 type AgentSwitchPolicyControl interface {
 	PrepareDisable(context.Context) (ports.AgentSwitchFailurePolicyAcknowledgement, error)
 	ApplyPolicy(context.Context, string, bool) (ports.AgentSwitchFailurePolicyAcknowledgement, error)

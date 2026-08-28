@@ -11,6 +11,8 @@ import (
 // delivery attempt. Cancellation values are local control decisions.
 type DeliveryOutcome string
 
+// DeliveryAccepted and the related constants enumerate provider-neutral
+// delivery outcomes.
 const (
 	DeliveryAccepted          DeliveryOutcome = "accepted"
 	DeliveryTransientFailure  DeliveryOutcome = "transient_failure"
@@ -22,6 +24,8 @@ const (
 // DeliveryErrorClass contains no provider response text or raw error.
 type DeliveryErrorClass string
 
+// DeliveryErrorNone and the related constants classify failures without
+// retaining provider response text.
 const (
 	DeliveryErrorNone                DeliveryErrorClass = "none"
 	DeliveryErrorNetwork             DeliveryErrorClass = "network"
@@ -35,14 +39,20 @@ const (
 	DeliveryErrorLocalInvariant      DeliveryErrorClass = "local_invariant"
 )
 
+// DeliveryThrottleScope identifies how broadly a provider response should
+// delay subsequent attempts.
 type DeliveryThrottleScope string
 
+// DeliveryThrottleNone and the related constants enumerate supported throttle
+// scopes.
 const (
 	DeliveryThrottleNone          DeliveryThrottleScope = "none"
 	DeliveryThrottleErrorCategory DeliveryThrottleScope = "error_category"
 	DeliveryThrottleAll           DeliveryThrottleScope = "all"
 )
 
+// DeliveryResult contains the bounded outcome and retry guidance from one
+// delivery attempt.
 type DeliveryResult struct {
 	Outcome        DeliveryOutcome
 	Class          DeliveryErrorClass

@@ -33,6 +33,8 @@ type AgentSwitchStore interface {
 	ActivateChatAgentSwitchTarget(ctx context.Context, activation domain.AgentSwitchChatTargetActivation) (bool, error)
 }
 
+// AgentSwitchMutation combines a fenced saga update with optional failure
+// enrollment authority.
 type AgentSwitchMutation struct {
 	Record                     domain.AgentSwitch
 	ExpectedState              domain.AgentSwitchState
@@ -42,6 +44,8 @@ type AgentSwitchMutation struct {
 	Authorization              domain.AgentSwitchReportingAuthorization
 }
 
+// AgentSwitchMutationResult reports whether the saga changed and how failure
+// enrollment concluded.
 type AgentSwitchMutationResult struct {
 	CoreChanged bool
 	Enrollment  domain.AgentSwitchEnrollmentStatus
@@ -61,12 +65,16 @@ type AgentSwitchOperationalFault struct {
 	Authorization        domain.AgentSwitchReportingAuthorization
 }
 
+// AgentSwitchDaemonFault describes a daemon-scoped failure that is not tied to
+// a durable switch row.
 type AgentSwitchDaemonFault struct {
 	DaemonRunID   string
 	Fault         domain.AgentSwitchFault
 	Authorization domain.AgentSwitchReportingAuthorization
 }
 
+// AgentSwitchFaultStore atomically persists fenced saga mutations and enrolls
+// their associated failure reports.
 type AgentSwitchFaultStore interface {
 	ApplyAgentSwitchMutation(context.Context, AgentSwitchMutation) (AgentSwitchMutationResult, error)
 	FailAgentSwitchIfUnacknowledgedWithFault(context.Context, AgentSwitchMutation) (AgentSwitchMutationResult, error)
@@ -74,6 +82,8 @@ type AgentSwitchFaultStore interface {
 	EnqueueAgentSwitchDaemonFault(context.Context, AgentSwitchDaemonFault) (AgentSwitchMutationResult, error)
 }
 
+// AgentSwitchFailurePolicy is the durable reporting authority mirror and its
+// update time.
 type AgentSwitchFailurePolicy struct {
 	Authorization domain.AgentSwitchReportingAuthorization
 	UpdatedAt     time.Time
@@ -88,15 +98,21 @@ type AgentSwitchFailurePolicyAcknowledgement struct {
 	PurgeConfirmed bool
 }
 
+// AgentSwitchFailureEventMetadataStore configures the immutable metadata used
+// when building persisted failure events.
 type AgentSwitchFailureEventMetadataStore interface {
 	ConfigureAgentSwitchFailureEventMetadata(context.Context, domain.AgentSwitchEventMetadata) error
 }
 
+// AgentSwitchFailureRecoveryEnrollment authorizes a one-time scan that enrolls
+// retained recovery markers.
 type AgentSwitchFailureRecoveryEnrollment struct {
 	Authorization domain.AgentSwitchReportingAuthorization
 	EnrolledAt    time.Time
 }
 
+// AgentSwitchFailureClaimRequest contains the authority and lease fence for one
+// outbox claim.
 type AgentSwitchFailureClaimRequest struct {
 	Authorization  domain.AgentSwitchReportingAuthorization
 	DeliveryEpoch  int64
@@ -105,6 +121,8 @@ type AgentSwitchFailureClaimRequest struct {
 	LeaseExpiresAt time.Time
 }
 
+// AgentSwitchFailureClaim is a leased immutable event ready for one bounded
+// delivery attempt.
 type AgentSwitchFailureClaim struct {
 	ID                     string
 	Event                  domain.AgentSwitchFailureEvent
@@ -116,6 +134,8 @@ type AgentSwitchFailureClaim struct {
 	AttemptCount           int64
 }
 
+// AgentSwitchFailureAttempt identifies and fences the start of an external
+// delivery call.
 type AgentSwitchFailureAttempt struct {
 	ID                     string
 	LeaseToken             string
@@ -125,6 +145,8 @@ type AgentSwitchFailureAttempt struct {
 	Now                    time.Time
 }
 
+// AgentSwitchFailureSettlement applies a provider-neutral result to the exact
+// leased delivery attempt.
 type AgentSwitchFailureSettlement struct {
 	ID                     string
 	LeaseToken             string
@@ -136,12 +158,15 @@ type AgentSwitchFailureSettlement struct {
 	Result                 DeliveryResult
 }
 
+// AgentSwitchFailureReceiptResolution marks receipts resolved against an exact
+// durable switch fingerprint.
 type AgentSwitchFailureReceiptResolution struct {
 	SwitchID                domain.AgentSwitchID
 	DurableStateFingerprint string
 	ResolvedAt              time.Time
 }
 
+// AgentSwitchFailureBacklog summarizes outbox state without exposing payloads.
 type AgentSwitchFailureBacklog struct {
 	Pending   int64
 	Leased    int64
@@ -150,6 +175,8 @@ type AgentSwitchFailureBacklog struct {
 	OldestDue time.Time
 }
 
+// AgentSwitchFailureOutboxStore manages policy-gated enrollment, leasing,
+// settlement, expiry, and receipt resolution.
 type AgentSwitchFailureOutboxStore interface {
 	ForceDisableAgentSwitchFailurePolicy(context.Context, time.Time) error
 	// ApplyAgentSwitchFailurePolicy atomically mirrors policy and, when it is

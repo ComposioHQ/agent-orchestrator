@@ -2762,12 +2762,7 @@ func (m *Manager) finalizeAgentSwitchHandoff(ctx context.Context, store ports.Ag
 	return current, errors.New("agent switch: finalized handoff record was not observable")
 }
 
-func (m *Manager) markTargetStartUnconfirmed(ctx context.Context, store ports.AgentSwitchStore, sw domain.AgentSwitch) (domain.AgentSwitch, error) {
-	recorder := newAgentSwitchFlightRecorder(sw, domain.SessionModeTUI, domain.AgentSwitchExecutionLive)
-	recorder.failurePoint = domain.AgentSwitchFailureClassificationUnknown
-	return m.markTargetStartUnconfirmedWithRecorder(ctx, store, sw, recorder)
-}
-
+//nolint:dupl // Target-start and source-stop recovery have distinct durable predicates and fault codes.
 func (m *Manager) markTargetStartUnconfirmedWithRecorder(ctx context.Context, store ports.AgentSwitchStore, sw domain.AgentSwitch, recorder agentSwitchFlightRecorder) (domain.AgentSwitch, error) {
 	if sw.RequiresTargetStartRecovery() {
 		return sw, nil
@@ -2790,12 +2785,7 @@ func (m *Manager) markTargetStartUnconfirmedWithRecorder(ctx context.Context, st
 	return next, nil
 }
 
-func (m *Manager) markSourceStopUnconfirmed(ctx context.Context, store ports.AgentSwitchStore, sw domain.AgentSwitch) (domain.AgentSwitch, error) {
-	recorder := newAgentSwitchFlightRecorder(sw, domain.SessionModeTUI, domain.AgentSwitchExecutionLive)
-	recorder.failurePoint = domain.AgentSwitchFailureClassificationUnknown
-	return m.markSourceStopUnconfirmedWithRecorder(ctx, store, sw, recorder)
-}
-
+//nolint:dupl // Source-stop and target-start recovery have distinct durable predicates and fault codes.
 func (m *Manager) markSourceStopUnconfirmedWithRecorder(ctx context.Context, store ports.AgentSwitchStore, sw domain.AgentSwitch, recorder agentSwitchFlightRecorder) (domain.AgentSwitch, error) {
 	if sw.RequiresSourceStopRecovery() {
 		return sw, nil
@@ -2818,17 +2808,6 @@ func (m *Manager) markSourceStopUnconfirmedWithRecorder(ctx context.Context, sto
 	return next, nil
 }
 
-func (m *Manager) markRetainedSourceRecovery(
-	ctx context.Context,
-	store ports.AgentSwitchStore,
-	sw domain.AgentSwitch,
-	targetRuntimeAmbiguous bool,
-) (domain.AgentSwitch, error) {
-	recorder := newAgentSwitchFlightRecorder(sw, domain.SessionModeTUI, domain.AgentSwitchExecutionLive)
-	recorder.failurePoint = domain.AgentSwitchFailureClassificationUnknown
-	return m.markRetainedSourceRecoveryWithRecorder(ctx, store, sw, targetRuntimeAmbiguous, recorder)
-}
-
 func (m *Manager) markRetainedSourceRecoveryWithRecorder(
 	ctx context.Context,
 	store ports.AgentSwitchStore,
@@ -2847,12 +2826,6 @@ func (m *Manager) markRetainedSourceRecoveryWithRecorder(
 		}
 	}
 	return sw, nil
-}
-
-func (m *Manager) markSourceRestoreUnconfirmed(ctx context.Context, store ports.AgentSwitchStore, sw domain.AgentSwitch) (domain.AgentSwitch, error) {
-	recorder := newAgentSwitchFlightRecorder(sw, domain.SessionModeTUI, domain.AgentSwitchExecutionLive)
-	recorder.failurePoint = domain.AgentSwitchFailureClassificationUnknown
-	return m.markSourceRestoreUnconfirmedWithRecorder(ctx, store, sw, recorder)
 }
 
 func (m *Manager) markSourceRestoreUnconfirmedWithRecorder(ctx context.Context, store ports.AgentSwitchStore, sw domain.AgentSwitch, recorder agentSwitchFlightRecorder) (domain.AgentSwitch, error) {
@@ -2909,12 +2882,6 @@ func (m *Manager) advanceAgentSwitch(ctx context.Context, store ports.AgentSwitc
 	}
 	*sw = next
 	return nil
-}
-
-func (m *Manager) failAgentSwitch(ctx context.Context, store ports.AgentSwitchStore, sw domain.AgentSwitch, code domain.AgentSwitchErrorCode) (domain.AgentSwitch, error) {
-	recorder := newAgentSwitchFlightRecorder(sw, domain.SessionModeTUI, domain.AgentSwitchExecutionLive)
-	recorder.failurePoint = domain.AgentSwitchFailureClassificationUnknown
-	return m.failAgentSwitchWithRecorder(ctx, store, sw, code, recorder)
 }
 
 func (m *Manager) failAgentSwitchWithRecorder(ctx context.Context, store ports.AgentSwitchStore, sw domain.AgentSwitch, code domain.AgentSwitchErrorCode, recorder agentSwitchFlightRecorder) (domain.AgentSwitch, error) {

@@ -24,17 +24,20 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
+// PolicyFileName is the durable desktop telemetry-policy authority filename.
 const (
 	PolicyFileName                      = "telemetry_policy.json"
 	agentSwitchFailureProductionEnabled = domain.AgentSwitchFailureProductionEnabled
 )
 
+// Policy synchronization errors describe rejected authority state or cleanup.
 var (
 	ErrPolicyHintMismatch   = errors.New("telemetry policy hint does not match durable authority")
 	ErrPolicyUnavailable    = errors.New("telemetry policy authority is unavailable or unsafe")
 	ErrPolicyCleanupPending = errors.New("telemetry policy disable cleanup is pending")
 )
 
+// PolicyStore persists the transaction-bound daemon mirror of telemetry policy.
 type PolicyStore interface {
 	ConfigureAgentSwitchFailureEventMetadata(context.Context, domain.AgentSwitchEventMetadata) error
 	ForceDisableAgentSwitchFailurePolicy(context.Context, time.Time) error
@@ -43,6 +46,7 @@ type PolicyStore interface {
 	EnrollCurrentAgentSwitchRecoveryMarkers(context.Context, ports.AgentSwitchFailureRecoveryEnrollment) (int64, error)
 }
 
+// PolicyOptions supplies authority location, release gates, metadata, and hooks.
 type PolicyOptions struct {
 	DataDir                 string
 	TelemetryEvents         bool
@@ -56,6 +60,7 @@ type PolicyOptions struct {
 	OnEventsChanged         func(bool)
 }
 
+// PolicyCoordinator synchronizes durable consent and gates provider deliveries.
 type PolicyCoordinator interface {
 	ForceDisabled(context.Context) error
 	Synchronize(context.Context) error
@@ -67,6 +72,7 @@ type PolicyCoordinator interface {
 	CloseAndDrain(context.Context) error
 }
 
+// Coordinator is the concurrency-safe PolicyCoordinator implementation.
 type Coordinator struct {
 	store         PolicyStore
 	options       PolicyOptions
@@ -89,6 +95,7 @@ type Coordinator struct {
 	callWG          sync.WaitGroup
 }
 
+// NewPolicyCoordinator constructs a fail-closed coordinator for store and options.
 func NewPolicyCoordinator(store PolicyStore, options PolicyOptions) *Coordinator {
 	if options.Now == nil {
 		options.Now = time.Now
@@ -104,6 +111,7 @@ func NewPolicyCoordinator(store PolicyStore, options PolicyOptions) *Coordinator
 	return coordinator
 }
 
+// ForceDisabled closes and drains delivery before disabling the durable mirror.
 func (c *Coordinator) ForceDisabled(ctx context.Context) error {
 	c.operationMu.Lock()
 	defer c.operationMu.Unlock()
@@ -121,6 +129,7 @@ func (c *Coordinator) ForceDisabled(ctx context.Context) error {
 	return c.store.ForceDisableAgentSwitchFailurePolicy(ctx, c.options.Now().UTC())
 }
 
+// Synchronize applies the current durable desktop authority to the daemon mirror.
 func (c *Coordinator) Synchronize(ctx context.Context) error {
 	c.operationMu.Lock()
 	defer c.operationMu.Unlock()
@@ -129,6 +138,7 @@ func (c *Coordinator) Synchronize(ctx context.Context) error {
 	return err
 }
 
+// PrepareDisable closes the delivery gate and waits for active calls to drain.
 func (c *Coordinator) PrepareDisable(ctx context.Context) (ports.AgentSwitchFailurePolicyAcknowledgement, error) {
 	c.operationMu.Lock()
 	defer c.operationMu.Unlock()
@@ -145,6 +155,7 @@ func (c *Coordinator) PrepareDisable(ctx context.Context) (ports.AgentSwitchFail
 	}, nil
 }
 
+// ApplyPolicy validates a desktop hint and synchronizes its durable authority.
 func (c *Coordinator) ApplyPolicy(ctx context.Context, generation string, eventsEnabled bool) (ports.AgentSwitchFailurePolicyAcknowledgement, error) {
 	c.operationMu.Lock()
 	defer c.operationMu.Unlock()
@@ -163,24 +174,28 @@ func (c *Coordinator) ApplyPolicy(ctx context.Context, generation string, events
 	return c.synchronizeAuthority(ctx, authority)
 }
 
+// Authorization returns the current immutable reporting authorization snapshot.
 func (c *Coordinator) Authorization() domain.AgentSwitchReportingAuthorization {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.authorization
 }
 
+// DeliveryEpoch returns the epoch required to enter the current delivery gate.
 func (c *Coordinator) DeliveryEpoch() int64 {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.deliveryEpoch
 }
 
+// EventsEnabled reports whether the synchronized policy enables telemetry events.
 func (c *Coordinator) EventsEnabled() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.eventsEnabled
 }
 
+// EnterDelivery synchronizes policy and conditionally enters the matching gate.
 func (c *Coordinator) EnterDelivery(parent context.Context, generation string, epoch int64) (context.Context, func(), bool) {
 	if err := c.Synchronize(parent); err != nil {
 		return parent, func() {}, false
@@ -208,6 +223,7 @@ func (c *Coordinator) EnterDelivery(parent context.Context, generation string, e
 	return callContext, release, true
 }
 
+// CloseAndDrain closes the gate, cancels active calls, and waits for their exit.
 func (c *Coordinator) CloseAndDrain(ctx context.Context) error {
 	c.operationMu.Lock()
 	defer c.operationMu.Unlock()
@@ -219,6 +235,7 @@ func (c *Coordinator) CloseAndDrain(ctx context.Context) error {
 	return c.closeGateAndDrain(ctx)
 }
 
+// StartWatcher periodically synchronizes policy until ctx is canceled.
 func (c *Coordinator) StartWatcher(ctx context.Context) {
 	go func() {
 		ticker := time.NewTicker(time.Second)
@@ -255,7 +272,7 @@ func (c *Coordinator) readAuthority() authorityRead {
 	if err != nil {
 		return authorityRead{}
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	decoder := json.NewDecoder(io.LimitReader(file, 4097))
 	decoder.DisallowUnknownFields()
 	var keys map[string]json.RawMessage
@@ -440,11 +457,11 @@ func (c *Coordinator) notifyEventsChanged(enabled bool) {
 }
 
 func newBootToken() string {
-	var bytes [16]byte
-	if _, err := rand.Read(bytes[:]); err != nil {
+	var tokenBytes [16]byte
+	if _, err := rand.Read(tokenBytes[:]); err != nil {
 		return fmt.Sprintf("headless-%d", time.Now().UnixNano())
 	}
-	return "headless-" + hex.EncodeToString(bytes[:])
+	return "headless-" + hex.EncodeToString(tokenBytes[:])
 }
 
 var _ PolicyCoordinator = (*Coordinator)(nil)

@@ -19,11 +19,11 @@ type hostSpawner func(ctx context.Context, sessionID, cwd string, argv []string,
 // the session. A successful kill proves the failed spawn left no runtime;
 // otherwise the stable PID and joined cleanup error let Create expose a typed
 // partial-effect result instead of incorrectly claiming no effect.
-func cleanupStartedHostFailure(pid int, cause error, kill func() error) (string, int, error) {
+func cleanupStartedHostFailure(pid int, cause error, kill func() error) (int, error) {
 	if killErr := kill(); killErr != nil {
-		return "", pid, errors.Join(cause, fmt.Errorf("kill started pty-host pid %d: %w", pid, killErr))
+		return pid, errors.Join(cause, fmt.Errorf("kill started pty-host pid %d: %w", pid, killErr))
 	}
-	return "", 0, cause
+	return 0, cause
 }
 
 // stripEnvAssignments splits a launch argv that may begin with a Unix-style

@@ -19,6 +19,7 @@ const (
 	dispatcherSettleTimeout = 5 * time.Second
 )
 
+// Dispatcher construction errors identify missing required dependencies.
 var (
 	ErrDispatcherStoreRequired    = errors.New("agent switch failure dispatcher store is required")
 	ErrDispatcherObserverRequired = errors.New("agent switch failure dispatcher observer is required")
@@ -26,6 +27,8 @@ var (
 	errDispatcherShutdown         = errors.New("agent switch failure dispatcher shutdown")
 )
 
+// DispatcherConfig supplies the durable queue, delivery observer, policy gate,
+// and optional scheduling hooks used by a Dispatcher.
 type DispatcherConfig struct {
 	Store    ports.AgentSwitchFailureOutboxStore
 	Observer ports.AgentSwitchFailureObserver
@@ -60,6 +63,7 @@ type Dispatcher struct {
 	active    context.CancelCauseFunc
 }
 
+// NewDispatcher validates config and returns an idle failure-event dispatcher.
 func NewDispatcher(config DispatcherConfig) (*Dispatcher, error) {
 	if config.Store == nil {
 		return nil, ErrDispatcherStoreRequired
@@ -211,7 +215,7 @@ func (d *Dispatcher) deliver(claim ports.AgentSwitchFailureClaim) {
 	defer leaveGate()
 	callContext, cancelCall := context.WithCancelCause(gateContext)
 	d.setActive(cancelCall)
-	defer d.clearActive(cancelCall)
+	defer d.clearActive()
 
 	now := d.clock().UTC()
 	if !now.Before(claim.ExpiresAt) {
@@ -224,7 +228,7 @@ func (d *Dispatcher) deliver(claim ports.AgentSwitchFailureClaim) {
 		return
 	}
 	if callContext.Err() != nil {
-		d.settleCancellation(claim, callContext)
+		d.settleCancellation(callContext, claim)
 		return
 	}
 	began, err := d.store.BeginAgentSwitchFailureAttempt(callContext, ports.AgentSwitchFailureAttempt{
@@ -233,7 +237,7 @@ func (d *Dispatcher) deliver(claim ports.AgentSwitchFailureClaim) {
 	})
 	if err != nil {
 		if callContext.Err() != nil {
-			d.settleCancellation(claim, callContext)
+			d.settleCancellation(callContext, claim)
 		} else {
 			d.logger.Warn("begin agent switch failure attempt", "error", err)
 		}
@@ -248,7 +252,7 @@ func (d *Dispatcher) deliver(claim ports.AgentSwitchFailureClaim) {
 		return
 	}
 	if callContext.Err() != nil {
-		d.settleCancellation(claim, callContext)
+		d.settleCancellation(callContext, claim)
 		return
 	}
 
@@ -264,7 +268,7 @@ func (d *Dispatcher) deliver(claim ports.AgentSwitchFailureClaim) {
 	d.settle(claim, result)
 }
 
-func (d *Dispatcher) settleCancellation(claim ports.AgentSwitchFailureClaim, callContext context.Context) {
+func (d *Dispatcher) settleCancellation(callContext context.Context, claim ports.AgentSwitchFailureClaim) {
 	result := dispatcherCancellationResult(callContext)
 	if result.Outcome != ports.DeliveryPolicyCancelled {
 		d.settle(claim, result)
@@ -324,7 +328,7 @@ func (d *Dispatcher) setActive(cancel context.CancelCauseFunc) {
 	}
 }
 
-func (d *Dispatcher) clearActive(cancel context.CancelCauseFunc) {
+func (d *Dispatcher) clearActive() {
 	d.mu.Lock()
 	// At most one call exists, so clearing cannot detach another delivery.
 	d.active = nil
@@ -360,6 +364,7 @@ func dispatcherRetryDelay(attempt int64, jitter func(time.Duration) time.Duratio
 
 func defaultDispatcherJitter(base time.Duration) time.Duration {
 	half := base / 2
+	// #nosec G404 -- retry jitter is not used for secrets or access control.
 	return half + time.Duration(rand.Int64N(int64(base-half)+1))
 }
 

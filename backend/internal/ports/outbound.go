@@ -91,6 +91,8 @@ type Runtime interface {
 // gates when an adapter cannot prove an exact match or exact absence.
 type FencedLiveness string
 
+// FencedAlive and the related constants enumerate exact-generation liveness
+// conclusions.
 const (
 	FencedAlive   FencedLiveness = "alive"
 	FencedDead    FencedLiveness = "dead"
@@ -100,6 +102,8 @@ const (
 // FencedProbeReason explains the evidence behind a fenced liveness result.
 type FencedProbeReason string
 
+// FencedReasonExactMatch and the related constants explain the evidence behind
+// a fenced liveness conclusion.
 const (
 	FencedReasonExactMatch         FencedProbeReason = "exact_match"
 	FencedReasonExactAbsent        FencedProbeReason = "exact_absent"
@@ -120,11 +124,15 @@ type FencedRuntimeRef struct {
 	NativeIdentity string
 }
 
+// FencedProbeResult pairs an exact-generation liveness conclusion with its
+// evidence category.
 type FencedProbeResult struct {
 	Liveness FencedLiveness
 	Reason   FencedProbeReason
 }
 
+// FencedRuntimeProber determines liveness for an exact AO-owned runtime
+// generation without treating uncertainty as death.
 type FencedRuntimeProber interface {
 	ProbeFencedRuntime(context.Context, FencedRuntimeRef) FencedProbeResult
 }
@@ -133,6 +141,8 @@ type FencedRuntimeProber interface {
 // applied an external side effect.
 type RuntimeEffectOutcome string
 
+// RuntimeEffectNone and the related constants classify whether a failed
+// runtime operation may have applied an external side effect.
 const (
 	RuntimeEffectNone     RuntimeEffectOutcome = "none"
 	RuntimeEffectPossible RuntimeEffectOutcome = "possible"
@@ -143,6 +153,8 @@ const (
 // operation that may have applied an external side effect.
 type RuntimeCleanupOutcome string
 
+// RuntimeCleanupNotAttempted and the related constants classify cleanup after
+// a failed runtime operation.
 const (
 	RuntimeCleanupNotAttempted RuntimeCleanupOutcome = "not_attempted"
 	RuntimeCleanupSucceeded    RuntimeCleanupOutcome = "succeeded"

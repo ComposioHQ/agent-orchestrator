@@ -30,6 +30,7 @@ var pidAlive = defaultPidAlive
 // or permission failure cannot be reported as a complete empty scan.
 var rewriteRegistry = writeRaw
 
+// ErrRegistryMalformed indicates that the durable ConPTY registry cannot be parsed safely.
 var ErrRegistryMalformed = errors.New("conpty pty registry malformed")
 
 // UnresolvedPipePath marks a durable launch reservation or a child that
@@ -100,13 +101,13 @@ func readRaw() ([]Entry, bool, error) {
 	}
 	var parsed []json.RawMessage
 	if err := json.Unmarshal(data, &parsed); err != nil {
-		return nil, false, fmt.Errorf("%w: %v", ErrRegistryMalformed, err)
+		return nil, false, fmt.Errorf("%w: %w", ErrRegistryMalformed, err)
 	}
 	out := make([]Entry, 0, len(parsed))
 	for _, raw := range parsed {
 		var e Entry
 		if err := json.Unmarshal(raw, &e); err != nil {
-			return out, false, fmt.Errorf("%w: %v", ErrRegistryMalformed, err)
+			return out, false, fmt.Errorf("%w: %w", ErrRegistryMalformed, err)
 		}
 		if e.SessionID == "" || e.PtyHostPID < 0 || e.PipePath == "" || (e.PtyHostPID == 0 && e.PipePath != UnresolvedPipePath) {
 			return out, false, fmt.Errorf("%w: entry has invalid sessionId, ptyHostPid, or pipePath", ErrRegistryMalformed)

@@ -18,6 +18,8 @@ import (
 // rollout's consent, privacy, and provider-configuration gates are complete.
 const AgentSwitchFailureProductionEnabled = false
 
+// AgentSwitchCanonicalEventMaxBytes bounds the serialized event payload sent
+// to an external failure-reporting provider.
 const (
 	AgentSwitchCanonicalEventMaxBytes = 60 << 10
 	AgentSwitchEnvelopeEncodingV1     = 1
@@ -27,6 +29,8 @@ const (
 // AgentSwitchReportKind is the stable remote incident class.
 type AgentSwitchReportKind string
 
+// AgentSwitchReportTerminalFailure and the related constants enumerate the
+// durable and operational report classes accepted by the taxonomy.
 const (
 	AgentSwitchReportTerminalFailure        AgentSwitchReportKind = "terminal_failure"
 	AgentSwitchReportRecoveryRequired       AgentSwitchReportKind = "recovery_required"
@@ -54,6 +58,8 @@ func (k AgentSwitchReportKind) valid() bool {
 // durable switch error.
 type AgentSwitchFaultCode string
 
+// AgentSwitchFaultNotApplicable and the related constants identify bounded
+// operational outcomes that are not durable saga error codes.
 const (
 	AgentSwitchFaultNotApplicable           AgentSwitchFaultCode = "not_applicable"
 	AgentSwitchFaultWorkerPanic             AgentSwitchFaultCode = "worker_panic"
@@ -90,6 +96,8 @@ const (
 // AgentSwitchCallOutcome is the side-effect-aware result of one boundary.
 type AgentSwitchCallOutcome string
 
+// AgentSwitchCallOK and the related constants describe whether a boundary
+// operation applied its intended side effect.
 const (
 	AgentSwitchCallOK                    AgentSwitchCallOutcome = "ok"
 	AgentSwitchCallExpectedRejection     AgentSwitchCallOutcome = "expected_rejection"
@@ -115,8 +123,12 @@ func (o AgentSwitchCallOutcome) valid() bool {
 	}
 }
 
+// AgentSwitchOwnership records which side, if any, owns the live session after
+// a switch failure.
 type AgentSwitchOwnership string
 
+// AgentSwitchOwnershipSource and the related constants enumerate the possible
+// ownership conclusions at failure-classification time.
 const (
 	AgentSwitchOwnershipSource        AgentSwitchOwnership = "source"
 	AgentSwitchOwnershipNone          AgentSwitchOwnership = "none"
@@ -136,8 +148,12 @@ func (o AgentSwitchOwnership) valid() bool {
 	}
 }
 
+// AgentSwitchCompensation records the outcome of any recovery action attempted
+// after a switch boundary failed.
 type AgentSwitchCompensation string
 
+// AgentSwitchCompensationNotNeeded and the related constants enumerate bounded
+// compensation outcomes.
 const (
 	AgentSwitchCompensationNotNeeded     AgentSwitchCompensation = "not_needed"
 	AgentSwitchCompensationSucceeded     AgentSwitchCompensation = "succeeded"
@@ -157,8 +173,12 @@ func (c AgentSwitchCompensation) valid() bool {
 	}
 }
 
+// AgentSwitchExecution identifies the daemon workflow in which a fault was
+// observed.
 type AgentSwitchExecution string
 
+// AgentSwitchExecutionLive and the related constants enumerate live,
+// reconciliation, recovery, and shutdown execution contexts.
 const (
 	AgentSwitchExecutionLive             AgentSwitchExecution = "live"
 	AgentSwitchExecutionStartupReconcile AgentSwitchExecution = "startup_reconcile"
@@ -176,8 +196,12 @@ func (e AgentSwitchExecution) valid() bool {
 	}
 }
 
+// AgentSwitchUserImpact describes the user-visible consequence of a classified
+// switch failure.
 type AgentSwitchUserImpact string
 
+// AgentSwitchUserImpactSourceAvailable and the related constants enumerate the
+// bounded user-impact categories permitted in reports.
 const (
 	AgentSwitchUserImpactSourceAvailable    AgentSwitchUserImpact = "source_available"
 	AgentSwitchUserImpactNoLiveOwner        AgentSwitchUserImpact = "no_live_owner"
@@ -201,8 +225,12 @@ func (i AgentSwitchUserImpact) valid() bool {
 	}
 }
 
+// AgentSwitchSeverity is the normalized provider severity derived from a
+// classified switch fault.
 type AgentSwitchSeverity string
 
+// AgentSwitchSeverityFatal and the related constants enumerate the supported
+// provider severity levels.
 const (
 	AgentSwitchSeverityFatal   AgentSwitchSeverity = "fatal"
 	AgentSwitchSeverityError   AgentSwitchSeverity = "error"
@@ -210,6 +238,7 @@ const (
 	AgentSwitchSeverityNone    AgentSwitchSeverity = "none"
 )
 
+// Valid reports whether s is a supported normalized severity.
 func (s AgentSwitchSeverity) Valid() bool {
 	switch s {
 	case AgentSwitchSeverityFatal, AgentSwitchSeverityError,
@@ -220,8 +249,12 @@ func (s AgentSwitchSeverity) Valid() bool {
 	}
 }
 
+// AgentSwitchRuntimeBackend identifies the normalized runtime boundary involved
+// in a switch fault.
 type AgentSwitchRuntimeBackend string
 
+// AgentSwitchRuntimeTMUX and the related constants enumerate supported runtime
+// backends without exposing provider-specific configuration.
 const (
 	AgentSwitchRuntimeTMUX           AgentSwitchRuntimeBackend = "tmux"
 	AgentSwitchRuntimeConPTY         AgentSwitchRuntimeBackend = "conpty"
@@ -244,12 +277,15 @@ func (b AgentSwitchRuntimeBackend) valid() bool {
 // these values rather than forwarding configuration text.
 type AgentSwitchEnvironment string
 
+// AgentSwitchEnvironmentStable and the related constants enumerate normalized
+// release environments.
 const (
 	AgentSwitchEnvironmentStable      AgentSwitchEnvironment = "stable"
 	AgentSwitchEnvironmentNightly     AgentSwitchEnvironment = "nightly"
 	AgentSwitchEnvironmentDevelopment AgentSwitchEnvironment = "development"
 )
 
+// Valid reports whether e is an allowed release environment.
 func (e AgentSwitchEnvironment) Valid() bool {
 	return e == AgentSwitchEnvironmentStable || e == AgentSwitchEnvironmentNightly || e == AgentSwitchEnvironmentDevelopment
 }
@@ -258,41 +294,57 @@ func (e AgentSwitchEnvironment) Valid() bool {
 // per-feature and pull-request release feeds without exporting their names.
 type AgentSwitchChannel string
 
+// AgentSwitchChannelStable and the related constants enumerate normalized
+// release channels.
 const (
 	AgentSwitchChannelStable  AgentSwitchChannel = "stable"
 	AgentSwitchChannelNightly AgentSwitchChannel = "nightly"
 	AgentSwitchChannelPreview AgentSwitchChannel = "preview"
 )
 
+// Valid reports whether c is an allowed release channel.
 func (c AgentSwitchChannel) Valid() bool {
 	return c == AgentSwitchChannelStable || c == AgentSwitchChannelNightly || c == AgentSwitchChannelPreview
 }
 
+// AgentSwitchPlatform identifies the normalized application process that
+// observed a switch failure.
 type AgentSwitchPlatform string
 
+// AgentSwitchPlatformDaemon and the related constants enumerate reporting
+// process boundaries.
 const (
 	AgentSwitchPlatformDaemon   AgentSwitchPlatform = "daemon"
 	AgentSwitchPlatformRenderer AgentSwitchPlatform = "renderer"
 )
 
+// Valid reports whether p is an allowed reporting platform.
 func (p AgentSwitchPlatform) Valid() bool {
 	return p == AgentSwitchPlatformDaemon || p == AgentSwitchPlatformRenderer
 }
 
+// AgentSwitchOS identifies the normalized operating system in event metadata.
 type AgentSwitchOS string
 
+// AgentSwitchOSDarwin and the related constants enumerate supported operating
+// systems.
 const (
 	AgentSwitchOSDarwin  AgentSwitchOS = "darwin"
 	AgentSwitchOSLinux   AgentSwitchOS = "linux"
 	AgentSwitchOSWindows AgentSwitchOS = "windows"
 )
 
+// Valid reports whether o is a supported operating system.
 func (o AgentSwitchOS) Valid() bool {
 	return o == AgentSwitchOSDarwin || o == AgentSwitchOSLinux || o == AgentSwitchOSWindows
 }
 
+// AgentSwitchElapsedTimeBucket is a coarse, privacy-safe duration category for
+// one switch attempt.
 type AgentSwitchElapsedTimeBucket string
 
+// AgentSwitchElapsedUnder1Second and the related constants enumerate bounded
+// duration buckets.
 const (
 	AgentSwitchElapsedUnder1Second   AgentSwitchElapsedTimeBucket = "under_1s"
 	AgentSwitchElapsedUnder5Seconds  AgentSwitchElapsedTimeBucket = "under_5s"
@@ -302,6 +354,7 @@ const (
 	AgentSwitchElapsedNotApplicable  AgentSwitchElapsedTimeBucket = "not_applicable"
 )
 
+// Valid reports whether b is an allowed duration bucket.
 func (b AgentSwitchElapsedTimeBucket) Valid() bool {
 	switch b {
 	case AgentSwitchElapsedUnder1Second, AgentSwitchElapsedUnder5Seconds,
@@ -317,6 +370,8 @@ func (b AgentSwitchElapsedTimeBucket) Valid() bool {
 // location which owns the semantic classification.
 type AgentSwitchClassifierCallsite string
 
+// AgentSwitchClassifierAdmission and the related constants identify the
+// privacy-safe code boundary responsible for each classification.
 const (
 	AgentSwitchClassifierAdmission           AgentSwitchClassifierCallsite = "session_manager.admit_agent_switch"
 	AgentSwitchClassifierSettle              AgentSwitchClassifierCallsite = "session_manager.settle_agent_switch_fault"
@@ -346,8 +401,12 @@ func (c AgentSwitchClassifierCallsite) valid() bool {
 	}
 }
 
+// AgentSwitchTriState represents a required boolean fact that may be explicitly
+// inapplicable for non-saga reports.
 type AgentSwitchTriState string
 
+// AgentSwitchTriTrue and the related constants enumerate explicit true, false,
+// and not-applicable values.
 const (
 	AgentSwitchTriTrue          AgentSwitchTriState = "true"
 	AgentSwitchTriFalse         AgentSwitchTriState = "false"
@@ -366,8 +425,12 @@ type AgentSwitchReportingAuthorization struct {
 	DestinationFingerprint string
 }
 
+// AgentSwitchEnrollmentStatus records the result of atomically enrolling a
+// classified failure for delivery.
 type AgentSwitchEnrollmentStatus string
 
+// AgentSwitchEnrollmentEnrolled and the related constants enumerate enrollment
+// outcomes without exposing payload contents.
 const (
 	AgentSwitchEnrollmentEnrolled             AgentSwitchEnrollmentStatus = "enrolled"
 	AgentSwitchEnrollmentDisabled             AgentSwitchEnrollmentStatus = "disabled"
@@ -376,6 +439,7 @@ const (
 	AgentSwitchEnrollmentLocalInvariantFailed AgentSwitchEnrollmentStatus = "local_invariant_failed"
 )
 
+// AllAgentSwitchEnrollmentStatuses returns every supported enrollment outcome.
 func AllAgentSwitchEnrollmentStatuses() []AgentSwitchEnrollmentStatus {
 	return []AgentSwitchEnrollmentStatus{
 		AgentSwitchEnrollmentEnrolled,
@@ -386,8 +450,12 @@ func AllAgentSwitchEnrollmentStatuses() []AgentSwitchEnrollmentStatus {
 	}
 }
 
+// AgentSwitchFailurePoint is a stable, privacy-safe identifier for the boundary
+// at which a switch workflow failed.
 type AgentSwitchFailurePoint string
 
+// AgentSwitchFailureAdmissionSagaCreate and the related constants enumerate all
+// classified switch failure boundaries.
 const (
 	AgentSwitchFailureAdmissionSagaCreate          AgentSwitchFailurePoint = "admission_saga_create"
 	AgentSwitchFailureAdmissionCommitReadback      AgentSwitchFailurePoint = "admission_commit_readback"
@@ -507,10 +575,14 @@ func init() {
 	})
 }
 
+// AllAgentSwitchFailurePoints returns a copy of the complete sorted failure
+// point allowlist.
 func AllAgentSwitchFailurePoints() []AgentSwitchFailurePoint {
 	return append([]AgentSwitchFailurePoint(nil), allAgentSwitchFailurePoints...)
 }
 
+// AgentSwitchFailureTaxonomyEntry defines the valid report tuple and safe
+// presentation metadata for one failure point.
 type AgentSwitchFailureTaxonomyEntry struct {
 	Subsystem          string
 	ReportKind         AgentSwitchReportKind
@@ -527,6 +599,8 @@ type AgentSwitchFailureTaxonomyEntry struct {
 
 var agentSwitchFailureTaxonomy = buildAgentSwitchFailureTaxonomy()
 
+// AgentSwitchFailureTaxonomy returns an isolated copy of the taxonomy entry for
+// point.
 func AgentSwitchFailureTaxonomy(point AgentSwitchFailurePoint) (AgentSwitchFailureTaxonomyEntry, bool) {
 	entry, ok := agentSwitchFailureTaxonomy[point]
 	if !ok {
@@ -752,6 +826,8 @@ func buildAgentSwitchFailureTaxonomy() map[AgentSwitchFailurePoint]AgentSwitchFa
 	return taxonomy
 }
 
+// AgentSwitchStackFrame is a sanitized, repository-relative stack frame safe
+// for inclusion in an external event.
 type AgentSwitchStackFrame struct {
 	Package  string `json:"package"`
 	Function string `json:"function"`
@@ -759,6 +835,8 @@ type AgentSwitchStackFrame struct {
 	Line     int    `json:"line"`
 }
 
+// AgentSwitchFault is the complete normalized classification of one agent
+// switch failure.
 type AgentSwitchFault struct {
 	ReportKind           AgentSwitchReportKind
 	FailurePoint         AgentSwitchFailurePoint
@@ -784,6 +862,8 @@ type AgentSwitchFault struct {
 	Frames               []AgentSwitchStackFrame
 }
 
+// AgentSwitchEventBuildInput combines a validated fault with normalized build
+// metadata for canonical serialization.
 type AgentSwitchEventBuildInput struct {
 	EventID           string
 	Fault             AgentSwitchFault
@@ -807,6 +887,8 @@ type AgentSwitchEventMetadata struct {
 	ElapsedTimeBucket AgentSwitchElapsedTimeBucket
 }
 
+// ValidateAgentSwitchEventMetadata rejects release metadata outside the closed,
+// privacy-safe event allowlists.
 func ValidateAgentSwitchEventMetadata(metadata AgentSwitchEventMetadata) error {
 	if !validAgentSwitchRelease(metadata.Release) {
 		return errors.New("release is not bounded strict SemVer 2.0")
@@ -818,6 +900,8 @@ func ValidateAgentSwitchEventMetadata(metadata AgentSwitchEventMetadata) error {
 	return nil
 }
 
+// AgentSwitchFailureEvent is the immutable encoded payload retained in the
+// delivery outbox.
 type AgentSwitchFailureEvent struct {
 	EventID                 string
 	EnvelopeEncodingVersion int
@@ -828,13 +912,15 @@ var (
 	agentSwitchEventIDPattern  = regexp.MustCompile(`^[0-9a-f]{32}$`)
 	agentSwitchTokenPattern    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+:-]*$`)
 	agentSwitchReleasePattern  = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$`)
-	agentSwitchNumericPattern  = regexp.MustCompile(`^[0-9]+$`)
+	agentSwitchNumericPattern  = regexp.MustCompile(`^\d+$`)
 	agentSwitchPackagePattern  = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(?:[./][A-Za-z_][A-Za-z0-9_]*)*$`)
 	agentSwitchFunctionPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$`)
 	agentSwitchFilenamePattern = regexp.MustCompile(`^(backend|frontend)(/[A-Za-z_][A-Za-z0-9_]*)*/[A-Za-z_][A-Za-z0-9_.-]*\.(go|ts|tsx|js|jsx|mjs|cjs)$`)
 	agentSwitchOpaqueIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$`)
 )
 
+// ValidateAgentSwitchFault verifies that every field belongs to the compiled
+// taxonomy tuple for the selected failure point.
 func ValidateAgentSwitchFault(fault AgentSwitchFault) error {
 	entry, ok := AgentSwitchFailureTaxonomy(fault.FailurePoint)
 	if !ok {
@@ -1098,6 +1184,8 @@ func validateAgentSwitchFrames(frames []AgentSwitchStackFrame) error {
 	return nil
 }
 
+// BuildAgentSwitchCanonicalEvent validates input and returns the bounded,
+// deterministic provider payload.
 func BuildAgentSwitchCanonicalEvent(input AgentSwitchEventBuildInput) ([]byte, error) {
 	if !agentSwitchEventIDPattern.MatchString(input.EventID) {
 		return nil, errors.New("event ID must be exactly 32 lowercase hexadecimal characters")
@@ -1179,11 +1267,15 @@ func validAgentSwitchRelease(release string) bool {
 	return true
 }
 
+// AgentSwitchDedupeScope supplies the durable identity required by a report
+// kind's deduplication formula.
 type AgentSwitchDedupeScope struct {
 	SwitchID    AgentSwitchID
 	DaemonRunID string
 }
 
+// AgentSwitchDedupeKey returns the stable durable deduplication key for a valid
+// fault and scope.
 func AgentSwitchDedupeKey(scope AgentSwitchDedupeScope, fault AgentSwitchFault) (string, error) {
 	if err := ValidateAgentSwitchFault(fault); err != nil {
 		return "", fmt.Errorf("invalid fault for dedupe: %w", err)
@@ -1233,6 +1325,8 @@ func AgentSwitchDedupeKey(scope AgentSwitchDedupeScope, fault AgentSwitchFault) 
 	}
 }
 
+// AgentSwitchIssueFingerprint returns the bounded provider grouping fields for
+// a classified fault.
 func AgentSwitchIssueFingerprint(fault AgentSwitchFault) []string {
 	if fault.ReportKind == AgentSwitchReportPanic {
 		topFunction := "not_applicable"

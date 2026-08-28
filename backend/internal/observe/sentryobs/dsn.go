@@ -16,7 +16,7 @@ const maxAgentSwitchDSNBytes = 4 << 10
 
 var (
 	agentSwitchPublicKeyPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,256}$`)
-	agentSwitchProjectPattern   = regexp.MustCompile(`^[0-9]{1,20}$`)
+	agentSwitchProjectPattern   = regexp.MustCompile(`^\d{1,20}$`)
 )
 
 // AgentSwitchDestination is a normalized, non-secret Sentry envelope target.
@@ -38,20 +38,20 @@ func ParseAgentSwitchDSN(raw string, production bool) (AgentSwitchDestination, e
 		return AgentSwitchDestination{}, errors.New("invalid Sentry DSN")
 	}
 	if parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" || parsed.RawFragment != "" {
-		return AgentSwitchDestination{}, errors.New("Sentry DSN cannot contain query or fragment")
+		return AgentSwitchDestination{}, errors.New("sentry DSN cannot contain query or fragment")
 	}
 	scheme := strings.ToLower(parsed.Scheme)
 	if scheme != "https" && scheme != "http" {
-		return AgentSwitchDestination{}, errors.New("Sentry DSN scheme must be HTTP or HTTPS")
+		return AgentSwitchDestination{}, errors.New("sentry DSN scheme must be HTTP or HTTPS")
 	}
 	if production && scheme != "https" {
 		return AgentSwitchDestination{}, errors.New("production Sentry DSN must use HTTPS")
 	}
 	if parsed.User == nil {
-		return AgentSwitchDestination{}, errors.New("Sentry DSN public key is required")
+		return AgentSwitchDestination{}, errors.New("sentry DSN public key is required")
 	}
 	if _, hasSecret := parsed.User.Password(); hasSecret {
-		return AgentSwitchDestination{}, errors.New("Sentry DSN secret is not supported")
+		return AgentSwitchDestination{}, errors.New("sentry DSN secret is not supported")
 	}
 	publicKey := parsed.User.Username()
 	if !agentSwitchPublicKeyPattern.MatchString(publicKey) {
@@ -104,7 +104,7 @@ func ParseAgentSwitchDSN(raw string, production bool) (AgentSwitchDestination, e
 
 func normalizeAgentSwitchHost(raw string) (string, error) {
 	if raw == "" {
-		return "", errors.New("Sentry DSN host is required")
+		return "", errors.New("sentry DSN host is required")
 	}
 	host := strings.ToLower(raw)
 	if ip := net.ParseIP(host); ip != nil {
@@ -138,7 +138,7 @@ func agentSwitchLoopbackHost(host string) bool {
 func normalizeAgentSwitchDSNPath(parsed *url.URL) (string, string, error) {
 	escaped := parsed.EscapedPath()
 	if escaped == "" || escaped[0] != '/' || strings.HasSuffix(escaped, "/") {
-		return "", "", errors.New("Sentry DSN numeric project ID is required")
+		return "", "", errors.New("sentry DSN numeric project ID is required")
 	}
 	segments := strings.Split(strings.TrimPrefix(escaped, "/"), "/")
 	normalized := make([]string, 0, len(segments))
@@ -154,7 +154,7 @@ func normalizeAgentSwitchDSNPath(parsed *url.URL) (string, string, error) {
 	}
 	projectRaw := normalized[len(normalized)-1]
 	if !agentSwitchProjectPattern.MatchString(projectRaw) {
-		return "", "", errors.New("Sentry DSN project ID must be numeric")
+		return "", "", errors.New("sentry DSN project ID must be numeric")
 	}
 	projectNumber, err := strconv.ParseUint(projectRaw, 10, 64)
 	if err != nil || projectNumber == 0 {

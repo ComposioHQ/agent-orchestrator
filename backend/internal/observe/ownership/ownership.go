@@ -7,6 +7,7 @@ package ownership
 // Owner identifies the layer responsible for reporting an error to Sentry.
 type Owner string
 
+// Owner values identify the layer responsible for reporting a failure.
 const (
 	OwnerHTTP            Owner = "http"
 	OwnerAgentSwitchSaga Owner = "agent_switch_saga"

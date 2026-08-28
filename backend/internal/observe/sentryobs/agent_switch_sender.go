@@ -29,13 +29,14 @@ const (
 	agentSwitchSentryAuth       = "Sentry sentry_version=7, sentry_key=%s, sentry_client=ao-agent-switch/1"
 )
 
+// Agent-switch envelope validation errors describe rejected local payloads.
 var (
 	ErrInvalidEventID              = errors.New("invalid agent switch EventID")
 	ErrEventIDMismatch             = errors.New("agent switch EventID mismatch")
 	ErrEnvelopeTooLarge            = errors.New("agent switch envelope exceeds 64 KiB")
 	ErrEnvelopeWrapperTooLarge     = errors.New("agent switch envelope wrapper exceeds 4 KiB")
 	ErrUnsupportedEnvelopeEncoding = errors.New("unsupported agent switch envelope encoding")
-	errResponseHeadersTooLarge     = errors.New("Sentry response headers exceed processing bound")
+	errResponseHeadersTooLarge     = errors.New("sentry response headers exceed processing bound")
 	agentSwitchEventIDPattern      = regexp.MustCompile(`^[0-9a-f]{32}$`)
 )
 
