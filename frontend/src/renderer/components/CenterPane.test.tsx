@@ -719,7 +719,7 @@ describe("CenterPane toolbar session label", () => {
 		const scrollRegion = document.querySelector(".overflow-x-auto");
 		expect(reviewerTab).toHaveAttribute("aria-current", "true");
 		expect(reviewerTab.querySelector("img")).toHaveClass("size-terminal-agent-icon");
-		expect(reviewerTab.parentElement).toHaveClass(
+		expect(reviewerTab).toHaveClass(
 			"min-w-0",
 			"shrink",
 			"self-stretch",
@@ -727,14 +727,15 @@ describe("CenterPane toolbar session label", () => {
 			"border-r",
 			"bg-overlay",
 		);
+		expect(reviewerTab.parentElement).toHaveClass("flex", "min-w-0", "shrink-0", "items-stretch");
 		expect(shellTab.parentElement).toHaveClass(
 			"min-w-shell-tab-min",
 			"shrink-0",
 			"self-stretch",
 			"w-shell-tab-connected",
 		);
-		expect(reviewerTab.parentElement).toHaveAttribute("data-terminal-role", "primary");
-		expect(scrollRegion?.contains(reviewerTab.parentElement)).toBe(false);
+		expect(reviewerTab).toHaveAttribute("data-terminal-role", "primary");
+		expect(scrollRegion?.contains(reviewerTab)).toBe(false);
 		expect(screen.getByRole("tab", { name: /^Claude Code/ })).not.toHaveAttribute("aria-current", "true");
 		expect(reviewerTab.querySelector("img")).toHaveAttribute("src");
 		expect(screen.queryByRole("button", { name: "Back to agent" })).not.toBeInTheDocument();
