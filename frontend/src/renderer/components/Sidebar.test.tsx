@@ -35,11 +35,15 @@ type DragOverTestEvent = {
 const {
 	checkUpdateMock,
 	cloudSessionState,
+	compactRailCanGoBack,
+	compactRailCanGoForward,
 	dragEnds,
 	dragOvers,
 	dragStarts,
 	downloadUpdateMock,
 	getMock,
+	historyBackMock,
+	historyForwardMock,
 	navigateMock,
 	mockParams,
 	renameSessionMock,
@@ -67,6 +71,10 @@ const {
 		downloadUpdateMock: vi.fn(),
 		checkUpdateMock: vi.fn(),
 		commandPaletteEnabled: { current: true },
+		compactRailCanGoBack: { current: false },
+		compactRailCanGoForward: { current: false },
+		historyBackMock: vi.fn(),
+		historyForwardMock: vi.fn(),
 	}),
 );
 
@@ -97,16 +105,35 @@ vi.mock("../hooks/useCommandPaletteEnabled", () => ({
 	useCommandPaletteEnabled: () => commandPaletteEnabled.current,
 }));
 
+vi.mock("../lib/platform", () => ({
+	isLinuxPlatform: () => false,
+	isMacPlatform: () => true,
+	isWindowsPlatform: () => false,
+}));
+
 vi.mock("@tanstack/react-router", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("@tanstack/react-router")>();
 	return {
 		...actual,
+		useCanGoBack: () => compactRailCanGoBack.current,
 		useNavigate: () => navigateMock,
 		useParams: () => ({ ...mockParams }),
+		useRouter: () => ({
+			history: {
+				back: historyBackMock,
+				forward: historyForwardMock,
+				location: { state: { __TSR_index: 0 } },
+				subscribe: vi.fn(() => () => undefined),
+			},
+		}),
 		useRouterState: ({ select }: { select: (state: { location: { pathname: string } }) => unknown }) =>
 			select({ location: { pathname: "/" } }),
 	};
 });
+
+vi.mock("./TitlebarNav", () => ({
+	useCanGoForward: () => compactRailCanGoForward.current,
+}));
 
 vi.mock("../lib/bridge", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("../lib/bridge")>();
@@ -319,11 +346,15 @@ beforeEach(() => {
 	dragStarts.clear();
 	document.documentElement.style.removeProperty("--ao-sidebar-w");
 	commandPaletteEnabled.current = true;
+	compactRailCanGoBack.current = false;
+	compactRailCanGoForward.current = false;
 	cloudSessionState.configured = false;
 	cloudSessionState.session = null;
 	cloudSessionState.status = "unauthenticated";
 	cloudSessionState.signIn.mockReset();
 	cloudSessionState.signOut.mockReset().mockResolvedValue(undefined);
+	historyBackMock.mockReset();
+	historyForwardMock.mockReset();
 	useUiStore.setState({ isCommandPaletteOpen: false, settingsModal: null });
 	getMock.mockReset();
 	getMock.mockResolvedValue({
@@ -1580,6 +1611,18 @@ describe("Sidebar", () => {
 		expect(document.querySelector('[data-slot="sidebar-gap"]')).toHaveStyle({
 			width: "var(--sidebar-width-icon)",
 		});
+	});
+
+	it("keeps back and forward accessible from the compact rail on macOS/Linux", async () => {
+		compactRailCanGoBack.current = true;
+		compactRailCanGoForward.current = true;
+		renderSidebar({ autoCompact: true, initialOpen: false, topbarOffset: "trafficLights" });
+
+		await userEvent.click(screen.getByRole("button", { name: "Go back" }));
+		await userEvent.click(screen.getByRole("button", { name: "Go forward" }));
+
+		expect(historyBackMock).toHaveBeenCalledTimes(1);
+		expect(historyForwardMock).toHaveBeenCalledTimes(1);
 	});
 
 	it("flushes any queued rAF frame on pointer-up and persists the clamped width", async () => {
