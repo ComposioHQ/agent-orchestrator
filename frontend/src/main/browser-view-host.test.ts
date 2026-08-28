@@ -22,11 +22,16 @@ type EventHandler = (event: { sender: { id: number; getZoomFactor?: () => number
 
 function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").AgentBrowserRuntime) {
 	let currentURL = "";
+	let browserZoomFactor = 1;
 	const webContentsListeners = new Map<string, (...args: never[]) => void>();
 	const debuggerListeners = new Map<string, (...args: never[]) => void>();
 	let debuggerAttached = false;
 	const openDevTools = vi.fn();
 	const closeDevTools = vi.fn();
+	const insertCSS = vi.fn(async (_css: string, _options?: { cssOrigin?: "author" | "user" }) => "ao-browser-scrollbars");
+	let insertedStyleNumber = 0;
+	insertCSS.mockImplementation(async () => `ao-browser-scrollbars-${++insertedStyleNumber}`);
+	const removeInsertedCSS = vi.fn(async (_key: string) => undefined);
 	const debuggerSendCommand = vi.fn(async (method: string, params?: Record<string, unknown>): Promise<unknown> => {
 		if (method === "Page.navigate" && typeof params?.url === "string") currentURL = params.url;
 		return {};
@@ -59,9 +64,12 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 		clearHistory: () => undefined,
 		getTitle: () => "",
 		getURL: () => currentURL,
+		getZoomFactor: () => browserZoomFactor,
 		goBack: () => undefined,
 		goForward: () => undefined,
 		isLoading: () => false,
+		insertCSS,
+		removeInsertedCSS,
 		loadURL: vi.fn(async (url: string) => {
 			currentURL = url;
 		}),
@@ -204,6 +212,11 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 		shellSend,
 		openDevTools,
 		closeDevTools,
+		insertCSS,
+		removeInsertedCSS,
+		setBrowserZoomFactor: (zoomFactor: number) => {
+			browserZoomFactor = zoomFactor;
+		},
 		view,
 		webContents,
 		webContentsListeners,
@@ -211,6 +224,39 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 		debuggerSendCommand,
 	};
 }
+
+describe("browser scrollbar styling", () => {
+	it("injects AO-styled horizontal and vertical scrollbars whenever a browser page becomes ready", async () => {
+		const { insertCSS, invoke, removeInsertedCSS, setBrowserZoomFactor, webContentsListeners } = setupHost();
+
+		await invoke("browser:ensure", "sess-1");
+		webContentsListeners.get("dom-ready")?.();
+
+		await vi.waitFor(() => expect(insertCSS).toHaveBeenCalledOnce());
+		const css = insertCSS.mock.calls[0]?.[0] ?? "";
+		expect(insertCSS.mock.calls[0]?.[1]).toEqual({ cssOrigin: "user" });
+		expect(css).toContain("::-webkit-scrollbar-thumb");
+		expect(css).toContain("border-radius: 999px");
+		expect(css).toContain("background: rgba(232, 232, 232, 0.72)");
+		expect(css).toContain("::-webkit-scrollbar-track");
+		expect(css).toContain("background: transparent");
+		expect(css).toContain("width: 8px");
+		expect(css).toContain("height: 8px");
+		expect(css).not.toContain("min-height");
+		expect(css).not.toContain("min-width");
+
+		webContentsListeners.get("dom-ready")?.();
+		await vi.waitFor(() => expect(insertCSS).toHaveBeenCalledTimes(2));
+
+		setBrowserZoomFactor(4);
+		webContentsListeners.get("zoom-changed")?.();
+		await vi.waitFor(() => expect(insertCSS).toHaveBeenCalledTimes(3));
+		const zoomedCss = insertCSS.mock.calls[2]?.[0] ?? "";
+		expect(zoomedCss).toContain("width: 2px");
+		expect(zoomedCss).toContain("height: 2px");
+		await vi.waitFor(() => expect(removeInsertedCSS).toHaveBeenCalledWith("ao-browser-scrollbars-2"));
+	});
+});
 
 function setupTabHost() {
 	const constructorOptions: Array<{ webPreferences: { partition?: string } }> = [];

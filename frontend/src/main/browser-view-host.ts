@@ -152,12 +152,15 @@ type BrowserWebContents = Pick<
 	| "mainFrame"
 	| "getTitle"
 	| "getURL"
+	| "getZoomFactor"
 	| "goBack"
 	| "goForward"
 	| "isLoading"
+	| "insertCSS"
 	| "loadURL"
 	| "on"
 	| "reload"
+	| "removeInsertedCSS"
 	| "send"
 	| "setWindowOpenHandler"
 	| "stop"
@@ -166,6 +169,35 @@ type BrowserWebContents = Pick<
 	closeDevTools?: () => void;
 	close?: () => void;
 	session?: Pick<Session, "setPermissionCheckHandler" | "setPermissionRequestHandler" | "webRequest">;
+};
+
+const browserScrollbarCSS = (zoomFactor: number): string => {
+	const effectiveZoom = Number.isFinite(zoomFactor) && zoomFactor > 0 ? zoomFactor : 1;
+	const thickness = Number((8 / effectiveZoom).toFixed(3));
+	return `
+	::-webkit-scrollbar {
+		width: ${thickness}px;
+		height: ${thickness}px;
+	}
+
+	::-webkit-scrollbar-button {
+		display: none;
+	}
+
+	::-webkit-scrollbar-track,
+	::-webkit-scrollbar-corner {
+		background: transparent;
+	}
+
+	::-webkit-scrollbar-thumb {
+		border-radius: 999px;
+		background: rgba(232, 232, 232, 0.72);
+	}
+
+	::-webkit-scrollbar-thumb:hover {
+		background: rgba(232, 232, 232, 0.86);
+	}
+`;
 };
 
 type BrowserViewLike = View & {
@@ -499,6 +531,22 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		view.setBorderRadius?.(BROWSER_VIEW_BORDER_RADIUS);
 		view.webContents.session?.setPermissionCheckHandler?.(() => false);
 		view.webContents.session?.setPermissionRequestHandler?.((_contents, _permission, callback) => callback(false));
+		let scrollbarStyleKey: string | undefined;
+		let scrollbarStyleUpdate = Promise.resolve();
+		const applyScrollbarStyle = (): void => {
+			scrollbarStyleUpdate = scrollbarStyleUpdate
+				.then(async () => {
+					const previousKey = scrollbarStyleKey;
+					scrollbarStyleKey = await view.webContents.insertCSS(
+						browserScrollbarCSS(view.webContents.getZoomFactor()),
+						{ cssOrigin: "user" },
+					);
+					if (previousKey) await view.webContents.removeInsertedCSS(previousKey);
+				})
+				.catch(() => undefined);
+		};
+		view.webContents.on("dom-ready", applyScrollbarStyle);
+		view.webContents.on("zoom-changed", applyScrollbarStyle);
 
 		const tabId = `t${session.nextTabNumber++}`;
 		const state: BrowserNavState = emptyNavState(session.viewId);

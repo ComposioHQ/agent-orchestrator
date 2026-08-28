@@ -503,24 +503,25 @@ func nativeHistoryTextMatches(checkpoint, replayed string) bool {
 	return len(parts) == 2 && strings.HasPrefix(replayed, parts[0]) && strings.HasSuffix(replayed, parts[1])
 }
 
-// importNativeHistory projects the settled provider thread before live event
-// consumption starts. Re-running it is safe because history events carry stable
-// identities and ProjectProviderEvent deduplicates archive+projection together.
-func (c *Controller) importNativeHistory(
+// readNativeHistory loads and reconciles the settled provider thread without
+// mutating AO's timeline. A pending provider boundary uses this split phase so
+// the caller can project the events inside the same transaction that publishes
+// the boundary and controller generation.
+func (c *Controller) readNativeHistory(
 	ctx context.Context,
 	existingTurns []domain.ConversationTurn,
 	existingMessages []domain.ConversationMessage,
 	existingActivities []domain.ConversationActivity,
 	required bool,
 	checkpoint nativeHistoryCheckpoint,
-) error {
+) ([]ports.ChatEvent, error) {
 	reader, ok := c.conv.(ports.ChatHistoryReader)
 	if !ok {
 		if required {
-			return fmt.Errorf("%w: provider does not implement typed history replay",
+			return nil, fmt.Errorf("%w: provider does not implement typed history replay",
 				ports.ErrChatHistoryUnavailable)
 		}
-		return nil
+		return nil, nil
 	}
 	historyCtx, cancel := context.WithTimeout(ctx, nativeHistorySettleLimit)
 	defer cancel()
@@ -532,25 +533,25 @@ func (c *Controller) importNativeHistory(
 			err = ports.ErrChatHistoryUnsettled
 		}
 		if errors.Is(err, ports.ErrChatHistoryUnavailable) && !required {
-			return nil
+			return nil, nil
 		}
 		if sawUnsettled && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
-			return fmt.Errorf("wait for settled native conversation history: %w: %w",
+			return nil, fmt.Errorf("wait for settled native conversation history: %w: %w",
 				ports.ErrChatHistoryUnsettled, err)
 		}
 		if !errors.Is(err, ports.ErrChatHistoryUnsettled) {
-			return fmt.Errorf("read native conversation history: %w", err)
+			return nil, fmt.Errorf("read native conversation history: %w", err)
 		}
 		sawUnsettled = true
 		if !refreshable {
-			return fmt.Errorf("native conversation history snapshot is incomplete and cannot be refreshed: %w", err)
+			return nil, fmt.Errorf("native conversation history snapshot is incomplete and cannot be refreshed: %w", err)
 		}
 
 		timer := time.NewTimer(nativeHistorySettlePoll)
 		select {
 		case <-historyCtx.Done():
 			timer.Stop()
-			return fmt.Errorf("wait for settled native conversation history: %w: %w",
+			return nil, fmt.Errorf("wait for settled native conversation history: %w: %w",
 				ports.ErrChatHistoryUnsettled, historyCtx.Err())
 		case <-timer.C:
 		}
@@ -561,8 +562,17 @@ func (c *Controller) importNativeHistory(
 	)
 	for _, event := range events {
 		if event.ProviderEventID == "" {
-			return fmt.Errorf("native history event %s has no stable identity", event.Kind)
+			return nil, fmt.Errorf("native history event %s has no stable identity", event.Kind)
 		}
+	}
+	return events, nil
+}
+
+// projectNativeHistory durably imports a previously reconciled snapshot.
+// Re-running it is safe because history events carry stable identities and
+// ProjectProviderEvent deduplicates archive+projection together.
+func (c *Controller) projectNativeHistory(ctx context.Context, events []ports.ChatEvent) error {
+	for _, event := range events {
 		if _, _, err := c.projectEvent(ctx, event); err != nil {
 			return fmt.Errorf("import native history event %s: %w", event.Kind, err)
 		}

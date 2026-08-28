@@ -340,15 +340,20 @@ describe("TerminalPane replay cover", () => {
 		}
 	});
 
-	it("shows no loader text on a fast open", () => {
-		replaySettled.value = false;
-		const view = renderPane({ ...worker, terminalHandleId: "term-1" });
+	it("keeps the replay cover silent even when attachment takes longer", () => {
+		vi.useFakeTimers();
 		try {
-			// The label is delayed, so a session switch that resolves quickly never
-			// flashes a spinner — the whole point of a blank cover.
-			expect(screen.queryByText("Loading latest output…")).not.toBeInTheDocument();
+			replaySettled.value = false;
+			const view = renderPane({ ...worker, terminalHandleId: "term-1" });
+			try {
+				act(() => vi.advanceTimersByTime(1_000));
+				expect(screen.getByTestId("terminal-replay-cover")).toHaveAttribute("aria-hidden", "true");
+				expect(screen.queryByText("Loading latest output…")).not.toBeInTheDocument();
+			} finally {
+				view.restore();
+			}
 		} finally {
-			view.restore();
+			vi.useRealTimers();
 		}
 	});
 
@@ -649,6 +654,10 @@ describe("terminal link preview", () => {
 		const view = renderPane(worker);
 		try {
 			act(() => terminalLinkHandler?.("https://example.com/pull/42"));
+			expect(useUiStore.getState().inspectorSessions[worker.id]).toMatchObject({
+				isOpen: true,
+				view: "browser",
+			});
 			await waitFor(() =>
 				expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/preview", {
 					params: { path: { sessionId: "sess-1" } },

@@ -553,14 +553,17 @@ export const SessionUsageMetricView = forwardRef<
 >(({ className, usage, ...props }, ref) => (
 	<span
 		{...props}
-		aria-label={usage.accessibleLabel}
 		className={cn(
 			"inline-flex shrink-0 items-center gap-1 whitespace-nowrap font-mono text-2xs text-muted-foreground",
 			className,
 		)}
 		ref={ref}
 	>
-		{usage.compactLabel}
+		{/* aria-label on a generic span is not reliably exposed, so the full
+		    label is real text placed off-screen and the compact form is hidden
+		    from assistive technology rather than read out twice. */}
+		<span className="sr-only">{usage.accessibleLabel}</span>
+		<span aria-hidden="true">{usage.compactLabel}</span>
 	</span>
 ));
 SessionUsageMetricView.displayName = "SessionUsageMetricView";

@@ -5447,7 +5447,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Not Implemented
-      summary: List compact token usage for session cards
+      summary: List compact token and estimated cost usage for session cards
       tags:
       - usage
   /api/v1/usage/sessions/{sessionId}:
@@ -5486,7 +5486,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Not Implemented
-      summary: Get detailed token usage for one session
+      summary: Get detailed token and estimated cost usage for one session
       tags:
       - usage
 components:
@@ -5729,34 +5729,6 @@ components:
       required:
       - switch
       type: object
-    AnthropicUsageDetailsResponse:
-      properties:
-        anthropicCacheCreation1hInputTokens:
-          minimum: 0
-          type:
-          - "null"
-          - integer
-        anthropicCacheCreation5mInputTokens:
-          minimum: 0
-          type:
-          - "null"
-          - integer
-        anthropicCacheCreationInputTokens:
-          minimum: 0
-          type:
-          - "null"
-          - integer
-        anthropicDirectUncachedInputTokens:
-          minimum: 0
-          type:
-          - "null"
-          - integer
-      required:
-      - anthropicDirectUncachedInputTokens
-      - anthropicCacheCreationInputTokens
-      - anthropicCacheCreation5mInputTokens
-      - anthropicCacheCreation1hInputTokens
-      type: object
     AttachmentInput:
       properties:
         data:
@@ -5927,6 +5899,11 @@ components:
       type: object
     CompactSessionUsageResponse:
       properties:
+        estimatedCost:
+          anyOf:
+          - type: "null"
+          - $ref: '#/components/schemas/EstimatedCostResponse'
+            type: object
         incomplete:
           type: boolean
         processedTokens:
@@ -5948,6 +5925,7 @@ components:
       - processedTokens
       - totalTokens
       - incomplete
+      - estimatedCost
       type: object
     ContainerReapConfig:
       properties:
@@ -7021,6 +6999,52 @@ components:
       - sourceBranchId
       - activeBranchId
       type: object
+    EstimatedCostResponse:
+      properties:
+        cachedInputNanos:
+          format: int64
+          minimum: 0
+          type:
+          - "null"
+          - integer
+        coverage:
+          enum:
+          - complete
+          - partial
+          type: string
+        inputNanos:
+          description: Every non-cache-read input charge, cache writes included.
+          format: int64
+          minimum: 0
+          type:
+          - "null"
+          - integer
+        outputNanos:
+          format: int64
+          minimum: 0
+          type:
+          - "null"
+          - integer
+        providerAttribution:
+          description: Whether contributing billing providers were detected, inferred
+            from model ownership, or both.
+          enum:
+          - observed
+          - inferred
+          - mixed
+          type: string
+        totalNanos:
+          format: int64
+          minimum: 0
+          type: integer
+      required:
+      - totalNanos
+      - inputNanos
+      - cachedInputNanos
+      - outputNanos
+      - coverage
+      - providerAttribution
+      type: object
     ImportReport:
       properties:
         dryRun:
@@ -7536,22 +7560,6 @@ components:
       required:
       - kind
       - sessionId
-      type: object
-    OpenAIUsageDetailsResponse:
-      properties:
-        openaiCacheWriteInputTokens:
-          minimum: 0
-          type:
-          - "null"
-          - integer
-        openaiReasoningOutputTokens:
-          minimum: 0
-          type:
-          - "null"
-          - integer
-      required:
-      - openaiReasoningOutputTokens
-      - openaiCacheWriteInputTokens
       type: object
     OpenShellTerminalRequest:
       properties:
@@ -9271,6 +9279,10 @@ components:
           type: string
         modelId:
           type: string
+        providerId:
+          description: Canonical provider routing hint derived by the trusted local
+            Claude hook.
+          type: string
         subagentId:
           type: string
         subagentTranscriptPath:
@@ -9279,42 +9291,6 @@ components:
           type: string
       required:
       - harness
-      type: object
-    UsageMetricProvenanceResponse:
-      properties:
-        cachedInputTokens:
-          enum:
-          - reported
-          - derived
-          - unsupported
-          - unknown
-          type: string
-        inputTokens:
-          enum:
-          - reported
-          - derived
-          - unsupported
-          - unknown
-          type: string
-        outputTokens:
-          enum:
-          - reported
-          - derived
-          - unsupported
-          - unknown
-          type: string
-        uncachedInputTokens:
-          enum:
-          - reported
-          - derived
-          - unsupported
-          - unknown
-          type: string
-      required:
-      - inputTokens
-      - cachedInputTokens
-      - uncachedInputTokens
-      - outputTokens
       type: object
     UsageModelResponse:
       properties:
@@ -9326,24 +9302,10 @@ components:
       - modelId
       - totals
       type: object
-    UsageProviderDetailsResponse:
-      properties:
-        anthropic:
-          $ref: '#/components/schemas/AnthropicUsageDetailsResponse'
-        openai:
-          $ref: '#/components/schemas/OpenAIUsageDetailsResponse'
-      type: object
     UsageTotalsResponse:
       properties:
         cacheReadTokens:
           description: Deprecated compatibility alias for cachedInputTokens.
-          minimum: 0
-          type:
-          - "null"
-          - integer
-        cacheWriteTokens:
-          description: Deprecated compatibility aggregate of provider cache-write
-            input counters.
           minimum: 0
           type:
           - "null"
@@ -9355,6 +9317,11 @@ components:
           type:
           - "null"
           - integer
+        estimatedCost:
+          anyOf:
+          - type: "null"
+          - $ref: '#/components/schemas/EstimatedCostResponse'
+            type: object
         inputTokens:
           description: Total input, including cached and uncached input.
           minimum: 0
@@ -9375,19 +9342,9 @@ components:
           type:
           - "null"
           - integer
-        provenance:
-          $ref: '#/components/schemas/UsageMetricProvenanceResponse'
-        providerDetails:
-          $ref: '#/components/schemas/UsageProviderDetailsResponse'
-        reasoningTokens:
-          description: Deprecated compatibility alias for the OpenAI reasoning-output
-            subset.
-          minimum: 0
-          type:
-          - "null"
-          - integer
         uncachedInputTokens:
-          description: Input not read from an existing provider cache.
+          description: Input not read from an existing provider cache. Includes cache
+            writes.
           minimum: 0
           type:
           - "null"
@@ -9399,10 +9356,7 @@ components:
       - outputTokens
       - processedTokens
       - cacheReadTokens
-      - cacheWriteTokens
-      - reasoningTokens
-      - provenance
-      - providerDetails
+      - estimatedCost
       type: object
     WorkspaceCommitSummary:
       properties:
