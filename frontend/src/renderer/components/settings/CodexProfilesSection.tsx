@@ -119,7 +119,7 @@ export function CodexProfilesSection({ titleHidden }: { titleHidden?: boolean })
 
 				{error ? <p role="alert" className="text-xs text-error">{error}</p> : null}
 				{profilesQuery.isLoading ? <p className="text-xs text-muted-foreground">{t("settings.codexProfiles.loading")}</p> : null}
-				{profilesQuery.data?.profiles.map((profile) => (
+				{profilesQuery.data?.profiles?.map((profile) => (
 					<CodexProfileRow
 						key={profile.id}
 						profile={profile}
@@ -177,7 +177,7 @@ function CodexProfileRow({ profile, login, busy, loginSupported, onLogin, onCanc
 							<p className="truncate text-sm font-medium">{profile.label}</p>
 							{profile.id === "existing" ? <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">{t("settings.codexProfiles.existing")}</span> : null}
 						</div>
-						<p className="mt-0.5 text-xs text-muted-foreground">{profile.usableByCurrentLaunches ? t("settings.codexProfiles.usedBySessions") : t("settings.codexProfiles.notLaunchable")}</p>
+						<p className="mt-0.5 text-xs text-muted-foreground">{profile.usableByCurrentLaunches ? t("settings.codexProfiles.availableForLaunches") : t("settings.codexProfiles.notLaunchable")}</p>
 						{profile.status === "broken" ? <>
 							<p className="mt-1 text-xs text-error">{profile.reason}</p>
 							<p className="mt-1 text-xs text-muted-foreground">{t("settings.codexProfiles.recovery")}</p>

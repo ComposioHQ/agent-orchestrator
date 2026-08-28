@@ -129,6 +129,7 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 						activeAgentSwitch: session.activeAgentSwitch
 							? toAgentSwitchSummary(session.activeAgentSwitch)
 							: undefined,
+						codexProfile: session.codexProfile,
 						previewUrl: session.previewUrl,
 						previewRevision: session.previewRevision,
 						isPinned: session.isPinned ?? false,

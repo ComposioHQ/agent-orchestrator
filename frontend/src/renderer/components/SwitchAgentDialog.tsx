@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { LoaderCircle, Repeat2, TriangleAlert, X } from "lucide-react";
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
 	agentSwitchesQueryKey,
@@ -25,6 +25,18 @@ import { AgentAvatar } from "./AgentAvatar";
 import { AgentModelPicker } from "./AgentModelPicker";
 import { SettingsOptionMenu } from "./settings/SettingsOptionMenu";
 import { Button } from "./ui/button";
+import {
+	cacheCodexProfiles,
+	ensureCodexProfiles,
+	startCodexProfileLogin,
+	useCodexProfileLoginEvents,
+	useCodexProfilesQuery,
+	useEnsureCodexProfiles,
+	type CodexProfileLoginEvent,
+	type CodexProfileLoginStart,
+} from "../hooks/useCodexProfilesQuery";
+import { aoBridge } from "../lib/bridge";
+import { useUiStore } from "../stores/ui-store";
 import {
 	Dialog,
 	DialogClose,
@@ -121,11 +133,23 @@ export function SwitchAgentDialog({ agentSwitch, container, open, session, onOpe
 	const defaultTargetHarness: SwitchAgentHarness = session.provider === "claude-code" ? "codex" : "claude-code";
 	const [targetHarness, setTargetHarness] = useState<SwitchAgentHarness>(defaultTargetHarness);
 	const [model, setModel] = useState("");
+	const [profileId, setProfileId] = useState("existing");
+	const [profileLogin, setProfileLogin] = useState<CodexProfileLoginStart | null>(null);
+	const [profileError, setProfileError] = useState<string | undefined>();
 	const [mode, setMode] = useState("");
 	const [modelWarning, setModelWarning] = useState<string | undefined>();
 	const switchAgent = useSwitchAgent();
 	const recoverAgentSwitch = useRecoverAgentSwitch();
 	const switchMutation = useSwitchAgentState(session.id);
+	const needsProfileSelection = targetHarness === "codex" && !session.codexProfile;
+	const profilesQuery = useCodexProfilesQuery(open && needsProfileSelection);
+	useEnsureCodexProfiles(open && needsProfileSelection);
+	const selectedProfile = profilesQuery.data?.profiles?.find((profile) => profile.id === profileId);
+	const openGlobalSettings = useUiStore((state) => state.openGlobalSettings);
+	useCodexProfileLoginEvents(profileLogin, useCallback((event: CodexProfileLoginEvent) => {
+		if (event.status !== "pending") setProfileLogin(null);
+		if (event.status === "completed") setProfileError(undefined);
+	}, []));
 	const admissionPending = switchMutation.isPending;
 	// Agent-switch history has its own bounded polling fallback. Prefer that
 	// observation over the compact workspace projection so a settled recovery
@@ -164,6 +188,8 @@ export function SwitchAgentDialog({ agentSwitch, container, open, session, onOpe
 		setTargetHarness(session.provider === "claude-code" ? "codex" : "claude-code");
 		setModel("");
 		setMode("");
+		setProfileId("existing");
+		setProfileError(undefined);
 		setModelWarning(undefined);
 	}, [session.provider]);
 	useEffect(() => {
@@ -180,23 +206,45 @@ export function SwitchAgentDialog({ agentSwitch, container, open, session, onOpe
 		setModel("");
 		setMode("");
 		setModelWarning(undefined);
+		setProfileError(undefined);
+		if (nextTarget === "codex") setProfileId("existing");
 	};
 
 	const submit = (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();
 		if (admissionPending || durableSwitching || recoveryRequired) return;
+		if (needsProfileSelection && selectedProfile?.authentication.state === "unauthorized" && selectedProfile.authentication.freshness === "fresh") {
+			setProfileError(t("newTask.profileSignedOut"));
+			return;
+		}
 		switchAgent.mutate(
 			{
 				session,
 				targetHarness,
+				profileId: needsProfileSelection ? profileId : undefined,
 				model: model.trim() || mode.trim(),
 				idempotencyKey: createSwitchAgentIdempotencyKey(),
 			},
 			{ onSuccess: () => onOpenChange(false) },
 		);
 	};
+	const beginProfileLogin = async () => {
+		if (!needsProfileSelection) return;
+		setProfileError(undefined);
+		try {
+			const operation = await startCodexProfileLogin(profileId);
+			setProfileLogin(operation);
+			await aoBridge.app.openExternal(operation.authUrl);
+		} catch (cause) {
+			setProfileError(cause instanceof Error ? cause.message : t("settings.codexProfiles.loginFailed"));
+		}
+	};
 
 	const error = switchMutation.error;
+	const profileWarning = needsProfileSelection && selectedProfile &&
+		(selectedProfile.authentication.state === "unknown" || selectedProfile.authentication.freshness === "stale")
+		? t("newTask.profileUnknownWarning")
+		: undefined;
 	const refreshRecovery = async () => {
 		setRefreshingRecovery(true);
 		try {
@@ -298,7 +346,7 @@ export function SwitchAgentDialog({ agentSwitch, container, open, session, onOpe
 						</div>
 					) : (
 						<form className="flex flex-col gap-3 px-4 pb-4 pt-4" onSubmit={submit}>
-						{error || modelWarning ? (
+						{error || modelWarning || profileWarning || profileError ? (
 							<div>
 								{error ? (
 									<p className="text-caption leading-4 text-error" role="alert">
@@ -307,6 +355,15 @@ export function SwitchAgentDialog({ agentSwitch, container, open, session, onOpe
 								) : null}
 								{!error && modelWarning ? (
 									<p className="text-caption text-warning">{modelWarning}</p>
+								) : null}
+								{!error && !modelWarning && profileWarning ? <p className="text-caption text-warning">{profileWarning}</p> : null}
+								{profileError ? (
+									<div className="flex items-center justify-between gap-2">
+										<p className="text-caption leading-4 text-error" role="alert">{profileError}</p>
+										{needsProfileSelection && selectedProfile?.authentication.state === "unauthorized" ? (
+											<Button type="button" size="sm" variant="outline" onClick={() => void beginProfileLogin()}>{t("settings.codexProfiles.signIn")}</Button>
+										) : null}
+									</div>
 								) : null}
 							</div>
 						) : null}
@@ -321,6 +378,41 @@ export function SwitchAgentDialog({ agentSwitch, container, open, session, onOpe
 										value={targetHarness}
 									/>
 								</div>
+								{targetHarness === "codex" ? (
+									<>
+										<span className="composer-toolbar-divider" aria-hidden="true" />
+										<div className="composer-toolbar-slot">
+											{session.codexProfile ? (
+												<span className="composer-chip composer-toolbar-option w-full cursor-not-allowed truncate opacity-70" title={session.codexProfile.label}>{session.codexProfile.label}</span>
+											) : (
+												<SettingsOptionMenu
+													aria-label={t("newTask.profile")}
+													disabled={profilesQuery.isLoading || admissionPending}
+													menuAlign="start"
+													onOpenChange={(menuOpen) => {
+														if (menuOpen) void ensureCodexProfiles().then((next) => cacheCodexProfiles(queryClient, next)).catch(() => undefined);
+													}}
+													onChange={(value) => {
+														if (value === "__manage") {
+															openGlobalSettings("agents");
+															return;
+														}
+														setProfileId(value);
+														setProfileError(undefined);
+														void ensureCodexProfiles([value]).then((next) => cacheCodexProfiles(queryClient, next)).catch(() => undefined);
+													}}
+													options={[
+												...(profilesQuery.data?.profiles?.map((profile) => ({ value: profile.id, label: profile.label, disabled: profile.status !== "valid" })) ?? []),
+														{ value: "__manage", label: t("newTask.manageProfiles") },
+													]}
+													placeholder={t("newTask.selectProfile")}
+													triggerClassName="composer-chip composer-toolbar-option w-full justify-between"
+													value={profileId}
+												/>
+											)}
+										</div>
+									</>
+								) : null}
 								<span className="composer-toolbar-divider" aria-hidden="true" />
 								<div className="composer-toolbar-slot">
 									<AgentModelPicker
@@ -347,7 +439,7 @@ export function SwitchAgentDialog({ agentSwitch, container, open, session, onOpe
 							<Button
 								aria-label={admissionPending ? t("newTask.starting") : t("switchAgent.confirm")}
 								className="size-(--size-settings-action-height)"
-								disabled={admissionPending}
+								disabled={admissionPending || Boolean(targetHarness === "codex" && session.codexProfile?.availability === "unavailable")}
 								size="none"
 								title={admissionPending ? t("newTask.starting") : t("switchAgent.confirm")}
 								type="submit"

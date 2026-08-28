@@ -58,6 +58,13 @@ export type AgentSwitchSummary = {
 	targetHarness: string;
 };
 
+export type CodexSessionProfileSummary = {
+	availability: "available" | "unavailable" | "unknown";
+	id: string;
+	label: string;
+	source: "existing" | "managed" | "legacy";
+};
+
 export type WorkspaceSession = {
 	id: string;
 	terminalHandleId?: string;
@@ -101,6 +108,8 @@ export type WorkspaceSession = {
 	/** Raw agent lifecycle activity from the daemon. */
 	activity?: SessionActivity;
 	activeAgentSwitch?: AgentSwitchSummary;
+	/** Safe immutable Codex binding projection; filesystem paths never cross the API. */
+	codexProfile?: CodexSessionProfileSummary;
 	/**
 	 * Live preview target set by the daemon (via `ao preview`) and streamed over
 	 * CDC. When non-empty, the browser panel opens and navigates here.

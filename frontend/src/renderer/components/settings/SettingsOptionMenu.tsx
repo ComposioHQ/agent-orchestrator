@@ -30,6 +30,7 @@ export function SettingsOptionMenu<T extends string>({
 	menuAlign = "end",
 	searchable = false,
 	searchPlaceholder,
+	onOpenChange,
 	"aria-label": ariaLabel,
 }: {
 	value: T;
@@ -45,6 +46,7 @@ export function SettingsOptionMenu<T extends string>({
 	menuAlign?: "start" | "center" | "end";
 	searchable?: boolean;
 	searchPlaceholder?: string;
+	onOpenChange?: (open: boolean) => void;
 	"aria-label": string;
 }) {
 	const { t } = useTranslation();
@@ -79,8 +81,9 @@ export function SettingsOptionMenu<T extends string>({
 
 	return (
 		<DropdownMenu
-			onOpenChange={(open) => {
+				onOpenChange={(open) => {
 				setMenuOpen(open);
+				onOpenChange?.(open);
 				if (!open) setSearch("");
 			}}
 		>

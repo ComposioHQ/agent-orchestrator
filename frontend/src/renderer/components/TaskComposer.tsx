@@ -4,6 +4,7 @@ import {
 	type TaskComposerAgentControl,
 	type TaskComposerModelCatalog,
 	type TaskComposerModelControl,
+	type TaskComposerProfileControl,
 } from "@aoagents/product-ui";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -30,6 +31,18 @@ import {
 import { cn } from "../lib/utils";
 import { AgentModelCombobox } from "./settings/AgentModelCombobox";
 import { SettingsOptionMenu } from "./settings/SettingsOptionMenu";
+import {
+	cacheCodexProfiles,
+	ensureCodexProfiles,
+	startCodexProfileLogin,
+	useCodexProfileLoginEvents,
+	useCodexProfilesQuery,
+	useEnsureCodexProfiles,
+	type CodexProfileLoginEvent,
+	type CodexProfileLoginStart,
+} from "../hooks/useCodexProfilesQuery";
+import { aoBridge } from "../lib/bridge";
+import { useUiStore } from "../stores/ui-store";
 
 type Project = components["schemas"]["Project"];
 type DelegateAgent = components["schemas"]["DelegateTaskRequest"]["agent"];
@@ -41,6 +54,7 @@ type CreateTaskInput = {
 	model?: string;
 	mode?: "tui";
 	approvalMode?: "bypass-permissions";
+	profileId?: string;
 	attachments?: FileAttachmentPayload[];
 };
 
@@ -62,7 +76,7 @@ class TaskCreateError extends Error {
 	}
 }
 
-type FallbackAction = "tui" | "bypass-permissions";
+type FallbackAction = "tui" | "bypass-permissions" | "profile-login";
 
 function hasErrorDetail(details: components["schemas"]["APIError"]["details"] | undefined, key: string, value: string) {
 	const values = details?.[key];
@@ -97,6 +111,8 @@ export function TaskComposer({
 	const [mode, setMode] = useState("");
 	const [agent, setAgent] = useState("");
 	const [agentTouched, setAgentTouched] = useState(false);
+	const [profileId, setProfileId] = useState("existing");
+	const [profileLogin, setProfileLogin] = useState<CodexProfileLoginStart | null>(null);
 	const [modelTouched, setModelTouched] = useState(false);
 	const [isSubmitting, setIsSubmitting] = useState(false);
 	const [error, setError] = useState<string | undefined>();
@@ -121,6 +137,7 @@ export function TaskComposer({
 	// must be queried agent-level (no project scope); otherwise the request 404s
 	// and the model dropdown spins forever. Local projects keep their scope.
 	const modelsProjectId = isCloudProject ? "" : (projectId ?? "");
+	const openGlobalSettings = useUiStore((state) => state.openGlobalSettings);
 
 	const createCloudTask = useCallback(
 		async (input: CreateTaskInput): Promise<string> => {
@@ -157,6 +174,7 @@ export function TaskComposer({
 						brief: input.brief,
 						agent: input.agent,
 						model: input.model,
+						profileId: input.profileId,
 						...(input.mode ? { mode: input.mode } : {}),
 						...(input.approvalMode ? { approvalMode: input.approvalMode } : {}),
 						...(input.attachments && input.attachments.length > 0 ? { attachments: input.attachments } : {}),
@@ -210,6 +228,17 @@ export function TaskComposer({
 	const globalDefaultAgent = projectQuery.data?.agent ?? "";
 	const defaultWorkerAgent = projectWorkerAgent || globalDefaultAgent;
 	const selectedAgent = agent || defaultWorkerAgent;
+	const showCodexProfiles = !isCloudProject && selectedAgent === "codex";
+	const codexProfilesQuery = useCodexProfilesQuery(showCodexProfiles);
+	useEnsureCodexProfiles(showCodexProfiles);
+	const selectedCodexProfile = codexProfilesQuery.data?.profiles?.find((profile) => profile.id === profileId);
+	useCodexProfileLoginEvents(profileLogin, useCallback((event: CodexProfileLoginEvent) => {
+		if (event.status !== "pending") setProfileLogin(null);
+		if (event.status === "completed") {
+			setError(undefined);
+			setFallbackAction(undefined);
+		}
+	}, []));
 	useEnsureAgentReadiness({ agentIds: selectedAgent ? [selectedAgent] : [] });
 	const defaultWorkerModel =
 		projectQuery.data?.config?.worker?.agentConfig?.model ?? projectQuery.data?.config?.agentConfig?.model ?? "";
@@ -276,6 +305,11 @@ export function TaskComposer({
 		if (!agentTouched) setAgent(defaultWorkerAgent);
 	}, [agentTouched, defaultWorkerAgent]);
 	useEffect(() => {
+		if (showCodexProfiles && !codexProfilesQuery.data?.profiles?.some((profile) => profile.id === profileId)) {
+			setProfileId("existing");
+		}
+	}, [codexProfilesQuery.data?.profiles, profileId, showCodexProfiles]);
+	useEffect(() => {
 		if (!modelTouched) {
 			setModel(defaultModelForSelectedAgent);
 			setMode(defaultModeForSelectedAgent);
@@ -304,6 +338,11 @@ export function TaskComposer({
 		approvalMode?: "bypass-permissions",
 	) => {
 		if (!projectId || isSubmitting) return;
+		if (showCodexProfiles && selectedCodexProfile?.authentication.state === "unauthorized" && selectedCodexProfile.authentication.freshness === "fresh") {
+			setError(t("newTask.profileSignedOut"));
+			setFallbackAction("profile-login");
+			return;
+		}
 
 		const cleanModel = model.trim();
 		const cleanMode = mode.trim();
@@ -324,6 +363,7 @@ export function TaskComposer({
 				// or the resolved default, so spawning names it explicitly.
 				agent: selectedAgent ? (selectedAgent as CreateTaskInput["agent"]) : undefined,
 				model: requestedModel,
+				profileId: showCodexProfiles ? profileId : undefined,
 				mode: interfaceMode,
 				approvalMode,
 				attachments: attachmentPayloads.length > 0 ? attachmentPayloads : undefined,
@@ -350,6 +390,26 @@ export function TaskComposer({
 		}
 	};
 
+	const beginProfileLogin = async () => {
+		if (!showCodexProfiles || !profileId) return;
+		setError(undefined);
+		try {
+			const operation = await startCodexProfileLogin(profileId);
+			setProfileLogin(operation);
+			await aoBridge.app.openExternal(operation.authUrl);
+		} catch (cause) {
+			setError(cause instanceof Error ? cause.message : t("settings.codexProfiles.loginFailed"));
+		}
+	};
+
+	const profileWarning = showCodexProfiles && selectedCodexProfile
+		? selectedCodexProfile.authentication.freshness === "checking"
+			? t("newTask.profileChecking")
+			: selectedCodexProfile.authentication.state === "unknown" || selectedCodexProfile.authentication.freshness === "stale"
+				? t("newTask.profileUnknownWarning")
+				: undefined
+		: undefined;
+
 	return (
 		<TaskComposerView
 			autoFocusPrompt={autoFocusTitle}
@@ -359,6 +419,8 @@ export function TaskComposer({
 				addFile: t("newTask.addFile"),
 				fallbackAction: fallbackAction === "bypass-permissions"
 					? t("newTask.startWithoutApprovals", { defaultValue: "Start without approvals" })
+					: fallbackAction === "profile-login"
+						? t("settings.codexProfiles.signIn")
 					: t("newTask.createAsTui"),
 				removeFile: (name) => t("newTask.removeFile", { name }),
 				runsWith: t("newTask.runsWith"),
@@ -404,6 +466,33 @@ export function TaskComposer({
 					setModelTouched(true);
 				},
 			}}
+			profile={showCodexProfiles ? {
+				label: t("newTask.profile"),
+				placeholder: t("newTask.selectProfile"),
+				value: profileId,
+				disabled: codexProfilesQuery.isLoading,
+				onOpen: () => {
+					void ensureCodexProfiles().then((next) => cacheCodexProfiles(queryClient, next)).catch(() => undefined);
+				},
+				onChange: (value) => {
+					if (value === "__manage") {
+						openGlobalSettings("agents");
+						return;
+					}
+					setProfileId(value);
+					setError(undefined);
+					setFallbackAction(undefined);
+					void ensureCodexProfiles([value]).then((next) => cacheCodexProfiles(queryClient, next)).catch(() => undefined);
+				},
+				options: [
+					...(codexProfilesQuery.data?.profiles?.map((profile) => ({
+						id: profile.id,
+						label: profile.label,
+						disabled: profile.status !== "valid",
+					})) ?? []),
+					{ id: "__manage", label: t("newTask.manageProfiles") },
+				],
+			} : undefined}
 			attachments={{
 				items: attachments.map(({ id, name, dataUrl }) => ({ id, name, previewUrl: dataUrl })),
 				error: attachmentError,
@@ -414,15 +503,34 @@ export function TaskComposer({
 				showFallbackAction: fallbackAction !== undefined,
 				error,
 				isSubmitting,
-				modelWarning,
+				modelWarning: profileWarning ?? modelWarning,
 				onFallbackAction: (brief) =>
-					void (fallbackAction === "bypass-permissions"
+					void (fallbackAction === "profile-login"
+						? beginProfileLogin()
+						: fallbackAction === "bypass-permissions"
 						? submitTask(brief, undefined, "bypass-permissions")
 						: submitTask(brief, "tui")),
 				onSubmit: (brief) => void submitTask(brief, requiresTuiFallback ? "tui" : undefined),
 			}}
 			renderAgentControl={(control) => <DesktopAgentControl {...control} />}
+			renderProfileControl={(control) => <DesktopProfileControl {...control} />}
 			renderModelControl={(control) => <TaskModelPicker {...control} />}
+		/>
+	);
+}
+
+function DesktopProfileControl(control: TaskComposerProfileControl) {
+	return (
+		<SettingsOptionMenu
+			aria-label={control.label}
+			disabled={control.disabled}
+			menuAlign="start"
+			onChange={control.onChange}
+			onOpenChange={(open) => { if (open) control.onOpen(); }}
+			options={control.options.map((option) => ({ value: option.id, label: option.label, disabled: option.disabled }))}
+			placeholder={control.placeholder}
+			triggerClassName="composer-chip composer-toolbar-option w-full justify-between"
+			value={control.value}
 		/>
 	);
 }

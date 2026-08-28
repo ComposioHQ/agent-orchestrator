@@ -76,6 +76,23 @@ export type TaskComposerModelControl = {
 	value: string;
 };
 
+export type TaskComposerProfileOption = {
+	disabled?: boolean;
+	id: string;
+	label: string;
+};
+
+export type TaskComposerProfileControl = {
+	disabled: boolean;
+	id: string;
+	label: string;
+	onChange: (value: string) => void;
+	onOpen: () => void;
+	options: TaskComposerProfileOption[];
+	placeholder: string;
+	value: string;
+};
+
 export type TaskComposerAttachment = {
 	id: string;
 	name: string;
@@ -117,9 +134,11 @@ export type TaskComposerViewProps = {
 	initialPrompt?: string;
 	labels: TaskComposerLabels;
 	model: Omit<TaskComposerModelControl, "id">;
+	profile?: Omit<TaskComposerProfileControl, "id">;
 	onPromptChange: (value: string) => void;
 	renderAgentControl: (control: TaskComposerAgentControl) => ReactNode;
 	renderModelControl: (control: TaskComposerModelControl) => ReactNode;
+	renderProfileControl?: (control: TaskComposerProfileControl) => ReactNode;
 	submission: TaskComposerSubmission;
 };
 
@@ -189,13 +208,16 @@ export function TaskComposerView({
 	initialPrompt = "",
 	labels,
 	model,
+	profile,
 	onPromptChange,
 	renderAgentControl,
 	renderModelControl,
+	renderProfileControl,
 	submission,
 }: TaskComposerViewProps) {
 	const promptId = useId();
 	const modelId = useId();
+	const profileId = useId();
 	const agentId = useId();
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const promptRef = useRef(initialPrompt);
@@ -362,6 +384,14 @@ export function TaskComposerView({
 					<div className="composer-toolbar-slot">
 						{renderAgentControl({ ...agent, id: agentId })}
 					</div>
+					{profile && renderProfileControl ? (
+						<>
+							<span className="composer-toolbar-divider" aria-hidden="true" />
+							<div className="composer-toolbar-slot">
+								{renderProfileControl({ ...profile, id: profileId })}
+							</div>
+						</>
+					) : null}
 					<span className="composer-toolbar-divider" aria-hidden="true" />
 					<div className="composer-toolbar-slot">
 						{renderModelControl({ ...model, id: modelId })}

@@ -288,6 +288,15 @@ function SummaryView({
 		<SessionInspectorSummaryView
 			activity={
 				<>
+					{session.codexProfile ? (
+						<div className="mb-2 rounded-md border border-border bg-background/40 px-3 py-2">
+							<p className="text-2xs text-settings-muted">{t("inspector.codexProfile")}</p>
+							<p className="mt-0.5 text-xs font-medium text-settings-label">{session.codexProfile.label}</p>
+							{session.codexProfile.availability !== "available" ? (
+								<p className="mt-0.5 text-2xs text-warning">{session.codexProfile.availability === "unavailable" ? t("inspector.codexProfileUnavailable") : t("inspector.codexProfileUnknown")}</p>
+							) : null}
+						</div>
+					) : null}
 					<ActivityTimeline prs={prSummaries} session={session} />
 					<ResumeAgentControl session={session} />
 				</>
