@@ -31,6 +31,11 @@ func (p *Plugin) ComposerIsEmpty(output string) bool {
 	return false
 }
 
+// EmptyComposerProvesWaitingInputReady opts Aider into delivery from its
+// completion-notification state. Aider emits waiting_input after completion,
+// and its empty prompt proves that no native decision boundary is active.
+func (p *Plugin) EmptyComposerProvesWaitingInputReady() bool { return true }
+
 // DetectTerminalActivity reports active when Aider's newest prompt contains a
 // submitted message. A bare prompt emits no signal: startup must remain idle,
 // while the notification hook owns the completed-turn waiting-input state.

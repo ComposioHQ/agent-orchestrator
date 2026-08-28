@@ -48,6 +48,10 @@ func (emptyComposerReadyAgent) ComposerIsEmpty(output string) bool {
 	return output == "empty-composer"
 }
 
+type waitingInputComposerReadyAgent struct{ emptyComposerReadyAgent }
+
+func (waitingInputComposerReadyAgent) EmptyComposerProvesWaitingInputReady() bool { return true }
+
 func TestWaitForMessageDeliveryReadyWaitsForTerminalIdleMarker(t *testing.T) {
 	st := newFakeStore()
 	st.sessions["orch"] = domain.SessionRecord{
@@ -122,12 +126,37 @@ func TestWaitForMessageDeliveryReadyAcceptsProvenEmptyComposerWhileWaitingInput(
 		Metadata:  domain.SessionMetadata{RuntimeHandleID: "orch"},
 	}
 	runtime := &fakeRuntime{outputs: []string{"empty-composer"}}
-	m := New(Deps{Runtime: runtime, Agents: singleAgent{agent: emptyComposerReadyAgent{}}, Store: st})
+	m := New(Deps{Runtime: runtime, Agents: singleAgent{agent: waitingInputComposerReadyAgent{}}, Store: st})
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
 	if err := m.WaitForMessageDeliveryReady(ctx, "orch"); err != nil {
 		t.Fatalf("WaitForMessageDeliveryReady: %v", err)
+	}
+}
+
+func TestWaitForMessageDeliveryReadyRejectsWaitingInputWithoutExplicitCapability(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["orch"] = domain.SessionRecord{
+		ID:        "orch",
+		ProjectID: "ao",
+		Kind:      domain.KindOrchestrator,
+		Harness:   domain.HarnessCodex,
+		Mode:      domain.SessionModeTUI,
+		Activity:  domain.Activity{State: domain.ActivityWaitingInput},
+		Metadata:  domain.SessionMetadata{RuntimeHandleID: "orch"},
+	}
+	m := New(Deps{
+		Runtime: &fakeRuntime{outputs: []string{"empty-composer"}},
+		Agents:  singleAgent{agent: emptyComposerReadyAgent{}},
+		Store:   st,
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	err := m.WaitForMessageDeliveryReady(ctx, "orch")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("WaitForMessageDeliveryReady error = %v, want context deadline", err)
 	}
 }
 

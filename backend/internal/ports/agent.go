@@ -241,6 +241,15 @@ type EmptyComposerDetector interface {
 	ComposerIsEmpty(output string) bool
 }
 
+// WaitingInputComposerReadiness is an opt-in capability for adapters where an
+// empty composer authoritatively proves that a durable waiting_input state is
+// safe for unsolicited delivery. EmptyComposerDetector alone is insufficient:
+// other harnesses can render an empty composer beside a permission or
+// structured-input boundary.
+type WaitingInputComposerReadiness interface {
+	EmptyComposerProvesWaitingInputReady() bool
+}
+
 // ContinuousTerminalActivityDetector is implemented by adapters whose TUI is
 // the only authoritative source for some activity transitions. These adapters
 // are sampled on every observer tick, including while idle or waiting for
