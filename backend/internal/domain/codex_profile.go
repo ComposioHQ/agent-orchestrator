@@ -1,5 +1,13 @@
 package domain
 
+import (
+	"errors"
+	"time"
+)
+
+// ErrCodexProfileBindingConflict reports an attempt to replace an immutable session binding.
+var ErrCodexProfileBindingConflict = errors.New("codex profile binding conflict")
+
 // CodexProfileSource identifies who owns a Codex profile's home directory.
 type CodexProfileSource string
 
@@ -8,7 +16,49 @@ const (
 	CodexProfileSourceExisting CodexProfileSource = "existing"
 	// CodexProfileSourceManaged identifies an isolated profile created by AO.
 	CodexProfileSourceManaged CodexProfileSource = "managed"
+	// CodexProfileSourceLegacy identifies a session-only home recovered from a
+	// launch that predates durable profile bindings. Legacy profiles are never
+	// selectable for new sessions.
+	CodexProfileSourceLegacy CodexProfileSource = "legacy"
 )
+
+// CodexProfileAvailability is the display-safe availability of a session's
+// immutable profile binding. It deliberately says nothing about authentication.
+type CodexProfileAvailability string
+
+// Codex profile availability values describe whether the exact bound home can still be used.
+const (
+	CodexProfileAvailable   CodexProfileAvailability = "available"
+	CodexProfileUnavailable CodexProfileAvailability = "unavailable"
+	CodexProfileUnknown     CodexProfileAvailability = "unknown"
+)
+
+// CodexSessionBinding is the durable, daemon-only routing fact for every Codex
+// process owned by one AO session. Home must never cross the API boundary.
+type CodexSessionBinding struct {
+	SessionID SessionID
+	ProfileID string
+	Source    CodexProfileSource
+	Home      string
+	CreatedAt time.Time
+}
+
+// CodexSessionProfileSummary is the safe session read projection of a binding.
+type CodexSessionProfileSummary struct {
+	ID           string                   `json:"id"`
+	Label        string                   `json:"label"`
+	Source       CodexProfileSource       `json:"source" enum:"existing,managed,legacy"`
+	Availability CodexProfileAvailability `json:"availability" enum:"available,unavailable,unknown"`
+}
+
+// CodexLaunchContext contains the resolved invocation-scoped isolation needed
+// by Session Manager. The exact home remains internal to the daemon.
+type CodexLaunchContext struct {
+	Binding        CodexSessionBinding
+	Env            map[string]string
+	Managed        bool
+	Authentication AgentAuthenticationObservation
+}
 
 // CodexProfileStatus reports whether AO can safely inspect a profile with
 // Codex. Broken profiles remain visible so users are not left with a silently

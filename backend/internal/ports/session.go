@@ -25,8 +25,14 @@ type SpawnConfig struct {
 	IssueContext string
 	Kind         domain.SessionKind
 	Harness      domain.AgentHarness
-	Branch       string
-	Prompt       string
+	// ProfileID selects a Codex profile by canonical id. It is invalid for any
+	// non-Codex harness. Empty resolves through parent inheritance and existing.
+	ProfileID string
+	// ParentSessionID is the trusted AO session whose immutable Codex binding a
+	// related child inherits when ProfileID is empty.
+	ParentSessionID domain.SessionID
+	Branch          string
+	Prompt          string
 	// AgentConfig overrides the resolved project/role agent config for this
 	// single spawn. Empty fields keep the project defaults.
 	AgentConfig AgentConfig

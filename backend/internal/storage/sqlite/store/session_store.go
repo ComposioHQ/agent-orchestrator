@@ -21,13 +21,32 @@ func (s *Store) CreateSession(ctx context.Context, rec domain.SessionRecord) (do
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 
-	num, err := s.qw.NextSessionNum(ctx, rec.ProjectID)
+	var num int64
+	err := s.inTx(ctx, fmt.Sprintf("create session for %s", rec.ProjectID), func(q *gen.Queries) error {
+		var err error
+		num, err = q.NextSessionNum(ctx, rec.ProjectID)
+		if err != nil {
+			return fmt.Errorf("next session num: %w", err)
+		}
+		rec.ID = domain.SessionID(fmt.Sprintf("%s-%d", rec.ProjectID, num))
+		if err := q.InsertSession(ctx, recordToInsert(rec, num)); err != nil {
+			return fmt.Errorf("insert session %s: %w", rec.ID, err)
+		}
+		if rec.CodexProfileBinding != nil {
+			binding := *rec.CodexProfileBinding
+			binding.SessionID = rec.ID
+			if binding.CreatedAt.IsZero() {
+				binding.CreatedAt = rec.CreatedAt
+			}
+			if err := q.InsertCodexSessionBinding(ctx, bindingToInsert(binding)); err != nil {
+				return fmt.Errorf("insert Codex profile binding: %w", err)
+			}
+			rec.CodexProfileBinding = &binding
+		}
+		return nil
+	})
 	if err != nil {
-		return domain.SessionRecord{}, fmt.Errorf("next session num for %s: %w", rec.ProjectID, err)
-	}
-	rec.ID = domain.SessionID(fmt.Sprintf("%s-%d", rec.ProjectID, num))
-	if err := s.qw.InsertSession(ctx, recordToInsert(rec, num)); err != nil {
-		return domain.SessionRecord{}, fmt.Errorf("insert session %s: %w", rec.ID, err)
+		return domain.SessionRecord{}, err
 	}
 	return rec, nil
 }
@@ -381,7 +400,7 @@ func mapListAllSessionsRows(rows []gen.ListAllSessionsRow) []domain.SessionRecor
 }
 
 func rowToRecord(row gen.GetSessionRow) domain.SessionRecord {
-	return domain.SessionRecord{
+	rec := domain.SessionRecord{
 		ID:                row.ID,
 		ProjectID:         row.ProjectID,
 		IssueID:           row.IssueID,
@@ -428,6 +447,14 @@ func rowToRecord(row gen.GetSessionRow) domain.SessionRecord {
 		CreatedAt:         row.CreatedAt,
 		UpdatedAt:         row.UpdatedAt,
 	}
+	if row.CodexProfileID.Valid && row.CodexHome.Valid && row.CodexProfileCreatedAt.Valid {
+		rec.CodexProfileBinding = &domain.CodexSessionBinding{
+			SessionID: row.ID, ProfileID: row.CodexProfileID.String,
+			Source: row.CodexProfileSource, Home: row.CodexHome.String,
+			CreatedAt: row.CodexProfileCreatedAt.Time,
+		}
+	}
+	return rec
 }
 
 func getSessionRowToRecord(row gen.GetSessionRow) domain.SessionRecord {

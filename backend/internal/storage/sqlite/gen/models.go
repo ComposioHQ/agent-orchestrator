@@ -75,6 +75,14 @@ type ChangeLog struct {
 	CreatedAt time.Time
 }
 
+type CodexSessionBinding struct {
+	SessionID     domain.SessionID
+	ProfileID     string
+	ProfileSource domain.CodexProfileSource
+	CodexHome     string
+	CreatedAt     time.Time
+}
+
 type Conversation struct {
 	ID                         string
 	Scope                      domain.ConversationScope

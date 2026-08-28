@@ -111,13 +111,17 @@ const getSession = `-- name: GetSession :one
 SELECT id, project_id, num, issue_id, kind, harness,
     activity_state, activity_last_at, is_terminated, branch, workspace_path,
     runtime_handle_id, agent_session_id, agent_session_id_launch_id, prompt,
-    created_at, updated_at, display_name, first_signal_at, preview_url,
+    sessions.created_at AS created_at, updated_at, display_name, first_signal_at, preview_url,
     preview_revision, cleanup_generation, runtime_launch_id,
     workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref,
     reviewer_harness, is_pinned, pinned_at,
     session_mode, provider_conversation_id, controller_generation, browser_capability_verifier,
-    latest_user_prompt, latest_user_prompt_at, latest_assistant_update, native_transcript_path, auto_inject_review, auto_inject_ci, auto_review_enabled, model
-FROM sessions WHERE id = ?
+    latest_user_prompt, latest_user_prompt_at, latest_assistant_update, native_transcript_path, auto_inject_review, auto_inject_ci, auto_review_enabled, model,
+    b.profile_id AS codex_profile_id, COALESCE(b.profile_source, '') AS codex_profile_source,
+    b.codex_home AS codex_home, b.created_at AS codex_profile_created_at
+FROM sessions
+LEFT JOIN codex_session_bindings b ON b.session_id = sessions.id
+WHERE id = ?
 `
 
 type GetSessionRow struct {
@@ -163,6 +167,10 @@ type GetSessionRow struct {
 	AutoInjectCI              bool
 	AutoReviewEnabled         bool
 	Model                     string
+	CodexProfileID            sql.NullString
+	CodexProfileSource        domain.CodexProfileSource
+	CodexHome                 sql.NullString
+	CodexProfileCreatedAt     sql.NullTime
 }
 
 func (q *Queries) GetSession(ctx context.Context, id domain.SessionID) (GetSessionRow, error) {
@@ -211,6 +219,10 @@ func (q *Queries) GetSession(ctx context.Context, id domain.SessionID) (GetSessi
 		&i.AutoInjectCI,
 		&i.AutoReviewEnabled,
 		&i.Model,
+		&i.CodexProfileID,
+		&i.CodexProfileSource,
+		&i.CodexHome,
+		&i.CodexProfileCreatedAt,
 	)
 	return i, err
 }
@@ -330,13 +342,17 @@ const listAllSessions = `-- name: ListAllSessions :many
 SELECT id, project_id, num, issue_id, kind, harness,
     activity_state, activity_last_at, is_terminated, branch, workspace_path,
     runtime_handle_id, agent_session_id, agent_session_id_launch_id, prompt,
-    created_at, updated_at, display_name, first_signal_at, preview_url,
+    sessions.created_at AS created_at, updated_at, display_name, first_signal_at, preview_url,
     preview_revision, cleanup_generation, runtime_launch_id,
     workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref,
     reviewer_harness, is_pinned, pinned_at,
     session_mode, provider_conversation_id, controller_generation, browser_capability_verifier,
-    latest_user_prompt, latest_user_prompt_at, latest_assistant_update, native_transcript_path, auto_inject_review, auto_inject_ci, auto_review_enabled, model
-FROM sessions ORDER BY project_id, num
+    latest_user_prompt, latest_user_prompt_at, latest_assistant_update, native_transcript_path, auto_inject_review, auto_inject_ci, auto_review_enabled, model,
+    b.profile_id AS codex_profile_id, COALESCE(b.profile_source, '') AS codex_profile_source,
+    b.codex_home AS codex_home, b.created_at AS codex_profile_created_at
+FROM sessions
+LEFT JOIN codex_session_bindings b ON b.session_id = sessions.id
+ORDER BY project_id, num
 `
 
 type ListAllSessionsRow struct {
@@ -382,6 +398,10 @@ type ListAllSessionsRow struct {
 	AutoInjectCI              bool
 	AutoReviewEnabled         bool
 	Model                     string
+	CodexProfileID            sql.NullString
+	CodexProfileSource        domain.CodexProfileSource
+	CodexHome                 sql.NullString
+	CodexProfileCreatedAt     sql.NullTime
 }
 
 func (q *Queries) ListAllSessions(ctx context.Context) ([]ListAllSessionsRow, error) {
@@ -436,6 +456,10 @@ func (q *Queries) ListAllSessions(ctx context.Context) ([]ListAllSessionsRow, er
 			&i.AutoInjectCI,
 			&i.AutoReviewEnabled,
 			&i.Model,
+			&i.CodexProfileID,
+			&i.CodexProfileSource,
+			&i.CodexHome,
+			&i.CodexProfileCreatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -454,13 +478,17 @@ const listSessionsByProject = `-- name: ListSessionsByProject :many
 SELECT id, project_id, num, issue_id, kind, harness,
     activity_state, activity_last_at, is_terminated, branch, workspace_path,
     runtime_handle_id, agent_session_id, agent_session_id_launch_id, prompt,
-    created_at, updated_at, display_name, first_signal_at, preview_url,
+    sessions.created_at AS created_at, updated_at, display_name, first_signal_at, preview_url,
     preview_revision, cleanup_generation, runtime_launch_id,
     workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref,
     reviewer_harness, is_pinned, pinned_at,
     session_mode, provider_conversation_id, controller_generation, browser_capability_verifier,
-    latest_user_prompt, latest_user_prompt_at, latest_assistant_update, native_transcript_path, auto_inject_review, auto_inject_ci, auto_review_enabled, model
-FROM sessions WHERE project_id = ? ORDER BY num
+    latest_user_prompt, latest_user_prompt_at, latest_assistant_update, native_transcript_path, auto_inject_review, auto_inject_ci, auto_review_enabled, model,
+    b.profile_id AS codex_profile_id, COALESCE(b.profile_source, '') AS codex_profile_source,
+    b.codex_home AS codex_home, b.created_at AS codex_profile_created_at
+FROM sessions
+LEFT JOIN codex_session_bindings b ON b.session_id = sessions.id
+WHERE project_id = ? ORDER BY num
 `
 
 type ListSessionsByProjectRow struct {
@@ -506,6 +534,10 @@ type ListSessionsByProjectRow struct {
 	AutoInjectCI              bool
 	AutoReviewEnabled         bool
 	Model                     string
+	CodexProfileID            sql.NullString
+	CodexProfileSource        domain.CodexProfileSource
+	CodexHome                 sql.NullString
+	CodexProfileCreatedAt     sql.NullTime
 }
 
 func (q *Queries) ListSessionsByProject(ctx context.Context, projectID domain.ProjectID) ([]ListSessionsByProjectRow, error) {
@@ -560,6 +592,10 @@ func (q *Queries) ListSessionsByProject(ctx context.Context, projectID domain.Pr
 			&i.AutoInjectCI,
 			&i.AutoReviewEnabled,
 			&i.Model,
+			&i.CodexProfileID,
+			&i.CodexProfileSource,
+			&i.CodexHome,
+			&i.CodexProfileCreatedAt,
 		); err != nil {
 			return nil, err
 		}
