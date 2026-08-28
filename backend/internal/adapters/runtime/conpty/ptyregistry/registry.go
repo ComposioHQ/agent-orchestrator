@@ -31,6 +31,10 @@ var rewriteRegistry = writeRaw
 
 var ErrRegistryMalformed = errors.New("conpty pty registry malformed")
 
+// UnresolvedPipePath marks a durable launch reservation or a child that
+// started without reporting a READY address. It is deliberately not dialable.
+const UnresolvedPipePath = "ao-conpty://startup-unresolved"
+
 // overrideDir, when set, is the directory the registry file lives in for
 // this daemon instance, taking precedence over the ~/.ao default. Set once by
 // SetRunFilePath at daemon startup, before any session activity begins, so
@@ -98,8 +102,8 @@ func readRaw() ([]Entry, bool, error) {
 		if err := json.Unmarshal(raw, &e); err != nil {
 			return out, false, fmt.Errorf("%w: %v", ErrRegistryMalformed, err)
 		}
-		if e.SessionID == "" || e.PtyHostPID == 0 || e.PipePath == "" {
-			return out, false, fmt.Errorf("%w: entry is missing sessionId, ptyHostPid, or pipePath", ErrRegistryMalformed)
+		if e.SessionID == "" || e.PtyHostPID < 0 || e.PipePath == "" || (e.PtyHostPID == 0 && e.PipePath != UnresolvedPipePath) {
+			return out, false, fmt.Errorf("%w: entry has invalid sessionId, ptyHostPid, or pipePath", ErrRegistryMalformed)
 		}
 		out = append(out, e)
 	}
@@ -198,7 +202,11 @@ func Scan() (entries []Entry, complete bool, err error) {
 	}
 	live := make([]Entry, 0, len(all))
 	for _, e := range all {
-		if pidAlive(e.PtyHostPID) {
+		if e.PtyHostPID == 0 && e.PipePath == UnresolvedPipePath {
+			// A prelaunch reservation has no PID to probe. Retain it until an
+			// exact owner replaces or explicitly unregisters the reservation.
+			live = append(live, e)
+		} else if pidAlive(e.PtyHostPID) {
 			live = append(live, e)
 		}
 	}

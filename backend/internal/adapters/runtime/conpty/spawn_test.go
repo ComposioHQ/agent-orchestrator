@@ -6,7 +6,10 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/conpty/ptyregistry"
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -82,6 +85,21 @@ func TestStartedHostKillFailureRetainsPartialCreateEvidence(t *testing.T) {
 	if !strings.Contains(err.Error(), "kill access denied") {
 		t.Fatalf("Create error lost cleanup outcome: %v", err)
 	}
+	runtime.pidIsAlive = func(int) bool { return true }
+	runtime.destroyWait = 0
+	currentKillCalls := 0
+	runtime.processFinder = func(int) (processKiller, error) {
+		return processKillerFunc(func() error {
+			currentKillCalls++
+			return errors.New("current-owner force kill denied")
+		}), nil
+	}
+	if destroyErr := runtime.Destroy(context.Background(), effect.PossibleHandle()); destroyErr == nil || !strings.Contains(destroyErr.Error(), "current-owner force kill denied") {
+		t.Fatalf("Destroy current-owned partial create = %v, want controlled cleanup failure", destroyErr)
+	}
+	if currentKillCalls != 1 {
+		t.Fatalf("current-owned partial create force-kill calls = %d, want 1", currentKillCalls)
+	}
 
 	// The possible handle must remain fenceable even after a daemon restart.
 	// A live PID without a READY address is unknown, never exact absence.
@@ -95,15 +113,108 @@ func TestStartedHostKillFailureRetainsPartialCreateEvidence(t *testing.T) {
 		t.Fatalf("ProbeFencedRuntime partial create = %+v, want unknown/probe_failed", probe)
 	}
 
-	recovered.destroyWait = 0
-	recovered.processFinder = func(int) (processKiller, error) {
-		return processKillerFunc(func() error { return errors.New("force kill denied") }), nil
+	recoveredKillCalls := 0
+	recovered.killHost = func(string) error {
+		recoveredKillCalls++
+		return nil
 	}
-	if destroyErr := recovered.Destroy(context.Background(), effect.PossibleHandle()); destroyErr == nil || !strings.Contains(destroyErr.Error(), "force kill denied") {
-		t.Fatalf("Destroy partial create = %v, want retained cleanup failure", destroyErr)
+	recovered.processFinder = func(int) (processKiller, error) {
+		recoveredKillCalls++
+		return processKillerFunc(func() error {
+			recoveredKillCalls++
+			return nil
+		}), nil
+	}
+	if destroyErr := recovered.Destroy(context.Background(), effect.PossibleHandle()); destroyErr == nil || !errors.Is(destroyErr, ports.ErrRuntimeProbeInconclusive) {
+		t.Fatalf("Destroy recovered partial create = %v, want retained inconclusive error", destroyErr)
+	}
+	if recoveredKillCalls != 0 {
+		t.Fatalf("Destroy recovered partial create made %d unverified kill calls, want 0", recoveredKillCalls)
 	}
 	probe = recovered.ProbeFencedRuntime(context.Background(), ref)
 	if probe.Liveness != ports.FencedUnknown {
 		t.Fatalf("ProbeFencedRuntime after failed cleanup = %+v, want unknown", probe)
+	}
+	entries, complete, scanErr := ptyregistry.Scan()
+	if scanErr != nil || !complete || len(entries) != 1 || entries[0].SessionID != "sess-kill-failed" {
+		t.Fatalf("registry after recovered cleanup = entries %+v complete=%v err=%v, want retained evidence", entries, complete, scanErr)
+	}
+}
+
+func TestCreateReservationFailureDoesNotSpawnOrClaimRuntimeEffect(t *testing.T) {
+	isolateRegistry(t)
+	spawnCalls := 0
+	runtime := New(Options{Spawner: func(context.Context, string, string, []string, map[string]string) (string, int, error) {
+		spawnCalls++
+		return "127.0.0.1:1", livePID(), nil
+	}})
+	reservationErr := errors.New("reservation write denied")
+	runtime.registerHost = func(ptyregistry.Entry) error { return reservationErr }
+
+	_, err := runtime.Create(context.Background(), ports.RuntimeConfig{
+		SessionID: "sess-reservation-failed", WorkspacePath: t.TempDir(), Argv: []string{"codex"},
+		Env: map[string]string{runtimeLaunchIDEnv: "launch-reservation-failed"},
+	})
+	var effect ports.RuntimeEffectError
+	if !errors.As(err, &effect) || !errors.Is(err, reservationErr) {
+		t.Fatalf("Create reservation failure = %v, want typed reservation error", err)
+	}
+	if effect.EffectOutcome() != ports.RuntimeEffectNone || effect.PossibleHandle().ID != "" || spawnCalls != 0 {
+		t.Fatalf("reservation failure effect=%q handle=%+v spawnCalls=%d, want none/empty/0", effect.EffectOutcome(), effect.PossibleHandle(), spawnCalls)
+	}
+}
+
+func TestPostStartRegistryUpdateFailureLeavesDurableUnknownReservation(t *testing.T) {
+	isolateRegistry(t)
+	startupErr := errors.New("READY response lost")
+	runtime := New(Options{Spawner: func(context.Context, string, string, []string, map[string]string) (string, int, error) {
+		return "", livePID(), startupErr
+	}})
+	registerCalls := 0
+	updateErr := errors.New("registry update denied")
+	runtime.registerHost = func(entry ptyregistry.Entry) error {
+		registerCalls++
+		if registerCalls == 1 {
+			return ptyregistry.Register(entry)
+		}
+		return updateErr
+	}
+
+	_, err := runtime.Create(context.Background(), ports.RuntimeConfig{
+		SessionID: "sess-update-failed", WorkspacePath: t.TempDir(), Argv: []string{"codex"},
+		Env: map[string]string{runtimeLaunchIDEnv: "launch-update-failed"},
+	})
+	var effect ports.RuntimeEffectError
+	if !errors.As(err, &effect) || !errors.Is(err, startupErr) || !errors.Is(err, updateErr) || effect.EffectOutcome() != ports.RuntimeEffectPossible {
+		t.Fatalf("Create update failure = %v effect=%v, want joined possible effect", err, effect.EffectOutcome())
+	}
+	fresh := New(Options{})
+	probe := fresh.ProbeFencedRuntime(context.Background(), ports.FencedRuntimeRef{
+		Handle: effect.PossibleHandle(), SessionID: "sess-update-failed", Generation: "launch-update-failed",
+	})
+	if probe.Liveness != ports.FencedUnknown {
+		t.Fatalf("fresh ProbeFencedRuntime after update failure = %+v, want unknown", probe)
+	}
+}
+
+func TestPendingPIDZeroReservationRemainsUnknownAcrossScanAndRestart(t *testing.T) {
+	isolateRegistry(t)
+	entry := ptyregistry.Entry{
+		SessionID: "sess-pending", PtyHostPID: 0, PipePath: unresolvedHostAddress,
+		LaunchID: "launch-pending", RegisteredAt: time.Now().UTC().Format(time.RFC3339),
+	}
+	if err := ptyregistry.Register(entry); err != nil {
+		t.Fatal(err)
+	}
+	entries, complete, err := ptyregistry.Scan()
+	if err != nil || !complete || len(entries) != 1 || !reflect.DeepEqual(entries[0], entry) {
+		t.Fatalf("pending registry scan = entries %+v complete=%v err=%v, want retained reservation", entries, complete, err)
+	}
+	fresh := New(Options{})
+	probe := fresh.ProbeFencedRuntime(context.Background(), ports.FencedRuntimeRef{
+		Handle: ports.RuntimeHandle{ID: entry.SessionID}, SessionID: domain.SessionID(entry.SessionID), Generation: entry.LaunchID,
+	})
+	if probe.Liveness != ports.FencedUnknown {
+		t.Fatalf("fresh ProbeFencedRuntime pending reservation = %+v, want unknown", probe)
 	}
 }

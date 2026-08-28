@@ -17,7 +17,7 @@ import (
 
 const (
 	runtimeLaunchIDEnv    = "AO_RUNTIME_LAUNCH_ID"
-	unresolvedHostAddress = "ao-conpty://startup-unresolved"
+	unresolvedHostAddress = ptyregistry.UnresolvedPipePath
 )
 
 // Ensure Runtime satisfies the port at compile time (Attach in attach.go).
@@ -54,6 +54,7 @@ type hostSession struct {
 	addr             string
 	pid              int
 	launchID         string
+	currentOwner     bool
 	protocolVersion  int
 	protocolResolved bool
 }
@@ -75,12 +76,14 @@ type Options struct {
 
 // Runtime is the conpty runtime adapter.
 type Runtime struct {
-	spawner       hostSpawner
-	killHost      func(string) error
-	pidIsAlive    func(int) bool
-	processFinder func(int) (processKiller, error)
-	destroyWait   time.Duration
-	destroyPoll   time.Duration
+	spawner        hostSpawner
+	killHost       func(string) error
+	pidIsAlive     func(int) bool
+	processFinder  func(int) (processKiller, error)
+	registerHost   func(ptyregistry.Entry) error
+	unregisterHost func(string) error
+	destroyWait    time.Duration
+	destroyPoll    time.Duration
 
 	mu       sync.Mutex
 	sessions map[string]*hostSession // sessionID -> live session
@@ -94,13 +97,15 @@ func New(opts Options) *Runtime {
 		sp = defaultSpawnHost
 	}
 	return &Runtime{
-		spawner:       sp,
-		killHost:      clientKill,
-		pidIsAlive:    pidAlive,
-		processFinder: findProcess,
-		destroyWait:   500 * time.Millisecond,
-		destroyPoll:   25 * time.Millisecond,
-		sessions:      make(map[string]*hostSession),
+		spawner:        sp,
+		killHost:       clientKill,
+		pidIsAlive:     pidAlive,
+		processFinder:  findProcess,
+		registerHost:   ptyregistry.Register,
+		unregisterHost: ptyregistry.Unregister,
+		destroyWait:    500 * time.Millisecond,
+		destroyPoll:    25 * time.Millisecond,
+		sessions:       make(map[string]*hostSession),
 	}
 }
 
@@ -124,10 +129,38 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 		r.mu.Unlock()
 		return ports.RuntimeHandle{}, conptyCreateFailure(fmt.Errorf("conpty: session %q already exists; destroy before re-creating", id))
 	}
-	// Reserve the slot before the async spawn so a concurrent Create for the
-	// same id fails immediately (no gap between check and set).
-	r.sessions[id] = nil
 	r.mu.Unlock()
+	existing, resolveErr := r.resolveWithEvidence(id)
+	if resolveErr != nil {
+		return ports.RuntimeHandle{}, conptyCreateFailure(fmt.Errorf("conpty: inspect existing ownership for %q: %w", id, resolveErr))
+	}
+	if existing != nil {
+		return ports.RuntimeHandle{}, conptyCreateFailure(fmt.Errorf("conpty: session %q already exists; destroy before re-creating", id))
+	}
+
+	r.mu.Lock()
+	if _, dup := r.sessions[id]; dup {
+		r.mu.Unlock()
+		return ports.RuntimeHandle{}, conptyCreateFailure(fmt.Errorf("conpty: session %q already exists; destroy before re-creating", id))
+	}
+	// Reserve both the in-memory slot and the restart registry before spawning.
+	// If the daemon crashes after the child starts but before its PID/address
+	// update is durable, a fresh daemon must still see unknown ownership rather
+	// than exact absence.
+	reservation := &hostSession{
+		addr: unresolvedHostAddress, launchID: cfg.Env[runtimeLaunchIDEnv], currentOwner: true,
+	}
+	r.sessions[id] = reservation
+	r.mu.Unlock()
+	if err := r.registerHost(ptyregistry.Entry{
+		SessionID: id, PtyHostPID: 0, PipePath: unresolvedHostAddress,
+		LaunchID: reservation.launchID, RegisteredAt: time.Now().UTC().Format(time.RFC3339),
+	}); err != nil {
+		r.mu.Lock()
+		delete(r.sessions, id)
+		r.mu.Unlock()
+		return ports.RuntimeHandle{}, conptyCreateFailure(fmt.Errorf("conpty: reserve pty-host ownership for %q: %w", id, err))
+	}
 
 	addr, pid, err := r.spawner(ctx, id, cfg.WorkspacePath, cfg.Argv, cfg.Env)
 	if err != nil {
@@ -137,6 +170,9 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 			r.mu.Lock()
 			delete(r.sessions, id)
 			r.mu.Unlock()
+			if unregisterErr := r.unregisterHost(id); unregisterErr != nil {
+				cause = errors.Join(cause, fmt.Errorf("remove unused pty-host reservation for %q: %w", id, unregisterErr))
+			}
 			return ports.RuntimeHandle{}, conptyCreateFailure(cause)
 		}
 		if addr == "" && pid > 0 {
@@ -144,11 +180,11 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 			// spawner could not prove cleanup. Retain its PID and launch fence in
 			// both memory and the restart registry. The sentinel address prevents
 			// ordinary client traffic while keeping the possible handle probeable.
-			sess := &hostSession{addr: unresolvedHostAddress, pid: pid, launchID: cfg.Env[runtimeLaunchIDEnv]}
+			sess := &hostSession{addr: unresolvedHostAddress, pid: pid, launchID: cfg.Env[runtimeLaunchIDEnv], currentOwner: true}
 			r.mu.Lock()
 			r.sessions[id] = sess
 			r.mu.Unlock()
-			registryErr := ptyregistry.Register(ptyregistry.Entry{
+			registryErr := r.registerHost(ptyregistry.Entry{
 				SessionID: id, PtyHostPID: pid, PipePath: unresolvedHostAddress,
 				LaunchID: sess.launchID, RegisteredAt: time.Now().UTC().Format(time.RFC3339),
 			})
@@ -158,13 +194,13 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 			return ports.RuntimeHandle{}, conptyPartialCreateFailure(cause, handle, ports.RuntimeCleanupFailed)
 		}
 		if addr == "" || pid <= 0 {
-			r.mu.Lock()
-			delete(r.sessions, id)
-			r.mu.Unlock()
+			// Some effect was reported but cannot be safely addressed and fenced.
+			// Keep the prelaunch reservation rather than converting ambiguity to
+			// absence; a later exact owner may replace or explicitly clear it.
 			return ports.RuntimeHandle{}, conptyPartialCreateFailure(cause, handle, ports.RuntimeCleanupFailed)
 		}
 		r.mu.Lock()
-		r.sessions[id] = &hostSession{addr: addr, pid: pid, launchID: cfg.Env[runtimeLaunchIDEnv]}
+		r.sessions[id] = &hostSession{addr: addr, pid: pid, launchID: cfg.Env[runtimeLaunchIDEnv], currentOwner: true}
 		r.mu.Unlock()
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
 		cleanupErr := r.Destroy(cleanupCtx, handle)
@@ -176,7 +212,7 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 	}
 
 	sess := &hostSession{
-		addr: addr, pid: pid, launchID: cfg.Env[runtimeLaunchIDEnv],
+		addr: addr, pid: pid, launchID: cfg.Env[runtimeLaunchIDEnv], currentOwner: true,
 		protocolVersion: conPTYHostProtocolVersion, protocolResolved: true,
 	}
 
@@ -184,7 +220,7 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 	r.sessions[id] = sess
 	r.mu.Unlock()
 
-	if err := ptyregistry.Register(ptyregistry.Entry{
+	if err := r.registerHost(ptyregistry.Entry{
 		SessionID:    id,
 		PtyHostPID:   pid,
 		PipePath:     addr, // ponytail: reuse PipePath field for loopback addr
@@ -213,6 +249,9 @@ func (r *Runtime) Destroy(ctx context.Context, handle ports.RuntimeHandle) error
 	sess := r.resolve(handle.ID)
 	if sess == nil {
 		return nil // unknown or already gone
+	}
+	if sess.addr == unresolvedHostAddress && !sess.currentOwner {
+		return fmt.Errorf("conpty: recovered unresolved ownership for %q cannot be safely killed by PID alone: %w", handle.ID, ports.ErrRuntimeProbeInconclusive)
 	}
 
 	// Ask a READY host to shut down gracefully (triggers shutdown() in Serve).
@@ -248,7 +287,7 @@ func (r *Runtime) Destroy(ctx context.Context, handle ports.RuntimeHandle) error
 	delete(r.sessions, handle.ID)
 	r.mu.Unlock()
 
-	if err := ptyregistry.Unregister(handle.ID); err != nil {
+	if err := r.unregisterHost(handle.ID); err != nil {
 		return fmt.Errorf("conpty: unregister destroyed session %q: %w", handle.ID, err)
 	}
 	return nil
@@ -306,7 +345,7 @@ func (r *Runtime) IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool
 		return false, nil // no in-memory entry, no registry entry -> definitively gone
 	}
 	if sess.addr == unresolvedHostAddress {
-		if r.pidIsAlive(sess.pid) {
+		if sess.pid <= 0 || r.pidIsAlive(sess.pid) {
 			return false, fmt.Errorf("conpty: pty-host pid %d started without a READY address: %w", sess.pid, ports.ErrRuntimeProbeInconclusive)
 		}
 		return false, nil
@@ -336,7 +375,7 @@ func (r *Runtime) ProbeFencedRuntime(ctx context.Context, ref ports.FencedRuntim
 		return ports.FencedProbeResult{Liveness: ports.FencedUnknown, Reason: ports.FencedReasonGenerationMismatch}
 	}
 	if sess.addr == unresolvedHostAddress {
-		if r.pidIsAlive(sess.pid) {
+		if sess.pid <= 0 || r.pidIsAlive(sess.pid) {
 			return ports.FencedProbeResult{Liveness: ports.FencedUnknown, Reason: ports.FencedReasonProbeFailed}
 		}
 		return ports.FencedProbeResult{Liveness: ports.FencedDead, Reason: ports.FencedReasonExactAbsent}
