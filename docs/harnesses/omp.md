@@ -44,9 +44,29 @@ When configured, AO forwards:
 
 - `--model <model>` from the agent config model field
 - `--append-system-prompt <text>` for AO's role/system prompt
+- `--extension <workspace>/.omp/extensions/ao-activity.ts` so OMP reports
+  TUI activity through `ao hooks omp`
 
 The process remains interactive after the initial prompt, so users can keep
 working directly in the OMP TUI.
+
+## Activity
+
+AO installs a workspace-local TypeScript extension and passes it explicitly
+with `--extension`. The extension maps OMP lifecycle events onto AO activity:
+
+| OMP event | AO hook | Activity |
+| --- | --- | --- |
+| `session_start` | `session-start` | idle |
+| `before_agent_start` | `user-prompt-submit` | active |
+| `session_stop` | `stop` | idle |
+| `session_shutdown` | `session-end` | exited |
+
+`session_start` is idle because OMP emits it before any prompt starts. The
+active transition comes from `before_agent_start`. OMP has no `agent_settled`
+event; `session_stop` is the settle signal that a main-agent turn is about to
+go idle. Launch and restore pass `--extension` so reporting does not depend
+on project-local extension auto-discovery. Chat-mode activity is unchanged.
 
 ## Restore
 
@@ -75,7 +95,7 @@ provider configuration, or selected model availability.
 - ACP editor integration (`omp acp`)
 - RPC mode (`omp --mode rpc`)
 - Chat UI handoff
-- AO-managed OMP extensions or hooks
 
 Those surfaces would require a separate structured protocol driver rather than
-the terminal harness adapter.
+the terminal harness adapter. The TUI activity extension above is installed
+and loaded by this adapter; it is not a Chat/ACP driver.
