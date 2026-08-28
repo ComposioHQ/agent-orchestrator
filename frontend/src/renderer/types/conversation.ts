@@ -369,12 +369,17 @@ export interface SystemEventDetail {
 		| "compaction"
 		| "model.rerouted"
 		| "auth.reauth_required"
+		| "provider.failure"
 		| "steer"
 		| "plan"
 		| "context.reset";
 	/** model.rerouted */
 	fromModel?: string;
 	toModel?: string;
+	/** provider.failure: provider-neutral classification from an agent protocol extension. */
+	category?: string;
+	severity?: "warning" | "error" | (string & {});
+	revision?: number;
 	/** steer: the user's own words, delivered into a turn already running. */
 	origin?: string;
 	clientMessageId?: string;
