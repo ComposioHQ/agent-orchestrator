@@ -7,6 +7,10 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -337,6 +341,9 @@ func TestApprovalIsParkedUntilResolved(t *testing.T) {
 	if ev.RequestID != "0" {
 		t.Fatalf("request id = %q, want the JSON-RPC id 0", ev.RequestID)
 	}
+	if ev.ProviderTurnID != "turn-1" {
+		t.Fatalf("provider turn id = %q, want turn-1", ev.ProviderTurnID)
+	}
 	if ev.ActivityStatus != domain.ActivityStatusPending {
 		t.Errorf("status = %q, want pending", ev.ActivityStatus)
 	}
@@ -351,6 +358,14 @@ func TestApprovalIsParkedUntilResolved(t *testing.T) {
 	want := []string{"accept", "acceptWithExecpolicyAmendment", "cancel"}
 	if strings.Join(ids, ",") != strings.Join(want, ",") {
 		t.Fatalf("decisions = %v, want %v (from the provider's own list)", ids, want)
+	}
+	wantKinds := []ports.ChatDecisionKind{
+		ports.ChatDecisionAllowOnce, ports.ChatDecisionAllowAlways, ports.ChatDecisionRejectOnce,
+	}
+	for i, option := range ev.Decisions {
+		if option.Kind != wantKinds[i] {
+			t.Fatalf("decision %q kind = %q, want %q", option.ID, option.Kind, wantKinds[i])
+		}
 	}
 
 	// Nothing has been answered yet, so the provider is still blocked.
@@ -582,6 +597,7 @@ func TestResumeReappliesWorkspaceAndStandingInstructions(t *testing.T) {
 		SessionID:              "ao-1",
 		ProviderConversationID: "thread-1",
 		WorkspacePath:          "/tmp/ws",
+		Model:                  "selected-resume-model",
 		SystemPrompt:           "current AO standing instructions",
 	})
 	if err != nil {
@@ -593,6 +609,7 @@ func TestResumeReappliesWorkspaceAndStandingInstructions(t *testing.T) {
 	var params struct {
 		ThreadID              string `json:"threadId"`
 		Cwd                   string `json:"cwd"`
+		Model                 string `json:"model"`
 		DeveloperInstructions string `json:"developerInstructions"`
 	}
 	if err := json.Unmarshal(resume.Params, &params); err != nil {
@@ -600,6 +617,9 @@ func TestResumeReappliesWorkspaceAndStandingInstructions(t *testing.T) {
 	}
 	if params.ThreadID != "thread-1" || params.Cwd != "/tmp/ws" {
 		t.Fatalf("thread resume identity = %#v", params)
+	}
+	if params.Model != "selected-resume-model" {
+		t.Fatalf("thread resume model = %q, want selected-resume-model", params.Model)
 	}
 	if params.DeveloperInstructions != "current AO standing instructions" {
 		t.Fatalf("developerInstructions = %q", params.DeveloperInstructions)
@@ -670,6 +690,132 @@ func TestProbeAcceptsNewerCodexVersion(t *testing.T) {
 	if _, err := d.Probe(context.Background()); err != nil {
 		t.Fatalf("Probe: %v", err)
 	}
+}
+
+func TestInstalledCodexVersionAugmentsNodePATHForNPMLauncher(t *testing.T) {
+	launcher, _ := npmCodexLauncherWithNodeOutsidePATH(t)
+
+	directOutput, directErr := exec.Command(launcher, "--version").CombinedOutput()
+	var exitErr *exec.ExitError
+	if !errors.As(directErr, &exitErr) || exitErr.ExitCode() != 127 {
+		t.Fatalf("unaugmented npm launcher = %q, %v; want exit 127", directOutput, directErr)
+	}
+
+	got, err := installedCodexVersion(context.Background(), launcher)
+	if err != nil {
+		t.Fatalf("installedCodexVersion: %v", err)
+	}
+	if got != "codex-cli 0.149.1\n" {
+		t.Fatalf("installedCodexVersion = %q, want Codex version", got)
+	}
+
+	d, _ := newTestDriver(t)
+	d.plugin = fakePlugin{bin: launcher, authStatus: ports.AgentAuthStatusAuthorized}
+	d.versionProbe = installedCodexVersion
+	if _, err := d.Probe(context.Background()); err != nil {
+		t.Fatalf("Probe with augmented npm launcher: %v", err)
+	}
+}
+
+func TestStartAndResumeAugmentNodePATHForNPMLauncher(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		run  func(context.Context, *Driver) (ports.ChatConversation, error)
+	}{
+		{
+			name: "initial Chat launch",
+			run: func(ctx context.Context, d *Driver) (ports.ChatConversation, error) {
+				return d.Start(ctx, ports.ChatStartConfig{SessionID: "ao-1", WorkspacePath: "/tmp/ws"})
+			},
+		},
+		{
+			name: "Chat restore",
+			run: func(ctx context.Context, d *Driver) (ports.ChatConversation, error) {
+				return d.Resume(ctx, ports.ChatResumeConfig{
+					SessionID: "ao-1", ProviderConversationID: "thread-1", WorkspacePath: "/tmp/ws",
+				})
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			launcher, nodeDir := npmCodexLauncherWithNodeOutsidePATH(t)
+			d, _ := newTestDriver(t)
+			d.plugin = fakePlugin{bin: launcher, authStatus: ports.AgentAuthStatusAuthorized}
+			spawn := d.spawn
+			var childEnv []string
+			d.spawn = func(ctx context.Context, bin, workdir string, env []string) (*process, error) {
+				childEnv = append([]string(nil), env...)
+				return spawn(ctx, bin, workdir, env)
+			}
+
+			conv, err := tc.run(context.Background(), d)
+			if err != nil {
+				t.Fatalf("launch: %v", err)
+			}
+			defer func() { _ = conv.Close() }()
+
+			path := envValue(childEnv, "PATH")
+			if !pathContainsDir(path, nodeDir) {
+				t.Fatalf("child PATH = %q, want Node runtime dir %q", path, nodeDir)
+			}
+		})
+	}
+}
+
+func npmCodexLauncherWithNodeOutsidePATH(t *testing.T) (launcher, nodeDir string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("npm env-node launcher is Unix-specific")
+	}
+	home := t.TempDir()
+	if canonical, err := filepath.EvalSymlinks(home); err == nil {
+		home = canonical
+	}
+	nodeDir = filepath.Join(home, ".nvm", "versions", "node", "v22.11.0", "bin")
+	if err := os.MkdirAll(nodeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	node := filepath.Join(nodeDir, "node")
+	if err := os.WriteFile(node, []byte("#!/bin/sh\nscript=$1\nshift\nexec /bin/sh \"$script\" \"$@\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	packageRoot := filepath.Join(home, ".local", "lib", "node_modules", "@openai", "codex")
+	js := filepath.Join(packageRoot, "bin", "codex.js")
+	if err := os.MkdirAll(filepath.Dir(js), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(js, []byte("#!/usr/bin/env node\nif [ \"$1\" = \"--version\" ]; then printf 'codex-cli 0.149.1\\n'; fi\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	launcher = filepath.Join(home, ".local", "bin", "codex")
+	if err := os.MkdirAll(filepath.Dir(launcher), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join("..", "lib", "node_modules", "@openai", "codex", "bin", "codex.js"), launcher); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("PATH", t.TempDir())
+	return launcher, nodeDir
+}
+
+func envValue(env []string, key string) string {
+	prefix := key + "="
+	for _, entry := range env {
+		if strings.HasPrefix(entry, prefix) {
+			return strings.TrimPrefix(entry, prefix)
+		}
+	}
+	return ""
+}
+
+func pathContainsDir(path, dir string) bool {
+	for _, part := range filepath.SplitList(path) {
+		if part == dir {
+			return true
+		}
+	}
+	return false
 }
 
 func TestProbeRejectsUnparseableCodexVersion(t *testing.T) {

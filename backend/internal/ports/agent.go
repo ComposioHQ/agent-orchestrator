@@ -71,6 +71,14 @@ type AgentBinaryResolver interface {
 	ResolveBinary(ctx context.Context) (path string, err error)
 }
 
+// AgentBinaryPresenceResolver is an optional startup-only refinement for an
+// adapter whose normal binary resolution performs additional validation. It
+// must only inspect local executable paths; it must not start the agent CLI.
+// AO uses it for the first-render prerequisite gate, where existence is enough.
+type AgentBinaryPresenceResolver interface {
+	ResolveBinaryPresence(ctx context.Context) (path string, err error)
+}
+
 // AgentNativeSessionTerminator is an optional adapter capability used before
 // AO destroys a terminal runtime or worktree whose agent may keep running in a
 // detached native process. Implementations must affect only the supplied
@@ -157,6 +165,13 @@ type CachedAgentModelCatalog struct {
 	FetchedAt     time.Time
 }
 
+// AgentInventoryCache persists the last successful advisory installation and
+// authentication probe across daemon restarts.
+type AgentInventoryCache interface {
+	GetAgentInventoryCache(ctx context.Context) (inventoryJSON string, observedAt time.Time, ok bool, err error)
+	UpsertAgentInventoryCache(ctx context.Context, inventoryJSON string, observedAt time.Time) error
+}
+
 // AgentModelCatalogCache persists normalized model catalogs across daemon
 // restarts. Implementations must treat agent+project as the logical key.
 type AgentModelCatalogCache interface {
@@ -235,6 +250,13 @@ type ContinuousTerminalActivityDetector interface {
 	ContinuouslyDetectTerminalActivity() bool
 }
 
+// WaitingTerminalActivityDetector is implemented by non-continuous terminal
+// detectors that can authoritatively recover from a durable waiting-input state.
+type WaitingTerminalActivityDetector interface {
+	TerminalActivityDetector
+	ContinuouslyDetectTerminalActivityWhileWaiting() bool
+}
+
 // PromptReadinessHints describes when an after-start prompt should be sent.
 // Empty patterns mean "send immediately" unless the adapter also implements
 // TerminalActivityDetector, in which case AO waits for an authoritative idle
@@ -295,6 +317,15 @@ type SubmitActivitySignaler interface {
 // blocked signal implement this interface to opt in.
 type BlockedActivitySignaler interface {
 	EmitsBlockedActivity() bool
+}
+
+// StartupInputReadinessSignaler is an OPTIONAL capability for a TUI adapter
+// whose first lifecycle hook cannot arrive until native startup dialogs have
+// cleared and the agent can safely accept pane input. AO gates user and
+// automation writes on FirstSignalAt only for adapters that opt in here;
+// hookless adapters must remain usable without manufacturing a signal.
+type StartupInputReadinessSignaler interface {
+	FirstSignalProvesInputReady() bool
 }
 
 // ActiveTurnSteerer is an OPTIONAL capability an Agent adapter implements when

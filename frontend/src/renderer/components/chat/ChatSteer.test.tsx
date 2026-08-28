@@ -1,12 +1,10 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ChatComposer } from "./ChatComposer";
 import { ChatWorkspace } from "./ChatWorkspace";
 import { chatFixture } from "../../lib/chat-fixture";
-
-const png = (name = "shot.png") =>
-	new File([new Uint8Array([137, 80, 78, 71])], name, { type: "image/png" });
+import { typeInLexicalEditor } from "../../test/lexical";
 
 // Steering sends guidance INTO the running turn instead of queueing behind it. The
 // thing these tests protect is that the choice is legible: Enter changing meaning
@@ -19,19 +17,11 @@ describe("ChatComposer steering", () => {
 		);
 	}
 
-	it("names both destinations while a turn is running", () => {
+	it("shows delivery indicators while a turn is running", () => {
 		composer();
-		expect(screen.getByRole("button", { name: "Steer this turn" })).toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "Queue for next" })).toBeInTheDocument();
-	});
-
-	it("defaults Enter to the durable queue path used by ao send", () => {
-		composer();
-		expect(screen.getByRole("button", { name: "Queue for next" })).toHaveAttribute(
-			"aria-pressed",
-			"true",
-		);
-		expect(screen.queryByText(/Enter to/)).not.toBeInTheDocument();
+		const delivery = screen.getByRole("group", { name: /where this message goes/i });
+		expect(within(delivery).getByText("Queue")).toBeInTheDocument();
+		expect(within(delivery).getByText("Steer")).toBeInTheDocument();
 	});
 
 	it("queues by default while a turn is running", async () => {
@@ -39,104 +29,10 @@ describe("ChatComposer steering", () => {
 		const onSend = vi.fn();
 		composer({ onSteer, onSend });
 
-		await userEvent.type(screen.getByRole("combobox"), "use the unit tests only{Enter}");
+		await typeInLexicalEditor(screen.getByRole("combobox"), "use the unit tests only");
+		await userEvent.keyboard("{Enter}");
 		expect(onSend).toHaveBeenCalledWith("use the unit tests only");
 		expect(onSteer).not.toHaveBeenCalled();
-	});
-
-	it("steers once the user explicitly picks that", async () => {
-		const onSteer = vi.fn().mockResolvedValue(undefined);
-		const onSend = vi.fn();
-		composer({ onSteer, onSend });
-
-		await userEvent.click(screen.getByRole("button", { name: "Steer this turn" }));
-		expect(screen.getByRole("button", { name: "Steer this turn" })).toHaveAttribute(
-			"aria-pressed",
-			"true",
-		);
-		expect(screen.getByRole("button", { name: "Steer the running turn" })).toBeInTheDocument();
-		expect(screen.queryByText(/Enter to/)).not.toBeInTheDocument();
-
-		await userEvent.type(screen.getByRole("combobox"), "and then ship it{Enter}");
-		expect(onSteer).toHaveBeenCalledWith("and then ship it");
-		expect(onSend).not.toHaveBeenCalled();
-	});
-
-	it("marks the armed destination for assistive tech", async () => {
-		composer();
-		expect(screen.getByRole("button", { name: "Queue for next" })).toHaveAttribute(
-			"aria-pressed",
-			"true",
-		);
-		await userEvent.click(screen.getByRole("button", { name: "Steer this turn" }));
-		expect(screen.getByRole("button", { name: "Steer this turn" })).toHaveAttribute(
-			"aria-pressed",
-			"true",
-		);
-	});
-
-	it("clears the composer only once the provider has taken the guidance", async () => {
-		let settle = () => {};
-		const onSteer = vi.fn(
-			() =>
-				new Promise<void>((resolve) => {
-					settle = resolve;
-				}),
-		);
-		composer({ onSteer });
-
-		const field = screen.getByRole("combobox");
-		await userEvent.click(screen.getByRole("button", { name: "Steer this turn" }));
-		await userEvent.type(field, "stop after the tests{Enter}");
-		// Still in the box: the turn is already running, so a refusal is a real
-		// possibility and clearing early would lose what the user typed.
-		expect(field).toHaveValue("stop after the tests");
-		settle();
-	});
-
-	it("keeps the text when the steer is refused", async () => {
-		const onSteer = vi.fn().mockRejectedValue(new Error("not steerable"));
-		composer({ onSteer });
-		const field = screen.getByRole("combobox");
-		await userEvent.click(screen.getByRole("button", { name: "Steer this turn" }));
-		await userEvent.type(field, "actually, skip it{Enter}");
-		expect(field).toHaveValue("actually, skip it");
-		expect(screen.getByRole("button", { name: "Queue for next" })).toHaveAttribute(
-			"aria-pressed",
-			"true",
-		);
-	});
-
-	it("keeps attachment-only drafts out of steer and available to queue", async () => {
-		const onSteer = vi.fn().mockResolvedValue(undefined);
-		const onSend = vi.fn();
-		const stage = vi.fn().mockResolvedValue([".ao/attachments/shot.png"]);
-		composer({ onSteer, onSend, onStageAttachments: stage });
-
-		await userEvent.click(screen.getByRole("button", { name: "Steer this turn" }));
-
-		const field = screen.getByRole("combobox");
-		await userEvent.click(field);
-		fireEvent.paste(field, { clipboardData: { files: [png()], items: [] } });
-		await waitFor(() => expect(screen.getAllByRole("listitem")).toHaveLength(1));
-
-		expect(screen.getByRole("button", { name: "Steer the running turn" })).toBeDisabled();
-		await userEvent.keyboard("{Enter}");
-		expect(onSteer).not.toHaveBeenCalled();
-		expect(onSend).not.toHaveBeenCalled();
-		expect(stage).not.toHaveBeenCalled();
-		expect(screen.getAllByRole("listitem")).toHaveLength(1);
-
-		await userEvent.click(screen.getByRole("button", { name: "Queue for next" }));
-		expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
-		await userEvent.click(field);
-		await userEvent.keyboard("{Enter}");
-
-		await waitFor(() => expect(stage).toHaveBeenCalledOnce());
-		expect(onSend).toHaveBeenCalledWith(
-			"Attached files (read these files in the workspace):\n- .ao/attachments/shot.png",
-		);
-		await waitFor(() => expect(screen.queryAllByRole("listitem")).toHaveLength(0));
 	});
 
 	it("reports the daemon's refusal without a second message of its own", () => {
@@ -144,20 +40,14 @@ describe("ChatComposer steering", () => {
 		expect(screen.getByRole("status")).toHaveTextContent(/compaction turn is running/);
 	});
 
-	// Claude answers CHAT_STEER_UNSUPPORTED. A control that only ever fails is worse
-	// than none, so the surface withdraws it rather than disabling it.
-	it("offers nothing when the harness cannot steer", () => {
+	it("hides delivery indicators when the harness cannot steer", () => {
 		composer({ onSteer: undefined, canSteer: false });
-		expect(screen.queryByRole("button", { name: "Steer this turn" })).not.toBeInTheDocument();
-		expect(screen.queryByText(/Enter to/)).not.toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "Send message" })).toBeInTheDocument();
+		expect(screen.queryByText("Steer")).not.toBeInTheDocument();
 	});
 
-	it("offers nothing when no turn is in flight to steer", () => {
+	it("hides delivery indicators when no turn is in flight", () => {
 		composer({ canSteer: false, willQueue: false });
-		expect(screen.queryByRole("button", { name: "Steer this turn" })).not.toBeInTheDocument();
-		expect(screen.queryByText(/Enter to/)).not.toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "Send message" })).toBeInTheDocument();
+		expect(screen.queryByText("Steer")).not.toBeInTheDocument();
 	});
 });
 
@@ -200,25 +90,16 @@ describe("ChatWorkspace steering", () => {
 		};
 	}
 
-	it("docks queued messages above the composer and steers the selected turn", async () => {
-		const onPromoteQueuedTurn = vi.fn().mockResolvedValue(undefined);
+	it("docks queued messages above the composer", () => {
 		render(
 			<ChatWorkspace
 				snapshot={withQueuedMessages()}
 				onSteer={vi.fn()}
-				onPromoteQueuedTurn={onPromoteQueuedTurn}
 			/>,
 		);
 		const dock = screen.getByTestId("queued-message-dock");
 		expect(within(dock).getByText("first queued")).toBeVisible();
 		expect(within(dock).getByText("second queued")).toBeVisible();
-		expect(dock).toHaveClass("rounded-t-[10px]");
-		expect(dock.nextElementSibling).toHaveClass("rounded-t-none");
-		const actions = within(dock).getAllByRole("button", { name: "Steer" });
-		expect(actions).toHaveLength(2);
-		await userEvent.click(actions[1]!);
-		expect(onPromoteQueuedTurn).toHaveBeenCalledWith("queued-2");
-		expect(screen.queryByRole("button", { name: "Steer now" })).not.toBeInTheDocument();
 	});
 
 	it("keeps queued messages docked after the conversation branches", () => {
@@ -226,7 +107,6 @@ describe("ChatWorkspace steering", () => {
 			<ChatWorkspace
 				snapshot={{ ...withQueuedMessages(), branchedFromEarlierMessage: true }}
 				onSteer={vi.fn()}
-				onPromoteQueuedTurn={vi.fn().mockResolvedValue(undefined)}
 			/>,
 		);
 
@@ -235,56 +115,27 @@ describe("ChatWorkspace steering", () => {
 		expect(within(dock).getByText("second queued")).toBeVisible();
 	});
 
-	it("scopes pending and failure feedback to the selected queued message", async () => {
-		let releaseFirst = () => {};
-		const onPromoteQueuedTurn = vi
-			.fn<(turnId: string) => Promise<void>>()
-			.mockImplementationOnce(
-				() =>
-					new Promise<void>((resolve) => {
-						releaseFirst = resolve;
-					}),
-			)
-			.mockRejectedValueOnce(new Error("provider refused steer"));
-		render(
-			<ChatWorkspace
-				snapshot={withQueuedMessages()}
-				onSteer={vi.fn()}
-				onPromoteQueuedTurn={onPromoteQueuedTurn}
-			/>,
-		);
-
-		const first = screen.getByTestId("queued-message-queued-1");
-		const second = screen.getByTestId("queued-message-queued-2");
-		await userEvent.click(within(first).getByRole("button", { name: "Steer" }));
-		expect(within(first).getByRole("button", { name: "Steering…" })).toBeDisabled();
-		expect(within(second).getByRole("button", { name: "Steer" })).toBeDisabled();
-		releaseFirst();
-		await screen.findAllByRole("button", { name: "Steer" });
-
-		await userEvent.click(within(second).getByRole("button", { name: "Steer" }));
-		expect(await within(second).findByRole("status")).toHaveTextContent(
-			"Could not steer this message. It remains queued.",
-		);
-		expect(within(first).queryByRole("status")).not.toBeInTheDocument();
-		expect(within(first).getByText("first queued")).toBeVisible();
-		expect(within(second).getByText("second queued")).toBeVisible();
+	it("shows the delivery indicator only for a running turn without a pending approval", () => {
+		const snapshot = {
+			...chatFixture,
+			items: chatFixture.items.filter(
+				(item) =>
+					!(item.kind === "activity" && item.activityKind === "approval" && item.status === "pending"),
+			),
+		};
+		render(<ChatWorkspace snapshot={snapshot} onSteer={vi.fn()} />);
+		expect(screen.getByText("Steer")).toBeInTheDocument();
+		expect(screen.getByText("Queue")).toBeInTheDocument();
 	});
 
-	it("offers steering only into a turn the provider is actually running", () => {
-		render(<ChatWorkspace snapshot={chatFixture} onSteer={vi.fn()} />);
-		// The live fixture is mid-turn.
-		expect(screen.getByRole("button", { name: "Steer this turn" })).toBeInTheDocument();
-	});
-
-	it("does not offer steering on a settled conversation", () => {
+	it("does not show delivery indicator on a settled conversation", () => {
 		render(
 			<ChatWorkspace
 				snapshot={{ ...chatFixture, turns: chatFixture.turns.map((t) => ({ ...t, state: "completed" as const })) }}
 				onSteer={vi.fn()}
 			/>,
 		);
-		expect(screen.queryByRole("button", { name: "Steer this turn" })).not.toBeInTheDocument();
+		expect(screen.queryByText("Steer")).not.toBeInTheDocument();
 		expect(screen.queryByTestId("queued-message-dock")).not.toBeInTheDocument();
 	});
 

@@ -301,9 +301,13 @@
 	--size-sidebar-default: 240px;
 	--size-sidebar-mobile: 288px;
 	--size-titlebar-cluster-left: 72px;
-	/* Linux has no traffic lights: the cluster sits at the sidebar's own left
-	 * inset (TitlebarNav `left-1.5`). */
+	/* Linux has no traffic lights: with the sidebar open the cluster sits at the
+	 * sidebar's own left inset (TitlebarNav `left-titlebar-cluster-left-linux`). */
 	--size-titlebar-cluster-left-linux: 6px;
+	/* Sidebar off-canvas: the framed centre panel is flush-left, so the cluster
+	 * must clear its border (--size-center-panel-inline-inset) instead of
+	 * straddling it. */
+	--size-titlebar-cluster-left-linux-panel: calc(var(--size-center-panel-inline-inset) + 10px);
 	/* TitlebarNav cluster: 3 × --size-control-md buttons + 2 × 4px flex gaps. */
 	--size-titlebar-cluster-width: calc(3 * var(--size-control-md) + 2 * 4px);
 	/* Breathing room between the last arrow and the adjacent in-panel title. */
@@ -311,6 +315,11 @@
 	/* Clears fixed TitlebarNav (cluster-left + toggle/arrows) when the sidebar is off-canvas. */
 	--size-titlebar-content-offset: calc(
 		var(--size-titlebar-cluster-left) + var(--size-titlebar-cluster-width) + var(--size-titlebar-content-gap)
+	);
+	/* Same clearance measured from the off-canvas Linux cluster inset. */
+	--size-titlebar-content-offset-linux: calc(
+		var(--size-titlebar-cluster-left-linux-panel) + var(--size-titlebar-cluster-width) +
+			var(--size-titlebar-content-gap)
 	);
 
 	/* Keep macOS traffic-light chrome aligned with the shared route topbar. */
@@ -418,6 +427,7 @@
 	--size-import-folder-dialog: 640px;
 	--size-composer-prompt-min: 112px;
 	--size-composer-start-button: 7.25rem;
+	--radius-chat-composer: 20px;
 	/* Task composer — inline toolbar values. Quieter than a filled control at rest
 	 * so the task field stays the only thing with visual weight. */
 	--color-bg-composer-chip: color-mix(in oklab, var(--input) 55%, transparent);

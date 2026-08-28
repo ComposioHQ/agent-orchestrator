@@ -1,6 +1,7 @@
 import type { AoBridge } from "../../preload";
-import { coerceLocale } from "../../shared/ui-locale";
+import { coerceUiSettings, DEFAULT_UI_SETTINGS } from "../../shared/ui-locale";
 export type { FeatureBuild } from "../../main/feature-builds";
+
 
 export const aoBridge: AoBridge =
 	window.ao ??
@@ -13,6 +14,8 @@ export const aoBridge: AoBridge =
 			},
 			scanImportFolder: async ({ path }) => ({ path, repos: [] }),
 			checkAncestorRepo: async () => undefined,
+			getPathForFile: () => "",
+			onOpenFolderPath: () => () => undefined,
 			onNewSessionShortcut: () => () => undefined,
 			onKeyboardShortcutsHelp: () => () => undefined,
 			onNewShellTerminalShortcut: () => () => undefined,
@@ -60,6 +63,17 @@ export const aoBridge: AoBridge =
 			stop: async () => ({ state: "stopped" }),
 			restart: async () => ({ state: "starting" }),
 			onStatus: () => () => undefined,
+		},
+		editorHandoff: {
+			getState: async () => ({
+				targets: [],
+				preferredEditorId: "cursor",
+				workspaceAvailable: false,
+				unavailableReason: "Desktop app is required to open a workspace.",
+			}),
+			open: async () => {
+				throw new Error("Desktop app is required to open a workspace.");
+			},
 		},
 		telemetry: {
 			getBootstrap: async () => null,
@@ -161,8 +175,8 @@ export const aoBridge: AoBridge =
 			set: async () => undefined,
 		},
 		uiSettings: {
-			get: async () => ({ locale: "en" as const }),
-			set: async (settings) => ({ locale: coerceLocale(settings.locale) }),
+			get: async () => ({ ...DEFAULT_UI_SETTINGS }),
+			set: async (settings) => coerceUiSettings({ ...DEFAULT_UI_SETTINGS, ...settings }),
 		},
 		keybindings: {
 			get: async () => ({}),
@@ -187,5 +201,15 @@ export const aoBridge: AoBridge =
 			signIn: async () => undefined,
 			signOut: async () => undefined,
 			onSessionChanged: () => () => undefined,
+		},
+		cloudCp: {
+			request: async () => {
+				throw new Error("AO Cloud requests require the desktop app.");
+			},
+			openStream: async () => {
+				throw new Error("AO Cloud event streams require the desktop app.");
+			},
+			closeStream: () => undefined,
+			onStreamEvent: () => () => undefined,
 		},
 	} satisfies AoBridge);

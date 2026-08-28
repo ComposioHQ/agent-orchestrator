@@ -20,7 +20,8 @@ var (
 	ErrInvalidPRRef = errors.New("session: invalid pr ref")
 	// ErrPRNotFound is returned when the SCM provider has no matching pull request.
 	ErrPRNotFound = errors.New("session: pr not found")
-	// ErrPRNotOpen is returned when a PR is draft, merged, or closed and therefore cannot be claimed.
+	// ErrPRNotOpen is returned when a PR is merged or closed and therefore cannot be claimed.
+	// Draft PRs are open work and remain claimable.
 	ErrPRNotOpen = errors.New("session: pr not open")
 	// ErrSCMUnavailable is returned when live SCM facts cannot be fetched.
 	ErrSCMUnavailable = errors.New("session: scm unavailable")
@@ -110,7 +111,10 @@ func (s *Service) ClaimPR(ctx context.Context, id domain.SessionID, ref string, 
 	if obs.PR.URL == "" {
 		obs.PR.URL = prURL
 	}
-	if obs.PR.Draft || obs.PR.Merged || obs.PR.Closed {
+	// Draft PRs are still open work: workers must be able to claim them without
+	// first marking the PR ready for review. Only terminal states are rejected;
+	// the draft fact itself is preserved on the persisted PR row below.
+	if obs.PR.Merged || obs.PR.Closed {
 		return ClaimPRResult{}, ErrPRNotOpen
 	}
 	reviewMode, err := s.enrichClaimReviews(ctx, refSpec, &obs)
@@ -150,6 +154,9 @@ func (s *Service) fetchClaimObservation(ctx context.Context, ref ports.SCMPRRef)
 		return ports.SCMObservation{}, ErrPRNotFound
 	}
 	obs := batch[0]
+	if errors.Is(obs.Error, ports.ErrSCMNotFound) {
+		return ports.SCMObservation{}, ErrPRNotFound
+	}
 	if !obs.Fetched {
 		return ports.SCMObservation{}, ErrSCMUnavailable
 	}
@@ -280,7 +287,7 @@ func claimRowsFromSCM(sessionID domain.SessionID, obs ports.SCMObservation, now 
 	for _, th := range obs.Review.Threads {
 		threads = append(threads, domain.PullRequestReviewThread{ThreadID: th.ID, Path: th.Path, Line: th.Line, Resolved: th.Resolved, IsBot: th.IsBot, UpdatedAt: now})
 		for _, c := range th.Comments {
-			comments = append(comments, domain.PullRequestComment{ThreadID: th.ID, ID: c.ID, Author: c.Author, File: th.Path, Line: th.Line, Body: c.Body, URL: c.URL, Resolved: th.Resolved, IsBot: c.IsBot || th.IsBot, CreatedAt: now, AutoInjectReview: sessionRecord.AutoInjectReview})
+			comments = append(comments, domain.PullRequestComment{ThreadID: th.ID, ReviewID: c.ReviewID, ID: c.ID, Author: c.Author, File: th.Path, Line: th.Line, Body: c.Body, URL: c.URL, Resolved: th.Resolved, IsBot: c.IsBot || th.IsBot, CreatedAt: now, AutoInjectReview: sessionRecord.AutoInjectReview})
 		}
 	}
 	return pr, checks, reviews, threads, comments

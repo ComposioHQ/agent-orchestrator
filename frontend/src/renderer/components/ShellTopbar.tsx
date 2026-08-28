@@ -12,26 +12,28 @@ import {
 	sessionIsActive,
 	type WorkspaceSession,
 } from "../types/workspace";
-import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import { cloudSessionsQueryKey, useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import {
 	clearTerminateSessionState,
 	useProjectTerminateSessionStates,
 	useTerminateSession,
 	useTerminateSessionState,
 } from "../hooks/useTerminateSession";
+import { spawnCloudOrchestrator } from "../lib/cloud-orchestrator";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { addRendererExceptionStep, captureRendererEvent, captureRendererException } from "../lib/telemetry";
-import { useUiStore } from "../stores/ui-store";
+import { sidebarOccupiesLayout, useUiStore } from "../stores/ui-store";
 import { OrchestratorIcon } from "./icons";
 import { OrchestratorActivityIndicator } from "./OrchestratorActivityIndicator";
 import { getAgentActivityView } from "../lib/session-presentation";
-import { isMacPlatform, usesBoardActionsInPanel } from "../lib/platform";
+import { isLinuxPlatform, isMacPlatform, usesBoardActionsInPanel } from "../lib/platform";
 import { cn } from "../lib/utils";
 import { SHELL_PANEL_SPRING } from "../lib/motion-spring";
 import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
 import { StatusPill } from "./StatusPill";
-import { TopbarButton, TopbarKillError, topbarHeaderClass, topbarProjectLabelClass } from "./TopbarButton";
+import { TopbarActionError, TopbarButton, topbarHeaderClass, topbarProjectLabelClass } from "./TopbarButton";
 import { SessionTerminationPopover } from "./SessionTerminationPopover";
+import { TopbarOpenEditorButton } from "./TopbarOpenEditorButton";
 import {
 	agentSwitchStatusVisual,
 	deriveSessionAgentSwitchPresentation,
@@ -57,9 +59,16 @@ const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperti
 // --size-titlebar-cluster-left (72) + --size-titlebar-cluster-width (3×28+2×4=92)
 // + --size-titlebar-content-gap (12) = 176; minus --size-center-panel-inset-mac (6) = 170.
 // Fullscreen: --space-2 (8) + 92 + 12 = 112.
+// Linux: --size-titlebar-cluster-left-linux (6) + 92 + 12 = 110; minus
+// --size-center-panel-inline-inset (16) because the framed panel keeps that gutter.
 const PADDING_DEFAULT = 18; // 1.125rem
 const PADDING_CLEARANCE = 170;
 const PADDING_CLEARANCE_FULLSCREEN = 112;
+// Off-canvas the Linux cluster shifts right to clear the framed panel border, so
+// measure the reserve from that inset, relative to the panel's own left edge:
+// --size-titlebar-cluster-left-linux-panel (26) + --size-titlebar-cluster-width
+// (92) + --size-titlebar-content-gap (12) - --size-center-panel-inline-inset (16).
+const PADDING_CLEARANCE_LINUX = 114;
 
 export function ShellTopbar({
 	embedded = false,
@@ -78,16 +87,19 @@ export function ShellTopbar({
 	);
 	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
 	const requestNewTask = useUiStore((state) => state.requestNewTask);
-	const isSidebarOpen = useUiStore((state) => state.isSidebarOpen);
+	const isSidebarOpen = useUiStore(sidebarOccupiesLayout);
 	const isFullScreen = useWindowFullScreen();
 	const prefersReducedMotion = useReducedMotion();
 	const mac = isMacPlatform();
+	const linux = isLinuxPlatform();
 	const targetPaddingLeft =
-		!embedded && mac && !isSidebarOpen
+		!embedded && !isSidebarOpen && mac
 			? isFullScreen
 				? PADDING_CLEARANCE_FULLSCREEN
 				: PADDING_CLEARANCE
-			: PADDING_DEFAULT;
+			: !embedded && !isSidebarOpen && linux
+				? PADDING_CLEARANCE_LINUX
+				: PADDING_DEFAULT;
 	const paddingLeft = useMotionValue(targetPaddingLeft);
 	useEffect(() => {
 		const controls = animate(
@@ -150,6 +162,26 @@ export function ShellTopbar({
 				to: "/projects/$projectId/sessions/$sessionId",
 				params: { projectId, sessionId: orchestrator.id },
 			});
+			return;
+		}
+		// Cloud projects carry no local orchestrator-agent config; spawn the
+		// orchestrator as a cloud session in its own sandbox instead of falling
+		// through to the project-settings page.
+		if (project?.kind === "cloud") {
+			setIsSpawning(true);
+			try {
+				const sessionId = await spawnCloudOrchestrator(queryClient, projectId);
+				await queryClient.invalidateQueries({ queryKey: cloudSessionsQueryKey });
+				void navigate({
+					to: "/projects/$projectId/sessions/$sessionId",
+					params: { projectId, sessionId },
+				});
+			} catch (error) {
+				console.error("Failed to spawn cloud orchestrator:", error);
+				setBoardSpawnError(error instanceof Error ? error.message : t("shell.couldNotSpawn"));
+			} finally {
+				setIsSpawning(false);
+			}
 			return;
 		}
 		if (!hasConfiguredOrchestratorAgent(project)) {
@@ -224,9 +256,9 @@ export function ShellTopbar({
 				{!boardActionsInPanel && isProjectBoardRoute ? (
 					<>
 						{boardSpawnError ? (
-							<TopbarKillError className="max-w-content-max truncate" title={boardSpawnError}>
+							<TopbarActionError className="max-w-content-max truncate" title={boardSpawnError}>
 								{boardSpawnError}
-							</TopbarKillError>
+							</TopbarActionError>
 						) : null}
 						<Tooltip>
 							<TooltipTrigger asChild>
@@ -316,6 +348,22 @@ export function ShellTopbar({
 									<TooltipContent side="bottom">{t("shell.openKanban")}</TooltipContent>
 								</Tooltip>
 							</>
+						) : null}
+						{/* Open-in-editor leads the session actions: it is the only
+						    non-destructive one, and it must sit left of Kill. Kept outside
+						    the local-actions group because Electron main independently
+						    reports whether this session has a live workspace. */}
+						{session ? (
+							// Keyed per session so a stale launch error does not carry over
+							// when switching sessions. The prefix keeps it distinct from the
+							// kill button's key: identical sibling keys make React duplicate
+							// the nodes.
+							<TopbarOpenEditorButton
+								key={`open-workspace-${session.id}`}
+								sessionId={session.id}
+								projectId={session.workspaceId}
+								style={noDragStyle}
+							/>
 						) : null}
 						{/* Local worker actions share one tight control group. Navigation
 						    remains a separate visual target in the outer top-bar row. */}
@@ -431,7 +479,7 @@ export function TopbarKillButton({
 					</TopbarButton>
 				}
 			/>
-			{error ? <TopbarKillError>{error}</TopbarKillError> : null}
+			{error ? <TopbarActionError>{error}</TopbarActionError> : null}
 		</div>
 	);
 }
@@ -445,9 +493,9 @@ function ProjectTerminationFeedback({ projectId }: { projectId: string | undefin
 		<div aria-label={t("shell.sessionTerminationStatus")} className="flex max-w-content-max items-center gap-2">
 			{states.map((state) =>
 				state.error ? (
-					<TopbarKillError className="max-w-48 truncate" key={state.session.id} title={state.error}>
+					<TopbarActionError className="max-w-48 truncate" key={state.session.id} title={state.error}>
 						{state.session.title}: {state.error}
-					</TopbarKillError>
+					</TopbarActionError>
 				) : (
 					<span
 						className="max-w-40 truncate text-caption text-muted-foreground"

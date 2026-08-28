@@ -53,6 +53,37 @@ export function getAttentionZoneViewForZone(
 	return getPortableAttentionZoneViewForZone(zone, translator(t));
 }
 
+export type SessionStatusDotView = {
+	className: string;
+	breathe: boolean;
+};
+
+// The session dot carries two independent signals. Colour comes from the board
+// section represented by the SCM state, which survives a running agent —
+// `status` is activity-first, so it collapses to `working` the moment an agent
+// wakes and would otherwise take every pull request tone with it. Merged keeps
+// its split-section tone instead of sharing Ready to merge's tone.
+//
+// Motion stays on raw agent activity. A no-PR idle session is the exception to
+// the preserved section colour: when its agent starts working it blinks blue.
+export function getSessionStatusDotView(
+	session: { activity?: SessionActivity | null; scmStatus?: SessionStatus; status: SessionStatus },
+	t: TFunction = appI18n.t,
+): SessionStatusDotView {
+	const working = isAgentActivityWorking(session.activity);
+	const sectionStatus = session.scmStatus ?? session.status;
+	const toneStatus = sectionStatus === "idle" && working ? "working" : sectionStatus;
+	const className =
+		toneStatus === "idle" || toneStatus === "merged"
+			? getSessionStatusView(toneStatus, t).dotClassName
+			: getAttentionZoneView(toneStatus, t).dotClassName;
+
+	return {
+		className,
+		breathe: working,
+	};
+}
+
 export function getSessionTimelinePillView(
 	status: SessionTimelinePillStatus,
 	t: TFunction = appI18n.t,

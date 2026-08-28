@@ -22,17 +22,39 @@ func TestDeriverTokensAreKnownHarnesses(t *testing.T) {
 }
 
 func TestSupportsHarness(t *testing.T) {
-	for _, h := range []domain.AgentHarness{domain.HarnessCodex, domain.HarnessClaudeCode, domain.HarnessGrok, domain.HarnessMuse, domain.HarnessOpenCode, domain.HarnessKimi, domain.HarnessVibe, domain.HarnessPrimeAgent} {
+	for _, h := range []domain.AgentHarness{domain.HarnessCodex, domain.HarnessClaudeCode, domain.HarnessGrok, domain.HarnessMuse, domain.HarnessOpenCode, domain.HarnessKimi, domain.HarnessVibe, domain.HarnessPrimeAgent, domain.HarnessAmp, domain.HarnessPi, domain.HarnessAuggie} {
 		if !SupportsHarness(h) {
 			t.Errorf("SupportsHarness(%q) = false, want true", h)
 		}
 	}
 	// Harnesses whose adapters install no hooks must read as unsupported so
 	// their silence never derives no_signal.
-	for _, h := range []domain.AgentHarness{domain.HarnessAmp, domain.HarnessAider, domain.HarnessCrush, domain.AgentHarness("")} {
+	for _, h := range []domain.AgentHarness{domain.HarnessAider, domain.HarnessCrush, domain.AgentHarness("")} {
 		if SupportsHarness(h) {
 			t.Errorf("SupportsHarness(%q) = true, want false", h)
 		}
+	}
+}
+
+func TestAmpPiAndAuggieDispatchActivity(t *testing.T) {
+	tests := []struct {
+		agent   string
+		event   string
+		payload string
+		want    domain.ActivityState
+	}{
+		{agent: "amp", event: "thread-state", payload: `{"state":"awaiting-approval"}`, want: domain.ActivityWaitingInput},
+		{agent: "pi", event: "user-prompt-submit", payload: `{}`, want: domain.ActivityActive},
+		{agent: "auggie", event: "stop", payload: `{"agent_stop_cause":"error"}`, want: domain.ActivityWaitingInput},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.agent, func(t *testing.T) {
+			got, ok := Derive(tt.agent, tt.event, []byte(tt.payload))
+			if !ok || got != tt.want {
+				t.Fatalf("Derive(%q, %q) = (%q, %v), want (%q, true)", tt.agent, tt.event, got, ok, tt.want)
+			}
+		})
 	}
 }
 
@@ -58,6 +80,29 @@ func TestPrimeAgentDerivesManagedExtensionActivity(t *testing.T) {
 				t.Fatalf("Derive(prime-agent, %q) = (%q, %v), want (%q, %v)", tt.event, got, ok, tt.want, tt.wantOK)
 			}
 		})
+	}
+}
+
+func TestCursorDerivesManagedHookActivity(t *testing.T) {
+	tests := []struct {
+		event string
+		want  domain.ActivityState
+	}{
+		{"session-start", domain.ActivityActive},
+		{"user-prompt-submit", domain.ActivityActive},
+		{"stop", domain.ActivityIdle},
+		{"after-shell-execution", domain.ActivityActive},
+	}
+	for _, tt := range tests {
+		t.Run(tt.event, func(t *testing.T) {
+			got, ok := Derive("cursor", tt.event, []byte(`{}`))
+			if !ok || got != tt.want {
+				t.Fatalf("Derive(cursor, %q) = (%q, %v), want (%q, true)", tt.event, got, ok, tt.want)
+			}
+		})
+	}
+	if got, ok := Derive("cursor", "before-shell-execution", []byte(`{}`)); ok {
+		t.Fatalf("Derive(cursor, before-shell-execution) = (%q, true), want no activity from deriver", got)
 	}
 }
 

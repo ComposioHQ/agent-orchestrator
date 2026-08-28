@@ -86,6 +86,8 @@ describe("createEventTransport", () => {
 		expect(EventSourceStub.instances[0].url).toBe("http://127.0.0.1:3001/api/v1/events");
 		// All CDC event types plus onmessage are wired up.
 		expect(EventSourceStub.instances[0].listeners).toContain("session_updated");
+		expect(EventSourceStub.instances[0].listeners).toContain("review_run_created");
+		expect(EventSourceStub.instances[0].listeners).toContain("review_run_updated");
 		expect(EventSourceStub.instances[0].onmessage).toBeTypeOf("function");
 	});
 
@@ -138,6 +140,26 @@ describe("createEventTransport", () => {
 			expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["session-agent-switches"] });
 			expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["session-scm-summary"] });
 			expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["session-usage"] });
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	// A reconnect resumes via Last-Event-ID. When the event log has been truncated
+	// or replaced, that cursor is ahead of head and the daemon starts the client at
+	// head instead of replaying — correct, but it means no conversation CDC arrives
+	// to invalidate an open chat. EventSource cannot read the response header that
+	// reports the clamp, so reopening must refresh conversations unconditionally.
+	it("refreshes open conversations on reopen, not just workspaces", () => {
+		vi.useFakeTimers();
+		try {
+			const queryClient = fakeQueryClient();
+			createEventTransport(queryClient).connect();
+			EventSourceStub.instances[0].onopen?.();
+
+			vi.advanceTimersByTime(200);
+
+			expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["conversation"] });
 		} finally {
 			vi.useRealTimers();
 		}

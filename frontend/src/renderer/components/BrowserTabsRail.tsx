@@ -26,9 +26,9 @@ import {
 	verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { Globe2, Pin, PinOff, Plus, X } from "lucide-react";
+import { Globe2, History, Pin, PinOff, Plus, X } from "lucide-react";
 import type { BrowserTabState } from "../../main/browser-view-host";
-import { MAX_BROWSER_TABS } from "../../shared/browser-tabs";
+import type { ClosedBrowserTab } from "../hooks/useBrowserView";
 import { browserTabLabel } from "../lib/browser-tab-label";
 import { useResizable } from "../hooks/useResizable";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
@@ -61,10 +61,24 @@ type BrowserTabsRailProps = {
 	onCloseTab: (tabId: string) => Promise<void>;
 	onOpenTab: () => Promise<void>;
 	onReorderTabs: (orderedIds: string[]) => void;
+	closedTabs: ClosedBrowserTab[];
+	onReopenClosedTab: (tabId: string) => Promise<void>;
 };
 
 export const BrowserTabsRail = forwardRef<BrowserTabsRailHandle, BrowserTabsRailProps>(function BrowserTabsRail(
-	{ tabs, activeTabId, poppedOut, pinned, onPinnedChange, onSelectTab, onCloseTab, onOpenTab, onReorderTabs },
+	{
+		tabs,
+		activeTabId,
+		poppedOut,
+		pinned,
+		onPinnedChange,
+		onSelectTab,
+		onCloseTab,
+		onOpenTab,
+		onReorderTabs,
+		closedTabs,
+		onReopenClosedTab,
+	},
 	ref,
 ) {
 	const { t } = useTranslation();
@@ -190,6 +204,14 @@ export const BrowserTabsRail = forwardRef<BrowserTabsRailHandle, BrowserTabsRail
 		[onCloseTab],
 	);
 
+	const handleReopenClosedTab = useCallback(
+		(tabId: string) => {
+			closeFlyout(true);
+			void onReopenClosedTab(tabId);
+		},
+		[closeFlyout, onReopenClosedTab],
+	);
+
 	const sensors = useSensors(
 		useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
 		useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
@@ -211,7 +233,6 @@ export const BrowserTabsRail = forwardRef<BrowserTabsRailHandle, BrowserTabsRail
 	const onlyTab = tabs.length === 1;
 	const tabIds = tabs.map((tab) => tab.id);
 	const closeTitle = t("browser.onlyTab");
-	const canOpenTab = tabs.length < MAX_BROWSER_TABS;
 
 	return (
 		<div
@@ -251,7 +272,6 @@ export const BrowserTabsRail = forwardRef<BrowserTabsRailHandle, BrowserTabsRail
 						"text-muted-foreground hover:bg-interactive-hover hover:text-foreground",
 						"disabled:pointer-events-none disabled:opacity-50",
 					)}
-					disabled={!canOpenTab}
 					onClick={() => void onOpenTab()}
 					type="button"
 				>
@@ -308,6 +328,7 @@ export const BrowserTabsRail = forwardRef<BrowserTabsRailHandle, BrowserTabsRail
 						</SortableContext>
 					</DndContext>
 				)}
+				{expanded ? <ClosedTabsSection closedTabs={closedTabs} onReopen={handleReopenClosedTab} /> : null}
 			</nav>
 			{expanded ? (
 				<div
@@ -378,6 +399,7 @@ export const BrowserTabsRail = forwardRef<BrowserTabsRailHandle, BrowserTabsRail
 								tab={tab}
 							/>
 						))}
+						<ClosedTabsSection closedTabs={closedTabs} onReopen={handleReopenClosedTab} />
 					</div>
 				</div>
 			) : null}
@@ -407,6 +429,53 @@ function TabFavicon({ className, tab }: { className: string; tab: BrowserTabStat
 	// never spill past its box into the row next to it.
 	if (tab.favicon) return <img alt="" className={cn("shrink-0 object-cover", className)} src={tab.favicon} />;
 	return <Globe2 aria-hidden="true" className={cn("shrink-0 text-passive", className)} />;
+}
+
+// Only rendered where there's room for a label (expanded rail, docked flyout)
+// — the icon-only pinned rail has no space for a second, distinct row style,
+// and closed tabs are inherently distinct from "click to switch to this open
+// tab," so they don't belong crammed into the icon list.
+function ClosedTabsSection({
+	closedTabs,
+	onReopen,
+}: {
+	closedTabs: ClosedBrowserTab[];
+	onReopen: (tabId: string) => void;
+}) {
+	const { t } = useTranslation();
+	if (closedTabs.length === 0) return null;
+	return (
+		<div className="border-t border-border">
+			<div className="flex h-6 shrink-0 items-center px-1.5 font-mono text-[10px] font-semibold uppercase tracking-wide text-passive">
+				{t("browser.recentlyClosed")}
+			</div>
+			{closedTabs.map((tab) => {
+				const label = browserTabLabel(tab.title, tab.url);
+				const reopenLabel = t("browser.reopenTab", { title: label.title });
+				return (
+					<button
+						aria-label={reopenLabel}
+						className={cn(
+							"flex h-8 w-full items-center gap-1.5 p-1.5 text-left text-sm text-muted-foreground opacity-70 transition-[opacity,background-color,color]",
+							"hover:bg-interactive-hover hover:text-foreground hover:opacity-100",
+							"disabled:pointer-events-none disabled:opacity-40",
+						)}
+						key={tab.id}
+						onClick={() => onReopen(tab.id)}
+						title={reopenLabel}
+						type="button"
+					>
+						{tab.favicon ? (
+							<img alt="" className="size-icon-base shrink-0 object-cover" src={tab.favicon} />
+						) : (
+							<History aria-hidden="true" className="size-icon-base shrink-0" />
+						)}
+						<span className="min-w-0 flex-1 truncate">{label.title}</span>
+					</button>
+				);
+			})}
+		</div>
+	);
 }
 
 function IconTabRow({ active, chrome, onSelect, tab }: TabRowProps) {
@@ -476,8 +545,8 @@ function ExpandedTabRow({ active, chrome, closeTitle, onClose, onSelect, onlyTab
 			<button
 				aria-label={closeLabel}
 				className={cn(
-					"grid size-5 shrink-0 place-items-center overflow-hidden text-passive opacity-0",
-					"transition-opacity hover:bg-interactive-hover hover:text-foreground",
+					"mr-1.5 grid size-control-sm shrink-0 place-items-center overflow-hidden rounded-sm text-passive opacity-0",
+					"transition-[opacity,background-color,color] hover:bg-interactive-hover hover:text-foreground",
 					"group-hover/tab-row:opacity-100 group-focus-within/tab-row:opacity-100",
 					"disabled:pointer-events-none",
 				)}

@@ -319,7 +319,7 @@ describe("provider error", () => {
 			/>,
 		);
 		expect(screen.getByText("Reconnecting... [1/5]")).toBeInTheDocument();
-		expect(screen.getByText(/You have no credits remaining/i)).toBeInTheDocument();
+		expect(screen.queryByText(/You have no credits remaining/i)).not.toBeInTheDocument();
 		// The raw envelope must not paint as the row label — that is what overflowed the column.
 		expect(screen.queryByText(/codexErrorInfo/i)).not.toBeInTheDocument();
 		expect(screen.queryByText(/provider error:/i)).not.toBeInTheDocument();
@@ -341,7 +341,7 @@ describe("provider error", () => {
 			/>,
 		);
 		expect(screen.getByText("Reconnecting... [1/5]")).toBeInTheDocument();
-		expect(screen.getByText(/You have no credits remaining/i)).toBeInTheDocument();
+		expect(screen.queryByText(/You have no credits remaining/i)).not.toBeInTheDocument();
 		expect(screen.queryByText(/codexErrorInfo/i)).not.toBeInTheDocument();
 	});
 
@@ -445,23 +445,49 @@ describe("file changes", () => {
 
 	it("shows a status per file, which no client could read before", async () => {
 		render(<ActivityRow activity={edit} />);
-		await userEvent.click(screen.getByRole("button", { name: /Edited/ }));
-		expect(screen.getByLabelText("modified")).toBeInTheDocument();
-		expect(screen.getByLabelText("deleted")).toBeInTheDocument();
+		await userEvent.click(screen.getByRole("button", { name: /Edited 2 files/ }));
+		expect(screen.getByText("modified")).toBeInTheDocument();
+		expect(screen.getByText("deleted")).toBeInTheDocument();
 	});
 
 	it("opens a file's own patch", async () => {
 		render(<ActivityRow activity={edit} />);
-		await userEvent.click(screen.getByRole("button", { name: /Edited/ }));
+		await userEvent.click(screen.getByRole("button", { name: /Edited 2 files/ }));
 		await userEvent.click(screen.getByRole("button", { name: /src\/a\.ts/ }));
 		expect(screen.getByText(/@@ -1 \+1,2 @@/)).toBeInTheDocument();
+	});
+
+	it("opens a single-file edit straight onto its patch without listing the file again", async () => {
+		render(
+			<ActivityRow
+				activity={activity({
+					activityKind: "file_change",
+					summary: "Edited 1 file",
+					detail: {
+						files: [
+							{
+								path: "src/FAQ.tsx",
+								status: "modified",
+								additions: 1,
+								deletions: 1,
+								patch: "@@ -1 +1 @@\n-old\n+new\n",
+							},
+						],
+					},
+				})}
+			/>,
+		);
+		await userEvent.click(screen.getByRole("button", { name: /Edited/ }));
+		expect(screen.getByText(/@@ -1 \+1 @@/)).toBeInTheDocument();
+		// Header already shows the basename; do not repeat "Edited FAQ.tsx" in the body.
+		expect(screen.getAllByText("FAQ.tsx")).toHaveLength(1);
 	});
 
 	// A file with no patch is not a button: a control that does nothing when pressed
 	// is worse than plain text.
 	it("does not offer to open a file that carries no patch", async () => {
 		render(<ActivityRow activity={edit} />);
-		await userEvent.click(screen.getByRole("button", { name: /Edited/ }));
+		await userEvent.click(screen.getByRole("button", { name: /Edited 2 files/ }));
 		expect(screen.queryByRole("button", { name: /src\/gone\.ts/ })).not.toBeInTheDocument();
 	});
 
@@ -486,10 +512,7 @@ describe("file changes", () => {
 				})}
 			/>,
 		);
-		await userEvent.click(screen.getByRole("button", { name: /Edited/ }));
-		// The row's own header names the single file too, so the file's disclosure is
-		// the last of the two.
-		await userEvent.click(screen.getAllByRole("button", { name: /src\/big\.ts/ }).at(-1)!);
+		await userEvent.click(screen.getByRole("button", { name: /Created/ }));
 		expect(screen.getByText(/longer than AO stores/i)).toBeInTheDocument();
 	});
 
@@ -510,8 +533,16 @@ describe("file changes", () => {
 				})}
 			/>,
 		);
-		await userEvent.click(screen.getByRole("button", { name: /Edited/ }));
-		expect(screen.getByText("src/legacy.ts")).toBeInTheDocument();
-		expect(screen.getByLabelText("modified")).toBeInTheDocument();
+		await userEvent.click(screen.getByRole("button", { name: /Edited 2 files/ }));
+		expect(screen.getByText("legacy.ts")).toBeInTheDocument();
+		expect(screen.getByText("modified")).toBeInTheDocument();
+	});
+
+	it("shows the full path when hovering an edited basename", async () => {
+		const user = userEvent.setup();
+		render(<ActivityRow activity={edit} />);
+		await user.click(screen.getByRole("button", { name: /Edited 2 files/ }));
+		await user.hover(screen.getByText("a.ts"));
+		expect(await screen.findByRole("tooltip")).toHaveTextContent("src/a.ts");
 	});
 });

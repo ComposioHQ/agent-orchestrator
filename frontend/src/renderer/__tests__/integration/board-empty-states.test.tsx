@@ -28,7 +28,17 @@ vi.mock("../../lib/api-client", () => ({
 }));
 
 vi.mock("../../lib/bridge", () => ({
-	aoBridge: { app: { chooseDirectory: chooseDirectoryMock } },
+	aoBridge: {
+		app: { chooseDirectory: chooseDirectoryMock },
+		// CreateProjectFlow reads the cloud session (Local | Cloud gating);
+		// signed-out keeps these tests on the local-only flow.
+		cloud: {
+			getSession: async () => null,
+			signIn: async () => undefined,
+			signOut: async () => undefined,
+			onSessionChanged: () => () => undefined,
+		},
+	},
 }));
 
 vi.mock("@tanstack/react-router", async (importOriginal) => {
@@ -47,6 +57,20 @@ function respondWith(projects: Project[], sessions: Session[]) {
 	getMock.mockImplementation(async (url: string) => {
 		if (url === "/api/v1/projects") return { data: { projects }, error: undefined };
 		if (url === "/api/v1/sessions") return { data: { sessions }, error: undefined };
+		if (url === "/api/v1/system/requirements") {
+			return {
+				data: {
+					ready: true,
+					requirements: [
+						{ id: "git", label: "git", satisfied: true, required: true, detail: "/usr/bin/git" },
+						{ id: "tmux", label: "tmux", satisfied: true, required: true, detail: "/usr/bin/tmux" },
+						{ id: "harness", label: "agent harness", satisfied: true, required: true, detail: "Claude Code" },
+						{ id: "gh", label: "gh", satisfied: true, required: false, detail: "/usr/bin/gh" },
+					],
+				},
+				error: undefined,
+			};
+		}
 		return { data: undefined, error: undefined };
 	});
 }
@@ -124,7 +148,19 @@ beforeEach(() => {
 });
 
 describe("global board first launch", () => {
-	it("shows the startup loader instead of import while the daemon is booting", async () => {
+	it("runs the lightweight requirements preflight while loading the board", async () => {
+		respondWith([], []);
+		renderBoard(<SessionsBoard />);
+
+		await waitFor(() => {
+			expect(getMock.mock.calls.some(([url]) => url === "/api/v1/projects")).toBe(true);
+			expect(getMock.mock.calls.some(([url]) => url === "/api/v1/sessions")).toBe(true);
+		});
+		expect(await screen.findByText("Add code to Agent Orchestrator")).toBeInTheDocument();
+		expect(getMock.mock.calls.some(([url]) => url === "/api/v1/system/requirements")).toBe(true);
+	});
+
+	it("renders the board shell while the daemon is booting", async () => {
 		respondWith([], []);
 		lastQueryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 		lastShell = {
@@ -142,12 +178,8 @@ describe("global board first launch", () => {
 			</QueryClientProvider>,
 		);
 
-		expect(await screen.findByTestId("daemon-startup-loader")).toHaveClass("ao-startup-screen");
-		expect(screen.getByRole("status", { name: "Agent Orchestrator is starting" })).toBeInTheDocument();
-		expect(screen.getByText("Agent Orchestrator")).toBeInTheDocument();
-		expect(screen.getByText("Starting local services")).toHaveAttribute("aria-hidden", "true");
-		expect(screen.queryByText("Add code to Agent Orchestrator")).not.toBeInTheDocument();
-		expect(columnCount()).toBe(0);
+		expect(await screen.findByTestId("board")).toBeInTheDocument();
+		expect(screen.getByTestId("daemon-startup-loader")).toBeInTheDocument();
 	});
 
 	it("shows the import chooser instead of empty columns when no projects exist", async () => {

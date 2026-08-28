@@ -1,6 +1,8 @@
 import { createFileRoute, Outlet, useMatchRoute, useNavigate, useParams } from "@tanstack/react-router";
 import { isCancelledError, useQueryClient } from "@tanstack/react-query";
-import { type CSSProperties, useCallback, useEffect, useRef, useState } from "react";
+import { type CSSProperties, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { FolderPlus } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { CommandPalette } from "../components/CommandPalette";
 import { CenterPanelShell } from "../components/CenterPanelShell";
 import { DaemonFailureBanner } from "../components/DaemonFailureBanner";
@@ -13,12 +15,11 @@ import { KeyboardShortcutsSettingsDialog } from "../components/settings/Keyboard
 import { ShellTopbar } from "../components/ShellTopbar";
 import { SessionTopbarProvider } from "../components/SessionTopbarPortal";
 import { OrchestratorReplacementDialog } from "../components/OrchestratorReplacementDialog";
-import { Sidebar } from "../components/Sidebar";
+import { Sidebar, SIDEBAR_DEFAULT_WIDTH } from "../components/Sidebar";
 import { SidebarProvider } from "../components/ui/sidebar";
 import { TitlebarNav } from "../components/TitlebarNav";
 import { WindowTitlebar } from "../components/WindowTitlebar";
 import { TerminalCacheProvider } from "../components/TerminalPane";
-import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
 import { agentModelsQueryOptions } from "../hooks/useAgentModelsQuery";
 import { useDaemonStatus } from "../hooks/useDaemonStatus";
 import { useOpenShellTerminal } from "../hooks/useShellTerminals";
@@ -35,6 +36,7 @@ import { applyDocumentTheme, applyDocumentThemeStyle } from "../lib/theme";
 import { aoBridge } from "../lib/bridge";
 import { handleModifierLinkClick } from "../lib/external-link-policy";
 import { cn } from "../lib/utils";
+import { adaptiveSidebarShouldCompact } from "../lib/adaptive-sidebar";
 import {
 	isLinuxPlatform,
 	isMacPlatform,
@@ -42,7 +44,7 @@ import {
 	usesFramedAppTopbar,
 	hidesShellTopbar,
 } from "../lib/platform";
-import { useUiStore } from "../stores/ui-store";
+import { sidebarIsCompact, sidebarIsVisible, sidebarOccupiesLayout, useUiStore } from "../stores/ui-store";
 import { matchesRendererShortcut } from "../stores/keybindings-store";
 import { sessionIsActive, toProjectKind, type WorkspaceSummary } from "../types/workspace";
 import type { components } from "../../api/schema";
@@ -62,6 +64,11 @@ export const Route = createFileRoute("/_shell")({
 
 function errorMessage(error: unknown) {
 	return error instanceof Error ? error.message : "Could not load projects";
+}
+
+function expandedSidebarWidthPx(): number {
+	const inlineWidth = Number.parseFloat(document.documentElement.style.getPropertyValue("--ao-sidebar-w"));
+	return Number.isFinite(inlineWidth) && inlineWidth > 0 ? inlineWidth : SIDEBAR_DEFAULT_WIDTH;
 }
 
 type CreateProjectConfigInput = {
@@ -91,6 +98,7 @@ const shellTopbarHiddenByPlatform = hidesShellTopbar();
 function ShellLayout() {
 	// Reports how many agents this install has available, once per launch.
 	useAgentInventoryTelemetry();
+	const { t } = useTranslation();
 	const navigate = useNavigate();
 	const matchRoute = useMatchRoute();
 	const queryClient = useQueryClient();
@@ -99,15 +107,53 @@ function ShellLayout() {
 	const daemonStatus = useDaemonStatus(queryClient);
 	const [workspaceStartupState, setWorkspaceStartupState] = useState<"loading" | "ready" | "error">("loading");
 	const workspaceStartupBaselineRef = useRef(0);
-	const agentCatalogPortRef = useRef<number | undefined>(undefined);
-	const { themePreference, resolvedTheme, themeStyle, isSidebarOpen, toggleSidebar } = useUiStore();
+	const themePreference = useUiStore((state) => state.themePreference);
+	const resolvedTheme = useUiStore((state) => state.resolvedTheme);
+	const themeStyle = useUiStore((state) => state.themeStyle);
+	const isSidebarOpen = useUiStore(sidebarIsVisible);
+	const toggleSidebar = useUiStore((state) => state.toggleSidebar);
+	const isSidebarCompact = useUiStore(sidebarIsCompact);
+	const sidebarHasLayout = useUiStore(sidebarOccupiesLayout);
+	const sidebarWorkspaceDemandPx = useUiStore((state) => state.sidebarWorkspaceDemandPx);
+	const setSidebarAutoCollapsed = useUiStore((state) => state.setSidebarAutoCollapsed);
+	const clearSidebarAutoCollapse = useUiStore((state) => state.clearSidebarAutoCollapse);
+	const shellContentRowRef = useRef<HTMLDivElement | null>(null);
 	const syncSystemTheme = useUiStore((state) => state.syncSystemTheme);
 	const requestNewTask = useUiStore((state) => state.requestNewTask);
 	const requestCreateProject = useUiStore((state) => state.requestCreateProject);
+	const requestCreateProjectFromPath = useUiStore((state) => state.requestCreateProjectFromPath);
 	const requestNewShellTerminal = useUiStore((state) => state.requestNewShellTerminal);
 	const newShellTerminalNonce = useUiStore((state) => state.newShellTerminalNonce);
 	const setActiveShellTerminal = useUiStore((state) => state.setActiveShellTerminal);
 	const openShellTerminal = useOpenShellTerminal();
+	// Session surfaces publish only their required center-workspace width. The
+	// persistent shell owns the single responsive decision, measured against the
+	// invariant outer row so sidebar animation cannot feed back into itself.
+	useLayoutEffect(() => {
+		if (sidebarWorkspaceDemandPx === null) {
+			clearSidebarAutoCollapse();
+			return;
+		}
+		const row = shellContentRowRef.current;
+		if (!row) return;
+		const update = () => {
+			const rowWidth = row.clientWidth || row.getBoundingClientRect().width;
+			const expandedContentWidth = Math.max(0, rowWidth - expandedSidebarWidthPx());
+			const current = useUiStore.getState().isSidebarAutoCollapsed;
+			setSidebarAutoCollapsed(
+				adaptiveSidebarShouldCompact({
+					expandedContentWidth,
+					workspaceDemand: sidebarWorkspaceDemandPx,
+					isCompact: current,
+				}),
+			);
+		};
+		update();
+		if (typeof ResizeObserver === "undefined") return;
+		const observer = new ResizeObserver(update);
+		observer.observe(row);
+		return () => observer.disconnect();
+	}, [clearSidebarAutoCollapse, setSidebarAutoCollapsed, sidebarWorkspaceDemandPx]);
 	// Single subscription for sidebar clearance + drag strip (macOS no-ops inside the hook).
 	const isFullScreen = useWindowFullScreen();
 	// Drag is on immediately for a normal windowed launch. After leaving fullscreen,
@@ -138,13 +184,67 @@ function ShellLayout() {
 	const handledShellNonceRef = useRef(newShellTerminalNonce);
 	const [isKeyboardShortcutsOpen, setIsKeyboardShortcutsOpen] = useState(false);
 	const [isKeyboardShortcutsSettingsOpen, setIsKeyboardShortcutsSettingsOpen] = useState(false);
-	const [isSidebarPeekOpen, setIsSidebarPeekOpen] = useState(false);
-	const sidebarPeekCloseTimerRef = useRef<number | undefined>(undefined);
 	const routeParams = useParams({ strict: false }) as { projectId?: string; sessionId?: string };
 	useEffect(() => {
 		document.addEventListener("click", handleModifierLinkClick);
 		return () => document.removeEventListener("click", handleModifierLinkClick);
 	}, []);
+	// Drop a folder anywhere in the app window to add it as a project, mirroring
+	// VS Code's "drop a folder to open it". A depth counter (not a relatedTarget
+	// check) tracks dragenter/dragleave so the overlay doesn't flicker as the
+	// pointer crosses child-element boundaries. XtermTerminal's own drop handler
+	// only swallows (preventDefault/stopPropagation) a drop that is NOT a
+	// directory — a dropped folder is left untouched so it bubbles here even
+	// when it lands on an active terminal pane.
+	const [isDragActive, setIsDragActive] = useState(false);
+	const dragDepthRef = useRef(0);
+	useEffect(() => {
+		const isFileDrag = (event: DragEvent) => Array.from(event.dataTransfer?.types ?? []).includes("Files");
+		const firstEntryIsDirectory = (event: DragEvent) => {
+			const item = event.dataTransfer?.items?.[0];
+			return item?.webkitGetAsEntry?.()?.isDirectory ?? false;
+		};
+		const handleDragEnter = (event: DragEvent) => {
+			if (!isFileDrag(event)) return;
+			event.preventDefault();
+			dragDepthRef.current += 1;
+			if (dragDepthRef.current === 1 && firstEntryIsDirectory(event)) setIsDragActive(true);
+		};
+		const handleDragOver = (event: DragEvent) => {
+			if (!isFileDrag(event)) return;
+			event.preventDefault();
+			if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+		};
+		const handleDragLeave = (event: DragEvent) => {
+			if (!isFileDrag(event)) return;
+			dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+			if (dragDepthRef.current === 0) setIsDragActive(false);
+		};
+		const handleDrop = (event: DragEvent) => {
+			if (!isFileDrag(event)) return;
+			event.preventDefault();
+			dragDepthRef.current = 0;
+			setIsDragActive(false);
+			const item = event.dataTransfer?.items?.[0];
+			if (!item?.webkitGetAsEntry?.()?.isDirectory) return;
+			const file = item.getAsFile();
+			if (!file) return;
+			// Must be synchronous, on the File taken directly from dataTransfer, in
+			// the same tick as the native drop event — see preload.ts's comment.
+			const path = aoBridge.app.getPathForFile(file);
+			if (path) requestCreateProjectFromPath(path);
+		};
+		window.addEventListener("dragenter", handleDragEnter);
+		window.addEventListener("dragover", handleDragOver);
+		window.addEventListener("dragleave", handleDragLeave);
+		window.addEventListener("drop", handleDrop);
+		return () => {
+			window.removeEventListener("dragenter", handleDragEnter);
+			window.removeEventListener("dragover", handleDragOver);
+			window.removeEventListener("dragleave", handleDragLeave);
+			window.removeEventListener("drop", handleDrop);
+		};
+	}, [requestCreateProjectFromPath]);
 	// Project in scope for a new-session shortcut: the route's project, or the
 	// workspace owning the open session (so the shortcut works from a worker's
 	// detail view, where the URL carries only a sessionId).
@@ -202,27 +302,6 @@ function ShellLayout() {
 		!usesPreviewWorkspaceData &&
 		!daemonStatus.code &&
 		(daemonStatus.state !== "ready" || workspaceStartupState === "loading");
-	const cancelSidebarPeekClose = useCallback(() => {
-		if (sidebarPeekCloseTimerRef.current === undefined) return;
-		window.clearTimeout(sidebarPeekCloseTimerRef.current);
-		sidebarPeekCloseTimerRef.current = undefined;
-	}, []);
-
-	const previewSidebar = useCallback(() => {
-		if (isSidebarOpen) return;
-		cancelSidebarPeekClose();
-		setIsSidebarPeekOpen(true);
-	}, [cancelSidebarPeekClose, isSidebarOpen]);
-
-	const scheduleSidebarPeekClose = useCallback(() => {
-		if (isSidebarOpen) return;
-		cancelSidebarPeekClose();
-		sidebarPeekCloseTimerRef.current = window.setTimeout(() => {
-			setIsSidebarPeekOpen(false);
-			sidebarPeekCloseTimerRef.current = undefined;
-		}, 140);
-	}, [cancelSidebarPeekClose, isSidebarOpen]);
-
 	const navigateSession = useCallback(
 		(direction: -1 | 1) => {
 			if (!scopedProjectId) return;
@@ -538,56 +617,6 @@ function ShellLayout() {
 		void aoBridge.theme?.set(themePreference);
 	}, [themePreference]);
 
-	useEffect(() => {
-		if (!isSidebarOpen) return;
-		cancelSidebarPeekClose();
-		setIsSidebarPeekOpen(false);
-	}, [cancelSidebarPeekClose, isSidebarOpen]);
-
-	useEffect(() => cancelSidebarPeekClose, [cancelSidebarPeekClose]);
-
-	useEffect(() => {
-		if (!isSidebarPeekOpen || isSidebarOpen) return;
-
-		const handlePointerMove = (event: PointerEvent) => {
-			const target = event.target instanceof Element ? event.target : null;
-			const isInSidebarPortal = Boolean(target?.closest('[role="dialog"], [role="listbox"], [role="menu"]'));
-			// TitlebarNav / WindowTitlebar sit above the peek in z-order; keep the
-			// preview open while the pointer is on those controls so hover→click
-			// to pin still works.
-			const isInTitlebarChrome = Boolean(
-				target?.closest("[data-slot='titlebar-nav'], .window-titlebar"),
-			);
-			const sidebar = document.querySelector<HTMLElement>('[data-slot="sidebar-container"]');
-			const bounds = sidebar?.getBoundingClientRect();
-			const isInSidebar = Boolean(
-				bounds &&
-				event.clientX >= bounds.left &&
-				event.clientX <= bounds.right &&
-				event.clientY >= bounds.top &&
-				event.clientY <= bounds.bottom,
-			);
-
-			if (isInSidebar || isInSidebarPortal || isInTitlebarChrome) {
-				cancelSidebarPeekClose();
-				return;
-			}
-			scheduleSidebarPeekClose();
-		};
-
-		window.addEventListener("pointermove", handlePointerMove);
-		return () => window.removeEventListener("pointermove", handlePointerMove);
-	}, [cancelSidebarPeekClose, isSidebarOpen, isSidebarPeekOpen, scheduleSidebarPeekClose]);
-
-	useEffect(() => {
-		if (daemonStatus.state !== "ready" || !daemonStatus.port) return;
-		if (agentCatalogPortRef.current === daemonStatus.port) return;
-
-		agentCatalogPortRef.current = daemonStatus.port;
-		void queryClient.invalidateQueries({ queryKey: agentsQueryKey });
-		void queryClient.fetchQuery({ ...agentsQueryOptions, queryFn: refreshAgents });
-	}, [daemonStatus.port, daemonStatus.state, queryClient]);
-
 	// Follow OS appearance while the user keeps Theme on System — updates
 	// resolvedTheme (and thus React consumers) without writing light/dark to storage.
 	useEffect(() => {
@@ -635,6 +664,14 @@ function ShellLayout() {
 	);
 
 	useEffect(() => aoBridge.app.onKeyboardShortcutsHelp(() => setIsKeyboardShortcutsOpen(true)), []);
+
+	// A folder was dropped on the app's taskbar icon/shortcut (main process,
+	// cold start or an already-running instance) — feeds the same drop flow as
+	// dragging a folder into the open window.
+	useEffect(
+		() => aoBridge.app.onOpenFolderPath((path) => requestCreateProjectFromPath(path)),
+		[requestCreateProjectFromPath],
+	);
 
 	// New standalone terminal (⌘T / Ctrl+T), also detected in the main process so it
 	// fires from inside a terminal pane. It raises the same store signal as the
@@ -708,6 +745,22 @@ function ShellLayout() {
 			<SessionTopbarProvider>
 				<NotificationRuntime />
 				<TrayRuntime />
+				{isDragActive ? (
+					<div
+						aria-hidden="true"
+						className="dialog-overlay pointer-events-none flex items-center justify-center"
+						data-testid="folder-drop-overlay"
+					>
+						<div className="relative isolate flex w-[min(420px,calc(100vw-48px))] flex-col items-center gap-3 rounded-welcome-panel border border-dashed border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-modal)] p-8 text-center shadow-[var(--shadow-import-modal)]">
+							<span className="grid size-11 place-items-center rounded-xl bg-[var(--color-bg-import-chip)] text-[var(--color-text-import-muted)]">
+								<FolderPlus className="size-5" aria-hidden="true" />
+							</span>
+							<p className="text-[15px] font-semibold text-[var(--color-text-import-title)]">
+								{t("createProject.dropToAdd")}
+							</p>
+						</div>
+					</div>
+				) : null}
 				<GlobalNewTaskDialog />
 				<SettingsDialog />
 				<KeyboardShortcutsDialog
@@ -746,7 +799,7 @@ function ShellLayout() {
 				{/* Windows-only custom title bar (sidebar toggle + File/Edit/View/…
             menu); paints the chrome the frameless window drops. Renders null on
             macOS/Linux. */}
-				<WindowTitlebar onSidebarPreviewEnter={previewSidebar} />
+				<WindowTitlebar />
 				{/* App routes render their topbar inside the framed panel, matching the board chrome across platforms while leaving OS titlebars native. */}
 				{!framedAppTopbar && !hideShellTopbar && !routeParams.sessionId ? <ShellTopbar /> : null}
 				{/* Controlled by the ui-store so TitlebarNav / Topbar toggles (which
@@ -756,11 +809,9 @@ function ShellLayout() {
 					className="min-h-0 flex-1 flex-col overflow-x-hidden"
 					keyboardShortcut={false}
 					onOpenChange={(open) => {
-						cancelSidebarPeekClose();
-						setIsSidebarPeekOpen(false);
 						if (open !== isSidebarOpen) toggleSidebar();
 					}}
-					open={!isStartupLoading && (isSidebarOpen || isSidebarPeekOpen)}
+					open={!isStartupLoading && isSidebarOpen}
 					style={
 						{
 							"--sidebar-width": "var(--ao-sidebar-w, var(--size-sidebar-default))",
@@ -768,14 +819,17 @@ function ShellLayout() {
 						} as CSSProperties
 					}
 				>
-				<div className="flex min-h-0 w-full flex-1 overflow-x-hidden" data-testid="shell-content-row">
+				<div
+					className="flex min-h-0 w-full flex-1 overflow-x-hidden"
+					data-testid="shell-content-row"
+					ref={shellContentRowRef}
+				>
 				{/* macOS + Linux reserve a titlebar band for the fixed TitlebarNav
               cluster above a full-height sidebar; Windows hangs the sidebar
               below its custom titlebar. */}
 				<Sidebar
+					autoCompact={isSidebarCompact}
 					hideEdgeBorder={isWelcomeBoard}
-					isOverlay={isSidebarPeekOpen && !isSidebarOpen}
-					onPreviewLeave={scheduleSidebarPeekClose}
 					underTopbar={isMac || isWindows || isLinux}
 						topbarOffset={isWindows ? "titlebar" : hideShellTopbar ? "trafficLights" : "toolbar"}
 						onCloneProject={cloneProject}
@@ -785,7 +839,7 @@ function ShellLayout() {
 						workspaceError={workspaceQuery.isError ? errorMessage(workspaceQuery.error) : undefined}
 						workspaces={workspaces}
 					/>
-					<main className={cn("flex min-w-0 flex-1 flex-col overflow-x-hidden", !isSidebarOpen && "sidebar-hidden")}>
+					<main className={cn("flex min-w-0 flex-1 flex-col overflow-x-hidden", !sidebarHasLayout && "sidebar-hidden")}>
 						<div className="min-h-0 flex-1 overflow-x-hidden">
 							{/* Board/session routes render inside the same inset box the welcome board and settings paint for themselves, so every screen sits within the app's outer boundary. */}
 							{hideShellTopbar ? (
@@ -846,7 +900,6 @@ function ShellLayout() {
 						hasSessionTopbar={Boolean(routeParams.sessionId)}
 						historyLocked={isWelcomeBoard}
 						isFullScreen={isFullScreen}
-						onSidebarPreviewEnter={previewSidebar}
 					/>
 				</SidebarProvider>
 				<OrchestratorReplacementDialog

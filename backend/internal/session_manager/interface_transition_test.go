@@ -405,7 +405,11 @@ func (c *transitionChat) SupportsChat(_ domain.AgentHarness) bool {
 	return c.supportsChat
 }
 
-func (c *transitionChat) PreflightChat(ctx context.Context, _ domain.AgentHarness) error {
+func (c *transitionChat) PreflightChat(
+	ctx context.Context,
+	_ domain.AgentHarness,
+	_ ports.PermissionMode,
+) error {
 	if c.preflightStarted != nil {
 		select {
 		case c.preflightStarted <- struct{}{}:
@@ -429,7 +433,7 @@ func (c *transitionChat) StartChat(_ context.Context, cfg ChatStart) (ChatStarte
 	}
 	started := ChatStarted{ProviderConversationID: cfg.ProviderConversationID, ControllerGeneration: "chat-generation"}
 	if cfg.ControllerReady != nil {
-		if err := cfg.ControllerReady(started); err != nil {
+		if _, err := cfg.ControllerReady(started); err != nil {
 			return ChatStarted{}, err
 		}
 	}

@@ -11,13 +11,17 @@ package activitydispatch
 import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/activitystate"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agy"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/amp"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/auggie"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/claudecode"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/codex"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/cursor"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/droid"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/fake"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/kimchi"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/muse"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/opencode"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/pi"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/primeagent"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/vibe"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -41,9 +45,12 @@ var Derivers = map[string]DeriveFunc{
 	"kimchi":      kimchi.DeriveActivityState,
 	"opencode":    opencode.DeriveActivityState,
 	"prime-agent": primeagent.DeriveActivityState,
+	"amp":         amp.DeriveActivityState,
+	"pi":          pi.DeriveActivityState,
+	"auggie":      auggie.DeriveActivityState,
 	"goose":       activitystate.StandardDeriveActivityState,
 	"devin":       activitystate.StandardDeriveActivityState,
-	"cursor":      activitystate.StandardDeriveActivityState,
+	"cursor":      cursor.DeriveActivityState,
 	"qwen":        activitystate.StandardDeriveActivityState,
 	"copilot":     activitystate.StandardDeriveActivityState,
 	"kimi":        activitystate.StandardDeriveActivityState,
