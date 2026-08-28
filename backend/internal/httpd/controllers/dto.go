@@ -235,6 +235,8 @@ type SpawnSessionRequest struct {
 	TrackerProvider domain.TrackerProvider `json:"trackerProvider,omitempty" enum:"github,gitlab"`
 	Kind            domain.SessionKind     `json:"kind,omitempty" enum:"worker,orchestrator"`
 	Harness         domain.AgentHarness    `json:"harness,omitempty" enum:"claude-code,codex,aider,opencode,grok,droid,amp,agy,crush,cursor,qwen,copilot,goose,auggie,continue,devin,cline,kimi,muse,kiro,kilocode,vibe,pi,kimchi,omp,prime-agent,autohand"`
+	ProfileID       string                 `json:"profileId,omitempty" description:"Optional Codex profile identifier."`
+	ParentSessionID domain.SessionID       `json:"parentSessionId,omitempty" description:"Related AO session whose Codex binding is inherited when profileId is omitted."`
 	Branch          string                 `json:"branch,omitempty"`
 	// Mode picks the conversation controller: chat talks to the agent over a
 	// structured connection, tui opens the agent's native terminal interface.
@@ -288,6 +290,7 @@ type SpawnSessionResponse struct {
 // SwitchAgentRequest is the body of POST /api/v1/sessions/{sessionId}/switch-agent.
 type SwitchAgentRequest struct {
 	TargetHarness  domain.AgentHarness `json:"targetHarness" enum:"claude-code,codex" description:"Agent harness to continue the logical AO session with."`
+	ProfileID      string              `json:"profileId,omitempty" description:"Optional Codex profile id used only when first switching this session to Codex."`
 	Model          string              `json:"model,omitempty" maxLength:"256" description:"Optional model override for the target agent launch or resume."`
 	IdempotencyKey string              `json:"idempotencyKey,omitempty" maxLength:"128" description:"Optional retry key. Reusing it with a different request is rejected."`
 }
@@ -717,6 +720,7 @@ type DelegateTaskRequest struct {
 	ProjectID domain.ProjectID    `json:"projectId"`
 	Brief     string              `json:"brief" maxLength:"4096"`
 	Agent     domain.AgentHarness `json:"agent,omitempty" enum:"claude-code,codex,aider,opencode,grok,droid,amp,agy,crush,cursor,qwen,copilot,goose,auggie,continue,devin,cline,kimi,muse,kiro,kilocode,vibe,pi,kimchi,omp,prime-agent,autohand,fake"`
+	ProfileID string              `json:"profileId,omitempty" description:"Optional Codex profile identifier."`
 	Model     string              `json:"model,omitempty" maxLength:"256"`
 	// ApprovalMode is an optional per-session override. The UI uses the explicit
 	// bypass value only after the user accepts an approval-less Chat fallback.

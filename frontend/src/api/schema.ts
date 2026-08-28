@@ -2157,6 +2157,14 @@ export interface components {
             capabilities: components["schemas"]["CodexProfileCapabilities"];
             profiles: components["schemas"]["CodexProfileSnapshot"][];
         };
+        CodexSessionProfileSummary: {
+            /** @enum {string} */
+            availability: "available" | "unavailable" | "unknown";
+            id: string;
+            label: string;
+            /** @enum {string} */
+            source: "existing" | "managed" | "legacy";
+        };
         CompactConversationResponse: {
             /** Format: int64 */
             tokensAfter?: number;
@@ -2211,6 +2219,7 @@ export interface components {
             autoInjectReview: boolean;
             autoReviewEnabled: boolean;
             branch?: string;
+            codexProfile?: components["schemas"]["CodexSessionProfileSummary"];
             /** Format: date-time */
             createdAt: string;
             displayName?: string;
@@ -2514,6 +2523,8 @@ export interface components {
             /** @enum {string} */
             mode?: "tui" | "chat";
             model?: string;
+            /** @description Optional Codex profile identifier. */
+            profileId?: string;
             projectId: string;
         };
         DelegateTaskResponse: {
@@ -3325,6 +3336,10 @@ export interface components {
             /** @enum {string} */
             mode?: "chat" | "tui";
             model?: string;
+            /** @description Related AO session whose Codex binding is inherited when profileId is omitted. */
+            parentSessionId?: string;
+            /** @description Optional Codex profile identifier. */
+            profileId?: string;
             projectId: string;
             prompt?: string;
             /** @enum {string} */
@@ -3405,6 +3420,8 @@ export interface components {
             idempotencyKey?: string;
             /** @description Optional model override for the target agent launch or resume. */
             model?: string;
+            /** @description Optional Codex profile id used only when first switching this session to Codex. */
+            profileId?: string;
             /**
              * @description Agent harness to continue the logical AO session with.
              * @enum {string}

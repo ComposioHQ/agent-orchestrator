@@ -158,6 +158,7 @@ type Service struct {
 	logger              *slog.Logger
 	backgroundContext   context.Context
 	agentReadiness      ports.AgentReadinessProvider
+	codexProfiles       ports.CodexProfileLaunchResolver
 	runBackground       func(func())
 	orchestratorLocksMu sync.Mutex
 	orchestratorLocks   map[domain.ProjectID]*sync.Mutex
@@ -211,6 +212,9 @@ func NewWithDeps(d Deps) *Service {
 		backgroundContext = context.Background()
 	}
 	s := &Service{manager: d.Manager, store: d.Store, prClaimer: d.PRClaimer, scm: d.SCM, tracker: d.Tracker, clock: d.Clock, dataDir: d.DataDir, signalCapable: d.SignalCapable, telemetry: d.Telemetry, logger: d.Logger, backgroundContext: backgroundContext, agentReadiness: d.AgentReadiness}
+	if resolver, ok := d.AgentReadiness.(ports.CodexProfileLaunchResolver); ok {
+		s.codexProfiles = resolver
+	}
 	if s.prClaimer == nil {
 		if w, ok := d.Store.(ports.PRClaimer); ok {
 			s.prClaimer = w
@@ -246,7 +250,7 @@ func (s *Service) spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	if err != nil {
 		return domain.Session{}, 0, 0, err
 	}
-	if s.agentReadiness != nil && cfg.Harness != "" {
+	if s.agentReadiness != nil && cfg.Harness != "" && (cfg.Harness != domain.HarnessCodex || s.codexProfiles == nil) {
 		readiness, err := s.agentReadiness.EnsureAgentReadiness(ctx, string(cfg.Harness), domain.AgentReadinessPurposeLaunch)
 		if err != nil {
 			return domain.Session{}, 0, 0, err
@@ -263,7 +267,7 @@ func (s *Service) spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	cfg = s.withIssueContext(ctx, cfg, project)
 	rec, promptBytes, systemPromptBytes, err := s.manager.Spawn(ctx, cfg)
 	if err != nil {
-		s.invalidateAgentReadinessAfterLaunchFailure(cfg.Harness, err)
+		s.invalidateAgentReadinessAfterLaunchFailure(ctx, cfg, err)
 		apiErr := toSpawnAPIError(err)
 		s.emitSpawnFailed(cfg, apiErr, s.now().Sub(start).Milliseconds())
 		return domain.Session{}, 0, 0, apiErr
@@ -279,18 +283,31 @@ func (s *Service) spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	return sess, promptBytes, systemPromptBytes, nil
 }
 
-func (s *Service) invalidateAgentReadinessAfterLaunchFailure(harness domain.AgentHarness, err error) {
-	if s.agentReadiness == nil || harness == "" {
+func (s *Service) invalidateAgentReadinessAfterLaunchFailure(ctx context.Context, cfg ports.SpawnConfig, err error) {
+	if s.agentReadiness == nil || cfg.Harness == "" {
 		return
 	}
-	id := string(harness)
+	id := string(cfg.Harness)
 	invalidated := false
 	if errors.Is(err, ports.ErrAgentBinaryNotFound) {
 		s.agentReadiness.InvalidateAgentInstallation(id)
 		invalidated = true
 	}
 	if errors.Is(err, ports.ErrChatAuthRequired) {
-		s.agentReadiness.InvalidateAgentAuthentication(id)
+		if cfg.Harness == domain.HarnessCodex && s.codexProfiles != nil {
+			profileID := strings.TrimSpace(cfg.ProfileID)
+			if profileID == "" && cfg.ParentSessionID != "" {
+				if parent, found, readErr := s.store.GetSession(ctx, cfg.ParentSessionID); readErr == nil && found && parent.CodexProfileBinding != nil {
+					profileID = parent.CodexProfileBinding.ProfileID
+				}
+			}
+			if profileID == "" {
+				profileID = "existing"
+			}
+			s.codexProfiles.InvalidateCodexProfileAuthentication(profileID)
+		} else {
+			s.agentReadiness.InvalidateAgentAuthentication(id)
+		}
 		invalidated = true
 	}
 	if invalidated {
@@ -951,6 +968,9 @@ func toAPIError(err error) error {
 	case errors.Is(err, sessionmanager.ErrNativeConversationMissing):
 		return apierr.Conflict("NATIVE_SESSION_MISSING",
 			"The agent has not exposed a native conversation that can resume in the other interface", nil)
+	case errors.Is(err, sessionmanager.ErrCodexNativeHistoryUnavailable):
+		return apierr.Conflict("CODEX_NATIVE_HISTORY_UNAVAILABLE",
+			"The bound Codex profile no longer contains the expected native conversation", nil)
 	case errors.Is(err, sessionmanager.ErrNativeConversationUnverified):
 		return apierr.Conflict("NATIVE_SESSION_UNVERIFIED",
 			"The current terminal launch has not confirmed that it owns the stored native conversation yet", nil)
@@ -1135,13 +1155,18 @@ func (s *Service) toSession(ctx context.Context, rec domain.SessionRecord) (doma
 		return domain.Session{}, fmt.Errorf("pr facts %s: %w", rec.ID, err)
 	}
 	prs = deduplicatePRFacts(prs)
-	return domain.Session{
+	session := domain.Session{
 		SessionRecord:    rec,
 		Status:           deriveStatus(rec, prs, s.now(), s.harnessSignals(rec.Harness)),
 		SCMStatus:        deriveSCMStatus(prs),
 		TerminalHandleID: rec.Metadata.RuntimeHandleID,
 		PRs:              prs,
-	}, nil
+	}
+	if rec.CodexProfileBinding != nil && s.codexProfiles != nil {
+		summary := s.codexProfiles.CodexSessionProfileSummary(*rec.CodexProfileBinding)
+		session.CodexProfile = &summary
+	}
+	return session, nil
 }
 
 // now tolerates a zero-value Service (tests construct the struct literally

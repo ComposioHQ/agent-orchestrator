@@ -6425,6 +6425,30 @@ components:
       - profiles
       - capabilities
       type: object
+    CodexSessionProfileSummary:
+      properties:
+        availability:
+          enum:
+          - available
+          - unavailable
+          - unknown
+          type: string
+        id:
+          type: string
+        label:
+          type: string
+        source:
+          enum:
+          - existing
+          - managed
+          - legacy
+          type: string
+      required:
+      - id
+      - label
+      - source
+      - availability
+      type: object
     CompactConversationResponse:
       properties:
         tokensAfter:
@@ -6543,6 +6567,8 @@ components:
           type: boolean
         branch:
           type: string
+        codexProfile:
+          $ref: '#/components/schemas/CodexSessionProfileSummary'
         createdAt:
           format: date-time
           type: string
@@ -7405,6 +7431,9 @@ components:
           type: string
         model:
           maxLength: 256
+          type: string
+        profileId:
+          description: Optional Codex profile identifier.
           type: string
         projectId:
           type: string
@@ -9506,6 +9535,13 @@ components:
         model:
           maxLength: 256
           type: string
+        parentSessionId:
+          description: Related AO session whose Codex binding is inherited when profileId
+            is omitted.
+          type: string
+        profileId:
+          description: Optional Codex profile identifier.
+          type: string
         projectId:
           type: string
         prompt:
@@ -9687,6 +9723,10 @@ components:
         model:
           description: Optional model override for the target agent launch or resume.
           maxLength: 256
+          type: string
+        profileId:
+          description: Optional Codex profile id used only when first switching this
+            session to Codex.
           type: string
         targetHarness:
           description: Agent harness to continue the logical AO session with.

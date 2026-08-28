@@ -29,6 +29,7 @@ type spawnOptions struct {
 	issue           string
 	name            string
 	model           string
+	profile         string
 	claimPR         string
 	noTakeover      bool
 	skipAgentCheck  bool
@@ -44,6 +45,8 @@ type spawnRequest struct {
 	Kind            string `json:"kind,omitempty"`
 	Mode            string `json:"mode,omitempty"`
 	Harness         string `json:"harness,omitempty"`
+	ProfileID       string `json:"profileId,omitempty"`
+	ParentSessionID string `json:"parentSessionId,omitempty"`
 	Branch          string `json:"branch,omitempty"`
 	Prompt          string `json:"prompt,omitempty"`
 	Model           string `json:"model,omitempty"`
@@ -109,6 +112,10 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 				return err
 			}
 			opts.harness = harness
+			profileID := strings.TrimSpace(opts.profile)
+			if profileID != "" && harness != "codex" {
+				return usageError{fmt.Errorf("--profile requires --agent codex")}
+			}
 
 			if isScratchProject(project) {
 				if strings.TrimSpace(opts.branch) != "" {
@@ -119,7 +126,7 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 				}
 			}
 
-			if !opts.skipAgentCheck {
+			if !opts.skipAgentCheck && (harness != "codex" || profileID == "") {
 				if err := ctx.preflightSpawnAgentAuth(cmd.Context(), cmd, opts.harness); err != nil {
 					return err
 				}
@@ -137,11 +144,15 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 				TrackerProvider: opts.trackerProvider,
 				Kind:            opts.kind,
 				Harness:         opts.harness,
+				ProfileID:       profileID,
 				Mode:            opts.mode,
 				Branch:          opts.branch,
 				Prompt:          opts.prompt,
 				Model:           strings.TrimSpace(opts.model),
 				DisplayName:     name,
+			}
+			if parent := strings.TrimSpace(os.Getenv("AO_SESSION_ID")); sessionIDPattern.MatchString(parent) {
+				req.ParentSessionID = parent
 			}
 			var res spawnResult
 			if err := ctx.postJSON(cmd.Context(), "sessions", req, &res); err != nil {
@@ -189,6 +200,7 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 	f.StringVar(&opts.branch, "branch", "", "Branch for git project sessions (default: ao/<session-id>/root; unsupported for Scratch)")
 	f.StringVar(&opts.prompt, "prompt", "", "Initial prompt for the agent")
 	f.StringVar(&opts.model, "model", "", "Agent model override for this session only (e.g. sonnet, gpt-5.6-sol); overrides project/role config without changing it")
+	f.StringVar(&opts.profile, "profile", "", "Codex profile id for this session (requires --agent codex; default: inherited profile or existing)")
 	f.StringVar(&opts.issue, "issue", "", "Issue id to associate with the session")
 	f.StringVar(&opts.trackerProvider, "tracker-provider", "github", "Issue tracker provider: github or gitlab (default: github)")
 	f.StringVar(&opts.name, "name", "", "Display name shown in the sidebar (required, max 20 characters)")

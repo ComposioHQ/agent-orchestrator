@@ -263,6 +263,7 @@ var schemaNames = map[string]string{
 	"AgentCodexProfiles":                                  "CodexProfilesResponse",
 	"AgentCodexProfileLoginStart":                         "StartCodexProfileLoginResponse",
 	"DomainCodexProfileSnapshot":                          "CodexProfileSnapshot",
+	"DomainCodexSessionProfileSummary":                    "CodexSessionProfileSummary",
 	"DomainCodexProfileCapabilities":                      "CodexProfileCapabilities",
 	"DomainCodexCapabilityObservation":                    "CodexCapabilityObservation",
 	"DomainCodexProfileLoginEvent":                        "CodexProfileLoginEvent",
