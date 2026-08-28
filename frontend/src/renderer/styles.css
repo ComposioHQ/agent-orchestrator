@@ -2537,6 +2537,33 @@ html.sidebar-reordering * {
 	flex: 0 0 auto;
 }
 
+.session-topbar-session-chrome[data-compact-session-chrome="true"] .session-branch-badge {
+	max-width: calc(var(--space-8) + var(--space-1));
+	padding-inline: var(--space-2);
+}
+
+.session-topbar-session-chrome[data-compact-session-chrome="true"] .session-branch-badge__label {
+	inline-size: 0;
+	opacity: 0;
+	overflow: hidden;
+}
+
+.session-topbar-session-chrome[data-compact-session-chrome="true"]
+	.workspace-topbar-actions
+	[data-priority]
+	[data-compact-label] {
+	inline-size: 0;
+	opacity: 0;
+	transform: translateX(-2px);
+}
+
+.session-topbar-session-chrome[data-compact-session-chrome="true"]
+	.workspace-topbar-actions
+	[data-priority].topbar-control {
+	gap: 0;
+	padding-inline: 0;
+}
+
 @container workspace-topbar (max-width: 759px) {
 	.workspace-topbar-actions [data-priority="secondary"] [data-compact-label] {
 		inline-size: 0;

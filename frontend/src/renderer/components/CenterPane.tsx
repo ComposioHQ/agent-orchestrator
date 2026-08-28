@@ -512,7 +512,7 @@ export function CenterPane({
 						onKeyDown={handleTerminalTabListKeyDown}
 						role="tablist"
 					>
-						<div className="flex min-w-0 shrink items-stretch">
+						<div className="flex min-w-0 shrink-0 items-stretch">
 							{/* The owning session is permanent and never participates in overflow or reordering. */}
 							{session ? (
 								<SessionPaneTab

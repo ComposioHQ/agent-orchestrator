@@ -234,6 +234,18 @@ describe("ShellTopbar status pill", () => {
 		expect(localActions.contains(screen.getByRole("button", { name: "Open orchestrator" }))).toBe(false);
 	});
 
+	it("marks embedded session actions compact when requested", () => {
+		render(
+			<QueryClientProvider client={new QueryClient()}>
+				<TooltipProvider>
+					<ShellTopbar compactActions embedded sessionAction={<button type="button">New terminal</button>} />
+				</TooltipProvider>
+			</QueryClientProvider>,
+		);
+
+		expect(screen.getByTestId("workspace-topbar-actions")).toHaveAttribute("data-compact-actions", "true");
+	});
+
 	it.each([
 		["active", "Working"],
 		["idle", "Idle"],
