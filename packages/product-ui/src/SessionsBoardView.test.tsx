@@ -132,7 +132,10 @@ describe("SessionsBoardView", () => {
 
 		expect(screen.getByLabelText("#10, #11 open")).toHaveTextContent("PR#10,#11open");
 		expect(screen.getByLabelText("#12 merged")).toHaveTextContent("PR#12merged");
-		expect(screen.getByText("12.4K tok")).toHaveAccessibleName("12,400 tokens");
+		// The full label is real text, not an aria-label on a generic span, and
+		// the compact form is hidden so it is not read out alongside it.
+		expect(screen.getByText("12,400 tokens")).toHaveClass("sr-only");
+		expect(screen.getByText("12.4K tok")).toHaveAttribute("aria-hidden", "true");
 		expect(screen.getByText("5m ago")).toHaveAttribute("title", "Last message 2026-08-09T10:00:00Z");
 		expect(screen.getByText("5m ago").tagName).toBe("TIME");
 		expect(screen.getByText("github:42")).toHaveAttribute("title", "Issue github:42");

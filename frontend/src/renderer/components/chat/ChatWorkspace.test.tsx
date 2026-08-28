@@ -26,6 +26,7 @@ const closeShellTerminalListeners = new Set<() => void>();
 const closeShellTerminalShortcutStates: boolean[] = [];
 type TerminalPaneTestProps = {
 	fontSize?: number;
+	focusRequested?: boolean;
 	isFullscreen?: boolean;
 	onChangeFontSize?: (delta: number) => void;
 	onToggleFullscreen?: () => Promise<void> | void;
@@ -1850,7 +1851,6 @@ describe("ChatWorkspace reviewer tabs", () => {
 		...reviewerTerminal,
 		sessionId: chatSession.id,
 	};
-
 	it("selects Reviewer while keeping the worker mounted but inaccessible", () => {
 		const onSelectChat = vi.fn();
 		render(
@@ -1872,6 +1872,32 @@ describe("ChatWorkspace reviewer tabs", () => {
 
 		fireEvent.click(workerTab);
 		expect(onSelectChat).toHaveBeenCalledOnce();
+	});
+
+	it("makes each full-height tile its semantic click target", () => {
+		const onOpenReviewerTerminal = vi.fn();
+		render(
+			<ChatWorkspace
+				snapshot={idleSnapshot()}
+				session={chatSession}
+				reviewerTerminal={reviewerTerminal}
+				onOpenReviewerTerminal={onOpenReviewerTerminal}
+			/>,
+		);
+
+		const chatTab = screen.getByRole("tab", { name: "Codex" });
+		const reviewerTab = screen.getByRole("tab", { name: "Reviewer" });
+		expect(chatTab).toHaveClass("self-stretch", "px-3", "cursor-pointer");
+		expect(reviewerTab).toHaveClass(
+			"self-stretch",
+			"px-3",
+			"cursor-pointer",
+			"focus-visible:outline-2",
+		);
+		expect(reviewerTab.querySelector("img")).toBeInTheDocument();
+
+		fireEvent.click(reviewerTab);
+		expect(onOpenReviewerTerminal).toHaveBeenCalledWith(reviewerTerminal);
 	});
 
 	it("keeps the chat draft, attachments, edit, and scroll state mounted while Reviewer is selected", async () => {
@@ -1942,6 +1968,7 @@ describe("ChatWorkspace reviewer tabs", () => {
 		};
 		const view = render(<ChatWorkspace {...common} reviewerTerminal={reviewerTerminal} />);
 		expect(screen.getByTestId("chat-reviewer-terminal")).toBeInTheDocument();
+		expect(screen.getByTestId("chat-reviewer-terminal")).not.toHaveClass("pl-2");
 
 		view.rerender(<ChatWorkspace {...common} reviewerTerminal={undefined} />);
 
@@ -2116,6 +2143,7 @@ describe("ChatWorkspace shell tabs", () => {
 			/>,
 		);
 		expect(screen.getByTestId("chat-shell-terminal")).toBeInTheDocument();
+		expect(screen.getByTestId("chat-shell-terminal")).not.toHaveClass("pl-2");
 		expect(screen.getByTestId("chat-conversation-panel")).toHaveAttribute("hidden");
 		expect(screen.getByTestId("chat-conversation-panel")).toHaveAttribute("inert");
 
@@ -2139,6 +2167,7 @@ describe("ChatWorkspace shell tabs", () => {
 			/>,
 		);
 		expect(terminalPaneState.props).toMatchObject({
+			focusRequested: true,
 			terminalTarget: shellTarget("shell-2"),
 		});
 	});

@@ -1,6 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
+import { useMemo } from "react";
 import type { components } from "../../api/schema";
 import { apiClient, hasTrustedApiBaseUrl } from "../lib/api-client";
+import type { CloudCpProject, CloudCpSession } from "../lib/cloud-cp";
+import { useCloudCp } from "./useCloudCp";
+import { useCloudOrg } from "./useCloudOrg";
 import { mockWorkspaces } from "../lib/mock-data";
 import { usesPreviewWorkspaceData } from "../lib/preview-mode";
 import { toReviewerHarnessId } from "../lib/reviewer-harnesses";
@@ -13,6 +17,7 @@ import {
 	toProjectKind,
 	toSessionActivity,
 	toSessionStatus,
+	type WorkspaceSession,
 	type WorkspaceSummary,
 } from "../types/workspace";
 
@@ -144,6 +149,118 @@ export const workspaceQueryOptions = {
 	refetchInterval: 15_000,
 };
 
+// Cloud projects are a separate query so a control-plane failure can never
+// break the local list: on error TanStack keeps this query's last known data,
+// and until the first successful fetch the merge below simply omits cloud
+// items. Invalidated by the cloud create flow (CreateProjectFlow).
+export const cloudProjectsQueryKey = ["cloud-projects"] as const;
+export const cloudSessionsQueryKey = ["cloud-sessions"] as const;
+
+// Maps one control-plane session onto the board's session shape. Cloud sessions
+// carry the same status/activity/harness vocabulary as local ones, so the same
+// product-ui mappers apply; fields with no cloud analogue take safe defaults.
+function toCloudWorkspaceSession(
+	session: CloudCpSession,
+	project: CloudCpProject,
+	orgId: string,
+): WorkspaceSession {
+	return {
+		id: session.id,
+		// The terminal pane only mounts for a session that has a terminal handle.
+		// A cloud session's PTY is addressed by the session id over its ticketed
+		// CP WebSocket, so the session id is its handle.
+		terminalHandleId: session.id,
+		workspaceId: project.id,
+		workspaceName: project.displayName,
+		title: session.displayName || session.id,
+		provider: toAgentProvider(session.harness),
+		kind: session.kind === "orchestrator" ? "orchestrator" : "worker",
+		branch: session.branch || undefined,
+		status: toSessionStatus(session.status, session.isTerminated),
+		isTerminated: session.isTerminated,
+		createdAt: session.createdAt,
+		updatedAt: session.updatedAt,
+		activity: toSessionActivity({ state: session.activityState }),
+		prs: [],
+		// Marks this as a control-plane session so the terminal opens against the
+		// CP (ticket + sandbox WebSocket) instead of the local daemon mux.
+		cloud: { orgId },
+	};
+}
+
+function toCloudWorkspace(
+	project: CloudCpProject,
+	sessions: CloudCpSession[],
+	orgId: string,
+): WorkspaceSummary {
+	return {
+		id: project.id,
+		name: project.displayName,
+		kind: "cloud",
+		// Cloud projects run in control-plane sandboxes; there is no local folder.
+		path: "",
+		sessions: sessions
+			.filter((session) => session.projectId === project.id)
+			.map((session) => toCloudWorkspaceSession(session, project, orgId)),
+	};
+}
+
+export function useCloudProjectsQuery() {
+	const { client, ready, baseUrl } = useCloudCp();
+	const { org } = useCloudOrg();
+	const orgId = org?.id;
+	return useQuery({
+		queryKey: [...cloudProjectsQueryKey, baseUrl, orgId ?? ""],
+		enabled: ready && orgId !== undefined,
+		retry: 1,
+		queryFn: async (): Promise<CloudCpProject[]> => {
+			if (orgId === undefined) return [];
+			// First page only (control-plane max page size); pagination UI is a
+			// later phase alongside cloud sessions.
+			const response = await client.listProjects(orgId, { limit: 100 });
+			return response.items;
+		},
+	});
+}
+
+export function useCloudSessionsQuery() {
+	const { client, ready, baseUrl } = useCloudCp();
+	const { org } = useCloudOrg();
+	const orgId = org?.id;
+	return useQuery({
+		queryKey: [...cloudSessionsQueryKey, baseUrl, orgId ?? ""],
+		enabled: ready && orgId !== undefined,
+		retry: 1,
+		// A provisioning sandbox changes state without a client action, so poll to
+		// reflect requested -> running -> ready the same way local sessions stream.
+		refetchInterval: 5000,
+		queryFn: async (): Promise<CloudCpSession[]> => {
+			if (orgId === undefined) return [];
+			const response = await client.listSessions(orgId, { limit: 100 });
+			return response.items;
+		},
+	});
+}
+
 export function useWorkspaceQuery() {
-	return useQuery(workspaceQueryOptions);
+	const local = useQuery(workspaceQueryOptions);
+	const cloud = useCloudProjectsQuery();
+	const cloudSessions = useCloudSessionsQuery();
+	const { org, ready } = useCloudOrg();
+	const orgId = org?.id;
+	const localData = local.data;
+	const cloudData = cloud.data;
+	const cloudSessionData = cloudSessions.data;
+	const data = useMemo(() => {
+		// Local stays authoritative for loading/error semantics: cloud items only
+		// render once the local list exists, and never replace it.
+		if (localData === undefined || cloudData === undefined || cloudData.length === 0) return localData;
+		// Signing out (or turning the offering off) disables the cloud queries,
+		// but react-query keeps their last data; without this gate the stale
+		// cloud projects would keep rendering for a signed-out user.
+		if (!ready || orgId === undefined) return localData;
+		const sessions = cloudSessionData ?? [];
+		return [...localData, ...cloudData.map((project) => toCloudWorkspace(project, sessions, orgId))];
+	}, [localData, cloudData, cloudSessionData, orgId, ready]);
+	return { ...local, data };
 }
