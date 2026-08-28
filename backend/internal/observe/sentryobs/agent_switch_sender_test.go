@@ -526,6 +526,22 @@ func TestAgentSwitchSenderParsesProviderThrottleHeaders(t *testing.T) {
 	}
 }
 
+func TestAgentSwitchSenderClassifiesHeaderless429AsAllScopeThrottle(t *testing.T) {
+	now := time.Date(2026, time.August, 28, 12, 0, 0, 0, time.UTC)
+	transport := &recordingRoundTripper{status: http.StatusTooManyRequests, responseHeaders: make(http.Header)}
+	observer := newTestSender(t, transport)
+	sender := observer.(*agentSwitchFailureSender)
+	sender.now = func() time.Time { return now }
+
+	result := sender.ObserveAgentSwitchFailure(context.Background(), fixtureAgentSwitchEvent(t))
+	if result.Outcome != ports.DeliveryTransientFailure || result.Class != ports.DeliveryErrorRateLimited || result.ThrottleScope != ports.DeliveryThrottleAll {
+		t.Fatalf("headerless 429 result = %+v", result)
+	}
+	if !result.RetryNotBefore.IsZero() {
+		t.Fatalf("sender invented provider retry deadline %s", result.RetryNotBefore)
+	}
+}
+
 func loadAgentSwitchFixture(t *testing.T) []byte {
 	t.Helper()
 	path := filepath.Join("..", "..", "..", "..", "test", "fixtures", "agent-switch-observability", "envelope-v1.json")

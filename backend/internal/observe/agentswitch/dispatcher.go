@@ -282,8 +282,16 @@ func (d *Dispatcher) settle(claim ports.AgentSwitchFailureClaim, result ports.De
 	nextAvailable := settledAt
 	if result.Outcome == ports.DeliveryTransientFailure {
 		nextAvailable = settledAt.Add(dispatcherRetryDelay(claim.AttemptCount+1, d.jitter))
+		if result.RetryNotBefore.After(nextAvailable) {
+			nextAvailable = result.RetryNotBefore
+		}
 		if nextAvailable.After(claim.ExpiresAt) {
 			nextAvailable = claim.ExpiresAt
+		}
+		if result.ThrottleScope != ports.DeliveryThrottleNone {
+			// A headerless 429 still throttles the destination. Bind that scope to
+			// the same durable retry deadline so another row cannot bypass it.
+			result.RetryNotBefore = nextAvailable
 		}
 	}
 	settleContext, cancel := context.WithTimeout(context.Background(), dispatcherSettleTimeout)

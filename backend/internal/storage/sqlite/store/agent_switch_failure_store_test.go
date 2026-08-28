@@ -237,17 +237,42 @@ func TestMissingEventMetadataIsTelemetryLocalAndCoreCommits(t *testing.T) {
 	}
 }
 
-func TestSeparatelyValidMismatchedFaultIsRejectedBeforeMutation(t *testing.T) {
+func TestMismatchedObservabilityCannotVetoCoreFailureMutation(t *testing.T) {
 	f := openAgentSwitchFailureFixture(t)
 	f.enablePolicy(t)
 	mutation := failedMutation(f)
 	mutation.Fault.FromHarness = domain.HarnessCodex
-	if _, err := f.store.ApplyAgentSwitchMutation(context.Background(), mutation); err == nil {
-		t.Fatal("mismatched fault unexpectedly mutated the switch")
+	result, err := f.store.ApplyAgentSwitchMutation(context.Background(), mutation)
+	if err != nil || !result.CoreChanged || result.Enrollment != domain.AgentSwitchEnrollmentLocalInvariantFailed {
+		t.Fatalf("mismatched observability result = %+v, err=%v", result, err)
 	}
 	stored, ok, err := f.store.GetAgentSwitch(context.Background(), f.sw.ID)
-	if err != nil || !ok || stored.State != domain.AgentSwitchPreparingHandoff {
-		t.Fatalf("switch changed after mismatched fault: %+v, ok=%v err=%v", stored, ok, err)
+	if err != nil || !ok || stored.State != domain.AgentSwitchFailed || stored.ErrorCode != mutation.Record.ErrorCode || stored.FailurePoint != mutation.Record.FailurePoint {
+		t.Fatalf("core failure after mismatched observability = %+v, ok=%v err=%v", stored, ok, err)
+	}
+	if countFailureRows(t, f.db, "agent_switch_failure_outbox") != 0 || countFailureRows(t, f.db, "agent_switch_failure_receipts") != 0 {
+		t.Fatal("mismatched observability left telemetry rows")
+	}
+}
+
+func TestMalformedObservabilityCannotVetoCoreRecoveryMarkerMutation(t *testing.T) {
+	f := openAgentSwitchFailureFixture(t)
+	f.enablePolicy(t)
+	if _, err := f.db.Exec(`UPDATE agent_switches SET state='stopping_source',updated_at=? WHERE id=?`, f.now.Add(time.Second), f.sw.ID); err != nil {
+		t.Fatalf("seed recovery marker state: %v", err)
+	}
+	mutation := recoveryMarkerMutation(f)
+	mutation.Fault.FailurePoint = domain.AgentSwitchFailurePoint("not-in-compiled-taxonomy")
+	result, err := f.store.ApplyAgentSwitchMutation(context.Background(), mutation)
+	if err != nil || !result.CoreChanged || result.Enrollment != domain.AgentSwitchEnrollmentLocalInvariantFailed {
+		t.Fatalf("malformed observability result = %+v, err=%v", result, err)
+	}
+	stored, ok, err := f.store.GetAgentSwitch(context.Background(), f.sw.ID)
+	if err != nil || !ok || stored.State != domain.AgentSwitchStoppingSource || stored.ErrorCode != mutation.Record.ErrorCode || stored.FailurePoint != mutation.Record.FailurePoint {
+		t.Fatalf("core recovery marker after malformed observability = %+v, ok=%v err=%v", stored, ok, err)
+	}
+	if countFailureRows(t, f.db, "agent_switch_failure_outbox") != 0 || countFailureRows(t, f.db, "agent_switch_failure_receipts") != 0 {
+		t.Fatal("malformed observability left telemetry rows")
 	}
 }
 
@@ -878,6 +903,67 @@ BEGIN SELECT RAISE(ABORT, 'injected throttle failure'); END;`); err != nil {
 	var lease sql.NullString
 	if err := f.db.QueryRow(`SELECT delivered_at,lease_token FROM agent_switch_failure_outbox WHERE id=?`, claim.ID).Scan(&delivered, &lease); err != nil || delivered.Valid || !lease.Valid || lease.String != claim.LeaseToken {
 		t.Fatalf("outbox CAS survived throttle rollback: delivered=%+v lease=%+v err=%v", delivered, lease, err)
+	}
+}
+
+func TestTransientAllScopeThrottleUsesLocalRetryCapsAtTTLAndBlocksOtherRows(t *testing.T) {
+	f := openAgentSwitchFailureFixture(t)
+	f.enablePolicy(t)
+	if _, err := f.store.ApplyAgentSwitchMutation(context.Background(), failedMutation(f)); err != nil {
+		t.Fatalf("enroll terminal payload: %v", err)
+	}
+	stored, ok, err := f.store.GetAgentSwitch(context.Background(), f.sw.ID)
+	if err != nil || !ok {
+		t.Fatalf("read terminal switch: ok=%v err=%v", ok, err)
+	}
+	if result, err := f.store.EnqueueAgentSwitchOperationalFault(context.Background(), maintenanceFault(f, stored)); err != nil || !result.CoreChanged {
+		t.Fatalf("enroll second payload: result=%+v err=%v", result, err)
+	}
+	claimedAt := f.now.Add(time.Minute)
+	claim, ok, err := f.store.ClaimAgentSwitchFailure(context.Background(), ports.AgentSwitchFailureClaimRequest{
+		Authorization: f.authorization(), DeliveryEpoch: 11, LeaseToken: "lease-11",
+		Now: claimedAt, LeaseExpiresAt: claimedAt.Add(30 * time.Second),
+	})
+	if err != nil || !ok {
+		t.Fatalf("claim first payload = %+v, ok=%v err=%v", claim, ok, err)
+	}
+	settledAt := claimedAt.Add(10 * time.Second)
+	changed, err := f.store.SettleAgentSwitchFailureDelivery(context.Background(), ports.AgentSwitchFailureSettlement{
+		ID: claim.ID, LeaseToken: claim.LeaseToken, ConsentGeneration: claim.ConsentGeneration,
+		DeliveryEpoch: claim.DeliveryEpoch, DestinationFingerprint: claim.DestinationFingerprint,
+		SettledAt: settledAt, NextAvailableAt: claim.ExpiresAt.Add(time.Hour),
+		Result: ports.DeliveryResult{
+			Outcome: ports.DeliveryTransientFailure, Class: ports.DeliveryErrorRateLimited,
+			ThrottleScope: ports.DeliveryThrottleAll,
+		},
+	})
+	if err != nil || !changed {
+		t.Fatalf("settle headerless throttle: changed=%v err=%v", changed, err)
+	}
+	var availableAt, allNotBefore time.Time
+	if err := f.db.QueryRow(`
+SELECT o.available_at,d.all_not_before
+FROM agent_switch_failure_outbox o
+JOIN agent_switch_failure_delivery_state d ON d.destination_fingerprint=o.destination_fingerprint
+WHERE o.id=?`, claim.ID).Scan(&availableAt, &allNotBefore); err != nil {
+		t.Fatalf("read persisted throttle: %v", err)
+	}
+	if !availableAt.Equal(claim.ExpiresAt) || !allNotBefore.Equal(claim.ExpiresAt) {
+		t.Fatalf("persisted deadlines = available=%s all=%s, want TTL %s", availableAt, allNotBefore, claim.ExpiresAt)
+	}
+	blockedAt := claim.ExpiresAt.Add(-time.Second)
+	if blocked, ok, err := f.store.ClaimAgentSwitchFailure(context.Background(), ports.AgentSwitchFailureClaimRequest{
+		Authorization: f.authorization(), DeliveryEpoch: 11, LeaseToken: "lease-blocked",
+		Now: blockedAt, LeaseExpiresAt: blockedAt.Add(30 * time.Second),
+	}); err != nil || ok || blocked.ID != "" {
+		t.Fatalf("all-scope throttle allowed another claim = %+v, ok=%v err=%v", blocked, ok, err)
+	}
+	next, ok, err := f.store.ClaimAgentSwitchFailure(context.Background(), ports.AgentSwitchFailureClaimRequest{
+		Authorization: f.authorization(), DeliveryEpoch: 11, LeaseToken: "lease-next",
+		Now: claim.ExpiresAt, LeaseExpiresAt: claim.ExpiresAt.Add(30 * time.Second),
+	})
+	if err != nil || !ok || next.ID == claim.ID {
+		t.Fatalf("TTL-capped throttle did not release next payload = %+v, ok=%v err=%v", next, ok, err)
 	}
 }
 

@@ -54,9 +54,9 @@ func (s *Store) applyAgentSwitchMutation(ctx context.Context, mutation ports.Age
 	if rec.ErrorCode == "" {
 		rec.FailurePoint = ""
 	}
-	normalizeAgentSwitchMutationPoint(&rec, mutation.Fault)
+	normalizeAgentSwitchMutationPoint(&rec)
 	mutation.Record = rec
-	if err := validateFailureAwareMutation(mutation, unacknowledged); err != nil {
+	if err := validateAgentSwitchCoreMutation(mutation, unacknowledged); err != nil {
 		return ports.AgentSwitchMutationResult{}, err
 	}
 
@@ -112,18 +112,18 @@ func (s *Store) applyAgentSwitchMutation(ctx context.Context, mutation ports.Age
 	return result, nil
 }
 
-func normalizeAgentSwitchMutationPoint(rec *domain.AgentSwitch, fault *domain.AgentSwitchFault) {
-	if fault == nil {
+func normalizeAgentSwitchMutationPoint(rec *domain.AgentSwitch) {
+	point := rec.FailurePoint
+	if point == "" {
 		return
 	}
-	point := rec.FailurePoint
 	if _, ok := domain.AgentSwitchFailureTaxonomy(point); !ok {
 		point = domain.AgentSwitchFailureClassificationUnknown
 	}
 	rec.FailurePoint = point
 }
 
-func validateFailureAwareMutation(m ports.AgentSwitchMutation, unacknowledged bool) error {
+func validateAgentSwitchCoreMutation(m ports.AgentSwitchMutation, unacknowledged bool) error {
 	rec := m.Record
 	if err := validateAgentSwitch(rec, false); err != nil {
 		return err
@@ -133,22 +133,6 @@ func validateFailureAwareMutation(m ports.AgentSwitchMutation, unacknowledged bo
 	}
 	if m.ExpectedSourceGenerationID == "" || rec.SourceGenerationID != m.ExpectedSourceGenerationID {
 		return fmt.Errorf("apply agent switch mutation %s: source generation does not match immutable provenance", rec.ID)
-	}
-	if rec.State == domain.AgentSwitchFailed || rec.ErrorCode.RetainedRecoveryMarker() {
-		if m.Fault == nil {
-			return fmt.Errorf("apply agent switch mutation %s: reportable transition requires a typed fault", rec.ID)
-		}
-	} else if m.Fault != nil {
-		return fmt.Errorf("apply agent switch mutation %s: ordinary progress cannot carry a fault", rec.ID)
-	}
-	if m.Fault != nil {
-		if err := domain.ValidateAgentSwitchFault(*m.Fault); err == nil {
-			binding := rec
-			binding.State = m.ExpectedState
-			if err := validateAgentSwitchFaultBinding(binding, *m.Fault, false); err != nil {
-				return fmt.Errorf("apply agent switch mutation %s: %w", rec.ID, err)
-			}
-		}
 	}
 	if unacknowledged {
 		if rec.State != domain.AgentSwitchFailed || m.ExpectedState != domain.AgentSwitchDelivering || rec.TargetGenerationID == "" || rec.TargetAcknowledgedAt != nil {
@@ -214,6 +198,9 @@ func logAgentSwitchEnrollmentInvariant(fault *domain.AgentSwitchFault, stage str
 }
 
 func (s *Store) enrollFaultTx(ctx context.Context, tx *sql.Tx, input failureEnrollmentInput) (domain.AgentSwitchEnrollmentStatus, error) {
+	if err := validateFailureEnrollment(input); err != nil {
+		return domain.AgentSwitchEnrollmentLocalInvariantFailed, err
+	}
 	if input.ResolveReceipts && input.Switch != nil {
 		if _, err := tx.ExecContext(ctx, `
 UPDATE agent_switch_failure_receipts SET retain_until=?
@@ -228,18 +215,6 @@ WHERE switch_id=? AND retain_until IS NULL AND durable_state_fingerprint<>?`,
 	fault := *input.Fault
 	if !input.Authorization.Enabled {
 		return domain.AgentSwitchEnrollmentDisabled, nil
-	}
-	if err := domain.ValidateAgentSwitchFault(fault); err != nil {
-		return domain.AgentSwitchEnrollmentLocalInvariantFailed, err
-	}
-	if input.Switch != nil {
-		binding := *input.Switch
-		if input.FaultPhase != "" {
-			binding.State = input.FaultPhase
-		}
-		if err := validateAgentSwitchFaultBinding(binding, fault, false); err != nil {
-			return domain.AgentSwitchEnrollmentLocalInvariantFailed, err
-		}
 	}
 	var enabled bool
 	var generation, destination string
@@ -345,6 +320,32 @@ WHERE switch_id=? AND retain_until IS NULL AND durable_state_fingerprint<>?`,
 		return domain.AgentSwitchEnrollmentLocalInvariantFailed, errors.New("outbox insert did not match the enrolled receipt")
 	}
 	return domain.AgentSwitchEnrollmentEnrolled, nil
+}
+
+func validateFailureEnrollment(input failureEnrollmentInput) error {
+	if input.Switch != nil {
+		reportable := input.Switch.State == domain.AgentSwitchFailed || input.Switch.ErrorCode.RetainedRecoveryMarker()
+		if reportable && input.Fault == nil {
+			return errors.New("reportable agent switch mutation requires a typed fault")
+		}
+		if !reportable && input.Fault != nil {
+			return errors.New("ordinary agent switch progress cannot carry a fault")
+		}
+	}
+	if input.Fault == nil {
+		return nil
+	}
+	if err := domain.ValidateAgentSwitchFault(*input.Fault); err != nil {
+		return err
+	}
+	if input.Switch == nil {
+		return nil
+	}
+	binding := *input.Switch
+	if input.FaultPhase != "" {
+		binding.State = input.FaultPhase
+	}
+	return validateAgentSwitchFaultBinding(binding, *input.Fault, false)
 }
 
 func agentSwitchDurableFingerprint(sw domain.AgentSwitch) string {
@@ -727,14 +728,30 @@ func (s *Store) SettleAgentSwitchFailureDelivery(ctx context.Context, input port
 	}
 	defer func() { _ = tx.Rollback() }()
 	baseArgs := []any{input.ID, input.LeaseToken, input.ConsentGeneration, input.DeliveryEpoch, input.DestinationFingerprint}
+	retryNotBefore := input.Result.RetryNotBefore
 	var result sql.Result
 	switch input.Result.Outcome {
 	case ports.DeliveryAccepted:
 		result, err = tx.ExecContext(ctx, `UPDATE agent_switch_failure_outbox SET delivered_at=?,lease_token=NULL,lease_consent_generation=NULL,lease_delivery_epoch=NULL,lease_expires_at=NULL,last_delivery_error_class='' WHERE id=? AND lease_token=? AND lease_consent_generation=? AND lease_delivery_epoch=? AND destination_fingerprint=? AND delivered_at IS NULL AND discarded_at IS NULL`, append([]any{input.SettledAt}, baseArgs...)...)
 	case ports.DeliveryTransientFailure:
+		var expiresAt time.Time
+		if err := tx.QueryRowContext(ctx, `
+SELECT expires_at FROM agent_switch_failure_outbox
+WHERE id=? AND lease_token=? AND lease_consent_generation=? AND lease_delivery_epoch=? AND destination_fingerprint=?
+ AND delivered_at IS NULL AND discarded_at IS NULL`, baseArgs...).Scan(&expiresAt); errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		} else if err != nil {
+			return false, err
+		}
 		next := input.NextAvailableAt
-		if input.Result.RetryNotBefore.After(next) {
-			next = input.Result.RetryNotBefore
+		if retryNotBefore.After(next) {
+			next = retryNotBefore
+		}
+		if next.After(expiresAt) {
+			next = expiresAt
+		}
+		if input.Result.ThrottleScope != ports.DeliveryThrottleNone {
+			retryNotBefore = next
 		}
 		result, err = tx.ExecContext(ctx, `UPDATE agent_switch_failure_outbox SET available_at=?,lease_token=NULL,lease_consent_generation=NULL,lease_delivery_epoch=NULL,lease_expires_at=NULL,last_delivery_error_class=? WHERE id=? AND lease_token=? AND lease_consent_generation=? AND lease_delivery_epoch=? AND destination_fingerprint=? AND delivered_at IS NULL AND discarded_at IS NULL`, append([]any{next, input.Result.Class}, baseArgs...)...)
 	case ports.DeliveryPermanentFailure:
@@ -754,12 +771,12 @@ func (s *Store) SettleAgentSwitchFailureDelivery(ctx context.Context, input port
 	if n != 1 {
 		return false, nil
 	}
-	if input.Result.RetryNotBefore.After(input.SettledAt) && input.Result.ThrottleScope != ports.DeliveryThrottleNone {
+	if retryNotBefore.After(input.SettledAt) && input.Result.ThrottleScope != ports.DeliveryThrottleNone {
 		var errorUntil, allUntil any
 		if input.Result.ThrottleScope == ports.DeliveryThrottleErrorCategory {
-			errorUntil = input.Result.RetryNotBefore
+			errorUntil = retryNotBefore
 		} else {
-			allUntil = input.Result.RetryNotBefore
+			allUntil = retryNotBefore
 		}
 		if _, err := tx.ExecContext(ctx, `
 INSERT INTO agent_switch_failure_delivery_state(destination_fingerprint,error_not_before,all_not_before) VALUES(?,?,?)

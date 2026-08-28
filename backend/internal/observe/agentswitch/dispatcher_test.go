@@ -156,6 +156,46 @@ func TestDispatcherPersistsAcceptedResponseThrottleWithAcknowledgement(t *testin
 	}
 }
 
+func TestDispatcherBindsTransientThrottleToLaterRetryDeadlineAndTTL(t *testing.T) {
+	now := time.Date(2026, 8, 28, 10, 15, 30, 0, time.UTC)
+	for _, tc := range []struct {
+		name          string
+		providerRetry time.Time
+		expiresAt     time.Time
+		want          time.Time
+	}{
+		{name: "headerless throttle uses local retry", expiresAt: now.Add(time.Hour), want: now.Add(5 * time.Second)},
+		{name: "later provider retry wins", providerRetry: now.Add(20 * time.Second), expiresAt: now.Add(time.Hour), want: now.Add(20 * time.Second)},
+		{name: "payload TTL caps throttle", expiresAt: now.Add(2 * time.Second), want: now.Add(2 * time.Second)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			claim := dispatcherTestClaim(now)
+			claim.ExpiresAt = tc.expiresAt
+			store := &dispatcherStoreFake{claims: []ports.AgentSwitchFailureClaim{claim}}
+			d := mustDispatcher(t, DispatcherConfig{
+				Store: store,
+				Observer: &dispatcherObserverFake{results: []ports.DeliveryResult{{
+					Outcome: ports.DeliveryTransientFailure, Class: ports.DeliveryErrorRateLimited,
+					RetryNotBefore: tc.providerRetry, ThrottleScope: ports.DeliveryThrottleAll,
+				}}},
+				Policy: newDispatcherPolicyFake(), Clock: func() time.Time { return now },
+				NewToken: func() string { return "lease-token" }, Jitter: func(base time.Duration) time.Duration { return base },
+			})
+
+			if worked := d.runOne(context.Background()); !worked {
+				t.Fatal("dispatcher did not claim throttled delivery")
+			}
+			if len(store.settlements) != 1 {
+				t.Fatalf("settlements = %d, want 1", len(store.settlements))
+			}
+			settlement := store.settlements[0]
+			if !settlement.NextAvailableAt.Equal(tc.want) || !settlement.Result.RetryNotBefore.Equal(tc.want) || settlement.Result.ThrottleScope != ports.DeliveryThrottleAll {
+				t.Fatalf("throttled settlement = %+v, want deadline %s", settlement, tc.want)
+			}
+		})
+	}
+}
+
 func TestDispatcherEqualJitterBoundsAndRetrySchedule(t *testing.T) {
 	bases := []time.Duration{5 * time.Second, 30 * time.Second, 5 * time.Minute, 30 * time.Minute, 6 * time.Hour, 6 * time.Hour}
 	for attempt, wantBase := range bases {
