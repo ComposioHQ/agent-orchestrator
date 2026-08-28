@@ -113,9 +113,9 @@ func TestDetectTerminalActivity(t *testing.T) {
 		},
 		{
 			name: "question dialog",
-			output: "? Which environment should I use?\n" +
-				"  1. production\n" +
-				"  2. staging\n",
+			output: "\x1b[38;5;212m?\x1b[0m Which environment should I use?\n" +
+				"\x1b[38;5;212m❯\x1b[0m production\n" +
+				"  staging\n",
 			want: domain.ActivityWaitingInput,
 			ok:   true,
 		},
@@ -143,6 +143,10 @@ func TestDetectTerminalActivity(t *testing.T) {
 		{
 			name:   "question in transcript rejected",
 			output: "The answer is ? Which environment should I use?\n",
+		},
+		{
+			name:   "question-shaped transcript without answer row rejected",
+			output: "? Is this a question in the transcript?\n",
 		},
 		{
 			name:   "confirmation prose rejected",

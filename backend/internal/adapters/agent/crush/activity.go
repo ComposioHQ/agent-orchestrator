@@ -42,6 +42,8 @@ var crushWorkingPlaceholders = []string{
 
 const crushPermissionDialogLookahead = 24
 
+const crushQuestionLookahead = 4
+
 // DeriveActivityState maps a Crush hook event onto an AO activity state.
 // Currently a no-op since Crush doesn't have full hooks support like Claude Code and Codex.
 // The bool is false to indicate no activity signal is available.
@@ -113,7 +115,26 @@ func crushLineLooksWaitingInput(lines []string, index int) bool {
 
 func crushLineLooksQuestionDialog(lines []string, index int) bool {
 	text := crushDialogLineText(lines[index])
-	return strings.HasPrefix(text, "? ") && strings.TrimSpace(strings.TrimPrefix(text, "?")) != ""
+	if !strings.HasPrefix(text, "? ") || strings.TrimSpace(strings.TrimPrefix(text, "?")) == "" {
+		return false
+	}
+	end := min(index+crushQuestionLookahead, len(lines)-1)
+	for _, nearby := range lines[index+1 : end+1] {
+		if crushQuestionAnswerRow(nearby) {
+			return true
+		}
+	}
+	return false
+}
+
+func crushQuestionAnswerRow(line string) bool {
+	line = crushDialogLineText(line)
+	if strings.HasPrefix(line, "> ") || strings.HasPrefix(line, "❯ ") ||
+		strings.HasPrefix(line, "› ") || strings.HasPrefix(line, "○ ") ||
+		strings.HasPrefix(line, "◯ ") {
+		return true
+	}
+	return len(line) >= 3 && line[0] >= '1' && line[0] <= '9' && line[1] == '.' && line[2] == ' '
 }
 
 func crushDialogLineText(line string) string {
