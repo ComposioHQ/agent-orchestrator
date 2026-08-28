@@ -458,10 +458,11 @@ func (c *readinessCoordinator) runCheck(id string, purpose domain.AgentReadiness
 	}
 	snapshot := c.snapshotLocked(entry, purpose)
 	nextRetry := entry.nextRetryAt
+	duration := c.now().Sub(started)
 	delete(c.calls, id)
 	close(call.done)
 	c.mu.Unlock()
-	c.logDecision(id, purpose, "new_check", c.now().Sub(started), snapshot, failureCode, nextRetry)
+	c.logDecision(id, purpose, "new_check", duration, snapshot, failureCode, nextRetry)
 }
 
 func (c *readinessCoordinator) checkInstallation(item agentregistry.HarnessAgent, presenceOnly bool) (domain.AgentInstallationObservation, bool) {
