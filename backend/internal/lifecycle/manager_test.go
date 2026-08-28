@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/observe/ownership"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -188,11 +189,16 @@ type fakeAgentSwitchLifecycleStore struct {
 	native               map[domain.AgentNativeSessionID]domain.AgentNativeSession
 	acknowledgementCalls []targetAcknowledgementCall
 	ackForceNoChange     bool
+	ackErr               error
+	getSwitchErr         error
 }
 
 func (f *fakeAgentSwitchLifecycleStore) GetAgentSwitch(_ context.Context, id domain.AgentSwitchID) (domain.AgentSwitch, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.getSwitchErr != nil {
+		return domain.AgentSwitch{}, false, f.getSwitchErr
+	}
 	if !f.hasActiveSwitch || f.activeSwitch.ID != id {
 		return domain.AgentSwitch{}, false, nil
 	}
@@ -278,6 +284,9 @@ func (f *fakeAgentSwitchLifecycleStore) AcknowledgeAgentSwitchTarget(_ context.C
 	f.acknowledgementCalls = append(f.acknowledgementCalls, targetAcknowledgementCall{
 		switchID: switchID, sessionID: sessionID, generation: generation, at: at,
 	})
+	if f.ackErr != nil {
+		return false, f.ackErr
+	}
 	if f.ackForceNoChange {
 		return false, nil
 	}
@@ -1217,6 +1226,56 @@ func TestAcknowledgeAgentSwitchTargetReadsBackChangedFalseOutcomes(t *testing.T)
 			t.Fatal("unchanged exact acknowledgement predicate returned nil")
 		}
 	})
+}
+
+func TestAcknowledgeAgentSwitchTargetOwnsPostAdmissionErrors(t *testing.T) {
+	now := time.Date(2026, 8, 28, 10, 0, 0, 0, time.UTC)
+	base := domain.AgentSwitch{
+		ID: "switch-ack-owner", SessionID: "session-ack-owner",
+		FromHarness: domain.HarnessClaudeCode, TargetHarness: domain.HarnessCodex,
+		State: domain.AgentSwitchDelivering, SourceGenerationID: "source-generation", TargetGenerationID: "target-generation",
+	}
+	signal := ports.ActivitySignal{Valid: true, State: domain.ActivityActive, Event: "user-prompt-submit", LaunchID: "target-generation"}
+
+	tests := []struct {
+		name  string
+		store *fakeAgentSwitchLifecycleStore
+	}{
+		{
+			name: "acknowledgement failure",
+			store: &fakeAgentSwitchLifecycleStore{
+				fakeStore: newFakeStore(), hasActiveSwitch: true, activeSwitch: base,
+				ackErr: errors.New("ack write failed"),
+			},
+		},
+		{
+			name: "read-back failure",
+			store: &fakeAgentSwitchLifecycleStore{
+				fakeStore: newFakeStore(), hasActiveSwitch: true, activeSwitch: base,
+				ackForceNoChange: true, getSwitchErr: errors.New("read-back failed"),
+			},
+		},
+		{
+			name: "unchanged exact predicate",
+			store: &fakeAgentSwitchLifecycleStore{
+				fakeStore: newFakeStore(), hasActiveSwitch: true, activeSwitch: base,
+				ackForceNoChange: true,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			manager := New(tt.store, nil)
+			err := manager.acknowledgeAgentSwitchTarget(context.Background(), base.SessionID, signal, now)
+			if err == nil {
+				t.Fatal("acknowledgement error = nil")
+			}
+			if got := ownership.OwnerOf(err); got != ownership.OwnerAgentSwitchSaga {
+				t.Fatalf("acknowledgement owner = %q, want %q (error: %v)", got, ownership.OwnerAgentSwitchSaga, err)
+			}
+		})
+	}
 }
 
 func TestActivity_InternalSourceHandoffUpdateNeverReplacesUserFacingAssistant(t *testing.T) {

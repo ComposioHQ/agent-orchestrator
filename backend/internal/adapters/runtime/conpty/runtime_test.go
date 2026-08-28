@@ -802,6 +802,51 @@ func TestDestroyRetainsSessionWhenPIDCannotBeStopped(t *testing.T) {
 	}
 }
 
+func TestDestroyRequiresCompleteResolutionEvidence(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(t *testing.T, rt *Runtime, registryPath string)
+	}{
+		{
+			name: "malformed registry",
+			setup: func(t *testing.T, _ *Runtime, registryPath string) {
+				if err := os.WriteFile(registryPath, []byte("not json"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "unreadable registry",
+			setup: func(t *testing.T, _ *Runtime, registryPath string) {
+				if err := os.Mkdir(registryPath, 0o700); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "unresolved in-memory reservation",
+			setup: func(_ *testing.T, rt *Runtime, _ string) {
+				rt.sessions["sess-unresolved"] = nil
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			registryPath := filepath.Join(dir, "windows-pty-hosts.json")
+			rt := New(Options{RunFilePath: filepath.Join(dir, "running.json")})
+			t.Cleanup(func() { ptyregistry.SetRunFilePath("") })
+			tt.setup(t, rt, registryPath)
+
+			err := rt.Destroy(context.Background(), ports.RuntimeHandle{ID: "sess-unresolved"})
+			if !errors.Is(err, ports.ErrRuntimeProbeInconclusive) {
+				t.Fatalf("Destroy error = %v, want ErrRuntimeProbeInconclusive", err)
+			}
+		})
+	}
+}
+
 // TestResolveViaRegistry verifies that with an empty in-memory map but a
 // registry entry pointing at a live in-process host, status, styled output, and
 // input still work (simulates a daemon restart).

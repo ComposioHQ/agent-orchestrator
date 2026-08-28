@@ -250,9 +250,12 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 // never receive a false-success teardown while a provider may still be alive.
 // Unknown/already-gone sessions remain idempotent.
 func (r *Runtime) Destroy(ctx context.Context, handle ports.RuntimeHandle) error {
-	sess := r.resolve(handle.ID)
+	sess, err := r.resolveWithEvidence(handle.ID)
+	if err != nil {
+		return errors.Join(ports.ErrRuntimeProbeInconclusive, fmt.Errorf("conpty: resolve runtime %q for destroy: %w", handle.ID, err))
+	}
 	if sess == nil {
-		return nil // unknown or already gone
+		return nil // complete registry evidence proves the runtime is already gone
 	}
 	if sess.addr == unresolvedHostAddress && !sess.currentOwner {
 		return fmt.Errorf("conpty: recovered unresolved ownership for %q cannot be safely killed by PID alone: %w", handle.ID, ports.ErrRuntimeProbeInconclusive)
