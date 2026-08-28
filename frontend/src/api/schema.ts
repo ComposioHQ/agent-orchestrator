@@ -1780,7 +1780,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List compact token usage for session cards */
+        /** List compact token and estimated cost usage for session cards */
         get: operations["listCompactSessionUsage"];
         put?: never;
         post?: never;
@@ -1797,7 +1797,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get detailed token usage for one session */
+        /** Get detailed token and estimated cost usage for one session */
         get: operations["getSessionUsage"];
         put?: never;
         post?: never;
@@ -1902,12 +1902,6 @@ export interface components {
         AgentSwitchResponse: {
             switch: components["schemas"]["AgentSwitch"];
         };
-        AnthropicUsageDetailsResponse: {
-            anthropicCacheCreation1hInputTokens: null | number;
-            anthropicCacheCreation5mInputTokens: null | number;
-            anthropicCacheCreationInputTokens: null | number;
-            anthropicDirectUncachedInputTokens: null | number;
-        };
         AttachmentInput: {
             data: string;
             mimeType?: string;
@@ -1974,6 +1968,7 @@ export interface components {
             tokensBefore?: number;
         };
         CompactSessionUsageResponse: {
+            estimatedCost: null | components["schemas"]["EstimatedCostResponse"];
             incomplete: boolean;
             /** @description Canonical input plus output. Null when either component is unknown. */
             processedTokens: null | number;
@@ -2374,6 +2369,26 @@ export interface components {
             state?: "queued" | "running" | "completed" | "recovered" | "interrupted" | "failed";
             turnId?: string;
         };
+        EstimatedCostResponse: {
+            /** Format: int64 */
+            cachedInputNanos: null | number;
+            /** @enum {string} */
+            coverage: "complete" | "partial";
+            /**
+             * Format: int64
+             * @description Every non-cache-read input charge, cache writes included.
+             */
+            inputNanos: null | number;
+            /** Format: int64 */
+            outputNanos: null | number;
+            /**
+             * @description Whether contributing billing providers were detected, inferred from model ownership, or both.
+             * @enum {string}
+             */
+            providerAttribution: "observed" | "inferred" | "mixed";
+            /** Format: int64 */
+            totalNanos: number;
+        };
         ImportReport: {
             dryRun: boolean;
             notes?: string[];
@@ -2577,10 +2592,6 @@ export interface components {
             kind: "session" | "pr";
             prUrl?: string;
             sessionId: string;
-        };
-        OpenAIUsageDetailsResponse: {
-            openaiCacheWriteInputTokens: null | number;
-            openaiReasoningOutputTokens: null | number;
         };
         OpenShellTerminalRequest: {
             /** @description Project whose root the shell starts in. Omitted opens the shell in the daemon data dir. */
@@ -3248,46 +3259,29 @@ export interface components {
             /** @enum {string} */
             harness: "claude-code" | "codex";
             modelId?: string;
+            /** @description Canonical provider routing hint derived by the trusted local Claude hook. */
+            providerId?: string;
             subagentId?: string;
             subagentTranscriptPath?: string;
             transcriptPath?: string;
-        };
-        UsageMetricProvenanceResponse: {
-            /** @enum {string} */
-            cachedInputTokens: "reported" | "derived" | "unsupported" | "unknown";
-            /** @enum {string} */
-            inputTokens: "reported" | "derived" | "unsupported" | "unknown";
-            /** @enum {string} */
-            outputTokens: "reported" | "derived" | "unsupported" | "unknown";
-            /** @enum {string} */
-            uncachedInputTokens: "reported" | "derived" | "unsupported" | "unknown";
         };
         UsageModelResponse: {
             modelId: string;
             totals: components["schemas"]["UsageTotalsResponse"];
         };
-        UsageProviderDetailsResponse: {
-            anthropic?: components["schemas"]["AnthropicUsageDetailsResponse"];
-            openai?: components["schemas"]["OpenAIUsageDetailsResponse"];
-        };
         UsageTotalsResponse: {
             /** @description Deprecated compatibility alias for cachedInputTokens. */
             cacheReadTokens: null | number;
-            /** @description Deprecated compatibility aggregate of provider cache-write input counters. */
-            cacheWriteTokens: null | number;
             /** @description Input read from an existing provider cache. Cache hit percentage uses cachedInputTokens divided by inclusive inputTokens. */
             cachedInputTokens: null | number;
+            estimatedCost: null | components["schemas"]["EstimatedCostResponse"];
             /** @description Total input, including cached and uncached input. */
             inputTokens: null | number;
             /** @description Total output, including provider-specific subsets such as reasoning output. */
             outputTokens: null | number;
             /** @description Canonical input plus output. Null when either component is unknown. */
             processedTokens: null | number;
-            provenance: components["schemas"]["UsageMetricProvenanceResponse"];
-            providerDetails: components["schemas"]["UsageProviderDetailsResponse"];
-            /** @description Deprecated compatibility alias for the OpenAI reasoning-output subset. */
-            reasoningTokens: null | number;
-            /** @description Input not read from an existing provider cache. */
+            /** @description Input not read from an existing provider cache. Includes cache writes. */
             uncachedInputTokens: null | number;
         };
         WorkspaceCommitSummary: {
