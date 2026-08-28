@@ -525,7 +525,7 @@ function SettingsBody({
 							<ReviewerSelect
 								value={form.reviewerHarness}
 								onChange={(v) => setForm((f) => ({ ...f, reviewerHarness: v }))}
-								onConfigChange={(agentConfig) =>
+								onConfigChange={(_harness, agentConfig) =>
 									setForm((f) => ({
 										...f,
 										reviewerModel: agentConfig.model ?? "",

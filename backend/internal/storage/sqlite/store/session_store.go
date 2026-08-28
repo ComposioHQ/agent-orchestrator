@@ -259,7 +259,7 @@ func (s *Store) SetSessionAutoInjectCI(ctx context.Context, id domain.SessionID,
 	return updated, nil
 }
 
-// SetSessionReviewerHarness persists the reviewer preference for one session.
+// SetSessionReviewerConfig persists the reviewer preference for one session.
 func (s *Store) SetSessionReviewerConfig(
 	ctx context.Context,
 	id domain.SessionID,

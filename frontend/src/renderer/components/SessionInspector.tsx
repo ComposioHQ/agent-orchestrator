@@ -2242,7 +2242,7 @@ function ReviewPanel({
 							disabled={reviewRunning || autoReviewEnabled || isKilling || isSwitchingReviewer || isTriggering || isCancelling}
 							installed={agentCatalog?.installed}
 							onChange={(next) => onReviewerOverrideChange(next as ReviewerHarness | "", {})}
-							onConfigChange={(config) => onReviewerOverrideChange(reviewerOverride, config)}
+							onConfigChange={(harness, config) => onReviewerOverrideChange(harness as ReviewerHarness | "", config)}
 							model={reviewerModel}
 							mode={reviewerMode}
 							projectId={session.workspaceId}

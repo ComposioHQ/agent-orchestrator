@@ -195,7 +195,7 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID, override
 }
 
 // TriggerWithSource starts a review and records who initiated the pass.
-func (e *Engine) TriggerWithSource(ctx stdctx.Context, workerID domain.SessionID, override domain.ReviewerHarness, config domain.AgentConfig, source domain.ReviewTriggerSource) (TriggerResult, error) {
+func (e *Engine) TriggerWithSource(ctx stdctx.Context, workerID domain.SessionID, override domain.ReviewerHarness, overrideConfig domain.AgentConfig, source domain.ReviewTriggerSource) (TriggerResult, error) {
 	if workerID == "" {
 		return TriggerResult{}, fmt.Errorf("%w: worker session id is required", ErrInvalid)
 	}
@@ -250,8 +250,8 @@ func (e *Engine) TriggerWithSource(ctx stdctx.Context, workerID domain.SessionID
 	}
 	if override != "" {
 		harness = override
-		if config != (domain.AgentConfig{}) {
-			// pass-specific override wins when provided; otherwise keep the session/project default config
+		if overrideConfig != (domain.AgentConfig{}) {
+			config = overrideConfig
 		} else {
 			config = domain.AgentConfig{}
 		}
@@ -438,7 +438,7 @@ func (e *Engine) SwitchReviewer(
 		return SessionReviews{}, fmt.Errorf("%w: unknown reviewer harness %q", ErrInvalid, harness)
 	}
 	if err := config.Validate(); err != nil {
-		return SessionReviews{}, fmt.Errorf("%w: reviewer config: %v", ErrInvalid, err)
+		return SessionReviews{}, fmt.Errorf("%w: reviewer config: %w", ErrInvalid, err)
 	}
 	unlock := e.lockWorker(workerID)
 	defer unlock()

@@ -63,7 +63,7 @@ export function ReviewerSelect({
 }: {
 	value: string;
 	onChange: (value: string) => void;
-	onConfigChange?: (config: ReviewerAgentConfig) => void;
+	onConfigChange?: (harness: string, config: ReviewerAgentConfig) => void;
 	model?: string;
 	mode?: string;
 	projectId?: string;
@@ -128,7 +128,7 @@ export function ReviewerSelect({
 						currentMode={mode}
 						onSelect={(nextHarness, nextConfig) => {
 							onChange(nextHarness);
-							onConfigChange?.(nextConfig);
+							onConfigChange?.(nextHarness, nextConfig);
 						}}
 						projectId={projectId ?? ""}
 						resolvedHarness={defaultHarness}
@@ -144,7 +144,7 @@ export function ReviewerSelect({
 						currentMode={mode}
 						onSelect={(nextHarness, nextConfig) => {
 							onChange(nextHarness);
-							onConfigChange?.(nextConfig);
+							onConfigChange?.(nextHarness, nextConfig);
 						}}
 						projectId={projectId ?? ""}
 						resolvedHarness={agent.id}
@@ -205,6 +205,7 @@ function ReviewerHarnessOption({
 				onSelect={() => onSelect(persistHarness, {})}
 				active={isCurrent && currentModel === "" && currentMode === ""}
 				className="reviews-agent-menu-item"
+				disabled={agent.disabled}
 			>
 				<AgentSelectMenuItem
 					agentId={resolvedHarness}
@@ -220,7 +221,7 @@ function ReviewerHarnessOption({
 
 	return (
 		<OptionMenuSub open={open} onOpenChange={setOpen}>
-			<OptionMenuSubTrigger onClick={() => onSelect(persistHarness, {})}>
+			<OptionMenuSubTrigger onClick={() => onSelect(persistHarness, {})} disabled={agent.disabled}>
 				<div className="flex min-w-0 items-center justify-between gap-3">
 					<div className="min-w-0">
 						<AgentSelectMenuItem
