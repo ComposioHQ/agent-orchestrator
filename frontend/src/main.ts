@@ -32,6 +32,7 @@ import { initMainSentry, rendererCaptureAllowed } from "./main/sentry-main";
 import { TelemetryPolicyAuthority, resolveDesktopDataDir } from "./main/telemetry-policy-file";
 import { DaemonTelemetryPolicyClient } from "./main/daemon-telemetry-policy-client";
 import { DesktopTelemetryController } from "./main/desktop-telemetry-controller";
+import { AgentSwitchVisibilityController } from "./main/agent-switch-observability";
 import { readUpdateSettings, type UpdateSettings, type UpdateStatus } from "./main/update-settings";
 import { readKeybindingOverrides, writeKeybindingOverrides } from "./main/keybinding-settings";
 import { readEditorSettings, writeEditorPreference } from "./main/editor-settings";
@@ -96,7 +97,13 @@ import { installCloudCpProxy } from "./main/cloud-cp-proxy";
 import { DEFAULT_POSTHOG_HOST, DEFAULT_POSTHOG_PROJECT_KEY } from "./shared/posthog-config";
 import { DEFAULT_SENTRY_DSN } from "./shared/sentry-config";
 import { buildTelemetryBootstrap, rendererTelemetryEnabled } from "./shared/telemetry";
-import { TELEMETRY_POLICY_CHANGED_CHANNEL, type RendererTelemetryCapture, type TelemetryPolicyView } from "./shared/telemetry-policy";
+import {
+	TELEMETRY_CLEAR_RENDERER_QUEUES_CHANNEL,
+	TELEMETRY_POLICY_CHANGED_CHANNEL,
+	TELEMETRY_RENDERER_QUEUES_CLEARED_CHANNEL,
+	type RendererTelemetryCapture,
+	type TelemetryPolicyView,
+} from "./shared/telemetry-policy";
 import { createBrowserViewHost, type BrowserViewHost } from "./main/browser-view-host";
 import { createWindowComposition, type WindowComposition } from "./main/window-composition";
 import { AgentBrowserRuntime } from "./main/agent-browser-runtime";
@@ -110,6 +117,7 @@ import { dockBounceType, shouldReplaceBounce, shouldSignalAttention, shouldToast
 import { buildMacAppMenuTemplate, buildWindowsAppMenuTemplate } from "./main/menu";
 import { ancestorRepositorySetupWarning, scanImportFolder } from "./main/import-folder-scan";
 import { parseOpenFolderPathArg } from "./main/open-folder-arg";
+import { AGENT_SWITCH_VISIBILITY_IPC_CHANNEL } from "./shared/agent-switch-observability";
 
 // Globals injected at compile time by @electron-forge/plugin-vite.
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
@@ -170,6 +178,43 @@ app.setPath(
 const desktopLaunchWorkingDirectory = process.cwd();
 const desktopDataDir = resolveDesktopDataDir(process.env, os.homedir(), desktopLaunchWorkingDirectory, app.isPackaged);
 let telemetryPolicyController: DesktopTelemetryController | null = null;
+let agentSwitchVisibilityController: AgentSwitchVisibilityController | null = null;
+const trustedShellWebContents = new Map<number, WebContents>();
+const pendingRendererQueuePurges = new Map<string, {
+	senderId: number;
+	contents: WebContents;
+	resolve: () => void;
+	reject: (error: Error) => void;
+	timeout: ReturnType<typeof setTimeout>;
+	onDestroyed: () => void;
+}>();
+
+function finishRendererQueuePurge(requestId: string, error?: Error): void {
+	const pending = pendingRendererQueuePurges.get(requestId);
+	if (!pending) return;
+	pendingRendererQueuePurges.delete(requestId);
+	clearTimeout(pending.timeout);
+	pending.contents.removeListener("destroyed", pending.onDestroyed);
+	if (error) pending.reject(error);
+	else pending.resolve();
+}
+
+function requestRendererQueuePurge(contents: WebContents): Promise<void> {
+	return new Promise((resolve, reject) => {
+		const requestId = randomUUID();
+		const onDestroyed = () => finishRendererQueuePurge(requestId, new Error("renderer destroyed before telemetry queue purge"));
+		const timeout = setTimeout(() => finishRendererQueuePurge(requestId, new Error("renderer telemetry queue purge timed out")), 5_000);
+		pendingRendererQueuePurges.set(requestId, { senderId: contents.id, contents, resolve, reject, timeout, onDestroyed });
+		contents.once("destroyed", onDestroyed);
+		try { contents.send(TELEMETRY_CLEAR_RENDERER_QUEUES_CHANNEL, { requestId }); }
+		catch (error) { finishRendererQueuePurge(requestId, error instanceof Error ? error : new Error("renderer telemetry queue purge failed")); }
+	});
+}
+
+async function clearRendererTelemetryQueues(): Promise<void> {
+	const liveShells = [...trustedShellWebContents.values()].filter((contents) => !contents.isDestroyed());
+	await Promise.all(liveShells.map(requestRendererQueuePurge));
+}
 
 let mainWindow: BaseWindow | null = null;
 let trayController: TrayController | null = null;
@@ -454,6 +499,12 @@ async function createWindowInternal(): Promise<void> {
 	syncNativeWindowBackground();
 	const shellWebContents = getShellWebContents();
 	if (!shellWebContents) throw new Error("AO shell WebContents was not created");
+	trustedShellWebContents.set(shellWebContents.id, shellWebContents);
+	agentSwitchVisibilityController?.registerWindow(shellWebContents.id);
+	shellWebContents.once("destroyed", () => {
+		trustedShellWebContents.delete(shellWebContents.id);
+		agentSwitchVisibilityController?.destroyWindow(shellWebContents.id);
+	});
 
 	// On Windows the app paints its own title bar (WindowTitlebar), so the native
 	// menu bar is hidden (autoHideMenuBar above). The role-based menu is still
@@ -1782,9 +1833,24 @@ ipcMain.handle("telemetry:setEventsEnabled", (_event, input: { eventsEnabled?: u
 	if (!telemetryPolicyController || typeof input?.eventsEnabled !== "boolean" || typeof input.expectedGeneration !== "string") throw new Error("invalid telemetry policy request");
 	return telemetryPolicyController.setEventsEnabled(input.eventsEnabled, input.expectedGeneration);
 });
+ipcMain.on(TELEMETRY_RENDERER_QUEUES_CLEARED_CHANNEL, (event, input: unknown) => {
+	const trustedSender = trustedShellWebContents.get(event.sender.id);
+	if (!trustedSender || trustedSender !== event.sender || trustedSender.isDestroyed()) return;
+	if (!input || typeof input !== "object" || Array.isArray(input)) return;
+	const result = input as Record<string, unknown>;
+	if (Object.keys(result).length !== 2 || typeof result.requestId !== "string" || typeof result.ok !== "boolean") return;
+	const pending = pendingRendererQueuePurges.get(result.requestId);
+	if (!pending || pending.senderId !== event.sender.id) return;
+	finishRendererQueuePurge(result.requestId, result.ok ? undefined : new Error("renderer telemetry queue purge failed"));
+});
 ipcMain.handle("telemetry:capture", (_event, request: RendererTelemetryCapture) => {
 	if (!telemetryPolicyController || !rendererCaptureAllowed(request)) return false;
 	return telemetryPolicyController.capture(request);
+});
+ipcMain.on(AGENT_SWITCH_VISIBILITY_IPC_CHANNEL, (event, request: unknown) => {
+	const trustedSender = trustedShellWebContents.get(event.sender.id);
+	if (trustedSender !== event.sender || trustedSender.isDestroyed()) return;
+	agentSwitchVisibilityController?.signal(event.sender.id, request);
 });
 
 function failClosedTelemetryPolicyView(): TelemetryPolicyView {
@@ -2181,6 +2247,12 @@ async function writeAppStateOnLaunch(): Promise<void> {
 }
 
 app.whenReady().then(async () => {
+	const visibilityKillSwitched = (process.env.AO_TELEMETRY_DISABLED_EVENTS ?? "").split(",").some((name) => name.trim() === "ao.agent_switch.visibility_failure");
+	// The approved release gate is intentionally closed. Tests inject the
+	// dedicated no-cache sender; the shipping composition creates no visibility
+	// network transport until that gate is separately approved.
+	agentSwitchVisibilityController = new AgentSwitchVisibilityController({ send: async () => undefined, killSwitched: visibilityKillSwitched, diagnostic: (code) => console.warn("agent switch visibility diagnostic:", code) });
+	for (const shellContents of trustedShellWebContents.values()) agentSwitchVisibilityController.registerWindow(shellContents.id);
 	const authority = new TelemetryPolicyAuthority({ dataDir: desktopDataDir, packagedDefault: app.isPackaged, platform: process.platform });
 	const daemonPolicy = new DaemonTelemetryPolicyClient(() => daemonStatus.state === "ready" && daemonStatus.port ? `http://127.0.0.1:${daemonStatus.port}` : null, (url, init) => net.fetch(url, init));
 	telemetryPolicyController = new DesktopTelemetryController({
@@ -2188,7 +2260,11 @@ app.whenReady().then(async () => {
 		daemon: daemonPolicy,
 		environmentAllowsEvents: rendererTelemetryEnabled(process.env, app.isPackaged),
 		transportFactory: () => initMainSentry(app.getVersion(), app.getPath("userData")),
-		broadcast: (view) => getShellWebContents()?.send(TELEMETRY_POLICY_CHANGED_CHANNEL, view),
+		visibility: agentSwitchVisibilityController,
+		clearRendererQueues: clearRendererTelemetryQueues,
+		broadcast: (view) => {
+			for (const shellContents of trustedShellWebContents.values()) if (!shellContents.isDestroyed()) shellContents.send(TELEMETRY_POLICY_CHANGED_CHANNEL, view);
+		},
 	});
 	try { await telemetryPolicyController.initialize(); }
 	catch (error) { console.error("telemetry policy bootstrap failed; reporting remains disabled:", error); }
@@ -2303,7 +2379,10 @@ app.on("before-quit", (event) => {
 	if (!browserCleanupComplete) {
 		event.preventDefault();
 		if (!browserQuitCleanupPromise) {
-			browserQuitCleanupPromise = disposeAllBrowserViewHosts().finally(() => {
+			browserQuitCleanupPromise = Promise.all([
+				disposeAllBrowserViewHosts(),
+				telemetryPolicyController?.close() ?? Promise.resolve(),
+			]).then(() => undefined).finally(() => {
 				browserCleanupComplete = true;
 				browserQuitCleanupPromise = null;
 				app.quit();

@@ -25,6 +25,7 @@ export class DesktopTelemetryController {
 	private view: TelemetryPolicyView;
 	private transport: DesktopTelemetryTransport | null = null;
 	private operation: Promise<TelemetryPolicyView>;
+	private pendingDesktopCleanup: (() => Promise<boolean>) | null = null;
 
 	constructor(private readonly options: {
 		authority: Authority;
@@ -34,6 +35,7 @@ export class DesktopTelemetryController {
 		productionEnabled?: boolean;
 		broadcast?: (view: TelemetryPolicyView) => void;
 		clearRendererQueues?: () => Promise<void>;
+		visibility?: { setPolicy(enabled: boolean, consentGeneration: string): void; disableAndDrain(): Promise<void>; closeAndDrain(): Promise<void> };
 	}) {
 		this.view = this.toView(options.authority.snapshot(), "applied");
 		this.operation = Promise.resolve(this.view);
@@ -68,13 +70,16 @@ export class DesktopTelemetryController {
 	async retryPendingCleanup(): Promise<TelemetryPolicyView> {
 		return this.serialize(async () => {
 			if (this.view.state === "applied") return this.snapshot();
+			let desktopCleanupFailed = false;
 			try {
 				const ack = await this.options.daemon.applyPolicy(this.view.consentGeneration, this.view.eventsEnabled);
 				if (!this.acknowledges(this.view.eventsEnabled, this.view.consentGeneration, ack)) throw new Error("policy was not acknowledged");
+				if (!this.view.eventsEnabled && this.pendingDesktopCleanup && !(await this.pendingDesktopCleanup())) { desktopCleanupFailed = true; throw new Error("desktop cleanup is incomplete"); }
+				this.pendingDesktopCleanup = null;
 				this.view = { ...this.view, state: "applied", acknowledged: true, reason: this.baseReason() };
 				if (this.captureEnabled(this.view) && !this.transport) this.transport = await this.options.transportFactory();
 			} catch {
-				this.view = { ...this.view, state: "cleanup_pending", acknowledged: false, reason: "daemon_cleanup_pending" };
+				this.view = { ...this.view, state: "cleanup_pending", acknowledged: false, reason: desktopCleanupFailed ? "cleanup_failed" : "daemon_cleanup_pending" };
 			}
 			this.publish(); return this.snapshot();
 		});
@@ -85,21 +90,55 @@ export class DesktopTelemetryController {
 		this.transport.capture(request); return true;
 	}
 
+	async close(): Promise<void> {
+		const transport = this.transport;
+		this.transport = null;
+		await Promise.allSettled([
+			this.options.visibility?.closeAndDrain() ?? Promise.resolve(),
+			transport?.closeAndDrain() ?? Promise.resolve(),
+		]);
+	}
+
 	private async disable(): Promise<TelemetryPolicyView> {
+		let visibilityDrained = true;
+		try {
+			this.options.visibility?.setPolicy(false, this.view.consentGeneration);
+			await this.options.visibility?.disableAndDrain();
+		} catch { visibilityDrained = false; }
 		const closingTransport = this.transport;
-		await closingTransport?.closeAndDrain(); this.transport = null;
+		let transportDrained = true;
+		try { await closingTransport?.closeAndDrain(); } catch { transportDrained = false; }
+		this.transport = null;
 		try { await this.options.daemon.prepareDisable(); } catch { /* durable off still proceeds */ }
 		let snapshot: TelemetryPolicySnapshot;
 		try { snapshot = await this.options.authority.setEventsEnabled(false); }
-		catch (error) { snapshot = this.options.authority.snapshot(); this.view = this.toView(snapshot, "cleanup_failed", "cleanup_failed"); this.publish(); throw error; }
+		catch (error) {
+			snapshot = { ...this.options.authority.snapshot(), eventsEnabled: false, acknowledged: false };
+			this.view = this.toView(snapshot, "cleanup_failed", "cleanup_failed");
+			this.publish();
+			throw error;
+		}
 		let applied = false;
 		try {
 			const ack = await this.options.daemon.applyPolicy(snapshot.consentGeneration, false);
-			applied = ack.consentGeneration === snapshot.consentGeneration && !ack.eventsEnabled && ack.purgeConfirmed;
+			applied = ack.consentGeneration === snapshot.consentGeneration && !ack.eventsEnabled && ack.gateDrained && ack.purgeConfirmed;
 		} catch { applied = false; }
-		await closingTransport?.clearCache().catch(() => undefined);
-		await this.options.clearRendererQueues?.().catch(() => undefined);
-		this.view = this.toView({ ...snapshot, acknowledged: snapshot.acknowledged && applied }, applied ? "applied" : "cleanup_pending", applied ? this.baseReason() : "daemon_cleanup_pending");
+		this.pendingDesktopCleanup = async () => {
+			let purged = true;
+			if (!visibilityDrained) {
+				try { await this.options.visibility?.disableAndDrain(); visibilityDrained = true; } catch { purged = false; }
+			}
+			if (!transportDrained) {
+				try { await closingTransport?.closeAndDrain(); transportDrained = true; } catch { purged = false; }
+			}
+			try { await closingTransport?.clearCache(); } catch { purged = false; }
+			try { await this.options.clearRendererQueues?.(); } catch { purged = false; }
+			return purged;
+		};
+		const desktopPurged = await this.pendingDesktopCleanup();
+		if (desktopPurged) this.pendingDesktopCleanup = null;
+		const cleanupApplied = applied && desktopPurged;
+		this.view = this.toView({ ...snapshot, acknowledged: snapshot.acknowledged && cleanupApplied }, cleanupApplied ? "applied" : "cleanup_pending", cleanupApplied ? this.baseReason() : (desktopPurged ? "daemon_cleanup_pending" : "cleanup_failed"));
 		this.publish(); return this.snapshot();
 	}
 
@@ -108,7 +147,9 @@ export class DesktopTelemetryController {
 		if (!this.options.environmentAllowsEvents) { this.view = { ...this.view, environmentVeto: true, reason: "environment_veto" }; this.publish(); return this.snapshot(); }
 		if (!this.view.eventsEnabled && this.view.state !== "applied") {
 			const cleanup = await this.options.daemon.applyPolicy(this.view.consentGeneration, false);
-			if (!cleanup.purgeConfirmed || cleanup.eventsEnabled || cleanup.consentGeneration !== this.view.consentGeneration) throw new Error("prior telemetry purge is incomplete");
+			if (!cleanup.gateDrained || !cleanup.purgeConfirmed || cleanup.eventsEnabled || cleanup.consentGeneration !== this.view.consentGeneration) throw new Error("prior telemetry purge is incomplete");
+			if (this.pendingDesktopCleanup && !(await this.pendingDesktopCleanup())) throw new Error("prior desktop telemetry purge is incomplete");
+			this.pendingDesktopCleanup = null;
 		}
 		const snapshot = await this.options.authority.setEventsEnabled(true);
 		const ack = await this.options.daemon.applyPolicy(snapshot.consentGeneration, true);
@@ -137,11 +178,14 @@ export class DesktopTelemetryController {
 
 	private acknowledges(enabled: boolean, generation: string, ack: DaemonTelemetryPolicyAcknowledgement): boolean {
 		if (ack.consentGeneration !== generation) return false;
-		if (!enabled) return !ack.eventsEnabled && ack.purgeConfirmed;
+		if (!enabled) return !ack.eventsEnabled && ack.gateDrained && ack.purgeConfirmed;
 		return ack.eventsEnabled || !(this.options.productionEnabled ?? agentSwitchFailureProductionEnabled);
 	}
 
-	private publish(): void { this.options.broadcast?.(this.snapshot()); }
+	private publish(): void {
+		this.options.visibility?.setPolicy(this.captureEnabled(this.view), this.view.consentGeneration);
+		this.options.broadcast?.(this.snapshot());
+	}
 
 	private serialize(operation: () => Promise<TelemetryPolicyView>): Promise<TelemetryPolicyView> {
 		const next = this.operation.catch(() => this.snapshot()).then(operation);

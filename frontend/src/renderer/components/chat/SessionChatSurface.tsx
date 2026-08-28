@@ -16,6 +16,7 @@ import {
 	useAgentSwitches,
 } from "../../hooks/useAgentSwitches";
 import { useObservedAgentSwitchLifecycle } from "../../hooks/useObservedAgentSwitchLifecycle";
+import { useAgentSwitchPresentationVisibility, useAgentSwitchRouteVisibility } from "../../hooks/useAgentSwitchVisibility";
 import { useSwitchAgentState } from "../../hooks/useSwitchAgent";
 import {
 	useConversation,
@@ -30,6 +31,7 @@ import { useSessionBrowserLink } from "../../hooks/useSessionBrowserLink";
 import type { ShellTerminal } from "../../hooks/useShellTerminals";
 import {
 	deriveAgentSwitchPresentation,
+	agentSwitchVisibilityPresentationKind,
 	type AgentSwitchPresentation,
 } from "../../lib/agent-switch-presentation";
 import { cn } from "../../lib/utils";
@@ -172,6 +174,7 @@ export function SessionChatSurface({
 			}
 			: undefined;
 	const agentSwitch = durableAgentSwitch ?? admissionAgentSwitch ?? observedTerminalSwitch;
+	useAgentSwitchRouteVisibility(`session/${session.id}`, agentSwitch && agentSwitch.state !== "completed" && agentSwitch.state !== "failed" ? "active" : "history", undefined, false);
 	const targetChatControllerReady =
 		snapshot?.controller?.state === "ready" || snapshot?.controller?.state === "busy";
 	const switchPresentation = agentSwitch
@@ -215,6 +218,13 @@ export function SessionChatSurface({
 		(renderShellFallback
 			? unavailableConversationSnapshot(session)
 			: undefined);
+	const visibilityPresentationKind = agentSwitchVisibilityPresentationKind(shownSwitchPresentation);
+	useAgentSwitchPresentationVisibility({
+		localRouteKey: `session/${session.id}`,
+		agentSwitch,
+		presentationKind: visibilityPresentationKind,
+		visible: Boolean(shownSwitchPresentation && (!isLoading || renderShellFallback) && (!unavailable || renderShellFallback)),
+	});
 
 	if (isLoading && !renderShellFallback) {
 		return (

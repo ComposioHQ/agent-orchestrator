@@ -3,13 +3,14 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 
-const { captureRendererEventMock, cloudState, getMock, hasTrustedApiBaseUrlMock, listProjectsMock } = vi.hoisted(
+const { captureRendererEventMock, cloudState, getMock, hasTrustedApiBaseUrlMock, listProjectsMock, setQueryHealthyMock } = vi.hoisted(
 	() => ({
 		captureRendererEventMock: vi.fn().mockResolvedValue(undefined),
 		cloudState: { ready: false, org: undefined as { id: string } | undefined },
 		getMock: vi.fn(),
 		hasTrustedApiBaseUrlMock: vi.fn(() => true),
 		listProjectsMock: vi.fn(),
+		setQueryHealthyMock: vi.fn(),
 	}),
 );
 
@@ -19,6 +20,7 @@ vi.mock("../lib/api-client", () => ({
 }));
 
 vi.mock("../lib/telemetry", () => ({ captureRendererEvent: captureRendererEventMock }));
+vi.mock("../lib/agent-switch-visibility", () => ({ agentSwitchVisibility: { setQueryHealthy: setQueryHealthyMock } }));
 
 vi.mock("./useCloudCp", () => ({
 	useCloudCp: () => ({
@@ -58,6 +60,7 @@ beforeEach(() => {
 	cloudState.ready = false;
 	cloudState.org = undefined;
 	listProjectsMock.mockReset();
+	setQueryHealthyMock.mockReset();
 });
 
 describe("useWorkspaceQuery", () => {
@@ -174,6 +177,7 @@ describe("useWorkspaceQuery", () => {
 			id: "switch-1",
 			state: "delivering_context",
 			targetHarness: "codex",
+			updatedAt: "2026-06-10T15:32:00Z",
 		});
 		expect(workspace.sessions[1]).toMatchObject({
 			id: "sess-2",
@@ -358,6 +362,7 @@ describe("useWorkspaceQuery", () => {
 
 		await waitFor(() => expect(result.current.isError).toBe(true), { timeout: 3_000 });
 		expect(result.current.error).toBe(failure);
+		expect(setQueryHealthyMock).toHaveBeenCalledWith("history", false, "workspaces");
 	});
 
 	it("surfaces a sessions fetch error even when projects load", async () => {

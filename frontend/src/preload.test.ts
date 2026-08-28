@@ -35,6 +35,7 @@ await import("./preload");
 // not the per-call listener onOpenFolderPath registers when invoked.
 const openFolderPathBufferListener = electronMocks.listeners.get("app:openFolderPath");
 const telemetryPolicyBroadcastListener = electronMocks.listeners.get("telemetry:policyChanged");
+const rendererQueuePurgeRequestListener = electronMocks.listeners.get("telemetry:clearRendererQueues");
 
 function exposedBridge(): AoBridge {
 	const call = electronMocks.exposeInMainWorld.mock.calls.find(([key]) => key === "ao");
@@ -72,6 +73,43 @@ describe("preload telemetry generation bridge", () => {
 		await exposedBridge().telemetry.capture({ kind: "message", message: "second" });
 		expect(electronMocks.invoke).toHaveBeenNthCalledWith(1, "telemetry:capture", { kind: "message", message: "first", consentGeneration: "generation-off" });
 		expect(electronMocks.invoke).toHaveBeenNthCalledWith(2, "telemetry:capture", { kind: "message", message: "second", consentGeneration: "generation-on" });
+	});
+
+	it("attaches the latest policy generation to visibility signals without accepting renderer generation", () => {
+		telemetryPolicyBroadcastListener?.({}, { eventsEnabled: true, consentGeneration: "generation-a", updatedAt: "2026-08-28T10:15:30.000Z", acknowledged: true, state: "applied", environmentVeto: false, durabilitySupported: true });
+		expect(exposedBridge().telemetry.signalAgentSwitchVisibility({ kind: "focus", value: true })).toBe(true);
+		telemetryPolicyBroadcastListener?.({}, { eventsEnabled: true, consentGeneration: "generation-b", updatedAt: "2026-08-28T10:15:31.000Z", acknowledged: true, state: "applied", environmentVeto: false, durabilitySupported: true });
+		expect(exposedBridge().telemetry.signalAgentSwitchVisibility({ kind: "online", value: false })).toBe(true);
+		expect(electronMocks.send).toHaveBeenNthCalledWith(1, "agent-switch:visibility", { consentGeneration: "generation-a", signal: { kind: "focus", value: true } });
+		expect(electronMocks.send).toHaveBeenNthCalledWith(2, "agent-switch:visibility", { consentGeneration: "generation-b", signal: { kind: "online", value: false } });
+	});
+
+	it("acknowledges renderer queue purge only after every registered cleanup succeeds", async () => {
+		const first = vi.fn();
+		const second = vi.fn().mockResolvedValue(undefined);
+		const disposeFirst = exposedBridge().telemetry.onClearQueues(first);
+		const disposeSecond = exposedBridge().telemetry.onClearQueues(second);
+
+		rendererQueuePurgeRequestListener?.({}, { requestId: "purge-1" });
+		await Promise.resolve();
+		await Promise.resolve();
+
+		expect(first).toHaveBeenCalledOnce();
+		expect(second).toHaveBeenCalledOnce();
+		expect(electronMocks.send).toHaveBeenCalledWith("telemetry:rendererQueuesCleared", { requestId: "purge-1", ok: true });
+		disposeFirst();
+		disposeSecond();
+	});
+
+	it("reports renderer queue purge failure instead of over-acknowledging opt-out", async () => {
+		const dispose = exposedBridge().telemetry.onClearQueues(vi.fn().mockRejectedValue(new Error("purge failed")));
+
+		rendererQueuePurgeRequestListener?.({}, { requestId: "purge-2" });
+		await Promise.resolve();
+		await Promise.resolve();
+
+		expect(electronMocks.send).toHaveBeenCalledWith("telemetry:rendererQueuesCleared", { requestId: "purge-2", ok: false });
+		dispose();
 	});
 });
 

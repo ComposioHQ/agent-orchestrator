@@ -26,6 +26,7 @@ const POSTHOG_EVENT_NAME_ALIASES: Record<string, string> = {
 };
 
 let initPromise: Promise<boolean> | null = null;
+let postHogInitialized = false;
 let errorHandlersBound = false;
 let telemetryContext: TelemetryProperties = {};
 let fallbackActiveDate = "";
@@ -740,6 +741,7 @@ export async function initTelemetry(): Promise<boolean> {
 		const channel = releaseChannelFrom(await readUpdateSettingsForTelemetry());
 		telemetryContext = buildTelemetryContext(bootstrap.appVersion, bootstrap.platform, channel);
 		posthog.init(POSTHOG_KEY, buildPostHogConfig(bootstrap.distinctId));
+		postHogInitialized = true;
 		posthog.register({
 			...telemetryContext,
 			surface: "renderer",
@@ -791,6 +793,62 @@ export async function initTelemetry(): Promise<boolean> {
 	});
 	initPromise = attempt;
 	return attempt;
+}
+
+type PurgeablePostHog = Pick<typeof posthog, "opt_in_capturing" | "opt_out_capturing"> & {
+	_requestQueue?: unknown;
+	_retryQueue?: unknown;
+};
+
+/**
+ * Drops renderer-owned telemetry that has not left the process yet. This uses
+ * the pinned PostHog queue shape deliberately: calling either queue's public
+ * `unload` method would send the bytes that opt-out is trying to delete.
+ * Unknown SDK shapes fail closed so Electron cannot acknowledge cleanup.
+ */
+export function clearRendererTelemetryQueues(client: PurgeablePostHog = posthog): void {
+	if (client !== posthog || postHogInitialized) client.opt_out_capturing();
+	purgeRequestQueue(client._requestQueue);
+	purgeRetryQueue(client._retryQueue);
+	minuteWindows.clear();
+	dayWindows.clear();
+	fallbackActiveDate = "";
+	fallbackRouteViewDate = "";
+	fallbackRouteViewSurfaces.clear();
+	const storage = telemetryStorage() as (DailyActiveStorage & Partial<Pick<Storage, "removeItem">>) | undefined;
+	storage?.removeItem?.(ACTIVE_STORAGE_KEY);
+	storage?.removeItem?.(ROUTE_VIEW_STORAGE_KEY);
+}
+
+export function applyRendererTelemetryPolicy(enabled: boolean): void {
+	if (!enabled) return;
+	if (postHogInitialized) {
+		posthog.opt_in_capturing({ captureEventName: false });
+		return;
+	}
+	// A disabled bootstrap is memoized as false. Permit the same still-open
+	// renderer to initialize after main broadcasts a newly enabled generation.
+	initPromise = null;
+}
+
+function purgeRequestQueue(value: unknown): void {
+	if (value === undefined) return;
+	if (!value || typeof value !== "object") throw new Error("PostHog request queue cannot be purged");
+	const queue = value as { _queue?: unknown; _clearFlushTimeout?: unknown };
+	if (!Array.isArray(queue._queue) || typeof queue._clearFlushTimeout !== "function") throw new Error("PostHog request queue cannot be purged");
+	queue._queue.length = 0;
+	queue._clearFlushTimeout();
+}
+
+function purgeRetryQueue(value: unknown): void {
+	if (value === undefined) return;
+	if (!value || typeof value !== "object") throw new Error("PostHog retry queue cannot be purged");
+	const queue = value as { _queue?: unknown; _poller?: ReturnType<typeof setTimeout>; _isPolling?: boolean };
+	if (!Array.isArray(queue._queue) || typeof queue._isPolling !== "boolean") throw new Error("PostHog retry queue cannot be purged");
+	if (queue._poller !== undefined) clearTimeout(queue._poller);
+	queue._poller = undefined;
+	queue._isPolling = false;
+	queue._queue.length = 0;
 }
 
 export async function captureRendererEvent(event: string, properties?: Record<string, unknown>): Promise<void> {

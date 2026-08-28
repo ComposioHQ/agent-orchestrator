@@ -11,7 +11,8 @@ import { mergeUnreadNotification, unreadNotificationsQueryKey } from "./lib/noti
 import { createAppRouter } from "./router";
 import { TelemetryBoundary } from "./components/TelemetryBoundary";
 import { CloudOnboardingGate } from "./components/CloudOnboardingGate";
-import { initTelemetry } from "./lib/telemetry";
+import { applyRendererTelemetryPolicy, clearRendererTelemetryQueues, initTelemetry } from "./lib/telemetry";
+import { aoBridge } from "./lib/bridge";
 import { startDaemonFailureTelemetry } from "./lib/daemon-telemetry";
 import { startUpdateTelemetry } from "./lib/update-telemetry";
 import { appI18n } from "./i18n";
@@ -20,6 +21,11 @@ import { useSoundNotificationsStore } from "./stores/sound-notifications-store";
 import { useTelemetryPolicyStore } from "./stores/telemetry-policy-store";
 
 const router = createAppRouter(queryClient);
+
+// Main owns consent and only acknowledges opt-out after every live AO shell
+// confirms that its in-memory renderer queues were actually purged.
+aoBridge.telemetry.onClearQueues(clearRendererTelemetryQueues);
+aoBridge.telemetry.onPolicy((view) => applyRendererTelemetryPolicy(view.eventsEnabled && view.acknowledged && view.state === "applied"));
 
 if (import.meta.env.DEV) {
 	const w = window as never as Record<string, unknown>;

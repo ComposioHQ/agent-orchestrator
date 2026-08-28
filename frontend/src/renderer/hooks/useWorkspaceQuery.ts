@@ -9,6 +9,7 @@ import { mockWorkspaces } from "../lib/mock-data";
 import { usesPreviewWorkspaceData } from "../lib/preview-mode";
 import { toReviewerHarnessId } from "../lib/reviewer-harnesses";
 import { captureRendererEvent } from "../lib/telemetry";
+import { agentSwitchVisibility } from "../lib/agent-switch-visibility";
 import {
 	type AgentSwitchSummary,
 	type PRState,
@@ -31,6 +32,7 @@ function toAgentSwitchSummary(
 		id: agentSwitch.id,
 		state: agentSwitch.state,
 		targetHarness: agentSwitch.targetHarness,
+		updatedAt: agentSwitch.updatedAt,
 	};
 }
 
@@ -80,7 +82,13 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 	const [{ data: projectsData, error: projectsError }, { data: sessionsData, error: sessionsError }] =
 		await Promise.all([apiClient.GET("/api/v1/projects"), apiClient.GET("/api/v1/sessions")]);
 
-	if (projectsError || sessionsError) throw projectsError ?? sessionsError;
+	if (projectsError || sessionsError) {
+		agentSwitchVisibility.setQueryHealthy("active", false, "workspaces");
+		agentSwitchVisibility.setQueryHealthy("history", false, "workspaces");
+		throw projectsError ?? sessionsError;
+	}
+	agentSwitchVisibility.setQueryHealthy("active", true, "workspaces");
+	agentSwitchVisibility.setQueryHealthy("history", true, "workspaces");
 
 	return (projectsData?.projects ?? []).map((project) => {
 		const kind = toProjectKind(project.kind);

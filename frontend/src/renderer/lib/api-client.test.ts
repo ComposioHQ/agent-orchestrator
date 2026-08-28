@@ -149,6 +149,15 @@ describe("apiClient runtime base URL", () => {
 
 		expect(error).toEqual({ code: "exited", message: "AO daemon exited with code 1" });
 	});
+
+	it("leaves workspace and switch-history failures exclusively to visibility reporting", async () => {
+		vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ code: "unavailable", message: "nope", reporting_owner: "http" }), { status: 503, headers: { "Content-Type": "application/json" } }));
+		setApiBaseUrl("http://127.0.0.1:3001");
+		await apiClient.GET("/api/v1/projects");
+		await apiClient.GET("/api/v1/sessions");
+		await apiClient.GET("/api/v1/sessions/{sessionId}/agent-switches", { params: { path: { sessionId: "local-secret" } } });
+		expect(sentryCaptureMock).not.toHaveBeenCalled();
+	});
 });
 
 describe("subscribeApiBaseUrl", () => {

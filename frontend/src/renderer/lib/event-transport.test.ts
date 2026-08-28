@@ -7,6 +7,7 @@ const {
 	hasTrustedApiBaseUrlMock,
 	subscribeApiBaseUrlMock,
 	unsubscribeBaseUrlMock,
+	setTransportHealthyMock,
 } = vi.hoisted(() => ({
 	onStatusMock: vi.fn(),
 	removeStatusMock: vi.fn(),
@@ -14,6 +15,7 @@ const {
 	hasTrustedApiBaseUrlMock: vi.fn(() => true),
 	subscribeApiBaseUrlMock: vi.fn(),
 	unsubscribeBaseUrlMock: vi.fn(),
+	setTransportHealthyMock: vi.fn(),
 }));
 
 vi.mock("./bridge", () => ({
@@ -27,6 +29,7 @@ vi.mock("./api-client", () => ({
 	hasTrustedApiBaseUrl: hasTrustedApiBaseUrlMock,
 	subscribeApiBaseUrl: subscribeApiBaseUrlMock,
 }));
+vi.mock("./agent-switch-visibility", () => ({ agentSwitchVisibility: { setTransportHealthy: setTransportHealthyMock } }));
 
 import { createEventTransport } from "./event-transport";
 import { getEventsConnectionState, setEventsConnectionState } from "./events-connection";
@@ -59,7 +62,7 @@ class EventSourceStub {
 }
 
 function fakeQueryClient() {
-	return { invalidateQueries: vi.fn() } as unknown as Parameters<typeof createEventTransport>[0];
+	return { invalidateQueries: vi.fn(), refetchQueries: vi.fn().mockResolvedValue(undefined) } as unknown as Parameters<typeof createEventTransport>[0];
 }
 
 beforeEach(() => {
@@ -70,6 +73,7 @@ beforeEach(() => {
 	hasTrustedApiBaseUrlMock.mockReset().mockReturnValue(true);
 	subscribeApiBaseUrlMock.mockReset().mockReturnValue(unsubscribeBaseUrlMock);
 	unsubscribeBaseUrlMock.mockReset();
+	setTransportHealthyMock.mockReset();
 	setEventsConnectionState("idle");
 	(globalThis as unknown as { EventSource: unknown }).EventSource = EventSourceStub;
 });
@@ -262,6 +266,42 @@ describe("createEventTransport", () => {
 		source.readyState = 1;
 		source.onopen?.();
 		expect(getEventsConnectionState()).toBe("connected");
+	});
+
+	it("reports transport unhealthy only when the post-disconnect full refresh also fails", async () => {
+		const queryClient = fakeQueryClient() as unknown as { refetchQueries: ReturnType<typeof vi.fn> };
+		queryClient.refetchQueries = vi.fn().mockRejectedValue(new Error("refresh failed"));
+		createEventTransport(queryClient as never).connect();
+		const source = EventSourceStub.instances[0];
+		source.onerror?.();
+		expect(setTransportHealthyMock).not.toHaveBeenCalledWith("active", false);
+		await Promise.resolve(); await Promise.resolve();
+		expect(setTransportHealthyMock).toHaveBeenCalledWith("active", false);
+		expect(setTransportHealthyMock).toHaveBeenCalledWith("history", false);
+	});
+
+	it("heals transport when the post-disconnect full refresh succeeds", async () => {
+		const queryClient = fakeQueryClient() as unknown as { refetchQueries: ReturnType<typeof vi.fn> };
+		queryClient.refetchQueries = vi.fn().mockResolvedValue(undefined);
+		createEventTransport(queryClient as never).connect();
+		EventSourceStub.instances[0].onerror?.();
+		await Promise.resolve(); await Promise.resolve();
+		expect(setTransportHealthyMock).toHaveBeenCalledWith("active", true);
+		expect(setTransportHealthyMock).toHaveBeenCalledWith("history", true);
+	});
+
+	it("ignores a stale failed refresh after the SSE source reconnects", async () => {
+		let rejectRefresh: (error: Error) => void = () => undefined;
+		const queryClient = fakeQueryClient() as unknown as { refetchQueries: ReturnType<typeof vi.fn> };
+		queryClient.refetchQueries = vi.fn().mockReturnValue(new Promise<void>((_resolve, reject) => { rejectRefresh = reject; }));
+		createEventTransport(queryClient as never).connect();
+		const source = EventSourceStub.instances[0];
+		source.onerror?.();
+		source.onopen?.();
+		setTransportHealthyMock.mockClear();
+		rejectRefresh(new Error("late failure"));
+		await Promise.resolve(); await Promise.resolve();
+		expect(setTransportHealthyMock).not.toHaveBeenCalledWith("active", false);
 	});
 
 	it("rebuilds a source the browser abandoned after the retry delay", () => {

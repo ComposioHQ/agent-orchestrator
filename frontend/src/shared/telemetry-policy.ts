@@ -32,6 +32,11 @@ export type RendererTelemetryCapture = {
 export type RendererTelemetryCaptureInput = Omit<RendererTelemetryCapture, "consentGeneration">;
 
 export const TELEMETRY_POLICY_CHANGED_CHANNEL = "telemetry:policyChanged";
+export const TELEMETRY_CLEAR_RENDERER_QUEUES_CHANNEL = "telemetry:clearRendererQueues";
+export const TELEMETRY_RENDERER_QUEUES_CLEARED_CHANNEL = "telemetry:rendererQueuesCleared";
+
+export type RendererTelemetryQueuePurgeRequest = { requestId: string };
+export type RendererTelemetryQueuePurgeResult = { requestId: string; ok: boolean };
 
 export type TelemetryPolicyParseResult =
 	| { ok: true; record: TelemetryPolicyDiskRecord }

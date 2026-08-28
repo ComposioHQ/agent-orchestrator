@@ -1,8 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { PostHog } from "posthog-js/dist/module.full.no-external";
 import {
 	buildPostHogConfig,
 	buildTelemetryContext,
+	clearRendererTelemetryQueues,
 	isDeniedEvent,
 	postHogEventName,
 	reserveCapture,
@@ -31,6 +32,26 @@ function memoryStorage(initial: Record<string, string> = {}) {
 }
 
 describe("telemetry sanitizers", () => {
+	it("purges PostHog batch and retry queues without unloading them", () => {
+		const requestQueue = { _queue: [{ event: "queued" }], _clearFlushTimeout: vi.fn() };
+		const retryQueue = { _queue: [{ event: "retry" }], _poller: setTimeout(() => undefined, 60_000), _isPolling: true };
+		const client = { opt_in_capturing: vi.fn(), opt_out_capturing: vi.fn(), _requestQueue: requestQueue, _retryQueue: retryQueue };
+
+		clearRendererTelemetryQueues(client);
+
+		expect(client.opt_out_capturing).toHaveBeenCalledOnce();
+		expect(requestQueue._queue).toEqual([]);
+		expect(requestQueue._clearFlushTimeout).toHaveBeenCalledOnce();
+		expect(retryQueue._queue).toEqual([]);
+		expect(retryQueue._poller).toBeUndefined();
+		expect(retryQueue._isPolling).toBe(false);
+	});
+
+	it("fails closed when the pinned PostHog queue shape cannot be purged", () => {
+		const client = { opt_in_capturing: vi.fn(), opt_out_capturing: vi.fn(), _requestQueue: { entries: [] } };
+		expect(() => clearRendererTelemetryQueues(client)).toThrow("PostHog request queue cannot be purged");
+	});
+
 	it("isolates anonymous AO installation identity from persisted PostHog person state", () => {
 		const config = buildPostHogConfig("ins_stable-install-id");
 

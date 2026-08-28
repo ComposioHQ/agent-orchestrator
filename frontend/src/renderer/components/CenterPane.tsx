@@ -22,6 +22,7 @@ import {
 	useAgentSwitches,
 } from "../hooks/useAgentSwitches";
 import { useObservedAgentSwitchLifecycle } from "../hooks/useObservedAgentSwitchLifecycle";
+import { useAgentSwitchPresentationVisibility, useAgentSwitchRouteVisibility } from "../hooks/useAgentSwitchVisibility";
 import { useSwitchAgentState } from "../hooks/useSwitchAgent";
 import { useTruncatedText } from "../hooks/useTruncatedText";
 import type { ShellTerminal } from "../hooks/useShellTerminals";
@@ -29,6 +30,7 @@ import { TERMINAL_FONT_SIZE_DEFAULT, TERMINAL_FONT_SIZE_MAX, TERMINAL_FONT_SIZE_
 import { getAgentActivityView } from "../lib/session-presentation";
 import {
 	deriveAgentSwitchPresentation,
+	agentSwitchVisibilityPresentationKind,
 	type AgentSwitchPresentation,
 } from "../lib/agent-switch-presentation";
 import { agentLabel } from "../lib/agent-options";
@@ -236,6 +238,7 @@ export function CenterPane({
 		admissionAgentSwitch ??
 		latestCompletedSwitch ??
 		observedTerminalSwitch;
+	useAgentSwitchRouteVisibility(`session/${session?.id ?? "unavailable"}`, agentSwitch && agentSwitch.state !== "completed" && agentSwitch.state !== "failed" ? "active" : "history", undefined, false);
 	const presentation =
 		agentSwitch && session
 			? deriveAgentSwitchPresentation({
@@ -274,6 +277,13 @@ export function CenterPane({
 				: undefined
 			: presentation ?? displayedSuccessNotice?.presentation;
 	const shownAgentSwitch = agentSwitch ?? displayedSuccessNotice?.agentSwitch;
+	const visibilityPresentationKind = agentSwitchVisibilityPresentationKind(shownPresentation);
+	useAgentSwitchPresentationVisibility({
+		localRouteKey: `session/${session?.id ?? "unavailable"}`,
+		agentSwitch: shownAgentSwitch,
+		presentationKind: visibilityPresentationKind,
+		visible: Boolean(shownPresentation && shownAgentSwitch),
+	});
 	const switchControlPresentation =
 		presentation ?? displayedSuccessNotice?.presentation;
 	const sessionTabLabel = session

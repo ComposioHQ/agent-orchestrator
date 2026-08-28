@@ -1,7 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
+import { useEffect } from "react";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { usesPreviewWorkspaceData } from "../lib/preview-mode";
 import type { AgentSwitchSummary } from "../types/workspace";
+import { agentSwitchVisibility } from "../lib/agent-switch-visibility";
 
 export type AgentSwitch = AgentSwitchSummary;
 
@@ -75,21 +77,28 @@ export function agentSwitchesRefetchInterval(agentSwitches: AgentSwitch[]): 1_00
 		: false;
 }
 
-async function fetchAgentSwitches(sessionId: string): Promise<AgentSwitch[]> {
+async function fetchAgentSwitches(sessionId: string, signal?: AbortSignal): Promise<AgentSwitch[]> {
+	const localSourceKey = `switch-history:${sessionId}`;
 	const { data, error } = await apiClient.GET("/api/v1/sessions/{sessionId}/agent-switches", {
 		params: { path: { sessionId } },
+		signal,
 	});
 	if (error) {
+		agentSwitchVisibility.setQueryHealthy("active", false, localSourceKey);
+		agentSwitchVisibility.setQueryHealthy("history", false, localSourceKey);
 		throw new Error(apiErrorMessage(error, "Unable to load agent switch status"));
 	}
+	agentSwitchVisibility.setQueryHealthy("active", true, localSourceKey);
+	agentSwitchVisibility.setQueryHealthy("history", true, localSourceKey);
 	return data?.switches ?? [];
 }
 
 export function useAgentSwitches(sessionId: string) {
+	useEffect(() => () => agentSwitchVisibility.clearQuerySource(`switch-history:${sessionId}`), [sessionId]);
 	return useQuery({
 		queryKey: agentSwitchesQueryKey(sessionId),
 		enabled: Boolean(sessionId),
-		queryFn: () => (usesPreviewWorkspaceData ? Promise.resolve([]) : fetchAgentSwitches(sessionId)),
+		queryFn: ({ signal }) => (usesPreviewWorkspaceData ? Promise.resolve([]) : fetchAgentSwitches(sessionId, signal)),
 		// Keep active sagas fresh even if the CDC connection is temporarily
 		// unavailable. Source-recovery endpoints accept work asynchronously, so
 		// those recovery rows must also poll until their worker settles.

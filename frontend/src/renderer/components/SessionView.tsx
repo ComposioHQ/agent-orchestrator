@@ -50,6 +50,7 @@ import {
 	useSessionInterfaceTransition,
 } from "../hooks/useSessionInterfaceTransition";
 import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
+import { useAgentSwitchRouteVisibility } from "../hooks/useAgentSwitchVisibility";
 import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { SHELL_PANEL_SPRING } from "../lib/motion-spring";
@@ -428,6 +429,8 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	useEffect(() => stopTerminalLiveResize, [stopTerminalLiveResize]);
 
 	const session = workspaces.flatMap((workspace) => workspace.sessions).find((s) => s.id === sessionId);
+	const routeVisibilityOperation = session?.activeAgentSwitch && session.activeAgentSwitch.state !== "completed" && session.activeAgentSwitch.state !== "failed" ? "active" : "history";
+	useAgentSwitchRouteVisibility(`session/${sessionId}`, routeVisibilityOperation);
 	const interfaceSwitch = useSessionInterfaceTransition(session?.id);
 	const reviewerQuery = useQuery({
 		queryKey: ["session-reviews", sessionId],
