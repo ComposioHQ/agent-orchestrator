@@ -1,8 +1,8 @@
 # OMP Adapter
 
-OMP is integrated into Agent Orchestrator as an interactive Terminal UI
-harness. AO launches the `omp` binary inside the session worktree and streams
-the TUI through the existing terminal runtime.
+OMP is integrated into Agent Orchestrator as both an interactive Terminal UI
+harness and a structured Chat harness. AO launches the user's own `omp` binary
+inside the session worktree in either mode.
 
 ## Install
 
@@ -48,6 +48,30 @@ When configured, AO forwards:
 The process remains interactive after the initial prompt, so users can keep
 working directly in the OMP TUI.
 
+## Activity Tracking
+
+AO installs one managed extension at `.omp/extensions/ao-activity.ts` inside
+the session worktree and passes it explicitly with `--extension` on launches
+and restores. The extension reports OMP's native session, agent, and approval
+lifecycle through AO's existing hook pipeline:
+
+- session startup and turn completion report `idle`
+- prompt submission reports `active`
+- approval requests report `waiting_input`
+- approval resolution reports `active`
+- process shutdown reports `exited`
+
+Hook delivery is best-effort. A missing AO executable, an unavailable daemon,
+or a hook timeout never interrupts the OMP session. AO refuses to overwrite a
+user-owned file at the managed extension path and preserves all other OMP
+extensions.
+
+## Chat Mode
+
+OMP 15.0.0 and newer can run through its native `omp acp` command in AO's Chat
+interface. Chat activity is derived directly from structured turn, approval,
+input, and controller events rather than from the TUI extension.
+
 ## Restore
 
 When AO has captured an OMP native session id in session metadata, restore uses:
@@ -70,12 +94,7 @@ AO checks OMP auth using local-only signals:
 These probes are advisory. A later model call can still fail because of quota,
 provider configuration, or selected model availability.
 
-## Not Supported In This Adapter
+## Not Supported
 
-- ACP editor integration (`omp acp`)
 - RPC mode (`omp --mode rpc`)
-- Chat UI handoff
-- AO-managed OMP extensions or hooks
-
-Those surfaces would require a separate structured protocol driver rather than
-the terminal harness adapter.
+- TUI-to-Chat or Chat-to-TUI handoff of an existing OMP session
