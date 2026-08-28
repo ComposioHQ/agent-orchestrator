@@ -102,6 +102,8 @@ export interface ConversationTurn {
 	retryOfTurnId?: string;
 	/** A retry attempt exists, even if that child is outside the active branch. */
 	hasRetryAttempt?: boolean;
+	/** Provenance set only for turns first discovered during a TUI-to-Chat handoff. */
+	importedFromTerminal?: boolean;
 	errorMessage?: string;
 	requestedAt: string;
 	startedAt?: string;

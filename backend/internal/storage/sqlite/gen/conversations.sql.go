@@ -36,8 +36,9 @@ func (q *Queries) ActivateConversationBranch(ctx context.Context, arg ActivateCo
 const adoptProviderConversationTurn = `-- name: AdoptProviderConversationTurn :exec
 INSERT OR IGNORE INTO conversation_turns (
     id, conversation_id, handled_by_session_id, provider_turn_id,
-    controller_generation, state, requested_at, started_at
-) VALUES (?, ?, ?, ?, ?, 'running', ?, ?)
+    controller_generation, state, requested_at, started_at,
+    imported_from_terminal
+) VALUES (?, ?, ?, ?, ?, 'running', ?, ?, ?)
 `
 
 type AdoptProviderConversationTurnParams struct {
@@ -48,6 +49,7 @@ type AdoptProviderConversationTurnParams struct {
 	ControllerGeneration string
 	RequestedAt          time.Time
 	StartedAt            sql.NullTime
+	ImportedFromTerminal bool
 }
 
 // A turn the PROVIDER started that AO never dispatched: a compaction runs as its
@@ -65,6 +67,7 @@ func (q *Queries) AdoptProviderConversationTurn(ctx context.Context, arg AdoptPr
 		arg.ControllerGeneration,
 		arg.RequestedAt,
 		arg.StartedAt,
+		arg.ImportedFromTerminal,
 	)
 	return err
 }
@@ -2100,7 +2103,7 @@ func (q *Queries) SelectConversationRetryTurnIDBySource(ctx context.Context, arg
 }
 
 const selectConversationTurnByID = `-- name: SelectConversationTurnByID :one
-SELECT id, conversation_id, handled_by_session_id, provider_turn_id, controller_generation, state, error_message, requested_at, started_at, completed_at, diff_json, rolled_back_at, plan_json, branch_id, promotion_started_at, promoted_to_turn_id, retry_of_turn_id FROM conversation_turns WHERE id = ? LIMIT 1
+SELECT id, conversation_id, handled_by_session_id, provider_turn_id, controller_generation, state, error_message, requested_at, started_at, completed_at, diff_json, rolled_back_at, plan_json, branch_id, promotion_started_at, promoted_to_turn_id, retry_of_turn_id, imported_from_terminal FROM conversation_turns WHERE id = ? LIMIT 1
 `
 
 func (q *Queries) SelectConversationTurnByID(ctx context.Context, id string) (ConversationTurn, error) {
@@ -2124,12 +2127,13 @@ func (q *Queries) SelectConversationTurnByID(ctx context.Context, id string) (Co
 		&i.PromotionStartedAt,
 		&i.PromotedToTurnID,
 		&i.RetryOfTurnID,
+		&i.ImportedFromTerminal,
 	)
 	return i, err
 }
 
 const selectConversationTurnByProviderID = `-- name: SelectConversationTurnByProviderID :one
-SELECT id, conversation_id, handled_by_session_id, provider_turn_id, controller_generation, state, error_message, requested_at, started_at, completed_at, diff_json, rolled_back_at, plan_json, branch_id, promotion_started_at, promoted_to_turn_id, retry_of_turn_id FROM conversation_turns
+SELECT id, conversation_id, handled_by_session_id, provider_turn_id, controller_generation, state, error_message, requested_at, started_at, completed_at, diff_json, rolled_back_at, plan_json, branch_id, promotion_started_at, promoted_to_turn_id, retry_of_turn_id, imported_from_terminal FROM conversation_turns
 WHERE conversation_id = ? AND provider_turn_id = ?
 LIMIT 1
 `
@@ -2162,6 +2166,7 @@ func (q *Queries) SelectConversationTurnByProviderID(ctx context.Context, arg Se
 		&i.PromotionStartedAt,
 		&i.PromotedToTurnID,
 		&i.RetryOfTurnID,
+		&i.ImportedFromTerminal,
 	)
 	return i, err
 }
@@ -2182,7 +2187,7 @@ WITH RECURSIVE active_path(branch_id, max_sequence) AS (
     JOIN conversation_branches AS branch ON branch.id = path.branch_id
     WHERE branch.parent_branch_id IS NOT NULL
 )
-SELECT conversation_turns.id, conversation_turns.conversation_id, conversation_turns.handled_by_session_id, conversation_turns.provider_turn_id, conversation_turns.controller_generation, conversation_turns.state, conversation_turns.error_message, conversation_turns.requested_at, conversation_turns.started_at, conversation_turns.completed_at, conversation_turns.diff_json, conversation_turns.rolled_back_at, conversation_turns.plan_json, conversation_turns.branch_id, conversation_turns.promotion_started_at, conversation_turns.promoted_to_turn_id, conversation_turns.retry_of_turn_id FROM conversation_turns
+SELECT conversation_turns.id, conversation_turns.conversation_id, conversation_turns.handled_by_session_id, conversation_turns.provider_turn_id, conversation_turns.controller_generation, conversation_turns.state, conversation_turns.error_message, conversation_turns.requested_at, conversation_turns.started_at, conversation_turns.completed_at, conversation_turns.diff_json, conversation_turns.rolled_back_at, conversation_turns.plan_json, conversation_turns.branch_id, conversation_turns.promotion_started_at, conversation_turns.promoted_to_turn_id, conversation_turns.retry_of_turn_id, conversation_turns.imported_from_terminal FROM conversation_turns
 JOIN active_path AS path ON path.branch_id = conversation_turns.branch_id
 WHERE conversation_turns.conversation_id = ?1
   AND conversation_turns.promoted_to_turn_id IS NULL
@@ -2230,6 +2235,7 @@ func (q *Queries) SelectConversationTurns(ctx context.Context, conversationID st
 			&i.PromotionStartedAt,
 			&i.PromotedToTurnID,
 			&i.RetryOfTurnID,
+			&i.ImportedFromTerminal,
 		); err != nil {
 			return nil, err
 		}
@@ -2260,7 +2266,7 @@ WITH RECURSIVE active_path(branch_id, max_sequence) AS (
     JOIN conversation_branches AS branch ON branch.id = path.branch_id
     WHERE branch.parent_branch_id IS NOT NULL
 )
-SELECT conversation_turns.id, conversation_turns.conversation_id, conversation_turns.handled_by_session_id, conversation_turns.provider_turn_id, conversation_turns.controller_generation, conversation_turns.state, conversation_turns.error_message, conversation_turns.requested_at, conversation_turns.started_at, conversation_turns.completed_at, conversation_turns.diff_json, conversation_turns.rolled_back_at, conversation_turns.plan_json, conversation_turns.branch_id, conversation_turns.promotion_started_at, conversation_turns.promoted_to_turn_id, conversation_turns.retry_of_turn_id FROM conversation_turns
+SELECT conversation_turns.id, conversation_turns.conversation_id, conversation_turns.handled_by_session_id, conversation_turns.provider_turn_id, conversation_turns.controller_generation, conversation_turns.state, conversation_turns.error_message, conversation_turns.requested_at, conversation_turns.started_at, conversation_turns.completed_at, conversation_turns.diff_json, conversation_turns.rolled_back_at, conversation_turns.plan_json, conversation_turns.branch_id, conversation_turns.promotion_started_at, conversation_turns.promoted_to_turn_id, conversation_turns.retry_of_turn_id, conversation_turns.imported_from_terminal FROM conversation_turns
 JOIN active_path AS path ON path.branch_id = conversation_turns.branch_id
 WHERE conversation_turns.conversation_id = ?1
   AND conversation_turns.promoted_to_turn_id IS NULL
@@ -2327,6 +2333,7 @@ func (q *Queries) SelectConversationTurnsPage(ctx context.Context, arg SelectCon
 			&i.PromotionStartedAt,
 			&i.PromotedToTurnID,
 			&i.RetryOfTurnID,
+			&i.ImportedFromTerminal,
 		); err != nil {
 			return nil, err
 		}

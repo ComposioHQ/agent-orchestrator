@@ -489,6 +489,10 @@ type ConversationTurn struct {
 	// relation, including attempts outside the active provider branch.
 	HasRetryAttempt bool      `json:"hasRetryAttempt,omitempty"`
 	State           TurnState `json:"state"`
+	// ImportedFromTerminal is set only when this row was first discovered by the
+	// required native-history replay for a TUI-to-Chat handoff. Recovered state by
+	// itself is not provenance: ordinary Chat resume also replays native history.
+	ImportedFromTerminal bool `json:"importedFromTerminal,omitempty"`
 	// ErrorMessage is set for failed turns. Interrupted turns are not errors.
 	ErrorMessage string     `json:"errorMessage,omitempty"`
 	RequestedAt  time.Time  `json:"requestedAt"`

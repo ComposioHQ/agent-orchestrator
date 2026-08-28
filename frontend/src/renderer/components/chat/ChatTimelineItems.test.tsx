@@ -45,10 +45,19 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 describe("TurnOutcome", () => {
-	it("keeps a recovered historical turn distinct from success", () => {
+	it("describes a recovered historical turn as imported without inferring its outcome", () => {
+		render(<TurnOutcome state="recovered" importedFromTerminal />);
+		expect(
+			screen.getByText("Imported from Terminal UI — completion status unavailable"),
+		).toBeInTheDocument();
+		expect(screen.queryByText("This turn was recovered from an earlier session")).not.toBeInTheDocument();
+		expect(screen.queryByText("Done")).not.toBeInTheDocument();
+	});
+
+	it("does not invent Terminal provenance for an ordinary recovered Chat turn", () => {
 		render(<TurnOutcome state="recovered" />);
 		expect(screen.getByText("This turn was recovered from an earlier session")).toBeInTheDocument();
-		expect(screen.queryByText("Done")).not.toBeInTheDocument();
+		expect(screen.queryByText(/Imported from Terminal UI/)).not.toBeInTheDocument();
 	});
 
 	it("shows the message above a full-width rule", () => {

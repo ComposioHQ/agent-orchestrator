@@ -1085,11 +1085,63 @@ func TestResumeImportsNativeHistoryBeforeTheChatControllerStarts(t *testing.T) {
 	if len(snapshot.Turns) != 1 || snapshot.Turns[0].State != domain.TurnStateCompleted {
 		t.Fatalf("imported turns = %#v", snapshot.Turns)
 	}
+	if snapshot.Turns[0].ImportedFromTerminal {
+		t.Fatalf("ordinary Chat resume marked an existing turn as imported from Terminal: %#v", snapshot.Turns[0])
+	}
 	if snapshot.Turns[0].ProviderTurnID != "native-turn-1" {
 		t.Fatalf("provider turn = %q, want durable native-turn-1", snapshot.Turns[0].ProviderTurnID)
 	}
 	if snapshot.Turns[0].CompletedAt == nil || !snapshot.Turns[0].CompletedAt.Equal(now) {
 		t.Fatalf("replayed completion = %v, want original %s", snapshot.Turns[0].CompletedAt, now)
+	}
+}
+
+func TestOrdinaryChatResumeDoesNotMarkNewRecoveredHistoryAsImportedFromTerminal(t *testing.T) {
+	st := openStore(t)
+	conv := &nativeHistoryConversation{
+		fakeConversation: newFakeConversation(),
+		events: []ports.ChatEvent{
+			{Kind: ports.ChatEventTurnStarted, ProviderEventID: "history-start", ProviderTurnID: "native-turn-1"},
+			{
+				Kind: ports.ChatEventUserMessageCompleted, ProviderEventID: "history-user",
+				ProviderTurnID: "native-turn-1", ProviderItemID: "native-user-1",
+				Text: "Recover an ordinary Chat turn after restart.",
+			},
+			{
+				Kind: ports.ChatEventMessageCompleted, ProviderEventID: "history-answer",
+				ProviderTurnID: "native-turn-1", ProviderItemID: "native-answer-1",
+				Text: "Recovered Chat output.",
+			},
+			{
+				Kind: ports.ChatEventTurnCompleted, ProviderEventID: "history-recovered",
+				ProviderTurnID: "native-turn-1", TurnState: domain.TurnStateRecovered,
+			},
+		},
+	}
+	svc := chatsvc.New(chatsvc.Options{
+		Store: st, Sessions: st,
+		Drivers: fakeRegistry{driver: fakeDriver{conv: conv}},
+		Log:     slog.New(slog.DiscardHandler),
+		NewID:   func() string { return fmt.Sprintf("ordinary-recovered-%d", time.Now().UnixNano()) },
+	})
+	t.Cleanup(func() { _ = svc.Stop(context.Background(), testSession) })
+
+	ctrl, err := svc.Start(context.Background(), chatsvc.StartConfig{
+		SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex,
+		WorkspacePath: t.TempDir(), ProviderConversationID: "thread-1",
+	})
+	if err != nil {
+		t.Fatalf("Start ordinary Chat resume: %v", err)
+	}
+	snapshot, err := st.LoadConversationSnapshot(context.Background(), ctrl.ConversationID())
+	if err != nil {
+		t.Fatalf("LoadConversationSnapshot: %v", err)
+	}
+	if len(snapshot.Turns) != 1 || snapshot.Turns[0].State != domain.TurnStateRecovered {
+		t.Fatalf("turns = %#v, want one recovered Chat turn", snapshot.Turns)
+	}
+	if snapshot.Turns[0].ImportedFromTerminal {
+		t.Fatalf("ordinary Chat history invented Terminal provenance: %#v", snapshot.Turns[0])
 	}
 }
 
@@ -1270,6 +1322,9 @@ func TestInterfaceHandoffImportsInterruptedUserOnlyNativeHistory(t *testing.T) {
 	if len(snapshot.Turns) != 1 || snapshot.Turns[0].State != domain.TurnStateInterrupted {
 		t.Fatalf("turns = %#v, want one interrupted native turn", snapshot.Turns)
 	}
+	if !snapshot.Turns[0].ImportedFromTerminal {
+		t.Fatalf("interrupted Terminal turn lost its import provenance: %#v", snapshot.Turns[0])
+	}
 }
 
 func TestInterfaceHandoffImportsOutcomeUnknownNativeHistoryAsRecovered(t *testing.T) {
@@ -1323,6 +1378,9 @@ func TestInterfaceHandoffImportsOutcomeUnknownNativeHistoryAsRecovered(t *testin
 		!snapshot.Turns[0].State.Terminal() {
 		t.Fatalf("snapshot = turns %#v messages %#v activities %#v, want one terminal recovered native turn",
 			snapshot.Turns, snapshot.Messages, snapshot.Activities)
+	}
+	if !snapshot.Turns[0].ImportedFromTerminal {
+		t.Fatalf("recovered Terminal turn lost its import provenance: %#v", snapshot.Turns[0])
 	}
 	if len(snapshot.Activities) != 1 || snapshot.Activities[0].Status != domain.ActivityStatusRecovered {
 		t.Fatalf("activities = %#v, want one recovered historical activity", snapshot.Activities)
@@ -4004,7 +4062,7 @@ func TestInterruptReconcilesStaleRunningTurnOnDisk(t *testing.T) {
 	// its pendingTurnID stays empty — the desynced state.
 	const providerTurnID = "stale-running-turn"
 	if err := h.st.AdoptProviderTurn(ctx, h.ctrl.ConversationID(), testSession,
-		h.ctrl.Generation(), "stale-turn-id", providerTurnID, h.now()); err != nil {
+		h.ctrl.Generation(), "stale-turn-id", providerTurnID, false, h.now()); err != nil {
 		t.Fatalf("AdoptProviderTurn: %v", err)
 	}
 	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
@@ -4033,12 +4091,12 @@ func TestInterruptReconcilesAllVisibleRunningTurns(t *testing.T) {
 	ctx := context.Background()
 
 	if err := h.st.AdoptProviderTurn(ctx, h.ctrl.ConversationID(), testSession,
-		h.ctrl.Generation(), "root-turn", "provider-root", h.now()); err != nil {
+		h.ctrl.Generation(), "root-turn", "provider-root", false, h.now()); err != nil {
 		t.Fatalf("AdoptProviderTurn root: %v", err)
 	}
 	h.advance(time.Second)
 	if err := h.st.AdoptProviderTurn(ctx, h.ctrl.ConversationID(), testSession,
-		h.ctrl.Generation(), "child-turn", "provider-child", h.now()); err != nil {
+		h.ctrl.Generation(), "child-turn", "provider-child", false, h.now()); err != nil {
 		t.Fatalf("AdoptProviderTurn child: %v", err)
 	}
 	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
@@ -4075,7 +4133,7 @@ func TestInterruptDurableFallbackPreservesPostStopSend(t *testing.T) {
 	ctx := context.Background()
 
 	if err := h.st.AdoptProviderTurn(ctx, h.ctrl.ConversationID(), testSession,
-		h.ctrl.Generation(), "stale-turn", "provider-stale", h.now()); err != nil {
+		h.ctrl.Generation(), "stale-turn", "provider-stale", false, h.now()); err != nil {
 		t.Fatalf("AdoptProviderTurn: %v", err)
 	}
 	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {

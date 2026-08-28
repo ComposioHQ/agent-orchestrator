@@ -527,9 +527,13 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 			// live session as one transaction. Until then the terminated target is
 			// not exposed to input and no event can be attributed to the old root.
 			commitProviderHistory = func(commitCtx context.Context) error {
-				return controller.projectNativeHistory(commitCtx, events)
+				return controller.projectNativeHistory(
+					commitCtx, events, cfg.RequireNativeHistory,
+				)
 			}
-		} else if err := controller.projectNativeHistory(ctx, events); err != nil {
+		} else if err := controller.projectNativeHistory(
+			ctx, events, cfg.RequireNativeHistory,
+		); err != nil {
 			_ = conv.Close()
 			return nil, err
 		}

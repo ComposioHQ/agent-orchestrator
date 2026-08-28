@@ -49,7 +49,7 @@ type Store interface {
 	ActivateConversationBranch(ctx context.Context, sessionID domain.SessionID, conversationID, branchID, providerConversationID, generation string, now time.Time) error
 	UpdateConversationBranchReplacement(ctx context.Context, branchID, replacementTurnID string) error
 
-	AdoptProviderTurn(ctx context.Context, conversationID string, session domain.SessionID, generation, turnID, providerTurnID string, now time.Time) error
+	AdoptProviderTurn(ctx context.Context, conversationID string, session domain.SessionID, generation, turnID, providerTurnID string, importedFromTerminal bool, now time.Time) error
 	AppendImportedUserMessage(ctx context.Context, conversationID, providerTurnID string, msg domain.ConversationMessage, now time.Time) error
 
 	AppendUserMessage(ctx context.Context, conversationID string, session domain.SessionID, generation string, msg domain.ConversationMessage, turnID string, now time.Time) (bool, error)
@@ -571,9 +571,13 @@ func (c *Controller) readNativeHistory(
 // projectNativeHistory durably imports a previously reconciled snapshot.
 // Re-running it is safe because history events carry stable identities and
 // ProjectProviderEvent deduplicates archive+projection together.
-func (c *Controller) projectNativeHistory(ctx context.Context, events []ports.ChatEvent) error {
+func (c *Controller) projectNativeHistory(
+	ctx context.Context,
+	events []ports.ChatEvent,
+	importedFromTerminal bool,
+) error {
 	for _, event := range events {
-		if _, _, err := c.projectEvent(ctx, event); err != nil {
+		if _, _, err := c.projectEvent(ctx, event, importedFromTerminal); err != nil {
 			return fmt.Errorf("import native history event %s: %w", event.Kind, err)
 		}
 	}
@@ -1983,7 +1987,7 @@ func (c *Controller) project() {
 		if lifecycle {
 			c.sendMu.Lock()
 		}
-		projected, primaryTurn, err := c.projectEvent(ctx, event)
+		projected, primaryTurn, err := c.projectEvent(ctx, event, false)
 		if err != nil {
 			// A projection failure must not kill the provider stream. The store
 			// rolls the archive back with its projection, so durable state remains
@@ -2027,7 +2031,11 @@ func (c *Controller) project() {
 
 // projectEvent archives one normalized provider event and applies its durable
 // projection in the same SQLite transaction.
-func (c *Controller) projectEvent(ctx context.Context, event ports.ChatEvent) (bool, bool, error) {
+func (c *Controller) projectEvent(
+	ctx context.Context,
+	event ports.ChatEvent,
+	importedFromTerminal bool,
+) (bool, bool, error) {
 	record := map[string]any{
 		"kind":                   event.Kind,
 		"providerEventId":        event.ProviderEventID,
@@ -2068,7 +2076,7 @@ func (c *Controller) projectEvent(ctx context.Context, event ports.ChatEvent) (b
 	}
 	projected, err := c.store.ProjectProviderEvent(ctx, c.conversation.ID, c.sessionID,
 		c.generation, event.ProviderEventID, string(event.Kind), string(payload), c.now(),
-		func(txCtx context.Context) error { return c.apply(txCtx, event) })
+		func(txCtx context.Context) error { return c.apply(txCtx, event, importedFromTerminal) })
 	if err != nil || !projected {
 		return projected, false, err
 	}
@@ -2116,7 +2124,7 @@ func (c *Controller) applyCommittedTurnLifecycle(event ports.ChatEvent) bool {
 	}
 }
 
-func (c *Controller) apply(ctx context.Context, event ports.ChatEvent) error {
+func (c *Controller) apply(ctx context.Context, event ports.ChatEvent, importedFromTerminal bool) error {
 	now := c.now()
 
 	switch event.Kind {
@@ -2137,7 +2145,7 @@ func (c *Controller) apply(ctx context.Context, event ports.ChatEvent) error {
 				// correlated, and without that the activities arrive with no turn and the
 				// timeline quietly stops grouping them.
 				if err := c.store.AdoptProviderTurn(ctx, c.conversation.ID, c.sessionID,
-					c.generation, c.newID(), event.ProviderTurnID, now); err != nil {
+					c.generation, c.newID(), event.ProviderTurnID, importedFromTerminal, now); err != nil {
 					return fmt.Errorf("adopt provider-started turn %s: %w", event.ProviderTurnID, err)
 				}
 			}
