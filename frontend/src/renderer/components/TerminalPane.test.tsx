@@ -23,6 +23,7 @@ const {
 	terminalError,
 	terminalState,
 	replaySettled,
+	hasAttached,
 	terminalSessionOptions,
 	xtermMounts,
 	xtermUnmounts,
@@ -35,6 +36,7 @@ const {
 		terminalError: { value: undefined as string | undefined },
 		terminalState: { value: "idle" },
 		replaySettled: { value: true },
+		hasAttached: { value: false },
 		terminalSessionOptions: [] as Array<{ coverInitialReplay?: boolean }>,
 		xtermMounts: { value: 0 },
 		xtermUnmounts: { value: 0 },
@@ -95,6 +97,7 @@ vi.mock("../hooks/useTerminalSession", () => ({
 			state: terminalState.value,
 			error: terminalError.value,
 			replaySettled: replaySettled.value,
+			hasAttached: hasAttached.value,
 		};
 	},
 }));
@@ -126,6 +129,7 @@ beforeEach(() => {
 	terminalError.value = undefined;
 	terminalState.value = "idle";
 	replaySettled.value = true;
+	hasAttached.value = false;
 	terminalLinkHandler = undefined;
 	terminalSessionOptions.length = 0;
 	attachMock.mockClear();
@@ -284,8 +288,8 @@ describe("TerminalPane replay cover", () => {
 		try {
 			const cover = screen.getByTestId("terminal-replay-cover");
 			expect(cover).toBeInTheDocument();
-			expect(cover).toHaveClass("terminal-surface", "pointer-events-none");
-			expect(cover).not.toHaveClass("bg-terminal");
+			expect(cover).toHaveClass("bg-terminal-opaque", "pointer-events-none");
+			expect(cover).not.toHaveClass("terminal-surface");
 			// xterm keeps rendering underneath — covered, never unmounted, so the
 			// grid it measures stays correct.
 			expect(screen.getByTestId("xterm")).toBeInTheDocument();
@@ -336,21 +340,27 @@ describe("TerminalPane replay cover", () => {
 		}
 	});
 
-	it("shows no loader text on a fast open", () => {
-		replaySettled.value = false;
-		const view = renderPane({ ...worker, terminalHandleId: "term-1" });
+	it("keeps the replay cover silent even when attachment takes longer", () => {
+		vi.useFakeTimers();
 		try {
-			// The label is delayed, so a session switch that resolves quickly never
-			// flashes a spinner — the whole point of a blank cover.
-			expect(screen.queryByText("Loading latest output…")).not.toBeInTheDocument();
+			replaySettled.value = false;
+			const view = renderPane({ ...worker, terminalHandleId: "term-1" });
+			try {
+				act(() => vi.advanceTimersByTime(1_000));
+				expect(screen.getByTestId("terminal-replay-cover")).toHaveAttribute("aria-hidden", "true");
+				expect(screen.queryByText("Loading latest output…")).not.toBeInTheDocument();
+			} finally {
+				view.restore();
+			}
 		} finally {
-			view.restore();
+			vi.useRealTimers();
 		}
 	});
 
 	it("stays out of the way while the pane is visibly reattaching", () => {
 		replaySettled.value = false;
 		terminalState.value = "reattaching";
+		hasAttached.value = true;
 		const view = renderPane({ ...worker, terminalHandleId: "term-1" });
 		try {
 			// An open timeout lifts the cover and the backoff reconnect would pull
@@ -644,6 +654,10 @@ describe("terminal link preview", () => {
 		const view = renderPane(worker);
 		try {
 			act(() => terminalLinkHandler?.("https://example.com/pull/42"));
+			expect(useUiStore.getState().inspectorSessions[worker.id]).toMatchObject({
+				isOpen: true,
+				view: "browser",
+			});
 			await waitFor(() =>
 				expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/preview", {
 					params: { path: { sessionId: "sess-1" } },

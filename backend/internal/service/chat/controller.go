@@ -44,6 +44,7 @@ type Store interface {
 	ClaimChatControllerGeneration(ctx context.Context, session domain.SessionID, generation string, now time.Time) error
 	ConversationBranch(ctx context.Context, conversationID, branchID string) (domain.ConversationBranch, error)
 	ConversationEditAnchor(ctx context.Context, conversationID, replacedTurnID string) (domain.ConversationEditAnchor, error)
+	RepairIncompleteConversationEdit(ctx context.Context, sessionID domain.SessionID, conversationID string, now time.Time) (domain.ConversationBranch, bool, error)
 	CreateAndActivateConversationBranch(ctx context.Context, sessionID domain.SessionID, branch domain.ConversationBranch, generation string, now time.Time) error
 	ActivateConversationBranch(ctx context.Context, sessionID domain.SessionID, conversationID, branchID, providerConversationID, generation string, now time.Time) error
 	UpdateConversationBranchReplacement(ctx context.Context, branchID, replacementTurnID string) error
@@ -57,6 +58,7 @@ type Store interface {
 	SettleTurn(ctx context.Context, conversationID, providerTurnID string, state domain.TurnState, errMessage string, now time.Time) error
 	SettleTurnByID(ctx context.Context, turnID string, state domain.TurnState, errMessage string, now time.Time) error
 	SettleOrphanedTurns(ctx context.Context, session domain.SessionID, now time.Time) error
+	CleanupOwnedControllerWork(ctx context.Context, session domain.SessionID, conversationID, generation string, now time.Time) (bool, error)
 	ListVisibleRunningTurnProviderIDs(ctx context.Context, conversationID string) ([]string, error)
 
 	SetConversationSettings(ctx context.Context, conversationID string, settings domain.ConversationSettings, now time.Time) error
@@ -501,24 +503,25 @@ func nativeHistoryTextMatches(checkpoint, replayed string) bool {
 	return len(parts) == 2 && strings.HasPrefix(replayed, parts[0]) && strings.HasSuffix(replayed, parts[1])
 }
 
-// importNativeHistory projects the settled provider thread before live event
-// consumption starts. Re-running it is safe because history events carry stable
-// identities and ProjectProviderEvent deduplicates archive+projection together.
-func (c *Controller) importNativeHistory(
+// readNativeHistory loads and reconciles the settled provider thread without
+// mutating AO's timeline. A pending provider boundary uses this split phase so
+// the caller can project the events inside the same transaction that publishes
+// the boundary and controller generation.
+func (c *Controller) readNativeHistory(
 	ctx context.Context,
 	existingTurns []domain.ConversationTurn,
 	existingMessages []domain.ConversationMessage,
 	existingActivities []domain.ConversationActivity,
 	required bool,
 	checkpoint nativeHistoryCheckpoint,
-) error {
+) ([]ports.ChatEvent, error) {
 	reader, ok := c.conv.(ports.ChatHistoryReader)
 	if !ok {
 		if required {
-			return fmt.Errorf("%w: provider does not implement typed history replay",
+			return nil, fmt.Errorf("%w: provider does not implement typed history replay",
 				ports.ErrChatHistoryUnavailable)
 		}
-		return nil
+		return nil, nil
 	}
 	historyCtx, cancel := context.WithTimeout(ctx, nativeHistorySettleLimit)
 	defer cancel()
@@ -530,25 +533,25 @@ func (c *Controller) importNativeHistory(
 			err = ports.ErrChatHistoryUnsettled
 		}
 		if errors.Is(err, ports.ErrChatHistoryUnavailable) && !required {
-			return nil
+			return nil, nil
 		}
 		if sawUnsettled && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
-			return fmt.Errorf("wait for settled native conversation history: %w: %w",
+			return nil, fmt.Errorf("wait for settled native conversation history: %w: %w",
 				ports.ErrChatHistoryUnsettled, err)
 		}
 		if !errors.Is(err, ports.ErrChatHistoryUnsettled) {
-			return fmt.Errorf("read native conversation history: %w", err)
+			return nil, fmt.Errorf("read native conversation history: %w", err)
 		}
 		sawUnsettled = true
 		if !refreshable {
-			return fmt.Errorf("native conversation history snapshot is incomplete and cannot be refreshed: %w", err)
+			return nil, fmt.Errorf("native conversation history snapshot is incomplete and cannot be refreshed: %w", err)
 		}
 
 		timer := time.NewTimer(nativeHistorySettlePoll)
 		select {
 		case <-historyCtx.Done():
 			timer.Stop()
-			return fmt.Errorf("wait for settled native conversation history: %w: %w",
+			return nil, fmt.Errorf("wait for settled native conversation history: %w: %w",
 				ports.ErrChatHistoryUnsettled, historyCtx.Err())
 		case <-timer.C:
 		}
@@ -559,8 +562,17 @@ func (c *Controller) importNativeHistory(
 	)
 	for _, event := range events {
 		if event.ProviderEventID == "" {
-			return fmt.Errorf("native history event %s has no stable identity", event.Kind)
+			return nil, fmt.Errorf("native history event %s has no stable identity", event.Kind)
 		}
+	}
+	return events, nil
+}
+
+// projectNativeHistory durably imports a previously reconciled snapshot.
+// Re-running it is safe because history events carry stable identities and
+// ProjectProviderEvent deduplicates archive+projection together.
+func (c *Controller) projectNativeHistory(ctx context.Context, events []ports.ChatEvent) error {
+	for _, event := range events {
 		if _, _, err := c.projectEvent(ctx, event); err != nil {
 			return fmt.Errorf("import native history event %s: %w", event.Kind, err)
 		}
@@ -700,6 +712,37 @@ func reconcileNativeHistory(
 		mapped[replayTurnID] = candidate
 		candidate.used = true
 	}
+	providerItemCandidate := func(event ports.ChatEvent) *nativeHistoryTurn {
+		var match *nativeHistoryTurn
+		identities := make([]string, 0, 1+len(event.ProviderItemAliases))
+		identities = append(identities, event.ProviderItemID)
+		identities = append(identities, event.ProviderItemAliases...)
+		for _, identity := range identities {
+			candidate := providerItems[identity]
+			if candidate == nil {
+				continue
+			}
+			if match != nil && match != candidate {
+				return nil
+			}
+			match = candidate
+		}
+		return match
+	}
+	providerItemAliasCandidate := func(event ports.ChatEvent) *nativeHistoryTurn {
+		var match *nativeHistoryTurn
+		for _, identity := range event.ProviderItemAliases {
+			candidate := providerItems[identity]
+			if candidate == nil {
+				continue
+			}
+			if match != nil && match != candidate {
+				return nil
+			}
+			match = candidate
+		}
+		return match
+	}
 
 	// Gather mappings from the complete replay before rewriting TurnStarted, which
 	// necessarily arrives before the assistant/tool item that can identify it.
@@ -707,7 +750,7 @@ func reconcileNativeHistory(
 		if candidate := byProviderTurnID[event.ProviderTurnID]; candidate != nil {
 			bind(event.ProviderTurnID, candidate)
 		}
-		if candidate := providerItems[event.ProviderItemID]; candidate != nil {
+		if candidate := providerItemCandidate(event); candidate != nil {
 			bind(event.ProviderTurnID, candidate)
 		}
 	}
@@ -719,10 +762,21 @@ func reconcileNativeHistory(
 			continue
 		}
 		var match *nativeHistoryTurn
-		if event.ClientMessageID != "" {
+		clientIdentities := make([]string, 0, 1+len(event.ProviderItemAliases))
+		clientIdentities = append(clientIdentities, event.ClientMessageID)
+		clientIdentities = append(clientIdentities, event.ProviderItemAliases...)
+		if event.ClientMessageID != "" || len(event.ProviderItemAliases) > 0 {
 			for _, candidate := range ordered {
-				if !candidate.used && candidate.clientMessage == event.ClientMessageID {
-					match = candidate
+				if candidate.used || candidate.clientMessage == "" {
+					continue
+				}
+				for _, identity := range clientIdentities {
+					if candidate.clientMessage == identity {
+						match = candidate
+						break
+					}
+				}
+				if match != nil {
 					break
 				}
 			}
@@ -766,6 +820,13 @@ func reconcileNativeHistory(
 			continue
 		}
 		matched := false
+		if aliased := providerItemAliasCandidate(event); aliased != nil && aliased == candidate {
+			// The adapter identified the exact pre-namespacing item. Its detail can
+			// legitimately differ only because nested provider ids inside that JSON
+			// were namespaced too; do not re-import the same durable item under its
+			// new outer id.
+			matched = true
+		}
 		if fingerprint, ok := nativeHistoryEventMessageFingerprint(event); ok && candidate.messages[fingerprint] > 0 {
 			candidate.messages[fingerprint]--
 			matched = true
@@ -1957,14 +2018,10 @@ func (c *Controller) project() {
 	// does not remain durably active, idle, or blocked after its controller died.
 	// ControllerGeneration fences this write from a replacement controller.
 	c.reportActivity(ctx, domain.ActivityExited, "chat.controller.stopped", now)
-	if err := c.store.SettleOrphanedTurns(ctx, c.sessionID, now); err != nil {
-		c.log.Error("failed to settle orphaned turns", "session", c.sessionID, "error", err)
-	}
-	if err := c.store.FailPendingApprovals(ctx, c.conversation.ID, now); err != nil {
-		c.log.Error("failed to close pending approvals", "session", c.sessionID, "error", err)
-	}
-	if err := c.store.FailPendingInputs(ctx, c.conversation.ID, now); err != nil {
-		c.log.Error("failed to close pending input requests", "session", c.sessionID, "error", err)
+	if _, err := c.store.CleanupOwnedControllerWork(
+		ctx, c.sessionID, c.conversation.ID, c.generation, now,
+	); err != nil {
+		c.log.Error("failed to clean up stopped controller work", "session", c.sessionID, "error", err)
 	}
 }
 
@@ -1977,6 +2034,7 @@ func (c *Controller) projectEvent(ctx context.Context, event ports.ChatEvent) (b
 		"providerTurnId":         event.ProviderTurnID,
 		"providerConversationId": event.ProviderConversationID,
 		"providerItemId":         event.ProviderItemID,
+		"providerItemAliases":    event.ProviderItemAliases,
 		"clientMessageId":        event.ClientMessageID,
 		"turnState":              event.TurnState,
 		"delta":                  event.Delta,
@@ -2400,13 +2458,9 @@ func (c *Controller) apply(ctx context.Context, event ports.ChatEvent) error {
 
 	case ports.ChatEventControllerState:
 		if event.ControllerState == ports.ChatControllerStopped {
-			if err := c.store.SettleOrphanedTurns(ctx, c.sessionID, now); err != nil {
-				return err
-			}
-			if err := c.store.FailPendingApprovals(ctx, c.conversation.ID, now); err != nil {
-				return err
-			}
-			return c.store.FailPendingInputs(ctx, c.conversation.ID, now)
+			_, err := c.store.CleanupOwnedControllerWork(
+				ctx, c.sessionID, c.conversation.ID, c.generation, now)
+			return err
 		}
 		return nil
 

@@ -12,13 +12,14 @@ import {
 	sessionIsActive,
 	type WorkspaceSession,
 } from "../types/workspace";
-import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import { cloudSessionsQueryKey, useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import {
 	clearTerminateSessionState,
 	useProjectTerminateSessionStates,
 	useTerminateSession,
 	useTerminateSessionState,
 } from "../hooks/useTerminateSession";
+import { spawnCloudOrchestrator } from "../lib/cloud-orchestrator";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { addRendererExceptionStep, captureRendererEvent, captureRendererException } from "../lib/telemetry";
 import { sidebarOccupiesLayout, useUiStore } from "../stores/ui-store";
@@ -161,6 +162,26 @@ export function ShellTopbar({
 				to: "/projects/$projectId/sessions/$sessionId",
 				params: { projectId, sessionId: orchestrator.id },
 			});
+			return;
+		}
+		// Cloud projects carry no local orchestrator-agent config; spawn the
+		// orchestrator as a cloud session in its own sandbox instead of falling
+		// through to the project-settings page.
+		if (project?.kind === "cloud") {
+			setIsSpawning(true);
+			try {
+				const sessionId = await spawnCloudOrchestrator(queryClient, projectId);
+				await queryClient.invalidateQueries({ queryKey: cloudSessionsQueryKey });
+				void navigate({
+					to: "/projects/$projectId/sessions/$sessionId",
+					params: { projectId, sessionId },
+				});
+			} catch (error) {
+				console.error("Failed to spawn cloud orchestrator:", error);
+				setBoardSpawnError(error instanceof Error ? error.message : t("shell.couldNotSpawn"));
+			} finally {
+				setIsSpawning(false);
+			}
 			return;
 		}
 		if (!hasConfiguredOrchestratorAgent(project)) {
