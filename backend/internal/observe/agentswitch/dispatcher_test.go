@@ -368,11 +368,13 @@ func newDispatcherPolicyFake() *dispatcherPolicyFake {
 }
 func (p *dispatcherPolicyFake) ForceDisabled(context.Context) error { return nil }
 func (p *dispatcherPolicyFake) Synchronize(context.Context) error   { return nil }
-func (p *dispatcherPolicyFake) PrepareDisable(context.Context) error {
+func (p *dispatcherPolicyFake) PrepareDisable(context.Context) (ports.AgentSwitchFailurePolicyAcknowledgement, error) {
 	p.cancelCalls()
-	return nil
+	return ports.AgentSwitchFailurePolicyAcknowledgement{Authorization: p.Authorization(), GateDrained: true}, nil
 }
-func (p *dispatcherPolicyFake) ApplyPolicy(context.Context, string, bool) error { return nil }
+func (p *dispatcherPolicyFake) ApplyPolicy(context.Context, string, bool) (ports.AgentSwitchFailurePolicyAcknowledgement, error) {
+	return ports.AgentSwitchFailurePolicyAcknowledgement{Authorization: p.Authorization()}, nil
+}
 func (p *dispatcherPolicyFake) Authorization() domain.AgentSwitchReportingAuthorization {
 	p.mu.Lock()
 	defer p.mu.Unlock()

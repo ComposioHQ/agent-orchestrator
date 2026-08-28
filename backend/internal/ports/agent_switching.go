@@ -79,6 +79,15 @@ type AgentSwitchFailurePolicy struct {
 	UpdatedAt     time.Time
 }
 
+// AgentSwitchFailurePolicyAcknowledgement is proof produced by one completed
+// daemon policy-control call. PurgeConfirmed is generation-bound and is true
+// only after a disabled policy mirror and the outbox purge commit atomically.
+type AgentSwitchFailurePolicyAcknowledgement struct {
+	Authorization  domain.AgentSwitchReportingAuthorization
+	GateDrained    bool
+	PurgeConfirmed bool
+}
+
 type AgentSwitchFailureEventMetadataStore interface {
 	ConfigureAgentSwitchFailureEventMetadata(context.Context, domain.AgentSwitchEventMetadata) error
 }
@@ -143,6 +152,8 @@ type AgentSwitchFailureBacklog struct {
 
 type AgentSwitchFailureOutboxStore interface {
 	ForceDisableAgentSwitchFailurePolicy(context.Context, time.Time) error
+	// ApplyAgentSwitchFailurePolicy atomically mirrors policy and, when it is
+	// disabled, deletes every outbox payload without deleting receipts.
 	ApplyAgentSwitchFailurePolicy(context.Context, AgentSwitchFailurePolicy) error
 	PurgeAgentSwitchFailurePayloads(context.Context) (int64, error)
 	EnrollCurrentAgentSwitchRecoveryMarkers(context.Context, AgentSwitchFailureRecoveryEnrollment) (int64, error)

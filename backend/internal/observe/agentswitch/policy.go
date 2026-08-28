@@ -30,8 +30,9 @@ const (
 )
 
 var (
-	ErrPolicyHintMismatch = errors.New("telemetry policy hint does not match durable authority")
-	ErrPolicyUnavailable  = errors.New("telemetry policy authority is unavailable or unsafe")
+	ErrPolicyHintMismatch   = errors.New("telemetry policy hint does not match durable authority")
+	ErrPolicyUnavailable    = errors.New("telemetry policy authority is unavailable or unsafe")
+	ErrPolicyCleanupPending = errors.New("telemetry policy disable cleanup is pending")
 )
 
 type PolicyStore interface {
@@ -58,8 +59,8 @@ type PolicyOptions struct {
 type PolicyCoordinator interface {
 	ForceDisabled(context.Context) error
 	Synchronize(context.Context) error
-	PrepareDisable(context.Context) error
-	ApplyPolicy(context.Context, string, bool) error
+	PrepareDisable(context.Context) (ports.AgentSwitchFailurePolicyAcknowledgement, error)
+	ApplyPolicy(context.Context, string, bool) (ports.AgentSwitchFailurePolicyAcknowledgement, error)
 	Authorization() domain.AgentSwitchReportingAuthorization
 	DeliveryEpoch() int64
 	EnterDelivery(context.Context, string, int64) (context.Context, func(), bool)
@@ -73,13 +74,19 @@ type Coordinator struct {
 	bootToken     string
 	metadataReady bool
 
-	mu            sync.Mutex
-	authorization domain.AgentSwitchReportingAuthorization
-	eventsEnabled bool
-	deliveryEpoch int64
-	nextCall      uint64
-	calls         map[uint64]context.CancelFunc
-	callWG        sync.WaitGroup
+	operationMu     sync.Mutex
+	mu              sync.Mutex
+	authorization   domain.AgentSwitchReportingAuthorization
+	eventsEnabled   bool
+	deliveryEpoch   int64
+	disablePrepared bool
+	gateClosed      bool
+	gateDrained     bool
+	purgeGeneration string
+	purgeConfirmed  bool
+	nextCall        uint64
+	calls           map[uint64]context.CancelFunc
+	callWG          sync.WaitGroup
 }
 
 func NewPolicyCoordinator(store PolicyStore, options PolicyOptions) *Coordinator {
@@ -98,9 +105,16 @@ func NewPolicyCoordinator(store PolicyStore, options PolicyOptions) *Coordinator
 }
 
 func (c *Coordinator) ForceDisabled(ctx context.Context) error {
+	c.operationMu.Lock()
+	defer c.operationMu.Unlock()
 	if err := c.closeGateAndDrain(ctx); err != nil {
 		return err
 	}
+	c.mu.Lock()
+	c.disablePrepared = false
+	c.purgeGeneration = ""
+	c.purgeConfirmed = false
+	c.mu.Unlock()
 	if c.store == nil {
 		return errors.New("agent switch policy store is unavailable")
 	}
@@ -108,17 +122,43 @@ func (c *Coordinator) ForceDisabled(ctx context.Context) error {
 }
 
 func (c *Coordinator) Synchronize(ctx context.Context) error {
+	c.operationMu.Lock()
+	defer c.operationMu.Unlock()
 	authority := c.readAuthority()
-	return c.synchronizeAuthority(ctx, authority)
+	_, err := c.synchronizeAuthority(ctx, authority)
+	return err
 }
 
-func (c *Coordinator) PrepareDisable(ctx context.Context) error { return c.closeGateAndDrain(ctx) }
+func (c *Coordinator) PrepareDisable(ctx context.Context) (ports.AgentSwitchFailurePolicyAcknowledgement, error) {
+	c.operationMu.Lock()
+	defer c.operationMu.Unlock()
+	c.mu.Lock()
+	c.disablePrepared = true
+	c.eventsEnabled = false
+	c.mu.Unlock()
+	c.notifyEventsChanged(false)
+	if err := c.closeGateAndDrain(ctx); err != nil {
+		return ports.AgentSwitchFailurePolicyAcknowledgement{}, err
+	}
+	return ports.AgentSwitchFailurePolicyAcknowledgement{
+		Authorization: c.Authorization(), GateDrained: true,
+	}, nil
+}
 
-func (c *Coordinator) ApplyPolicy(ctx context.Context, generation string, eventsEnabled bool) error {
+func (c *Coordinator) ApplyPolicy(ctx context.Context, generation string, eventsEnabled bool) (ports.AgentSwitchFailurePolicyAcknowledgement, error) {
+	c.operationMu.Lock()
+	defer c.operationMu.Unlock()
 	authority := c.readAuthority()
 	if !authority.valid || authority.generation != generation || authority.eventsEnabled != eventsEnabled {
 		_ = c.closeGateAndDrain(ctx)
-		return ErrPolicyHintMismatch
+		return ports.AgentSwitchFailurePolicyAcknowledgement{}, ErrPolicyHintMismatch
+	}
+	c.mu.Lock()
+	disablePrepared := c.disablePrepared
+	c.mu.Unlock()
+	if disablePrepared && authority.eventsEnabled {
+		_ = c.closeGateAndDrain(ctx)
+		return ports.AgentSwitchFailurePolicyAcknowledgement{}, ErrPolicyCleanupPending
 	}
 	return c.synchronizeAuthority(ctx, authority)
 }
@@ -146,7 +186,7 @@ func (c *Coordinator) EnterDelivery(parent context.Context, generation string, e
 		return parent, func() {}, false
 	}
 	c.mu.Lock()
-	if !c.authorization.Enabled || c.authorization.ConsentGeneration != generation || c.deliveryEpoch != epoch {
+	if c.gateClosed || !c.authorization.Enabled || c.authorization.ConsentGeneration != generation || c.deliveryEpoch != epoch {
 		c.mu.Unlock()
 		return parent, func() {}, false
 	}
@@ -168,7 +208,16 @@ func (c *Coordinator) EnterDelivery(parent context.Context, generation string, e
 	return callContext, release, true
 }
 
-func (c *Coordinator) CloseAndDrain(ctx context.Context) error { return c.closeGateAndDrain(ctx) }
+func (c *Coordinator) CloseAndDrain(ctx context.Context) error {
+	c.operationMu.Lock()
+	defer c.operationMu.Unlock()
+	c.mu.Lock()
+	c.disablePrepared = true
+	c.eventsEnabled = false
+	c.mu.Unlock()
+	c.notifyEventsChanged(false)
+	return c.closeGateAndDrain(ctx)
+}
 
 func (c *Coordinator) StartWatcher(ctx context.Context) {
 	go func() {
@@ -260,58 +309,133 @@ func (c *Coordinator) desiredAuthorization(authority authorityRead) domain.Agent
 	return authorization
 }
 
-func (c *Coordinator) synchronizeAuthority(ctx context.Context, authority authorityRead) error {
+func (c *Coordinator) synchronizeAuthority(ctx context.Context, authority authorityRead) (ports.AgentSwitchFailurePolicyAcknowledgement, error) {
 	desired := c.desiredAuthorization(authority)
-	current := c.Authorization()
 	c.mu.Lock()
-	c.eventsEnabled = authority.valid && authority.eventsEnabled
+	disablePrepared := c.disablePrepared
+	c.eventsEnabled = authority.valid && authority.eventsEnabled && !disablePrepared
 	eventsEnabled := c.eventsEnabled
+	current := c.authorization
+	purgeConfirmed := c.purgeConfirmed && c.purgeGeneration == desired.ConsentGeneration
 	c.mu.Unlock()
-	if c.options.OnEventsChanged != nil {
-		c.options.OnEventsChanged(eventsEnabled)
+	c.notifyEventsChanged(eventsEnabled)
+	if disablePrepared && authority.valid && authority.eventsEnabled {
+		if err := c.closeGateAndDrain(ctx); err != nil {
+			return ports.AgentSwitchFailurePolicyAcknowledgement{}, err
+		}
+		return ports.AgentSwitchFailurePolicyAcknowledgement{
+			Authorization: c.Authorization(), GateDrained: true,
+		}, nil
 	}
-	if current == desired {
-		return nil
+	if current == desired && (desired.Enabled || purgeConfirmed) {
+		if !desired.Enabled {
+			if err := c.closeGateAndDrain(ctx); err != nil {
+				return ports.AgentSwitchFailurePolicyAcknowledgement{}, err
+			}
+		}
+		acknowledgement := c.policyAcknowledgement(desired)
+		if !authority.valid {
+			return acknowledgement, ErrPolicyUnavailable
+		}
+		return acknowledgement, nil
 	}
 	if err := c.closeGateAndDrain(ctx); err != nil {
-		return err
+		return ports.AgentSwitchFailurePolicyAcknowledgement{}, err
 	}
 	if c.store == nil {
-		return errors.New("agent switch policy store is unavailable")
+		return ports.AgentSwitchFailurePolicyAcknowledgement{}, errors.New("agent switch policy store is unavailable")
 	}
 	if err := c.store.ApplyAgentSwitchFailurePolicy(ctx, ports.AgentSwitchFailurePolicy{Authorization: desired, UpdatedAt: c.options.Now().UTC()}); err != nil {
-		return err
+		c.invalidatePurgeProof()
+		return ports.AgentSwitchFailurePolicyAcknowledgement{}, err
 	}
 	if desired.Enabled {
 		if _, err := c.store.EnrollCurrentAgentSwitchRecoveryMarkers(ctx, ports.AgentSwitchFailureRecoveryEnrollment{Authorization: desired, EnrolledAt: c.options.Now().UTC()}); err != nil {
-			_ = c.store.ApplyAgentSwitchFailurePolicy(ctx, ports.AgentSwitchFailurePolicy{Authorization: domain.AgentSwitchReportingAuthorization{ConsentGeneration: desired.ConsentGeneration}, UpdatedAt: c.options.Now().UTC()})
-			return err
+			fallback := domain.AgentSwitchReportingAuthorization{ConsentGeneration: desired.ConsentGeneration}
+			fallbackErr := c.store.ApplyAgentSwitchFailurePolicy(ctx, ports.AgentSwitchFailurePolicy{Authorization: fallback, UpdatedAt: c.options.Now().UTC()})
+			c.mu.Lock()
+			c.authorization = fallback
+			c.eventsEnabled = false
+			c.disablePrepared = true
+			c.purgeGeneration = fallback.ConsentGeneration
+			c.purgeConfirmed = fallbackErr == nil
+			c.mu.Unlock()
+			c.notifyEventsChanged(false)
+			if fallbackErr != nil {
+				return ports.AgentSwitchFailurePolicyAcknowledgement{}, errors.Join(err, fallbackErr)
+			}
+			return ports.AgentSwitchFailurePolicyAcknowledgement{}, err
 		}
 	}
 	c.mu.Lock()
 	c.authorization = desired
-	c.mu.Unlock()
-	if !authority.valid {
-		return ErrPolicyUnavailable
+	c.disablePrepared = false
+	if desired.Enabled {
+		c.gateClosed = false
+		c.gateDrained = false
+		c.purgeGeneration = ""
+		c.purgeConfirmed = false
+	} else {
+		c.purgeGeneration = desired.ConsentGeneration
+		c.purgeConfirmed = true
 	}
-	return nil
+	c.mu.Unlock()
+	acknowledgement := c.policyAcknowledgement(desired)
+	if !authority.valid {
+		return acknowledgement, ErrPolicyUnavailable
+	}
+	return acknowledgement, nil
 }
 
 func (c *Coordinator) closeGateAndDrain(ctx context.Context) error {
 	c.mu.Lock()
-	c.deliveryEpoch++
+	if !c.gateClosed {
+		c.deliveryEpoch++
+		c.gateClosed = true
+		c.gateDrained = false
+	}
 	c.authorization.Enabled = false
 	for _, cancel := range c.calls {
 		cancel()
+	}
+	if c.gateDrained {
+		c.mu.Unlock()
+		return nil
 	}
 	c.mu.Unlock()
 	done := make(chan struct{})
 	go func() { c.callWG.Wait(); close(done) }()
 	select {
 	case <-done:
+		c.mu.Lock()
+		c.gateDrained = true
+		c.mu.Unlock()
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
+	}
+}
+
+func (c *Coordinator) policyAcknowledgement(authorization domain.AgentSwitchReportingAuthorization) ports.AgentSwitchFailurePolicyAcknowledgement {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return ports.AgentSwitchFailurePolicyAcknowledgement{
+		Authorization:  authorization,
+		GateDrained:    !authorization.Enabled && c.gateClosed && c.gateDrained,
+		PurgeConfirmed: !authorization.Enabled && c.purgeConfirmed && c.purgeGeneration == authorization.ConsentGeneration,
+	}
+}
+
+func (c *Coordinator) invalidatePurgeProof() {
+	c.mu.Lock()
+	c.purgeGeneration = ""
+	c.purgeConfirmed = false
+	c.mu.Unlock()
+}
+
+func (c *Coordinator) notifyEventsChanged(enabled bool) {
+	if c.options.OnEventsChanged != nil {
+		c.options.OnEventsChanged(enabled)
 	}
 }
 

@@ -702,6 +702,54 @@ INSERT INTO agent_switch_failure_outbox (
 	if got := countFailureRows(t, f.db, "agent_switch_failure_receipts"); got != 1 {
 		t.Fatalf("payload-free receipts after opt-out = %d, want 1", got)
 	}
+	var enabled bool
+	var generation, destination string
+	if err := f.db.QueryRow(`SELECT enabled,consent_generation,destination_fingerprint FROM agent_switch_failure_policy WHERE singleton=1`).Scan(&enabled, &generation, &destination); err != nil {
+		t.Fatalf("read opt-out policy mirror: %v", err)
+	}
+	if enabled || generation != "generation-2" || destination != "destination-1" {
+		t.Fatalf("opt-out policy mirror = enabled=%v generation=%q destination=%q", enabled, generation, destination)
+	}
+}
+
+func TestOptOutPolicyAndPayloadPurgeRollbackTogether(t *testing.T) {
+	f := openAgentSwitchFailureFixture(t)
+	f.enablePolicy(t)
+	if _, err := f.store.ApplyAgentSwitchMutation(context.Background(), failedMutation(f)); err != nil {
+		t.Fatalf("seed failure payload: %v", err)
+	}
+	if _, err := f.db.Exec(`
+CREATE TRIGGER reject_agent_switch_failure_opt_out
+BEFORE DELETE ON agent_switch_failure_outbox
+BEGIN
+ SELECT RAISE(ABORT, 'reject opt-out purge');
+END`); err != nil {
+		t.Fatalf("install opt-out rollback trigger: %v", err)
+	}
+
+	err := f.store.ApplyAgentSwitchFailurePolicy(context.Background(), ports.AgentSwitchFailurePolicy{
+		Authorization: domain.AgentSwitchReportingAuthorization{
+			Enabled: false, ConsentGeneration: "generation-2", DestinationFingerprint: "destination-1",
+		},
+		UpdatedAt: f.now.Add(time.Hour),
+	})
+	if err == nil {
+		t.Fatal("opt-out unexpectedly committed after purge failure")
+	}
+	var enabled bool
+	var generation, destination string
+	if err := f.db.QueryRow(`SELECT enabled,consent_generation,destination_fingerprint FROM agent_switch_failure_policy WHERE singleton=1`).Scan(&enabled, &generation, &destination); err != nil {
+		t.Fatalf("read rolled-back policy mirror: %v", err)
+	}
+	if !enabled || generation != "generation-1" || destination != "destination-1" {
+		t.Fatalf("rolled-back policy mirror = enabled=%v generation=%q destination=%q", enabled, generation, destination)
+	}
+	if got := countFailureRows(t, f.db, "agent_switch_failure_outbox"); got != 1 {
+		t.Fatalf("payload rows after rollback = %d, want 1", got)
+	}
+	if got := countFailureRows(t, f.db, "agent_switch_failure_receipts"); got != 1 {
+		t.Fatalf("receipt rows after rollback = %d, want 1", got)
+	}
 }
 
 func TestFinalAttemptRequiresLeaseGenerationEpochDestinationThrottleAndTTL(t *testing.T) {
