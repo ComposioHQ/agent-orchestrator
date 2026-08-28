@@ -293,6 +293,11 @@ var schemaNames = map[string]string{
 	"AgentInventory":                                      "ListAgentsResponse",
 	"AgentInfo":                                           "AgentInfo",
 	"AgentProbeResult":                                    "ProbeAgentResponse",
+	"AgentReadiness":                                      "AgentReadinessResponse",
+	"ControllersEnsureAgentReadinessRequest":              "EnsureAgentReadinessRequest",
+	"DomainAgentReadinessSnapshot":                        "AgentReadinessSnapshot",
+	"DomainAgentInstallationObservation":                  "AgentInstallationObservation",
+	"DomainAgentAuthenticationObservation":                "AgentAuthenticationObservation",
 	// service/systemcheck: "SystemcheckReport" is a generic default name that
 	// reads like an internal type, not a wire response — rename to match the
 	// endpoint it serves, same treatment as AgentInventory above.
@@ -935,6 +940,26 @@ func agentOperations() []operation {
 			summary: "Return cached supported and locally installed agent adapters",
 			resps: []respUnit{
 				{http.StatusOK, controllers.ListAgentsResponse{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/agents/readiness", id: "getAgentReadiness", tag: "agents",
+			summary: "Return cached normalized agent readiness without running native checks",
+			resps: []respUnit{
+				{http.StatusOK, controllers.AgentReadinessResponse{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/agents/readiness/ensure", id: "ensureAgentReadiness", tag: "agents",
+			summary: "Ensure normalized readiness for selected agent adapters",
+			reqBody: controllers.EnsureAgentReadinessRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.AgentReadinessResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},
 			},
