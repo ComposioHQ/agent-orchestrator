@@ -37,6 +37,11 @@ import { aoBridge } from "../lib/bridge";
 import { TERMINAL_FONT_SIZE_DEFAULT } from "../lib/design-tokens";
 import { isWebLink, openLinkInSystemBrowser } from "../lib/external-link-policy";
 import { isMacPlatform } from "../lib/platform";
+import {
+	TerminalSelectionAutoscroll,
+	type TerminalLiveSelectionRender,
+	type TerminalSelectionPoint,
+} from "../lib/terminal-selection-autoscroll";
 import { applyDocumentTheme, applyDocumentThemeStyle } from "../lib/theme";
 import { buildTerminalThemes } from "../lib/terminal-themes";
 import { useUiStore, type Theme } from "../stores/ui-store";
@@ -216,6 +221,15 @@ function terminalHasFocus(host: HTMLElement): boolean {
 type XtermInternal = Terminal & {
 	_core?: {
 		element?: HTMLElement;
+		_mouseService?: {
+			getCoords: (
+				event: MouseEvent,
+				element: HTMLElement,
+				cols: number,
+				rows: number,
+				isSelection?: boolean,
+			) => [number, number] | undefined;
+		};
 		viewport?: {
 			scrollBarWidth: number;
 		};
@@ -294,6 +308,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 	const scrollbarThumbRef = useRef<HTMLDivElement | null>(null);
 	const termRef = useRef<Terminal | null>(null);
 	const searchAddonRef = useRef<SearchAddon | null>(null);
+	const extendedSelectionRef = useRef<TerminalSelectionAutoscroll | null>(null);
 	const fitRef = useRef<(() => void) | null>(null);
 	const contextMenuActionsRef = useRef<TerminalContextMenuActions | null>(null);
 	const [contextMenu, setContextMenu] = useState<TerminalContextMenuState>({
@@ -588,8 +603,163 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		scrollbarTrack?.addEventListener("pointercancel", scrollbarPointerUp);
 		scheduleScrollbarUpdate();
 
+		const userInputListeners = new Set<(data: string, source: TerminalUserInputSource) => void>();
+		const emitUserInput = (data: string, source: TerminalUserInputSource) => {
+			if (data.length === 0) return;
+			userInputListeners.forEach((listener) => listener(data, source));
+		};
+		const xtermInternal = term as XtermInternal;
+		const screen = host.querySelector<HTMLElement>(".xterm-screen");
+		const selectionLayer = document.createElement("div");
+		selectionLayer.dataset.aoTerminalSelectionLayer = "true";
+		selectionLayer.setAttribute("aria-hidden", "true");
+		Object.assign(selectionLayer.style, {
+			display: "none",
+			inset: "0",
+			overflow: "hidden",
+			pointerEvents: "none",
+			position: "absolute",
+			zIndex: "10",
+		});
+		screen?.appendChild(selectionLayer);
+		const renderExtendedSelection = (state: TerminalLiveSelectionRender | null) => {
+			selectionLayer.replaceChildren();
+			if (!screen || !state || term.cols <= 0 || term.rows <= 0) {
+				selectionLayer.style.display = "none";
+				return;
+			}
+			const rect = screen.getBoundingClientRect();
+			if (rect.width <= 0 || rect.height <= 0) {
+				selectionLayer.style.display = "none";
+				return;
+			}
+			const cellWidth = rect.width / term.cols;
+			const cellHeight = rect.height / term.rows;
+			selectionLayer.style.display = "block";
+			const selectionBackground = term.options.theme?.selectionBackground ?? "rgb(77 141 255 / 0.3)";
+			for (const highlight of state.highlights) {
+				const element = document.createElement("div");
+				element.dataset.aoTerminalSelectionHighlight = "true";
+				Object.assign(element.style, {
+					background: selectionBackground,
+					height: `${cellHeight}px`,
+					left: `${highlight.startCol * cellWidth}px`,
+					position: "absolute",
+					top: `${highlight.row * cellHeight}px`,
+					width: `${(highlight.endCol - highlight.startCol) * cellWidth}px`,
+				});
+				selectionLayer.appendChild(element);
+			}
+		};
+		const pointForMouse = (event: MouseEvent): TerminalSelectionPoint | null => {
+			if (!screen) return null;
+			const coords = xtermInternal._core?._mouseService?.getCoords(event, screen, term.cols, term.rows, true);
+			if (coords) {
+				return {
+					col: Math.min(term.cols, Math.max(0, coords[0] - 1)),
+					row: Math.min(term.rows - 1, Math.max(0, coords[1] - 1)),
+				};
+			}
+			const rect = screen.getBoundingClientRect();
+			if (rect.width <= 0 || rect.height <= 0) return null;
+			return {
+				col: Math.min(term.cols, Math.max(0, Math.floor(((event.clientX - rect.left) / rect.width) * term.cols))),
+				row: Math.min(term.rows - 1, Math.max(0, Math.floor(((event.clientY - rect.top) / rect.height) * term.rows))),
+			};
+		};
+		const extendedSelection = new TerminalSelectionAutoscroll({
+			readNativeSelection: () => {
+				const selection = term.getSelectionPosition();
+				const text = term.getSelection();
+				if (!selection || !text) return null;
+				const viewportY = term.buffer.active.viewportY;
+				return {
+					text,
+					range: {
+						anchor: { row: selection.start.y - viewportY, col: selection.start.x },
+						focus: { row: selection.end.y - viewportY, col: selection.end.x },
+					},
+				};
+			},
+			readSnapshot: () => ({
+				rows: Array.from({ length: term.rows }, (_, row) => {
+					const line = term.buffer.active.getLine(term.buffer.active.viewportY + row);
+					if (!line) return { text: "" };
+					let hasText = false;
+					let allTextIsDim = true;
+					let textOffset = 0;
+					const cellOffsets = Array.from({ length: term.cols + 1 }, () => 0);
+					for (let col = 0; col < term.cols; col += 1) {
+						const cell = line.getCell(col);
+						cellOffsets[col] = textOffset;
+						const chars = cell?.getChars() ?? "";
+						textOffset += chars.length > 0 ? chars.length : cell?.getWidth() === 1 ? 1 : 0;
+						if (!chars.trim()) continue;
+						hasText = true;
+						allTextIsDim &&= Boolean(cell?.isDim());
+					}
+					cellOffsets[term.cols] = textOffset;
+					return {
+						text: line.translateToString(true),
+						cellOffsets,
+						selectable: !hasText || !allTextIsDim,
+						wrapped: line.isWrapped,
+					};
+				}),
+			}),
+			clearNativeSelection: () => term.clearSelection(),
+			scroll: (direction, lines) => {
+				const visibleLines = Math.min(lines, Math.max(1, term.rows - 1));
+				if (callbacksRef.current.paneScrollsByKeyboard) {
+					emitUserInput(pageKeyReport(direction), "wheel");
+					return;
+				}
+				if (term.modes.mouseTrackingMode !== "none") {
+					const button = direction < 0 ? SGR_WHEEL_UP : SGR_WHEEL_DOWN;
+					emitUserInput(sgrWheelReport(button, visibleLines), "wheel");
+					return;
+				}
+				if (term.buffer.active.type === "normal") {
+					term.scrollLines(direction * visibleLines);
+					return;
+				}
+				emitUserInput(pageKeyReport(direction), "wheel");
+			},
+			render: renderExtendedSelection,
+		});
+		extendedSelectionRef.current = extendedSelection;
+		const selectionMouseDown = (event: MouseEvent) => {
+			if (event.button !== 0) return;
+			const eligible =
+				event.detail === 1 &&
+				!event.altKey &&
+				!event.shiftKey &&
+				term.buffer.active.type === "alternate" &&
+				userInputListeners.size > 0 &&
+				Boolean(screen && event.target instanceof Node && screen.contains(event.target));
+			extendedSelection.pointerDown(eligible);
+		};
+		const selectionMouseMove = (event: MouseEvent) => {
+			if ((event.buttons & 1) === 0 || !screen) return;
+			const point = pointForMouse(event);
+			if (!point) return;
+			const rect = screen.getBoundingClientRect();
+			if (extendedSelection.pointerMove(point, event.clientY, rect.top, rect.height)) {
+				event.preventDefault();
+				event.stopImmediatePropagation();
+			}
+		};
+		const selectionMouseUp = (event: MouseEvent) => {
+			if (event.button === 0) extendedSelection.pointerUp();
+		};
+		const selectionBlur = () => extendedSelection.blur();
+		shell.addEventListener("mousedown", selectionMouseDown, true);
+		document.addEventListener("mousemove", selectionMouseMove, true);
+		document.addEventListener("mouseup", selectionMouseUp, true);
+		window.addEventListener("blur", selectionBlur);
+
 		const copySelection = (options?: { clipboardData?: DataTransfer | null }) => {
-			const selection = term.getSelection();
+			const selection = extendedSelection.getText() || term.getSelection();
 			if (!selection) return false;
 			options?.clipboardData?.setData("text/plain", selection);
 			void aoBridge.clipboard
@@ -602,12 +772,8 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				});
 			return true;
 		};
-		const userInputListeners = new Set<(data: string, source: TerminalUserInputSource) => void>();
-		const emitUserInput = (data: string, source: TerminalUserInputSource) => {
-			if (data.length === 0) return;
-			userInputListeners.forEach((listener) => listener(data, source));
-		};
 		const pasteText = (text: string) => {
+			extendedSelection.blur();
 			const prepared = preparePastedText(text);
 			const bracketed = term.modes.bracketedPasteMode && term.options.ignoreBracketedPasteMode !== true;
 			emitUserInput(bracketPastedText(prepared, bracketed), "paste");
@@ -651,6 +817,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				focusTerminal();
 			},
 			selectAll: () => {
+				extendedSelection.blur();
 				term.selectAll();
 				focusTerminal();
 			},
@@ -659,7 +826,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			event.preventDefault();
 			event.stopPropagation();
 			setContextMenu({
-				canCopy: term.hasSelection(),
+				canCopy: extendedSelection.hasSelection() || term.hasSelection(),
 				open: true,
 				x: event.clientX,
 				y: event.clientY,
@@ -675,6 +842,8 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			// paste, double word-delete, etc). keyup/keypress fall through to
 			// xterm's own default handling for that event type.
 			if (event.type === "keyup" || event.type === "keypress") return true;
+			const modifierOnly = event.key === "Alt" || event.key === "Control" || event.key === "Meta" || event.key === "Shift";
+			if (!modifierOnly && !isTerminalCopyShortcut(event)) extendedSelection.blur();
 			if (isTerminalSearchShortcut(event)) {
 				consumeTerminalShortcut(event);
 				setSearchOpen(true);
@@ -872,6 +1041,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			pending = null;
 			if (++stableFrames >= STABLE_FRAMES_TARGET) stabilizer.dispose();
 		});
+		const selectionRender = term.onRender(() => extendedSelection.screenRendered());
 
 		// OS window resize and monitor/DPR changes also alter the true cell box
 		// without touching the host's height:100% box, so the ResizeObserver above
@@ -897,6 +1067,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		let wheelAccumPx = 0;
 		term.attachCustomWheelEventHandler((event) => {
 			if (event.ctrlKey || event.metaKey) return false;
+			extendedSelection.blur();
 			let lines: number;
 			if (event.deltaMode === 1 /* DOM_DELTA_LINE */) {
 				lines = Math.trunc(event.deltaY) || Math.sign(event.deltaY);
@@ -949,6 +1120,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			pasteText(text);
 		};
 		const compositionInput = (event: CompositionEvent) => {
+			extendedSelection.blur();
 			emitUserInput(event.data, "composition");
 		};
 		shell.addEventListener("paste", pasteInput, true);
@@ -1092,6 +1264,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			fitSettledListeners.clear();
 			observer.disconnect();
 			stabilizer.dispose();
+			selectionRender.dispose();
 			scrollPositionChange?.dispose();
 			scrollbarResize?.dispose();
 			if (scrollbarFrame !== null) cancelAnimationFrame(scrollbarFrame);
@@ -1101,6 +1274,13 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			scrollbarTrack?.removeEventListener("pointerup", scrollbarPointerUp);
 			scrollbarTrack?.removeEventListener("pointercancel", scrollbarPointerUp);
 			window.removeEventListener("resize", scheduleVisibleFit);
+			shell.removeEventListener("mousedown", selectionMouseDown, true);
+			document.removeEventListener("mousemove", selectionMouseMove, true);
+			document.removeEventListener("mouseup", selectionMouseUp, true);
+			window.removeEventListener("blur", selectionBlur);
+			extendedSelection.dispose();
+			if (extendedSelectionRef.current === extendedSelection) extendedSelectionRef.current = null;
+			selectionLayer.remove();
 			shell.removeEventListener("copy", copyInput);
 			window.removeEventListener("keydown", copyShortcut, true);
 			shell.removeEventListener("contextmenu", openContextMenu);
@@ -1134,6 +1314,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 
 	useLayoutEffect(() => {
 		if (props.isVisible === false) {
+			extendedSelectionRef.current?.blur();
 			setSearchOpen(false);
 			searchAddonRef.current?.clearDecorations();
 			setContextMenuOpen(false);

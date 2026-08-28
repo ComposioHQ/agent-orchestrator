@@ -8,6 +8,7 @@ import { XtermTerminal } from "./XtermTerminal";
 const state = vi.hoisted(() => ({
 	fit: vi.fn(),
 	linkHandler: null as null | ((event: MouseEvent, uri: string) => void),
+	screenRows: ["one", "two"] as string[],
 	searchAddon: null as null | {
 		clearDecorations: ReturnType<typeof vi.fn>;
 		findNext: ReturnType<typeof vi.fn>;
@@ -18,9 +19,25 @@ const state = vi.hoisted(() => ({
 		keyHandler?: (event: KeyboardEvent) => boolean;
 		wheelHandler?: (event: WheelEvent) => boolean;
 		selection: string;
+		selectionPosition: { start: { x: number; y: number }; end: { x: number; y: number } } | undefined;
 		options: Record<string, unknown>;
 		modes: { bracketedPasteMode: boolean; mouseTrackingMode: string };
-		buffer: { active: { baseY: number; type: string; viewportY: number } };
+		buffer: {
+			active: {
+				baseY: number;
+				type: string;
+				viewportY: number;
+				getLine: (row: number) => {
+					getCell: (col: number) => {
+						getChars: () => string;
+						getWidth: () => number;
+						isDim: () => boolean;
+					} | undefined;
+					isWrapped: boolean;
+					translateToString: () => string;
+				} | undefined;
+			};
+		};
 		scrollLines: ReturnType<typeof vi.fn>;
 		scrollToBottom: ReturnType<typeof vi.fn>;
 		scrollToLine: ReturnType<typeof vi.fn>;
@@ -31,7 +48,9 @@ const state = vi.hoisted(() => ({
 		dataListeners: Set<(data: string) => void>;
 		keyListeners: Set<(event: { key: string }) => void>;
 		selectionListeners: Set<() => void>;
+		renderListeners: Set<() => void>;
 		scrollListeners: Set<() => void>;
+		clearSelection: ReturnType<typeof vi.fn>;
 		_core: {
 			element: { classList: { add: ReturnType<typeof vi.fn>; remove: ReturnType<typeof vi.fn> } };
 			viewport: { scrollBarWidth: number };
@@ -49,10 +68,28 @@ vi.mock("@xterm/xterm", () => ({
 		cols = 80;
 		rows = 24;
 		selection = "";
+		selectionPosition = { start: { x: 0, y: 0 }, end: { x: 3, y: 1 } };
 		keyHandler?: (event: KeyboardEvent) => boolean;
 		wheelHandler?: (event: WheelEvent) => boolean;
 		modes = { bracketedPasteMode: false, mouseTrackingMode: "vt200" };
-		buffer = { active: { baseY: 0, type: "normal", viewportY: 0 } };
+		buffer = {
+			active: {
+				baseY: 0,
+				type: "normal",
+				viewportY: 0,
+				getLine: (row: number) => {
+					const text = state.screenRows[row];
+					if (text === undefined) return undefined;
+					return {
+						getCell: (col: number) => col < text.length
+							? { getChars: () => text[col] === " " ? "" : text[col], getWidth: () => 1, isDim: () => false }
+							: undefined,
+						isWrapped: false,
+						translateToString: () => text,
+					};
+				},
+			},
+		};
 		scrollLines = vi.fn();
 		scrollToBottom = vi.fn();
 		scrollToLine = vi.fn();
@@ -63,7 +100,9 @@ vi.mock("@xterm/xterm", () => ({
 		dataListeners = new Set<(data: string) => void>();
 		keyListeners = new Set<(event: { key: string }) => void>();
 		selectionListeners = new Set<() => void>();
+		renderListeners = new Set<() => void>();
 		scrollListeners = new Set<() => void>();
+		clearSelection = vi.fn(() => { this.selection = ""; });
 		_core = {
 			element: { classList: { add: vi.fn(), remove: vi.fn() } },
 			viewport: { scrollBarWidth: 15 },
@@ -80,6 +119,9 @@ vi.mock("@xterm/xterm", () => ({
 
 		loadAddon() {}
 		open(host: HTMLElement) {
+			const screen = document.createElement("div");
+			screen.className = "xterm-screen";
+			host.appendChild(screen);
 			host.appendChild(document.createElement("textarea"));
 		}
 		write() {}
@@ -92,8 +134,9 @@ vi.mock("@xterm/xterm", () => ({
 		onResize() {
 			return { dispose: () => undefined };
 		}
-		onRender() {
-			return { dispose: () => undefined };
+		onRender(listener: () => void) {
+			this.renderListeners.add(listener);
+			return { dispose: () => this.renderListeners.delete(listener) };
 		}
 		onScroll(listener: () => void) {
 			this.scrollListeners.add(listener);
@@ -113,6 +156,9 @@ vi.mock("@xterm/xterm", () => ({
 		getSelection() {
 			return this.selection;
 		}
+		getSelectionPosition() {
+			return this.selectionPosition;
+		}
 		attachCustomKeyEventHandler(listener: (event: KeyboardEvent) => boolean) {
 			this.keyHandler = listener;
 		}
@@ -127,6 +173,9 @@ vi.mock("@xterm/addon-fit", () => ({
 	FitAddon: class FakeFitAddon {
 		fit() {
 			state.fit();
+		}
+		proposeDimensions() {
+			return undefined;
 		}
 	},
 }));
@@ -189,6 +238,7 @@ describe("XtermTerminal", () => {
 		state.lastTerminal = null;
 		state.linkHandler = null;
 		state.searchAddon = null;
+		state.screenRows = ["one", "two"];
 		setNavigatorPlatform("Linux x86_64");
 		window.ao!.clipboard.writeText = vi.fn().mockResolvedValue(undefined);
 		window.ao!.clipboard.readText = vi.fn().mockResolvedValue("");
@@ -735,6 +785,77 @@ describe("XtermTerminal", () => {
 
 		expect(window.ao!.clipboard.writeText).not.toHaveBeenCalled();
 		expect(screen.queryByRole("status")).not.toBeInTheDocument();
+	});
+
+	it("keeps edge-drag text selected until an explicit context-menu copy", async () => {
+		const onInput = vi.fn();
+		const { container } = render(
+			<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />,
+		);
+		state.lastTerminal!.buffer.active.type = "alternate";
+		const terminalScreen = container.querySelector<HTMLElement>(".xterm-screen")!;
+		terminalScreen.getBoundingClientRect = () => ({
+			bottom: 500,
+			height: 400,
+			left: 0,
+			right: 800,
+			top: 100,
+			width: 800,
+			x: 0,
+			y: 100,
+			toJSON: () => undefined,
+		});
+
+		fireEvent.mouseDown(terminalScreen, { button: 0, detail: 1 });
+		state.lastTerminal!.selection = "one\ntwo";
+		fireEvent.mouseMove(document, { buttons: 1, clientX: 40, clientY: 550 });
+		state.screenRows = ["two", "three"];
+		act(() => state.lastTerminal!.renderListeners.forEach((listener) => listener()));
+		fireEvent.mouseUp(document, { button: 0 });
+
+		expect(window.ao!.clipboard.writeText).not.toHaveBeenCalled();
+		fireEvent.contextMenu(container.firstElementChild!);
+		fireEvent.click(await screen.findByText("Copy"));
+		await waitFor(() => expect(window.ao!.clipboard.writeText).toHaveBeenCalledWith("one\ntwo\nthree"));
+	});
+
+	it("maps untouched xterm gap cells when an edge selection returns inside", async () => {
+		const { container } = render(
+			<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(vi.fn())} />,
+		);
+		state.lastTerminal!.buffer.active.type = "alternate";
+		state.screenRows = ["a         b"];
+		state.lastTerminal!.selection = "a         b";
+		state.lastTerminal!.selectionPosition = { start: { x: 0, y: 0 }, end: { x: 11, y: 0 } };
+		const terminalScreen = container.querySelector<HTMLElement>(".xterm-screen")!;
+		terminalScreen.getBoundingClientRect = () => ({
+			bottom: 500,
+			height: 400,
+			left: 0,
+			right: 800,
+			top: 100,
+			width: 800,
+			x: 0,
+			y: 100,
+			toJSON: () => undefined,
+		});
+
+		fireEvent.mouseDown(terminalScreen, { button: 0, detail: 1 });
+		fireEvent.mouseMove(document, { buttons: 1, clientX: 800, clientY: 550 });
+		fireEvent.mouseMove(document, { buttons: 1, clientX: 100, clientY: 110 });
+		fireEvent.mouseUp(document, { button: 0 });
+		state.lastTerminal!.keyHandler!({
+			altKey: false,
+			ctrlKey: false,
+			key: "c",
+			metaKey: true,
+			preventDefault: vi.fn(),
+			shiftKey: false,
+			stopPropagation: vi.fn(),
+			type: "keydown",
+		} as unknown as KeyboardEvent);
+
+		await waitFor(() => expect(window.ao!.clipboard.writeText).toHaveBeenCalledWith("a         "));
 	});
 
 	it("shows a copied toast after an explicit copy", async () => {
