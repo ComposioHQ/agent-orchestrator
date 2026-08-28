@@ -139,9 +139,18 @@ func historicalControllerReady(
 			}
 			return chatsvc.ControllerCommit{Conversation: started.Conversation}, nil
 		}
-		if err := lcm.MarkChatSpawned(
-			context.Background(), target.ID, metadata, *started.ProviderBoundary,
-		); err != nil {
+		var err error
+		if started.CommitProviderHistory == nil {
+			err = lcm.MarkChatSpawned(
+				context.Background(), target.ID, metadata, *started.ProviderBoundary,
+			)
+		} else {
+			err = lcm.MarkChatSpawnedPrepared(
+				context.Background(), target.ID, metadata, *started.ProviderBoundary,
+				started.CommitProviderHistory,
+			)
+		}
+		if err != nil {
 			return chatsvc.ControllerCommit{}, err
 		}
 		conversation := started.Conversation
@@ -151,14 +160,40 @@ func historicalControllerReady(
 	}
 }
 
+func historicalNativeHistory() []ports.ChatEvent {
+	return []ports.ChatEvent{
+		{
+			Kind: ports.ChatEventTurnStarted, ProviderEventID: "history-turn-started",
+			ProviderConversationID: historicalTargetThread, ProviderTurnID: "history-turn",
+		},
+		{
+			Kind: ports.ChatEventUserMessageCompleted, ProviderEventID: "history-user-message",
+			ProviderConversationID: historicalTargetThread, ProviderTurnID: "history-turn",
+			ProviderItemID: "history-user-item", Text: "restore my prior question",
+		},
+		{
+			Kind: ports.ChatEventMessageCompleted, ProviderEventID: "history-assistant-message",
+			ProviderConversationID: historicalTargetThread, ProviderTurnID: "history-turn",
+			ProviderItemID: "history-assistant-item", Text: "restored prior answer",
+		},
+		{
+			Kind: ports.ChatEventTurnCompleted, ProviderEventID: "history-turn-completed",
+			ProviderConversationID: historicalTargetThread, ProviderTurnID: "history-turn",
+			TurnState: domain.TurnStateCompleted,
+		},
+	}
+}
+
 func TestHistoricalProjectProviderRestoreAppendsOwnershipEpochAtomically(t *testing.T) {
 	fixture := seedHistoricalProviderFixture(t)
 	ctx := context.Background()
 	var scopes []string
-	firstConversation := &nativeHistoryConversation{fakeConversation: newFakeConversation()}
+	firstConversation := &nativeHistoryConversation{
+		fakeConversation: newFakeConversation(), events: historicalNativeHistory(),
+	}
 	conversations := []*nativeHistoryConversation{
 		firstConversation,
-		{fakeConversation: newFakeConversation()},
+		{fakeConversation: newFakeConversation(), events: historicalNativeHistory()},
 	}
 	for _, conversation := range conversations {
 		conversation.providerConversationID = historicalTargetThread
@@ -246,8 +281,26 @@ func TestHistoricalProjectProviderRestoreAppendsOwnershipEpochAtomically(t *test
 	if err != nil {
 		t.Fatalf("load restored transcript: %v", err)
 	}
-	if len(snapshot.Messages) != 1 || snapshot.Messages[0].Text != "preserve the old orchestrator transcript" {
+	if len(snapshot.Messages) != 3 ||
+		snapshot.Messages[0].Text != "preserve the old orchestrator transcript" ||
+		snapshot.Messages[1].Text != "restore my prior question" ||
+		snapshot.Messages[2].Text != "restored prior answer" {
 		t.Fatalf("restored transcript = %+v", snapshot.Messages)
+	}
+	if len(snapshot.Turns) != 2 || snapshot.Turns[1].ProviderTurnID != "history-turn" ||
+		snapshot.Turns[1].State != domain.TurnStateCompleted ||
+		snapshot.Turns[1].HandledBySessionID != fixture.target.ID ||
+		snapshot.Turns[1].BranchID != wantBoundary {
+		t.Fatalf("restored native turn = %+v", snapshot.Turns)
+	}
+	providerEvents, err := fixture.store.ProviderEventsSince(ctx, conversation.ID, 0, 20)
+	if err != nil || len(providerEvents) != 4 {
+		t.Fatalf("restored provider events = %+v err=%v, want four", providerEvents, err)
+	}
+	for _, event := range providerEvents {
+		if event.BranchID != wantBoundary || event.SessionID != fixture.target.ID {
+			t.Fatalf("provider event was not committed on recovered ownership epoch: %+v", event)
+		}
 	}
 	if _, err := svc.Send(ctx, fixture.target.ID, ports.ChatUserMessage{
 		Text: "continue on the same native conversation", ClientMessageID: "post-restore-message",
@@ -337,6 +390,34 @@ func TestHistoricalProjectProviderRestoreFailureNeverPublishesEpoch(t *testing.T
 	}
 }
 
+func TestHistoricalProjectProviderRestoreRejectsWrongReturnedHandle(t *testing.T) {
+	fixture := seedHistoricalProviderFixture(t)
+	conversation := &nativeHistoryConversation{
+		fakeConversation: newFakeConversation(), events: historicalNativeHistory(),
+	}
+	conversation.providerConversationID = "native-WRONG"
+	svc := chatsvc.New(chatsvc.Options{
+		Store: fixture.store, Reader: snapshotReader(fixture.store), Sessions: fixture.store,
+		Drivers: fakeRegistry{driver: fakeDriver{conv: conversation}},
+		NewID:   func() string { return "generation-248" },
+	})
+	_, err := svc.Start(context.Background(), chatsvc.StartConfig{
+		SessionID: fixture.target.ID, ProjectID: testProject,
+		Kind: domain.KindOrchestrator, Harness: domain.HarnessCodex,
+		WorkspacePath:          fixture.target.Metadata.WorkspacePath,
+		ProviderConversationID: historicalTargetThread,
+		ProviderScopeID:        historicalTransitionID + ":provider",
+	})
+	if err == nil || !strings.Contains(err.Error(), "does not match requested handle") {
+		t.Fatalf("wrong returned handle error = %v", err)
+	}
+	if conversation.historyReads() != 0 {
+		t.Fatalf("wrong provider history reads = %d, want rejection before history import",
+			conversation.historyReads())
+	}
+	assertHistoricalTargetUnchanged(t, fixture)
+}
+
 type rollbackChatSpawnStore struct{ *sqlite.Store }
 
 func (s *rollbackChatSpawnStore) CommitChatSpawn(
@@ -350,10 +431,24 @@ func (s *rollbackChatSpawnStore) CommitChatSpawn(
 	return s.Store.CommitChatSpawn(ctx, rec, branch)
 }
 
+func (s *rollbackChatSpawnStore) CommitChatSpawnPrepared(
+	ctx context.Context,
+	rec domain.SessionRecord,
+	branch domain.ConversationBranch,
+	prepare func(context.Context) error,
+) error {
+	// Exercise rollback after branch activation and native-history projection by
+	// invalidating only the final lifecycle record write.
+	rec.Activity.State = domain.ActivityState("invalid-state")
+	return s.Store.CommitChatSpawnPrepared(ctx, rec, branch, prepare)
+}
+
 func TestHistoricalProjectProviderRestoreCommitFailureRollsBack(t *testing.T) {
 	fixture := seedHistoricalProviderFixture(t)
 	wrapped := &rollbackChatSpawnStore{Store: fixture.store}
-	conversation := &nativeHistoryConversation{fakeConversation: newFakeConversation()}
+	conversation := &nativeHistoryConversation{
+		fakeConversation: newFakeConversation(), events: historicalNativeHistory(),
+	}
 	conversation.providerConversationID = historicalTargetThread
 	lcm := lifecycle.New(wrapped, nil)
 	svc := chatsvc.New(chatsvc.Options{
@@ -539,11 +634,29 @@ func assertHistoricalTargetUnchanged(t *testing.T, fixture historicalProviderFix
 		t.Fatalf("load historical target: found=%v err=%v", found, err)
 	}
 	if !record.IsTerminated || record.Metadata.ProviderConversationID != historicalTargetThread ||
+		record.Metadata.ControllerGeneration != fixture.target.Metadata.ControllerGeneration ||
 		record.Metadata.WorkspacePath != fixture.target.Metadata.WorkspacePath ||
 		record.Metadata.Branch != fixture.target.Metadata.Branch {
 		t.Fatalf("failed restore changed historical target: %+v", record)
 	}
 	assertNoHistoricalBoundary(t, fixture)
+	snapshot, err := fixture.store.LoadConversationSnapshot(
+		context.Background(), fixture.conversation.ID,
+	)
+	if err != nil {
+		t.Fatalf("load conversation after failed restore: %v", err)
+	}
+	if snapshot.Conversation.ActiveBranchID != fixture.root.ID ||
+		len(snapshot.Messages) != 1 ||
+		snapshot.Messages[0].Text != "preserve the old orchestrator transcript" {
+		t.Fatalf("failed restore changed transcript/head: %+v", snapshot)
+	}
+	events, err := fixture.store.ProviderEventsSince(
+		context.Background(), fixture.conversation.ID, 0, 20,
+	)
+	if err != nil || len(events) != 0 {
+		t.Fatalf("failed restore committed provider events = %+v err=%v", events, err)
+	}
 }
 
 func assertNoHistoricalBoundary(t *testing.T, fixture historicalProviderFixture) {

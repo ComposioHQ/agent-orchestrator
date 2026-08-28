@@ -170,12 +170,14 @@ type ControllerCommit struct {
 func controllerStartResult(
 	controller *Controller,
 	providerBoundary *domain.ConversationBranch,
+	commitProviderHistory func(context.Context) error,
 ) StartResult {
 	return StartResult{
 		ProviderConversationID: controller.ProviderConversationID(),
 		ControllerGeneration:   controller.Generation(),
 		Conversation:           controller.conversation,
 		ProviderBoundary:       providerBoundary,
+		CommitProviderHistory:  commitProviderHistory,
 	}
 }
 
@@ -183,11 +185,14 @@ func notifyControllerReady(
 	cfg StartConfig,
 	controller *Controller,
 	providerBoundary *domain.ConversationBranch,
+	commitProviderHistory func(context.Context) error,
 ) (ControllerCommit, error) {
 	if cfg.ControllerReady == nil {
 		return ControllerCommit{}, nil
 	}
-	commit, err := cfg.ControllerReady(controllerStartResult(controller, providerBoundary))
+	commit, err := cfg.ControllerReady(controllerStartResult(
+		controller, providerBoundary, commitProviderHistory,
+	))
 	if err != nil {
 		return ControllerCommit{}, fmt.Errorf("commit chat controller: %w", err)
 	}
@@ -436,6 +441,15 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	if err != nil {
 		return nil, err
 	}
+	if cfg.ProviderConversationID != "" &&
+		conv.ProviderConversationID() != cfg.ProviderConversationID {
+		returned := conv.ProviderConversationID()
+		_ = conv.Close()
+		return nil, fmt.Errorf(
+			"resumed provider conversation handle %q does not match requested handle %q",
+			returned, cfg.ProviderConversationID,
+		)
+	}
 
 	// Claim the durable fence before the controller starts consuming events. A
 	// pending provider boundary claims it in ControllerReady's atomic ownership
@@ -474,6 +488,7 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	// replaced can be told apart from the current one's.
 	controller := newController(
 		cfg.SessionID, conversation, generation, conv, s.store, s.activity, s.log, s.newID, s.now)
+	var commitProviderHistory func(context.Context) error
 	if cfg.ProviderConversationID != "" && !cfg.SkipNativeHistoryImport {
 		// The provider's native thread is the continuity authority across TUI and
 		// Chat. Import it before the live projector starts so the first notification
@@ -497,21 +512,41 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 				cfg.SessionID, existing.Turns, existing.Messages, existing.Activities,
 			)
 		}
-		if err := controller.importNativeHistory(
+		events, historyErr := controller.readNativeHistory(
 			ctx, existing.Turns, existing.Messages, existing.Activities,
 			cfg.RequireNativeHistory, replayCheckpoint,
-		); err != nil {
+		)
+		if historyErr != nil {
+			_ = conv.Close()
+			return nil, historyErr
+		}
+		if providerBoundary != nil {
+			// The pending branch does not exist yet. Carry its stable replay into
+			// ControllerReady so SQLite can insert/activate the boundary, stage the
+			// generation, project every event onto that branch, and publish the
+			// live session as one transaction. Until then the terminated target is
+			// not exposed to input and no event can be attributed to the old root.
+			commitProviderHistory = func(commitCtx context.Context) error {
+				return controller.projectNativeHistory(commitCtx, events)
+			}
+		} else if err := controller.projectNativeHistory(ctx, events); err != nil {
 			_ = conv.Close()
 			return nil, err
 		}
 	}
-	commit, err := notifyControllerReady(cfg, controller, providerBoundary)
+	commit, err := notifyControllerReady(
+		cfg, controller, providerBoundary, commitProviderHistory,
+	)
 	if err != nil {
 		_ = conv.Close()
 		return nil, err
 	}
 	if providerBoundary != nil {
 		if cfg.ControllerReady == nil {
+			if commitProviderHistory != nil {
+				_ = conv.Close()
+				return nil, errors.New("commit native history: atomic provider-boundary lifecycle is unavailable")
+			}
 			if err := s.store.CreateAndActivateConversationBranch(
 				ctx, cfg.SessionID, *providerBoundary, generation, s.now(),
 			); err != nil {
@@ -1050,7 +1085,7 @@ func (s *Service) StartChat(ctx context.Context, cfg StartRequest) (StartResult,
 	if err != nil {
 		return StartResult{}, err
 	}
-	return controllerStartResult(controller, nil), nil
+	return controllerStartResult(controller, nil, nil), nil
 }
 
 // StartRequest mirrors session_manager.ChatStart. Duplicated rather than
@@ -1088,6 +1123,10 @@ type StartResult struct {
 	// that is not active yet. ControllerReady must commit it atomically with the
 	// session's provider handle and controller generation.
 	ProviderBoundary *domain.ConversationBranch
+	// CommitProviderHistory projects a reconciled native replay inside the
+	// provider-boundary lifecycle transaction. It must never be invoked outside
+	// that transaction: the pending branch and generation do not exist yet.
+	CommitProviderHistory func(context.Context) error
 }
 
 // StartChatTurn delivers the initial prompt as a normal turn.

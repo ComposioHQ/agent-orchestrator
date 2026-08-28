@@ -102,6 +102,10 @@ type ChatStarted struct {
 	ControllerGeneration   string
 	Conversation           domain.ConversationRecord
 	ProviderBoundary       *domain.ConversationBranch
+	// CommitProviderHistory projects a stable native replay inside the same
+	// lifecycle transaction that publishes ProviderBoundary. It is nil for
+	// ordinary resumes and paths that do not import native history.
+	CommitProviderHistory func(context.Context) error
 }
 
 // ChatControllerCommit carries the post-commit conversation state back to Chat
@@ -195,6 +199,7 @@ func (m *Manager) launchChatController(ctx context.Context, in chatSpawn) (domai
 			}
 			committedConversation, commitErr := m.markChatControllerSpawned(
 				ctx, id, metadata, started.Conversation, started.ProviderBoundary,
+				started.CommitProviderHistory,
 			)
 			completionErr = commitErr
 			controllerCommitted = completionErr == nil
@@ -386,6 +391,7 @@ func (m *Manager) resumeChatController(
 
 			committedConversation, commitErr := m.markChatControllerSpawned(
 				ctx, rec.ID, metadata, started.Conversation, started.ProviderBoundary,
+				started.CommitProviderHistory,
 			)
 			completionErr = commitErr
 			return ChatControllerCommit{Conversation: committedConversation}, completionErr
@@ -473,11 +479,34 @@ func (m *Manager) markChatControllerSpawned(
 	metadata domain.SessionMetadata,
 	conversation domain.ConversationRecord,
 	providerBoundary *domain.ConversationBranch,
+	commitProviderHistory func(context.Context) error,
 ) (domain.ConversationRecord, error) {
 	if providerBoundary == nil {
 		return conversation, m.lcm.MarkSpawned(ctx, id, metadata)
 	}
-	if err := m.lcm.MarkChatSpawned(ctx, id, metadata, *providerBoundary); err != nil {
+	var err error
+	if commitProviderHistory == nil {
+		err = m.lcm.MarkChatSpawned(ctx, id, metadata, *providerBoundary)
+	} else {
+		prepared, ok := m.lcm.(interface {
+			MarkChatSpawnedPrepared(
+				context.Context,
+				domain.SessionID,
+				domain.SessionMetadata,
+				domain.ConversationBranch,
+				func(context.Context) error,
+			) error
+		})
+		if !ok {
+			return domain.ConversationRecord{}, errors.New(
+				"atomic Chat provider-history persistence is unavailable",
+			)
+		}
+		err = prepared.MarkChatSpawnedPrepared(
+			ctx, id, metadata, *providerBoundary, commitProviderHistory,
+		)
+	}
+	if err != nil {
 		return domain.ConversationRecord{}, err
 	}
 	conversation.ActiveBranchID = providerBoundary.ID
