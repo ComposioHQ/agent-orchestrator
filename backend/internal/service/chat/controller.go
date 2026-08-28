@@ -163,7 +163,7 @@ type Controller struct {
 	log              *slog.Logger
 	newID            IDFactory
 	now              Clock
-	onAccountChanged func(domain.AgentHarness)
+	onAccountChanged func(domain.SessionID, domain.AgentHarness)
 
 	// sendMu serializes command dispatch so only one operation mutates the
 	// provider conversation at a time.
@@ -265,7 +265,7 @@ func newController(
 	log *slog.Logger,
 	newID IDFactory,
 	now Clock,
-	onAccountChanged func(domain.AgentHarness),
+	onAccountChanged func(domain.SessionID, domain.AgentHarness),
 ) *Controller {
 	c := &Controller{
 		sessionID:        sessionID,
@@ -2346,7 +2346,7 @@ func (c *Controller) apply(ctx context.Context, event ports.ChatEvent) error {
 			return err
 		}
 		if c.onAccountChanged != nil {
-			c.onAccountChanged(c.harness)
+			c.onAccountChanged(c.sessionID, c.harness)
 		}
 		return nil
 

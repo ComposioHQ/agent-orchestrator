@@ -315,7 +315,9 @@ func (m *Manager) runInterfaceTransition(
 	sourceStopped := false
 	modeChanged := false
 	var sourceRuntimeHandle ports.RuntimeHandle
+	var activeRecord domain.SessionRecord
 	fail := func(code string, cause error) {
+		m.invalidateCodexAuthenticationAfterFailure(activeRecord, cause)
 		if sourcePrepared && !sourceStopped {
 			m.abortSourceHandoff(transition)
 		}
@@ -343,6 +345,7 @@ func (m *Manager) runInterfaceTransition(
 		fail("SESSION_NOT_FOUND", err)
 		return
 	}
+	activeRecord = rec
 	if rec.IsTerminated || domain.NormalizeSessionMode(rec.Mode) != transition.SourceMode {
 		fail("SESSION_CHANGED", fmt.Errorf("session changed before the interface switch could start"))
 		return
@@ -600,6 +603,15 @@ func (m *Manager) persistedNativeConversationID(
 		return "", err
 	}
 	env := m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env)
+	if rec.Harness == domain.HarnessCodex {
+		launchContext, launchErr := m.codexLaunchForRecord(ctx, &rec)
+		if launchErr != nil {
+			return "", launchErr
+		}
+		if launchContext != nil {
+			m.applyCodexLaunchEnvironment(rec.ID, env, *launchContext)
+		}
+	}
 	exists, err := probe.NativeConversationExists(ctx, ports.SessionRef{
 		ID:            string(rec.ID),
 		WorkspacePath: rec.Metadata.WorkspacePath,
@@ -625,6 +637,14 @@ func (m *Manager) preflightInterfaceTarget(
 	rec domain.SessionRecord,
 	transition domain.SessionInterfaceTransition,
 ) error {
+	managedCodexProfile := false
+	if rec.Harness == domain.HarnessCodex {
+		launchContext, err := m.codexLaunchForRecord(ctx, &rec)
+		if err != nil {
+			return err
+		}
+		managedCodexProfile = launchContext != nil && launchContext.Managed
+	}
 	if transition.TargetMode == domain.SessionModeChat {
 		if m.chat == nil {
 			return ports.ErrChatUnsupported
@@ -670,6 +690,7 @@ func (m *Manager) preflightInterfaceTarget(
 	if err != nil {
 		return err
 	}
+	cmd = isolateManagedCodexCommand(cmd, managedCodexProfile)
 	return m.validateAgentBinary(cmd)
 }
 

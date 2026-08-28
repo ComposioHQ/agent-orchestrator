@@ -42,7 +42,7 @@ type Service struct {
 	log              *slog.Logger
 	newID            IDFactory
 	now              Clock
-	onAccountChanged func(domain.AgentHarness)
+	onAccountChanged func(domain.SessionID, domain.AgentHarness)
 
 	mu           sync.RWMutex
 	controllers  map[domain.SessionID]*Controller
@@ -84,7 +84,7 @@ type Options struct {
 	Now      Clock
 	// OnAccountChanged invalidates daemon-owned profile readiness for the
 	// harness that emitted an account/updated notification.
-	OnAccountChanged func(domain.AgentHarness)
+	OnAccountChanged func(domain.SessionID, domain.AgentHarness)
 }
 
 // New builds a Chat service.
@@ -135,6 +135,7 @@ type StartConfig struct {
 	DataDir               string
 	WorkspacePath         string
 	Env                   map[string]string
+	ManagedCodexProfile   bool
 	Model                 string
 	Permissions           ports.PermissionMode
 	SystemPrompt          string
@@ -410,6 +411,7 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 			DataDir:                cfg.DataDir,
 			WorkspacePath:          cfg.WorkspacePath,
 			Env:                    cfg.Env,
+			ManagedCodexProfile:    cfg.ManagedCodexProfile,
 			Model:                  cfg.Model,
 			Permissions:            cfg.Permissions,
 			SystemPrompt:           cfg.SystemPrompt,
@@ -423,6 +425,7 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 			DataDir:               cfg.DataDir,
 			WorkspacePath:         cfg.WorkspacePath,
 			Env:                   cfg.Env,
+			ManagedCodexProfile:   cfg.ManagedCodexProfile,
 			Model:                 cfg.Model,
 			Permissions:           cfg.Permissions,
 			SystemPrompt:          cfg.SystemPrompt,
@@ -1061,6 +1064,7 @@ type StartRequest struct {
 	DataDir               string
 	WorkspacePath         string
 	Env                   map[string]string
+	ManagedCodexProfile   bool
 	Model                 string
 	Permissions           ports.PermissionMode
 	SystemPrompt          string

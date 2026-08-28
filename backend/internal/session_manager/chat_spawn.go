@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -67,6 +68,7 @@ type ChatStart struct {
 	// commands find `ao`. An orchestrator delegates by running `ao spawn`, so
 	// without this a chat orchestrator could talk but not work.
 	Env                   map[string]string
+	ManagedCodexProfile   bool
 	Model                 string
 	Permissions           ports.PermissionMode
 	SystemPrompt          string
@@ -139,6 +141,18 @@ func (m *Manager) launchChatController(ctx context.Context, in chatSpawn) (domai
 	// provider passes its environment through to the shell commands it runs, so
 	// this is what makes `ao` resolvable to the agent.
 	env := m.runtimeEnv(id, in.cfg.ProjectID, in.cfg.IssueID, in.project.Config.Env)
+	managedCodexProfile := false
+	if in.record.CodexProfileBinding != nil && in.record.Harness == domain.HarnessCodex {
+		launch, err := m.codexLaunchForRecord(ctx, &in.record)
+		if err != nil {
+			m.rollbackSeedSpawnWorkspace(ctx, in.record, in.workspace, in.workspaceProject, false)
+			return domain.SessionRecord{}, wrapSpawnStage(id, ErrChatController, err)
+		}
+		if launch != nil {
+			m.applyCodexLaunchEnvironment(id, env, *launch)
+			managedCodexProfile = launch.Managed
+		}
+	}
 	var diffBaseSHA, diffBaseRef string
 	if in.projectKind == domain.ProjectKindSingleRepo {
 		diffBaseSHA, diffBaseRef = resolveSpawnDiffBase(
@@ -157,6 +171,7 @@ func (m *Manager) launchChatController(ctx context.Context, in chatSpawn) (domai
 		DataDir:               m.dataDir,
 		WorkspacePath:         in.workspace.Path,
 		Env:                   env,
+		ManagedCodexProfile:   managedCodexProfile,
 		Model:                 agentConfig.Model,
 		Permissions:           agentConfig.Permissions,
 		SystemPrompt:          in.systemPrompt,
@@ -325,6 +340,23 @@ func (m *Manager) resumeChatController(
 	if err != nil {
 		return RestoreResult{}, fmt.Errorf("%s %s: workspace roots: %w", operation, rec.ID, err)
 	}
+	env := m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env)
+	managedCodexProfile := false
+	if rec.Harness == domain.HarnessCodex {
+		launchContext, launchErr := m.codexLaunchForRecord(ctx, &rec)
+		if launchErr != nil {
+			return RestoreResult{}, fmt.Errorf("%s %s: Codex profile: %w", operation, rec.ID, launchErr)
+		}
+		if launchContext != nil {
+			m.applyCodexLaunchEnvironment(rec.ID, env, *launchContext)
+			managedCodexProfile = launchContext.Managed
+		}
+		if agent, ok := m.agents.Agent(domain.HarnessCodex); ok && strings.TrimSpace(rec.Metadata.ProviderConversationID) != "" {
+			if historyErr := ensureBoundCodexNativeHistory(ctx, agent, env, rec.Metadata.ProviderConversationID); historyErr != nil {
+				return RestoreResult{}, fmt.Errorf("%s %s: %w", operation, rec.ID, historyErr)
+			}
+		}
+	}
 	var completionErr error
 	_, err = m.chat.StartChat(ctx, ChatStart{
 		SessionID:             rec.ID,
@@ -333,7 +365,8 @@ func (m *Manager) resumeChatController(
 		Harness:               rec.Harness,
 		DataDir:               m.dataDir,
 		WorkspacePath:         ws.Path,
-		Env:                   m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env),
+		Env:                   env,
+		ManagedCodexProfile:   managedCodexProfile,
 		Model:                 agentConfig.Model,
 		Permissions:           agentConfig.Permissions,
 		SystemPrompt:          systemPrompt,
@@ -365,6 +398,7 @@ func (m *Manager) resumeChatController(
 		},
 	})
 	if err != nil {
+		m.invalidateCodexAuthenticationAfterFailure(rec, err)
 		if completionErr != nil {
 			m.stopChatBestEffort(ctx, rec.ID)
 			return RestoreResult{}, fmt.Errorf("%s %s: completed: %w", operation, rec.ID, completionErr)

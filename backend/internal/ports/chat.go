@@ -215,6 +215,9 @@ type ChatStartConfig struct {
 	// shell commands the agent runs. AO passes a HookPATH-augmented copy so the
 	// agent can invoke `ao` — that is how an orchestrator delegates.
 	Env map[string]string
+	// ManagedCodexProfile asks the Codex driver to force its file credential
+	// store for this invocation. Other drivers ignore the zero value.
+	ManagedCodexProfile bool
 	// Model is optional; empty defers to the provider's configured default.
 	Model string
 	// Permissions is AO's existing per-session approval policy. Drivers map it
@@ -241,6 +244,7 @@ type ChatResumeConfig struct {
 	DataDir                string
 	WorkspacePath          string
 	Env                    map[string]string
+	ManagedCodexProfile    bool
 	// Model is optional; empty keeps the provider conversation's current model.
 	Model       string
 	Permissions PermissionMode

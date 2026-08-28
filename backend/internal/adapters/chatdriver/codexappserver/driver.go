@@ -38,11 +38,10 @@ const (
 const handshakeTimeout = 60 * time.Second
 
 // codexPlugin is the subset of AO's existing Codex agent plugin that the Chat
-// driver reuses. Binary resolution and local auth probing already live there and
-// must not be reimplemented: a second copy would drift from what TUI sessions do.
+// driver reuses for binary resolution. Profile-scoped authentication is owned
+// by the daemon launch resolver, never by an ambient existing-profile probe.
 type codexPlugin interface {
 	ResolveBinary(ctx context.Context) (string, error)
-	AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error)
 }
 
 // process is a running app-server, abstracted so tests can substitute pipes for
@@ -55,7 +54,7 @@ type process struct {
 }
 
 // spawnFunc launches an app-server. Injected so tests never exec anything.
-type spawnFunc func(ctx context.Context, bin, workdir string, env []string) (*process, error)
+type spawnFunc func(ctx context.Context, bin, workdir string, env, args []string) (*process, error)
 
 type versionProbeFunc func(context.Context, string) (string, error)
 
@@ -136,15 +135,6 @@ func (d *Driver) Probe(ctx context.Context) (ports.ChatCapabilities, error) {
 		return nil, fmt.Errorf("%w: %w", ports.ErrChatDriverUnavailable, err)
 	}
 
-	// An unknown auth result is not proof of failure — the same rule AO already
-	// applies to runtime probes. Only an explicit unauthorized blocks creation.
-	status, err := d.plugin.AuthStatus(ctx)
-	if err == nil && status == ports.AgentAuthStatusUnauthorized {
-		return nil, ports.ErrChatAuthRequired
-	}
-	if err != nil {
-		d.log.Debug("codex auth probe inconclusive; continuing", "error", err)
-	}
 	versionProbe := d.versionProbe
 	if versionProbe == nil {
 		versionProbe = installedCodexVersion
@@ -176,7 +166,7 @@ func (d *Driver) Probe(ctx context.Context) (ports.ChatCapabilities, error) {
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, handshakeTimeout)
 	defer cancel()
-	conv, err := d.connect(probeCtx, workdir, nil)
+	conv, err := d.connect(probeCtx, workdir, nil, false)
 	if err != nil {
 		return nil, err
 	}
@@ -240,7 +230,7 @@ func (d *Driver) Start(ctx context.Context, cfg ports.ChatStartConfig) (ports.Ch
 		return nil, fmt.Errorf("workspace path must be absolute, got %q", cfg.WorkspacePath)
 	}
 
-	conv, err := d.connect(ctx, cfg.WorkspacePath, cfg.Env)
+	conv, err := d.connect(ctx, cfg.WorkspacePath, cfg.Env, cfg.ManagedCodexProfile)
 	if err != nil {
 		return nil, err
 	}
@@ -290,7 +280,7 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 		return nil, fmt.Errorf("workspace path must be absolute, got %q", cfg.WorkspacePath)
 	}
 
-	conv, err := d.connect(ctx, cfg.WorkspacePath, cfg.Env)
+	conv, err := d.connect(ctx, cfg.WorkspacePath, cfg.Env, cfg.ManagedCodexProfile)
 	if err != nil {
 		return nil, err
 	}
@@ -330,13 +320,17 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 }
 
 // connect spawns app-server and completes the initialize handshake.
-func (d *Driver) connect(ctx context.Context, workdir string, env map[string]string) (*conversation, error) {
+func (d *Driver) connect(ctx context.Context, workdir string, env map[string]string, managed bool) (*conversation, error) {
 	bin, err := d.plugin.ResolveBinary(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ports.ErrChatDriverUnavailable, err)
 	}
 
-	proc, err := d.spawn(ctx, bin, workdir, envSlice(env))
+	args := []string{"app-server"}
+	if managed {
+		args = []string{"-c", `cli_auth_credentials_store="file"`, "app-server"}
+	}
+	proc, err := d.spawn(ctx, bin, workdir, envSlice(env), args)
 	if err != nil {
 		return nil, fmt.Errorf("%w: launch app-server: %w", ports.ErrChatDriverUnavailable, err)
 	}
@@ -393,8 +387,11 @@ func approvalSettings(mode ports.PermissionMode) (policy, sandbox string) {
 }
 
 // spawnAppServer is the real launcher.
-func spawnAppServer(ctx context.Context, bin, workdir string, env []string) (*process, error) {
-	cmd := aoprocess.Command(bin, "app-server")
+func spawnAppServer(ctx context.Context, bin, workdir string, env, args []string) (*process, error) {
+	if len(args) == 0 {
+		args = []string{"app-server"}
+	}
+	cmd := aoprocess.Command(bin, args...)
 	cmd.Dir = workdir
 	if len(env) > 0 {
 		cmd.Env = env

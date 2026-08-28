@@ -286,9 +286,13 @@ func Run() error {
 		Activity: lcStack.LCM,
 		Log:      log,
 		NewID:    uuid.NewString,
-		OnAccountChanged: func(harness domain.AgentHarness) {
+		OnAccountChanged: func(sessionID domain.SessionID, harness domain.AgentHarness) {
 			if harness == domain.HarnessCodex && agentSvc != nil {
-				agentSvc.InvalidateCodexProfileAuthentication("existing")
+				profileID := "existing"
+				if rec, found, readErr := store.GetSession(context.WithoutCancel(ctx), sessionID); readErr == nil && found && rec.CodexProfileBinding != nil {
+					profileID = rec.CodexProfileBinding.ProfileID
+				}
+				agentSvc.InvalidateCodexProfileAuthentication(profileID)
 			}
 		},
 	})
