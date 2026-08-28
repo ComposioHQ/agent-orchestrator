@@ -554,58 +554,60 @@ export function CenterPane({
 							)}
 							<div
 								ref={tabsOverflowRef}
-								className="scrollbar-none flex min-w-flex-min flex-1 self-stretch items-center overflow-x-auto"
+								className="scrollbar-none flex min-w-flex-min min-w-0 flex-1 self-stretch items-center overflow-x-auto"
 							>
-								<Reorder.Group
-									as="div"
-									axis="x"
-									className="flex self-stretch"
-									onReorder={reorderAuxiliaryTerminals}
-									values={orderedAuxiliaryTerminals.map((terminal) => terminal.key)}
-								>
-									{orderedAuxiliaryTerminals.map((terminal) => (
-										<DraggableTerminalTab key={terminal.key} value={terminal.key}>
-											{terminal.kind === "reviewer" ? (
-												<SessionPaneTab
-													appearance="connected"
-													icon={
-														<AgentAvatar
-															provider={terminal.terminal.harness}
-															className="size-terminal-agent-icon"
-															decorative
-														/>
-													}
-													isActive={target.kind === "reviewer"}
-													label={t("terminal.reviewer")}
-													onSelect={() => onSelectReviewerTerminal?.(terminal.terminal)}
-													title={terminal.terminal.harness}
-												/>
-											) : (
-												<ShellTerminalTab
-													appearance="connected"
-													isActive={target.kind === "shell" && target.handleId === terminal.terminal.handleId}
-													onClose={() => onCloseShellTerminal?.(terminal.terminal.handleId)}
-													onRename={
-														onRenameShellTerminal
-															? (title) => onRenameShellTerminal(terminal.terminal.handleId, title)
-															: undefined
-													}
-													onSelect={() => onSelectShellTerminal?.(terminal.terminal.handleId)}
-													shell={terminal.terminal}
-												/>
-											)}
-										</DraggableTerminalTab>
-									))}
-								</Reorder.Group>
-								{workspaceTabs}
-								{tabStripAction ? (
-									<div
-										className="sticky right-0 z-10 flex shrink-0 self-stretch items-center pl-1"
-										data-testid="session-tab-strip-action"
+								<div className="flex w-max items-stretch">
+									<Reorder.Group
+										as="div"
+										axis="x"
+										className="flex self-stretch"
+										onReorder={reorderAuxiliaryTerminals}
+										values={orderedAuxiliaryTerminals.map((terminal) => terminal.key)}
 									>
-										{tabStripAction}
-									</div>
-								) : null}
+										{orderedAuxiliaryTerminals.map((terminal) => (
+											<DraggableTerminalTab key={terminal.key} value={terminal.key}>
+												{terminal.kind === "reviewer" ? (
+													<SessionPaneTab
+														appearance="connected"
+														icon={
+															<AgentAvatar
+																provider={terminal.terminal.harness}
+																className="size-terminal-agent-icon"
+																decorative
+															/>
+														}
+														isActive={target.kind === "reviewer"}
+														label={t("terminal.reviewer")}
+														onSelect={() => onSelectReviewerTerminal?.(terminal.terminal)}
+														title={terminal.terminal.harness}
+													/>
+												) : (
+													<ShellTerminalTab
+														appearance="connected"
+														isActive={target.kind === "shell" && target.handleId === terminal.terminal.handleId}
+														onClose={() => onCloseShellTerminal?.(terminal.terminal.handleId)}
+														onRename={
+															onRenameShellTerminal
+																? (title) => onRenameShellTerminal(terminal.terminal.handleId, title)
+																: undefined
+														}
+														onSelect={() => onSelectShellTerminal?.(terminal.terminal.handleId)}
+														shell={terminal.terminal}
+													/>
+												)}
+											</DraggableTerminalTab>
+										))}
+									</Reorder.Group>
+									{workspaceTabs}
+									{tabStripAction ? (
+										<div
+											className="sticky right-0 z-10 flex shrink-0 self-stretch items-center bg-background pl-1"
+											data-testid="session-tab-strip-action"
+										>
+											{tabStripAction}
+										</div>
+									) : null}
+								</div>
 							</div>
 					</div>
 				</div>

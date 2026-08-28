@@ -1158,63 +1158,65 @@ function ChatHeader({
 								<span className="truncate">{label}</span>
 							</button>
 						</span>
-						<div className="scrollbar-none flex min-w-flex-min flex-1 self-stretch items-center overflow-x-auto">
-							{reviewerTerminal ? (
-								<span
-									className={cn(
-										"group relative inline-flex min-w-shell-tab-min self-stretch items-center gap-1.5 border-r border-border px-3",
-										reviewerActive
-											? "bg-overlay text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80"
-											: "text-muted-foreground hover:bg-raised hover:text-foreground",
-									)}
-								>
-									<AgentAvatar
-										className="size-icon-base"
-										decorative
-										provider={reviewerTerminal.harness}
-									/>
-									<button
-										aria-current={reviewerActive ? true : undefined}
-										aria-label="Reviewer"
-										aria-selected={Boolean(reviewerActive)}
+						<div className="scrollbar-none flex min-w-flex-min min-w-0 flex-1 self-stretch items-center overflow-x-auto">
+							<div className="flex w-max items-stretch">
+								{reviewerTerminal ? (
+									<span
 										className={cn(
-											"inline-flex min-w-flex-min max-w-shell-tab-max items-center gap-1.5 text-control font-medium leading-none",
-											reviewerActive ? "text-foreground" : "text-muted-foreground",
+											"group relative inline-flex min-w-shell-tab-min self-stretch items-center gap-1.5 border-r border-border px-3",
+											reviewerActive
+												? "bg-overlay text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80"
+												: "text-muted-foreground hover:bg-raised hover:text-foreground",
 										)}
-										onClick={() => onOpenReviewerTerminal?.(reviewerTerminal)}
-										role="tab"
-										tabIndex={reviewerActive ? 0 : -1}
-										title={reviewerTerminal.harness}
-										type="button"
 									>
-										<span className="truncate">Reviewer</span>
-									</button>
-								</span>
-							) : null}
-							{(shellTerminals ?? []).map((shell) => (
-								<ShellTerminalTab
-									key={shell.handleId}
-									appearance="connected"
-									isActive={shell.handleId === shellActiveHandleId}
-									onClose={() => onCloseShellTerminal?.(shell.handleId)}
-									onRename={
-										onRenameShellTerminal
-											? (title) => onRenameShellTerminal(shell.handleId, title)
-											: undefined
-									}
-									onSelect={() => onSelectShellTerminal?.(shell.handleId)}
-									shell={shell}
-								/>
-							))}
-							{workspaceTabs}
-							{tabStripAction ? (
-								<div
-									className="sticky right-0 z-10 flex shrink-0 self-stretch items-center pl-1"
-									data-testid="session-tab-strip-action"
-								>
-									{tabStripAction}
-								</div>
-							) : null}
+										<AgentAvatar
+											className="size-icon-base"
+											decorative
+											provider={reviewerTerminal.harness}
+										/>
+										<button
+											aria-current={reviewerActive ? true : undefined}
+											aria-label="Reviewer"
+											aria-selected={Boolean(reviewerActive)}
+											className={cn(
+												"inline-flex min-w-flex-min max-w-shell-tab-max items-center gap-1.5 text-control font-medium leading-none",
+												reviewerActive ? "text-foreground" : "text-muted-foreground",
+											)}
+											onClick={() => onOpenReviewerTerminal?.(reviewerTerminal)}
+											role="tab"
+											tabIndex={reviewerActive ? 0 : -1}
+											title={reviewerTerminal.harness}
+											type="button"
+										>
+											<span className="truncate">Reviewer</span>
+										</button>
+									</span>
+								) : null}
+								{(shellTerminals ?? []).map((shell) => (
+									<ShellTerminalTab
+										key={shell.handleId}
+										appearance="connected"
+										isActive={shell.handleId === shellActiveHandleId}
+										onClose={() => onCloseShellTerminal?.(shell.handleId)}
+										onRename={
+											onRenameShellTerminal
+												? (title) => onRenameShellTerminal(shell.handleId, title)
+												: undefined
+										}
+										onSelect={() => onSelectShellTerminal?.(shell.handleId)}
+										shell={shell}
+									/>
+								))}
+								{workspaceTabs}
+								{tabStripAction ? (
+									<div
+										className="sticky right-0 z-10 flex shrink-0 self-stretch items-center bg-background pl-1"
+										data-testid="session-tab-strip-action"
+									>
+										{tabStripAction}
+									</div>
+								) : null}
+							</div>
 						</div>
 					</div>
 				</div>
