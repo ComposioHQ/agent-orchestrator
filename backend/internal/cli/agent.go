@@ -27,6 +27,32 @@ type agentInventory struct {
 	Authorized []agentInfo `json:"authorized"`
 }
 
+type agentReadinessObservation struct {
+	State      string `json:"state"`
+	Freshness  string `json:"freshness"`
+	ReasonCode string `json:"reasonCode"`
+	Reason     string `json:"reason"`
+}
+
+type agentReadinessSnapshot struct {
+	ID                 string                    `json:"id"`
+	Label              string                    `json:"label"`
+	Installation       agentReadinessObservation `json:"installation"`
+	Authentication     agentReadinessObservation `json:"authentication"`
+	EffectiveReadiness string                    `json:"effectiveReadiness"`
+	UsageCount         int                       `json:"usageCount"`
+	LastUsedAt         *string                   `json:"lastUsedAt,omitempty"`
+}
+
+type agentReadinessResponse struct {
+	Agents []agentReadinessSnapshot `json:"agents"`
+}
+
+type ensureAgentReadinessRequest struct {
+	AgentIDs []string `json:"agentIds,omitempty"`
+	Purpose  string   `json:"purpose"`
+}
+
 func newAgentCommand(ctx *commandContext) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "agent",
@@ -44,7 +70,7 @@ func newAgentListCommand(ctx *commandContext) *cobra.Command {
 		Short:   "List supported agents and local auth readiness",
 		Args:    noArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			inv, err := ctx.fetchAgentInventory(cmd.Context(), opts.refresh)
+			inv, err := ctx.fetchAgentInventory(cmd.Context())
 			if err != nil {
 				return err
 			}
@@ -54,9 +80,30 @@ func newAgentListCommand(ctx *commandContext) *cobra.Command {
 			return writeAgentList(cmd, inv)
 		},
 	}
-	cmd.Flags().BoolVar(&opts.refresh, "refresh", false, "Refresh local install/auth probes before listing")
+	cmd.Flags().BoolVar(&opts.refresh, "refresh", false, "Deprecated: readiness is always ensured before listing")
+	_ = cmd.Flags().MarkHidden("refresh")
+	_ = cmd.Flags().MarkDeprecated("refresh", "readiness is always ensured before listing")
 	cmd.Flags().BoolVar(&opts.json, "json", false, "Output raw agent catalog JSON")
 	return cmd
+}
+
+func readinessInventory(readiness agentReadinessResponse) agentInventory {
+	inv := agentInventory{Supported: make([]agentInfo, 0, len(readiness.Agents)), Installed: []agentInfo{}, Authorized: []agentInfo{}}
+	for _, snapshot := range readiness.Agents {
+		authStatus := snapshot.Authentication.State
+		if authStatus == "not_applicable" {
+			authStatus = "authorized"
+		}
+		info := agentInfo{ID: snapshot.ID, Label: snapshot.Label, AuthStatus: authStatus}
+		inv.Supported = append(inv.Supported, info)
+		if snapshot.Installation.State == "installed" {
+			inv.Installed = append(inv.Installed, info)
+		}
+		if snapshot.Authentication.State == "authorized" || snapshot.Authentication.State == "not_applicable" {
+			inv.Authorized = append(inv.Authorized, info)
+		}
+	}
+	return inv
 }
 
 func writeAgentList(cmd *cobra.Command, inv agentInventory) error {

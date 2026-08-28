@@ -157,6 +157,7 @@ type Service struct {
 	telemetry           ports.EventSink
 	logger              *slog.Logger
 	backgroundContext   context.Context
+	agentReadiness      ports.AgentReadinessProvider
 	runBackground       func(func())
 	orchestratorLocksMu sync.Mutex
 	orchestratorLocks   map[domain.ProjectID]*sync.Mutex
@@ -191,6 +192,8 @@ type Deps struct {
 	DataDir   string
 	Telemetry ports.EventSink
 	Logger    *slog.Logger
+	// AgentReadiness coordinates advisory native harness checks before launch.
+	AgentReadiness ports.AgentReadinessProvider
 	// BackgroundContext owns best-effort work that must survive an HTTP request
 	// returning but stop with the daemon. It defaults to context.Background for
 	// focused service tests and non-daemon callers.
@@ -207,7 +210,7 @@ func NewWithDeps(d Deps) *Service {
 	if backgroundContext == nil {
 		backgroundContext = context.Background()
 	}
-	s := &Service{manager: d.Manager, store: d.Store, prClaimer: d.PRClaimer, scm: d.SCM, tracker: d.Tracker, clock: d.Clock, dataDir: d.DataDir, signalCapable: d.SignalCapable, telemetry: d.Telemetry, logger: d.Logger, backgroundContext: backgroundContext}
+	s := &Service{manager: d.Manager, store: d.Store, prClaimer: d.PRClaimer, scm: d.SCM, tracker: d.Tracker, clock: d.Clock, dataDir: d.DataDir, signalCapable: d.SignalCapable, telemetry: d.Telemetry, logger: d.Logger, backgroundContext: backgroundContext, agentReadiness: d.AgentReadiness}
 	if s.prClaimer == nil {
 		if w, ok := d.Store.(ports.PRClaimer); ok {
 			s.prClaimer = w
@@ -243,6 +246,15 @@ func (s *Service) spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	if err != nil {
 		return domain.Session{}, 0, 0, err
 	}
+	if s.agentReadiness != nil && cfg.Harness != "" {
+		readiness, err := s.agentReadiness.EnsureAgentReadiness(ctx, string(cfg.Harness), domain.AgentReadinessPurposeLaunch)
+		if err != nil {
+			return domain.Session{}, 0, 0, err
+		}
+		if readiness.Installation.State == domain.AgentInstallationNotInstalled {
+			return domain.Session{}, 0, 0, apierr.Invalid("AGENT_BINARY_NOT_FOUND", "The selected agent harness is not installed", map[string]any{"agentId": cfg.Harness})
+		}
+	}
 	start := s.now()
 	firstSession, err := s.isFirstSession(ctx)
 	if err != nil {
@@ -251,6 +263,7 @@ func (s *Service) spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	cfg = s.withIssueContext(ctx, cfg, project)
 	rec, promptBytes, systemPromptBytes, err := s.manager.Spawn(ctx, cfg)
 	if err != nil {
+		s.invalidateAgentReadinessAfterLaunchFailure(cfg.Harness, err)
 		apiErr := toSpawnAPIError(err)
 		s.emitSpawnFailed(cfg, apiErr, s.now().Sub(start).Milliseconds())
 		return domain.Session{}, 0, 0, apiErr
@@ -264,6 +277,25 @@ func (s *Service) spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.Session{}, 0, 0, err
 	}
 	return sess, promptBytes, systemPromptBytes, nil
+}
+
+func (s *Service) invalidateAgentReadinessAfterLaunchFailure(harness domain.AgentHarness, err error) {
+	if s.agentReadiness == nil || harness == "" {
+		return
+	}
+	id := string(harness)
+	invalidated := false
+	if errors.Is(err, ports.ErrAgentBinaryNotFound) {
+		s.agentReadiness.InvalidateAgentInstallation(id)
+		invalidated = true
+	}
+	if errors.Is(err, ports.ErrChatAuthRequired) {
+		s.agentReadiness.InvalidateAgentAuthentication(id)
+		invalidated = true
+	}
+	if invalidated {
+		s.agentReadiness.RecheckAgent(id)
+	}
 }
 
 // requireProject verifies the project is registered before any spawn write
