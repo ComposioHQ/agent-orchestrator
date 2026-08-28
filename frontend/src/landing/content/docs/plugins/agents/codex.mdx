@@ -3,10 +3,10 @@ title: Codex
 description: Built-in Terminal UI and native app-server Chat support for the user's Codex installation.
 ---
 
-AO uses the locally installed `codex` executable and its existing OpenAI authentication.
+AO uses the locally installed `codex` executable and Codex-owned authentication.
 
 ```bash
-ao agent ls --refresh
+ao agent ls
 ao spawn --project my-app --name codex-task --agent codex --mode chat
 ```
 
@@ -18,3 +18,9 @@ ao spawn --project my-app --name codex-task --agent codex --mode chat
 Codex supports the same capability-gated Chat/Terminal UI handoff as Claude Code. The AO session and worktree remain stable across a compatible handoff.
 
 AO performs bounded installation and authentication probes before spawn. Use `--skip-agent-check` only to bypass that advisory CLI preflight; daemon validation remains authoritative.
+
+## Profiles
+
+Open **Settings → Agents** to see the identity in the effective `CODEX_HOME` and to create additional isolated Codex profiles. Sign-in runs through Codex's browser authentication flow. Codex writes and refreshes its own credentials; AO does not parse or expose credential files, tokens, plan details, or quota information.
+
+Managed profiles are stored under AO's state directory and remain separate from the existing Codex home. In this phase they are available for discovery and authentication only: new tasks, existing sessions, Terminal UI, and Chat launches continue to use the existing profile. Profile-bound launch and capacity controls arrive in later phases.

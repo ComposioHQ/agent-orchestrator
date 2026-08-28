@@ -94,6 +94,11 @@ surface (`npm run sqlc`, `npm run api`).
   installation/authentication observations, purpose-specific freshness,
   single-flight checks, bounded warm-up/retries, launch-time validation, and
   compatibility projections for older agent inventory/probe clients.
+- Codex profile discovery and browser authentication under Settings → Agents.
+  AO represents the effective existing `CODEX_HOME`, can create isolated
+  managed homes under `~/.ao`, and reads authentication through Codex
+  app-server without parsing credential files. Current launches continue to use
+  only the existing profile.
 - OpenAPI spec generated from Go DTOs; frontend TS types generated from it and
   drift-checked in CI.
 
