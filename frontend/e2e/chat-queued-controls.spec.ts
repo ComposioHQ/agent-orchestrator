@@ -186,7 +186,9 @@ test("queued turns can be cancelled or promoted independently and Stop confirms 
 		});
 	}
 
-	const stop = page.getByRole("button", { name: "Stop turn" });
+	const stop = page.getByRole("button", {
+		name: "Stop turn and cancel 2 queued messages",
+	});
 	await expect(stop).toHaveAccessibleDescription(
 		/also cancels 2 queued messages/i,
 	);
@@ -249,7 +251,9 @@ test("Stop sends the exact queue scope and requires reconfirmation after a confl
 	const fixture = await installQueuedConversation(page);
 	fixture.rejectNextInterrupt();
 
-	await page.getByRole("button", { name: "Stop turn" }).click();
+	await page
+		.getByRole("button", { name: "Stop turn and cancel 2 queued messages" })
+		.click();
 	let dialog = page.getByRole("dialog", {
 		name: "Stop turn and cancel 2 queued messages?",
 	});
@@ -273,7 +277,9 @@ test("Stop sends the exact queue scope and requires reconfirmation after a confl
 		["turn-queued-one", "turn-queued-two"],
 	]);
 
-	await page.getByRole("button", { name: "Stop turn" }).click();
+	await page
+		.getByRole("button", { name: "Stop turn and cancel 2 queued messages" })
+		.click();
 	dialog = page.getByRole("dialog", {
 		name: "Stop turn and cancel 2 queued messages?",
 	});

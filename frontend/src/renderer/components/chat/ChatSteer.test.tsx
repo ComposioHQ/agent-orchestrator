@@ -171,6 +171,9 @@ describe("ChatWorkspace steering", () => {
 		expect(
 			screen.getByRole("button", { name: "Cancel queued message: first queued" }),
 		).toBeVisible();
+		expect(
+			screen.queryByRole("button", { name: "Use as next message: first queued" }),
+		).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Stop turn" })).not.toBeInTheDocument();
 	});
 
@@ -233,7 +236,9 @@ describe("ChatWorkspace steering", () => {
 		expect(onCancelQueuedTurn).toHaveBeenCalledTimes(1);
 		expect(onInterrupt).not.toHaveBeenCalled();
 
-		const stop = screen.getByRole("button", { name: "Stop turn" });
+		const stop = screen.getByRole("button", {
+			name: "Stop turn and cancel 2 queued messages",
+		});
 		expect(stop).toHaveAccessibleDescription(/also cancels 2 queued messages/i);
 		await userEvent.click(stop);
 		const stopDialog = screen.getByRole("dialog", {

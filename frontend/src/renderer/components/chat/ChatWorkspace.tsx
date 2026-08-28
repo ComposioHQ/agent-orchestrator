@@ -876,7 +876,7 @@ export function ChatWorkspace({
 											<QueuedMessageDock
 												messages={visibleQueuedTurns}
 												onCancel={onCancelQueuedTurn}
-												onPromote={onPromoteQueuedTurn}
+												onPromote={runningTurn ? onPromoteQueuedTurn : undefined}
 											/>
 										) : null
 									}
@@ -893,6 +893,11 @@ export function ChatWorkspace({
 									onSend={(text, attachments) => onSend?.(text, attachments)}
 									onInterrupt={
 										runningTurn && queuedTurns !== undefined ? requestInterrupt : undefined
+									}
+									interruptLabel={
+										visibleQueuedTurns.length > 0
+											? `Stop turn and cancel ${visibleQueuedTurns.length} queued ${visibleQueuedTurns.length === 1 ? "message" : "messages"}`
+											: undefined
 									}
 									interruptDescription={
 										visibleQueuedTurns.length > 0
