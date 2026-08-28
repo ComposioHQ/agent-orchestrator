@@ -131,6 +131,23 @@ func TestToolPrecedence_CursorConcurrentDialogsRemainBlockedUntilAllComplete(t *
 	}
 }
 
+func TestToolPrecedence_CursorDeniedDialogClearsOnlyMatchingPendingRequest(t *testing.T) {
+	m, st, _ := newManager()
+	seedSignaled(st, "mer-1", domain.ActivityActive)
+
+	mustApply(t, m, "mer-1", sig(domain.ActivityBlocked, "before-shell-execution", "git push", ""))
+	mustApply(t, m, "mer-1", sig(domain.ActivityBlocked, "before-mcp-execution", "deploy", ""))
+	mustApply(t, m, "mer-1", sig(domain.ActivityActive, "cursor-shell-permission-denied", "git push", ""))
+	if got := stateOf(st, "mer-1"); got != domain.ActivityBlocked {
+		t.Fatalf("state after one Cursor denial = %q, want blocked while MCP dialog remains", got)
+	}
+
+	mustApply(t, m, "mer-1", sig(domain.ActivityActive, "after-mcp-execution", "deploy", ""))
+	if got := stateOf(st, "mer-1"); got != domain.ActivityActive {
+		t.Fatalf("state after final Cursor dialog completed = %q, want active", got)
+	}
+}
+
 func TestToolPrecedence_LegacyKimchiFailurePostAlsoClears(t *testing.T) {
 	// Old Kimchi hook files used this non-canonical subcommand. Keep accepting
 	// it so existing worktrees do not remain blocked after a failed tool call.

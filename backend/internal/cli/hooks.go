@@ -387,6 +387,12 @@ func (c *commandContext) runHook(ctx context.Context, agent, event string) error
 	}
 
 	toolName, toolUseID := activityMeta(payload)
+	if domain.AgentHarness(agent) == domain.HarnessCursor && event == "post-tool-use-failure" {
+		if denialEvent, denialTool, ok := cursor.PermissionDenialCorrelation(payload); ok {
+			event = denialEvent
+			toolName = denialTool
+		}
+	}
 	conversation := hookConversationSnapshot{}
 	switch domain.AgentHarness(agent) {
 	case domain.HarnessClaudeCode, domain.HarnessCodex:

@@ -1259,3 +1259,52 @@ func TestHooks_CursorAfterShellExecutionReportsActive(t *testing.T) {
 		t.Fatalf("state = %q, want active", got)
 	}
 }
+
+func TestHooks_CursorPermissionDenialReportsCorrelatedCompletion(t *testing.T) {
+	tests := []struct {
+		name      string
+		payload   string
+		wantEvent string
+		wantTool  string
+	}{
+		{
+			name:      "shell",
+			payload:   `{"tool_name":"Shell","tool_input":{"command":"git push"},"failure_type":"permission_denied"}`,
+			wantEvent: "cursor-shell-permission-denied",
+			wantTool:  "git push",
+		},
+		{
+			name:      "mcp",
+			payload:   `{"tool_name":"MCP:deploy","tool_input":{"environment":"prod"},"failure_type":"permission_denied"}`,
+			wantEvent: "cursor-mcp-permission-denied",
+			wantTool:  "deploy",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("AO_SESSION_ID", "ao-7")
+			cfg := setConfigEnv(t)
+			srv, capture := activityServer(t, http.StatusOK, `{"ok":true}`)
+			writeRunFileFor(t, cfg, srv)
+
+			_, _, err := executeCLI(t, Deps{
+				In:           strings.NewReader(tt.payload),
+				ProcessAlive: func(int) bool { return true },
+			}, "hooks", "cursor", "post-tool-use-failure")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			var req struct {
+				State    string `json:"state"`
+				Event    string `json:"event"`
+				ToolName string `json:"toolName"`
+			}
+			if err := json.Unmarshal([]byte(capture.body), &req); err != nil {
+				t.Fatalf("decode body: %v\nbody=%s", err, capture.body)
+			}
+			if req.State != "active" || req.Event != tt.wantEvent || req.ToolName != tt.wantTool {
+				t.Fatalf("denial activity = %+v, want state=active event=%q toolName=%q", req, tt.wantEvent, tt.wantTool)
+			}
+		})
+	}
+}

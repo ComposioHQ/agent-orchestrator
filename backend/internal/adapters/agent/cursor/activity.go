@@ -81,6 +81,33 @@ func HookToolName(event string, payload []byte) string {
 	}
 }
 
+// PermissionDenialCorrelation converts Cursor's generic postToolUseFailure
+// payload into the same execution family/name pair captured by the specialized
+// before-execution hook. Missing correlation stays unresolved so lifecycle
+// tracking fails closed.
+func PermissionDenialCorrelation(payload []byte) (event, toolName string, ok bool) {
+	var p struct {
+		ToolName    string `json:"tool_name"`
+		FailureType string `json:"failure_type"`
+		ToolInput   struct {
+			Command string `json:"command"`
+		} `json:"tool_input"`
+	}
+	if err := json.Unmarshal(payload, &p); err != nil || p.FailureType != "permission_denied" {
+		return "", "", false
+	}
+	switch {
+	case p.ToolName == "Shell":
+		command := capHookField(p.ToolInput.Command)
+		return "cursor-shell-permission-denied", command, command != ""
+	case strings.HasPrefix(p.ToolName, "MCP:"):
+		name := capHookField(strings.TrimPrefix(p.ToolName, "MCP:"))
+		return "cursor-mcp-permission-denied", name, name != ""
+	default:
+		return "", "", false
+	}
+}
+
 func capHookField(value string) string {
 	value = strings.TrimSpace(value)
 	const maxLen = 256

@@ -806,14 +806,14 @@ func cursorBeforeExecutionKey(s ports.ActivitySignal) (string, bool) {
 	}
 }
 
-func cursorAfterExecutionKey(s ports.ActivitySignal) (string, bool) {
+func cursorResolvedExecutionKey(s ports.ActivitySignal) (string, bool) {
 	if s.ToolName == "" {
 		return "", false
 	}
 	switch s.Event {
-	case "after-shell-execution":
+	case "after-shell-execution", "cursor-shell-permission-denied":
 		return "shell\x00" + s.ToolName, true
-	case "after-mcp-execution":
+	case "after-mcp-execution", "cursor-mcp-permission-denied":
 		return "mcp\x00" + s.ToolName, true
 	default:
 		return "", false
@@ -934,7 +934,7 @@ func (m *Manager) applyToolPrecedenceLocked(id domain.SessionID, cur domain.Acti
 			return s
 		default:
 			if fl != nil {
-				if key, ok := cursorAfterExecutionKey(s); ok && fl.cursorPending[key] > 0 {
+				if key, ok := cursorResolvedExecutionKey(s); ok && fl.cursorPending[key] > 0 {
 					if fl.cursorPending[key] == 1 {
 						delete(fl.cursorPending, key)
 					} else {
