@@ -128,6 +128,8 @@ describe("createEventTransport", () => {
 		expect(first.closed).toBe(true);
 		expect(EventSourceStub.instances).toHaveLength(1);
 		expect(getEventsConnectionState()).toBe("disconnected");
+		expect(setTransportHealthyMock).toHaveBeenCalledWith("active", false);
+		expect(setTransportHealthyMock).toHaveBeenCalledWith("history", false);
 	});
 
 	it("debounces workspace and session invalidation after a status change", () => {

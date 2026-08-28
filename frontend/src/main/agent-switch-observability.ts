@@ -91,7 +91,7 @@ export class AgentSwitchVisibilityController {
 				break;
 			case "online":
 				window.online = signal.value;
-				if (this.owner === senderId) this.reconcileOwner();
+				this.reselectOwner();
 				break;
 			case "transport": case "query":
 				window.health.set(`${signal.kind}:${signal.operation}`, { active: signal.active, healthy: signal.healthy });
@@ -99,7 +99,7 @@ export class AgentSwitchVisibilityController {
 				if (this.owner === senderId) this.reconcileHealth(signal.operation);
 				break;
 			case "expected_presentation": {
-				const localKey = `presentation:${signal.switchId}\u0000${signal.updatedAt}`;
+				const localKey = `presentation:${signal.localRouteKey}\u0000${signal.switchId}\u0000${signal.updatedAt}`;
 				window.expectations.set(signal.token, { token: signal.token, localKey, presentationKind: signal.presentationKind, durableState: signal.durableState });
 				this.interruptRecovery(localKey);
 				if (this.owner === senderId) this.reconcilePresentation(localKey);
@@ -179,7 +179,8 @@ export class AgentSwitchVisibilityController {
 	private finishExpectation(window: WindowState, token: string, presented: boolean): void {
 		const expectation = window.expectations.get(token);
 		if (!expectation) return;
-		if (presented) {
+		const ownerWindow = this.owner === null ? undefined : this.windows.get(this.owner);
+		if (presented && window === ownerWindow) {
 			for (const candidateWindow of this.windows.values()) {
 				for (const [candidateToken, candidate] of candidateWindow.expectations) if (candidate.localKey === expectation.localKey) candidateWindow.expectations.delete(candidateToken);
 			}
@@ -187,7 +188,9 @@ export class AgentSwitchVisibilityController {
 			return;
 		}
 		window.expectations.delete(token);
-		if (![...window.expectations.values()].some((candidate) => candidate.localKey === expectation.localKey)) this.recoverIncident(expectation.localKey);
+		if (![...(ownerWindow?.expectations.values() ?? [])].some((candidate) => candidate.localKey === expectation.localKey)) {
+			this.recoverIncident(expectation.localKey);
+		}
 	}
 
 	private setIncident(key: string, failed: boolean, remote: AgentSwitchVisibilityIncident, grace: number): void {
@@ -283,13 +286,15 @@ export function createAgentSwitchVisibilitySender(options: {
 		const eventId = options.eventId?.() ?? randomBytes(16).toString("hex");
 		const event = buildVisibilityEvent({ ...incident, eventId, occurredAt: (options.now?.() ?? new Date()).toISOString() }, options.metadata);
 		const envelope = encodeAgentSwitchEnvelopeV1(eventId, event);
+		const body = new ArrayBuffer(envelope.byteLength);
+		new Uint8Array(body).set(envelope);
 		const abort = new AbortController();
 		const cancel = () => abort.abort();
 		cancellation.addEventListener("abort", cancel, { once: true });
 		const timer = setTimeout(() => abort.abort(), 5_000);
 		try {
 			const response = await options.fetch(destination.endpoint, {
-				method: "POST", body: envelope, signal: abort.signal,
+				method: "POST", body, signal: abort.signal,
 				headers: { "Content-Type": "application/x-sentry-envelope", "X-Sentry-Auth": `Sentry sentry_version=7, sentry_key=${destination.publicKey}, sentry_client=ao-agent-switch/1` },
 				redirect: "manual", credentials: "omit", cache: "no-store", referrerPolicy: "no-referrer",
 			});

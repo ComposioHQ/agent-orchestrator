@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
 	buildVisibilityEvent,
@@ -18,7 +18,7 @@ describe("agent switch visibility IPC", () => {
 
 describe("agent switch visibility envelope", () => {
 	it("uses the frozen byte-length wrapper shared with Go", () => {
-		const fixturePath = fileURLToPath(new URL("../../../test/fixtures/agent-switch-observability/envelope-v1.json", import.meta.url));
+		const fixturePath = resolve(process.cwd(), "../test/fixtures/agent-switch-observability/envelope-v1.json");
 		const canonical = readFileSync(fixturePath);
 		const encoded = encodeAgentSwitchEnvelopeV1("0123456789abcdef0123456789abcdef", canonical);
 		const prefix = Buffer.from(encoded).subarray(0, encoded.length - canonical.length).toString("utf8");

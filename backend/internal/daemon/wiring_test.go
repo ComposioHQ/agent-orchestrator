@@ -797,6 +797,10 @@ func (r *selectableRuntime) IsAlive(context.Context, ports.RuntimeHandle) (bool,
 	return true, nil
 }
 
+func (r *selectableRuntime) ProbeFencedRuntime(context.Context, ports.FencedRuntimeRef) ports.FencedProbeResult {
+	return ports.FencedProbeResult{Liveness: ports.FencedUnknown, Reason: ports.FencedReasonProbeFailed}
+}
+
 func (r *selectableRuntime) Attach(context.Context, ports.RuntimeHandle, uint16, uint16) (ports.Stream, error) {
 	return nil, nil
 }

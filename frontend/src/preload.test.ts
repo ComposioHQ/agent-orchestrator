@@ -91,12 +91,12 @@ describe("preload telemetry generation bridge", () => {
 		const disposeSecond = exposedBridge().telemetry.onClearQueues(second);
 
 		rendererQueuePurgeRequestListener?.({}, { requestId: "purge-1" });
-		await Promise.resolve();
-		await Promise.resolve();
 
-		expect(first).toHaveBeenCalledOnce();
-		expect(second).toHaveBeenCalledOnce();
-		expect(electronMocks.send).toHaveBeenCalledWith("telemetry:rendererQueuesCleared", { requestId: "purge-1", ok: true });
+		await vi.waitFor(() => {
+			expect(first).toHaveBeenCalledOnce();
+			expect(second).toHaveBeenCalledOnce();
+			expect(electronMocks.send).toHaveBeenCalledWith("telemetry:rendererQueuesCleared", { requestId: "purge-1", ok: true });
+		});
 		disposeFirst();
 		disposeSecond();
 	});
@@ -105,10 +105,8 @@ describe("preload telemetry generation bridge", () => {
 		const dispose = exposedBridge().telemetry.onClearQueues(vi.fn().mockRejectedValue(new Error("purge failed")));
 
 		rendererQueuePurgeRequestListener?.({}, { requestId: "purge-2" });
-		await Promise.resolve();
-		await Promise.resolve();
 
-		expect(electronMocks.send).toHaveBeenCalledWith("telemetry:rendererQueuesCleared", { requestId: "purge-2", ok: false });
+		await vi.waitFor(() => expect(electronMocks.send).toHaveBeenCalledWith("telemetry:rendererQueuesCleared", { requestId: "purge-2", ok: false }));
 		dispose();
 	});
 });

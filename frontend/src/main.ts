@@ -2255,7 +2255,7 @@ app.whenReady().then(async () => {
 	for (const shellContents of trustedShellWebContents.values()) agentSwitchVisibilityController.registerWindow(shellContents.id);
 	const authority = new TelemetryPolicyAuthority({ dataDir: desktopDataDir, packagedDefault: app.isPackaged, platform: process.platform });
 	const daemonPolicy = new DaemonTelemetryPolicyClient(() => daemonStatus.state === "ready" && daemonStatus.port ? `http://127.0.0.1:${daemonStatus.port}` : null, (url, init) => net.fetch(url, init));
-	telemetryPolicyController = new DesktopTelemetryController({
+	const policyController = new DesktopTelemetryController({
 		authority,
 		daemon: daemonPolicy,
 		environmentAllowsEvents: rendererTelemetryEnabled(process.env, app.isPackaged),
@@ -2266,9 +2266,10 @@ app.whenReady().then(async () => {
 			for (const shellContents of trustedShellWebContents.values()) if (!shellContents.isDestroyed()) shellContents.send(TELEMETRY_POLICY_CHANGED_CHANNEL, view);
 		},
 	});
-	try { await telemetryPolicyController.initialize(); }
+	telemetryPolicyController = policyController;
+	try { await policyController.initialize(); }
 	catch (error) { console.error("telemetry policy bootstrap failed; reporting remains disabled:", error); }
-	setInterval(() => { if (telemetryPolicyController?.snapshot().state !== "applied") void telemetryPolicyController.retryPendingCleanup(); }, 1_000).unref();
+	setInterval(() => { if (policyController.snapshot().state !== "applied") void policyController.retryPendingCleanup(); }, 1_000).unref();
 	// Capture install provenance BEFORE relocation. moveToApplicationsFolder()
 	// relaunches from /Applications WITHOUT forwarding our --installed-via arg, and
 	// code past a successful move never runs in this instance, so a post-move-only

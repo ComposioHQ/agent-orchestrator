@@ -8,7 +8,7 @@ describe("RendererAgentSwitchVisibility", () => {
 		const second = visibility.registerRoute("session-a", "active");
 		visibility.setTransportHealthy("active", false);
 		first();
-		expect(send).not.toHaveBeenCalledWith(expect.objectContaining({ kind: "transport", active: false }));
+		expect(send).not.toHaveBeenCalledWith(expect.objectContaining({ kind: "transport", operation: "active", active: false }));
 		second();
 		expect(send).toHaveBeenCalledWith({ kind: "query", operation: "active", healthy: true, active: false });
 	});

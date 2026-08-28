@@ -223,7 +223,14 @@ export function SessionChatSurface({
 		localRouteKey: `session/${session.id}`,
 		agentSwitch,
 		presentationKind: visibilityPresentationKind,
-		visible: Boolean(shownSwitchPresentation && (!isLoading || renderShellFallback) && (!unavailable || renderShellFallback)),
+		visible: Boolean(
+			shownSwitchPresentation &&
+				(!isLoading || renderShellFallback) &&
+				(!unavailable || renderShellFallback) &&
+				!error &&
+				renderSnapshot &&
+				!workspaceFileActive,
+		),
 	});
 
 	if (isLoading && !renderShellFallback) {

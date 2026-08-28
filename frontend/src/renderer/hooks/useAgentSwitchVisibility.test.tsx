@@ -16,11 +16,11 @@ describe("agent switch visibility hooks", () => {
 
 	it("expects in a passive effect, acknowledges after commit, and cancels on dismissal", () => {
 		const send = vi.fn(); const coordinator = new RendererAgentSwitchVisibility(send);
-		let dismiss = () => undefined;
+		let dismiss: () => void = () => undefined;
 		const tokenFactory = () => "token";
 		function Surface() {
 			const [visible, setVisible] = useState(true); dismiss = () => setVisible(false);
-			useAgentSwitchPresentationVisibility({ coordinator, localRouteKey: "route", agentSwitch: { id: "switch", state: "failed", errorCode: "switch_failed", fromHarness: "claude-code", targetHarness: "codex", updatedAt: "revision" }, presentationKind: "terminal_failure", visible, tokenFactory });
+			useAgentSwitchPresentationVisibility({ coordinator, localRouteKey: "route", agentSwitch: { id: "switch", state: "failed", errorCode: "switch_failed", fromHarness: "claude-code", targetHarness: "codex", agentHandoffStatus: "not_attempted", updatedAt: "revision" }, presentationKind: "terminal_failure", visible, tokenFactory });
 			return visible ? <div role="alert">failed</div> : null;
 		}
 		render(<Surface />);
@@ -32,7 +32,7 @@ describe("agent switch visibility hooks", () => {
 	it("does not expect a normal historical failure that is not visible", () => {
 		const send = vi.fn(); const coordinator = new RendererAgentSwitchVisibility(send);
 		function Surface() {
-			useAgentSwitchPresentationVisibility({ coordinator, localRouteKey: "route", agentSwitch: { id: "historical", state: "failed", errorCode: "switch_failed", fromHarness: "claude-code", targetHarness: "codex", updatedAt: "revision" }, presentationKind: "terminal_failure", visible: false });
+			useAgentSwitchPresentationVisibility({ coordinator, localRouteKey: "route", agentSwitch: { id: "historical", state: "failed", errorCode: "switch_failed", fromHarness: "claude-code", targetHarness: "codex", agentHandoffStatus: "not_attempted", updatedAt: "revision" }, presentationKind: "terminal_failure", visible: false });
 			return null;
 		}
 		render(<Surface />);

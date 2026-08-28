@@ -148,10 +148,13 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 				// EventSource is unavailable in jsdom (tests) and some preview surfaces; guard it.
 				if (typeof EventSource === "undefined") return;
 				if (!hasTrustedApiBaseUrl()) {
+					healthAttempt += 1;
 					source?.close();
 					source = undefined;
 					sourceBaseUrl = undefined;
 					setEventsConnectionState("disconnected");
+					agentSwitchVisibility.setTransportHealthy("active", false);
+					agentSwitchVisibility.setTransportHealthy("history", false);
 					return;
 				}
 				const baseUrl = getApiBaseUrl();

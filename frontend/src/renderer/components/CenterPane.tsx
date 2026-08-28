@@ -282,7 +282,7 @@ export function CenterPane({
 		localRouteKey: `session/${session?.id ?? "unavailable"}`,
 		agentSwitch: shownAgentSwitch,
 		presentationKind: visibilityPresentationKind,
-		visible: Boolean(shownPresentation && shownAgentSwitch),
+		visible: Boolean(shownPresentation && shownAgentSwitch && !workspaceFileActive && !switchSelectorOpen),
 	});
 	const switchControlPresentation =
 		presentation ?? displayedSuccessNotice?.presentation;

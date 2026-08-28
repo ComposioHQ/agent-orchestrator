@@ -47,11 +47,41 @@ describe("AgentSwitchVisibilityController", () => {
 		await vi.advanceTimersByTimeAsync(1); expect(send).not.toHaveBeenCalled();
 	});
 
+	it("keeps the focused owner's presentation timer when the old owner cleans up", async () => {
+		const send = vi.fn(); const controller = harness(send);
+		controller.signal(1, signalBody({ kind: "expected_presentation", token: "old-token", switchId: "switch", updatedAt: "revision", localRouteKey: "route", presentationKind: "terminal_failure", durableState: "failed" }));
+		controller.registerWindow(2);
+		controller.signal(2, signal("online", true));
+		controller.signal(2, signal("focus", true));
+		controller.signal(2, signalBody({ kind: "expected_presentation", token: "new-token", switchId: "switch", updatedAt: "revision", localRouteKey: "route", presentationKind: "terminal_failure", durableState: "failed" }));
+
+		controller.signal(1, signalBody({ kind: "cancel", token: "old-token" }));
+		await vi.advanceTimersByTimeAsync(2_000);
+
+		expect(send).toHaveBeenCalledTimes(1);
+		expect(send.mock.calls[0][0]).toMatchObject({ failurePoint: "visibility_presentation", presentationKind: "terminal_failure" });
+	});
+
+	it("does not let a delayed non-owner presentation acknowledgement clear the focused owner's expectation", async () => {
+		const send = vi.fn(); const controller = harness(send);
+		controller.signal(1, signalBody({ kind: "expected_presentation", token: "old-token", switchId: "switch", updatedAt: "revision", localRouteKey: "route", presentationKind: "terminal_failure", durableState: "failed" }));
+		controller.registerWindow(2);
+		controller.signal(2, signal("online", true));
+		controller.signal(2, signal("focus", true));
+		controller.signal(2, signalBody({ kind: "expected_presentation", token: "new-token", switchId: "switch", updatedAt: "revision", localRouteKey: "route", presentationKind: "terminal_failure", durableState: "failed" }));
+
+		controller.signal(1, signalBody({ kind: "presented", token: "old-token" }));
+		await vi.advanceTimersByTimeAsync(2_000);
+
+		expect(send).toHaveBeenCalledTimes(1);
+		expect(send.mock.calls[0][0]).toMatchObject({ failurePoint: "visibility_presentation", presentationKind: "terminal_failure" });
+	});
+
 	it("cancels on focus transfer, offline, destruction, stale generation, and disable", async () => {
 		const send = vi.fn(); const controller = harness(send);
 		controller.registerWindow(2);
 		controller.signal(1, health("transport", "active", false));
-		controller.signal(2, signal("focus", true));
+		controller.signal(2, signal("online", true)); controller.signal(2, signal("focus", true));
 		await vi.advanceTimersByTimeAsync(15_000); expect(send).not.toHaveBeenCalled();
 		controller.signal(2, signal("online", false)); controller.destroyWindow(2);
 		controller.signal(1, { consentGeneration: "stale", signal: { kind: "focus", value: true } });
@@ -115,7 +145,7 @@ describe("main visibility sender", () => {
 	});
 });
 
-function harness(send: ReturnType<typeof vi.fn>) {
+function harness(send: ConstructorParameters<typeof AgentSwitchVisibilityController>[0]["send"]) {
 	const controller = new AgentSwitchVisibilityController({ send });
 	controller.setPolicy(true, "generation-1"); controller.registerWindow(1);
 	controller.signal(1, signal("focus", true)); controller.signal(1, signal("online", true));

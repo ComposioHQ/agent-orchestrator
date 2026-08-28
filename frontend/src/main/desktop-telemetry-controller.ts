@@ -152,12 +152,26 @@ export class DesktopTelemetryController {
 			this.pendingDesktopCleanup = null;
 		}
 		const snapshot = await this.options.authority.setEventsEnabled(true);
-		const ack = await this.options.daemon.applyPolicy(snapshot.consentGeneration, true);
-		const releaseEnabled = this.options.productionEnabled ?? agentSwitchFailureProductionEnabled;
-		if (ack.consentGeneration !== snapshot.consentGeneration || (releaseEnabled && !ack.eventsEnabled)) {
-			this.view = this.toView({ ...snapshot, acknowledged: false }, "cleanup_failed", "cleanup_failed"); this.publish(); return this.snapshot();
+		let transport: DesktopTelemetryTransport | null = null;
+		try {
+			const ack = await this.options.daemon.applyPolicy(snapshot.consentGeneration, true);
+			const releaseEnabled = this.options.productionEnabled ?? agentSwitchFailureProductionEnabled;
+			if (ack.consentGeneration !== snapshot.consentGeneration || (releaseEnabled && !ack.eventsEnabled)) {
+				throw new Error("telemetry enablement was not acknowledged");
+			}
+			if (this.captureEnabled(snapshot)) {
+				transport = await this.options.transportFactory();
+				if (!transport) throw new Error("desktop telemetry transport is unavailable");
+			}
+		} catch (error) {
+			// The durable enabled generation may already have opened the daemon
+			// gate even when its response was lost. Reuse the full opt-out path so
+			// no process can retain that ambiguous enablement.
+			this.view = this.toView({ ...snapshot, acknowledged: false }, "cleanup_pending", "daemon_cleanup_pending");
+			await this.disable();
+			throw error;
 		}
-		if (this.captureEnabled(snapshot)) this.transport = await this.options.transportFactory();
+		this.transport = transport;
 		this.view = this.toView(snapshot, "applied", this.baseReason()); this.publish(); return this.snapshot();
 	}
 

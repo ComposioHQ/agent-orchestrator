@@ -25,6 +25,11 @@ const agentSwitchMocks = vi.hoisted(() => ({
 	},
 }));
 
+const visibilityMocks = vi.hoisted(() => ({
+	presentation: vi.fn(),
+	route: vi.fn(),
+}));
+
 const reorderMocks = vi.hoisted(() => ({
 	onReorder: undefined as ((values: string[]) => void) | undefined,
 }));
@@ -52,6 +57,11 @@ vi.mock("../hooks/useAgentSwitches", async (importOriginal) => {
 
 vi.mock("../hooks/useSwitchAgent", () => ({
 	useSwitchAgentState: () => agentSwitchMocks.mutation,
+}));
+
+vi.mock("../hooks/useAgentSwitchVisibility", () => ({
+	useAgentSwitchPresentationVisibility: visibilityMocks.presentation,
+	useAgentSwitchRouteVisibility: visibilityMocks.route,
 }));
 
 vi.mock("./TerminalSwitchAgentButton", () => ({
@@ -160,6 +170,8 @@ beforeEach(() => {
 	agentSwitchMocks.mutation.error = null;
 	agentSwitchMocks.mutation.input = undefined;
 	agentSwitchMocks.mutation.isPending = false;
+	visibilityMocks.presentation.mockReset();
+	visibilityMocks.route.mockReset();
 	reorderMocks.onReorder = undefined;
 });
 
@@ -188,6 +200,22 @@ describe("CenterPane toolbar session label", () => {
 		expect(screen.getByTestId("terminal-interaction-surface")).toHaveAttribute("inert");
 		expect(screen.getByText("terminal body")).toHaveAttribute("data-input-disabled", "true");
 		expect(document.body.style.pointerEvents).not.toBe("none");
+	});
+
+	it("does not acknowledge a switch presentation hidden by files or the switch selector", async () => {
+		const activeSwitch = switchRecord({ state: "starting_target", updatedAt: "2026-08-28T00:00:00Z" });
+		agentSwitchMocks.switches.push(activeSwitch);
+		const view = renderCenterPane({ session: { ...worker, activeAgentSwitch: activeSwitch }, workspaceFileActive: true });
+
+		expect(visibilityMocks.presentation).toHaveBeenLastCalledWith(expect.objectContaining({ visible: false }));
+
+		view.rerender(
+			<TooltipProvider>
+				<CenterPane daemonReady session={{ ...worker, activeAgentSwitch: activeSwitch }} theme="dark" />
+			</TooltipProvider>,
+		);
+		await userEvent.click(screen.getByRole("button", { name: "Switch agent" }));
+		expect(visibilityMocks.presentation).toHaveBeenLastCalledWith(expect.objectContaining({ visible: false }));
 	});
 
 	it("uses mutation input only while switch admission is still pending", () => {

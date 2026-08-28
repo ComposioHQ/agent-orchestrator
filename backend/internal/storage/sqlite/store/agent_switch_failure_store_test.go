@@ -148,6 +148,19 @@ func countFailureRows(t *testing.T, db *sql.DB, table string) int {
 	return count
 }
 
+func deleteFailureFixtureSession(t *testing.T, f agentSwitchFailureFixture) {
+	t.Helper()
+	// change_log deliberately has a non-cascading session foreign key. Product
+	// deletion clears those CDC rows before deleting the session, so mirror that
+	// ordering when exercising payload independence.
+	if _, err := f.db.Exec(`DELETE FROM change_log WHERE session_id=?`, f.sw.SessionID); err != nil {
+		t.Fatalf("clear session change log: %v", err)
+	}
+	if _, err := f.db.Exec(`DELETE FROM sessions WHERE id=?`, f.sw.SessionID); err != nil {
+		t.Fatalf("delete session: %v", err)
+	}
+}
+
 func TestFailedMutationAndOutboxCommitAtomically(t *testing.T) {
 	f := openAgentSwitchFailureFixture(t)
 	f.enablePolicy(t)
@@ -315,6 +328,7 @@ func TestZeroRowCASAndRepeatedMarkerDoNotEnroll(t *testing.T) {
 	f.enablePolicy(t)
 	mutation := failedMutation(f)
 	mutation.ExpectedSourceGenerationID = "stale-source"
+	mutation.Record.SourceGenerationID = "stale-source"
 	result, err := f.store.ApplyAgentSwitchMutation(context.Background(), mutation)
 	if err != nil || result.CoreChanged || result.Enrollment != domain.AgentSwitchEnrollmentDeduped {
 		t.Fatalf("stale result = %+v, err=%v", result, err)
@@ -518,9 +532,7 @@ func TestStandaloneEnqueueDeletionOrdersAndReceiptCascade(t *testing.T) {
 			stored, _, _ := f.store.GetAgentSwitch(context.Background(), f.sw.ID)
 			op := maintenanceFault(f, stored)
 			if deleteFirst {
-				if _, err := f.db.Exec(`DELETE FROM sessions WHERE id=?`, f.sw.SessionID); err != nil {
-					t.Fatalf("delete session: %v", err)
-				}
+				deleteFailureFixtureSession(t, f)
 				result, err := f.store.EnqueueAgentSwitchOperationalFault(context.Background(), op)
 				if err != nil || result.CoreChanged || countFailureRows(t, f.db, "agent_switch_failure_outbox") != 1 {
 					t.Fatalf("post-delete enqueue = %+v, err=%v", result, err)
@@ -531,9 +543,7 @@ func TestStandaloneEnqueueDeletionOrdersAndReceiptCascade(t *testing.T) {
 			if err != nil || !result.CoreChanged || countFailureRows(t, f.db, "agent_switch_failure_outbox") != 2 {
 				t.Fatalf("standalone enqueue = %+v, err=%v", result, err)
 			}
-			if _, err := f.db.Exec(`DELETE FROM sessions WHERE id=?`, f.sw.SessionID); err != nil {
-				t.Fatalf("delete session: %v", err)
-			}
+			deleteFailureFixtureSession(t, f)
 			if countFailureRows(t, f.db, "agent_switch_failure_receipts") != 0 {
 				t.Fatal("switch receipt did not cascade")
 			}

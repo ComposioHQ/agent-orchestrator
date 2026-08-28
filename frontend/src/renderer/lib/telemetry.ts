@@ -798,16 +798,18 @@ export async function initTelemetry(): Promise<boolean> {
 type PurgeablePostHog = Pick<typeof posthog, "opt_in_capturing" | "opt_out_capturing"> & {
 	_requestQueue?: unknown;
 	_retryQueue?: unknown;
+	__request_queue?: unknown;
 };
 
 /**
  * Drops renderer-owned telemetry that has not left the process yet. This uses
- * the pinned PostHog queue shape deliberately: calling either queue's public
- * `unload` method would send the bytes that opt-out is trying to delete.
+ * the pinned PostHog queue shapes deliberately: calling either durable queue's
+ * public `unload` method would send the bytes that opt-out is trying to delete.
  * Unknown SDK shapes fail closed so Electron cannot acknowledge cleanup.
  */
 export function clearRendererTelemetryQueues(client: PurgeablePostHog = posthog): void {
 	if (client !== posthog || postHogInitialized) client.opt_out_capturing();
+	purgePreDomRequestQueue(client.__request_queue);
 	purgeRequestQueue(client._requestQueue);
 	purgeRetryQueue(client._retryQueue);
 	minuteWindows.clear();
@@ -818,6 +820,11 @@ export function clearRendererTelemetryQueues(client: PurgeablePostHog = posthog)
 	const storage = telemetryStorage() as (DailyActiveStorage & Partial<Pick<Storage, "removeItem">>) | undefined;
 	storage?.removeItem?.(ACTIVE_STORAGE_KEY);
 	storage?.removeItem?.(ROUTE_VIEW_STORAGE_KEY);
+}
+
+function purgePreDomRequestQueue(value: unknown): void {
+	if (!Array.isArray(value)) throw new Error("PostHog pre-DOM request queue cannot be purged");
+	value.length = 0;
 }
 
 export function applyRendererTelemetryPolicy(enabled: boolean): void {

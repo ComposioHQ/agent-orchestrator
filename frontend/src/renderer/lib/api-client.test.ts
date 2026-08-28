@@ -151,7 +151,7 @@ describe("apiClient runtime base URL", () => {
 	});
 
 	it("leaves workspace and switch-history failures exclusively to visibility reporting", async () => {
-		vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ code: "unavailable", message: "nope", reporting_owner: "http" }), { status: 503, headers: { "Content-Type": "application/json" } }));
+		vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({ code: "unavailable", message: "nope", reporting_owner: "http" }), { status: 503, headers: { "Content-Type": "application/json" } }));
 		setApiBaseUrl("http://127.0.0.1:3001");
 		await apiClient.GET("/api/v1/projects");
 		await apiClient.GET("/api/v1/sessions");
@@ -267,10 +267,10 @@ describe("api error telemetry", () => {
 		vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("oops", { status: 500 }));
 		setApiBaseUrl("http://127.0.0.1:3037");
 
-		await apiClient.GET("/api/v1/projects");
+		await apiClient.GET("/api/v1/agents");
 
 		expect(captureMock).toHaveBeenCalledWith("ao.renderer.api_error", {
-			operation: "GET /api/v1/projects",
+			operation: "GET /api/v1/agents",
 			error_category: "http_5xx",
 			status: 500,
 		});
@@ -291,7 +291,7 @@ describe("api error telemetry", () => {
 		);
 		setApiBaseUrl("http://127.0.0.1:3037");
 
-		const { error } = await apiClient.GET("/api/v1/projects");
+		const { error } = await apiClient.GET("/api/v1/agents");
 
 		expect(captureMock).toHaveBeenCalledTimes(1);
 		expect(sentryCaptureMock).not.toHaveBeenCalled();
@@ -312,7 +312,7 @@ describe("api error telemetry", () => {
 		);
 		setApiBaseUrl("http://127.0.0.1:3037");
 
-		const { error } = await apiClient.GET("/api/v1/projects");
+		const { error } = await apiClient.GET("/api/v1/agents");
 
 		expect(sentryCaptureMock).not.toHaveBeenCalled();
 		expect(apiErrorMessage(error)).toBe(
@@ -329,7 +329,7 @@ describe("api error telemetry", () => {
 		);
 		setApiBaseUrl("http://127.0.0.1:3037");
 
-		await apiClient.GET("/api/v1/projects");
+		await apiClient.GET("/api/v1/agents");
 
 		expect(sentryCaptureMock).toHaveBeenCalledTimes(1);
 	});
@@ -350,8 +350,8 @@ describe("api error telemetry", () => {
 			);
 		setApiBaseUrl("http://127.0.0.1:3037");
 
-		await apiClient.GET("/api/v1/projects");
-		await apiClient.GET("/api/v1/projects");
+		await apiClient.GET("/api/v1/agents");
+		await apiClient.GET("/api/v1/agents");
 
 		expect(captureMock).toHaveBeenCalledTimes(2);
 		expect(sentryCaptureMock).toHaveBeenCalledTimes(1);
@@ -376,10 +376,10 @@ describe("api error telemetry", () => {
 		vi.spyOn(globalThis, "fetch").mockRejectedValue(new TypeError("Failed to fetch"));
 		setApiBaseUrl("http://127.0.0.1:3037");
 
-		await expect(apiClient.GET("/api/v1/projects")).rejects.toThrow("Failed to fetch");
+		await expect(apiClient.GET("/api/v1/agents")).rejects.toThrow("Failed to fetch");
 
 		expect(captureMock).toHaveBeenCalledWith("ao.renderer.api_error", {
-			operation: "GET /api/v1/projects",
+			operation: "GET /api/v1/agents",
 			error_category: "network_error",
 			status: undefined,
 		});
@@ -389,7 +389,7 @@ describe("api error telemetry", () => {
 		vi.spyOn(globalThis, "fetch").mockRejectedValue(new DOMException("Aborted", "AbortError"));
 		setApiBaseUrl("http://127.0.0.1:3037");
 
-		await expect(apiClient.GET("/api/v1/projects")).rejects.toThrow("Aborted");
+		await expect(apiClient.GET("/api/v1/agents")).rejects.toThrow("Aborted");
 
 		expect(captureMock).not.toHaveBeenCalled();
 	});
@@ -397,10 +397,10 @@ describe("api error telemetry", () => {
 	it("reports daemon_unavailable when the base URL is untrusted", async () => {
 		setApiBaseUrl(null);
 
-		await apiClient.GET("/api/v1/projects");
+		await apiClient.GET("/api/v1/agents");
 
 		expect(captureMock).toHaveBeenCalledWith("ao.renderer.api_error", {
-			operation: "GET /api/v1/projects",
+			operation: "GET /api/v1/agents",
 			error_category: "daemon_unavailable",
 			status: 503,
 		});
@@ -410,12 +410,12 @@ describe("api error telemetry", () => {
 		vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response("oops", { status: 502 }));
 		setApiBaseUrl("http://127.0.0.1:3037");
 
-		await apiClient.GET("/api/v1/projects");
-		await apiClient.GET("/api/v1/projects");
+		await apiClient.GET("/api/v1/agents");
+		await apiClient.GET("/api/v1/agents");
 		expect(captureMock).toHaveBeenCalledTimes(1);
 
 		vi.setSystemTime(clock + 31_000);
-		await apiClient.GET("/api/v1/projects");
+		await apiClient.GET("/api/v1/agents");
 		expect(captureMock).toHaveBeenCalledTimes(2);
 	});
 });

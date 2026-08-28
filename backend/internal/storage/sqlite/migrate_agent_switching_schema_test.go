@@ -315,7 +315,10 @@ func TestMigration0117CopiesEveryExistingAgentSwitchColumn(t *testing.T) {
 	if _, err := db.Exec(`
 INSERT INTO projects (id,path,registered_at) VALUES ('copy-project','/repos/copy-project',?);
 INSERT INTO sessions (id,project_id,num,harness,activity_last_at,created_at,updated_at)
-VALUES ('copy-session','copy-project',1,'claude-code',?,?,?);
+VALUES ('copy-session','copy-project',1,'claude-code',?,?,?);`, now, now, now, now); err != nil {
+		t.Fatalf("seed pre-0117 parents: %v", err)
+	}
+	if _, err := db.Exec(`
 INSERT INTO agent_switches (
  id,session_id,idempotency_key,request_fingerprint,from_harness,target_harness,
  target_native_session_ref,target_start_mode,state,agent_handoff_status,
@@ -326,7 +329,7 @@ INSERT INTO agent_switches (
  'copy-switch','copy-session','copy-key',?,'claude-code','codex',NULL,'resumed','failed','received',
  'available',1,'handoff.json',?,'source-copy','target-copy','handle-copy',?,
  'delivery_unconfirmed',?,?, 'final.json',?
-)`, now, now, now, now, "v1:"+strings.Repeat("c", 64), strings.Repeat("a", 64),
+)`, "v1:"+strings.Repeat("c", 64), strings.Repeat("a", 64),
 		now.Add(time.Second), now, now.Add(2*time.Second), strings.Repeat("b", 64)); err != nil {
 		t.Fatalf("seed pre-0117 switch: %v", err)
 	}
