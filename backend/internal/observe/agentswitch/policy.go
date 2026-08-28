@@ -61,6 +61,7 @@ type PolicyCoordinator interface {
 	PrepareDisable(context.Context) error
 	ApplyPolicy(context.Context, string, bool) error
 	Authorization() domain.AgentSwitchReportingAuthorization
+	DeliveryEpoch() int64
 	EnterDelivery(context.Context, string, int64) (context.Context, func(), bool)
 	CloseAndDrain(context.Context) error
 }

@@ -159,7 +159,10 @@ func Run() error {
 	// Consent and event metadata are established before any reporting surface or
 	// recovery enrollment exists. SQLite is forced off first on every boot so a
 	// stale enabled mirror can never authorize work after a restart.
-	destination, _ := sentryobs.ParseAgentSwitchDSN(cfg.Telemetry.SentryDSN, true)
+	destination, destinationErr := sentryobs.ParseAgentSwitchDSN(cfg.Telemetry.SentryDSN, true)
+	if destinationErr != nil && cfg.Telemetry.SentryDSN != "" {
+		log.Warn("agent switch failure sender disabled", "error", destinationErr)
+	}
 	policyCoordinator := agentswitchobs.NewPolicyCoordinator(store, agentswitchobs.PolicyOptions{
 		DataDir:                 cfg.DataDir,
 		TelemetryEvents:         cfg.Telemetry.Events,
@@ -219,6 +222,27 @@ func Run() error {
 	defer stop()
 	policyCoordinator.StartWatcher(ctx)
 	defer func() { _ = policyCoordinator.CloseAndDrain(context.Background()) }()
+	// Constructing the synchronous sender performs no I/O. The hard production
+	// gate keeps this dormant until the separate privacy and destination release
+	// gates are approved; each call remains guarded by durable consent below.
+	var agentSwitchObserver ports.AgentSwitchFailureObserver
+	if domain.AgentSwitchFailureProductionEnabled && destinationErr == nil {
+		agentSwitchObserver = sentryobs.NewAgentSwitchFailureSender(destination, nil)
+	}
+	agentSwitchDispatcher, err := newAgentSwitchFailureDispatcher(store, policyCoordinator, agentSwitchObserver, log)
+	if err != nil {
+		return fmt.Errorf("wire agent switch failure dispatcher: %w", err)
+	}
+	if agentSwitchDispatcher != nil {
+		agentSwitchDispatcher.Start(ctx)
+		defer func() {
+			stopContext, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+			defer cancel()
+			if stopErr := agentSwitchDispatcher.Stop(stopContext); stopErr != nil {
+				log.Error("agent switch failure dispatcher shutdown", "error", stopErr)
+			}
+		}()
+	}
 
 	cdcPipe, err := startCDC(ctx, store, log)
 	if err != nil {
@@ -644,6 +668,13 @@ func Run() error {
 	// via defer) avoids the LIFO trap where a Stop() that blocks on ctx-cancel
 	// runs before the cancel: a non-signal exit path would hang otherwise.
 	stop()
+	if agentSwitchDispatcher != nil {
+		dispatcherStopContext, dispatcherStopCancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+		if err := agentSwitchDispatcher.Stop(dispatcherStopContext); err != nil {
+			log.Error("agent switch failure dispatcher shutdown", "error", err)
+		}
+		dispatcherStopCancel()
+	}
 	if startupReconcileDone != nil {
 		<-startupReconcileDone
 	}
