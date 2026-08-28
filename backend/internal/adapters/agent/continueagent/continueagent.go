@@ -59,14 +59,14 @@ var continueBinarySpec = binaryutil.BinarySpec{
 	},
 }
 
-var continueStartupMatcher = "startup"
+var continueSessionStartMatcher = "startup|resume|clear|compact"
 
 // continueManagedHooks is Claude Code's hook event shape with Continue-specific
 // AO hook commands. Continue reads this file through its Claude compatibility
 // layer, while `ao hooks continue` keeps activity and session metadata
 // attributed to the Continue harness.
 var continueManagedHooks = []hooksjson.HookSpec{
-	{Event: "SessionStart", Matcher: &continueStartupMatcher, Command: continueHookCommandPrefix + "session-start"},
+	{Event: "SessionStart", Matcher: &continueSessionStartMatcher, Command: continueHookCommandPrefix + "session-start"},
 	{Event: "UserPromptSubmit", Command: continueHookCommandPrefix + "user-prompt-submit"},
 	{Event: "PreToolUse", Command: continueHookCommandPrefix + "pre-tool-use"},
 	{Event: "PostToolUse", Command: continueHookCommandPrefix + "post-tool-use"},

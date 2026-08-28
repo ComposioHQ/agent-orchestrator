@@ -2,6 +2,7 @@ package continueagent
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/claudecode"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/hooksjson"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -388,6 +390,34 @@ func TestGetAgentHooksDelegates(t *testing.T) {
 	if strings.Contains(body, "ao hooks claude-code") {
 		t.Fatalf("Continue hooks must use the Continue token, got: %s", body)
 	}
+}
+
+func TestGetAgentHooksIncludesSupportedSessionStartSources(t *testing.T) {
+	ws := t.TempDir()
+	if err := (&Plugin{resolvedBinary: "cn"}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{WorkspacePath: ws}); err != nil {
+		t.Fatalf("GetAgentHooks: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(ws, ".claude", "settings.local.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var settings struct {
+		Hooks map[string][]hooksjson.MatcherGroup `json:"hooks"`
+	}
+	if err := json.Unmarshal(data, &settings); err != nil {
+		t.Fatal(err)
+	}
+	for _, group := range settings.Hooks["SessionStart"] {
+		for _, hook := range group.Hooks {
+			if hook.Command == "ao hooks continue session-start" {
+				if group.Matcher == nil || *group.Matcher != "startup|resume|clear|compact" {
+					t.Fatalf("SessionStart matcher = %v, want startup|resume|clear|compact", group.Matcher)
+				}
+				return
+			}
+		}
+	}
+	t.Fatal("Continue SessionStart hook not installed")
 }
 
 func TestGetAgentHooksMigratesLegacyClaudeHooks(t *testing.T) {
