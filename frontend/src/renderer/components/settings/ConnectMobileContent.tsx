@@ -5,11 +5,11 @@ import { ArrowUpRight, Check, Copy, Loader2, RotateCcw } from "lucide-react";
 import { apiClient, apiErrorMessage } from "../../lib/api-client";
 import { aoBridge } from "../../lib/bridge";
 import { captureRendererEvent } from "../../lib/telemetry";
-import { cn } from "../../lib/utils";
 import { ANDROID_PLAY_STORE_URL, TESTFLIGHT_URL } from "./ConnectMobileGetApp";
 import { reasonMessage, type SetupMode } from "./ConnectMobileSetup";
 import { SettingsOptionMenu, type SettingsOption } from "./SettingsOptionMenu";
 import { StyledQRCode } from "./StyledQRCode";
+import { PairingQr } from "./PairingQr";
 import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../ui/tooltip";
@@ -339,7 +339,6 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 	}
 	if (!status) return null;
 
-	const tunnelStarting = Boolean(status?.tunnel?.running) && !status?.tunnel?.ready;
 	const showRealQR =
 		enabled &&
 		activeHost &&
@@ -532,39 +531,32 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 				{/* Right: dedicated pairing-QR panel — square, clipping, flush with
 				    the content's right edge so bottom/right spacing match. */}
 				<div className="flex w-full shrink-0 flex-col gap-3 self-start sm:w-60">
-					<div className="relative aspect-square w-full overflow-hidden rounded-md">
-						{enabled && tunnelStarting ? (
-							// Held deliberately: a code scanned before the connector is
-							// advertisable carries no tunnel endpoint, so the pairing would
-							// work here and fail on every other network.
-							<div className="flex size-full items-center justify-center bg-(--color-bg-settings-input) p-4">
-								<p className="text-center text-caption leading-(--leading-settings-mobile-hint) text-settings-muted">
-									{t("mobile.tunnelStarting")}
-								</p>
-							</div>
-						) : enabled && !activeHost ? (
-							<div className="flex size-full items-center justify-center bg-(--color-bg-settings-input) p-4">
-								<p className="text-center text-caption leading-(--leading-settings-mobile-hint) text-settings-muted">
-									{mode === "tailscale" ? t("mobile.noTailscaleHost") : t("mobile.noPairingHost")}
-								</p>
-							</div>
-						) : (
-							<>
-								<div
-									className={cn(
-										"size-full transition-[filter,opacity] duration-300 ease-out",
-										!showRealQR && "opacity-60 blur-[6px]",
-									)}
-									aria-hidden={!showRealQR}
-								>
-									<StyledQRCode
-										value={qrValue ?? PLACEHOLDER_QR_VALUE}
-										data-qr-value={qrValue}
-										size={QR_CODE_SIZE}
-										className="block size-full p-4 [&_svg]:size-full"
-									/>
+					{enabled && activeHost ? (
+						// Owns its own square box and puts the caption beneath it: the
+						// caption cannot live inside a clipping aspect-square, which is
+						// what cut it off and pushed it under the button.
+						<PairingQr
+							value={showRealQR ? (qrValue ?? null) : null}
+							size={QR_CODE_SIZE}
+							caption={t("mobile.tunnelStarting")}
+						/>
+					) : (
+						<div className="relative aspect-square w-full overflow-hidden rounded-md">
+							{enabled && !activeHost ? (
+								<div className="flex size-full items-center justify-center bg-(--color-bg-settings-input) p-4">
+									<p className="text-center text-caption leading-(--leading-settings-mobile-hint) text-settings-muted">
+										{mode === "tailscale" ? t("mobile.noTailscaleHost") : t("mobile.noPairingHost")}
+									</p>
 								</div>
-								{!showRealQR && (
+							) : (
+								<>
+									<div className="size-full opacity-60 blur-[6px]" aria-hidden="true">
+										<StyledQRCode
+											value={PLACEHOLDER_QR_VALUE}
+											size={QR_CODE_SIZE}
+											className="block size-full p-4 [&_svg]:size-full"
+										/>
+									</div>
 									<div className="absolute inset-0 flex items-center justify-center">
 										<Button
 											type="button"
@@ -576,10 +568,10 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 											{t("mobile.generate")}
 										</Button>
 									</div>
-								)}
-							</>
-						)}
-					</div>
+								</>
+							)}
+						</div>
+					)}
 					{enabled && (
 						<Button
 							type="button"
