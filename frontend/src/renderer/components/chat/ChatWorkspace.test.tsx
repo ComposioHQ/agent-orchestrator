@@ -2002,6 +2002,35 @@ describe("ChatWorkspace reviewer tabs", () => {
 		act(() => [...previousTabListeners][0]?.());
 		expect(onSelectChat).toHaveBeenCalledOnce();
 	});
+
+	it("keeps chat and reviewer pinned before the scrollable shell strip", () => {
+		const shells = [
+			{
+				handleId: "shell-1",
+				sessionId: chatFixture.sessionId,
+				title: "chat worktree shell",
+				workingDir: "/p",
+				createdAt: "2026-08-04T00:00:00Z",
+			},
+		];
+		render(
+			<ChatWorkspace
+				snapshot={idleSnapshot()}
+				session={chatSession}
+				reviewerTerminal={reviewerTerminal}
+				shellTerminals={shells}
+			/>,
+		);
+
+		const scrollRegion = document.querySelector(".overflow-x-auto");
+		const chatTab = screen.getByRole("tab", { name: "Codex" });
+		const reviewerTab = screen.getByRole("tab", { name: "Reviewer" });
+		const shellTab = screen.getByRole("tab", { name: "chat worktree shell" });
+
+		expect(scrollRegion?.contains(chatTab.parentElement)).toBe(false);
+		expect(scrollRegion?.contains(reviewerTab.parentElement)).toBe(false);
+		expect(scrollRegion?.contains(shellTab.parentElement)).toBe(true);
+	});
 });
 
 describe("promptSpacerHeight", () => {

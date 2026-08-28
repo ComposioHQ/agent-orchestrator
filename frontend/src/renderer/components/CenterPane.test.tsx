@@ -716,15 +716,15 @@ describe("CenterPane toolbar session label", () => {
 
 		const reviewerTab = screen.getByRole("tab", { name: "Reviewer" });
 		const shellTab = screen.getByRole("tab", { name: shell.title });
+		const scrollRegion = document.querySelector(".overflow-x-auto");
 		expect(reviewerTab).toHaveAttribute("aria-current", "true");
 		expect(reviewerTab.querySelector("img")).toHaveClass("size-terminal-agent-icon");
-		expect(reviewerTab).toHaveClass(
-			"min-w-shell-tab-min",
-			"shrink-0",
+		expect(reviewerTab.parentElement).toHaveClass(
+			"min-w-0",
+			"shrink",
 			"self-stretch",
-			"w-shell-tab-connected",
-			"border-x",
-			"border-border-strong",
+			"overflow-hidden",
+			"border-r",
 			"bg-overlay",
 		);
 		expect(shellTab.parentElement).toHaveClass(
@@ -733,13 +733,14 @@ describe("CenterPane toolbar session label", () => {
 			"self-stretch",
 			"w-shell-tab-connected",
 		);
-		expect(reviewerTab).not.toHaveAttribute("data-terminal-role", "primary");
+		expect(reviewerTab.parentElement).toHaveAttribute("data-terminal-role", "primary");
+		expect(scrollRegion?.contains(reviewerTab.parentElement)).toBe(false);
 		expect(screen.getByRole("tab", { name: /^Claude Code/ })).not.toHaveAttribute("aria-current", "true");
 		expect(reviewerTab.querySelector("img")).toHaveAttribute("src");
 		expect(screen.queryByRole("button", { name: "Back to agent" })).not.toBeInTheDocument();
 	});
 
-	it("makes the full reviewer tile the interactive selection target", () => {
+	it("opens reviewer from the tab strip when a reviewer handle exists", () => {
 		const onSelectReviewerTerminal = vi.fn();
 		renderCenterPane({
 			session: worker,
@@ -747,12 +748,7 @@ describe("CenterPane toolbar session label", () => {
 			onSelectReviewerTerminal,
 		});
 
-		const reviewerTab = screen.getByRole("tab", { name: "Reviewer" });
-		expect(reviewerTab).toHaveClass("self-stretch", "w-shell-tab-connected", "px-2", "cursor-pointer");
-		expect(reviewerTab).toHaveClass("focus-visible:outline-2", "focus-visible:outline-accent/50");
-		expect(reviewerTab.parentElement).not.toHaveClass("px-2", "w-shell-tab-connected");
-
-		fireEvent.click(reviewerTab);
+		fireEvent.click(screen.getByRole("tab", { name: "Reviewer" }));
 		expect(onSelectReviewerTerminal).toHaveBeenCalledWith({ handleId: "review-sess-1", harness: "codex" });
 	});
 
@@ -885,7 +881,7 @@ describe("CenterPane toolbar session label", () => {
 		expect(screen.queryByRole("button", { name: "Scroll tabs right" })).toBeNull();
 	});
 
-	it("reorders reviewer and shell terminals together while keeping the owner terminal first", () => {
+	it("keeps reviewer pinned while reordering shell terminals in the scroll strip", () => {
 		const shells = makeShells(2);
 		renderCenterPane({
 			reviewerTerminal: { handleId: "review-sess-1", harness: "codex" },
@@ -900,9 +896,9 @@ describe("CenterPane toolbar session label", () => {
 		expect(tabLabels()).toEqual(["Claude Code", "Reviewer", "agent-orchestrator-0", "agent-orchestrator-1"]);
 		expect(reorderMocks.onReorder).toBeTypeOf("function");
 
-		act(() => reorderMocks.onReorder?.(["h-0", "reviewer:review-sess-1", "h-1"]));
+		act(() => reorderMocks.onReorder?.(["h-1", "h-0"]));
 
-		expect(tabLabels()).toEqual(["Claude Code", "agent-orchestrator-0", "Reviewer", "agent-orchestrator-1"]);
+		expect(tabLabels()).toEqual(["Claude Code", "Reviewer", "agent-orchestrator-1", "agent-orchestrator-0"]);
 	});
 
 	it("drops a session's remembered terminal order after navigating away", () => {

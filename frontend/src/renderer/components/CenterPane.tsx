@@ -71,9 +71,7 @@ type CenterPaneProps = {
 	agentInputDisabled?: boolean;
 };
 
-type AuxiliaryTerminal =
-	| { key: string; kind: "reviewer"; terminal: NonNullable<CenterPaneProps["reviewerTerminal"]> }
-	| { key: string; kind: "shell"; terminal: ShellTerminal };
+type AuxiliaryTerminal = { key: string; terminal: ShellTerminal };
 
 type TerminalOrder = { sessionId: string; keys: string[] };
 
@@ -148,20 +146,10 @@ export function CenterPane({
 	const isSidebarOpen = useUiStore(sidebarOccupiesLayout);
 	const isSidebarCompact = useUiStore(sidebarIsCompact);
 	const sessionId = session?.id;
+	const reviewerTabKey = reviewerTerminal ? `reviewer:${reviewerTerminal.handleId}` : undefined;
 	const auxiliaryTerminals = useMemo<AuxiliaryTerminal[]>(
-		() => [
-			...(reviewerTerminal
-				? [
-						{
-							key: `reviewer:${reviewerTerminal.handleId}`,
-							kind: "reviewer" as const,
-							terminal: reviewerTerminal,
-						},
-					]
-				: []),
-			...shellTerminals.map((terminal) => ({ key: terminal.handleId, kind: "shell" as const, terminal })),
-		],
-		[reviewerTerminal, shellTerminals],
+		() => shellTerminals.map((terminal) => ({ key: terminal.handleId, terminal })),
+		[shellTerminals],
 	);
 	const availableAuxiliaryKeys = useMemo(() => auxiliaryTerminals.map((terminal) => terminal.key), [auxiliaryTerminals]);
 	const orderedAuxiliaryTerminals = useMemo(() => {
@@ -311,22 +299,32 @@ export function CenterPane({
 					: target.kind === "reviewer"
 						? `reviewer:${target.handleId}`
 						: "worker";
-			const tabKeys = ["worker", ...orderedAuxiliaryTerminals.map((terminal) => terminal.key)];
+			const tabKeys = [
+				"worker",
+				...(reviewerTabKey ? [reviewerTabKey] : []),
+				...orderedAuxiliaryTerminals.map((terminal) => terminal.key),
+			];
 			const activeIndex = Math.max(0, tabKeys.indexOf(activeKey));
 			const nextIndex = (activeIndex + direction + tabKeys.length) % tabKeys.length;
 			if (nextIndex === 0) {
 				onSelectSessionTerminal?.();
 				return;
 			}
-			const nextTerminal = orderedAuxiliaryTerminals[nextIndex - 1];
-			if (nextTerminal?.kind === "reviewer") onSelectReviewerTerminal?.(nextTerminal.terminal);
-			if (nextTerminal?.kind === "shell") onSelectShellTerminal?.(nextTerminal.terminal.handleId);
+			if (reviewerTabKey && tabKeys[nextIndex] === reviewerTabKey) {
+				if (reviewerTerminal) onSelectReviewerTerminal?.(reviewerTerminal);
+				return;
+			}
+			const nextKey = tabKeys[nextIndex];
+			const nextTerminal = orderedAuxiliaryTerminals.find((terminal) => terminal.key === nextKey);
+			if (nextTerminal) onSelectShellTerminal?.(nextTerminal.terminal.handleId);
 		},
 		[
 			onSelectReviewerTerminal,
 			onSelectSessionTerminal,
 			onSelectShellTerminal,
 			orderedAuxiliaryTerminals,
+			reviewerTabKey,
+			reviewerTerminal,
 			target,
 		],
 	);
@@ -434,9 +432,7 @@ export function CenterPane({
 		const activeKey =
 			target.kind === "shell"
 				? target.handleId
-				: target.kind === "reviewer"
-					? `reviewer:${target.handleId}`
-					: undefined;
+				: undefined;
 		if (!activeKey) return;
 		const scrollRegion = tabsOverflowRef.current;
 		if (!scrollRegion) return;
@@ -511,69 +507,69 @@ export function CenterPane({
 					data-testid="session-terminal-region"
 				>
 					<div
-							aria-label={t("terminal.tabsAria")}
-							className="flex h-full min-w-0 flex-1 items-center"
-							onKeyDown={handleTerminalTabListKeyDown}
-							role="tablist"
-						>
+						aria-label={t("terminal.tabsAria")}
+						className="flex h-full min-w-0 flex-1 items-center"
+						onKeyDown={handleTerminalTabListKeyDown}
+						role="tablist"
+					>
+						<div className="flex min-w-0 shrink items-stretch">
 							{/* The owning session is permanent and never participates in overflow or reordering. */}
 							{session ? (
-				<SessionPaneTab
+								<SessionPaneTab
 									isActive={target.kind === "worker" && !workspaceFileActive}
-					label={sessionTabLabel}
-					onSelect={onSelectSessionTerminal}
-					session={session}
-				/>
+									label={sessionTabLabel}
+									onSelect={onSelectSessionTerminal}
+									session={session}
+								/>
 							) : (
 								<SessionPaneTab isActive={target.kind === "worker"} label={sessionTabLabel} />
 							)}
-							<div
-								ref={tabsOverflowRef}
-								className="scrollbar-none flex min-w-flex-min flex-1 self-stretch items-center overflow-x-auto"
+							{reviewerTerminal ? (
+								<SessionPaneTab
+									icon={
+										<AgentAvatar
+											provider={reviewerTerminal.harness}
+											className="size-terminal-agent-icon"
+											decorative
+										/>
+									}
+									isActive={target.kind === "reviewer"}
+									label={t("terminal.reviewer")}
+									onSelect={() => onSelectReviewerTerminal?.(reviewerTerminal)}
+									title={reviewerTerminal.harness}
+								/>
+							) : null}
+						</div>
+						<div
+							ref={tabsOverflowRef}
+							className="scrollbar-none flex min-w-flex-min flex-1 self-stretch items-center overflow-x-auto"
+						>
+							<Reorder.Group
+								as="div"
+								axis="x"
+								className="flex self-stretch"
+								onReorder={reorderAuxiliaryTerminals}
+								values={orderedAuxiliaryTerminals.map((terminal) => terminal.key)}
 							>
-								<Reorder.Group
-									as="div"
-									axis="x"
-									className="flex self-stretch"
-									onReorder={reorderAuxiliaryTerminals}
-									values={orderedAuxiliaryTerminals.map((terminal) => terminal.key)}
-								>
-									{orderedAuxiliaryTerminals.map((terminal) => (
-										<DraggableTerminalTab key={terminal.key} value={terminal.key}>
-											{terminal.kind === "reviewer" ? (
-												<SessionPaneTab
-													appearance="connected"
-													icon={
-														<AgentAvatar
-															provider={terminal.terminal.harness}
-															className="size-terminal-agent-icon"
-															decorative
-														/>
-													}
-													isActive={target.kind === "reviewer"}
-													label={t("terminal.reviewer")}
-													onSelect={() => onSelectReviewerTerminal?.(terminal.terminal)}
-													title={terminal.terminal.harness}
-												/>
-											) : (
-												<ShellTerminalTab
-													appearance="connected"
-													isActive={target.kind === "shell" && target.handleId === terminal.terminal.handleId}
-													onClose={() => onCloseShellTerminal?.(terminal.terminal.handleId)}
-													onRename={
-														onRenameShellTerminal
-															? (title) => onRenameShellTerminal(terminal.terminal.handleId, title)
-															: undefined
-													}
-													onSelect={() => onSelectShellTerminal?.(terminal.terminal.handleId)}
-													shell={terminal.terminal}
-												/>
-											)}
-										</DraggableTerminalTab>
-									))}
-								</Reorder.Group>
-								{workspaceTabs}
-							</div>
+								{orderedAuxiliaryTerminals.map((terminal) => (
+									<DraggableTerminalTab key={terminal.key} value={terminal.key}>
+										<ShellTerminalTab
+											appearance="connected"
+											isActive={target.kind === "shell" && target.handleId === terminal.terminal.handleId}
+											onClose={() => onCloseShellTerminal?.(terminal.terminal.handleId)}
+											onRename={
+												onRenameShellTerminal
+													? (title) => onRenameShellTerminal(terminal.terminal.handleId, title)
+													: undefined
+											}
+											onSelect={() => onSelectShellTerminal?.(terminal.terminal.handleId)}
+											shell={terminal.terminal}
+										/>
+									</DraggableTerminalTab>
+								))}
+							</Reorder.Group>
+							{workspaceTabs}
+						</div>
 					</div>
 				</div>
 				{isFullscreen ? null : (
