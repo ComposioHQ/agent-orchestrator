@@ -33,9 +33,10 @@ type ConversationService interface {
 	ActivateBranch(ctx context.Context, session domain.SessionID, branchID string) (string, error)
 	Resolve(ctx context.Context, session domain.SessionID, requestID string, decision ports.ChatDecision) error
 	ResolveInput(ctx context.Context, session domain.SessionID, requestID string, response ports.ChatInputResponse) error
-	Interrupt(ctx context.Context, session domain.SessionID) error
+	Interrupt(ctx context.Context, session domain.SessionID, queuedTurnIDs []string) error
 	Steer(ctx context.Context, session domain.SessionID, msg ports.ChatUserMessage) (chatsvc.SteerResult, error)
 	PromoteQueuedTurn(ctx context.Context, session domain.SessionID, turnID string) (chatsvc.PromoteQueuedTurnResult, error)
+	CancelQueuedTurn(ctx context.Context, session domain.SessionID, turnID string) error
 	Models(ctx context.Context, session domain.SessionID) ([]ports.ChatModel, domain.ConversationSettings, error)
 	ConfigOptions(ctx context.Context, session domain.SessionID) ([]ports.ChatConfigOption, error)
 	SetConfigOption(ctx context.Context, session domain.SessionID, configID string, value ports.ChatConfigOptionValue) ([]ports.ChatConfigOption, error)
@@ -70,6 +71,7 @@ func (c *ConversationsController) Register(r chi.Router) {
 	r.Post("/sessions/{sessionId}/conversation/interrupt", c.interrupt)
 	r.Post("/sessions/{sessionId}/conversation/steer", c.steer)
 	r.Post("/sessions/{sessionId}/conversation/turns/{turnId}/steer", c.promoteQueuedTurn)
+	r.Post("/sessions/{sessionId}/conversation/turns/{turnId}/cancel", c.cancelQueuedTurn)
 	r.Post("/sessions/{sessionId}/conversation/compact", c.compact)
 	r.Get("/sessions/{sessionId}/conversation/models", c.models)
 	r.Get("/sessions/{sessionId}/conversation/config-options", c.configOptions)
@@ -680,7 +682,19 @@ func (c *ConversationsController) interrupt(w http.ResponseWriter, r *http.Reque
 		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions/{sessionId}/conversation/interrupt")
 		return
 	}
-	err := c.Svc.Interrupt(r.Context(), domain.SessionID(chi.URLParam(r, "sessionId")))
+	var req InterruptConversationRequest
+	if !decodeConversationBody(w, r, &req) {
+		return
+	}
+	if req.QueuedTurnIDs == nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "validation",
+			"CHAT_QUEUE_SCOPE_REQUIRED",
+			"queuedTurnIds must be the complete confirmed queue, or an explicit empty array", nil)
+		return
+	}
+	err := c.Svc.Interrupt(
+		r.Context(), domain.SessionID(chi.URLParam(r, "sessionId")), req.QueuedTurnIDs,
+	)
 	if err != nil {
 		writeConversationError(w, r, err)
 		return
@@ -745,6 +759,24 @@ func writeConversationError(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, chatsvc.ErrNoActiveTurn):
 		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict",
 			"CHAT_NO_ACTIVE_TURN", "there is no turn in flight to interrupt", nil)
+
+	case errors.Is(err, chatsvc.ErrQueueScopeChanged):
+		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict",
+			"CHAT_QUEUE_SCOPE_CHANGED",
+			"the queued work changed; review the refreshed queue and confirm Stop again", nil)
+
+	case errors.Is(err, ports.ErrChatInterruptDeliveryUncertain):
+		// The provider may already have acted and AO has permanently settled the
+		// exact queue the user confirmed. Retrying Stop is therefore not equivalent
+		// to the failed request; clients must refresh before taking another action.
+		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict",
+			"CHAT_INTERRUPT_DELIVERY_UNCERTAIN",
+			"Stop may have reached the agent; refresh the conversation before taking another action", nil)
+
+	case errors.Is(err, chatsvc.ErrInterruptPending):
+		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict",
+			"CHAT_INTERRUPT_PENDING",
+			"Stop is still being reconciled; retry after its outcome is known", nil)
 
 	case errors.Is(err, domain.ErrNoConversationTurn):
 		envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found",
@@ -858,6 +890,7 @@ func conversationSnapshotResponse(s chatsvc.Snapshot) ConversationSnapshotRespon
 		HasMoreBefore:                    s.HasMoreBefore,
 		NativeForkAvailableAfterSequence: s.NativeForkAvailableAfterSequence,
 		Turns:                            make([]ConversationTurnResponse, 0, len(s.Turns)),
+		QueuedTurns:                      make([]ConversationQueuedTurnResponse, 0, len(s.QueuedTurns)),
 		Messages:                         make([]ConversationMessageResponse, 0, len(s.Messages)),
 		Activities:                       make([]ConversationActivityResponse, 0, len(s.Activities)),
 		BranchPoints:                     make([]ConversationBranchPointResponse, 0, len(s.BranchPoints)),
@@ -872,6 +905,13 @@ func conversationSnapshotResponse(s chatsvc.Snapshot) ConversationSnapshotRespon
 		ThreadState:                      threadStatePayload(s.Conversation.ThreadState),
 		MCPServers:                       mcpServersPayload(s.Conversation.MCPServers),
 		Capabilities:                     capabilityNames(s.Capabilities),
+	}
+	for _, queued := range s.QueuedTurns {
+		out.QueuedTurns = append(out.QueuedTurns, ConversationQueuedTurnResponse{
+			TurnID: queued.TurnID,
+			Text:   queued.Text,
+			Origin: string(queued.Origin),
+		})
 	}
 
 	for _, turn := range s.Turns {

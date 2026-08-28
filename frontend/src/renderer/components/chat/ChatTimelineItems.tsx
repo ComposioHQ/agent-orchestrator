@@ -333,7 +333,7 @@ export function TurnOutcome({
 	error,
 	retry,
 }: {
-	state: "recovered" | "interrupted" | "failed";
+	state: "recovered" | "interrupted" | "queue_cancelled" | "failed";
 	error?: string;
 	retry?: TurnOutcomeRetryControl;
 }) {
@@ -344,6 +344,10 @@ export function TurnOutcome({
 		},
 		interrupted: {
 			label: "The agent was interrupted by you",
+			tone: "text-muted-foreground/70",
+		},
+		queue_cancelled: {
+			label: "This queued message was cancelled",
 			tone: "text-muted-foreground/70",
 		},
 		failed: { label: "The agent ran into a problem", tone: "text-destructive" },

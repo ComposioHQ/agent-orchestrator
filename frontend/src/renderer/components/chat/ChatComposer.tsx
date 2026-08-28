@@ -85,6 +85,8 @@ export function ChatComposer({
 	nativeImages,
 	onSteer,
 	onInterrupt,
+	interruptLabel,
+	interruptDescription,
 	canSteer,
 	steerPending,
 	steerRefusal,
@@ -128,7 +130,11 @@ export function ChatComposer({
 	 */
 	onSteer?: (text: string) => Promise<unknown>;
 	/** Stop the turn already running when there is no draft to send. */
-	onInterrupt?: () => void;
+	onInterrupt?: () => void | Promise<unknown>;
+	/** Exact destructive scope used as the Stop control's accessible name. */
+	interruptLabel?: string;
+	/** Additional destructive detail exposed as the Stop control's description. */
+	interruptDescription?: string;
 	/** A turn is actually running, so there is something to steer into. */
 	canSteer?: boolean;
 	steerPending?: boolean;
@@ -740,12 +746,19 @@ export function ChatComposer({
 							size="icon-sm"
 							disabled={canStopTurn ? false : !canSend}
 							onClick={canStopTurn ? onInterrupt : undefined}
-							aria-label={canStopTurn ? "Stop turn" : "Send message"}
+							aria-label={canStopTurn ? (interruptLabel ?? "Stop turn") : "Send message"}
+							aria-description={canStopTurn ? interruptDescription : undefined}
 							// The destination Enter is armed with used to be spelled out beside
 							// the button. The row reads better without a line of prose in it, but
 							// the fact is not decoration, so it moves onto the control it
 							// describes rather than being dropped.
-							title={canStopTurn ? "Stop turn" : sendHint}
+							title={
+								canStopTurn
+									? interruptDescription
+										? `Stop turn. ${interruptDescription}`
+										: "Stop turn"
+									: sendHint
+							}
 							className={cn(
 								"size-7 rounded-full border-transparent focus-visible:ring-ring/40",
 								canStopTurn || canSend

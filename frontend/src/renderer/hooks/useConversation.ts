@@ -21,6 +21,7 @@ import type {
 	ConversationActivity,
 	ConversationItem,
 	ConversationMessage,
+	ConversationQueuedTurn,
 	ConversationSnapshot,
 	ControllerState,
 	DecisionOption,
@@ -231,11 +232,12 @@ export function useConversationCommands(sessionId: string | undefined) {
 	});
 
 	const interrupt = useMutation({
-		mutationFn: async () => {
+		mutationFn: async (queuedTurnIds: string[]) => {
 			const { error } = await apiClient.POST(
 				"/api/v1/sessions/{sessionId}/conversation/interrupt",
 				{
 					params: { path: { sessionId: sessionId as string } },
+					body: { queuedTurnIds },
 				},
 			);
 			if (error) throw error;
@@ -358,6 +360,17 @@ export function useConversationCommands(sessionId: string | undefined) {
 		onSuccess: invalidate,
 	});
 
+	const cancelQueuedTurn = useMutation({
+		mutationFn: async (turnId: string) => {
+			const { error } = await apiClient.POST(
+				"/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/cancel",
+				{ params: { path: { sessionId: sessionId as string, turnId } } },
+			);
+			if (error) throw error;
+		},
+		onSuccess: invalidate,
+	});
+
 	/**
 	 * Restart the tool servers.
 	 *
@@ -454,7 +467,12 @@ export function useConversationCommands(sessionId: string | undefined) {
 			action: "accept" | "decline" | "cancel",
 			content?: Record<string, unknown>,
 		) => resolveInput.mutateAsync({ requestId, action, content }),
-		interrupt: () => interrupt.mutate(),
+		interrupt: (queuedTurnIds: string[]) => {
+			interrupt.reset();
+			return interrupt.mutateAsync(queuedTurnIds);
+		},
+		interruptScopeChanged:
+			apiErrorCode(interrupt.error) === "CHAT_QUEUE_SCOPE_CHANGED",
 		resumeAgent: () => resume.mutateAsync(),
 		resumingAgent: resume.isPending,
 		resumeError: resume.error ? apiErrorMessage(resume.error) : undefined,
@@ -492,6 +510,7 @@ export function useConversationCommands(sessionId: string | undefined) {
 		activateBranchError: activateBranch.error ? apiErrorMessage(activateBranch.error) : undefined,
 		steer: (text: string) => steer.mutateAsync(text),
 		promoteQueuedTurn: (turnId: string) => promoteQueuedTurn.mutateAsync(turnId),
+		cancelQueuedTurn: (turnId: string) => cancelQueuedTurn.mutateAsync(turnId),
 		steerPending: steer.isPending,
 		/**
 		 * Why the last steer was refused, or undefined. Only the retryable and
@@ -882,6 +901,13 @@ function toSnapshot(wire: WireSnapshot): ConversationSnapshot {
 				: undefined,
 			rolledBack: turn.rolledBack ?? undefined,
 		})),
+		queuedTurns: wire.queuedTurns?.map(
+			(queued): ConversationQueuedTurn => ({
+				turnId: queued.turnId,
+				text: queued.text,
+				origin: (queued.origin as MessageOrigin | undefined) || undefined,
+			}),
+		),
 		items,
 	};
 }

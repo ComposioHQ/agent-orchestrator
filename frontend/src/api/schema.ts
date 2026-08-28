@@ -922,7 +922,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Cancel the in-flight turn in a chat session */
+        /** Stop the in-flight turn and cancel the exact confirmed queued work */
         post: operations["interruptSessionConversationTurn"];
         delete?: never;
         options?: never;
@@ -1043,6 +1043,23 @@ export interface paths {
         /** Name the provider's conversation thread */
         put: operations["setSessionConversationTitle"];
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel one queued message before it reaches the agent */
+        post: operations["cancelQueuedSessionConversationTurn"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2188,6 +2205,12 @@ export interface components {
             status: "pending" | "in_progress" | "completed";
             text: string;
         };
+        ConversationQueuedTurnResponse: {
+            /** @enum {string} */
+            origin?: "human" | "automation" | "daemon" | "provider";
+            text: string;
+            turnId: string;
+        };
         ConversationRateLimitsPayload: {
             planLabel?: string;
             /** Format: int64 */
@@ -2241,6 +2264,7 @@ export interface components {
             nativeForkAvailableAfterSequence: number;
             /** Format: int64 */
             oldestSequence?: number;
+            queuedTurns: components["schemas"]["ConversationQueuedTurnResponse"][];
             rateLimits?: components["schemas"]["ConversationRateLimitsPayload"];
             sessionId: string;
             settings: components["schemas"]["ConversationTurnSettingsPayload"];
@@ -2432,6 +2456,9 @@ export interface components {
              * @enum {string}
              */
             target: "tmux" | "gh" | "claude" | "codex" | "opencode" | "copilot";
+        };
+        InterruptConversationRequest: {
+            queuedTurnIds: string[];
         };
         KillReviewResponse: {
             reviewerHandleId: string;
@@ -6616,7 +6643,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InterruptConversationRequest"];
+            };
+        };
         responses: {
             /** @description No Content */
             204: {
@@ -6624,6 +6655,15 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
             };
             /** @description Not Found */
             404: {
@@ -7089,6 +7129,65 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["APIError"];
                 };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    cancelQueuedSessionConversationTurn: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+                /** @description AO conversation turn identifier, from the snapshot's turns array. */
+                turnId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Not Found */
             404: {

@@ -146,6 +146,8 @@ var schemaNames = map[string]string{
 	"ControllersDesktopWorkspaceLocationResponse":          "DesktopWorkspaceLocationResponse",
 	"ControllersUpdateSessionInterfaceRequest":             "UpdateSessionInterfaceRequest",
 	"ControllersConversationSnapshotResponse":              "ConversationSnapshotResponse",
+	"ControllersConversationQueuedTurnResponse":            "ConversationQueuedTurnResponse",
+	"ControllersInterruptConversationRequest":              "InterruptConversationRequest",
 	"ControllersConversationTurnResponse":                  "ConversationTurnResponse",
 	"ControllersConversationTurnDiffResponse":              "ConversationTurnDiffResponse",
 	"ControllersConversationDiffFileResponse":              "ConversationDiffFileResponse",
@@ -803,10 +805,12 @@ func shellTerminalOperations() []operation {
 		},
 		{
 			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/conversation/interrupt", id: "interruptSessionConversationTurn", tag: "conversations",
-			summary:    "Cancel the in-flight turn in a chat session",
+			summary:    "Stop the in-flight turn and cancel the exact confirmed queued work",
 			pathParams: []any{controllers.SessionIDParam{}},
+			reqBody:    controllers.InterruptConversationRequest{},
 			resps: []respUnit{
 				{http.StatusNoContent, nil},
+				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusConflict, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
@@ -834,6 +838,18 @@ func shellTerminalOperations() []operation {
 			resps: []respUnit{
 				{http.StatusAccepted, controllers.PromoteQueuedTurnResponse{}},
 				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/cancel", id: "cancelQueuedSessionConversationTurn", tag: "conversations",
+			summary:    "Cancel one queued message before it reaches the agent",
+			pathParams: []any{controllers.SessionIDParam{}, controllers.ConversationTurnIDParam{}},
+			resps: []respUnit{
+				{http.StatusNoContent, nil},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusConflict, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},

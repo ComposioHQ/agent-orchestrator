@@ -224,13 +224,17 @@ func cloneStartConfig(cfg StartConfig) StartConfig {
 
 // settleOrphanedWork closes out anything a previous controller left behind.
 //
-// Best-effort by design: a failure here must not stop a session from coming back,
-// because a session the user cannot reopen is worse than a stale row. Both
-// failures are logged rather than swallowed.
-func (s *Service) settleOrphanedWork(ctx context.Context, session domain.SessionID, conversationID string) {
+// The durable turn settlement is load-bearing: it releases any Stop fence the
+// previous controller owned, so a replacement must not publish if that write
+// fails. Pending interactions do not gate dispatch and remain best-effort.
+func (s *Service) settleOrphanedWork(
+	ctx context.Context,
+	session domain.SessionID,
+	conversationID string,
+) error {
 	now := s.now()
 	if err := s.store.SettleOrphanedTurns(ctx, session, now); err != nil {
-		s.log.Error("chat start: settle orphaned turns", "session", session, "error", err)
+		return fmt.Errorf("settle orphaned turns for %s: %w", session, err)
 	}
 	// An approval left pending can never be answered: the provider call it was
 	// blocking died with the process that was holding it.
@@ -240,6 +244,7 @@ func (s *Service) settleOrphanedWork(ctx context.Context, session domain.Session
 	if err := s.store.FailPendingInputs(ctx, conversationID, now); err != nil {
 		s.log.Error("chat start: close pending input requests", "session", session, "error", err)
 	}
+	return nil
 }
 
 // Start launches or resumes the Chat controller for a session.
@@ -351,6 +356,34 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	if err != nil {
 		return nil, fmt.Errorf("open conversation: %w", err)
 	}
+	// CreateConversation is the durable project-owner bind, but a different
+	// session can rebind the same project as soon as that transaction returns.
+	// Pin this owner through settings, provider startup, and orphan settlement so
+	// a retired Start cannot contact its provider after a newer owner has taken
+	// over. ControllerReady may itself run the lifecycle write that transfers
+	// ownership, so release before that callback and reacquire/revalidate before
+	// publication. Session-scoped starts keep their per-session gate and do not
+	// participate in this cross-session fence.
+	releaseProjectOwnership := func() {}
+	projectOwnershipHeld := false
+	if conversation.Scope == domain.ConversationScopeProject {
+		releaseProjectOwnership, err = s.store.AcquireProjectConversationDispatch(
+			ctx, conversation.ID, conversation.ProjectID, cfg.SessionID,
+		)
+		if errors.Is(err, domain.ErrConversationOwnerChanged) {
+			return nil, fmt.Errorf("%w: %w", ErrControllerHandoff, err)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("verify project conversation owner after bind: %w", err)
+		}
+		projectOwnershipHeld = true
+	}
+	defer func() {
+		if projectOwnershipHeld {
+			releaseProjectOwnership()
+		}
+	}()
+
 	repairedBranch, restoredProviderOwner, err := s.store.RepairIncompleteConversationEdit(
 		ctx, cfg.SessionID, conversation.ID, s.now())
 	if err != nil {
@@ -483,7 +516,10 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	// behind a controller that no longer existed. Nothing would ever have corrected
 	// it. Settling here covers every way a controller can come up, and is a no-op
 	// for a session that has none of it.
-	s.settleOrphanedWork(ctx, cfg.SessionID, conversation.ID)
+	if err := s.settleOrphanedWork(ctx, cfg.SessionID, conversation.ID); err != nil {
+		_ = conv.Close()
+		return nil, err
+	}
 	// A fresh generation per launch, so events from the controller this one
 	// replaced can be told apart from the current one's.
 	controller := newController(
@@ -534,12 +570,34 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 			return nil, err
 		}
 	}
+	// ControllerReady is a lifecycle transaction boundary, not a read-only hook:
+	// among other checks it may observe or cause a project rebind. Do not call it
+	// while holding the project's read lease. Reacquiring below closes the gap
+	// between a successful commit and publishing this controller.
+	if conversation.Scope == domain.ConversationScopeProject {
+		releaseProjectOwnership()
+		projectOwnershipHeld = false
+	}
 	commit, err := notifyControllerReady(
 		cfg, controller, providerBoundary, commitProviderHistory,
 	)
 	if err != nil {
 		_ = conv.Close()
 		return nil, err
+	}
+	if conversation.Scope == domain.ConversationScopeProject {
+		releaseProjectOwnership, err = s.store.AcquireProjectConversationDispatch(
+			ctx, conversation.ID, conversation.ProjectID, cfg.SessionID,
+		)
+		if errors.Is(err, domain.ErrConversationOwnerChanged) {
+			_ = conv.Close()
+			return nil, fmt.Errorf("%w: %w", ErrControllerHandoff, err)
+		}
+		if err != nil {
+			_ = conv.Close()
+			return nil, fmt.Errorf("verify project conversation owner before publish: %w", err)
+		}
+		projectOwnershipHeld = true
 	}
 	if providerBoundary != nil {
 		if cfg.ControllerReady == nil {
@@ -683,7 +741,7 @@ func (s *Service) ResolveInput(
 }
 
 // Interrupt cancels a session's in-flight turn.
-func (s *Service) Interrupt(ctx context.Context, id domain.SessionID) error {
+func (s *Service) Interrupt(ctx context.Context, id domain.SessionID, expectedQueuedTurnIDs []string) error {
 	if _, err := s.requireChatSession(ctx, id); err != nil {
 		return err
 	}
@@ -691,7 +749,7 @@ func (s *Service) Interrupt(ctx context.Context, id domain.SessionID) error {
 	if err != nil {
 		return err
 	}
-	return controller.Interrupt(ctx)
+	return controller.Interrupt(ctx, expectedQueuedTurnIDs)
 }
 
 // ArmChatHandoff closes source intake and queue dispatch at
@@ -807,6 +865,7 @@ type Snapshot struct {
 	Mode                             domain.SessionMode
 	Controller                       ports.ChatControllerState
 	Turns                            []domain.ConversationTurn
+	QueuedTurns                      []domain.QueuedTurn
 	Messages                         []domain.ConversationMessage
 	Activities                       []domain.ConversationActivity
 	BranchPoints                     []domain.ConversationBranchPoint
@@ -851,6 +910,7 @@ type ConversationRows struct {
 	EditFloorSequence                int64
 	NativeForkAvailableAfterSequence int64
 	Turns                            []domain.ConversationTurn
+	QueuedTurns                      []domain.QueuedTurn
 	Messages                         []domain.ConversationMessage
 	Activities                       []domain.ConversationActivity
 	BranchPoints                     []domain.ConversationBranchPoint
@@ -909,6 +969,7 @@ func (s *Service) Snapshot(ctx context.Context, id domain.SessionID) (Snapshot, 
 		Mode:                             domain.NormalizeSessionMode(record.Mode),
 		Controller:                       state,
 		Turns:                            rows.Turns,
+		QueuedTurns:                      rows.QueuedTurns,
 		Messages:                         rows.Messages,
 		Activities:                       rows.Activities,
 		BranchPoints:                     rows.BranchPoints,
@@ -963,6 +1024,7 @@ func (s *Service) SnapshotPage(ctx context.Context, id domain.SessionID, beforeS
 		Mode:                             domain.NormalizeSessionMode(record.Mode),
 		Controller:                       state,
 		Turns:                            rows.Turns,
+		QueuedTurns:                      rows.QueuedTurns,
 		Messages:                         rows.Messages,
 		Activities:                       rows.Activities,
 		BranchPoints:                     rows.BranchPoints,
@@ -1180,6 +1242,11 @@ func (s *Service) Models(ctx context.Context, id domain.SessionID) ([]ports.Chat
 	if !ok {
 		return nil, controller.Settings(), ErrModelsUnsupported
 	}
+	releaseOwnership, err := controller.acquireProjectOwnership(ctx)
+	if err != nil {
+		return nil, controller.Settings(), err
+	}
+	defer releaseOwnership()
 	models, err := lister.ListModels(ctx)
 	if err != nil {
 		return nil, controller.Settings(), err
@@ -1203,6 +1270,11 @@ func (s *Service) ConfigOptions(ctx context.Context, id domain.SessionID) ([]por
 	if !ok {
 		return nil, ErrConfigOptionsUnsupported
 	}
+	releaseOwnership, err := controller.acquireProjectOwnership(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer releaseOwnership()
 	return configurer.ListConfigOptions(ctx)
 }
 
@@ -1226,6 +1298,19 @@ func (s *Service) SetConfigOption(
 	if !ok {
 		return nil, ErrConfigOptionsUnsupported
 	}
+	controller.sendMu.Lock()
+	defer controller.sendMu.Unlock()
+	if controller.handoffActive() {
+		return nil, ErrControllerHandoff
+	}
+	if err := controller.requireNoInterruptPendingLocked(); err != nil {
+		return nil, err
+	}
+	releaseOwnership, err := controller.acquireProjectOwnership(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer releaseOwnership()
 	return configurer.SetConfigOption(ctx, configID, value)
 }
 

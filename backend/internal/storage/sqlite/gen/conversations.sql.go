@@ -310,7 +310,14 @@ func (q *Queries) BindProjectConversationSession(ctx context.Context, arg BindPr
 const cancelAllQueuedConversationTurns = `-- name: CancelAllQueuedConversationTurns :exec
 UPDATE conversation_turns
 SET state = 'interrupted', completed_at = ?
-WHERE conversation_id = ? AND state = 'queued'
+WHERE conversation_turns.conversation_id = ?
+  AND conversation_turns.state = 'queued'
+  AND EXISTS (
+      SELECT 1
+      FROM conversations AS queue_owner
+      WHERE queue_owner.id = conversation_turns.conversation_id
+        AND queue_owner.current_session_id = conversation_turns.handled_by_session_id
+  )
 `
 
 type CancelAllQueuedConversationTurnsParams struct {
@@ -327,25 +334,80 @@ func (q *Queries) CancelAllQueuedConversationTurns(ctx context.Context, arg Canc
 	return err
 }
 
-const cancelQueuedConversationTurns = `-- name: CancelQueuedConversationTurns :exec
+const cancelQueuedConversationTurn = `-- name: CancelQueuedConversationTurn :execrows
 UPDATE conversation_turns
-SET state = 'interrupted', completed_at = ?
-WHERE conversation_id = ? AND state = 'queued' AND requested_at <= ?
+SET state = 'interrupted', completed_at = ?1
+WHERE conversation_turns.id = ?2
+  AND conversation_turns.conversation_id = ?3
+  AND conversation_turns.state = 'queued'
+  AND EXISTS (
+      SELECT 1
+      FROM conversations AS queue_owner
+      WHERE queue_owner.id = conversation_turns.conversation_id
+        AND queue_owner.current_session_id = conversation_turns.handled_by_session_id
+  )
+  AND conversation_turns.promotion_started_at IS NULL
+  AND conversation_turns.interrupt_reservation_id IS NULL
+  AND NOT EXISTS (
+      SELECT 1
+      FROM conversations AS stop_fence
+      WHERE stop_fence.id = ?3
+        AND stop_fence.interrupt_reservation_id IS NOT NULL
+  )
 `
 
-type CancelQueuedConversationTurnsParams struct {
+type CancelQueuedConversationTurnParams struct {
 	CompletedAt    sql.NullTime
+	ID             string
 	ConversationID string
-	RequestedAt    time.Time
 }
 
-// Stopping the agent stops the queue with it: a brake that starts new work
-// instead of ending it would be the wrong shape for the button the user pressed.
-// The cutoff is the moment the user pressed stop, so a message typed after that
-// is still delivered rather than swept up by a cancellation it predates.
-func (q *Queries) CancelQueuedConversationTurns(ctx context.Context, arg CancelQueuedConversationTurnsParams) error {
-	_, err := q.db.ExecContext(ctx, cancelQueuedConversationTurns, arg.CompletedAt, arg.ConversationID, arg.RequestedAt)
-	return err
+// Cancel exactly one queue item. The promotion reservation is part of the state
+// check: once delivery to the provider may have started, cancellation must lose
+// the compare-and-set instead of claiming the prompt was never delivered.
+func (q *Queries) CancelQueuedConversationTurn(ctx context.Context, arg CancelQueuedConversationTurnParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, cancelQueuedConversationTurn, arg.CompletedAt, arg.ID, arg.ConversationID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const cancelQueuedConversationTurnForInterrupt = `-- name: CancelQueuedConversationTurnForInterrupt :execrows
+UPDATE conversation_turns
+SET state = 'interrupted',
+    completed_at = ?1,
+    interrupt_reservation_id = NULL
+WHERE conversation_turns.id = ?2
+  AND conversation_turns.conversation_id = ?3
+  AND conversation_turns.state = 'queued'
+  AND EXISTS (
+      SELECT 1
+      FROM conversations AS queue_owner
+      WHERE queue_owner.id = conversation_turns.conversation_id
+        AND queue_owner.current_session_id = conversation_turns.handled_by_session_id
+  )
+  AND conversation_turns.interrupt_reservation_id = ?4
+`
+
+type CancelQueuedConversationTurnForInterruptParams struct {
+	CompletedAt            sql.NullTime
+	ID                     string
+	ConversationID         string
+	InterruptReservationID sql.NullString
+}
+
+func (q *Queries) CancelQueuedConversationTurnForInterrupt(ctx context.Context, arg CancelQueuedConversationTurnForInterruptParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, cancelQueuedConversationTurnForInterrupt,
+		arg.CompletedAt,
+		arg.ID,
+		arg.ConversationID,
+		arg.InterruptReservationID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const completeQueuedConversationTurnPromotion = `-- name: CompleteQueuedConversationTurnPromotion :execrows
@@ -354,10 +416,16 @@ SET state = 'completed',
     completed_at = ?1,
     promotion_started_at = NULL,
     promoted_to_turn_id = ?2
-WHERE id = ?3
-  AND conversation_id = ?4
-  AND state = 'queued'
-  AND promotion_started_at IS NOT NULL
+WHERE conversation_turns.id = ?3
+  AND conversation_turns.conversation_id = ?4
+  AND conversation_turns.state = 'queued'
+  AND EXISTS (
+      SELECT 1
+      FROM conversations AS queue_owner
+      WHERE queue_owner.id = conversation_turns.conversation_id
+        AND queue_owner.current_session_id = conversation_turns.handled_by_session_id
+  )
+  AND conversation_turns.promotion_started_at IS NOT NULL
 `
 
 type CompleteQueuedConversationTurnPromotionParams struct {
@@ -968,13 +1036,84 @@ func (q *Queries) RecomputeConversationCompactedAt(ctx context.Context, arg Reco
 	return err
 }
 
+const releaseConversationInterruptReservation = `-- name: ReleaseConversationInterruptReservation :execrows
+UPDATE conversations
+SET interrupt_reservation_id = NULL,
+    interrupt_reservation_session_id = NULL
+WHERE id = ?1
+  AND interrupt_reservation_id = ?2
+`
+
+type ReleaseConversationInterruptReservationParams struct {
+	ConversationID         string
+	InterruptReservationID sql.NullString
+}
+
+func (q *Queries) ReleaseConversationInterruptReservation(ctx context.Context, arg ReleaseConversationInterruptReservationParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, releaseConversationInterruptReservation, arg.ConversationID, arg.InterruptReservationID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const releaseOrphanedConversationInterruptReservations = `-- name: ReleaseOrphanedConversationInterruptReservations :exec
+UPDATE conversations
+SET interrupt_reservation_id = NULL,
+    interrupt_reservation_session_id = NULL
+WHERE interrupt_reservation_session_id = ?1
+`
+
+// A confirmed Stop survives the controller that created it. Recovery settles
+// that controller's dead-generation turns first, then removes its global fence
+// so a replacement controller is not permanently blocked.
+func (q *Queries) ReleaseOrphanedConversationInterruptReservations(ctx context.Context, handledBySessionID sql.NullString) error {
+	_, err := q.db.ExecContext(ctx, releaseOrphanedConversationInterruptReservations, handledBySessionID)
+	return err
+}
+
+const releaseQueuedConversationTurnInterruptReservation = `-- name: ReleaseQueuedConversationTurnInterruptReservation :execrows
+UPDATE conversation_turns
+SET interrupt_reservation_id = NULL
+WHERE conversation_turns.id = ?1
+  AND conversation_turns.conversation_id = ?2
+  AND conversation_turns.state = 'queued'
+  AND EXISTS (
+      SELECT 1
+      FROM conversations AS queue_owner
+      WHERE queue_owner.id = conversation_turns.conversation_id
+        AND queue_owner.current_session_id = conversation_turns.handled_by_session_id
+  )
+  AND conversation_turns.interrupt_reservation_id = ?3
+`
+
+type ReleaseQueuedConversationTurnInterruptReservationParams struct {
+	ID                     string
+	ConversationID         string
+	InterruptReservationID sql.NullString
+}
+
+func (q *Queries) ReleaseQueuedConversationTurnInterruptReservation(ctx context.Context, arg ReleaseQueuedConversationTurnInterruptReservationParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, releaseQueuedConversationTurnInterruptReservation, arg.ID, arg.ConversationID, arg.InterruptReservationID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const releaseQueuedConversationTurnPromotion = `-- name: ReleaseQueuedConversationTurnPromotion :execrows
 UPDATE conversation_turns
 SET promotion_started_at = NULL
-WHERE id = ?1
-  AND conversation_id = ?2
-  AND state = 'queued'
-  AND promotion_started_at IS NOT NULL
+WHERE conversation_turns.id = ?1
+  AND conversation_turns.conversation_id = ?2
+  AND conversation_turns.state = 'queued'
+  AND EXISTS (
+      SELECT 1
+      FROM conversations AS queue_owner
+      WHERE queue_owner.id = conversation_turns.conversation_id
+        AND queue_owner.current_session_id = conversation_turns.handled_by_session_id
+  )
+  AND conversation_turns.promotion_started_at IS NOT NULL
 `
 
 type ReleaseQueuedConversationTurnPromotionParams struct {
@@ -992,13 +1131,83 @@ func (q *Queries) ReleaseQueuedConversationTurnPromotion(ctx context.Context, ar
 	return result.RowsAffected()
 }
 
+const reserveConversationForInterrupt = `-- name: ReserveConversationForInterrupt :execrows
+UPDATE conversations
+SET interrupt_reservation_id = ?1,
+    interrupt_reservation_session_id = current_session_id
+WHERE id = ?2
+  AND current_session_id IS NOT NULL
+  AND interrupt_reservation_id IS NULL
+`
+
+type ReserveConversationForInterruptParams struct {
+	InterruptReservationID sql.NullString
+	ConversationID         string
+}
+
+// Reserve the conversation before reserving the exact member rows. This global
+// marker is required even for an empty confirmed scope: later work must not be
+// dispatched while the provider outcome is unknown.
+func (q *Queries) ReserveConversationForInterrupt(ctx context.Context, arg ReserveConversationForInterruptParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, reserveConversationForInterrupt, arg.InterruptReservationID, arg.ConversationID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const reserveQueuedConversationTurnForInterrupt = `-- name: ReserveQueuedConversationTurnForInterrupt :execrows
+UPDATE conversation_turns
+SET interrupt_reservation_id = ?1
+WHERE conversation_turns.id = ?2
+  AND conversation_turns.conversation_id = ?3
+  AND conversation_turns.state = 'queued'
+  AND EXISTS (
+      SELECT 1
+      FROM conversations AS queue_owner
+      WHERE queue_owner.id = conversation_turns.conversation_id
+        AND queue_owner.current_session_id = conversation_turns.handled_by_session_id
+  )
+  AND conversation_turns.promotion_started_at IS NULL
+  AND conversation_turns.interrupt_reservation_id IS NULL
+`
+
+type ReserveQueuedConversationTurnForInterruptParams struct {
+	InterruptReservationID sql.NullString
+	ID                     string
+	ConversationID         string
+}
+
+// Reserve one member of an already compared Stop scope. The store performs the
+// ordered comparison and every reservation inside one write transaction.
+func (q *Queries) ReserveQueuedConversationTurnForInterrupt(ctx context.Context, arg ReserveQueuedConversationTurnForInterruptParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, reserveQueuedConversationTurnForInterrupt, arg.InterruptReservationID, arg.ID, arg.ConversationID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const reserveQueuedConversationTurnForPromotion = `-- name: ReserveQueuedConversationTurnForPromotion :execrows
 UPDATE conversation_turns
 SET promotion_started_at = ?1
-WHERE id = ?2
-  AND conversation_id = ?3
-  AND state = 'queued'
-  AND promotion_started_at IS NULL
+WHERE conversation_turns.id = ?2
+  AND conversation_turns.conversation_id = ?3
+  AND conversation_turns.state = 'queued'
+  AND EXISTS (
+      SELECT 1
+      FROM conversations AS queue_owner
+      WHERE queue_owner.id = conversation_turns.conversation_id
+        AND queue_owner.current_session_id = conversation_turns.handled_by_session_id
+  )
+  AND conversation_turns.promotion_started_at IS NULL
+  AND conversation_turns.interrupt_reservation_id IS NULL
+  AND NOT EXISTS (
+      SELECT 1
+      FROM conversations AS stop_fence
+      WHERE stop_fence.id = ?3
+        AND stop_fence.interrupt_reservation_id IS NOT NULL
+  )
 `
 
 type ReserveQueuedConversationTurnForPromotionParams struct {
@@ -1443,7 +1652,7 @@ func (q *Queries) SelectConversationBranches(ctx context.Context, conversationID
 }
 
 const selectConversationByID = `-- name: SelectConversationByID :one
-SELECT id, scope, project_id, session_id, current_session_id, latest_sequence, created_at, updated_at, model, reasoning_effort, approval_mode, compacted_at, context_used, context_window, usage_input_tokens, usage_output_tokens, usage_cached_tokens, usage_total_tokens, rate_limit_primary_percent, rate_limit_secondary_percent, rate_limit_primary_resets_in, rate_limit_secondary_resets_in, rate_limit_plan, provider_title, applied_title, model_reroute_json, account_json, thread_state_json, mcp_servers_json, usage_cost, usage_currency, active_branch_id FROM conversations WHERE id = ? LIMIT 1
+SELECT id, scope, project_id, session_id, current_session_id, latest_sequence, created_at, updated_at, model, reasoning_effort, approval_mode, compacted_at, context_used, context_window, usage_input_tokens, usage_output_tokens, usage_cached_tokens, usage_total_tokens, rate_limit_primary_percent, rate_limit_secondary_percent, rate_limit_primary_resets_in, rate_limit_secondary_resets_in, rate_limit_plan, provider_title, applied_title, model_reroute_json, account_json, thread_state_json, mcp_servers_json, usage_cost, usage_currency, active_branch_id, interrupt_reservation_id, interrupt_reservation_session_id FROM conversations WHERE id = ? LIMIT 1
 `
 
 func (q *Queries) SelectConversationByID(ctx context.Context, id string) (Conversation, error) {
@@ -1482,12 +1691,14 @@ func (q *Queries) SelectConversationByID(ctx context.Context, id string) (Conver
 		&i.UsageCost,
 		&i.UsageCurrency,
 		&i.ActiveBranchID,
+		&i.InterruptReservationID,
+		&i.InterruptReservationSessionID,
 	)
 	return i, err
 }
 
 const selectConversationBySession = `-- name: SelectConversationBySession :one
-SELECT id, scope, project_id, session_id, current_session_id, latest_sequence, created_at, updated_at, model, reasoning_effort, approval_mode, compacted_at, context_used, context_window, usage_input_tokens, usage_output_tokens, usage_cached_tokens, usage_total_tokens, rate_limit_primary_percent, rate_limit_secondary_percent, rate_limit_primary_resets_in, rate_limit_secondary_resets_in, rate_limit_plan, provider_title, applied_title, model_reroute_json, account_json, thread_state_json, mcp_servers_json, usage_cost, usage_currency, active_branch_id FROM conversations WHERE current_session_id = ? LIMIT 1
+SELECT id, scope, project_id, session_id, current_session_id, latest_sequence, created_at, updated_at, model, reasoning_effort, approval_mode, compacted_at, context_used, context_window, usage_input_tokens, usage_output_tokens, usage_cached_tokens, usage_total_tokens, rate_limit_primary_percent, rate_limit_secondary_percent, rate_limit_primary_resets_in, rate_limit_secondary_resets_in, rate_limit_plan, provider_title, applied_title, model_reroute_json, account_json, thread_state_json, mcp_servers_json, usage_cost, usage_currency, active_branch_id, interrupt_reservation_id, interrupt_reservation_session_id FROM conversations WHERE current_session_id = ? LIMIT 1
 `
 
 func (q *Queries) SelectConversationBySession(ctx context.Context, currentSessionID *domain.SessionID) (Conversation, error) {
@@ -1526,6 +1737,8 @@ func (q *Queries) SelectConversationBySession(ctx context.Context, currentSessio
 		&i.UsageCost,
 		&i.UsageCurrency,
 		&i.ActiveBranchID,
+		&i.InterruptReservationID,
+		&i.InterruptReservationSessionID,
 	)
 	return i, err
 }
@@ -2100,7 +2313,7 @@ func (q *Queries) SelectConversationRetryTurnIDBySource(ctx context.Context, arg
 }
 
 const selectConversationTurnByID = `-- name: SelectConversationTurnByID :one
-SELECT id, conversation_id, handled_by_session_id, provider_turn_id, controller_generation, state, error_message, requested_at, started_at, completed_at, diff_json, rolled_back_at, plan_json, branch_id, promotion_started_at, promoted_to_turn_id, retry_of_turn_id FROM conversation_turns WHERE id = ? LIMIT 1
+SELECT id, conversation_id, handled_by_session_id, provider_turn_id, controller_generation, state, error_message, requested_at, started_at, completed_at, diff_json, rolled_back_at, plan_json, branch_id, promotion_started_at, promoted_to_turn_id, retry_of_turn_id, interrupt_reservation_id FROM conversation_turns WHERE id = ? LIMIT 1
 `
 
 func (q *Queries) SelectConversationTurnByID(ctx context.Context, id string) (ConversationTurn, error) {
@@ -2124,12 +2337,13 @@ func (q *Queries) SelectConversationTurnByID(ctx context.Context, id string) (Co
 		&i.PromotionStartedAt,
 		&i.PromotedToTurnID,
 		&i.RetryOfTurnID,
+		&i.InterruptReservationID,
 	)
 	return i, err
 }
 
 const selectConversationTurnByProviderID = `-- name: SelectConversationTurnByProviderID :one
-SELECT id, conversation_id, handled_by_session_id, provider_turn_id, controller_generation, state, error_message, requested_at, started_at, completed_at, diff_json, rolled_back_at, plan_json, branch_id, promotion_started_at, promoted_to_turn_id, retry_of_turn_id FROM conversation_turns
+SELECT id, conversation_id, handled_by_session_id, provider_turn_id, controller_generation, state, error_message, requested_at, started_at, completed_at, diff_json, rolled_back_at, plan_json, branch_id, promotion_started_at, promoted_to_turn_id, retry_of_turn_id, interrupt_reservation_id FROM conversation_turns
 WHERE conversation_id = ? AND provider_turn_id = ?
 LIMIT 1
 `
@@ -2162,6 +2376,7 @@ func (q *Queries) SelectConversationTurnByProviderID(ctx context.Context, arg Se
 		&i.PromotionStartedAt,
 		&i.PromotedToTurnID,
 		&i.RetryOfTurnID,
+		&i.InterruptReservationID,
 	)
 	return i, err
 }
@@ -2182,7 +2397,7 @@ WITH RECURSIVE active_path(branch_id, max_sequence) AS (
     JOIN conversation_branches AS branch ON branch.id = path.branch_id
     WHERE branch.parent_branch_id IS NOT NULL
 )
-SELECT conversation_turns.id, conversation_turns.conversation_id, conversation_turns.handled_by_session_id, conversation_turns.provider_turn_id, conversation_turns.controller_generation, conversation_turns.state, conversation_turns.error_message, conversation_turns.requested_at, conversation_turns.started_at, conversation_turns.completed_at, conversation_turns.diff_json, conversation_turns.rolled_back_at, conversation_turns.plan_json, conversation_turns.branch_id, conversation_turns.promotion_started_at, conversation_turns.promoted_to_turn_id, conversation_turns.retry_of_turn_id FROM conversation_turns
+SELECT conversation_turns.id, conversation_turns.conversation_id, conversation_turns.handled_by_session_id, conversation_turns.provider_turn_id, conversation_turns.controller_generation, conversation_turns.state, conversation_turns.error_message, conversation_turns.requested_at, conversation_turns.started_at, conversation_turns.completed_at, conversation_turns.diff_json, conversation_turns.rolled_back_at, conversation_turns.plan_json, conversation_turns.branch_id, conversation_turns.promotion_started_at, conversation_turns.promoted_to_turn_id, conversation_turns.retry_of_turn_id, conversation_turns.interrupt_reservation_id FROM conversation_turns
 JOIN active_path AS path ON path.branch_id = conversation_turns.branch_id
 WHERE conversation_turns.conversation_id = ?1
   AND conversation_turns.promoted_to_turn_id IS NULL
@@ -2230,6 +2445,7 @@ func (q *Queries) SelectConversationTurns(ctx context.Context, conversationID st
 			&i.PromotionStartedAt,
 			&i.PromotedToTurnID,
 			&i.RetryOfTurnID,
+			&i.InterruptReservationID,
 		); err != nil {
 			return nil, err
 		}
@@ -2260,7 +2476,7 @@ WITH RECURSIVE active_path(branch_id, max_sequence) AS (
     JOIN conversation_branches AS branch ON branch.id = path.branch_id
     WHERE branch.parent_branch_id IS NOT NULL
 )
-SELECT conversation_turns.id, conversation_turns.conversation_id, conversation_turns.handled_by_session_id, conversation_turns.provider_turn_id, conversation_turns.controller_generation, conversation_turns.state, conversation_turns.error_message, conversation_turns.requested_at, conversation_turns.started_at, conversation_turns.completed_at, conversation_turns.diff_json, conversation_turns.rolled_back_at, conversation_turns.plan_json, conversation_turns.branch_id, conversation_turns.promotion_started_at, conversation_turns.promoted_to_turn_id, conversation_turns.retry_of_turn_id FROM conversation_turns
+SELECT conversation_turns.id, conversation_turns.conversation_id, conversation_turns.handled_by_session_id, conversation_turns.provider_turn_id, conversation_turns.controller_generation, conversation_turns.state, conversation_turns.error_message, conversation_turns.requested_at, conversation_turns.started_at, conversation_turns.completed_at, conversation_turns.diff_json, conversation_turns.rolled_back_at, conversation_turns.plan_json, conversation_turns.branch_id, conversation_turns.promotion_started_at, conversation_turns.promoted_to_turn_id, conversation_turns.retry_of_turn_id, conversation_turns.interrupt_reservation_id FROM conversation_turns
 JOIN active_path AS path ON path.branch_id = conversation_turns.branch_id
 WHERE conversation_turns.conversation_id = ?1
   AND conversation_turns.promoted_to_turn_id IS NULL
@@ -2327,6 +2543,7 @@ func (q *Queries) SelectConversationTurnsPage(ctx context.Context, arg SelectCon
 			&i.PromotionStartedAt,
 			&i.PromotedToTurnID,
 			&i.RetryOfTurnID,
+			&i.InterruptReservationID,
 		); err != nil {
 			return nil, err
 		}
@@ -2425,7 +2642,20 @@ JOIN conversation_messages
     AND conversation_messages.role = 'user'
 WHERE conversation_turns.conversation_id = ?
   AND conversation_turns.state = 'queued'
+  AND EXISTS (
+      SELECT 1
+      FROM conversations AS queue_owner
+      WHERE queue_owner.id = conversation_turns.conversation_id
+        AND queue_owner.current_session_id = conversation_turns.handled_by_session_id
+  )
   AND conversation_turns.promotion_started_at IS NULL
+  AND conversation_turns.interrupt_reservation_id IS NULL
+  AND NOT EXISTS (
+      SELECT 1
+      FROM conversations AS stop_fence
+      WHERE stop_fence.id = conversation_turns.conversation_id
+        AND stop_fence.interrupt_reservation_id IS NOT NULL
+  )
 ORDER BY conversation_turns.requested_at, conversation_turns.rowid
 LIMIT 1
 `
@@ -2458,7 +2688,7 @@ func (q *Queries) SelectNextQueuedConversationTurn(ctx context.Context, conversa
 }
 
 const selectProjectConversation = `-- name: SelectProjectConversation :one
-SELECT id, scope, project_id, session_id, current_session_id, latest_sequence, created_at, updated_at, model, reasoning_effort, approval_mode, compacted_at, context_used, context_window, usage_input_tokens, usage_output_tokens, usage_cached_tokens, usage_total_tokens, rate_limit_primary_percent, rate_limit_secondary_percent, rate_limit_primary_resets_in, rate_limit_secondary_resets_in, rate_limit_plan, provider_title, applied_title, model_reroute_json, account_json, thread_state_json, mcp_servers_json, usage_cost, usage_currency, active_branch_id FROM conversations WHERE project_id = ? AND scope = 'project' LIMIT 1
+SELECT id, scope, project_id, session_id, current_session_id, latest_sequence, created_at, updated_at, model, reasoning_effort, approval_mode, compacted_at, context_used, context_window, usage_input_tokens, usage_output_tokens, usage_cached_tokens, usage_total_tokens, rate_limit_primary_percent, rate_limit_secondary_percent, rate_limit_primary_resets_in, rate_limit_secondary_resets_in, rate_limit_plan, provider_title, applied_title, model_reroute_json, account_json, thread_state_json, mcp_servers_json, usage_cost, usage_currency, active_branch_id, interrupt_reservation_id, interrupt_reservation_session_id FROM conversations WHERE project_id = ? AND scope = 'project' LIMIT 1
 `
 
 func (q *Queries) SelectProjectConversation(ctx context.Context, projectID domain.ProjectID) (Conversation, error) {
@@ -2497,8 +2727,77 @@ func (q *Queries) SelectProjectConversation(ctx context.Context, projectID domai
 		&i.UsageCost,
 		&i.UsageCurrency,
 		&i.ActiveBranchID,
+		&i.InterruptReservationID,
+		&i.InterruptReservationSessionID,
 	)
 	return i, err
+}
+
+const selectQueuedConversationTurns = `-- name: SelectQueuedConversationTurns :many
+SELECT conversation_turns.id,
+       COALESCE(conversation_messages.text, '') AS text,
+       COALESCE(conversation_messages.client_message_id, '') AS client_message_id,
+       COALESCE(conversation_messages.origin, '') AS origin,
+       COALESCE(conversation_messages.delivery_content_json, '') AS delivery_content_json
+FROM conversation_turns
+LEFT JOIN conversation_messages
+    ON conversation_messages.rowid = (
+        SELECT queued_message.rowid
+        FROM conversation_messages AS queued_message
+        WHERE queued_message.turn_id = conversation_turns.id
+          AND queued_message.role = 'user'
+        ORDER BY queued_message.sequence, queued_message.rowid
+        LIMIT 1
+    )
+WHERE conversation_turns.conversation_id = ?
+  AND conversation_turns.state = 'queued'
+  AND EXISTS (
+      SELECT 1
+      FROM conversations AS queue_owner
+      WHERE queue_owner.id = conversation_turns.conversation_id
+        AND queue_owner.current_session_id = conversation_turns.handled_by_session_id
+  )
+ORDER BY conversation_turns.requested_at, conversation_turns.rowid
+`
+
+type SelectQueuedConversationTurnsRow struct {
+	ID                  string
+	Text                string
+	ClientMessageID     string
+	Origin              domain.MessageOrigin
+	DeliveryContentJson string
+}
+
+// The complete durable queue, independent of the bounded timeline page the UI
+// happens to have loaded. LEFT JOIN keeps a damaged/missing message row from
+// silently disappearing out of a destructive confirmation scope.
+func (q *Queries) SelectQueuedConversationTurns(ctx context.Context, conversationID string) ([]SelectQueuedConversationTurnsRow, error) {
+	rows, err := q.db.QueryContext(ctx, selectQueuedConversationTurns, conversationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SelectQueuedConversationTurnsRow{}
+	for rows.Next() {
+		var i SelectQueuedConversationTurnsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Text,
+			&i.ClientMessageID,
+			&i.Origin,
+			&i.DeliveryContentJson,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const selectReservedConversationTurnForPromotion = `-- name: SelectReservedConversationTurnForPromotion :one
@@ -2514,6 +2813,12 @@ JOIN conversation_messages
 WHERE conversation_turns.id = ?1
   AND conversation_turns.conversation_id = ?2
   AND conversation_turns.state = 'queued'
+  AND EXISTS (
+      SELECT 1
+      FROM conversations AS queue_owner
+      WHERE queue_owner.id = conversation_turns.conversation_id
+        AND queue_owner.current_session_id = conversation_turns.handled_by_session_id
+  )
   AND conversation_turns.promotion_started_at IS NOT NULL
 LIMIT 1
 `
@@ -2718,9 +3023,16 @@ func (q *Queries) SettleConversationTurn(ctx context.Context, arg SettleConversa
 
 const settleOrphanedConversationTurns = `-- name: SettleOrphanedConversationTurns :exec
 UPDATE conversation_turns
-SET state = 'failed',
-    error_message = 'controller ended before the turn completed',
-    completed_at = ?
+SET state = CASE
+        WHEN interrupt_reservation_id IS NOT NULL THEN 'interrupted'
+        ELSE 'failed'
+    END,
+    error_message = CASE
+        WHEN interrupt_reservation_id IS NOT NULL THEN ''
+        ELSE 'controller ended before the turn completed'
+    END,
+    completed_at = ?,
+    interrupt_reservation_id = NULL
 WHERE handled_by_session_id = ? AND state IN ('queued', 'running')
 `
 

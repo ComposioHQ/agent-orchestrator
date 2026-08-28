@@ -13,6 +13,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	chatsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/chat"
+	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite/store"
 )
 
@@ -537,6 +538,17 @@ type editDriverState struct {
 func newEditHarness(t *testing.T, supportsPromptReplay bool) (*harness, *historyRecorder, *editDriverState) {
 	t.Helper()
 	st := openStore(t)
+	return newEditHarnessWithStore(t, st, st, domain.KindWorker, supportsPromptReplay)
+}
+
+func newEditHarnessWithStore(
+	t *testing.T,
+	st *sqlite.Store,
+	serviceStore chatsvc.Store,
+	kind domain.SessionKind,
+	supportsPromptReplay bool,
+) (*harness, *historyRecorder, *editDriverState) {
+	t.Helper()
 	source := newHistoryRecorder()
 	if supportsPromptReplay {
 		sourceCapabilities := productionCaps()
@@ -605,7 +617,7 @@ func newEditHarness(t *testing.T, supportsPromptReplay bool) (*harness, *history
 	var idMu sync.Mutex
 	nextID := 0
 	svc := chatsvc.New(chatsvc.Options{
-		Store: st, Sessions: st,
+		Store: serviceStore, Sessions: st,
 		Reader: chatsvc.SnapshotReaderFunc(func(ctx context.Context, conversationID string) (chatsvc.ConversationRows, error) {
 			snapshot, err := st.LoadConversationSnapshot(ctx, conversationID)
 			if err != nil {
@@ -630,7 +642,7 @@ func newEditHarness(t *testing.T, supportsPromptReplay bool) (*harness, *history
 	})
 	workspace := t.TempDir()
 	ctrl, err := svc.Start(context.Background(), chatsvc.StartConfig{
-		SessionID: testSession, ProjectID: testProject, Kind: domain.KindWorker,
+		SessionID: testSession, ProjectID: testProject, Kind: kind,
 		Harness: domain.HarnessCodex, WorkspacePath: workspace,
 		Env: map[string]string{"AO_EDIT_TEST": "yes"}, SystemPrompt: "preserved prompt",
 	})

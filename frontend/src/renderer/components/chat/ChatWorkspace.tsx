@@ -30,7 +30,7 @@ import {
 } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
-import { ArrowDown, CornerDownRight, GitBranch, Loader2, TriangleAlert, Undo2 } from "lucide-react";
+import { ArrowDown, CornerDownRight, GitBranch, Loader2, TriangleAlert, Undo2, X } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { sameContent, useStableList } from "../../lib/stable-list";
 import { getApiBaseUrl, subscribeApiBaseUrl } from "../../lib/api-client";
@@ -84,6 +84,7 @@ import {
 	isSteer,
 	queuedTurnIds,
 	type ConversationPlan,
+	type ConversationQueuedTurn,
 	type ConversationSnapshot,
 	type ControllerState,
 	type ChatConfigOption,
@@ -191,7 +192,7 @@ export interface ChatWorkspaceProps {
 		action: "accept" | "decline" | "cancel",
 		content?: Record<string, unknown>,
 	) => Promise<unknown> | void;
-	onInterrupt?: () => void;
+	onInterrupt?: (queuedTurnIds: string[]) => void | Promise<unknown>;
 	commandError?: string;
 	onResumeAgent?: () => void;
 	resumingAgent?: boolean;
@@ -288,6 +289,10 @@ export interface ChatWorkspaceProps {
 	 * is worse than none.
 	 */
 	onSteer?: (text: string) => Promise<unknown>;
+	/** Settle one durable queued prompt without touching the active turn or siblings. */
+	onCancelQueuedTurn?: (turnId: string) => Promise<unknown>;
+	/** Deliver one selected queued prompt into the active turn as guidance. */
+	onPromoteQueuedTurn?: (turnId: string) => Promise<unknown>;
 	steerPending?: boolean;
 	/** Why the last steer was refused, from the daemon's typed answer. */
 	steerRefusal?: string;
@@ -362,6 +367,8 @@ export function ChatWorkspace({
 	onStageAttachments,
 	nativeImages,
 	onSteer,
+	onCancelQueuedTurn,
+	onPromoteQueuedTurn,
 	steerPending,
 	steerRefusal,
 	onReloadMcpServers,
@@ -370,6 +377,7 @@ export function ChatWorkspace({
 }: ChatWorkspaceProps) {
 	const { t } = useTranslation();
 	const turn = activeTurn(snapshot);
+	const runningTurn = snapshot.turns.find((candidate) => candidate.state === "running");
 	const hasPendingInteraction = snapshot.items.some(
 		(item) =>
 			item.kind === "activity" &&
@@ -377,6 +385,21 @@ export function ChatWorkspace({
 			item.status === "pending" &&
 			(!item.turnId || item.turnId === turn?.id),
 	);
+	const queuedTurns = snapshot.queuedTurns;
+	const visibleQueuedTurns = queuedTurns ?? [];
+	const stopUnavailable = Boolean(runningTurn && onInterrupt && queuedTurns === undefined);
+	const [confirmingStopQueueIDs, setConfirmingStopQueueIDs] = useState<string[]>();
+	const requestInterrupt = useCallback(() => {
+		if (!onInterrupt || queuedTurns === undefined) return;
+		if (queuedTurns.length > 0) {
+			// Freeze the destructive scope shown to the user. Snapshot polling can
+			// update the queue while this dialog is open, but the confirmation must
+			// continue to describe the action the user originally requested.
+			setConfirmingStopQueueIDs(queuedTurns.map((queuedTurn) => queuedTurn.turnId));
+			return;
+		}
+		void Promise.resolve(onInterrupt([])).catch(() => {});
+	}, [onInterrupt, queuedTurns]);
 	const handleChatKeyDown = useCallback(
 		(event: ReactKeyboardEvent<HTMLElement>) => {
 			if (
@@ -388,13 +411,14 @@ export function ChatWorkspace({
 				event.metaKey ||
 				turn?.state !== "running" ||
 				hasPendingInteraction ||
-				!onInterrupt
+				!onInterrupt ||
+				queuedTurns === undefined
 			)
 				return;
 			event.preventDefault();
-			onInterrupt();
+			requestInterrupt();
 		},
-		[hasPendingInteraction, onInterrupt, turn],
+		[hasPendingInteraction, onInterrupt, queuedTurns, requestInterrupt, turn],
 	);
 	const handleChatSurfaceClick = useCallback((event: ReactMouseEvent<HTMLElement>) => {
 		const target = event.target;
@@ -419,24 +443,6 @@ export function ChatWorkspace({
 	// session temporarily becomes terminated and later returns.
 	const reviewerActive = Boolean(reviewerTarget && session);
 	const shellActive = Boolean(shellTarget && session);
-	const queuedMessages = useMemo(() => {
-		const messagesByTurn = new Map(
-			snapshot.items
-				.filter(
-					(item): item is ConversationMessage =>
-						item.kind === "message" &&
-						item.role === "user" &&
-						item.origin === "human" &&
-						Boolean(item.turnId),
-				)
-				.map((message) => [message.turnId as string, message]),
-		);
-		return snapshot.turns.flatMap((queuedTurn) => {
-			if (queuedTurn.state !== "queued") return [];
-			const message = messagesByTurn.get(queuedTurn.id);
-			return message ? [{ turnId: queuedTurn.id, message }] : [];
-		});
-	}, [snapshot.items, snapshot.turns]);
 	// The turn a confirmation is open for. Undo is not reversible and it changes what
 	// the agent knows, so it is never one click.
 	const [confirming, setConfirming] = useState<string | undefined>(undefined);
@@ -864,10 +870,14 @@ export function ChatWorkspace({
 									</p>
 								) : null}
 								<ChatComposer
-									attachedTop={turn?.state === "running" && queuedMessages.length > 0}
+									attachedTop={visibleQueuedTurns.length > 0}
 									queuedDock={
-										turn?.state === "running" && queuedMessages.length > 0 ? (
-											<QueuedMessageDock messages={queuedMessages} />
+										visibleQueuedTurns.length > 0 ? (
+											<QueuedMessageDock
+												messages={visibleQueuedTurns}
+												onCancel={onCancelQueuedTurn}
+												onPromote={runningTurn ? onPromoteQueuedTurn : undefined}
+											/>
 										) : null
 									}
 									approval={
@@ -881,8 +891,25 @@ export function ChatWorkspace({
 										) : undefined
 									}
 									onSend={(text, attachments) => onSend?.(text, attachments)}
-									onInterrupt={turn ? onInterrupt : undefined}
-									commandError={commandError}
+									onInterrupt={
+										runningTurn && queuedTurns !== undefined ? requestInterrupt : undefined
+									}
+									interruptLabel={
+										visibleQueuedTurns.length > 0
+											? `Stop turn and cancel ${visibleQueuedTurns.length} queued ${visibleQueuedTurns.length === 1 ? "message" : "messages"}`
+											: undefined
+									}
+									interruptDescription={
+										visibleQueuedTurns.length > 0
+											? `Also cancels ${visibleQueuedTurns.length} queued ${visibleQueuedTurns.length === 1 ? "message" : "messages"}.`
+											: undefined
+									}
+									commandError={
+										commandError ??
+										(stopUnavailable
+											? "Stop is unavailable because this AO daemon does not report the complete queued work needed for a safe Stop. Update or restart AO, then try again."
+											: undefined)
+									}
 									settings={
 										onChooseSettings || onChooseConfigOption ? (
 											<TurnSettingsBar
@@ -924,6 +951,29 @@ export function ChatWorkspace({
 					</div>
 				</div>
 			</div>
+
+			<ConfirmDialog
+				open={confirmingStopQueueIDs !== undefined && !reviewerActive && !shellActive}
+				onOpenChange={(open) => {
+					if (!open) setConfirmingStopQueueIDs(undefined);
+				}}
+				title={`Stop turn and cancel ${confirmingStopQueueIDs?.length ?? 0} queued ${(confirmingStopQueueIDs?.length ?? 0) === 1 ? "message" : "messages"}?`}
+				description={
+					<p className="text-sm text-foreground">
+						{confirmingStopQueueIDs?.length === 2
+							? "The active turn and both queued messages will be stopped. This cannot be undone."
+							: `The active turn and ${confirmingStopQueueIDs?.length === 1 ? "the queued message" : `all ${confirmingStopQueueIDs?.length ?? 0} queued messages`} will be stopped. This cannot be undone.`}
+					</p>
+				}
+				confirmLabel="Stop all"
+				destructive
+				busy={busy}
+				onConfirm={() => {
+					const queuedTurnIDs = confirmingStopQueueIDs ?? [];
+					setConfirmingStopQueueIDs(undefined);
+					void Promise.resolve(onInterrupt?.(queuedTurnIDs)).catch(() => {});
+				}}
+			/>
 
 			{/* The copy has to be honest about the cost: this is not "hide these
 			    messages", it is "the agent forgets them". Nothing in the worktree is
@@ -2418,7 +2468,7 @@ type TimelineGroup = {
 	anchor: number;
 	items: ConversationItem[];
 	outcome?: {
-		state: "completed" | "recovered" | "interrupted" | "failed";
+		state: "completed" | "recovered" | "interrupted" | "queue_cancelled" | "failed";
 		durationMs?: number;
 		error?: string;
 	};
@@ -2597,7 +2647,7 @@ function groupByTurn(snapshot: ConversationSnapshot): TimelineGroup[] {
 		if (turn.state === "running" || turn.state === "queued") continue;
 		group.rollbackable = Boolean(turn.providerTurnId);
 		group.outcome = {
-			state: turn.state,
+			state: turn.state === "interrupted" && !turn.startedAt ? "queue_cancelled" : turn.state,
 			durationMs:
 				turn.completedAt && turn.startedAt
 					? new Date(turn.completedAt).getTime() - new Date(turn.startedAt).getTime()
@@ -2613,10 +2663,49 @@ function groupByTurn(snapshot: ConversationSnapshot): TimelineGroup[] {
 
 function QueuedMessageDock({
 	messages,
+	onCancel,
+	onPromote,
 }: {
-	messages: Array<{ turnId: string; message: ConversationMessage }>;
+	messages: ConversationQueuedTurn[];
+	onCancel?: (turnId: string) => Promise<unknown>;
+	onPromote?: (turnId: string) => Promise<unknown>;
 }) {
-	const [errors] = useState<Record<string, string>>({});
+	const [pending, setPending] = useState<Record<string, "cancel" | "promote">>({});
+	const [errors, setErrors] = useState<Record<string, string>>({});
+
+	const act = useCallback(
+		async (
+			turnId: string,
+			action: "cancel" | "promote",
+			command: ((turnId: string) => Promise<unknown>) | undefined,
+		) => {
+			if (!command || pending[turnId]) return;
+			setPending((current) => ({ ...current, [turnId]: action }));
+			setErrors((current) => {
+				const next = { ...current };
+				delete next[turnId];
+				return next;
+			});
+			try {
+				await command(turnId);
+			} catch {
+				setErrors((current) => ({
+					...current,
+					[turnId]:
+						action === "cancel"
+							? "Couldn't cancel this queued work. It may no longer be queued."
+							: "Couldn't use this message next. It may no longer be queued.",
+				}));
+			} finally {
+				setPending((current) => {
+					const next = { ...current };
+					delete next[turnId];
+					return next;
+				});
+			}
+		},
+		[pending],
+	);
 
 	const reversed = [...messages].reverse();
 	const lastIndex = reversed.length - 1;
@@ -2626,8 +2715,11 @@ function QueuedMessageDock({
 			className="-mb-2 max-h-40 overflow-y-auto rounded-t-[var(--radius-chat-composer)] border border-b-0 border-border-strong bg-surface"
 			data-testid="queued-message-dock"
 		>
-			{reversed.map(({ turnId, message }, index) => {
+			{reversed.map((message, index) => {
+				const { turnId } = message;
+				const presentation = queuedTurnPresentation(message);
 				const isNext = index === lastIndex;
+				const pendingAction = pending[turnId];
 				return (
 					<div
 						key={turnId}
@@ -2636,16 +2728,57 @@ function QueuedMessageDock({
 					>
 						<div className="flex h-8 min-w-0 items-center gap-2 px-3">
 							<span
-								className="min-w-0 flex-1 truncate text-xs text-muted-foreground"
-								title={message.text}
+								className="flex min-w-0 flex-1 items-center gap-1.5 truncate text-xs text-muted-foreground"
+								title={presentation.title}
 							>
-								{message.text}
+								{presentation.originLabel ? (
+									<span className="shrink-0 text-[10px] font-medium uppercase tracking-wide text-muted-foreground/80">
+										{presentation.originLabel}
+									</span>
+								) : null}
+								<span className="truncate">{presentation.label}</span>
 							</span>
 							{isNext ? (
 								<CornerDownRight
 									aria-hidden="true"
 									className="size-3 shrink-0 text-muted-foreground"
 								/>
+							) : null}
+							{onPromote && message.origin === "human" ? (
+								<Button
+									type="button"
+									variant="ghost"
+									size="icon-sm"
+									aria-label={`Use as next message: ${presentation.label}`}
+									title="Use as next message"
+									disabled={Boolean(pendingAction)}
+									onClick={() => void act(turnId, "promote", onPromote)}
+									className="size-6 shrink-0 text-muted-foreground"
+								>
+									{pendingAction === "promote" ? (
+										<Loader2 aria-hidden="true" className="size-3 animate-spin" />
+									) : (
+										<CornerDownRight aria-hidden="true" className="size-3" />
+									)}
+								</Button>
+							) : null}
+							{onCancel ? (
+								<Button
+									type="button"
+									variant="ghost"
+									size="icon-sm"
+									aria-label={`${presentation.cancelLabel}: ${presentation.label}`}
+									title={presentation.cancelLabel}
+									disabled={Boolean(pendingAction)}
+									onClick={() => void act(turnId, "cancel", onCancel)}
+									className="size-6 shrink-0 text-muted-foreground hover:text-destructive"
+								>
+									{pendingAction === "cancel" ? (
+										<Loader2 aria-hidden="true" className="size-3 animate-spin" />
+									) : (
+										<X aria-hidden="true" className="size-3" />
+									)}
+								</Button>
 							) : null}
 						</div>
 						{errors[turnId] ? (
@@ -2658,4 +2791,55 @@ function QueuedMessageDock({
 			})}
 		</div>
 	);
+}
+
+function queuedTurnPresentation(turn: ConversationQueuedTurn): {
+	label: string;
+	originLabel?: string;
+	cancelLabel: string;
+	title: string;
+} {
+	const text = turn.text.trim();
+	switch (turn.origin) {
+		case "human": {
+			const label = text || "Queued message";
+			return { label, cancelLabel: "Cancel queued message", title: label };
+		}
+		case "automation": {
+			const label = text || "Queued automation";
+			return {
+				label,
+				originLabel: "Automation",
+				cancelLabel: "Cancel queued automation",
+				title: `Automation: ${label}`,
+			};
+		}
+		case "daemon": {
+			const label = text || "Queued system work";
+			return {
+				label,
+				originLabel: "System",
+				cancelLabel: "Cancel queued system work",
+				title: `System: ${label}`,
+			};
+		}
+		case "provider": {
+			const label = text || "Queued agent work";
+			return {
+				label,
+				originLabel: "Agent",
+				cancelLabel: "Cancel queued agent work",
+				title: `Agent: ${label}`,
+			};
+		}
+		default: {
+			const label = text || "Queued work";
+			return {
+				label,
+				originLabel: "Queued",
+				cancelLabel: "Cancel queued work",
+				title: label,
+			};
+		}
+	}
 }

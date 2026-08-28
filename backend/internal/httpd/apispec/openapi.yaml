@@ -2595,9 +2595,21 @@ paths:
         schema:
           description: Session identifier, e.g. project-1.
           type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InterruptConversationRequest'
+        required: true
       responses:
         "204":
           description: No Content
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
         "404":
           content:
             application/json:
@@ -2622,7 +2634,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Not Implemented
-      summary: Cancel the in-flight turn in a chat session
+      summary: Stop the in-flight turn and cancel the exact confirmed queued work
       tags:
       - conversations
   /api/v1/sessions/{sessionId}/conversation/mcp/reload:
@@ -2986,6 +2998,55 @@ paths:
                 $ref: '#/components/schemas/APIError'
           description: Not Implemented
       summary: Name the provider's conversation thread
+      tags:
+      - conversations
+  /api/v1/sessions/{sessionId}/conversation/turns/{turnId}/cancel:
+    post:
+      operationId: cancelQueuedSessionConversationTurn
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      - description: AO conversation turn identifier, from the snapshot's turns array.
+        in: path
+        name: turnId
+        required: true
+        schema:
+          description: AO conversation turn identifier, from the snapshot's turns
+            array.
+          type: string
+      responses:
+        "204":
+          description: No Content
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Cancel one queued message before it reaches the agent
       tags:
       - conversations
   /api/v1/sessions/{sessionId}/conversation/turns/{turnId}/edit:
@@ -6501,6 +6562,23 @@ components:
       - text
       - status
       type: object
+    ConversationQueuedTurnResponse:
+      properties:
+        origin:
+          enum:
+          - human
+          - automation
+          - daemon
+          - provider
+          type: string
+        text:
+          type: string
+        turnId:
+          type: string
+      required:
+      - turnId
+      - text
+      type: object
     ConversationRateLimitsPayload:
       properties:
         planLabel:
@@ -6628,6 +6706,10 @@ components:
         oldestSequence:
           format: int64
           type: integer
+        queuedTurns:
+          items:
+            $ref: '#/components/schemas/ConversationQueuedTurnResponse'
+          type: array
         rateLimits:
           $ref: '#/components/schemas/ConversationRateLimitsPayload'
         sessionId:
@@ -6654,6 +6736,7 @@ components:
       - hasMoreBefore
       - nativeForkAvailableAfterSequence
       - turns
+      - queuedTurns
       - messages
       - activities
       - settings
@@ -7140,6 +7223,15 @@ components:
       required:
       - target
       - status
+      type: object
+    InterruptConversationRequest:
+      properties:
+        queuedTurnIds:
+          items:
+            type: string
+          type: array
+      required:
+      - queuedTurnIds
       type: object
     KillReviewResponse:
       properties:

@@ -297,7 +297,11 @@ export function SessionChatSurface({
 				onLoadOlder={loadOlder}
 				busy={commands.busy}
 				onSend={(text, attachments) => commands.send({ text, attachments })}
-				commandError={commands.error}
+				commandError={
+					commands.interruptScopeChanged
+						? "Queued work changed while Stop was awaiting confirmation. Review the refreshed queue and press Stop again."
+						: commands.error
+				}
 				onDecide={commands.resolve}
 				onResolveInput={commands.resolveInput}
 				onInterrupt={commands.interrupt}
@@ -340,6 +344,12 @@ export function SessionChatSurface({
 				// covers the window before the controller reports, and it is the last word
 				// afterwards, since the capability is a property of the driver.
 				onSteer={can(renderSnapshot, "steer") && !commands.steerUnsupported ? commands.steer : undefined}
+				onCancelQueuedTurn={commands.cancelQueuedTurn}
+				onPromoteQueuedTurn={
+					can(renderSnapshot, "steer") && !commands.steerUnsupported
+						? commands.promoteQueuedTurn
+						: undefined
+				}
 				steerPending={commands.steerPending}
 				steerRefusal={commands.steerRefusal}
 				onReloadMcpServers={
