@@ -67,6 +67,36 @@ type recordingLauncher struct {
 	aborted  []domain.SessionID
 }
 
+type historicalChatRestoreStore struct {
+	*transitionStore
+	conversation    domain.ConversationRecord
+	activeBranch    domain.ConversationBranch
+	conversationErr error
+}
+
+func (s *historicalChatRestoreStore) ConversationForSession(
+	_ context.Context,
+	id domain.SessionID,
+) (domain.ConversationRecord, error) {
+	if s.conversationErr != nil {
+		return domain.ConversationRecord{}, s.conversationErr
+	}
+	if s.conversation.SessionID != id {
+		return domain.ConversationRecord{}, domain.ErrNoConversation
+	}
+	return s.conversation, nil
+}
+
+func (s *historicalChatRestoreStore) ConversationBranch(
+	_ context.Context,
+	conversationID, branchID string,
+) (domain.ConversationBranch, error) {
+	if s.activeBranch.ConversationID != conversationID || s.activeBranch.ID != branchID {
+		return domain.ConversationBranch{}, domain.ErrNoConversationBranch
+	}
+	return s.activeBranch, nil
+}
+
 func (l *recordingLauncher) SupportsChat(_ domain.AgentHarness) bool { return true }
 
 func (l *recordingLauncher) PreflightChat(
@@ -315,6 +345,165 @@ func TestRestoreTerminatedChatOrchestratorAfterCompatibilityRecoveryKeepsIdentit
 	if resumed.ProviderConversationID != rec.Metadata.ProviderConversationID || rt.created != 0 {
 		t.Fatalf("restore continuity = provider %q runtime creates %d, want %q and no terminal runtime",
 			resumed.ProviderConversationID, rt.created, rec.Metadata.ProviderConversationID)
+	}
+}
+
+func TestHistoricalChatProviderScopeRequiresLatestCompletedMatchingHandoff(t *testing.T) {
+	const (
+		sessionID = domain.SessionID("mer-248")
+		provider  = "native-248"
+	)
+	newStore := func() *historicalChatRestoreStore {
+		transitions := newTransitionStore()
+		return &historicalChatRestoreStore{
+			transitionStore: transitions,
+			conversation: domain.ConversationRecord{
+				ID: "project-conversation", Scope: domain.ConversationScopeProject,
+				ProjectID: chatTestProject, SessionID: sessionID, ActiveBranchID: "old-root",
+			},
+			activeBranch: domain.ConversationBranch{
+				ID: "old-root", ConversationID: "project-conversation",
+				SessionID: "mer-88", ProviderConversationID: "native-88", Active: true,
+			},
+		}
+	}
+	record := domain.SessionRecord{
+		ID: sessionID, ProjectID: chatTestProject, Kind: domain.KindOrchestrator,
+		Harness: domain.HarnessCodex, Mode: domain.SessionModeChat, IsTerminated: true,
+		Metadata: domain.SessionMetadata{ProviderConversationID: provider},
+	}
+	now := time.Date(2026, 8, 28, 7, 0, 0, 0, time.UTC)
+
+	t.Run("matching latest transition reserves deterministic boundary", func(t *testing.T) {
+		st := newStore()
+		st.transitions["handoff-248"] = domain.SessionInterfaceTransition{
+			ID: "handoff-248", SessionID: sessionID,
+			SourceMode: domain.SessionModeTUI, TargetMode: domain.SessionModeChat,
+			Phase: domain.SessionInterfaceTransitionCompleted, NativeConversationID: provider,
+			CreatedAt: now, CompletedAt: now,
+		}
+		m := New(Deps{Store: st})
+		got, err := m.historicalChatProviderScopeID(context.Background(), record)
+		if err != nil {
+			t.Fatalf("historicalChatProviderScopeID: %v", err)
+		}
+		if got != "handoff-248:provider" {
+			t.Fatalf("provider scope = %q, want deterministic handoff boundary", got)
+		}
+	})
+
+	t.Run("newer transition prevents stale proof", func(t *testing.T) {
+		st := newStore()
+		st.transitions["matching-old"] = domain.SessionInterfaceTransition{
+			ID: "matching-old", SessionID: sessionID,
+			SourceMode: domain.SessionModeTUI, TargetMode: domain.SessionModeChat,
+			Phase: domain.SessionInterfaceTransitionCompleted, NativeConversationID: provider,
+			CreatedAt: now,
+		}
+		st.transitions["newer-other-provider"] = domain.SessionInterfaceTransition{
+			ID: "newer-other-provider", SessionID: sessionID,
+			SourceMode: domain.SessionModeTUI, TargetMode: domain.SessionModeChat,
+			Phase: domain.SessionInterfaceTransitionCompleted, NativeConversationID: "native-other",
+			CreatedAt: now.Add(time.Minute),
+		}
+		m := New(Deps{Store: st})
+		got, err := m.historicalChatProviderScopeID(context.Background(), record)
+		if err != nil {
+			t.Fatalf("historicalChatProviderScopeID: %v", err)
+		}
+		if got != "" {
+			t.Fatalf("provider scope = %q, want no repair from stale transition proof", got)
+		}
+	})
+
+	t.Run("current owner is never forked", func(t *testing.T) {
+		st := newStore()
+		st.transitions["handoff-current"] = domain.SessionInterfaceTransition{
+			ID: "handoff-current", SessionID: sessionID,
+			SourceMode: domain.SessionModeTUI, TargetMode: domain.SessionModeChat,
+			Phase: domain.SessionInterfaceTransitionCompleted, NativeConversationID: provider,
+			CreatedAt: now,
+		}
+		st.activeBranch.SessionID = sessionID
+		st.activeBranch.ProviderConversationID = provider
+		m := New(Deps{Store: st})
+		got, err := m.historicalChatProviderScopeID(context.Background(), record)
+		if err != nil {
+			t.Fatalf("historicalChatProviderScopeID: %v", err)
+		}
+		if got != "" {
+			t.Fatalf("provider scope = %q, want ordinary idempotent resume", got)
+		}
+	})
+
+	t.Run("matching proof cannot rebind a newer owner", func(t *testing.T) {
+		st := newStore()
+		st.transitions["handoff-no-owner"] = domain.SessionInterfaceTransition{
+			ID: "handoff-no-owner", SessionID: sessionID,
+			SourceMode: domain.SessionModeTUI, TargetMode: domain.SessionModeChat,
+			Phase: domain.SessionInterfaceTransitionCompleted, NativeConversationID: provider,
+			CreatedAt: now,
+		}
+		st.conversationErr = domain.ErrNoConversation
+		m := New(Deps{Store: st})
+		if _, err := m.historicalChatProviderScopeID(context.Background(), record); !errors.Is(err, domain.ErrNoConversation) {
+			t.Fatalf("historicalChatProviderScopeID error = %v, want current-owner proof failure", err)
+		}
+	})
+}
+
+func TestRestoreTerminatedChatOrchestratorPassesProvenProviderBoundary(t *testing.T) {
+	const sessionID = domain.SessionID("mer-248")
+	st := &historicalChatRestoreStore{
+		transitionStore: newTransitionStore(),
+		conversation: domain.ConversationRecord{
+			ID: "project-conversation", Scope: domain.ConversationScopeProject,
+			ProjectID: chatTestProject, SessionID: sessionID, ActiveBranchID: "old-root",
+		},
+		activeBranch: domain.ConversationBranch{
+			ID: "old-root", ConversationID: "project-conversation",
+			SessionID: "mer-88", ProviderConversationID: "native-88", Active: true,
+		},
+	}
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	rec := domain.SessionRecord{
+		ID: sessionID, ProjectID: chatTestProject, Kind: domain.KindOrchestrator,
+		Harness: domain.HarnessCodex, Mode: domain.SessionModeChat, IsTerminated: true,
+		Activity: domain.Activity{State: domain.ActivityExited},
+		Metadata: domain.SessionMetadata{
+			Branch: "ao/orchestrator", WorkspacePath: "/ws/mer-248",
+			ProviderConversationID: "native-248",
+		},
+	}
+	st.sessions[sessionID] = rec
+	st.transitions["handoff-248"] = domain.SessionInterfaceTransition{
+		ID: "handoff-248", SessionID: sessionID,
+		SourceMode: domain.SessionModeTUI, TargetMode: domain.SessionModeChat,
+		Phase:                domain.SessionInterfaceTransitionCompleted,
+		NativeConversationID: rec.Metadata.ProviderConversationID,
+		CreatedAt:            time.Now().UTC(), CompletedAt: time.Now().UTC(),
+	}
+	providerErr := errors.New("provider unavailable")
+	launcher := &recordingLauncher{startErr: providerErr}
+	m := New(Deps{
+		Runtime: &fakeRuntime{}, Agents: fakeAgents{}, Workspace: &fakeWorkspace{},
+		Store: st, Messenger: &fakeMessenger{}, Chat: launcher,
+		Lifecycle: &fakeLCM{store: st.fakeStore}, DataDir: "/ao-test-data",
+	})
+
+	if _, err := m.RestoreWithMode(context.Background(), sessionID); !errors.Is(err, providerErr) {
+		t.Fatalf("RestoreWithMode error = %v, want provider failure", err)
+	}
+	if len(launcher.started) != 1 {
+		t.Fatalf("Chat starts = %d, want 1", len(launcher.started))
+	}
+	start := launcher.started[0]
+	if start.ProviderConversationID != "native-248" || start.ProviderScopeID != "handoff-248:provider" {
+		t.Fatalf("historical restore start = provider %q scope %q",
+			start.ProviderConversationID, start.ProviderScopeID)
+	}
+	if got := st.sessions[sessionID]; !got.IsTerminated || got.Metadata.ProviderConversationID != "native-248" {
+		t.Fatalf("failed provider resume changed terminated target: %+v", got)
 	}
 }
 

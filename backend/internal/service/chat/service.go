@@ -332,6 +332,13 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	if freshProjectContext {
 		conversation, err = s.store.CreateProjectConversationWithContextReset(
 			ctx, conversationID, cfg.ProjectID, cfg.SessionID, resetBoundary, now)
+	} else if scope == domain.ConversationScopeProject &&
+		cfg.ProviderConversationID != "" && cfg.ProviderScopeID != "" {
+		// A coordinator-reserved provider boundary is an ownership transfer, not
+		// permission to steal a project narrative from a newer orchestrator.
+		// Require the durable current_session_id proof the coordinator observed;
+		// ControllerReady/CommitChatSpawn rechecks it after provider I/O.
+		conversation, err = s.store.ConversationForSession(ctx, cfg.SessionID)
 	} else {
 		conversation, err = s.store.CreateConversation(
 			ctx, conversationID, scope, cfg.ProjectID, cfg.SessionID, now)
