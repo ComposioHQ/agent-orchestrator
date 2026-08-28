@@ -40,8 +40,10 @@ func Build() ([]byte, error) {
 	// required array. nonNullableSlices drops the spurious "null" type swaggest
 	// stamps on every Go slice.
 	r.DefaultOptions = append(r.DefaultOptions,
+		func(rc *jsonschema.ReflectContext) { rc.EnvelopNullability = true },
 		jsonschema.InterceptProp(requiredFromJSONTag),
 		jsonschema.InterceptNullability(nonNullableSlices),
+		jsonschema.InterceptNullability(validNullableReferenceUnions),
 		// Clean component schema names (which become the generated TS type names):
 		// swaggest defaults to PackageType, e.g. "ProjectProject", "EnvelopeAPIError".
 		jsonschema.InterceptDefName(schemaName),
@@ -140,52 +142,53 @@ func schemaName(_ reflect.Type, defaultName string) string {
 // by projectOperations(). Add an entry when a new contract type is introduced;
 // the drift test fails until the spec is regenerated, which flags the gap.
 var schemaNames = map[string]string{
-	"ControllersSettingsResponse":                     "SettingsResponse",
-	"ControllersDesktopWorkspaceLocationResponse":     "DesktopWorkspaceLocationResponse",
-	"ControllersUpdateSessionInterfaceRequest":        "UpdateSessionInterfaceRequest",
-	"ControllersConversationSnapshotResponse":         "ConversationSnapshotResponse",
-	"ControllersConversationTurnResponse":             "ConversationTurnResponse",
-	"ControllersConversationTurnDiffResponse":         "ConversationTurnDiffResponse",
-	"ControllersConversationDiffFileResponse":         "ConversationDiffFileResponse",
-	"ControllersConversationMessageResponse":          "ConversationMessageResponse",
-	"ControllersConversationActivityResponse":         "ConversationActivityResponse",
-	"ControllersSendConversationMessageRequest":       "SendConversationMessageRequest",
-	"ControllersConversationImageContentRequest":      "ConversationImageContentRequest",
-	"ControllersConversationResourceContentRequest":   "ConversationResourceContentRequest",
-	"ControllersSendConversationMessageResponse":      "SendConversationMessageResponse",
-	"ControllersEditConversationMessageRequest":       "EditConversationMessageRequest",
-	"ControllersConversationContentSummaryResponse":   "ConversationContentSummaryResponse",
-	"ControllersEditConversationMessageResponse":      "EditConversationMessageResponse",
-	"ControllersActivateConversationBranchResponse":   "ActivateConversationBranchResponse",
-	"ControllersConversationBranchPointResponse":      "ConversationBranchPointResponse",
-	"ControllersResolveConversationApprovalRequest":   "ResolveConversationApprovalRequest",
-	"ControllersResolveConversationInputRequest":      "ResolveConversationInputRequest",
-	"ControllersConversationModelsResponse":           "ConversationModelsResponse",
-	"ControllersConversationModelResponse":            "ConversationModelResponse",
-	"ControllersConversationConfigOptionsResponse":    "ConversationConfigOptionsResponse",
-	"ControllersConversationConfigOptionResponse":     "ConversationConfigOptionResponse",
-	"ControllersConversationConfigChoiceResponse":     "ConversationConfigChoiceResponse",
-	"ControllersSetConversationConfigOptionRequest":   "SetConversationConfigOptionRequest",
-	"ControllersConversationSkillsResponse":           "ConversationSkillsResponse",
-	"ControllersConversationSkillResponse":            "ConversationSkillResponse",
-	"ControllersConversationTurnSettingsPayload":      "ConversationTurnSettingsPayload",
-	"ControllersConversationUsagePayload":             "ConversationUsagePayload",
-	"ControllersConversationRateLimitsPayload":        "ConversationRateLimitsPayload",
-	"ControllersConversationPlanResponse":             "ConversationPlanResponse",
-	"ControllersConversationPlanStepResponse":         "ConversationPlanStepResponse",
-	"ControllersConversationModelReroutePayload":      "ConversationModelReroutePayload",
-	"ControllersConversationAccountPayload":           "ConversationAccountPayload",
-	"ControllersConversationThreadStatePayload":       "ConversationThreadStatePayload",
-	"ControllersConversationMCPServerPayload":         "ConversationMCPServerPayload",
-	"ControllersReloadConversationMCPServersResponse": "ReloadConversationMCPServersResponse",
-	"ControllersCompactConversationResponse":          "CompactConversationResponse",
-	"ControllersRollbackConversationResponse":         "RollbackConversationResponse",
-	"ControllersRetryTurnResponse":                    "RetryTurnResponse",
-	"ControllersSetConversationTitleRequest":          "SetConversationTitleRequest",
-	"ControllersSetConversationTitleResponse":         "SetConversationTitleResponse",
-	"ControllersSteerConversationRequest":             "SteerConversationRequest",
-	"ControllersSteerConversationResponse":            "SteerConversationResponse",
-	"ControllersPromoteQueuedTurnResponse":            "PromoteQueuedTurnResponse",
+	"ControllersSettingsResponse":                          "SettingsResponse",
+	"ControllersDesktopWorkspaceLocationResponse":          "DesktopWorkspaceLocationResponse",
+	"ControllersUpdateSessionInterfaceRequest":             "UpdateSessionInterfaceRequest",
+	"ControllersConversationSnapshotResponse":              "ConversationSnapshotResponse",
+	"ControllersConversationTurnResponse":                  "ConversationTurnResponse",
+	"ControllersConversationTurnDiffResponse":              "ConversationTurnDiffResponse",
+	"ControllersConversationDiffFileResponse":              "ConversationDiffFileResponse",
+	"ControllersConversationMessageResponse":               "ConversationMessageResponse",
+	"ControllersConversationActivityResponse":              "ConversationActivityResponse",
+	"ControllersSendConversationMessageRequest":            "SendConversationMessageRequest",
+	"ControllersConversationImageContentRequest":           "ConversationImageContentRequest",
+	"ControllersConversationResourceContentRequest":        "ConversationResourceContentRequest",
+	"ControllersSendConversationMessageResponse":           "SendConversationMessageResponse",
+	"ControllersEditConversationMessageRequest":            "EditConversationMessageRequest",
+	"ControllersConversationContentSummaryResponse":        "ConversationContentSummaryResponse",
+	"ControllersEditConversationMessageResponse":           "EditConversationMessageResponse",
+	"ControllersActivateConversationBranchResponse":        "ActivateConversationBranchResponse",
+	"ControllersConversationBranchPointResponse":           "ConversationBranchPointResponse",
+	"ControllersConversationBranchMaterializationResponse": "ConversationBranchMaterializationResponse",
+	"ControllersResolveConversationApprovalRequest":        "ResolveConversationApprovalRequest",
+	"ControllersResolveConversationInputRequest":           "ResolveConversationInputRequest",
+	"ControllersConversationModelsResponse":                "ConversationModelsResponse",
+	"ControllersConversationModelResponse":                 "ConversationModelResponse",
+	"ControllersConversationConfigOptionsResponse":         "ConversationConfigOptionsResponse",
+	"ControllersConversationConfigOptionResponse":          "ConversationConfigOptionResponse",
+	"ControllersConversationConfigChoiceResponse":          "ConversationConfigChoiceResponse",
+	"ControllersSetConversationConfigOptionRequest":        "SetConversationConfigOptionRequest",
+	"ControllersConversationSkillsResponse":                "ConversationSkillsResponse",
+	"ControllersConversationSkillResponse":                 "ConversationSkillResponse",
+	"ControllersConversationTurnSettingsPayload":           "ConversationTurnSettingsPayload",
+	"ControllersConversationUsagePayload":                  "ConversationUsagePayload",
+	"ControllersConversationRateLimitsPayload":             "ConversationRateLimitsPayload",
+	"ControllersConversationPlanResponse":                  "ConversationPlanResponse",
+	"ControllersConversationPlanStepResponse":              "ConversationPlanStepResponse",
+	"ControllersConversationModelReroutePayload":           "ConversationModelReroutePayload",
+	"ControllersConversationAccountPayload":                "ConversationAccountPayload",
+	"ControllersConversationThreadStatePayload":            "ConversationThreadStatePayload",
+	"ControllersConversationMCPServerPayload":              "ConversationMCPServerPayload",
+	"ControllersReloadConversationMCPServersResponse":      "ReloadConversationMCPServersResponse",
+	"ControllersCompactConversationResponse":               "CompactConversationResponse",
+	"ControllersRollbackConversationResponse":              "RollbackConversationResponse",
+	"ControllersRetryTurnResponse":                         "RetryTurnResponse",
+	"ControllersSetConversationTitleRequest":               "SetConversationTitleRequest",
+	"ControllersSetConversationTitleResponse":              "SetConversationTitleResponse",
+	"ControllersSteerConversationRequest":                  "SteerConversationRequest",
+	"ControllersSteerConversationResponse":                 "SteerConversationResponse",
+	"ControllersPromoteQueuedTurnResponse":                 "PromoteQueuedTurnResponse",
 	// httpd/envelope
 	"EnvelopeAPIError": "APIError",
 	// domain
@@ -250,7 +253,13 @@ var schemaNames = map[string]string{
 	"ControllersAttachmentInput":                          "AttachmentInput",
 	"ControllersListWorkspaceFilesResponse":               "ListWorkspaceFilesResponse",
 	"ControllersWorkspaceFileSummary":                     "WorkspaceFileSummary",
+	"ControllersWorkspaceFileSections":                    "WorkspaceFileSections",
+	"ControllersWorkspaceCommitSummary":                   "WorkspaceCommitSummary",
+	"ControllersWorkspaceSummary":                         "WorkspaceSummary",
 	"ControllersWorkspaceFileResponse":                    "WorkspaceFileResponse",
+	"ControllersWorkspaceTreeQuery":                       "WorkspaceTreeQuery",
+	"ControllersListWorkspaceTreeResponse":                "ListWorkspaceTreeResponse",
+	"ControllersWorkspaceTreeEntry":                       "WorkspaceTreeEntry",
 	"ControllersListEditorsResponse":                      "ListEditorsResponse",
 	"ControllersEditorSummary":                            "EditorSummary",
 	"ControllersOpenSessionEditorRequest":                 "OpenSessionEditorRequest",
@@ -308,12 +317,9 @@ var schemaNames = map[string]string{
 	"ControllersMarkAllNotificationsReadResponse": "MarkAllNotificationsReadResponse",
 	"ControllersUsageHookMetadata":                "UsageHookMetadata",
 	"ControllersListUsageSessionsQuery":           "ListUsageSessionsQuery",
+	"ControllersEstimatedCostResponse":            "EstimatedCostResponse",
 	"ControllersCompactSessionUsageResponse":      "CompactSessionUsageResponse",
 	"ControllersListCompactSessionUsageResponse":  "ListCompactSessionUsageResponse",
-	"ControllersUsageMetricProvenanceResponse":    "UsageMetricProvenanceResponse",
-	"ControllersOpenAIUsageDetailsResponse":       "OpenAIUsageDetailsResponse",
-	"ControllersAnthropicUsageDetailsResponse":    "AnthropicUsageDetailsResponse",
-	"ControllersUsageProviderDetailsResponse":     "UsageProviderDetailsResponse",
 	"ControllersUsageTotalsResponse":              "UsageTotalsResponse",
 	"ControllersUsageModelResponse":               "UsageModelResponse",
 	"ControllersUsageHarnessResponse":             "UsageHarnessResponse",
@@ -401,6 +407,21 @@ func nonNullableSlices(p jsonschema.InterceptNullabilityParams) {
 	}
 	p.Schema.TypeEns().WithSimpleTypes(jsonschema.Array)
 	p.Schema.Type.SliceOfSimpleTypeValues = nil
+}
+
+// validNullableReferenceUnions removes the original concrete type left beside
+// an enveloped null-or-reference anyOf. Keeping that sibling type would apply
+// it conjunctively and reject null despite the explicit null branch.
+func validNullableReferenceUnions(p jsonschema.InterceptNullabilityParams) {
+	if p.Schema.Type == nil || len(p.Schema.AnyOf) == 0 {
+		return
+	}
+	for _, option := range p.Schema.AnyOf {
+		if option.TypeObject != nil && option.TypeObject.HasType(jsonschema.Null) {
+			p.Schema.Type = nil
+			return
+		}
+	}
 }
 
 // requiredFromJSONTag marks a property required when its json tag lacks
@@ -555,7 +576,7 @@ func usageOperations() []operation {
 	return []operation{
 		{
 			method: http.MethodGet, path: "/api/v1/usage/sessions", id: "listCompactSessionUsage", tag: "usage",
-			summary:    "List compact token usage for session cards",
+			summary:    "List compact token and estimated cost usage for session cards",
 			pathParams: []any{controllers.ListUsageSessionsQuery{}},
 			resps: []respUnit{
 				{http.StatusOK, controllers.ListCompactSessionUsageResponse{}},
@@ -565,7 +586,7 @@ func usageOperations() []operation {
 		},
 		{
 			method: http.MethodGet, path: "/api/v1/usage/sessions/{sessionId}", id: "getSessionUsage", tag: "usage",
-			summary:    "Get detailed token usage for one session",
+			summary:    "Get detailed token and estimated cost usage for one session",
 			pathParams: []any{controllers.SessionIDParam{}},
 			resps: []respUnit{
 				{http.StatusOK, controllers.SessionUsageResponse{}},
@@ -594,6 +615,17 @@ func shellTerminalOperations() []operation {
 			method: http.MethodPatch, path: "/api/v1/settings/session-interface", id: "updateSessionInterface", tag: "settings",
 			summary: "Choose the default interface for new sessions",
 			reqBody: controllers.UpdateSessionInterfaceRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.SettingsResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPatch, path: "/api/v1/settings/cloud-offering", id: "updateCloudOffering", tag: "settings",
+			summary: "Turn the cloud offering on or off for this machine",
+			reqBody: controllers.UpdateCloudOfferingRequest{},
 			resps: []respUnit{
 				{http.StatusOK, controllers.SettingsResponse{}},
 				{http.StatusBadRequest, envelope.APIError{}},
@@ -1634,6 +1666,18 @@ func sessionOperations() []operation {
 			contentTypes: map[int]string{http.StatusOK: "application/octet-stream"},
 		},
 		{
+			method: http.MethodGet, path: "/api/v1/sessions/{sessionId}/workspace/tree", id: "listSessionWorkspaceTree", tag: "sessions",
+			summary:    "List one directory level of a session workspace's full file tree, git-status decorated",
+			pathParams: []any{controllers.SessionIDParam{}, controllers.WorkspaceTreeQuery{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ListWorkspaceTreeResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
 			method: http.MethodGet, path: "/api/v1/sessions/{sessionId}/pr", id: "listSessionPRs", tag: "sessions",
 			summary:    "List pull requests owned by a session",
 			pathParams: []any{controllers.SessionIDParam{}},
@@ -1699,7 +1743,7 @@ func sessionOperations() []operation {
 		},
 		{
 			method: http.MethodPatch, path: "/api/v1/sessions/{sessionId}/auto-inject-ci", id: "setSessionAutoInjectCI", tag: "sessions",
-			summary:    "Set the automatic CI-failure injection default for new session PRs",
+			summary:    "Set automatic CI-failure injection for a session and its PRs",
 			pathParams: []any{controllers.SessionIDParam{}},
 			reqBody:    controllers.SetSessionAutoInjectCIRequest{},
 			resps: []respUnit{

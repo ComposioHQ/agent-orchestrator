@@ -2,6 +2,7 @@ import { lazy, Suspense } from "react";
 import { useTranslation } from "react-i18next";
 import type { GlobalSettingsSection as GlobalSettingsPage } from "../stores/ui-store";
 import { GeneralSettingsSection } from "./settings/GeneralSettingsSection";
+import { CloudCredentialsSection } from "./settings/CloudCredentialsSection";
 import { ConnectMobileContent } from "./settings/ConnectMobileContent";
 import { KeyboardShortcutsContent } from "./settings/KeyboardShortcutsContent";
 import { MobileDevicesSection } from "./settings/MobileDevicesSection";
@@ -40,6 +41,8 @@ export function GlobalSettingsForm({
 		>
 			{(all || section === "general") && <GeneralSettingsSection titleHidden={titleHidden} />}
 
+			{(all || section === "cloud") && <CloudCredentialsSection titleHidden={titleHidden} />}
+
 			{(all || section === "mobile") && (
 				<SettingsSection title={t("settings.mobile")} titleHidden={titleHidden}>
 					<div className="rounded-md bg-[var(--color-bg-settings-row)] px-4 pb-4 pt-0">
@@ -58,7 +61,7 @@ export function GlobalSettingsForm({
 			)}
 
 			{(all || section === "updates") && (
-				<Suspense fallback={<UpdatesSectionSkeleton titleHidden={titleHidden} />}>
+				<Suspense fallback={null}>
 					<UpdatesSection titleHidden={titleHidden} />
 				</Suspense>
 			)}
@@ -71,14 +74,5 @@ export function GlobalSettingsForm({
 				</SettingsSection>
 			)}
 		</div>
-	);
-}
-
-function UpdatesSectionSkeleton({ titleHidden }: { titleHidden: boolean }) {
-	return (
-		<section className="flex w-full flex-col gap-(--size-settings-section-inner-gap)" aria-busy="true">
-			{!titleHidden && <div className="mx-3 h-4 w-16 animate-pulse rounded bg-foreground/8 motion-reduce:animate-none" />}
-			<div className="h-32 w-full animate-pulse rounded-(--radius-settings-panel) border border-[var(--color-border-settings-dialog)] bg-[var(--color-bg-settings-input)] motion-reduce:animate-none" />
-		</section>
 	);
 }
