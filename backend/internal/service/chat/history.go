@@ -223,12 +223,6 @@ func (s *Service) EditMessage(
 	var replayTruncated bool
 	var providerScopeID string
 	operationCtx := ctx
-	var cancelOperation context.CancelFunc
-	defer func() {
-		if cancelOperation != nil {
-			cancelOperation()
-		}
-	}()
 	sourceStopInitiated := false
 	if canNativeFork {
 		forkAnchor := anchor.PreviousProviderTurnID
@@ -236,8 +230,10 @@ func (s *Service) EditMessage(
 		if err == nil {
 			// Fork succeeded, so closing the source writer is now irreversible.
 			// Finish or recover this boundary independently of request cancellation.
-			operationCtx, cancelOperation = context.WithTimeout(
+			detachedCtx, cancel := context.WithTimeout(
 				context.WithoutCancel(ctx), nativeEditHandoffLimit)
+			defer cancel()
+			operationCtx = detachedCtx
 			sourceStopInitiated = true
 			// Codex loads a fork into the source app-server, which remains that
 			// child's active writer until the process exits. Close the fenced, idle
