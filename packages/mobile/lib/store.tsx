@@ -24,6 +24,7 @@ import {
 } from "./api";
 import { isConfigured, loadConfig, type ServerConfig } from "./config";
 import { resolveActiveConfig, runtimeResolveDeps } from "./resolveConfig";
+import { pollIntervalFor } from "./pollInterval";
 import { shouldReRace } from "./reRace";
 import { sameServerConfig } from "./sameConfig";
 import { shouldKeepPolling } from "./connectionError";
@@ -34,7 +35,6 @@ import { mobileTelemetry, trackFeature } from "./telemetry/runtime";
 import { useConversationEventTransport } from "./chat/conversationEvents";
 
 const ACTIVE_PROJECT_KEY = "ao.activeProject";
-const POLL_INTERVAL_MS = 8000;
 
 // Board-level connection state is derived from the REST poll. The session screen
 // tracks its own terminal mux connection separately.
@@ -316,7 +316,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			}
 		};
 		void tick();
-		const poll = setInterval(() => void tick(), POLL_INTERVAL_MS);
+		// Paced by which endpoint won: the event stream cannot deliver over the
+		// tunnel, so the poll is the only live signal there and has to be quick.
+		// The effect re-runs whenever the config changes, so switching paths
+		// re-paces this without anything extra.
+		const poll = setInterval(() => void tick(), pollIntervalFor(config));
 		return () => {
 			clearInterval(poll);
 			// Clearing the interval does not stop a tick already in flight, and

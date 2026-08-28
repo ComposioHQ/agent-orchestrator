@@ -20,6 +20,9 @@ export function configForEndpoint(endpoint: Endpoint, token: string, hostId = ""
 		// Carried so per-machine state — the chat event cursor above all — keys on
 		// the machine rather than whichever address won the race.
 		...(hostId ? { hostId } : {}),
+		// Carried so the poll can speed up on paths where the event stream
+		// cannot deliver. See pollInterval.ts.
+		endpointKind: endpoint.kind,
 	};
 }
 

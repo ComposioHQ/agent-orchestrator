@@ -1,5 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as SecureStore from "expo-secure-store";
+import type { EndpointKind } from "./endpoints";
 import { useCallback, useEffect, useState } from "react";
 
 // The user points the app at their AO daemon (over Tailscale/LAN). We store the
@@ -22,6 +23,13 @@ export type ServerConfig = {
 	 * from the single-server config until its first connect.
 	 */
 	hostId?: string;
+	/**
+	 * Which kind of endpoint won the race. Drives how often we poll: the
+	 * conversation event stream cannot deliver over a Cloudflare quick tunnel
+	 * (it forwards the body in ~128 KB chunks), so polling is the only live
+	 * signal on that path. Absent for a config that predates the race.
+	 */
+	endpointKind?: EndpointKind;
 };
 
 export const DEFAULT_CONFIG: ServerConfig = {
