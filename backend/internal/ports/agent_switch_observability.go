@@ -28,6 +28,7 @@ const (
 	DeliveryErrorTimeout             DeliveryErrorClass = "timeout"
 	DeliveryErrorRateLimited         DeliveryErrorClass = "rate_limited"
 	DeliveryErrorProviderUnavailable DeliveryErrorClass = "provider_unavailable"
+	DeliveryResponseLost             DeliveryErrorClass = "response_lost"
 	DeliveryErrorInvalidPayload      DeliveryErrorClass = "invalid_payload"
 	DeliveryErrorUnauthorized        DeliveryErrorClass = "unauthorized"
 	DeliveryErrorUnsupportedEncoding DeliveryErrorClass = "unsupported_encoding"

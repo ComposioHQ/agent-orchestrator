@@ -56,3 +56,25 @@ cd backend && go test ./internal/domain ./internal/ports -count=1
 ```
 
 Then include these packages in the final full backend test, race, and vet suites.
+
+## Fix round 1
+
+Review corrections applied after commit `55fd9fe96`:
+
+- Replaced the custom `title` and flat exception object with Sentry-recognized `message` and `exception.values`, and changed stack frames to the accepted `module`, `function`, `filename`, `lineno`, and `in_app` keys. The canonical event remains fixed-struct-only and deterministic.
+- Changed `AgentSwitchDedupeKey` to require a validated `AgentSwitchDedupeScope`. Switch incidents now include the opaque switch ID, maintenance includes both switch ID and daemon-run ID, and daemon lifecycle uses only daemon-run ID, matching the approved formulas. Scope IDs remain local and never enter canonical JSON.
+- Tightened report-kind applicability: terminal failures reject retained markers; semantic reports require `fault_code=not_applicable`; panic and daemon lifecycle require `error_code=not_applicable`; recovery-attempt and maintenance reports accept a durable semantic code only where the durable phase makes it real.
+- Suppressed `stale` alongside `ok` and `expected_rejection`; required resolved target-start/runtime/tri-state facts for target-scoped points; required source-stop/gate facts for source-scoped points; and forced daemon/visibility switch-only fields to explicit `not_applicable`.
+- Made stack requirements taxonomy-priority-based: panics and P0/P1 internal taxonomy entries require frames, while P2 entries may intentionally omit them.
+- Added the provider-neutral `DeliveryResponseLost` error class for dispatcher response-loss settlement.
+- Expanded deny-by-default tests across every free metadata and frame string, rejecting identifier-, absolute-path-, URL-, prompt-, and UUID-like values.
+- Updated the frozen fixture and structural assertions to the accepted Sentry event shape.
+
+Fix-round static inspection:
+
+- `gofmt` completed for all changed Go files.
+- `git diff --check` reported no whitespace errors.
+- `jq` validated both fixture syntax and the exact recognized Sentry message/exception/frame keys.
+- Approved taxonomy parity remained exact at 71 points with no `comm` difference.
+- Fixture prohibited-content search and domain/ports Sentry-import search returned no matches.
+- Runtime/compiler verification remains deferred under the same explicit no-test/no-build instruction.
