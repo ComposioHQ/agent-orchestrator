@@ -627,36 +627,6 @@
 	border-block-start: 0 !important;
 }
 
-/* Keep updater state legible without tinting the whole surface. The glyph is
- * the single state-colored affordance; the panel otherwise matches Settings. */
-.update-status-panel {
-	--update-status-tone: var(--muted-foreground);
-	box-shadow: inset 0 1px 0 color-mix(in oklch, var(--foreground) 5%, transparent);
-}
-
-.update-status-panel[data-tone="accent"] {
-	--update-status-tone: var(--primary);
-}
-
-.update-status-panel[data-tone="success"] {
-	--update-status-tone: var(--color-success);
-}
-
-.update-status-panel[data-tone="warning"] {
-	--update-status-tone: var(--color-warning);
-}
-
-.update-status-panel[data-tone="error"] {
-	--update-status-tone: var(--color-error);
-}
-
-.update-status-glyph {
-	border: 1px solid color-mix(in oklch, var(--update-status-tone) 30%, transparent);
-	background: color-mix(in oklch, var(--update-status-tone) 11%, transparent);
-	color: var(--update-status-tone);
-	box-shadow: inset 0 1px 0 color-mix(in oklch, var(--foreground) 5%, transparent);
-}
-
 /* Tailwind preflight clears button backgrounds; keep settings rows filled. */
 button.settings-row-bar {
 	background-color: var(--color-bg-settings-row);
@@ -676,6 +646,11 @@ button.settings-link-row:active {
 	padding-block: var(--space-2);
 	padding-inline: var(--space-3);
 	border-radius: 0;
+}
+
+/* The update summary is a content row, not a compact control row. */
+.settings-grouped-rows .update-status-row {
+	padding-block: var(--space-4);
 }
 
 /* Button/link rows (e.g. Connect Mobile, Keyboard Shortcuts) keep rounded
@@ -1376,10 +1351,9 @@ textarea,
 	height: 100%;
 }
 
-/* Normal-buffer panes (codex, a plain shell) now keep scrollback (scrollback:5000
-   in XtermTerminal), so the viewport becomes scrollable. Hide the scrollbar so it
-   doesn't reserve width and shift the cell grid; the wheel still scrolls via the
-   terminal's wheel handler. */
+/* Normal-buffer panes (codex, a plain shell) keep scrollback (scrollback:5000 in
+   XtermTerminal). Preserve the existing hidden-scrollbar behavior by default;
+   macOS opts into the slim, draggable gutter below. */
 .xterm .xterm-viewport {
 	scrollbar-width: none;
 }
@@ -1387,6 +1361,49 @@ textarea,
 .xterm .xterm-viewport::-webkit-scrollbar {
 	width: 0;
 	height: 0;
+}
+
+/* xterm 5's native scrollbar obeys macOS's system auto-hide preference even
+   when its WebKit pseudo-elements are styled. Mirror normal-buffer geometry in
+   an app-owned overlay that fades after scrolling, while alternate-screen TUIs
+   (and their tmux copy-mode chrome) have no thumb at all. */
+.terminal-scrollbar {
+	position: absolute;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	z-index: 4;
+	width: 7px;
+	opacity: 0;
+	pointer-events: none;
+	transition: opacity var(--duration-fast) ease-out;
+}
+
+.terminal-scrollbar[data-scrollable="true"] {
+	pointer-events: auto;
+}
+
+.terminal-scrollbar[data-scrollable="true"][data-active="true"],
+.terminal-scrollbar[data-scrollable="true"]:hover,
+.terminal-scrollbar[data-scrollable="true"]:active {
+	opacity: 1;
+}
+
+.terminal-scrollbar__thumb {
+	position: absolute;
+	top: 0;
+	right: 1px;
+	left: 1px;
+	min-height: 24px;
+	border-radius: 999px;
+	background-color: color-mix(in srgb, var(--color-text-terminal) 30%, transparent);
+	will-change: height, transform;
+}
+
+.terminal-scrollbar:hover .terminal-scrollbar__thumb,
+.terminal-scrollbar:active .terminal-scrollbar__thumb,
+.terminal-xterm-host--mac:focus-within + .terminal-scrollbar .terminal-scrollbar__thumb {
+	background-color: color-mix(in srgb, var(--color-text-terminal) 48%, transparent);
 }
 
 /* Scrollable region that must not show a scrollbar — the wheel/trackpad still
@@ -1881,6 +1898,13 @@ body.is-resizing-x .session-split[data-workspace-resizing="true"] [data-slot="in
 	background-color: var(--color-interactive-hover) !important;
 	outline: none !important;
 	box-shadow: none !important;
+}
+
+/* A reorder can leave its source row, so lock the renderer cursor until the
+   drag ends or is cancelled. */
+html.sidebar-reordering,
+html.sidebar-reordering * {
+	cursor: grabbing !important;
 }
 
 /* No blue focus rings anywhere — hover/active carry interaction feedback.

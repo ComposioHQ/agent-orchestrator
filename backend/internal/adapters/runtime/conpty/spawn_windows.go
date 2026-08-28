@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -19,20 +18,9 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// readyRE matches the "READY:<pid> <port>" line printed by RunHost.
-var readyRE = regexp.MustCompile(`READY:(\d+) (\d+)`)
-
-const spawnReadyTimeout = 10 * time.Second
-
-// maxCapturedStderr bounds how much pty-host stderr we retain for diagnostics.
-const maxCapturedStderr = 8192
-
 // boundedBuffer is a thread-safe io.Writer that retains up to max bytes of what
 // is written and discards the rest. It always consumes its input (never blocks
-// or errors), so it is a safe stderr sink for the detached pty-host — matching
-// the previous io.Discard behavior while keeping a capped copy so a startup
-// failure (e.g. newConPTY) can be reported instead of only "exited without
-// printing READY".
+// or errors), making it a safe startup diagnostic sink for a detached host.
 type boundedBuffer struct {
 	mu  sync.Mutex
 	buf []byte
