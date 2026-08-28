@@ -13,7 +13,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 type TerminalSwitchAgentButtonProps = {
 	agentSwitch?: AgentSwitchSummary;
-	container: HTMLElement | null | undefined;
+	container?: HTMLElement | null;
 	onOpenChange: ((open: boolean) => void) | undefined;
 	open: boolean;
 	presentation?: AgentSwitchPresentation;
@@ -108,7 +108,7 @@ export function TerminalSwitchAgentButton({
 					<TooltipContent>{label}</TooltipContent>
 				</Tooltip>
 			)}
-			{open && container ? (
+			{open && container && variant !== "menu-item" ? (
 				<SwitchAgentDialog
 					agentSwitch={agentSwitch}
 					container={container}
