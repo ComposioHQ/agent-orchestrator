@@ -72,7 +72,17 @@ identical, non-forcing behavior.
 `AO_PROJECT_ID`, `AO_SESSION_ID` (by fetching the current session from the
 daemon), then the current working directory matched against registered project
 paths. If `AO_SESSION_ID` is set but the session cannot be fetched, pass
-`--project` explicitly.
+`--project` explicitly. Under a valid AO session it also sends that session as
+the parent, allowing a Codex child to inherit its immutable profile binding.
+Select a profile explicitly with its canonical ID:
+
+```bash
+ao spawn --agent codex --profile existing --prompt "Implement the next task"
+```
+
+`--profile` is rejected for non-Codex agents. Omission inherits the parent's
+binding when available and otherwise selects `existing`; there is no mutable
+global “last selected” profile.
 
 Agent switching is initially available only for worker sessions whose source
 and target harnesses are Claude Code or Codex. The main command
@@ -80,6 +90,7 @@ accepts an idempotency key:
 
 ```bash
 ao session switch-agent ao-7 codex \
+  --profile existing \
   --idempotency-key switch-ao-7-to-codex
 
 ao session agent-switch ls ao-7 --json
@@ -88,6 +99,10 @@ ao session agent-switch ls ao-7 --json
 `switch-agent` and `agent-switch ls` both support `--json`.
 The `agent-switch` command also has the `agent-switches` alias, and `ls` has the
 `list` alias.
+
+The first switch of an unbound session to Codex accepts `--profile`. Once a
+session has a Codex binding, omission or the same ID reuses it and a different
+ID is rejected. Switching away does not remove the binding.
 
 `ao session handoff submit` is the internal source-agent path for optional
 semantic enrichment, not a required human step in a normal switch. It requires
