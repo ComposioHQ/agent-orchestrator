@@ -256,7 +256,8 @@ func (c *codexProfileCatalog) readManaged(id string) codexProfileRecord {
 			ID: id, Label: label, Source: domain.CodexProfileSourceManaged,
 			Status: domain.CodexProfileStatusValid, ReasonCode: domain.CodexProfileReasonValid,
 			Reason: "This Codex profile is available.", Authentication: uncheckedAuthentication(),
-			AuthMethod: domain.CodexAuthMethodUnknown,
+			AuthMethod:              domain.CodexAuthMethodUnknown,
+			UsableByCurrentLaunches: true,
 		},
 	}
 }

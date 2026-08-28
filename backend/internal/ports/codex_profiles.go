@@ -2,6 +2,7 @@ package ports
 
 import (
 	"context"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
@@ -61,4 +62,16 @@ type CodexAccountClient interface {
 type CodexAccountClientFactory interface {
 	Open(ctx context.Context, profile CodexAccountProfile) (CodexAccountClient, error)
 	Capabilities(ctx context.Context) domain.CodexProfileCapabilities
+}
+
+// CodexProfileLaunchResolver is the daemon-owned boundary that turns a profile
+// identity or an existing immutable binding into an invocation-scoped launch
+// context. Session Manager owns selection and persistence; the agent service
+// owns catalog and readiness validation.
+type CodexProfileLaunchResolver interface {
+	ResolveCodexProfileForLaunch(ctx context.Context, profileID string) (domain.CodexLaunchContext, error)
+	ResolveCodexLegacyBinding(ctx context.Context, sessionID domain.SessionID, candidateHome string, createdAt time.Time) (domain.CodexSessionBinding, error)
+	ValidateCodexSessionBinding(ctx context.Context, binding domain.CodexSessionBinding) (domain.CodexLaunchContext, error)
+	CodexSessionProfileSummary(binding domain.CodexSessionBinding) domain.CodexSessionProfileSummary
+	InvalidateCodexProfileAuthentication(profileID string)
 }

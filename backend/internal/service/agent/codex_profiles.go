@@ -138,8 +138,8 @@ func (m *codexProfileManager) detectCapabilities(ctx context.Context) domain.Cod
 }
 
 func (m *codexProfileManager) ensure(ctx context.Context, profileIDs []string, purpose domain.AgentReadinessPurpose, installation domain.AgentInstallationState) (CodexProfiles, error) {
-	if purpose != domain.AgentReadinessPurposeDisplay {
-		return CodexProfiles{}, apierr.Invalid("INVALID_READINESS_PURPOSE", "Purpose must be display", map[string]any{"purpose": purpose})
+	if purpose != domain.AgentReadinessPurposeDisplay && purpose != domain.AgentReadinessPurposeLaunch {
+		return CodexProfiles{}, apierr.Invalid("INVALID_READINESS_PURPOSE", "Purpose must be display or launch", map[string]any{"purpose": purpose})
 	}
 	if err := m.catalog.refresh(); err != nil {
 		return CodexProfiles{}, apierr.Unavailable("CODEX_PROFILE_MANAGEMENT_UNAVAILABLE", "Codex profile discovery is unavailable")
@@ -205,8 +205,8 @@ func (m *codexProfileManager) ensure(ctx context.Context, profileIDs []string, p
 }
 
 func (m *codexProfileManager) prepareEnsure(profileIDs []string, purpose domain.AgentReadinessPurpose) (CodexProfiles, bool, error) {
-	if purpose != domain.AgentReadinessPurposeDisplay {
-		return CodexProfiles{}, true, apierr.Invalid("INVALID_READINESS_PURPOSE", "Purpose must be display", map[string]any{"purpose": purpose})
+	if purpose != domain.AgentReadinessPurposeDisplay && purpose != domain.AgentReadinessPurposeLaunch {
+		return CodexProfiles{}, true, apierr.Invalid("INVALID_READINESS_PURPOSE", "Purpose must be display or launch", map[string]any{"purpose": purpose})
 	}
 	if err := m.catalog.refresh(); err != nil {
 		return CodexProfiles{}, true, apierr.Unavailable("CODEX_PROFILE_MANAGEMENT_UNAVAILABLE", "Codex profile discovery is unavailable")
@@ -815,6 +815,11 @@ func (s *Service) EnsureCodexProfiles(ctx context.Context, profileIDs []string, 
 	}
 	if s.codexProfiles == nil {
 		return CodexProfiles{}, apierr.Unavailable("CODEX_PROFILE_MANAGEMENT_UNAVAILABLE", "Codex profile management is unavailable")
+	}
+	// Phase 2's public profile API remains display-only. Launch freshness is an
+	// internal Session Manager boundary exposed through ResolveCodexProfileForLaunch.
+	if purpose != domain.AgentReadinessPurposeDisplay {
+		return CodexProfiles{}, apierr.Invalid("INVALID_READINESS_PURPOSE", "Purpose must be display", map[string]any{"purpose": purpose})
 	}
 	if result, done, err := s.codexProfiles.prepareEnsure(profileIDs, purpose); done {
 		return result, err

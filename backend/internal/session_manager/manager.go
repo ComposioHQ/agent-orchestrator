@@ -113,6 +113,10 @@ var (
 	// ErrNativeConversationMissing means a supported harness has not yet exposed
 	// the native id required to resume it through the other controller.
 	ErrNativeConversationMissing = errors.New("session: native conversation id unavailable")
+	// ErrCodexNativeHistoryUnavailable means the exact conversation is absent
+	// from the immutable profile home. AO must never search or fresh-start in a
+	// different home when continuity was requested.
+	ErrCodexNativeHistoryUnavailable = errors.New("session: bound Codex native history unavailable")
 	// ErrNativeConversationUnverified means the stored native id belongs to an
 	// older terminal generation and the currently visible TUI has not confirmed
 	// that it resumed the same provider conversation yet.
@@ -347,6 +351,7 @@ type Manager struct {
 	workspace      ports.Workspace
 	store          Store
 	agentReadiness ports.AgentReadinessProvider
+	codexProfiles  ports.CodexProfileLaunchResolver
 	// messenger is a sessionguard.Guard wrapping the raw messenger, so every
 	// pane write is guarded (re-read state, refuse a blocked session) without
 	// each call site re-deriving the check. Send/confirmActive use Deliver for
@@ -628,6 +633,9 @@ type Deps struct {
 	Preview             PreviewLifecycle
 	Browser             BrowserLifecycle
 	BrowserCapabilities BrowserCapabilityIssuer
+	// CodexProfiles resolves and validates immutable profile-bound launch homes.
+	// Nil keeps non-Codex focused tests and embedders compatible.
+	CodexProfiles ports.CodexProfileLaunchResolver
 	// DataDir owns durable attachment storage and is exported to spawned agents
 	// as AO_DATA_DIR so their hook commands can open the same store.
 	DataDir string
@@ -671,6 +679,7 @@ func New(d Deps) *Manager {
 		preview:                      d.Preview,
 		browser:                      d.Browser,
 		browserCapabilities:          d.BrowserCapabilities,
+		codexProfiles:                d.CodexProfiles,
 		attachments:                  attachmentstore.New(d.DataDir),
 		attachmentSuffix:             randomSuffix,
 		dataDir:                      d.DataDir,
@@ -767,6 +776,10 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	if _, ok := m.agents.Agent(cfg.Harness); !ok {
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w: %q", ErrUnknownHarness, cfg.Harness)
 	}
+	codexLaunch, err := m.resolveInitialCodexLaunch(ctx, cfg)
+	if err != nil {
+		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w", err)
+	}
 
 	// Resolve the effective agent config (project base + role override + spawn
 	// override) and validate the model before any durable state is created. A
@@ -827,11 +840,25 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	promptBytes := len(prompt)
 	systemPromptBytes := len(systemPrompt)
 
-	rec, err := m.store.CreateSession(ctx, seedRecord(cfg, project.Config, m.clock()))
+	seed := seedRecord(cfg, project.Config, m.clock())
+	if codexLaunch != nil {
+		binding := codexLaunch.Binding
+		seed.CodexProfileBinding = &binding
+	}
+	rec, err := m.store.CreateSession(ctx, seed)
 	if err != nil {
 		return domain.SessionRecord{}, 0, 0, wrapSpawnStageEarly(ErrSpawnCreate, err)
 	}
 	id := rec.ID
+	if codexLaunch != nil {
+		binding := codexLaunch.Binding
+		binding.SessionID = id
+		if binding.CreatedAt.IsZero() {
+			binding.CreatedAt = rec.CreatedAt
+		}
+		rec.CodexProfileBinding = &binding
+		codexLaunch.Binding = binding
+	}
 	systemPromptFile, err := m.prepareSystemPromptFile(id, cfg.Harness, systemPrompt)
 	if err != nil {
 		m.rollbackSpawnSeedRow(ctx, id)
@@ -908,6 +935,9 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, true)
 		return domain.SessionRecord{}, 0, 0, wrapSpawnStage(id, ErrSpawnBrowser, err)
 	}
+	if codexLaunch != nil {
+		m.applyCodexLaunchEnvironment(id, env, *codexLaunch)
+	}
 	rec, err = m.persistBrowserCapabilityVerifier(ctx, rec, browserCapabilityVerifier)
 	if err != nil {
 		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, true)
@@ -942,6 +972,9 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	if err != nil {
 		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, true)
 		return domain.SessionRecord{}, 0, 0, wrapSpawnStage(id, ErrSpawnLaunchCommand, err)
+	}
+	if codexLaunch != nil {
+		argv = isolateManagedCodexCommand(argv, codexLaunch.Managed)
 	}
 	// Pre-flight: confirm argv[0] actually exists on PATH (or as an absolute
 	// path the adapter returned) BEFORE handing the launch to the runtime.
@@ -1993,6 +2026,17 @@ func (m *Manager) relaunchSessionWithPolicy(ctx context.Context, operation strin
 	if err != nil {
 		return RestoreResult{}, fmt.Errorf("%s %s: persist browser capability: %w", operation, rec.ID, err)
 	}
+	managedCodexProfile := false
+	if rec.Harness == domain.HarnessCodex {
+		launchContext, launchErr := m.codexLaunchForRecord(ctx, &rec)
+		if launchErr != nil {
+			return RestoreResult{}, fmt.Errorf("%s %s: Codex profile: %w", operation, rec.ID, launchErr)
+		}
+		if launchContext != nil {
+			m.applyCodexLaunchEnvironment(rec.ID, env, *launchContext)
+			managedCodexProfile = launchContext.Managed
+		}
+	}
 	m.augmentAgentRuntimeEnv(agent, env)
 	if err := m.prepareWorkspace(ctx, agent, rec.ID, ws.Path, systemPrompt, systemPromptFile, agentConfig, env); err != nil {
 		return RestoreResult{}, fmt.Errorf("%s %s: %w", operation, rec.ID, err)
@@ -2004,6 +2048,12 @@ func (m *Manager) relaunchSessionWithPolicy(ctx context.Context, operation strin
 		argv, delivery, mode, err = freshLaunchArgv(ctx, agent, rec.ID, ws.Path, rec.Metadata,
 			systemPrompt, systemPromptFile, agentConfig, rec.Kind, m.dataDir, true)
 	} else {
+		if rec.Harness == domain.HarnessCodex && strings.TrimSpace(rec.Metadata.AgentSessionID) != "" {
+			if err := ensureBoundCodexNativeHistory(ctx, agent, env, rec.Metadata.AgentSessionID); err != nil {
+				m.cleanupSystemPromptDir(rec.ID)
+				return RestoreResult{}, fmt.Errorf("%s %s: %w", operation, rec.ID, err)
+			}
+		}
 		argv, delivery, mode, err = restoreArgv(ctx, agent, rec.ID, ws.Path, rec.Metadata,
 			systemPrompt, systemPromptFile, agentConfig, rec.Kind, rec.Harness, m.dataDir)
 	}
@@ -2011,6 +2061,7 @@ func (m *Manager) relaunchSessionWithPolicy(ctx context.Context, operation strin
 		m.cleanupSystemPromptDir(rec.ID)
 		return RestoreResult{}, fmt.Errorf("%s %s: %w", operation, rec.ID, err)
 	}
+	argv = isolateManagedCodexCommand(argv, managedCodexProfile)
 	if err := m.validateAgentBinary(argv); err != nil {
 		m.cleanupSystemPromptDir(rec.ID)
 		return RestoreResult{}, fmt.Errorf("%s %s: %w", operation, rec.ID, err)
@@ -2091,6 +2142,28 @@ func (m *Manager) relaunchSessionWithPolicy(ctx context.Context, operation strin
 		return RestoreResult{}, err
 	}
 	return RestoreResult{Session: updated, Mode: mode}, nil
+}
+
+func ensureBoundCodexNativeHistory(ctx context.Context, agent ports.Agent, env map[string]string, nativeID string) error {
+	prober, ok := agent.(ports.AgentNativeSessionProber)
+	if !ok {
+		return nil
+	}
+	configDir, err := nativeConfigDir(ctx, agent, env)
+	if err != nil {
+		return err
+	}
+	availability, err := prober.ProbeNativeSession(ctx, ports.NativeSessionRef{NativeSessionID: nativeID, ConfigDir: configDir})
+	if err != nil {
+		availability = ports.NativeSessionAvailabilityUnknown
+	}
+	if availability == ports.NativeSessionAvailabilityUnknown {
+		return nil
+	}
+	if availability == ports.NativeSessionAvailabilityUnavailable {
+		return ErrCodexNativeHistoryUnavailable
+	}
+	return nil
 }
 
 func (m *Manager) restartRuntime(ctx context.Context, handle ports.RuntimeHandle, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
@@ -4042,6 +4115,13 @@ func (m *Manager) cleanupAgentWorkspace(ctx context.Context, rec domain.SessionR
 	} else {
 		m.logger.Warn("workspace cleanup: project env unavailable; agent cleanup using AO env only",
 			"sessionID", rec.ID, "projectID", rec.ProjectID, "error", err)
+	}
+	if rec.Harness == domain.HarnessCodex {
+		if launchContext, err := m.codexLaunchForRecord(ctx, &rec); err == nil && launchContext != nil {
+			m.applyCodexLaunchEnvironment(rec.ID, env, *launchContext)
+		} else if err != nil {
+			m.logger.Warn("workspace cleanup: bound Codex profile unavailable", "sessionID", rec.ID, "error", err)
+		}
 	}
 	if strings.TrimSpace(workspacePath) != "" {
 		if err := cleaner.CleanupWorkspace(ctx, ports.WorkspaceHookConfig{
