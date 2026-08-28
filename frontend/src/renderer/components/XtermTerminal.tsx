@@ -403,9 +403,10 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			// Left-click on a web link opens it inside the AO Browser panel (the
 			// parent decides how). Non-web schemes (mailto:, etc.) still go to the OS
 			// via the main process's window-open handler. Right-click to open a web
-			// link in the system browser instead — see the context menu below.
+			// link in the system browser instead — see the context menu below. Cmd-click
+			// follows the same escape hatch as links in the Chat surface.
 			if (isWebLink(uri)) {
-				if (event.altKey) {
+				if (event.altKey || event.metaKey) {
 					void openLinkInSystemBrowser(uri);
 					return;
 				}
