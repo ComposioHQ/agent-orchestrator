@@ -131,6 +131,9 @@ func migrate(db *sql.DB) error {
 	if err := goose.SetDialect("sqlite3"); err != nil {
 		return fmt.Errorf("set goose dialect: %w", err)
 	}
+	if err := retirePublishedPipelinesProfile(context.Background(), db); err != nil {
+		return fmt.Errorf("retire published Pipelines migration profile: %w", err)
+	}
 	if err := repairRenumberedChatMigrationHistory(db); err != nil {
 		return fmt.Errorf("repair renumbered chat migration history: %w", err)
 	}
@@ -155,12 +158,6 @@ func migrate(db *sql.DB) error {
 	if err := prepareQueuedTurnPromotionMigration(db); err != nil {
 		return fmt.Errorf("prepare queued-turn promotion migration: %w", err)
 	}
-	if err := prepareLegacyPipelineCDCBeforeReviewRunMigration(db); err != nil {
-		return fmt.Errorf("prepare legacy pipeline CDC migration: %w", err)
-	}
-	if err := prepareAppSettingsSingletonMigration(db); err != nil {
-		return fmt.Errorf("prepare app settings singleton migration: %w", err)
-	}
 	// Builds can advance a database past a migration that is added or
 	// renumbered later (notably across fast-moving Nightly releases). Apply
 	// those embedded migrations instead of permanently wedging daemon startup
@@ -169,180 +166,6 @@ func migrate(db *sql.DB) error {
 		return fmt.Errorf("run migrations: %w", err)
 	}
 	return reconcileSchema(db)
-}
-
-// prepareLegacyPipelineCDCBeforeReviewRunMigration repairs Nightly databases
-// that briefly carried the abandoned pipeline CDC schema. The 0103 migration
-// rebuilds change_log; SQLite refuses to drop that table while these old trigger
-// bodies still reference it, and any retained pipeline_* event rows would fail
-// 0103's narrower CHECK constraint.
-func prepareLegacyPipelineCDCBeforeReviewRunMigration(db *sql.DB) error {
-	var gooseTable int
-	if err := db.QueryRow(
-		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'goose_db_version'`,
-	).Scan(&gooseTable); err != nil {
-		return err
-	}
-	if gooseTable == 0 {
-		return nil
-	}
-
-	var applied103 int
-	if err := db.QueryRow(`
-SELECT COALESCE((
-    SELECT is_applied FROM goose_db_version
-    WHERE version_id = 103 ORDER BY id DESC LIMIT 1
-), 0)`).Scan(&applied103); err != nil {
-		return err
-	}
-	if applied103 != 0 {
-		return nil
-	}
-
-	if _, err := db.Exec(`
-DROP TRIGGER IF EXISTS pipeline_definitions_cdc_insert;
-DROP TRIGGER IF EXISTS pipeline_definitions_cdc_update;
-DROP TRIGGER IF EXISTS pipeline_definitions_cdc_delete;
-DROP TRIGGER IF EXISTS pipeline_runs_cdc_insert;
-DROP TRIGGER IF EXISTS pipeline_runs_cdc_update;
-DROP TRIGGER IF EXISTS pipeline_stage_runs_cdc_insert;
-DROP TRIGGER IF EXISTS pipeline_stage_runs_cdc_update;
-DROP TRIGGER IF EXISTS pipeline_artifacts_cdc_insert;
-DROP TRIGGER IF EXISTS pipeline_artifacts_cdc_update;`); err != nil {
-		return err
-	}
-
-	var changeLogTable int
-	if err := db.QueryRow(
-		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'change_log'`,
-	).Scan(&changeLogTable); err != nil {
-		return err
-	}
-	if changeLogTable == 0 {
-		return nil
-	}
-
-	_, err := db.Exec(`
-DELETE FROM change_log
-WHERE event_type IN (
-    'pipeline_definition_changed',
-    'pipeline_run_updated',
-    'pipeline_stage_run_updated',
-    'pipeline_artifact_updated'
-);`)
-	return err
-}
-
-// prepareAppSettingsSingletonMigration repairs feature-build databases whose
-// app_settings table came from the abandoned pipeline key/value migration. Some
-// of those databases already recorded 0067 through a burned migration profile;
-// the published PR build stopped at 0051 and has not. Recreate 0067's physical
-// schema and ledger effect together so goose neither skips a missing schema nor
-// replays CREATE TABLE over the repaired table.
-func prepareAppSettingsSingletonMigration(db *sql.DB) error {
-	var tableExists int
-	if err := db.QueryRow(
-		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'app_settings'`,
-	).Scan(&tableExists); err != nil {
-		return err
-	}
-	if tableExists == 0 {
-		return nil
-	}
-
-	var columnCount, idColumn, modeColumn, updatedAtColumn, keyColumn, valueColumn int
-	if err := db.QueryRow(`
-SELECT COUNT(*),
-       SUM(name = 'id'),
-       SUM(name = 'default_session_mode'),
-       SUM(name = 'updated_at'),
-       SUM(name = 'key'),
-       SUM(name = 'value')
-FROM pragma_table_info('app_settings')`).Scan(
-		&columnCount,
-		&idColumn,
-		&modeColumn,
-		&updatedAtColumn,
-		&keyColumn,
-		&valueColumn,
-	); err != nil {
-		return err
-	}
-	if idColumn > 0 && modeColumn > 0 && updatedAtColumn > 0 {
-		return nil
-	}
-	if columnCount != 2 || keyColumn != 1 || valueColumn != 1 {
-		return fmt.Errorf(
-			"unsupported app_settings schema: columns=%d id=%d default_session_mode=%d updated_at=%d key=%d value=%d",
-			columnCount, idColumn, modeColumn, updatedAtColumn, keyColumn, valueColumn,
-		)
-	}
-
-	var gooseTable int
-	if err := db.QueryRow(
-		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'goose_db_version'`,
-	).Scan(&gooseTable); err != nil {
-		return err
-	}
-	if gooseTable == 0 {
-		return fmt.Errorf("legacy app_settings schema exists without goose migration history")
-	}
-
-	tx, err := db.Begin()
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	var defaultMode string
-	if err := tx.QueryRow(`
-SELECT COALESCE((
-    SELECT value FROM app_settings
-    WHERE key = 'default_session_mode' AND value IN ('chat', 'tui')
-    LIMIT 1
-), 'tui')`).Scan(&defaultMode); err != nil {
-		return err
-	}
-
-	var applied67 int
-	if err := tx.QueryRow(`
-SELECT COALESCE((
-    SELECT is_applied FROM goose_db_version
-    WHERE version_id = 67 ORDER BY id DESC LIMIT 1
-), 0)`).Scan(&applied67); err != nil {
-		return err
-	}
-
-	if _, err := tx.Exec(
-		`ALTER TABLE app_settings RENAME TO app_settings_legacy_before_0067_repair`,
-	); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(`
-CREATE TABLE app_settings (
-    id                   INTEGER PRIMARY KEY CHECK (id = 1),
-    default_session_mode TEXT NOT NULL DEFAULT 'tui'
-        CHECK (default_session_mode IN ('chat', 'tui')),
-    updated_at           TIMESTAMP NOT NULL
-)`); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(`
-INSERT INTO app_settings (id, default_session_mode, updated_at)
-VALUES (1, ?, CURRENT_TIMESTAMP)`, defaultMode); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(`DROP TABLE app_settings_legacy_before_0067_repair`); err != nil {
-		return err
-	}
-	if applied67 == 0 {
-		if _, err := tx.Exec(
-			`INSERT INTO goose_db_version (version_id, is_applied) VALUES (67, 1)`,
-		); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
 }
 
 // prepareAutoInjectReviewMigration preserves development databases whose

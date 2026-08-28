@@ -120,6 +120,9 @@ var shippedMigrations = map[int64]string{
 // new file claiming one would be skipped silently there.
 //
 //   - 22 shipped in a nightly (#2412) and was deleted by the revert.
+//   - 45, 46, 50, and 51 were applied by the published Pipelines feature
+//     release v0.11.1-pr2863.202607311655. Main never owned those slots, but
+//     real databases retain them and would skip any future reuse.
 //
 // Beware of the adjacent hazard this cannot catch: at least one field profile
 // has versions 40 through 51 recorded as applied by a foreign build
@@ -127,7 +130,12 @@ var shippedMigrations = map[int64]string{
 // Any such migration whose schema the generated queries depend on must add a
 // schemaRepairs entry in db.go.
 func burnedVersion(v int64) bool {
-	return v == 22
+	switch v {
+	case 22, 45, 46, 50, 51:
+		return true
+	default:
+		return false
+	}
 }
 
 // TestMigrationVersionLedger enforces the append-only migration ledger: every
