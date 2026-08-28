@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"slices"
 	"testing"
 	"time"
 
@@ -250,6 +251,60 @@ func TestOpenShellTerminalFallsBackToDataDirWhenNoProjectGiven(t *testing.T) {
 	}
 	if term.ProjectID != "" {
 		t.Errorf("project id = %q, want empty", term.ProjectID)
+	}
+}
+
+func TestOpenCommandTerminalUsesTrustedProcessConfiguration(t *testing.T) {
+	rt := newFakeShellRuntime()
+	st := &fakeShellTerminalStore{}
+	svc := newTestService(rt, st, &fakeProjectRootLocator{})
+
+	term, err := svc.OpenCommandTerminal(context.Background(), OpenCommandTerminalInput{
+		Argv:       []string{"/Applications/AO.app/Contents/MacOS/ao", "codex-login"},
+		Env:        map[string]string{"CODEX_HOME": "/data/codex-profiles/work/home"},
+		WorkingDir: "/data/codex-profiles/work/home",
+		Title:      "Codex login - Work",
+	})
+	if err != nil {
+		t.Fatalf("OpenCommandTerminal: %v", err)
+	}
+
+	if len(rt.created) != 1 {
+		t.Fatalf("runtime creates = %d, want 1", len(rt.created))
+	}
+	created := rt.created[0]
+	if got, want := created.Argv, []string{"/Applications/AO.app/Contents/MacOS/ao", "codex-login"}; !slices.Equal(got, want) {
+		t.Errorf("argv = %q, want %q", got, want)
+	}
+	if got := created.Env["CODEX_HOME"]; got != "/data/codex-profiles/work/home" {
+		t.Errorf("CODEX_HOME = %q, want the selected profile home", got)
+	}
+	if created.WorkspacePath != "/data/codex-profiles/work/home" {
+		t.Errorf("workspace path = %q, want the selected profile home", created.WorkspacePath)
+	}
+	if term.Title != "Codex login - Work" || term.WorkingDir != "/data/codex-profiles/work/home" {
+		t.Errorf("terminal = %+v, want trusted title and working directory", term)
+	}
+	if len(st.records) != 1 || st.records[0].Title != "Codex login - Work" {
+		t.Fatalf("persisted records = %+v, want trusted terminal record", st.records)
+	}
+}
+
+func TestOpenCommandTerminalDestroysRuntimeWhenPersistenceFails(t *testing.T) {
+	rt := newFakeShellRuntime()
+	st := &fakeShellTerminalStore{insertErr: errors.New("database unavailable")}
+	svc := newTestService(rt, st, &fakeProjectRootLocator{})
+
+	_, err := svc.OpenCommandTerminal(context.Background(), OpenCommandTerminalInput{
+		Argv:       []string{"/ao", "codex-login"},
+		WorkingDir: "/data/codex-profiles/work/home",
+		Title:      "Codex login - Work",
+	})
+	if err == nil {
+		t.Fatal("OpenCommandTerminal error = nil, want persistence failure")
+	}
+	if len(rt.destroyed) != 1 || rt.destroyed[0] != "shellterm-test1" {
+		t.Fatalf("destroyed = %v, want the unpersisted runtime", rt.destroyed)
 	}
 }
 

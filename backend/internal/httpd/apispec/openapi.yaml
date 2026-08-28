@@ -297,6 +297,45 @@ paths:
       summary: Start browser authentication for one Codex profile
       tags:
       - agents
+  /api/v1/agents/codex/profiles/{profileId}/login-terminal:
+    post:
+      operationId: openCodexProfileLoginTerminal
+      parameters:
+      - description: Codex profile identifier.
+        in: path
+        name: profileId
+        required: true
+        schema:
+          description: Codex profile identifier.
+          type: string
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpenCodexProfileLoginTerminalResponse'
+          description: Created
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Open a native Codex login terminal for one profile
+      tags:
+      - agents
   /api/v1/agents/codex/profiles/{profileId}/login/{operationId}/cancel:
     post:
       operationId: cancelCodexProfileLogin
@@ -7561,6 +7600,10 @@ components:
       type: object
     EnsureCodexProfilesRequest:
       properties:
+        forceAuthenticationRefresh:
+          description: Bypass the profile authentication TTL for an active native
+            login terminal.
+          type: boolean
         profileIds:
           items:
             type: string
@@ -8133,6 +8176,16 @@ components:
       required:
       - kind
       - sessionId
+      type: object
+    OpenCodexProfileLoginTerminalResponse:
+      properties:
+        profileId:
+          type: string
+        shellTerminal:
+          $ref: '#/components/schemas/ShellTerminalResponse'
+      required:
+      - profileId
+      - shellTerminal
       type: object
     OpenShellTerminalRequest:
       properties:

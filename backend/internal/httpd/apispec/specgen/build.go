@@ -340,12 +340,13 @@ var schemaNames = map[string]string{
 	"ControllersUsageHarnessResponse":             "UsageHarnessResponse",
 	"ControllersSessionUsageResponse":             "SessionUsageResponse",
 	// httpd/controllers — standalone shell terminal wire envelopes
-	"ControllersShellTerminalHandleIDParam": "ShellTerminalHandleIDParam",
-	"ControllersOpenShellTerminalRequest":   "OpenShellTerminalRequest",
-	"ControllersUpdateShellTerminalRequest": "UpdateShellTerminalRequest",
-	"ControllersShellTerminalResponse":      "ShellTerminalResponse",
-	"ControllersListShellTerminalsResponse": "ListShellTerminalsResponse",
-	"ControllersShellTerminalEnvelope":      "ShellTerminalEnvelope",
+	"ControllersShellTerminalHandleIDParam":            "ShellTerminalHandleIDParam",
+	"ControllersOpenShellTerminalRequest":              "OpenShellTerminalRequest",
+	"ControllersUpdateShellTerminalRequest":            "UpdateShellTerminalRequest",
+	"ControllersShellTerminalResponse":                 "ShellTerminalResponse",
+	"ControllersListShellTerminalsResponse":            "ListShellTerminalsResponse",
+	"ControllersShellTerminalEnvelope":                 "ShellTerminalEnvelope",
+	"ControllersOpenCodexProfileLoginTerminalResponse": "OpenCodexProfileLoginTerminalResponse",
 	// httpd/controllers — PR wire envelopes
 	"ControllersMergePRRequest":          "MergePRRequest",
 	"ControllersMergePRResponse":         "MergePRResponse",
@@ -1001,6 +1002,17 @@ func agentOperations() []operation {
 			resps: []respUnit{
 				{http.StatusCreated, controllers.CreateCodexProfileResponse{}},
 				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusServiceUnavailable, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/agents/codex/profiles/{profileId}/login-terminal", id: "openCodexProfileLoginTerminal", tag: "agents",
+			summary:    "Open a native Codex login terminal for one profile",
+			pathParams: []any{controllers.CodexProfileIDParam{}},
+			resps: []respUnit{
+				{http.StatusCreated, controllers.OpenCodexProfileLoginTerminalResponse{}},
+				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusServiceUnavailable, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},
 			},

@@ -22,7 +22,8 @@ import { WindowTitlebar } from "../components/WindowTitlebar";
 import { TerminalCacheProvider } from "../components/TerminalPane";
 import { agentModelsQueryOptions } from "../hooks/useAgentModelsQuery";
 import { useDaemonStatus } from "../hooks/useDaemonStatus";
-import { useOpenShellTerminal } from "../hooks/useShellTerminals";
+import { useOpenShellTerminal, useShellTerminals } from "../hooks/useShellTerminals";
+import { useCodexProfileLoginTerminalMonitor } from "../hooks/useCodexProfileLoginTerminalMonitor";
 import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
 import { useWorkspaceQuery, workspaceQueryKey, workspaceQueryOptions } from "../hooks/useWorkspaceQuery";
 import { apiClient, apiErrorCode, apiErrorMessage, hasTrustedApiBaseUrl } from "../lib/api-client";
@@ -126,6 +127,11 @@ function ShellLayout() {
 	const newShellTerminalNonce = useUiStore((state) => state.newShellTerminalNonce);
 	const setActiveShellTerminal = useUiStore((state) => state.setActiveShellTerminal);
 	const openShellTerminal = useOpenShellTerminal();
+	const shellTerminals = useShellTerminals().data ?? [];
+	const navigateToLoginTerminal = useCallback(() => {
+		void navigate({ to: "/terminals" });
+	}, [navigate]);
+	useCodexProfileLoginTerminalMonitor(shellTerminals, navigateToLoginTerminal);
 	// Session surfaces publish only their required center-workspace width. The
 	// persistent shell owns the single responsive decision, measured against the
 	// invariant outer row so sidebar animation cannot feed back into itself.

@@ -9,6 +9,7 @@ export { CODEX_PROFILE_DAEMON_RESET_EVENT, codexProfilesQueryKey } from "./codex
 export type CodexProfilesResponse = components["schemas"]["CodexProfilesResponse"];
 export type CodexProfile = components["schemas"]["CodexProfileSnapshot"];
 export type CodexProfileLoginStart = components["schemas"]["StartCodexProfileLoginResponse"];
+export type CodexProfileLoginTerminalStart = components["schemas"]["OpenCodexProfileLoginTerminalResponse"];
 export type CodexProfileLoginEvent = components["schemas"]["CodexProfileLoginEvent"];
 
 async function fetchCodexProfiles(): Promise<CodexProfilesResponse> {
@@ -17,9 +18,9 @@ async function fetchCodexProfiles(): Promise<CodexProfilesResponse> {
 	return data as CodexProfilesResponse;
 }
 
-export async function ensureCodexProfiles(profileIds: string[] = []): Promise<CodexProfilesResponse> {
+export async function ensureCodexProfiles(profileIds: string[] = [], forceAuthenticationRefresh = false): Promise<CodexProfilesResponse> {
 	const { data, error } = await apiClient.POST("/api/v1/agents/codex/profiles/ensure", {
-		body: { profileIds, purpose: "display" },
+		body: { profileIds, purpose: "display", ...(forceAuthenticationRefresh ? { forceAuthenticationRefresh: true } : {}) },
 	});
 	if (error) throw new Error(apiErrorMessage(error));
 	return data as CodexProfilesResponse;
@@ -37,6 +38,14 @@ export async function startCodexProfileLogin(profileId: string): Promise<CodexPr
 	});
 	if (error) throw new Error(apiErrorMessage(error));
 	return data as CodexProfileLoginStart;
+}
+
+export async function openCodexProfileLoginTerminal(profileId: string): Promise<CodexProfileLoginTerminalStart> {
+	const { data, error } = await apiClient.POST("/api/v1/agents/codex/profiles/{profileId}/login-terminal", {
+		params: { path: { profileId } },
+	});
+	if (error) throw new Error(apiErrorMessage(error));
+	return data as CodexProfileLoginTerminalStart;
 }
 
 export async function cancelCodexProfileLogin(profileId: string, operationId: string): Promise<CodexProfileLoginEvent> {
