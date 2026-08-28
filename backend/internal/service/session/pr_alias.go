@@ -57,6 +57,9 @@ func deduplicatePRFacts(prs []domain.PRFacts) []domain.PRFacts {
 func mergePRFacts(current, next domain.PRFacts) domain.PRFacts {
 	if next.UpdatedAt.After(current.UpdatedAt) {
 		next.ReviewComments = current.ReviewComments || next.ReviewComments
+		next.ExternalApproved = current.ExternalApproved || next.ExternalApproved
+		next.ExternalChangesRequested = current.ExternalChangesRequested || next.ExternalChangesRequested
+		next.ExternalComments = current.ExternalComments || next.ExternalComments
 		if next.SourceBranch == "" {
 			next.SourceBranch = current.SourceBranch
 		}
@@ -69,6 +72,9 @@ func mergePRFacts(current, next domain.PRFacts) domain.PRFacts {
 		return next
 	}
 	current.ReviewComments = current.ReviewComments || next.ReviewComments
+	current.ExternalApproved = current.ExternalApproved || next.ExternalApproved
+	current.ExternalChangesRequested = current.ExternalChangesRequested || next.ExternalChangesRequested
+	current.ExternalComments = current.ExternalComments || next.ExternalComments
 	if current.SourceBranch == "" {
 		current.SourceBranch = next.SourceBranch
 	}
