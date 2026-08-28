@@ -114,7 +114,7 @@ func TestDetectTerminalActivity(t *testing.T) {
 		{
 			name: "question dialog",
 			output: "\x1b[38;5;212m?\x1b[0m Which environment should I use?\n" +
-				"\x1b[38;5;212m❯\x1b[0m production\n" +
+				"\x1b[38;5;212m┃\x1b[0m production\n" +
 				"  staging\n",
 			want: domain.ActivityWaitingInput,
 			ok:   true,

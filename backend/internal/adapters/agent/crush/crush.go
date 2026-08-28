@@ -41,6 +41,7 @@ func New() *Plugin {
 var _ adapters.Adapter = (*Plugin)(nil)
 var _ ports.Agent = (*Plugin)(nil)
 var _ ports.ContinuousTerminalActivityDetector = (*Plugin)(nil)
+var _ ports.WaitingTerminalActivityDetector = (*Plugin)(nil)
 
 // Manifest returns the adapter's static self-description.
 func (p *Plugin) Manifest() adapters.Manifest {

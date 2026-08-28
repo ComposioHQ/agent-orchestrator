@@ -190,6 +190,29 @@ func TestPollReconcilesWaitingCrushAfterUserResponds(t *testing.T) {
 	}
 }
 
+func TestPollPreservesClaudeWaitingInputWithoutContinuousCapability(t *testing.T) {
+	now := time.Unix(500, 0).UTC()
+	session := activeSession(now, domain.HarnessClaudeCode)
+	session.Activity = domain.Activity{State: domain.ActivityWaitingInput, LastActivityAt: now.Add(-time.Second)}
+	session.UpdatedAt = now.Add(-time.Second)
+	sink := &fakeSink{}
+	runtime := &fakeRuntime{output: claudeStuckActiveScreen}
+	observer := New(
+		fakeSessions{rows: []domain.SessionRecord{session}},
+		sink,
+		runtime,
+		fakeAgents{domain.HarnessClaudeCode: claudecode.New()},
+		Config{Clock: func() time.Time { return now }, Logger: testLogger()},
+	)
+
+	if err := observer.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.calls != 0 || len(sink.signals) != 0 {
+		t.Fatalf("sticky Claude waiting state was sampled: output calls=%d signals=%+v", runtime.calls, sink.signals)
+	}
+}
+
 func TestPollLeavesOtherHarnessesUntouched(t *testing.T) {
 	now := time.Unix(500, 0).UTC()
 	sink := &fakeSink{}

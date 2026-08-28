@@ -114,11 +114,13 @@ func (o *Observer) reconcile(ctx context.Context, session domain.SessionRecord, 
 	}
 	continuous, ok := agent.(ports.ContinuousTerminalActivityDetector)
 	if !ok || !continuous.ContinuouslyDetectTerminalActivity() {
-		// A detected waiting-input state still needs sampling so a terminal
-		// prompt can prove that the user answered and the turn resumed.
-		if session.Activity.State != domain.ActivityWaitingInput &&
-			(session.Activity.State != domain.ActivityActive || session.Activity.LastActivityAt.IsZero() ||
-				now.Sub(session.Activity.LastActivityAt) < o.staleAfter) {
+		if session.Activity.State == domain.ActivityWaitingInput {
+			waitingDetector, canRecoverWaiting := agent.(ports.WaitingTerminalActivityDetector)
+			if !canRecoverWaiting || !waitingDetector.ContinuouslyDetectTerminalActivityWhileWaiting() {
+				return
+			}
+		} else if session.Activity.State != domain.ActivityActive || session.Activity.LastActivityAt.IsZero() ||
+			now.Sub(session.Activity.LastActivityAt) < o.staleAfter {
 			return
 		}
 	} else if session.Activity.State != domain.ActivityActive &&

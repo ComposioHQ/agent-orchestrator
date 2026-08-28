@@ -129,13 +129,17 @@ func crushLineLooksQuestionDialog(lines []string, index int) bool {
 
 func crushQuestionAnswerRow(line string) bool {
 	line = crushDialogLineText(line)
-	if strings.HasPrefix(line, "> ") || strings.HasPrefix(line, "❯ ") ||
+	if strings.HasPrefix(line, "┃ ") || strings.HasPrefix(line, "> ") || strings.HasPrefix(line, "❯ ") ||
 		strings.HasPrefix(line, "› ") || strings.HasPrefix(line, "○ ") ||
 		strings.HasPrefix(line, "◯ ") {
 		return true
 	}
 	return len(line) >= 3 && line[0] >= '1' && line[0] <= '9' && line[1] == '.' && line[2] == ' '
 }
+
+// ContinuouslyDetectTerminalActivityWhileWaiting opts Crush into terminal
+// reconciliation after AO has recorded a waiting-input state.
+func (p *Plugin) ContinuouslyDetectTerminalActivityWhileWaiting() bool { return true }
 
 func crushDialogLineText(line string) string {
 	return strings.Trim(line, " │")

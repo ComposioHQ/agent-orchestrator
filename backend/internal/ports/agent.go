@@ -250,6 +250,13 @@ type ContinuousTerminalActivityDetector interface {
 	ContinuouslyDetectTerminalActivity() bool
 }
 
+// WaitingTerminalActivityDetector is implemented by non-continuous terminal
+// detectors that can authoritatively recover from a durable waiting-input state.
+type WaitingTerminalActivityDetector interface {
+	TerminalActivityDetector
+	ContinuouslyDetectTerminalActivityWhileWaiting() bool
+}
+
 // PromptReadinessHints describes when an after-start prompt should be sent.
 // Empty patterns mean "send immediately" unless the adapter also implements
 // TerminalActivityDetector, in which case AO waits for an authoritative idle
