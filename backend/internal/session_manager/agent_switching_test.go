@@ -26,6 +26,8 @@ type switchTestStore struct {
 	*fakeStore
 	mu                            sync.Mutex
 	native                        map[domain.AgentNativeSessionID]domain.AgentNativeSession
+	conversations                 map[domain.SessionID]domain.ConversationRecord
+	branches                      map[string]domain.ConversationBranch
 	switches                      map[domain.AgentSwitchID]domain.AgentSwitch
 	ackBeforeDeliveryFailure      bool
 	confirmHook                   func(context.Context)
@@ -66,7 +68,23 @@ func (s switchContextAwareDeliveryStore) GetAgentSwitch(ctx context.Context, id 
 }
 
 func newSwitchTestStore() *switchTestStore {
-	return &switchTestStore{fakeStore: newFakeStore(), native: map[domain.AgentNativeSessionID]domain.AgentNativeSession{}, switches: map[domain.AgentSwitchID]domain.AgentSwitch{}}
+	return &switchTestStore{fakeStore: newFakeStore(), native: map[domain.AgentNativeSessionID]domain.AgentNativeSession{}, conversations: map[domain.SessionID]domain.ConversationRecord{}, branches: map[string]domain.ConversationBranch{}, switches: map[domain.AgentSwitchID]domain.AgentSwitch{}}
+}
+
+func (s *switchTestStore) ConversationForSession(_ context.Context, sessionID domain.SessionID) (domain.ConversationRecord, error) {
+	conversation, ok := s.conversations[sessionID]
+	if !ok {
+		return domain.ConversationRecord{}, errors.New("conversation not found")
+	}
+	return conversation, nil
+}
+
+func (s *switchTestStore) ConversationBranch(_ context.Context, _, branchID string) (domain.ConversationBranch, error) {
+	branch, ok := s.branches[branchID]
+	if !ok {
+		return domain.ConversationBranch{}, errors.New("conversation branch not found")
+	}
+	return branch, nil
 }
 
 func (s *switchTestStore) CreateAgentNativeSession(_ context.Context, rec domain.AgentNativeSession) (domain.AgentNativeSession, bool, error) {
@@ -430,6 +448,9 @@ func (s *switchTestStore) ActivateChatAgentSwitchTarget(_ context.Context, activ
 	rec.Metadata.ControllerGeneration = activation.ControllerGeneration
 	rec.UpdatedAt = activation.ActivatedAt
 	s.sessions[activation.SessionID] = rec
+	boundaryID := chatSwitchProviderBoundaryID(activation.SwitchID)
+	s.conversations[activation.SessionID] = domain.ConversationRecord{ID: "conversation-" + string(activation.SessionID), SessionID: activation.SessionID, ActiveBranchID: boundaryID}
+	s.branches[boundaryID] = domain.ConversationBranch{ID: boundaryID, ConversationID: "conversation-" + string(activation.SessionID), SessionID: activation.SessionID, ProviderConversationID: activation.ProviderConversationID, ProviderScopeID: boundaryID, Active: true}
 	sw.State = domain.AgentSwitchTargetReady
 	sw.UpdatedAt = activation.ActivatedAt
 	s.switches[activation.SwitchID] = sw
@@ -958,6 +979,50 @@ func TestAgentSwitchChatControllerReadyUsesSourceGenerationCAS(t *testing.T) {
 	}
 	if len(launcher.relayIDs) != 1 || launcher.relayIDs[0] != chatSwitchActivationMessageID(sw.ID) {
 		t.Fatalf("target activation delivery IDs = %v, want stable switch ID", launcher.relayIDs)
+	}
+}
+
+func TestResolveChatTargetActivationOutcomeRejectsIncompleteOwnershipTuples(t *testing.T) {
+	manager, store, _ := newSwitchTestManager(t, &fakeRestartRuntime{fakeRuntime: &fakeRuntime{}})
+	activation := domain.AgentSwitchChatTargetActivation{
+		SwitchID: "switch-1", SessionID: "proj-1", SourceHarness: domain.HarnessClaudeCode,
+		SourceGenerationID: "source-generation", ExpectedSourceControllerGeneration: "source-generation",
+		TargetHarness: domain.HarnessCodex, TargetNativeSessionRef: "target-native",
+		TargetGenerationID: "target-generation", ProviderConversationID: "target-provider",
+		ControllerGeneration: "target-generation", ActivatedAt: time.Now().UTC(),
+	}
+	store.switches[activation.SwitchID] = domain.AgentSwitch{
+		ID: activation.SwitchID, SessionID: activation.SessionID, State: domain.AgentSwitchTargetReady,
+		FromHarness: activation.SourceHarness, TargetHarness: activation.TargetHarness,
+		SourceGenerationID: activation.SourceGenerationID, TargetGenerationID: activation.TargetGenerationID,
+		TargetNativeSessionRef: nativeSessionIDPtr(activation.TargetNativeSessionRef),
+	}
+	rec := store.sessions[activation.SessionID]
+	rec.Mode = domain.SessionModeChat
+	rec.Harness = activation.TargetHarness
+	rec.Metadata.ProviderConversationID = activation.ProviderConversationID
+	rec.Metadata.ControllerGeneration = activation.ControllerGeneration
+	rec.Activity = domain.Activity{State: domain.ActivityActive, LastActivityAt: activation.ActivatedAt}
+	store.sessions[rec.ID] = rec
+
+	_, committed, sourceStillOwns, err := manager.resolveChatTargetActivationOutcome(context.Background(), store, domain.SessionRecord{}, activation)
+	if err != nil || committed || sourceStillOwns {
+		t.Fatalf("incomplete target tuple resolved = committed %v sourceStillOwns %v err %v, want neither", committed, sourceStillOwns, err)
+	}
+
+	switchRecord := store.switches[activation.SwitchID]
+	switchRecord.State = domain.AgentSwitchStartingTarget
+	store.switches[activation.SwitchID] = switchRecord
+	rec.Harness = activation.SourceHarness
+	rec.Metadata.ProviderConversationID = "source-provider"
+	rec.Metadata.ControllerGeneration = activation.ExpectedSourceControllerGeneration
+	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: activation.ActivatedAt}
+	store.sessions[rec.ID] = rec
+	_, committed, sourceStillOwns, err = manager.resolveChatTargetActivationOutcome(context.Background(), store, domain.SessionRecord{
+		Metadata: domain.SessionMetadata{ProviderConversationID: "source-provider"},
+	}, activation)
+	if err != nil || committed || sourceStillOwns {
+		t.Fatalf("incomplete source tuple resolved = committed %v sourceStillOwns %v err %v, want neither", committed, sourceStillOwns, err)
 	}
 }
 

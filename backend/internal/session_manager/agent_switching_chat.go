@@ -710,8 +710,41 @@ func (m *Manager) resolveChatTargetActivationOutcome(
 		current.TargetGenerationID == activation.TargetGenerationID && targetRefMatches &&
 		domain.NormalizeSessionMode(session.Mode) == domain.SessionModeChat &&
 		session.Harness == activation.TargetHarness &&
+		session.Activity.State == domain.ActivityIdle &&
 		session.Metadata.ProviderConversationID == activation.ProviderConversationID &&
 		session.Metadata.ControllerGeneration == activation.ControllerGeneration
+	if committed {
+		targetNative, nativeFound, nativeErr := store.GetAgentNativeSession(ctx, activation.TargetNativeSessionRef)
+		if nativeErr != nil {
+			return current, false, false, nativeErr
+		}
+		if !nativeFound || targetNative.AOSessionID != activation.SessionID ||
+			targetNative.Harness != activation.TargetHarness ||
+			targetNative.LastGenerationID != activation.TargetGenerationID ||
+			targetNative.NativeSessionID != activation.ProviderConversationID {
+			return current, false, false, nil
+		}
+		conversationStore, ok := m.store.(interface {
+			ConversationForSession(context.Context, domain.SessionID) (domain.ConversationRecord, error)
+			ConversationBranch(context.Context, string, string) (domain.ConversationBranch, error)
+		})
+		if !ok {
+			return current, false, false, errors.New("chat activation outcome requires conversation store")
+		}
+		conversation, conversationErr := conversationStore.ConversationForSession(ctx, activation.SessionID)
+		if conversationErr != nil {
+			return current, false, false, conversationErr
+		}
+		boundaryID := chatSwitchProviderBoundaryID(activation.SwitchID)
+		boundary, boundaryErr := conversationStore.ConversationBranch(ctx, conversation.ID, boundaryID)
+		if boundaryErr != nil {
+			return current, false, false, boundaryErr
+		}
+		committed = conversation.ActiveBranchID == boundaryID && boundary.Active &&
+			boundary.SessionID == activation.SessionID &&
+			boundary.ProviderConversationID == activation.ProviderConversationID &&
+			boundary.ProviderScopeID == boundaryID
+	}
 	if committed {
 		return current, true, false, nil
 	}
@@ -720,6 +753,7 @@ func (m *Manager) resolveChatTargetActivationOutcome(
 		current.TargetGenerationID == activation.TargetGenerationID && targetRefMatches &&
 		domain.NormalizeSessionMode(session.Mode) == domain.SessionModeChat &&
 		session.Harness == activation.SourceHarness &&
+		session.Activity.State == domain.ActivityExited &&
 		session.Metadata.ProviderConversationID == source.Metadata.ProviderConversationID &&
 		session.Metadata.ControllerGeneration == activation.ExpectedSourceControllerGeneration
 	return current, false, sourceStillOwns, nil

@@ -317,6 +317,19 @@ func TestActivateChatAgentSwitchTargetMovesSourceGenerationToTarget(t *testing.T
 	}
 }
 
+func TestActivateChatAgentSwitchTargetRejectsMismatchedExpectedSourceGeneration(t *testing.T) {
+	s := newTestStore(t)
+	activation := domain.AgentSwitchChatTargetActivation{
+		SwitchID: "switch", SessionID: "session", SourceHarness: domain.HarnessClaudeCode,
+		SourceGenerationID: "source-generation", ExpectedSourceControllerGeneration: "other-generation",
+		TargetHarness: domain.HarnessCodex, TargetNativeSessionRef: "native", TargetGenerationID: "target-generation",
+		ProviderConversationID: "target-provider", ControllerGeneration: "target-generation", ActivatedAt: time.Now().UTC(),
+	}
+	if changed, err := s.ActivateChatAgentSwitchTarget(context.Background(), activation); err == nil || changed {
+		t.Fatalf("mismatched source generation activation = changed %v err %v, want validation failure", changed, err)
+	}
+}
+
 func TestListActiveAgentSwitchesExcludesTerminalRows(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

@@ -823,6 +823,9 @@ func validateAgentSwitchChatTargetActivation(activation domain.AgentSwitchChatTa
 	if string(activation.TargetGenerationID) != activation.ControllerGeneration {
 		return fmt.Errorf("activate Chat agent switch target %s: target and controller generations differ", activation.SwitchID)
 	}
+	if string(activation.SourceGenerationID) != activation.ExpectedSourceControllerGeneration {
+		return fmt.Errorf("activate Chat agent switch target %s: source and expected controller generations differ", activation.SwitchID)
+	}
 	if !activation.SourceHarness.IsKnown() || !activation.TargetHarness.IsKnown() || activation.SourceHarness == activation.TargetHarness {
 		return fmt.Errorf("activate Chat agent switch target %s: source and distinct known target harnesses are required", activation.SwitchID)
 	}
