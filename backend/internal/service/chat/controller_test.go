@@ -2450,6 +2450,74 @@ func TestApprovalIsStoredPendingWithProviderDecisions(t *testing.T) {
 	}
 }
 
+func TestResolvingOneOfMultipleApprovalsKeepsWaitingInput(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{Text: "go", ClientMessageID: "c1"}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	for _, requestID := range []string{"approval-1", "approval-2"} {
+		h.conv.emit(ports.ChatEvent{
+			Kind: ports.ChatEventApprovalRequested, ProviderTurnID: "provider-turn-1",
+			ProviderItemID: requestID, RequestID: requestID, Summary: "Approve " + requestID,
+			Decisions: []ports.ChatDecisionOption{{ID: "accept", Label: "Approve", Kind: ports.ChatDecisionAllowOnce}},
+		})
+	}
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return len(s.Activities) == 2 &&
+			s.Activities[0].Status == domain.ActivityStatusPending &&
+			s.Activities[1].Status == domain.ActivityStatusPending
+	})
+
+	if err := h.svc.Resolve(ctx, testSession, "approval-1", ports.ChatDecision{ID: "accept"}); err != nil {
+		t.Fatalf("Resolve first: %v", err)
+	}
+	if got := countActivitySignals(h.activity.snapshot(), domain.ActivityActive, "chat.approval.resolved"); got != 0 {
+		t.Fatalf("active resolution signals after first approval = %d, want 0 while another approval is pending", got)
+	}
+
+	if err := h.svc.Resolve(ctx, testSession, "approval-2", ports.ChatDecision{ID: "accept"}); err != nil {
+		t.Fatalf("Resolve second: %v", err)
+	}
+	if got := countActivitySignals(h.activity.snapshot(), domain.ActivityActive, "chat.approval.resolved"); got != 1 {
+		t.Fatalf("active resolution signals after final approval = %d, want 1", got)
+	}
+}
+
+func TestProviderResolutionKeepsWaitingInputUntilFinalApproval(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{Text: "go", ClientMessageID: "c1"}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	for _, requestID := range []string{"approval-1", "approval-2"} {
+		h.conv.emit(ports.ChatEvent{
+			Kind: ports.ChatEventApprovalRequested, ProviderTurnID: "provider-turn-1",
+			ProviderItemID: requestID, RequestID: requestID, Summary: "Approve " + requestID,
+		})
+	}
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool { return len(s.Activities) == 2 })
+
+	h.conv.emit(ports.ChatEvent{Kind: ports.ChatEventApprovalResolved, RequestID: "approval-1"})
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return s.Activities[0].Status == domain.ActivityStatusResolved
+	})
+	if got := countActivitySignals(h.activity.snapshot(), domain.ActivityActive, "chat.approval.resolved"); got != 0 {
+		t.Fatalf("active provider-resolution signals after first approval = %d, want 0", got)
+	}
+
+	h.conv.emit(ports.ChatEvent{Kind: ports.ChatEventApprovalResolved, RequestID: "approval-2"})
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if got := countActivitySignals(h.activity.snapshot(), domain.ActivityActive, "chat.approval.resolved"); got == 1 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("active provider-resolution signals after final approval = %d, want 1",
+		countActivitySignals(h.activity.snapshot(), domain.ActivityActive, "chat.approval.resolved"))
+}
+
 // A controller that dies mid-turn must not leave the turn looking like it is still
 // working, and must not leave an approval the user can never answer.
 func TestControllerDeathSettlesInFlightWork(t *testing.T) {
@@ -3996,6 +4064,16 @@ func hasActivitySignal(signals []ports.ActivitySignal, state domain.ActivityStat
 		}
 	}
 	return false
+}
+
+func countActivitySignals(signals []ports.ActivitySignal, state domain.ActivityState, event string) int {
+	count := 0
+	for _, signal := range signals {
+		if signal.State == state && signal.Event == event {
+			count++
+		}
+	}
+	return count
 }
 
 // The #3749 desync: a turn is 'running' on disk while the in-memory controller

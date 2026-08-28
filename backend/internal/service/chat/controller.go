@@ -109,6 +109,7 @@ type Store interface {
 	UpsertActivity(ctx context.Context, conversationID, providerTurnID string, activity domain.ConversationActivity, now time.Time) error
 	MarkCompacted(ctx context.Context, conversationID string, at time.Time) error
 	ResolveApproval(ctx context.Context, conversationID, requestID, detailJSON string, now time.Time) error
+	HasPendingConversationInteractions(ctx context.Context, conversationID string) (bool, error)
 	FailPendingApprovals(ctx context.Context, conversationID string, now time.Time) error
 	FailPendingInputs(ctx context.Context, conversationID string, now time.Time) error
 
@@ -1569,7 +1570,7 @@ func (c *Controller) Resolve(ctx context.Context, requestID string, decision por
 		ctx, c.conversation.ID, requestID, string(detail), c.now()); err != nil {
 		return fmt.Errorf("record approval %s: %w", requestID, err)
 	}
-	c.reportActivity(ctx, domain.ActivityActive, "chat.approval.resolved", c.now())
+	c.reportInteractionResolved(ctx, "chat.approval.resolved", c.now())
 	return nil
 }
 
@@ -1596,7 +1597,7 @@ func (c *Controller) ResolveInput(
 		ctx, c.conversation.ID, requestID, string(detail), c.now()); err != nil {
 		return fmt.Errorf("record input %s: %w", requestID, err)
 	}
-	c.reportActivity(ctx, domain.ActivityActive, "chat.input.resolved", c.now())
+	c.reportInteractionResolved(ctx, "chat.input.resolved", c.now())
 	return nil
 }
 
@@ -2508,11 +2509,11 @@ func (c *Controller) afterProject(ctx context.Context, event ports.ChatEvent, pr
 	case ports.ChatEventApprovalRequested:
 		c.reportActivity(ctx, domain.ActivityWaitingInput, "chat.approval.requested", now)
 	case ports.ChatEventApprovalResolved:
-		c.reportActivity(ctx, domain.ActivityActive, "chat.approval.resolved", now)
+		c.reportInteractionResolved(ctx, "chat.approval.resolved", now)
 	case ports.ChatEventInputRequested:
 		c.reportActivity(ctx, domain.ActivityWaitingInput, "chat.input.requested", now)
 	case ports.ChatEventInputResolved:
-		c.reportActivity(ctx, domain.ActivityActive, "chat.input.resolved", now)
+		c.reportInteractionResolved(ctx, "chat.input.resolved", now)
 	case ports.ChatEventControllerState:
 		// Volatile state moves only after the provider event and all of its durable
 		// cleanup committed. Otherwise a rollback can say "stopped" in memory while
@@ -2528,6 +2529,19 @@ func (c *Controller) afterProject(ctx context.Context, event ports.ChatEvent, pr
 			c.reportActivity(ctx, domain.ActivityWaitingInput, "chat.account.reauth", now)
 		}
 	}
+}
+
+func (c *Controller) reportInteractionResolved(ctx context.Context, event string, now time.Time) {
+	pending, err := c.store.HasPendingConversationInteractions(ctx, c.conversation.ID)
+	if err != nil {
+		c.log.Debug("chat pending-interaction check failed",
+			"session", c.sessionID, "event", event, "error", err)
+		return
+	}
+	if pending {
+		return
+	}
+	c.reportActivity(ctx, domain.ActivityActive, event, now)
 }
 
 // applyThreadTitle records a title the provider reports for the thread and, when

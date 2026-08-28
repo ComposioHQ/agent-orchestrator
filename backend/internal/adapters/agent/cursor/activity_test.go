@@ -35,13 +35,13 @@ func TestDeriveActivityState(t *testing.T) {
 
 func TestEvaluatePermission(t *testing.T) {
 	tests := []struct {
-		name       string
-		mode       ports.PermissionMode
-		wantPerm   string
-		wantState  domain.ActivityState
+		name      string
+		mode      ports.PermissionMode
+		wantPerm  string
+		wantState domain.ActivityState
 	}{
-		{"default asks", ports.PermissionModeDefault, "ask", domain.ActivityWaitingInput},
-		{"accept-edits asks", ports.PermissionModeAcceptEdits, "ask", domain.ActivityWaitingInput},
+		{"default asks", ports.PermissionModeDefault, "ask", domain.ActivityBlocked},
+		{"accept-edits asks", ports.PermissionModeAcceptEdits, "ask", domain.ActivityBlocked},
 		{"auto allows", ports.PermissionModeAuto, "allow", domain.ActivityActive},
 		{"bypass allows", ports.PermissionModeBypassPermissions, "allow", domain.ActivityActive},
 	}

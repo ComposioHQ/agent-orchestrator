@@ -332,6 +332,14 @@ func TestGetAgentHooksInstallsCursorHooks(t *testing.T) {
 			t.Fatalf("%s command %q count = %d, want 1 in %#v", spec.Event, spec.Command, count, entries)
 		}
 	}
+	for _, event := range []string{"beforeShellExecution", "beforeMCPExecution"} {
+		entries := config.Hooks[event]
+		for _, entry := range entries {
+			if isCursorManagedHook(entry.Command) && !entry.FailClosed {
+				t.Fatalf("%s managed permission hook = %#v, want failClosed", event, entry)
+			}
+		}
+	}
 	stopEntries := config.Hooks["stop"]
 	if countCursorHookCommand(stopEntries, "custom stop hook") != 1 {
 		t.Fatalf("existing stop hook was not preserved: %#v", stopEntries)
@@ -360,6 +368,47 @@ func TestGetAgentHooksInstallsCursorHooks(t *testing.T) {
 	}
 	if !trust.AOManaged {
 		t.Fatal("aoManaged = false, want true")
+	}
+}
+
+func TestGetAgentHooksMigratesLegacyPermissionCallbacks(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "cursor-agent"}
+	workspace := t.TempDir()
+	hooksDir := filepath.Join(workspace, ".cursor")
+	if err := os.MkdirAll(hooksDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	hooksPath := filepath.Join(hooksDir, "hooks.json")
+	existing := `{"version":1,"hooks":{"beforeShellExecution":[{"command":"ao hooks cursor permission-request"},{"command":"custom permission hook","failClosed":true}]}}`
+	if err := os.WriteFile(hooksPath, []byte(existing), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := plugin.GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
+		DataDir: t.TempDir(), SessionID: "sess-1", WorkspacePath: workspace,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(hooksPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config cursorHookFile
+	if err := json.Unmarshal(data, &config); err != nil {
+		t.Fatal(err)
+	}
+	entries := config.Hooks["beforeShellExecution"]
+	if got := countCursorHookCommand(entries, cursorHookCommandPrefix+"permission-request"); got != 0 {
+		t.Fatalf("legacy permission callback count = %d, want 0 in %#v", got, entries)
+	}
+	if got := countCursorHookCommand(entries, cursorHookCommandPrefix+"before-shell-execution"); got != 1 {
+		t.Fatalf("current permission callback count = %d, want 1 in %#v", got, entries)
+	}
+	for _, entry := range entries {
+		if entry.Command == "custom permission hook" && !entry.FailClosed {
+			t.Fatalf("custom hook lost failClosed during migration: %#v", entry)
+		}
 	}
 }
 

@@ -1190,7 +1190,7 @@ func TestHooks_DaemonErrorIsSwallowed(t *testing.T) {
 	}
 }
 
-func TestHooks_CursorBeforeShellDefaultModeReportsWaitingInput(t *testing.T) {
+func TestHooks_CursorBeforeShellDefaultModeReportsBlocked(t *testing.T) {
 	t.Setenv("AO_SESSION_ID", "ao-7")
 	t.Setenv("AO_PERMISSION_MODE", "default")
 	cfg := setConfigEnv(t)
@@ -1204,8 +1204,8 @@ func TestHooks_CursorBeforeShellDefaultModeReportsWaitingInput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got := capturedState(t, capture); got != "waiting_input" {
-		t.Fatalf("state = %q, want waiting_input", got)
+	if got := capturedState(t, capture); got != "blocked" {
+		t.Fatalf("state = %q, want blocked", got)
 	}
 	var out cursorPermissionHookOutput
 	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &out); err != nil {

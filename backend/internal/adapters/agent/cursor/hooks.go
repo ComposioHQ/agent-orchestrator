@@ -31,7 +31,8 @@ const (
 	// cursorHookCommandPrefix identifies the hook commands AO owns, so
 	// install skips duplicates and uninstall recognizes AO entries by
 	// prefix without an embedded template to diff against.
-	cursorHookCommandPrefix = "ao hooks cursor "
+	cursorHookCommandPrefix           = "ao hooks cursor "
+	cursorLegacyPermissionHookCommand = cursorHookCommandPrefix + "permission-request"
 )
 
 // cursorHookFile is the on-disk shape of .cursor/hooks.json. It is used by tests
@@ -43,15 +44,17 @@ type cursorHookFile struct {
 }
 
 type cursorHookEntry struct {
-	Command string `json:"command"`
+	Command    string `json:"command"`
+	FailClosed bool   `json:"failClosed,omitempty"`
 }
 
 // cursorHookSpec describes one hook AO installs, defined in code rather than
 // read from an embedded hooks file. Event is Cursor's native camelCase event
 // name; Command is the AO sub-command dispatched when the hook fires.
 type cursorHookSpec struct {
-	Event   string
-	Command string
+	Event      string
+	Command    string
+	FailClosed bool
 }
 
 // cursorManagedHooks is the source of truth for the hooks AO installs. The
@@ -61,8 +64,8 @@ var cursorManagedHooks = []cursorHookSpec{
 	{Event: "sessionStart", Command: cursorHookCommandPrefix + "session-start"},
 	{Event: "beforeSubmitPrompt", Command: cursorHookCommandPrefix + "user-prompt-submit"},
 	{Event: "stop", Command: cursorHookCommandPrefix + "stop"},
-	{Event: "beforeShellExecution", Command: cursorHookCommandPrefix + "before-shell-execution"},
-	{Event: "beforeMCPExecution", Command: cursorHookCommandPrefix + "before-mcp-execution"},
+	{Event: "beforeShellExecution", Command: cursorHookCommandPrefix + "before-shell-execution", FailClosed: true},
+	{Event: "beforeMCPExecution", Command: cursorHookCommandPrefix + "before-mcp-execution", FailClosed: true},
 	{Event: "afterShellExecution", Command: cursorHookCommandPrefix + "after-shell-execution"},
 	{Event: "afterMCPExecution", Command: cursorHookCommandPrefix + "after-mcp-execution"},
 	{Event: "postToolUse", Command: cursorHookCommandPrefix + "post-tool-use"},
@@ -95,9 +98,12 @@ func (p *Plugin) GetAgentHooks(ctx context.Context, cfg ports.WorkspaceHookConfi
 		if err := parseCursorHookEvent(rawHooks, event, &existing); err != nil {
 			return fmt.Errorf("cursor.GetAgentHooks: %w", err)
 		}
+		existing = removeCursorLegacyPermissionHooks(event, existing)
 		for _, spec := range specs {
-			if !cursorHookCommandExists(existing, spec.Command) {
-				existing = append(existing, cursorHookEntry{Command: spec.Command})
+			if index := cursorHookCommandIndex(existing, spec.Command); index >= 0 {
+				existing[index].FailClosed = spec.FailClosed
+			} else {
+				existing = append(existing, cursorHookEntry{Command: spec.Command, FailClosed: spec.FailClosed})
 			}
 		}
 		if err := marshalCursorHookEvent(rawHooks, event, existing); err != nil {
@@ -503,6 +509,21 @@ func removeCursorManagedHooks(entries []cursorHookEntry) []cursorHookEntry {
 	return kept
 }
 
+func removeCursorLegacyPermissionHooks(event string, entries []cursorHookEntry) []cursorHookEntry {
+	switch event {
+	case "beforeShellExecution", "beforeMCPExecution":
+	default:
+		return entries
+	}
+	kept := make([]cursorHookEntry, 0, len(entries))
+	for _, entry := range entries {
+		if entry.Command != cursorLegacyPermissionHookCommand {
+			kept = append(kept, entry)
+		}
+	}
+	return kept
+}
+
 func parseCursorHookEvent(rawHooks map[string]json.RawMessage, event string, target *[]cursorHookEntry) error {
 	data, ok := rawHooks[event]
 	if !ok {
@@ -527,11 +548,11 @@ func marshalCursorHookEvent(rawHooks map[string]json.RawMessage, event string, e
 	return nil
 }
 
-func cursorHookCommandExists(entries []cursorHookEntry, command string) bool {
-	for _, hook := range entries {
+func cursorHookCommandIndex(entries []cursorHookEntry, command string) int {
+	for index, hook := range entries {
 		if hook.Command == command {
-			return true
+			return index
 		}
 	}
-	return false
+	return -1
 }

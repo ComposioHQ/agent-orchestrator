@@ -39,13 +39,14 @@ func DeriveActivityState(event string, _ []byte) (domain.ActivityState, bool) {
 }
 
 // EvaluatePermission decides whether a Cursor shell/MCP attempt needs user
-// approval under AO's permission mode. waiting_input is used (not blocked)
-// because Cursor installs no pre/post-tool-use correlation trio.
+// approval under AO's permission mode. A native permission dialog is blocked:
+// ordinary input must not be delivered while Cursor is waiting for the user's
+// decision.
 func EvaluatePermission(mode ports.PermissionMode, _ string, _ []byte) PermissionDecision {
 	if permissionRequired(mode) {
 		return PermissionDecision{
 			Permission:     "ask",
-			State:          domain.ActivityWaitingInput,
+			State:          domain.ActivityBlocked,
 			ReportActivity: true,
 		}
 	}
