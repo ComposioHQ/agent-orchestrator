@@ -24,10 +24,44 @@ type Store struct {
 	readDB  *sql.DB
 	qw      *gen.Queries // bound to the single writer connection
 	qr      *gen.Queries // bound to the reader pool
-	writeMu sync.Mutex
+	writeMu *contextMutex
 
 	projectConversationMu    sync.Mutex
 	projectConversationLocks map[domain.ProjectID]*sync.RWMutex
+}
+
+type contextMutex struct {
+	token chan struct{}
+}
+
+func newContextMutex() *contextMutex {
+	mutex := &contextMutex{token: make(chan struct{}, 1)}
+	mutex.token <- struct{}{}
+	return mutex
+}
+
+func (m *contextMutex) Lock() {
+	<-m.token
+}
+
+func (m *contextMutex) LockContext(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-m.token:
+		if err := ctx.Err(); err != nil {
+			m.token <- struct{}{}
+			return err
+		}
+		return nil
+	}
+}
+
+func (m *contextMutex) Unlock() {
+	m.token <- struct{}{}
 }
 
 type conversationProjectionTxKey struct{}
@@ -76,6 +110,7 @@ func NewStore(writeDB, readDB *sql.DB) *Store {
 		readDB:                   readDB,
 		qw:                       gen.New(writeDB),
 		qr:                       gen.New(readDB),
+		writeMu:                  newContextMutex(),
 		projectConversationLocks: make(map[domain.ProjectID]*sync.RWMutex),
 	}
 }

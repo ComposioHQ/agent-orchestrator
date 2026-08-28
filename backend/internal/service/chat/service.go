@@ -170,12 +170,14 @@ type ControllerCommit struct {
 func controllerStartResult(
 	controller *Controller,
 	providerBoundary *domain.ConversationBranch,
+	commitProviderHistory func(context.Context) error,
 ) StartResult {
 	return StartResult{
 		ProviderConversationID: controller.ProviderConversationID(),
 		ControllerGeneration:   controller.Generation(),
 		Conversation:           controller.conversation,
 		ProviderBoundary:       providerBoundary,
+		CommitProviderHistory:  commitProviderHistory,
 	}
 }
 
@@ -183,11 +185,14 @@ func notifyControllerReady(
 	cfg StartConfig,
 	controller *Controller,
 	providerBoundary *domain.ConversationBranch,
+	commitProviderHistory func(context.Context) error,
 ) (ControllerCommit, error) {
 	if cfg.ControllerReady == nil {
 		return ControllerCommit{}, nil
 	}
-	commit, err := cfg.ControllerReady(controllerStartResult(controller, providerBoundary))
+	commit, err := cfg.ControllerReady(controllerStartResult(
+		controller, providerBoundary, commitProviderHistory,
+	))
 	if err != nil {
 		return ControllerCommit{}, fmt.Errorf("commit chat controller: %w", err)
 	}
@@ -337,6 +342,13 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	if freshProjectContext {
 		conversation, err = s.store.CreateProjectConversationWithContextReset(
 			ctx, conversationID, cfg.ProjectID, cfg.SessionID, resetBoundary, now)
+	} else if scope == domain.ConversationScopeProject &&
+		cfg.ProviderConversationID != "" && cfg.ProviderScopeID != "" {
+		// A coordinator-reserved provider boundary is an ownership transfer, not
+		// permission to steal a project narrative from a newer orchestrator.
+		// Require the durable current_session_id proof the coordinator observed;
+		// ControllerReady/CommitChatSpawn rechecks it after provider I/O.
+		conversation, err = s.store.ConversationForSession(ctx, cfg.SessionID)
 	} else {
 		conversation, err = s.store.CreateConversation(
 			ctx, conversationID, scope, cfg.ProjectID, cfg.SessionID, now)
@@ -346,10 +358,12 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	}
 	// CreateConversation is the durable project-owner bind, but a different
 	// session can rebind the same project as soon as that transaction returns.
-	// Pin this owner through settings, provider startup, orphan settlement, and
-	// controller publication so a retired Start cannot mutate or publish after a
-	// newer owner has taken over. Session-scoped starts keep their per-session gate
-	// and do not participate in this cross-session fence.
+	// Pin this owner through settings, provider startup, and orphan settlement so
+	// a retired Start cannot contact its provider after a newer owner has taken
+	// over. ControllerReady may itself run the lifecycle write that transfers
+	// ownership, so release before that callback and reacquire/revalidate before
+	// publication. Session-scoped starts keep their per-session gate and do not
+	// participate in this cross-session fence.
 	releaseProjectOwnership := func() {}
 	if conversation.Scope == domain.ConversationScopeProject {
 		releaseProjectOwnership, err = s.store.AcquireProjectConversationDispatch(
@@ -362,7 +376,7 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 			return nil, fmt.Errorf("verify project conversation owner after bind: %w", err)
 		}
 	}
-	defer releaseProjectOwnership()
+	defer func() { releaseProjectOwnership() }()
 
 	repairedBranch, restoredProviderOwner, err := s.store.RepairIncompleteConversationEdit(
 		ctx, cfg.SessionID, conversation.ID, s.now())
@@ -454,6 +468,15 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	if err != nil {
 		return nil, err
 	}
+	if cfg.ProviderConversationID != "" &&
+		conv.ProviderConversationID() != cfg.ProviderConversationID {
+		returned := conv.ProviderConversationID()
+		_ = conv.Close()
+		return nil, fmt.Errorf(
+			"resumed provider conversation handle %q does not match requested handle %q",
+			returned, cfg.ProviderConversationID,
+		)
+	}
 
 	// Claim the durable fence before the controller starts consuming events. A
 	// pending provider boundary claims it in ControllerReady's atomic ownership
@@ -495,6 +518,7 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	// replaced can be told apart from the current one's.
 	controller := newController(
 		cfg.SessionID, conversation, generation, conv, s.store, s.activity, s.log, s.newID, s.now)
+	var commitProviderHistory func(context.Context) error
 	if cfg.ProviderConversationID != "" && !cfg.SkipNativeHistoryImport {
 		// The provider's native thread is the continuity authority across TUI and
 		// Chat. Import it before the live projector starts so the first notification
@@ -518,21 +542,62 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 				cfg.SessionID, existing.Turns, existing.Messages, existing.Activities,
 			)
 		}
-		if err := controller.importNativeHistory(
+		events, historyErr := controller.readNativeHistory(
 			ctx, existing.Turns, existing.Messages, existing.Activities,
 			cfg.RequireNativeHistory, replayCheckpoint,
-		); err != nil {
+		)
+		if historyErr != nil {
+			_ = conv.Close()
+			return nil, historyErr
+		}
+		if providerBoundary != nil {
+			// The pending branch does not exist yet. Carry its stable replay into
+			// ControllerReady so SQLite can insert/activate the boundary, stage the
+			// generation, project every event onto that branch, and publish the
+			// live session as one transaction. Until then the terminated target is
+			// not exposed to input and no event can be attributed to the old root.
+			commitProviderHistory = func(commitCtx context.Context) error {
+				return controller.projectNativeHistory(commitCtx, events)
+			}
+		} else if err := controller.projectNativeHistory(ctx, events); err != nil {
 			_ = conv.Close()
 			return nil, err
 		}
 	}
-	commit, err := notifyControllerReady(cfg, controller, providerBoundary)
+	// ControllerReady is a lifecycle transaction boundary, not a read-only hook:
+	// among other checks it may observe or cause a project rebind. Do not call it
+	// while holding the project's read lease. Reacquiring below closes the gap
+	// between a successful commit and publishing this controller.
+	if conversation.Scope == domain.ConversationScopeProject {
+		releaseProjectOwnership()
+		releaseProjectOwnership = func() {}
+	}
+	commit, err := notifyControllerReady(
+		cfg, controller, providerBoundary, commitProviderHistory,
+	)
 	if err != nil {
 		_ = conv.Close()
 		return nil, err
 	}
+	if conversation.Scope == domain.ConversationScopeProject {
+		releaseProjectOwnership, err = s.store.AcquireProjectConversationDispatch(
+			ctx, conversation.ID, conversation.ProjectID, cfg.SessionID,
+		)
+		if errors.Is(err, domain.ErrConversationOwnerChanged) {
+			_ = conv.Close()
+			return nil, fmt.Errorf("%w: %w", ErrControllerHandoff, err)
+		}
+		if err != nil {
+			_ = conv.Close()
+			return nil, fmt.Errorf("verify project conversation owner before publish: %w", err)
+		}
+	}
 	if providerBoundary != nil {
 		if cfg.ControllerReady == nil {
+			if commitProviderHistory != nil {
+				_ = conv.Close()
+				return nil, errors.New("commit native history: atomic provider-boundary lifecycle is unavailable")
+			}
 			if err := s.store.CreateAndActivateConversationBranch(
 				ctx, cfg.SessionID, *providerBoundary, generation, s.now(),
 			); err != nil {
@@ -1075,7 +1140,7 @@ func (s *Service) StartChat(ctx context.Context, cfg StartRequest) (StartResult,
 	if err != nil {
 		return StartResult{}, err
 	}
-	return controllerStartResult(controller, nil), nil
+	return controllerStartResult(controller, nil, nil), nil
 }
 
 // StartRequest mirrors session_manager.ChatStart. Duplicated rather than
@@ -1113,6 +1178,10 @@ type StartResult struct {
 	// that is not active yet. ControllerReady must commit it atomically with the
 	// session's provider handle and controller generation.
 	ProviderBoundary *domain.ConversationBranch
+	// CommitProviderHistory projects a reconciled native replay inside the
+	// provider-boundary lifecycle transaction. It must never be invoked outside
+	// that transaction: the pending branch and generation do not exist yet.
+	CommitProviderHistory func(context.Context) error
 }
 
 // StartChatTurn delivers the initial prompt as a normal turn.

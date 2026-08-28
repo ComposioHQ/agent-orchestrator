@@ -473,6 +473,7 @@ func TestResumeUsesPersistedBypassPermissionForCapabilityAdmission(t *testing.T)
 	}
 
 	conv := newFakeConversation()
+	conv.providerConversationID = "thread-bypass"
 	var resumed ports.ChatResumeConfig
 	svc := chatsvc.New(chatsvc.Options{
 		Store: st, Sessions: st,
@@ -1733,6 +1734,7 @@ func TestInterfaceHandoffDoesNotAnchorReplayBeforeProviderCoordinationBoundary(t
 			},
 		},
 	}
+	conv.providerConversationID = "new-provider-thread"
 	svc := chatsvc.New(chatsvc.Options{
 		Store: st, Sessions: st,
 		Reader: chatsvc.SnapshotReaderFunc(func(ctx context.Context, conversationID string) (chatsvc.ConversationRows, error) {
