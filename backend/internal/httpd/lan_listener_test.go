@@ -72,6 +72,7 @@ func TestLANManagerBlocksLoopbackOnlyControlRoutes(t *testing.T) {
 		"/api/v1/desktop/sessions/ao-1/workspace",
 		"/api/v1/system/install/tmux",
 		"/api/v1/sessions/ao-1/preview/server",
+		"/api/v1/sessions/ao-1/preview/ports",
 	}
 	for _, path := range blocked {
 		req, _ := http.NewRequest(http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d%s", port, path), nil)

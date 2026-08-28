@@ -65,6 +65,8 @@ type fakeSessionService struct {
 	handoffSource        domain.AgentGenerationID
 	autoInjectCISession  domain.SessionID
 	autoInjectCIEnabled  bool
+	previewPorts         []ports.DetectedPort
+	previewPortsErr      error
 }
 
 type fakeInterfaceTransitionSessionService struct {
@@ -533,6 +535,10 @@ func (f *fakeSessionService) StageAttachments(
 	}
 	f.staged = attachments
 	return f.stagedPaths, nil
+}
+
+func (f *fakeSessionService) ListPreviewPorts(_ context.Context, _ domain.SessionID) ([]ports.DetectedPort, error) {
+	return f.previewPorts, f.previewPortsErr
 }
 
 func (f *fakeSessionService) ListWorkspaceFiles(_ context.Context, id domain.SessionID) (sessionsvc.WorkspaceFiles, error) {
@@ -2048,6 +2054,57 @@ func TestSessionsAPI_ClearPreviewNotFound(t *testing.T) {
 
 	body, status, _ := doRequest(t, srv, "DELETE", "/api/v1/sessions/missing-1/preview", "")
 	assertErrorCode(t, body, status, http.StatusNotFound, "SESSION_NOT_FOUND")
+}
+
+func TestSessionsAPI_DetectedPreviewPortsAreListed(t *testing.T) {
+	svc := newFakeSessionService()
+	svc.previewPorts = []ports.DetectedPort{
+		{Port: 5173, PID: 812, Command: "node"},
+		{Port: 8080, PID: 900},
+	}
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, http.MethodGet, "/api/v1/sessions/ao-1/preview/ports", "")
+	if status != http.StatusOK || !containsAll(body, `"port":5173`, `"pid":812`, `"command":"node"`, `"port":8080`) {
+		t.Fatalf("list preview ports = %d body=%s", status, body)
+	}
+	// An unlabeled process must omit the field rather than send an empty one.
+	if bytes.Contains(body, []byte(`"pid":900,"command"`)) {
+		t.Fatalf("empty command was serialized: %s", body)
+	}
+}
+
+// Detection is a suggestion source, so a machine that cannot enumerate sockets
+// gets an empty list, never an error the user has to read.
+func TestSessionsAPI_DetectedPreviewPortsFailOpen(t *testing.T) {
+	svc := newFakeSessionService()
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, http.MethodGet, "/api/v1/sessions/ao-1/preview/ports", "")
+	if status != http.StatusOK || !containsAll(body, `"sessionId":"ao-1"`, `"ports":[]`) {
+		t.Fatalf("list preview ports = %d body=%s", status, body)
+	}
+}
+
+func TestSessionsAPI_DetectedPreviewPortsUnknownSession(t *testing.T) {
+	srv := newSessionTestServer(t, newFakeSessionService())
+
+	body, status, _ := doRequest(t, srv, http.MethodGet, "/api/v1/sessions/missing-1/preview/ports", "")
+	assertErrorCode(t, body, status, http.StatusNotFound, "SESSION_NOT_FOUND")
+}
+
+// A terminated session's recorded runtime handle may already be recycled, so
+// its process tree is never scanned.
+func TestSessionsAPI_DetectedPreviewPortsRejectTerminatedSession(t *testing.T) {
+	svc := newFakeSessionService()
+	session := svc.sessions["ao-1"]
+	session.IsTerminated = true
+	svc.sessions["ao-1"] = session
+	svc.previewPorts = []ports.DetectedPort{{Port: 5173, PID: 812}}
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, http.MethodGet, "/api/v1/sessions/ao-1/preview/ports", "")
+	assertErrorCode(t, body, status, http.StatusConflict, "SESSION_TERMINATED")
 }
 
 func TestSessionsAPI_ManagedPreviewStartsExactApplicationAndPersistsTarget(t *testing.T) {

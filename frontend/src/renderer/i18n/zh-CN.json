@@ -38,6 +38,8 @@
 	"browser.deviceCustomWidth": "自定义宽度",
 	"browser.deviceFit": "适应面板",
 	"browser.devicePreset": "设备预设",
+	"browser.detectedPorts": "检测到的端口",
+	"browser.openDetectedPort": "打开 localhost:{{port}}",
 	"browser.emptyUrl": "输入网址，或在终端中点击链接。",
 	"browser.forward": "前进",
 	"browser.newTab": "新标签",

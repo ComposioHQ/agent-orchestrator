@@ -952,3 +952,13 @@ func approvalReply(method string, decision ports.ChatDecision) any {
 	}
 	return map[string]any{"decision": decision.ID}
 }
+
+// ProcessID is the app-server process this conversation owns, satisfying
+// ports.ChatProcessInspector. See that interface: it is an observation root,
+// never a lifecycle handle.
+func (c *conversation) ProcessID() int {
+	if c.proc == nil {
+		return 0
+	}
+	return c.proc.pid
+}

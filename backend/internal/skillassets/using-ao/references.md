@@ -7,6 +7,7 @@ Natural-language-to-command mappings for common AO tasks.
 | Show me this webpage / open this page | `ao preview "<url>"` |
 | Start an existing configured dev app | `ao preview start [configuration]` |
 | Check or stop the worker's managed dev app | `ao preview status` / `ao preview stop` |
+| Find the port a server in this session is on | `ao preview ports` |
 | Show this Markdown or HTML file without a server | `ao preview "<workspace-path>"` |
 | Hand off a newly created browser-displayable artifact | `ao preview "<workspace-path>"` immediately after writing the primary artifact |
 | Inspect and verify this webpage as the agent | `ao browser open "<url>"`, then `ao browser snapshot` |

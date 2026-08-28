@@ -916,6 +916,19 @@ type ChatConversation interface {
 	Close() error
 }
 
+// ChatProcessInspector is optionally implemented by a conversation that runs
+// its provider as a local child process. ProcessID is the root of everything
+// that conversation has started -- the provider, its tools, and any server an
+// agent launched through them -- so callers can scope a machine observation to
+// one session's own work.
+//
+// It is an observation, not a lifecycle handle: 0 means "no local process to
+// point at", and a non-zero pid is not a promise the process is still alive.
+// Nothing may kill, signal, or infer session liveness from it.
+type ChatProcessInspector interface {
+	ProcessID() int
+}
+
 // ChatHistoryReader is optionally implemented by a conversation whose native
 // protocol can read the durable thread it resumed. Events are returned oldest
 // first, settled, and with stable ProviderEventID values so importing the same

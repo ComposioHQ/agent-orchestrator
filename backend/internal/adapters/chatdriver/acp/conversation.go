@@ -783,3 +783,15 @@ func (c *conversation) promptContent(message ports.ChatUserMessage) ([]acpsdk.Co
 	}
 	return prompt, nil
 }
+
+// ProcessID is the provider process this conversation owns, satisfying
+// ports.ChatProcessInspector. It is the root of everything the conversation has
+// started, so a caller can scope a machine-wide observation (which ports this
+// session is serving on, for instance) to this session alone. 0 means there is
+// no local process to point at.
+func (c *conversation) ProcessID() int {
+	if c.proc == nil {
+		return 0
+	}
+	return c.proc.pid
+}

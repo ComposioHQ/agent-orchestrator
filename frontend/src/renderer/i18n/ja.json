@@ -38,6 +38,8 @@
 	"browser.deviceCustomWidth": "カスタム幅",
 	"browser.deviceFit": "パネルに合わせる",
 	"browser.devicePreset": "デバイスプリセット",
+	"browser.detectedPorts": "検出されたポート",
+	"browser.openDetectedPort": "localhost:{{port}} を開く",
 	"browser.emptyUrl": "URL を入力するか、ターミナル内のリンクをクリックしてください。",
 	"browser.forward": "進む",
 	"browser.newTab": "新しいタブ",

@@ -218,6 +218,8 @@ var schemaNames = map[string]string{
 	"ControllersSetSessionPreviewRequest":                 "SetSessionPreviewRequest",
 	"ControllersStartPreviewServerRequest":                "StartPreviewServerRequest",
 	"ControllersPreviewServerStatusResponse":              "PreviewServerStatusResponse",
+	"ControllersDetectedPreviewPort":                      "DetectedPreviewPort",
+	"ControllersDetectedPreviewPortsResponse":             "DetectedPreviewPortsResponse",
 	"ControllersBrowserStatusQuery":                       "BrowserStatusQuery",
 	"ControllersBrowserStatusResponse":                    "BrowserStatusResponse",
 	"ControllersBrowserCommandRequest":                    "BrowserCommandRequest",
@@ -1575,6 +1577,18 @@ func sessionOperations() []operation {
 			resps: []respUnit{
 				{http.StatusOK, controllers.PreviewServerStatusResponse{}},
 				{http.StatusForbidden, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/sessions/{sessionId}/preview/ports", id: "listSessionPreviewPorts", tag: "sessions",
+			summary:    "List TCP ports detected inside a session's own process tree",
+			pathParams: []any{controllers.SessionIDParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.DetectedPreviewPortsResponse{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusConflict, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},

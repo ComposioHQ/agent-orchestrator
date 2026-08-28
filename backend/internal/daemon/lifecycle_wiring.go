@@ -468,6 +468,7 @@ func (r projectRepoResolver) RepoPath(projectID domain.ProjectID) (string, error
 type chatLauncher struct{ svc *chatsvc.Service }
 
 var _ sessionmanager.ChatLauncher = chatLauncher{}
+var _ sessionmanager.ChatProcessLocator = chatLauncher{}
 var _ interface {
 	ArmChatHandoff(context.Context, domain.SessionID, domain.SessionInterfaceTransitionPolicy) error
 	PrepareChatHandoff(context.Context, domain.SessionID, domain.SessionInterfaceTransitionPolicy) error
@@ -476,6 +477,12 @@ var _ interface {
 
 func (c chatLauncher) SupportsChat(harness domain.AgentHarness) bool {
 	return c.svc.SupportsChat(harness)
+}
+
+// ChatProcessID satisfies sessionmanager.ChatProcessLocator so preview-port
+// detection can root a chat session's scan at its provider process.
+func (c chatLauncher) ChatProcessID(id domain.SessionID) (int, bool) {
+	return c.svc.ChatProcessID(id)
 }
 
 func (c chatLauncher) PreflightChat(

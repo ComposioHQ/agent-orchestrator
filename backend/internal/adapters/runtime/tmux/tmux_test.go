@@ -1674,3 +1674,11 @@ func exitCodeErr(t *testing.T, code int) error {
 	}
 	return err
 }
+
+// -- detected preview ports --
+
+// The runtime satisfies the optional capability preview-port detection
+// type-asserts for; dropping the method would otherwise silently degrade the
+// feature to "nothing detected". The scan itself is portscan's job and is
+// tested there.
+var _ ports.SessionRootProcessInspector = (*Runtime)(nil)

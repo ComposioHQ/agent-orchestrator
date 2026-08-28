@@ -81,8 +81,14 @@ func lanControlBlock(next http.Handler) http.Handler {
 // beneath it ("/api/v1/mobile/status") but must not catch unrelated siblings
 // such as "/api/v1/mobileapp".
 func isLANControlBlockedPath(path string) bool {
-	if strings.HasPrefix(path, "/api/v1/sessions/") && strings.HasSuffix(strings.TrimSuffix(path, "/"), "/preview/server") {
-		return true
+	// /preview/server runs a process; /preview/ports reports which local ports
+	// a session is serving on. Neither belongs on a listener the rest of the
+	// home network can reach.
+	if strings.HasPrefix(path, "/api/v1/sessions/") {
+		suffix := strings.TrimSuffix(path, "/")
+		if strings.HasSuffix(suffix, "/preview/server") || strings.HasSuffix(suffix, "/preview/ports") {
+			return true
+		}
 	}
 	for _, prefix := range lanControlBlockedPrefixes {
 		trimmed := prefix

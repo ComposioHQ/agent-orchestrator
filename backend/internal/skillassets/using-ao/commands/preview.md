@@ -88,7 +88,9 @@ ao preview stop [--json]
 ```
 
 This command is for an existing, intentional project configuration. Do not
-create the file as routine preview setup. Do not scan unrelated ports.
+create the file as routine preview setup. Do not go looking for servers you did
+not start: `ao preview ports` below is the only sanctioned way to find a port,
+and it reports this session's own processes only.
 `${PORT}` is expanded in `runtimeArgs`, `url`, and `env`; AO also sets `PORT`,
 `AO_PREVIEW_PORT`, and `AO_SESSION_ID`.
 
@@ -122,6 +124,38 @@ taking over the visible browser. When several configurations exist, select the
 one relevant to the user's request by name. If the agent starts a server
 outside this lifecycle, explicitly adopt its known URL with `ao preview <url>`;
 terminal URLs are not automatically ranked or selected.
+
+---
+
+### ao preview ports
+
+List the TCP ports this session's own processes are listening on, then open one
+with `ao preview http://localhost:<port>`.
+
+```bash
+ao preview ports [--json]
+```
+
+Scoped to this session: a process counts when it descends from the session's
+own root process, or when its working directory is inside the session
+workspace. A server another session started, and anything else running on the
+machine, are never reported. Use it after starting a dev server whose port you
+do not already know, instead of reading it out of scrollback or probing ports
+by hand.
+
+Backgrounding a server does not hide it. A detached process is reparented away
+from everything AO owns, but it keeps its working directory, so it is still
+found.
+
+Best effort by design. It prints nothing when the session is serving nothing,
+and also when the machine cannot enumerate listening sockets at all — those two
+cases are indistinguishable, so do not report "no servers are running" on an
+empty result. Nothing here says whether a server is healthy or ready; only that
+something in this session holds the port.
+
+Prefer a URL you already know. If you started the server yourself, or the
+project has a `.ao/launch.json`, you know its port already and should adopt it
+directly rather than searching for it.
 
 ---
 

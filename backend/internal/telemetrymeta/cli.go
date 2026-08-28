@@ -130,6 +130,7 @@ var legacyActorlessUserCLICommands = map[string]struct{}{
 	"ao pr resolve-comments":    {},
 	"ao preview":                {},
 	"ao preview clear":          {},
+	"ao preview ports":          {},
 	"ao preview start":          {},
 	"ao preview status":         {},
 	"ao preview stop":           {},

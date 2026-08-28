@@ -2,6 +2,14 @@
 // processes used by the desktop preview. It deliberately does not scan global
 // localhost ports: a server is started from an explicit project configuration,
 // so its worker, command, working directory, and URL are known.
+//
+// That is not a rule against port detection anywhere in AO, only against
+// guessing here. The Browser panel additionally offers detected ports as
+// clickable suggestions (ports.DescendantPortLister, internal/portscan), and
+// the two are complementary rather than contradictory: this package knows what
+// it started and can start, stop and report on it, while detection only
+// observes what already exists inside one session's process tree and never
+// controls it. Neither reads global localhost.
 package previewserver
 
 import (
