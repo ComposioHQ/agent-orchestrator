@@ -31,7 +31,7 @@ export function parseSnapshotEntries(snapshotRefs: unknown): SnapshotEntry[] {
 		if (typeof role !== "string" || typeof name !== "string") continue;
 		entries.push({ role, name, ref });
 	}
-	return entries;
+	return entries.sort((a, b) => Number(a.ref.slice(1)) - Number(b.ref.slice(1)));
 }
 
 const ARIA_ROLES = new Set([
@@ -99,8 +99,9 @@ export function matchInstruction(instruction: string, snapshotRefs: unknown, opt
 	const entries = parseSnapshotEntries(snapshotRefs);
 	const instructions = [parseInstruction(instruction)];
 	if (LEADING_VERBS.has(tokenize(instruction)[0])) instructions.push(parseInstruction(instruction, true));
+	const roleOnlyInstruction = instructions.find(({ roleHint, nameHint }) => Boolean(roleHint) && !nameHint);
 	const candidatesByRef = new Map<string, ActCandidate>();
-	for (const { roleHint, nameHint, nameTokens } of instructions) {
+	for (const { roleHint, nameHint, nameTokens } of roleOnlyInstruction ? [roleOnlyInstruction] : instructions) {
 		for (const candidate of scoreCandidates(entries, roleHint, nameHint, nameTokens)) {
 			const previous = candidatesByRef.get(candidate.ref);
 			if (!previous || candidate.score > previous.score) candidatesByRef.set(candidate.ref, candidate);
@@ -115,6 +116,9 @@ export function matchInstruction(instruction: string, snapshotRefs: unknown, opt
 		(top.score >= MATCH_SCORE_FLOOR && (!second || top.score - second.score >= MATCH_SCORE_GAP));
 
 	if (isConfidentMatch) return { outcome: "matched", candidate: top };
+	if (roleOnlyInstruction && typeof opts.nth === "number" && opts.nth >= 0 && opts.nth < candidates.length) {
+		return { outcome: "matched", candidate: candidates[opts.nth] };
+	}
 	if (candidates.length === 1 && top.score < MATCH_SCORE_FLOOR) return { outcome: "no-match" };
 	if (typeof opts.nth === "number" && opts.nth >= 0 && opts.nth < candidates.length) {
 		return { outcome: "matched", candidate: candidates[opts.nth] };

@@ -784,11 +784,14 @@ function stringError(value: unknown): string {
 	return "";
 }
 
+const STALE_REFERENCE_MESSAGE = /^(?:Unknown ref:|Could not locate element with)/;
+
 // Preserve only the stale-reference signal needed by `act`. Other native
 // command failures stay generic so tab drift and close recovery paths continue
 // to recognize AGENT_BROWSER_COMMAND_FAILED.
 function staleReferenceCode(value: unknown): "STALE_REFERENCE" | undefined {
-	return isRecord(value) && value.code === "STALE_REFERENCE" ? "STALE_REFERENCE" : undefined;
+	if (isRecord(value) && value.code === "STALE_REFERENCE") return "STALE_REFERENCE";
+	return typeof value === "string" && STALE_REFERENCE_MESSAGE.test(value) ? "STALE_REFERENCE" : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

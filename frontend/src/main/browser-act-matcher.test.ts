@@ -32,6 +32,24 @@ describe("parseSnapshotEntries", () => {
 			}),
 		).toEqual([{ role: "button", name: "Save", ref: "e1" }]);
 	});
+
+	it("restores document order when the native refs map uses lexicographic keys", () => {
+		expect(
+			parseSnapshotEntries({
+				e1: { role: "button", name: "First" },
+				e10: { role: "button", name: "Tenth" },
+				e11: { role: "button", name: "Eleventh" },
+				e2: { role: "button", name: "Second" },
+				e3: { role: "button", name: "Third" },
+			}),
+		).toEqual([
+			{ role: "button", name: "First", ref: "e1" },
+			{ role: "button", name: "Second", ref: "e2" },
+			{ role: "button", name: "Third", ref: "e3" },
+			{ role: "button", name: "Tenth", ref: "e10" },
+			{ role: "button", name: "Eleventh", ref: "e11" },
+		]);
+	});
 });
 
 describe("matchInstruction", () => {
@@ -81,6 +99,31 @@ describe("matchInstruction", () => {
 		expect(
 			matchInstruction("the cancel button", { e1: { role: "button", name: "Confirm delete" } }, { nth: 0 }),
 		).toEqual({ outcome: "no-match" });
+	});
+
+	it("does not let an action word outrank the explicit role of an unnamed control", () => {
+		expect(
+			matchInstruction("check the checkbox", {
+				e1: { role: "checkbox", name: "" },
+				e2: { role: "button", name: "Check" },
+			}),
+		).toEqual({ outcome: "no-match" });
+	});
+
+	it("lets explicit --nth select an unnamed control from an action-prefixed role-only instruction", () => {
+		expect(
+			matchInstruction(
+				"check the checkbox",
+				{
+					e1: { role: "checkbox", name: "" },
+					e2: { role: "button", name: "Check" },
+				},
+				{ nth: 0 },
+			),
+		).toEqual({
+			outcome: "matched",
+			candidate: { role: "checkbox", name: "", ref: "e1", score: 3 },
+		});
 	});
 
 	it("uses only a trailing role noun as the role hint", () => {

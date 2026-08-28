@@ -10,6 +10,7 @@ import {
 } from "./browser-view-host";
 import { MAX_BROWSER_TABS } from "../shared/browser-tabs";
 import { NEW_SESSION_SHORTCUT_CHANNEL } from "../shared/shortcuts";
+import { parseAgentBrowserJSON } from "./agent-browser-runtime";
 
 type InvokeHandler = (event: unknown, ...args: unknown[]) => unknown;
 type EventHandler = (event: { sender: { id: number; getZoomFactor?: () => number } }, ...args: unknown[]) => unknown;
@@ -501,6 +502,30 @@ describe("browser:act", () => {
 		);
 	});
 
+	it("uses --nth to check an unnamed checkbox instead of a button named Check", async () => {
+		const { host, runAction } = setupActHost(async (_sessionId, action, args) => {
+			if (action === "snapshot") {
+				return {
+					snapshot: '- checkbox [checked=false, ref=e1]\n- button "Check" [ref=e2]',
+					refs: { e1: { role: "checkbox", name: "" }, e2: { role: "button", name: "Check" } },
+				};
+			}
+			if (action === "check") return { checked: args.ref };
+			return {};
+		});
+
+		const result = await host.execute("sess-1", "act", {
+			instruction: "check the checkbox",
+			action: "check",
+			nth: 0,
+		});
+
+		expect(result).toMatchObject({ outcome: "matched", resolvedRef: "e1", retried: false });
+		expect(runAction.mock.calls.filter(([, action]) => action === "check")).toEqual([
+			expect.arrayContaining(["sess-1", "check", { ref: "e1" }]),
+		]);
+	});
+
 	it("retries once after a stale reference: re-snapshots, re-matches, and completes", async () => {
 		let snapshotCalls = 0;
 		const { host, runAction } = setupActHost(async (_sessionId, action, args) => {
@@ -510,7 +535,9 @@ describe("browser:act", () => {
 				return { snapshot: `- button "Submit" [ref=${ref}]`, refs: { [ref]: { role: "button", name: "Submit" } } };
 			}
 			if (action === "click") {
-				if (args.ref === "e3") throw Object.assign(new Error("Reference no longer resolves"), { code: "STALE_REFERENCE" });
+				if (args.ref === "e3") {
+					parseAgentBrowserJSON(JSON.stringify({ success: false, data: null, error: "Unknown ref: e3" }));
+				}
 				return { clicked: args.ref };
 			}
 			return {};
