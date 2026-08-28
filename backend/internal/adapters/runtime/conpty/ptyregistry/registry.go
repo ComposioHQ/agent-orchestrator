@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 )
 
 // Entry is one registered pty-host process.
@@ -40,6 +41,11 @@ const UnresolvedPipePath = "ao-conpty://startup-unresolved"
 // SetRunFilePath at daemon startup, before any session activity begins, so
 // the unsynchronized package var has no concurrent access to race against.
 var overrideDir string
+
+// registryMu makes each read-modify-write operation atomic within the daemon.
+// Session starts can run concurrently; without this lock two successful hosts
+// could race and leave only one recoverable registry entry on disk.
+var registryMu sync.Mutex
 
 // SetRunFilePath pins the registry to the directory containing this
 // instance's running.json (backend/internal/config's already-resolved,
@@ -160,7 +166,9 @@ func writeRaw(entries []Entry) error {
 // Register adds or replaces the entry for entry.SessionID. registeredAt must
 // be set by the caller (e.g. time.Now().UTC().Format(time.RFC3339)).
 func Register(entry Entry) error {
-	all, complete, err := Scan()
+	registryMu.Lock()
+	defer registryMu.Unlock()
+	all, complete, err := scanLocked()
 	if err != nil || !complete {
 		return errors.Join(err, errors.New("conpty pty registry scan incomplete"))
 	}
@@ -176,7 +184,9 @@ func Register(entry Entry) error {
 
 // Unregister removes the entry for sessionID. No-op if absent.
 func Unregister(sessionID string) error {
-	all, complete, err := Scan()
+	registryMu.Lock()
+	defer registryMu.Unlock()
+	all, complete, err := scanLocked()
 	if err != nil || !complete {
 		return errors.Join(err, errors.New("conpty pty registry scan incomplete"))
 	}
@@ -196,6 +206,12 @@ func Unregister(sessionID string) error {
 // Dead entries are pruned only after a complete read and parse. Any read,
 // parse, or prune-write failure returns incomplete evidence.
 func Scan() (entries []Entry, complete bool, err error) {
+	registryMu.Lock()
+	defer registryMu.Unlock()
+	return scanLocked()
+}
+
+func scanLocked() (entries []Entry, complete bool, err error) {
 	all, complete, err := readRaw()
 	if err != nil || !complete {
 		return all, false, err
@@ -227,5 +243,7 @@ func List() ([]Entry, error) {
 
 // Clear deletes the registry file. Best-effort; used by tests and recovery.
 func Clear() error {
+	registryMu.Lock()
+	defer registryMu.Unlock()
 	return writeRaw(nil)
 }

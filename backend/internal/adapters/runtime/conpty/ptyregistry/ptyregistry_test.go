@@ -5,6 +5,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
+	"sync"
 	"testing"
 	"time"
 )
@@ -87,6 +89,42 @@ func TestRegisterReplaceSameID(t *testing.T) {
 	}
 	if got[0].PtyHostPID != 222 {
 		t.Fatalf("expected PID 222, got %d", got[0].PtyHostPID)
+	}
+}
+
+func TestConcurrentRegistersPreserveEveryHost(t *testing.T) {
+	setupHome(t)
+	withFakePidAlive(t, func(int) bool { return true })
+
+	const count = 16
+	var wg sync.WaitGroup
+	errs := make(chan error, count)
+	for i := 0; i < count; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			errs <- Register(Entry{
+				SessionID:    "session-" + strconv.Itoa(i),
+				PtyHostPID:   1000 + i,
+				PipePath:     "127.0.0.1:" + strconv.Itoa(50000+i),
+				RegisteredAt: nowRFC3339(),
+			})
+		}(i)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	entries, err := List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != count {
+		t.Fatalf("registry has %d entries, want %d: %v", len(entries), count, entries)
 	}
 }
 
