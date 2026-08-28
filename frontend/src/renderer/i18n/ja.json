@@ -13,6 +13,8 @@
 	"common.yes": "はい",
 	"board.empty.body": "タスクを説明すると、オーケストレーターが計画を立て、ワーカーセッションを起動し、進捗に合わせてここで追跡します。",
 	"board.empty.title": "ワーカーセッションはまだありません",
+	"home.jumpBack": "続きを始める",
+	"home.starUs": "スターを付ける",
 	"browser.agentAction": "エージェントが{{verb}}",
 	"browser.agentUsing": "エージェントがブラウザを使用中",
 	"browser.annotate": "ページに注釈",

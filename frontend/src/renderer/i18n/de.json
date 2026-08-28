@@ -13,6 +13,8 @@
 	"common.yes": "Ja",
 	"board.empty.body": "Beschreiben Sie eine Aufgabe — der Orchestrator plant sie, startet Worker-Sitzungen und verfolgt sie hier, während die Arbeit voranschreitet.",
 	"board.empty.title": "Noch keine Worker-Sitzungen",
+	"home.jumpBack": "Direkt weitermachen",
+	"home.starUs": "Mit Stern markieren",
 	"browser.agentAction": "Agent {{verb}}",
 	"browser.agentUsing": "Agent nutzt den Browser",
 	"browser.annotate": "Seite annotieren",

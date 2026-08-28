@@ -13,6 +13,8 @@
 	"common.yes": "Yes",
 	"board.empty.body": "Describe a task and the orchestrator plans it, spawns worker sessions, and tracks them here as work moves forward.",
 	"board.empty.title": "No worker sessions yet",
+	"home.jumpBack": "Jump back right in",
+	"home.starUs": "Star Us",
 	"browser.agentAction": "Agent {{verb}}",
 	"browser.agentUsing": "Agent using browser",
 	"browser.annotate": "Annotate page",

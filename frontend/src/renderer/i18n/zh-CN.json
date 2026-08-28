@@ -13,6 +13,8 @@
 	"common.yes": "是",
 	"board.empty.body": "描述一个任务后，编排器会进行规划、创建 worker 会话，并在工作推进时在此跟踪。",
 	"board.empty.title": "还没有 worker 会话",
+	"home.jumpBack": "继续进行",
+	"home.starUs": "点个星标",
 	"browser.agentAction": "代理正在{{verb}}",
 	"browser.agentUsing": "代理正在使用浏览器",
 	"browser.annotate": "标注页面",

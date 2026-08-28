@@ -1,4 +1,5 @@
 import { useNavigate } from "@tanstack/react-router";
+import { useTranslation } from "react-i18next";
 import { Folder, Star } from "lucide-react";
 import { aoBridge } from "../lib/bridge";
 import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
@@ -34,6 +35,7 @@ function ProjectRow({ project, onClick }: { project: WorkspaceSummary; onClick: 
 
 export function HomePage() {
 	const navigate = useNavigate();
+	const { t } = useTranslation();
 	const workspaceQuery = useWorkspaceQuery();
 	const projects = (workspaceQuery.data ?? [])
 		.slice()
@@ -45,14 +47,14 @@ export function HomePage() {
 			<div className="w-full max-w-[530px] -translate-y-3">
 				<div className="space-y-3">
 					<div className="flex items-center justify-between gap-4 px-3">
-						<h1 className="text-[17px] font-medium tracking-[-0.01em] text-foreground/80">Jump back right in</h1>
+						<h1 className="text-[17px] font-medium tracking-[-0.01em] text-foreground/80">{t("home.jumpBack")}</h1>
 						<TopbarButton
 							className="shrink-0 font-mono text-[15px] tracking-[0.03em] transition-[transform,filter,background,color,border-color] duration-150 ease-out active:scale-[0.96] motion-reduce:transform-none"
 							onClick={() => void aoBridge.app.openExternal(`${GITHUB_REPOSITORY_URL}/stargazers`)}
 							variant="accent"
 						>
 							<Star className="size-4" strokeWidth={1.8} aria-hidden="true" />
-							Star Us
+							{t("home.starUs")}
 						</TopbarButton>
 					</div>
 					<div className="space-y-1">
