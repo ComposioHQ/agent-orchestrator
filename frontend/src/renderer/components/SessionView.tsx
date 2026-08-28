@@ -529,6 +529,9 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const browserPopOutPhase = browserPopOutState.sessionId === sessionId ? browserPopOutState.phase : "docked";
 	const browserPoppedOut = browserPopOutPhase !== "docked";
 	const [interfaceSwitchDialogOpen, setInterfaceSwitchDialogOpen] = useState(false);
+	const [interfaceSwitchHistoryPolicy, setInterfaceSwitchHistoryPolicy] = useState<
+		"strict" | "provider_history"
+	>("strict");
 	const isNativeFullScreen = useWindowFullScreen();
 	const stopTerminalLiveResize = useCallback(() => {
 		if (terminalLiveResizeTimerRef.current !== null) {
@@ -981,7 +984,11 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			session.activity?.state === "blocked"),
 	);
 	const beginInterfaceSwitch = useCallback(
-		async (policy: "drain" | "interrupt") => {
+		async (
+			policy: "drain" | "interrupt",
+			targetMode: "chat" | "tui" = interfaceTarget,
+			historyPolicy: "strict" | "provider_history" = "strict",
+		) => {
 			const draftLeaveDecision = chatToTerminal
 				? await confirmUnsafeDraftLeave()
 				: ({ kind: "safe" } satisfies UnsafeDraftLeaveDecision);
@@ -1003,7 +1010,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 				});
 			}
 			try {
-				const response = await interfaceSwitch.start({ targetMode: interfaceTarget, policy });
+				const response = await interfaceSwitch.start({ targetMode, policy, historyPolicy });
 				if (chatLeaveRequestId !== undefined) {
 					setChatLeaveLock((current) =>
 						current?.requestId === chatLeaveRequestId && response?.transition?.id
@@ -1018,6 +1025,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 					);
 				}
 				setInterfaceSwitchDialogOpen(false);
+				setInterfaceSwitchHistoryPolicy("strict");
 			} catch {
 				if (chatLeaveRequestId !== undefined) {
 					setChatLeaveLock((current) =>
@@ -1040,6 +1048,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	);
 	const requestInterfaceSwitch = useCallback(() => {
 		interfaceSwitch.resetStartError();
+		setInterfaceSwitchHistoryPolicy("strict");
 		// Terminal UI is the escape hatch for a runaway Chat turn. The session
 		// projection can briefly report idle while the Chat controller is busy, so
 		// this direction must always apply the explicit interrupt policy instead
@@ -1055,6 +1064,23 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		}
 		setInterfaceSwitchDialogOpen(true);
 	}, [beginInterfaceSwitch, chatToTerminal, interfaceBusy, interfaceSwitch]);
+	const requestFailedInterfaceSwitch = useCallback(
+		(historyPolicy: "strict" | "provider_history") => {
+			const failed = interfaceSwitch.transition;
+			if (!failed) return;
+			interfaceSwitch.resetStartError();
+			setInterfaceSwitchHistoryPolicy(historyPolicy);
+			// A failed attempt's interrupt policy is stale consent. Re-evaluate the
+			// current Terminal state and either choose the safe drain default or ask
+			// again before cancelling newly started work.
+			if (!interfaceBusy) {
+				void beginInterfaceSwitch("drain", failed.targetMode, historyPolicy);
+				return;
+			}
+			setInterfaceSwitchDialogOpen(true);
+		},
+		[beginInterfaceSwitch, interfaceBusy, interfaceSwitch],
+	);
 	// Adapters without a Chat driver cannot offer a switch into Chat UI; hide
 	// the button entirely rather than showing a permanently disabled control.
 	const interfaceSwitchUnsupported = interfaceSwitch.status?.reasonCode === "CHAT_UNSUPPORTED";
@@ -1565,6 +1591,14 @@ export function SessionView({ sessionId }: SessionViewProps) {
 										void beginInterfaceSwitch("interrupt");
 									}}
 									interrupting={interfaceSwitch.starting}
+									onRetry={() => {
+										requestFailedInterfaceSwitch("strict");
+									}}
+									onUseProviderHistory={() => {
+										requestFailedInterfaceSwitch("provider_history");
+									}}
+									recoveryError={interfaceSwitch.startError}
+									retrying={interfaceSwitch.starting}
 								/>
 							) : null}
 						</div>
@@ -1627,8 +1661,13 @@ export function SessionView({ sessionId }: SessionViewProps) {
 				waitingForInput={interfaceWaitingForInput}
 				busy={interfaceSwitch.starting}
 				error={interfaceSwitch.startError}
-				onOpenChange={setInterfaceSwitchDialogOpen}
-				onChoose={(policy) => void beginInterfaceSwitch(policy)}
+				onOpenChange={(open) => {
+					setInterfaceSwitchDialogOpen(open);
+					if (!open) setInterfaceSwitchHistoryPolicy("strict");
+				}}
+				onChoose={(policy) =>
+					void beginInterfaceSwitch(policy, interfaceTarget, interfaceSwitchHistoryPolicy)
+				}
 			/>
 			<ConfirmDialog
 				open={unsafeDraftLeaveConfirmation?.sessionId === sessionId}

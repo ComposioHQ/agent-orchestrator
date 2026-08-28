@@ -77,7 +77,7 @@ type commander interface {
 // can expose the feature through the concrete Session Manager.
 type interfaceTransitionCommander interface {
 	InterfaceTransitionStatus(context.Context, domain.SessionID) (sessionmanager.InterfaceTransitionStatus, error)
-	StartInterfaceTransition(context.Context, domain.SessionID, domain.SessionMode, domain.SessionInterfaceTransitionPolicy) (domain.SessionInterfaceTransition, error)
+	StartInterfaceTransition(context.Context, domain.SessionID, domain.SessionMode, domain.SessionInterfaceTransitionPolicy, domain.SessionInterfaceTransitionHistoryPolicy) (domain.SessionInterfaceTransition, error)
 	CancelInterfaceTransition(context.Context, domain.SessionID) error
 	AcknowledgeInterfaceTransitionNotice(context.Context, domain.SessionID, string) (domain.SessionInterfaceTransition, error)
 }
@@ -562,6 +562,7 @@ func (s *Service) StartInterfaceTransition(
 	id domain.SessionID,
 	target domain.SessionMode,
 	policy domain.SessionInterfaceTransitionPolicy,
+	historyPolicy domain.SessionInterfaceTransitionHistoryPolicy,
 ) (domain.SessionInterfaceTransition, error) {
 	if !target.Valid() {
 		return domain.SessionInterfaceTransition{}, apierr.Invalid(
@@ -571,12 +572,16 @@ func (s *Service) StartInterfaceTransition(
 		return domain.SessionInterfaceTransition{}, apierr.Invalid(
 			"INVALID_TRANSITION_POLICY", "Policy must be drain or interrupt", nil)
 	}
+	if !historyPolicy.Valid() {
+		return domain.SessionInterfaceTransition{}, apierr.Invalid(
+			"INVALID_TRANSITION_HISTORY_POLICY", "History policy must be strict or provider_history", nil)
+	}
 	manager, ok := s.manager.(interfaceTransitionCommander)
 	if !ok {
 		return domain.SessionInterfaceTransition{}, apierr.Conflict(
 			"INTERFACE_HANDOFF_UNSUPPORTED", "This build cannot switch session interfaces", nil)
 	}
-	transition, err := manager.StartInterfaceTransition(ctx, id, target, policy)
+	transition, err := manager.StartInterfaceTransition(ctx, id, target, policy, historyPolicy)
 	return transition, toAPIError(err)
 }
 
@@ -928,6 +933,9 @@ func toAPIError(err error) error {
 	case errors.Is(err, sessionmanager.ErrInterfaceTransitionNoticeNotAcknowledgeable):
 		return apierr.Conflict("INTERFACE_TRANSITION_NOTICE_NOT_ACKNOWLEDGEABLE",
 			"This interface switch has no failure or recovery notice to acknowledge", nil)
+	case errors.Is(err, sessionmanager.ErrInterfaceProviderHistoryRecoveryUnavailable):
+		return apierr.Conflict("PROVIDER_HISTORY_RECOVERY_UNAVAILABLE",
+			"Provider history can be used only after AO identifies a legacy text-only mismatch", nil)
 	case errors.Is(err, sessionmanager.ErrInterfaceAlreadySelected):
 		return apierr.Conflict("INTERFACE_ALREADY_SELECTED",
 			"The session is already using the requested interface", nil)

@@ -414,48 +414,52 @@ type ReviewRun struct {
 }
 
 type Session struct {
-	ID                        domain.SessionID
-	ProjectID                 domain.ProjectID
-	Num                       int64
-	IssueID                   domain.IssueID
-	Kind                      domain.SessionKind
-	Harness                   domain.AgentHarness
-	ActivityState             domain.ActivityState
-	ActivityLastAt            time.Time
-	IsTerminated              bool
-	Branch                    string
-	WorkspacePath             string
-	RuntimeHandleID           string
-	AgentSessionID            string
-	Prompt                    string
-	CreatedAt                 time.Time
-	UpdatedAt                 time.Time
-	DisplayName               string
-	FirstSignalAt             sql.NullTime
-	PreviewURL                string
-	PreviewRevision           int64
-	CleanupGeneration         int64
-	RuntimeLaunchID           string
-	WorkspaceRepoPath         string
-	TerminateOnPRMerge        bool
-	DiffBaseSha               string
-	DiffBaseRef               string
-	ReviewerHarness           domain.ReviewerHarness
-	IsPinned                  bool
-	PinnedAt                  sql.NullTime
-	SessionMode               domain.SessionMode
-	ProviderConversationID    string
-	ControllerGeneration      string
-	BrowserCapabilityVerifier string
-	AutoInjectReview          bool
-	LatestUserPrompt          string
-	LatestAssistantUpdate     string
-	NativeTranscriptPath      string
-	AutoInjectCI              bool
-	AutoReviewEnabled         bool
-	AgentSessionIDLaunchID    string
-	Model                     string
-	LatestUserPromptAt        sql.NullTime
+	ID                               domain.SessionID
+	ProjectID                        domain.ProjectID
+	Num                              int64
+	IssueID                          domain.IssueID
+	Kind                             domain.SessionKind
+	Harness                          domain.AgentHarness
+	ActivityState                    domain.ActivityState
+	ActivityLastAt                   time.Time
+	IsTerminated                     bool
+	Branch                           string
+	WorkspacePath                    string
+	RuntimeHandleID                  string
+	AgentSessionID                   string
+	Prompt                           string
+	CreatedAt                        time.Time
+	UpdatedAt                        time.Time
+	DisplayName                      string
+	FirstSignalAt                    sql.NullTime
+	PreviewURL                       string
+	PreviewRevision                  int64
+	CleanupGeneration                int64
+	RuntimeLaunchID                  string
+	WorkspaceRepoPath                string
+	TerminateOnPRMerge               bool
+	DiffBaseSha                      string
+	DiffBaseRef                      string
+	ReviewerHarness                  domain.ReviewerHarness
+	IsPinned                         bool
+	PinnedAt                         sql.NullTime
+	SessionMode                      domain.SessionMode
+	ProviderConversationID           string
+	ControllerGeneration             string
+	BrowserCapabilityVerifier        string
+	AutoInjectReview                 bool
+	LatestUserPrompt                 string
+	LatestAssistantUpdate            string
+	NativeTranscriptPath             string
+	AutoInjectCI                     bool
+	AutoReviewEnabled                bool
+	AgentSessionIDLaunchID           string
+	Model                            string
+	LatestUserPromptAt               sql.NullTime
+	ConversationCheckpointState      domain.ConversationCheckpointState
+	ConversationCheckpointGeneration string
+	ConversationCheckpointNativeID   string
+	ConversationCheckpointUnsettled  bool
 }
 
 type SessionCleanupFact struct {
@@ -483,6 +487,7 @@ type SessionInterfaceTransition struct {
 	UpdatedAt            time.Time
 	CompletedAt          sql.NullTime
 	NoticeAcknowledgedAt sql.NullTime
+	HistoryPolicy        domain.SessionInterfaceTransitionHistoryPolicy
 }
 
 type SessionInterfaceTransitionMessage struct {

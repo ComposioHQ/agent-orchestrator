@@ -123,6 +123,8 @@ var shippedMigrations = map[int64]string{
 	116: "0116_usage_billing_provider_source.sql",
 	118: "0118_conversation_steer_delivery.sql",
 	119: "0119_conversation_edit_delivery.sql",
+	120: "0120_conversation_checkpoint_provenance.sql",
+	121: "0121_conversation_checkpoint_unsettled.sql",
 }
 
 // burnedVersion reports version numbers that must never be (re)used: they
