@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/claudecode"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -417,6 +418,41 @@ func TestGetAgentHooksMigratesLegacyClaudeHooks(t *testing.T) {
 	}
 	if !strings.Contains(body, "ao hooks continue stop") || !strings.Contains(body, "ao hooks continue notification") {
 		t.Fatalf("new Continue hooks missing: %s", body)
+	}
+}
+
+func TestClaudeInstallReplacesContinueHooks(t *testing.T) {
+	ws := t.TempDir()
+	settingsDir := filepath.Join(ws, ".claude")
+	if err := os.MkdirAll(settingsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	settingsPath := filepath.Join(settingsDir, "settings.local.json")
+	if err := os.WriteFile(settingsPath, []byte(`{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"user stop hook"}]}]}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := ports.WorkspaceHookConfig{WorkspacePath: ws}
+	if err := (&Plugin{resolvedBinary: "cn"}).GetAgentHooks(context.Background(), cfg); err != nil {
+		t.Fatalf("install Continue hooks: %v", err)
+	}
+	if err := claudecode.New().GetAgentHooks(context.Background(), cfg); err != nil {
+		t.Fatalf("install Claude Code hooks: %v", err)
+	}
+
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(data)
+	if strings.Contains(body, "ao hooks continue ") {
+		t.Fatalf("Continue hooks were retained after Claude install: %s", body)
+	}
+	if !strings.Contains(body, "ao hooks claude-code stop") {
+		t.Fatalf("Claude hooks missing after switch: %s", body)
+	}
+	if !strings.Contains(body, "user stop hook") {
+		t.Fatalf("user hook was not preserved: %s", body)
 	}
 }
 
