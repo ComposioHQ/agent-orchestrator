@@ -167,12 +167,16 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 		cause := fmt.Errorf("conpty: spawn pty-host for %q: %w", id, err)
 		handle := ports.RuntimeHandle{ID: id}
 		if addr == "" && pid == 0 {
+			if unregisterErr := r.unregisterHost(id); unregisterErr != nil {
+				cause = errors.Join(cause, fmt.Errorf("remove unused pty-host reservation for %q: %w", id, unregisterErr))
+				// Keep the current-owner reservation in memory when durable
+				// cleanup fails. A later Destroy can safely retry unregistering
+				// it without spawning or killing any process.
+				return ports.RuntimeHandle{}, conptyCreateFailure(cause)
+			}
 			r.mu.Lock()
 			delete(r.sessions, id)
 			r.mu.Unlock()
-			if unregisterErr := r.unregisterHost(id); unregisterErr != nil {
-				cause = errors.Join(cause, fmt.Errorf("remove unused pty-host reservation for %q: %w", id, unregisterErr))
-			}
 			return ports.RuntimeHandle{}, conptyCreateFailure(cause)
 		}
 		if addr == "" && pid > 0 {
@@ -283,17 +287,20 @@ func (r *Runtime) Destroy(ctx context.Context, handle ports.RuntimeHandle) error
 		return errors.Join(gracefulErr, forceErr, fmt.Errorf("conpty: pty-host pid %d is still alive after teardown", sess.pid))
 	}
 
-	r.mu.Lock()
-	delete(r.sessions, handle.ID)
-	r.mu.Unlock()
-
 	if err := r.unregisterHost(handle.ID); err != nil {
 		return fmt.Errorf("conpty: unregister destroyed session %q: %w", handle.ID, err)
 	}
+
+	r.mu.Lock()
+	delete(r.sessions, handle.ID)
+	r.mu.Unlock()
 	return nil
 }
 
 func (r *Runtime) waitForPIDExit(ctx context.Context, pid int) (bool, error) {
+	if pid <= 0 {
+		return true, nil
+	}
 	if !r.pidIsAlive(pid) {
 		return true, nil
 	}

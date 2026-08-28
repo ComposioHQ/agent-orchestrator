@@ -164,6 +164,63 @@ func TestCreateReservationFailureDoesNotSpawnOrClaimRuntimeEffect(t *testing.T) 
 	}
 }
 
+func TestDefinitiveSpawnFailureRetainsCleanupAuthorityUntilUnregisterSucceeds(t *testing.T) {
+	isolateRegistry(t)
+	spawnErr := errors.New("pty-host failed before starting")
+	runtime := New(Options{Spawner: func(context.Context, string, string, []string, map[string]string) (string, int, error) {
+		return "", 0, spawnErr
+	}})
+	unregisterErr := errors.New("reservation cleanup denied")
+	unregisterCalls := 0
+	runtime.unregisterHost = func(string) error {
+		unregisterCalls++
+		return unregisterErr
+	}
+
+	_, err := runtime.Create(context.Background(), ports.RuntimeConfig{
+		SessionID: "sess-cleanup-retry", WorkspacePath: t.TempDir(), Argv: []string{"codex"},
+		Env: map[string]string{runtimeLaunchIDEnv: "launch-cleanup-retry"},
+	})
+	var effect ports.RuntimeEffectError
+	if !errors.As(err, &effect) || !errors.Is(err, spawnErr) || !errors.Is(err, unregisterErr) {
+		t.Fatalf("Create definitive failure = %v, want joined spawn and unregister errors", err)
+	}
+	if effect.EffectOutcome() != ports.RuntimeEffectNone || effect.PossibleHandle().ID != "" {
+		t.Fatalf("definitive failure effect=%q handle=%+v, want none/empty", effect.EffectOutcome(), effect.PossibleHandle())
+	}
+	runtime.mu.Lock()
+	retained := runtime.sessions["sess-cleanup-retry"]
+	runtime.mu.Unlock()
+	if retained == nil || !retained.currentOwner || retained.pid != 0 || retained.addr != unresolvedHostAddress {
+		t.Fatalf("retained cleanup authority = %+v, want current-owner PID-zero reservation", retained)
+	}
+
+	runtime.unregisterHost = func(string) error {
+		unregisterCalls++
+		return nil
+	}
+	runtime.pidIsAlive = func(int) bool {
+		t.Fatal("PID-zero reservation cleanup must not probe OS process liveness")
+		return false
+	}
+	runtime.processFinder = func(int) (processKiller, error) {
+		t.Fatal("PID-zero reservation cleanup must not resolve or kill an OS process")
+		return nil, errors.New("unreachable")
+	}
+	if err := runtime.Destroy(context.Background(), ports.RuntimeHandle{ID: "sess-cleanup-retry"}); err != nil {
+		t.Fatalf("Destroy retrying reservation cleanup: %v", err)
+	}
+	if unregisterCalls != 2 {
+		t.Fatalf("unregister calls = %d, want failed Create cleanup plus successful Destroy retry", unregisterCalls)
+	}
+	runtime.mu.Lock()
+	_, exists := runtime.sessions["sess-cleanup-retry"]
+	runtime.mu.Unlock()
+	if exists {
+		t.Fatal("reservation remained in memory after durable cleanup succeeded")
+	}
+}
+
 func TestPostStartRegistryUpdateFailureLeavesDurableUnknownReservation(t *testing.T) {
 	isolateRegistry(t)
 	startupErr := errors.New("READY response lost")
