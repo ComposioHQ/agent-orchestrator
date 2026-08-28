@@ -14,8 +14,10 @@ import (
 type fakeBackend struct {
 	createHandle ports.RuntimeHandle
 	createErr    error
+	probeResult  ports.FencedProbeResult
 	calls        []string
 	handles      []ports.RuntimeHandle
+	probeRefs    []ports.FencedRuntimeRef
 }
 
 func (f *fakeBackend) record(call string, handle ports.RuntimeHandle) {
@@ -82,6 +84,12 @@ func (f *fakeBackend) IsSupervisedProcessAlive(_ context.Context, handle ports.R
 func (f *fakeBackend) IsExactSupervisedProcessAlive(_ context.Context, handle ports.RuntimeHandle, _ ports.SupervisedProcessRef) (bool, error) {
 	f.record("exact", handle)
 	return true, nil
+}
+
+func (f *fakeBackend) ProbeFencedRuntime(_ context.Context, ref ports.FencedRuntimeRef) ports.FencedProbeResult {
+	f.calls = append(f.calls, "probe")
+	f.probeRefs = append(f.probeRefs, ref)
+	return f.probeResult
 }
 
 type restartableFakeBackend struct{ fakeBackend }
@@ -196,6 +204,45 @@ func TestDarwinRuntimeRoutesVersionedHandlesToDirectHost(t *testing.T) {
 	}
 	if len(legacy.calls) != 0 {
 		t.Fatalf("legacy calls = %v, want none", legacy.calls)
+	}
+}
+
+func TestDarwinRuntimeRoutesExactFencedProbeByHandle(t *testing.T) {
+	legacyResult := ports.FencedProbeResult{Liveness: ports.FencedAlive, Reason: ports.FencedReasonExactMatch}
+	directResult := ports.FencedProbeResult{Liveness: ports.FencedUnknown, Reason: ports.FencedReasonGenerationMismatch}
+	legacy := &restartableFakeBackend{fakeBackend: fakeBackend{probeResult: legacyResult}}
+	direct := &fakeBackend{probeResult: directResult}
+	runtime := newDarwinRuntime(legacy, direct, nil)
+
+	legacyRef := ports.FencedRuntimeRef{
+		Handle:         ports.RuntimeHandle{ID: "legacy-session"},
+		SessionID:      "session-1",
+		Generation:     "generation-1",
+		NativeIdentity: "native-1",
+	}
+	if got := runtime.ProbeFencedRuntime(context.Background(), legacyRef); got != legacyResult {
+		t.Fatalf("legacy probe = %+v, want %+v", got, legacyResult)
+	}
+	if !reflect.DeepEqual(legacy.probeRefs, []ports.FencedRuntimeRef{legacyRef}) {
+		t.Fatalf("legacy probe refs = %+v, want exact ref %+v", legacy.probeRefs, legacyRef)
+	}
+	if len(direct.probeRefs) != 0 {
+		t.Fatalf("direct probe refs = %+v, want none", direct.probeRefs)
+	}
+
+	directRef := ports.FencedRuntimeRef{
+		Handle:         ports.RuntimeHandle{ID: darwinDirectHandlePrefix + "direct-session"},
+		SessionID:      "session-2",
+		Generation:     "generation-2",
+		NativeIdentity: "native-2",
+	}
+	wantDirectRef := directRef
+	wantDirectRef.Handle.ID = "direct-session"
+	if got := runtime.ProbeFencedRuntime(context.Background(), directRef); got != directResult {
+		t.Fatalf("direct probe = %+v, want %+v", got, directResult)
+	}
+	if !reflect.DeepEqual(direct.probeRefs, []ports.FencedRuntimeRef{wantDirectRef}) {
+		t.Fatalf("direct probe refs = %+v, want exact routed ref %+v", direct.probeRefs, wantDirectRef)
 	}
 }
 

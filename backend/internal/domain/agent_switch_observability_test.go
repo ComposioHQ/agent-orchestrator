@@ -716,8 +716,10 @@ func TestAgentSwitchDedupeAndIssueFingerprintAreStable(t *testing.T) {
 	panicFault := fault
 	panicFault.ReportKind = AgentSwitchReportPanic
 	panicFault.FailurePoint = AgentSwitchFailureLiveWorkerPanic
+	panicFault.ClassifierCallsite = AgentSwitchClassifierLiveWorkerPanic
 	panicFault.FaultCode = AgentSwitchFaultWorkerPanic
 	panicFault.ErrorCode = AgentSwitchErrorNotApplicable
+	panicFault.CallOutcome = AgentSwitchCallPanic
 	panicFault.ExecutionAttemptID = "opaque-local-attempt"
 	panicFault.Frames = []AgentSwitchStackFrame{{
 		Package: "internal/session_manager", Function: "runAgentSwitchWorker", Filename: "backend/internal/session_manager/agent_switching.go", Line: 9,

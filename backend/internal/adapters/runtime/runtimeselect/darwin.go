@@ -78,6 +78,12 @@ func (r *darwinRuntime) IsAlive(ctx context.Context, handle ports.RuntimeHandle)
 	return backend.IsAlive(ctx, raw)
 }
 
+func (r *darwinRuntime) ProbeFencedRuntime(ctx context.Context, ref ports.FencedRuntimeRef) ports.FencedProbeResult {
+	backend, raw := r.route(ref.Handle)
+	ref.Handle = raw
+	return backend.ProbeFencedRuntime(ctx, ref)
+}
+
 func (r *darwinRuntime) Attach(ctx context.Context, handle ports.RuntimeHandle, rows, cols uint16) (ports.Stream, error) {
 	backend, raw := r.route(handle)
 	return backend.Attach(ctx, raw, rows, cols)
