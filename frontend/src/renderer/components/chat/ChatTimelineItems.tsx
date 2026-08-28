@@ -2222,20 +2222,19 @@ export function TurnChangedFiles({
 					const tooltipOldPath = file.oldPath
 						? resolveTurnFilePath(file.oldPath, pathHints)
 						: undefined;
+					const openPath = turnFileOpenPath(file.path, pathHints);
+					const location = fileLocationLabel(tooltipPath, tooltipOldPath);
 
 					const body = (
 						<>
 							<span className="sr-only">{status.label}</span>
 							<FileIcon aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
-							{/* Same path tooltip as mid-turn Edited rows — not a native
-							    ellipsis title of the basename. */}
-							<FileLocationLabel
-								path={file.path}
-								oldPath={file.oldPath}
-								locationPath={tooltipPath}
-								locationOldPath={tooltipOldPath}
+							<span
 								className="min-w-0 flex-1 truncate text-[12px] text-foreground/80"
-							/>
+								title=""
+							>
+								{fileBasename(file.path)}
+							</span>
 							{file.additions > 0 ? (
 								<span className="shrink-0 font-mono text-[11px] tabular-nums text-success">
 									+{file.additions}
@@ -2257,16 +2256,53 @@ export function TurnChangedFiles({
 					return (
 						<li key={`${file.status}-${file.oldPath ?? ""}-${file.path}`}>
 							{onOpenFile ? (
-								<button
-									type="button"
-									onClick={() => onOpenFile(file.path)}
-									aria-label={`Open ${file.path} in Files`}
-									className={rowClass}
-								>
-									{body}
-								</button>
+								<TooltipProvider delayDuration={200}>
+									<Tooltip>
+										<TooltipTrigger asChild>
+											<button
+												type="button"
+												onClick={() => onOpenFile(openPath)}
+												aria-label={`Open ${openPath} in Files`}
+												className={rowClass}
+											>
+												{body}
+											</button>
+										</TooltipTrigger>
+										<TooltipContent
+											side="top"
+											className="max-w-[min(28rem,90vw)] border-border bg-popover px-2.5 py-1.5 font-mono text-[11px] font-normal text-muted-foreground shadow-none"
+										>
+											{location}
+										</TooltipContent>
+									</Tooltip>
+								</TooltipProvider>
 							) : (
-								<div className={rowClass}>{body}</div>
+								<div className={rowClass}>
+									<span className="sr-only">{status.label}</span>
+									<FileIcon aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
+									<FileLocationLabel
+										path={file.path}
+										oldPath={file.oldPath}
+										locationPath={tooltipPath}
+										locationOldPath={tooltipOldPath}
+										className="min-w-0 flex-1 truncate text-[12px] text-foreground/80"
+									/>
+									{file.additions > 0 ? (
+										<span className="shrink-0 font-mono text-[11px] tabular-nums text-success">
+											+{file.additions}
+										</span>
+									) : null}
+									{file.deletions > 0 ? (
+										<span className="shrink-0 font-mono text-[11px] tabular-nums text-destructive">
+											&minus;{file.deletions}
+										</span>
+									) : null}
+									{file.additions === 0 && file.deletions === 0 ? (
+										<span className="shrink-0 font-mono text-[11px] tabular-nums text-muted-foreground/50">
+											0
+										</span>
+									) : null}
+								</div>
 							)}
 						</li>
 					);
@@ -2394,6 +2430,15 @@ function resolveTurnFilePath(path: string, hints: TurnPathHints): string {
 		return `${hints.cwd.replace(/\/$/, "")}/${rel}`;
 	}
 	return path;
+}
+
+/** Workspace-relative path to open in the Files panel from a turn diff row. */
+function turnFileOpenPath(path: string, hints: TurnPathHints): string {
+	const normalized = path.replace(/^\.\//, "");
+	if (!looksAbsolutePath(normalized)) return normalized;
+	const resolved = resolveTurnFilePath(path, hints);
+	if (!looksAbsolutePath(resolved)) return resolved.replace(/^\.\//, "");
+	return fileBasename(resolved);
 }
 
 /** Basename only — the row is too narrow for a full path; the tooltip carries that. */

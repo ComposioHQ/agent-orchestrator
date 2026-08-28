@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { PanelRight, Plus } from "lucide-react";
 import { motion, useReducedMotion } from "motion/react";
 import {
@@ -52,6 +52,12 @@ import {
 import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
 import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
+import {
+	sessionWorkspaceFilesQueryKey,
+	sessionWorkspaceFilesQueryOptions,
+	type WorkspaceFilesResponse,
+} from "../hooks/useSessionWorkspaceFiles";
+import { matchWorkspaceFilePath } from "../lib/workspace-file-path";
 import { SHELL_PANEL_SPRING } from "../lib/motion-spring";
 import {
 	activateSessionFile,
@@ -372,7 +378,9 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const setInspectorOpenForSession = useUiStore((state) => state.setInspectorOpen);
 	const toggleInspector = useUiStore((state) => state.toggleInspector);
 	const setInspectorViewForSession = useUiStore((state) => state.setInspectorView);
+	const setFilesChangedOnly = useUiStore((state) => state.setFilesChangedOnly);
 	const initializeInspectorSession = useUiStore((state) => state.initializeInspectorSession);
+	const queryClient = useQueryClient();
 	const setBrowserContentRevealed = useUiStore((state) => state.setBrowserContentRevealed);
 	const setBrowserUnseen = useUiStore((state) => state.setBrowserUnseen);
 	const setSidebarWorkspaceDemand = useUiStore((state) => state.setSidebarWorkspaceDemand);
@@ -894,27 +902,61 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		return () => clearVisibleTerminalKind(sessionId);
 	}, [clearVisibleTerminalKind, routedTerminalTarget.kind, sessionId, setVisibleTerminalKind]);
 
+	const resolveWorkspaceFilePath = useCallback(
+		(rawPath: string) => {
+			const files =
+				queryClient.getQueryData<WorkspaceFilesResponse>(sessionWorkspaceFilesQueryKey(sessionId))
+					?.files ?? [];
+			return matchWorkspaceFilePath(rawPath, files);
+		},
+		[queryClient, sessionId],
+	);
+
 	const handleOpenFiles = useCallback(() => {
 		setBrowserPopOutState({ sessionId, phase: "docked" });
 		setFilesPoppedOut(false);
+		setFilesChangedOnly(sessionId, true);
 		transitionInspectorView("files");
 		setInspectorOpenForSession(sessionId, true);
-	}, [sessionId, setInspectorOpenForSession, transitionInspectorView]);
+		void queryClient.prefetchQuery(
+			sessionWorkspaceFilesQueryOptions(sessionId, t("files.error.loadWorkspace")),
+		);
+	}, [
+		queryClient,
+		sessionId,
+		setFilesChangedOnly,
+		setInspectorOpenForSession,
+		t,
+		transitionInspectorView,
+	]);
 
 	const handleOpenReviewFile = useCallback((target: { line?: number; path: string }) => {
 		setBrowserPopOutState({ sessionId, phase: "docked" });
 		setFilesPoppedOut(false);
+		setFilesChangedOnly(sessionId, true);
 		transitionInspectorView("files");
 		setInspectorOpenForSession(sessionId, true);
-		openCenterFile(target.path);
-	}, [openCenterFile, sessionId, setInspectorOpenForSession, transitionInspectorView]);
+		openCenterFile(resolveWorkspaceFilePath(target.path));
+		void queryClient.prefetchQuery(
+			sessionWorkspaceFilesQueryOptions(sessionId, t("files.error.loadWorkspace")),
+		);
+	}, [
+		openCenterFile,
+		queryClient,
+		resolveWorkspaceFilePath,
+		sessionId,
+		setFilesChangedOnly,
+		setInspectorOpenForSession,
+		t,
+		transitionInspectorView,
+	]);
 
 	const handleOpenFile = useCallback(
 		(path: string) => {
 			handleOpenFiles();
-			openCenterFile(path);
+			openCenterFile(resolveWorkspaceFilePath(path));
 		},
-		[handleOpenFiles, openCenterFile],
+		[handleOpenFiles, openCenterFile, resolveWorkspaceFilePath],
 	);
 
 	const handleToggleFilesPopOut = useCallback(

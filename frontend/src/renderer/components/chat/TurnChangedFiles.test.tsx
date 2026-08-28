@@ -61,6 +61,33 @@ describe("TurnChangedFiles", () => {
 		expect(onOpenFile).toHaveBeenCalledWith("src/a.ts");
 	});
 
+	it("opens a cwd-relative path from a turn diff basename", async () => {
+		const onOpenFile = vi.fn();
+		render(
+			<TurnChangedFiles
+				diff={{
+					files: [{ path: "notes.txt", additions: 1, deletions: 0, status: "added" }],
+				}}
+				items={[
+					{
+						kind: "activity",
+						id: "a-1",
+						sequence: 1,
+						revision: 0,
+						activityKind: "command",
+						status: "completed",
+						summary: "Ran command",
+						detail: { cwd: "/Users/me/.ao/dev/data/worktrees/demo/demo-1", command: "ls" },
+						createdAt: new Date().toISOString(),
+					},
+				]}
+				onOpenFile={onOpenFile}
+			/>,
+		);
+		await userEvent.click(screen.getByRole("button", { name: /Open notes\.txt in Files/ }));
+		expect(onOpenFile).toHaveBeenCalledWith("notes.txt");
+	});
+
 	it("shows the full path on basename hover", async () => {
 		const user = userEvent.setup();
 		render(<TurnChangedFiles diff={diff()} />);
