@@ -81,7 +81,9 @@ func (m *Manager) WaitForMessageDeliveryReady(ctx context.Context, id domain.Ses
 				if output, outputErr := m.runtime.GetOutput(ctx, handle, messageDeliveryReadyLines); outputErr == nil {
 					state, authoritative := detector.DetectTerminalActivity(output)
 					ready = authoritative && state == domain.ActivityIdle
-					if !authoritative && rec.Activity.State == domain.ActivityIdle && emptyComposerDetector != nil {
+					if !authoritative &&
+						(rec.Activity.State == domain.ActivityIdle || rec.Activity.State == domain.ActivityWaitingInput) &&
+						emptyComposerDetector != nil {
 						ready = emptyComposerDetector.ComposerIsEmpty(output)
 					}
 				}

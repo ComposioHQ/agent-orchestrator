@@ -110,6 +110,27 @@ func TestWaitForMessageDeliveryReadyAcceptsProvenEmptyComposer(t *testing.T) {
 	}
 }
 
+func TestWaitForMessageDeliveryReadyAcceptsProvenEmptyComposerWhileWaitingInput(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["orch"] = domain.SessionRecord{
+		ID:        "orch",
+		ProjectID: "ao",
+		Kind:      domain.KindOrchestrator,
+		Harness:   domain.HarnessAider,
+		Mode:      domain.SessionModeTUI,
+		Activity:  domain.Activity{State: domain.ActivityWaitingInput},
+		Metadata:  domain.SessionMetadata{RuntimeHandleID: "orch"},
+	}
+	runtime := &fakeRuntime{outputs: []string{"empty-composer"}}
+	m := New(Deps{Runtime: runtime, Agents: singleAgent{agent: emptyComposerReadyAgent{}}, Store: st})
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	if err := m.WaitForMessageDeliveryReady(ctx, "orch"); err != nil {
+		t.Fatalf("WaitForMessageDeliveryReady: %v", err)
+	}
+}
+
 func TestWaitForMessageDeliveryReadyWaitsForFirstHookSignal(t *testing.T) {
 	st := &synchronizedSessionStore{fakeStore: newFakeStore()}
 	st.sessions["cursor-1"] = domain.SessionRecord{
