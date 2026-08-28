@@ -29,6 +29,9 @@ func (p *Plugin) DetectTerminalActivity(output string) (domain.ActivityState, bo
 
 	for i := len(recent) - 1; i >= 0; i-- {
 		line := strings.ToLower(recent[i])
+		if continueIdleComposerAt(recent[i]) {
+			return "", false
+		}
 		if continueQuestionPickerAt(recent, i) {
 			return domain.ActivityWaitingInput, true
 		}
@@ -46,7 +49,7 @@ func continueQuestionPickerAt(lines []string, idx int) bool {
 	// A completed picker remains in Continue's transcript. An empty composer
 	// after this action row proves that the picker is historical, not visible.
 	for i := idx + 1; i < len(lines); i++ {
-		if strings.Trim(lines[i], "│ ") == "❯" {
+		if continueIdleComposerAt(lines[i]) {
 			return false
 		}
 	}
@@ -61,6 +64,10 @@ func continueQuestionPickerAt(lines []string, idx int) bool {
 		}
 	}
 	return false
+}
+
+func continueIdleComposerAt(line string) bool {
+	return strings.Trim(line, "│ ") == "❯"
 }
 
 func continueTerminalLines(output string) []string {

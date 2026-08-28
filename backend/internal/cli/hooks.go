@@ -384,7 +384,7 @@ func (c *commandContext) runHook(ctx context.Context, agent, event string) error
 	toolName, toolUseID := activityMeta(payload)
 	conversation := hookConversationSnapshot{}
 	switch domain.AgentHarness(agent) {
-	case domain.HarnessClaudeCode, domain.HarnessCodex:
+	case domain.HarnessClaudeCode, domain.HarnessCodex, domain.HarnessContinue:
 		conversation = hookConversationFacts(payload)
 	}
 	path := "sessions/" + url.PathEscape(sessionID) + "/activity"

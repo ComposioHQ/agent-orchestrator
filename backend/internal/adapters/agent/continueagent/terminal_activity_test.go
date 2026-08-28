@@ -67,3 +67,24 @@ func TestDetectTerminalActivityContinueIgnoresCompletedQuestionInIdleComposer(t 
 		t.Fatalf("DetectTerminalActivity() = (%q, true), want no signal", got)
 	}
 }
+
+func TestDetectTerminalActivityContinueIgnoresCompletedQuestionSpinnerBeforeIdleComposer(t *testing.T) {
+	output := `
+○ Ask Question(Which background color do you want to change to red?)
+
+ ⣿⣿⣿  ( 27s • esc to interrupt )
+╭───────────────────────────────────────────────────────────────────────────────╮
+│  ? Which background color do you want to change to red?                       │
+│    ❯ App-wide background (body/root)                                          │
+│  ↑/↓ navigate, Enter select                                                   │
+╰───────────────────────────────────────────────────────────────────────────────╯
+
+╭───────────────────────────────────────────────────────────────────────────────╮
+│  ❯                                                                            │
+╰───────────────────────────────────────────────────────────────────────────────╯
+`
+	got, ok := (&Plugin{}).DetectTerminalActivity(output)
+	if ok {
+		t.Fatalf("DetectTerminalActivity() = (%q, true), want no signal", got)
+	}
+}
