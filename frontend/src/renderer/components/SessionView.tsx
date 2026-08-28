@@ -27,7 +27,6 @@ import { SessionFileWorkspace } from "./SessionFileWorkspace";
 import { SessionActionsMenu } from "./SessionActionsMenu";
 import { SessionInspector } from "./SessionInspector";
 import {
-	SessionInterfaceActionGroup,
 	SessionInterfaceSwitchButton,
 	SessionInterfaceSwitchDialog,
 	SessionInterfaceSwitchMenuItem,
@@ -774,22 +773,19 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		!interfaceSwitchUnsupported && (interfaceSwitch.status || interfaceSwitch.isLoading || interfaceSwitch.statusError),
 	);
 	const newTerminalError = openShellTerminal.error ? apiErrorMessage(openShellTerminal.error) : undefined;
-	const sessionLocalActions = session ? (
-		<SessionInterfaceActionGroup>
-			{!isOrchestrator ? (
-				<TopbarButton
-					aria-label={t("shortcut.new-shell-terminal")}
-					disabled={openShellTerminal.isPending}
-					onClick={addShellTerminal}
-					title={newTerminalError ?? t("terminal.newWithShortcut", { shortcut: newTerminalShortcutLabel })}
-					type="button"
-					variant="icon"
-				>
-					<Plus aria-hidden="true" className="size-icon-md" />
-				</TopbarButton>
-			) : null}
-		</SessionInterfaceActionGroup>
-	) : null;
+	const newShellTerminalAction =
+		session && !isOrchestrator ? (
+			<TopbarButton
+				aria-label={t("shortcut.new-shell-terminal")}
+				disabled={openShellTerminal.isPending}
+				onClick={addShellTerminal}
+				title={newTerminalError ?? t("terminal.newWithShortcut", { shortcut: newTerminalShortcutLabel })}
+				type="button"
+				variant="icon"
+			>
+				<Plus aria-hidden="true" className="size-icon-md" />
+			</TopbarButton>
+		) : null;
 	const fileAnnotation = useFileAnnotation(sessionId);
 	const centerFileTabs = (
 		<SessionFileTabs
@@ -917,7 +913,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	) : null;
 	const sessionHeaderActions = (
 		<>
-			<ShellTopbar embedded sessionAction={sessionLocalActions} />
+			<ShellTopbar embedded />
 			<SessionActionsMenu inlineStatus={interfaceSwitchInlineStatus}>
 				{interfaceSwitchMenuItem}
 				{handoffMenuItem}
@@ -1262,6 +1258,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 									daemonReady={daemonStatus.state === "ready"}
 									theme={theme}
 									headerActions={sessionHeaderActions}
+									tabStripAction={newShellTerminalAction}
 									handoffDialogOpen={handoffDialogOpen}
 									workspaceTabs={centerFileTabs}
 									workspaceFileActive={Boolean(fileTabs.activePath)}
@@ -1291,6 +1288,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 									terminalTarget={routedTerminalTarget}
 									theme={theme}
 									topbarActions={sessionHeaderActions}
+									tabStripAction={newShellTerminalAction}
 									handoffDialogOpen={handoffDialogOpen}
 									workspaceTabs={centerFileTabs}
 									workspaceFileActive={Boolean(fileTabs.activePath)}

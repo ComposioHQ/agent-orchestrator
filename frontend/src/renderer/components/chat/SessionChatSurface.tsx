@@ -60,6 +60,7 @@ export function SessionChatSurface({
 	onOpenFiles,
 	onOpenFile,
 	headerActions,
+	tabStripAction,
 	handoffDialogOpen = false,
 	workspaceTabs,
 	workspaceFileActive,
@@ -87,6 +88,7 @@ export function SessionChatSurface({
 	/** Opens the Files inspector focused on one changed path. */
 	onOpenFile?: (path: string) => void;
 	headerActions?: ReactNode;
+	tabStripAction?: ReactNode;
 	handoffDialogOpen?: boolean;
 	workspaceTabs?: ReactNode;
 	workspaceFileActive?: boolean;
@@ -271,6 +273,7 @@ export function SessionChatSurface({
 				daemonReady={daemonReady}
 				theme={theme}
 				headerActions={headerActions}
+				tabStripAction={tabStripAction}
 				workspaceTabs={workspaceTabs}
 				workspaceFileActive={workspaceFileActive}
 				controllerTransitioning={controllerTransitioning}

@@ -183,6 +183,7 @@ vi.mock("./chat/SessionChatSurface", () => ({
 	SessionChatSurface: ({
 		onOpenShell,
 		headerActions,
+		tabStripAction,
 		reviewerTerminal,
 		onOpenReviewerTerminal,
 		reviewerTarget,
@@ -194,6 +195,7 @@ vi.mock("./chat/SessionChatSurface", () => ({
 	}: {
 		onOpenShell?: () => void;
 		headerActions?: ReactNode;
+		tabStripAction?: ReactNode;
 		reviewerTerminal?: { handleId: string; harness: string };
 		onOpenReviewerTerminal?: (target: { handleId: string; harness: string }) => void;
 		reviewerTarget?: { kind: "reviewer"; handleId: string; harness: string; sessionId: string };
@@ -206,7 +208,10 @@ vi.mock("./chat/SessionChatSurface", () => ({
 		<div data-testid="chat-surface">
 			chat surface
 			{headerActions}
-			<div role="tablist">{workspaceTabs}</div>
+			<div role="tablist">
+				{workspaceTabs}
+				{tabStripAction}
+			</div>
 			{reviewerTerminal ? (
 				<button type="button" onClick={() => onOpenReviewerTerminal?.(reviewerTerminal)}>
 					Reviewer
@@ -252,6 +257,7 @@ vi.mock("./CenterPane", () => ({
 		onSelectSessionTerminal,
 		onSelectReviewerTerminal,
 		topbarActions,
+		tabStripAction,
 		workspaceTabs,
 		reviewerTerminal,
 		terminalTarget,
@@ -263,6 +269,7 @@ vi.mock("./CenterPane", () => ({
 		onSelectSessionTerminal?: () => void;
 		onSelectReviewerTerminal?: (target: { handleId: string; harness: string }) => void;
 		topbarActions?: ReactNode;
+		tabStripAction?: ReactNode;
 		workspaceTabs?: ReactNode;
 		reviewerTerminal?: { handleId: string; harness: string };
 		terminalTarget?: { kind: string; handleId?: string };
@@ -270,7 +277,10 @@ vi.mock("./CenterPane", () => ({
 		<div>
 			terminal center
 			{topbarActions}
-			<div role="tablist">{workspaceTabs}</div>
+			<div role="tablist">
+				{workspaceTabs}
+				{tabStripAction}
+			</div>
 			<div data-testid="terminal-target">
 				{terminalTarget?.kind === "shell" ? terminalTarget.handleId : (terminalTarget?.kind ?? "worker")}
 			</div>

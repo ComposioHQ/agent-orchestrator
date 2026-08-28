@@ -64,6 +64,8 @@ type CenterPaneProps = {
 	onRenameShellTerminal?: (handleId: string, title: string) => void;
 	/** Session actions consolidated into the terminal bar by SessionView. */
 	topbarActions?: ReactNode;
+	/** Pinned beside the tab strip, before the workspace topbar actions. */
+	tabStripAction?: ReactNode;
 	handoffDialogOpen?: boolean;
 	workspaceTabs?: ReactNode;
 	workspaceFileActive?: boolean;
@@ -131,6 +133,7 @@ export function CenterPane({
 	onCloseShellTerminal,
 	onRenameShellTerminal,
 	topbarActions,
+	tabStripAction,
 	handoffDialogOpen = false,
 	workspaceTabs,
 	workspaceFileActive = false,
@@ -595,6 +598,14 @@ export function CenterPane({
 									))}
 								</Reorder.Group>
 								{workspaceTabs}
+								{tabStripAction ? (
+									<div
+										className="sticky right-0 z-10 flex shrink-0 self-stretch items-center pl-1"
+										data-testid="session-tab-strip-action"
+									>
+										{tabStripAction}
+									</div>
+								) : null}
 							</div>
 					</div>
 				</div>

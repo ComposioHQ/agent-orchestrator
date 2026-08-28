@@ -168,6 +168,8 @@ export interface ChatWorkspaceProps {
 	sessionRole?: SessionKind;
 	/** Session-level actions owned above the conversation surface. */
 	headerActions?: ReactNode;
+	/** Pinned beside the tab strip, before the workspace topbar actions. */
+	tabStripAction?: ReactNode;
 	/** File tabs coordinated by SessionView, appended to the native chat tab strip. */
 	workspaceTabs?: ReactNode;
 	workspaceFileActive?: boolean;
@@ -296,6 +298,7 @@ export function ChatWorkspace({
 	snapshot,
 	sessionRole = "worker",
 	headerActions,
+	tabStripAction,
 	workspaceTabs,
 	workspaceFileActive = false,
 	controllerTransitioning,
@@ -722,6 +725,7 @@ export function ChatWorkspace({
 				onRenameShellTerminal={onRenameShellTerminal}
 				onTabsKeyDown={handleChatTabsKeyDown}
 				headerActions={headerActions}
+				tabStripAction={tabStripAction}
 				workspaceTabs={workspaceTabs}
 				workspaceFileActive={workspaceFileActive}
 				inline={isFullscreen}
@@ -1068,6 +1072,7 @@ function ChatHeader({
 	onRenameShellTerminal,
 	onTabsKeyDown,
 	headerActions,
+	tabStripAction,
 	workspaceTabs,
 	workspaceFileActive = false,
 	inline,
@@ -1089,6 +1094,7 @@ function ChatHeader({
 	onRenameShellTerminal?: (handleId: string, title: string) => void;
 	onTabsKeyDown?: (event: ReactKeyboardEvent<HTMLDivElement>) => void;
 	headerActions?: ReactNode;
+	tabStripAction?: ReactNode;
 	workspaceTabs?: ReactNode;
 	workspaceFileActive?: boolean;
 	/** Fullscreen content cannot see the normal topbar portal outside its subtree. */
@@ -1121,14 +1127,14 @@ function ChatHeader({
 				>
 					<div
 						aria-label="Chat tabs"
-						className="scrollbar-none flex h-full min-w-flex-min flex-1 items-center overflow-x-auto"
+						className="flex h-full min-w-0 flex-1 items-center"
 						onKeyDown={onTabsKeyDown ?? handleTerminalTabListKeyDown}
 						role="tablist"
 					>
 						<span
 							data-terminal-role="primary"
 							className={cn(
-								"group relative inline-flex min-w-shell-tab-min self-stretch items-center gap-1.5 border-r border-border px-3",
+								"group relative inline-flex min-w-shell-tab-min shrink-0 self-stretch items-center gap-1.5 border-r border-border px-3",
 								timelineActive
 									? "bg-overlay text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80"
 									: "text-muted-foreground hover:bg-raised hover:text-foreground",
@@ -1152,56 +1158,64 @@ function ChatHeader({
 								<span className="truncate">{label}</span>
 							</button>
 						</span>
-						{reviewerTerminal ? (
-							<span
-								className={cn(
-									"group relative inline-flex min-w-shell-tab-min self-stretch items-center gap-1.5 border-r border-border px-3",
-									reviewerActive
-										? "bg-overlay text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80"
-										: "text-muted-foreground hover:bg-raised hover:text-foreground",
-								)}
-							>
-								<AgentAvatar
-									className="size-icon-base"
-									decorative
-									provider={reviewerTerminal.harness}
-								/>
-								<button
-									aria-current={reviewerActive ? true : undefined}
-									aria-label="Reviewer"
-									aria-selected={Boolean(reviewerActive)}
+						<div className="scrollbar-none flex min-w-flex-min flex-1 self-stretch items-center overflow-x-auto">
+							{reviewerTerminal ? (
+								<span
 									className={cn(
-										"inline-flex min-w-flex-min max-w-shell-tab-max items-center gap-1.5 text-control font-medium leading-none",
-										reviewerActive ? "text-foreground" : "text-muted-foreground",
+										"group relative inline-flex min-w-shell-tab-min self-stretch items-center gap-1.5 border-r border-border px-3",
+										reviewerActive
+											? "bg-overlay text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80"
+											: "text-muted-foreground hover:bg-raised hover:text-foreground",
 									)}
-									onClick={() => onOpenReviewerTerminal?.(reviewerTerminal)}
-									role="tab"
-									tabIndex={reviewerActive ? 0 : -1}
-									title={reviewerTerminal.harness}
-									type="button"
 								>
-									<span className="truncate">Reviewer</span>
-								</button>
-							</span>
-						) : null}
-						{/* The same shared shell tab the terminal pane strip and the
-						    standalone terminals screen use, so all three never drift. */}
-						{(shellTerminals ?? []).map((shell) => (
-							<ShellTerminalTab
-								key={shell.handleId}
-								appearance="connected"
-								isActive={shell.handleId === shellActiveHandleId}
-								onClose={() => onCloseShellTerminal?.(shell.handleId)}
-								onRename={
-									onRenameShellTerminal
-										? (title) => onRenameShellTerminal(shell.handleId, title)
-										: undefined
-								}
-								onSelect={() => onSelectShellTerminal?.(shell.handleId)}
-								shell={shell}
-							/>
-						))}
-						{workspaceTabs}
+									<AgentAvatar
+										className="size-icon-base"
+										decorative
+										provider={reviewerTerminal.harness}
+									/>
+									<button
+										aria-current={reviewerActive ? true : undefined}
+										aria-label="Reviewer"
+										aria-selected={Boolean(reviewerActive)}
+										className={cn(
+											"inline-flex min-w-flex-min max-w-shell-tab-max items-center gap-1.5 text-control font-medium leading-none",
+											reviewerActive ? "text-foreground" : "text-muted-foreground",
+										)}
+										onClick={() => onOpenReviewerTerminal?.(reviewerTerminal)}
+										role="tab"
+										tabIndex={reviewerActive ? 0 : -1}
+										title={reviewerTerminal.harness}
+										type="button"
+									>
+										<span className="truncate">Reviewer</span>
+									</button>
+								</span>
+							) : null}
+							{(shellTerminals ?? []).map((shell) => (
+								<ShellTerminalTab
+									key={shell.handleId}
+									appearance="connected"
+									isActive={shell.handleId === shellActiveHandleId}
+									onClose={() => onCloseShellTerminal?.(shell.handleId)}
+									onRename={
+										onRenameShellTerminal
+											? (title) => onRenameShellTerminal(shell.handleId, title)
+											: undefined
+									}
+									onSelect={() => onSelectShellTerminal?.(shell.handleId)}
+									shell={shell}
+								/>
+							))}
+							{workspaceTabs}
+							{tabStripAction ? (
+								<div
+									className="sticky right-0 z-10 flex shrink-0 self-stretch items-center pl-1"
+									data-testid="session-tab-strip-action"
+								>
+									{tabStripAction}
+								</div>
+							) : null}
+						</div>
 					</div>
 				</div>
 				<div
