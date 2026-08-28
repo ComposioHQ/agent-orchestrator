@@ -37,6 +37,16 @@ type AgentIDParam struct {
 	Agent string `path:"agent" description:"Agent adapter identifier."`
 }
 
+// CodexProfileIDParam documents a Codex profile route identifier.
+type CodexProfileIDParam struct {
+	ProfileID string `path:"profileId" description:"Codex profile identifier."`
+}
+
+// CodexProfileLoginIDParam documents a Codex login operation route identifier.
+type CodexProfileLoginIDParam struct {
+	OperationID string `path:"operationId" description:"In-memory Codex profile login operation identifier."`
+}
+
 // ListProjectsResponse is the body of GET /api/v1/projects.
 type ListProjectsResponse struct {
 	Projects []projectsvc.Summary `json:"projects"`
@@ -1049,6 +1059,29 @@ type EnsureAgentReadinessRequest struct {
 	AgentIDs []string                     `json:"agentIds,omitempty"`
 	Purpose  domain.AgentReadinessPurpose `json:"purpose" enum:"display,launch"`
 }
+
+// CodexProfilesResponse is the cached profile and capability view.
+type CodexProfilesResponse = agentsvc.CodexProfiles
+
+// EnsureCodexProfilesRequest selects profiles for a display-freshness ensure.
+type EnsureCodexProfilesRequest struct {
+	ProfileIDs []string                     `json:"profileIds,omitempty"`
+	Purpose    domain.AgentReadinessPurpose `json:"purpose" enum:"display"`
+}
+
+// CreateCodexProfileRequest supplies the display label for a managed profile.
+type CreateCodexProfileRequest struct {
+	Label string `json:"label" minLength:"1" maxLength:"80"`
+}
+
+// CreateCodexProfileResponse is the newly created managed profile snapshot.
+type CreateCodexProfileResponse = domain.CodexProfileSnapshot
+
+// StartCodexProfileLoginResponse is an accepted in-memory browser login.
+type StartCodexProfileLoginResponse = agentsvc.CodexProfileLoginStart
+
+// CodexProfileLoginEventResponse is one SSE or cancellation login snapshot.
+type CodexProfileLoginEventResponse = domain.CodexProfileLoginEvent
 
 // AgentReadinessSnapshot is one normalized harness readiness view.
 type AgentReadinessSnapshot = domain.AgentReadinessSnapshot

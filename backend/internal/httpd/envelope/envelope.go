@@ -88,6 +88,12 @@ func httpStatus(k apierr.Kind) (int, string) {
 		return http.StatusConflict, "conflict"
 	case apierr.KindForbidden:
 		return http.StatusForbidden, "forbidden"
+	case apierr.KindTooManyRequests:
+		return http.StatusTooManyRequests, "too_many_requests"
+	case apierr.KindNotImplemented:
+		return http.StatusNotImplemented, "not_implemented"
+	case apierr.KindUnavailable:
+		return http.StatusServiceUnavailable, "unavailable"
 	case apierr.KindInternal:
 		return http.StatusInternalServerError, "internal"
 	default:

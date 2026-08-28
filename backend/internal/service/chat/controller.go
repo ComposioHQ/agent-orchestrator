@@ -155,13 +155,15 @@ type Controller struct {
 	sessionID    domain.SessionID
 	conversation domain.ConversationRecord
 	generation   string
+	harness      domain.AgentHarness
 
-	conv     ports.ChatConversation
-	store    Store
-	activity ActivityRecorder
-	log      *slog.Logger
-	newID    IDFactory
-	now      Clock
+	conv             ports.ChatConversation
+	store            Store
+	activity         ActivityRecorder
+	log              *slog.Logger
+	newID            IDFactory
+	now              Clock
+	onAccountChanged func(domain.AgentHarness)
 
 	// sendMu serializes command dispatch so only one operation mutates the
 	// provider conversation at a time.
@@ -256,27 +258,31 @@ func newController(
 	sessionID domain.SessionID,
 	conversation domain.ConversationRecord,
 	generation string,
+	harness domain.AgentHarness,
 	conv ports.ChatConversation,
 	store Store,
 	activity ActivityRecorder,
 	log *slog.Logger,
 	newID IDFactory,
 	now Clock,
+	onAccountChanged func(domain.AgentHarness),
 ) *Controller {
 	c := &Controller{
-		sessionID:    sessionID,
-		conversation: conversation,
-		generation:   generation,
-		conv:         conv,
-		store:        store,
-		activity:     activity,
-		log:          log,
-		newID:        newID,
-		now:          now,
-		state:        ports.ChatControllerReady,
-		settings:     conversation.Settings,
-		mcpServers:   map[string]domain.ConversationMCPServer{},
-		stopped:      make(chan struct{}),
+		sessionID:        sessionID,
+		conversation:     conversation,
+		generation:       generation,
+		harness:          harness,
+		conv:             conv,
+		store:            store,
+		activity:         activity,
+		log:              log,
+		newID:            newID,
+		now:              now,
+		onAccountChanged: onAccountChanged,
+		state:            ports.ChatControllerReady,
+		settings:         conversation.Settings,
+		mcpServers:       map[string]domain.ConversationMCPServer{},
+		stopped:          make(chan struct{}),
 	}
 	// Seeded from the durable row so a reconnect merges onto what is already known
 	// rather than starting from blank and reporting a conversation as having no
@@ -2336,7 +2342,13 @@ func (c *Controller) apply(ctx context.Context, event ports.ChatEvent) error {
 		if event.Account == nil {
 			return nil
 		}
-		return c.applyAccount(ctx, *event.Account, now)
+		if err := c.applyAccount(ctx, *event.Account, now); err != nil {
+			return err
+		}
+		if c.onAccountChanged != nil {
+			c.onAccountChanged(c.harness)
+		}
+		return nil
 
 	case ports.ChatEventThreadState:
 		if event.ThreadState == nil {

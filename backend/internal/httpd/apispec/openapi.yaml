@@ -185,6 +185,253 @@ paths:
       summary: Run a fresh local readiness probe for one agent adapter
       tags:
       - agents
+  /api/v1/agents/codex/profiles:
+    get:
+      operationId: getCodexProfiles
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CodexProfilesResponse'
+          description: OK
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Return cached Codex profile discovery and authentication state
+      tags:
+      - agents
+    post:
+      operationId: createCodexProfile
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCodexProfileRequest'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CodexProfileSnapshot'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Create an isolated AO-managed Codex profile
+      tags:
+      - agents
+  /api/v1/agents/codex/profiles/{profileId}/login:
+    post:
+      operationId: startCodexProfileLogin
+      parameters:
+      - description: Codex profile identifier.
+        in: path
+        name: profileId
+        required: true
+        schema:
+          description: Codex profile identifier.
+          type: string
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StartCodexProfileLoginResponse'
+          description: Accepted
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "429":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Too Many Requests
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Start browser authentication for one Codex profile
+      tags:
+      - agents
+  /api/v1/agents/codex/profiles/{profileId}/login/{operationId}/cancel:
+    post:
+      operationId: cancelCodexProfileLogin
+      parameters:
+      - description: Codex profile identifier.
+        in: path
+        name: profileId
+        required: true
+        schema:
+          description: Codex profile identifier.
+          type: string
+      - description: In-memory Codex profile login operation identifier.
+        in: path
+        name: operationId
+        required: true
+        schema:
+          description: In-memory Codex profile login operation identifier.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CodexProfileLoginEvent'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Cancel one pending Codex profile login operation
+      tags:
+      - agents
+  /api/v1/agents/codex/profiles/{profileId}/login/{operationId}/events:
+    get:
+      operationId: streamCodexProfileLogin
+      parameters:
+      - description: Codex profile identifier.
+        in: path
+        name: profileId
+        required: true
+        schema:
+          description: Codex profile identifier.
+          type: string
+      - description: In-memory Codex profile login operation identifier.
+        in: path
+        name: operationId
+        required: true
+        schema:
+          description: In-memory Codex profile login operation identifier.
+          type: string
+      responses:
+        "200":
+          content:
+            text/event-stream:
+              schema:
+                type: string
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Stream one in-memory Codex profile login operation
+      tags:
+      - agents
+  /api/v1/agents/codex/profiles/ensure:
+    post:
+      operationId: ensureCodexProfiles
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EnsureCodexProfilesRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CodexProfilesResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Discover Codex profiles and ensure their display authentication state
+      tags:
+      - agents
   /api/v1/agents/readiness:
     get:
       operationId: getAgentReadiness
@@ -6063,6 +6310,121 @@ components:
       - remoteUrl
       - destinationParent
       type: object
+    CodexCapabilityObservation:
+      properties:
+        reason:
+          type: string
+        reasonCode:
+          type: string
+        state:
+          enum:
+          - supported
+          - unsupported
+          - unknown
+          type: string
+      required:
+      - state
+      - reasonCode
+      - reason
+      type: object
+    CodexProfileCapabilities:
+      properties:
+        accountRead:
+          $ref: '#/components/schemas/CodexCapabilityObservation'
+        browserLogin:
+          $ref: '#/components/schemas/CodexCapabilityObservation'
+      required:
+      - accountRead
+      - browserLogin
+      type: object
+    CodexProfileLoginEvent:
+      properties:
+        operationId:
+          type: string
+        profile:
+          anyOf:
+          - type: "null"
+          - $ref: '#/components/schemas/CodexProfileSnapshot'
+            type: object
+        profileId:
+          type: string
+        reason:
+          type: string
+        reasonCode:
+          type: string
+        status:
+          enum:
+          - pending
+          - completed
+          - cancelled
+          - failed
+          type: string
+      required:
+      - operationId
+      - profileId
+      - status
+      - reasonCode
+      - reason
+      - profile
+      type: object
+    CodexProfileSnapshot:
+      properties:
+        accountEmail:
+          type:
+          - "null"
+          - string
+        authMethod:
+          enum:
+          - chatgpt
+          - api_key
+          - other
+          - unknown
+          type: string
+        authentication:
+          $ref: '#/components/schemas/AgentAuthenticationObservation'
+        id:
+          type: string
+        label:
+          type: string
+        reason:
+          type: string
+        reasonCode:
+          type: string
+        source:
+          enum:
+          - existing
+          - managed
+          type: string
+        status:
+          enum:
+          - valid
+          - broken
+          type: string
+        usableByCurrentLaunches:
+          type: boolean
+      required:
+      - id
+      - label
+      - source
+      - status
+      - reasonCode
+      - reason
+      - authentication
+      - authMethod
+      - usableByCurrentLaunches
+      type: object
+    CodexProfilesResponse:
+      properties:
+        capabilities:
+          $ref: '#/components/schemas/CodexProfileCapabilities'
+        profiles:
+          items:
+            $ref: '#/components/schemas/CodexProfileSnapshot'
+          type: array
+      required:
+      - profiles
+      - capabilities
+      type: object
     CompactConversationResponse:
       properties:
         tokensAfter:
@@ -6957,6 +7319,15 @@ components:
       - cachedTokens
       - totalTokens
       type: object
+    CreateCodexProfileRequest:
+      properties:
+        label:
+          maxLength: 80
+          minLength: 1
+          type: string
+      required:
+      - label
+      type: object
     DegradedProject:
       properties:
         id:
@@ -7184,6 +7555,19 @@ components:
           enum:
           - display
           - launch
+          type: string
+      required:
+      - purpose
+      type: object
+    EnsureCodexProfilesRequest:
+      properties:
+        profileIds:
+          items:
+            type: string
+          type: array
+        purpose:
+          enum:
+          - display
           type: string
       required:
       - purpose
@@ -9168,6 +9552,27 @@ components:
       required:
       - sessionId
       - paths
+      type: object
+    StartCodexProfileLoginResponse:
+      properties:
+        authUrl:
+          type: string
+        operationId:
+          type: string
+        profileId:
+          type: string
+        status:
+          enum:
+          - pending
+          - completed
+          - cancelled
+          - failed
+          type: string
+      required:
+      - operationId
+      - profileId
+      - status
+      - authUrl
       type: object
     StartPreviewServerRequest:
       properties:
