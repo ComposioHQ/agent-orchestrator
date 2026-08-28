@@ -1351,10 +1351,9 @@ textarea,
 	height: 100%;
 }
 
-/* Normal-buffer panes (codex, a plain shell) now keep scrollback (scrollback:5000
-   in XtermTerminal), so the viewport becomes scrollable. Hide the scrollbar so it
-   doesn't reserve width and shift the cell grid; the wheel still scrolls via the
-   terminal's wheel handler. */
+/* Normal-buffer panes (codex, a plain shell) keep scrollback (scrollback:5000 in
+   XtermTerminal). Preserve the existing hidden-scrollbar behavior by default;
+   macOS opts into the slim, draggable gutter below. */
 .xterm .xterm-viewport {
 	scrollbar-width: none;
 }
@@ -1362,6 +1361,49 @@ textarea,
 .xterm .xterm-viewport::-webkit-scrollbar {
 	width: 0;
 	height: 0;
+}
+
+/* xterm 5's native scrollbar obeys macOS's system auto-hide preference even
+   when its WebKit pseudo-elements are styled. Mirror normal-buffer geometry in
+   an app-owned overlay that fades after scrolling, while alternate-screen TUIs
+   (and their tmux copy-mode chrome) have no thumb at all. */
+.terminal-scrollbar {
+	position: absolute;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	z-index: 4;
+	width: 7px;
+	opacity: 0;
+	pointer-events: none;
+	transition: opacity var(--duration-fast) ease-out;
+}
+
+.terminal-scrollbar[data-scrollable="true"] {
+	pointer-events: auto;
+}
+
+.terminal-scrollbar[data-scrollable="true"][data-active="true"],
+.terminal-scrollbar[data-scrollable="true"]:hover,
+.terminal-scrollbar[data-scrollable="true"]:active {
+	opacity: 1;
+}
+
+.terminal-scrollbar__thumb {
+	position: absolute;
+	top: 0;
+	right: 1px;
+	left: 1px;
+	min-height: 24px;
+	border-radius: 999px;
+	background-color: color-mix(in srgb, var(--color-text-terminal) 30%, transparent);
+	will-change: height, transform;
+}
+
+.terminal-scrollbar:hover .terminal-scrollbar__thumb,
+.terminal-scrollbar:active .terminal-scrollbar__thumb,
+.terminal-xterm-host--mac:focus-within + .terminal-scrollbar .terminal-scrollbar__thumb {
+	background-color: color-mix(in srgb, var(--color-text-terminal) 48%, transparent);
 }
 
 /* Scrollable region that must not show a scrollbar — the wheel/trackpad still
@@ -3971,6 +4013,188 @@ body:has(#root .platform-linux) > .browser-popout-overlay {
 		inset 0 1px 0 color-mix(in srgb, white 7%, transparent),
 		0 1px 0 color-mix(in srgb, black 22%, transparent);
 	backdrop-filter: blur(10px);
+}
+
+.browser-panel {
+	container-name: browser-panel;
+	container-type: inline-size;
+}
+
+.browser-panel__tab-bar {
+	display: none;
+	height: 38px;
+	min-width: 0;
+	align-items: end;
+	padding: 6px 8px 0;
+	border-bottom: 1px solid color-mix(in srgb, var(--color-border) 72%, transparent);
+	background: color-mix(in srgb, var(--surface) 92%, var(--bg));
+}
+
+.browser-panel__tab-strip {
+	display: flex;
+	width: fit-content;
+	max-width: calc(100% - 34px);
+	min-width: 0;
+	align-items: end;
+	gap: 2px;
+	flex: 0 1 auto;
+	overflow-x: auto;
+	overflow-y: hidden;
+	scrollbar-width: none;
+}
+
+.browser-panel__tab-strip::-webkit-scrollbar {
+	display: none;
+}
+
+.browser-panel__tab {
+	position: relative;
+	display: flex;
+	width: 220px;
+	min-width: 52px;
+	max-width: 220px;
+	height: 32px;
+	align-items: center;
+	flex: 1 1 220px;
+	border: 1px solid transparent;
+	border-bottom: 0;
+	border-radius: 7px 7px 0 0;
+	color: var(--fg-muted);
+	background: transparent;
+}
+
+.browser-panel__tab:not(:last-child)::after {
+	position: absolute;
+	top: 8px;
+	right: -2px;
+	width: 1px;
+	height: 16px;
+	background: color-mix(in srgb, var(--color-border) 68%, transparent);
+	content: "";
+	opacity: 0.82;
+	transition: opacity 120ms ease-out;
+}
+
+.browser-panel__tab--active::after,
+.browser-panel__tab:has(+ .browser-panel__tab--active)::after,
+.browser-panel__tab:hover::after,
+.browser-panel__tab:has(+ .browser-panel__tab:hover)::after,
+.browser-panel__tab--dragging::after,
+.browser-panel__tab:has(+ .browser-panel__tab--dragging)::after {
+	opacity: 0;
+}
+
+.browser-panel__tab:hover {
+	color: var(--fg);
+	background: color-mix(in srgb, var(--surface-hover) 72%, transparent);
+}
+
+.browser-panel__tab--active {
+	color: var(--fg);
+	border-color: color-mix(in srgb, var(--color-border) 72%, transparent);
+	background: var(--surface);
+	box-shadow: inset 0 1px 0 color-mix(in srgb, white 7%, transparent);
+}
+
+.browser-panel__tab-select {
+	display: flex;
+	min-width: 0;
+	height: 100%;
+	align-items: center;
+	gap: 7px;
+	flex: 1;
+	padding: 0 4px 0 10px;
+	border: 0;
+	color: inherit;
+	background: transparent;
+	font-size: 12px;
+	text-align: left;
+}
+
+.browser-panel__tab-select:focus-visible,
+.browser-panel__tab-close:focus-visible {
+	outline: 2px solid var(--color-accent);
+	outline-offset: -2px;
+}
+
+.browser-panel__tab-icon {
+	width: 14px;
+	height: 14px;
+	flex: none;
+	color: var(--fg-passive);
+}
+
+.browser-panel__tab-title {
+	min-width: 0;
+	overflow: hidden;
+	font-weight: 550;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.browser-panel__tab-close {
+	display: grid;
+	width: 26px;
+	height: 26px;
+	place-items: center;
+	flex: none;
+	margin-right: 3px;
+	border: 0;
+	border-radius: 5px;
+	color: var(--fg-muted);
+	background: transparent;
+}
+
+.browser-panel__tab-close:not(:disabled):hover {
+	color: var(--fg);
+	background: var(--surface-hover);
+}
+
+.browser-panel__tab-close:disabled {
+	display: none;
+}
+
+.browser-panel__tab-strip:has(.browser-panel__tab:nth-child(8)) .browser-panel__tab-close {
+	display: none;
+}
+
+.browser-panel__tab-strip:has(.browser-panel__tab:nth-child(8)) .browser-panel__tab--active .browser-panel__tab-close {
+	display: grid;
+}
+
+.browser-panel__tab-new {
+	display: grid;
+	width: 30px;
+	height: 30px;
+	place-items: center;
+	flex: none;
+	margin: 0 0 1px 4px;
+	border: 0;
+	border-radius: 7px;
+	color: var(--fg-muted);
+	background: transparent;
+}
+
+.browser-panel__tab-new:not(:disabled):hover {
+	color: var(--fg);
+	background: var(--surface-hover);
+}
+
+.browser-panel__tab-new:focus-visible {
+	outline: 2px solid var(--color-accent);
+	outline-offset: -2px;
+}
+
+@container browser-panel (min-width: 640px) {
+	.browser-panel__tab-bar {
+		display: flex;
+	}
+
+	.browser-panel__toolbar-new-tab,
+	.browser-panel__toolbar-tabs-trigger,
+	.browser-tabs-rail {
+		display: none;
+	}
 }
 
 .browser-panel__url,

@@ -11,8 +11,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -20,6 +18,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/modelcatalog"
+	"github.com/aoagents/agent-orchestrator/backend/internal/agentlaunch"
 	"github.com/aoagents/agent-orchestrator/backend/internal/attachmentstore"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -232,12 +231,13 @@ type lifecycleRecorder interface {
 	ConfirmAgentSwitchSourceStopped(ctx context.Context, confirmation domain.AgentSwitchSourceStopConfirmation) (bool, error)
 	ActivateAgentSwitchTarget(ctx context.Context, activation domain.AgentSwitchTargetActivation) (bool, error)
 	ActivateChatAgentSwitchTarget(ctx context.Context, activation domain.AgentSwitchChatTargetActivation) (bool, error)
+	ApplyActivitySignal(ctx context.Context, id domain.SessionID, signal ports.ActivitySignal) error
 	MarkTerminated(ctx context.Context, id domain.SessionID) error
 }
 
 // ShellTerminalCloser gates a session's scoped shell terminals around every
 // path that releases its worktree (Kill, Cleanup, RetireForReplacement, the
-// reconcile/shutdown save-and-teardown path), so none of them removes a
+// explicit shutdown save-and-teardown path), so none of them removes a
 // worktree out from under a shell whose cwd still points into it — on Windows
 // an open handle on that directory can even make the removal itself fail.
 //
@@ -2142,7 +2142,7 @@ func (m *Manager) SaveAndTeardownAll(ctx context.Context) error {
 		if rec.Metadata.WorkspacePath == "" || rec.Metadata.Branch == "" {
 			continue
 		}
-		if err := m.saveAndTeardownOne(ctx, rec, true); err != nil {
+		if err := m.saveAndTeardownOne(ctx, rec); err != nil {
 			m.logger.Error("save-teardown-all: session failed, skipping", "sessionID", rec.ID, "error", err)
 		}
 	}
@@ -2153,11 +2153,10 @@ func (m *Manager) SaveAndTeardownAll(ctx context.Context) error {
 // session. The DB write (UpsertSessionWorktree) is committed before
 // ForceDestroy; if either capture or the DB write fails, ForceDestroy is
 // not called.
-func (m *Manager) saveAndTeardownOne(ctx context.Context, rec domain.SessionRecord, destroyRuntime bool) error {
+func (m *Manager) saveAndTeardownOne(ctx context.Context, rec domain.SessionRecord) error {
 	// Gate shut this session's scoped shell terminals before either branch
-	// below force-removes its worktree. Both SaveAndTeardownAll and
-	// reconcileLive only reach here for a session with a real workspace, so
-	// there is always a worktree to protect.
+	// below force-removes its worktree. SaveAndTeardownAll only reaches here for
+	// a session with a real workspace, so there is always a worktree to protect.
 	release, closeErr := m.beginShellTerminalTeardown(ctx, rec.ID)
 	if closeErr != nil {
 		return fmt.Errorf("save %s: %w", rec.ID, closeErr)
@@ -2175,7 +2174,7 @@ func (m *Manager) saveAndTeardownOne(ctx context.Context, rec domain.SessionReco
 	if rows, ok, err := m.workspaceProjectRows(ctx, rec); err != nil {
 		return fmt.Errorf("save %s: workspace rows: %w", rec.ID, err)
 	} else if ok {
-		return m.saveAndTeardownWorkspaceProject(ctx, rec, rows, destroyRuntime)
+		return m.saveAndTeardownWorkspaceProject(ctx, rec, rows)
 	}
 
 	// 1. Capture uncommitted work (ref may be "" for clean worktrees).
@@ -2214,7 +2213,7 @@ func (m *Manager) saveAndTeardownOne(ctx context.Context, rec domain.SessionReco
 
 	// 5. Runtime teardown (best-effort; same pattern as Kill).
 	handle := runtimeHandle(rec.Metadata)
-	if destroyRuntime && handle.ID != "" {
+	if handle.ID != "" {
 		if err := m.runtime.Destroy(ctx, handle); err != nil {
 			m.logger.Warn("save-teardown-all: runtime destroy failed", "sessionID", rec.ID, "error", err)
 		}
@@ -2237,9 +2236,9 @@ func (m *Manager) saveAndTeardownOne(ctx context.Context, rec domain.SessionReco
 // ordinary daemon restart must not turn every live session into a serial
 // stash/remove/recreate cycle before the HTTP listener can bind.
 //
-// The old capture-and-teardown path remains the safety fallback when in-place
-// recovery fails. It records a durable restore marker before removing anything,
-// so RestoreAll can retry without risking uncommitted work.
+// If in-place recovery fails, preserve the live record, worktree, and native
+// conversation identity. A restart-time dependency failure is not user intent
+// to terminate the session; the controller can be retried through Resume Agent.
 func (m *Manager) reconcileLive(ctx context.Context, rec domain.SessionRecord) error {
 	project, err := m.loadProject(ctx, rec.ProjectID)
 	if err != nil {
@@ -2282,47 +2281,100 @@ func (m *Manager) reconcileLive(ctx context.Context, rec domain.SessionRecord) e
 		if relaunchErr == nil {
 			return nil
 		}
-		committed, verifyErr := m.liveRelaunchCommitted(ctx, rec)
-		if verifyErr != nil {
-			return fmt.Errorf("reconcile %s: relaunch failed (%w), then commit state became uncertain: %w", rec.ID, relaunchErr, verifyErr)
-		}
-		if committed {
-			m.logger.Warn("reconcile: relaunch reported an error after the controller commit; preserving the live session", "sessionID", rec.ID, "error", relaunchErr)
-			return nil
-		}
 		restoreErr = relaunchErr
 	}
-	m.logger.Warn("reconcile: in-place relaunch failed; falling back to save-and-teardown", "sessionID", rec.ID, "error", restoreErr)
-	if err := m.saveAndTeardownOne(ctx, rec, false); err != nil {
-		m.logger.Warn("reconcile: save-and-teardown failed; terminating without restore marker", "sessionID", rec.ID, "error", err)
-		if mErr := m.lcm.MarkTerminated(ctx, rec.ID); mErr != nil {
-			return fmt.Errorf("reconcile %s: mark terminated: %w", rec.ID, mErr)
-		}
+	// A provider or runtime dependency can be temporarily unavailable during an
+	// app restart (for example, a GUI-launched daemon may have a sparse PATH).
+	// That is not user intent to terminate the AO session, remove its worktree,
+	// or retire an orchestrator. Preserve the durable session and native resume
+	// identity, but expose the stopped controller as an exited workload so the
+	// existing Resume Agent path can retry it in place.
+	committed, preserveErr := m.preserveFailedReconcileRelaunch(ctx, rec)
+	if preserveErr != nil {
+		return fmt.Errorf("reconcile %s: relaunch failed and commit state became uncertain: %w", rec.ID, errors.Join(restoreErr, preserveErr))
 	}
-	return nil
+	if committed {
+		m.logger.Warn("reconcile: relaunch reported an error after the controller commit; preserving the live session", "sessionID", rec.ID, "error", restoreErr)
+		return nil
+	}
+	return fmt.Errorf("reconcile %s: relaunch controller: %w", rec.ID, restoreErr)
 }
 
-func (m *Manager) liveRelaunchCommitted(ctx context.Context, before domain.SessionRecord) (bool, error) {
-	after, ok, err := m.store.GetSession(ctx, before.ID)
-	if err != nil {
-		return false, err
-	}
-	if !ok {
-		return false, ErrNotFound
-	}
+func (m *Manager) relaunchCommitted(before, after domain.SessionRecord) bool {
 	if after.IsTerminated {
-		return false, nil
+		return false
 	}
 	if domain.NormalizeSessionMode(before.Mode) == domain.SessionModeChat {
 		generation := after.Metadata.ControllerGeneration
-		return generation != "" && generation != before.Metadata.ControllerGeneration, nil
+		// Chat Service durably claims a generation before native-history import
+		// and ControllerReady. A changed generation alone therefore proves only
+		// that launch began, not that a controller reached the published registry.
+		// Require both durable epoch movement and live registry ownership before
+		// treating an error returned after launch as a committed controller.
+		return generation != "" && generation != before.Metadata.ControllerGeneration &&
+			m.chat != nil && m.chat.HasLiveChatController(before.ID)
 	}
 	launchID := after.Metadata.RuntimeLaunchID
 	if launchID != "" && launchID != before.Metadata.RuntimeLaunchID {
-		return true, nil
+		return true
 	}
 	handleID := after.Metadata.RuntimeHandleID
-	return handleID != "" && handleID != before.Metadata.RuntimeHandleID, nil
+	return handleID != "" && handleID != before.Metadata.RuntimeHandleID
+}
+
+// preserveFailedReconcileRelaunch transitions the current controller epoch to
+// exited without using the boot snapshot as a CAS token. Launch preparation can
+// legitimately persist metadata (notably the browser capability verifier)
+// before runtime creation fails, so the current row must be read immediately
+// before the activity signal. Since ApplyActivitySignal intentionally treats a
+// stale CAS as a no-op, reread and retry rather than claiming recovery succeeded
+// while the session is still active and exposed to the reaper.
+func (m *Manager) preserveFailedReconcileRelaunch(ctx context.Context, before domain.SessionRecord) (bool, error) {
+	const maxAttempts = 3
+	for range maxAttempts {
+		current, ok, err := m.store.GetSession(ctx, before.ID)
+		if err != nil {
+			return false, err
+		}
+		if !ok {
+			return false, ErrNotFound
+		}
+		if m.relaunchCommitted(before, current) {
+			return true, nil
+		}
+		if current.IsTerminated || current.Activity.State == domain.ActivityExited {
+			return false, nil
+		}
+
+		signal := ports.ActivitySignal{
+			Valid:             true,
+			State:             domain.ActivityExited,
+			ExpectedUpdatedAt: current.UpdatedAt,
+		}
+		if domain.NormalizeSessionMode(current.Mode) == domain.SessionModeChat {
+			signal.ControllerGeneration = current.Metadata.ControllerGeneration
+		} else {
+			signal.LaunchID = current.Metadata.RuntimeLaunchID
+		}
+		if err := m.lcm.ApplyActivitySignal(ctx, before.ID, signal); err != nil {
+			return false, err
+		}
+
+		after, ok, err := m.store.GetSession(ctx, before.ID)
+		if err != nil {
+			return false, err
+		}
+		if !ok {
+			return false, ErrNotFound
+		}
+		if m.relaunchCommitted(before, after) {
+			return true, nil
+		}
+		if after.IsTerminated || after.Activity.State == domain.ActivityExited {
+			return false, nil
+		}
+	}
+	return false, errors.New("session changed while recording failed relaunch")
 }
 
 // reconcileReap kills the leaked tmux session of a session the DB already marks
@@ -2361,7 +2413,8 @@ func (m *Manager) reconcileReap(ctx context.Context, rec domain.SessionRecord) e
 // crash), live reality matches the DB:
 //
 //  1. Live pass: for each non-terminated session, adopt it if its runtime
-//     survived, else capture work and mark terminated (reconcileLive).
+//     survived, else relaunch in place while preserving failed attempts as
+//     recoverable exited sessions (reconcileLive).
 //  2. Reap pass: for each terminated session whose runtime leaked, kill it
 //     (reconcileReap). Runs before restore so a restored session does not
 //     collide with a leaked tmux of the same name.
@@ -2425,12 +2478,33 @@ func (m *Manager) ReconcileBackground(ctx context.Context) error {
 }
 
 func (m *Manager) reconcileLivePass(ctx context.Context, recs []domain.SessionRecord) {
-	live := make([]domain.SessionRecord, 0, len(recs))
+	candidates := make([]domain.SessionRecord, 0, len(recs))
+	ids := make([]domain.SessionID, 0, len(recs))
 	for _, rec := range recs {
 		if rec.IsTerminated {
 			continue
 		}
-		if m.SessionMutationInProgress(rec.ID) {
+		candidates = append(candidates, rec)
+		ids = append(ids, rec.ID)
+	}
+	if len(candidates) == 0 {
+		return
+	}
+	// Reserve every candidate before starting the bounded worker pool. Otherwise
+	// sessions queued behind slow probes remain open to input and the periodic
+	// reaper until a worker dequeues them.
+	acquired, err := m.beginAgentOperations(ctx, ids, agentOperationReconcile)
+	if err != nil {
+		m.logger.Warn("reconcile: could not fence live sessions", "error", err)
+		return
+	}
+	acquiredSet := make(map[domain.SessionID]struct{}, len(acquired))
+	for _, id := range acquired {
+		acquiredSet[id] = struct{}{}
+	}
+	live := make([]domain.SessionRecord, 0, len(acquired))
+	for _, rec := range candidates {
+		if _, ok := acquiredSet[rec.ID]; !ok {
 			m.logger.Warn("reconcile: session remains input-gated pending unambiguous agent-switch recovery", "sessionID", rec.ID)
 			continue
 		}
@@ -2450,7 +2524,11 @@ func (m *Manager) reconcileLivePass(ctx context.Context, recs []domain.SessionRe
 		go func() {
 			defer wg.Done()
 			for rec := range jobs {
-				if err := m.reconcileLive(ctx, rec); err != nil {
+				err := func() error {
+					defer m.endAgentOperation(rec.ID, agentOperationReconcile)
+					return m.reconcileLive(ctx, rec)
+				}()
+				if err != nil {
 					m.logger.Error("reconcile: live pass failed, skipping", "sessionID", rec.ID, "error", err)
 				}
 			}
@@ -2777,7 +2855,7 @@ func (m *Manager) sessionWorktreeRowsToRepoInfos(ctx context.Context, project do
 	return out, nil
 }
 
-func (m *Manager) saveAndTeardownWorkspaceProject(ctx context.Context, rec domain.SessionRecord, rows []ports.WorkspaceRepoInfo, destroyRuntime bool) error {
+func (m *Manager) saveAndTeardownWorkspaceProject(ctx context.Context, rec domain.SessionRecord, rows []ports.WorkspaceRepoInfo) error {
 	for _, row := range rows {
 		ref, err := m.workspace.StashUncommitted(ctx, workspaceInfoFromRepoInfo(row))
 		if err != nil {
@@ -2803,7 +2881,7 @@ func (m *Manager) saveAndTeardownWorkspaceProject(ctx context.Context, rec domai
 		return fmt.Errorf("save %s: mark terminated: %w", rec.ID, err)
 	}
 	handle := runtimeHandle(rec.Metadata)
-	if destroyRuntime && handle.ID != "" {
+	if handle.ID != "" {
 		if err := m.runtime.Destroy(ctx, handle); err != nil {
 			m.logger.Warn("save-teardown-all: runtime destroy failed", "sessionID", rec.ID, "error", err)
 		}
@@ -4269,200 +4347,11 @@ func (m *Manager) augmentRuntimePATHForLaunchBinary(ctx context.Context, env map
 	AugmentRuntimePATHForLaunchBinary(ctx, env, argv, m.lookPath)
 }
 
-// AugmentRuntimePATHForLaunchBinary prepends the resolved launch binary
-// directory to the runtime PATH. For Node-backed CLI shims, it also prepends a
-// concrete Node runtime directory so shebangs like `#!/usr/bin/env node` work
-// in GUI-launched terminals whose PATH may not include shell manager setup.
+// AugmentRuntimePATHForLaunchBinary is retained at the session-manager boundary
+// for reviewer launches; all agent child-process paths share agentlaunch's
+// executable-environment augmentation.
 func AugmentRuntimePATHForLaunchBinary(ctx context.Context, env map[string]string, argv []string, lookPath func(string) (string, error)) {
-	bin, ok := launchBinary(argv)
-	if !ok || !filepath.IsAbs(bin) {
-		return
-	}
-	launchDir := filepath.Dir(bin)
-	if launchDir == "." || launchDir == string(filepath.Separator) {
-		return
-	}
-	dirs := []string{launchDir}
-	if isNodeLaunchBinary(bin) {
-		if nodeDir := nodeRuntimeDir(ctx, lookPath); nodeDir != "" && nodeDir != launchDir {
-			dirs = append(dirs, nodeDir)
-		}
-	}
-	var parts []string
-	if path := env["PATH"]; path != "" {
-		parts = strings.Split(path, string(os.PathListSeparator))
-	}
-	for i := len(dirs) - 1; i >= 0; i-- {
-		if !containsPathDir(parts, dirs[i]) {
-			parts = append([]string{dirs[i]}, parts...)
-		}
-	}
-	env["PATH"] = strings.Join(parts, string(os.PathListSeparator))
-}
-
-func isNodeLaunchBinary(path string) bool {
-	info, err := os.Stat(path)
-	if err != nil || !info.Mode().IsRegular() {
-		return false
-	}
-	f, err := os.Open(path)
-	if err != nil {
-		return false
-	}
-	defer func() { _ = f.Close() }()
-	const maxShebangBytes = 4096
-	buf := make([]byte, maxShebangBytes)
-	n, _ := f.Read(buf)
-	line := string(buf[:n])
-	if newline := strings.IndexByte(line, '\n'); newline >= 0 {
-		line = line[:newline]
-	}
-	if !strings.HasPrefix(line, "#!") {
-		return false
-	}
-	for _, field := range strings.Fields(strings.TrimPrefix(line, "#!")) {
-		if filepath.Base(field) == "node" {
-			return true
-		}
-	}
-	return false
-}
-
-func containsPathDir(parts []string, dir string) bool {
-	for _, part := range parts {
-		if part == dir {
-			return true
-		}
-	}
-	return false
-}
-
-func nodeRuntimeDir(ctx context.Context, lookPath func(string) (string, error)) string {
-	if err := ctx.Err(); err != nil || runtime.GOOS == "windows" {
-		return ""
-	}
-	if lookPath == nil {
-		lookPath = exec.LookPath
-	}
-	if node, err := lookPath("node"); err == nil && node != "" {
-		return filepath.Dir(node)
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	fnmDir := os.Getenv("FNM_DIR")
-	if fnmDir == "" {
-		if xdg := os.Getenv("XDG_DATA_HOME"); xdg != "" {
-			fnmDir = filepath.Join(xdg, "fnm")
-		} else if runtime.GOOS == "darwin" {
-			fnmDir = filepath.Join(home, "Library", "Application Support", "fnm")
-		} else {
-			fnmDir = filepath.Join(home, ".local", "share", "fnm")
-		}
-	}
-	voltaHome := os.Getenv("VOLTA_HOME")
-	if voltaHome == "" {
-		voltaHome = filepath.Join(home, ".volta")
-	}
-	nvm := versionedNodeMatches(filepath.Join(home, ".nvm", "versions", "node", "*", "bin", "node"))
-	if data, err := os.ReadFile(filepath.Join(home, ".nvm", "alias", "default")); err == nil {
-		fields := strings.Fields(string(data))
-		if len(fields) > 0 {
-			nvm = preferNodeVersion(nvm, fields[0])
-		}
-	}
-	fnmMatches := versionedNodeMatches(filepath.Join(fnmDir, "node-versions", "*", "installation", "bin", "node"))
-	candidates := make([]string, 0, len(nvm)+len(fnmMatches)+3)
-	candidates = append(candidates, nvm...)
-	candidates = append(candidates, fnmMatches...)
-	// Prefer explicitly selected/versioned runtimes over manager and package-
-	// manager shims. A dormant ~/.volta installation must not override the NVM
-	// default or newest fnm runtime merely because the GUI omitted shell setup.
-	candidates = append(candidates, filepath.Join(voltaHome, "bin", "node"), "/opt/homebrew/bin/node", "/usr/local/bin/node")
-	for _, candidate := range candidates {
-		if err := ctx.Err(); err != nil {
-			return ""
-		}
-		if info, err := os.Stat(candidate); err == nil && !info.IsDir() && info.Mode()&0o111 != 0 {
-			return filepath.Dir(candidate)
-		}
-	}
-	return ""
-}
-
-func versionedNodeMatches(pattern string) []string {
-	matches, _ := filepath.Glob(pattern)
-	sort.SliceStable(matches, func(i, j int) bool {
-		return compareNodeVersion(nodeVersionFromPath(matches[i]), nodeVersionFromPath(matches[j])) > 0
-	})
-	return matches
-}
-
-func nodeVersionFromPath(path string) string {
-	dir := filepath.Dir(path)
-	if filepath.Base(dir) == "bin" {
-		dir = filepath.Dir(dir)
-	}
-	if filepath.Base(dir) == "installation" {
-		dir = filepath.Dir(dir)
-	}
-	return filepath.Base(dir)
-}
-
-func preferNodeVersion(paths []string, version string) []string {
-	version = normalizeNodeVersion(version)
-	for i, path := range paths {
-		if normalizeNodeVersion(nodeVersionFromPath(path)) != version {
-			continue
-		}
-		out := make([]string, 0, len(paths))
-		out = append(out, path)
-		out = append(out, paths[:i]...)
-		out = append(out, paths[i+1:]...)
-		return out
-	}
-	return paths
-}
-
-func compareNodeVersion(a, b string) int {
-	av, aok := parseNodeVersion(a)
-	bv, bok := parseNodeVersion(b)
-	for i := range av {
-		if av[i] != bv[i] {
-			if av[i] > bv[i] {
-				return 1
-			}
-			return -1
-		}
-	}
-	if aok != bok {
-		if aok {
-			return 1
-		}
-		return -1
-	}
-	return strings.Compare(a, b)
-}
-
-func parseNodeVersion(version string) ([3]int, bool) {
-	var parsed [3]int
-	fields := strings.Split(normalizeNodeVersion(version), ".")
-	if len(fields) == 0 || fields[0] == "" {
-		return parsed, false
-	}
-	for i := 0; i < len(fields) && i < len(parsed); i++ {
-		n, err := strconv.Atoi(fields[i])
-		if err != nil {
-			return [3]int{}, false
-		}
-		parsed[i] = n
-	}
-	return parsed, true
-}
-
-func normalizeNodeVersion(version string) string {
-	return strings.TrimPrefix(strings.TrimSpace(version), "v")
+	agentlaunch.AugmentRuntimePATHForLaunchBinary(ctx, env, argv, lookPath)
 }
 
 func (m *Manager) validateRuntimePrerequisites() error {
