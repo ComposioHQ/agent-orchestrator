@@ -7,12 +7,15 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
+
+const nativeEditHandoffLimit = 45 * time.Second
 
 // Conversation history operations: rollback, fork, and the thread title.
 //
@@ -219,19 +222,30 @@ func (s *Service) EditMessage(
 	var replayContent ports.ChatContent
 	var replayTruncated bool
 	var providerScopeID string
-	sourceClosed := false
+	operationCtx := ctx
+	var cancelOperation context.CancelFunc
+	defer func() {
+		if cancelOperation != nil {
+			cancelOperation()
+		}
+	}()
+	sourceStopInitiated := false
 	if canNativeFork {
 		forkAnchor := anchor.PreviousProviderTurnID
 		providerConversationID, err = forker.Fork(ctx, &forkAnchor)
 		if err == nil {
+			// Fork succeeded, so closing the source writer is now irreversible.
+			// Finish or recover this boundary independently of request cancellation.
+			operationCtx, cancelOperation = context.WithTimeout(
+				context.WithoutCancel(ctx), nativeEditHandoffLimit)
+			sourceStopInitiated = true
 			// Codex loads a fork into the source app-server, which remains that
 			// child's active writer until the process exits. Close the fenced, idle
 			// source before another driver process resumes the child.
-			if closeErr := source.Close(ctx); closeErr != nil {
+			if closeErr := source.closeForBranchHandoff(operationCtx); closeErr != nil {
 				err = fmt.Errorf("close source writer after fork: %w", closeErr)
 			} else {
-				sourceClosed = true
-				provider, err = driver.Resume(ctx, ports.ChatResumeConfig{
+				provider, err = driver.Resume(operationCtx, ports.ChatResumeConfig{
 					SessionID: cfg.SessionID, ProviderConversationID: providerConversationID,
 					DataDir: cfg.DataDir, WorkspacePath: cfg.WorkspacePath, Env: cfg.Env,
 					Model: cfg.Model, Permissions: cfg.Permissions, SystemPrompt: cfg.SystemPrompt,
@@ -264,10 +278,12 @@ func (s *Service) EditMessage(
 	}
 	if err != nil {
 		prepareErr := classify(fmt.Errorf("prepare edited conversation: %w", err))
-		if sourceClosed {
+		if sourceStopInitiated {
 			if restoreErr := s.restoreClosedSourceController(
 				ctx, id, source, sourceBranch, cfg, driver); restoreErr != nil {
 				prepareErr = errors.Join(prepareErr, restoreErr)
+			} else {
+				abortSource = false
 			}
 		}
 		return EditMessageResult{}, prepareErr
@@ -277,10 +293,12 @@ func (s *Service) EditMessage(
 			_ = provider.Close()
 		}
 		prepareErr := errors.New("replacement provider conversation is not ready")
-		if sourceClosed {
+		if sourceStopInitiated {
 			if restoreErr := s.restoreClosedSourceController(
 				ctx, id, source, sourceBranch, cfg, driver); restoreErr != nil {
 				prepareErr = errors.Join(prepareErr, restoreErr)
+			} else {
+				abortSource = false
 			}
 		}
 		return EditMessageResult{}, prepareErr
@@ -307,13 +325,17 @@ func (s *Service) EditMessage(
 	conversation := source.conversation
 	conversation.ActiveBranchID = branchID
 	replacement := newController(id, conversation, generation, provider, s.store, s.activity, s.log, s.newID, s.now)
-	if err := s.store.CreateAndActivateConversationBranch(ctx, id, branch, generation, s.now()); err != nil {
+	if err := s.store.CreateAndActivateConversationBranch(
+		operationCtx, id, branch, generation, s.now(),
+	); err != nil {
 		_ = provider.Close()
 		activateErr := fmt.Errorf("activate edited conversation: %w", err)
-		if sourceClosed {
+		if sourceStopInitiated {
 			if restoreErr := s.restoreClosedSourceController(
 				ctx, id, source, sourceBranch, cfg, driver); restoreErr != nil {
 				activateErr = errors.Join(activateErr, restoreErr)
+			} else {
+				abortSource = false
 			}
 		}
 		return EditMessageResult{}, activateErr
@@ -326,33 +348,35 @@ func (s *Service) EditMessage(
 		msg.Content = append([]ports.ChatContent{replayContent}, msg.Content...)
 	}
 	result, sendErr := s.sendEditedMessage(
-		ctx, anchor.SourceBranchID, branchID, replacement, msg, false)
+		operationCtx, anchor.SourceBranchID, branchID, replacement, msg, false)
 	if result.Turn.ID == "" || errors.Is(sendErr, ErrProviderRefused) {
-		if err := s.store.ActivateConversationBranch(ctx, id, source.conversation.ID,
+		if err := s.store.ActivateConversationBranch(operationCtx, id, source.conversation.ID,
 			anchor.SourceBranchID, source.ProviderConversationID(), source.generation, s.now()); err != nil {
 			sendErr = errors.Join(sendErr, fmt.Errorf("restore source after rejected edit: %w", err))
 			// The durable head still belongs to the child. Publish its controller
 			// rather than reopening a source generation the store just rejected.
 			if installErr := s.installStartedBranchController(
-				ctx, id, source, replacement, anchor.SourceBranchID); installErr != nil {
+				operationCtx, id, source, replacement, anchor.SourceBranchID); installErr != nil {
 				return result, errors.Join(sendErr, installErr)
 			}
 			abortSource = false
 			return result, sendErr
 		}
-		if err := replacement.Close(ctx); err != nil {
+		if err := replacement.Close(operationCtx); err != nil {
 			sendErr = errors.Join(sendErr, fmt.Errorf("close rejected edited conversation: %w", err))
 		}
-		if sourceClosed {
+		if sourceStopInitiated {
 			if restoreErr := s.restoreClosedSourceController(
 				ctx, id, source, sourceBranch, cfg, driver); restoreErr != nil {
 				sendErr = errors.Join(sendErr, restoreErr)
+			} else {
+				abortSource = false
 			}
 		}
 		return result, sendErr
 	}
 	if err := s.installStartedBranchController(
-		ctx, id, source, replacement, anchor.SourceBranchID); err != nil {
+		operationCtx, id, source, replacement, anchor.SourceBranchID); err != nil {
 		return result, errors.Join(sendErr, err)
 	}
 	abortSource = false
@@ -622,9 +646,27 @@ func (s *Service) restoreClosedSourceController(
 	branch domain.ConversationBranch,
 	cfg StartConfig,
 	driver ports.ChatDriver,
-) error {
+) (returnErr error) {
+	defer func() {
+		if returnErr != nil {
+			source.reportFailedBranchHandoff(ctx)
+		}
+	}()
+	recoveryCtx, cancel := context.WithTimeout(
+		context.WithoutCancel(ctx), nativeEditHandoffLimit)
+	defer cancel()
+	if source.State() != ports.ChatControllerStopped {
+		closeErr := source.closeForBranchHandoff(recoveryCtx)
+		if source.State() != ports.ChatControllerStopped {
+			if closeErr == nil {
+				closeErr = errors.New("source controller did not stop")
+			}
+			return fmt.Errorf(
+				"confirm source stopped before failed native edit recovery: %w", closeErr)
+		}
+	}
 	providerConversationID := source.ProviderConversationID()
-	provider, err := driver.Resume(ctx, ports.ChatResumeConfig{
+	provider, err := driver.Resume(recoveryCtx, ports.ChatResumeConfig{
 		SessionID: cfg.SessionID, ProviderConversationID: providerConversationID,
 		DataDir: cfg.DataDir, WorkspacePath: cfg.WorkspacePath, Env: cfg.Env,
 		Model: cfg.Model, Permissions: cfg.Permissions, SystemPrompt: cfg.SystemPrompt,
@@ -639,12 +681,12 @@ func (s *Service) restoreClosedSourceController(
 	conversation.ActiveBranchID = branch.ID
 	replacement := newController(
 		id, conversation, generation, provider, s.store, s.activity, s.log, s.newID, s.now)
-	if err := s.store.ActivateConversationBranch(ctx, id, conversation.ID, branch.ID,
+	if err := s.store.ActivateConversationBranch(recoveryCtx, id, conversation.ID, branch.ID,
 		providerConversationID, generation, s.now()); err != nil {
 		_ = provider.Close()
 		return fmt.Errorf("reactivate source after failed native edit: %w", err)
 	}
-	if err := s.installBranchController(ctx, id, source, replacement, branch.ID); err != nil {
+	if err := s.installBranchController(recoveryCtx, id, source, replacement, branch.ID); err != nil {
 		return fmt.Errorf("install source after failed native edit: %w", err)
 	}
 	return nil
@@ -680,6 +722,7 @@ func (s *Service) installStartedBranchController(
 		}
 		return ErrControllerHandoff
 	}
+	source.prepareBranchHandoffStop()
 	s.controllers[id] = replacement
 	s.mu.Unlock()
 
@@ -692,8 +735,8 @@ func (s *Service) installStartedBranchController(
 		}
 		s.mu.Unlock()
 	}()
-	source.AbortHandoff()
-	if err := source.Close(ctx); err != nil {
+	source.completeBranchHandoff()
+	if err := source.closeForBranchHandoff(ctx); err != nil {
 		s.log.Error("close source controller after branch swap", "session", id, "error", err)
 	}
 	return nil

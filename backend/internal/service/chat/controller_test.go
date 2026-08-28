@@ -64,14 +64,18 @@ type fakeConversation struct {
 	events                 chan ports.ChatEvent
 	providerConversationID string
 
-	mu        sync.Mutex
-	sent      []ports.ChatUserMessage
-	caps      ports.ChatCapabilities
-	resolved  map[string]ports.ChatDecision
-	turnSeq   int
-	sendErr   error
-	onSend    func(providerTurnID string)
-	closeOnce sync.Once
+	mu                 sync.Mutex
+	sent               []ports.ChatUserMessage
+	caps               ports.ChatCapabilities
+	resolved           map[string]ports.ChatDecision
+	turnSeq            int
+	sendErr            error
+	onSend             func(providerTurnID string)
+	onClose            func()
+	closeStarted       chan struct{}
+	closeEventsRelease <-chan struct{}
+	closeSignalOnce    sync.Once
+	closeOnce          sync.Once
 }
 
 type nativeHistoryConversation struct {
@@ -243,7 +247,28 @@ func (f *fakeConversation) ResolveRequest(_ context.Context, id string, d ports.
 }
 
 func (f *fakeConversation) Close() error {
-	f.closeOnce.Do(func() { close(f.events) })
+	f.mu.Lock()
+	onClose := f.onClose
+	closeStarted := f.closeStarted
+	closeEventsRelease := f.closeEventsRelease
+	f.mu.Unlock()
+	if onClose != nil {
+		onClose()
+	}
+	if closeStarted != nil {
+		f.closeSignalOnce.Do(func() { close(closeStarted) })
+	}
+	closeEvents := func() {
+		f.closeOnce.Do(func() { close(f.events) })
+	}
+	if closeEventsRelease != nil {
+		go func() {
+			<-closeEventsRelease
+			closeEvents()
+		}()
+		return nil
+	}
+	closeEvents()
 	return nil
 }
 
