@@ -241,7 +241,8 @@ func Run() error {
 	// loudly instead of silently becoming a TUI session.
 	var agentSvc *agentsvc.Service
 	var codexUsageLimitReporter interface {
-		ReportCodexUsageLimitFailure(context.Context, domain.SessionID)
+		ReportCodexUsageLimitFailureEvidence(context.Context, domain.CodexExhaustionEvidence)
+		ReportCodexExhaustion(context.Context, domain.CodexExhaustionEvidence) (domain.CodexAutomaticProfileSwitchAttempt, bool, error)
 	}
 	var codexUsageLimitReporterMu sync.RWMutex
 	chatSvc := chatsvc.New(chatsvc.Options{
@@ -300,7 +301,7 @@ func Run() error {
 				agentSvc.InvalidateCodexProfileAuthentication(profileID)
 			}
 		},
-		OnCapacityChanged: func(sessionID domain.SessionID, profileID string, observation ports.CodexCapacityObservation) {
+		OnCapacityChanged: func(sessionID domain.SessionID, profileID, generation, providerTurnID string, observation ports.CodexCapacityObservation) {
 			if agentSvc == nil {
 				return
 			}
@@ -309,12 +310,29 @@ func Run() error {
 				log.Warn("ignored Codex capacity event with binding mismatch", "session_id", sessionID, "profile_id", profileID)
 				return
 			}
-			agentSvc.ObserveCodexProfileCapacity(profileID, observation)
+			snapshot := agentSvc.ObserveCodexProfileCapacity(profileID, observation)
+			if snapshot.State == domain.CodexCapacityExhausted && snapshot.Freshness == domain.AgentReadinessFresh {
+				codexUsageLimitReporterMu.RLock()
+				reporter := codexUsageLimitReporter
+				codexUsageLimitReporterMu.RUnlock()
+				if reporter != nil {
+					episodeID := providerTurnID
+					if episodeID == "" {
+						episodeID = "capacity:" + time.Now().UTC().Format(time.RFC3339Nano)
+					}
+					_, _, _ = reporter.ReportCodexExhaustion(context.WithoutCancel(ctx), domain.CodexExhaustionEvidence{
+						SessionID: sessionID, ProfileID: profileID, Generation: domain.AgentGenerationID(generation),
+						EpisodeID: episodeID, Trigger: domain.CodexAutomaticProfileSwitchCapacityEvent,
+						ObservedAt: time.Now().UTC(), Fresh: true,
+					})
+				}
+			}
 		},
-		OnUsageLimited: func(sessionID domain.SessionID, profileID string) {
+		OnUsageLimited: func(evidence domain.CodexExhaustionEvidence) {
 			if agentSvc == nil {
 				return
 			}
+			sessionID, profileID := evidence.SessionID, evidence.ProfileID
 			rec, found, readErr := store.GetSession(context.WithoutCancel(ctx), sessionID)
 			if readErr != nil || !found || rec.Harness != domain.HarnessCodex || rec.CodexProfileBinding == nil || rec.CodexProfileBinding.ProfileID != profileID {
 				log.Warn("ignored Codex usage-limit event with binding mismatch", "session_id", sessionID, "profile_id", profileID)
@@ -325,7 +343,7 @@ func Run() error {
 			reporter := codexUsageLimitReporter
 			codexUsageLimitReporterMu.RUnlock()
 			if reporter != nil {
-				reporter.ReportCodexUsageLimitFailure(context.WithoutCancel(ctx), sessionID)
+				reporter.ReportCodexUsageLimitFailureEvidence(context.WithoutCancel(ctx), evidence)
 			}
 		},
 	})
@@ -355,6 +373,21 @@ func Run() error {
 			return
 		}
 		agentSvc.InvalidateCodexProfileCapacity(next.CodexProfileBinding.ProfileID)
+		if previous.Activity.State == domain.ActivityActive && next.Activity.State != domain.ActivityActive {
+			codexUsageLimitReporterMu.RLock()
+			reporter := codexUsageLimitReporter
+			codexUsageLimitReporterMu.RUnlock()
+			if reporter != nil && next.Metadata.RuntimeLaunchID != "" {
+				episodeID := fmt.Sprintf("tui:%s:%s:%s", next.Metadata.RuntimeLaunchID, next.Activity.State, next.UpdatedAt.UTC().Format(time.RFC3339Nano))
+				go func() {
+					_, _, _ = reporter.ReportCodexExhaustion(context.WithoutCancel(ctx), domain.CodexExhaustionEvidence{
+						SessionID: next.ID, ProfileID: next.CodexProfileBinding.ProfileID,
+						Generation: domain.AgentGenerationID(next.Metadata.RuntimeLaunchID), EpisodeID: episodeID,
+						Trigger: domain.CodexAutomaticProfileSwitchCapacityRead, ObservedAt: next.UpdatedAt,
+					})
+				}()
+			}
+		}
 	})
 
 	sessionSvc, reviewSvc, sessMgr, err := startSession(ctx, cfg, runtimeAdapter, store, lcStack.LCM, messenger, telemetrySink, agents, agentSvc, managedPreview, browserBroker, browserAuthority, chatLauncher{svc: chatSvc}, settingsSvc, log)
@@ -368,7 +401,8 @@ func Run() error {
 	}
 	sessMgr.SetTerminalInputGate(termMgr)
 	if reporter, ok := sessMgr.(interface {
-		ReportCodexUsageLimitFailure(context.Context, domain.SessionID)
+		ReportCodexUsageLimitFailureEvidence(context.Context, domain.CodexExhaustionEvidence)
+		ReportCodexExhaustion(context.Context, domain.CodexExhaustionEvidence) (domain.CodexAutomaticProfileSwitchAttempt, bool, error)
 	}); ok {
 		codexUsageLimitReporterMu.Lock()
 		codexUsageLimitReporter = reporter

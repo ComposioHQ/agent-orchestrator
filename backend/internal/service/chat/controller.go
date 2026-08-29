@@ -165,8 +165,8 @@ type Controller struct {
 	newID             IDFactory
 	now               Clock
 	onAccountChanged  func(domain.SessionID, domain.AgentHarness)
-	onCapacityChanged func(domain.SessionID, string, ports.CodexCapacityObservation)
-	onUsageLimited    func(domain.SessionID, string)
+	onCapacityChanged func(domain.SessionID, string, string, string, ports.CodexCapacityObservation)
+	onUsageLimited    func(domain.CodexExhaustionEvidence)
 
 	// sendMu serializes command dispatch so only one operation mutates the
 	// provider conversation at a time.
@@ -270,8 +270,8 @@ func newController(
 	newID IDFactory,
 	now Clock,
 	onAccountChanged func(domain.SessionID, domain.AgentHarness),
-	onCapacityChanged func(domain.SessionID, string, ports.CodexCapacityObservation),
-	onUsageLimited func(domain.SessionID, string),
+	onCapacityChanged func(domain.SessionID, string, string, string, ports.CodexCapacityObservation),
+	onUsageLimited func(domain.CodexExhaustionEvidence),
 ) *Controller {
 	c := &Controller{
 		sessionID:         sessionID,
@@ -2555,7 +2555,15 @@ func (c *Controller) afterProject(ctx context.Context, event ports.ChatEvent, pr
 		}
 		c.reportActivity(ctx, domain.ActivityIdle, "chat.turn.usage_limited", now)
 		if c.harness == domain.HarnessCodex && c.codexProfileID != "" && c.onUsageLimited != nil {
-			c.onUsageLimited(c.sessionID, c.codexProfileID)
+			episodeID := event.ProviderTurnID
+			if episodeID == "" {
+				episodeID = "usage-limit:" + now.UTC().Format(time.RFC3339Nano)
+			}
+			c.onUsageLimited(domain.CodexExhaustionEvidence{
+				SessionID: c.sessionID, ProfileID: c.codexProfileID,
+				Generation: domain.AgentGenerationID(c.generation), EpisodeID: episodeID,
+				Trigger: domain.CodexAutomaticProfileSwitchUsageLimitFailure, ObservedAt: now, Fresh: true,
+			})
 		}
 		c.drainLocked(ctx)
 	case ports.ChatEventApprovalRequested:
@@ -2578,7 +2586,7 @@ func (c *Controller) afterProject(ctx context.Context, event ports.ChatEvent, pr
 		}
 	case ports.ChatEventRateLimits:
 		if c.harness == domain.HarnessCodex && c.codexProfileID != "" && event.RateLimits != nil && event.RateLimits.CodexCapacity != nil && c.onCapacityChanged != nil {
-			c.onCapacityChanged(c.sessionID, c.codexProfileID, *event.RateLimits.CodexCapacity)
+			c.onCapacityChanged(c.sessionID, c.codexProfileID, c.generation, event.ProviderTurnID, *event.RateLimits.CodexCapacity)
 		}
 	}
 }

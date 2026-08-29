@@ -341,16 +341,17 @@ func capacitySnapshotFromObservation(observation ports.CodexCapacityObservation,
 	return snapshot
 }
 
-func (c *codexCapacityCoordinator) updateFromEvent(profileID string, observation ports.CodexCapacityObservation) {
+func (c *codexCapacityCoordinator) updateFromEvent(profileID string, observation ports.CodexCapacityObservation) domain.CodexCapacitySnapshot {
 	if profileID == "" {
-		return
+		return uncheckedCodexCapacity()
 	}
 	receivedAt := c.now()
 	c.mu.Lock()
 	state := c.ensureStateLocked(profileID)
 	if state.receivedAt.After(receivedAt) {
+		current := state.snapshot
 		c.mu.Unlock()
-		return
+		return current
 	}
 	merged := mergeCapacityObservation(state.snapshot, observation, receivedAt)
 	state.snapshot = merged
@@ -364,6 +365,7 @@ func (c *codexCapacityCoordinator) updateFromEvent(profileID string, observation
 	c.publish(profileID, &merged)
 	c.scheduleResetInvalidation(profileID, generation, merged)
 	c.logger.Info("Codex profile capacity updated", "profile_id", profileID, "trigger", "provider_event", "source", "event", "outcome", merged.State, "classification", "partial")
+	return merged
 }
 
 func mergeCapacityObservation(current domain.CodexCapacitySnapshot, observation ports.CodexCapacityObservation, receivedAt time.Time) domain.CodexCapacitySnapshot {

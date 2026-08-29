@@ -189,6 +189,7 @@ func (m *Manager) StartCodexProfileSwitch(ctx context.Context, id domain.Session
 		SourceGenerationID: generation, SemanticHandoffStatus: domain.AgentHandoffNotAttempted,
 		HandoffClassification:      domain.CodexProfileSwitchHandoffPending,
 		AcknowledgeUnknownCapacity: cfg.AcknowledgeUnknownCapacity, RequestedAt: now, UpdatedAt: now,
+		Initiator: domain.CodexProfileSwitchInitiatorManual,
 	}
 	stored, created, err := store.CreateCodexProfileSwitch(ctx, sw)
 	if err != nil {
@@ -223,6 +224,17 @@ func candidateSelectionError(candidate domain.CodexProfileSwitchCandidate) error
 	}
 }
 
+func (m *Manager) verifyCodexProfileSwitchTarget(ctx context.Context, sw domain.CodexProfileSwitch) (domain.CodexProfileSwitchVerification, error) {
+	if sw.Initiator == domain.CodexProfileSwitchInitiatorAutomatic {
+		if m.codexAutomaticProfiles == nil {
+			return domain.CodexProfileSwitchVerification{}, ErrCodexAutomaticProfileSwitchUnavailable
+		}
+		verification, _, err := m.codexAutomaticProfiles.VerifyCodexAutomaticProfileSwitchCandidate(ctx, sw.TargetProfileID)
+		return verification, err
+	}
+	return m.codexProfileSwitchOptions.VerifyCodexProfileSwitchTarget(ctx, sw.TargetProfileID, sw.AcknowledgeUnknownCapacity)
+}
+
 func (m *Manager) codexProfileSwitchTrigger(sessionID domain.SessionID, capacity *domain.CodexCapacitySummary) domain.CodexProfileSwitchTrigger {
 	m.agentOpMu.Lock()
 	_, usageLimited := m.codexUsageLimited[sessionID]
@@ -246,6 +258,22 @@ func (m *Manager) codexProfileSwitchTrigger(sessionID domain.SessionID, capacity
 // a continuation target it enters recovery and restores the exact predecessor;
 // it never cascades to another profile.
 func (m *Manager) ReportCodexUsageLimitFailure(ctx context.Context, sessionID domain.SessionID) {
+	rec, found, _ := m.store.GetSession(ctx, sessionID)
+	evidence := domain.CodexExhaustionEvidence{
+		SessionID: sessionID, Trigger: domain.CodexAutomaticProfileSwitchUsageLimitFailure,
+		EpisodeID: "usage-limit:" + m.clock().Format(time.RFC3339Nano), ObservedAt: m.clock(), Fresh: true,
+	}
+	if found && rec.CodexProfileBinding != nil {
+		evidence.ProfileID = rec.CodexProfileBinding.ProfileID
+		evidence.Generation = codexSessionGeneration(rec)
+	}
+	m.ReportCodexUsageLimitFailureEvidence(ctx, evidence)
+}
+
+// ReportCodexUsageLimitFailureEvidence preserves Phase 5 target recovery and
+// otherwise offers the exact settled Chat episode to the Phase 6 coordinator.
+func (m *Manager) ReportCodexUsageLimitFailureEvidence(ctx context.Context, evidence domain.CodexExhaustionEvidence) {
+	sessionID := evidence.SessionID
 	m.agentOpMu.Lock()
 	m.codexUsageLimited[sessionID] = m.clock()
 	m.agentOpMu.Unlock()
@@ -256,6 +284,7 @@ func (m *Manager) ReportCodexUsageLimitFailure(ctx context.Context, sessionID do
 	}
 	sw, found, err := store.GetCodexProfileSwitchForSession(context.WithoutCancel(ctx), sessionID)
 	if err != nil || !found || sw.TargetSessionID == nil || *sw.TargetSessionID != sessionID || sw.Phase.Terminal() || sw.Phase == domain.CodexProfileSwitchRecoveryRequired {
+		_, _, _ = m.ReportCodexExhaustion(context.WithoutCancel(ctx), evidence)
 		return
 	}
 	go m.recoverCodexProfileSwitchTargetUsageLimit(store, sw)
@@ -389,7 +418,7 @@ func (m *Manager) executeCodexProfileSwitch(ctx context.Context, store ports.Cod
 		if err := m.waitForCodexProfileSwitchBoundary(ctx, store, result, source); err != nil {
 			return result, err
 		}
-		verification, err := m.codexProfileSwitchOptions.VerifyCodexProfileSwitchTarget(ctx, result.TargetProfileID, result.AcknowledgeUnknownCapacity)
+		verification, err := m.verifyCodexProfileSwitchTarget(ctx, result)
 		if err != nil {
 			return result, err
 		}
@@ -425,7 +454,7 @@ func (m *Manager) executeCodexProfileSwitch(ctx context.Context, store ports.Cod
 	}
 	var target domain.SessionRecord
 	if result.Phase == domain.CodexProfileSwitchSourceStopped {
-		verification, err := m.codexProfileSwitchOptions.VerifyCodexProfileSwitchTarget(ctx, result.TargetProfileID, result.AcknowledgeUnknownCapacity)
+		verification, err := m.verifyCodexProfileSwitchTarget(ctx, result)
 		if err != nil {
 			return result, err
 		}

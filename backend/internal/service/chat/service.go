@@ -46,8 +46,8 @@ type Service struct {
 	newID             IDFactory
 	now               Clock
 	onAccountChanged  func(domain.SessionID, domain.AgentHarness)
-	onCapacityChanged func(domain.SessionID, string, ports.CodexCapacityObservation)
-	onUsageLimited    func(domain.SessionID, string)
+	onCapacityChanged func(domain.SessionID, string, string, string, ports.CodexCapacityObservation)
+	onUsageLimited    func(domain.CodexExhaustionEvidence)
 
 	mu           sync.RWMutex
 	controllers  map[domain.SessionID]*Controller
@@ -92,10 +92,10 @@ type Options struct {
 	OnAccountChanged func(domain.SessionID, domain.AgentHarness)
 	// OnCapacityChanged forwards normalized bound-Codex rate-limit events to the
 	// daemon-owned profile coordinator instead of conversation persistence.
-	OnCapacityChanged func(domain.SessionID, string, ports.CodexCapacityObservation)
+	OnCapacityChanged func(domain.SessionID, string, string, string, ports.CodexCapacityObservation)
 	// OnUsageLimited reports the exact bound Codex profile whose turn ended at a
 	// structured provider usage-limit boundary.
-	OnUsageLimited func(domain.SessionID, string)
+	OnUsageLimited func(domain.CodexExhaustionEvidence)
 }
 
 // New builds a Chat service.
