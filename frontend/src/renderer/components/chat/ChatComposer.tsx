@@ -93,6 +93,7 @@ export function ChatComposer({
 	draftSeed,
 	editingQueuedTurnId,
 	onCancelQueuedEdit,
+	savingQueuedEditPending,
 	commandError,
 	attachedTop = false,
 	queuedDock,
@@ -143,6 +144,8 @@ export function ChatComposer({
 	/** A queued turn being edited in the composer instead of the dock. */
 	editingQueuedTurnId?: string;
 	onCancelQueuedEdit?: () => void;
+	/** The queued edit mutation is in flight for the turn being edited. */
+	savingQueuedEditPending?: boolean;
 	/** A failed send, approval, interrupt, or settings mutation. */
 	commandError?: string;
 	/** A queued-message dock owns the shared rounded top edge. */
@@ -235,7 +238,11 @@ export function ChatComposer({
 	const hasDraft = hasText || staged;
 	const savingQueuedEdit = Boolean(editingQueuedTurnId);
 	const canSend =
-		(hasText || staged) && !disabled && !steerPending && (savingQueuedEdit || !busy);
+		(hasText || staged) &&
+		!disabled &&
+		!steerPending &&
+		!savingQueuedEditPending &&
+		(savingQueuedEdit || !busy);
 	const canStopTurn = Boolean(willQueue && onInterrupt && !disabled && !hasDraft && !savingQueuedEdit);
 	// Steering delivers text only, so a draft carrying files cannot take that
 	// path. Treating it as unavailable — rather than steering the text and
@@ -305,6 +312,15 @@ export function ChatComposer({
 		setHighlighted(0);
 		setSendError(null);
 	}, [draftSeedId, draftSeedText]);
+
+	const previousEditingQueuedTurnIdRef = useRef(editingQueuedTurnId);
+	useEffect(() => {
+		const previous = previousEditingQueuedTurnIdRef.current;
+		previousEditingQueuedTurnIdRef.current = editingQueuedTurnId;
+		if (previous && !editingQueuedTurnId) {
+			clearEditor();
+		}
+	}, [clearEditor, editingQueuedTurnId]);
 
 	const onEditorChange = useCallback((snapshot: ComposerEditorSnapshot) => {
 		textRef.current = snapshot.text;
@@ -403,6 +419,7 @@ export function ChatComposer({
 			(currentText.trim().length > 0 || staged) &&
 			!disabled &&
 			!steerPending &&
+			!savingQueuedEditPending &&
 			(editingQueuedTurnId || !busy);
 		if (!canSubmitNow) return;
 		setSendError(null);
@@ -807,7 +824,7 @@ export function ChatComposer({
 						>
 							{canStopTurn ? (
 								<Square aria-hidden="true" className="size-2.5 fill-current" />
-							) : steerPending ? (
+							) : steerPending || savingQueuedEditPending ? (
 								<Loader2 aria-hidden="true" className="size-3.5 animate-spin" />
 							) : (
 								<ArrowUp aria-hidden="true" className="size-3.5" />

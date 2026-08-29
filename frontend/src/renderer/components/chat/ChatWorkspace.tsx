@@ -276,6 +276,7 @@ export interface ChatWorkspaceProps {
 	onCancelQueuedTurn?: (turnId: string) => Promise<unknown>;
 	promoteQueuedTurnPendingTurnId?: string;
 	cancelQueuedTurnPendingTurnId?: string;
+	editQueuedTurnPendingTurnId?: string;
 	/** Start the tool servers again. Absent when the harness cannot. */
 	onReloadMcpServers?: () => void;
 	reloadingMcpServers?: boolean;
@@ -355,6 +356,7 @@ export function ChatWorkspace({
 	onCancelQueuedTurn,
 	promoteQueuedTurnPendingTurnId,
 	cancelQueuedTurnPendingTurnId,
+	editQueuedTurnPendingTurnId,
 	onReloadMcpServers,
 	reloadingMcpServers,
 	mcpReloadError,
@@ -429,12 +431,19 @@ export function ChatWorkspace({
 		});
 	}, [snapshot.items, snapshot.turns]);
 	const [queueEdit, setQueueEdit] = useState<{ turnId: string; text: string } | undefined>();
-	const dockQueuedMessages = useMemo(
-		() =>
-			queueEdit
-				? queuedMessages.filter((message) => message.turnId !== queueEdit.turnId)
-				: queuedMessages,
-		[queueEdit, queuedMessages],
+	useEffect(() => {
+		if (!queueEdit) return;
+		if (!queuedMessages.some((message) => message.turnId === queueEdit.turnId)) {
+			setQueueEdit(undefined);
+		}
+	}, [queueEdit, queuedMessages]);
+	const handleCancelQueuedTurn = useCallback(
+		async (turnId: string) => {
+			if (!onCancelQueuedTurn) return;
+			await onCancelQueuedTurn(turnId);
+			setQueueEdit((current) => (current?.turnId === turnId ? undefined : current));
+		},
+		[onCancelQueuedTurn],
 	);
 	const handleComposerSend = useCallback(
 		async (text: string, attachments?: Parameters<NonNullable<typeof onSend>>[1]) => {
@@ -836,19 +845,25 @@ export function ChatWorkspace({
 								{discarded > 0 ? <RolledBackNotice count={discarded} /> : null}
 								<ChatComposer
 									queuedDock={
-										turn?.state === "running" && queuedMessages.length > 0 ? (
+										queuedMessages.length > 0 ? (
 											<QueuedMessageDock
-												messages={dockQueuedMessages}
+												messages={queuedMessages}
 												messageCount={queuedMessages.length}
 												editingTurnId={queueEdit?.turnId}
-												canSteer={Boolean(onSteer) && can(snapshot, "steer")}
+												canSteer={
+													Boolean(onSteer) &&
+													can(snapshot, "steer") &&
+													turn?.state === "running"
+												}
 												onPromoteQueuedTurn={newWorkDisabled ? undefined : onPromoteQueuedTurn}
 												onBeginQueuedEdit={
 													newWorkDisabled || !onEditQueuedTurn
 														? undefined
 														: (turnId, text) => setQueueEdit({ turnId, text })
 												}
-												onCancelQueuedTurn={newWorkDisabled ? undefined : onCancelQueuedTurn}
+												onCancelQueuedTurn={
+													newWorkDisabled ? undefined : handleCancelQueuedTurn
+												}
 												promotePendingTurnId={promoteQueuedTurnPendingTurnId}
 												cancelPendingTurnId={cancelQueuedTurnPendingTurnId}
 											/>
@@ -869,6 +884,7 @@ export function ChatWorkspace({
 										queueEdit ? { id: queueEdit.turnId, text: queueEdit.text } : undefined
 									}
 									editingQueuedTurnId={queueEdit?.turnId}
+									savingQueuedEditPending={editQueuedTurnPendingTurnId === queueEdit?.turnId}
 									onCancelQueuedEdit={() => setQueueEdit(undefined)}
 									onInterrupt={turn && !newWorkDisabled ? onInterrupt : undefined}
 									commandError={commandError}

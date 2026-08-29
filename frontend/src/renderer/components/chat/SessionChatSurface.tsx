@@ -390,6 +390,7 @@ export function SessionChatSurface({
 				onCancelQueuedTurn={commands.cancelQueuedTurn}
 				promoteQueuedTurnPendingTurnId={commands.promoteQueuedTurnPendingTurnId}
 				cancelQueuedTurnPendingTurnId={commands.cancelQueuedTurnPendingTurnId}
+				editQueuedTurnPendingTurnId={commands.editQueuedTurnPendingTurnId}
 				onReloadMcpServers={
 					!can(renderSnapshot, "mcp_reload") || commands.mcpReloadUnsupported
 						? undefined

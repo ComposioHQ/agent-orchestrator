@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ChatComposer } from "./ChatComposer";
@@ -158,6 +158,37 @@ describe("ChatWorkspace steering", () => {
 
 		await userEvent.click(screen.getAllByRole("button", { name: "Delete queued message" })[0]);
 		expect(onCancelQueuedTurn).toHaveBeenCalledWith("queued-1");
+	});
+
+	it("clears a queued edit when that message is deleted from the dock", async () => {
+		const onCancelQueuedTurn = vi.fn().mockResolvedValue(undefined);
+		render(
+			<ChatWorkspace
+				snapshot={withQueuedMessages()}
+				onSteer={vi.fn()}
+				onEditQueuedTurn={vi.fn()}
+				onCancelQueuedTurn={onCancelQueuedTurn}
+			/>,
+		);
+
+		await userEvent.click(screen.getAllByRole("button", { name: "Edit queued message" })[0]);
+		await waitFor(() => expect(screen.getByText(/editing/i)).toBeInTheDocument());
+
+		await userEvent.click(screen.getAllByRole("button", { name: "Delete queued message" })[0]);
+		await waitFor(() => expect(onCancelQueuedTurn).toHaveBeenCalledWith("queued-1"));
+		await waitFor(() => expect(screen.queryByText(/editing/i)).not.toBeInTheDocument());
+	});
+
+	it("shows the queued dock while messages are still queued between turns", () => {
+		const snapshot = {
+			...withQueuedMessages(),
+			turns: withQueuedMessages().turns.map((turn) =>
+				turn.state === "running" ? { ...turn, state: "completed" as const } : turn,
+			),
+		};
+		render(<ChatWorkspace snapshot={snapshot} onSteer={vi.fn()} />);
+		expect(screen.getByTestId("queued-message-dock")).toBeInTheDocument();
+		expect(within(screen.getByTestId("queued-message-dock")).getByText("first queued")).toBeVisible();
 	});
 
 	it("keeps queued messages docked after the conversation branches", () => {
