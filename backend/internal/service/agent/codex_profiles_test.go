@@ -254,6 +254,36 @@ func TestOpenCodexProfileLoginTerminalRefreshesCachedInstallationBeforeSpawning(
 	}
 }
 
+func TestOpenCodexProfileLoginTerminalAllowsInconclusiveProbeAfterCachedAbsence(t *testing.T) {
+	probeErr := ports.ErrAgentBinaryNotFound
+	agent := &readinessTestAgent{
+		resolve: func(context.Context) (string, error) { return "", probeErr },
+		auth:    func(context.Context) (ports.AgentAuthStatus, error) { return ports.AgentAuthStatusUnknown, nil },
+	}
+	harness := readinessHarness(string(domain.HarnessCodex), "Codex", agent)
+	svc := newService([]agentregistry.HarnessAgent{harness}, nil, nil, nil)
+	svc.readiness = newReadinessCoordinator(readinessCoordinatorConfig{Agents: []agentregistry.HarnessAgent{harness}})
+	svc.codexProfiles = newCodexProfileManager(context.Background(), t.TempDir(), t.TempDir(), nil, nil)
+	opener := &fakeCodexLoginTerminalOpener{result: shellterm.ShellTerminal{HandleID: "shellterm-login-1"}}
+	svc.SetCodexProfileLoginTerminalOpener(opener)
+	svc.codexProfiles.executable = func() (string, error) { return "/ao", nil }
+
+	if _, err := svc.readiness.EnsureInstallation(context.Background(), []string{string(domain.HarnessCodex)}, domain.AgentReadinessPurposeDisplay); err != nil {
+		t.Fatal(err)
+	}
+	probeErr = errors.New("probe unavailable")
+	started, err := svc.OpenCodexProfileLoginTerminal(context.Background(), codexExistingProfileID)
+	if err != nil {
+		t.Fatalf("open login terminal: %v", err)
+	}
+	if started.ShellTerminal.HandleID != "shellterm-login-1" {
+		t.Fatalf("terminal = %+v, want shellterm-login-1", started.ShellTerminal)
+	}
+	if len(opener.opened) != 1 {
+		t.Fatalf("opened terminals = %d, want 1", len(opener.opened))
+	}
+}
+
 func TestOpenCodexProfileLoginTerminalPreservesInstallationProbeCancellation(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
