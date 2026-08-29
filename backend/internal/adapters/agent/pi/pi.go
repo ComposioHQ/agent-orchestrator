@@ -137,7 +137,9 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 		return nil, false, err
 	}
 	cmd = []string{binary}
-	appendPiSessionDirFlag(&cmd, cfg.DataDir)
+	if piTranscriptInManagedDir(cfg.Session.Metadata[ports.MetadataKeyNativeTranscriptPath], cfg.DataDir) {
+		appendPiSessionDirFlag(&cmd, cfg.DataDir)
+	}
 	appendPiExtensionFlag(&cmd, cfg.Session.WorkspacePath)
 	if cfg.SystemPrompt != "" {
 		cmd = append(cmd, "--append-system-prompt", cfg.SystemPrompt)

@@ -79,6 +79,17 @@ func appendPiSessionDirFlag(cmd *[]string, dataDir string) {
 	*cmd = append(*cmd, "--session-dir", filepath.Join(dataDir, "pi", "sessions"))
 }
 
+func piTranscriptInManagedDir(transcriptPath, dataDir string) bool {
+	transcriptPath = strings.TrimSpace(transcriptPath)
+	dataDir = strings.TrimSpace(dataDir)
+	if transcriptPath == "" || dataDir == "" {
+		return false
+	}
+	root := filepath.Join(dataDir, "pi", "sessions")
+	rel, err := filepath.Rel(root, filepath.Clean(transcriptPath))
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
 func (p *Plugin) piAgentSettledSupported(ctx context.Context) (bool, error) {
 	binary, err := p.piBinary(ctx)
 	if err != nil {

@@ -158,7 +158,7 @@ func hookLaunchID(payload []byte) string {
 // a malformed field in one projection while the other remains useful.
 func hookUsageMetadata(agent string, payload []byte) *usageHookMetadata {
 	harness := domain.AgentHarness(agent)
-	if harness != domain.HarnessClaudeCode && harness != domain.HarnessCodex {
+	if harness != domain.HarnessClaudeCode && harness != domain.HarnessCodex && harness != domain.HarnessPi {
 		return nil
 	}
 	var native struct {
@@ -176,6 +176,15 @@ func hookUsageMetadata(agent string, payload []byte) *usageHookMetadata {
 		ModelID:                strings.TrimSpace(native.Model),
 		SubagentID:             strings.TrimSpace(native.SubagentID),
 		SubagentTranscriptPath: strings.TrimSpace(native.SubagentTranscriptPath),
+	}
+	if harness == domain.HarnessPi {
+		meta.ModelID = ""
+		meta.SubagentID = ""
+		meta.SubagentTranscriptPath = ""
+		if meta.TranscriptPath == "" {
+			return nil
+		}
+		return meta
 	}
 	if meta.TranscriptPath == "" && meta.SubagentTranscriptPath == "" && meta.ModelID == "" {
 		return nil

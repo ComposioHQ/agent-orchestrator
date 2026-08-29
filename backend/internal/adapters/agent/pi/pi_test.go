@@ -308,7 +308,10 @@ func TestGetRestoreCommandExplicitlyLoadsManagedExtension(t *testing.T) {
 		DataDir: dataDir,
 		Session: ports.SessionRef{
 			WorkspacePath: workspace,
-			Metadata:      map[string]string{ports.MetadataKeyAgentSessionID: "native-pi-1"},
+			Metadata: map[string]string{
+				ports.MetadataKeyAgentSessionID:       "native-pi-1",
+				ports.MetadataKeyNativeTranscriptPath: filepath.Join(dataDir, "pi", "sessions", "native-pi-1.jsonl"),
+			},
 		},
 	})
 	if err != nil {
@@ -318,6 +321,26 @@ func TestGetRestoreCommandExplicitlyLoadsManagedExtension(t *testing.T) {
 		t.Fatal("ok=false, want true")
 	}
 	want := []string{"pi", "--session-dir", filepath.Join(dataDir, "pi", "sessions"), "--extension", filepath.Join(workspace, ".pi", "extensions", "ao-activity.ts"), "--session", "native-pi-1"}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("cmd = %#v, want %#v", cmd, want)
+	}
+}
+
+func TestGetRestoreCommandKeepsLegacySessionDirectory(t *testing.T) {
+	workspace := t.TempDir()
+	dataDir := t.TempDir()
+	p := &Plugin{resolvedBinary: "pi"}
+	cmd, ok, err := p.GetRestoreCommand(context.Background(), ports.RestoreConfig{
+		DataDir: dataDir,
+		Session: ports.SessionRef{
+			WorkspacePath: workspace,
+			Metadata:      map[string]string{ports.MetadataKeyAgentSessionID: "legacy-pi-1"},
+		},
+	})
+	if err != nil || !ok {
+		t.Fatalf("restore = %#v, ok=%v err=%v", cmd, ok, err)
+	}
+	want := []string{"pi", "--extension", filepath.Join(workspace, ".pi", "extensions", "ao-activity.ts"), "--session", "legacy-pi-1"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("cmd = %#v, want %#v", cmd, want)
 	}
