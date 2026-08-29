@@ -94,11 +94,13 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 			addListener(webContentsListeners, event, listener);
 		},
 		executeJavaScript: vi.fn(async (_script: string) => undefined),
+		findInPage: vi.fn(() => 1),
 		focus: vi.fn(),
 		reload: vi.fn(),
 		send: vi.fn(),
 		setWindowOpenHandler: () => undefined,
 		stop: () => undefined,
+		stopFindInPage: vi.fn(),
 		close: vi.fn(),
 		openDevTools,
 		closeDevTools,
@@ -268,7 +270,11 @@ describe("browser shortcut matching", () => {
 		expect(browserShortcutAction({ ...input, key: "T" }, false)).toBe("new-tab");
 		expect(browserShortcutAction({ ...input, key: "w" }, false)).toBe("close-tab");
 		expect(browserShortcutAction({ ...input, key: "l" }, false)).toBe("focus-location");
+		expect(browserShortcutAction({ ...input, key: "f" }, false)).toBe("find-in-page");
+		expect(browserShortcutAction({ ...input, key: "r" }, false)).toBe("reload");
 		expect(browserShortcutAction({ ...input, key: "t", control: false, meta: true }, true)).toBe("new-tab");
+		expect(browserShortcutAction({ ...input, key: " ", control: false }, false)).toBe("scroll-down");
+		expect(browserShortcutAction({ ...input, key: " ", control: false, shift: true }, false)).toBe("scroll-up");
 	});
 
 	it("rejects extra and wrong-platform modifiers", () => {
@@ -324,6 +330,28 @@ describe("browser shortcut routing", () => {
 		host.forgetLastFocusedPanel();
 		const ignored = emitShellBeforeInput({ key: "l", control: true });
 		expect(ignored.preventDefault).not.toHaveBeenCalled();
+	});
+
+	it("finds, reloads, and scrolls the active native page", async () => {
+		const { emitBeforeInput, invoke, shellSend, webContents } = setupHost();
+		const state = await invoke("browser:ensure", "sess-1");
+		shellSend.mockClear();
+
+		emitBeforeInput({ key: "f", control: true });
+		expect(shellSend).toHaveBeenCalledWith("browser:focusFind", state.viewId);
+
+		emitBeforeInput({ key: "r", control: true });
+		expect(webContents.reload).toHaveBeenCalledOnce();
+
+		emitBeforeInput({ key: " " });
+		emitBeforeInput({ key: " ", shift: true });
+		expect(webContents.executeJavaScript).toHaveBeenCalledWith(expect.stringContaining("1 * window.innerHeight"));
+		expect(webContents.executeJavaScript).toHaveBeenCalledWith(expect.stringContaining("-1 * window.innerHeight"));
+
+		await invoke("browser:findInPage", { viewId: state.viewId, text: "needle" });
+		expect(webContents.findInPage).toHaveBeenCalledWith("needle", { findNext: false, forward: true });
+		await invoke("browser:stopFindInPage", state.viewId);
+		expect(webContents.stopFindInPage).toHaveBeenCalledWith("clearSelection");
 	});
 });
 

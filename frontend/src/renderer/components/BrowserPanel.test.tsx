@@ -161,6 +161,7 @@ describe("BrowserPanel", () => {
 	const annotationSubmitListeners = new Set<(payload: BrowserAnnotationSubmitPayload) => void>();
 	const annotationCancelListeners = new Set<(payload: BrowserAnnotationCancelPayload) => void>();
 	let focusLocationListener: ((viewId: string) => void) | undefined;
+	let focusFindListener: ((viewId: string) => void) | undefined;
 
 	beforeEach(() => {
 		hookState.navigate.mockReset();
@@ -209,6 +210,14 @@ describe("BrowserPanel", () => {
 				if (focusLocationListener === listener) focusLocationListener = undefined;
 			};
 		});
+		window.ao!.browser.findInPage = vi.fn(async () => 1);
+		window.ao!.browser.stopFindInPage = vi.fn(async () => undefined);
+		window.ao!.browser.onFocusFind = vi.fn((listener: (viewId: string) => void) => {
+			focusFindListener = listener;
+			return () => {
+				if (focusFindListener === listener) focusFindListener = undefined;
+			};
+		});
 		hookState.previewUrl = undefined;
 		hookState.tabs = [{ id: "t1", url: "", title: "", active: true }];
 		hookState.activeTabId = "t1";
@@ -244,6 +253,42 @@ describe("BrowserPanel", () => {
 		expect(input.selectionStart).toBe(0);
 		expect(input.selectionEnd).toBe(input.value.length);
 		expect(window.ao!.browser.notifyPanelUsed).toHaveBeenCalledWith("42:sess-1");
+	});
+
+	it("opens the find bar and searches forward or backward", async () => {
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		act(() => focusFindListener?.("42:sess-1"));
+		const input = await screen.findByRole("textbox", { name: "Find in page" });
+		expect(input).toHaveFocus();
+
+		await userEvent.type(input, "needle");
+		expect(window.ao!.browser.findInPage).toHaveBeenLastCalledWith({
+			viewId: "42:sess-1",
+			text: "needle",
+			findNext: false,
+			forward: true,
+		});
+
+		await userEvent.type(input, "{Enter}");
+		expect(window.ao!.browser.findInPage).toHaveBeenLastCalledWith({
+			viewId: "42:sess-1",
+			text: "needle",
+			findNext: true,
+			forward: true,
+		});
+
+		await userEvent.type(input, "{Shift>}{Enter}{/Shift}");
+		expect(window.ao!.browser.findInPage).toHaveBeenLastCalledWith({
+			viewId: "42:sess-1",
+			text: "needle",
+			findNext: true,
+			forward: false,
+		});
+
+		await userEvent.type(input, "{Escape}");
+		expect(screen.queryByTestId("browser-find-bar")).not.toBeInTheDocument();
+		expect(window.ao!.browser.stopFindInPage).toHaveBeenCalledWith("42:sess-1");
 	});
 
 	it("constrains the device frame to a named preset's width, and clears it back to fit", async () => {

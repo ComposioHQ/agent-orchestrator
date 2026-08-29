@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useRef, useState, type FocusEvent, type FormEvent } from "react";
+import {
+	useCallback,
+	useEffect,
+	useRef,
+	useState,
+	type FocusEvent,
+	type FormEvent,
+	type KeyboardEvent,
+} from "react";
 import { useTranslation } from "react-i18next";
 import {
 	DndContext,
@@ -21,6 +29,8 @@ import {
 	ArrowRight,
 	Bug,
 	Check,
+	ChevronDown,
+	ChevronUp,
 	Globe2,
 	Layers3,
 	Maximize2,
@@ -345,6 +355,9 @@ export function BrowserPanelView({
 	const railRef = useRef<BrowserTabsRailHandle>(null);
 	const panelRef = useRef<HTMLDivElement>(null);
 	const urlInputRef = useRef<HTMLInputElement>(null);
+	const findInputRef = useRef<HTMLInputElement>(null);
+	const [findOpen, setFindOpen] = useState(false);
+	const [findQuery, setFindQuery] = useState("");
 	const [pinned, setPinned] = useState(() => window.localStorage.getItem(RAIL_PINNED_STORAGE_KEY) === "1");
 	const showTabsTrigger = !poppedOut && !pinned && tabs.length >= 2;
 	const [topTabDragActive, setTopTabDragActive] = useState(false);
@@ -364,6 +377,45 @@ export function BrowserPanelView({
 				urlInputRef.current?.select();
 			}),
 		[viewId],
+	);
+
+	useEffect(
+		() =>
+			window.ao?.browser.onFocusFind((targetViewId) => {
+				if (targetViewId !== viewId) return;
+				setFindOpen(true);
+				window.requestAnimationFrame(() => {
+					findInputRef.current?.focus();
+					findInputRef.current?.select();
+				});
+			}),
+		[viewId],
+	);
+
+	const runFind = useCallback(
+		(text: string, findNext = false, forward = true) => {
+			if (!viewId) return;
+			void window.ao?.browser.findInPage({ viewId, text, findNext, forward });
+		},
+		[viewId],
+	);
+	const closeFind = useCallback(() => {
+		setFindOpen(false);
+		if (viewId) void window.ao?.browser.stopFindInPage(viewId);
+	}, [viewId]);
+	const handleFindKeyDown = useCallback(
+		(event: KeyboardEvent<HTMLInputElement>) => {
+			if (event.key === "Escape") {
+				event.preventDefault();
+				closeFind();
+				return;
+			}
+			if (event.key === "Enter") {
+				event.preventDefault();
+				runFind(findQuery, true, !event.shiftKey);
+			}
+		},
+		[closeFind, findQuery, runFind],
 	);
 	const tabSensors = useSensors(
 		useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
@@ -808,6 +860,55 @@ export function BrowserPanelView({
 					</div>
 				) : null}
 			</form>
+			{findOpen ? (
+				<div
+					className="flex shrink-0 items-center justify-end gap-1 border-b border-border bg-surface px-2 py-1"
+					data-testid="browser-find-bar"
+				>
+					<Input
+						aria-label={t("browser.findInPage")}
+						className="h-7 w-56 text-xs"
+						onChange={(event) => {
+							const text = event.target.value;
+							setFindQuery(text);
+							runFind(text);
+						}}
+						onKeyDown={handleFindKeyDown}
+						placeholder={t("browser.find")}
+						ref={findInputRef}
+						value={findQuery}
+					/>
+					<Button
+						aria-label={t("browser.previousMatch")}
+						disabled={!findQuery}
+						onClick={() => runFind(findQuery, true, false)}
+						size="icon-sm"
+						type="button"
+						variant="ghost"
+					>
+						<ChevronUp aria-hidden="true" className="size-icon-base" />
+					</Button>
+					<Button
+						aria-label={t("browser.nextMatch")}
+						disabled={!findQuery}
+						onClick={() => runFind(findQuery, true, true)}
+						size="icon-sm"
+						type="button"
+						variant="ghost"
+					>
+						<ChevronDown aria-hidden="true" className="size-icon-base" />
+					</Button>
+					<Button
+						aria-label={t("common.close")}
+						onClick={closeFind}
+						size="icon-sm"
+						type="button"
+						variant="ghost"
+					>
+						<X aria-hidden="true" className="size-icon-base" />
+					</Button>
+				</div>
+			) : null}
 			<div className="browser-panel__body flex min-h-0 flex-1 overflow-hidden">
 				<div
 					className="browser-panel__viewport relative min-h-0 flex-1 overflow-hidden"

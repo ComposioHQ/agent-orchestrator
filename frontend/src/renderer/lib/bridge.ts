@@ -130,6 +130,8 @@ export const aoBridge: AoBridge =
 				canGoForward: false,
 				isLoading: false,
 			}),
+			findInPage: async () => 0,
+			stopFindInPage: async () => undefined,
 			stop: async (viewId: string) => ({
 				viewId,
 				url: "",
@@ -145,6 +147,7 @@ export const aoBridge: AoBridge =
 			notifyPanelUsed: () => undefined,
 			notifyPanelBlur: () => undefined,
 			onFocusLocation: () => () => undefined,
+			onFocusFind: () => () => undefined,
 			devtools: async ({ viewId, operation }) => ({
 				viewId,
 				open: operation !== "close",
