@@ -2986,6 +2986,7 @@ describe("SessionInspector summary reviews", () => {
         },
       ),
     );
+    expect(postMock).toHaveBeenCalledTimes(1);
   });
 
   it("keeps an explicit reviewer visible and lets it return to the resolved default", async () => {
