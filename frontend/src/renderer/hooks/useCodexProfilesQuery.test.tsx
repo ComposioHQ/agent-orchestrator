@@ -17,6 +17,7 @@ const response = {
 	capabilities: {
 		accountRead: { state: "supported", reasonCode: "supported", reason: "available" },
 		browserLogin: { state: "supported", reasonCode: "supported", reason: "available" },
+		capacityRead: { state: "supported", reasonCode: "supported", reason: "available" },
 	},
 };
 
@@ -42,7 +43,7 @@ describe("Codex profile query", () => {
 		const queryClient = new QueryClient();
 		renderHook(() => useEnsureCodexProfiles(), { wrapper: wrapper(queryClient) });
 		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
-		expect(postMock).toHaveBeenLastCalledWith("/api/v1/agents/codex/profiles/ensure", { body: { profileIds: [], purpose: "display" } });
+		expect(postMock).toHaveBeenLastCalledWith("/api/v1/agents/codex/profiles/capacity/ensure", { body: { profileIds: [] } });
 		act(() => window.dispatchEvent(new Event("focus")));
 		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(2));
 		expect(queryClient.getQueryData(codexProfilesQueryKey)).toEqual(response);

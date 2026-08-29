@@ -37,13 +37,17 @@ func (f *fakeCodexAccountFactory) Capabilities(context.Context) domain.CodexProf
 }
 
 type fakeCodexAccountClient struct {
-	mu          sync.Mutex
-	reads       []ports.CodexAccountObservation
-	readErr     error
-	readStarted chan struct{}
-	readRelease chan struct{}
-	events      chan ports.CodexAccountEvent
-	cancelled   string
+	mu              sync.Mutex
+	reads           []ports.CodexAccountObservation
+	readErr         error
+	readStarted     chan struct{}
+	readRelease     chan struct{}
+	capacity        ports.CodexCapacityObservation
+	capacityErr     error
+	capacityStarted chan struct{}
+	capacityRelease chan struct{}
+	events          chan ports.CodexAccountEvent
+	cancelled       string
 }
 
 func (c *fakeCodexAccountClient) Read(ctx context.Context, _ bool) (ports.CodexAccountObservation, error) {
@@ -74,6 +78,23 @@ func (c *fakeCodexAccountClient) Read(ctx context.Context, _ bool) (ports.CodexA
 	}
 	return result, nil
 }
+
+func (c *fakeCodexAccountClient) ReadCapacity(ctx context.Context) (ports.CodexCapacityObservation, error) {
+	if c.capacityStarted != nil {
+		select {
+		case c.capacityStarted <- struct{}{}:
+		default:
+		}
+	}
+	if c.capacityRelease != nil {
+		select {
+		case <-c.capacityRelease:
+		case <-ctx.Done():
+			return ports.CodexCapacityObservation{}, ctx.Err()
+		}
+	}
+	return c.capacity, c.capacityErr
+}
 func (c *fakeCodexAccountClient) StartBrowserLogin(context.Context) (ports.CodexLoginStart, error) {
 	return ports.CodexLoginStart{AuthURL: "https://auth.example.test/login", LoginID: "login-1"}, nil
 }
@@ -86,7 +107,8 @@ func (c *fakeCodexAccountClient) Close() error                           { retur
 
 func supportedCodexProfileCapabilities() domain.CodexProfileCapabilities {
 	value := domain.CodexCapabilityObservation{State: domain.CodexCapabilitySupported, ReasonCode: domain.CodexCapabilityReasonSupported, Reason: "supported"}
-	return domain.CodexProfileCapabilities{AccountRead: value, BrowserLogin: value}
+	unsupported := domain.CodexCapabilityObservation{State: domain.CodexCapabilityUnsupported, ReasonCode: domain.CodexCapabilityReasonUnsupported, Reason: "unsupported"}
+	return domain.CodexProfileCapabilities{AccountRead: value, BrowserLogin: value, CapacityRead: unsupported}
 }
 
 func TestCachedCodexProfilesPerformsNoNativeWork(t *testing.T) {

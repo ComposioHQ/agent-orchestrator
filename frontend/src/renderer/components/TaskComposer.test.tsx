@@ -109,16 +109,19 @@ describe("TaskComposer", () => {
 					id: "existing", label: "Existing Codex profile", source: "existing", status: "valid",
 					reasonCode: "profile_valid", reason: "Available.", usableByCurrentLaunches: true,
 					authentication: { state: "authorized", freshness: "fresh", reasonCode: "authorized", reason: "Signed in." },
+					capacity: { state: "available", freshness: "fresh", usedPercent: 25, reasonCode: "capacity_available", reason: "Available.", additionalBuckets: [] },
 				},
 				{
 					id: "managed-profile", label: "Work", source: "managed", status: "valid",
 					reasonCode: "profile_valid", reason: "Available.", usableByCurrentLaunches: true,
 					authentication: { state: "authorized", freshness: "fresh", reasonCode: "authorized", reason: "Signed in." },
+					capacity: { state: "exhausted", freshness: "fresh", usedPercent: 100, reasonCode: "capacity_exhausted", reason: "Exhausted.", additionalBuckets: [] },
 				},
 			],
 			capabilities: {
 				accountRead: { state: "supported", reasonCode: "supported", reason: "Available." },
 				browserLogin: { state: "supported", reasonCode: "supported", reason: "Available." },
+				capacityRead: { state: "supported", reasonCode: "supported", reason: "Available." },
 			},
 		};
 		h.get.mockImplementation(async (path: string) => {
@@ -127,14 +130,15 @@ describe("TaskComposer", () => {
 			return { data: { status: "ok", project: { agent: "codex", config: { worker: { agent: "codex" } } } } };
 		});
 		h.post.mockImplementation(async (path: string) => {
-			if (path === "/api/v1/agents/codex/profiles/ensure") return { data: profiles };
+			if (path === "/api/v1/agents/codex/profiles/ensure" || path === "/api/v1/agents/codex/profiles/capacity/ensure") return { data: profiles };
 			return { data: { workerId: "sess-profile" } };
 		});
 
 		render(<Wrap><TaskComposer projectId="proj-1" onCreated={vi.fn()} /></Wrap>);
 		const profile = await screen.findByRole("button", { name: "Profile" });
 		await userEvent.click(profile);
-		await userEvent.click(screen.getByRole("menuitem", { name: "Work" }));
+		await userEvent.click(screen.getByRole("menuitem", { name: /Work/ }));
+		expect(screen.getByText("Codex reports this profile is at its limit. You can still start the task with this profile.")).toBeInTheDocument();
 		fireEvent.click(screen.getByRole("button", { name: "Start task" }));
 
 		await waitFor(() => expect(h.post).toHaveBeenCalledWith(

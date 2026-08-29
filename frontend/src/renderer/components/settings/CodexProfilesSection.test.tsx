@@ -22,10 +22,12 @@ const profileResponse = {
 		authentication: { state: "unauthorized", freshness: "fresh", checkedAt: null, attemptedAt: null, reasonCode: "unauthorized", reason: "signed out" },
 		authMethod: "unknown",
 		usableByCurrentLaunches: true,
+		capacity: { state: "unknown", freshness: "stale", reasonCode: "capacity_skipped_signed_out", reason: "Sign in to see capacity.", additionalBuckets: [] },
 	}],
 	capabilities: {
 		accountRead: { state: "supported", reasonCode: "supported", reason: "available" },
 		browserLogin: { state: "supported", reasonCode: "supported", reason: "available" },
+		capacityRead: { state: "supported", reasonCode: "supported", reason: "available" },
 	},
 };
 
