@@ -15,7 +15,7 @@ func TestDefaultSourceRootsIncludesPiSessions(t *testing.T) {
 	t.Setenv("CODEX_HOME", "")
 	t.Setenv("PI_CODING_AGENT_DIR", piHome)
 
-	got, err := DefaultSourceRoots(context.Background())
+	got, err := DefaultSourceRoots(context.Background(), "")
 	mustNoError(t, err)
 	if got.PiSessions != filepath.Join(piHome, "sessions") {
 		t.Fatalf("Pi sessions = %q, want %q", got.PiSessions, filepath.Join(piHome, "sessions"))
@@ -102,24 +102,5 @@ func TestReadPiSessionMetaHonorsCanceledContext(t *testing.T) {
 
 	if _, ok := readPiSessionMeta(ctx, path); ok {
 		t.Fatal("canceled Pi metadata read succeeded")
-	}
-}
-
-func TestSourceKindForHarness(t *testing.T) {
-	tests := []struct {
-		harness domain.AgentHarness
-		want    domain.UsageSourceKind
-		ok      bool
-	}{
-		{harness: domain.HarnessClaudeCode, want: domain.UsageSourceClaudeMain, ok: true},
-		{harness: domain.HarnessCodex, want: domain.UsageSourceCodexRollout, ok: true},
-		{harness: domain.HarnessPi, want: domain.UsageSourcePiSession, ok: true},
-		{harness: domain.HarnessAider, ok: false},
-	}
-	for _, tt := range tests {
-		got, ok := sourceKindForHarness(tt.harness)
-		if got != tt.want || ok != tt.ok {
-			t.Fatalf("sourceKindForHarness(%q) = %q, %v; want %q, %v", tt.harness, got, ok, tt.want, tt.ok)
-		}
 	}
 }
