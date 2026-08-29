@@ -33,6 +33,7 @@ export function CodexProfilesSection({ titleHidden }: { titleHidden?: boolean })
 	const queryClient = useQueryClient();
 	const profilesQuery = useCodexProfilesQuery();
 	useEnsureCodexProfiles(true);
+	const [providerExpanded, setProviderExpanded] = useState(true);
 	const [adding, setAdding] = useState(false);
 	const [label, setLabel] = useState("");
 	const [busyProfile, setBusyProfile] = useState<string | null>(null);
@@ -46,6 +47,7 @@ export function CodexProfilesSection({ titleHidden }: { titleHidden?: boolean })
 
 	const beginLogin = useCallback(async (profileId: string) => {
 		if (useUiStore.getState().codexProfileLoginTerminal) return;
+		setProviderExpanded(true);
 		setBusyProfile(profileId);
 		setError(null);
 		setAnnouncement("");
@@ -186,8 +188,11 @@ export function CodexProfilesSection({ titleHidden }: { titleHidden?: boolean })
 				summary={profileCount === undefined
 					? t("settings.codexProfiles.loading")
 					: t("settings.codexProfiles.count", { count: profileCount })}
+				expanded={providerExpanded || Boolean(loginWorkflow)}
+				onExpandedChange={setProviderExpanded}
+				collapseLocked={Boolean(loginWorkflow)}
 				action={(
-					<Button type="button" size="sm" onClick={() => setAdding(true)} disabled={adding || Boolean(loginWorkflow) || !profilesQuery.data}>
+					<Button type="button" size="sm" onClick={() => { setProviderExpanded(true); setAdding(true); }} disabled={adding || Boolean(loginWorkflow) || !profilesQuery.data}>
 						<Plus aria-hidden="true" /> {t("settings.codexProfiles.add")}
 					</Button>
 				)}
