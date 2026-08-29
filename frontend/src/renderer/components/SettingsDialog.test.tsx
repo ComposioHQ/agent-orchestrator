@@ -33,6 +33,12 @@ vi.mock("./GlobalSettingsForm", () => ({
 	GlobalSettingsForm: ({ section }: { section: string }) => <div data-testid="global-settings-section">{section}</div>,
 }));
 
+// The dialog reads the cloud gate to decide whether the Cloud nav page exists;
+// mocked so these tests need no QueryClientProvider (same pattern as Sidebar).
+vi.mock("../hooks/useCloudGate", () => ({
+	useCloudGate: () => ({ cloudEnabled: false, localEnabled: true }),
+}));
+
 describe("SettingsDialog", () => {
 	beforeEach(() => {
 		useUiStore.setState({ settingsModal: null });

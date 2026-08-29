@@ -51,6 +51,7 @@ function viewProps(overrides: Partial<TaskComposerViewProps> = {}): TaskComposer
 			agentId: "codex",
 			agentLabel: "Codex",
 			projectId: "project-1",
+			disabled: false,
 			value: "gpt-5",
 			mode: "",
 			catalog: {
@@ -172,6 +173,57 @@ describe("TaskComposerView", () => {
 			dataTransfer: { files: [file] },
 		});
 		expect(onAddFiles).toHaveBeenLastCalledWith([file]);
+	});
+
+	it("locks attachment editing while submitting and restores it for retry", () => {
+		const onAddFiles = vi.fn();
+		const onRemove = vi.fn();
+		const file = new File(["notes"], "notes.txt", { type: "text/plain" });
+		const attachments = {
+			items: [{ id: "attachment-1", name: "notes.txt" }],
+			onAddFiles,
+			onRemove,
+		};
+		const { container, rerender } = render(
+			<TaskComposerView
+				{...viewProps({
+					attachments,
+					submission: {
+						showFallbackAction: false,
+						isSubmitting: true,
+						onFallbackAction: vi.fn(),
+						onSubmit: vi.fn(),
+					},
+				})}
+			/>,
+		);
+
+		const form = container.querySelector("form") as HTMLFormElement;
+		const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+		const addFile = screen.getByRole("button", { name: "Add file" });
+		const removeFile = screen.getByRole("button", { name: "Remove notes.txt" });
+		expect(input).toBeDisabled();
+		expect(addFile).toBeDisabled();
+		expect(removeFile).toBeDisabled();
+
+		fireEvent.change(input, { target: { files: [file] } });
+		fireEvent.paste(screen.getByRole("textbox", { name: "Task" }), {
+			clipboardData: { files: [file] },
+		});
+		fireEvent.drop(form, { dataTransfer: { files: [file] } });
+		fireEvent.click(removeFile);
+		expect(onAddFiles).not.toHaveBeenCalled();
+		expect(onRemove).not.toHaveBeenCalled();
+
+		rerender(<TaskComposerView {...viewProps({ attachments })} />);
+		expect(input).toBeEnabled();
+		expect(addFile).toBeEnabled();
+		expect(removeFile).toBeEnabled();
+
+		fireEvent.change(input, { target: { files: [file] } });
+		fireEvent.click(removeFile);
+		expect(onAddFiles).toHaveBeenCalledWith([file]);
+		expect(onRemove).toHaveBeenCalledWith("attachment-1");
 	});
 
 	it("keeps attachment previews hidden until a file is selected", () => {

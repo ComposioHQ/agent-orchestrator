@@ -139,6 +139,13 @@ vi.mock("../hooks/useDaemonStatus", () => ({
 	useDaemonStatus: () => shellMocks.state.daemonStatus,
 }));
 
+// TerminalCacheProvider resolves the cloud terminal transport in production.
+// These shell shortcut tests never mount a terminal, so keep that unrelated
+// settings/query path out of the provider-free harness.
+vi.mock("../hooks/useCloudCp", () => ({
+	useCloudCp: () => ({ client: {}, ready: false, baseUrl: "" }),
+}));
+
 // The shell layout opens standalone terminals; this suite only covers the
 // shortcut subscriptions, so the mutation is stubbed rather than driven.
 vi.mock("../hooks/useShellTerminals", () => ({

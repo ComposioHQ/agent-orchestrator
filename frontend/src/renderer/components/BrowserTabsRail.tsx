@@ -29,7 +29,6 @@ import { CSS } from "@dnd-kit/utilities";
 import { Globe2, History, Pin, PinOff, Plus, X } from "lucide-react";
 import type { BrowserTabState } from "../../main/browser-view-host";
 import type { ClosedBrowserTab } from "../hooks/useBrowserView";
-import { MAX_BROWSER_TABS } from "../../shared/browser-tabs";
 import { browserTabLabel } from "../lib/browser-tab-label";
 import { useResizable } from "../hooks/useResizable";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
@@ -234,7 +233,6 @@ export const BrowserTabsRail = forwardRef<BrowserTabsRailHandle, BrowserTabsRail
 	const onlyTab = tabs.length === 1;
 	const tabIds = tabs.map((tab) => tab.id);
 	const closeTitle = t("browser.onlyTab");
-	const canOpenTab = tabs.length < MAX_BROWSER_TABS;
 
 	return (
 		<div
@@ -274,7 +272,6 @@ export const BrowserTabsRail = forwardRef<BrowserTabsRailHandle, BrowserTabsRail
 						"text-muted-foreground hover:bg-interactive-hover hover:text-foreground",
 						"disabled:pointer-events-none disabled:opacity-50",
 					)}
-					disabled={!canOpenTab}
 					onClick={() => void onOpenTab()}
 					type="button"
 				>
@@ -331,7 +328,7 @@ export const BrowserTabsRail = forwardRef<BrowserTabsRailHandle, BrowserTabsRail
 						</SortableContext>
 					</DndContext>
 				)}
-				{expanded ? <ClosedTabsSection canOpenTab={canOpenTab} closedTabs={closedTabs} onReopen={handleReopenClosedTab} /> : null}
+				{expanded ? <ClosedTabsSection closedTabs={closedTabs} onReopen={handleReopenClosedTab} /> : null}
 			</nav>
 			{expanded ? (
 				<div
@@ -402,7 +399,7 @@ export const BrowserTabsRail = forwardRef<BrowserTabsRailHandle, BrowserTabsRail
 								tab={tab}
 							/>
 						))}
-						<ClosedTabsSection canOpenTab={canOpenTab} closedTabs={closedTabs} onReopen={handleReopenClosedTab} />
+						<ClosedTabsSection closedTabs={closedTabs} onReopen={handleReopenClosedTab} />
 					</div>
 				</div>
 			) : null}
@@ -439,11 +436,9 @@ function TabFavicon({ className, tab }: { className: string; tab: BrowserTabStat
 // and closed tabs are inherently distinct from "click to switch to this open
 // tab," so they don't belong crammed into the icon list.
 function ClosedTabsSection({
-	canOpenTab,
 	closedTabs,
 	onReopen,
 }: {
-	canOpenTab: boolean;
 	closedTabs: ClosedBrowserTab[];
 	onReopen: (tabId: string) => void;
 }) {
@@ -465,10 +460,9 @@ function ClosedTabsSection({
 							"hover:bg-interactive-hover hover:text-foreground hover:opacity-100",
 							"disabled:pointer-events-none disabled:opacity-40",
 						)}
-						disabled={!canOpenTab}
 						key={tab.id}
 						onClick={() => onReopen(tab.id)}
-						title={canOpenTab ? reopenLabel : t("browser.tabLimitReached")}
+						title={reopenLabel}
 						type="button"
 					>
 						{tab.favicon ? (

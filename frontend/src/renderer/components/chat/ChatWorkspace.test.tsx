@@ -26,6 +26,7 @@ const closeShellTerminalListeners = new Set<() => void>();
 const closeShellTerminalShortcutStates: boolean[] = [];
 type TerminalPaneTestProps = {
 	fontSize?: number;
+	focusRequested?: boolean;
 	isFullscreen?: boolean;
 	onChangeFontSize?: (delta: number) => void;
 	onToggleFullscreen?: () => Promise<void> | void;
@@ -320,6 +321,38 @@ describe("ChatWorkspace timeline", () => {
 		render(<ChatWorkspace snapshot={idleSnapshot()} agentInputDisabled />);
 
 		expect(screen.getByTestId("chat-conversation-panel")).toHaveAttribute("inert");
+	});
+
+	it("fences new work during a drain while keeping the current turn's approval interactive", async () => {
+		const user = userEvent.setup();
+		const onDecide = vi.fn();
+		const view = render(<ChatWorkspace snapshot={idleSnapshot()} newWorkDisabled />);
+
+		expect(screen.getByTestId("chat-conversation-panel")).not.toHaveAttribute("inert");
+		expect(screen.getByLabelText("Message the agent")).toHaveAttribute("aria-disabled", "true");
+
+		const snapshot = structuredClone(chatFixture);
+		snapshot.items.push({
+			kind: "activity",
+			id: "drain-approval",
+			sequence: 99,
+			revision: 1,
+			turnId: "turn-2",
+			activityKind: "approval",
+			status: "pending",
+			summary: "Run command",
+			requestId: "drain-approval",
+			decisions: [{ id: "allow_once", label: "Allow Once", kind: "allow_once" }],
+			detail: { command: "npm test" },
+			createdAt: "2026-08-08T00:00:00Z",
+		});
+		view.rerender(
+			<ChatWorkspace snapshot={snapshot} newWorkDisabled onDecide={onDecide} />,
+		);
+
+		const approval = screen.getByRole("group", { name: "Approval request drain-approval" });
+		await user.click(within(approval).getByRole("button", { name: /Allow once/ }));
+		expect(onDecide).toHaveBeenCalledWith("drain-approval", "allow_once");
 	});
 
 	it("uses the shared session topbar chrome for workers and orchestrators", () => {
@@ -1669,7 +1702,7 @@ describe("ChatWorkspace message actions", () => {
 		expect(screen.getByRole("textbox", { name: "Edit message" })).toBeVisible();
 	});
 
-	it("navigates prompt branches and explains that files are unchanged", async () => {
+	it("navigates prompt branches without a persistent context notice", async () => {
 		const user = userEvent.setup();
 		const onActivateBranch = vi.fn(async () => undefined);
 		const snapshot = {
@@ -1693,20 +1726,16 @@ describe("ChatWorkspace message actions", () => {
 		render(<ChatWorkspace snapshot={snapshot} onActivateBranch={onActivateBranch} />);
 
 		expect(screen.getByText("2 / 3")).toBeVisible();
-		expect(screen.getByRole("status")).toHaveAttribute("aria-live", "polite");
-		expect(screen.getByRole("status")).toHaveAttribute("aria-atomic", "true");
+		expect(screen.queryByText(/Reconstructed context/)).not.toBeInTheDocument();
 		await user.click(
 			screen.getByRole("button", {
 				name: "Previous conversation branch",
 			}),
 		);
 		expect(onActivateBranch).toHaveBeenCalledWith("branch-previous");
-		expect(screen.getByText(/Reconstructed context/)).toHaveTextContent(
-			"Reconstructed context · Text messages were replayed. Some text was omitted to fit the context limit. Tool activity and workspace history were not replayed; current worktree files remain unchanged.",
-		);
 	});
 
-	it("labels a provider-native branch as exact context", () => {
+	it("does not label a provider-native branch as exact context", () => {
 		render(
 			<ChatWorkspace
 				snapshot={{
@@ -1720,29 +1749,7 @@ describe("ChatWorkspace message actions", () => {
 			/>,
 		);
 
-		expect(screen.getByText(/Exact context/)).toHaveTextContent(
-			"Exact context · Provider history was preserved; current worktree files remain unchanged.",
-		);
-	});
-
-	it("localizes the active branch fidelity and truncation notice", async () => {
-		await act(() => appI18n.changeLanguage("zh-CN"));
-		render(
-			<ChatWorkspace
-				snapshot={{
-					...idleSnapshot(),
-					branchedFromEarlierMessage: true,
-					branchMaterialization: {
-						strategy: "approximate_context",
-						replayTruncated: true,
-					},
-				}}
-			/>,
-		);
-
-		expect(screen.getByRole("status")).toHaveTextContent(
-			"重建上下文 · 已重放文本消息。为符合上下文限制，部分文本已省略。未重放工具活动和工作区历史；当前工作树文件保持不变。",
-		);
+		expect(screen.queryByText(/Exact context/)).not.toBeInTheDocument();
 	});
 
 	it("copies an assistant message as the markdown the agent wrote", async () => {
@@ -1796,6 +1803,32 @@ describe("ChatWorkspace reviewer tabs", () => {
 		...reviewerTerminal,
 		sessionId: chatSession.id,
 	};
+
+	it("makes each full-height tile its semantic click target", () => {
+		const onOpenReviewerTerminal = vi.fn();
+		render(
+			<ChatWorkspace
+				snapshot={idleSnapshot()}
+				session={chatSession}
+				reviewerTerminal={reviewerTerminal}
+				onOpenReviewerTerminal={onOpenReviewerTerminal}
+			/>,
+		);
+
+		const chatTab = screen.getByRole("tab", { name: "Codex" });
+		const reviewerTab = screen.getByRole("tab", { name: "Reviewer" });
+		expect(chatTab).toHaveClass("self-stretch", "px-3", "cursor-pointer");
+		expect(reviewerTab).toHaveClass(
+			"self-stretch",
+			"px-3",
+			"cursor-pointer",
+			"focus-visible:outline-2",
+		);
+		expect(reviewerTab.querySelector("img")).toBeInTheDocument();
+
+		fireEvent.click(reviewerTab);
+		expect(onOpenReviewerTerminal).toHaveBeenCalledWith(reviewerTerminal);
+	});
 
 	it("keeps the chat draft, attachments, edit, and scroll state mounted while Reviewer is selected", async () => {
 		const user = userEvent.setup();
@@ -1865,6 +1898,7 @@ describe("ChatWorkspace reviewer tabs", () => {
 		};
 		const view = render(<ChatWorkspace {...common} reviewerTerminal={reviewerTerminal} />);
 		expect(screen.getByTestId("chat-reviewer-terminal")).toBeInTheDocument();
+		expect(screen.getByTestId("chat-reviewer-terminal")).not.toHaveClass("pl-2");
 
 		view.rerender(<ChatWorkspace {...common} reviewerTerminal={undefined} />);
 
@@ -2039,6 +2073,7 @@ describe("ChatWorkspace shell tabs", () => {
 			/>,
 		);
 		expect(screen.getByTestId("chat-shell-terminal")).toBeInTheDocument();
+		expect(screen.getByTestId("chat-shell-terminal")).not.toHaveClass("pl-2");
 		expect(screen.getByTestId("chat-conversation-panel")).toHaveAttribute("hidden");
 		expect(screen.getByTestId("chat-conversation-panel")).toHaveAttribute("inert");
 
@@ -2062,6 +2097,7 @@ describe("ChatWorkspace shell tabs", () => {
 			/>,
 		);
 		expect(terminalPaneState.props).toMatchObject({
+			focusRequested: true,
 			terminalTarget: shellTarget("shell-2"),
 		});
 	});

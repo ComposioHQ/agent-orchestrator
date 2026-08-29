@@ -35,6 +35,8 @@ import { cn } from "../lib/utils";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { useRestoreSession } from "../hooks/useRestoreSession";
 import { useShellTerminals } from "../hooks/useShellTerminals";
+import { useCloudCp } from "../hooks/useCloudCp";
+import { createCloudTerminalMux } from "../lib/cloud-terminal-mux";
 import { XtermTerminal } from "./XtermTerminal";
 import { RestoreUnavailableDialog } from "./RestoreUnavailableDialog";
 
@@ -316,6 +318,44 @@ export function TerminalCacheProvider({
 		);
 	}
 	const muxPool = muxPoolRef.current;
+	// Cloud sessions do not share the pooled local-daemon socket: each runs in its
+	// own control-plane sandbox reached over its own ticketed WebSocket. Resolve a
+	// stable, per-session cloud mux factory so terminal props stay referentially
+	// equal across renders; local sessions keep the pooled daemon mux untouched.
+	const { client: cloudClient, baseUrl: cloudBaseUrl } = useCloudCp();
+	// A cloud pane must never fall back to the local daemon mux, even during the
+	// startup window before settings resolve the control-plane URL: the local
+	// daemon does not know a cloud session's handle and would report it as exited.
+	// Read the control-plane client/URL through a ref so the factory (cached once
+	// per session for referential stability) always uses the current values at
+	// connect time rather than whatever was resolved on first render.
+	const cloudCpRef = useRef({ client: cloudClient, baseUrl: cloudBaseUrl });
+	cloudCpRef.current = { client: cloudClient, baseUrl: cloudBaseUrl };
+	const cloudMuxFactoriesRef = useRef(new Map<string, () => TerminalMux>());
+	const resolveCreateMux = useCallback(
+		(paneSession?: WorkspaceSession): (() => TerminalMux) => {
+			const cloud = paneSession?.cloud;
+			if (!cloud) return muxPool.acquire;
+			const cached = cloudMuxFactoriesRef.current.get(paneSession.id);
+			if (cached) return cached;
+			const sessionId = paneSession.id;
+			const orgId = cloud.orgId;
+			const factory = () =>
+				createCloudTerminalMux({
+					wsBaseUrl: `${cloudCpRef.current.baseUrl.replace(/^http/i, "ws").replace(/\/+$/, "")}/api/cloud/v1`,
+					kind: "agent",
+					mintTicket: async () => {
+						const response = await cloudCpRef.current.client.createTerminalTicket(orgId, sessionId, {
+							kind: "agent",
+						});
+						return response.ticket;
+					},
+				});
+			cloudMuxFactoriesRef.current.set(sessionId, factory);
+			return factory;
+		},
+		[muxPool],
+	);
 	const [, setRevision] = useState(0);
 	const rerender = useCallback(() => setRevision((current) => current + 1), []);
 
@@ -340,7 +380,7 @@ export function TerminalCacheProvider({
 		(descriptor: TerminalCacheDescriptor, props: TerminalPaneProps, slot: HTMLDivElement) => {
 			const parking = parkingRef.current;
 			if (!parking) return;
-			const cachedProps = { ...props, createMux: muxPool.acquire };
+			const cachedProps = { ...props, createMux: resolveCreateMux(props.session) };
 
 			const previous = activeRef.current;
 			if (previous && previous.key !== descriptor.cacheKey) {
@@ -416,7 +456,7 @@ export function TerminalCacheProvider({
 	const update = useCallback(
 		(cacheKey: string, props: TerminalPaneProps) => {
 			const entry = entriesRef.current.get(cacheKey);
-			const cachedProps = { ...props, createMux: muxPool.acquire };
+			const cachedProps = { ...props, createMux: resolveCreateMux(props.session) };
 			if (!entry || terminalPropsMatch(entry.props, cachedProps)) return;
 			entry.props = cachedProps;
 			rerender();
@@ -876,8 +916,20 @@ export function providerScrollsByKeyboard(provider?: string): boolean {
 	return provider ? KEYBOARD_SCROLL_PROVIDERS.has(provider) : false;
 }
 
-function bannerText(state: TerminalSessionState, t: TFunction, error?: string): string | undefined {
-	if (state === "reattaching") return t("terminal.reattaching");
+function bannerText(
+	state: TerminalSessionState,
+	t: TFunction,
+	hasAttached: boolean,
+	isCloud: boolean,
+	error?: string,
+): string | undefined {
+	// Cloud only: before the first successful open (the sandbox worker is still
+	// coming up), show a calm "Connecting…" rather than the alarming
+	// "disconnected — reattaching". A local terminal keeps its original wording
+	// verbatim, so local behavior is unchanged.
+	if (state === "reattaching") {
+		return isCloud && !hasAttached ? t("terminal.connecting") : t("terminal.reattaching");
+	}
 	if (state === "error") return t("terminal.error", { error: error ?? t("terminal.connectionFailed") });
 	return undefined;
 }
@@ -920,7 +972,7 @@ function AttachedTerminal({
 	// A shell pane has no session, so it hands the hook its handle directly
 	// instead of reading one off `attachSession`.
 	const shellTerminalHandleId = terminalTarget?.kind === "shell" ? terminalTarget.handleId : undefined;
-	const { attach, state, error, replaySettled, syncVisibleSize } = useTerminalSession(attachSession, {
+	const { attach, state, error, replaySettled, hasAttached, syncVisibleSize } = useTerminalSession(attachSession, {
 		coverInitialReplay: terminalTarget?.kind !== "reviewer",
 		createMux,
 		daemonReady,
@@ -1021,7 +1073,7 @@ function AttachedTerminal({
 		);
 	}
 
-	const banner = bannerText(state, t, error);
+	const banner = bannerText(state, t, hasAttached, Boolean(attachSession?.cloud), error);
 	const showEmptyState = !handleId;
 	// Cover xterm while the attachment buffers the initial replay, so the pane
 	// appears already drawn at the tail instead of visibly scrolling down to it.
@@ -1107,29 +1159,16 @@ function AttachedTerminal({
 	);
 }
 
-// Blank terminal-coloured cover held over xterm while the initial replay is
-// buffered. A fast open (the common case) shows nothing at all — the label only
-// appears if the wait is long enough to read as a stall rather than a repaint,
-// so normal session switching never flashes a loader.
-const REPLAY_COVER_LABEL_MS = 120;
-
 function ReplayCover() {
-	const { t } = useTranslation();
-	const [showLabel, setShowLabel] = useState(false);
-	useEffect(() => {
-		const timer = window.setTimeout(() => setShowLabel(true), REPLAY_COVER_LABEL_MS);
-		return () => window.clearTimeout(timer);
-	}, []);
 	return (
-		// pointer-events-none: the cover is purely visual and xterm underneath is
-		// live the whole time, so clicks, selection and wheel must pass through
-		// rather than being swallowed for the length of the gate.
+		// Keep this cover silent: its only job is to hide the initial replay's
+		// intermediate paints. xterm remains live underneath, and pointer events
+		// pass through so selection and wheel input never wait on attachment.
 		<div
-			className="terminal-surface pointer-events-none absolute inset-0 grid place-items-center"
+			aria-hidden="true"
+			className="bg-terminal-opaque pointer-events-none absolute inset-0"
 			data-testid="terminal-replay-cover"
-		>
-			{showLabel && <div className="font-mono text-caption text-terminal-dim">{t("terminal.loadingOutput")}</div>}
-		</div>
+		/>
 	);
 }
 
