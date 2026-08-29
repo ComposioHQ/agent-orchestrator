@@ -85,7 +85,7 @@ WHERE id = ? AND session_mode = ? AND is_terminated = 0;
 
 -- name: GetSession :one
 SELECT id, project_id, num, issue_id, kind, harness,
-    activity_state, activity_last_at, is_terminated, branch, workspace_path,
+    activity_state, activity_last_at, is_terminated, archived_at, branch, workspace_path,
     runtime_handle_id, agent_session_id, agent_session_id_launch_id, prompt,
     sessions.created_at AS created_at, updated_at, display_name, first_signal_at, preview_url,
     preview_revision, cleanup_generation, runtime_launch_id,
@@ -101,7 +101,7 @@ WHERE id = ?;
 
 -- name: ListSessionsByProject :many
 SELECT id, project_id, num, issue_id, kind, harness,
-    activity_state, activity_last_at, is_terminated, branch, workspace_path,
+    activity_state, activity_last_at, is_terminated, archived_at, branch, workspace_path,
     runtime_handle_id, agent_session_id, agent_session_id_launch_id, prompt,
     sessions.created_at AS created_at, updated_at, display_name, first_signal_at, preview_url,
     preview_revision, cleanup_generation, runtime_launch_id,
@@ -117,7 +117,7 @@ WHERE project_id = ? ORDER BY num;
 
 -- name: ListAllSessions :many
 SELECT id, project_id, num, issue_id, kind, harness,
-    activity_state, activity_last_at, is_terminated, branch, workspace_path,
+    activity_state, activity_last_at, is_terminated, archived_at, branch, workspace_path,
     runtime_handle_id, agent_session_id, agent_session_id_launch_id, prompt,
     sessions.created_at AS created_at, updated_at, display_name, first_signal_at, preview_url,
     preview_revision, cleanup_generation, runtime_launch_id,

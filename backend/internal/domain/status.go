@@ -19,6 +19,7 @@ const (
 	StatusExited           SessionStatus = "exited"
 	StatusIdle             SessionStatus = "idle"
 	StatusTerminated       SessionStatus = "terminated"
+	StatusArchived         SessionStatus = "archived"
 	// StatusNoSignal marks a live session whose agent has never delivered a
 	// hook callback for the current spawn/restore: AO cannot tell whether the
 	// agent is working or stuck (broken hook pipeline, blocked interactive

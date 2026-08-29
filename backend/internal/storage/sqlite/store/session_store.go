@@ -418,6 +418,7 @@ func rowToRecord(row gen.GetSessionRow) domain.SessionRecord {
 		IsTerminated:       row.IsTerminated,
 		IsPinned:           row.IsPinned,
 		PinnedAt:           nullTimeToTimePtr(row.PinnedAt),
+		ArchivedAt:         nullTimeToTimePtr(row.ArchivedAt),
 		TerminateOnPRMerge: row.TerminateOnPRMerge,
 		AutoInjectReview:   row.AutoInjectReview,
 		AutoInjectCI:       row.AutoInjectCI,

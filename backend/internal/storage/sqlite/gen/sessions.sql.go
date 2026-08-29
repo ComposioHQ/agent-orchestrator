@@ -109,7 +109,7 @@ func (q *Queries) CommitSessionControllerEpoch(ctx context.Context, arg CommitSe
 
 const getSession = `-- name: GetSession :one
 SELECT id, project_id, num, issue_id, kind, harness,
-    activity_state, activity_last_at, is_terminated, branch, workspace_path,
+    activity_state, activity_last_at, is_terminated, archived_at, branch, workspace_path,
     runtime_handle_id, agent_session_id, agent_session_id_launch_id, prompt,
     sessions.created_at AS created_at, updated_at, display_name, first_signal_at, preview_url,
     preview_revision, cleanup_generation, runtime_launch_id,
@@ -134,6 +134,7 @@ type GetSessionRow struct {
 	ActivityState             domain.ActivityState
 	ActivityLastAt            time.Time
 	IsTerminated              bool
+	ArchivedAt                sql.NullTime
 	Branch                    string
 	WorkspacePath             string
 	RuntimeHandleID           string
@@ -186,6 +187,7 @@ func (q *Queries) GetSession(ctx context.Context, id domain.SessionID) (GetSessi
 		&i.ActivityState,
 		&i.ActivityLastAt,
 		&i.IsTerminated,
+		&i.ArchivedAt,
 		&i.Branch,
 		&i.WorkspacePath,
 		&i.RuntimeHandleID,
@@ -340,7 +342,7 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) er
 
 const listAllSessions = `-- name: ListAllSessions :many
 SELECT id, project_id, num, issue_id, kind, harness,
-    activity_state, activity_last_at, is_terminated, branch, workspace_path,
+    activity_state, activity_last_at, is_terminated, archived_at, branch, workspace_path,
     runtime_handle_id, agent_session_id, agent_session_id_launch_id, prompt,
     sessions.created_at AS created_at, updated_at, display_name, first_signal_at, preview_url,
     preview_revision, cleanup_generation, runtime_launch_id,
@@ -365,6 +367,7 @@ type ListAllSessionsRow struct {
 	ActivityState             domain.ActivityState
 	ActivityLastAt            time.Time
 	IsTerminated              bool
+	ArchivedAt                sql.NullTime
 	Branch                    string
 	WorkspacePath             string
 	RuntimeHandleID           string
@@ -423,6 +426,7 @@ func (q *Queries) ListAllSessions(ctx context.Context) ([]ListAllSessionsRow, er
 			&i.ActivityState,
 			&i.ActivityLastAt,
 			&i.IsTerminated,
+			&i.ArchivedAt,
 			&i.Branch,
 			&i.WorkspacePath,
 			&i.RuntimeHandleID,
@@ -476,7 +480,7 @@ func (q *Queries) ListAllSessions(ctx context.Context) ([]ListAllSessionsRow, er
 
 const listSessionsByProject = `-- name: ListSessionsByProject :many
 SELECT id, project_id, num, issue_id, kind, harness,
-    activity_state, activity_last_at, is_terminated, branch, workspace_path,
+    activity_state, activity_last_at, is_terminated, archived_at, branch, workspace_path,
     runtime_handle_id, agent_session_id, agent_session_id_launch_id, prompt,
     sessions.created_at AS created_at, updated_at, display_name, first_signal_at, preview_url,
     preview_revision, cleanup_generation, runtime_launch_id,
@@ -501,6 +505,7 @@ type ListSessionsByProjectRow struct {
 	ActivityState             domain.ActivityState
 	ActivityLastAt            time.Time
 	IsTerminated              bool
+	ArchivedAt                sql.NullTime
 	Branch                    string
 	WorkspacePath             string
 	RuntimeHandleID           string
@@ -559,6 +564,7 @@ func (q *Queries) ListSessionsByProject(ctx context.Context, projectID domain.Pr
 			&i.ActivityState,
 			&i.ActivityLastAt,
 			&i.IsTerminated,
+			&i.ArchivedAt,
 			&i.Branch,
 			&i.WorkspacePath,
 			&i.RuntimeHandleID,

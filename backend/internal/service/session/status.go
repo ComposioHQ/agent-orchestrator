@@ -17,6 +17,9 @@ import (
 const noSignalGrace = 90 * time.Second
 
 func deriveStatus(rec domain.SessionRecord, prs []domain.PRFacts, now time.Time, signalCapable bool) domain.SessionStatus {
+	if rec.ArchivedAt != nil {
+		return domain.StatusArchived
+	}
 	status := contract.DeriveStatus(
 		toContractSessionFacts(rec, signalCapable),
 		toContractPRFacts(prs),

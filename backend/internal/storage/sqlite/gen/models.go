@@ -75,6 +75,36 @@ type ChangeLog struct {
 	CreatedAt time.Time
 }
 
+type CodexProfileSwitch struct {
+	ID                         domain.CodexProfileSwitchID
+	SourceSessionID            domain.SessionID
+	TargetSessionID            *domain.SessionID
+	SourceProfileID            string
+	TargetProfileID            string
+	IdempotencyKey             string
+	RequestFingerprint         domain.CodexProfileSwitchRequestFingerprint
+	TriggerKind                domain.CodexProfileSwitchTrigger
+	Phase                      domain.CodexProfileSwitchPhase
+	RecoveryOriginPhase        *domain.CodexProfileSwitchPhase
+	WorkspaceOwner             domain.CodexProfileSwitchWorkspaceOwner
+	SourceGenerationID         domain.AgentGenerationID
+	TargetGenerationID         domain.AgentGenerationID
+	TargetRuntimeHandleID      string
+	TargetControllerGeneration string
+	TargetProviderThreadID     string
+	SemanticHandoffStatus      domain.AgentHandoffStatus
+	HandoffClassification      domain.CodexProfileSwitchHandoffClassification
+	FinalHandoffPath           string
+	FinalHandoffHash           string
+	AcknowledgeUnknownCapacity bool
+	TargetAcknowledgedAt       sql.NullTime
+	SourceArchivedAt           sql.NullTime
+	RequestedAt                time.Time
+	UpdatedAt                  time.Time
+	CompletedAt                sql.NullTime
+	ErrorCode                  string
+}
+
 type CodexSessionBinding struct {
 	SessionID     domain.SessionID
 	ProfileID     string
@@ -427,6 +457,7 @@ type Session struct {
 	AgentSessionIDLaunchID    string
 	Model                     string
 	LatestUserPromptAt        sql.NullTime
+	ArchivedAt                sql.NullTime
 }
 
 type SessionCleanupFact struct {
