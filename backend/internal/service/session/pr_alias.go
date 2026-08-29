@@ -77,14 +77,31 @@ func canonicalizeCurrentHeadReviewRuns(prs []domain.PRFacts, runs []domain.Curre
 		}
 	}
 
-	out := make([]domain.CurrentHeadReviewRun, len(runs))
-	for i, run := range runs {
-		out[i] = run
+	out := make([]domain.CurrentHeadReviewRun, 0, len(runs))
+	byCanonicalAndHarness := make(map[string]int, len(runs))
+	for _, run := range runs {
+		normalized := run
 		if canonicalURL, ok := canonicalByURL[run.PRURL]; ok {
-			out[i].PRURL = canonicalURL
+			normalized.PRURL = canonicalURL
 		}
+		key := normalized.PRURL + "\x00" + string(normalized.Harness)
+		if idx, ok := byCanonicalAndHarness[key]; ok {
+			if currentHeadRunOutranks(normalized, out[idx]) {
+				out[idx] = normalized
+			}
+			continue
+		}
+		byCanonicalAndHarness[key] = len(out)
+		out = append(out, normalized)
 	}
 	return out
+}
+
+func currentHeadRunOutranks(candidate, current domain.CurrentHeadReviewRun) bool {
+	if !candidate.CreatedAt.Equal(current.CreatedAt) {
+		return candidate.CreatedAt.After(current.CreatedAt)
+	}
+	return candidate.ID > current.ID
 }
 
 func mergePRFacts(current, next domain.PRFacts) domain.PRFacts {

@@ -105,4 +105,6 @@ type CurrentHeadReviewRun struct {
 	PRURL     string
 	Status    ReviewRunStatus
 	Verdict   ReviewVerdict
+	ID        string
+	CreatedAt time.Time
 }

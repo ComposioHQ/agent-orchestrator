@@ -81,7 +81,7 @@ FROM review_run WHERE session_id = ? AND batch_id = ? ORDER BY created_at ASC, i
 -- an earlier head are excluded here so a stale run can never decide the
 -- session's Kanban column. The latest same-head pass per (pr, harness) wins,
 -- so a superseded retry cannot outvote the rerun that replaced it.
-SELECT review_run.harness, review_run.pr_url, review_run.status, review_run.verdict
+SELECT review_run.id, review_run.harness, review_run.pr_url, review_run.status, review_run.verdict, review_run.created_at
 FROM review_run
 JOIN pr ON pr.url = review_run.pr_url
 WHERE review_run.session_id = ?
@@ -108,7 +108,7 @@ WITH wanted_session AS (
     SELECT CAST(j.value AS TEXT) AS session_id
     FROM json_each(?) AS j
 )
-SELECT review_run.session_id, review_run.harness, review_run.pr_url, review_run.status, review_run.verdict
+SELECT review_run.session_id, review_run.id, review_run.harness, review_run.pr_url, review_run.status, review_run.verdict, review_run.created_at
 FROM review_run
 JOIN pr ON pr.url = review_run.pr_url
 JOIN wanted_session ON wanted_session.session_id = review_run.session_id

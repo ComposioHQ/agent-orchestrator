@@ -359,6 +359,8 @@ func (s *Store) ListCurrentHeadReviewRunsForSession(ctx context.Context, id doma
 			PRURL:     r.PRURL,
 			Status:    r.Status,
 			Verdict:   r.Verdict,
+			ID:        r.ID,
+			CreatedAt: r.CreatedAt,
 		})
 	}
 	return out, nil
@@ -387,6 +389,8 @@ func (s *Store) ListCurrentHeadReviewRunsForSessions(ctx context.Context, ids []
 			PRURL:     r.PRURL,
 			Status:    r.Status,
 			Verdict:   r.Verdict,
+			ID:        r.ID,
+			CreatedAt: r.CreatedAt,
 		})
 	}
 	for _, id := range ids {

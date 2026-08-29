@@ -287,7 +287,7 @@ func (q *Queries) InsertReviewRun(ctx context.Context, arg InsertReviewRunParams
 }
 
 const listCurrentHeadReviewRunsBySession = `-- name: ListCurrentHeadReviewRunsBySession :many
-SELECT review_run.harness, review_run.pr_url, review_run.status, review_run.verdict
+SELECT review_run.id, review_run.harness, review_run.pr_url, review_run.status, review_run.verdict, review_run.created_at
 FROM review_run
 JOIN pr ON pr.url = review_run.pr_url
 WHERE review_run.session_id = ?
@@ -308,10 +308,12 @@ WHERE review_run.session_id = ?
 `
 
 type ListCurrentHeadReviewRunsBySessionRow struct {
-	Harness domain.ReviewerHarness
-	PRURL   string
-	Status  domain.ReviewRunStatus
-	Verdict domain.ReviewVerdict
+	ID        string
+	Harness   domain.ReviewerHarness
+	PRURL     string
+	Status    domain.ReviewRunStatus
+	Verdict   domain.ReviewVerdict
+	CreatedAt time.Time
 }
 
 // AO review passes recorded against each PR's CURRENT head commit. Passes for
@@ -328,10 +330,12 @@ func (q *Queries) ListCurrentHeadReviewRunsBySession(ctx context.Context, sessio
 	for rows.Next() {
 		var i ListCurrentHeadReviewRunsBySessionRow
 		if err := rows.Scan(
+			&i.ID,
 			&i.Harness,
 			&i.PRURL,
 			&i.Status,
 			&i.Verdict,
+			&i.CreatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -351,7 +355,7 @@ WITH wanted_session AS (
     SELECT CAST(j.value AS TEXT) AS session_id
     FROM json_each(?) AS j
 )
-SELECT review_run.session_id, review_run.harness, review_run.pr_url, review_run.status, review_run.verdict
+SELECT review_run.session_id, review_run.id, review_run.harness, review_run.pr_url, review_run.status, review_run.verdict, review_run.created_at
 FROM review_run
 JOIN pr ON pr.url = review_run.pr_url
 JOIN wanted_session ON wanted_session.session_id = review_run.session_id
@@ -373,10 +377,12 @@ WHERE pr.head_sha != ''
 
 type ListCurrentHeadReviewRunsBySessionsRow struct {
 	SessionID domain.SessionID
+	ID        string
 	Harness   domain.ReviewerHarness
 	PRURL     string
 	Status    domain.ReviewRunStatus
 	Verdict   domain.ReviewVerdict
+	CreatedAt time.Time
 }
 
 // Batch form of ListCurrentHeadReviewRunsBySession for session-list reads.
@@ -393,10 +399,12 @@ func (q *Queries) ListCurrentHeadReviewRunsBySessions(ctx context.Context, jsonE
 		var i ListCurrentHeadReviewRunsBySessionsRow
 		if err := rows.Scan(
 			&i.SessionID,
+			&i.ID,
 			&i.Harness,
 			&i.PRURL,
 			&i.Status,
 			&i.Verdict,
+			&i.CreatedAt,
 		); err != nil {
 			return nil, err
 		}
