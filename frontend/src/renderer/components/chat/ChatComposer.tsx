@@ -183,6 +183,7 @@ export function ChatComposer({
 	const editor = useRef<ComposerEditorHandle>(null);
 	const filePicker = useRef<HTMLInputElement>(null);
 	const stagedDelivery = useRef<{ signature: string; paths: string[] } | null>(null);
+	const submitInFlight = useRef<Promise<void> | null>(null);
 	const menuId = useId();
 	const previousTrigger = useRef<ComposerTrigger | undefined>(undefined);
 	const triggerRef = useRef<ComposerTrigger | undefined>(undefined);
@@ -369,8 +370,23 @@ export function ChatComposer({
 		[onCompact, suggestionsFor],
 	);
 
-	async function submit(event?: FormEvent, forceSteer?: boolean) {
+	function submit(event?: FormEvent, forceSteer?: boolean): Promise<void> {
 		event?.preventDefault();
+		// React cannot publish the next busy prop until after this event returns. A
+		// second Enter in that gap joins the accepted submission instead of opening a
+		// second transport whose local admission rejection would look like a real
+		// provider failure.
+		if (submitInFlight.current) return submitInFlight.current;
+		const pending = performSubmit(forceSteer);
+		submitInFlight.current = pending;
+		const release = () => {
+			if (submitInFlight.current === pending) submitInFlight.current = null;
+		};
+		void pending.then(release, release);
+		return pending;
+	}
+
+	async function performSubmit(forceSteer?: boolean) {
 		const currentText = textRef.current;
 		const canSubmitNow = (currentText.trim().length > 0 || staged) && !busy && !disabled && !steerPending;
 		if (!canSubmitNow) return;

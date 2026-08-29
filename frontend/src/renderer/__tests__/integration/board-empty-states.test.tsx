@@ -28,7 +28,17 @@ vi.mock("../../lib/api-client", () => ({
 }));
 
 vi.mock("../../lib/bridge", () => ({
-	aoBridge: { app: { chooseDirectory: chooseDirectoryMock } },
+	aoBridge: {
+		app: { chooseDirectory: chooseDirectoryMock },
+		// CreateProjectFlow reads the cloud session (Local | Cloud gating);
+		// signed-out keeps these tests on the local-only flow.
+		cloud: {
+			getSession: async () => null,
+			signIn: async () => undefined,
+			signOut: async () => undefined,
+			onSessionChanged: () => () => undefined,
+		},
+	},
 }));
 
 vi.mock("@tanstack/react-router", async (importOriginal) => {

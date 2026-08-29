@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -38,6 +39,14 @@ const (
 	// DefaultTelemetryPostHogHost is the default PostHog ingestion host when
 	// remote telemetry is enabled and AO_TELEMETRY_POSTHOG_HOST is unset.
 	DefaultTelemetryPostHogHost = "https://us.i.posthog.com"
+	// ClientElevenX is the AO_CLIENT value entitled to the cloud offering. It is
+	// the single place the identity is spelled out; gating logic must compare
+	// against this constant, never a string literal.
+	ClientElevenX = "eleven_x"
+
+	// defaultCloudControlPlaneURL is the control plane a build talks to when no
+	// override is set. Staging while the offering is in its dogfooding phase.
+	defaultCloudControlPlaneURL = "https://staging-api.aoagents.dev"
 )
 
 // TelemetryRemote selects the remote telemetry exporter.
@@ -142,6 +151,22 @@ type Config struct {
 	// GitLab carries the self-managed GitLab host allowlist and per-host
 	// token overrides, loaded once at boot from environment variables.
 	GitLab GitLabConfig
+	// Client identifies which client this deployment serves (AO_CLIENT). Empty
+	// means no client identity, which keeps client-gated offerings off.
+	Client string
+	// CloudOffering reports whether the cloud offering flag is switched on
+	// (AO_CLOUD_OFFERING). The flag alone does not surface cloud in clients:
+	// the settings service also requires the entitled client (ClientElevenX)
+	// and a configured control plane.
+	CloudOffering bool
+	// LocalOffering reports whether the local offering is available
+	// (AO_LOCAL_OFFERING). It defaults to true; only an explicit false/0
+	// switches it off.
+	LocalOffering bool
+	// CloudControlPlaneURL is the cloud control plane base URL
+	// (AO_CLOUD_CONTROL_PLANE_URL). When set it must be an http(s) URL; empty
+	// means no control plane is configured, which keeps the cloud offering off.
+	CloudControlPlaneURL string
 }
 
 // Addr returns the host:port the HTTP server binds. It uses net.JoinHostPort so
@@ -172,6 +197,10 @@ func (c Config) Addr() string {
 //	AO_TELEMETRY_POSTHOG_HOST  PostHog host (default DefaultTelemetryPostHogHost)
 //	AO_GITLAB_ALLOWED_HOSTS    comma-separated self-managed GitLab hosts (each may include :port)
 //	AO_GITLAB_HOST_TOKENS      host=token,host=token per-host token overrides
+//	AO_CLIENT                  client identity for offering gates (trimmed, default empty)
+//	AO_CLOUD_OFFERING          cloud offering flag off|on (default off)
+//	AO_LOCAL_OFFERING          local offering off|on (default on)
+//	AO_CLOUD_CONTROL_PLANE_URL cloud control plane base URL (trimmed, must be http(s))
 //
 // The bind host is not configurable: the daemon is loopback-only by design.
 func Load() (Config, error) {
@@ -186,6 +215,7 @@ func Load() (Config, error) {
 			Remote:      TelemetryRemoteOff,
 			PostHogHost: DefaultTelemetryPostHogHost,
 		},
+		LocalOffering: true,
 	}
 
 	if raw := os.Getenv("AO_PORT"); raw != "" {
@@ -304,6 +334,36 @@ func Load() (Config, error) {
 		cfg.GitLab.HostTokens = tokens
 	}
 
+	if raw := os.Getenv("AO_CLIENT"); raw != "" {
+		cfg.Client = strings.TrimSpace(raw)
+	}
+	if raw := os.Getenv("AO_CLOUD_OFFERING"); raw != "" {
+		v, err := parseToggleEnv("AO_CLOUD_OFFERING", raw)
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.CloudOffering = v
+	}
+	if raw := os.Getenv("AO_LOCAL_OFFERING"); raw != "" {
+		v, err := parseToggleEnv("AO_LOCAL_OFFERING", raw)
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.LocalOffering = v
+	}
+	// The control-plane URL is public client configuration (like the WorkOS
+	// client id), so it ships as a baked default and the env var is only a
+	// development override. Users never configure it; the Settings toggle is
+	// the sole cloud switch.
+	cfg.CloudControlPlaneURL = defaultCloudControlPlaneURL
+	if raw := os.Getenv("AO_CLOUD_CONTROL_PLANE_URL"); strings.TrimSpace(raw) != "" {
+		u, err := parseCloudControlPlaneURL(raw)
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.CloudControlPlaneURL = u
+	}
+
 	runFile, err := resolveRunFilePath()
 	if err != nil {
 		return Config{}, err
@@ -385,6 +445,22 @@ func parseHostTokenMap(name, raw string) (map[string]string, error) {
 		tokens[host] = token
 	}
 	return tokens, nil
+}
+
+// parseCloudControlPlaneURL validates the cloud control plane base URL. Only
+// http(s) with a host is accepted: clients dial this value, so a stray scheme
+// or a bare host (which url.Parse reads as a path) must fail boot loudly
+// rather than surface later as an unreachable cloud.
+func parseCloudControlPlaneURL(raw string) (string, error) {
+	trimmed := strings.TrimSpace(raw)
+	u, err := url.Parse(trimmed)
+	if err != nil {
+		return "", fmt.Errorf("invalid AO_CLOUD_CONTROL_PLANE_URL %q: %w", raw, err)
+	}
+	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return "", fmt.Errorf("invalid AO_CLOUD_CONTROL_PLANE_URL %q: must be an http(s) URL", raw)
+	}
+	return trimmed, nil
 }
 
 // parsePositiveDuration rejects zero and negative durations: a zero
