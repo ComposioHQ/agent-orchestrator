@@ -614,7 +614,7 @@ describe("ChatWorkspace timeline", () => {
 			name: "Approval request approval-1",
 		});
 		const composer = approval.closest("form");
-		expect(composer).toHaveClass("cursor-chat-composer", "border-border-strong");
+		expect(composer).toHaveClass("cursor-chat-composer", "border");
 		expect(screen.getByRole("log", { name: "Conversation" })).not.toContainElement(approval);
 		expect(screen.queryByLabelText("Message the agent")).not.toBeInTheDocument();
 		expect(within(approval).queryByText("Terminal")).not.toBeInTheDocument();

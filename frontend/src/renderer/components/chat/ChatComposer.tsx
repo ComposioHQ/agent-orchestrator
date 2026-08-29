@@ -630,19 +630,20 @@ export function ChatComposer({
 		settings && deliveryChoice && isValidElement(settings)
 			? cloneElement(settings, undefined, deliveryChoice)
 			: settings;
-	const withQueueStack = (form: ReactElement) => (
-		<div className="relative flex w-full flex-col">
-			{queuedDock ? (
+	const withQueueStack = (form: ReactElement) =>
+		queuedDock ? (
+			<div className="relative flex w-full flex-col">
 				<div
 					className="cursor-chat-composer-queue queue-dock-enter relative z-10 mx-auto mb-2 w-[calc(100%-2rem)]"
 					data-testid="queued-composer-dock"
 				>
 					{queuedDock}
 				</div>
-			) : null}
-			{form}
-		</div>
-	);
+				{form}
+			</div>
+		) : (
+			form
+		);
 
 	if (approval) {
 		return withQueueStack(
