@@ -27,7 +27,7 @@ export function SessionActionsMenu({
 					<DropdownMenuTrigger asChild>
 						<TopbarButton
 							aria-label={t("session.actionsMenu")}
-							className="size-7 !bg-transparent text-muted-foreground !hover:bg-transparent !active:bg-transparent !focus:bg-transparent data-[state=open]:!bg-transparent hover:text-foreground"
+							className="size-7 !bg-transparent text-muted-foreground hover:!bg-transparent active:!bg-transparent focus:!bg-transparent data-[state=open]:!bg-transparent hover:text-foreground"
 							data-session-actions-trigger
 							title={t("session.actionsMenu")}
 							type="button"

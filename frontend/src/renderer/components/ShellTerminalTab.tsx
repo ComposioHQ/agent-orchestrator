@@ -182,7 +182,7 @@ export function ShellTerminalTab({
 		<span
 			data-editing={isConnected && isEditing ? "true" : undefined}
 			className={cn(
-				"group relative h-full shrink-0 self-stretch items-center transition-[border-color]",
+				"group relative h-full shrink-0 self-stretch items-center",
 				isConnected
 					? cn(
 							"session-tab-icon-floor session-tab-icon-floor--closable relative inline-flex max-w-shell-tab-max border-x border-transparent",
