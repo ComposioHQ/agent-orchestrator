@@ -1212,6 +1212,16 @@ describe("BrowserPanel", () => {
 		expect(screen.queryByText("Pick element")).not.toBeInTheDocument();
 	});
 
+	it("uses AO orange for the active annotation status dot", async () => {
+		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		const annotateButton = screen.getByRole("button", { name: /annotate/i });
+		await userEvent.click(annotateButton);
+
+		expect(annotateButton.querySelector('span[aria-hidden="true"]')).toHaveClass("bg-status-needs-you");
+	});
+
 	it("keeps the browser viewport transparent once a native page is loaded, so overlays don't blank it", () => {
 		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
 		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);

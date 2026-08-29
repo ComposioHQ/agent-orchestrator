@@ -584,7 +584,7 @@ export function BrowserPanelView({
 							aria-hidden="true"
 							className={cn(
 								"pointer-events-none absolute -right-0.5 -top-0.5 size-1.5 rounded-full",
-								status === "error" ? "bg-destructive" : "bg-accent",
+								status === "error" ? "bg-destructive" : "bg-status-needs-you",
 							)}
 						/>
 					) : agentStatusLabel ? (

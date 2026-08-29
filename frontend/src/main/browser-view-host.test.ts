@@ -1907,6 +1907,40 @@ describe("browser annotation IPC", () => {
 		expect(webContents.focus).not.toHaveBeenCalled();
 	});
 
+	it("preserves and restores an unfinished annotation when the toolbar reloads the page", async () => {
+		const { invoke, send, sent, webContents, webContentsListeners } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+		await invoke("browser:navigate", { viewId: "1:sess-1", url: "http://localhost:4173/" });
+		await invoke("browser:annotation:setMode", { viewId: "1:sess-1", enabled: true });
+		const draft = {
+			instruction: "Keep this text after refresh",
+			selection: {
+				kind: "element" as const,
+				context: {
+					url: "http://localhost:4173/",
+					tag: "button",
+					classes: [],
+					selector: "button#save",
+					size: { width: 80, height: 30 },
+					computedStyle: {},
+				},
+			},
+		};
+		send("browser:annotation:draft", 99, draft);
+		webContents.send.mockClear();
+
+		await invoke("browser:reload", "1:sess-1");
+		webContentsListeners.get("did-start-loading")?.();
+		webContentsListeners.get("did-stop-loading")?.();
+
+		expect(webContents.reload).toHaveBeenCalledOnce();
+		expect(sent).not.toContainEqual({
+			channel: "browser:annotation:canceled",
+			payload: expect.anything(),
+		});
+		expect(webContents.send).toHaveBeenCalledWith("browser:annotation:setMode", { enabled: true, draft });
+	});
+
 	it("forwards a single-element preview annotation submission to the renderer-owned view", async () => {
 		const { invoke, invokeFromTab, sent } = setupHost();
 		await invoke("browser:ensure", "sess-1");

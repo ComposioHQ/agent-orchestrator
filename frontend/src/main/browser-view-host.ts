@@ -13,6 +13,7 @@ import { randomUUID } from "node:crypto";
 import type {
 	BrowserAnnotationCancelPayload,
 	BrowserAnnotationContext,
+	BrowserAnnotationDraft,
 	BrowserAnnotationModeInput,
 	BrowserAnnotationPageCancelPayload,
 	BrowserAnnotationPageSubmitPayload,
@@ -266,6 +267,7 @@ type BrowserEntry = {
 	ready: Promise<void>;
 	state: BrowserNavState;
 	annotationEnabled: boolean;
+	annotationDraft: BrowserAnnotationDraft | null;
 	networkCapture?: BrowserNetworkCapture;
 	favicon?: string;
 	// URL of the favicon currently applied to `favicon` (fetch succeeded).
@@ -554,6 +556,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			ready: Promise.resolve(),
 			state,
 			annotationEnabled: false,
+			annotationDraft: null,
 		};
 		session.tabs.set(tabId, entry);
 		tabsByWebContentsId.set(view.webContents.id, entry);
@@ -1235,12 +1238,15 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		viewId: string,
 		action: (contents: BrowserWebContents) => void,
 		cancelForNavigation = false,
+		reapplyBounds = false,
 	): BrowserNavState => {
 		const session = entries.get(viewId);
 		if (!session) return emptyNavState(viewId);
 		const entry = activeEntry(session);
 		if (cancelForNavigation) {
 			cancelAnnotation(options, entry, "navigation");
+		}
+		if (cancelForNavigation || reapplyBounds) {
 			applySessionBounds(session, entry);
 		}
 		action(entry.view.webContents);
@@ -1253,8 +1259,18 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		if (!session) return;
 		const entry = activeEntry(session);
 		entry.annotationEnabled = input.enabled;
-		entry.view.webContents.send("browser:annotation:setMode", { enabled: input.enabled });
+		if (!input.enabled) entry.annotationDraft = null;
+		entry.view.webContents.send("browser:annotation:setMode", {
+			enabled: input.enabled,
+			...(input.enabled && entry.annotationDraft ? { draft: entry.annotationDraft } : {}),
+		});
 		if (input.enabled) entry.view.webContents.focus();
+	};
+
+	const updateAnnotationDraft = (event: IpcMainEvent, draft: BrowserAnnotationDraft | undefined): void => {
+		const entry = tabsByWebContentsId.get(event.sender.id);
+		if (!entry?.annotationEnabled || !isValidAnnotationDraft(draft)) return;
+		entry.annotationDraft = draft;
 	};
 
 	const forwardAnnotationSubmit = async (
@@ -1273,6 +1289,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			return;
 		}
 		entry.annotationEnabled = false;
+		entry.annotationDraft = null;
 		// Captured now, before returning: the preload only tears down the
 		// highlight overlay after this handler resolves, so the frame we grab
 		// here still has the selection ring(s) on it and not the prompt box
@@ -1295,6 +1312,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		const viewId = entry?.state.viewId;
 		if (!viewId || !entry) return;
 		entry.annotationEnabled = false;
+		entry.annotationDraft = null;
 		const forwarded: BrowserAnnotationCancelPayload = {
 			viewId,
 			reason: payload?.reason ?? "cancel",
@@ -1337,7 +1355,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			: emptyNavState(viewId),
 	);
 	handle("browser:reload", (event, viewId: string) =>
-		isRendererOwned(event, viewId) ? invokeNav(viewId, (contents) => contents.reload(), true) : emptyNavState(viewId),
+		isRendererOwned(event, viewId) ? invokeNav(viewId, (contents) => contents.reload(), false, true) : emptyNavState(viewId),
 	);
 	handle("browser:stop", (event, viewId: string) =>
 		isRendererOwned(event, viewId) ? invokeNav(viewId, (contents) => contents.stop()) : emptyNavState(viewId),
@@ -1450,6 +1468,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	on("browser:annotation:cancel", (event, payload: BrowserAnnotationPageCancelPayload) =>
 		forwardAnnotationCancel(event, payload),
 	);
+	on("browser:annotation:draft", (event, draft: BrowserAnnotationDraft) => updateAnnotationDraft(event, draft));
 
 	return {
 		execute: async (sessionId, action, args = {}, signal) => {
@@ -1944,10 +1963,15 @@ function wireNavEvents(
 	contents.on("did-navigate-in-page", update);
 	contents.on("page-title-updated", update);
 	contents.on("did-start-loading", () => {
-		cancelAnnotation(options, entry, "navigation");
+		if (entry.annotationDraft && !isSameAnnotationPage(annotationDraftURL(entry.annotationDraft), contents.getURL())) {
+			cancelAnnotation(options, entry, "navigation");
+		}
 		update();
 	});
 	contents.on("did-stop-loading", () => {
+		if (entry.annotationEnabled && entry.annotationDraft) {
+			contents.send("browser:annotation:setMode", { enabled: true, draft: entry.annotationDraft });
+		}
 		update();
 	});
 	contents.on("did-fail-load", (_event, errorCode, errorDescription) => {
@@ -2044,11 +2068,34 @@ function cancelAnnotation(
 ): void {
 	if (!entry.annotationEnabled) return;
 	entry.annotationEnabled = false;
+	entry.annotationDraft = null;
 	entry.view.webContents.send("browser:annotation:setMode", { enabled: false });
 	shellContents(options).send("browser:annotation:canceled", {
 		viewId: entry.state.viewId,
 		reason,
 	});
+}
+
+function annotationDraftURL(draft: BrowserAnnotationDraft): string {
+	return draft.selection.kind === "element" ? draft.selection.context.url : (draft.selection.contexts[0]?.url ?? "");
+}
+
+function isSameAnnotationPage(source: string, destination: string): boolean {
+	try {
+		const sourceURL = new URL(source);
+		const destinationURL = new URL(destination);
+		sourceURL.hash = "";
+		destinationURL.hash = "";
+		return sourceURL.href === destinationURL.href;
+	} catch {
+		return source === destination;
+	}
+}
+
+function isValidAnnotationDraft(value: unknown): value is BrowserAnnotationDraft {
+	if (!value || typeof value !== "object") return false;
+	const draft = value as Partial<BrowserAnnotationDraft>;
+	return typeof draft.instruction === "string" && isValidAnnotationSelection(draft.selection);
 }
 
 function pushNavState(options: BrowserViewHostOptions, entry: BrowserEntry): BrowserNavState {
