@@ -1628,6 +1628,14 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 	if (rec.Harness == domain.HarnessCodex || rec.ReviewerHarness == domain.ReviewerCodex) && m.codexAccountSwitchIsActive() {
 		return false, fmt.Errorf("kill %s: %w", id, ErrCodexAccountSwitchInProgress)
 	}
+	// Kill is idempotent. In particular, historical orchestrators can retain the
+	// same canonical workspace identity as their live replacement. Re-running
+	// Kill on that already-terminated row must not tear the shared worktree out
+	// from under the current owner. Cleanup separately refuses reclamation while
+	// a live orchestrator still owns the same path.
+	if rec.IsTerminated {
+		return false, nil
+	}
 	m.stopPreviewBestEffort(ctx, id)
 	m.destroyBrowserBestEffort(ctx, id)
 	handle := runtimeHandle(rec.Metadata)
@@ -2872,9 +2880,11 @@ func (m *Manager) parkDuplicateOrchestrator(ctx context.Context, rec domain.Sess
 			return fmt.Errorf("stop runtime: %w", err)
 		}
 	}
-	if err := m.store.DeleteSessionWorktrees(ctx, current.ID); err != nil {
-		return fmt.Errorf("clear restore marker: %w", err)
-	}
+	// Keep session_worktrees inventory. Active rows are not startup-restore
+	// markers (RestoreAll only consumes removed/legacy rows), and workspace
+	// projects need the per-repo rows for an explicit restore or later Cleanup.
+	// Deleting them here would orphan child worktrees even though parking is
+	// deliberately non-destructive.
 	if err := m.lcm.MarkTerminated(ctx, current.ID); err != nil {
 		return fmt.Errorf("mark terminated: %w", err)
 	}
@@ -3013,16 +3023,26 @@ func (m *Manager) selectSavedOrchestrators(
 	candidates []domain.SessionRecord,
 ) map[domain.ProjectID]domain.SessionRecord {
 	selected := make(map[domain.ProjectID]domain.SessionRecord)
+	counts := make(map[domain.ProjectID]int)
 	for _, rec := range candidates {
 		if rec.Kind != domain.KindOrchestrator {
 			continue
 		}
+		counts[rec.ProjectID]++
 		if current, ok := selected[rec.ProjectID]; !ok || restoreRecordNewer(rec, current) {
 			selected[rec.ProjectID] = rec
 		}
 	}
 
-	owners, blocked := m.durableProjectConversationOwners(ctx, candidates)
+	// Conversation ownership only disambiguates contested projects. A transient
+	// read failure must not suppress the sole saved orchestrator for a project.
+	contested := make([]domain.SessionRecord, 0)
+	for _, rec := range candidates {
+		if rec.Kind == domain.KindOrchestrator && counts[rec.ProjectID] > 1 {
+			contested = append(contested, rec)
+		}
+	}
+	owners, blocked := m.durableProjectConversationOwners(ctx, contested)
 	for projectID := range blocked {
 		delete(selected, projectID)
 	}
@@ -3925,6 +3945,32 @@ func (m *Manager) Cleanup(ctx context.Context, project domain.ProjectID) (Cleanu
 // call) — most commonly because a scoped shell terminal could not be
 // confirmed closed, so reclaiming would pull the ground out from under it.
 func (m *Manager) cleanupOne(ctx context.Context, rec domain.SessionRecord, ws ports.WorkspaceInfo) (skipReason string) {
+	if rec.Kind == domain.KindOrchestrator {
+		unlock := m.LockOrchestratorProject(rec.ProjectID)
+		defer unlock()
+
+		// Cleanup runs while the API is serving. Re-read termination under the
+		// same ownership lock used by restore/spawn before touching the canonical
+		// worktree, and never reclaim a path still owned by a live orchestrator.
+		current, found, err := m.store.GetSession(ctx, rec.ID)
+		if err != nil {
+			m.logger.Warn("cleanup: refresh orchestrator failed", "sessionID", rec.ID, "error", err)
+			return "workspace ownership check failed"
+		}
+		if !found || !current.IsTerminated {
+			return "session is no longer terminated"
+		}
+		rec = current
+		ws = workspaceInfo(current)
+		shared, err := m.liveOrchestratorSharesWorkspace(ctx, current)
+		if err != nil {
+			m.logger.Warn("cleanup: shared orchestrator workspace check failed", "sessionID", rec.ID, "error", err)
+			return "workspace ownership check failed"
+		}
+		if shared {
+			return "workspace is owned by active orchestrator"
+		}
+	}
 	release, closeErr := m.beginShellTerminalTeardown(ctx, rec.ID)
 	if closeErr != nil {
 		m.logger.Warn("cleanup: shell terminal still open", "sessionID", rec.ID, "error", closeErr)
@@ -3961,6 +4007,26 @@ func (m *Manager) cleanupOne(ctx context.Context, rec domain.SessionRecord, ws p
 	}
 	m.cleanupAgentWorkspace(ctx, rec, ws.Path)
 	return ""
+}
+
+func (m *Manager) liveOrchestratorSharesWorkspace(ctx context.Context, rec domain.SessionRecord) (bool, error) {
+	if rec.Kind != domain.KindOrchestrator || rec.Metadata.WorkspacePath == "" {
+		return false, nil
+	}
+	recs, err := m.store.ListSessions(ctx, rec.ProjectID)
+	if err != nil {
+		return false, err
+	}
+	path := filepath.Clean(rec.Metadata.WorkspacePath)
+	for _, other := range recs {
+		if other.ID == rec.ID || other.Kind != domain.KindOrchestrator || other.IsTerminated || other.Metadata.WorkspacePath == "" {
+			continue
+		}
+		if filepath.Clean(other.Metadata.WorkspacePath) == path {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // cleanupSkipReason renders a workspace teardown refusal as a short
