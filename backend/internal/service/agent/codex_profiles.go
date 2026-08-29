@@ -64,6 +64,7 @@ type codexProfileManager struct {
 	capabilities  domain.CodexProfileCapabilities
 	logins        map[string]*codexLoginOperation
 	loginStarting map[string]struct{}
+	capacity      *codexCapacityCoordinator
 }
 
 type codexLoginOperation struct {
@@ -85,18 +86,21 @@ func newCodexProfileManager(ctx context.Context, root, existingHome string, fact
 	if logger == nil {
 		logger = slog.New(slog.DiscardHandler)
 	}
-	return &codexProfileManager{
+	manager := &codexProfileManager{
 		ctx: ctx, catalog: newCodexProfileCatalog(root, existingHome, logger), factory: factory, logger: logger,
 		now: func() time.Time { return time.Now().UTC() }, newID: uuid.NewString,
 		processes: make(chan struct{}, codexProfileProcessLimit), auth: make(map[string]*profileAuthState),
 		capabilities: unavailableCodexCapabilities(), logins: make(map[string]*codexLoginOperation),
 		loginStarting: make(map[string]struct{}),
 	}
+	manager.capacity = newCodexCapacityCoordinator(manager)
+	manager.catalog.setOnRemoved(manager.capacity.removeProfiles)
+	return manager
 }
 
 func unavailableCodexCapabilities() domain.CodexProfileCapabilities {
 	unknown := domain.CodexCapabilityObservation{State: domain.CodexCapabilityUnknown, ReasonCode: domain.CodexCapabilityReasonUnknown, Reason: "Codex capability detection has not completed."}
-	return domain.CodexProfileCapabilities{AccountRead: unknown, BrowserLogin: unknown}
+	return domain.CodexProfileCapabilities{AccountRead: unknown, BrowserLogin: unknown, CapacityRead: unknown}
 }
 
 func (m *codexProfileManager) cached() CodexProfiles {
@@ -114,7 +118,12 @@ func (m *codexProfileManager) view(profileIDs []string) (CodexProfiles, error) {
 	}
 	profiles := make([]domain.CodexProfileSnapshot, 0, len(records))
 	for _, record := range records {
-		profiles = append(profiles, record.Snapshot)
+		snapshot := record.Snapshot
+		snapshot.Capacity = m.capacity.snapshot(snapshot.ID)
+		if snapshot.Status != domain.CodexProfileStatusValid && snapshot.Capacity.CheckedAt == nil {
+			snapshot.Capacity = unavailableCodexCapacity()
+		}
+		profiles = append(profiles, snapshot)
 	}
 	return CodexProfiles{Profiles: profiles, Capabilities: capabilities}, nil
 }
@@ -133,6 +142,7 @@ func (m *codexProfileManager) detectCapabilities(ctx context.Context) domain.Cod
 		"duration_ms", m.now().Sub(started).Milliseconds(),
 		"account_read", capabilities.AccountRead.State,
 		"browser_login", capabilities.BrowserLogin.State,
+		"capacity_read", capabilities.CapacityRead.State,
 	)
 	return capabilities
 }
@@ -330,6 +340,7 @@ func accountAuthenticationObservation(at time.Time, state domain.AgentAuthentica
 
 func (m *codexProfileManager) finishAuthentication(profileID string, observation domain.AgentAuthenticationObservation, method domain.CodexAuthMethod, email *string, failed bool, call *profileAuthCall) {
 	var nextRetryAt time.Time
+	previous, _ := m.catalog.record(profileID)
 	m.mu.Lock()
 	state := m.auth[profileID]
 	if failed {
@@ -360,6 +371,9 @@ func (m *codexProfileManager) finishAuthentication(profileID string, observation
 	state.call = nil
 	close(call.done)
 	m.mu.Unlock()
+	if !failed {
+		m.reconcileCapacityAuthentication(profileID, previous.Snapshot, observation, method, email)
+	}
 	duration := int64(0)
 	if observation.AttemptedAt != nil {
 		duration = m.now().Sub(*observation.AttemptedAt).Milliseconds()
@@ -415,6 +429,7 @@ func (m *codexProfileManager) invalidate(profileID string) {
 	m.catalog.updateSnapshot(profileID, func(snapshot *domain.CodexProfileSnapshot) {
 		snapshot.Authentication.Freshness = domain.AgentReadinessStale
 	})
+	m.capacity.invalidate(profileID, true)
 }
 
 func (m *codexProfileManager) create(ctx context.Context, label string) (domain.CodexProfileSnapshot, error) {
@@ -433,7 +448,9 @@ func (m *codexProfileManager) create(ctx context.Context, label string) (domain.
 	if err != nil {
 		return domain.CodexProfileSnapshot{}, apierr.Unavailable("CODEX_PROFILE_MANAGEMENT_UNAVAILABLE", "Codex profile could not be created")
 	}
-	return record.Snapshot, nil
+	snapshot := record.Snapshot
+	snapshot.Capacity = m.capacity.snapshot(snapshot.ID)
+	return snapshot, nil
 }
 
 func requireBrowserLoginCapability(capabilities domain.CodexProfileCapabilities) error {
@@ -583,6 +600,10 @@ func (m *codexProfileManager) watchLogin(ctx context.Context, operation *codexLo
 				m.recheck(operation.profileID, true)
 				continue
 			}
+			if event.Kind == ports.CodexAccountEventCapacityUpdated && event.Capacity != nil {
+				m.capacity.updateFromEvent(operation.profileID, *event.Capacity)
+				continue
+			}
 			if event.Kind != ports.CodexAccountEventLoginCompleted || event.LoginID != operation.loginID {
 				continue
 			}
@@ -605,6 +626,7 @@ func (m *codexProfileManager) watchLogin(ctx context.Context, operation *codexLo
 				return
 			}
 			profile := latest.Snapshot
+			profile.Capacity = m.capacity.snapshot(profile.ID)
 			m.completeLogin(operation.id, domain.CodexProfileLoginCompleted, domain.CodexProfileLoginReasonCompleted, "Codex profile sign-in completed.", &profile)
 			return
 		case <-ctx.Done():
@@ -616,6 +638,7 @@ func (m *codexProfileManager) watchLogin(ctx context.Context, operation *codexLo
 
 func (m *codexProfileManager) storeAccountObservation(profileID string, account ports.CodexAccountObservation) {
 	observation := accountAuthenticationObservation(m.now(), account.Authentication)
+	previous, _ := m.catalog.record(profileID)
 	m.mu.Lock()
 	state := m.auth[profileID]
 	if state == nil {
@@ -638,6 +661,29 @@ func (m *codexProfileManager) storeAccountObservation(profileID string, account 
 		}
 	}
 	m.mu.Unlock()
+	if account.Authentication != domain.AgentAuthenticationUnknown {
+		m.reconcileCapacityAuthentication(profileID, previous.Snapshot, observation, account.Method, account.Email)
+	}
+}
+
+func (m *codexProfileManager) reconcileCapacityAuthentication(profileID string, previous domain.CodexProfileSnapshot, observation domain.AgentAuthenticationObservation, method domain.CodexAuthMethod, email *string) {
+	switch {
+	case observation.State == domain.AgentAuthenticationUnauthorized && observation.Freshness == domain.AgentReadinessFresh:
+		m.capacity.replace(profileID, staticCodexCapacity(domain.CodexCapacityUnknown, domain.CodexCapacityReasonSkippedSignedOut, "Sign in to Codex to see subscription capacity."), "authentication")
+	case observation.State == domain.AgentAuthenticationNotApplicable || method == domain.CodexAuthMethodAPIKey || method == domain.CodexAuthMethodOther:
+		m.capacity.replace(profileID, staticCodexCapacity(domain.CodexCapacityUnsupported, domain.CodexCapacityReasonUnsupported, "Subscription capacity is not available for this Codex authentication method."), "authentication")
+	case observation.State == domain.AgentAuthenticationAuthorized && method == domain.CodexAuthMethodChatGPT:
+		if previous.Authentication.State != observation.State || previous.AuthMethod != method || !sameOptionalString(previous.AccountEmail, email) {
+			m.capacity.invalidate(profileID, true)
+		}
+	}
+}
+
+func sameOptionalString(left, right *string) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
 }
 
 func (m *codexProfileManager) recordLoginReadFailure(profileID string, err error) {
@@ -692,12 +738,19 @@ func (m *codexProfileManager) completeLogin(operationID string, status domain.Co
 }
 
 func (m *codexProfileManager) recheck(profileID string, refreshToken bool) {
-	go func(profileID string) {
+	m.mu.Lock()
+	capabilities := m.capabilities
+	m.mu.Unlock()
+	go func(profileID string, capabilities domain.CodexProfileCapabilities) {
 		record, ok := m.catalog.record(profileID)
 		if ok && record.Snapshot.Status == domain.CodexProfileStatusValid {
-			_, _ = m.ensureAuthentication(m.ctx, record, domain.AgentReadinessPurposeDisplay, true, refreshToken)
+			if _, err := m.ensureAuthentication(m.ctx, record, domain.AgentReadinessPurposeDisplay, true, refreshToken); err == nil {
+				if latest, found := m.catalog.record(profileID); found {
+					_, _ = m.capacity.ensureOne(m.ctx, latest, capabilities, true)
+				}
+			}
 		}
-	}(profileID)
+	}(profileID, capabilities)
 }
 
 func (m *codexProfileManager) evictLogin(operationID string) {
@@ -845,6 +898,60 @@ func (s *Service) EnsureCodexProfiles(ctx context.Context, profileIDs []string, 
 	return result, nil
 }
 
+// EnsureCodexProfileCapacity refreshes display authentication first and then
+// ensures the eligible profile-scoped capacity snapshots. Provider failures
+// remain represented as safe stale/unknown observations in the 200 response.
+func (s *Service) EnsureCodexProfileCapacity(ctx context.Context, profileIDs []string) (CodexProfiles, error) {
+	if s.codexProfiles == nil {
+		return CodexProfiles{}, apierr.Unavailable("CODEX_PROFILE_MANAGEMENT_UNAVAILABLE", "Codex profile management is unavailable")
+	}
+	if _, err := s.EnsureCodexProfiles(ctx, profileIDs, domain.AgentReadinessPurposeDisplay); err != nil {
+		return CodexProfiles{}, err
+	}
+	records, err := s.codexProfiles.catalog.recordsFor(profileIDs)
+	if err != nil {
+		return CodexProfiles{}, mapUnknownCodexProfile(err)
+	}
+	s.codexProfiles.mu.Lock()
+	capabilities := s.codexProfiles.capabilities
+	s.codexProfiles.mu.Unlock()
+	if err := s.codexProfiles.capacity.ensure(ctx, records, capabilities); err != nil {
+		return CodexProfiles{}, err
+	}
+	return s.codexProfiles.view(profileIDs)
+}
+
+// SubscribeCodexProfileCapacity emits cached snapshots first and then live,
+// latest-wins profile changes until the request context closes.
+func (s *Service) SubscribeCodexProfileCapacity(ctx context.Context) (<-chan CodexProfileCapacityEvent, error) {
+	if s.codexProfiles == nil {
+		return nil, apierr.Unavailable("CODEX_PROFILE_MANAGEMENT_UNAVAILABLE", "Codex profile management is unavailable")
+	}
+	records, err := s.codexProfiles.catalog.recordsFor(nil)
+	if err != nil {
+		return nil, err
+	}
+	return s.codexProfiles.capacity.subscribe(ctx, records), nil
+}
+
+// ObserveCodexProfileCapacity merges a correctly attributed sparse bound-Chat
+// provider notification into the shared profile snapshot.
+func (s *Service) ObserveCodexProfileCapacity(profileID string, observation ports.CodexCapacityObservation) {
+	if s.codexProfiles == nil {
+		return
+	}
+	s.codexProfiles.capacity.updateFromEvent(strings.TrimSpace(profileID), observation)
+}
+
+// InvalidateCodexProfileCapacity marks one exact profile stale without native
+// work. The next meaningful display or launch trigger performs the read.
+func (s *Service) InvalidateCodexProfileCapacity(profileID string) {
+	if s.codexProfiles == nil {
+		return
+	}
+	s.codexProfiles.capacity.invalidate(strings.TrimSpace(profileID), false)
+}
+
 // CreateCodexProfile atomically creates an isolated AO-managed Codex profile.
 func (s *Service) CreateCodexProfile(ctx context.Context, label string) (domain.CodexProfileSnapshot, error) {
 	if s.codexProfiles == nil {
@@ -923,7 +1030,7 @@ func (s *Service) WarmCodexProfiles() {
 		if err := s.codexProfiles.catalog.refresh(); err != nil {
 			return
 		}
-		_, _ = s.EnsureCodexProfiles(s.codexProfiles.ctx, nil, domain.AgentReadinessPurposeDisplay)
+		_, _ = s.EnsureCodexProfileCapacity(s.codexProfiles.ctx, nil)
 	}()
 }
 

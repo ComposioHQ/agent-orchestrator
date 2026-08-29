@@ -145,7 +145,7 @@ func (s *Service) resolveCodexRecordForLaunch(ctx context.Context, record codexP
 		return domain.CodexLaunchContext{}, apierr.Conflict("CODEX_PROFILE_UNAUTHORIZED", "The selected Codex profile needs sign-in", map[string]any{"profileId": record.Snapshot.ID})
 	}
 	now := s.codexProfiles.now()
-	return domain.CodexLaunchContext{
+	launch := domain.CodexLaunchContext{
 		Binding: domain.CodexSessionBinding{
 			ProfileID: record.Snapshot.ID, Source: record.Snapshot.Source,
 			Home: canonicalPath(record.Home), CreatedAt: now,
@@ -153,7 +153,13 @@ func (s *Service) resolveCodexRecordForLaunch(ctx context.Context, record codexP
 		Env:            map[string]string{"CODEX_HOME": canonicalPath(record.Home)},
 		Managed:        record.Snapshot.Source == domain.CodexProfileSourceManaged,
 		Authentication: auth,
-	}, nil
+	}
+	// Capacity is advisory. Start or join a stale read only after launch
+	// readiness has succeeded, and never make workspace/process creation wait.
+	go func(record codexProfileRecord, capabilities domain.CodexProfileCapabilities) {
+		_, _ = s.codexProfiles.capacity.ensureOne(s.codexProfiles.ctx, record, capabilities, false)
+	}(record, capabilities)
+	return launch, nil
 }
 
 func (s *Service) ensureCodexInstallationForLaunch(ctx context.Context) error {
@@ -220,6 +226,10 @@ func codexProfileUnavailable(profileID string) error {
 // filesystem or native work and therefore remains safe for ordinary session reads.
 func (s *Service) CodexSessionProfileSummary(binding domain.CodexSessionBinding) domain.CodexSessionProfileSummary {
 	summary := domain.CodexSessionProfileSummary{ID: binding.ProfileID, Source: binding.Source, Availability: domain.CodexProfileUnknown}
+	if s.codexProfiles != nil {
+		capacity := domain.CompactCodexCapacity(s.codexProfiles.capacity.snapshot(binding.ProfileID))
+		summary.Capacity = &capacity
+	}
 	if binding.Source == domain.CodexProfileSourceLegacy {
 		summary.Label = "Legacy Codex profile"
 		return summary

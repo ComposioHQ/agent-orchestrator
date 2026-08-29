@@ -50,8 +50,9 @@ type codexProfileCatalog struct {
 	now          func() time.Time
 	newID        func() string
 
-	mu      sync.RWMutex
-	records map[string]codexProfileRecord
+	mu        sync.RWMutex
+	records   map[string]codexProfileRecord
+	onRemoved func([]string)
 }
 
 func newCodexProfileCatalog(root, existingHome string, logger *slog.Logger) *codexProfileCatalog {
@@ -216,7 +217,23 @@ func (c *codexProfileCatalog) preserveAuthentication(record *codexProfileRecord)
 
 func (c *codexProfileCatalog) replaceRecords(records map[string]codexProfileRecord) {
 	c.mu.Lock()
+	removed := make([]string, 0)
+	for id := range c.records {
+		if _, ok := records[id]; !ok {
+			removed = append(removed, id)
+		}
+	}
 	c.records = records
+	onRemoved := c.onRemoved
+	c.mu.Unlock()
+	if onRemoved != nil && len(removed) > 0 {
+		onRemoved(removed)
+	}
+}
+
+func (c *codexProfileCatalog) setOnRemoved(callback func([]string)) {
+	c.mu.Lock()
+	c.onRemoved = callback
 	c.mu.Unlock()
 }
 
