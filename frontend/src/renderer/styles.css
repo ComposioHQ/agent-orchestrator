@@ -2492,8 +2492,8 @@ html.sidebar-reordering * {
    Square the joining edge, let the label half breathe, and keep the chevron half
    narrower than a full square so the pair stays compact. */
 .workspace-topbar-actions .topbar-control--split-main {
-	padding-inline: 0;
-	gap: 0;
+	padding-inline: var(--space-2_5);
+	gap: var(--space-1_5);
 	border-start-end-radius: 0;
 	border-end-end-radius: 0;
 }
