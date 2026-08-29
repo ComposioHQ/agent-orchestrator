@@ -253,8 +253,10 @@ func (e *Engine) TriggerWithSource(ctx stdctx.Context, workerID domain.SessionID
 	if err != nil {
 		return TriggerResult{}, err
 	}
-	hasConfigOverride := !overrideConfig.IsZero()
-	if override != "" {
+	resolvedConfig := config
+	hasHarnessOverride := override != ""
+	hasConfigOverride := !overrideConfig.IsZero() && (hasHarnessOverride || overrideConfig != resolvedConfig)
+	if hasHarnessOverride {
 		harness = override
 		if hasConfigOverride {
 			config = overrideConfig
@@ -320,7 +322,7 @@ func (e *Engine) TriggerWithSource(ctx stdctx.Context, workerID domain.SessionID
 		if source == domain.ReviewTriggerAuto && autoReviewHeadBlocked(runs, reviewState.PRURL, reviewState.TargetSHA, harness) {
 			eligible = false
 		}
-		if !eligible && !secondOpinionWanted(reviewState, override != "", hasConfigOverride, harness) {
+		if !eligible && !secondOpinionWanted(reviewState, hasHarnessOverride, hasConfigOverride, harness) {
 			continue
 		}
 		if _, err := e.store.SupersedeStaleRunningReviewRuns(ctx, workerID, reviewState.PRURL, reviewState.TargetSHA, "superseded by a review trigger for a newer commit"); err != nil {
