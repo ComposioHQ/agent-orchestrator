@@ -1107,7 +1107,7 @@ function ChatHeader({
 			>
 				<div
 					className={cn(
-						"flex min-w-0 shrink items-center pr-3",
+						"flex min-w-0 shrink items-stretch pr-3",
 						!isSidebarOpen && isMac && "session-topbar-titlebar-clearance-mac",
 						!isSidebarOpen && isLinux && "session-topbar-titlebar-clearance-linux",
 					)}
@@ -1118,7 +1118,7 @@ function ChatHeader({
 				>
 					<div
 						aria-label="Chat tabs"
-						className="flex h-full min-w-0 flex-1 items-center"
+						className="flex h-full min-w-0 flex-1 items-stretch"
 						onKeyDown={onTabsKeyDown ?? handleTerminalTabListKeyDown}
 						role="tablist"
 					>
@@ -1152,7 +1152,7 @@ function ChatHeader({
 								<span className="truncate">{label}</span>
 							</button>
 						)}
-						<div className="scrollbar-none flex min-w-flex-min min-w-0 flex-1 self-stretch items-center overflow-x-auto">
+						<div className="scrollbar-none flex min-w-flex-min min-w-0 flex-1 self-stretch items-stretch overflow-x-auto">
 							<div className="flex w-max items-stretch">
 								{reviewerTerminal ? (
 									<button

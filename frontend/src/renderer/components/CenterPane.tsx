@@ -529,7 +529,7 @@ export function CenterPane({
 			<div className="session-topbar-surface flex min-w-0 flex-1" data-testid="session-workspace-topbar">
 				<div
 					className={cn(
-						"flex min-w-0 shrink items-center pr-3",
+						"flex min-w-0 shrink items-stretch pr-3",
 						!isFullscreen && !isSidebarOpen && isMac && "session-topbar-titlebar-clearance-mac",
 						!isFullscreen && !isSidebarOpen && isLinux && "session-topbar-titlebar-clearance-linux",
 					)}
@@ -540,7 +540,7 @@ export function CenterPane({
 				>
 					<div
 							aria-label={t("terminal.tabsAria")}
-							className="flex h-full min-w-0 flex-1 items-center"
+							className="flex h-full min-w-0 flex-1 items-stretch"
 							onKeyDown={handleTerminalTabListKeyDown}
 							role="tablist"
 						>
@@ -558,13 +558,13 @@ export function CenterPane({
 							)}
 							<div
 								ref={tabsOverflowRef}
-								className="scrollbar-none flex min-w-flex-min min-w-0 flex-1 self-stretch items-center overflow-x-auto"
+								className="scrollbar-none flex min-w-flex-min min-w-0 flex-1 self-stretch items-stretch overflow-x-auto"
 							>
 								<div className="flex w-max items-stretch">
 									<Reorder.Group
 										as="div"
 										axis="x"
-										className="flex self-stretch"
+										className="flex items-stretch self-stretch"
 										onReorder={reorderAuxiliaryTerminals}
 										values={orderedAuxiliaryTerminals.map((terminal) => terminal.key)}
 									>
@@ -894,7 +894,7 @@ export function SessionPaneTab({
 				connected
 					? isActive
 						? "border-border-strong bg-overlay text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80"
-						: "text-passive hover:bg-interactive-hover/60 hover:text-foreground"
+						: "text-passive hover:bg-raised hover:text-foreground"
 					: tabAction
 						? isActive
 							? "text-foreground"

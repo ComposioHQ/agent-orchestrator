@@ -127,6 +127,7 @@ describe("ShellTerminalTab rename", () => {
 		renderTab({ appearance: "connected", isActive: true });
 
 		expect(screen.getByRole("tab", { name: "ao" }).parentElement).toHaveClass(
+			"h-full",
 			"self-stretch",
 			"bg-overlay",
 			"after:h-0.5",
@@ -135,6 +136,16 @@ describe("ShellTerminalTab rename", () => {
 		expect(screen.getByRole("tab", { name: "ao" }).parentElement).not.toHaveClass("rounded-md");
 		expect(screen.getByRole("tab", { name: "ao" }).parentElement).not.toHaveClass("before:bg-accent");
 		expect(screen.getByRole("tab", { name: "ao" }).parentElement).not.toHaveClass("after:h-px");
+	});
+
+	it("matches the shared inactive tab hover surface", () => {
+		renderTab({ appearance: "connected", isActive: false });
+
+		expect(screen.getByRole("tab", { name: "ao" }).parentElement).toHaveClass(
+			"h-full",
+			"self-stretch",
+			"hover:bg-raised",
+		);
 	});
 
 	it("places the active connected-terminal indicator along the bottom edge", () => {
