@@ -55,7 +55,7 @@ export function useSessionHandoffMenu(
 		presentation?.outcome === "success" ? undefined : presentation;
 
 	return {
-		agentSwitch: selectedAgentSwitch,
+		agentSwitch,
 		switchControlPresentation,
 		switchError: switchMutation.error,
 	};
