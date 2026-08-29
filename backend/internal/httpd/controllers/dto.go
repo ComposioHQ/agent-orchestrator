@@ -131,6 +131,11 @@ type CodexProfileSwitchIDParam struct {
 	SwitchID string `path:"switchId" description:"Durable Codex profile-switch identifier."`
 }
 
+// CodexAutomaticProfileSwitchAttemptIDParam is the automatic attempt path identifier.
+type CodexAutomaticProfileSwitchAttemptIDParam struct {
+	AttemptID string `path:"attemptId" description:"Durable automatic Codex profile-switch attempt identifier."`
+}
+
 // SessionInterfaceTransitionIDParam is the {transitionId} path parameter for a
 // durable interface handoff.
 type SessionInterfaceTransitionIDParam struct {
@@ -349,6 +354,19 @@ type CodexProfileSwitchResponse struct {
 type ListCodexProfileSwitchesResponse struct {
 	Switches []domain.CodexProfileSwitch `json:"switches"`
 }
+
+// CodexAutomaticProfileSwitchPolicyResponse is the safe cached chain policy.
+type CodexAutomaticProfileSwitchPolicyResponse = domain.CodexAutomaticProfileSwitchPolicy
+
+// PutCodexAutomaticProfileSwitchPolicyRequest replaces one ordered chain policy.
+type PutCodexAutomaticProfileSwitchPolicyRequest struct {
+	Enabled          bool     `json:"enabled"`
+	ProfileIDs       []string `json:"profileIds"`
+	ExpectedRevision int64    `json:"expectedRevision" minimum:"0"`
+}
+
+// CodexAutomaticProfileSwitchAttemptResponse is one safe durable attempt view.
+type CodexAutomaticProfileSwitchAttemptResponse = domain.CodexAutomaticProfileSwitchAttempt
 
 // SubmitAgentHandoffRequest is the body of
 // POST /api/v1/sessions/{sessionId}/agent-switches/{switchId}/handoff.

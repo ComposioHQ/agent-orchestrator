@@ -948,6 +948,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sessions/{sessionId}/automatic-profile-switch-attempts/{attemptId}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel automatic evaluation before the linked switch becomes unsafe */
+        post: operations["cancelCodexAutomaticProfileSwitchAttempt"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sessions/{sessionId}/automatic-profile-switch-policy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the cached continuation-chain automatic switching policy */
+        get: operations["getCodexAutomaticProfileSwitchPolicy"];
+        /** Replace the ordered continuation-chain automatic switching policy */
+        put: operations["putCodexAutomaticProfileSwitchPolicy"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sessions/{sessionId}/conversation": {
         parameters: {
             query?: never;
@@ -2290,6 +2325,66 @@ export interface components {
             projectId?: null | string;
             remoteUrl: string;
         };
+        CodexAutomaticProfileSwitchAttempt: {
+            canCancel: boolean;
+            candidates: components["schemas"]["CodexAutomaticProfileSwitchAttemptCandidate"][];
+            /** Format: date-time */
+            completedAt?: null | string;
+            /** Format: date-time */
+            createdAt: string;
+            id: string;
+            outcomeCode: string;
+            /** Format: int64 */
+            policyRevision: number;
+            profileSwitch?: components["schemas"]["CodexProfileSwitch"];
+            reason: string;
+            selectedProfileId?: null | string;
+            selectedProfilePosition?: null | number;
+            sourceProfile?: components["schemas"]["CodexSessionProfileSummary"];
+            sourceProfileId: string;
+            sourceSessionId: string;
+            /** @enum {string} */
+            state: "evaluating" | "no_candidate" | "delegated_to_phase5" | "completed" | "needs_attention" | "cancelled";
+            targetProfile?: components["schemas"]["CodexSessionProfileSummary"];
+            /** @enum {string} */
+            trigger: "usage_limit_failure" | "capacity_event" | "capacity_read";
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        CodexAutomaticProfileSwitchAttemptCandidate: {
+            /** Format: date-time */
+            evaluatedAt: string;
+            label: string;
+            /** Format: int64 */
+            position: number;
+            profileId: string;
+            reason: string;
+            reasonCode: string;
+        };
+        CodexAutomaticProfileSwitchPolicy: {
+            chainRootSessionId: string;
+            /** Format: date-time */
+            createdAt?: null | string;
+            currentProfile: components["schemas"]["CodexSessionProfileSummary"];
+            enabled: boolean;
+            profiles: components["schemas"]["CodexAutomaticProfileSwitchPolicyEntry"][];
+            /** Format: int64 */
+            revision: number;
+            /** Format: date-time */
+            updatedAt?: null | string;
+        };
+        CodexAutomaticProfileSwitchPolicyEntry: {
+            authentication?: components["schemas"]["AgentAuthenticationObservation"];
+            /** @enum {string} */
+            availability: "available" | "unavailable" | "unknown";
+            capacity?: components["schemas"]["CodexCapacitySummary"];
+            current: boolean;
+            id: string;
+            label: string;
+            reason: string;
+            reasonCode: string;
+            source?: string;
+        };
         CodexCapabilityObservation: {
             reason: string;
             reasonCode: string;
@@ -2390,6 +2485,8 @@ export interface components {
             /** @enum {string} */
             handoffClassification: "pending" | "semantic" | "fallback";
             id: string;
+            /** @enum {string} */
+            initiator: "manual" | "automatic";
             /** @enum {string} */
             phase: "requested" | "waiting_for_safe_boundary" | "preparing_handoff" | "stopping_source" | "source_stopped" | "starting_target" | "target_ready" | "delivering_handoff" | "recovery_required" | "completed" | "cancelled" | "failed";
             progressReason: string;
@@ -2522,6 +2619,7 @@ export interface components {
             kind: string;
             /** Format: date-time */
             lastUserMessageAt?: null | string;
+            latestAutomaticCodexProfileSwitchAttempt?: components["schemas"]["CodexAutomaticProfileSwitchAttempt"];
             /** @enum {string} */
             mode: "chat" | "tui";
             model?: string;
@@ -3216,6 +3314,12 @@ export interface components {
             lastSeenAt: string;
             platform?: string;
             token?: string;
+        };
+        PutCodexAutomaticProfileSwitchPolicyRequest: {
+            enabled: boolean;
+            /** Format: int64 */
+            expectedRevision: number;
+            profileIds: string[];
         };
         RegisterPushDeviceRequest: {
             /** @description Human-friendly device label. */
@@ -7170,6 +7274,207 @@ export interface operations {
             };
             /** @description Not Implemented */
             501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    cancelCodexAutomaticProfileSwitchAttempt: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+                /** @description Durable automatic Codex profile-switch attempt identifier. */
+                attemptId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CodexAutomaticProfileSwitchAttempt"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    getCodexAutomaticProfileSwitchPolicy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CodexAutomaticProfileSwitchPolicy"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    putCodexAutomaticProfileSwitchPolicy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PutCodexAutomaticProfileSwitchPolicyRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CodexAutomaticProfileSwitchPolicy"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

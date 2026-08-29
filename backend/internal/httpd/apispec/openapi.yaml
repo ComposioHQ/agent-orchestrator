@@ -2557,6 +2557,165 @@ paths:
       summary: Enable or disable automatic review for a session
       tags:
       - sessions
+  /api/v1/sessions/{sessionId}/automatic-profile-switch-attempts/{attemptId}/cancel:
+    post:
+      operationId: cancelCodexAutomaticProfileSwitchAttempt
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      - description: Durable automatic Codex profile-switch attempt identifier.
+        in: path
+        name: attemptId
+        required: true
+        schema:
+          description: Durable automatic Codex profile-switch attempt identifier.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CodexAutomaticProfileSwitchAttempt'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Cancel automatic evaluation before the linked switch becomes unsafe
+      tags:
+      - sessions
+  /api/v1/sessions/{sessionId}/automatic-profile-switch-policy:
+    get:
+      operationId: getCodexAutomaticProfileSwitchPolicy
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CodexAutomaticProfileSwitchPolicy'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Read the cached continuation-chain automatic switching policy
+      tags:
+      - sessions
+    put:
+      operationId: putCodexAutomaticProfileSwitchPolicy
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PutCodexAutomaticProfileSwitchPolicyRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CodexAutomaticProfileSwitchPolicy'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Replace the ordered continuation-chain automatic switching policy
+      tags:
+      - sessions
   /api/v1/sessions/{sessionId}/conversation:
     get:
       operationId: getSessionConversation
@@ -6793,6 +6952,169 @@ components:
       - remoteUrl
       - destinationParent
       type: object
+    CodexAutomaticProfileSwitchAttempt:
+      properties:
+        canCancel:
+          type: boolean
+        candidates:
+          items:
+            $ref: '#/components/schemas/CodexAutomaticProfileSwitchAttemptCandidate'
+          type: array
+        completedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        createdAt:
+          format: date-time
+          type: string
+        id:
+          type: string
+        outcomeCode:
+          type: string
+        policyRevision:
+          format: int64
+          type: integer
+        profileSwitch:
+          $ref: '#/components/schemas/CodexProfileSwitch'
+        reason:
+          type: string
+        selectedProfileId:
+          type:
+          - "null"
+          - string
+        selectedProfilePosition:
+          type:
+          - "null"
+          - integer
+        sourceProfile:
+          $ref: '#/components/schemas/CodexSessionProfileSummary'
+        sourceProfileId:
+          type: string
+        sourceSessionId:
+          type: string
+        state:
+          enum:
+          - evaluating
+          - no_candidate
+          - delegated_to_phase5
+          - completed
+          - needs_attention
+          - cancelled
+          type: string
+        targetProfile:
+          $ref: '#/components/schemas/CodexSessionProfileSummary'
+        trigger:
+          enum:
+          - usage_limit_failure
+          - capacity_event
+          - capacity_read
+          type: string
+        updatedAt:
+          format: date-time
+          type: string
+      required:
+      - id
+      - sourceSessionId
+      - sourceProfileId
+      - trigger
+      - policyRevision
+      - state
+      - outcomeCode
+      - candidates
+      - reason
+      - canCancel
+      - createdAt
+      - updatedAt
+      type: object
+    CodexAutomaticProfileSwitchAttemptCandidate:
+      properties:
+        evaluatedAt:
+          format: date-time
+          type: string
+        label:
+          type: string
+        position:
+          format: int64
+          type: integer
+        profileId:
+          type: string
+        reason:
+          type: string
+        reasonCode:
+          type: string
+      required:
+      - profileId
+      - label
+      - position
+      - reasonCode
+      - reason
+      - evaluatedAt
+      type: object
+    CodexAutomaticProfileSwitchPolicy:
+      properties:
+        chainRootSessionId:
+          type: string
+        createdAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        currentProfile:
+          $ref: '#/components/schemas/CodexSessionProfileSummary'
+        enabled:
+          type: boolean
+        profiles:
+          items:
+            $ref: '#/components/schemas/CodexAutomaticProfileSwitchPolicyEntry'
+          type: array
+        revision:
+          format: int64
+          type: integer
+        updatedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+      required:
+      - chainRootSessionId
+      - enabled
+      - revision
+      - currentProfile
+      - profiles
+      type: object
+    CodexAutomaticProfileSwitchPolicyEntry:
+      properties:
+        authentication:
+          $ref: '#/components/schemas/AgentAuthenticationObservation'
+        availability:
+          enum:
+          - available
+          - unavailable
+          - unknown
+          type: string
+        capacity:
+          $ref: '#/components/schemas/CodexCapacitySummary'
+        current:
+          type: boolean
+        id:
+          type: string
+        label:
+          type: string
+        reason:
+          type: string
+        reasonCode:
+          type: string
+        source:
+          type: string
+      required:
+      - id
+      - label
+      - availability
+      - current
+      - reasonCode
+      - reason
+      type: object
     CodexCapabilityObservation:
       properties:
         reason:
@@ -7090,6 +7412,11 @@ components:
           type: string
         id:
           type: string
+        initiator:
+          enum:
+          - manual
+          - automatic
+          type: string
         phase:
           enum:
           - requested
@@ -7153,6 +7480,7 @@ components:
       - phase
       - handoffClassification
       - acknowledgeUnknownCapacity
+      - initiator
       - requestedAt
       - updatedAt
       - progressReason
@@ -7426,6 +7754,8 @@ components:
           type:
           - "null"
           - string
+        latestAutomaticCodexProfileSwitchAttempt:
+          $ref: '#/components/schemas/CodexAutomaticProfileSwitchAttempt'
         mode:
           enum:
           - chat
@@ -9282,6 +9612,23 @@ components:
       required:
       - createdAt
       - lastSeenAt
+      type: object
+    PutCodexAutomaticProfileSwitchPolicyRequest:
+      properties:
+        enabled:
+          type: boolean
+        expectedRevision:
+          format: int64
+          minimum: 0
+          type: integer
+        profileIds:
+          items:
+            type: string
+          type: array
+      required:
+      - enabled
+      - profileIds
+      - expectedRevision
       type: object
     RegisterPushDeviceRequest:
       properties:

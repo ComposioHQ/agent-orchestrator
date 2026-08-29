@@ -94,6 +94,14 @@ type codexProfileSwitchCommander interface {
 	SubmitCodexProfileSwitchHandoff(context.Context, domain.SessionID, domain.CodexProfileSwitchID, domain.AgentGenerationID, json.RawMessage) (domain.CodexProfileSwitch, error)
 }
 
+type codexAutomaticProfileSwitchCommander interface {
+	CachedCodexAutomaticProfileSwitchPolicy(context.Context, domain.SessionID) (domain.CodexAutomaticProfileSwitchPolicy, error)
+	PutCodexAutomaticProfileSwitchPolicy(context.Context, domain.SessionID, sessionmanager.PutCodexAutomaticProfileSwitchPolicyConfig) (domain.CodexAutomaticProfileSwitchPolicy, error)
+	GetCodexAutomaticProfileSwitchAttempt(context.Context, domain.SessionID, string) (domain.CodexAutomaticProfileSwitchAttempt, error)
+	GetLatestCodexAutomaticProfileSwitchAttempt(context.Context, domain.SessionID) (domain.CodexAutomaticProfileSwitchAttempt, bool, error)
+	CancelCodexAutomaticProfileSwitchAttempt(context.Context, domain.SessionID, string) (domain.CodexAutomaticProfileSwitchAttempt, error)
+}
+
 // RollbackOutcome reports what happened in a rollback: either the seed row was
 // deleted, or the partially-spawned session was killed (runtime+workspace torn
 // down, row marked terminated).
@@ -783,6 +791,46 @@ func (s *Service) SubmitCodexProfileSwitchHandoff(ctx context.Context, id domain
 	return s.decorateCodexProfileSwitch(ctx, sw), nil
 }
 
+// CachedCodexAutomaticProfileSwitchPolicy reads the chain policy without native work.
+func (s *Service) CachedCodexAutomaticProfileSwitchPolicy(ctx context.Context, id domain.SessionID) (domain.CodexAutomaticProfileSwitchPolicy, error) {
+	manager, ok := s.manager.(codexAutomaticProfileSwitchCommander)
+	if !ok {
+		return domain.CodexAutomaticProfileSwitchPolicy{}, apierr.Unavailable("CODEX_AUTOMATIC_PROFILE_SWITCH_UNAVAILABLE", "Automatic Codex profile switching is unavailable")
+	}
+	policy, err := manager.CachedCodexAutomaticProfileSwitchPolicy(ctx, id)
+	return policy, toAPIError(err)
+}
+
+// PutCodexAutomaticProfileSwitchPolicy validates and replaces the chain policy.
+func (s *Service) PutCodexAutomaticProfileSwitchPolicy(ctx context.Context, id domain.SessionID, cfg sessionmanager.PutCodexAutomaticProfileSwitchPolicyConfig) (domain.CodexAutomaticProfileSwitchPolicy, error) {
+	manager, ok := s.manager.(codexAutomaticProfileSwitchCommander)
+	if !ok {
+		return domain.CodexAutomaticProfileSwitchPolicy{}, apierr.Unavailable("CODEX_AUTOMATIC_PROFILE_SWITCH_UNAVAILABLE", "Automatic Codex profile switching is unavailable")
+	}
+	policy, err := manager.PutCodexAutomaticProfileSwitchPolicy(ctx, id, cfg)
+	return policy, toAPIError(err)
+}
+
+// GetCodexAutomaticProfileSwitchAttempt reads one safe source-scoped attempt.
+func (s *Service) GetCodexAutomaticProfileSwitchAttempt(ctx context.Context, id domain.SessionID, attemptID string) (domain.CodexAutomaticProfileSwitchAttempt, error) {
+	manager, ok := s.manager.(codexAutomaticProfileSwitchCommander)
+	if !ok {
+		return domain.CodexAutomaticProfileSwitchAttempt{}, apierr.Unavailable("CODEX_AUTOMATIC_PROFILE_SWITCH_UNAVAILABLE", "Automatic Codex profile switching is unavailable")
+	}
+	attempt, err := manager.GetCodexAutomaticProfileSwitchAttempt(ctx, id, attemptID)
+	return attempt, toAPIError(err)
+}
+
+// CancelCodexAutomaticProfileSwitchAttempt cancels evaluation while Phase 5 remains safe.
+func (s *Service) CancelCodexAutomaticProfileSwitchAttempt(ctx context.Context, id domain.SessionID, attemptID string) (domain.CodexAutomaticProfileSwitchAttempt, error) {
+	manager, ok := s.manager.(codexAutomaticProfileSwitchCommander)
+	if !ok {
+		return domain.CodexAutomaticProfileSwitchAttempt{}, apierr.Unavailable("CODEX_AUTOMATIC_PROFILE_SWITCH_UNAVAILABLE", "Automatic Codex profile switching is unavailable")
+	}
+	attempt, err := manager.CancelCodexAutomaticProfileSwitchAttempt(ctx, id, attemptID)
+	return attempt, toAPIError(err)
+}
+
 func restoreModeView(mode sessionmanager.RestoreMode) RestoreModeView {
 	switch mode {
 	case sessionmanager.RestoreModeNative:
@@ -1134,6 +1182,16 @@ func toAPIError(err error) error {
 		return apierr.Conflict("CODEX_PROFILE_SWITCH_RECOVERY_REQUIRED", "This profile switch requires recovery", nil)
 	case errors.Is(err, sessionmanager.ErrCodexProfileSwitchUnavailable):
 		return apierr.Unavailable("CODEX_PROFILE_SWITCH_UNAVAILABLE", "Codex profile switching is unavailable")
+	case errors.Is(err, sessionmanager.ErrCodexAutomaticProfileSwitchRequiresCodex):
+		return apierr.Invalid("CODEX_AUTOMATIC_PROFILE_SWITCH_REQUIRES_CODEX_SESSION", "Automatic switching requires a bound local Codex worker session", nil)
+	case errors.Is(err, sessionmanager.ErrCodexAutomaticProfileSwitchAttemptNotFound):
+		return apierr.NotFound("CODEX_AUTOMATIC_PROFILE_SWITCH_ATTEMPT_NOT_FOUND", "Automatic profile-switch attempt not found")
+	case errors.Is(err, sessionmanager.ErrCodexAutomaticProfileSwitchCancellationUnsafe):
+		return apierr.Conflict("CODEX_AUTOMATIC_PROFILE_SWITCH_CANCELLATION_UNSAFE", "The linked profile switch has crossed the safe cancellation boundary", nil)
+	case errors.Is(err, sessionmanager.ErrCodexAutomaticProfileSwitchUnavailable):
+		return apierr.Unavailable("CODEX_AUTOMATIC_PROFILE_SWITCH_UNAVAILABLE", "Automatic Codex profile switching is unavailable")
+	case errors.Is(err, domain.ErrCodexAutomaticProfileSwitchPolicyRevisionConflict):
+		return apierr.Conflict("CODEX_AUTOMATIC_PROFILE_SWITCH_POLICY_REVISION_CONFLICT", "The automatic profile-switch policy changed", nil)
 	case errors.Is(err, domain.ErrCodexProfileSwitchIdempotencyConflict):
 		return apierr.Conflict("CODEX_PROFILE_SWITCH_IDEMPOTENCY_CONFLICT", "The idempotency key belongs to a different profile switch request", nil)
 	case errors.Is(err, domain.ErrCodexProfileSwitchInProgress):
@@ -1372,6 +1430,13 @@ func (s *Service) toSession(ctx context.Context, rec domain.SessionRecord) (doma
 					session.ContinuedFrom = s.continuationSummary(ctx, sw.SourceSessionID)
 				}
 			}
+		}
+	}
+	if manager, ok := s.manager.(codexAutomaticProfileSwitchCommander); ok {
+		if attempt, found, attemptErr := manager.GetLatestCodexAutomaticProfileSwitchAttempt(ctx, rec.ID); attemptErr != nil {
+			return domain.Session{}, fmt.Errorf("automatic Codex profile switch %s: %w", rec.ID, attemptErr)
+		} else if found {
+			session.LatestAutomaticCodexProfileSwitchAttempt = &attempt
 		}
 	}
 	return session, nil
