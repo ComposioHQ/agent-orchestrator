@@ -280,6 +280,19 @@ func (g *Guard) Nudge(ctx context.Context, id domain.SessionID, msg string) (Out
 	return g.send(ctx, id, msg, g.refuseNudge)
 }
 
+// NudgeUrgent writes an AO-initiated message that must reach the agent even
+// while the session sits idle at a needs-input prompt (waiting_input) —
+// reserved for alerts where a human parked at that prompt may be exactly who
+// needs to act (e.g. a merge conflict needing a rebase or a redirected agent),
+// unlike a routine reaction nudge that can simply wait for the agent to resume
+// on its own. It reuses refuseDeliver, the same policy real user messages take:
+// it still refuses while the session is blocked on a live permission decision
+// (an unsolicited write there risks answering the dialog rather than merely
+// being read late) and while a TUI session has not yet signalled startup.
+func (g *Guard) NudgeUrgent(ctx context.Context, id domain.SessionID, msg string) (Outcome, error) {
+	return g.send(ctx, id, msg, g.refuseDeliver)
+}
+
 // NudgeCoordination writes an AO-initiated coordination message under the full
 // delivery policy, re-evaluated here — at the write boundary — rather than from
 // a caller's earlier snapshot. It refuses whenever the session awaits the human,

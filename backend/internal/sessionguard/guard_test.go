@@ -115,6 +115,72 @@ func TestGuard_OutcomeByState(t *testing.T) {
 	}
 }
 
+// TestGuard_NudgeUrgentReachesNeedsInputButNotBlocked pins NudgeUrgent's
+// outcome table directly: it is the only nudge method that may write into a
+// session idle at a needs-input prompt, and it must still refuse every state
+// Deliver refuses — above all blocked, where a paste+Enter would answer a live
+// permission dialog on the user's behalf.
+func TestGuard_NudgeUrgentReachesNeedsInputButNotBlocked(t *testing.T) {
+	cases := []struct {
+		name string
+		rec  domain.SessionRecord
+		ok   bool
+		want Outcome
+	}{
+		{"active", record(domain.ActivityActive, false), true, Sent},
+		{"idle", record(domain.ActivityIdle, false), true, Sent},
+		// The whole point of the method: unlike Nudge, an urgent nudge lands at
+		// an idle waiting_input prompt.
+		{"waiting_input", record(domain.ActivityWaitingInput, false), true, Sent},
+		{"blocked", record(domain.ActivityBlocked, false), true, SuppressedAwaitingUser},
+		{"exited", record(domain.ActivityExited, false), true, SuppressedExited},
+		{"terminated", record(domain.ActivityIdle, true), true, SuppressedTerminated},
+		{"missing", domain.SessionRecord{}, false, SuppressedNotFound},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			msgr := &fakeMessenger{}
+			g := New(&fakeStore{rec: tc.rec, ok: tc.ok}, msgr, nil)
+			got, err := g.NudgeUrgent(context.Background(), "s1", "hello")
+			if err != nil {
+				t.Fatalf("NudgeUrgent: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("outcome = %v, want %v", got, tc.want)
+			}
+			if wantSent := tc.want == Sent; (len(msgr.sent) == 1) != wantSent {
+				t.Fatalf("messenger sends = %d, want sent=%v", len(msgr.sent), wantSent)
+			}
+		})
+	}
+}
+
+// TestGuard_NudgeUrgentRespectsTUIStartupGate keeps the urgent carve-out from
+// widening past its one intended state: a TUI session that has not yet sent
+// its first hook may still be sitting on a pre-session dialog, so an urgent
+// nudge is refused there exactly as Deliver is.
+func TestGuard_NudgeUrgentRespectsTUIStartupGate(t *testing.T) {
+	msgr := &fakeMessenger{}
+	rec := domain.SessionRecord{
+		ID:       "s1",
+		Mode:     domain.SessionModeTUI,
+		Activity: domain.Activity{State: domain.ActivityWaitingInput},
+	}
+	g := New(&fakeStore{rec: rec, ok: true}, msgr, nil)
+	g.SetStartupSignalGate(func(domain.AgentHarness) bool { return true })
+
+	got, err := g.NudgeUrgent(context.Background(), "s1", "rebase")
+	if err != nil {
+		t.Fatalf("NudgeUrgent: %v", err)
+	}
+	if got != SuppressedStartupPending {
+		t.Fatalf("outcome = %v, want SuppressedStartupPending", got)
+	}
+	if len(msgr.sent) != 0 {
+		t.Fatalf("messenger sends = %d, want 0 before first hook", len(msgr.sent))
+	}
+}
+
 func TestGuard_TUIStartupPendingBlocksDeliver(t *testing.T) {
 	msgr := &fakeMessenger{}
 	rec := domain.SessionRecord{
