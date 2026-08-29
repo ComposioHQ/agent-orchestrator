@@ -673,8 +673,14 @@ func (q *Queries) InsertUsageSource(ctx context.Context, arg InsertUsageSourcePa
 const listCompactSessionUsage = `-- name: ListCompactSessionUsage :many
 SELECT
     ub.session_id,
-    CAST(COALESCE(SUM(mue.input_tokens) + SUM(mue.output_tokens), 0) AS INTEGER) AS processed_tokens,
-    CAST(COUNT(mue.input_tokens) = COUNT(*) AND COUNT(mue.output_tokens) = COUNT(*) AS INTEGER) AS processed_tokens_known,
+    CAST(COALESCE(SUM(mue.input_tokens), 0) AS INTEGER) AS input_tokens,
+    CAST(COUNT(mue.input_tokens) = COUNT(*) AS INTEGER) AS input_tokens_known,
+    CAST(COALESCE(SUM(mue.cached_input_tokens), 0) AS INTEGER) AS cached_input_tokens,
+    CAST(COUNT(mue.cached_input_tokens) = COUNT(*) AS INTEGER) AS cached_input_tokens_known,
+    CAST(COALESCE(SUM(mue.uncached_input_tokens), 0) AS INTEGER) AS uncached_input_tokens,
+    CAST(COUNT(mue.uncached_input_tokens) = COUNT(*) AS INTEGER) AS uncached_input_tokens_known,
+    CAST(COALESCE(SUM(mue.output_tokens), 0) AS INTEGER) AS output_tokens,
+    CAST(COUNT(mue.output_tokens) = COUNT(*) AS INTEGER) AS output_tokens_known,
     CAST(COALESCE(integrity.incomplete, 0) AS INTEGER) AS incomplete,
     CAST(COUNT(*) AS INTEGER) AS event_count,
     CAST(COUNT(mue.estimated_cost_nanos) AS INTEGER) AS priced_event_count,
@@ -707,8 +713,14 @@ ORDER BY s.project_id, s.num
 
 type ListCompactSessionUsageRow struct {
 	SessionID                     domain.SessionID
-	ProcessedTokens               int64
-	ProcessedTokensKnown          int64
+	InputTokens                   int64
+	InputTokensKnown              int64
+	CachedInputTokens             int64
+	CachedInputTokensKnown        int64
+	UncachedInputTokens           int64
+	UncachedInputTokensKnown      int64
+	OutputTokens                  int64
+	OutputTokensKnown             int64
 	Incomplete                    int64
 	EventCount                    int64
 	PricedEventCount              int64
@@ -737,8 +749,14 @@ func (q *Queries) ListCompactSessionUsage(ctx context.Context, projectID interfa
 		var i ListCompactSessionUsageRow
 		if err := rows.Scan(
 			&i.SessionID,
-			&i.ProcessedTokens,
-			&i.ProcessedTokensKnown,
+			&i.InputTokens,
+			&i.InputTokensKnown,
+			&i.CachedInputTokens,
+			&i.CachedInputTokensKnown,
+			&i.UncachedInputTokens,
+			&i.UncachedInputTokensKnown,
+			&i.OutputTokens,
+			&i.OutputTokensKnown,
 			&i.Incomplete,
 			&i.EventCount,
 			&i.PricedEventCount,

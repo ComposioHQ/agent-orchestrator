@@ -317,13 +317,19 @@ func (i *Ingestor) Ingest(ctx context.Context, sourceID int64) (IngestResult, er
 		apply = func() error {
 			return i.pricing.WithSnapshot(ctx, func(snapshot *pricing.Snapshot) error {
 				for index := range parsed.Events {
-					// Live ingestion prices only what the transcript or the
-					// binding's route hint named outright. Resolving the model
-					// against the catalog would turn "one catalog lists this
-					// name" into a billed provider and a dollar amount in the
-					// same write, for a session whose route may simply not have
-					// been recorded yet. Deriving it is the legacy repairer's
-					// job, once no hook is coming.
+					// A unique catalog owner is reliable fallback evidence when a
+					// provider-native record omitted its billing route. Persist it
+					// explicitly as inferred so a later observed route can still
+					// replace both attribution and cost. An unidentified Claude
+					// proxy is different: its hook proved that model ownership is
+					// not the billing route, so it must stay honestly unpriced.
+					if parsed.Events[index].BillingProviderID == "" &&
+						strings.TrimSpace(source.ProviderHint) != pricing.UnidentifiedBillingRoute {
+						if providerID := snapshot.ProviderForModel(parsed.Events[index].ModelID); providerID != "" {
+							parsed.Events[index].BillingProviderID = providerID
+							parsed.Events[index].BillingProviderSource = domain.UsageBillingProviderInferred
+						}
+					}
 					estimate, estimateErr := snapshot.Estimate(parsed.Events[index])
 					if estimateErr != nil {
 						parsed.Events[index].Costs.PricingVersion = snapshot.ProviderVersion(parsed.Events[index].BillingProviderID)

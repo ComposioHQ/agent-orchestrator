@@ -1088,6 +1088,7 @@ type CompactSessionUsageResponse struct {
 	TotalTokens     int64                  `json:"totalTokens" minimum:"0" description:"Deprecated compatibility alias for processedTokens."`
 	Incomplete      bool                   `json:"incomplete"`
 	EstimatedCost   *EstimatedCostResponse `json:"estimatedCost"`
+	Totals          UsageTotalsResponse    `json:"totals" description:"Canonical token categories and estimated cost used by card detail disclosures."`
 }
 
 // ListCompactSessionUsageResponse is the batch dashboard usage response.

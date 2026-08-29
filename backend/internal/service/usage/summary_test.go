@@ -36,14 +36,13 @@ func (s *usageSummaryStoreStub) GetUsageSessionIncomplete(context.Context, domai
 }
 
 func TestSummaryReaderListCompactUsesOneBatchRead(t *testing.T) {
-	zeroProcessed, partialProcessed := int64(0), int64(120)
 	store := &usageSummaryStoreStub{rows: []domain.CompactSessionUsageAggregate{
 		{
-			SessionID: "zero", ProcessedTokens: &zeroProcessed,
+			SessionID: "zero", Tokens: testUsageMetrics(0, 0, 0, 0),
 			Cost: completeCostAggregate(1, 0, 0, 0, 0),
 		},
 		{
-			SessionID: "partial", ProcessedTokens: &partialProcessed, Incomplete: true,
+			SessionID: "partial", Tokens: testUsageMetrics(100, 20, 80, 20), Incomplete: true,
 			Cost: domain.UsageCostAggregate{
 				EventCount:                    1,
 				ObservedCostEventCount:        1,
@@ -58,24 +57,34 @@ func TestSummaryReaderListCompactUsesOneBatchRead(t *testing.T) {
 				UnpricedKnownOutputNanos:      5,
 			},
 		},
+		{
+			SessionID: "unknown", Tokens: domain.UsageTokenMetrics{
+				InputTokens: testUsageMetrics(100, 0, 100, 0).InputTokens,
+			},
+		},
 	}}
 
 	got, err := NewSummaryReader(store).ListCompact(context.Background(), "reverb")
 	mustNoError(t, err)
-	if store.calls[0] != 1 || store.projectID != "reverb" || len(got) != 2 {
+	if store.calls[0] != 1 || store.projectID != "reverb" || len(got) != 3 {
 		t.Fatalf("read=%d project=%q items=%+v", store.calls[0], store.projectID, got)
 	}
-	if got[0].EstimatedCost == nil || got[0].EstimatedCost.Coverage != domain.EstimatedCostCoverageComplete || got[0].EstimatedCost.TotalNanos != 0 {
-		t.Fatalf("zero cost = %+v, want complete zero", got[0].EstimatedCost)
+	if got[0].Totals.EstimatedCost == nil || got[0].Totals.EstimatedCost.Coverage != domain.EstimatedCostCoverageComplete || got[0].Totals.EstimatedCost.TotalNanos != 0 {
+		t.Fatalf("zero cost = %+v, want complete zero", got[0].Totals.EstimatedCost)
 	}
-	if got[1].ProcessedTokens == nil || *got[1].ProcessedTokens != 120 || !got[1].Incomplete ||
-		got[1].EstimatedCost == nil ||
-		got[1].EstimatedCost.Coverage != domain.EstimatedCostCoveragePartial || got[1].EstimatedCost.TotalNanos != 35 {
+	if got[1].Totals.ProcessedTokens == nil || *got[1].Totals.ProcessedTokens != 120 || !got[1].Incomplete ||
+		got[1].Totals.EstimatedCost == nil ||
+		got[1].Totals.EstimatedCost.Coverage != domain.EstimatedCostCoveragePartial || got[1].Totals.EstimatedCost.TotalNanos != 35 {
 		t.Fatalf("partial compact summary = %+v", got[1])
 	}
-	if got[1].EstimatedCost.InputNanos == nil || *got[1].EstimatedCost.InputNanos != 30 ||
-		got[1].EstimatedCost.CachedInputNanos == nil || *got[1].EstimatedCost.CachedInputNanos != 0 {
-		t.Fatalf("partial components = %+v", got[1].EstimatedCost)
+	if got[1].Totals.EstimatedCost.InputNanos == nil || *got[1].Totals.EstimatedCost.InputNanos != 30 ||
+		got[1].Totals.EstimatedCost.CachedInputNanos == nil || *got[1].Totals.EstimatedCost.CachedInputNanos != 0 {
+		t.Fatalf("partial components = %+v", got[1].Totals.EstimatedCost)
+	}
+	if got[2].Totals.InputTokens == nil || *got[2].Totals.InputTokens != 100 ||
+		got[2].Totals.OutputTokens != nil || got[2].Totals.ProcessedTokens != nil ||
+		got[2].Totals.EstimatedCost != nil {
+		t.Fatalf("unknown compact summary = %+v", got[2])
 	}
 }
 
@@ -201,7 +210,7 @@ func TestSummaryReaderReturnsUnavailableCostForZeroPartialLowerBound(t *testing.
 	}}}
 	got, err := NewSummaryReader(store).ListCompact(context.Background(), "")
 	mustNoError(t, err)
-	if len(got) != 1 || got[0].EstimatedCost != nil {
+	if len(got) != 1 || got[0].Totals.EstimatedCost != nil {
 		t.Fatalf("cost = %+v, want unavailable", got)
 	}
 }

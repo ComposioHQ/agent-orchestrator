@@ -41,13 +41,14 @@ func (c *UsageController) listSessions(w http.ResponseWriter, r *http.Request) {
 	out := make([]CompactSessionUsageResponse, 0, len(items))
 	for _, item := range items {
 		var totalTokens int64
-		if item.ProcessedTokens != nil {
-			totalTokens = *item.ProcessedTokens
+		if item.Totals.ProcessedTokens != nil {
+			totalTokens = *item.Totals.ProcessedTokens
 		}
 		out = append(out, CompactSessionUsageResponse{
-			SessionID: item.SessionID, ProcessedTokens: item.ProcessedTokens,
+			SessionID: item.SessionID, ProcessedTokens: item.Totals.ProcessedTokens,
 			TotalTokens: totalTokens, Incomplete: item.Incomplete,
-			EstimatedCost: estimatedCostResponse(item.EstimatedCost),
+			EstimatedCost: estimatedCostResponse(item.Totals.EstimatedCost),
+			Totals:        usageTotalsResponse(item.Totals),
 		})
 	}
 	envelope.WriteJSON(w, http.StatusOK, ListCompactSessionUsageResponse{Sessions: out})

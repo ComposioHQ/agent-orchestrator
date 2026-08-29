@@ -43,18 +43,26 @@ func newUsageTestServer(t *testing.T, svc *fakeUsageSummaryService) *httptest.Se
 
 func TestUsageAPIListsCompactProjectUsage(t *testing.T) {
 	inputCost := int64(300000000)
+	input := int64(10_000)
+	cachedInput := int64(4_000)
+	uncachedInput := int64(6_000)
+	output := int64(2_300)
 	processed := int64(12300)
 	unavailableProcessed := int64(3)
 	svc := &fakeUsageSummaryService{items: []domain.CompactSessionUsage{
 		{
-			SessionID: "reverb-12", ProcessedTokens: &processed, Incomplete: true,
-			EstimatedCost: &domain.EstimatedCost{
-				TotalNanos: 420000000, InputNanos: &inputCost,
-				Coverage:            domain.EstimatedCostCoveragePartial,
-				ProviderAttribution: domain.EstimatedCostProviderAttributionInferred,
+			SessionID: "reverb-12", Incomplete: true,
+			Totals: domain.UsageMetricTotals{
+				InputTokens: &input, CachedInputTokens: &cachedInput, UncachedInputTokens: &uncachedInput,
+				OutputTokens: &output, ProcessedTokens: &processed,
+				EstimatedCost: &domain.EstimatedCost{
+					TotalNanos: 420000000, InputNanos: &inputCost,
+					Coverage:            domain.EstimatedCostCoveragePartial,
+					ProviderAttribution: domain.EstimatedCostProviderAttributionInferred,
+				},
 			},
 		},
-		{SessionID: "unavailable", ProcessedTokens: &unavailableProcessed},
+		{SessionID: "unavailable", Totals: domain.UsageMetricTotals{ProcessedTokens: &unavailableProcessed}},
 	}}
 	srv := newUsageTestServer(t, svc)
 
@@ -72,12 +80,21 @@ func TestUsageAPIListsCompactProjectUsage(t *testing.T) {
 			TotalTokens     int64           `json:"totalTokens"`
 			Incomplete      bool            `json:"incomplete"`
 			EstimatedCost   json.RawMessage `json:"estimatedCost"`
+			Totals          struct {
+				InputTokens         int64 `json:"inputTokens"`
+				CachedInputTokens   int64 `json:"cachedInputTokens"`
+				UncachedInputTokens int64 `json:"uncachedInputTokens"`
+				OutputTokens        int64 `json:"outputTokens"`
+				ProcessedTokens     int64 `json:"processedTokens"`
+			} `json:"totals"`
 		} `json:"sessions"`
 	}
 	mustJSON(t, body, &got)
 	if len(got.Sessions) != 2 || got.Sessions[0].SessionID != "reverb-12" ||
 		got.Sessions[0].ProcessedTokens != 12300 || got.Sessions[0].TotalTokens != 12300 ||
-		!got.Sessions[0].Incomplete {
+		!got.Sessions[0].Incomplete || got.Sessions[0].Totals.InputTokens != 10000 ||
+		got.Sessions[0].Totals.CachedInputTokens != 4000 || got.Sessions[0].Totals.UncachedInputTokens != 6000 ||
+		got.Sessions[0].Totals.OutputTokens != 2300 || got.Sessions[0].Totals.ProcessedTokens != 12300 {
 		t.Fatalf("response = %+v", got)
 	}
 	var cost struct {

@@ -778,9 +778,14 @@ func (s *Store) ListCompactSessionUsageAggregates(ctx context.Context, projectID
 	out := make([]domain.CompactSessionUsageAggregate, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, domain.CompactSessionUsageAggregate{
-			SessionID:       row.SessionID,
-			ProcessedTokens: int64PtrWhen(row.ProcessedTokens, row.ProcessedTokensKnown != 0),
-			Incomplete:      row.Incomplete != 0,
+			SessionID: row.SessionID,
+			Tokens: domain.UsageTokenMetrics{
+				InputTokens:         int64PtrWhen(row.InputTokens, row.InputTokensKnown != 0),
+				CachedInputTokens:   int64PtrWhen(row.CachedInputTokens, row.CachedInputTokensKnown != 0),
+				UncachedInputTokens: int64PtrWhen(row.UncachedInputTokens, row.UncachedInputTokensKnown != 0),
+				OutputTokens:        int64PtrWhen(row.OutputTokens, row.OutputTokensKnown != 0),
+			},
+			Incomplete: row.Incomplete != 0,
 			Cost: domain.UsageCostAggregate{
 				EventCount: row.EventCount, PricedEventCount: row.PricedEventCount, PricedTotalNanos: row.PricedTotalNanos,
 				ObservedCostEventCount: row.ObservedCostEventCount, InferredCostEventCount: row.InferredCostEventCount,

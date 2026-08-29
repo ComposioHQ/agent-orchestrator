@@ -19,6 +19,72 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 )
 
+func TestIngestorInfersUniqueBillingProviderForFreshHarnessUsage(t *testing.T) {
+	t.Run("Claude Code", func(t *testing.T) {
+		dataDir := t.TempDir()
+		store, source, path, now := seedClaudeIngestionSource(t, dataDir, "")
+		mustNoError(t, os.WriteFile(path, []byte(legacyClaudeTranscript("claude-test")), 0o600))
+
+		ingestSourceFully(context.Background(), t, NewIngestor(store, IngestorConfig{
+			Clock: func() time.Time { return now }, Pricing: pricing.NewManager(claudePricingSnapshot(t)),
+		}), source.ID)
+
+		assertIngestedBilling(t, dataDir, source.ID, "anthropic", domain.UsageBillingProviderInferred, 795_000, true)
+	})
+
+	t.Run("Codex", func(t *testing.T) {
+		dataDir := t.TempDir()
+		store, source, path, now := seedCodexIngestionSource(t, dataDir)
+		content := `{"type":"turn_context","payload":{"model":"gpt-test"}}` + "\n" +
+			string(codexTokenLine("fresh", 100, 60, 0, 20, 5)) + "\n"
+		mustNoError(t, os.WriteFile(path, []byte(content), 0o600))
+
+		ingestSourceFully(context.Background(), t, NewIngestor(store, IngestorConfig{
+			Clock: func() time.Time { return now }, Pricing: pricing.NewManager(testPricingSnapshot(t, "0.000001")),
+		}), source.ID)
+
+		assertIngestedBilling(t, dataDir, source.ID, "openai", domain.UsageBillingProviderInferred, 86_000, true)
+	})
+
+	t.Run("Kimi", func(t *testing.T) {
+		dataDir := t.TempDir()
+		store, source, path, now := seedKimiIngestionSource(t, dataDir)
+		content := `{"id":"usage-1","time":"2026-08-09T10:00:00Z","type":"usage.record",` +
+			`"model":"glm-test","usage":{"inputOther":13,"inputCacheRead":21,"inputCacheCreation":8,"output":5}}` + "\n"
+		mustNoError(t, os.WriteFile(path, []byte(content), 0o600))
+
+		ingestSourceFully(context.Background(), t, NewIngestor(store, IngestorConfig{
+			Clock: func() time.Time { return now }, Pricing: pricing.NewManager(testPricingSnapshot(t, "0.000001")),
+		}), source.ID)
+
+		assertIngestedBilling(t, dataDir, source.ID, "zai", domain.UsageBillingProviderInferred, 83_000, true)
+	})
+}
+
+func TestIngestorLeavesUnidentifiedClaudeRouteUnpriced(t *testing.T) {
+	dataDir := t.TempDir()
+	store, source, path, now := seedClaudeIngestionSource(t, dataDir, pricing.UnidentifiedBillingRoute)
+	mustNoError(t, os.WriteFile(path, []byte(legacyClaudeTranscript("claude-test")), 0o600))
+
+	ingestSourceFully(context.Background(), t, NewIngestor(store, IngestorConfig{
+		Clock: func() time.Time { return now }, Pricing: pricing.NewManager(claudePricingSnapshot(t)),
+	}), source.ID)
+
+	assertIngestedBilling(t, dataDir, source.ID, "", "", 0, false)
+}
+
+func TestIngestorLeavesUnknownCatalogModelUnpriced(t *testing.T) {
+	dataDir := t.TempDir()
+	store, source, path, now := seedClaudeIngestionSource(t, dataDir, "")
+	mustNoError(t, os.WriteFile(path, []byte(legacyClaudeTranscript("private-model")), 0o600))
+
+	ingestSourceFully(context.Background(), t, NewIngestor(store, IngestorConfig{
+		Clock: func() time.Time { return now }, Pricing: pricing.NewManager(claudePricingSnapshot(t)),
+	}), source.ID)
+
+	assertIngestedBilling(t, dataDir, source.ID, "", "", 0, false)
+}
+
 // Break caught: activating a new catalog after estimation but before the
 // source event commit could leave an old-version event behind after the new
 // provider backfill had already passed it.
@@ -530,6 +596,54 @@ func seedCodexIngestionSource(t *testing.T, dataDir string) (*sqlite.Store, doma
 	})
 	mustNoError(t, err)
 	return store, source, path, now
+}
+
+func seedKimiIngestionSource(t *testing.T, dataDir string) (*sqlite.Store, domain.UsageSourceRecord, string, time.Time) {
+	t.Helper()
+	ctx := context.Background()
+	now := time.Unix(1700000000, 0).UTC()
+	store, session := seedUsageTestSession(
+		t, dataDir, "usage", domain.HarnessKimi, domain.ActivityIdle, "", now,
+	)
+	binding, err := store.UpsertUsageBinding(ctx, domain.UsageBindingRecord{
+		SessionID: session.ID, Harness: domain.HarnessKimi, NativeRootID: "kimi-root",
+		State: domain.UsageBindingActive, UpdatedAt: now,
+	})
+	mustNoError(t, err)
+	path := filepath.Join(t.TempDir(), "wire.jsonl")
+	mustNoError(t, os.WriteFile(path, nil, 0o600))
+	path = canonicalTranscriptPath(path)
+	identity, err := usagesvc.SourceIdentity(ctx, path)
+	mustNoError(t, err)
+	source, err := store.InsertUsageSource(ctx, domain.UsageSourceRecord{
+		BindingID: binding.ID, Kind: domain.UsageSourceKimiWire, NativeSessionID: "kimi-root",
+		ArtifactPath: path, FileIdentity: identity, State: domain.UsageSourcePending, UpdatedAt: now,
+	})
+	mustNoError(t, err)
+	return store, source, path, now
+}
+
+func assertIngestedBilling(
+	t *testing.T,
+	dataDir string,
+	sourceID int64,
+	provider string,
+	source domain.UsageBillingProviderSource,
+	total int64,
+	costKnown bool,
+) {
+	t.Helper()
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(dataDir, "ao.db"))
+	mustNoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	var gotProvider, gotSource sql.NullString
+	var gotTotal sql.NullInt64
+	mustNoError(t, db.QueryRow(`SELECT billing_provider_id, billing_provider_source, estimated_cost_nanos
+FROM model_usage_events WHERE usage_source_id = ?`, sourceID).Scan(&gotProvider, &gotSource, &gotTotal))
+	if gotProvider.String != provider || domain.UsageBillingProviderSource(gotSource.String) != source ||
+		gotTotal.Valid != costKnown || (costKnown && gotTotal.Int64 != total) {
+		t.Fatalf("billing = provider %+v source %+v total %+v", gotProvider, gotSource, gotTotal)
+	}
 }
 
 func readParserStateJSON(t *testing.T, dataDir string, sourceID int64) string {
@@ -1170,8 +1284,9 @@ func testPricingSnapshot(t *testing.T, openAIInputRate string) *pricing.Snapshot
   "zai/glm-test": {
     "litellm_provider": "zai",
     "mode": "chat",
-    "input_cost_per_token": 0,
-    "output_cost_per_token": 0
+    "input_cost_per_token": 0.000002,
+    "cache_read_input_token_cost": 0.000001,
+    "output_cost_per_token": 0.000004
   }
 }`)
 	_, err := catalogsync.Sync(root, upstream, catalogsync.Source{

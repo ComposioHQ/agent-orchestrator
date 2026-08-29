@@ -35,6 +35,7 @@ import { AgentAvatar } from "./AgentAvatar";
 import { ProductExternalLink } from "./ProductExternalLink";
 import { SessionTerminationPopover } from "./SessionTerminationPopover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
+import { EstimatedCostExplanation, UsageBreakdown } from "./UsageBreakdown";
 
 export function toBoardSessionPresentation(
 	session: WorkspaceSession,
@@ -227,15 +228,12 @@ function DesktopSessionCard({
 			renderAvatar={(provider) => <AgentAvatar className="mt-0.5" provider={provider} />}
 			session={toBoardSessionPresentation(session, t)}
 			translate={translate}
-			renderUsage={(usage) => (
-				<Tooltip>
-					<TooltipTrigger asChild>
-						<SessionUsageMetricView usage={usage} />
-					</TooltipTrigger>
-					<TooltipContent side="top">{usage.accessibleLabel}</TooltipContent>
-				</Tooltip>
-			)}
 			usage={usagePresentation}
+			renderUsage={
+				usage
+					? (presentation) => <BoardUsageMetric presentation={presentation} usage={usage} />
+					: undefined
+			}
 		/>
 	);
 }
@@ -266,40 +264,69 @@ function reviewerAvatarUrl(pr: SessionPRSummary, reviewerId: string): string | u
 	return undefined;
 }
 
-// Keep the board metric scannable by showing cost only. The full cost/token
-// summary remains available from the hover tooltip and to screen readers.
+// A card carries exactly one scan metric. Cost wins when it is known; otherwise
+// reliable tokens are the fallback. Unknown data is represented by absence,
+// never by a placeholder that competes with the session itself.
 function toUsagePresentation(
 	usage: SessionUsageSummary | undefined,
 	t: TFunction,
 ): BoardUsagePresentation | undefined {
-	const processedTokens = usage?.processedTokens ?? null;
 	if (!usage) {
 		return undefined;
 	}
-	const cost = formatEstimatedCost(usage.estimatedCost);
-	if (!cost) {
-		if (processedTokens === null || processedTokens <= 0) {
-			return undefined;
-		}
-		const compactTokens = formatTokenCount(processedTokens).replace(/ tok$/, "");
-		const accessibleTokens = t("shell.usageTokens", {
-			count: processedTokens.toLocaleString("en-US"),
-		});
+	const cost = formatEstimatedCost(usage.totals.estimatedCost);
+	if (cost) {
 		return {
-			accessibleLabel: accessibleTokens,
-			compactLabel: compactTokens,
+			accessibleLabel: `${t("usage.estimatedCost")}: ${cost}`,
+			compactLabel: cost,
 		};
 	}
-	if (processedTokens === null) {
-		return { accessibleLabel: cost, compactLabel: cost };
+	const processedTokens = usage.totals.processedTokens;
+	if (processedTokens === null || processedTokens <= 0) {
+		return undefined;
 	}
+	const compactTokens = formatTokenCount(processedTokens).replace(/ tok$/, "");
 	const accessibleTokens = t("shell.usageTokens", {
 		count: processedTokens.toLocaleString("en-US"),
 	});
 	return {
-		accessibleLabel: `${cost} · ${accessibleTokens}`,
-		compactLabel: cost,
+		accessibleLabel: accessibleTokens,
+		compactLabel: compactTokens,
 	};
+}
+
+function BoardUsageMetric({
+	presentation,
+	usage,
+}: {
+	presentation: BoardUsagePresentation;
+	usage: SessionUsageSummary;
+}) {
+	const { t } = useTranslation();
+	return (
+		<Tooltip>
+			<TooltipTrigger asChild>
+				<button
+					aria-label={presentation.accessibleLabel}
+					className="relative z-10 rounded-sm outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
+					onClick={(event) => event.stopPropagation()}
+					onPointerDown={(event) => event.stopPropagation()}
+					type="button"
+				>
+					<SessionUsageMetricView usage={presentation} />
+				</button>
+			</TooltipTrigger>
+			<TooltipContent className="w-72 p-3 text-left" side="top">
+				<p className="mb-2 font-medium text-popover-foreground">{t("inspector.usage.title")}</p>
+				<UsageBreakdown totals={usage.totals} />
+				{usage.totals.estimatedCost ? (
+					<div className="mt-2.5 border-t border-border/70 pt-2 text-2xs leading-normal text-muted-foreground">
+						<EstimatedCostExplanation cost={usage.totals.estimatedCost} />
+					</div>
+				) : null}
+			</TooltipContent>
+		</Tooltip>
+	);
 }
 
 function ArchiveRestoreButton({

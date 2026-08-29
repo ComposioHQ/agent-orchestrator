@@ -6030,12 +6030,17 @@ components:
           format: int64
           minimum: 0
           type: integer
+        totals:
+          $ref: '#/components/schemas/UsageTotalsResponse'
+          description: Canonical token categories and estimated cost used by card
+            detail disclosures.
       required:
       - sessionId
       - processedTokens
       - totalTokens
       - incomplete
       - estimatedCost
+      - totals
       type: object
     ContainerReapConfig:
       properties:
@@ -9473,7 +9478,6 @@ components:
           anyOf:
           - type: "null"
           - $ref: '#/components/schemas/EstimatedCostResponse'
-            type: object
         inputTokens:
           description: Total input, including cached and uncached input.
           minimum: 0

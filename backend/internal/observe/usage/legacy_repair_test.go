@@ -187,6 +187,7 @@ func makeLegacyProviderNull(t *testing.T, dataDir string, sourceID int64) {
 	// too: refilling it from the durable transcript is part of the repair.
 	_, err := db.Exec(`UPDATE model_usage_events
 SET billing_provider_id = NULL, provider_usage_json = NULL,
+    billing_provider_source = NULL,
     input_cost_nanos = NULL, cached_input_cost_nanos = NULL,
     output_cost_nanos = NULL, estimated_cost_nanos = NULL,
     pricing_version = ''
@@ -320,9 +321,8 @@ func TestLegacyRepairerAttributesClaudeHistoryFromTheBindingRouteHint(t *testing
 func TestLegacyRepairerLetsAnObservationCorrectAnInference(t *testing.T) {
 	ctx := context.Background()
 	dataDir := t.TempDir()
-	// No hook has run, so ingestion leaves the row unattributed and the first
-	// repair pass — the point at which no hook is coming — infers the provider
-	// from the model that answered.
+	// No hook has run, so live ingestion uses the catalog's unique model owner
+	// as explicitly inferred attribution.
 	store, source, path, now := seedClaudeIngestionSource(t, dataDir, "")
 	mustNoError(t, os.WriteFile(path, []byte(legacyClaudeTranscript("claude-test")), 0o600))
 	snapshot := claudePricingSnapshot(t)
@@ -330,10 +330,6 @@ func TestLegacyRepairerLetsAnObservationCorrectAnInference(t *testing.T) {
 		Clock:   func() time.Time { return now },
 		Pricing: pricing.NewManager(snapshot),
 	}), source.ID)
-	assertLegacyStillNull(t, dataDir, source.ID)
-	mustNoError(t, NewLegacyRepairer(store, pricing.NewManager(snapshot), LegacyRepairerConfig{
-		Clock: func() time.Time { return now.Add(time.Minute) },
-	}).Run(ctx))
 	assertLegacyRepair(t, dataDir, source.ID, "anthropic", domain.UsageBillingProviderInferred,
 		795_000, snapshot.ProviderVersion("anthropic"))
 
@@ -413,9 +409,10 @@ func TestIngestorRequestsRepairWhenARouteLandsMidChunk(t *testing.T) {
 	mustNoError(t, os.WriteFile(path, []byte(legacyClaudeTranscript("claude-test")), 0o600))
 
 	requested := 0
+	snapshot := claudePricingSnapshot(t)
 	ingestor := NewIngestor(store, IngestorConfig{
 		Clock:                    func() time.Time { return now },
-		Pricing:                  pricing.NewManager(claudePricingSnapshot(t)),
+		Pricing:                  pricing.NewManager(snapshot),
 		RequestAttributionRepair: func() { requested++ },
 	})
 	// The chunk has been read against a binding with no route; the hook lands
@@ -429,7 +426,8 @@ func TestIngestorRequestsRepairWhenARouteLandsMidChunk(t *testing.T) {
 	}
 	ingestSourceFully(ctx, t, ingestor, source.ID)
 
-	assertLegacyStillNull(t, dataDir, source.ID)
+	assertLegacyRepair(t, dataDir, source.ID, "anthropic", domain.UsageBillingProviderInferred,
+		795_000, snapshot.ProviderVersion("anthropic"))
 	if requested == 0 {
 		t.Fatal("no repair requested for rows the route-resolved pass could not have seen")
 	}
@@ -489,6 +487,7 @@ func TestLegacyRepairerRunsAgainAfterStartupIngestionSettles(t *testing.T) {
 		Clock:   func() time.Time { return now },
 		Pricing: pricing.NewManager(snapshot),
 	}), source.ID)
+	makeLegacyProviderNull(t, dataDir, source.ID)
 	assertLegacyStillNull(t, dataDir, source.ID)
 	close(ordered.ingestDone)
 

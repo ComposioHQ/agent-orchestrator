@@ -39,9 +39,17 @@ func (r *SummaryReader) ListCompact(ctx context.Context, projectID domain.Projec
 		if err != nil {
 			return nil, err
 		}
+		totals := domain.UsageMetricTotals{
+			InputTokens: row.Tokens.InputTokens, CachedInputTokens: row.Tokens.CachedInputTokens,
+			UncachedInputTokens: row.Tokens.UncachedInputTokens, OutputTokens: row.Tokens.OutputTokens,
+			EstimatedCost: estimatedCost,
+		}
+		if totals.InputTokens != nil && totals.OutputTokens != nil {
+			processed := *totals.InputTokens + *totals.OutputTokens
+			totals.ProcessedTokens = &processed
+		}
 		out = append(out, domain.CompactSessionUsage{
-			SessionID: row.SessionID, ProcessedTokens: row.ProcessedTokens,
-			Incomplete: row.Incomplete, EstimatedCost: estimatedCost,
+			SessionID: row.SessionID, Incomplete: row.Incomplete, Totals: totals,
 		})
 	}
 	return out, nil

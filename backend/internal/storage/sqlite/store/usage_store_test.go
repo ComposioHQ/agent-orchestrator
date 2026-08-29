@@ -1475,7 +1475,7 @@ func TestUsageAggregatesMergeProvidersPerModelAndPreserveCostCoverageFacts(t *te
 
 	compact, err := s.ListCompactSessionUsageAggregates(ctx, sess.ProjectID)
 	mustNoError(t, err)
-	if len(compact) != 1 || usageTokenValue(compact[0].ProcessedTokens) != 18 {
+	if len(compact) != 1 || compactProcessedTokens(compact[0]) != 18 {
 		t.Fatalf("compact rows = %+v", compact)
 	}
 	// The dashboard row already summed across providers, so it is unchanged by
@@ -1557,7 +1557,11 @@ func TestListCompactSessionUsageAggregatesAndFiltersByProject(t *testing.T) {
 		t.Fatalf("filtered rows = %+v, want only %s (not %s)", got, usageSession.ID, otherSession.ID)
 	}
 	row := got[0]
-	if usageTokenValue(row.ProcessedTokens) != 180 || row.Incomplete {
+	if compactProcessedTokens(row) != 180 ||
+		usageTokenValue(row.Tokens.InputTokens) != 150 ||
+		usageTokenValue(row.Tokens.CachedInputTokens) != 70 ||
+		usageTokenValue(row.Tokens.UncachedInputTokens) != 80 ||
+		usageTokenValue(row.Tokens.OutputTokens) != 30 || row.Incomplete {
 		t.Fatalf("aggregate = %+v", row)
 	}
 	all, err := s.ListCompactSessionUsageAggregates(ctx, "")
@@ -1694,7 +1698,11 @@ func TestUsageSessionAggregatesParentChildAndMultipleBindingsExactlyOnce(t *test
 		t.Fatalf("compact rows = %+v, want one", compact)
 	}
 	row := compact[0]
-	if usageTokenValue(row.ProcessedTokens) != 215 || row.Incomplete {
+	if compactProcessedTokens(row) != 215 ||
+		usageTokenValue(row.Tokens.InputTokens) != 180 ||
+		usageTokenValue(row.Tokens.CachedInputTokens) != 0 ||
+		usageTokenValue(row.Tokens.UncachedInputTokens) != 180 ||
+		usageTokenValue(row.Tokens.OutputTokens) != 35 || row.Incomplete {
 		t.Fatalf("compact aggregate = %+v", row)
 	}
 }
@@ -1878,6 +1886,10 @@ func usageTokenValue(value *int64) int64 {
 		return -1
 	}
 	return *value
+}
+
+func compactProcessedTokens(row domain.CompactSessionUsageAggregate) int64 {
+	return usageTokenValue(row.Tokens.InputTokens) + usageTokenValue(row.Tokens.OutputTokens)
 }
 
 func assertUsageSourceOffset(t *testing.T, s *sqlite.Store, sourceID int64, want int64) {

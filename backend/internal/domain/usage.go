@@ -340,18 +340,17 @@ type UsageModelAggregate struct {
 // CompactSessionUsageAggregate is one batched storage row before checked token
 // and cost derivation.
 type CompactSessionUsageAggregate struct {
-	SessionID       SessionID
-	ProcessedTokens *int64
-	Incomplete      bool
-	Cost            UsageCostAggregate
+	SessionID  SessionID
+	Tokens     UsageTokenMetrics
+	Incomplete bool
+	Cost       UsageCostAggregate
 }
 
 // CompactSessionUsage is the dashboard usage read model.
 type CompactSessionUsage struct {
-	SessionID       SessionID
-	ProcessedTokens *int64
-	Incomplete      bool
-	EstimatedCost   *EstimatedCost
+	SessionID  SessionID
+	Incomplete bool
+	Totals     UsageMetricTotals
 }
 
 // UsageMetricTotals is the aggregate metric block used by session, harness,

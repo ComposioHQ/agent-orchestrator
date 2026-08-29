@@ -102,16 +102,28 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 		: liveSessions;
 	const usageBySession = usesPreviewWorkspaceData
 		? new Map<string, SessionUsageSummary>(
-				sessions.map((session, index) => [
+				sessions.map((session, index) => {
+					const processedTokens = [18_400, 46_700, 12_900, 81_200, 3_100][index % 5];
+					return [
 						session.id,
 						liveUsageBySession.get(session.id) ?? {
 							estimatedCost: null,
 							sessionId: session.id,
-							processedTokens: [18_400, 46_700, 12_900, 81_200, 3_100][index % 5],
+							processedTokens,
 							totalTokens: 100_000,
 							incomplete: false,
-					},
-				]),
+							totals: {
+								cacheReadTokens: 0,
+								cachedInputTokens: 0,
+								estimatedCost: null,
+								inputTokens: processedTokens,
+								outputTokens: 0,
+								processedTokens,
+								uncachedInputTokens: processedTokens,
+							},
+						},
+					] as const;
+				}),
 			)
 		: liveUsageBySession;
 	const orchestrator = projectId ? newestActiveOrchestrator(workspaces[0]?.sessions ?? []) : undefined;

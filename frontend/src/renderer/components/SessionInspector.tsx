@@ -70,6 +70,7 @@ import { agentLabel } from "../lib/agent-options";
 import { agentsQueryOptions } from "../hooks/useAgentsQuery";
 import { Switch } from "./ui/switch";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
+import { EstimatedCostExplanation, UsageBreakdown } from "./UsageBreakdown";
 import { appI18n } from "../i18n";
 import type { MessageKey } from "../i18n";
 import { usesPreviewWorkspaceData as usePreviewData } from "../lib/preview-mode";
@@ -437,7 +438,7 @@ function UsageCostTelemetry({ usage }: { usage: SessionUsage }) {
 					className="rounded-lg border border-(--color-border-settings-input) bg-(--color-bg-settings-input) px-2.5 py-2.5"
 					data-testid="session-usage-metrics"
 				>
-					<UsageMetrics totals={usage.totals} />
+					<UsageBreakdown totals={usage.totals} />
 				</div>
 			</div>
 
@@ -715,7 +716,7 @@ function UsageModelRow({
 			showCost={showCost}
 			totals={model.totals}
 		>
-			<UsageMetrics totals={model.totals} />
+			<UsageBreakdown totals={model.totals} />
 		</UsageDisclosureRow>
 	);
 }
@@ -820,11 +821,6 @@ function UsageCostValue({ cost }: { cost: EstimatedCost | null }) {
 function EstimatedCostInfo({ cost }: { cost: EstimatedCost | null }) {
 	const { t } = useTranslation();
 	const label = t("usage.estimatedCostInfoLabel");
-	const providerInfoKey = cost?.providerAttribution === "inferred"
-		? "usage.estimatedCostInfoInferred"
-		: cost?.providerAttribution === "mixed"
-			? "usage.estimatedCostInfoMixed"
-			: "usage.estimatedCostInfo";
 	return (
 		<Tooltip>
 			<TooltipTrigger asChild>
@@ -839,90 +835,10 @@ function EstimatedCostInfo({ cost }: { cost: EstimatedCost | null }) {
 			{/* Opens upward: the figure it explains sits directly under the heading,
 			    so a downward tooltip covers the very number the reader came for. */}
 			<TooltipContent className="max-w-64 text-left" side="top">
-				<p>{t(providerInfoKey)}</p>
-				{cost?.coverage === "partial" ? (
-					<p className="mt-1.5">{t("usage.estimatedCostInfoPartial")}</p>
-				) : null}
+				{cost ? <EstimatedCostExplanation cost={cost} /> : <p>{t("usage.estimatedCostInfo")}</p>}
 			</TooltipContent>
 		</Tooltip>
 	);
-}
-
-function UsageMetrics({ totals }: { totals: SessionUsage["totals"] }) {
-	const { t } = useTranslation();
-	const cacheHitRate = formatCacheHitRate(totals.cachedInputTokens, totals.inputTokens);
-	return (
-		<dl className="grid grid-cols-2 gap-x-4 gap-y-2 @max-[300px]/inspector:grid-cols-1" data-testid="session-usage-metrics">
-			<UsageMetric label={t("inspector.usage.uncachedInputTokens")} metric={totals.uncachedInputTokens} />
-			<UsageMetric label={t("inspector.usage.cachedInputTokens")} metric={totals.cachedInputTokens} />
-			<UsageMetric label={t("inspector.usage.outputTokens")} metric={totals.outputTokens} />
-			<UsageRateMetric rate={cacheHitRate} />
-		</dl>
-	);
-}
-
-function UsageRateMetric({ rate }: { rate: string | null }) {
-	const { t } = useTranslation();
-	const label = t("inspector.usage.cacheHitRate");
-	const description =
-		rate === null
-			? t("inspector.usage.metricUnavailable", { label })
-			: t("inspector.usage.cacheHitRateDescription", { rate });
-	return (
-		<div className="min-w-0">
-			<dt className="truncate text-2xs text-settings-muted">{label}</dt>
-			<dd
-				aria-label={description}
-				className="mt-0.5 truncate font-mono text-sm-md text-settings-label"
-				title={description}
-			>
-				{rate === null ? "—" : `${rate}%`}
-			</dd>
-		</div>
-	);
-}
-
-function UsageMetric({ label, metric }: { label: string; metric: number | null | undefined }) {
-	const { t } = useTranslation();
-	const value = typeof metric === "number" && Number.isFinite(metric) ? metric : null;
-	const exactValue = value?.toLocaleString("en-US");
-	const accessibleLabel =
-		value === null
-			? t("inspector.usage.metricUnavailable", { label })
-			: t("inspector.usage.metricAria", { label, count: exactValue });
-	return (
-		<div className="min-w-0">
-			<dt className="truncate text-2xs text-settings-muted">{label}</dt>
-			<dd
-				aria-label={accessibleLabel}
-				className="mt-0.5 truncate font-mono text-sm-md text-settings-label"
-				title={
-					value === null
-						? t("inspector.usage.metricUnavailable", { label })
-						: t("inspector.usage.tokensExact", { count: exactValue })
-				}
-			>
-				{value === null ? "—" : formatTelemetryTokenValue(value)}
-			</dd>
-		</div>
-	);
-}
-
-function formatCacheHitRate(
-	cachedInputTokens: number | null | undefined,
-	inputTokens: number | null | undefined,
-): string | null {
-	if (
-		typeof cachedInputTokens !== "number" ||
-		!Number.isFinite(cachedInputTokens) ||
-		typeof inputTokens !== "number" ||
-		!Number.isFinite(inputTokens) ||
-		inputTokens <= 0
-	) {
-		return null;
-	}
-	const percentage = Math.min(100, Math.max(0, (cachedInputTokens / inputTokens) * 100));
-	return percentage.toFixed(1).replace(/\.0$/, "");
 }
 
 const usageMetricKeys = [

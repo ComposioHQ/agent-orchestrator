@@ -2012,6 +2012,8 @@ export interface components {
              * @description Deprecated compatibility alias for processedTokens.
              */
             totalTokens: number;
+            /** @description Canonical token categories and estimated cost used by card detail disclosures. */
+            totals: components["schemas"]["UsageTotalsResponse"];
         };
         ContainerReapConfig: {
             disabled?: boolean;

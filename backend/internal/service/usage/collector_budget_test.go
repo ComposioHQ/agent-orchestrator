@@ -430,7 +430,7 @@ func testCollectorCodexBudgetFinalizationWaitsThenPersistsPartialAcrossRestart(t
 	if err != nil || len(compact) != 1 {
 		t.Fatalf("compact=%+v err=%v", compact, err)
 	}
-	if compact[0].ProcessedTokens == nil || *compact[0].ProcessedTokens != 12 || !compact[0].Incomplete {
+	if compact[0].Totals.ProcessedTokens == nil || *compact[0].Totals.ProcessedTokens != 12 || !compact[0].Incomplete {
 		t.Fatalf("compact summary=%+v", compact[0])
 	}
 	detail, err := reader.Get(ctx, session.ID)

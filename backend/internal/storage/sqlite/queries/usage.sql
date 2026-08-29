@@ -605,8 +605,14 @@ SELECT CAST(COALESCE((
 -- name: ListCompactSessionUsage :many
 SELECT
     ub.session_id,
-    CAST(COALESCE(SUM(mue.input_tokens) + SUM(mue.output_tokens), 0) AS INTEGER) AS processed_tokens,
-    CAST(COUNT(mue.input_tokens) = COUNT(*) AND COUNT(mue.output_tokens) = COUNT(*) AS INTEGER) AS processed_tokens_known,
+    CAST(COALESCE(SUM(mue.input_tokens), 0) AS INTEGER) AS input_tokens,
+    CAST(COUNT(mue.input_tokens) = COUNT(*) AS INTEGER) AS input_tokens_known,
+    CAST(COALESCE(SUM(mue.cached_input_tokens), 0) AS INTEGER) AS cached_input_tokens,
+    CAST(COUNT(mue.cached_input_tokens) = COUNT(*) AS INTEGER) AS cached_input_tokens_known,
+    CAST(COALESCE(SUM(mue.uncached_input_tokens), 0) AS INTEGER) AS uncached_input_tokens,
+    CAST(COUNT(mue.uncached_input_tokens) = COUNT(*) AS INTEGER) AS uncached_input_tokens_known,
+    CAST(COALESCE(SUM(mue.output_tokens), 0) AS INTEGER) AS output_tokens,
+    CAST(COUNT(mue.output_tokens) = COUNT(*) AS INTEGER) AS output_tokens_known,
     CAST(COALESCE(integrity.incomplete, 0) AS INTEGER) AS incomplete,
     CAST(COUNT(*) AS INTEGER) AS event_count,
     CAST(COUNT(mue.estimated_cost_nanos) AS INTEGER) AS priced_event_count,
