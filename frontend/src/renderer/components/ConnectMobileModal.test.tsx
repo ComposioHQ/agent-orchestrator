@@ -3,6 +3,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, test, vi } from "vitest";
 import { TooltipProvider } from "./ui/tooltip";
+import { apiClient } from "../lib/api-client";
 
 // vi.mock is hoisted above module-level consts, so the shared double has to be
 // created inside vi.hoisted to exist by the time the factory runs.
@@ -90,6 +91,29 @@ test("encodes the LAN address by default", async () => {
 	renderMobileSettings();
 	await waitFor(() => expect(qrPayload()).not.toBeNull());
 	expect(JSON.parse(qrPayload()!).host).toBe("192.168.1.42");
+});
+
+test("can turn off the generated mobile connection", async () => {
+	renderMobileSettings();
+	const button = await screen.findByRole("button", { name: "Turn off mobile connection" });
+
+	await userEvent.click(button);
+	expect(apiClient.POST).toHaveBeenCalledWith("/api/v1/mobile/disable");
+});
+
+test("keeps the mobile setup dropdowns at a shared width", async () => {
+	renderMobileSettings();
+	await waitFor(() => expect(qrPayload()).not.toBeNull());
+
+	const controls = [
+		screen.getByRole("button", { name: "Get the app" }),
+		screen.getByRole("button", { name: "Connection method" }),
+	];
+	expect(controls[0]).toHaveClass("w-44", "justify-between");
+	expect(controls[1]).toHaveClass("w-44", "justify-between");
+
+	await userEvent.click(controls[0]);
+	expect(screen.getByRole("menu")).toHaveClass("!w-44", "!min-w-0");
 });
 
 test("shows a square Google Play QR tooltip for Android", async () => {

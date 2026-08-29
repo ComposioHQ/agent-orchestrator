@@ -128,6 +128,7 @@ func TestSessionPersistsDeterministicHandoffInputs(t *testing.T) {
 	seedProject(t, s, "handoff-inputs")
 	rec := sampleRecord("handoff-inputs")
 	rec.Metadata.LatestUserPrompt = "Please finish the duplicate-listener test."
+	rec.Metadata.LatestUserPromptAt = rec.CreatedAt.Add(time.Minute)
 	rec.Metadata.LatestAssistantUpdate = "The generation fence is implemented; the test is unfinished."
 	rec.Metadata.NativeTranscriptPath = "/ao/transcripts/claude/session.jsonl"
 	rec.Metadata.AgentSessionID = "native-session-1"
@@ -142,6 +143,7 @@ func TestSessionPersistsDeterministicHandoffInputs(t *testing.T) {
 		t.Fatalf("get session: ok=%v err=%v", ok, err)
 	}
 	if got.Metadata.LatestUserPrompt != rec.Metadata.LatestUserPrompt ||
+		!got.Metadata.LatestUserPromptAt.Equal(rec.Metadata.LatestUserPromptAt) ||
 		got.Metadata.LatestAssistantUpdate != rec.Metadata.LatestAssistantUpdate ||
 		got.Metadata.NativeTranscriptPath != rec.Metadata.NativeTranscriptPath ||
 		got.Metadata.AgentSessionIDLaunchID != rec.Metadata.AgentSessionIDLaunchID {
@@ -149,6 +151,7 @@ func TestSessionPersistsDeterministicHandoffInputs(t *testing.T) {
 	}
 
 	got.Metadata.LatestUserPrompt = "Now run the focused tests."
+	got.Metadata.LatestUserPromptAt = got.Metadata.LatestUserPromptAt.Add(time.Minute)
 	got.Metadata.LatestAssistantUpdate = "The regression test has been added."
 	got.Metadata.NativeTranscriptPath = "/ao/transcripts/codex/session.jsonl"
 	got.Metadata.AgentSessionIDLaunchID = "launch-2"
@@ -161,6 +164,7 @@ func TestSessionPersistsDeterministicHandoffInputs(t *testing.T) {
 		t.Fatalf("get updated session: ok=%v err=%v", ok, err)
 	}
 	if updated.Metadata.LatestUserPrompt != got.Metadata.LatestUserPrompt ||
+		!updated.Metadata.LatestUserPromptAt.Equal(got.Metadata.LatestUserPromptAt) ||
 		updated.Metadata.LatestAssistantUpdate != got.Metadata.LatestAssistantUpdate ||
 		updated.Metadata.NativeTranscriptPath != got.Metadata.NativeTranscriptPath ||
 		updated.Metadata.AgentSessionIDLaunchID != got.Metadata.AgentSessionIDLaunchID {
@@ -168,6 +172,7 @@ func TestSessionPersistsDeterministicHandoffInputs(t *testing.T) {
 	}
 	listed, err := s.ListSessions(ctx, created.ProjectID)
 	if err != nil || len(listed) != 1 || listed[0].Metadata.LatestUserPrompt != got.Metadata.LatestUserPrompt ||
+		!listed[0].Metadata.LatestUserPromptAt.Equal(got.Metadata.LatestUserPromptAt) ||
 		listed[0].Metadata.AgentSessionIDLaunchID != got.Metadata.AgentSessionIDLaunchID {
 		t.Fatalf("listed handoff inputs = %+v err=%v", listed, err)
 	}
@@ -208,7 +213,7 @@ func TestRecordSessionLatestUserPromptIsNarrowAndMonotonic(t *testing.T) {
 		t.Fatalf("fresh prompt write = changed %v, err %v", changed, err)
 	}
 	current, _, _ = s.GetSession(ctx, created.ID)
-	if current.Metadata.LatestUserPrompt != "continue the target work" || current.Harness != domain.HarnessCodex ||
+	if current.Metadata.LatestUserPrompt != "continue the target work" || !current.Metadata.LatestUserPromptAt.Equal(promptAt) || current.Harness != domain.HarnessCodex ||
 		current.Metadata.RuntimeLaunchID != "target-generation" || current.Metadata.LatestAssistantUpdate != "target already owns this row" {
 		t.Fatalf("narrow prompt write changed unrelated facts: %+v", current)
 	}
@@ -792,7 +797,7 @@ func TestPRCRUD(t *testing.T) {
 	}
 }
 
-func TestPRAutoInjectCISnapshotsSessionDefaultAtCreation(t *testing.T) {
+func TestPRAutoInjectCITracksSessionPolicyChanges(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	seedProject(t, s, "mer")
@@ -812,37 +817,47 @@ func TestPRAutoInjectCISnapshotsSessionDefaultAtCreation(t *testing.T) {
 	changedAt := now.Add(time.Minute)
 	ok, err := s.SetSessionAutoInjectCI(ctx, owner.ID, false, changedAt)
 	if err != nil || !ok {
-		t.Fatalf("disable session CI default: ok=%v err=%v", ok, err)
+		t.Fatalf("disable session CI policy: ok=%v err=%v", ok, err)
 	}
 	session, found, err := s.GetSession(ctx, owner.ID)
 	if err != nil || !found || session.AutoInjectCI {
-		t.Fatalf("disabled session default = found:%v err:%v session:%+v", found, err, session)
+		t.Fatalf("disabled session policy = found:%v err:%v session:%+v", found, err, session)
 	}
 
 	events, err := s.EventsAfter(ctx, base, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(events) != 1 || string(events[0].Type) != "session_updated" {
-		t.Fatalf("policy change events = %+v, want one session_updated", events)
+	if len(events) != 2 {
+		t.Fatalf("policy change events = %+v, want session and PR updates", events)
+	}
+	var sessionPayload []byte
+	for i := range events {
+		if string(events[i].Type) == "session_updated" {
+			sessionPayload = events[i].Payload
+			break
+		}
+	}
+	if sessionPayload == nil {
+		t.Fatalf("policy change events = %+v, want session_updated", events)
 	}
 	var payload map[string]any
-	if err := json.Unmarshal(events[0].Payload, &payload); err != nil {
+	if err := json.Unmarshal(sessionPayload, &payload); err != nil {
 		t.Fatal(err)
 	}
 	if enabled, ok := payload["autoInjectCI"].(bool); !ok || enabled {
 		t.Fatalf("autoInjectCI payload = %#v, want false", payload["autoInjectCI"])
 	}
 
-	// Re-observing the first PR after changing the session default must preserve
-	// the value captured when that PR was first inserted.
+	// Re-observing the first PR after changing the session policy must preserve
+	// the currently selected policy.
 	first.UpdatedAt = changedAt.Add(time.Minute)
 	if err := s.WritePR(ctx, first, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	got, _, _ = s.GetPR(ctx, first.URL)
-	if !got.AutoInjectCI {
-		t.Fatal("session toggle rewrote the first PR's enabled snapshot")
+	if got.AutoInjectCI {
+		t.Fatal("session toggle did not rewrite the first PR's enabled policy")
 	}
 
 	second := domain.PullRequest{URL: "https://github.com/o/r/pull/2", SessionID: owner.ID, Number: 2, UpdatedAt: changedAt}
@@ -851,19 +866,19 @@ func TestPRAutoInjectCISnapshotsSessionDefaultAtCreation(t *testing.T) {
 	}
 	got, _, _ = s.GetPR(ctx, second.URL)
 	if got.AutoInjectCI {
-		t.Fatal("PR created while disabled did not capture the disabled default")
+		t.Fatal("PR created while disabled did not inherit the disabled session policy")
 	}
 
 	if ok, err := s.SetSessionAutoInjectCI(ctx, owner.ID, true, changedAt.Add(time.Minute)); err != nil || !ok {
-		t.Fatalf("enable session CI default: ok=%v err=%v", ok, err)
+		t.Fatalf("enable session CI policy: ok=%v err=%v", ok, err)
 	}
 	second.UpdatedAt = changedAt.Add(2 * time.Minute)
 	if err := s.WritePR(ctx, second, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	got, _, _ = s.GetPR(ctx, second.URL)
-	if got.AutoInjectCI {
-		t.Fatal("later session enable rewrote the second PR's disabled snapshot")
+	if !got.AutoInjectCI {
+		t.Fatal("later session enable did not rewrite the second PR's disabled policy")
 	}
 }
 
