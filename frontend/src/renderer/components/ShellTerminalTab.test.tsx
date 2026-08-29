@@ -86,35 +86,41 @@ describe("ShellTerminalTab rename", () => {
 	it("makes the full connected tile the semantic selection button", () => {
 		const { onSelect } = renderTab({ appearance: "connected" });
 		const tab = screen.getByRole("tab", { name: "ao" });
-		expect(tab).toHaveClass("h-full", "w-full", "pl-2", "cursor-pointer", "focus-visible:outline-2");
+		expect(tab).toHaveClass("h-full", "min-w-0", "pl-2", "cursor-pointer", "focus-visible:outline-2");
 		fireEvent.click(tab);
 		expect(onSelect).toHaveBeenCalledOnce();
 	});
 
-	it("keeps the close affordance visible on an active connected tab", () => {
+	it("cross-fades the terminal glyph into close on hover instead of reserving a trailing close column", () => {
 		renderTab({ appearance: "connected", isActive: true });
-		expect(screen.getByRole("button", { name: "Close terminal ao" })).toHaveClass("w-control-sm", "opacity-100");
-		expect(screen.getByRole("button", { name: "Close terminal ao" })).not.toHaveClass("absolute");
+
+		const closeButton = screen.getByRole("button", { name: "Close terminal ao" });
+		expect(closeButton).toHaveClass(
+			"absolute",
+			"opacity-0",
+			"pointer-events-none",
+			"group-hover:opacity-100",
+			"duration-fast",
+		);
+		expect(closeButton).not.toHaveClass("w-control-sm");
+		expect(screen.getByRole("tab", { name: "ao" }).querySelector("svg")).toHaveClass(
+			"group-hover:opacity-0",
+			"duration-fast",
+		);
 		expect(screen.getByRole("tab", { name: "ao" })).toHaveAttribute("aria-selected", "true");
 	});
 
-	it("uses a compact fixed width and shrinks its title around the sibling close affordance", () => {
+	it("hugs the truncated title instead of a fixed connected width", () => {
 		renderTab({ appearance: "connected", isActive: false });
 
-		const closeButton = screen.getByRole("button", { name: "Close terminal ao" });
-		expect(closeButton.classList.contains("w-0")).toBe(true);
-		expect(closeButton.classList.contains("opacity-0")).toBe(true);
-		expect(closeButton.classList.contains("group-hover:w-control-sm")).toBe(true);
-		expect(closeButton.classList.contains("group-hover:opacity-100")).toBe(true);
-		expect(closeButton.classList.contains("mr-1")).toBe(true);
-		expect(closeButton.classList.contains("absolute")).toBe(false);
 		const tab = screen.getByRole("tab", { name: "ao" });
-		expect(tab.classList.contains("w-full")).toBe(true);
 		expect(tab.classList.contains("min-w-0")).toBe(true);
 		expect(tab.classList.contains("text-left")).toBe(true);
-		expect(tab.parentElement?.classList.contains("grid")).toBe(true);
+		expect(tab.parentElement?.classList.contains("inline-flex")).toBe(true);
 		expect(tab.parentElement?.classList.contains("shrink-0")).toBe(true);
-		expect(tab.parentElement?.classList.contains("w-shell-tab-connected")).toBe(true);
+		expect(tab.parentElement?.classList.contains("max-w-shell-tab-max")).toBe(true);
+		expect(tab.parentElement?.classList.contains("w-shell-tab-connected")).toBe(false);
+		expect(tab.parentElement?.classList.contains("min-w-shell-tab-min")).toBe(false);
 	});
 
 	it("uses a neutral active surface with a strong foreground selection line", () => {
@@ -137,6 +143,13 @@ describe("ShellTerminalTab rename", () => {
 		const classes = screen.getByRole("tab", { name: "ao" }).parentElement?.classList;
 		expect(classes?.contains("after:bottom-0")).toBe(true);
 		expect(classes?.contains("after:top-0")).toBe(false);
+	});
+
+	it("closes from the glyph slot without selecting the tab", () => {
+		const { onClose, onSelect } = renderTab({ appearance: "connected" });
+		fireEvent.click(screen.getByRole("button", { name: "Close terminal ao" }));
+		expect(onClose).toHaveBeenCalledOnce();
+		expect(onSelect).not.toHaveBeenCalled();
 	});
 
 	it("optically centers the auxiliary terminal glyph with its label", () => {

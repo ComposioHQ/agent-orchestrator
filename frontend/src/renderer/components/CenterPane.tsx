@@ -62,8 +62,10 @@ type CenterPaneProps = {
 	onSelectShellTerminal?: (handleId: string) => void;
 	onCloseShellTerminal?: (handleId: string) => void;
 	onRenameShellTerminal?: (handleId: string, title: string) => void;
-	/** Session actions consolidated into the terminal bar by SessionView. */
+	/** Workspace-level controls (e.g. shell topbar) rendered beside the tab strip. */
 	topbarActions?: ReactNode;
+	/** Agent-session actions (interface switch, handoff) on the primary session tab. */
+	sessionTabAction?: ReactNode;
 	/** Pinned beside the tab strip, before the workspace topbar actions. */
 	tabStripAction?: ReactNode;
 	handoffDialogOpen?: boolean;
@@ -133,6 +135,7 @@ export function CenterPane({
 	onCloseShellTerminal,
 	onRenameShellTerminal,
 	topbarActions,
+	sessionTabAction,
 	tabStripAction,
 	handoffDialogOpen = false,
 	workspaceTabs,
@@ -548,6 +551,7 @@ export function CenterPane({
 					label={sessionTabLabel}
 					onSelect={onSelectSessionTerminal}
 					session={session}
+					tabAction={sessionTabAction}
 				/>
 							) : (
 								<SessionPaneTab isActive={target.kind === "worker"} label={sessionTabLabel} />
@@ -847,13 +851,15 @@ type SessionPaneTabProps = {
 	session?: WorkspaceSession;
 	icon?: ReactNode;
 	title?: string;
+	/** Session-scoped controls (interface switch, handoff) beside the tab label. */
+	tabAction?: ReactNode;
 };
 
 // Shared tab chrome: the open tab is highlighted with the same rounded
 // background as the inspector rail tabs (Summary · Reviews · Browser), and
 // the full label only becomes the hover tooltip when the tab strip is
 // crowded enough to truncate it.
-function SessionPaneTab({
+export function SessionPaneTab({
 	label,
 	isActive,
 	appearance = "primary",
@@ -861,6 +867,7 @@ function SessionPaneTab({
 	session,
 	icon,
 	title,
+	tabAction,
 }: SessionPaneTabProps) {
 	const { t } = useTranslation();
 	const { ref, isTruncated } = useTruncatedText<HTMLButtonElement>(label);
@@ -870,25 +877,31 @@ function SessionPaneTab({
 	const activityBreathe = activity?.breathe;
 	const tabIcon = session ? <AgentAvatar className="size-terminal-agent-icon" decorative provider={session.provider} /> : icon;
 	const connected = appearance === "connected";
-	return (
+	const tabButton = (
 		<button
 			ref={ref}
 			aria-current={isActive}
 			aria-label={activityLabel ? `${label} · ${activityLabel}` : label}
 			aria-selected={isActive}
-			data-terminal-role={connected ? undefined : "primary"}
+			data-terminal-role={connected || tabAction ? undefined : "primary"}
 			className={cn(
-				"group relative inline-flex self-stretch cursor-pointer items-center gap-1.5 truncate text-control leading-none transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent/50",
+				"group relative inline-flex cursor-pointer items-center gap-1.5 truncate text-control leading-none transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent/50",
 				connected
-					? "w-shell-tab-connected min-w-shell-tab-min shrink-0 border-x border-transparent px-2 text-left font-normal"
-					: "min-w-0 max-w-shell-tab-max shrink overflow-hidden border-r border-border bg-surface px-3 font-medium text-foreground",
+					? "w-shell-tab-connected min-w-shell-tab-min shrink-0 self-stretch border-x border-transparent px-2 text-left font-normal"
+					: tabAction
+						? "min-w-0 max-w-shell-tab-max flex-1 shrink self-stretch overflow-hidden px-3 font-medium"
+						: "min-w-0 max-w-shell-tab-max shrink self-stretch overflow-hidden border-r border-border bg-surface px-3 font-medium text-foreground",
 				connected
 					? isActive
 						? "border-border-strong bg-overlay text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80"
 						: "text-passive hover:bg-interactive-hover/60 hover:text-foreground"
-					: isActive
-						? "bg-overlay text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80"
-						: "text-muted-foreground hover:bg-raised hover:text-foreground",
+					: tabAction
+						? isActive
+							? "text-foreground"
+							: "text-muted-foreground hover:text-foreground"
+						: isActive
+							? "bg-overlay text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80"
+							: "text-muted-foreground hover:bg-raised hover:text-foreground",
 				isActive ? "text-foreground" : "text-passive hover:text-foreground",
 			)}
 			onClick={onSelect}
@@ -913,5 +926,24 @@ function SessionPaneTab({
 				</span>
 			) : null}
 		</button>
+	);
+
+	if (connected || !tabAction) return tabButton;
+
+	return (
+		<span
+			className={cn(
+				"group relative inline-flex min-w-0 max-w-shell-tab-max shrink self-stretch items-stretch border-r border-border bg-surface",
+				isActive
+					? "bg-overlay text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80"
+					: "text-muted-foreground hover:bg-raised hover:text-foreground",
+			)}
+			data-terminal-role="primary"
+		>
+			{tabButton}
+			<div className="flex shrink-0 items-center pr-0.5" data-terminal-tab-action data-testid="session-tab-action">
+				{tabAction}
+			</div>
+		</span>
 	);
 }

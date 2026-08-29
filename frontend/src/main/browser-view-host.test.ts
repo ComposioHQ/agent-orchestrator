@@ -9,7 +9,6 @@ import {
 	normalizeBrowserURL,
 	scaleBoundsForZoom,
 } from "./browser-view-host";
-import { MAX_BROWSER_TABS } from "../shared/browser-tabs";
 import { NEW_SESSION_SHORTCUT_CHANNEL } from "../shared/shortcuts";
 
 vi.mock("electron", async (importOriginal) => {
@@ -22,11 +21,16 @@ type EventHandler = (event: { sender: { id: number; getZoomFactor?: () => number
 
 function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").AgentBrowserRuntime) {
 	let currentURL = "";
+	let browserZoomFactor = 1;
 	const webContentsListeners = new Map<string, (...args: never[]) => void>();
 	const debuggerListeners = new Map<string, (...args: never[]) => void>();
 	let debuggerAttached = false;
 	const openDevTools = vi.fn();
 	const closeDevTools = vi.fn();
+	const insertCSS = vi.fn(async (_css: string, _options?: { cssOrigin?: "author" | "user" }) => "ao-browser-scrollbars");
+	let insertedStyleNumber = 0;
+	insertCSS.mockImplementation(async () => `ao-browser-scrollbars-${++insertedStyleNumber}`);
+	const removeInsertedCSS = vi.fn(async (_key: string) => undefined);
 	const debuggerSendCommand = vi.fn(async (method: string, params?: Record<string, unknown>): Promise<unknown> => {
 		if (method === "Page.navigate" && typeof params?.url === "string") currentURL = params.url;
 		return {};
@@ -59,9 +63,12 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 		clearHistory: () => undefined,
 		getTitle: () => "",
 		getURL: () => currentURL,
+		getZoomFactor: () => browserZoomFactor,
 		goBack: () => undefined,
 		goForward: () => undefined,
 		isLoading: () => false,
+		insertCSS,
+		removeInsertedCSS,
 		loadURL: vi.fn(async (url: string) => {
 			currentURL = url;
 		}),
@@ -204,6 +211,11 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 		shellSend,
 		openDevTools,
 		closeDevTools,
+		insertCSS,
+		removeInsertedCSS,
+		setBrowserZoomFactor: (zoomFactor: number) => {
+			browserZoomFactor = zoomFactor;
+		},
 		view,
 		webContents,
 		webContentsListeners,
@@ -211,6 +223,39 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 		debuggerSendCommand,
 	};
 }
+
+describe("browser scrollbar styling", () => {
+	it("injects AO-styled horizontal and vertical scrollbars whenever a browser page becomes ready", async () => {
+		const { insertCSS, invoke, removeInsertedCSS, setBrowserZoomFactor, webContentsListeners } = setupHost();
+
+		await invoke("browser:ensure", "sess-1");
+		webContentsListeners.get("dom-ready")?.();
+
+		await vi.waitFor(() => expect(insertCSS).toHaveBeenCalledOnce());
+		const css = insertCSS.mock.calls[0]?.[0] ?? "";
+		expect(insertCSS.mock.calls[0]?.[1]).toEqual({ cssOrigin: "user" });
+		expect(css).toContain("::-webkit-scrollbar-thumb");
+		expect(css).toContain("border-radius: 999px");
+		expect(css).toContain("background: rgba(232, 232, 232, 0.72)");
+		expect(css).toContain("::-webkit-scrollbar-track");
+		expect(css).toContain("background: transparent");
+		expect(css).toContain("width: 8px");
+		expect(css).toContain("height: 8px");
+		expect(css).not.toContain("min-height");
+		expect(css).not.toContain("min-width");
+
+		webContentsListeners.get("dom-ready")?.();
+		await vi.waitFor(() => expect(insertCSS).toHaveBeenCalledTimes(2));
+
+		setBrowserZoomFactor(4);
+		webContentsListeners.get("zoom-changed")?.();
+		await vi.waitFor(() => expect(insertCSS).toHaveBeenCalledTimes(3));
+		const zoomedCss = insertCSS.mock.calls[2]?.[0] ?? "";
+		expect(zoomedCss).toContain("width: 2px");
+		expect(zoomedCss).toContain("height: 2px");
+		await vi.waitFor(() => expect(removeInsertedCSS).toHaveBeenCalledWith("ao-browser-scrollbars-2"));
+	});
+});
 
 function setupTabHost() {
 	const constructorOptions: Array<{ webPreferences: { partition?: string } }> = [];
@@ -970,13 +1015,13 @@ describe("agent browser runtime", () => {
 		await expect(host.execute("sess-1", "__destroy-session")).resolves.toEqual({ destroyed: false });
 	});
 
-	it("caps session tabs", async () => {
-		const { host } = setupHost();
+	it("opens tabs beyond the former session cap", async () => {
+		const { host, mainContentView } = setupHost();
 		await host.execute("sess-1", "tabs");
-		for (let i = 1; i < 16; i += 1) {
+		for (let i = 1; i < 20; i += 1) {
 			await host.execute("sess-1", "tab-new");
 		}
-		await expect(host.execute("sess-1", "tab-new")).rejects.toMatchObject({ code: "BROWSER_TAB_LIMIT" });
+		expect(mainContentView.addChildView).toHaveBeenCalledTimes(20);
 	});
 
 	it("escapes page-supplied trust boundary markers in browser logs", async () => {
@@ -1317,14 +1362,15 @@ describe("agent browser runtime", () => {
 });
 
 describe("browser tab lifecycle stress (tabs stop closing regression guard)", () => {
+	const stressTabCount = 16;
 	// Re-verifies the historically reported "tabs stop closing" bug against the
 	// REAL closeTab/destroyTabView code paths (not a mock of them), by driving
-	// the IPC handlers exactly as the renderer rail does: open to the tab cap,
+	// the IPC handlers exactly as the renderer rail does: open many tabs,
 	// close back down to one, repeatedly, interleaving tab selection plus a
 	// DevTools open/close and an annotation-mode toggle each cycle -- the two
 	// failure modes ("wrong tab content after switching", "stale overlay
 	// captures") called out by the stabilization commits already on main.
-	it("opens to the tab cap and closes back to one tab across many churn cycles without a stuck or leaked tab", async () => {
+	it("opens many tabs and closes back to one across churn cycles without a stuck or leaked tab", async () => {
 		const { invoke, views } = setupTabHost();
 		const ensured = (await invoke("browser:ensure", "sess-1")) as BrowserNavState;
 		const { viewId } = ensured;
@@ -1349,11 +1395,11 @@ describe("browser tab lifecycle stress (tabs stop closing regression guard)", ()
 		let nonReactivatingCloses = 0;
 
 		for (let cycle = 0; cycle < 20; cycle += 1) {
-			for (let i = 0; i < MAX_BROWSER_TABS - 1; i += 1) {
+			for (let i = 0; i < stressTabCount - 1; i += 1) {
 				await invoke("browser:openTab", { viewId });
 			}
 			let tabs = (await invoke("browser:getTabs", viewId)) as BrowserTabsState;
-			expect(tabs.tabs).toHaveLength(MAX_BROWSER_TABS);
+			expect(tabs.tabs).toHaveLength(stressTabCount);
 
 			// Interleave the two related failure modes named in the brief: a
 			// DevTools open/close cycle and an annotation-mode toggle.
@@ -1367,7 +1413,7 @@ describe("browser tab lifecycle stress (tabs stop closing regression guard)", ()
 			// above surfaces here directly, instead of only indirectly on the
 			// next close below.
 			tabs = (await invoke("browser:getTabs", viewId)) as BrowserTabsState;
-			expect(tabs.tabs).toHaveLength(MAX_BROWSER_TABS);
+			expect(tabs.tabs).toHaveLength(stressTabCount);
 
 			let closeCount = 0;
 			while (tabs.tabs.length > 1) {
@@ -1414,7 +1460,7 @@ describe("browser tab lifecycle stress (tabs stop closing regression guard)", ()
 		// from closeTab's behavior, so this assertion can't pass by accident
 		// the way the prior induction-based version did. The thresholds are
 		// deliberately loose (the actual split is a deterministic 160
-		// reactivating / 140 non-reactivating for MAX_BROWSER_TABS=16 across 20
+		// reactivating / 140 non-reactivating for 16 tabs across 20
 		// cycles) since what matters is that neither branch has zero coverage.
 		expect(reactivatingCloses).toBeGreaterThanOrEqual(5);
 		expect(nonReactivatingCloses).toBeGreaterThanOrEqual(5);

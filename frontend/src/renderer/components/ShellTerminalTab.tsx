@@ -27,7 +27,8 @@ type ShellTerminalTabProps = {
 // macOS/Linux, right-click on Windows. Enter or blur commits, Escape cancels,
 // and an empty or unchanged name is discarded. The close control is a sibling
 // button, not nested inside the tab button - nesting interactive elements is
-// invalid HTML and breaks keyboard traversal.
+// invalid HTML and breaks keyboard traversal. Connected session-strip tabs hug
+// the title and cross-fade the terminal glyph into that sibling on hover.
 export function ShellTerminalTab({
 	shell,
 	isActive,
@@ -101,16 +102,31 @@ export function ShellTerminalTab({
 		setDraft(shell.title);
 	};
 
+	const closeControl = {
+		"aria-label": t("terminal.closeNamed", { title: shell.title }),
+		"data-terminal-tab-action": true,
+		onClick: (event: MouseEvent) => {
+			event.stopPropagation();
+			onClose();
+		},
+		onDoubleClick: (event: MouseEvent) => event.stopPropagation(),
+		onContextMenu: (event: MouseEvent) => event.stopPropagation(),
+		title: t("terminal.close"),
+		type: "button" as const,
+	};
+	const connectedGlyphClass =
+		"size-icon-sm shrink-0 translate-y-px transition-opacity duration-fast ease-out motion-reduce:transition-none";
+
 	return (
 		<span
 			className={cn(
-				"group relative min-w-shell-tab-min shrink-0 items-center transition-colors",
+				"group relative shrink-0 items-center transition-colors",
 				appearance === "connected"
 					? cn(
-							"grid w-shell-tab-connected self-stretch border-x border-transparent pr-0",
-							isEditing ? "grid-cols-[auto_minmax(0,1fr)_auto] pl-2" : "grid-cols-[minmax(0,1fr)_auto]",
+							"inline-flex max-w-shell-tab-max self-stretch border-x border-transparent",
+							isEditing && "pl-2 pr-1",
 						)
-					: "inline-flex gap-1 rounded-md px-2 py-1",
+					: "inline-flex min-w-shell-tab-min gap-1 rounded-md px-2 py-1",
 				appearance === "connected"
 					? isActive
 						? "border-border-strong bg-overlay text-foreground after:pointer-events-none after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80"
@@ -121,7 +137,7 @@ export function ShellTerminalTab({
 			)}
 		>
 			{appearance === "connected" && isEditing ? (
-				<SquareTerminal aria-hidden="true" className="mr-1 size-icon-sm shrink-0 translate-y-px" />
+				<SquareTerminal aria-hidden="true" className={cn("mr-1", connectedGlyphClass)} />
 			) : null}
 			{isEditing ? (
 				<input
@@ -152,7 +168,7 @@ export function ShellTerminalTab({
 					className={cn(
 						"select-none truncate text-control transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent/50",
 						appearance === "connected"
-							? "grid h-full min-w-0 w-full cursor-pointer grid-cols-[auto_minmax(0,1fr)] items-center pl-2 text-left"
+							? "inline-flex h-full min-w-0 cursor-pointer items-center pl-2 pr-2 text-left"
 							: "min-w-flex-min max-w-shell-tab-max cursor-pointer",
 						appearance === "connected" ? "font-normal" : "font-mono font-semibold",
 						isActive ? "text-foreground" : "text-passive group-hover:text-foreground",
@@ -170,33 +186,33 @@ export function ShellTerminalTab({
 					type="button"
 				>
 					{appearance === "connected" ? (
-						<SquareTerminal aria-hidden="true" className="mr-1 size-icon-sm shrink-0 translate-y-px" />
+						<SquareTerminal
+							aria-hidden="true"
+							className={cn(
+								"mr-1",
+								connectedGlyphClass,
+								"group-hover:opacity-0 group-focus-within:opacity-0",
+							)}
+						/>
 					) : null}
 					<span className="truncate">{shell.title}</span>
 				</button>
 			)}
-			<button
-				aria-label={t("terminal.closeNamed", { title: shell.title })}
-				data-terminal-tab-action
-				className={cn(
-					"inline-flex h-control-sm shrink-0 items-center justify-center overflow-hidden rounded-sm text-passive transition-[width,margin,background,color,opacity] hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50",
-					appearance === "connected"
-						? isActive
-							? "ml-1 mr-1 w-control-sm opacity-100"
-							: "ml-0 mr-1 w-0 opacity-0 group-hover:ml-1 group-hover:w-control-sm group-hover:opacity-100 group-focus-within:ml-1 group-focus-within:w-control-sm group-focus-within:opacity-100"
-						: "w-control-sm opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
-				)}
-				onClick={(event) => {
-					event.stopPropagation();
-					onClose();
-				}}
-				onDoubleClick={(event) => event.stopPropagation()}
-				onContextMenu={(event) => event.stopPropagation()}
-				title={t("terminal.close")}
-				type="button"
-			>
-				<X aria-hidden="true" className="size-icon-sm" />
-			</button>
+			{appearance === "connected" && isEditing ? null : (
+				<button
+					{...closeControl}
+					className={
+						appearance === "connected"
+							? "absolute top-1/2 left-2 z-10 grid size-icon-sm -translate-y-1/2 place-items-center rounded-sm text-passive opacity-0 pointer-events-none transition-[opacity,background,color] duration-fast ease-out hover:bg-interactive-hover hover:text-foreground group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 motion-reduce:transition-none"
+							: "inline-flex h-control-sm w-control-sm shrink-0 items-center justify-center overflow-hidden rounded-sm text-passive opacity-0 transition-[background,color,opacity] duration-fast ease-out hover:bg-interactive-hover hover:text-foreground group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 motion-reduce:transition-none"
+					}
+				>
+					<X
+						aria-hidden="true"
+						className={appearance === "connected" ? "size-icon-sm translate-y-px" : "size-icon-sm"}
+					/>
+				</button>
+			)}
 		</span>
 	);
 }

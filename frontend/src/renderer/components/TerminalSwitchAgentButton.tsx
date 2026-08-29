@@ -14,6 +14,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 type TerminalSwitchAgentButtonProps = {
 	agentSwitch?: AgentSwitchSummary;
 	container?: HTMLElement | null;
+	disabled?: boolean;
 	onOpenChange: ((open: boolean) => void) | undefined;
 	open: boolean;
 	presentation?: AgentSwitchPresentation;
@@ -25,6 +26,7 @@ type TerminalSwitchAgentButtonProps = {
 export function TerminalSwitchAgentButton({
 	agentSwitch,
 	container,
+	disabled,
 	onOpenChange,
 	open,
 	presentation,
@@ -37,7 +39,7 @@ export function TerminalSwitchAgentButton({
 	const controlPresentation = presentation?.outcome === "success" ? undefined : presentation;
 	const switching = controlPresentation?.outcome === "in_progress";
 	const warning = controlPresentation?.outcome === "failure" || controlPresentation?.outcome === "recovery";
-	const blocksNewSwitch = switching;
+	const blocksNewSwitch = switching || disabled;
 
 	useEffect(() => {
 		if (switchError) onOpenChange?.(true);

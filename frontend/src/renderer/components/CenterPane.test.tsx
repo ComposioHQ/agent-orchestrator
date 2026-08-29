@@ -743,11 +743,11 @@ describe("CenterPane toolbar session label", () => {
 			"bg-overlay",
 		);
 		expect(shellTab.parentElement).toHaveClass(
-			"min-w-shell-tab-min",
 			"shrink-0",
 			"self-stretch",
-			"w-shell-tab-connected",
+			"max-w-shell-tab-max",
 		);
+		expect(shellTab.parentElement).not.toHaveClass("w-shell-tab-connected");
 		expect(reviewerTab).not.toHaveAttribute("data-terminal-role", "primary");
 		expect(screen.getByRole("tab", { name: /^Claude Code/ })).not.toHaveAttribute("aria-current", "true");
 		expect(reviewerTab.querySelector("img")).toHaveAttribute("src");
@@ -798,10 +798,11 @@ describe("CenterPane toolbar session label", () => {
 		expect(tablist.classList.contains("h-full")).toBe(true);
 	});
 
-	it("keeps terminal tabs in the measured terminal region and session actions outside it", () => {
+	it("keeps session tab actions on the primary agent tab and workspace actions outside the terminal region", () => {
 		renderCenterPane({
 			session: worker,
-			topbarActions: <button type="button">Session action</button>,
+			sessionTabAction: <button type="button">Session tab action</button>,
+			topbarActions: <button type="button">Workspace action</button>,
 		});
 
 		const terminalRegion = screen.getByTestId("session-terminal-region");
@@ -811,12 +812,12 @@ describe("CenterPane toolbar session label", () => {
 		expect(terminalRegion).toContainElement(screen.getByRole("tablist", { name: "Open terminals" }));
 		expect(terminalRegion).not.toContainElement(screen.queryByRole("button", { name: "New terminal" }));
 		expect(screen.queryByRole("toolbar", { name: "Terminal display controls" })).not.toBeInTheDocument();
+		expect(terminalRegion).toContainElement(screen.getByRole("button", { name: "Session tab action" }));
 		expect(terminalRegion).not.toContainElement(screen.getByTestId("session-action-region"));
 		const actionRegion = screen.getByTestId("session-action-region");
 		expect(actionRegion).not.toHaveClass("border-l");
-		expect(actionRegion).toContainElement(
-			screen.getByRole("button", { name: "Session action" }),
-		);
+		expect(actionRegion).toContainElement(screen.getByRole("button", { name: "Workspace action" }));
+		expect(actionRegion).not.toContainElement(screen.getByRole("button", { name: "Session tab action" }));
 	});
 
 	it("reserves trailing space after the terminal strip controls", () => {
@@ -849,7 +850,7 @@ describe("CenterPane toolbar session label", () => {
 		expect(screen.queryByRole("button", { name: "Scroll tabs right" })).not.toBeInTheDocument();
 	});
 
-	it("keeps fixed-width auxiliary tabs in a visually hidden native scroll strip while the owner stays fixed", () => {
+	it("keeps added shell tabs hugging their titles in a visually hidden native scroll strip while the owner stays fixed", () => {
 		const shells = makeShells(8);
 		renderCenterPane({ session: worker, shellTerminals: shells });
 
@@ -860,12 +861,11 @@ describe("CenterPane toolbar session label", () => {
 		expect(scrollRegion?.classList.contains("flex-1")).toBe(true);
 		expect(scrollRegion?.contains(screen.getByRole("tab", { name: /^Claude Code/ }).parentElement)).toBe(false);
 		for (const tab of screen.getAllByTitle(/^\/tmp\/ws/)) {
-			expect(tab.parentElement?.classList.contains("min-w-shell-tab-min")).toBe(true);
+			expect(tab.parentElement?.classList.contains("max-w-shell-tab-max")).toBe(true);
 			expect(tab.parentElement?.classList.contains("shrink-0")).toBe(true);
-			expect(tab.parentElement?.classList.contains("w-shell-tab-connected")).toBe(true);
+			expect(tab.parentElement?.classList.contains("w-shell-tab-connected")).toBe(false);
 			expect(tab.parentElement?.classList.contains("min-w-16")).toBe(false);
 			expect(tab.classList.contains("min-w-0")).toBe(true);
-			expect(tab.classList.contains("w-full")).toBe(true);
 		}
 		// Overflow is handled directly by the scroll strip; arrow controls never reserve space.
 		expect(screen.queryByRole("button", { name: "Scroll tabs left" })).toBeNull();
