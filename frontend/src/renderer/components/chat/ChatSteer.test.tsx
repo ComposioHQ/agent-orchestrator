@@ -160,6 +160,27 @@ describe("ChatWorkspace steering", () => {
 		expect(onCancelQueuedTurn).toHaveBeenCalledWith("queued-1");
 	});
 
+	it("hides a cancelled queued message from the timeline", () => {
+		const base = withQueuedMessages();
+		const snapshot = {
+			...base,
+			turns: base.turns.map((turn) =>
+				turn.id === "queued-1"
+					? {
+							...turn,
+							state: "interrupted" as const,
+							completedAt: "2026-08-11T10:03:00Z",
+						}
+					: turn,
+			),
+			items: base.items.filter((item) => item.kind !== "message" || item.turnId !== "queued-1"),
+		};
+		render(<ChatWorkspace snapshot={snapshot} onSteer={vi.fn()} />);
+
+		expect(screen.queryByText("first queued")).not.toBeInTheDocument();
+		expect(within(screen.getByTestId("queued-message-dock")).getByText("second queued")).toBeVisible();
+	});
+
 	it("clears a queued edit when that message is deleted from the dock", async () => {
 		const onCancelQueuedTurn = vi.fn().mockResolvedValue(undefined);
 		render(

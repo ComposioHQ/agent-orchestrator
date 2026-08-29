@@ -69,7 +69,7 @@ type AppSetting struct {
 	ID                 int64
 	DefaultSessionMode domain.SessionMode
 	UpdatedAt          time.Time
-	CloudOffering      int64
+	CloudOffering      bool
 }
 
 type ChangeLog struct {

@@ -802,6 +802,26 @@ export function activeTurn(snapshot: ConversationSnapshot): ConversationTurn | u
 }
 
 /**
+ * Turn ids whose human prompt must not appear in the timeline.
+ *
+ * Queued turns live in the dock until dispatch. Undispatched turns cancelled from
+ * the queue settle as interrupted without ever reaching the provider; they must
+ * not reappear as a fake "interrupted by you" exchange after the snapshot
+ * refreshes.
+ */
+export function hiddenTimelineTurnIds(snapshot: ConversationSnapshot): Set<string> {
+	return new Set(
+		snapshot.turns
+			.filter(
+				(turn) =>
+					turn.state === "queued" ||
+					(turn.state === "interrupted" && !turn.startedAt && !turn.providerTurnId),
+			)
+			.map((turn) => turn.id),
+	);
+}
+
+/**
  * Turn ids for messages recorded but not yet sent.
  *
  * The daemon holds a mid-turn message instead of pushing it at a busy agent, so

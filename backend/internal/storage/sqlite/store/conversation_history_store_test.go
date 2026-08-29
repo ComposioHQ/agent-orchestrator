@@ -611,6 +611,40 @@ func TestUpdateQueuedTurnMessage(t *testing.T) {
 	}
 }
 
+func TestCancelQueuedTurnByIDHidesMessageFromSnapshot(t *testing.T) {
+	s, session, conversation := conversationFixture(t)
+	ctx := context.Background()
+	created, err := s.AppendUserMessage(ctx, conversation, session, "gen-1",
+		domain.ConversationMessage{
+			ID: "queued-1-message", Text: "delete me", Origin: domain.MessageOriginHuman,
+		}, "queued-1", histClock)
+	if err != nil || !created {
+		t.Fatalf("append queued turn: created=%v err=%v", created, err)
+	}
+
+	if err := s.CancelQueuedTurnByID(ctx, conversation, "queued-1", histClock.Add(time.Minute)); err != nil {
+		t.Fatalf("cancel queued turn: %v", err)
+	}
+
+	page, err := s.LoadConversationSnapshotPage(ctx, conversation, 0, 10)
+	if err != nil {
+		t.Fatalf("load snapshot: %v", err)
+	}
+	if got := texts(page.Messages); len(got) != 0 {
+		t.Fatalf("messages after cancel = %#v, want none in timeline", got)
+	}
+	for _, turn := range page.Turns {
+		if turn.ID != "queued-1" {
+			continue
+		}
+		if turn.State != domain.TurnStateInterrupted {
+			t.Fatalf("cancelled turn state = %q, want interrupted", turn.State)
+		}
+		return
+	}
+	t.Fatal("cancelled turn row disappeared")
+}
+
 // seedTurn records one dispatched turn with a user message and an activity, which is
 // the shape a real turn leaves behind.
 func seedTurn(t *testing.T, s *sqlite.Store, conversationID string, session domain.SessionID, turnID, text string, at time.Time) {

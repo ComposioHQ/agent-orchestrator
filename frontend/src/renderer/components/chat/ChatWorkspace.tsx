@@ -81,6 +81,7 @@ import {
 	can,
 	isCompaction,
 	isSteer,
+	hiddenTimelineTurnIds,
 	queuedTurnIds,
 	type ConversationPlan,
 	type ConversationSnapshot,
@@ -1588,9 +1589,9 @@ function Timeline({
 		if (added.size > 0) setNewHumanMessageIds(added);
 	}, [items, snapshot.latestSequence]);
 	const grouped = useMemo(() => {
-		const turnState = new Map(snapshot.turns.map((queuedTurn) => [queuedTurn.id, queuedTurn.state]));
+		const hiddenTurns = hiddenTimelineTurnIds(snapshot);
 		return groupByTurn({ ...snapshot, items }).filter(
-			(group) => !group.turnId || turnState.get(group.turnId) !== "queued",
+			(group) => !group.turnId || !hiddenTurns.has(group.turnId),
 		);
 	}, [snapshot, items]);
 	const groups = useStableList(grouped, groupKey, sameGroup);

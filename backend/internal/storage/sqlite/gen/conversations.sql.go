@@ -1131,7 +1131,15 @@ WHERE conversation_activities.conversation_id = ?1
   AND (path.max_sequence IS NULL OR conversation_activities.sequence <= path.max_sequence)
   AND (conversation_activities.turn_id IS NULL OR conversation_activities.turn_id NOT IN (
       SELECT discarded.id FROM conversation_turns AS discarded
-      WHERE discarded.conversation_id = ?1 AND discarded.rolled_back_at IS NOT NULL
+      WHERE discarded.conversation_id = ?1
+        AND (
+          discarded.rolled_back_at IS NOT NULL
+          OR (
+            discarded.state = 'interrupted'
+            AND discarded.started_at IS NULL
+            AND discarded.provider_turn_id = ''
+          )
+        )
   ))
 ORDER BY conversation_activities.sequence
 `
@@ -1204,7 +1212,14 @@ WHERE conversation_activities.conversation_id = ?1
   AND (conversation_activities.turn_id IS NULL OR conversation_activities.turn_id NOT IN (
       SELECT discarded.id FROM conversation_turns AS discarded
       WHERE discarded.conversation_id = ?1
-        AND discarded.rolled_back_at IS NOT NULL
+        AND (
+          discarded.rolled_back_at IS NOT NULL
+          OR (
+            discarded.state = 'interrupted'
+            AND discarded.started_at IS NULL
+            AND discarded.provider_turn_id = ''
+          )
+        )
   ))
 ORDER BY conversation_activities.sequence DESC
 LIMIT ?3
@@ -1847,7 +1862,15 @@ WHERE conversation_messages.conversation_id = ?1
   AND (conversation_messages.turn_id IS NULL OR conversation_messages.turn_id NOT IN (
       SELECT discarded.id FROM conversation_turns AS discarded
       WHERE discarded.conversation_id = ?1
-        AND (discarded.rolled_back_at IS NOT NULL OR discarded.promoted_to_turn_id IS NOT NULL)
+        AND (
+          discarded.rolled_back_at IS NOT NULL
+          OR discarded.promoted_to_turn_id IS NOT NULL
+          OR (
+            discarded.state = 'interrupted'
+            AND discarded.started_at IS NULL
+            AND discarded.provider_turn_id = ''
+          )
+        )
   ))
 ORDER BY conversation_messages.sequence
 `
@@ -1855,6 +1878,10 @@ ORDER BY conversation_messages.sequence
 // Prose the agent still remembers. Rows belonging to a rolled-back turn are left
 // out: rollback discarded them provider-side, and showing a person a message the
 // agent has no memory of is the one way this feature can lie.
+//
+// Undispatched queue items cancelled from the dock or by stop settle as
+// interrupted without ever reaching the provider. Their human prompt stays out
+// for the same reason.
 //
 // Rows with turn_id IS NULL survive the filter on purpose. Those are items the
 // provider never attributed to a turn, and hiding what AO cannot prove belonged to
@@ -1924,7 +1951,15 @@ WHERE conversation_messages.conversation_id = ?1
   AND (conversation_messages.turn_id IS NULL OR conversation_messages.turn_id NOT IN (
       SELECT discarded.id FROM conversation_turns AS discarded
       WHERE discarded.conversation_id = ?1
-        AND (discarded.rolled_back_at IS NOT NULL OR discarded.promoted_to_turn_id IS NOT NULL)
+        AND (
+          discarded.rolled_back_at IS NOT NULL
+          OR discarded.promoted_to_turn_id IS NOT NULL
+          OR (
+            discarded.state = 'interrupted'
+            AND discarded.started_at IS NULL
+            AND discarded.provider_turn_id = ''
+          )
+        )
   ))
 ORDER BY conversation_messages.sequence DESC
 LIMIT ?3
