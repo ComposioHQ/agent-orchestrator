@@ -202,4 +202,14 @@ export const aoBridge: AoBridge =
 			signOut: async () => undefined,
 			onSessionChanged: () => () => undefined,
 		},
+		cloudCp: {
+			request: async () => {
+				throw new Error("AO Cloud requests require the desktop app.");
+			},
+			openStream: async () => {
+				throw new Error("AO Cloud event streams require the desktop app.");
+			},
+			closeStream: () => undefined,
+			onStreamEvent: () => () => undefined,
+		},
 	} satisfies AoBridge);

@@ -208,6 +208,11 @@ export function SessionInterfaceSwitchDialog({
 							now” to switch immediately.
 						</p>
 					) : null}
+					{target === "tui" ? (
+						<p className="text-[11px] leading-4 text-warning">
+							Any unsent Chat draft or staged attachments are discarded when the switch completes.
+						</p>
+					) : null}
 					{error ? (
 						<p role="alert" className="text-xs leading-5 text-destructive">
 							{error}

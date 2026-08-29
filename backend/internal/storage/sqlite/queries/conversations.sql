@@ -967,6 +967,15 @@ WHERE conversation_id = sqlc.arg(conversation_id)
   AND request_id = sqlc.arg(request_id)
   AND status = 'pending';
 
+-- name: HasPendingConversationInteractions :one
+SELECT EXISTS (
+    SELECT 1
+    FROM conversation_activities
+    WHERE conversation_id = ?
+      AND kind IN ('approval', 'user_input')
+      AND status = 'pending'
+);
+
 -- Any approval still pending when a controller dies can never be answered: the
 -- provider call it was blocking is gone.
 -- name: FailPendingConversationApprovals :exec

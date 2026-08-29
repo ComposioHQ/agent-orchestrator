@@ -50,6 +50,27 @@ describe("mobile Chat API boundaries", () => {
 		expect(result.sessions[0]).toMatchObject({ isPinned: true, pinnedAt: "2026-08-09T10:00:00Z", lastActivityAt: "2026-08-08T10:00:00Z" });
 	});
 
+	it("preserves the daemon terminal handle used to attach native macOS PTYs", async () => {
+		vi.mocked(fetch)
+			.mockResolvedValueOnce(response({
+				sessions: [{
+					id: "w-1",
+					projectId: "p-1",
+					mode: "tui",
+					terminalHandleId: "ptyhost-v1:w-1",
+				}],
+			}))
+			.mockResolvedValueOnce(response({ sessions: [] }))
+			.mockResolvedValueOnce(response({ projects: [] }));
+
+		const result = await getSessions(cfg);
+
+		expect(result.sessions[0]).toMatchObject({
+			id: "w-1",
+			terminalHandleId: "ptyhost-v1:w-1",
+		});
+	});
+
 	it("delegates an optional empty task with explicit interface and model", async () => {
 		vi.mocked(fetch)
 			.mockResolvedValueOnce(response({ ok: true, workerId: "w-2" }, 202))

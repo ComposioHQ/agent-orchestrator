@@ -25,6 +25,11 @@ import type { TelemetryBootstrap } from "./shared/telemetry";
 import type { MigrationState } from "./main/app-state";
 import type { UpdateSettings, UpdateStatus } from "./main/update-settings";
 import type { CloudAccount } from "./shared/cloud-account";
+import type {
+	CloudCpProxyRequestInit,
+	CloudCpProxyResponse,
+	CloudCpStreamEvent,
+} from "./main/cloud-cp-proxy";
 import type { UpdateOutcome } from "./shared/update-telemetry";
 import type { UiSettings } from "./main/ui-settings";
 import type { UpdateCheckOptions } from "./main/auto-updater";
@@ -417,6 +422,27 @@ const api = {
 			ipcRenderer.on("cloud:sessionChanged", wrapped);
 			return () => {
 				ipcRenderer.off("cloud:sessionChanged", wrapped);
+			};
+		},
+	},
+	// Cloud control-plane transport. The CP has no CORS and the WorkOS bearer
+	// token lives only in the main process, so every CP call is proxied through
+	// main (main/cloud-cp-proxy.ts), which attaches the token; the token itself
+	// never crosses this bridge.
+	cloudCp: {
+		request: (init: CloudCpProxyRequestInit) =>
+			ipcRenderer.invoke("cloudCp:request", init) as Promise<CloudCpProxyResponse>,
+		openStream: (init: CloudCpProxyRequestInit) =>
+			ipcRenderer.invoke("cloudCp:openStream", init) as Promise<{ streamId: string }>,
+		closeStream: (streamId: string) => {
+			ipcRenderer.send("cloudCp:closeStream", streamId);
+		},
+		onStreamEvent: (streamId: string, listener: (event: CloudCpStreamEvent) => void) => {
+			const channel = `cloudCp:stream:${streamId}`;
+			const wrapped = (_event: Electron.IpcRendererEvent, event: CloudCpStreamEvent) => listener(event);
+			ipcRenderer.on(channel, wrapped);
+			return () => {
+				ipcRenderer.off(channel, wrapped);
 			};
 		},
 	},

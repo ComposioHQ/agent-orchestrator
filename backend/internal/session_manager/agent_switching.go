@@ -1148,6 +1148,7 @@ func (m *Manager) prepareTargetActivation(ctx context.Context, store ports.Agent
 		config.Model = model
 	}
 	env := m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env)
+	pinRuntimePermissionEnv(env, config.Permissions)
 	m.augmentAgentRuntimeEnv(agent, env)
 	configDir, err := nativeConfigDir(ctx, agent, env)
 	if err != nil {

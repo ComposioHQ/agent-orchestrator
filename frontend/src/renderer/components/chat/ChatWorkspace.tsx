@@ -28,9 +28,7 @@ import {
 	type ReactNode,
 	type WheelEvent as ReactWheelEvent,
 } from "react";
-import type { TFunction } from "i18next";
-import { useTranslation } from "react-i18next";
-import { ArrowDown, CornerDownRight, GitBranch, Loader2, TriangleAlert, Undo2 } from "lucide-react";
+import { ArrowDown, CornerDownRight, Loader2, TriangleAlert, Undo2 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { sameContent, useStableList } from "../../lib/stable-list";
 import { getApiBaseUrl, subscribeApiBaseUrl } from "../../lib/api-client";
@@ -126,21 +124,6 @@ function initialTerminalFontSize(): number {
 	return clampTerminalFontSize(parsed);
 }
 
-function branchContextNotice(snapshot: ConversationSnapshot, t: TFunction): string {
-	const materialization = snapshot.branchMaterialization;
-	if (materialization?.strategy === "native") {
-		return t("chat.branch.context.native");
-	}
-	if (materialization?.strategy === "approximate_context") {
-		return t(
-			materialization.replayTruncated
-				? "chat.branch.context.approximateTruncated"
-				: "chat.branch.context.approximate",
-		);
-	}
-	return t("chat.branch.context.fallback");
-}
-
 type ReviewerTerminalTarget = Extract<TerminalTarget, { kind: "reviewer" }>;
 type ShellTerminalTarget = Extract<TerminalTarget, { kind: "shell" }>;
 
@@ -175,6 +158,8 @@ export interface ChatWorkspaceProps {
 	controllerTransitioning?: boolean;
 	/** Freeze agent-owned Chat controls while a durable session mutation owns input. */
 	agentInputDisabled?: boolean;
+	/** Fence new agent work without blocking decisions required by the current turn. */
+	newWorkDisabled?: boolean;
 	reviewerTerminal?: { handleId: string; harness: string };
 	onOpenReviewerTerminal?: (target: { handleId: string; harness: string }) => void;
 	/** Older durable history is available but not loaded into the DOM yet. */
@@ -305,6 +290,7 @@ export function ChatWorkspace({
 	workspaceFileActive = false,
 	controllerTransitioning,
 	agentInputDisabled = false,
+	newWorkDisabled = false,
 	reviewerTerminal,
 	onOpenReviewerTerminal,
 	session,
@@ -368,7 +354,6 @@ export function ChatWorkspace({
 	reloadingMcpServers,
 	mcpReloadError,
 }: ChatWorkspaceProps) {
-	const { t } = useTranslation();
 	const turn = activeTurn(snapshot);
 	const hasPendingInteraction = snapshot.items.some(
 		(item) =>
@@ -380,6 +365,7 @@ export function ChatWorkspace({
 	const handleChatKeyDown = useCallback(
 		(event: ReactKeyboardEvent<HTMLElement>) => {
 			if (
+				newWorkDisabled ||
 				event.key !== "Escape" ||
 				event.defaultPrevented ||
 				isDialogOrMenuOpen() ||
@@ -394,7 +380,7 @@ export function ChatWorkspace({
 			event.preventDefault();
 			onInterrupt();
 		},
-		[hasPendingInteraction, onInterrupt, turn],
+		[hasPendingInteraction, newWorkDisabled, onInterrupt, turn],
 	);
 	const handleChatSurfaceClick = useCallback((event: ReactMouseEvent<HTMLElement>) => {
 		const target = event.target;
@@ -617,7 +603,7 @@ export function ChatWorkspace({
 
 	// Offered only while the agent is idle. The daemon refuses a rollback mid-turn,
 	// and a control that exists to be refused is worse than one that waits.
-	const rollbackTarget = onRollback && !turn ? (id: string) => setConfirming(id) : undefined;
+	const rollbackTarget = onRollback && !turn && !newWorkDisabled ? (id: string) => setConfirming(id) : undefined;
 	const discarded = snapshot.turns.filter((t) => t.rolledBack).length;
 
 	const brokenServers = useMemo(() => brokenMcpServers(snapshot), [snapshot]);
@@ -748,7 +734,7 @@ export function ChatWorkspace({
 						onWheelCapture={handleWheelZoom}
 						role="tabpanel"
 					>
-						<div className="h-full min-h-0 pl-2" data-testid="chat-reviewer-terminal">
+						<div className="h-full min-h-0" data-testid="chat-reviewer-terminal">
 							<TerminalPane
 								daemonReady={Boolean(daemonReady)}
 								fontSize={terminalFontSize}
@@ -770,10 +756,11 @@ export function ChatWorkspace({
 						onWheelCapture={handleWheelZoom}
 						role="tabpanel"
 					>
-						<div className="h-full min-h-0 pl-2" data-testid="chat-shell-terminal">
+						<div className="h-full min-h-0" data-testid="chat-shell-terminal">
 							<TerminalPane
 								daemonReady={Boolean(daemonReady)}
 								fontSize={terminalFontSize}
+								focusRequested
 								isFullscreen={isFullscreen}
 								onChangeFontSize={updateTerminalFontSize}
 								onToggleFullscreen={toggleFullscreen}
@@ -802,7 +789,7 @@ export function ChatWorkspace({
 					<ControllerBanner
 						controller={snapshot.controller}
 						transitioning={controllerTransitioning}
-						onResume={onResumeAgent}
+						onResume={newWorkDisabled ? undefined : onResumeAgent}
 						resuming={resumingAgent}
 						resumeError={resumeError}
 						onOpenShell={onOpenShell}
@@ -812,7 +799,7 @@ export function ChatWorkspace({
 					{snapshot.threadState ? <ThreadStateBanner threadState={snapshot.threadState} /> : null}
 					<McpServerBanner
 						servers={brokenServers}
-						onReload={onReloadMcpServers}
+						onReload={newWorkDisabled ? undefined : onReloadMcpServers}
 						reloading={reloadingMcpServers}
 						turnInFlight={Boolean(turn)}
 						error={mcpReloadError}
@@ -841,6 +828,7 @@ export function ChatWorkspace({
 								onActivateBranch={onActivateBranch}
 								activateBranchPending={activateBranchPending}
 								activateBranchError={activateBranchError}
+								newWorkDisabled={newWorkDisabled}
 							/>
 						</ChatLinkProvider>
 
@@ -851,17 +839,6 @@ export function ChatWorkspace({
 								className="mx-auto flex w-full max-w-3xl flex-col gap-2 transition-[max-width] duration-500 ease-out data-[empty]:max-w-2xl"
 							>
 								{discarded > 0 ? <RolledBackNotice count={discarded} /> : null}
-								{snapshot.branchedFromEarlierMessage ? (
-									<p
-										role="status"
-										aria-live="polite"
-										aria-atomic="true"
-										className="flex items-center gap-1.5 text-pretty text-[11px] text-muted-foreground"
-									>
-										<GitBranch aria-hidden="true" className="size-3 shrink-0" />
-										{branchContextNotice(snapshot, t)}
-									</p>
-								) : null}
 								<ChatComposer
 									attachedTop={turn?.state === "running" && queuedMessages.length > 0}
 									queuedDock={
@@ -880,7 +857,7 @@ export function ChatWorkspace({
 										) : undefined
 									}
 									onSend={(text, attachments) => onSend?.(text, attachments)}
-									onInterrupt={turn ? onInterrupt : undefined}
+									onInterrupt={turn && !newWorkDisabled ? onInterrupt : undefined}
 									commandError={commandError}
 									settings={
 										onChooseSettings || onChooseConfigOption ? (
@@ -888,32 +865,36 @@ export function ChatWorkspace({
 												models={models ?? []}
 												settings={snapshot.settings}
 												reroute={snapshot.modelReroute}
-												onChange={onChooseSettings}
+												onChange={newWorkDisabled ? undefined : onChooseSettings}
 												configOptions={configOptions ?? []}
-												onChangeConfigOption={onChooseConfigOption}
+												onChangeConfigOption={newWorkDisabled ? undefined : onChooseConfigOption}
 												configPending={configOptionPending}
 												error={configOptionError}
-												disabled={snapshot.controller.state === "stopped" || configOptionPending}
+												disabled={
+													snapshot.controller.state === "stopped" ||
+													configOptionPending ||
+													newWorkDisabled
+												}
 											/>
 										) : null
 									}
 									busy={busy}
 									willQueue={Boolean(turn)}
-									disabled={snapshot.controller.state === "stopped"}
+									disabled={snapshot.controller.state === "stopped" || newWorkDisabled}
 									skills={skills}
 									filePaths={filePaths}
 									filePathsTruncated={filePathsTruncated}
-									onStageAttachments={onStageAttachments}
+									onStageAttachments={newWorkDisabled ? undefined : onStageAttachments}
 									nativeImages={nativeImages}
 									autoFocus={!reviewerActive}
 									autoFocusKey={snapshot.sessionId}
 									// Steering is only meaningful into a turn that is running. A queued turn
 									// has not reached the provider, so there is nothing to steer.
-									onSteer={onSteer}
+									onSteer={newWorkDisabled ? undefined : onSteer}
 									canSteer={Boolean(onSteer) && turn?.state === "running"}
 									steerPending={steerPending}
 									steerRefusal={steerRefusal}
-									onCompact={onCompact}
+									onCompact={newWorkDisabled ? undefined : onCompact}
 									compacting={compacting}
 									compactUnavailable={compactUnavailable}
 									compactBlocked={Boolean(turn)}
@@ -1140,64 +1121,50 @@ function ChatHeader({
 						onKeyDown={onTabsKeyDown ?? handleTerminalTabListKeyDown}
 						role="tablist"
 					>
-						<span
+						<button
+							aria-current={timelineActive ? true : undefined}
+							aria-label={label}
+							aria-selected={timelineActive}
 							data-terminal-role="primary"
 							className={cn(
-								"group relative inline-flex min-w-shell-tab-min self-stretch items-center gap-1.5 border-r border-border px-3",
+								"group relative inline-flex min-w-shell-tab-min max-w-shell-tab-max self-stretch cursor-pointer items-center gap-1.5 border-r border-border px-3 text-control font-medium leading-none transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent/50",
 								timelineActive
 									? "bg-overlay text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80"
 									: "text-muted-foreground hover:bg-raised hover:text-foreground",
 							)}
+							onClick={timelineActive ? undefined : onSelectChat}
+							role="tab"
+							tabIndex={timelineActive || (!reviewerTerminal && !shellTerminals?.length) ? 0 : -1}
+							title={label}
+							type="button"
 						>
 							<AgentAvatar className="size-icon-base" decorative provider={snapshot.harness} />
-							<button
-								aria-current={timelineActive ? true : undefined}
-								aria-label={label}
-								aria-selected={timelineActive}
-								className={cn(
-									"inline-flex min-w-flex-min max-w-shell-tab-max items-center gap-1.5 text-control font-medium leading-none transition-colors",
-									timelineActive ? "text-foreground" : "text-muted-foreground",
-								)}
-								onClick={timelineActive ? undefined : onSelectChat}
-								role="tab"
-								tabIndex={timelineActive || (!reviewerTerminal && !shellTerminals?.length) ? 0 : -1}
-								title={label}
-								type="button"
-							>
-								<span className="truncate">{label}</span>
-							</button>
-						</span>
+							<span className="truncate">{label}</span>
+						</button>
 						{reviewerTerminal ? (
-							<span
+							<button
+								aria-current={reviewerActive ? true : undefined}
+								aria-label="Reviewer"
+								aria-selected={Boolean(reviewerActive)}
 								className={cn(
-									"group relative inline-flex min-w-shell-tab-min self-stretch items-center gap-1.5 border-r border-border px-3",
+									"group relative inline-flex min-w-shell-tab-min max-w-shell-tab-max self-stretch cursor-pointer items-center gap-1.5 border-r border-border px-3 text-control font-medium leading-none transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent/50",
 									reviewerActive
 										? "bg-overlay text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80"
 										: "text-muted-foreground hover:bg-raised hover:text-foreground",
 								)}
+								onClick={() => onOpenReviewerTerminal?.(reviewerTerminal)}
+								role="tab"
+								tabIndex={reviewerActive ? 0 : -1}
+								title={reviewerTerminal.harness}
+								type="button"
 							>
 								<AgentAvatar
 									className="size-icon-base"
 									decorative
 									provider={reviewerTerminal.harness}
 								/>
-								<button
-									aria-current={reviewerActive ? true : undefined}
-									aria-label="Reviewer"
-									aria-selected={Boolean(reviewerActive)}
-									className={cn(
-										"inline-flex min-w-flex-min max-w-shell-tab-max items-center gap-1.5 text-control font-medium leading-none",
-										reviewerActive ? "text-foreground" : "text-muted-foreground",
-									)}
-									onClick={() => onOpenReviewerTerminal?.(reviewerTerminal)}
-									role="tab"
-									tabIndex={reviewerActive ? 0 : -1}
-									title={reviewerTerminal.harness}
-									type="button"
-								>
-									<span className="truncate">Reviewer</span>
-								</button>
-							</span>
+								<span className="truncate">Reviewer</span>
+							</button>
 						) : null}
 						{/* The same shared shell tab the terminal pane strip and the
 						    standalone terminals screen use, so all three never drift. */}
@@ -1375,6 +1342,7 @@ function Timeline({
 	onActivateBranch,
 	activateBranchPending,
 	activateBranchError,
+	newWorkDisabled,
 }: {
 	snapshot: ConversationSnapshot;
 	hasOlder?: boolean;
@@ -1394,6 +1362,7 @@ function Timeline({
 	onActivateBranch?: (branchId: string) => Promise<unknown> | void;
 	activateBranchPending?: boolean;
 	activateBranchError?: string;
+	newWorkDisabled?: boolean;
 }) {
 	const scroller = useRef<HTMLDivElement>(null);
 	const scrollContent = useRef<HTMLDivElement>(null);
@@ -1433,8 +1402,8 @@ function Timeline({
 	const apiBaseUrl = useSyncExternalStore(subscribeApiBaseUrl, getApiBaseUrl, getApiBaseUrl);
 	const editHumanMessage = useStableCallback(onEditHumanMessage);
 	const activateBranch = useStableCallback(onActivateBranch);
-	const canEditHumanMessage = Boolean(onEditHumanMessage);
-	const canActivateBranch = Boolean(onActivateBranch);
+	const canEditHumanMessage = Boolean(onEditHumanMessage) && !newWorkDisabled;
+	const canActivateBranch = Boolean(onActivateBranch) && !newWorkDisabled;
 	const canForkHistoricalContext = can(snapshot, "fork");
 	const canReconstructHistoricalContext =
 		can(snapshot, "prompt_replay") && can(snapshot, "embedded_context");
@@ -1854,7 +1823,10 @@ function Timeline({
 										},
 										pending: retryControl.pending && retrySelected,
 										error: retrySelected ? retryControl.error : undefined,
-										disabled: Boolean(turn) || Boolean(retryControl.pending),
+										disabled:
+											Boolean(turn) ||
+											Boolean(retryControl.pending) ||
+											Boolean(newWorkDisabled),
 									}
 								: undefined;
 						return (
@@ -1879,7 +1851,7 @@ function Timeline({
 									onCancelMessageEdit={cancelMessageEdit}
 									onSubmitMessageEdit={submitMessageEdit}
 									editPending={editPending}
-									editBusy={editBusy}
+									editBusy={Boolean(editBusy || newWorkDisabled)}
 									editError={editError}
 									branchPoints={branchPoints}
 									editableTurns={editableTurns}
@@ -1906,7 +1878,7 @@ function Timeline({
 								text={messageEdit.text}
 								content={messageEdit.content}
 								pending={Boolean(editPending)}
-								busy={Boolean(editBusy)}
+								busy={Boolean(editBusy || newWorkDisabled)}
 								error={editError}
 								reconstructedContext={messageEdit.reconstructedContext}
 								onDraftChange={updateMessageEdit}

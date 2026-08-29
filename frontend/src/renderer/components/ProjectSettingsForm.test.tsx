@@ -419,8 +419,11 @@ describe("ProjectSettingsForm", () => {
 		const workerAgent = screen.getByRole("button", { name: "Default worker agent" });
 		const orchestratorAgent = screen.getByRole("button", { name: "Default orchestrator agent" });
 		const permissionMode = screen.getByRole("button", { name: "Permission mode" });
-		expect(workerAgent).toHaveTextContent("codex");
-		expect(orchestratorAgent).toHaveTextContent("claude-code");
+		// The trigger shows the raw harness id until the agent catalog resolves,
+		// then its label ("codex" -> "Codex"). Both prove the configured value;
+		// exactly which one is on screen depends on unrelated query timing.
+		expect(workerAgent).toHaveTextContent(/^codex$/i);
+		expect(orchestratorAgent).toHaveTextContent(/^claude[- ]code$/i);
 		expect(permissionMode).toHaveTextContent("Auto");
 
 		await chooseOption(workerAgent, "OpenCode");

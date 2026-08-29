@@ -289,5 +289,11 @@ if (typeof window !== "undefined") {
 			signOut: async () => undefined,
 			onSessionChanged: () => () => undefined,
 		},
+		cloudCp: {
+			request: async () => ({ status: 401, headers: {}, body: "" }),
+			openStream: async () => ({ streamId: "stream_test" }),
+			closeStream: () => undefined,
+			onStreamEvent: () => () => undefined,
+		},
 	};
 } // end if (typeof window !== "undefined")
