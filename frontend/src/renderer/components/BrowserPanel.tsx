@@ -329,6 +329,7 @@ export function BrowserPanelView({
 		setAnnotationMode,
 	} = browserView;
 	const [urlInput, setUrlInput] = useState(navState.url);
+	const [urlEditing, setUrlEditing] = useState(false);
 	const { beginPicking, cancelPicking, enqueue, error, failPicking, queuedCount, retryQueued, status } =
 		annotationQueue;
 	const hasNativeBrowser = Boolean(window.ao?.browser);
@@ -390,6 +391,12 @@ export function BrowserPanelView({
 	}, [navState.url]);
 
 	useEffect(() => {
+		if (!urlEditing) return;
+		const frame = window.requestAnimationFrame(() => urlInputRef.current?.select());
+		return () => window.cancelAnimationFrame(frame);
+	}, [urlEditing]);
+
+	useEffect(() => {
 		const offSubmit = window.ao?.browser.onAnnotationSubmit((payload) => {
 			if (payload.viewId !== viewId) return;
 			enqueue(payload);
@@ -408,6 +415,11 @@ export function BrowserPanelView({
 		event.preventDefault();
 		const nextURL = urlInput.trim();
 		if (nextURL) void navigate(nextURL);
+	};
+
+	const beginUrlEditing = () => {
+		setUrlInput(navState.url);
+		setUrlEditing(true);
 	};
 
 	const toggleAnnotationMode = async () => {
@@ -519,7 +531,10 @@ export function BrowserPanelView({
 				</button>
 			</div>
 			<form
-				className="browser-panel__toolbar flex shrink-0 min-w-0 items-center gap-1 border-b border-border bg-surface"
+				className={cn(
+					"browser-panel__toolbar flex shrink-0 min-w-0 items-center gap-1 border-b border-border bg-surface",
+					urlEditing && "browser-panel__toolbar--url-editing",
+				)}
 				data-testid="browser-toolbar"
 				onSubmit={submit}
 			>
@@ -601,18 +616,15 @@ export function BrowserPanelView({
 					</span>
 				) : null}
 					<div className="browser-panel__url-wrap relative min-w-0 flex-1">
-						<Globe2
-							aria-hidden="true"
-							className="browser-panel__url-icon"
-							data-testid="browser-url-icon"
-						/>
 					<Input
 						aria-label={t("browser.url")}
-						className="browser-panel__url-input h-browser-url pl-browser-url font-mono text-xs"
+						className="browser-panel__url-input h-browser-url font-mono text-xs"
+						onBlur={() => setUrlEditing(false)}
 						onChange={(event) => setUrlInput(event.target.value)}
+						onFocus={beginUrlEditing}
 						placeholder={t("browser.urlPlaceholder")}
 						ref={urlInputRef}
-						value={urlInput}
+						value={urlEditing ? urlInput : compactBrowserAddress(navState.url)}
 					/>
 				</div>
 				{tabNotice ? (
@@ -907,6 +919,23 @@ function SortableBrowserTopTab({
 			</button>
 		</div>
 	);
+}
+
+function compactBrowserAddress(url: string): string {
+	if (!url) return "";
+	try {
+		const parsed = new URL(url);
+		if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+			return parsed.host.replace(/^www\./i, "");
+		}
+		if (parsed.protocol === "file:") {
+			const name = parsed.pathname.split("/").filter(Boolean).at(-1);
+			return name ? decodeURIComponent(name) : url;
+		}
+		return parsed.host || url;
+	} catch {
+		return url;
+	}
 }
 
 function agentActivityLabel(activity: BrowserViewModel["agentBrowserActivity"], active: boolean): string {

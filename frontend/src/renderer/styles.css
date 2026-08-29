@@ -4028,6 +4028,14 @@ body:has(#root .platform-linux) > .browser-popout-overlay {
 	backdrop-filter: blur(10px);
 }
 
+.browser-panel__toolbar--url-editing {
+	padding-right: 4px;
+}
+
+.browser-panel__toolbar--url-editing > :not(.browser-panel__url-wrap) {
+	display: none;
+}
+
 .browser-panel {
 	container-name: browser-panel;
 	container-type: inline-size;
@@ -4243,21 +4251,8 @@ body:has(#root .platform-linux) > .browser-popout-overlay {
 	color: var(--fg);
 }
 
-.browser-panel__url-icon {
-	position: absolute;
-	left: 10px;
-	top: 50%;
-	z-index: 1;
-	width: 15px;
-	height: 15px;
-	transform: translateY(-50%);
-	color: var(--fg-passive);
-	pointer-events: none;
-}
-
 .browser-panel__url-input {
 	height: 29px;
-	padding-left: 29px;
 	border-color: color-mix(in srgb, var(--color-border) 72%, transparent);
 	border-radius: 7px;
 	background:

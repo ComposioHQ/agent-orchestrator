@@ -224,6 +224,41 @@ describe("BrowserPanel", () => {
 		expect(hookState.navigate).toHaveBeenCalledWith("localhost:5173");
 	});
 
+	it("shows only the site address until the URL input is focused", () => {
+		hookState.navState = {
+			...hookState.navState,
+			url: "https://www.google.com/search?q=agent+orchestrator#results",
+		};
+
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		expect(screen.getByRole("textbox", { name: /browser url/i })).toHaveValue("google.com");
+	});
+
+	it("expands the URL input, reveals the full URL, and selects it on focus", async () => {
+		const url = "https://www.google.com/search?q=agent+orchestrator#results";
+		hookState.navState = { ...hookState.navState, url, canGoBack: true };
+		const user = userEvent.setup();
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+		const toolbar = screen.getByTestId("browser-toolbar");
+		const input = screen.getByRole("textbox", { name: /browser url/i }) as HTMLInputElement;
+
+		await user.click(input);
+
+		await waitFor(() => {
+			expect(input).toHaveValue(url);
+			expect(input.selectionStart).toBe(0);
+			expect(input.selectionEnd).toBe(url.length);
+		});
+		expect(toolbar).toHaveClass("browser-panel__toolbar--url-editing");
+
+		fireEvent.blur(input);
+
+		expect(input).toHaveValue("google.com");
+		expect(toolbar).not.toHaveClass("browser-panel__toolbar--url-editing");
+		expect(within(toolbar).getByRole("button", { name: /back/i })).toBeInTheDocument();
+	});
+
 	it("constrains the device frame to a named preset's width, and clears it back to fit", async () => {
 		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
 		const frame = screen.getByTestId("browser-device-frame").parentElement as HTMLElement;
@@ -812,13 +847,10 @@ describe("BrowserPanel", () => {
 		expect(screen.getByTestId("browser-viewport")).toHaveClass("browser-panel__viewport");
 	});
 
-	it("keeps URL icon placement controlled by the browser shell CSS", () => {
+	it("does not render a globe icon in the URL input", () => {
 		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
 
-		const icon = screen.getByTestId("browser-url-icon");
-		expect(icon).toHaveClass("browser-panel__url-icon");
-		expect(icon).not.toHaveClass("top-1/2");
-		expect(icon).not.toHaveClass("-translate-y-1/2");
+		expect(screen.queryByTestId("browser-url-icon")).not.toBeInTheDocument();
 	});
 	it("disables annotation mode when no page is loaded", () => {
 		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
