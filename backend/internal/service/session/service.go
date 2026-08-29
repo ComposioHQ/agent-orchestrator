@@ -82,6 +82,18 @@ type interfaceTransitionCommander interface {
 	AcknowledgeInterfaceTransitionNotice(context.Context, domain.SessionID, string) (domain.SessionInterfaceTransition, error)
 }
 
+type codexProfileSwitchCommander interface {
+	CachedCodexProfileSwitchOptions(context.Context, domain.SessionID) (domain.CodexProfileSwitchOptions, error)
+	EnsureCodexProfileSwitchOptions(context.Context, domain.SessionID) (domain.CodexProfileSwitchOptions, error)
+	StartCodexProfileSwitch(context.Context, domain.SessionID, sessionmanager.StartCodexProfileSwitchConfig) (domain.CodexProfileSwitch, error)
+	ListCodexProfileSwitches(context.Context, domain.SessionID) ([]domain.CodexProfileSwitch, error)
+	GetCodexProfileSwitch(context.Context, domain.SessionID, domain.CodexProfileSwitchID) (domain.CodexProfileSwitch, error)
+	CancelCodexProfileSwitch(context.Context, domain.SessionID, domain.CodexProfileSwitchID) (domain.CodexProfileSwitch, error)
+	RecoverCodexProfileSwitch(context.Context, domain.SessionID, domain.CodexProfileSwitchID) (domain.CodexProfileSwitch, error)
+	RestoreCodexProfileSwitchSource(context.Context, domain.SessionID, domain.CodexProfileSwitchID) (domain.CodexProfileSwitch, error)
+	SubmitCodexProfileSwitchHandoff(context.Context, domain.SessionID, domain.CodexProfileSwitchID, domain.AgentGenerationID, json.RawMessage) (domain.CodexProfileSwitch, error)
+}
+
 // RollbackOutcome reports what happened in a rollback: either the seed row was
 // deleted, or the partially-spawned session was killed (runtime+workspace torn
 // down, row marked terminated).
@@ -656,6 +668,121 @@ func (s *Service) AcknowledgeInterfaceTransitionNotice(
 	return transition, toAPIError(err)
 }
 
+// CachedCodexProfileSwitchOptions returns only daemon-memory profile state.
+func (s *Service) CachedCodexProfileSwitchOptions(ctx context.Context, id domain.SessionID) (domain.CodexProfileSwitchOptions, error) {
+	manager, ok := s.manager.(codexProfileSwitchCommander)
+	if !ok {
+		return domain.CodexProfileSwitchOptions{}, apierr.Unavailable("CODEX_PROFILE_SWITCH_UNAVAILABLE", "Codex profile switching is unavailable")
+	}
+	options, err := manager.CachedCodexProfileSwitchOptions(ctx, id)
+	return options, toAPIError(err)
+}
+
+// EnsureCodexProfileSwitchOptions refreshes target authentication and capacity.
+func (s *Service) EnsureCodexProfileSwitchOptions(ctx context.Context, id domain.SessionID) (domain.CodexProfileSwitchOptions, error) {
+	manager, ok := s.manager.(codexProfileSwitchCommander)
+	if !ok {
+		return domain.CodexProfileSwitchOptions{}, apierr.Unavailable("CODEX_PROFILE_SWITCH_UNAVAILABLE", "Codex profile switching is unavailable")
+	}
+	options, err := manager.EnsureCodexProfileSwitchOptions(ctx, id)
+	return options, toAPIError(err)
+}
+
+// StartCodexProfileSwitch accepts one explicitly confirmed asynchronous switch.
+func (s *Service) StartCodexProfileSwitch(ctx context.Context, id domain.SessionID, cfg sessionmanager.StartCodexProfileSwitchConfig) (domain.CodexProfileSwitch, error) {
+	manager, ok := s.manager.(codexProfileSwitchCommander)
+	if !ok {
+		return domain.CodexProfileSwitch{}, apierr.Unavailable("CODEX_PROFILE_SWITCH_UNAVAILABLE", "Codex profile switching is unavailable")
+	}
+	sw, err := manager.StartCodexProfileSwitch(ctx, id, cfg)
+	if err != nil {
+		return sw, toAPIError(err)
+	}
+	return s.decorateCodexProfileSwitch(ctx, sw), nil
+}
+
+// ListCodexProfileSwitches returns durable source-owned operation history.
+func (s *Service) ListCodexProfileSwitches(ctx context.Context, id domain.SessionID) ([]domain.CodexProfileSwitch, error) {
+	manager, ok := s.manager.(codexProfileSwitchCommander)
+	if !ok {
+		return nil, apierr.Unavailable("CODEX_PROFILE_SWITCH_UNAVAILABLE", "Codex profile switching is unavailable")
+	}
+	switches, err := manager.ListCodexProfileSwitches(ctx, id)
+	if err != nil {
+		return nil, toAPIError(err)
+	}
+	for i := range switches {
+		switches[i] = s.decorateCodexProfileSwitch(ctx, switches[i])
+	}
+	return switches, nil
+}
+
+// GetCodexProfileSwitch returns one source-scoped durable operation.
+func (s *Service) GetCodexProfileSwitch(ctx context.Context, id domain.SessionID, switchID domain.CodexProfileSwitchID) (domain.CodexProfileSwitch, error) {
+	manager, ok := s.manager.(codexProfileSwitchCommander)
+	if !ok {
+		return domain.CodexProfileSwitch{}, apierr.Unavailable("CODEX_PROFILE_SWITCH_UNAVAILABLE", "Codex profile switching is unavailable")
+	}
+	sw, err := manager.GetCodexProfileSwitch(ctx, id, switchID)
+	if err != nil {
+		return sw, toAPIError(err)
+	}
+	return s.decorateCodexProfileSwitch(ctx, sw), nil
+}
+
+// CancelCodexProfileSwitch cancels only before source shutdown is durable.
+func (s *Service) CancelCodexProfileSwitch(ctx context.Context, id domain.SessionID, switchID domain.CodexProfileSwitchID) (domain.CodexProfileSwitch, error) {
+	manager, ok := s.manager.(codexProfileSwitchCommander)
+	if !ok {
+		return domain.CodexProfileSwitch{}, apierr.Unavailable("CODEX_PROFILE_SWITCH_UNAVAILABLE", "Codex profile switching is unavailable")
+	}
+	sw, err := manager.CancelCodexProfileSwitch(ctx, id, switchID)
+	if err != nil {
+		return sw, toAPIError(err)
+	}
+	return s.decorateCodexProfileSwitch(ctx, sw), nil
+}
+
+// RecoverCodexProfileSwitch retries only the already allocated target.
+func (s *Service) RecoverCodexProfileSwitch(ctx context.Context, id domain.SessionID, switchID domain.CodexProfileSwitchID) (domain.CodexProfileSwitch, error) {
+	manager, ok := s.manager.(codexProfileSwitchCommander)
+	if !ok {
+		return domain.CodexProfileSwitch{}, apierr.Unavailable("CODEX_PROFILE_SWITCH_UNAVAILABLE", "Codex profile switching is unavailable")
+	}
+	sw, err := manager.RecoverCodexProfileSwitch(ctx, id, switchID)
+	if err != nil {
+		return sw, toAPIError(err)
+	}
+	return s.decorateCodexProfileSwitch(ctx, sw), nil
+}
+
+// RestoreCodexProfileSwitchSource transfers ownership back only when safe.
+func (s *Service) RestoreCodexProfileSwitchSource(ctx context.Context, id domain.SessionID, switchID domain.CodexProfileSwitchID) (domain.CodexProfileSwitch, error) {
+	manager, ok := s.manager.(codexProfileSwitchCommander)
+	if !ok {
+		return domain.CodexProfileSwitch{}, apierr.Unavailable("CODEX_PROFILE_SWITCH_UNAVAILABLE", "Codex profile switching is unavailable")
+	}
+	sw, err := manager.RestoreCodexProfileSwitchSource(ctx, id, switchID)
+	if err != nil {
+		return sw, toAPIError(err)
+	}
+	return s.decorateCodexProfileSwitch(ctx, sw), nil
+}
+
+// SubmitCodexProfileSwitchHandoff accepts hidden generation-fenced source
+// enrichment for the daemon-owned continuation coordinator.
+func (s *Service) SubmitCodexProfileSwitchHandoff(ctx context.Context, id domain.SessionID, switchID domain.CodexProfileSwitchID, sourceGenerationID domain.AgentGenerationID, handoff json.RawMessage) (domain.CodexProfileSwitch, error) {
+	manager, ok := s.manager.(codexProfileSwitchCommander)
+	if !ok {
+		return domain.CodexProfileSwitch{}, apierr.Unavailable("CODEX_PROFILE_SWITCH_UNAVAILABLE", "Codex profile switching is unavailable")
+	}
+	sw, err := manager.SubmitCodexProfileSwitchHandoff(ctx, id, switchID, sourceGenerationID, handoff)
+	if err != nil {
+		return sw, toAPIError(err)
+	}
+	return s.decorateCodexProfileSwitch(ctx, sw), nil
+}
+
 func restoreModeView(mode sessionmanager.RestoreMode) RestoreModeView {
 	switch mode {
 	case sessionmanager.RestoreModeNative:
@@ -696,6 +823,9 @@ func (s *Service) Send(ctx context.Context, id domain.SessionID, message string,
 
 // Rename updates the user-facing session display name.
 func (s *Service) Rename(ctx context.Context, id domain.SessionID, displayName string) error {
+	if err := s.requireMutableSession(ctx, id); err != nil {
+		return err
+	}
 	displayName = strings.TrimSpace(displayName)
 	if displayName == "" {
 		return apierr.Invalid("DISPLAY_NAME_REQUIRED", "Display name is required", nil)
@@ -717,6 +847,9 @@ func (s *Service) Rename(ctx context.Context, id domain.SessionID, displayName s
 // sessions_cdc_update trigger, mirroring how other session mutations surface on
 // the live event stream.
 func (s *Service) SetPreview(ctx context.Context, id domain.SessionID, previewURL string) (domain.Session, error) {
+	if err := s.requireMutableSession(ctx, id); err != nil {
+		return domain.Session{}, err
+	}
 	updated, err := s.store.SetSessionPreviewURL(ctx, id, previewURL, time.Now().UTC())
 	if err != nil {
 		return domain.Session{}, fmt.Errorf("set preview url %s: %w", id, err)
@@ -730,6 +863,9 @@ func (s *Service) SetPreview(ctx context.Context, id domain.SessionID, previewUR
 // SetTerminateOnPRMerge persists the user's merge-completion lifecycle policy
 // and returns the refreshed read model.
 func (s *Service) SetTerminateOnPRMerge(ctx context.Context, id domain.SessionID, terminate bool) (domain.Session, error) {
+	if err := s.requireMutableSession(ctx, id); err != nil {
+		return domain.Session{}, err
+	}
 	updated, err := s.store.SetSessionTerminateOnPRMerge(ctx, id, terminate, time.Now().UTC())
 	if err != nil {
 		return domain.Session{}, fmt.Errorf("set terminate-on-pr-merge %s: %w", id, err)
@@ -742,6 +878,9 @@ func (s *Service) SetTerminateOnPRMerge(ctx context.Context, id domain.SessionID
 
 // SetAutoInjectReview persists whether new SCM and AO review feedback should be sent to the session.
 func (s *Service) SetAutoInjectReview(ctx context.Context, id domain.SessionID, autoInject bool) (domain.Session, error) {
+	if err := s.requireMutableSession(ctx, id); err != nil {
+		return domain.Session{}, err
+	}
 	updated, err := s.store.SetSessionAutoInjectReview(ctx, id, autoInject, time.Now().UTC())
 	if err != nil {
 		return domain.Session{}, fmt.Errorf("set auto-inject review %s: %w", id, err)
@@ -755,6 +894,9 @@ func (s *Service) SetAutoInjectReview(ctx context.Context, id domain.SessionID, 
 // SetAutoInjectCI persists the default automatic CI-failure injection policy
 // for PRs created after this update. Existing PRs keep their captured policy.
 func (s *Service) SetAutoInjectCI(ctx context.Context, id domain.SessionID, autoInject bool) (domain.Session, error) {
+	if err := s.requireMutableSession(ctx, id); err != nil {
+		return domain.Session{}, err
+	}
 	updated, err := s.store.SetSessionAutoInjectCI(ctx, id, autoInject, time.Now().UTC())
 	if err != nil {
 		return domain.Session{}, fmt.Errorf("set auto-inject CI %s: %w", id, err)
@@ -767,6 +909,9 @@ func (s *Service) SetAutoInjectCI(ctx context.Context, id domain.SessionID, auto
 
 // Pin marks a session as pinned and returns the refreshed read model.
 func (s *Service) Pin(ctx context.Context, id domain.SessionID) (domain.Session, error) {
+	if err := s.requireMutableSession(ctx, id); err != nil {
+		return domain.Session{}, err
+	}
 	now := s.now()
 	updated, err := s.store.SetSessionPinned(ctx, id, true, &now, now)
 	if err != nil {
@@ -780,6 +925,9 @@ func (s *Service) Pin(ctx context.Context, id domain.SessionID) (domain.Session,
 
 // Unpin marks a session as unpinned and returns the refreshed read model.
 func (s *Service) Unpin(ctx context.Context, id domain.SessionID) (domain.Session, error) {
+	if err := s.requireMutableSession(ctx, id); err != nil {
+		return domain.Session{}, err
+	}
 	now := s.now()
 	updated, err := s.store.SetSessionPinned(ctx, id, false, nil, now)
 	if err != nil {
@@ -794,6 +942,9 @@ func (s *Service) Unpin(ctx context.Context, id domain.SessionID) (domain.Sessio
 // SetReviewerHarness persists the reviewer selected for this session. Empty
 // clears the preference and restores the project-level fallback.
 func (s *Service) SetReviewerHarness(ctx context.Context, id domain.SessionID, harness domain.ReviewerHarness) (domain.Session, error) {
+	if err := s.requireMutableSession(ctx, id); err != nil {
+		return domain.Session{}, err
+	}
 	if harness != "" && !harness.IsKnown() {
 		return domain.Session{}, apierr.Invalid("UNKNOWN_REVIEWER_HARNESS", "Unknown reviewer harness", nil)
 	}
@@ -809,6 +960,9 @@ func (s *Service) SetReviewerHarness(ctx context.Context, id domain.SessionID, h
 
 // SetAutoReview enables or disables daemon-side review automation for a session.
 func (s *Service) SetAutoReview(ctx context.Context, id domain.SessionID, enabled bool) (domain.Session, error) {
+	if err := s.requireMutableSession(ctx, id); err != nil {
+		return domain.Session{}, err
+	}
 	updated, err := s.store.SetSessionAutoReview(ctx, id, enabled, s.now())
 	if err != nil {
 		return domain.Session{}, fmt.Errorf("set auto review %s: %w", id, err)
@@ -903,13 +1057,16 @@ func (s *Service) listRecords(ctx context.Context, project domain.ProjectID) ([]
 }
 
 func matchesSessionFilter(rec domain.SessionRecord, filter ListFilter) bool {
-	if filter.Active != nil && rec.IsTerminated == *filter.Active {
-		return false
+	if filter.Active != nil {
+		isActive := !rec.IsTerminated && rec.ArchivedAt == nil
+		if isActive != *filter.Active {
+			return false
+		}
 	}
 	if filter.OrchestratorOnly && rec.Kind != domain.KindOrchestrator {
 		return false
 	}
-	if filter.Fresh && rec.IsTerminated {
+	if filter.Fresh && (rec.IsTerminated || rec.ArchivedAt != nil) {
 		return false
 	}
 	return true
@@ -939,6 +1096,20 @@ func (s *Service) Get(ctx context.Context, id domain.SessionID) (domain.Session,
 	return sess, nil
 }
 
+func (s *Service) requireMutableSession(ctx context.Context, id domain.SessionID) error {
+	rec, found, err := s.store.GetSession(ctx, id)
+	if err != nil {
+		return fmt.Errorf("get %s: %w", id, err)
+	}
+	if !found {
+		return apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	if rec.ArchivedAt != nil {
+		return apierr.Conflict("SESSION_ARCHIVED", "Archived sessions are read-only", nil)
+	}
+	return nil
+}
+
 // toAPIError maps the session engine's sentinel errors to their REST API
 // equivalents; an unrecognized error passes through and surfaces as a 500.
 func toAPIError(err error) error {
@@ -951,6 +1122,24 @@ func toAPIError(err error) error {
 		return apierr.Conflict("SESSION_NOT_RESTORABLE", "Session is not restorable", nil)
 	case errors.Is(err, sessionmanager.ErrTerminated):
 		return apierr.Conflict("SESSION_TERMINATED", "Session is terminated", nil)
+	case errors.Is(err, sessionmanager.ErrSessionArchived):
+		return apierr.Conflict("SESSION_ARCHIVED", "Archived sessions are read-only", nil)
+	case errors.Is(err, sessionmanager.ErrCodexProfileSwitchRequiresCodex):
+		return apierr.Invalid("CODEX_PROFILE_SWITCH_REQUIRES_CODEX_SESSION", "Profile switching requires a bound local Codex worker session", nil)
+	case errors.Is(err, sessionmanager.ErrCodexProfileSwitchNotFound):
+		return apierr.NotFound("CODEX_PROFILE_SWITCH_NOT_FOUND", "Codex profile switch not found")
+	case errors.Is(err, sessionmanager.ErrCodexProfileSwitchCancellationUnsafe):
+		return apierr.Conflict("CODEX_PROFILE_SWITCH_CANCELLATION_UNSAFE", "The source has begun stopping; recovery now owns this switch", nil)
+	case errors.Is(err, sessionmanager.ErrCodexProfileSwitchRecoveryRequired):
+		return apierr.Conflict("CODEX_PROFILE_SWITCH_RECOVERY_REQUIRED", "This profile switch requires recovery", nil)
+	case errors.Is(err, sessionmanager.ErrCodexProfileSwitchUnavailable):
+		return apierr.Unavailable("CODEX_PROFILE_SWITCH_UNAVAILABLE", "Codex profile switching is unavailable")
+	case errors.Is(err, domain.ErrCodexProfileSwitchIdempotencyConflict):
+		return apierr.Conflict("CODEX_PROFILE_SWITCH_IDEMPOTENCY_CONFLICT", "The idempotency key belongs to a different profile switch request", nil)
+	case errors.Is(err, domain.ErrCodexProfileSwitchInProgress):
+		return apierr.Conflict("CODEX_PROFILE_SWITCH_IN_PROGRESS", "A Codex profile switch is already in progress", nil)
+	case errors.Is(err, domain.ErrCodexProfileSwitchTransitionConflict):
+		return apierr.Conflict("SESSION_OPERATION_IN_PROGRESS", "The session operation changed concurrently", nil)
 	case errors.Is(err, sessionmanager.ErrAgentExited):
 		return apierr.Conflict("AGENT_EXITED",
 			"The agent process exited; relaunch it before sending another message", nil)
@@ -1161,12 +1350,87 @@ func (s *Service) toSession(ctx context.Context, rec domain.SessionRecord) (doma
 		SCMStatus:        deriveSCMStatus(prs),
 		TerminalHandleID: rec.Metadata.RuntimeHandleID,
 		PRs:              prs,
+		IsArchived:       rec.ArchivedAt != nil,
 	}
 	if rec.CodexProfileBinding != nil && s.codexProfiles != nil {
 		summary := s.codexProfiles.CodexSessionProfileSummary(*rec.CodexProfileBinding)
 		session.CodexProfile = &summary
 	}
+	if switchStore, ok := s.store.(ports.CodexProfileSwitchStore); ok {
+		if sw, found, switchErr := switchStore.GetCodexProfileSwitchForSession(ctx, rec.ID); switchErr != nil {
+			return domain.Session{}, fmt.Errorf("codex profile switch relation %s: %w", rec.ID, switchErr)
+		} else if found {
+			sw = s.decorateCodexProfileSwitch(ctx, sw)
+			if !sw.Phase.Terminal() {
+				session.ActiveCodexProfileSwitch = &sw
+			}
+			if sw.Phase == domain.CodexProfileSwitchCompleted && sw.TargetSessionID != nil {
+				switch rec.ID {
+				case sw.SourceSessionID:
+					session.ContinuedTo = s.continuationSummary(ctx, *sw.TargetSessionID)
+				case *sw.TargetSessionID:
+					session.ContinuedFrom = s.continuationSummary(ctx, sw.SourceSessionID)
+				}
+			}
+		}
+	}
 	return session, nil
+}
+
+func (s *Service) decorateCodexProfileSwitch(ctx context.Context, sw domain.CodexProfileSwitch) domain.CodexProfileSwitch {
+	if source, found, _ := s.store.GetSession(ctx, sw.SourceSessionID); found && source.CodexProfileBinding != nil {
+		summary := s.codexProfileSummary(*source.CodexProfileBinding)
+		sw.SourceProfile = &summary
+	}
+	if sw.TargetSessionID != nil {
+		if target, found, _ := s.store.GetSession(ctx, *sw.TargetSessionID); found && target.CodexProfileBinding != nil {
+			summary := s.codexProfileSummary(*target.CodexProfileBinding)
+			sw.TargetProfile = &summary
+		}
+	}
+	sw.ProgressReason = codexProfileSwitchProgressReason(sw.Phase)
+	sw.CanCancel = sw.Phase.Cancellable()
+	sw.CanRecover = sw.Phase == domain.CodexProfileSwitchRecoveryRequired
+	sw.CanRestoreSource = sw.Phase == domain.CodexProfileSwitchRecoveryRequired
+	return sw
+}
+
+func (s *Service) codexProfileSummary(binding domain.CodexSessionBinding) domain.CodexSessionProfileSummary {
+	if s.codexProfiles != nil {
+		return s.codexProfiles.CodexSessionProfileSummary(binding)
+	}
+	return domain.CodexSessionProfileSummary{ID: binding.ProfileID, Label: "Codex profile", Source: binding.Source, Availability: domain.CodexProfileUnknown}
+}
+
+func (s *Service) continuationSummary(ctx context.Context, id domain.SessionID) *domain.CodexSessionContinuationSummary {
+	rec, found, err := s.store.GetSession(ctx, id)
+	if err != nil || !found || rec.CodexProfileBinding == nil {
+		return nil
+	}
+	return &domain.CodexSessionContinuationSummary{SessionID: id, Label: rec.DisplayName, Profile: s.codexProfileSummary(*rec.CodexProfileBinding)}
+}
+
+func codexProfileSwitchProgressReason(phase domain.CodexProfileSwitchPhase) string {
+	switch phase {
+	case domain.CodexProfileSwitchRequested, domain.CodexProfileSwitchWaitingForSafeBoundary:
+		return "Waiting for a safe point."
+	case domain.CodexProfileSwitchPreparingHandoff:
+		return "Preparing context."
+	case domain.CodexProfileSwitchStoppingSource, domain.CodexProfileSwitchSourceStopped:
+		return "Stopping the current session."
+	case domain.CodexProfileSwitchStartingTarget, domain.CodexProfileSwitchTargetReady:
+		return "Starting the continuation."
+	case domain.CodexProfileSwitchDeliveringHandoff:
+		return "Opening the new session."
+	case domain.CodexProfileSwitchCompleted:
+		return "The continuation is ready."
+	case domain.CodexProfileSwitchCancelled:
+		return "The profile switch was cancelled."
+	case domain.CodexProfileSwitchRecoveryRequired:
+		return "Workspace ownership needs recovery."
+	default:
+		return "The profile switch failed."
+	}
 }
 
 // now tolerates a zero-value Service (tests construct the struct literally

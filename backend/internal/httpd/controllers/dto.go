@@ -126,6 +126,11 @@ type AgentSwitchIDParam struct {
 	SwitchID string `path:"switchId" description:"Durable agent-switch identifier."`
 }
 
+// CodexProfileSwitchIDParam is the {switchId} path parameter for an assisted continuation.
+type CodexProfileSwitchIDParam struct {
+	SwitchID string `path:"switchId" description:"Durable Codex profile-switch identifier."`
+}
+
 // SessionInterfaceTransitionIDParam is the {transitionId} path parameter for a
 // durable interface handoff.
 type SessionInterfaceTransitionIDParam struct {
@@ -323,6 +328,26 @@ type AgentSwitchResponse struct {
 // GET /api/v1/sessions/{sessionId}/agent-switches.
 type ListAgentSwitchesResponse struct {
 	Switches []AgentSwitchView `json:"switches"`
+}
+
+// CodexProfileSwitchOptionsResponse is the cache-only or ensured target list.
+type CodexProfileSwitchOptionsResponse = domain.CodexProfileSwitchOptions
+
+// StartCodexProfileSwitchRequest confirms one exact target profile.
+type StartCodexProfileSwitchRequest struct {
+	TargetProfileID            string `json:"targetProfileId" minLength:"1"`
+	IdempotencyKey             string `json:"idempotencyKey" minLength:"1" maxLength:"128"`
+	AcknowledgeUnknownCapacity bool   `json:"acknowledgeUnknownCapacity,omitempty"`
+}
+
+// CodexProfileSwitchResponse wraps one safe durable operation.
+type CodexProfileSwitchResponse struct {
+	Switch domain.CodexProfileSwitch `json:"switch"`
+}
+
+// ListCodexProfileSwitchesResponse is source-owned operation history.
+type ListCodexProfileSwitchesResponse struct {
+	Switches []domain.CodexProfileSwitch `json:"switches"`
 }
 
 // SubmitAgentHandoffRequest is the body of

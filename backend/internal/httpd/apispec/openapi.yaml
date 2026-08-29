@@ -4427,6 +4427,427 @@ paths:
         preview
       tags:
       - sessions
+  /api/v1/sessions/{sessionId}/profile-switch-options:
+    get:
+      operationId: getCodexProfileSwitchOptions
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CodexProfileSwitchOptionsResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Read cached assisted Codex profile-switch candidates
+      tags:
+      - sessions
+  /api/v1/sessions/{sessionId}/profile-switch-options/ensure:
+    post:
+      operationId: ensureCodexProfileSwitchOptions
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CodexProfileSwitchOptionsResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Refresh assisted Codex profile-switch candidates
+      tags:
+      - sessions
+  /api/v1/sessions/{sessionId}/profile-switches:
+    get:
+      operationId: listCodexProfileSwitches
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListCodexProfileSwitchesResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: List durable Codex profile-switch operations
+      tags:
+      - sessions
+    post:
+      operationId: startCodexProfileSwitch
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartCodexProfileSwitchRequest'
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CodexProfileSwitchResponse'
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Start an explicitly confirmed assisted Codex profile switch
+      tags:
+      - sessions
+  /api/v1/sessions/{sessionId}/profile-switches/{switchId}:
+    get:
+      operationId: getCodexProfileSwitch
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      - description: Durable Codex profile-switch identifier.
+        in: path
+        name: switchId
+        required: true
+        schema:
+          description: Durable Codex profile-switch identifier.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CodexProfileSwitchResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Read one durable Codex profile-switch operation
+      tags:
+      - sessions
+  /api/v1/sessions/{sessionId}/profile-switches/{switchId}/cancel:
+    post:
+      operationId: cancelCodexProfileSwitch
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      - description: Durable Codex profile-switch identifier.
+        in: path
+        name: switchId
+        required: true
+        schema:
+          description: Durable Codex profile-switch identifier.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CodexProfileSwitchResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Cancel an assisted switch before source shutdown
+      tags:
+      - sessions
+  /api/v1/sessions/{sessionId}/profile-switches/{switchId}/handoff:
+    post:
+      operationId: submitCodexProfileSwitchHandoff
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      - description: Durable Codex profile-switch identifier.
+        in: path
+        name: switchId
+        required: true
+        schema:
+          description: Durable Codex profile-switch identifier.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubmitAgentHandoffRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CodexProfileSwitchResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Submit a generation-fenced Codex profile-switch handoff
+      tags:
+      - sessions
+  /api/v1/sessions/{sessionId}/profile-switches/{switchId}/recover:
+    post:
+      operationId: recoverCodexProfileSwitch
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      - description: Durable Codex profile-switch identifier.
+        in: path
+        name: switchId
+        required: true
+        schema:
+          description: Durable Codex profile-switch identifier.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CodexProfileSwitchResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Retry the exact assisted-switch target
+      tags:
+      - sessions
+  /api/v1/sessions/{sessionId}/profile-switches/{switchId}/restore-source:
+    post:
+      operationId: restoreCodexProfileSwitchSource
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      - description: Durable Codex profile-switch identifier.
+        in: path
+        name: switchId
+        required: true
+        schema:
+          description: Durable Codex profile-switch identifier.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CodexProfileSwitchResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Restore the stopped predecessor when the target cannot continue
+      tags:
+      - sessions
   /api/v1/sessions/{sessionId}/restore:
     post:
       operationId: restoreSession
@@ -6644,6 +7065,161 @@ components:
       - usableByCurrentLaunches
       - capacity
       type: object
+    CodexProfileSwitch:
+      properties:
+        acknowledgeUnknownCapacity:
+          type: boolean
+        canCancel:
+          type: boolean
+        canRecover:
+          type: boolean
+        canRestoreSource:
+          type: boolean
+        completedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        errorCode:
+          type: string
+        handoffClassification:
+          enum:
+          - pending
+          - semantic
+          - fallback
+          type: string
+        id:
+          type: string
+        phase:
+          enum:
+          - requested
+          - waiting_for_safe_boundary
+          - preparing_handoff
+          - stopping_source
+          - source_stopped
+          - starting_target
+          - target_ready
+          - delivering_handoff
+          - recovery_required
+          - completed
+          - cancelled
+          - failed
+          type: string
+        progressReason:
+          type: string
+        recoveryOriginPhase:
+          type: string
+        requestedAt:
+          format: date-time
+          type: string
+        sourceArchivedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        sourceProfile:
+          $ref: '#/components/schemas/CodexSessionProfileSummary'
+        sourceProfileId:
+          type: string
+        sourceSessionId:
+          type: string
+        targetAcknowledgedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        targetProfile:
+          $ref: '#/components/schemas/CodexSessionProfileSummary'
+        targetProfileId:
+          type: string
+        targetSessionId:
+          type: string
+        trigger:
+          enum:
+          - manual
+          - near_limit
+          - exhausted
+          - usage_limit_failure
+          type: string
+        updatedAt:
+          format: date-time
+          type: string
+      required:
+      - id
+      - sourceSessionId
+      - sourceProfileId
+      - targetProfileId
+      - trigger
+      - phase
+      - handoffClassification
+      - acknowledgeUnknownCapacity
+      - requestedAt
+      - updatedAt
+      - progressReason
+      - canCancel
+      - canRecover
+      - canRestoreSource
+      type: object
+    CodexProfileSwitchCandidate:
+      properties:
+        authentication:
+          $ref: '#/components/schemas/AgentAuthenticationObservation'
+        capacity:
+          $ref: '#/components/schemas/CodexCapacitySnapshot'
+        id:
+          type: string
+        label:
+          type: string
+        reason:
+          type: string
+        reasonCode:
+          type: string
+        recommended:
+          type: boolean
+        requiresCapacityAcknowledgement:
+          type: boolean
+        selectable:
+          type: boolean
+        source:
+          enum:
+          - existing
+          - managed
+          type: string
+      required:
+      - id
+      - label
+      - source
+      - authentication
+      - capacity
+      - recommended
+      - selectable
+      - requiresCapacityAcknowledgement
+      - reasonCode
+      - reason
+      type: object
+    CodexProfileSwitchOptionsResponse:
+      properties:
+        candidates:
+          items:
+            $ref: '#/components/schemas/CodexProfileSwitchCandidate'
+          type: array
+        recommendedProfileId:
+          type:
+          - "null"
+          - string
+        sourceProfile:
+          $ref: '#/components/schemas/CodexSessionProfileSummary'
+      required:
+      - sourceProfile
+      - candidates
+      type: object
+    CodexProfileSwitchResponse:
+      properties:
+        switch:
+          $ref: '#/components/schemas/CodexProfileSwitch'
+      required:
+      - switch
+      type: object
     CodexProfilesResponse:
       properties:
         capabilities:
@@ -6655,6 +7231,19 @@ components:
       required:
       - profiles
       - capabilities
+      type: object
+    CodexSessionContinuationSummary:
+      properties:
+        label:
+          type: string
+        profile:
+          $ref: '#/components/schemas/CodexSessionProfileSummary'
+        sessionId:
+          type: string
+      required:
+      - sessionId
+      - label
+      - profile
       type: object
     CodexSessionProfileSummary:
       properties:
@@ -6790,8 +7379,15 @@ components:
       properties:
         activeAgentSwitch:
           $ref: '#/components/schemas/AgentSwitch'
+        activeCodexProfileSwitch:
+          $ref: '#/components/schemas/CodexProfileSwitch'
         activity:
           $ref: '#/components/schemas/DomainActivity'
+        archivedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
         autoInjectCI:
           type: boolean
         autoInjectReview:
@@ -6802,6 +7398,10 @@ components:
           type: string
         codexProfile:
           $ref: '#/components/schemas/CodexSessionProfileSummary'
+        continuedFrom:
+          $ref: '#/components/schemas/CodexSessionContinuationSummary'
+        continuedTo:
+          $ref: '#/components/schemas/CodexSessionContinuationSummary'
         createdAt:
           format: date-time
           type: string
@@ -6811,6 +7411,8 @@ components:
           type: string
         id:
           type: string
+        isArchived:
+          type: boolean
         isPinned:
           type: boolean
         isTerminated:
@@ -6902,6 +7504,7 @@ components:
           - idle
           - terminated
           - no_signal
+          - archived
           type: string
         terminalHandleId:
           type: string
@@ -6925,6 +7528,7 @@ components:
       - updatedAt
       - isPinned
       - status
+      - isArchived
       - prs
       type: object
     ControllersSetSecurePairingRequest:
@@ -8047,6 +8651,15 @@ components:
       - supported
       - installed
       - authorized
+      type: object
+    ListCodexProfileSwitchesResponse:
+      properties:
+        switches:
+          items:
+            $ref: '#/components/schemas/CodexProfileSwitch'
+          type: array
+      required:
+      - switches
       type: object
     ListCompactSessionUsageResponse:
       properties:
@@ -9849,6 +10462,21 @@ components:
       - profileId
       - status
       - authUrl
+      type: object
+    StartCodexProfileSwitchRequest:
+      properties:
+        acknowledgeUnknownCapacity:
+          type: boolean
+        idempotencyKey:
+          maxLength: 128
+          minLength: 1
+          type: string
+        targetProfileId:
+          minLength: 1
+          type: string
+      required:
+      - targetProfileId
+      - idempotencyKey
       type: object
     StartPreviewServerRequest:
       properties:
