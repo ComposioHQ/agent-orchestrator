@@ -89,6 +89,7 @@ it("opens a profile-scoped login terminal inline without leaving settings", asyn
 	expect(screen.getByTestId("codex-profile-login-terminal")).toBeInTheDocument();
 	expect(screen.getByTestId("inline-terminal-body")).toBeInTheDocument();
 	expect(screen.getByRole("button", { name: "Add profile" })).toBeDisabled();
+	expect(screen.getByRole("button", { name: "Codex 1 profile" })).toBeDisabled();
 	openExternal.mockRestore();
 });
 
@@ -109,6 +110,22 @@ it("groups compact profile rows under the Codex provider", async () => {
 	expect(provider).toHaveAttribute("data-agent-provider", "codex");
 	expect(provider).toHaveTextContent("1 profile");
 	expect(provider.querySelector("[data-profile-id='existing']")).toBeInTheDocument();
+});
+
+it("collapses and expands the Codex provider group", async () => {
+	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+	render(<QueryClientProvider client={queryClient}><CodexProfilesSection /></QueryClientProvider>);
+	await screen.findByText("Existing Codex profile");
+	const toggle = screen.getByRole("button", { name: "Codex 1 profile" });
+	expect(toggle).toHaveAttribute("aria-expanded", "true");
+
+	fireEvent.click(toggle);
+	expect(toggle).toHaveAttribute("aria-expanded", "false");
+	expect(screen.queryByText("Existing Codex profile")).not.toBeInTheDocument();
+
+	fireEvent.click(toggle);
+	expect(toggle).toHaveAttribute("aria-expanded", "true");
+	expect(screen.getByText("Existing Codex profile")).toBeInTheDocument();
 });
 
 it("expands only the affected profile and disables other sign-in actions", async () => {
