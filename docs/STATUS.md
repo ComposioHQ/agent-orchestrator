@@ -112,7 +112,15 @@ surface (`npm run sqlc`, `npm run api`).
   related session, starts a fresh native Codex thread, and archives the
   predecessor only after the target acknowledges the bounded handoff. The
   original and target profile bindings remain immutable; unknown capacity
-  requires explicit acknowledgement. Switching is never automatic.
+  requires explicit acknowledgement. A user may separately opt one
+  continuation chain into automatic switching and order the exact fallback
+  profiles AO may consider. Only confirmed exhaustion triggers evaluation and
+  only a freshly authenticated, freshly available profile qualifies. The
+  automatic coordinator delegates one target to the same assisted-switch
+  engine; it never ranks by capacity, polls, parses terminal text, or cascades
+  to another target after handoff begins. Phase 6 remains behind the daemon-local
+  `AO_DEV_CODEX_AUTOMATIC_PROFILE_SWITCHING=1` exit gate until its full live
+  recovery matrix passes; without the gate, automatic evaluation is unavailable.
 - OpenAPI spec generated from Go DTOs; frontend TS types generated from it and
   drift-checked in CI.
 

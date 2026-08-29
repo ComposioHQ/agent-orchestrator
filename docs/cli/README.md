@@ -113,6 +113,26 @@ a related AO session on the same workspace and interface, starts a fresh Codex
 thread, and archives the predecessor after acknowledgement. Native history,
 credentials, and profile homes are never copied.
 
+Automatic switching is off by default and scoped to one successful
+continuation chain. Configure an ordered allowlist with:
+
+```bash
+ao session profile-switch automatic show ao-7
+ao session profile-switch automatic enable ao-7 \
+  --profile managed-work --profile existing
+ao session profile-switch automatic disable ao-7
+ao session profile-switch automatic cancel ao-7 automatic-profile-switch-id
+```
+
+Repeated `--profile` flags preserve their order. If `--expected-revision` is
+omitted, the CLI reads the policy once and submits that revision; it never
+polls. Confirmed exhaustion is the only trigger. The current profile is skipped
+and AO checks approved profiles sequentially, accepting only a fresh authorized
+profile with fresh `available` capacity. Near-limit, exhausted, missing,
+signed-out, stale, unknown, and unsupported entries stay configured but are
+skipped. Once one target is delegated, the existing assisted-switch recovery
+flow owns it and AO never silently cascades to another profile.
+
 Agent switching is initially available only for worker sessions whose source
 and target harnesses are Claude Code or Codex. The main command
 accepts an idempotency key:
