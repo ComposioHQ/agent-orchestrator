@@ -180,6 +180,24 @@ func TestNotificationsAreFannedOut(t *testing.T) {
 	}
 }
 
+func TestNotificationReplayBurstRetainsTerminalFrame(t *testing.T) {
+	c, fake := newFakeAppServer(t, rejectAllServerRequests)
+	for i := 0; i < notificationBuffer; i++ {
+		fake.push(`{"method":"item/agentMessage/delta","params":{"delta":"x"}}`)
+	}
+	fake.push(`{"method":"turn/completed","params":{"turn":{"status":"completed"}}}`)
+
+	foundTerminal := false
+	for i := 0; i < notificationBuffer+1; i++ {
+		if n := <-c.notifs(); n.Method == "turn/completed" {
+			foundTerminal = true
+		}
+	}
+	if !foundTerminal {
+		t.Fatal("turn/completed was dropped when replay exceeded the notification buffer")
+	}
+}
+
 // A frame this build cannot parse must be skipped, not fatal: the provider is
 // free to add shapes we do not model yet.
 func TestUnparseableFrameDoesNotKillConnection(t *testing.T) {

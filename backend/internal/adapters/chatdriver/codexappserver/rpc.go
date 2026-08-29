@@ -86,9 +86,11 @@ type conn struct {
 	pending map[int64]chan frame
 	closed  bool
 
-	// notifications is bounded. Overflow is dropped and logged rather than
-	// allowed to block the reader, which would deadlock the provider.
-	notifications chan notification
+	// notificationInput decouples provider reads from notification consumption.
+	// The relay owns an ordered queue so a replay burst cannot block response
+	// correlation or silently drop a lifecycle frame.
+	notificationInput chan notification
+	notifications     chan notification
 
 	onServerRequest serverRequestHandler
 
@@ -108,16 +110,47 @@ func newConn(w io.WriteCloser, r io.Reader, log *slog.Logger, onReq serverReques
 
 func newConnAt(w io.WriteCloser, r io.Reader, log *slog.Logger, onReq serverRequestHandler, nextID int64) *conn {
 	c := &conn{
-		w:               w,
-		log:             log,
-		pending:         make(map[int64]chan frame),
-		notifications:   make(chan notification, notificationBuffer),
-		onServerRequest: onReq,
-		done:            make(chan struct{}),
+		w:                 w,
+		log:               log,
+		pending:           make(map[int64]chan frame),
+		notificationInput: make(chan notification),
+		notifications:     make(chan notification, notificationBuffer),
+		onServerRequest:   onReq,
+		done:              make(chan struct{}),
 	}
 	c.nextID.Store(nextID)
+	go c.relayNotifications()
 	go c.readLoop(r)
 	return c
+}
+
+// relayNotifications keeps provider reads independent from a slow consumer
+// without discarding protocol frames. The host bounds a detached replay by
+// bytes; this queue preserves that replay's order while the conversation pump
+// catches up.
+func (c *conn) relayNotifications() {
+	defer close(c.notifications)
+	var queued []notification
+	input := c.notificationInput
+	for input != nil || len(queued) > 0 {
+		var output chan notification
+		var next notification
+		if len(queued) > 0 {
+			output = c.notifications
+			next = queued[0]
+		}
+		select {
+		case n, ok := <-input:
+			if !ok {
+				input = nil
+				continue
+			}
+			queued = append(queued, n)
+		case output <- next:
+			queued[0] = notification{}
+			queued = queued[1:]
+		}
+	}
 }
 
 // notifications the caller consumes. Closed when the connection ends.
@@ -148,7 +181,7 @@ func (c *conn) readLoop(r io.Reader) {
 		for _, ch := range pending {
 			close(ch)
 		}
-		close(c.notifications)
+		close(c.notificationInput)
 		close(c.done)
 	}()
 
@@ -179,11 +212,7 @@ func (c *conn) readLoop(r io.Reader) {
 		case f.ID != nil:
 			c.deliver(f)
 		case f.Method != "":
-			select {
-			case c.notifications <- notification{Method: f.Method, Params: f.Params}:
-			default:
-				c.log.Warn("dropped app-server notification: buffer full", "method", f.Method)
-			}
+			c.notificationInput <- notification{Method: f.Method, Params: f.Params}
 		}
 	}
 }

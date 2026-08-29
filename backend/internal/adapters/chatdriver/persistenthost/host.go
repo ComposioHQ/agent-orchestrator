@@ -248,10 +248,10 @@ func ConnectOrStart(ctx context.Context, cfg Config) (*Transport, error) {
 		if processalive.Alive(d.PID) {
 			return nil, fmt.Errorf("%w: %w", ErrOwnershipInconclusive, attachErr)
 		}
-		path, _ := descriptorPath(cfg.DataDir, cfg.SessionID)
-		_ = os.Remove(path)
-		lock, _ := lockPath(cfg.DataDir, cfg.SessionID)
-		_ = os.Remove(lock)
+		// Do not remove stale ownership files here. Another starter may have
+		// already reclaimed the dead lock and published a replacement descriptor
+		// since this client read d. The detached host's O_EXCL lock acquisition is
+		// the single authority for reclaiming dead ownership.
 	} else if !errors.Is(err, os.ErrNotExist) {
 		// A malformed or unreadable ownership record is not proof that no host
 		// exists. Fail closed instead of launching a competing process.
@@ -316,10 +316,16 @@ func Reconcile(ctx context.Context, dataDir string, keep map[string]struct{}) er
 			continue
 		}
 		if !processalive.Alive(d.PID) {
+			// Claim the launch lock before cleaning a dead descriptor. If a new host
+			// already owns it, preserve its descriptor instead of deleting ownership
+			// state observed by a stale reconciler.
+			release, lockErr := acquireHostLock(dataDir, sessionID)
+			if lockErr != nil {
+				continue
+			}
 			path, _ := descriptorPath(dataDir, sessionID)
 			_ = os.Remove(path)
-			lock, _ := lockPath(dataDir, sessionID)
-			_ = os.Remove(lock)
+			release()
 			continue
 		}
 		if shutdownErr := Shutdown(ctx, dataDir, sessionID); shutdownErr != nil {
