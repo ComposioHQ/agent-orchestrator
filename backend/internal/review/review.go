@@ -259,12 +259,12 @@ func (e *Engine) TriggerWithSource(ctx stdctx.Context, workerID domain.SessionID
 	if hasHarnessOverride {
 		harness = override
 		if hasConfigOverride {
-			config = overrideConfig
+			config = mergeReviewerAgentConfig(domain.AgentConfig{}, overrideConfig)
 		} else {
 			config = domain.AgentConfig{}
 		}
 	} else if hasConfigOverride {
-		config = overrideConfig
+		config = mergeReviewerAgentConfig(config, overrideConfig)
 	}
 	reviewRows, err := e.store.ListReviewsBySession(ctx, workerID)
 	if err != nil {
@@ -1035,16 +1035,33 @@ func (e *Engine) reviewerSelection(
 ) (domain.ReviewerHarness, domain.AgentConfig, error) {
 	if worker.ReviewerHarness != "" || !worker.ReviewerConfig.IsZero() {
 		harness := worker.ReviewerHarness
-		if harness == "" {
-			var err error
-			harness, _, err = e.projectReviewerSelection(ctx, worker)
-			if err != nil {
-				return "", domain.AgentConfig{}, err
-			}
+		projectHarness, projectConfig, err := e.projectReviewerSelection(ctx, worker)
+		if err != nil {
+			return "", domain.AgentConfig{}, err
 		}
-		return harness, worker.ReviewerConfig, nil
+		if harness == "" {
+			harness = projectHarness
+		}
+		baseConfig := domain.AgentConfig{}
+		if harness == projectHarness {
+			baseConfig = projectConfig
+		}
+		return harness, mergeReviewerAgentConfig(baseConfig, worker.ReviewerConfig), nil
 	}
 	return e.projectReviewerSelection(ctx, worker)
+}
+
+func mergeReviewerAgentConfig(base, override domain.AgentConfig) domain.AgentConfig {
+	if override.Model != "" {
+		base.Model = override.Model
+	}
+	if override.Mode != "" {
+		base.Mode = override.Mode
+	}
+	if override.Permissions != "" {
+		base.Permissions = override.Permissions
+	}
+	return base
 }
 
 func (e *Engine) projectReviewerSelection(

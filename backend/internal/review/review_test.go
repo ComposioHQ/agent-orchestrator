@@ -1056,6 +1056,49 @@ func TestTriggerConfigOnlyOverrideUsesResolvedHarnessAndConfig(t *testing.T) {
 	}
 }
 
+func TestTriggerConfigOnlyOverrideMergesResolvedConfig(t *testing.T) {
+	store := &fakeStore{
+		runs: []domain.ReviewRun{{
+			ID: "run-1", SessionID: "mer-1", PRURL: "https://github.com/o/r/pull/1", TargetSHA: "sha1",
+			Harness: domain.ReviewerClaudeCode,
+			Status:  domain.ReviewRunComplete, Verdict: domain.VerdictApproved,
+		}},
+	}
+	launcher := &fakeLauncher{handle: "review-mer-2"}
+	projects := fakeProjects{cfg: domain.ProjectConfig{Reviewers: []domain.ReviewerConfig{{
+		Harness:     domain.ReviewerClaudeCode,
+		AgentConfig: domain.AgentConfig{Model: "claude-old", Permissions: domain.PermissionModeBypassPermissions},
+	}}}}
+	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), projects, launcher)
+
+	if _, err := eng.Trigger(context.Background(), "mer-1", "", domain.AgentConfig{Model: "claude-new"}); err != nil {
+		t.Fatalf("Trigger: %v", err)
+	}
+	if got := launcher.gotSpec.AgentConfig; got.Model != "claude-new" || got.Permissions != domain.PermissionModeBypassPermissions {
+		t.Fatalf("spawn config = %+v, want merged override plus inherited permissions", got)
+	}
+}
+
+func TestReviewerSelectionMergesSessionConfigWithProjectReviewerConfig(t *testing.T) {
+	worker := liveWorker()
+	worker.ReviewerConfig = domain.AgentConfig{Model: "gpt-5"}
+	eng := newEngineForTest(&fakeStore{}, fakeSessions{rec: worker, ok: true}, prAt("sha1"), fakeProjects{cfg: domain.ProjectConfig{Reviewers: []domain.ReviewerConfig{{
+		Harness:     domain.ReviewerClaudeCode,
+		AgentConfig: domain.AgentConfig{Permissions: domain.PermissionModeBypassPermissions},
+	}}}}, &fakeLauncher{})
+
+	harness, config, err := eng.reviewerSelection(context.Background(), worker)
+	if err != nil {
+		t.Fatalf("reviewerSelection: %v", err)
+	}
+	if harness != domain.ReviewerClaudeCode {
+		t.Fatalf("harness = %q, want claude-code", harness)
+	}
+	if config.Model != "gpt-5" || config.Permissions != domain.PermissionModeBypassPermissions {
+		t.Fatalf("config = %+v, want merged session override + project permissions", config)
+	}
+}
+
 func TestTriggerRejectsInvalidReviewerConfig(t *testing.T) {
 	eng := newEngineForTest(&fakeStore{}, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, &fakeLauncher{})
 	if _, err := eng.Trigger(context.Background(), "mer-1", "", domain.AgentConfig{Mode: "turbo"}); !errors.Is(err, ErrInvalid) {
