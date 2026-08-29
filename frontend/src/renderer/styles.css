@@ -2213,6 +2213,19 @@ html.sidebar-reordering * {
 	color: color-mix(in oklch, var(--color-text-muted) 96%, var(--color-text-primary));
 }
 
+/* Long shell lines scroll horizontally; hide the native track so the explore card
+   stays visually flat (wheel/trackpad scrolling still works). */
+.cursor-chat-explore-command,
+.cursor-chat-explore-output {
+	scrollbar-width: none;
+}
+
+.cursor-chat-explore-command::-webkit-scrollbar,
+.cursor-chat-explore-output::-webkit-scrollbar {
+	width: 0;
+	height: 0;
+}
+
 :root[data-theme="light"] .cursor-chat-surface {
 	background: var(--color-bg-primary);
 }

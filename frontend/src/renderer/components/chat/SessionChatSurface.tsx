@@ -42,6 +42,12 @@ import { AgentSwitchProgressTrack } from "../AgentSwitchProgressTrack";
 import { TerminalSwitchAgentButton } from "../TerminalSwitchAgentButton";
 import { ChatWorkspace } from "./ChatWorkspace";
 
+export interface ConversationWorkState {
+	controllerBusy: boolean;
+	hasRunningTurn: boolean;
+	queuedTurnCount: number;
+}
+
 export function SessionChatSurface({
 	session,
 	reviewerTerminal,
@@ -64,6 +70,8 @@ export function SessionChatSurface({
 	workspaceTabs,
 	workspaceFileActive,
 	controllerTransitioning,
+	newWorkDisabled,
+	onConversationWorkChange,
 }: {
 	session: WorkspaceSession;
 	reviewerTerminal?: { handleId: string; harness: string };
@@ -91,9 +99,13 @@ export function SessionChatSurface({
 	workspaceFileActive?: boolean;
 	/** The target controller is being installed by an interface handoff. */
 	controllerTransitioning?: boolean;
+	/** An interface handoff fences new agent work while current-turn decisions remain available. */
+	newWorkDisabled?: boolean;
+	/** Reports accepted Chat work that must inform an interface-switch policy choice. */
+	onConversationWorkChange?: (state: ConversationWorkState) => void;
 }) {
 	const {
-		snapshot,
+		snapshot: queriedSnapshot,
 		isLoading,
 		unavailable,
 		error,
@@ -101,7 +113,30 @@ export function SessionChatSurface({
 		isLoadingOlder,
 		loadOlder,
 	} = useConversation(session.id);
+	// Route props can move to the destination before the old query observer drops
+	// its data. Treat that snapshot as unknown everywhere, especially at the work
+	// boundary that decides whether switching to Terminal needs user consent.
+	const snapshot = queriedSnapshot?.sessionId === session.id ? queriedSnapshot : undefined;
 	const commands = useConversationCommands(session.id);
+	const { acknowledgeAcceptedTurn, pendingAcceptedTurnId } = commands;
+	const conversationWorkKnown = Boolean(snapshot);
+	const acceptedLocalTurnObserved = Boolean(
+		pendingAcceptedTurnId && snapshot?.turns.some((turn) => turn.id === pendingAcceptedTurnId),
+	);
+	const acceptedLocalWorkPending = Boolean(pendingAcceptedTurnId && !acceptedLocalTurnObserved);
+	const controllerBusy =
+		snapshot?.controller?.state === "busy" || commands.busy || acceptedLocalWorkPending;
+	const hasRunningTurn = Boolean(snapshot?.turns.some((turn) => turn.state === "running"));
+	const queuedTurnCount = snapshot?.turns.filter((turn) => turn.state === "queued").length ?? 0;
+	useEffect(() => {
+		if (acceptedLocalTurnObserved && pendingAcceptedTurnId) {
+			acknowledgeAcceptedTurn(pendingAcceptedTurnId);
+		}
+	}, [acceptedLocalTurnObserved, acknowledgeAcceptedTurn, pendingAcceptedTurnId]);
+	useEffect(() => {
+		if (!conversationWorkKnown) return;
+		onConversationWorkChange?.({ controllerBusy, hasRunningTurn, queuedTurnCount });
+	}, [controllerBusy, conversationWorkKnown, hasRunningTurn, onConversationWorkChange, queuedTurnCount]);
 	const configOptions = useConversationConfigOptions(
 		session.id,
 		Boolean(snapshot && can(snapshot, "config_options")),
@@ -132,6 +167,9 @@ export function SessionChatSurface({
 	// dialog anchors to (the workspace body, handed up by ChatWorkspace).
 	const [switchSelectorOpen, setSwitchSelectorOpen] = useState(false);
 	const [switchSelectorContainer, setSwitchSelectorContainer] = useState<HTMLDivElement | null>(null);
+	useEffect(() => {
+		if (newWorkDisabled) setSwitchSelectorOpen(false);
+	}, [newWorkDisabled]);
 	const switchMutation = useSwitchAgentState(session.id);
 	const agentSwitches = useAgentSwitches(session.id).data ?? [];
 	const activeHistorySwitch = findActiveAgentSwitch(agentSwitches);
@@ -209,9 +247,8 @@ export function SessionChatSurface({
 		switchPresentation?.lockAgentTerminal && !switchPresentation.allowSourceInput,
 	);
 	const renderShellFallback = Boolean(shellTarget && session);
-	const snapshotSessionMismatch = Boolean(snapshot && snapshot.sessionId !== session.id);
 	const renderSnapshot =
-		(snapshotSessionMismatch ? undefined : snapshot) ??
+		snapshot ??
 		(renderShellFallback
 			? unavailableConversationSnapshot(session)
 			: undefined);
@@ -261,6 +298,7 @@ export function SessionChatSurface({
 				key={session.id}
 				snapshot={renderSnapshot}
 				agentInputDisabled={switchLocksChat || switchSelectorOpen}
+				newWorkDisabled={newWorkDisabled}
 				onLinkOpen={openLinkInBrowser}
 				sessionTitle={session.title}
 				sessionRole={session.kind}
@@ -278,8 +316,9 @@ export function SessionChatSurface({
 					<TerminalSwitchAgentButton
 						agentSwitch={selectedDurableAgentSwitch}
 						container={switchSelectorContainer}
+						disabled={newWorkDisabled}
 						onOpenChange={setSwitchSelectorOpen}
-						open={switchSelectorOpen}
+						open={switchSelectorOpen && !newWorkDisabled}
 						presentation={switchControlPresentation}
 						session={session}
 						switchError={switchMutation.error}

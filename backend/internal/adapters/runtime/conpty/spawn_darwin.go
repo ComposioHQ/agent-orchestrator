@@ -28,11 +28,7 @@ func defaultSpawnHost(ctx context.Context, sessionID, cwd string, argv []string,
 
 	envAssignments, argv := stripEnvAssignments(argv)
 	args := append([]string{"pty-host", sessionID, cwd}, argv...)
-	merged := os.Environ()
-	for k, v := range env {
-		merged = append(merged, k+"="+v)
-	}
-	merged = append(merged, envAssignments...)
+	merged := interactiveTerminalEnv(os.Environ(), env, envAssignments)
 
 	// Deliberately do not use CommandContext: once READY is received the host
 	// must survive cancellation of the request that created it.
