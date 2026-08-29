@@ -6,9 +6,10 @@ INSERT INTO codex_profile_switches (
     target_runtime_handle_id, target_controller_generation, target_provider_thread_id,
     semantic_handoff_status, handoff_classification, final_handoff_path, final_handoff_hash,
     acknowledge_unknown_capacity, target_acknowledged_at, source_archived_at,
-    requested_at, updated_at, completed_at, error_code
+    requested_at, updated_at, completed_at, error_code, initiator,
+    automatic_attempt_id, automatic_policy_revision
 ) VALUES (
-    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 );
 
 -- name: GetCodexProfileSwitch :one

@@ -124,6 +124,7 @@ var shippedMigrations = map[int64]string{
 	117: "0117_drop_agent_inventory_cache.sql",
 	118: "0118_codex_session_bindings.sql",
 	119: "0119_codex_profile_switches.sql",
+	120: "0120_codex_automatic_profile_switching.sql",
 }
 
 // burnedVersion reports version numbers that must never be (re)used: they

@@ -65,7 +65,7 @@ func (q *Queries) ArchiveSessionForCodexProfileSwitch(ctx context.Context, arg A
 }
 
 const getActiveCodexProfileSwitch = `-- name: GetActiveCodexProfileSwitch :one
-SELECT id, source_session_id, target_session_id, source_profile_id, target_profile_id, idempotency_key, request_fingerprint, trigger_kind, phase, recovery_origin_phase, workspace_owner, source_generation_id, target_generation_id, target_runtime_handle_id, target_controller_generation, target_provider_thread_id, semantic_handoff_status, handoff_classification, final_handoff_path, final_handoff_hash, acknowledge_unknown_capacity, target_acknowledged_at, source_archived_at, requested_at, updated_at, completed_at, error_code FROM codex_profile_switches
+SELECT id, source_session_id, target_session_id, source_profile_id, target_profile_id, idempotency_key, request_fingerprint, trigger_kind, phase, recovery_origin_phase, workspace_owner, source_generation_id, target_generation_id, target_runtime_handle_id, target_controller_generation, target_provider_thread_id, semantic_handoff_status, handoff_classification, final_handoff_path, final_handoff_hash, acknowledge_unknown_capacity, target_acknowledged_at, source_archived_at, requested_at, updated_at, completed_at, error_code, initiator, automatic_attempt_id, automatic_policy_revision FROM codex_profile_switches
 WHERE source_session_id = ? AND phase NOT IN ('completed', 'cancelled', 'failed')
 `
 
@@ -100,12 +100,15 @@ func (q *Queries) GetActiveCodexProfileSwitch(ctx context.Context, sourceSession
 		&i.UpdatedAt,
 		&i.CompletedAt,
 		&i.ErrorCode,
+		&i.Initiator,
+		&i.AutomaticAttemptID,
+		&i.AutomaticPolicyRevision,
 	)
 	return i, err
 }
 
 const getCodexProfileSwitch = `-- name: GetCodexProfileSwitch :one
-SELECT id, source_session_id, target_session_id, source_profile_id, target_profile_id, idempotency_key, request_fingerprint, trigger_kind, phase, recovery_origin_phase, workspace_owner, source_generation_id, target_generation_id, target_runtime_handle_id, target_controller_generation, target_provider_thread_id, semantic_handoff_status, handoff_classification, final_handoff_path, final_handoff_hash, acknowledge_unknown_capacity, target_acknowledged_at, source_archived_at, requested_at, updated_at, completed_at, error_code FROM codex_profile_switches WHERE id = ?
+SELECT id, source_session_id, target_session_id, source_profile_id, target_profile_id, idempotency_key, request_fingerprint, trigger_kind, phase, recovery_origin_phase, workspace_owner, source_generation_id, target_generation_id, target_runtime_handle_id, target_controller_generation, target_provider_thread_id, semantic_handoff_status, handoff_classification, final_handoff_path, final_handoff_hash, acknowledge_unknown_capacity, target_acknowledged_at, source_archived_at, requested_at, updated_at, completed_at, error_code, initiator, automatic_attempt_id, automatic_policy_revision FROM codex_profile_switches WHERE id = ?
 `
 
 func (q *Queries) GetCodexProfileSwitch(ctx context.Context, id domain.CodexProfileSwitchID) (CodexProfileSwitch, error) {
@@ -139,12 +142,15 @@ func (q *Queries) GetCodexProfileSwitch(ctx context.Context, id domain.CodexProf
 		&i.UpdatedAt,
 		&i.CompletedAt,
 		&i.ErrorCode,
+		&i.Initiator,
+		&i.AutomaticAttemptID,
+		&i.AutomaticPolicyRevision,
 	)
 	return i, err
 }
 
 const getCodexProfileSwitchByIdempotencyKey = `-- name: GetCodexProfileSwitchByIdempotencyKey :one
-SELECT id, source_session_id, target_session_id, source_profile_id, target_profile_id, idempotency_key, request_fingerprint, trigger_kind, phase, recovery_origin_phase, workspace_owner, source_generation_id, target_generation_id, target_runtime_handle_id, target_controller_generation, target_provider_thread_id, semantic_handoff_status, handoff_classification, final_handoff_path, final_handoff_hash, acknowledge_unknown_capacity, target_acknowledged_at, source_archived_at, requested_at, updated_at, completed_at, error_code FROM codex_profile_switches
+SELECT id, source_session_id, target_session_id, source_profile_id, target_profile_id, idempotency_key, request_fingerprint, trigger_kind, phase, recovery_origin_phase, workspace_owner, source_generation_id, target_generation_id, target_runtime_handle_id, target_controller_generation, target_provider_thread_id, semantic_handoff_status, handoff_classification, final_handoff_path, final_handoff_hash, acknowledge_unknown_capacity, target_acknowledged_at, source_archived_at, requested_at, updated_at, completed_at, error_code, initiator, automatic_attempt_id, automatic_policy_revision FROM codex_profile_switches
 WHERE source_session_id = ? AND idempotency_key = ?
 `
 
@@ -184,12 +190,15 @@ func (q *Queries) GetCodexProfileSwitchByIdempotencyKey(ctx context.Context, arg
 		&i.UpdatedAt,
 		&i.CompletedAt,
 		&i.ErrorCode,
+		&i.Initiator,
+		&i.AutomaticAttemptID,
+		&i.AutomaticPolicyRevision,
 	)
 	return i, err
 }
 
 const getCodexProfileSwitchForSession = `-- name: GetCodexProfileSwitchForSession :one
-SELECT id, source_session_id, target_session_id, source_profile_id, target_profile_id, idempotency_key, request_fingerprint, trigger_kind, phase, recovery_origin_phase, workspace_owner, source_generation_id, target_generation_id, target_runtime_handle_id, target_controller_generation, target_provider_thread_id, semantic_handoff_status, handoff_classification, final_handoff_path, final_handoff_hash, acknowledge_unknown_capacity, target_acknowledged_at, source_archived_at, requested_at, updated_at, completed_at, error_code FROM codex_profile_switches
+SELECT id, source_session_id, target_session_id, source_profile_id, target_profile_id, idempotency_key, request_fingerprint, trigger_kind, phase, recovery_origin_phase, workspace_owner, source_generation_id, target_generation_id, target_runtime_handle_id, target_controller_generation, target_provider_thread_id, semantic_handoff_status, handoff_classification, final_handoff_path, final_handoff_hash, acknowledge_unknown_capacity, target_acknowledged_at, source_archived_at, requested_at, updated_at, completed_at, error_code, initiator, automatic_attempt_id, automatic_policy_revision FROM codex_profile_switches
 WHERE source_session_id = ? OR target_session_id = ?
 ORDER BY CASE WHEN phase NOT IN ('completed', 'cancelled', 'failed') THEN 0 ELSE 1 END,
          requested_at DESC, id DESC
@@ -232,12 +241,15 @@ func (q *Queries) GetCodexProfileSwitchForSession(ctx context.Context, arg GetCo
 		&i.UpdatedAt,
 		&i.CompletedAt,
 		&i.ErrorCode,
+		&i.Initiator,
+		&i.AutomaticAttemptID,
+		&i.AutomaticPolicyRevision,
 	)
 	return i, err
 }
 
 const getCompletedCodexProfileSwitch = `-- name: GetCompletedCodexProfileSwitch :one
-SELECT id, source_session_id, target_session_id, source_profile_id, target_profile_id, idempotency_key, request_fingerprint, trigger_kind, phase, recovery_origin_phase, workspace_owner, source_generation_id, target_generation_id, target_runtime_handle_id, target_controller_generation, target_provider_thread_id, semantic_handoff_status, handoff_classification, final_handoff_path, final_handoff_hash, acknowledge_unknown_capacity, target_acknowledged_at, source_archived_at, requested_at, updated_at, completed_at, error_code FROM codex_profile_switches
+SELECT id, source_session_id, target_session_id, source_profile_id, target_profile_id, idempotency_key, request_fingerprint, trigger_kind, phase, recovery_origin_phase, workspace_owner, source_generation_id, target_generation_id, target_runtime_handle_id, target_controller_generation, target_provider_thread_id, semantic_handoff_status, handoff_classification, final_handoff_path, final_handoff_hash, acknowledge_unknown_capacity, target_acknowledged_at, source_archived_at, requested_at, updated_at, completed_at, error_code, initiator, automatic_attempt_id, automatic_policy_revision FROM codex_profile_switches
 WHERE source_session_id = ? AND phase = 'completed'
 `
 
@@ -272,6 +284,9 @@ func (q *Queries) GetCompletedCodexProfileSwitch(ctx context.Context, sourceSess
 		&i.UpdatedAt,
 		&i.CompletedAt,
 		&i.ErrorCode,
+		&i.Initiator,
+		&i.AutomaticAttemptID,
+		&i.AutomaticPolicyRevision,
 	)
 	return i, err
 }
@@ -284,9 +299,10 @@ INSERT INTO codex_profile_switches (
     target_runtime_handle_id, target_controller_generation, target_provider_thread_id,
     semantic_handoff_status, handoff_classification, final_handoff_path, final_handoff_hash,
     acknowledge_unknown_capacity, target_acknowledged_at, source_archived_at,
-    requested_at, updated_at, completed_at, error_code
+    requested_at, updated_at, completed_at, error_code, initiator,
+    automatic_attempt_id, automatic_policy_revision
 ) VALUES (
-    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 )
 `
 
@@ -318,6 +334,9 @@ type InsertCodexProfileSwitchParams struct {
 	UpdatedAt                  time.Time
 	CompletedAt                sql.NullTime
 	ErrorCode                  string
+	Initiator                  string
+	AutomaticAttemptID         sql.NullString
+	AutomaticPolicyRevision    sql.NullInt64
 }
 
 func (q *Queries) InsertCodexProfileSwitch(ctx context.Context, arg InsertCodexProfileSwitchParams) error {
@@ -349,12 +368,15 @@ func (q *Queries) InsertCodexProfileSwitch(ctx context.Context, arg InsertCodexP
 		arg.UpdatedAt,
 		arg.CompletedAt,
 		arg.ErrorCode,
+		arg.Initiator,
+		arg.AutomaticAttemptID,
+		arg.AutomaticPolicyRevision,
 	)
 	return err
 }
 
 const listActiveCodexProfileSwitches = `-- name: ListActiveCodexProfileSwitches :many
-SELECT id, source_session_id, target_session_id, source_profile_id, target_profile_id, idempotency_key, request_fingerprint, trigger_kind, phase, recovery_origin_phase, workspace_owner, source_generation_id, target_generation_id, target_runtime_handle_id, target_controller_generation, target_provider_thread_id, semantic_handoff_status, handoff_classification, final_handoff_path, final_handoff_hash, acknowledge_unknown_capacity, target_acknowledged_at, source_archived_at, requested_at, updated_at, completed_at, error_code FROM codex_profile_switches
+SELECT id, source_session_id, target_session_id, source_profile_id, target_profile_id, idempotency_key, request_fingerprint, trigger_kind, phase, recovery_origin_phase, workspace_owner, source_generation_id, target_generation_id, target_runtime_handle_id, target_controller_generation, target_provider_thread_id, semantic_handoff_status, handoff_classification, final_handoff_path, final_handoff_hash, acknowledge_unknown_capacity, target_acknowledged_at, source_archived_at, requested_at, updated_at, completed_at, error_code, initiator, automatic_attempt_id, automatic_policy_revision FROM codex_profile_switches
 WHERE phase NOT IN ('completed', 'cancelled', 'failed')
 ORDER BY requested_at, id
 `
@@ -396,6 +418,9 @@ func (q *Queries) ListActiveCodexProfileSwitches(ctx context.Context) ([]CodexPr
 			&i.UpdatedAt,
 			&i.CompletedAt,
 			&i.ErrorCode,
+			&i.Initiator,
+			&i.AutomaticAttemptID,
+			&i.AutomaticPolicyRevision,
 		); err != nil {
 			return nil, err
 		}
@@ -411,7 +436,7 @@ func (q *Queries) ListActiveCodexProfileSwitches(ctx context.Context) ([]CodexPr
 }
 
 const listCodexProfileSwitches = `-- name: ListCodexProfileSwitches :many
-SELECT id, source_session_id, target_session_id, source_profile_id, target_profile_id, idempotency_key, request_fingerprint, trigger_kind, phase, recovery_origin_phase, workspace_owner, source_generation_id, target_generation_id, target_runtime_handle_id, target_controller_generation, target_provider_thread_id, semantic_handoff_status, handoff_classification, final_handoff_path, final_handoff_hash, acknowledge_unknown_capacity, target_acknowledged_at, source_archived_at, requested_at, updated_at, completed_at, error_code FROM codex_profile_switches
+SELECT id, source_session_id, target_session_id, source_profile_id, target_profile_id, idempotency_key, request_fingerprint, trigger_kind, phase, recovery_origin_phase, workspace_owner, source_generation_id, target_generation_id, target_runtime_handle_id, target_controller_generation, target_provider_thread_id, semantic_handoff_status, handoff_classification, final_handoff_path, final_handoff_hash, acknowledge_unknown_capacity, target_acknowledged_at, source_archived_at, requested_at, updated_at, completed_at, error_code, initiator, automatic_attempt_id, automatic_policy_revision FROM codex_profile_switches
 WHERE source_session_id = ?
 ORDER BY requested_at DESC, id DESC
 `
@@ -453,6 +478,9 @@ func (q *Queries) ListCodexProfileSwitches(ctx context.Context, sourceSessionID 
 			&i.UpdatedAt,
 			&i.CompletedAt,
 			&i.ErrorCode,
+			&i.Initiator,
+			&i.AutomaticAttemptID,
+			&i.AutomaticPolicyRevision,
 		); err != nil {
 			return nil, err
 		}

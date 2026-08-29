@@ -258,6 +258,20 @@ func (s *Store) CompleteCodexProfileSwitch(ctx context.Context, sw domain.CodexP
 		}
 		return sw, false, fmt.Errorf("complete profile switch: %w", err)
 	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO codex_automatic_profile_switch_chain_sessions(session_id, chain_root_session_id, joined_at)
+SELECT ?, chain_root_session_id, ? FROM codex_automatic_profile_switch_chain_sessions WHERE session_id = ?
+ON CONFLICT(session_id) DO NOTHING`, *current.TargetSessionID, acknowledgedAt, current.SourceSessionID); err != nil {
+		return sw, false, fmt.Errorf("inherit automatic profile-switch chain: %w", err)
+	}
+	if current.Initiator == domain.CodexProfileSwitchInitiatorAutomatic && current.AutomaticAttemptID != "" {
+		result, err := tx.ExecContext(ctx, `UPDATE codex_automatic_profile_switch_attempts SET state='completed', outcome_code='automatic_switch_completed', updated_at=?, completed_at=? WHERE id=? AND profile_switch_id=? AND state IN ('delegated_to_phase5','needs_attention')`, acknowledgedAt, acknowledgedAt, current.AutomaticAttemptID, current.ID)
+		if err != nil {
+			return sw, false, fmt.Errorf("complete automatic profile-switch attempt: %w", err)
+		}
+		if affected, _ := result.RowsAffected(); affected != 1 {
+			return sw, false, domain.ErrCodexAutomaticProfileSwitchAttemptConflict
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return sw, false, fmt.Errorf("commit profile switch completion: %w", err)
 	}
@@ -307,16 +321,21 @@ func (s *Store) RestoreCodexProfileSwitchSource(ctx context.Context, sw domain.C
 }
 
 func validateCodexProfileSwitch(rec domain.CodexProfileSwitch) error {
+	initiatorValid := rec.Initiator == "" || rec.Initiator.Valid()
 	if rec.ID == "" || rec.SourceSessionID == "" || strings.TrimSpace(rec.SourceProfileID) == "" ||
 		strings.TrimSpace(rec.TargetProfileID) == "" || rec.SourceProfileID == rec.TargetProfileID ||
 		strings.TrimSpace(rec.IdempotencyKey) == "" || !rec.RequestFingerprint.Valid() ||
-		!rec.Trigger.Valid() || !rec.Phase.Valid() || rec.RequestedAt.IsZero() || rec.UpdatedAt.Before(rec.RequestedAt) {
+		!rec.Trigger.Valid() || !rec.Phase.Valid() || !initiatorValid || rec.RequestedAt.IsZero() || rec.UpdatedAt.Before(rec.RequestedAt) {
 		return fmt.Errorf("invalid Codex profile switch %s", rec.ID)
 	}
 	return nil
 }
 
 func codexProfileSwitchToInsert(rec domain.CodexProfileSwitch) gen.InsertCodexProfileSwitchParams {
+	initiator := rec.Initiator
+	if initiator == "" {
+		initiator = domain.CodexProfileSwitchInitiatorManual
+	}
 	return gen.InsertCodexProfileSwitchParams{
 		ID: rec.ID, SourceSessionID: rec.SourceSessionID, TargetSessionID: rec.TargetSessionID,
 		SourceProfileID: rec.SourceProfileID, TargetProfileID: rec.TargetProfileID,
@@ -330,6 +349,8 @@ func codexProfileSwitchToInsert(rec domain.CodexProfileSwitch) gen.InsertCodexPr
 		AcknowledgeUnknownCapacity: rec.AcknowledgeUnknownCapacity,
 		TargetAcknowledgedAt:       timePtrToNull(rec.TargetAcknowledgedAt), SourceArchivedAt: timePtrToNull(rec.SourceArchivedAt),
 		RequestedAt: rec.RequestedAt, UpdatedAt: rec.UpdatedAt, CompletedAt: timePtrToNull(rec.CompletedAt), ErrorCode: string(rec.ErrorCode),
+		Initiator: string(initiator), AutomaticAttemptID: sql.NullString{String: rec.AutomaticAttemptID, Valid: rec.AutomaticAttemptID != ""},
+		AutomaticPolicyRevision: ptrInt64ToNull(rec.AutomaticPolicyRevision),
 	}
 }
 
@@ -362,6 +383,7 @@ func codexProfileSwitchFromGen(row gen.CodexProfileSwitch) domain.CodexProfileSw
 		AcknowledgeUnknownCapacity: row.AcknowledgeUnknownCapacity,
 		TargetAcknowledgedAt:       nullTimeToPtr(row.TargetAcknowledgedAt), SourceArchivedAt: nullTimeToPtr(row.SourceArchivedAt),
 		RequestedAt: row.RequestedAt, UpdatedAt: row.UpdatedAt, CompletedAt: nullTimeToPtr(row.CompletedAt),
-		ErrorCode: domain.CodexProfileSwitchErrorCode(row.ErrorCode),
+		ErrorCode: domain.CodexProfileSwitchErrorCode(row.ErrorCode), Initiator: domain.CodexProfileSwitchInitiator(row.Initiator),
+		AutomaticAttemptID: row.AutomaticAttemptID.String, AutomaticPolicyRevision: nullInt64Ptr(row.AutomaticPolicyRevision),
 	}
 }

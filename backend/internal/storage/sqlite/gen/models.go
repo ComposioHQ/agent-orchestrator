@@ -75,6 +75,54 @@ type ChangeLog struct {
 	CreatedAt time.Time
 }
 
+type CodexAutomaticProfileSwitchAttempt struct {
+	ID                      string
+	ChainRootSessionID      string
+	SourceSessionID         string
+	SourceProfileID         string
+	SourceGenerationID      string
+	SourceEpisodeID         string
+	TriggerKind             string
+	ExhaustionFingerprint   string
+	PolicyRevision          int64
+	SelectedProfileID       sql.NullString
+	SelectedProfilePosition sql.NullInt64
+	ProfileSwitchID         sql.NullString
+	State                   string
+	OutcomeCode             string
+	CreatedAt               time.Time
+	UpdatedAt               time.Time
+	CompletedAt             sql.NullTime
+}
+
+type CodexAutomaticProfileSwitchAttemptCandidate struct {
+	AttemptID   string
+	Position    int64
+	ProfileID   string
+	ReasonCode  string
+	EvaluatedAt time.Time
+}
+
+type CodexAutomaticProfileSwitchChainSession struct {
+	SessionID          string
+	ChainRootSessionID string
+	JoinedAt           time.Time
+}
+
+type CodexAutomaticProfileSwitchPolicy struct {
+	ChainRootSessionID string
+	Enabled            int64
+	Revision           int64
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+}
+
+type CodexAutomaticProfileSwitchPolicyProfile struct {
+	ChainRootSessionID string
+	Position           int64
+	ProfileID          string
+}
+
 type CodexProfileSwitch struct {
 	ID                         domain.CodexProfileSwitchID
 	SourceSessionID            domain.SessionID
@@ -103,6 +151,9 @@ type CodexProfileSwitch struct {
 	UpdatedAt                  time.Time
 	CompletedAt                sql.NullTime
 	ErrorCode                  string
+	Initiator                  string
+	AutomaticAttemptID         sql.NullString
+	AutomaticPolicyRevision    sql.NullInt64
 }
 
 type CodexSessionBinding struct {

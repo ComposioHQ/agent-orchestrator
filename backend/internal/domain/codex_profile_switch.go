@@ -21,6 +21,22 @@ var (
 // CodexProfileSwitchID identifies one durable assisted profile continuation.
 type CodexProfileSwitchID string
 
+// CodexProfileSwitchInitiator distinguishes an explicit assisted switch from a
+// Phase 6 authorized automatic continuation.
+type CodexProfileSwitchInitiator string
+
+const (
+	// CodexProfileSwitchInitiatorManual is an explicitly confirmed Phase 5 request.
+	CodexProfileSwitchInitiatorManual CodexProfileSwitchInitiator = "manual"
+	// CodexProfileSwitchInitiatorAutomatic is delegated by a confirmed Phase 6 attempt.
+	CodexProfileSwitchInitiatorAutomatic CodexProfileSwitchInitiator = "automatic"
+)
+
+// Valid reports whether the initiator may be persisted.
+func (i CodexProfileSwitchInitiator) Valid() bool {
+	return i == CodexProfileSwitchInitiatorManual || i == CodexProfileSwitchInitiatorAutomatic
+}
+
 // CodexProfileSwitchRequestFingerprint binds an idempotency key to the exact
 // user-visible request. Runtime observations are deliberately excluded.
 type CodexProfileSwitchRequestFingerprint string
@@ -33,6 +49,20 @@ func ComputeCodexProfileSwitchRequestFingerprint(sessionID SessionID, targetProf
 		TargetProfileID            string    `json:"targetProfileId"`
 		AcknowledgeUnknownCapacity bool      `json:"acknowledgeUnknownCapacity"`
 	}{sessionID, strings.TrimSpace(targetProfileID), acknowledgeUnknownCapacity})
+	sum := sha256.Sum256(payload)
+	return CodexProfileSwitchRequestFingerprint("v1:" + hex.EncodeToString(sum[:]))
+}
+
+// ComputeAutomaticCodexProfileSwitchRequestFingerprint binds Phase 5's
+// idempotency record to exactly one Phase 6 attempt and policy revision while
+// preserving the v1 encoding used by existing rows.
+func ComputeAutomaticCodexProfileSwitchRequestFingerprint(sessionID SessionID, targetProfileID, attemptID string, policyRevision int64) CodexProfileSwitchRequestFingerprint {
+	payload, _ := json.Marshal(struct {
+		SessionID       SessionID `json:"sessionId"`
+		TargetProfileID string    `json:"targetProfileId"`
+		AttemptID       string    `json:"automaticAttemptId"`
+		PolicyRevision  int64     `json:"automaticPolicyRevision"`
+	}{sessionID, strings.TrimSpace(targetProfileID), strings.TrimSpace(attemptID), policyRevision})
 	sum := sha256.Sum256(payload)
 	return CodexProfileSwitchRequestFingerprint("v1:" + hex.EncodeToString(sum[:]))
 }
@@ -251,6 +281,9 @@ type CodexProfileSwitch struct {
 	FinalHandoffPath           string                                  `json:"-"`
 	FinalHandoffHash           string                                  `json:"-"`
 	AcknowledgeUnknownCapacity bool                                    `json:"acknowledgeUnknownCapacity"`
+	Initiator                  CodexProfileSwitchInitiator             `json:"initiator" enum:"manual,automatic"`
+	AutomaticAttemptID         string                                  `json:"-"`
+	AutomaticPolicyRevision    *int64                                  `json:"-"`
 	TargetAcknowledgedAt       *time.Time                              `json:"targetAcknowledgedAt,omitempty"`
 	SourceArchivedAt           *time.Time                              `json:"sourceArchivedAt,omitempty"`
 	RequestedAt                time.Time                               `json:"requestedAt"`
