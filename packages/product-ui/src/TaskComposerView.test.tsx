@@ -117,6 +117,7 @@ describe("TaskComposerView", () => {
 		fireEvent.change(screen.getByRole("textbox", { name: "Model" }), { target: { value: "gpt-5.1" } });
 		expect(props.model.onModelChange).toHaveBeenCalledWith("gpt-5.1");
 		expect(screen.getByRole("group", { name: "Runs with" })).toHaveClass("composer-run-controls");
+		expect(screen.getByRole("group", { name: "Runs with" })).toHaveAttribute("data-control-count", "2");
 	});
 
 	it("keeps the surrounding controls stable while typing", () => {
@@ -145,7 +146,10 @@ describe("TaskComposerView", () => {
 		})} />);
 		fireEvent.click(screen.getByRole("button", { name: "Profile" }));
 		expect(onChange).toHaveBeenCalledWith("existing");
-		expect(screen.getByRole("group", { name: "Runs with" }).querySelectorAll(".composer-toolbar-slot")).toHaveLength(3);
+		const controls = screen.getByRole("group", { name: "Runs with" });
+		expect(controls).toHaveAttribute("data-control-count", "3");
+		expect(controls.querySelector(".composer-context-controls")).toHaveAttribute("data-has-profile", "true");
+		expect(controls.querySelectorAll(".composer-toolbar-slot")).toHaveLength(3);
 	});
 
 	it("submits on the button or unmodified Enter and respects project availability", () => {
