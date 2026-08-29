@@ -312,6 +312,16 @@ describe("browser shortcut routing", () => {
 			expect(tabs.tabs).toHaveLength(1);
 		});
 		expect(webContents.close).toHaveBeenCalledOnce();
+		expect(shellSend).toHaveBeenCalledWith(
+			"browser:tabsState",
+			expect.objectContaining({
+				change: expect.objectContaining({
+					kind: "closed",
+					tabId: expect.any(String),
+					tab: expect.objectContaining({ active: false }),
+				}),
+			}),
+		);
 
 		emitBeforeInput({ key: "w", control: true });
 		await Promise.resolve();

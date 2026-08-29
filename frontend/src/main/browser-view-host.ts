@@ -89,6 +89,7 @@ export type BrowserTabsState = {
 	change?: {
 		kind: "opened" | "popup" | "selected" | "closed";
 		tabId: string;
+		tab?: BrowserTabState;
 	};
 };
 
@@ -935,6 +936,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		}
 		const tab = session.tabs.get(tabId);
 		if (!tab) throw browserError("TAB_NOT_FOUND", `Browser tab ${tabId} does not exist`);
+		const closedTab = tabResult(tab, false);
 		const wasActive = tabId === session.activeTabId;
 		disposeNetworkCapture(tab, "tab-closed");
 		if (session.networkTabId === tabId) session.networkTabId = undefined;
@@ -945,7 +947,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			const nextTabId = [...session.tabs.keys()].at(-1)!;
 			activateTab(session, nextTabId, false);
 		}
-		const state = listTabs(session, { kind: "closed", tabId });
+		const state = listTabs(session, { kind: "closed", tabId, tab: closedTab });
 		shellContents(options).send("browser:tabsState", state);
 		return state;
 	}

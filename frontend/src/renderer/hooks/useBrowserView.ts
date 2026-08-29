@@ -425,10 +425,19 @@ export function useBrowserView({
 		return window.ao?.browser.onTabsState((state) => {
 			if (state.viewId !== viewIdRef.current) return;
 			setTabsState(state);
-			if (state.change?.kind !== "popup") return;
-			showTabNotice("Opened new tab");
+			const change = state.change;
+			if (change?.kind === "popup") {
+				showTabNotice("Opened new tab");
+				return;
+			}
+			if (change?.kind !== "closed" || !change.tab || isBlankTabUrl(change.tab.url)) return;
+			const { id, title, url, favicon } = change.tab;
+			updateClosedTabs((current) => [
+				{ id, title, url, favicon },
+				...current.filter((tab) => tab.id !== id),
+			].slice(0, MAX_CLOSED_TABS));
 		});
-	}, [showTabNotice]);
+	}, [showTabNotice, updateClosedTabs]);
 
 	// Re-project the persisted display order onto every incoming tabsState push:
 	// browser:tabsState fires on every nav/title-update/loading-state change for
