@@ -651,6 +651,7 @@
 	"settings.codexProfiles.create": "Criar",
 	"settings.codexProfiles.createFailed": "Não foi possível criar o perfil do Codex.",
 	"settings.codexProfiles.count_one": "{{count}} perfil",
+	"settings.codexProfiles.count_many": "{{count}} perfis",
 	"settings.codexProfiles.count_other": "{{count}} perfis",
 	"settings.codexProfiles.existing": "Existente",
 	"settings.codexProfiles.label": "Nome do perfil",
