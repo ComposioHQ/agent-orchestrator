@@ -110,14 +110,15 @@ describe("ShellTerminalTab rename", () => {
 		expect(screen.getByRole("tab", { name: "ao" })).toHaveAttribute("aria-selected", "true");
 	});
 
-	it("hugs the truncated title instead of a fixed connected width", () => {
+	it("hugs the truncated title with adaptive shell-tab floor sizing", () => {
 		renderTab({ appearance: "connected", isActive: false });
 
 		const tab = screen.getByRole("tab", { name: "ao" });
 		expect(tab.classList.contains("min-w-0")).toBe(true);
 		expect(tab.classList.contains("text-left")).toBe(true);
+		expect(tab.parentElement?.classList.contains("session-tab-icon-floor")).toBe(true);
+		expect(tab.parentElement?.classList.contains("session-tab-icon-floor--closable")).toBe(true);
 		expect(tab.parentElement?.classList.contains("inline-flex")).toBe(true);
-		expect(tab.parentElement?.classList.contains("shrink-0")).toBe(true);
 		expect(tab.parentElement?.classList.contains("max-w-shell-tab-max")).toBe(true);
 		expect(tab.parentElement?.classList.contains("w-shell-tab-connected")).toBe(false);
 		expect(tab.parentElement?.classList.contains("min-w-shell-tab-min")).toBe(false);

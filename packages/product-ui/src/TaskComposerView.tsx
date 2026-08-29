@@ -58,6 +58,7 @@ export type TaskComposerModelControl = {
 	agentId: string;
 	agentLabel: string;
 	catalog?: TaskComposerModelCatalog;
+	disabled: boolean;
 	fetching: boolean;
 	id: string;
 	loading: boolean;
@@ -117,6 +118,7 @@ export type TaskComposerViewProps = {
 
 type TaskPromptProps = {
 	autoFocus?: boolean;
+	disabled: boolean;
 	id: string;
 	initialValue: string;
 	label: string;
@@ -127,6 +129,7 @@ type TaskPromptProps = {
 
 const TaskPrompt = memo(function TaskPrompt({
 	autoFocus,
+	disabled,
 	id,
 	initialValue,
 	label,
@@ -153,7 +156,8 @@ const TaskPrompt = memo(function TaskPrompt({
 				ref={textareaRef}
 				id={id}
 				autoFocus={autoFocus}
-				className="min-h-[calc(3lh+1.75rem)] max-h-[calc(8lh+1.75rem)] w-full resize-none overflow-y-auto bg-transparent px-4 pb-3 pt-4 text-md leading-relaxed text-foreground outline-none placeholder:text-passive"
+				className="min-h-[calc(3lh+1.75rem)] max-h-[calc(8lh+1.75rem)] w-full resize-none overflow-y-auto bg-transparent px-4 pb-3 pt-4 text-md leading-relaxed text-foreground outline-none placeholder:text-passive disabled:cursor-not-allowed disabled:opacity-50"
+				disabled={disabled}
 				placeholder={placeholder}
 				value={value}
 				onChange={(event) => {
@@ -207,6 +211,7 @@ export function TaskComposerView({
 	};
 
 	const handlePaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
+		if (submission.isSubmitting) return;
 		const files = Array.from(event.clipboardData?.files ?? []);
 		if (files.length === 0) return;
 		event.preventDefault();
@@ -216,11 +221,13 @@ export function TaskComposerView({
 	const handleDrop = (event: DragEvent<HTMLFormElement>) => {
 		event.preventDefault();
 		setIsDragging(false);
+		if (submission.isSubmitting) return;
 		const files = Array.from(event.dataTransfer?.files ?? []);
 		if (files.length > 0) attachments.onAddFiles(files);
 	};
 
 	const handleDragOver = (event: DragEvent<HTMLFormElement>) => {
+		if (submission.isSubmitting) return;
 		if (Array.from(event.dataTransfer?.items ?? []).some((item) => item.kind === "file")) {
 			event.preventDefault();
 			setIsDragging(true);
@@ -241,6 +248,7 @@ export function TaskComposerView({
 		>
 			<TaskPrompt
 				autoFocus={autoFocusPrompt}
+				disabled={submission.isSubmitting}
 				id={promptId}
 				initialValue={initialPrompt}
 				label={labels.task}
@@ -272,9 +280,12 @@ export function TaskComposerView({
 											/>
 											<button
 												type="button"
-												className="absolute top-1 right-1 grid size-4.5 place-items-center rounded-full bg-background/80 text-muted-foreground hover:bg-background hover:text-foreground shadow-sm transition-colors"
+												disabled={submission.isSubmitting}
+												className="absolute top-1 right-1 grid size-4.5 place-items-center rounded-full bg-background/80 text-muted-foreground hover:bg-background hover:text-foreground shadow-sm transition-colors disabled:pointer-events-none disabled:opacity-50"
 												aria-label={labels.removeFile(attachment.name)}
-												onClick={() => attachments.onRemove(attachment.id)}
+												onClick={() => {
+													if (!submission.isSubmitting) attachments.onRemove(attachment.id);
+												}}
 											>
 												<X className="size-3" aria-hidden="true" />
 											</button>
@@ -295,9 +306,12 @@ export function TaskComposerView({
 											</div>
 											<button
 												type="button"
-												className="absolute top-1 right-1 grid size-4.5 place-items-center rounded-full bg-background border border-border text-muted-foreground hover:bg-muted hover:text-foreground shadow-sm transition-colors"
+												disabled={submission.isSubmitting}
+												className="absolute top-1 right-1 grid size-4.5 place-items-center rounded-full bg-background border border-border text-muted-foreground hover:bg-muted hover:text-foreground shadow-sm transition-colors disabled:pointer-events-none disabled:opacity-50"
 												aria-label={labels.removeFile(attachment.name)}
-												onClick={() => attachments.onRemove(attachment.id)}
+												onClick={() => {
+													if (!submission.isSubmitting) attachments.onRemove(attachment.id);
+												}}
 											>
 												<X className="size-3" aria-hidden="true" />
 											</button>
@@ -313,8 +327,10 @@ export function TaskComposerView({
 				ref={fileInputRef}
 				type="file"
 				multiple
+				disabled={submission.isSubmitting}
 				className="hidden"
 				onChange={(event) => {
+					if (submission.isSubmitting) return;
 					if (event.target.files) attachments.onAddFiles(Array.from(event.target.files));
 					event.target.value = "";
 				}}
@@ -362,9 +378,12 @@ export function TaskComposerView({
 
 				<button
 					type="button"
-					className="inline-flex size-(--size-settings-action-height) shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+					disabled={submission.isSubmitting}
+					className="inline-flex size-(--size-settings-action-height) shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
 					aria-label={labels.addFile}
-					onClick={() => fileInputRef.current?.click()}
+					onClick={() => {
+						if (!submission.isSubmitting) fileInputRef.current?.click();
+					}}
 				>
 					<Paperclip className="size-icon-base" aria-hidden="true" />
 				</button>

@@ -119,14 +119,15 @@ export function ShellTerminalTab({
 
 	return (
 		<span
+			data-editing={appearance === "connected" && isEditing ? "true" : undefined}
 			className={cn(
 				"group relative h-full shrink-0 self-stretch items-center transition-colors",
 				appearance === "connected"
 					? cn(
-							"inline-flex max-w-shell-tab-max border-x border-transparent",
+							"session-tab-icon-floor session-tab-icon-floor--closable relative inline-flex max-w-shell-tab-max border-x border-transparent",
 							isEditing && "pl-2 pr-1",
 						)
-					: "inline-flex min-w-shell-tab-min items-center gap-1 rounded-md px-2 py-1",
+					: "inline-flex min-w-shell-tab-min shrink-0 items-center gap-1 rounded-md px-2 py-1",
 				appearance === "connected"
 					? isActive
 						? "border-border-strong bg-overlay text-foreground after:pointer-events-none after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80"
