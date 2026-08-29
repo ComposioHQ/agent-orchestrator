@@ -168,7 +168,7 @@ describe("ChatWorkspace steering", () => {
 				turn.id === "queued-1"
 					? {
 							...turn,
-							state: "interrupted" as const,
+							state: "cancelled" as const,
 							completedAt: "2026-08-11T10:03:00Z",
 						}
 					: turn,

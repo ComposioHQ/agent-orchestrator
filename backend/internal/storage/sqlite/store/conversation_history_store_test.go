@@ -637,8 +637,8 @@ func TestCancelQueuedTurnByIDHidesMessageFromSnapshot(t *testing.T) {
 		if turn.ID != "queued-1" {
 			continue
 		}
-		if turn.State != domain.TurnStateInterrupted {
-			t.Fatalf("cancelled turn state = %q, want interrupted", turn.State)
+		if turn.State != domain.TurnStateCancelled {
+			t.Fatalf("cancelled turn state = %q, want cancelled", turn.State)
 		}
 		return
 	}

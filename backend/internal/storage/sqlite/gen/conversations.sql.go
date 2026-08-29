@@ -329,7 +329,7 @@ func (q *Queries) CancelAllQueuedConversationTurns(ctx context.Context, arg Canc
 
 const cancelQueuedConversationTurnByID = `-- name: CancelQueuedConversationTurnByID :execrows
 UPDATE conversation_turns
-SET state = 'interrupted', completed_at = ?
+SET state = 'cancelled', completed_at = ?
 WHERE id = ?
   AND conversation_id = ?
   AND state = 'queued'
@@ -1134,11 +1134,7 @@ WHERE conversation_activities.conversation_id = ?1
       WHERE discarded.conversation_id = ?1
         AND (
           discarded.rolled_back_at IS NOT NULL
-          OR (
-            discarded.state = 'interrupted'
-            AND discarded.started_at IS NULL
-            AND discarded.provider_turn_id = ''
-          )
+          OR discarded.state = 'cancelled'
         )
   ))
 ORDER BY conversation_activities.sequence
@@ -1214,11 +1210,7 @@ WHERE conversation_activities.conversation_id = ?1
       WHERE discarded.conversation_id = ?1
         AND (
           discarded.rolled_back_at IS NOT NULL
-          OR (
-            discarded.state = 'interrupted'
-            AND discarded.started_at IS NULL
-            AND discarded.provider_turn_id = ''
-          )
+          OR discarded.state = 'cancelled'
         )
   ))
 ORDER BY conversation_activities.sequence DESC
@@ -1865,11 +1857,7 @@ WHERE conversation_messages.conversation_id = ?1
         AND (
           discarded.rolled_back_at IS NOT NULL
           OR discarded.promoted_to_turn_id IS NOT NULL
-          OR (
-            discarded.state = 'interrupted'
-            AND discarded.started_at IS NULL
-            AND discarded.provider_turn_id = ''
-          )
+          OR discarded.state = 'cancelled'
         )
   ))
 ORDER BY conversation_messages.sequence
@@ -1879,9 +1867,8 @@ ORDER BY conversation_messages.sequence
 // out: rollback discarded them provider-side, and showing a person a message the
 // agent has no memory of is the one way this feature can lie.
 //
-// Undispatched queue items cancelled from the dock or by stop settle as
-// interrupted without ever reaching the provider. Their human prompt stays out
-// for the same reason.
+// Undispatched queue items cancelled from the dock settle as cancelled rather
+// than interrupted. Stop and handoff still mark the queue interrupted.
 //
 // Rows with turn_id IS NULL survive the filter on purpose. Those are items the
 // provider never attributed to a turn, and hiding what AO cannot prove belonged to
@@ -1954,11 +1941,7 @@ WHERE conversation_messages.conversation_id = ?1
         AND (
           discarded.rolled_back_at IS NOT NULL
           OR discarded.promoted_to_turn_id IS NOT NULL
-          OR (
-            discarded.state = 'interrupted'
-            AND discarded.started_at IS NULL
-            AND discarded.provider_turn_id = ''
-          )
+          OR discarded.state = 'cancelled'
         )
   ))
 ORDER BY conversation_messages.sequence DESC
