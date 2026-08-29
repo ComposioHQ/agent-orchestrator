@@ -655,6 +655,11 @@ func Run() error {
 	// authenticated LAN listener behind it. Best-effort and never blocking:
 	// boot restore re-applies it against the next bound port.
 	bs.ShutdownServe()
+	// And the connector before that again, for the same reason: cloudflared is
+	// a separate process that outlives this one, so leaving it would keep a
+	// public hostname resolving to a port that is about to close. Stopping it
+	// does not disable the bridge — boot restore starts a new one.
+	bs.ShutdownTunnel()
 	lanStopCtx, lanCancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer lanCancel()
 	if err := lan.Stop(lanStopCtx); err != nil {

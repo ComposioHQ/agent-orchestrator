@@ -450,6 +450,25 @@ func (b *BridgeService) Disable() error {
 // process that later binds that port would be published to the tailnet in its
 // place. The persisted SecurePairing preference is deliberately left set, so
 // RestoreOnBoot re-applies the proxy against the next bound port.
+// ShutdownTunnel stops the managed connector on the way out.
+//
+// The same reasoning as ShutdownServe: a cloudflared process outlives this
+// daemon, so leaving it running would keep a public hostname resolving to a
+// port that no longer has the authenticated LAN listener behind it. Reaping on
+// the next boot recovers from a crash, but a clean quit should not depend on
+// it — until the user happens to reopen the app the process keeps running and
+// the hostname stays registered.
+//
+// Deliberately not touching persisted state: the bridge stays enabled, so boot
+// restore brings the connector back on the next start. This ends the process,
+// not the user's preference.
+func (b *BridgeService) ShutdownTunnel() {
+	if b.Tunnel == nil {
+		return // Remote access is optional; nothing to stop without cloudflared.
+	}
+	b.Tunnel.Stop()
+}
+
 func (b *BridgeService) ShutdownServe() {
 	st, _ := mobilebridge.Load(b.ConfigPath)
 	if !st.Enabled || !st.SecurePairing {

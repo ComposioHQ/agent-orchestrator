@@ -703,3 +703,29 @@ func TestMobileRestoreOnBootWithoutATunnelIsHarmless(t *testing.T) {
 		t.Fatalf("restore: %v", err)
 	}
 }
+
+// A cloudflared process outlives the daemon that spawned it, so quitting
+// without stopping it leaves a public hostname pointing at a port that no
+// longer has the authenticated LAN listener behind it. Reaping on the next
+// boot cleans it up eventually, but "eventually" is whenever the user happens
+// to reopen the app — until then the process runs and the hostname resolves.
+func TestShutdownTunnelStopsTheConnector(t *testing.T) {
+	dir := t.TempDir()
+	tun := &fakeTunnel{}
+	b := &BridgeService{ConfigPath: filepath.Join(dir, "mobile.json"), Tunnel: tun}
+
+	b.ShutdownTunnel()
+
+	if tun.stops != 1 {
+		t.Fatalf("connector stops = %d, want 1", tun.stops)
+	}
+}
+
+// Remote access is optional: without cloudflared installed there is no
+// connector, and shutdown must not panic on the way out.
+func TestShutdownTunnelWithoutAConnector(t *testing.T) {
+	dir := t.TempDir()
+	b := &BridgeService{ConfigPath: filepath.Join(dir, "mobile.json")}
+
+	b.ShutdownTunnel()
+}
