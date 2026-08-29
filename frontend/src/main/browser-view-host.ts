@@ -631,6 +631,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		);
 		view.webContents.on("focus", () => {
 			lastFocusedViewId = session.viewId;
+			shellWebContents.send("browser:pageFocus", session.viewId);
 		});
 		// A newly-created WebContentsView reports about:blank before its renderer
 		// has actually been initialized. CDP commands can hang until that initial

@@ -160,6 +160,7 @@ function PersistentBrowserPanelView({
 describe("BrowserPanel", () => {
 	const annotationSubmitListeners = new Set<(payload: BrowserAnnotationSubmitPayload) => void>();
 	const annotationCancelListeners = new Set<(payload: BrowserAnnotationCancelPayload) => void>();
+	const pageFocusListeners = new Set<(viewId: string) => void>();
 
 	beforeEach(() => {
 		hookState.navigate.mockReset();
@@ -188,6 +189,11 @@ describe("BrowserPanel", () => {
 		postMock.mockResolvedValue({ data: {} });
 		annotationSubmitListeners.clear();
 		annotationCancelListeners.clear();
+		pageFocusListeners.clear();
+		window.ao!.browser.onPageFocus = vi.fn((listener: (viewId: string) => void) => {
+			pageFocusListeners.add(listener);
+			return () => pageFocusListeners.delete(listener);
+		});
 		window.ao!.browser.onAnnotationSubmit = vi.fn((listener: (payload: BrowserAnnotationSubmitPayload) => void) => {
 			annotationSubmitListeners.add(listener);
 			return () => {
@@ -252,7 +258,9 @@ describe("BrowserPanel", () => {
 		});
 		expect(toolbar).toHaveClass("browser-panel__toolbar--url-editing");
 
-		fireEvent.blur(input);
+		act(() => {
+			for (const listener of pageFocusListeners) listener("42:sess-1");
+		});
 
 		expect(input).toHaveValue("google.com");
 		expect(toolbar).not.toHaveClass("browser-panel__toolbar--url-editing");

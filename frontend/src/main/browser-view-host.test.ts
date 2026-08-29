@@ -2028,6 +2028,7 @@ describe("getLastFocusedPanelContents", () => {
 	// Mock that captures each panel's "focus" listener so the test can fire it.
 	function setup() {
 		let focusListener: (() => void) | undefined;
+		const shellSend = vi.fn();
 		const webContents = {
 			canGoBack: () => false,
 			canGoForward: () => false,
@@ -2055,7 +2056,7 @@ describe("getLastFocusedPanelContents", () => {
 			mainWindow: {
 				contentView: { addChildView: () => undefined, removeChildView: () => undefined },
 				getContentBounds: () => ({ x: 0, y: 0, width: 800, height: 600 }),
-				webContents: { id: 1, send: () => undefined },
+				webContents: { id: 1, send: shellSend },
 			} as never,
 			ipcMain: { handle: record, on: record, removeHandler: () => undefined, off: () => undefined } as never,
 			shell: { openExternal: async () => undefined },
@@ -2067,7 +2068,7 @@ describe("getLastFocusedPanelContents", () => {
 		});
 		const call = (channel: string, ...args: unknown[]) =>
 			handlers.get(channel)!({ sender: { id: 1, getZoomFactor: () => 1 } }, ...args);
-		return { host, call, webContents, focus: () => focusListener?.() };
+		return { host, call, shellSend, webContents, focus: () => focusListener?.() };
 	}
 
 	it("is null until a panel is focused", async () => {
@@ -2077,11 +2078,12 @@ describe("getLastFocusedPanelContents", () => {
 	});
 
 	it("tracks the focused panel, then clears on hide and destroy", async () => {
-		const { host, call, webContents, focus } = setup();
+		const { host, call, shellSend, webContents, focus } = setup();
 		await call("browser:ensure", "s");
 
 		focus();
 		expect(host.getLastFocusedPanelContents()).toBe(webContents);
+		expect(shellSend).toHaveBeenCalledWith("browser:pageFocus", "1:s");
 
 		call("browser:setBounds", { viewId: "1:s", rect: { x: 0, y: 0, width: 10, height: 10 }, visible: false });
 		expect(host.getLastFocusedPanelContents()).toBeNull();

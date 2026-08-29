@@ -397,6 +397,16 @@ export function BrowserPanelView({
 	}, [urlEditing]);
 
 	useEffect(() => {
+		const onPageFocus = window.ao?.browser.onPageFocus;
+		if (!onPageFocus) return;
+		return onPageFocus((focusedViewId) => {
+			if (focusedViewId !== viewId) return;
+			urlInputRef.current?.blur();
+			setUrlEditing(false);
+		});
+	}, [viewId]);
+
+	useEffect(() => {
 		const offSubmit = window.ao?.browser.onAnnotationSubmit((payload) => {
 			if (payload.viewId !== viewId) return;
 			enqueue(payload);
@@ -418,6 +428,15 @@ export function BrowserPanelView({
 	};
 
 	const beginUrlEditing = () => {
+		const input = urlInputRef.current;
+		const wrapper = input?.parentElement;
+		const toolbar = input?.closest<HTMLElement>(".browser-panel__toolbar");
+		if (wrapper && toolbar) {
+			const wrapperRect = wrapper.getBoundingClientRect();
+			const toolbarRect = toolbar.getBoundingClientRect();
+			wrapper.style.setProperty("--browser-url-expand-left", `${toolbarRect.left + 4 - wrapperRect.left}px`);
+			wrapper.style.setProperty("--browser-url-expand-right", `${wrapperRect.right - toolbarRect.right + 4}px`);
+		}
 		setUrlInput(navState.url);
 		setUrlEditing(true);
 	};

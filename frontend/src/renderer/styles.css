@@ -4028,12 +4028,17 @@ body:has(#root .platform-linux) > .browser-popout-overlay {
 	backdrop-filter: blur(10px);
 }
 
-.browser-panel__toolbar--url-editing {
-	padding-right: 4px;
+.browser-panel__toolbar > :not(.browser-panel__url-wrap) {
+	transition:
+		opacity 140ms ease,
+		visibility 0s linear;
 }
 
 .browser-panel__toolbar--url-editing > :not(.browser-panel__url-wrap) {
-	display: none;
+	visibility: hidden;
+	opacity: 0;
+	pointer-events: none;
+	transition-delay: 0s, 140ms;
 }
 
 .browser-panel {
@@ -4227,6 +4232,10 @@ body:has(#root .platform-linux) > .browser-popout-overlay {
 	flex: 1;
 }
 
+.browser-panel__url-wrap {
+	height: 29px;
+}
+
 .browser-panel__toolbar button {
 	border-radius: 7px;
 	transition:
@@ -4252,6 +4261,12 @@ body:has(#root .platform-linux) > .browser-popout-overlay {
 }
 
 .browser-panel__url-input {
+	position: absolute;
+	top: 0;
+	right: 0;
+	left: 0;
+	z-index: 0;
+	width: auto;
 	height: 29px;
 	border-color: color-mix(in srgb, var(--color-border) 72%, transparent);
 	border-radius: 7px;
@@ -4262,6 +4277,17 @@ body:has(#root .platform-linux) > .browser-popout-overlay {
 		0 1px 8px color-mix(in srgb, black 9%, transparent);
 	font-family: var(--font-mono);
 	font-size: 12px;
+	transition:
+		left 180ms cubic-bezier(0.2, 0.8, 0.2, 1),
+		right 180ms cubic-bezier(0.2, 0.8, 0.2, 1),
+		box-shadow var(--duration-fast) ease,
+		background-color var(--duration-fast) ease;
+}
+
+.browser-panel__toolbar--url-editing .browser-panel__url-input {
+	left: var(--browser-url-expand-left, 0);
+	right: var(--browser-url-expand-right, 0);
+	z-index: 2;
 }
 
 .browser-panel__url-input:focus {
@@ -4449,7 +4475,9 @@ html[data-native-browser-composition="true"] .browser-popout-backdrop {
 	}
 
 	.browser-panel,
-	.browser-panel__toolbar button {
+	.browser-panel__toolbar button,
+	.browser-panel__toolbar > :not(.browser-panel__url-wrap),
+	.browser-panel__url-input {
 		transition: none;
 	}
 
