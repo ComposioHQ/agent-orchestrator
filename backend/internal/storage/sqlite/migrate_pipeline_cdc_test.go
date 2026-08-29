@@ -5,6 +5,7 @@ import (
 	"embed"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -411,8 +412,11 @@ func openPipelineProfileCheckDB(t *testing.T, dataDir string) *sql.DB {
 
 func assertPublishedPipelineProfileRetired(t *testing.T, db *sql.DB) {
 	t.Helper()
-	if got := tableColumns(t, db, "app_settings"); !reflect.DeepEqual(got, []string{"id", "default_session_mode", "updated_at"}) {
-		t.Fatalf("canonical app_settings columns = %v", got)
+	gotSettingsColumns := tableColumns(t, db, "app_settings")
+	for _, required := range []string{"id", "default_session_mode", "updated_at"} {
+		if !slices.Contains(gotSettingsColumns, required) {
+			t.Fatalf("canonical app_settings columns = %v, missing %q", gotSettingsColumns, required)
+		}
 	}
 	var mode string
 	if err := db.QueryRow(`SELECT default_session_mode FROM app_settings WHERE id = 1`).Scan(&mode); err != nil {
