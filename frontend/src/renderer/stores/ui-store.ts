@@ -95,8 +95,8 @@ export type UiState = {
 	// session view (tabs beside the session's pane) and the standalone terminals
 	// view read it, so whichever one is on screen shows the same shell.
 	activeShellTerminalHandleId: string | null;
-	/** Active profile login terminal monitored for a fresh Codex auth state. */
-	codexProfileLoginTerminal: CodexProfileLoginTerminalMonitor | null;
+	/** Active inline profile-login workflow. This is daemon-lifetime UI state only. */
+	codexProfileLoginTerminal: CodexProfileLoginTerminalWorkflow | null;
 	// Which terminal each mounted session is actually showing. The session pane
 	// renders one terminal at a time, so opening a shell or the reviewer swaps
 	// the agent's terminal off screen even though the route still points at that
@@ -139,8 +139,12 @@ export type UiState = {
 	requestCreateProjectFromPath: (path: string) => void;
 	requestNewShellTerminal: () => void;
 	setActiveShellTerminal: (handleId: string | null) => void;
-	monitorCodexProfileLoginTerminal: (profileId: string, handleId: string) => void;
-	clearCodexProfileLoginTerminal: () => void;
+	startCodexProfileLoginTerminal: (profileId: string, terminal: CodexProfileLoginTerminal) => void;
+	updateCodexProfileLoginTerminal: (
+		handleId: string,
+		update: Partial<Pick<CodexProfileLoginTerminalWorkflow, "phase" | "reason">>,
+	) => void;
+	clearCodexProfileLoginTerminal: (handleId?: string) => void;
 	setVisibleTerminalKind: (sessionId: string, kind: TerminalTarget["kind"]) => void;
 	clearVisibleTerminalKind: (sessionId: string) => void;
 };
@@ -151,9 +155,25 @@ export type OrchestratorReplacementFailure = {
 	requestId?: string;
 };
 
-export type CodexProfileLoginTerminalMonitor = {
-	profileId: string;
+export type CodexProfileLoginTerminalPhase =
+	| "running"
+	| "verifying"
+	| "unauthorized"
+	| "unverified"
+	| "timed_out"
+	| "closing";
+
+export type CodexProfileLoginTerminal = {
 	handleId: string;
+	title: string;
+	createdAt: string;
+};
+
+export type CodexProfileLoginTerminalWorkflow = {
+	profileId: string;
+	terminal: CodexProfileLoginTerminal;
+	phase: CodexProfileLoginTerminalPhase;
+	reason?: string;
 	startedAt: number;
 };
 
@@ -410,10 +430,23 @@ export const useUiStore = create<UiState>((set, get) => ({
 		set((state) => ({ folderDropRequest: { path, nonce: (state.folderDropRequest?.nonce ?? 0) + 1 } })),
 	requestNewShellTerminal: () => set((state) => ({ newShellTerminalNonce: state.newShellTerminalNonce + 1 })),
 	setActiveShellTerminal: (activeShellTerminalHandleId) => set({ activeShellTerminalHandleId }),
-	monitorCodexProfileLoginTerminal: (profileId, handleId) => set({
-		codexProfileLoginTerminal: { profileId, handleId, startedAt: Date.now() },
+	startCodexProfileLoginTerminal: (profileId, terminal) => set({
+		codexProfileLoginTerminal: {
+			profileId,
+			terminal,
+			phase: "running",
+			startedAt: Date.now(),
+		},
 	}),
-	clearCodexProfileLoginTerminal: () => set({ codexProfileLoginTerminal: null }),
+	updateCodexProfileLoginTerminal: (handleId, update) => set((state) => {
+		const current = state.codexProfileLoginTerminal;
+		if (!current || current.terminal.handleId !== handleId) return state;
+		return { codexProfileLoginTerminal: { ...current, ...update } };
+	}),
+	clearCodexProfileLoginTerminal: (handleId) => set((state) => {
+		if (handleId && state.codexProfileLoginTerminal?.terminal.handleId !== handleId) return state;
+		return { codexProfileLoginTerminal: null };
+	}),
 	setVisibleTerminalKind: (sessionId, kind) =>
 		set((state) =>
 			state.visibleTerminalKindBySession[sessionId] === kind

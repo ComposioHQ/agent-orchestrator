@@ -2,6 +2,7 @@ import { renderHook, waitFor } from "@testing-library/react";
 import { act } from "react";
 import type { QueryClient } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { useUiStore } from "../stores/ui-store";
 
 const {
 	getStatusMock,
@@ -54,6 +55,7 @@ function fakeQueryClient(): QueryClient {
 
 beforeEach(() => {
 	vi.useRealTimers();
+	useUiStore.setState({ codexProfileLoginTerminal: null });
 	getStatusMock.mockReset().mockResolvedValue({ state: "stopped" });
 	onStatusMock.mockReset().mockReturnValue(removeStatusMock);
 	removeStatusMock.mockReset();
@@ -116,6 +118,11 @@ describe("useDaemonStatus", () => {
 	});
 
 	it("clears readiness when the daemon identity changes or becomes unavailable", async () => {
+		useUiStore.getState().startCodexProfileLoginTerminal("existing", {
+			handleId: "shellterm-login-1",
+			title: "Codex login",
+			createdAt: "2026-08-29T12:00:00Z",
+		});
 		getStatusMock.mockResolvedValue({ state: "ready", port: 4555, pid: 101 });
 		const queryClient = fakeQueryClient();
 		const { result } = renderHook(() => useDaemonStatus(queryClient));
@@ -138,6 +145,7 @@ describe("useDaemonStatus", () => {
 			exact: true,
 		});
 		expect(queryClient.removeQueries).toHaveBeenCalledTimes(9);
+		expect(useUiStore.getState().codexProfileLoginTerminal).toBeNull();
 	});
 
 	it("ensures display readiness when the window regains focus", async () => {

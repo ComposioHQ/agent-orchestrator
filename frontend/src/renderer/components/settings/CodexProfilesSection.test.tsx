@@ -1,15 +1,29 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
 import { aoBridge } from "../../lib/bridge";
 import { useUiStore } from "../../stores/ui-store";
 import { CodexProfilesSection } from "./CodexProfilesSection";
 
-const { getMock, postMock } = vi.hoisted(() => ({ getMock: vi.fn(), postMock: vi.fn() }));
+const { deleteMock, getMock, postMock, terminalStateCallback } = vi.hoisted(() => ({
+	deleteMock: vi.fn(),
+	getMock: vi.fn(),
+	postMock: vi.fn(),
+	terminalStateCallback: { value: undefined as ((state: string) => void) | undefined },
+}));
 vi.mock("../../lib/api-client", () => ({
-	apiClient: { GET: getMock, POST: postMock },
+	apiClient: { DELETE: deleteMock, GET: getMock, POST: postMock },
+	apiErrorCode: (error: { code?: string }) => error?.code,
 	apiErrorMessage: () => "request failed",
 	getApiBaseUrl: () => "http://127.0.0.1:3001",
+	hasTrustedApiBaseUrl: () => true,
+}));
+
+vi.mock("../TerminalPane", () => ({
+	TerminalPane: ({ onTerminalStateChange }: { onTerminalStateChange?: (state: string) => void }) => {
+		terminalStateCallback.value = onTerminalStateChange;
+		return <div data-testid="inline-terminal-body" />;
+	},
 }));
 
 const profileResponse = {
@@ -39,6 +53,8 @@ beforeEach(() => {
 		codexProfileLoginTerminal: null,
 	});
 	getMock.mockReset().mockResolvedValue({ data: profileResponse });
+	deleteMock.mockReset().mockResolvedValue({});
+	terminalStateCallback.value = undefined;
 	postMock.mockReset().mockImplementation((path: string) => {
 		if (path.endsWith("/ensure")) return Promise.resolve({ data: profileResponse });
 		if (path.endsWith("/login-terminal")) return Promise.resolve({ data: {
@@ -49,7 +65,7 @@ beforeEach(() => {
 	});
 });
 
-it("opens a profile-scoped login terminal without starting browser login", async () => {
+it("opens a profile-scoped login terminal inline without leaving settings", async () => {
 	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 	const openExternal = vi.spyOn(aoBridge.app, "openExternal").mockResolvedValue(undefined);
 	render(<QueryClientProvider client={queryClient}><CodexProfilesSection /></QueryClientProvider>);
@@ -59,9 +75,16 @@ it("opens a profile-scoped login terminal without starting browser login", async
 	fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
 	await waitFor(() => expect(postMock).toHaveBeenCalledWith("/api/v1/agents/codex/profiles/{profileId}/login-terminal", { params: { path: { profileId: "existing" } } }));
 	expect(openExternal).not.toHaveBeenCalled();
-	expect(useUiStore.getState().activeShellTerminalHandleId).toBe("shellterm-login-1");
-	expect(useUiStore.getState().codexProfileLoginTerminal).toMatchObject({ profileId: "existing", handleId: "shellterm-login-1" });
-	expect(useUiStore.getState().settingsModal).toBeNull();
+	expect(useUiStore.getState().activeShellTerminalHandleId).toBeNull();
+	expect(useUiStore.getState().codexProfileLoginTerminal).toMatchObject({
+		profileId: "existing",
+		phase: "running",
+		terminal: { handleId: "shellterm-login-1" },
+	});
+	expect(useUiStore.getState().settingsModal).toEqual({ scope: "global", section: "agents" });
+	expect(screen.getByTestId("codex-profile-login-terminal")).toBeInTheDocument();
+	expect(screen.getByTestId("inline-terminal-body")).toBeInTheDocument();
+	expect(screen.getByRole("button", { name: "Add profile" })).toBeDisabled();
 	openExternal.mockRestore();
 });
 
@@ -73,6 +96,36 @@ it("renders the profile icon without a background wrapper", async () => {
 	expect(icon.tagName).toBe("svg");
 	expect(icon).toHaveClass("size-5", "shrink-0", "text-muted-foreground");
 	expect(icon).not.toHaveClass("rounded-md", "bg-muted", "p-2");
+});
+
+it("expands only the affected profile and disables other sign-in actions", async () => {
+	const managed = {
+		...profileResponse.profiles[0],
+		id: "72d4db6e-da2c-414c-a6a9-fdbd09a006b6",
+		label: "Work",
+		source: "managed",
+		usableByCurrentLaunches: false,
+	};
+	const twoProfiles = { ...profileResponse, profiles: [...profileResponse.profiles, managed] };
+	getMock.mockResolvedValue({ data: twoProfiles });
+	postMock.mockImplementation((path: string) => {
+		if (path.endsWith("/ensure")) return Promise.resolve({ data: twoProfiles });
+		if (path.endsWith("/login-terminal")) return Promise.resolve({ data: {
+			profileId: "existing",
+			shellTerminal: { handleId: "shellterm-login-1", workingDir: "/profiles/existing", title: "Codex login", createdAt: "2026-08-29T12:00:00Z" },
+		} });
+		return Promise.resolve({ data: {} });
+	});
+	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+	render(<QueryClientProvider client={queryClient}><CodexProfilesSection /></QueryClientProvider>);
+	await screen.findByText("Work");
+	const signInButtons = screen.getAllByRole("button", { name: "Sign in" });
+	fireEvent.click(signInButtons[0]);
+
+	const panel = await screen.findByTestId("codex-profile-login-terminal");
+	expect(panel.closest("[data-profile-id]")).toHaveAttribute("data-profile-id", "existing");
+	expect(screen.getAllByRole("button", { name: "Sign in" })).toHaveLength(1);
+	expect(screen.getByRole("button", { name: "Sign in" })).toBeDisabled();
 });
 
 it("creates a managed profile, then opens its login terminal", async () => {
@@ -96,9 +149,167 @@ it("creates a managed profile, then opens its login terminal", async () => {
 	await waitFor(() => expect(postMock).toHaveBeenCalledWith("/api/v1/agents/codex/profiles", { body: { label: "Work" } }));
 	await waitFor(() => expect(postMock).toHaveBeenCalledWith("/api/v1/agents/codex/profiles/{profileId}/login-terminal", { params: { path: { profileId: managed.id } } }));
 	expect(openExternal).not.toHaveBeenCalled();
-	expect(useUiStore.getState().codexProfileLoginTerminal).toMatchObject({ profileId: managed.id, handleId: "shellterm-login-2" });
+	expect(useUiStore.getState().codexProfileLoginTerminal).toMatchObject({
+		profileId: managed.id,
+		terminal: { handleId: "shellterm-login-2" },
+	});
+	expect(screen.getByTestId("codex-profile-login-terminal")).toBeInTheDocument();
 	expect((await screen.findAllByText("Available for Codex task launches"))).not.toHaveLength(0);
 	openExternal.mockRestore();
+});
+
+it("verifies once after terminal exit, cleans up, and leaves the signed-in card visible", async () => {
+	const setIntervalSpy = vi.spyOn(window, "setInterval");
+	const authorized = {
+		...profileResponse,
+		profiles: [{
+			...profileResponse.profiles[0],
+			authentication: {
+				...profileResponse.profiles[0].authentication,
+				state: "authorized",
+				freshness: "fresh",
+				reasonCode: "authorized",
+				reason: "signed in",
+			},
+			authMethod: "chatgpt",
+			accountEmail: "user@example.com",
+		}],
+	};
+	postMock.mockImplementation((path: string, options?: { body?: { forceAuthenticationRefresh?: boolean } }) => {
+		if (path.endsWith("/ensure")) {
+			return Promise.resolve({ data: options?.body?.forceAuthenticationRefresh ? authorized : profileResponse });
+		}
+		if (path.endsWith("/login-terminal")) return Promise.resolve({ data: {
+			profileId: "existing",
+			shellTerminal: { handleId: "shellterm-login-1", workingDir: "/profiles/existing", title: "Codex login", createdAt: "2026-08-29T12:00:00Z" },
+		} });
+		return Promise.resolve({ data: {} });
+	});
+	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+	render(<QueryClientProvider client={queryClient}><CodexProfilesSection /></QueryClientProvider>);
+	await screen.findByText("Existing Codex profile");
+	fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+	await screen.findByTestId("inline-terminal-body");
+
+	act(() => terminalStateCallback.value?.("exited"));
+
+	await waitFor(() => expect(postMock).toHaveBeenCalledWith("/api/v1/agents/codex/profiles/ensure", {
+		body: { profileIds: ["existing"], purpose: "display", forceAuthenticationRefresh: true },
+	}));
+	await waitFor(() => expect(useUiStore.getState().codexProfileLoginTerminal).toBeNull());
+	expect(screen.queryByTestId("codex-profile-login-terminal")).not.toBeInTheDocument();
+	expect(await screen.findByText(/Signed in · user@example.com · chatgpt/)).toBeInTheDocument();
+	expect(deleteMock).toHaveBeenCalledTimes(1);
+	const forcedEnsures = postMock.mock.calls.filter(([, options]) => options?.body?.forceAuthenticationRefresh);
+	expect(forcedEnsures).toHaveLength(1);
+	expect(setIntervalSpy.mock.calls.some(([, delay]) => delay === 2_000)).toBe(false);
+	setIntervalSpy.mockRestore();
+});
+
+it("retains terminal output with Retry after Codex remains signed out", async () => {
+	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+	render(<QueryClientProvider client={queryClient}><CodexProfilesSection /></QueryClientProvider>);
+	await screen.findByText("Existing Codex profile");
+	fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+	await screen.findByTestId("inline-terminal-body");
+
+	act(() => terminalStateCallback.value?.("exited"));
+
+	await screen.findAllByText("Codex still reports this profile as signed out.");
+	expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled();
+	expect(screen.getAllByRole("button", { name: "Close sign-in" }).length).toBeGreaterThan(0);
+	expect(screen.getByTestId("inline-terminal-body")).toBeInTheDocument();
+});
+
+it("retains an unverifiable terminal and checks again without starting a replacement login", async () => {
+	const unknown = {
+		...profileResponse,
+		profiles: [{
+			...profileResponse.profiles[0],
+			authentication: {
+				...profileResponse.profiles[0].authentication,
+				state: "unknown",
+				freshness: "fresh",
+				reasonCode: "auth_check_inconclusive",
+				reason: "unknown",
+			},
+		}],
+	};
+	postMock.mockImplementation((path: string, options?: { body?: { forceAuthenticationRefresh?: boolean } }) => {
+		if (path.endsWith("/ensure")) return Promise.resolve({ data: options?.body?.forceAuthenticationRefresh ? unknown : profileResponse });
+		if (path.endsWith("/login-terminal")) return Promise.resolve({ data: {
+			profileId: "existing",
+			shellTerminal: { handleId: "shellterm-login-1", workingDir: "/profiles/existing", title: "Codex login", createdAt: "2026-08-29T12:00:00Z" },
+		} });
+		return Promise.resolve({ data: {} });
+	});
+	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+	render(<QueryClientProvider client={queryClient}><CodexProfilesSection /></QueryClientProvider>);
+	await screen.findByText("Existing Codex profile");
+	fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+	await screen.findByTestId("inline-terminal-body");
+
+	act(() => terminalStateCallback.value?.("error"));
+
+	await screen.findAllByText("AO could not verify the current authentication state.");
+	const loginStartsBefore = postMock.mock.calls.filter(([path]) => String(path).endsWith("/login-terminal")).length;
+	fireEvent.click(screen.getByRole("button", { name: "Check again" }));
+	await waitFor(() => {
+		const forcedEnsures = postMock.mock.calls.filter(([, options]) => options?.body?.forceAuthenticationRefresh);
+		expect(forcedEnsures).toHaveLength(2);
+	});
+	expect(postMock.mock.calls.filter(([path]) => String(path).endsWith("/login-terminal"))).toHaveLength(loginStartsBefore);
+	expect(screen.getByTestId("inline-terminal-body")).toBeInTheDocument();
+});
+
+it("cleans up the old terminal before retrying one signed-out profile", async () => {
+	let loginAttempt = 0;
+	postMock.mockImplementation((path: string) => {
+		if (path.endsWith("/ensure")) return Promise.resolve({ data: profileResponse });
+		if (path.endsWith("/login-terminal")) {
+			loginAttempt += 1;
+			return Promise.resolve({ data: {
+				profileId: "existing",
+				shellTerminal: { handleId: `shellterm-login-${loginAttempt}`, workingDir: "/profiles/existing", title: "Codex login", createdAt: `2026-08-29T12:00:0${loginAttempt}Z` },
+			} });
+		}
+		return Promise.resolve({ data: {} });
+	});
+	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+	render(<QueryClientProvider client={queryClient}><CodexProfilesSection /></QueryClientProvider>);
+	await screen.findByText("Existing Codex profile");
+	fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+	await screen.findByTestId("inline-terminal-body");
+	act(() => terminalStateCallback.value?.("exited"));
+	await screen.findByRole("button", { name: "Retry" });
+
+	fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+	await waitFor(() => expect(useUiStore.getState().codexProfileLoginTerminal?.terminal.handleId).toBe("shellterm-login-2"));
+	expect(deleteMock).toHaveBeenCalledWith("/api/v1/shell-terminals/{handleId}", {
+		params: { path: { handleId: "shellterm-login-1" } },
+	});
+});
+
+it("uses one upper-bound timeout and retains the profile card", async () => {
+	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+	render(<QueryClientProvider client={queryClient}><CodexProfilesSection /></QueryClientProvider>);
+	await screen.findByText("Existing Codex profile");
+	act(() => useUiStore.setState({
+		codexProfileLoginTerminal: {
+			profileId: "existing",
+			terminal: { handleId: "shellterm-timeout", title: "Codex login", createdAt: "2026-08-29T12:00:00Z" },
+			phase: "running",
+			startedAt: Date.now() - (15 * 60_000),
+		},
+	}));
+
+	await waitFor(() => expect(useUiStore.getState().codexProfileLoginTerminal?.phase).toBe("timed_out"));
+	expect(screen.getAllByText("Sign-in timed out. Retry or close this terminal.")).toHaveLength(2);
+	expect(screen.getByText("Existing Codex profile")).toBeInTheDocument();
+	expect(deleteMock).toHaveBeenCalledWith("/api/v1/shell-terminals/{handleId}", {
+		params: { path: { handleId: "shellterm-timeout" } },
+	});
 });
 
 it("keeps terminal login available when structured authentication is unknown", async () => {
