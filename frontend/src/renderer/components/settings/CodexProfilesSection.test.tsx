@@ -5,10 +5,11 @@ import { aoBridge } from "../../lib/bridge";
 import { useUiStore } from "../../stores/ui-store";
 import { CodexProfilesSection } from "./CodexProfilesSection";
 
-const { deleteMock, getMock, postMock, terminalStateCallback } = vi.hoisted(() => ({
+const { deleteMock, getMock, postMock, scrollIntoViewMock, terminalStateCallback } = vi.hoisted(() => ({
 	deleteMock: vi.fn(),
 	getMock: vi.fn(),
 	postMock: vi.fn(),
+	scrollIntoViewMock: vi.fn(),
 	terminalStateCallback: { value: undefined as ((state: string) => void) | undefined },
 }));
 vi.mock("../../lib/api-client", () => ({
@@ -45,6 +46,11 @@ const profileResponse = {
 };
 
 beforeEach(() => {
+	Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+		configurable: true,
+		value: scrollIntoViewMock,
+	});
+	scrollIntoViewMock.mockReset();
 	useUiStore.setState({
 		settingsModal: { scope: "global", section: "agents" },
 		activeShellTerminalHandleId: null,
@@ -151,6 +157,8 @@ it("creates a managed profile, then opens its login terminal", async () => {
 		terminal: { handleId: "shellterm-login-2" },
 	});
 	expect(screen.getByTestId("codex-profile-login-terminal")).toBeInTheDocument();
+	expect(scrollIntoViewMock).toHaveBeenCalledOnce();
+	expect(scrollIntoViewMock).toHaveBeenCalledWith({ behavior: "smooth", block: "nearest" });
 	expect(await screen.findByText("Not available for task launch yet")).toBeInTheDocument();
 	openExternal.mockRestore();
 });
