@@ -68,6 +68,7 @@ const ROUTE_TEMPLATES = [
 	"/api/v1/agents/codex/profiles/ensure",
 	"/api/v1/agents/codex/profiles/capacity/ensure",
 	"/api/v1/agents/codex/profiles/capacity/events",
+	"/api/v1/agents/codex/profiles/{profileId}/login-terminal",
 	"/api/v1/agents/codex/profiles/{profileId}/login",
 	"/api/v1/agents/codex/profiles/{profileId}/login/{operationId}/events",
 	"/api/v1/agents/codex/profiles/{profileId}/login/{operationId}/cancel",

@@ -1,27 +1,20 @@
 import { CircleAlert, CircleCheck, LoaderCircle, Plus, UserRound } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import {
-	CODEX_PROFILE_DAEMON_RESET_EVENT,
 	cacheCodexProfile,
-	cancelCodexProfileLogin,
 	createCodexProfile,
-	startCodexProfileLogin,
-	useCodexProfileLoginEvents,
+	openCodexProfileLoginTerminal,
 	useCodexProfilesQuery,
 	useEnsureCodexProfiles,
 	type CodexProfile,
-	type CodexProfileLoginEvent,
-	type CodexProfileLoginStart,
 } from "../../hooks/useCodexProfilesQuery";
-import { codexProfileLoginsQueryKey } from "../../hooks/codex-profile-cache";
-import { aoBridge } from "../../lib/bridge";
+import { shellTerminalsQueryKey } from "../../hooks/useShellTerminals";
+import { useUiStore } from "../../stores/ui-store";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { SettingsSection } from "./SettingsSection";
-
-type LoginView = CodexProfileLoginStart & { reason?: string };
 
 export function CodexProfilesSection({ titleHidden }: { titleHidden?: boolean }) {
 	const { t } = useTranslation();
@@ -32,33 +25,25 @@ export function CodexProfilesSection({ titleHidden }: { titleHidden?: boolean })
 	const [label, setLabel] = useState("");
 	const [busyProfile, setBusyProfile] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
-	const [logins, setLogins] = useState<Record<string, LoginView>>(
-		() => queryClient.getQueryData<Record<string, LoginView>>(codexProfileLoginsQueryKey) ?? {},
-	);
-
-	useEffect(() => {
-		queryClient.setQueryData(codexProfileLoginsQueryKey, logins);
-	}, [logins, queryClient]);
-
-	useEffect(() => {
-		const reset = () => setLogins({});
-		window.addEventListener(CODEX_PROFILE_DAEMON_RESET_EVENT, reset);
-		return () => window.removeEventListener(CODEX_PROFILE_DAEMON_RESET_EVENT, reset);
-	}, []);
+	const setActiveShellTerminal = useUiStore((state) => state.setActiveShellTerminal);
+	const monitorLoginTerminal = useUiStore((state) => state.monitorCodexProfileLoginTerminal);
+	const closeSettings = useUiStore((state) => state.closeSettings);
 
 	const beginLogin = useCallback(async (profileId: string) => {
 		setBusyProfile(profileId);
 		setError(null);
 		try {
-			const operation = await startCodexProfileLogin(profileId);
-			setLogins((current) => ({ ...current, [profileId]: { ...operation, reason: t("settings.codexProfiles.waiting") } }));
-			await aoBridge.app.openExternal(operation.authUrl);
+			const started = await openCodexProfileLoginTerminal(profileId);
+			void queryClient.invalidateQueries({ queryKey: shellTerminalsQueryKey });
+			setActiveShellTerminal(started.shellTerminal.handleId);
+			monitorLoginTerminal(started.profileId, started.shellTerminal.handleId);
+			closeSettings();
 		} catch (cause) {
 			setError(cause instanceof Error ? cause.message : t("settings.codexProfiles.loginFailed"));
 		} finally {
 			setBusyProfile(null);
 		}
-	}, [t]);
+	}, [closeSettings, monitorLoginTerminal, queryClient, setActiveShellTerminal, t]);
 
 	const createProfile = async () => {
 		const nextLabel = label.trim();
@@ -78,17 +63,6 @@ export function CodexProfilesSection({ titleHidden }: { titleHidden?: boolean })
 		}
 	};
 
-	const onLoginEvent = useCallback((event: CodexProfileLoginEvent) => {
-		setLogins((current) => {
-			const prior = current[event.profileId];
-			if (!prior) return current;
-			return { ...current, [event.profileId]: { ...prior, status: event.status, reason: event.reason } };
-		});
-	}, []);
-
-	const browserLogin = profilesQuery.data?.capabilities.browserLogin;
-	const loginSupported = browserLogin?.state === "supported";
-
 	return (
 		<SettingsSection title={t("settings.codexProfiles.title")} sectionId="codex-profiles" titleHidden={titleHidden}>
 			<div className="flex flex-col gap-3 rounded-md bg-[var(--color-bg-settings-row)] p-4">
@@ -97,17 +71,10 @@ export function CodexProfilesSection({ titleHidden }: { titleHidden?: boolean })
 						<p className="text-sm font-medium text-foreground">{t("settings.codexProfiles.heading")}</p>
 						<p className="mt-1 text-xs leading-relaxed text-muted-foreground">{t("settings.codexProfiles.description")}</p>
 					</div>
-					<Button type="button" size="sm" onClick={() => setAdding(true)} disabled={!loginSupported || adding}>
+					<Button type="button" size="sm" onClick={() => setAdding(true)} disabled={adding}>
 						<Plus aria-hidden="true" /> {t("settings.codexProfiles.add")}
 					</Button>
 				</div>
-
-				{browserLogin && browserLogin.state !== "supported" ? (
-					<div className="flex gap-2 rounded-md border border-border bg-background/50 p-3 text-xs text-muted-foreground">
-						<CircleAlert className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-						<span>{browserLogin.reason}</span>
-					</div>
-				) : null}
 
 				{adding ? (
 					<div className="flex items-center gap-2">
@@ -123,19 +90,8 @@ export function CodexProfilesSection({ titleHidden }: { titleHidden?: boolean })
 					<CodexProfileRow
 						key={profile.id}
 						profile={profile}
-						login={logins[profile.id]}
 						busy={busyProfile === profile.id}
-						loginSupported={loginSupported}
 						onLogin={() => void beginLogin(profile.id)}
-						onCancel={() => {
-							const operation = logins[profile.id];
-							if (!operation) return;
-							void cancelCodexProfileLogin(profile.id, operation.operationId)
-								.then(onLoginEvent)
-								.catch((cause) => setError(cause instanceof Error ? cause.message : t("settings.codexProfiles.cancelFailed")));
-						}}
-						onOpen={() => { const operation = logins[profile.id]; if (operation) void aoBridge.app.openExternal(operation.authUrl); }}
-						onEvent={onLoginEvent}
 					/>
 				))}
 			</div>
@@ -143,18 +99,12 @@ export function CodexProfilesSection({ titleHidden }: { titleHidden?: boolean })
 	);
 }
 
-function CodexProfileRow({ profile, login, busy, loginSupported, onLogin, onCancel, onOpen, onEvent }: {
+function CodexProfileRow({ profile, busy, onLogin }: {
 	profile: CodexProfile;
-	login?: LoginView;
 	busy: boolean;
-	loginSupported: boolean;
 	onLogin: () => void;
-	onCancel: () => void;
-	onOpen: () => void;
-	onEvent: (event: CodexProfileLoginEvent) => void;
 }) {
 	const { t } = useTranslation();
-	useCodexProfileLoginEvents(login?.status === "pending" ? login : null, onEvent);
 	const auth = profile.authentication;
 	const checking = auth.freshness === "checking";
 	const authLabel = auth.state === "authorized"
@@ -164,8 +114,7 @@ function CodexProfileRow({ profile, login, busy, loginSupported, onLogin, onCanc
 			: auth.state === "not_applicable"
 				? t("settings.codexProfiles.notRequired")
 				: t("settings.codexProfiles.unknown");
-	const canLogin = profile.status === "valid" && auth.state === "unauthorized" && loginSupported;
-	const retryableLogin = auth.state === "unauthorized" && (login?.status === "failed" || login?.status === "cancelled");
+	const canLogin = profile.status === "valid" && auth.state === "unauthorized";
 	const capacity = profile.capacity;
 	const capacityLabel = capacity.state === "available"
 		? t("settings.codexProfiles.capacityAvailable")
@@ -207,15 +156,11 @@ function CodexProfileRow({ profile, login, busy, loginSupported, onLogin, onCanc
 								{capacity.freshness === "stale" || capacity.state === "unknown" || capacity.state === "unsupported" ? <p className="mt-0.5 text-muted-foreground">{capacity.reason}</p> : null}
 							</div>
 						) : null}
-						{login?.reason ? <p className="mt-1 text-xs text-muted-foreground">{login.reason}</p> : null}
 					</div>
 				</div>
 				<div className="flex shrink-0 items-center gap-1.5">
-					{login?.status === "pending" ? <>
-						<Button type="button" size="sm" variant="outline" onClick={onOpen}>{t("settings.codexProfiles.openBrowser")}</Button>
-						<Button type="button" size="sm" variant="ghost" onClick={onCancel}>{t("settings.codexProfiles.cancel")}</Button>
-					</> : canLogin || retryableLogin ? (
-						<Button type="button" size="sm" variant="outline" onClick={onLogin} disabled={busy}>{retryableLogin ? t("settings.codexProfiles.retry") : t("settings.codexProfiles.signIn")}</Button>
+					{canLogin ? (
+						<Button type="button" size="sm" variant="outline" onClick={onLogin} disabled={busy}>{t("settings.codexProfiles.signIn")}</Button>
 					) : null}
 				</div>
 			</div>

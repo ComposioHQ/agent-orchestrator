@@ -95,6 +95,8 @@ export type UiState = {
 	// session view (tabs beside the session's pane) and the standalone terminals
 	// view read it, so whichever one is on screen shows the same shell.
 	activeShellTerminalHandleId: string | null;
+	/** Active profile login terminal monitored for a fresh Codex auth state. */
+	codexProfileLoginTerminal: CodexProfileLoginTerminalMonitor | null;
 	// Which terminal each mounted session is actually showing. The session pane
 	// renders one terminal at a time, so opening a shell or the reviewer swaps
 	// the agent's terminal off screen even though the route still points at that
@@ -137,6 +139,8 @@ export type UiState = {
 	requestCreateProjectFromPath: (path: string) => void;
 	requestNewShellTerminal: () => void;
 	setActiveShellTerminal: (handleId: string | null) => void;
+	monitorCodexProfileLoginTerminal: (profileId: string, handleId: string) => void;
+	clearCodexProfileLoginTerminal: () => void;
 	setVisibleTerminalKind: (sessionId: string, kind: TerminalTarget["kind"]) => void;
 	clearVisibleTerminalKind: (sessionId: string) => void;
 };
@@ -145,6 +149,12 @@ export type OrchestratorReplacementFailure = {
 	message: string;
 	code?: string;
 	requestId?: string;
+};
+
+export type CodexProfileLoginTerminalMonitor = {
+	profileId: string;
+	handleId: string;
+	startedAt: number;
 };
 
 const sidebarStorageKey = "ao.sidebar.open";
@@ -209,6 +219,7 @@ export const useUiStore = create<UiState>((set, get) => ({
 	folderDropRequest: null,
 	newShellTerminalNonce: 0,
 	activeShellTerminalHandleId: null,
+	codexProfileLoginTerminal: null,
 	visibleTerminalKindBySession: {},
 	setWorkbenchTab: (workbenchTab) => set({ workbenchTab }),
 	setThemePreference: (themePreference) => {
@@ -399,6 +410,10 @@ export const useUiStore = create<UiState>((set, get) => ({
 		set((state) => ({ folderDropRequest: { path, nonce: (state.folderDropRequest?.nonce ?? 0) + 1 } })),
 	requestNewShellTerminal: () => set((state) => ({ newShellTerminalNonce: state.newShellTerminalNonce + 1 })),
 	setActiveShellTerminal: (activeShellTerminalHandleId) => set({ activeShellTerminalHandleId }),
+	monitorCodexProfileLoginTerminal: (profileId, handleId) => set({
+		codexProfileLoginTerminal: { profileId, handleId, startedAt: Date.now() },
+	}),
+	clearCodexProfileLoginTerminal: () => set({ codexProfileLoginTerminal: null }),
 	setVisibleTerminalKind: (sessionId, kind) =>
 		set((state) =>
 			state.visibleTerminalKindBySession[sessionId] === kind

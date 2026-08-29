@@ -8,27 +8,31 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd"
 	agentsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/agent"
+	"github.com/aoagents/agent-orchestrator/backend/internal/service/shellterm"
 )
 
 type fakeCodexProfiles struct {
-	result            agentsvc.CodexProfiles
-	ensureIDs         []string
-	ensurePurpose     domain.AgentReadinessPurpose
-	capacityEnsureIDs []string
-	events            chan domain.CodexProfileLoginEvent
-	capacityEvents    chan agentsvc.CodexProfileCapacityEvent
+	result                 agentsvc.CodexProfiles
+	ensureIDs              []string
+	ensurePurpose          domain.AgentReadinessPurpose
+	ensureForce            bool
+	events                 chan domain.CodexProfileLoginEvent
+	loginTerminalProfileID string
+	capacityEnsureIDs      []string
+	capacityEvents         chan agentsvc.CodexProfileCapacityEvent
 }
 
 func (f *fakeCodexProfiles) CachedCodexProfiles(context.Context) (agentsvc.CodexProfiles, error) {
 	return f.result, nil
 }
-func (f *fakeCodexProfiles) EnsureCodexProfiles(_ context.Context, ids []string, purpose domain.AgentReadinessPurpose) (agentsvc.CodexProfiles, error) {
-	f.ensureIDs, f.ensurePurpose = ids, purpose
+func (f *fakeCodexProfiles) EnsureCodexProfiles(_ context.Context, ids []string, purpose domain.AgentReadinessPurpose, force bool) (agentsvc.CodexProfiles, error) {
+	f.ensureIDs, f.ensurePurpose, f.ensureForce = ids, purpose, force
 	return f.result, nil
 }
 func (f *fakeCodexProfiles) EnsureCodexProfileCapacity(_ context.Context, ids []string) (agentsvc.CodexProfiles, error) {
@@ -50,6 +54,16 @@ func (f *fakeCodexProfiles) CreateCodexProfile(_ context.Context, label string) 
 }
 func (f *fakeCodexProfiles) StartCodexProfileLogin(_ context.Context, profileID string) (agentsvc.CodexProfileLoginStart, error) {
 	return agentsvc.CodexProfileLoginStart{OperationID: "op-1", ProfileID: profileID, Status: domain.CodexProfileLoginPending, AuthURL: "https://auth.example.test"}, nil
+}
+func (f *fakeCodexProfiles) OpenCodexProfileLoginTerminal(_ context.Context, profileID string) (agentsvc.CodexProfileLoginTerminalStart, error) {
+	f.loginTerminalProfileID = profileID
+	return agentsvc.CodexProfileLoginTerminalStart{
+		ProfileID: profileID,
+		ShellTerminal: shellterm.ShellTerminal{
+			HandleID: "shellterm-login-1", WorkingDir: "/profiles/existing", Title: "Codex login - Existing Codex profile",
+			CreatedAt: time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC),
+		},
+	}, nil
 }
 func (f *fakeCodexProfiles) SubscribeCodexProfileLogin(context.Context, string, string) (<-chan domain.CodexProfileLoginEvent, error) {
 	return f.events, nil
@@ -90,12 +104,15 @@ func TestCodexProfileRoutesExposeSafeCachedAndEnsureShapes(t *testing.T) {
 			t.Fatalf("GET leaked %q: %s", forbidden, body)
 		}
 	}
-	body, status, _ = doRequest(t, srv, http.MethodPost, "/api/v1/agents/codex/profiles/ensure", `{"profileIds":["existing","existing"],"purpose":"display"}`)
+	body, status, _ = doRequest(t, srv, http.MethodPost, "/api/v1/agents/codex/profiles/ensure", `{"profileIds":["existing","existing"],"purpose":"display","forceAuthenticationRefresh":true}`)
 	if status != http.StatusOK {
 		t.Fatalf("ensure status=%d body=%s", status, body)
 	}
 	if len(fake.ensureIDs) != 2 || fake.ensurePurpose != domain.AgentReadinessPurposeDisplay {
 		t.Fatalf("ensure args = %#v %q", fake.ensureIDs, fake.ensurePurpose)
+	}
+	if !fake.ensureForce {
+		t.Fatal("ensure did not forward forceAuthenticationRefresh")
 	}
 	body, status, _ = doRequest(t, srv, http.MethodPost, "/api/v1/agents/codex/profiles/capacity/ensure", `{"profileIds":["existing","existing"]}`)
 	if status != http.StatusOK || len(fake.capacityEnsureIDs) != 2 {
@@ -137,6 +154,29 @@ func TestCreateCodexProfileReturnsCreatedSnapshotWithoutFilesystemFields(t *test
 	for _, forbidden := range []string{"home", "path", "token", "quota"} {
 		if strings.Contains(strings.ToLower(string(body)), forbidden) {
 			t.Fatalf("create leaked %q: %s", forbidden, body)
+		}
+	}
+}
+
+func TestCodexProfileLoginTerminalRouteUsesOnlyTheProfileID(t *testing.T) {
+	fake := &fakeCodexProfiles{result: codexProfilesFixture()}
+	srv := httptest.NewServer(httpd.NewRouterWithControl(config.Config{}, slog.New(slog.DiscardHandler), nil, httpd.APIDeps{CodexProfiles: fake}, httpd.ControlDeps{}))
+	defer srv.Close()
+
+	body, status, _ := doRequest(t, srv, http.MethodPost, "/api/v1/agents/codex/profiles/existing/login-terminal", `{"argv":["sh","-c","steal"],"env":{"TOKEN":"secret"}}`)
+	if status != http.StatusCreated {
+		t.Fatalf("status=%d body=%s", status, body)
+	}
+	text := string(body)
+	if !strings.Contains(text, `"profileId":"existing"`) || !strings.Contains(text, `"handleId":"shellterm-login-1"`) {
+		t.Fatalf("response = %s", body)
+	}
+	if fake.loginTerminalProfileID != "existing" {
+		t.Fatalf("profile id = %q, want path-selected profile", fake.loginTerminalProfileID)
+	}
+	for _, forbidden := range []string{"argv", "TOKEN", "secret", "steal"} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("response leaked request-controlled %q: %s", forbidden, text)
 		}
 	}
 }

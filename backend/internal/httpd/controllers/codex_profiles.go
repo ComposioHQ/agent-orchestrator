@@ -20,10 +20,11 @@ import (
 // authentication boundary.
 type CodexProfileService interface {
 	CachedCodexProfiles(context.Context) (agentsvc.CodexProfiles, error)
-	EnsureCodexProfiles(context.Context, []string, domain.AgentReadinessPurpose) (agentsvc.CodexProfiles, error)
+	EnsureCodexProfiles(context.Context, []string, domain.AgentReadinessPurpose, bool) (agentsvc.CodexProfiles, error)
 	EnsureCodexProfileCapacity(context.Context, []string) (agentsvc.CodexProfiles, error)
 	SubscribeCodexProfileCapacity(context.Context) (<-chan agentsvc.CodexProfileCapacityEvent, error)
 	CreateCodexProfile(context.Context, string) (domain.CodexProfileSnapshot, error)
+	OpenCodexProfileLoginTerminal(context.Context, string) (agentsvc.CodexProfileLoginTerminalStart, error)
 	StartCodexProfileLogin(context.Context, string) (agentsvc.CodexProfileLoginStart, error)
 	SubscribeCodexProfileLogin(context.Context, string, string) (<-chan domain.CodexProfileLoginEvent, error)
 	CancelCodexProfileLogin(context.Context, string, string) (domain.CodexProfileLoginEvent, error)
@@ -38,8 +39,25 @@ func (c *CodexProfilesController) Register(r chi.Router) {
 	r.Post("/agents/codex/profiles/ensure", c.ensure)
 	r.Post("/agents/codex/profiles/capacity/ensure", c.ensureCapacity)
 	r.Post("/agents/codex/profiles", c.create)
+	r.Post("/agents/codex/profiles/{profileId}/login-terminal", c.openLoginTerminal)
 	r.Post("/agents/codex/profiles/{profileId}/login", c.startLogin)
 	r.Post("/agents/codex/profiles/{profileId}/login/{operationId}/cancel", c.cancelLogin)
+}
+
+func (c *CodexProfilesController) openLoginTerminal(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "POST", "/api/v1/agents/codex/profiles/{profileId}/login-terminal")
+		return
+	}
+	result, err := c.Svc.OpenCodexProfileLoginTerminal(r.Context(), strings.TrimSpace(chi.URLParam(r, "profileId")))
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusCreated, OpenCodexProfileLoginTerminalResponse{
+		ProfileID:     result.ProfileID,
+		ShellTerminal: shellTerminalResponse(result.ShellTerminal),
+	})
 }
 
 // RegisterStreams installs the SSE route outside the ordinary request timeout.
@@ -71,7 +89,7 @@ func (c *CodexProfilesController) ensure(w http.ResponseWriter, r *http.Request)
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
 		return
 	}
-	result, err := c.Svc.EnsureCodexProfiles(r.Context(), request.ProfileIDs, request.Purpose)
+	result, err := c.Svc.EnsureCodexProfiles(r.Context(), request.ProfileIDs, request.Purpose, request.ForceAuthenticationRefresh)
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return

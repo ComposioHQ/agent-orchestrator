@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -11,7 +13,19 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	"github.com/aoagents/agent-orchestrator/backend/internal/service/shellterm"
 )
+
+type fakeCodexLoginTerminalOpener struct {
+	opened []shellterm.OpenCommandTerminalInput
+	result shellterm.ShellTerminal
+	err    error
+}
+
+func (f *fakeCodexLoginTerminalOpener) OpenCommandTerminal(_ context.Context, in shellterm.OpenCommandTerminalInput) (shellterm.ShellTerminal, error) {
+	f.opened = append(f.opened, in)
+	return f.result, f.err
+}
 
 type fakeCodexAccountFactory struct {
 	mu               sync.Mutex
@@ -123,6 +137,80 @@ func TestCachedCodexProfilesPerformsNoNativeWork(t *testing.T) {
 	}
 	if factory.opens != 0 || factory.capabilityChecks != 0 {
 		t.Fatalf("native work = capabilities %d opens %d", factory.capabilityChecks, factory.opens)
+	}
+}
+
+func TestOpenCodexProfileLoginTerminalUsesServerOwnedProfileContext(t *testing.T) {
+	existingHome := t.TempDir()
+	resolvedHome, err := filepath.EvalSymlinks(existingHome)
+	if err != nil {
+		t.Fatalf("resolve temp profile home: %v", err)
+	}
+	manager := newCodexProfileManager(context.Background(), t.TempDir(), existingHome, nil, nil)
+	opener := &fakeCodexLoginTerminalOpener{result: shellterm.ShellTerminal{
+		HandleID: "shellterm-login-1", WorkingDir: resolvedHome, Title: "Codex login - Existing Codex profile",
+	}}
+	manager.loginTerminalOpener = opener
+	manager.executable = func() (string, error) { return "/Applications/AO.app/Contents/MacOS/ao", nil }
+
+	started, err := manager.openLoginTerminal(context.Background(), codexExistingProfileID)
+	if err != nil {
+		t.Fatalf("openLoginTerminal: %v", err)
+	}
+	if started.ProfileID != codexExistingProfileID || started.ShellTerminal.HandleID != "shellterm-login-1" {
+		t.Fatalf("start = %+v, want selected profile and terminal", started)
+	}
+	if len(opener.opened) != 1 {
+		t.Fatalf("terminal opens = %d, want 1", len(opener.opened))
+	}
+	opened := opener.opened[0]
+	if got, want := opened.Argv, []string{"/Applications/AO.app/Contents/MacOS/ao", "codex-login"}; !slices.Equal(got, want) {
+		t.Errorf("argv = %q, want fixed helper argv %q", got, want)
+	}
+	if got := opened.Env["CODEX_HOME"]; got != resolvedHome {
+		t.Errorf("CODEX_HOME = %q, want %q", got, resolvedHome)
+	}
+	if opened.WorkingDir != resolvedHome {
+		t.Errorf("working dir = %q, want profile home", opened.WorkingDir)
+	}
+	if opened.Title != "Codex login - Existing Codex profile" {
+		t.Errorf("title = %q", opened.Title)
+	}
+}
+
+func TestOpenCodexProfileLoginTerminalRejectsUnknownProfileBeforeSpawning(t *testing.T) {
+	manager := newCodexProfileManager(context.Background(), t.TempDir(), t.TempDir(), nil, nil)
+	opener := &fakeCodexLoginTerminalOpener{}
+	manager.loginTerminalOpener = opener
+	manager.executable = func() (string, error) { return "/ao", nil }
+
+	_, err := manager.openLoginTerminal(context.Background(), "not-a-profile")
+	var apiErr *apierr.Error
+	if !errors.As(err, &apiErr) || apiErr.Code != "CODEX_PROFILE_NOT_FOUND" {
+		t.Fatalf("error = %v, want CODEX_PROFILE_NOT_FOUND", err)
+	}
+	if len(opener.opened) != 0 {
+		t.Fatalf("terminal opened for unknown profile: %+v", opener.opened)
+	}
+}
+
+func TestCreateCodexProfileDoesNotRequireStructuredBrowserLogin(t *testing.T) {
+	unsupported := supportedCodexProfileCapabilities()
+	unsupported.BrowserLogin = domain.CodexCapabilityObservation{
+		State: domain.CodexCapabilityUnsupported, ReasonCode: domain.CodexCapabilityReasonUnsupported, Reason: "browser login unavailable",
+	}
+	factory := &fakeCodexAccountFactory{capabilities: unsupported}
+	manager := newCodexProfileManager(context.Background(), t.TempDir(), t.TempDir(), factory, nil)
+
+	profile, err := manager.create(context.Background(), "API profile")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if profile.Label != "API profile" || profile.Source != domain.CodexProfileSourceManaged {
+		t.Fatalf("profile = %+v, want managed API profile", profile)
+	}
+	if factory.capabilityChecks != 0 {
+		t.Fatalf("browser capability checks = %d, want none", factory.capabilityChecks)
 	}
 }
 
@@ -290,7 +378,7 @@ func TestEnsureBrokenCodexProfileSkipsNativeCapabilityAndAccountChecks(t *testin
 	if err := os.Remove(record.Home); err != nil {
 		t.Fatal(err)
 	}
-	result, err := manager.ensure(context.Background(), []string{record.Snapshot.ID}, domain.AgentReadinessPurposeDisplay, domain.AgentInstallationUnknown)
+	result, err := manager.ensure(context.Background(), []string{record.Snapshot.ID}, domain.AgentReadinessPurposeDisplay, domain.AgentInstallationUnknown, false)
 	if err != nil {
 		t.Fatal(err)
 	}

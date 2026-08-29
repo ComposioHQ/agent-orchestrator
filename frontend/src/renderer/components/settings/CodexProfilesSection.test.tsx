@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
 import { aoBridge } from "../../lib/bridge";
+import { useUiStore } from "../../stores/ui-store";
 import { CodexProfilesSection } from "./CodexProfilesSection";
 
 const { getMock, postMock } = vi.hoisted(() => ({ getMock: vi.fn(), postMock: vi.fn() }));
@@ -32,15 +33,23 @@ const profileResponse = {
 };
 
 beforeEach(() => {
+	useUiStore.setState({
+		settingsModal: { scope: "global", section: "agents" },
+		activeShellTerminalHandleId: null,
+		codexProfileLoginTerminal: null,
+	});
 	getMock.mockReset().mockResolvedValue({ data: profileResponse });
 	postMock.mockReset().mockImplementation((path: string) => {
 		if (path.endsWith("/ensure")) return Promise.resolve({ data: profileResponse });
-		if (path.endsWith("/login")) return Promise.resolve({ data: { operationId: "op-1", profileId: "existing", status: "pending", authUrl: "https://auth.example.test" } });
+		if (path.endsWith("/login-terminal")) return Promise.resolve({ data: {
+			profileId: "existing",
+			shellTerminal: { handleId: "shellterm-login-1", workingDir: "/profiles/existing", title: "Codex login", createdAt: "2026-08-29T12:00:00Z" },
+		} });
 		return Promise.resolve({ data: {} });
 	});
 });
 
-it("shows signed-out existing profile and opens structured browser login", async () => {
+it("opens a profile-scoped login terminal without starting browser login", async () => {
 	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 	const openExternal = vi.spyOn(aoBridge.app, "openExternal").mockResolvedValue(undefined);
 	render(<QueryClientProvider client={queryClient}><CodexProfilesSection /></QueryClientProvider>);
@@ -48,8 +57,11 @@ it("shows signed-out existing profile and opens structured browser login", async
 	expect(screen.getByText("Signed out")).toBeInTheDocument();
 	expect(screen.getByText("Available for Codex task launches")).toBeInTheDocument();
 	fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
-	await waitFor(() => expect(openExternal).toHaveBeenCalledWith("https://auth.example.test"));
-	expect(postMock).toHaveBeenCalledWith("/api/v1/agents/codex/profiles/{profileId}/login", { params: { path: { profileId: "existing" } } });
+	await waitFor(() => expect(postMock).toHaveBeenCalledWith("/api/v1/agents/codex/profiles/{profileId}/login-terminal", { params: { path: { profileId: "existing" } } }));
+	expect(openExternal).not.toHaveBeenCalled();
+	expect(useUiStore.getState().activeShellTerminalHandleId).toBe("shellterm-login-1");
+	expect(useUiStore.getState().codexProfileLoginTerminal).toMatchObject({ profileId: "existing", handleId: "shellterm-login-1" });
+	expect(useUiStore.getState().settingsModal).toBeNull();
 	openExternal.mockRestore();
 });
 
@@ -63,12 +75,15 @@ it("renders the profile icon without a background wrapper", async () => {
 	expect(icon).not.toHaveClass("rounded-md", "bg-muted", "p-2");
 });
 
-it("creates a managed profile, then explicitly starts its browser login", async () => {
+it("creates a managed profile, then opens its login terminal", async () => {
 	const managed = { ...profileResponse.profiles[0], id: "72d4db6e-da2c-414c-a6a9-fdbd09a006b6", label: "Work", source: "managed", usableByCurrentLaunches: true };
 	postMock.mockImplementation((path: string) => {
 		if (path.endsWith("/ensure")) return Promise.resolve({ data: profileResponse });
 		if (path === "/api/v1/agents/codex/profiles") return Promise.resolve({ data: managed });
-		if (path.endsWith("/login")) return Promise.resolve({ data: { operationId: "op-2", profileId: managed.id, status: "pending", authUrl: "https://auth.example.test/work" } });
+		if (path.endsWith("/login-terminal")) return Promise.resolve({ data: {
+			profileId: managed.id,
+			shellTerminal: { handleId: "shellterm-login-2", workingDir: "/profiles/work", title: "Codex login - Work", createdAt: "2026-08-29T12:00:00Z" },
+		} });
 		return Promise.resolve({ data: {} });
 	});
 	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -79,13 +94,14 @@ it("creates a managed profile, then explicitly starts its browser login", async 
 	fireEvent.change(screen.getByRole("textbox", { name: "Profile label" }), { target: { value: "Work" } });
 	fireEvent.click(screen.getByRole("button", { name: "Create" }));
 	await waitFor(() => expect(postMock).toHaveBeenCalledWith("/api/v1/agents/codex/profiles", { body: { label: "Work" } }));
-	await waitFor(() => expect(postMock).toHaveBeenCalledWith("/api/v1/agents/codex/profiles/{profileId}/login", { params: { path: { profileId: managed.id } } }));
-	expect(openExternal).toHaveBeenCalledWith("https://auth.example.test/work");
+	await waitFor(() => expect(postMock).toHaveBeenCalledWith("/api/v1/agents/codex/profiles/{profileId}/login-terminal", { params: { path: { profileId: managed.id } } }));
+	expect(openExternal).not.toHaveBeenCalled();
+	expect(useUiStore.getState().codexProfileLoginTerminal).toMatchObject({ profileId: managed.id, handleId: "shellterm-login-2" });
 	expect((await screen.findAllByText("Available for Codex task launches"))).not.toHaveLength(0);
 	openExternal.mockRestore();
 });
 
-it("disables profile creation when browser login capability is not confirmed", async () => {
+it("keeps terminal login available when structured browser login is unsupported", async () => {
 	const unavailable = {
 		...profileResponse,
 		capabilities: {
@@ -97,6 +113,8 @@ it("disables profile creation when browser login capability is not confirmed", a
 	postMock.mockResolvedValue({ data: unavailable });
 	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 	render(<QueryClientProvider client={queryClient}><CodexProfilesSection /></QueryClientProvider>);
-	await screen.findByText("Capability check unavailable.");
-	expect(screen.getByRole("button", { name: "Add profile" })).toBeDisabled();
+	await screen.findByText("Existing Codex profile");
+	expect(screen.queryByText("Capability check unavailable.")).not.toBeInTheDocument();
+	expect(screen.getByRole("button", { name: "Add profile" })).toBeEnabled();
+	expect(screen.getByRole("button", { name: "Sign in" })).toBeEnabled();
 });
