@@ -96,6 +96,23 @@ The daemon performs the bounded display ensure. Capacity is in-memory,
 profile-scoped, advisory, and may be stale; the CLI never reads Codex files or
 starts native processes itself.
 
+Inspect and explicitly start an assisted continuation with:
+
+```bash
+ao session profile-switch options ao-7
+ao session profile-switch start ao-7 --profile managed-profile
+ao session profile-switch ls ao-7
+```
+
+Unknown, stale, or unsupported capacity requires
+`--acknowledge-unknown-capacity`. Start returns the accepted durable operation
+immediately and never polls. If ownership recovery is required, use
+`profile-switch recover`; add `--restore-source` to restore the stopped
+predecessor instead of retrying the exact target. Each successful switch creates
+a related AO session on the same workspace and interface, starts a fresh Codex
+thread, and archives the predecessor after acknowledgement. Native history,
+credentials, and profile homes are never copied.
+
 Agent switching is initially available only for worker sessions whose source
 and target harnesses are Claude Code or Codex. The main command
 accepts an idempotency key:

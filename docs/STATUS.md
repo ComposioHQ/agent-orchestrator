@@ -106,7 +106,13 @@ surface (`npm run sqlc`, `npm run api`).
   events now feed one daemon-memory subscription-capacity snapshot per profile;
   Settings, task selection, the switch dialog, session details, and
   `ao agent profile ls` display that advisory state without polling or changing
-  launch eligibility. Assisted and automatic profile switching are not included.
+  launch eligibility. Local Codex sessions can now explicitly continue with a
+  different authenticated profile when capacity is tight. AO waits for a safe
+  boundary, transfers exclusive ownership of the same workspace to a new
+  related session, starts a fresh native Codex thread, and archives the
+  predecessor only after the target acknowledges the bounded handoff. The
+  original and target profile bindings remain immutable; unknown capacity
+  requires explicit acknowledgement. Switching is never automatic.
 - OpenAPI spec generated from Go DTOs; frontend TS types generated from it and
   drift-checked in CI.
 
