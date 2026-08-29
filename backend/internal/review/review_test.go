@@ -20,6 +20,7 @@ type fakeStore struct {
 	reviews              map[domain.ReviewerHarness]domain.Review
 	runs                 []domain.ReviewRun
 	listAllReviewRunHits int
+	agentSessionUpdates  []struct{ id, agentSessionID string }
 	// insertErr, when set, makes the next InsertReviewRun model a concurrent
 	// writer that already recorded a run for this commit: it records that
 	// winner (so a follow-up GetReviewRunBySessionAndSHA finds it) and returns
@@ -130,6 +131,20 @@ func (f *fakeStore) InsertReviewRun(_ context.Context, r domain.ReviewRun) error
 	f.runs = append(f.runs, r)
 	return nil
 }
+func (f *fakeStore) UpdateReviewAgentSessionID(_ context.Context, id, agentSessionID string) (bool, error) {
+	f.agentSessionUpdates = append(f.agentSessionUpdates, struct{ id, agentSessionID string }{id: id, agentSessionID: agentSessionID})
+	if f.review != nil && f.review.ID == id {
+		f.review.AgentSessionID = agentSessionID
+	}
+	for harness, review := range f.reviews {
+		if review.ID == id {
+			review.AgentSessionID = agentSessionID
+			f.reviews[harness] = review
+		}
+	}
+	return true, nil
+}
+
 func (f *fakeStore) UpdateReviewRunResult(_ context.Context, id string, status domain.ReviewRunStatus, verdict domain.ReviewVerdict, body, githubReviewID string, autoInjectReview bool) (bool, error) {
 	for i := range f.runs {
 		if f.runs[i].ID == id {
@@ -614,6 +629,38 @@ func TestRestoreReviewerUsesSelectedHarnessSessionAndKillsOtherActivePane(t *tes
 	}
 	if store.review.Harness != domain.ReviewerOpenCode || store.review.ReviewerHandleID != "opencode-pane" || store.review.AgentSessionID != "opencode-native" {
 		t.Fatalf("active review row = %+v, want restored opencode", store.review)
+	}
+}
+
+func TestSwitchReviewerRestartsLivePaneWhenOnlyConfigChanges(t *testing.T) {
+	store := &fakeStore{
+		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", Harness: domain.ReviewerCodex, ReviewerHandleID: "codex-pane", AgentSessionID: "codex-native"},
+		reviews: map[domain.ReviewerHarness]domain.Review{
+			domain.ReviewerCodex: {ID: "rev-1", SessionID: "mer-1", Harness: domain.ReviewerCodex, ReviewerHandleID: "codex-pane", AgentSessionID: "codex-native"},
+		},
+		runs: []domain.ReviewRun{{ID: "codex-run", ReviewID: "rev-1", SessionID: "mer-1", Harness: domain.ReviewerCodex, PRURL: "https://github.com/o/r/pull/1", TargetSHA: "sha1", Status: domain.ReviewRunComplete, Verdict: domain.VerdictApproved}},
+	}
+	worker := liveWorker()
+	worker.ReviewerHarness = domain.ReviewerCodex
+	worker.ReviewerConfig = domain.AgentConfig{Model: "gpt-old"}
+	launcher := &fakeLauncher{alive: true, handle: "codex-pane-2"}
+	eng := newEngineForTest(store, fakeSessions{rec: worker, ok: true}, prAt("sha1"), fakeProjects{}, launcher)
+
+	res, err := eng.SwitchReviewer(context.Background(), "mer-1", domain.ReviewerCodex, domain.AgentConfig{Model: "gpt-new"})
+	if err != nil {
+		t.Fatalf("SwitchReviewer: %v", err)
+	}
+	if !launcher.destroyed || launcher.destroyedHandle != "codex-pane" {
+		t.Fatalf("expected active pane destroyed: %+v", launcher)
+	}
+	if !launcher.restored || launcher.gotSpec.AgentConfig.Model != "gpt-new" || launcher.gotSpec.AgentSessionID != "" {
+		t.Fatalf("restore spec = %+v, want restarted with new config and no native session", launcher.gotSpec)
+	}
+	if len(store.agentSessionUpdates) != 1 || store.agentSessionUpdates[0].agentSessionID != "" {
+		t.Fatalf("agent session updates = %+v, want cleared native session", store.agentSessionUpdates)
+	}
+	if res.ReviewerHandleID != "codex-pane-2" || res.ReviewerHarness != domain.ReviewerCodex {
+		t.Fatalf("result = %+v", res)
 	}
 }
 

@@ -221,7 +221,7 @@ function ReviewerHarnessOption({
 
 	return (
 		<OptionMenuSub open={open} onOpenChange={setOpen}>
-			<OptionMenuSubTrigger onClick={() => onSelect(persistHarness, {})} disabled={agent.disabled}>
+			<OptionMenuSubTrigger disabled={agent.disabled}>
 				<div className="flex min-w-0 items-center justify-between gap-3">
 					<div className="min-w-0">
 						<AgentSelectMenuItem

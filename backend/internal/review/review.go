@@ -40,6 +40,7 @@ type Store interface {
 	ClearReviewerHandleByHarness(ctx stdctx.Context, id domain.SessionID, harness domain.ReviewerHarness) error
 	InsertReviewRun(ctx stdctx.Context, r domain.ReviewRun) error
 	UpdateReviewRunResult(ctx stdctx.Context, id string, status domain.ReviewRunStatus, verdict domain.ReviewVerdict, body, githubReviewID string, autoInjectReview bool) (bool, error)
+	UpdateReviewAgentSessionID(ctx stdctx.Context, id, agentSessionID string) (bool, error)
 	SupersedeStaleRunningReviewRuns(ctx stdctx.Context, sessionID domain.SessionID, prURL, targetSHA, body string) (int64, error)
 	CancelRunningReviewRunsBySession(ctx stdctx.Context, sessionID domain.SessionID, body string) (int64, error)
 	CancelRunningReviewRunsBySessionAndHarness(ctx stdctx.Context, sessionID domain.SessionID, harness domain.ReviewerHarness, body string) (int64, error)
@@ -457,6 +458,10 @@ func (e *Engine) SwitchReviewer(
 	if !ok {
 		return SessionReviews{}, fmt.Errorf("%w: worker session %q", ErrNotFound, workerID)
 	}
+	previousSelected, previousConfig, err := e.reviewerSelection(ctx, worker)
+	if err != nil {
+		return SessionReviews{}, err
+	}
 	if ok, err := e.store.SetSessionReviewerConfig(ctx, workerID, harness, config, e.clock()); err != nil {
 		return SessionReviews{}, err
 	} else if !ok {
@@ -474,6 +479,11 @@ func (e *Engine) SwitchReviewer(
 	}
 	if err := e.destroyOtherReviewerHandles(ctx, workerID, selected, reviewRows); err != nil {
 		return SessionReviews{}, err
+	}
+	if previousSelected == selected && previousConfig != selectedConfig {
+		if err := e.resetReviewerRuntimeLocked(ctx, workerID, selected); err != nil {
+			return SessionReviews{}, err
+		}
 	}
 	if _, err := e.restoreReviewerLocked(ctx, workerID, worker, selected, selectedConfig); err != nil {
 		return SessionReviews{}, err
@@ -511,6 +521,25 @@ func (e *Engine) destroyOtherReviewerHandles(ctx stdctx.Context, workerID domain
 		if _, err := e.store.CancelRunningReviewRunsBySessionAndHarness(ctx, workerID, review.Harness, "cancelled because reviewer agent was switched"); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func (e *Engine) resetReviewerRuntimeLocked(ctx stdctx.Context, workerID domain.SessionID, harness domain.ReviewerHarness) error {
+	review, ok, err := e.store.GetReviewBySessionAndHarness(ctx, workerID, harness)
+	if err != nil || !ok {
+		return err
+	}
+	if review.ReviewerHandleID != "" {
+		if err := e.launcher.Destroy(ctx, review.ReviewerHandleID); err != nil {
+			return err
+		}
+		if err := e.store.ClearReviewerHandleByHarness(ctx, workerID, harness); err != nil {
+			return err
+		}
+	}
+	if _, err := e.store.UpdateReviewAgentSessionID(ctx, review.ID, ""); err != nil {
+		return err
 	}
 	return nil
 }
