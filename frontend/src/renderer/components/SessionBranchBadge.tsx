@@ -5,7 +5,7 @@ export function SessionBranchBadge({ branch, compact = false }: { branch?: strin
 	return (
 		<span
 			aria-label={branch}
-			className="session-branch-badge mr-1 inline-flex h-7 max-w-48 shrink-0 items-center gap-1.5 rounded-md border border-border bg-surface px-2 text-2xs text-muted-foreground"
+			className="session-branch-badge mr-1 inline-flex h-7 max-w-48 shrink-0 items-center gap-1.5 overflow-hidden rounded-md border border-border bg-surface px-2 text-2xs text-muted-foreground"
 			data-compact={compact ? "true" : "false"}
 			title={branch}
 		>

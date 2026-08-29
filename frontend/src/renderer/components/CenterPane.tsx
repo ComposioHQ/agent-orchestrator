@@ -11,6 +11,7 @@ import {
 	useMemo,
 	useRef,
 	useState,
+	type CSSProperties,
 	type PointerEvent,
 	type ReactNode,
 	type WheelEvent as ReactWheelEvent,
@@ -23,7 +24,6 @@ import {
 } from "../hooks/useAgentSwitches";
 import { useObservedAgentSwitchLifecycle } from "../hooks/useObservedAgentSwitchLifecycle";
 import { useSwitchAgentState } from "../hooks/useSwitchAgent";
-import { useTruncatedText } from "../hooks/useTruncatedText";
 import type { ShellTerminal } from "../hooks/useShellTerminals";
 import { TERMINAL_FONT_SIZE_DEFAULT, TERMINAL_FONT_SIZE_MAX, TERMINAL_FONT_SIZE_MIN } from "../lib/design-tokens";
 import { getAgentActivityView } from "../lib/session-presentation";
@@ -505,6 +505,13 @@ export function CenterPane({
 						!isFullscreen && !isSidebarOpen && isLinux && "session-topbar-titlebar-clearance-linux",
 					)}
 					data-testid="session-terminal-region"
+					style={
+						{
+							"--session-tab-share": `${
+								100 / (1 + (reviewerTerminal ? 1 : 0) + orderedAuxiliaryTerminals.length)
+							}cqw`,
+						} as CSSProperties
+					}
 				>
 					<div
 						aria-label={t("terminal.tabsAria")}
@@ -512,7 +519,7 @@ export function CenterPane({
 						onKeyDown={handleTerminalTabListKeyDown}
 						role="tablist"
 					>
-						<div className="flex min-w-0 shrink-0 items-stretch">
+						<div className="flex shrink-0 items-stretch">
 							{/* The owning session is permanent and never participates in overflow or reordering. */}
 							{session ? (
 								<SessionPaneTab
@@ -837,7 +844,6 @@ function SessionPaneTab({
 	title,
 }: SessionPaneTabProps) {
 	const { t } = useTranslation();
-	const { ref, isTruncated } = useTruncatedText<HTMLButtonElement>(label);
 	const activity = session ? getAgentActivityView(session.activity, t) : undefined;
 	const activityLabel = activity?.label;
 	const activityTone = activity?.tone;
@@ -846,16 +852,15 @@ function SessionPaneTab({
 	const connected = appearance === "connected";
 	return (
 		<button
-			ref={ref}
 			aria-current={isActive}
 			aria-label={activityLabel ? `${label} · ${activityLabel}` : label}
 			aria-selected={isActive}
 			data-terminal-role={connected ? undefined : "primary"}
 			className={cn(
-				"group relative inline-flex self-stretch cursor-pointer items-center gap-1.5 truncate text-control leading-none transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent/50",
+				"session-adaptive-tab group relative inline-flex self-stretch cursor-pointer items-center gap-1.5 overflow-hidden text-control leading-none transition-[width,background-color,color,border-color] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent/50",
 				connected
-					? "w-shell-tab-connected min-w-shell-tab-min shrink-0 border-x border-transparent px-2 text-left font-normal"
-					: "w-shell-tab-connected min-w-shell-tab-min shrink-0 overflow-hidden border-r border-border bg-surface px-3 font-medium text-foreground",
+					? "shrink-0 border-x border-transparent px-2 text-left font-normal"
+					: "shrink-0 border-r border-border bg-surface px-3 font-medium text-foreground",
 				connected
 					? isActive
 						? "border-border-strong bg-overlay text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80"
@@ -868,15 +873,15 @@ function SessionPaneTab({
 			onClick={onSelect}
 			role="tab"
 			tabIndex={isActive ? 0 : -1}
-			title={title ?? (isTruncated ? label : t("terminal.sessionAria"))}
+			title={title ?? label}
 			type="button"
 		>
 			{tabIcon}
-			<span className="truncate">{label}</span>
+			<span className="session-adaptive-tab__label min-w-0 truncate">{label}</span>
 			{activityTone ? (
 				<span
 					aria-hidden="true"
-					className="inline-flex shrink-0 self-center items-center"
+					className="session-adaptive-tab__status inline-flex shrink-0 self-center items-center"
 					style={{ color: activityTone }}
 					title={activityLabel}
 				>

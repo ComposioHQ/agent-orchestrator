@@ -625,13 +625,17 @@ describe("CenterPane toolbar session label", () => {
 		const scrollRegion = document.querySelector(".overflow-x-auto");
 		const avatar = ownerCard?.querySelector('img[aria-hidden="true"]');
 
-		expect(ownerCard).toHaveClass("w-shell-tab-connected", "min-w-shell-tab-min", "shrink-0", "overflow-hidden");
+		expect(ownerCard).toHaveClass("session-adaptive-tab", "shrink-0", "overflow-hidden");
+		expect(ownerCard).not.toHaveClass("w-shell-tab-connected", "min-w-shell-tab-min");
 		expect(ownerCard).not.toHaveClass("w-full", "max-w-full");
 		expect(ownerTab).not.toHaveClass("min-w-0", "min-w-flex-min");
-		expect(ownerCard?.parentElement).toHaveClass("min-w-0", "shrink-0");
+		expect(ownerCard?.parentElement).toHaveClass("shrink-0");
 		expect(ownerCard?.parentElement).not.toHaveClass("min-w-flex-min");
 		expect(scrollRegion?.contains(ownerCard)).toBe(false);
 		expect(avatar?.classList.contains("size-terminal-agent-icon")).toBe(true);
+		expect(screen.getByTestId("session-terminal-region").style.getPropertyValue("--session-tab-share")).toBe(
+			"50cqw",
+		);
 	});
 
 	it("closes only the selected auxiliary terminal from the application shortcut", () => {
@@ -718,20 +722,21 @@ describe("CenterPane toolbar session label", () => {
 		expect(reviewerTab).toHaveAttribute("aria-current", "true");
 		expect(reviewerTab.querySelector("img")).toHaveClass("size-terminal-agent-icon");
 		expect(reviewerTab).toHaveClass(
-			"w-shell-tab-connected",
-			"min-w-shell-tab-min",
+			"session-adaptive-tab",
 			"shrink-0",
 			"self-stretch",
 			"overflow-hidden",
 			"border-r",
 			"bg-overlay",
 		);
-		expect(reviewerTab.parentElement).toHaveClass("flex", "min-w-0", "shrink-0", "items-stretch");
+		expect(reviewerTab).not.toHaveClass("w-shell-tab-connected", "min-w-shell-tab-min");
+		expect(reviewerTab.parentElement).toHaveClass("flex", "shrink-0", "items-stretch");
 		expect(shellTab.parentElement).toHaveClass(
+			"session-adaptive-tab",
+			"session-adaptive-tab--closable",
 			"min-w-shell-tab-min",
 			"shrink-0",
 			"self-stretch",
-			"w-shell-tab-connected",
 		);
 		expect(reviewerTab).toHaveAttribute("data-terminal-role", "primary");
 		expect(scrollRegion?.contains(reviewerTab)).toBe(false);
@@ -833,7 +838,7 @@ describe("CenterPane toolbar session label", () => {
 		expect(screen.queryByRole("button", { name: "Scroll tabs right" })).not.toBeInTheDocument();
 	});
 
-	it("keeps fixed-width auxiliary tabs in a visually hidden native scroll strip while the owner stays fixed", () => {
+	it("compresses auxiliary tabs to a safe minimum in a visually hidden native scroll strip", () => {
 		const shells = makeShells(8);
 		renderCenterPane({ session: worker, shellTerminals: shells });
 
@@ -844,9 +849,11 @@ describe("CenterPane toolbar session label", () => {
 		expect(scrollRegion?.classList.contains("flex-1")).toBe(true);
 		expect(scrollRegion?.contains(screen.getByRole("tab", { name: /^Claude Code/ }).parentElement)).toBe(false);
 		for (const tab of screen.getAllByTitle(/^\/tmp\/ws/)) {
+			expect(tab.parentElement?.classList.contains("session-adaptive-tab")).toBe(true);
+			expect(tab.parentElement?.classList.contains("session-adaptive-tab--closable")).toBe(true);
 			expect(tab.parentElement?.classList.contains("min-w-shell-tab-min")).toBe(true);
 			expect(tab.parentElement?.classList.contains("shrink-0")).toBe(true);
-			expect(tab.parentElement?.classList.contains("w-shell-tab-connected")).toBe(true);
+			expect(tab.parentElement?.classList.contains("w-shell-tab-connected")).toBe(false);
 			expect(tab.parentElement?.classList.contains("min-w-16")).toBe(false);
 			expect(tab.classList.contains("min-w-0")).toBe(true);
 			expect(tab.classList.contains("w-full")).toBe(true);

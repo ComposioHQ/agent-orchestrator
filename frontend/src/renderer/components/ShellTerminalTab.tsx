@@ -103,11 +103,12 @@ export function ShellTerminalTab({
 
 	return (
 		<span
+			data-editing={appearance === "connected" && isEditing ? "true" : undefined}
 			className={cn(
 				"group relative min-w-shell-tab-min shrink-0 items-center transition-colors",
 				appearance === "connected"
 					? cn(
-							"grid w-shell-tab-connected self-stretch border-x border-transparent pr-0",
+							"session-adaptive-tab session-adaptive-tab--closable grid self-stretch border-x border-transparent pr-0",
 							isEditing ? "grid-cols-[auto_minmax(0,1fr)_auto] pl-2" : "grid-cols-[minmax(0,1fr)_auto]",
 						)
 					: "inline-flex gap-1 rounded-md px-2 py-1",
@@ -172,7 +173,7 @@ export function ShellTerminalTab({
 					{appearance === "connected" ? (
 						<SquareTerminal aria-hidden="true" className="mr-1 size-icon-sm shrink-0 translate-y-px" />
 					) : null}
-					<span className="truncate">{shell.title}</span>
+					<span className="session-adaptive-tab__label min-w-0 truncate">{shell.title}</span>
 				</button>
 			)}
 			<button

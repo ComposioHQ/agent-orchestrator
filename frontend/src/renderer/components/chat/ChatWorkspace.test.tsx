@@ -1804,7 +1804,7 @@ describe("ChatWorkspace reviewer tabs", () => {
 		sessionId: chatSession.id,
 	};
 
-	it("keeps pinned tabs at the main tab width and opens reviewer from the strip", () => {
+	it("keeps pinned tabs adaptive and opens reviewer from the strip", () => {
 		const onOpenReviewerTerminal = vi.fn();
 		render(
 			<ChatWorkspace
@@ -1817,19 +1817,23 @@ describe("ChatWorkspace reviewer tabs", () => {
 
 		const chatTab = screen.getByRole("tab", { name: "Codex" });
 		const reviewerTab = screen.getByRole("tab", { name: "Reviewer" });
-		expect(chatTab).toHaveClass("self-stretch", "px-3", "cursor-pointer", "w-shell-tab-connected", "min-w-shell-tab-min");
+		expect(chatTab).toHaveClass("self-stretch", "px-3", "cursor-pointer", "session-adaptive-tab");
+		expect(chatTab).not.toHaveClass("w-shell-tab-connected", "min-w-shell-tab-min");
 		expect(reviewerTab).toHaveClass(
 			"self-stretch",
 			"px-3",
 			"cursor-pointer",
-			"w-shell-tab-connected",
-			"min-w-shell-tab-min",
+			"session-adaptive-tab",
 			"border-r",
 			"overflow-hidden",
 		);
-		expect(chatTab.parentElement).toHaveClass("flex", "min-w-0", "shrink-0", "items-stretch");
-		expect(reviewerTab.parentElement).toHaveClass("flex", "min-w-0", "shrink-0", "items-stretch");
+		expect(reviewerTab).not.toHaveClass("w-shell-tab-connected", "min-w-shell-tab-min");
+		expect(chatTab.parentElement).toHaveClass("flex", "shrink-0", "items-stretch");
+		expect(reviewerTab.parentElement).toHaveClass("flex", "shrink-0", "items-stretch");
 		expect(reviewerTab.querySelector("img")).toBeInTheDocument();
+		expect(screen.getByTestId("session-terminal-region").style.getPropertyValue("--session-tab-share")).toBe(
+			"50cqw",
+		);
 
 		fireEvent.click(reviewerTab);
 		expect(onOpenReviewerTerminal).toHaveBeenCalledWith(reviewerTerminal);

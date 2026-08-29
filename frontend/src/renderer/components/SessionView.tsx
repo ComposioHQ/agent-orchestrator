@@ -892,12 +892,18 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		</SessionInterfaceActionGroup>
 	) : null;
 	const compactSessionChrome = adaptiveWorkspaceActive;
+	// Branch context remains useful in an ordinary window. It yields to tabs
+	// based on real competition in the strip; width-based CSS handles the
+	// remaining genuinely narrow layouts independently of Browser state.
+	const branchHasCompetingTabs = Boolean(
+		reviewerTerminal || shellTerminals.length > 0 || fileTabs.openPaths.length > 0,
+	);
 	const sessionHeaderActions = (
 		<div
 			className="session-topbar-session-chrome flex shrink-0 items-center"
 			data-compact-session-chrome={compactSessionChrome ? "true" : "false"}
 		>
-			<SessionBranchBadge branch={session?.branch} compact={compactSessionChrome} />
+			<SessionBranchBadge branch={session?.branch} compact={branchHasCompetingTabs} />
 			<ShellTopbar compactActions={compactSessionChrome} embedded sessionAction={sessionLocalActions} />
 		</div>
 	);

@@ -599,6 +599,25 @@ describe("SessionView", () => {
 		expect(tabs).not.toHaveTextContent("loose-shell");
 	});
 
+	it("lets competing workspace tabs compact the branch and restores it when they close", () => {
+		shellTerminalsState.data = [
+			{
+				handleId: "sh-a",
+				sessionId: "sess-1",
+				title: "sess-1-shell",
+				workingDir: "/p",
+				createdAt: "2026-07-24T00:00:00Z",
+			},
+		];
+		const view = render(<SessionView sessionId="sess-1" />);
+		const branch = screen.getByLabelText("ao/sess-1");
+		expect(branch).toHaveAttribute("data-compact", "true");
+
+		shellTerminalsState.data = [];
+		view.rerender(<SessionView sessionId="sess-1" />);
+		expect(branch).toHaveAttribute("data-compact", "false");
+	});
+
 	// The pane shows one terminal at a time, so selecting a shell takes the
 	// agent's terminal off screen while the route still points at this session.
 	// The notification runtime lives outside this subtree and reads the published
@@ -1522,10 +1541,12 @@ describe("SessionView", () => {
 		render(<SessionView sessionId="sess-1" />);
 
 		expect(screen.getByTestId("mock-session-topbar")).toHaveAttribute("data-compact-actions", "true");
-		expect(screen.getByLabelText("ao/sess-1").closest("[data-compact-session-chrome]")).toHaveAttribute(
+		const branch = screen.getByLabelText("ao/sess-1");
+		expect(branch.closest("[data-compact-session-chrome]")).toHaveAttribute(
 			"data-compact-session-chrome",
 			"true",
 		);
+		expect(branch).toHaveAttribute("data-compact", "false");
 	});
 
 	it("restores and clamps the persisted inspector width in pixels", () => {

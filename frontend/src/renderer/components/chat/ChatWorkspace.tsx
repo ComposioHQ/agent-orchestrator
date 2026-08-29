@@ -1070,6 +1070,13 @@ function ChatHeader({
 						!isSidebarOpen && isLinux && "session-topbar-titlebar-clearance-linux",
 					)}
 					data-testid="session-terminal-region"
+					style={
+						{
+							"--session-tab-share": `${
+								100 / (1 + (reviewerTerminal ? 1 : 0) + (shellTerminals?.length ?? 0))
+							}cqw`,
+						} as CSSProperties
+					}
 				>
 					<div
 						aria-label="Chat tabs"
@@ -1077,14 +1084,14 @@ function ChatHeader({
 						onKeyDown={onTabsKeyDown ?? handleTerminalTabListKeyDown}
 						role="tablist"
 					>
-						<div className="flex min-w-0 shrink-0 items-stretch">
+						<div className="flex shrink-0 items-stretch">
 							<button
 								aria-current={timelineActive ? true : undefined}
 								aria-label={label}
 								aria-selected={timelineActive}
 								data-terminal-role="primary"
 								className={cn(
-									"group relative inline-flex w-shell-tab-connected min-w-shell-tab-min shrink-0 self-stretch cursor-pointer items-center gap-1.5 overflow-hidden border-r border-border px-3 text-control font-medium leading-none transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent/50",
+									"session-adaptive-tab group relative inline-flex shrink-0 self-stretch cursor-pointer items-center gap-1.5 overflow-hidden border-r border-border px-3 text-control font-medium leading-none transition-[width,background-color,color,border-color] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent/50",
 									timelineActive
 										? "bg-overlay text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80"
 										: "text-muted-foreground hover:bg-raised hover:text-foreground",
@@ -1096,7 +1103,7 @@ function ChatHeader({
 								type="button"
 							>
 								<AgentAvatar className="size-icon-base" decorative provider={snapshot.harness} />
-								<span className="truncate">{label}</span>
+								<span className="session-adaptive-tab__label min-w-0 truncate">{label}</span>
 							</button>
 							{reviewerTerminal ? (
 								<button
@@ -1105,7 +1112,7 @@ function ChatHeader({
 									aria-selected={Boolean(reviewerActive)}
 									data-terminal-role="primary"
 									className={cn(
-										"group relative inline-flex w-shell-tab-connected min-w-shell-tab-min shrink-0 self-stretch cursor-pointer items-center gap-1.5 overflow-hidden border-r border-border px-3 text-control font-medium leading-none transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent/50",
+										"session-adaptive-tab group relative inline-flex shrink-0 self-stretch cursor-pointer items-center gap-1.5 overflow-hidden border-r border-border px-3 text-control font-medium leading-none transition-[width,background-color,color,border-color] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent/50",
 										reviewerActive
 											? "bg-overlay text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80"
 											: "text-muted-foreground hover:bg-raised hover:text-foreground",
@@ -1121,7 +1128,7 @@ function ChatHeader({
 										decorative
 										provider={reviewerTerminal.harness}
 									/>
-									<span className="truncate">Reviewer</span>
+									<span className="session-adaptive-tab__label min-w-0 truncate">Reviewer</span>
 								</button>
 							) : null}
 						</div>

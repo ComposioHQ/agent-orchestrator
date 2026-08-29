@@ -98,7 +98,7 @@ describe("ShellTerminalTab rename", () => {
 		expect(screen.getByRole("tab", { name: "ao" })).toHaveAttribute("aria-selected", "true");
 	});
 
-	it("uses a compact fixed width and shrinks its title around the sibling close affordance", () => {
+	it("uses an adaptive width and shrinks its title around the sibling close affordance", () => {
 		renderTab({ appearance: "connected", isActive: false });
 
 		const closeButton = screen.getByRole("button", { name: "Close terminal ao" });
@@ -114,7 +114,9 @@ describe("ShellTerminalTab rename", () => {
 		expect(tab.classList.contains("text-left")).toBe(true);
 		expect(tab.parentElement?.classList.contains("grid")).toBe(true);
 		expect(tab.parentElement?.classList.contains("shrink-0")).toBe(true);
-		expect(tab.parentElement?.classList.contains("w-shell-tab-connected")).toBe(true);
+		expect(tab.parentElement?.classList.contains("session-adaptive-tab")).toBe(true);
+		expect(tab.parentElement?.classList.contains("session-adaptive-tab--closable")).toBe(true);
+		expect(tab.parentElement?.classList.contains("w-shell-tab-connected")).toBe(false);
 	});
 
 	it("uses a neutral active surface with a strong foreground selection line", () => {
