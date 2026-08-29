@@ -56,6 +56,9 @@ func CLIActorType(actorType, commandPath string) string {
 	case "ao session agent-switch", "ao session agent-switch ls", "ao session switch-agent":
 		return "user"
 	}
+	if normalized == "ao session profile-switch" || strings.HasPrefix(normalized, "ao session profile-switch ") {
+		return "user"
+	}
 	if normalized == "ao hooks" {
 		return "agent"
 	}

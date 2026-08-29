@@ -28,6 +28,7 @@ type sessionAgentSwitchListOptions struct {
 type sessionHandoffSubmitOptions struct {
 	session            string
 	switchID           string
+	profileSwitchID    string
 	sourceGenerationID string
 	file               string
 	json               bool
@@ -158,6 +159,7 @@ func newSessionHandoffSubmitCommand(ctx *commandContext) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&opts.session, "session", "", "AO session id (default: AO_SESSION_ID)")
 	cmd.Flags().StringVar(&opts.switchID, "switch", "", "Agent switch id (required)")
+	cmd.Flags().StringVar(&opts.profileSwitchID, "profile-switch", "", "Codex profile switch id (mutually exclusive with --switch)")
 	cmd.Flags().StringVar(&opts.sourceGenerationID, "source-generation", "", "Source agent generation id (required)")
 	cmd.Flags().StringVar(&opts.file, "file", "", "Path to the JSON handoff document (required)")
 	cmd.Flags().BoolVar(&opts.json, "json", false, "Output the updated agent switch as JSON")
@@ -283,8 +285,12 @@ func (c *commandContext) submitSessionAgentHandoff(
 		return usageError{errors.New("session id is required (pass --session or set AO_SESSION_ID)")}
 	}
 	switchID := strings.TrimSpace(opts.switchID)
-	if switchID == "" {
-		return usageError{errors.New("--switch is required")}
+	profileSwitchID := strings.TrimSpace(opts.profileSwitchID)
+	if switchID == "" && profileSwitchID == "" {
+		return usageError{errors.New("--switch is required unless --profile-switch is provided")}
+	}
+	if switchID != "" && profileSwitchID != "" {
+		return usageError{errors.New("--switch and --profile-switch are mutually exclusive")}
 	}
 	sourceGenerationID := strings.TrimSpace(opts.sourceGenerationID)
 	if sourceGenerationID == "" {
@@ -313,12 +319,28 @@ func (c *commandContext) submitSessionAgentHandoff(
 		return usageError{errors.New("handoff file must contain a JSON object")}
 	}
 
-	var res agentSwitchResponse
-	path := "sessions/" + url.PathEscape(sessionID) + "/agent-switches/" + url.PathEscape(switchID) + "/handoff"
+	path := "sessions/" + url.PathEscape(sessionID)
+	if profileSwitchID != "" {
+		path += "/profile-switches/" + url.PathEscape(profileSwitchID) + "/handoff"
+	} else {
+		path += "/agent-switches/" + url.PathEscape(switchID) + "/handoff"
+	}
 	req := submitAgentHandoffRequest{
 		SourceGenerationID: sourceGenerationID,
 		Handoff:            json.RawMessage(raw),
 	}
+	if profileSwitchID != "" {
+		var res codexProfileSwitchResponseDTO
+		if err := c.postJSON(ctx, path, req, &res); err != nil {
+			return err
+		}
+		if opts.json {
+			return writeJSON(cmd.OutOrStdout(), res)
+		}
+		_, err = fmt.Fprintf(cmd.OutOrStdout(), "handoff submitted for profile switch %s (phase: %s)\n", res.Switch.ID, res.Switch.Phase)
+		return err
+	}
+	var res agentSwitchResponse
 	if err := c.postJSON(ctx, path, req, &res); err != nil {
 		return err
 	}
