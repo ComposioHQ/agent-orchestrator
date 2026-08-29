@@ -415,6 +415,14 @@ func (s *Service) triggerWithSource(
 	config domain.AgentConfig,
 	source domain.ReviewTriggerSource,
 ) (reviewcore.TriggerResult, error) {
+	if err := config.Validate(); err != nil {
+		err = fmt.Errorf("%w: reviewer config: %w", ErrInvalid, err)
+		s.emit("ao.review.trigger_failed", workerID, map[string]any{
+			"error_kind": reviewErrorKind(err),
+			"trigger":    string(source),
+		})
+		return reviewcore.TriggerResult{}, err
+	}
 	result, err := s.engineTrigger(ctx, workerID, harness, config, source)
 	if err != nil {
 		s.emit(ctx, "ao.review.trigger_failed", workerID, map[string]any{

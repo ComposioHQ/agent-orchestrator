@@ -952,6 +952,43 @@ func TestTriggerWithSameHarnessOverrideStillReuses(t *testing.T) {
 	}
 }
 
+func TestTriggerConfigOnlyOverrideUsesResolvedHarnessAndConfig(t *testing.T) {
+	store := &fakeStore{
+		runs: []domain.ReviewRun{{
+			ID: "run-1", SessionID: "mer-1", PRURL: "https://github.com/o/r/pull/1", TargetSHA: "sha1",
+			Harness: domain.ReviewerClaudeCode,
+			Status:  domain.ReviewRunComplete, Verdict: domain.VerdictApproved,
+		}},
+	}
+	launcher := &fakeLauncher{handle: "review-mer-2"}
+	projects := fakeProjects{cfg: domain.ProjectConfig{Reviewers: []domain.ReviewerConfig{{
+		Harness:     domain.ReviewerClaudeCode,
+		AgentConfig: domain.AgentConfig{Model: "claude-old"},
+	}}}}
+	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), projects, launcher)
+
+	res, err := eng.Trigger(context.Background(), "mer-1", "", domain.AgentConfig{Model: "claude-new"})
+	if err != nil {
+		t.Fatalf("Trigger: %v", err)
+	}
+	if !res.Created {
+		t.Fatalf("config-only override should force a new pass: %+v", res)
+	}
+	if res.Run.Harness != domain.ReviewerClaudeCode {
+		t.Fatalf("run harness = %q, want resolved claude-code", res.Run.Harness)
+	}
+	if got := launcher.gotSpec.AgentConfig; got.Model != "claude-new" {
+		t.Fatalf("spawn config = %+v, want model override preserved", got)
+	}
+}
+
+func TestTriggerRejectsInvalidReviewerConfig(t *testing.T) {
+	eng := newEngineForTest(&fakeStore{}, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, &fakeLauncher{})
+	if _, err := eng.Trigger(context.Background(), "mer-1", "", domain.AgentConfig{Mode: "turbo"}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("err = %v, want ErrInvalid", err)
+	}
+}
+
 func TestTriggerReusesRunningRowWithNoVerdict(t *testing.T) {
 	store := &fakeStore{
 		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", Harness: domain.ReviewerClaudeCode, ReviewerHandleID: "review-mer-1", AgentSessionID: "native-reviewer-1"},

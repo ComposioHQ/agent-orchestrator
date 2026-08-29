@@ -244,17 +244,24 @@ func (e *Engine) TriggerWithSource(ctx stdctx.Context, workerID domain.SessionID
 		return TriggerResult{}, err
 	}
 
+	if err := overrideConfig.Validate(); err != nil {
+		return TriggerResult{}, fmt.Errorf("%w: reviewer config: %w", ErrInvalid, err)
+	}
+
 	harness, config, err := e.reviewerSelection(ctx, worker)
 	if err != nil {
 		return TriggerResult{}, err
 	}
+	hasConfigOverride := !overrideConfig.IsZero()
 	if override != "" {
 		harness = override
-		if overrideConfig != (domain.AgentConfig{}) {
+		if hasConfigOverride {
 			config = overrideConfig
 		} else {
 			config = domain.AgentConfig{}
 		}
+	} else if hasConfigOverride {
+		config = overrideConfig
 	}
 	reviewRows, err := e.store.ListReviewsBySession(ctx, workerID)
 	if err != nil {
@@ -312,7 +319,7 @@ func (e *Engine) TriggerWithSource(ctx stdctx.Context, workerID domain.SessionID
 		if source == domain.ReviewTriggerAuto && autoReviewHeadBlocked(runs, reviewState.PRURL, reviewState.TargetSHA, harness) {
 			eligible = false
 		}
-		if !eligible && !secondOpinionWanted(reviewState, override, harness) {
+		if !eligible && !secondOpinionWanted(reviewState, override != "", hasConfigOverride, harness) {
 			continue
 		}
 		if _, err := e.store.SupersedeStaleRunningReviewRuns(ctx, workerID, reviewState.PRURL, reviewState.TargetSHA, "superseded by a review trigger for a newer commit"); err != nil {
@@ -722,18 +729,31 @@ func reviewQueue(runs []domain.ReviewRun) []ports.ReviewTask {
 	return queue
 }
 
-// secondOpinionWanted reports whether an explicitly requested harness differs
-// from the one that already reviewed this commit, which makes an otherwise
-// up-to-date PR worth running again. Only an explicit override counts: falling
-// back to the project default must not re-review a commit on every trigger.
-func secondOpinionWanted(state PRReviewState, override, harness domain.ReviewerHarness) bool {
-	if override == "" || state.Status == ReviewStateIneligible || state.Status == ReviewStateRunning {
+// secondOpinionWanted reports whether an explicit manual override makes an
+// otherwise up-to-date PR worth running again. A config-only override (for
+// example, picking a model under the same harness) always requests another
+// pass. A harness-only override only does so when it actually changes the
+// reviewer that produced the current result; re-picking the same harness must
+// still reuse. Legacy runs may have an empty harness, which means "the same
+// resolved harness as today" for this comparison.
+func secondOpinionWanted(state PRReviewState, hasHarnessOverride, hasConfigOverride bool, harness domain.ReviewerHarness) bool {
+	if state.Status == ReviewStateIneligible || state.Status == ReviewStateRunning {
 		return false
 	}
 	if state.LatestRun == nil {
 		return false
 	}
-	return state.LatestRun.Harness != harness
+	if hasConfigOverride {
+		return true
+	}
+	if !hasHarnessOverride {
+		return false
+	}
+	latestHarness := state.LatestRun.Harness
+	if latestHarness == "" {
+		latestHarness = harness
+	}
+	return latestHarness != harness
 }
 
 func replaceReviewLatestRun(reviews []PRReviewState, prURL, targetSHA string, run domain.ReviewRun) []PRReviewState {

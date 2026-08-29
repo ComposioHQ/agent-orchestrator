@@ -748,6 +748,32 @@ func TestTriggerFailureReportsWhichPassFailed(t *testing.T) {
 	}
 }
 
+func TestTriggerRejectsInvalidReviewerConfigBeforeEngine(t *testing.T) {
+	sink := &recordingSink{}
+	svc := New(nil, &fakeStore{}, WithTelemetry(sink))
+	called := false
+	svc.engineTrigger = func(
+		_ context.Context, _ domain.SessionID, _ domain.ReviewerHarness, _ domain.AgentConfig, _ domain.ReviewTriggerSource,
+	) (reviewcore.TriggerResult, error) {
+		called = true
+		return reviewcore.TriggerResult{}, nil
+	}
+
+	if _, err := svc.Trigger(context.Background(), "worker-1", "", domain.AgentConfig{Mode: "turbo"}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("err = %v, want ErrInvalid", err)
+	}
+	if called {
+		t.Fatal("engineTrigger should not run for invalid config")
+	}
+	got := sink.named("ao.review.trigger_failed")
+	if len(got) != 1 {
+		t.Fatalf("ao.review.trigger_failed count = %d, want 1", len(got))
+	}
+	if got[0].Payload["error_kind"] != "invalid" || got[0].Payload["trigger"] != "manual" {
+		t.Fatalf("payload = %#v, want error_kind=invalid trigger=manual", got[0].Payload)
+	}
+}
+
 // The submitted event has to carry enough to tell a shallow automatic approval
 // apart from a substantial manual changes-requested pass.
 func TestSubmitReportsPassShapeNotItsContents(t *testing.T) {
