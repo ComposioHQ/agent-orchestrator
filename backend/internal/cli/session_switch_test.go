@@ -454,6 +454,51 @@ func TestSessionHandoffSubmitChoosesSessionAndEmbedsRawJSON(t *testing.T) {
 	}
 }
 
+func TestSessionHandoffSubmitSupportsGenerationFencedProfileSwitch(t *testing.T) {
+	cfg := setConfigEnv(t)
+	t.Setenv("AO_SESSION_ID", "demo-1")
+	handoffPath := filepath.Join(t.TempDir(), "handoff.json")
+	if err := os.WriteFile(handoffPath, []byte(`{"schemaVersion":1,"goal":"continue","progressSummary":"ready"}`), 0o600); err != nil {
+		t.Fatalf("write handoff fixture: %v", err)
+	}
+	capture := &agentSwitchRequestCapture{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capture.record(r)
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions/demo-1/profile-switches/profile-switch-1/handoff" {
+			_, _ = io.WriteString(w, `{"switch":{"id":"profile-switch-1","sourceSessionId":"demo-1","sourceProfileId":"existing","targetProfileId":"managed-1","trigger":"manual","phase":"preparing_handoff","handoffClassification":"pending","acknowledgeUnknownCapacity":false,"progressReason":"Preparing context.","canCancel":true,"canRecover":false,"canRestoreSource":false,"requestedAt":"2026-08-04T10:00:00Z","updatedAt":"2026-08-04T10:01:00Z"}}`)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	writeRunFileFor(t, cfg, srv)
+
+	out, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }},
+		"session", "handoff", "submit",
+		"--profile-switch", "profile-switch-1",
+		"--source-generation", "generation-1",
+		"--file", handoffPath,
+	)
+	if err != nil {
+		t.Fatalf("profile-switch handoff submit failed: %v\nstderr=%s", err, errOut)
+	}
+	method, path, body, count := capture.snapshot()
+	if method != http.MethodPost || path != "/api/v1/sessions/demo-1/profile-switches/profile-switch-1/handoff" || count != 1 {
+		t.Fatalf("request = %s %s (count %d)", method, path, count)
+	}
+	var got submitAgentHandoffRequest
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("decode request: %v; body=%s", err, body)
+	}
+	if got.SourceGenerationID != "generation-1" || !strings.Contains(string(got.Handoff), `"goal":"continue"`) {
+		t.Fatalf("unexpected request: %+v", got)
+	}
+	if !strings.Contains(out, "handoff submitted for profile switch profile-switch-1 (phase: preparing_handoff)") {
+		t.Fatalf("unexpected output: %s", out)
+	}
+}
+
 func TestSessionHandoffSubmitValidatesInputsBeforeDaemonCall(t *testing.T) {
 	cfg := setConfigEnv(t)
 	capture := &agentSwitchRequestCapture{}
@@ -494,6 +539,12 @@ func TestSessionHandoffSubmitValidatesInputsBeforeDaemonCall(t *testing.T) {
 			envID:   "demo-1",
 			args:    []string{"session", "handoff", "submit", "--switch", "switch-1", "--file", invalidJSONPath},
 			wantErr: "--source-generation is required",
+		},
+		{
+			name:    "mutually exclusive switch kinds",
+			envID:   "demo-1",
+			args:    []string{"session", "handoff", "submit", "--switch", "switch-1", "--profile-switch", "profile-switch-1", "--source-generation", "generation-1", "--file", invalidJSONPath},
+			wantErr: "mutually exclusive",
 		},
 		{
 			name:    "missing file",

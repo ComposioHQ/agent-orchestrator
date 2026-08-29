@@ -69,6 +69,14 @@ func TestNormalizeUnknownTurnStatusFailsClosed(t *testing.T) {
 	}
 }
 
+func TestNormalizeStructuredUsageLimit(t *testing.T) {
+	event := normalizeOne(t, "thread/goal/updated", `{"threadId":"th1","turnId":"tu4","goal":{"createdAt":1,"objective":"finish","status":"usageLimited","threadId":"th1","timeUsedSeconds":3,"tokensUsed":10,"updatedAt":2}}`)
+	if event.Kind != ports.ChatEventUsageLimited || event.ProviderTurnID != "tu4" || event.ProviderConversationID != "th1" || event.Err == nil {
+		t.Fatalf("usage limit -> %+v", event)
+	}
+	normalizeNone(t, "thread/goal/updated", `{"threadId":"th1","goal":{"createdAt":1,"objective":"finish","status":"active","threadId":"th1","timeUsedSeconds":3,"tokensUsed":10,"updatedAt":2}}`)
+}
+
 func TestNormalizeAssistantStreaming(t *testing.T) {
 	delta := normalizeOne(t, "item/agentMessage/delta",
 		`{"threadId":"th1","turnId":"tu1","itemId":"msg_1","delta":"Running"}`)
