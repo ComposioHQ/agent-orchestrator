@@ -126,6 +126,9 @@ export function useOpenShellTerminal() {
 		// busy) leaves the "+" button looking like it silently did nothing.
 		onError: (error) => {
 			console.error("Failed to open shell terminal:", error);
+			if (isWindowsPlatform() && apiErrorCode(error) === "SHELL_TERMINAL_SHELL_UNAVAILABLE") {
+				void useTerminalShellStore.getState().setPreference({ kind: "auto" });
+			}
 		},
 	});
 }

@@ -52,7 +52,16 @@ func resolveWindowsShell(preference string) (argv []string, usedFallback bool) {
 	case "powershell":
 		resolved = resolveKnownWindowsShell("powershell.exe")
 	case "cmd":
-		resolved = resolveKnownWindowsShell("cmd.exe")
+		// ComSpec is authoritative for the user's Windows Command Prompt. It
+		// must win even when cmd.exe is not separately discoverable through PATH.
+		if comSpec := strings.TrimSpace(os.Getenv("ComSpec")); comSpec != "" {
+			if path, err := exec.LookPath(comSpec); err == nil {
+				resolved = []string{path}
+			}
+		}
+		if len(resolved) == 0 {
+			resolved = resolveKnownWindowsShell("cmd.exe")
+		}
 	default:
 		if path, err := exec.LookPath(preference); err == nil {
 			resolved = windowsShellArgv(path)

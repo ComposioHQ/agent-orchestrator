@@ -23,6 +23,7 @@ func TestResolveWindowsShellHonorsNamedSelections(t *testing.T) {
 		writeTestExecutable(t, filepath.Join(dir, name))
 	}
 	t.Setenv("PATH", dir)
+	t.Setenv("ComSpec", "")
 
 	tests := []struct {
 		preference string
@@ -93,6 +94,26 @@ func TestResolveWindowsShellFallsBackWhenSelectionIsUnavailable(t *testing.T) {
 		t.Fatal("did not report the automatic fallback")
 	}
 	want := []string{pwshPath, "-NoLogo"}
+	if !reflect.DeepEqual(argv, want) {
+		t.Fatalf("argv = %#v, want %#v", argv, want)
+	}
+}
+
+func TestResolveWindowsShellCmdHonorsComSpecWhenCmdIsNotOnPath(t *testing.T) {
+	dir := t.TempDir()
+	pwshPath := filepath.Join(dir, "pwsh.exe")
+	comSpecPath := filepath.Join(dir, "custom-cmd.exe")
+	writeTestExecutable(t, pwshPath)
+	writeTestExecutable(t, comSpecPath)
+	t.Setenv("PATH", dir)
+	t.Setenv("ComSpec", comSpecPath)
+
+	argv, usedFallback := resolveWindowsShell("cmd")
+
+	if usedFallback {
+		t.Fatal("used automatic fallback for Command Prompt with a valid ComSpec")
+	}
+	want := []string{comSpecPath}
 	if !reflect.DeepEqual(argv, want) {
 		t.Fatalf("argv = %#v, want %#v", argv, want)
 	}
