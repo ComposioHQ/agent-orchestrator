@@ -729,7 +729,7 @@ func TestHooks_PiSessionStartReportsUsageTranscriptPath(t *testing.T) {
 	if err := json.Unmarshal([]byte(capture.body), &req); err != nil {
 		t.Fatalf("decode body: %v\nbody=%s", err, capture.body)
 	}
-	if req.AgentSessionID != "pi-native-1" || req.Usage == nil ||
+	if req.AgentSessionID != "pi-native-1" || req.TranscriptPath != "/ao/data/pi/sessions/pi-native-1.jsonl" || req.Usage == nil ||
 		req.Usage.Harness != "pi" || req.Usage.TranscriptPath != "/ao/data/pi/sessions/pi-native-1.jsonl" {
 		t.Fatalf("body = %+v", req)
 	}

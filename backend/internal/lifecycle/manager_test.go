@@ -1532,6 +1532,7 @@ func TestApplyActivitySignalNativeSessionIDReactivatesUsageDiscovery(t *testing.
 
 	if err := m.ApplyActivitySignal(ctx, rec.ID, ports.ActivitySignal{
 		AgentSessionID: "pi-native-1",
+		TranscriptPath: "/ao/data/pi/sessions/pi-native-1.jsonl",
 		LaunchID:       "launch-1",
 	}); err != nil {
 		t.Fatal(err)
@@ -1540,6 +1541,9 @@ func TestApplyActivitySignalNativeSessionIDReactivatesUsageDiscovery(t *testing.
 		usage.reactivateLaunch != "launch-1" || !usage.sawLive {
 		t.Fatalf("usage discovery = calls:%d id:%q launch:%q live:%v",
 			usage.reactivateCalls, usage.reactivateID, usage.reactivateLaunch, usage.sawLive)
+	}
+	if got := st.sessions[rec.ID].Metadata.NativeTranscriptPath; got != "/ao/data/pi/sessions/pi-native-1.jsonl" {
+		t.Fatalf("native transcript path = %q", got)
 	}
 }
 
