@@ -9,7 +9,7 @@ import {
 	cacheAgentReadiness,
 	ensureAgentReadiness,
 } from "./useAgentReadinessQuery";
-import { CODEX_PROFILE_DAEMON_RESET_EVENT, codexProfileLoginsQueryKey, codexProfilesQueryKey, codexProfileSwitchOptionsQueryRoot } from "./codex-profile-cache";
+import { CODEX_PROFILE_DAEMON_RESET_EVENT, codexAutomaticProfileSwitchPolicyQueryRoot, codexProfileLoginsQueryKey, codexProfilesQueryKey, codexProfileSwitchOptionsQueryRoot } from "./codex-profile-cache";
 
 const STATUS_REFRESH_MS = 2_000;
 const READY_STATUS_REFRESH_MS = 10_000;
@@ -73,6 +73,7 @@ export function useDaemonStatus(queryClient: QueryClient = defaultQueryClient) {
 				queryClient.removeQueries({ queryKey: codexProfilesQueryKey, exact: true });
 				queryClient.removeQueries({ queryKey: codexProfileLoginsQueryKey, exact: true });
 				queryClient.removeQueries({ queryKey: codexProfileSwitchOptionsQueryRoot });
+				queryClient.removeQueries({ queryKey: codexAutomaticProfileSwitchPolicyQueryRoot });
 				window.dispatchEvent(new Event(CODEX_PROFILE_DAEMON_RESET_EVENT));
 			}
 			if (nextStatus.state === "ready" && nextStatus.port) {

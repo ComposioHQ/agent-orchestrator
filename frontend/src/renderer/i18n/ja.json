@@ -1442,5 +1442,16 @@
 	"settings.project.autoReview": "Auto review",
 	"settings.project.autoReviewToggle": "Auto review PRs",
 	"settings.project.autoReviewDescription": "When enabled, new worker sessions will automatically review their pull requests. This can still be toggled per session after spawn.",
-	"settings.project.reviewer": "Reviewer"
+	"settings.project.reviewer": "Reviewer",
+	"codexAutomaticSwitch.title": "自動プロファイル切り替え",
+	"codexAutomaticSwitch.description": "この継続チェーンの上限到達が確認された後に、AO が試せるプロファイルを順番に指定します。認証が最新で利用可能な容量があるプロファイルだけが対象です。",
+	"codexAutomaticSwitch.enabled": "この継続チェーンで有効",
+	"codexAutomaticSwitch.disabled": "既定ではオフ",
+	"codexAutomaticSwitch.configure": "設定",
+	"codexAutomaticSwitch.enableLabel": "自動切り替えを有効にする",
+	"codexAutomaticSwitch.orderHelp": "承認したプロファイルをドラッグして優先順位を決めます。現在のプロファイルは常にスキップされます。",
+	"codexAutomaticSwitch.cancel": "キャンセル",
+	"codexAutomaticSwitch.save": "ポリシーを保存",
+	"codexAutomaticSwitch.saveFailed": "自動切り替えポリシーを保存できませんでした。",
+	"codexAutomaticSwitch.reorderProfile": "プロファイルを並べ替える"
 }

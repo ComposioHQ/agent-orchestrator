@@ -1424,5 +1424,16 @@
 	"settings.project.autoReview": "Auto review",
 	"settings.project.autoReviewToggle": "Auto review PRs",
 	"settings.project.autoReviewDescription": "When enabled, new worker sessions will automatically review their pull requests. This can still be toggled per session after spawn.",
-	"settings.project.reviewer": "Reviewer"
+	"settings.project.reviewer": "Reviewer",
+	"codexAutomaticSwitch.title": "自动切换配置文件",
+	"codexAutomaticSwitch.description": "为此延续链确认额度耗尽后，按顺序选择 AO 可以尝试的配置文件。只有身份验证为最新且有可用容量的配置文件才符合条件。",
+	"codexAutomaticSwitch.enabled": "已为此延续链启用",
+	"codexAutomaticSwitch.disabled": "默认关闭",
+	"codexAutomaticSwitch.configure": "配置",
+	"codexAutomaticSwitch.enableLabel": "启用自动切换",
+	"codexAutomaticSwitch.orderHelp": "拖动已批准的配置文件以设置优先级。当前配置文件始终会被跳过。",
+	"codexAutomaticSwitch.cancel": "取消",
+	"codexAutomaticSwitch.save": "保存策略",
+	"codexAutomaticSwitch.saveFailed": "无法保存自动切换策略。",
+	"codexAutomaticSwitch.reorderProfile": "重新排序配置文件"
 }

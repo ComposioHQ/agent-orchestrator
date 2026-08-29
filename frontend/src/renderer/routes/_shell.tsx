@@ -880,8 +880,8 @@ function ShellLayout() {
 						<div
 							aria-hidden="true"
 							className={cn(
-								"fixed top-0 left-0 z-chrome w-(--ao-sidebar-w,var(--size-sidebar-default)) transition-[height] duration-200 ease-out motion-reduce:transition-none",
-								isFullScreen ? "pointer-events-none h-0" : "h-traffic-light-clearance",
+								"pointer-events-none fixed top-0 left-0 z-chrome w-(--ao-sidebar-w,var(--size-sidebar-default)) transition-[height] duration-200 ease-out motion-reduce:transition-none",
+								isFullScreen ? "h-0" : "h-traffic-light-clearance",
 							)}
 							style={trafficLightDragActive ? ({ WebkitAppRegion: "drag" } as CSSProperties) : undefined}
 						/>

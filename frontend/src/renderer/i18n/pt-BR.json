@@ -1460,5 +1460,16 @@
 	"settings.project.autoReview": "Auto review",
 	"settings.project.autoReviewToggle": "Auto review PRs",
 	"settings.project.autoReviewDescription": "When enabled, new worker sessions will automatically review their pull requests. This can still be toggled per session after spawn.",
-	"settings.project.reviewer": "Reviewer"
+	"settings.project.reviewer": "Reviewer",
+	"codexAutomaticSwitch.title": "Troca automática",
+	"codexAutomaticSwitch.description": "Escolha, em ordem, os perfis que o AO pode tentar quando o esgotamento desta cadeia de continuação for confirmado. Apenas perfis autenticados recentemente e com capacidade disponível se qualificam.",
+	"codexAutomaticSwitch.enabled": "Ativada para esta cadeia de continuação",
+	"codexAutomaticSwitch.disabled": "Desativada por padrão",
+	"codexAutomaticSwitch.configure": "Configurar",
+	"codexAutomaticSwitch.enableLabel": "Ativar troca automática",
+	"codexAutomaticSwitch.orderHelp": "Arraste os perfis aprovados para definir a prioridade. O perfil atual sempre é ignorado.",
+	"codexAutomaticSwitch.cancel": "Cancelar",
+	"codexAutomaticSwitch.save": "Salvar política",
+	"codexAutomaticSwitch.saveFailed": "Não foi possível salvar a política de troca automática.",
+	"codexAutomaticSwitch.reorderProfile": "Reordenar perfil"
 }

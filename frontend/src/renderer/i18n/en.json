@@ -1424,5 +1424,16 @@
 	"inspector.usage.processedTokens": "Tokens processed",
 	"inspector.usage.processedTokensAria": "{{count}} tokens processed",
 	"inspector.usage.processedTokensUnavailable": "Processed tokens unavailable",
-	"settings.project.reviewer": "Reviewer"
+	"settings.project.reviewer": "Reviewer",
+	"codexAutomaticSwitch.title": "Automatic switching",
+	"codexAutomaticSwitch.description": "Choose the profiles AO may try, in order, after this continuation chain is confirmed exhausted. Only freshly signed-in profiles with available capacity qualify.",
+	"codexAutomaticSwitch.enabled": "Enabled for this continuation chain",
+	"codexAutomaticSwitch.disabled": "Off by default",
+	"codexAutomaticSwitch.configure": "Configure",
+	"codexAutomaticSwitch.enableLabel": "Enable automatic switching",
+	"codexAutomaticSwitch.orderHelp": "Drag approved profiles into priority order. The current profile is always skipped.",
+	"codexAutomaticSwitch.cancel": "Cancel",
+	"codexAutomaticSwitch.save": "Save policy",
+	"codexAutomaticSwitch.saveFailed": "Unable to save the automatic switching policy.",
+	"codexAutomaticSwitch.reorderProfile": "Reorder profile"
 }

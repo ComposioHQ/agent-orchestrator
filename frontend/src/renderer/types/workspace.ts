@@ -93,6 +93,17 @@ export type CodexProfileSwitchSummary = {
 	errorCode?: string;
 };
 
+export type CodexAutomaticProfileSwitchAttemptSummary = {
+	id: string;
+	state: "evaluating" | "no_candidate" | "delegated_to_phase5" | "completed" | "needs_attention" | "cancelled";
+	trigger: "usage_limit_failure" | "capacity_event" | "capacity_read";
+	outcomeCode: string;
+	reason: string;
+	canCancel: boolean;
+	targetProfile?: CodexSessionProfileSummary;
+	profileSwitch?: CodexProfileSwitchSummary;
+};
+
 export type WorkspaceSession = {
 	id: string;
 	terminalHandleId?: string;
@@ -125,6 +136,7 @@ export type WorkspaceSession = {
 	continuedFrom?: CodexSessionContinuationSummary;
 	continuedTo?: CodexSessionContinuationSummary;
 	activeCodexProfileSwitch?: CodexProfileSwitchSummary;
+	latestAutomaticCodexProfileSwitchAttempt?: CodexAutomaticProfileSwitchAttemptSummary;
 	/** User preference to tear down this session when its PR set completes through a merge. */
 	terminateOnPrMerge?: boolean;
 	/** Whether SCM review feedback is automatically injected into the worker. */

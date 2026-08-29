@@ -1460,5 +1460,16 @@
 	"settings.project.autoReview": "Auto review",
 	"settings.project.autoReviewToggle": "Auto review PRs",
 	"settings.project.autoReviewDescription": "When enabled, new worker sessions will automatically review their pull requests. This can still be toggled per session after spawn.",
-	"settings.project.reviewer": "Reviewer"
+	"settings.project.reviewer": "Reviewer",
+	"codexAutomaticSwitch.title": "Changement automatique",
+	"codexAutomaticSwitch.description": "Choisissez dans l’ordre les profils qu’AO peut essayer lorsque cette chaîne de continuation est confirmée épuisée. Seuls les profils récemment authentifiés avec une capacité disponible sont admissibles.",
+	"codexAutomaticSwitch.enabled": "Activé pour cette chaîne de continuation",
+	"codexAutomaticSwitch.disabled": "Désactivé par défaut",
+	"codexAutomaticSwitch.configure": "Configurer",
+	"codexAutomaticSwitch.enableLabel": "Activer le changement automatique",
+	"codexAutomaticSwitch.orderHelp": "Faites glisser les profils approuvés pour définir leur priorité. Le profil actuel est toujours ignoré.",
+	"codexAutomaticSwitch.cancel": "Annuler",
+	"codexAutomaticSwitch.save": "Enregistrer la règle",
+	"codexAutomaticSwitch.saveFailed": "Impossible d’enregistrer la règle de changement automatique.",
+	"codexAutomaticSwitch.reorderProfile": "Réorganiser le profil"
 }

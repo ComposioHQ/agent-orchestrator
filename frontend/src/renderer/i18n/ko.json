@@ -1442,5 +1442,16 @@
 	"settings.project.autoReview": "Auto review",
 	"settings.project.autoReviewToggle": "Auto review PRs",
 	"settings.project.autoReviewDescription": "When enabled, new worker sessions will automatically review their pull requests. This can still be toggled per session after spawn.",
-	"settings.project.reviewer": "Reviewer"
+	"settings.project.reviewer": "Reviewer",
+	"codexAutomaticSwitch.title": "자동 프로필 전환",
+	"codexAutomaticSwitch.description": "이 연속 작업 체인의 한도 소진이 확인된 뒤 AO가 순서대로 시도할 프로필을 선택합니다. 인증이 최신이고 사용 가능한 용량이 있는 프로필만 대상입니다.",
+	"codexAutomaticSwitch.enabled": "이 연속 작업 체인에 사용",
+	"codexAutomaticSwitch.disabled": "기본적으로 꺼짐",
+	"codexAutomaticSwitch.configure": "구성",
+	"codexAutomaticSwitch.enableLabel": "자동 전환 사용",
+	"codexAutomaticSwitch.orderHelp": "승인된 프로필을 드래그해 우선순위를 정하세요. 현재 프로필은 항상 건너뜁니다.",
+	"codexAutomaticSwitch.cancel": "취소",
+	"codexAutomaticSwitch.save": "정책 저장",
+	"codexAutomaticSwitch.saveFailed": "자동 전환 정책을 저장할 수 없습니다.",
+	"codexAutomaticSwitch.reorderProfile": "프로필 순서 변경"
 }

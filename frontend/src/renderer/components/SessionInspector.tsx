@@ -67,6 +67,7 @@ import { cn } from "../lib/utils";
 import { codexCapacityTranslationKey } from "../lib/codex-capacity";
 import { SessionTerminationPopover } from "./SessionTerminationPopover";
 import { CodexProfileSwitchControl } from "./CodexProfileSwitch";
+import { CodexAutomaticProfileSwitchControl } from "./CodexAutomaticProfileSwitch";
 import { ReviewerSelect } from "./ReviewerSelect";
 import { agentLabel } from "../lib/agent-options";
 import { useAgentReadinessQuery, useEnsureAgentReadiness } from "../hooks/useAgentReadinessQuery";
@@ -307,6 +308,7 @@ function SummaryView({
 							) : null}
 							{session.continuedFrom ? <p className="mt-1 text-2xs text-settings-muted">{t("codexProfileSwitch.continuedFrom", { label: session.continuedFrom.label })}</p> : null}
 							{session.continuedTo ? <p className="mt-1 text-2xs text-settings-muted">{t("codexProfileSwitch.continuedTo", { label: session.continuedTo.label })}</p> : null}
+							<CodexAutomaticProfileSwitchControl session={session} />
 							<CodexProfileSwitchControl session={session} />
 						</div>
 					) : null}
