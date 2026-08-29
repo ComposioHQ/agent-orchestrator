@@ -372,6 +372,15 @@ export function BrowserPanelView({
 			}),
 		[viewId],
 	);
+	useEffect(
+		() =>
+			window.ao?.browser.onReopenClosedTab((targetViewId) => {
+				if (targetViewId !== viewId) return;
+				const latest = closedTabs[0];
+				if (latest) void reopenClosedTab(latest.id);
+			}),
+		[closedTabs, reopenClosedTab, viewId],
+	);
 
 	const tabSensors = useSensors(
 		useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),

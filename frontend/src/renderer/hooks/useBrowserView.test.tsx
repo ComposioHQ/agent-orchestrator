@@ -90,6 +90,7 @@ function setupBridge() {
 		notifyPanelUsed: vi.fn(),
 		notifyPanelBlur: vi.fn(),
 		onFocusLocation: vi.fn(() => () => undefined),
+		onReopenClosedTab: vi.fn(() => () => undefined),
 		devtools: vi.fn(
 			async ({ viewId, operation, placement }: {
 				viewId: string;

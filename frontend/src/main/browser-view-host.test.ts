@@ -263,12 +263,13 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 }
 
 describe("browser shortcut matching", () => {
-	it("matches the three browser chords with platform-native primary modifiers", () => {
+	it("matches contextual browser shortcuts with platform-native primary modifiers", () => {
 		const input = { control: true, meta: false, shift: false, alt: false, type: "keyDown" };
 		expect(browserShortcutAction({ ...input, key: "T" }, false)).toBe("new-tab");
 		expect(browserShortcutAction({ ...input, key: "w" }, false)).toBe("close-tab");
 		expect(browserShortcutAction({ ...input, key: "l" }, false)).toBe("focus-location");
 		expect(browserShortcutAction({ ...input, key: "r" }, false)).toBe("reload");
+		expect(browserShortcutAction({ ...input, key: "t", shift: true }, false)).toBe("reopen-tab");
 		expect(browserShortcutAction({ ...input, key: "t", control: false, meta: true }, true)).toBe("new-tab");
 		expect(browserShortcutAction({ ...input, key: " ", control: false }, false)).toBe("scroll-down");
 		expect(browserShortcutAction({ ...input, key: " ", control: false, shift: true }, false)).toBe("scroll-up");
@@ -276,7 +277,7 @@ describe("browser shortcut matching", () => {
 
 	it("rejects extra and wrong-platform modifiers", () => {
 		const input = { key: "t", control: true, meta: false, shift: false, alt: false, type: "keyDown" };
-		expect(browserShortcutAction({ ...input, shift: true }, false)).toBeNull();
+		expect(browserShortcutAction({ ...input, key: "r", shift: true }, false)).toBeNull();
 		expect(browserShortcutAction({ ...input, meta: true }, false)).toBeNull();
 		expect(browserShortcutAction(input, true)).toBeNull();
 	});
@@ -291,6 +292,10 @@ describe("browser shortcut routing", () => {
 		const focusEvent = emitBeforeInput({ key: "l", control: true });
 		expect(focusEvent.preventDefault).toHaveBeenCalledOnce();
 		expect(shellSend).toHaveBeenCalledWith("browser:focusLocation", state.viewId);
+
+		const reopenEvent = emitBeforeInput({ key: "t", control: true, shift: true });
+		expect(reopenEvent.preventDefault).toHaveBeenCalled();
+		expect(shellSend).toHaveBeenCalledWith("browser:reopenClosedTab", state.viewId);
 
 		const openEvent = emitBeforeInput({ key: "t", control: true });
 		expect(openEvent.preventDefault).toHaveBeenCalledOnce();

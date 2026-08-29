@@ -150,6 +150,7 @@ type BrowserShortcutInput = {
 
 export type BrowserShortcutAction =
 	| "new-tab"
+	| "reopen-tab"
 	| "close-tab"
 	| "focus-location"
 	| "reload"
@@ -158,7 +159,8 @@ export type BrowserShortcutAction =
 
 export function browserShortcutAction(input: BrowserShortcutInput, isMac: boolean): BrowserShortcutAction | null {
 	const primaryModifier = isMac ? input.meta && !input.control : input.control && !input.meta;
-	if (primaryModifier && !input.shift && !input.alt) {
+	if (primaryModifier && !input.alt) {
+		if (input.shift) return input.key.toLowerCase() === "t" ? "reopen-tab" : null;
 		switch (input.key.toLowerCase()) {
 			case "t":
 				return "new-tab";
@@ -994,6 +996,9 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		shellWebContents.focus();
 		shellWebContents.send("browser:focusLocation", session.viewId);
 	};
+	const reopenClosedTab = (session: BrowserSessionEntry): void => {
+		shellWebContents.send("browser:reopenClosedTab", session.viewId);
+	};
 	function attachBrowserShortcuts(
 		contents: Pick<WebContents, "on">,
 		getSession: () => BrowserSessionEntry | undefined,
@@ -1025,6 +1030,10 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			}
 			if (action === "new-tab") {
 				void openUserTab(session).then(() => focusLocation(session)).catch(() => undefined);
+				return;
+			}
+			if (action === "reopen-tab") {
+				reopenClosedTab(session);
 				return;
 			}
 			const closingTabId = session.activeTabId;
