@@ -6,7 +6,7 @@ import { SessionView } from "./SessionView";
 import { SessionTopbarProvider } from "./SessionTopbarPortal";
 import { TooltipProvider } from "./ui/tooltip";
 import type { SessionInterfaceTransitionStatus } from "../hooks/useSessionInterfaceTransition";
-import { useUiStore } from "../stores/ui-store";
+import { useUiStore, type InspectorView } from "../stores/ui-store";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 
 const navigateMock = vi.hoisted(() => vi.fn());
@@ -158,8 +158,16 @@ const { workspaces, workspaceQueryState, shellTerminalsState } = vi.hoisted(() =
 // the split under test. (ShellTopbar is shell-owned on Win/Linux; when the
 // platform hides the shell topbar, SessionView mounts it in-panel.)
 vi.mock("./ShellTopbar", () => ({
-	ShellTopbar: ({ sessionAction }: { sessionAction?: ReactNode }) => (
-		<div data-testid="mock-session-topbar">{sessionAction}</div>
+	ShellTopbar: ({
+		sessionAction,
+		compactActions,
+	}: {
+		sessionAction?: ReactNode;
+		compactActions?: boolean;
+	}) => (
+		<div data-compact-actions={compactActions ? "true" : "false"} data-testid="mock-session-topbar">
+			{sessionAction}
+		</div>
 	),
 }));
 vi.mock("./NotificationCenter", () => ({
@@ -405,7 +413,7 @@ vi.mock("./SessionInspector", () => ({
 		onOpenFiles?: () => void;
 		onOpenReviewFile?: (target: { line?: number; path: string }) => void;
 		onToggleBrowserPopOut?: (next: boolean, sourceRect?: DOMRectReadOnly) => void;
-		onViewChange?: (view: "summary" | "browser") => void;
+		onViewChange?: (view: InspectorView) => void;
 		view?: string;
 	}) => {
 		inspectorVisibilityRenders.push(isInspectorVisible);
@@ -413,6 +421,9 @@ vi.mock("./SessionInspector", () => ({
 			<div>
 				<button role="tab" type="button" onClick={() => onViewChange?.("summary")}>
 					Summary
+				</button>
+				<button role="tab" type="button" onClick={() => onViewChange?.("reviews")}>
+					Reviews
 				</button>
 				<button role="tab" type="button" onClick={() => onViewChange?.("browser")}>
 					Browser
@@ -1521,6 +1532,24 @@ describe("SessionView", () => {
 		expect(toggle).toHaveAttribute("aria-pressed", "false");
 	});
 
+	it("compacts non-primary session chrome when Browser pressure collapses the sidebar", () => {
+		useUiStore.setState({
+			isSidebarOpen: true,
+			isSidebarAutoCollapsed: true,
+			sidebarAutoCollapseOverride: false,
+			inspectorSessions: { "sess-1": { initialized: true, isOpen: true, view: "browser" } },
+		});
+
+		render(<SessionView sessionId="sess-1" />);
+
+		const topbar = screen.getByTestId("mock-session-topbar");
+		expect(topbar).toHaveAttribute("data-compact-actions", "true");
+		expect(topbar.closest("[data-compact-session-chrome]")).toHaveAttribute(
+			"data-compact-session-chrome",
+			"true",
+		);
+	});
+
 	it("restores and clamps the persisted inspector width in pixels", () => {
 		window.localStorage.setItem("ao.inspector.widthPx", "240");
 		act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
@@ -1586,18 +1615,24 @@ describe("SessionView", () => {
 		expect(document.documentElement.style.getPropertyValue("--ao-inspector-w")).toBe("500px");
 	});
 
-	it("raises shell pressure for Browser comfort and restores utility pressure on exit", async () => {
+	it("raises shell pressure only for Browser and clears it for every utility view", async () => {
 		render(<SessionView sessionId="sess-1" />);
-		expect(useUiStore.getState().sidebarWorkspaceDemandPx).toBe(1068);
+		expect(useUiStore.getState().sidebarWorkspaceDemandPx).toBeNull();
+
+		fireEvent.click(screen.getByRole("tab", { name: "Reviews" }));
+		expect(useUiStore.getState().sidebarWorkspaceDemandPx).toBeNull();
 
 		fireEvent.click(screen.getByRole("tab", { name: "Browser" }));
 		expect(useUiStore.getState().sidebarWorkspaceDemandPx).toBe(1628);
 
 		fireEvent.click(screen.getByRole("tab", { name: "Summary" }));
-		expect(useUiStore.getState().sidebarWorkspaceDemandPx).toBe(1068);
+		expect(useUiStore.getState().sidebarWorkspaceDemandPx).toBeNull();
 
 		fireEvent.click(screen.getByRole("tab", { name: "Browser" }));
+		fireEvent.click(screen.getByRole("button", { name: "open files" }));
+		expect(useUiStore.getState().sidebarWorkspaceDemandPx).toBeNull();
 
+		fireEvent.click(screen.getByRole("tab", { name: "Browser" }));
 		fireEvent.click(screen.getByRole("button", { name: "Close inspector panel" }));
 		await waitFor(() => expect(useUiStore.getState().sidebarWorkspaceDemandPx).toBeNull());
 	});

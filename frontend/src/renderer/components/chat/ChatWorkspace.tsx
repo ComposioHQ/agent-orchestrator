@@ -43,7 +43,7 @@ import { isLinuxPlatform, isMacPlatform } from "../../lib/platform";
 import { handleTerminalTabListKeyDown } from "../../lib/terminal-tabs";
 import { agentLabel } from "../../lib/agent-options";
 import type { ShellTerminal } from "../../hooks/useShellTerminals";
-import { sidebarOccupiesLayout, useUiStore } from "../../stores/ui-store";
+import { sidebarIsCompact, sidebarOccupiesLayout, useUiStore } from "../../stores/ui-store";
 import type { TerminalTarget } from "../../types/terminal";
 import type { SessionKind, WorkspaceSession } from "../../types/workspace";
 import { AgentAvatar } from "../AgentAvatar";
@@ -129,12 +129,6 @@ type ShellTerminalTarget = Extract<TerminalTarget, { kind: "shell" }>;
 
 const isMac = isMacPlatform();
 const isLinux = isLinuxPlatform();
-
-type TopbarBounds = {
-	leftInset: number;
-	rightInset: number;
-	width: number;
-};
 
 type MessageEditDraft = {
 	turnId: string;
@@ -431,40 +425,6 @@ export function ChatWorkspace({
 	const wheelZoomRemainderRef = useRef(0);
 	const [terminalFontSize, setTerminalFontSize] = useState(initialTerminalFontSize);
 	const [isFullscreen, setIsFullscreen] = useState(false);
-	const [topbarBounds, setTopbarBounds] = useState<TopbarBounds>({
-		leftInset: 0,
-		rightInset: 0,
-		width: 0,
-	});
-
-	useEffect(() => {
-		const surface = surfaceRef.current;
-		if (!surface) return;
-		const workspaceSurface = surface.closest<HTMLElement>(".center-panel-surface");
-		const measure = () => {
-			const surfaceRect = surface.getBoundingClientRect();
-			const workspaceRect = workspaceSurface?.getBoundingClientRect() ?? surfaceRect;
-			const next = {
-				leftInset: workspaceRect.left,
-				rightInset: Math.max(0, window.innerWidth - workspaceRect.right),
-				width: surfaceRect.width,
-			};
-			setTopbarBounds((current) =>
-				current.leftInset === next.leftInset &&
-				current.rightInset === next.rightInset &&
-				current.width === next.width
-					? current
-					: next,
-			);
-		};
-		measure();
-		if (typeof ResizeObserver === "undefined") return;
-		const observer = new ResizeObserver(measure);
-		observer.observe(surface);
-		if (workspaceSurface) observer.observe(workspaceSurface);
-		return () => observer.disconnect();
-	}, []);
-
 	useEffect(() => {
 		const handleFullscreenChange = () => {
 			setIsFullscreen(document.fullscreenElement === surfaceRef.current);
@@ -719,7 +679,6 @@ export function ChatWorkspace({
 				workspaceTabs={workspaceTabs}
 				workspaceFileActive={workspaceFileActive}
 				inline={isFullscreen}
-				topbarBounds={topbarBounds}
 			/>
 			{/* The body host anchors the agent-switch dialog and holds whichever tab is
 			    active: the reviewer pane, a shell pane, or the chat timeline. The
@@ -1065,7 +1024,6 @@ function ChatHeader({
 	workspaceTabs,
 	workspaceFileActive = false,
 	inline,
-	topbarBounds,
 }: {
 	snapshot: ConversationSnapshot;
 	reviewerTerminal?: { handleId: string; harness: string };
@@ -1089,7 +1047,6 @@ function ChatHeader({
 	workspaceFileActive?: boolean;
 	/** Fullscreen content cannot see the normal topbar portal outside its subtree. */
 	inline?: boolean;
-	topbarBounds: TopbarBounds;
 }) {
 	const label = agentLabel(snapshot.harness);
 	// The chat tab is "selected" only when neither terminal pane is the body.
@@ -1098,6 +1055,7 @@ function ChatHeader({
 	// cluster sits over the session tab strip. Terminal already reserves that
 	// space; chat must too or the back/forward buttons land on the tab label.
 	const isSidebarOpen = useUiStore(sidebarOccupiesLayout);
+	const isSidebarCompact = useUiStore(sidebarIsCompact);
 	const header = (
 		<header className="flex h-inspector-tabs w-full shrink-0 items-stretch bg-sidebar">
 			<div
@@ -1106,14 +1064,12 @@ function ChatHeader({
 			>
 				<div
 					className={cn(
-						"flex min-w-0 shrink items-center pr-3",
+						"session-topbar-terminal-region flex min-w-0 flex-1 items-center pr-3",
+						!inline && isSidebarCompact && isMac && "session-topbar-traffic-light-clearance-mac",
 						!isSidebarOpen && isMac && "session-topbar-titlebar-clearance-mac",
 						!isSidebarOpen && isLinux && "session-topbar-titlebar-clearance-linux",
 					)}
 					data-testid="session-terminal-region"
-					style={{
-						width: topbarBounds.width > 0 ? topbarBounds.width : "100%",
-					}}
 				>
 					<div
 						aria-label="Chat tabs"
@@ -1127,7 +1083,7 @@ function ChatHeader({
 							aria-selected={timelineActive}
 							data-terminal-role="primary"
 							className={cn(
-								"group relative inline-flex min-w-shell-tab-min max-w-shell-tab-max self-stretch cursor-pointer items-center gap-1.5 border-r border-border px-3 text-control font-medium leading-none transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent/50",
+								"session-tab-icon-floor group relative inline-flex max-w-shell-tab-max shrink self-stretch cursor-pointer items-center gap-1.5 overflow-hidden border-r border-border px-3 text-control font-medium leading-none transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent/50",
 								timelineActive
 									? "bg-overlay text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80"
 									: "text-muted-foreground hover:bg-raised hover:text-foreground",
@@ -1147,7 +1103,7 @@ function ChatHeader({
 								aria-label="Reviewer"
 								aria-selected={Boolean(reviewerActive)}
 								className={cn(
-									"group relative inline-flex min-w-shell-tab-min max-w-shell-tab-max self-stretch cursor-pointer items-center gap-1.5 border-r border-border px-3 text-control font-medium leading-none transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent/50",
+									"session-tab-icon-floor group relative inline-flex max-w-shell-tab-max shrink self-stretch cursor-pointer items-center gap-1.5 overflow-hidden border-r border-border px-3 text-control font-medium leading-none transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent/50",
 									reviewerActive
 										? "bg-overlay text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80"
 										: "text-muted-foreground hover:bg-raised hover:text-foreground",

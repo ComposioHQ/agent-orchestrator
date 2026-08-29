@@ -103,14 +103,15 @@ export function ShellTerminalTab({
 
 	return (
 		<span
+			data-editing={appearance === "connected" && isEditing ? "true" : undefined}
 			className={cn(
-				"group relative min-w-shell-tab-min shrink-0 items-center transition-colors",
+				"group relative min-w-shell-tab-min items-center transition-colors",
 				appearance === "connected"
 					? cn(
-							"grid w-shell-tab-connected self-stretch border-x border-transparent pr-0",
+							"session-tab-icon-floor session-tab-icon-floor--closable grid shrink self-stretch border-x border-transparent pr-0",
 							isEditing ? "grid-cols-[auto_minmax(0,1fr)_auto] pl-2" : "grid-cols-[minmax(0,1fr)_auto]",
 						)
-					: "inline-flex gap-1 rounded-md px-2 py-1",
+					: "inline-flex shrink-0 gap-1 rounded-md px-2 py-1",
 				appearance === "connected"
 					? isActive
 						? "border-border-strong bg-overlay text-foreground after:pointer-events-none after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80"
