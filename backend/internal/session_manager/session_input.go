@@ -13,12 +13,13 @@ import (
 type agentOperationKind string
 
 const (
-	agentOperationSwitch        agentOperationKind = "switch"
-	agentOperationResume        agentOperationKind = "resume"
-	agentOperationKill          agentOperationKind = "kill"
-	agentOperationRestore       agentOperationKind = "restore"
-	agentOperationRetire        agentOperationKind = "retire"
-	agentOperationProfileSwitch agentOperationKind = "profile_switch"
+	agentOperationSwitch                 agentOperationKind = "switch"
+	agentOperationResume                 agentOperationKind = "resume"
+	agentOperationKill                   agentOperationKind = "kill"
+	agentOperationRestore                agentOperationKind = "restore"
+	agentOperationRetire                 agentOperationKind = "retire"
+	agentOperationProfileSwitch          agentOperationKind = "profile_switch"
+	agentOperationAutomaticProfileSwitch agentOperationKind = "automatic_profile_switch"
 )
 
 var errAgentOperationInProgress = errors.New("session: another exclusive operation is in progress")
@@ -124,6 +125,17 @@ func (m *Manager) endAgentOperation(id domain.SessionID, kind agentOperationKind
 	if current, ok := m.agentOperations[id]; ok && current == kind {
 		delete(m.agentOperations, id)
 	}
+}
+
+// adoptAgentOperation restores a durable startup fence before the API accepts
+// mutations. Startup reconciliation has no already-admitted request leases.
+func (m *Manager) adoptAgentOperation(id domain.SessionID, kind agentOperationKind) {
+	m.agentOpMu.Lock()
+	defer m.agentOpMu.Unlock()
+	if m.agentOperations == nil {
+		m.agentOperations = make(map[domain.SessionID]agentOperationKind)
+	}
+	m.agentOperations[id] = kind
 }
 
 func (m *Manager) allowAgentSwitchDecisionInput(id domain.SessionID, switchID domain.AgentSwitchID) {

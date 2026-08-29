@@ -936,11 +936,11 @@ func (s *Service) SubscribeCodexProfileCapacity(ctx context.Context) (<-chan Cod
 
 // ObserveCodexProfileCapacity merges a correctly attributed sparse bound-Chat
 // provider notification into the shared profile snapshot.
-func (s *Service) ObserveCodexProfileCapacity(profileID string, observation ports.CodexCapacityObservation) {
+func (s *Service) ObserveCodexProfileCapacity(profileID string, observation ports.CodexCapacityObservation) domain.CodexCapacitySnapshot {
 	if s.codexProfiles == nil {
-		return
+		return domain.CodexCapacitySnapshot{State: domain.CodexCapacityUnknown, Freshness: domain.AgentReadinessStale}
 	}
-	s.codexProfiles.capacity.updateFromEvent(strings.TrimSpace(profileID), observation)
+	return s.codexProfiles.capacity.updateFromEvent(strings.TrimSpace(profileID), observation)
 }
 
 // InvalidateCodexProfileCapacity marks one exact profile stale without native

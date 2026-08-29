@@ -148,13 +148,17 @@ var (
 	// ErrStartupPending means a TUI session has not yet received its first
 	// agent hook callback, so the native startup sequence (including pre-session
 	// approval dialogs) may still be consuming pane input.
-	ErrStartupPending                       = errors.New("session: agent startup not ready for input")
-	ErrSessionArchived                      = errors.New("session: archived")
-	ErrCodexProfileSwitchUnavailable        = errors.New("session: Codex profile switching unavailable")
-	ErrCodexProfileSwitchNotFound           = errors.New("session: Codex profile switch not found")
-	ErrCodexProfileSwitchRequiresCodex      = errors.New("session: Codex profile switch requires a bound Codex worker")
-	ErrCodexProfileSwitchCancellationUnsafe = errors.New("session: Codex profile switch cancellation is unsafe")
-	ErrCodexProfileSwitchRecoveryRequired   = errors.New("session: Codex profile switch recovery is required")
+	ErrStartupPending                                = errors.New("session: agent startup not ready for input")
+	ErrSessionArchived                               = errors.New("session: archived")
+	ErrCodexProfileSwitchUnavailable                 = errors.New("session: Codex profile switching unavailable")
+	ErrCodexProfileSwitchNotFound                    = errors.New("session: Codex profile switch not found")
+	ErrCodexProfileSwitchRequiresCodex               = errors.New("session: Codex profile switch requires a bound Codex worker")
+	ErrCodexProfileSwitchCancellationUnsafe          = errors.New("session: Codex profile switch cancellation is unsafe")
+	ErrCodexProfileSwitchRecoveryRequired            = errors.New("session: Codex profile switch recovery is required")
+	ErrCodexAutomaticProfileSwitchUnavailable        = errors.New("session: automatic Codex profile switching unavailable")
+	ErrCodexAutomaticProfileSwitchRequiresCodex      = errors.New("session: automatic Codex profile switching requires a bound Codex worker")
+	ErrCodexAutomaticProfileSwitchAttemptNotFound    = errors.New("session: automatic Codex profile switch attempt not found")
+	ErrCodexAutomaticProfileSwitchCancellationUnsafe = errors.New("session: automatic Codex profile switch cancellation is unsafe")
 
 	// Spawn-stage sentinels. Each is the existing log word after "spawn" /
 	// "spawn <id>:" so wrapping them does not change daemon-log wording, while
@@ -359,6 +363,7 @@ type Manager struct {
 	agentReadiness            ports.AgentReadinessProvider
 	codexProfiles             ports.CodexProfileLaunchResolver
 	codexProfileSwitchOptions ports.CodexProfileSwitchOptionProvider
+	codexAutomaticProfiles    ports.CodexAutomaticProfileSwitchVerifier
 	// messenger is a sessionguard.Guard wrapping the raw messenger, so every
 	// pane write is guarded (re-read state, refuse a blocked session) without
 	// each call site re-deriving the check. Send/confirmActive use Deliver for
@@ -647,6 +652,9 @@ type Deps struct {
 	// CodexProfiles resolves and validates immutable profile-bound launch homes.
 	// Nil keeps non-Codex focused tests and embedders compatible.
 	CodexProfiles ports.CodexProfileLaunchResolver
+	// EnableCodexAutomaticProfileSwitching enables the daemon-local Phase 6
+	// development gate. Production keeps this false until live exit gates pass.
+	EnableCodexAutomaticProfileSwitching bool
 	// DataDir owns durable attachment storage and is exported to spawned agents
 	// as AO_DATA_DIR so their hook commands can open the same store.
 	DataDir string
@@ -733,6 +741,9 @@ func New(d Deps) *Manager {
 	}
 	if options, ok := d.CodexProfiles.(ports.CodexProfileSwitchOptionProvider); ok {
 		m.codexProfileSwitchOptions = options
+	}
+	if automatic, ok := d.CodexProfiles.(ports.CodexAutomaticProfileSwitchVerifier); ok && d.EnableCodexAutomaticProfileSwitching {
+		m.codexAutomaticProfiles = automatic
 	}
 	if m.clock == nil {
 		// UTC so spawn-stamped CreatedAt/UpdatedAt match every other session
@@ -2498,6 +2509,9 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 // state that would otherwise lose its in-memory input fence across a daemon
 // restart. This must complete before the API accepts user input.
 func (m *Manager) ReconcileStartupSafety(ctx context.Context) error {
+	if err := m.ReconcileCodexAutomaticProfileSwitches(ctx); err != nil {
+		return fmt.Errorf("reconcile: automatic Codex profile-switch pass: %w", err)
+	}
 	if err := m.ReconcileCodexProfileSwitches(ctx); err != nil {
 		return fmt.Errorf("reconcile: Codex profile-switch pass: %w", err)
 	}

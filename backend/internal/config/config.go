@@ -148,6 +148,9 @@ type Config struct {
 	AllowedOrigins []string
 	// Telemetry controls local/remote telemetry sinks.
 	Telemetry TelemetryConfig
+	// DevCodexAutomaticProfileSwitching keeps Phase 6 disabled in production
+	// until its live recovery matrix has passed. It is intentionally daemon-local.
+	DevCodexAutomaticProfileSwitching bool
 	// StartupWorkingDirectory is the daemon process cwd before startup
 	// normalizes it. The desktop uses this to identify dev daemons after the
 	// process cwd is moved to the stable data dir.
@@ -205,6 +208,7 @@ func (c Config) Addr() string {
 //	AO_CLOUD_OFFERING          cloud offering flag off|on (default off)
 //	AO_LOCAL_OFFERING          local offering off|on (default on)
 //	AO_CLOUD_CONTROL_PLANE_URL cloud control plane base URL (trimmed, must be http(s))
+//	AO_DEV_CODEX_AUTOMATIC_PROFILE_SWITCHING development-only Phase 6 gate off|on (default off)
 //
 // The bind host is not configurable: the daemon is loopback-only by design.
 func Load() (Config, error) {
@@ -251,6 +255,13 @@ func Load() (Config, error) {
 
 	if raw := os.Getenv("AO_AGENT"); raw != "" {
 		cfg.Agent = raw
+	}
+	if raw := os.Getenv("AO_DEV_CODEX_AUTOMATIC_PROFILE_SWITCHING"); raw != "" {
+		v, err := parseToggleEnv("AO_DEV_CODEX_AUTOMATIC_PROFILE_SWITCHING", raw)
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.DevCodexAutomaticProfileSwitching = v
 	}
 
 	// A missing AO_APP_RUN_ID means nothing is supervising this daemon, so this
