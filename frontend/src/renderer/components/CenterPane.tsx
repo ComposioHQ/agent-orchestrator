@@ -855,7 +855,7 @@ function SessionPaneTab({
 				"group relative inline-flex self-stretch cursor-pointer items-center gap-1.5 truncate text-control leading-none transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent/50",
 				connected
 					? "w-shell-tab-connected min-w-shell-tab-min shrink-0 border-x border-transparent px-2 text-left font-normal"
-					: "min-w-0 max-w-shell-tab-max shrink overflow-hidden border-r border-border bg-surface px-3 font-medium text-foreground",
+					: "w-shell-tab-connected min-w-shell-tab-min shrink-0 overflow-hidden border-r border-border bg-surface px-3 font-medium text-foreground",
 				connected
 					? isActive
 						? "border-border-strong bg-overlay text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80"

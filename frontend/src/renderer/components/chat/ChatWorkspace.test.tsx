@@ -1804,7 +1804,7 @@ describe("ChatWorkspace reviewer tabs", () => {
 		sessionId: chatSession.id,
 	};
 
-	it("opens reviewer from the pinned tab strip", () => {
+	it("keeps pinned tabs at the main tab width and opens reviewer from the strip", () => {
 		const onOpenReviewerTerminal = vi.fn();
 		render(
 			<ChatWorkspace
@@ -1817,16 +1817,19 @@ describe("ChatWorkspace reviewer tabs", () => {
 
 		const chatTab = screen.getByRole("tab", { name: "Codex" });
 		const reviewerTab = screen.getByRole("tab", { name: "Reviewer" });
-		expect(chatTab.parentElement).toHaveClass("self-stretch", "px-3");
-		expect(reviewerTab.parentElement).toHaveClass(
+		expect(chatTab).toHaveClass("self-stretch", "px-3", "cursor-pointer", "w-shell-tab-connected", "min-w-shell-tab-min");
+		expect(reviewerTab).toHaveClass(
 			"self-stretch",
 			"px-3",
+			"cursor-pointer",
+			"w-shell-tab-connected",
+			"min-w-shell-tab-min",
 			"border-r",
 			"overflow-hidden",
 		);
-		expect(chatTab.parentElement?.parentElement).toHaveClass("shrink-0");
-		expect(reviewerTab.parentElement?.parentElement).toHaveClass("shrink-0");
-		expect(reviewerTab.parentElement?.querySelector("img")).toBeInTheDocument();
+		expect(chatTab.parentElement).toHaveClass("flex", "min-w-0", "shrink-0", "items-stretch");
+		expect(reviewerTab.parentElement).toHaveClass("flex", "min-w-0", "shrink-0", "items-stretch");
+		expect(reviewerTab.querySelector("img")).toBeInTheDocument();
 
 		fireEvent.click(reviewerTab);
 		expect(onOpenReviewerTerminal).toHaveBeenCalledWith(reviewerTerminal);
@@ -2029,8 +2032,8 @@ describe("ChatWorkspace reviewer tabs", () => {
 		const reviewerTab = screen.getByRole("tab", { name: "Reviewer" });
 		const shellTab = screen.getByRole("tab", { name: "chat worktree shell" });
 
-		expect(chatTab.parentElement?.parentElement).toHaveClass("shrink-0");
-		expect(reviewerTab.parentElement?.parentElement).toHaveClass("shrink-0");
+		expect(chatTab.parentElement).toHaveClass("shrink-0");
+		expect(reviewerTab.parentElement).toHaveClass("shrink-0");
 		expect(scrollRegion?.contains(chatTab.parentElement)).toBe(false);
 		expect(scrollRegion?.contains(reviewerTab.parentElement)).toBe(false);
 		expect(scrollRegion?.contains(shellTab.parentElement)).toBe(true);
