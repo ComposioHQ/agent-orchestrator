@@ -854,21 +854,7 @@ func shellTerminalOperations() []operation {
 			},
 		},
 		{
-			method: http.MethodPatch, path: "/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/queue", id: "editQueuedSessionConversationTurn", tag: "conversations",
-			summary:    "Rewrite one queued message before it dispatches",
-			pathParams: []any{controllers.SessionIDParam{}, controllers.ConversationTurnIDParam{}},
-			reqBody:    controllers.EditQueuedConversationMessageRequest{},
-			resps: []respUnit{
-				{http.StatusNoContent, nil},
-				{http.StatusBadRequest, envelope.APIError{}},
-				{http.StatusNotFound, envelope.APIError{}},
-				{http.StatusConflict, envelope.APIError{}},
-				{http.StatusInternalServerError, envelope.APIError{}},
-				{http.StatusNotImplemented, envelope.APIError{}},
-			},
-		},
-		{
-			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/queue/edit", id: "editQueuedSessionConversationTurnPost", tag: "conversations",
+			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/queue/edit", id: "editQueuedSessionConversationTurn", tag: "conversations",
 			summary:    "Rewrite one queued message before it dispatches",
 			pathParams: []any{controllers.SessionIDParam{}, controllers.ConversationTurnIDParam{}},
 			reqBody:    controllers.EditQueuedConversationMessageRequest{},

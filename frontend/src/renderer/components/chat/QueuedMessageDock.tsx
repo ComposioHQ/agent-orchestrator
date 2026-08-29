@@ -7,7 +7,6 @@ export type QueuedMessage = { turnId: string; message: ConversationMessage };
 
 export function QueuedMessageDock({
 	messages,
-	messageCount,
 	editingTurnId,
 	canSteer,
 	onPromoteQueuedTurn,
@@ -17,8 +16,6 @@ export function QueuedMessageDock({
 	cancelPendingTurnId,
 }: {
 	messages: QueuedMessage[];
-	/** Full queue size, including a row currently being edited in the composer. */
-	messageCount?: number;
 	editingTurnId?: string;
 	canSteer?: boolean;
 	onPromoteQueuedTurn?: (turnId: string) => Promise<unknown>;
@@ -50,7 +47,7 @@ export function QueuedMessageDock({
 		[],
 	);
 
-	const count = messageCount ?? messages.length;
+	const count = messages.length;
 
 	return (
 		<div

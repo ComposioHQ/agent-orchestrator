@@ -805,7 +805,6 @@ export function useConversationCommands(sessionId: string | undefined) {
 			if (!sessionId) return Promise.reject(new Error("No conversation session is selected."));
 			return editQueuedTurn.mutateAsync({ turnId, text });
 		},
-		promoteQueuedTurnPending: promoteQueuedTurn.isPending,
 		promoteQueuedTurnPendingTurnId: promoteQueuedTurn.isPending
 			? promoteQueuedTurn.variables
 			: undefined,

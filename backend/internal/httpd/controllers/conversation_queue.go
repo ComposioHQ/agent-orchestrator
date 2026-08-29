@@ -15,7 +15,7 @@ import (
 )
 
 const cancelQueuedTurnPath = "/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/cancel"
-const editQueuedTurnPath = "/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/queue"
+const editQueuedTurnPath = "/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/queue/edit"
 
 // EditQueuedConversationMessageRequest rewrites one undispatched queue item.
 type EditQueuedConversationMessageRequest struct {
@@ -41,7 +41,7 @@ func (c *ConversationsController) cancelQueuedTurn(w http.ResponseWriter, r *htt
 
 func (c *ConversationsController) editQueuedTurn(w http.ResponseWriter, r *http.Request) {
 	if c.Svc == nil {
-		apispec.NotImplemented(w, r, "PATCH", editQueuedTurnPath)
+		apispec.NotImplemented(w, r, "POST", editQueuedTurnPath)
 		return
 	}
 	var req EditQueuedConversationMessageRequest

@@ -3102,70 +3102,9 @@ paths:
       summary: Branch before and replace an earlier human prompt
       tags:
       - conversations
-  /api/v1/sessions/{sessionId}/conversation/turns/{turnId}/queue:
-    patch:
-      operationId: editQueuedSessionConversationTurn
-      parameters:
-      - description: Session identifier, e.g. project-1.
-        in: path
-        name: sessionId
-        required: true
-        schema:
-          description: Session identifier, e.g. project-1.
-          type: string
-      - description: AO conversation turn identifier, from the snapshot's turns array.
-        in: path
-        name: turnId
-        required: true
-        schema:
-          description: AO conversation turn identifier, from the snapshot's turns
-            array.
-          type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/EditQueuedConversationMessageRequest'
-        required: true
-      responses:
-        "204":
-          description: No Content
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-          description: Bad Request
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-          description: Not Found
-        "409":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-          description: Conflict
-        "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-          description: Internal Server Error
-        "501":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-          description: Not Implemented
-      summary: Rewrite one queued message before it dispatches
-      tags:
-      - conversations
   /api/v1/sessions/{sessionId}/conversation/turns/{turnId}/queue/edit:
     post:
-      operationId: editQueuedSessionConversationTurnPost
+      operationId: editQueuedSessionConversationTurn
       parameters:
       - description: Session identifier, e.g. project-1.
         in: path

@@ -848,7 +848,6 @@ export function ChatWorkspace({
 										queuedMessages.length > 0 ? (
 											<QueuedMessageDock
 												messages={queuedMessages}
-												messageCount={queuedMessages.length}
 												editingTurnId={queueEdit?.turnId}
 												canSteer={
 													Boolean(onSteer) &&

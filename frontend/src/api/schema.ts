@@ -1083,23 +1083,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/queue": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        /** Rewrite one queued message before it dispatches */
-        patch: operations["editQueuedSessionConversationTurn"];
-        trace?: never;
-    };
     "/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/queue/edit": {
         parameters: {
             query?: never;
@@ -1110,7 +1093,7 @@ export interface paths {
         get?: never;
         put?: never;
         /** Rewrite one queued message before it dispatches */
-        post: operations["editQueuedSessionConversationTurnPost"];
+        post: operations["editQueuedSessionConversationTurn"];
         delete?: never;
         options?: never;
         head?: never;
@@ -7316,78 +7299,6 @@ export interface operations {
         };
     };
     editQueuedSessionConversationTurn: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Session identifier, e.g. project-1. */
-                sessionId: string;
-                /** @description AO conversation turn identifier, from the snapshot's turns array. */
-                turnId: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["EditQueuedConversationMessageRequest"];
-            };
-        };
-        responses: {
-            /** @description No Content */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Bad Request */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["APIError"];
-                };
-            };
-            /** @description Not Found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["APIError"];
-                };
-            };
-            /** @description Conflict */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["APIError"];
-                };
-            };
-            /** @description Internal Server Error */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["APIError"];
-                };
-            };
-            /** @description Not Implemented */
-            501: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["APIError"];
-                };
-            };
-        };
-    };
-    editQueuedSessionConversationTurnPost: {
         parameters: {
             query?: never;
             header?: never;
