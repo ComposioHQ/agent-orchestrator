@@ -480,9 +480,15 @@ func (c *conversation) SessionUpdate(_ context.Context, params acpsdk.SessionNot
 	}
 
 	update := params.Update
+	providerOutputResumed := update.AgentMessageChunk != nil ||
+		update.AgentThoughtChunk != nil ||
+		update.ToolCall != nil ||
+		update.Plan != nil
+	if providerOutputResumed {
+		c.completeProviderFailure(turnID)
+	}
 	switch {
 	case update.AgentMessageChunk != nil:
-		c.completeProviderFailure(turnID)
 		id := c.providerItemID(messageID(update.AgentMessageChunk.MessageId, "assistant", turnID))
 		if delta := contentText(update.AgentMessageChunk.Content); delta != "" {
 			if parentID := c.providerItemID(parentToolUseID(update.AgentMessageChunk.Meta)); parentID != "" {
@@ -508,7 +514,6 @@ func (c *conversation) SessionUpdate(_ context.Context, params acpsdk.SessionNot
 			c.emit(ports.ChatEvent{Kind: ports.ChatEventMessageDelta, ProviderTurnID: turnID, ProviderItemID: id, Delta: delta})
 		}
 	case update.AgentThoughtChunk != nil:
-		c.completeProviderFailure(turnID)
 		id := c.providerItemID(messageID(update.AgentThoughtChunk.MessageId, "thought", turnID))
 		if delta := contentText(update.AgentThoughtChunk.Content); delta != "" {
 			c.mu.Lock()
@@ -523,7 +528,6 @@ func (c *conversation) SessionUpdate(_ context.Context, params acpsdk.SessionNot
 			c.emit(ports.ChatEvent{Kind: ports.ChatEventReasoningDelta, ProviderTurnID: turnID, ProviderItemID: id, Delta: delta})
 		}
 	case update.ToolCall != nil:
-		c.completeProviderFailure(turnID)
 		tool := &toolState{
 			id: string(update.ToolCall.ToolCallId), title: update.ToolCall.Title,
 			kind: update.ToolCall.Kind, status: update.ToolCall.Status,
@@ -545,7 +549,6 @@ func (c *conversation) SessionUpdate(_ context.Context, params acpsdk.SessionNot
 		c.emit(c.toolEvent(turnID, tool, toolTerminal(tool.status)))
 		c.emitDiffs(turnID, tool.content)
 	case update.Plan != nil:
-		c.completeProviderFailure(turnID)
 		c.emit(ports.ChatEvent{Kind: ports.ChatEventPlanUpdated, ProviderTurnID: turnID, Plan: normalizePlan(update.Plan.Entries)})
 	case update.SessionInfoUpdate != nil:
 		if update.SessionInfoUpdate.Title != nil {
