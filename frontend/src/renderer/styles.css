@@ -1023,12 +1023,13 @@ button.settings-link-row:active {
 	}
 
 	/* The agent chip's SelectTrigger chevron has no rotation of its own — give
-	   it the same open-state flip as the settings dropdowns. */
-	& svg {
+	   it the same open-state flip as the settings dropdowns. Scope this to the
+	   final, direct-child chevron so value icons remain stationary. */
+	& > svg:last-child {
 		transition: transform var(--duration-normal) ease-out;
 	}
 
-	&[data-state="open"] svg {
+	&[data-state="open"] > svg:last-child {
 		transform: rotate(180deg);
 	}
 }
