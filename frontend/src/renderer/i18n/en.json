@@ -628,7 +628,6 @@
 	"settings.codexProfiles.capacityResets": "Resets {{value}}",
 	"settings.codexProfiles.create": "Create",
 	"settings.codexProfiles.createFailed": "Could not create the Codex profile.",
-	"settings.codexProfiles.description": "Create isolated Codex profiles, then sign in from a terminal with ChatGPT, a device code, an API key, or an access token. Codex owns the credential files.",
 	"settings.codexProfiles.existing": "Existing",
 	"settings.codexProfiles.heading": "Codex profiles",
 	"settings.codexProfiles.label": "Profile label",

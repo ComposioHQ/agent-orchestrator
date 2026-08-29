@@ -641,7 +641,6 @@
 	"settings.codexProfiles.capacityResets": "{{value}} にリセット",
 	"settings.codexProfiles.create": "作成",
 	"settings.codexProfiles.createFailed": "Codex プロファイルを作成できませんでした。",
-	"settings.codexProfiles.description": "既存の Codex ID を検出し、分離されたプロファイルを作成します。認証情報は Codex が管理し、AO は認証ファイルを読みません。",
 	"settings.codexProfiles.existing": "既存",
 	"settings.codexProfiles.heading": "Codex プロファイル",
 	"settings.codexProfiles.label": "プロファイル名",

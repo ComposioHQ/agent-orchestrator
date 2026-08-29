@@ -641,7 +641,6 @@
 	"settings.codexProfiles.capacityResets": "{{value}}에 재설정",
 	"settings.codexProfiles.create": "만들기",
 	"settings.codexProfiles.createFailed": "Codex 프로필을 만들지 못했습니다.",
-	"settings.codexProfiles.description": "기존 Codex ID를 찾고 격리된 프로필을 만듭니다. 자격 증명은 Codex가 소유하며 AO는 자격 증명 파일을 읽지 않습니다.",
 	"settings.codexProfiles.existing": "기존",
 	"settings.codexProfiles.heading": "Codex 프로필",
 	"settings.codexProfiles.label": "프로필 이름",
