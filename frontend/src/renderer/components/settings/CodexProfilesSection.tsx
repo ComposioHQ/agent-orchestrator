@@ -182,7 +182,6 @@ export function CodexProfilesSection({ titleHidden }: { titleHidden?: boolean })
 				<div className="flex items-start justify-between gap-4">
 					<div>
 						<p className="text-sm font-medium text-foreground">{t("settings.codexProfiles.heading")}</p>
-						<p className="mt-1 text-xs leading-relaxed text-muted-foreground">{t("settings.codexProfiles.description")}</p>
 					</div>
 					<Button type="button" size="sm" onClick={() => setAdding(true)} disabled={adding || Boolean(loginWorkflow) || !profilesQuery.data}>
 						<Plus aria-hidden="true" /> {t("settings.codexProfiles.add")}

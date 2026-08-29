@@ -640,7 +640,6 @@
 	"settings.codexProfiles.checking": "Comprobando",
 	"settings.codexProfiles.create": "Crear",
 	"settings.codexProfiles.createFailed": "No se pudo crear el perfil de Codex.",
-	"settings.codexProfiles.description": "Detecta la identidad de Codex existente y crea perfiles aislados. Codex gestiona las credenciales; AO nunca lee sus archivos.",
 	"settings.codexProfiles.existing": "Existente",
 	"settings.codexProfiles.heading": "Perfiles de Codex",
 	"settings.codexProfiles.label": "Nombre del perfil",

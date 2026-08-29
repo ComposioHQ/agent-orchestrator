@@ -613,7 +613,6 @@
 	"settings.codexProfiles.checking": "正在检查",
 	"settings.codexProfiles.create": "创建",
 	"settings.codexProfiles.createFailed": "无法创建 Codex 配置文件。",
-	"settings.codexProfiles.description": "发现现有 Codex 身份并创建隔离的配置文件。凭据由 Codex 管理；AO 从不读取凭据文件。",
 	"settings.codexProfiles.existing": "现有",
 	"settings.codexProfiles.heading": "Codex 配置文件",
 	"settings.codexProfiles.label": "配置文件名称",
