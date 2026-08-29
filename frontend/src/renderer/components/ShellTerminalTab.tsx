@@ -118,7 +118,8 @@ export function ShellTerminalTab({
 	};
 	const connectedGlyphClass =
 		"size-icon-sm shrink-0 translate-y-px";
-	if (appearance === "connected") {
+	const isConnected = appearance === "connected";
+	if (isConnected) {
 		const closeAction = isEditing ? undefined : (
 			<button
 				{...closeControl}
@@ -179,16 +180,16 @@ export function ShellTerminalTab({
 
 	return (
 		<span
-			data-editing={appearance === "connected" && isEditing ? "true" : undefined}
+			data-editing={isConnected && isEditing ? "true" : undefined}
 			className={cn(
 				"group relative h-full shrink-0 self-stretch items-center transition-[border-color]",
-				appearance === "connected"
+				isConnected
 					? cn(
 							"session-tab-icon-floor session-tab-icon-floor--closable relative inline-flex max-w-shell-tab-max border-x border-transparent",
 							isEditing && "pl-2 pr-1",
 						)
 					: "inline-flex min-w-shell-tab-min shrink-0 items-center gap-1 rounded-md px-2 py-1",
-				appearance === "connected"
+				isConnected
 					? isActive
 						? "border-border-strong bg-overlay text-foreground"
 						: "border-transparent text-passive hover:bg-raised hover:text-foreground"
@@ -197,7 +198,7 @@ export function ShellTerminalTab({
 						: "hover:bg-interactive-hover/60",
 			)}
 		>
-			{appearance === "connected" && isEditing ? (
+			{isConnected && isEditing ? (
 				<SquareTerminal aria-hidden="true" className={cn("mr-1", connectedGlyphClass)} />
 			) : null}
 			{isEditing ? (
@@ -205,7 +206,7 @@ export function ShellTerminalTab({
 					aria-label={t("terminal.rename", { title })}
 					className={cn(
 						"rounded-sm border border-accent bg-background px-1 font-mono text-control font-semibold text-foreground shadow-sm outline-none ring-1 ring-accent",
-						appearance === "connected" ? "min-w-0 w-full text-left" : "min-w-flex-min max-w-shell-tab-max",
+						isConnected ? "min-w-0 w-full text-left" : "min-w-flex-min max-w-shell-tab-max",
 					)}
 					onBlur={commit}
 					onChange={(event) => setDraft(event.target.value)}
@@ -228,10 +229,10 @@ export function ShellTerminalTab({
 					aria-selected={isActive}
 					className={cn(
 						"select-none truncate text-control focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent/50",
-						appearance === "connected"
+						isConnected
 							? "inline-flex h-full min-w-0 cursor-pointer items-center pl-2 pr-2 text-left"
 							: "min-w-flex-min max-w-shell-tab-max cursor-pointer",
-						appearance === "connected" ? "font-normal" : "font-mono font-semibold",
+					isConnected ? "font-normal" : "font-mono font-semibold",
 						isActive ? "text-foreground" : "text-passive group-hover:text-foreground",
 					)}
 					{...tabRenameHandlers}
@@ -247,7 +248,7 @@ export function ShellTerminalTab({
 					type="button"
 				>
 					<span className="inline-flex min-w-0 -translate-y-px items-center">
-						{appearance === "connected" ? (
+						{isConnected ? (
 							<SquareTerminal
 								aria-hidden="true"
 								className={cn(
@@ -261,18 +262,18 @@ export function ShellTerminalTab({
 					</span>
 				</button>
 			)}
-			{appearance === "connected" && isEditing ? null : (
+			{isConnected && isEditing ? null : (
 				<button
 					{...closeControl}
 					className={
-						appearance === "connected"
+						isConnected
 							? "absolute top-[calc(50%_-_1px)] left-2 z-10 grid size-icon-sm -translate-y-1/2 place-items-center rounded-sm text-passive opacity-0 pointer-events-none transition-[background,color] duration-fast ease-out hover:bg-interactive-hover hover:text-foreground group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 motion-reduce:transition-none"
 							: "inline-flex h-control-sm w-control-sm shrink-0 items-center justify-center overflow-hidden rounded-sm text-passive opacity-0 transition-[background,color] duration-fast ease-out hover:bg-interactive-hover hover:text-foreground group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 motion-reduce:transition-none"
 					}
 				>
 					<X
 						aria-hidden="true"
-						className={appearance === "connected" ? "size-icon-sm translate-y-px" : "size-icon-sm"}
+						className={isConnected ? "size-icon-sm translate-y-px" : "size-icon-sm"}
 					/>
 				</button>
 			)}
