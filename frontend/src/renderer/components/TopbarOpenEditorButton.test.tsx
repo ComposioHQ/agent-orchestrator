@@ -98,7 +98,7 @@ describe("TopbarOpenEditorButton", () => {
 		renderButton();
 		const button = await screen.findByRole("button", { name: "Open in Cursor" });
 		expect(button).toHaveAttribute("data-priority", "primary");
-		expect(button.querySelector("[data-compact-label]")).toBeNull();
+		expect(button.querySelector("[data-compact-label]")).toHaveTextContent("Open");
 		await userEvent.click(button);
 		await waitFor(() => expect(openMock).toHaveBeenCalledWith({ sessionId: "sess-1" }));
 	});
