@@ -4034,7 +4034,7 @@ body:has(#root .platform-linux) > .browser-popout-overlay {
 		visibility 0s linear;
 }
 
-.browser-panel__toolbar--url-editing > :not(.browser-panel__url-wrap) {
+.browser-panel__toolbar--url-takeover > :not(.browser-panel__url-wrap):not(.browser-panel__navigation-btn) {
 	visibility: hidden;
 	opacity: 0;
 	pointer-events: none;
@@ -4284,7 +4284,7 @@ body:has(#root .platform-linux) > .browser-popout-overlay {
 		background-color var(--duration-fast) ease;
 }
 
-.browser-panel__toolbar--url-editing .browser-panel__url-input {
+.browser-panel__toolbar--url-takeover .browser-panel__url-input {
 	left: var(--browser-url-expand-left, 0);
 	right: var(--browser-url-expand-right, 0);
 	z-index: 2;

@@ -330,6 +330,7 @@ export function BrowserPanelView({
 	} = browserView;
 	const [urlInput, setUrlInput] = useState(navState.url);
 	const [urlEditing, setUrlEditing] = useState(false);
+	const urlTakeover = urlEditing && !poppedOut;
 	const { beginPicking, cancelPicking, enqueue, error, failPicking, queuedCount, retryQueued, status } =
 		annotationQueue;
 	const hasNativeBrowser = Boolean(window.ao?.browser);
@@ -431,10 +432,13 @@ export function BrowserPanelView({
 		const input = urlInputRef.current;
 		const wrapper = input?.parentElement;
 		const toolbar = input?.closest<HTMLElement>(".browser-panel__toolbar");
-		if (wrapper && toolbar) {
+		if (!poppedOut && wrapper && toolbar) {
 			const wrapperRect = wrapper.getBoundingClientRect();
 			const toolbarRect = toolbar.getBoundingClientRect();
-			wrapper.style.setProperty("--browser-url-expand-left", `${toolbarRect.left + 4 - wrapperRect.left}px`);
+			const navigationButtons = toolbar.querySelectorAll<HTMLElement>(".browser-panel__navigation-btn");
+			const lastNavigationButton = navigationButtons.item(navigationButtons.length - 1);
+			const targetLeft = lastNavigationButton?.getBoundingClientRect().right ?? toolbarRect.left + 4;
+			wrapper.style.setProperty("--browser-url-expand-left", `${targetLeft + 2 - wrapperRect.left}px`);
 			wrapper.style.setProperty("--browser-url-expand-right", `${wrapperRect.right - toolbarRect.right + 4}px`);
 		}
 		setUrlInput(navState.url);
@@ -552,13 +556,14 @@ export function BrowserPanelView({
 			<form
 				className={cn(
 					"browser-panel__toolbar flex shrink-0 min-w-0 items-center gap-1 border-b border-border bg-surface",
-					urlEditing && "browser-panel__toolbar--url-editing",
+					urlTakeover && "browser-panel__toolbar--url-takeover",
 				)}
 				data-testid="browser-toolbar"
 				onSubmit={submit}
 			>
 				<Button
 					aria-label={t("browser.back")}
+					className="browser-panel__navigation-btn"
 					disabled={!navState.canGoBack}
 					onClick={() => void goBack()}
 					size="icon-sm"
@@ -569,6 +574,7 @@ export function BrowserPanelView({
 				</Button>
 				<Button
 					aria-label={t("browser.forward")}
+					className="browser-panel__navigation-btn"
 					disabled={!navState.canGoForward}
 					onClick={() => void goForward()}
 					size="icon-sm"
@@ -579,6 +585,7 @@ export function BrowserPanelView({
 				</Button>
 				<Button
 					aria-label={navState.isLoading ? t("browser.stop") : t("browser.reload")}
+					className="browser-panel__navigation-btn"
 					onClick={() => void (navState.isLoading ? stop() : reload())}
 					size="icon-sm"
 					type="button"
@@ -643,7 +650,7 @@ export function BrowserPanelView({
 						onFocus={beginUrlEditing}
 						placeholder={t("browser.urlPlaceholder")}
 						ref={urlInputRef}
-						value={urlEditing ? urlInput : compactBrowserAddress(navState.url)}
+						value={urlEditing || poppedOut ? urlInput : compactBrowserAddress(navState.url)}
 					/>
 				</div>
 				{tabNotice ? (

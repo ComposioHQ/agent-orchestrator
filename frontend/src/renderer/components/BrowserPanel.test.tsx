@@ -256,15 +256,34 @@ describe("BrowserPanel", () => {
 			expect(input.selectionStart).toBe(0);
 			expect(input.selectionEnd).toBe(url.length);
 		});
-		expect(toolbar).toHaveClass("browser-panel__toolbar--url-editing");
+		expect(toolbar).toHaveClass("browser-panel__toolbar--url-takeover");
+		expect(within(toolbar).getByRole("button", { name: /back/i })).toHaveClass("browser-panel__navigation-btn");
+		expect(within(toolbar).getByRole("button", { name: /forward/i })).toHaveClass("browser-panel__navigation-btn");
+		expect(within(toolbar).getByRole("button", { name: /reload/i })).toHaveClass("browser-panel__navigation-btn");
 
 		act(() => {
 			for (const listener of pageFocusListeners) listener("42:sess-1");
 		});
 
 		expect(input).toHaveValue("google.com");
-		expect(toolbar).not.toHaveClass("browser-panel__toolbar--url-editing");
+		expect(toolbar).not.toHaveClass("browser-panel__toolbar--url-takeover");
 		expect(within(toolbar).getByRole("button", { name: /back/i })).toBeInTheDocument();
+	});
+
+	it("keeps the normal toolbar and full URL while maximized", async () => {
+		const url = "https://www.google.com/search?q=agent+orchestrator";
+		hookState.navState = { ...hookState.navState, url };
+		const user = userEvent.setup();
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut session={session} />);
+		const toolbar = screen.getByTestId("browser-toolbar");
+		const input = screen.getByRole("textbox", { name: /browser url/i });
+
+		expect(input).toHaveValue(url);
+		await user.click(input);
+
+		expect(toolbar).not.toHaveClass("browser-panel__toolbar--url-takeover");
+		expect(within(toolbar).getByRole("button", { name: /back/i })).toBeInTheDocument();
+		expect(within(toolbar).getByRole("button", { name: /reload/i })).toBeInTheDocument();
 	});
 
 	it("constrains the device frame to a named preset's width, and clears it back to fit", async () => {
