@@ -325,11 +325,15 @@ function CodexProfileLoginTerminalPanel({ workflow, onCheckAgain, onClose, onRet
 	const theme = useResolvedTheme();
 	const shell = useShellMaybe();
 	const daemonReady = shell ? shell.daemonStatus.state === "ready" : true;
+	const panelRef = useRef<HTMLDivElement>(null);
 	const terminalStateHandlerRef = useRef(onTerminalState);
 	terminalStateHandlerRef.current = onTerminalState;
 	const handleTerminalState = useCallback((state: TerminalSessionState) => {
 		terminalStateHandlerRef.current(state);
 	}, []);
+	useEffect(() => {
+		panelRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+	}, [workflow.terminal.handleId]);
 	const status = workflow.phase === "running"
 		? t("settings.codexProfiles.loginRunning")
 		: workflow.phase === "verifying"
@@ -341,7 +345,7 @@ function CodexProfileLoginTerminalPanel({ workflow, onCheckAgain, onClose, onRet
 	const checkable = workflow.phase === "unverified";
 
 	return (
-		<div className="mt-3 overflow-hidden rounded-md border border-border bg-terminal" data-testid="codex-profile-login-terminal">
+		<div ref={panelRef} className="mt-3 scroll-my-3 overflow-hidden rounded-md border border-border bg-terminal" data-testid="codex-profile-login-terminal">
 			<div className="flex min-h-10 items-center justify-between gap-3 border-b border-border bg-surface/90 px-3 py-2">
 				<div className="min-w-0">
 					<p className="truncate text-xs font-medium text-foreground">{t("settings.codexProfiles.loginTerminalTitle")}</p>
