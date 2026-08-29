@@ -1218,7 +1218,7 @@ function ChatHeader({
 					</div>
 				</div>
 				<div
-					className="ml-auto flex shrink-0 items-center gap-2 pl-2 pr-3"
+					className="ml-auto flex shrink-0 items-center gap-1 pl-2 pr-3"
 					data-testid="session-action-region"
 				>
 					{tabStripAction ? <div data-testid="session-tab-strip-action">{tabStripAction}</div> : null}
