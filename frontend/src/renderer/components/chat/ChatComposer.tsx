@@ -415,19 +415,12 @@ export function ChatComposer({
 
 	async function performSubmit(forceSteer?: boolean) {
 		const currentText = textRef.current;
-		const canSubmitNow =
-			(currentText.trim().length > 0 || staged) &&
-			!disabled &&
-			!steerPending &&
-			!savingQueuedEditPending &&
-			(editingQueuedTurnId || !busy);
-		if (!canSubmitNow) return;
-		setSendError(null);
-
-		const shouldSteer = forceSteer ?? false;
 		const body = currentText.trim();
 
+		// `/compact` is a local AO command. It must refuse while a turn is running
+		// without being blocked by the ordinary busy send gate.
 		if (body === "/compact" && onCompact) {
+			setSendError(null);
 			if (compactBlocked) {
 				setSendError("Stop the current turn before compacting.");
 				return;
@@ -451,6 +444,17 @@ export function ChatComposer({
 			setHighlighted(0);
 			return;
 		}
+
+		const canSubmitNow =
+			(currentText.trim().length > 0 || staged) &&
+			!disabled &&
+			!steerPending &&
+			!savingQueuedEditPending &&
+			(editingQueuedTurnId || !busy);
+		if (!canSubmitNow) return;
+		setSendError(null);
+
+		const shouldSteer = forceSteer ?? false;
 
 		// Steering keeps the text in the box until the provider has taken it. The turn
 		// is already running, so a refusal is a real possibility — and a refusal that
