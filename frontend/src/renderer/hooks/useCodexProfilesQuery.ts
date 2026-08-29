@@ -10,6 +10,7 @@ export type CodexProfilesResponse = components["schemas"]["CodexProfilesResponse
 export type CodexProfile = components["schemas"]["CodexProfileSnapshot"];
 export type CodexProfileLoginStart = components["schemas"]["StartCodexProfileLoginResponse"];
 export type CodexProfileLoginEvent = components["schemas"]["CodexProfileLoginEvent"];
+export type CodexProfileCapacityEvent = components["schemas"]["CodexProfileCapacityEvent"];
 
 async function fetchCodexProfiles(): Promise<CodexProfilesResponse> {
 	const { data, error } = await apiClient.GET("/api/v1/agents/codex/profiles");
@@ -20,6 +21,14 @@ async function fetchCodexProfiles(): Promise<CodexProfilesResponse> {
 export async function ensureCodexProfiles(profileIds: string[] = []): Promise<CodexProfilesResponse> {
 	const { data, error } = await apiClient.POST("/api/v1/agents/codex/profiles/ensure", {
 		body: { profileIds, purpose: "display" },
+	});
+	if (error) throw new Error(apiErrorMessage(error));
+	return data as CodexProfilesResponse;
+}
+
+export async function ensureCodexProfileCapacity(profileIds: string[] = []): Promise<CodexProfilesResponse> {
+	const { data, error } = await apiClient.POST("/api/v1/agents/codex/profiles/capacity/ensure", {
+		body: { profileIds },
 	});
 	if (error) throw new Error(apiErrorMessage(error));
 	return data as CodexProfilesResponse;
@@ -83,7 +92,7 @@ export function useEnsureCodexProfiles(enabled = true): void {
 			const cacheReady = cached
 				? Promise.resolve()
 				: queryClient.fetchQuery(codexProfilesQueryOptions).then(() => undefined).catch(() => undefined);
-			void cacheReady.then(() => ensureCodexProfiles()).then((next) => {
+			void cacheReady.then(() => ensureCodexProfileCapacity()).then((next) => {
 				if (active) cacheCodexProfiles(queryClient, next);
 			}).catch(() => undefined);
 		};
@@ -124,7 +133,7 @@ export function useCodexProfileLoginEvents(
 				onEvent(event);
 				if (event.status !== "pending") {
 					source.close();
-					void ensureCodexProfiles()
+					void ensureCodexProfileCapacity()
 						.then((next) => cacheCodexProfiles(queryClient, next))
 						.catch(() => undefined);
 				}

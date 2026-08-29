@@ -64,6 +64,7 @@ import type { BrowserViewModel } from "../hooks/useBrowserView";
 import { useUiStore } from "../stores/ui-store";
 import { Button } from "./ui/button";
 import { cn } from "../lib/utils";
+import { codexCapacityTranslationKey } from "../lib/codex-capacity";
 import { SessionTerminationPopover } from "./SessionTerminationPopover";
 import { ReviewerSelect } from "./ReviewerSelect";
 import { agentLabel } from "../lib/agent-options";
@@ -294,6 +295,14 @@ function SummaryView({
 							<p className="mt-0.5 text-xs font-medium text-settings-label">{session.codexProfile.label}</p>
 							{session.codexProfile.availability !== "available" ? (
 								<p className="mt-0.5 text-2xs text-warning">{session.codexProfile.availability === "unavailable" ? t("inspector.codexProfileUnavailable") : t("inspector.codexProfileUnknown")}</p>
+							) : null}
+							{session.codexProfile.capacity ? (
+								<p className={cn("mt-0.5 text-2xs", session.codexProfile.capacity.state === "near_limit" || session.codexProfile.capacity.state === "exhausted" ? "text-warning" : "text-settings-muted")}>
+									{t("inspector.codexCapacity", {
+										state: t(codexCapacityTranslationKey(session.codexProfile.capacity.state)),
+										used: session.codexProfile.capacity.usedPercent === undefined || session.codexProfile.capacity.usedPercent === null ? "—" : `${session.codexProfile.capacity.usedPercent}%`,
+									})}
+								</p>
 							) : null}
 						</div>
 					) : null}

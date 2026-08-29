@@ -166,6 +166,17 @@ function CodexProfileRow({ profile, login, busy, loginSupported, onLogin, onCanc
 				: t("settings.codexProfiles.unknown");
 	const canLogin = profile.status === "valid" && auth.state === "unauthorized" && loginSupported;
 	const retryableLogin = auth.state === "unauthorized" && (login?.status === "failed" || login?.status === "cancelled");
+	const capacity = profile.capacity;
+	const capacityLabel = capacity.state === "available"
+		? t("settings.codexProfiles.capacityAvailable")
+		: capacity.state === "near_limit"
+			? t("settings.codexProfiles.capacityNearLimit")
+			: capacity.state === "exhausted"
+				? t("settings.codexProfiles.capacityExhausted")
+				: capacity.state === "unsupported"
+					? t("settings.codexProfiles.capacityUnsupported")
+					: t("settings.codexProfiles.capacityUnknown");
+	const capacityParts = [capacity.plan, capacity.usedPercent === undefined || capacity.usedPercent === null ? undefined : `${capacity.usedPercent}%`, capacity.resetsAt ? t("settings.codexProfiles.capacityResets", { value: new Date(capacity.resetsAt).toLocaleString() }) : undefined].filter(Boolean);
 
 	return (
 		<div className="rounded-md border border-border bg-background/40 p-3" data-profile-id={profile.id}>
@@ -189,6 +200,13 @@ function CodexProfileRow({ profile, login, busy, loginSupported, onLogin, onCanc
 							</p>
 						)}
 						{profile.status === "valid" && auth.freshness === "stale" && auth.reason ? <p className="mt-1 text-xs text-muted-foreground">{auth.reason}</p> : null}
+						{profile.status === "valid" ? (
+							<div className="mt-2 rounded border border-border/70 bg-muted/30 px-2.5 py-2 text-xs">
+								<p className="font-medium text-foreground">{capacityLabel}{capacity.freshness === "checking" ? <LoaderCircle className="ml-1 inline size-3 animate-spin" aria-label={t("settings.codexProfiles.checking")} /> : null}</p>
+								{capacityParts.length > 0 ? <p className="mt-0.5 text-muted-foreground">{capacityParts.join(" · ")}</p> : null}
+								{capacity.freshness === "stale" || capacity.state === "unknown" || capacity.state === "unsupported" ? <p className="mt-0.5 text-muted-foreground">{capacity.reason}</p> : null}
+							</div>
+						) : null}
 						{login?.reason ? <p className="mt-1 text-xs text-muted-foreground">{login.reason}</p> : null}
 					</div>
 				</div>

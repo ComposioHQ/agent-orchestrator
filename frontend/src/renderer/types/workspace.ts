@@ -60,6 +60,16 @@ export type AgentSwitchSummary = {
 
 export type CodexSessionProfileSummary = {
 	availability: "available" | "unavailable" | "unknown";
+	capacity?: {
+		freshness: "fresh" | "stale" | "checking";
+		observedAt?: string | null;
+		plan?: string | null;
+		reason: string;
+		reasonCode: string;
+		resetsAt?: string | null;
+		state: "available" | "near_limit" | "exhausted" | "unknown" | "unsupported";
+		usedPercent?: number | null;
+	};
 	id: string;
 	label: string;
 	source: "existing" | "managed" | "legacy";

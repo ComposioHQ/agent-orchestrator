@@ -27,16 +27,18 @@ import { SettingsOptionMenu } from "./settings/SettingsOptionMenu";
 import { Button } from "./ui/button";
 import {
 	cacheCodexProfiles,
-	ensureCodexProfiles,
+	ensureCodexProfileCapacity,
 	startCodexProfileLogin,
 	useCodexProfileLoginEvents,
 	useCodexProfilesQuery,
 	useEnsureCodexProfiles,
 	type CodexProfileLoginEvent,
 	type CodexProfileLoginStart,
+	type CodexProfile,
 } from "../hooks/useCodexProfilesQuery";
 import { aoBridge } from "../lib/bridge";
 import { useUiStore } from "../stores/ui-store";
+import { codexCapacitySummary, codexCapacityTranslationKey } from "../lib/codex-capacity";
 import {
 	Dialog,
 	DialogClose,
@@ -54,6 +56,11 @@ const ALL_SWITCH_AGENT_OPTIONS = AGENT_OPTIONS.map((value) => ({ value, label: A
 
 export function canSwitchAgentHarness(value: string): value is SwitchAgentHarness {
 	return SWITCH_AGENT_OPTIONS.some((option) => option.value === value);
+}
+
+function codexProfileCapacityLabel(profile: CodexProfile, stateLabel: string): string {
+	const summary = codexCapacitySummary(profile.capacity, stateLabel);
+	return summary ? `${profile.label} · ${summary}` : profile.label;
 }
 
 function SwitchTargetPicker({
@@ -241,10 +248,16 @@ export function SwitchAgentDialog({ agentSwitch, container, open, session, onOpe
 	};
 
 	const error = switchMutation.error;
-	const profileWarning = needsProfileSelection && selectedProfile &&
-		(selectedProfile.authentication.state === "unknown" || selectedProfile.authentication.freshness === "stale")
-		? t("newTask.profileUnknownWarning")
-		: undefined;
+	let profileWarning: string | undefined;
+	if (needsProfileSelection && selectedProfile) {
+		if (selectedProfile.authentication.state === "unknown" || selectedProfile.authentication.freshness === "stale") {
+			profileWarning = t("newTask.profileUnknownWarning");
+		} else if (selectedProfile.capacity.state === "exhausted") {
+			profileWarning = t("newTask.profileCapacityExhausted");
+		} else if (selectedProfile.capacity.state === "near_limit") {
+			profileWarning = t("newTask.profileCapacityNearLimit");
+		}
+	}
 	const refreshRecovery = async () => {
 		setRefreshingRecovery(true);
 		try {
@@ -390,7 +403,11 @@ export function SwitchAgentDialog({ agentSwitch, container, open, session, onOpe
 													disabled={profilesQuery.isLoading || admissionPending}
 													menuAlign="start"
 													onOpenChange={(menuOpen) => {
-														if (menuOpen) void ensureCodexProfiles().then((next) => cacheCodexProfiles(queryClient, next)).catch(() => undefined);
+														if (menuOpen) {
+															void ensureCodexProfileCapacity()
+																.then((next) => cacheCodexProfiles(queryClient, next))
+																.catch(() => undefined);
+														}
 													}}
 													onChange={(value) => {
 														if (value === "__manage") {
@@ -399,10 +416,16 @@ export function SwitchAgentDialog({ agentSwitch, container, open, session, onOpe
 														}
 														setProfileId(value);
 														setProfileError(undefined);
-														void ensureCodexProfiles([value]).then((next) => cacheCodexProfiles(queryClient, next)).catch(() => undefined);
+														void ensureCodexProfileCapacity([value])
+															.then((next) => cacheCodexProfiles(queryClient, next))
+															.catch(() => undefined);
 													}}
 													options={[
-												...(profilesQuery.data?.profiles?.map((profile) => ({ value: profile.id, label: profile.label, disabled: profile.status !== "valid" })) ?? []),
+														...(profilesQuery.data?.profiles?.map((profile) => ({
+															value: profile.id,
+															label: codexProfileCapacityLabel(profile, t(codexCapacityTranslationKey(profile.capacity.state))),
+															disabled: profile.status !== "valid",
+														})) ?? []),
 														{ value: "__manage", label: t("newTask.manageProfiles") },
 													]}
 													placeholder={t("newTask.selectProfile")}

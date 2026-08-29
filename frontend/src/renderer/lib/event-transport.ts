@@ -7,6 +7,8 @@ import { sessionScmSummaryQueryKey } from "../hooks/useSessionScmSummary";
 import { conversationQueryKey, conversationQueryRoot } from "../hooks/useConversation";
 import { agentSwitchesQueryRoot } from "../hooks/useAgentSwitches";
 import { sessionUsageQueryRoot } from "../hooks/useSessionUsageSummaries";
+import { codexProfilesQueryKey } from "../hooks/codex-profile-cache";
+import type { components } from "../../api/schema";
 
 export type EventTransport = {
 	connect: () => () => void;
@@ -39,9 +41,10 @@ const CDC_EVENT_TYPES = [
 ] as const;
 
 /**
- * Wires live server state into the TanStack Query cache. Two sources feed it:
+ * Wires live server state into the TanStack Query cache. Three sources feed it:
  *   - daemon lifecycle over Electron IPC (coming up/down changes session availability)
  *   - the backend CDC stream over SSE (project/session/PR changes)
+ *   - the Codex capacity stream over SSE (profile-scoped advisory state)
  * Both invalidate the ["workspaces"] query so the UI refetches. Invalidations are
  * debounced because a single user action can emit a burst of CDC events.
  */
@@ -56,6 +59,23 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 			let retryTimer: ReturnType<typeof setTimeout> | undefined;
 			let source: EventSource | undefined;
 			let sourceBaseUrl: string | undefined;
+			let capacitySource: EventSource | undefined;
+			let capacitySourceBaseUrl: string | undefined;
+			const applyCapacityEvent = (event: Event) => {
+				if (!("data" in event)) return;
+				try {
+					const decoded = JSON.parse(String((event as MessageEvent).data)) as components["schemas"]["CodexProfileCapacityEvent"];
+					queryClient.setQueryData<components["schemas"]["CodexProfilesResponse"]>(codexProfilesQueryKey, (current) => {
+						if (!current) return current;
+						if (decoded.capacity === null) return { ...current, profiles: current.profiles.filter((profile) => profile.id !== decoded.profileId) };
+						const capacity = decoded.capacity;
+						return { ...current, profiles: current.profiles.map((profile) => profile.id === decoded.profileId ? { ...profile, capacity } : profile) };
+					});
+					void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+				} catch {
+					// A malformed transient event cannot replace the cached safe snapshot.
+				}
+			};
 			const refreshWorkspaces = (event?: Event) => {
 				let conversationOnly = false;
 				if (event === undefined) {
@@ -147,12 +167,30 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 				if (typeof EventSource === "undefined") return;
 				if (!hasTrustedApiBaseUrl()) {
 					source?.close();
+					capacitySource?.close();
 					source = undefined;
+					capacitySource = undefined;
 					sourceBaseUrl = undefined;
+					capacitySourceBaseUrl = undefined;
 					setEventsConnectionState("disconnected");
 					return;
 				}
 				const baseUrl = getApiBaseUrl();
+				if (!capacitySource || capacitySourceBaseUrl !== baseUrl || capacitySource.readyState === EVENTSOURCE_CLOSED) {
+					capacitySource?.close();
+					capacitySourceBaseUrl = baseUrl;
+					try {
+						capacitySource = new EventSource(`${baseUrl.replace(/\/+$/, "")}/api/v1/agents/codex/profiles/capacity/events`);
+						capacitySource.onopen = () => {
+							void queryClient.invalidateQueries({ queryKey: codexProfilesQueryKey });
+							void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+						};
+						capacitySource.onerror = () => { if (capacitySource?.readyState === EVENTSOURCE_CLOSED) scheduleRetry(); };
+						capacitySource.addEventListener("codex_profile_capacity", applyCapacityEvent);
+					} catch {
+						capacitySource = undefined;
+					}
+				}
 				// Keep a still-usable source on the same base URL; replace one the
 				// browser abandoned (CLOSED) or one bound to a stale port.
 				if (source && sourceBaseUrl === baseUrl && source.readyState !== EVENTSOURCE_CLOSED) return;
@@ -199,6 +237,7 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 				removeDaemonListener();
 				removeBaseUrlListener();
 				source?.close();
+				capacitySource?.close();
 				setEventsConnectionState("idle");
 			};
 		},

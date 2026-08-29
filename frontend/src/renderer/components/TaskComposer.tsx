@@ -13,6 +13,7 @@ import { RequiredAgentField } from "./CreateProjectAgentSheet";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorCode, apiErrorMessage } from "../lib/api-client";
 import { captureRendererEvent } from "../lib/telemetry";
+import { codexCapacitySummary, codexCapacityTranslationKey } from "../lib/codex-capacity";
 import {
 	agentReadinessQueryKey,
 	useAgentReadinessQuery,
@@ -33,7 +34,7 @@ import { AgentModelCombobox } from "./settings/AgentModelCombobox";
 import { SettingsOptionMenu } from "./settings/SettingsOptionMenu";
 import {
 	cacheCodexProfiles,
-	ensureCodexProfiles,
+	ensureCodexProfileCapacity,
 	startCodexProfileLogin,
 	useCodexProfileLoginEvents,
 	useCodexProfilesQuery,
@@ -402,13 +403,18 @@ export function TaskComposer({
 		}
 	};
 
-	const profileWarning = showCodexProfiles && selectedCodexProfile
-		? selectedCodexProfile.authentication.freshness === "checking"
-			? t("newTask.profileChecking")
-			: selectedCodexProfile.authentication.state === "unknown" || selectedCodexProfile.authentication.freshness === "stale"
-				? t("newTask.profileUnknownWarning")
-				: undefined
-		: undefined;
+	let profileWarning: string | undefined;
+	if (showCodexProfiles && selectedCodexProfile) {
+		if (selectedCodexProfile.authentication.freshness === "checking") {
+			profileWarning = t("newTask.profileChecking");
+		} else if (selectedCodexProfile.authentication.state === "unknown" || selectedCodexProfile.authentication.freshness === "stale") {
+			profileWarning = t("newTask.profileUnknownWarning");
+		} else if (selectedCodexProfile.capacity.state === "exhausted") {
+			profileWarning = t("newTask.profileCapacityExhausted");
+		} else if (selectedCodexProfile.capacity.state === "near_limit") {
+			profileWarning = t("newTask.profileCapacityNearLimit");
+		}
+	}
 
 	return (
 		<TaskComposerView
@@ -472,7 +478,7 @@ export function TaskComposer({
 				value: profileId,
 				disabled: codexProfilesQuery.isLoading,
 				onOpen: () => {
-					void ensureCodexProfiles().then((next) => cacheCodexProfiles(queryClient, next)).catch(() => undefined);
+					void ensureCodexProfileCapacity().then((next) => cacheCodexProfiles(queryClient, next)).catch(() => undefined);
 				},
 				onChange: (value) => {
 					if (value === "__manage") {
@@ -482,13 +488,16 @@ export function TaskComposer({
 					setProfileId(value);
 					setError(undefined);
 					setFallbackAction(undefined);
-					void ensureCodexProfiles([value]).then((next) => cacheCodexProfiles(queryClient, next)).catch(() => undefined);
+					void ensureCodexProfileCapacity([value]).then((next) => cacheCodexProfiles(queryClient, next)).catch(() => undefined);
 				},
 				options: [
 					...(codexProfilesQuery.data?.profiles?.map((profile) => ({
 						id: profile.id,
-						label: profile.label,
+						label: profileCapacityOptionLabel(profile, t(codexCapacityTranslationKey(profile.capacity.state))),
 						disabled: profile.status !== "valid",
+						capacityState: profile.capacity.state,
+						capacityFreshness: profile.capacity.freshness,
+						capacitySummary: codexCapacitySummary(profile.capacity, t(codexCapacityTranslationKey(profile.capacity.state))),
 					})) ?? []),
 					{ id: "__manage", label: t("newTask.manageProfiles") },
 				],
@@ -517,6 +526,11 @@ export function TaskComposer({
 			renderModelControl={(control) => <TaskModelPicker {...control} />}
 		/>
 	);
+}
+
+function profileCapacityOptionLabel(profile: components["schemas"]["CodexProfileSnapshot"], stateLabel: string): string {
+	const summary = codexCapacitySummary(profile.capacity, stateLabel);
+	return summary ? `${profile.label} · ${summary}` : profile.label;
 }
 
 function DesktopProfileControl(control: TaskComposerProfileControl) {

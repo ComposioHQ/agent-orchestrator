@@ -80,6 +80,9 @@ export type TaskComposerProfileOption = {
 	disabled?: boolean;
 	id: string;
 	label: string;
+	capacityState?: "available" | "near_limit" | "exhausted" | "unknown" | "unsupported";
+	capacityFreshness?: "fresh" | "stale" | "checking";
+	capacitySummary?: string;
 };
 
 export type TaskComposerProfileControl = {
