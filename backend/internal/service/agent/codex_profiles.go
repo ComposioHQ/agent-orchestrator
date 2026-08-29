@@ -1046,7 +1046,7 @@ func (s *Service) OpenCodexProfileLoginTerminal(ctx context.Context, profileID s
 	if err != nil {
 		return CodexProfileLoginTerminalStart{}, err
 	}
-	if installation == domain.AgentInstallationNotInstalled {
+	if codexInstallationConfirmedAbsent(installation) {
 		return CodexProfileLoginTerminalStart{}, apierr.Unavailable("CODEX_PROFILE_LOGIN_TERMINAL_UNAVAILABLE", "Codex is not installed")
 	}
 	return s.codexProfiles.openResolvedLoginTerminal(ctx, record)
@@ -1071,22 +1071,26 @@ func (s *Service) requireCodexProfileInstallation(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if installation == domain.AgentInstallationNotInstalled {
+	if codexInstallationConfirmedAbsent(installation) {
 		return apierr.Unavailable("CODEX_PROFILE_MANAGEMENT_UNAVAILABLE", "Codex is not installed")
 	}
 	return nil
 }
 
-func (s *Service) codexProfileInstallation(ctx context.Context, force bool) (domain.AgentInstallationState, error) {
+func (s *Service) codexProfileInstallation(ctx context.Context, force bool) (domain.AgentInstallationObservation, error) {
 	const codexID = string(domain.HarnessCodex)
 	if force {
 		s.readiness.Invalidate(codexID, readinessInvalidateInstallation)
 	}
 	installation, err := s.readiness.EnsureInstallation(ctx, []string{codexID}, domain.AgentReadinessPurposeDisplay)
 	if err != nil {
-		return domain.AgentInstallationUnknown, err
+		return domain.AgentInstallationObservation{}, err
 	}
-	return installation[0].Installation.State, nil
+	return installation[0].Installation, nil
+}
+
+func codexInstallationConfirmedAbsent(installation domain.AgentInstallationObservation) bool {
+	return installation.State == domain.AgentInstallationNotInstalled && installation.Freshness == domain.AgentReadinessFresh
 }
 
 // SubscribeCodexProfileLogin streams the current and subsequent login state.
