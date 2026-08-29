@@ -1159,29 +1159,16 @@ function AttachedTerminal({
 	);
 }
 
-// Blank terminal-coloured cover held over xterm while the initial replay is
-// buffered. A fast open (the common case) shows nothing at all — the label only
-// appears if the wait is long enough to read as a stall rather than a repaint,
-// so normal session switching never flashes a loader.
-const REPLAY_COVER_LABEL_MS = 120;
-
 function ReplayCover() {
-	const { t } = useTranslation();
-	const [showLabel, setShowLabel] = useState(false);
-	useEffect(() => {
-		const timer = window.setTimeout(() => setShowLabel(true), REPLAY_COVER_LABEL_MS);
-		return () => window.clearTimeout(timer);
-	}, []);
 	return (
-		// pointer-events-none: the cover is purely visual and xterm underneath is
-		// live the whole time, so clicks, selection and wheel must pass through
-		// rather than being swallowed for the length of the gate.
+		// Keep this cover silent: its only job is to hide the initial replay's
+		// intermediate paints. xterm remains live underneath, and pointer events
+		// pass through so selection and wheel input never wait on attachment.
 		<div
-			className="bg-terminal-opaque pointer-events-none absolute inset-0 grid place-items-center"
+			aria-hidden="true"
+			className="bg-terminal-opaque pointer-events-none absolute inset-0"
 			data-testid="terminal-replay-cover"
-		>
-			{showLabel && <div className="font-mono text-caption text-terminal-dim">{t("terminal.loadingOutput")}</div>}
-		</div>
+		/>
 	);
 }
 

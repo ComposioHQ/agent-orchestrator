@@ -29,6 +29,14 @@ function renderComposer(props: Partial<Parameters<typeof ChatComposer>[0]> = {})
 	return { onSend, field: screen.getByLabelText("Message the agent") as HTMLElement };
 }
 
+function deferred<T>() {
+	let resolve!: (value: T) => void;
+	const promise = new Promise<T>((resolvePromise) => {
+		resolve = resolvePromise;
+	});
+	return { promise, resolve };
+}
+
 async function typeInComposer(field: HTMLElement, text: string) {
 	await typeInLexicalEditor(field, text);
 }
@@ -185,6 +193,29 @@ describe("send keys", () => {
 		expect(field).toHaveTextContent("hello");
 		await userEvent.keyboard("{Enter}");
 		expect(onSend).toHaveBeenCalledWith("hello");
+	});
+
+	it("joins rapid duplicate Enter submissions without showing a false retry error", async () => {
+		const provider = deferred<void>();
+		const onSend = vi
+			.fn()
+			.mockImplementationOnce(() => provider.promise)
+			.mockRejectedValueOnce(new Error("A message is already being sent for this session."));
+		render(<ChatComposer onSend={onSend} />);
+		const field = screen.getByLabelText("Message the agent") as HTMLElement;
+		await typeInComposer(field, "only send this once");
+
+		fireEvent.keyDown(field, { key: "Enter" });
+		fireEvent.keyDown(field, { key: "Enter" });
+
+		expect(onSend).toHaveBeenCalledTimes(1);
+		provider.resolve();
+		await act(async () => {
+			await provider.promise;
+		});
+		await waitFor(() => expect(field).toHaveTextContent(""));
+		expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+		expect(screen.queryByText(/draft.*kept|retry/i)).not.toBeInTheDocument();
 	});
 
 	it("makes a newline on Shift+Enter and does not send", async () => {
