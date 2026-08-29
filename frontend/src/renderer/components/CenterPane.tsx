@@ -900,7 +900,7 @@ export function SessionPaneTab({
 			}}
 			buttonRef={ref}
 			className="w-shell-tab-connected min-w-shell-tab-min"
-			data-terminal-role={connected || tabAction ? undefined : "primary"}
+			data-terminal-role={connected ? undefined : "primary"}
 		>
 			{tabIcon}
 			<span className="truncate">{label}</span>

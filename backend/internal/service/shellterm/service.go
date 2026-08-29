@@ -279,25 +279,20 @@ func (s *Service) OpenShellTerminal(ctx context.Context, in OpenShellTerminalInp
 // a tab's current UI position, so closing or reordering another tab cannot
 // rename an existing terminal.
 func nextShellTerminalTitle(terminals []ShellTerminalRecord) string {
-	max := 0
+	maxNumber := 0
 	for _, terminal := range terminals {
 		if terminal.Title == "Terminal" {
-			max = maxInt(max, 1)
+			if maxNumber < 1 {
+				maxNumber = 1
+			}
 			continue
 		}
 		var number int
-		if _, err := fmt.Sscanf(terminal.Title, "Terminal %d", &number); err == nil && number > max {
-			max = number
+		if _, err := fmt.Sscanf(terminal.Title, "Terminal %d", &number); err == nil && number > maxNumber {
+			maxNumber = number
 		}
 	}
-	return fmt.Sprintf("Terminal %d", max+1)
-}
-
-func maxInt(left, right int) int {
-	if left > right {
-		return left
-	}
-	return right
+	return fmt.Sprintf("Terminal %d", maxNumber+1)
 }
 
 // maxShellTerminalTitleLen bounds a user-supplied tab name. Tabs are truncated
