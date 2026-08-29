@@ -729,20 +729,30 @@ func (m *Manager) acknowledgeAgentSwitchTarget(ctx context.Context, id domain.Se
 	if !signal.Valid || signal.State != domain.ActivityActive || signal.Event != "user-prompt-submit" || signal.LaunchID == "" {
 		return nil
 	}
-	store, ok := m.store.(ports.AgentSwitchStore)
-	if !ok {
-		return nil
+	if store, ok := m.store.(ports.AgentSwitchStore); ok {
+		sw, found, err := store.GetActiveAgentSwitch(ctx, id)
+		if err != nil {
+			return fmt.Errorf("lifecycle: read active agent switch acknowledgement for %s: %w", id, err)
+		}
+		if found && sw.State == domain.AgentSwitchDelivering {
+			if _, err = store.AcknowledgeAgentSwitchTarget(ctx, sw.ID, id, domain.AgentGenerationID(signal.LaunchID), at); err != nil {
+				return fmt.Errorf("lifecycle: acknowledge agent switch %s target: %w", sw.ID, err)
+			}
+		}
 	}
-	sw, found, err := store.GetActiveAgentSwitch(ctx, id)
-	if err != nil {
-		return fmt.Errorf("lifecycle: read active agent switch acknowledgement for %s: %w", id, err)
-	}
-	if !found || sw.State != domain.AgentSwitchDelivering {
-		return nil
-	}
-	_, err = store.AcknowledgeAgentSwitchTarget(ctx, sw.ID, id, domain.AgentGenerationID(signal.LaunchID), at)
-	if err != nil {
-		return fmt.Errorf("lifecycle: acknowledge agent switch %s target: %w", sw.ID, err)
+	if store, ok := m.store.(interface {
+		GetCodexProfileSwitchForSession(context.Context, domain.SessionID) (domain.CodexProfileSwitch, bool, error)
+		AcknowledgeCodexProfileSwitchTarget(context.Context, domain.CodexProfileSwitchID, domain.SessionID, domain.AgentGenerationID, time.Time) (bool, error)
+	}); ok {
+		sw, found, err := store.GetCodexProfileSwitchForSession(ctx, id)
+		if err != nil {
+			return fmt.Errorf("lifecycle: read Codex profile-switch acknowledgement for %s: %w", id, err)
+		}
+		if found && sw.TargetSessionID != nil && *sw.TargetSessionID == id && sw.Phase == domain.CodexProfileSwitchDeliveringHandoff {
+			if _, err := store.AcknowledgeCodexProfileSwitchTarget(ctx, sw.ID, id, domain.AgentGenerationID(signal.LaunchID), at); err != nil {
+				return fmt.Errorf("lifecycle: acknowledge Codex profile switch %s target: %w", sw.ID, err)
+			}
+		}
 	}
 	return nil
 }

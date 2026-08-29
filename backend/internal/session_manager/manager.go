@@ -148,7 +148,13 @@ var (
 	// ErrStartupPending means a TUI session has not yet received its first
 	// agent hook callback, so the native startup sequence (including pre-session
 	// approval dialogs) may still be consuming pane input.
-	ErrStartupPending = errors.New("session: agent startup not ready for input")
+	ErrStartupPending                       = errors.New("session: agent startup not ready for input")
+	ErrSessionArchived                      = errors.New("session: archived")
+	ErrCodexProfileSwitchUnavailable        = errors.New("session: Codex profile switching unavailable")
+	ErrCodexProfileSwitchNotFound           = errors.New("session: Codex profile switch not found")
+	ErrCodexProfileSwitchRequiresCodex      = errors.New("session: Codex profile switch requires a bound Codex worker")
+	ErrCodexProfileSwitchCancellationUnsafe = errors.New("session: Codex profile switch cancellation is unsafe")
+	ErrCodexProfileSwitchRecoveryRequired   = errors.New("session: Codex profile switch recovery is required")
 
 	// Spawn-stage sentinels. Each is the existing log word after "spawn" /
 	// "spawn <id>:" so wrapping them does not change daemon-log wording, while
@@ -346,12 +352,13 @@ type Store interface {
 // Manager coordinates internal session spawn, restore, kill, and cleanup over
 // the outbound ports. User-facing read-model assembly lives in the service package.
 type Manager struct {
-	runtime        runtimeController
-	agents         ports.AgentResolver
-	workspace      ports.Workspace
-	store          Store
-	agentReadiness ports.AgentReadinessProvider
-	codexProfiles  ports.CodexProfileLaunchResolver
+	runtime                   runtimeController
+	agents                    ports.AgentResolver
+	workspace                 ports.Workspace
+	store                     Store
+	agentReadiness            ports.AgentReadinessProvider
+	codexProfiles             ports.CodexProfileLaunchResolver
+	codexProfileSwitchOptions ports.CodexProfileSwitchOptionProvider
 	// messenger is a sessionguard.Guard wrapping the raw messenger, so every
 	// pane write is guarded (re-read state, refuse a blocked session) without
 	// each call site re-deriving the check. Send/confirmActive use Deliver for
@@ -392,6 +399,10 @@ type Manager struct {
 	newLaunchID     func() string
 	agentOpMu       sync.Mutex
 	agentOperations map[domain.SessionID]agentOperationKind
+	// codexUsageLimited retains a structured provider usage-limit boundary until
+	// the user confirms an assisted switch. It is daemon-memory state, never a
+	// capacity claim and never sufficient to start a switch by itself.
+	codexUsageLimited map[domain.SessionID]time.Time
 	// switchDecisionInput opens a narrow human-only terminal lane while the
 	// source is blocked on permission during a mandatory switch.
 	switchDecisionInput map[domain.SessionID]domain.AgentSwitchID
@@ -693,6 +704,7 @@ func New(d Deps) *Manager {
 		newLaunchID:                  d.NewLaunchID,
 		backgroundContext:            d.BackgroundContext,
 		agentOperations:              make(map[domain.SessionID]agentOperationKind),
+		codexUsageLimited:            make(map[domain.SessionID]time.Time),
 		switchDecisionInput:          make(map[domain.SessionID]domain.AgentSwitchID),
 		retainedSwitches:             make(map[domain.SessionID]struct{}),
 		inputLeases:                  make(map[domain.SessionID]int),
@@ -718,6 +730,9 @@ func New(d Deps) *Manager {
 			staleIdleLimit: interfaceTransitionStaleIdleLimit,
 		},
 		logger: d.Logger,
+	}
+	if options, ok := d.CodexProfiles.(ports.CodexProfileSwitchOptionProvider); ok {
+		m.codexProfileSwitchOptions = options
 	}
 	if m.clock == nil {
 		// UTC so spawn-stamped CreatedAt/UpdatedAt match every other session
@@ -1559,6 +1574,9 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 	if !ok {
 		return false, nil // already gone: benign race
 	}
+	if rec.ArchivedAt != nil {
+		return false, fmt.Errorf("kill %s: %w", id, ErrSessionArchived)
+	}
 	m.stopPreviewBestEffort(ctx, id)
 	m.destroyBrowserBestEffort(ctx, id)
 	handle := runtimeHandle(rec.Metadata)
@@ -1876,6 +1894,9 @@ func (m *Manager) RestoreWithMode(ctx context.Context, id domain.SessionID) (Res
 	if !ok {
 		return RestoreResult{}, fmt.Errorf("restore %s: %w", id, ErrNotFound)
 	}
+	if rec.ArchivedAt != nil {
+		return RestoreResult{}, fmt.Errorf("restore %s: %w", id, ErrSessionArchived)
+	}
 	if !rec.IsTerminated {
 		return RestoreResult{}, fmt.Errorf("restore %s: %w", id, ErrNotRestorable)
 	}
@@ -1937,6 +1958,9 @@ func (m *Manager) ResumeAgentWithMode(ctx context.Context, id domain.SessionID) 
 	}
 	if !ok {
 		return RestoreResult{}, fmt.Errorf("resume agent %s: %w", id, ErrNotFound)
+	}
+	if rec.ArchivedAt != nil {
+		return RestoreResult{}, fmt.Errorf("resume agent %s: %w", id, ErrSessionArchived)
 	}
 	if rec.IsTerminated {
 		return RestoreResult{}, fmt.Errorf("resume agent %s: %w", id, ErrTerminated)
@@ -2044,8 +2068,21 @@ func (m *Manager) relaunchSessionWithPolicy(ctx context.Context, operation strin
 	var argv []string
 	var delivery ports.PromptDeliveryStrategy
 	var mode RestoreMode
+	launchMetadata := rec.Metadata
+	launchPrompt := rec.Metadata.Prompt
 	if forceFresh {
-		argv, delivery, mode, err = freshLaunchArgv(ctx, agent, rec.ID, ws.Path, rec.Metadata,
+		if _, isProfileTarget, profileErr := m.profileSwitchSystemPrompt(ctx, rec, ""); profileErr != nil {
+			m.cleanupSystemPromptDir(rec.ID)
+			return RestoreResult{}, fmt.Errorf("%s %s: profile-switch context: %w", operation, rec.ID, profileErr)
+		} else if isProfileTarget {
+			// The profile-switch coordinator opens delivery only after the exact
+			// target generation is durable, then sends the activation once.
+			launchPrompt = ""
+			launchMetadata.Prompt = launchPrompt
+		}
+	}
+	if forceFresh {
+		argv, delivery, mode, err = freshLaunchArgv(ctx, agent, rec.ID, ws.Path, launchMetadata,
 			systemPrompt, systemPromptFile, agentConfig, rec.Kind, m.dataDir, true)
 	} else {
 		if rec.Harness == domain.HarnessCodex && strings.TrimSpace(rec.Metadata.AgentSessionID) != "" {
@@ -2118,19 +2155,19 @@ func (m *Manager) relaunchSessionWithPolicy(ctx context.Context, operation strin
 		m.cleanupSystemPromptDir(rec.ID)
 		return RestoreResult{}, fmt.Errorf("%s %s: completed: %w", operation, rec.ID, err)
 	}
-	if delivery == ports.PromptDeliveryAfterStart && rec.Metadata.Prompt != "" {
+	if delivery == ports.PromptDeliveryAfterStart && launchPrompt != "" {
 		launchCfg := ports.LaunchConfig{
 			DataDir:          m.dataDir,
 			SessionID:        string(rec.ID),
 			WorkspacePath:    ws.Path,
 			Kind:             rec.Kind,
-			Prompt:           rec.Metadata.Prompt,
+			Prompt:           launchPrompt,
 			SystemPrompt:     systemPrompt,
 			SystemPromptFile: systemPromptFile,
 			Config:           agentConfig,
 			Permissions:      agentConfig.Permissions,
 		}
-		if err := m.deliverAfterStartPrompt(ctx, agent, launchCfg, handle, rec.ID, rec.Metadata.Prompt); err != nil {
+		if err := m.deliverAfterStartPrompt(ctx, agent, launchCfg, handle, rec.ID, launchPrompt); err != nil {
 			_ = m.runtime.Destroy(ctx, handle)
 			_ = m.lcm.MarkTerminated(ctx, rec.ID)
 			m.cleanupSystemPromptDir(rec.ID)
@@ -2215,7 +2252,7 @@ func (m *Manager) SaveAndTeardownAll(ctx context.Context) error {
 		return fmt.Errorf("save-teardown-all: list sessions: %w", err)
 	}
 	for _, rec := range recs {
-		if rec.IsTerminated {
+		if rec.IsTerminated || rec.ArchivedAt != nil {
 			continue
 		}
 		if rec.Metadata.WorkspacePath == "" || rec.Metadata.Branch == "" {
@@ -2461,6 +2498,9 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 // state that would otherwise lose its in-memory input fence across a daemon
 // restart. This must complete before the API accepts user input.
 func (m *Manager) ReconcileStartupSafety(ctx context.Context) error {
+	if err := m.ReconcileCodexProfileSwitches(ctx); err != nil {
+		return fmt.Errorf("reconcile: Codex profile-switch pass: %w", err)
+	}
 	// A daemon restart destroys the in-memory input fence. Close any durable
 	// non-terminal switch before adopting runtimes so the API never implies an
 	// unconfirmed continuation was delivered.
@@ -2486,7 +2526,7 @@ func (m *Manager) ReconcileBackground(ctx context.Context) error {
 	}
 	m.reconcileLivePass(ctx, recs)
 	for _, rec := range recs {
-		if !rec.IsTerminated {
+		if !rec.IsTerminated || rec.ArchivedAt != nil {
 			continue
 		}
 		if err := m.reconcileReap(ctx, rec); err != nil {
@@ -2506,7 +2546,7 @@ func (m *Manager) ReconcileBackground(ctx context.Context) error {
 func (m *Manager) reconcileLivePass(ctx context.Context, recs []domain.SessionRecord) {
 	live := make([]domain.SessionRecord, 0, len(recs))
 	for _, rec := range recs {
-		if rec.IsTerminated {
+		if rec.IsTerminated || rec.ArchivedAt != nil {
 			continue
 		}
 		if m.SessionMutationInProgress(rec.ID) {
@@ -2560,7 +2600,7 @@ func (m *Manager) RestoreAll(ctx context.Context) error {
 		return fmt.Errorf("restore-all: list sessions: %w", err)
 	}
 	for _, rec := range recs {
-		if !rec.IsTerminated {
+		if !rec.IsTerminated || rec.ArchivedAt != nil {
 			continue
 		}
 		// Check the shutdown-saved marker: is there a session_worktrees row?
@@ -3070,6 +3110,8 @@ func (m *Manager) send(ctx context.Context, id domain.SessionID, message, client
 		return fmt.Errorf("send %s: %w", id, ErrNotFound)
 	case sessionguard.SuppressedTerminated:
 		return fmt.Errorf("send %s: %w", id, ErrTerminated)
+	case sessionguard.SuppressedArchived:
+		return fmt.Errorf("send %s: %w", id, ErrSessionArchived)
 	case sessionguard.SuppressedExited:
 		return fmt.Errorf("send %s: %w", id, ErrAgentExited)
 	case sessionguard.SuppressedAwaitingUser:
@@ -4158,6 +4200,8 @@ func (m *Manager) deliverAfterStartPrompt(ctx context.Context, agent ports.Agent
 		return fmt.Errorf("send %s: %w", id, ErrNotFound)
 	case sessionguard.SuppressedTerminated:
 		return fmt.Errorf("send %s: %w", id, ErrTerminated)
+	case sessionguard.SuppressedArchived:
+		return fmt.Errorf("send %s: %w", id, ErrSessionArchived)
 	case sessionguard.SuppressedExited:
 		return fmt.Errorf("send %s: %w", id, ErrAgentExited)
 	case sessionguard.SuppressedAwaitingUser:

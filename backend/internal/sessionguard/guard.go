@@ -52,6 +52,8 @@ const (
 	// SuppressedTerminated means the session is terminated; its pane is gone
 	// or about to be reaped.
 	SuppressedTerminated
+	// SuppressedArchived means an immutable predecessor is read-only.
+	SuppressedArchived
 	// SuppressedExited means the managed pane remains available but its agent
 	// process exited. The pane may now contain an interactive shell, so writing
 	// an agent prompt would execute it as shell input.
@@ -83,6 +85,8 @@ func (o Outcome) String() string {
 		return "suppressed_not_found"
 	case SuppressedTerminated:
 		return "suppressed_terminated"
+	case SuppressedArchived:
+		return "suppressed_archived"
 	case SuppressedExited:
 		return "suppressed_exited"
 	case SuppressedAwaitingUser:
@@ -351,6 +355,10 @@ func (g *Guard) sendAdmittedChecked(ctx context.Context, id domain.SessionID, ms
 	if rec.IsTerminated {
 		g.logger.Info("sessionguard: write suppressed", "sessionID", id, "reason", "terminated")
 		return SuppressedTerminated, nil
+	}
+	if rec.ArchivedAt != nil {
+		g.logger.Info("sessionguard: write suppressed", "sessionID", id, "reason", "archived")
+		return SuppressedArchived, nil
 	}
 	if rec.Activity.State == domain.ActivityExited {
 		g.logger.Info("sessionguard: write suppressed", "sessionID", id, "reason", "agent_exited")
