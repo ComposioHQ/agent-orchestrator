@@ -2,6 +2,7 @@ package codexappserver
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -478,6 +479,22 @@ func normalizeNotification(n notification, now time.Time) []ports.ChatEvent {
 		}
 		return []ports.ChatEvent{{Kind: ports.ChatEventThreadState, ThreadState: &state}}
 
+	case codexproto.MethodThreadGoalUpdated:
+		var p codexproto.ThreadGoalUpdatedNotification
+		if err := json.Unmarshal(n.Params, &p); err != nil || p.Goal.Status != codexproto.ThreadGoalStatusUsageLimited {
+			return nil
+		}
+		turnID := ""
+		if p.TurnID != nil {
+			turnID = *p.TurnID
+		}
+		return []ports.ChatEvent{{
+			Kind:                   ports.ChatEventUsageLimited,
+			ProviderTurnID:         turnID,
+			ProviderConversationID: p.ThreadID,
+			Err:                    errors.New("codex reported a usage limit"),
+		}}
+
 	case codexproto.MethodThreadArchived, codexproto.MethodThreadUnarchived:
 		// VERIFIED live: thread/archive and thread/unarchive each produced their
 		// notification. Archiving is the provider's own idea of putting a thread away,
@@ -653,7 +670,7 @@ func normalizeNotification(n notification, now time.Time) []ports.ChatEvent {
 
 	default:
 		// Provider bookkeeping: hook/started, hook/completed,
-		// remoteControl/status/changed, deprecationNotice, thread/goal/*,
+		// remoteControl/status/changed, deprecationNotice, other thread/goal/*,
 		// model/safetyBuffering/updated, thread/settings/updated, and anything added
 		// by a newer provider build. Deliberately not conversation events.
 		//

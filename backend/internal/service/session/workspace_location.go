@@ -22,6 +22,9 @@ func (s *Service) WorkspaceLocation(ctx context.Context, id domain.SessionID) (s
 	if !ok {
 		return "", apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
 	}
+	if record.ArchivedAt != nil {
+		return "", apierr.Conflict("SESSION_ARCHIVED", "Archived predecessor sessions are read-only", nil)
+	}
 
 	workspacePath := strings.TrimSpace(record.Metadata.WorkspacePath)
 	if workspacePath == "" || !filepath.IsAbs(workspacePath) {

@@ -166,6 +166,7 @@ type Controller struct {
 	now               Clock
 	onAccountChanged  func(domain.SessionID, domain.AgentHarness)
 	onCapacityChanged func(domain.SessionID, string, ports.CodexCapacityObservation)
+	onUsageLimited    func(domain.SessionID, string)
 
 	// sendMu serializes command dispatch so only one operation mutates the
 	// provider conversation at a time.
@@ -270,6 +271,7 @@ func newController(
 	now Clock,
 	onAccountChanged func(domain.SessionID, domain.AgentHarness),
 	onCapacityChanged func(domain.SessionID, string, ports.CodexCapacityObservation),
+	onUsageLimited func(domain.SessionID, string),
 ) *Controller {
 	c := &Controller{
 		sessionID:         sessionID,
@@ -285,6 +287,7 @@ func newController(
 		now:               now,
 		onAccountChanged:  onAccountChanged,
 		onCapacityChanged: onCapacityChanged,
+		onUsageLimited:    onUsageLimited,
 		state:             ports.ChatControllerReady,
 		settings:          conversation.Settings,
 		mcpServers:        map[string]domain.ConversationMCPServer{},
@@ -2032,6 +2035,14 @@ func (c *Controller) project() {
 // projectEvent archives one normalized provider event and applies its durable
 // projection in the same SQLite transaction.
 func (c *Controller) projectEvent(ctx context.Context, event ports.ChatEvent) (bool, bool, error) {
+	if event.Kind == ports.ChatEventUsageLimited && event.ProviderTurnID == "" {
+		// Codex may report a thread-level usageLimited goal without the optional
+		// turnId. AO serializes root turns, so the currently owned root turn is the
+		// only safe attribution; without one, the event remains advisory only.
+		c.mu.Lock()
+		event.ProviderTurnID = c.pendingTurnID
+		c.mu.Unlock()
+	}
 	record := map[string]any{
 		"kind":                   event.Kind,
 		"providerEventId":        event.ProviderEventID,
@@ -2096,7 +2107,7 @@ func (c *Controller) projectEvent(ctx context.Context, event ports.ChatEvent) (b
 // child threads over the root connection, so only events from the conversation AO
 // opened are allowed to claim or release the primary turn.
 func (c *Controller) applyCommittedTurnLifecycle(event ports.ChatEvent) bool {
-	if event.Kind != ports.ChatEventTurnStarted && event.Kind != ports.ChatEventTurnCompleted {
+	if event.Kind != ports.ChatEventTurnStarted && event.Kind != ports.ChatEventTurnCompleted && event.Kind != ports.ChatEventUsageLimited {
 		return false
 	}
 	if event.ProviderConversationID != "" && event.ProviderConversationID != c.conv.ProviderConversationID() {
@@ -2116,7 +2127,7 @@ func (c *Controller) applyCommittedTurnLifecycle(event ports.ChatEvent) bool {
 		c.ackedTurnID = event.ProviderTurnID
 		c.state = ports.ChatControllerBusy
 		return true
-	case ports.ChatEventTurnCompleted:
+	case ports.ChatEventTurnCompleted, ports.ChatEventUsageLimited:
 		if c.pendingTurnID != event.ProviderTurnID {
 			return false
 		}
@@ -2189,6 +2200,16 @@ func (c *Controller) apply(ctx context.Context, event ports.ChatEvent) error {
 			return err
 		}
 		return nil
+
+	case ports.ChatEventUsageLimited:
+		message := "Codex reported a usage limit"
+		if event.Err != nil {
+			message = event.Err.Error()
+		}
+		if event.ProviderTurnID == "" {
+			return nil
+		}
+		return c.store.SettleTurn(ctx, c.conversation.ID, event.ProviderTurnID, domain.TurnStateFailed, message, now)
 
 	case ports.ChatEventMessageDelta:
 		return c.store.AppendAssistantDelta(ctx, c.conversation.ID,
@@ -2527,6 +2548,15 @@ func (c *Controller) afterProject(ctx context.Context, event ports.ChatEvent, pr
 		}
 		c.reportActivity(ctx, domain.ActivityIdle, "chat.turn.completed", now)
 		// The settled turn is committed before another queued turn can dispatch.
+		c.drainLocked(ctx)
+	case ports.ChatEventUsageLimited:
+		if !primaryTurn {
+			return
+		}
+		c.reportActivity(ctx, domain.ActivityIdle, "chat.turn.usage_limited", now)
+		if c.harness == domain.HarnessCodex && c.codexProfileID != "" && c.onUsageLimited != nil {
+			c.onUsageLimited(c.sessionID, c.codexProfileID)
+		}
 		c.drainLocked(ctx)
 	case ports.ChatEventApprovalRequested:
 		c.reportActivity(ctx, domain.ActivityWaitingInput, "chat.approval.requested", now)

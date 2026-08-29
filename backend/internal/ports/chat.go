@@ -712,6 +712,11 @@ type ChatEventKind string
 const (
 	ChatEventTurnStarted   ChatEventKind = "turn.started"
 	ChatEventTurnCompleted ChatEventKind = "turn.completed"
+	// ChatEventUsageLimited is a structured provider signal that the active turn
+	// cannot continue because the bound account reached a usage limit. Keeping it
+	// distinct from a generic error lets the session coordinator attribute the
+	// failure to the exact immutable Codex profile binding.
+	ChatEventUsageLimited ChatEventKind = "usage.limited"
 	// ChatEventUserMessageCompleted is a settled user message recovered from the
 	// provider's native history. Live sends are already durable before dispatch and
 	// therefore never emit this event; history readers use it to reconstruct turns

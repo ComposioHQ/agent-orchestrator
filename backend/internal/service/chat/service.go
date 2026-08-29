@@ -24,6 +24,9 @@ var ErrNoController = errors.New("no live chat controller for session")
 // fact later, but callers must route from the persisted mode they read now.
 var ErrNotChatMode = errors.New("session is not in chat mode")
 
+// ErrSessionArchived prevents mutation of an assisted-switch predecessor.
+var ErrSessionArchived = errors.New("session is archived")
+
 // SessionReader is the session-fact surface the service needs. It reads the
 // persisted mode rather than trusting the caller, so a client cannot talk its way
 // into the wrong dispatch path.
@@ -44,6 +47,7 @@ type Service struct {
 	now               Clock
 	onAccountChanged  func(domain.SessionID, domain.AgentHarness)
 	onCapacityChanged func(domain.SessionID, string, ports.CodexCapacityObservation)
+	onUsageLimited    func(domain.SessionID, string)
 
 	mu           sync.RWMutex
 	controllers  map[domain.SessionID]*Controller
@@ -89,6 +93,9 @@ type Options struct {
 	// OnCapacityChanged forwards normalized bound-Codex rate-limit events to the
 	// daemon-owned profile coordinator instead of conversation persistence.
 	OnCapacityChanged func(domain.SessionID, string, ports.CodexCapacityObservation)
+	// OnUsageLimited reports the exact bound Codex profile whose turn ended at a
+	// structured provider usage-limit boundary.
+	OnUsageLimited func(domain.SessionID, string)
 }
 
 // New builds a Chat service.
@@ -113,6 +120,7 @@ func New(opts Options) *Service {
 		now:               now,
 		onAccountChanged:  opts.OnAccountChanged,
 		onCapacityChanged: opts.OnCapacityChanged,
+		onUsageLimited:    opts.OnUsageLimited,
 		controllers:       make(map[domain.SessionID]*Controller),
 		startConfigs:      make(map[domain.SessionID]StartConfig),
 		gates:             make(map[domain.SessionID]controllerGate),
@@ -480,7 +488,7 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	// A fresh generation per launch, so events from the controller this one
 	// replaced can be told apart from the current one's.
 	controller := newController(
-		cfg.SessionID, conversation, generation, cfg.Harness, cfg.CodexProfileID, conv, s.store, s.activity, s.log, s.newID, s.now, s.onAccountChanged, s.onCapacityChanged)
+		cfg.SessionID, conversation, generation, cfg.Harness, cfg.CodexProfileID, conv, s.store, s.activity, s.log, s.newID, s.now, s.onAccountChanged, s.onCapacityChanged, s.onUsageLimited)
 	if cfg.ProviderConversationID != "" && !cfg.SkipNativeHistoryImport {
 		// The provider's native thread is the continuity authority across TUI and
 		// Chat. Import it before the live projector starts so the first notification
@@ -595,6 +603,9 @@ func (s *Service) requireChatSession(ctx context.Context, id domain.SessionID) (
 	}
 	if !found {
 		return domain.SessionRecord{}, ports.ErrSessionNotFound
+	}
+	if record.ArchivedAt != nil {
+		return domain.SessionRecord{}, ErrSessionArchived
 	}
 	if domain.NormalizeSessionMode(record.Mode) != domain.SessionModeChat {
 		return domain.SessionRecord{}, ErrNotChatMode

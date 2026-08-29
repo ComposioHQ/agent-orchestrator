@@ -149,6 +149,9 @@ func (m *Manager) StartInterfaceTransition(
 	if rec.IsTerminated {
 		return domain.SessionInterfaceTransition{}, ErrTerminated
 	}
+	if rec.ArchivedAt != nil {
+		return domain.SessionInterfaceTransition{}, ErrSessionArchived
+	}
 	source := domain.NormalizeSessionMode(rec.Mode)
 	if target == source {
 		return domain.SessionInterfaceTransition{}, fmt.Errorf("%w: session %s is already in %s mode",

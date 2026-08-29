@@ -225,7 +225,7 @@ func (e *Engine) TriggerWithSource(ctx stdctx.Context, workerID domain.SessionID
 			return TriggerResult{SkipReason: reason}, nil
 		}
 	}
-	if worker.IsTerminated {
+	if worker.IsTerminated || worker.ArchivedAt != nil {
 		return TriggerResult{}, fmt.Errorf("%w: worker session %q is terminated", ErrInvalid, workerID)
 	}
 	if worker.Metadata.WorkspacePath == "" {
@@ -407,7 +407,7 @@ func autoReviewSessionReason(worker domain.SessionRecord, now time.Time) string 
 		return "disabled"
 	case worker.Kind != domain.KindWorker:
 		return "not_worker"
-	case worker.IsTerminated:
+	case worker.IsTerminated || worker.ArchivedAt != nil:
 		return "terminated"
 	case worker.Activity.State != domain.ActivityIdle:
 		return "not_idle"
@@ -511,7 +511,7 @@ func (e *Engine) RestoreReviewer(ctx stdctx.Context, workerID domain.SessionID) 
 	if !ok {
 		return RestoreReviewerResult{}, fmt.Errorf("%w: worker session %q", ErrNotFound, workerID)
 	}
-	if worker.IsTerminated || worker.Metadata.WorkspacePath == "" {
+	if worker.IsTerminated || worker.ArchivedAt != nil || worker.Metadata.WorkspacePath == "" {
 		return RestoreReviewerResult{}, nil
 	}
 	harness, err := e.reviewerHarness(ctx, worker)

@@ -271,6 +271,9 @@ func (m *Manager) sendChat(ctx context.Context, id domain.SessionID, message, cl
 	if rec.IsTerminated {
 		return true, fmt.Errorf("send %s: %w", id, ErrTerminated)
 	}
+	if rec.ArchivedAt != nil {
+		return true, fmt.Errorf("send %s: %w", id, ErrSessionArchived)
+	}
 	var relayErr error
 	if clientMessageID != "" {
 		_, relayErr = m.chat.RelayChatTurnWithID(ctx, id, message, clientMessageID)

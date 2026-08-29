@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -239,6 +240,10 @@ func Run() error {
 	// registered driver cannot start in chat mode, so an unsupported request fails
 	// loudly instead of silently becoming a TUI session.
 	var agentSvc *agentsvc.Service
+	var codexUsageLimitReporter interface {
+		ReportCodexUsageLimitFailure(context.Context, domain.SessionID)
+	}
+	var codexUsageLimitReporterMu sync.RWMutex
 	chatSvc := chatsvc.New(chatsvc.Options{
 		Store:    store,
 		Sessions: store,
@@ -306,6 +311,23 @@ func Run() error {
 			}
 			agentSvc.ObserveCodexProfileCapacity(profileID, observation)
 		},
+		OnUsageLimited: func(sessionID domain.SessionID, profileID string) {
+			if agentSvc == nil {
+				return
+			}
+			rec, found, readErr := store.GetSession(context.WithoutCancel(ctx), sessionID)
+			if readErr != nil || !found || rec.Harness != domain.HarnessCodex || rec.CodexProfileBinding == nil || rec.CodexProfileBinding.ProfileID != profileID {
+				log.Warn("ignored Codex usage-limit event with binding mismatch", "session_id", sessionID, "profile_id", profileID)
+				return
+			}
+			agentSvc.InvalidateCodexProfileCapacity(profileID)
+			codexUsageLimitReporterMu.RLock()
+			reporter := codexUsageLimitReporter
+			codexUsageLimitReporterMu.RUnlock()
+			if reporter != nil {
+				reporter.ReportCodexUsageLimitFailure(context.WithoutCancel(ctx), sessionID)
+			}
+		},
 	})
 
 	codexPlugin := codexagent.New()
@@ -345,6 +367,13 @@ func Run() error {
 		return fmt.Errorf("wire session service: %w", err)
 	}
 	sessMgr.SetTerminalInputGate(termMgr)
+	if reporter, ok := sessMgr.(interface {
+		ReportCodexUsageLimitFailure(context.Context, domain.SessionID)
+	}); ok {
+		codexUsageLimitReporterMu.Lock()
+		codexUsageLimitReporter = reporter
+		codexUsageLimitReporterMu.Unlock()
+	}
 	lifecycleMessenger.Bind(sessionLifecycleMessenger{sessMgr})
 	lcStack.LCM.SetCompletionTerminator(sessMgr)
 	lcStack.LCM.SetSessionInputLease(sessMgr)

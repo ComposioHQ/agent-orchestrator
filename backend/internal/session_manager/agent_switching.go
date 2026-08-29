@@ -248,6 +248,9 @@ func (m *Manager) admitAgentSwitch(ctx context.Context, id domain.SessionID, cfg
 	if rec.IsTerminated {
 		return domain.AgentSwitch{}, nil, fmt.Errorf("switch agent %s: %w", id, ErrTerminated)
 	}
+	if rec.ArchivedAt != nil {
+		return domain.AgentSwitch{}, nil, fmt.Errorf("switch agent %s: %w", id, ErrSessionArchived)
+	}
 	if rec.Kind != domain.KindWorker {
 		return domain.AgentSwitch{}, nil, fmt.Errorf("switch agent %s: %w", id, ErrUnsupportedSwitchKind)
 	}
@@ -1299,6 +1302,11 @@ func appendAgentContinuationProtocol(systemPrompt string) string {
 // delivery acknowledgement did not. Older switches without a finalized
 // artifact used a visible provider turn and need no hidden replay.
 func (m *Manager) systemPromptForNativeRestore(ctx context.Context, rec domain.SessionRecord, base string) (string, error) {
+	profileBase, _, profileErr := m.profileSwitchSystemPrompt(ctx, rec, base)
+	if profileErr != nil {
+		return "", fmt.Errorf("restore Codex profile-switch context: %w", profileErr)
+	}
+	base = profileBase
 	if rec.Kind != domain.KindWorker || !switchHarnessSupported(rec.Harness) {
 		return base, nil
 	}
