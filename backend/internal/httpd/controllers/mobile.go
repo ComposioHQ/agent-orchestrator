@@ -443,13 +443,6 @@ func (b *BridgeService) Disable() error {
 	return mobilebridge.Save(b.ConfigPath, st)
 }
 
-// ShutdownServe removes the tailnet proxy this bridge installed, for use on
-// daemon shutdown. `tailscale serve --bg` state lives in tailscaled and
-// outlives AO, so without this the tailnet keeps routing to a local port that
-// no longer has the authenticated LAN listener behind it — and any other
-// process that later binds that port would be published to the tailnet in its
-// place. The persisted SecurePairing preference is deliberately left set, so
-// RestoreOnBoot re-applies the proxy against the next bound port.
 // ShutdownTunnel stops the managed connector on the way out.
 //
 // The same reasoning as ShutdownServe: a cloudflared process outlives this
@@ -469,6 +462,13 @@ func (b *BridgeService) ShutdownTunnel() {
 	b.Tunnel.Stop()
 }
 
+// ShutdownServe removes the tailnet proxy this bridge installed, for use on
+// daemon shutdown. `tailscale serve --bg` state lives in tailscaled and
+// outlives AO, so without this the tailnet keeps routing to a local port that
+// no longer has the authenticated LAN listener behind it — and any other
+// process that later binds that port would be published to the tailnet in its
+// place. The persisted SecurePairing preference is deliberately left set, so
+// RestoreOnBoot re-applies the proxy against the next bound port.
 func (b *BridgeService) ShutdownServe() {
 	st, _ := mobilebridge.Load(b.ConfigPath)
 	if !st.Enabled || !st.SecurePairing {
