@@ -896,9 +896,16 @@ func (r *Runtime) socketForSession(ctx context.Context, id string) (string, erro
 	if ctx.Err() != nil {
 		return "", ctx.Err()
 	}
-	if sessionMissingOutput(string(legacyOut)) || serverNotRunningOutput(string(legacyOut)) {
-		// Both known sockets definitively lack the session. Return the private
-		// target so IsAlive's ordinary exact-session handling reports false.
+	if sessionMissingOutput(string(legacyOut)) ||
+		serverNotRunningOutput(string(legacyOut)) ||
+		migrationSocketAbsentOutput(string(legacyOut)) {
+		// Both known sockets definitively lack the session: the private server
+		// is gone or has no such session, and the legacy default socket is
+		// missing or also has no server. Return the private target so IsAlive
+		// reports Unavailable (no server) or false (missing session) instead of
+		// ProbeInconclusive. "error connecting ... no such file" on default is
+		// not a transient refusal; the socket file is absent, so the session
+		// cannot be alive there.
 		return r.socketName, nil
 	}
 	return "", fmt.Errorf(

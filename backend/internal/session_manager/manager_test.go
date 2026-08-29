@@ -1743,6 +1743,35 @@ func TestResumeAgent_RequiresLiveExitedSession(t *testing.T) {
 	}
 }
 
+func TestResumeAgent_InconclusiveRuntimeProbeRecreates(t *testing.T) {
+	runtime := &fakeRuntime{
+		aliveErr: fmt.Errorf("legacy client unavailable: %w", ports.ErrRuntimeProbeInconclusive),
+	}
+	agent := supervisedLaunchAgent{launchArgvAgent{argv: []string{"codex", "resume", "agent-x"}}}
+	m, st, _ := newExitedResumeManager(t, runtime, agent)
+
+	result, err := m.ResumeAgentWithMode(ctx, "mer-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.created != 1 {
+		t.Fatalf("created=%d, want 1 replacement runtime after inconclusive probe", runtime.created)
+	}
+	if runtime.destroyed != 0 {
+		t.Fatalf("destroyed=%d, want 0 when the old runtime cannot be probed", runtime.destroyed)
+	}
+	got := st.sessions["mer-1"]
+	if got.IsTerminated || got.Activity.State != domain.ActivityIdle {
+		t.Fatalf("resumed session = %+v, want live idle", got)
+	}
+	if got.Metadata.RuntimeHandleID != "h1" {
+		t.Fatalf("resumed handle = %q, want h1", got.Metadata.RuntimeHandleID)
+	}
+	if result.Mode != RestoreModeNative {
+		t.Fatalf("resume mode = %q, want native", result.Mode)
+	}
+}
+
 func TestResumeAgent_RestartFailureLeavesSessionExited(t *testing.T) {
 	baseRuntime := &fakeRuntime{aliveByHandle: map[string]bool{"tmux-mer-1": true}}
 	runtime := &fakeRestartRuntime{fakeRuntime: baseRuntime, restartErr: errors.New("respawn failed")}
@@ -6088,7 +6117,7 @@ func TestRetireForReplacementCapturesAndReleasesWorkspace(t *testing.T) {
 	}
 }
 
-func TestRetireForReplacement_NativeTerminationFailurePreservesRuntimeAndWorkspace(t *testing.T) {
+func TestRetireForReplacement_NativeTerminationFailureStillTerminates(t *testing.T) {
 	m, st, rt, ws := newLifecycleManager()
 	agent := &nativeTerminatingAgent{wantID: "native-7", err: errors.New("prime stop failed")}
 	m.agents = singleAgent{agent: agent}
@@ -6103,41 +6132,49 @@ func TestRetireForReplacement_NativeTerminationFailurePreservesRuntimeAndWorkspa
 	}
 	st.sessions[rec.ID] = rec
 
-	err := m.RetireForReplacement(ctx, rec.ID)
-	if err == nil || !strings.Contains(err.Error(), "prime stop failed") {
-		t.Fatalf("err=%v, want native termination error", err)
+	if err := m.RetireForReplacement(ctx, rec.ID); err != nil {
+		t.Fatalf("err=%v, want retire to succeed after native terminate failure", err)
 	}
-	if rt.destroyed != 0 || st.sessions[rec.ID].IsTerminated {
-		t.Fatalf("runtime=%d terminated=%v", rt.destroyed, st.sessions[rec.ID].IsTerminated)
+	if agent.calls != 1 || rt.destroyed != 1 {
+		t.Fatalf("native=%d runtime=%d, want one each", agent.calls, rt.destroyed)
 	}
-	for _, call := range ws.calls {
-		if strings.HasPrefix(call, "ForceDestroy:") {
-			t.Fatalf("worktree must remain after native termination failure: calls=%v", ws.calls)
-		}
+	if !st.sessions[rec.ID].IsTerminated {
+		t.Fatal("session must be terminated when native terminate fails on a stale id")
 	}
 }
 
-func TestRetireForReplacement_WorkspaceProjectNativeTerminationFailurePreservesRepos(t *testing.T) {
+func TestRetireForReplacement_WorkspaceProjectNativeTerminationFailureStillTerminates(t *testing.T) {
 	m, st, rt, ws := newLifecycleManager()
 	agent := &nativeTerminatingAgent{wantID: "native-7", err: errors.New("prime stop failed")}
 	m.agents = singleAgent{agent: agent}
 	ws.stashRef = "refs/ao/preserved/mer-orch"
 	rec := seedNativeWorkspaceProject(st, "mer-orch", domain.KindOrchestrator)
 
-	err := m.RetireForReplacement(ctx, rec.ID)
-	if err == nil || !strings.Contains(err.Error(), "prime stop failed") {
-		t.Fatalf("err=%v, want native termination error", err)
+	if err := m.RetireForReplacement(ctx, rec.ID); err != nil {
+		t.Fatalf("err=%v, want retire to succeed after native terminate failure", err)
 	}
-	if rt.destroyed != 0 || st.sessions[rec.ID].IsTerminated {
+	if rt.destroyed != 1 || !st.sessions[rec.ID].IsTerminated {
 		t.Fatalf("runtime=%d terminated=%v", rt.destroyed, st.sessions[rec.ID].IsTerminated)
 	}
-	if rows := st.worktrees[rec.ID]; len(rows) != 2 {
-		t.Fatalf("workspace repo inventory = %#v, want both rows retained", rows)
+}
+
+func TestRetireForReplacement_RuntimeProbeInconclusiveStillTerminates(t *testing.T) {
+	m, st, rt, ws := newLifecycleManager()
+	rt.destroyErr = fmt.Errorf("legacy client unavailable: %w", ports.ErrRuntimeProbeInconclusive)
+	ws.stashRef = "refs/ao/preserved/mer-orch"
+	st.sessions["mer-orch"] = domain.SessionRecord{
+		ID:        "mer-orch",
+		ProjectID: "mer",
+		Kind:      domain.KindOrchestrator,
+		Metadata:  domain.SessionMetadata{WorkspacePath: "/ws/mer-orch", Branch: "ao/mer-orchestrator", RuntimeHandleID: "orch-handle"},
+		Activity:  domain.Activity{State: domain.ActivityActive},
 	}
-	for _, call := range ws.calls {
-		if strings.HasPrefix(call, "ForceDestroy:") {
-			t.Fatalf("worktrees must remain after native termination failure: calls=%v", ws.calls)
-		}
+
+	if err := m.RetireForReplacement(ctx, "mer-orch"); err != nil {
+		t.Fatalf("err=%v, want retire to succeed on inconclusive probe", err)
+	}
+	if rt.destroyed != 1 || !st.sessions["mer-orch"].IsTerminated {
+		t.Fatalf("runtime=%d terminated=%v", rt.destroyed, st.sessions["mer-orch"].IsTerminated)
 	}
 }
 
@@ -7776,18 +7813,21 @@ func TestReconcileLive_InconclusiveRuntimeProbeDoesNotRelaunch(t *testing.T) {
 	}
 }
 
-func TestRestartRuntime_InconclusiveProbeDoesNotCreateReplacement(t *testing.T) {
+func TestRestartRuntime_InconclusiveProbeCreatesReplacement(t *testing.T) {
 	rt := &fakeRuntime{aliveErr: fmt.Errorf("legacy client unavailable: %w", ports.ErrRuntimeProbeInconclusive)}
 	m := New(Deps{Runtime: rt})
 
-	_, err := m.restartRuntime(context.Background(), ports.RuntimeHandle{ID: "legacy-live"}, ports.RuntimeConfig{
+	handle, err := m.restartRuntime(context.Background(), ports.RuntimeHandle{ID: "legacy-live"}, ports.RuntimeConfig{
 		SessionID: "legacy-live",
 	})
-	if !errors.Is(err, ports.ErrRuntimeProbeInconclusive) {
-		t.Fatalf("restartRuntime err = %v, want ErrRuntimeProbeInconclusive", err)
+	if err != nil {
+		t.Fatalf("restartRuntime err = %v, want replacement create", err)
 	}
-	if rt.created != 0 || rt.destroyed != 0 {
-		t.Fatalf("inconclusive probe replaced runtime: created=%d destroyed=%d", rt.created, rt.destroyed)
+	if rt.created != 1 || rt.destroyed != 0 {
+		t.Fatalf("inconclusive probe create=%d destroyed=%d, want create only", rt.created, rt.destroyed)
+	}
+	if handle.ID != "h1" {
+		t.Fatalf("replacement handle = %q, want h1", handle.ID)
 	}
 }
 

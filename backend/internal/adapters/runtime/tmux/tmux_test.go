@@ -854,6 +854,40 @@ func TestIsAliveKeepsAmbiguousNamedSocketFailureInNamedNamespace(t *testing.T) {
 	}
 }
 
+func TestIsAliveReportsPrivateServerGoneAndLegacySocketAbsentAsUnavailable(t *testing.T) {
+	r := New(Options{
+		Binary:       "bundled-tmux-test",
+		LegacyBinary: "system-tmux-test",
+		SocketName:   "ao",
+		Timeout:      time.Second,
+	})
+	privateNoServer := fakeRunnerResult{
+		out: []byte("no server running on /private/tmp/tmux-501/ao"),
+		err: &exec.ExitError{},
+	}
+	legacyAbsent := fakeRunnerResult{
+		out: []byte("error connecting to /private/tmp/tmux-501/default (No such file or directory)"),
+		err: &exec.ExitError{},
+	}
+	fr := &fakeRunnerSequence{results: []fakeRunnerResult{
+		privateNoServer,
+		legacyAbsent,
+		privateNoServer,
+	}}
+	r.runner = fr
+
+	alive, err := r.IsAlive(context.Background(), ports.RuntimeHandle{ID: "ao-killfix-2"})
+	if !errors.Is(err, ports.ErrRuntimeUnavailable) {
+		t.Fatalf("IsAlive err = %v, want ports.ErrRuntimeUnavailable", err)
+	}
+	if alive {
+		t.Fatal("alive = true, want false")
+	}
+	if len(fr.calls) != 3 {
+		t.Fatalf("calls = %d, want private discovery, legacy discovery, then private probe", len(fr.calls))
+	}
+}
+
 func TestIsAliveReportsMissingLegacyClientAsProbeInconclusive(t *testing.T) {
 	r := New(Options{Binary: "bundled-tmux-test", SocketName: "ao", Timeout: time.Second})
 	r.legacyBinary = ""
@@ -978,6 +1012,35 @@ func TestDestroyIsIdempotentWhenLegacyClientMissing(t *testing.T) {
 
 	if err := r.Destroy(context.Background(), ports.RuntimeHandle{ID: "sess-1"}); err != nil {
 		t.Fatalf("Destroy missing legacy client: %v, want nil", err)
+	}
+}
+
+func TestDestroyIsIdempotentWhenPrivateServerGoneAndLegacySocketAbsent(t *testing.T) {
+	r := New(Options{
+		Binary:       "bundled-tmux-test",
+		LegacyBinary: "system-tmux-test",
+		SocketName:   "ao",
+		Timeout:      time.Second,
+	})
+	r.reapSessions = (&recordingReaper{}).reap
+	privateNoServer := fakeRunnerResult{
+		out: []byte("no server running on /private/tmp/tmux-501/ao"),
+		err: &exec.ExitError{},
+	}
+	legacyAbsent := fakeRunnerResult{
+		out: []byte("error connecting to /private/tmp/tmux-501/default (No such file or directory)"),
+		err: &exec.ExitError{},
+	}
+	fr := &fakeRunnerSequence{results: []fakeRunnerResult{
+		privateNoServer, legacyAbsent, // list-panes socket discovery
+		privateNoServer,               // list-panes command
+		privateNoServer, legacyAbsent, // kill-session socket discovery
+		privateNoServer, // kill-session command
+	}}
+	r.runner = fr
+
+	if err := r.Destroy(context.Background(), ports.RuntimeHandle{ID: "ao-killfix-2"}); err != nil {
+		t.Fatalf("Destroy stale private server: %v, want nil", err)
 	}
 }
 
