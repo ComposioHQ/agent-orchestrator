@@ -119,7 +119,7 @@ func (c *codexCapacityCoordinator) ensure(ctx context.Context, records []codexPr
 	return nil
 }
 
-func (c *codexCapacityCoordinator) ensureOne(ctx context.Context, record codexProfileRecord, capabilities domain.CodexProfileCapabilities, bypassBackoff bool) (domain.CodexCapacitySnapshot, error) {
+func (c *codexCapacityCoordinator) ensureOne(ctx context.Context, record codexProfileRecord, capabilities domain.CodexProfileCapabilities, force bool) (domain.CodexCapacitySnapshot, error) {
 	if err := ctx.Err(); err != nil {
 		return domain.CodexCapacitySnapshot{}, err
 	}
@@ -134,13 +134,13 @@ func (c *codexCapacityCoordinator) ensureOne(ctx context.Context, record codexPr
 	state := c.ensureStateLocked(record.Snapshot.ID)
 	now := c.now()
 	fresh := state.snapshot.CheckedAt != nil && now.Sub(*state.snapshot.CheckedAt) < codexCapacityDisplayTTL
-	if !state.invalidated && fresh {
+	if !force && !state.invalidated && fresh {
 		snapshot := state.snapshot
 		c.mu.Unlock()
 		c.logger.Debug("Codex profile capacity cache hit", "profile_id", record.Snapshot.ID, "source", record.Snapshot.Source, "trigger", "display", "cache", "hit")
 		return snapshot, nil
 	}
-	if !bypassBackoff && !state.nextRetryAt.IsZero() && now.Before(state.nextRetryAt) {
+	if !force && !state.nextRetryAt.IsZero() && now.Before(state.nextRetryAt) {
 		snapshot := state.snapshot
 		nextRetryAt := state.nextRetryAt
 		c.mu.Unlock()
