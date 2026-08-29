@@ -471,6 +471,33 @@ describe("GlobalSettingsForm", () => {
 		expect(screen.getByRole("status")).toHaveTextContent("You're on the latest version.");
 	});
 
+	it("refreshes Last checked immediately and does not let a stale IPC snapshot roll it back", async () => {
+		let resolveInitialStatus: (status: { state: "idle" }) => void = () => undefined;
+		let emit: (status: { state: string; checkedAt?: number; requestId?: string }) => void = () => undefined;
+		updGetStatus.mockReturnValue(new Promise((resolve) => {
+			resolveInitialStatus = resolve;
+		}));
+		updOnStatus.mockImplementation((listener: (status: unknown) => void) => {
+			emit = listener as typeof emit;
+			return () => undefined;
+		});
+		renderForm();
+		const button = await screen.findByRole("button", { name: "Check for updates" });
+
+		await userEvent.click(button);
+		const requestId = updCheck.mock.calls.at(-1)?.[0]?.requestId;
+		const checkedAt = new Date("2026-08-29T16:42:00.000Z").getTime();
+		act(() => emit({ state: "not-available", checkedAt, requestId }));
+
+		const formatted = new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short" }).format(checkedAt);
+		expect(await screen.findByTestId("update-checked-at")).toHaveTextContent(`Last checked ${formatted}`);
+
+		// This is the mount-time response arriving after the completed-check push.
+		// Reopening Settings used to be the only way to recover from this rollback.
+		await act(async () => resolveInitialStatus({ state: "idle" }));
+		expect(screen.getByTestId("update-checked-at")).toHaveTextContent(`Last checked ${formatted}`);
+	});
+
 	it("offers an Update button when an update is available and downloads it", async () => {
 		let emit: (s: { state: string; version?: string; requestId?: string }) => void = () => undefined;
 		updOnStatus.mockImplementation((cb: (s: unknown) => void) => {
