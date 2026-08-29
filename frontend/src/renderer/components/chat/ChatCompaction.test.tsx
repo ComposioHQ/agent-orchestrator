@@ -70,15 +70,12 @@ const assistantSaid: ConversationItem = {
 };
 
 describe("compaction in the timeline", () => {
-	it("marks where history was compacted, and says what it reclaimed", () => {
+	it("shows the message above a full-width rule", () => {
 		render(<ChatWorkspace snapshot={snapshot([assistantSaid, compaction()])} />);
 
-		expect(screen.getByText("History compacted")).toBeInTheDocument();
-		// The reclaim, not the raw before/after: what was gained is the useful figure.
-		expect(screen.getByText("−11.0k")).toBeInTheDocument();
-		// How full the context is afterwards, which is what tells the user whether
-		// they have room to keep going.
-		expect(screen.getByText("2% full")).toBeInTheDocument();
+		expect(screen.getByText("The conversation history was compacted")).toBeInTheDocument();
+		expect(screen.getByText("−11.0k · 2% full")).toBeInTheDocument();
+		expect(screen.getByText("−11.0k · 2% full")).toHaveClass("text-muted-foreground/70");
 	});
 
 	// A compaction right after a daemon restart genuinely does not know what it
@@ -97,20 +94,17 @@ describe("compaction in the timeline", () => {
 			/>,
 		);
 
-		expect(screen.getByText("History compacted")).toBeInTheDocument();
+		expect(screen.getByText("The conversation history was compacted")).toBeInTheDocument();
 		expect(screen.queryByText(/0 tokens/)).not.toBeInTheDocument();
 		expect(screen.queryByText(/% full/)).not.toBeInTheDocument();
 	});
 
-	// It is a boundary in the conversation, not a step in one: everything above it is
-	// no longer what the agent sees verbatim, which a collapsed tool-call run would
-	// hide entirely.
-	it("renders as a divider rather than a collapsible activity row", () => {
+	it("does not render a centered label inside the rule", () => {
 		const { container } = render(
 			<ChatWorkspace snapshot={snapshot([assistantSaid, compaction()])} />,
 		);
 
-		expect(container.querySelector('[data-compaction="true"]')).not.toBeNull();
+		expect(container.querySelector('[data-compaction="true"]')).toBeNull();
 		expect(
 			screen.queryByRole("button", { name: /Compacted history/ }),
 		).not.toBeInTheDocument();

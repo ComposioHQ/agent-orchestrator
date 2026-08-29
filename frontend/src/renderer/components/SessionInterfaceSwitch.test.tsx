@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { SessionInterfaceTransition } from "../hooks/useSessionInterfaceTransition";
 import {
@@ -115,6 +115,29 @@ describe("SessionInterfaceSwitchButton", () => {
 });
 
 describe("SessionInterfaceSwitchDialog", () => {
+	it("focuses Finish work as the safe default", async () => {
+		render(<SessionInterfaceSwitchDialog open target="tui" onOpenChange={vi.fn()} onChoose={vi.fn()} />);
+
+		await waitFor(() => {
+			expect(screen.getByRole("button", { name: /^Finish work, then switch/ })).toHaveFocus();
+		});
+	});
+
+	it("names active, queued, draft, and staged-attachment consequences before a Chat escape", () => {
+		render(<SessionInterfaceSwitchDialog open target="tui" onOpenChange={vi.fn()} onChoose={vi.fn()} />);
+
+		const dialog = screen.getByRole("dialog", { name: "Switch to Terminal UI?" });
+		expect(within(dialog).getByRole("button", { name: /^Finish work, then switch/ })).toHaveTextContent(
+			"running turn and anything already queued to finish",
+		);
+		expect(within(dialog).getByRole("button", { name: /^Stop now and switch/ })).toHaveTextContent(
+			"unfinished output and queued Chat turns are cancelled",
+		);
+		expect(dialog).toHaveTextContent(
+			"Any unsent Chat draft or staged attachments are discarded when the switch completes.",
+		);
+	});
+
 	it("discloses that interrupting discards an unsent terminal draft", () => {
 		render(<SessionInterfaceSwitchDialog open target="chat" onOpenChange={vi.fn()} onChoose={vi.fn()} />);
 

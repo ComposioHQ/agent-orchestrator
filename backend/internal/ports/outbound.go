@@ -170,7 +170,7 @@ type ContainerReaper interface {
 
 // Stream is one live terminal attach: PTY-like bytes plus resize. Returned
 // already-open by a Runtime's Attach. tmux backs it with a local PTY around
-// their attach CLI; conpty backs it with a loopback connection to the pty-host.
+// its attach CLI; detached hosts use a loopback connection to the pty-host.
 type Stream interface {
 	io.ReadWriteCloser
 	Resize(rows, cols uint16) error

@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Loader2, Smartphone, Trash2 } from "lucide-react";
+import { Bell, Loader2, Smartphone, Trash2 } from "lucide-react";
 import { apiClient, apiErrorCode, apiErrorMessage } from "../../lib/api-client";
 import { Switch } from "../ui/switch";
 
@@ -135,19 +135,22 @@ export function MobileDevicesSection() {
 									key={device.installId}
 									className="flex min-h-12 items-center gap-3 py-2.5"
 								>
-									<Smartphone className="size-4 shrink-0 text-settings-muted" />
+									<Smartphone className="size-4 shrink-0 text-settings-muted" aria-hidden="true" />
 									<div className="min-w-0 flex-1">
 										<div className="truncate text-sm">{name}</div>
 									</div>
 
-									<Switch
-										checked={device.notificationsEnabled && !device.muted}
-										disabled={mute.isPending || !device.notificationsEnabled}
-										aria-label={t("mobile.devices.notificationsFor", { name })}
-										onCheckedChange={(next) =>
-											mute.mutate({ installId: device.installId, muted: !next })
-										}
-									/>
+									<div className="flex items-center gap-2" title={t("mobile.devices.notificationsFor", { name })}>
+										<Bell className="size-4 text-settings-muted" aria-hidden="true" data-testid="bell" />
+										<Switch
+											checked={device.notificationsEnabled && !device.muted}
+											disabled={mute.isPending || !device.notificationsEnabled}
+											aria-label={t("mobile.devices.notificationsFor", { name })}
+											onCheckedChange={(next) =>
+												mute.mutate({ installId: device.installId, muted: !next })
+											}
+										/>
+									</div>
 
 									{confirmingRemoval === device.installId ? (
 										<button

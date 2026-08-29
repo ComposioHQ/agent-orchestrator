@@ -237,7 +237,10 @@ function CameraGate({
 					: "Camera access is turned off for AO. Enable it in system settings, or enter your details manually below."}
 			</Text>
 			{canAskAgain ? (
-				<Button title="Allow camera" icon="camera" onPress={onRequest} style={{ marginTop: 18 }} />
+				// App Review 5.1.1(iv): the button ahead of the system permission
+				// prompt must read "Continue"/"Next", never "Allow ...", so the grant
+				// decision is only ever made in the system dialog itself.
+				<Button title="Continue" onPress={onRequest} style={{ marginTop: 18 }} />
 			) : (
 				<Button
 					title="Open settings"

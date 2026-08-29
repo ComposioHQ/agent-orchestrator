@@ -246,9 +246,9 @@ func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.
 		Telemetry:         telemetry,
 		Logger:            log,
 		BackgroundContext: ctx,
-		// no_signal only makes sense for harnesses whose adapters install
-		// activity hooks; the deriver registry is the source of truth for that.
-		SignalCapable: activitydispatch.SupportsHarness,
+		// no_signal only makes sense for harnesses with complete lifecycle signal
+		// coverage; partial callbacks cannot prove that silence is abnormal.
+		SignalCapable: activitydispatch.FullySupportsHarness,
 	})
 	// Triggering a review spawns a reviewer over the worker's worktree, resolved
 	// from the reviewer registry (distinct from the worker agent set). The
@@ -500,6 +500,7 @@ func (c chatLauncher) StartChat(ctx context.Context, cfg sessionmanager.ChatStar
 		SystemPrompt:            cfg.SystemPrompt,
 		AdditionalDirectories:   cfg.AdditionalDirectories,
 		ProviderConversationID:  cfg.ProviderConversationID,
+		ProviderScopeID:         cfg.ProviderScopeID,
 		ControllerGeneration:    cfg.ControllerGeneration,
 		RequireNativeHistory:    cfg.RequireNativeHistory,
 		SkipNativeHistoryImport: cfg.SkipNativeHistoryImport,
@@ -511,6 +512,8 @@ func (c chatLauncher) StartChat(ctx context.Context, cfg sessionmanager.ChatStar
 				ProviderConversationID: out.ProviderConversationID,
 				ControllerGeneration:   out.ControllerGeneration,
 				Conversation:           out.Conversation,
+				ProviderBoundary:       out.ProviderBoundary,
+				CommitProviderHistory:  out.CommitProviderHistory,
 			})
 			return chatsvc.ControllerCommit{Conversation: commit.Conversation}, err
 		},
