@@ -287,9 +287,6 @@ const api = {
 		goBack: (viewId: string) => ipcRenderer.invoke("browser:goBack", viewId) as Promise<BrowserNavState>,
 		goForward: (viewId: string) => ipcRenderer.invoke("browser:goForward", viewId) as Promise<BrowserNavState>,
 		reload: (viewId: string) => ipcRenderer.invoke("browser:reload", viewId) as Promise<BrowserNavState>,
-		findInPage: (input: { viewId: string; text: string; forward?: boolean; findNext?: boolean }) =>
-			ipcRenderer.invoke("browser:findInPage", input) as Promise<number>,
-		stopFindInPage: (viewId: string) => ipcRenderer.invoke("browser:stopFindInPage", viewId) as Promise<void>,
 		stop: (viewId: string) => ipcRenderer.invoke("browser:stop", viewId) as Promise<BrowserNavState>,
 		getTabs: (viewId: string) => ipcRenderer.invoke("browser:getTabs", viewId) as Promise<BrowserTabsState>,
 		selectTab: (input: { viewId: string; tabId: string }) =>
@@ -305,13 +302,6 @@ const api = {
 			ipcRenderer.on("browser:focusLocation", wrapped);
 			return () => {
 				ipcRenderer.off("browser:focusLocation", wrapped);
-			};
-		},
-		onFocusFind: (listener: (viewId: string) => void) => {
-			const wrapped = (_event: Electron.IpcRendererEvent, viewId: string) => listener(viewId);
-			ipcRenderer.on("browser:focusFind", wrapped);
-			return () => {
-				ipcRenderer.off("browser:focusFind", wrapped);
 			};
 		},
 		devtools: (input: BrowserDevToolsInput) =>

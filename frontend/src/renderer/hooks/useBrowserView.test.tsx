@@ -63,8 +63,6 @@ function setupBridge() {
 		goBack: vi.fn(async (viewId: string) => bridge.stateFor(viewId)),
 		goForward: vi.fn(async (viewId: string) => bridge.stateFor(viewId)),
 		reload: vi.fn(async (viewId: string) => bridge.stateFor(viewId)),
-		findInPage: vi.fn(async () => 0),
-		stopFindInPage: vi.fn(async () => undefined),
 		stop: vi.fn(async (viewId: string) => bridge.stateFor(viewId)),
 		getTabs: vi.fn(async (viewId: string) => ({
 			viewId,
@@ -92,7 +90,6 @@ function setupBridge() {
 		notifyPanelUsed: vi.fn(),
 		notifyPanelBlur: vi.fn(),
 		onFocusLocation: vi.fn(() => () => undefined),
-		onFocusFind: vi.fn(() => () => undefined),
 		devtools: vi.fn(
 			async ({ viewId, operation, placement }: {
 				viewId: string;

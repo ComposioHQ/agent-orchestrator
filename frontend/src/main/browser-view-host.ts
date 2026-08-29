@@ -152,7 +152,6 @@ export type BrowserShortcutAction =
 	| "new-tab"
 	| "close-tab"
 	| "focus-location"
-	| "find-in-page"
 	| "reload"
 	| "scroll-down"
 	| "scroll-up";
@@ -167,8 +166,6 @@ export function browserShortcutAction(input: BrowserShortcutInput, isMac: boolea
 				return "close-tab";
 			case "l":
 				return "focus-location";
-			case "f":
-				return "find-in-page";
 			case "r":
 				return "reload";
 		}
@@ -188,7 +185,6 @@ type BrowserWebContents = Pick<
 	| "clearHistory"
 	| "debugger"
 	| "executeJavaScript"
-	| "findInPage"
 	| "focus"
 	| "mainFrame"
 	| "getTitle"
@@ -205,7 +201,6 @@ type BrowserWebContents = Pick<
 	| "send"
 	| "setWindowOpenHandler"
 	| "stop"
-	| "stopFindInPage"
 > & {
 	openDevTools?: (options?: Pick<OpenDevToolsOptions, "mode" | "activate">) => void;
 	closeDevTools?: () => void;
@@ -999,12 +994,6 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		shellWebContents.focus();
 		shellWebContents.send("browser:focusLocation", session.viewId);
 	};
-	const focusFind = (session: BrowserSessionEntry): void => {
-		lastUsedViewId = session.viewId;
-		shellWebContents.focus();
-		shellWebContents.send("browser:focusFind", session.viewId);
-	};
-
 	function attachBrowserShortcuts(
 		contents: Pick<WebContents, "on">,
 		getSession: () => BrowserSessionEntry | undefined,
@@ -1021,10 +1010,6 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			lastUsedViewId = session.viewId;
 			if (action === "focus-location") {
 				focusLocation(session);
-				return;
-			}
-			if (action === "find-in-page") {
-				focusFind(session);
 				return;
 			}
 			if (action === "reload") {
@@ -1496,26 +1481,6 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	handle("browser:reload", (event, viewId: string) =>
 		isRendererOwned(event, viewId) ? invokeNav(viewId, (contents) => contents.reload(), true) : emptyNavState(viewId),
 	);
-	handle(
-		"browser:findInPage",
-		(event, input: { viewId: string; text: string; forward?: boolean; findNext?: boolean }) => {
-			const session = entries.get(input?.viewId);
-			if (!session || !isRendererOwned(event, input.viewId) || typeof input.text !== "string") return 0;
-			if (!input.text) {
-				activeEntry(session).view.webContents.stopFindInPage("clearSelection");
-				return 0;
-			}
-			return activeEntry(session).view.webContents.findInPage(input.text, {
-				forward: input.forward !== false,
-				findNext: input.findNext === true,
-			});
-		},
-	);
-	handle("browser:stopFindInPage", (event, viewId: string) => {
-		const session = entries.get(viewId);
-		if (!session || !isRendererOwned(event, viewId)) return;
-		activeEntry(session).view.webContents.stopFindInPage("clearSelection");
-	});
 	handle("browser:stop", (event, viewId: string) =>
 		isRendererOwned(event, viewId) ? invokeNav(viewId, (contents) => contents.stop()) : emptyNavState(viewId),
 	);

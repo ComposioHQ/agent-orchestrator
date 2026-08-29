@@ -217,8 +217,6 @@ if (typeof window !== "undefined") {
 				canGoForward: false,
 				isLoading: false,
 			}),
-			findInPage: async () => 0,
-			stopFindInPage: async () => undefined,
 			stop: async (viewId: string) => ({
 				viewId,
 				url: "",
@@ -234,7 +232,6 @@ if (typeof window !== "undefined") {
 			notifyPanelUsed: () => undefined,
 			notifyPanelBlur: () => undefined,
 			onFocusLocation: () => () => undefined,
-			onFocusFind: () => () => undefined,
 			devtools: async ({ viewId, operation }) => ({
 				viewId,
 				open: operation !== "close",
