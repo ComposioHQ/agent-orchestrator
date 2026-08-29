@@ -84,6 +84,18 @@ ao spawn --agent codex --profile existing --prompt "Implement the next task"
 binding when available and otherwise selects `existing`; there is no mutable
 global “last selected” profile.
 
+Inspect current Codex profile authentication and provider-reported subscription
+capacity with:
+
+```bash
+ao agent profile ls
+ao agent profile ls --json
+```
+
+The daemon performs the bounded display ensure. Capacity is in-memory,
+profile-scoped, advisory, and may be stale; the CLI never reads Codex files or
+starts native processes itself.
+
 Agent switching is initially available only for worker sessions whose source
 and target harnesses are Claude Code or Codex. The main command
 accepts an idempotency key:

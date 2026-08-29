@@ -102,8 +102,11 @@ surface (`npm run sqlc`, `npm run api`).
   persists an immutable, path-private binding and applies its exact
   `CODEX_HOME` to every Codex TUI, Chat, restore, switch, and reviewer process.
   Managed launches force Codex's file credential store; AO never searches a
-  different profile for native history. Capacity-aware or automatic profile
-  switching is not included yet.
+  different profile for native history. Codex app-server reads and bound Chat
+  events now feed one daemon-memory subscription-capacity snapshot per profile;
+  Settings, task selection, the switch dialog, session details, and
+  `ao agent profile ls` display that advisory state without polling or changing
+  launch eligibility. Assisted and automatic profile switching are not included.
 - OpenAPI spec generated from Go DTOs; frontend TS types generated from it and
   drift-checked in CI.
 
