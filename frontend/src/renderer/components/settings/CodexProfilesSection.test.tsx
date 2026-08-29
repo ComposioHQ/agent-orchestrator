@@ -51,6 +51,16 @@ it("shows signed-out existing profile and opens structured browser login", async
 	openExternal.mockRestore();
 });
 
+it("renders the profile icon without a background tile", async () => {
+	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+	render(<QueryClientProvider client={queryClient}><CodexProfilesSection /></QueryClientProvider>);
+	await screen.findByText("Existing Codex profile");
+	const icon = screen.getByTestId("codex-profile-icon");
+	expect(icon.tagName).toBe("svg");
+	expect(icon).toHaveClass("size-5", "shrink-0", "text-muted-foreground");
+	expect(icon).not.toHaveClass("rounded-md", "bg-muted", "p-2");
+});
+
 it("creates a managed profile, then explicitly starts its browser login", async () => {
 	const managed = { ...profileResponse.profiles[0], id: "72d4db6e-da2c-414c-a6a9-fdbd09a006b6", label: "Work", source: "managed", usableByCurrentLaunches: true };
 	postMock.mockImplementation((path: string) => {

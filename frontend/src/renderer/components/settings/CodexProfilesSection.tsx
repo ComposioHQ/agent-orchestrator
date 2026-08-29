@@ -171,7 +171,7 @@ function CodexProfileRow({ profile, login, busy, loginSupported, onLogin, onCanc
 		<div className="rounded-md border border-border bg-background/40 p-3" data-profile-id={profile.id}>
 			<div className="flex items-start justify-between gap-3">
 				<div className="flex min-w-0 gap-3">
-					<div className="mt-0.5 rounded-md bg-muted p-2"><UserRound className="size-4" aria-hidden="true" /></div>
+					<UserRound data-testid="codex-profile-icon" className="mt-0.5 size-5 shrink-0 text-muted-foreground" aria-hidden="true" />
 					<div className="min-w-0">
 						<div className="flex items-center gap-2">
 							<p className="truncate text-sm font-medium">{profile.label}</p>
