@@ -1051,7 +1051,9 @@ func TestModelsUsesCapabilityAwareFallbackWhenDiscoveryCannotRun(t *testing.T) {
 		{agent: "grok", wantEntryMode: ports.CustomModelEntryDirect, wantSelection: ports.ModelSelectionText, wantAllowInput: true},
 	} {
 		t.Run(tc.agent, func(t *testing.T) {
-			t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+			emptyHome := t.TempDir()
+			t.Setenv("HOME", emptyHome)
+			t.Setenv("XDG_CONFIG_HOME", emptyHome)
 			svc := NewWithAgents([]agentregistry.HarnessAgent{
 				harnessAgent(tc.agent, tc.agent, ports.ErrAgentBinaryNotFound),
 			})
@@ -1205,6 +1207,45 @@ func TestModelsKeepsFullerCacheWhenRefreshReturnsPartialCatalog(t *testing.T) {
 	}
 	if len(got.Models) != 3 || !got.Stale || got.Warning == "" {
 		t.Fatalf("catalog = %#v, want fuller stale cache", got)
+	}
+}
+
+func TestModelsUsesNewestAgentWideCacheWhenCurrentProjectDiscoveryFails(t *testing.T) {
+	older := cachedModelRecord(t, "cursor", "project-a", time.Now().Add(-2*time.Hour), false)
+	newer := cachedModelRecord(t, "cursor", "project-b", time.Now().Add(-time.Hour), false)
+	var newerCatalog ports.AgentModelCatalog
+	if err := json.Unmarshal([]byte(newer.CatalogJSON), &newerCatalog); err != nil {
+		t.Fatal(err)
+	}
+	newerCatalog.Models = []ports.AgentModelInfo{{ID: "cursor/latest", Label: "Latest"}}
+	newerData, err := json.Marshal(newerCatalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newer.CatalogJSON = string(newerData)
+
+	cache := &fakeModelCache{records: map[string]ports.CachedAgentModelCatalog{
+		"cursor\x00project-a": older,
+		"cursor\x00project-b": newer,
+	}}
+	discoverer := &fakeModelDiscoverer{err: errors.New("cursor model discovery timed out after 20s")}
+	projects := &fakeProjectLookup{records: map[string]domain.ProjectRecord{
+		"project-c": {ID: "project-c", Path: "/work/project-c"},
+	}}
+	svc := newService([]agentregistry.HarnessAgent{harnessAgent("cursor", "Cursor", nil)}, cache, projects, discoverer)
+
+	got, err := svc.Models(context.Background(), "cursor", "project-c", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Models) != 1 || got.Models[0].ID != "cursor/latest" || !got.Stale {
+		t.Fatalf("catalog = %#v, want newest agent-wide cache marked stale", got)
+	}
+	if !strings.Contains(got.Warning, "timed out") {
+		t.Fatalf("warning = %q, want discovery failure", got.Warning)
+	}
+	if _, exists := cache.records["cursor\x00project-c"]; exists {
+		t.Fatal("agent-wide fallback must not be persisted as project-specific discovery")
 	}
 }
 

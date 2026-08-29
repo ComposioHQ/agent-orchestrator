@@ -76,6 +76,32 @@ func TestAiderAndAutohandUseDocumentedDiscoveryCommands(t *testing.T) {
 	}
 }
 
+func TestOMPAndHelpBackedAgentsUseDocumentedDiscoveryCommands(t *testing.T) {
+	tests := []struct {
+		agent string
+		want  []string
+	}{
+		{agent: "omp", want: []string{"models", "--json"}},
+		{agent: "copilot", want: []string{"help", "config"}},
+		{agent: "droid", want: []string{"exec", "--help"}},
+		{agent: "crush", want: []string{"models"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.agent, func(t *testing.T) {
+			spec, ok := commandSpecs[tc.agent]
+			if !ok {
+				t.Fatalf("%s has no discovery command", tc.agent)
+			}
+			if !reflect.DeepEqual(spec.args, tc.want) {
+				t.Fatalf("%s discovery args = %q, want %q", tc.agent, spec.args, tc.want)
+			}
+			if spec.parser == nil {
+				t.Fatalf("%s discovery parser is nil", tc.agent)
+			}
+		})
+	}
+}
+
 func TestBaseClassifiesStaticTextAndModeAgents(t *testing.T) {
 	tests := []struct {
 		agent string
@@ -90,9 +116,12 @@ func TestBaseClassifiesStaticTextAndModeAgents(t *testing.T) {
 		{agent: "autohand", mode: ports.ModelSelectionCatalog},
 		{agent: "kimchi", mode: ports.ModelSelectionCatalog},
 		{agent: "prime-agent", mode: ports.ModelSelectionCatalog},
-		{agent: "qwen", mode: ports.ModelSelectionText},
-		{agent: "continue", mode: ports.ModelSelectionText},
-		{agent: "crush", mode: ports.ModelSelectionText},
+		{agent: "qwen", mode: ports.ModelSelectionCatalog},
+		{agent: "copilot", mode: ports.ModelSelectionCatalog},
+		{agent: "droid", mode: ports.ModelSelectionCatalog},
+		{agent: "continue", mode: ports.ModelSelectionCatalog},
+		{agent: "crush", mode: ports.ModelSelectionCatalog},
+		{agent: "omp", mode: ports.ModelSelectionCatalog},
 	}
 	for _, tc := range tests {
 		t.Run(tc.agent, func(t *testing.T) {
@@ -115,24 +144,24 @@ func TestCustomModelEntryPolicy(t *testing.T) {
 		{agent: "opencode", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
 		{agent: "grok", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
 		{agent: "cursor", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
-		{agent: "qwen", wantEntryMode: "direct", wantSelection: ports.ModelSelectionText},
-		{agent: "copilot", wantEntryMode: "direct", wantSelection: ports.ModelSelectionText},
+		{agent: "qwen", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
+		{agent: "copilot", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
 		{agent: "kimi", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
 		{agent: "muse", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
-		{agent: "droid", wantEntryMode: "direct", wantSelection: ports.ModelSelectionText},
+		{agent: "droid", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
 		{agent: "amp", wantEntryMode: "none", wantSelection: ports.ModelSelectionModeList},
 		{agent: "agy", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
-		{agent: "crush", wantEntryMode: "direct", wantSelection: ports.ModelSelectionText},
+		{agent: "crush", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
 		{agent: "aider", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
-		{agent: "goose", wantEntryMode: "direct", wantSelection: ports.ModelSelectionText},
+		{agent: "goose", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
 		{agent: "auggie", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
-		{agent: "continue", wantEntryMode: "direct", wantSelection: ports.ModelSelectionText},
+		{agent: "continue", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
 		{agent: "devin", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
-		{agent: "omp", wantEntryMode: "direct", wantSelection: ports.ModelSelectionText},
-		{agent: "cline", wantEntryMode: "direct", wantSelection: ports.ModelSelectionText},
+		{agent: "omp", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
+		{agent: "cline", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
 		{agent: "kiro", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
 		{agent: "kilocode", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
-		{agent: "vibe", wantEntryMode: "direct", wantSelection: ports.ModelSelectionText},
+		{agent: "vibe", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
 		{agent: "pi", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
 		{agent: "kimchi", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
 		{agent: "prime-agent", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
@@ -222,6 +251,33 @@ func TestCodexDiscoveryUsesStructuredProviderCatalog(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got.Models, want) || got.Source != "cli" {
 		t.Fatalf("catalog = %#v, want models %#v", got, want)
+	}
+}
+
+func TestClineDiscoveryUsesACPModelOptions(t *testing.T) {
+	discoverer := Discoverer{ClineOptions: func(context.Context, ports.AgentModelDiscoveryRequest) ([]ports.ChatConfigOption, error) {
+		return []ports.ChatConfigOption{
+			{
+				ID: "model", Name: "Model", Category: "model", Type: ports.ChatConfigOptionSelect,
+				Current: ports.ChatConfigOptionValue{Select: "anthropic/claude-sonnet-4-6"},
+				Choices: []ports.ChatConfigOptionChoice{
+					{Value: "anthropic/claude-sonnet-4-6", Name: "Claude Sonnet 4.6", Group: "anthropic", GroupName: "Anthropic"},
+					{Value: "openai/gpt-5.4", Name: "GPT-5.4", Group: "openai", GroupName: "OpenAI"},
+				},
+			},
+			{ID: "mode", Name: "Mode", Category: "mode", Type: ports.ChatConfigOptionSelect},
+		}, nil
+	}}
+	got, err := discoverer.Discover(context.Background(), ports.AgentModelDiscoveryRequest{AgentID: "cline", Binary: "/bin/cline"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []ports.AgentModelInfo{
+		{ID: "anthropic/claude-sonnet-4-6", Label: "Claude Sonnet 4.6", Provider: "anthropic", IsDefault: true},
+		{ID: "openai/gpt-5.4", Label: "GPT-5.4", Provider: "openai"},
+	}
+	if !reflect.DeepEqual(got.Models, want) || got.Source != "acp" {
+		t.Fatalf("catalog = %#v, want models %#v from ACP", got, want)
 	}
 }
 
@@ -339,6 +395,43 @@ func TestParseJSONModelsFindsNestedModels(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("models = %#v, want nested claude-sonnet", got)
+	}
+}
+
+func TestParseOMPModelsUsesSelectorAsLaunchID(t *testing.T) {
+	got, err := parseJSONModels([]byte(`{"models":[{"provider":"anthropic","id":"claude-opus-5","selector":"anthropic/claude-opus-5","name":"Claude Opus 5"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []ports.AgentModelInfo{{ID: "anthropic/claude-opus-5", Label: "Claude Opus 5", Provider: "anthropic"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("models = %#v, want %#v", got, want)
+	}
+}
+
+func TestParseCopilotConfigModels(t *testing.T) {
+	got, err := parseCopilotConfigModels([]byte("`model`: AI model to use.\n  - \"claude-fable-5\"\n  - \"gpt-5.6-sol\"\n`contextTier`: context tier.\n  - ignored\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []ports.AgentModelInfo{{ID: "claude-fable-5", Label: "claude-fable-5"}, {ID: "gpt-5.6-sol", Label: "gpt-5.6-sol"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("models = %#v, want %#v", got, want)
+	}
+}
+
+func TestParseDroidHelpModels(t *testing.T) {
+	got, err := parseDroidHelpModels([]byte("Available Models:\n  auto                    Auto Model\n  claude-opus-5           Opus 5 (default)\n  gpt-5.6-sol             GPT-5.6 Sol\n\nTool Controls:\n  --list-tools            List tools\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []ports.AgentModelInfo{
+		{ID: "claude-opus-5", Label: "Opus 5", IsDefault: true},
+		{ID: "auto", Label: "Auto Model"},
+		{ID: "gpt-5.6-sol", Label: "GPT-5.6 Sol"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("models = %#v, want %#v", got, want)
 	}
 }
 

@@ -112,6 +112,43 @@ func New(cfg Config, log *slog.Logger) *Driver {
 	return &Driver{cfg: cfg, log: log, spawn: spawnAgent}
 }
 
+// DiscoverConfigOptions opens a short-lived ACP session and returns the
+// provider-owned configuration catalog advertised by session/new. It sends no
+// prompt and closes the process immediately after the handshake.
+func DiscoverConfigOptions(
+	ctx context.Context,
+	launch Launch,
+	workingDir string,
+	log *slog.Logger,
+) ([]ports.ChatConfigOption, error) {
+	driver := New(Config{
+		Launch: func(context.Context, LaunchConfig) (Launch, error) { return launch, nil },
+	}, log)
+	return driver.discoverConfigOptions(ctx, workingDir)
+}
+
+func (d *Driver) discoverConfigOptions(ctx context.Context, workingDir string) ([]ports.ChatConfigOption, error) {
+	if !filepath.IsAbs(workingDir) {
+		return nil, fmt.Errorf("workspace path must be absolute, got %q", workingDir)
+	}
+	conv, _, err := d.connect(ctx, LaunchConfig{WorkspacePath: workingDir})
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = conv.Close() }()
+
+	openCtx, cancel := context.WithTimeout(ctx, handshakeTimeout)
+	defer cancel()
+	resp, err := conv.conn.NewSession(openCtx, acpsdk.NewSessionRequest{
+		Cwd:        workingDir,
+		McpServers: []acpsdk.McpServer{},
+	})
+	if err != nil {
+		return nil, normalizeACPError("ACP session/new", err)
+	}
+	return normalizeConfigOptions(resp.ConfigOptions), nil
+}
+
 // Harness identifies the AO harness this ACP transport adapts.
 func (d *Driver) Harness() domain.AgentHarness { return d.cfg.Harness }
 

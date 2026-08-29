@@ -57,6 +57,10 @@ var commandSpecs = map[string]commandSpec{
 	"auggie":      {args: []string{"models", "list", "--json"}, parser: parseJSONModels},
 	"devin":       {args: []string{"models", "list", "--format", "json"}, parser: parseJSONModels},
 	"kiro":        {args: []string{"chat", "--list-models", "--format", "json"}, parser: parseJSONModels},
+	"omp":         {args: []string{"models", "--json"}, parser: parseJSONModels},
+	"copilot":     {args: []string{"help", "config"}, parser: parseCopilotConfigModels},
+	"droid":       {args: []string{"exec", "--help"}, parser: parseDroidHelpModels},
+	"crush":       {args: []string{"models"}, parser: parseIDLines},
 }
 
 // Base returns the picker behavior AO can provide without executing a CLI.
@@ -126,11 +130,16 @@ func customModelEntryMode(agentID string) ports.CustomModelEntryMode {
 type Discoverer struct {
 	TerminalSpawner TerminalSpawnFunc
 	CodexModels     CodexModelListFunc
+	ClineOptions    ClineConfigOptionListFunc
 }
 
 // CodexModelListFunc obtains Codex's account-scoped app-server catalog without
 // opening a provider thread.
 type CodexModelListFunc func(context.Context, ports.AgentModelDiscoveryRequest) ([]ports.ChatModel, error)
+
+// ClineConfigOptionListFunc obtains Cline's provider-owned model choices from
+// the ACP configuration catalog advertised by session/new.
+type ClineConfigOptionListFunc func(context.Context, ports.AgentModelDiscoveryRequest) ([]ports.ChatConfigOption, error)
 
 // Discover uses the agent-owned model surface configured for this adapter.
 func (d Discoverer) Discover(ctx context.Context, request ports.AgentModelDiscoveryRequest) (ports.AgentModelCatalog, error) {
@@ -139,6 +148,13 @@ func (d Discoverer) Discover(ctx context.Context, request ports.AgentModelDiscov
 	}
 	if request.AgentID == "codex" {
 		return discoverCodexCatalog(ctx, request, d.CodexModels)
+	}
+	if request.AgentID == "cline" && d.ClineOptions != nil {
+		if catalog, err := discoverClineCatalog(ctx, request, d.ClineOptions); err == nil {
+			return catalog, nil
+		}
+		// Older Cline releases may not expose ACP config options. Fall back to
+		// the configured provider selections already stored by Cline.
 	}
 	return Discover(ctx, request.AgentID, request.Binary, request.WorkingDir, request.Env)
 }
@@ -162,6 +178,9 @@ func Discover(ctx context.Context, agentID, binary, workingDir string, env map[s
 	}
 	if agentID == "codex" {
 		return base, errors.New("codex model discovery requires app-server")
+	}
+	if hasConfigDiscoverySource(agentID) {
+		return discoverConfigCatalog(agentID, workingDir, env)
 	}
 	spec, ok := commandSpecs[agentID]
 	if !ok {
@@ -225,6 +244,53 @@ func discoverCodexCatalog(ctx context.Context, request ports.AgentModelDiscovery
 	return base, nil
 }
 
+func discoverClineCatalog(
+	ctx context.Context,
+	request ports.AgentModelDiscoveryRequest,
+	list ClineConfigOptionListFunc,
+) (ports.AgentModelCatalog, error) {
+	base := Base(request.AgentID)
+	options, err := list(ctx, request)
+	if err != nil {
+		return base, fmt.Errorf("cline ACP model discovery: %w", err)
+	}
+	var models []ports.AgentModelInfo
+	for _, option := range options {
+		if option.Type != ports.ChatConfigOptionSelect ||
+			(option.Category != "model" && option.ID != "model") {
+			continue
+		}
+		for _, choice := range option.Choices {
+			id := strings.TrimSpace(choice.Value)
+			if id == "" {
+				continue
+			}
+			label := strings.TrimSpace(choice.Name)
+			if label == "" {
+				label = id
+			}
+			provider := strings.TrimSpace(choice.Group)
+			if provider == "" {
+				if prefix, _, ok := strings.Cut(id, "/"); ok {
+					provider = prefix
+				}
+			}
+			models = append(models, ports.AgentModelInfo{
+				ID: id, Label: label, Provider: provider,
+				IsDefault: id == strings.TrimSpace(option.Current.Select),
+			})
+		}
+	}
+	models = normalize(models)
+	if len(models) == 0 {
+		return base, errors.New("cline ACP model discovery returned no models")
+	}
+	base.Models = models
+	base.Source = "acp"
+	base.FetchedAt = time.Now().UTC()
+	return base, nil
+}
+
 // claudeCodeSettingsReadLimit bounds how much of a settings file AO parses. The
 // documented files are small; a pathological one must not stall discovery.
 const claudeCodeSettingsReadLimit = 1 << 20
@@ -282,6 +348,9 @@ func claudeCodeSettingsModel(path string) string {
 func hasDiscoverySource(agentID string) bool {
 	switch agentID {
 	case "claude-code", "codex", "muse":
+		return true
+	}
+	if hasConfigDiscoverySource(agentID) {
 		return true
 	}
 	_, hasCommand := commandSpecs[agentID]
@@ -379,10 +448,13 @@ func CatalogFingerprint(ctx context.Context, agentID, binary, workingDir string,
 // discoveryConfigInputs returns the configuration an agent's discovery consults,
 // or "" when the catalog depends on the binary alone.
 func discoveryConfigInputs(agentID, workingDir string, env map[string]string) string {
-	if agentID != "claude-code" {
-		return ""
+	if agentID == "claude-code" {
+		return "model=" + claudeCodeResolvedModel(workingDir, env)
 	}
-	return "model=" + claudeCodeResolvedModel(workingDir, env)
+	if config := configDiscoveryFingerprint(agentID, workingDir, env); config != "" {
+		return "config=" + config
+	}
+	return ""
 }
 
 func catalog(agentID, source string, entryMode ports.CustomModelEntryMode, at time.Time, models ...ports.AgentModelInfo) ports.AgentModelCatalog {
@@ -425,6 +497,66 @@ func parseGrokModels(output []byte) ([]ports.AgentModelInfo, error) {
 
 func parseCursorModels(output []byte) ([]ports.AgentModelInfo, error) {
 	return parseSectionModels(string(output), "Available models", "Tip:")
+}
+
+func parseCopilotConfigModels(output []byte) ([]ports.AgentModelInfo, error) {
+	text := ansiPattern.ReplaceAllString(string(output), "")
+	inModels := false
+	var models []ports.AgentModelInfo
+	for _, rawLine := range strings.Split(text, "\n") {
+		line := strings.TrimSpace(rawLine)
+		if !inModels {
+			if strings.HasPrefix(line, "`model`:") {
+				inModels = true
+			}
+			continue
+		}
+		if strings.HasPrefix(line, "`contextTier`:") {
+			break
+		}
+		if !strings.HasPrefix(line, "-") {
+			continue
+		}
+		id := strings.TrimSpace(strings.TrimPrefix(line, "-"))
+		id = strings.Trim(id, "`\"'")
+		if looksLikeModelID(id) {
+			models = append(models, ports.AgentModelInfo{ID: id, Label: id})
+		}
+	}
+	return normalize(models), nil
+}
+
+func parseDroidHelpModels(output []byte) ([]ports.AgentModelInfo, error) {
+	text := ansiPattern.ReplaceAllString(string(output), "")
+	inModels := false
+	var models []ports.AgentModelInfo
+	for _, rawLine := range strings.Split(text, "\n") {
+		line := strings.TrimSpace(rawLine)
+		if !inModels {
+			if line == "Available Models:" {
+				inModels = true
+			}
+			continue
+		}
+		if line == "" {
+			if len(models) > 0 {
+				break
+			}
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 2 || !looksLikeModelID(fields[0]) {
+			break
+		}
+		id := fields[0]
+		label := strings.TrimSpace(strings.TrimPrefix(line, id))
+		isDefault := strings.HasSuffix(strings.ToLower(label), "(default)")
+		if isDefault {
+			label = strings.TrimSpace(label[:len(label)-len("(default)")])
+		}
+		models = append(models, ports.AgentModelInfo{ID: id, Label: label, IsDefault: isDefault})
+	}
+	return normalize(models), nil
 }
 
 func parseSectionModels(output, startMarker, stopMarker string) ([]ports.AgentModelInfo, error) {
@@ -520,7 +652,7 @@ func parseJSONModels(output []byte) ([]ports.AgentModelInfo, error) {
 				walk(item)
 			}
 		case map[string]any:
-			id := firstString(node, "modelId", "model_id", "model_uid", "slug", "model")
+			id := firstString(node, "selector", "modelId", "model_id", "model_uid", "slug", "model")
 			if id == "" {
 				if _, isProviderContainer := node["models"]; !isProviderContainer {
 					id = firstString(node, "id")

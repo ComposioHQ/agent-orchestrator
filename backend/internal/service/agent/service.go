@@ -627,6 +627,14 @@ func (s *Service) loadModels(ctx context.Context, agentID, projectID string, mod
 			}
 			return cached.Catalog, nil
 		}
+		if shared, ok := s.latestAgentCatalog(ctx, agentID, projectID); ok {
+			shared = applyCustomModelEntryPolicy(shared, policy)
+			shared.Stale = true
+			shared.Warning = discoverErr.Error()
+			shared.ValidatedAt = time.Now().UTC()
+			shared.RefreshRecommended = false
+			return shared, nil
+		}
 		fallback := policy
 		fallback.BinaryVersion = version
 		fallback.ValidatedAt = time.Now().UTC()
@@ -638,6 +646,39 @@ func (s *Service) loadModels(ctx context.Context, agentID, projectID string, mod
 		discovered.Warning = appendCacheWarning(discovered.Warning)
 	}
 	return discovered, nil
+}
+
+// latestAgentCatalog returns a last-known-good catalog from another project as
+// a display-only fallback. Discovery remains project-scoped and this result is
+// deliberately not persisted under the requested project key.
+func (s *Service) latestAgentCatalog(ctx context.Context, agentID, projectID string) (ports.AgentModelCatalog, bool) {
+	if s.cache == nil {
+		return ports.AgentModelCatalog{}, false
+	}
+	records, err := s.cache.ListAgentModelCatalogsByAgent(ctx, agentID)
+	if err != nil {
+		return ports.AgentModelCatalog{}, false
+	}
+	var best ports.AgentModelCatalog
+	var bestAt time.Time
+	for _, record := range records {
+		if record.ProjectID == projectID {
+			continue
+		}
+		var candidate ports.AgentModelCatalog
+		if err := json.Unmarshal([]byte(record.CatalogJSON), &candidate); err != nil || len(candidate.Models) == 0 {
+			continue
+		}
+		at := record.FetchedAt
+		if at.IsZero() {
+			at = candidate.FetchedAt
+		}
+		if best.Models == nil || at.After(bestAt) {
+			best = candidate
+			bestAt = at
+		}
+	}
+	return best, best.Models != nil
 }
 
 func applyCustomModelEntryPolicy(catalog, policy ports.AgentModelCatalog) ports.AgentModelCatalog {

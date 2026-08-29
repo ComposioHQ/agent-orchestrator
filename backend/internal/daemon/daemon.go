@@ -19,6 +19,7 @@ import (
 
 	codexagent "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/codex"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/modelcatalog"
+	chatdriveracp "github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/acp"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/codexappserver"
 	chatdriverregistry "github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/registry"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/ptyexec"
@@ -319,6 +320,13 @@ func Run() error {
 		TerminalSpawner: ptyexec.SpawnInDir,
 		CodexModels: func(listCtx context.Context, request ports.AgentModelDiscoveryRequest) ([]ports.ChatModel, error) {
 			return codexModelDriver.DiscoverModels(listCtx, request.WorkingDir, request.Env)
+		},
+		ClineOptions: func(listCtx context.Context, request ports.AgentModelDiscoveryRequest) ([]ports.ChatConfigOption, error) {
+			return chatdriveracp.DiscoverConfigOptions(listCtx, chatdriveracp.Launch{
+				Command: request.Binary,
+				Args:    []string{"--acp"},
+				Env:     request.Env,
+			}, request.WorkingDir, log)
 		},
 	}
 	agentSvc := agentsvc.NewWithDeps(agentsvc.Deps{Cache: store, InventoryCache: store, Discoverer: modelDiscoverer, Projects: store, Sessions: store})
