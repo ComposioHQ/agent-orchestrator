@@ -1804,7 +1804,7 @@ describe("ChatWorkspace reviewer tabs", () => {
 		sessionId: chatSession.id,
 	};
 
-	it("keeps pinned tabs adaptive and opens reviewer from the strip", () => {
+	it("keeps the original tab chrome while allowing primary tabs to shrink to their icons", () => {
 		const onOpenReviewerTerminal = vi.fn();
 		render(
 			<ChatWorkspace
@@ -1817,23 +1817,34 @@ describe("ChatWorkspace reviewer tabs", () => {
 
 		const chatTab = screen.getByRole("tab", { name: "Codex" });
 		const reviewerTab = screen.getByRole("tab", { name: "Reviewer" });
-		expect(chatTab).toHaveClass("self-stretch", "px-3", "cursor-pointer", "session-adaptive-tab");
-		expect(chatTab).not.toHaveClass("w-shell-tab-connected", "min-w-shell-tab-min");
-		expect(reviewerTab).toHaveClass(
+		expect(chatTab).toHaveClass(
+			"inline-flex",
+			"max-w-shell-tab-max",
 			"self-stretch",
 			"px-3",
-			"cursor-pointer",
-			"session-adaptive-tab",
+			"session-tab-icon-floor",
+			"shrink",
+			"border-r",
+			"overflow-hidden",
+			"after:inset-x-0",
+		);
+		expect(reviewerTab).toHaveClass(
+			"inline-flex",
+			"max-w-shell-tab-max",
+			"self-stretch",
+			"px-3",
+			"session-tab-icon-floor",
+			"shrink",
 			"border-r",
 			"overflow-hidden",
 		);
-		expect(reviewerTab).not.toHaveClass("w-shell-tab-connected", "min-w-shell-tab-min");
-		expect(chatTab.parentElement).toHaveClass("flex", "shrink-0", "items-stretch");
-		expect(reviewerTab.parentElement).toHaveClass("flex", "shrink-0", "items-stretch");
+		expect(chatTab).not.toHaveClass("w-shell-tab-connected", "min-w-shell-tab-min", "shrink-0");
+		expect(reviewerTab).not.toHaveClass("w-shell-tab-connected", "min-w-shell-tab-min", "shrink-0");
+		expect(chatTab.querySelector("img")).toBeInTheDocument();
 		expect(reviewerTab.querySelector("img")).toBeInTheDocument();
-		expect(screen.getByTestId("session-terminal-region").style.getPropertyValue("--session-tab-share")).toBe(
-			"50cqw",
-		);
+		expect(chatTab.parentElement).toBe(reviewerTab.parentElement);
+		expect(chatTab.parentElement).toHaveClass("overflow-x-auto", "min-w-flex-min");
+		expect(screen.getByTestId("session-terminal-region").style.getPropertyValue("--session-tab-share")).toBe("");
 
 		fireEvent.click(reviewerTab);
 		expect(onOpenReviewerTerminal).toHaveBeenCalledWith(reviewerTerminal);
@@ -2012,7 +2023,7 @@ describe("ChatWorkspace reviewer tabs", () => {
 		expect(onSelectChat).toHaveBeenCalledOnce();
 	});
 
-	it("keeps chat and reviewer pinned before the scrollable shell strip", () => {
+	it("keeps chat, reviewer, and shell tabs in one scrollable strip", () => {
 		const shells = [
 			{
 				handleId: "shell-1",
@@ -2036,10 +2047,10 @@ describe("ChatWorkspace reviewer tabs", () => {
 		const reviewerTab = screen.getByRole("tab", { name: "Reviewer" });
 		const shellTab = screen.getByRole("tab", { name: "chat worktree shell" });
 
-		expect(chatTab.parentElement).toHaveClass("shrink-0");
-		expect(reviewerTab.parentElement).toHaveClass("shrink-0");
-		expect(scrollRegion?.contains(chatTab.parentElement)).toBe(false);
-		expect(scrollRegion?.contains(reviewerTab.parentElement)).toBe(false);
+		expect(chatTab).toHaveClass("session-tab-icon-floor", "shrink");
+		expect(reviewerTab).toHaveClass("session-tab-icon-floor", "shrink");
+		expect(scrollRegion?.contains(chatTab)).toBe(true);
+		expect(scrollRegion?.contains(reviewerTab)).toBe(true);
 		expect(scrollRegion?.contains(shellTab.parentElement)).toBe(true);
 	});
 });

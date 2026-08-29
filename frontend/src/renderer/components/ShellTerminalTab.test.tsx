@@ -113,9 +113,10 @@ describe("ShellTerminalTab rename", () => {
 		expect(tab.classList.contains("min-w-0")).toBe(true);
 		expect(tab.classList.contains("text-left")).toBe(true);
 		expect(tab.parentElement?.classList.contains("grid")).toBe(true);
-		expect(tab.parentElement?.classList.contains("shrink-0")).toBe(true);
-		expect(tab.parentElement?.classList.contains("session-adaptive-tab")).toBe(true);
-		expect(tab.parentElement?.classList.contains("session-adaptive-tab--closable")).toBe(true);
+		expect(tab.parentElement?.classList.contains("shrink")).toBe(true);
+		expect(tab.parentElement?.classList.contains("shrink-0")).toBe(false);
+		expect(tab.parentElement?.classList.contains("session-tab-icon-floor")).toBe(true);
+		expect(tab.parentElement?.classList.contains("session-tab-icon-floor--closable")).toBe(true);
 		expect(tab.parentElement?.classList.contains("w-shell-tab-connected")).toBe(false);
 	});
 

@@ -616,7 +616,7 @@ describe("CenterPane toolbar session label", () => {
 		expect(within(mainContainer as HTMLElement).queryByTestId("terminal-switch-agent")).toBeNull();
 	});
 
-	it("keeps the pinned owner tabs before the scrollable terminal list", () => {
+	it("keeps the owning session before the scrollable terminal list", () => {
 		const [shell] = makeShells(1);
 		renderCenterPane({ session: worker, shellTerminals: [shell] });
 
@@ -625,17 +625,17 @@ describe("CenterPane toolbar session label", () => {
 		const scrollRegion = document.querySelector(".overflow-x-auto");
 		const avatar = ownerCard?.querySelector('img[aria-hidden="true"]');
 
-		expect(ownerCard).toHaveClass("session-adaptive-tab", "shrink-0", "overflow-hidden");
+		expect(ownerCard).toHaveClass("session-tab-icon-floor", "shrink", "overflow-hidden");
+		expect(ownerCard).not.toHaveClass("shrink-0");
 		expect(ownerCard).not.toHaveClass("w-shell-tab-connected", "min-w-shell-tab-min");
 		expect(ownerCard).not.toHaveClass("w-full", "max-w-full");
 		expect(ownerTab).not.toHaveClass("min-w-0", "min-w-flex-min");
-		expect(ownerCard?.parentElement).toHaveClass("shrink-0");
+		expect(ownerCard?.parentElement).toHaveClass("min-w-0", "flex-1");
+		expect(ownerCard?.parentElement).not.toHaveClass("shrink-0");
 		expect(ownerCard?.parentElement).not.toHaveClass("min-w-flex-min");
 		expect(scrollRegion?.contains(ownerCard)).toBe(false);
 		expect(avatar?.classList.contains("size-terminal-agent-icon")).toBe(true);
-		expect(screen.getByTestId("session-terminal-region").style.getPropertyValue("--session-tab-share")).toBe(
-			"50cqw",
-		);
+		expect(screen.getByTestId("session-terminal-region").style.getPropertyValue("--session-tab-share")).toBe("");
 	});
 
 	it("closes only the selected auxiliary terminal from the application shortcut", () => {
@@ -722,24 +722,24 @@ describe("CenterPane toolbar session label", () => {
 		expect(reviewerTab).toHaveAttribute("aria-current", "true");
 		expect(reviewerTab.querySelector("img")).toHaveClass("size-terminal-agent-icon");
 		expect(reviewerTab).toHaveClass(
-			"session-adaptive-tab",
-			"shrink-0",
+			"session-tab-icon-floor",
+			"shrink",
 			"self-stretch",
-			"overflow-hidden",
-			"border-r",
+			"border-x",
 			"bg-overlay",
 		);
 		expect(reviewerTab).not.toHaveClass("w-shell-tab-connected", "min-w-shell-tab-min");
-		expect(reviewerTab.parentElement).toHaveClass("flex", "shrink-0", "items-stretch");
+		expect(reviewerTab).not.toHaveClass("shrink-0");
+		expect(reviewerTab.closest('[data-terminal-tab-key="reviewer:review-sess-1"]')).toBeInTheDocument();
 		expect(shellTab.parentElement).toHaveClass(
-			"session-adaptive-tab",
-			"session-adaptive-tab--closable",
+			"session-tab-icon-floor",
+			"session-tab-icon-floor--closable",
 			"min-w-shell-tab-min",
-			"shrink-0",
+			"shrink",
 			"self-stretch",
 		);
-		expect(reviewerTab).toHaveAttribute("data-terminal-role", "primary");
-		expect(scrollRegion?.contains(reviewerTab)).toBe(false);
+		expect(reviewerTab).not.toHaveAttribute("data-terminal-role");
+		expect(scrollRegion?.contains(reviewerTab)).toBe(true);
 		expect(screen.getByRole("tab", { name: /^Claude Code/ })).not.toHaveAttribute("aria-current", "true");
 		expect(reviewerTab.querySelector("img")).toHaveAttribute("src");
 		expect(screen.queryByRole("button", { name: "Back to agent" })).not.toBeInTheDocument();
@@ -846,13 +846,15 @@ describe("CenterPane toolbar session label", () => {
 		expect(scrollRegion?.classList.contains("scrollbar-none")).toBe(true);
 		expect(scrollRegion?.classList.contains("terminal-tabs-scrollbar")).toBe(false);
 		expect(scrollRegion?.classList.contains("min-w-flex-min")).toBe(true);
-		expect(scrollRegion?.classList.contains("flex-1")).toBe(true);
+		expect(scrollRegion?.classList.contains("flex-auto")).toBe(true);
+		expect(scrollRegion?.classList.contains("flex-1")).toBe(false);
 		expect(scrollRegion?.contains(screen.getByRole("tab", { name: /^Claude Code/ }).parentElement)).toBe(false);
 		for (const tab of screen.getAllByTitle(/^\/tmp\/ws/)) {
-			expect(tab.parentElement?.classList.contains("session-adaptive-tab")).toBe(true);
-			expect(tab.parentElement?.classList.contains("session-adaptive-tab--closable")).toBe(true);
+			expect(tab.parentElement?.classList.contains("session-tab-icon-floor")).toBe(true);
+			expect(tab.parentElement?.classList.contains("session-tab-icon-floor--closable")).toBe(true);
 			expect(tab.parentElement?.classList.contains("min-w-shell-tab-min")).toBe(true);
-			expect(tab.parentElement?.classList.contains("shrink-0")).toBe(true);
+			expect(tab.parentElement?.classList.contains("shrink")).toBe(true);
+			expect(tab.parentElement?.classList.contains("shrink-0")).toBe(false);
 			expect(tab.parentElement?.classList.contains("w-shell-tab-connected")).toBe(false);
 			expect(tab.parentElement?.classList.contains("min-w-16")).toBe(false);
 			expect(tab.classList.contains("min-w-0")).toBe(true);
@@ -888,7 +890,7 @@ describe("CenterPane toolbar session label", () => {
 		expect(screen.queryByRole("button", { name: "Scroll tabs right" })).toBeNull();
 	});
 
-	it("keeps reviewer pinned while reordering shell terminals in the scroll strip", () => {
+	it("reorders reviewer and shell terminals together in the scroll strip", () => {
 		const shells = makeShells(2);
 		renderCenterPane({
 			reviewerTerminal: { handleId: "review-sess-1", harness: "codex" },
@@ -903,9 +905,9 @@ describe("CenterPane toolbar session label", () => {
 		expect(tabLabels()).toEqual(["Claude Code", "Reviewer", "agent-orchestrator-0", "agent-orchestrator-1"]);
 		expect(reorderMocks.onReorder).toBeTypeOf("function");
 
-		act(() => reorderMocks.onReorder?.(["h-1", "h-0"]));
+		act(() => reorderMocks.onReorder?.(["h-1", "reviewer:review-sess-1", "h-0"]));
 
-		expect(tabLabels()).toEqual(["Claude Code", "Reviewer", "agent-orchestrator-1", "agent-orchestrator-0"]);
+		expect(tabLabels()).toEqual(["Claude Code", "agent-orchestrator-1", "Reviewer", "agent-orchestrator-0"]);
 	});
 
 	it("drops a session's remembered terminal order after navigating away", () => {
