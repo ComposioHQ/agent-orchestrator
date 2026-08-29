@@ -156,7 +156,7 @@ var schemaNames = map[string]string{
 	"ControllersConversationResourceContentRequest":        "ConversationResourceContentRequest",
 	"ControllersSendConversationMessageResponse":           "SendConversationMessageResponse",
 	"ControllersEditConversationMessageRequest":            "EditConversationMessageRequest",
-	"ControllersEditQueuedConversationMessageRequest":    "EditQueuedConversationMessageRequest",
+	"ControllersEditQueuedConversationMessageRequest":      "EditQueuedConversationMessageRequest",
 	"ControllersConversationContentSummaryResponse":        "ConversationContentSummaryResponse",
 	"ControllersEditConversationMessageResponse":           "EditConversationMessageResponse",
 	"ControllersActivateConversationBranchResponse":        "ActivateConversationBranchResponse",

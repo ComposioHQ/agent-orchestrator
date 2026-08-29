@@ -48,6 +48,7 @@ func (s *Service) EditQueuedTurn(
 	return controller.EditQueuedTurn(ctx, turnID, text)
 }
 
+// CancelQueuedTurn drops one queue row that has not yet dispatched.
 func (c *Controller) CancelQueuedTurn(ctx context.Context, turnID string) error {
 	c.sendMu.Lock()
 	defer c.sendMu.Unlock()
@@ -57,6 +58,7 @@ func (c *Controller) CancelQueuedTurn(ctx context.Context, turnID string) error 
 	return c.store.CancelQueuedTurnByID(ctx, c.conversation.ID, turnID, c.now())
 }
 
+// EditQueuedTurn rewrites the durable human prompt for a queued turn.
 func (c *Controller) EditQueuedTurn(ctx context.Context, turnID, text string) error {
 	c.sendMu.Lock()
 	defer c.sendMu.Unlock()
