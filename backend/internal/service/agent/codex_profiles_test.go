@@ -243,6 +243,76 @@ func TestOpenCodexProfileLoginTerminalRejectsMissingCodexBeforeSpawning(t *testi
 	}
 }
 
+func TestOpenCodexProfileLoginTerminalRefreshesCachedInstallationBeforeSpawning(t *testing.T) {
+	installed := true
+	agent := &readinessTestAgent{
+		resolve: func(context.Context) (string, error) {
+			if installed {
+				return "/bin/codex", nil
+			}
+			return "", ports.ErrAgentBinaryNotFound
+		},
+		auth: func(context.Context) (ports.AgentAuthStatus, error) { return ports.AgentAuthStatusUnknown, nil },
+	}
+	harness := readinessHarness(string(domain.HarnessCodex), "Codex", agent)
+	svc := newService([]agentregistry.HarnessAgent{harness}, nil, nil, nil)
+	svc.readiness = newReadinessCoordinator(readinessCoordinatorConfig{Agents: []agentregistry.HarnessAgent{harness}})
+	svc.codexProfiles = newCodexProfileManager(context.Background(), t.TempDir(), t.TempDir(), nil, nil)
+	opener := &fakeCodexLoginTerminalOpener{result: shellterm.ShellTerminal{HandleID: "should-not-open"}}
+	svc.SetCodexProfileLoginTerminalOpener(opener)
+	svc.codexProfiles.executable = func() (string, error) { return "/ao", nil }
+
+	if _, err := svc.readiness.EnsureInstallation(context.Background(), []string{string(domain.HarnessCodex)}, domain.AgentReadinessPurposeDisplay); err != nil {
+		t.Fatal(err)
+	}
+	installed = false
+	_, err := svc.OpenCodexProfileLoginTerminal(context.Background(), codexExistingProfileID)
+	var apiErr *apierr.Error
+	if !errors.As(err, &apiErr) || apiErr.Code != "CODEX_PROFILE_LOGIN_TERMINAL_UNAVAILABLE" {
+		t.Fatalf("error = %v, want CODEX_PROFILE_LOGIN_TERMINAL_UNAVAILABLE", err)
+	}
+	if len(opener.opened) != 0 {
+		t.Fatalf("terminal opened from stale installation cache: %+v", opener.opened)
+	}
+}
+
+func TestOpenCodexProfileLoginTerminalPreservesInstallationProbeCancellation(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	agent := &readinessTestAgent{
+		resolve: func(context.Context) (string, error) {
+			close(started)
+			<-release
+			return "/bin/codex", nil
+		},
+		auth: func(context.Context) (ports.AgentAuthStatus, error) { return ports.AgentAuthStatusUnknown, nil },
+	}
+	harness := readinessHarness(string(domain.HarnessCodex), "Codex", agent)
+	svc := newService([]agentregistry.HarnessAgent{harness}, nil, nil, nil)
+	svc.readiness = newReadinessCoordinator(readinessCoordinatorConfig{Agents: []agentregistry.HarnessAgent{harness}})
+	svc.codexProfiles = newCodexProfileManager(context.Background(), t.TempDir(), t.TempDir(), nil, nil)
+	opener := &fakeCodexLoginTerminalOpener{result: shellterm.ShellTerminal{HandleID: "should-not-open"}}
+	svc.SetCodexProfileLoginTerminalOpener(opener)
+	svc.codexProfiles.executable = func() (string, error) { return "/ao", nil }
+
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() {
+		_, err := svc.OpenCodexProfileLoginTerminal(ctx, codexExistingProfileID)
+		result <- err
+	}()
+	<-started
+	cancel()
+	err := <-result
+	close(release)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("error = %v, want context.Canceled", err)
+	}
+	if len(opener.opened) != 0 {
+		t.Fatalf("terminal opened after cancellation: %+v", opener.opened)
+	}
+}
+
 func TestCreateCodexProfileDoesNotRequireStructuredBrowserLogin(t *testing.T) {
 	unsupported := supportedCodexProfileCapabilities()
 	unsupported.BrowserLogin = domain.CodexCapabilityObservation{
