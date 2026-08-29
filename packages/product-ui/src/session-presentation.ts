@@ -37,6 +37,7 @@ const englishLabels: Record<SessionPresentationMessageKey, string> = {
 	"status.mergeable": "Ready",
 	"status.merged": "Merged",
 	"status.terminated": "Terminated",
+	"status.archived": "Archived",
 	"status.unknown": "Unknown status",
 	"zone.merge": "Ready to merge",
 	"zone.action": "Needs you",
@@ -153,6 +154,11 @@ const sessionStatusStyles: Record<SessionStatus, Omit<SessionStatusView, "label"
 		dotClassName: "bg-status-terminated",
 		cardClassName: "session-card-terminated",
 	},
+	archived: {
+		className: "text-status-terminated-foreground",
+		dotClassName: "bg-status-terminated",
+		cardClassName: "session-card-terminated",
+	},
 	unknown: { className: "text-status-unknown", dotClassName: "bg-status-unknown" },
 };
 
@@ -242,6 +248,7 @@ export function attentionZone(input: SessionStatus | SessionStatusModel): Attent
 		case "mergeable":
 			return "merge";
 		case "terminated":
+		case "archived":
 			return "done";
 		case "needs_input":
 		case "exited":

@@ -62,7 +62,7 @@ const emptyUsageBySession: UsageBySession = new Map();
 // Live merged sessions remain in-flow. A terminated runtime is archived even
 // when its SCM outcome remains `merged`.
 function isArchivedSession(session: WorkspaceSession): boolean {
-	return session.isTerminated === true || session.status === "terminated";
+	return session.isArchived === true || session.isTerminated === true || session.status === "terminated";
 }
 
 const isMac = isMacPlatform();

@@ -13,6 +13,7 @@ export const SESSION_STATUSES = [
 	"no_signal",
 	"idle",
 	"terminated",
+	"archived",
 	"unknown",
 ] as const;
 

@@ -75,6 +75,24 @@ export type CodexSessionProfileSummary = {
 	source: "existing" | "managed" | "legacy";
 };
 
+export type CodexSessionContinuationSummary = {
+	sessionId: string;
+	label: string;
+	profile: CodexSessionProfileSummary;
+};
+
+export type CodexProfileSwitchSummary = {
+	id: string;
+	phase: string;
+	progressReason: string;
+	targetSessionId?: string;
+	targetProfileId: string;
+	canCancel: boolean;
+	canRecover: boolean;
+	canRestoreSource: boolean;
+	errorCode?: string;
+};
+
 export type WorkspaceSession = {
 	id: string;
 	terminalHandleId?: string;
@@ -101,6 +119,12 @@ export type WorkspaceSession = {
 	scmStatus?: SessionStatus;
 	/** Durable runtime fact from the daemon; independent of the derived SCM-aware status. */
 	isTerminated?: boolean;
+	/** Durable read-only predecessor fact set after continuation acknowledgement. */
+	isArchived?: boolean;
+	archivedAt?: string;
+	continuedFrom?: CodexSessionContinuationSummary;
+	continuedTo?: CodexSessionContinuationSummary;
+	activeCodexProfileSwitch?: CodexProfileSwitchSummary;
 	/** User preference to tear down this session when its PR set completes through a merge. */
 	terminateOnPrMerge?: boolean;
 	/** Whether SCM review feedback is automatically injected into the worker. */
@@ -280,7 +304,7 @@ export function sortedWorkerSessions(sessions: WorkspaceSession[]): WorkspaceSes
 }
 
 export function sessionIsActive(session: WorkspaceSession): boolean {
-	return session.isTerminated !== true && session.status !== "terminated";
+	return session.isArchived !== true && session.isTerminated !== true && session.status !== "terminated";
 }
 
 export function sessionNeedsAttention(session: WorkspaceSession): boolean {

@@ -66,6 +66,7 @@ import { Button } from "./ui/button";
 import { cn } from "../lib/utils";
 import { codexCapacityTranslationKey } from "../lib/codex-capacity";
 import { SessionTerminationPopover } from "./SessionTerminationPopover";
+import { CodexProfileSwitchControl } from "./CodexProfileSwitch";
 import { ReviewerSelect } from "./ReviewerSelect";
 import { agentLabel } from "../lib/agent-options";
 import { useAgentReadinessQuery, useEnsureAgentReadiness } from "../hooks/useAgentReadinessQuery";
@@ -304,6 +305,9 @@ function SummaryView({
 									})}
 								</p>
 							) : null}
+							{session.continuedFrom ? <p className="mt-1 text-2xs text-settings-muted">{t("codexProfileSwitch.continuedFrom", { label: session.continuedFrom.label })}</p> : null}
+							{session.continuedTo ? <p className="mt-1 text-2xs text-settings-muted">{t("codexProfileSwitch.continuedTo", { label: session.continuedTo.label })}</p> : null}
+							<CodexProfileSwitchControl session={session} />
 						</div>
 					) : null}
 					<ActivityTimeline prs={prSummaries} session={session} />
@@ -1051,7 +1055,7 @@ function ResumeAgentControl({ session }: { session: WorkspaceSession }) {
 		},
 	});
 
-	if (session.isTerminated === true || session.activity?.state !== "exited" || session.activeAgentSwitch) return null;
+	if (session.isArchived || session.isTerminated === true || session.activity?.state !== "exited" || session.activeAgentSwitch) return null;
 
 	const error = resume.error instanceof Error ? resume.error.message : null;
 	return (
@@ -1124,7 +1128,7 @@ function SessionControls({ session }: { session: WorkspaceSession }) {
 		void navigate({ to: "/projects/$projectId", params: { projectId: session.workspaceId } });
 	};
 
-	if (session.isTerminated === true) return null;
+	if (session.isArchived || session.isTerminated === true) return null;
 
 	return (
 		<Section title={t("inspector.sessionControls")}>

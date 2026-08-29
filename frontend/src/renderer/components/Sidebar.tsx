@@ -516,7 +516,7 @@ export function Sidebar({
 	const activeDragSessions = useMemo(
 		() => activeDragWorkspace
 			? applyOrder(
-				sortedWorkerSessions(activeDragWorkspace.sessions).filter((session) => session.isTerminated !== true),
+				sortedWorkerSessions(activeDragWorkspace.sessions).filter((session) => session.isTerminated !== true && session.isArchived !== true),
 				(session) => session.id,
 				sessionOrderByProject[activeDragWorkspace.id] ?? [],
 				"start",
@@ -615,7 +615,7 @@ export function Sidebar({
 	const pinnedSessions = useMemo(
 		() => workspaces
 			.flatMap((w) => workerSessions(w.sessions))
-			.filter((s) => s.isPinned && s.isTerminated !== true)
+			.filter((s) => s.isPinned && s.isTerminated !== true && s.isArchived !== true)
 			.sort((a, b) => {
 				const aTime = a.pinnedAt ? new Date(a.pinnedAt).getTime() : 0;
 				const bTime = b.pinnedAt ? new Date(b.pinnedAt).getTime() : 0;
@@ -1005,7 +1005,7 @@ const ProjectItemContent = memo(function ProjectItemContent({
 	// Only termination removes a worker from the sidebar; archived sessions stay
 	// reachable through SessionsBoard.
 	const visibleSessions = useMemo(
-		() => sortedWorkerSessions(workspace.sessions).filter((session) => session.isTerminated !== true),
+		() => sortedWorkerSessions(workspace.sessions).filter((session) => session.isTerminated !== true && session.isArchived !== true),
 		[workspace.sessions],
 	);
 	const [sessionOrder, setSessionOrder] = useState<string[]>([]);
