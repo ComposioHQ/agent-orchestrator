@@ -455,6 +455,7 @@ func cacheWriteSplitFor(event domain.ModelUsageEvent) cacheWriteSplit {
 		var usage struct {
 			CacheCreationInputTokens *int64 `json:"cache_creation_input_tokens"`
 			PiCacheWrite             *int64 `json:"cacheWrite"`
+			PiCacheWrite1H           *int64 `json:"cacheWrite1h"`
 			CacheCreation            *struct {
 				Ephemeral5mInputTokens *int64 `json:"ephemeral_5m_input_tokens"`
 				Ephemeral1hInputTokens *int64 `json:"ephemeral_1h_input_tokens"`
@@ -471,6 +472,11 @@ func cacheWriteSplitFor(event domain.ModelUsageEvent) cacheWriteSplit {
 		if usage.CacheCreation != nil {
 			split.fiveM = usage.CacheCreation.Ephemeral5mInputTokens
 			split.oneH = usage.CacheCreation.Ephemeral1hInputTokens
+		} else if usage.PiCacheWrite != nil && usage.PiCacheWrite1H != nil &&
+			*usage.PiCacheWrite1H >= 0 && *usage.PiCacheWrite1H <= *usage.PiCacheWrite {
+			fiveM := *usage.PiCacheWrite - *usage.PiCacheWrite1H
+			split.fiveM = &fiveM
+			split.oneH = usage.PiCacheWrite1H
 		}
 		return split
 	case domain.UsageProviderOpenAI:

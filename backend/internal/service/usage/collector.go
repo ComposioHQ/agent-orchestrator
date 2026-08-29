@@ -83,16 +83,12 @@ func DefaultSourceRoots(ctx context.Context, dataDir string) (SourceRoots, error
 	if strings.TrimSpace(dataDir) == "" {
 		dataDir = filepath.Join(home, ".ao", "data")
 	}
-	piHome := strings.TrimSpace(os.Getenv("PI_CODING_AGENT_DIR"))
-	if piHome == "" {
-		piHome = filepath.Join(home, ".pi", "agent")
-	}
 	return SourceRoots{
 		ClaudeProjects: filepath.Join(home, ".claude", "projects"),
 		CodexSessions:  filepath.Join(codexHome, "sessions"),
 		CodexArchived:  filepath.Join(codexHome, "archived_sessions"),
 		KimiHome:       filepath.Join(dataDir, "kimi"),
-		PiSessions:     filepath.Join(piHome, "sessions"),
+		PiSessions:     filepath.Join(dataDir, "pi", "sessions"),
 	}, nil
 }
 
@@ -392,7 +388,8 @@ func (c *Collector) RecordHook(ctx context.Context, sessionID domain.SessionID, 
 	inventoryChanged := !exists || state != existing.State
 	needsReconcile := false
 	lastErrorCode := ""
-	if session.Harness == domain.HarnessCodex && strings.TrimSpace(signal.TranscriptPath) == "" {
+	if (session.Harness == domain.HarnessCodex || session.Harness == domain.HarnessPi) &&
+		strings.TrimSpace(signal.TranscriptPath) == "" {
 		lastErrorCode = domain.UsageErrorSourceDiscoveryPending
 	}
 	// A binding that existed without a billable route, and now has one, owns

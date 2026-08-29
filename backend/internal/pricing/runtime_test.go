@@ -213,6 +213,29 @@ func TestEstimateReadsPiCacheWriteUsage(t *testing.T) {
 	}
 }
 
+func TestEstimateReadsPiOneHourCacheWriteUsage(t *testing.T) {
+	snapshot := decodeTestSnapshot(t, map[string][]testModel{
+		"anthropic": {{
+			ID: "claude-test", Input: "0.000001", Read: strptr("0.0000001"),
+			Write: strptr("0.000002"), Write1H: strptr("0.000004"), Output: "0.000003",
+		}},
+		"openai": {{ID: "gpt-test", Input: "0.1", Output: "0.2"}},
+		"zai":    {{ID: "glm-test", Input: "0.1", Output: "0.2"}},
+	})
+	estimate, err := snapshot.Estimate(domain.ModelUsageEvent{
+		ProviderID: domain.UsageProviderAnthropic, BillingProviderID: "anthropic", ModelID: "claude-test",
+		Tokens:            pricingTokens(1000, 400, 600, 200),
+		ProviderUsageJSON: `{"input":500,"cacheRead":400,"cacheWrite":100,"cacheWrite1h":40,"output":200}`,
+	})
+	if err != nil {
+		t.Fatalf("Estimate: %v", err)
+	}
+	assertCost(t, "input", estimate.InputNanos, 780_000)
+	assertCost(t, "cached input", estimate.CachedInputNanos, 40_000)
+	assertCost(t, "output", estimate.OutputNanos, 600_000)
+	assertCost(t, "total", estimate.TotalNanos, 1_420_000)
+}
+
 func TestEstimateKeepsUnknownBucketsUnknownAndZeroBucketsKnown(t *testing.T) {
 	snapshot := decodeTestSnapshot(t, map[string][]testModel{
 		"anthropic": {{ID: "claude-test", Input: "0.1", Output: "0.2"}},

@@ -137,6 +137,29 @@ func TestActiveKimiBindingRemainsDiscoverable(t *testing.T) {
 	}
 }
 
+func TestSourceLessPiBindingRemainsDiscoverable(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	sess := seedUsageSession(t, s, domain.HarnessPi)
+	now := time.Unix(1700000000, 0).UTC()
+	binding := mustUpsertUsageBinding(t, s, sess, now, domain.UsageBindingRecord{
+		NativeRootID:  "pi-late-transcript",
+		State:         domain.UsageBindingActive,
+		LastErrorCode: domain.UsageErrorSourceDiscoveryPending,
+	})
+
+	pending, err := s.HasPendingUsageDiscovery(ctx)
+	mustNoError(t, err)
+	if !pending {
+		t.Fatal("source-less Pi binding did not request discovery retry")
+	}
+	discovery, err := s.ListUsageDiscoveryBindings(ctx, 8)
+	mustNoError(t, err)
+	if len(discovery) != 1 || discovery[0].ID != binding.ID {
+		t.Fatalf("discovery bindings = %+v, want Pi binding %d", discovery, binding.ID)
+	}
+}
+
 func TestListLatestRetiredCodexReplacementClaimsByPath(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

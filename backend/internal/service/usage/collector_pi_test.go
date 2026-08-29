@@ -10,15 +10,14 @@ import (
 
 func TestDefaultSourceRootsIncludesPiSessions(t *testing.T) {
 	home := t.TempDir()
-	piHome := filepath.Join(home, "custom-pi")
+	dataDir := filepath.Join(home, "ao-data")
 	t.Setenv("HOME", home)
 	t.Setenv("CODEX_HOME", "")
-	t.Setenv("PI_CODING_AGENT_DIR", piHome)
 
-	got, err := DefaultSourceRoots(context.Background(), "")
+	got, err := DefaultSourceRoots(context.Background(), dataDir)
 	mustNoError(t, err)
-	if got.PiSessions != filepath.Join(piHome, "sessions") {
-		t.Fatalf("Pi sessions = %q, want %q", got.PiSessions, filepath.Join(piHome, "sessions"))
+	if got.PiSessions != filepath.Join(dataDir, "pi", "sessions") {
+		t.Fatalf("Pi sessions = %q, want %q", got.PiSessions, filepath.Join(dataDir, "pi", "sessions"))
 	}
 }
 
@@ -44,6 +43,31 @@ func TestCollectorDiscoversPiSessionByHeaderID(t *testing.T) {
 	if err != nil || len(sources) != 1 || sources[0].Kind != domain.UsageSourcePiSession ||
 		sources[0].ArtifactPath != canonicalUsagePath(t, path) {
 		t.Fatalf("sources=%+v err=%v", sources, err)
+	}
+}
+
+func TestCollectorReconcilesPiTranscriptCreatedAfterHook(t *testing.T) {
+	const nativeID = "pi-late-session"
+	store := collectorTestStore(t)
+	session := collectorTestSession(t, store, domain.HarnessPi, nativeID, false)
+	root := t.TempDir()
+	collector := NewCollector(store, SourceRoots{PiSessions: root}, nil)
+
+	mustNoError(t, collector.RecordHook(context.Background(), session.ID, HookSignal{
+		Harness: domain.HarnessPi, Event: "session-start", NativeSessionID: nativeID,
+	}))
+	bindings, err := store.ListUsageBindingsForSession(context.Background(), session.ID)
+	if err != nil || len(bindings) != 1 || bindings[0].LastErrorCode != domain.UsageErrorSourceDiscoveryPending {
+		t.Fatalf("binding before transcript = %+v, err=%v", bindings, err)
+	}
+	path := filepath.Join(root, "project", "session.jsonl")
+	writeUsageFixture(t, path, `{"type":"session","id":"`+nativeID+`","cwd":"/repo","version":3}`+"\n")
+
+	mustNoError(t, collector.ReconcileSources(context.Background(), 8))
+	sources, err := store.ListUsageSourcesForBinding(context.Background(), bindings[0].ID)
+	if err != nil || len(sources) != 1 || sources[0].Kind != domain.UsageSourcePiSession ||
+		sources[0].ArtifactPath != canonicalUsagePath(t, path) {
+		t.Fatalf("sources after late transcript = %+v, err=%v", sources, err)
 	}
 }
 

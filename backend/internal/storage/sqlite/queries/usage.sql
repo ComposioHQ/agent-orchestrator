@@ -111,11 +111,20 @@ SELECT CAST(EXISTS (
     FROM usage_bindings ub
     JOIN sessions s ON s.id = ub.session_id
     WHERE (s.is_terminated = 0 OR ub.state = 'finalizing')
-      AND ub.harness IN ('claude-code', 'codex', 'kimi')
+      AND ub.harness IN ('claude-code', 'codex', 'kimi', 'pi')
       AND (
           ub.harness = 'kimi'
           OR ub.state = 'discovering'
           OR ub.last_error_code = 'source_discovery_pending'
+          OR (
+              ub.harness = 'pi'
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM usage_sources source
+                  WHERE source.binding_id = ub.id
+                    AND source.kind = 'pi_session'
+              )
+          )
           OR EXISTS (
               SELECT 1
               FROM usage_codex_pending_children pending
@@ -179,7 +188,7 @@ SELECT ub.*
 FROM usage_bindings ub
 JOIN sessions s ON s.id = ub.session_id
 WHERE (s.is_terminated = 0 OR ub.state = 'finalizing')
-  AND ub.harness IN ('claude-code', 'codex', 'kimi')
+  AND ub.harness IN ('claude-code', 'codex', 'kimi', 'pi')
   AND (
       ub.state IN ('discovering', 'active', 'finalizing')
       OR (ub.state = 'partial' AND ub.last_error_code = 'codex_source_budget_exceeded')
@@ -190,17 +199,26 @@ WHERE (s.is_terminated = 0 OR ub.state = 'finalizing')
       OR ub.state = 'finalizing'
       OR ub.last_error_code = 'codex_source_budget_exceeded'
       OR ub.last_error_code = 'source_discovery_pending'
-      OR NOT EXISTS (
+      OR (ub.harness = 'codex' AND NOT EXISTS (
           SELECT 1
           FROM usage_sources us
           WHERE us.binding_id = ub.id
             AND us.kind = 'codex_rollout'
-      )
+      ))
+      OR (ub.harness = 'pi' AND NOT EXISTS (
+          SELECT 1
+          FROM usage_sources us
+          WHERE us.binding_id = ub.id
+            AND us.kind = 'pi_session'
+      ))
       OR EXISTS (
           SELECT 1
           FROM usage_sources us
           WHERE us.binding_id = ub.id
-            AND us.kind = 'codex_rollout'
+            AND (
+                ub.harness = 'codex' AND us.kind = 'codex_rollout'
+                OR ub.harness = 'pi' AND us.kind = 'pi_session'
+            )
             AND us.state = 'error'
             AND us.last_error_code IN ('artifact_missing', 'source_read_failed')
       )
