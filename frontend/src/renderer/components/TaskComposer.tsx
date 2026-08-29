@@ -8,7 +8,7 @@ import {
 } from "@aoagents/product-ui";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Loader2 } from "lucide-react";
+import { Loader2, UserRound } from "lucide-react";
 import { RequiredAgentField } from "./CreateProjectAgentSheet";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorCode, apiErrorMessage } from "../lib/api-client";
@@ -529,6 +529,14 @@ function DesktopProfileControl(control: TaskComposerProfileControl) {
 			onOpenChange={(open) => { if (open) control.onOpen(); }}
 			options={control.options.map((option) => ({ value: option.id, label: option.label, disabled: option.disabled }))}
 			placeholder={control.placeholder}
+			renderTrigger={(selected, placeholder) => (
+				<span className="flex min-w-0 items-center gap-2">
+					<UserRound className="size-icon-sm shrink-0 text-muted-foreground" aria-hidden="true" />
+					<span className="min-w-0 truncate text-control text-foreground" title={selected?.label ?? placeholder}>
+						{selected?.label ?? placeholder}
+					</span>
+				</span>
+			)}
 			triggerClassName="composer-chip composer-toolbar-option w-full justify-between"
 			value={control.value}
 		/>

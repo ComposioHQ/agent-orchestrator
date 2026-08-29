@@ -380,21 +380,28 @@ export function TaskComposerView({
 			)}
 
 			<div className="composer-toolbar">
-				<div className="composer-run-controls" role="group" aria-label={labels.runsWith}>
-					<div className="composer-toolbar-slot">
+				<div
+					className="composer-run-controls"
+					data-control-count={profile ? 3 : 2}
+					role="group"
+					aria-label={labels.runsWith}
+				>
+					<div className="composer-toolbar-slot composer-agent-slot" data-control="agent">
 						{renderAgentControl({ ...agent, id: agentId })}
 					</div>
-					{profile && renderProfileControl ? (
-						<>
-							<span className="composer-toolbar-divider" aria-hidden="true" />
-							<div className="composer-toolbar-slot">
-								{renderProfileControl({ ...profile, id: profileId })}
-							</div>
-						</>
-					) : null}
 					<span className="composer-toolbar-divider" aria-hidden="true" />
-					<div className="composer-toolbar-slot">
-						{renderModelControl({ ...model, id: modelId })}
+					<div className="composer-context-controls" data-has-profile={profile && renderProfileControl ? "true" : "false"}>
+						{profile && renderProfileControl ? (
+							<>
+								<div className="composer-toolbar-slot" data-control="profile">
+									{renderProfileControl({ ...profile, id: profileId })}
+								</div>
+								<span className="composer-toolbar-divider" aria-hidden="true" />
+							</>
+						) : null}
+						<div className="composer-toolbar-slot" data-control="model">
+							{renderModelControl({ ...model, id: modelId })}
+						</div>
 					</div>
 				</div>
 
