@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	agentregistry "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/registry"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -164,11 +165,59 @@ func TestOpenCodexProfileLoginTerminalRejectsUnknownProfileBeforeSpawning(t *tes
 
 	_, err := manager.openLoginTerminal(context.Background(), "not-a-profile")
 	var apiErr *apierr.Error
-	if !errors.As(err, &apiErr) || apiErr.Code != "CODEX_PROFILE_NOT_FOUND" {
-		t.Fatalf("error = %v, want CODEX_PROFILE_NOT_FOUND", err)
+	if !errors.As(err, &apiErr) || apiErr.Code != "CODEX_PROFILE_UNKNOWN" {
+		t.Fatalf("error = %v, want CODEX_PROFILE_UNKNOWN", err)
 	}
 	if len(opener.opened) != 0 {
 		t.Fatalf("terminal opened for unknown profile: %+v", opener.opened)
+	}
+}
+
+func TestOpenCodexProfileLoginTerminalRejectsBrokenProfileBeforeSpawning(t *testing.T) {
+	root := t.TempDir()
+	manager := newCodexProfileManager(context.Background(), root, t.TempDir(), nil, nil)
+	manager.catalog.newID = func() string { return "72d4db6e-da2c-414c-a6a9-fdbd09a006b6" }
+	record, err := manager.catalog.create("Broken")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(record.Home); err != nil {
+		t.Fatal(err)
+	}
+	opener := &fakeCodexLoginTerminalOpener{}
+	manager.loginTerminalOpener = opener
+	manager.executable = func() (string, error) { return "/ao", nil }
+
+	_, err = manager.openLoginTerminal(context.Background(), record.Snapshot.ID)
+	var apiErr *apierr.Error
+	if !errors.As(err, &apiErr) || apiErr.Code != "CODEX_PROFILE_INVALID" {
+		t.Fatalf("error = %v, want CODEX_PROFILE_INVALID", err)
+	}
+	if len(opener.opened) != 0 {
+		t.Fatalf("terminal opened for broken profile: %+v", opener.opened)
+	}
+}
+
+func TestOpenCodexProfileLoginTerminalRejectsMissingCodexBeforeSpawning(t *testing.T) {
+	agent := &readinessTestAgent{
+		resolve: func(context.Context) (string, error) { return "", ports.ErrAgentBinaryNotFound },
+		auth:    func(context.Context) (ports.AgentAuthStatus, error) { return ports.AgentAuthStatusUnknown, nil },
+	}
+	harness := readinessHarness(string(domain.HarnessCodex), "Codex", agent)
+	svc := newService([]agentregistry.HarnessAgent{harness}, nil, nil, nil)
+	svc.readiness = newReadinessCoordinator(readinessCoordinatorConfig{Agents: []agentregistry.HarnessAgent{harness}})
+	svc.codexProfiles = newCodexProfileManager(context.Background(), t.TempDir(), t.TempDir(), nil, nil)
+	opener := &fakeCodexLoginTerminalOpener{result: shellterm.ShellTerminal{HandleID: "should-not-open"}}
+	svc.SetCodexProfileLoginTerminalOpener(opener)
+	svc.codexProfiles.executable = func() (string, error) { return "/ao", nil }
+
+	_, err := svc.OpenCodexProfileLoginTerminal(context.Background(), codexExistingProfileID)
+	var apiErr *apierr.Error
+	if !errors.As(err, &apiErr) || apiErr.Code != "CODEX_PROFILE_LOGIN_TERMINAL_UNAVAILABLE" {
+		t.Fatalf("error = %v, want CODEX_PROFILE_LOGIN_TERMINAL_UNAVAILABLE", err)
+	}
+	if len(opener.opened) != 0 {
+		t.Fatalf("terminal opened without Codex installed: %+v", opener.opened)
 	}
 }
 

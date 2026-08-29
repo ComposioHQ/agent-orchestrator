@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
@@ -43,6 +44,11 @@ func (c *CodexProfilesController) Register(r chi.Router) {
 func (c *CodexProfilesController) openLoginTerminal(w http.ResponseWriter, r *http.Request) {
 	if c.Svc == nil {
 		apispec.NotImplemented(w, r, "POST", "/api/v1/agents/codex/profiles/{profileId}/login-terminal")
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1))
+	if err != nil || len(body) != 0 {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_REQUEST_BODY", "Request body must be empty", nil)
 		return
 	}
 	result, err := c.Svc.OpenCodexProfileLoginTerminal(r.Context(), strings.TrimSpace(chi.URLParam(r, "profileId")))

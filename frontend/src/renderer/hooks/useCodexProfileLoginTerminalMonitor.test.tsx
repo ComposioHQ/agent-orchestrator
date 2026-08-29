@@ -32,6 +32,21 @@ beforeEach(() => {
 it("navigates to the login terminal and stops after Codex reports authorization", async () => {
 	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 	const navigateToTerminals = vi.fn();
+	queryClient.setQueryData(codexProfilesQueryKey, {
+		profiles: [
+			{
+				id: "existing", label: "Existing Codex profile", source: "existing", status: "valid", reasonCode: "profile_valid", reason: "available",
+				authentication: { state: "unauthorized", freshness: "fresh", reasonCode: "unauthorized", reason: "signed out" },
+				authMethod: "unknown", usableByCurrentLaunches: true,
+			},
+			{
+				id: "managed-1", label: "Work", source: "managed", status: "valid", reasonCode: "profile_valid", reason: "available",
+				authentication: { state: "unauthorized", freshness: "fresh", reasonCode: "unauthorized", reason: "signed out" },
+				authMethod: "unknown", usableByCurrentLaunches: false,
+			},
+		],
+		capabilities: { accountRead: { state: "supported", reasonCode: "supported", reason: "available" }, browserLogin: { state: "supported", reasonCode: "supported", reason: "available" } },
+	});
 	postMock.mockResolvedValue({ data: {
 		profiles: [{
 			id: "existing", label: "Existing Codex profile", source: "existing", status: "valid", reasonCode: "profile_valid", reason: "available",
@@ -49,7 +64,10 @@ it("navigates to the login terminal and stops after Codex reports authorization"
 	}));
 	await waitFor(() => expect(useUiStore.getState().codexProfileLoginTerminal).toBeNull());
 	expect(navigateToTerminals).toHaveBeenCalledTimes(1);
-	expect(queryClient.getQueryData(codexProfilesQueryKey)).toMatchObject({ profiles: [{ authentication: { state: "authorized" } }] });
+	expect(queryClient.getQueryData(codexProfilesQueryKey)).toMatchObject({ profiles: [
+		{ id: "existing", authentication: { state: "authorized" } },
+		{ id: "managed-1", authentication: { state: "unauthorized" } },
+	] });
 });
 
 it("stops monitoring after a previously visible login terminal disappears", async () => {

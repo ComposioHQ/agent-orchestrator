@@ -60,6 +60,18 @@ export function cacheCodexProfiles(queryClient: QueryClient, next: CodexProfiles
 	queryClient.setQueryData(codexProfilesQueryKey, next);
 }
 
+export function mergeCodexProfiles(queryClient: QueryClient, next: CodexProfilesResponse): void {
+	queryClient.setQueryData<CodexProfilesResponse>(codexProfilesQueryKey, (current) => {
+		if (!current) return next;
+		const updates = new Map(next.profiles.map((profile) => [profile.id, profile]));
+		const profiles = current.profiles.map((profile) => updates.get(profile.id) ?? profile);
+		for (const profile of next.profiles) {
+			if (!current.profiles.some((currentProfile) => currentProfile.id === profile.id)) profiles.push(profile);
+		}
+		return { ...current, capabilities: next.capabilities, profiles };
+	});
+}
+
 export function cacheCodexProfile(queryClient: QueryClient, profile: CodexProfile): void {
 	queryClient.setQueryData<CodexProfilesResponse>(codexProfilesQueryKey, (current) => {
 		if (!current) return current;

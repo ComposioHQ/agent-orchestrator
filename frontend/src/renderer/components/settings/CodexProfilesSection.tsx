@@ -114,7 +114,7 @@ function CodexProfileRow({ profile, busy, onLogin }: {
 			: auth.state === "not_applicable"
 				? t("settings.codexProfiles.notRequired")
 				: t("settings.codexProfiles.unknown");
-	const canLogin = profile.status === "valid" && auth.state === "unauthorized";
+	const canLogin = profile.status === "valid" && auth.state !== "authorized" && auth.state !== "not_applicable";
 
 	return (
 		<div className="rounded-md border border-border bg-background/40 p-3" data-profile-id={profile.id}>

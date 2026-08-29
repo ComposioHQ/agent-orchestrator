@@ -37,15 +37,16 @@ Add:
 
 ```text
 POST /api/v1/agents/codex/profiles/{profileId}/login-terminal
-200 { "profileId": "...", "shellTerminal": { ... } }
+201 { "profileId": "...", "shellTerminal": { ... } }
 ```
 
-The route has no request body. Existing browser-login routes remain available for compatibility but the profile settings UI no longer starts them.
+The route has no request body and rejects any non-empty body. Existing browser-login routes remain available for compatibility but the profile settings UI no longer starts them.
 
 ## Error handling
 
 - Unknown profile: existing `CODEX_PROFILE_UNKNOWN` envelope.
 - Broken profile: `CODEX_PROFILE_INVALID` conflict.
+- Non-empty request body: `INVALID_REQUEST_BODY` bad request.
 - Missing Codex executable or AO helper startup failure: safe `CODEX_PROFILE_LOGIN_TERMINAL_UNAVAILABLE` response without paths or credentials.
 - Terminal persistence failure: destroy the newly created runtime before returning the error.
 - Invalid or unverifiable OpenAI API key: explain that the key was not saved and leave the profile unauthorized.

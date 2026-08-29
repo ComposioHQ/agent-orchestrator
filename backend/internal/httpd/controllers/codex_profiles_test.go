@@ -119,7 +119,7 @@ func TestCodexProfileLoginTerminalRouteUsesOnlyTheProfileID(t *testing.T) {
 	srv := httptest.NewServer(httpd.NewRouterWithControl(config.Config{}, slog.New(slog.DiscardHandler), nil, httpd.APIDeps{CodexProfiles: fake}, httpd.ControlDeps{}))
 	defer srv.Close()
 
-	body, status, _ := doRequest(t, srv, http.MethodPost, "/api/v1/agents/codex/profiles/existing/login-terminal", `{"argv":["sh","-c","steal"],"env":{"TOKEN":"secret"}}`)
+	body, status, _ := doRequest(t, srv, http.MethodPost, "/api/v1/agents/codex/profiles/existing/login-terminal", "")
 	if status != http.StatusCreated {
 		t.Fatalf("status=%d body=%s", status, body)
 	}
@@ -130,10 +130,24 @@ func TestCodexProfileLoginTerminalRouteUsesOnlyTheProfileID(t *testing.T) {
 	if fake.loginTerminalProfileID != "existing" {
 		t.Fatalf("profile id = %q, want path-selected profile", fake.loginTerminalProfileID)
 	}
-	for _, forbidden := range []string{"argv", "TOKEN", "secret", "steal"} {
+	for _, forbidden := range []string{"argv", "env"} {
 		if strings.Contains(text, forbidden) {
-			t.Fatalf("response leaked request-controlled %q: %s", forbidden, text)
+			t.Fatalf("response exposed %q: %s", forbidden, text)
 		}
+	}
+}
+
+func TestCodexProfileLoginTerminalRouteRejectsRequestBody(t *testing.T) {
+	fake := &fakeCodexProfiles{result: codexProfilesFixture()}
+	srv := httptest.NewServer(httpd.NewRouterWithControl(config.Config{}, slog.New(slog.DiscardHandler), nil, httpd.APIDeps{CodexProfiles: fake}, httpd.ControlDeps{}))
+	defer srv.Close()
+
+	body, status, _ := doRequest(t, srv, http.MethodPost, "/api/v1/agents/codex/profiles/existing/login-terminal", `{"argv":["sh","-c","steal"],"env":{"TOKEN":"secret"}}`)
+	if status != http.StatusBadRequest || !strings.Contains(string(body), `"code":"INVALID_REQUEST_BODY"`) {
+		t.Fatalf("status=%d body=%s, want INVALID_REQUEST_BODY", status, body)
+	}
+	if fake.loginTerminalProfileID != "" {
+		t.Fatalf("profile service called with %q despite request body", fake.loginTerminalProfileID)
 	}
 }
 

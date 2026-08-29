@@ -98,11 +98,21 @@ it("creates a managed profile, then opens its login terminal", async () => {
 	openExternal.mockRestore();
 });
 
-it("keeps terminal login available when structured browser login is unsupported", async () => {
+it("keeps terminal login available when structured authentication is unknown", async () => {
 	const unavailable = {
 		...profileResponse,
+		profiles: [{
+			...profileResponse.profiles[0],
+			authentication: {
+				...profileResponse.profiles[0].authentication,
+				state: "unknown",
+				reasonCode: "auth_check_unsupported",
+				reason: "Structured authentication is not supported by this Codex version.",
+			},
+		}],
 		capabilities: {
 			...profileResponse.capabilities,
+			accountRead: { state: "unsupported", reasonCode: "unsupported", reason: "Account discovery unavailable." },
 			browserLogin: { state: "unknown", reasonCode: "unknown", reason: "Capability check unavailable." },
 		},
 	};
@@ -111,6 +121,7 @@ it("keeps terminal login available when structured browser login is unsupported"
 	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 	render(<QueryClientProvider client={queryClient}><CodexProfilesSection /></QueryClientProvider>);
 	await screen.findByText("Existing Codex profile");
+	expect(screen.getByText("Authentication unknown")).toBeInTheDocument();
 	expect(screen.queryByText("Capability check unavailable.")).not.toBeInTheDocument();
 	expect(screen.getByRole("button", { name: "Add profile" })).toBeEnabled();
 	expect(screen.getByRole("button", { name: "Sign in" })).toBeEnabled();

@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
 import { useUiStore } from "../stores/ui-store";
-import { cacheCodexProfiles, ensureCodexProfiles } from "./useCodexProfilesQuery";
+import { ensureCodexProfiles, mergeCodexProfiles } from "./useCodexProfilesQuery";
 import type { ShellTerminal } from "./useShellTerminals";
 
 const loginCheckIntervalMs = 2_000;
@@ -46,7 +46,7 @@ export function useCodexProfileLoginTerminalMonitor(
 			try {
 				const next = await ensureCodexProfiles([monitor.profileId], true);
 				if (!active) return;
-				cacheCodexProfiles(queryClient, next);
+				mergeCodexProfiles(queryClient, next);
 				const profile = next.profiles.find((item) => item.id === monitor.profileId);
 				if (profile?.authentication.state === "authorized") clearMonitor();
 			} catch {

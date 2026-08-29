@@ -111,16 +111,31 @@ func newCodexProfileManager(ctx context.Context, root, existingHome string, fact
 }
 
 func (m *codexProfileManager) openLoginTerminal(ctx context.Context, profileID string) (CodexProfileLoginTerminalStart, error) {
-	if err := ctx.Err(); err != nil {
+	record, err := m.resolveLoginTerminalProfile(ctx, profileID)
+	if err != nil {
 		return CodexProfileLoginTerminalStart{}, err
 	}
+	return m.openResolvedLoginTerminal(ctx, record)
+}
+
+func (m *codexProfileManager) resolveLoginTerminalProfile(ctx context.Context, profileID string) (codexProfileRecord, error) {
+	if err := ctx.Err(); err != nil {
+		return codexProfileRecord{}, err
+	}
 	if err := m.catalog.refresh(); err != nil {
-		return CodexProfileLoginTerminalStart{}, apierr.Unavailable("CODEX_PROFILE_MANAGEMENT_UNAVAILABLE", "Codex profile discovery is unavailable")
+		return codexProfileRecord{}, apierr.Unavailable("CODEX_PROFILE_MANAGEMENT_UNAVAILABLE", "Codex profile discovery is unavailable")
 	}
 	record, ok := m.catalog.record(strings.TrimSpace(profileID))
-	if !ok || record.Snapshot.Status != domain.CodexProfileStatusValid {
-		return CodexProfileLoginTerminalStart{}, apierr.NotFound("CODEX_PROFILE_NOT_FOUND", "Codex profile not found")
+	if !ok {
+		return codexProfileRecord{}, apierr.NotFound("CODEX_PROFILE_UNKNOWN", "Codex profile not found")
 	}
+	if record.Snapshot.Status != domain.CodexProfileStatusValid {
+		return codexProfileRecord{}, apierr.Conflict("CODEX_PROFILE_INVALID", "Codex profile is not valid", map[string]any{"profileId": record.Snapshot.ID})
+	}
+	return record, nil
+}
+
+func (m *codexProfileManager) openResolvedLoginTerminal(ctx context.Context, record codexProfileRecord) (CodexProfileLoginTerminalStart, error) {
 	if m.loginTerminalOpener == nil || m.executable == nil {
 		return CodexProfileLoginTerminalStart{}, apierr.Unavailable("CODEX_PROFILE_LOGIN_TERMINAL_UNAVAILABLE", "Codex login terminal is unavailable")
 	}
@@ -911,7 +926,14 @@ func (s *Service) OpenCodexProfileLoginTerminal(ctx context.Context, profileID s
 	if s.codexProfiles == nil {
 		return CodexProfileLoginTerminalStart{}, apierr.Unavailable("CODEX_PROFILE_MANAGEMENT_UNAVAILABLE", "Codex profile management is unavailable")
 	}
-	return s.codexProfiles.openLoginTerminal(ctx, profileID)
+	record, err := s.codexProfiles.resolveLoginTerminalProfile(ctx, profileID)
+	if err != nil {
+		return CodexProfileLoginTerminalStart{}, err
+	}
+	if err := s.requireCodexProfileInstallation(ctx); err != nil {
+		return CodexProfileLoginTerminalStart{}, apierr.Unavailable("CODEX_PROFILE_LOGIN_TERMINAL_UNAVAILABLE", "Codex is not installed")
+	}
+	return s.codexProfiles.openResolvedLoginTerminal(ctx, record)
 }
 
 // StartCodexProfileLogin starts a guarded browser login for one profile.
