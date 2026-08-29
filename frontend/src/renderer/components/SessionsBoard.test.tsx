@@ -389,16 +389,13 @@ describe("SessionsBoard", () => {
 		expect(activeUsage).toHaveAttribute("aria-hidden", "true");
 		expect(screen.getByText("$1.24 · 12,300 tokens")).toHaveClass("sr-only");
 		expect(screen.queryByText(/processed/i)).not.toBeInTheDocument();
-		// A null estimate stays explicit even when the summary has no tokens.
+		// Sessions without a dollar estimate do not show a usage metric.
 		const emptyCard = screen.getByText("empty worker").closest('[data-testid="board-session-card"]') as HTMLElement;
-		const emptyCost = within(emptyCard).getAllByText("Unavailable");
-		expect(emptyCost).toHaveLength(1);
-		expect(emptyCost[0]).toHaveAttribute("aria-hidden", "true");
-		expect(within(emptyCard).getByText("Unavailable · 0 tokens")).toHaveClass("sr-only");
+		expect(within(emptyCard).queryByText("Unavailable")).not.toBeInTheDocument();
+		expect(within(emptyCard).queryByText("Unavailable · 0 tokens")).not.toBeInTheDocument();
 		const tokensOnlyCard = screen.getByText("tokens worker").closest('[data-testid="board-session-card"]') as HTMLElement;
-		expect(within(tokensOnlyCard).getByText("Unavailable")).toHaveAttribute("aria-hidden", "true");
-		expect(within(tokensOnlyCard).getByText("Unavailable · 800 tokens")).toHaveClass("sr-only");
-		expect(tokensOnlyCard).not.toHaveTextContent(/[≈≥]\$/);
+		expect(within(tokensOnlyCard).queryByText("Unavailable")).not.toBeInTheDocument();
+		expect(within(tokensOnlyCard).queryByText("Unavailable · 800 tokens")).not.toBeInTheDocument();
 		expect(usageQueryMock).toHaveBeenCalledWith("p1");
 
 		const archive = await expandArchive();

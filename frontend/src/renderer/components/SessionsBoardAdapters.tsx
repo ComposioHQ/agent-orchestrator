@@ -275,7 +275,10 @@ function toUsagePresentation(
 	if (!usage) {
 		return undefined;
 	}
-	const cost = formatEstimatedCost(usage.estimatedCost) ?? t("usage.unavailable");
+	const cost = formatEstimatedCost(usage.estimatedCost);
+	if (!cost) {
+		return undefined;
+	}
 	if (processedTokens === null) {
 		return { accessibleLabel: cost, compactLabel: cost };
 	}
