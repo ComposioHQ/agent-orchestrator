@@ -378,7 +378,7 @@ func Run() error {
 			usagePricing.Wait()
 		}()
 	}
-	if roots, rootsErr := usagesvc.DefaultSourceRoots(ctx); rootsErr != nil {
+	if roots, rootsErr := usagesvc.DefaultSourceRoots(ctx, cfg.DataDir); rootsErr != nil {
 		log.Warn("usage collection disabled", "err", rootsErr)
 	} else {
 		usageCollector = usagesvc.NewCollector(store, roots, func(reconcile bool) {
@@ -403,11 +403,7 @@ func Run() error {
 			ingestorConfig.RequestAttributionRepair = usagePricing.RepairLegacyAttribution
 		}
 		ingestor := usagepipeline.NewIngestor(store, ingestorConfig)
-		usagePipeline = usagepipeline.NewPipeline(store, ingestor, []string{
-			roots.ClaudeProjects,
-			roots.CodexSessions,
-			roots.CodexArchived,
-		}, usagepipeline.CoordinatorConfig{
+		usagePipeline = usagepipeline.NewPipeline(store, ingestor, usagePipelineWatchRoots(roots), usagepipeline.CoordinatorConfig{
 			Logger:     log,
 			Initialize: usageCollector.BackfillActive,
 			Reconcile: func(reconcileCtx context.Context) error {
@@ -646,6 +642,15 @@ func Run() error {
 		log.Error("cdc pipeline shutdown", "err", err)
 	}
 	return runErr
+}
+
+func usagePipelineWatchRoots(roots usagesvc.SourceRoots) []string {
+	return []string{
+		roots.ClaudeProjects,
+		roots.CodexSessions,
+		roots.CodexArchived,
+		roots.KimiHome,
+	}
 }
 
 func seedScratchProjectOnBoot(ctx context.Context, cfg config.Config, projects *projectsvc.Service) error {

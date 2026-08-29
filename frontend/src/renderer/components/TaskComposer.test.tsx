@@ -23,10 +23,12 @@ vi.mock("./CreateProjectAgentSheet", () => ({
 		value,
 		onChange,
 		triggerClassName,
+		disabled,
 	}: {
 		value: string;
 		onChange: (value: string) => void;
 		triggerClassName?: string;
+		disabled?: boolean;
 	}) => {
 		h.agentValues.push(value);
 		return (
@@ -36,6 +38,7 @@ vi.mock("./CreateProjectAgentSheet", () => ({
 				className={triggerClassName}
 				data-testid="agent-field"
 				data-value={value}
+				disabled={disabled}
 				onClick={() => onChange(value === "codex" ? "claude-code" : "codex")}
 			/>
 		);
@@ -201,6 +204,117 @@ describe("TaskComposer", () => {
 		await act(async () => resolveCreate({ data: { workerId: "sess-1" } }));
 		await waitFor(() => expect(onCreated).toHaveBeenCalledWith("sess-1"));
 		await waitFor(() => expect(onSubmittingChange).toHaveBeenLastCalledWith(false));
+	});
+
+	it("locks agent and model selection while task creation is in flight, then unlocks them after failure", async () => {
+		h.get.mockImplementation(async (path: string) => {
+			if (path.includes("/models")) {
+				return {
+					data: {
+						agent: "codex",
+						selectionMode: "text",
+						models: [],
+						allowCustom: true,
+						refreshRecommended: false,
+					},
+				};
+			}
+			return { data: { status: "ok", project: { agent: "codex", config: {} } } };
+		});
+		let rejectCreate!: (error: Error) => void;
+		h.post.mockReturnValueOnce(new Promise((_resolve, reject) => (rejectCreate = reject)));
+
+		render(
+			<Wrap>
+				<TaskComposer projectId="proj-1" onCreated={vi.fn()} />
+			</Wrap>,
+		);
+
+		const agent = await screen.findByTestId("agent-field");
+		await waitFor(() => expect(agent).toHaveAttribute("data-value", "codex"));
+		const model = await screen.findByRole("textbox", { name: "Model" });
+		const prompt = task();
+		expect(agent).toBeEnabled();
+		expect(model).toBeEnabled();
+		expect(prompt).toBeEnabled();
+
+		fireEvent.click(screen.getByRole("button", { name: "Start task" }));
+
+		await waitFor(() => expect(h.post).toHaveBeenCalledOnce());
+		expect(agent).toBeDisabled();
+		expect(model).toBeDisabled();
+		expect(prompt).toBeDisabled();
+
+		await act(async () => rejectCreate(new Error("creation failed")));
+		await screen.findByText("creation failed");
+		expect(agent).toBeEnabled();
+		expect(model).toBeEnabled();
+		expect(prompt).toBeEnabled();
+	});
+
+	it.each([
+		{
+			name: "mode",
+			catalog: {
+				agent: "codex",
+				selectionMode: "mode",
+				models: [{ id: "plan", label: "Plan", isDefault: true }],
+				allowCustom: false,
+			},
+			controls: async () => [await screen.findByRole("button", { name: "Model" })],
+		},
+		{
+			name: "catalog",
+			catalog: {
+				agent: "codex",
+				selectionMode: "catalog",
+				models: [{ id: "gpt-5", label: "GPT-5", isDefault: true }],
+				allowCustom: false,
+			},
+			controls: async () => [await screen.findByRole("button", { name: "Model" })],
+		},
+		{
+			name: "custom input and browse",
+			catalog: {
+				agent: "codex",
+				selectionMode: "catalog",
+				models: [{ id: "gpt-5", label: "GPT-5", isDefault: true }],
+				allowCustom: true,
+			},
+			controls: async () => {
+				await userEvent.click(await screen.findByRole("button", { name: "Model" }));
+				await userEvent.click(await screen.findByRole("menuitem", { name: "Custom model…" }));
+				return [
+					screen.getByRole("textbox", { name: "Model" }),
+					screen.getByRole("button", { name: "Model options" }),
+				];
+			},
+		},
+	])("locks the $name selector while creating and restores it after failure", async ({ catalog, controls }) => {
+		h.get.mockImplementation(async (path: string) => {
+			if (path.includes("/models")) return { data: catalog };
+			return { data: { status: "ok", project: { agent: "codex", config: {} } } };
+		});
+		let rejectCreate!: (error: Error) => void;
+		h.post.mockReturnValueOnce(new Promise((_resolve, reject) => (rejectCreate = reject)));
+
+		render(
+			<Wrap>
+				<TaskComposer projectId="proj-1" onCreated={vi.fn()} />
+			</Wrap>,
+		);
+
+		const modelControls = await controls();
+		for (const control of modelControls) expect(control).toBeEnabled();
+
+		fireEvent.click(screen.getByRole("button", { name: "Start task" }));
+
+		await waitFor(() => expect(h.post).toHaveBeenCalledOnce());
+		for (const control of modelControls) expect(control).toBeDisabled();
+
+		await act(async () => rejectCreate(new Error("creation failed")));
+		await screen.findByText("creation failed");
+		for (const control of modelControls) expect(control).toBeEnabled();
 	});
 
 	it("attaches a selected file and sends it in the delegate body", async () => {

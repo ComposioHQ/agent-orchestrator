@@ -32,6 +32,7 @@ import (
 const (
 	nativeHistorySettlePoll  = 100 * time.Millisecond
 	nativeHistorySettleLimit = 45 * time.Second
+	branchHandoffReportLimit = 5 * time.Second
 	retryClientMessagePrefix = "retry-attempt/"
 )
 
@@ -169,6 +170,10 @@ type Controller struct {
 	sendMu sync.Mutex
 
 	mu sync.Mutex
+	// suppressStoppedActivity marks a deliberate branch-controller retirement.
+	// The replacement generation owns lifecycle state; publishing an exited fact
+	// from the source would make that replacement unable to report active work.
+	suppressStoppedActivity bool
 	// activeTurn maps a provider turn id to AO's turn id for the turn currently
 	// in flight, so a completion can be attributed without a round trip.
 	pendingTurnID string
@@ -193,7 +198,8 @@ type Controller struct {
 	// Interface drain keeps dispatching accepted rows; interface interrupt and an
 	// idle branch mutation stop dispatch entirely. The target controller is not
 	// started until this controller reports quiescent and is closed.
-	handoff controllerHandoff
+	handoff           controllerHandoff
+	branchHandoffDone chan struct{}
 
 	// account, threadState and mcpServers are merged here before being written,
 	// because the provider reports each of them in pieces: account/updated carries
@@ -1543,6 +1549,7 @@ func (c *Controller) BeginIdleBranchHandoff(ctx context.Context) error {
 		return fmt.Errorf("check queue before branch handoff: %w", err)
 	}
 	c.handoff = controllerHandoffIdleBranch
+	c.branchHandoffDone = make(chan struct{})
 	return nil
 }
 
@@ -1552,10 +1559,40 @@ func (c *Controller) AbortHandoff() {
 	c.mu.Lock()
 	resumeDispatch := c.handoff == controllerHandoffInterfaceDrain ||
 		c.handoff == controllerHandoffInterfaceInterrupt
+	branchHandoffDone := c.branchHandoffDone
+	c.branchHandoffDone = nil
 	c.handoff = controllerHandoffNone
 	c.mu.Unlock()
+	if branchHandoffDone != nil {
+		close(branchHandoffDone)
+	}
 	if resumeDispatch {
 		go c.drain(context.WithoutCancel(context.Background()))
+	}
+}
+
+// completeBranchHandoff releases stopped-controller registry cleanup without
+// reopening the obsolete source's intake. Commands may already hold a pointer
+// captured before the registry swap, so the fence must remain closed forever.
+func (c *Controller) completeBranchHandoff() {
+	c.mu.Lock()
+	branchHandoffDone := c.branchHandoffDone
+	c.branchHandoffDone = nil
+	c.mu.Unlock()
+	if branchHandoffDone != nil {
+		close(branchHandoffDone)
+	}
+}
+
+// waitForBranchHandoff keeps the registry's stopped-controller cleanup from
+// deleting a deliberately closed source while its forked replacement is being
+// resumed and installed. Ordinary stops have no latch and return immediately.
+func (c *Controller) waitForBranchHandoff() {
+	c.mu.Lock()
+	done := c.branchHandoffDone
+	c.mu.Unlock()
+	if done != nil {
+		<-done
 	}
 }
 
@@ -1966,6 +2003,35 @@ func (c *Controller) Close(ctx context.Context) error {
 	}
 }
 
+// closeForBranchHandoff retires a source controller without publishing a
+// session-level exit. Branch replacement is an in-place writer handoff, not the
+// end of the session; the replacement generation continues the lifecycle.
+func (c *Controller) closeForBranchHandoff(ctx context.Context) error {
+	c.prepareBranchHandoffStop()
+	return c.Close(ctx)
+}
+
+func (c *Controller) prepareBranchHandoffStop() {
+	c.mu.Lock()
+	c.suppressStoppedActivity = true
+	c.mu.Unlock()
+}
+
+func (c *Controller) reportFailedBranchHandoff(ctx context.Context) {
+	c.mu.Lock()
+	c.suppressStoppedActivity = false
+	stopped := c.state == ports.ChatControllerStopped
+	c.mu.Unlock()
+	if !stopped {
+		// project will publish the ordinary stop boundary when the stream ends.
+		return
+	}
+	reportCtx, cancel := context.WithTimeout(
+		context.WithoutCancel(ctx), branchHandoffReportLimit)
+	defer cancel()
+	c.reportActivity(reportCtx, domain.ActivityExited, "chat.controller.stopped", c.now())
+}
+
 // Wait blocks until the controller's event stream has ended.
 func (c *Controller) Wait() { <-c.stopped }
 
@@ -2003,6 +2069,7 @@ func (c *Controller) project() {
 
 	c.mu.Lock()
 	c.state = ports.ChatControllerStopped
+	suppressStoppedActivity := c.suppressStoppedActivity
 	c.mu.Unlock()
 
 	// The stream has ended, so nothing more can arrive for this controller. This
@@ -2020,7 +2087,9 @@ func (c *Controller) project() {
 	// transport cannot. Report the same lifecycle boundary here so the session
 	// does not remain durably active, idle, or blocked after its controller died.
 	// ControllerGeneration fences this write from a replacement controller.
-	c.reportActivity(ctx, domain.ActivityExited, "chat.controller.stopped", now)
+	if !suppressStoppedActivity {
+		c.reportActivity(ctx, domain.ActivityExited, "chat.controller.stopped", now)
+	}
 	if _, err := c.store.CleanupOwnedControllerWork(
 		ctx, c.sessionID, c.conversation.ID, c.generation, now,
 	); err != nil {
@@ -2520,8 +2589,9 @@ func (c *Controller) afterProject(ctx context.Context, event ports.ChatEvent, pr
 		// SQLite still contains live work.
 		c.mu.Lock()
 		c.state = event.ControllerState
+		suppressStoppedActivity := c.suppressStoppedActivity
 		c.mu.Unlock()
-		if event.ControllerState == ports.ChatControllerStopped {
+		if event.ControllerState == ports.ChatControllerStopped && !suppressStoppedActivity {
 			c.reportActivity(ctx, domain.ActivityExited, "chat.controller.stopped", now)
 		}
 	case ports.ChatEventAccountChanged:
