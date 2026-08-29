@@ -160,6 +160,7 @@ function PersistentBrowserPanelView({
 describe("BrowserPanel", () => {
 	const annotationSubmitListeners = new Set<(payload: BrowserAnnotationSubmitPayload) => void>();
 	const annotationCancelListeners = new Set<(payload: BrowserAnnotationCancelPayload) => void>();
+	let focusLocationListener: ((viewId: string) => void) | undefined;
 
 	beforeEach(() => {
 		hookState.navigate.mockReset();
@@ -200,6 +201,14 @@ describe("BrowserPanel", () => {
 				annotationCancelListeners.delete(listener);
 			};
 		});
+		window.ao!.browser.notifyPanelUsed = vi.fn();
+		window.ao!.browser.notifyPanelBlur = vi.fn();
+		window.ao!.browser.onFocusLocation = vi.fn((listener: (viewId: string) => void) => {
+			focusLocationListener = listener;
+			return () => {
+				if (focusLocationListener === listener) focusLocationListener = undefined;
+			};
+		});
 		hookState.previewUrl = undefined;
 		hookState.tabs = [{ id: "t1", url: "", title: "", active: true }];
 		hookState.activeTabId = "t1";
@@ -222,6 +231,19 @@ describe("BrowserPanel", () => {
 		await userEvent.type(input, "localhost:5173{Enter}");
 
 		expect(hookState.navigate).toHaveBeenCalledWith("localhost:5173");
+	});
+
+	it("marks browser UI as used and focuses the address bar for a matching shortcut request", async () => {
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+		const input = screen.getByRole("textbox", { name: /browser url/i }) as HTMLInputElement;
+		input.value = "http://localhost:5173/path";
+
+		act(() => focusLocationListener?.("42:sess-1"));
+
+		expect(input).toHaveFocus();
+		expect(input.selectionStart).toBe(0);
+		expect(input.selectionEnd).toBe(input.value.length);
+		expect(window.ao!.browser.notifyPanelUsed).toHaveBeenCalledWith("42:sess-1");
 	});
 
 	it("constrains the device frame to a named preset's width, and clears it back to fit", async () => {

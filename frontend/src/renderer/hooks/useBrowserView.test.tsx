@@ -87,6 +87,9 @@ function setupBridge() {
 				{ id: "t2", url: "", title: "", active: true },
 			],
 		})),
+		notifyPanelUsed: vi.fn(),
+		notifyPanelBlur: vi.fn(),
+		onFocusLocation: vi.fn(() => () => undefined),
 		devtools: vi.fn(
 			async ({ viewId, operation, placement }: {
 				viewId: string;

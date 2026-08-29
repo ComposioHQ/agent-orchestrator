@@ -505,7 +505,9 @@ async function createWindowInternal(): Promise<void> {
 		false,
 		() => keybindingOverrides,
 		() => keybindingRecordingActive,
-		() => true,
+		(id) =>
+			!browserViewHost?.isLastUsedBrowser() ||
+			(id !== "new-shell-terminal" && id !== "close-shell-terminal"),
 		(id) => {
 			if (id !== "toggle-browser-devtools") return;
 			void browserViewHost?.toggleDevToolsForLastFocused().catch(() => undefined);

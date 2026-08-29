@@ -142,6 +142,9 @@ export const aoBridge: AoBridge =
 			selectTab: async ({ viewId, tabId }) => ({ viewId, activeTabId: tabId, tabs: [] }),
 			closeTab: async ({ viewId }) => ({ viewId, activeTabId: "", tabs: [] }),
 			openTab: async ({ viewId }) => ({ viewId, activeTabId: "", tabs: [] }),
+			notifyPanelUsed: () => undefined,
+			notifyPanelBlur: () => undefined,
+			onFocusLocation: () => () => undefined,
 			devtools: async ({ viewId, operation }) => ({
 				viewId,
 				open: operation !== "close",
