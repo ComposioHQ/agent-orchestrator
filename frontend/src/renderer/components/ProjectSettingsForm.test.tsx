@@ -594,7 +594,7 @@ describe("ProjectSettingsForm", () => {
 			"GPT-5.6 SolDefault",
 			"GPT-5.5",
 			"GPT-5.4",
-			"Custom model…",
+			"Enter model ID…",
 		]);
 		// A compact catalog stays immediately scannable and does not spend a row on search.
 		expect(screen.queryByRole("searchbox", { name: "Search worker model" })).not.toBeInTheDocument();
@@ -605,7 +605,50 @@ describe("ProjectSettingsForm", () => {
 		expect(await screen.findByRole("menuitem", { name: /GPT-5\.6 Sol/ })).toBeInTheDocument();
 		expect(screen.getByRole("menuitem", { name: /GPT-5\.5/ })).toBeInTheDocument();
 		expect(screen.getByRole("menuitem", { name: /GPT-5\.4/ })).toBeInTheDocument();
-		expect(screen.getByRole("menuitem", { name: "Custom model…" })).toBeInTheDocument();
+		expect(screen.getByRole("menuitem", { name: "Enter model ID…" })).toBeInTheDocument();
+	});
+
+	it("does not allow arbitrary model text for configured-only agents", async () => {
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/agents") return agentCatalogResponse;
+			if (path === "/api/v1/agents/{agent}/models") {
+				return {
+					data: {
+						agentId: "opencode",
+						selectionMode: "catalog",
+						models: [],
+						customModelEntry: "configured",
+						allowCustom: false,
+						source: "manual",
+						fetchedAt: "2026-08-29T00:00:00Z",
+						stale: false,
+					},
+					error: undefined,
+				};
+			}
+			return {
+				data: {
+					status: "ok",
+					project: {
+						id: "proj-1",
+						name: "Project One",
+						kind: "single_repo",
+						path: "/repo/project-one",
+						repo: "",
+						defaultBranch: "main",
+						config: { worker: { agent: "opencode" }, orchestrator: { agent: "opencode" } },
+					},
+				},
+				error: undefined,
+			};
+		});
+
+		renderSettings("proj-1", undefined, "agents");
+
+		const workerModel = await screen.findByRole("button", { name: "Worker model" });
+		expect(screen.queryByRole("textbox", { name: "Worker model" })).not.toBeInTheDocument();
+		await userEvent.click(workerModel);
+		expect(screen.getByText("Configure the model in opencode, then refresh.")).toBeInTheDocument();
 	});
 
 	it("shows a warning when background model revalidation fails", async () => {

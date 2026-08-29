@@ -16,6 +16,7 @@ import type { components } from "../../api/schema";
 import {
 	agentModelsQueryKey,
 	agentModelsQueryOptions,
+	refreshAgentModels,
 	revalidateAgentModels,
 	type AgentModelCatalog,
 } from "../hooks/useAgentModelsQuery";
@@ -661,6 +662,16 @@ function AgentModelField({
 		catalog?.warning ??
 		(query.isError ? (query.error instanceof Error ? query.error.message : t("settings.models.loadFailed")) : undefined);
 
+	if (agentId !== "" && query.isFetching && catalog === undefined) {
+		return (
+			<SettingsRow label={label}>
+				<span className="text-xs text-settings-muted" role="status" aria-label={t("settings.models.loading")}>
+					{t("settings.models.loading")}
+				</span>
+			</SettingsRow>
+		);
+	}
+
 	if (isMode) {
 		const options = [
 			{ value: "__default__", label: t("settings.models.agentDefault") },
@@ -688,8 +699,16 @@ function AgentModelField({
 	}
 
 	const hasCatalog = catalog?.selectionMode === "catalog" && (catalog.models?.length ?? 0) > 0;
+	const customModelEntry = catalog?.customModelEntry ?? (catalog?.allowCustom ? "direct" : "none");
 	const modelIsInCatalog = catalog?.models?.some((item) => item.id === model) ?? false;
-	const showCustomInput = hasCatalog && (customAgentId === agentId || (model !== "" && !modelIsInCatalog));
+	const showCustomInput =
+		customModelEntry === "direct" &&
+		hasCatalog &&
+		(customAgentId === agentId || (model !== "" && !modelIsInCatalog));
+	const refreshCatalog = async () => {
+		const refreshed = await refreshAgentModels(agentId, projectId);
+		queryClient.setQueryData(agentModelsQueryKey(agentId, projectId), refreshed);
+	};
 	const selectCatalogModel = (value: string) => {
 		setCustomAgentId(null);
 		onModelChange(value);
@@ -704,12 +723,16 @@ function AgentModelField({
 		<>
 			<SettingsRow label={label}>
 				<div className="flex min-w-0 items-center gap-2">
-					{hasCatalog && !showCustomInput ? (
+					{!showCustomInput && (hasCatalog || customModelEntry !== "direct") ? (
 						<AgentModelCombobox
 							aria-label={label}
 							value={model}
-							models={catalog.models}
-							allowCustom={catalog.allowCustom}
+									models={catalog?.models ?? []}
+									allowCustom={catalog?.allowCustom}
+							customModelEntry={customModelEntry}
+							agentLabel={agentId}
+							onRefresh={refreshCatalog}
+							disabled={query.isFetching || agentId === ""}
 							onChange={selectCatalogModel}
 							onCustom={selectCustomModel}
 							triggerClassName="justify-end"
@@ -732,8 +755,11 @@ function AgentModelField({
 								<AgentModelCombobox
 									aria-label={t("settings.models.optionsAria", { label })}
 									value={model}
-									models={catalog.models}
-									allowCustom={catalog.allowCustom}
+									models={catalog?.models ?? []}
+									allowCustom={catalog?.allowCustom}
+									customModelEntry={customModelEntry}
+									agentLabel={agentId}
+									onRefresh={refreshCatalog}
 									onChange={selectCatalogModel}
 									onCustom={selectCustomModel}
 									triggerLabel={t("settings.models.browse")}

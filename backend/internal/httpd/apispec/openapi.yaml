@@ -5607,6 +5607,12 @@ components:
           type: boolean
         binaryVersion:
           type: string
+        customModelEntry:
+          enum:
+          - none
+          - direct
+          - configured
+          type: string
         fetchedAt:
           format: date-time
           type: string
@@ -5635,6 +5641,7 @@ components:
       - agentId
       - selectionMode
       - models
+      - customModelEntry
       - allowCustom
       - source
       - fetchedAt

@@ -2,6 +2,7 @@ package modelcatalog
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -90,14 +91,73 @@ func TestBaseClassifiesStaticTextAndModeAgents(t *testing.T) {
 		{agent: "kimchi", mode: ports.ModelSelectionCatalog},
 		{agent: "prime-agent", mode: ports.ModelSelectionCatalog},
 		{agent: "qwen", mode: ports.ModelSelectionText},
-		{agent: "continue", mode: ports.ModelSelectionText},
-		{agent: "crush", mode: ports.ModelSelectionText},
+		{agent: "continue", mode: ports.ModelSelectionCatalog},
+		{agent: "crush", mode: ports.ModelSelectionCatalog},
 	}
 	for _, tc := range tests {
 		t.Run(tc.agent, func(t *testing.T) {
 			got := Base(tc.agent)
 			if got.SelectionMode != tc.mode || len(got.Models) != tc.count {
 				t.Fatalf("Base(%q) = %#v", tc.agent, got)
+			}
+		})
+	}
+}
+
+func TestCustomModelEntryPolicy(t *testing.T) {
+	tests := []struct {
+		agent         string
+		wantEntryMode string
+		wantSelection ports.ModelSelectionMode
+	}{
+		{agent: "claude-code", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
+		{agent: "codex", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
+		{agent: "opencode", wantEntryMode: "configured", wantSelection: ports.ModelSelectionCatalog},
+		{agent: "grok", wantEntryMode: "none", wantSelection: ports.ModelSelectionCatalog},
+		{agent: "cursor", wantEntryMode: "none", wantSelection: ports.ModelSelectionCatalog},
+		{agent: "qwen", wantEntryMode: "direct", wantSelection: ports.ModelSelectionText},
+		{agent: "copilot", wantEntryMode: "none", wantSelection: ports.ModelSelectionCatalog},
+		{agent: "kimi", wantEntryMode: "configured", wantSelection: ports.ModelSelectionCatalog},
+		{agent: "muse", wantEntryMode: "none", wantSelection: ports.ModelSelectionCatalog},
+		{agent: "droid", wantEntryMode: "configured", wantSelection: ports.ModelSelectionCatalog},
+		{agent: "amp", wantEntryMode: "none", wantSelection: ports.ModelSelectionModeList},
+		{agent: "agy", wantEntryMode: "none", wantSelection: ports.ModelSelectionCatalog},
+		{agent: "crush", wantEntryMode: "configured", wantSelection: ports.ModelSelectionCatalog},
+		{agent: "aider", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
+		{agent: "goose", wantEntryMode: "direct", wantSelection: ports.ModelSelectionText},
+		{agent: "auggie", wantEntryMode: "none", wantSelection: ports.ModelSelectionCatalog},
+		{agent: "continue", wantEntryMode: "configured", wantSelection: ports.ModelSelectionCatalog},
+		{agent: "devin", wantEntryMode: "none", wantSelection: ports.ModelSelectionCatalog},
+		{agent: "omp", wantEntryMode: "configured", wantSelection: ports.ModelSelectionCatalog},
+		{agent: "cline", wantEntryMode: "direct", wantSelection: ports.ModelSelectionText},
+		{agent: "kiro", wantEntryMode: "none", wantSelection: ports.ModelSelectionCatalog},
+		{agent: "kilocode", wantEntryMode: "configured", wantSelection: ports.ModelSelectionCatalog},
+		{agent: "vibe", wantEntryMode: "direct", wantSelection: ports.ModelSelectionText},
+		{agent: "pi", wantEntryMode: "configured", wantSelection: ports.ModelSelectionCatalog},
+		{agent: "kimchi", wantEntryMode: "configured", wantSelection: ports.ModelSelectionCatalog},
+		{agent: "prime-agent", wantEntryMode: "configured", wantSelection: ports.ModelSelectionCatalog},
+		{agent: "autohand", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.agent, func(t *testing.T) {
+			got := Base(tc.agent)
+			encoded, err := json.Marshal(got)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var wire map[string]any
+			if err := json.Unmarshal(encoded, &wire); err != nil {
+				t.Fatal(err)
+			}
+			if wire["customModelEntry"] != tc.wantEntryMode {
+				t.Fatalf("Base(%q) customModelEntry = %#v, want %q", tc.agent, wire["customModelEntry"], tc.wantEntryMode)
+			}
+			if got.AllowCustom != (tc.wantEntryMode == "direct") {
+				t.Fatalf("Base(%q) allowCustom = %v, want %v", tc.agent, got.AllowCustom, tc.wantEntryMode == "direct")
+			}
+			if got.SelectionMode != tc.wantSelection {
+				t.Fatalf("Base(%q) selectionMode = %q, want %q", tc.agent, got.SelectionMode, tc.wantSelection)
 			}
 		})
 	}
@@ -135,7 +195,8 @@ func TestBaseDiscoverableCatalogsContainNoAOOwnedModelIDs(t *testing.T) {
 	for _, agentID := range []string{"claude-code", "codex", "muse"} {
 		t.Run(agentID, func(t *testing.T) {
 			got := Base(agentID)
-			if got.SelectionMode != ports.ModelSelectionCatalog || !got.AllowCustom || got.Source != "cli" {
+			wantAllowCustom := agentID != "muse"
+			if got.SelectionMode != ports.ModelSelectionCatalog || got.AllowCustom != wantAllowCustom || got.Source != "cli" {
 				t.Fatalf("Base(%q) = %#v", agentID, got)
 			}
 			if len(got.Models) != 0 {

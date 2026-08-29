@@ -563,6 +563,10 @@ func (s *Service) loadModels(ctx context.Context, agentID, projectID string, mod
 	if err != nil {
 		return ports.AgentModelCatalog{}, err
 	}
+	policy := s.discoverer.Manual(agentID)
+	if hasCached {
+		cached.Catalog = applyCustomModelEntryPolicy(cached.Catalog, policy)
+	}
 	var binary string
 	if resolver, ok := item.Agent.(ports.AgentBinaryResolver); ok {
 		lock := s.resolverMu[agentID]
@@ -590,6 +594,7 @@ func (s *Service) loadModels(ctx context.Context, agentID, projectID string, mod
 	}
 
 	discovered, discoverErr := s.discoverer.Discover(ctx, request)
+	discovered = applyCustomModelEntryPolicy(discovered, policy)
 	discovered.BinaryVersion = version
 	discovered.ValidatedAt = time.Now().UTC()
 	discovered.RefreshRecommended = false
@@ -622,7 +627,7 @@ func (s *Service) loadModels(ctx context.Context, agentID, projectID string, mod
 			}
 			return cached.Catalog, nil
 		}
-		fallback := s.discoverer.Manual(agentID)
+		fallback := policy
 		fallback.BinaryVersion = version
 		fallback.ValidatedAt = time.Now().UTC()
 		fallback.Stale = true
@@ -633,6 +638,20 @@ func (s *Service) loadModels(ctx context.Context, agentID, projectID string, mod
 		discovered.Warning = appendCacheWarning(discovered.Warning)
 	}
 	return discovered, nil
+}
+
+func applyCustomModelEntryPolicy(catalog, policy ports.AgentModelCatalog) ports.AgentModelCatalog {
+	entryMode := policy.CustomModelEntry
+	if entryMode == "" {
+		if policy.AllowCustom {
+			entryMode = ports.CustomModelEntryDirect
+		} else {
+			entryMode = ports.CustomModelEntryNone
+		}
+	}
+	catalog.CustomModelEntry = entryMode
+	catalog.AllowCustom = entryMode == ports.CustomModelEntryDirect
+	return catalog
 }
 
 func appendCacheWarning(current string) string {

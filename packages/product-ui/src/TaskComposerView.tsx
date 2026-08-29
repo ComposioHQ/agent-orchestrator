@@ -50,6 +50,7 @@ export type TaskComposerModelOption = {
 
 export type TaskComposerModelCatalog = {
 	allowCustom: boolean;
+	customModelEntry: "none" | "direct" | "configured";
 	models: TaskComposerModelOption[];
 	selectionMode: "catalog" | "text" | "mode";
 };

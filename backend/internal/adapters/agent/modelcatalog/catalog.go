@@ -62,9 +62,10 @@ var commandSpecs = map[string]commandSpec{
 // Base returns the picker behavior AO can provide without executing a CLI.
 func Base(agentID string) ports.AgentModelCatalog {
 	now := time.Now().UTC()
+	entryMode := customModelEntryMode(agentID)
 	switch agentID {
 	case "amp":
-		c := catalog(agentID, "official-modes", false, now,
+		c := catalog(agentID, "official-modes", entryMode, now,
 			model("low", "Low", false),
 			model("medium", "Medium", true),
 			model("high", "High", false),
@@ -75,28 +76,48 @@ func Base(agentID string) ports.AgentModelCatalog {
 	default:
 		if hasDiscoverySource(agentID) {
 			return ports.AgentModelCatalog{
-				AgentID:       agentID,
-				SelectionMode: ports.ModelSelectionCatalog,
-				Models:        []ports.AgentModelInfo{},
-				AllowCustom:   true,
-				Source:        "cli",
-				FetchedAt:     now,
+				AgentID:          agentID,
+				SelectionMode:    ports.ModelSelectionCatalog,
+				Models:           []ports.AgentModelInfo{},
+				CustomModelEntry: entryMode,
+				AllowCustom:      entryMode == ports.CustomModelEntryDirect,
+				Source:           "cli",
+				FetchedAt:        now,
 			}
 		}
 		return Manual(agentID)
 	}
 }
 
-// Manual returns the free-text fallback used when an adapter has no reliable
-// catalog or when discovery fails before AO has a successful cached catalog.
+// Manual returns the capability-aware fallback used when an adapter has no
+// reliable catalog or discovery fails before AO has a successful cache.
 func Manual(agentID string) ports.AgentModelCatalog {
+	entryMode := customModelEntryMode(agentID)
+	selectionMode := ports.ModelSelectionCatalog
+	if entryMode == ports.CustomModelEntryDirect {
+		selectionMode = ports.ModelSelectionText
+	}
 	return ports.AgentModelCatalog{
-		AgentID:       agentID,
-		SelectionMode: ports.ModelSelectionText,
-		Models:        []ports.AgentModelInfo{},
-		AllowCustom:   true,
-		Source:        "manual",
-		FetchedAt:     time.Now().UTC(),
+		AgentID:          agentID,
+		SelectionMode:    selectionMode,
+		Models:           []ports.AgentModelInfo{},
+		CustomModelEntry: entryMode,
+		AllowCustom:      entryMode == ports.CustomModelEntryDirect,
+		Source:           "manual",
+		FetchedAt:        time.Now().UTC(),
+	}
+}
+
+// customModelEntryMode is stable adapter capability policy. Model names and
+// availability remain agent-owned and are never listed here.
+func customModelEntryMode(agentID string) ports.CustomModelEntryMode {
+	switch agentID {
+	case "claude-code", "codex", "qwen", "aider", "goose", "cline", "vibe", "autohand":
+		return ports.CustomModelEntryDirect
+	case "opencode", "kimi", "droid", "crush", "continue", "omp", "kilocode", "pi", "kimchi", "prime-agent":
+		return ports.CustomModelEntryConfigured
+	default:
+		return ports.CustomModelEntryNone
 	}
 }
 
@@ -363,14 +384,15 @@ func discoveryConfigInputs(agentID, workingDir string, env map[string]string) st
 	return "model=" + claudeCodeResolvedModel(workingDir, env)
 }
 
-func catalog(agentID, source string, allowCustom bool, at time.Time, models ...ports.AgentModelInfo) ports.AgentModelCatalog {
+func catalog(agentID, source string, entryMode ports.CustomModelEntryMode, at time.Time, models ...ports.AgentModelInfo) ports.AgentModelCatalog {
 	return ports.AgentModelCatalog{
-		AgentID:       agentID,
-		SelectionMode: ports.ModelSelectionCatalog,
-		Models:        models,
-		AllowCustom:   allowCustom,
-		Source:        source,
-		FetchedAt:     at,
+		AgentID:          agentID,
+		SelectionMode:    ports.ModelSelectionCatalog,
+		Models:           models,
+		CustomModelEntry: entryMode,
+		AllowCustom:      entryMode == ports.CustomModelEntryDirect,
+		Source:           source,
+		FetchedAt:        at,
 	}
 }
 

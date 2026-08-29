@@ -155,12 +155,13 @@ func (f *fakeModelDiscoverer) CatalogFingerprint(_ context.Context, request port
 
 func (f *fakeModelDiscoverer) Manual(agentID string) ports.AgentModelCatalog {
 	return ports.AgentModelCatalog{
-		AgentID:       agentID,
-		SelectionMode: ports.ModelSelectionText,
-		Models:        []ports.AgentModelInfo{},
-		AllowCustom:   true,
-		Source:        "manual",
-		FetchedAt:     time.Now().UTC(),
+		AgentID:          agentID,
+		SelectionMode:    ports.ModelSelectionText,
+		Models:           []ports.AgentModelInfo{},
+		CustomModelEntry: ports.CustomModelEntryDirect,
+		AllowCustom:      true,
+		Source:           "manual",
+		FetchedAt:        time.Now().UTC(),
 	}
 }
 
@@ -1038,21 +1039,69 @@ func TestModelsRejectsUnknownProjectScope(t *testing.T) {
 	}
 }
 
-func TestModelsUsesTextFallbackWhenDiscoveryCannotRun(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	svc := NewWithAgents([]agentregistry.HarnessAgent{
-		harnessAgent("opencode", "OpenCode", ports.ErrAgentBinaryNotFound),
-	})
-	svc.discoverer = testModelDiscoverer
-	got, err := svc.Models(context.Background(), "opencode", "", false)
-	if err != nil {
-		t.Fatal(err)
+func TestModelsUsesCapabilityAwareFallbackWhenDiscoveryCannotRun(t *testing.T) {
+	for _, tc := range []struct {
+		agent          string
+		wantEntryMode  ports.CustomModelEntryMode
+		wantSelection  ports.ModelSelectionMode
+		wantAllowInput bool
+	}{
+		{agent: "qwen", wantEntryMode: ports.CustomModelEntryDirect, wantSelection: ports.ModelSelectionText, wantAllowInput: true},
+		{agent: "opencode", wantEntryMode: ports.CustomModelEntryConfigured, wantSelection: ports.ModelSelectionCatalog},
+		{agent: "grok", wantEntryMode: ports.CustomModelEntryNone, wantSelection: ports.ModelSelectionCatalog},
+	} {
+		t.Run(tc.agent, func(t *testing.T) {
+			t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+			svc := NewWithAgents([]agentregistry.HarnessAgent{
+				harnessAgent(tc.agent, tc.agent, ports.ErrAgentBinaryNotFound),
+			})
+			svc.discoverer = testModelDiscoverer
+			got, err := svc.Models(context.Background(), tc.agent, "", false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.SelectionMode != tc.wantSelection || got.CustomModelEntry != tc.wantEntryMode || got.AllowCustom != tc.wantAllowInput || got.Source != "manual" || len(got.Models) != 0 {
+				t.Fatalf("catalog = %#v, want capability-aware fallback", got)
+			}
+			if tc.agent != "qwen" && (!got.Stale || got.Warning == "") {
+				t.Fatalf("catalog = %#v, want discovery warning on manual fallback", got)
+			}
+		})
 	}
-	if got.SelectionMode != ports.ModelSelectionText || !got.AllowCustom || got.Source != "manual" || len(got.Models) != 0 {
-		t.Fatalf("catalog = %#v, want custom text input", got)
-	}
-	if !got.Stale || got.Warning == "" {
-		t.Fatalf("catalog = %#v, want discovery warning on manual fallback", got)
+}
+
+func TestModelsNormalizesCustomEntryPolicyInOldCache(t *testing.T) {
+	for _, tc := range []struct {
+		agent          string
+		wantEntryMode  ports.CustomModelEntryMode
+		wantAllowInput bool
+	}{
+		{agent: "codex", wantEntryMode: ports.CustomModelEntryDirect, wantAllowInput: true},
+		{agent: "opencode", wantEntryMode: ports.CustomModelEntryConfigured},
+		{agent: "grok", wantEntryMode: ports.CustomModelEntryNone},
+	} {
+		t.Run(tc.agent, func(t *testing.T) {
+			oldCatalog := map[string]any{
+				"agentId": tc.agent, "selectionMode": "catalog", "models": []map[string]any{{"id": "cached-model", "label": "Cached model"}},
+				"allowCustom": true, "source": "cli", "fetchedAt": time.Now().UTC(), "stale": false,
+			}
+			data, err := json.Marshal(oldCatalog)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cache := &fakeModelCache{records: map[string]ports.CachedAgentModelCatalog{
+				tc.agent + "\x00": {AgentID: tc.agent, CatalogJSON: string(data)},
+			}}
+			svc := newService([]agentregistry.HarnessAgent{harnessAgent(tc.agent, tc.agent, nil)}, cache, nil, testModelDiscoverer)
+
+			got, err := svc.Models(context.Background(), tc.agent, "", false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.CustomModelEntry != tc.wantEntryMode || got.AllowCustom != tc.wantAllowInput {
+				t.Fatalf("catalog = %#v, want entry mode %q allowCustom=%v", got, tc.wantEntryMode, tc.wantAllowInput)
+			}
+		})
 	}
 }
 

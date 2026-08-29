@@ -571,6 +571,34 @@ describe("TaskComposer", () => {
 		expect(await screen.findByRole("menuitem", { name: "Use codex's default" })).toBeInTheDocument();
 	});
 
+	it("does not render free text when models must be configured in the agent", async () => {
+		h.get.mockImplementation(async (path: string) => {
+			if (path.includes("/models")) {
+				return {
+					data: {
+						agentId: "opencode",
+						selectionMode: "catalog",
+						models: [],
+						customModelEntry: "configured",
+						allowCustom: false,
+					},
+				};
+			}
+			return { data: { status: "ok", project: { agent: "opencode", config: {} } } };
+		});
+
+		render(
+			<Wrap>
+				<TaskComposer projectId="proj-1" onCreated={vi.fn()} />
+			</Wrap>,
+		);
+
+		const picker = await screen.findByRole("button", { name: "Model" });
+		expect(screen.queryByRole("textbox", { name: "Model" })).not.toBeInTheDocument();
+		await userEvent.click(picker);
+		expect(screen.getByText("Configure the model in opencode, then refresh.")).toBeInTheDocument();
+	});
+
 	it("uses the project worker model as the new task model default", async () => {
 		h.get.mockImplementation(async (path: string) => {
 			if (path.includes("/models")) {

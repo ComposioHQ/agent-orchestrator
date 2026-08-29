@@ -21,6 +21,7 @@ import { cloudSessionsQueryKey, useCloudProjectsQuery } from "../hooks/useWorksp
 import {
 	agentModelsQueryKey,
 	agentModelsQueryOptions,
+	refreshAgentModels,
 	revalidateAgentModels,
 } from "../hooks/useAgentModelsQuery";
 import { cn } from "../lib/utils";
@@ -258,6 +259,7 @@ export function TaskComposer({
 	const modelCatalog: TaskComposerModelCatalog | undefined = modelCatalogQuery.data
 		? {
 				allowCustom: modelCatalogQuery.data.allowCustom,
+				customModelEntry: modelCatalogQuery.data.customModelEntry,
 				models: modelCatalogQuery.data.models,
 				selectionMode: modelCatalogQuery.data.selectionMode,
 			}
@@ -274,6 +276,10 @@ export function TaskComposer({
 		selectedAgent !== "" &&
 		settings?.defaultSessionMode === "chat" &&
 		!settings.chatHarnesses.includes(selectedAgent);
+	const refreshSelectedModels = useCallback(async () => {
+		const refreshed = await refreshAgentModels(selectedAgent, modelsProjectId);
+		queryClient.setQueryData(agentModelsQueryKey(selectedAgent, modelsProjectId), refreshed);
+	}, [modelsProjectId, queryClient, selectedAgent]);
 
 	useEffect(() => {
 		if (!agentTouched) setAgent(defaultWorkerAgent);
@@ -427,7 +433,7 @@ export function TaskComposer({
 				onSubmit: (brief) => void submitTask(brief, requiresTuiFallback ? "tui" : undefined),
 			}}
 			renderAgentControl={(control) => <DesktopAgentControl {...control} />}
-			renderModelControl={(control) => <TaskModelPicker {...control} />}
+			renderModelControl={(control) => <TaskModelPicker {...control} onRefresh={refreshSelectedModels} />}
 		/>
 	);
 }
@@ -453,7 +459,8 @@ function TaskModelPicker({
 	mode,
 	onModelChange,
 	onModeChange,
-}: TaskComposerModelControl) {
+	onRefresh,
+}: TaskComposerModelControl & { onRefresh: () => Promise<void> }) {
 	const { t } = useTranslation();
 	const [customAgentId, setCustomAgentId] = useState<string | null>(null);
 
@@ -462,16 +469,21 @@ function TaskModelPicker({
 		? t("newTask.letAgentChoose", { agent: agentLabel })
 		: t("settings.models.agentDefault");
 
-	if (loading) {
+	if (loading || agentId === "") {
 		return (
 			<span
 				className="composer-chip composer-toolbar-option w-full cursor-not-allowed justify-start opacity-50"
-				role="status"
-				aria-label={t("settings.models.loading")}
-				aria-busy="true"
+				aria-label={t("newTask.model")}
 			>
-				<Loader2 className="size-icon-sm shrink-0 animate-spin text-settings-muted" aria-hidden="true" />
-				<span className="truncate text-settings-muted">{t("settings.models.loading")}</span>
+				<span
+					className="inline-flex min-w-0 items-center gap-1.5"
+					role="status"
+					aria-label={t("settings.models.loading")}
+					aria-busy="true"
+				>
+					<Loader2 className="size-icon-sm shrink-0 animate-spin text-settings-muted" aria-hidden="true" />
+					<span className="truncate text-settings-muted">{t("settings.models.loading")}</span>
+				</span>
 			</span>
 		);
 	}
@@ -500,11 +512,15 @@ function TaskModelPicker({
 	}
 
 	const hasCatalog = catalog?.selectionMode === "catalog" && (catalog.models?.length ?? 0) > 0;
+	const customModelEntry = catalog?.customModelEntry ?? (catalog?.allowCustom ? "direct" : "none");
 	const modelIsInCatalog = catalog?.models?.some((item) => item.id === value) ?? false;
 	const displayModels = (catalog?.models ?? []).map((item) =>
 		item.id === "auto" ? { ...item, label: t("settings.models.autoRouteLabel") } : item,
 	);
-	const showCustomInput = hasCatalog && (customAgentId === agentId || (value !== "" && !modelIsInCatalog));
+	const showCustomInput =
+		customModelEntry === "direct" &&
+		hasCatalog &&
+		(customAgentId === agentId || (value !== "" && !modelIsInCatalog));
 	const selectCatalogModel = (nextModel: string) => {
 		setCustomAgentId(null);
 		onModelChange(nextModel);
@@ -514,14 +530,17 @@ function TaskModelPicker({
 		onModelChange(nextModel);
 	};
 
-	if (hasCatalog && !showCustomInput) {
+	if (!showCustomInput && (hasCatalog || customModelEntry !== "direct")) {
 		return (
 			<AgentModelCombobox
 				key={agentId}
 				aria-label={t("newTask.model")}
 				value={value}
 				models={displayModels}
-				allowCustom={catalog.allowCustom}
+				allowCustom={catalog?.allowCustom}
+				customModelEntry={customModelEntry}
+				agentLabel={agentLabel}
+				onRefresh={onRefresh}
 				emptyLabel={noOverrideLabel}
 				onChange={selectCatalogModel}
 				onCustom={selectCustomModel}
@@ -562,7 +581,10 @@ function TaskModelPicker({
 					aria-label={t("settings.models.optionsAria", { label: t("newTask.model") })}
 					value={value}
 					models={displayModels}
-					allowCustom={catalog.allowCustom}
+					allowCustom={catalog?.allowCustom}
+					customModelEntry={customModelEntry}
+					agentLabel={agentLabel}
+					onRefresh={onRefresh}
 					emptyLabel={noOverrideLabel}
 					onChange={selectCatalogModel}
 					onCustom={selectCustomModel}

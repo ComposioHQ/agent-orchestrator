@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import {
 	agentModelsQueryKey,
 	agentModelsQueryOptions,
+	refreshAgentModels,
 	revalidateAgentModels,
 	type AgentModelCatalog,
 } from "../hooks/useAgentModelsQuery";
@@ -69,6 +70,10 @@ export function AgentModelPicker({
 		? t("newTask.letAgentChoose", { agent: agentLabel })
 		: t("settings.models.agentDefault");
 	const catalogLoading = agentId !== "" && query.isFetching && catalog === undefined;
+	const refreshCatalog = async () => {
+		const refreshed = await refreshAgentModels(agentId, projectId);
+		queryClient.setQueryData(agentModelsQueryKey(agentId, projectId), refreshed);
+	};
 
 	if (catalogLoading) {
 		return (
@@ -95,7 +100,7 @@ export function AgentModelPicker({
 				aria-label={t("newTask.model")}
 				value={mode || "__default__"}
 				options={options}
-				disabled={disabled}
+				disabled={disabled || agentId === "" || (query.isFetching && catalog === undefined)}
 				triggerClassName="composer-chip composer-toolbar-option w-full justify-between"
 				menuAlign="start"
 				renderTrigger={() => (
@@ -109,11 +114,15 @@ export function AgentModelPicker({
 	}
 
 	const hasCatalog = catalog?.selectionMode === "catalog" && (catalog.models?.length ?? 0) > 0;
+	const customModelEntry = catalog?.customModelEntry ?? (catalog?.allowCustom ? "direct" : "none");
 	const modelIsInCatalog = catalog?.models?.some((item) => item.id === value) ?? false;
 	const displayModels = (catalog?.models ?? []).map((item) =>
 		item.id === "auto" ? { ...item, label: t("settings.models.autoRouteLabel") } : item,
 	);
-	const showCustomInput = hasCatalog && (customAgentId === agentId || (value !== "" && !modelIsInCatalog));
+	const showCustomInput =
+		customModelEntry === "direct" &&
+		hasCatalog &&
+		(customAgentId === agentId || (value !== "" && !modelIsInCatalog));
 	const selectCatalogModel = (nextModel: string) => {
 		setCustomAgentId(null);
 		onModelChange(nextModel);
@@ -123,15 +132,18 @@ export function AgentModelPicker({
 		onModelChange(nextModel);
 	};
 
-	if (hasCatalog && !showCustomInput) {
+	if (!showCustomInput && (hasCatalog || customModelEntry !== "direct")) {
 		return (
 			<AgentModelCombobox
 				key={agentId}
 				aria-label={t("newTask.model")}
 				value={value}
 				models={displayModels}
-				allowCustom={catalog.allowCustom}
-				disabled={disabled}
+				allowCustom={catalog?.allowCustom}
+				customModelEntry={customModelEntry}
+				agentLabel={agentLabel}
+				onRefresh={refreshCatalog}
+				disabled={disabled || agentId === ""}
 				emptyLabel={noOverrideLabel}
 				onChange={selectCatalogModel}
 				onCustom={selectCustomModel}
@@ -170,7 +182,10 @@ export function AgentModelPicker({
 					aria-label={t("settings.models.optionsAria", { label: t("newTask.model") })}
 					value={value}
 					models={displayModels}
-					allowCustom={catalog.allowCustom}
+					allowCustom={catalog?.allowCustom}
+					customModelEntry={customModelEntry}
+					agentLabel={agentLabel}
+					onRefresh={refreshCatalog}
 					disabled={disabled}
 					emptyLabel={noOverrideLabel}
 					onChange={selectCatalogModel}
