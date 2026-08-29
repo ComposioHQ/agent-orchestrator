@@ -300,10 +300,11 @@ func choiceOffered(choices []ports.ChatConfigOptionChoice, value string) bool {
 }
 
 // resolveLegacyModelChoice translates a CLI-facing model alias into the exact
-// opaque value an ACP agent advertised. Cursor's CLI lists composer-2.5 while
-// its legacy ACP selector offers composer-2.5[fast=false]; session/set_model
-// accepts only the latter. Exact provider values always win, and an alias is
-// accepted only when it identifies one advertised choice unambiguously.
+// opaque value an ACP agent advertised. Cursor's CLI lists aliases such as
+// composer-2.5-fast and gpt-5.5-medium while its legacy ACP selector includes
+// those settings as parameters; session/set_model accepts only the latter.
+// Exact provider values always win, and an alias is accepted only when it
+// identifies one advertised choice unambiguously.
 func resolveLegacyModelChoice(choices []ports.ChatConfigOptionChoice, requested string) (string, bool) {
 	if choiceOffered(choices, requested) {
 		return requested, true
@@ -311,34 +312,11 @@ func resolveLegacyModelChoice(choices []ports.ChatConfigOptionChoice, requested 
 
 	matched := ""
 	for _, choice := range choices {
-		base, fast, parameterized := parameterizedModelAlias(choice.Value)
+		alias, parameterized := parameterizedModelAlias(choice.Value)
 		if !parameterized {
 			continue
 		}
-		alias := base
-		if fast {
-			alias += "-fast"
-		}
 		if alias != requested {
-			continue
-		}
-		if matched != "" {
-			return "", false
-		}
-		matched = choice.Value
-	}
-	if matched != "" {
-		return matched, true
-	}
-
-	// Cursor may advertise only one parameterized value for a model base, with
-	// flags reflecting the session's current account/runtime state. The CLI still
-	// exposes the stable base id. Selecting that id is safe when exactly one
-	// advertised opaque value has the same base; multiple variants remain
-	// ambiguous and are rejected.
-	for _, choice := range choices {
-		open := strings.IndexByte(choice.Value, '[')
-		if open <= 0 || !strings.HasSuffix(choice.Value, "]") || choice.Value[:open] != requested {
 			continue
 		}
 		if matched != "" {
@@ -349,28 +327,50 @@ func resolveLegacyModelChoice(choices []ports.ChatConfigOptionChoice, requested 
 	return matched, matched != ""
 }
 
-func parameterizedModelAlias(value string) (base string, fast, ok bool) {
+func parameterizedModelAlias(value string) (string, bool) {
 	open := strings.IndexByte(value, '[')
 	if open <= 0 || !strings.HasSuffix(value, "]") {
-		return "", false, false
+		return "", false
 	}
-	base = value[:open]
+	alias := value[:open]
+	reasoning := ""
+	fast := false
+	parameterized := false
 	params := strings.Split(value[open+1:len(value)-1], ",")
 	for _, param := range params {
 		key, raw, found := strings.Cut(strings.TrimSpace(param), "=")
-		if !found || strings.TrimSpace(key) != "fast" {
+		if !found {
 			continue
 		}
-		switch strings.TrimSpace(raw) {
-		case "true":
-			return base, true, true
-		case "false":
-			return base, false, true
-		default:
-			return "", false, false
+		switch strings.TrimSpace(key) {
+		case "reasoning":
+			reasoning = strings.TrimSpace(raw)
+			if reasoning == "" {
+				return "", false
+			}
+			parameterized = true
+		case "fast":
+			switch strings.TrimSpace(raw) {
+			case "true":
+				fast = true
+			case "false":
+				fast = false
+			default:
+				return "", false
+			}
+			parameterized = true
 		}
 	}
-	return "", false, false
+	if !parameterized {
+		return "", false
+	}
+	if reasoning != "" {
+		alias += "-" + reasoning
+	}
+	if fast {
+		alias += "-fast"
+	}
+	return alias, true
 }
 
 func cloneConfigOptions(options []ports.ChatConfigOption) []ports.ChatConfigOption {

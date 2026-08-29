@@ -1504,12 +1504,12 @@ func TestACPDriverResolvesCLIModelToAdvertisedParameterizedLegacyChoice(t *testi
 	}
 }
 
-func TestACPDriverResolvesBaseAliasToOnlyAdvertisedParameterizedLegacyChoice(t *testing.T) {
+func TestACPDriverRejectsNonFastAliasWhenOnlyFastParameterizedChoiceIsAdvertised(t *testing.T) {
 	agent := &legacyKimiAgent{
 		currentModel: "auto",
 		availableModels: []legacyModelInfo{
 			{ModelID: "auto", Name: "Auto"},
-			{ModelID: "composer-2.5[fast=true]", Name: "composer-2.5"},
+			{ModelID: "composer-2.5[fast=true]", Name: "Composer 2.5 Fast"},
 		},
 		rejectUnknownModel: true,
 	}
@@ -1527,19 +1527,50 @@ func TestACPDriverResolvesBaseAliasToOnlyAdvertisedParameterizedLegacyChoice(t *
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	driver.spawn = fakeLegacyKimiSpawn(agent)
 
-	conv, err := driver.Start(context.Background(), ports.ChatStartConfig{
+	_, err := driver.Start(context.Background(), ports.ChatStartConfig{
 		WorkspacePath: t.TempDir(), Model: "composer-2.5",
 	})
-	if err != nil {
-		t.Fatalf("Start with sole advertised parameterized model: %v", err)
+	if !errors.Is(err, ports.ErrChatConfigOptionInvalid) {
+		t.Fatalf("Start with unavailable non-fast alias: err = %v, want ErrChatConfigOptionInvalid", err)
 	}
-	defer conv.Close()
-
 	agent.mu.Lock()
-	model, calls := agent.model, agent.modelCalls
+	calls := agent.modelCalls
 	agent.mu.Unlock()
-	if model != "composer-2.5[fast=true]" || calls != 1 {
-		t.Fatalf("legacy model setter = %q across %d calls, want sole advertised exact value", model, calls)
+	if calls != 0 {
+		t.Fatalf("legacy model setter called %d times, want 0", calls)
+	}
+}
+
+func TestResolveLegacyModelChoiceDerivesParameterizedCursorAliases(t *testing.T) {
+	tests := []struct {
+		name      string
+		requested string
+		choice    string
+	}{
+		{
+			name:      "fast",
+			requested: "composer-2.5-fast",
+			choice:    "composer-2.5[fast=true]",
+		},
+		{
+			name:      "reasoning",
+			requested: "gpt-5.5-medium",
+			choice:    "gpt-5.5[context=272k,reasoning=medium,fast=false]",
+		},
+		{
+			name:      "reasoning and fast",
+			requested: "gpt-5.5-high-fast",
+			choice:    "gpt-5.5[context=272k,reasoning=high,fast=true]",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			choices := []ports.ChatConfigOptionChoice{{Value: tt.choice}}
+			got, ok := resolveLegacyModelChoice(choices, tt.requested)
+			if !ok || got != tt.choice {
+				t.Fatalf("resolveLegacyModelChoice(%q) = %q, %v; want %q, true", tt.requested, got, ok, tt.choice)
+			}
+		})
 	}
 }
 
