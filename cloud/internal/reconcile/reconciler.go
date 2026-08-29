@@ -863,7 +863,7 @@ func (r *Reconciler) terminate(
 
 func (r *Reconciler) providerStartupTimeoutError() error {
 	return fmt.Errorf(
-		"The NodeOps VM did not become ready within %s. AO kept the existing VM and will retry.",
+		"The sandbox did not become ready within %s. AO kept the existing environment and will retry.",
 		r.options.StartupTimeout,
 	)
 }

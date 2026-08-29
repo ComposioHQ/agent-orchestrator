@@ -21,6 +21,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/cloud/internal/prstatus"
 	"github.com/aoagents/agent-orchestrator/cloud/internal/reconcile"
 	"github.com/aoagents/agent-orchestrator/cloud/internal/sandbox"
+	coderprovider "github.com/aoagents/agent-orchestrator/cloud/internal/sandbox/coder"
 	"github.com/aoagents/agent-orchestrator/cloud/internal/sandbox/createos"
 	dockerprovider "github.com/aoagents/agent-orchestrator/cloud/internal/sandbox/docker"
 	"github.com/aoagents/agent-orchestrator/cloud/internal/sandboxresolve"
@@ -73,6 +74,14 @@ func provisioningDefaults(cfg config.Config) sandbox.ProvisioningDefaults {
 			Namespace:      cfg.DockerNamespace,
 			WorkerTokenTTL: cfg.DockerWorkerTokenTTL,
 		},
+		Coder: sandbox.CoderConfig{
+			BaseURL:        cfg.CoderURL,
+			Owner:          cfg.CoderOwner,
+			TemplateID:     cfg.CoderTemplateID,
+			AgentName:      cfg.CoderAgentName,
+			Parameters:     cfg.CoderParameters,
+			WorkerTokenTTL: cfg.CoderWorkerTokenTTL,
+		},
 	}
 }
 
@@ -86,17 +95,18 @@ func newSandboxReconciler(
 	logger *slog.Logger,
 ) (*reconcile.Reconciler, error) {
 	if cfg.SandboxProvider != sandbox.ProviderNodeOps &&
-		cfg.SandboxProvider != sandbox.ProviderDocker {
+		cfg.SandboxProvider != sandbox.ProviderDocker &&
+		cfg.SandboxProvider != sandbox.ProviderCoder {
 		return nil, nil
 	}
 	var (
 		nodeOpsProvider    sandbox.Provider
 		dockerProvider     sandbox.Provider
+		coderProvider      sandbox.Provider
 		workerBinary       []byte
 		workerHelperBinary []byte
 	)
-	switch cfg.SandboxProvider {
-	case sandbox.ProviderNodeOps:
+	if cfg.SandboxProvider == sandbox.ProviderNodeOps || cfg.SandboxProvider == sandbox.ProviderCoder {
 		// The worker binary is read once, at startup. Reading it per provision
 		// would let a mid-flight deploy hand two sandboxes different builds.
 		var err error
@@ -114,6 +124,9 @@ func newSandboxReconciler(
 		if len(workerHelperBinary) == 0 {
 			return nil, fmt.Errorf("worker helper binary %s is empty", cfg.WorkerHelperBinaryPath)
 		}
+	}
+	switch cfg.SandboxProvider {
+	case sandbox.ProviderNodeOps:
 		sshPubKeys, err := readSSHPubKeys(cfg.NodeOpsSSHKeyPath)
 		if err != nil {
 			return nil, err
@@ -137,8 +150,21 @@ func newSandboxReconciler(
 			return nil, err
 		}
 		dockerProvider = provider
+	case sandbox.ProviderCoder:
+		provider, err := coderprovider.New(coderprovider.Config{
+			BaseURL:    cfg.CoderURL,
+			Token:      cfg.CoderAPIToken,
+			Owner:      cfg.CoderOwner,
+			TemplateID: cfg.CoderTemplateID,
+			AgentName:  cfg.CoderAgentName,
+			Parameters: cfg.CoderParameters,
+		})
+		if err != nil {
+			return nil, err
+		}
+		coderProvider = provider
 	}
-	return reconcile.New(store, sandboxresolve.New(nodeOpsProvider, dockerProvider), reconcile.Options{
+	return reconcile.New(store, sandboxresolve.New(nodeOpsProvider, dockerProvider, coderProvider), reconcile.Options{
 		PublicURL:              cfg.PublicURL,
 		WorkerBinary:           workerBinary,
 		WorkerHelperBinary:     workerHelperBinary,
