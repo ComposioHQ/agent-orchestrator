@@ -141,6 +141,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/agents/codex/profiles/capacity/ensure": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Ensure display capacity for selected Codex profiles */
+        post: operations["ensureCodexProfileCapacity"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agents/codex/profiles/capacity/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Stream cached and live Codex profile capacity */
+        get: operations["streamCodexProfileCapacity"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/agents/codex/profiles/ensure": {
         parameters: {
             query?: never;
@@ -2125,9 +2159,63 @@ export interface components {
             /** @enum {string} */
             state: "supported" | "unsupported" | "unknown";
         };
+        CodexCapacityBucket: {
+            displayName?: null | string;
+            limitId: string;
+            primary?: components["schemas"]["CodexCapacityWindow"];
+            /** @enum {string} */
+            reached: "not_reached" | "reached" | "unknown";
+            secondary?: components["schemas"]["CodexCapacityWindow"];
+        };
+        CodexCapacitySnapshot: {
+            additionalBuckets: components["schemas"]["CodexCapacityBucket"][];
+            /** Format: date-time */
+            attemptedAt?: null | string;
+            /** Format: date-time */
+            checkedAt?: null | string;
+            /** @enum {string} */
+            freshness: "fresh" | "stale" | "checking";
+            /** Format: date-time */
+            observedAt?: null | string;
+            overall?: components["schemas"]["CodexCapacityBucket"];
+            plan?: null | string;
+            reason: string;
+            reasonCode: string;
+            /** Format: date-time */
+            resetsAt?: null | string;
+            /** @enum {string} */
+            state: "available" | "near_limit" | "exhausted" | "unknown" | "unsupported";
+            usedPercent?: null | number;
+        };
+        CodexCapacitySummary: {
+            /** @enum {string} */
+            freshness: "fresh" | "stale" | "checking";
+            /** Format: date-time */
+            observedAt?: null | string;
+            plan?: null | string;
+            reason: string;
+            reasonCode: string;
+            /** Format: date-time */
+            resetsAt?: null | string;
+            /** @enum {string} */
+            state: "available" | "near_limit" | "exhausted" | "unknown" | "unsupported";
+            usedPercent?: null | number;
+        };
+        CodexCapacityWindow: {
+            /** Format: date-time */
+            resetsAt?: null | string;
+            /** Format: double */
+            usedPercent: number;
+            windowDurationMinutes?: null | number;
+        };
         CodexProfileCapabilities: {
             accountRead: components["schemas"]["CodexCapabilityObservation"];
             browserLogin: components["schemas"]["CodexCapabilityObservation"];
+            capacityRead: components["schemas"]["CodexCapabilityObservation"];
+        };
+        CodexProfileCapacityEvent: {
+            capacity: null | components["schemas"]["CodexCapacitySnapshot"];
+            profileId: string;
         };
         CodexProfileLoginEvent: {
             operationId: string;
@@ -2143,6 +2231,7 @@ export interface components {
             /** @enum {string} */
             authMethod: "chatgpt" | "api_key" | "other" | "unknown";
             authentication: components["schemas"]["AgentAuthenticationObservation"];
+            capacity: components["schemas"]["CodexCapacitySnapshot"];
             id: string;
             label: string;
             reason: string;
@@ -2160,6 +2249,7 @@ export interface components {
         CodexSessionProfileSummary: {
             /** @enum {string} */
             availability: "available" | "unavailable" | "unknown";
+            capacity?: components["schemas"]["CodexCapacitySummary"];
             id: string;
             label: string;
             /** @enum {string} */
@@ -2583,6 +2673,9 @@ export interface components {
             agentIds?: string[];
             /** @enum {string} */
             purpose: "display" | "launch";
+        };
+        EnsureCodexProfileCapacityRequest: {
+            profileIds?: string[];
         };
         EnsureCodexProfilesRequest: {
             profileIds?: string[];
@@ -4057,6 +4150,95 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    ensureCodexProfileCapacity: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EnsureCodexProfileCapacityRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CodexProfilesResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    streamCodexProfileCapacity: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": components["schemas"]["CodexProfileCapacityEvent"];
                 };
             };
             /** @description Not Implemented */

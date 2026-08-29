@@ -1073,6 +1073,15 @@ type EnsureCodexProfilesRequest struct {
 	Purpose    domain.AgentReadinessPurpose `json:"purpose" enum:"display"`
 }
 
+// EnsureCodexProfileCapacityRequest selects discovered profiles for a
+// profile-scoped display capacity ensure.
+type EnsureCodexProfileCapacityRequest struct {
+	ProfileIDs []string `json:"profileIds,omitempty"`
+}
+
+// CodexProfileCapacityEventResponse is one cached or live capacity SSE event.
+type CodexProfileCapacityEventResponse = agentsvc.CodexProfileCapacityEvent
+
 // CreateCodexProfileRequest supplies the display label for a managed profile.
 type CreateCodexProfileRequest struct {
 	Label string `json:"label" minLength:"1" maxLength:"80"`

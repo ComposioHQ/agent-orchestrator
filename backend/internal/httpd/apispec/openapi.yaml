@@ -395,6 +395,68 @@ paths:
       summary: Stream one in-memory Codex profile login operation
       tags:
       - agents
+  /api/v1/agents/codex/profiles/capacity/ensure:
+    post:
+      operationId: ensureCodexProfileCapacity
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EnsureCodexProfileCapacityRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CodexProfilesResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Ensure display capacity for selected Codex profiles
+      tags:
+      - agents
+  /api/v1/agents/codex/profiles/capacity/events:
+    get:
+      operationId: streamCodexProfileCapacity
+      responses:
+        "200":
+          content:
+            text/event-stream:
+              schema:
+                $ref: '#/components/schemas/CodexProfileCapacityEvent'
+          description: OK
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Stream cached and live Codex profile capacity
+      tags:
+      - agents
   /api/v1/agents/codex/profiles/ensure:
     post:
       operationId: ensureCodexProfiles
@@ -6327,15 +6389,181 @@ components:
       - reasonCode
       - reason
       type: object
+    CodexCapacityBucket:
+      properties:
+        displayName:
+          type:
+          - "null"
+          - string
+        limitId:
+          type: string
+        primary:
+          $ref: '#/components/schemas/CodexCapacityWindow'
+        reached:
+          enum:
+          - not_reached
+          - reached
+          - unknown
+          type: string
+        secondary:
+          $ref: '#/components/schemas/CodexCapacityWindow'
+      required:
+      - limitId
+      - reached
+      type: object
+    CodexCapacitySnapshot:
+      properties:
+        additionalBuckets:
+          items:
+            $ref: '#/components/schemas/CodexCapacityBucket'
+          type: array
+        attemptedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        checkedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        freshness:
+          enum:
+          - fresh
+          - stale
+          - checking
+          type: string
+        observedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        overall:
+          $ref: '#/components/schemas/CodexCapacityBucket'
+        plan:
+          type:
+          - "null"
+          - string
+        reason:
+          type: string
+        reasonCode:
+          type: string
+        resetsAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        state:
+          enum:
+          - available
+          - near_limit
+          - exhausted
+          - unknown
+          - unsupported
+          type: string
+        usedPercent:
+          maximum: 100
+          minimum: 0
+          type:
+          - "null"
+          - number
+      required:
+      - state
+      - freshness
+      - reasonCode
+      - reason
+      - additionalBuckets
+      type: object
+    CodexCapacitySummary:
+      properties:
+        freshness:
+          enum:
+          - fresh
+          - stale
+          - checking
+          type: string
+        observedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        plan:
+          type:
+          - "null"
+          - string
+        reason:
+          type: string
+        reasonCode:
+          type: string
+        resetsAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        state:
+          enum:
+          - available
+          - near_limit
+          - exhausted
+          - unknown
+          - unsupported
+          type: string
+        usedPercent:
+          maximum: 100
+          minimum: 0
+          type:
+          - "null"
+          - number
+      required:
+      - state
+      - freshness
+      - reasonCode
+      - reason
+      type: object
+    CodexCapacityWindow:
+      properties:
+        resetsAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        usedPercent:
+          format: double
+          maximum: 100
+          minimum: 0
+          type: number
+        windowDurationMinutes:
+          type:
+          - "null"
+          - integer
+      required:
+      - usedPercent
+      type: object
     CodexProfileCapabilities:
       properties:
         accountRead:
           $ref: '#/components/schemas/CodexCapabilityObservation'
         browserLogin:
           $ref: '#/components/schemas/CodexCapabilityObservation'
+        capacityRead:
+          $ref: '#/components/schemas/CodexCapabilityObservation'
       required:
       - accountRead
       - browserLogin
+      - capacityRead
+      type: object
+    CodexProfileCapacityEvent:
+      properties:
+        capacity:
+          anyOf:
+          - type: "null"
+          - $ref: '#/components/schemas/CodexCapacitySnapshot'
+            type: object
+        profileId:
+          type: string
+      required:
+      - profileId
+      - capacity
       type: object
     CodexProfileLoginEvent:
       properties:
@@ -6382,6 +6610,8 @@ components:
           type: string
         authentication:
           $ref: '#/components/schemas/AgentAuthenticationObservation'
+        capacity:
+          $ref: '#/components/schemas/CodexCapacitySnapshot'
         id:
           type: string
         label:
@@ -6412,6 +6642,7 @@ components:
       - authentication
       - authMethod
       - usableByCurrentLaunches
+      - capacity
       type: object
     CodexProfilesResponse:
       properties:
@@ -6433,6 +6664,8 @@ components:
           - unavailable
           - unknown
           type: string
+        capacity:
+          $ref: '#/components/schemas/CodexCapacitySummary'
         id:
           type: string
         label:
@@ -7587,6 +7820,13 @@ components:
           type: string
       required:
       - purpose
+      type: object
+    EnsureCodexProfileCapacityRequest:
+      properties:
+        profileIds:
+          items:
+            type: string
+          type: array
       type: object
     EnsureCodexProfilesRequest:
       properties:
