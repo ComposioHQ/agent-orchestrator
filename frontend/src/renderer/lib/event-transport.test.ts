@@ -1,3 +1,4 @@
+import { QueryClient, QueryObserver } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryObserver } from "@tanstack/react-query";
 import { computeSseRetryDelayMs } from "./sse-backoff";
@@ -315,6 +316,45 @@ describe("createEventTransport", () => {
 				queryKey: ["editor-handoff", "session-1"],
 			}, { cancelRefetch: false });
 		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("refetches cached unavailable state after the post-spawn session update", async () => {
+		vi.useFakeTimers();
+		let disconnect: (() => void) | undefined;
+		let unsubscribe: (() => void) | undefined;
+		try {
+			const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+			const queryKey = ["editor-handoff", "agent-orchestrator-260"] as const;
+			const queryFn = vi
+				.fn()
+				.mockResolvedValueOnce({ workspaceAvailable: false })
+				.mockResolvedValue({ workspaceAvailable: true });
+			await queryClient.fetchQuery({ queryKey, queryFn, staleTime: 10_000 });
+			const observer = new QueryObserver(queryClient, { queryKey, queryFn, staleTime: 10_000 });
+			unsubscribe = observer.subscribe(() => {});
+			disconnect = createEventTransport(queryClient).connect();
+
+			expect(queryClient.getQueryData(queryKey)).toEqual({ workspaceAvailable: false });
+			EventSourceStub.instances[0].emit(
+				"session_updated",
+				JSON.stringify({
+					seq: 667762,
+					projectId: "agent-orchestrator",
+					sessionId: "agent-orchestrator-260",
+					type: "session_updated",
+					payload: { id: "agent-orchestrator-260" },
+					createdAt: "2026-08-29T07:55:18.913484Z",
+				}),
+			);
+
+			await vi.advanceTimersByTimeAsync(200);
+			expect(queryFn).toHaveBeenCalledTimes(2);
+			expect(queryClient.getQueryData(queryKey)).toEqual({ workspaceAvailable: true });
+		} finally {
+			unsubscribe?.();
+			disconnect?.();
 			vi.useRealTimers();
 		}
 	});
