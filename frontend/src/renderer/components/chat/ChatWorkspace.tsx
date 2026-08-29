@@ -2610,7 +2610,7 @@ function groupByTurn(snapshot: ConversationSnapshot): TimelineGroup[] {
 				(item.activityKind === "approval" || item.activityKind === "user_input") &&
 				item.status === "pending",
 		);
-		if (turn.state === "running" || turn.state === "queued") continue;
+		if (turn.state === "running" || turn.state === "queued" || turn.state === "cancelled") continue;
 		group.rollbackable = Boolean(turn.providerTurnId);
 		group.outcome = {
 			state: turn.state,
