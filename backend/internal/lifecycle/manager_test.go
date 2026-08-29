@@ -2164,6 +2164,193 @@ func TestPRObservation_MergeConflictNudgesAgent(t *testing.T) {
 	}
 }
 
+// TestPRObservation_MergeConflictReArmsAfterConflictClears is the regression
+// test for #4528: AO notified on the first conflict but never again, because
+// the "merge-conflict:<url>" = "conflicting" signature sendOnce persists was
+// never cleared. A PR rebased clean and then made conflicting again by a
+// base-branch advance was silently swallowed as a duplicate.
+func TestPRObservation_MergeConflictReArmsAfterConflictClears(t *testing.T) {
+	// Every state that definitively rules a conflict out must re-arm; `blocked`
+	// is deliberately excluded because the observer synthesizes it from
+	// draft/CI/review facts even while provider mergeability is unknown.
+	for _, clear := range []domain.Mergeability{domain.MergeMergeable, domain.MergeUnstable} {
+		t.Run(string(clear), func(t *testing.T) {
+			m, st, msg := newManager()
+			st.sessions["mer-1"] = working("mer-1")
+			apply := func(state domain.Mergeability) {
+				t.Helper()
+				if err := m.ApplyPRObservation(ctx, "mer-1", ports.PRObservation{Fetched: true, URL: "pr1", Mergeability: state}); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			apply(clear)
+			apply(domain.MergeConflicting)
+			if len(msg.msgs) != 1 {
+				t.Fatalf("first conflict should nudge once, got %v", msg.msgs)
+			}
+			apply(clear)
+			apply(domain.MergeConflicting)
+			if len(msg.msgs) != 2 {
+				t.Fatalf("conflict returning after %s should nudge again, got %d nudges: %v", clear, len(msg.msgs), msg.msgs)
+			}
+		})
+	}
+}
+
+// TestPRObservation_ConsecutiveMergeConflictsStayDeduplicated pins the other
+// half of #4528: the re-arm must not weaken the dedup that stops an unchanged
+// conflict from re-nudging on every poll.
+func TestPRObservation_ConsecutiveMergeConflictsStayDeduplicated(t *testing.T) {
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	for range 3 {
+		if err := m.ApplyPRObservation(ctx, "mer-1", ports.PRObservation{Fetched: true, URL: "pr1", Mergeability: domain.MergeConflicting}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(msg.msgs) != 1 {
+		t.Fatalf("identical consecutive conflicts should nudge once, got %d: %v", len(msg.msgs), msg.msgs)
+	}
+}
+
+// TestPRObservation_UnknownMergeabilityDoesNotReArm keeps the re-arm off the
+// transient GitHub reports while it recomputes mergeability after a push or a
+// retarget. Treating unknown as "conflict resolved" would re-nudge on every
+// unknown → conflicting flap of a conflict that never went away.
+func TestPRObservation_UnknownMergeabilityDoesNotReArm(t *testing.T) {
+	for _, transient := range []domain.Mergeability{domain.MergeUnknown, domain.MergeBlocked, ""} {
+		t.Run(string(transient), func(t *testing.T) {
+			m, st, msg := newManager()
+			st.sessions["mer-1"] = working("mer-1")
+			for _, state := range []domain.Mergeability{domain.MergeConflicting, transient, domain.MergeConflicting} {
+				if err := m.ApplyPRObservation(ctx, "mer-1", ports.PRObservation{Fetched: true, URL: "pr1", Mergeability: state}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if len(msg.msgs) != 1 {
+				t.Fatalf("%q must not re-arm the conflict nudge, got %d nudges: %v", transient, len(msg.msgs), msg.msgs)
+			}
+		})
+	}
+}
+
+// TestPRObservation_MergeConflictDedupSurvivesRestart covers both persistence
+// directions of #4528 across a daemon restart, simulated by a fresh Manager
+// over the same store: an unchanged conflict must stay quiet, and a conflict
+// that cleared before the restart must be free to nudge again.
+func TestPRObservation_MergeConflictDedupSurvivesRestart(t *testing.T) {
+	conflicting := ports.PRObservation{Fetched: true, URL: "pr1", Mergeability: domain.MergeConflicting}
+
+	t.Run("unchanged conflict stays deduplicated", func(t *testing.T) {
+		st := newFakeStore()
+		st.sessions["mer-1"] = working("mer-1")
+		first := New(st, &fakeMessenger{})
+		if err := first.ApplyPRObservation(ctx, "mer-1", conflicting); err != nil {
+			t.Fatal(err)
+		}
+
+		restarted := &fakeMessenger{}
+		if err := New(st, restarted).ApplyPRObservation(ctx, "mer-1", conflicting); err != nil {
+			t.Fatal(err)
+		}
+		if len(restarted.msgs) != 0 {
+			t.Fatalf("restart must not replay an already-sent conflict nudge, got %v", restarted.msgs)
+		}
+	})
+
+	t.Run("cleared conflict re-arms across restart", func(t *testing.T) {
+		st := newFakeStore()
+		st.sessions["mer-1"] = working("mer-1")
+		first := New(st, &fakeMessenger{})
+		if err := first.ApplyPRObservation(ctx, "mer-1", conflicting); err != nil {
+			t.Fatal(err)
+		}
+		if err := first.ApplyPRObservation(ctx, "mer-1", ports.PRObservation{Fetched: true, URL: "pr1", Mergeability: domain.MergeMergeable}); err != nil {
+			t.Fatal(err)
+		}
+
+		restarted := &fakeMessenger{}
+		if err := New(st, restarted).ApplyPRObservation(ctx, "mer-1", conflicting); err != nil {
+			t.Fatal(err)
+		}
+		if len(restarted.msgs) != 1 {
+			t.Fatalf("a conflict returning after a restart should nudge, got %v", restarted.msgs)
+		}
+	})
+}
+
+// TestPRObservation_ReArmLeavesOtherDedupEntriesIntact guards the blast radius
+// of the re-arm: it must delete only this PR's merge-conflict key, so a
+// resolved conflict cannot replay the CI-failure nudge the same PR row holds.
+func TestPRObservation_ReArmLeavesOtherDedupEntriesIntact(t *testing.T) {
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	o := ports.PRObservation{
+		Fetched:      true,
+		URL:          "pr1",
+		CI:           domain.CIFailing,
+		Checks:       []ports.PRCheckObservation{{Name: "build", CommitHash: "c1", Status: domain.PRCheckFailed, LogTail: "boom"}},
+		Mergeability: domain.MergeConflicting,
+	}
+	if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 2 {
+		t.Fatalf("want a CI and a merge-conflict nudge, got %d: %v", len(msg.msgs), msg.msgs)
+	}
+
+	o.Mergeability = domain.MergeMergeable
+	if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 2 {
+		t.Fatalf("re-arming the conflict must not replay the unchanged CI nudge, got %d: %v", len(msg.msgs), msg.msgs)
+	}
+}
+
+// TestPRObservation_ReArmSkipsStoreWriteWhenNothingArmed keeps a steadily
+// mergeable PR off the write path: the re-arm persists only when it actually
+// cleared an entry, so routine polls do not rewrite an unchanged payload.
+func TestPRObservation_ReArmSkipsStoreWriteWhenNothingArmed(t *testing.T) {
+	m, st, _ := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	for range 2 {
+		if err := m.ApplyPRObservation(ctx, "mer-1", ports.PRObservation{Fetched: true, URL: "pr1", Mergeability: domain.MergeMergeable}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if st.signatureWrites != 0 {
+		t.Fatalf("mergeable polls with nothing armed wrote the signature payload %d times, want 0", st.signatureWrites)
+	}
+}
+
+// TestPRObservation_ReArmStoreFailureSurfacesWithoutLosingNudges checks the
+// deferred-error contract: a failed re-arm persist is reported, but only after
+// the independent CI nudge queued in the same observation has been sent.
+func TestPRObservation_ReArmStoreFailureSurfacesWithoutLosingNudges(t *testing.T) {
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	if err := m.ApplyPRObservation(ctx, "mer-1", ports.PRObservation{Fetched: true, URL: "pr1", Mergeability: domain.MergeConflicting}); err != nil {
+		t.Fatal(err)
+	}
+
+	st.signatureWriteErr = errors.New("db locked")
+	err := m.ApplyPRObservation(ctx, "mer-1", ports.PRObservation{
+		Fetched:      true,
+		URL:          "pr1",
+		CI:           domain.CIFailing,
+		Checks:       []ports.PRCheckObservation{{Name: "build", CommitHash: "c1", Status: domain.PRCheckFailed, LogTail: "boom"}},
+		Mergeability: domain.MergeMergeable,
+	})
+	if err == nil {
+		t.Fatal("a failed re-arm persist should surface to the observer")
+	}
+	if len(msg.msgs) != 2 {
+		t.Fatalf("the CI nudge must still be sent before the deferred re-arm error, got %d: %v", len(msg.msgs), msg.msgs)
+	}
+}
+
 func TestPRObservation_ExitedAgentIsNotNudged(t *testing.T) {
 	m, st, msg := newManager()
 	rec := working("mer-1")

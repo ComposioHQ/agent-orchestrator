@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -610,6 +611,97 @@ func TestWiring_StartLifecycleThreadsMessengerIntoLCM(t *testing.T) {
 	}
 	if messenger.msgs[0].id != rec.ID {
 		t.Fatalf("nudge sent to %q, want %q", messenger.msgs[0].id, rec.ID)
+	}
+}
+
+// TestWiring_MergeConflictNudgeReArmsAfterConflictClears is the end-to-end
+// counterpart to the lifecycle unit tests for #4528, over the real sqlite store
+// the daemon runs on: it drives the SCM observer's entrypoint
+// (ApplySCMObservation) through the full mergeable → conflicting → mergeable →
+// conflicting cycle and asserts the second conflict notifies again. The
+// dedup signature is persisted in pr.last_nudge_signature, so a fake store
+// cannot prove the round trip actually survives the real column.
+func TestWiring_MergeConflictNudgeReArmsAfterConflictClears(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	store, err := sqlitetest.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	if err := store.UpsertProject(ctx, domain.ProjectRecord{ID: "p", Path: "/repo/p", RegisteredAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	rec, err := store.CreateSession(ctx, domain.SessionRecord{
+		ProjectID: "p",
+		Kind:      domain.KindWorker,
+		Activity:  domain.Activity{State: domain.ActivityIdle, LastActivityAt: time.Now()},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const prURL = "https://github.com/o/r/pull/1"
+	if err := store.WriteSCMObservation(ctx, domain.PullRequest{
+		URL:       prURL,
+		SessionID: rec.ID,
+		Number:    1,
+		UpdatedAt: time.Now(),
+	}, nil, nil, nil, nil, ports.ReviewWritePreserve); err != nil {
+		t.Fatalf("persist PR before lifecycle: %v", err)
+	}
+
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	messenger := &captureMessenger{}
+	stack := startLifecycle(ctx, store, tmux.New(tmux.Options{}), messenger, nil, nil, nil, log)
+	t.Cleanup(stack.Stop)
+	t.Cleanup(cancel)
+
+	observe := func(state domain.Mergeability) {
+		t.Helper()
+		if err := stack.LCM.ApplySCMObservation(ctx, rec.ID, ports.SCMObservation{
+			Fetched:      true,
+			PR:           ports.SCMPRObservation{URL: prURL, Number: 1},
+			Mergeability: ports.SCMMergeabilityObservation{State: string(state), Conflict: state == domain.MergeConflicting},
+		}); err != nil {
+			t.Fatalf("ApplySCMObservation(%s): %v", state, err)
+		}
+	}
+
+	observe(domain.MergeMergeable)
+	observe(domain.MergeConflicting)
+	if len(messenger.msgs) != 1 {
+		t.Fatalf("first conflict should nudge once, got %d: %v", len(messenger.msgs), messenger.msgs)
+	}
+	observe(domain.MergeConflicting)
+	if len(messenger.msgs) != 1 {
+		t.Fatalf("an unchanged conflict must stay deduplicated, got %d: %v", len(messenger.msgs), messenger.msgs)
+	}
+	observe(domain.MergeMergeable)
+	observe(domain.MergeConflicting)
+	if len(messenger.msgs) != 2 {
+		t.Fatalf("a conflict returning after the PR went mergeable should nudge again, got %d: %v", len(messenger.msgs), messenger.msgs)
+	}
+	if messenger.msgs[1].id != rec.ID || !strings.Contains(messenger.msgs[1].msg, "merge conflicts") {
+		t.Fatalf("second nudge is not the merge-conflict nudge for this session: %+v", messenger.msgs[1])
+	}
+
+	// A daemon restart rebuilds the lifecycle manager with empty in-memory dedup
+	// maps, so only pr.last_nudge_signature carries the state forward. A bare
+	// lifecycle.New over the same store is that rebuild without the background
+	// observers a second startLifecycle would leave running. The still-unresolved
+	// conflict must stay quiet across that boundary.
+	restarted := &captureMessenger{}
+	restartedLCM := lifecycle.New(store, restarted)
+	if err := restartedLCM.ApplySCMObservation(ctx, rec.ID, ports.SCMObservation{
+		Fetched:      true,
+		PR:           ports.SCMPRObservation{URL: prURL, Number: 1},
+		Mergeability: ports.SCMMergeabilityObservation{State: string(domain.MergeConflicting), Conflict: true},
+	}); err != nil {
+		t.Fatalf("ApplySCMObservation after restart: %v", err)
+	}
+	if len(restarted.msgs) != 0 {
+		t.Fatalf("restart replayed an already-delivered conflict nudge: %v", restarted.msgs)
 	}
 }
 

@@ -283,7 +283,9 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 	// defer the error past the send loop, still surfacing it so the observer logs
 	// and re-polls.
 	var blockedCheckErr error
-	if o.Mergeability == domain.MergeConflicting {
+	var rearmErr error
+	switch {
+	case o.Mergeability == domain.MergeConflicting:
 		// Only the bottom of a stack is eligible for the rebase nudge. A PR
 		// stacked on an open parent is expected to report conflicts against its
 		// parent branch until the parent merges and it retargets, so nudging the
@@ -298,8 +300,16 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 			if o.URL != "" {
 				msg += "\nPR: " + domain.SanitizeControlChars(o.URL)
 			}
-			nudges = append(nudges, pendingNudge{key: "merge-conflict:" + o.URL, sig: string(o.Mergeability), msg: msg, maxAttempts: 0, urgent: true})
+			nudges = append(nudges, pendingNudge{key: mergeConflictKey(o.URL), sig: string(o.Mergeability), msg: msg, maxAttempts: 0, urgent: true})
 		}
+	case mergeabilityClearsConflict(o.Mergeability):
+		// The conflict is definitively gone, so drop this PR's merge-conflict
+		// dedup entry (#4528). Without the re-arm the "conflicting" signature
+		// persists forever and the next real conflict — typically a base-branch
+		// advance after the agent rebased clean — is silently swallowed as a
+		// duplicate. Deferred like blockedCheckErr so a store failure here
+		// cannot discard the CI/review nudges already queued above.
+		rearmErr = m.rearmMergeConflict(ctx, o.URL)
 	}
 
 	for _, n := range nudges {
@@ -312,7 +322,10 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 	if ciPolicyErr != nil {
 		return ciPolicyErr
 	}
-	return blockedCheckErr
+	if blockedCheckErr != nil {
+		return blockedCheckErr
+	}
+	return rearmErr
 }
 
 func (m *Manager) terminateCompletedSession(ctx context.Context, id domain.SessionID) error {
@@ -349,6 +362,66 @@ func (m *Manager) sessionComplete(ctx context.Context, id domain.SessionID) (boo
 		}
 	}
 	return merged, nil
+}
+
+// mergeConflictKey is the reaction-dedup key for a PR's merge-conflict nudge.
+// The send path and the re-arm path share it so the two cannot drift.
+func mergeConflictKey(prURL string) string { return "merge-conflict:" + prURL }
+
+// mergeabilityClearsConflict reports whether an observation positively
+// establishes that a PR is no longer conflicting, which is what re-arms its
+// merge-conflict nudge (#4528).
+//
+// Only states the provider actually computed count. `unknown` is the transient
+// GitHub reports while it recomputes mergeability after a push or a retarget;
+// re-arming on it would defeat the dedup entirely, since a conflict that never
+// went away flaps unknown → conflicting and would re-nudge on every poll.
+// `blocked` is excluded on the same grounds even though it is not literally a
+// conflict: the observer synthesizes it locally from draft / failing-CI /
+// changes-requested facts (see mergeabilityFromProviderFacts), so it is reported
+// even while provider mergeability is still unknown and cannot be read as proof
+// the conflict is gone. `mergeable` and `unstable` both require a computed
+// provider rollup that ruled conflicts out first, so both are definitive.
+func mergeabilityClearsConflict(state domain.Mergeability) bool {
+	return state == domain.MergeMergeable || state == domain.MergeUnstable
+}
+
+// rearmMergeConflict clears the merge-conflict dedup entry for prURL so a later
+// conflicting observation notifies again. sendOnce otherwise keeps the
+// "merge-conflict:<url>" = "conflicting" signature forever: a PR rebased clean
+// and then made conflicting again by a base-branch advance stayed silent, and
+// because the signature is persisted in pr.last_nudge_signature the suppression
+// survived daemon restarts (#4528).
+//
+// Only this PR's merge-conflict key is touched, so the CI and review-feedback
+// entries for the same PR keep their signatures and resolving a conflict cannot
+// replay unrelated nudges. The persisted payload is loaded first: after a
+// restart the in-memory maps are empty, and persisting from them alone would
+// erase every other key the PR row still holds.
+func (m *Manager) rearmMergeConflict(ctx context.Context, prURL string) error {
+	if m.guard == nil || prURL == "" {
+		return nil
+	}
+	m.react.mu.Lock()
+	defer m.react.mu.Unlock()
+
+	if !m.react.loaded[prURL] {
+		if err := m.loadPRSignaturesLocked(ctx, prURL); err != nil {
+			return err
+		}
+		m.react.loaded[prURL] = true
+	}
+	key := mergeConflictKey(prURL)
+	_, seen := m.react.seen[key]
+	_, attempted := m.react.attempts[key]
+	if !seen && !attempted {
+		// Nothing is armed, so skip the store write: a steadily mergeable PR
+		// must not re-persist an unchanged payload on every poll.
+		return nil
+	}
+	delete(m.react.seen, key)
+	delete(m.react.attempts, key)
+	return m.persistPRSignaturesLocked(ctx, prURL)
 }
 
 // prBlockedByOpenParent reports whether the PR at prURL is stacked on top of
