@@ -114,7 +114,7 @@ function CodexProfileRow({ profile, busy, onLogin }: {
 			: auth.state === "not_applicable"
 				? t("settings.codexProfiles.notRequired")
 				: t("settings.codexProfiles.unknown");
-	const canLogin = profile.status === "valid" && auth.state === "unauthorized";
+	const canLogin = profile.status === "valid" && auth.state !== "authorized" && auth.state !== "not_applicable";
 	const capacity = profile.capacity;
 	const capacityLabel = capacity.state === "available"
 		? t("settings.codexProfiles.capacityAvailable")

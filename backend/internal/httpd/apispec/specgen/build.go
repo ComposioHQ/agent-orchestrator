@@ -1030,7 +1030,9 @@ func agentOperations() []operation {
 			pathParams: []any{controllers.CodexProfileIDParam{}},
 			resps: []respUnit{
 				{http.StatusCreated, controllers.OpenCodexProfileLoginTerminalResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
 				{http.StatusServiceUnavailable, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},
 			},
