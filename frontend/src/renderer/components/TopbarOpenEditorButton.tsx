@@ -95,6 +95,7 @@ export function TopbarOpenEditorButton({
 		: !stateQuery.isPending && editors.length === 0
 			? t("editor.noEditorGuidance", { fileManager: fileManagerName, terminal: terminalName })
 			: null;
+	const mainLabel = open.isPending ? t("editor.opening") : preferred ? t("editor.open") : t("editor.chooseEditor");
 	const mainTitle = guidance
 		?? (preferred ? t("editor.openWorkspaceInTitle", { name: preferred.name }) : t("editor.chooseEditorTitle"));
 
@@ -115,6 +116,7 @@ export function TopbarOpenEditorButton({
 					variant="splitMain"
 				>
 					<TargetIcon target={preferred} className="size-icon-lg" />
+					<span data-compact-label>{mainLabel}</span>
 				</TopbarButton>
 				<DropdownMenu>
 					<DropdownMenuTrigger asChild>
