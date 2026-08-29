@@ -295,6 +295,17 @@ func Run() error {
 				agentSvc.InvalidateCodexProfileAuthentication(profileID)
 			}
 		},
+		OnCapacityChanged: func(sessionID domain.SessionID, profileID string, observation ports.CodexCapacityObservation) {
+			if agentSvc == nil {
+				return
+			}
+			rec, found, readErr := store.GetSession(context.WithoutCancel(ctx), sessionID)
+			if readErr != nil || !found || rec.Harness != domain.HarnessCodex || rec.CodexProfileBinding == nil || rec.CodexProfileBinding.ProfileID != profileID {
+				log.Warn("ignored Codex capacity event with binding mismatch", "session_id", sessionID, "profile_id", profileID)
+				return
+			}
+			agentSvc.ObserveCodexProfileCapacity(profileID, observation)
+		},
 	})
 
 	codexPlugin := codexagent.New()
@@ -313,6 +324,15 @@ func Run() error {
 		CodexAccounts: codexappserver.NewAccountFactoryWithResolver(func(resolveCtx context.Context) (string, error) {
 			return codexagent.New().ResolveBinary(resolveCtx)
 		}, log),
+	})
+	lcStack.LCM.SetActivityObserver(func(previous, next domain.SessionRecord) {
+		if next.Harness != domain.HarnessCodex || domain.NormalizeSessionMode(next.Mode) != domain.SessionModeTUI || next.CodexProfileBinding == nil {
+			return
+		}
+		if previous.Activity.State == next.Activity.State || (previous.Activity.State != domain.ActivityActive && next.Activity.State != domain.ActivityActive) {
+			return
+		}
+		agentSvc.InvalidateCodexProfileCapacity(next.CodexProfileBinding.ProfileID)
 	})
 
 	sessionSvc, reviewSvc, sessMgr, err := startSession(ctx, cfg, runtimeAdapter, store, lcStack.LCM, messenger, telemetrySink, agents, agentSvc, managedPreview, browserBroker, browserAuthority, chatLauncher{svc: chatSvc}, settingsSvc, log)

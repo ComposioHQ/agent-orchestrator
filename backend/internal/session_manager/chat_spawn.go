@@ -69,6 +69,7 @@ type ChatStart struct {
 	// without this a chat orchestrator could talk but not work.
 	Env                   map[string]string
 	ManagedCodexProfile   bool
+	CodexProfileID        string
 	Model                 string
 	Permissions           ports.PermissionMode
 	SystemPrompt          string
@@ -142,7 +143,9 @@ func (m *Manager) launchChatController(ctx context.Context, in chatSpawn) (domai
 	// this is what makes `ao` resolvable to the agent.
 	env := m.runtimeEnv(id, in.cfg.ProjectID, in.cfg.IssueID, in.project.Config.Env)
 	managedCodexProfile := false
+	codexProfileID := ""
 	if in.record.CodexProfileBinding != nil && in.record.Harness == domain.HarnessCodex {
+		codexProfileID = in.record.CodexProfileBinding.ProfileID
 		launch, err := m.codexLaunchForRecord(ctx, &in.record)
 		if err != nil {
 			m.rollbackSeedSpawnWorkspace(ctx, in.record, in.workspace, in.workspaceProject, false)
@@ -172,6 +175,7 @@ func (m *Manager) launchChatController(ctx context.Context, in chatSpawn) (domai
 		WorkspacePath:         in.workspace.Path,
 		Env:                   env,
 		ManagedCodexProfile:   managedCodexProfile,
+		CodexProfileID:        codexProfileID,
 		Model:                 agentConfig.Model,
 		Permissions:           agentConfig.Permissions,
 		SystemPrompt:          in.systemPrompt,
@@ -342,7 +346,11 @@ func (m *Manager) resumeChatController(
 	}
 	env := m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env)
 	managedCodexProfile := false
+	codexProfileID := ""
 	if rec.Harness == domain.HarnessCodex {
+		if rec.CodexProfileBinding != nil {
+			codexProfileID = rec.CodexProfileBinding.ProfileID
+		}
 		launchContext, launchErr := m.codexLaunchForRecord(ctx, &rec)
 		if launchErr != nil {
 			return RestoreResult{}, fmt.Errorf("%s %s: Codex profile: %w", operation, rec.ID, launchErr)
@@ -367,6 +375,7 @@ func (m *Manager) resumeChatController(
 		WorkspacePath:         ws.Path,
 		Env:                   env,
 		ManagedCodexProfile:   managedCodexProfile,
+		CodexProfileID:        codexProfileID,
 		Model:                 agentConfig.Model,
 		Permissions:           agentConfig.Permissions,
 		SystemPrompt:          systemPrompt,

@@ -507,6 +507,7 @@ func (c chatLauncher) StartChat(ctx context.Context, cfg sessionmanager.ChatStar
 		WorkspacePath:           cfg.WorkspacePath,
 		Env:                     cfg.Env,
 		ManagedCodexProfile:     cfg.ManagedCodexProfile,
+		CodexProfileID:          cfg.CodexProfileID,
 		Model:                   cfg.Model,
 		Permissions:             cfg.Permissions,
 		SystemPrompt:            cfg.SystemPrompt,

@@ -152,18 +152,20 @@ func interfaceHandoff(policy domain.SessionInterfaceTransitionPolicy) controller
 
 // Controller drives one Chat session.
 type Controller struct {
-	sessionID    domain.SessionID
-	conversation domain.ConversationRecord
-	generation   string
-	harness      domain.AgentHarness
+	sessionID      domain.SessionID
+	conversation   domain.ConversationRecord
+	generation     string
+	harness        domain.AgentHarness
+	codexProfileID string
 
-	conv             ports.ChatConversation
-	store            Store
-	activity         ActivityRecorder
-	log              *slog.Logger
-	newID            IDFactory
-	now              Clock
-	onAccountChanged func(domain.SessionID, domain.AgentHarness)
+	conv              ports.ChatConversation
+	store             Store
+	activity          ActivityRecorder
+	log               *slog.Logger
+	newID             IDFactory
+	now               Clock
+	onAccountChanged  func(domain.SessionID, domain.AgentHarness)
+	onCapacityChanged func(domain.SessionID, string, ports.CodexCapacityObservation)
 
 	// sendMu serializes command dispatch so only one operation mutates the
 	// provider conversation at a time.
@@ -259,6 +261,7 @@ func newController(
 	conversation domain.ConversationRecord,
 	generation string,
 	harness domain.AgentHarness,
+	codexProfileID string,
 	conv ports.ChatConversation,
 	store Store,
 	activity ActivityRecorder,
@@ -266,23 +269,26 @@ func newController(
 	newID IDFactory,
 	now Clock,
 	onAccountChanged func(domain.SessionID, domain.AgentHarness),
+	onCapacityChanged func(domain.SessionID, string, ports.CodexCapacityObservation),
 ) *Controller {
 	c := &Controller{
-		sessionID:        sessionID,
-		conversation:     conversation,
-		generation:       generation,
-		harness:          harness,
-		conv:             conv,
-		store:            store,
-		activity:         activity,
-		log:              log,
-		newID:            newID,
-		now:              now,
-		onAccountChanged: onAccountChanged,
-		state:            ports.ChatControllerReady,
-		settings:         conversation.Settings,
-		mcpServers:       map[string]domain.ConversationMCPServer{},
-		stopped:          make(chan struct{}),
+		sessionID:         sessionID,
+		conversation:      conversation,
+		generation:        generation,
+		harness:           harness,
+		codexProfileID:    codexProfileID,
+		conv:              conv,
+		store:             store,
+		activity:          activity,
+		log:               log,
+		newID:             newID,
+		now:               now,
+		onAccountChanged:  onAccountChanged,
+		onCapacityChanged: onCapacityChanged,
+		state:             ports.ChatControllerReady,
+		settings:          conversation.Settings,
+		mcpServers:        map[string]domain.ConversationMCPServer{},
+		stopped:           make(chan struct{}),
 	}
 	// Seeded from the durable row so a reconnect merges onto what is already known
 	// rather than starting from blank and reporting a conversation as having no
@@ -310,7 +316,9 @@ func newController(
 // notification from racing ahead of the older turns it follows.
 func (c *Controller) start() {
 	go c.project()
-	go c.readRateLimits()
+	if c.harness != domain.HarnessCodex || c.codexProfileID == "" {
+		go c.readRateLimits()
+	}
 }
 
 type nativeHistoryHighWater struct {
@@ -2051,6 +2059,18 @@ func (c *Controller) projectEvent(ctx context.Context, event ports.ChatEvent) (b
 		"threadState":            event.ThreadState,
 		"mcpServers":             event.MCPServers,
 	}
+	if event.RateLimits != nil && event.RateLimits.CodexCapacity != nil {
+		// The reusable Codex observation contains full profile buckets. Only the
+		// legacy conversation projection may be archived, never profile capacity.
+		legacy := *event.RateLimits
+		legacy.CodexCapacity = nil
+		record["rateLimits"] = &legacy
+	}
+	if c.harness == domain.HarnessCodex && c.codexProfileID != "" && event.Kind == ports.ChatEventRateLimits {
+		// Bound Codex capacity is daemon-memory state. Keep the event boundary but
+		// do not archive plan, percentages, or buckets in conversation SQLite.
+		record["rateLimits"] = nil
+	}
 	record["diff"] = event.Diff
 	if event.Input != nil {
 		record["input"] = event.Input
@@ -2450,6 +2470,9 @@ func (c *Controller) apply(ctx context.Context, event ports.ChatEvent) error {
 		if event.RateLimits == nil {
 			return nil
 		}
+		if c.harness == domain.HarnessCodex && c.codexProfileID != "" {
+			return nil
+		}
 		return c.store.RecordRateLimits(ctx, c.conversation.ID, domain.ConversationRateLimits{
 			PrimaryUsedPercent:       event.RateLimits.PrimaryUsedPercent,
 			SecondaryUsedPercent:     event.RateLimits.SecondaryUsedPercent,
@@ -2522,6 +2545,10 @@ func (c *Controller) afterProject(ctx context.Context, event ports.ChatEvent, pr
 	case ports.ChatEventAccountChanged:
 		if event.Account != nil && event.Account.ReauthRequired {
 			c.reportActivity(ctx, domain.ActivityWaitingInput, "chat.account.reauth", now)
+		}
+	case ports.ChatEventRateLimits:
+		if c.harness == domain.HarnessCodex && c.codexProfileID != "" && event.RateLimits != nil && event.RateLimits.CodexCapacity != nil && c.onCapacityChanged != nil {
+			c.onCapacityChanged(c.sessionID, c.codexProfileID, *event.RateLimits.CodexCapacity)
 		}
 	}
 }

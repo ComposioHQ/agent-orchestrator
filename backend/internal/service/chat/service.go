@@ -33,16 +33,17 @@ type SessionReader interface {
 
 // Service owns the live Chat controllers.
 type Service struct {
-	store            Store
-	reader           SnapshotReader
-	pageReader       SnapshotPageReader
-	sessions         SessionReader
-	drivers          ports.ChatDriverRegistry
-	activity         ActivityRecorder
-	log              *slog.Logger
-	newID            IDFactory
-	now              Clock
-	onAccountChanged func(domain.SessionID, domain.AgentHarness)
+	store             Store
+	reader            SnapshotReader
+	pageReader        SnapshotPageReader
+	sessions          SessionReader
+	drivers           ports.ChatDriverRegistry
+	activity          ActivityRecorder
+	log               *slog.Logger
+	newID             IDFactory
+	now               Clock
+	onAccountChanged  func(domain.SessionID, domain.AgentHarness)
+	onCapacityChanged func(domain.SessionID, string, ports.CodexCapacityObservation)
 
 	mu           sync.RWMutex
 	controllers  map[domain.SessionID]*Controller
@@ -85,6 +86,9 @@ type Options struct {
 	// OnAccountChanged invalidates daemon-owned profile readiness for the
 	// harness that emitted an account/updated notification.
 	OnAccountChanged func(domain.SessionID, domain.AgentHarness)
+	// OnCapacityChanged forwards normalized bound-Codex rate-limit events to the
+	// daemon-owned profile coordinator instead of conversation persistence.
+	OnCapacityChanged func(domain.SessionID, string, ports.CodexCapacityObservation)
 }
 
 // New builds a Chat service.
@@ -98,20 +102,21 @@ func New(opts Options) *Service {
 		now = func() time.Time { return time.Now().UTC() }
 	}
 	return &Service{
-		store:            opts.Store,
-		reader:           opts.Reader,
-		pageReader:       opts.PageReader,
-		sessions:         opts.Sessions,
-		drivers:          opts.Drivers,
-		activity:         opts.Activity,
-		log:              log,
-		newID:            opts.NewID,
-		now:              now,
-		onAccountChanged: opts.OnAccountChanged,
-		controllers:      make(map[domain.SessionID]*Controller),
-		startConfigs:     make(map[domain.SessionID]StartConfig),
-		gates:            make(map[domain.SessionID]controllerGate),
-		probed:           make(map[domain.AgentHarness]ports.ChatCapabilities),
+		store:             opts.Store,
+		reader:            opts.Reader,
+		pageReader:        opts.PageReader,
+		sessions:          opts.Sessions,
+		drivers:           opts.Drivers,
+		activity:          opts.Activity,
+		log:               log,
+		newID:             opts.NewID,
+		now:               now,
+		onAccountChanged:  opts.OnAccountChanged,
+		onCapacityChanged: opts.OnCapacityChanged,
+		controllers:       make(map[domain.SessionID]*Controller),
+		startConfigs:      make(map[domain.SessionID]StartConfig),
+		gates:             make(map[domain.SessionID]controllerGate),
+		probed:            make(map[domain.AgentHarness]ports.ChatCapabilities),
 	}
 }
 
@@ -136,6 +141,7 @@ type StartConfig struct {
 	WorkspacePath         string
 	Env                   map[string]string
 	ManagedCodexProfile   bool
+	CodexProfileID        string
 	Model                 string
 	Permissions           ports.PermissionMode
 	SystemPrompt          string
@@ -474,7 +480,7 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	// A fresh generation per launch, so events from the controller this one
 	// replaced can be told apart from the current one's.
 	controller := newController(
-		cfg.SessionID, conversation, generation, cfg.Harness, conv, s.store, s.activity, s.log, s.newID, s.now, s.onAccountChanged)
+		cfg.SessionID, conversation, generation, cfg.Harness, cfg.CodexProfileID, conv, s.store, s.activity, s.log, s.newID, s.now, s.onAccountChanged, s.onCapacityChanged)
 	if cfg.ProviderConversationID != "" && !cfg.SkipNativeHistoryImport {
 		// The provider's native thread is the continuity authority across TUI and
 		// Chat. Import it before the live projector starts so the first notification
@@ -1065,6 +1071,7 @@ type StartRequest struct {
 	WorkspacePath         string
 	Env                   map[string]string
 	ManagedCodexProfile   bool
+	CodexProfileID        string
 	Model                 string
 	Permissions           ports.PermissionMode
 	SystemPrompt          string

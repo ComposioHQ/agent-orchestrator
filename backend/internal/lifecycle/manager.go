@@ -211,6 +211,7 @@ type Manager struct {
 	// unknown harness is only written to while idle.
 	steerActive             func(domain.AgentHarness) bool
 	startupSignalGatesInput func(domain.AgentHarness) bool
+	activityObserver        func(domain.SessionRecord, domain.SessionRecord)
 }
 
 // New builds a Lifecycle Manager over the session store it writes and the messenger it uses for agent nudges.
@@ -257,6 +258,15 @@ func (m *Manager) SetUsageFinalizer(finalizer sessionUsageFinalizer) {
 	defer m.mu.Unlock()
 	m.usageFinalizer = finalizer
 	m.usageReactivator, _ = finalizer.(sessionUsageReactivator)
+}
+
+// SetActivityObserver wires a non-persistent observer for successfully applied
+// activity transitions. It is used for advisory cache invalidation only and is
+// called after the durable lifecycle write releases the manager lock.
+func (m *Manager) SetActivityObserver(observer func(domain.SessionRecord, domain.SessionRecord)) {
+	m.mu.Lock()
+	m.activityObserver = observer
+	m.mu.Unlock()
 }
 
 // SetSessionInputLease late-binds Session Manager's pane-input authority into
@@ -646,7 +656,11 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 	// that pinged them has nothing left to resolve.
 	resolutions := needsInputResolutions(rec, next, now)
 	waitingEvents := m.waitingInputEvents(next, prevState, prevAt, now)
+	activityObserver := m.activityObserver
 	m.mu.Unlock()
+	if activityObserver != nil {
+		activityObserver(rec, next)
+	}
 	if err := m.acknowledgeAgentSwitchTarget(ctx, id, s, now); err != nil {
 		return err
 	}

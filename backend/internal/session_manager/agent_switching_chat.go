@@ -38,7 +38,11 @@ func (m *Manager) executeChatAgentSwitch(
 	skipTerminalization := false
 	targetEnv := m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env)
 	managedCodexProfile := false
+	codexProfileID := ""
 	if admitted.config.TargetHarness == domain.HarnessCodex {
+		if rec.CodexProfileBinding != nil {
+			codexProfileID = rec.CodexProfileBinding.ProfileID
+		}
 		launchContext, launchErr := m.codexLaunchForRecord(ctx, &rec)
 		if launchErr != nil {
 			return result, launchErr
@@ -313,6 +317,7 @@ func (m *Manager) executeChatAgentSwitch(
 		WorkspacePath:           rec.Metadata.WorkspacePath,
 		Env:                     targetEnv,
 		ManagedCodexProfile:     managedCodexProfile,
+		CodexProfileID:          codexProfileID,
 		Model:                   agentConfig.Model,
 		Permissions:             agentConfig.Permissions,
 		SystemPrompt:            finalSystemPrompt,
