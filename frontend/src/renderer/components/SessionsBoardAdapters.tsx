@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import {
 	SessionCardView,
+	SessionUsageMetricView,
 	type BoardPullRequestLabels,
 	type BoardSessionPresentation,
 	type BoardColumnLabels,
@@ -15,7 +16,6 @@ import type { MessageKey } from "../i18n";
 import { aoBridge } from "../lib/bridge";
 import { formatTimeCompact } from "../lib/format-time";
 import { formatEstimatedCost } from "../lib/format-cost";
-import { formatTokenCount } from "../lib/format-token-count";
 import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
 import {
 	agentSwitchStatusVisual,
@@ -226,6 +226,14 @@ function DesktopSessionCard({
 			renderAvatar={(provider) => <AgentAvatar className="mt-0.5" provider={provider} />}
 			session={toBoardSessionPresentation(session, t)}
 			translate={translate}
+			renderUsage={(usage) => (
+				<Tooltip>
+					<TooltipTrigger asChild>
+						<SessionUsageMetricView usage={usage} />
+					</TooltipTrigger>
+					<TooltipContent side="top">{usage.accessibleLabel}</TooltipContent>
+				</Tooltip>
+			)}
 			usage={usagePresentation}
 		/>
 	);
@@ -257,10 +265,8 @@ function reviewerAvatarUrl(pr: SessionPRSummary, reviewerId: string): string | u
 	return undefined;
 }
 
-// toUsagePresentation builds the card's single usage line: cost, tokens, or
-// both. The card carries no cost breakdown — a board is for scanning, and the
-// per-component figures belong on the session's own surface — so the visible
-// text is bare while the accessible label still names what the count is.
+// Keep the board metric scannable by showing cost only. The full cost/token
+// summary remains available from the hover tooltip and to screen readers.
 function toUsagePresentation(
 	usage: SessionUsageSummary | undefined,
 	t: TFunction,
@@ -270,16 +276,15 @@ function toUsagePresentation(
 		return undefined;
 	}
 	const cost = formatEstimatedCost(usage.estimatedCost) ?? t("usage.unavailable");
-	if (processedTokens === null || processedTokens <= 0) {
+	if (processedTokens === null) {
 		return { accessibleLabel: cost, compactLabel: cost };
 	}
-	const compactTokens = formatTokenCount(processedTokens).replace(/ tok$/, "");
 	const accessibleTokens = t("shell.usageTokens", {
 		count: processedTokens.toLocaleString("en-US"),
 	});
 	return {
 		accessibleLabel: `${cost} · ${accessibleTokens}`,
-		compactLabel: `${cost} · ${compactTokens}`,
+		compactLabel: cost,
 	};
 }
 
