@@ -140,7 +140,7 @@ describe("useDaemonStatus", () => {
 		expect(queryClient.removeQueries).toHaveBeenCalledWith({
 			queryKey: ["codex-profile-switch-options"],
 		});
-		expect(queryClient.removeQueries).toHaveBeenCalledTimes(12);
+		expect(queryClient.removeQueries).toHaveBeenCalledTimes(15);
 	});
 
 	it("ensures display readiness when the window regains focus", async () => {

@@ -310,6 +310,31 @@ func TestLoadOfferingNumericToggles(t *testing.T) {
 	}
 }
 
+func TestLoadCodexAutomaticProfileSwitchingDevelopmentGate(t *testing.T) {
+	t.Setenv("AO_DEV_CODEX_AUTOMATIC_PROFILE_SWITCHING", "")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load default: %v", err)
+	}
+	if cfg.DevCodexAutomaticProfileSwitching {
+		t.Fatal("DevCodexAutomaticProfileSwitching = true, want disabled by default")
+	}
+
+	t.Setenv("AO_DEV_CODEX_AUTOMATIC_PROFILE_SWITCHING", "1")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("Load enabled: %v", err)
+	}
+	if !cfg.DevCodexAutomaticProfileSwitching {
+		t.Fatal("DevCodexAutomaticProfileSwitching = false, want enabled")
+	}
+
+	t.Setenv("AO_DEV_CODEX_AUTOMATIC_PROFILE_SWITCHING", "invalid")
+	if _, err := Load(); err == nil {
+		t.Fatal("Load invalid gate = nil error, want validation error")
+	}
+}
+
 func TestLoadOfferingInvalid(t *testing.T) {
 	tests := []struct {
 		name string

@@ -4375,9 +4375,12 @@ func TestBoundCodexRateLimitsUpdateProfileCapacityWithoutConversationPersistence
 		Drivers: fakeRegistry{driver: fakeDriver{conv: conv}},
 		Log:     slog.New(slog.DiscardHandler),
 		NewID:   func() string { return "bound-capacity" },
-		OnCapacityChanged: func(sessionID domain.SessionID, profileID string, observation ports.CodexCapacityObservation) {
+		OnCapacityChanged: func(sessionID domain.SessionID, profileID, generation, providerTurnID string, observation ports.CodexCapacityObservation) {
 			if sessionID != testSession || profileID != "managed-profile" {
 				t.Errorf("capacity attribution = %s/%s", sessionID, profileID)
+			}
+			if generation == "" {
+				t.Error("capacity event did not carry controller generation")
 			}
 			updates <- observation
 		},
