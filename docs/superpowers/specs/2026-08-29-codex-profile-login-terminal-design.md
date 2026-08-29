@@ -19,9 +19,11 @@ Replace AO's browser-only managed Codex profile sign-in action with a dedicated 
 1. The user selects **Sign in** for a valid signed-out Codex profile.
 2. The renderer calls `POST /api/v1/agents/codex/profiles/{profileId}/login-terminal` with no body.
 3. The daemon opens a standalone terminal titled `Codex login - <profile label>` and returns the normal shell-terminal record.
-4. AO closes Settings, selects that terminal, and navigates to `/terminals`.
+4. AO keeps Settings on the Agents page and embeds the returned terminal inside the affected profile card.
 5. The helper displays four native Codex choices: ChatGPT/browser, device code, API key, and access token. It invokes the installed Codex CLI with the fixed file-store override.
-6. While the login terminal is active, the renderer periodically calls the existing profile `ensure` endpoint. The profile cache updates to **Signed in** after Codex reports authorization. The monitor stops when authorization succeeds or the terminal disappears.
+6. When the terminal exits or reports an attachment error, the renderer performs one forced exact-profile authentication ensure. A fresh authorized result collapses and cleans up the terminal while leaving the updated card visible. Unauthorized or unverifiable results retain the final terminal output with retry, check-again, and close controls.
+
+Only one profile login terminal may be active. While it is active, other profile login actions are disabled and Settings stays locked to Agents. Closing the inline terminal or Settings destroys the PTY but leaves the durable profile intact. A single 15-minute timeout bounds an abandoned terminal; there is no authentication polling interval.
 
 ## Backend architecture
 
@@ -55,5 +57,5 @@ The route has no request body and rejects any non-empty body. Existing browser-l
 ## Verification
 
 - Go tests cover trusted terminal creation, rollback, server-owned argv/env, profile validation, the route contract, the hidden helper's fixed command mapping and secret handling, and rejection before storage when OpenAI returns 401.
-- Frontend tests cover starting the terminal, selecting/navigating to it, and monitoring profile authorization.
+- Frontend tests cover inline terminal creation, state-driven verification, cleanup, retry, timeout, daemon reset, and Settings-close safety.
 - Regenerate OpenAPI and TypeScript types, then run focused backend tests, frontend tests/typecheck, API drift tests, and builds.

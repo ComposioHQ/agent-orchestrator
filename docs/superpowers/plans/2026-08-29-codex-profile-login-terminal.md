@@ -4,7 +4,7 @@
 
 **Goal:** Open a secure, profile-scoped embedded terminal for all Codex CLI login methods and refresh the profile status after authentication.
 
-**Architecture:** A backend-only trusted terminal API reuses the existing shell-terminal lifecycle without widening its public request. The Codex profile service resolves the selected home and launches a hidden AO login helper that invokes fixed Codex commands with file credential storage. The renderer selects the returned terminal and monitors the existing profile readiness endpoint.
+**Architecture:** A backend-only trusted terminal API reuses the existing shell-terminal lifecycle without widening its public request. The Codex profile service resolves the selected home and launches a hidden AO login helper that invokes fixed Codex commands with file credential storage. The renderer embeds the returned terminal in the profile card and performs one forced authentication check after the terminal ends.
 
 **Tech Stack:** Go, Cobra, SQLite-backed shell terminals, terminal mux, OpenAPI generation, React, TanStack Query, TanStack Router, Vitest.
 
@@ -88,7 +88,7 @@
 - [ ] Run `npm run api`.
 - [ ] Run `cd backend && go test ./internal/httpd/...` and confirm route/spec parity passes.
 
-### Task 5: Launch, select, and monitor the terminal in the renderer
+### Task 5: Run and verify the terminal inline in the renderer
 
 **Files:**
 - Modify: `frontend/src/renderer/hooks/useCodexProfilesQuery.ts`
@@ -101,12 +101,12 @@
 
 **Interfaces:**
 - Consumes: the generated login-terminal response and existing `ensureCodexProfiles` endpoint.
-- Produces: terminal selection/navigation and a bounded profile-authentication monitor.
+- Produces: a single inline terminal workflow with event-driven authentication verification and confirmed PTY cleanup.
 
-- [ ] Write failing hook/component tests proving Sign in calls the new route, closes settings, selects the returned handle, navigates to `/terminals`, and never calls `openExternal`.
-- [ ] Write a failing monitor test proving `ensureCodexProfiles([profileId])` repeats while unauthorized and stops after authorization or terminal removal.
+- [ ] Write failing component tests proving Sign in calls the new route, keeps Settings open on Agents, expands only the selected card, and never calls `openExternal`.
+- [ ] Write failing terminal-state tests proving exit/error causes exactly one forced authentication ensure with no interval.
 - [ ] Run the focused Vitest files and confirm the expected failures.
-- [ ] Implement the mutation, transient monitor state, shell-level monitor, and updated copy.
+- [ ] Implement the mutation, inline workflow state, terminal-state callback, safe close/retry/timeout behavior, and updated copy.
 - [ ] Run the focused Vitest files and frontend typecheck.
 
 ### Task 6: Verify the complete change
