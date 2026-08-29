@@ -91,8 +91,8 @@ func TestBaseClassifiesStaticTextAndModeAgents(t *testing.T) {
 		{agent: "kimchi", mode: ports.ModelSelectionCatalog},
 		{agent: "prime-agent", mode: ports.ModelSelectionCatalog},
 		{agent: "qwen", mode: ports.ModelSelectionText},
-		{agent: "continue", mode: ports.ModelSelectionCatalog},
-		{agent: "crush", mode: ports.ModelSelectionCatalog},
+		{agent: "continue", mode: ports.ModelSelectionText},
+		{agent: "crush", mode: ports.ModelSelectionText},
 	}
 	for _, tc := range tests {
 		t.Run(tc.agent, func(t *testing.T) {
@@ -112,30 +112,30 @@ func TestCustomModelEntryPolicy(t *testing.T) {
 	}{
 		{agent: "claude-code", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
 		{agent: "codex", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
-		{agent: "opencode", wantEntryMode: "configured", wantSelection: ports.ModelSelectionCatalog},
-		{agent: "grok", wantEntryMode: "none", wantSelection: ports.ModelSelectionCatalog},
-		{agent: "cursor", wantEntryMode: "none", wantSelection: ports.ModelSelectionCatalog},
+		{agent: "opencode", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
+		{agent: "grok", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
+		{agent: "cursor", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
 		{agent: "qwen", wantEntryMode: "direct", wantSelection: ports.ModelSelectionText},
-		{agent: "copilot", wantEntryMode: "none", wantSelection: ports.ModelSelectionCatalog},
-		{agent: "kimi", wantEntryMode: "configured", wantSelection: ports.ModelSelectionCatalog},
-		{agent: "muse", wantEntryMode: "none", wantSelection: ports.ModelSelectionCatalog},
-		{agent: "droid", wantEntryMode: "configured", wantSelection: ports.ModelSelectionCatalog},
+		{agent: "copilot", wantEntryMode: "direct", wantSelection: ports.ModelSelectionText},
+		{agent: "kimi", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
+		{agent: "muse", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
+		{agent: "droid", wantEntryMode: "direct", wantSelection: ports.ModelSelectionText},
 		{agent: "amp", wantEntryMode: "none", wantSelection: ports.ModelSelectionModeList},
-		{agent: "agy", wantEntryMode: "none", wantSelection: ports.ModelSelectionCatalog},
-		{agent: "crush", wantEntryMode: "configured", wantSelection: ports.ModelSelectionCatalog},
+		{agent: "agy", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
+		{agent: "crush", wantEntryMode: "direct", wantSelection: ports.ModelSelectionText},
 		{agent: "aider", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
 		{agent: "goose", wantEntryMode: "direct", wantSelection: ports.ModelSelectionText},
-		{agent: "auggie", wantEntryMode: "none", wantSelection: ports.ModelSelectionCatalog},
-		{agent: "continue", wantEntryMode: "configured", wantSelection: ports.ModelSelectionCatalog},
-		{agent: "devin", wantEntryMode: "none", wantSelection: ports.ModelSelectionCatalog},
-		{agent: "omp", wantEntryMode: "configured", wantSelection: ports.ModelSelectionCatalog},
+		{agent: "auggie", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
+		{agent: "continue", wantEntryMode: "direct", wantSelection: ports.ModelSelectionText},
+		{agent: "devin", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
+		{agent: "omp", wantEntryMode: "direct", wantSelection: ports.ModelSelectionText},
 		{agent: "cline", wantEntryMode: "direct", wantSelection: ports.ModelSelectionText},
-		{agent: "kiro", wantEntryMode: "none", wantSelection: ports.ModelSelectionCatalog},
-		{agent: "kilocode", wantEntryMode: "configured", wantSelection: ports.ModelSelectionCatalog},
+		{agent: "kiro", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
+		{agent: "kilocode", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
 		{agent: "vibe", wantEntryMode: "direct", wantSelection: ports.ModelSelectionText},
-		{agent: "pi", wantEntryMode: "configured", wantSelection: ports.ModelSelectionCatalog},
-		{agent: "kimchi", wantEntryMode: "configured", wantSelection: ports.ModelSelectionCatalog},
-		{agent: "prime-agent", wantEntryMode: "configured", wantSelection: ports.ModelSelectionCatalog},
+		{agent: "pi", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
+		{agent: "kimchi", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
+		{agent: "prime-agent", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
 		{agent: "autohand", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
 	}
 
@@ -195,8 +195,7 @@ func TestBaseDiscoverableCatalogsContainNoAOOwnedModelIDs(t *testing.T) {
 	for _, agentID := range []string{"claude-code", "codex", "muse"} {
 		t.Run(agentID, func(t *testing.T) {
 			got := Base(agentID)
-			wantAllowCustom := agentID != "muse"
-			if got.SelectionMode != ports.ModelSelectionCatalog || got.AllowCustom != wantAllowCustom || got.Source != "cli" {
+			if got.SelectionMode != ports.ModelSelectionCatalog || !got.AllowCustom || got.Source != "cli" {
 				t.Fatalf("Base(%q) = %#v", agentID, got)
 			}
 			if len(got.Models) != 0 {

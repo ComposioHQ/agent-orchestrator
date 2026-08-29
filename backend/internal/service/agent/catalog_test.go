@@ -1047,8 +1047,8 @@ func TestModelsUsesCapabilityAwareFallbackWhenDiscoveryCannotRun(t *testing.T) {
 		wantAllowInput bool
 	}{
 		{agent: "qwen", wantEntryMode: ports.CustomModelEntryDirect, wantSelection: ports.ModelSelectionText, wantAllowInput: true},
-		{agent: "opencode", wantEntryMode: ports.CustomModelEntryConfigured, wantSelection: ports.ModelSelectionCatalog},
-		{agent: "grok", wantEntryMode: ports.CustomModelEntryNone, wantSelection: ports.ModelSelectionCatalog},
+		{agent: "opencode", wantEntryMode: ports.CustomModelEntryDirect, wantSelection: ports.ModelSelectionText, wantAllowInput: true},
+		{agent: "grok", wantEntryMode: ports.CustomModelEntryDirect, wantSelection: ports.ModelSelectionText, wantAllowInput: true},
 	} {
 		t.Run(tc.agent, func(t *testing.T) {
 			t.Setenv("XDG_CONFIG_HOME", t.TempDir())
@@ -1077,8 +1077,8 @@ func TestModelsNormalizesCustomEntryPolicyInOldCache(t *testing.T) {
 		wantAllowInput bool
 	}{
 		{agent: "codex", wantEntryMode: ports.CustomModelEntryDirect, wantAllowInput: true},
-		{agent: "opencode", wantEntryMode: ports.CustomModelEntryConfigured},
-		{agent: "grok", wantEntryMode: ports.CustomModelEntryNone},
+		{agent: "opencode", wantEntryMode: ports.CustomModelEntryDirect, wantAllowInput: true},
+		{agent: "grok", wantEntryMode: ports.CustomModelEntryDirect, wantAllowInput: true},
 	} {
 		t.Run(tc.agent, func(t *testing.T) {
 			oldCatalog := map[string]any{
