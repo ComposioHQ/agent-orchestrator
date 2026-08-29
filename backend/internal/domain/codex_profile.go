@@ -49,6 +49,7 @@ type CodexSessionProfileSummary struct {
 	Label        string                   `json:"label"`
 	Source       CodexProfileSource       `json:"source" enum:"existing,managed,legacy"`
 	Availability CodexProfileAvailability `json:"availability" enum:"available,unavailable,unknown"`
+	Capacity     *CodexCapacitySummary    `json:"capacity,omitempty"`
 }
 
 // CodexLaunchContext contains the resolved invocation-scoped isolation needed
@@ -111,6 +112,7 @@ type CodexCapabilityObservation struct {
 type CodexProfileCapabilities struct {
 	AccountRead  CodexCapabilityObservation `json:"accountRead"`
 	BrowserLogin CodexCapabilityObservation `json:"browserLogin"`
+	CapacityRead CodexCapabilityObservation `json:"capacityRead"`
 }
 
 // CodexProfileSnapshot is the public, display-safe view of one profile. Home
@@ -126,6 +128,7 @@ type CodexProfileSnapshot struct {
 	AuthMethod              CodexAuthMethod                `json:"authMethod" enum:"chatgpt,api_key,other,unknown"`
 	AccountEmail            *string                        `json:"accountEmail,omitempty"`
 	UsableByCurrentLaunches bool                           `json:"usableByCurrentLaunches"`
+	Capacity                CodexCapacitySnapshot          `json:"capacity"`
 }
 
 const (

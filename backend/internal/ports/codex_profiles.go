@@ -21,6 +21,16 @@ type CodexAccountObservation struct {
 	Email          *string
 }
 
+// CodexCapacityObservation is normalized provider data before cache freshness
+// and safe display reasons are applied by the daemon-owned coordinator.
+type CodexCapacityObservation struct {
+	Plan              *string
+	Overall           *domain.CodexCapacityBucket
+	AdditionalBuckets []domain.CodexCapacityBucket
+	ObservedAt        time.Time
+	Partial           bool
+}
+
 // CodexLoginStart contains the ephemeral browser-login handles returned by
 // Codex. Callers must never persist or log these values.
 type CodexLoginStart struct {
@@ -36,21 +46,25 @@ const (
 	CodexAccountEventLoginCompleted CodexAccountEventKind = "login_completed"
 	// CodexAccountEventUpdated is emitted when the active Codex account changes.
 	CodexAccountEventUpdated CodexAccountEventKind = "account_updated"
+	// CodexAccountEventCapacityUpdated is a sparse provider rate-limit update.
+	CodexAccountEventCapacityUpdated CodexAccountEventKind = "capacity_updated"
 )
 
 // CodexAccountEvent is a normalized account notification. Error details are
 // intentionally reduced to a boolean so provider output cannot leak to logs or
 // API responses.
 type CodexAccountEvent struct {
-	Kind    CodexAccountEventKind
-	LoginID string
-	Success bool
-	Failed  bool
+	Kind     CodexAccountEventKind
+	LoginID  string
+	Success  bool
+	Failed   bool
+	Capacity *CodexCapacityObservation
 }
 
 // CodexAccountClient owns one app-server process for one profile.
 type CodexAccountClient interface {
 	Read(ctx context.Context, refreshToken bool) (CodexAccountObservation, error)
+	ReadCapacity(ctx context.Context) (CodexCapacityObservation, error)
 	StartBrowserLogin(ctx context.Context) (CodexLoginStart, error)
 	CancelLogin(ctx context.Context, loginID string) error
 	Events() <-chan CodexAccountEvent

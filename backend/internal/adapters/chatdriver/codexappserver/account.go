@@ -146,13 +146,13 @@ func (f *AccountFactory) Capabilities(ctx context.Context) domain.CodexProfileCa
 	result := f.probeSchema(probeCtx, bin)
 	f.mu.Lock()
 	call.result = result
-	if cacheable && result.AccountRead.State != domain.CodexCapabilityUnknown && result.BrowserLogin.State != domain.CodexCapabilityUnknown {
+	if cacheable && result.AccountRead.State != domain.CodexCapabilityUnknown && result.BrowserLogin.State != domain.CodexCapabilityUnknown && result.CapacityRead.State != domain.CodexCapabilityUnknown {
 		f.capability[key] = result
 	}
 	delete(f.capabilityCalls, key)
 	close(call.done)
 	f.mu.Unlock()
-	f.log.Info("Codex capability check completed", "operation", "capability_check", "cache", "new", "duration_ms", time.Since(started).Milliseconds(), "account_read", result.AccountRead.State, "browser_login", result.BrowserLogin.State)
+	f.log.Info("Codex capability check completed", "operation", "capability_check", "cache", "new", "duration_ms", time.Since(started).Milliseconds(), "account_read", result.AccountRead.State, "browser_login", result.BrowserLogin.State, "capacity_read", result.CapacityRead.State)
 	return result
 }
 
@@ -175,6 +175,7 @@ func inspectCodexSchemaDirectory(dir string) domain.CodexProfileCapabilities {
 	declared := make(map[string]bool)
 	methods := []string{
 		codexproto.MethodAccountRead,
+		codexproto.MethodAccountRateLimitsRead,
 		codexproto.MethodAccountLoginStart,
 		codexproto.MethodAccountLoginCancel,
 		codexproto.MethodAccountLoginCompleted,
@@ -222,6 +223,7 @@ func inspectCodexSchemaDirectory(dir string) domain.CodexProfileCapabilities {
 	return domain.CodexProfileCapabilities{
 		AccountRead:  codexCapability(accountRead, "Structured Codex account discovery is available.", "Structured Codex account discovery is not supported by this Codex version."),
 		BrowserLogin: codexCapability(browserLogin, "Codex browser login is available.", "Codex browser login is not supported by this Codex version."),
+		CapacityRead: codexCapability(declared[codexproto.MethodAccountRateLimitsRead], "Codex subscription capacity is available.", "Codex subscription capacity is not supported by this Codex version."),
 	}
 }
 
@@ -234,7 +236,7 @@ func codexCapability(supported bool, yes, no string) domain.CodexCapabilityObser
 
 func unknownCodexCapabilities(reason string) domain.CodexProfileCapabilities {
 	unknown := domain.CodexCapabilityObservation{State: domain.CodexCapabilityUnknown, ReasonCode: domain.CodexCapabilityReasonUnknown, Reason: reason}
-	return domain.CodexProfileCapabilities{AccountRead: unknown, BrowserLogin: unknown}
+	return domain.CodexProfileCapabilities{AccountRead: unknown, BrowserLogin: unknown, CapacityRead: unknown}
 }
 
 type accountClient struct {
@@ -336,6 +338,13 @@ func (c *accountClient) pump() {
 			}
 		case codexproto.MethodAccountUpdated:
 			event = ports.CodexAccountEvent{Kind: ports.CodexAccountEventUpdated, Success: true}
+		case codexproto.MethodAccountRateLimitsUpdated:
+			var updated capacityReadEnvelope
+			if err := jsonUnmarshal(notification.Params, &updated); err != nil {
+				continue
+			}
+			capacity := capacityObservationFromEnvelope(updated, time.Now().UTC(), true)
+			event = ports.CodexAccountEvent{Kind: ports.CodexAccountEventCapacityUpdated, Success: true, Capacity: &capacity}
 		default:
 			continue
 		}
