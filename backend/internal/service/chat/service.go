@@ -582,6 +582,7 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	// reports ErrNoController instead of writing into a dead controller.
 	go func() {
 		controller.Wait()
+		controller.waitForBranchHandoff()
 		s.mu.Lock()
 		if current, ok := s.controllers[cfg.SessionID]; ok && current == controller {
 			delete(s.controllers, cfg.SessionID)
