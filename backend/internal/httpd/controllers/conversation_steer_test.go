@@ -54,12 +54,28 @@ func (f *fakeConversationService) PromoteQueuedTurn(
 	return chatsvc.PromoteQueuedTurnResult{}, nil
 }
 
+func (f *fakeConversationService) CancelQueuedTurn(context.Context, domain.SessionID, string) error {
+	return nil
+}
+
+func (f *fakeConversationService) EditQueuedTurn(context.Context, domain.SessionID, string, string) error {
+	return nil
+}
+
 func (f *fakeChatService) PromoteQueuedTurn(
 	context.Context,
 	domain.SessionID,
 	string,
 ) (chatsvc.PromoteQueuedTurnResult, error) {
 	return chatsvc.PromoteQueuedTurnResult{}, nil
+}
+
+func (f *fakeChatService) CancelQueuedTurn(context.Context, domain.SessionID, string) error {
+	return nil
+}
+
+func (f *fakeChatService) EditQueuedTurn(context.Context, domain.SessionID, string, string) error {
+	return nil
 }
 
 type promoteQueuedStub struct {

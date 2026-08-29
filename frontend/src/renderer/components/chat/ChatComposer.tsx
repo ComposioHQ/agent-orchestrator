@@ -7,7 +7,7 @@
  * A message typed mid-turn is held by the daemon and sent when the turn ends,
  * because the agent is one conversation and cannot run a second turn alongside
  * the first. The placeholder says so rather than leaving the user to guess where
- * their text went, and the queued message stays visible in the timeline.
+ * their text went, and the queued message stays visible only in the dock.
  *
  * The model, reasoning effort and approval controls belong here rather than in
  * settings because the provider takes all three per turn: choosing one changes the
@@ -39,11 +39,13 @@ import {
 	type DragEvent,
 	type FormEvent,
 	type KeyboardEvent,
+	type ReactElement,
 	type ReactNode,
 } from "react";
 import { ArrowUp, Command, CornerDownLeft, Loader2, Plus, Square, X } from "lucide-react";
 import { Button } from "../ui/button";
 import { cn } from "../../lib/utils";
+import { apiErrorMessage } from "../../lib/api-client";
 import { ComposerSuggestMenu } from "./ComposerSuggestMenu";
 import {
 	ComposerEditor,
@@ -89,6 +91,8 @@ export function ChatComposer({
 	steerPending,
 	steerRefusal,
 	draftSeed,
+	editingQueuedTurnId,
+	onCancelQueuedEdit,
 	commandError,
 	attachedTop = false,
 	queuedDock,
@@ -136,6 +140,9 @@ export function ChatComposer({
 	steerRefusal?: string;
 	/** A selected history message to load into the composer as a new draft. */
 	draftSeed?: { id: string; text: string };
+	/** A queued turn being edited in the composer instead of the dock. */
+	editingQueuedTurnId?: string;
+	onCancelQueuedEdit?: () => void;
 	/** A failed send, approval, interrupt, or settings mutation. */
 	commandError?: string;
 	/** A queued-message dock owns the shared rounded top edge. */
@@ -226,20 +233,24 @@ export function ChatComposer({
 
 	const staged = fileAttachments.attachments.length > 0;
 	const hasDraft = hasText || staged;
-	const canSend = (hasText || staged) && !busy && !disabled && !steerPending;
-	const canStopTurn = Boolean(willQueue && onInterrupt && !disabled && !hasDraft);
+	const savingQueuedEdit = Boolean(editingQueuedTurnId);
+	const canSend =
+		(hasText || staged) && !disabled && !steerPending && (savingQueuedEdit || !busy);
+	const canStopTurn = Boolean(willQueue && onInterrupt && !disabled && !hasDraft && !savingQueuedEdit);
 	// Steering delivers text only, so a draft carrying files cannot take that
 	// path. Treating it as unavailable — rather than steering the text and
 	// dropping the files, or refusing on an empty body with attachments staged —
 	// keeps the armed state something the composer can actually honour.
-	const canSteerDraft = Boolean(canSteer && onSteer) && !staged;
+	const canSteerDraft = Boolean(canSteer && onSteer) && !staged && !savingQueuedEdit;
 	const sendHint = menuOpen
 		? "Enter to insert"
-		: willQueue && canSteerDraft
-			? "⏎ queue · ⌘⏎ steer"
-			: willQueue
-				? "⏎ queue"
-				: "Enter to send";
+		: savingQueuedEdit
+			? "⏎ save edit"
+			: willQueue && canSteerDraft
+				? "⏎ queue · ⌘⏎ steer"
+				: willQueue
+					? "⏎ queue"
+					: "Enter to send";
 	const draftSeedId = draftSeed?.id;
 	const draftSeedText = draftSeed?.text;
 
@@ -388,7 +399,11 @@ export function ChatComposer({
 
 	async function performSubmit(forceSteer?: boolean) {
 		const currentText = textRef.current;
-		const canSubmitNow = (currentText.trim().length > 0 || staged) && !busy && !disabled && !steerPending;
+		const canSubmitNow =
+			(currentText.trim().length > 0 || staged) &&
+			!disabled &&
+			!steerPending &&
+			(editingQueuedTurnId || !busy);
 		if (!canSubmitNow) return;
 		setSendError(null);
 
@@ -423,7 +438,7 @@ export function ChatComposer({
 		// Steering keeps the text in the box until the provider has taken it. The turn
 		// is already running, so a refusal is a real possibility — and a refusal that
 		// had already cleared the composer would lose what the user typed.
-		if (shouldSteer && onSteer) {
+		if (shouldSteer && onSteer && !editingQueuedTurnId) {
 			if (body === "") return;
 			try {
 				await onSteer(body);
@@ -471,8 +486,12 @@ export function ChatComposer({
 		} else {
 			try {
 				await onSend(body);
-			} catch {
-				setSendError("Message not sent. Your draft was kept so you can retry.");
+			} catch (error) {
+				setSendError(
+					editingQueuedTurnId
+						? apiErrorMessage(error, "Could not save that queued message edit. Your draft was kept.")
+						: "Message not sent. Your draft was kept so you can retry.",
+				);
 				return;
 			}
 		}
@@ -533,6 +552,13 @@ export function ChatComposer({
 			}
 		}
 
+		if (event.key === "Escape" && editingQueuedTurnId && onCancelQueuedEdit) {
+			event.preventDefault();
+			clearEditor();
+			onCancelQueuedEdit();
+			return;
+		}
+
 		// Enter queues; Shift+Enter makes a newline; Cmd/Ctrl+Enter steers.
 		if (event.key !== "Enter") return;
 		if (event.shiftKey) return;
@@ -580,36 +606,46 @@ export function ChatComposer({
 
 	const attachmentError = fileAttachments.error ?? sendError ?? commandError;
 	const deliveryChoice =
-		canSteer && onSteer ? <DeliveryChoice value={activeDelivery} disabled={steerPending} /> : null;
+		canSteer && onSteer && !savingQueuedEdit ? (
+			<DeliveryChoice value={activeDelivery} disabled={steerPending} />
+		) : null;
 	const settingsNode =
 		settings && deliveryChoice && isValidElement(settings)
 			? cloneElement(settings, undefined, deliveryChoice)
 			: settings;
+	const withQueueStack = (form: ReactElement) => (
+		<div className="relative flex w-full flex-col">
+			{queuedDock ? (
+				<div
+					className="cursor-chat-composer-queue queue-dock-enter relative z-10 mx-auto mb-2 w-[calc(100%-2rem)]"
+					data-testid="queued-composer-dock"
+				>
+					{queuedDock}
+				</div>
+			) : null}
+			{form}
+		</div>
+	);
 
 	if (approval) {
-		return (
-			<>
-				{queuedDock}
-				<form
-					onSubmit={(event) => event.preventDefault()}
-					data-attached-top={attachedTop || undefined}
-					className="cursor-chat-composer relative flex flex-col gap-1.5 border border-border-strong px-3 py-3 transition-[background,border-color,box-shadow]"
-				>
-					{approval}
-					{commandError ? (
-						<p role="alert" className="px-1.5 text-[11px] leading-snug text-destructive">
-							{commandError}
-						</p>
-					) : null}
-				</form>
-			</>
+		return withQueueStack(
+			<form
+				onSubmit={(event) => event.preventDefault()}
+				data-attached-top={attachedTop && !queuedDock ? true : undefined}
+				className="cursor-chat-composer relative flex flex-col gap-1.5 border px-3 py-3 transition-[background,border-color,box-shadow]"
+			>
+				{approval}
+				{commandError ? (
+					<p role="alert" className="px-1.5 text-[11px] leading-snug text-destructive">
+						{commandError}
+					</p>
+				) : null}
+			</form>,
 		);
 	}
 
-	return (
-		<>
-			{queuedDock}
-			<form
+	return withQueueStack(
+		<form
 				// Clicking send while Cmd/Ctrl is held has to mean what the indicator
 				// beside it says. Reading the same armed state the chip paints keeps the
 				// pointer and keyboard paths from disagreeing about where the message goes.
@@ -625,7 +661,7 @@ export function ChatComposer({
 				// on one surface, so they are declared together in CSS rather than half
 				// here and half there.
 				data-dragging={dragging || undefined}
-				data-attached-top={attachedTop || undefined}
+				data-attached-top={attachedTop && !queuedDock ? true : undefined}
 				onClick={(e) => {
 					if (
 						e.target === e.currentTarget ||
@@ -779,8 +815,7 @@ export function ChatComposer({
 						</Button>
 					</div>
 				</div>
-			</form>
-		</>
+			</form>,
 	);
 }
 

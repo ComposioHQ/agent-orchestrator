@@ -28,7 +28,7 @@ import {
 	type ReactNode,
 	type WheelEvent as ReactWheelEvent,
 } from "react";
-import { ArrowDown, CornerDownRight, Loader2, TriangleAlert, Undo2 } from "lucide-react";
+import { ArrowDown, Loader2, TriangleAlert, Undo2 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { sameContent, useStableList } from "../../lib/stable-list";
 import { getApiBaseUrl, subscribeApiBaseUrl } from "../../lib/api-client";
@@ -68,6 +68,7 @@ import {
 import { HumanMessageEditor } from "./HumanMessageEditor";
 import { ChatLinkProvider } from "./ChatMarkdown";
 import { ChatComposer } from "./ChatComposer";
+import { QueuedMessageDock } from "./QueuedMessageDock";
 import { ActivityRun } from "./ActivityRun";
 import { TurnPlan } from "./TurnPlan";
 import { TurnSettingsBar } from "./TurnSettingsBar";
@@ -270,6 +271,11 @@ export interface ChatWorkspaceProps {
 	steerPending?: boolean;
 	/** Why the last steer was refused, from the daemon's typed answer. */
 	steerRefusal?: string;
+	onPromoteQueuedTurn?: (turnId: string) => Promise<unknown>;
+	onEditQueuedTurn?: (turnId: string, text: string) => Promise<unknown>;
+	onCancelQueuedTurn?: (turnId: string) => Promise<unknown>;
+	promoteQueuedTurnPendingTurnId?: string;
+	cancelQueuedTurnPendingTurnId?: string;
 	/** Start the tool servers again. Absent when the harness cannot. */
 	onReloadMcpServers?: () => void;
 	reloadingMcpServers?: boolean;
@@ -344,6 +350,11 @@ export function ChatWorkspace({
 	onSteer,
 	steerPending,
 	steerRefusal,
+	onPromoteQueuedTurn,
+	onEditQueuedTurn,
+	onCancelQueuedTurn,
+	promoteQueuedTurnPendingTurnId,
+	cancelQueuedTurnPendingTurnId,
 	onReloadMcpServers,
 	reloadingMcpServers,
 	mcpReloadError,
@@ -417,6 +428,31 @@ export function ChatWorkspace({
 			return message ? [{ turnId: queuedTurn.id, message }] : [];
 		});
 	}, [snapshot.items, snapshot.turns]);
+	const [queueEdit, setQueueEdit] = useState<{ turnId: string; text: string } | undefined>();
+	const dockQueuedMessages = useMemo(
+		() =>
+			queueEdit
+				? queuedMessages.filter((message) => message.turnId !== queueEdit.turnId)
+				: queuedMessages,
+		[queueEdit, queuedMessages],
+	);
+	const handleComposerSend = useCallback(
+		async (text: string, attachments?: Parameters<NonNullable<typeof onSend>>[1]) => {
+			if (queueEdit) {
+				if (attachments && attachments.length > 0) {
+					throw new Error("Queued message edits cannot include attachments.");
+				}
+				if (!onEditQueuedTurn) {
+					throw new Error("Queued message edits are unavailable right now.");
+				}
+				await onEditQueuedTurn(queueEdit.turnId, text);
+				setQueueEdit(undefined);
+				return;
+			}
+			return onSend?.(text, attachments);
+		},
+		[onEditQueuedTurn, onSend, queueEdit],
+	);
 	// The turn a confirmation is open for. Undo is not reversible and it changes what
 	// the agent knows, so it is never one click.
 	const [confirming, setConfirming] = useState<string | undefined>(undefined);
@@ -799,10 +835,23 @@ export function ChatWorkspace({
 							>
 								{discarded > 0 ? <RolledBackNotice count={discarded} /> : null}
 								<ChatComposer
-									attachedTop={turn?.state === "running" && queuedMessages.length > 0}
 									queuedDock={
 										turn?.state === "running" && queuedMessages.length > 0 ? (
-											<QueuedMessageDock messages={queuedMessages} />
+											<QueuedMessageDock
+												messages={dockQueuedMessages}
+												messageCount={queuedMessages.length}
+												editingTurnId={queueEdit?.turnId}
+												canSteer={Boolean(onSteer) && can(snapshot, "steer")}
+												onPromoteQueuedTurn={newWorkDisabled ? undefined : onPromoteQueuedTurn}
+												onBeginQueuedEdit={
+													newWorkDisabled || !onEditQueuedTurn
+														? undefined
+														: (turnId, text) => setQueueEdit({ turnId, text })
+												}
+												onCancelQueuedTurn={newWorkDisabled ? undefined : onCancelQueuedTurn}
+												promotePendingTurnId={promoteQueuedTurnPendingTurnId}
+												cancelPendingTurnId={cancelQueuedTurnPendingTurnId}
+											/>
 										) : null
 									}
 									approval={
@@ -815,7 +864,12 @@ export function ChatWorkspace({
 											/>
 										) : undefined
 									}
-									onSend={(text, attachments) => onSend?.(text, attachments)}
+									onSend={(text, attachments) => handleComposerSend(text, attachments)}
+									draftSeed={
+										queueEdit ? { id: queueEdit.turnId, text: queueEdit.text } : undefined
+									}
+									editingQueuedTurnId={queueEdit?.turnId}
+									onCancelQueuedEdit={() => setQueueEdit(undefined)}
 									onInterrupt={turn && !newWorkDisabled ? onInterrupt : undefined}
 									commandError={commandError}
 									settings={
@@ -1518,7 +1572,12 @@ function Timeline({
 		lastSeenLatestSequence.current = snapshot.latestSequence;
 		if (added.size > 0) setNewHumanMessageIds(added);
 	}, [items, snapshot.latestSequence]);
-	const grouped = useMemo(() => groupByTurn({ ...snapshot, items }), [snapshot, items]);
+	const grouped = useMemo(() => {
+		const turnState = new Map(snapshot.turns.map((queuedTurn) => [queuedTurn.id, queuedTurn.state]));
+		return groupByTurn({ ...snapshot, items }).filter(
+			(group) => !group.turnId || turnState.get(group.turnId) !== "queued",
+		);
+	}, [snapshot, items]);
 	const groups = useStableList(grouped, groupKey, sameGroup);
 	const navigableGroups = useMemo(() => groups.filter(groupHasHumanPrompt), [groups]);
 	const previews = useMemo(() => navigableGroups.map(groupPreview), [navigableGroups]);
@@ -2548,55 +2607,4 @@ function groupByTurn(snapshot: ConversationSnapshot): TimelineGroup[] {
 	}
 
 	return groups;
-}
-
-/* -------------------------------------------------------------------------- */
-
-function QueuedMessageDock({
-	messages,
-}: {
-	messages: Array<{ turnId: string; message: ConversationMessage }>;
-}) {
-	const [errors] = useState<Record<string, string>>({});
-
-	const reversed = [...messages].reverse();
-	const lastIndex = reversed.length - 1;
-
-	return (
-		<div
-			className="-mb-2 max-h-40 overflow-y-auto rounded-t-[var(--radius-chat-composer)] border border-b-0 border-border-strong bg-surface"
-			data-testid="queued-message-dock"
-		>
-			{reversed.map(({ turnId, message }, index) => {
-				const isNext = index === lastIndex;
-				return (
-					<div
-						key={turnId}
-						className="border-b border-border last:border-b-0"
-						data-testid={`queued-message-${turnId}`}
-					>
-						<div className="flex h-8 min-w-0 items-center gap-2 px-3">
-							<span
-								className="min-w-0 flex-1 truncate text-xs text-muted-foreground"
-								title={message.text}
-							>
-								{message.text}
-							</span>
-							{isNext ? (
-								<CornerDownRight
-									aria-hidden="true"
-									className="size-3 shrink-0 text-muted-foreground"
-								/>
-							) : null}
-						</div>
-						{errors[turnId] ? (
-							<p role="status" className="px-3 pb-1 text-[11px] text-warning">
-								{errors[turnId]}
-							</p>
-						) : null}
-					</div>
-				);
-			})}
-		</div>
-	);
 }

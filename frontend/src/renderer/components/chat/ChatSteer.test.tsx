@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ChatComposer } from "./ChatComposer";
 import { ChatWorkspace } from "./ChatWorkspace";
+import { QueuedMessageDock } from "./QueuedMessageDock";
 import { chatFixture } from "../../lib/chat-fixture";
 import { typeInLexicalEditor } from "../../test/lexical";
 
@@ -98,8 +99,65 @@ describe("ChatWorkspace steering", () => {
 			/>,
 		);
 		const dock = screen.getByTestId("queued-message-dock");
+		expect(within(dock).getByText("2 Queued Messages")).toBeVisible();
 		expect(within(dock).getByText("first queued")).toBeVisible();
 		expect(within(dock).getByText("second queued")).toBeVisible();
+		expect(screen.queryByText("Queued · sends when the agent finishes")).not.toBeInTheDocument();
+	});
+
+	it("steers, edits, and deletes queued messages from the dock", async () => {
+		const onPromoteQueuedTurn = vi.fn().mockResolvedValue(undefined);
+		const onBeginQueuedEdit = vi.fn();
+		const onCancelQueuedTurn = vi.fn().mockResolvedValue(undefined);
+		render(
+			<QueuedMessageDock
+				messages={[
+					{
+						turnId: "queued-1",
+						message: {
+							kind: "message",
+							id: "queued-message-1",
+							turnId: "queued-1",
+							sequence: 100,
+							revision: 0,
+							role: "user",
+							origin: "human",
+							text: "first queued",
+							streaming: false,
+							createdAt: "2026-08-11T10:01:00Z",
+						},
+					},
+					{
+						turnId: "queued-2",
+						message: {
+							kind: "message",
+							id: "queued-message-2",
+							turnId: "queued-2",
+							sequence: 101,
+							revision: 0,
+							role: "user",
+							origin: "human",
+							text: "second queued",
+							streaming: false,
+							createdAt: "2026-08-11T10:02:00Z",
+						},
+					},
+				]}
+				canSteer
+				onPromoteQueuedTurn={onPromoteQueuedTurn}
+				onBeginQueuedEdit={onBeginQueuedEdit}
+				onCancelQueuedTurn={onCancelQueuedTurn}
+			/>,
+		);
+
+		await userEvent.click(screen.getAllByRole("button", { name: "Steer this queued message into the running turn" })[0]);
+		expect(onPromoteQueuedTurn).toHaveBeenCalledWith("queued-1");
+
+		await userEvent.click(screen.getAllByRole("button", { name: "Edit queued message" })[0]);
+		expect(onBeginQueuedEdit).toHaveBeenCalledWith("queued-1", "first queued");
+
+		await userEvent.click(screen.getAllByRole("button", { name: "Delete queued message" })[0]);
+		expect(onCancelQueuedTurn).toHaveBeenCalledWith("queued-1");
 	});
 
 	it("keeps queued messages docked after the conversation branches", () => {

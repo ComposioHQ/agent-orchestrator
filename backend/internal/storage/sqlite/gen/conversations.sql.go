@@ -327,6 +327,30 @@ func (q *Queries) CancelAllQueuedConversationTurns(ctx context.Context, arg Canc
 	return err
 }
 
+const cancelQueuedConversationTurnByID = `-- name: CancelQueuedConversationTurnByID :execrows
+UPDATE conversation_turns
+SET state = 'interrupted', completed_at = ?
+WHERE id = ?
+  AND conversation_id = ?
+  AND state = 'queued'
+  AND promotion_started_at IS NULL
+`
+
+type CancelQueuedConversationTurnByIDParams struct {
+	CompletedAt    sql.NullTime
+	ID             string
+	ConversationID string
+}
+
+// Remove one queued turn without disturbing the running turn or later queue items.
+func (q *Queries) CancelQueuedConversationTurnByID(ctx context.Context, arg CancelQueuedConversationTurnByIDParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, cancelQueuedConversationTurnByID, arg.CompletedAt, arg.ID, arg.ConversationID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const cancelQueuedConversationTurns = `-- name: CancelQueuedConversationTurns :exec
 UPDATE conversation_turns
 SET state = 'interrupted', completed_at = ?
@@ -3094,4 +3118,44 @@ func (q *Queries) UpdateConversationUsage(ctx context.Context, arg UpdateConvers
 		arg.ID,
 	)
 	return err
+}
+
+const updateQueuedConversationMessageText = `-- name: UpdateQueuedConversationMessageText :execrows
+UPDATE conversation_messages
+SET text = ?,
+    revision = revision + 1,
+    delivery_content_json = '',
+    updated_at = ?
+WHERE conversation_messages.conversation_id = ?
+  AND conversation_messages.turn_id = ?
+  AND conversation_messages.role = 'user'
+  AND EXISTS (
+      SELECT 1
+      FROM conversation_turns
+      WHERE conversation_turns.id = conversation_messages.turn_id
+        AND conversation_turns.conversation_id = conversation_messages.conversation_id
+        AND conversation_turns.state = 'queued'
+        AND conversation_turns.promotion_started_at IS NULL
+  )
+`
+
+type UpdateQueuedConversationMessageTextParams struct {
+	Text           string
+	UpdatedAt      time.Time
+	ConversationID string
+	TurnID         sql.NullString
+}
+
+// Rewrite the durable human prompt for a turn that has not yet dispatched.
+func (q *Queries) UpdateQueuedConversationMessageText(ctx context.Context, arg UpdateQueuedConversationMessageTextParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateQueuedConversationMessageText,
+		arg.Text,
+		arg.UpdatedAt,
+		arg.ConversationID,
+		arg.TurnID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
