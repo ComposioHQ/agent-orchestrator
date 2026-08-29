@@ -64,14 +64,18 @@ type fakeConversation struct {
 	events                 chan ports.ChatEvent
 	providerConversationID string
 
-	mu        sync.Mutex
-	sent      []ports.ChatUserMessage
-	caps      ports.ChatCapabilities
-	resolved  map[string]ports.ChatDecision
-	turnSeq   int
-	sendErr   error
-	onSend    func(providerTurnID string)
-	closeOnce sync.Once
+	mu                 sync.Mutex
+	sent               []ports.ChatUserMessage
+	caps               ports.ChatCapabilities
+	resolved           map[string]ports.ChatDecision
+	turnSeq            int
+	sendErr            error
+	onSend             func(providerTurnID string)
+	onClose            func()
+	closeStarted       chan struct{}
+	closeEventsRelease <-chan struct{}
+	closeSignalOnce    sync.Once
+	closeOnce          sync.Once
 }
 
 type nativeHistoryConversation struct {
@@ -243,7 +247,28 @@ func (f *fakeConversation) ResolveRequest(_ context.Context, id string, d ports.
 }
 
 func (f *fakeConversation) Close() error {
-	f.closeOnce.Do(func() { close(f.events) })
+	f.mu.Lock()
+	onClose := f.onClose
+	closeStarted := f.closeStarted
+	closeEventsRelease := f.closeEventsRelease
+	f.mu.Unlock()
+	if onClose != nil {
+		onClose()
+	}
+	if closeStarted != nil {
+		f.closeSignalOnce.Do(func() { close(closeStarted) })
+	}
+	closeEvents := func() {
+		f.closeOnce.Do(func() { close(f.events) })
+	}
+	if closeEventsRelease != nil {
+		go func() {
+			<-closeEventsRelease
+			closeEvents()
+		}()
+		return nil
+	}
+	closeEvents()
 	return nil
 }
 
@@ -473,6 +498,7 @@ func TestResumeUsesPersistedBypassPermissionForCapabilityAdmission(t *testing.T)
 	}
 
 	conv := newFakeConversation()
+	conv.providerConversationID = "thread-bypass"
 	var resumed ports.ChatResumeConfig
 	svc := chatsvc.New(chatsvc.Options{
 		Store: st, Sessions: st,
@@ -1733,6 +1759,7 @@ func TestInterfaceHandoffDoesNotAnchorReplayBeforeProviderCoordinationBoundary(t
 			},
 		},
 	}
+	conv.providerConversationID = "new-provider-thread"
 	svc := chatsvc.New(chatsvc.Options{
 		Store: st, Sessions: st,
 		Reader: chatsvc.SnapshotReaderFunc(func(ctx context.Context, conversationID string) (chatsvc.ConversationRows, error) {
@@ -2440,6 +2467,80 @@ func TestApprovalIsStoredPendingWithProviderDecisions(t *testing.T) {
 	if len(resolvedDetail.Decisions) != 3 {
 		t.Fatalf("resolved decision options = %d, want preserved 3", len(resolvedDetail.Decisions))
 	}
+	if !hasActivitySignal(h.activity.snapshot(), domain.ActivityWaitingInput, "chat.approval.requested") {
+		t.Fatalf("activity signals = %v, want waiting_input on approval request", h.activity.snapshot())
+	}
+	if !hasActivitySignal(h.activity.snapshot(), domain.ActivityActive, "chat.approval.resolved") {
+		t.Fatalf("activity signals = %v, want active after approval resolve", h.activity.snapshot())
+	}
+}
+
+func TestResolvingOneOfMultipleApprovalsKeepsWaitingInput(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{Text: "go", ClientMessageID: "c1"}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	for _, requestID := range []string{"approval-1", "approval-2"} {
+		h.conv.emit(ports.ChatEvent{
+			Kind: ports.ChatEventApprovalRequested, ProviderTurnID: "provider-turn-1",
+			ProviderItemID: requestID, RequestID: requestID, Summary: "Approve " + requestID,
+			Decisions: []ports.ChatDecisionOption{{ID: "accept", Label: "Approve", Kind: ports.ChatDecisionAllowOnce}},
+		})
+	}
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return len(s.Activities) == 2 &&
+			s.Activities[0].Status == domain.ActivityStatusPending &&
+			s.Activities[1].Status == domain.ActivityStatusPending
+	})
+
+	if err := h.svc.Resolve(ctx, testSession, "approval-1", ports.ChatDecision{ID: "accept"}); err != nil {
+		t.Fatalf("Resolve first: %v", err)
+	}
+	if got := countActivitySignals(h.activity.snapshot(), domain.ActivityActive, "chat.approval.resolved"); got != 0 {
+		t.Fatalf("active resolution signals after first approval = %d, want 0 while another approval is pending", got)
+	}
+
+	if err := h.svc.Resolve(ctx, testSession, "approval-2", ports.ChatDecision{ID: "accept"}); err != nil {
+		t.Fatalf("Resolve second: %v", err)
+	}
+	if got := countActivitySignals(h.activity.snapshot(), domain.ActivityActive, "chat.approval.resolved"); got != 1 {
+		t.Fatalf("active resolution signals after final approval = %d, want 1", got)
+	}
+}
+
+func TestProviderResolutionKeepsWaitingInputUntilFinalApproval(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{Text: "go", ClientMessageID: "c1"}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	for _, requestID := range []string{"approval-1", "approval-2"} {
+		h.conv.emit(ports.ChatEvent{
+			Kind: ports.ChatEventApprovalRequested, ProviderTurnID: "provider-turn-1",
+			ProviderItemID: requestID, RequestID: requestID, Summary: "Approve " + requestID,
+		})
+	}
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool { return len(s.Activities) == 2 })
+
+	h.conv.emit(ports.ChatEvent{Kind: ports.ChatEventApprovalResolved, RequestID: "approval-1"})
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return s.Activities[0].Status == domain.ActivityStatusResolved
+	})
+	if got := countActivitySignals(h.activity.snapshot(), domain.ActivityActive, "chat.approval.resolved"); got != 0 {
+		t.Fatalf("active provider-resolution signals after first approval = %d, want 0", got)
+	}
+
+	h.conv.emit(ports.ChatEvent{Kind: ports.ChatEventApprovalResolved, RequestID: "approval-2"})
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if got := countActivitySignals(h.activity.snapshot(), domain.ActivityActive, "chat.approval.resolved"); got == 1 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("active provider-resolution signals after final approval = %d, want 1",
+		countActivitySignals(h.activity.snapshot(), domain.ActivityActive, "chat.approval.resolved"))
 }
 
 // A controller that dies mid-turn must not leave the turn looking like it is still
@@ -3988,6 +4089,16 @@ func hasActivitySignal(signals []ports.ActivitySignal, state domain.ActivityStat
 		}
 	}
 	return false
+}
+
+func countActivitySignals(signals []ports.ActivitySignal, state domain.ActivityState, event string) int {
+	count := 0
+	for _, signal := range signals {
+		if signal.State == state && signal.Event == event {
+			count++
+		}
+	}
+	return count
 }
 
 // The #3749 desync: a turn is 'running' on disk while the in-memory controller

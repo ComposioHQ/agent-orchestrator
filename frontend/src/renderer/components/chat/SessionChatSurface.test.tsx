@@ -31,13 +31,24 @@ function snapshotFor(sessionId: string): ConversationSnapshot & { capabilities: 
 	};
 }
 
-const { getMock, postMock, conversationState, agentSwitchState } = vi.hoisted(() => ({
+const {
+	getMock,
+	postMock,
+	conversationState,
+	conversationCommandState,
+	agentSwitchState,
+} = vi.hoisted(() => ({
 	getMock: vi.fn(),
 	postMock: vi.fn(),
 	agentSwitchState: { data: [] as AgentSwitchSummary[] },
+	conversationCommandState: {
+		busy: false,
+		pendingAcceptedTurnId: undefined as string | undefined,
+		acknowledgeAcceptedTurn: vi.fn(),
+	},
 	conversationState: {
 		snapshot: { capabilities: [] } as
-			| { capabilities: string[]; controller?: { state: string } }
+			| (Partial<ConversationSnapshot> & { capabilities: string[] })
 			| undefined,
 		isLoading: false,
 		unavailable: undefined as { message: string } | undefined,
@@ -58,9 +69,9 @@ vi.mock("../../hooks/useConversation", () => ({
 		...conversationState,
 		snapshot: conversationState.snapshot
 			? { ...snapshotFor(sessionId), ...conversationState.snapshot }
-			: snapshotFor(sessionId),
+			: undefined,
 	}),
-	useConversationCommands: () => ({}),
+	useConversationCommands: () => conversationCommandState,
 	useConversationConfigOptions: () => ({ options: [] }),
 	useConversationModels: () => ({ models: [] }),
 	useConversationSkills: () => ({ skills: [] }),
@@ -73,12 +84,14 @@ vi.mock("./ChatWorkspace", async () => {
 	return {
 		ChatWorkspace: ({
 			agentInputDisabled,
+			newWorkDisabled,
 			onLinkOpen,
 			snapshot,
 			switchAgentControl,
 			shellTarget,
 		}: {
 			agentInputDisabled?: boolean;
+			newWorkDisabled?: boolean;
 			onLinkOpen?: (url: string) => void;
 			snapshot: { sessionId?: string };
 			switchAgentControl?: ReactNode;
@@ -90,6 +103,10 @@ vi.mock("./ChatWorkspace", async () => {
 					<div
 						data-testid="chat-agent-input"
 						data-disabled={agentInputDisabled ? "true" : "false"}
+					/>
+					<div
+						data-testid="chat-new-work"
+						data-disabled={newWorkDisabled ? "true" : "false"}
 					/>
 					{snapshot.sessionId ? <div>Mounted {mountedSessionId}</div> : null}
 					{snapshot.sessionId ? <div>Rendered {snapshot.sessionId}</div> : null}
@@ -105,11 +122,17 @@ vi.mock("./ChatWorkspace", async () => {
 });
 
 vi.mock("../TerminalSwitchAgentButton", () => ({
-	TerminalSwitchAgentButton: ({ presentation }: { presentation?: { outcome: string } }) => (
+	TerminalSwitchAgentButton: ({
+		disabled,
+		presentation,
+	}: {
+		disabled?: boolean;
+		presentation?: { outcome: string };
+	}) => (
 		<button
 			aria-label="Switch agent"
 			data-outcome={presentation?.outcome}
-			disabled={presentation?.outcome === "in_progress"}
+			disabled={disabled || presentation?.outcome === "in_progress"}
 			type="button"
 		/>
 	),
@@ -148,6 +171,9 @@ beforeEach(() => {
 	conversationState.hasOlder = false;
 	conversationState.isLoadingOlder = false;
 	conversationState.loadOlder = vi.fn();
+	conversationCommandState.busy = false;
+	conversationCommandState.pendingAcceptedTurnId = undefined;
+	conversationCommandState.acknowledgeAcceptedTurn.mockReset();
 	agentSwitchState.data = [];
 	useUiStore.setState({ inspectorSessions: {} });
 });
@@ -157,6 +183,186 @@ afterEach(() => {
 });
 
 describe("SessionChatSurface link routing", () => {
+	it("does not report idle work before the conversation snapshot loads", () => {
+		conversationState.snapshot = undefined;
+		conversationState.isLoading = true;
+		const onConversationWorkChange = vi.fn();
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+		});
+
+		render(
+			<Wrapper client={queryClient}>
+				<SessionChatSurface
+					session={session}
+					onConversationWorkChange={onConversationWorkChange}
+				/>
+			</Wrapper>,
+		);
+
+		expect(onConversationWorkChange).not.toHaveBeenCalled();
+	});
+
+	it("does not attribute a previous session snapshot's work to the destination", () => {
+		conversationState.snapshot = {
+			...snapshotFor("sess-previous"),
+			controller: { state: "busy" },
+			turns: [
+				{
+					id: "turn-previous",
+					state: "running",
+					requestedAt: "2026-08-25T09:00:00Z",
+				},
+			],
+		};
+		const onConversationWorkChange = vi.fn();
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+		});
+
+		render(
+			<Wrapper client={queryClient}>
+				<SessionChatSurface
+					session={session}
+					onConversationWorkChange={onConversationWorkChange}
+				/>
+			</Wrapper>,
+		);
+
+		expect(onConversationWorkChange).not.toHaveBeenCalled();
+	});
+
+	it("reports live and queued Chat work to the interface-switch owner", async () => {
+		conversationState.snapshot = {
+			capabilities: [],
+			controller: { state: "busy" },
+			turns: [
+				{ id: "turn-running", state: "running", requestedAt: "2026-08-25T09:00:00Z" },
+				{ id: "turn-queued", state: "queued", requestedAt: "2026-08-25T09:00:01Z" },
+			],
+		};
+		const onConversationWorkChange = vi.fn();
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+		});
+
+		render(
+			<Wrapper client={queryClient}>
+				<SessionChatSurface
+					session={session}
+					onConversationWorkChange={onConversationWorkChange}
+				/>
+			</Wrapper>,
+		);
+
+		await waitFor(() => {
+			expect(onConversationWorkChange).toHaveBeenLastCalledWith({
+				controllerBusy: true,
+				hasRunningTurn: true,
+				queuedTurnCount: 1,
+			});
+		});
+	});
+
+	it("reports pending local work while the cached conversation snapshot is idle", async () => {
+		conversationState.snapshot = {
+			capabilities: [],
+			controller: { state: "ready" },
+			turns: [],
+		};
+		conversationCommandState.busy = true;
+		const onConversationWorkChange = vi.fn();
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+		});
+
+		render(
+			<Wrapper client={queryClient}>
+				<SessionChatSurface
+					session={session}
+					onConversationWorkChange={onConversationWorkChange}
+				/>
+			</Wrapper>,
+		);
+
+		await waitFor(() => {
+			expect(onConversationWorkChange).toHaveBeenLastCalledWith({
+				controllerBusy: true,
+				hasRunningTurn: false,
+				queuedTurnCount: 0,
+			});
+		});
+	});
+
+	it("reports an accepted local turn while the conversation snapshot is still stale", async () => {
+		conversationState.snapshot = {
+			capabilities: [],
+			controller: { state: "ready" },
+			turns: [],
+		};
+		conversationCommandState.pendingAcceptedTurnId = "turn-accepted";
+		const onConversationWorkChange = vi.fn();
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+		});
+
+		render(
+			<Wrapper client={queryClient}>
+				<SessionChatSurface
+					session={session}
+					onConversationWorkChange={onConversationWorkChange}
+				/>
+			</Wrapper>,
+		);
+
+		await waitFor(() => {
+			expect(onConversationWorkChange).toHaveBeenLastCalledWith({
+				controllerBusy: true,
+				hasRunningTurn: false,
+				queuedTurnCount: 0,
+			});
+		});
+	});
+
+	it("returns to idle after the accepted turn appears in the conversation snapshot", async () => {
+		conversationState.snapshot = {
+			capabilities: [],
+			controller: { state: "ready" },
+			turns: [
+				{
+					id: "turn-accepted",
+					state: "completed",
+					requestedAt: "2026-08-25T09:00:00Z",
+				},
+			],
+		};
+		conversationCommandState.pendingAcceptedTurnId = "turn-accepted";
+		const onConversationWorkChange = vi.fn();
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+		});
+
+		render(
+			<Wrapper client={queryClient}>
+				<SessionChatSurface
+					session={session}
+					onConversationWorkChange={onConversationWorkChange}
+				/>
+			</Wrapper>,
+		);
+
+		await waitFor(() => {
+			expect(conversationCommandState.acknowledgeAcceptedTurn).toHaveBeenCalledWith(
+				"turn-accepted",
+			);
+			expect(onConversationWorkChange).toHaveBeenLastCalledWith({
+				controllerBusy: false,
+				hasRunningTurn: false,
+				queuedTurnCount: 0,
+			});
+		});
+	});
+
 	it("opens a plain Chat link in the active worker AO Browser", async () => {
 		const user = userEvent.setup();
 		const queryClient = new QueryClient({
@@ -195,6 +401,21 @@ describe("SessionChatSurface link routing", () => {
 		);
 
 		expect(screen.getByRole("button", { name: "Switch agent" })).toBeInTheDocument();
+	});
+
+	it("fences new work and agent switching without applying the decision-blocking agent lock", () => {
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+		});
+		render(
+			<Wrapper client={queryClient}>
+				<SessionChatSurface session={session} newWorkDisabled />
+			</Wrapper>,
+		);
+
+		expect(screen.getByTestId("chat-agent-input")).toHaveAttribute("data-disabled", "false");
+		expect(screen.getByTestId("chat-new-work")).toHaveAttribute("data-disabled", "true");
+		expect(screen.getByRole("button", { name: "Switch agent" })).toBeDisabled();
 	});
 
 	it.each([

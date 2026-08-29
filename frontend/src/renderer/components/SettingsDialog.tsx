@@ -1,6 +1,7 @@
-import { Bot, CircleHelp, GitBranch, Inbox, Keyboard, MonitorCog, RefreshCw, Settings2, Smartphone, TriangleAlert, X } from "lucide-react";
+import { Bot, CircleHelp, Cloud, GitBranch, Inbox, Keyboard, MonitorCog, RefreshCw, Settings2, Smartphone, TriangleAlert, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useCloudGate } from "../hooks/useCloudGate";
 import { GlobalSettingsForm } from "./GlobalSettingsForm";
 import {
 	ProjectSettingsForm,
@@ -37,6 +38,8 @@ export function SettingsDialog() {
 	const { t } = useTranslation();
 	const settingsModal = useUiStore((state) => state.settingsModal);
 	const closeSettings = useUiStore((state) => state.closeSettings);
+	// Reads the daemon settings the dialog tree already queries; no extra fetch.
+	const { cloudEnabled } = useCloudGate();
 
 	// Keep the last non-null settings so the content stays rendered during the
 	// exit animation (when settingsModal is already null but the dialog hasn't
@@ -50,6 +53,8 @@ export function SettingsDialog() {
 
 	const globalSections: Array<{ id: GlobalSettingsSection; label: string; icon: typeof Settings2 }> = [
 		{ id: "general", label: t("settings.general"), icon: Settings2 },
+		// Only deployments with the cloud offering get the Cloud page.
+		...(cloudEnabled ? [{ id: "cloud" as const, label: t("settings.cloud"), icon: Cloud }] : []),
 		{ id: "mobile", label: t("settings.mobile"), icon: Smartphone },
 		{ id: "shortcuts", label: t("settings.shortcuts"), icon: Keyboard },
 		{ id: "updates", label: t("settings.updates"), icon: RefreshCw },

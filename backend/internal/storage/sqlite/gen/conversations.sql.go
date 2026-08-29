@@ -524,6 +524,23 @@ func (q *Queries) FailRolledBackConversationApprovals(ctx context.Context, arg F
 	return err
 }
 
+const hasPendingConversationInteractions = `-- name: HasPendingConversationInteractions :one
+SELECT EXISTS (
+    SELECT 1
+    FROM conversation_activities
+    WHERE conversation_id = ?
+      AND kind IN ('approval', 'user_input')
+      AND status = 'pending'
+)
+`
+
+func (q *Queries) HasPendingConversationInteractions(ctx context.Context, conversationID string) (bool, error) {
+	row := q.db.QueryRowContext(ctx, hasPendingConversationInteractions, conversationID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const insertConversation = `-- name: InsertConversation :exec
 
 INSERT INTO conversations (

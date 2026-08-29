@@ -2,20 +2,28 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AttachableTerminal } from "../hooks/useTerminalSession";
 import { useUiStore } from "../stores/ui-store";
+import { safeTerminalFind } from "./TerminalSearch";
 import { XtermTerminal } from "./XtermTerminal";
 
 const state = vi.hoisted(() => ({
 	fit: vi.fn(),
 	linkHandler: null as null | ((event: MouseEvent, uri: string) => void),
+	searchAddon: null as null | {
+		clearDecorations: ReturnType<typeof vi.fn>;
+		findNext: ReturnType<typeof vi.fn>;
+		findPrevious: ReturnType<typeof vi.fn>;
+		resultListeners: Set<(results: { resultCount: number; resultIndex: number }) => void>;
+	},
 	lastTerminal: null as null | {
 		keyHandler?: (event: KeyboardEvent) => boolean;
 		wheelHandler?: (event: WheelEvent) => boolean;
 		selection: string;
 		options: Record<string, unknown>;
 		modes: { bracketedPasteMode: boolean; mouseTrackingMode: string };
-		buffer: { active: { type: string } };
+		buffer: { active: { baseY: number; type: string; viewportY: number } };
 		scrollLines: ReturnType<typeof vi.fn>;
 		scrollToBottom: ReturnType<typeof vi.fn>;
+		scrollToLine: ReturnType<typeof vi.fn>;
 		refresh: ReturnType<typeof vi.fn>;
 		clear: ReturnType<typeof vi.fn>;
 		focus: ReturnType<typeof vi.fn>;
@@ -23,6 +31,7 @@ const state = vi.hoisted(() => ({
 		dataListeners: Set<(data: string) => void>;
 		keyListeners: Set<(event: { key: string }) => void>;
 		selectionListeners: Set<() => void>;
+		scrollListeners: Set<() => void>;
 		_core: {
 			element: { classList: { add: ReturnType<typeof vi.fn>; remove: ReturnType<typeof vi.fn> } };
 			viewport: { scrollBarWidth: number };
@@ -43,9 +52,10 @@ vi.mock("@xterm/xterm", () => ({
 		keyHandler?: (event: KeyboardEvent) => boolean;
 		wheelHandler?: (event: WheelEvent) => boolean;
 		modes = { bracketedPasteMode: false, mouseTrackingMode: "vt200" };
-		buffer = { active: { type: "normal" } };
+		buffer = { active: { baseY: 0, type: "normal", viewportY: 0 } };
 		scrollLines = vi.fn();
 		scrollToBottom = vi.fn();
+		scrollToLine = vi.fn();
 		refresh = vi.fn();
 		clear = vi.fn();
 		focus = vi.fn();
@@ -53,6 +63,7 @@ vi.mock("@xterm/xterm", () => ({
 		dataListeners = new Set<(data: string) => void>();
 		keyListeners = new Set<(event: { key: string }) => void>();
 		selectionListeners = new Set<() => void>();
+		scrollListeners = new Set<() => void>();
 		_core = {
 			element: { classList: { add: vi.fn(), remove: vi.fn() } },
 			viewport: { scrollBarWidth: 15 },
@@ -83,6 +94,10 @@ vi.mock("@xterm/xterm", () => ({
 		}
 		onRender() {
 			return { dispose: () => undefined };
+		}
+		onScroll(listener: () => void) {
+			this.scrollListeners.add(listener);
+			return { dispose: () => this.scrollListeners.delete(listener) };
 		}
 		onKey(listener: (event: { key: string }) => void) {
 			this.keyListeners.add(listener);
@@ -117,7 +132,21 @@ vi.mock("@xterm/addon-fit", () => ({
 }));
 
 vi.mock("@xterm/addon-search", () => ({
-	SearchAddon: class FakeSearchAddon {},
+	SearchAddon: class FakeSearchAddon {
+		clearDecorations = vi.fn();
+		findNext = vi.fn(() => true);
+		findPrevious = vi.fn(() => true);
+		resultListeners = new Set<(results: { resultCount: number; resultIndex: number }) => void>();
+
+		constructor() {
+			state.searchAddon = this;
+		}
+
+		onDidChangeResults(listener: (results: { resultCount: number; resultIndex: number }) => void) {
+			this.resultListeners.add(listener);
+			return { dispose: () => this.resultListeners.delete(listener) };
+		}
+	},
 }));
 
 vi.mock("@xterm/addon-unicode11", () => ({
@@ -159,6 +188,7 @@ describe("XtermTerminal", () => {
 		state.fit.mockReset();
 		state.lastTerminal = null;
 		state.linkHandler = null;
+		state.searchAddon = null;
 		setNavigatorPlatform("Linux x86_64");
 		window.ao!.clipboard.writeText = vi.fn().mockResolvedValue(undefined);
 		window.ao!.clipboard.readText = vi.fn().mockResolvedValue("");
@@ -304,10 +334,38 @@ describe("XtermTerminal", () => {
 		}
 	});
 
-	it("does not reserve width for the hidden terminal scrollbar", () => {
-		render(<XtermTerminal theme="dark" />);
+	it("does not reserve width for the hidden terminal scrollbar outside macOS", () => {
+		const { container } = render(<XtermTerminal theme="dark" />);
 
 		expect(state.lastTerminal!._core.viewport.scrollBarWidth).toBe(0);
+		expect(container.querySelector(".terminal-scrollbar")).toBeNull();
+	});
+
+	it("reserves a slim draggable scrollbar gutter on macOS", () => {
+		setNavigatorPlatform("MacIntel");
+		const { container } = render(<XtermTerminal theme="dark" />);
+
+		expect(state.lastTerminal!._core.viewport.scrollBarWidth).toBe(7);
+		expect(container.querySelector(".terminal-xterm-host--mac")).not.toBeNull();
+		expect(container.querySelector(".terminal-scrollbar")).not.toBeNull();
+	});
+
+	it("fades the macOS scrollbar after scrolling goes idle", () => {
+		setNavigatorPlatform("MacIntel");
+		const { container } = render(<XtermTerminal theme="dark" />);
+		const scrollbar = container.querySelector<HTMLElement>(".terminal-scrollbar")!;
+		scrollbar.dataset.scrollable = "true";
+		vi.useFakeTimers();
+
+		act(() => state.lastTerminal!.scrollListeners.forEach((listener) => listener()));
+		expect(scrollbar.dataset.active).toBe("true");
+
+		act(() => vi.advanceTimersByTime(699));
+		expect(scrollbar.dataset.active).toBe("true");
+		act(() => vi.advanceTimersByTime(1));
+		expect(scrollbar.dataset.active).toBe("false");
+
+		vi.useRealTimers();
 	});
 
 	it("copies selected terminal text on the terminal copy shortcut", () => {
@@ -436,6 +494,174 @@ describe("XtermTerminal", () => {
 		expect(trigger.style.top).toBe("88px");
 	});
 
+	it("opens terminal search from the context menu with readable light-theme query text", async () => {
+		const { container } = render(<XtermTerminal theme="light" />);
+
+		fireEvent.contextMenu(container.firstElementChild!);
+		fireEvent.click(await screen.findByText("Search terminal"));
+
+		const input = await screen.findByRole("searchbox", { name: "Search terminal" });
+		expect(input).toHaveFocus();
+		expect(input).toHaveClass("text-foreground");
+		expect(input).not.toHaveClass("text-terminal");
+	});
+
+	it.each([
+		["Command+F", "MacIntel", false, true],
+		["Ctrl+F", "Linux x86_64", true, false],
+	])("opens search with %s and consumes the terminal shortcut", async (_label, platform, ctrlKey, metaKey) => {
+		setNavigatorPlatform(platform);
+		render(<XtermTerminal theme="dark" />);
+		const event = {
+			altKey: false,
+			ctrlKey,
+			key: "f",
+			metaKey,
+			preventDefault: vi.fn(),
+			shiftKey: false,
+			stopPropagation: vi.fn(),
+			type: "keydown",
+		} as unknown as KeyboardEvent;
+
+		let allowed = true;
+		act(() => {
+			allowed = state.lastTerminal!.keyHandler!(event);
+		});
+
+		expect(allowed).toBe(false);
+		expect(event.preventDefault).toHaveBeenCalledOnce();
+		expect(event.stopPropagation).toHaveBeenCalledOnce();
+		expect(await screen.findByRole("searchbox", { name: "Search terminal" })).toHaveFocus();
+	});
+
+	it("searches incrementally, reports matches, and navigates in both directions", async () => {
+		setNavigatorPlatform("MacIntel");
+		render(<XtermTerminal theme="dark" />);
+		const shortcut = {
+			altKey: false,
+			ctrlKey: false,
+			key: "f",
+			metaKey: true,
+			preventDefault: vi.fn(),
+			shiftKey: false,
+			stopPropagation: vi.fn(),
+			type: "keydown",
+		} as unknown as KeyboardEvent;
+		act(() => state.lastTerminal!.keyHandler!(shortcut));
+		const input = await screen.findByRole("searchbox", { name: "Search terminal" });
+		state.searchAddon!.findNext.mockClear();
+
+		fireEvent.change(input, { target: { value: "needle" } });
+		await waitFor(() =>
+			expect(state.searchAddon!.findNext).toHaveBeenLastCalledWith(
+				"needle",
+				expect.objectContaining({ incremental: true, caseSensitive: false, regex: false }),
+			),
+		);
+
+		fireEvent.click(screen.getByRole("button", { name: "Match case" }));
+		fireEvent.click(screen.getByRole("button", { name: "Use regular expression" }));
+		await waitFor(() =>
+			expect(state.searchAddon!.findNext).toHaveBeenLastCalledWith(
+				"needle",
+				expect.objectContaining({ incremental: true, caseSensitive: true, regex: true }),
+			),
+		);
+
+		act(() =>
+			state.searchAddon!.resultListeners.forEach((listener) => listener({ resultCount: 3, resultIndex: 1 })),
+		);
+		expect(screen.getByText("2/3")).toHaveAccessibleName("Match 2 of 3");
+
+		state.searchAddon!.findNext.mockClear();
+		fireEvent.keyDown(input, { key: "Enter" });
+		expect(state.searchAddon!.findNext).toHaveBeenCalledWith(
+			"needle",
+			expect.objectContaining({ incremental: false, caseSensitive: true, regex: true }),
+		);
+		state.lastTerminal!.selection = "needle";
+		state.lastTerminal!.selectionListeners.forEach((listener) => listener());
+		await new Promise((resolve) => window.setTimeout(resolve, 0));
+		expect(window.ao!.clipboard.writeText).not.toHaveBeenCalled();
+		expect(screen.queryByRole("status")).not.toBeInTheDocument();
+
+		fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
+		expect(state.searchAddon!.findPrevious).toHaveBeenCalledWith(
+			"needle",
+			expect.objectContaining({ incremental: false, caseSensitive: true, regex: true }),
+		);
+
+		state.searchAddon!.findNext.mockClear();
+		fireEvent.keyDown(input, { key: "g", metaKey: true });
+		expect(state.searchAddon!.findNext).toHaveBeenCalledWith("needle", expect.anything());
+		state.searchAddon!.findPrevious.mockClear();
+		fireEvent.keyDown(input, { key: "g", metaKey: true, shiftKey: true });
+		expect(state.searchAddon!.findPrevious).toHaveBeenCalledWith("needle", expect.anything());
+	});
+
+	it("marks an invalid regular expression without calling xterm search", async () => {
+		setNavigatorPlatform("MacIntel");
+		render(<XtermTerminal theme="dark" />);
+		act(() =>
+			state.lastTerminal!.keyHandler!({
+				altKey: false,
+				ctrlKey: false,
+				key: "f",
+				metaKey: true,
+				preventDefault: vi.fn(),
+				shiftKey: false,
+				stopPropagation: vi.fn(),
+				type: "keydown",
+			} as unknown as KeyboardEvent),
+		);
+		const input = await screen.findByRole("searchbox", { name: "Search terminal" });
+		fireEvent.click(screen.getByRole("button", { name: "Use regular expression" }));
+		state.searchAddon!.findNext.mockClear();
+
+		fireEvent.change(input, { target: { value: "[" } });
+
+		expect(input).toHaveAttribute("aria-invalid", "true");
+		expect(screen.getByText("—")).toHaveAccessibleName("Invalid regular expression");
+		expect(state.searchAddon!.findNext).not.toHaveBeenCalledWith("[", expect.anything());
+	});
+
+	it("clears search highlights and returns focus to xterm on Escape", async () => {
+		setNavigatorPlatform("MacIntel");
+		render(<XtermTerminal theme="dark" />);
+		act(() =>
+			state.lastTerminal!.keyHandler!({
+				altKey: false,
+				ctrlKey: false,
+				key: "f",
+				metaKey: true,
+				preventDefault: vi.fn(),
+				shiftKey: false,
+				stopPropagation: vi.fn(),
+				type: "keydown",
+			} as unknown as KeyboardEvent),
+		);
+		const input = await screen.findByRole("searchbox", { name: "Search terminal" });
+
+		fireEvent.keyDown(input, { key: "Escape" });
+
+		expect(screen.queryByRole("searchbox", { name: "Search terminal" })).not.toBeInTheDocument();
+		expect(state.searchAddon!.clearDecorations).toHaveBeenCalled();
+		await waitFor(() => expect(state.lastTerminal!.focus).toHaveBeenCalled());
+	});
+
+	it("contains xterm's known decoration failure without hiding other search failures", () => {
+		expect(
+			safeTerminalFind(() => {
+				throw new Error("This API only accepts positive integers");
+			}, "needle"),
+		).toBe(false);
+		expect(() =>
+			safeTerminalFind(() => {
+				throw new Error("unexpected search failure");
+			}, "needle"),
+		).toThrow("unexpected search failure");
+	});
+
 	it("toggles terminal fullscreen from the right-click menu", async () => {
 		const onToggleFullscreen = vi.fn();
 		const { container, rerender } = render(
@@ -500,35 +726,28 @@ describe("XtermTerminal", () => {
 		await waitFor(() => expect(onInput).toHaveBeenCalledWith("\x1b[200~bracketed\rpaste\x1b[201~", "paste"));
 	});
 
-	it("auto-copies new selections and retries explicit copy if the auto-copy failed", async () => {
+	it("does not copy terminal selections without an explicit copy action", async () => {
 		render(<XtermTerminal theme="dark" />);
-		const writeText = vi.fn().mockRejectedValueOnce(new Error("clipboard failed")).mockResolvedValueOnce(undefined);
-		window.ao!.clipboard.writeText = writeText;
 
-		state.lastTerminal!.selection = "retry me";
+		state.lastTerminal!.selection = "selected text";
 		state.lastTerminal!.selectionListeners.forEach((listener) => listener());
 		await new Promise((resolve) => window.setTimeout(resolve, 0));
 
-		const event = {
+		expect(window.ao!.clipboard.writeText).not.toHaveBeenCalled();
+		expect(screen.queryByRole("status")).not.toBeInTheDocument();
+	});
+
+	it("shows a copied toast after an explicit copy", async () => {
+		render(<XtermTerminal theme="dark" />);
+		state.lastTerminal!.selection = "toast selection";
+		state.lastTerminal!.keyHandler!({
 			key: "c",
 			metaKey: true,
 			ctrlKey: false,
 			shiftKey: false,
 			preventDefault: vi.fn(),
 			stopPropagation: vi.fn(),
-		} as unknown as KeyboardEvent;
-		const allowed = state.lastTerminal!.keyHandler!(event);
-
-		expect(allowed).toBe(false);
-		expect(writeText).toHaveBeenCalledTimes(2);
-		expect(writeText).toHaveBeenLastCalledWith("retry me");
-	});
-
-	it("shows a copied toast after a successful selection auto-copy", async () => {
-		render(<XtermTerminal theme="dark" />);
-		state.lastTerminal!.selection = "toast selection";
-		state.lastTerminal!.selectionListeners.forEach((listener) => listener());
-		await new Promise((resolve) => window.setTimeout(resolve, 0));
+		} as unknown as KeyboardEvent);
 
 		expect(await screen.findByRole("status")).toHaveTextContent("Copied to clipboard");
 	});
@@ -537,8 +756,14 @@ describe("XtermTerminal", () => {
 		window.ao!.clipboard.writeText = vi.fn().mockRejectedValue(new Error("clipboard failed"));
 		render(<XtermTerminal theme="dark" />);
 		state.lastTerminal!.selection = "failed selection";
-		state.lastTerminal!.selectionListeners.forEach((listener) => listener());
-		await new Promise((resolve) => window.setTimeout(resolve, 0));
+		state.lastTerminal!.keyHandler!({
+			key: "c",
+			metaKey: true,
+			ctrlKey: false,
+			shiftKey: false,
+			preventDefault: vi.fn(),
+			stopPropagation: vi.fn(),
+		} as unknown as KeyboardEvent);
 		await Promise.resolve();
 
 		expect(screen.queryByRole("status")).not.toBeInTheDocument();
@@ -550,8 +775,14 @@ describe("XtermTerminal", () => {
 			render(<XtermTerminal theme="dark" />);
 			state.lastTerminal!.selection = "timed selection";
 			await act(async () => {
-				state.lastTerminal!.selectionListeners.forEach((listener) => listener());
-				await vi.advanceTimersByTimeAsync(0);
+				state.lastTerminal!.keyHandler!({
+					key: "c",
+					metaKey: true,
+					ctrlKey: false,
+					shiftKey: false,
+					preventDefault: vi.fn(),
+					stopPropagation: vi.fn(),
+				} as unknown as KeyboardEvent);
 				await Promise.resolve();
 			});
 
@@ -1045,14 +1276,19 @@ describe("XtermTerminal", () => {
 		open.mockRestore();
 	});
 
-	it.each(["plain", "OSC 8"])("opens %s web links in the system browser on Option/Alt+Click", (kind) => {
+	it.each([
+		["plain", "Option/Alt", { altKey: true }],
+		["OSC 8", "Option/Alt", { altKey: true }],
+		["plain", "Command", { metaKey: true }],
+		["OSC 8", "Command", { metaKey: true }],
+	])("opens %s web links in the system browser on %s+Click", (kind, _modifier, event) => {
 		const openExternal = vi.fn().mockResolvedValue(undefined);
 		window.ao!.app.openExternal = openExternal;
 		const onLinkOpen = vi.fn();
 		render(<XtermTerminal onLinkOpen={onLinkOpen} theme="dark" />);
 		const oscHandler = state.lastTerminal!.options.linkHandler as { activate: (event: MouseEvent, uri: string) => void };
 		const handler = kind === "plain" ? state.linkHandler! : oscHandler.activate;
-		handler({ altKey: true } as MouseEvent, "https://example.com");
+		handler(event as unknown as MouseEvent, "https://example.com");
 		expect(openExternal).toHaveBeenCalledWith("https://example.com");
 		expect(onLinkOpen).not.toHaveBeenCalled();
 	});
