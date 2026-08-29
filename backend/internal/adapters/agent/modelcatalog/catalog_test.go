@@ -291,6 +291,24 @@ func TestParseIDLinesAcceptsOnlyWholeModelIDs(t *testing.T) {
 	}
 }
 
+func TestParseAgyModelsUsesFirstColumnAsModelID(t *testing.T) {
+	got, err := parseAgyModels([]byte(`gemini-3.7-flash-high  Gemini 3.7 Flash (High)
+claude-sonnet-4-6  Claude Sonnet 4.6 (Thinking)
+gpt-oss-120b-medium  GPT-OSS 120B (Medium)
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []ports.AgentModelInfo{
+		{ID: "claude-sonnet-4-6", Label: "Claude Sonnet 4.6 (Thinking)"},
+		{ID: "gemini-3.7-flash-high", Label: "Gemini 3.7 Flash (High)"},
+		{ID: "gpt-oss-120b-medium", Label: "GPT-OSS 120B (Medium)"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("models = %#v, want %#v", got, want)
+	}
+}
+
 func TestParseGrokModelsIgnoresAuthAndDefaultStatus(t *testing.T) {
 	got, err := parseGrokModels([]byte(`You are not authenticated.
 

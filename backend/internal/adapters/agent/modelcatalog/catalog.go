@@ -48,7 +48,7 @@ var commandSpecs = map[string]commandSpec{
 	"opencode":    {args: []string{"--pure", "models"}, parser: parseIDLines},
 	"grok":        {args: []string{"models"}, parser: parseGrokModels},
 	"cursor":      {args: []string{"models"}, parser: parseCursorModels},
-	"agy":         {args: []string{"models"}, parser: parseIDLines},
+	"agy":         {args: []string{"models"}, parser: parseAgyModels},
 	"kilocode":    {args: []string{"models"}, parser: parseIDLines},
 	"pi":          {args: []string{"--list-models"}, parser: parsePiModels},
 	"kimchi":      {args: []string{"--list-models"}, parser: parsePiModels},
@@ -487,6 +487,28 @@ func parseIDLines(output []byte) ([]ports.AgentModelInfo, error) {
 		}
 		id := strings.Trim(fields[0], "`\"'[](),:")
 		models = append(models, ports.AgentModelInfo{ID: id, Label: id})
+	}
+	return normalize(models), nil
+}
+
+func parseAgyModels(output []byte) ([]ports.AgentModelInfo, error) {
+	text := ansiPattern.ReplaceAllString(string(output), "")
+	var models []ports.AgentModelInfo
+	for _, rawLine := range strings.Split(text, "\n") {
+		line := strings.TrimSpace(rawLine)
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		id := strings.Trim(fields[0], "`\"'[](),:")
+		if !looksLikeModelID(id) || !strings.ContainsAny(id, "-./:_") {
+			continue
+		}
+		label := strings.TrimSpace(strings.TrimPrefix(line, fields[0]))
+		if label == "" {
+			label = id
+		}
+		models = append(models, ports.AgentModelInfo{ID: id, Label: label})
 	}
 	return normalize(models), nil
 }
