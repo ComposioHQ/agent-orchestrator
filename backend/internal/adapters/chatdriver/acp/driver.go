@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"strings"
 	"time"
 
 	acpsdk "github.com/coder/acp-go-sdk"
@@ -346,11 +347,16 @@ func (d *Driver) connect(
 		},
 	})
 	if err != nil {
+		// Close first: stopping the process drives its stderr pipe to EOF, so the
+		// retained tail is complete before it is folded into the error.
 		_ = conv.Close()
 		if isACPAuthRequired(err) {
 			return nil, acpsdk.InitializeResponse{}, normalizeACPError("ACP initialize", err)
 		}
-		return nil, acpsdk.InitializeResponse{}, fmt.Errorf("%w: ACP initialize: %w", ports.ErrChatDriverIncompatible, err)
+		return nil, acpsdk.InitializeResponse{}, fmt.Errorf(
+			"%w: ACP initialize: %w%s",
+			ports.ErrChatDriverIncompatible, err, formatStderrTail(proc.stderrSnapshot()),
+		)
 	}
 	if d.cfg.ValidateInitialize != nil {
 		if err := d.cfg.ValidateInitialize(init); err != nil {
@@ -359,6 +365,27 @@ func (d *Driver) connect(
 		}
 	}
 	return conv, init, nil
+}
+
+// stderrTailLines caps how much adapter stderr reaches the error message. A
+// fatal runtime trace is long; the last lines carry the cause and keep the
+// surfaced error readable in the UI.
+const stderrTailLines = 12
+
+// formatStderrTail renders retained adapter stderr as an error suffix. An
+// adapter that exits before answering initialize leaves no other diagnostic,
+// which previously reduced a crashed runtime to "peer disconnected before
+// response" (#4442).
+func formatStderrTail(tail string) string {
+	tail = strings.TrimSpace(tail)
+	if tail == "" {
+		return ""
+	}
+	lines := strings.Split(tail, "\n")
+	if len(lines) > stderrTailLines {
+		lines = lines[len(lines)-stderrTailLines:]
+	}
+	return fmt.Sprintf(" (adapter stderr: %s)", strings.Join(lines, "; "))
 }
 
 func cloneCapabilities(in ports.ChatCapabilities) ports.ChatCapabilities {
