@@ -110,10 +110,17 @@ type reactionState struct {
 	// seen/attempts during this process. Lazy: we only pay the DB read on the
 	// first reaction touching each PR after startup.
 	loaded map[string]bool
+	// pendingRearm tracks PR URLs whose merge-conflict re-arm has been applied
+	// in memory but whose durable write failed. The in-memory delete stands (a
+	// conflict returning in this process must still nudge), so without this the
+	// next re-arm would see nothing armed, take the early return, and never
+	// retry the store — leaving the stale "conflicting" signature on disk to
+	// suppress the nudge after a restart. Cleared once the write lands.
+	pendingRearm map[string]bool
 }
 
 func newReactionState() reactionState {
-	return reactionState{seen: map[string]string{}, attempts: map[string]int{}, loaded: map[string]bool{}}
+	return reactionState{seen: map[string]string{}, attempts: map[string]int{}, loaded: map[string]bool{}, pendingRearm: map[string]bool{}}
 }
 
 // reactionPayload is the JSON document persisted in pr.last_nudge_signature.
@@ -414,14 +421,26 @@ func (m *Manager) rearmMergeConflict(ctx context.Context, prURL string) error {
 	key := mergeConflictKey(prURL)
 	_, seen := m.react.seen[key]
 	_, attempted := m.react.attempts[key]
-	if !seen && !attempted {
-		// Nothing is armed, so skip the store write: a steadily mergeable PR
-		// must not re-persist an unchanged payload on every poll.
+	if !seen && !attempted && !m.react.pendingRearm[prURL] {
+		// Nothing is armed and no earlier re-arm is still owed a durable write,
+		// so skip the store write: a steadily mergeable PR must not re-persist
+		// an unchanged payload on every poll.
 		return nil
 	}
 	delete(m.react.seen, key)
 	delete(m.react.attempts, key)
-	return m.persistPRSignaturesLocked(ctx, prURL)
+	if err := m.persistPRSignaturesLocked(ctx, prURL); err != nil {
+		// The in-memory delete deliberately stands: a conflict returning later
+		// in this process must still nudge. But disk still holds the stale
+		// "conflicting" signature, which a restart would reload and use to
+		// suppress that nudge — the exact bug this re-arm exists to fix. Mark
+		// the PR so every later non-conflicting observation retries the write
+		// until it lands, instead of taking the early return above.
+		m.react.pendingRearm[prURL] = true
+		return err
+	}
+	delete(m.react.pendingRearm, prURL)
+	return nil
 }
 
 // prBlockedByOpenParent reports whether the PR at prURL is stacked on top of

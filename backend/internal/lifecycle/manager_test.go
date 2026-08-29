@@ -2325,6 +2325,70 @@ func TestPRObservation_ReArmSkipsStoreWriteWhenNothingArmed(t *testing.T) {
 	}
 }
 
+// TestPRObservation_ReArmRetriesAfterFailedPersist covers the failure ->
+// successful observation -> restart -> conflict path. The re-arm's in-memory
+// delete stands even when the durable write fails, so a naive implementation
+// would see nothing armed on the next mergeable observation, take the early
+// return, and never retry — leaving the stale "conflicting" signature on disk
+// to suppress the nudge after a restart, recreating #4528.
+func TestPRObservation_ReArmRetriesAfterFailedPersist(t *testing.T) {
+	conflicting := ports.PRObservation{Fetched: true, URL: "pr1", Mergeability: domain.MergeConflicting}
+	mergeable := ports.PRObservation{Fetched: true, URL: "pr1", Mergeability: domain.MergeMergeable}
+
+	st := newFakeStore()
+	st.sessions["mer-1"] = working("mer-1")
+	m := New(st, &fakeMessenger{})
+	if err := m.ApplyPRObservation(ctx, "mer-1", conflicting); err != nil {
+		t.Fatal(err)
+	}
+
+	st.signatureWriteErr = errors.New("db locked")
+	if err := m.ApplyPRObservation(ctx, "mer-1", mergeable); err == nil {
+		t.Fatal("a failed re-arm persist should surface to the observer")
+	}
+
+	// Persistence recovers. The next non-conflicting observation must retry the
+	// durable write rather than short-circuit on the now-empty in-memory maps.
+	st.signatureWriteErr = nil
+	if err := m.ApplyPRObservation(ctx, "mer-1", mergeable); err != nil {
+		t.Fatal(err)
+	}
+
+	restarted := &fakeMessenger{}
+	if err := New(st, restarted).ApplyPRObservation(ctx, "mer-1", conflicting); err != nil {
+		t.Fatal(err)
+	}
+	if len(restarted.msgs) != 1 {
+		t.Fatalf("a re-arm that retried its persist must survive a restart, got %v", restarted.msgs)
+	}
+}
+
+// TestPRObservation_ReArmStillNudgesInProcessAfterFailedPersist pins the other
+// half of the retry contract: the failed persist must not roll the in-memory
+// re-arm back, or a conflict returning before the write succeeds would be
+// deduplicated away inside the running daemon.
+func TestPRObservation_ReArmStillNudgesInProcessAfterFailedPersist(t *testing.T) {
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	conflicting := ports.PRObservation{Fetched: true, URL: "pr1", Mergeability: domain.MergeConflicting}
+	if err := m.ApplyPRObservation(ctx, "mer-1", conflicting); err != nil {
+		t.Fatal(err)
+	}
+
+	st.signatureWriteErr = errors.New("db locked")
+	if err := m.ApplyPRObservation(ctx, "mer-1", ports.PRObservation{Fetched: true, URL: "pr1", Mergeability: domain.MergeMergeable}); err == nil {
+		t.Fatal("a failed re-arm persist should surface to the observer")
+	}
+	st.signatureWriteErr = nil
+
+	if err := m.ApplyPRObservation(ctx, "mer-1", conflicting); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 2 {
+		t.Fatalf("a conflict returning after a failed re-arm persist should still nudge, got %d: %v", len(msg.msgs), msg.msgs)
+	}
+}
+
 // TestPRObservation_ReArmStoreFailureSurfacesWithoutLosingNudges checks the
 // deferred-error contract: a failed re-arm persist is reported, but only after
 // the independent CI nudge queued in the same observation has been sent.
