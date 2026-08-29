@@ -5,6 +5,7 @@ import { useTruncatedText } from "../hooks/useTruncatedText";
 import type { ShellTerminal } from "../hooks/useShellTerminals";
 import { isWindowsPlatform } from "../lib/platform";
 import { cn } from "../lib/utils";
+import { TerminalTabFrame } from "./TerminalTabFrame";
 
 type ShellTerminalTabProps = {
 	shell: ShellTerminal;
@@ -38,7 +39,8 @@ export function ShellTerminalTab({
 	onRename,
 }: ShellTerminalTabProps) {
 	const { t } = useTranslation();
-	const { ref, isTruncated } = useTruncatedText<HTMLButtonElement>(shell.title);
+	const title = shell.title;
+	const { ref, isTruncated } = useTruncatedText<HTMLButtonElement>(title);
 	const [isEditing, setIsEditing] = useState(false);
 	const [draft, setDraft] = useState(shell.title);
 	const inputRef = useRef<HTMLInputElement | null>(null);
@@ -56,7 +58,7 @@ export function ShellTerminalTab({
 
 	const beginEdit = () => {
 		if (!onRename || isEditing) return;
-		setDraft(shell.title);
+		setDraft(title);
 		setIsEditing(true);
 	};
 
@@ -99,11 +101,11 @@ export function ShellTerminalTab({
 
 	const cancel = () => {
 		setIsEditing(false);
-		setDraft(shell.title);
+		setDraft(title);
 	};
 
 	const closeControl = {
-		"aria-label": t("terminal.closeNamed", { title: shell.title }),
+		"aria-label": t("terminal.closeNamed", { title }),
 		"data-terminal-tab-action": true,
 		onClick: (event: MouseEvent) => {
 			event.stopPropagation();
@@ -115,13 +117,71 @@ export function ShellTerminalTab({
 		type: "button" as const,
 	};
 	const connectedGlyphClass =
-		"size-icon-sm shrink-0 translate-y-px transition-opacity duration-fast ease-out motion-reduce:transition-none";
+		"size-icon-sm shrink-0 translate-y-px";
+	if (appearance === "connected") {
+		const closeAction = isEditing ? undefined : (
+			<button
+				{...closeControl}
+				className="grid size-icon-sm place-items-center rounded-sm text-passive opacity-0 pointer-events-none transition-[background,color] duration-fast ease-out hover:bg-interactive-hover hover:text-foreground group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 motion-reduce:transition-none"
+			>
+				<X aria-hidden="true" className="size-icon-sm translate-y-px" />
+			</button>
+		);
+		const editingContent = isEditing ? (
+			<input
+				aria-label={t("terminal.rename", { title })}
+				className="min-w-0 w-full rounded-sm border border-accent bg-background px-1 font-mono text-control font-semibold text-foreground shadow-sm outline-none ring-1 ring-accent"
+				onBlur={commit}
+				onChange={(event) => setDraft(event.target.value)}
+				onKeyDown={(event) => {
+					if (event.key === "Enter") {
+						event.preventDefault();
+						commit();
+					} else if (event.key === "Escape") {
+						event.preventDefault();
+						cancel();
+					}
+				}}
+				ref={inputRef}
+				value={draft}
+			/>
+		) : undefined;
+		return (
+			<TerminalTabFrame
+				action={closeAction}
+				actionPosition="leading"
+				active={isActive}
+				buttonProps={{
+					"aria-current": isActive,
+					"aria-selected": isActive,
+					...tabRenameHandlers,
+					role: "tab",
+					tabIndex: isActive ? 0 : -1,
+					title: isTruncated
+						? title
+						: t(renameViaRightClick ? "terminal.renameHintRightClick" : "terminal.renameHintDoubleClick", {
+								workingDir: shell.workingDir,
+							}),
+					type: "button",
+				}}
+				buttonRef={ref}
+				className="max-w-shell-tab-max"
+				editingContent={editingContent}
+			>
+				<SquareTerminal
+					aria-hidden="true"
+					className={cn("size-icon-sm shrink-0", "group-hover:opacity-0 group-focus-within:opacity-0")}
+				/>
+				<span className="truncate">{title}</span>
+			</TerminalTabFrame>
+		);
+	}
 
 	return (
 		<span
 			data-editing={appearance === "connected" && isEditing ? "true" : undefined}
 			className={cn(
-				"group relative h-full shrink-0 self-stretch items-center transition-colors",
+				"group relative h-full shrink-0 self-stretch items-center transition-[border-color]",
 				appearance === "connected"
 					? cn(
 							"session-tab-icon-floor session-tab-icon-floor--closable relative inline-flex max-w-shell-tab-max border-x border-transparent",
@@ -130,7 +190,7 @@ export function ShellTerminalTab({
 					: "inline-flex min-w-shell-tab-min shrink-0 items-center gap-1 rounded-md px-2 py-1",
 				appearance === "connected"
 					? isActive
-						? "border-border-strong bg-overlay text-foreground after:pointer-events-none after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80"
+						? "border-border-strong bg-overlay text-foreground"
 						: "border-transparent text-passive hover:bg-raised hover:text-foreground"
 					: isActive
 						? "bg-interactive-active"
@@ -142,7 +202,7 @@ export function ShellTerminalTab({
 			) : null}
 			{isEditing ? (
 				<input
-					aria-label={t("terminal.rename", { title: shell.title })}
+					aria-label={t("terminal.rename", { title })}
 					className={cn(
 						"rounded-sm border border-accent bg-background px-1 font-mono text-control font-semibold text-foreground shadow-sm outline-none ring-1 ring-accent",
 						appearance === "connected" ? "min-w-0 w-full text-left" : "min-w-flex-min max-w-shell-tab-max",
@@ -167,7 +227,7 @@ export function ShellTerminalTab({
 					aria-current={isActive}
 					aria-selected={isActive}
 					className={cn(
-						"select-none truncate text-control transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent/50",
+						"select-none truncate text-control focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent/50",
 						appearance === "connected"
 							? "inline-flex h-full min-w-0 cursor-pointer items-center pl-2 pr-2 text-left"
 							: "min-w-flex-min max-w-shell-tab-max cursor-pointer",
@@ -179,24 +239,26 @@ export function ShellTerminalTab({
 					tabIndex={isActive ? 0 : -1}
 					title={
 						isTruncated
-							? shell.title
+							? title
 							: t(renameViaRightClick ? "terminal.renameHintRightClick" : "terminal.renameHintDoubleClick", {
 									workingDir: shell.workingDir,
 								})
 					}
 					type="button"
 				>
-					{appearance === "connected" ? (
-						<SquareTerminal
-							aria-hidden="true"
-							className={cn(
-								"mr-1",
-								connectedGlyphClass,
-								"group-hover:opacity-0 group-focus-within:opacity-0",
-							)}
-						/>
-					) : null}
-					<span className="truncate">{shell.title}</span>
+					<span className="inline-flex min-w-0 -translate-y-px items-center">
+						{appearance === "connected" ? (
+							<SquareTerminal
+								aria-hidden="true"
+								className={cn(
+									"mr-1",
+									connectedGlyphClass,
+									"group-hover:opacity-0 group-focus-within:opacity-0",
+								)}
+							/>
+						) : null}
+						<span className="truncate">{title}</span>
+					</span>
 				</button>
 			)}
 			{appearance === "connected" && isEditing ? null : (
@@ -204,8 +266,8 @@ export function ShellTerminalTab({
 					{...closeControl}
 					className={
 						appearance === "connected"
-							? "absolute top-1/2 left-2 z-10 grid size-icon-sm -translate-y-1/2 place-items-center rounded-sm text-passive opacity-0 pointer-events-none transition-[opacity,background,color] duration-fast ease-out hover:bg-interactive-hover hover:text-foreground group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 motion-reduce:transition-none"
-							: "inline-flex h-control-sm w-control-sm shrink-0 items-center justify-center overflow-hidden rounded-sm text-passive opacity-0 transition-[background,color,opacity] duration-fast ease-out hover:bg-interactive-hover hover:text-foreground group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 motion-reduce:transition-none"
+							? "absolute top-[calc(50%_-_1px)] left-2 z-10 grid size-icon-sm -translate-y-1/2 place-items-center rounded-sm text-passive opacity-0 pointer-events-none transition-[background,color] duration-fast ease-out hover:bg-interactive-hover hover:text-foreground group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 motion-reduce:transition-none"
+							: "inline-flex h-control-sm w-control-sm shrink-0 items-center justify-center overflow-hidden rounded-sm text-passive opacity-0 transition-[background,color] duration-fast ease-out hover:bg-interactive-hover hover:text-foreground group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 motion-reduce:transition-none"
 					}
 				>
 					<X

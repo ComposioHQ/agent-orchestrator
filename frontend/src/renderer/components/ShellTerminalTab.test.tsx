@@ -86,63 +86,59 @@ describe("ShellTerminalTab rename", () => {
 	it("makes the full connected tile the semantic selection button", () => {
 		const { onSelect } = renderTab({ appearance: "connected" });
 		const tab = screen.getByRole("tab", { name: "ao" });
-		expect(tab).toHaveClass("h-full", "min-w-0", "pl-2", "cursor-pointer", "focus-visible:outline-2");
+		expect(tab).toHaveClass("h-full", "min-w-0", "px-2", "cursor-pointer", "focus-visible:outline-2");
 		fireEvent.click(tab);
 		expect(onSelect).toHaveBeenCalledOnce();
 	});
 
-	it("cross-fades the terminal glyph into close on hover instead of reserving a trailing close column", () => {
+	it("swaps the terminal glyph for close on hover without reserving a trailing close column", () => {
 		renderTab({ appearance: "connected", isActive: true });
 
 		const closeButton = screen.getByRole("button", { name: "Close terminal ao" });
+		expect(closeButton.parentElement).toHaveClass("absolute", "left-2", "inset-y-0");
 		expect(closeButton).toHaveClass(
-			"absolute",
 			"opacity-0",
 			"pointer-events-none",
 			"group-hover:opacity-100",
-			"duration-fast",
 		);
+		expect(closeButton).not.toHaveClass("transition-opacity", "transition-[opacity,background,color]");
 		expect(closeButton).not.toHaveClass("w-control-sm");
 		expect(screen.getByRole("tab", { name: "ao" }).querySelector("svg")).toHaveClass(
 			"group-hover:opacity-0",
-			"duration-fast",
 		);
 		expect(screen.getByRole("tab", { name: "ao" })).toHaveAttribute("aria-selected", "true");
 	});
 
-	it("hugs the truncated title with adaptive shell-tab floor sizing", () => {
+	it("hugs the truncated title instead of a fixed connected width", () => {
 		renderTab({ appearance: "connected", isActive: false });
 
 		const tab = screen.getByRole("tab", { name: "ao" });
 		expect(tab.classList.contains("min-w-0")).toBe(true);
 		expect(tab.classList.contains("text-left")).toBe(true);
-		expect(tab.parentElement?.classList.contains("session-tab-icon-floor")).toBe(true);
-		expect(tab.parentElement?.classList.contains("session-tab-icon-floor--closable")).toBe(true);
-		expect(tab.parentElement?.classList.contains("inline-flex")).toBe(true);
-		expect(tab.parentElement?.classList.contains("max-w-shell-tab-max")).toBe(true);
-		expect(tab.parentElement?.classList.contains("w-shell-tab-connected")).toBe(false);
-		expect(tab.parentElement?.classList.contains("min-w-shell-tab-min")).toBe(false);
+		const frame = tab.closest("[data-terminal-tab-frame]");
+		expect(frame?.classList.contains("inline-flex")).toBe(true);
+		expect(frame?.classList.contains("shrink-0")).toBe(true);
+		expect(frame?.classList.contains("max-w-shell-tab-max")).toBe(true);
+		expect(frame?.classList.contains("w-shell-tab-connected")).toBe(false);
+		expect(frame?.classList.contains("min-w-shell-tab-min")).toBe(false);
 	});
 
 	it("uses a neutral active surface with a strong foreground selection line", () => {
 		renderTab({ appearance: "connected", isActive: true });
 
-		expect(screen.getByRole("tab", { name: "ao" }).parentElement).toHaveClass(
+		expect(screen.getByRole("tab", { name: "ao" }).closest("[data-terminal-tab-frame]")).toHaveClass(
 			"h-full",
 			"self-stretch",
 			"bg-overlay",
-			"after:h-0.5",
-			"after:bg-foreground/80",
 		);
-		expect(screen.getByRole("tab", { name: "ao" }).parentElement).not.toHaveClass("rounded-md");
-		expect(screen.getByRole("tab", { name: "ao" }).parentElement).not.toHaveClass("before:bg-accent");
-		expect(screen.getByRole("tab", { name: "ao" }).parentElement).not.toHaveClass("after:h-px");
+		expect(screen.getByTestId("active-terminal-tab-indicator")).toHaveClass("bottom-0", "h-0.5");
+		expect(screen.getByRole("tab", { name: "ao" }).closest("[data-terminal-tab-frame]")).not.toHaveClass("rounded-md", "before:bg-accent", "after:h-px");
 	});
 
 	it("matches the shared inactive tab hover surface", () => {
 		renderTab({ appearance: "connected", isActive: false });
 
-		expect(screen.getByRole("tab", { name: "ao" }).parentElement).toHaveClass(
+		expect(screen.getByRole("tab", { name: "ao" }).closest("[data-terminal-tab-frame]")).toHaveClass(
 			"h-full",
 			"self-stretch",
 			"hover:bg-raised",
@@ -152,9 +148,8 @@ describe("ShellTerminalTab rename", () => {
 	it("places the active connected-terminal indicator along the bottom edge", () => {
 		renderTab({ appearance: "connected", isActive: true });
 
-		const classes = screen.getByRole("tab", { name: "ao" }).parentElement?.classList;
-		expect(classes?.contains("after:bottom-0")).toBe(true);
-		expect(classes?.contains("after:top-0")).toBe(false);
+		const indicator = screen.getByTestId("active-terminal-tab-indicator");
+		expect(indicator).toHaveClass("bottom-0", "h-0.5");
 	});
 
 	it("closes from the glyph slot without selecting the tab", () => {
@@ -167,7 +162,7 @@ describe("ShellTerminalTab rename", () => {
 	it("optically centers the auxiliary terminal glyph with its label", () => {
 		renderTab({ appearance: "connected" });
 
-		expect(screen.getByRole("tab", { name: "ao" }).parentElement?.querySelector("svg")).toHaveClass("translate-y-px");
+		expect(screen.getByRole("tab", { name: "ao" }).querySelector("svg")?.parentElement).not.toHaveClass("-translate-y-px");
 	});
 });
 

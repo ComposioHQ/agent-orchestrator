@@ -139,12 +139,7 @@ beforeEach(() => {
 	terminalPaneState.props = undefined;
 	window.localStorage.clear();
 	setApiBaseUrl("http://127.0.0.1:3001");
-	useUiStore.setState({
-		isSidebarOpen: true,
-		isSidebarAutoCollapsed: false,
-		sidebarAutoCollapseOverride: false,
-		inspectorSessions: {},
-	});
+	useUiStore.setState({ isSidebarOpen: true, inspectorSessions: {} });
 });
 
 afterEach(async () => {
@@ -367,7 +362,7 @@ describe("ChatWorkspace timeline", () => {
 
 		expect(screen.getByLabelText("Chat")).toHaveAttribute("data-session-role", "orchestrator");
 		expect(screen.getByTestId("session-workspace-topbar")).toBeInTheDocument();
-		expect(screen.getByTestId("session-action-region")).toHaveClass("shrink-0");
+		expect(screen.getByTestId("session-action-region")).toBeInTheDocument();
 	});
 
 	it("clears the fixed titlebar nav when the sidebar is collapsed, like the terminal session", () => {
@@ -407,22 +402,10 @@ describe("ChatWorkspace timeline", () => {
 		expect(actionRegion).not.toContainElement(screen.getByRole("button", { name: "Session tab action" }));
 	});
 
-	it("reserves the macOS traffic-light notch while the sidebar is compact", () => {
-		useUiStore.setState({ isSidebarAutoCollapsed: true });
-		render(<ChatWorkspace snapshot={chatFixture} />);
-
-		expect(screen.getByTestId("session-terminal-region")).toHaveClass(
-			"session-topbar-terminal-region",
-			"session-topbar-traffic-light-clearance-mac",
-		);
-	});
-
 	it("leaves new-terminal and display controls out of the chat strip, like the terminal session", () => {
 		render(<ChatWorkspace snapshot={chatFixture} onOpenShell={vi.fn()} />);
 
 		const terminalRegion = screen.getByTestId("session-terminal-region");
-		expect(terminalRegion).toHaveClass("min-w-0", "flex-1");
-		expect(terminalRegion.style.width).toBe("");
 		expect(terminalRegion).toContainElement(screen.getByRole("tablist", { name: "Chat tabs" }));
 		expect(terminalRegion).not.toContainElement(
 			screen.queryByRole("button", { name: "New terminal" }),
@@ -1825,7 +1808,7 @@ describe("ChatWorkspace reviewer tabs", () => {
 		sessionId: chatSession.id,
 	};
 
-	it("keeps the original tab chrome while allowing primary tabs to shrink to their icons", () => {
+	it("makes each full-height tile its semantic click target", () => {
 		const onOpenReviewerTerminal = vi.fn();
 		render(
 			<ChatWorkspace
@@ -1838,25 +1821,15 @@ describe("ChatWorkspace reviewer tabs", () => {
 
 		const chatTab = screen.getByRole("tab", { name: /^Codex/ });
 		const reviewerTab = screen.getByRole("tab", { name: "Reviewer" });
-		const scrollRegion = document.querySelector(".overflow-x-auto");
-		expect(chatTab).toHaveClass(
-			"session-tab-icon-floor",
-			"max-w-shell-tab-max",
-			"overflow-hidden",
-		);
+		expect(chatTab).toHaveClass("px-2", "cursor-pointer");
+		expect(chatTab.closest("[data-terminal-tab-frame]")).toHaveClass("self-stretch");
 		expect(reviewerTab).toHaveClass(
-			"session-tab-icon-floor",
-			"max-w-shell-tab-max",
-			"shrink",
-			"overflow-hidden",
+			"self-stretch",
+			"px-3",
+			"cursor-pointer",
+			"focus-visible:outline-2",
 		);
-		expect(chatTab).not.toHaveClass("w-shell-tab-connected", "min-w-shell-tab-min", "shrink-0");
-		expect(reviewerTab).not.toHaveClass("w-shell-tab-connected", "min-w-shell-tab-min", "shrink-0");
-		expect(chatTab.querySelector("img")).toBeInTheDocument();
 		expect(reviewerTab.querySelector("img")).toBeInTheDocument();
-		expect(scrollRegion?.contains(chatTab)).toBe(false);
-		expect(scrollRegion?.contains(reviewerTab)).toBe(true);
-		expect(screen.getByTestId("session-terminal-region").style.getPropertyValue("--session-tab-share")).toBe("");
 
 		fireEvent.click(reviewerTab);
 		expect(onOpenReviewerTerminal).toHaveBeenCalledWith(reviewerTerminal);
@@ -2033,37 +2006,6 @@ describe("ChatWorkspace reviewer tabs", () => {
 		expect(previousTabListeners.size).toBe(1);
 		act(() => [...previousTabListeners][0]?.());
 		expect(onSelectChat).toHaveBeenCalledOnce();
-	});
-
-	it("keeps the owner tab fixed while reviewer and shell tabs scroll", () => {
-		const shells = [
-			{
-				handleId: "shell-1",
-				sessionId: chatFixture.sessionId,
-				title: "chat worktree shell",
-				workingDir: "/p",
-				createdAt: "2026-08-04T00:00:00Z",
-			},
-		];
-		render(
-			<ChatWorkspace
-				snapshot={idleSnapshot()}
-				session={chatSession}
-				reviewerTerminal={reviewerTerminal}
-				shellTerminals={shells}
-			/>,
-		);
-
-		const scrollRegion = document.querySelector(".overflow-x-auto");
-		const chatTab = screen.getByRole("tab", { name: /^Codex/ });
-		const reviewerTab = screen.getByRole("tab", { name: "Reviewer" });
-		const shellTab = screen.getByRole("tab", { name: "chat worktree shell" });
-
-		expect(chatTab).toHaveClass("session-tab-icon-floor");
-		expect(reviewerTab).toHaveClass("session-tab-icon-floor", "shrink");
-		expect(scrollRegion?.contains(chatTab)).toBe(false);
-		expect(scrollRegion?.contains(reviewerTab)).toBe(true);
-		expect(scrollRegion?.contains(shellTab.parentElement)).toBe(true);
 	});
 });
 

@@ -98,11 +98,7 @@ function terminalTargetMatches(left?: TerminalTarget, right?: TerminalTarget): b
 		return left.handleId === right.handleId && left.harness === right.harness;
 	}
 	if (left.kind === "shell" && right.kind === "shell") {
-		return (
-			left.handleId === right.handleId &&
-			left.generation === right.generation &&
-			left.title === right.title
-		);
+		return left.handleId === right.handleId && left.generation === right.generation;
 	}
 	return false;
 }

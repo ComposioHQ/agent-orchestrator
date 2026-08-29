@@ -505,6 +505,23 @@
 	border-radius: 0;
 }
 
+/* A persistent edge fade signals that the tab strip can scroll horizontally. */
+.session-tab-scroll-fade {
+	pointer-events: none;
+	position: absolute;
+	inset-block: 0;
+	right: 0;
+	z-index: 2;
+	width: var(--space-8);
+	background: linear-gradient(90deg, transparent 0%, var(--color-bg-primary) 82%);
+}
+
+.session-tab-scroll-fade--left {
+	left: 0;
+	right: auto;
+	background: linear-gradient(270deg, transparent 0%, var(--color-bg-primary) 82%);
+}
+
 /* Session actions are portaled into the center pane. Make their responsive
  * labels follow that pane's width instead of the full window width. */
 .workspace-topbar-container {
