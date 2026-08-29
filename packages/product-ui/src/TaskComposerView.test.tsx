@@ -56,6 +56,7 @@ function viewProps(overrides: Partial<TaskComposerViewProps> = {}): TaskComposer
 			mode: "",
 			catalog: {
 				allowCustom: true,
+				customModelEntry: "direct",
 				models: [{ id: "gpt-5", label: "GPT-5" }],
 				selectionMode: "catalog",
 			},

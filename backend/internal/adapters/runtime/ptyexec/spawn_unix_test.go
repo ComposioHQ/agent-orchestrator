@@ -4,9 +4,11 @@ package ptyexec
 
 import (
 	"context"
+	"errors"
 	"io"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -19,7 +21,9 @@ func TestSpawnInDirUsesRequestedWorkingDirectory(t *testing.T) {
 	}
 	defer p.Close()
 	output, err := io.ReadAll(p)
-	if err != nil {
+	// Linux PTYs report EIO rather than EOF when the slave closes after the
+	// child exits. The output read before that terminal condition remains valid.
+	if err != nil && !errors.Is(err, syscall.EIO) {
 		t.Fatalf("read output: %v", err)
 	}
 	if strings.TrimSpace(string(output)) != filepath.Clean(dir) {

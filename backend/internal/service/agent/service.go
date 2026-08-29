@@ -596,14 +596,11 @@ func (s *Service) loadModels(ctx context.Context, agentID, projectID string, mod
 	discovered, discoverErr := s.discoverer.Discover(ctx, request)
 	discovered = applyCustomModelEntryPolicy(discovered, policy)
 	discovered.BinaryVersion = version
-	discovered.ValidatedAt = time.Now().UTC()
-	discovered.RefreshRecommended = false
 	if discoverErr != nil {
 		if hasCached && len(cached.Catalog.Models) > len(discovered.Models) {
 			cached.Catalog.Stale = true
 			cached.Catalog.Warning = discoverErr.Error()
-			cached.Catalog.ValidatedAt = time.Now().UTC()
-			cached.Catalog.RefreshRecommended = false
+			cached.Catalog.RefreshRecommended = true
 			if err := s.saveCatalog(ctx, projectID, cached.Catalog); err != nil {
 				cached.Catalog.Warning = appendCacheWarning(cached.Catalog.Warning)
 			}
@@ -612,6 +609,7 @@ func (s *Service) loadModels(ctx context.Context, agentID, projectID string, mod
 		if len(discovered.Models) > 0 {
 			discovered.Stale = true
 			discovered.Warning = discoverErr.Error()
+			discovered.RefreshRecommended = true
 			if err := s.saveCatalog(ctx, projectID, discovered); err != nil {
 				discovered.Warning = appendCacheWarning(discovered.Warning)
 			}
@@ -620,8 +618,7 @@ func (s *Service) loadModels(ctx context.Context, agentID, projectID string, mod
 		if hasCached {
 			cached.Catalog.Stale = true
 			cached.Catalog.Warning = discoverErr.Error()
-			cached.Catalog.ValidatedAt = time.Now().UTC()
-			cached.Catalog.RefreshRecommended = false
+			cached.Catalog.RefreshRecommended = true
 			if err := s.saveCatalog(ctx, projectID, cached.Catalog); err != nil {
 				cached.Catalog.Warning = appendCacheWarning(cached.Catalog.Warning)
 			}
@@ -631,17 +628,18 @@ func (s *Service) loadModels(ctx context.Context, agentID, projectID string, mod
 			shared = applyCustomModelEntryPolicy(shared, policy)
 			shared.Stale = true
 			shared.Warning = discoverErr.Error()
-			shared.ValidatedAt = time.Now().UTC()
-			shared.RefreshRecommended = false
+			shared.RefreshRecommended = true
 			return shared, nil
 		}
 		fallback := policy
 		fallback.BinaryVersion = version
-		fallback.ValidatedAt = time.Now().UTC()
 		fallback.Stale = true
 		fallback.Warning = discoverErr.Error()
+		fallback.RefreshRecommended = true
 		return fallback, nil
 	}
+	discovered.ValidatedAt = time.Now().UTC()
+	discovered.RefreshRecommended = false
 	if err := s.saveCatalog(ctx, projectID, discovered); err != nil {
 		discovered.Warning = appendCacheWarning(discovered.Warning)
 	}

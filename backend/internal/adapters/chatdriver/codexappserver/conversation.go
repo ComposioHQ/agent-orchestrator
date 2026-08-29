@@ -318,7 +318,7 @@ func (c *conversation) ListModels(ctx context.Context) ([]ports.ChatModel, error
 }
 
 func listModels(ctx context.Context, connection *conn) ([]ports.ChatModel, error) {
-	var resp struct {
+	type modelListResponse struct {
 		Data []struct {
 			ID          string `json:"id"`
 			Model       string `json:"model"`
@@ -331,43 +331,56 @@ func listModels(ctx context.Context, connection *conn) ([]ports.ChatModel, error
 				ReasoningEffort string `json:"reasoningEffort"`
 			} `json:"supportedReasoningEfforts"`
 		} `json:"data"`
-	}
-	if err := connection.request(ctx, "model/list", map[string]any{}, &resp); err != nil {
-		return nil, fmt.Errorf("model/list: %w", err)
+		NextCursor *string `json:"nextCursor"`
 	}
 
-	models := make([]ports.ChatModel, 0, len(resp.Data))
-	for _, entry := range resp.Data {
-		if entry.Hidden {
-			// The provider marks a model hidden when the account should not be
-			// offered it. Showing it anyway would offer a choice that then fails.
-			continue
+	var models []ports.ChatModel
+	var cursor string
+	for {
+		params := map[string]any{}
+		if cursor != "" {
+			params["cursor"] = cursor
 		}
-		id := entry.ID
-		if id == "" {
-			id = entry.Model
+		var resp modelListResponse
+		if err := connection.request(ctx, "model/list", params, &resp); err != nil {
+			return nil, fmt.Errorf("model/list: %w", err)
 		}
-		if id == "" {
-			continue
-		}
-		efforts := make([]string, 0, len(entry.Efforts))
-		for _, effort := range entry.Efforts {
-			if effort.ReasoningEffort != "" {
-				efforts = append(efforts, effort.ReasoningEffort)
+		for _, entry := range resp.Data {
+			if entry.Hidden {
+				// The provider marks a model hidden when the account should not be
+				// offered it. Showing it anyway would offer a choice that then fails.
+				continue
 			}
+			id := entry.ID
+			if id == "" {
+				id = entry.Model
+			}
+			if id == "" {
+				continue
+			}
+			efforts := make([]string, 0, len(entry.Efforts))
+			for _, effort := range entry.Efforts {
+				if effort.ReasoningEffort != "" {
+					efforts = append(efforts, effort.ReasoningEffort)
+				}
+			}
+			display := entry.DisplayName
+			if display == "" {
+				display = id
+			}
+			models = append(models, ports.ChatModel{
+				ID:            id,
+				DisplayName:   display,
+				Description:   entry.Description,
+				Default:       entry.IsDefault,
+				Efforts:       efforts,
+				DefaultEffort: entry.DefaultEff,
+			})
 		}
-		display := entry.DisplayName
-		if display == "" {
-			display = id
+		if resp.NextCursor == nil || *resp.NextCursor == "" {
+			break
 		}
-		models = append(models, ports.ChatModel{
-			ID:            id,
-			DisplayName:   display,
-			Description:   entry.Description,
-			Default:       entry.IsDefault,
-			Efforts:       efforts,
-			DefaultEffort: entry.DefaultEff,
-		})
+		cursor = *resp.NextCursor
 	}
 	return models, nil
 }

@@ -259,6 +259,7 @@ describe("TaskComposer", () => {
 				agent: "codex",
 				selectionMode: "mode",
 				models: [{ id: "plan", label: "Plan", isDefault: true }],
+				customModelEntry: "none",
 				allowCustom: false,
 			},
 			controls: async () => [await screen.findByRole("button", { name: "Model" })],
@@ -269,6 +270,7 @@ describe("TaskComposer", () => {
 				agent: "codex",
 				selectionMode: "catalog",
 				models: [{ id: "gpt-5", label: "GPT-5", isDefault: true }],
+				customModelEntry: "none",
 				allowCustom: false,
 			},
 			controls: async () => [await screen.findByRole("button", { name: "Model" })],
@@ -279,11 +281,12 @@ describe("TaskComposer", () => {
 				agent: "codex",
 				selectionMode: "catalog",
 				models: [{ id: "gpt-5", label: "GPT-5", isDefault: true }],
+				customModelEntry: "direct",
 				allowCustom: true,
 			},
 			controls: async () => {
 				await userEvent.click(await screen.findByRole("button", { name: "Model" }));
-				await userEvent.click(await screen.findByRole("menuitem", { name: "Custom model…" }));
+				await userEvent.click(await screen.findByRole("menuitem", { name: "Enter model ID…" }));
 				return [
 					screen.getByRole("textbox", { name: "Model" }),
 					screen.getByRole("button", { name: "Model options" }),

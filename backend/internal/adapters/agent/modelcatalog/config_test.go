@@ -22,11 +22,70 @@ func TestParseQwenModelsUsesConfiguredProviderSelectors(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []ports.AgentModelInfo{
-		{ID: "openai:gpt-5.6-sol", Label: "GPT-5.6 Sol", Provider: "openai", IsDefault: true},
-		{ID: "anthropic:claude-fable-5", Label: "Fable 5", Provider: "anthropic"},
+		{ID: "gpt-5.6-sol", Label: "GPT-5.6 Sol", Provider: "openai", IsDefault: true},
+		{ID: "claude-fable-5", Label: "Fable 5", Provider: "anthropic"},
 	}
 	if !reflect.DeepEqual(models, want) {
 		t.Fatalf("models = %#v, want %#v", models, want)
+	}
+}
+
+func TestParseAutoHandModelsUsesConfiguredProviderModel(t *testing.T) {
+	models, err := parseAutoHandModels([]byte(`{
+		"provider": "zai",
+		"zai": {"model": "glm-5.1"}
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []ports.AgentModelInfo{{
+		ID: "zai/glm-5.1", Label: "glm-5.1", Provider: "zai", IsDefault: true,
+	}}
+	if !reflect.DeepEqual(models, want) {
+		t.Fatalf("models = %#v, want %#v", models, want)
+	}
+}
+
+func TestAutoHandDiscoveryReadsConfigurationWithoutRunningBinary(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	path := filepath.Join(home, ".autohand", "config.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"provider":"zai","zai":{"model":"glm-5.1"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := Discover(context.Background(), "autohand", "", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Models) != 1 || got.Models[0].ID != "zai/glm-5.1" || got.Source != "config" {
+		t.Fatalf("catalog = %#v", got)
+	}
+}
+
+func TestQwenConfigDiscoveryUsesQwenHome(t *testing.T) {
+	home := t.TempDir()
+	qwenHome := filepath.Join(home, "custom-qwen")
+	t.Setenv("HOME", home)
+	t.Setenv("QWEN_HOME", qwenHome)
+	if err := os.MkdirAll(qwenHome, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(qwenHome, "settings.json"), []byte(`{
+		"modelProviders":{"openai":[{"id":"gpt-5.6-sol","name":"Sol"}]}
+	}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := Discover(context.Background(), "qwen", "", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Models) != 1 || got.Models[0].ID != "gpt-5.6-sol" {
+		t.Fatalf("catalog = %#v", got)
 	}
 }
 

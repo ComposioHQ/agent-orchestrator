@@ -23,7 +23,7 @@ type configParser func([]byte) ([]ports.AgentModelInfo, error)
 
 func hasConfigDiscoverySource(agentID string) bool {
 	switch agentID {
-	case "qwen", "continue", "goose", "vibe", "cline":
+	case "qwen", "continue", "goose", "vibe", "cline", "autohand":
 		return true
 	default:
 		return false
@@ -78,6 +78,8 @@ func configModelParser(agentID string) configParser {
 		return parseVibeModels
 	case "cline":
 		return parseClineModels
+	case "autohand":
+		return parseAutoHandModels
 	default:
 		return nil
 	}
@@ -88,8 +90,8 @@ func modelConfigPaths(agentID, workingDir string, env map[string]string) []strin
 	var paths []string
 	switch agentID {
 	case "qwen":
-		if home != "" {
-			paths = append(paths, filepath.Join(home, ".qwen", "settings.json"))
+		if root := qwenConfigHome(home, env); root != "" {
+			paths = append(paths, filepath.Join(root, "settings.json"))
 		}
 		if workingDir != "" {
 			paths = append(paths, filepath.Join(workingDir, ".qwen", "settings.json"))
@@ -117,8 +119,32 @@ func modelConfigPaths(agentID, workingDir string, env map[string]string) []strin
 		if home != "" {
 			paths = append(paths, filepath.Join(home, ".cline", "data", "settings", "providers.json"))
 		}
+	case "autohand":
+		if home != "" {
+			paths = append(paths, filepath.Join(home, ".autohand", "config.json"))
+		}
 	}
 	return paths
+}
+
+func qwenConfigHome(home string, env map[string]string) string {
+	root := strings.TrimSpace(env["QWEN_HOME"])
+	if root == "" {
+		root = strings.TrimSpace(os.Getenv("QWEN_HOME"))
+	}
+	if root == "" {
+		if home == "" {
+			return ""
+		}
+		return filepath.Join(home, ".qwen")
+	}
+	if root == "~" {
+		return home
+	}
+	if strings.HasPrefix(root, "~/") {
+		return filepath.Join(home, strings.TrimPrefix(root, "~/"))
+	}
+	return root
 }
 
 func readModelConfig(path string) ([]byte, error) {
@@ -180,12 +206,48 @@ func parseQwenModels(raw []byte) ([]ports.AgentModelInfo, error) {
 				label = id
 			}
 			models = append(models, ports.AgentModelInfo{
-				ID: provider + ":" + id, Label: label, Provider: provider,
+				ID: id, Label: label, Provider: provider,
 				IsDefault: strings.EqualFold(id, strings.TrimSpace(config.Model.Name)),
 			})
 		}
 	}
 	return normalize(models), nil
+}
+
+func parseAutoHandModels(raw []byte) ([]ports.AgentModelInfo, error) {
+	var config struct {
+		Provider string `json:"provider"`
+	}
+	var values map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &values); err != nil {
+		return nil, err
+	}
+	if providerRaw := values["provider"]; providerRaw != nil {
+		if err := json.Unmarshal(providerRaw, &config.Provider); err != nil {
+			return nil, err
+		}
+	}
+	provider := strings.TrimSpace(config.Provider)
+	if provider == "" {
+		return nil, nil
+	}
+	var providerConfig struct {
+		Model string `json:"model"`
+	}
+	if err := json.Unmarshal(values[provider], &providerConfig); err != nil {
+		return nil, err
+	}
+	modelID := strings.TrimSpace(providerConfig.Model)
+	if modelID == "" {
+		return nil, nil
+	}
+	selector := modelID
+	if !strings.Contains(modelID, "/") {
+		selector = provider + "/" + modelID
+	}
+	return []ports.AgentModelInfo{{
+		ID: selector, Label: modelID, Provider: provider, IsDefault: true,
+	}}, nil
 }
 
 func parseContinueModels(raw []byte) ([]ports.AgentModelInfo, error) {

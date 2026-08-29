@@ -1169,6 +1169,7 @@ func TestModelsReturnsDiscoveredCatalogWhenCacheWriteFails(t *testing.T) {
 }
 
 func TestModelsKeepsFullerCacheWhenRefreshReturnsPartialCatalog(t *testing.T) {
+	lastSuccessfulValidation := time.Now().Add(-modelCatalogTrustWindow - time.Hour)
 	cached := ports.AgentModelCatalog{
 		AgentID:       "opencode",
 		SelectionMode: ports.ModelSelectionCatalog,
@@ -1179,7 +1180,8 @@ func TestModelsKeepsFullerCacheWhenRefreshReturnsPartialCatalog(t *testing.T) {
 		},
 		AllowCustom: true,
 		Source:      "cli",
-		FetchedAt:   time.Now().Add(-time.Hour),
+		FetchedAt:   lastSuccessfulValidation,
+		ValidatedAt: lastSuccessfulValidation,
 	}
 	data, err := json.Marshal(cached)
 	if err != nil {
@@ -1207,6 +1209,12 @@ func TestModelsKeepsFullerCacheWhenRefreshReturnsPartialCatalog(t *testing.T) {
 	}
 	if len(got.Models) != 3 || !got.Stale || got.Warning == "" {
 		t.Fatalf("catalog = %#v, want fuller stale cache", got)
+	}
+	if !got.ValidatedAt.Equal(lastSuccessfulValidation) {
+		t.Fatalf("validatedAt = %s, want last successful validation %s", got.ValidatedAt, lastSuccessfulValidation)
+	}
+	if !got.RefreshRecommended {
+		t.Fatal("failed refresh did not remain eligible for automatic retry")
 	}
 }
 

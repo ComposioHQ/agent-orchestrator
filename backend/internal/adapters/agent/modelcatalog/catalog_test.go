@@ -58,21 +58,11 @@ func TestOpenCodeDiscoveryUsesPureMode(t *testing.T) {
 	}
 }
 
-func TestAiderAndAutohandUseDocumentedDiscoveryCommands(t *testing.T) {
-	tests := []struct {
-		agent string
-		want  []string
-	}{
-		{agent: "aider", want: []string{"--no-check-update", "--no-git", "--no-gitignore", "--no-analytics", "--list-models", "."}},
-		{agent: "autohand", want: []string{"models", "list"}},
-	}
-	for _, tc := range tests {
-		t.Run(tc.agent, func(t *testing.T) {
-			spec := commandSpecs[tc.agent]
-			if strings.Join(spec.args, "\x00") != strings.Join(tc.want, "\x00") {
-				t.Fatalf("%s discovery args = %q, want %q", tc.agent, spec.args, tc.want)
-			}
-		})
+func TestAiderUsesDocumentedDiscoveryCommand(t *testing.T) {
+	spec := commandSpecs["aider"]
+	want := []string{"--no-check-update", "--no-git", "--no-gitignore", "--no-analytics", "--list-models", "."}
+	if strings.Join(spec.args, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("aider discovery args = %q, want %q", spec.args, want)
 	}
 }
 
@@ -145,26 +135,26 @@ func TestCustomModelEntryPolicy(t *testing.T) {
 		{agent: "grok", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
 		{agent: "cursor", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
 		{agent: "qwen", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
-		{agent: "copilot", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
+		{agent: "copilot", wantEntryMode: "none", wantSelection: ports.ModelSelectionCatalog},
 		{agent: "kimi", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
 		{agent: "muse", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
-		{agent: "droid", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
+		{agent: "droid", wantEntryMode: "none", wantSelection: ports.ModelSelectionCatalog},
 		{agent: "amp", wantEntryMode: "none", wantSelection: ports.ModelSelectionModeList},
-		{agent: "agy", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
-		{agent: "crush", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
+		{agent: "agy", wantEntryMode: "none", wantSelection: ports.ModelSelectionCatalog},
+		{agent: "crush", wantEntryMode: "none", wantSelection: ports.ModelSelectionCatalog},
 		{agent: "aider", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
 		{agent: "goose", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
-		{agent: "auggie", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
-		{agent: "continue", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
-		{agent: "devin", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
-		{agent: "omp", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
-		{agent: "cline", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
-		{agent: "kiro", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
-		{agent: "kilocode", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
-		{agent: "vibe", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
-		{agent: "pi", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
-		{agent: "kimchi", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
-		{agent: "prime-agent", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
+		{agent: "auggie", wantEntryMode: "none", wantSelection: ports.ModelSelectionCatalog},
+		{agent: "continue", wantEntryMode: "configured", wantSelection: ports.ModelSelectionCatalog},
+		{agent: "devin", wantEntryMode: "none", wantSelection: ports.ModelSelectionCatalog},
+		{agent: "omp", wantEntryMode: "none", wantSelection: ports.ModelSelectionCatalog},
+		{agent: "cline", wantEntryMode: "configured", wantSelection: ports.ModelSelectionCatalog},
+		{agent: "kiro", wantEntryMode: "none", wantSelection: ports.ModelSelectionCatalog},
+		{agent: "kilocode", wantEntryMode: "configured", wantSelection: ports.ModelSelectionCatalog},
+		{agent: "vibe", wantEntryMode: "configured", wantSelection: ports.ModelSelectionCatalog},
+		{agent: "pi", wantEntryMode: "configured", wantSelection: ports.ModelSelectionCatalog},
+		{agent: "kimchi", wantEntryMode: "configured", wantSelection: ports.ModelSelectionCatalog},
+		{agent: "prime-agent", wantEntryMode: "configured", wantSelection: ports.ModelSelectionCatalog},
 		{agent: "autohand", wantEntryMode: "direct", wantSelection: ports.ModelSelectionCatalog},
 	}
 

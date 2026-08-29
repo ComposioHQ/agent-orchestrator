@@ -44,7 +44,6 @@ var ansiPattern = regexp.MustCompile(`\x1b\[[0-9;]*[[:alpha:]]`)
 
 var commandSpecs = map[string]commandSpec{
 	"aider":       {args: []string{"--no-check-update", "--no-git", "--no-gitignore", "--no-analytics", "--list-models", "."}, parser: parseIDLines},
-	"autohand":    {args: []string{"models", "list"}, parser: parseIDLines},
 	"opencode":    {args: []string{"--pure", "models"}, parser: parseIDLines},
 	"grok":        {args: []string{"models"}, parser: parseGrokModels},
 	"cursor":      {args: []string{"models"}, parser: parseCursorModels},
@@ -116,11 +115,11 @@ func Manual(agentID string) ports.AgentModelCatalog {
 // availability remain agent-owned and are never listed here.
 func customModelEntryMode(agentID string) ports.CustomModelEntryMode {
 	switch agentID {
-	case "claude-code", "codex", "opencode", "grok", "cursor", "qwen", "copilot",
-		"kimi", "muse", "droid", "agy", "crush", "aider", "goose", "auggie",
-		"continue", "devin", "omp", "cline", "kiro", "kilocode", "vibe", "pi",
-		"kimchi", "prime-agent", "autohand":
+	case "claude-code", "codex", "opencode", "grok", "cursor", "qwen",
+		"kimi", "muse", "aider", "goose", "autohand":
 		return ports.CustomModelEntryDirect
+	case "continue", "cline", "kilocode", "vibe", "pi", "kimchi", "prime-agent":
+		return ports.CustomModelEntryConfigured
 	default:
 		return ports.CustomModelEntryNone
 	}
