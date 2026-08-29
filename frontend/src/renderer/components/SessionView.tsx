@@ -28,7 +28,6 @@ import { SessionFileExplorer } from "./SessionFileExplorer";
 import { SessionFileTabs } from "./SessionFileTabs";
 import { SessionFileWorkspace } from "./SessionFileWorkspace";
 import { SessionActionsMenu } from "./SessionActionsMenu";
-import { SessionBranchBadge } from "./SessionBranchBadge";
 import { SessionInspector } from "./SessionInspector";
 import {
 	SessionInterfaceSwitchButton,
@@ -1015,12 +1014,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			{handoffMenuItem}
 		</SessionActionsMenu>
 	);
-	const sessionHeaderActions = (
-		<>
-			<SessionBranchBadge branch={session?.branch} />
-			<ShellTopbar embedded />
-		</>
-	);
+	const sessionHeaderActions = <ShellTopbar embedded />;
 
 	useEffect(() => {
 		setHandoffDialogOpen(false);
