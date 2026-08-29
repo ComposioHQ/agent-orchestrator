@@ -167,8 +167,15 @@ describe("TopbarOpenEditorButton", () => {
 		expect(screen.getByRole("button", { name: "Open workspace options" })).toBeDisabled();
 	});
 
-	it("keeps a fresh session neutral while bounded readiness polling recovers", async () => {
+	it("never renders a transient unavailable error while a fresh session becomes ready", async () => {
 		vi.useFakeTimers();
+		const renderedAlerts: string[] = [];
+		const alertObserver = new MutationObserver(() => {
+			for (const alert of document.querySelectorAll('[role="alert"]')) {
+				renderedAlerts.push(alert.textContent ?? "");
+			}
+		});
+		alertObserver.observe(document.body, { childList: true, subtree: true, characterData: true });
 		try {
 			const getState = vi
 				.fn()
@@ -187,13 +194,52 @@ describe("TopbarOpenEditorButton", () => {
 			expect(screen.getByRole("button", { name: "Preparing workspace…" })).toBeDisabled();
 
 			await act(async () => {
-				await vi.advanceTimersByTimeAsync(500);
+				await vi.advanceTimersByTimeAsync(499);
+			});
+			expect(getState).toHaveBeenCalledTimes(1);
+			expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+			expect(screen.getByRole("button", { name: "Preparing workspace…" })).toBeDisabled();
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(1);
 			});
 			await act(async () => {
 				await vi.runOnlyPendingTimersAsync();
 			});
 			expect(getState).toHaveBeenCalledTimes(2);
 			expect(screen.getByRole("button", { name: "Open in Cursor" })).toBeEnabled();
+			expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+			expect(renderedAlerts).toEqual([]);
+		} finally {
+			alertObserver.disconnect();
+			vi.useRealTimers();
+		}
+	});
+
+	it("shows the unavailable error only after the fresh-session readiness timeout", async () => {
+		vi.useFakeTimers();
+		try {
+			const getState = vi.fn().mockResolvedValue({
+				...availableState,
+				workspaceAvailable: false,
+				unavailableReason: "Session workspace is not available.",
+			});
+			window.ao!.editorHandoff.getState = getState;
+			renderButton({ sessionCreatedAt: new Date().toISOString() });
+
+			await act(async () => {});
+			expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+			expect(screen.getByRole("button", { name: "Preparing workspace…" })).toBeDisabled();
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(5_000);
+			});
+			await act(async () => {
+				await vi.runOnlyPendingTimersAsync();
+			});
+			expect(getState).toHaveBeenCalledTimes(11);
+			expect(screen.getByRole("alert")).toHaveTextContent("Session workspace is not available.");
+			expect(screen.getByRole("button", { name: "Open in Cursor" })).toBeDisabled();
 		} finally {
 			vi.useRealTimers();
 		}
