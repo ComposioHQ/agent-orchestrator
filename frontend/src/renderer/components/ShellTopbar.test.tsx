@@ -211,6 +211,20 @@ describe("ShellTopbar status pill", () => {
 		expect(identity.querySelector(".lucide-folder")).not.toBeNull();
 	});
 
+	// The branch belongs to detail surfaces, not the top bar: an orchestrator's
+	// identity stays the project crumb plus its activity, with its own controls
+	// intact (#3874, regressed by the badge #4252 added beside these actions).
+	it("keeps the worktree branch out of the orchestrator identity and actions", () => {
+		renderTopbar(sessionWith({ ...orchestrator, branch: "ao/orch-root" }));
+
+		const identity = screen.getByTestId("session-topbar-identity");
+		expect(identity.textContent).toContain("my-app");
+		expect(identity.textContent).toContain("Working");
+		expect(screen.queryByText("ao/orch-root")).toBeNull();
+		expect(screen.getByRole("button", { name: "Open Kanban" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "New task" })).toBeInTheDocument();
+	});
+
 	it("renders only session actions when embedded in the terminal bar", () => {
 		renderTopbar(
 			sessionWith(),

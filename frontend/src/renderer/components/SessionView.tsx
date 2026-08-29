@@ -27,7 +27,6 @@ import { ResizeHandle } from "./ResizeHandle";
 import { SessionFileExplorer } from "./SessionFileExplorer";
 import { SessionFileTabs } from "./SessionFileTabs";
 import { SessionFileWorkspace } from "./SessionFileWorkspace";
-import { SessionBranchBadge } from "./SessionBranchBadge";
 import { SessionInspector } from "./SessionInspector";
 import {
 	SessionInterfaceActionGroup,
@@ -884,12 +883,10 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			{interfaceSwitchAction}
 		</SessionInterfaceActionGroup>
 	) : null;
-	const sessionHeaderActions = (
-		<>
-			<SessionBranchBadge branch={session?.branch} />
-			<ShellTopbar embedded sessionAction={sessionLocalActions} />
-		</>
-	);
+	// The prime top bar carries session identity, status, and controls only. The
+	// worktree branch stays on detail surfaces (inspector PR summary, board card,
+	// command palette) — it is long, rarely actionable, and crowds the actions.
+	const sessionHeaderActions = <ShellTopbar embedded sessionAction={sessionLocalActions} />;
 	const fileAnnotation = useFileAnnotation(sessionId);
 	const centerFileTabs = (
 		<SessionFileTabs

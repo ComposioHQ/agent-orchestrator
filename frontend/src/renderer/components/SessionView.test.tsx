@@ -681,6 +681,27 @@ describe("SessionView", () => {
 		expect(screen.queryByRole("button", { name: "New terminal" })).not.toBeInTheDocument();
 	});
 
+	// Regression (#3874 then re-added by #4252): the prime top bar carries session
+	// identity, status, and controls — never the worktree branch. A branch badge
+	// beside the actions duplicates a fact the inspector, board card, and command
+	// palette already own, and its long name crowds the controls it sits next to.
+	it.each([
+		["a terminal worker", "sess-1", "tui", true],
+		["a chat worker", "sess-1", "chat", true],
+		["an orchestrator", "sess-orch", "tui", false],
+	] as const)("keeps the git branch out of %s session's top bar", (_label, sessionId, mode, offersNewTerminal) => {
+		workerSession(sessionId).mode = mode;
+
+		render(<SessionView sessionId={sessionId} />);
+
+		expect(screen.queryByText("ao/sess-1")).not.toBeInTheDocument();
+		expect(screen.queryByTitle("ao/sess-1")).not.toBeInTheDocument();
+		expect(document.querySelector(".lucide-git-branch")).toBeNull();
+		// The session's own actions still ride in the same top-bar slot.
+		expect(screen.getByTestId("mock-session-topbar")).toBeInTheDocument();
+		expect(Boolean(screen.queryByRole("button", { name: "New terminal" }))).toBe(offersNewTerminal);
+	});
+
 	it("shows a shell opened from chat and returns to the chat agent tab", () => {
 		const session = workspaces[0]!.sessions.find((candidate) => candidate.id === "sess-1")!;
 		session.mode = "chat";
