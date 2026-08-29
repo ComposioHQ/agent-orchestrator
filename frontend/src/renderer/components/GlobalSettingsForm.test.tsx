@@ -372,19 +372,19 @@ describe("GlobalSettingsForm", () => {
 
 	it("shows the current app version", async () => {
 		renderForm();
-		expect(await screen.findByTestId("app-version")).toHaveTextContent("v1.4.0");
-		expect(screen.getByTestId("installed-update-channel")).toHaveTextContent("Stable");
+		await waitFor(() => expect(screen.getByTestId("app-version")).toHaveTextContent("v1.4.0"));
+		await waitFor(() => expect(screen.getByTestId("installed-update-channel")).toHaveTextContent("Stable"));
 	});
 
 	it("shows the installed Nightly channel separately from the selected update feed", async () => {
 		getVersion.mockResolvedValue("1.4.0-nightly.202608271030");
 		renderForm();
-		expect(await screen.findByTestId("installed-update-channel")).toHaveTextContent("Nightly (Pre-release)");
+		await waitFor(() => expect(screen.getByTestId("installed-update-channel")).toHaveTextContent("Nightly (Pre-release)"));
 	});
 
 	it("shows an explicit idle update state and triggers a manual check", async () => {
 		renderForm();
-		expect(await screen.findByTestId("app-version")).toHaveTextContent("v1.4.0");
+		await waitFor(() => expect(screen.getByTestId("app-version")).toHaveTextContent("v1.4.0"));
 		expect(screen.getByText("Updates haven't been checked yet.")).toBeInTheDocument();
 		await userEvent.click(screen.getByRole("button", { name: "Check for updates" }));
 		expect(updCheck).toHaveBeenCalled();
