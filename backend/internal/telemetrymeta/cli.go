@@ -75,6 +75,8 @@ var legacyActorlessSystemCLICommands = map[string]struct{}{
 var legacyActorlessUserCLICommands = map[string]struct{}{
 	"ao agent":                  {},
 	"ao agent ls":               {},
+	"ao agent profile":          {},
+	"ao agent profile ls":       {},
 	"ao browser":                {},
 	"ao browser check":          {},
 	"ao browser click":          {},

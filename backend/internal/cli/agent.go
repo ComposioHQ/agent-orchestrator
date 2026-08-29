@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"text/tabwriter"
@@ -28,10 +30,12 @@ type agentInventory struct {
 }
 
 type agentReadinessObservation struct {
-	State      string `json:"state"`
-	Freshness  string `json:"freshness"`
-	ReasonCode string `json:"reasonCode"`
-	Reason     string `json:"reason"`
+	State       string  `json:"state"`
+	Freshness   string  `json:"freshness"`
+	CheckedAt   *string `json:"checkedAt,omitempty"`
+	AttemptedAt *string `json:"attemptedAt,omitempty"`
+	ReasonCode  string  `json:"reasonCode"`
+	Reason      string  `json:"reason"`
 }
 
 type agentReadinessSnapshot struct {
@@ -59,7 +63,112 @@ func newAgentCommand(ctx *commandContext) *cobra.Command {
 		Short: "Inspect agent catalog readiness",
 	}
 	cmd.AddCommand(newAgentListCommand(ctx))
+	cmd.AddCommand(newAgentProfileCommand(ctx))
 	return cmd
+}
+
+type codexProfileCapacityCLI struct {
+	State             string            `json:"state"`
+	Freshness         string            `json:"freshness"`
+	Plan              *string           `json:"plan,omitempty"`
+	UsedPercent       *float64          `json:"usedPercent,omitempty"`
+	ResetsAt          *string           `json:"resetsAt,omitempty"`
+	ObservedAt        *string           `json:"observedAt,omitempty"`
+	CheckedAt         *string           `json:"checkedAt,omitempty"`
+	AttemptedAt       *string           `json:"attemptedAt,omitempty"`
+	ReasonCode        string            `json:"reasonCode"`
+	Reason            string            `json:"reason"`
+	Overall           json.RawMessage   `json:"overall,omitempty"`
+	AdditionalBuckets []json.RawMessage `json:"additionalBuckets"`
+}
+
+type codexProfileCLI struct {
+	ID                      string                    `json:"id"`
+	Label                   string                    `json:"label"`
+	Source                  string                    `json:"source"`
+	Status                  string                    `json:"status"`
+	ReasonCode              string                    `json:"reasonCode"`
+	Reason                  string                    `json:"reason"`
+	Authentication          agentReadinessObservation `json:"authentication"`
+	AuthMethod              string                    `json:"authMethod"`
+	AccountEmail            *string                   `json:"accountEmail,omitempty"`
+	UsableByCurrentLaunches bool                      `json:"usableByCurrentLaunches"`
+	Capacity                codexProfileCapacityCLI   `json:"capacity"`
+}
+
+type codexProfilesCLIResponse struct {
+	Profiles     []codexProfileCLI          `json:"profiles"`
+	Capabilities map[string]json.RawMessage `json:"capabilities"`
+}
+
+func newAgentProfileCommand(ctx *commandContext) *cobra.Command {
+	cmd := &cobra.Command{Use: "profile", Short: "Inspect Codex profiles"}
+	cmd.AddCommand(newAgentProfileListCommand(ctx))
+	return cmd
+}
+
+func newAgentProfileListCommand(ctx *commandContext) *cobra.Command {
+	var jsonOutput bool
+	cmd := &cobra.Command{
+		Use: "ls", Aliases: []string{"list"}, Short: "List Codex profiles and subscription capacity", Args: noArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			profiles, err := ctx.fetchCodexProfileCapacity(cmd.Context())
+			if err != nil {
+				return err
+			}
+			if jsonOutput {
+				return writeJSON(cmd.OutOrStdout(), profiles)
+			}
+			return writeCodexProfileList(cmd, profiles)
+		},
+	}
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output raw Codex profile JSON")
+	return cmd
+}
+
+func (c *commandContext) fetchCodexProfileCapacity(ctx context.Context) (codexProfilesCLIResponse, error) {
+	var result codexProfilesCLIResponse
+	if err := c.postJSON(ctx, "agents/codex/profiles/capacity/ensure", struct {
+		ProfileIDs []string `json:"profileIds,omitempty"`
+	}{}, &result); err != nil {
+		return codexProfilesCLIResponse{}, err
+	}
+	return result, nil
+}
+
+func writeCodexProfileList(cmd *cobra.Command, response codexProfilesCLIResponse) error {
+	tw := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
+	if _, err := fmt.Fprintln(tw, "ID\tLABEL\tSOURCE\tAUTH\tPLAN\tCAPACITY\tUSED\tRESET\tFRESHNESS"); err != nil {
+		return err
+	}
+	for _, profile := range response.Profiles {
+		plan, used, reset := "—", "—", "—"
+		if profile.Capacity.Plan != nil && *profile.Capacity.Plan != "" {
+			plan = *profile.Capacity.Plan
+		}
+		if profile.Capacity.UsedPercent != nil {
+			used = fmt.Sprintf("%g%%", *profile.Capacity.UsedPercent)
+		}
+		if profile.Capacity.ResetsAt != nil && *profile.Capacity.ResetsAt != "" {
+			reset = *profile.Capacity.ResetsAt
+		}
+		auth := profile.Authentication.State
+		if auth == "" {
+			auth = "unknown"
+		}
+		capacity := profile.Capacity.State
+		if capacity == "" {
+			capacity = "unknown"
+		}
+		freshness := profile.Capacity.Freshness
+		if freshness == "" {
+			freshness = "stale"
+		}
+		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", profile.ID, profile.Label, profile.Source, auth, plan, capacity, used, reset, freshness); err != nil {
+			return err
+		}
+	}
+	return tw.Flush()
 }
 
 func newAgentListCommand(ctx *commandContext) *cobra.Command {
