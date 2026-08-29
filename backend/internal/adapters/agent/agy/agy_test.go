@@ -3,12 +3,14 @@ package agy
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/modelcatalog"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -351,24 +353,67 @@ func assertRawJSONEqual(t *testing.T, want, got json.RawMessage) {
 }
 
 func TestAuthStatus(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_CONFIG_HOME", "")
-	adcPath := filepath.Join(t.TempDir(), "application-default-credentials.json")
-	if err := os.WriteFile(adcPath, []byte(`{"type":"authorized_user"}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	// ADC authenticates Google Cloud clients, but is not an Antigravity CLI
-	// credential according to the official auth flow.
-	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", adcPath)
-	plugin := &Plugin{resolvedBinary: "agy"}
+	t.Cleanup(func() { discoverModels = modelcatalog.Discover })
 
-	status, err := plugin.AuthStatus(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if status != ports.AgentAuthStatusUnknown {
-		t.Errorf("AuthStatus() = %v, want AgentAuthStatusUnknown", status)
-	}
+	t.Run("authorized when model discovery succeeds", func(t *testing.T) {
+		discoverModels = func(_ context.Context, agentID, binary, _ string, _ map[string]string) (ports.AgentModelCatalog, error) {
+			if agentID != adapterID {
+				t.Fatalf("agentID = %q, want %q", agentID, adapterID)
+			}
+			if binary != "agy" {
+				t.Fatalf("binary = %q, want %q", binary, "agy")
+			}
+			return ports.AgentModelCatalog{}, nil
+		}
+		plugin := &Plugin{resolvedBinary: "agy"}
+
+		status, err := plugin.AuthStatus(context.Background())
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if status != ports.AgentAuthStatusAuthorized {
+			t.Errorf("AuthStatus() = %v, want AgentAuthStatusAuthorized", status)
+		}
+	})
+
+	t.Run("unknown when model discovery fails, even with unrelated Google credentials present", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		t.Setenv("XDG_CONFIG_HOME", "")
+		adcPath := filepath.Join(t.TempDir(), "application-default-credentials.json")
+		if err := os.WriteFile(adcPath, []byte(`{"type":"authorized_user"}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		// ADC authenticates Google Cloud clients, but is not an Antigravity CLI
+		// credential according to the official auth flow, and must not be
+		// mistaken for one.
+		t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", adcPath)
+		discoverModels = func(context.Context, string, string, string, map[string]string) (ports.AgentModelCatalog, error) {
+			return ports.AgentModelCatalog{}, errors.New("not authenticated")
+		}
+		plugin := &Plugin{resolvedBinary: "agy"}
+
+		status, err := plugin.AuthStatus(context.Background())
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if status != ports.AgentAuthStatusUnknown {
+			t.Errorf("AuthStatus() = %v, want AgentAuthStatusUnknown", status)
+		}
+	})
+
+	t.Run("unknown when the binary cannot be resolved", func(t *testing.T) {
+		t.Setenv("PATH", t.TempDir()) // empty of any "agy" binary
+		t.Setenv("HOME", t.TempDir())
+		plugin := &Plugin{}
+
+		status, err := plugin.AuthStatus(context.Background())
+		if err == nil {
+			t.Fatal("expected an error when the binary cannot be resolved")
+		}
+		if status != ports.AgentAuthStatusUnknown {
+			t.Errorf("AuthStatus() = %v, want AgentAuthStatusUnknown", status)
+		}
+	})
 }
 
 func TestGetConfigSpecReportsModelField(t *testing.T) {
