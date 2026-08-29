@@ -104,6 +104,16 @@ it("renders the profile icon without a background wrapper", async () => {
 	expect(icon).not.toHaveClass("rounded-md", "bg-muted", "p-2");
 });
 
+it("groups compact profile rows under the Codex provider", async () => {
+	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+	render(<QueryClientProvider client={queryClient}><CodexProfilesSection /></QueryClientProvider>);
+	await screen.findByText("Existing Codex profile");
+	const provider = screen.getByRole("region", { name: "Codex" });
+	expect(provider).toHaveAttribute("data-agent-provider", "codex");
+	expect(provider).toHaveTextContent("1 profile");
+	expect(provider.querySelector("[data-profile-id='existing']")).toBeInTheDocument();
+});
+
 it("expands only the affected profile and disables other sign-in actions", async () => {
 	const managed = {
 		...profileResponse.profiles[0],
@@ -162,6 +172,7 @@ it("creates a managed profile, then opens its login terminal", async () => {
 	expect(screen.getByTestId("codex-profile-login-terminal")).toBeInTheDocument();
 	expect(scrollIntoViewMock).toHaveBeenCalledOnce();
 	expect(scrollIntoViewMock).toHaveBeenCalledWith({ behavior: "smooth", block: "nearest" });
+	expect(screen.getByText("AO-managed")).toBeInTheDocument();
 	expect((await screen.findAllByText("Available for Codex task launches"))).not.toHaveLength(0);
 	openExternal.mockRestore();
 });

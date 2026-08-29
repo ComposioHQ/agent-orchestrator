@@ -23,6 +23,7 @@ import {
 import { TerminalPane } from "../TerminalPane";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { AgentProviderGroup } from "./AgentProviderGroup";
 import { SettingsSection } from "./SettingsSection";
 
 const loginTerminalLifetimeMs = 15 * 60_000;
@@ -41,6 +42,7 @@ export function CodexProfilesSection({ titleHidden }: { titleHidden?: boolean })
 	const startLoginTerminal = useUiStore((state) => state.startCodexProfileLoginTerminal);
 	const updateLoginTerminal = useUiStore((state) => state.updateCodexProfileLoginTerminal);
 	const clearLoginTerminal = useUiStore((state) => state.clearCodexProfileLoginTerminal);
+	const profileCount = profilesQuery.data?.profiles.length;
 
 	const beginLogin = useCallback(async (profileId: string) => {
 		if (useUiStore.getState().codexProfileLoginTerminal) return;
@@ -178,48 +180,52 @@ export function CodexProfilesSection({ titleHidden }: { titleHidden?: boolean })
 
 	return (
 		<SettingsSection title={t("settings.codexProfiles.title")} sectionId="codex-profiles" titleHidden={titleHidden}>
-			<div className="flex flex-col gap-3 rounded-md bg-[var(--color-bg-settings-row)] p-4">
-				<div className="flex items-start justify-between gap-4">
-					<div>
-						<p className="text-sm font-medium text-foreground">{t("settings.codexProfiles.heading")}</p>
-					</div>
+			<AgentProviderGroup
+				provider="codex"
+				name="Codex"
+				summary={profileCount === undefined
+					? t("settings.codexProfiles.loading")
+					: t("settings.codexProfiles.count", { count: profileCount })}
+				action={(
 					<Button type="button" size="sm" onClick={() => setAdding(true)} disabled={adding || Boolean(loginWorkflow) || !profilesQuery.data}>
 						<Plus aria-hidden="true" /> {t("settings.codexProfiles.add")}
 					</Button>
-				</div>
-
+				)}
+			>
 				{adding ? (
-					<div className="flex items-center gap-2">
+					<div className="flex items-center gap-2 border-b border-border px-4 py-3">
 						<Input aria-label={t("settings.codexProfiles.label")} value={label} maxLength={80} autoFocus onChange={(event) => setLabel(event.target.value)} placeholder={t("settings.codexProfiles.labelPlaceholder")} />
 						<Button type="button" size="sm" onClick={() => void createProfile()} disabled={!label.trim() || busyProfile === "create" || Boolean(loginWorkflow)}>{t("settings.codexProfiles.create")}</Button>
 						<Button type="button" size="sm" variant="ghost" onClick={() => { setAdding(false); setLabel(""); }}>{t("settings.codexProfiles.cancel")}</Button>
 					</div>
 				) : null}
 
-				{error ? <p role="alert" className="text-xs text-error">{error}</p> : null}
+				{error ? <p role="alert" className="border-b border-border px-4 py-3 text-xs text-error">{error}</p> : null}
 				{announcement ? <p className="sr-only" role="status" aria-live="polite">{announcement}</p> : null}
-				{profilesQuery.isLoading ? <p className="text-xs text-muted-foreground">{t("settings.codexProfiles.loading")}</p> : null}
-				{profilesQuery.data?.profiles?.map((profile) => (
-					<CodexProfileRow
-						key={profile.id}
-						profile={profile}
-						busy={busyProfile === profile.id}
-						loginWorkflow={loginWorkflow?.profileId === profile.id ? loginWorkflow : null}
-						loginActive={Boolean(loginWorkflow)}
-						onCheckAgain={verifyLogin}
-						onCloseLogin={closeInlineLogin}
-						onLogin={() => void beginLogin(profile.id)}
-						onRetry={retryLogin}
-						onTerminalState={(state) => {
-							if ((state !== "exited" && state !== "error") || !loginWorkflow) return;
-							const current = useUiStore.getState().codexProfileLoginTerminal;
-							if (current?.terminal.handleId === loginWorkflow.terminal.handleId && current.phase === "running") {
-								void verifyLogin(current);
-							}
-						}}
-					/>
-				))}
-			</div>
+				{profilesQuery.isLoading ? <p className="px-4 py-3 text-xs text-muted-foreground">{t("settings.codexProfiles.loading")}</p> : null}
+				<div className="divide-y divide-border">
+					{profilesQuery.data?.profiles.map((profile) => (
+						<CodexProfileRow
+							key={profile.id}
+							profile={profile}
+							busy={busyProfile === profile.id}
+							loginWorkflow={loginWorkflow?.profileId === profile.id ? loginWorkflow : null}
+							loginActive={Boolean(loginWorkflow)}
+							onCheckAgain={verifyLogin}
+							onCloseLogin={closeInlineLogin}
+							onLogin={() => void beginLogin(profile.id)}
+							onRetry={retryLogin}
+							onTerminalState={(state) => {
+								if ((state !== "exited" && state !== "error") || !loginWorkflow) return;
+								const current = useUiStore.getState().codexProfileLoginTerminal;
+								if (current?.terminal.handleId === loginWorkflow.terminal.handleId && current.phase === "running") {
+									void verifyLogin(current);
+								}
+							}}
+						/>
+					))}
+				</div>
+			</AgentProviderGroup>
 		</SettingsSection>
 	);
 }
@@ -238,6 +244,9 @@ function CodexProfileRow({ profile, busy, loginWorkflow, loginActive, onCheckAga
 	const { t } = useTranslation();
 	const auth = profile.authentication;
 	const checking = auth.freshness === "checking";
+	const sourceLabel = profile.source === "existing"
+		? t("settings.codexProfiles.existing")
+		: t("settings.codexProfiles.managed");
 	const authLabel = auth.state === "authorized"
 		? t("settings.codexProfiles.signedIn")
 		: auth.state === "unauthorized"
@@ -260,7 +269,7 @@ function CodexProfileRow({ profile, busy, loginWorkflow, loginActive, onCheckAga
 
 	return (
 		<div
-			className="rounded-md border border-border bg-background/40 p-3 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+			className="bg-background/20 px-4 py-3 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
 			data-profile-id={profile.id}
 			id={`codex-profile-${profile.id}`}
 			tabIndex={-1}
@@ -271,7 +280,7 @@ function CodexProfileRow({ profile, busy, loginWorkflow, loginActive, onCheckAga
 					<div className="min-w-0">
 						<div className="flex items-center gap-2">
 							<p className="truncate text-sm font-medium">{profile.label}</p>
-							{profile.id === "existing" ? <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">{t("settings.codexProfiles.existing")}</span> : null}
+							<span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">{sourceLabel}</span>
 						</div>
 						<p className="mt-0.5 text-xs text-muted-foreground">{profile.usableByCurrentLaunches ? t("settings.codexProfiles.availableForLaunches") : t("settings.codexProfiles.notLaunchable")}</p>
 						{profile.status === "broken" ? <>
