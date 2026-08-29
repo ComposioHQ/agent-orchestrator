@@ -900,9 +900,8 @@ button.settings-link-row:active {
 	opacity: 0.75;
 }
 
-/* The composer is one continuous surface. Agent and model share equal, stable
-   tracks so changing provider names never moves the model or the primary action;
-   transparent controls keep the row reading as card padding rather than a form. */
+/* The composer is one continuous surface. The agent is the primary choice;
+   profile and model are contextual configuration grouped beside it. */
 .composer-toolbar {
 	display: grid;
 	grid-template-columns: minmax(0, 1fr) auto auto;
@@ -932,6 +931,25 @@ button.settings-link-row:active {
 	   by design there, since it always sits inside an already-painted dialog
 	   surface) — this pill floats on its own with nothing painted behind it. */
 	background-color: color-mix(in oklch, var(--card) 97%, var(--foreground));
+}
+
+.composer-run-controls[data-control-count="3"] {
+	grid-template-columns: minmax(0, 1fr) 1px minmax(0, 1.6fr);
+}
+
+.composer-context-controls {
+	display: grid;
+	min-width: 0;
+	grid-template-columns: minmax(0, 1fr);
+	align-items: center;
+}
+
+.composer-context-controls[data-has-profile="true"] {
+	grid-template-columns: minmax(0, 1fr) 1px minmax(0, 1fr);
+}
+
+.composer-agent-slot .composer-toolbar-option {
+	font-weight: 500;
 }
 
 .composer-toolbar-slot {
@@ -1005,12 +1023,13 @@ button.settings-link-row:active {
 	}
 
 	/* The agent chip's SelectTrigger chevron has no rotation of its own — give
-	   it the same open-state flip as the settings dropdowns. */
-	& svg {
+	   it the same open-state flip as the settings dropdowns. Scope this to the
+	   final, direct-child chevron so value icons remain stationary. */
+	& > svg:last-child {
 		transition: transform var(--duration-normal) ease-out;
 	}
 
-	&[data-state="open"] svg {
+	&[data-state="open"] > svg:last-child {
 		transform: rotate(180deg);
 	}
 }

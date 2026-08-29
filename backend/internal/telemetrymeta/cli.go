@@ -31,6 +31,7 @@ var routineInternalCLICommands = []string{
 	"ao orchestrator ls",
 	"ao hooks",
 	"ao pty-host",
+	"ao codex-login",
 }
 
 // CLIActorType infers the actor for legacy loopback CLI telemetry requests that

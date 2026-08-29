@@ -1,7 +1,9 @@
 import { Bot, CircleHelp, Cloud, GitBranch, Inbox, Keyboard, MonitorCog, RefreshCw, Settings2, Smartphone, TriangleAlert, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useCloudGate } from "../hooks/useCloudGate";
+import { closeShellTerminal, shellTerminalsQueryKey } from "../hooks/useShellTerminals";
 import { GlobalSettingsForm } from "./GlobalSettingsForm";
 import {
 	ProjectSettingsForm,
@@ -36,8 +38,12 @@ function initialProjectSaveState(): ProjectSettingsSaveState {
 
 export function SettingsDialog() {
 	const { t } = useTranslation();
+	const queryClient = useQueryClient();
 	const settingsModal = useUiStore((state) => state.settingsModal);
 	const closeSettings = useUiStore((state) => state.closeSettings);
+	const loginWorkflow = useUiStore((state) => state.codexProfileLoginTerminal);
+	const updateLoginTerminal = useUiStore((state) => state.updateCodexProfileLoginTerminal);
+	const clearLoginTerminal = useUiStore((state) => state.clearCodexProfileLoginTerminal);
 	// Reads the daemon settings the dialog tree already queries; no extra fetch.
 	const { cloudEnabled } = useCloudGate();
 
@@ -73,6 +79,7 @@ export function SettingsDialog() {
 	const [activeSection, setActiveSection] = useState<GlobalSettingsSection>("general");
 	const [activeProjectSection, setActiveProjectSection] = useState<ProjectSettingsSection>("general");
 	const [projectSaveState, setProjectSaveState] = useState<ProjectSettingsSaveState>(initialProjectSaveState);
+	const [closingLogin, setClosingLogin] = useState(false);
 
 	const activeLabel = isProjectSettings
 		? (projectSections.find((s) => s.id === activeProjectSection)?.label ?? t("settings.project.identity"))
@@ -80,7 +87,25 @@ export function SettingsDialog() {
 
 	const closeSettingsDialog = () => {
 		if (isProjectSettings && projectSaveState.isPending) return;
-		closeSettings();
+		const workflow = useUiStore.getState().codexProfileLoginTerminal;
+		if (!workflow) {
+			closeSettings();
+			return;
+		}
+		if (closingLogin || workflow.phase === "closing") return;
+		setClosingLogin(true);
+		const { handleId } = workflow.terminal;
+		updateLoginTerminal(handleId, { phase: "closing", reason: undefined });
+		void closeShellTerminal(handleId).then(() => {
+			clearLoginTerminal(handleId);
+			void queryClient.invalidateQueries({ queryKey: shellTerminalsQueryKey });
+			closeSettings();
+		}).catch(() => {
+			updateLoginTerminal(handleId, {
+				phase: workflow.phase,
+				reason: t("settings.codexProfiles.loginCloseFailed"),
+			});
+		}).finally(() => setClosingLogin(false));
 	};
 
 	useEffect(() => {
@@ -90,6 +115,10 @@ export function SettingsDialog() {
 			setProjectSaveState(initialProjectSaveState());
 		}
 	}, [settingsModal]);
+
+	useEffect(() => {
+		if (loginWorkflow && settingsModal?.scope === "global") setActiveSection("agents");
+	}, [loginWorkflow, settingsModal?.scope]);
 
 	return (
 		<Dialog open={settingsModal !== null} onOpenChange={(open) => !open && closeSettingsDialog()}>
@@ -112,6 +141,7 @@ export function SettingsDialog() {
 											icon={icon}
 											key={id}
 											label={label}
+											disabled={Boolean(loginWorkflow)}
 											onClick={() => setActiveProjectSection(id)}
 										/>
 									))
@@ -121,6 +151,7 @@ export function SettingsDialog() {
 											icon={icon}
 											key={id}
 											label={label}
+											disabled={Boolean(loginWorkflow) && id !== "agents"}
 											onClick={() => setActiveSection(id)}
 										/>
 									))}
@@ -177,7 +208,7 @@ export function SettingsDialog() {
 							<DialogClose
 								aria-label={t("settings.close")}
 								className="settings-close-button border border-transparent transition-colors hover:border-(--color-border-settings-input) hover:bg-[var(--color-bg-settings-input)]"
-								disabled={isProjectSettings && projectSaveState.isPending}
+								disabled={(isProjectSettings && projectSaveState.isPending) || closingLogin || loginWorkflow?.phase === "closing"}
 							>
 								<X aria-hidden="true" className="size-4" />
 							</DialogClose>
@@ -205,11 +236,13 @@ export function SettingsDialog() {
 
 function SettingsNavItem({
 	active,
+	disabled,
 	icon: Icon,
 	label,
 	onClick,
 }: {
 	active: boolean;
+	disabled?: boolean;
 	icon: typeof Settings2;
 	label: string;
 	onClick: () => void;
@@ -218,11 +251,12 @@ function SettingsNavItem({
 		<button
 			aria-current={active ? "page" : undefined}
 			className={cn(
-				"flex h-9 w-full items-center gap-2 rounded-md px-2.5 text-left text-sm font-medium transition-[background-color,color,transform] duration-fast ease-out active:scale-press focus:outline-none focus-visible:outline-none focus-visible:ring-0",
+				"flex h-9 w-full items-center gap-2 rounded-md px-2.5 text-left text-sm font-medium transition-[background-color,color,transform] duration-fast ease-out active:scale-press focus:outline-none focus-visible:outline-none focus-visible:ring-0 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-muted-foreground",
 				active
 					? "bg-interactive-active text-foreground"
 					: "text-muted-foreground hover:bg-interactive-hover hover:text-foreground",
 			)}
+			disabled={disabled}
 			onClick={onClick}
 			type="button"
 		>

@@ -199,6 +199,9 @@ describe("normalizeApiOperation", () => {
 		expect(normalizeApiOperation("POST", "/api/v1/agents/codex/profiles/72d4db6e-da2c-414c-a6a9-fdbd09a006b6/login")).toBe(
 			"POST /api/v1/agents/codex/profiles/:id/login",
 		);
+		expect(normalizeApiOperation("POST", "/api/v1/agents/codex/profiles/72d4db6e-da2c-414c-a6a9-fdbd09a006b6/login-terminal")).toBe(
+			"POST /api/v1/agents/codex/profiles/:id/login-terminal",
+		);
 		expect(normalizeApiOperation("GET", "/api/v1/agents/codex/profiles/72d4db6e-da2c-414c-a6a9-fdbd09a006b6/login/operation-1/events")).toBe(
 			"GET /api/v1/agents/codex/profiles/:id/login/:id/events",
 		);

@@ -1,72 +1,174 @@
-import { CircleAlert, CircleCheck, LoaderCircle, Plus, UserRound } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { CircleAlert, CircleCheck, LoaderCircle, Plus, UserRound, X } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import {
-	CODEX_PROFILE_DAEMON_RESET_EVENT,
 	cacheCodexProfile,
-	cancelCodexProfileLogin,
 	createCodexProfile,
-	startCodexProfileLogin,
-	useCodexProfileLoginEvents,
+	ensureCodexProfiles,
+	mergeCodexProfiles,
+	openCodexProfileLoginTerminal,
 	useCodexProfilesQuery,
 	useEnsureCodexProfiles,
 	type CodexProfile,
-	type CodexProfileLoginEvent,
-	type CodexProfileLoginStart,
 } from "../../hooks/useCodexProfilesQuery";
-import { codexProfileLoginsQueryKey } from "../../hooks/codex-profile-cache";
-import { aoBridge } from "../../lib/bridge";
+import { closeShellTerminal, shellTerminalsQueryKey } from "../../hooks/useShellTerminals";
+import type { TerminalSessionState } from "../../hooks/useTerminalSession";
+import { useShellMaybe } from "../../lib/shell-context";
+import {
+	type CodexProfileLoginTerminalWorkflow,
+	useResolvedTheme,
+	useUiStore,
+} from "../../stores/ui-store";
+import { TerminalPane } from "../TerminalPane";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { AgentProviderGroup } from "./AgentProviderGroup";
 import { SettingsSection } from "./SettingsSection";
 
-type LoginView = CodexProfileLoginStart & { reason?: string };
+const loginTerminalLifetimeMs = 15 * 60_000;
 
 export function CodexProfilesSection({ titleHidden }: { titleHidden?: boolean }) {
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 	const profilesQuery = useCodexProfilesQuery();
 	useEnsureCodexProfiles(true);
+	const [providerExpanded, setProviderExpanded] = useState(true);
 	const [adding, setAdding] = useState(false);
 	const [label, setLabel] = useState("");
 	const [busyProfile, setBusyProfile] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
-	const [logins, setLogins] = useState<Record<string, LoginView>>(
-		() => queryClient.getQueryData<Record<string, LoginView>>(codexProfileLoginsQueryKey) ?? {},
-	);
-
-	useEffect(() => {
-		queryClient.setQueryData(codexProfileLoginsQueryKey, logins);
-	}, [logins, queryClient]);
-
-	useEffect(() => {
-		const reset = () => setLogins({});
-		window.addEventListener(CODEX_PROFILE_DAEMON_RESET_EVENT, reset);
-		return () => window.removeEventListener(CODEX_PROFILE_DAEMON_RESET_EVENT, reset);
-	}, []);
+	const [announcement, setAnnouncement] = useState("");
+	const loginWorkflow = useUiStore((state) => state.codexProfileLoginTerminal);
+	const startLoginTerminal = useUiStore((state) => state.startCodexProfileLoginTerminal);
+	const updateLoginTerminal = useUiStore((state) => state.updateCodexProfileLoginTerminal);
+	const clearLoginTerminal = useUiStore((state) => state.clearCodexProfileLoginTerminal);
+	const profileCount = profilesQuery.data?.profiles.length;
 
 	const beginLogin = useCallback(async (profileId: string) => {
+		if (useUiStore.getState().codexProfileLoginTerminal) return;
+		setProviderExpanded(true);
 		setBusyProfile(profileId);
 		setError(null);
+		setAnnouncement("");
 		try {
-			const operation = await startCodexProfileLogin(profileId);
-			setLogins((current) => ({ ...current, [profileId]: { ...operation, reason: t("settings.codexProfiles.waiting") } }));
-			await aoBridge.app.openExternal(operation.authUrl);
+			const started = await openCodexProfileLoginTerminal(profileId);
+			startLoginTerminal(started.profileId, {
+				handleId: started.shellTerminal.handleId,
+				title: started.shellTerminal.title,
+				createdAt: started.shellTerminal.createdAt,
+			});
+			void queryClient.invalidateQueries({ queryKey: shellTerminalsQueryKey });
 		} catch (cause) {
 			setError(cause instanceof Error ? cause.message : t("settings.codexProfiles.loginFailed"));
 		} finally {
 			setBusyProfile(null);
 		}
-	}, [t]);
+	}, [queryClient, startLoginTerminal, t]);
+
+	const verifyLogin = useCallback(async (workflow: CodexProfileLoginTerminalWorkflow) => {
+		const { handleId } = workflow.terminal;
+		const current = useUiStore.getState().codexProfileLoginTerminal;
+		if (!current || current.terminal.handleId !== handleId || current.phase === "verifying") return;
+		updateLoginTerminal(handleId, { phase: "verifying", reason: undefined });
+		try {
+			const next = await ensureCodexProfiles([workflow.profileId], true);
+			if (useUiStore.getState().codexProfileLoginTerminal?.terminal.handleId !== handleId) return;
+			mergeCodexProfiles(queryClient, next);
+			const profile = next.profiles.find((item) => item.id === workflow.profileId);
+			const verified = profile?.authentication.freshness === "fresh" &&
+				(profile.authentication.state === "authorized" || profile.authentication.state === "not_applicable");
+			if (verified) {
+				// Authentication is authoritative. Cleanup is best-effort here because
+				// the PTY has already ended and list reconciliation will prune it.
+				void closeShellTerminal(handleId).catch(() => undefined).finally(() => {
+					void queryClient.invalidateQueries({ queryKey: shellTerminalsQueryKey });
+				});
+				clearLoginTerminal(handleId);
+				setAnnouncement(t("settings.codexProfiles.loginSuccess", { label: profile.label }));
+				window.requestAnimationFrame(() => {
+					document.getElementById(`codex-profile-${workflow.profileId}`)?.focus();
+				});
+				return;
+			}
+			const unauthorized = profile?.authentication.freshness === "fresh" &&
+				profile.authentication.state === "unauthorized";
+			updateLoginTerminal(handleId, {
+				phase: unauthorized ? "unauthorized" : "unverified",
+				reason: unauthorized
+					? t("settings.codexProfiles.loginUnauthorized")
+					: t("settings.codexProfiles.loginUnverified"),
+			});
+		} catch {
+			updateLoginTerminal(handleId, {
+				phase: "unverified",
+				reason: t("settings.codexProfiles.loginVerificationFailed"),
+			});
+		}
+	}, [clearLoginTerminal, queryClient, t, updateLoginTerminal]);
+
+	const closeInlineLogin = useCallback(async (workflow: CodexProfileLoginTerminalWorkflow) => {
+		const { handleId } = workflow.terminal;
+		updateLoginTerminal(handleId, { phase: "closing", reason: undefined });
+		try {
+			await closeShellTerminal(handleId);
+			clearLoginTerminal(handleId);
+			void queryClient.invalidateQueries({ queryKey: shellTerminalsQueryKey });
+		} catch {
+			updateLoginTerminal(handleId, {
+				phase: workflow.phase,
+				reason: t("settings.codexProfiles.loginCloseFailed"),
+			});
+		}
+	}, [clearLoginTerminal, queryClient, t, updateLoginTerminal]);
+
+	const retryLogin = useCallback(async (workflow: CodexProfileLoginTerminalWorkflow) => {
+		const { handleId } = workflow.terminal;
+		updateLoginTerminal(handleId, { phase: "closing", reason: undefined });
+		try {
+			await closeShellTerminal(handleId);
+			clearLoginTerminal(handleId);
+			void queryClient.invalidateQueries({ queryKey: shellTerminalsQueryKey });
+			await beginLogin(workflow.profileId);
+		} catch {
+			updateLoginTerminal(handleId, {
+				phase: workflow.phase,
+				reason: t("settings.codexProfiles.loginCloseFailed"),
+			});
+		}
+	}, [beginLogin, clearLoginTerminal, queryClient, t, updateLoginTerminal]);
+
+	useEffect(() => {
+		if (!loginWorkflow || loginWorkflow.phase !== "running") return;
+		const { handleId } = loginWorkflow.terminal;
+		const remaining = Math.max(0, loginTerminalLifetimeMs - (Date.now() - loginWorkflow.startedAt));
+		const timeout = window.setTimeout(() => {
+			if (useUiStore.getState().codexProfileLoginTerminal?.terminal.handleId !== handleId) return;
+			updateLoginTerminal(handleId, { phase: "closing", reason: undefined });
+			void closeShellTerminal(handleId).then(() => {
+				updateLoginTerminal(handleId, {
+					phase: "timed_out",
+					reason: t("settings.codexProfiles.loginTimedOut"),
+				});
+				void queryClient.invalidateQueries({ queryKey: shellTerminalsQueryKey });
+			}).catch(() => {
+				updateLoginTerminal(handleId, {
+					phase: "timed_out",
+					reason: t("settings.codexProfiles.loginCloseFailed"),
+				});
+			});
+		}, remaining);
+		return () => window.clearTimeout(timeout);
+	}, [loginWorkflow, queryClient, t, updateLoginTerminal]);
 
 	const createProfile = async () => {
 		const nextLabel = label.trim();
-		if (!nextLabel) return;
+		if (!nextLabel || loginWorkflow) return;
 		setBusyProfile("create");
 		setError(null);
 		try {
 			const profile = await createCodexProfile(nextLabel);
+			// The durable profile is visible even if opening its login terminal fails.
 			cacheCodexProfile(queryClient, profile);
 			setLabel("");
 			setAdding(false);
@@ -78,85 +180,78 @@ export function CodexProfilesSection({ titleHidden }: { titleHidden?: boolean })
 		}
 	};
 
-	const onLoginEvent = useCallback((event: CodexProfileLoginEvent) => {
-		setLogins((current) => {
-			const prior = current[event.profileId];
-			if (!prior) return current;
-			return { ...current, [event.profileId]: { ...prior, status: event.status, reason: event.reason } };
-		});
-	}, []);
-
-	const browserLogin = profilesQuery.data?.capabilities.browserLogin;
-	const loginSupported = browserLogin?.state === "supported";
-
 	return (
 		<SettingsSection title={t("settings.codexProfiles.title")} sectionId="codex-profiles" titleHidden={titleHidden}>
-			<div className="flex flex-col gap-3 rounded-md bg-[var(--color-bg-settings-row)] p-4">
-				<div className="flex items-start justify-between gap-4">
-					<div>
-						<p className="text-sm font-medium text-foreground">{t("settings.codexProfiles.heading")}</p>
-						<p className="mt-1 text-xs leading-relaxed text-muted-foreground">{t("settings.codexProfiles.description")}</p>
-					</div>
-					<Button type="button" size="sm" onClick={() => setAdding(true)} disabled={!loginSupported || adding}>
+			<AgentProviderGroup
+				provider="codex"
+				name="Codex"
+				summary={profileCount === undefined
+					? t("settings.codexProfiles.loading")
+					: t("settings.codexProfiles.count", { count: profileCount })}
+				expanded={providerExpanded || Boolean(loginWorkflow)}
+				onExpandedChange={setProviderExpanded}
+				collapseLocked={Boolean(loginWorkflow)}
+				action={(
+					<Button type="button" size="sm" onClick={() => { setProviderExpanded(true); setAdding(true); }} disabled={adding || Boolean(loginWorkflow) || !profilesQuery.data}>
 						<Plus aria-hidden="true" /> {t("settings.codexProfiles.add")}
 					</Button>
-				</div>
-
-				{browserLogin && browserLogin.state !== "supported" ? (
-					<div className="flex gap-2 rounded-md border border-border bg-background/50 p-3 text-xs text-muted-foreground">
-						<CircleAlert className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-						<span>{browserLogin.reason}</span>
-					</div>
-				) : null}
-
+				)}
+			>
 				{adding ? (
-					<div className="flex items-center gap-2">
+					<div className="flex items-center gap-2 border-b border-border px-4 py-3">
 						<Input aria-label={t("settings.codexProfiles.label")} value={label} maxLength={80} autoFocus onChange={(event) => setLabel(event.target.value)} placeholder={t("settings.codexProfiles.labelPlaceholder")} />
-						<Button type="button" size="sm" onClick={() => void createProfile()} disabled={!label.trim() || busyProfile === "create"}>{t("settings.codexProfiles.create")}</Button>
+						<Button type="button" size="sm" onClick={() => void createProfile()} disabled={!label.trim() || busyProfile === "create" || Boolean(loginWorkflow)}>{t("settings.codexProfiles.create")}</Button>
 						<Button type="button" size="sm" variant="ghost" onClick={() => { setAdding(false); setLabel(""); }}>{t("settings.codexProfiles.cancel")}</Button>
 					</div>
 				) : null}
 
-				{error ? <p role="alert" className="text-xs text-error">{error}</p> : null}
-				{profilesQuery.isLoading ? <p className="text-xs text-muted-foreground">{t("settings.codexProfiles.loading")}</p> : null}
-				{profilesQuery.data?.profiles?.map((profile) => (
-					<CodexProfileRow
-						key={profile.id}
-						profile={profile}
-						login={logins[profile.id]}
-						busy={busyProfile === profile.id}
-						loginSupported={loginSupported}
-						onLogin={() => void beginLogin(profile.id)}
-						onCancel={() => {
-							const operation = logins[profile.id];
-							if (!operation) return;
-							void cancelCodexProfileLogin(profile.id, operation.operationId)
-								.then(onLoginEvent)
-								.catch((cause) => setError(cause instanceof Error ? cause.message : t("settings.codexProfiles.cancelFailed")));
-						}}
-						onOpen={() => { const operation = logins[profile.id]; if (operation) void aoBridge.app.openExternal(operation.authUrl); }}
-						onEvent={onLoginEvent}
-					/>
-				))}
-			</div>
+				{error ? <p role="alert" className="border-b border-border px-4 py-3 text-xs text-error">{error}</p> : null}
+				{announcement ? <p className="sr-only" role="status" aria-live="polite">{announcement}</p> : null}
+				{profilesQuery.isLoading ? <p className="px-4 py-3 text-xs text-muted-foreground">{t("settings.codexProfiles.loading")}</p> : null}
+				<div className="divide-y divide-border">
+					{profilesQuery.data?.profiles.map((profile) => (
+						<CodexProfileRow
+							key={profile.id}
+							profile={profile}
+							busy={busyProfile === profile.id}
+							loginWorkflow={loginWorkflow?.profileId === profile.id ? loginWorkflow : null}
+							loginActive={Boolean(loginWorkflow)}
+							onCheckAgain={verifyLogin}
+							onCloseLogin={closeInlineLogin}
+							onLogin={() => void beginLogin(profile.id)}
+							onRetry={retryLogin}
+							onTerminalState={(state) => {
+								if ((state !== "exited" && state !== "error") || !loginWorkflow) return;
+								const current = useUiStore.getState().codexProfileLoginTerminal;
+								if (current?.terminal.handleId === loginWorkflow.terminal.handleId && current.phase === "running") {
+									void verifyLogin(current);
+								}
+							}}
+						/>
+					))}
+				</div>
+			</AgentProviderGroup>
 		</SettingsSection>
 	);
 }
 
-function CodexProfileRow({ profile, login, busy, loginSupported, onLogin, onCancel, onOpen, onEvent }: {
+function CodexProfileRow({ profile, busy, loginWorkflow, loginActive, onCheckAgain, onCloseLogin, onLogin, onRetry, onTerminalState }: {
 	profile: CodexProfile;
-	login?: LoginView;
 	busy: boolean;
-	loginSupported: boolean;
+	loginWorkflow: CodexProfileLoginTerminalWorkflow | null;
+	loginActive: boolean;
+	onCheckAgain: (workflow: CodexProfileLoginTerminalWorkflow) => Promise<void>;
+	onCloseLogin: (workflow: CodexProfileLoginTerminalWorkflow) => Promise<void>;
 	onLogin: () => void;
-	onCancel: () => void;
-	onOpen: () => void;
-	onEvent: (event: CodexProfileLoginEvent) => void;
+	onRetry: (workflow: CodexProfileLoginTerminalWorkflow) => Promise<void>;
+	onTerminalState: (state: TerminalSessionState) => void;
 }) {
 	const { t } = useTranslation();
-	useCodexProfileLoginEvents(login?.status === "pending" ? login : null, onEvent);
 	const auth = profile.authentication;
 	const checking = auth.freshness === "checking";
+	const sourceLabel = profile.source === "existing"
+		? t("settings.codexProfiles.existing")
+		: t("settings.codexProfiles.managed");
 	const authLabel = auth.state === "authorized"
 		? t("settings.codexProfiles.signedIn")
 		: auth.state === "unauthorized"
@@ -164,8 +259,7 @@ function CodexProfileRow({ profile, login, busy, loginSupported, onLogin, onCanc
 			: auth.state === "not_applicable"
 				? t("settings.codexProfiles.notRequired")
 				: t("settings.codexProfiles.unknown");
-	const canLogin = profile.status === "valid" && auth.state === "unauthorized" && loginSupported;
-	const retryableLogin = auth.state === "unauthorized" && (login?.status === "failed" || login?.status === "cancelled");
+	const canLogin = profile.status === "valid" && auth.state !== "authorized" && auth.state !== "not_applicable";
 	const capacity = profile.capacity;
 	const capacityLabel = capacity.state === "available"
 		? t("settings.codexProfiles.capacityAvailable")
@@ -179,14 +273,19 @@ function CodexProfileRow({ profile, login, busy, loginSupported, onLogin, onCanc
 	const capacityParts = [capacity.plan, capacity.usedPercent === undefined || capacity.usedPercent === null ? undefined : `${capacity.usedPercent}%`, capacity.resetsAt ? t("settings.codexProfiles.capacityResets", { value: new Date(capacity.resetsAt).toLocaleString() }) : undefined].filter(Boolean);
 
 	return (
-		<div className="rounded-md border border-border bg-background/40 p-3" data-profile-id={profile.id}>
+		<div
+			className="bg-background/20 px-4 py-3 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+			data-profile-id={profile.id}
+			id={`codex-profile-${profile.id}`}
+			tabIndex={-1}
+		>
 			<div className="flex items-start justify-between gap-3">
 				<div className="flex min-w-0 gap-3">
-					<div className="mt-0.5 rounded-md bg-muted p-2"><UserRound className="size-4" aria-hidden="true" /></div>
+					<UserRound data-testid="codex-profile-icon" className="mt-0.5 size-5 shrink-0 text-muted-foreground" aria-hidden="true" />
 					<div className="min-w-0">
 						<div className="flex items-center gap-2">
 							<p className="truncate text-sm font-medium">{profile.label}</p>
-							{profile.id === "existing" ? <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">{t("settings.codexProfiles.existing")}</span> : null}
+							<span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">{sourceLabel}</span>
 						</div>
 						<p className="mt-0.5 text-xs text-muted-foreground">{profile.usableByCurrentLaunches ? t("settings.codexProfiles.availableForLaunches") : t("settings.codexProfiles.notLaunchable")}</p>
 						{profile.status === "broken" ? <>
@@ -207,18 +306,98 @@ function CodexProfileRow({ profile, login, busy, loginSupported, onLogin, onCanc
 								{capacity.freshness === "stale" || capacity.state === "unknown" || capacity.state === "unsupported" ? <p className="mt-0.5 text-muted-foreground">{capacity.reason}</p> : null}
 							</div>
 						) : null}
-						{login?.reason ? <p className="mt-1 text-xs text-muted-foreground">{login.reason}</p> : null}
 					</div>
 				</div>
 				<div className="flex shrink-0 items-center gap-1.5">
-					{login?.status === "pending" ? <>
-						<Button type="button" size="sm" variant="outline" onClick={onOpen}>{t("settings.codexProfiles.openBrowser")}</Button>
-						<Button type="button" size="sm" variant="ghost" onClick={onCancel}>{t("settings.codexProfiles.cancel")}</Button>
-					</> : canLogin || retryableLogin ? (
-						<Button type="button" size="sm" variant="outline" onClick={onLogin} disabled={busy}>{retryableLogin ? t("settings.codexProfiles.retry") : t("settings.codexProfiles.signIn")}</Button>
+					{canLogin && !loginWorkflow ? (
+						<Button type="button" size="sm" variant="outline" onClick={onLogin} disabled={busy || loginActive}>{t("settings.codexProfiles.signIn")}</Button>
 					) : null}
 				</div>
 			</div>
+			{loginWorkflow ? (
+				<CodexProfileLoginTerminalPanel
+					workflow={loginWorkflow}
+					onCheckAgain={() => void onCheckAgain(loginWorkflow)}
+					onClose={() => void onCloseLogin(loginWorkflow)}
+					onRetry={() => void onRetry(loginWorkflow)}
+					onTerminalState={onTerminalState}
+				/>
+			) : null}
+		</div>
+	);
+}
+
+function CodexProfileLoginTerminalPanel({ workflow, onCheckAgain, onClose, onRetry, onTerminalState }: {
+	workflow: CodexProfileLoginTerminalWorkflow;
+	onCheckAgain: () => void;
+	onClose: () => void;
+	onRetry: () => void;
+	onTerminalState: (state: TerminalSessionState) => void;
+}) {
+	const { t } = useTranslation();
+	const theme = useResolvedTheme();
+	const shell = useShellMaybe();
+	const daemonReady = shell ? shell.daemonStatus.state === "ready" : true;
+	const panelRef = useRef<HTMLDivElement>(null);
+	const terminalStateHandlerRef = useRef(onTerminalState);
+	terminalStateHandlerRef.current = onTerminalState;
+	const handleTerminalState = useCallback((state: TerminalSessionState) => {
+		terminalStateHandlerRef.current(state);
+	}, []);
+	useEffect(() => {
+		panelRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+	}, [workflow.terminal.handleId]);
+	const status = workflow.phase === "running"
+		? t("settings.codexProfiles.loginRunning")
+		: workflow.phase === "verifying"
+			? t("settings.codexProfiles.loginVerifying")
+			: workflow.phase === "closing"
+				? t("settings.codexProfiles.loginClosing")
+				: (workflow.reason ?? t("settings.codexProfiles.loginUnverified"));
+	const retryable = workflow.phase === "unauthorized" || workflow.phase === "timed_out";
+	const checkable = workflow.phase === "unverified";
+
+	return (
+		<div ref={panelRef} className="mt-3 scroll-my-3 overflow-hidden rounded-md border border-border bg-terminal" data-testid="codex-profile-login-terminal">
+			<div className="flex min-h-10 items-center justify-between gap-3 border-b border-border bg-surface/90 px-3 py-2">
+				<div className="min-w-0">
+					<p className="truncate text-xs font-medium text-foreground">{t("settings.codexProfiles.loginTerminalTitle")}</p>
+					<p className="truncate text-[11px] text-muted-foreground" aria-live="polite" role="status">{status}</p>
+				</div>
+				<button
+					type="button"
+					aria-label={t("settings.codexProfiles.loginClose")}
+					className="grid size-7 shrink-0 place-items-center rounded text-muted-foreground hover:bg-interactive-hover hover:text-foreground disabled:opacity-50"
+					disabled={workflow.phase === "closing"}
+					onClick={onClose}
+				>
+					<X className="size-4" aria-hidden="true" />
+				</button>
+			</div>
+			<div className="h-[300px] min-h-0">
+				<TerminalPane
+					daemonReady={daemonReady}
+					fontSize={12}
+					onTerminalStateChange={handleTerminalState}
+					terminalTarget={{
+						kind: "shell",
+						handleId: workflow.terminal.handleId,
+						generation: workflow.terminal.createdAt,
+						title: workflow.terminal.title,
+					}}
+					theme={theme}
+				/>
+			</div>
+			{workflow.reason || retryable || checkable ? (
+				<div className="flex items-center justify-between gap-3 border-t border-border bg-surface/90 px-3 py-2">
+					<p className="min-w-0 text-xs text-muted-foreground" role={workflow.reason ? "alert" : undefined}>{workflow.reason}</p>
+					<div className="flex shrink-0 items-center gap-2">
+						{retryable ? <Button type="button" size="sm" variant="outline" onClick={onRetry}>{t("settings.codexProfiles.retry")}</Button> : null}
+						{checkable ? <Button type="button" size="sm" variant="outline" onClick={onCheckAgain}>{t("settings.codexProfiles.loginCheckAgain")}</Button> : null}
+						<Button type="button" size="sm" variant="ghost" onClick={onClose}>{t("settings.codexProfiles.loginClose")}</Button>
+					</div>
+				</div>
+			) : null}
 		</div>
 	);
 }
