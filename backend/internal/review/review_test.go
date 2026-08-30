@@ -1244,6 +1244,34 @@ func TestTriggerConfigOverrideRestartsAliveReviewerPane(t *testing.T) {
 	}
 }
 
+func TestTriggerConfigOverrideRollbackUpsertFailureKeepsReplacementHandleTracked(t *testing.T) {
+	store := &fakeStore{
+		review:        &domain.Review{ID: "rev-1", SessionID: "mer-1", Harness: domain.ReviewerClaudeCode, ReviewerHandleID: "review-mer-1", AgentSessionID: "native-reviewer-1"},
+		upsertErr:     errors.New("rollback failed"),
+		upsertErrCall: 3,
+		runs: []domain.ReviewRun{{
+			ID: "run-1", SessionID: "mer-1", PRURL: "https://github.com/o/r/pull/1", TargetSHA: "sha1",
+			Harness: domain.ReviewerClaudeCode,
+			Status:  domain.ReviewRunComplete, Verdict: domain.VerdictApproved,
+		}},
+	}
+	worker := liveWorker()
+	worker.ReviewerHarness = domain.ReviewerClaudeCode
+	worker.ReviewerConfig = domain.AgentConfig{Model: "gpt-5"}
+	launcher := &fakeLauncher{alive: true, handle: "review-mer-2", destroyErr: errors.New("destroy old failed"), destroyErrCall: 1}
+	eng := newEngineForTest(store, fakeSessions{rec: worker, ok: true}, prAt("sha1"), fakeProjects{}, launcher)
+
+	if _, err := eng.Trigger(context.Background(), "mer-1", domain.ReviewerClaudeCode, domain.AgentConfig{Model: "gpt-5-mini"}); err == nil || !strings.Contains(err.Error(), "rollback review row") {
+		t.Fatalf("Trigger error = %v, want rollback review row failure", err)
+	}
+	if store.review == nil || store.review.ReviewerHandleID != "review-mer-2" || store.review.AgentSessionID != "" {
+		t.Fatalf("stored review row = %+v, want replacement handle to remain authoritative", store.review)
+	}
+	if launcher.destroyCalls != 1 || launcher.destroyedHandle != "review-mer-1" {
+		t.Fatalf("launcher destroy calls = %d handle=%q, want only failed old-handle destroy", launcher.destroyCalls, launcher.destroyedHandle)
+	}
+}
+
 func TestTriggerConfigOverrideDestroyPreviousFailureRestoresOldNativeSessionID(t *testing.T) {
 	store := &fakeStore{
 		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", Harness: domain.ReviewerClaudeCode, ReviewerHandleID: "review-mer-1", AgentSessionID: "native-reviewer-1"},
