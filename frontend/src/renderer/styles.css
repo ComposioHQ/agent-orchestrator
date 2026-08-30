@@ -272,6 +272,7 @@
 	--color-error: var(--bridge-danger);
 	--color-status-working: var(--bridge-status-working);
 	--color-status-needs-you: var(--bridge-status-needs-you);
+	--color-status-validating: var(--bridge-status-validating);
 	--color-status-in-review: var(--bridge-status-in-review);
 	--color-status-ready: var(--bridge-status-ready);
 	--color-status-merged: var(--bridge-status-merged);
@@ -1646,6 +1647,33 @@ textarea,
 	}
 	50% {
 		opacity: 0.35;
+	}
+}
+
+@keyframes attention-card-pulse {
+	0%,
+	100% {
+		opacity: 0.15;
+	}
+	50% {
+		opacity: 1;
+	}
+}
+
+.animate-attention-card-pulse::before {
+	position: absolute;
+	inset: 0;
+	border-radius: inherit;
+	background-color: color-mix(in srgb, var(--color-status-needs-you) 9%, transparent);
+	pointer-events: none;
+	content: "";
+	animation: attention-card-pulse 3.5s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.animate-attention-card-pulse::before {
+		animation: none;
+		opacity: 0.5;
 	}
 }
 

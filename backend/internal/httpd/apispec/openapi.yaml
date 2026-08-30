@@ -6126,6 +6126,30 @@ components:
           type: string
         displayName:
           type: string
+        displayStatus:
+          enum:
+          - Working
+          - Blocked
+          - Exited
+          - No signal
+          - Awaiting PR
+          - Fixing CI failures
+          - Addressing comments
+          - Needs review
+          - Review scheduled
+          - Reviewing
+          - Review pending
+          - Draft
+          - CI failing
+          - Commented
+          - Changes requested
+          - Needs human review
+          - Mergeable
+          - Approved
+          - Merged
+          - Closed without merge
+          - Terminated
+          type: string
         harness:
           type: string
         id:
@@ -6135,6 +6159,14 @@ components:
         isTerminated:
           type: boolean
         issueId:
+          type: string
+        kanbanColumn:
+          enum:
+          - building
+          - validating
+          - needs_review
+          - ready
+          - archive
           type: string
         kind:
           type: string
@@ -6244,6 +6276,8 @@ components:
       - updatedAt
       - isPinned
       - status
+      - kanbanColumn
+      - displayStatus
       - prs
       type: object
     ControllersSetSecurePairingRequest:

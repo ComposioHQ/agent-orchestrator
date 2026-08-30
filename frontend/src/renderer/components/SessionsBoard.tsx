@@ -16,10 +16,10 @@ import {
 	workerSessions,
 } from "../types/workspace";
 import {
-	boardAttentionZoneOrder,
+	boardKanbanColumnOrder,
 	getAgentActivityView,
-	getAttentionZoneViewForZone,
-	type AttentionZoneView,
+	getKanbanColumnView,
+	type KanbanColumnView,
 } from "../lib/session-presentation";
 import {
 	useSessionUsageSummaries,
@@ -37,6 +37,7 @@ import { spawnCloudOrchestrator } from "../lib/cloud-orchestrator";
 import { isChatPreflightError, spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
 import { usesPreviewWorkspaceData } from "../lib/preview-mode";
+import { demoBoardSessions } from "../lib/demo-board-sessions";
 import { isLinuxPlatform, isMacPlatform, usesBoardActionsInPanel } from "../lib/platform";
 import { cn } from "../lib/utils";
 import { useUiStore } from "../stores/ui-store";
@@ -60,9 +61,14 @@ type UsageBySession = ReadonlyMap<string, SessionUsageSummary>;
 const emptyUsageBySession: UsageBySession = new Map();
 
 // Live merged sessions remain in-flow. A terminated runtime is archived even
-// when its SCM outcome remains `merged`.
+// when its SCM outcome remains `merged`, which is exactly what the daemon's
+// `archive` column means.
 function isArchivedSession(session: WorkspaceSession): boolean {
-	return session.isTerminated === true || session.status === "terminated";
+	return (
+		session.kanbanColumn === "archive" ||
+		session.isTerminated === true ||
+		session.status === "terminated"
+	);
 }
 
 const isMac = isMacPlatform();
@@ -73,10 +79,13 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const { t } = useTranslation();
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
-	const columns: AttentionZoneView[] = boardAttentionZoneOrder.map((zone) => getAttentionZoneViewForZone(zone, t));
+	// Lanes follow the daemon's delivery order: building -> validating ->
+	// in review -> ready. The middle two are one review-feedback loop, split by
+	// whose turn it is.
+	const columns: KanbanColumnView[] = boardKanbanColumnOrder.map((column) => getKanbanColumnView(column, t));
 	const workspaceQuery = useWorkspaceQuery();
 	const shell = useShellMaybe();
-	const usageBySession = useSessionUsageSummaries(projectId).data ?? emptyUsageBySession;
+	const liveUsageBySession = useSessionUsageSummaries(projectId).data ?? emptyUsageBySession;
 	// Evaluated at render so platform mocks in tests can flip the in-panel chrome.
 	const boardActionsInPanel = usesBoardActionsInPanel();
 	/** Bell lives in the board action row when the shell topbar does not host it. */
@@ -86,7 +95,25 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const workspace = projectId ? workspaces[0] : undefined;
 	// Board chrome stays route-oriented; project context remains in the sidebar.
 	const boardLabel = t("shell.board");
-	const sessions = workspaces.flatMap((workspace) => workerSessions(workspace.sessions));
+	const liveSessions = workspaces.flatMap((workspace) => workerSessions(workspace.sessions));
+	const demoWorkspaceId = projectId ?? workspaces[0]?.id;
+	const sessions = usesPreviewWorkspaceData && demoWorkspaceId && liveSessions.length === 0
+		? demoBoardSessions(demoWorkspaceId)
+		: liveSessions;
+	const usageBySession = usesPreviewWorkspaceData
+		? new Map<string, SessionUsageSummary>(
+				sessions.map((session, index) => [
+						session.id,
+						liveUsageBySession.get(session.id) ?? {
+							estimatedCost: null,
+							sessionId: session.id,
+							processedTokens: [18_400, 46_700, 12_900, 81_200, 3_100][index % 5],
+							totalTokens: 100_000,
+							incomplete: false,
+					},
+				]),
+			)
+		: liveUsageBySession;
 	const orchestrator = projectId ? newestActiveOrchestrator(workspaces[0]?.sessions ?? []) : undefined;
 	const orchestratorActivityLabel = orchestrator ? getAgentActivityView(orchestrator.activity, t).label : undefined;
 	const [isSpawning, setIsSpawning] = useState(false);
