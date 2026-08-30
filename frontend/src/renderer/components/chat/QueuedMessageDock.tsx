@@ -149,7 +149,8 @@ export function QueuedMessageDock({
 		() => new Set(),
 	);
 	const scrollRef = useRef<HTMLDivElement>(null);
-	const lastSteerNextRequest = useRef(steerNextRequest ?? 0);
+	const [handledSteerNextRequest, setHandledSteerNextRequest] = useState(steerNextRequest ?? 0);
+	const steerNextInFlight = useRef(false);
 
 	const runAction = useCallback(
 		async (turnId: string, action: () => Promise<unknown>) => {
@@ -197,13 +198,32 @@ export function QueuedMessageDock({
 	);
 
 	useEffect(() => {
-		if (steerNextRequest === undefined || steerNextRequest <= lastSteerNextRequest.current) return;
-		lastSteerNextRequest.current = steerNextRequest;
-		if (!canSteerNext || !onPromoteQueuedTurn) return;
+		if (steerNextRequest === undefined || steerNextRequest <= handledSteerNextRequest) return;
+		if (!canSteerNext || !onPromoteQueuedTurn) {
+			setHandledSteerNextRequest(steerNextRequest);
+			return;
+		}
+		if (steerNextInFlight.current) return;
 
 		const next = displayMessages[displayMessages.length - 1];
-		if (next) void runAction(next.turnId, () => promoteQueuedTurn(next.turnId));
-	}, [canSteerNext, displayMessages, onPromoteQueuedTurn, promoteQueuedTurn, runAction, steerNextRequest]);
+		if (!next) {
+			setHandledSteerNextRequest(steerNextRequest);
+			return;
+		}
+		steerNextInFlight.current = true;
+		void runAction(next.turnId, () => promoteQueuedTurn(next.turnId)).finally(() => {
+			steerNextInFlight.current = false;
+			setHandledSteerNextRequest((request) => request + 1);
+		});
+	}, [
+		canSteerNext,
+		displayMessages,
+		handledSteerNextRequest,
+		onPromoteQueuedTurn,
+		promoteQueuedTurn,
+		runAction,
+		steerNextRequest,
+	]);
 
 	useEffect(() => {
 		if (!isOpen || count <= QUEUE_DOCK_VISIBLE_ROWS) return;

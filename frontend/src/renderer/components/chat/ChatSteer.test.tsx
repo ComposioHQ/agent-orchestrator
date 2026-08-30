@@ -88,6 +88,41 @@ describe("ChatComposer steering", () => {
 		expect(screen.queryByTestId("queued-message-queued-1")).not.toBeInTheDocument();
 	});
 
+	it("drains every queued steer request that arrives while a promotion is pending", async () => {
+		let resolveFirstPromotion: (() => void) | undefined;
+		const firstPromotion = new Promise<void>((resolve) => {
+			resolveFirstPromotion = resolve;
+		});
+		const onPromoteQueuedTurn = vi
+			.fn()
+			.mockImplementationOnce(() => firstPromotion)
+			.mockResolvedValueOnce(undefined);
+		const messages = [queuedMessage("queued-1", "first"), queuedMessage("queued-2", "next")];
+		const { rerender } = render(
+			<QueuedMessageDock
+				messages={messages}
+				canSteer
+				canSteerNext
+				steerNextRequest={0}
+				onPromoteQueuedTurn={onPromoteQueuedTurn}
+			/>,
+		);
+
+		rerender(
+			<QueuedMessageDock
+				messages={messages}
+				canSteer
+				canSteerNext
+				steerNextRequest={2}
+				onPromoteQueuedTurn={onPromoteQueuedTurn}
+			/>,
+		);
+
+		await waitFor(() => expect(onPromoteQueuedTurn).toHaveBeenCalledWith("queued-1"));
+		resolveFirstPromotion?.();
+		await waitFor(() => expect(onPromoteQueuedTurn).toHaveBeenNthCalledWith(2, "queued-2"));
+	});
+
 	it("reports the daemon's refusal without a second message of its own", () => {
 		composer({ steerRefusal: "A compaction turn is running. Try again once it finishes." });
 		expect(screen.getByRole("status")).toHaveTextContent(/compaction turn is running/);
