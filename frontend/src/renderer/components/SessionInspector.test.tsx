@@ -3044,6 +3044,41 @@ describe("SessionInspector summary reviews", () => {
     expect(postMock).toHaveBeenCalledTimes(1);
   });
 
+  it("clears hidden session reviewer config when returning an explicit default-matching reviewer to project default", async () => {
+    mockCommonGets([], "reviewer-pane", [reviewState(3, "needs_review", "sha-1")]);
+    postMock.mockResolvedValue({
+      data: { reviewerHandleId: "", reviews: [] },
+      response: { status: 200 },
+    });
+
+    renderWithQuery(
+      <SessionInspector
+        session={session([pr(3, "open")], {
+          provider: "codex",
+          reviewerHarness: "codex",
+          reviewerConfig: { permissions: "bypass-permissions" },
+        })}
+      />,
+    );
+    await openReviewsSection();
+
+    const picker = await screen.findByRole("button", {
+      name: /Select reviewer agent/,
+    });
+    await userEvent.click(picker);
+    await userEvent.click(screen.getByRole("menuitem", { name: /codex/i }));
+
+    await waitFor(() =>
+      expect(postMock).toHaveBeenLastCalledWith(
+        "/api/v1/sessions/{sessionId}/reviews/switch",
+        {
+          params: { path: { sessionId: "sess-1" } },
+          body: { harness: undefined, agentConfig: undefined },
+        },
+      ),
+    );
+  });
+
   it("keeps an explicit reviewer visible and lets it return to the resolved default", async () => {
     mockCommonGets([], "reviewer-pane", [
       reviewState(3, "needs_review", "sha-1"),

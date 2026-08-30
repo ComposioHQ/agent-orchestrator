@@ -1511,10 +1511,13 @@ function ReviewsSection({
 	}, [session.id, session.reviewerConfig?.mode, session.reviewerConfig?.model, session.reviewerHarness]);
 	const saveReviewer = useMutation({
 		mutationFn: async ({ harness, model, mode }: { harness: ReviewerHarness | ""; model: string; mode: string }) => {
+			const clearingToProjectDefault = harness === "" && model === "" && mode === "";
 			const currentEffectiveReviewerHarness = (session.reviewerHarness ?? "") || currentDefaultReviewerHarness;
 			const nextEffectiveReviewerHarness = harness || currentDefaultReviewerHarness;
 			const existingReviewerConfig =
-				currentEffectiveReviewerHarness === nextEffectiveReviewerHarness ? session.reviewerConfig : undefined;
+				!clearingToProjectDefault && currentEffectiveReviewerHarness === nextEffectiveReviewerHarness
+					? session.reviewerConfig
+					: undefined;
 			const nextReviewerConfig = buildReviewerAgentConfig(existingReviewerConfig, model, mode);
 			const { data, error } = await apiClient.POST("/api/v1/sessions/{sessionId}/reviews/switch", {
 				params: { path: { sessionId: session.id } },
