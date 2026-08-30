@@ -565,6 +565,9 @@ func TestLauncherRestoreTerminalUsesReviewerRestoreCommandWhenAvailable(t *testi
 	if launch.HandleID != "review-mer-1" {
 		t.Fatalf("handle = %q, want review-mer-1", launch.HandleID)
 	}
+	if !launch.NativeResumed {
+		t.Fatal("native reviewer restore was not reported")
+	}
 	if !reviewer.restored {
 		t.Fatal("restore command was not used")
 	}
@@ -594,7 +597,8 @@ func TestLauncherRestoreTerminalFallsBackToFreshCommand(t *testing.T) {
 	rt := &fakeRuntime{}
 	l := newTestLauncher(t, reviewer, rt)
 
-	if _, err := l.RestoreTerminal(context.Background(), launchSpec()); err != nil {
+	launch, err := l.RestoreTerminal(context.Background(), launchSpec())
+	if err != nil {
 		t.Fatalf("RestoreTerminal: %v", err)
 	}
 	if !reviewer.restored {
@@ -602,6 +606,9 @@ func TestLauncherRestoreTerminalFallsBackToFreshCommand(t *testing.T) {
 	}
 	if got := rt.createCfg.Argv; len(got) != 2 || got[0] != "greptile" || got[1] != "review" {
 		t.Fatalf("fallback argv = %#v", got)
+	}
+	if launch.NativeResumed {
+		t.Fatal("fresh-command fallback reported a native resume")
 	}
 }
 
