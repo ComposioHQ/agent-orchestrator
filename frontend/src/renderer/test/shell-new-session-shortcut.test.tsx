@@ -319,6 +319,7 @@ beforeEach(() => {
 		isSidebarOpen: true,
 		newTaskRequest: null,
 		newShellTerminalNonce: 0,
+		agentAuthGeneration: 0,
 		agentAuthTerminalRequest: null,
 		agentAuthCheckRequest: null,
 		activeShellTerminalHandleId: null,
@@ -339,6 +340,22 @@ describe("shell agent authentication terminal request", () => {
 		await waitFor(() => expect(shellMocks.navigate).toHaveBeenCalledWith({ to: "/terminals" }));
 		expect(useUiStore.getState().activeShellTerminalHandleId).toBe("shellterm-login");
 		expect(useUiStore.getState().settingsModal).toBeNull();
+	});
+
+	it("reveals a second terminal after the first auth flow completes", async () => {
+		await renderShell();
+		act(() => useUiStore.getState().requestAgentAuthTerminal("codex", "shellterm-one"));
+		await waitFor(() => expect(useUiStore.getState().activeShellTerminalHandleId).toBe("shellterm-one"));
+
+		act(() => {
+			useUiStore.getState().openGlobalSettings();
+			const check = useUiStore.getState().agentAuthCheckRequest!;
+			useUiStore.getState().completeAgentAuthCheck(check, true);
+			useUiStore.getState().requestAgentAuthTerminal("muse", "shellterm-two");
+		});
+
+		await waitFor(() => expect(useUiStore.getState().activeShellTerminalHandleId).toBe("shellterm-two"));
+		expect(shellMocks.navigate).toHaveBeenCalledTimes(2);
 	});
 });
 

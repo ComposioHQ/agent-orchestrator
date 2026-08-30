@@ -202,6 +202,7 @@ export function HarnessSettingsSection({ titleHidden = false }: { titleHidden?: 
 			requestAgentAuthTerminal(agentId, result.terminal.handleId);
 		} catch (error) {
 			updateAuthState(agentId, { error: error instanceof Error ? error.message : t("settings.harness.authFailed") });
+			return undefined;
 		} finally {
 			updateAuthState(agentId, { pending: false });
 		}
@@ -210,11 +211,13 @@ export function HarnessSettingsSection({ titleHidden = false }: { titleHidden?: 
 	const checkAuth = useCallback(async (agentId: AgentId) => {
 		updateAuthState(agentId, { checking: true, error: null });
 		try {
-			await probeAgentAuth(agentId);
+			const result = await probeAgentAuth(agentId);
 			const readiness = await ensureAgentReadiness([agentId], "display");
 			cacheAgentReadiness(queryClient, readiness);
+			return result;
 		} catch (error) {
 			updateAuthState(agentId, { error: error instanceof Error ? error.message : t("settings.harness.authFailed") });
+			return undefined;
 		} finally {
 			updateAuthState(agentId, { checking: false });
 		}
@@ -222,8 +225,10 @@ export function HarnessSettingsSection({ titleHidden = false }: { titleHidden?: 
 
 	useEffect(() => {
 		if (!agentAuthCheckRequest || !agents.data) return;
-		const { agentId, nonce } = agentAuthCheckRequest;
-		void checkAuth(agentId as AgentId).finally(() => completeAgentAuthCheck(nonce));
+		const request = agentAuthCheckRequest;
+		void checkAuth(request.agentId as AgentId)
+			.then((result) => completeAgentAuthCheck(request, result?.agent?.authStatus === "authorized"))
+			.catch(() => completeAgentAuthCheck(request, false));
 	}, [agentAuthCheckRequest, agents.data, checkAuth, completeAgentAuthCheck]);
 
 	const refresh = async () => {
@@ -352,7 +357,7 @@ export function HarnessSettingsSection({ titleHidden = false }: { titleHidden?: 
 															: t("settings.harness.login")}
 												</Button>
 											)}
-											{authPlan.available && authStatus === "unknown" ? (
+											{authPlan.available && (authStatus === "unknown" || authStatus === "unauthorized") ? (
 												<Button disabled={authState?.checking} size="sm" variant="outline" onClick={() => void checkAuth(agentId)}>
 													{authState?.checking ? <LoaderCircle className="animate-spin" aria-hidden="true" /> : <RefreshCw aria-hidden="true" />}
 													{authState?.checking ? t("settings.harness.checkingLogin") : t("settings.harness.checkLogin")}

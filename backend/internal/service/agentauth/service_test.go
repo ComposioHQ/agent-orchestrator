@@ -56,14 +56,13 @@ func TestStartOpensResolvedPlanAndReturnsSafeTerminal(t *testing.T) {
 		t.Fatalf("OpenCommandTerminal calls = %d, want 1", opener.calls)
 	}
 	wantInput := shellterm.OpenCommandTerminalInput{
-		Argv:         []string{"/test/bin/pi"},
-		Title:        "Log in to Pi",
-		InitialInput: "/login\r",
+		Argv:  []string{"/test/bin/pi"},
+		Title: "Log in to Pi",
 	}
 	if !reflect.DeepEqual(opener.input, wantInput) {
 		t.Fatalf("OpenCommandTerminal input = %#v, want %#v", opener.input, wantInput)
 	}
-	if got.AgentID != "pi" || got.Action != ActionLogin || got.Guidance != "Native Pi login flow" || got.Terminal != terminal {
+	if got.AgentID != "pi" || got.Action != ActionLogin || got.Guidance != "Run /login in the terminal" || got.Terminal != terminal {
 		t.Fatalf("Start(pi) = %#v, want display-safe Pi result with terminal %#v", got, terminal)
 	}
 	data, err := json.Marshal(got)
@@ -88,6 +87,22 @@ func TestStartFallsBackToAgentResolvedBinaryOutsidePATH(t *testing.T) {
 	}
 	if got := opener.input.Argv; !reflect.DeepEqual(got, []string{"/Users/test/.claude/local/claude", "auth", "login"}) {
 		t.Fatalf("terminal argv = %#v, want adapter-resolved Claude binary", got)
+	}
+}
+
+func TestStartPrefersAdapterResolvedBinaryOverGenericPATHMatch(t *testing.T) {
+	t.Parallel()
+
+	opener := &recordingTerminalOpener{}
+	resolver := managedExecutableResolver{agentID: "muse", path: "/validated/meta/muse"}
+	svc := NewWithAgentResolver(foundExecutable("muse"), resolver, opener)
+
+	_, err := svc.Start(context.Background(), "muse")
+	if err != nil {
+		t.Fatalf("Start(muse): %v", err)
+	}
+	if got := opener.input.Argv; !reflect.DeepEqual(got, []string{"/validated/meta/muse", "login"}) {
+		t.Fatalf("terminal argv = %#v, want adapter-validated Muse binary", got)
 	}
 }
 

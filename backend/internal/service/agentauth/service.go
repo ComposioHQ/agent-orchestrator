@@ -51,7 +51,6 @@ type Plan struct {
 	Reason           string `json:"reason,omitempty"`
 	command          []string
 	title            string
-	initialInput     string
 }
 
 // TerminalOpener opens the daemon-trusted terminal used for a native
@@ -61,8 +60,7 @@ type TerminalOpener interface {
 }
 
 // StartResult is the display-safe result of starting a native authentication
-// flow. Command arguments and initial terminal input remain private to the
-// resolved plan.
+// flow. Command arguments remain private to the resolved plan.
 type StartResult struct {
 	AgentID  string                  `json:"agentId"`
 	Action   Action                  `json:"action"`
@@ -70,7 +68,8 @@ type StartResult struct {
 	Terminal shellterm.ShellTerminal `json:"terminal"`
 }
 
-// Service resolves the fixed authentication registry against the host PATH.
+// Service resolves the fixed authentication registry through AO's registered
+// harness adapters, with direct PATH lookup only for callers without one.
 type Service struct {
 	executables ExecutableFinder
 	agents      AgentBinaryResolver
@@ -82,33 +81,33 @@ func New(executables ExecutableFinder, terminals TerminalOpener) *Service {
 	return NewWithAgentResolver(executables, nil, terminals)
 }
 
-// NewWithAgentResolver creates a service that falls back to AO's adapter-aware
-// binary resolver when an installed harness is not visible on the daemon PATH.
+// NewWithAgentResolver creates a service that uses AO's adapter-aware binary
+// resolver as the authoritative validation and discovery boundary.
 func NewWithAgentResolver(executables ExecutableFinder, agents AgentBinaryResolver, terminals TerminalOpener) *Service {
 	return &Service{executables: executables, agents: agents, terminals: terminals}
 }
 
 // Plans returns every known harness plan in stable Harness settings order.
-func (s *Service) Plans() []Plan {
+func (s *Service) Plans(ctx context.Context) []Plan {
 	out := make([]Plan, 0, len(plans))
 	for _, plan := range plans {
-		out = append(out, s.resolve(context.Background(), plan))
+		out = append(out, s.resolve(ctx, plan))
 	}
 	return out
 }
 
 // Plan returns the resolved plan for agentID.
-func (s *Service) Plan(agentID string) (Plan, error) {
+func (s *Service) Plan(ctx context.Context, agentID string) (Plan, error) {
 	plan, ok := planByAgentID[agentID]
 	if !ok {
 		return Plan{}, apierr.Invalid("AGENT_AUTH_TARGET_UNKNOWN", fmt.Sprintf("unknown agent authentication target %q", agentID), nil)
 	}
-	return s.resolve(context.Background(), plan), nil
+	return s.resolve(ctx, plan), nil
 }
 
 // Start opens the reviewed native authentication flow for agentID. Callers
-// choose only the registry key; command and terminal input come exclusively
-// from the resolved private plan fields.
+// choose only the registry key; command arguments come exclusively from the
+// resolved private plan fields. Any later terminal input is user-entered.
 func (s *Service) Start(ctx context.Context, agentID string) (StartResult, error) {
 	plan, ok := planByAgentID[agentID]
 	if !ok {
@@ -125,9 +124,8 @@ func (s *Service) Start(ctx context.Context, agentID string) (StartResult, error
 		return StartResult{}, apierr.Internal("AGENT_AUTH_TERMINAL_UNAVAILABLE", "Authentication terminal service is unavailable.")
 	}
 	terminal, err := s.terminals.OpenCommandTerminal(ctx, shellterm.OpenCommandTerminalInput{
-		Argv:         plan.command,
-		Title:        plan.title,
-		InitialInput: plan.initialInput,
+		Argv:  plan.command,
+		Title: plan.title,
 	})
 	if err != nil {
 		return StartResult{}, err
@@ -146,13 +144,12 @@ func (s *Service) resolve(ctx context.Context, plan Plan) Plan {
 		plan.Available = true
 		return plan
 	}
-	if s.executables == nil {
-		plan.Reason = fmt.Sprintf("%s was not found on PATH.", plan.command[0])
-		return plan
-	}
-	path, err := s.executables.LookPath(plan.command[0])
-	if (err != nil || path == "") && s.agents != nil {
+	var path string
+	var err error
+	if s.agents != nil {
 		path, err = s.agents.ResolveAgentBinary(ctx, plan.AgentID)
+	} else if s.executables != nil {
+		path, err = s.executables.LookPath(plan.command[0])
 	}
 	if err != nil || path == "" {
 		plan.Reason = fmt.Sprintf("%s was not found on PATH.", plan.command[0])

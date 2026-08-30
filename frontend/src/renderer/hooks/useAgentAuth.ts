@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
-import { shellTerminalsQueryKey } from "./useShellTerminals";
+import { shellTerminalsQueryKey, type ShellTerminal } from "./useShellTerminals";
 
 export type AgentAuthPlan = components["schemas"]["AgentAuthPlan"];
 export type StartAgentAuthResponse = components["schemas"]["StartAgentAuthResponse"];
@@ -28,7 +28,19 @@ export function useStartAgentAuth() {
 			if (error || !data) throw new Error(apiErrorMessage(error, "Could not start agent authentication."));
 			return data;
 		},
-		onSuccess: () => {
+		onSuccess: (result) => {
+			const terminal: ShellTerminal = {
+				handleId: result.terminal.handleId,
+				projectId: result.terminal.projectId,
+				sessionId: result.terminal.sessionId,
+				workingDir: result.terminal.workingDir,
+				title: result.terminal.title,
+				createdAt: result.terminal.createdAt,
+			};
+			queryClient.setQueryData<ShellTerminal[]>(shellTerminalsQueryKey, (current = []) => [
+				...current.filter((item) => item.handleId !== terminal.handleId),
+				terminal,
+			]);
 			void queryClient.invalidateQueries({ queryKey: shellTerminalsQueryKey });
 		},
 	});

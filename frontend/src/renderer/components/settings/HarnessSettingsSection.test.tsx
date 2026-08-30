@@ -154,7 +154,7 @@ describe("HarnessSettingsSection", () => {
 		await waitFor(() => expect(within(claudeRow).getAllByText("Logged in")).toHaveLength(2));
 		expect(within(claudeRow).queryByRole("button", { name: "Check login" })).not.toBeInTheDocument();
 		expect(within(codexRow).getByRole("button", { name: "Login" })).toBeInTheDocument();
-		expect(within(codexRow).queryByRole("button", { name: "Check login" })).not.toBeInTheDocument();
+		expect(within(codexRow).getByRole("button", { name: "Check login" })).toBeInTheDocument();
 		expect(within(aiderRow).getByRole("button", { name: "Set up" })).toBeInTheDocument();
 		expect(within(aiderRow).getByRole("button", { name: "Check login" })).toBeInTheDocument();
 		expect(aiderRow).toHaveTextContent("Login status unknown");
@@ -218,6 +218,7 @@ describe("HarnessSettingsSection", () => {
 		const user = userEvent.setup();
 		const first = renderSection();
 		const firstCodexRow = (await screen.findByText("Codex")).closest('[data-agent="codex"]') as HTMLElement;
+		expect(await within(firstCodexRow).findByRole("button", { name: "Check login" })).toBeInTheDocument();
 		await user.click(await within(firstCodexRow).findByRole("button", { name: "Login" }));
 		await waitFor(() => expect(useUiStore.getState().agentAuthTerminalRequest?.handleId).toBe("shellterm-login"));
 		first.unmount();

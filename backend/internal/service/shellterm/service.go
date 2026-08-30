@@ -25,7 +25,6 @@ type ShellRuntime interface {
 	Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error)
 	Destroy(ctx context.Context, handle ports.RuntimeHandle) error
 	IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool, error)
-	SendInput(ctx context.Context, handle ports.RuntimeHandle, input string) error
 }
 
 // ProjectRootLocator resolves a project id to the directory a shell should
@@ -61,9 +60,8 @@ type Service struct {
 
 	// now and newHandleID are injectable so tests can assert on exact ids and
 	// timestamps without a clock or entropy dependency.
-	now               func() time.Time
-	newHandleID       func() (string, error)
-	initialInputDelay time.Duration
+	now         func() time.Time
+	newHandleID func() (string, error)
 
 	// gatesMu guards gates itself (the map), not the individual gate mutexes it
 	// holds.
@@ -153,17 +151,16 @@ func NewService(runtime ShellRuntime, store Store, projects ProjectRootLocator, 
 		log = slog.Default()
 	}
 	return &Service{
-		runtime:           runtime,
-		store:             store,
-		projects:          projects,
-		sessions:          sessions,
-		dataDir:           dataDir,
-		appRunID:          appRunID,
-		log:               log,
-		now:               time.Now,
-		newHandleID:       newShellTerminalHandleID,
-		initialInputDelay: 500 * time.Millisecond,
-		gates:             map[domain.SessionID]*sessionGate{},
+		runtime:     runtime,
+		store:       store,
+		projects:    projects,
+		sessions:    sessions,
+		dataDir:     dataDir,
+		appRunID:    appRunID,
+		log:         log,
+		now:         time.Now,
+		newHandleID: newShellTerminalHandleID,
+		gates:       map[domain.SessionID]*sessionGate{},
 	}
 }
 
@@ -256,20 +253,18 @@ func (s *Service) OpenCommandTerminal(ctx context.Context, in OpenCommandTermina
 		return ShellTerminal{}, err
 	}
 	return s.openTerminal(ctx, openTerminalConfig{
-		argv:         in.Argv,
-		workingDir:   s.dataDir,
-		title:        in.Title,
-		initialInput: in.InitialInput,
+		argv:       in.Argv,
+		workingDir: s.dataDir,
+		title:      in.Title,
 	})
 }
 
 type openTerminalConfig struct {
-	argv         []string
-	projectID    domain.ProjectID
-	sessionID    domain.SessionID
-	workingDir   string
-	title        string
-	initialInput string
+	argv       []string
+	projectID  domain.ProjectID
+	sessionID  domain.SessionID
+	workingDir string
+	title      string
 }
 
 // openTerminal creates and persists a terminal, rolling the runtime back on
@@ -295,21 +290,6 @@ func (s *Service) openTerminal(ctx context.Context, cfg openTerminalConfig) (She
 		if destroyErr := s.runtime.Destroy(context.WithoutCancel(ctx), handle); destroyErr != nil {
 			s.log.Warn("shell terminal rollback failed; runtime may be orphaned",
 				"handleId", handle.ID, "error", destroyErr)
-		}
-	}
-
-	if cfg.initialInput != "" {
-		if err := waitForInitialInput(ctx, s.initialInputDelay); err != nil {
-			rollback()
-			return ShellTerminal{}, fmt.Errorf("open shell terminal %s: wait for initial input: %w", handle.ID, err)
-		}
-		if err := ctx.Err(); err != nil {
-			rollback()
-			return ShellTerminal{}, fmt.Errorf("open shell terminal %s: send initial input: %w", handle.ID, err)
-		}
-		if err := s.runtime.SendInput(ctx, handle, cfg.initialInput); err != nil {
-			rollback()
-			return ShellTerminal{}, fmt.Errorf("open shell terminal %s: send initial input: %w", handle.ID, err)
 		}
 	}
 
@@ -349,20 +329,6 @@ func nextShellTerminalTitle(terminals []ShellTerminalRecord) string {
 		}
 	}
 	return fmt.Sprintf("Terminal %d", maxNumber+1)
-}
-
-func waitForInitialInput(ctx context.Context, delay time.Duration) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return ctx.Err()
-	}
 }
 
 // maxShellTerminalTitleLen bounds a user-supplied tab name. Tabs are truncated

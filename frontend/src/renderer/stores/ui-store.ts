@@ -44,6 +44,9 @@ export type InspectorSessionState = {
 	initialized?: boolean;
 };
 
+export type AgentAuthTerminalRequest = { agentId: string; handleId: string; nonce: number };
+export type AgentAuthCheckRequest = { agentId: string; handleId: string; generation: number; nonce: number };
+
 // Selection (which project/session is open) now lives in the URL — the router
 // is the single source of truth, read via route params. This store holds only
 // ephemeral UI: theme, sidebar collapse, command palette, per-session inspector
@@ -91,13 +94,16 @@ export type UiState = {
 	// the nonce always changes. The shell layout is its single consumer — it is
 	// mounted on every route, so the request is honoured from anywhere in the app.
 	newShellTerminalNonce: number;
+	// Monotonic across completed auth flows so the persistent shell never
+	// mistakes a later terminal request for one it already revealed.
+	agentAuthGeneration: number;
 	// One-shot request to reveal a backend-created authentication terminal.
 	// The renderer carries only the returned terminal handle, never argv or credentials.
-	agentAuthTerminalRequest: { agentId: string; handleId: string; nonce: number } | null;
+	agentAuthTerminalRequest: AgentAuthTerminalRequest | null;
 	// Raised only when Settings is reopened after an authentication terminal was
 	// requested, so the Harness page can re-probe that one agent after the user
 	// has had a chance to complete the native flow.
-	agentAuthCheckRequest: { agentId: string; nonce: number } | null;
+	agentAuthCheckRequest: AgentAuthCheckRequest | null;
 	// The shell terminal the user most recently opened or selected. Both the
 	// session view (tabs beside the session's pane) and the standalone terminals
 	// view read it, so whichever one is on screen shows the same shell.
@@ -144,7 +150,7 @@ export type UiState = {
 	requestCreateProjectFromPath: (path: string) => void;
 	requestNewShellTerminal: () => void;
 	requestAgentAuthTerminal: (agentId: string, handleId: string) => void;
-	completeAgentAuthCheck: (nonce: number) => void;
+	completeAgentAuthCheck: (request: AgentAuthCheckRequest, authorized: boolean) => void;
 	setActiveShellTerminal: (handleId: string | null) => void;
 	setVisibleTerminalKind: (sessionId: string, kind: TerminalTarget["kind"]) => void;
 	clearVisibleTerminalKind: (sessionId: string) => void;
@@ -217,6 +223,7 @@ export const useUiStore = create<UiState>((set, get) => ({
 	createProjectNonce: 0,
 	folderDropRequest: null,
 	newShellTerminalNonce: 0,
+	agentAuthGeneration: 0,
 	agentAuthTerminalRequest: null,
 	agentAuthCheckRequest: null,
 	activeShellTerminalHandleId: null,
@@ -249,6 +256,8 @@ export const useUiStore = create<UiState>((set, get) => ({
 			agentAuthCheckRequest: state.agentAuthTerminalRequest
 				? {
 					agentId: state.agentAuthTerminalRequest.agentId,
+					handleId: state.agentAuthTerminalRequest.handleId,
+					generation: state.agentAuthTerminalRequest.nonce,
 					nonce: (state.agentAuthCheckRequest?.nonce ?? 0) + 1,
 				}
 				: state.agentAuthCheckRequest,
@@ -425,17 +434,26 @@ export const useUiStore = create<UiState>((set, get) => ({
 		set((state) => ({ folderDropRequest: { path, nonce: (state.folderDropRequest?.nonce ?? 0) + 1 } })),
 	requestNewShellTerminal: () => set((state) => ({ newShellTerminalNonce: state.newShellTerminalNonce + 1 })),
 	requestAgentAuthTerminal: (agentId, handleId) =>
-		set((state) => ({
-			agentAuthTerminalRequest: {
-				agentId,
-				handleId,
-				nonce: (state.agentAuthTerminalRequest?.nonce ?? 0) + 1,
-			},
-		})),
-	completeAgentAuthCheck: (nonce) =>
-		set((state) => state.agentAuthCheckRequest?.nonce === nonce
-			? { agentAuthCheckRequest: null, agentAuthTerminalRequest: null }
-			: {}),
+		set((state) => {
+			const generation = state.agentAuthGeneration + 1;
+			return {
+				agentAuthGeneration: generation,
+				agentAuthCheckRequest: null,
+				agentAuthTerminalRequest: { agentId, handleId, nonce: generation },
+			};
+		}),
+	completeAgentAuthCheck: (request, authorized) =>
+		set((state) => {
+			const currentCheck = state.agentAuthCheckRequest;
+			if (!currentCheck || currentCheck.nonce !== request.nonce || currentCheck.generation !== request.generation ||
+				currentCheck.agentId !== request.agentId || currentCheck.handleId !== request.handleId) return {};
+			const currentTerminal = state.agentAuthTerminalRequest;
+			if (authorized && currentTerminal?.nonce === request.generation && currentTerminal.agentId === request.agentId &&
+				currentTerminal.handleId === request.handleId) {
+				return { agentAuthCheckRequest: null, agentAuthTerminalRequest: null };
+			}
+			return { agentAuthCheckRequest: null };
+		}),
 	setActiveShellTerminal: (activeShellTerminalHandleId) => set({ activeShellTerminalHandleId }),
 	setVisibleTerminalKind: (sessionId, kind) =>
 		set((state) =>

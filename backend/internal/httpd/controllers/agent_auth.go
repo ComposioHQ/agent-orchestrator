@@ -13,7 +13,7 @@ import (
 
 // AgentAuthService exposes only fixed, daemon-owned authentication plans.
 type AgentAuthService interface {
-	Plans() []agentauth.Plan
+	Plans(context.Context) []agentauth.Plan
 	Start(ctx context.Context, agentID string) (agentauth.StartResult, error)
 }
 
@@ -33,7 +33,7 @@ func (c *AgentAuthController) list(w http.ResponseWriter, r *http.Request) {
 		apispec.NotImplemented(w, r, http.MethodGet, "/api/v1/agents/auth-plans")
 		return
 	}
-	envelope.WriteJSON(w, http.StatusOK, ListAgentAuthPlansResponse{Plans: c.Svc.Plans()})
+	envelope.WriteJSON(w, http.StatusOK, ListAgentAuthPlansResponse{Plans: c.Svc.Plans(r.Context())})
 }
 
 func (c *AgentAuthController) start(w http.ResponseWriter, r *http.Request) {

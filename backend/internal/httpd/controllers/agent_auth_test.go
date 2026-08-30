@@ -25,7 +25,7 @@ type fakeAgentAuthService struct {
 	startCalls  int
 }
 
-func (f *fakeAgentAuthService) Plans() []agentauth.Plan { return f.plans }
+func (f *fakeAgentAuthService) Plans(context.Context) []agentauth.Plan { return f.plans }
 
 func (f *fakeAgentAuthService) Start(_ context.Context, agentID string) (agentauth.StartResult, error) {
 	f.startCalls++

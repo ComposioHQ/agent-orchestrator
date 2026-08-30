@@ -217,7 +217,6 @@ func newTestServiceWithSessions(rt *fakeShellRuntime, st *fakeShellTerminalStore
 		return "shellterm-test" + string(rune('0'+n)), nil
 	}
 	svc.now = func() time.Time { return time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC) }
-	svc.initialInputDelay = 0
 	return svc
 }
 
@@ -226,10 +225,9 @@ func TestOpenCommandTerminalStartsTrustedCommandInDataDir(t *testing.T) {
 	st := &fakeShellTerminalStore{}
 	svc := newTestService(rt, st, &fakeProjectRootLocator{})
 
-	term, err := svc.OpenCommandTerminal(context.Background(), OpenCommandTerminalInput{
-		Argv:         []string{"pi"},
-		Title:        "Log in to Pi",
-		InitialInput: "/login\r",
+	_, err := svc.OpenCommandTerminal(context.Background(), OpenCommandTerminalInput{
+		Argv:  []string{"pi"},
+		Title: "Log in to Pi",
 	})
 	if err != nil {
 		t.Fatalf("OpenCommandTerminal: %v", err)
@@ -254,8 +252,8 @@ func TestOpenCommandTerminalStartsTrustedCommandInDataDir(t *testing.T) {
 	if !reflect.DeepEqual(st.records, []ShellTerminalRecord{wantRecord}) {
 		t.Errorf("records = %#v, want %#v", st.records, []ShellTerminalRecord{wantRecord})
 	}
-	if !reflect.DeepEqual(rt.sent, []sentInput{{handleID: term.HandleID, input: "/login\r"}}) {
-		t.Errorf("sent = %#v, want one unchanged trusted input", rt.sent)
+	if len(rt.sent) != 0 {
+		t.Errorf("sent = %#v, want interactive input left to the user", rt.sent)
 	}
 }
 
@@ -272,68 +270,6 @@ func TestOpenCommandTerminalDestroysRuntimeWhenPersistFails(t *testing.T) {
 	}
 	if len(st.records) != 0 {
 		t.Errorf("records = %#v, want no persisted terminal", st.records)
-	}
-}
-
-func TestOpenCommandTerminalDestroysRuntimeWhenInitialInputFails(t *testing.T) {
-	rt := newFakeShellRuntime()
-	rt.sendErr = errors.New("runtime input failed")
-	st := &fakeShellTerminalStore{}
-	svc := newTestService(rt, st, &fakeProjectRootLocator{})
-
-	if _, err := svc.OpenCommandTerminal(context.Background(), OpenCommandTerminalInput{Argv: []string{"pi"}, Title: "Log in to Pi", InitialInput: "/login\r"}); err == nil {
-		t.Fatal("OpenCommandTerminal succeeded despite an initial-input failure")
-	}
-	if !reflect.DeepEqual(rt.destroyed, []string{"shellterm-test1"}) {
-		t.Errorf("destroyed = %#v, want rollback of the created runtime", rt.destroyed)
-	}
-	if len(st.records) != 0 {
-		t.Errorf("records = %#v, want no persisted terminal", st.records)
-	}
-}
-
-func TestOpenCommandTerminalDestroysRuntimeWhenInitialInputWaitIsCanceled(t *testing.T) {
-	rt := newFakeShellRuntime()
-	st := &fakeShellTerminalStore{}
-	svc := newTestService(rt, st, &fakeProjectRootLocator{})
-	svc.initialInputDelay = time.Hour
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	if _, err := svc.OpenCommandTerminal(ctx, OpenCommandTerminalInput{Argv: []string{"pi"}, Title: "Log in to Pi", InitialInput: "/login\r"}); err == nil {
-		t.Fatal("OpenCommandTerminal succeeded despite a canceled initial-input wait")
-	}
-	if !reflect.DeepEqual(rt.destroyed, []string{"shellterm-test1"}) {
-		t.Errorf("destroyed = %#v, want rollback of the created runtime", rt.destroyed)
-	}
-	if len(st.records) != 0 {
-		t.Errorf("records = %#v, want no persisted terminal", st.records)
-	}
-	if len(rt.sent) != 0 {
-		t.Errorf("sent = %#v, want no input sent after canceled wait", rt.sent)
-	}
-}
-
-func TestOpenCommandTerminalDoesNotSendInputAfterZeroDelayCanceledWait(t *testing.T) {
-	for i := 0; i < 100; i++ {
-		rt := newFakeShellRuntime()
-		st := &fakeShellTerminalStore{}
-		svc := newTestService(rt, st, &fakeProjectRootLocator{})
-		ctx, cancel := context.WithCancel(context.Background())
-		cancel()
-
-		if _, err := svc.OpenCommandTerminal(ctx, OpenCommandTerminalInput{Argv: []string{"pi"}, Title: "Log in to Pi", InitialInput: "/login\r"}); err == nil {
-			t.Fatal("OpenCommandTerminal succeeded despite a canceled zero-delay initial-input wait")
-		}
-		if len(rt.sent) != 0 {
-			t.Fatalf("sent = %#v, want no input sent after canceled wait", rt.sent)
-		}
-		if len(st.records) != 0 {
-			t.Fatalf("records = %#v, want no persisted terminal", st.records)
-		}
-		if !reflect.DeepEqual(rt.destroyed, []string{"shellterm-test1"}) {
-			t.Fatalf("destroyed = %#v, want rollback of the created runtime", rt.destroyed)
-		}
 	}
 }
 
