@@ -181,7 +181,7 @@ export function QueuedMessageDock({
 				onClick={() => hasMore && setExpanded((open) => !open)}
 				disabled={!hasMore}
 				className={cn(
-					"flex w-full items-center gap-2 px-3 py-2 text-left motion-reduce:transition-none",
+					"queue-dock-toggle flex w-full items-center gap-2 px-3 py-2 text-left motion-reduce:transition-none",
 					hasMore && "cursor-pointer",
 					!hasMore && "cursor-default",
 				)}

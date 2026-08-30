@@ -2277,6 +2277,10 @@ html.sidebar-reordering * {
 	flex: none;
 }
 
+.cursor-chat-surface .queue-dock-toggle:not(:disabled):active {
+	transform: none;
+}
+
 .queue-dock-scroll {
 	display: flex;
 	min-height: 100%;
