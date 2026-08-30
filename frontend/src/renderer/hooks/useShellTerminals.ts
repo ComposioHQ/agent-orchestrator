@@ -22,13 +22,21 @@ export type ShellTerminal = {
 export const shellTerminalsQueryKey = ["shell-terminals"] as const;
 const usePreviewData = import.meta.env.VITE_NO_ELECTRON === "1";
 
+function isLegacyDirectoryTitle(title: string, workingDir: string): boolean {
+	const parts = workingDir.split(/[\\/]/).filter(Boolean);
+	return parts.at(-1) === title;
+}
+
 function toShellTerminal(t: components["schemas"]["ShellTerminalResponse"]): ShellTerminal {
+	const title = isLegacyDirectoryTitle(t.title, t.workingDir) ? "Terminal" : t.title;
 	return {
 		handleId: t.handleId,
 		projectId: t.projectId,
 		sessionId: t.sessionId,
 		workingDir: t.workingDir,
-		title: t.title,
+		// Shell tabs used to be named after their initial directory. Normalize
+		// those persisted legacy labels so existing tabs adopt the new idle state.
+		title: title === "Terminal" ? "Terminal 1" : title,
 		createdAt: t.createdAt,
 	};
 }
@@ -83,7 +91,7 @@ export function useOpenShellTerminal() {
 					projectId,
 					sessionId,
 					workingDir: `/Users/demo/Projects/${projectId ?? "ao"}`,
-					title: projectId ?? "shell",
+					title: `Terminal ${previewShellSeq}`,
 					createdAt: new Date().toISOString(),
 				};
 				previewShellTerminals = [...previewShellTerminals, shell];
@@ -183,7 +191,21 @@ export function useRenameShellTerminal() {
 			if (!data) throw new Error("Daemon returned no shell terminal");
 			return toShellTerminal(data.shellTerminal);
 		},
-		onSuccess: () => {
+		onMutate: async ({ handleId, title }) => {
+			await queryClient.cancelQueries({ queryKey: shellTerminalsQueryKey });
+			const previous = queryClient.getQueryData<ShellTerminal[]>(shellTerminalsQueryKey);
+			queryClient.setQueryData<ShellTerminal[]>(shellTerminalsQueryKey, (current) =>
+				current?.map((shell) => (shell.handleId === handleId ? { ...shell, title } : shell)),
+			);
+			return { previous };
+		},
+		onError: (_error, _input, context) => {
+			if (context?.previous) queryClient.setQueryData(shellTerminalsQueryKey, context.previous);
+		},
+		onSuccess: (shell) => {
+			queryClient.setQueryData<ShellTerminal[]>(shellTerminalsQueryKey, (current) =>
+				current?.map((candidate) => (candidate.handleId === shell.handleId ? shell : candidate)),
+			);
 			void queryClient.invalidateQueries({ queryKey: shellTerminalsQueryKey });
 		},
 	});
