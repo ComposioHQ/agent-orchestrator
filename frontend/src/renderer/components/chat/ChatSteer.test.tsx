@@ -211,6 +211,7 @@ describe("ChatWorkspace steering", () => {
 		const hiddenRow = within(dock).getByTestId("queued-message-queued-2");
 		expect(hiddenRow).toHaveAttribute("aria-hidden", "true");
 		expect(hiddenRow).toHaveAttribute("inert");
+		expect(screen.getByTestId("queued-message-toggle")).toHaveClass("active:scale-[0.999]");
 	});
 
 	it("hides a cancelled queued message from the timeline", () => {

@@ -161,7 +161,7 @@ export function QueuedMessageDock({
 
 	return (
 		<div
-			className="overflow-hidden rounded-[var(--radius-chat-composer)] border border-border-strong bg-surface shadow-sm"
+			className="queue-dock rounded-[var(--radius-chat-composer)] border border-border-strong bg-surface shadow-sm"
 			data-testid="queued-message-dock"
 		>
 			<button
@@ -170,10 +170,11 @@ export function QueuedMessageDock({
 				disabled={!hasMore}
 				className={cn(
 					"flex w-full items-center gap-2 px-3 py-2 text-left motion-reduce:transition-none",
-					hasMore && "cursor-pointer active:scale-[0.995] transition-transform duration-150 ease-out",
+					hasMore && "cursor-pointer active:scale-[0.999] transition-transform duration-150 ease-out",
 					!hasMore && "cursor-default",
 				)}
 				aria-expanded={hasMore ? expanded : undefined}
+				data-testid="queued-message-toggle"
 			>
 				{hasMore ? (
 					<ChevronDown
@@ -193,7 +194,7 @@ export function QueuedMessageDock({
 			</button>
 			{count > 0 ? (
 				<div
-					className="queue-dock-body"
+					className="queue-dock-body bg-surface"
 					data-expanded={isOpen ? "true" : "false"}
 					data-collapsible={hasMore ? "true" : "false"}
 					style={
