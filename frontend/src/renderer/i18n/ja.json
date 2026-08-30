@@ -1149,7 +1149,7 @@
 	"settings.project.intakeAssigneePlaceholder": "ユーザー名を入力、または * ですべて",
 	"settings.project.intakeDescription": "一致するトラッカー Issue からワーカーセッションを自動起動します。",
 	"settings.project.intakeHelpAria": "Issue インテークを有効にするとどうなりますか？",
-	"settings.project.intakeTooltip": "一致する各 GitHub Issue に対してワーカーセッションを自動起動します。",
+	"settings.project.intakeTooltip": "一致する各Issueに対してワーカーセッションを自動起動します。",
 	"settings.migration.title": "移行",
 	"settings.migration.description": "以前の Agent Orchestrator インストールからプロジェクトとオーケストレーターセッションをインポートします。古いファイルは変更されず、何度実行しても安全です。",
 	"settings.migration.statusLabel": "ステータス",

@@ -1149,7 +1149,7 @@
 	"settings.project.intakeAssigneePlaceholder": "사용자 이름 입력, 또는 * 로 전체",
 	"settings.project.intakeDescription": "일치하는 트래커 이슈에서 워커 세션을 자동으로 시작합니다.",
 	"settings.project.intakeHelpAria": "이슈 인테이크를 사용하면 어떻게 되나요?",
-	"settings.project.intakeTooltip": "일치하는 각 GitHub 이슈에 대해 워커 세션을 자동으로 시작합니다.",
+	"settings.project.intakeTooltip": "일치하는 각 이슈에 대해 워커 세션을 자동으로 시작합니다.",
 	"settings.migration.title": "마이그레이션",
 	"settings.migration.description": "이전 Agent Orchestrator 설치에서 프로젝트와 오케스트레이터 세션을 가져옵니다. 이전 파일은 수정되지 않으며 여러 번 실행해도 안전합니다.",
 	"settings.migration.statusLabel": "상태",
