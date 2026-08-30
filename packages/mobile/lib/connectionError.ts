@@ -10,6 +10,7 @@
 export type ConnectionFailure =
 	| "not-ao-qr" // the scanned code wasn't an AO pairing payload
 	| "outdated-desktop" // a v1 code: AO on the computer is too old to pair with
+	| "tunnel-rotated" // nothing answered, and the only remote path was a tunnel
 	| "unreachable" // nothing answered (DNS failure, refused, timeout)
 	| "auth" // 401/403 — the password is wrong or was rotated
 	| "rate-limited" // 429 — the daemon's failed-attempt lockout
@@ -106,6 +107,13 @@ export function describeConnectionFailure(
 		reason === "unreachable" && target.platform === "ios" && isLocalNetworkHost(target.host);
 
 	switch (reason) {
+		case "tunnel-rotated":
+			return {
+				title: "This machine's remote address changed",
+				message:
+					"AO on your computer restarted, which gives it a new address. Open Settings \u2192 Connect Mobile there and scan the code again.",
+				showLocalNetworkHint: false,
+			};
 		case "outdated-desktop":
 			return {
 				title: "Update AO on your computer",

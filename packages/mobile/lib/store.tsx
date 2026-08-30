@@ -26,7 +26,7 @@ import { isConfigured, loadConfig, type ServerConfig } from "./config";
 import { resolveActiveConfig, runtimeResolveDeps } from "./resolveConfig";
 import { pollIntervalFor } from "./pollInterval";
 import type { Endpoint } from "./endpoints";
-import { loadHosts } from "./hosts";
+import { activeHost, loadHosts } from "./hosts";
 import { shouldReRace } from "./reRace";
 import { shouldRaceForUpgrade, UPGRADE_RACE_CHECK_MS } from "./upgradeRace";
 import { sameServerConfig } from "./sameConfig";
@@ -59,6 +59,9 @@ export type SpawnOptions = {
 type AppState = {
 	config: ServerConfig | null;
 	configured: boolean;
+	/** Every way the active machine says it can be reached, for telling a
+	 *  rotated tunnel hostname apart from being simply out of range. */
+	activeEndpoints: Endpoint[];
 	projects: ProjectInfo[];
 	sessions: DashboardSession[];
 	orchestrators: OrchestratorLink[];
@@ -114,6 +117,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	// Whether resolution has finished at least once. Distinguishes "no config
 	// yet" from "no machine paired" — identical as state, opposite to the user.
 	const [configResolved, setConfigResolved] = useState(false);
+	const [activeEndpoints, setActiveEndpoints] = useState<Endpoint[]>([]);
 	const [projects, setProjects] = useState<ProjectInfo[]>([]);
 	const [sessions, setSessions] = useState<DashboardSession[]>([]);
 	const [orchestrators, setOrchestrators] = useState<OrchestratorLink[]>([]);
@@ -214,6 +218,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			const next = sameServerConfig(prev, c) ? (prev as typeof c) : c;
 			cfgRef.current = next;
 			setConfig(next);
+			// Read alongside the config so a failure can be explained: a stored
+			// tunnel that no longer answers is a rotated hostname, not a machine
+			// that is merely out of range.
+			setActiveEndpoints((await activeHost())?.endpoints ?? []);
 		} finally {
 			setConfigResolved(true);
 		}
@@ -483,6 +491,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 		() => ({
 			config,
 			configured: !!config && isConfigured(config),
+			activeEndpoints,
 			projects,
 			sessions,
 			orchestrators,
