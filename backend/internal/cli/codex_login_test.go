@@ -190,6 +190,24 @@ func TestCodexLoginMenuGuidesUsersThroughEverySupportedMethod(t *testing.T) {
 	}
 }
 
+func TestCodexLoginMenuFitsInlineTerminalWithoutScrolling(t *testing.T) {
+	var stdout bytes.Buffer
+	if err := writeCodexLoginMenu(&stdout, codexLoginStyle{}); err != nil {
+		t.Fatalf("writeCodexLoginMenu: %v", err)
+	}
+
+	const maxRows = 14
+	rows := strings.Count(stdout.String(), "\n") + 1
+	if rows > maxRows {
+		t.Fatalf("menu uses %d rows, want at most %d:\n%s", rows, maxRows, stdout.String())
+	}
+	for _, line := range strings.Split(stdout.String(), "\n") {
+		if width := len([]rune(line)); width > 80 {
+			t.Fatalf("menu line uses %d columns, want at most 80: %q", width, line)
+		}
+	}
+}
+
 func TestCodexLoginReportsCredentialVerificationAndCompletion(t *testing.T) {
 	var stdout bytes.Buffer
 	deps := Deps{

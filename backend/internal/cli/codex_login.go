@@ -146,29 +146,19 @@ func (s codexLoginStyle) success(value string) string {
 
 func writeCodexLoginMenu(out io.Writer, style codexLoginStyle) error {
 	lines := []string{
-		"",
 		style.accent("Sign in to Codex"),
 		style.dim("Choose how you want to authenticate this profile."),
 		"",
 		style.dim("PERSONAL ACCOUNT"),
-		"",
-		fmt.Sprintf("  %s  %s  %s", style.accent("1"), style.bold("ChatGPT in browser"), style.success("Recommended")),
-		style.dim("     Continue using your ChatGPT account"),
-		"",
-		fmt.Sprintf("  %s  %s", style.accent("2"), style.bold("Device code")),
-		style.dim("     Sign in on another device"),
+		fmt.Sprintf("  %s  %s  %s %s", style.accent("1"), style.bold("ChatGPT in browser"), style.success("Recommended"), style.dim("· Continue using your ChatGPT account")),
+		fmt.Sprintf("  %s  %s %s", style.accent("2"), style.bold("Device code"), style.dim("· Sign in on another device")),
 		"",
 		style.dim("DEVELOPER CREDENTIALS"),
-		"",
-		fmt.Sprintf("  %s  %s", style.accent("3"), style.bold("OpenAI API key")),
-		style.dim("     Your key is validated before being saved"),
-		"",
-		fmt.Sprintf("  %s  %s", style.accent("4"), style.bold("Access token")),
-		style.dim("     For advanced or managed environments"),
+		fmt.Sprintf("  %s  %s %s", style.accent("3"), style.bold("OpenAI API key"), style.dim("· Your key is validated before being saved")),
+		fmt.Sprintf("  %s  %s %s", style.accent("4"), style.bold("Access token"), style.dim("· For advanced or managed environments")),
 		"",
 		style.bold("Enter 1-4 and press Return"),
 		style.dim("Ctrl+C to cancel · Secret input stays hidden"),
-		"",
 	}
 	if _, err := fmt.Fprintln(out, strings.Join(lines, "\n")); err != nil {
 		return err
