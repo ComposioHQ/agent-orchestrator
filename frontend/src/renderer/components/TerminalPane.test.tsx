@@ -76,6 +76,7 @@ vi.mock("./XtermTerminal", () => ({
 				showLatestOutput: vi.fn(),
 				prepareForActivation: prepareForActivationMock,
 				onUserInput: vi.fn(() => disposable),
+				onTerminalResponse: vi.fn(() => disposable),
 				onResize: vi.fn(() => disposable),
 			});
 			return () => {

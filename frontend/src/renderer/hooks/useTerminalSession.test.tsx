@@ -96,12 +96,14 @@ type FakeTerminal = AttachableTerminal & {
 	compose(data: string): void;
 	shortcut(data: string): void;
 	wheel(data: string): void;
+	respond(data: string): void;
 	emitResize(cols: number, rows: number): void;
 	completeWrites(): void;
 };
 
 function createFakeTerminal(): FakeTerminal {
 	const inputListeners = new Set<Parameters<AttachableTerminal["onUserInput"]>[0]>();
+	const responseListeners = new Set<Parameters<AttachableTerminal["onTerminalResponse"]>[0]>();
 	const resizeListeners = new Set<(size: { cols: number; rows: number }) => void>();
 	const terminal: FakeTerminal = {
 		cols: 80,
@@ -127,6 +129,10 @@ function createFakeTerminal(): FakeTerminal {
 			inputListeners.add(listener);
 			return { dispose: () => inputListeners.delete(listener) };
 		},
+		onTerminalResponse: (listener) => {
+			responseListeners.add(listener);
+			return { dispose: () => responseListeners.delete(listener) };
+		},
 		onResize: (listener) => {
 			resizeListeners.add(listener);
 			return { dispose: () => resizeListeners.delete(listener) };
@@ -136,6 +142,7 @@ function createFakeTerminal(): FakeTerminal {
 		compose: (data) => inputListeners.forEach((listener) => listener(data, "composition")),
 		shortcut: (data) => inputListeners.forEach((listener) => listener(data, "shortcut")),
 		wheel: (data) => inputListeners.forEach((listener) => listener(data, "wheel")),
+		respond: (data) => responseListeners.forEach((listener) => listener(data)),
 		emitResize: (cols, rows) => resizeListeners.forEach((listener) => listener({ cols, rows })),
 		completeWrites: () => {
 			for (const callback of terminal.pendingWriteCallbacks.splice(0)) callback();
@@ -261,6 +268,18 @@ describe("useTerminalSession", () => {
 		view.rerender({ daemonReady: true, isVisible: true, inputDisabled: false });
 		terminal.typeKeys("safe now\r");
 		expect(muxes[0].inputs).toEqual([["handle-1", "safe now\r"]]);
+	});
+
+	it("forwards terminal protocol responses after the attachment opens", () => {
+		const { terminal, muxes } = setup({ inputDisabled: true });
+		const response = "\x1b]11;rgb:ffff/ffff/ffff\x1b\\";
+
+		terminal.respond(response);
+		expect(muxes[0].inputs).toEqual([]);
+
+		act(() => muxes[0].emitOpened("handle-1"));
+		terminal.respond(response);
+		expect(muxes[0].inputs).toEqual([["handle-1", response]]);
 	});
 
 	it("keeps receiving output while hidden without accepting input or resizing the PTY", () => {

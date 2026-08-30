@@ -29,6 +29,10 @@ const state = vi.hoisted(() => ({
 		focus: ReturnType<typeof vi.fn>;
 		selectAll: ReturnType<typeof vi.fn>;
 		dataListeners: Set<(data: string) => void>;
+		csiHandlers: Array<{
+			callback: (params: (number | number[])[]) => boolean | Promise<boolean>;
+			id: { final: string; intermediates?: string; prefix?: string };
+		}>;
 		keyListeners: Set<(event: { key: string }) => void>;
 		selectionListeners: Set<() => void>;
 		scrollListeners: Set<() => void>;
@@ -61,6 +65,24 @@ vi.mock("@xterm/xterm", () => ({
 		focus = vi.fn();
 		selectAll = vi.fn();
 		dataListeners = new Set<(data: string) => void>();
+		csiHandlers: Array<{
+			callback: (params: (number | number[])[]) => boolean | Promise<boolean>;
+			id: { final: string; intermediates?: string; prefix?: string };
+		}> = [];
+		parser = {
+			registerCsiHandler: (
+				id: { final: string; intermediates?: string; prefix?: string },
+				callback: (params: (number | number[])[]) => boolean | Promise<boolean>,
+			) => {
+				const handler = { callback, id };
+				this.csiHandlers.push(handler);
+				return {
+					dispose: () => {
+						this.csiHandlers = this.csiHandlers.filter((candidate) => candidate !== handler);
+					},
+				};
+			},
+		};
 		keyListeners = new Set<(event: { key: string }) => void>();
 		selectionListeners = new Set<() => void>();
 		scrollListeners = new Set<() => void>();
@@ -1148,9 +1170,76 @@ describe("XtermTerminal", () => {
 		const onInput = vi.fn();
 		render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);
 
-		expect(state.lastTerminal!.dataListeners.size).toBe(0);
 		state.lastTerminal!.dataListeners.forEach((listener) => listener("\x1b[A"));
 		expect(onInput).not.toHaveBeenCalled();
+	});
+
+	it("routes xterm color reports without forwarding raw input", () => {
+		const onResponse = vi.fn();
+		render(<XtermTerminal theme="light" onReady={(terminal) => terminal.onTerminalResponse(onResponse)} />);
+
+		expect(state.lastTerminal!.dataListeners.size).toBe(1);
+		state.lastTerminal!.dataListeners.forEach((listener) => {
+			listener("typed text");
+			listener("\x1b[A");
+			listener("\x1b]4;0;rgb:2424/2929/2f2f\x1b\\");
+			listener("\x1b]10;rgb:1111/2222/3333\x1b\\");
+			listener("\x1b]11;rgb:ffff/ffff/ffff\x1b\\");
+			listener("\x1b]12;rgb:4444/5555/6666\x1b\\");
+		});
+
+		expect(onResponse.mock.calls).toEqual([
+			["\x1b]4;0;rgb:2424/2929/2f2f\x1b\\"],
+			["\x1b]10;rgb:1111/2222/3333\x1b\\"],
+			["\x1b]11;rgb:ffff/ffff/ffff\x1b\\"],
+			["\x1b]12;rgb:4444/5555/6666\x1b\\"],
+		]);
+	});
+
+	it("reports live light and dark changes to mode 2031 subscribers", () => {
+		const onResponse = vi.fn();
+		const view = render(
+			<XtermTerminal theme="light" onReady={(terminal) => terminal.onTerminalResponse(onResponse)} />,
+		);
+		const setMode = state.lastTerminal!.csiHandlers.find(
+			({ id }) => id.prefix === "?" && id.final === "h",
+		);
+		const resetMode = state.lastTerminal!.csiHandlers.find(
+			({ id }) => id.prefix === "?" && id.final === "l",
+		);
+
+		expect(setMode?.callback([2031])).toBe(true);
+		view.rerender(
+			<XtermTerminal theme="dark" onReady={(terminal) => terminal.onTerminalResponse(onResponse)} />,
+		);
+		expect(onResponse).toHaveBeenLastCalledWith("\x1b[?997;1n");
+
+		view.rerender(
+			<XtermTerminal theme="light" onReady={(terminal) => terminal.onTerminalResponse(onResponse)} />,
+		);
+		expect(onResponse).toHaveBeenLastCalledWith("\x1b[?997;2n");
+
+		expect(resetMode?.callback([2031])).toBe(true);
+		onResponse.mockClear();
+		view.rerender(
+			<XtermTerminal theme="dark" onReady={(terminal) => terminal.onTerminalResponse(onResponse)} />,
+		);
+		expect(onResponse).not.toHaveBeenCalled();
+	});
+
+	it("answers color-scheme capability and current-mode queries", () => {
+		const onResponse = vi.fn();
+		render(<XtermTerminal theme="light" onReady={(terminal) => terminal.onTerminalResponse(onResponse)} />);
+		const capabilityQuery = state.lastTerminal!.csiHandlers.find(
+			({ id }) => id.prefix === "?" && id.intermediates === "$" && id.final === "p",
+		);
+		const modeQuery = state.lastTerminal!.csiHandlers.find(
+			({ id }) => id.prefix === "?" && id.final === "n",
+		);
+
+		expect(capabilityQuery?.callback([2031])).toBe(true);
+		expect(modeQuery?.callback([996])).toBe(true);
+		expect(onResponse.mock.calls).toEqual([["\x1b[?2031;2$y"], ["\x1b[?997;2n"]]);
 	});
 
 	it("translates wheel motion into SGR wheel reports for zellij scrollback", () => {

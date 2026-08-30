@@ -115,6 +115,10 @@ function loadRenderer(term: Terminal): void {
 const SUPPRESS_NATIVE_PASTE_MS = 100;
 /** Long enough to notice, short enough that a second copy reads as a second copy. */
 const COPY_TOAST_MS = 1400;
+const XTERM_COLOR_REPORT =
+	/^\x1b\](?:4;(?:[0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])|1[0-2]);rgb:[0-9a-f]{4}\/[0-9a-f]{4}\/[0-9a-f]{4}\x1b\\$/i;
+const COLOR_SCHEME_UPDATE_MODE = 2031;
+const COLOR_SCHEME_QUERY = 996;
 
 function preparePastedText(text: string): string {
 	return text.replace(/\r?\n/g, "\r");
@@ -295,6 +299,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 	const termRef = useRef<Terminal | null>(null);
 	const searchAddonRef = useRef<SearchAddon | null>(null);
 	const fitRef = useRef<(() => void) | null>(null);
+	const colorSchemeReporterRef = useRef<((theme: Theme) => void) | null>(null);
 	const contextMenuActionsRef = useRef<TerminalContextMenuActions | null>(null);
 	const [contextMenu, setContextMenu] = useState<TerminalContextMenuState>({
 		canCopy: false,
@@ -365,6 +370,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		if (!term) return;
 		const { dark, light } = buildTerminalThemes();
 		term.options.theme = props.theme === "dark" ? dark : light;
+		colorSchemeReporterRef.current?.(props.theme);
 	}, [props.theme, themeStyle]);
 
 	useEffect(() => {
@@ -603,6 +609,54 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			return true;
 		};
 		const userInputListeners = new Set<(data: string, source: TerminalUserInputSource) => void>();
+		const terminalResponseListeners = new Set<(data: string) => void>();
+		// xterm 5 does not implement the modern terminal color-scheme protocol.
+		// OpenTUI clients use it to receive live light/dark changes after startup.
+		let colorSchemeUpdatesEnabled = false;
+		let currentColorScheme = props.theme;
+		const emitTerminalResponse = (data: string) => {
+			terminalResponseListeners.forEach((listener) => listener(data));
+		};
+		const reportColorScheme = (theme: Theme, force = false) => {
+			const changed = theme !== currentColorScheme;
+			currentColorScheme = theme;
+			if (!force && (!colorSchemeUpdatesEnabled || !changed)) return;
+			emitTerminalResponse(`\x1b[?997;${theme === "dark" ? 1 : 2}n`);
+		};
+		colorSchemeReporterRef.current = reportColorScheme;
+		const setColorSchemeUpdates = term.parser.registerCsiHandler(
+			{ prefix: "?", final: "h" },
+			(params) => {
+				if (params.length !== 1 || params[0] !== COLOR_SCHEME_UPDATE_MODE) return false;
+				colorSchemeUpdatesEnabled = true;
+				currentColorScheme = callbacksRef.current.theme;
+				return true;
+			},
+		);
+		const resetColorSchemeUpdates = term.parser.registerCsiHandler(
+			{ prefix: "?", final: "l" },
+			(params) => {
+				if (params.length !== 1 || params[0] !== COLOR_SCHEME_UPDATE_MODE) return false;
+				colorSchemeUpdatesEnabled = false;
+				return true;
+			},
+		);
+		const queryColorSchemeCapability = term.parser.registerCsiHandler(
+			{ prefix: "?", intermediates: "$", final: "p" },
+			(params) => {
+				if (params.length !== 1 || params[0] !== COLOR_SCHEME_UPDATE_MODE) return false;
+				emitTerminalResponse(`\x1b[?${COLOR_SCHEME_UPDATE_MODE};${colorSchemeUpdatesEnabled ? 1 : 2}$y`);
+				return true;
+			},
+		);
+		const queryColorScheme = term.parser.registerCsiHandler(
+			{ prefix: "?", final: "n" },
+			(params) => {
+				if (params.length !== 1 || params[0] !== COLOR_SCHEME_QUERY) return false;
+				reportColorScheme(callbacksRef.current.theme, true);
+				return true;
+			},
+		);
 		const emitUserInput = (data: string, source: TerminalUserInputSource) => {
 			if (data.length === 0) return;
 			userInputListeners.forEach((listener) => listener(data, source));
@@ -878,11 +932,14 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		// misses them. Listen on window directly as a session-long recovery path.
 		window.addEventListener("resize", scheduleVisibleFit);
 
-		// Do not replace this with term.onData. xterm's raw data stream can include
-		// terminal-generated control responses during attach/repaint; forwarding
-		// those bytes through the mux writes dirty input into the real Codex PTY and
-		// corrupts the TUI. Keyboard is the only safe generic text path here; paste,
-		// composition, shortcuts, and wheel reports are emitted explicitly below.
+		// xterm mixes user data and terminal-generated responses on onData. Keep
+		// generic user input on the explicit paths below, but pass through xterm's
+		// color reports. Adaptive TUIs query both the terminal background (OSC 11)
+		// and ANSI palette entries (OSC 4) before choosing and rendering their theme.
+		const terminalResponse = term.onData((data) => {
+			if (!XTERM_COLOR_REPORT.test(data)) return;
+			emitTerminalResponse(data);
+		});
 		const keyInput = term.onKey(({ key }) => emitUserInput(key, "keyboard"));
 
 		// Translate wheel motion into SGR wheel reports for the pane (see
@@ -1071,6 +1128,10 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				userInputListeners.add(listener);
 				return { dispose: () => userInputListeners.delete(listener) };
 			},
+			onTerminalResponse: (listener) => {
+				terminalResponseListeners.add(listener);
+				return { dispose: () => terminalResponseListeners.delete(listener) };
+			},
 			onResize: (listener) => term.onResize(listener),
 		};
 		callbacksRef.current.onReady?.(handle);
@@ -1111,8 +1172,15 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			contextMenuActionsRef.current = null;
 			cancelActivationPreparation?.();
 			clearSuppressNativePaste();
+			if (colorSchemeReporterRef.current === reportColorScheme) colorSchemeReporterRef.current = null;
+			setColorSchemeUpdates.dispose();
+			resetColorSchemeUpdates.dispose();
+			queryColorSchemeCapability.dispose();
+			queryColorScheme.dispose();
+			terminalResponse.dispose();
 			keyInput.dispose();
 			userInputListeners.clear();
+			terminalResponseListeners.clear();
 			try {
 				term.dispose();
 			} catch {

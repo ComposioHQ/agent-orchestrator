@@ -46,6 +46,7 @@ export type AttachableTerminal = {
 	 */
 	prepareForActivation: () => Promise<void>;
 	onUserInput: (listener: (data: string, source: TerminalUserInputSource) => void) => { dispose: () => void };
+	onTerminalResponse: (listener: (data: string) => void) => { dispose: () => void };
 	onResize: (listener: (size: { cols: number; rows: number }) => void) => { dispose: () => void };
 };
 
@@ -664,6 +665,10 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 			else revealReplayTail();
 			mux.sendInput(handle, data);
 		});
+		const terminalResponse = terminal.onTerminalResponse((data) => {
+			if (!isCurrentAttachment(generation, handle, mux) || !r.inputReady) return;
+			mux.sendInput(handle, data);
+		});
 		// xterm only fires onResize when the grid actually changed; the debounce
 		// additionally collapses a drag/fullscreen/layout burst into one PTY
 		// resize. The last published grid is checked again at send time because a
@@ -684,6 +689,7 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		});
 		r.disposers.push(
 			() => input.dispose(),
+			() => terminalResponse.dispose(),
 			() => resize.dispose(),
 		);
 
