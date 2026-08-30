@@ -2513,7 +2513,7 @@ export interface components {
              * @description Install target this job ran (or is running) for.
              * @enum {string}
              */
-            target: "tmux" | "gh" | "claude" | "codex" | "opencode" | "copilot";
+            target: "tmux" | "gh" | "claude" | "codex" | "opencode" | "copilot" | "cloudflared";
         };
         KillReviewResponse: {
             reviewerHandleId: string;
@@ -10320,7 +10320,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Install target identifier: tmux, gh, claude, codex, opencode, or copilot. */
+                /** @description Install target identifier: tmux, gh, claude, codex, opencode, copilot, or cloudflared. */
                 target: string;
             };
             cookie?: never;
@@ -10370,7 +10370,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Install target identifier: tmux, gh, claude, codex, opencode, or copilot. */
+                /** @description Install target identifier: tmux, gh, claude, codex, opencode, copilot, or cloudflared. */
                 target: string;
             };
             cookie?: never;

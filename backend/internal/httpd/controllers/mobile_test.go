@@ -753,3 +753,52 @@ func TestTunnelStatusReportsSupportedWhenAConnectorExists(t *testing.T) {
 		t.Fatal("a configured connector means remote access is supported")
 	}
 }
+
+// Resolution happens once at daemon start, so a cloudflared installed from
+// Connect Mobile was invisible until AO restarted — the user pressed Install,
+// watched it succeed, and remote access stayed off with no explanation.
+// Enabling is the natural moment to look again.
+func TestEnableResolvesAConnectorInstalledSinceBoot(t *testing.T) {
+	dir := t.TempDir()
+	tun := &fakeTunnel{}
+	resolved := 0
+	b := &BridgeService{
+		ConfigPath:  filepath.Join(dir, "mobile.json"),
+		LAN:         &fakeLAN{},
+		DefaultPort: 3011,
+		ResolveTunnel: func() TunnelController {
+			resolved++
+			return tun
+		},
+	}
+
+	if _, err := b.Enable(); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+
+	if resolved != 1 {
+		t.Fatalf("resolver calls = %d, want 1", resolved)
+	}
+	if tun.startedOn != 3011 {
+		t.Fatalf("connector started on %d, want the bound port 3011", tun.startedOn)
+	}
+}
+
+// A machine that still has no cloudflared must enable cleanly as a LAN-only
+// bridge rather than failing: remote access is optional.
+func TestEnableWithoutAConnectorStillWorks(t *testing.T) {
+	dir := t.TempDir()
+	b := &BridgeService{
+		ConfigPath:    filepath.Join(dir, "mobile.json"),
+		LAN:           &fakeLAN{},
+		DefaultPort:   3011,
+		ResolveTunnel: func() TunnelController { return nil },
+	}
+
+	if _, err := b.Enable(); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+	if b.tunnelStatus().Supported {
+		t.Fatal("no connector resolved, so remote access is not supported")
+	}
+}

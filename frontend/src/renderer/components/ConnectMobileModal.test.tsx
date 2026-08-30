@@ -19,6 +19,16 @@ const { mobileStatus } = vi.hoisted(() => ({
 		// missing, so a fixture without it is not a realistic daemon.
 		hostId: "h_fixture",
 		endpoints: [{ kind: "lan", host: "192.168.1.42", port: 3011, secure: false }],
+		tunnel: undefined as
+			| undefined
+			| {
+					supported: boolean;
+					running: boolean;
+					ready: boolean;
+					hostname: string;
+					location: string;
+					lastError: string;
+			  },
 		warning: "",
 		securePairing: {
 			enabled: false,
@@ -425,4 +435,25 @@ test("does not claim unavailability while the connector is merely starting", asy
 	renderMobileSettings();
 
 	await waitFor(() => expect(screen.queryByTestId("mobile-remote-unavailable")).toBeNull());
+});
+
+// The install offer belongs with the caveat: the user learns that remote access
+// is unavailable and can act on it in the same place, rather than being told to
+// go and find a terminal.
+test("offers to install the connector when it is missing", async () => {
+	mobileStatus.tunnel = {
+		supported: false, running: false, ready: false, hostname: "", location: "", lastError: "",
+	};
+	renderMobileSettings();
+
+	expect(await screen.findByTestId("mobile-install-cloudflared")).toBeInTheDocument();
+});
+
+test("does not offer an install when a connector already exists", async () => {
+	mobileStatus.tunnel = {
+		supported: true, running: true, ready: true, hostname: "x.trycloudflare.com", location: "", lastError: "",
+	};
+	renderMobileSettings();
+
+	await waitFor(() => expect(screen.queryByTestId("mobile-install-cloudflared")).toBeNull());
 });

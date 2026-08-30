@@ -476,6 +476,18 @@ func Run() error {
 	if reapErr := mobilebridge.ReapStaleTunnel(tunnelPID, mobilebridge.IsLiveCloudflared, mobilebridge.KillProcess); reapErr != nil {
 		log.Warn("could not reap a stale mobile tunnel", "error", reapErr)
 	}
+	// Looked up again whenever the bridge is enabled, so a cloudflared the user
+	// installs from Connect Mobile is picked up without restarting AO.
+	bs.ResolveTunnel = func() controllers.TunnelController {
+		res := mobilebridge.ResolveCloudflared(mobilebridge.LocalCloudflaredLookup(cfg.DataDir))
+		if res.NeedsInstall {
+			return nil
+		}
+		log.Info("mobile remote access available", "cloudflared", res.Path, "source", res.Source)
+		return mobilebridge.NewManagedTunnel(mobilebridge.ManagedTunnelDeps{
+			Binary: res.Path, PIDPath: tunnelPID, Log: log,
+		})
+	}
 	if res := mobilebridge.ResolveCloudflared(mobilebridge.LocalCloudflaredLookup(cfg.DataDir)); !res.NeedsInstall {
 		log.Info("mobile remote access available", "cloudflared", res.Path, "source", res.Source)
 		bs.Tunnel = mobilebridge.NewManagedTunnel(mobilebridge.ManagedTunnelDeps{

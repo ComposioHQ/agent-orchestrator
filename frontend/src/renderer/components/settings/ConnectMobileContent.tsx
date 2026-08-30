@@ -10,6 +10,7 @@ import { reasonMessage, type SetupMode } from "./ConnectMobileSetup";
 import { SettingsOptionMenu, type SettingsOption } from "./SettingsOptionMenu";
 import { StyledQRCode } from "./StyledQRCode";
 import { PairingQr } from "./PairingQr";
+import { InstallCloudflared } from "./InstallCloudflared";
 import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../ui/tooltip";
@@ -537,12 +538,17 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 						// so this is a limitation of what the code can reach, not an
 						// error. Without it the QR looks entirely normal and the user
 						// discovers the gap only by being away from home.
-						<p className="mt-3 text-xs text-settings-muted" data-testid="mobile-remote-unavailable">
-							{t(
-								"mobile.remoteAccessUnavailable",
-								"Works on this network only — cloudflared isn't installed, so this machine can't be reached from elsewhere.",
-							)}
-						</p>
+						<div className="mt-3">
+							<p className="text-xs text-settings-muted" data-testid="mobile-remote-unavailable">
+								{t(
+									"mobile.remoteAccessUnavailable",
+									"Works on this network only — cloudflared isn't installed, so this machine can't be reached from elsewhere.",
+								)}
+							</p>
+							{/* Re-enabling is what makes the daemon look for the binary
+							    again, so a fresh install takes effect without restarting. */}
+							<InstallCloudflared onInstalled={() => void query.refetch().then(() => enable.mutate())} />
+						</div>
 					)}
 					{actionError && <p className="mt-3 text-xs text-error">{actionError}</p>}
 				</div>

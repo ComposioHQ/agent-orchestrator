@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
@@ -140,6 +141,15 @@ type BridgeService struct {
 	// which case the bridge behaves exactly as the LAN-only version did.
 	Tunnel TunnelController
 
+	// ResolveTunnel looks for a connector binary again, for the case where one
+	// was installed after the daemon started. Resolution otherwise happens once
+	// at boot, so a cloudflared installed from Connect Mobile stayed invisible
+	// until AO was restarted. Nil in tests that set Tunnel directly.
+	ResolveTunnel func() TunnelController
+
+	// Guards Tunnel, which ensureTunnel may replace while HTTP handlers read it.
+	tunnelMu sync.RWMutex
+
 	// serveErr records the last Apply failure so Status can report serve_failed.
 	serveErr error
 }
@@ -210,18 +220,44 @@ func (b *BridgeService) AdvertisedEndpoints() []mobilebridge.Endpoint {
 	})
 }
 
-func (b *BridgeService) tunnelEndpoint() *mobilebridge.TunnelEndpoint {
-	if b.Tunnel == nil {
+// tunnel reads the current connector without resolving one.
+func (b *BridgeService) tunnel() TunnelController {
+	b.tunnelMu.RLock()
+	defer b.tunnelMu.RUnlock()
+	return b.Tunnel
+}
+
+// ensureTunnel returns the connector, looking for a newly installed one first.
+// Called where a connector is about to be needed, not on every read: probing
+// the filesystem to answer a status poll would be wasteful.
+func (b *BridgeService) ensureTunnel() TunnelController {
+	if t := b.tunnel(); t != nil {
+		return t
+	}
+	if b.ResolveTunnel == nil {
 		return nil
 	}
-	return b.Tunnel.Endpoint()
+	b.tunnelMu.Lock()
+	defer b.tunnelMu.Unlock()
+	if b.Tunnel == nil {
+		b.Tunnel = b.ResolveTunnel()
+	}
+	return b.Tunnel
+}
+
+func (b *BridgeService) tunnelEndpoint() *mobilebridge.TunnelEndpoint {
+	if b.tunnel() == nil {
+		return nil
+	}
+	return b.tunnel().Endpoint()
 }
 
 func (b *BridgeService) tunnelStatus() mobilebridge.TunnelStatus {
-	if b.Tunnel == nil {
+	t := b.tunnel()
+	if t == nil {
 		return mobilebridge.TunnelStatus{} // Supported stays false: nothing to run.
 	}
-	st := b.Tunnel.Status()
+	st := t.Status()
 	st.Supported = true
 	return st
 }
@@ -363,8 +399,10 @@ func (b *BridgeService) enableWithPassword(pw string) (MobileStatusResponse, err
 	// connector aimed at the wrong port tunnels nothing. Start is idempotent
 	// and returns immediately — the connector needs tens of seconds to become
 	// advertisable, and Status reports that progress meanwhile.
-	if b.Tunnel != nil {
-		b.Tunnel.Start(port)
+	// Resolve here rather than only at boot: this is the moment a connector
+	// installed since then should start being used.
+	if t := b.ensureTunnel(); t != nil {
+		t.Start(port)
 	}
 	return b.Status(), nil
 }
@@ -393,8 +431,8 @@ func (b *BridgeService) RestoreOnBoot(state mobilebridge.State) error {
 	// rotate — so the connector has to be started here too. Without it the
 	// bridge comes back LAN-only and the UI shows Connect Mobile enabled while
 	// remote access is silently gone until the user toggles it off and on.
-	if b.Tunnel != nil {
-		b.Tunnel.Start(port)
+	if t := b.ensureTunnel(); t != nil {
+		t.Start(port)
 	}
 	return nil
 }
@@ -426,8 +464,8 @@ func (b *BridgeService) Disable() error {
 	// Stop the connector first. Leaving it up after the user turned Connect
 	// Mobile off would keep the machine reachable from the internet while the
 	// UI says it is not.
-	if b.Tunnel != nil {
-		b.Tunnel.Stop()
+	if t := b.tunnel(); t != nil {
+		t.Stop()
 	}
 	if err := b.LAN.Stop(ctx); err != nil {
 		return err
@@ -458,10 +496,11 @@ func (b *BridgeService) Disable() error {
 // restore brings the connector back on the next start. This ends the process,
 // not the user's preference.
 func (b *BridgeService) ShutdownTunnel() {
-	if b.Tunnel == nil {
+	t := b.tunnel()
+	if t == nil {
 		return // Remote access is optional; nothing to stop without cloudflared.
 	}
-	b.Tunnel.Stop()
+	t.Stop()
 }
 
 // ShutdownServe removes the tailnet proxy this bridge installed, for use on
