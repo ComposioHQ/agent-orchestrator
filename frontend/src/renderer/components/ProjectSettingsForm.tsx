@@ -256,7 +256,7 @@ function SettingsBody({
 							? [
 									{
 										harness: form.reviewerHarness,
-										agentConfig: buildRoleAgentConfig(undefined, form.reviewerModel, form.reviewerMode),
+										agentConfig: buildRoleAgentConfig(config.reviewers?.[0]?.agentConfig, form.reviewerModel, form.reviewerMode),
 									},
 								]
 							: undefined,
