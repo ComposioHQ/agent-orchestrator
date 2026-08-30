@@ -25,6 +25,16 @@
 	animation: none;
 	mix-blend-mode: normal;
 }
+
+/* While data-theme flips, kill per-element color tweens (composer, search,
+   switches). Without this they animate for hundreds of ms and read as a
+   white box in dark mode / a black strip in light mode. */
+:root[data-theme-transition="active"] *,
+:root[data-theme-transition="active"] *::before,
+:root[data-theme-transition="active"] *::after {
+	transition-duration: 0ms !important;
+	transition-delay: 0ms !important;
+}
 @theme inline {
 	--font-sans: var(--font-family-base);
 	--font-mono: var(--font-family-mono);
@@ -2190,6 +2200,8 @@ html.sidebar-reordering * {
 	border-color: var(--composer-border);
 	background: var(--composer-bg);
 	box-shadow: none;
+	/* Border only — background must snap with the view-transition theme cut. */
+	transition: border-color 150ms ease-out;
 }
 
 .cursor-chat-composer[data-attached-top] {

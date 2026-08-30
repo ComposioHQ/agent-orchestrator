@@ -246,6 +246,28 @@ function syncNativeWindowBackground(): void {
 	);
 }
 
+function resolvedDaemonDataDir(): string {
+	const override = process.env.AO_DATA_DIR?.trim();
+	if (override) return override;
+	if (isDev) return path.join(os.homedir(), ".ao", DEV_STATE_SUBDIR, "data");
+	return path.join(os.homedir(), ".ao", "data");
+}
+
+// Cursor Agent reads TERM_THEME at process start. The daemon applies it from
+// this file when spawning a PTY. The renderer writes the resolved light/dark
+// scheme here so it matches the xterm palette (not Electron nativeTheme alone).
+function persistTerminalThemeHint(scheme: "light" | "dark"): void {
+	const dir = resolvedDaemonDataDir();
+	void (async () => {
+		try {
+			await mkdir(dir, { recursive: true, mode: 0o750 });
+			await writeFile(path.join(dir, "terminal-theme"), `${scheme}\n`, { mode: 0o600 });
+		} catch (error) {
+			console.warn("AO: unable to persist terminal theme hint", error);
+		}
+	})();
+}
+
 nativeTheme.on("updated", syncNativeWindowBackground);
 
 // The packaged renderer is served from a custom standard scheme, not file://.
@@ -1681,6 +1703,12 @@ ipcMain.handle("theme:set", (_event, preference: "light" | "dark" | "system") =>
 	if (preference === "light" || preference === "dark" || preference === "system") {
 		nativeTheme.themeSource = preference;
 		syncNativeWindowBackground();
+	}
+});
+
+ipcMain.handle("theme:persist-terminal", (_event, scheme: unknown) => {
+	if (scheme === "light" || scheme === "dark") {
+		persistTerminalThemeHint(scheme);
 	}
 });
 
