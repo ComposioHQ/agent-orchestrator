@@ -66,6 +66,7 @@ const CODEX_APPROVAL_COPY: Record<ApprovalMode, { label: string }> = {
 };
 
 const CODEX_APPROVAL_ORDER: ApprovalMode[] = [
+	"default",
 	"accept-edits",
 	"auto",
 	"bypass-permissions",
@@ -196,8 +197,8 @@ export function TurnSettingsBar({
 						) : onChange ? (
 							<Picker
 								label={approvalLabel}
-								title="Approval policy for the next turn"
-								disabled={disabled}
+													title="Approval policy for the next turn"
+													disabled={optionDisabled}
 							>
 								{approvalOrder.map((mode) => (
 									<OptionMenuItem

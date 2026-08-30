@@ -269,7 +269,7 @@ describe("ACP session config options", () => {
 		expect(screen.queryByRole("menuitem", { name: "Default approvals" })).not.toBeInTheDocument();
 		expect(screen.queryByRole("menuitem", { name: "Accept edits" })).not.toBeInTheDocument();
 		expect(screen.queryByRole("menuitem", { name: "Auto-approve" })).not.toBeInTheDocument();
-		expect(screen.queryByRole("menuitem", { name: "Full access" })).not.toBeInTheDocument();
+		expect(screen.getByRole("menuitem", { name: "Full access" })).toBeInTheDocument();
 
 		await user.click(screen.getByRole("menuitem", { name: "Approve for me" }));
 		expect(onChange).toHaveBeenCalledWith({ approvalMode: "auto" });

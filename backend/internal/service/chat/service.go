@@ -131,6 +131,7 @@ type StartConfig struct {
 	WorkspacePath         string
 	Env                   map[string]string
 	Model                 string
+	Effort                string
 	Permissions           ports.PermissionMode
 	SystemPrompt          string
 	AdditionalDirectories []string
@@ -401,6 +402,9 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	if cfg.ProviderConversationID != "" && conversation.Settings.Model != "" {
 		cfg.Model = conversation.Settings.Model
 	}
+	if cfg.ProviderConversationID != "" && conversation.Settings.ReasoningEffort != "" {
+		cfg.Effort = conversation.Settings.ReasoningEffort
+	}
 	if cfg.ProviderConversationID != "" && conversation.Settings.ApprovalMode != "" {
 		cfg.Permissions = conversation.Settings.ApprovalMode
 	}
@@ -409,6 +413,7 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	}
 	if cfg.ProviderConversationID == "" {
 		conversation.Settings.Model = cfg.Model
+		conversation.Settings.ReasoningEffort = cfg.Effort
 		conversation.Settings.ApprovalMode = cfg.Permissions
 		if err := s.store.SetConversationSettings(ctx, conversation.ID, conversation.Settings, s.now()); err != nil {
 			return nil, fmt.Errorf("record initial conversation settings: %w", err)
@@ -424,6 +429,7 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 			WorkspacePath:          cfg.WorkspacePath,
 			Env:                    cfg.Env,
 			Model:                  cfg.Model,
+			Effort:                 cfg.Effort,
 			Permissions:            cfg.Permissions,
 			SystemPrompt:           cfg.SystemPrompt,
 			ProviderScopeID:        providerScopeID,
@@ -1106,6 +1112,7 @@ type StartRequest struct {
 	WorkspacePath         string
 	Env                   map[string]string
 	Model                 string
+	Effort                string
 	Permissions           ports.PermissionMode
 	SystemPrompt          string
 	AdditionalDirectories []string

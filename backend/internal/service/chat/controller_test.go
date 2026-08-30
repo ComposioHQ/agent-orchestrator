@@ -530,6 +530,9 @@ func TestResumeUsesPersistedBypassPermissionForCapabilityAdmission(t *testing.T)
 	if resumed.Model != "gpt-5.6-luna" {
 		t.Fatalf("resume model = %q, want persisted model", resumed.Model)
 	}
+	if resumed.Effort != "high" {
+		t.Fatalf("resume effort = %q, want persisted effort", resumed.Effort)
+	}
 	controller, err := svc.Controller(testSession)
 	if err != nil {
 		t.Fatalf("Controller: %v", err)

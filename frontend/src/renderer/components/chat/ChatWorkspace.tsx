@@ -930,10 +930,11 @@ export function ChatWorkspace({
 									commandError={commandError}
 									settings={
 										onChooseSettings || onChooseConfigOption ? (
-											<TurnSettingsBar
-												models={models ?? []}
-												settings={snapshot.settings}
-												reroute={snapshot.modelReroute}
+							<TurnSettingsBar
+								models={models ?? []}
+								settings={snapshot.settings}
+								harness={snapshot.harness}
+								reroute={snapshot.modelReroute}
 												onChange={newWorkDisabled ? undefined : onChooseSettings}
 												configOptions={configOptions ?? []}
 												onChangeConfigOption={newWorkDisabled ? undefined : onChooseConfigOption}
