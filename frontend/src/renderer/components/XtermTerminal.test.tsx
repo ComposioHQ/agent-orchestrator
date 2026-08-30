@@ -1148,9 +1148,15 @@ describe("XtermTerminal", () => {
 		const onInput = vi.fn();
 		render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);
 
-		expect(state.lastTerminal!.dataListeners.size).toBe(0);
+		// One onData hook exists for OSC 10/11/12 color replies (Cursor theme probes).
+		expect(state.lastTerminal!.dataListeners.size).toBe(1);
 		state.lastTerminal!.dataListeners.forEach((listener) => listener("\x1b[A"));
 		expect(onInput).not.toHaveBeenCalled();
+
+		state.lastTerminal!.dataListeners.forEach((listener) =>
+			listener("\x1b]11;rgb:f5f5/f5f5/f4f4\x07"),
+		);
+		expect(onInput).toHaveBeenCalledWith("\x1b]11;rgb:f5f5/f5f5/f4f4\x07", "protocol");
 	});
 
 	it("translates wheel motion into SGR wheel reports for zellij scrollback", () => {
