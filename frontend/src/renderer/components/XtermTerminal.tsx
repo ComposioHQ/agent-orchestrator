@@ -40,6 +40,7 @@ import { isMacPlatform } from "../lib/platform";
 import { applyDocumentTheme, applyDocumentThemeStyle } from "../lib/theme";
 import { buildTerminalThemes } from "../lib/terminal-themes";
 import { useUiStore, type Theme } from "../stores/ui-store";
+import { TerminalSearch } from "./TerminalSearch";
 import {
 	DropdownMenu,
 	DropdownMenuContent,
@@ -112,6 +113,8 @@ function loadRenderer(term: Terminal): void {
 
 // xterm palette tracks the app theme (see lib/terminal-themes.ts + tokens.css).
 const SUPPRESS_NATIVE_PASTE_MS = 100;
+/** Long enough to notice, short enough that a second copy reads as a second copy. */
+const COPY_TOAST_MS = 1400;
 
 function preparePastedText(text: string): string {
 	return text.replace(/\r?\n/g, "\r");
@@ -141,6 +144,13 @@ function isTerminalPasteShortcut(event: KeyboardEvent): boolean {
 	if (event.metaKey) return true;
 	if (event.ctrlKey && event.shiftKey && !event.altKey) return true;
 	return isWindowsPlatform() && event.ctrlKey && !event.shiftKey && !event.altKey && !event.metaKey;
+}
+
+function isTerminalSearchShortcut(event: KeyboardEvent): boolean {
+	if (event.altKey || event.shiftKey || event.key.toLowerCase() !== "f") return false;
+	return isMacPlatform()
+		? event.metaKey && !event.ctrlKey
+		: event.ctrlKey && !event.metaKey;
 }
 
 function consumeTerminalShortcut(event: KeyboardEvent): void {
@@ -252,6 +262,8 @@ function sgrWheelReport(button: number, count: number): string {
 // already scrolls a full screen, so scaling by line count would over-scroll.
 const PAGE_UP = "\x1b[5~";
 const PAGE_DOWN = "\x1b[6~";
+const MAC_TERMINAL_SCROLLBAR_WIDTH = 7;
+const MAC_TERMINAL_SCROLLBAR_IDLE_MS = 700;
 
 function pageKeyReport(lines: number): string {
 	return lines < 0 ? PAGE_UP : PAGE_DOWN;
@@ -267,16 +279,21 @@ function forceSelectionMode(term: Terminal): void {
 	element.classList.remove("enable-mouse-events");
 }
 
-function removeHiddenScrollbarReservation(term: Terminal): void {
+function configureScrollbarReservation(term: Terminal): void {
 	const viewport = (term as XtermInternal)._core?.viewport;
-	if (viewport) viewport.scrollBarWidth = 0;
+	if (viewport) viewport.scrollBarWidth = isMacPlatform() ? MAC_TERMINAL_SCROLLBAR_WIDTH : 0;
 }
 
 export function XtermTerminal(props: XtermTerminalProps) {
 	const { t } = useTranslation();
 	const themeStyle = useUiStore((state) => state.themeStyle);
+	const macPlatform = isMacPlatform();
+	const shellRef = useRef<HTMLDivElement | null>(null);
 	const hostRef = useRef<HTMLDivElement | null>(null);
+	const scrollbarTrackRef = useRef<HTMLDivElement | null>(null);
+	const scrollbarThumbRef = useRef<HTMLDivElement | null>(null);
 	const termRef = useRef<Terminal | null>(null);
+	const searchAddonRef = useRef<SearchAddon | null>(null);
 	const fitRef = useRef<(() => void) | null>(null);
 	const contextMenuActionsRef = useRef<TerminalContextMenuActions | null>(null);
 	const [contextMenu, setContextMenu] = useState<TerminalContextMenuState>({
@@ -286,6 +303,10 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		y: 0,
 		link: null,
 	});
+	const [copiedToast, setCopiedToast] = useState(false);
+	const [searchOpen, setSearchOpen] = useState(false);
+	const copiedToastTimerRef = useRef<number | undefined>(undefined);
+	const showCopiedToastRef = useRef<() => void>(() => undefined);
 	// The web link currently under the cursor, tracked via the link providers'
 	// hover/leave callbacks so the right-click menu can offer "Open in system
 	// browser" for it.
@@ -306,8 +327,32 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		},
 		[setContextMenuOpen],
 	);
+	const focusTerminal = useCallback(() => {
+		try {
+			termRef.current?.focus();
+		} catch {
+			// A retained terminal can be parked between closing search and this frame.
+		}
+	}, []);
 
 	callbacksRef.current = props;
+	showCopiedToastRef.current = () => {
+		// Hidden retained terminals keep parsing output but expose no UI overlays.
+		if (callbacksRef.current.isVisible === false) return;
+		setCopiedToast(true);
+		if (copiedToastTimerRef.current !== undefined) window.clearTimeout(copiedToastTimerRef.current);
+		copiedToastTimerRef.current = window.setTimeout(() => {
+			setCopiedToast(false);
+			copiedToastTimerRef.current = undefined;
+		}, COPY_TOAST_MS);
+	};
+
+	useEffect(
+		() => () => {
+			if (copiedToastTimerRef.current !== undefined) window.clearTimeout(copiedToastTimerRef.current);
+		},
+		[],
+	);
 
 	useEffect(() => {
 		// buildTerminalThemes() reads live CSS vars from :root. Parent shell effects
@@ -332,8 +377,9 @@ export function XtermTerminal(props: XtermTerminalProps) {
 	}, [props.fontSize]);
 
 	useEffect(() => {
+		const shell = shellRef.current;
 		const host = hostRef.current;
-		if (!host) return undefined;
+		if (!shell || !host) return undefined;
 		let reportedFocused = false;
 		const reportFocused = (focused: boolean) => {
 			const next = focused && Boolean(callbacksRef.current.onChangeFontSize);
@@ -357,9 +403,10 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			// Left-click on a web link opens it inside the AO Browser panel (the
 			// parent decides how). Non-web schemes (mailto:, etc.) still go to the OS
 			// via the main process's window-open handler. Right-click to open a web
-			// link in the system browser instead — see the context menu below.
+			// link in the system browser instead — see the context menu below. Cmd-click
+			// follows the same escape hatch as links in the Chat surface.
 			if (isWebLink(uri)) {
-				if (event.altKey) {
+				if (event.altKey || event.metaKey) {
 					void openLinkInSystemBrowser(uri);
 					return;
 				}
@@ -388,7 +435,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				// but powerline separators and file-type icons are real PUA codepoints
 				// that must come from a system-installed Nerd Font.
 				fontFamily:
-					getComputedStyle(host).getPropertyValue("--font-mono").trim() ||
+					getComputedStyle(shell).getPropertyValue("--font-mono").trim() ||
 					'ui-monospace, Menlo, Monaco, "Courier New", monospace',
 				fontSize: props.fontSize ?? TERMINAL_FONT_SIZE_DEFAULT,
 				lineHeight: 1.35,
@@ -405,8 +452,9 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				// only matters for normal-buffer panes that print their transcript and
 				// rely on the terminal's scrollback (codex, a plain shell). Keep it > 0
 				// so that history survives to be scrolled locally (see the wheel
-				// handler's normal-buffer branch). The scrollbar itself is hidden in
-				// CSS; its matching FitAddon reservation is removed after open() below.
+				// handler's normal-buffer branch). macOS exposes that history through a
+				// slim draggable scrollbar; other platforms retain the existing hidden
+				// scrollbar behavior for now.
 				scrollback: 5000,
 				theme: props.theme === "dark" ? dark : light,
 			});
@@ -429,7 +477,9 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		// empty open is dropped and clicks silently no-op. Pass the matched URL to
 		// window.open directly so the main process routes it to shell.openExternal.
 		term.loadAddon(new WebLinksAddon(activateLink, { hover: trackHover, leave: clearHover }));
-		term.loadAddon(new SearchAddon());
+		const searchAddon = new SearchAddon();
+		searchAddonRef.current = searchAddon;
+		term.loadAddon(searchAddon);
 
 		term.open(host);
 		// Browser integration tests need to wait on xterm's buffer state, not
@@ -438,32 +488,119 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		if (import.meta.env.DEV) {
 			(host as DevXtermHost).__aoXtermForTest = term;
 		}
-		// xterm reserves a 15px fallback for macOS overlay scrollbars even when CSS
-		// hides the scrollbar entirely. FitAddon subtracts that private value from
-		// every width proposal, leaving a conspicuous empty strip on the right. The
-		// viewport still scrolls normally without the invisible reservation.
-		removeHiddenScrollbarReservation(term);
+		// xterm 5 has no public scrollbar-width option. Keep its private FitAddon
+		// reservation aligned with our CSS: a stable 7px macOS gutter, and no
+		// reservation on platforms where the scrollbar remains hidden.
+		configureScrollbarReservation(term);
 		loadRenderer(term);
 		term.options.macOptionClickForcesSelection = true;
 		forceSelectionMode(term);
 
-		let lastCopiedSelection = "";
-		const copySelection = (options?: { clipboardData?: DataTransfer | null; dedupe?: boolean }) => {
+		// xterm 5's native viewport scrollbar follows macOS's system auto-hide
+		// preference even when its WebKit pseudo-elements are styled. Keep the
+		// native viewport hidden and mirror its normal-buffer geometry into a small
+		// app-owned thumb. Like a native macOS overlay scrollbar, it appears while
+		// scrolling or dragging and fades after the interaction goes idle.
+		const scrollbarTrack = scrollbarTrackRef.current;
+		const scrollbarThumb = scrollbarThumbRef.current;
+		let scrollbarFrame: number | null = null;
+		let scrollbarHideTimer: number | null = null;
+		let scrollbarDrag: { pointerId: number; startLine: number; startY: number } | null = null;
+		const revealScrollbar = () => {
+			if (!scrollbarTrack || scrollbarTrack.dataset.scrollable !== "true") return;
+			scrollbarTrack.dataset.active = "true";
+			if (scrollbarHideTimer !== null) window.clearTimeout(scrollbarHideTimer);
+			scrollbarHideTimer = null;
+			if (scrollbarDrag) return;
+			scrollbarHideTimer = window.setTimeout(() => {
+				scrollbarTrack.dataset.active = "false";
+				scrollbarHideTimer = null;
+			}, MAC_TERMINAL_SCROLLBAR_IDLE_MS);
+		};
+		const updateScrollbar = () => {
+			scrollbarFrame = null;
+			if (!scrollbarTrack || !scrollbarThumb) return;
+			const buffer = term.buffer.active;
+			const maxScrollLine = buffer.type === "normal" ? buffer.baseY : 0;
+			const trackHeight = scrollbarTrack.clientHeight;
+			if (maxScrollLine <= 0 || trackHeight <= 0) {
+				scrollbarTrack.dataset.scrollable = "false";
+				scrollbarTrack.dataset.active = "false";
+				return;
+			}
+			const totalLines = maxScrollLine + term.rows;
+			const thumbHeight = Math.max(24, (trackHeight * term.rows) / totalLines);
+			const travel = Math.max(0, trackHeight - thumbHeight);
+			const thumbTop = travel * (buffer.viewportY / maxScrollLine);
+			scrollbarThumb.style.height = `${thumbHeight}px`;
+			scrollbarThumb.style.transform = `translateY(${thumbTop}px)`;
+			scrollbarTrack.dataset.scrollable = "true";
+		};
+		const scheduleScrollbarUpdate = () => {
+			if (!scrollbarTrack || scrollbarFrame !== null) return;
+			scrollbarFrame = requestAnimationFrame(updateScrollbar);
+		};
+		const scrollPositionChange = scrollbarTrack
+			? term.onScroll(() => {
+				scheduleScrollbarUpdate();
+				revealScrollbar();
+			})
+			: null;
+		const scrollbarResize = scrollbarTrack ? term.onResize(scheduleScrollbarUpdate) : null;
+		const scrollToPointer = (clientY: number) => {
+			if (!scrollbarTrack || !scrollbarThumb) return;
+			const maxScrollLine = term.buffer.active.type === "normal" ? term.buffer.active.baseY : 0;
+			const trackRect = scrollbarTrack.getBoundingClientRect();
+			const travel = trackRect.height - scrollbarThumb.getBoundingClientRect().height;
+			if (maxScrollLine <= 0 || travel <= 0) return;
+			const thumbTop = Math.min(travel, Math.max(0, clientY - trackRect.top - scrollbarThumb.offsetHeight / 2));
+			term.scrollToLine(Math.round((thumbTop / travel) * maxScrollLine));
+		};
+		const scrollbarPointerDown = (event: PointerEvent) => {
+			if (!scrollbarTrack || !scrollbarThumb || scrollbarTrack.dataset.scrollable !== "true") return;
+			event.preventDefault();
+			scrollbarTrack.setPointerCapture(event.pointerId);
+			if (event.target !== scrollbarThumb) scrollToPointer(event.clientY);
+			scrollbarDrag = {
+				pointerId: event.pointerId,
+				startLine: term.buffer.active.viewportY,
+				startY: event.clientY,
+			};
+			revealScrollbar();
+		};
+		const scrollbarPointerMove = (event: PointerEvent) => {
+			if (!scrollbarDrag || scrollbarDrag.pointerId !== event.pointerId || !scrollbarTrack || !scrollbarThumb) return;
+			const maxScrollLine = term.buffer.active.type === "normal" ? term.buffer.active.baseY : 0;
+			const travel = scrollbarTrack.clientHeight - scrollbarThumb.offsetHeight;
+			if (maxScrollLine <= 0 || travel <= 0) return;
+			const lineDelta = ((event.clientY - scrollbarDrag.startY) / travel) * maxScrollLine;
+			term.scrollToLine(Math.round(scrollbarDrag.startLine + lineDelta));
+		};
+		const scrollbarPointerUp = (event: PointerEvent) => {
+			if (!scrollbarDrag || scrollbarDrag.pointerId !== event.pointerId) return;
+			scrollbarDrag = null;
+			if (scrollbarTrack?.hasPointerCapture(event.pointerId)) scrollbarTrack.releasePointerCapture(event.pointerId);
+			revealScrollbar();
+		};
+		scrollbarTrack?.addEventListener("pointerdown", scrollbarPointerDown);
+		scrollbarTrack?.addEventListener("pointermove", scrollbarPointerMove);
+		scrollbarTrack?.addEventListener("pointerup", scrollbarPointerUp);
+		scrollbarTrack?.addEventListener("pointercancel", scrollbarPointerUp);
+		scheduleScrollbarUpdate();
+
+		const copySelection = (options?: { clipboardData?: DataTransfer | null }) => {
 			const selection = term.getSelection();
-			if (!selection || (options?.dedupe && selection === lastCopiedSelection)) return false;
+			if (!selection) return false;
 			options?.clipboardData?.setData("text/plain", selection);
 			void aoBridge.clipboard
 				.writeText(selection)
 				.then(() => {
-					lastCopiedSelection = selection;
+					showCopiedToastRef.current();
 				})
 				.catch((error) => {
 					console.warn("Unable to copy terminal selection", error);
 				});
 			return true;
-		};
-		const clearCopiedSelection = () => {
-			lastCopiedSelection = "";
 		};
 		const userInputListeners = new Set<(data: string, source: TerminalUserInputSource) => void>();
 		const emitUserInput = (data: string, source: TerminalUserInputSource) => {
@@ -529,7 +666,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				link: hoveredLinkRef.current,
 			});
 		};
-		host.addEventListener("contextmenu", openContextMenu);
+		shell.addEventListener("contextmenu", openContextMenu);
 		term.attachCustomKeyEventHandler((event) => {
 			// xterm invokes this same handler on keydown, keyup, AND keypress (see
 			// Terminal.ts _keyDown/_keyUp/_keyPress). Only keydown should trigger our
@@ -538,6 +675,11 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			// paste, double word-delete, etc). keyup/keypress fall through to
 			// xterm's own default handling for that event type.
 			if (event.type === "keyup" || event.type === "keypress") return true;
+			if (isTerminalSearchShortcut(event)) {
+				consumeTerminalShortcut(event);
+				setSearchOpen(true);
+				return false;
+			}
 			// Shift+Enter → newline without submitting, matching Claude Code / Codex.
 			// A terminal normally sends the same CR for Enter and Shift+Enter, so the
 			// agent can't distinguish them; emit the meta-return (ESC+CR) that
@@ -591,19 +733,12 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			event.preventDefault();
 		};
 		const copyShortcut = (event: KeyboardEvent) => {
-			if (!isTerminalCopyShortcut(event) || !terminalHasFocus(host) || !copySelection()) return;
+			if (!isTerminalCopyShortcut(event) || !terminalHasFocus(shell) || !copySelection()) return;
 			event.preventDefault();
 			event.stopPropagation();
 		};
-		host.addEventListener("copy", copyInput);
+		shell.addEventListener("copy", copyInput);
 		window.addEventListener("keydown", copyShortcut, true);
-		const selectionChange = term.onSelectionChange(() => {
-			if (!term.hasSelection()) {
-				clearCopiedSelection();
-				return;
-			}
-			window.setTimeout(() => copySelection({ dedupe: true }), 0);
-		});
 
 		const fitTerminal = () => {
 			// Parked terminals keep their last measured box and continue parsing
@@ -816,8 +951,8 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		const compositionInput = (event: CompositionEvent) => {
 			emitUserInput(event.data, "composition");
 		};
-		host.addEventListener("paste", pasteInput, true);
-		host.addEventListener("compositionend", compositionInput, true);
+		shell.addEventListener("paste", pasteInput, true);
+		shell.addEventListener("compositionend", compositionInput, true);
 
 		// A file dropped on the pane inserts its path, mirroring a native terminal
 		// so an agent (e.g. Claude Code) attaches it. The sandboxed renderer cannot
@@ -860,8 +995,8 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				pasteText(`${paths.map((p) => (/\s/.test(p) ? `'${p}'` : p)).join(" ")} `);
 			})();
 		};
-		host.addEventListener("dragover", dragOverInput);
-		host.addEventListener("drop", dropInput);
+		shell.addEventListener("dragover", dragOverInput);
+		shell.addEventListener("drop", dropInput);
 
 		const showLatestOutput = () => {
 			term.scrollToBottom();
@@ -871,6 +1006,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			const viewport = host.querySelector<HTMLElement>(".xterm-viewport");
 			if (!viewport) return;
 			viewport.scrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
+			scheduleScrollbarUpdate();
 		};
 
 		let cancelActivationPreparation: (() => void) | null = null;
@@ -923,8 +1059,12 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			// Forward xterm's write callback: it fires once THIS chunk has been
 			// parsed into the buffer, which is what lets the attachment reveal the
 			// pane at the replay's settled scroll position (issue #3160).
-			write: (data, done) => term.write(data, done),
-			writeln: (line) => term.writeln(line),
+			write: (data, done) =>
+				term.write(data, () => {
+					scheduleScrollbarUpdate();
+					done?.();
+				}),
+			writeln: (line) => term.writeln(line, scheduleScrollbarUpdate),
 			showLatestOutput,
 			prepareForActivation,
 			onUserInput: (listener) => {
@@ -943,6 +1083,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			host.removeEventListener("focusout", handleFocusOut);
 			delete (host as DevXtermHost).__aoXtermForTest;
 			termRef.current = null;
+			if (searchAddonRef.current === searchAddon) searchAddonRef.current = null;
 			fitRef.current = null;
 			cancelAnimationFrame(raf);
 			for (const timer of settleTimers) window.clearTimeout(timer);
@@ -951,15 +1092,22 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			fitSettledListeners.clear();
 			observer.disconnect();
 			stabilizer.dispose();
+			scrollPositionChange?.dispose();
+			scrollbarResize?.dispose();
+			if (scrollbarFrame !== null) cancelAnimationFrame(scrollbarFrame);
+			if (scrollbarHideTimer !== null) window.clearTimeout(scrollbarHideTimer);
+			scrollbarTrack?.removeEventListener("pointerdown", scrollbarPointerDown);
+			scrollbarTrack?.removeEventListener("pointermove", scrollbarPointerMove);
+			scrollbarTrack?.removeEventListener("pointerup", scrollbarPointerUp);
+			scrollbarTrack?.removeEventListener("pointercancel", scrollbarPointerUp);
 			window.removeEventListener("resize", scheduleVisibleFit);
-			host.removeEventListener("copy", copyInput);
+			shell.removeEventListener("copy", copyInput);
 			window.removeEventListener("keydown", copyShortcut, true);
-			selectionChange.dispose();
-			host.removeEventListener("contextmenu", openContextMenu);
-			host.removeEventListener("paste", pasteInput, true);
-			host.removeEventListener("compositionend", compositionInput, true);
-			host.removeEventListener("dragover", dragOverInput);
-			host.removeEventListener("drop", dropInput);
+			shell.removeEventListener("contextmenu", openContextMenu);
+			shell.removeEventListener("paste", pasteInput, true);
+			shell.removeEventListener("compositionend", compositionInput, true);
+			shell.removeEventListener("dragover", dragOverInput);
+			shell.removeEventListener("drop", dropInput);
 			contextMenuActionsRef.current = null;
 			cancelActivationPreparation?.();
 			clearSuppressNativePaste();
@@ -985,7 +1133,16 @@ export function XtermTerminal(props: XtermTerminalProps) {
 	}, [props.focusRequested, props.isVisible]);
 
 	useLayoutEffect(() => {
-		if (props.isVisible === false) setContextMenuOpen(false);
+		if (props.isVisible === false) {
+			setSearchOpen(false);
+			searchAddonRef.current?.clearDecorations();
+			setContextMenuOpen(false);
+			setCopiedToast(false);
+			if (copiedToastTimerRef.current !== undefined) {
+				window.clearTimeout(copiedToastTimerRef.current);
+				copiedToastTimerRef.current = undefined;
+			}
+		}
 	}, [props.isVisible, setContextMenuOpen]);
 
 	const wasVisibleRef = useRef(props.isVisible !== false);
@@ -1012,16 +1169,53 @@ export function XtermTerminal(props: XtermTerminalProps) {
 	return (
 		<>
 			<div
-				ref={hostRef}
+				ref={shellRef}
 				aria-label={props.ariaLabel}
 				className={props.className}
 				style={{
-					backgroundColor: "var(--color-bg-terminal-opaque)",
 					height: "100%",
 					overflow: "hidden",
+					position: "relative",
 					width: "100%",
 				}}
-			/>
+			>
+				<div
+					ref={hostRef}
+					className={macPlatform ? "terminal-xterm-host terminal-xterm-host--mac" : "terminal-xterm-host"}
+					style={{
+						backgroundColor: "var(--color-bg-terminal-opaque)",
+						height: "100%",
+						overflow: "hidden",
+						width: "100%",
+					}}
+				/>
+				{macPlatform ? (
+					<div
+						aria-hidden="true"
+						className="terminal-scrollbar"
+						data-active="false"
+						data-scrollable="false"
+						ref={scrollbarTrackRef}
+					>
+						<div className="terminal-scrollbar__thumb" ref={scrollbarThumbRef} />
+					</div>
+				) : null}
+				<TerminalSearch
+					onClose={() => setSearchOpen(false)}
+					onReturnFocus={focusTerminal}
+					open={searchOpen && props.isVisible !== false}
+					searchAddon={searchAddonRef.current}
+				/>
+				{copiedToast && props.isVisible !== false ? (
+					<div
+						aria-live="polite"
+						className="pointer-events-none absolute bottom-3 left-1/2 z-10 -translate-x-1/2 rounded-md border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-modal)] px-3 py-1.5 text-xs text-[var(--color-text-import-title)] shadow-[var(--shadow-import-modal)]"
+						role="status"
+					>
+						{t("terminal.copiedToClipboard")}
+					</div>
+				) : null}
+			</div>
 			<DropdownMenu modal={false} open={contextMenu.open} onOpenChange={setContextMenuOpen}>
 				<DropdownMenuTrigger asChild>
 					<button
@@ -1068,6 +1262,15 @@ export function XtermTerminal(props: XtermTerminalProps) {
 					</DropdownMenuItem>
 					<DropdownMenuItem onSelect={() => runContextMenuAction("paste")}>{t("titlebar.paste")}</DropdownMenuItem>
 					<DropdownMenuItem onSelect={() => runContextMenuAction("selectAll")}>{t("titlebar.selectAll")}</DropdownMenuItem>
+					<DropdownMenuSeparator />
+					<DropdownMenuItem
+						onSelect={() => {
+							setContextMenuOpen(false);
+							setSearchOpen(true);
+						}}
+					>
+						{t("terminal.search")}
+					</DropdownMenuItem>
 					{props.onToggleFullscreen ? (
 						<DropdownMenuItem
 							onSelect={() => {

@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
-import { AlertCircle, AlertTriangle, CheckCircle2, CircleDashed, Clock3, Download, Loader2, RefreshCw } from "lucide-react";
+import { AlertTriangle, Clock3, Loader2, RefreshCw } from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
 import { useTranslation } from "react-i18next";
 import { aoBridge } from "../../lib/bridge";
 import { cn } from "../../lib/utils";
@@ -21,12 +22,13 @@ export const updateSettingsQueryKey = ["update-settings"] as const;
 type PrimaryValue = UpdateChannel | "feature";
 
 const DEFAULT_SETTINGS: UpdateSettings = { enabled: false, channel: "latest", nightlyAck: false, feature: null };
+const MIN_MANUAL_CHECK_VISIBLE_MS = 1_000;
 
 let updateRequestSequence = 0;
 
-function nextUpdateRequestId(): string {
+function nextUpdateRequestId(prefix = "feature-update"): string {
 	updateRequestSequence += 1;
-	return `feature-update-${updateRequestSequence}`;
+	return `${prefix}-${updateRequestSequence}`;
 }
 
 export function UpdatesSection({ titleHidden }: { titleHidden?: boolean } = {}) {
@@ -41,10 +43,53 @@ export function UpdatesSection({ titleHidden }: { titleHidden?: boolean } = {}) 
 	const formRef = useRef(form);
 	formRef.current = form;
 	const [showFeature, setShowFeature] = useState(false);
+	const [savingField, setSavingField] = useState<"automatic" | "channel" | null>(null);
 	const [pendingPin, setPendingPin] = useState<{ pr: number; title: string } | null>(null);
+	const [manualCheckRequestId, setManualCheckRequestId] = useState<string | null>(null);
+	const [channelSwitch, setChannelSwitch] = useState<{ channel: UpdateChannel; requestId: string } | null>(null);
+	const channelSwitchRef = useRef<typeof channelSwitch>(null);
+	channelSwitchRef.current = channelSwitch;
+	const manualCheckStartedAtRef = useRef<number | null>(null);
+	const manualCheckFinishTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const developerMode = useUiStore((state) => state.developerMode);
 
-	const status = useUpdateStatus();
+	const finishManualCheck = (requestId: string) => {
+		if (manualCheckFinishTimerRef.current !== null) clearTimeout(manualCheckFinishTimerRef.current);
+		const elapsed = manualCheckStartedAtRef.current === null ? MIN_MANUAL_CHECK_VISIBLE_MS : Date.now() - manualCheckStartedAtRef.current;
+		const clear = () => {
+			manualCheckFinishTimerRef.current = null;
+			setManualCheckRequestId((pending) => {
+				if (pending !== requestId) return pending;
+				manualCheckStartedAtRef.current = null;
+				return null;
+			});
+		};
+		const remaining = Math.max(0, MIN_MANUAL_CHECK_VISIBLE_MS - elapsed);
+		if (remaining === 0) clear();
+		else manualCheckFinishTimerRef.current = setTimeout(clear, remaining);
+	};
+
+	const startManualCheck = (requestId: string) => {
+		manualCheckStartedAtRef.current = Date.now();
+		setManualCheckRequestId(requestId);
+	};
+
+	const status = useUpdateStatus((next) => {
+		if (next.requestId && next.requestId === manualCheckRequestId && next.state !== "checking") {
+			finishManualCheck(next.requestId);
+		}
+		const pending = channelSwitchRef.current;
+		if (pending && next.requestId === pending.requestId && ["not-available", "error", "unsupported"].includes(next.state)) {
+			setChannelSwitch(null);
+		}
+	});
+
+	useEffect(
+		() => () => {
+			if (manualCheckFinishTimerRef.current !== null) clearTimeout(manualCheckFinishTimerRef.current);
+		},
+		[],
+	);
 	// Set only for the owned pin/home transition request, so unrelated hourly
 	// updater events cannot auto-progress through download/install.
 	const autoProgressRef = useRef<string | null>(null);
@@ -75,10 +120,12 @@ export function UpdatesSection({ titleHidden }: { titleHidden?: boolean } = {}) 
 			return next;
 		},
 		onSuccess: (next) => {
+			setSavingField(null);
 			setForm(next);
 			void queryClient.invalidateQueries({ queryKey: updateSettingsQueryKey });
 		},
 		onError: () => {
+			setSavingField(null);
 			const previous = queryClient.getQueryData<UpdateSettings>(updateSettingsQueryKey);
 			if (previous) setForm(previous);
 		},
@@ -92,18 +139,19 @@ export function UpdatesSection({ titleHidden }: { titleHidden?: boolean } = {}) 
 	const primaryValue: PrimaryValue = developerMode && (form.feature !== null || showFeature) ? "feature" : form.channel;
 
 	const setEnabled = (enabled: boolean) => {
+		setSavingField("automatic");
 		const next = { ...formRef.current, enabled };
 		setForm(next);
 		save.mutate(next);
 	};
 
 	const handlePrimaryChannel = (value: PrimaryValue) => {
-		if (!formRef.current.enabled) return;
 		if (value === "feature") {
 			setShowFeature(true);
 			return;
 		}
 		setShowFeature(false);
+		setSavingField("channel");
 		const next = {
 			...formRef.current,
 			channel: value,
@@ -121,6 +169,15 @@ export function UpdatesSection({ titleHidden }: { titleHidden?: boolean } = {}) 
 			setReleaseChannelContext(to);
 			void captureRendererEvent("ao.renderer.update_channel_changed", { from_channel: from, to_channel: to });
 		}
+		const requestId = nextUpdateRequestId("channel-update");
+		setChannelSwitch({ channel: value, requestId });
+		startManualCheck(requestId);
+		void aoBridge.updates
+			.check({ settings: next, requestId })
+			.catch(() => {
+				setChannelSwitch((pending) => (pending?.requestId === requestId ? null : pending));
+			})
+			.finally(() => finishManualCheck(requestId));
 	};
 
 	const confirmPinBuild = async () => {
@@ -171,70 +228,64 @@ export function UpdatesSection({ titleHidden }: { titleHidden?: boolean } = {}) 
 	return (
 		<>
 			<SettingsSection title={t("settings.updates")} sectionId="updates" titleHidden={titleHidden} grouped>
-				<UpdateActions status={status} />
+				<UpdateActions
+					status={status}
+					manualCheckRequestId={manualCheckRequestId}
+					startManualCheck={startManualCheck}
+					finishManualCheck={finishManualCheck}
+					channelSwitch={channelSwitch}
+				/>
 
 				{featurePr != null && (
-					<div className="mt-3 flex flex-col gap-2 rounded-(--radius-settings-panel) border border-[var(--color-border-settings-dialog)] bg-[var(--color-bg-settings-input)] p-1">
-						<div className="settings-row-bar h-auto min-h-(--size-settings-row) flex-wrap gap-2">
-							<Badge variant="accent">PR #{featurePr}</Badge>
-							<span className="min-w-0 flex-1 text-sm leading-5 text-settings-label">
+					<div className="settings-row-bar h-auto min-h-(--size-settings-row) items-start gap-3 py-3">
+						<Badge className="mt-0.5" variant="accent">PR #{featurePr}</Badge>
+						<div className="min-w-0 flex-1">
+							<p className="text-sm leading-5 text-settings-label">
 								{activeBuild
 									? t("settings.updates.onFeatureBuild", { pr: featurePr })
 									: t("settings.updates.featurePinned", { pr: featurePr })}
-							</span>
-							<Button type="button" variant="outline" size="sm" onClick={() => void handleReturnToHome()}>
-								{form.channel === "nightly" ? t("settings.updates.returnToNightly") : t("settings.updates.returnToStable")}
-							</Button>
+							</p>
+							<p className="mt-1 text-xs leading-4 text-settings-muted">
+								{t("settings.updates.featureTracking", { pr: featurePr })}
+							</p>
 						</div>
-						<p className="px-(--size-settings-row-padding) pb-2 text-xs text-settings-muted">
-							{t("settings.updates.featureTracking", { pr: featurePr })}
-						</p>
+						<Button type="button" variant="outline" size="sm" onClick={() => void handleReturnToHome()}>
+							{form.channel === "nightly" ? t("settings.updates.returnToNightly") : t("settings.updates.returnToStable")}
+						</Button>
 					</div>
 				)}
 
-				<div className="mt-3 w-full overflow-hidden rounded-(--radius-settings-panel) border border-[var(--color-border-settings-dialog)] bg-[var(--color-bg-settings-input)] shadow-[inset_0_1px_0_color-mix(in_oklch,var(--foreground)_4%,transparent)]">
-					<SettingsRow label={t("settings.updates.automatic")}>
-						<div className="flex items-center gap-3">
-							<span className="text-xs text-settings-muted">
-								{form.enabled ? t("settings.updates.enabled") : t("settings.updates.disabled")}
-							</span>
-							<Switch
-								aria-label={t("settings.updates.automatic")}
-								checked={form.enabled}
-								onCheckedChange={setEnabled}
-								disabled={save.isPending}
-							/>
-						</div>
-					</SettingsRow>
+				<SettingsRow label={t("settings.updates.automatic")}>
+					<Switch
+						aria-label={t("settings.updates.automatic")}
+						checked={form.enabled}
+						onCheckedChange={setEnabled}
+						disabled={savingField === "automatic"}
+					/>
+				</SettingsRow>
 
-					{form.enabled && (
-						<div className="update-policy-details border-t border-[var(--color-border-settings-dialog)]">
-							<SettingsRow label={t("settings.updates.channel")}>
-								<SettingsOptionMenu
-									aria-label={t("settings.updates.channel")}
-									value={primaryValue}
-									options={developerMode ? channelOptions : channelOptions.filter((option) => option.value !== "feature")}
-									onChange={handlePrimaryChannel}
-									disabled={save.isPending}
-								/>
-							</SettingsRow>
+				<SettingsRow label={t("settings.updates.channel")}>
+					<SettingsOptionMenu
+						aria-label={t("settings.updates.channel")}
+						value={primaryValue}
+						options={developerMode ? channelOptions : channelOptions.filter((option) => option.value !== "feature")}
+						onChange={handlePrimaryChannel}
+						disabled={savingField === "channel"}
+					/>
+				</SettingsRow>
 
-							{primaryValue === "feature" && (
-								<FeatureBuildsSelect
-									currentPr={form.feature?.pr ?? null}
-									onPin={(pr, title) => setPendingPin({ pr, title })}
-								/>
-							)}
+				{primaryValue === "feature" && (
+					<FeatureBuildsSelect
+						currentPr={form.feature?.pr ?? null}
+						onPin={(pr, title) => setPendingPin({ pr, title })}
+					/>
+				)}
 
-							{primaryValue === "nightly" && (
-								<p className="nightly-warning flex items-start gap-2 px-(--size-settings-row-padding) pb-(--size-settings-row-padding) text-xs leading-row text-warning">
-									<AlertTriangle className="mt-0.5 size-icon-sm shrink-0" aria-hidden="true" />
-									<span>{t("settings.updates.nightlyWarning")}</span>
-								</p>
-							)}
-						</div>
-					)}
-				</div>
+				{primaryValue === "nightly" && (
+					<p className="nightly-warning -mt-1 pl-3 pr-(--size-settings-row-padding) pb-(--size-settings-row-padding) text-xs leading-row text-warning">
+						{t("settings.updates.nightlyWarning")}
+					</p>
+				)}
 
 				{save.isError && (
 					<p className="mt-2 px-(--size-settings-row-padding) text-xs text-error">
@@ -286,117 +337,190 @@ function FeatureBuildsSelect({
 	);
 }
 
-function UpdateActions({ status }: { status: UpdateStatus }) {
+function UpdateActions({
+	status,
+	manualCheckRequestId,
+	startManualCheck,
+	finishManualCheck,
+	channelSwitch,
+}: {
+	status: UpdateStatus;
+	manualCheckRequestId: string | null;
+	startManualCheck: (requestId: string) => void;
+	finishManualCheck: (requestId: string) => void;
+	channelSwitch: { channel: UpdateChannel; requestId: string } | null;
+}) {
 	const { t, i18n } = useTranslation();
 	const version = useQuery({ queryKey: ["app-version"], queryFn: () => aoBridge.app.getVersion() });
-	const [manualCheckPending, setManualCheckPending] = useState(false);
+	const installedChannel = installedUpdateChannel(version.data);
+	const effectiveStatus = status;
 
-	const checking = status.state === "checking" || manualCheckPending;
-	const downloading = status.state === "downloading";
+	const manualCheckPending = manualCheckRequestId !== null;
+	const checking = effectiveStatus.state === "checking" || manualCheckPending;
+	const downloading = effectiveStatus.state === "downloading";
 	const busy = checking || downloading;
-	const displayStatus: UpdateStatus = manualCheckPending && status.state !== "checking" ? { ...status, state: "checking" } : status;
-	const tone = updateStatusTone(displayStatus.state);
-	const progress = Math.min(100, Math.max(0, displayStatus.percent ?? 0));
-	const checkedAt = status.checkedAt
+	const displayStatus: UpdateStatus = manualCheckPending && effectiveStatus.state !== "checking" ? { ...effectiveStatus, state: "checking" } : effectiveStatus;
+	const checkedAt = effectiveStatus.checkedAt
 		? new Intl.DateTimeFormat(i18n.resolvedLanguage ?? i18n.language, {
 				dateStyle: "medium",
 				timeStyle: "short",
-			}).format(status.checkedAt)
+			}).format(effectiveStatus.checkedAt)
+			: null;
+	const channelSwitchInFlight = channelSwitch !== null && (!status.requestId || status.requestId === channelSwitch.requestId);
+	// Use the live updater state, not displayStatus: the manual-check minimum
+	// spinner time forces displayStatus back to "checking" even after a channel
+	// switch finds an update, which would hide this guidance until the timer fires.
+	const channelSwitchMessage = channelSwitchInFlight &&
+		(effectiveStatus.state === "available" || effectiveStatus.state === "downloading" || effectiveStatus.state === "downloaded")
+		? t(effectiveStatus.state === "downloaded" ? "settings.updates.channelSwitchRestart" : "settings.updates.channelSwitchUpdate", {
+			channel: channelSwitch.channel === "nightly" ? t("settings.updates.channel.nightly") : t("settings.updates.channel.stable"),
+		})
 		: null;
 
 	const checkNow = async () => {
-		setManualCheckPending(true);
+		const requestId = nextUpdateRequestId("manual-update");
+		startManualCheck(requestId);
 		try {
-			await aoBridge.updates.check();
+			await aoBridge.updates.check({ requestId });
 		} catch {
 			// The main process publishes the actionable updater error state.
 		} finally {
-			setManualCheckPending(false);
+			finishManualCheck(requestId);
 		}
 	};
 
 	return (
-		<div className="update-status-panel rounded-(--radius-settings-panel)" data-tone={tone}>
-			<div className="relative z-1 flex flex-col gap-4 px-4 py-4 sm:px-5 sm:py-5">
-				<div className="flex flex-col gap-4 sm:flex-row sm:items-center">
-					<div className="flex min-w-0 flex-1 items-start gap-3.5">
-						<div className="update-status-glyph mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-lg" aria-hidden="true">
-							<UpdateStatusIcon status={displayStatus} />
-						</div>
-
-						<div
-							key={displayStatus.state}
-							id="update-status-line"
-							role="status"
-							aria-live="polite"
-							aria-atomic="true"
-							aria-busy={checking}
-							className="update-status-content min-w-0"
+		<div className="settings-row-bar update-status-row h-auto flex-col items-stretch gap-4 py-4">
+			<div className="grid min-w-0 gap-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start">
+				<div className="min-w-0">
+					<div className="flex min-w-0 flex-wrap items-center gap-2">
+						<span
+							aria-label={t("settings.updates.currentVersion", { version: version.data ? `v${version.data}` : "…" })}
+							className="min-w-0 text-2xl font-semibold leading-none tracking-tight tabular-nums text-settings-label"
+							data-testid="app-version"
 						>
-							<UpdateStatusLine status={displayStatus} />
-							<div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] leading-4 text-settings-muted">
-								<span className="font-mono tabular-nums" data-testid="app-version">
-									{t("settings.updates.currentVersion", { version: version.data ? `v${version.data}` : "…" })}
-								</span>
-								{checkedAt && (
-									<>
-										<span className="hidden size-0.5 rounded-full bg-current opacity-50 sm:block" aria-hidden="true" />
-										<span className="inline-flex items-center gap-1.5 tabular-nums" data-testid="update-checked-at">
-											<Clock3 className="size-3" aria-hidden="true" />
-											{t("settings.updates.lastChecked", { time: checkedAt })}
-										</span>
-									</>
-								)}
-							</div>
-						</div>
+							{version.data ? `v${version.data}` : "…"}
+						</span>
+						<Badge data-testid="installed-update-channel" variant={installedChannel === "nightly" ? "warning" : "neutral"}>
+							{installedChannel === "nightly" ? t("settings.updates.channel.nightly") : t("settings.updates.channel.stable")}
+						</Badge>
 					</div>
 
-					<div className="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end">
-						{!checking && status.state === "available" && (
-							<Button type="button" variant="primary" onClick={() => void aoBridge.updates.download()}>
-								{status.version ? t("settings.updates.updateTo", { version: `v${status.version}` }) : t("settings.updates.updateToLatest")}
-							</Button>
-						)}
-						{!checking && status.state === "downloaded" && (
-							<Button type="button" variant="primary" onClick={() => void aoBridge.updates.install()}>
-								{t("settings.updates.restartInstall")}
-							</Button>
-						)}
-						<Button
-							type="button"
-							aria-label={checking ? t("settings.updates.checking") : t("settings.updates.check")}
-							aria-describedby="update-status-line"
-							variant="outline"
-							size="sm"
-							className="min-w-36 bg-background/45"
-							onClick={() => void checkNow()}
-							disabled={busy}
-						>
-							{checking ? (
-								<Loader2 className="size-icon-sm animate-spin motion-reduce:animate-none" aria-hidden="true" />
-							) : (
-								<RefreshCw className="size-icon-sm" aria-hidden="true" />
-							)}
-							{checking ? t("settings.updates.checking") : t("settings.updates.check")}
-						</Button>
+					<div
+						id="update-status-line"
+						role="status"
+						aria-live="polite"
+						aria-atomic="true"
+						aria-busy={checking}
+						className="mt-2 min-w-0"
+					>
+						{displayStatus.state === "checking" ? (
+							<span className="sr-only">{t("settings.updates.checking")}</span>
+						) : displayStatus.state !== "available" && displayStatus.state !== "idle" && displayStatus.state !== "downloading" ? (
+							<UpdateStatusLine status={displayStatus} />
+						) : null}
+						{channelSwitchMessage && <p className="mt-1 text-xs leading-4 text-settings-muted">{channelSwitchMessage}</p>}
+					</div>
+
+					<div className="relative mt-2 h-5 text-sm font-medium leading-5 text-settings-muted">
+						<AnimatePresence initial={false} mode="wait">
+							{checkedAt ? (
+								<motion.div
+									key={checkedAt}
+									initial={{ opacity: 0, filter: "blur(4px)" }}
+									animate={{ opacity: 1, filter: "blur(0px)" }}
+									exit={{ opacity: 0, filter: "blur(4px)" }}
+									transition={{ duration: 0.22, ease: "easeOut" }}
+									className="absolute inset-0 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1"
+								>
+									<span className="inline-flex items-center gap-1.5 tabular-nums" data-testid="update-checked-at">
+										<Clock3 className="size-3" aria-hidden="true" />
+										{t("settings.updates.lastChecked", { time: checkedAt })}
+									</span>
+								</motion.div>
+							) : displayStatus.state === "idle" ? (
+								<motion.span
+									key="not-checked"
+									initial={{ opacity: 1, filter: "blur(0px)" }}
+									animate={{ opacity: 1, filter: "blur(0px)" }}
+									exit={{ opacity: 0, filter: "blur(4px)" }}
+									className="absolute inset-0"
+								>
+									{t("settings.updates.notChecked")}
+								</motion.span>
+							) : null}
+						</AnimatePresence>
 					</div>
 				</div>
 
-				{displayStatus.state === "downloading" && (
-					<div className="h-1 overflow-hidden rounded-full bg-foreground/8" aria-hidden="true">
-						<div className="update-download-progress h-full origin-left rounded-full bg-primary" style={{ transform: `scaleX(${progress / 100})` }} />
-					</div>
-				)}
-
-				{status.staleCheckNudge && (
-					<p className="flex items-start gap-2 border-t border-[color-mix(in_oklch,var(--update-status-tone)_18%,transparent)] pt-3 text-xs leading-5 text-warning">
-						<AlertTriangle className="mt-0.5 size-icon-sm shrink-0" aria-hidden="true" />
-						<span>{t("settings.updates.networkStale")}</span>
-					</p>
-				)}
+				<div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end [&>button]:flex-1 sm:[&>button]:flex-none">
+					{effectiveStatus.state === "downloading" && (
+						<Button type="button" variant="primary" size="sm" disabled>
+							<DownloadProgressIcon percent={effectiveStatus.percent ?? 0} />
+							{t("settings.updates.downloading", { percent: effectiveStatus.percent ?? 0 })}
+						</Button>
+					)}
+					{!checking && effectiveStatus.state === "available" && (
+						<Button type="button" variant="primary" size="sm" onClick={() => void aoBridge.updates.download()}>
+							{effectiveStatus.version ? t("settings.updates.updateTo", { version: `v${effectiveStatus.version}` }) : t("settings.updates.updateToLatest")}
+						</Button>
+					)}
+					{!checking && effectiveStatus.state === "downloaded" && (
+						<Button type="button" variant="primary" size="sm" onClick={() => void aoBridge.updates.install()}>
+							{t("settings.updates.restartInstall")}
+						</Button>
+					)}
+					{displayStatus.state !== "available" && displayStatus.state !== "downloaded" && displayStatus.state !== "downloading" && <Button
+						type="button"
+						aria-label={checking ? t("settings.updates.checking") : t("settings.updates.check")}
+						aria-describedby="update-status-line"
+						variant="outline"
+						size="sm"
+						className="min-w-36"
+						onClick={() => void checkNow()}
+						disabled={busy}
+					>
+						{checking ? (
+							<Loader2 className="size-icon-sm animate-spin motion-reduce:animate-none" aria-hidden="true" />
+						) : (
+							<RefreshCw className="size-icon-sm" aria-hidden="true" />
+						)}
+						{checking ? t("settings.updates.checking") : t("settings.updates.check")}
+					</Button>}
+				</div>
 			</div>
+
+			{!status.staleCheckNudge && status.checksFailing && (
+				<p className="flex items-start gap-2 text-xs leading-5 text-warning">
+					<AlertTriangle className="mt-0.5 size-icon-sm shrink-0" aria-hidden="true" />
+					<span>{t("settings.updates.checksFailing")}</span>
+				</p>
+			)}
+
+			{status.staleCheckNudge && (
+				<p className="flex items-start gap-2 text-xs leading-5 text-warning">
+					<AlertTriangle className="mt-0.5 size-icon-sm shrink-0" aria-hidden="true" />
+					<span>{t("settings.updates.networkStale")}</span>
+				</p>
+			)}
 		</div>
 	);
+}
+
+function DownloadProgressIcon({ percent }: { percent: number }) {
+	const clamped = Math.min(100, Math.max(0, percent));
+	return (
+		<span className="relative grid size-icon-sm shrink-0 place-items-center" aria-hidden="true">
+			<svg className="absolute inset-0 size-full -rotate-90" viewBox="0 0 24 24" fill="none">
+				<circle cx="12" cy="12" r="9" className="stroke-current/20" strokeWidth="2.5" />
+				<circle cx="12" cy="12" r="9" className="stroke-current" strokeWidth="2.5" strokeLinecap="round" strokeDasharray={`${clamped * 0.5655} 56.55`} />
+			</svg>
+		</span>
+	);
+}
+
+function installedUpdateChannel(version: string | undefined): UpdateChannel {
+	return /-nightly(?:[.+]|$)/.test(version ?? "") ? "nightly" : "latest";
 }
 
 function UpdateStatusLine({ status }: { status: UpdateStatus }) {
@@ -438,44 +562,6 @@ function UpdateStatusLine({ status }: { status: UpdateStatus }) {
 	}
 
 	return (
-		<p className={cn("text-pretty text-[15px] font-medium leading-5 tracking-[-0.01em]", className)}>{label}</p>
+		<p className={cn("text-pretty text-sm font-medium leading-5", className)}>{label}</p>
 	);
-}
-
-function UpdateStatusIcon({ status }: { status: UpdateStatus }) {
-	const className = "size-5";
-	switch (status.state) {
-		case "checking":
-			return <Loader2 className={cn(className, "animate-spin motion-reduce:animate-none")} />;
-		case "available":
-		case "downloading":
-			return <Download className={className} />;
-		case "downloaded":
-		case "not-available":
-			return <CheckCircle2 className={className} />;
-		case "unsupported":
-			return <AlertTriangle className={className} />;
-		case "error":
-			return <AlertCircle className={className} />;
-		case "idle":
-			return <CircleDashed className={className} />;
-	}
-}
-
-function updateStatusTone(state: UpdateState): "neutral" | "accent" | "success" | "warning" | "error" {
-	switch (state) {
-		case "checking":
-		case "available":
-		case "downloading":
-			return "accent";
-		case "downloaded":
-		case "not-available":
-			return "success";
-		case "unsupported":
-			return "warning";
-		case "error":
-			return "error";
-		case "idle":
-			return "neutral";
-	}
 }

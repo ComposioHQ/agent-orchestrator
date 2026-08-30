@@ -1,5 +1,6 @@
 import type { Page } from "@playwright/test";
 
+import type { UpdateSettings, UpdateStatus } from "../../src/main/update-settings";
 import type { AoBridge } from "../../src/preload";
 import type { DaemonStatus } from "../../src/shared/daemon-status";
 import { coerceUiSettings, DEFAULT_UI_SETTINGS } from "../../src/shared/ui-locale";
@@ -34,16 +35,25 @@ export type FakeBridgeOptions = {
 	daemonState?: "ready" | "starting" | "stopped" | "error";
 	/** REST port advertised when ready (mock data is served regardless). */
 	daemonPort?: number;
+	/** Desktop updater state surfaced in Settings > Updates. */
+	updateStatus?: UpdateStatus;
+	/** Persisted automatic-update policy surfaced in Settings > Updates. */
+	updateSettings?: UpdateSettings;
 };
 
 export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}): Promise<void> {
 	const version = opts.version ?? "9.9.9-test";
 	const daemonState = opts.daemonState ?? "ready";
 	const daemonPort = opts.daemonPort ?? 8080;
+	const updateStatus = opts.updateStatus ?? ({ state: "idle" } satisfies UpdateStatus);
+	const updateSettings =
+		opts.updateSettings ??
+		({ enabled: false, channel: "latest", nightlyAck: false, feature: null } satisfies UpdateSettings);
 
 	await page.addInitScript(
-		({ version, daemonState, daemonPort }) => {
+		({ version, daemonState, daemonPort, updateStatus, updateSettings }) => {
 			const unsubscribe = () => () => undefined;
+			let currentUpdateSettings = updateSettings;
 			const status: DaemonStatus =
 				daemonState === "ready" ? { state: "ready", port: daemonPort } : { state: daemonState };
 			const navState = (viewId: string) => ({
@@ -105,6 +115,18 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 						listener(status);
 						return unsubscribe();
 					},
+				},
+				editorHandoff: {
+					getState: async () => ({
+						targets: [
+							{ id: "cursor" as const, name: "Cursor", kind: "editor" as const },
+							{ id: "file-manager" as const, name: "File Manager", kind: "file_manager" as const },
+							{ id: "terminal" as const, name: "Terminal", kind: "terminal" as const },
+						],
+						preferredEditorId: "cursor" as const,
+						workspaceAvailable: true,
+					}),
+					open: async () => ({ id: "cursor" as const, name: "Cursor", kind: "editor" as const }),
 				},
 				telemetry: {
 					getBootstrap: async () => null,
@@ -168,8 +190,10 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					setMigration: async () => undefined,
 				},
 				updateSettings: {
-					get: async () => ({ enabled: false, channel: "latest", nightlyAck: false, feature: null }),
-					set: async () => undefined,
+					get: async () => currentUpdateSettings,
+					set: async (next: UpdateSettings) => {
+						currentUpdateSettings = next;
+					},
 				},
 				uiSettings: {
 					get: async () => ({ ...DEFAULT_UI_SETTINGS }),
@@ -181,7 +205,7 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					setRecording: async () => undefined,
 				},
 				updates: {
-					getStatus: async () => ({ state: "idle" }),
+					getStatus: async () => updateStatus,
 					check: async () => undefined,
 					returnHome: async () => undefined,
 					download: async () => undefined,
@@ -201,10 +225,16 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					signOut: async () => undefined,
 					onSessionChanged: unsubscribe,
 				},
+				cloudCp: {
+					request: async () => ({ status: 401, headers: {}, body: "" }),
+					openStream: async () => ({ streamId: "stream_test" }),
+					closeStream: () => undefined,
+					onStreamEvent: unsubscribe,
+				},
 			} satisfies AoBridge;
 			(window as unknown as { ao: unknown }).ao = ao;
 		},
-		{ version, daemonState, daemonPort },
+		{ version, daemonState, daemonPort, updateStatus, updateSettings },
 	);
 }
 
@@ -301,6 +331,30 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 
 			const nowIso = new Date().toISOString();
 			type Session = Record<string, unknown>;
+			// The daemon derives the board lane; the fake stands in for it so
+			// driving a spec's status through setStatus still moves the card.
+			const kanbanColumnFor = (status: string): string => {
+				switch (status) {
+					case "merged":
+					case "approved":
+					case "mergeable":
+						return "ready";
+					case "terminated":
+						return "archive";
+					case "review_pending":
+					case "pr_open":
+					case "draft":
+						return "validating";
+					case "needs_input":
+					case "exited":
+					case "no_signal":
+					case "ci_failed":
+					case "changes_requested":
+						return "needs_review";
+					default:
+						return "building";
+				}
+			};
 			const makeWorker = (w: (typeof workers)[number]): Session => ({
 				id: w.id,
 				terminalHandleId: (w.mode ?? "tui") === "tui" ? `${w.id}/terminal_0` : undefined,
@@ -312,6 +366,7 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 				mode: w.mode ?? "tui",
 				branch: w.branch ?? `session/${w.id}`,
 				status: w.status ?? "working",
+				kanbanColumn: kanbanColumnFor(w.status ?? "working"),
 				createdAt: nowIso,
 				updatedAt: new Date().toISOString(),
 				activity: { state: w.activity ?? "active", lastActivityAt: new Date().toISOString() },
@@ -338,6 +393,7 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 						kind: "orchestrator",
 						branch: "main",
 						status: "working",
+						kanbanColumn: "building",
 						createdAt: nowIso,
 						updatedAt: nowIso,
 						activity: { state: "active", lastActivityAt: nowIso },
@@ -442,6 +498,7 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					const s = findSession(id);
 					if (!s) return;
 					s.status = status;
+					s.kanbanColumn = kanbanColumnFor(status);
 					s.displayStatus = undefined;
 					if (activity) s.activity = { state: activity, lastActivityAt: new Date().toISOString() };
 					touch(s);
@@ -538,6 +595,18 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 						return unsubscribe();
 					},
 				},
+				editorHandoff: {
+					getState: async () => ({
+						targets: [
+							{ id: "cursor" as const, name: "Cursor", kind: "editor" as const },
+							{ id: "file-manager" as const, name: "File Manager", kind: "file_manager" as const },
+							{ id: "terminal" as const, name: "Terminal", kind: "terminal" as const },
+						],
+						preferredEditorId: "cursor" as const,
+						workspaceAvailable: true,
+					}),
+					open: async () => ({ id: "cursor" as const, name: "Cursor", kind: "editor" as const }),
+				},
 				telemetry: { getBootstrap: async () => null },
 				browser: {
 					nativeCompositionEnabled: true,
@@ -625,6 +694,12 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					signIn: async () => undefined,
 					signOut: async () => undefined,
 					onSessionChanged: unsubscribe,
+				},
+				cloudCp: {
+					request: async () => ({ status: 401, headers: {}, body: "" }),
+					openStream: async () => ({ streamId: "stream_test" }),
+					closeStream: () => undefined,
+					onStreamEvent: unsubscribe,
 				},
 			} satisfies AoBridge;
 			(window as unknown as { ao: unknown }).ao = ao;

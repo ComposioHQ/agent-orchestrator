@@ -12,6 +12,40 @@ expect.extend(jestDomMatchers);
 // routes setupFiles here, so only install the DOM stubs when a DOM exists.
 // ponytail: single guard; node env has no DOM to stub.
 if (typeof window !== "undefined") {
+	const emptyRect = () => ({
+		bottom: 0,
+		height: 0,
+		left: 0,
+		right: 0,
+		top: 0,
+		width: 0,
+		x: 0,
+		y: 0,
+		toJSON: () => ({}),
+	});
+
+	// JSDOM does not implement the selection geometry rich text editors use to
+	// keep the caret visible. Lexical only reads these values; zero geometry is
+	// sufficient for component tests.
+	if (!Range.prototype.getBoundingClientRect) {
+		Range.prototype.getBoundingClientRect = emptyRect;
+	}
+	if (!Range.prototype.getClientRects) {
+		Range.prototype.getClientRects = () => [] as unknown as DOMRectList;
+	}
+	if (!(Text.prototype as Text & { getBoundingClientRect?: () => DOMRect }).getBoundingClientRect) {
+		Object.defineProperty(Text.prototype, "getBoundingClientRect", {
+			configurable: true,
+			value: emptyRect,
+		});
+	}
+	if (typeof globalThis.ClipboardEvent === "undefined") {
+		Object.defineProperty(globalThis, "ClipboardEvent", {
+			configurable: true,
+			value: class ClipboardEventStub extends Event {},
+		});
+	}
+
 	class ResizeObserverStub {
 		observe() {}
 		unobserve() {}
@@ -111,6 +145,22 @@ if (typeof window !== "undefined") {
 			stop: async () => ({ state: "stopped" }),
 			restart: async () => ({ state: "starting" }),
 			onStatus: () => () => undefined,
+		},
+		editorHandoff: {
+			getState: async () => ({
+				targets: [
+					{ id: "cursor", name: "Cursor", kind: "editor" },
+					{ id: "file-manager", name: "Finder", kind: "file_manager" },
+					{ id: "terminal", name: "Terminal", kind: "terminal" },
+				],
+				preferredEditorId: "cursor",
+				workspaceAvailable: true,
+			}),
+			open: async ({ targetId }) => {
+				if (targetId === "file-manager") return { id: "file-manager", name: "Finder", kind: "file_manager" };
+				if (targetId === "terminal") return { id: "terminal", name: "Terminal", kind: "terminal" };
+				return { id: targetId ?? "cursor", name: "Cursor", kind: "editor" };
+			},
 		},
 		telemetry: {
 			getBootstrap: async () => null,
@@ -238,6 +288,12 @@ if (typeof window !== "undefined") {
 			signIn: async () => undefined,
 			signOut: async () => undefined,
 			onSessionChanged: () => () => undefined,
+		},
+		cloudCp: {
+			request: async () => ({ status: 401, headers: {}, body: "" }),
+			openStream: async () => ({ streamId: "stream_test" }),
+			closeStream: () => undefined,
+			onStreamEvent: () => () => undefined,
 		},
 	};
 } // end if (typeof window !== "undefined")

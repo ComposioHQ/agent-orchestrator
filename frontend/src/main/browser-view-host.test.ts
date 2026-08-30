@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { net } from "electron";
 import {
 	type BrowserNavState,
 	type BrowserTabsState,
@@ -8,19 +9,29 @@ import {
 	normalizeBrowserURL,
 	scaleBoundsForZoom,
 } from "./browser-view-host";
-import { MAX_BROWSER_TABS } from "../shared/browser-tabs";
 import { NEW_SESSION_SHORTCUT_CHANNEL } from "../shared/shortcuts";
+import { parseAgentBrowserJSON } from "./agent-browser-runtime";
+
+vi.mock("electron", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("electron")>();
+	return { ...actual, net: { fetch: vi.fn() } };
+});
 
 type InvokeHandler = (event: unknown, ...args: unknown[]) => unknown;
 type EventHandler = (event: { sender: { id: number; getZoomFactor?: () => number } }, ...args: unknown[]) => unknown;
 
 function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").AgentBrowserRuntime) {
 	let currentURL = "";
+	let browserZoomFactor = 1;
 	const webContentsListeners = new Map<string, (...args: never[]) => void>();
 	const debuggerListeners = new Map<string, (...args: never[]) => void>();
 	let debuggerAttached = false;
 	const openDevTools = vi.fn();
 	const closeDevTools = vi.fn();
+	const insertCSS = vi.fn(async (_css: string, _options?: { cssOrigin?: "author" | "user" }) => "ao-browser-scrollbars");
+	let insertedStyleNumber = 0;
+	insertCSS.mockImplementation(async () => `ao-browser-scrollbars-${++insertedStyleNumber}`);
+	const removeInsertedCSS = vi.fn(async (_key: string) => undefined);
 	const debuggerSendCommand = vi.fn(async (method: string, params?: Record<string, unknown>): Promise<unknown> => {
 		if (method === "Page.navigate" && typeof params?.url === "string") currentURL = params.url;
 		return {};
@@ -53,9 +64,12 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 		clearHistory: () => undefined,
 		getTitle: () => "",
 		getURL: () => currentURL,
+		getZoomFactor: () => browserZoomFactor,
 		goBack: () => undefined,
 		goForward: () => undefined,
 		isLoading: () => false,
+		insertCSS,
+		removeInsertedCSS,
 		loadURL: vi.fn(async (url: string) => {
 			currentURL = url;
 		}),
@@ -198,6 +212,11 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 		shellSend,
 		openDevTools,
 		closeDevTools,
+		insertCSS,
+		removeInsertedCSS,
+		setBrowserZoomFactor: (zoomFactor: number) => {
+			browserZoomFactor = zoomFactor;
+		},
 		view,
 		webContents,
 		webContentsListeners,
@@ -205,6 +224,39 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 		debuggerSendCommand,
 	};
 }
+
+describe("browser scrollbar styling", () => {
+	it("injects AO-styled horizontal and vertical scrollbars whenever a browser page becomes ready", async () => {
+		const { insertCSS, invoke, removeInsertedCSS, setBrowserZoomFactor, webContentsListeners } = setupHost();
+
+		await invoke("browser:ensure", "sess-1");
+		webContentsListeners.get("dom-ready")?.();
+
+		await vi.waitFor(() => expect(insertCSS).toHaveBeenCalledOnce());
+		const css = insertCSS.mock.calls[0]?.[0] ?? "";
+		expect(insertCSS.mock.calls[0]?.[1]).toEqual({ cssOrigin: "user" });
+		expect(css).toContain("::-webkit-scrollbar-thumb");
+		expect(css).toContain("border-radius: 999px");
+		expect(css).toContain("background: rgba(232, 232, 232, 0.72)");
+		expect(css).toContain("::-webkit-scrollbar-track");
+		expect(css).toContain("background: transparent");
+		expect(css).toContain("width: 8px");
+		expect(css).toContain("height: 8px");
+		expect(css).not.toContain("min-height");
+		expect(css).not.toContain("min-width");
+
+		webContentsListeners.get("dom-ready")?.();
+		await vi.waitFor(() => expect(insertCSS).toHaveBeenCalledTimes(2));
+
+		setBrowserZoomFactor(4);
+		webContentsListeners.get("zoom-changed")?.();
+		await vi.waitFor(() => expect(insertCSS).toHaveBeenCalledTimes(3));
+		const zoomedCss = insertCSS.mock.calls[2]?.[0] ?? "";
+		expect(zoomedCss).toContain("width: 2px");
+		expect(zoomedCss).toContain("height: 2px");
+		await vi.waitFor(() => expect(removeInsertedCSS).toHaveBeenCalledWith("ao-browser-scrollbars-2"));
+	});
+});
 
 function setupTabHost() {
 	const constructorOptions: Array<{ webPreferences: { partition?: string } }> = [];
@@ -220,6 +272,13 @@ function setupTabHost() {
 			closeDevTools: ReturnType<typeof vi.fn>;
 			openWindow: (url: string) => void;
 			close: ReturnType<typeof vi.fn>;
+			emitConsoleMessage: (level: number, message: string, line?: number, sourceId?: string) => void;
+			session: {
+				webRequest: {
+					onCompleted: ReturnType<typeof vi.fn>;
+					onErrorOccurred: ReturnType<typeof vi.fn>;
+				};
+			};
 			};
 			setBounds: ReturnType<typeof vi.fn>;
 			setBorderRadius: ReturnType<typeof vi.fn>;
@@ -292,6 +351,18 @@ function setupTabHost() {
 					void result.createWindow?.().loadURL(url);
 				}
 			},
+			emitConsoleMessage: (level: number, message: string, line = 0, sourceId = "") => {
+				const listener = listeners.get("console-message") as
+					| ((event: unknown, level: number, message: string, line: number, sourceId: string) => void)
+					| undefined;
+				listener?.({}, level, message, line, sourceId);
+			},
+			session: {
+				webRequest: {
+					onCompleted: vi.fn(),
+					onErrorOccurred: vi.fn(),
+				},
+			},
 		};
 		const view = { webContents, setBounds: vi.fn(), setBorderRadius: vi.fn(), setVisible: vi.fn() };
 		views.push(view);
@@ -357,6 +428,9 @@ function setupTabHost() {
 		annotatePreloadPath: "/preload.js",
 		rendererOrigin: "http://localhost:5173",
 		agentBrowserRuntime: runtime,
+		// Kept only as a regression tripwire: the removed auto-send path used
+		// this option to discover the daemon before calling net.fetch.
+		...({ getDaemonPort: () => 43123 } as Record<string, unknown>),
 	});
 	const invoke = (channel: string, ...args: unknown[]) =>
 		handlers.get(channel)!({ sender: { id: 1 } }, ...args) as Promise<unknown>;
@@ -467,6 +541,182 @@ describe("browser:openTab navigation failure", () => {
 		};
 
 		expect(result.tabs.map((tab) => tab.id)).toEqual(["t1", "t2"]);
+	});
+});
+
+describe("browser:act", () => {
+	function setupActHost(runAction: (sessionId: string, action: string, args: Record<string, unknown>) => Promise<unknown>) {
+		const runtime = {
+			runAction: vi.fn(runAction),
+			closeSession: vi.fn(async () => undefined),
+			dispose: vi.fn(async () => undefined),
+		} as unknown as import("./agent-browser-runtime").AgentBrowserRuntime;
+		return { ...setupHost(runtime), runAction: runtime.runAction as unknown as ReturnType<typeof vi.fn> };
+	}
+
+	it("resolves an instruction to a ref via snapshot, then performs the action", async () => {
+		const { host, runAction } = setupActHost(async (_sessionId, action, args) => {
+			if (action === "snapshot") {
+				return { snapshot: '- button "Wrong display text" [ref=e99]', refs: { e3: { role: "button", name: "Submit" } } };
+			}
+			if (action === "click") return { clicked: args.ref };
+			return {};
+		});
+
+		const result = await host.execute("sess-1", "act", { instruction: "the submit button" });
+
+		expect(result).toMatchObject({ outcome: "matched", resolvedRef: "e3", retried: false });
+		expect(runAction).toHaveBeenCalledWith(
+			"sess-1",
+			"click",
+			{ ref: "e3" },
+			expect.objectContaining({ listTargets: expect.any(Function) }),
+			undefined,
+		);
+	});
+
+	it("uses --nth to check an unnamed checkbox instead of a button named Check", async () => {
+		const { host, runAction } = setupActHost(async (_sessionId, action, args) => {
+			if (action === "snapshot") {
+				return {
+					snapshot: '- checkbox [checked=false, ref=e1]\n- button "Check" [ref=e2]',
+					refs: { e1: { role: "checkbox", name: "" }, e2: { role: "button", name: "Check" } },
+				};
+			}
+			if (action === "check") return { checked: args.ref };
+			return {};
+		});
+
+		const result = await host.execute("sess-1", "act", {
+			instruction: "check the checkbox",
+			action: "check",
+			nth: 0,
+		});
+
+		expect(result).toMatchObject({ outcome: "matched", resolvedRef: "e1", retried: false });
+		expect(runAction.mock.calls.filter(([, action]) => action === "check")).toEqual([
+			expect.arrayContaining(["sess-1", "check", { ref: "e1" }]),
+		]);
+	});
+
+	it("retries once after a stale reference: re-snapshots, re-matches, and completes", async () => {
+		let snapshotCalls = 0;
+		const { host, runAction } = setupActHost(async (_sessionId, action, args) => {
+			if (action === "snapshot") {
+				snapshotCalls += 1;
+				const ref = snapshotCalls === 1 ? "e3" : "e5";
+				return { snapshot: `- button "Submit" [ref=${ref}]`, refs: { [ref]: { role: "button", name: "Submit" } } };
+			}
+			if (action === "click") {
+				if (args.ref === "e3") {
+					parseAgentBrowserJSON(JSON.stringify({ success: false, data: null, error: "Unknown ref: e3" }));
+				}
+				return { clicked: args.ref };
+			}
+			return {};
+		});
+
+		const result = await host.execute("sess-1", "act", { instruction: "the submit button" });
+
+		expect(result).toMatchObject({ outcome: "matched", resolvedRef: "e5", retried: true });
+		expect(snapshotCalls).toBe(2);
+		expect(runAction.mock.calls.filter(([, action]) => action === "click")).toHaveLength(2);
+	});
+
+	// Regression guard: retrying must not become an unbounded loop — exactly
+	// one retry, then the real failure surfaces as itself (an honest error
+	// beats silently doing nothing on a mutating action).
+	it("rethrows a stale reference as-is once the single retry is also stale", async () => {
+		let snapshotCalls = 0;
+		const { host } = setupActHost(async (_sessionId, action) => {
+			if (action === "snapshot") {
+				snapshotCalls += 1;
+				return { snapshot: '- button "Submit" [ref=e3]', refs: { e3: { role: "button", name: "Submit" } } };
+			}
+			throw Object.assign(new Error("Reference no longer resolves"), { code: "STALE_REFERENCE" });
+		});
+
+		await expect(host.execute("sess-1", "act", { instruction: "the submit button" })).rejects.toMatchObject({
+			code: "STALE_REFERENCE",
+		});
+		expect(snapshotCalls).toBe(2);
+	});
+
+	it("does not retry a generic command failure whose message says expired", async () => {
+		let snapshotCalls = 0;
+		let clickCalls = 0;
+		const { host } = setupActHost(async (_sessionId, action) => {
+			if (action === "snapshot") {
+				snapshotCalls += 1;
+				return { snapshot: '- button "Submit" [ref=e3]', refs: { e3: { role: "button", name: "Submit" } } };
+			}
+			clickCalls += 1;
+			throw Object.assign(new Error("Browser session expired"), { code: "AGENT_BROWSER_COMMAND_FAILED" });
+		});
+
+		await expect(host.execute("sess-1", "act", { instruction: "the submit button" })).rejects.toMatchObject({
+			code: "AGENT_BROWSER_COMMAND_FAILED",
+		});
+		expect(snapshotCalls).toBe(1);
+		expect(clickCalls).toBe(1);
+	});
+
+	it("reports ambiguous without performing an action when multiple elements match equally", async () => {
+		const { host, runAction } = setupActHost(async (_sessionId, action) => {
+			if (action === "snapshot") {
+				return {
+					snapshot: ['- button "Add to Cart" [ref=e1]', '- button "Add to Cart" [ref=e2]'].join("\n"),
+					refs: { e1: { role: "button", name: "Add to Cart" }, e2: { role: "button", name: "Add to Cart" } },
+				};
+			}
+			return {};
+		});
+
+		const result = await host.execute("sess-1", "act", { instruction: "add to cart" });
+
+		expect(result).toMatchObject({ outcome: "ambiguous" });
+		expect(runAction.mock.calls.every((call: unknown[]) => call[1] === "snapshot")).toBe(true);
+	});
+
+	it("reports no-match without performing an action when nothing scores", async () => {
+		const { host, runAction } = setupActHost(async (_sessionId, action) => {
+			if (action === "snapshot") return { snapshot: '- textbox "Email" [ref=e1]', refs: {} };
+			return {};
+		});
+
+		const result = await host.execute("sess-1", "act", { instruction: "the submit button" });
+
+		expect(result).toMatchObject({ outcome: "no-match" });
+		expect(runAction.mock.calls.every((call: unknown[]) => call[1] === "snapshot")).toBe(true);
+	});
+
+	it("uses --nth to disambiguate a tie instead of declining", async () => {
+		const { host } = setupActHost(async (_sessionId, action, args) => {
+			if (action === "snapshot") {
+				return {
+					snapshot: ['- button "Add to Cart" [ref=e1]', '- button "Add to Cart" [ref=e2]'].join("\n"),
+					refs: { e1: { role: "button", name: "Add to Cart" }, e2: { role: "button", name: "Add to Cart" } },
+				};
+			}
+			if (action === "click") return { clicked: args.ref };
+			return {};
+		});
+
+		const result = await host.execute("sess-1", "act", { instruction: "add to cart", nth: 1 });
+
+		expect(result).toMatchObject({ outcome: "matched", resolvedRef: "e2" });
+	});
+
+	it("requires an instruction", async () => {
+		const { host } = setupActHost(async () => ({}));
+		await expect(host.execute("sess-1", "act", {})).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+	});
+
+	it("rejects an unsupported verb rather than silently defaulting", async () => {
+		const { host } = setupActHost(async () => ({}));
+		await expect(host.execute("sess-1", "act", { instruction: "the submit button", action: "drag" })).rejects.toMatchObject({
+			code: "INVALID_ARGUMENT",
+		});
 	});
 });
 
@@ -771,6 +1021,41 @@ describe("native browser visibility", () => {
 		expect(view.setVisible).toHaveBeenLastCalledWith(true);
 	});
 
+	// Regression, reported live (macOS, maximized/popped-out panel): opening a
+	// toolbar dropdown over the browser blanked the live page to black.
+	// window-composition.ts documents the same class of bug for its own shell
+	// view — re-adding a view to reorder it can leave its *previous*
+	// compositor surface on screen until a real geometry change rebuilds it,
+	// and identical bounds are a no-op Electron ignores. refreshLastFocusedPanelSurface
+	// applies that same "shrink by 1px, restore next tick" nudge to the live
+	// page's own view; main.ts calls it right after raising the shell.
+	it("toggles visibility and nudges the last-focused panel's bounds to force a real resize, then restores both", async () => {
+		const { emit, host, invoke, view } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+		emit("browser:setBounds", 1, {
+			viewId: "1:sess-1",
+			rect: { x: 10, y: 20, width: 320, height: 240 },
+			visible: true,
+		});
+		await invoke("browser:navigate", { viewId: "1:sess-1", url: "http://localhost:3000" });
+		view.setBounds.mockClear();
+		view.setVisible.mockClear();
+
+		host.refreshLastFocusedPanelSurface();
+		expect(view.setVisible).toHaveBeenLastCalledWith(false);
+		expect(view.setBounds).toHaveBeenLastCalledWith({ x: 10, y: 20, width: 320, height: 239 });
+
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(view.setBounds).toHaveBeenLastCalledWith({ x: 10, y: 20, width: 320, height: 240 });
+		expect(view.setVisible).toHaveBeenLastCalledWith(true);
+	});
+
+	it("does nothing when nothing has been focused yet, or the panel is hidden", async () => {
+		const { host, view } = setupHost();
+		host.refreshLastFocusedPanelSurface();
+		expect(view.setBounds).not.toHaveBeenCalled();
+	});
+
 	it("keeps rounded native geometry across page zoom", async () => {
 		const { emit, invoke, view } = setupHost();
 		await invoke("browser:ensure", "sess-1");
@@ -907,13 +1192,13 @@ describe("agent browser runtime", () => {
 		await expect(host.execute("sess-1", "__destroy-session")).resolves.toEqual({ destroyed: false });
 	});
 
-	it("caps session tabs", async () => {
-		const { host } = setupHost();
+	it("opens tabs beyond the former session cap", async () => {
+		const { host, mainContentView } = setupHost();
 		await host.execute("sess-1", "tabs");
-		for (let i = 1; i < 16; i += 1) {
+		for (let i = 1; i < 20; i += 1) {
 			await host.execute("sess-1", "tab-new");
 		}
-		await expect(host.execute("sess-1", "tab-new")).rejects.toMatchObject({ code: "BROWSER_TAB_LIMIT" });
+		expect(mainContentView.addChildView).toHaveBeenCalledTimes(20);
 	});
 
 	it("escapes page-supplied trust boundary markers in browser logs", async () => {
@@ -1051,21 +1336,152 @@ describe("agent browser runtime", () => {
 		await host.execute("sess-1", "open", { url: "http://localhost:3000" });
 
 		views[0].webContents.openWindow("http://localhost:3000/popup");
-		await Promise.resolve();
 
-		const listed = (await host.execute("sess-1", "tabs")) as {
-			activeTabId: string;
-			tabs: Array<{ id: string; url: string }>;
-		};
-		expect(listed.activeTabId).toBe("t2");
-		expect(listed.tabs[1]).toEqual(
-			expect.objectContaining({ id: "t2", url: "http://localhost:3000/popup" }),
-		);
+		// Popups now open through the real async openTab (createTab, then await
+		// navigation) instead of the old synchronous createWindow path, so give
+		// it room to actually finish navigating before asserting on the result.
+		await vi.waitFor(async () => {
+			const listed = (await host.execute("sess-1", "tabs")) as {
+				activeTabId: string;
+				tabs: Array<{ id: string; url: string }>;
+			};
+			expect(listed.activeTabId).toBe("t2");
+			expect(listed.tabs[1]).toEqual(
+				expect.objectContaining({ id: "t2", url: "http://localhost:3000/popup" }),
+			);
+		});
 
 		await host.execute("sess-1", "tab-close");
 		await expect(host.execute("sess-1", "tab-close")).rejects.toMatchObject({
 			code: "CANNOT_CLOSE_LAST_TAB",
 		});
+	});
+
+	it("closes the tab locally when the automation runtime reports its registry does not recognize it", async () => {
+		const { invoke, runtime } = setupTabHost();
+		const ensured = (await invoke("browser:ensure", "sess-1")) as { viewId: string };
+		const viewId = ensured.viewId;
+		await invoke("browser:openTab", { viewId });
+
+		const before = (await invoke("browser:getTabs", viewId)) as { tabs: { id: string }[] };
+		expect(before.tabs.map((tab) => tab.id)).toEqual(["t1", "t2"]);
+
+		const runAction = runtime.runAction as unknown as ReturnType<typeof vi.fn>;
+		const originalRunAction = runAction.getMockImplementation()! as (...args: unknown[]) => Promise<unknown>;
+		runAction.mockImplementation(async (sessionId: string, action: string, args: Record<string, unknown>, provider: unknown) => {
+			if (action === "tab-close" && String(args.tabId) === "t2") {
+				throw Object.assign(new Error("Tab t2 not found; run `agent-browser tab` to list open tabs"), {
+					code: "AGENT_BROWSER_COMMAND_FAILED",
+				});
+			}
+			return originalRunAction(sessionId, action, args, provider);
+		});
+
+		const result = (await invoke("browser:closeTab", { viewId, tabId: "t2" })) as { tabs: { id: string }[] };
+		expect(result.tabs.map((tab) => tab.id)).toEqual(["t1"]);
+	});
+
+	it("still surfaces an unrelated automation-runtime failure instead of silently closing the tab", async () => {
+		const { invoke, runtime } = setupTabHost();
+		const ensured = (await invoke("browser:ensure", "sess-1")) as { viewId: string };
+		const viewId = ensured.viewId;
+		await invoke("browser:openTab", { viewId });
+
+		const runAction = runtime.runAction as unknown as ReturnType<typeof vi.fn>;
+		const originalRunAction = runAction.getMockImplementation()! as (...args: unknown[]) => Promise<unknown>;
+		runAction.mockImplementation(async (sessionId: string, action: string, args: Record<string, unknown>, provider: unknown) => {
+			if (action === "tab-close" && String(args.tabId) === "t2") {
+				throw Object.assign(new Error("agent-browser exited with code 1"), {
+					code: "AGENT_BROWSER_START_FAILED",
+				});
+			}
+			return originalRunAction(sessionId, action, args, provider);
+		});
+
+		await expect(invoke("browser:closeTab", { viewId, tabId: "t2" })).rejects.toThrow("agent-browser exited with code 1");
+
+		const after = (await invoke("browser:getTabs", viewId)) as { tabs: { id: string }[] };
+		expect(after.tabs.map((tab) => tab.id)).toEqual(["t1", "t2"]);
+	});
+
+	it("registers a session-scoped webRequest watcher for failed requests exactly once, not per tab", async () => {
+		const { host, views } = setupTabHost();
+		await host.execute("sess-1", "open", { url: "http://localhost:3000" });
+		await host.execute("sess-1", "tab-new");
+
+		// One registration for the whole session, not one per tab created within it.
+		expect(views[0].webContents.session.webRequest.onCompleted).toHaveBeenCalledTimes(1);
+		expect(views[0].webContents.session.webRequest.onCompleted).toHaveBeenCalledWith(
+			{ urls: ["*://*/*"] },
+			expect.any(Function),
+		);
+		expect(views[0].webContents.session.webRequest.onErrorOccurred).toHaveBeenCalledTimes(1);
+	});
+
+	it("keeps browser failures available for an explicit errors query after the old auto-send window", async () => {
+		vi.useFakeTimers();
+		const fetchSpy = vi.mocked(net.fetch).mockResolvedValue(new Response());
+		try {
+			const { host, views } = setupTabHost();
+			await host.execute("sess-1", "open", { url: "http://localhost:3000" });
+
+			views[0].webContents.emitConsoleMessage(3, "render failed", 42, "http://localhost:3000/app.js");
+			const onErrorOccurred = views[0].webContents.session.webRequest.onErrorOccurred.mock.calls[0]?.[1] as
+				| ((details: {
+						resourceType: string;
+						method: string;
+						url: string;
+						error: string;
+				  }) => void)
+				| undefined;
+			onErrorOccurred?.({
+				resourceType: "xhr",
+				method: "GET",
+				url: "http://localhost:3000/api/data",
+				error: "net::ERR_CONNECTION_REFUSED",
+			});
+
+			await vi.advanceTimersByTimeAsync(5_000);
+			expect(fetchSpy).not.toHaveBeenCalled();
+			const result = (await host.execute("sess-1", "errors")) as {
+				messages: Array<{ level: string; message: string }>;
+			};
+
+			expect(result.messages).toHaveLength(2);
+			expect(result.messages[0]).toMatchObject({ level: "error" });
+			expect(result.messages[0]?.message).toContain(
+				"render failed (http://localhost:3000/app.js:42)",
+			);
+			expect(result.messages[1]).toMatchObject({ level: "error" });
+			expect(result.messages[1]?.message).toContain(
+				"GET http://localhost:3000/api/data failed: net::ERR_CONNECTION_REFUSED",
+			);
+		} finally {
+			fetchSpy.mockReset();
+			vi.useRealTimers();
+		}
+	});
+
+	it("caps each stored browser failure before retaining it", async () => {
+		const { host, views } = setupTabHost();
+		await host.execute("sess-1", "open", { url: "http://localhost:3000" });
+
+		views[0].webContents.emitConsoleMessage(3, "x".repeat(20_000));
+		const result = (await host.execute("sess-1", "errors")) as {
+			messages: Array<{ message: string }>;
+		};
+
+		expect(result.messages[0]?.message).toContain("[Content truncated at 16384 bytes]");
+	});
+
+	it("detaches browser failure listeners when their session is destroyed", async () => {
+		const { host, views } = setupTabHost();
+		await host.execute("sess-1", "open", { url: "http://localhost:3000" });
+
+		await host.execute("sess-1", "__destroy-session");
+
+		expect(views[0].webContents.session.webRequest.onCompleted).toHaveBeenLastCalledWith(null);
+		expect(views[0].webContents.session.webRequest.onErrorOccurred).toHaveBeenLastCalledWith(null);
 	});
 
 	it("exposes owned tab state and manual tab actions to the renderer", async () => {
@@ -1123,14 +1539,15 @@ describe("agent browser runtime", () => {
 });
 
 describe("browser tab lifecycle stress (tabs stop closing regression guard)", () => {
+	const stressTabCount = 16;
 	// Re-verifies the historically reported "tabs stop closing" bug against the
 	// REAL closeTab/destroyTabView code paths (not a mock of them), by driving
-	// the IPC handlers exactly as the renderer rail does: open to the tab cap,
+	// the IPC handlers exactly as the renderer rail does: open many tabs,
 	// close back down to one, repeatedly, interleaving tab selection plus a
 	// DevTools open/close and an annotation-mode toggle each cycle -- the two
 	// failure modes ("wrong tab content after switching", "stale overlay
 	// captures") called out by the stabilization commits already on main.
-	it("opens to the tab cap and closes back to one tab across many churn cycles without a stuck or leaked tab", async () => {
+	it("opens many tabs and closes back to one across churn cycles without a stuck or leaked tab", async () => {
 		const { invoke, views } = setupTabHost();
 		const ensured = (await invoke("browser:ensure", "sess-1")) as BrowserNavState;
 		const { viewId } = ensured;
@@ -1155,11 +1572,11 @@ describe("browser tab lifecycle stress (tabs stop closing regression guard)", ()
 		let nonReactivatingCloses = 0;
 
 		for (let cycle = 0; cycle < 20; cycle += 1) {
-			for (let i = 0; i < MAX_BROWSER_TABS - 1; i += 1) {
+			for (let i = 0; i < stressTabCount - 1; i += 1) {
 				await invoke("browser:openTab", { viewId });
 			}
 			let tabs = (await invoke("browser:getTabs", viewId)) as BrowserTabsState;
-			expect(tabs.tabs).toHaveLength(MAX_BROWSER_TABS);
+			expect(tabs.tabs).toHaveLength(stressTabCount);
 
 			// Interleave the two related failure modes named in the brief: a
 			// DevTools open/close cycle and an annotation-mode toggle.
@@ -1173,7 +1590,7 @@ describe("browser tab lifecycle stress (tabs stop closing regression guard)", ()
 			// above surfaces here directly, instead of only indirectly on the
 			// next close below.
 			tabs = (await invoke("browser:getTabs", viewId)) as BrowserTabsState;
-			expect(tabs.tabs).toHaveLength(MAX_BROWSER_TABS);
+			expect(tabs.tabs).toHaveLength(stressTabCount);
 
 			let closeCount = 0;
 			while (tabs.tabs.length > 1) {
@@ -1220,7 +1637,7 @@ describe("browser tab lifecycle stress (tabs stop closing regression guard)", ()
 		// from closeTab's behavior, so this assertion can't pass by accident
 		// the way the prior induction-based version did. The thresholds are
 		// deliberately loose (the actual split is a deterministic 160
-		// reactivating / 140 non-reactivating for MAX_BROWSER_TABS=16 across 20
+		// reactivating / 140 non-reactivating for 16 tabs across 20
 		// cycles) since what matters is that neither branch has zero coverage.
 		expect(reactivatingCloses).toBeGreaterThanOrEqual(5);
 		expect(nonReactivatingCloses).toBeGreaterThanOrEqual(5);

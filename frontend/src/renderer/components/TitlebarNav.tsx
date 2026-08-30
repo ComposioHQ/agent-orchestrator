@@ -3,7 +3,7 @@ import { ArrowLeft, ArrowRight, PanelLeft } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { isLinuxPlatform, isMacPlatform } from "../lib/platform";
-import { useUiStore } from "../stores/ui-store";
+import { sidebarIsCompact, sidebarIsVisible, sidebarOccupiesLayout, useUiStore } from "../stores/ui-store";
 
 const isMac = isMacPlatform();
 const isLinux = isLinuxPlatform();
@@ -12,9 +12,9 @@ const noDragStyle = isMac
   : undefined;
 
 // Sidebar chrome cluster (sidebar toggle + history arrows). It stays fixed while
-// the sidebar expands, collapses, or appears as a hover preview. macOS pins it
-// beside the traffic lights; Linux has no traffic lights, so it sits at the
-// sidebar's top-left. (Windows keeps these controls in its own titlebar.)
+// the sidebar expands or collapses. macOS pins it beside the traffic lights;
+// Linux has no traffic lights, so it sits at the sidebar's top-left. (Windows
+// keeps these controls in its own titlebar.)
 // The installed router has no useCanGoForward, and deriving one as
 // `__TSR_index < history.length - 1` (the upstream hook's approach) is wrong
 // here: window.history.length also counts entries the router never created —
@@ -42,28 +42,34 @@ export function TitlebarNav({
   historyLocked = false,
   hasSessionTopbar = false,
   isFullScreen = false,
-  onSidebarPreviewEnter,
 }: {
   historyLocked?: boolean;
   hasSessionTopbar?: boolean;
   isFullScreen?: boolean;
-  onSidebarPreviewEnter?: React.PointerEventHandler<HTMLButtonElement>;
 }) {
   const { t } = useTranslation();
-  const { isSidebarOpen, toggleSidebar } = useUiStore();
+  const toggleSidebar = useUiStore((state) => state.toggleSidebar);
+  const isSidebarOpen = useUiStore(sidebarIsVisible);
+  const isSidebarCompact = useUiStore(sidebarIsCompact);
+  const sidebarHasLayout = useUiStore(sidebarOccupiesLayout);
   const router = useRouter();
   const canGoBack = useCanGoBack();
   const canGoForward = useCanGoForward();
 
   if (!isMac && !isLinux) return null;
+  if (isSidebarCompact) return null;
 
   // macOS: pinned beside the traffic lights. Native dots sit at y: 12 with a
   // 12px hit target (centerline 18); the 40px clearance band is items-centered,
   // so top: -2px puts the toggle/arrows on that same centerline. Linux: no
   // traffic lights, so it sits at the sidebar's top-left within the reserved
-  // titlebar band (cluster-left-linux, not flush to the window edge).
+  // titlebar band (cluster-left-linux, not flush to the window edge) — and when
+  // the sidebar is off-canvas it shifts right to clear the framed centre
+  // panel's left border instead of straddling it.
   const leftClass = !isMac
-    ? "left-titlebar-cluster-left-linux"
+    ? isSidebarOpen
+      ? "left-titlebar-cluster-left-linux"
+      : "left-titlebar-cluster-left-linux-panel"
     : isFullScreen
       ? "left-titlebar-cluster-left-fullscreen"
       : "left-titlebar-cluster-left";
@@ -71,7 +77,7 @@ export function TitlebarNav({
   // 1px) so the cluster shares its centerline with the project title.
   const topClass = !isMac
     ? "top-0.75"
-    : isFullScreen && hasSessionTopbar && !isSidebarOpen
+    : isFullScreen && hasSessionTopbar && !sidebarHasLayout
       ? "top-1.5"
       : isFullScreen
         ? "top-0"
@@ -92,7 +98,6 @@ export function TitlebarNav({
           isSidebarOpen ? t("shell.collapseSidebar") : t("shell.expandSidebar")
         }
         onClick={toggleSidebar}
-        onPointerEnter={onSidebarPreviewEnter}
         title={
           isSidebarOpen
             ? t("titlebar.collapseSidebarShortcut")
@@ -127,7 +132,6 @@ function TitlebarButton({
   disabled,
   tabIndex,
   onClick,
-  onPointerEnter,
   children,
 }: {
   label: string;
@@ -135,7 +139,6 @@ function TitlebarButton({
   disabled?: boolean;
   tabIndex?: number;
   onClick: () => void;
-  onPointerEnter?: React.PointerEventHandler<HTMLButtonElement>;
   children: React.ReactNode;
 }) {
   return (
@@ -145,7 +148,6 @@ function TitlebarButton({
       className="grid size-control-md place-items-center rounded-md text-passive transition-colors hover:bg-interactive-hover hover:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-55 disabled:hover:bg-transparent disabled:hover:text-passive"
       disabled={disabled}
       onClick={onClick}
-      onPointerEnter={onPointerEnter}
       style={noDragStyle}
       tabIndex={tabIndex}
       title={title}

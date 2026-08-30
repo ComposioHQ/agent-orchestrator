@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -481,8 +482,16 @@ type switchAgentChatLauncher struct {
 	live  bool
 }
 
-func (l *switchAgentChatLauncher) StartChat(_ context.Context, cfg ChatStart) (ChatStarted, error) {
+func (l *switchAgentChatLauncher) StartChat(ctx context.Context, cfg ChatStart) (ChatStarted, error) {
+	var err error
+	cfg, err = prepareTestChatStart(ctx, cfg)
+	if err != nil {
+		return ChatStarted{}, err
+	}
 	l.started = append(l.started, cfg)
+	if l.beforeStart != nil {
+		l.beforeStart(cfg)
+	}
 	if l.startErr != nil {
 		return ChatStarted{}, l.startErr
 	}
@@ -925,6 +934,20 @@ func TestSwitchAgentChatSessionKeepsChatModeAndNeedsNoRuntime(t *testing.T) {
 		live:              true,
 	}
 	manager.chat = launcher
+	issuedWhileSourceLive := false
+	issuer := &scriptedBrowserCapabilities{
+		issues: []browserCapabilityIssue{{token: "target-token", verifier: "target-verifier"}},
+		onIssue: func(_ int, _ domain.SessionID) {
+			issuedWhileSourceLive = launcher.live
+		},
+	}
+	manager.browserCapabilities = issuer
+	verifierAtTargetStart := ""
+	launcher.beforeStart = func(cfg ChatStart) {
+		store.mu.Lock()
+		verifierAtTargetStart = store.sessions[cfg.SessionID].Metadata.BrowserCapabilityVerifier
+		store.mu.Unlock()
+	}
 
 	sw, err := switchAgentSynchronously(context.Background(), manager, rec.ID, SwitchAgentConfig{
 		TargetHarness:  domain.HarnessCodex,
@@ -947,6 +970,21 @@ func TestSwitchAgentChatSessionKeepsChatModeAndNeedsNoRuntime(t *testing.T) {
 		got.Metadata.ControllerGeneration != "target-generation" {
 		t.Fatalf("Chat target identity = provider %q generation %q",
 			got.Metadata.ProviderConversationID, got.Metadata.ControllerGeneration)
+	}
+	if issuedWhileSourceLive {
+		t.Fatal("target capability was issued before the source Chat controller stopped")
+	}
+	if issuer.calls != 1 || verifierAtTargetStart != "target-verifier" ||
+		launcher.started[0].Env[EnvBrowserCapability] != "target-token" ||
+		got.Metadata.BrowserCapabilityVerifier != "target-verifier" {
+		t.Fatalf("target capability rotation = calls %d start verifier %q token %q verifier %q",
+			issuer.calls, verifierAtTargetStart, launcher.started[0].Env[EnvBrowserCapability],
+			got.Metadata.BrowserCapabilityVerifier)
+	}
+	if len(launcher.started) != 1 ||
+		launcher.started[0].ProviderScopeID != chatSwitchProviderBoundaryID(sw.ID) {
+		t.Fatalf("fresh Chat target scope = %+v, want reserved boundary %q",
+			launcher.started, chatSwitchProviderBoundaryID(sw.ID))
 	}
 	if len(launcher.armed) != 1 || len(launcher.prepared) != 1 || len(launcher.stopped) != 1 {
 		t.Fatalf("Chat ownership boundaries: armed=%v prepared=%v stopped=%v",
@@ -1006,6 +1044,10 @@ func TestSwitchAgentChatSwitchBackResumesVerifiedNativeConversation(t *testing.T
 	if launcher.started[0].Model != "selected-target-model" {
 		t.Fatalf("resumed Chat target model = %q, want selected-target-model", launcher.started[0].Model)
 	}
+	if launcher.started[0].ProviderScopeID != chatSwitchProviderBoundaryID(sw.ID) {
+		t.Fatalf("resumed Chat target scope = %q, want reserved boundary %q",
+			launcher.started[0].ProviderScopeID, chatSwitchProviderBoundaryID(sw.ID))
+	}
 	if !launcher.started[0].SkipNativeHistoryImport {
 		t.Fatal("switch-back projected target-native history into the source provider branch before activation")
 	}
@@ -1031,6 +1073,11 @@ func TestSwitchAgentChatActivationFailureRestoresSourceController(t *testing.T) 
 		live:              true,
 	}
 	manager.chat = launcher
+	issuer := &scriptedBrowserCapabilities{issues: []browserCapabilityIssue{
+		{token: "failed-target-token", verifier: "failed-target-verifier"},
+		{token: "restored-source-token", verifier: "restored-source-verifier"},
+	}}
+	manager.browserCapabilities = issuer
 	activationErr := errors.New("target ownership commit unavailable")
 	store.activateErr = activationErr
 
@@ -1055,6 +1102,16 @@ func TestSwitchAgentChatActivationFailureRestoresSourceController(t *testing.T) 
 	}
 	if len(launcher.started) != 2 || launcher.started[1].ProviderConversationID != "source-chat-native" {
 		t.Fatalf("Chat starts = %+v, want target attempt then source resume", launcher.started)
+	}
+	if issuer.calls != 2 ||
+		launcher.started[0].Env[EnvBrowserCapability] != "failed-target-token" ||
+		launcher.started[1].Env[EnvBrowserCapability] != "restored-source-token" ||
+		got.Metadata.BrowserCapabilityVerifier != "restored-source-verifier" {
+		t.Fatalf("rollback capability rotation = calls %d target %q source %q verifier %q",
+			issuer.calls,
+			launcher.started[0].Env[EnvBrowserCapability],
+			launcher.started[1].Env[EnvBrowserCapability],
+			got.Metadata.BrowserCapabilityVerifier)
 	}
 }
 
@@ -3319,6 +3376,49 @@ func TestSwitchAgentMarksAndRecoversUnconfirmedSourceStop(t *testing.T) {
 	}
 }
 
+func TestRecoverAgentSwitchReleasesSourceWhenProbeRemainsInconclusive(t *testing.T) {
+	probeErr := errors.New("runtime probe unavailable")
+	runtime := &fakeRestartRuntime{fakeRuntime: &fakeRuntime{
+		destroyErr: errors.New("teardown unavailable"),
+		aliveErr:   probeErr,
+	}}
+	manager, store, _ := newSwitchTestManager(t, runtime)
+
+	sw, err := switchAgentSynchronously(context.Background(), manager, "proj-1", SwitchAgentConfig{
+		TargetHarness: domain.HarnessCodex, IdempotencyKey: "stop-probe-stays-inconclusive",
+	})
+	if !errors.Is(err, ErrSwitchSourceStopUnconfirmed) {
+		t.Fatalf("switch error = %v, want ErrSwitchSourceStopUnconfirmed", err)
+	}
+	if sw.State != domain.AgentSwitchStoppingSource || !sw.RequiresSourceStopRecovery() {
+		t.Fatalf("switch = state %q code %q, want retained source-stop recovery", sw.State, sw.ErrorCode)
+	}
+	destroyedBeforeRecovery := runtime.destroyed
+
+	if _, err := manager.RecoverAgentSwitch(context.Background(), "proj-1", sw.ID); err != nil {
+		t.Fatalf("recover retained source stop: %v", err)
+	}
+	waitForSwitchWorkers(t, manager)
+
+	recovered := store.switches[sw.ID]
+	if recovered.State != domain.AgentSwitchFailed || recovered.ErrorCode != domain.AgentSwitchErrorSourceStopUnconfirmed {
+		t.Fatalf("recovered switch = state %q code %q, want failed/source_stop_unconfirmed",
+			recovered.State, recovered.ErrorCode)
+	}
+	if got := store.sessions["proj-1"]; got.Harness != domain.HarnessClaudeCode || got.Metadata.RuntimeHandleID != "proj-1" {
+		t.Fatalf("source ownership changed during inconclusive recovery: %+v", got)
+	}
+	if runtime.created != 0 {
+		t.Fatalf("target or replacement runtime created %d times, want none", runtime.created)
+	}
+	if runtime.destroyed != destroyedBeforeRecovery {
+		t.Fatalf("recovery retried ambiguous teardown: destroy calls = %d, want %d", runtime.destroyed, destroyedBeforeRecovery)
+	}
+	if manager.SessionMutationInProgress("proj-1") {
+		t.Fatal("inconclusive source probe left the switch input gate closed")
+	}
+}
+
 func TestSwitchAgentInstallsTargetWorkspaceOnlyAfterFinalSourceSnapshot(t *testing.T) {
 	runtime := &fakeRestartRuntime{fakeRuntime: &fakeRuntime{}}
 	manager, _, _ := newSwitchTestManager(t, runtime)
@@ -3536,7 +3636,7 @@ func TestReconcileAgentSwitchesUsesDurableBoundaries(t *testing.T) {
 		{name: "stopped source is restored", state: domain.AgentSwitchStoppingSource, runtimeAlive: false, wantState: domain.AgentSwitchFailed, wantHarness: domain.HarnessClaudeCode, wantErrorCode: "daemon_restart_post_stop", wantActivity: domain.ActivityIdle},
 		{name: "failed source restore remains recoverable", state: domain.AgentSwitchStoppingSource, runtimeAlive: false, rollbackErr: errors.New("source relaunch unavailable"), wantState: domain.AgentSwitchSourceStopped, wantHarness: domain.HarnessClaudeCode, wantErrorCode: domain.AgentSwitchErrorSourceRestoreUnconfirmed, wantError: "source relaunch unavailable", wantGated: true, wantActivity: domain.ActivityExited},
 		{name: "missing rollback project remains recoverable", state: domain.AgentSwitchStoppingSource, runtimeAlive: false, projectErr: errors.New("project unavailable"), wantState: domain.AgentSwitchSourceStopped, wantHarness: domain.HarnessClaudeCode, wantErrorCode: domain.AgentSwitchErrorSourceRestoreUnconfirmed, wantError: "project unavailable", wantGated: true, wantActivity: domain.ActivityExited},
-		{name: "inconclusive source probe remains available for explicit recovery", state: domain.AgentSwitchStoppingSource, runtimeErr: errors.New("probe unavailable"), wantState: domain.AgentSwitchStoppingSource, wantHarness: domain.HarnessClaudeCode, wantErrorCode: domain.AgentSwitchErrorSourceStopUnconfirmed, wantGated: true},
+		{name: "inconclusive source probe returns ownership to source", state: domain.AgentSwitchStoppingSource, runtimeErr: errors.New("probe unavailable"), wantState: domain.AgentSwitchFailed, wantHarness: domain.HarnessClaudeCode, wantErrorCode: domain.AgentSwitchErrorSourceStopUnconfirmed},
 		{name: "exact starting target is adopted by opaque handle without delivery", state: domain.AgentSwitchStartingTarget, runtimeAlive: true, targetHandle: "opaque-target-handle", wantState: domain.AgentSwitchFailed, wantHarness: domain.HarnessCodex, wantHandle: "opaque-target-handle", wantErrorCode: "daemon_restart_before_delivery"},
 		{name: "starting target without a durable handle requires recovery", state: domain.AgentSwitchStartingTarget, runtimeAlive: true, wantState: domain.AgentSwitchStartingTarget, wantHarness: domain.HarnessClaudeCode, wantErrorCode: domain.AgentSwitchErrorTargetStartUnconfirmed, wantGated: true},
 		{name: "acknowledged delivery completes", state: domain.AgentSwitchDelivering, runtimeAlive: true, acknowledged: true, wantState: domain.AgentSwitchCompleted, wantHarness: domain.HarnessCodex},
@@ -3626,6 +3726,51 @@ func TestReconcileAgentSwitchesUsesDurableBoundaries(t *testing.T) {
 				t.Fatal("resolved recovery left input gated")
 			}
 		})
+	}
+}
+
+func TestReconcileStartingTargetPreservesInconclusiveRuntime(t *testing.T) {
+	probeErr := fmt.Errorf("legacy target inspection failed: %w", ports.ErrRuntimeProbeInconclusive)
+	runtime := &fakeRestartRuntime{fakeRuntime: &fakeRuntime{aliveErr: probeErr}}
+	manager, store, messenger := newSwitchTestManager(t, runtime)
+	target := manager.agents.(switchTestAgents)[domain.HarnessCodex].(*switchTestAgent)
+	now := time.Now().UTC()
+	targetRef := domain.AgentNativeSessionID("native-target")
+	sw := domain.AgentSwitch{
+		ID: "switch-inconclusive-target", SessionID: "proj-1", IdempotencyKey: "inconclusive-target",
+		RequestFingerprint: domain.ComputeAgentSwitchRequestFingerprint("proj-1", domain.HarnessCodex, ""),
+		FromHarness:        domain.HarnessClaudeCode, TargetHarness: domain.HarnessCodex,
+		TargetNativeSessionRef: &targetRef, TargetStartMode: domain.AgentSwitchTargetStartFresh,
+		State: domain.AgentSwitchStartingTarget, AgentHandoffStatus: domain.AgentHandoffUnavailable,
+		SourceGenerationID: "source-generation", TargetGenerationID: "target-generation",
+		TargetRuntimeHandleID: "durable-target-handle", RequestedAt: now, UpdatedAt: now,
+	}
+	store.switches[sw.ID] = sw
+	recBefore := store.sessions[sw.SessionID]
+	recBefore.Activity = domain.Activity{State: domain.ActivityExited, LastActivityAt: now}
+	store.sessions[recBefore.ID] = recBefore
+
+	err := manager.ReconcileAgentSwitches(context.Background())
+	if !errors.Is(err, ports.ErrRuntimeProbeInconclusive) {
+		t.Fatalf("reconcile error = %v, want ErrRuntimeProbeInconclusive", err)
+	}
+	if got := store.switches[sw.ID]; got != sw {
+		t.Fatalf("inconclusive recovery mutated switch:\n got  %+v\n want %+v", got, sw)
+	}
+	if got := store.sessions[recBefore.ID]; !reflect.DeepEqual(got, recBefore) {
+		t.Fatalf("inconclusive recovery mutated session:\n got  %+v\n want %+v", got, recBefore)
+	}
+	if len(runtime.destroyedIDs) != 0 {
+		t.Fatalf("inconclusive recovery destroyed runtimes: %v", runtime.destroyedIDs)
+	}
+	if target.cleanupCalls != 0 {
+		t.Fatalf("inconclusive recovery cleaned target workspace %d times, want 0", target.cleanupCalls)
+	}
+	if len(messenger.msgs) != 0 {
+		t.Fatalf("inconclusive recovery sent continuation: %#v", messenger.msgs)
+	}
+	if !manager.SessionMutationInProgress(sw.SessionID) {
+		t.Fatal("inconclusive recovery reopened session input")
 	}
 }
 

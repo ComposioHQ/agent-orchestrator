@@ -71,6 +71,14 @@ type AgentBinaryResolver interface {
 	ResolveBinary(ctx context.Context) (path string, err error)
 }
 
+// AgentBinaryPresenceResolver is an optional startup-only refinement for an
+// adapter whose normal binary resolution performs additional validation. It
+// must only inspect local executable paths; it must not start the agent CLI.
+// AO uses it for the first-render prerequisite gate, where existence is enough.
+type AgentBinaryPresenceResolver interface {
+	ResolveBinaryPresence(ctx context.Context) (path string, err error)
+}
+
 // AgentNativeSessionTerminator is an optional adapter capability used before
 // AO destroys a terminal runtime or worktree whose agent may keep running in a
 // detached native process. Implementations must affect only the supplied
@@ -233,6 +241,15 @@ type EmptyComposerDetector interface {
 	ComposerIsEmpty(output string) bool
 }
 
+// WaitingInputComposerReadiness is an opt-in capability for adapters where an
+// empty composer authoritatively proves that a durable waiting_input state is
+// safe for unsolicited delivery. EmptyComposerDetector alone is insufficient:
+// other harnesses can render an empty composer beside a permission or
+// structured-input boundary.
+type WaitingInputComposerReadiness interface {
+	EmptyComposerProvesWaitingInputReady() bool
+}
+
 // ContinuousTerminalActivityDetector is implemented by adapters whose TUI is
 // the only authoritative source for some activity transitions. These adapters
 // are sampled on every observer tick, including while idle or waiting for
@@ -240,6 +257,13 @@ type EmptyComposerDetector interface {
 type ContinuousTerminalActivityDetector interface {
 	TerminalActivityDetector
 	ContinuouslyDetectTerminalActivity() bool
+}
+
+// WaitingTerminalActivityDetector is implemented by non-continuous terminal
+// detectors that can authoritatively recover from a durable waiting-input state.
+type WaitingTerminalActivityDetector interface {
+	TerminalActivityDetector
+	ContinuouslyDetectTerminalActivityWhileWaiting() bool
 }
 
 // PromptReadinessHints describes when an after-start prompt should be sent.
@@ -302,6 +326,15 @@ type SubmitActivitySignaler interface {
 // blocked signal implement this interface to opt in.
 type BlockedActivitySignaler interface {
 	EmitsBlockedActivity() bool
+}
+
+// StartupInputReadinessSignaler is an OPTIONAL capability for a TUI adapter
+// whose first lifecycle hook cannot arrive until native startup dialogs have
+// cleared and the agent can safely accept pane input. AO gates user and
+// automation writes on FirstSignalAt only for adapters that opt in here;
+// hookless adapters must remain usable without manufacturing a signal.
+type StartupInputReadinessSignaler interface {
+	FirstSignalProvesInputReady() bool
 }
 
 // ActiveTurnSteerer is an OPTIONAL capability an Agent adapter implements when

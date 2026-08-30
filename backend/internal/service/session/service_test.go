@@ -29,10 +29,12 @@ func (f *fakeTelemetrySink) Close(context.Context) error { return nil }
 
 type fakeStore struct {
 	sessions            map[domain.SessionID]domain.SessionRecord
+	getSessionErr       error
 	activeSwitches      map[domain.SessionID]domain.AgentSwitch
 	activeSwitchGetErr  error
 	activeSwitchListErr error
 	pr                  map[domain.SessionID]domain.PRFacts
+	prFacts             map[domain.SessionID][]domain.PRFacts
 	prs                 map[domain.SessionID][]domain.PullRequest
 	projects            map[string]domain.ProjectRecord
 	worktrees           map[domain.SessionID][]domain.SessionWorktreeRecord
@@ -42,6 +44,9 @@ type fakeStore struct {
 	threads             map[string][]domain.PullRequestReviewThread
 	comments            map[string][]domain.PullRequestComment
 	commentsErr         error
+	reviewRuns          map[domain.SessionID][]domain.CurrentHeadReviewRun
+	listPRFactsCalls    int
+	listReviewRunsCalls int
 	num                 int
 }
 
@@ -50,6 +55,7 @@ func newFakeStore() *fakeStore {
 		sessions:       map[domain.SessionID]domain.SessionRecord{},
 		activeSwitches: map[domain.SessionID]domain.AgentSwitch{},
 		pr:             map[domain.SessionID]domain.PRFacts{},
+		prFacts:        map[domain.SessionID][]domain.PRFacts{},
 		prs:            map[domain.SessionID][]domain.PullRequest{},
 		projects:       map[string]domain.ProjectRecord{},
 		worktrees:      map[domain.SessionID][]domain.SessionWorktreeRecord{},
@@ -57,6 +63,31 @@ func newFakeStore() *fakeStore {
 		reviews:        map[string][]domain.PullRequestReview{},
 		threads:        map[string][]domain.PullRequestReviewThread{},
 		comments:       map[string][]domain.PullRequestComment{},
+		reviewRuns:     map[domain.SessionID][]domain.CurrentHeadReviewRun{},
+	}
+}
+
+func TestListBatchesKanbanReads(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer"}
+	st.sessions["mer-2"] = domain.SessionRecord{ID: "mer-2", ProjectID: "mer"}
+	st.pr["mer-1"] = domain.PRFacts{URL: "pr-1", HeadSHA: "head-1"}
+	st.pr["mer-2"] = domain.PRFacts{URL: "pr-2", HeadSHA: "head-2"}
+	st.reviewRuns["mer-1"] = []domain.CurrentHeadReviewRun{{SessionID: "mer-1", PRURL: "pr-1", Status: domain.ReviewRunRunning, ID: "run-1", CreatedAt: time.Now().UTC()}}
+	st.reviewRuns["mer-2"] = []domain.CurrentHeadReviewRun{{SessionID: "mer-2", PRURL: "pr-2", Status: domain.ReviewRunRunning, ID: "run-2", CreatedAt: time.Now().UTC()}}
+
+	list, err := (&Service{store: st}).List(context.Background(), ListFilter{ProjectID: "mer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("len(list) = %d, want 2", len(list))
+	}
+	if st.listPRFactsCalls != 1 {
+		t.Fatalf("ListPRFacts calls = %d, want 1 batched call", st.listPRFactsCalls)
+	}
+	if st.listReviewRunsCalls != 1 {
+		t.Fatalf("ListCurrentHeadReviewRuns calls = %d, want 1 batched call", st.listReviewRunsCalls)
 	}
 }
 
@@ -136,6 +167,9 @@ func (f *fakeStore) CreateSession(_ context.Context, rec domain.SessionRecord) (
 }
 
 func (f *fakeStore) GetSession(_ context.Context, id domain.SessionID) (domain.SessionRecord, bool, error) {
+	if f.getSessionErr != nil {
+		return domain.SessionRecord{}, false, f.getSessionErr
+	}
 	r, ok := f.sessions[id]
 	return r, ok, nil
 }
@@ -264,11 +298,47 @@ func (f *fakeStore) ListPRsBySession(_ context.Context, id domain.SessionID) ([]
 }
 
 func (f *fakeStore) ListPRFactsForSession(_ context.Context, id domain.SessionID) ([]domain.PRFacts, error) {
+	f.listPRFactsCalls++
+	if prs, ok := f.prFacts[id]; ok {
+		return append([]domain.PRFacts(nil), prs...), nil
+	}
 	pr, ok := f.pr[id]
 	if !ok {
 		return nil, nil
 	}
 	return []domain.PRFacts{pr}, nil
+}
+
+func (f *fakeStore) ListPRFactsForSessions(_ context.Context, ids []domain.SessionID) (map[domain.SessionID][]domain.PRFacts, error) {
+	f.listPRFactsCalls++
+	out := make(map[domain.SessionID][]domain.PRFacts, len(ids))
+	for _, id := range ids {
+		if prs, ok := f.prFacts[id]; ok {
+			out[id] = append([]domain.PRFacts(nil), prs...)
+			continue
+		}
+		pr, ok := f.pr[id]
+		if ok {
+			out[id] = []domain.PRFacts{pr}
+			continue
+		}
+		out[id] = []domain.PRFacts{}
+	}
+	return out, nil
+}
+
+func (f *fakeStore) ListCurrentHeadReviewRunsForSession(_ context.Context, id domain.SessionID) ([]domain.CurrentHeadReviewRun, error) {
+	f.listReviewRunsCalls++
+	return f.reviewRuns[id], nil
+}
+
+func (f *fakeStore) ListCurrentHeadReviewRunsForSessions(_ context.Context, ids []domain.SessionID) (map[domain.SessionID][]domain.CurrentHeadReviewRun, error) {
+	f.listReviewRunsCalls++
+	out := make(map[domain.SessionID][]domain.CurrentHeadReviewRun, len(ids))
+	for _, id := range ids {
+		out[id] = append([]domain.CurrentHeadReviewRun(nil), f.reviewRuns[id]...)
+	}
+	return out, nil
 }
 
 func (f *fakeStore) ListChecks(_ context.Context, prURL string) ([]domain.PullRequestCheck, error) {
@@ -586,7 +656,7 @@ func TestGetWorkspaceFileReturnsContentAndDiff(t *testing.T) {
 	st := newFakeStore()
 	st.sessions["ao-1"] = domain.SessionRecord{ID: "ao-1", Metadata: domain.SessionMetadata{WorkspacePath: repo}}
 
-	got, err := (&Service{store: st}).GetWorkspaceFile(context.Background(), "ao-1", "README.md")
+	got, err := (&Service{store: st}).GetWorkspaceFile(context.Background(), "ao-1", "README.md", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -616,7 +686,7 @@ func TestGetWorkspaceFileReportsImageMediaType(t *testing.T) {
 	st := newFakeStore()
 	st.sessions["ao-1"] = domain.SessionRecord{ID: "ao-1", Metadata: domain.SessionMetadata{WorkspacePath: repo}}
 
-	got, err := (&Service{store: st}).GetWorkspaceFile(context.Background(), "ao-1", "docs/logo.png")
+	got, err := (&Service{store: st}).GetWorkspaceFile(context.Background(), "ao-1", "docs/logo.png", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -635,7 +705,7 @@ func TestGetWorkspaceFileLeavesTextFilesWithoutImageMediaType(t *testing.T) {
 	st := newFakeStore()
 	st.sessions["ao-1"] = domain.SessionRecord{ID: "ao-1", Metadata: domain.SessionMetadata{WorkspacePath: repo}}
 
-	got, err := (&Service{store: st}).GetWorkspaceFile(context.Background(), "ao-1", "docs/icon.svg")
+	got, err := (&Service{store: st}).GetWorkspaceFile(context.Background(), "ao-1", "docs/icon.svg", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -737,7 +807,7 @@ func TestGetWorkspaceFileBlobHasNoAfterSideForDeletedFile(t *testing.T) {
 	if _, err := svc.GetWorkspaceFileBlob(context.Background(), "ao-1", "docs/logo.png", WorkspaceBlobAfter); err == nil {
 		t.Fatal("after blob for a deleted file: want error, got nil")
 	}
-	detail, err := svc.GetWorkspaceFile(context.Background(), "ao-1", "docs/logo.png")
+	detail, err := svc.GetWorkspaceFile(context.Background(), "ao-1", "docs/logo.png", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -871,7 +941,7 @@ func TestWorkspaceFilesIncludeCommittedBranchDiffAgainstRecordedBase(t *testing.
 		t.Fatalf("compare metadata = mode:%q sha:%q ref:%q, want base %s main", files.CompareMode, files.CompareBaseSHA, files.CompareBaseRef, base)
 	}
 
-	detail, err := (&Service{store: st}).GetWorkspaceFile(context.Background(), "ao-1", "README.md")
+	detail, err := (&Service{store: st}).GetWorkspaceFile(context.Background(), "ao-1", "README.md", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1428,7 +1498,7 @@ func TestWorkspaceFilesReportCommittedDeletionsAgainstRecordedBase(t *testing.T)
 		t.Fatalf("src/app.go summary = %#v, want deleted", byPath["src/app.go"])
 	}
 
-	detail, err := (&Service{store: st}).GetWorkspaceFile(context.Background(), "ao-1", "src/app.go")
+	detail, err := (&Service{store: st}).GetWorkspaceFile(context.Background(), "ao-1", "src/app.go", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1465,6 +1535,178 @@ func TestWorkspaceFilesKeepBaseStatusWhenCommittedAddedFileIsModified(t *testing
 	}
 }
 
+func workspaceSectionPaths(files []WorkspaceFileSummary) map[string]bool {
+	out := map[string]bool{}
+	for _, file := range files {
+		out[file.Path] = true
+	}
+	return out
+}
+
+func TestWorkspaceFileSectionsSplitByGitState(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	base := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+	runGit(t, repo, "switch", "-c", "ao/work")
+
+	// Committed since base.
+	writeWorkspaceFile(t, repo, "committed.go", "package main\n")
+	runGit(t, repo, "add", "committed.go")
+	runGit(t, repo, "commit", "-m", "agent: add committed.go")
+
+	// Partially staged: index differs from HEAD, worktree differs from index.
+	writeWorkspaceFile(t, repo, "README.md", "hello\nstaged addition\n")
+	runGit(t, repo, "add", "README.md")
+	writeWorkspaceFile(t, repo, "README.md", "hello\nstaged addition\nunstaged addition\n")
+
+	// Untracked.
+	writeWorkspaceFile(t, repo, "scratch.txt", "untracked note\n")
+
+	st := newFakeStore()
+	st.sessions["ao-1"] = domain.SessionRecord{
+		ID: "ao-1",
+		Metadata: domain.SessionMetadata{
+			Branch:        "ao/work",
+			WorkspacePath: repo,
+			DiffBaseSHA:   base,
+			DiffBaseRef:   "main",
+		},
+	}
+
+	files, err := (&Service{store: st}).ListWorkspaceFiles(context.Background(), "ao-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	staged := workspaceSectionPaths(files.Sections.Staged)
+	if !staged["README.md"] {
+		t.Fatalf("staged section = %v, want README.md", staged)
+	}
+	unstaged := workspaceSectionPaths(files.Sections.Unstaged)
+	if !unstaged["README.md"] {
+		t.Fatalf("unstaged section = %v, want README.md (partially staged file)", unstaged)
+	}
+	untracked := workspaceSectionPaths(files.Sections.Untracked)
+	if !untracked["scratch.txt"] {
+		t.Fatalf("untracked section = %v, want scratch.txt", untracked)
+	}
+	committed := workspaceSectionPaths(files.Sections.Committed)
+	if !committed["committed.go"] {
+		t.Fatalf("committed section = %v, want committed.go", committed)
+	}
+	if len(files.Commits) != 1 || files.Commits[0].Subject != "agent: add committed.go" {
+		t.Fatalf("commits = %+v, want one commit for agent: add committed.go", files.Commits)
+	}
+	if files.Summary.Files == 0 || files.Summary.Additions == 0 {
+		t.Fatalf("summary = %+v, want non-zero files and additions", files.Summary)
+	}
+}
+
+// TestWorkspaceFileDiffScopedToSection covers a partially staged file, where
+// GetWorkspaceFile previously always returned the combined base..worktree
+// diff no matter which section (Staged or Unstaged) the caller opened it
+// from. Each section must resolve to its own diff: staged is index vs HEAD,
+// unstaged is worktree vs index.
+func TestWorkspaceFileDiffScopedToSection(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+
+	// Partially staged: index differs from HEAD, worktree differs from index.
+	writeWorkspaceFile(t, repo, "README.md", "hello\nstaged addition\n")
+	runGit(t, repo, "add", "README.md")
+	writeWorkspaceFile(t, repo, "README.md", "hello\nstaged addition\nunstaged addition\n")
+
+	st := newFakeStore()
+	st.sessions["ao-1"] = domain.SessionRecord{
+		ID:       "ao-1",
+		Metadata: domain.SessionMetadata{WorkspacePath: repo},
+	}
+	svc := &Service{store: st}
+
+	staged, err := svc.GetWorkspaceFile(context.Background(), "ao-1", "README.md", WorkspaceFileSectionStaged)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(staged.Diff, "+staged addition") || strings.Contains(staged.Diff, "+unstaged addition") {
+		t.Fatalf("staged diff = %q, want only the staged hunk", staged.Diff)
+	}
+
+	unstaged, err := svc.GetWorkspaceFile(context.Background(), "ao-1", "README.md", WorkspaceFileSectionUnstaged)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(unstaged.Diff, "+unstaged addition") || strings.Contains(unstaged.Diff, "+staged addition") {
+		t.Fatalf("unstaged diff = %q, want only the unstaged hunk", unstaged.Diff)
+	}
+}
+
+func TestWorkspaceFilesAheadReportsPushCount(t *testing.T) {
+	remote := t.TempDir()
+	runGit(t, remote, "init", "--bare")
+
+	repo := newWorkspaceRepo(t)
+	runGit(t, repo, "remote", "add", "origin", remote)
+	runGit(t, repo, "push", "-u", "origin", "HEAD")
+	writeWorkspaceFile(t, repo, "ahead.go", "package main\n")
+	runGit(t, repo, "add", "ahead.go")
+	runGit(t, repo, "commit", "-m", "local ahead commit")
+
+	st := newFakeStore()
+	st.sessions["ao-1"] = domain.SessionRecord{ID: "ao-1", Metadata: domain.SessionMetadata{WorkspacePath: repo}}
+
+	files, err := (&Service{store: st}).ListWorkspaceFiles(context.Background(), "ao-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if files.Ahead == nil || *files.Ahead != 1 {
+		t.Fatalf("ahead = %v, want 1", files.Ahead)
+	}
+	if files.Behind == nil || *files.Behind != 0 {
+		t.Fatalf("behind = %v, want 0", files.Behind)
+	}
+}
+
+func TestWorkspaceFilesBehindReportsPullCount(t *testing.T) {
+	remote := t.TempDir()
+	runGit(t, remote, "init", "--bare")
+
+	repo := newWorkspaceRepo(t)
+	runGit(t, repo, "remote", "add", "origin", remote)
+	writeWorkspaceFile(t, repo, "upstream.go", "package main\n")
+	runGit(t, repo, "add", "upstream.go")
+	runGit(t, repo, "commit", "-m", "upstream commit")
+	runGit(t, repo, "push", "-u", "origin", "HEAD")
+	// Simulate a session worktree that hasn't picked up the commit its
+	// tracking ref already knows the remote has.
+	runGit(t, repo, "reset", "--hard", "HEAD~1")
+
+	st := newFakeStore()
+	st.sessions["ao-1"] = domain.SessionRecord{ID: "ao-1", Metadata: domain.SessionMetadata{WorkspacePath: repo}}
+
+	files, err := (&Service{store: st}).ListWorkspaceFiles(context.Background(), "ao-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if files.Ahead == nil || *files.Ahead != 0 {
+		t.Fatalf("ahead = %v, want 0", files.Ahead)
+	}
+	if files.Behind == nil || *files.Behind != 1 {
+		t.Fatalf("behind = %v, want 1", files.Behind)
+	}
+}
+
+func TestWorkspaceFilesAheadBehindNilWithoutUpstream(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	st := newFakeStore()
+	st.sessions["ao-1"] = domain.SessionRecord{ID: "ao-1", Metadata: domain.SessionMetadata{WorkspacePath: repo}}
+
+	files, err := (&Service{store: st}).ListWorkspaceFiles(context.Background(), "ao-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if files.Ahead != nil || files.Behind != nil {
+		t.Fatalf("ahead/behind = %v/%v, want nil/nil without a configured upstream", files.Ahead, files.Behind)
+	}
+}
+
 func TestWorkspaceFilesReportRenamesAgainstRecordedBase(t *testing.T) {
 	repo := newWorkspaceRepo(t)
 	base := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
@@ -1497,7 +1739,7 @@ func TestWorkspaceFilesReportRenamesAgainstRecordedBase(t *testing.T) {
 		t.Fatalf("renamed summary = %#v, want R src/app.go -> src/main.go", renamed)
 	}
 
-	detail, err := (&Service{store: st}).GetWorkspaceFile(context.Background(), "ao-1", "src/main.go")
+	detail, err := (&Service{store: st}).GetWorkspaceFile(context.Background(), "ao-1", "src/main.go", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1565,7 +1807,7 @@ func TestWorkspaceFilesIncludeWorkspaceProjectChildRepoDiffs(t *testing.T) {
 		t.Fatal("child .git internals must not be listed through the workspace root")
 	}
 
-	detail, err := svc.GetWorkspaceFile(context.Background(), "ws-1", "api/service.go")
+	detail, err := svc.GetWorkspaceFile(context.Background(), "ws-1", "api/service.go", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1634,7 +1876,7 @@ func TestWorkspaceProjectChildRepoRecomputesBaseAfterRebase(t *testing.T) {
 		t.Fatalf("api/baseonly.go = %#v, want unmodified after recomputing child base", got)
 	}
 
-	detail, err := (&Service{store: st}).GetWorkspaceFile(context.Background(), "ws-1", "api/agent.go")
+	detail, err := (&Service{store: st}).GetWorkspaceFile(context.Background(), "ws-1", "api/agent.go", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1831,7 +2073,7 @@ func TestGetWorkspaceFileScratchReturnsContentWithEmptyDiff(t *testing.T) {
 		Metadata:  domain.SessionMetadata{WorkspacePath: root},
 	}
 
-	got, err := (&Service{store: st}).GetWorkspaceFile(context.Background(), "scratch-1", "README.md")
+	got, err := (&Service{store: st}).GetWorkspaceFile(context.Background(), "scratch-1", "README.md", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1854,7 +2096,7 @@ func TestGetWorkspaceFileRejectsTraversal(t *testing.T) {
 	st := newFakeStore()
 	st.sessions["ao-1"] = domain.SessionRecord{ID: "ao-1", Metadata: domain.SessionMetadata{WorkspacePath: repo}}
 
-	_, err := (&Service{store: st}).GetWorkspaceFile(context.Background(), "ao-1", "../secrets.txt")
+	_, err := (&Service{store: st}).GetWorkspaceFile(context.Background(), "ao-1", "../secrets.txt", "")
 	var e *apierr.Error
 	if !errors.As(err, &e) || e.Kind != apierr.KindInvalid || e.Code != "INVALID_WORKSPACE_PATH" {
 		t.Fatalf("err = %v, want bad request INVALID_WORKSPACE_PATH", err)
@@ -1869,7 +2111,7 @@ func TestGetWorkspaceFileRejectsIntermediateSymlinkEscape(t *testing.T) {
 	st := newFakeStore()
 	st.sessions["ao-1"] = domain.SessionRecord{ID: "ao-1", Metadata: domain.SessionMetadata{WorkspacePath: repo}}
 
-	_, err := (&Service{store: st}).GetWorkspaceFile(context.Background(), "ao-1", "link/secret.txt")
+	_, err := (&Service{store: st}).GetWorkspaceFile(context.Background(), "ao-1", "link/secret.txt", "")
 	var e *apierr.Error
 	if !errors.As(err, &e) || e.Kind != apierr.KindInvalid || e.Code != "INVALID_WORKSPACE_PATH" {
 		t.Fatalf("err = %v, want bad request INVALID_WORKSPACE_PATH", err)
@@ -2501,6 +2743,9 @@ func TestSpawnFailedEmitsDuration(t *testing.T) {
 	if got := sink.events[0].Payload["error_kind"]; got != "internal" {
 		t.Fatalf("spawn_failed error_kind = %#v, want internal", got)
 	}
+	if got := sink.events[0].Payload["error_code"]; got != "SPAWN_INTERNAL" {
+		t.Fatalf("spawn_failed error_code = %#v, want SPAWN_INTERNAL", got)
+	}
 	if got := sink.events[0].Payload["component"]; got != "session_service" {
 		t.Fatalf("spawn_failed component = %#v, want session_service", got)
 	}
@@ -2567,6 +2812,9 @@ func TestSpawnEmitsTelemetryOnFailure(t *testing.T) {
 	}
 	if got := ev.Payload["error_kind"]; got != "internal" {
 		t.Fatalf("event payload error_kind = %#v, want internal", got)
+	}
+	if got := ev.Payload["error_code"]; got != "SPAWN_INTERNAL" {
+		t.Fatalf("event payload error_code = %#v, want SPAWN_INTERNAL", got)
 	}
 	if got := ev.Payload["component"]; got != "session_service" {
 		t.Fatalf("event payload component = %#v, want session_service", got)
@@ -2647,6 +2895,7 @@ func TestToAPIErrorMapsWorkspaceBranchSentinels(t *testing.T) {
 		{"unknown harness", fmt.Errorf("spawn: %w: %q", sessionmanager.ErrUnknownHarness, "bogus"), apierr.KindInvalid, "UNKNOWN_HARNESS"},
 		{"missing harness", fmt.Errorf("spawn: %w: configure project worker.agent or pass --harness", sessionmanager.ErrMissingHarness), apierr.KindInvalid, "AGENT_REQUIRED"},
 		{"awaiting decision", fmt.Errorf("send mer-1: %w", sessionmanager.ErrAwaitingDecision), apierr.KindConflict, "SESSION_AWAITING_DECISION"},
+		{"startup pending", fmt.Errorf("send mer-1: %w", sessionmanager.ErrStartupPending), apierr.KindConflict, "SESSION_STARTUP_PENDING"},
 		{"agent exited", fmt.Errorf("send mer-1: %w", sessionmanager.ErrAgentExited), apierr.KindConflict, "AGENT_EXITED"},
 		{"agent not exited", fmt.Errorf("resume agent mer-1: %w", sessionmanager.ErrAgentNotExited), apierr.KindConflict, "AGENT_NOT_EXITED"},
 		{"resume in progress", fmt.Errorf("resume agent mer-1: %w", sessionmanager.ErrResumeInProgress), apierr.KindConflict, "AGENT_RESUME_IN_PROGRESS"},
@@ -2682,6 +2931,150 @@ func TestToAPIErrorMapsWorkspaceBranchSentinels(t *testing.T) {
 	}
 }
 
+func TestToSpawnAPIErrorMapsSpawnStageSentinels(t *testing.T) {
+	cases := []struct {
+		name     string
+		err      error
+		wantKind apierr.Kind
+		wantCode string
+	}{
+		{
+			"workspace create",
+			fmt.Errorf("spawn mer-1: %w: git worktree add failed", sessionmanager.ErrWorkspaceCreate),
+			apierr.KindConflict,
+			"WORKSPACE_CREATE_FAILED",
+		},
+		{
+			"workspace provision",
+			fmt.Errorf("spawn mer-1: %w: postCreate \"pnpm install\": exit 1", sessionmanager.ErrWorkspaceProvision),
+			apierr.KindConflict,
+			"WORKSPACE_PROVISION_FAILED",
+		},
+		{
+			"runtime create",
+			fmt.Errorf("spawn mer-1: %w: tmux runtime: create session mer-1: context deadline exceeded", sessionmanager.ErrRuntimeCreate),
+			apierr.KindInternal,
+			"RUNTIME_CREATE_FAILED",
+		},
+		{
+			"chat controller",
+			fmt.Errorf("spawn mer-1: %w: app-server exited", sessionmanager.ErrChatController),
+			apierr.KindConflict,
+			"CHAT_CONTROLLER_FAILED",
+		},
+		{
+			"spawn timeout",
+			context.DeadlineExceeded,
+			apierr.KindConflict,
+			"SPAWN_TIMEOUT",
+		},
+		{
+			"timeout wins over runtime stage",
+			fmt.Errorf("spawn mer-1: %w: %w", sessionmanager.ErrRuntimeCreate, context.DeadlineExceeded),
+			apierr.KindConflict,
+			"SPAWN_TIMEOUT",
+		},
+		{
+			"spawn cancelled",
+			context.Canceled,
+			apierr.KindConflict,
+			"SPAWN_CANCELLED",
+		},
+		{
+			"branch sentinel wins over workspace stage",
+			fmt.Errorf("spawn mer-1: %w: %w", sessionmanager.ErrWorkspaceCreate, ports.ErrWorkspaceBranchNotFetched),
+			apierr.KindInvalid,
+			"BRANCH_NOT_FETCHED",
+		},
+		{
+			"unclassified fallback",
+			errors.New("boom"),
+			apierr.KindInternal,
+			"SPAWN_INTERNAL",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mapped := toSpawnAPIError(tc.err)
+			var e *apierr.Error
+			if !errors.As(mapped, &e) || e.Kind != tc.wantKind || e.Code != tc.wantCode {
+				t.Fatalf("mapped = %v, want kind=%v code=%s", mapped, tc.wantKind, tc.wantCode)
+			}
+		})
+	}
+}
+
+func TestSpawnEmitsTypedErrorCodeForRuntimeFailure(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+	fc := &fakeCommander{
+		spawnErr: fmt.Errorf("spawn mer-1: %w: tmux runtime: create session mer-1: boom", sessionmanager.ErrRuntimeCreate),
+	}
+	ts := &fakeTelemetrySink{}
+	svc := NewWithDeps(Deps{Manager: fc, Store: st, Telemetry: ts, Clock: func() time.Time { return time.Unix(1700000000, 0).UTC() }})
+
+	_, _, _, err := svc.Spawn(context.Background(), ports.SpawnConfig{
+		ProjectID: "mer",
+		Kind:      domain.KindWorker,
+		Harness:   domain.HarnessCodex,
+	})
+	if err == nil {
+		t.Fatal("Spawn error = nil, want failure")
+	}
+	var apiError *apierr.Error
+	if !errors.As(err, &apiError) || apiError.Code != "RUNTIME_CREATE_FAILED" {
+		t.Fatalf("err = %v, want RUNTIME_CREATE_FAILED", err)
+	}
+	if len(ts.events) != 1 {
+		t.Fatalf("telemetry events = %d, want 1", len(ts.events))
+	}
+	if got := ts.events[0].Payload["error_code"]; got != "RUNTIME_CREATE_FAILED" {
+		t.Fatalf("event payload error_code = %#v, want RUNTIME_CREATE_FAILED", got)
+	}
+	if got := ts.events[0].Payload["error_kind"]; got != "internal" {
+		t.Fatalf("event payload error_kind = %#v, want internal", got)
+	}
+}
+
+func TestEmitSpawnFailedClassifiesRawStageSentinel(t *testing.T) {
+	ts := &fakeTelemetrySink{}
+	svc := NewWithDeps(Deps{
+		Telemetry: ts,
+		Clock:     func() time.Time { return time.Unix(1700000000, 0).UTC() },
+	})
+
+	raw := fmt.Errorf("spawn mer-1: %w: tmux runtime: create session mer-1: boom", sessionmanager.ErrRuntimeCreate)
+	svc.emitSpawnFailed(ports.SpawnConfig{
+		ProjectID: "mer",
+		Kind:      domain.KindWorker,
+		Harness:   domain.HarnessCodex,
+	}, raw, 42)
+
+	if len(ts.events) != 1 {
+		t.Fatalf("telemetry events = %d, want 1", len(ts.events))
+	}
+	if got := ts.events[0].Payload["error_code"]; got != "RUNTIME_CREATE_FAILED" {
+		t.Fatalf("event payload error_code = %#v, want RUNTIME_CREATE_FAILED", got)
+	}
+	if got := ts.events[0].Payload["error_kind"]; got != "internal" {
+		t.Fatalf("event payload error_kind = %#v, want internal", got)
+	}
+}
+
+func TestToSpawnAPIErrorIsIdempotentForMappedErrors(t *testing.T) {
+	raw := fmt.Errorf("spawn mer-1: %w: tmux runtime: create session mer-1: boom", sessionmanager.ErrRuntimeCreate)
+	first := toSpawnAPIError(raw)
+	second := toSpawnAPIError(first)
+
+	var firstErr, secondErr *apierr.Error
+	if !errors.As(first, &firstErr) || !errors.As(second, &secondErr) {
+		t.Fatalf("mapped = %v / %v, want *apierr.Error", first, second)
+	}
+	if firstErr.Code != "RUNTIME_CREATE_FAILED" || secondErr.Code != "RUNTIME_CREATE_FAILED" {
+		t.Fatalf("codes = %q / %q, want RUNTIME_CREATE_FAILED", firstErr.Code, secondErr.Code)
+	}
+}
+
 func TestToAPIErrorSwitchDeliveryUnconfirmedMessage(t *testing.T) {
 	err := fmt.Errorf("switch agent mer-1: confirm continuation: %w", sessionmanager.ErrSwitchDeliveryUnconfirmed)
 	mapped := toAPIError(err)
@@ -2699,6 +3092,30 @@ func TestToAPIErrorSwitchDeliveryUnconfirmedMessage(t *testing.T) {
 	const wantMessage = "The target agent started, but AO could not confirm that it accepted the continuation"
 	if apiError.Message != wantMessage {
 		t.Fatalf("message = %q, want %q", apiError.Message, wantMessage)
+	}
+}
+
+func TestToAPIErrorPreservesMissingChatCapabilityRecoveryDetails(t *testing.T) {
+	mapped := toAPIError(fmt.Errorf("spawn: %w", &ports.ChatCapabilityError{
+		Harness:                domain.HarnessPi,
+		Missing:                []ports.ChatCapability{ports.ChatCapabilityApprovals},
+		AllowedPermissionModes: []ports.PermissionMode{ports.PermissionModeBypassPermissions},
+	}))
+
+	var apiError *apierr.Error
+	if !errors.As(mapped, &apiError) {
+		t.Fatalf("mapped = %v, want *apierr.Error", mapped)
+	}
+	if apiError.Code != "SESSION_MODE_UNSUPPORTED" {
+		t.Fatalf("code = %q, want SESSION_MODE_UNSUPPORTED", apiError.Code)
+	}
+	missing, ok := apiError.Details["missingCapabilities"].([]string)
+	if !ok || len(missing) != 1 || missing[0] != "approvals" {
+		t.Fatalf("missingCapabilities = %#v, want [approvals]", apiError.Details["missingCapabilities"])
+	}
+	allowed, ok := apiError.Details["allowedApprovalModes"].([]string)
+	if !ok || len(allowed) != 1 || allowed[0] != "bypass-permissions" {
+		t.Fatalf("allowedApprovalModes = %#v, want [bypass-permissions]", apiError.Details["allowedApprovalModes"])
 	}
 }
 
@@ -3523,7 +3940,7 @@ func TestListPRSummariesExposesReviewSummariesButKeepsRawLogsAndCommentBodiesPri
 		{ID: "review-1", Author: "reviewer-a", State: domain.ReviewChangesRequest, URL: "https://github.com/acme/repo/pull/7#pullrequestreview-1", Body: "summary: please fix the failing unit test", SubmittedAt: now.Add(-30 * time.Second), AutoInjectReview: false},
 	}
 	stList.comments[prURL] = []domain.PullRequestComment{
-		{Author: "reviewer-a", File: "main.go", Line: 12, Body: "raw body must stay private", URL: "https://github.com/acme/repo/pull/7#discussion_r1", AutoInjectReview: false},
+		{Author: "reviewer-a", ReviewID: "4876751117", File: "main.go", Line: 12, Body: "raw body must stay private", URL: "https://github.com/acme/repo/pull/7#discussion_r1", AutoInjectReview: false},
 		{Author: "ci-bot", File: "main.go", Line: 13, Body: "bot body", URL: "https://github.com/acme/repo/pull/7#discussion_r2", IsBot: true},
 		{Author: "reviewer-a", File: "main.go", Line: 14, Body: "resolved body", URL: "https://github.com/acme/repo/pull/7#discussion_r4", Resolved: true},
 		{Author: "reviewer-a", File: "test.go", Line: 22, Body: "another raw body", URL: "https://github.com/acme/repo/pull/7#discussion_r3", AutoInjectReview: true},
@@ -3552,6 +3969,8 @@ func TestListPRSummariesExposesReviewSummariesButKeepsRawLogsAndCommentBodiesPri
 		t.Fatalf("review url = %q", reviewer.ReviewURL)
 	} else if reviewer.Links[0].AutoInjectReview || !reviewer.Links[1].AutoInjectReview {
 		t.Fatalf("comment injection decisions = %+v, want false then true", reviewer.Links)
+	} else if reviewer.Links[0].ReviewID != "4876751117" || reviewer.Links[1].ReviewID != "" {
+		t.Fatalf("comment review ids = %+v, want first linked and second legacy", reviewer.Links)
 	} else if reviewer.Links[0].Body != "raw body must stay private" || reviewer.Links[1].Body != "another raw body" {
 		t.Fatalf("comment bodies = %+v", reviewer.Links)
 	}
@@ -3584,13 +4003,14 @@ func TestListPRSummariesExposesReviewSummariesButKeepsRawLogsAndCommentBodiesPri
 	}
 }
 
-func TestSummarizeReviewSurfacesApprovedAndChangesRequestedSummaries(t *testing.T) {
+func TestSummarizeReviewSurfacesSubmittedReviewSummaries(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	reviews := []domain.PullRequestReview{
 		// alice's approved review supersedes her earlier changes_requested one.
 		{ID: "a-old", Author: "alice", State: domain.ReviewChangesRequest, Body: "old note", URL: "url-a-old", SubmittedAt: now.Add(-time.Hour)},
 		{ID: "a-new", Author: "alice", State: domain.ReviewApproved, Body: "looks good now", URL: "url-a-new", SubmittedAt: now},
 		{ID: "b", Author: "bob", State: domain.ReviewChangesRequest, Body: "please fix", URL: "url-b", SubmittedAt: now},
+		{ID: "c", Author: "charlie", State: domain.ReviewNone, Body: "non-blocking suggestion", URL: "url-c", SubmittedAt: now},
 	}
 
 	got := summarizeReview(domain.PullRequest{URL: "u", Review: domain.ReviewChangesRequest}, nil, reviews)
@@ -3599,14 +4019,17 @@ func TestSummarizeReviewSurfacesApprovedAndChangesRequestedSummaries(t *testing.
 	for _, entry := range got.Reviews {
 		byReviewer[entry.Reviewer] = entry
 	}
-	if len(got.Reviews) != 2 {
-		t.Fatalf("review summaries = %+v, want alice + bob", got.Reviews)
+	if len(got.Reviews) != 3 {
+		t.Fatalf("review summaries = %+v, want alice + bob + charlie", got.Reviews)
 	}
 	if a := byReviewer["alice"]; a.Verdict != domain.ReviewApproved || a.Body != "looks good now" || a.URL != "url-a-new" {
 		t.Fatalf("alice entry = %+v, want latest approved with its body", a)
 	}
 	if b := byReviewer["bob"]; b.Verdict != domain.ReviewChangesRequest || b.Body != "please fix" {
 		t.Fatalf("bob entry = %+v, want changes_requested with its body", b)
+	}
+	if c := byReviewer["charlie"]; c.Verdict != domain.ReviewNone || c.Body != "non-blocking suggestion" || c.URL != "url-c" {
+		t.Fatalf("charlie entry = %+v, want commented review with its body", c)
 	}
 }
 
@@ -3910,28 +4333,146 @@ func TestDeduplicatePRFactsCollapsesTransferredRepoAliasesWithSameHead(t *testin
 	now := time.Date(2026, 7, 31, 10, 0, 0, 0, time.UTC)
 	got := deduplicatePRFacts([]domain.PRFacts{
 		{
-			URL:            "https://github.com/AgentWrapper/agent-orchestrator/pull/3193",
-			Number:         3193,
-			ReviewComments: true,
-			SourceBranch:   "ao/mer-1/fix-sigpipe",
-			TargetBranch:   "main",
-			HeadSHA:        "same-head",
-			UpdatedAt:      now,
+			URL:                      "https://github.com/AgentWrapper/agent-orchestrator/pull/3193",
+			Number:                   3193,
+			ReviewComments:           true,
+			ExternalChangesRequested: true,
+			ExternalComments:         true,
+			SourceBranch:             "ao/mer-1/fix-sigpipe",
+			TargetBranch:             "main",
+			HeadSHA:                  "same-head",
+			UpdatedAt:                now,
 		},
 		{
-			URL:          "https://github.com/Untrivial-ai/agent-orchestrator/pull/3193",
-			Number:       3193,
-			SourceBranch: "ao/mer-1/fix-sigpipe",
-			TargetBranch: "main",
-			HeadSHA:      "same-head",
-			UpdatedAt:    now.Add(time.Minute),
+			URL:              "https://github.com/Untrivial-ai/agent-orchestrator/pull/3193",
+			Number:           3193,
+			ExternalApproved: true,
+			SourceBranch:     "ao/mer-1/fix-sigpipe",
+			TargetBranch:     "main",
+			HeadSHA:          "same-head",
+			UpdatedAt:        now.Add(time.Minute),
 		},
 	})
 	if len(got) != 1 {
 		t.Fatalf("facts = %d, want transferred aliases collapsed: %+v", len(got), got)
 	}
-	if got[0].URL != "https://github.com/Untrivial-ai/agent-orchestrator/pull/3193" || !got[0].ReviewComments {
+	if got[0].URL != "https://github.com/Untrivial-ai/agent-orchestrator/pull/3193" ||
+		!got[0].ReviewComments ||
+		!got[0].ExternalChangesRequested ||
+		!got[0].ExternalComments ||
+		!got[0].ExternalApproved {
 		t.Fatalf("merged facts = %+v, want newest URL and preserved comments", got[0])
+	}
+}
+
+func TestToSessionWithFactsRemapsTransferredAliasReviewRuns(t *testing.T) {
+	st := newFakeStore()
+	rec := domain.SessionRecord{
+		ID:                "mer-1",
+		ProjectID:         "mer",
+		UpdatedAt:         time.Date(2026, 8, 28, 10, 0, 0, 0, time.UTC),
+		AutoReviewEnabled: true,
+		AutoInjectReview:  true,
+	}
+	oldURL := "https://github.com/AgentWrapper/agent-orchestrator/pull/3193"
+	newURL := "https://github.com/Untrivial-ai/agent-orchestrator/pull/3193"
+	st.prFacts[rec.ID] = []domain.PRFacts{
+		{
+			URL:                      oldURL,
+			Number:                   3193,
+			Review:                   domain.ReviewRequired,
+			SourceBranch:             "ao/mer-1/fix-sigpipe",
+			TargetBranch:             "main",
+			HeadSHA:                  "same-head",
+			UpdatedAt:                rec.UpdatedAt,
+			ExternalChangesRequested: false,
+		},
+		{
+			URL:          newURL,
+			Number:       3193,
+			Review:       domain.ReviewRequired,
+			SourceBranch: "ao/mer-1/fix-sigpipe",
+			TargetBranch: "main",
+			HeadSHA:      "same-head",
+			UpdatedAt:    rec.UpdatedAt.Add(time.Minute),
+		},
+	}
+	st.reviewRuns[rec.ID] = []domain.CurrentHeadReviewRun{{
+		SessionID: rec.ID,
+		Harness:   "claude-code",
+		PRURL:     oldURL,
+		Status:    domain.ReviewRunRunning,
+		ID:        "run-old",
+		CreatedAt: rec.UpdatedAt,
+	}}
+
+	sess, err := (&Service{store: st, clock: func() time.Time { return rec.UpdatedAt.Add(2 * time.Minute) }}).toSessionWithFacts(rec, st.prFacts[rec.ID], st.reviewRuns[rec.ID])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.KanbanColumn != "validating" {
+		t.Fatalf("column = %q, want validating", sess.KanbanColumn)
+	}
+	if sess.DisplayStatus != "Reviewing" {
+		t.Fatalf("displayStatus = %q, want Reviewing", sess.DisplayStatus)
+	}
+	if len(sess.PRs) != 1 || sess.PRs[0].URL != newURL {
+		t.Fatalf("deduped PRs = %+v, want newest alias only", sess.PRs)
+	}
+}
+
+func TestToSessionWithFactsCanonicalAliasRunSupersedesOlderAliasRun(t *testing.T) {
+	st := newFakeStore()
+	rec := domain.SessionRecord{
+		ID:                "mer-2",
+		ProjectID:         "mer",
+		UpdatedAt:         time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC),
+		AutoReviewEnabled: true,
+		AutoInjectReview:  true,
+	}
+	oldURL := "https://github.com/AgentWrapper/agent-orchestrator/pull/4000"
+	newURL := "https://github.com/Untrivial-ai/agent-orchestrator/pull/4000"
+	st.prFacts[rec.ID] = []domain.PRFacts{
+		{
+			URL:          oldURL,
+			Number:       4000,
+			Review:       domain.ReviewRequired,
+			SourceBranch: "ao/mer-2/fix-review",
+			TargetBranch: "main",
+			HeadSHA:      "same-head",
+			UpdatedAt:    rec.UpdatedAt,
+		},
+		{
+			URL:          newURL,
+			Number:       4000,
+			Review:       domain.ReviewRequired,
+			SourceBranch: "ao/mer-2/fix-review",
+			TargetBranch: "main",
+			HeadSHA:      "same-head",
+			UpdatedAt:    rec.UpdatedAt.Add(time.Minute),
+		},
+	}
+	st.reviewRuns[rec.ID] = []domain.CurrentHeadReviewRun{
+		{
+			SessionID: rec.ID, Harness: "claude-code", PRURL: oldURL,
+			Status: domain.ReviewRunRunning, ID: "run-old", CreatedAt: rec.UpdatedAt,
+		},
+		{
+			SessionID: rec.ID, Harness: "claude-code", PRURL: newURL,
+			Status: domain.ReviewRunComplete, Verdict: domain.VerdictApproved,
+			ID: "run-new", CreatedAt: rec.UpdatedAt.Add(time.Minute),
+		},
+	}
+
+	sess, err := (&Service{store: st, clock: func() time.Time { return rec.UpdatedAt.Add(2 * time.Minute) }}).toSessionWithFacts(rec, st.prFacts[rec.ID], st.reviewRuns[rec.ID])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.KanbanColumn != "needs_review" {
+		t.Fatalf("column = %q, want needs_review", sess.KanbanColumn)
+	}
+	if sess.DisplayStatus != "Needs human review" {
+		t.Fatalf("displayStatus = %q, want Needs human review", sess.DisplayStatus)
 	}
 }
 

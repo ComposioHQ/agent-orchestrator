@@ -162,11 +162,11 @@ test("renderer: board renders all status columns @T0 @BRD", async ({ page }) => 
 	await page.goto("/");
 	const columns = page.getByTestId("board-column");
 	await expect(columns).toHaveCount(4);
-	// Left→right flow: work → needs-you → review → merge.
-	await expect(page.locator('[data-testid="board-column"][data-column="working"]')).toContainText("Working");
-	await expect(page.locator('[data-testid="board-column"][data-column="action"]')).toContainText("Needs you");
-	await expect(page.locator('[data-testid="board-column"][data-column="pending"]')).toContainText("In review");
-	await expect(page.locator('[data-testid="board-column"][data-column="merge"]')).toContainText("Ready to merge");
+	// Left→right delivery flow: building → validating → in review → ready.
+	await expect(columns.nth(0)).toContainText("Building");
+	await expect(columns.nth(1)).toContainText("Validating");
+	await expect(columns.nth(2)).toContainText("In review");
+	await expect(columns.nth(3)).toContainText("Ready");
 });
 
 // #2483 BRD-012.
@@ -195,14 +195,12 @@ test("renderer: route nav home to board to session detail and back @T0 @BRD", as
 
 // #2483 SET-001.
 test("renderer: global settings page renders all sections @T0 @SET", async ({ page }) => {
-	// The settings revamp (#2797) reduced the page to General + Updates + Get
-	// help; the Migration section no longer renders there, so "all sections"
-	// means these. Updates keeps its per-section hook; General/help are asserted
-	// by their user-visible headings.
+	// The settings revamp (#2797) reduced the page to General + Updates + Help;
+	// Help now renders the report form inline rather than opening another dialog.
 	await page.goto("/#/settings");
 	await expect(page.getByTestId("settings-page")).toBeVisible();
 	await page.getByRole("button", { name: "Updates" }).click();
 	await expect(page.locator('[data-testid="settings-section"][data-section="updates"]')).toBeVisible();
 	await page.getByRole("button", { name: "Help" }).click();
-	await expect(page.getByRole("button", { name: "Report a problem" })).toBeVisible();
+	await expect(page.getByLabel("Title")).toBeVisible();
 });

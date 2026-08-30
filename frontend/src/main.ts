@@ -28,8 +28,12 @@ import {
 	type UpdateCheckOptions,
 } from "./main/auto-updater";
 import { listFeatureBuilds, getActiveFeatureBuild } from "./main/feature-builds";
+import { initMainSentry } from "./main/sentry-main";
 import { readUpdateSettings, type UpdateSettings, type UpdateStatus } from "./main/update-settings";
 import { readKeybindingOverrides, writeKeybindingOverrides } from "./main/keybinding-settings";
+import { readEditorSettings, writeEditorPreference } from "./main/editor-settings";
+import { createEditorHandoff } from "./main/editor-handoff";
+import { launchCommand } from "./main/launch-command";
 import {
 	decideRelocation,
 	inspectInstalledBundle,
@@ -45,7 +49,7 @@ import {
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
 import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -78,13 +82,16 @@ import {
 } from "./shared/daemon-attach";
 import { browserDaemonOwnershipDecision, shouldReplacePortHolder } from "./shared/daemon-takeover";
 import { buildDaemonEnv, resolveShellEnv, type ShellRunner } from "./shared/shell-env";
+import { bundledTmuxBinaryPath, stableBundledTmuxBinaryPath } from "./shared/bundled-tmux";
 import {
 	handleCloudDeepLink,
 	installCloudIPC,
 	registerCloudProtocol,
 	showCloudSignInFailure,
 } from "./main/cloud-auth";
+import { installCloudCpProxy } from "./main/cloud-cp-proxy";
 import { DEFAULT_POSTHOG_HOST, DEFAULT_POSTHOG_PROJECT_KEY } from "./shared/posthog-config";
+import { DEFAULT_SENTRY_DSN } from "./shared/sentry-config";
 import { buildTelemetryBootstrap } from "./shared/telemetry";
 import { createBrowserViewHost, type BrowserViewHost } from "./main/browser-view-host";
 import { createWindowComposition, type WindowComposition } from "./main/window-composition";
@@ -96,7 +103,7 @@ import { keepDaemonAlive, shouldLinkOnAttach } from "./main/daemon-owner";
 import { readMigrationState, updateMigration, writeAppStateMarker, type MigrationState } from "./main/app-state";
 import { isAllowedAppExternalURL, openAllowedAppExternalURL } from "./main/external-open";
 import { dockBounceType, shouldReplaceBounce, shouldSignalAttention, shouldToast } from "./main/notification-signals";
-import { buildWindowsAppMenuTemplate } from "./main/menu";
+import { buildMacAppMenuTemplate, buildWindowsAppMenuTemplate } from "./main/menu";
 import { ancestorRepositorySetupWarning, scanImportFolder } from "./main/import-folder-scan";
 import { parseOpenFolderPathArg } from "./main/open-folder-arg";
 
@@ -153,6 +160,12 @@ app.setPath(
 	"userData",
 	app.isPackaged ? path.join(os.homedir(), ".ao", "electron") : path.join(os.homedir(), ".ao", "dev", "electron"),
 );
+
+// Init main-process Sentry as early as possible so startup crashes are caught,
+// and after userData is pinned so its cache resolves under ~/.ao/electron. The
+// renderer SDK forwards over IPC to this main process, so this is required for
+// any desktop event to upload. No-op unless AO_SENTRY_DSN is set.
+void initMainSentry(app.getVersion());
 
 let mainWindow: BaseWindow | null = null;
 let trayController: TrayController | null = null;
@@ -441,11 +454,28 @@ async function createWindowInternal(): Promise<void> {
 	// On Windows the app paints its own title bar (WindowTitlebar), so the native
 	// menu bar is hidden (autoHideMenuBar above). The role-based menu is still
 	// installed so its accelerators keep working and act on the focused pane;
-	// setMenuBarVisibility(false) keeps the strip itself out of view. macOS/Linux
-	// keep their native menus.
+	// setMenuBarVisibility(false) keeps the strip itself out of view. macOS gets
+	// an explicit menu so DevTools avoids Electron's unsafe built-in role; Linux
+	// keeps its native menu.
 	if (process.platform === "win32") {
 		Menu.setApplicationMenu(buildWindowsAppMenu());
 		mainWindow.setMenuBarVisibility(false);
+	} else if (process.platform === "darwin") {
+		Menu.setApplicationMenu(
+			Menu.buildFromTemplate(
+				buildMacAppMenuTemplate(() => {
+					const fallback = () => getShellWebContents()?.toggleDevTools();
+					const host = browserViewHost;
+					if (!host) {
+						fallback();
+						return;
+					}
+					void host.toggleDevToolsForLastFocused().then((state) => {
+						if (!state) fallback();
+					}).catch(fallback);
+				}),
+			),
+		);
 	}
 
 	// Harden navigation: never let renderer/terminal content open in-app windows or
@@ -593,6 +623,60 @@ function runFilePath(): string | null {
 	return defaultRunFilePath(process.platform, process.env, os.homedir());
 }
 
+function editorStateDir(): string {
+	const runFile = runFilePath();
+	if (!runFile) throw new Error("AO state directory is not available.");
+	return path.dirname(runFile);
+}
+
+async function resolveSessionWorkspaceForDesktop(sessionId: string): Promise<string> {
+	if (daemonStatus.state !== "ready" || !daemonStatus.port) {
+		throw new Error("AO daemon is not ready.");
+	}
+	const controller = new AbortController();
+	const timer = setTimeout(() => controller.abort(), DAEMON_PROBE_TIMEOUT_MS);
+	try {
+		const response = await net.fetch(
+			`http://127.0.0.1:${daemonStatus.port}/api/v1/desktop/sessions/${encodeURIComponent(sessionId)}/workspace`,
+			{ signal: controller.signal },
+		);
+		const body = await response.json() as Record<string, unknown>;
+		if (!response.ok) {
+			const message = typeof body.message === "string" ? body.message : "Session workspace is not available.";
+			throw new Error(message);
+		}
+		const workspacePath = body.workspacePath;
+		if (typeof workspacePath !== "string" || !path.isAbsolute(workspacePath)) {
+			throw new Error("Session workspace is not available.");
+		}
+		return workspacePath;
+	} catch (error) {
+		if (error instanceof Error && error.name === "AbortError") {
+			throw new Error("Timed out while resolving the session workspace.");
+		}
+		throw error;
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
+const editorHandoff = createEditorHandoff({
+	platform: process.platform,
+	env: process.env,
+	homeDir: os.homedir(),
+	resolveWorkspace: resolveSessionWorkspaceForDesktop,
+	readPreference: async () => (await readEditorSettings(editorStateDir())).preferredEditorId,
+	writePreference: async (editorId) => {
+		await writeEditorPreference(editorStateDir(), editorId);
+	},
+	launch: (command, args, cwd) => launchCommand(command, args, cwd),
+	openDirectory: async (workspacePath) => {
+		const error = await shell.openPath(workspacePath);
+		if (error) throw new Error(error);
+	},
+	logError: (message, error) => console.error(message, error),
+});
+
 // How long to wait for the login shell to print its env before giving up. A
 // misconfigured rc that blocks (or a slow nvm/pyenv chain) must not hang startup;
 // the daemon then falls back to the static PATH floor.
@@ -617,6 +701,11 @@ function telemetryOverrides(): Record<string, string> {
 		AO_TELEMETRY_REMOTE: process.env.AO_TELEMETRY_REMOTE ?? (isDev ? "off" : "posthog"),
 		AO_TELEMETRY_POSTHOG_KEY: process.env.AO_TELEMETRY_POSTHOG_KEY ?? DEFAULT_POSTHOG_PROJECT_KEY,
 		AO_TELEMETRY_POSTHOG_HOST: process.env.AO_TELEMETRY_POSTHOG_HOST ?? DEFAULT_POSTHOG_HOST,
+		// Daemon-side Sentry (5xx + panics with Go stacks). Stamped on the daemon
+		// env so the spawned daemon inherits the DSN; off in dev to match the
+		// PostHog remote gate, and an explicit env always wins. A blank value
+		// leaves the daemon's Sentry a no-op.
+		AO_SENTRY_DSN: process.env.AO_SENTRY_DSN ?? (isDev ? "" : DEFAULT_SENTRY_DSN),
 		// The daemon binary has no version of its own that release tooling sets,
 		// so without this every daemon event lands unattributable to a release.
 		AO_TELEMETRY_APP_VERSION: process.env.AO_TELEMETRY_APP_VERSION ?? app.getVersion(),
@@ -687,6 +776,36 @@ function ensureShellEnv(): Promise<void> {
 // AO_APP_RUN_ID in the environment wins, which lets a test or a wrapper pin it.
 const appRunId = process.env.AO_APP_RUN_ID ?? `apprun-${randomUUID()}`;
 const browserRuntimeToken = randomBytes(32).toString("base64url");
+let stagedBundledTmuxBinary: string | null = null;
+
+async function ensureBundledTmuxStaged(): Promise<void> {
+	const source = bundledTmuxBinaryPath(app.isPackaged, process.resourcesPath, process.platform);
+	const destination = stableBundledTmuxBinaryPath(
+		app.isPackaged,
+		process.env.AO_DATA_DIR?.trim() || path.join(os.homedir(), ".ao"),
+		app.getVersion(),
+		process.platform,
+		process.arch,
+	);
+	if (!source || !destination) {
+		stagedBundledTmuxBinary = null;
+		return;
+	}
+	if (existsSync(destination)) {
+		stagedBundledTmuxBinary = destination;
+		return;
+	}
+	await mkdir(path.dirname(destination), { recursive: true, mode: 0o750 });
+	const temporary = `${destination}.tmp-${process.pid}-${randomUUID()}`;
+	try {
+		await copyFile(source, temporary);
+		await chmod(temporary, 0o755);
+		await rename(temporary, destination);
+	} finally {
+		await rm(temporary, { force: true });
+	}
+	stagedBundledTmuxBinary = destination;
+}
 
 function daemonEnv(forceKeep = keepDaemonAlive(process.env)): NodeJS.ProcessEnv {
 	// AO_OWNER is the daemon's durable spawn-mode record: the daemon writes it
@@ -702,6 +821,7 @@ function daemonEnv(forceKeep = keepDaemonAlive(process.env)): NodeJS.ProcessEnv 
 	// is how the daemon recognises the previous run's shells as orphans and
 	// destroys them (see internal/service/shellterm).
 	const AO_OWNER = forceKeep ? "persistent" : "app";
+	const bundledTmuxBinary = stagedBundledTmuxBinary;
 	const ownerTag = {
 		AO_OWNER,
 		AO_APP_RUN_ID: appRunId,
@@ -723,6 +843,7 @@ function daemonEnv(forceKeep = keepDaemonAlive(process.env)): NodeJS.ProcessEnv 
 			(app.isPackaged
 				? path.join(process.resourcesPath, "acp-runtime")
 				: path.join(app.getAppPath(), "resources", "acp-runtime")),
+		...(bundledTmuxBinary ? { AO_TMUX_BINARY: bundledTmuxBinary, AO_TMUX_SOCKET_NAME: "ao" } : {}),
 	};
 	// In dev mode, inject isolation defaults so the dev daemon never collides with
 	// the installed app. User-set env vars take priority (checked first).
@@ -1183,6 +1304,16 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 		});
 		return daemonStatus;
 	}
+	try {
+		await ensureBundledTmuxStaged();
+	} catch (err) {
+		setDaemonStatus({
+			state: "error",
+			message: `Could not stage AO's bundled tmux under the AO data directory: ${(err as Error).message}`,
+			code: "binary_missing",
+		});
+		return daemonStatus;
+	}
 
 	daemonOutput = "";
 	setDaemonStatus({ state: "starting" });
@@ -1526,6 +1657,14 @@ ipcMain.handle("daemon:restart", async () => {
 		return reportDaemonRestartFailure(error);
 	}
 });
+ipcMain.handle("editorHandoff:getState", (event, sessionId: string) => {
+	if (event.sender !== getShellWebContents()) throw new Error("Untrusted editor handoff request.");
+	return editorHandoff.getState(typeof sessionId === "string" ? sessionId : "");
+});
+ipcMain.handle("editorHandoff:open", (event, input) => {
+	if (event.sender !== getShellWebContents()) throw new Error("Untrusted editor handoff request.");
+	return editorHandoff.open(input && typeof input === "object" ? input : { sessionId: "" });
+});
 ipcMain.handle("app:getVersion", () => app.getVersion());
 ipcMain.handle("app:openExternal", async (_event, url: string) => {
 	await openAllowedAppExternalURL(url, shell);
@@ -1551,6 +1690,10 @@ ipcMain.on("shell:focus", () => browserViewHost?.forgetLastFocusedPanel());
 ipcMain.on("browser:overlay", (event, open: unknown) => {
 	if (event.sender !== getShellWebContents() || typeof open !== "boolean") return;
 	windowComposition?.setOverlayOpen(open);
+	// Raising the shell can leave the live page's own compositor surface stale
+	// (the same class of bug window-composition.ts already works around for
+	// the shell itself) — nudge it the same way once the shell is on top.
+	if (open) browserViewHost?.refreshLastFocusedPanelSurface();
 });
 
 ipcMain.on(SET_CLOSE_SHELL_TERMINAL_SHORTCUT_ENABLED_CHANNEL, (_event, enabled: unknown) => {
@@ -1895,6 +2038,10 @@ function notifyRenderersOfCloudSession(account: import("./shared/cloud-account")
 }
 
 installCloudIPC(cloudDataDir, notifyRenderersOfCloudSession);
+
+// Cloud control-plane proxy IPC — cloudCp:request/openStream/closeStream.
+// CP calls go through main so the WorkOS bearer token never reaches a renderer.
+installCloudCpProxy(cloudDataDir);
 
 function focusCloudWindow(): void {
 	const window = BaseWindow.getAllWindows()[0];
