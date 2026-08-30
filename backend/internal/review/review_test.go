@@ -292,6 +292,8 @@ type fakeLauncher struct {
 	destroyed        bool
 	destroyedHandle  string
 	destroyErr       error
+	destroyErrCall   int
+	destroyCalls     int
 	specs            []LaunchSpec
 	handles          []string
 	aliveChecked     bool
@@ -354,10 +356,14 @@ func (f *fakeLauncher) Cancel(_ context.Context, handleID string, harness domain
 func (f *fakeLauncher) Destroy(_ context.Context, handleID string) error {
 	f.destroyed = true
 	f.destroyedHandle = handleID
+	f.destroyCalls++
 	if f.destroyCalled != nil {
 		f.destroyCalled <- handleID
 	}
-	return f.destroyErr
+	if f.destroyErr != nil && (f.destroyErrCall == 0 || f.destroyErrCall == f.destroyCalls) {
+		return f.destroyErr
+	}
+	return nil
 }
 func (f *fakeLauncher) Preflight(_ context.Context, _ domain.ReviewerHarness, _ string) error {
 	f.preflighted = true
@@ -1235,6 +1241,29 @@ func TestTriggerConfigOverrideRestartsAliveReviewerPane(t *testing.T) {
 	}
 	if store.review.AgentSessionID != "" {
 		t.Fatalf("replacement should clear stale native session id when launch reports none, got %q", store.review.AgentSessionID)
+	}
+}
+
+func TestTriggerConfigOverrideDestroyPreviousFailureRestoresOldNativeSessionID(t *testing.T) {
+	store := &fakeStore{
+		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", Harness: domain.ReviewerClaudeCode, ReviewerHandleID: "review-mer-1", AgentSessionID: "native-reviewer-1"},
+		runs: []domain.ReviewRun{{
+			ID: "run-1", SessionID: "mer-1", PRURL: "https://github.com/o/r/pull/1", TargetSHA: "sha1",
+			Harness: domain.ReviewerClaudeCode,
+			Status:  domain.ReviewRunComplete, Verdict: domain.VerdictApproved,
+		}},
+	}
+	worker := liveWorker()
+	worker.ReviewerHarness = domain.ReviewerClaudeCode
+	worker.ReviewerConfig = domain.AgentConfig{Model: "gpt-5"}
+	launcher := &fakeLauncher{alive: true, handle: "review-mer-2", destroyErr: errors.New("destroy old failed"), destroyErrCall: 1}
+	eng := newEngineForTest(store, fakeSessions{rec: worker, ok: true}, prAt("sha1"), fakeProjects{}, launcher)
+
+	if _, err := eng.Trigger(context.Background(), "mer-1", domain.ReviewerClaudeCode, domain.AgentConfig{Model: "gpt-5-mini"}); err == nil || !strings.Contains(err.Error(), "destroy previous reviewer") {
+		t.Fatalf("Trigger error = %v, want destroy previous reviewer failure", err)
+	}
+	if store.review == nil || store.review.ReviewerHandleID != "review-mer-1" || store.review.AgentSessionID != "native-reviewer-1" {
+		t.Fatalf("stored review row = %+v, want rollback to old handle and native session id", store.review)
 	}
 }
 
