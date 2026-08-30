@@ -378,7 +378,7 @@ function hasModelChoices(catalog?: AgentModelCatalog): boolean {
 
 function modelOptions(catalog?: AgentModelCatalog): Array<{ kind: "model" | "mode"; label: string; value: string }> {
 	if (!catalog) return [];
-	if (catalog.selectionMode !== "catalog" && catalog.selectionMode !== "mode") return [];
+	if (catalog.selectionMode !== "catalog" && catalog.selectionMode !== "mode" && catalog.selectionMode !== "text") return [];
 	return (catalog.models ?? []).map((item) => ({
 		kind: catalog.selectionMode === "mode" ? "mode" : "model",
 		label: item.label,

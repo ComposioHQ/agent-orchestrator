@@ -3086,6 +3086,8 @@ describe("SessionInspector summary reviews", () => {
     await openReviewsSection();
 
     await userEvent.click(await screen.findByRole("button", { name: /Select reviewer agent/ }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: /^opencode$/i }));
+    expect(await screen.findByRole("menuitem", { name: "Suggested A" })).toBeInTheDocument();
     await userEvent.click(await screen.findByRole("menuitem", { name: /^custom opencode model$/i }));
     const customInput = await screen.findByRole("textbox", { name: /custom opencode/i });
     await userEvent.type(customInput, "private/custom-model");
