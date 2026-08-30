@@ -192,7 +192,7 @@ func (m *Manager) launchChatController(ctx context.Context, in chatSpawn) (domai
 				launchCtx, in.record, in.project.Config.Env, expected,
 			)
 			if prepareErr != nil {
-				return nil, fmt.Errorf("%w: %v", ErrSpawnBrowser, prepareErr)
+				return nil, fmt.Errorf("%w: %w", ErrSpawnBrowser, prepareErr)
 			}
 			in.record = prepared
 			return launchEnv, nil

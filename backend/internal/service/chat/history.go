@@ -328,7 +328,7 @@ func (s *Service) EditMessage(
 	}
 	if replayContent.Type != "" && !supportsApproximateReplay(provider) {
 		_ = provider.Close()
-		unsupportedErr := error(ErrForkUnsupported)
+		unsupportedErr := ErrForkUnsupported
 		if sourceStopInitiated {
 			if restoreErr := s.restoreClosedSourceController(
 				ctx, id, source, sourceBranch, cfg, driver); restoreErr != nil {
