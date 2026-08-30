@@ -685,7 +685,7 @@ describe("ProjectSettingsForm", () => {
 		});
 	});
 
-	it("clears the saved reviewer model when switching the project reviewer harness", async () => {
+	it("clears the saved reviewer model and reviewer-only config when switching the project reviewer harness", async () => {
 		getMock.mockImplementation(async (path: string, init?: { params?: { path?: { agent?: string } } }) => {
 			if (path === "/api/v1/agents") return agentCatalogResponse;
 			if (path === "/api/v1/agents/{agent}/models") {
@@ -733,6 +733,9 @@ describe("ProjectSettingsForm", () => {
 						config: {
 							worker: { agent: "codex" },
 							orchestrator: { agent: "claude-code" },
+							reviewers: [
+								{ harness: "codex", agentConfig: { permissions: "bypass-permissions" } },
+							],
 						},
 					},
 				},
@@ -759,7 +762,14 @@ describe("ProjectSettingsForm", () => {
 		expect(putMock).toHaveBeenCalledWith("/api/v1/projects/{id}", {
 			params: { path: { id: "proj-1" } },
 			body: expect.objectContaining({
-				config: expect.objectContaining({ reviewers: [{ harness: "opencode" }] }),
+				config: expect.objectContaining({
+					reviewers: [
+						expect.objectContaining({
+							harness: "opencode",
+							agentConfig: undefined,
+						}),
+					],
+				}),
 			}),
 		});
 	});

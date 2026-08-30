@@ -205,6 +205,9 @@ function SettingsBody({
 				mode: _legacyMode,
 				...sharedAgentConfig
 			} = config.agentConfig ?? {};
+			const existingReviewer = config.reviewers?.[0];
+			const existingReviewerAgentConfig =
+				existingReviewer?.harness === form.reviewerHarness ? existingReviewer.agentConfig : undefined;
 			const next: ProjectConfig = isScratchProject
 				? {
 						...scratchSupportedConfig(config),
@@ -256,7 +259,7 @@ function SettingsBody({
 							? [
 									{
 										harness: form.reviewerHarness,
-										agentConfig: buildRoleAgentConfig(config.reviewers?.[0]?.agentConfig, form.reviewerModel, form.reviewerMode),
+										agentConfig: buildRoleAgentConfig(existingReviewerAgentConfig, form.reviewerModel, form.reviewerMode),
 									},
 								]
 							: undefined,
