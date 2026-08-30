@@ -4028,7 +4028,7 @@ body:has(#root .platform-linux) > .browser-popout-overlay {
 	backdrop-filter: blur(10px);
 }
 
-.browser-panel__toolbar > :not(.browser-panel__url-wrap) {
+.browser-panel__toolbar > :not(.browser-panel__url-wrap):not(button) {
 	transition:
 		opacity 140ms ease,
 		visibility 0s linear;
@@ -4242,7 +4242,9 @@ body:has(#root .platform-linux) > .browser-popout-overlay {
 		background var(--duration-fast) ease,
 		color var(--duration-fast) ease,
 		transform var(--duration-fast) ease,
-		box-shadow var(--duration-fast) ease;
+		box-shadow var(--duration-fast) ease,
+		opacity 140ms ease,
+		visibility 0s linear;
 }
 
 .browser-panel__toolbar button:not(:disabled):hover {
