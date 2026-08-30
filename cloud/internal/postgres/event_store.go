@@ -6,6 +6,7 @@ import (
 	"errors"
 
 	"github.com/aoagents/agent-orchestrator/cloud/internal/domain"
+	"github.com/aoagents/agent-orchestrator/cloud/internal/worker"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -272,7 +273,7 @@ func appendUserMessage(
 		}
 		payload, marshalErr := json.Marshal(map[string]any{
 			"terminalId": terminalID,
-			"data":       []byte(text + "\r"),
+			"data":       worker.EncodeTerminalInput(text),
 		})
 		if marshalErr != nil {
 			return domain.ClientEvent{}, marshalErr
@@ -280,7 +281,7 @@ func appendUserMessage(
 		if _, err := tx.Exec(ctx,
 			`INSERT INTO ao_worker_requests (
 				org_id, session_id, worker_epoch, kind, payload, expires_at
-			) VALUES ($1, $2, $3, 'terminal.input', $4, now() + interval '15 seconds')`,
+			) VALUES ($1, $2, $3, 'terminal.input', $4, now() + interval '60 seconds')`,
 			orgID, sessionID, workerEpoch, payload,
 		); err != nil {
 			return domain.ClientEvent{}, err

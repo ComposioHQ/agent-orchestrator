@@ -19,6 +19,9 @@ type LaunchContext struct {
 	Branch         string   `json:"branch"`
 	Prompt         string   `json:"prompt,omitempty"`
 	AgentSessionID string   `json:"agentSessionId,omitempty"`
+	// ParentSessionID is the orchestrator that spawned this session; empty for
+	// top-level sessions.
+	ParentSessionID string `json:"parentSessionId,omitempty"`
 	Mode           string   `json:"mode"`
 	DeniedCommands []string `json:"deniedCommands"`
 	RepositoryURL  string   `json:"repositoryUrl"`

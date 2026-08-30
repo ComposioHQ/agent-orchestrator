@@ -27,6 +27,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/cloud/internal/skillassets"
 	"github.com/aoagents/agent-orchestrator/cloud/internal/worker"
 	"github.com/aoagents/agent-orchestrator/cloud/internal/workerexec"
 	"github.com/aoagents/agent-orchestrator/cloud/internal/workertransport"
@@ -90,6 +91,11 @@ func run(logger *slog.Logger) error {
 	}
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return fmt.Errorf("create worker data directory: %w", err)
+	}
+	// The system prompt points the agent at this path; the skill enhances the
+	// prompts and is not load-bearing, so a failed install only warns.
+	if err := skillassets.Install(dataDir); err != nil {
+		logger.Warn("install using-ao skill assets", "error", err)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

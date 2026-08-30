@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/cloud/internal/worker"
@@ -39,6 +40,26 @@ type Supervisor struct {
 
 	mu        sync.Mutex
 	terminals map[string]*terminalProcess
+
+	// agentOutputAt is the unix-nano time of the agent terminal's first output,
+	// 0 until it happens. Queued turns are held until the harness TUI has both
+	// painted something and had a short grace period to become interactive;
+	// injecting a prompt into a PTY that exists but has not drawn yet loses or
+	// garbles the message.
+	agentOutputAt atomic.Int64
+}
+
+// agentReadyGrace is how long after the agent terminal's first output queued
+// turns stay held. TUIs paint a banner before they accept input; two seconds
+// is far below sandbox provisioning latency and safely above TUI startup.
+const agentReadyGrace = 2 * time.Second
+
+// agentReadyForTurns reports whether the interactive agent can accept injected
+// input. Sessions without an agent terminal never become ready — their turns
+// are claimed and failed loudly in forwardTurn instead of queueing forever.
+func (s *Supervisor) agentReadyForTurns() bool {
+	first := s.agentOutputAt.Load()
+	return first != 0 && time.Since(time.Unix(0, first)) >= agentReadyGrace
 }
 
 type terminalProcess struct {
@@ -123,6 +144,13 @@ func (s *Supervisor) Run(ctx context.Context) error {
 }
 
 func (s *Supervisor) forwardTurn(ctx context.Context) (bool, error) {
+	// Leave queued turns on the control plane until the agent TUI is ready to
+	// receive them; claiming earlier would type the prompt into a terminal that
+	// has not started accepting input. Terminal-less sessions skip the gate so
+	// their turns still fail loudly below rather than queueing forever.
+	if s.AgentTerminalID != "" && !s.agentReadyForTurns() {
+		return false, nil
+	}
 	turn, err := s.Control.ClaimTurn(ctx)
 	if err != nil || turn == nil {
 		return false, err
@@ -137,7 +165,7 @@ func (s *Supervisor) forwardTurn(ctx context.Context) (bool, error) {
 	}
 	if err := s.writeTerminal(worker.TerminalCommand{
 		TerminalID: s.AgentTerminalID,
-		Data:       []byte(turn.Prompt + "\r"),
+		Data:       worker.EncodeTerminalInput(turn.Prompt),
 	}); err != nil {
 		if failErr := s.Control.FailTurn(
 			ctx, turn.ID, turn.Attempt, err.Error(),
@@ -337,6 +365,9 @@ func (s *Supervisor) copyTerminalOutput(
 	for {
 		count, err := reader.Read(buffer)
 		if count > 0 {
+			if terminalID == s.AgentTerminalID {
+				s.agentOutputAt.CompareAndSwap(0, time.Now().UnixNano())
+			}
 			data := append([]byte(nil), buffer[:count]...)
 			if outputErr := s.Control.PublishTerminalOutput(ctx, terminalID, data); outputErr != nil &&
 				ctx.Err() == nil {

@@ -693,6 +693,7 @@ func (s *Store) WorkerLaunchSpec(
 			`SELECT session.id, session.project_id, session.kind, session.harness,
 				session.display_name, session.branch, session.prompt,
 				session.agent_session_id, session.mode, session.denied_commands,
+				COALESCE(session.parent_session_id::text, ''),
 				project.repository_url, project.default_branch
 			FROM ao_sessions session
 			JOIN ao_projects project ON project.id = session.project_id
@@ -710,6 +711,7 @@ func (s *Store) WorkerLaunchSpec(
 			&launch.AgentSessionID,
 			&launch.Mode,
 			&launch.DeniedCommands,
+			&launch.ParentSessionID,
 			&launch.RepositoryURL,
 			&launch.DefaultBranch,
 		)
