@@ -41,7 +41,6 @@ func (c *MobileController) Status(w http.ResponseWriter, r *http.Request) {
 	envelope.WriteJSON(w, http.StatusOK, withWarning(c.Bridge.Status()))
 }
 
-// Enable turns the bridge on and returns the resulting status (with password).
 // StartRemoteAccess re-checks for a connector and starts it, leaving the
 // connection password alone so an already-paired phone keeps working.
 func (c *MobileController) StartRemoteAccess(w http.ResponseWriter, r *http.Request) {
@@ -53,6 +52,7 @@ func (c *MobileController) StartRemoteAccess(w http.ResponseWriter, r *http.Requ
 	envelope.WriteJSON(w, http.StatusOK, withWarning(res))
 }
 
+// Enable turns the bridge on and returns the resulting status (with password).
 func (c *MobileController) Enable(w http.ResponseWriter, r *http.Request) {
 	res, err := c.Bridge.Enable()
 	if err != nil {

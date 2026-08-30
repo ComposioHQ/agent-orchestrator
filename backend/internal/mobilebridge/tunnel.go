@@ -438,16 +438,10 @@ func CloudflaredArgs(localPort, metricsPort int) []string {
 	}
 }
 
-// RemoveOwnTunnelPIDFile clears the recorded pid, but only while it is still
-// the one this runner wrote.
-//
-// ManagedTunnel.Start cancels the previous runner and starts its replacement
-// without waiting — deliberately, because a blocking stop deadlocked the
-// disable request. The replacement therefore records its pid while the old
-// runner is still unwinding, and an unconditional delete on the way out erases
-// the live connector's record. Boot reaping then has nothing to find, and that
-// connector can never be cleaned up.
-var tunnelPIDLocks sync.Map // map[cleaned path]*sync.Mutex
+var tunnelPIDLocks = struct {
+	sync.Mutex
+	byPath map[string]*sync.Mutex
+}{byPath: make(map[string]*sync.Mutex)}
 
 // tunnelPIDOwner serializes the complete claim/release transaction for one PID
 // path. Checking the recorded PID and removing the file are otherwise two
@@ -460,8 +454,14 @@ type tunnelPIDOwner struct {
 
 func newTunnelPIDOwner(path string) tunnelPIDOwner {
 	clean := filepath.Clean(path)
-	lock, _ := tunnelPIDLocks.LoadOrStore(clean, &sync.Mutex{})
-	return tunnelPIDOwner{path: path, mu: lock.(*sync.Mutex)}
+	tunnelPIDLocks.Lock()
+	defer tunnelPIDLocks.Unlock()
+	lock := tunnelPIDLocks.byPath[clean]
+	if lock == nil {
+		lock = &sync.Mutex{}
+		tunnelPIDLocks.byPath[clean] = lock
+	}
+	return tunnelPIDOwner{path: path, mu: lock}
 }
 
 func (o tunnelPIDOwner) claim(pid int) error {
@@ -476,6 +476,10 @@ func (o tunnelPIDOwner) release(pid int) error {
 	return RemoveOwnTunnelPIDFile(o.path, pid)
 }
 
+// RemoveOwnTunnelPIDFile clears the recorded pid, but only while it is still
+// the one this runner wrote. Callers that can overlap replacement startup must
+// invoke it through tunnelPIDOwner.release so the check and removal are
+// serialized against the replacement claim.
 func RemoveOwnTunnelPIDFile(path string, pid int) error {
 	if recorded, ok := ReadTunnelPID(path); ok && recorded != pid {
 		return nil // A replacement already owns the file; not ours to delete.
