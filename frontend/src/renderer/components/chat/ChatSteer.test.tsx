@@ -18,11 +18,11 @@ describe("ChatComposer steering", () => {
 		);
 	}
 
-	it("shows delivery indicators while a turn is running", () => {
+	it("does not show delivery indicators in the composer while a turn is running", () => {
 		composer();
-		const delivery = screen.getByRole("group", { name: /where this message goes/i });
-		expect(within(delivery).getByText("Queue")).toBeInTheDocument();
-		expect(within(delivery).getByText("Steer")).toBeInTheDocument();
+		expect(screen.queryByRole("group", { name: /where this message goes/i })).not.toBeInTheDocument();
+		expect(screen.queryByText("Queue")).not.toBeInTheDocument();
+		expect(screen.queryByText("Steer")).not.toBeInTheDocument();
 	});
 
 	it("queues by default while a turn is running", async () => {
@@ -225,7 +225,7 @@ describe("ChatWorkspace steering", () => {
 		expect(within(dock).getByText("second queued")).toBeVisible();
 	});
 
-	it("shows the delivery indicator only for a running turn without a pending approval", () => {
+	it("does not show delivery indicators in the composer for a running turn without a pending approval", () => {
 		const snapshot = {
 			...chatFixture,
 			items: chatFixture.items.filter(
@@ -234,8 +234,8 @@ describe("ChatWorkspace steering", () => {
 			),
 		};
 		render(<ChatWorkspace snapshot={snapshot} onSteer={vi.fn()} />);
-		expect(screen.getByText("Steer")).toBeInTheDocument();
-		expect(screen.getByText("Queue")).toBeInTheDocument();
+		expect(screen.queryByText("Steer")).not.toBeInTheDocument();
+		expect(screen.queryByText("Queue")).not.toBeInTheDocument();
 	});
 
 	it("does not show delivery indicator on a settled conversation", () => {

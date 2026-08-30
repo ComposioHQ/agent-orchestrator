@@ -27,8 +27,6 @@
  */
 
 import {
-	cloneElement,
-	isValidElement,
 	useCallback,
 	useEffect,
 	useId,
@@ -42,7 +40,7 @@ import {
 	type ReactElement,
 	type ReactNode,
 } from "react";
-import { ArrowUp, Command, CornerDownLeft, Loader2, Plus, Square, X } from "lucide-react";
+import { ArrowUp, Loader2, Plus, Square, X } from "lucide-react";
 import { Button } from "../ui/button";
 import { cn } from "../../lib/utils";
 import { apiErrorMessage } from "../../lib/api-client";
@@ -537,28 +535,39 @@ export function ChatComposer({
 		setHighlighted(0);
 	}
 
+	const handleEnterKey = useCallback(
+		(event: globalThis.KeyboardEvent): boolean => {
+			const liveSnapshot = editor.current?.getSnapshot();
+			if (liveSnapshot) textRef.current = liveSnapshot.text;
+			const liveTrigger = liveSnapshot?.trigger;
+			const liveSuggestions = suggestionsFor(liveTrigger);
+			if (liveSuggestions.length > 0) {
+				if (textRef.current.trim() === "/compact" && onCompact) {
+					void submit();
+					return true;
+				}
+				triggerRef.current = liveTrigger;
+				const chosen = liveSuggestions[Math.min(highlightedRef.current, liveSuggestions.length - 1)];
+				if (chosen) pick(chosen.value);
+				return true;
+			}
+
+			const wantsSteer = (event.metaKey || event.ctrlKey) && canSteerDraft;
+			void submit(undefined, wantsSteer);
+			return true;
+		},
+		[canSteerDraft, onCompact, pick, suggestionsFor],
+	);
+
 	function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
 		if (event.nativeEvent.isComposing) return;
-		if (event.key === "Enter" && event.shiftKey) return;
-		// Read Lexical directly here. A fast typist can press Enter before React has
-		// rendered the state update for the last character, while the editor state is
-		// already current. Using the rendered `menuOpen` in that window sent the draft
-		// instead of accepting the visible completion.
+		// Enter is handled in Lexical before a newline is inserted; this handler is
+		// only for menu navigation and escape while a completion menu is open.
 		const liveSnapshot = editor.current?.getSnapshot();
 		if (liveSnapshot) textRef.current = liveSnapshot.text;
 		const liveTrigger = liveSnapshot?.trigger;
 		const liveSuggestions = suggestionsFor(liveTrigger);
 		if (liveSuggestions.length > 0) {
-			// `/compact` takes no arguments. Once its exact name is present, Enter
-			// executes it directly instead of merely accepting the highlighted row and
-			// requiring a second Enter on the inserted trailing space.
-			if (event.key === "Enter" && textRef.current.trim() === "/compact" && onCompact) {
-				event.preventDefault();
-				void submit();
-				return;
-			}
-			// Only these keys are taken while the menu is open. Everything else falls
-			// through to the editor, which is what keeps typing from being swallowed.
 			if (event.key === "ArrowDown" || event.key === "ArrowUp") {
 				event.preventDefault();
 				const next = moveHighlight(
@@ -570,17 +579,8 @@ export function ChatComposer({
 				setHighlighted(next);
 				return;
 			}
-			if (event.key === "Enter" || event.key === "Tab") {
-				event.preventDefault();
-				triggerRef.current = liveTrigger;
-				const chosen = liveSuggestions[Math.min(highlightedRef.current, liveSuggestions.length - 1)];
-				if (chosen) pick(chosen.value);
-				return;
-			}
 			if (event.key === "Escape") {
 				event.preventDefault();
-				// Stopped here so Escape closes the menu rather than travelling on to
-				// whatever surface is hosting the composer.
 				event.stopPropagation();
 				dismissedKeyRef.current = liveTrigger?.key ?? null;
 				setDismissedKey(dismissedKeyRef.current);
@@ -592,15 +592,7 @@ export function ChatComposer({
 			event.preventDefault();
 			clearEditor();
 			onCancelQueuedEdit();
-			return;
 		}
-
-		// Enter queues; Shift+Enter makes a newline; Cmd/Ctrl+Enter steers.
-		if (event.key !== "Enter") return;
-		if (event.shiftKey) return;
-		event.preventDefault();
-		const wantsSteer = (event.metaKey || event.ctrlKey) && canSteerDraft;
-		void submit(undefined, wantsSteer);
 	}
 
 	function onPaste(event: ClipboardEvent<HTMLDivElement>) {
@@ -625,10 +617,16 @@ export function ChatComposer({
 		void fileAttachments.addFiles(files);
 	}
 
-	const [metaHeld, setMetaHeld] = useState(false);
+	// Track Cmd/Ctrl for the send-button click path without re-rendering the composer
+	// on every modifier key event.
+	const modifierHeldRef = useRef(false);
 	useEffect(() => {
-		const onKey = (e: globalThis.KeyboardEvent) => setMetaHeld(e.metaKey || e.ctrlKey);
-		const onBlur = () => setMetaHeld(false);
+		const onKey = (event: globalThis.KeyboardEvent) => {
+			modifierHeldRef.current = event.metaKey || event.ctrlKey;
+		};
+		const onBlur = () => {
+			modifierHeldRef.current = false;
+		};
 		window.addEventListener("keydown", onKey);
 		window.addEventListener("keyup", onKey);
 		window.addEventListener("blur", onBlur);
@@ -638,17 +636,8 @@ export function ChatComposer({
 			window.removeEventListener("blur", onBlur);
 		};
 	}, []);
-	const activeDelivery = metaHeld && canSteerDraft ? "steer" : "queue";
 
 	const attachmentError = fileAttachments.error ?? sendError ?? commandError;
-	const deliveryChoice =
-		canSteer && onSteer && !savingQueuedEdit ? (
-			<DeliveryChoice value={activeDelivery} disabled={steerPending} />
-		) : null;
-	const settingsNode =
-		settings && deliveryChoice && isValidElement(settings)
-			? cloneElement(settings, undefined, deliveryChoice)
-			: settings;
 	const withQueueStack = (form: ReactElement) =>
 		queuedDock ? (
 			<div className="relative flex w-full flex-col">
@@ -686,7 +675,7 @@ export function ChatComposer({
 				// Clicking send while Cmd/Ctrl is held has to mean what the indicator
 				// beside it says. Reading the same armed state the chip paints keeps the
 				// pointer and keyboard paths from disagreeing about where the message goes.
-				onSubmit={(event) => void submit(event, activeDelivery === "steer")}
+				onSubmit={(event) => void submit(event, modifierHeldRef.current && canSteerDraft)}
 				onDragOver={(event) => {
 					if (!canAttach) return;
 					event.preventDefault();
@@ -769,6 +758,7 @@ export function ChatComposer({
 					activeIndex={activeIndex}
 					onChange={onEditorChange}
 					onComplete={completeFromEditor}
+					onEnterKey={handleEnterKey}
 					onCompositionChange={setIsComposing}
 					onKeyDown={onKeyDown}
 					onPaste={onPaste}
@@ -818,8 +808,7 @@ export function ChatComposer({
 								</Button>
 							</>
 						) : null}
-						{settingsNode}
-						{!settings && deliveryChoice}
+						{settings}
 					</div>
 
 					<div role="group" aria-label="Send message controls" className="flex h-7 shrink-0 items-center">
@@ -853,55 +842,5 @@ export function ChatComposer({
 					</div>
 				</div>
 			</form>,
-	);
-}
-
-/**
- * Where the next message goes while the agent is working.
- *
- * Two words rather than a switch, because the difference is not a preference — it is
- * two different things happening to what the user typed. Steering joins the turn in
- * flight: the agent keeps its context, its reasoning and the command it has running,
- * and decides for itself what to abandon. Queueing waits for the turn to end and
- * then starts a new one from a cold start. For someone who has just realized they
- * asked for the wrong thing, that is the whole difference, so both are named and the
- * active choice is exposed visually and through `aria-pressed`.
- */
-export function DeliveryChoice({ value, disabled }: { value: "steer" | "queue"; disabled?: boolean }) {
-	return (
-		// A group, not a status: these chips label what each keystroke will do,
-		// they are not a live region announcing an event. `status` also made this
-		// shadow the steer refusal below, which is the real one.
-		<div
-			role="group"
-			aria-label="Where this message goes while the agent is working"
-			className="flex h-7 shrink-0 items-center gap-1"
-		>
-			<span
-				className={cn(
-					"inline-flex h-7 items-center gap-1.5 rounded-lg px-3 text-sm leading-none transition-colors",
-					disabled && "opacity-50",
-					value === "queue" ? "bg-white/5 text-foreground" : "text-muted-foreground",
-				)}
-			>
-				<span className="inline-flex items-center gap-0.5 text-muted-foreground">
-					<CornerDownLeft aria-hidden="true" className="size-3" />
-				</span>
-				Queue
-			</span>
-			<span
-				className={cn(
-					"inline-flex h-7 items-center gap-1.5 rounded-lg px-3 text-sm leading-none transition-colors",
-					disabled && "opacity-50",
-					value === "steer" ? "bg-white/5 text-foreground" : "text-muted-foreground",
-				)}
-			>
-				<span className="inline-flex items-center gap-1 text-muted-foreground">
-					<Command aria-hidden="true" className="size-2.5" />
-					<CornerDownLeft aria-hidden="true" className="size-3" />
-				</span>
-				Steer
-			</span>
-		</div>
 	);
 }
