@@ -594,6 +594,14 @@ func TestSessionSetReviewerHarnessRejectsUnknownHarness(t *testing.T) {
 	}
 }
 
+func TestSessionSetReviewerHarnessRejectsConfigWithoutHarness(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1"}
+	if _, err := (&Service{store: st}).SetReviewerHarness(context.Background(), "mer-1", "", domain.AgentConfig{Model: "gpt-5"}); err == nil {
+		t.Fatal("expected invalid reviewer config error")
+	}
+}
+
 func TestSessionSetAutoReviewPersistsToggle(t *testing.T) {
 	st := newFakeStore()
 	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker}

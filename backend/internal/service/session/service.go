@@ -758,6 +758,9 @@ func (s *Service) SetReviewerHarness(ctx context.Context, id domain.SessionID, h
 	if err := config.Validate(); err != nil {
 		return domain.Session{}, apierr.Invalid("INVALID_REVIEWER_CONFIG", "Invalid reviewer config", map[string]any{"detail": err.Error()})
 	}
+	if harness == "" && !config.IsZero() {
+		return domain.Session{}, apierr.Invalid("INVALID_REVIEWER_CONFIG", "Invalid reviewer config", map[string]any{"detail": "reviewer harness is required when reviewer config is set"})
+	}
 	updated, err := s.store.SetSessionReviewerConfig(ctx, id, harness, config, time.Now().UTC())
 	if err != nil {
 		return domain.Session{}, fmt.Errorf("set reviewer config %s: %w", id, err)

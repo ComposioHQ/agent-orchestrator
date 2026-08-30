@@ -301,6 +301,9 @@ func (f *fakeSessionService) SetReviewerHarness(_ context.Context, id domain.Ses
 	if !ok {
 		return domain.Session{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
 	}
+	if harness == "" && !config.IsZero() {
+		return domain.Session{}, apierr.Invalid("INVALID_REVIEWER_CONFIG", "Invalid reviewer config", map[string]any{"detail": "reviewer harness is required when reviewer config is set"})
+	}
 	s.ReviewerHarness = harness
 	s.ReviewerConfig = config
 	f.sessions[id] = s
@@ -1203,6 +1206,17 @@ func TestSessionsAPI_ListSpawnGetAndActions(t *testing.T) {
 	body, status, _ = doRequest(t, srv, "POST", "/api/v1/orchestrators", `{"projectId":"ao"}`)
 	if status != http.StatusCreated {
 		t.Fatalf("orchestrator = %d, want 201; body=%s", status, body)
+	}
+}
+
+func TestSessionsAPI_SetReviewerRejectsConfigWithoutHarness(t *testing.T) {
+	svc := newFakeSessionService()
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, "PUT", "/api/v1/sessions/ao-1/reviewer", `{"agentConfig":{"model":"gpt-5"}}`)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "INVALID_REVIEWER_CONFIG")
+	if got := svc.sessions["ao-1"].ReviewerConfig; !got.IsZero() {
+		t.Fatalf("invalid reviewer update persisted config: %+v", got)
 	}
 }
 
