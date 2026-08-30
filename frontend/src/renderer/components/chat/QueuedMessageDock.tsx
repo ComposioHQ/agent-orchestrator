@@ -229,6 +229,7 @@ export function QueuedMessageDock({
 									busy={busy}
 									error={errors[turnId]}
 									{...rowProps}
+									canSteer={canSteer && index === 0}
 								/>
 							);
 						})}

@@ -2225,7 +2225,7 @@ html.sidebar-reordering * {
 	height: var(--queue-dock-collapsed-height);
 }
 
-.cursor-chat-composer-queue:has(.queue-dock[data-collapsible="true"][data-expanded="true"]) .queue-dock {
+.cursor-chat-composer-queue .queue-dock {
 	position: absolute;
 	right: 0;
 	bottom: 0;

@@ -151,14 +151,14 @@ describe("ChatWorkspace steering", () => {
 		);
 
 		expect(screen.queryByText("Queue")).not.toBeInTheDocument();
-		expect(screen.getAllByRole("button", { name: "Steer this queued message into the running turn" })).toHaveLength(2);
+		expect(screen.getAllByRole("button", { name: "Steer this queued message into the running turn" })).toHaveLength(1);
 
 		await userEvent.click(
-			within(screen.getByTestId("queued-message-queued-1")).getByRole("button", {
+			within(screen.getByTestId("queued-message-queued-2")).getByRole("button", {
 				name: "Steer this queued message into the running turn",
 			}),
 		);
-		expect(onPromoteQueuedTurn).toHaveBeenCalledWith("queued-1");
+		expect(onPromoteQueuedTurn).toHaveBeenCalledWith("queued-2");
 
 		await userEvent.click(within(screen.getByTestId("queued-message-queued-1")).getByRole("button", { name: "Edit queued message" }));
 		expect(onBeginQueuedEdit).toHaveBeenCalledWith("queued-1", "first queued");
@@ -283,7 +283,7 @@ describe("ChatWorkspace steering", () => {
 		expect(within(dock).getByText("second queued")).toBeVisible();
 	});
 
-	it("shows steer action on each queued message while a turn is running", () => {
+	it("shows steer action only on the latest queued message while a turn is running", () => {
 		render(
 			<ChatWorkspace
 				snapshot={withQueuedMessages()}
@@ -294,7 +294,7 @@ describe("ChatWorkspace steering", () => {
 
 		const dock = screen.getByTestId("queued-message-dock");
 		expect(within(dock).queryByText("Queue")).not.toBeInTheDocument();
-		expect(within(dock).getAllByRole("button", { name: "Steer this queued message into the running turn" })).toHaveLength(2);
+		expect(within(dock).getAllByRole("button", { name: "Steer this queued message into the running turn" })).toHaveLength(1);
 	});
 
 	it("does not show delivery indicators in the composer for a running turn without a pending approval", () => {
