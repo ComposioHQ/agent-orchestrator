@@ -254,6 +254,11 @@ func appendUserMessage(
 	var workerEpoch int64
 	var sessionMode string
 	var sessionDeniedCommands []string
+	// The direct PTY fast path only applies while the agent is at its prompt:
+	// text typed into a mid-turn harness lands in the composer unsubmitted and
+	// the agent never sees it (a report the orchestrator is actively polling
+	// for would deadlock it). A busy agent's message queues durably below and
+	// is delivered by the worker once the turn ends.
 	err = tx.QueryRow(ctx,
 		`SELECT terminal.id, terminal.worker_epoch, session.mode, session.denied_commands
 		FROM ao_terminal_sessions terminal
@@ -261,6 +266,7 @@ func appendUserMessage(
 			ON session.org_id = terminal.org_id AND session.id = terminal.session_id
 		WHERE terminal.org_id = $1 AND terminal.session_id = $2 AND terminal.kind = 'agent'
 		  AND terminal.state = 'open' AND terminal.expires_at > now()
+		  AND session.activity_state <> 'active'
 		ORDER BY terminal.created_at DESC
 		LIMIT 1`,
 		orgID, sessionID,
