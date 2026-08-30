@@ -13,6 +13,35 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
+const activateConversationBranchReview = `-- name: ActivateConversationBranchReview :execrows
+UPDATE review
+SET provider_conversation_id = ?1,
+    controller_generation = ?2,
+    controller_error = '',
+    updated_at = ?3
+WHERE id = ?4 AND interface_mode = 'chat'
+`
+
+type ActivateConversationBranchReviewParams struct {
+	ProviderConversationID string
+	ControllerGeneration   string
+	UpdatedAt              time.Time
+	ID                     string
+}
+
+func (q *Queries) ActivateConversationBranchReview(ctx context.Context, arg ActivateConversationBranchReviewParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, activateConversationBranchReview,
+		arg.ProviderConversationID,
+		arg.ControllerGeneration,
+		arg.UpdatedAt,
+		arg.ID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const cancelRunningReviewRunsBySession = `-- name: CancelRunningReviewRunsBySession :execrows
 UPDATE review_run SET status = 'cancelled', body = ? WHERE session_id = ? AND status = 'running' AND verdict = ''
 `

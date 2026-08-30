@@ -602,17 +602,18 @@ func (s *Store) UpdateConversationBranchReplacement(
 // RepairIncompleteConversationEdit closes the only crash window in edit branch
 // creation. If the active edit child already owns a durable human prompt, that
 // earliest prompt becomes its replacement. If no prompt was recorded, the child
-// was never dispatched and the conversation plus session provider ownership move
-// back to the source branch in the same transaction.
+// was never dispatched and the conversation plus controller-owner provider
+// ownership move back to the source branch in the same transaction.
 //
 // A non-empty returned branch means a repair was applied. restoredProviderOwner
-// is true only when the abandoned child belongs to the same AO session, so
-// startup may replace that session's stale child provider handle. A project
-// conversation can be rebound to a new orchestrator session; that new owner must
-// start its own provider boundary rather than inherit the prior agent's handle.
+// is true only when the abandoned child belongs to the same typed owner, so
+// startup may replace that owner's stale child provider handle. A project
+// conversation can be rebound to a new orchestrator session; that new owner
+// must start its own provider boundary rather than inherit the prior agent's
+// handle.
 func (s *Store) RepairIncompleteConversationEdit(
 	ctx context.Context,
-	sessionID domain.SessionID,
+	owner domain.ConversationOwner,
 	conversationID string,
 	now time.Time,
 ) (repaired domain.ConversationBranch, restoredProviderOwner bool, err error) {
@@ -624,8 +625,18 @@ func (s *Store) RepairIncompleteConversationEdit(
 		if selectErr != nil {
 			return fmt.Errorf("select conversation %s: %w", conversationID, selectErr)
 		}
-		if conversation.CurrentSessionID == nil || *conversation.CurrentSessionID != sessionID {
-			return fmt.Errorf("conversation %s is not controlled by session %s", conversationID, sessionID)
+		switch owner.Kind {
+		case domain.ConversationOwnerSession:
+			sessionID := domain.SessionID(owner.ID)
+			if conversation.CurrentSessionID == nil || *conversation.CurrentSessionID != sessionID {
+				return fmt.Errorf("conversation %s is not controlled by session %s", conversationID, sessionID)
+			}
+		case domain.ConversationOwnerReview:
+			if !conversation.CurrentReviewID.Valid || conversation.CurrentReviewID.String != owner.ID {
+				return fmt.Errorf("conversation %s is not controlled by review %s", conversationID, owner.ID)
+			}
+		default:
+			return fmt.Errorf("conversation %s has unsupported owner kind %q", conversationID, owner.Kind)
 		}
 		activeRow, selectErr := q.SelectConversationBranch(ctx, gen.SelectConversationBranchParams{
 			ConversationID: conversationID,
@@ -688,24 +699,48 @@ func (s *Store) RepairIncompleteConversationEdit(
 		}
 		parent.Active = true
 		repaired = parent
-		if active.SessionID != sessionID {
+		activeBelongsToOwner := false
+		switch owner.Kind {
+		case domain.ConversationOwnerSession:
+			activeBelongsToOwner = active.SessionID == domain.SessionID(owner.ID)
+		case domain.ConversationOwnerReview:
+			activeBelongsToOwner = active.ReviewID == owner.ID
+		}
+		if !activeBelongsToOwner {
 			// CreateConversation may have just rebound a project narrative to a new
 			// orchestrator. Repair the lineage, but never copy the prior agent's
 			// opaque provider handle into this new session.
 			return nil
 		}
-		sessionRows, updateErr := q.ActivateConversationBranchSession(
-			ctx, gen.ActivateConversationBranchSessionParams{
-				ProviderConversationID: parent.ProviderConversationID,
-				ControllerGeneration:   "",
-				UpdatedAt:              now,
-				ID:                     sessionID,
-			})
-		if updateErr != nil {
-			return fmt.Errorf("restore source session controller: %w", updateErr)
-		}
-		if sessionRows != 1 {
-			return fmt.Errorf("restore source session controller: live chat session %s not found", sessionID)
+		if owner.Kind == domain.ConversationOwnerReview {
+			reviewRows, updateErr := q.ActivateConversationBranchReview(
+				ctx, gen.ActivateConversationBranchReviewParams{
+					ProviderConversationID: parent.ProviderConversationID,
+					ControllerGeneration:   "",
+					UpdatedAt:              now,
+					ID:                     owner.ID,
+				})
+			if updateErr != nil {
+				return fmt.Errorf("restore source review controller: %w", updateErr)
+			}
+			if reviewRows != 1 {
+				return fmt.Errorf("restore source review controller: chat review %s not found", owner.ID)
+			}
+		} else {
+			sessionID := domain.SessionID(owner.ID)
+			sessionRows, updateErr := q.ActivateConversationBranchSession(
+				ctx, gen.ActivateConversationBranchSessionParams{
+					ProviderConversationID: parent.ProviderConversationID,
+					ControllerGeneration:   "",
+					UpdatedAt:              now,
+					ID:                     sessionID,
+				})
+			if updateErr != nil {
+				return fmt.Errorf("restore source session controller: %w", updateErr)
+			}
+			if sessionRows != 1 {
+				return fmt.Errorf("restore source session controller: live chat session %s not found", sessionID)
+			}
 		}
 		restoredProviderOwner = true
 		return nil

@@ -426,6 +426,44 @@ func TestSuccessfulChatProbeIsReusedByStart(t *testing.T) {
 	}
 }
 
+func TestStartRestoresReviewOwnedConversation(t *testing.T) {
+	ctx := context.Background()
+	st := openStore(t)
+	reviewID := "review-chat-restore"
+	now := time.Now().UTC()
+	if err := st.UpsertReview(ctx, domain.Review{
+		ID: reviewID, SessionID: testSession, ProjectID: testProject,
+		Harness: domain.ReviewerCodex, InterfaceMode: domain.ReviewerInterfaceChat,
+		ProviderConversationID: "review-thread", ControllerGeneration: "old-generation",
+		CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("UpsertReview: %v", err)
+	}
+	provider := newFakeConversation()
+	provider.providerConversationID = "review-thread"
+	svc := chatsvc.New(chatsvc.Options{
+		Store: st, Sessions: st,
+		Drivers: fakeRegistry{driver: fakeDriver{conv: provider}},
+		Log:     slog.New(slog.DiscardHandler),
+		NewID:   func() string { return "review-chat-conversation" },
+	})
+	t.Cleanup(func() {
+		_ = svc.StopForOwner(context.Background(), domain.ReviewConversationOwner(reviewID))
+	})
+
+	if _, err := svc.Start(ctx, chatsvc.StartConfig{
+		Owner:     domain.ReviewConversationOwner(reviewID),
+		SessionID: testSession, ProjectID: testProject, Kind: domain.KindWorker,
+		Harness: domain.HarnessCodex, WorkspacePath: t.TempDir(),
+		ProviderConversationID: "review-thread",
+	}); err != nil {
+		t.Fatalf("restore reviewer chat controller: %v", err)
+	}
+	if !svc.HasLiveControllerForOwner(domain.ReviewConversationOwner(reviewID)) {
+		t.Fatal("reviewer chat controller is not live after restore")
+	}
+}
+
 func TestFailedChatProbeCanBeRetriedThenCached(t *testing.T) {
 	attempts := 0
 	driver := fakeDriver{probe: func() error {

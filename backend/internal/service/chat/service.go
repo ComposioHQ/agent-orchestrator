@@ -398,7 +398,7 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 		return nil, fmt.Errorf("open conversation: %w", err)
 	}
 	repairedBranch, restoredProviderOwner, err := s.store.RepairIncompleteConversationEdit(
-		ctx, cfg.SessionID, conversation.ID, s.now())
+		ctx, owner, conversation.ID, s.now())
 	if err != nil {
 		return nil, fmt.Errorf("repair incomplete conversation edit: %w", err)
 	}

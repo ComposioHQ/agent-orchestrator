@@ -66,6 +66,14 @@ UPDATE review
 SET controller_generation = '', updated_at = sqlc.arg(updated_at)
 WHERE id = sqlc.arg(id) AND interface_mode = 'chat';
 
+-- name: ActivateConversationBranchReview :execrows
+UPDATE review
+SET provider_conversation_id = sqlc.arg(provider_conversation_id),
+    controller_generation = sqlc.arg(controller_generation),
+    controller_error = '',
+    updated_at = sqlc.arg(updated_at)
+WHERE id = sqlc.arg(id) AND interface_mode = 'chat';
+
 -- name: ListRecoverableChatReviews :many
 SELECT DISTINCT r.*
 FROM review r

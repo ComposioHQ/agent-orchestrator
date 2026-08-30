@@ -46,7 +46,7 @@ type Store interface {
 	ClaimChatControllerGeneration(ctx context.Context, session domain.SessionID, generation string, now time.Time) error
 	ConversationBranch(ctx context.Context, conversationID, branchID string) (domain.ConversationBranch, error)
 	ConversationEditAnchor(ctx context.Context, conversationID, replacedTurnID string) (domain.ConversationEditAnchor, error)
-	RepairIncompleteConversationEdit(ctx context.Context, sessionID domain.SessionID, conversationID string, now time.Time) (domain.ConversationBranch, bool, error)
+	RepairIncompleteConversationEdit(ctx context.Context, owner domain.ConversationOwner, conversationID string, now time.Time) (domain.ConversationBranch, bool, error)
 	CreateAndActivateConversationBranch(ctx context.Context, sessionID domain.SessionID, branch domain.ConversationBranch, generation string, now time.Time) error
 	ActivateConversationBranch(ctx context.Context, sessionID domain.SessionID, conversationID, branchID, providerConversationID, generation string, now time.Time) error
 	UpdateConversationBranchReplacement(ctx context.Context, branchID, replacementTurnID string) error
