@@ -294,6 +294,24 @@ describe("send keys", () => {
    Cmd, Ctrl, and the send control while a modifier is held — is pinned here.
 --------------------------------------------------------------------------- */
 
+describe("queued message edit", () => {
+	it("saves a queued edit while the composer is busy", async () => {
+		const onSend = vi.fn().mockResolvedValue(undefined);
+		render(
+			<ChatComposer
+				onSend={onSend}
+				busy
+				willQueue
+				editingQueuedTurnId="queued-1"
+				draftSeed={{ id: "queued-1", text: "hi" }}
+			/>,
+		);
+		await waitFor(() => expect(screen.getByLabelText("Message the agent")).toHaveTextContent("hi"));
+		await userEvent.keyboard("{Enter}");
+		await waitFor(() => expect(onSend).toHaveBeenCalledWith("hi"));
+	});
+});
+
 describe("steering", () => {
 	function renderSteerable(props: Partial<Parameters<typeof ChatComposer>[0]> = {}) {
 		const onSend = vi.fn();
@@ -887,6 +905,20 @@ describe("unavailable states", () => {
 		expect(onSend).not.toHaveBeenCalled();
 	});
 
+	it("does not show a loading spinner when no queued edit is saving", () => {
+		renderComposer();
+		expect(
+			screen.getByRole("button", { name: "Send message" }).querySelector(".animate-spin"),
+		).not.toBeInTheDocument();
+	});
+
+	it("shows a loading spinner only while the queued edit being edited is saving", () => {
+		renderComposer({ editingQueuedTurnId: "turn-1", savingQueuedEditPending: true });
+		expect(
+			screen.getByRole("button", { name: "Send message" }).querySelector(".animate-spin"),
+		).toBeInTheDocument();
+	});
+
 	it("says a mid-turn message will be held", () => {
 		const { field } = renderComposer({ willQueue: true });
 		expect(field).toHaveAttribute(
@@ -916,5 +948,21 @@ describe("unavailable states", () => {
 
 		expect(onSend).toHaveBeenCalledWith("follow up");
 		expect(onInterrupt).not.toHaveBeenCalled();
+	});
+
+	it("explains when a send is blocked by the previous in-flight message", async () => {
+		const onSend = vi.fn().mockImplementation(
+			() => new Promise<void>(() => {
+				/* keep pending */
+			}),
+		);
+		render(<ChatComposer busy onSend={onSend} willQueue />);
+		const field = screen.getByLabelText("Message the agent");
+
+		await typeInComposer(field, "follow up");
+		await userEvent.keyboard("{Enter}");
+
+		expect(onSend).not.toHaveBeenCalled();
+		expect(screen.getByRole("alert")).toHaveTextContent(/still sending the previous message/i);
 	});
 });

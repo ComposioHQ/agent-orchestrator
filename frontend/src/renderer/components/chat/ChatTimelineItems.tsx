@@ -651,9 +651,9 @@ export function AssistantMessage({
 			<ChatMarkdown text={visibleText} streaming={renderingStreaming} />
 			{showActions ? (
 				// One action row for the completed answer, not one after every prose
-				// fragment the provider emitted while working. Reveal the controls only
-				// when the message is being inspected, keeping the answer visually quiet.
-				<div className="mt-1 flex h-7 items-center gap-0.5 opacity-0 transition-opacity duration-150 ease-out group-hover/message:opacity-100 group-focus-within/message:opacity-100 motion-reduce:transition-none">
+				// fragment the provider emitted while working. Copy, rollback, and
+				// duration stay visible; only the wall-clock time reveals on hover.
+				<div className="mt-1 flex h-7 items-center gap-0.5">
 					{showCopy ? (
 						/* The stored markdown, not a re-serialization of what was rendered:
 						   pasting it into an editor has to give back what the agent wrote. */
@@ -677,7 +677,7 @@ export function AssistantMessage({
 					) : null}
 					{hasDuration ? <TurnDuration durationMs={durationMs} /> : null}
 					<span
-						className="w-auto shrink-0 px-1 text-[11px] tabular-nums text-muted-foreground/75"
+						className="w-auto shrink-0 px-1 text-[11px] tabular-nums text-muted-foreground/75 opacity-0 transition-opacity duration-150 ease-out group-hover/message:opacity-100 group-focus-within/message:opacity-100 motion-reduce:transition-none"
 						aria-label={`Sent ${formatMessageTimestamp(message.createdAt)}`}
 					>
 						{formatMessageTimestamp(message.createdAt)}

@@ -272,6 +272,7 @@
 	--color-error: var(--bridge-danger);
 	--color-status-working: var(--bridge-status-working);
 	--color-status-needs-you: var(--bridge-status-needs-you);
+	--color-status-validating: var(--bridge-status-validating);
 	--color-status-in-review: var(--bridge-status-in-review);
 	--color-status-ready: var(--bridge-status-ready);
 	--color-status-merged: var(--bridge-status-merged);
@@ -505,6 +506,23 @@
 	border-radius: 0;
 }
 
+/* A persistent edge fade signals that the tab strip can scroll horizontally. */
+.session-tab-scroll-fade {
+	pointer-events: none;
+	position: absolute;
+	inset-block: 0;
+	right: 0;
+	z-index: 2;
+	width: var(--space-8);
+	background: linear-gradient(90deg, transparent 0%, var(--color-bg-primary) 82%);
+}
+
+.session-tab-scroll-fade--left {
+	left: 0;
+	right: auto;
+	background: linear-gradient(270deg, transparent 0%, var(--color-bg-primary) 82%);
+}
+
 /* Session actions are portaled into the center pane. Make their responsive
  * labels follow that pane's width instead of the full window width. */
 .workspace-topbar-container {
@@ -517,6 +535,41 @@
  * the compact panel inset instead of retaining the windowed 79px reserve. */
 .session-topbar-titlebar-clearance-mac {
 	padding-left: var(--size-titlebar-content-offset);
+}
+
+/* Browser pressure keeps a 48px navigation rail in layout. Native macOS
+ * traffic lights extend to the 72px titlebar boundary, so reserve only the
+ * missing slice instead of applying the full off-canvas navigation clearance. */
+.session-topbar-terminal-region {
+	transition: padding-left 280ms cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+/* Preserve the established tab chrome while preventing flex pressure from
+ * erasing the agent icon. This class controls sizing only. */
+.session-tab-icon-floor {
+	min-width: calc(var(--size-icon-base) + var(--space-6));
+}
+
+.session-tab-icon-floor--closable {
+	width: auto;
+	min-width: var(--size-shell-tab-min);
+	max-width: var(--size-shell-tab-connected);
+}
+
+.session-tab-icon-floor[data-editing="true"] {
+	flex-shrink: 0;
+	width: var(--size-shell-tab-connected);
+	min-width: var(--size-shell-tab-connected);
+}
+
+.session-topbar-traffic-light-clearance-mac {
+	padding-left: calc(var(--size-titlebar-cluster-left) - var(--size-sidebar-icon));
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.session-topbar-terminal-region {
+		transition-duration: 0ms;
+	}
 }
 
 .native-fullscreen .session-topbar-titlebar-clearance-mac {
@@ -1597,6 +1650,33 @@ textarea,
 	}
 }
 
+@keyframes attention-card-pulse {
+	0%,
+	100% {
+		opacity: 0.15;
+	}
+	50% {
+		opacity: 1;
+	}
+}
+
+.animate-attention-card-pulse::before {
+	position: absolute;
+	inset: 0;
+	border-radius: inherit;
+	background-color: color-mix(in srgb, var(--color-status-needs-you) 9%, transparent);
+	pointer-events: none;
+	content: "";
+	animation: attention-card-pulse 3.5s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.animate-attention-card-pulse::before {
+		animation: none;
+		opacity: 0.5;
+	}
+}
+
 .agent-switch-transfer-pulse {
 	animation: agent-switch-transfer 1.35s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 }
@@ -2113,8 +2193,30 @@ html.sidebar-reordering * {
 }
 
 .cursor-chat-composer[data-attached-top] {
+	border-top: none;
 	border-top-left-radius: 0;
 	border-top-right-radius: 0;
+}
+
+@keyframes queue-dock-in {
+	from {
+		opacity: 0;
+		transform: translateY(6px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+
+.queue-dock-enter {
+	animation: queue-dock-in 200ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.queue-dock-enter {
+		animation: none;
+	}
 }
 
 .cursor-chat-composer:hover:not(:focus-within) {
@@ -2394,18 +2496,13 @@ html.sidebar-reordering * {
 	min-width: 0;
 	flex: 0 0 auto;
 	align-items: center;
-	gap: var(--space-2);
+	gap: var(--space-1);
 }
 
-.workspace-topbar__utility-separator,
 .workspace-topbar__identity-separator {
 	width: 1px;
 	flex: 0 0 1px;
 	background: color-mix(in srgb, var(--color-text-topbar) 28%, transparent);
-}
-
-.workspace-topbar__utility-separator {
-	height: calc(var(--size-topbar-control) - var(--space-3));
 }
 
 .workspace-topbar__identity-separator {
@@ -2421,6 +2518,7 @@ html.sidebar-reordering * {
 	border-radius: var(--radius-topbar-control);
 	font-size: var(--font-size-sm-md);
 	transition:
+		transform var(--duration-fast) ease-out,
 		background-color var(--duration-fast) ease,
 		border-color var(--duration-fast) ease,
 		color var(--duration-fast) ease,
@@ -2429,18 +2527,25 @@ html.sidebar-reordering * {
 		padding-inline var(--duration-normal) ease;
 }
 
+.workspace-topbar-actions .topbar-control:active:not(:disabled) {
+	transform: scale(0.96);
+}
+
 .workspace-topbar-actions .topbar-control--labeled,
 .workspace-topbar-actions .topbar-control--feature {
 	padding-inline: var(--space-2_5);
 }
 
-/* Split workspace handoff control. The generic .topbar-control rule above rounds
-   all four corners and clamps every control to a square minimum, which makes the
-   two halves read as separate chips crammed together rather than one button.
-   Square the joining edge, let the label half breathe, and keep the chevron half
-   narrower than a full square so the pair stays compact. */
+.topbar-control--disabled-affordance:disabled {
+	cursor: not-allowed;
+	opacity: var(--opacity-control-disabled);
+}
+
+/* The editor handoff stays one joined split control. All measurements use the
+   shared spacing/control tokens; only gaps between separate controls use the
+   workspace toolbar gap. */
 .workspace-topbar-actions .topbar-control--split-main {
-	padding-inline: var(--space-3);
+	padding-inline: var(--space-2_5);
 	gap: var(--space-1_5);
 	border-start-end-radius: 0;
 	border-end-end-radius: 0;
@@ -2505,12 +2610,12 @@ html.sidebar-reordering * {
 	-webkit-app-region: no-drag;
 	position: absolute;
 	top: 0;
-	right: var(--space-3);
+	right: var(--space-1);
 	z-index: var(--z-index-chrome);
 	display: flex;
 	height: var(--size-inspector-tabs);
 	align-items: center;
-	gap: var(--space-2);
+	gap: var(--space-1);
 }
 
 .session-inspector-actions-spacer {
@@ -2518,6 +2623,22 @@ html.sidebar-reordering * {
 		var(--size-topbar-control) + var(--size-topbar-control) + var(--space-2) + var(--space-3)
 	);
 	flex: 0 0 auto;
+}
+
+.session-topbar-session-chrome[data-compact-session-chrome="true"]
+	.workspace-topbar-actions
+	[data-priority]
+	[data-compact-label] {
+	inline-size: 0;
+	opacity: 0;
+	transform: translateX(-2px);
+}
+
+.session-topbar-session-chrome[data-compact-session-chrome="true"]
+	.workspace-topbar-actions
+	[data-priority].topbar-control {
+	gap: 0;
+	padding-inline: 0;
 }
 
 @container workspace-topbar (max-width: 759px) {
@@ -3192,57 +3313,6 @@ html.sidebar-reordering * {
 .session-inspector__tab-button {
 	flex: none;
 	gap: 0;
-}
-
-.session-inspector__responsive-label {
-	max-width: 5.5rem;
-	margin-left: var(--space-0_5);
-	overflow: hidden;
-	/* Clip during the collapse animation — never ellipsize mid-label. */
-	text-overflow: clip;
-	opacity: 1;
-	transform: translateX(0);
-	transition:
-		max-width 170ms cubic-bezier(0.2, 0.8, 0.2, 1),
-		margin-left 170ms cubic-bezier(0.2, 0.8, 0.2, 1),
-		opacity 120ms ease-out,
-		transform 170ms cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-
-.session-inspector__tablist {
-	container: inspector-tabs / inline-size;
-	justify-content: flex-start;
-}
-
-/* Keep labels until they nearly meet the pinned actions, then collapse to a
- * tight icon cluster. Tuned just under the ~270px labeled content width so the
- * default inspector (~274px tablist) still shows full words. */
-@container inspector-tabs (max-width: 268px) {
-	.session-inspector__responsive-label {
-		max-width: 0;
-		margin-left: 0;
-		opacity: 0;
-		transform: translateX(-4px);
-	}
-}
-
-/* Keep one label layout for the full automatic panel transition. Without this
- * lock, crossing the compact container threshold near the end of the resize
- * makes the tab text reflow after the inspector itself has nearly settled. */
-.session-split[data-terminal-live-resize="true"][data-inspector-label-mode="expanded"]
-	.session-inspector__responsive-label {
-	max-width: 5.5rem;
-	margin-left: var(--space-0_5);
-	opacity: 1;
-	transform: translateX(0);
-}
-
-.session-split[data-terminal-live-resize="true"][data-inspector-label-mode="compact"]
-	.session-inspector__responsive-label {
-	max-width: 0;
-	margin-left: 0;
-	opacity: 0;
-	transform: translateX(-4px);
 }
 
 .session-inspector__toggle {
@@ -4484,8 +4554,7 @@ html[data-native-browser-composition="true"] .browser-popout-backdrop {
 }
 
 @media (prefers-reduced-motion: reduce) {
-	.notification-row-enter,
-	.session-inspector__responsive-label {
+	.notification-row-enter {
 		animation: none;
 		transition: none;
 	}
