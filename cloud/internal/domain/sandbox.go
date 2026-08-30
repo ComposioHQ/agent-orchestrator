@@ -115,8 +115,8 @@ type WorkerLaunch struct {
 	// top-level sessions. It gates the worker:report scope and the report
 	// guidance in the worker prompt.
 	ParentSessionID string
-	Mode           string
-	DeniedCommands []string
-	RepositoryURL  string
-	DefaultBranch  string
+	Mode            string
+	DeniedCommands  []string
+	RepositoryURL   string
+	DefaultBranch   string
 }

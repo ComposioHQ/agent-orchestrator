@@ -29,11 +29,11 @@ const (
 type stubStore struct {
 	Store
 
-	listChildren func(ctx context.Context, orgID, sessionID string, includeTerminated bool, cursor *domain.Cursor, limit int) ([]domain.Session, bool, error)
+	listChildren        func(ctx context.Context, orgID, sessionID string, includeTerminated bool, cursor *domain.Cursor, limit int) ([]domain.Session, bool, error)
 	listSessionChildren func(ctx context.Context, principal domain.Principal, orgID, sessionID string, cursor *domain.Cursor, limit int) ([]domain.Session, bool, error)
-	report       func(ctx context.Context, orgID, childID, key, text string) (domain.ClientEvent, error)
-	prFacts      func(ctx context.Context, orgID string, sessionIDs []string) (map[string][]contract.PRFacts, error)
-	pullRequests func(ctx context.Context, orgID string, sessionIDs []string) (map[string][]domain.PullRequest, error)
+	report              func(ctx context.Context, orgID, childID, key, text string) (domain.ClientEvent, error)
+	prFacts             func(ctx context.Context, orgID string, sessionIDs []string) (map[string][]contract.PRFacts, error)
+	pullRequests        func(ctx context.Context, orgID string, sessionIDs []string) (map[string][]domain.PullRequest, error)
 }
 
 func (s *stubStore) ListOrchestratorChildren(

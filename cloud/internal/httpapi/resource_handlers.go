@@ -77,12 +77,12 @@ type pageInfo struct {
 // children listing: enough for a human row (number, url, lifecycle) and for an
 // orchestrator to route CI/review feedback without a second lookup.
 type sessionPRFactsResponse struct {
-	URL          string    `json:"url"`
-	Number       int       `json:"number"`
-	State        string    `json:"state"`
-	CI           string    `json:"ci"`
-	Review       string    `json:"review"`
-	Mergeability string    `json:"mergeability"`
+	URL          string `json:"url"`
+	Number       int    `json:"number"`
+	State        string `json:"state"`
+	CI           string `json:"ci"`
+	Review       string `json:"review"`
+	Mergeability string `json:"mergeability"`
 	// The control plane does not track unresolved review comments yet; the
 	// field exists so the renderer's shared PullRequestFacts shape maps 1:1.
 	ReviewComments bool      `json:"reviewComments"`

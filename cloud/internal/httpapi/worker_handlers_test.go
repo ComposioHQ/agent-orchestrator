@@ -22,10 +22,10 @@ var allTicketScopes = []string{
 
 func TestIssuedWorkerScopes(t *testing.T) {
 	cases := []struct {
-		name    string
-		launch  domain.WorkerLaunch
-		keeps   []string
-		strips  []string
+		name   string
+		launch domain.WorkerLaunch
+		keeps  []string
+		strips []string
 	}{
 		{
 			name:   "orchestrator keeps orchestrate, loses report",
