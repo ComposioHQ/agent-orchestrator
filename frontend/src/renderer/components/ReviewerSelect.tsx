@@ -278,6 +278,22 @@ function ReviewerHarnessOption({
 				{!catalogKnown ? (
 					<OptionMenuItem disabled>{t("common.loading", { defaultValue: "Loading…" })}</OptionMenuItem>
 				) : null}
+				{catalogKnown && supportsCustomModel ? (
+					<OptionMenuSub>
+						<OptionMenuSubTrigger
+							className="text-sm text-settings-muted"
+							aria-label={`Custom ${agent.label} model`}
+							label={t("settings.models.custom")}
+						/>
+						<OptionMenuSubContent className="w-[15rem]">
+							<ReviewerCustomModelOption
+								label={agent.label}
+								currentModel={isCurrent ? currentModel : ""}
+								onSelect={(nextModel) => onSelect(persistHarness, { model: nextModel })}
+							/>
+						</OptionMenuSubContent>
+					</OptionMenuSub>
+				) : null}
 				{modelOptions(catalog).map((option) => {
 					const selected =
 						isCurrent &&
