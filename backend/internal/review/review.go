@@ -436,14 +436,6 @@ func (e *Engine) TriggerWithSource(ctx stdctx.Context, workerID domain.SessionID
 			return TriggerResult{}, failRuns(0, err)
 		}
 	}
-	if hasConfigOverride && previousHandleID != "" && previousHandleID != handleID {
-		if err := e.launcher.Destroy(ctx, previousHandleID); err != nil {
-			if handleID != "" {
-				_ = e.launcher.Destroy(ctx, handleID)
-			}
-			return TriggerResult{}, failRuns(0, fmt.Errorf("destroy previous reviewer: %w", err))
-		}
-	}
 	if hasConfigOverride && persistedAgentSessionID == "" && reviewRow.ID != "" {
 		if _, err := e.store.UpdateReviewAgentSessionID(ctx, reviewRow.ID, ""); err != nil {
 			if handleID != "" {
@@ -454,7 +446,19 @@ func (e *Engine) TriggerWithSource(ctx stdctx.Context, workerID domain.SessionID
 	}
 	reviewRow, err = e.upsertReview(ctx, worker, harness, handleID, persistedAgentSessionID, now)
 	if err != nil {
+		if handleID != "" {
+			_ = e.launcher.Destroy(ctx, handleID)
+		}
 		return TriggerResult{}, err
+	}
+	if hasConfigOverride && previousHandleID != "" && previousHandleID != handleID {
+		if err := e.launcher.Destroy(ctx, previousHandleID); err != nil {
+			if handleID != "" {
+				_ = e.launcher.Destroy(ctx, handleID)
+			}
+			_, _ = e.upsertReview(ctx, worker, harness, previousHandleID, launchAgentSessionID, now)
+			return TriggerResult{}, failRuns(0, fmt.Errorf("destroy previous reviewer: %w", err))
+		}
 	}
 	for i := range created {
 		created[i].ReviewID = reviewRow.ID

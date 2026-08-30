@@ -26,6 +26,9 @@ type fakeStore struct {
 		harness   domain.ReviewerHarness
 		config    domain.AgentConfig
 	}
+	upsertErr     error
+	upsertErrCall int
+	upsertCalls   int
 	// insertErr, when set, makes the next InsertReviewRun model a concurrent
 	// writer that already recorded a run for this commit: it records that
 	// winner (so a follow-up GetReviewRunBySessionAndSHA finds it) and returns
@@ -35,6 +38,10 @@ type fakeStore struct {
 }
 
 func (f *fakeStore) UpsertReview(_ context.Context, r domain.Review) error {
+	f.upsertCalls++
+	if f.upsertErr != nil && f.upsertCalls == f.upsertErrCall {
+		return f.upsertErr
+	}
 	cp := r
 	f.review = &cp
 	if f.reviews == nil {
@@ -1228,6 +1235,34 @@ func TestTriggerConfigOverrideRestartsAliveReviewerPane(t *testing.T) {
 	}
 	if store.review.AgentSessionID != "" {
 		t.Fatalf("replacement should clear stale native session id when launch reports none, got %q", store.review.AgentSessionID)
+	}
+}
+
+func TestTriggerConfigOverrideFinalUpsertFailurePreservesStoredReviewerHandle(t *testing.T) {
+	store := &fakeStore{
+		review:        &domain.Review{ID: "rev-1", SessionID: "mer-1", Harness: domain.ReviewerClaudeCode, ReviewerHandleID: "review-mer-1", AgentSessionID: "native-reviewer-1"},
+		upsertErr:     errors.New("write failed"),
+		upsertErrCall: 2,
+		runs: []domain.ReviewRun{{
+			ID: "run-1", SessionID: "mer-1", PRURL: "https://github.com/o/r/pull/1", TargetSHA: "sha1",
+			Harness: domain.ReviewerClaudeCode,
+			Status:  domain.ReviewRunComplete, Verdict: domain.VerdictApproved,
+		}},
+	}
+	worker := liveWorker()
+	worker.ReviewerHarness = domain.ReviewerClaudeCode
+	worker.ReviewerConfig = domain.AgentConfig{Model: "gpt-5"}
+	launcher := &fakeLauncher{alive: true, handle: "review-mer-2"}
+	eng := newEngineForTest(store, fakeSessions{rec: worker, ok: true}, prAt("sha1"), fakeProjects{}, launcher)
+
+	if _, err := eng.Trigger(context.Background(), "mer-1", domain.ReviewerClaudeCode, domain.AgentConfig{Model: "gpt-5-mini"}); err == nil || !strings.Contains(err.Error(), "write failed") {
+		t.Fatalf("Trigger error = %v, want final upsert failure", err)
+	}
+	if !launcher.spawned || !launcher.destroyed || launcher.destroyedHandle != "review-mer-2" {
+		t.Fatalf("replacement reviewer should be cleaned up after upsert failure: %+v", launcher)
+	}
+	if store.review == nil || store.review.ReviewerHandleID != "review-mer-1" || store.review.AgentSessionID != "" {
+		t.Fatalf("stored review row = %+v, want old handle retained with cleared stale native id", store.review)
 	}
 }
 
