@@ -83,7 +83,6 @@ export function ReviewerSelect({
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 	const [menuOpen, setMenuOpen] = useState(false);
-	const [customModel, setCustomModel] = useState("");
 	const fallbackAgents: AgentInfo[] = [...KNOWN_REVIEWER_HARNESS_IDS].map((id) => ({ id, label: agentLabel(id) }));
 	const filteredSupported = (supported ?? fallbackAgents).filter((a) => KNOWN_REVIEWER_HARNESS_IDS.has(a.id));
 	const supportedAgents = filteredSupported.length > 0 ? filteredSupported : fallbackAgents;
@@ -115,16 +114,7 @@ export function ReviewerSelect({
 			void queryClient.prefetchQuery(agentModelsQueryOptions(harness, menuProjectID));
 		}
 	}, [defaultHarness, menuOpen, menuProjectID, queryClient, selectableOptions]);
-	useEffect(() => {
-		if (!menuOpen) setCustomModel("");
-	}, [menuOpen]);
 	const selectedModelLabel = modelOrModeLabel(triggerCatalog.data, model, mode, t("settings.models.agentDefault"));
-	const customModelActionLabel = useMemo(() => {
-		const nextModel = customModel.trim();
-		return nextModel !== ""
-			? t("settings.models.useCustom", { model: nextModel })
-			: t("settings.models.custom");
-	}, [customModel, t]);
 	const triggerLabel = [value ? agentLabel(value) : (defaultTriggerLabel ?? defaultOptionLabel ?? defaultHarness), selectedModelLabel]
 		.filter(Boolean)
 		.join(" · ");
@@ -177,37 +167,6 @@ export function ReviewerSelect({
 						persistHarness={agent.id}
 					/>
 				))}
-				{supportsReviewerCustomModel(triggerCatalog.data) && effectiveHarness ? (
-					<>
-						<div className="p-1" onKeyDown={(event) => event.stopPropagation()}>
-							<input
-								type="text"
-								aria-label={`Custom ${agentLabel(effectiveHarness)} model`}
-								value={customModel}
-								onChange={(event) => setCustomModel(event.target.value)}
-								placeholder={model || t("settings.models.custom")}
-								className="settings-inline-input w-full"
-								onKeyDown={(event) => {
-									if (event.key !== "Enter") return;
-									const nextModel = customModel.trim();
-									if (nextModel === "") return;
-									event.preventDefault();
-									onConfigChange?.(value, { model: nextModel });
-								}}
-							/>
-						</div>
-						<OptionMenuItem
-							onSelect={() => {
-								const nextModel = customModel.trim();
-								if (nextModel === "") return;
-								onConfigChange?.(value, { model: nextModel });
-							}}
-							disabled={customModel.trim() === ""}
-						>
-							<span className="min-w-0 truncate">{customModelActionLabel}</span>
-						</OptionMenuItem>
-					</>
-				) : null}
 			</OptionMenuContent>
 		</OptionMenu>
 	);
@@ -240,9 +199,6 @@ function ReviewerHarnessOption({
 	});
 	const catalog = catalogQuery.data;
 	const isCurrent = currentHarness === persistHarness;
-	const currentLabel = isCurrent
-		? modelOrModeLabel(catalog, currentModel, currentMode, t("settings.models.agentDefault"))
-		: "";
 
 	if (!resolvedHarness) {
 		return (
@@ -256,15 +212,50 @@ function ReviewerHarnessOption({
 	}
 
 	const hasChoices = hasModelChoices(catalog);
+	const supportsCustomModel = supportsReviewerCustomModel(catalog);
 	const catalogKnown = catalogQuery.data !== undefined || catalogQuery.isFetched;
+
 	if (catalogKnown && !hasChoices) {
 		return (
-			<OptionMenuItem
-				onSelect={() => onSelect(persistHarness, {})}
-				active={isCurrent && currentModel === "" && currentMode === ""}
-				className="reviews-agent-menu-item"
-				disabled={agent.disabled}
-			>
+			<>
+				<OptionMenuItem
+					onSelect={() => onSelect(persistHarness, {})}
+					active={isCurrent && currentModel === "" && currentMode === ""}
+					className="reviews-agent-menu-item"
+					disabled={agent.disabled}
+				>
+					<AgentSelectMenuItem
+						agentId={resolvedHarness}
+						label={agent.label}
+						selected={isCurrent}
+						status={agent.status}
+						statusTone={agent.statusTone}
+						disabled={agent.disabled}
+					/>
+				</OptionMenuItem>
+				{supportsCustomModel ? (
+					<OptionMenuSub>
+						<OptionMenuSubTrigger
+							className="pl-8 text-sm text-settings-muted"
+							aria-label={`Custom ${agent.label} model`}
+							label={t("settings.models.custom")}
+						/>
+						<OptionMenuSubContent className="w-[15rem]">
+							<ReviewerCustomModelOption
+								label={agent.label}
+								currentModel={isCurrent ? currentModel : ""}
+								onSelect={(nextModel) => onSelect(persistHarness, { model: nextModel })}
+							/>
+						</OptionMenuSubContent>
+					</OptionMenuSub>
+				) : null}
+			</>
+		);
+	}
+
+	return (
+		<OptionMenuSub open={open} onOpenChange={setOpen}>
+			<OptionMenuSubTrigger disabled={agent.disabled} aria-label={agent.status ? `${agent.label}${agent.status}` : agent.label}>
 				<AgentSelectMenuItem
 					agentId={resolvedHarness}
 					label={agent.label}
@@ -273,28 +264,6 @@ function ReviewerHarnessOption({
 					statusTone={agent.statusTone}
 					disabled={agent.disabled}
 				/>
-			</OptionMenuItem>
-		);
-	}
-
-	return (
-		<OptionMenuSub open={open} onOpenChange={setOpen}>
-			<OptionMenuSubTrigger disabled={agent.disabled} aria-label={agent.status ? `${agent.label}${agent.status}` : agent.label}>
-				<div className="flex min-w-0 items-center justify-between gap-3">
-					<div className="min-w-0">
-						<AgentSelectMenuItem
-							agentId={resolvedHarness}
-							label={agent.label}
-							selected={isCurrent}
-							status={agent.status}
-							statusTone={agent.statusTone}
-							disabled={agent.disabled}
-						/>
-					</div>
-					<span aria-hidden="true" className="min-w-0 truncate text-muted-foreground">
-						{currentLabel || t("settings.models.agentDefault")}
-					</span>
-				</div>
 			</OptionMenuSubTrigger>
 			<OptionMenuSubContent className="w-[15rem]">
 				<OptionMenuItem
@@ -310,7 +279,10 @@ function ReviewerHarnessOption({
 					<OptionMenuItem disabled>{t("common.loading", { defaultValue: "Loading…" })}</OptionMenuItem>
 				) : null}
 				{modelOptions(catalog).map((option) => {
-					const selected = isCurrent && ((option.kind === "mode" && currentMode === option.value) || (option.kind === "model" && currentModel === option.value));
+					const selected =
+						isCurrent &&
+						((option.kind === "mode" && currentMode === option.value) ||
+							(option.kind === "model" && currentModel === option.value));
 					return (
 						<OptionMenuItem
 							key={`${option.kind}:${option.value}`}
@@ -322,10 +294,61 @@ function ReviewerHarnessOption({
 								{selected ? <Check aria-hidden="true" className="size-4" /> : null}
 							</span>
 						</OptionMenuItem>
-						);
+					);
 				})}
 			</OptionMenuSubContent>
 		</OptionMenuSub>
+	);
+}
+
+function ReviewerCustomModelOption({
+	label,
+	currentModel,
+	onSelect,
+}: {
+	label: string;
+	currentModel: string;
+	onSelect: (model: string) => void;
+}) {
+	const { t } = useTranslation();
+	const [customModel, setCustomModel] = useState("");
+	const customModelActionLabel = useMemo(() => {
+		const nextModel = customModel.trim();
+		return nextModel !== ""
+			? t("settings.models.useCustom", { model: nextModel })
+			: t("settings.models.custom");
+	}, [customModel, t]);
+
+	return (
+		<>
+			<div className="p-1" onKeyDown={(event) => event.stopPropagation()}>
+				<input
+					type="text"
+					aria-label={`Custom ${label} model`}
+					value={customModel}
+					onChange={(event) => setCustomModel(event.target.value)}
+					placeholder={currentModel || t("settings.models.custom")}
+					className="settings-inline-input w-full"
+					onKeyDown={(event) => {
+						if (event.key !== "Enter") return;
+						const nextModel = customModel.trim();
+						if (nextModel === "") return;
+						event.preventDefault();
+						onSelect(nextModel);
+					}}
+				/>
+			</div>
+			<OptionMenuItem
+				onSelect={() => {
+					const nextModel = customModel.trim();
+					if (nextModel === "") return;
+					onSelect(nextModel);
+				}}
+				disabled={customModel.trim() === ""}
+			>
+				<span className="min-w-0 truncate">{customModelActionLabel}</span>
+			</OptionMenuItem>
+		</>
 	);
 }
 
