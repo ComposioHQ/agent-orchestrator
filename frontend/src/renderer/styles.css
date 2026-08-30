@@ -2278,7 +2278,15 @@ html.sidebar-reordering * {
 }
 
 .queue-dock-scroll {
+	display: flex;
+	min-height: 100%;
+	flex-direction: column;
+	justify-content: flex-end;
 	overflow-y: hidden;
+}
+
+.queue-dock-scroll > .queue-dock-row {
+	flex: none;
 }
 
 .queue-dock-scroll-active {
