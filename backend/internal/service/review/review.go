@@ -473,7 +473,7 @@ func (s *Service) RestoreReviewer(ctx context.Context, workerID domain.SessionID
 	return err
 }
 
-// RecoverChatReviewers restores running typed reviewer controllers after a
+// RecoverChatReviewers restores durable typed reviewer controllers after a
 // daemon restart without creating or resending review tasks.
 func (s *Service) RecoverChatReviewers(ctx context.Context) error {
 	return s.engine.RecoverChatReviewers(ctx)

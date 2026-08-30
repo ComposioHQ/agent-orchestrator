@@ -273,6 +273,21 @@ BEGIN
       AND id IN (SELECT active_branch_id FROM conversations WHERE current_review_id = NEW.id);
 END;
 
+CREATE TRIGGER review_conversation_title_cdc_update
+AFTER UPDATE OF provider_title ON conversations
+WHEN OLD.provider_title <> NEW.provider_title AND NEW.current_review_id IS NOT NULL BEGIN
+    INSERT INTO change_log (project_id, session_id, event_type, payload, created_at)
+    SELECT s.project_id, s.id, 'session_updated',
+           json_object('id', s.id, 'sessionId', s.id, 'reviewId', r.id,
+                       'conversationId', NEW.id,
+                       'activity', s.activity_state,
+                       'isTerminated', json(CASE WHEN s.is_terminated THEN 'true' ELSE 'false' END)),
+           NEW.updated_at
+    FROM review r
+    JOIN sessions s ON s.id = r.session_id
+    WHERE r.id = NEW.current_review_id;
+END;
+
 CREATE TRIGGER conversation_messages_cdc_insert AFTER INSERT ON conversation_messages BEGIN
     INSERT INTO change_log (project_id, session_id, event_type, payload, created_at)
     SELECT s.project_id, s.id, 'session_updated',

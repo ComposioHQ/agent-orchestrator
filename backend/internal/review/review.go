@@ -547,7 +547,7 @@ func (e *Engine) RestoreReviewer(ctx stdctx.Context, workerID domain.SessionID) 
 	return e.restoreReviewerLocked(ctx, workerID, worker, harness)
 }
 
-// RecoverChatReviewers resumes running typed reviewer conversations whose
+// RecoverChatReviewers resumes durable typed reviewer conversations whose
 // in-memory controllers disappeared with the previous daemon process.
 func (e *Engine) RecoverChatReviewers(ctx stdctx.Context) error {
 	store, ok := e.store.(recoverableChatReviewStore)

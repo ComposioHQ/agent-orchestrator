@@ -298,6 +298,13 @@ func TestReviewerConversationCDCIdentifiesTheReviewOwner(t *testing.T) {
 
 	mustExec(t, db, `UPDATE conversation_turns SET state='completed', completed_at=? WHERE id='review-turn-1'`, now)
 	assertReviewerConversationCDC(t, db, "review-1")
+
+	beforeTitle := countConversationCDC(t, db, "review-conv-1")
+	mustExec(t, db, `UPDATE conversations SET provider_title='Reviewer Found a Race', updated_at=? WHERE id='review-conv-1'`, now)
+	if got := countConversationCDC(t, db, "review-conv-1"); got != beforeTitle+1 {
+		t.Fatalf("provider-title invalidations = %d, want %d", got, beforeTitle+1)
+	}
+	assertReviewerConversationCDC(t, db, "review-1")
 }
 
 func assertReviewerConversationCDC(t *testing.T, db *sql.DB, wantReviewID string) {
@@ -313,6 +320,17 @@ func assertReviewerConversationCDC(t *testing.T, db *sql.DB, wantReviewID string
 	if reviewID != wantReviewID {
 		t.Fatalf("reviewer CDC reviewId = %q, want %q", reviewID, wantReviewID)
 	}
+}
+
+func countConversationCDC(t *testing.T, db *sql.DB, conversationID string) int {
+	t.Helper()
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM change_log
+		WHERE event_type = 'session_updated'
+		  AND json_extract(payload, '$.conversationId') = ?`, conversationID).Scan(&count); err != nil {
+		t.Fatalf("count conversation CDC: %v", err)
+	}
+	return count
 }
 
 func mustExec(t *testing.T, db *sql.DB, query string, args ...any) {
