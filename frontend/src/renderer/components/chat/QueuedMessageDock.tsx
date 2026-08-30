@@ -11,6 +11,7 @@ function QueuedMessageRow({
 	turnId,
 	message,
 	hiddenFromView,
+	showHoverSteer,
 	canSteer,
 	onPromoteQueuedTurn,
 	onBeginQueuedEdit,
@@ -22,6 +23,7 @@ function QueuedMessageRow({
 	turnId: string;
 	message: ConversationMessage;
 	hiddenFromView?: boolean;
+	showHoverSteer?: boolean;
 	canSteer?: boolean;
 	onPromoteQueuedTurn?: (turnId: string) => Promise<unknown>;
 	onBeginQueuedEdit?: (turnId: string, text: string) => void;
@@ -32,7 +34,7 @@ function QueuedMessageRow({
 }) {
 	return (
 		<div
-			className="queue-dock-row"
+			className="queue-dock-row group/queued-row"
 			data-testid={`queued-message-${turnId}`}
 			aria-hidden={hiddenFromView ? true : undefined}
 			inert={hiddenFromView ? true : undefined}
@@ -50,6 +52,20 @@ function QueuedMessageRow({
 					{message.text}
 				</p>
 				<div className="queue-dock-actions flex shrink-0 items-center gap-0.5 whitespace-nowrap">
+					{showHoverSteer && onPromoteQueuedTurn ? (
+						<button
+							type="button"
+							disabled={busy}
+							onClick={() => {
+								void onRunAction(turnId, () => onPromoteQueuedTurn(turnId));
+							}}
+							className="inline-flex h-7 items-center rounded-lg px-2 text-[11px] leading-none text-muted-foreground opacity-0 pointer-events-none transition-[background-color,color,opacity] duration-150 ease-out hover:bg-interactive-hover hover:text-foreground group-hover/queued-row:pointer-events-auto group-hover/queued-row:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100 disabled:opacity-50 motion-reduce:transition-none"
+							aria-label="Steer this queued message into the running turn"
+							title="Steer into running turn"
+						>
+							Steer
+						</button>
+					) : null}
 					{canSteer && onPromoteQueuedTurn ? (
 						<button
 							type="button"
@@ -126,6 +142,9 @@ export function QueuedMessageDock({
 }) {
 	const [expanded, setExpanded] = useState(true);
 	const [errors, setErrors] = useState<Record<string, string>>({});
+	const [optimisticallySteeredTurnIds, setOptimisticallySteeredTurnIds] = useState<Set<string>>(
+		() => new Set(),
+	);
 	const scrollRef = useRef<HTMLDivElement>(null);
 
 	const runAction = useCallback(
@@ -148,11 +167,30 @@ export function QueuedMessageDock({
 		[],
 	);
 
-	const count = messages.length;
+	const visibleMessages = messages.filter(({ turnId }) => !optimisticallySteeredTurnIds.has(turnId));
+	const count = visibleMessages.length;
 	const hasMore = count > 1;
 	const isOpen = !hasMore || expanded;
 	const expandedRows = Math.min(count, QUEUE_DOCK_VISIBLE_ROWS);
-	const displayMessages = [...messages].reverse();
+	const displayMessages = [...visibleMessages].reverse();
+
+	const promoteQueuedTurn = useCallback(
+		async (turnId: string) => {
+			setOptimisticallySteeredTurnIds((current) => new Set(current).add(turnId));
+			try {
+				if (!onPromoteQueuedTurn) return;
+				await onPromoteQueuedTurn(turnId);
+			} catch (error) {
+				setOptimisticallySteeredTurnIds((current) => {
+					const next = new Set(current);
+					next.delete(turnId);
+					return next;
+				});
+				throw error;
+			}
+		},
+		[onPromoteQueuedTurn],
+	);
 
 	useEffect(() => {
 		if (!isOpen || count <= QUEUE_DOCK_VISIBLE_ROWS) return;
@@ -162,7 +200,7 @@ export function QueuedMessageDock({
 
 	const rowProps = {
 		canSteer,
-		onPromoteQueuedTurn,
+		onPromoteQueuedTurn: onPromoteQueuedTurn ? promoteQueuedTurn : undefined,
 		onBeginQueuedEdit,
 		onCancelQueuedTurn,
 		onRunAction: runAction,
@@ -232,6 +270,7 @@ export function QueuedMessageDock({
 									turnId={turnId}
 									message={message}
 									hiddenFromView={!isOpen && index !== displayMessages.length - 1}
+									showHoverSteer={canSteer && index !== displayMessages.length - 1}
 									busy={busy}
 									error={errors[turnId]}
 									{...rowProps}
