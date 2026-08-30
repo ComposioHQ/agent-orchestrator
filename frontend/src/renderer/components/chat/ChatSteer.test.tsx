@@ -208,7 +208,9 @@ describe("ChatWorkspace steering", () => {
 		await userEvent.click(screen.getByRole("button", { expanded: true }));
 		expect(screen.getByRole("button", { expanded: false })).toBeInTheDocument();
 		expect(within(dock).getByText("first queued")).toBeVisible();
-		expect(within(dock).getByTestId("queued-message-queued-2")).toHaveAttribute("aria-hidden", "true");
+		const hiddenRow = within(dock).getByTestId("queued-message-queued-2");
+		expect(hiddenRow).toHaveAttribute("aria-hidden", "true");
+		expect(hiddenRow).toHaveAttribute("inert");
 	});
 
 	it("hides a cancelled queued message from the timeline", () => {

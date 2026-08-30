@@ -31,7 +31,11 @@ function QueuedMessageRow({
 	onRunAction: (turnId: string, action: () => Promise<unknown>) => void;
 }) {
 	return (
-		<div data-testid={`queued-message-${turnId}`} aria-hidden={hiddenFromView ? true : undefined}>
+		<div
+			data-testid={`queued-message-${turnId}`}
+			aria-hidden={hiddenFromView ? true : undefined}
+			inert={hiddenFromView ? true : undefined}
+		>
 			<div className="flex min-h-9 min-w-0 items-center gap-2.5 px-3 py-1.5">
 				<Circle
 					aria-hidden="true"
