@@ -75,13 +75,11 @@ SET provider_conversation_id = sqlc.arg(provider_conversation_id),
 WHERE id = sqlc.arg(id) AND interface_mode = 'chat';
 
 -- name: ListRecoverableChatReviews :many
-SELECT DISTINCT r.*
-FROM review r
-JOIN review_run rr ON rr.review_id = r.id
-WHERE r.interface_mode = 'chat'
-  AND r.provider_conversation_id != ''
-  AND rr.status = 'running'
-ORDER BY r.updated_at, r.id;
+SELECT *
+FROM review
+WHERE interface_mode = 'chat'
+  AND provider_conversation_id != ''
+ORDER BY updated_at, id;
 
 -- name: ClearReviewerHandle :exec
 UPDATE review SET reviewer_handle_id = '', updated_at = CURRENT_TIMESTAMP WHERE session_id = ?;

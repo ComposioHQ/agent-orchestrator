@@ -10,9 +10,10 @@ import {
 
 type WireSnapshot = components["schemas"]["ConversationSnapshotResponse"];
 const REVIEWER_CONVERSATION_PAGE_SIZE = 200;
+export const reviewerConversationQueryRoot = ["reviewer-conversation"] as const;
 
 export function reviewerConversationQueryKey(reviewId: string) {
-	return ["reviewer-conversation", reviewId] as const;
+	return [...reviewerConversationQueryRoot, reviewId] as const;
 }
 
 export function useReviewerConversation(reviewId: string | undefined) {
@@ -35,12 +36,6 @@ export function useReviewerConversation(reviewId: string | undefined) {
 		},
 		getNextPageParam: (page) => (page.hasMoreBefore ? page.oldestSequence : undefined),
 		select: (data) => mergeConversationPages(data.pages),
-		refetchInterval: (query) => {
-			// TanStack passes the cache Query here. `select` transforms the observer
-			// result, while cache state retains the raw InfiniteData page structure.
-			const snapshot = query.state.data?.pages[0];
-			return snapshot?.controller.state === "busy" ? 500 : 2_000;
-		},
 	});
 	return {
 		snapshot: query.data,

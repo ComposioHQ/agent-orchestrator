@@ -285,7 +285,8 @@ CREATE TRIGGER conversation_messages_cdc_insert AFTER INSERT ON conversation_mes
     WHERE c.id = NEW.conversation_id
     UNION ALL
     SELECT s.project_id, s.id, 'session_updated',
-           json_object('id', s.id, 'sessionId', s.id, 'conversationId', c.id,
+           json_object('id', s.id, 'sessionId', s.id, 'reviewId', r.id,
+                       'conversationId', c.id,
                        'activity', s.activity_state,
                        'isTerminated', json(CASE WHEN s.is_terminated THEN 'true' ELSE 'false' END)),
            NEW.updated_at
@@ -306,7 +307,8 @@ WHEN OLD.revision <> NEW.revision BEGIN
     WHERE c.id = NEW.conversation_id
     UNION ALL
     SELECT s.project_id, s.id, 'session_updated',
-           json_object('id', s.id, 'sessionId', s.id, 'conversationId', c.id,
+           json_object('id', s.id, 'sessionId', s.id, 'reviewId', r.id,
+                       'conversationId', c.id,
                        'activity', s.activity_state,
                        'isTerminated', json(CASE WHEN s.is_terminated THEN 'true' ELSE 'false' END)), NEW.updated_at
     FROM conversations c JOIN review r ON r.id = c.current_review_id
@@ -323,7 +325,8 @@ CREATE TRIGGER conversation_activities_cdc_insert AFTER INSERT ON conversation_a
     WHERE c.id = NEW.conversation_id
     UNION ALL
     SELECT s.project_id, s.id, 'session_updated',
-           json_object('id', s.id, 'sessionId', s.id, 'conversationId', c.id,
+           json_object('id', s.id, 'sessionId', s.id, 'reviewId', r.id,
+                       'conversationId', c.id,
                        'activity', s.activity_state,
                        'isTerminated', json(CASE WHEN s.is_terminated THEN 'true' ELSE 'false' END)), NEW.updated_at
     FROM conversations c JOIN review r ON r.id = c.current_review_id
@@ -341,7 +344,8 @@ WHEN OLD.revision <> NEW.revision BEGIN
     WHERE c.id = NEW.conversation_id
     UNION ALL
     SELECT s.project_id, s.id, 'session_updated',
-           json_object('id', s.id, 'sessionId', s.id, 'conversationId', c.id,
+           json_object('id', s.id, 'sessionId', s.id, 'reviewId', r.id,
+                       'conversationId', c.id,
                        'activity', s.activity_state,
                        'isTerminated', json(CASE WHEN s.is_terminated THEN 'true' ELSE 'false' END)), NEW.updated_at
     FROM conversations c JOIN review r ON r.id = c.current_review_id
@@ -352,7 +356,9 @@ CREATE TRIGGER conversation_turns_cdc_update AFTER UPDATE ON conversation_turns
 WHEN OLD.state <> NEW.state BEGIN
     INSERT INTO change_log (project_id, session_id, event_type, payload, created_at)
     SELECT s.project_id, s.id, 'session_updated',
-           json_object('id', s.id, 'sessionId', s.id, 'conversationId', NEW.conversation_id,
+           json_object('id', s.id, 'sessionId', s.id,
+                       'reviewId', NEW.handled_by_review_id,
+                       'conversationId', NEW.conversation_id,
                        'activity', s.activity_state,
                        'isTerminated', json(CASE WHEN s.is_terminated THEN 'true' ELSE 'false' END)),
            COALESCE(NEW.completed_at, NEW.started_at, NEW.requested_at)

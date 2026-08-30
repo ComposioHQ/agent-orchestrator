@@ -509,13 +509,11 @@ func (q *Queries) ListCurrentHeadReviewRunsBySessions(ctx context.Context, jsonE
 }
 
 const listRecoverableChatReviews = `-- name: ListRecoverableChatReviews :many
-SELECT DISTINCT r.id, r.session_id, r.project_id, r.harness, r.pr_url, r.reviewer_handle_id, r.agent_session_id, r.created_at, r.updated_at, r.interface_mode, r.provider_conversation_id, r.controller_generation, r.controller_error
-FROM review r
-JOIN review_run rr ON rr.review_id = r.id
-WHERE r.interface_mode = 'chat'
-  AND r.provider_conversation_id != ''
-  AND rr.status = 'running'
-ORDER BY r.updated_at, r.id
+SELECT id, session_id, project_id, harness, pr_url, reviewer_handle_id, agent_session_id, created_at, updated_at, interface_mode, provider_conversation_id, controller_generation, controller_error
+FROM review
+WHERE interface_mode = 'chat'
+  AND provider_conversation_id != ''
+ORDER BY updated_at, id
 `
 
 func (q *Queries) ListRecoverableChatReviews(ctx context.Context) ([]Review, error) {

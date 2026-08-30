@@ -83,7 +83,7 @@ describe("useReviewerConversation pagination", () => {
 		expect(result.current.hasOlder).toBe(false);
 	});
 
-	it("polls busy reviewer conversations on the fast interval after selecting merged data", async () => {
+	it("does not poll busy reviewer conversations while CDC owns invalidation", async () => {
 		getMock.mockResolvedValue({
 			data: page({
 				id: "streaming",
@@ -96,9 +96,8 @@ describe("useReviewerConversation pagination", () => {
 
 		const { unmount } = renderHook(() => useReviewerConversation("review-1"), { wrapper });
 		await waitFor(() => expect(getMock).toHaveBeenCalledTimes(1));
-		await waitFor(() => expect(getMock.mock.calls.length).toBeGreaterThanOrEqual(2), {
-			timeout: 1_200,
-		});
+		await new Promise((resolve) => setTimeout(resolve, 750));
+		expect(getMock).toHaveBeenCalledTimes(1);
 		unmount();
 	});
 });

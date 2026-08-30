@@ -2719,8 +2719,8 @@ func (c *Controller) reportInteractionResolved(ctx context.Context, event string
 	c.reportActivity(ctx, domain.ActivityActive, event, now)
 }
 
-// applyThreadTitle records a title the provider reports for the thread and, when
-// it may, adopts it as the session's label.
+// applyThreadTitle records a title the provider reports for the thread and, for
+// session-owned conversations, adopts it as the session's label when it may.
 //
 // The session's display name is the field that already exists for this, so a
 // provider title lands there rather than in a parallel one — every surface that
@@ -2738,7 +2738,7 @@ func (c *Controller) applyThreadTitle(ctx context.Context, title string, now tim
 	if err := c.store.SetProviderTitle(ctx, c.conversation.ID, normalized, now); err != nil {
 		return err
 	}
-	if normalized == "" {
+	if normalized == "" || c.owner.Kind == domain.ConversationOwnerReview {
 		return nil
 	}
 	applied, err := c.store.ApplyProviderTitle(

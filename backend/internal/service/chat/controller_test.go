@@ -464,6 +464,54 @@ func TestStartRestoresReviewOwnedConversation(t *testing.T) {
 	}
 }
 
+func TestReviewOwnedProviderTitleDoesNotRenameWorkerSession(t *testing.T) {
+	ctx := context.Background()
+	st := openStore(t)
+	reviewID := "review-chat-title"
+	now := time.Now().UTC()
+	if err := st.UpsertReview(ctx, domain.Review{
+		ID: reviewID, SessionID: testSession, ProjectID: testProject,
+		Harness: domain.ReviewerCodex, InterfaceMode: domain.ReviewerInterfaceChat,
+		CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("UpsertReview: %v", err)
+	}
+	provider := newFakeConversation()
+	svc := chatsvc.New(chatsvc.Options{
+		Store: st, Sessions: st,
+		Drivers: fakeRegistry{driver: fakeDriver{conv: provider}},
+		Log:     slog.New(slog.DiscardHandler),
+		NewID:   func() string { return "review-title-conversation" },
+	})
+	t.Cleanup(func() {
+		_ = svc.StopForOwner(context.Background(), domain.ReviewConversationOwner(reviewID))
+	})
+
+	ctrl, err := svc.Start(ctx, chatsvc.StartConfig{
+		Owner: domain.ReviewConversationOwner(reviewID), SessionID: testSession,
+		ProjectID: testProject, Kind: domain.KindWorker, Harness: domain.HarnessCodex,
+		WorkspacePath: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("start reviewer chat controller: %v", err)
+	}
+
+	provider.emit(ports.ChatEvent{
+		Kind: ports.ChatEventThreadRenamed, Title: "Reviewer Found a Race",
+	})
+	awaitStoreSnapshot(t, st, ctrl.ConversationID(), func(snapshot store.ConversationSnapshot) bool {
+		return snapshot.Conversation.ProviderTitle == "Reviewer Found a Race"
+	})
+
+	worker, found, err := st.GetSession(ctx, testSession)
+	if err != nil || !found {
+		t.Fatalf("GetSession: found=%v err=%v", found, err)
+	}
+	if worker.DisplayName != "" {
+		t.Fatalf("worker display name = %q, want reviewer title kept review-local", worker.DisplayName)
+	}
+}
+
 func TestFailedChatProbeCanBeRetriedThenCached(t *testing.T) {
 	attempts := 0
 	driver := fakeDriver{probe: func() error {
