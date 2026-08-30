@@ -2657,6 +2657,7 @@ export interface components {
             location: string;
             ready: boolean;
             running: boolean;
+            supported: boolean;
         };
         MuteDeviceRequest: {
             /** @description True to stop sending push notifications to this device. */

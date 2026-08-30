@@ -89,6 +89,7 @@ beforeEach(() => {
 	mobileStatus.enabled = true;
 	mobileStatus.host = "192.168.1.42";
 	mobileStatus.hostId = "h_fixture";
+	mobileStatus.tunnel = undefined;
 	mobileStatus.endpoints = [{ kind: "lan", host: "192.168.1.42", port: 3011, secure: false }];
 	mobileStatus.tailscaleHost = "100.72.46.7";
 	mobileStatus.warning = "";
@@ -398,4 +399,30 @@ test("does not poll when there is no tunnel to wait for", () => {
 	expect(mobileStatusRefetchInterval({ tunnel: { running: false, ready: false } })).toBe(false);
 	expect(mobileStatusRefetchInterval({ tunnel: undefined })).toBe(false);
 	expect(mobileStatusRefetchInterval(undefined)).toBe(false);
+});
+
+// Remote access is optional: nothing installs cloudflared, so on a machine
+// without it there is no connector at all. A zero tunnel status made that
+// indistinguishable from "not started yet", so the QR looked entirely normal
+// and the user discovered the gap only by being away from home.
+test("says so when this machine cannot be reached from elsewhere", async () => {
+	mobileStatus.tunnel = {
+		supported: false, running: false, ready: false, hostname: "", location: "", lastError: "",
+	};
+	renderMobileSettings();
+
+	expect(await screen.findByTestId("mobile-remote-unavailable")).toHaveTextContent(
+		/only|cloudflared/i,
+	);
+});
+
+// A machine that has a connector must not carry the caveat, whether or not the
+// tunnel happens to be up yet.
+test("does not claim unavailability while the connector is merely starting", async () => {
+	mobileStatus.tunnel = {
+		supported: true, running: true, ready: false, hostname: "", location: "", lastError: "",
+	};
+	renderMobileSettings();
+
+	await waitFor(() => expect(screen.queryByTestId("mobile-remote-unavailable")).toBeNull());
 });

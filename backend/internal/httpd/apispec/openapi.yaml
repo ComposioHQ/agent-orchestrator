@@ -7729,7 +7729,10 @@ components:
           type: boolean
         running:
           type: boolean
+        supported:
+          type: boolean
       required:
+      - supported
       - running
       - ready
       - hostname

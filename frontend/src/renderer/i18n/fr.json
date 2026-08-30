@@ -439,6 +439,7 @@
 	"mobile.loadFailed": "Échec du chargement de l'état mobile.",
 	"mobile.noPairingHost": "Aucune adresse réseau trouvée pour cet ordinateur. Connectez-vous au Wi-Fi ou à Ethernet, ou configurez Tailscale.",
 	"mobile.tunnelStarting": "Préparation de l'accès à distance — 30-60 s",
+	"mobile.remoteAccessUnavailable": "Fonctionne uniquement sur ce réseau — cloudflared n'est pas installé, cette machine n'est donc pas joignable de l'extérieur.",
 	"mobile.noTailscaleHost": "Tailscale n'est pas en cours d'exécution sur cet ordinateur. Installez-le, connectez-vous, puis rouvrez cette fenêtre.",
 	"mobile.password": "Mot de passe",
 	"mobile.passwordCopied": "Mot de passe copié",

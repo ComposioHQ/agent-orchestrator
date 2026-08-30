@@ -279,6 +279,12 @@ func ReapStaleTunnel(path string, isOurs func(pid int) bool, kill func(pid int) 
 // TunnelStatus is the connector's observable state, for the desktop's Connect
 // Mobile panel.
 type TunnelStatus struct {
+	// Supported is false when this machine has no connector at all — cloudflared
+	// is absent and nothing installs it. Without this, "no connector" and "not
+	// started yet" were both a zero value, so the desktop showed an ordinary QR
+	// and the user had no way to learn that reaching this machine from outside
+	// the network is simply not available here.
+	Supported bool   `json:"supported"`
 	Running   bool   `json:"running"`
 	Ready     bool   `json:"ready"`
 	Hostname  string `json:"hostname"`

@@ -437,6 +437,7 @@
 	"mobile.loadFailed": "モバイルステータスの読み込みに失敗しました。",
 	"mobile.noPairingHost": "このコンピュータのネットワークアドレスが見つかりません。Wi-Fi またはイーサネットに接続するか、Tailscale を設定してください。",
 	"mobile.tunnelStarting": "リモートアクセスを準備中 — 30〜60秒",
+	"mobile.remoteAccessUnavailable": "このネットワーク内でのみ利用できます — cloudflared が未インストールのため、外部からは接続できません。",
 	"mobile.noTailscaleHost": "このコンピュータで Tailscale が実行されていません。インストールしてサインインしてから、このウィンドウを開き直してください。",
 	"mobile.password": "パスワード",
 	"mobile.passwordCopied": "パスワードをコピーしました",

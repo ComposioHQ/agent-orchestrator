@@ -219,9 +219,11 @@ func (b *BridgeService) tunnelEndpoint() *mobilebridge.TunnelEndpoint {
 
 func (b *BridgeService) tunnelStatus() mobilebridge.TunnelStatus {
 	if b.Tunnel == nil {
-		return mobilebridge.TunnelStatus{}
+		return mobilebridge.TunnelStatus{} // Supported stays false: nothing to run.
 	}
-	return b.Tunnel.Status()
+	st := b.Tunnel.Status()
+	st.Supported = true
+	return st
 }
 
 func (b *BridgeService) queryTS() mobilebridge.TailscaleInfo {

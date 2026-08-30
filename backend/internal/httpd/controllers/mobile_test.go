@@ -729,3 +729,27 @@ func TestShutdownTunnelWithoutAConnector(t *testing.T) {
 
 	b.ShutdownTunnel()
 }
+
+// Remote access is optional: without cloudflared there is no connector at all.
+// A zero TunnelStatus made that indistinguishable from "not started yet", so
+// the desktop showed a normal QR and the user had no way to learn that
+// connecting from cellular was simply unavailable on this machine.
+func TestTunnelStatusReportsWhenRemoteAccessIsUnsupported(t *testing.T) {
+	dir := t.TempDir()
+	b := &BridgeService{ConfigPath: filepath.Join(dir, "mobile.json")}
+
+	st := b.tunnelStatus()
+
+	if st.Supported {
+		t.Fatal("no connector configured, so remote access is not supported")
+	}
+}
+
+func TestTunnelStatusReportsSupportedWhenAConnectorExists(t *testing.T) {
+	dir := t.TempDir()
+	b := &BridgeService{ConfigPath: filepath.Join(dir, "mobile.json"), Tunnel: &fakeTunnel{}}
+
+	if !b.tunnelStatus().Supported {
+		t.Fatal("a configured connector means remote access is supported")
+	}
+}

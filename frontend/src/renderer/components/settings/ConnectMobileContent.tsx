@@ -162,6 +162,9 @@ interface MobileStatus {
 	/** Managed remote-access connector state, for showing progress while the
 	 * tunnel comes up. */
 	tunnel?: {
+		/** False when this machine has no connector at all — cloudflared is
+		 * absent. Distinct from "not started yet", which is running:false. */
+		supported?: boolean;
 		running: boolean;
 		ready: boolean;
 		hostname: string;
@@ -287,6 +290,10 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 			? (status?.tailscaleHost ?? "")
 			: (status?.host ?? "");
 	const activePort = secureActive ? status!.securePairing.port : (status?.port ?? 0);
+	// No connector on this machine at all: cloudflared is absent and nothing
+	// installs it. Pairing still works on the local network, so this is a
+	// caveat to state rather than a failure to block on.
+	const remoteAccessUnavailable = status?.tunnel ? status.tunnel.supported === false : false;
 	const secureBlocked = mode === "tailscale" && (status?.securePairing?.enabled ?? false) && !secureActive;
 	const busy = enable.isPending || regenerate.isPending || disable.isPending || setSecure.isPending;
 
@@ -525,6 +532,18 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 						</div>
 					)}
 
+					{remoteAccessUnavailable && (
+						// Stated rather than hidden: pairing still works on this network,
+						// so this is a limitation of what the code can reach, not an
+						// error. Without it the QR looks entirely normal and the user
+						// discovers the gap only by being away from home.
+						<p className="mt-3 text-xs text-settings-muted" data-testid="mobile-remote-unavailable">
+							{t(
+								"mobile.remoteAccessUnavailable",
+								"Works on this network only — cloudflared isn't installed, so this machine can't be reached from elsewhere.",
+							)}
+						</p>
+					)}
 					{actionError && <p className="mt-3 text-xs text-error">{actionError}</p>}
 				</div>
 
