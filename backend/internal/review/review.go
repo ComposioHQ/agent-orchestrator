@@ -471,7 +471,7 @@ func (e *Engine) TriggerWithSource(ctx stdctx.Context, workerID domain.SessionID
 	triggerRuns := append([]domain.ReviewRun{}, created...)
 	triggerRuns = append(triggerRuns, runs...)
 	resultRun := launchRun
-	createdFlag := len(created) > 0
+	createdFlag := len(created) > 0 || len(restarted) > 0
 	return TriggerResult{Run: resultRun, ReviewerHandleID: handleID, Created: createdFlag, Reviews: reviews, Runs: triggerRuns, CreatedRuns: created}, nil
 }
 

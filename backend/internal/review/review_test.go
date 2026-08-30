@@ -1407,8 +1407,8 @@ func TestTriggerConfigOverrideWhileSameCommitRunningRestartsReview(t *testing.T)
 	if err != nil {
 		t.Fatalf("Trigger: %v", err)
 	}
-	if res.Created || res.Run.ID != "run-1" {
-		t.Fatalf("expected running same-commit config override to restart the existing run: %+v", res)
+	if !res.Created || res.Run.ID != "run-1" {
+		t.Fatalf("expected running same-commit config override to restart the existing run as a fresh pass: %+v", res)
 	}
 	if !launcher.spawned || launcher.notified {
 		t.Fatalf("config override should relaunch, not reuse running pane: %+v", launcher)
