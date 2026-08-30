@@ -1293,6 +1293,42 @@ func TestTriggerRejectsInvalidReviewerConfig(t *testing.T) {
 	}
 }
 
+func TestTriggerConfigOverrideWhileSameCommitRunningRestartsReview(t *testing.T) {
+	store := &fakeStore{
+		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", Harness: domain.ReviewerClaudeCode, ReviewerHandleID: "review-mer-1", AgentSessionID: "native-reviewer-1"},
+		runs: []domain.ReviewRun{{
+			ID: "run-1", SessionID: "mer-1", PRURL: "https://github.com/o/r/pull/1", TargetSHA: "sha1",
+			Harness: domain.ReviewerClaudeCode,
+			Status:  domain.ReviewRunRunning, Verdict: domain.VerdictNone,
+		}},
+	}
+	worker := liveWorker()
+	worker.ReviewerHarness = domain.ReviewerClaudeCode
+	worker.ReviewerConfig = domain.AgentConfig{Model: "gpt-5"}
+	launcher := &fakeLauncher{alive: true, handle: "review-mer-2"}
+	eng := newEngineForTest(store, fakeSessions{rec: worker, ok: true}, prAt("sha1"), fakeProjects{}, launcher)
+
+	res, err := eng.Trigger(context.Background(), "mer-1", domain.ReviewerClaudeCode, domain.AgentConfig{Model: "gpt-5-mini"})
+	if err != nil {
+		t.Fatalf("Trigger: %v", err)
+	}
+	if res.Created || res.Run.ID != "run-1" {
+		t.Fatalf("expected running same-commit config override to restart the existing run: %+v", res)
+	}
+	if !launcher.spawned || launcher.notified {
+		t.Fatalf("config override should relaunch, not reuse running pane: %+v", launcher)
+	}
+	if got := launcher.gotSpec.AgentConfig.Model; got != "gpt-5-mini" {
+		t.Fatalf("spawn config model = %q, want gpt-5-mini", got)
+	}
+	if got := store.runs[0]; got.Status != domain.ReviewRunRunning {
+		t.Fatalf("running run should stay active in storage while the pane restarts, got %+v", got)
+	}
+	if len(store.runs) != 1 {
+		t.Fatalf("runs = %+v, want the existing running run to be reused", store.runs)
+	}
+}
+
 func TestTriggerReusesRunningRowWithNoVerdict(t *testing.T) {
 	store := &fakeStore{
 		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", Harness: domain.ReviewerClaudeCode, ReviewerHandleID: "review-mer-1", AgentSessionID: "native-reviewer-1"},

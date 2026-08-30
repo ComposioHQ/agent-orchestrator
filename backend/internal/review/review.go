@@ -319,6 +319,7 @@ func (e *Engine) TriggerWithSource(ctx stdctx.Context, workerID domain.SessionID
 		targetSHA string
 	}
 	var pendingSupersedes []staleSupersede
+	var restarted []domain.ReviewRun
 	batchID := ""
 	for _, reviewState := range reviews {
 		// A PR that is already up to date has nothing due — unless the caller asked
@@ -335,6 +336,10 @@ func (e *Engine) TriggerWithSource(ctx stdctx.Context, workerID domain.SessionID
 		}
 		if hasConfigOverride {
 			pendingSupersedes = append(pendingSupersedes, staleSupersede{prURL: reviewState.PRURL, targetSHA: reviewState.TargetSHA})
+			if reviewState.LatestRun != nil && reviewState.LatestRun.Status == domain.ReviewRunRunning && (reviewState.LatestRun.Harness == harness || reviewState.LatestRun.Harness == "") {
+				restarted = append(restarted, *reviewState.LatestRun)
+				continue
+			}
 		} else if _, err := e.store.SupersedeStaleRunningReviewRuns(ctx, workerID, reviewState.PRURL, reviewState.TargetSHA, "superseded by a review trigger for a newer commit"); err != nil {
 			return TriggerResult{}, err
 		}
@@ -371,7 +376,7 @@ func (e *Engine) TriggerWithSource(ctx stdctx.Context, workerID domain.SessionID
 		created = append(created, run)
 		reviews = replaceReviewLatestRun(reviews, reviewState.PRURL, reviewState.TargetSHA, run)
 	}
-	if len(created) == 0 {
+	if len(created) == 0 && len(restarted) == 0 {
 		return TriggerResult{Run: firstReusableRun(reviews), ReviewerHandleID: reviewRow.ReviewerHandleID, Created: false, Reviews: reviews, Runs: runs}, nil
 	}
 
@@ -384,7 +389,10 @@ func (e *Engine) TriggerWithSource(ctx stdctx.Context, workerID domain.SessionID
 		return err
 	}
 
-	queue := reviewQueue(created)
+	queueRuns := append([]domain.ReviewRun{}, restarted...)
+	queueRuns = append(queueRuns, created...)
+	queue := reviewQueue(queueRuns)
+	launchRun := queueRuns[0]
 	launchAgentSessionID := reviewRow.AgentSessionID
 	if hasConfigOverride {
 		launchAgentSessionID = ""
@@ -405,7 +413,7 @@ func (e *Engine) TriggerWithSource(ctx stdctx.Context, workerID domain.SessionID
 		if err := e.launcher.Preflight(ctx, harness, worker.Metadata.WorkspacePath); err != nil {
 			return TriggerResult{}, failRuns(0, fmt.Errorf("reviewer preflight: %w", err))
 		}
-		launch, err := e.launcher.Spawn(ctx, reviewLaunchSpec(worker, harness, config, created[0], queue, 0, launchAgentSessionID))
+		launch, err := e.launcher.Spawn(ctx, reviewLaunchSpec(worker, harness, config, launchRun, queue, 0, launchAgentSessionID))
 		if err != nil {
 			return TriggerResult{}, failRuns(0, fmt.Errorf("launch reviewer: %w", err))
 		}
@@ -414,7 +422,7 @@ func (e *Engine) TriggerWithSource(ctx stdctx.Context, workerID domain.SessionID
 			reviewRow.AgentSessionID = launch.AgentSessionID
 		}
 	} else {
-		if err := e.launcher.Notify(ctx, handleID, reviewLaunchSpec(worker, harness, config, created[0], queue, 0, reviewRow.AgentSessionID)); err != nil {
+		if err := e.launcher.Notify(ctx, handleID, reviewLaunchSpec(worker, harness, config, launchRun, queue, 0, reviewRow.AgentSessionID)); err != nil {
 			return TriggerResult{}, failRuns(0, fmt.Errorf("notify reviewer: %w", err))
 		}
 	}
@@ -435,7 +443,9 @@ func (e *Engine) TriggerWithSource(ctx stdctx.Context, workerID domain.SessionID
 	}
 	triggerRuns := append([]domain.ReviewRun{}, created...)
 	triggerRuns = append(triggerRuns, runs...)
-	return TriggerResult{Run: created[0], ReviewerHandleID: handleID, Created: true, Reviews: reviews, Runs: triggerRuns, CreatedRuns: created}, nil
+	resultRun := launchRun
+	createdFlag := len(created) > 0
+	return TriggerResult{Run: resultRun, ReviewerHandleID: handleID, Created: createdFlag, Reviews: reviews, Runs: triggerRuns, CreatedRuns: created}, nil
 }
 
 func autoReviewSessionReason(worker domain.SessionRecord, now time.Time) string {
@@ -794,7 +804,7 @@ func reviewQueue(runs []domain.ReviewRun) []ports.ReviewTask {
 // still reuse. Legacy runs may have an empty harness, which means "the same
 // resolved harness as today" for this comparison.
 func secondOpinionWanted(state PRReviewState, hasHarnessOverride, hasConfigOverride bool, harness domain.ReviewerHarness) bool {
-	if state.Status == ReviewStateIneligible || state.Status == ReviewStateRunning {
+	if state.Status == ReviewStateIneligible {
 		return false
 	}
 	if state.LatestRun == nil {
@@ -802,6 +812,9 @@ func secondOpinionWanted(state PRReviewState, hasHarnessOverride, hasConfigOverr
 	}
 	if hasConfigOverride {
 		return true
+	}
+	if state.Status == ReviewStateRunning {
+		return false
 	}
 	if !hasHarnessOverride {
 		return false
