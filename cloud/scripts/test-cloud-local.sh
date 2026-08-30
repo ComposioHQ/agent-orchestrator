@@ -508,8 +508,22 @@ docker exec "$first_worker" ao list >/dev/null
 # prompts point the agent.
 docker exec "$first_worker" test -f /workspace/.ao/worker/skills/using-ao/SKILL.md
 docker exec "$first_worker" test -f /workspace/.ao/worker/skills/using-ao/commands/orchestration.md
+# The harness process appears shortly after the worker container does; retry
+# the argv probe instead of racing the PTY launch.
+wait_for_process_marker() {
+	local container="$1" marker="$2" attempts=30
+	while ((attempts > 0)); do
+		if docker exec "$container" sh -c "ps ax | grep -v grep | grep -q '$marker'"; then
+			return 0
+		fi
+		attempts=$((attempts - 1))
+		sleep 1
+	done
+	echo "Process marker '$marker' never appeared in $container." >&2
+	exit 1
+}
 # The orchestrator harness launches with the coordination prompt in its argv.
-docker exec "$first_worker" sh -c "ps ax | grep -v grep | grep -q 'AO Orchestrator Role'"
+wait_for_process_marker "$first_worker" "AO Orchestrator Role"
 exercise_browser_proxy "$first_worker"
 spawn_output="$(
 	docker exec "$first_worker" ao spawn \
@@ -528,7 +542,7 @@ docker exec "$first_worker" ao send "$child_session" "Report smoke status" >/dev
 child_worker="$(wait_for_worker "$child_session")"
 # The child harness carries the worker prompt, including report guidance (it
 # has an orchestrator parent).
-docker exec "$child_worker" sh -c "ps ax | grep -v grep | grep -q 'AO Worker Role'"
+wait_for_process_marker "$child_worker" "AO Worker Role"
 wait_for_child_message() {
 	local target="$1" description="$2" attempts=45 forwarded=""
 	while ((attempts > 0)); do
@@ -552,7 +566,7 @@ wait_for_child_message \
 # worker-provenance prefix.
 docker exec "$child_worker" ao report "smoke child reporting done" >/dev/null
 wait_for_child_message \
-	"SELECT EXISTS (SELECT 1 FROM ao_events WHERE session_id = '${session}' AND type = 'message.user' AND payload::text LIKE '%from worker%smoke child reporting done%')" \
+	"SELECT EXISTS (SELECT 1 FROM ao_events WHERE session_id = '${session}' AND type = 'chat.user_message' AND payload::text LIKE '%from worker%smoke child reporting done%')" \
 	"Child report did not land in the orchestrator conversation."
 # A parentless orchestrator cannot report (scope never issued).
 if docker exec "$first_worker" ao report "should be rejected" >/dev/null 2>&1; then
@@ -575,8 +589,8 @@ while ((attempts > 0)); do
 	list_state="$(docker exec "$first_worker" sh -c "ao list --json && echo --- && ao list --all --json" | python3 -c '
 import json, sys
 raw = sys.stdin.read().split("---")
-live = {item["id"] for item in json.loads(raw[0])}
-everything = {item["id"]: item for item in json.loads(raw[1])}
+live = {item["id"] for item in (json.loads(raw[0]) or [])}
+everything = {item["id"]: item for item in (json.loads(raw[1]) or [])}
 child = sys.argv[1]
 if child not in live and child in everything and everything[child]["isTerminated"]:
     print("settled")

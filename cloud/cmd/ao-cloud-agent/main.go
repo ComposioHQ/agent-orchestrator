@@ -203,6 +203,10 @@ func runList(ctx context.Context, c *client, args []string) error {
 	if err != nil {
 		return err
 	}
+	if items == nil {
+		// A childless listing must print [], not null: agents parse this.
+		items = []session{}
+	}
 	if *asJSON {
 		encoded, err := json.MarshalIndent(items, "", "  ")
 		if err != nil {
