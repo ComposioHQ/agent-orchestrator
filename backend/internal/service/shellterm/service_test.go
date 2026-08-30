@@ -229,8 +229,8 @@ func TestOpenShellTerminalStartsLoginShellInProjectRoot(t *testing.T) {
 	if term.WorkingDir != "/repos/portfolio" {
 		t.Errorf("working dir = %q, want the project root", term.WorkingDir)
 	}
-	if term.Title != "portfolio" {
-		t.Errorf("title = %q, want the working dir's base name", term.Title)
+	if term.Title != "Terminal 1" {
+		t.Errorf("title = %q, want the first terminal label", term.Title)
 	}
 	if len(st.records) != 1 || st.records[0].AppRunID != testAppRunID {
 		t.Fatalf("record not persisted against the current app run: %+v", st.records)
@@ -1095,11 +1095,9 @@ func TestReapShellTerminalsFromPreviousAppRunsKeepsRowForConfirmedLiveOrphan(t *
 	}
 }
 
-func TestShellTerminalTitleFallsBackForRootlessPaths(t *testing.T) {
-	if got := shellTerminalTitle(""); got != "Shell" {
-		t.Errorf("title for empty path = %q, want %q", got, "Shell")
-	}
-	if got := shellTerminalTitle("/repos/portfolio"); got != "portfolio" {
-		t.Errorf("title = %q, want %q", got, "portfolio")
+func TestNextShellTerminalTitleKeepsExistingNumbersStable(t *testing.T) {
+	terminals := []ShellTerminalRecord{{Title: "Terminal"}, {Title: "Terminal 3"}, {Title: "logs"}}
+	if got := nextShellTerminalTitle(terminals); got != "Terminal 4" {
+		t.Errorf("title = %q, want %q", got, "Terminal 4")
 	}
 }

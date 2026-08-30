@@ -2087,7 +2087,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Not Implemented
-      summary: Set the automatic CI-failure injection default for new session PRs
+      summary: Set automatic CI-failure injection for a session and its PRs
       tags:
       - sessions
   /api/v1/sessions/{sessionId}/auto-inject-review:
@@ -2988,6 +2988,55 @@ paths:
       summary: Name the provider's conversation thread
       tags:
       - conversations
+  /api/v1/sessions/{sessionId}/conversation/turns/{turnId}/cancel:
+    post:
+      operationId: cancelQueuedSessionConversationTurn
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      - description: AO conversation turn identifier, from the snapshot's turns array.
+        in: path
+        name: turnId
+        required: true
+        schema:
+          description: AO conversation turn identifier, from the snapshot's turns
+            array.
+          type: string
+      responses:
+        "204":
+          description: No Content
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Remove one queued message without stopping the running turn
+      tags:
+      - conversations
   /api/v1/sessions/{sessionId}/conversation/turns/{turnId}/edit:
     post:
       operationId: editSessionConversationMessage
@@ -3051,6 +3100,67 @@ paths:
                 $ref: '#/components/schemas/APIError'
           description: Not Implemented
       summary: Branch before and replace an earlier human prompt
+      tags:
+      - conversations
+  /api/v1/sessions/{sessionId}/conversation/turns/{turnId}/queue/edit:
+    post:
+      operationId: editQueuedSessionConversationTurn
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      - description: AO conversation turn identifier, from the snapshot's turns array.
+        in: path
+        name: turnId
+        required: true
+        schema:
+          description: AO conversation turn identifier, from the snapshot's turns
+            array.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EditQueuedConversationMessageRequest'
+        required: true
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Rewrite one queued message before it dispatches
       tags:
       - conversations
   /api/v1/sessions/{sessionId}/conversation/turns/{turnId}/retry:
@@ -4966,6 +5076,60 @@ paths:
       summary: List files in a session workspace with git change status
       tags:
       - sessions
+  /api/v1/sessions/{sessionId}/workspace/tree:
+    get:
+      operationId: listSessionWorkspaceTree
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      - description: Directory path relative to the session workspace root. Empty
+          or omitted lists the root.
+        in: query
+        name: path
+        schema:
+          description: Directory path relative to the session workspace root. Empty
+            or omitted lists the root.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListWorkspaceTreeResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: List one directory level of a session workspace's full file tree, git-status
+        decorated
+      tags:
+      - sessions
   /api/v1/sessions/cleanup:
     post:
       operationId: cleanupSessions
@@ -5023,6 +5187,43 @@ paths:
                 $ref: '#/components/schemas/APIError'
           description: Not Implemented
       summary: Read the daemon-owned user preferences
+      tags:
+      - settings
+  /api/v1/settings/cloud-offering:
+    patch:
+      operationId: updateCloudOffering
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ControllersUpdateCloudOfferingRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SettingsResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Turn the cloud offering on or off for this machine
       tags:
       - settings
   /api/v1/settings/session-interface:
@@ -5356,7 +5557,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Not Implemented
-      summary: List compact token usage for session cards
+      summary: List compact token and estimated cost usage for session cards
       tags:
       - usage
   /api/v1/usage/sessions/{sessionId}:
@@ -5395,7 +5596,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Not Implemented
-      summary: Get detailed token usage for one session
+      summary: Get detailed token and estimated cost usage for one session
       tags:
       - usage
 components:
@@ -5638,34 +5839,6 @@ components:
       required:
       - switch
       type: object
-    AnthropicUsageDetailsResponse:
-      properties:
-        anthropicCacheCreation1hInputTokens:
-          minimum: 0
-          type:
-          - "null"
-          - integer
-        anthropicCacheCreation5mInputTokens:
-          minimum: 0
-          type:
-          - "null"
-          - integer
-        anthropicCacheCreationInputTokens:
-          minimum: 0
-          type:
-          - "null"
-          - integer
-        anthropicDirectUncachedInputTokens:
-          minimum: 0
-          type:
-          - "null"
-          - integer
-      required:
-      - anthropicDirectUncachedInputTokens
-      - anthropicCacheCreationInputTokens
-      - anthropicCacheCreation5mInputTokens
-      - anthropicCacheCreation1hInputTokens
-      type: object
     AttachmentInput:
       properties:
         data:
@@ -5836,6 +6009,11 @@ components:
       type: object
     CompactSessionUsageResponse:
       properties:
+        estimatedCost:
+          anyOf:
+          - type: "null"
+          - $ref: '#/components/schemas/EstimatedCostResponse'
+            type: object
         incomplete:
           type: boolean
         processedTokens:
@@ -5857,6 +6035,7 @@ components:
       - processedTokens
       - totalTokens
       - incomplete
+      - estimatedCost
       type: object
     ContainerReapConfig:
       properties:
@@ -5954,6 +6133,11 @@ components:
           type: string
         kind:
           type: string
+        lastUserMessageAt:
+          format: date-time
+          type:
+          - "null"
+          - string
         mode:
           enum:
           - chat
@@ -6071,6 +6255,15 @@ components:
       required:
       - enabled
       type: object
+    ControllersUpdateCloudOfferingRequest:
+      properties:
+        enabled:
+          type:
+          - "null"
+          - boolean
+      required:
+      - enabled
+      type: object
     ConversationAccountPayload:
       properties:
         authMode:
@@ -6144,6 +6337,19 @@ components:
       - status
       - summary
       - createdAt
+      type: object
+    ConversationBranchMaterializationResponse:
+      properties:
+        replayTruncated:
+          type: boolean
+        strategy:
+          enum:
+          - native
+          - approximate_context
+          type: string
+      required:
+      - strategy
+      - replayTruncated
       type: object
     ConversationBranchPointResponse:
       properties:
@@ -6478,6 +6684,8 @@ components:
           items:
             $ref: '#/components/schemas/ConversationActivityResponse'
           type: array
+        branchMaterialization:
+          $ref: '#/components/schemas/ConversationBranchMaterializationResponse'
         branchPoints:
           items:
             $ref: '#/components/schemas/ConversationBranchPointResponse'
@@ -6524,6 +6732,9 @@ components:
           type: string
         modelReroute:
           $ref: '#/components/schemas/ConversationModelReroutePayload'
+        nativeForkAvailableAfterSequence:
+          format: int64
+          type: integer
         oldestSequence:
           format: int64
           type: integer
@@ -6551,6 +6762,7 @@ components:
       - controller
       - latestSequence
       - hasMoreBefore
+      - nativeForkAvailableAfterSequence
       - turns
       - messages
       - activities
@@ -6626,6 +6838,7 @@ components:
           - recovered
           - interrupted
           - failed
+          - cancelled
           type: string
       required:
       - id
@@ -6896,6 +7109,59 @@ components:
       required:
       - sourceBranchId
       - activeBranchId
+      type: object
+    EditQueuedConversationMessageRequest:
+      properties:
+        text:
+          type: string
+      required:
+      - text
+      type: object
+    EstimatedCostResponse:
+      properties:
+        cachedInputNanos:
+          format: int64
+          minimum: 0
+          type:
+          - "null"
+          - integer
+        coverage:
+          enum:
+          - complete
+          - partial
+          type: string
+        inputNanos:
+          description: Every non-cache-read input charge, cache writes included.
+          format: int64
+          minimum: 0
+          type:
+          - "null"
+          - integer
+        outputNanos:
+          format: int64
+          minimum: 0
+          type:
+          - "null"
+          - integer
+        providerAttribution:
+          description: Whether contributing billing providers were detected, inferred
+            from model ownership, or both.
+          enum:
+          - observed
+          - inferred
+          - mixed
+          type: string
+        totalNanos:
+          format: int64
+          minimum: 0
+          type: integer
+      required:
+      - totalNanos
+      - inputNanos
+      - cachedInputNanos
+      - outputNanos
+      - coverage
+      - providerAttribution
       type: object
     ImportReport:
       properties:
@@ -7185,6 +7451,24 @@ components:
       - commits
       - summary
       type: object
+    ListWorkspaceTreeResponse:
+      properties:
+        entries:
+          items:
+            $ref: '#/components/schemas/WorkspaceTreeEntry'
+          type: array
+        path:
+          type: string
+        sessionId:
+          type: string
+        truncated:
+          type: boolean
+      required:
+      - sessionId
+      - path
+      - entries
+      - truncated
+      type: object
     MarkAllNotificationsReadRequest:
       properties:
         ids:
@@ -7394,22 +7678,6 @@ components:
       required:
       - kind
       - sessionId
-      type: object
-    OpenAIUsageDetailsResponse:
-      properties:
-        openaiCacheWriteInputTokens:
-          minimum: 0
-          type:
-          - "null"
-          - integer
-        openaiReasoningOutputTokens:
-          minimum: 0
-          type:
-          - "null"
-          - integer
-      required:
-      - openaiReasoningOutputTokens
-      - openaiCacheWriteInputTokens
       type: object
     OpenShellTerminalRequest:
       properties:
@@ -8654,14 +8922,29 @@ components:
           items:
             type: string
           type: array
+        client:
+          type: string
+        cloudControlPlaneUrl:
+          type: string
+        cloudEnabled:
+          type: boolean
+        cloudOffering:
+          type: boolean
         defaultSessionMode:
           enum:
           - chat
           - tui
           type: string
+        localEnabled:
+          type: boolean
       required:
       - defaultSessionMode
       - chatHarnesses
+      - client
+      - localEnabled
+      - cloudOffering
+      - cloudEnabled
+      - cloudControlPlaneUrl
       type: object
     ShellTerminalEnvelope:
       properties:
@@ -9114,6 +9397,10 @@ components:
           type: string
         modelId:
           type: string
+        providerId:
+          description: Canonical provider routing hint derived by the trusted local
+            Claude hook.
+          type: string
         subagentId:
           type: string
         subagentTranscriptPath:
@@ -9122,42 +9409,6 @@ components:
           type: string
       required:
       - harness
-      type: object
-    UsageMetricProvenanceResponse:
-      properties:
-        cachedInputTokens:
-          enum:
-          - reported
-          - derived
-          - unsupported
-          - unknown
-          type: string
-        inputTokens:
-          enum:
-          - reported
-          - derived
-          - unsupported
-          - unknown
-          type: string
-        outputTokens:
-          enum:
-          - reported
-          - derived
-          - unsupported
-          - unknown
-          type: string
-        uncachedInputTokens:
-          enum:
-          - reported
-          - derived
-          - unsupported
-          - unknown
-          type: string
-      required:
-      - inputTokens
-      - cachedInputTokens
-      - uncachedInputTokens
-      - outputTokens
       type: object
     UsageModelResponse:
       properties:
@@ -9169,24 +9420,10 @@ components:
       - modelId
       - totals
       type: object
-    UsageProviderDetailsResponse:
-      properties:
-        anthropic:
-          $ref: '#/components/schemas/AnthropicUsageDetailsResponse'
-        openai:
-          $ref: '#/components/schemas/OpenAIUsageDetailsResponse'
-      type: object
     UsageTotalsResponse:
       properties:
         cacheReadTokens:
           description: Deprecated compatibility alias for cachedInputTokens.
-          minimum: 0
-          type:
-          - "null"
-          - integer
-        cacheWriteTokens:
-          description: Deprecated compatibility aggregate of provider cache-write
-            input counters.
           minimum: 0
           type:
           - "null"
@@ -9198,6 +9435,11 @@ components:
           type:
           - "null"
           - integer
+        estimatedCost:
+          anyOf:
+          - type: "null"
+          - $ref: '#/components/schemas/EstimatedCostResponse'
+            type: object
         inputTokens:
           description: Total input, including cached and uncached input.
           minimum: 0
@@ -9218,19 +9460,9 @@ components:
           type:
           - "null"
           - integer
-        provenance:
-          $ref: '#/components/schemas/UsageMetricProvenanceResponse'
-        providerDetails:
-          $ref: '#/components/schemas/UsageProviderDetailsResponse'
-        reasoningTokens:
-          description: Deprecated compatibility alias for the OpenAI reasoning-output
-            subset.
-          minimum: 0
-          type:
-          - "null"
-          - integer
         uncachedInputTokens:
-          description: Input not read from an existing provider cache.
+          description: Input not read from an existing provider cache. Includes cache
+            writes.
           minimum: 0
           type:
           - "null"
@@ -9242,10 +9474,7 @@ components:
       - outputTokens
       - processedTokens
       - cacheReadTokens
-      - cacheWriteTokens
-      - reasoningTokens
-      - provenance
-      - providerDetails
+      - estimatedCost
       type: object
     WorkspaceCommitSummary:
       properties:
@@ -9406,6 +9635,37 @@ components:
       - files
       - additions
       - deletions
+      type: object
+    WorkspaceTreeEntry:
+      properties:
+        binary:
+          type: boolean
+        hasChanges:
+          type: boolean
+        name:
+          type: string
+        path:
+          type: string
+        size:
+          format: int64
+          type: integer
+        status:
+          enum:
+          - unmodified
+          - modified
+          - added
+          - deleted
+          - renamed
+          type: string
+        type:
+          enum:
+          - file
+          - dir
+          type: string
+      required:
+      - name
+      - path
+      - type
       type: object
 tags:
 - description: Supported and locally runnable agent adapters
