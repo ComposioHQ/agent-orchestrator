@@ -11,6 +11,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -120,26 +121,41 @@ func (f executableFinderFunc) LookPath(file string) (string, error) { return f(f
 // branch on Unsupported; callers that only need to know whether a route exists
 // should test len(Command).
 type Plan struct {
-	Target      Target
-	Command     []string // argv, e.g. ["brew", "install", "tmux"]
-	Manager     string   // resolving package manager ("brew", "apt-get", ...), empty when none applies
-	NeedsRoot   bool     // Command must run as root; the caller supplies the privilege
-	Unsupported bool
-	Reason      string // set when Unsupported, or as extra context otherwise
-	Method      string
-	DocsURL     string
+	Target              Target
+	Command             []string // argv, e.g. ["brew", "install", "tmux"]
+	Manager             string   // resolving package manager ("brew", "apt-get", ...), empty when none applies
+	NeedsRoot           bool     // Command must run as root; the caller supplies the privilege
+	Unsupported         bool
+	Reason              string // set when Unsupported, or as extra context otherwise
+	Method              string
+	DocsURL             string
+	ExpectedDestination string
 }
 
 // AgentPlan is the display-safe plan returned to the settings page. Command is
 // a preview of fixed server-owned argv and is never accepted from the client.
 type AgentPlan struct {
-	AgentID          string `json:"agentId"`
-	Available        bool   `json:"available"`
-	Automatic        bool   `json:"automatic"`
-	Method           string `json:"method"`
-	Command          string `json:"command,omitempty"`
-	Reason           string `json:"reason,omitempty"`
-	DocumentationURL string `json:"documentationUrl"`
+	AgentID             string               `json:"agentId"`
+	Available           bool                 `json:"available"`
+	Automatic           bool                 `json:"automatic"`
+	Method              string               `json:"method"`
+	Command             string               `json:"command,omitempty"`
+	Reason              string               `json:"reason,omitempty"`
+	DocumentationURL    string               `json:"documentationUrl"`
+	ExpectedDestination string               `json:"expectedDestination,omitempty"`
+	Methods             []AgentInstallMethod `json:"methods"`
+}
+
+// AgentInstallMethod is one server-owned installation recipe and its current
+// viability. The renderer may select ID but never submits argv.
+type AgentInstallMethod struct {
+	ID                  string `json:"id"`
+	Label               string `json:"label"`
+	Available           bool   `json:"available"`
+	Recommended         bool   `json:"recommended"`
+	Command             string `json:"command,omitempty"`
+	Reason              string `json:"reason,omitempty"`
+	ExpectedDestination string `json:"expectedDestination,omitempty"`
 }
 
 // Status is the lifecycle state of an install Job.
@@ -188,8 +204,10 @@ type Service struct {
 	mu   sync.Mutex
 	jobs map[Target]*Job
 
-	executables ports.ExecutableFinder
-	commands    ports.CommandRunner
+	executables         ports.ExecutableFinder
+	commands            ports.CommandRunner
+	installCommands     ports.InstallCommandRunner
+	installCapabilities ports.InstallCapabilityProbe
 	// goos selects the platform branch in planFor. Real use is always
 	// runtime.GOOS; tests override it to exercise every OS branch from one
 	// machine, the same seam lookPath provides for PATH probing.
@@ -203,12 +221,16 @@ type Service struct {
 // New returns a Service backed by explicit host-operation ports. The daemon
 // supplies their concrete adapter; core service code never invokes os/exec.
 func New(executables ports.ExecutableFinder, commands ports.CommandRunner) *Service {
+	installCommands, _ := commands.(ports.InstallCommandRunner)
+	installCapabilities, _ := executables.(ports.InstallCapabilityProbe)
 	return &Service{
-		jobs:           make(map[Target]*Job),
-		executables:    executables,
-		commands:       commands,
-		goos:           runtime.GOOS,
-		installTimeout: defaultInstallTimeout,
+		jobs:                make(map[Target]*Job),
+		executables:         executables,
+		commands:            commands,
+		installCommands:     installCommands,
+		installCapabilities: installCapabilities,
+		goos:                runtime.GOOS,
+		installTimeout:      defaultInstallTimeout,
 	}
 }
 
@@ -220,15 +242,56 @@ func (s *Service) AgentPlans(ctx context.Context) ([]AgentPlan, error) {
 	}
 	out := make([]AgentPlan, 0, len(agentTargets))
 	for _, target := range agentTargets {
-		plan := s.planAgent(target)
+		plans := s.agentMethodPlans(target)
+		recommended := recommendedPlanIndex(plans)
+		plan := plans[recommended]
+		methods := make([]AgentInstallMethod, 0, len(plans))
+		for index, methodPlan := range plans {
+			methods = append(methods, AgentInstallMethod{
+				ID: methodPlan.Method, Label: installMethodLabel(methodPlan.Method),
+				Available: !methodPlan.Unsupported, Recommended: index == recommended,
+				Command: displayCommand(methodPlan), Reason: methodPlan.Reason,
+				ExpectedDestination: methodPlan.ExpectedDestination,
+			})
+		}
 		out = append(out, AgentPlan{
 			AgentID: string(target), Available: !plan.Unsupported,
 			Automatic: !plan.Unsupported, Method: plan.Method,
 			Command: displayCommand(plan), Reason: plan.Reason,
-			DocumentationURL: plan.DocsURL,
+			DocumentationURL:    plan.DocsURL,
+			ExpectedDestination: plan.ExpectedDestination,
+			Methods:             methods,
 		})
 	}
 	return out, nil
+}
+
+func recommendedPlanIndex(plans []Plan) int {
+	for index, plan := range plans {
+		if !plan.Unsupported {
+			return index
+		}
+	}
+	return len(plans) - 1
+}
+
+func installMethodLabel(method string) string {
+	switch method {
+	case "homebrew":
+		return "Homebrew"
+	case "npm":
+		return "npm"
+	case "winget":
+		return "winget"
+	case "uv":
+		return "uv tool"
+	case "pipx":
+		return "pipx"
+	case "bun":
+		return "Bun"
+	default:
+		return "Manual installation"
+	}
 }
 
 // Start begins the install for target, or returns the already-running Job if
@@ -321,7 +384,21 @@ func (s *Service) run(argv []string, job *Job) {
 	defer cancel()
 
 	out := &capturedOutput{max: maxOutputBytes}
-	runErr := s.commands.Run(ctx, argv, out, out)
+	var runErr error
+	if s.installCommands != nil {
+		runErr = s.installCommands.RunInstall(ctx, ports.InstallCommand{
+			Argv: argv,
+			Env: []string{
+				"CI=1",
+				"NONINTERACTIVE=1",
+				"HOMEBREW_NO_AUTO_UPDATE=1",
+				"NPM_CONFIG_AUDIT=false",
+				"NPM_CONFIG_FUND=false",
+			},
+		}, out, out)
+	} else {
+		runErr = s.commands.Run(ctx, argv, out, out)
+	}
 	now := time.Now()
 
 	s.mu.Lock()
@@ -451,25 +528,36 @@ func (s *Service) planNPM(target Target, pkg string) Plan {
 			Method: "npm", Reason: "npm was not found on PATH. Install Node.js from https://nodejs.org first, then retry.",
 		}
 	}
-	return Plan{Target: target, Command: []string{"npm", "install", "-g", pkg}, Method: "npm"}
+	plan := Plan{Target: target, Command: []string{"npm", "install", "-g", pkg}, Method: "npm"}
+	if IsAgentTarget(target) && s.installCapabilities != nil {
+		prefix, err := s.installCapabilities.NPMGlobalPrefix()
+		if err != nil || prefix == "" {
+			plan.Unsupported = true
+			plan.Reason = "npm's global install prefix could not be resolved."
+			return plan
+		}
+		if !s.installCapabilities.PathWritable(prefix) {
+			plan.Unsupported = true
+			plan.Reason = fmt.Sprintf("npm's global prefix %s is not writable by the current user. Configure a user-owned prefix; AO will not use sudo.", prefix)
+			return plan
+		}
+		if s.goos == "windows" {
+			plan.ExpectedDestination = prefix
+		} else {
+			plan.ExpectedDestination = filepath.Join(prefix, "bin")
+		}
+	}
+	return plan
 }
 
 func (s *Service) planOpencode() Plan {
 	if s.goos == "windows" {
 		return s.planWinget(TargetOpencode, "SST.opencode")
 	}
-	if _, err := s.executables.LookPath("curl"); err != nil {
-		return Plan{Target: TargetOpencode, Unsupported: true, Method: "official-installer", Reason: "curl was not found on PATH."}
+	return Plan{
+		Target: TargetOpencode, Unsupported: true, Method: "manual",
+		Reason: "AO does not automatically execute opencode's mutable remote installer script.",
 	}
-	// opencode's official installer is documented as a bash script
-	// (curl -fsSL https://opencode.ai/install | bash); there is no sh
-	// fallback here because sh piping into "| bash" still requires bash to
-	// actually exist, so probing for sh and then unconditionally invoking
-	// bash anyway would silently fail the moment the pipe reaches it.
-	if _, err := s.executables.LookPath("bash"); err != nil {
-		return Plan{Target: TargetOpencode, Unsupported: true, Method: "official-installer", Reason: "bash was not found on PATH."}
-	}
-	return Plan{Target: TargetOpencode, Command: []string{"bash", "-c", "curl -fsSL https://opencode.ai/install | bash"}, Method: "official-installer"}
 }
 
 func (s *Service) planBrew(target Target, pkg string) Plan {
@@ -494,7 +582,7 @@ func (s *Service) planWinget(target Target, id string) Plan {
 	if _, err := s.executables.LookPath("winget"); err != nil {
 		return Plan{Target: target, Unsupported: true, Method: "winget", Reason: "winget was not found on PATH."}
 	}
-	return Plan{Target: target, Command: []string{"winget", "install", "-e", "--id", id}, Method: "winget"}
+	return Plan{Target: target, Command: []string{"winget", "install", "-e", "--id", id, "--silent", "--accept-package-agreements", "--accept-source-agreements", "--disable-interactivity"}, Method: "winget"}
 }
 
 func withDocs(plan Plan, docsURL string) Plan {

@@ -19,6 +19,26 @@ type CommandRunner interface {
 	Run(ctx context.Context, argv []string, stdout, stderr io.Writer) error
 }
 
+// InstallCommand carries the extra execution policy required for unattended
+// installers. Argv remains server-owned; Env contains only explicit overrides.
+type InstallCommand struct {
+	Argv []string
+	Env  []string
+}
+
+// InstallCommandRunner executes an installer with closed stdin and controlled
+// noninteractive environment overrides.
+type InstallCommandRunner interface {
+	RunInstall(ctx context.Context, command InstallCommand, stdout, stderr io.Writer) error
+}
+
+// InstallCapabilityProbe resolves package-manager state that PATH lookup alone
+// cannot validate safely.
+type InstallCapabilityProbe interface {
+	NPMGlobalPrefix() (string, error)
+	PathWritable(path string) bool
+}
+
 // AgentInstallJobRecord is the storage-bound representation of a daemon-owned
 // harness installation job. Strings keep the persistence adapter independent
 // of the systeminstall package's domain types.

@@ -2,6 +2,131 @@ package systeminstall
 
 import "fmt"
 
+var agentDocumentationURLs = map[Target]string{
+	TargetClaudeCode: "https://code.claude.com/docs/en/installation",
+	TargetCodex:      "https://github.com/openai/codex",
+	TargetCursor:     "https://docs.cursor.com/en/cli/installation",
+	TargetOpencode:   "https://github.com/anomalyco/opencode",
+	TargetAider:      "https://aider.chat/docs/install.html",
+	TargetCopilot:    "https://docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli/install-copilot-cli",
+	TargetGrok:       "https://docs.x.ai/build/overview",
+	TargetKimi:       "https://moonshotai.github.io/kimi-code/en/",
+	TargetPi:         "https://github.com/earendil-works/pi",
+	TargetAmp:        "https://ampcode.com/manual",
+	TargetAuggie:     "https://docs.augmentcode.com/cli/overview",
+	TargetDroid:      "https://docs.factory.ai/droid-cli/cli-reference",
+	TargetCrush:      "https://github.com/charmbracelet/crush",
+	TargetCline:      "https://github.com/cline/cline",
+	TargetGoose:      "https://block.github.io/goose/index.html",
+	TargetQwen:       "https://qwenlm.github.io/qwen-code-docs/en/users/quickstart/",
+	TargetContinue:   "https://docs.continue.dev/cli/quickstart",
+	TargetDevin:      "https://docs.devin.ai/get-started/devin-intro",
+	TargetKiro:       "https://kiro.dev/docs/getting-started/installation/",
+	TargetKilocode:   "https://kilo.ai/docs/code-with-ai/platforms/cli",
+	TargetVibe:       "https://github.com/mistralai/mistral-vibe",
+	TargetMuse:       "https://ai.meta.com/llama/",
+	TargetAgy:        "https://github.com/google-antigravity/antigravity-cli",
+	TargetAutohand:   "https://docs.autohand.ai/working-with-autohand-code/cli",
+	TargetKimchi:     "https://www.npmjs.com/package/@kimchi-dev/cli",
+	TargetPrimeAgent: "https://github.com/PrimeIntellect-ai/prime-agent/blob/main/packages/coding-agent/docs/quickstart.md",
+	TargetOMP:        "https://github.com/can1357/oh-my-pi",
+}
+
+func (s *Service) agentMethodPlans(target Target) []Plan {
+	var plans []Plan
+	switch target {
+	case TargetClaudeCode:
+		if s.goos == "darwin" {
+			plans = []Plan{s.planBrewCask(target, "claude-code"), s.planNPM(target, "@anthropic-ai/claude-code")}
+		} else {
+			plans = []Plan{s.planNPM(target, "@anthropic-ai/claude-code")}
+		}
+	case TargetCodex:
+		if s.goos == "darwin" {
+			plans = []Plan{s.planBrewCask(target, "codex"), s.planNPM(target, "@openai/codex")}
+		} else {
+			plans = []Plan{s.planNPM(target, "@openai/codex")}
+		}
+	case TargetOpencode:
+		switch s.goos {
+		case "windows":
+			plans = []Plan{s.planWinget(target, "SST.opencode")}
+		case "darwin":
+			plans = []Plan{s.planBrew(target, "anomalyco/tap/opencode"), s.planNPM(target, "opencode-ai@latest")}
+		default:
+			plans = []Plan{s.planNPM(target, "opencode-ai@latest")}
+		}
+	case TargetCopilot:
+		switch s.goos {
+		case "windows":
+			plans = []Plan{s.planWinget(target, "GitHub.Copilot"), s.planNPM(target, "@github/copilot")}
+		case "darwin":
+			plans = []Plan{s.planBrewCask(target, "copilot-cli"), s.planNPM(target, "@github/copilot")}
+		default:
+			plans = []Plan{s.planNPM(target, "@github/copilot")}
+		}
+	case TargetPi:
+		plans = []Plan{s.planNPM(target, "@earendil-works/pi-coding-agent")}
+	case TargetAmp:
+		if s.goos == "darwin" {
+			plans = []Plan{s.planBrew(target, "ampcode/tap/ampcode"), s.planNPM(target, "@ampcode/cli")}
+		} else {
+			plans = []Plan{s.planNPM(target, "@ampcode/cli")}
+		}
+	case TargetDroid:
+		if s.goos == "darwin" {
+			plans = []Plan{s.planBrewCask(target, "droid"), s.planNPM(target, "droid")}
+		} else {
+			plans = []Plan{s.planNPM(target, "droid")}
+		}
+	case TargetCrush:
+		if s.goos == "darwin" {
+			plans = []Plan{s.planBrew(target, "charmbracelet/tap/crush"), s.planNPM(target, "@charmland/crush")}
+		} else {
+			plans = []Plan{s.planNPM(target, "@charmland/crush")}
+		}
+	case TargetQwen:
+		if s.goos == "darwin" {
+			plans = []Plan{s.planBrew(target, "qwen-code"), s.planNPM(target, "@qwen-code/qwen-code@latest")}
+		} else {
+			plans = []Plan{s.planNPM(target, "@qwen-code/qwen-code@latest")}
+		}
+	case TargetAutohand:
+		if s.goos == "darwin" {
+			plans = []Plan{s.planBrew(target, "autohandai/code/autohand-code"), s.planNPM(target, "autohand-cli")}
+		} else {
+			plans = []Plan{s.planNPM(target, "autohand-cli")}
+		}
+	case TargetVibe:
+		plans = []Plan{s.planUV(target, "mistral-vibe"), s.planPipx(target, "mistral-vibe")}
+	case TargetOMP:
+		if s.goos == "darwin" {
+			plans = []Plan{s.planBrew(target, "can1357/tap/omp"), s.planBun(target, "@oh-my-pi/pi-coding-agent")}
+		} else {
+			plans = []Plan{s.planBun(target, "@oh-my-pi/pi-coding-agent")}
+		}
+	default:
+		plans = []Plan{s.planAgent(target)}
+	}
+	for index := range plans {
+		plans[index].DocsURL = agentDocumentationURLs[target]
+	}
+	return plans
+}
+
+func (s *Service) resolveAgentMethod(target Target, method string) (Plan, error) {
+	for _, plan := range s.agentMethodPlans(target) {
+		if plan.Method != method {
+			continue
+		}
+		if plan.Unsupported {
+			return Plan{}, fmt.Errorf("systeminstall: install method %q is not available: %s", method, plan.Reason)
+		}
+		return plan, nil
+	}
+	return Plan{}, fmt.Errorf("systeminstall: unknown install method %q for %s", method, target)
+}
+
 // planAgent contains the first-party, code-reviewed installation recipe for
 // each Harness settings entry. The renderer never supplies any part of these
 // commands; it can only select the target id.
@@ -122,7 +247,7 @@ func (s *Service) planAgent(target Target) Plan {
 	case TargetKilocode:
 		return withDocs(s.planNPM(target, "@kilocode/cli"), "https://kilo.ai/docs/code-with-ai/platforms/cli")
 	case TargetVibe:
-		return withDocs(firstAvailable(s.planUV(target, "mistral-vibe"), s.planPythonPip(target, "mistral-vibe")), "https://github.com/mistralai/mistral-vibe")
+		return withDocs(firstAvailable(s.planUV(target, "mistral-vibe"), s.planPipx(target, "mistral-vibe")), "https://github.com/mistralai/mistral-vibe")
 	case TargetMuse:
 		if s.goos == "windows" {
 			return manualPlan(target, "Muse Code does not currently publish a native Windows installer.", "https://ai.meta.com/llama/")
@@ -171,28 +296,17 @@ func (s *Service) officialByOS(target Target, unixURL, unixShell, windowsURL, do
 }
 
 func (s *Service) planShellInstaller(target Target, url, shell string) Plan {
-	if _, err := s.executables.LookPath("curl"); err != nil {
-		return Plan{Target: target, Unsupported: true, Method: "official-installer", Reason: "curl was not found on PATH."}
-	}
-	if _, err := s.executables.LookPath(shell); err != nil {
-		return Plan{Target: target, Unsupported: true, Method: "official-installer", Reason: fmt.Sprintf("%s was not found on PATH.", shell)}
-	}
 	return Plan{
-		Target: target, Method: "official-installer",
-		Command: []string{shell, "-c", fmt.Sprintf("curl -fsSL %s | %s", url, shell)},
+		Target: target, Unsupported: true, Method: "manual",
+		Reason: fmt.Sprintf("AO does not automatically execute mutable remote installer scripts. Follow the vendor instructions for %s using %s.", url, shell),
 	}
 }
 
 func (s *Service) planPowerShellInstaller(target Target, url string) Plan {
-	for _, shell := range []string{"pwsh.exe", "powershell.exe", "pwsh", "powershell"} {
-		if _, err := s.executables.LookPath(shell); err == nil {
-			return Plan{
-				Target: target, Method: "official-installer",
-				Command: []string{shell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", fmt.Sprintf("irm '%s' | iex", url)},
-			}
-		}
+	return Plan{
+		Target: target, Unsupported: true, Method: "manual",
+		Reason: fmt.Sprintf("AO does not automatically execute mutable remote installer scripts. Follow the vendor instructions for %s in PowerShell.", url),
 	}
-	return Plan{Target: target, Unsupported: true, Method: "official-installer", Reason: "PowerShell was not found on PATH."}
 }
 
 func (s *Service) planUV(target Target, pkg string) Plan {
@@ -209,13 +323,11 @@ func (s *Service) planBun(target Target, pkg string) Plan {
 	return Plan{Target: target, Method: "bun", Command: []string{"bun", "install", "-g", pkg}}
 }
 
-func (s *Service) planPythonPip(target Target, pkg string) Plan {
-	for _, python := range []string{"python3", "python"} {
-		if _, err := s.executables.LookPath(python); err == nil {
-			return Plan{Target: target, Method: "pip", Command: []string{python, "-m", "pip", "install", pkg}}
-		}
+func (s *Service) planPipx(target Target, pkg string) Plan {
+	if _, err := s.executables.LookPath("pipx"); err != nil {
+		return Plan{Target: target, Unsupported: true, Method: "pipx", Reason: "pipx was not found on PATH. Install pipx, then retry."}
 	}
-	return Plan{Target: target, Unsupported: true, Method: "pip", Reason: "Python was not found on PATH."}
+	return Plan{Target: target, Method: "pipx", Command: []string{"pipx", "install", pkg}}
 }
 
 func firstAvailable(plans ...Plan) Plan {
@@ -227,7 +339,11 @@ func firstAvailable(plans ...Plan) Plan {
 	if len(plans) == 0 {
 		return Plan{Unsupported: true, Method: "manual", Reason: "No installation method is configured."}
 	}
-	return plans[0]
+	// When every candidate is unavailable, report the last fallback's failure.
+	// Returning the first candidate used to make an unavailable official script
+	// mask actionable package-manager diagnostics (for example an unwritable
+	// npm prefix).
+	return plans[len(plans)-1]
 }
 
 func manualPlan(target Target, reason, docsURL string) Plan {

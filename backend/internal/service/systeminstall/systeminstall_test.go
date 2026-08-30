@@ -98,7 +98,7 @@ func TestPlanFor(t *testing.T) {
 		},
 		{
 			name: "gh windows uses winget", target: TargetGH, goos: "windows", found: []string{"winget"},
-			wantCommand: []string{"winget", "install", "-e", "--id", "GitHub.cli"},
+			wantCommand: []string{"winget", "install", "-e", "--id", "GitHub.cli", "--silent", "--accept-package-agreements", "--accept-source-agreements", "--disable-interactivity"},
 		},
 		{
 			name: "gh windows without winget is unsupported", target: TargetGH, goos: "windows",
@@ -130,22 +130,19 @@ func TestPlanFor(t *testing.T) {
 		},
 		{
 			name: "opencode windows uses winget", target: TargetOpencode, goos: "windows", found: []string{"winget"},
-			wantCommand: []string{"winget", "install", "-e", "--id", "SST.opencode"},
+			wantCommand: []string{"winget", "install", "-e", "--id", "SST.opencode", "--silent", "--accept-package-agreements", "--accept-source-agreements", "--disable-interactivity"},
 		},
 		{
-			name: "opencode darwin uses the curl pipeline via bash", target: TargetOpencode, goos: "darwin", found: []string{"curl", "bash"},
-			wantCommand: []string{"bash", "-c", "curl -fsSL https://opencode.ai/install | bash"},
+			name: "opencode darwin remote script is manual", target: TargetOpencode, goos: "darwin", found: []string{"curl", "bash"},
+			wantUnsupported: true, wantReasonHas: "does not automatically execute",
 		},
 		{
-			name: "opencode without curl is unsupported", target: TargetOpencode, goos: "linux", found: []string{"bash"},
-			wantUnsupported: true, wantReasonHas: "curl was not found",
+			name: "opencode without curl remains manual", target: TargetOpencode, goos: "linux", found: []string{"bash"},
+			wantUnsupported: true, wantReasonHas: "does not automatically execute",
 		},
 		{
-			// sh alone must NOT satisfy this: the command always pipes into
-			// bash, so a machine with sh but no bash would still fail at the
-			// pipe if this were accepted.
-			name: "opencode without bash is unsupported even if sh is present", target: TargetOpencode, goos: "linux", found: []string{"curl", "sh"},
-			wantUnsupported: true, wantReasonHas: "bash was not found",
+			name: "opencode with sh remains manual", target: TargetOpencode, goos: "linux", found: []string{"curl", "sh"},
+			wantUnsupported: true, wantReasonHas: "does not automatically execute",
 		},
 	}
 
