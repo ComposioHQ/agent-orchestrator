@@ -2238,11 +2238,14 @@ html.sidebar-reordering * {
 	position: relative;
 	overflow: hidden;
 	height: var(--queue-dock-row-height);
+	flex: 0 0 auto;
 	transition: height 420ms cubic-bezier(0.16, 1, 0.3, 1);
 	will-change: height;
 }
 
 .queue-dock {
+	display: flex;
+	flex-direction: column-reverse;
 	height: var(--queue-dock-collapsed-height, 4.5rem);
 	transition: height 420ms cubic-bezier(0.16, 1, 0.3, 1);
 	will-change: height;
@@ -2268,19 +2271,22 @@ html.sidebar-reordering * {
 }
 
 .queue-dock-scroll {
+	display: flex;
+	flex-direction: column-reverse;
+	height: 100%;
 	overflow-y: hidden;
 }
 
+.queue-dock > button {
+	flex: 0 0 var(--queue-dock-header-height, 2rem);
+}
+
 .queue-dock-scroll-active {
-	height: calc(var(--queue-dock-row-height) * var(--queue-dock-visible-rows));
+	height: 100%;
 	overflow-y: auto;
 	overscroll-behavior: contain;
 	scrollbar-width: thin;
 	scrollbar-color: var(--color-scrollbar-board) transparent;
-}
-
-.queue-dock-body[data-expanded="false"] [aria-hidden="true"] {
-	display: none;
 }
 
 .queue-dock-scroll::-webkit-scrollbar {
