@@ -506,7 +506,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	useEffect(() => stopTerminalLiveResize, [stopTerminalLiveResize]);
 
 	const session = workspaceQuery.data;
-	const interfaceSwitch = useSessionInterfaceTransition(session?.id);
+	const interfaceSwitch = useSessionInterfaceTransition(session?.id, session?.cloud);
 	const reviewerQuery = useQuery({
 		queryKey: ["session-reviews", sessionId],
 		enabled: Boolean(
