@@ -442,14 +442,16 @@ func (s *Service) triggerWithSource(
 	if source == domain.ReviewTriggerAuto && (result.SkipReason != "" || len(result.CreatedRuns) == 0) {
 		return result, nil
 	}
-	// created_runs distinguishes a genuinely new pass from a reuse of a running
-	// or up-to-date one, which the engine also reports as success. harness is the
-	// one actually used, resolved by the engine, not the caller's override, which
-	// may be empty.
+	// created_runs counts brand-new rows, while Created also covers restart flows
+	// that relaunch a pass against an existing row after a reviewer config change.
+	// reused must stay false for those restarts even though created_runs is zero.
+	// harness is the one actually used, resolved by the engine, not the caller's
+	// override, which may be empty.
+	createdOrRestarted := result.Created || len(result.CreatedRuns) > 0
 	s.emit(ctx, "ao.review.triggered", workerID, map[string]any{
 		"harness":      string(result.Run.Harness),
 		"created_runs": len(result.CreatedRuns),
-		"reused":       len(result.CreatedRuns) == 0,
+		"reused":       !createdOrRestarted,
 		"trigger":      string(source),
 	})
 	return result, nil

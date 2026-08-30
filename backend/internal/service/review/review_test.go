@@ -805,6 +805,27 @@ func TestSubmitReportsPassShapeNotItsContents(t *testing.T) {
 		t.Fatalf("auto_inject = %#v, want false for a session with the policy off", p["auto_inject"])
 	}
 }
+func TestRestartedManualPassIsNotReportedAsReused(t *testing.T) {
+	sink := &recordingSink{}
+	svc := New(nil, &fakeStore{}, WithTelemetry(sink))
+	svc.engineTrigger = func(
+		_ context.Context, _ domain.SessionID, _ domain.ReviewerHarness, _ domain.AgentConfig, _ domain.ReviewTriggerSource,
+	) (reviewcore.TriggerResult, error) {
+		return reviewcore.TriggerResult{Run: domain.ReviewRun{Harness: "codex"}, Created: true, CreatedRuns: nil}, nil
+	}
+
+	if _, err := svc.Trigger(context.Background(), "worker-1", "", domain.AgentConfig{Model: "gpt-5-mini"}); err != nil {
+		t.Fatalf("Trigger: %v", err)
+	}
+	got := sink.named("ao.review.triggered")
+	if len(got) != 1 {
+		t.Fatalf("ao.review.triggered count = %d, want 1", len(got))
+	}
+	if got[0].Payload["reused"] != false || got[0].Payload["created_runs"] != 0 {
+		t.Fatalf("payload = %#v, want reused=false created_runs=0 for a restart", got[0].Payload)
+	}
+}
+
 func TestReusedManualPassStaysATrigger(t *testing.T) {
 	sink := &recordingSink{}
 	svc := New(nil, &fakeStore{}, WithTelemetry(sink))
