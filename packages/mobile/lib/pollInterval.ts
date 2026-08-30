@@ -14,7 +14,11 @@ import type { ServerConfig } from "./config";
  * a named tunnel, or a relay — polling faster is what keeps it usable.
  *
  * See docs/adr/0004-cloudflare-tunnel-for-remote-mobile-access.md — this is a
- * stopgap; carrying conversation events over the mux WebSocket removes it.
+ * stopgap, and the exit condition is concrete: conversation events move to the
+ * existing /mux WebSocket, which already reaches the same daemon and already
+ * round-trips small frames in 11ms over the tunnel. When that lands, both this
+ * and conversationPoll.ts are deleted and the poll returns to DIRECT_POLL_MS on
+ * every path. Until then the cost is unmeasured battery and cellular data.
  */
 
 /** Direct paths stream fine, so the poll stays cheap on battery and data. */
