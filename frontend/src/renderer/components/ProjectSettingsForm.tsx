@@ -524,7 +524,13 @@ function SettingsBody({
 						<SettingsRow label={t("settings.project.defaultReviewer")}>
 							<ReviewerSelect
 								value={form.reviewerHarness}
-								onChange={(v) => setForm((f) => ({ ...f, reviewerHarness: v }))}
+								onChange={(v) =>
+									setForm((f) => ({
+										...f,
+										reviewerHarness: v,
+										...(v !== f.reviewerHarness ? { reviewerModel: "", reviewerMode: "" } : {}),
+									}))
+								}
 								onConfigChange={(_harness, agentConfig) =>
 									setForm((f) => ({
 										...f,
