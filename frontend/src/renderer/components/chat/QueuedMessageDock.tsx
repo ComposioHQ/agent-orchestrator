@@ -199,7 +199,7 @@ export function QueuedMessageDock({
 				) : (
 					<span aria-hidden="true" className="size-3.5 shrink-0" />
 				)}
-				<span className="text-xs font-medium text-muted-foreground">
+				<span className="queue-dock-label text-xs font-medium text-muted-foreground transition-colors duration-150">
 					<span
 						className="inline-block w-fit"
 					>

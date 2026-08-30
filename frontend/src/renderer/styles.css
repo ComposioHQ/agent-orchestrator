@@ -2281,6 +2281,10 @@ html.sidebar-reordering * {
 	transform: none;
 }
 
+.cursor-chat-surface .queue-dock-toggle:hover .queue-dock-label {
+	color: var(--color-foreground);
+}
+
 .queue-dock-scroll {
 	display: flex;
 	min-height: 100%;
