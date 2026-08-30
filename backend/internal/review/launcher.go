@@ -83,6 +83,9 @@ type LaunchSpec struct {
 type LaunchResult struct {
 	HandleID       string
 	AgentSessionID string
+	// NativeResumed reports whether RestoreTerminal resumed the provider-native
+	// conversation instead of falling back to a fresh idle reviewer process.
+	NativeResumed bool
 }
 
 // reviewerRuntime is the runtime surface the launcher needs: create a pane,
@@ -406,6 +409,7 @@ func (l *agentLauncher) launchReviewerTerminalWithMode(ctx context.Context, spec
 		}
 	}
 	var cmd ports.ReviewCommandSpec
+	nativeResumed := false
 	if restoring {
 		if restorer, ok := reviewer.(ports.ReviewerRestorer); ok {
 			restoreCmd, restoreOK, err := restorer.ReviewRestoreCommand(ctx, inv)
@@ -414,6 +418,7 @@ func (l *agentLauncher) launchReviewerTerminalWithMode(ctx context.Context, spec
 			}
 			if restoreOK {
 				cmd = restoreCmd
+				nativeResumed = len(restoreCmd.Argv) > 0
 			}
 		}
 	}
@@ -462,7 +467,7 @@ func (l *agentLauncher) launchReviewerTerminalWithMode(ctx context.Context, spec
 	if agentSessionID == "" {
 		agentSessionID = strings.TrimSpace(spec.AgentSessionID)
 	}
-	return LaunchResult{HandleID: handle.ID, AgentSessionID: agentSessionID}, nil
+	return LaunchResult{HandleID: handle.ID, AgentSessionID: agentSessionID, NativeResumed: nativeResumed}, nil
 }
 
 func (l *agentLauncher) waitForPromptReadiness(ctx context.Context, reviewer ports.Reviewer, handle ports.RuntimeHandle) error {
