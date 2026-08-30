@@ -10,6 +10,7 @@
  */
 import { type ConnectDeps, connectHost, type ConnectResult } from "./connect";
 import { type Endpoint, endpointBaseUrl } from "./endpoints";
+import { shouldRetryProbe, TUNNEL_PROBE_RETRY_DELAY_MS } from "./probeRetry";
 import { adoptHostIdentity, findHost, touchHost, updateHostEndpoints } from "./hosts";
 import { type ProbeAnswer, raceEndpoints } from "./race";
 
@@ -28,6 +29,35 @@ export const PROBE_TIMEOUT_MS = 3_000;
  * docs/adr/0003-unauthenticated-identity-probe.md.
  */
 export async function probeEndpoint(endpoint: Endpoint, signal: AbortSignal): Promise<ProbeAnswer> {
+	// A tunnel hostname may simply not have propagated yet; see probeRetry.
+	const startedAt = Date.now();
+	for (;;) {
+		try {
+			return await probeOnce(endpoint, signal);
+		} catch (e) {
+			if (signal.aborted) throw e; // The race already has a winner.
+			if (!shouldRetryProbe(endpoint.kind, Date.now() - startedAt)) throw e;
+			await waitOrAbort(TUNNEL_PROBE_RETRY_DELAY_MS, signal);
+		}
+	}
+}
+
+/** Resolves when the delay elapses, or rejects as soon as the race is over. */
+function waitOrAbort(ms: number, signal: AbortSignal): Promise<void> {
+	return new Promise((resolve, reject) => {
+		const timer = setTimeout(() => {
+			signal.removeEventListener("abort", onAbort);
+			resolve();
+		}, ms);
+		function onAbort() {
+			clearTimeout(timer);
+			reject(new Error("probe aborted"));
+		}
+		signal.addEventListener("abort", onAbort, { once: true });
+	});
+}
+
+async function probeOnce(endpoint: Endpoint, signal: AbortSignal): Promise<ProbeAnswer> {
 	const controller = new AbortController();
 	const timeout = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
 	// Abort when either the race picked a winner or our own timeout fired.

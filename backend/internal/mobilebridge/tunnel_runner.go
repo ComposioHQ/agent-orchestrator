@@ -154,9 +154,18 @@ func (t *TunnelRunner) settleDelay() time.Duration {
 
 const (
 	// DefaultTunnelSettleDelay is how long after registration the hostname is
-	// treated as resolvable. Measured propagation was ~20s; the margin covers
-	// a slower run without making the wait obviously long.
-	DefaultTunnelSettleDelay = 25 * time.Second
+	// treated as resolvable.
+	//
+	// Measured propagation was ~20s on one network, and this was 25s to cover a
+	// slower run. That margin is guesswork the daemon cannot improve on: probing
+	// from the machine that owns the tunnel tests its own resolver, and probing
+	// early caches an NXDOMAIN locally that outlives propagation.
+	//
+	// The phone now retries a tunnel candidate whose hostname does not resolve
+	// yet (see the mobile probeRetry policy), which is where the resolver that
+	// actually decides lives. With that absorbing the tail, this only has to
+	// cover the common case, and the whole enable is quicker for it.
+	DefaultTunnelSettleDelay = 12 * time.Second
 	settlePollInterval       = 500 * time.Millisecond
 )
 
