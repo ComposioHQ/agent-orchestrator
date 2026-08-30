@@ -14,7 +14,7 @@
 export type SessionMode = "chat" | "tui";
 
 /** One request and the agent work that followed it. */
-export type TurnState = "queued" | "running" | "completed" | "recovered" | "interrupted" | "failed";
+export type TurnState = "queued" | "running" | "completed" | "recovered" | "interrupted" | "failed" | "cancelled";
 
 export type MessageRole = "user" | "assistant";
 
@@ -798,6 +798,20 @@ export function activeTurn(snapshot: ConversationSnapshot): ConversationTurn | u
 	return (
 		snapshot.turns.find((turn) => turn.state === "running") ??
 		snapshot.turns.find((turn) => turn.state === "queued")
+	);
+}
+
+/**
+ * Turn ids whose human prompt must not appear in the timeline.
+ *
+ * Queued turns live in the dock until dispatch. Turns cancelled from the dock
+ * before dispatch must not reappear in the timeline after the snapshot refreshes.
+ */
+export function hiddenTimelineTurnIds(snapshot: ConversationSnapshot): Set<string> {
+	return new Set(
+		snapshot.turns
+			.filter((turn) => turn.state === "queued" || turn.state === "cancelled")
+			.map((turn) => turn.id),
 	);
 }
 

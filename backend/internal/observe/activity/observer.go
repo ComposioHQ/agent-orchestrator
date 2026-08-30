@@ -114,7 +114,12 @@ func (o *Observer) reconcile(ctx context.Context, session domain.SessionRecord, 
 	}
 	continuous, ok := agent.(ports.ContinuousTerminalActivityDetector)
 	if !ok || !continuous.ContinuouslyDetectTerminalActivity() {
-		if session.Activity.State != domain.ActivityActive || session.Activity.LastActivityAt.IsZero() ||
+		if session.Activity.State == domain.ActivityWaitingInput {
+			waitingDetector, canRecoverWaiting := agent.(ports.WaitingTerminalActivityDetector)
+			if !canRecoverWaiting || !waitingDetector.ContinuouslyDetectTerminalActivityWhileWaiting() {
+				return
+			}
+		} else if session.Activity.State != domain.ActivityActive || session.Activity.LastActivityAt.IsZero() ||
 			now.Sub(session.Activity.LastActivityAt) < o.staleAfter {
 			return
 		}
