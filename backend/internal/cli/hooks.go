@@ -355,12 +355,16 @@ func (c *commandContext) runHook(ctx context.Context, agent, event string) error
 		// without a piped payload can't block on EOF.
 		return nil
 	}
-	payload, err := io.ReadAll(c.deps.In)
-	if err != nil {
-		// Surface read errors for parity with the daemon-error path, but keep
-		// the empty payload and exit 0: a failed hook must not break the
-		// agent. The deriver tolerates an empty payload.
-		c.reportHookFailure(agent, event, sessionID, fmt.Errorf("read stdin: %w", err))
+	var payload []byte
+	if hookReadsStdin(agent, event) {
+		var err error
+		payload, err = io.ReadAll(c.deps.In)
+		if err != nil {
+			// Surface read errors for parity with the daemon-error path, but keep
+			// the empty payload and exit 0: a failed hook must not break the
+			// agent. The deriver tolerates an empty payload.
+			c.reportHookFailure(agent, event, sessionID, fmt.Errorf("read stdin: %w", err))
+		}
 	}
 	if shouldEmitSessionStartContext(agent, event) {
 		c.emitSessionStartContext(agent, event, sessionID)
@@ -395,7 +399,7 @@ func (c *commandContext) runHook(ctx context.Context, agent, event string) error
 	}
 	conversation := hookConversationSnapshot{}
 	switch domain.AgentHarness(agent) {
-	case domain.HarnessClaudeCode, domain.HarnessCodex:
+	case domain.HarnessClaudeCode, domain.HarnessCodex, domain.HarnessContinue:
 		conversation = hookConversationFacts(payload)
 	}
 	path := "sessions/" + url.PathEscape(sessionID) + "/activity"
@@ -477,9 +481,13 @@ func isAgyModernHookEvent(agent, event string) bool {
 }
 
 func (c *commandContext) runReviewHook(ctx context.Context, agent, event, reviewSessionID string) error {
-	payload, err := io.ReadAll(c.deps.In)
-	if err != nil {
-		c.reportHookFailure(agent, event, reviewSessionID, fmt.Errorf("read stdin: %w", err))
+	var payload []byte
+	if hookReadsStdin(agent, event) {
+		var err error
+		payload, err = io.ReadAll(c.deps.In)
+		if err != nil {
+			c.reportHookFailure(agent, event, reviewSessionID, fmt.Errorf("read stdin: %w", err))
+		}
 	}
 	state, hasActivity := activitydispatch.Derive(agent, event, payload)
 	agentSessionID := ""
@@ -506,6 +514,13 @@ func (c *commandContext) runReviewHook(ctx context.Context, agent, event, review
 		c.reportHookFailure(agent, event, reviewSessionID, err)
 	}
 	return nil
+}
+
+// Aider's notification callback is synchronous and inherits the interactive
+// PTY stdin, but its activity transition carries no payload. Reading stdin
+// here would wait for the next user prompt and stall Aider's redraw.
+func hookReadsStdin(agent, event string) bool {
+	return agent != "aider" || event != "notification"
 }
 
 func validLaunchID(value string) string {

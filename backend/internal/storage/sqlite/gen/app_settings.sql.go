@@ -22,8 +22,27 @@ SELECT id, default_session_mode, updated_at, cloud_offering FROM app_settings WH
 func (q *Queries) GetAppSettings(ctx context.Context) (AppSetting, error) {
 	row := q.db.QueryRowContext(ctx, getAppSettings)
 	var i AppSetting
-	err := row.Scan(&i.ID, &i.DefaultSessionMode, &i.UpdatedAt, &i.CloudOffering)
+	err := row.Scan(
+		&i.ID,
+		&i.DefaultSessionMode,
+		&i.UpdatedAt,
+		&i.CloudOffering,
+	)
 	return i, err
+}
+
+const setCloudOffering = `-- name: SetCloudOffering :exec
+UPDATE app_settings SET cloud_offering = ?, updated_at = ? WHERE id = 1
+`
+
+type SetCloudOfferingParams struct {
+	CloudOffering int64
+	UpdatedAt     time.Time
+}
+
+func (q *Queries) SetCloudOffering(ctx context.Context, arg SetCloudOfferingParams) error {
+	_, err := q.db.ExecContext(ctx, setCloudOffering, arg.CloudOffering, arg.UpdatedAt)
+	return err
 }
 
 const setDefaultSessionMode = `-- name: SetDefaultSessionMode :exec
@@ -37,19 +56,5 @@ type SetDefaultSessionModeParams struct {
 
 func (q *Queries) SetDefaultSessionMode(ctx context.Context, arg SetDefaultSessionModeParams) error {
 	_, err := q.db.ExecContext(ctx, setDefaultSessionMode, arg.DefaultSessionMode, arg.UpdatedAt)
-	return err
-}
-
-const setCloudOffering = `-- name: SetCloudOffering :exec
-UPDATE app_settings SET cloud_offering = ?, updated_at = ? WHERE id = 1
-`
-
-type SetCloudOfferingParams struct {
-	CloudOffering bool
-	UpdatedAt     time.Time
-}
-
-func (q *Queries) SetCloudOffering(ctx context.Context, arg SetCloudOfferingParams) error {
-	_, err := q.db.ExecContext(ctx, setCloudOffering, arg.CloudOffering, arg.UpdatedAt)
 	return err
 }

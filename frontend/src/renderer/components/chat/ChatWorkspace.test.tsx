@@ -318,6 +318,38 @@ describe("ChatWorkspace timeline", () => {
 		expect(screen.getByTestId("chat-conversation-panel")).toHaveAttribute("inert");
 	});
 
+	it("fences new work during a drain while keeping the current turn's approval interactive", async () => {
+		const user = userEvent.setup();
+		const onDecide = vi.fn();
+		const view = render(<ChatWorkspace snapshot={idleSnapshot()} newWorkDisabled />);
+
+		expect(screen.getByTestId("chat-conversation-panel")).not.toHaveAttribute("inert");
+		expect(screen.getByLabelText("Message the agent")).toHaveAttribute("aria-disabled", "true");
+
+		const snapshot = structuredClone(chatFixture);
+		snapshot.items.push({
+			kind: "activity",
+			id: "drain-approval",
+			sequence: 99,
+			revision: 1,
+			turnId: "turn-2",
+			activityKind: "approval",
+			status: "pending",
+			summary: "Run command",
+			requestId: "drain-approval",
+			decisions: [{ id: "allow_once", label: "Allow Once", kind: "allow_once" }],
+			detail: { command: "npm test" },
+			createdAt: "2026-08-08T00:00:00Z",
+		});
+		view.rerender(
+			<ChatWorkspace snapshot={snapshot} newWorkDisabled onDecide={onDecide} />,
+		);
+
+		const approval = screen.getByRole("group", { name: "Approval request drain-approval" });
+		await user.click(within(approval).getByRole("button", { name: /Allow once/ }));
+		expect(onDecide).toHaveBeenCalledWith("drain-approval", "allow_once");
+	});
+
 	it("uses the shared session topbar chrome for workers and orchestrators", () => {
 		const view = render(<ChatWorkspace snapshot={chatFixture} sessionRole="worker" />);
 
@@ -330,7 +362,9 @@ describe("ChatWorkspace timeline", () => {
 
 		expect(screen.getByLabelText("Chat")).toHaveAttribute("data-session-role", "orchestrator");
 		expect(screen.getByTestId("session-workspace-topbar")).toBeInTheDocument();
-		expect(screen.getByTestId("session-action-region")).toBeInTheDocument();
+		const actionRegion = screen.getByTestId("session-action-region");
+		expect(actionRegion).toHaveClass("pl-2", "pr-3");
+		expect(actionRegion).not.toHaveClass("px-3");
 	});
 
 	it("clears the fixed titlebar nav when the sidebar is collapsed, like the terminal session", () => {
@@ -347,6 +381,27 @@ describe("ChatWorkspace timeline", () => {
 		expect(screen.getByTestId("session-terminal-region")).not.toHaveClass(
 			"session-topbar-titlebar-clearance-mac",
 		);
+	});
+
+	it("keeps session tab actions on the primary chat tab, like the terminal session", () => {
+		render(
+			<ChatWorkspace
+				snapshot={idleSnapshot()}
+				session={chatSession}
+				sessionTabAction={<button type="button">Session tab action</button>}
+				headerActions={<button type="button">Workspace action</button>}
+			/>,
+		);
+
+		const terminalRegion = screen.getByTestId("session-terminal-region");
+		expect(terminalRegion).toContainElement(screen.getByRole("tab", { name: /^Codex/ }));
+		expect(terminalRegion).toContainElement(screen.getByRole("button", { name: "Session tab action" }));
+		expect(screen.getByTestId("session-tab-action")).toContainElement(
+			screen.getByRole("button", { name: "Session tab action" }),
+		);
+		const actionRegion = screen.getByTestId("session-action-region");
+		expect(actionRegion).toContainElement(screen.getByRole("button", { name: "Workspace action" }));
+		expect(actionRegion).not.toContainElement(screen.getByRole("button", { name: "Session tab action" }));
 	});
 
 	it("leaves new-terminal and display controls out of the chat strip, like the terminal session", () => {
@@ -601,7 +656,7 @@ describe("ChatWorkspace timeline", () => {
 			name: "Approval request approval-1",
 		});
 		const composer = approval.closest("form");
-		expect(composer).toHaveClass("cursor-chat-composer", "border-border-strong");
+		expect(composer).toHaveClass("cursor-chat-composer", "border");
 		expect(screen.getByRole("log", { name: "Conversation" })).not.toContainElement(approval);
 		expect(screen.queryByLabelText("Message the agent")).not.toBeInTheDocument();
 		expect(within(approval).queryByText("Terminal")).not.toBeInTheDocument();
@@ -1802,9 +1857,10 @@ describe("ChatWorkspace reviewer tabs", () => {
 			/>,
 		);
 
-		const chatTab = screen.getByRole("tab", { name: "Codex" });
+		const chatTab = screen.getByRole("tab", { name: /^Codex/ });
 		const reviewerTab = screen.getByRole("tab", { name: "Reviewer" });
-		expect(chatTab).toHaveClass("self-stretch", "px-3", "cursor-pointer");
+		expect(chatTab).toHaveClass("px-2", "cursor-pointer");
+		expect(chatTab.closest("[data-terminal-tab-frame]")).toHaveClass("self-stretch");
 		expect(reviewerTab).toHaveClass(
 			"self-stretch",
 			"px-3",
@@ -1944,7 +2000,7 @@ describe("ChatWorkspace reviewer tabs", () => {
 		};
 		const view = render(<ChatWorkspace {...common} />);
 		const chatTab = screen.getByRole("tab", {
-			name: "Codex",
+			name: /^Codex/,
 		});
 		const reviewerTab = screen.getByRole("tab", { name: "Reviewer" });
 		expect(chatTab).toHaveAttribute("tabindex", "0");
@@ -1968,7 +2024,7 @@ describe("ChatWorkspace reviewer tabs", () => {
 
 		view.rerender(<ChatWorkspace {...common} reviewerTarget={reviewerTarget} />);
 		const activeReviewerTab = screen.getByRole("tab", { name: "Reviewer" });
-		expect(screen.getByRole("tab", { name: "Codex" })).toHaveAttribute(
+		expect(screen.getByRole("tab", { name: /^Codex/ })).toHaveAttribute(
 			"tabindex",
 			"-1",
 		);
@@ -1977,7 +2033,7 @@ describe("ChatWorkspace reviewer tabs", () => {
 		activeReviewerTab.focus();
 		fireEvent.keyDown(activeReviewerTab, { key: "Home" });
 		expect(onSelectChat).toHaveBeenCalledOnce();
-		expect(screen.getByRole("tab", { name: "Codex" })).toHaveFocus();
+		expect(screen.getByRole("tab", { name: /^Codex/ })).toHaveFocus();
 
 		onSelectChat.mockClear();
 		activeReviewerTab.focus();
@@ -2147,7 +2203,7 @@ describe("ChatWorkspace shell tabs", () => {
 			/>,
 		);
 
-		const workerTab = screen.getByRole("tab", { name: "Codex" });
+		const workerTab = screen.getByRole("tab", { name: /^Codex/ });
 		workerTab.focus();
 		fireEvent.keyDown(workerTab, { key: "Tab", ctrlKey: true });
 

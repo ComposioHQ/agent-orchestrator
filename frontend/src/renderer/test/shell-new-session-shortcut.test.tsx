@@ -479,6 +479,19 @@ describe("shell sidebar toggle", () => {
 			expect(useUiStore.getState().sidebarAutoCollapseOverride).toBe(true);
 			expect(screen.getByTestId("sidebar-provider")).toHaveAttribute("data-open", "true");
 			expect(screen.getByRole("button", { name: "Collapse sidebar" })).toBeInTheDocument();
+
+			fireEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));
+
+			// Browser pressure still owns the icon rail. Returning from the manual
+			// expansion must not remove that rail's layout width and shift the
+			// inspector boundary after the transition.
+			expect(useUiStore.getState()).toMatchObject({
+				isSidebarAutoCollapsed: true,
+				isSidebarOpen: true,
+				sidebarAutoCollapseOverride: false,
+			});
+			expect(screen.getByTestId("sidebar-provider")).toHaveAttribute("data-open", "false");
+			expect(screen.getByRole("button", { name: "Expand sidebar" })).toBeInTheDocument();
 		} finally {
 			clientWidth.mockRestore();
 		}
