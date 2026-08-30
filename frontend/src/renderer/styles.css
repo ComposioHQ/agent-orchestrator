@@ -2298,7 +2298,10 @@ html.sidebar-reordering * {
 }
 
 .queue-dock-scroll-active {
+	min-height: 0;
+	max-height: 100%;
 	height: 100%;
+	justify-content: flex-start;
 	overflow-y: auto;
 	overscroll-behavior: contain;
 	scrollbar-width: thin;
