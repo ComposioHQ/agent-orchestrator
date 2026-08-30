@@ -32,6 +32,7 @@ function QueuedMessageRow({
 }) {
 	return (
 		<div
+			className="queue-dock-row"
 			data-testid={`queued-message-${turnId}`}
 			aria-hidden={hiddenFromView ? true : undefined}
 			inert={hiddenFromView ? true : undefined}

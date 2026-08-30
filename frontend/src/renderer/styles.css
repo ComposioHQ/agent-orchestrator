@@ -2289,7 +2289,7 @@ html.sidebar-reordering * {
 	scrollbar-color: var(--color-scrollbar-board) transparent;
 }
 
-.queue-dock-body[data-expanded="false"] [aria-hidden="true"] {
+.queue-dock-body[data-expanded="false"] .queue-dock-row[aria-hidden="true"] {
 	display: none;
 }
 
