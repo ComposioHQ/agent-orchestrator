@@ -16,11 +16,16 @@ import (
 // --- fakes ---
 
 type fakeStore struct {
-	review               *domain.Review
-	reviews              map[domain.ReviewerHarness]domain.Review
-	runs                 []domain.ReviewRun
-	listAllReviewRunHits int
-	agentSessionUpdates  []struct{ id, agentSessionID string }
+	review                *domain.Review
+	reviews               map[domain.ReviewerHarness]domain.Review
+	runs                  []domain.ReviewRun
+	listAllReviewRunHits  int
+	agentSessionUpdates   []struct{ id, agentSessionID string }
+	reviewerConfigUpdates []struct {
+		sessionID domain.SessionID
+		harness   domain.ReviewerHarness
+		config    domain.AgentConfig
+	}
 	// insertErr, when set, makes the next InsertReviewRun model a concurrent
 	// writer that already recorded a run for this commit: it records that
 	// winner (so a follow-up GetReviewRunBySessionAndSHA finds it) and returns
@@ -46,7 +51,12 @@ func (f *fakeStore) UpsertReview(_ context.Context, r domain.Review) error {
 	f.reviews[r.Harness] = cp
 	return nil
 }
-func (f *fakeStore) SetSessionReviewerConfig(_ context.Context, _ domain.SessionID, _ domain.ReviewerHarness, _ domain.AgentConfig, _ time.Time) (bool, error) {
+func (f *fakeStore) SetSessionReviewerConfig(_ context.Context, id domain.SessionID, harness domain.ReviewerHarness, config domain.AgentConfig, _ time.Time) (bool, error) {
+	f.reviewerConfigUpdates = append(f.reviewerConfigUpdates, struct {
+		sessionID domain.SessionID
+		harness   domain.ReviewerHarness
+		config    domain.AgentConfig
+	}{sessionID: id, harness: harness, config: config})
 	return true, nil
 }
 func (f *fakeStore) GetReviewBySession(_ context.Context, _ domain.SessionID) (domain.Review, bool, error) {
@@ -661,6 +671,42 @@ func TestSwitchReviewerRestartsLivePaneWhenOnlyConfigChanges(t *testing.T) {
 	}
 	if res.ReviewerHandleID != "codex-pane-2" || res.ReviewerHarness != domain.ReviewerCodex {
 		t.Fatalf("result = %+v", res)
+	}
+}
+
+func TestSwitchReviewerPinsResolvedHarnessWhenSavingDefaultReviewerConfig(t *testing.T) {
+	store := &fakeStore{}
+	worker := liveWorker()
+	launcher := &fakeLauncher{handle: "review-mer-2"}
+	projects := fakeProjects{cfg: domain.ProjectConfig{Reviewers: []domain.ReviewerConfig{{
+		Harness: domain.ReviewerClaudeCode,
+	}}}}
+	eng := newEngineForTest(store, fakeSessions{rec: worker, ok: true}, prAt("sha1"), projects, launcher)
+
+	res, err := eng.SwitchReviewer(context.Background(), "mer-1", "", domain.AgentConfig{Model: "claude-3.7"})
+	if err != nil {
+		t.Fatalf("SwitchReviewer: %v", err)
+	}
+	if len(store.reviewerConfigUpdates) != 1 {
+		t.Fatalf("reviewer config updates = %+v, want one", store.reviewerConfigUpdates)
+	}
+	if got := store.reviewerConfigUpdates[0]; got.harness != domain.ReviewerClaudeCode || got.config.Model != "claude-3.7" {
+		t.Fatalf("persisted reviewer config = %+v, want pinned claude-code + model", got)
+	}
+	if res.ReviewerHarness != domain.ReviewerClaudeCode {
+		t.Fatalf("result reviewer harness = %q, want claude-code", res.ReviewerHarness)
+	}
+	worker.ReviewerHarness = store.reviewerConfigUpdates[0].harness
+	worker.ReviewerConfig = store.reviewerConfigUpdates[0].config
+	eng.projects = fakeProjects{cfg: domain.ProjectConfig{Reviewers: []domain.ReviewerConfig{{
+		Harness: domain.ReviewerOpenCode,
+	}}}}
+	selected, selectedConfig, err := eng.reviewerSelection(context.Background(), worker)
+	if err != nil {
+		t.Fatalf("reviewerSelection after project change: %v", err)
+	}
+	if selected != domain.ReviewerClaudeCode || selectedConfig.Model != "claude-3.7" {
+		t.Fatalf("selection after project reviewer change = (%q, %+v), want pinned claude-code config", selected, selectedConfig)
 	}
 }
 
