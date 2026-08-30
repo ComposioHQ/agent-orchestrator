@@ -1,9 +1,10 @@
 import { useCanGoBack, useRouter } from "@tanstack/react-router";
 import { ArrowLeft, ArrowRight, PanelLeft } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type PointerEventHandler } from "react";
 import { useTranslation } from "react-i18next";
 import { isLinuxPlatform, isMacPlatform } from "../lib/platform";
 import { sidebarIsCompact, sidebarIsVisible, sidebarOccupiesLayout, useUiStore } from "../stores/ui-store";
+import { requestSidebarPeek } from "./ui/sidebar";
 
 const isMac = isMacPlatform();
 const isLinux = isLinuxPlatform();
@@ -97,6 +98,10 @@ export function TitlebarNav({
         label={
           isSidebarOpen ? t("shell.collapseSidebar") : t("shell.expandSidebar")
         }
+        onPointerEnter={(event) => {
+          const bounds = event.currentTarget.getBoundingClientRect();
+          requestSidebarPeek(event.pointerType, event.buttons, bounds);
+        }}
         onClick={toggleSidebar}
         title={
           isSidebarOpen
@@ -130,6 +135,7 @@ function TitlebarButton({
   label,
   title,
   disabled,
+  onPointerEnter,
   tabIndex,
   onClick,
   children,
@@ -137,6 +143,7 @@ function TitlebarButton({
   label: string;
   title: string;
   disabled?: boolean;
+  onPointerEnter?: PointerEventHandler<HTMLButtonElement>;
   tabIndex?: number;
   onClick: () => void;
   children: React.ReactNode;
@@ -147,6 +154,7 @@ function TitlebarButton({
       aria-disabled={disabled || undefined}
       className="grid size-control-md place-items-center rounded-md text-passive transition-colors hover:bg-interactive-hover hover:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-55 disabled:hover:bg-transparent disabled:hover:text-passive"
       disabled={disabled}
+      onPointerEnter={onPointerEnter}
       onClick={onClick}
       style={noDragStyle}
       tabIndex={tabIndex}

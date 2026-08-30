@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { SIDEBAR_PEEK_REQUEST_EVENT } from "./ui/sidebar";
 
 const { navigateMock } = vi.hoisted(() => ({
   navigateMock: vi.fn(),
@@ -98,6 +99,34 @@ describe("WindowTitlebar", () => {
     expect(
       screen.getByRole("button", { name: "Go forward" }),
     ).toBeInTheDocument();
+  });
+
+  it("requests an immediate temporary peek from the Windows sidebar titlebar button", async () => {
+    const peekRequest = vi.fn();
+    window.addEventListener(SIDEBAR_PEEK_REQUEST_EVENT, peekRequest);
+    try {
+      const { WindowTitlebar } = await loadWindowTitlebar();
+
+      render(<WindowTitlebar />);
+      const sidebarToggle = document.querySelector<HTMLButtonElement>(".window-titlebar__toggle");
+      expect(sidebarToggle).not.toBeNull();
+      fireEvent.pointerEnter(sidebarToggle!, {
+        buttons: 0,
+        pointerType: "mouse",
+      });
+
+      expect(peekRequest).toHaveBeenCalledWith(
+        expect.objectContaining({
+          detail: expect.objectContaining({
+            buttons: 0,
+            pointerType: "mouse",
+            triggerZone: expect.any(Object),
+          }),
+        }),
+      );
+    } finally {
+      window.removeEventListener(SIDEBAR_PEEK_REQUEST_EVENT, peekRequest);
+    }
   });
 
   it("switches the maximize control to a restore icon when the window is maximized", async () => {

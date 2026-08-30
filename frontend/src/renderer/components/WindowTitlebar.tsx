@@ -13,6 +13,7 @@ import {
 import { useEffect, useState } from "react";
 import { sidebarIsVisible, useUiStore } from "../stores/ui-store";
 import { useCanGoForward } from "./TitlebarNav";
+import { requestSidebarPeek } from "./ui/sidebar";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -188,6 +189,10 @@ export function WindowTitlebar() {
         }
         className="window-titlebar__toggle"
         onClick={toggleSidebar}
+        onPointerEnter={(event) => {
+          const bounds = event.currentTarget.getBoundingClientRect();
+          requestSidebarPeek(event.pointerType, event.buttons, bounds);
+        }}
         title={
           isSidebarOpen
             ? t("shell.collapseSidebarTitle")

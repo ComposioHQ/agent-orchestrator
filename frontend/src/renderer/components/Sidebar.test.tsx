@@ -18,6 +18,7 @@ import {
 	SIDEBAR_DEFAULT_WIDTH,
 	SIDEBAR_MIN_WIDTH,
 } from "./Sidebar";
+import { TitlebarNav } from "./TitlebarNav";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { agentsQueryKey } from "../hooks/useAgentsQuery";
 import { useUiStore } from "../stores/ui-store";
@@ -134,7 +135,8 @@ vi.mock("@tanstack/react-router", async (importOriginal) => {
 	};
 });
 
-vi.mock("./TitlebarNav", () => ({
+vi.mock("./TitlebarNav", async (importOriginal) => ({
+	...(await importOriginal<typeof import("./TitlebarNav")>()),
 	useCanGoForward: () => compactRailCanGoForward.current,
 }));
 
@@ -241,6 +243,7 @@ function renderSidebar({
 	autoCompact = false,
 	topbarOffset = "toolbar",
 	expandedProjectIds,
+	includeTitlebarNav = false,
 }: {
 	onCloneProject?: CloneProjectHandler;
 	onCreateProject?: CreateProjectHandler;
@@ -252,6 +255,7 @@ function renderSidebar({
 	autoCompact?: boolean;
 	topbarOffset?: "toolbar" | "titlebar" | "trafficLights" | "session";
 	expandedProjectIds?: string[];
+	includeTitlebarNav?: boolean;
 } = {}) {
 	// Most legacy sidebar tests exercise session rows and assume their fixture
 	// project was previously open. Tests for the empty-store behavior opt out.
@@ -290,6 +294,7 @@ function renderSidebar({
 					onRemoveProject={onRemoveProject}
 					workspaces={workspaces}
 				/>
+				{includeTitlebarNav ? <TitlebarNav /> : null}
 			</SidebarProvider>
 		</QueryClientProvider>,
 	);
@@ -1651,6 +1656,227 @@ describe("Sidebar", () => {
 
 		expect(historyBackMock).toHaveBeenCalledTimes(1);
 		expect(historyForwardMock).toHaveBeenCalledTimes(1);
+	});
+
+	it("opens the adaptive collapsed rail after an edge dwell and dismisses after leaving", () => {
+		vi.useFakeTimers();
+		try {
+			renderSidebar({ autoCompact: true, initialOpen: false });
+			const sidebar = document.querySelector('[data-slot="sidebar"]');
+			const container = document.querySelector('[data-slot="sidebar-container"]');
+			const gap = document.querySelector('[data-slot="sidebar-gap"]');
+
+			expect(sidebar).not.toHaveAttribute("data-peek-open", "true");
+			fireEvent.pointerMove(window, { buttons: 0, clientX: 4, pointerType: "mouse" });
+			act(() => vi.advanceTimersByTime(249));
+			expect(sidebar).not.toHaveAttribute("data-peek-open", "true");
+
+			act(() => vi.advanceTimersByTime(1));
+			expect(sidebar).toHaveAttribute("data-peek-open", "true");
+			expect(sidebar).not.toHaveAttribute("data-collapsible", "icon");
+			expect(gap).toHaveStyle({ width: "var(--sidebar-width-icon)" });
+			const expandedSettings = Array.from(document.querySelectorAll<HTMLButtonElement>('button[aria-label="Settings"]'))
+				.find((button) => button.textContent?.includes("Settings"));
+			const collapsedSettings = Array.from(document.querySelectorAll<HTMLButtonElement>('button[aria-label="Settings"]'))
+				.find((button) => !button.textContent?.includes("Settings"));
+			expect(expandedSettings).toHaveAttribute("tabindex", "0");
+			expect(collapsedSettings).toHaveAttribute("tabindex", "-1");
+
+			fireEvent.pointerMove(window, { buttons: 0, clientX: 140, pointerType: "mouse" });
+			act(() => vi.advanceTimersByTime(1000));
+			expect(sidebar).toHaveAttribute("data-peek-open", "true");
+
+			fireEvent.pointerLeave(container!, { pointerType: "mouse" });
+			act(() => vi.advanceTimersByTime(54));
+			expect(sidebar).toHaveAttribute("data-peek-open", "true");
+			fireEvent.pointerEnter(container!, { pointerType: "mouse" });
+			act(() => vi.advanceTimersByTime(54));
+			act(() => vi.advanceTimersByTime(1));
+			expect(sidebar).toHaveAttribute("data-peek-open", "true");
+			fireEvent.pointerLeave(container!, { pointerType: "mouse" });
+			act(() => vi.advanceTimersByTime(54));
+			expect(sidebar).toHaveAttribute("data-peek-open", "true");
+			act(() => vi.advanceTimersByTime(1));
+			expect(sidebar).not.toHaveAttribute("data-peek-open", "true");
+			expect(container).not.toHaveClass("opacity-0");
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("cancels edge dwell when the pointer moves away or uses touch", () => {
+		vi.useFakeTimers();
+		try {
+			renderSidebar({ autoCompact: true, initialOpen: false });
+			const sidebar = document.querySelector('[data-slot="sidebar"]');
+
+			fireEvent.pointerMove(window, { buttons: 0, clientX: 4, pointerType: "mouse" });
+			act(() => vi.advanceTimersByTime(249));
+			expect(sidebar).not.toHaveAttribute("data-peek-open", "true");
+			fireEvent.pointerMove(window, { buttons: 0, clientX: 20, pointerType: "mouse" });
+			act(() => vi.advanceTimersByTime(1));
+			expect(sidebar).not.toHaveAttribute("data-peek-open", "true");
+
+			fireEvent.pointerMove(window, { buttons: 0, clientX: 4, pointerType: "touch" });
+			act(() => vi.advanceTimersByTime(250));
+			expect(sidebar).not.toHaveAttribute("data-peek-open", "true");
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("keeps the titlebar peek open through the trigger-to-sidebar route", async () => {
+		useUiStore.setState({ isSidebarOpen: false });
+		const peekRequest = vi.fn();
+		window.addEventListener("ao:sidebar-peek-request", peekRequest);
+		try {
+			renderSidebar({ initialOpen: false, includeTitlebarNav: true });
+			const sidebar = document.querySelector('[data-slot="sidebar"]');
+			const titlebar = document.querySelector<HTMLElement>('[data-slot="titlebar-nav"]');
+			const toggle = within(titlebar!).getByRole("button", { name: "Expand sidebar" });
+
+			expect(toggle).toBeVisible();
+			fireEvent.pointerEnter(toggle, { buttons: 1, pointerType: "mouse" });
+			expect(sidebar).not.toHaveAttribute("data-peek-open", "true");
+			fireEvent.pointerEnter(toggle, { buttons: 0, pointerType: "touch" });
+			expect(sidebar).not.toHaveAttribute("data-peek-open", "true");
+			fireEvent.pointerEnter(toggle, { buttons: 0, pointerType: "mouse" });
+			expect(peekRequest).toHaveBeenLastCalledWith(expect.objectContaining({
+				detail: expect.objectContaining({
+					buttons: 0,
+					pointerType: "mouse",
+					triggerZone: expect.any(Object),
+				}),
+			}));
+			await waitFor(() => expect(sidebar).toHaveAttribute("data-peek-open", "true"));
+
+			vi.useFakeTimers();
+			fireEvent.pointerLeave(sidebar!, { pointerType: "mouse" });
+			fireEvent.pointerMove(window, { buttons: 0, clientX: 0, clientY: 0, pointerType: "mouse" });
+			act(() => vi.advanceTimersByTime(100));
+			expect(sidebar).toHaveAttribute("data-peek-open", "true");
+
+			fireEvent.pointerMove(window, { buttons: 0, clientX: 140, clientY: 100, pointerType: "mouse" });
+			act(() => vi.advanceTimersByTime(100));
+			expect(sidebar).toHaveAttribute("data-peek-open", "true");
+
+			fireEvent.pointerMove(window, { buttons: 0, clientX: 300, clientY: 100, pointerType: "mouse" });
+			act(() => vi.advanceTimersByTime(54));
+			expect(sidebar).toHaveAttribute("data-peek-open", "true");
+			act(() => vi.advanceTimersByTime(1));
+			expect(sidebar).not.toHaveAttribute("data-peek-open", "true");
+		} finally {
+			vi.useRealTimers();
+			window.removeEventListener("ao:sidebar-peek-request", peekRequest);
+			useUiStore.setState({ isSidebarOpen: true });
+		}
+	});
+
+	it("edge-peeks the fully collapsed off-canvas sidebar and lets the control pin it open", () => {
+		vi.useFakeTimers();
+		try {
+			renderSidebar({ initialOpen: false });
+			const sidebar = document.querySelector('[data-slot="sidebar"]');
+			const container = document.querySelector('[data-slot="sidebar-container"]');
+			const gap = document.querySelector('[data-slot="sidebar-gap"]');
+			fireEvent.pointerMove(window, { buttons: 0, clientX: 4, pointerType: "mouse" });
+			act(() => vi.advanceTimersByTime(250));
+			expect(sidebar).toHaveAttribute("data-peek-open", "true");
+			expect(container).toHaveClass(
+				"opacity-100",
+				"transition-opacity",
+				"duration-normal",
+				"ease-out",
+				"motion-reduce:transition-none",
+			);
+			expect(sidebar).not.toHaveAttribute("data-collapsible", "offcanvas");
+			expect(gap).toHaveStyle({ width: "0px" });
+			const pinControl = screen.getByRole("button", { name: "Collapse sidebar" });
+			expect(pinControl).toBeVisible();
+			fireEvent.click(pinControl);
+			expect(sidebar).toHaveAttribute("data-state", "expanded");
+			expect(sidebar).not.toHaveAttribute("data-peek-open", "true");
+		} finally {
+			vi.useRealTimers();
+		}
+
+		vi.useFakeTimers();
+		try {
+			renderSidebar({ autoCompact: true });
+			const openSidebar = document.querySelector('[data-slot="sidebar"]');
+			fireEvent.pointerMove(window, { buttons: 0, clientX: 4, pointerType: "mouse" });
+			act(() => vi.advanceTimersByTime(250));
+			expect(openSidebar).not.toHaveAttribute("data-peek-open", "true");
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("uses a short reduced-motion-safe fade while dismissing a peek", () => {
+		vi.useFakeTimers();
+		try {
+			renderSidebar({ initialOpen: false });
+			const sidebar = document.querySelector('[data-slot="sidebar"]');
+			const container = document.querySelector('[data-slot="sidebar-container"]');
+			fireEvent.pointerMove(window, { buttons: 0, clientX: 4, pointerType: "mouse" });
+			act(() => vi.advanceTimersByTime(250));
+			fireEvent.pointerLeave(container!, { pointerType: "mouse" });
+			act(() => vi.advanceTimersByTime(54));
+			expect(sidebar).toHaveAttribute("data-peek-open", "true");
+			act(() => vi.advanceTimersByTime(1));
+
+			expect(sidebar).not.toHaveAttribute("data-peek-open", "true");
+			expect(container).toHaveClass(
+				"opacity-0",
+				"transition-opacity",
+				"duration-fast",
+				"ease-in",
+				"motion-reduce:transition-none",
+			);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("rejects edge activation during pointer drags or text selection", () => {
+		vi.useFakeTimers();
+		try {
+			renderSidebar({ initialOpen: false });
+			const sidebar = document.querySelector('[data-slot="sidebar"]');
+
+			fireEvent.pointerMove(window, { buttons: 1, clientX: 4, pointerType: "mouse" });
+			act(() => vi.advanceTimersByTime(250));
+			expect(sidebar).not.toHaveAttribute("data-peek-open", "true");
+
+			fireEvent.pointerMove(window, { buttons: 0, clientX: 4, pointerType: "mouse" });
+			const selection = window.getSelection();
+			const range = document.createRange();
+			range.selectNodeContents(document.body);
+			selection?.removeAllRanges();
+			selection?.addRange(range);
+			act(() => vi.advanceTimersByTime(250));
+			expect(sidebar).not.toHaveAttribute("data-peek-open", "true");
+			selection?.removeAllRanges();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("pins a temporary off-canvas peek open through the sidebar keyboard shortcut", () => {
+		vi.useFakeTimers();
+		try {
+			renderSidebar({ initialOpen: false });
+			const sidebar = document.querySelector('[data-slot="sidebar"]');
+			fireEvent.pointerMove(window, { buttons: 0, clientX: 4, pointerType: "mouse" });
+			act(() => vi.advanceTimersByTime(250));
+			expect(sidebar).toHaveAttribute("data-peek-open", "true");
+
+			fireEvent.keyDown(window, { key: "b", metaKey: true });
+			expect(sidebar).toHaveAttribute("data-state", "expanded");
+			expect(sidebar).not.toHaveAttribute("data-peek-open", "true");
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 
 	it("flushes any queued rAF frame on pointer-up and persists the clamped width", async () => {

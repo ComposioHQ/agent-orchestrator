@@ -110,6 +110,9 @@ import {
 	SidebarRail,
 	SidebarMenuSub,
 	SidebarMenuSubItem,
+	SIDEBAR_PEEK_REQUEST_EVENT,
+	type SidebarPeekRequestDetail,
+	type SidebarPeekTriggerZone,
 	useSidebar,
 } from "./ui/sidebar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
@@ -164,6 +167,10 @@ const MAX_DISPLAY_NAME_LEN = 20;
 // distance keeps a plain navigation/disclosure click from starting a drag;
 // nested action buttons remain outside that activator surface.
 const REORDER_ACTIVATION_DISTANCE = 4;
+const SIDEBAR_PEEK_DELAY_MS = 250;
+const SIDEBAR_PEEK_DISMISS_DELAY_MS = 55;
+const SIDEBAR_PEEK_EDGE_WIDTH_PX = 8;
+const SIDEBAR_PEEK_FALLBACK_WIDTH_PX = 240;
 
 /** Stable drag-context ids: one for the project list, one per project's sessions. */
 export const PROJECT_DND_ID = "sidebar-projects";
@@ -311,6 +318,153 @@ function useGrabbingCursor(active: boolean) {
 	}, [active]);
 }
 
+function hasActiveTextSelection() {
+	const selection = window.getSelection();
+	return selection !== null && !selection.isCollapsed;
+}
+
+function isInsideSidebarPeekZone(event: PointerEvent, container: HTMLElement | null) {
+	const sidebar = container?.closest<HTMLElement>('[data-slot="sidebar"]');
+	const configuredWidth = Number.parseFloat(
+		getComputedStyle(document.documentElement).getPropertyValue("--ao-sidebar-w"),
+	);
+	const width = container?.offsetWidth || configuredWidth || SIDEBAR_PEEK_FALLBACK_WIDTH_PX;
+	const left = sidebar?.dataset.side === "right" ? window.innerWidth - width : 0;
+	return event.clientX >= left && event.clientX <= left + width && event.clientY >= 0 && event.clientY <= window.innerHeight;
+}
+
+function useSidebarPointerPeek(enabled: boolean) {
+	const { isPeeking, setPeekOpen } = useSidebar();
+	const openTimerRef = useRef<number | null>(null);
+	const dismissTimerRef = useRef<number | null>(null);
+	const lastPointerButtonsRef = useRef(0);
+	const titlebarTriggerActiveRef = useRef(false);
+	const titlebarTriggerZoneRef = useRef<SidebarPeekTriggerZone | null>(null);
+
+	const clearOpenTimer = useCallback(() => {
+		if (openTimerRef.current === null) return;
+		window.clearTimeout(openTimerRef.current);
+		openTimerRef.current = null;
+	}, []);
+	const clearDismissTimer = useCallback(() => {
+		if (dismissTimerRef.current === null) return;
+		window.clearTimeout(dismissTimerRef.current);
+		dismissTimerRef.current = null;
+	}, []);
+	const clearTitlebarTrigger = useCallback(() => {
+		titlebarTriggerActiveRef.current = false;
+		titlebarTriggerZoneRef.current = null;
+	}, []);
+
+	useEffect(() => {
+		if (enabled) return;
+		clearOpenTimer();
+		clearDismissTimer();
+		clearTitlebarTrigger();
+		if (isPeeking) setPeekOpen(false);
+	}, [clearDismissTimer, clearOpenTimer, clearTitlebarTrigger, enabled, isPeeking, setPeekOpen]);
+
+	const scheduleDismiss = useCallback(() => {
+		clearDismissTimer();
+		dismissTimerRef.current = window.setTimeout(() => {
+			dismissTimerRef.current = null;
+			setPeekOpen(false);
+		}, SIDEBAR_PEEK_DISMISS_DELAY_MS);
+	}, [clearDismissTimer, setPeekOpen]);
+	const scheduleOpen = useCallback(() => {
+		if (lastPointerButtonsRef.current !== 0 || hasActiveTextSelection() || openTimerRef.current !== null) return;
+		openTimerRef.current = window.setTimeout(() => {
+			openTimerRef.current = null;
+			if (lastPointerButtonsRef.current !== 0 || hasActiveTextSelection()) return;
+			setPeekOpen(true);
+		}, SIDEBAR_PEEK_DELAY_MS);
+	}, [setPeekOpen]);
+
+	useEffect(() => {
+		if (!enabled) return;
+		const onPointerDown = () => {
+			lastPointerButtonsRef.current = 1;
+			clearOpenTimer();
+			clearTitlebarTrigger();
+		};
+		const onSelectionChange = () => {
+			if (hasActiveTextSelection()) {
+				clearOpenTimer();
+				clearTitlebarTrigger();
+			}
+		};
+		const onTitlebarPointerEnter = (event: Event) => {
+			const { pointerType, buttons, triggerZone } = (event as CustomEvent<SidebarPeekRequestDetail>).detail;
+			clearDismissTimer();
+			lastPointerButtonsRef.current = buttons;
+			clearOpenTimer();
+			if (pointerType !== "mouse" || buttons !== 0 || hasActiveTextSelection()) {
+				clearTitlebarTrigger();
+				return;
+			}
+			titlebarTriggerActiveRef.current = triggerZone !== undefined;
+			titlebarTriggerZoneRef.current = triggerZone ?? null;
+			setPeekOpen(true);
+		};
+		const onPointerMove = (event: PointerEvent) => {
+			lastPointerButtonsRef.current = event.buttons;
+			if (event.pointerType !== "mouse" || event.buttons !== 0 || hasActiveTextSelection()) {
+				clearOpenTimer();
+				clearTitlebarTrigger();
+				return;
+			}
+			if (isPeeking) {
+				const container = document.querySelector<HTMLElement>("[data-slot=sidebar-container]");
+				const triggerZone = titlebarTriggerZoneRef.current;
+				const insideTrigger = titlebarTriggerActiveRef.current && triggerZone !== null &&
+					event.clientX >= triggerZone.left && event.clientX <= triggerZone.right &&
+					event.clientY >= triggerZone.top && event.clientY <= triggerZone.bottom;
+				if (insideTrigger) {
+					clearDismissTimer();
+					return;
+				}
+				if (titlebarTriggerActiveRef.current) clearTitlebarTrigger();
+				isInsideSidebarPeekZone(event, container) ? clearDismissTimer() : scheduleDismiss();
+				return;
+			}
+			if (event.clientX > SIDEBAR_PEEK_EDGE_WIDTH_PX) {
+				clearOpenTimer();
+				return;
+			}
+			scheduleOpen();
+		};
+
+		window.addEventListener("pointerdown", onPointerDown);
+		window.addEventListener("pointermove", onPointerMove);
+		window.addEventListener(SIDEBAR_PEEK_REQUEST_EVENT, onTitlebarPointerEnter);
+		document.addEventListener("selectionchange", onSelectionChange);
+		return () => {
+			window.removeEventListener("pointerdown", onPointerDown);
+			window.removeEventListener("pointermove", onPointerMove);
+			window.removeEventListener(SIDEBAR_PEEK_REQUEST_EVENT, onTitlebarPointerEnter);
+			document.removeEventListener("selectionchange", onSelectionChange);
+			clearOpenTimer();
+			clearTitlebarTrigger();
+		};
+	}, [clearDismissTimer, clearOpenTimer, clearTitlebarTrigger, enabled, isPeeking, scheduleDismiss, scheduleOpen]);
+
+	const onPointerEnter = useCallback(() => {
+		clearDismissTimer();
+	}, [clearDismissTimer]);
+	const onPointerLeave = useCallback(() => {
+		clearOpenTimer();
+		if (!isPeeking || titlebarTriggerActiveRef.current) return;
+		scheduleDismiss();
+	}, [clearOpenTimer, isPeeking, scheduleDismiss]);
+
+	useEffect(() => () => {
+		clearOpenTimer();
+		clearDismissTimer();
+	}, [clearDismissTimer, clearOpenTimer]);
+
+	return { isPeeking, onPointerEnter, onPointerLeave };
+}
+
 export const SIDEBAR_DEFAULT_WIDTH = 240;
 export const SIDEBAR_MIN_WIDTH = 200;
 export const SIDEBAR_MAX_WIDTH = 420;
@@ -419,13 +573,15 @@ export function Sidebar({
 }: SidebarProps) {
 	const { t } = useTranslation();
 	const selection = useSelection();
-	const { state, setOpen, toggleSidebar } = useSidebar();
+	const { isMobile, state, setOpen, toggleSidebar } = useSidebar();
 	const isCollapsed = state === "collapsed";
+	const { isPeeking, onPointerEnter, onPointerLeave } = useSidebarPointerPeek(!isMobile && isCollapsed);
+	const isCompactCollapsed = isCollapsed && !isPeeking;
 	const [expandedChromeVisible, setExpandedChromeVisible] = useState(!isCollapsed);
 	const router = useRouter();
 	const canGoBack = useCanGoBack();
 	const canGoForward = useCanGoForward();
-	const showCompactRailHistory = autoCompact && isCollapsed && (isMac || isLinux) && !isWindows;
+	const showCompactRailHistory = autoCompact && isCompactCollapsed && (isMac || isLinux) && !isWindows;
 	// One IPC subscription for both footer variants of the restart-to-update prompt.
 	const updateStatus = useUpdateStatus();
 	// Daemon status for the smoke suite's sr-only mirror in the footer. Null when
@@ -439,10 +595,10 @@ export function Sidebar({
 	useLayoutEffect(() => {
 		// Offcanvas: the panel slides off-screen on collapse — no need to hide content.
 		// Reveal immediately on expand so there's no fade-in delay.
-		if (!isCollapsed) {
+		if (!isCollapsed || isPeeking) {
 			setExpandedChromeVisible(true);
 		}
-	}, [isCollapsed]);
+	}, [isCollapsed, isPeeking]);
 
 	// Disclosure state is persisted as the IDs of projects that were expanded.
 	// An empty/missing store intentionally means all projects start collapsed.
@@ -637,8 +793,11 @@ export function Sidebar({
 		// Pinned sidebars start below shell chrome.
 		<SidebarRoot
 			collapsible={autoCompact ? "icon" : "offcanvas"}
-			data-expanded-chrome={expandedChromeVisible ? "visible" : "hidden"}
+			peekOpen={isPeeking}
+			data-expanded-chrome={expandedChromeVisible || isPeeking ? "visible" : "hidden"}
 			data-topbar-offset={underTopbar ? topbarOffset : undefined}
+			onPointerEnter={onPointerEnter}
+			onPointerLeave={onPointerLeave}
 			className={cn(
 				"sidebar-focusless",
 				hideEdgeBorder ? "border-transparent" : "border-r-0 group-data-[side=left]:border-r-0",
@@ -706,8 +865,8 @@ export function Sidebar({
 				<Tooltip>
 					<TooltipTrigger asChild>
 						<button
-							aria-label={isCollapsed ? t("shell.expandSidebar") : t("shell.collapseSidebar")}
-							className="hidden size-control-board place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground group-data-[collapsible=icon]:grid [&_svg]:size-icon-base"
+							aria-label={isCompactCollapsed ? t("shell.expandSidebar") : t("shell.collapseSidebar")}
+							className="hidden size-control-board place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground group-data-[collapsible=icon]:grid group-data-[peek-open=true]:grid [&_svg]:size-icon-base"
 							onClick={toggleSidebar}
 							type="button"
 						>
@@ -715,7 +874,7 @@ export function Sidebar({
 						</button>
 					</TooltipTrigger>
 					<TooltipContent side="right">
-						{isCollapsed ? t("shell.expandSidebar") : t("shell.collapseSidebar")}
+						{isCompactCollapsed ? t("shell.expandSidebar") : t("shell.collapseSidebar")}
 					</TooltipContent>
 				</Tooltip>
 				{showCompactRailHistory ? (
@@ -844,13 +1003,13 @@ export function Sidebar({
 											onRemoveProject={onRemoveProject}
 										/>
 									))}
-									{isCollapsed && <CreateProjectListItem />}
+									{isCompactCollapsed && <CreateProjectListItem />}
 								</SidebarMenu>
 								<DragOverlay adjustScale={false} dropAnimation={null} modifiers={[restrictProjectOverlayToRows]} style={PROJECT_DRAG_OVERLAY_STYLE} zIndex={60}>
 									{activeDragWorkspace ? (
 										<ProjectDragPreview
 											expanded={
-												!isCollapsed &&
+												!isCompactCollapsed &&
 												(expandedIds.has(activeDragWorkspace.id) ||
 													(initialActiveSessionProjectId === activeDragWorkspace.id &&
 														!dismissedInitialActiveProjectIds.has(activeDragWorkspace.id)))
@@ -882,13 +1041,13 @@ export function Sidebar({
 					</span>
 				)}
 				<div
-					aria-hidden={isCollapsed || undefined}
-					hidden={isCollapsed}
+					aria-hidden={isCompactCollapsed || undefined}
+					hidden={isCompactCollapsed}
 					className="sidebar-expanded-chrome relative flex w-full min-w-46.5 flex-col gap-0.5"
 				>
-					<UpdateStatusRow status={updateStatus} tabIndex={isCollapsed ? -1 : 0} />
-					<CloudSignInRow tabIndex={isCollapsed ? -1 : 0} />
-					<CloudAccountRow tabIndex={isCollapsed ? -1 : 0} />
+					<UpdateStatusRow status={updateStatus} tabIndex={isCompactCollapsed ? -1 : 0} />
+					<CloudSignInRow tabIndex={isCompactCollapsed ? -1 : 0} />
+					<CloudAccountRow tabIndex={isCompactCollapsed ? -1 : 0} />
 					<button
 						aria-label={t("settings.connectMobile")}
 						className={cn(
@@ -896,7 +1055,7 @@ export function Sidebar({
 							"flex h-9 w-full items-center text-left [&_svg]:size-icon-md [&_svg]:shrink-0",
 						)}
 						onClick={() => selection.goConnectMobile()}
-						tabIndex={isCollapsed ? -1 : 0}
+						tabIndex={isCompactCollapsed ? -1 : 0}
 						type="button"
 					>
 						<Smartphone aria-hidden="true" />
@@ -909,7 +1068,7 @@ export function Sidebar({
 							"flex h-[42px] w-full items-center text-left [&_svg]:size-icon-md [&_svg]:shrink-0",
 						)}
 						onClick={() => selection.goGlobalSettings()}
-						tabIndex={isCollapsed ? -1 : 0}
+						tabIndex={isCompactCollapsed ? -1 : 0}
 						type="button"
 					>
 						<Settings aria-hidden="true" />
@@ -917,19 +1076,19 @@ export function Sidebar({
 					</button>
 				</div>
 				<div
-					aria-hidden={!isCollapsed || undefined}
+					aria-hidden={!isCompactCollapsed || undefined}
 					className="pointer-events-none absolute inset-x-1.5 bottom-0 top-auto flex min-h-row-md flex-col items-center justify-end gap-1 opacity-0 transition-opacity duration-150 ease-out group-data-[collapsible=icon]:pointer-events-auto group-data-[collapsible=icon]:!bottom-2 group-data-[collapsible=icon]:opacity-100"
 				>
-					<UpdateStatusRail status={updateStatus} tabIndex={isCollapsed ? 0 : -1} />
-					<CloudSignInRailButton tabIndex={isCollapsed ? 0 : -1} />
-					<CloudAccountRailButton tabIndex={isCollapsed ? 0 : -1} />
+					<UpdateStatusRail status={updateStatus} tabIndex={isCompactCollapsed ? 0 : -1} />
+					<CloudSignInRailButton tabIndex={isCompactCollapsed ? 0 : -1} />
+					<CloudAccountRailButton tabIndex={isCompactCollapsed ? 0 : -1} />
 					<Tooltip>
 						<TooltipTrigger asChild>
 							<button
 								aria-label={t("settings.connectMobile")}
 								className="grid size-control-board place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-icon-base"
 								onClick={() => selection.goConnectMobile()}
-								tabIndex={isCollapsed ? 0 : -1}
+								tabIndex={isCompactCollapsed ? 0 : -1}
 								type="button"
 							>
 								<Smartphone aria-hidden="true" />
@@ -943,7 +1102,7 @@ export function Sidebar({
 								aria-label={t("shell.settings")}
 								className="grid size-control-board place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-icon-base"
 								onClick={() => selection.goGlobalSettings()}
-								tabIndex={isCollapsed ? 0 : -1}
+								tabIndex={isCompactCollapsed ? 0 : -1}
 								type="button"
 							>
 								<Settings aria-hidden="true" />
@@ -963,7 +1122,7 @@ export function Sidebar({
 			/>
 			<SidebarRail
 				aria-label={t("shell.expandSidebar")}
-				className="group-data-[state=expanded]:hidden hover:after:bg-transparent"
+				className="group-data-[state=expanded]:hidden group-data-[peek-open=true]:hidden hover:after:bg-transparent"
 				onClick={() => setOpen(true)}
 				onPointerDown={onCollapsedResizePointerDown}
 			/>
@@ -2326,8 +2485,8 @@ function SectionDisclosure({
 
 function SidebarSearchButton({ onOpen }: { onOpen: () => void }) {
 	const { t } = useTranslation();
-	const { state } = useSidebar();
-	const isCollapsed = state === "collapsed";
+	const { state, isPeeking } = useSidebar();
+	const isCollapsed = state === "collapsed" && !isPeeking;
 	const overrides = useKeybindingsStore((store) => store.overrides);
 	const paletteBinding = effectiveShortcutBindings("command-palette", isMac, overrides)[0];
 	const commandPaletteShortcutLabel = paletteBinding

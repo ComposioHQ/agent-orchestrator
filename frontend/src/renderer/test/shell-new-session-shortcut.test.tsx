@@ -497,20 +497,6 @@ describe("shell sidebar toggle", () => {
 		}
 	});
 
-	it("does not open a collapsed sidebar on titlebar hover", async () => {
-		useUiStore.setState({ isSidebarOpen: false });
-		await renderShell();
-
-		const provider = screen.getByTestId("sidebar-provider");
-		const expandTrigger = screen.getByRole("button", { name: "Expand sidebar" });
-
-		expect(provider).toHaveAttribute("data-open", "false");
-		fireEvent.pointerEnter(expandTrigger);
-
-		expect(provider).toHaveAttribute("data-open", "false");
-		expect(useUiStore.getState().isSidebarOpen).toBe(false);
-	});
-
 	it("opens the sidebar when the titlebar toggle is clicked", async () => {
 		useUiStore.setState({ isSidebarOpen: false });
 		await renderShell();
