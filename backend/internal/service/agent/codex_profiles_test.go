@@ -127,7 +127,7 @@ func TestOpenCodexProfileLoginTerminalUsesServerOwnedProfileContext(t *testing.T
 	}
 	manager := newCodexProfileManager(context.Background(), t.TempDir(), existingHome, nil, nil)
 	opener := &fakeCodexLoginTerminalOpener{result: shellterm.ShellTerminal{
-		HandleID: "shellterm-login-1", WorkingDir: resolvedHome, Title: "Codex login - Existing Codex profile",
+		HandleID: "shellterm-login-1", WorkingDir: resolvedHome, Title: "Codex login - Existing Codex account",
 	}}
 	manager.loginTerminalOpener = opener
 	manager.executable = func() (string, error) { return "/Applications/AO.app/Contents/MacOS/ao", nil }
@@ -152,7 +152,7 @@ func TestOpenCodexProfileLoginTerminalUsesServerOwnedProfileContext(t *testing.T
 	if opened.WorkingDir != resolvedHome {
 		t.Errorf("working dir = %q, want profile home", opened.WorkingDir)
 	}
-	if opened.Title != "Codex login - Existing Codex profile" {
+	if opened.Title != "Codex login - Existing Codex account" {
 		t.Errorf("title = %q", opened.Title)
 	}
 }

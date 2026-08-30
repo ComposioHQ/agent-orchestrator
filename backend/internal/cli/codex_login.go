@@ -32,7 +32,7 @@ const (
 func newCodexLoginCommand(ctx *commandContext) *cobra.Command {
 	return &cobra.Command{
 		Use:    "codex-login",
-		Short:  "Sign a managed Codex profile in (internal)",
+		Short:  "Sign a managed Codex account in (internal)",
 		Hidden: true,
 		Args:   noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -147,7 +147,7 @@ func (s codexLoginStyle) success(value string) string {
 func writeCodexLoginMenu(out io.Writer, style codexLoginStyle) error {
 	lines := []string{
 		style.accent("Sign in to Codex"),
-		style.dim("Choose how you want to authenticate this profile."),
+		style.dim("Choose how you want to authenticate this account."),
 		"",
 		style.dim("PERSONAL ACCOUNT"),
 		fmt.Sprintf("  %s  %s  %s %s", style.accent("1"), style.bold("ChatGPT in browser"), style.success("Recommended"), style.dim("· Continue using your ChatGPT account")),

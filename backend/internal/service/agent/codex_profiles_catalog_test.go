@@ -14,7 +14,7 @@ import (
 func TestCodexProfileCatalogAlwaysReturnsExistingWithoutDiskWork(t *testing.T) {
 	catalog := newCodexProfileCatalog(filepath.Join(t.TempDir(), "missing"), filepath.Join(t.TempDir(), ".codex"), nil)
 	profiles := catalog.snapshots()
-	if len(profiles) != 1 || profiles[0].ID != codexExistingProfileID || profiles[0].Source != domain.CodexProfileSourceExisting || !profiles[0].UsableByCurrentLaunches {
+	if len(profiles) != 1 || profiles[0].ID != codexExistingProfileID || profiles[0].Label != "Existing Codex account" || profiles[0].Source != domain.CodexProfileSourceExisting || !profiles[0].UsableByCurrentLaunches {
 		t.Fatalf("cached profiles = %#v", profiles)
 	}
 }

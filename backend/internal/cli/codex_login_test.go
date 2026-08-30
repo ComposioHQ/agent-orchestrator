@@ -165,7 +165,7 @@ func TestCodexLoginMenuGuidesUsersThroughEverySupportedMethod(t *testing.T) {
 	}
 	wantInOrder := []string{
 		"Sign in to Codex",
-		"Choose how you want to authenticate this profile.",
+		"Choose how you want to authenticate this account.",
 		"PERSONAL ACCOUNT",
 		"ChatGPT in browser",
 		"Recommended",
