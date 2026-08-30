@@ -173,6 +173,7 @@ export function QueuedMessageDock({
 			data-testid="queued-message-dock"
 			data-collapsible={hasMore ? "true" : "false"}
 			data-expanded={isOpen ? "true" : "false"}
+			style={{ "--queue-dock-expanded-rows": expandedRows } as CSSProperties}
 		>
 			<button
 				type="button"

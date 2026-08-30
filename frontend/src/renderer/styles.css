@@ -2237,32 +2237,34 @@ html.sidebar-reordering * {
 	--queue-dock-visible-rows: 5;
 	position: relative;
 	overflow: hidden;
-	transition: max-height 420ms cubic-bezier(0.16, 1, 0.3, 1);
-	will-change: max-height;
+	height: var(--queue-dock-row-height);
+	transition: height 420ms cubic-bezier(0.16, 1, 0.3, 1);
+	will-change: height;
 }
 
 .queue-dock {
-	max-height: var(--queue-dock-collapsed-height, 4.5rem);
-	transition: max-height 420ms cubic-bezier(0.16, 1, 0.3, 1);
+	height: var(--queue-dock-collapsed-height, 4.5rem);
+	transition: height 420ms cubic-bezier(0.16, 1, 0.3, 1);
+	will-change: height;
 }
 
 .queue-dock[data-collapsible="true"][data-expanded="true"] {
-	max-height: calc(
+	height: calc(
 		var(--queue-dock-header-height, 2rem) +
-		var(--queue-dock-row-height, 2.5rem) * var(--queue-dock-visible-rows, 5)
+		var(--queue-dock-row-height, 2.5rem) * var(--queue-dock-expanded-rows, 5)
 	);
 }
 
 .queue-dock-body[data-collapsible="true"][data-expanded="false"] {
-	max-height: var(--queue-dock-row-height);
+	height: var(--queue-dock-row-height);
 }
 
 .queue-dock-body[data-collapsible="true"][data-expanded="true"] {
-	max-height: calc(var(--queue-dock-row-height) * var(--queue-dock-expanded-rows, 5));
+	height: calc(var(--queue-dock-row-height) * var(--queue-dock-expanded-rows, 5));
 }
 
 .queue-dock-body[data-collapsible="false"] {
-	max-height: calc(var(--queue-dock-row-height) * var(--queue-dock-expanded-rows, 1));
+	height: calc(var(--queue-dock-row-height) * var(--queue-dock-expanded-rows, 1));
 }
 
 .queue-dock-scroll {
@@ -2270,7 +2272,7 @@ html.sidebar-reordering * {
 }
 
 .queue-dock-scroll-active {
-	max-height: calc(var(--queue-dock-row-height) * var(--queue-dock-visible-rows));
+	height: calc(var(--queue-dock-row-height) * var(--queue-dock-visible-rows));
 	overflow-y: auto;
 	overscroll-behavior: contain;
 	scrollbar-width: thin;
@@ -2317,6 +2319,7 @@ html.sidebar-reordering * {
 
 	.queue-dock {
 		transition: none;
+		will-change: auto;
 	}
 }
 
