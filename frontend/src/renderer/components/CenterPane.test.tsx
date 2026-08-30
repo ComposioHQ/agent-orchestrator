@@ -207,7 +207,7 @@ describe("CenterPane toolbar session label", () => {
 		expect(document.body.style.pointerEvents).not.toBe("none");
 	});
 
-	it("does not acknowledge a switch presentation hidden by files or the switch selector", async () => {
+	it("does not acknowledge a switch presentation hidden by files or the switch selector", () => {
 		const activeSwitch = switchRecord({ state: "starting_target", updatedAt: "2026-08-28T00:00:00Z" });
 		agentSwitchMocks.switches.push(activeSwitch);
 		const view = renderCenterPane({ session: { ...worker, activeAgentSwitch: activeSwitch }, workspaceFileActive: true });
@@ -216,10 +216,14 @@ describe("CenterPane toolbar session label", () => {
 
 		view.rerender(
 			<TooltipProvider>
-				<CenterPane daemonReady session={{ ...worker, activeAgentSwitch: activeSwitch }} theme="dark" />
+				<CenterPane
+					daemonReady
+					handoffDialogOpen
+					session={{ ...worker, activeAgentSwitch: activeSwitch }}
+					theme="dark"
+				/>
 			</TooltipProvider>,
 		);
-		await userEvent.click(screen.getByRole("button", { name: "Switch agent" }));
 		expect(visibilityMocks.presentation).toHaveBeenLastCalledWith(expect.objectContaining({ visible: false }));
 	});
 
