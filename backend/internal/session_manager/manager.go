@@ -201,6 +201,8 @@ const (
 	EnvSupervisedProcess = "AO_SUPERVISED_PROCESS"
 	// EnvDataDir tells a spawned agent's AO hook commands where the store lives.
 	EnvDataDir = "AO_DATA_DIR"
+	// EnvPermissionMode tells hook commands which AO approval policy applies.
+	EnvPermissionMode = "AO_PERMISSION_MODE"
 	// EnvRunFile tells spawned AO hook commands which live daemon owns the
 	// session. AO_DATA_DIR is durable storage, not daemon discovery; custom and
 	// isolated daemons therefore need this coordinate explicitly.
@@ -908,6 +910,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.SessionRecord{}, 0, 0, wrapSpawnStage(id, ErrSpawnBrowser, err)
 	}
 	m.augmentAgentRuntimeEnv(agent, env)
+	pinRuntimePermissionEnv(env, adapterConfig.Permissions)
 	if err := m.prepareWorkspace(ctx, agent, id, ws.Path, systemPrompt, systemPromptFile, adapterConfig, env); err != nil {
 		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, false)
 		return domain.SessionRecord{}, 0, 0, wrapSpawnStage(id, ErrSpawnPrepare, err)
@@ -1988,6 +1991,7 @@ func (m *Manager) relaunchSessionWithPolicy(ctx context.Context, operation strin
 		return RestoreResult{}, fmt.Errorf("%s %s: persist browser capability: %w", operation, rec.ID, err)
 	}
 	m.augmentAgentRuntimeEnv(agent, env)
+	pinRuntimePermissionEnv(env, agentConfig.Permissions)
 	if err := m.prepareWorkspace(ctx, agent, rec.ID, ws.Path, systemPrompt, systemPromptFile, agentConfig, env); err != nil {
 		return RestoreResult{}, fmt.Errorf("%s %s: %w", operation, rec.ID, err)
 	}
@@ -3876,6 +3880,16 @@ func (m *Manager) runtimeEnv(id domain.SessionID, project domain.ProjectID, issu
 	}
 	env["PATH"] = path
 	return env
+}
+
+// pinRuntimePermissionEnv exposes the session's AO approval policy to hook
+// commands so adapters like Cursor can decide whether a tool attempt needs
+// user approval before returning a native permission response.
+func pinRuntimePermissionEnv(env map[string]string, mode domain.PermissionMode) {
+	if env == nil {
+		return
+	}
+	env[EnvPermissionMode] = string(ports.NormalizePermissionMode(mode))
 }
 
 func (m *Manager) launchRuntimeEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueID, projectEnv map[string]string) (map[string]string, string, error) {

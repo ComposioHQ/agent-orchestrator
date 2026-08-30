@@ -19,13 +19,23 @@ function wrapper({ children }: { children: ReactNode }) {
 	return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
 }
 
-function page({ id, sequence, hasMoreBefore }: { id: string; sequence: number; hasMoreBefore: boolean }) {
+function page({
+	id,
+	sequence,
+	hasMoreBefore,
+	controller = "ready",
+}: {
+	id: string;
+	sequence: number;
+	hasMoreBefore: boolean;
+	controller?: "ready" | "busy";
+}) {
 	return {
 		conversationId: "review-conversation-1",
 		sessionId: "worker-1",
 		harness: "codex",
 		mode: "chat",
-		controller: "ready",
+		controller,
 		latestSequence: 400,
 		oldestSequence: sequence,
 		hasMoreBefore,
@@ -71,5 +81,24 @@ describe("useReviewerConversation pagination", () => {
 			params: { path: { reviewId: "review-1" }, query: { beforeSequence: 201, limit: 200 } },
 		});
 		expect(result.current.hasOlder).toBe(false);
+	});
+
+	it("polls busy reviewer conversations on the fast interval after selecting merged data", async () => {
+		getMock.mockResolvedValue({
+			data: page({
+				id: "streaming",
+				sequence: 1,
+				hasMoreBefore: false,
+				controller: "busy",
+			}),
+			error: undefined,
+		});
+
+		const { unmount } = renderHook(() => useReviewerConversation("review-1"), { wrapper });
+		await waitFor(() => expect(getMock).toHaveBeenCalledTimes(1));
+		await waitFor(() => expect(getMock.mock.calls.length).toBeGreaterThanOrEqual(2), {
+			timeout: 1_200,
+		});
+		unmount();
 	});
 });

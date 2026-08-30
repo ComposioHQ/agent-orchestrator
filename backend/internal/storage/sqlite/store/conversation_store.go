@@ -1815,6 +1815,55 @@ func (s *Store) CancelAllQueuedTurns(
 	return nil
 }
 
+// CancelQueuedTurnByID removes one undispatched queue item without disturbing
+// later queue items or the running turn.
+func (s *Store) CancelQueuedTurnByID(
+	ctx context.Context,
+	conversationID, turnID string,
+	now time.Time,
+) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	rows, err := s.qw.CancelQueuedConversationTurnByID(ctx,
+		gen.CancelQueuedConversationTurnByIDParams{
+			CompletedAt:    sql.NullTime{Time: now, Valid: true},
+			ID:             turnID,
+			ConversationID: conversationID,
+		})
+	if err != nil {
+		return fmt.Errorf("cancel queued turn %s: %w", turnID, err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("%w: %s", ErrQueuedTurnNotAvailable, turnID)
+	}
+	return nil
+}
+
+// UpdateQueuedTurnMessage rewrites the durable human prompt for a turn that has
+// not yet dispatched. Attachments are cleared because the edit path is text-only.
+func (s *Store) UpdateQueuedTurnMessage(
+	ctx context.Context,
+	conversationID, turnID, text string,
+	now time.Time,
+) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	rows, err := s.qw.UpdateQueuedConversationMessageText(ctx,
+		gen.UpdateQueuedConversationMessageTextParams{
+			Text:           text,
+			UpdatedAt:      now,
+			ConversationID: conversationID,
+			TurnID:         sql.NullString{String: turnID, Valid: true},
+		})
+	if err != nil {
+		return fmt.Errorf("update queued turn message %s: %w", turnID, err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("%w: %s", ErrQueuedTurnNotAvailable, turnID)
+	}
+	return nil
+}
+
 // SettleTurnByID records a terminal state for a turn AO can name directly.
 //
 // Needed for a turn that never reached the provider: it has no provider turn id,
@@ -2123,6 +2172,16 @@ func (s *Store) ResolveApproval(
 		return fmt.Errorf("resolve approval %s: %w", requestID, err)
 	}
 	return nil
+}
+
+// HasPendingConversationInteractions reports whether the durable conversation
+// still contains an actionable approval or structured-input request.
+func (s *Store) HasPendingConversationInteractions(ctx context.Context, conversationID string) (bool, error) {
+	pending, err := s.qr.HasPendingConversationInteractions(ctx, conversationID)
+	if err != nil {
+		return false, fmt.Errorf("check pending interactions for %s: %w", conversationID, err)
+	}
+	return pending, nil
 }
 
 // FailPendingApprovals closes out anything the user can no longer answer, because

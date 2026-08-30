@@ -1606,7 +1606,7 @@ type CompactConversationResponse struct {
 // ConversationTurnResponse is one request and the work that followed it.
 type ConversationTurnResponse struct {
 	ID             string `json:"id"`
-	State          string `json:"state" enum:"queued,running,completed,recovered,interrupted,failed"`
+	State          string `json:"state" enum:"queued,running,completed,recovered,interrupted,failed,cancelled"`
 	ProviderTurnID string `json:"providerTurnId,omitempty"`
 	// RetryOfTurnID is the failed source whose durable prompt created this turn.
 	RetryOfTurnID string `json:"retryOfTurnId,omitempty"`

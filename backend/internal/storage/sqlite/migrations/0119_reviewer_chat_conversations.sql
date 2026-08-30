@@ -149,7 +149,7 @@ CREATE TABLE conversation_turns_next (
     handled_by_review_id   TEXT REFERENCES review(id) ON DELETE CASCADE,
     provider_turn_id       TEXT NOT NULL DEFAULT '',
     controller_generation  TEXT NOT NULL DEFAULT '',
-    state                  TEXT NOT NULL CHECK (state IN ('queued', 'running', 'completed', 'recovered', 'interrupted', 'failed')),
+    state                  TEXT NOT NULL CHECK (state IN ('queued', 'running', 'completed', 'recovered', 'interrupted', 'failed', 'cancelled')),
     error_message          TEXT NOT NULL DEFAULT '',
     requested_at           TIMESTAMP NOT NULL,
     started_at             TIMESTAMP,
@@ -185,7 +185,7 @@ CREATE UNIQUE INDEX idx_conversation_turns_provider
     WHERE provider_turn_id <> '';
 CREATE INDEX idx_conversation_turns_branch
     ON conversation_turns(branch_id, requested_at);
-CREATE UNIQUE INDEX idx_conversation_turns_retry_source
+CREATE INDEX idx_conversation_turns_retry_source
     ON conversation_turns(conversation_id, retry_of_turn_id)
     WHERE retry_of_turn_id IS NOT NULL;
 

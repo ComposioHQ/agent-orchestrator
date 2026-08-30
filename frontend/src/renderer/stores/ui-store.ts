@@ -248,12 +248,18 @@ export const useUiStore = create<UiState>((set, get) => ({
 	toggleSidebar: () =>
 		set((state) => {
 			const wasVisible = sidebarIsVisible(state);
+			// While Browser pressure owns the compact rail, expand/collapse is a
+			// temporary override cycle. It must not mutate the durable preference:
+			// removing the rail's layout width lets the percentage-clamped inspector
+			// shift left after the sidebar animation has settled.
+			if (state.isSidebarOpen && state.isSidebarAutoCollapsed) {
+				return { sidebarAutoCollapseOverride: !state.sidebarAutoCollapseOverride };
+			}
 			const isSidebarOpen = !wasVisible;
 			getLocalStorage()?.setItem(sidebarStorageKey, String(isSidebarOpen));
 			return {
 				isSidebarOpen,
 				// Reopening under active workspace pressure is an explicit override.
-				// Closing clears it so the next open follows the current layout policy.
 				sidebarAutoCollapseOverride: isSidebarOpen && state.isSidebarAutoCollapsed,
 			};
 		}),

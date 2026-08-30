@@ -2,7 +2,6 @@ import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-q
 import { useCallback } from "react";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
-import type { ConversationSnapshot } from "../types/conversation";
 import {
 	mergeConversationPages,
 	toSnapshot,
@@ -37,7 +36,9 @@ export function useReviewerConversation(reviewId: string | undefined) {
 		getNextPageParam: (page) => (page.hasMoreBefore ? page.oldestSequence : undefined),
 		select: (data) => mergeConversationPages(data.pages),
 		refetchInterval: (query) => {
-			const snapshot = (query.state.data as { pages?: ConversationSnapshot[] } | undefined)?.pages?.[0];
+			// TanStack passes the cache Query here. `select` transforms the observer
+			// result, while cache state retains the raw InfiniteData page structure.
+			const snapshot = query.state.data?.pages[0];
 			return snapshot?.controller.state === "busy" ? 500 : 2_000;
 		},
 	});
