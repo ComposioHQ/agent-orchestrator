@@ -36,7 +36,7 @@ UPDATE app_settings SET cloud_offering = ?, updated_at = ? WHERE id = 1
 `
 
 type SetCloudOfferingParams struct {
-	CloudOffering bool
+	CloudOffering int64
 	UpdatedAt     time.Time
 }
 
