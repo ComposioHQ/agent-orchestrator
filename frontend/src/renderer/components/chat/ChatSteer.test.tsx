@@ -12,6 +12,22 @@ import { typeInLexicalEditor } from "../../test/lexical";
 // silently would be worse than the queueing it replaces.
 
 describe("ChatComposer steering", () => {
+	const queuedMessage = (turnId: string, text: string) => ({
+		turnId,
+		message: {
+			kind: "message" as const,
+			id: `message-${turnId}`,
+			turnId,
+			sequence: 1,
+			revision: 0,
+			role: "user" as const,
+			origin: "human" as const,
+			text,
+			streaming: false,
+			createdAt: "2026-08-11T10:01:00Z",
+		},
+	});
+
 	function composer(props: Partial<Parameters<typeof ChatComposer>[0]> = {}) {
 		return render(
 			<ChatComposer onSend={vi.fn()} willQueue onSteer={vi.fn()} canSteer {...props} />,
@@ -34,6 +50,31 @@ describe("ChatComposer steering", () => {
 		await userEvent.keyboard("{Enter}");
 		expect(onSend).toHaveBeenCalledWith("use the unit tests only");
 		expect(onSteer).not.toHaveBeenCalled();
+	});
+
+	it("steers the next queued message on empty Enter and removes it immediately", async () => {
+		const onPromoteQueuedTurn = vi.fn().mockResolvedValue(undefined);
+		render(
+			<ChatComposer
+				onSend={vi.fn()}
+				willQueue
+				onSteer={vi.fn()}
+				canSteer
+				queuedDock={
+					<QueuedMessageDock
+						messages={[queuedMessage("queued-1", "first"), queuedMessage("queued-2", "next")]}
+						canSteer
+						onPromoteQueuedTurn={onPromoteQueuedTurn}
+					/>
+				}
+			/>,
+		);
+
+		await userEvent.click(screen.getByRole("combobox"));
+		await userEvent.keyboard("{Enter}");
+
+		await waitFor(() => expect(onPromoteQueuedTurn).toHaveBeenCalledWith("queued-1"));
+		expect(screen.queryByTestId("queued-message-queued-1")).not.toBeInTheDocument();
 	});
 
 	it("reports the daemon's refusal without a second message of its own", () => {

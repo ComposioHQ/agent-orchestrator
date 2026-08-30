@@ -27,12 +27,14 @@
  */
 
 import {
+	cloneElement,
 	useCallback,
 	useEffect,
 	useId,
 	useMemo,
 	useRef,
 	useState,
+	isValidElement,
 	type ClipboardEvent,
 	type DragEvent,
 	type FormEvent,
@@ -180,6 +182,7 @@ export function ChatComposer({
 	const [isComposing, setIsComposing] = useState(false);
 	const [dragging, setDragging] = useState(false);
 	const [sendError, setSendError] = useState<string | null>(null);
+	const [steerNextRequest, setSteerNextRequest] = useState(0);
 	// The DOM event is the source of truth while React catches up with the draft
 	// transition. This keeps Enter-after-fast-typing from observing stale state.
 	const textRef = useRef("");
@@ -249,18 +252,32 @@ export function ChatComposer({
 	// path. Treating it as unavailable — rather than steering the text and
 	// dropping the files, or refusing on an empty body with attachments staged —
 	// keeps the armed state something the composer can actually honour.
-	const canSteerDraft = Boolean(canSteer && onSteer) && !staged && !savingQueuedEdit;
+	const canSteerNext =
+		Boolean(canSteer && onSteer) &&
+		!disabled &&
+		!hasDraft &&
+		!savingQueuedEdit &&
+		Boolean(queuedDock);
 	const sendHint = menuOpen
 		? "Enter to insert"
 		: savingQueuedEdit
 			? "⏎ save edit"
-			: willQueue && canSteerDraft
-				? "⏎ queue · ⌘⏎ steer"
+			: willQueue && canSteerNext
+				? "⏎ queue · Enter steer"
 				: willQueue
 					? "⏎ queue"
 					: "Enter to send";
 	const draftSeedId = draftSeed?.id;
 	const draftSeedText = draftSeed?.text;
+	const queuedDockWithSteer = isValidElement(queuedDock)
+		? cloneElement(
+				queuedDock as ReactElement<{
+					canSteerNext?: boolean;
+					steerNextRequest?: number;
+				}>,
+				{ canSteerNext, steerNextRequest },
+			)
+		: queuedDock;
 
 	const focusEditor = useCallback(() => {
 		if (!autoFocus || disabled) return;
@@ -536,7 +553,7 @@ export function ChatComposer({
 	}
 
 	const handleEnterKey = useCallback(
-		(event: globalThis.KeyboardEvent): boolean => {
+		(_event: globalThis.KeyboardEvent): boolean => {
 			const liveSnapshot = editor.current?.getSnapshot();
 			if (liveSnapshot) textRef.current = liveSnapshot.text;
 			const liveTrigger = liveSnapshot?.trigger;
@@ -552,11 +569,14 @@ export function ChatComposer({
 				return true;
 			}
 
-			const wantsSteer = (event.metaKey || event.ctrlKey) && canSteerDraft;
-			void submit(undefined, wantsSteer);
+			if (canSteerNext) {
+				setSteerNextRequest((request) => request + 1);
+				return true;
+			}
+			void submit();
 			return true;
 		},
-		[canSteerDraft, onCompact, pick, suggestionsFor],
+		[canSteerNext, onCompact, pick, suggestionsFor],
 	);
 
 	function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
@@ -617,26 +637,6 @@ export function ChatComposer({
 		void fileAttachments.addFiles(files);
 	}
 
-	// Track Cmd/Ctrl for the send-button click path without re-rendering the composer
-	// on every modifier key event.
-	const modifierHeldRef = useRef(false);
-	useEffect(() => {
-		const onKey = (event: globalThis.KeyboardEvent) => {
-			modifierHeldRef.current = event.metaKey || event.ctrlKey;
-		};
-		const onBlur = () => {
-			modifierHeldRef.current = false;
-		};
-		window.addEventListener("keydown", onKey);
-		window.addEventListener("keyup", onKey);
-		window.addEventListener("blur", onBlur);
-		return () => {
-			window.removeEventListener("keydown", onKey);
-			window.removeEventListener("keyup", onKey);
-			window.removeEventListener("blur", onBlur);
-		};
-	}, []);
-
 	const attachmentError = fileAttachments.error ?? sendError ?? commandError;
 	const withQueueStack = (form: ReactElement) =>
 		queuedDock ? (
@@ -645,7 +645,7 @@ export function ChatComposer({
 					className="cursor-chat-composer-queue queue-dock-enter relative z-10 mx-auto mb-2 w-[calc(100%-2rem)]"
 					data-testid="queued-composer-dock"
 				>
-					{queuedDock}
+					{queuedDockWithSteer}
 				</div>
 				{form}
 			</div>
@@ -672,10 +672,9 @@ export function ChatComposer({
 
 	return withQueueStack(
 		<form
-				// Clicking send while Cmd/Ctrl is held has to mean what the indicator
-				// beside it says. Reading the same armed state the chip paints keeps the
-				// pointer and keyboard paths from disagreeing about where the message goes.
-				onSubmit={(event) => void submit(event, modifierHeldRef.current && canSteerDraft)}
+				// The send button always submits the typed draft. Steering is reserved for
+				// the empty-input Enter path handled by the editor above.
+			onSubmit={(event) => void submit(event)}
 				onDragOver={(event) => {
 					if (!canAttach) return;
 					event.preventDefault();

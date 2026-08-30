@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
-import { ChevronDown, Circle, Command, CornerDownLeft, Pencil, Trash2 } from "lucide-react";
+import { ChevronDown, Circle, CornerDownLeft, Pencil, Trash2 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import type { ConversationMessage } from "../../types/conversation";
 
@@ -78,7 +78,6 @@ function QueuedMessageRow({
 							title="Steer into running turn"
 						>
 							<span className="inline-flex shrink-0 items-center gap-1 text-muted-foreground">
-								<Command aria-hidden="true" className="shrink-0" width={12} height={12} strokeWidth={2} />
 								<CornerDownLeft aria-hidden="true" className="shrink-0" width={12} height={12} strokeWidth={2} />
 							</span>
 							Steer
@@ -125,6 +124,8 @@ export function QueuedMessageDock({
 	messages,
 	editingTurnId,
 	canSteer,
+	canSteerNext,
+	steerNextRequest,
 	onPromoteQueuedTurn,
 	onBeginQueuedEdit,
 	onCancelQueuedTurn,
@@ -134,6 +135,8 @@ export function QueuedMessageDock({
 	messages: QueuedMessage[];
 	editingTurnId?: string;
 	canSteer?: boolean;
+	canSteerNext?: boolean;
+	steerNextRequest?: number;
 	onPromoteQueuedTurn?: (turnId: string) => Promise<unknown>;
 	onBeginQueuedEdit?: (turnId: string, text: string) => void;
 	onCancelQueuedTurn?: (turnId: string) => Promise<unknown>;
@@ -146,6 +149,7 @@ export function QueuedMessageDock({
 		() => new Set(),
 	);
 	const scrollRef = useRef<HTMLDivElement>(null);
+	const lastSteerNextRequest = useRef(steerNextRequest ?? 0);
 
 	const runAction = useCallback(
 		async (turnId: string, action: () => Promise<unknown>) => {
@@ -191,6 +195,15 @@ export function QueuedMessageDock({
 		},
 		[onPromoteQueuedTurn],
 	);
+
+	useEffect(() => {
+		if (steerNextRequest === undefined || steerNextRequest <= lastSteerNextRequest.current) return;
+		lastSteerNextRequest.current = steerNextRequest;
+		if (!canSteerNext || !onPromoteQueuedTurn) return;
+
+		const next = displayMessages[displayMessages.length - 1];
+		if (next) void runAction(next.turnId, () => promoteQueuedTurn(next.turnId));
+	}, [canSteerNext, displayMessages, onPromoteQueuedTurn, promoteQueuedTurn, runAction, steerNextRequest]);
 
 	useEffect(() => {
 		if (!isOpen || count <= QUEUE_DOCK_VISIBLE_ROWS) return;
@@ -270,11 +283,11 @@ export function QueuedMessageDock({
 									turnId={turnId}
 									message={message}
 									hiddenFromView={!isOpen && index !== displayMessages.length - 1}
-									showHoverSteer={canSteer && index !== displayMessages.length - 1}
+									showHoverSteer={canSteer && (index !== displayMessages.length - 1 || !canSteerNext)}
 									busy={busy}
 									error={errors[turnId]}
 									{...rowProps}
-									canSteer={canSteer && index === displayMessages.length - 1}
+									canSteer={canSteer && canSteerNext && index === displayMessages.length - 1}
 								/>
 							);
 						})}
