@@ -342,7 +342,7 @@ func parseRepoNative(remote string, provider domain.TrackerProvider) (string, bo
 	}
 	if strings.HasPrefix(remote, "git@") {
 		if _, rest, ok := strings.Cut(remote, ":"); ok {
-			return cleanRepoPath(rest), true
+			return cleanRepoPath(rest, provider), true
 		}
 		return "", false
 	}
@@ -350,14 +350,14 @@ func parseRepoNative(remote string, provider domain.TrackerProvider) (string, bo
 		if provider == domain.TrackerProviderGitHub {
 			host := strings.TrimPrefix(strings.ToLower(u.Host), "www.")
 			if host == "github.com" || strings.HasSuffix(host, ".github.com") || strings.HasSuffix(host, ".ghe.io") {
-				return cleanRepoPath(u.Path), true
+				return cleanRepoPath(u.Path, provider), true
 			}
 			return "", false
 		}
 		// GitLab: accept any host.
-		return cleanRepoPath(u.Path), true
+		return cleanRepoPath(u.Path, provider), true
 	}
-	return cleanRepoPath(remote), true
+	return cleanRepoPath(remote, provider), true
 }
 
 // repoHostFromOrigin extracts the host from the SCM origin URL for the given
@@ -396,15 +396,25 @@ func hostFromRemote(remote string) string {
 	return ""
 }
 
-func cleanRepoPath(path string) string {
+func cleanRepoPath(path string, provider domain.TrackerProvider) string {
 	path = strings.Trim(strings.TrimSpace(path), "/")
 	path = strings.TrimSuffix(path, ".git")
 	parts := strings.Split(path, "/")
 	if len(parts) < 2 {
 		return ""
 	}
-	// For nested namespaces (GitLab group/subgroup/repo), take the last two
-	// segments — the tracker's List endpoint only needs owner/repo.
+	// GitLab supports nested groups (group/subgroup/repo). The full namespace
+	// path is required for GraphQL's fullPath parameter and REST project lookups.
+	if provider == domain.TrackerProviderGitLab {
+		for _, p := range parts {
+			if strings.TrimSpace(p) == "" {
+				return ""
+			}
+		}
+		return strings.Join(parts, "/")
+	}
+	// GitHub: take the last two segments (owner/repo). Sub-path segments
+	// beyond owner/repo (e.g. blob/main) are ignored.
 	owner := strings.TrimSpace(parts[len(parts)-2])
 	repo := strings.TrimSpace(parts[len(parts)-1])
 	if owner == "" || repo == "" {

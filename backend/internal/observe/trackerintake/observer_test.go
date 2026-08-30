@@ -474,3 +474,120 @@ func TestTrackerRepoGitLabSelfManagedWithPort(t *testing.T) {
 		t.Errorf("Host = %q, want gitlab.local:8443", repo.Host)
 	}
 }
+
+func TestParseRepoNativeGitLabNestedGroup(t *testing.T) {
+	// GitLab nested group: full namespace path must be preserved.
+	tests := []struct {
+		name   string
+		remote string
+		want   string
+	}{
+		{
+			name:   "https nested group",
+			remote: "https://gitlab.com/group/subgroup/repo.git",
+			want:   "group/subgroup/repo",
+		},
+		{
+			name:   "ssh nested group",
+			remote: "git@gitlab.com:group/subgroup/repo.git",
+			want:   "group/subgroup/repo",
+		},
+		{
+			name:   "deeply nested",
+			remote: "https://gitlab.internal/org/team/sub/repo.git",
+			want:   "org/team/sub/repo",
+		},
+		{
+			name:   "simple two-segment",
+			remote: "https://gitlab.com/group/project.git",
+			want:   "group/project",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := parseRepoNative(tt.remote, domain.TrackerProviderGitLab)
+			if !ok {
+				t.Fatalf("parseRepoNative ok = false, want true")
+			}
+			if got != tt.want {
+				t.Errorf("parseRepoNative(%q, gitlab) = %q, want %q", tt.remote, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseRepoNativeGitHubKeepsLastTwo(t *testing.T) {
+	tests := []struct {
+		name   string
+		remote string
+		want   string
+	}{
+		{
+			name:   "https owner/repo",
+			remote: "https://github.com/acme/demo.git",
+			want:   "acme/demo",
+		},
+		{
+			name:   "ssh owner/repo",
+			remote: "git@github.com:acme/demo.git",
+			want:   "acme/demo",
+		},
+		{
+			name:   "ghe host",
+			remote: "https://ghe.corp.ghe.io/acme/demo.git",
+			want:   "acme/demo",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := parseRepoNative(tt.remote, domain.TrackerProviderGitHub)
+			if !ok {
+				t.Fatalf("parseRepoNative ok = false, want true")
+			}
+			if got != tt.want {
+				t.Errorf("parseRepoNative(%q, github) = %q, want %q", tt.remote, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCleanRepoPathGitLabPreservesFullPath(t *testing.T) {
+	tests := []struct {
+		path string
+		want string
+	}{
+		{"group/subgroup/repo", "group/subgroup/repo"},
+		{"group/subgroup/repo.git", "group/subgroup/repo"},
+		{"/group/subgroup/repo/", "group/subgroup/repo"},
+		{"group/project", "group/project"},
+		{"single", ""},
+		{"", ""},
+		{"a/b/c/d/e", "a/b/c/d/e"},
+	}
+	for _, tt := range tests {
+		got := cleanRepoPath(tt.path, domain.TrackerProviderGitLab)
+		if got != tt.want {
+			t.Errorf("cleanRepoPath(%q, gitlab) = %q, want %q", tt.path, got, tt.want)
+		}
+	}
+}
+
+func TestCleanRepoPathGitHubLastTwoSegments(t *testing.T) {
+	tests := []struct {
+		path string
+		want string
+	}{
+		{"owner/repo", "owner/repo"},
+		{"owner/repo.git", "owner/repo"},
+		{"/owner/repo/", "owner/repo"},
+		{"a/b/c/d", "c/d"},
+		{"single", ""},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		got := cleanRepoPath(tt.path, domain.TrackerProviderGitHub)
+		if got != tt.want {
+			t.Errorf("cleanRepoPath(%q, github) = %q, want %q", tt.path, got, tt.want)
+		}
+	}
+}
