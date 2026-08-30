@@ -88,6 +88,7 @@ export function ChatComposer({
 	onSteer,
 	onInterrupt,
 	canSteer,
+	sendPending,
 	steerPending,
 	steerRefusal,
 	draftSeed,
@@ -136,6 +137,8 @@ export function ChatComposer({
 	onInterrupt?: () => void;
 	/** A turn is actually running, so there is something to steer into. */
 	canSteer?: boolean;
+	/** A send mutation is in flight for this session. */
+	sendPending?: boolean;
 	steerPending?: boolean;
 	/** Why the last steer was refused. */
 	steerRefusal?: string;
@@ -451,7 +454,19 @@ export function ChatComposer({
 			!steerPending &&
 			!savingQueuedEditPending &&
 			(editingQueuedTurnId || !busy);
-		if (!canSubmitNow) return;
+		if (!canSubmitNow) {
+			if (
+				(currentText.trim().length > 0 || staged) &&
+				busy &&
+				!disabled &&
+				!steerPending &&
+				!savingQueuedEditPending &&
+				!editingQueuedTurnId
+			) {
+				setSendError("Still sending the previous message. Try again in a moment.");
+			}
+			return;
+		}
 		setSendError(null);
 
 		const shouldSteer = forceSteer ?? false;
@@ -829,7 +844,7 @@ export function ChatComposer({
 						>
 							{canStopTurn ? (
 								<Square aria-hidden="true" className="size-2.5 fill-current" />
-							) : steerPending || savingQueuedEditPending ? (
+							) : steerPending || savingQueuedEditPending || sendPending ? (
 								<Loader2 aria-hidden="true" className="size-3.5 animate-spin" />
 							) : (
 								<ArrowUp aria-hidden="true" className="size-3.5" />

@@ -276,6 +276,7 @@ export interface ChatWorkspaceProps {
 	 * is worse than none.
 	 */
 	onSteer?: (text: string) => Promise<unknown>;
+	sendPending?: boolean;
 	steerPending?: boolean;
 	/** Why the last steer was refused, from the daemon's typed answer. */
 	steerRefusal?: string;
@@ -357,6 +358,7 @@ export function ChatWorkspace({
 	onStageAttachments,
 	nativeImages,
 	onSteer,
+	sendPending,
 	steerPending,
 	steerRefusal,
 	onPromoteQueuedTurn,
@@ -924,7 +926,10 @@ export function ChatWorkspace({
 										queueEdit ? { id: queueEdit.turnId, text: queueEdit.text } : undefined
 									}
 									editingQueuedTurnId={queueEdit?.turnId}
-									savingQueuedEditPending={editQueuedTurnPendingTurnId === queueEdit?.turnId}
+									savingQueuedEditPending={Boolean(
+										queueEdit?.turnId &&
+											editQueuedTurnPendingTurnId === queueEdit.turnId,
+									)}
 									onCancelQueuedEdit={() => setQueueEdit(undefined)}
 									onInterrupt={turn && !newWorkDisabled ? onInterrupt : undefined}
 									commandError={commandError}
@@ -961,6 +966,7 @@ export function ChatWorkspace({
 									// has not reached the provider, so there is nothing to steer.
 									onSteer={newWorkDisabled ? undefined : onSteer}
 									canSteer={Boolean(onSteer) && turn?.state === "running"}
+									sendPending={sendPending}
 									steerPending={steerPending}
 									steerRefusal={steerRefusal}
 									onCompact={newWorkDisabled ? undefined : onCompact}
