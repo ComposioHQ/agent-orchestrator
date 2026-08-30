@@ -2267,6 +2267,11 @@ html.sidebar-reordering * {
 	height: calc(var(--queue-dock-row-height) * var(--queue-dock-expanded-rows, 1));
 }
 
+.queue-dock-actions {
+	min-width: max-content;
+	flex-shrink: 0;
+}
+
 .queue-dock-scroll {
 	overflow-y: hidden;
 }
