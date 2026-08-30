@@ -59,7 +59,7 @@ function QueuedMessageRow({
 							onClick={() => {
 								void onRunAction(turnId, () => onPromoteQueuedTurn(turnId));
 							}}
-							className="inline-flex h-7 items-center rounded-lg px-2 text-[11px] leading-none text-muted-foreground opacity-0 pointer-events-none transition-[background-color,color,opacity] duration-150 ease-out hover:bg-interactive-hover hover:text-foreground group-hover/queued-row:pointer-events-auto group-hover/queued-row:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100 disabled:opacity-50 motion-reduce:transition-none"
+							className="inline-flex h-7 items-center rounded-lg px-2 text-[11px] leading-none text-muted-foreground opacity-0 pointer-events-none transition-[background-color,color] duration-150 ease-out hover:bg-interactive-hover hover:text-foreground group-hover/queued-row:pointer-events-auto group-hover/queued-row:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100 disabled:opacity-50 motion-reduce:transition-none"
 							aria-label="Steer this queued message into the running turn"
 							title="Steer into running turn"
 						>
