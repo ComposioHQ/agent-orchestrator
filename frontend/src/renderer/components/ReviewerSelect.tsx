@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -83,6 +83,7 @@ export function ReviewerSelect({
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 	const [menuOpen, setMenuOpen] = useState(false);
+	const [customModel, setCustomModel] = useState("");
 	const fallbackAgents: AgentInfo[] = [...KNOWN_REVIEWER_HARNESS_IDS].map((id) => ({ id, label: agentLabel(id) }));
 	const filteredSupported = (supported ?? fallbackAgents).filter((a) => KNOWN_REVIEWER_HARNESS_IDS.has(a.id));
 	const supportedAgents = filteredSupported.length > 0 ? filteredSupported : fallbackAgents;
@@ -114,7 +115,16 @@ export function ReviewerSelect({
 			void queryClient.prefetchQuery(agentModelsQueryOptions(harness, menuProjectID));
 		}
 	}, [defaultHarness, menuOpen, menuProjectID, queryClient, selectableOptions]);
+	useEffect(() => {
+		if (!menuOpen) setCustomModel("");
+	}, [menuOpen]);
 	const selectedModelLabel = modelOrModeLabel(triggerCatalog.data, model, mode, t("settings.models.agentDefault"));
+	const customModelActionLabel = useMemo(() => {
+		const nextModel = customModel.trim();
+		return nextModel !== ""
+			? t("settings.models.useCustom", { model: nextModel })
+			: t("settings.models.custom");
+	}, [customModel, t]);
 	const triggerLabel = [value ? agentLabel(value) : (defaultTriggerLabel ?? defaultOptionLabel ?? defaultHarness), selectedModelLabel]
 		.filter(Boolean)
 		.join(" · ");
@@ -167,6 +177,37 @@ export function ReviewerSelect({
 						persistHarness={agent.id}
 					/>
 				))}
+				{supportsReviewerCustomModel(triggerCatalog.data) && effectiveHarness ? (
+					<>
+						<div className="p-1" onKeyDown={(event) => event.stopPropagation()}>
+							<input
+								type="text"
+								aria-label={`Custom ${agentLabel(effectiveHarness)} model`}
+								value={customModel}
+								onChange={(event) => setCustomModel(event.target.value)}
+								placeholder={model || t("settings.models.custom")}
+								className="settings-inline-input w-full"
+								onKeyDown={(event) => {
+									if (event.key !== "Enter") return;
+									const nextModel = customModel.trim();
+									if (nextModel === "") return;
+									event.preventDefault();
+									onConfigChange?.(value, { model: nextModel });
+								}}
+							/>
+						</div>
+						<OptionMenuItem
+							onSelect={() => {
+								const nextModel = customModel.trim();
+								if (nextModel === "") return;
+								onConfigChange?.(value, { model: nextModel });
+							}}
+							disabled={customModel.trim() === ""}
+						>
+							<span className="min-w-0 truncate">{customModelActionLabel}</span>
+						</OptionMenuItem>
+					</>
+				) : null}
 			</OptionMenuContent>
 		</OptionMenu>
 	);
@@ -238,7 +279,7 @@ function ReviewerHarnessOption({
 
 	return (
 		<OptionMenuSub open={open} onOpenChange={setOpen}>
-			<OptionMenuSubTrigger disabled={agent.disabled}>
+			<OptionMenuSubTrigger disabled={agent.disabled} aria-label={agent.status ? `${agent.label}${agent.status}` : agent.label}>
 				<div className="flex min-w-0 items-center justify-between gap-3">
 					<div className="min-w-0">
 						<AgentSelectMenuItem
@@ -250,7 +291,9 @@ function ReviewerHarnessOption({
 							disabled={agent.disabled}
 						/>
 					</div>
-					<span className="min-w-0 truncate text-muted-foreground">{currentLabel || t("settings.models.agentDefault")}</span>
+					<span aria-hidden="true" className="min-w-0 truncate text-muted-foreground">
+						{currentLabel || t("settings.models.agentDefault")}
+					</span>
 				</div>
 			</OptionMenuSubTrigger>
 			<OptionMenuSubContent className="w-[15rem]">
@@ -279,11 +322,15 @@ function ReviewerHarnessOption({
 								{selected ? <Check aria-hidden="true" className="size-4" /> : null}
 							</span>
 						</OptionMenuItem>
-					);
+						);
 				})}
 			</OptionMenuSubContent>
 		</OptionMenuSub>
 	);
+}
+
+function supportsReviewerCustomModel(catalog?: AgentModelCatalog): boolean {
+	return catalog?.selectionMode === "text" && catalog.allowCustom === true;
 }
 
 function hasModelChoices(catalog?: AgentModelCatalog): boolean {

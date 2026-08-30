@@ -2993,6 +2993,61 @@ describe("SessionInspector summary reviews", () => {
     );
   });
 
+  it("allows a custom reviewer model for text-selection harnesses", async () => {
+    getMock.mockImplementation(async (path: string, options?: { params?: { path?: { agent?: string } } }) => {
+      if (path === "/api/v1/agents/{agent}/models" && options?.params?.path?.agent === "opencode") {
+        return {
+          data: {
+            agentId: "opencode",
+            selectionMode: "text",
+            models: [],
+            allowCustom: true,
+            source: "manual",
+            fetchedAt: "2026-08-30T00:00:00Z",
+            stale: false,
+          },
+          error: undefined,
+        };
+      }
+      return commonGetsResponder([], "reviewer-pane", [reviewState(3, "needs_review", "sha-1")])(path);
+    });
+    postMock.mockResolvedValue({
+      data: { reviewerHandleId: "", reviews: [] },
+      error: undefined,
+      response: { status: 200 },
+    });
+
+    renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+    await openReviewsSection();
+
+    await userEvent.click(await screen.findByRole("button", { name: /Select reviewer agent/ }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: /opencode/i }));
+    await waitFor(() =>
+      expect(postMock).toHaveBeenCalledWith(
+        "/api/v1/sessions/{sessionId}/reviews/switch",
+        {
+          params: { path: { sessionId: "sess-1" } },
+          body: { harness: "opencode" },
+        },
+      ),
+    );
+
+    await userEvent.click(await screen.findByRole("button", { name: /Select reviewer agent/ }));
+    const customInput = await screen.findByRole("textbox", { name: /custom opencode/i });
+    await userEvent.type(customInput, "private/custom-model");
+    await userEvent.click(screen.getByRole("menuitem", { name: /use “private\/custom-model” as a custom model/i }));
+
+    await waitFor(() =>
+      expect(postMock).toHaveBeenLastCalledWith(
+        "/api/v1/sessions/{sessionId}/reviews/switch",
+        {
+          params: { path: { sessionId: "sess-1" } },
+          body: { harness: "opencode", agentConfig: { model: "private/custom-model" } },
+        },
+      ),
+    );
+  });
+
   it("does not save an empty reviewer config just by opening a harness submenu", async () => {
     getMock.mockImplementation(async (path: string, options?: { params?: { path?: { agent?: string } } }) => {
       if (path === "/api/v1/agents/{agent}/models" && options?.params?.path?.agent === "codex") {
