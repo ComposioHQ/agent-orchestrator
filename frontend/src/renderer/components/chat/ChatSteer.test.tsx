@@ -163,6 +163,54 @@ describe("ChatWorkspace steering", () => {
 		expect(onCancelQueuedTurn).toHaveBeenCalledWith("queued-1");
 	});
 
+	it("keeps the next queued message visible when the dock is collapsed", async () => {
+		render(
+			<QueuedMessageDock
+				messages={[
+					{
+						turnId: "queued-1",
+						message: {
+							kind: "message",
+							id: "queued-message-1",
+							turnId: "queued-1",
+							sequence: 100,
+							revision: 0,
+							role: "user",
+							origin: "human",
+							text: "first queued",
+							streaming: false,
+							createdAt: "2026-08-11T10:01:00Z",
+						},
+					},
+					{
+						turnId: "queued-2",
+						message: {
+							kind: "message",
+							id: "queued-message-2",
+							turnId: "queued-2",
+							sequence: 101,
+							revision: 0,
+							role: "user",
+							origin: "human",
+							text: "second queued",
+							streaming: false,
+							createdAt: "2026-08-11T10:02:00Z",
+						},
+					},
+				]}
+			/>,
+		);
+
+		const dock = screen.getByTestId("queued-message-dock");
+		expect(within(dock).getByText("first queued")).toBeVisible();
+		expect(within(dock).getByText("second queued")).toBeVisible();
+
+		await userEvent.click(screen.getByRole("button", { expanded: true }));
+		expect(screen.getByRole("button", { expanded: false })).toBeInTheDocument();
+		expect(within(dock).getByText("first queued")).toBeVisible();
+		expect(within(dock).getByTestId("queued-message-queued-2")).toHaveAttribute("aria-hidden", "true");
+	});
+
 	it("hides a cancelled queued message from the timeline", () => {
 		const base = withQueuedMessages();
 		const snapshot = {
