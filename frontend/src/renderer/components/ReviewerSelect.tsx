@@ -237,7 +237,7 @@ function ReviewerHarnessOption({
 					<OptionMenuSub>
 						<OptionMenuSubTrigger
 							className="pl-8 text-sm text-settings-muted"
-							aria-label={`Custom ${agent.label} model`}
+							aria-label={t("settings.models.customAgentModelAria", { label: agent.label })}
 							label={t("settings.models.custom")}
 						/>
 						<OptionMenuSubContent className="w-[15rem]">
@@ -282,7 +282,7 @@ function ReviewerHarnessOption({
 					<OptionMenuSub>
 						<OptionMenuSubTrigger
 							className="text-sm text-settings-muted"
-							aria-label={`Custom ${agent.label} model`}
+							aria-label={t("settings.models.customAgentModelAria", { label: agent.label })}
 							label={t("settings.models.custom")}
 						/>
 						<OptionMenuSubContent className="w-[15rem]">
@@ -340,7 +340,7 @@ function ReviewerCustomModelOption({
 			<div className="p-1" onKeyDown={(event) => event.stopPropagation()}>
 				<input
 					type="text"
-					aria-label={`Custom ${label} model`}
+					aria-label={t("settings.models.customAgentModelAria", { label })}
 					value={customModel}
 					onChange={(event) => setCustomModel(event.target.value)}
 					placeholder={currentModel || t("settings.models.custom")}
