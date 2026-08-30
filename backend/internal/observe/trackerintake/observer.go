@@ -326,7 +326,7 @@ func truncateUTF8(s string, maxBytes int) string {
 func trackerRepo(project domain.ProjectRecord, cfg domain.TrackerIntakeConfig) (domain.TrackerRepo, bool) {
 	provider := cfg.Provider
 	if provider == "" {
-		provider = domain.TrackerProviderGitHub
+		provider = domain.InferTrackerProvider(project.RepoOriginURL)
 	}
 	native := strings.TrimSpace(cfg.Repo)
 	if native == "" {
