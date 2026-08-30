@@ -398,6 +398,7 @@ func (e *Engine) TriggerWithSource(ctx stdctx.Context, workerID domain.SessionID
 	if hasConfigOverride {
 		launchAgentSessionID = ""
 	}
+	persistedAgentSessionID := launchAgentSessionID
 	handleID := ""
 	if !hasConfigOverride && reviewRow.ReviewerHandleID != "" && reviewerPaneReusable(reviewRow, hadRunningReviewer) {
 		alive, err := e.launcher.Alive(ctx, reviewRow.ReviewerHandleID)
@@ -420,7 +421,7 @@ func (e *Engine) TriggerWithSource(ctx stdctx.Context, workerID domain.SessionID
 		}
 		handleID = launch.HandleID
 		if launch.AgentSessionID != "" {
-			reviewRow.AgentSessionID = launch.AgentSessionID
+			persistedAgentSessionID = launch.AgentSessionID
 		}
 	} else {
 		if err := e.launcher.Notify(ctx, handleID, reviewLaunchSpec(worker, harness, config, launchRun, queue, 0, reviewRow.AgentSessionID)); err != nil {
@@ -443,7 +444,15 @@ func (e *Engine) TriggerWithSource(ctx stdctx.Context, workerID domain.SessionID
 			return TriggerResult{}, failRuns(0, fmt.Errorf("destroy previous reviewer: %w", err))
 		}
 	}
-	reviewRow, err = e.upsertReview(ctx, worker, harness, handleID, reviewRow.AgentSessionID, now)
+	if hasConfigOverride && persistedAgentSessionID == "" && reviewRow.ID != "" {
+		if _, err := e.store.UpdateReviewAgentSessionID(ctx, reviewRow.ID, ""); err != nil {
+			if handleID != "" {
+				_ = e.launcher.Destroy(ctx, handleID)
+			}
+			return TriggerResult{}, failRuns(0, err)
+		}
+	}
+	reviewRow, err = e.upsertReview(ctx, worker, harness, handleID, persistedAgentSessionID, now)
 	if err != nil {
 		return TriggerResult{}, err
 	}

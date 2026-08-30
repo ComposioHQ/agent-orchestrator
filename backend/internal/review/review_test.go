@@ -1226,6 +1226,9 @@ func TestTriggerConfigOverrideRestartsAliveReviewerPane(t *testing.T) {
 	if got := launcher.gotSpec.AgentConfig.Model; got != "gpt-5-mini" {
 		t.Fatalf("spawn config model = %q, want gpt-5-mini", got)
 	}
+	if store.review.AgentSessionID != "" {
+		t.Fatalf("replacement should clear stale native session id when launch reports none, got %q", store.review.AgentSessionID)
+	}
 }
 
 func TestTriggerConfigOverridePreflightFailurePreservesRunningReviewer(t *testing.T) {
