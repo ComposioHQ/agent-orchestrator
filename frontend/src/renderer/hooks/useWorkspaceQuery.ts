@@ -116,7 +116,11 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 						provider: toAgentProvider(session.harness),
 						reviewerHarness: toReviewerHarnessId(session.reviewerHarness),
 						reviewerConfig: session.reviewerConfig
-							? { model: session.reviewerConfig.model ?? undefined, mode: session.reviewerConfig.mode ?? undefined }
+							? {
+								model: session.reviewerConfig.model ?? undefined,
+								mode: session.reviewerConfig.mode ?? undefined,
+								permissions: session.reviewerConfig.permissions ?? undefined,
+							}
 							: undefined,
 						autoReviewEnabled: session.autoReviewEnabled ?? false,
 						kind: session.kind === "orchestrator" ? "orchestrator" : session.kind === "worker" ? "worker" : undefined,

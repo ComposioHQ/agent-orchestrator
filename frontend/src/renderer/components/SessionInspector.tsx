@@ -1498,6 +1498,7 @@ function ReviewsSection({
 	// The reviewer preference belongs to the worker session, not this component
 	// or the whole project. Keep local state responsive while the daemon persists
 	// it, and resync when the inspector moves to another session.
+	const currentDefaultReviewerHarness = resolveDefaultReviewerHarness(projectConfigQuery.data, session.provider);
 	const [reviewerOverride, setReviewerOverride] = useState<ReviewerHarness | "">(
 		session.reviewerHarness ?? "",
 	);
@@ -1510,11 +1511,16 @@ function ReviewsSection({
 	}, [session.id, session.reviewerConfig?.mode, session.reviewerConfig?.model, session.reviewerHarness]);
 	const saveReviewer = useMutation({
 		mutationFn: async ({ harness, model, mode }: { harness: ReviewerHarness | ""; model: string; mode: string }) => {
+			const currentEffectiveReviewerHarness = (session.reviewerHarness ?? "") || currentDefaultReviewerHarness;
+			const nextEffectiveReviewerHarness = harness || currentDefaultReviewerHarness;
+			const existingReviewerConfig =
+				currentEffectiveReviewerHarness === nextEffectiveReviewerHarness ? session.reviewerConfig : undefined;
+			const nextReviewerConfig = buildReviewerAgentConfig(existingReviewerConfig, model, mode);
 			const { data, error } = await apiClient.POST("/api/v1/sessions/{sessionId}/reviews/switch", {
 				params: { path: { sessionId: session.id } },
 				body: {
 					harness: harness || undefined,
-					agentConfig: model || mode ? { ...(model ? { model } : {}), ...(mode ? { mode } : {}) } : undefined,
+					agentConfig: nextReviewerConfig,
 				},
 			});
 			if (error) throw new Error(apiErrorMessage(error, "Unable to save reviewer"));
@@ -2032,6 +2038,19 @@ function renderReviewMarkdown(body: string) {
 			{body}
 		</ReactMarkdown>
 	);
+}
+
+function buildReviewerAgentConfig(
+	existing: WorkspaceSession["reviewerConfig"] | undefined,
+	model: string,
+	mode: string,
+): { model?: string; mode?: string; permissions?: string } | undefined {
+	const next = { ...existing };
+	if (model) next.model = model;
+	else delete next.model;
+	if (mode) next.mode = mode;
+	else delete next.mode;
+	return Object.keys(next).length > 0 ? next : undefined;
 }
 
 function formatInlineReviewCommentMessage(comment: InspectorInlineComment & { reviewerId?: string }): string {
