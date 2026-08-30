@@ -108,6 +108,32 @@ func TestAuthorityUsesLaunchScopedSessionSecrets(t *testing.T) {
 	}
 }
 
+func TestServiceRotationRejectsOldBearerAndDispatchesNewBearer(t *testing.T) {
+	authority := NewAuthority()
+	oldToken, _, err := authority.Issue("s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	newToken, newVerifier, err := authority.Issue("s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := &fakeRuntime{}
+	service := New(fakeSessions{session: domain.Session{SessionRecord: domain.SessionRecord{
+		ID:       "s1",
+		Metadata: domain.SessionMetadata{BrowserCapabilityVerifier: newVerifier},
+	}}}, runtime, authority)
+	if _, _, err := service.Execute(context.Background(), "s1", oldToken, "snapshot", nil); apiErrorCode(err) != "BROWSER_CAPABILITY_INVALID" {
+		t.Fatalf("old bearer error = %v, want BROWSER_CAPABILITY_INVALID", err)
+	}
+	if _, _, err := service.Execute(context.Background(), "s1", newToken, "snapshot", nil); err != nil {
+		t.Fatalf("new bearer execute: %v", err)
+	}
+	if runtime.action != "snapshot" {
+		t.Fatalf("browser runtime action = %q, want snapshot", runtime.action)
+	}
+}
+
 func TestAuthorityValidatesDurableVerifierAcrossDaemonReplacement(t *testing.T) {
 	first := NewAuthority()
 	token, verifier, err := first.Issue("s1")

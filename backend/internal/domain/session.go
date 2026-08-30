@@ -131,6 +131,34 @@ type SessionRecord struct {
 	PinnedAt          *time.Time `json:"pinnedAt,omitempty"`
 }
 
+// SessionControllerOwner is the durable identity of the process/controller
+// currently allowed to act for a session. Narrow lifecycle writes compare this
+// snapshot before updating so stale launch work cannot mutate a replacement.
+type SessionControllerOwner struct {
+	Harness                AgentHarness
+	Mode                   SessionMode
+	IsTerminated           bool
+	RuntimeLaunchID        string
+	AgentSessionID         string
+	AgentSessionIDLaunchID string
+	ProviderConversationID string
+	ControllerGeneration   string
+}
+
+// ControllerOwner returns the fields that fence process/controller ownership.
+func (r SessionRecord) ControllerOwner() SessionControllerOwner {
+	return SessionControllerOwner{
+		Harness:                r.Harness,
+		Mode:                   NormalizeSessionMode(r.Mode),
+		IsTerminated:           r.IsTerminated,
+		RuntimeLaunchID:        r.Metadata.RuntimeLaunchID,
+		AgentSessionID:         r.Metadata.AgentSessionID,
+		AgentSessionIDLaunchID: r.Metadata.AgentSessionIDLaunchID,
+		ProviderConversationID: r.Metadata.ProviderConversationID,
+		ControllerGeneration:   r.Metadata.ControllerGeneration,
+	}
+}
+
 // Session is the read-model returned across the API boundary: a SessionRecord
 // plus derived display facts. None of Status, SCMStatus, or KanbanColumn is
 // persisted.
