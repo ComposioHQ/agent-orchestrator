@@ -288,25 +288,6 @@ func (e *Engine) TriggerWithSource(ctx stdctx.Context, workerID domain.SessionID
 			return TriggerResult{}, err
 		}
 	}
-	if hasConfigOverride {
-		if _, err := e.store.CancelRunningReviewRunsBySessionAndHarness(ctx, workerID, harness, "cancelled because reviewer config changed"); err != nil {
-			return TriggerResult{}, err
-		}
-		if err := e.resetReviewerRuntimeLocked(ctx, workerID, harness); err != nil {
-			return TriggerResult{}, err
-		}
-		reviewRow, hasReview, err = e.store.GetReviewBySessionAndHarness(ctx, workerID, harness)
-		if err != nil {
-			return TriggerResult{}, err
-		}
-		runs, err = e.store.ListReviewRunsBySession(ctx, workerID)
-		if err != nil {
-			return TriggerResult{}, err
-		}
-		if !hasReview {
-			reviewRow = domain.Review{}
-		}
-	}
 	hadRunningReviewer := reviewRunsContainRunningForHarness(runs, harness)
 	reviews := Plan(prs, runs)
 	if source == domain.ReviewTriggerAuto {
@@ -333,6 +314,11 @@ func (e *Engine) TriggerWithSource(ctx stdctx.Context, workerID domain.SessionID
 	}
 
 	var created []domain.ReviewRun
+	type staleSupersede struct {
+		prURL     string
+		targetSHA string
+	}
+	var pendingSupersedes []staleSupersede
 	batchID := ""
 	for _, reviewState := range reviews {
 		// A PR that is already up to date has nothing due — unless the caller asked
@@ -347,7 +333,9 @@ func (e *Engine) TriggerWithSource(ctx stdctx.Context, workerID domain.SessionID
 		if !eligible && !secondOpinionWanted(reviewState, hasHarnessOverride, hasConfigOverride, harness) {
 			continue
 		}
-		if _, err := e.store.SupersedeStaleRunningReviewRuns(ctx, workerID, reviewState.PRURL, reviewState.TargetSHA, "superseded by a review trigger for a newer commit"); err != nil {
+		if hasConfigOverride {
+			pendingSupersedes = append(pendingSupersedes, staleSupersede{prURL: reviewState.PRURL, targetSHA: reviewState.TargetSHA})
+		} else if _, err := e.store.SupersedeStaleRunningReviewRuns(ctx, workerID, reviewState.PRURL, reviewState.TargetSHA, "superseded by a review trigger for a newer commit"); err != nil {
 			return TriggerResult{}, err
 		}
 		if batchID == "" {
@@ -397,8 +385,12 @@ func (e *Engine) TriggerWithSource(ctx stdctx.Context, workerID domain.SessionID
 	}
 
 	queue := reviewQueue(created)
+	launchAgentSessionID := reviewRow.AgentSessionID
+	if hasConfigOverride {
+		launchAgentSessionID = ""
+	}
 	handleID := ""
-	if reviewRow.ReviewerHandleID != "" && reviewerPaneReusable(reviewRow, hadRunningReviewer) {
+	if !hasConfigOverride && reviewRow.ReviewerHandleID != "" && reviewerPaneReusable(reviewRow, hadRunningReviewer) {
 		alive, err := e.launcher.Alive(ctx, reviewRow.ReviewerHandleID)
 		if err != nil {
 			return TriggerResult{}, failRuns(0, err)
@@ -413,7 +405,7 @@ func (e *Engine) TriggerWithSource(ctx stdctx.Context, workerID domain.SessionID
 		if err := e.launcher.Preflight(ctx, harness, worker.Metadata.WorkspacePath); err != nil {
 			return TriggerResult{}, failRuns(0, fmt.Errorf("reviewer preflight: %w", err))
 		}
-		launch, err := e.launcher.Spawn(ctx, reviewLaunchSpec(worker, harness, config, created[0], queue, 0, reviewRow.AgentSessionID))
+		launch, err := e.launcher.Spawn(ctx, reviewLaunchSpec(worker, harness, config, created[0], queue, 0, launchAgentSessionID))
 		if err != nil {
 			return TriggerResult{}, failRuns(0, fmt.Errorf("launch reviewer: %w", err))
 		}
@@ -424,6 +416,14 @@ func (e *Engine) TriggerWithSource(ctx stdctx.Context, workerID domain.SessionID
 	} else {
 		if err := e.launcher.Notify(ctx, handleID, reviewLaunchSpec(worker, harness, config, created[0], queue, 0, reviewRow.AgentSessionID)); err != nil {
 			return TriggerResult{}, failRuns(0, fmt.Errorf("notify reviewer: %w", err))
+		}
+	}
+	for _, stale := range pendingSupersedes {
+		if _, err := e.store.SupersedeStaleRunningReviewRuns(ctx, workerID, stale.prURL, stale.targetSHA, "superseded by a review trigger for a newer commit"); err != nil {
+			if handleID != "" {
+				_ = e.launcher.Destroy(ctx, handleID)
+			}
+			return TriggerResult{}, failRuns(0, err)
 		}
 	}
 	reviewRow, err = e.upsertReview(ctx, worker, harness, handleID, reviewRow.AgentSessionID, now)

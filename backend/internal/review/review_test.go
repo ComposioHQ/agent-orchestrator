@@ -1217,8 +1217,8 @@ func TestTriggerConfigOverrideRestartsAliveReviewerPane(t *testing.T) {
 	if !res.Created {
 		t.Fatalf("expected new run for config override: %+v", res)
 	}
-	if !launcher.destroyed || launcher.destroyedHandle != "review-mer-1" {
-		t.Fatalf("expected existing reviewer pane destroyed: %+v", launcher)
+	if launcher.destroyed {
+		t.Fatalf("engine should not destroy the existing pane before replacement spawn succeeds: %+v", launcher)
 	}
 	if !launcher.spawned || launcher.notified {
 		t.Fatalf("config override should relaunch, not notify existing pane: %+v", launcher)
@@ -1226,8 +1226,63 @@ func TestTriggerConfigOverrideRestartsAliveReviewerPane(t *testing.T) {
 	if got := launcher.gotSpec.AgentConfig.Model; got != "gpt-5-mini" {
 		t.Fatalf("spawn config model = %q, want gpt-5-mini", got)
 	}
-	if len(store.agentSessionUpdates) != 1 || store.agentSessionUpdates[0].agentSessionID != "" {
-		t.Fatalf("agent session updates = %+v, want cleared native session", store.agentSessionUpdates)
+}
+
+func TestTriggerConfigOverridePreflightFailurePreservesRunningReviewer(t *testing.T) {
+	store := &fakeStore{
+		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", Harness: domain.ReviewerClaudeCode, ReviewerHandleID: "review-mer-1", AgentSessionID: "native-reviewer-1"},
+		runs: []domain.ReviewRun{{
+			ID: "run-1", SessionID: "mer-1", PRURL: "https://github.com/o/r/pull/1", TargetSHA: "sha1",
+			Harness: domain.ReviewerClaudeCode,
+			Status:  domain.ReviewRunRunning, Verdict: domain.VerdictNone,
+		}},
+	}
+	worker := liveWorker()
+	worker.ReviewerHarness = domain.ReviewerClaudeCode
+	worker.ReviewerConfig = domain.AgentConfig{Model: "gpt-5"}
+	launcher := &fakeLauncher{alive: true, preflightErr: errors.New("missing binary")}
+	eng := newEngineForTest(store, fakeSessions{rec: worker, ok: true}, prAt("sha2"), fakeProjects{}, launcher)
+
+	if _, err := eng.Trigger(context.Background(), "mer-1", domain.ReviewerClaudeCode, domain.AgentConfig{Model: "gpt-5-mini"}); err == nil || !strings.Contains(err.Error(), "reviewer preflight") {
+		t.Fatalf("Trigger error = %v, want reviewer preflight failure", err)
+	}
+	if !launcher.preflighted || launcher.destroyed || launcher.notified || launcher.spawned {
+		t.Fatalf("replacement should fail before touching the live reviewer: %+v", launcher)
+	}
+	if got := store.runs[0]; got.Status != domain.ReviewRunRunning {
+		t.Fatalf("running review should remain active, got %+v", got)
+	}
+	if len(store.runs) != 2 || store.runs[1].Status != domain.ReviewRunFailed {
+		t.Fatalf("runs = %+v, want old running run plus failed replacement run", store.runs)
+	}
+}
+
+func TestTriggerConfigOverrideLaunchFailurePreservesRunningReviewer(t *testing.T) {
+	store := &fakeStore{
+		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", Harness: domain.ReviewerClaudeCode, ReviewerHandleID: "review-mer-1", AgentSessionID: "native-reviewer-1"},
+		runs: []domain.ReviewRun{{
+			ID: "run-1", SessionID: "mer-1", PRURL: "https://github.com/o/r/pull/1", TargetSHA: "sha1",
+			Harness: domain.ReviewerClaudeCode,
+			Status:  domain.ReviewRunRunning, Verdict: domain.VerdictNone,
+		}},
+	}
+	worker := liveWorker()
+	worker.ReviewerHarness = domain.ReviewerClaudeCode
+	worker.ReviewerConfig = domain.AgentConfig{Model: "gpt-5"}
+	launcher := &fakeLauncher{alive: true, spawnErr: errors.New("create failed")}
+	eng := newEngineForTest(store, fakeSessions{rec: worker, ok: true}, prAt("sha2"), fakeProjects{}, launcher)
+
+	if _, err := eng.Trigger(context.Background(), "mer-1", domain.ReviewerClaudeCode, domain.AgentConfig{Model: "gpt-5-mini"}); err == nil || !strings.Contains(err.Error(), "launch reviewer") {
+		t.Fatalf("Trigger error = %v, want launch failure", err)
+	}
+	if !launcher.preflighted || !launcher.spawned || launcher.destroyed || launcher.notified {
+		t.Fatalf("replacement should fail without cancelling the live reviewer state first: %+v", launcher)
+	}
+	if got := store.runs[0]; got.Status != domain.ReviewRunRunning {
+		t.Fatalf("running review should remain active, got %+v", got)
+	}
+	if len(store.runs) != 2 || store.runs[1].Status != domain.ReviewRunFailed {
+		t.Fatalf("runs = %+v, want old running run plus failed replacement run", store.runs)
 	}
 }
 
