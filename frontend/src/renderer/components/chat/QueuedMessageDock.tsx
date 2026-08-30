@@ -61,8 +61,8 @@ function QueuedMessageRow({
 							title="Steer into running turn"
 						>
 							<span className="inline-flex shrink-0 items-center gap-1 text-muted-foreground">
-								<Command aria-hidden="true" className="size-3 shrink-0" strokeWidth={2} />
-								<CornerDownLeft aria-hidden="true" className="size-3 shrink-0" strokeWidth={2} />
+								<Command aria-hidden="true" className="shrink-0" width={12} height={12} strokeWidth={2} />
+								<CornerDownLeft aria-hidden="true" className="shrink-0" width={12} height={12} strokeWidth={2} />
 							</span>
 							Steer
 						</button>
@@ -76,7 +76,7 @@ function QueuedMessageRow({
 							aria-label="Edit queued message"
 							title="Edit"
 						>
-							<Pencil aria-hidden="true" className="size-3 shrink-0" strokeWidth={2} />
+							<Pencil aria-hidden="true" className="shrink-0" width={12} height={12} strokeWidth={2} />
 						</button>
 					) : null}
 					{onCancelQueuedTurn ? (
@@ -90,7 +90,7 @@ function QueuedMessageRow({
 							aria-label="Delete queued message"
 							title="Delete"
 						>
-							<Trash2 aria-hidden="true" className="size-3 shrink-0" strokeWidth={2} />
+							<Trash2 aria-hidden="true" className="shrink-0" width={12} height={12} strokeWidth={2} />
 						</button>
 					) : null}
 				</div>
