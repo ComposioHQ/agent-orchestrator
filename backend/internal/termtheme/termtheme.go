@@ -16,7 +16,9 @@ const (
 	// FileName is written by the desktop app under AO_DATA_DIR.
 	FileName = "terminal-theme"
 
-	EnvTheme     = "TERM_THEME"
+	// EnvTheme is the PTY variable Cursor Agent reads before its OSC 11 probe.
+	EnvTheme = "TERM_THEME"
+	// EnvColorFgBg is the portable COLORFGBG hint for terminal appearance.
 	EnvColorFgBg = "COLORFGBG"
 )
 
@@ -24,7 +26,9 @@ const (
 type Scheme string
 
 const (
-	SchemeDark  Scheme = "dark"
+	// SchemeDark is a dark terminal canvas.
+	SchemeDark Scheme = "dark"
+	// SchemeLight is a light terminal canvas.
 	SchemeLight Scheme = "light"
 )
 
