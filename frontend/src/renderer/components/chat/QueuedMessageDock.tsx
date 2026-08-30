@@ -11,6 +11,7 @@ function QueuedMessageRow({
 	turnId,
 	message,
 	hiddenFromView,
+	showNextUp,
 	canSteer,
 	onPromoteQueuedTurn,
 	onBeginQueuedEdit,
@@ -22,6 +23,7 @@ function QueuedMessageRow({
 	turnId: string;
 	message: ConversationMessage;
 	hiddenFromView?: boolean;
+	showNextUp?: boolean;
 	canSteer?: boolean;
 	onPromoteQueuedTurn?: (turnId: string) => Promise<unknown>;
 	onBeginQueuedEdit?: (turnId: string, text: string) => void;
@@ -42,6 +44,9 @@ function QueuedMessageRow({
 					className="size-3 shrink-0 text-muted-foreground/60"
 					strokeWidth={1.5}
 				/>
+				{showNextUp ? (
+					<span className="shrink-0 text-[11px] font-normal text-muted-foreground/60">Next Up</span>
+				) : null}
 				<p
 					className="min-w-0 flex-1 truncate text-xs leading-relaxed text-foreground"
 					title={message.text}
@@ -199,7 +204,6 @@ export function QueuedMessageDock({
 					<span aria-hidden="true" className="size-3.5 shrink-0" />
 				)}
 				<span className="text-xs font-medium text-muted-foreground">
-					<span className="mr-2 text-[11px] font-normal text-muted-foreground/60">Next Up</span>
 					{count} Queued {count === 1 ? "Message" : "Messages"}
 					{editingTurnId ? " · editing" : ""}
 				</span>
@@ -228,6 +232,7 @@ export function QueuedMessageDock({
 									turnId={turnId}
 									message={message}
 									hiddenFromView={!isOpen && index > 0}
+									showNextUp={!isOpen && index === 0}
 									busy={busy}
 									error={errors[turnId]}
 									{...rowProps}

@@ -212,6 +212,7 @@ describe("ChatWorkspace steering", () => {
 		await userEvent.click(screen.getByRole("button", { expanded: true }));
 		expect(screen.getByRole("button", { expanded: false })).toBeInTheDocument();
 		expect(within(dock).getByText("first queued")).toBeVisible();
+		expect(within(dock).getByText("Next Up")).toBeVisible();
 		const hiddenRow = within(dock).getByTestId("queued-message-queued-2");
 		expect(hiddenRow).toHaveAttribute("aria-hidden", "true");
 		expect(hiddenRow).toHaveAttribute("inert");
