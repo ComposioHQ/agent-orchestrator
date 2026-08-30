@@ -2265,26 +2265,21 @@ export function TurnChangedFiles({
 					return (
 						<li key={`${file.status}-${file.oldPath ?? ""}-${file.path}`}>
 							{onOpenFile ? (
-								<TooltipProvider delayDuration={200}>
-									<Tooltip>
-										<TooltipTrigger asChild>
-											<button
-												type="button"
-												onClick={() => onOpenFile(openPath)}
-												aria-label={`Open ${openPath} in Files`}
-												className={rowClass}
-											>
-												{body}
-											</button>
-										</TooltipTrigger>
-										<TooltipContent
-											side="top"
-											className="max-w-[min(28rem,90vw)] border-border bg-popover px-2.5 py-1.5 font-mono text-[11px] font-normal text-muted-foreground shadow-none"
+								<Tooltip>
+									<TooltipTrigger asChild>
+										<button
+											type="button"
+											onClick={() => onOpenFile(openPath)}
+											aria-label={`Open ${openPath} in Files`}
+											className={rowClass}
 										>
-											{location}
-										</TooltipContent>
-									</Tooltip>
-								</TooltipProvider>
+											{body}
+										</button>
+									</TooltipTrigger>
+									<TooltipContent side="top" className="max-w-[min(28rem,90vw)] font-mono text-[11px] font-normal">
+										{location}
+									</TooltipContent>
+								</Tooltip>
 							) : (
 								<div className={rowClass}>
 									<span className="sr-only">{status.label}</span>

@@ -1115,22 +1115,29 @@ function SessionControls({ session }: { session: WorkspaceSession }) {
 			{session.kind === "orchestrator" ? null : canTerminateNow ? (
 				<div className="flex items-center justify-between gap-3 py-1">
 					<span className="min-w-0 text-xs font-medium text-settings-label">{t("inspector.terminateShort")}</span>
-					<SessionTerminationPopover
-						onConfirm={confirmTermination}
-						onOpenChange={setConfirmOpen}
-						open={confirmOpen}
-						session={session}
-						trigger={
-							<button
-								aria-label={t("inspector.terminate")}
-								className="inline-flex size-control-md items-center justify-center rounded-sm text-passive transition-colors hover:bg-error/10 hover:text-error focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
-								onClick={() => clearTerminateSessionState(queryClient, session.id)}
-								type="button"
-							>
-								<Trash2 className="size-icon-sm" aria-hidden="true" />
-							</button>
-						}
-					/>
+					<Tooltip>
+						<TooltipTrigger asChild>
+							<span className="inline-flex">
+								<SessionTerminationPopover
+									onConfirm={confirmTermination}
+									onOpenChange={setConfirmOpen}
+									open={confirmOpen}
+									session={session}
+									trigger={
+										<button
+											aria-label={t("inspector.terminate")}
+											className="inline-flex size-control-md items-center justify-center rounded-sm text-passive transition-colors hover:bg-error/10 hover:text-error focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+											onClick={() => clearTerminateSessionState(queryClient, session.id)}
+											type="button"
+										>
+											<Trash2 className="size-icon-sm" aria-hidden="true" />
+										</button>
+									}
+								/>
+							</span>
+						</TooltipTrigger>
+						<TooltipContent side="bottom">{t("inspector.terminate")}</TooltipContent>
+					</Tooltip>
 				</div>
 			) : (
 				<>
