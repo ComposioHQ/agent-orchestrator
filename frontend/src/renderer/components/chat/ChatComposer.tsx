@@ -27,8 +27,6 @@
  */
 
 import {
-	cloneElement,
-	isValidElement,
 	useCallback,
 	useEffect,
 	useId,
@@ -42,7 +40,7 @@ import {
 	type ReactElement,
 	type ReactNode,
 } from "react";
-import { ArrowUp, Command, CornerDownLeft, Loader2, Plus, Square, X } from "lucide-react";
+import { ArrowUp, Loader2, Plus, Square, X } from "lucide-react";
 import { Button } from "../ui/button";
 import { cn } from "../../lib/utils";
 import { apiErrorMessage } from "../../lib/api-client";
@@ -641,14 +639,6 @@ export function ChatComposer({
 	const activeDelivery = metaHeld && canSteerDraft ? "steer" : "queue";
 
 	const attachmentError = fileAttachments.error ?? sendError ?? commandError;
-	const deliveryChoice =
-		canSteer && onSteer && !savingQueuedEdit ? (
-			<DeliveryChoice value={activeDelivery} disabled={steerPending} />
-		) : null;
-	const settingsNode =
-		settings && deliveryChoice && isValidElement(settings)
-			? cloneElement(settings, undefined, deliveryChoice)
-			: settings;
 	const withQueueStack = (form: ReactElement) =>
 		queuedDock ? (
 			<div className="relative flex w-full flex-col">
@@ -818,8 +808,7 @@ export function ChatComposer({
 								</Button>
 							</>
 						) : null}
-						{settingsNode}
-						{!settings && deliveryChoice}
+						{settings}
 					</div>
 
 					<div role="group" aria-label="Send message controls" className="flex h-7 shrink-0 items-center">
@@ -853,55 +842,5 @@ export function ChatComposer({
 					</div>
 				</div>
 			</form>,
-	);
-}
-
-/**
- * Where the next message goes while the agent is working.
- *
- * Two words rather than a switch, because the difference is not a preference — it is
- * two different things happening to what the user typed. Steering joins the turn in
- * flight: the agent keeps its context, its reasoning and the command it has running,
- * and decides for itself what to abandon. Queueing waits for the turn to end and
- * then starts a new one from a cold start. For someone who has just realized they
- * asked for the wrong thing, that is the whole difference, so both are named and the
- * active choice is exposed visually and through `aria-pressed`.
- */
-export function DeliveryChoice({ value, disabled }: { value: "steer" | "queue"; disabled?: boolean }) {
-	return (
-		// A group, not a status: these chips label what each keystroke will do,
-		// they are not a live region announcing an event. `status` also made this
-		// shadow the steer refusal below, which is the real one.
-		<div
-			role="group"
-			aria-label="Where this message goes while the agent is working"
-			className="flex h-7 shrink-0 items-center gap-1"
-		>
-			<span
-				className={cn(
-					"inline-flex h-7 items-center gap-1.5 rounded-lg px-3 text-sm leading-none transition-colors",
-					disabled && "opacity-50",
-					value === "queue" ? "bg-white/5 text-foreground" : "text-muted-foreground",
-				)}
-			>
-				<span className="inline-flex items-center gap-0.5 text-muted-foreground">
-					<CornerDownLeft aria-hidden="true" className="size-3" />
-				</span>
-				Queue
-			</span>
-			<span
-				className={cn(
-					"inline-flex h-7 items-center gap-1.5 rounded-lg px-3 text-sm leading-none transition-colors",
-					disabled && "opacity-50",
-					value === "steer" ? "bg-white/5 text-foreground" : "text-muted-foreground",
-				)}
-			>
-				<span className="inline-flex items-center gap-1 text-muted-foreground">
-					<Command aria-hidden="true" className="size-2.5" />
-					<CornerDownLeft aria-hidden="true" className="size-3" />
-				</span>
-				Steer
-			</span>
-		</div>
 	);
 }
