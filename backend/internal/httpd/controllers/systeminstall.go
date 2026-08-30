@@ -2,6 +2,8 @@ package controllers
 
 import (
 	"context"
+	"errors"
+	"io"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -15,8 +17,11 @@ import (
 // against the fixed systeminstall.Target allowlist.
 type Installer interface {
 	Start(ctx context.Context, target systeminstall.Target) (systeminstall.Job, error)
+	StartAgent(ctx context.Context, target systeminstall.Target, method string) (systeminstall.Job, error)
 	Status(ctx context.Context, target systeminstall.Target) (systeminstall.Job, error)
 	AgentPlans(ctx context.Context) ([]systeminstall.AgentPlan, error)
+	AgentJobs(ctx context.Context) ([]systeminstall.Job, error)
+	Verify(ctx context.Context, target systeminstall.Target) (systeminstall.Job, error)
 }
 
 // SystemInstallController owns the system prerequisite and agent harness install routes.
@@ -29,8 +34,10 @@ func (c *SystemInstallController) Register(r chi.Router) {
 	r.Post("/system/install/{target}", c.start)
 	r.Get("/system/install/{target}", c.status)
 	r.Get("/agents/installers", c.agentPlans)
+	r.Get("/agents/install-jobs", c.agentJobs)
 	r.Post("/agents/{agent}/install", c.startAgent)
 	r.Get("/agents/{agent}/install", c.agentStatus)
+	r.Post("/agents/{agent}/verify", c.verifyAgent)
 }
 
 func (c *SystemInstallController) agentPlans(w http.ResponseWriter, r *http.Request) {
@@ -55,12 +62,66 @@ func (c *SystemInstallController) startAgent(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
-	job, err := c.Installer.Start(r.Context(), target)
+	var request StartAgentInstallRequest
+	if err := decodeJSONStrict(r, &request); err != nil && !errors.Is(err, io.EOF) {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_INSTALL_REQUEST", "invalid install request", nil)
+		return
+	}
+	job, err := c.Installer.StartAgent(r.Context(), target, request.Method)
 	if err != nil {
+		if writeAgentInstallError(w, r, err) {
+			return
+		}
 		envelope.WriteError(w, r, err)
 		return
 	}
 	envelope.WriteJSON(w, http.StatusAccepted, job)
+}
+
+func (c *SystemInstallController) agentJobs(w http.ResponseWriter, r *http.Request) {
+	if c.Installer == nil {
+		apispec.NotImplemented(w, r, "GET", "/api/v1/agents/install-jobs")
+		return
+	}
+	jobs, err := c.Installer.AgentJobs(r.Context())
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, AgentInstallJobsResponse{Jobs: jobs})
+}
+
+func (c *SystemInstallController) verifyAgent(w http.ResponseWriter, r *http.Request) {
+	if c.Installer == nil {
+		apispec.NotImplemented(w, r, "POST", "/api/v1/agents/{agent}/verify")
+		return
+	}
+	target, ok := parseAgentInstallTarget(w, r)
+	if !ok {
+		return
+	}
+	job, err := c.Installer.Verify(r.Context(), target)
+	if err != nil {
+		if writeAgentInstallError(w, r, err) {
+			return
+		}
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusAccepted, job)
+}
+
+func writeAgentInstallError(w http.ResponseWriter, r *http.Request, err error) bool {
+	switch {
+	case errors.Is(err, systeminstall.ErrInstallMethod):
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INSTALL_METHOD_UNAVAILABLE", "the selected install method is unavailable", nil)
+		return true
+	case errors.Is(err, systeminstall.ErrHarnessActive):
+		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict", "HARNESS_ACTIVE", "end active Droid sessions before installing or reinstalling Droid", nil)
+		return true
+	default:
+		return false
+	}
 }
 
 func (c *SystemInstallController) agentStatus(w http.ResponseWriter, r *http.Request) {

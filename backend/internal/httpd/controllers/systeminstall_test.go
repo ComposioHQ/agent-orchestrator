@@ -24,6 +24,10 @@ type fakeInstaller struct {
 	plansErr   error
 	startCalls int
 	lastTarget systeminstall.Target
+	lastMethod string
+	agentJobs  []systeminstall.Job
+	verifyJob  systeminstall.Job
+	verifyErr  error
 }
 
 func (f *fakeInstaller) Start(_ context.Context, target systeminstall.Target) (systeminstall.Job, error) {
@@ -41,11 +45,29 @@ func (f *fakeInstaller) AgentPlans(context.Context) ([]systeminstall.AgentPlan, 
 	return f.plans, f.plansErr
 }
 
+func (f *fakeInstaller) StartAgent(_ context.Context, target systeminstall.Target, method string) (systeminstall.Job, error) {
+	f.startCalls++
+	f.lastTarget = target
+	f.lastMethod = method
+	return f.startJob, f.startErr
+}
+
+func (f *fakeInstaller) AgentJobs(context.Context) ([]systeminstall.Job, error) {
+	return f.agentJobs, f.statusErr
+}
+
+func (f *fakeInstaller) Verify(_ context.Context, target systeminstall.Target) (systeminstall.Job, error) {
+	f.lastTarget = target
+	return f.verifyJob, f.verifyErr
+}
+
 func TestAgentInstallRoutes(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	installer := &fakeInstaller{
-		plans:    []systeminstall.AgentPlan{{AgentID: "codex", Available: true, Automatic: true, Method: "npm"}},
-		startJob: systeminstall.Job{Target: systeminstall.TargetCodex, Status: systeminstall.StatusRunning},
+		plans:     []systeminstall.AgentPlan{{AgentID: "codex", Available: true, Automatic: true, Method: "npm"}},
+		startJob:  systeminstall.Job{Target: systeminstall.TargetCodex, Status: systeminstall.StatusInstalling, Method: "npm"},
+		agentJobs: []systeminstall.Job{{Target: systeminstall.TargetCodex, Status: systeminstall.StatusInterrupted, Method: "npm", Error: "AO restarted"}},
+		verifyJob: systeminstall.Job{Target: systeminstall.TargetCodex, Status: systeminstall.StatusVerifying},
 	}
 	srv := httptest.NewServer(httpd.NewRouterWithControl(config.Config{}, log, nil, httpd.APIDeps{
 		Installer: installer,
@@ -56,13 +78,44 @@ func TestAgentInstallRoutes(t *testing.T) {
 	if status != http.StatusOK || !strings.Contains(string(body), `"agentId":"codex"`) {
 		t.Fatalf("GET /agents/installers = %d, body=%s", status, body)
 	}
-	body, status, _ = doRequest(t, srv, http.MethodPost, "/api/v1/agents/codex/install", "")
-	if status != http.StatusAccepted || installer.lastTarget != systeminstall.TargetCodex {
-		t.Fatalf("POST /agents/codex/install = %d, target=%q, body=%s", status, installer.lastTarget, body)
+	body, status, _ = doRequest(t, srv, http.MethodPost, "/api/v1/agents/codex/install", `{"method":"npm"}`)
+	if status != http.StatusAccepted || installer.lastTarget != systeminstall.TargetCodex || installer.lastMethod != "npm" {
+		t.Fatalf("POST /agents/codex/install = %d, target=%q method=%q, body=%s", status, installer.lastTarget, installer.lastMethod, body)
+	}
+	body, status, _ = doRequest(t, srv, http.MethodGet, "/api/v1/agents/install-jobs", "")
+	if status != http.StatusOK || !strings.Contains(string(body), `"status":"interrupted"`) {
+		t.Fatalf("GET /agents/install-jobs = %d, body=%s", status, body)
+	}
+	body, status, _ = doRequest(t, srv, http.MethodPost, "/api/v1/agents/codex/verify", "")
+	if status != http.StatusAccepted || !strings.Contains(string(body), `"status":"verifying"`) {
+		t.Fatalf("POST /agents/codex/verify = %d, body=%s", status, body)
 	}
 	body, status, _ = doRequest(t, srv, http.MethodPost, "/api/v1/agents/not-real/install", "")
 	if status != http.StatusBadRequest || !strings.Contains(string(body), `"code":"UNKNOWN_AGENT_INSTALL_TARGET"`) {
 		t.Fatalf("POST /agents/not-real/install = %d, body=%s", status, body)
+	}
+}
+
+func TestAgentInstallMapsMethodAndActiveHarnessErrors(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	for _, tt := range []struct {
+		name       string
+		err        error
+		wantStatus int
+		wantCode   string
+	}{
+		{name: "invalid method", err: systeminstall.ErrInstallMethod, wantStatus: http.StatusBadRequest, wantCode: "INSTALL_METHOD_UNAVAILABLE"},
+		{name: "active droid", err: systeminstall.ErrHarnessActive, wantStatus: http.StatusConflict, wantCode: "HARNESS_ACTIVE"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			installer := &fakeInstaller{startErr: tt.err}
+			srv := httptest.NewServer(httpd.NewRouterWithControl(config.Config{}, log, nil, httpd.APIDeps{Installer: installer}, httpd.ControlDeps{}))
+			defer srv.Close()
+			body, status, _ := doRequest(t, srv, http.MethodPost, "/api/v1/agents/droid/install", `{"method":"homebrew"}`)
+			if status != tt.wantStatus || !strings.Contains(string(body), `"code":"`+tt.wantCode+`"`) || !strings.Contains(string(body), `"requestId":"`) {
+				t.Fatalf("status = %d body=%s", status, body)
+			}
+		})
 	}
 }
 

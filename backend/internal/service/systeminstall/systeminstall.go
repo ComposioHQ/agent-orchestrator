@@ -22,7 +22,10 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
-var ErrHarnessActive = errors.New("systeminstall: harness has an active session")
+var (
+	ErrHarnessActive = errors.New("systeminstall: harness has an active session")
+	ErrInstallMethod = errors.New("systeminstall: invalid install method")
+)
 
 // Target is one of the fixed install targets AO knows how to install.
 type Target string

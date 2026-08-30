@@ -90,6 +90,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/agents/{agent}/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Verify an installed harness without reinstalling or probing authentication */
+        post: operations["verifyAgentInstall"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agents/install-jobs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Return the latest durable install job for every agent harness */
+        get: operations["listAgentInstallJobs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/agents/installers": {
         parameters: {
             query?: never;
@@ -1925,13 +1959,27 @@ export interface components {
             /** @description Number of retained sessions currently attributed to this agent. */
             usageCount?: number;
         };
+        AgentInstallJobsResponse: {
+            jobs: components["schemas"]["InstallJob"][];
+        };
+        AgentInstallMethod: {
+            available: boolean;
+            command?: string;
+            expectedDestination?: string;
+            id: string;
+            label: string;
+            reason?: string;
+            recommended: boolean;
+        };
         AgentInstallPlan: {
             agentId: string;
             automatic: boolean;
             available: boolean;
             command?: string;
             documentationUrl: string;
+            expectedDestination?: string;
             method: string;
+            methods: components["schemas"]["AgentInstallMethod"][];
             reason?: string;
         };
         AgentInstallerCatalogResponse: {
@@ -2501,11 +2549,15 @@ export interface components {
             command?: string;
             /** @description Set on failure or when the target is unsupported on this machine: the exec error, the Unsupported reason, or a timeout message. */
             error?: string;
+            /** @description Expected or adapter-resolved executable destination. */
+            expectedDestination?: string;
             /**
              * Format: date-time
              * @description Absent until the job finishes.
              */
             finishedAt?: null | string;
+            /** @description Server-owned installation method selected for this harness job. */
+            method?: string;
             /** @description Combined stdout+stderr from the install command, tail-capped to the last ~4000 bytes. */
             output?: string;
             /** Format: date-time */
@@ -2514,9 +2566,11 @@ export interface components {
              * @description Current lifecycle state of the job.
              * @enum {string}
              */
-            status: "idle" | "running" | "succeeded" | "failed" | "unsupported";
+            status: "idle" | "running" | "installing" | "verifying" | "succeeded" | "failed" | "unsupported" | "interrupted";
             /** @description Fixed install target this job ran (or is running) for. */
             target: string;
+            /** Format: date-time */
+            updatedAt?: null | string;
         };
         KillReviewResponse: {
             reviewerHandleId: string;
@@ -3218,6 +3272,10 @@ export interface components {
             paths: string[];
             sessionId: string;
         };
+        StartAgentInstallRequest: {
+            /** @description Server-issued installation method id. Omit to use the recommended viable method. */
+            method?: string;
+        };
         StartPreviewServerRequest: {
             /** @description Named preview configuration. Optional when exactly one configuration exists. */
             configuration?: string;
@@ -3536,7 +3594,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["StartAgentInstallRequest"];
+            };
+        };
         responses: {
             /** @description Accepted */
             202: {
@@ -3549,6 +3611,24 @@ export interface operations {
             };
             /** @description Bad Request */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3721,6 +3801,103 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    verifyAgentInstall: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent adapter identifier. */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstallJob"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    listAgentInstallJobs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentInstallJobsResponse"];
                 };
             };
             /** @description Internal Server Error */

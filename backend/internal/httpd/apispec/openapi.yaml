@@ -76,6 +76,11 @@ paths:
         schema:
           description: Agent adapter identifier.
           type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartAgentInstallRequest'
       responses:
         "202":
           content:
@@ -89,6 +94,18 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Bad Request
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
         "501":
           content:
             application/json:
@@ -248,6 +265,76 @@ paths:
                 $ref: '#/components/schemas/APIError'
           description: Not Implemented
       summary: Run a fresh local readiness probe for one agent adapter
+      tags:
+      - agents
+  /api/v1/agents/{agent}/verify:
+    post:
+      operationId: verifyAgentInstall
+      parameters:
+      - description: Agent adapter identifier.
+        in: path
+        name: agent
+        required: true
+        schema:
+          description: Agent adapter identifier.
+          type: string
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstallJob'
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Verify an installed harness without reinstalling or probing authentication
+      tags:
+      - agents
+  /api/v1/agents/install-jobs:
+    get:
+      operationId: listAgentInstallJobs
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentInstallJobsResponse'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Return the latest durable install job for every agent harness
       tags:
       - agents
   /api/v1/agents/installers:
@@ -5799,6 +5886,37 @@ components:
       - id
       - label
       type: object
+    AgentInstallJobsResponse:
+      properties:
+        jobs:
+          items:
+            $ref: '#/components/schemas/InstallJob'
+          type: array
+      required:
+      - jobs
+      type: object
+    AgentInstallMethod:
+      properties:
+        available:
+          type: boolean
+        command:
+          type: string
+        expectedDestination:
+          type: string
+        id:
+          type: string
+        label:
+          type: string
+        reason:
+          type: string
+        recommended:
+          type: boolean
+      required:
+      - id
+      - label
+      - available
+      - recommended
+      type: object
     AgentInstallPlan:
       properties:
         agentId:
@@ -5811,8 +5929,14 @@ components:
           type: string
         documentationUrl:
           type: string
+        expectedDestination:
+          type: string
         method:
           type: string
+        methods:
+          items:
+            $ref: '#/components/schemas/AgentInstallMethod'
+          type: array
         reason:
           type: string
       required:
@@ -5821,6 +5945,7 @@ components:
       - automatic
       - method
       - documentationUrl
+      - methods
       type: object
     AgentInstallerCatalogResponse:
       properties:
@@ -7391,12 +7516,19 @@ components:
           description: 'Set on failure or when the target is unsupported on this machine:
             the exec error, the Unsupported reason, or a timeout message.'
           type: string
+        expectedDestination:
+          description: Expected or adapter-resolved executable destination.
+          type: string
         finishedAt:
           description: Absent until the job finishes.
           format: date-time
           type:
           - "null"
           - string
+        method:
+          description: Server-owned installation method selected for this harness
+            job.
+          type: string
         output:
           description: Combined stdout+stderr from the install command, tail-capped
             to the last ~4000 bytes.
@@ -7411,13 +7543,21 @@ components:
           enum:
           - idle
           - running
+          - installing
+          - verifying
           - succeeded
           - failed
           - unsupported
+          - interrupted
           type: string
         target:
           description: Fixed install target this job ran (or is running) for.
           type: string
+        updatedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
       required:
       - target
       - status
@@ -9260,6 +9400,13 @@ components:
       required:
       - sessionId
       - paths
+      type: object
+    StartAgentInstallRequest:
+      properties:
+        method:
+          description: Server-issued installation method id. Omit to use the recommended
+            viable method.
+          type: string
       type: object
     StartPreviewServerRequest:
       properties:

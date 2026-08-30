@@ -120,11 +120,11 @@ func (s *Service) resolveAgentMethod(target Target, method string) (Plan, error)
 			continue
 		}
 		if plan.Unsupported {
-			return Plan{}, fmt.Errorf("systeminstall: install method %q is not available: %s", method, plan.Reason)
+			return Plan{}, fmt.Errorf("%w: install method %q is not available: %s", ErrInstallMethod, method, plan.Reason)
 		}
 		return plan, nil
 	}
-	return Plan{}, fmt.Errorf("systeminstall: unknown install method %q for %s", method, target)
+	return Plan{}, fmt.Errorf("%w: unknown install method %q for %s", ErrInstallMethod, method, target)
 }
 
 // planAgent contains the first-party, code-reviewed installation recipe for
