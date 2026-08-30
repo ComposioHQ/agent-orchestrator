@@ -252,7 +252,11 @@ func seenIssueIDs(sessions []domain.SessionRecord) map[domain.IssueID]bool {
 }
 
 // CanonicalIssueID stores tracker issue ids in sessions.issue_id with the
-// provider included, so future providers cannot collide on native ids.
+// provider included, so future providers cannot collide on native ids. For
+// GitLab self-managed instances the host is appended after '@' so issues
+// from different hosts with the same project path and iid are distinct
+// (e.g. gitlab.com/group/repo#7 vs gitlab.internal/group/repo#7). GitHub
+// and gitlab.com (zero-value host) produce the same format as before.
 func CanonicalIssueID(id domain.TrackerID) domain.IssueID {
 	provider := id.Provider
 	if provider == "" {
@@ -261,6 +265,10 @@ func CanonicalIssueID(id domain.TrackerID) domain.IssueID {
 	native := strings.TrimSpace(id.Native)
 	if native == "" {
 		return ""
+	}
+	host := strings.TrimSpace(id.Host)
+	if host != "" {
+		return domain.IssueID(string(provider) + ":" + native + "@" + host)
 	}
 	return domain.IssueID(string(provider) + ":" + native)
 }

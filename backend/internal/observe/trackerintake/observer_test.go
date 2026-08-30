@@ -591,3 +591,52 @@ func TestCleanRepoPathGitHubLastTwoSegments(t *testing.T) {
 		}
 	}
 }
+
+func TestCanonicalIssueIDGitLabHostDisambiguates(t *testing.T) {
+	tests := []struct {
+		name string
+		id   domain.TrackerID
+		want domain.IssueID
+	}{
+		{
+			name: "gitlab.com zero host",
+			id:   domain.TrackerID{Provider: domain.TrackerProviderGitLab, Native: "group/repo#7"},
+			want: "gitlab:group/repo#7",
+		},
+		{
+			name: "self-managed host",
+			id:   domain.TrackerID{Provider: domain.TrackerProviderGitLab, Native: "group/repo#7", Host: "gitlab.internal"},
+			want: "gitlab:group/repo#7@gitlab.internal",
+		},
+		{
+			name: "self-managed with port",
+			id:   domain.TrackerID{Provider: domain.TrackerProviderGitLab, Native: "group/repo#7", Host: "gitlab.local:8443"},
+			want: "gitlab:group/repo#7@gitlab.local:8443",
+		},
+		{
+			name: "github no host",
+			id:   domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#12"},
+			want: "github:acme/demo#12",
+		},
+		{
+			name: "empty native",
+			id:   domain.TrackerID{Provider: domain.TrackerProviderGitLab, Native: ""},
+			want: "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := CanonicalIssueID(tt.id)
+			if got != tt.want {
+				t.Errorf("CanonicalIssueID(%+v) = %q, want %q", tt.id, got, tt.want)
+			}
+		})
+	}
+
+	// The core assertion: same native, different hosts → different IDs.
+	dotCom := CanonicalIssueID(domain.TrackerID{Provider: domain.TrackerProviderGitLab, Native: "group/repo#7"})
+	internal := CanonicalIssueID(domain.TrackerID{Provider: domain.TrackerProviderGitLab, Native: "group/repo#7", Host: "gitlab.internal"})
+	if dotCom == internal {
+		t.Fatalf("gitlab.com and self-managed with same native produced identical IssueID %q", dotCom)
+	}
+}
