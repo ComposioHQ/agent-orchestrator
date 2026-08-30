@@ -2214,15 +2214,14 @@ html.sidebar-reordering * {
 }
 
 /* The parent reserves one compact footprint; the expanded dock floats above it. */
-.queue-dock {
+.cursor-chat-composer-queue {
 	--queue-dock-header-height: 2rem;
 	--queue-dock-row-height: 2.5rem;
 	--queue-dock-collapsed-height: calc(var(--queue-dock-header-height) + var(--queue-dock-row-height));
-}
-
-.cursor-chat-composer-queue {
 	position: relative;
 	height: var(--queue-dock-collapsed-height);
+	min-height: var(--queue-dock-collapsed-height);
+	flex-shrink: 0;
 }
 
 .cursor-chat-composer-queue .queue-dock {
@@ -2240,6 +2239,18 @@ html.sidebar-reordering * {
 	overflow: hidden;
 	transition: max-height 420ms cubic-bezier(0.16, 1, 0.3, 1);
 	will-change: max-height;
+}
+
+.queue-dock {
+	max-height: var(--queue-dock-collapsed-height, 4.5rem);
+	transition: max-height 420ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.queue-dock[data-collapsible="true"][data-expanded="true"] {
+	max-height: calc(
+		var(--queue-dock-header-height, 2rem) +
+		var(--queue-dock-row-height, 2.5rem) * var(--queue-dock-visible-rows, 5)
+	);
 }
 
 .queue-dock-body[data-collapsible="true"][data-expanded="false"] {
@@ -2302,6 +2313,10 @@ html.sidebar-reordering * {
 	.queue-dock-body {
 		transition: none;
 		will-change: auto;
+	}
+
+	.queue-dock {
+		transition: none;
 	}
 }
 
