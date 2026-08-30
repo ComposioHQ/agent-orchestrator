@@ -106,6 +106,7 @@ func TestAgentInstallMapsMethodAndActiveHarnessErrors(t *testing.T) {
 	}{
 		{name: "invalid method", err: systeminstall.ErrInstallMethod, wantStatus: http.StatusBadRequest, wantCode: "INSTALL_METHOD_UNAVAILABLE"},
 		{name: "active droid", err: systeminstall.ErrHarnessActive, wantStatus: http.StatusConflict, wantCode: "HARNESS_ACTIVE"},
+		{name: "install active", err: systeminstall.ErrInstallActive, wantStatus: http.StatusConflict, wantCode: "INSTALL_ACTIVE"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			installer := &fakeInstaller{startErr: tt.err}
@@ -142,6 +143,18 @@ func TestPostSystemInstall(t *testing.T) {
 	}
 	if installer.startCalls != 1 {
 		t.Fatalf("startCalls = %d, want 1", installer.startCalls)
+	}
+}
+
+func TestPostSystemInstallMapsActiveAgentConflict(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	installer := &fakeInstaller{startErr: systeminstall.ErrInstallActive}
+	srv := httptest.NewServer(httpd.NewRouterWithControl(config.Config{}, log, nil, httpd.APIDeps{Installer: installer}, httpd.ControlDeps{}))
+	defer srv.Close()
+
+	body, status, _ := doRequest(t, srv, http.MethodPost, "/api/v1/system/install/codex", "")
+	if status != http.StatusConflict || !strings.Contains(string(body), `"code":"INSTALL_ACTIVE"`) {
+		t.Fatalf("POST /system/install/codex = %d, body=%s", status, body)
 	}
 }
 

@@ -27,6 +27,8 @@ var (
 	ErrHarnessActive = errors.New("systeminstall: harness has an active session")
 	// ErrInstallMethod reports an unknown or currently unavailable install method.
 	ErrInstallMethod = errors.New("systeminstall: invalid install method")
+	// ErrInstallActive prevents a second operation from being silently discarded.
+	ErrInstallActive = errors.New("systeminstall: harness install operation already active")
 )
 
 // Target is one of the fixed install targets AO knows how to install.
@@ -235,8 +237,13 @@ type Deps struct {
 
 // Service runs real install commands for the fixed Target allowlist.
 type Service struct {
-	mu   sync.Mutex
-	jobs map[Target]*Job
+	mu                sync.Mutex
+	jobs              map[Target]*Job
+	backgroundContext context.Context
+	stop              context.CancelFunc
+	stopping          bool
+	workers           sync.WaitGroup
+	droidGate         sync.RWMutex
 
 	executables         ports.ExecutableFinder
 	commands            ports.CommandRunner
@@ -266,6 +273,7 @@ func New(executables ports.ExecutableFinder, commands ports.CommandRunner) *Serv
 func NewWithDeps(executables ports.ExecutableFinder, commands ports.CommandRunner, deps Deps) *Service {
 	installCommands, _ := commands.(ports.InstallCommandRunner)
 	installCapabilities, _ := executables.(ports.InstallCapabilityProbe)
+	backgroundContext, stop := context.WithCancel(context.Background())
 	return &Service{
 		jobs:                make(map[Target]*Job),
 		executables:         executables,
@@ -277,6 +285,8 @@ func NewWithDeps(executables ports.ExecutableFinder, commands ports.CommandRunne
 		sessions:            deps.Sessions,
 		goos:                runtime.GOOS,
 		installTimeout:      defaultInstallTimeout,
+		stop:                stop,
+		backgroundContext:   backgroundContext,
 	}
 }
 
@@ -385,8 +395,18 @@ func (s *Service) Start(ctx context.Context, target Target) (Job, error) {
 		StartedAt: &now,
 	}
 	s.jobs[target] = job
+	if s.stopping {
+		job.Status = StatusInterrupted
+		job.Error = "daemon shutdown interrupted the install"
+		job.FinishedAt = &now
+		return *job, nil
+	}
+	s.workers.Add(1)
 
-	go s.run(plan.Command, job) //nolint:gosec // G118: the async job deliberately outlives the starting HTTP request and owns a bounded timeout.
+	go func() { //nolint:gosec // bounded daemon-owned worker intentionally outlives the request.
+		defer s.workers.Done()
+		s.run(s.backgroundContext, plan.Command, job)
+	}()
 
 	return *job, nil
 }
@@ -401,14 +421,32 @@ func (s *Service) StartAgent(ctx context.Context, target Target, method string) 
 	if !IsAgentTarget(target) {
 		return Job{}, fmt.Errorf("systeminstall: unknown harness target %q", target)
 	}
-	if target == TargetDroid && s.sessions != nil {
-		sessions, err := s.sessions.ListAllSessions(ctx)
-		if err != nil {
-			return Job{}, fmt.Errorf("systeminstall: list sessions before droid install: %w", err)
+	var releaseDroid func()
+	if target == TargetDroid {
+		s.mu.Lock()
+		if current, ok := s.jobs[target]; ok && activeStatus(current.Status) {
+			s.mu.Unlock()
+			return Job{}, ErrInstallActive
 		}
-		for _, session := range sessions {
-			if session.Harness == domain.HarnessDroid && !session.IsTerminated {
-				return Job{}, fmt.Errorf("%w: end Droid session %s before installing or reinstalling Droid", ErrHarnessActive, session.ID)
+		s.mu.Unlock()
+		if !s.droidGate.TryLock() {
+			return Job{}, fmt.Errorf("%w: a Droid session is starting", ErrHarnessActive)
+		}
+		releaseDroid = s.droidGate.Unlock
+		defer func() {
+			if releaseDroid != nil {
+				releaseDroid()
+			}
+		}()
+		if s.sessions != nil {
+			sessions, err := s.sessions.ListAllSessions(ctx)
+			if err != nil {
+				return Job{}, fmt.Errorf("systeminstall: list sessions before droid install: %w", err)
+			}
+			for _, session := range sessions {
+				if session.Harness == domain.HarnessDroid && !session.IsTerminated {
+					return Job{}, fmt.Errorf("%w: end Droid session %s before installing or reinstalling Droid", ErrHarnessActive, session.ID)
+				}
 			}
 		}
 	}
@@ -427,10 +465,10 @@ func (s *Service) StartAgent(ctx context.Context, target Target, method string) 
 
 	s.mu.Lock()
 	if current, ok := s.jobs[target]; ok && activeStatus(current.Status) {
-		job := *current
 		s.mu.Unlock()
-		return job, nil
+		return Job{}, ErrInstallActive
 	}
+	previous, hadPrevious := s.jobs[target]
 	now := time.Now().UTC()
 	status := StatusInstalling
 	finishedAt := (*time.Time)(nil)
@@ -448,7 +486,13 @@ func (s *Service) StartAgent(ctx context.Context, target Target, method string) 
 
 	if err := s.persistJob(ctx, *job); err != nil {
 		s.mu.Lock()
-		delete(s.jobs, target)
+		if s.jobs[target] == job {
+			if hadPrevious {
+				s.jobs[target] = previous
+			} else {
+				delete(s.jobs, target)
+			}
+		}
 		s.mu.Unlock()
 		return Job{}, err
 	}
@@ -457,8 +501,32 @@ func (s *Service) StartAgent(ctx context.Context, target Target, method string) 
 	}
 
 	initial := *job
-	go s.runAgentInstall(plan, job) //nolint:gosec // bounded background installer intentionally outlives the request.
+	if !s.beginWorker() {
+		s.finishAgentJob(job, StatusInterrupted, "", "daemon shutdown interrupted the install", "")
+		return initial, nil
+	}
+	workerRelease := releaseDroid
+	releaseDroid = nil
+	go func() { //nolint:gosec // bounded daemon-owned worker intentionally outlives the request.
+		defer s.workers.Done()
+		if workerRelease != nil {
+			defer workerRelease()
+		}
+		s.runAgentInstall(s.backgroundContext, plan, job)
+	}()
 	return initial, nil
+}
+
+// TryBeginHarnessUse prevents a Droid session launch from racing replacement
+// of the Droid executable. The returned release must be called after launch.
+func (s *Service) TryBeginHarnessUse(harness domain.AgentHarness) (func(), bool) {
+	if harness != domain.HarnessDroid {
+		return func() {}, true
+	}
+	if !s.droidGate.TryRLock() {
+		return nil, false
+	}
+	return s.droidGate.RUnlock, true
 }
 
 // Status returns the current or last known Job for target. A target that has
@@ -559,10 +627,10 @@ func (s *Service) Verify(ctx context.Context, target Target) (Job, error) {
 	}
 	s.mu.Lock()
 	if current, ok := s.jobs[target]; ok && activeStatus(current.Status) {
-		job := *current
 		s.mu.Unlock()
-		return job, nil
+		return Job{}, ErrInstallActive
 	}
+	previous, hadPrevious := s.jobs[target]
 	now := time.Now().UTC()
 	job := &Job{Target: target, Status: StatusVerifying, StartedAt: &now, UpdatedAt: &now}
 	if current, ok := s.jobs[target]; ok {
@@ -574,11 +642,59 @@ func (s *Service) Verify(ctx context.Context, target Target) (Job, error) {
 	s.jobs[target] = job
 	s.mu.Unlock()
 	if err := s.persistJob(ctx, *job); err != nil {
+		s.mu.Lock()
+		if s.jobs[target] == job {
+			if hadPrevious {
+				s.jobs[target] = previous
+			} else {
+				delete(s.jobs, target)
+			}
+		}
+		s.mu.Unlock()
 		return Job{}, err
 	}
 	initial := *job
-	go s.runAgentVerification(job) //nolint:gosec // bounded background verifier intentionally outlives the request.
+	if !s.beginWorker() {
+		s.finishAgentJob(job, StatusInterrupted, "", "daemon shutdown interrupted verification", "")
+		return initial, nil
+	}
+	go func() { //nolint:gosec // bounded daemon-owned worker intentionally outlives the request.
+		defer s.workers.Done()
+		s.runAgentVerification(s.backgroundContext, job)
+	}()
 	return initial, nil
+}
+
+func (s *Service) beginWorker() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.stopping {
+		return false
+	}
+	s.workers.Add(1)
+	return true
+}
+
+// Close cancels and drains daemon-owned harness installation work.
+func (s *Service) Close(ctx context.Context) error {
+	s.mu.Lock()
+	if !s.stopping {
+		s.stopping = true
+		s.stop()
+	}
+	s.mu.Unlock()
+
+	done := make(chan struct{})
+	go func() {
+		s.workers.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("systeminstall: drain workers: %w", ctx.Err())
+	}
 }
 
 // run executes argv in the background and records the outcome onto job. job
@@ -586,8 +702,8 @@ func (s *Service) Verify(ctx context.Context, target Target) (Job, error) {
 // concurrent Start/Status calls never race with this goroutine's writes.
 // The run is bounded by installTimeout so a stalled installer eventually
 // surfaces as a failure instead of pinning the target in StatusRunning.
-func (s *Service) run(argv []string, job *Job) {
-	ctx, cancel := context.WithTimeout(context.Background(), s.installTimeout)
+func (s *Service) run(parent context.Context, argv []string, job *Job) {
+	ctx, cancel := context.WithTimeout(parent, s.installTimeout)
 	defer cancel()
 
 	out := &capturedOutput{max: maxOutputBytes}
@@ -617,6 +733,11 @@ func (s *Service) run(argv []string, job *Job) {
 		job.Error = fmt.Sprintf("install timed out after %s", s.installTimeout)
 		return
 	}
+	if ctx.Err() == context.Canceled {
+		job.Status = StatusInterrupted
+		job.Error = "daemon shutdown interrupted the install"
+		return
+	}
 	if runErr != nil {
 		job.Status = StatusFailed
 		job.Error = runErr.Error()
@@ -632,8 +753,8 @@ func (s *Service) run(argv []string, job *Job) {
 	job.Status = StatusSucceeded
 }
 
-func (s *Service) runAgentInstall(plan Plan, job *Job) {
-	ctx, cancel := context.WithTimeout(context.Background(), s.installTimeout)
+func (s *Service) runAgentInstall(parent context.Context, plan Plan, job *Job) {
+	ctx, cancel := context.WithTimeout(parent, s.installTimeout)
 	defer cancel()
 	out := &capturedOutput{max: maxOutputBytes}
 	var runErr error
@@ -652,6 +773,10 @@ func (s *Service) runAgentInstall(plan Plan, job *Job) {
 		s.finishAgentJob(job, StatusFailed, out.String(), fmt.Sprintf("install timed out after %s", s.installTimeout), "")
 		return
 	}
+	if ctx.Err() == context.Canceled {
+		s.finishAgentJob(job, StatusInterrupted, out.String(), "daemon shutdown interrupted the install", "")
+		return
+	}
 	if runErr != nil {
 		s.finishAgentJob(job, StatusFailed, out.String(), runErr.Error(), "")
 		return
@@ -661,15 +786,19 @@ func (s *Service) runAgentInstall(plan Plan, job *Job) {
 		s.finishAgentJob(job, StatusFailed, "", fmt.Sprintf("persist verifying state: %v", err), "")
 		return
 	}
-	s.runAgentVerification(job)
+	s.runAgentVerification(s.backgroundContext, job)
 }
 
-func (s *Service) runAgentVerification(job *Job) {
+func (s *Service) runAgentVerification(ctx context.Context, job *Job) {
 	if s.verifier == nil {
 		s.finishAgentJob(job, StatusFailed, "", "adapter-backed install verifier is not configured", "")
 		return
 	}
-	result, err := s.verifier.Verify(context.Background(), job.Target)
+	result, err := s.verifier.Verify(ctx, job.Target)
+	if ctx.Err() == context.Canceled {
+		s.finishAgentJob(job, StatusInterrupted, result.Output, "daemon shutdown interrupted verification", result.ResolvedPath)
+		return
+	}
 	if err != nil {
 		s.finishAgentJob(job, StatusFailed, result.Output, err.Error(), result.ResolvedPath)
 		return
@@ -893,21 +1022,39 @@ func (s *Service) planOpencode() Plan {
 }
 
 func (s *Service) planBrew(target Target, pkg string) Plan {
+	return s.planHomebrew(target, pkg, false)
+}
+
+func (s *Service) planBrewCask(target Target, pkg string) Plan {
+	return s.planHomebrew(target, pkg, true)
+}
+
+func (s *Service) planHomebrew(target Target, pkg string, cask bool) Plan {
 	if _, err := s.executables.LookPath("brew"); err != nil {
 		return Plan{
 			Target: target, Unsupported: true,
 			Method: "homebrew", Reason: "Homebrew was not found on PATH. Install it from https://brew.sh first, then retry.",
 		}
 	}
-	return Plan{Target: target, Command: []string{"brew", "install", pkg}, Method: "homebrew"}
-}
-
-func (s *Service) planBrewCask(target Target, pkg string) Plan {
-	plan := s.planBrew(target, pkg)
-	if !plan.Unsupported {
-		plan.Command = []string{"brew", "install", "--cask", pkg}
+	if IsAgentTarget(target) && s.installCapabilities != nil {
+		prefix, err := s.installCapabilities.HomebrewPrefix()
+		if err != nil || prefix == "" {
+			return Plan{Target: target, Unsupported: true, Method: "homebrew", Reason: "Homebrew's installation prefix could not be resolved."}
+		}
+		if !s.installCapabilities.PathWritable(prefix) {
+			return Plan{Target: target, Unsupported: true, Method: "homebrew", Reason: fmt.Sprintf("Homebrew's prefix %s is not writable by the current user. Repair Homebrew ownership; AO will not use sudo.", prefix)}
+		}
 	}
-	return plan
+	verb := "install"
+	if s.installCapabilities != nil && s.installCapabilities.HomebrewPackageInstalled(pkg, cask) {
+		verb = "reinstall"
+	}
+	command := []string{"brew", verb}
+	if cask {
+		command = append(command, "--cask")
+	}
+	command = append(command, pkg)
+	return Plan{Target: target, Command: command, Method: "homebrew"}
 }
 
 func (s *Service) planWinget(target Target, id string) Plan {

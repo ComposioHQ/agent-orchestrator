@@ -34,6 +34,9 @@ func (Adapter) LookPath(file string) (string, error) {
 // replacing PATH and the user's package-manager configuration.
 func (Adapter) RunInstall(ctx context.Context, command ports.InstallCommand, stdout, stderr io.Writer) error {
 	cmd := exec.CommandContext(ctx, command.Argv[0], command.Argv[1:]...) //nolint:gosec // G204: argv is selected from systeminstall's fixed recipes.
+	configureProcessGroup(cmd)
+	cmd.Cancel = func() error { return killProcessTree(cmd) }
+	cmd.WaitDelay = 5 * time.Second
 	cmd.Stdin = strings.NewReader("")
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
@@ -52,6 +55,31 @@ func (Adapter) NPMGlobalPrefix() (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+// HomebrewPrefix resolves the installation root whose ownership determines
+// whether Homebrew can install without privilege escalation.
+func (Adapter) HomebrewPrefix() (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "brew", "--prefix").Output() //nolint:gosec // fixed read-only argv
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// HomebrewPackageInstalled distinguishes a first install from an explicit
+// reinstall without mutating package-manager state.
+func (Adapter) HomebrewPackageInstalled(name string, cask bool) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	args := []string{"list", "--versions"}
+	if cask {
+		args = append(args, "--cask")
+	}
+	args = append(args, name)
+	return exec.CommandContext(ctx, "brew", args...).Run() == nil //nolint:gosec // name comes from fixed server-owned recipes.
 }
 
 // PathWritable checks the nearest existing ancestor by creating and removing

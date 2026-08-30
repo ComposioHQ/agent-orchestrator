@@ -3,7 +3,7 @@ import { Check, Copy, Download, ExternalLink, LoaderCircle, RefreshCw, Search, T
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { components } from "../../../api/schema";
-import { agentsQueryKey, refreshAgents, refreshAgentsIfStale, type AgentCatalog, useAgentsQuery } from "../../hooks/useAgentsQuery";
+import { agentsQueryKey, refreshAgents, refreshAgentsIfStale, useAgentsQuery } from "../../hooks/useAgentsQuery";
 import { agentLabel, AGENT_OPTIONS, type AgentId } from "../../lib/agent-options";
 import { apiClient, apiErrorMessage } from "../../lib/api-client";
 import { aoBridge } from "../../lib/bridge";
@@ -29,13 +29,6 @@ async function fetchInstallJobs(): Promise<InstallJob[]> {
 	const { data, error } = await apiClient.GET("/api/v1/agents/install-jobs");
 	if (error || !data) throw new Error(apiErrorMessage(error, "Could not load harness installation jobs."));
 	return data.jobs;
-}
-
-function addInstalledAgent(catalog: AgentCatalog | undefined, agentId: AgentId): AgentCatalog | undefined {
-	if (!catalog || catalog.installed.some((agent) => agent.id === agentId)) return catalog;
-	const supported = catalog.supported.find((agent) => agent.id === agentId);
-	if (!supported) return catalog;
-	return { ...catalog, installed: [...catalog.installed, supported] };
 }
 
 function upsertJob(current: InstallJob[] | undefined, next: InstallJob): InstallJob[] {
@@ -69,6 +62,8 @@ export function HarnessSettingsSection({ titleHidden = false }: { titleHidden?: 
 	const [expandedDiagnostics, setExpandedDiagnostics] = useState<Partial<Record<AgentId, boolean>>>({});
 	const [copiedAgent, setCopiedAgent] = useState<AgentId | null>(null);
 	const refreshedSuccess = useRef(new Set<string>());
+	const pendingActions = useRef(new Set<AgentId>());
+	const [pendingAgentIds, setPendingAgentIds] = useState<Set<AgentId>>(new Set());
 
 	useEffect(() => {
 		void refreshAgentsIfStale().then((fresh) => {
@@ -101,38 +96,63 @@ export function HarnessSettingsSection({ titleHidden = false }: { titleHidden?: 
 			if (!token || refreshedSuccess.current.has(token)) continue;
 			refreshedSuccess.current.add(token);
 			const agentId = token.split(":", 1)[0] as AgentId;
-			queryClient.setQueryData<AgentCatalog | undefined>(agentsQueryKey, (current) => addInstalledAgent(current, agentId));
-			void queryClient.invalidateQueries({ queryKey: agentsQueryKey });
+			setActionErrors((current) => ({ ...current, [agentId]: undefined }));
+			void apiClient.POST("/api/v1/agents/{agent}/probe", {
+				params: { path: { agent: agentId } },
+			}).finally(() => queryClient.invalidateQueries({ queryKey: agentsQueryKey }));
 		}
 	}, [queryClient, succeededKey]);
 
 	const updateJob = (job: InstallJob) => {
+		setActionErrors((current) => ({ ...current, [job.target as AgentId]: undefined }));
 		queryClient.setQueryData<InstallJob[]>(installJobsQueryKey, (current) => upsertJob(current, job));
 	};
 
+	const beginAction = (agentId: AgentId): boolean => {
+		if (pendingActions.current.has(agentId)) return false;
+		pendingActions.current.add(agentId);
+		setPendingAgentIds(new Set(pendingActions.current));
+		return true;
+	};
+
+	const endAction = (agentId: AgentId) => {
+		pendingActions.current.delete(agentId);
+		setPendingAgentIds(new Set(pendingActions.current));
+	};
+
 	const startInstall = async (agentId: AgentId, method: string) => {
+		if (!beginAction(agentId)) return;
 		setActionErrors((current) => ({ ...current, [agentId]: undefined }));
-		const { data, error } = await apiClient.POST("/api/v1/agents/{agent}/install", {
-			params: { path: { agent: agentId } },
-			body: { method },
-		});
-		if (error || !data) {
-			setActionErrors((current) => ({ ...current, [agentId]: apiErrorMessage(error, t("settings.harness.startFailed")) }));
-			return;
+		try {
+			const { data, error } = await apiClient.POST("/api/v1/agents/{agent}/install", {
+				params: { path: { agent: agentId } },
+				body: { method },
+			});
+			if (error || !data) {
+				setActionErrors((current) => ({ ...current, [agentId]: apiErrorMessage(error, t("settings.harness.startFailed")) }));
+				return;
+			}
+			updateJob(data);
+		} finally {
+			endAction(agentId);
 		}
-		updateJob(data);
 	};
 
 	const verifyInstall = async (agentId: AgentId) => {
+		if (!beginAction(agentId)) return;
 		setActionErrors((current) => ({ ...current, [agentId]: undefined }));
-		const { data, error } = await apiClient.POST("/api/v1/agents/{agent}/verify", {
-			params: { path: { agent: agentId } },
-		});
-		if (error || !data) {
-			setActionErrors((current) => ({ ...current, [agentId]: apiErrorMessage(error, t("settings.harness.verifyFailed", { agent: agentLabel(agentId) })) }));
-			return;
+		try {
+			const { data, error } = await apiClient.POST("/api/v1/agents/{agent}/verify", {
+				params: { path: { agent: agentId } },
+			});
+			if (error || !data) {
+				setActionErrors((current) => ({ ...current, [agentId]: apiErrorMessage(error, t("settings.harness.verifyFailed", { agent: agentLabel(agentId) })) }));
+				return;
+			}
+			updateJob(data);
+		} finally {
+			endAction(agentId);
 		}
-		updateJob(data);
 	};
 
 	const copyText = async (agentId: AgentId, text: string) => {
@@ -188,9 +208,15 @@ export function HarnessSettingsSection({ titleHidden = false }: { titleHidden?: 
 					const actionError = actionErrors[agentId];
 					const failed = job?.status === "failed" || job?.status === "unsupported" || job?.status === "interrupted" || Boolean(actionError);
 					const active = isActive(job);
-					const isInstalled = installed.has(agentId) || job?.status === "succeeded";
+					const pending = pendingAgentIds.has(agentId);
+					const isInstalled = installed.has(agentId);
 					const hasDiagnostics = Boolean(job && (job.error || job.output || job.method || job.expectedDestination));
 					const methodLabel = selectedMethod?.label ?? plan?.method;
+					const methodSelect = availableMethods.length > 1 ? (
+						<select aria-label={t("settings.harness.installMethod")} className="h-8 rounded-md border border-(--color-border-settings-input) bg-(--color-bg-settings-input) px-2 text-xs text-settings-label" value={selectedMethodId} onChange={(event) => setSelectedMethods((current) => ({ ...current, [agentId]: event.target.value }))}>
+							{availableMethods.map((method) => <option key={method.id} value={method.id}>{method.label}</option>)}
+						</select>
+					) : null;
 					return (
 						<div className="settings-row-bar min-h-14 flex-wrap gap-3" data-agent={agentId} key={agentId}>
 							<AgentAvatar className="size-7 shrink-0" decorative provider={agentId} />
@@ -205,8 +231,9 @@ export function HarnessSettingsSection({ titleHidden = false }: { titleHidden?: 
 								<span className="inline-flex items-center gap-1.5 text-xs text-settings-muted" role="status"><LoaderCircle className="size-4 animate-spin" aria-hidden="true" />{job?.status === "installing" ? t("settings.harness.installing") : t("settings.harness.verifying")}</span>
 							) : failed ? (
 								<div className="flex items-center gap-1.5">
-									<Button size="sm" variant="outline" onClick={() => void verifyInstall(agentId)}>{t("settings.harness.verifyAgain")}</Button>
-									<Button size="sm" onClick={() => selectedMethodId && void startInstall(agentId, selectedMethodId)} disabled={!selectedMethodId}>{t("settings.harness.reinstall")}</Button>
+									{methodSelect}
+									<Button size="sm" variant="outline" disabled={pending} onClick={() => void verifyInstall(agentId)}>{t("settings.harness.verifyAgain")}</Button>
+									<Button size="sm" onClick={() => selectedMethodId && void startInstall(agentId, selectedMethodId)} disabled={pending || !selectedMethodId}>{t("settings.harness.reinstall")}</Button>
 								</div>
 							) : isInstalled ? (
 								<span className="inline-flex items-center gap-1 text-xs font-medium text-success"><Check className="size-4" aria-hidden="true" />{t("settings.harness.installed")}</span>
@@ -214,12 +241,8 @@ export function HarnessSettingsSection({ titleHidden = false }: { titleHidden?: 
 								<span className="inline-flex items-center gap-1.5 text-xs text-settings-muted" role="status"><LoaderCircle className="size-4 animate-spin" aria-hidden="true" /></span>
 							) : availableMethods.length > 0 ? (
 								<div className="flex items-center gap-1.5">
-									{availableMethods.length > 1 ? (
-										<select aria-label={t("settings.harness.installMethod")} className="h-8 rounded-md border border-(--color-border-settings-input) bg-(--color-bg-settings-input) px-2 text-xs text-settings-label" value={selectedMethodId} onChange={(event) => setSelectedMethods((current) => ({ ...current, [agentId]: event.target.value }))}>
-											{availableMethods.map((method) => <option key={method.id} value={method.id}>{method.label}</option>)}
-										</select>
-									) : null}
-									<Button size="sm" onClick={() => selectedMethodId && void startInstall(agentId, selectedMethodId)}><Download aria-hidden="true" />{t("settings.harness.install")}</Button>
+									{methodSelect}
+									<Button size="sm" disabled={pending} onClick={() => selectedMethodId && void startInstall(agentId, selectedMethodId)}><Download aria-hidden="true" />{t("settings.harness.install")}</Button>
 								</div>
 							) : plan?.command ? (
 								<Button size="sm" variant="outline" onClick={() => void copyText(agentId, plan.command!)}>{copiedAgent === agentId ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}{copiedAgent === agentId ? t("settings.harness.copied") : t("settings.harness.copyCommand")}</Button>

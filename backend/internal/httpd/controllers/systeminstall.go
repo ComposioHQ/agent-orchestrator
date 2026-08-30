@@ -119,6 +119,9 @@ func writeAgentInstallError(w http.ResponseWriter, r *http.Request, err error) b
 	case errors.Is(err, systeminstall.ErrHarnessActive):
 		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict", "HARNESS_ACTIVE", "end active Droid sessions before installing or reinstalling Droid", nil)
 		return true
+	case errors.Is(err, systeminstall.ErrInstallActive):
+		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict", "INSTALL_ACTIVE", "an install or verification job is already active for this harness", nil)
+		return true
 	default:
 		return false
 	}
@@ -152,6 +155,9 @@ func (c *SystemInstallController) start(w http.ResponseWriter, r *http.Request) 
 	}
 	job, err := c.Installer.Start(r.Context(), target)
 	if err != nil {
+		if writeAgentInstallError(w, r, err) {
+			return
+		}
 		envelope.WriteError(w, r, err)
 		return
 	}

@@ -8,13 +8,25 @@ import (
 )
 
 type installCapabilitiesStub struct {
-	prefix    string
-	prefixErr error
-	writable  bool
+	prefix            string
+	prefixErr         error
+	homebrewPrefix    string
+	homebrewErr       error
+	homebrewInstalled bool
+	writable          bool
 }
 
 func (s installCapabilitiesStub) NPMGlobalPrefix() (string, error) { return s.prefix, s.prefixErr }
-func (s installCapabilitiesStub) PathWritable(string) bool         { return s.writable }
+func (s installCapabilitiesStub) HomebrewPrefix() (string, error) {
+	if s.homebrewPrefix == "" && s.homebrewErr == nil {
+		return "/opt/homebrew", nil
+	}
+	return s.homebrewPrefix, s.homebrewErr
+}
+func (s installCapabilitiesStub) HomebrewPackageInstalled(string, bool) bool {
+	return s.homebrewInstalled
+}
+func (s installCapabilitiesStub) PathWritable(string) bool { return s.writable }
 
 func TestAgentPlansCoverEveryHarnessOnce(t *testing.T) {
 	s := newTestService("darwin", "npm", "brew", "curl", "bash", "sh", "bun", "uv", "python3")
@@ -130,6 +142,24 @@ func TestNPMPlanRequiresWritableGlobalPrefix(t *testing.T) {
 	plan := s.planAgent(TargetCodex)
 	if plan.Unsupported || plan.ExpectedDestination != "/Users/test/.npm/bin" {
 		t.Fatalf("plan = %+v, want writable npm destination", plan)
+	}
+}
+
+func TestHomebrewPlanRequiresWritablePrefix(t *testing.T) {
+	s := newTestService("darwin", "brew")
+	s.installCapabilities = installCapabilitiesStub{homebrewPrefix: "/opt/homebrew", writable: false}
+	plan := s.planBrew(TargetCodex, "codex")
+	if !plan.Unsupported || !strings.Contains(plan.Reason, "not writable") {
+		t.Fatalf("plan = %+v, want unavailable Homebrew writability reason", plan)
+	}
+}
+
+func TestHomebrewPlanReinstallsAnExistingPackage(t *testing.T) {
+	s := newTestService("darwin", "brew")
+	s.installCapabilities = installCapabilitiesStub{homebrewPrefix: "/opt/homebrew", homebrewInstalled: true, writable: true}
+	plan := s.planBrewCask(TargetCodex, "codex")
+	if got := strings.Join(plan.Command, " "); got != "brew reinstall --cask codex" {
+		t.Fatalf("command = %q, want an actual cask reinstall", got)
 	}
 }
 

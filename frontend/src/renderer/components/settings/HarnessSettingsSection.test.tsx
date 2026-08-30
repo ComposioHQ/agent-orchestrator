@@ -93,6 +93,67 @@ describe("HarnessSettingsSection", () => {
 		}));
 		await waitFor(() => expect(codexRow).toHaveTextContent("npm failed"));
 		expect(codexRow).toHaveTextContent("Reinstall");
+		await user.selectOptions(within(codexRow as HTMLElement).getByRole("combobox", { name: "Installation method" }), "homebrew");
+		await user.click(within(codexRow as HTMLElement).getByRole("button", { name: "Reinstall" }));
+		await waitFor(() => expect(apiClient.POST).toHaveBeenLastCalledWith("/api/v1/agents/{agent}/install", {
+			params: { path: { agent: "codex" } },
+			body: { method: "homebrew" },
+		}));
+	});
+
+	it("does not treat a historical successful job as current installation inventory", async () => {
+		vi.mocked(apiClient.GET).mockImplementation(async (path) => {
+			if (path === "/api/v1/agents") return { data: catalog } as never;
+			if (path === "/api/v1/agents/installers") return { data: plans } as never;
+			if (path === "/api/v1/agents/install-jobs") return { data: { jobs: [{ target: "codex", status: "succeeded", method: "npm", updatedAt: "2026-08-01T00:00:00Z" }] } } as never;
+			return { data: undefined } as never;
+		});
+		renderSection();
+		const row = (await screen.findByText("Codex")).closest('[data-agent="codex"]') as HTMLElement;
+		await waitFor(() => expect(row).toHaveTextContent("Available via npm"));
+		expect(within(row).getByRole("button", { name: "Install" })).toBeEnabled();
+	});
+
+	it("probes the installed harness before refreshing inventory after success", async () => {
+		let installed = false;
+		vi.mocked(apiClient.GET).mockImplementation(async (path) => {
+			if (path === "/api/v1/agents") return { data: installed ? { ...catalog, installed: [...catalog.installed, { id: "codex", label: "Codex" }] } : catalog } as never;
+			if (path === "/api/v1/agents/installers") return { data: plans } as never;
+			if (path === "/api/v1/agents/install-jobs") return { data: { jobs: [{ target: "codex", status: "succeeded", method: "npm", updatedAt: "2026-08-31T00:00:00Z" }] } } as never;
+			return { data: undefined } as never;
+		});
+		vi.mocked(apiClient.POST).mockImplementation(async (path) => {
+			if (path === "/api/v1/agents/{agent}/probe") {
+				installed = true;
+				return { data: { agent: { id: "codex", label: "Codex" }, supported: true, installed: true } } as never;
+			}
+			return { data: undefined } as never;
+		});
+		renderSection();
+		const row = (await screen.findByText("Codex")).closest('[data-agent="codex"]') as HTMLElement;
+		await waitFor(() => expect(apiClient.POST).toHaveBeenCalledWith("/api/v1/agents/{agent}/probe", { params: { path: { agent: "codex" } } }));
+		await waitFor(() => expect(row).toHaveTextContent("Installed"));
+	});
+
+	it("admits only one install request per harness while the first POST is pending", async () => {
+		let resolveInstall!: (value: unknown) => void;
+		let installCalls = 0;
+		const pendingInstall = new Promise((resolve) => { resolveInstall = resolve; });
+		vi.mocked(apiClient.POST).mockImplementation(async (path) => {
+			if (path === "/api/v1/agents/{agent}/install") {
+				installCalls += 1;
+				return await pendingInstall as never;
+			}
+			return { data: undefined } as never;
+		});
+		const user = userEvent.setup();
+		renderSection();
+		const row = (await screen.findByText("Codex")).closest('[data-agent="codex"]') as HTMLElement;
+		const button = await within(row).findByRole("button", { name: "Install" });
+		await user.dblClick(button);
+		expect(installCalls).toBe(1);
+		resolveInstall({ data: { target: "codex", status: "installing", method: "homebrew" } });
+		await waitFor(() => expect(row).toHaveTextContent("Installing…"));
 	});
 
 	it("keeps concurrent installs independent with only one spinner status per row", async () => {

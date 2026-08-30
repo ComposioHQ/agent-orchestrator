@@ -36,6 +36,8 @@ type InstallCommandRunner interface {
 // cannot validate safely.
 type InstallCapabilityProbe interface {
 	NPMGlobalPrefix() (string, error)
+	HomebrewPrefix() (string, error)
+	HomebrewPackageInstalled(name string, cask bool) bool
 	PathWritable(path string) bool
 }
 

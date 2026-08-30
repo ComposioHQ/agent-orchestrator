@@ -338,6 +338,7 @@ func Run() error {
 		}
 		return fmt.Errorf("recover harness install jobs: %w", err)
 	}
+	sessMgr.SetHarnessUseGate(systemInstall)
 
 	// Connect Mobile: the bridge service needs the LAN listener, but the LAN
 	// listener needs the built router's handler, which only exists once srv is
@@ -608,6 +609,11 @@ func Run() error {
 	// via defer) avoids the LIFO trap where a Stop() that blocks on ctx-cancel
 	// runs before the cancel: a non-signal exit path would hang otherwise.
 	stop()
+	installStopCtx, installStopCancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+	if err := systemInstall.Close(installStopCtx); err != nil {
+		log.Error("harness installer shutdown", "err", err)
+	}
+	installStopCancel()
 	if startupReconcileDone != nil {
 		<-startupReconcileDone
 	}
