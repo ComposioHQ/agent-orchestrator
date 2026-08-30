@@ -212,7 +212,7 @@ func TestWiring_StartSessionBuildsSessionService(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildAgentResolver: %v", err)
 	}
-	svc, reviewSvc, lc, err := startSession(context.Background(), cfg, rt, store, lcm, messenger, telemetryadapter.NoopSink{}, agents, nil, nil, nil, nil, nil, log)
+	svc, reviewSvc, lc, err := startSession(context.Background(), cfg, rt, store, lcm, messenger, telemetryadapter.NoopSink{}, agents, nil, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("startSession: %v", err)
 	}
@@ -273,7 +273,7 @@ func TestWiring_StartSessionSpawnsScratchWithoutGitRepo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildAgentResolver: %v", err)
 	}
-	svc, _, _, err := startSession(context.Background(), cfg, runtime, store, lcm, messenger, telemetryadapter.NoopSink{}, agents, nil, nil, nil, nil, nil, log)
+	svc, _, _, err := startSession(context.Background(), cfg, runtime, store, lcm, messenger, telemetryadapter.NoopSink{}, agents, nil, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("startSession: %v", err)
 	}
@@ -299,11 +299,13 @@ func TestWiring_StartSessionSpawnsScratchWithoutGitRepo(t *testing.T) {
 }
 
 // TestStartSession_SpawnDoesNotPanicWhenNoTrackerToken is a regression test for
-// issue #2685: when no GitHub token is configured, startSession must wire a
-// true-nil ports.Tracker so Spawn's issue-context guard fires instead of
-// dereferencing a typed-nil *github.Tracker. The pre-fix wiring assigned the
-// typed-nil return of newGitHubTracker directly, and `ao spawn --issue` panicked
-// on the first lookup.
+// issue #2685: when no tracker credentials are configured, the session service
+// must tolerate a true-nil ports.Tracker so Spawn's issue-context guard fires
+// instead of dereferencing a typed-nil *github.Tracker. The pre-fix wiring
+// assigned the typed-nil return of newGitHubTracker directly, and
+// `ao spawn --issue` panicked on the first lookup. The multi-tracker is now
+// built once in Run and passed in (see newMultiTracker); this test exercises
+// the service-side nil-guard directly.
 func TestStartSession_SpawnDoesNotPanicWhenNoTrackerToken(t *testing.T) {
 	t.Setenv("AO_GITHUB_TOKEN", "")
 	t.Setenv("GITHUB_TOKEN", "")
@@ -328,7 +330,7 @@ func TestStartSession_SpawnDoesNotPanicWhenNoTrackerToken(t *testing.T) {
 	if agentsErr != nil {
 		t.Fatalf("buildAgentResolver: %v", agentsErr)
 	}
-	svc, _, _, err := startSession(context.Background(), cfg, rt, store, lcm, messenger, telemetryadapter.NoopSink{}, agents, nil, nil, nil, nil, nil, log)
+	svc, _, _, err := startSession(context.Background(), cfg, rt, store, lcm, messenger, telemetryadapter.NoopSink{}, agents, nil, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("startSession: %v", err)
 	}
@@ -387,13 +389,13 @@ func TestStartTrackerIntake_RunsEvenWithoutEnabledProjects(t *testing.T) {
 	if agentsErr != nil {
 		t.Fatalf("buildAgentResolver: %v", agentsErr)
 	}
-	svc, _, _, err := startSession(context.Background(), cfg, rt, store, lcm, messenger, telemetryadapter.NoopSink{}, agents, nil, nil, nil, nil, nil, log)
+	svc, _, _, err := startSession(context.Background(), cfg, rt, store, lcm, messenger, telemetryadapter.NoopSink{}, agents, nil, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("startSession: %v", err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	done := startTrackerIntake(ctx, store, svc, log)
+	done := startTrackerIntake(ctx, store, svc, newMultiTracker(config.GitLabConfig{}, log), log)
 
 	select {
 	case <-done:
@@ -409,15 +411,27 @@ func TestStartTrackerIntake_RunsEvenWithoutEnabledProjects(t *testing.T) {
 	}
 }
 
-func TestTrackerTokenSourcePrefersAOGitHubToken(t *testing.T) {
+func TestGhTokenSourcePrefersAOGitHubToken(t *testing.T) {
 	t.Setenv("AO_GITHUB_TOKEN", "ao-token")
 	t.Setenv("GITHUB_TOKEN", "github-token")
-	token, err := (&trackerTokenSource{}).Token(context.Background())
+	token, err := (&ghTokenSource{}).Token(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if token != "ao-token" {
 		t.Fatalf("token = %q, want AO_GITHUB_TOKEN", token)
+	}
+}
+
+func TestGhTokenSourceFallsBackToGITHUBToken(t *testing.T) {
+	t.Setenv("AO_GITHUB_TOKEN", "")
+	t.Setenv("GITHUB_TOKEN", "github-token")
+	token, err := (&ghTokenSource{}).Token(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if token != "github-token" {
+		t.Fatalf("token = %q, want GITHUB_TOKEN", token)
 	}
 }
 
@@ -760,27 +774,22 @@ func (r *selectableRuntime) SendMessage(context.Context, ports.RuntimeHandle, st
 }
 
 // TestWiring_NewMultiTracker_NeverTypedNilWhenNoGitHubToken verifies the
-// typed-nil guard from issue #2685 at the multi-tracker wiring level. When
-// the GitHub tracker fails to construct (no token), newMultiTracker must
-// return either a true nil interface (when GitLab also has no token) or a
-// non-nil, usable ports.Tracker (when GitLab has a token via glab CLI). In
-// neither case may it return a typed-nil (non-nil interface wrapping a nil
-// pointer), which would bypass the session service's `tracker == nil` guard.
+// typed-nil guard from issue #2685 at the multi-tracker wiring level. With no
+// GitHub token the GitHub slot is lazily constructed, so newMultiTracker must
+// return a truly non-nil, usable ports.Tracker — never a typed-nil (non-nil
+// interface wrapping a nil pointer), which would bypass the session service's
+// `tracker == nil` guard and panic on first call.
 func TestWiring_NewMultiTracker_NeverTypedNilWhenNoGitHubToken(t *testing.T) {
 	t.Setenv("AO_GITHUB_TOKEN", "")
 	t.Setenv("GITHUB_TOKEN", "")
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	tracker := newMultiTracker(config.GitLabConfig{}, log)
-	// The key assertion: tracker is either truly nil or truly non-nil — never
-	// a typed-nil. Go's interface == nil check covers both cases correctly here
-	// because newMultiTracker returns a bare nil or a *trackermulti.Tracker.
 	if tracker == nil {
-		// Both trackers failed: expected when no glab CLI is available.
-		return
+		t.Fatal("newMultiTracker = nil, want non-nil: the GitHub slot is lazily constructed and always present")
 	}
-	// If GitLab succeeded via glab CLI, the tracker must be usable (not a
-	// typed-nil that panics on first call). A Preflight call should not panic.
+	// With no credentials the lazy GitHub adapter fails to resolve, so an
+	// error from Preflight is fine — it just must not panic.
 	_ = tracker.Preflight(context.Background())
 }
 

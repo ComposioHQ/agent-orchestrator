@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { describe, expect, it, vi } from "vitest";
 import type { SessionInterfaceTransition } from "../hooks/useSessionInterfaceTransition";
 import {
+	SessionInterfaceActionGroup,
 	SessionInterfaceSwitchButton,
 	SessionInterfaceSwitchDialog,
 	SessionInterfaceTransitionNotice,
@@ -33,6 +34,19 @@ function transition(phase: SessionInterfaceTransition["phase"]): SessionInterfac
 }
 
 describe("SessionInterfaceSwitchButton", () => {
+	it("uses the shared topbar spacing between adjacent session actions", () => {
+		render(
+			<SessionInterfaceActionGroup>
+				<button type="button">First action</button>
+				<button type="button">Second action</button>
+			</SessionInterfaceActionGroup>,
+		);
+
+		const group = screen.getByRole("button", { name: "First action" }).parentElement;
+		expect(group).toHaveClass("gap-2");
+		expect(group).not.toHaveClass("gap-px");
+	});
+
 	it("keeps a draining switch in the top bar with an adjacent Cancel action", () => {
 		const onCancel = vi.fn();
 		render(

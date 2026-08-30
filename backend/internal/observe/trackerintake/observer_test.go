@@ -474,3 +474,169 @@ func TestTrackerRepoGitLabSelfManagedWithPort(t *testing.T) {
 		t.Errorf("Host = %q, want gitlab.local:8443", repo.Host)
 	}
 }
+
+func TestParseRepoNativeGitLabNestedGroup(t *testing.T) {
+	// GitLab nested group: full namespace path must be preserved.
+	tests := []struct {
+		name   string
+		remote string
+		want   string
+	}{
+		{
+			name:   "https nested group",
+			remote: "https://gitlab.com/group/subgroup/repo.git",
+			want:   "group/subgroup/repo",
+		},
+		{
+			name:   "ssh nested group",
+			remote: "git@gitlab.com:group/subgroup/repo.git",
+			want:   "group/subgroup/repo",
+		},
+		{
+			name:   "deeply nested",
+			remote: "https://gitlab.internal/org/team/sub/repo.git",
+			want:   "org/team/sub/repo",
+		},
+		{
+			name:   "simple two-segment",
+			remote: "https://gitlab.com/group/project.git",
+			want:   "group/project",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := parseRepoNative(tt.remote, domain.TrackerProviderGitLab)
+			if !ok {
+				t.Fatalf("parseRepoNative ok = false, want true")
+			}
+			if got != tt.want {
+				t.Errorf("parseRepoNative(%q, gitlab) = %q, want %q", tt.remote, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseRepoNativeGitHubKeepsLastTwo(t *testing.T) {
+	tests := []struct {
+		name   string
+		remote string
+		want   string
+	}{
+		{
+			name:   "https owner/repo",
+			remote: "https://github.com/acme/demo.git",
+			want:   "acme/demo",
+		},
+		{
+			name:   "ssh owner/repo",
+			remote: "git@github.com:acme/demo.git",
+			want:   "acme/demo",
+		},
+		{
+			name:   "ghe host",
+			remote: "https://ghe.corp.ghe.io/acme/demo.git",
+			want:   "acme/demo",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := parseRepoNative(tt.remote, domain.TrackerProviderGitHub)
+			if !ok {
+				t.Fatalf("parseRepoNative ok = false, want true")
+			}
+			if got != tt.want {
+				t.Errorf("parseRepoNative(%q, github) = %q, want %q", tt.remote, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCleanRepoPathGitLabPreservesFullPath(t *testing.T) {
+	tests := []struct {
+		path string
+		want string
+	}{
+		{"group/subgroup/repo", "group/subgroup/repo"},
+		{"group/subgroup/repo.git", "group/subgroup/repo"},
+		{"/group/subgroup/repo/", "group/subgroup/repo"},
+		{"group/project", "group/project"},
+		{"single", ""},
+		{"", ""},
+		{"a/b/c/d/e", "a/b/c/d/e"},
+	}
+	for _, tt := range tests {
+		got := cleanRepoPath(tt.path, domain.TrackerProviderGitLab)
+		if got != tt.want {
+			t.Errorf("cleanRepoPath(%q, gitlab) = %q, want %q", tt.path, got, tt.want)
+		}
+	}
+}
+
+func TestCleanRepoPathGitHubLastTwoSegments(t *testing.T) {
+	tests := []struct {
+		path string
+		want string
+	}{
+		{"owner/repo", "owner/repo"},
+		{"owner/repo.git", "owner/repo"},
+		{"/owner/repo/", "owner/repo"},
+		{"a/b/c/d", "c/d"},
+		{"single", ""},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		got := cleanRepoPath(tt.path, domain.TrackerProviderGitHub)
+		if got != tt.want {
+			t.Errorf("cleanRepoPath(%q, github) = %q, want %q", tt.path, got, tt.want)
+		}
+	}
+}
+
+func TestCanonicalIssueIDGitLabHostDisambiguates(t *testing.T) {
+	tests := []struct {
+		name string
+		id   domain.TrackerID
+		want domain.IssueID
+	}{
+		{
+			name: "gitlab.com zero host",
+			id:   domain.TrackerID{Provider: domain.TrackerProviderGitLab, Native: "group/repo#7"},
+			want: "gitlab:group/repo#7",
+		},
+		{
+			name: "self-managed host",
+			id:   domain.TrackerID{Provider: domain.TrackerProviderGitLab, Native: "group/repo#7", Host: "gitlab.internal"},
+			want: "gitlab:group/repo#7@gitlab.internal",
+		},
+		{
+			name: "self-managed with port",
+			id:   domain.TrackerID{Provider: domain.TrackerProviderGitLab, Native: "group/repo#7", Host: "gitlab.local:8443"},
+			want: "gitlab:group/repo#7@gitlab.local:8443",
+		},
+		{
+			name: "github no host",
+			id:   domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#12"},
+			want: "github:acme/demo#12",
+		},
+		{
+			name: "empty native",
+			id:   domain.TrackerID{Provider: domain.TrackerProviderGitLab, Native: ""},
+			want: "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := CanonicalIssueID(tt.id)
+			if got != tt.want {
+				t.Errorf("CanonicalIssueID(%+v) = %q, want %q", tt.id, got, tt.want)
+			}
+		})
+	}
+
+	// The core assertion: same native, different hosts → different IDs.
+	dotCom := CanonicalIssueID(domain.TrackerID{Provider: domain.TrackerProviderGitLab, Native: "group/repo#7"})
+	internal := CanonicalIssueID(domain.TrackerID{Provider: domain.TrackerProviderGitLab, Native: "group/repo#7", Host: "gitlab.internal"})
+	if dotCom == internal {
+		t.Fatalf("gitlab.com and self-managed with same native produced identical IssueID %q", dotCom)
+	}
+}
