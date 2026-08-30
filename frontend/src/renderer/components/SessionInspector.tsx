@@ -39,7 +39,6 @@ import {
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
-import { captureRendererEvent } from "../lib/telemetry";
 import { formatTimeCompact } from "../lib/format-time";
 import { AgentAvatar } from "./AgentAvatar";
 import { ProductExternalLink } from "./ProductExternalLink";
@@ -77,7 +76,6 @@ import {
 	openReviewStatesFor,
 	reviewIsRunning,
 	reviewRunDisabled,
-	reviewRunActionKind,
 	reviewSessionRunAction,
 	sessionReviewsQueryOptions,
 	type PRReviewState,
@@ -1551,13 +1549,6 @@ function ReviewsSection({
 	});
 	const triggerReview = useMutation({
 		mutationFn: async () => {
-			// Emitted before the request: these renderer events count INTENT, and the
-			// daemon's ao.review.* events are the ground truth for what actually ran.
-			void captureRendererEvent("ao.renderer.review_triggered", {
-				action: reviewRunActionKind(openReviewStatesFor(session, reviewsQuery.data?.reviews ?? []), false),
-				has_override: reviewerOverride !== "",
-				source: "inspector",
-			});
 			// No override sends no body at all, leaving the default path on the wire
 			// exactly as it was.
 			const reviewerConfig = reviewerModel || reviewerMode

@@ -415,12 +415,14 @@ func (s *Service) triggerWithSource(
 	config domain.AgentConfig,
 	source domain.ReviewTriggerSource,
 ) (reviewcore.TriggerResult, error) {
+	triggeredPayload := map[string]any{"trigger": string(source)}
 	if err := config.Validate(); err != nil {
 		err = fmt.Errorf("%w: reviewer config: %w", ErrInvalid, err)
 		s.emit(ctx, "ao.review.trigger_failed", workerID, map[string]any{
 			"error_kind": reviewErrorKind(err),
 			"trigger":    string(source),
 		})
+		s.emit(ctx, "ao.review.triggered", workerID, triggeredPayload)
 		return reviewcore.TriggerResult{}, err
 	}
 	result, err := s.engineTrigger(ctx, workerID, harness, config, source)
@@ -429,31 +431,20 @@ func (s *Service) triggerWithSource(
 			"error_kind": reviewErrorKind(err),
 			"trigger":    string(source),
 		})
+		s.emit(ctx, "ao.review.triggered", workerID, triggeredPayload)
 		return result, err
 	}
-	// An automatic pass that did no work must not be reported as a trigger. Two
-	// shapes reach here: the coordinator's read of the session lost a race with
-	// the user (SkipReason), or the sweep found a review already running or the
-	// current head already covered (nothing created). Counting either inflates
-	// how often auto-review actually reviews anything, by one event per sweep for
-	// the whole life of a long review, and spends the per-name daily rate limit
-	// that real triggers need. A manual reuse is a different fact: the user
-	// pressed the button, and that is worth counting.
-	if source == domain.ReviewTriggerAuto && (result.SkipReason != "" || len(result.CreatedRuns) == 0) {
-		return result, nil
+	if result.Run.Harness != "" {
+		triggeredPayload["harness"] = string(result.Run.Harness)
 	}
-	// created_runs counts brand-new rows, while Created also covers restart flows
-	// that relaunch a pass against an existing row after a reviewer config change.
-	// reused must stay false for those restarts even though created_runs is zero.
-	// harness is the one actually used, resolved by the engine, not the caller's
-	// override, which may be empty.
+	// ao.review.triggered counts every attempt. created_runs still counts only
+	// brand-new rows, while Created also covers restart flows that relaunch a
+	// pass against an existing row after a reviewer config change. reused must
+	// stay false for those restarts even though created_runs is zero.
 	createdOrRestarted := result.Created || len(result.CreatedRuns) > 0
-	s.emit(ctx, "ao.review.triggered", workerID, map[string]any{
-		"harness":      string(result.Run.Harness),
-		"created_runs": len(result.CreatedRuns),
-		"reused":       !createdOrRestarted,
-		"trigger":      string(source),
-	})
+	triggeredPayload["created_runs"] = len(result.CreatedRuns)
+	triggeredPayload["reused"] = !createdOrRestarted
+	s.emit(ctx, "ao.review.triggered", workerID, triggeredPayload)
 	return result, nil
 }
 

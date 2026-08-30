@@ -76,8 +76,25 @@ func TestEvaluateSessionEligibility(t *testing.T) {
 		{name: "new head after changes requested", want: true, mutate: func(f *fakeStore) {
 			f.runs = []domain.ReviewRun{{PRURL: "pr1", TargetSHA: "old", Status: domain.ReviewRunComplete, Verdict: domain.VerdictChangesRequested, TriggerSource: domain.ReviewTriggerAuto, CreatedAt: now}}
 		}},
-		{name: "failed current head retries", want: true, mutate: func(f *fakeStore) {
-			f.runs = []domain.ReviewRun{{PRURL: "pr1", TargetSHA: "sha1", Status: domain.ReviewRunFailed, CreatedAt: now}}
+		{name: "failed current head retries under limit", want: true, mutate: func(f *fakeStore) {
+			f.runs = []domain.ReviewRun{
+				{PRURL: "pr1", TargetSHA: "sha1", Status: domain.ReviewRunFailed, TriggerSource: domain.ReviewTriggerAuto, CreatedAt: now},
+				{PRURL: "pr1", TargetSHA: "sha1", Status: domain.ReviewRunFailed, TriggerSource: domain.ReviewTriggerAuto, CreatedAt: now.Add(time.Second)},
+			}
+		}},
+		{name: "failed current head stops after three auto retries", mutate: func(f *fakeStore) {
+			f.runs = []domain.ReviewRun{
+				{PRURL: "pr1", TargetSHA: "sha1", Status: domain.ReviewRunFailed, TriggerSource: domain.ReviewTriggerAuto, CreatedAt: now},
+				{PRURL: "pr1", TargetSHA: "sha1", Status: domain.ReviewRunFailed, TriggerSource: domain.ReviewTriggerAuto, CreatedAt: now.Add(time.Second)},
+				{PRURL: "pr1", TargetSHA: "sha1", Status: domain.ReviewRunFailed, TriggerSource: domain.ReviewTriggerAuto, CreatedAt: now.Add(2 * time.Second)},
+			}
+		}},
+		{name: "manual failures do not spend the auto retry budget", want: true, mutate: func(f *fakeStore) {
+			f.runs = []domain.ReviewRun{
+				{PRURL: "pr1", TargetSHA: "sha1", Status: domain.ReviewRunFailed, TriggerSource: domain.ReviewTriggerManual, CreatedAt: now},
+				{PRURL: "pr1", TargetSHA: "sha1", Status: domain.ReviewRunFailed, TriggerSource: domain.ReviewTriggerManual, CreatedAt: now.Add(time.Second)},
+				{PRURL: "pr1", TargetSHA: "sha1", Status: domain.ReviewRunFailed, TriggerSource: domain.ReviewTriggerManual, CreatedAt: now.Add(2 * time.Second)},
+			}
 		}},
 		{name: "cancelled current head waits for new commit", mutate: func(f *fakeStore) {
 			f.runs = []domain.ReviewRun{{PRURL: "pr1", TargetSHA: "sha1", Status: domain.ReviewRunCancelled, CreatedAt: now}}

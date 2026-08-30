@@ -96,6 +96,8 @@ type Engine struct {
 	triggerLocks map[domain.SessionID]*sync.Mutex
 }
 
+const autoReviewFailedRetryLimit = 3
+
 // New wires an Engine from its dependencies, defaulting the clock and id source.
 func New(d Deps) *Engine {
 	clock := d.Clock
@@ -185,7 +187,8 @@ type RestoreReviewerResult struct {
 
 // Trigger starts reviews for every PR on the worker session that needs review.
 // It reuses running/up-to-date runs, retries failed/current changes-requested
-// heads, and uses one reviewer pane for every new run in the batch.
+// heads, and uses one reviewer pane for every new run in the batch. Automatic
+// retries against the same PR head stop after three failed auto-review runs.
 //
 // An empty override keeps the project's configured reviewer. A known one runs
 // this pass under it without editing project config, so picking a reviewer for
@@ -731,12 +734,19 @@ func (e *Engine) TeardownReviewerTerminal(ctx stdctx.Context, workerID domain.Se
 }
 
 func autoReviewHeadBlocked(runs []domain.ReviewRun, prURL, targetSHA string, harness domain.ReviewerHarness) bool {
+	failedAutoRuns := 0
 	for _, run := range runs {
 		if run.PRURL != prURL || run.TargetSHA != targetSHA || (run.Harness != harness && run.Harness != "") {
 			continue
 		}
 		if run.Status == domain.ReviewRunRunning || run.Status == domain.ReviewRunCancelled || run.Verdict == domain.VerdictApproved || run.Verdict == domain.VerdictChangesRequested {
 			return true
+		}
+		if run.Status == domain.ReviewRunFailed && run.TriggerSource == domain.ReviewTriggerAuto {
+			failedAutoRuns++
+			if failedAutoRuns >= autoReviewFailedRetryLimit {
+				return true
+			}
 		}
 	}
 	return false
