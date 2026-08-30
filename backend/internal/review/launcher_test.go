@@ -255,10 +255,13 @@ func (f *fakeRestoringReviewer) ReviewRestoreCommand(_ context.Context, inv port
 	if !f.restoreOK {
 		return ports.ReviewCommandSpec{}, false, nil
 	}
-	if len(f.restoreSpec.Argv) > 0 || f.restoreSpec.InitialMessage != "" || f.restoreSpec.AgentSessionID != "" {
+	if len(f.restoreSpec.Argv) > 0 || f.restoreSpec.InitialMessage != "" || f.restoreSpec.AgentSessionID != "" || f.restoreSpec.NativeResumed {
 		return f.restoreSpec, true, nil
 	}
-	return ports.ReviewCommandSpec{Argv: []string{"agent", "resume", inv.AgentSessionID}}, true, nil
+	return ports.ReviewCommandSpec{
+		Argv:          []string{"agent", "resume", inv.AgentSessionID},
+		NativeResumed: true,
+	}, true, nil
 }
 
 func (f *fakeCancellableReviewer) ReviewCancel(context.Context) (ports.ReviewCancelSpec, error) {
@@ -542,6 +545,7 @@ func TestLauncherRestoreTerminalUsesReviewerRestoreCommandWhenAvailable(t *testi
 		restoreSpec: ports.ReviewCommandSpec{
 			Argv:           []string{"agent", "resume", "native-reviewer-1"},
 			Env:            map[string]string{"PATH": "/restore/bin"},
+			NativeResumed:  true,
 			InitialMessage: "restored task",
 		},
 	}

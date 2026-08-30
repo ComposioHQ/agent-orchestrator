@@ -44,5 +44,9 @@ func Command(ctx context.Context, agent ports.Agent, inv ports.ReviewInvocation,
 	if err != nil || !ok {
 		return ports.ReviewCommandSpec{}, ok, err
 	}
-	return ports.ReviewCommandSpec{Argv: argv, AgentSessionID: strings.TrimSpace(inv.AgentSessionID)}, true, nil
+	return ports.ReviewCommandSpec{
+		Argv:           argv,
+		AgentSessionID: strings.TrimSpace(inv.AgentSessionID),
+		NativeResumed:  true,
+	}, true, nil
 }

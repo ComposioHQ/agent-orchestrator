@@ -413,7 +413,7 @@ func (l *agentLauncher) launchReviewerTerminalWithMode(ctx context.Context, spec
 			}
 			if restoreOK {
 				cmd = restoreCmd
-				nativeResumed = len(restoreCmd.Argv) > 0
+				nativeResumed = restoreCmd.NativeResumed
 			}
 		}
 	}
