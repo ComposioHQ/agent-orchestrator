@@ -26,6 +26,7 @@ export type Host = {
 export const MAX_HOSTS = 10;
 
 const HOSTS_KEY = "ao.hosts";
+const ACTIVE_HOST_KEY = "ao.activeHost";
 const tokenKey = (id: string) => `ao.hostToken.${id}`;
 
 /** What is written to AsyncStorage: everything except the token. */
@@ -115,10 +116,40 @@ export async function touchHost(id: string, at: number = Date.now()): Promise<vo
  * token in the keystore, and a later re-pair of the same machine would silently
  * resurrect it.
  */
+/**
+ * The machine the app is talking to.
+ *
+ * Selection used to be emergent: loadHosts is ordered most-recent-first and
+ * callers took the head. Nothing owned it, so nothing could change it — which
+ * is why a manual connection snapped back to the previous machine on reload,
+ * and why forgetting a server left it reachable.
+ *
+ * Recency remains the fallback, so a first pairing needs no explicit selection
+ * and a stale pointer cannot strand the app with no host at all.
+ */
+export async function activeHost(): Promise<Host | null> {
+	const hosts = await loadHosts();
+	if (hosts.length === 0) return null;
+	const selected = await AsyncStorage.getItem(ACTIVE_HOST_KEY);
+	return hosts.find((h) => h.id === selected) ?? hosts[0];
+}
+
+/** Point the app at a machine, overriding recency until it changes again. */
+export async function setActiveHost(id: string): Promise<void> {
+	await AsyncStorage.setItem(ACTIVE_HOST_KEY, id);
+}
+
+export async function clearActiveHost(): Promise<void> {
+	await AsyncStorage.removeItem(ACTIVE_HOST_KEY);
+}
+
 export async function removeHost(id: string): Promise<void> {
 	const stored = await readStored();
 	await writeStored(stored.filter((h) => h.id !== id));
 	await SecureStore.deleteItemAsync(tokenKey(id));
+	// A pointer at a machine that no longer exists would resolve to nothing;
+	// clearing it falls back to recency instead.
+	if ((await AsyncStorage.getItem(ACTIVE_HOST_KEY)) === id) await clearActiveHost();
 }
 
 const LEGACY_CONFIG_KEY = "ao.serverConfig";

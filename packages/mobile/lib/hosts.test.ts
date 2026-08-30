@@ -286,3 +286,75 @@ describe("adopting an identity", () => {
 		expect((await loadHosts())[0].id).toBe("h_real");
 	});
 })
+
+// Which machine is "active" used to be emergent — loadHosts is ordered
+// most-recent-first and callers took hosts[0]. That is why a manual connection
+// snapped back to the previous machine on reload, and why forgetting a server
+// left it reachable: nothing owned the selection, so nothing could change it.
+describe("the active host", () => {
+	beforeEach(() => {
+		plain.clear();
+		secure.clear();
+		vi.resetModules();
+	});
+
+	const host = (id: string) => ({
+		id,
+		name: id,
+		platform: "darwin",
+		endpoints: [{ kind: "lan" as const, host: "192.168.1.42", port: 3011, secure: false }],
+		token: `tok-${id}`,
+		lastConnected: 1,
+	});
+
+	it("falls back to the most recent machine when nothing is selected", async () => {
+		const { saveHost, activeHost } = await mod();
+		await saveHost(host("a"));
+		await saveHost(host("b"));
+
+		expect((await activeHost())?.id).toBe("b");
+	});
+
+	it("honours an explicit selection over recency", async () => {
+		const { saveHost, setActiveHost, activeHost } = await mod();
+		await saveHost(host("a"));
+		await saveHost(host("b"));
+
+		await setActiveHost("a");
+
+		expect((await activeHost())?.id).toBe("a");
+	});
+
+	// A selection pointing at a machine that has since been forgotten must not
+	// strand the app with no host at all.
+	it("falls back to recency when the selected machine is gone", async () => {
+		const { saveHost, setActiveHost, removeHost, activeHost } = await mod();
+		await saveHost(host("a"));
+		await saveHost(host("b"));
+		await setActiveHost("a");
+
+		await removeHost("a");
+
+		expect((await activeHost())?.id).toBe("b");
+	});
+
+	it("has no active host once every machine is forgotten", async () => {
+		const { saveHost, removeHost, activeHost } = await mod();
+		await saveHost(host("a"));
+		await removeHost("a");
+
+		expect(await activeHost()).toBeNull();
+	});
+
+	// Forgetting must take the credential with it, or the machine stays
+	// reachable by anything that reads the token store.
+	it("drops the token when a machine is forgotten", async () => {
+		const { saveHost, removeHost } = await mod();
+		await saveHost(host("a"));
+		expect(secure.get("ao.hostToken.a")).toBe("tok-a");
+
+		await removeHost("a");
+
+		expect(secure.get("ao.hostToken.a")).toBeUndefined();
+	});
+});

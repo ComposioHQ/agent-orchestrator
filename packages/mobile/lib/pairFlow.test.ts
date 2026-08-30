@@ -113,3 +113,20 @@ describe("pairFromCode", () => {
 		expect(d.saveHost).not.toHaveBeenCalled();
 	});
 });
+
+// The reason must not depend on which caller reached pairFromCode: the scan
+// screen checks the code itself before calling, but any other entry point (a
+// deep link, a paste) would otherwise get "not an AO code" for a code AO made.
+describe("pairFromCode reasons", () => {
+	it("reports an outdated desktop rather than an unrecognised code", async () => {
+		const got = await pairFromCode(JSON.stringify({ v: 1, host: "192.168.1.42", port: 3011 }), deps());
+		expect(got.ok).toBe(false);
+		if (!got.ok) expect(got.reason).toBe("outdated-desktop");
+	});
+
+	it("still reports genuinely unrecognised input as not an AO code", async () => {
+		const got = await pairFromCode("hello world", deps());
+		expect(got.ok).toBe(false);
+		if (!got.ok) expect(got.reason).toBe("not-ao-qr");
+	});
+});

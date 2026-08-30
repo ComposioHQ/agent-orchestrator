@@ -1,12 +1,13 @@
 import type { ConnectResult } from "./connect";
 import { loadConfig, saveConfig, type ServerConfig } from "./config";
 import type { Host } from "./hosts";
-import { loadHosts, migrateLegacyConfig } from "./hosts";
+import { activeHost, migrateLegacyConfig } from "./hosts";
 import { connectToHost } from "./connectRuntime";
 
 export type ResolveDeps = {
 	migrate: () => Promise<void>;
-	loadHosts: () => Promise<Host[]>;
+	/** The machine to talk to: an explicit selection, else the most recent. */
+	activeHost: () => Promise<Host | null>;
 	connect: (hostId: string) => Promise<ConnectResult>;
 	loadLegacyConfig: () => Promise<ServerConfig>;
 	/** Writes the winning endpoint back to storage. */
@@ -16,9 +17,10 @@ export type ResolveDeps = {
 /**
  * Works out which address the app should be talking to right now.
  *
- * Races the most recently used machine's endpoints, so the app lands on
- * whichever of its addresses currently works — LAN at home, the tunnel from
- * anywhere else — without the user choosing.
+ * Races the active machine's endpoints, so the app lands on whichever of its
+ * addresses currently works — LAN at home, the tunnel from anywhere else —
+ * without the user choosing. "Active" is an explicit selection where one has
+ * been made, and the most recently used machine otherwise.
  *
  * Always returns something. The rest of the app is built around having a
  * config, so every failure path degrades to the last stored one rather than
@@ -32,10 +34,9 @@ export async function resolveActiveConfig(deps: ResolveDeps): Promise<ServerConf
 		// pairing into the list — otherwise an upgrading user looks unpaired.
 		await deps.migrate();
 
-		const hosts = await deps.loadHosts();
-		if (hosts.length > 0) {
-			// loadHosts is ordered most-recent-first.
-			const result = await deps.connect(hosts[0].id);
+		const host = await deps.activeHost();
+		if (host) {
+			const result = await deps.connect(host.id);
 			if (result.ok) {
 				// Persist the winner. Long-lived surfaces — the terminal mux above
 				// all — read the stored config directly rather than the store's
@@ -57,7 +58,7 @@ export async function resolveActiveConfig(deps: ResolveDeps): Promise<ServerConf
 export function runtimeResolveDeps(): ResolveDeps {
 	return {
 		migrate: migrateLegacyConfig,
-		loadHosts,
+		activeHost,
 		connect: connectToHost,
 		loadLegacyConfig: loadConfig,
 		persist: saveConfig,

@@ -24,7 +24,7 @@ const legacy: ServerConfig = { ...DEFAULT_CONFIG, host: "10.0.0.9", httpPort: "3
 
 const deps = (over: Record<string, unknown> = {}) => ({
 	migrate: vi.fn(async () => {}),
-	loadHosts: vi.fn(async () => [host()]),
+	activeHost: vi.fn(async () => host()),
 	connect: vi.fn(async (id: string) => ({
 		ok: true as const,
 		config: { ...DEFAULT_CONFIG, host: "192.168.1.42", httpPort: "3011", password: "pw" },
@@ -57,11 +57,13 @@ describe("resolveActiveConfig", () => {
 		expect(d.persist).not.toHaveBeenCalled();
 	});
 
-	it("connects to the most recently used machine", async () => {
-		const d = deps({ loadHosts: vi.fn(async () => [host({ id: "h_new", lastConnected: 9 }), host({ id: "h_old", lastConnected: 1 })]) });
+	// Which machine that is belongs to hosts.activeHost — an explicit selection
+	// where one has been made, most-recent otherwise. Resolution just asks.
+	it("connects to whichever machine is active", async () => {
+		const d = deps({ activeHost: vi.fn(async () => host({ id: "h_chosen" })) });
 		const got = await resolveActiveConfig(d);
 
-		expect(d.connect).toHaveBeenCalledWith("h_new");
+		expect(d.connect).toHaveBeenCalledWith("h_chosen");
 		expect(got?.host).toBe("192.168.1.42");
 	});
 
@@ -71,9 +73,9 @@ describe("resolveActiveConfig", () => {
 		const order: string[] = [];
 		const d = deps({
 			migrate: vi.fn(async () => void order.push("migrate")),
-			loadHosts: vi.fn(async () => {
+			activeHost: vi.fn(async () => {
 				order.push("load");
-				return [host()];
+				return host();
 			}),
 		});
 		await resolveActiveConfig(d);
@@ -92,7 +94,7 @@ describe("resolveActiveConfig", () => {
 	});
 
 	it("falls back to the stored config when no machine is paired", async () => {
-		const d = deps({ loadHosts: vi.fn(async () => []) });
+		const d = deps({ activeHost: vi.fn(async () => null) });
 		const got = await resolveActiveConfig(d);
 
 		expect(d.connect).not.toHaveBeenCalled();

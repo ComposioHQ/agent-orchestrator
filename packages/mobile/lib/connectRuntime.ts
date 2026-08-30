@@ -51,6 +51,22 @@ export async function probeEndpoint(endpoint: Endpoint, signal: AbortSignal): Pr
 }
 
 /**
+ * The host id at a plain address, for a connection made by hand rather than by
+ * scanning. Same endpoint as the race's probe, without a candidate to race.
+ */
+export async function probeIdentity(cfg: {
+	host: string;
+	httpPort: string;
+	secure?: boolean;
+}): Promise<string> {
+	const base = `${cfg.secure ? "https" : "http"}://${cfg.host}:${cfg.httpPort}`;
+	const res = await fetch(`${base}/api/v1/identity`, { method: "GET" });
+	if (!res.ok) throw new Error(`identity probe returned ${res.status}`);
+	const body = (await res.json()) as { hostId?: unknown };
+	return typeof body.hostId === "string" ? body.hostId : "";
+}
+
+/**
  * Re-reads what the daemon advertises now.
  *
  * Deliberately GET /api/v1/endpoints and not /api/v1/mobile/status: the mobile

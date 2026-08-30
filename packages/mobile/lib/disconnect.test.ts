@@ -21,6 +21,12 @@ vi.mock("./config", () => ({
 		calls.push("clearConfig");
 	}),
 }));
+vi.mock("./hosts", () => ({
+	activeHost: vi.fn(async () => ({ id: "h_active" })),
+	removeHost: vi.fn(async (id: string) => {
+		calls.push(`removeHost:${id}`);
+	}),
+}));
 vi.mock("./onboardingStore", () => ({
 	clearOnboardingSkipped: vi.fn(async () => {
 		calls.push("clearOnboardingSkipped");
@@ -39,7 +45,12 @@ describe("forgetServer", () => {
 	// device, still listing it as paired, and leave the password in the keystore.
 	it("unpairs, clears the config, and re-arms onboarding", async () => {
 		await forgetServer();
-		expect(calls).toEqual(["unpairFromServer", "clearConfig", "clearOnboardingSkipped"]);
+		expect(calls).toEqual([
+			"unpairFromServer",
+			"removeHost:h_active",
+			"clearConfig",
+			"clearOnboardingSkipped",
+		]);
 	});
 
 	// The unpair call needs credentials that clearConfig would otherwise destroy,
@@ -57,5 +68,34 @@ describe("forgetServer", () => {
 		await expect(forgetServer()).rejects.toThrow("SecureStore unavailable");
 		expect(calls).toContain("clearConfig");
 		expect(calls).toContain("clearOnboardingSkipped");
+	});
+});
+
+// The bug this covers: forgetting cleared only the legacy config, so the host
+// record and its token in ao.hostToken.<id> survived. resolveActiveConfig then
+// raced that machine's endpoints on the next launch and silently reconnected to
+// the server the user had just forgotten.
+describe("forgetServer and the host list", () => {
+	beforeEach(() => {
+		calls.length = 0;
+		unpairThrows = null;
+	});
+
+	it("removes the paired machine, not just the resolved address", async () => {
+		await forgetServer();
+		expect(calls).toContain("removeHost:h_active");
+	});
+
+	// Same reasoning as the existing finally: whatever fails upstream, the
+	// pairing must not survive a disconnect.
+	it("removes the machine even when unpairing fails", async () => {
+		unpairThrows = new Error("daemon unreachable");
+
+		// The error still surfaces — the caller decides what to show — but the
+		// pairing is gone regardless, which is the whole point of the finally.
+		await expect(forgetServer()).rejects.toThrow("daemon unreachable");
+
+		expect(calls).toContain("removeHost:h_active");
+		expect(calls).toContain("clearConfig");
 	});
 });

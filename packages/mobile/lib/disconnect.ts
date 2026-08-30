@@ -1,4 +1,5 @@
 import { clearConfig } from "./config";
+import { activeHost, removeHost } from "./hosts";
 import { clearOnboardingSkipped } from "./onboardingStore";
 import { unpairFromServer } from "./push";
 
@@ -19,9 +20,15 @@ import { unpairFromServer } from "./push";
 // still on disk. Disconnecting is the one operation that must not leave
 // credentials behind: whatever happens upstream, the config gets cleared.
 export async function forgetServer(): Promise<void> {
+	// The host record and its token are the actual pairing now; the legacy
+	// config is only the last resolved address. Clearing that alone left the
+	// machine in the list with its token in the keystore, so the next launch
+	// raced its endpoints and silently reconnected to the server just forgotten.
+	const host = await activeHost();
 	try {
 		await unpairFromServer();
 	} finally {
+		if (host) await removeHost(host.id);
 		await clearConfig();
 		// Re-arm onboarding: a user with no server should be offered the pairing
 		// flow again, not dropped on a bare Agents empty state.
