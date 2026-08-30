@@ -2,6 +2,7 @@ package sessionmanager
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -10,7 +11,21 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	browsersvc "github.com/aoagents/agent-orchestrator/backend/internal/service/browser"
 )
+
+type recordingBrowserAuthority struct {
+	authority *browsersvc.Authority
+	tokens    []string
+}
+
+func (r *recordingBrowserAuthority) Issue(id domain.SessionID) (string, string, error) {
+	token, verifier, err := r.authority.Issue(id)
+	if err == nil {
+		r.tokens = append(r.tokens, token)
+	}
+	return token, verifier, err
+}
 
 // newChatManager mirrors newManager() with a chat launcher injected, so both
 // branches can be exercised against the same fakes.
@@ -110,7 +125,24 @@ func (l *recordingLauncher) PreflightChat(
 	return l.preflightErr
 }
 
-func (l *recordingLauncher) StartChat(_ context.Context, cfg ChatStart) (ChatStarted, error) {
+func prepareTestChatStart(ctx context.Context, cfg ChatStart) (ChatStart, error) {
+	if cfg.PrepareControllerEnv == nil {
+		return cfg, nil
+	}
+	env, err := cfg.PrepareControllerEnv(ctx, cfg.ExpectedControllerOwner)
+	if err != nil {
+		return cfg, err
+	}
+	cfg.Env = env
+	return cfg, nil
+}
+
+func (l *recordingLauncher) StartChat(ctx context.Context, cfg ChatStart) (ChatStarted, error) {
+	var err error
+	cfg, err = prepareTestChatStart(ctx, cfg)
+	if err != nil {
+		return ChatStarted{}, err
+	}
 	l.started = append(l.started, cfg)
 	if l.beforeStart != nil {
 		l.beforeStart(cfg)
@@ -185,7 +217,12 @@ type generationClaimFailureLauncher struct {
 	err        error
 }
 
-func (l *generationClaimFailureLauncher) StartChat(_ context.Context, cfg ChatStart) (ChatStarted, error) {
+func (l *generationClaimFailureLauncher) StartChat(ctx context.Context, cfg ChatStart) (ChatStarted, error) {
+	var prepareErr error
+	cfg, prepareErr = prepareTestChatStart(ctx, cfg)
+	if prepareErr != nil {
+		return ChatStarted{}, prepareErr
+	}
 	l.started = append(l.started, cfg)
 	rec := l.store.sessions[cfg.SessionID]
 	rec.Metadata.ControllerGeneration = l.generation
@@ -555,15 +592,19 @@ func TestResumeChatRotatesBrowserCapabilityBeforeControllerStart(t *testing.T) {
 	mgr, store, _ := newChatManager(launcher)
 	seedChatResumeSession(store, domain.ActivityExited)
 	rec := store.sessions["mer-1"]
-	rec.Metadata.BrowserCapabilityVerifier = "old-verifier"
+	authority := browsersvc.NewAuthority()
+	oldToken, oldVerifier, err := authority.Issue(rec.ID)
+	if err != nil {
+		t.Fatalf("issue old capability: %v", err)
+	}
+	rec.Metadata.BrowserCapabilityVerifier = oldVerifier
 	store.sessions[rec.ID] = rec
-	mgr.browserCapabilities = &scriptedBrowserCapabilities{issues: []browserCapabilityIssue{{
-		token: "resumed-token", verifier: "resumed-verifier",
-	}}}
+	issuer := &recordingBrowserAuthority{authority: authority}
+	mgr.browserCapabilities = issuer
 	launcher.beforeStart = func(cfg ChatStart) {
 		stored := store.sessions[cfg.SessionID]
-		if got := stored.Metadata.BrowserCapabilityVerifier; got != "resumed-verifier" {
-			t.Fatalf("verifier at controller start = %q, want resumed-verifier", got)
+		if !authority.Valid(cfg.SessionID, cfg.Env[EnvBrowserCapability], stored.Metadata.BrowserCapabilityVerifier) {
+			t.Fatal("fresh capability was not authorized when the resumed controller started")
 		}
 	}
 
@@ -571,11 +612,20 @@ func TestResumeChatRotatesBrowserCapabilityBeforeControllerStart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResumeAgentWithMode: %v", err)
 	}
-	if got := launcher.started[0].Env[EnvBrowserCapability]; got != "resumed-token" {
-		t.Fatalf("resumed capability = %q, want resumed-token", got)
+	newToken := launcher.started[0].Env[EnvBrowserCapability]
+	newVerifier := result.Session.Metadata.BrowserCapabilityVerifier
+	if authority.Valid(rec.ID, oldToken, newVerifier) {
+		t.Fatal("old browser capability remained authorized after Chat resume")
 	}
-	if got := result.Session.Metadata.BrowserCapabilityVerifier; got != "resumed-verifier" {
-		t.Fatalf("resumed verifier = %q, want resumed-verifier", got)
+	if !authority.Valid(rec.ID, newToken, newVerifier) {
+		t.Fatal("new browser capability was not authorized after Chat resume")
+	}
+	encoded, err := json.Marshal(result.Session)
+	if err != nil {
+		t.Fatalf("marshal resumed session: %v", err)
+	}
+	if strings.Contains(string(encoded), oldToken) || strings.Contains(string(encoded), newToken) {
+		t.Fatalf("session API JSON leaked a browser bearer: %s", encoded)
 	}
 }
 

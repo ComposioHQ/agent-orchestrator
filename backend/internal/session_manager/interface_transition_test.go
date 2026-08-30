@@ -425,7 +425,12 @@ func (c *transitionChat) PreflightChat(
 	}
 	return c.preflightErr
 }
-func (c *transitionChat) StartChat(_ context.Context, cfg ChatStart) (ChatStarted, error) {
+func (c *transitionChat) StartChat(ctx context.Context, cfg ChatStart) (ChatStarted, error) {
+	var err error
+	cfg, err = prepareTestChatStart(ctx, cfg)
+	if err != nil {
+		return ChatStarted{}, err
+	}
 	c.start = cfg
 	*c.log = append(*c.log, "start:chat")
 	if c.startErr != nil {

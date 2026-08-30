@@ -303,10 +303,7 @@ func (m *Manager) executeChatAgentSwitch(
 		credentialRecord.Activity.State != domain.ActivityExited {
 		return result, fmt.Errorf("switch Chat agent %s: source ownership changed before browser capability rotation", id)
 	}
-	_, targetLaunchEnv, err := m.prepareWorkerLaunchEnv(ctx, credentialRecord, project.Config.Env)
-	if err != nil {
-		return result, fmt.Errorf("switch Chat agent %s: browser capability: %w", id, err)
-	}
+	targetLaunchEnv := m.runtimeEnv(id, credentialRecord.ProjectID, credentialRecord.IssueID, project.Config.Env)
 	m.augmentAgentRuntimeEnv(targetAgent, targetLaunchEnv)
 
 	_, err = m.chat.StartChat(ctx, ChatStart{
@@ -321,12 +318,30 @@ func (m *Manager) executeChatAgentSwitch(
 		Permissions:             agentConfig.Permissions,
 		SystemPrompt:            finalSystemPrompt,
 		AdditionalDirectories:   additionalDirectories,
+		ExpectedControllerOwner: credentialRecord.ControllerOwner(),
+		PrepareControllerEnv: func(launchCtx context.Context, expected domain.SessionControllerOwner) (map[string]string, error) {
+			prepared, launchEnv, prepareErr := m.prepareChatControllerEnv(
+				launchCtx, credentialRecord, project.Config.Env, expected,
+			)
+			if prepareErr != nil {
+				return nil, prepareErr
+			}
+			credentialRecord = prepared
+			m.augmentAgentRuntimeEnv(targetAgent, launchEnv)
+			return launchEnv, nil
+		},
 		ProviderConversationID:  providerConversationID,
 		ProviderScopeID:         chatSwitchProviderBoundaryID(result.ID),
 		ControllerGeneration:    string(targetGeneration),
 		SkipNativeHistoryImport: resumable,
 		ControllerReady: func(started ChatStarted) (ChatControllerCommit, error) {
 			emptyCommit := ChatControllerCommit{}
+			targetControllerOwner := chatControllerOwner(
+				credentialRecord, cfg.TargetHarness,
+				started.ProviderConversationID, started.ControllerGeneration,
+			)
+			targetControllerOwner.AgentSessionID = started.ProviderConversationID
+			targetControllerOwner.AgentSessionIDLaunchID = ""
 			if strings.TrimSpace(started.ProviderConversationID) == "" ||
 				started.ControllerGeneration != string(targetGeneration) {
 				return emptyCommit, errors.New("target Chat controller returned incomplete or mismatched identity")
@@ -388,8 +403,10 @@ func (m *Manager) executeChatAgentSwitch(
 				if committed {
 					result = current
 					targetOwnerCommitted = true
-					return ChatControllerCommit{Conversation: committedChatSwitchConversation(
-						started.Conversation, result.ID, activatedAt)}, nil
+					return ChatControllerCommit{
+						Conversation:    committedChatSwitchConversation(started.Conversation, result.ID, activatedAt),
+						ControllerOwner: targetControllerOwner,
+					}, nil
 				}
 				if !sourceStillOwns || resolutionErr != nil {
 					targetOwnershipAmbiguous = true
@@ -408,8 +425,10 @@ func (m *Manager) executeChatAgentSwitch(
 			targetOwnerCommitted = true
 			result.State = domain.AgentSwitchTargetReady
 			result.UpdatedAt = activatedAt
-			return ChatControllerCommit{Conversation: committedChatSwitchConversation(
-				started.Conversation, result.ID, activatedAt)}, nil
+			return ChatControllerCommit{
+				Conversation:    committedChatSwitchConversation(started.Conversation, result.ID, activatedAt),
+				ControllerOwner: targetControllerOwner,
+			}, nil
 		},
 	})
 	if err != nil {

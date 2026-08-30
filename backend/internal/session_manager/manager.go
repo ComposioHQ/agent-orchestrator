@@ -317,6 +317,7 @@ type Store interface {
 	ListWorkspaceRepos(ctx context.Context, projectID string) ([]domain.WorkspaceRepoRecord, error)
 	CreateSession(ctx context.Context, rec domain.SessionRecord) (domain.SessionRecord, error)
 	UpdateSession(ctx context.Context, rec domain.SessionRecord) error
+	UpdateBrowserCapabilityVerifier(ctx context.Context, id domain.SessionID, expected domain.SessionControllerOwner, verifier string, updatedAt time.Time) (bool, error)
 	GetSession(ctx context.Context, id domain.SessionID) (domain.SessionRecord, bool, error)
 	ListSessions(ctx context.Context, project domain.ProjectID) ([]domain.SessionRecord, error)
 	ListAllSessions(ctx context.Context) ([]domain.SessionRecord, error)
@@ -3913,7 +3914,27 @@ func (m *Manager) prepareWorkerLaunchEnv(
 	if err != nil {
 		return rec, nil, err
 	}
-	rec, err = m.persistBrowserCapabilityVerifier(ctx, rec, verifier)
+	rec, err = m.persistBrowserCapabilityVerifier(ctx, rec, rec.ControllerOwner(), verifier)
+	if err != nil {
+		return rec, nil, fmt.Errorf("persist browser capability verifier: %w", err)
+	}
+	return rec, env, nil
+}
+
+// prepareChatControllerEnv is the Chat launch variant: the service supplies the
+// exact durable owner selected under its controller gate, while Session Manager
+// retains responsibility for issuing and persisting the split credential.
+func (m *Manager) prepareChatControllerEnv(
+	ctx context.Context,
+	rec domain.SessionRecord,
+	projectEnv map[string]string,
+	expected domain.SessionControllerOwner,
+) (domain.SessionRecord, map[string]string, error) {
+	env, verifier, err := m.launchRuntimeEnv(rec.ID, rec.ProjectID, rec.IssueID, projectEnv)
+	if err != nil {
+		return rec, nil, err
+	}
+	rec, err = m.persistBrowserCapabilityVerifier(ctx, rec, expected, verifier)
 	if err != nil {
 		return rec, nil, fmt.Errorf("persist browser capability verifier: %w", err)
 	}
@@ -3924,16 +3945,44 @@ func (m *Manager) prepareWorkerLaunchEnv(
 // This closes the launch race where an eager worker could present its freshly
 // injected token before the daemon had stored the verifier needed to validate
 // it. The bearer token remains only in the runtime environment.
-func (m *Manager) persistBrowserCapabilityVerifier(ctx context.Context, rec domain.SessionRecord, verifier string) (domain.SessionRecord, error) {
+func (m *Manager) persistBrowserCapabilityVerifier(
+	ctx context.Context,
+	rec domain.SessionRecord,
+	expected domain.SessionControllerOwner,
+	verifier string,
+) (domain.SessionRecord, error) {
 	if verifier == "" {
 		return rec, nil
 	}
-	rec.Metadata.BrowserCapabilityVerifier = verifier
-	rec.UpdatedAt = m.clock()
-	if err := m.store.UpdateSession(ctx, rec); err != nil {
+	updatedAt := m.clock()
+	applied, err := m.store.UpdateBrowserCapabilityVerifier(ctx, rec.ID, expected, verifier, updatedAt)
+	if err != nil {
 		return rec, err
 	}
+	if !applied {
+		return rec, errors.New("session controller ownership changed before browser capability rotation")
+	}
+	rec.Metadata.BrowserCapabilityVerifier = verifier
+	if rec.UpdatedAt.Before(updatedAt) {
+		rec.UpdatedAt = updatedAt
+	}
 	return rec, nil
+}
+
+func chatControllerOwner(
+	rec domain.SessionRecord,
+	harness domain.AgentHarness,
+	providerConversationID string,
+	controllerGeneration string,
+) domain.SessionControllerOwner {
+	owner := rec.ControllerOwner()
+	owner.Harness = harness
+	owner.Mode = domain.SessionModeChat
+	owner.IsTerminated = false
+	owner.RuntimeLaunchID = ""
+	owner.ProviderConversationID = providerConversationID
+	owner.ControllerGeneration = controllerGeneration
+	return owner
 }
 
 // HookPATH builds the PATH value pinned into a spawned session: the daemon

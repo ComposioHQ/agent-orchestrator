@@ -67,11 +67,15 @@ type ChatStart struct {
 	// Env carries the HookPATH-pinned PATH, which is how the agent's own shell
 	// commands find `ao`. An orchestrator delegates by running `ao spawn`, so
 	// without this a chat orchestrator could talk but not work.
-	Env                   map[string]string
-	Model                 string
-	Permissions           ports.PermissionMode
-	SystemPrompt          string
-	AdditionalDirectories []string
+	Env                     map[string]string
+	Model                   string
+	Permissions             ports.PermissionMode
+	SystemPrompt            string
+	AdditionalDirectories   []string
+	ExpectedControllerOwner domain.SessionControllerOwner
+	// PrepareControllerEnv rotates launch-only credentials after Chat Service has
+	// selected this launch under its per-session controller gate.
+	PrepareControllerEnv func(context.Context, domain.SessionControllerOwner) (map[string]string, error)
 	// ProviderConversationID resumes a stored conversation instead of opening a
 	// new one. Empty means start fresh.
 	ProviderConversationID string
@@ -111,7 +115,8 @@ type ChatStarted struct {
 // ChatControllerCommit carries the post-commit conversation state back to Chat
 // Service without making it read again after durable ownership has changed.
 type ChatControllerCommit struct {
-	Conversation domain.ConversationRecord
+	Conversation    domain.ConversationRecord
+	ControllerOwner domain.SessionControllerOwner
 }
 
 // historicalChatProviderOwnershipStore is the narrow durable read boundary used
@@ -161,32 +166,37 @@ func (m *Manager) launchChatController(ctx context.Context, in chatSpawn) (domai
 		diffBaseSHA, diffBaseRef = resolveSpawnDiffBase(
 			ctx, in.workspace.Path, in.workspace.BaseRef)
 	}
-	// The provider passes this environment through to agent shell commands. The
-	// shared launch boundary pins `ao`, issues the browser bearer, and persists
-	// its verifier before StartChat can run an eager provider process.
-	preparedRecord, env, err := m.prepareWorkerLaunchEnv(ctx, in.record, in.project.Config.Env)
-	if err != nil {
-		m.rollbackSeedSpawnWorkspace(ctx, in.record, in.workspace, in.workspaceProject, false)
-		return domain.SessionRecord{}, wrapSpawnStage(id, ErrSpawnBrowser, err)
-	}
-	in.record = preparedRecord
+	// Chat Service retains this unprivileged base environment. The bearer is
+	// minted inside its per-session launch gate and is never cached for reuse.
+	env := m.runtimeEnv(id, in.record.ProjectID, in.record.IssueID, in.project.Config.Env)
 
 	var (
 		controllerCommitted bool
 		completionErr       error
 	)
-	_, err = m.chat.StartChat(ctx, ChatStart{
-		SessionID:             id,
-		ProjectID:             in.cfg.ProjectID,
-		Kind:                  in.cfg.Kind,
-		Harness:               in.cfg.Harness,
-		DataDir:               m.dataDir,
-		WorkspacePath:         in.workspace.Path,
-		Env:                   env,
-		Model:                 agentConfig.Model,
-		Permissions:           agentConfig.Permissions,
-		SystemPrompt:          in.systemPrompt,
-		AdditionalDirectories: workspaceProjectDirectories(in.workspace.Path, in.workspaceProject),
+	_, err := m.chat.StartChat(ctx, ChatStart{
+		SessionID:               id,
+		ProjectID:               in.cfg.ProjectID,
+		Kind:                    in.cfg.Kind,
+		Harness:                 in.cfg.Harness,
+		DataDir:                 m.dataDir,
+		WorkspacePath:           in.workspace.Path,
+		Env:                     env,
+		Model:                   agentConfig.Model,
+		Permissions:             agentConfig.Permissions,
+		SystemPrompt:            in.systemPrompt,
+		AdditionalDirectories:   workspaceProjectDirectories(in.workspace.Path, in.workspaceProject),
+		ExpectedControllerOwner: in.record.ControllerOwner(),
+		PrepareControllerEnv: func(launchCtx context.Context, expected domain.SessionControllerOwner) (map[string]string, error) {
+			prepared, launchEnv, prepareErr := m.prepareChatControllerEnv(
+				launchCtx, in.record, in.project.Config.Env, expected,
+			)
+			if prepareErr != nil {
+				return nil, fmt.Errorf("%w: %v", ErrSpawnBrowser, prepareErr)
+			}
+			in.record = prepared
+			return launchEnv, nil
+		},
 		ControllerReady: func(started ChatStarted) (ChatControllerCommit, error) {
 			metadata := domain.SessionMetadata{
 				Branch:            in.workspace.Branch,
@@ -209,7 +219,12 @@ func (m *Manager) launchChatController(ctx context.Context, in chatSpawn) (domai
 			)
 			completionErr = commitErr
 			controllerCommitted = completionErr == nil
-			return ChatControllerCommit{Conversation: committedConversation}, completionErr
+			return ChatControllerCommit{
+				Conversation: committedConversation,
+				ControllerOwner: chatControllerOwner(
+					in.record, in.cfg.Harness, started.ProviderConversationID, started.ControllerGeneration,
+				),
+			}, completionErr
 		},
 	})
 	if err != nil {
@@ -353,27 +368,35 @@ func (m *Manager) resumeChatController(
 	if err != nil {
 		return RestoreResult{}, fmt.Errorf("%s %s: workspace roots: %w", operation, rec.ID, err)
 	}
-	rec, env, err := m.prepareWorkerLaunchEnv(ctx, rec, project.Config.Env)
-	if err != nil {
-		return RestoreResult{}, fmt.Errorf("%s %s: browser capability: %w", operation, rec.ID, err)
-	}
+	env := m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env)
 	providerScopeID, err := m.historicalChatProviderScopeID(ctx, rec)
 	if err != nil {
 		return RestoreResult{}, fmt.Errorf("%s %s: recover provider ownership: %w", operation, rec.ID, err)
 	}
 	var completionErr error
 	_, err = m.chat.StartChat(ctx, ChatStart{
-		SessionID:             rec.ID,
-		ProjectID:             rec.ProjectID,
-		Kind:                  rec.Kind,
-		Harness:               rec.Harness,
-		DataDir:               m.dataDir,
-		WorkspacePath:         ws.Path,
-		Env:                   env,
-		Model:                 agentConfig.Model,
-		Permissions:           agentConfig.Permissions,
-		SystemPrompt:          systemPrompt,
-		AdditionalDirectories: additionalDirectories,
+		SessionID:               rec.ID,
+		ProjectID:               rec.ProjectID,
+		Kind:                    rec.Kind,
+		Harness:                 rec.Harness,
+		DataDir:                 m.dataDir,
+		WorkspacePath:           ws.Path,
+		Env:                     env,
+		Model:                   agentConfig.Model,
+		Permissions:             agentConfig.Permissions,
+		SystemPrompt:            systemPrompt,
+		AdditionalDirectories:   additionalDirectories,
+		ExpectedControllerOwner: rec.ControllerOwner(),
+		PrepareControllerEnv: func(launchCtx context.Context, expected domain.SessionControllerOwner) (map[string]string, error) {
+			prepared, launchEnv, prepareErr := m.prepareChatControllerEnv(
+				launchCtx, rec, project.Config.Env, expected,
+			)
+			if prepareErr != nil {
+				return nil, prepareErr
+			}
+			rec = prepared
+			return launchEnv, nil
+		},
 		// The handle that makes this a resume rather than a new conversation.
 		ProviderConversationID: rec.Metadata.ProviderConversationID,
 		// Older TUI -> Chat handoffs could persist the native handle without
@@ -404,7 +427,12 @@ func (m *Manager) resumeChatController(
 				started.CommitProviderHistory,
 			)
 			completionErr = commitErr
-			return ChatControllerCommit{Conversation: committedConversation}, completionErr
+			return ChatControllerCommit{
+				Conversation: committedConversation,
+				ControllerOwner: chatControllerOwner(
+					rec, rec.Harness, started.ProviderConversationID, started.ControllerGeneration,
+				),
+			}, completionErr
 		},
 	})
 	if err != nil {

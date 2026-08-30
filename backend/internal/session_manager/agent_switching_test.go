@@ -482,7 +482,12 @@ type switchAgentChatLauncher struct {
 	live  bool
 }
 
-func (l *switchAgentChatLauncher) StartChat(_ context.Context, cfg ChatStart) (ChatStarted, error) {
+func (l *switchAgentChatLauncher) StartChat(ctx context.Context, cfg ChatStart) (ChatStarted, error) {
+	var err error
+	cfg, err = prepareTestChatStart(ctx, cfg)
+	if err != nil {
+		return ChatStarted{}, err
+	}
 	l.started = append(l.started, cfg)
 	if l.beforeStart != nil {
 		l.beforeStart(cfg)
