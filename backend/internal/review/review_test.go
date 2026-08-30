@@ -1079,6 +1079,29 @@ func TestTriggerConfigOnlyOverrideMergesResolvedConfig(t *testing.T) {
 	}
 }
 
+func TestTriggerSameHarnessOverrideMergesResolvedConfig(t *testing.T) {
+	store := &fakeStore{
+		runs: []domain.ReviewRun{{
+			ID: "run-1", SessionID: "mer-1", PRURL: "https://github.com/o/r/pull/1", TargetSHA: "sha1",
+			Harness: domain.ReviewerClaudeCode,
+			Status:  domain.ReviewRunComplete, Verdict: domain.VerdictApproved,
+		}},
+	}
+	launcher := &fakeLauncher{handle: "review-mer-2"}
+	projects := fakeProjects{cfg: domain.ProjectConfig{Reviewers: []domain.ReviewerConfig{{
+		Harness:     domain.ReviewerClaudeCode,
+		AgentConfig: domain.AgentConfig{Model: "claude-old", Permissions: domain.PermissionModeBypassPermissions},
+	}}}}
+	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), projects, launcher)
+
+	if _, err := eng.Trigger(context.Background(), "mer-1", domain.ReviewerClaudeCode, domain.AgentConfig{Model: "claude-new"}); err != nil {
+		t.Fatalf("Trigger: %v", err)
+	}
+	if got := launcher.gotSpec.AgentConfig; got.Model != "claude-new" || got.Permissions != domain.PermissionModeBypassPermissions {
+		t.Fatalf("spawn config = %+v, want explicit same-harness override merged with inherited permissions", got)
+	}
+}
+
 func TestReviewerSelectionMergesSessionConfigWithProjectReviewerConfig(t *testing.T) {
 	worker := liveWorker()
 	worker.ReviewerConfig = domain.AgentConfig{Model: "gpt-5"}

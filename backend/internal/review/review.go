@@ -253,13 +253,18 @@ func (e *Engine) TriggerWithSource(ctx stdctx.Context, workerID domain.SessionID
 	if err != nil {
 		return TriggerResult{}, err
 	}
+	resolvedHarness := harness
 	resolvedConfig := config
 	hasHarnessOverride := override != ""
 	hasConfigOverride := !overrideConfig.IsZero() && (hasHarnessOverride || overrideConfig != resolvedConfig)
 	if hasHarnessOverride {
 		harness = override
 		if hasConfigOverride {
-			config = mergeReviewerAgentConfig(domain.AgentConfig{}, overrideConfig)
+			base := domain.AgentConfig{}
+			if override == resolvedHarness {
+				base = resolvedConfig
+			}
+			config = mergeReviewerAgentConfig(base, overrideConfig)
 		} else {
 			config = domain.AgentConfig{}
 		}
