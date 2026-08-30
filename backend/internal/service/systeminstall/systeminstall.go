@@ -10,6 +10,7 @@ package systeminstall
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"runtime"
@@ -17,8 +18,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
+
+var ErrHarnessActive = errors.New("systeminstall: harness has an active session")
 
 // Target is one of the fixed install targets AO knows how to install.
 type Target string
@@ -165,9 +169,12 @@ type Status string
 const (
 	StatusIdle        Status = "idle"
 	StatusRunning     Status = "running"
+	StatusInstalling  Status = "installing"
+	StatusVerifying   Status = "verifying"
 	StatusSucceeded   Status = "succeeded"
 	StatusFailed      Status = "failed"
 	StatusUnsupported Status = "unsupported"
+	StatusInterrupted Status = "interrupted"
 )
 
 // maxOutputBytes bounds Job.Output so a chatty installer can't grow memory
@@ -185,11 +192,13 @@ const defaultInstallTimeout = 15 * time.Minute
 
 // Job is the tracked state of one install run for a Target.
 type Job struct {
-	Target  Target `json:"target" description:"Fixed install target this job ran (or is running) for."`
-	Status  Status `json:"status" enum:"idle,running,succeeded,failed,unsupported" description:"Current lifecycle state of the job."`
-	Command string `json:"command,omitempty" description:"Human-readable install command, e.g. \"brew install tmux\", for display even before/without output."`
-	Output  string `json:"output,omitempty" description:"Combined stdout+stderr from the install command, tail-capped to the last ~4000 bytes."`
-	Error   string `json:"error,omitempty" description:"Set on failure or when the target is unsupported on this machine: the exec error, the Unsupported reason, or a timeout message."`
+	Target              Target `json:"target" description:"Fixed install target this job ran (or is running) for."`
+	Status              Status `json:"status" enum:"idle,running,installing,verifying,succeeded,failed,unsupported,interrupted" description:"Current lifecycle state of the job."`
+	Method              string `json:"method,omitempty" description:"Server-owned installation method selected for this harness job."`
+	Command             string `json:"command,omitempty" description:"Human-readable install command, e.g. \"brew install tmux\", for display even before/without output."`
+	ExpectedDestination string `json:"expectedDestination,omitempty" description:"Expected or adapter-resolved executable destination."`
+	Output              string `json:"output,omitempty" description:"Combined stdout+stderr from the install command, tail-capped to the last ~4000 bytes."`
+	Error               string `json:"error,omitempty" description:"Set on failure or when the target is unsupported on this machine: the exec error, the Unsupported reason, or a timeout message."`
 	// Pointers, not time.Time: omitempty has no effect on a struct, so a bare
 	// time.Time always serializes (as the zero value's "0001-01-01..."
 	// timestamp) even when nothing has happened yet. A nil pointer actually
@@ -197,6 +206,26 @@ type Job struct {
 	// finishes" contract.
 	StartedAt  *time.Time `json:"startedAt,omitempty"`
 	FinishedAt *time.Time `json:"finishedAt,omitempty" description:"Absent until the job finishes."`
+	UpdatedAt  *time.Time `json:"updatedAt,omitempty"`
+}
+
+// HarnessVerifier performs post-install binary verification without probing
+// authentication.
+type HarnessVerifier interface {
+	Verify(ctx context.Context, target Target) (VerifyResult, error)
+}
+
+// SessionLister exposes durable lifecycle facts used to keep the Droid vendor
+// installer away from active Droid processes.
+type SessionLister interface {
+	ListAllSessions(ctx context.Context) ([]domain.SessionRecord, error)
+}
+
+// Deps are the durable and adapter-backed dependencies used for harness jobs.
+type Deps struct {
+	JobStore ports.AgentInstallJobStore
+	Verifier HarnessVerifier
+	Sessions SessionLister
 }
 
 // Service runs real install commands for the fixed Target allowlist.
@@ -208,6 +237,9 @@ type Service struct {
 	commands            ports.CommandRunner
 	installCommands     ports.InstallCommandRunner
 	installCapabilities ports.InstallCapabilityProbe
+	jobStore            ports.AgentInstallJobStore
+	verifier            HarnessVerifier
+	sessions            SessionLister
 	// goos selects the platform branch in planFor. Real use is always
 	// runtime.GOOS; tests override it to exercise every OS branch from one
 	// machine, the same seam lookPath provides for PATH probing.
@@ -221,6 +253,12 @@ type Service struct {
 // New returns a Service backed by explicit host-operation ports. The daemon
 // supplies their concrete adapter; core service code never invokes os/exec.
 func New(executables ports.ExecutableFinder, commands ports.CommandRunner) *Service {
+	return NewWithDeps(executables, commands, Deps{})
+}
+
+// NewWithDeps returns a Service with durable harness-job and verification
+// dependencies supplied by the daemon.
+func NewWithDeps(executables ports.ExecutableFinder, commands ports.CommandRunner, deps Deps) *Service {
 	installCommands, _ := commands.(ports.InstallCommandRunner)
 	installCapabilities, _ := executables.(ports.InstallCapabilityProbe)
 	return &Service{
@@ -229,6 +267,9 @@ func New(executables ports.ExecutableFinder, commands ports.CommandRunner) *Serv
 		commands:            commands,
 		installCommands:     installCommands,
 		installCapabilities: installCapabilities,
+		jobStore:            deps.JobStore,
+		verifier:            deps.Verifier,
+		sessions:            deps.Sessions,
 		goos:                runtime.GOOS,
 		installTimeout:      defaultInstallTimeout,
 	}
@@ -305,6 +346,9 @@ func (s *Service) Start(ctx context.Context, target Target) (Job, error) {
 	if !Valid(target) {
 		return Job{}, fmt.Errorf("systeminstall: unknown target %q", target)
 	}
+	if IsAgentTarget(target) {
+		return s.StartAgent(ctx, target, "")
+	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -342,6 +386,76 @@ func (s *Service) Start(ctx context.Context, target Target) (Job, error) {
 	return *job, nil
 }
 
+// StartAgent begins a harness install using one server-owned method ID. An
+// empty method chooses the first currently viable method for compatibility
+// with older clients.
+func (s *Service) StartAgent(ctx context.Context, target Target, method string) (Job, error) {
+	if err := ctx.Err(); err != nil {
+		return Job{}, err
+	}
+	if !IsAgentTarget(target) {
+		return Job{}, fmt.Errorf("systeminstall: unknown harness target %q", target)
+	}
+	if target == TargetDroid && s.sessions != nil {
+		sessions, err := s.sessions.ListAllSessions(ctx)
+		if err != nil {
+			return Job{}, fmt.Errorf("systeminstall: list sessions before droid install: %w", err)
+		}
+		for _, session := range sessions {
+			if session.Harness == domain.HarnessDroid && !session.IsTerminated {
+				return Job{}, fmt.Errorf("%w: end Droid session %s before installing or reinstalling Droid", ErrHarnessActive, session.ID)
+			}
+		}
+	}
+
+	var plan Plan
+	var err error
+	if method == "" {
+		plans := s.agentMethodPlans(target)
+		plan = plans[recommendedPlanIndex(plans)]
+	} else {
+		plan, err = s.resolveAgentMethod(target, method)
+		if err != nil {
+			return Job{}, err
+		}
+	}
+
+	s.mu.Lock()
+	if current, ok := s.jobs[target]; ok && activeStatus(current.Status) {
+		job := *current
+		s.mu.Unlock()
+		return job, nil
+	}
+	now := time.Now().UTC()
+	status := StatusInstalling
+	finishedAt := (*time.Time)(nil)
+	if plan.Unsupported {
+		status = StatusUnsupported
+		finishedAt = &now
+	}
+	job := &Job{
+		Target: target, Status: status, Method: plan.Method,
+		Command: displayCommand(plan), ExpectedDestination: plan.ExpectedDestination,
+		Error: plan.Reason, StartedAt: &now, FinishedAt: finishedAt, UpdatedAt: &now,
+	}
+	s.jobs[target] = job
+	s.mu.Unlock()
+
+	if err := s.persistJob(ctx, *job); err != nil {
+		s.mu.Lock()
+		delete(s.jobs, target)
+		s.mu.Unlock()
+		return Job{}, err
+	}
+	if status == StatusUnsupported {
+		return *job, nil
+	}
+
+	initial := *job
+	go s.runAgentInstall(plan, job) //nolint:gosec // bounded background installer intentionally outlives the request.
+	return initial, nil
+}
+
 // Status returns the current or last known Job for target. A target that has
 // never been started returns a plan preview: Idle when the daemon can run it,
 // or Unsupported with a manual command/reason when it cannot. An error is
@@ -353,6 +467,15 @@ func (s *Service) Status(ctx context.Context, target Target) (Job, error) {
 	if !Valid(target) {
 		return Job{}, fmt.Errorf("systeminstall: unknown target %q", target)
 	}
+	if IsAgentTarget(target) && s.jobStore != nil {
+		record, ok, err := s.jobStore.GetAgentInstallJob(ctx, string(target))
+		if err != nil {
+			return Job{}, err
+		}
+		if ok {
+			return jobFromRecord(record), nil
+		}
+	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -360,6 +483,10 @@ func (s *Service) Status(ctx context.Context, target Target) (Job, error) {
 	job, ok := s.jobs[target]
 	if !ok {
 		plan := s.resolvePlan(target)
+		if IsAgentTarget(target) {
+			plans := s.agentMethodPlans(target)
+			plan = plans[recommendedPlanIndex(plans)]
+		}
 		status := StatusIdle
 		if plan.Unsupported {
 			status = StatusUnsupported
@@ -372,6 +499,81 @@ func (s *Service) Status(ctx context.Context, target Target) (Job, error) {
 		}, nil
 	}
 	return *job, nil
+}
+
+// AgentJobs returns the latest durable job for every harness that has one.
+func (s *Service) AgentJobs(ctx context.Context) ([]Job, error) {
+	if s.jobStore != nil {
+		records, err := s.jobStore.ListAgentInstallJobs(ctx)
+		if err != nil {
+			return nil, err
+		}
+		jobs := make([]Job, 0, len(records))
+		for _, record := range records {
+			jobs = append(jobs, jobFromRecord(record))
+		}
+		return jobs, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	jobs := make([]Job, 0, len(s.jobs))
+	for target, job := range s.jobs {
+		if IsAgentTarget(target) {
+			jobs = append(jobs, *job)
+		}
+	}
+	return jobs, nil
+}
+
+// Recover marks unfinished durable jobs interrupted and hydrates the in-memory
+// coordination map before the HTTP server starts accepting requests.
+func (s *Service) Recover(ctx context.Context) error {
+	if s.jobStore == nil {
+		return nil
+	}
+	if err := s.jobStore.InterruptActiveAgentInstallJobs(ctx, time.Now().UTC()); err != nil {
+		return err
+	}
+	records, err := s.jobStore.ListAgentInstallJobs(ctx)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, record := range records {
+		job := jobFromRecord(record)
+		s.jobs[job.Target] = &job
+	}
+	return nil
+}
+
+// Verify starts adapter-backed verification without rerunning an installer.
+func (s *Service) Verify(ctx context.Context, target Target) (Job, error) {
+	if !IsAgentTarget(target) {
+		return Job{}, fmt.Errorf("systeminstall: unknown harness target %q", target)
+	}
+	s.mu.Lock()
+	if current, ok := s.jobs[target]; ok && activeStatus(current.Status) {
+		job := *current
+		s.mu.Unlock()
+		return job, nil
+	}
+	now := time.Now().UTC()
+	job := &Job{Target: target, Status: StatusVerifying, StartedAt: &now, UpdatedAt: &now}
+	if current, ok := s.jobs[target]; ok {
+		job.Method = current.Method
+		job.Command = current.Command
+		job.ExpectedDestination = current.ExpectedDestination
+		job.Output = current.Output
+	}
+	s.jobs[target] = job
+	s.mu.Unlock()
+	if err := s.persistJob(ctx, *job); err != nil {
+		return Job{}, err
+	}
+	initial := *job
+	go s.runAgentVerification(job) //nolint:gosec // bounded background verifier intentionally outlives the request.
+	return initial, nil
 }
 
 // run executes argv in the background and records the outcome onto job. job
@@ -423,6 +625,131 @@ func (s *Service) run(argv []string, job *Job) {
 		}
 	}
 	job.Status = StatusSucceeded
+}
+
+func (s *Service) runAgentInstall(plan Plan, job *Job) {
+	ctx, cancel := context.WithTimeout(context.Background(), s.installTimeout)
+	defer cancel()
+	out := &capturedOutput{max: maxOutputBytes}
+	var runErr error
+	if s.installCommands != nil {
+		runErr = s.installCommands.RunInstall(ctx, ports.InstallCommand{
+			Argv: plan.Command,
+			Env: []string{
+				"CI=1", "NONINTERACTIVE=1", "HOMEBREW_NO_AUTO_UPDATE=1",
+				"NPM_CONFIG_AUDIT=false", "NPM_CONFIG_FUND=false",
+			},
+		}, out, out)
+	} else {
+		runErr = s.commands.Run(ctx, plan.Command, out, out)
+	}
+	if ctx.Err() == context.DeadlineExceeded {
+		s.finishAgentJob(job, StatusFailed, out.String(), fmt.Sprintf("install timed out after %s", s.installTimeout), "")
+		return
+	}
+	if runErr != nil {
+		s.finishAgentJob(job, StatusFailed, out.String(), runErr.Error(), "")
+		return
+	}
+
+	if err := s.transitionAgentJob(job, StatusVerifying, out.String(), "", ""); err != nil {
+		s.finishAgentJob(job, StatusFailed, "", fmt.Sprintf("persist verifying state: %v", err), "")
+		return
+	}
+	s.runAgentVerification(job)
+}
+
+func (s *Service) runAgentVerification(job *Job) {
+	if s.verifier == nil {
+		s.finishAgentJob(job, StatusFailed, "", "adapter-backed install verifier is not configured", "")
+		return
+	}
+	result, err := s.verifier.Verify(context.Background(), job.Target)
+	if err != nil {
+		s.finishAgentJob(job, StatusFailed, result.Output, err.Error(), result.ResolvedPath)
+		return
+	}
+	s.finishAgentJob(job, StatusSucceeded, result.Output, "", result.ResolvedPath)
+}
+
+func (s *Service) transitionAgentJob(job *Job, status Status, output, errorMessage, resolvedPath string) error {
+	now := time.Now().UTC()
+	s.mu.Lock()
+	job.Status = status
+	job.Output = combineOutput(job.Output, output)
+	job.Error = errorMessage
+	if resolvedPath != "" {
+		job.ExpectedDestination = resolvedPath
+	}
+	job.UpdatedAt = &now
+	copy := *job
+	s.mu.Unlock()
+	return s.persistJob(context.Background(), copy)
+}
+
+func (s *Service) finishAgentJob(job *Job, status Status, output, errorMessage, resolvedPath string) {
+	now := time.Now().UTC()
+	s.mu.Lock()
+	job.Status = status
+	job.Output = combineOutput(job.Output, output)
+	job.Error = errorMessage
+	if resolvedPath != "" {
+		job.ExpectedDestination = resolvedPath
+	}
+	job.FinishedAt = &now
+	job.UpdatedAt = &now
+	copy := *job
+	s.mu.Unlock()
+	if err := s.persistJob(context.Background(), copy); err != nil {
+		s.mu.Lock()
+		job.Status = StatusFailed
+		job.Error = fmt.Sprintf("persist terminal install state: %v", err)
+		s.mu.Unlock()
+	}
+}
+
+func (s *Service) persistJob(ctx context.Context, job Job) error {
+	if s.jobStore == nil {
+		return nil
+	}
+	if job.StartedAt == nil {
+		return fmt.Errorf("systeminstall: persist job without startedAt")
+	}
+	updatedAt := *job.StartedAt
+	if job.UpdatedAt != nil {
+		updatedAt = *job.UpdatedAt
+	}
+	return s.jobStore.UpsertAgentInstallJob(ctx, ports.AgentInstallJobRecord{
+		Target: string(job.Target), Status: string(job.Status), Method: job.Method,
+		Command: job.Command, ExpectedDestination: job.ExpectedDestination,
+		Output: job.Output, Error: job.Error, StartedAt: *job.StartedAt,
+		FinishedAt: job.FinishedAt, UpdatedAt: updatedAt,
+	})
+}
+
+func jobFromRecord(record ports.AgentInstallJobRecord) Job {
+	startedAt := record.StartedAt
+	updatedAt := record.UpdatedAt
+	return Job{
+		Target: Target(record.Target), Status: Status(record.Status), Method: record.Method,
+		Command: record.Command, ExpectedDestination: record.ExpectedDestination,
+		Output: record.Output, Error: record.Error, StartedAt: &startedAt,
+		FinishedAt: record.FinishedAt, UpdatedAt: &updatedAt,
+	}
+}
+
+func activeStatus(status Status) bool {
+	return status == StatusRunning || status == StatusInstalling || status == StatusVerifying
+}
+
+func combineOutput(existing, next string) string {
+	out := &capturedOutput{max: maxOutputBytes}
+	_, _ = out.Write([]byte(existing))
+	if existing != "" && next != "" && !strings.HasSuffix(existing, "\n") {
+		_, _ = out.Write([]byte("\n"))
+	}
+	_, _ = out.Write([]byte(next))
+	return out.String()
 }
 
 func (s *Service) resolvePlan(target Target) Plan {

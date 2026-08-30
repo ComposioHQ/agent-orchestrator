@@ -325,7 +325,19 @@ func Run() error {
 	agentSvc := agentsvc.NewWithDeps(agentsvc.Deps{Cache: store, InventoryCache: store, Discoverer: modelcatalog.Discoverer{}, Projects: store, Sessions: store})
 	hostCommands := systemexec.Adapter{}
 	systemChecks := systemcheck.New(agentSvc, hostCommands)
-	systemInstall := systeminstall.New(hostCommands, hostCommands)
+	systemInstall := systeminstall.NewWithDeps(hostCommands, hostCommands, systeminstall.Deps{
+		JobStore: store,
+		Verifier: systeminstall.NewVerifier(agents, hostCommands),
+		Sessions: store,
+	})
+	if err := systemInstall.Recover(ctx); err != nil {
+		stop()
+		lcStack.Stop()
+		if cdcErr := cdcPipe.Stop(); cdcErr != nil {
+			log.Error("cdc pipeline shutdown", "err", cdcErr)
+		}
+		return fmt.Errorf("recover harness install jobs: %w", err)
+	}
 
 	// Connect Mobile: the bridge service needs the LAN listener, but the LAN
 	// listener needs the built router's handler, which only exists once srv is
