@@ -239,17 +239,20 @@ export function QueuedMessageDock({
 				aria-expanded={hasMore ? expanded : undefined}
 				data-testid="queued-message-toggle"
 			>
-				{hasMore ? (
+				<span
+					aria-hidden="true"
+					className={cn(
+						"grid h-3.5 shrink-0 overflow-hidden transition-[width] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none",
+						hasMore ? "w-3.5" : "w-0",
+					)}
+				>
 					<ChevronDown
-						aria-hidden="true"
 						className={cn(
 							"size-3.5 shrink-0 text-muted-foreground transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none",
 							expanded ? "rotate-0" : "-rotate-90",
 						)}
 					/>
-				) : (
-					<span aria-hidden="true" className="size-3.5 shrink-0" />
-				)}
+				</span>
 				<span className="queue-dock-label text-xs font-medium text-muted-foreground transition-colors duration-150">
 					<span
 						className="inline-block w-fit"

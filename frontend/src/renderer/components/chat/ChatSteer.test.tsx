@@ -52,6 +52,17 @@ describe("ChatComposer steering", () => {
 		expect(onSteer).not.toHaveBeenCalled();
 	});
 
+	it("keeps Cmd/Ctrl+Enter steering available without advertising it", async () => {
+		const onSteer = vi.fn().mockResolvedValue(undefined);
+		composer({ onSteer });
+
+		await typeInLexicalEditor(screen.getByRole("combobox"), "steer this draft");
+		await userEvent.keyboard("{Control>}{Enter}{/Control}");
+
+		expect(onSteer).toHaveBeenCalledWith("steer this draft");
+		expect(screen.queryByText(/steer/i)).not.toBeInTheDocument();
+	});
+
 	it("steers the next queued message on empty Enter and removes it immediately", async () => {
 		const onPromoteQueuedTurn = vi.fn().mockResolvedValue(undefined);
 		render(

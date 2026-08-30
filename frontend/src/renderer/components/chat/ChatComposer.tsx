@@ -248,10 +248,9 @@ export function ChatComposer({
 		!savingQueuedEditPending &&
 		(savingQueuedEdit || !busy);
 	const canStopTurn = Boolean(willQueue && onInterrupt && !disabled && !hasDraft && !savingQueuedEdit);
-	// Steering delivers text only, so a draft carrying files cannot take that
-	// path. Treating it as unavailable — rather than steering the text and
-	// dropping the files, or refusing on an empty body with attachments staged —
-	// keeps the armed state something the composer can actually honour.
+	// Cmd/Ctrl+Enter remains an intentionally quiet power-user path for steering
+	// typed text into the running turn. The visible hint stays queue-only.
+	const canSteerDraft = Boolean(canSteer && onSteer) && !staged && !savingQueuedEdit;
 	const canSteerNext =
 		Boolean(canSteer && onSteer) &&
 		!disabled &&
@@ -262,11 +261,9 @@ export function ChatComposer({
 		? "Enter to insert"
 		: savingQueuedEdit
 			? "⏎ save edit"
-			: willQueue && canSteerNext
-				? "⏎ queue · Enter steer"
-				: willQueue
-					? "⏎ queue"
-					: "Enter to send";
+			: willQueue
+				? "⏎ queue"
+				: "Enter to send";
 	const draftSeedId = draftSeed?.id;
 	const draftSeedText = draftSeed?.text;
 	const queuedDockWithSteer = isValidElement(queuedDock)
@@ -553,7 +550,7 @@ export function ChatComposer({
 	}
 
 	const handleEnterKey = useCallback(
-		(_event: globalThis.KeyboardEvent): boolean => {
+		(event: globalThis.KeyboardEvent): boolean => {
 			const liveSnapshot = editor.current?.getSnapshot();
 			if (liveSnapshot) textRef.current = liveSnapshot.text;
 			const liveTrigger = liveSnapshot?.trigger;
@@ -569,14 +566,15 @@ export function ChatComposer({
 				return true;
 			}
 
-			if (canSteerNext) {
+			if (canSteerNext && !textRef.current.trim()) {
 				setSteerNextRequest((request) => request + 1);
 				return true;
 			}
-			void submit();
+			const wantsSteer = (event.metaKey || event.ctrlKey) && canSteerDraft;
+			void submit(undefined, wantsSteer);
 			return true;
 		},
-		[canSteerNext, onCompact, pick, suggestionsFor],
+		[canSteerDraft, canSteerNext, onCompact, pick, suggestionsFor],
 	);
 
 	function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
@@ -637,6 +635,26 @@ export function ChatComposer({
 		void fileAttachments.addFiles(files);
 	}
 
+	// Keep the hidden Cmd/Ctrl steering shortcut available for the send-button path
+	// without rerendering the composer for every modifier key event.
+	const modifierHeldRef = useRef(false);
+	useEffect(() => {
+		const onKey = (event: globalThis.KeyboardEvent) => {
+			modifierHeldRef.current = event.metaKey || event.ctrlKey;
+		};
+		const onBlur = () => {
+			modifierHeldRef.current = false;
+		};
+		window.addEventListener("keydown", onKey);
+		window.addEventListener("keyup", onKey);
+		window.addEventListener("blur", onBlur);
+		return () => {
+			window.removeEventListener("keydown", onKey);
+			window.removeEventListener("keyup", onKey);
+			window.removeEventListener("blur", onBlur);
+		};
+	}, []);
+
 	const attachmentError = fileAttachments.error ?? sendError ?? commandError;
 	const withQueueStack = (form: ReactElement) =>
 		queuedDock ? (
@@ -672,9 +690,8 @@ export function ChatComposer({
 
 	return withQueueStack(
 		<form
-				// The send button always submits the typed draft. Steering is reserved for
-				// the empty-input Enter path handled by the editor above.
-			onSubmit={(event) => void submit(event)}
+			// Cmd/Ctrl steering remains available as a quiet power-user action.
+			onSubmit={(event) => void submit(event, modifierHeldRef.current && canSteerDraft)}
 				onDragOver={(event) => {
 					if (!canAttach) return;
 					event.preventDefault();
