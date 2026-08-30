@@ -671,7 +671,7 @@ export function ChatComposer({
 	const attachmentError = fileAttachments.error ?? sendError ?? commandError;
 	const withQueueStack = (form: ReactElement) =>
 		(
-			<div className="relative flex w-full flex-col">
+			<div className="relative mx-auto flex w-full max-w-3xl flex-col">
 				{queuedDock ? (
 				<div
 					className="cursor-chat-composer-queue queue-dock-enter relative z-10 mx-auto mb-2 w-[calc(100%-2rem)]"
