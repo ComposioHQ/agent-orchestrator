@@ -1195,6 +1195,42 @@ func TestReviewerSelectionMergesSessionConfigWithProjectReviewerConfig(t *testin
 	}
 }
 
+func TestTriggerConfigOverrideRestartsAliveReviewerPane(t *testing.T) {
+	store := &fakeStore{
+		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", Harness: domain.ReviewerClaudeCode, ReviewerHandleID: "review-mer-1", AgentSessionID: "native-reviewer-1"},
+		runs: []domain.ReviewRun{{
+			ID: "run-1", SessionID: "mer-1", PRURL: "https://github.com/o/r/pull/1", TargetSHA: "sha1",
+			Harness: domain.ReviewerClaudeCode,
+			Status:  domain.ReviewRunComplete, Verdict: domain.VerdictApproved,
+		}},
+	}
+	worker := liveWorker()
+	worker.ReviewerHarness = domain.ReviewerClaudeCode
+	worker.ReviewerConfig = domain.AgentConfig{Model: "gpt-5"}
+	launcher := &fakeLauncher{alive: true, handle: "review-mer-2"}
+	eng := newEngineForTest(store, fakeSessions{rec: worker, ok: true}, prAt("sha1"), fakeProjects{}, launcher)
+
+	res, err := eng.Trigger(context.Background(), "mer-1", domain.ReviewerClaudeCode, domain.AgentConfig{Model: "gpt-5-mini"})
+	if err != nil {
+		t.Fatalf("Trigger: %v", err)
+	}
+	if !res.Created {
+		t.Fatalf("expected new run for config override: %+v", res)
+	}
+	if !launcher.destroyed || launcher.destroyedHandle != "review-mer-1" {
+		t.Fatalf("expected existing reviewer pane destroyed: %+v", launcher)
+	}
+	if !launcher.spawned || launcher.notified {
+		t.Fatalf("config override should relaunch, not notify existing pane: %+v", launcher)
+	}
+	if got := launcher.gotSpec.AgentConfig.Model; got != "gpt-5-mini" {
+		t.Fatalf("spawn config model = %q, want gpt-5-mini", got)
+	}
+	if len(store.agentSessionUpdates) != 1 || store.agentSessionUpdates[0].agentSessionID != "" {
+		t.Fatalf("agent session updates = %+v, want cleared native session", store.agentSessionUpdates)
+	}
+}
+
 func TestTriggerRejectsInvalidReviewerConfig(t *testing.T) {
 	eng := newEngineForTest(&fakeStore{}, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, &fakeLauncher{})
 	if _, err := eng.Trigger(context.Background(), "mer-1", "", domain.AgentConfig{Mode: "turbo"}); !errors.Is(err, ErrInvalid) {

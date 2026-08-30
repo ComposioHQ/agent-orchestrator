@@ -288,6 +288,25 @@ func (e *Engine) TriggerWithSource(ctx stdctx.Context, workerID domain.SessionID
 			return TriggerResult{}, err
 		}
 	}
+	if hasConfigOverride {
+		if _, err := e.store.CancelRunningReviewRunsBySessionAndHarness(ctx, workerID, harness, "cancelled because reviewer config changed"); err != nil {
+			return TriggerResult{}, err
+		}
+		if err := e.resetReviewerRuntimeLocked(ctx, workerID, harness); err != nil {
+			return TriggerResult{}, err
+		}
+		reviewRow, hasReview, err = e.store.GetReviewBySessionAndHarness(ctx, workerID, harness)
+		if err != nil {
+			return TriggerResult{}, err
+		}
+		runs, err = e.store.ListReviewRunsBySession(ctx, workerID)
+		if err != nil {
+			return TriggerResult{}, err
+		}
+		if !hasReview {
+			reviewRow = domain.Review{}
+		}
+	}
 	hadRunningReviewer := reviewRunsContainRunningForHarness(runs, harness)
 	reviews := Plan(prs, runs)
 	if source == domain.ReviewTriggerAuto {
