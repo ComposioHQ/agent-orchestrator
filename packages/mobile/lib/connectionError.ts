@@ -9,6 +9,7 @@
 
 export type ConnectionFailure =
 	| "not-ao-qr" // the scanned code wasn't an AO pairing payload
+	| "outdated-desktop" // a v1 code: AO on the computer is too old to pair with
 	| "unreachable" // nothing answered (DNS failure, refused, timeout)
 	| "auth" // 401/403 — the password is wrong or was rotated
 	| "rate-limited" // 429 — the daemon's failed-attempt lockout
@@ -105,6 +106,13 @@ export function describeConnectionFailure(
 		reason === "unreachable" && target.platform === "ios" && isLocalNetworkHost(target.host);
 
 	switch (reason) {
+		case "outdated-desktop":
+			return {
+				title: "Update AO on your computer",
+				message:
+					"That code was made by an older version of AO. Update the desktop app, then generate a new code.",
+				showLocalNetworkHint: false,
+			};
 		case "not-ao-qr":
 			return {
 				title: "Not an AO pairing code",

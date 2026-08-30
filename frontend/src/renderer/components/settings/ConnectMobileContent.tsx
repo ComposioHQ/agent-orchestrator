@@ -50,23 +50,22 @@ export function qrValueFor(input: {
 	platform: string;
 	password: string;
 	endpoints: readonly PairingEndpoint[];
-	/** Legacy fallback only: the port and TLS flag of the chosen address. */
-	port?: number;
-	secure?: boolean;
 }): string {
-	if (input.endpoints.length > 0) {
-		return pairingCodeUrl(
-			buildPairingOffer({
-				endpoints: input.endpoints,
-				password: input.password,
-				hostId: input.hostId,
-				name: input.host,
-				platform: input.platform,
-			}),
-			PAIRING_LINK_BASE,
-		);
-	}
-	return pairingPayload(input.host, input.port ?? 3011, input.password, input.secure);
+	// v2 only. The phone no longer accepts v1: those codes predate the identity
+	// probe the race uses to verify a machine before sending it a credential, so
+	// a daemon old enough to need one could never complete a race anyway. An
+	// empty endpoint list means there is nothing to advertise yet, and the panel
+	// shows the preparing state rather than a code — see qrIsReady.
+	return pairingCodeUrl(
+		buildPairingOffer({
+			endpoints: input.endpoints,
+			password: input.password,
+			hostId: input.hostId,
+			name: input.host,
+			platform: input.platform,
+		}),
+		PAIRING_LINK_BASE,
+	);
 }
 
 /**
@@ -111,7 +110,10 @@ export function qrIsReady(status: {
 	tunnel?: { running: boolean; ready: boolean; [k: string]: unknown };
 }): boolean {
 	if (!status.enabled) return false;
-	if (status.endpoints && status.endpoints.length === 0) return false;
+	// Nothing to encode: a v2 code carries the endpoint list, and there is no
+	// longer a v1 form to fall back to. An absent list is as unready as an empty
+	// one — it means the daemon has not told us where it can be reached.
+	if (!status.endpoints || status.endpoints.length === 0) return false;
 	if (status.tunnel?.running && !status.tunnel.ready) return false;
 	return true;
 }
@@ -353,8 +355,6 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 				platform: "",
 				password: status?.password ?? "",
 				endpoints: status?.endpoints ?? [],
-				port: activePort,
-				secure: secureActive,
 			})
 		: undefined;
 	const secureReasonText = reasonMessage(status.securePairing?.reason ?? "", t);

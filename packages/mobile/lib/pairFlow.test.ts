@@ -98,20 +98,18 @@ describe("pairFromCode", () => {
 		if (!got.ok) expect(got.reason).toBe("none-reachable");
 	});
 
-	// A legacy desktop still emits v1. It has no host id, so the machine is
-	// stored unverified and adopts one on its first connect.
-	it("pairs from a legacy v1 code", async () => {
-		const d = deps({
-			race: vi.fn(async () => ({ ok: true as const, endpoint: lan, hostId: "h_learned" })),
-		});
+	// v1 is no longer accepted. Those codes predate the identity probe the race
+	// uses, so a daemon old enough to emit one answers 404 to every probe and
+	// the race could never complete — the app now says to update the desktop
+	// rather than failing obscurely. See isLegacyPairingCode.
+	it("refuses a legacy v1 code", async () => {
+		const d = deps();
 		const got = await pairFromCode(
 			JSON.stringify({ v: 1, host: "192.168.1.42", port: 3011, password: "old" }),
 			d,
 		);
 
-		expect(got.ok).toBe(true);
-		// The identity the daemon reported is adopted immediately, since we just
-		// spoke to it and know who it is.
-		expect(d.saveHost).toHaveBeenCalledWith(expect.objectContaining({ id: "h_learned", token: "old" }));
+		expect(got.ok).toBe(false);
+		expect(d.saveHost).not.toHaveBeenCalled();
 	});
 });

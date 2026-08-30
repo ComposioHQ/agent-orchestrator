@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { encodePairingCode, parsePairingCode, pairingUrl } from "./pairingCode";
+import { encodePairingCode, isLegacyPairingCode, parsePairingCode, pairingUrl } from "./pairingCode";
 
 const offer = {
 	v: 2 as const,
@@ -45,33 +45,14 @@ describe("parsePairingCode", () => {
 		expect(got?.hostId).toBe("h_b3e07f31");
 	});
 
-	// A new phone paired against a desktop that has not updated yet. Rejecting
-	// this would break the mixed-version case entirely.
-	it("still accepts a legacy v1 payload", () => {
-		const got = parsePairingCode(
-			JSON.stringify({ v: 1, host: "192.168.1.5", port: 3011, password: "old-pw" }),
-		);
-
-		expect(got).not.toBeNull();
-		expect(got?.endpoints).toEqual([
-			{ kind: "lan", host: "192.168.1.5", port: 3011, secure: false },
-		]);
-		expect(got?.token).toBe("old-pw");
-		// v1 predates host ids, so the machine adopts one on first connect.
-		expect(got?.hostId).toBe("");
-	});
-
-	it("maps a legacy secure payload to a tailscale endpoint", () => {
-		const got = parsePairingCode(
-			JSON.stringify({ v: 1, host: "mbp.tail1234.ts.net", port: 443, password: "p", secure: true }),
-		);
-
-		expect(got?.endpoints[0]).toEqual({
-			kind: "tailscale",
-			host: "mbp.tail1234.ts.net",
-			port: 443,
-			secure: true,
-		});
+	// v1 support was removed rather than repaired: those codes predate the
+	// identity probe the race uses to verify a machine before sending it a
+	// credential, so a daemon old enough to emit one answers 404 to every probe
+	// and the race can never complete. See isLegacyPairingCode.
+	it("rejects a legacy v1 payload", () => {
+		expect(
+			parsePairingCode(JSON.stringify({ v: 1, host: "192.168.1.5", port: 3011, password: "old-pw" })),
+		).toBeNull();
 	});
 
 	it.each([
@@ -106,5 +87,40 @@ describe("deep link scheme", () => {
 		const got = parsePairingCode(pairingUrl(offer, `${scheme}://pair`));
 
 		expect(got?.hostId).toBe("h_b3e07f31");
+	});
+});
+
+// v1 support was dropped rather than repaired. The probe that verifies a
+// machine's identity before sending it a credential does not exist on a daemon
+// old enough to emit v1, so those codes could never complete a race — the
+// compatibility was advertised but unreachable. Rejecting them outright is
+// honest; what matters is that the user is told why.
+describe("v1 pairing codes", () => {
+	const v1 = JSON.stringify({ v: 1, host: "192.168.1.42", port: "3011", password: "pw" });
+
+	it("no longer accepts a v1 payload", () => {
+		expect(parsePairingCode(v1)).toBeNull();
+	});
+
+	it("recognises one well enough to explain the failure", () => {
+		expect(isLegacyPairingCode(v1)).toBe(true);
+	});
+
+	it("does not mistake a v2 code for a legacy one", () => {
+		const v2 = encodePairingCode({
+			v: 2,
+			hostId: "h_1",
+			name: "mbp",
+			platform: "darwin",
+			endpoints: [{ kind: "lan", host: "192.168.1.42", port: 3011, secure: false }],
+			token: "pw",
+		});
+		expect(isLegacyPairingCode(v2)).toBe(false);
+		expect(parsePairingCode(v2)).not.toBeNull();
+	});
+
+	it("does not mistake arbitrary text for a legacy one", () => {
+		expect(isLegacyPairingCode("https://example.com")).toBe(false);
+		expect(isLegacyPairingCode("{}")).toBe(false);
 	});
 });

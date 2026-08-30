@@ -496,3 +496,49 @@ func TestTunnelRuntimeUnsettledHostnameOnlyAfterRegistration(t *testing.T) {
 		t.Errorf("UnsettledHostname = %q after settling", got)
 	}
 }
+
+// Start cancels the previous runner without waiting for it (deliberately: a
+// blocking Stop deadlocked the disable request). So a replacement can record
+// its pid while the old runner is still unwinding, and an unconditional delete
+// on the way out erases the live connector's pid — after which boot reaping has
+// nothing to find and that connector can never be cleaned up.
+func TestRemoveOwnTunnelPIDFileLeavesAReplacementAlone(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tunnel.pid")
+	if err := WriteTunnelPID(path, 4242); err != nil {
+		t.Fatalf("seed pid: %v", err)
+	}
+
+	// The outgoing runner (pid 1111) cleans up after the replacement (4242)
+	// has already claimed the file.
+	if err := RemoveOwnTunnelPIDFile(path, 1111); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+
+	pid, ok := ReadTunnelPID(path)
+	if !ok || pid != 4242 {
+		t.Fatalf("replacement pid = (%d, %v), want (4242, true)", pid, ok)
+	}
+}
+
+func TestRemoveOwnTunnelPIDFileClearsItsOwnRecord(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tunnel.pid")
+	if err := WriteTunnelPID(path, 1111); err != nil {
+		t.Fatalf("seed pid: %v", err)
+	}
+
+	if err := RemoveOwnTunnelPIDFile(path, 1111); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+
+	if _, ok := ReadTunnelPID(path); ok {
+		t.Fatal("own pid record should be gone")
+	}
+}
+
+// A clean stop after the file has already been removed is not an error.
+func TestRemoveOwnTunnelPIDFileToleratesAMissingFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tunnel.pid")
+	if err := RemoveOwnTunnelPIDFile(path, 1111); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+}

@@ -160,6 +160,36 @@ describe("migration from the single-server config", () => {
 		expect(got[0].token).toBe("legacy-pw");
 	});
 
+	// Builds older still kept the password inside the AsyncStorage config blob;
+	// loadConfig() is what moves it into SecureStore, and that runs *after* this
+	// migration. Reading SecureStore alone left those users with an empty token
+	// and a machine they could not authenticate to.
+	it("takes the password from the legacy blob when SecureStore has none", async () => {
+		plain.set(
+			"ao.serverConfig",
+			JSON.stringify({ host: "192.168.1.42", httpPort: "3011", password: "blob-pw" }),
+		);
+
+		const { migrateLegacyConfig, loadHosts } = await mod();
+		await migrateLegacyConfig();
+
+		expect((await loadHosts())[0].token).toBe("blob-pw");
+	});
+
+	// SecureStore is the newer home for it, so it wins where both exist.
+	it("prefers the SecureStore password over the legacy blob", async () => {
+		plain.set(
+			"ao.serverConfig",
+			JSON.stringify({ host: "192.168.1.42", httpPort: "3011", password: "blob-pw" }),
+		);
+		secure.set("ao.serverPassword", "secure-pw");
+
+		const { migrateLegacyConfig, loadHosts } = await mod();
+		await migrateLegacyConfig();
+
+		expect((await loadHosts())[0].token).toBe("secure-pw");
+	});
+
 	// The old config carries no host id — the daemon issues those, and this
 	// pairing predates them. The migrated machine therefore starts unverified
 	// and adopts its identity on the first successful connect.

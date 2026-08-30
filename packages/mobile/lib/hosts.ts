@@ -139,6 +139,11 @@ const LEGACY_PASSWORD_KEY = "ao.serverPassword";
  *
  * Idempotent, and it never runs over an existing list.
  */
+/** The password older builds kept inside the AsyncStorage config blob. */
+function legacyPassword(legacy: Record<string, unknown>): string {
+	return typeof legacy.password === "string" ? legacy.password : "";
+}
+
 export async function migrateLegacyConfig(): Promise<void> {
 	if ((await readStored()).length > 0) return;
 
@@ -167,7 +172,12 @@ export async function migrateLegacyConfig(): Promise<void> {
 		name: host,
 		platform: "",
 		endpoints: [{ kind, host, port, secure: isSecure }],
-		token: (await SecureStore.getItemAsync(LEGACY_PASSWORD_KEY)) ?? "",
+		// SecureStore first, then the config blob. Builds older than the
+		// SecureStore move kept the password inside ao.serverConfig, and the
+		// code that relocates it (loadConfig) runs *after* this migration — so
+		// reading SecureStore alone handed those users an empty token and a
+		// machine they could not authenticate to.
+		token: (await SecureStore.getItemAsync(LEGACY_PASSWORD_KEY)) || legacyPassword(legacy),
 		lastConnected: Date.now(),
 	});
 }

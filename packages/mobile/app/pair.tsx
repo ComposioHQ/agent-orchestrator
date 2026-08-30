@@ -17,7 +17,7 @@ import type { Theme } from "../lib/theme";
 import { haptics } from "../lib/haptics";
 import { clearOnboardingSkipped } from "../lib/onboardingStore";
 import { pairFromCode } from "../lib/pairFlow";
-import { parsePairingCode } from "../lib/pairingCode";
+import { isLegacyPairingCode, parsePairingCode } from "../lib/pairingCode";
 import { saveHost } from "../lib/hosts";
 import { probeEndpoint } from "../lib/connectRuntime";
 import { raceEndpoints } from "../lib/race";
@@ -84,7 +84,10 @@ export default function PairScreen() {
 		if (!parsePairingCode(data)) {
 			if (rejected.current !== data) {
 				rejected.current = data;
-				setFailure(describeConnectionFailure("not-ao-qr", { host: "", port: "", platform: Platform.OS }));
+				// A v1 code is a recognisable thing, not noise: say what to do
+				// about it rather than claiming it is not a pairing code.
+				const reason = isLegacyPairingCode(data) ? "outdated-desktop" : "not-ao-qr";
+				setFailure(describeConnectionFailure(reason, { host: "", port: "", platform: Platform.OS }));
 			}
 			return;
 		}

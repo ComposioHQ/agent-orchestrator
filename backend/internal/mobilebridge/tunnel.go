@@ -432,6 +432,22 @@ func CloudflaredArgs(localPort, metricsPort int) []string {
 	}
 }
 
+// RemoveOwnTunnelPIDFile clears the recorded pid, but only while it is still
+// the one this runner wrote.
+//
+// ManagedTunnel.Start cancels the previous runner and starts its replacement
+// without waiting — deliberately, because a blocking stop deadlocked the
+// disable request. The replacement therefore records its pid while the old
+// runner is still unwinding, and an unconditional delete on the way out erases
+// the live connector's record. Boot reaping then has nothing to find, and that
+// connector can never be cleaned up.
+func RemoveOwnTunnelPIDFile(path string, pid int) error {
+	if recorded, ok := ReadTunnelPID(path); ok && recorded != pid {
+		return nil // A replacement already owns the file; not ours to delete.
+	}
+	return RemoveTunnelPIDFile(path)
+}
+
 // RemoveTunnelPIDFile clears the recorded pid after a clean stop.
 func RemoveTunnelPIDFile(path string) error {
 	err := os.Remove(path)

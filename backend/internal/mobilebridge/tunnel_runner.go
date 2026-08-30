@@ -104,7 +104,9 @@ func (t *TunnelRunner) runOnce(ctx context.Context) error {
 
 	waitErr := cmd.Wait()
 	t.Runtime.Exited(waitErr)
-	_ = RemoveTunnelPIDFile(t.PIDPath)
+	// Only if this runner still owns the record: a replacement started while
+	// this one was unwinding will already have written its own pid there.
+	_ = RemoveOwnTunnelPIDFile(t.PIDPath, cmd.Process.Pid)
 	if waitErr != nil && ctx.Err() == nil {
 		return waitErr
 	}

@@ -76,52 +76,37 @@ function extractCode(input: string): string | null {
 	return trimmed;
 }
 
-/** A v1 code from a desktop that has not updated yet. */
-function parseLegacy(raw: string): PairingOffer | null {
+/**
+ * Whether this is a v1 code from a desktop that has not been updated.
+ *
+ * v1 is no longer accepted. Those codes predate the identity probe the race
+ * uses to verify a machine before sending it a credential, so a daemon old
+ * enough to emit one answers 404 to every probe and the race can never
+ * complete — the compatibility was advertised but unreachable in practice.
+ *
+ * Recognised, though, so the app can say "update AO on your computer" instead
+ * of "this is not a pairing code".
+ */
+export function isLegacyPairingCode(raw: string): boolean {
 	let parsed: unknown;
 	try {
-		parsed = JSON.parse(raw);
+		parsed = JSON.parse(raw.trim());
 	} catch {
-		return null;
+		return false;
 	}
-	if (typeof parsed !== "object" || parsed === null) return null;
+	if (typeof parsed !== "object" || parsed === null) return false;
 	const o = parsed as Record<string, unknown>;
-	if (o.v !== 1) return null;
-	if (typeof o.host !== "string" || o.host.length === 0) return null;
-	if (typeof o.port !== "string" && typeof o.port !== "number") return null;
-
-	const isSecure = o.secure === true;
-	return {
-		v: 2,
-		hostId: "",
-		name: o.host,
-		platform: "",
-		// Secure was only ever produced by the Tailscale pairing path; everything
-		// else was plain LAN.
-		endpoints: [
-			{
-				kind: isSecure ? "tailscale" : "lan",
-				host: o.host,
-				port: Number(o.port),
-				secure: isSecure,
-			},
-		],
-		token: typeof o.password === "string" ? o.password : "",
-	};
+	return o.v === 1 && typeof o.host === "string" && o.host.length > 0;
 }
 
 /**
- * Reads a pairing code from a deep link, an https universal link, a pasted
- * bare code, or a legacy v1 payload.
+ * Reads a pairing code from a deep link, an https universal link, or a pasted
+ * bare code. v1 payloads are not accepted — see isLegacyPairingCode.
  *
  * Returns null rather than throwing: the input is whatever a camera happened to
  * see, so anything unrecognised is simply not a pairing code.
  */
 export function parsePairingCode(input: string): PairingOffer | null {
-	// v1 travelled as raw JSON rather than an encoded payload.
-	const legacy = parseLegacy(input.trim());
-	if (legacy) return legacy;
-
 	const code = extractCode(input);
 	if (!code) return null;
 
