@@ -26,6 +26,7 @@ const closeShellTerminalListeners = new Set<() => void>();
 const closeShellTerminalShortcutStates: boolean[] = [];
 type TerminalPaneTestProps = {
 	fontSize?: number;
+	focusRequested?: boolean;
 	isFullscreen?: boolean;
 	onChangeFontSize?: (delta: number) => void;
 	onToggleFullscreen?: () => Promise<void> | void;
@@ -317,6 +318,38 @@ describe("ChatWorkspace timeline", () => {
 		expect(screen.getByTestId("chat-conversation-panel")).toHaveAttribute("inert");
 	});
 
+	it("fences new work during a drain while keeping the current turn's approval interactive", async () => {
+		const user = userEvent.setup();
+		const onDecide = vi.fn();
+		const view = render(<ChatWorkspace snapshot={idleSnapshot()} newWorkDisabled />);
+
+		expect(screen.getByTestId("chat-conversation-panel")).not.toHaveAttribute("inert");
+		expect(screen.getByLabelText("Message the agent")).toHaveAttribute("aria-disabled", "true");
+
+		const snapshot = structuredClone(chatFixture);
+		snapshot.items.push({
+			kind: "activity",
+			id: "drain-approval",
+			sequence: 99,
+			revision: 1,
+			turnId: "turn-2",
+			activityKind: "approval",
+			status: "pending",
+			summary: "Run command",
+			requestId: "drain-approval",
+			decisions: [{ id: "allow_once", label: "Allow Once", kind: "allow_once" }],
+			detail: { command: "npm test" },
+			createdAt: "2026-08-08T00:00:00Z",
+		});
+		view.rerender(
+			<ChatWorkspace snapshot={snapshot} newWorkDisabled onDecide={onDecide} />,
+		);
+
+		const approval = screen.getByRole("group", { name: "Approval request drain-approval" });
+		await user.click(within(approval).getByRole("button", { name: /Allow once/ }));
+		expect(onDecide).toHaveBeenCalledWith("drain-approval", "allow_once");
+	});
+
 	it("uses the shared session topbar chrome for workers and orchestrators", () => {
 		const view = render(<ChatWorkspace snapshot={chatFixture} sessionRole="worker" />);
 
@@ -329,7 +362,9 @@ describe("ChatWorkspace timeline", () => {
 
 		expect(screen.getByLabelText("Chat")).toHaveAttribute("data-session-role", "orchestrator");
 		expect(screen.getByTestId("session-workspace-topbar")).toBeInTheDocument();
-		expect(screen.getByTestId("session-action-region")).toBeInTheDocument();
+		const actionRegion = screen.getByTestId("session-action-region");
+		expect(actionRegion).toHaveClass("pl-2", "pr-3");
+		expect(actionRegion).not.toHaveClass("px-3");
 	});
 
 	it("clears the fixed titlebar nav when the sidebar is collapsed, like the terminal session", () => {
@@ -346,6 +381,27 @@ describe("ChatWorkspace timeline", () => {
 		expect(screen.getByTestId("session-terminal-region")).not.toHaveClass(
 			"session-topbar-titlebar-clearance-mac",
 		);
+	});
+
+	it("keeps session tab actions on the primary chat tab, like the terminal session", () => {
+		render(
+			<ChatWorkspace
+				snapshot={idleSnapshot()}
+				session={chatSession}
+				sessionTabAction={<button type="button">Session tab action</button>}
+				headerActions={<button type="button">Workspace action</button>}
+			/>,
+		);
+
+		const terminalRegion = screen.getByTestId("session-terminal-region");
+		expect(terminalRegion).toContainElement(screen.getByRole("tab", { name: /^Codex/ }));
+		expect(terminalRegion).toContainElement(screen.getByRole("button", { name: "Session tab action" }));
+		expect(screen.getByTestId("session-tab-action")).toContainElement(
+			screen.getByRole("button", { name: "Session tab action" }),
+		);
+		const actionRegion = screen.getByTestId("session-action-region");
+		expect(actionRegion).toContainElement(screen.getByRole("button", { name: "Workspace action" }));
+		expect(actionRegion).not.toContainElement(screen.getByRole("button", { name: "Session tab action" }));
 	});
 
 	it("leaves new-terminal and display controls out of the chat strip, like the terminal session", () => {
@@ -564,7 +620,7 @@ describe("ChatWorkspace timeline", () => {
 			name: "Approval request approval-1",
 		});
 		const composer = approval.closest("form");
-		expect(composer).toHaveClass("cursor-chat-composer", "border-border-strong");
+		expect(composer).toHaveClass("cursor-chat-composer", "border");
 		expect(screen.getByRole("log", { name: "Conversation" })).not.toContainElement(approval);
 		expect(screen.queryByLabelText("Message the agent")).not.toBeInTheDocument();
 		expect(within(approval).queryByText("Terminal")).not.toBeInTheDocument();
@@ -1652,7 +1708,7 @@ describe("ChatWorkspace message actions", () => {
 		expect(screen.getByRole("textbox", { name: "Edit message" })).toBeVisible();
 	});
 
-	it("navigates prompt branches and explains that files are unchanged", async () => {
+	it("navigates prompt branches without a persistent context notice", async () => {
 		const user = userEvent.setup();
 		const onActivateBranch = vi.fn(async () => undefined);
 		const snapshot = {
@@ -1676,20 +1732,16 @@ describe("ChatWorkspace message actions", () => {
 		render(<ChatWorkspace snapshot={snapshot} onActivateBranch={onActivateBranch} />);
 
 		expect(screen.getByText("2 / 3")).toBeVisible();
-		expect(screen.getByRole("status")).toHaveAttribute("aria-live", "polite");
-		expect(screen.getByRole("status")).toHaveAttribute("aria-atomic", "true");
+		expect(screen.queryByText(/Reconstructed context/)).not.toBeInTheDocument();
 		await user.click(
 			screen.getByRole("button", {
 				name: "Previous conversation branch",
 			}),
 		);
 		expect(onActivateBranch).toHaveBeenCalledWith("branch-previous");
-		expect(screen.getByText(/Reconstructed context/)).toHaveTextContent(
-			"Reconstructed context · Text messages were replayed. Some text was omitted to fit the context limit. Tool activity and workspace history were not replayed; current worktree files remain unchanged.",
-		);
 	});
 
-	it("labels a provider-native branch as exact context", () => {
+	it("does not label a provider-native branch as exact context", () => {
 		render(
 			<ChatWorkspace
 				snapshot={{
@@ -1703,29 +1755,7 @@ describe("ChatWorkspace message actions", () => {
 			/>,
 		);
 
-		expect(screen.getByText(/Exact context/)).toHaveTextContent(
-			"Exact context · Provider history was preserved; current worktree files remain unchanged.",
-		);
-	});
-
-	it("localizes the active branch fidelity and truncation notice", async () => {
-		await act(() => appI18n.changeLanguage("zh-CN"));
-		render(
-			<ChatWorkspace
-				snapshot={{
-					...idleSnapshot(),
-					branchedFromEarlierMessage: true,
-					branchMaterialization: {
-						strategy: "approximate_context",
-						replayTruncated: true,
-					},
-				}}
-			/>,
-		);
-
-		expect(screen.getByRole("status")).toHaveTextContent(
-			"重建上下文 · 已重放文本消息。为符合上下文限制，部分文本已省略。未重放工具活动和工作区历史；当前工作树文件保持不变。",
-		);
+		expect(screen.queryByText(/Exact context/)).not.toBeInTheDocument();
 	});
 
 	it("copies an assistant message as the markdown the agent wrote", async () => {
@@ -1779,6 +1809,33 @@ describe("ChatWorkspace reviewer tabs", () => {
 		...reviewerTerminal,
 		sessionId: chatSession.id,
 	};
+
+	it("makes each full-height tile its semantic click target", () => {
+		const onOpenReviewerTerminal = vi.fn();
+		render(
+			<ChatWorkspace
+				snapshot={idleSnapshot()}
+				session={chatSession}
+				reviewerTerminal={reviewerTerminal}
+				onOpenReviewerTerminal={onOpenReviewerTerminal}
+			/>,
+		);
+
+		const chatTab = screen.getByRole("tab", { name: /^Codex/ });
+		const reviewerTab = screen.getByRole("tab", { name: "Reviewer" });
+		expect(chatTab).toHaveClass("px-2", "cursor-pointer");
+		expect(chatTab.closest("[data-terminal-tab-frame]")).toHaveClass("self-stretch");
+		expect(reviewerTab).toHaveClass(
+			"self-stretch",
+			"px-3",
+			"cursor-pointer",
+			"focus-visible:outline-2",
+		);
+		expect(reviewerTab.querySelector("img")).toBeInTheDocument();
+
+		fireEvent.click(reviewerTab);
+		expect(onOpenReviewerTerminal).toHaveBeenCalledWith(reviewerTerminal);
+	});
 
 	it("keeps the chat draft, attachments, edit, and scroll state mounted while Reviewer is selected", async () => {
 		const user = userEvent.setup();
@@ -1848,6 +1905,7 @@ describe("ChatWorkspace reviewer tabs", () => {
 		};
 		const view = render(<ChatWorkspace {...common} reviewerTerminal={reviewerTerminal} />);
 		expect(screen.getByTestId("chat-reviewer-terminal")).toBeInTheDocument();
+		expect(screen.getByTestId("chat-reviewer-terminal")).not.toHaveClass("pl-2");
 
 		view.rerender(<ChatWorkspace {...common} reviewerTerminal={undefined} />);
 
@@ -1906,7 +1964,7 @@ describe("ChatWorkspace reviewer tabs", () => {
 		};
 		const view = render(<ChatWorkspace {...common} />);
 		const chatTab = screen.getByRole("tab", {
-			name: "Codex",
+			name: /^Codex/,
 		});
 		const reviewerTab = screen.getByRole("tab", { name: "Reviewer" });
 		expect(chatTab).toHaveAttribute("tabindex", "0");
@@ -1930,7 +1988,7 @@ describe("ChatWorkspace reviewer tabs", () => {
 
 		view.rerender(<ChatWorkspace {...common} reviewerTarget={reviewerTarget} />);
 		const activeReviewerTab = screen.getByRole("tab", { name: "Reviewer" });
-		expect(screen.getByRole("tab", { name: "Codex" })).toHaveAttribute(
+		expect(screen.getByRole("tab", { name: /^Codex/ })).toHaveAttribute(
 			"tabindex",
 			"-1",
 		);
@@ -1939,7 +1997,7 @@ describe("ChatWorkspace reviewer tabs", () => {
 		activeReviewerTab.focus();
 		fireEvent.keyDown(activeReviewerTab, { key: "Home" });
 		expect(onSelectChat).toHaveBeenCalledOnce();
-		expect(screen.getByRole("tab", { name: "Codex" })).toHaveFocus();
+		expect(screen.getByRole("tab", { name: /^Codex/ })).toHaveFocus();
 
 		onSelectChat.mockClear();
 		activeReviewerTab.focus();
@@ -2022,6 +2080,7 @@ describe("ChatWorkspace shell tabs", () => {
 			/>,
 		);
 		expect(screen.getByTestId("chat-shell-terminal")).toBeInTheDocument();
+		expect(screen.getByTestId("chat-shell-terminal")).not.toHaveClass("pl-2");
 		expect(screen.getByTestId("chat-conversation-panel")).toHaveAttribute("hidden");
 		expect(screen.getByTestId("chat-conversation-panel")).toHaveAttribute("inert");
 
@@ -2045,6 +2104,7 @@ describe("ChatWorkspace shell tabs", () => {
 			/>,
 		);
 		expect(terminalPaneState.props).toMatchObject({
+			focusRequested: true,
 			terminalTarget: shellTarget("shell-2"),
 		});
 	});
@@ -2107,7 +2167,7 @@ describe("ChatWorkspace shell tabs", () => {
 			/>,
 		);
 
-		const workerTab = screen.getByRole("tab", { name: "Codex" });
+		const workerTab = screen.getByRole("tab", { name: /^Codex/ });
 		workerTab.focus();
 		fireEvent.keyDown(workerTab, { key: "Tab", ctrlKey: true });
 

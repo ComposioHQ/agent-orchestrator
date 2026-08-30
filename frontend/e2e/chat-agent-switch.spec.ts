@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { installFakeAgent } from "./support/fake-bridge";
+import { openSwitchAgentDialog } from "./support/open-switch-agent-menu";
 
 const projectId = "chat-agent-switch";
 const sessionId = "chat-switch-worker";
@@ -80,8 +81,5 @@ test("chat session without an agent terminal exposes the switch-agent dialog @T0
 
 	await page.goto(`/#/projects/${projectId}/sessions/${sessionId}`);
 	await expect(page.getByRole("region", { name: "Chat" })).toBeVisible();
-	const switchAgent = page.getByRole("button", { name: "Switch agent", exact: true });
-	await expect(switchAgent).toBeVisible();
-	await switchAgent.click();
-	await expect(page.getByRole("dialog", { name: "Switch agent" })).toBeVisible();
+	await openSwitchAgentDialog(page);
 });

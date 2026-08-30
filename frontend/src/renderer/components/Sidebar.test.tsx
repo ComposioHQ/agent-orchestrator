@@ -34,12 +34,17 @@ type DragOverTestEvent = {
 
 const {
 	checkUpdateMock,
+	cloudGateState,
 	cloudSessionState,
+	compactRailCanGoBack,
+	compactRailCanGoForward,
 	dragEnds,
 	dragOvers,
 	dragStarts,
 	downloadUpdateMock,
 	getMock,
+	historyBackMock,
+	historyForwardMock,
 	navigateMock,
 	mockParams,
 	renameSessionMock,
@@ -48,6 +53,7 @@ const {
 	commandPaletteEnabled,
 } = vi.hoisted(
 	() => ({
+		cloudGateState: { cloudEnabled: true, localEnabled: true, client: "" },
 		cloudSessionState: {
 			configured: false,
 			session: null as null | { user: { email: string } },
@@ -67,6 +73,10 @@ const {
 		downloadUpdateMock: vi.fn(),
 		checkUpdateMock: vi.fn(),
 		commandPaletteEnabled: { current: true },
+		compactRailCanGoBack: { current: false },
+		compactRailCanGoForward: { current: false },
+		historyBackMock: vi.fn(),
+		historyForwardMock: vi.fn(),
 	}),
 );
 
@@ -93,20 +103,40 @@ vi.mock("@dnd-kit/core", async (importOriginal) => {
 vi.mock("../lib/rename-session", () => ({ renameSession: renameSessionMock }));
 vi.mock("../lib/spawn-orchestrator", () => ({ spawnOrchestrator: spawnMock }));
 vi.mock("../lib/cloud-session", () => ({ useCloudSession: () => cloudSessionState }));
+vi.mock("../hooks/useCloudGate", () => ({ useCloudGate: () => cloudGateState }));
 vi.mock("../hooks/useCommandPaletteEnabled", () => ({
 	useCommandPaletteEnabled: () => commandPaletteEnabled.current,
+}));
+
+vi.mock("../lib/platform", () => ({
+	isLinuxPlatform: () => false,
+	isMacPlatform: () => true,
+	isWindowsPlatform: () => false,
 }));
 
 vi.mock("@tanstack/react-router", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("@tanstack/react-router")>();
 	return {
 		...actual,
+		useCanGoBack: () => compactRailCanGoBack.current,
 		useNavigate: () => navigateMock,
 		useParams: () => ({ ...mockParams }),
+		useRouter: () => ({
+			history: {
+				back: historyBackMock,
+				forward: historyForwardMock,
+				location: { state: { __TSR_index: 0 } },
+				subscribe: vi.fn(() => () => undefined),
+			},
+		}),
 		useRouterState: ({ select }: { select: (state: { location: { pathname: string } }) => unknown }) =>
 			select({ location: { pathname: "/" } }),
 	};
 });
+
+vi.mock("./TitlebarNav", () => ({
+	useCanGoForward: () => compactRailCanGoForward.current,
+}));
 
 vi.mock("../lib/bridge", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("../lib/bridge")>();
@@ -209,6 +239,7 @@ function renderSidebar({
 	workspaces = [workspace],
 	initialOpen = true,
 	autoCompact = false,
+	topbarOffset = "toolbar",
 	expandedProjectIds,
 }: {
 	onCloneProject?: CloneProjectHandler;
@@ -219,6 +250,7 @@ function renderSidebar({
 	workspaces?: WorkspaceSummary[];
 	initialOpen?: boolean;
 	autoCompact?: boolean;
+	topbarOffset?: "toolbar" | "titlebar" | "trafficLights" | "session";
 	expandedProjectIds?: string[];
 } = {}) {
 	// Most legacy sidebar tests exercise session rows and assume their fixture
@@ -251,6 +283,7 @@ function renderSidebar({
 			<SidebarProvider defaultOpen={initialOpen}>
 				<Sidebar
 					autoCompact={autoCompact}
+					topbarOffset={topbarOffset}
 					onCloneProject={onCloneProject}
 					onCreateProject={onCreateProject}
 					onInitializeProject={onInitializeProject}
@@ -316,11 +349,18 @@ beforeEach(() => {
 	dragStarts.clear();
 	document.documentElement.style.removeProperty("--ao-sidebar-w");
 	commandPaletteEnabled.current = true;
+	compactRailCanGoBack.current = false;
+	compactRailCanGoForward.current = false;
+	cloudGateState.cloudEnabled = true;
+	cloudGateState.localEnabled = true;
+	cloudGateState.client = "";
 	cloudSessionState.configured = false;
 	cloudSessionState.session = null;
 	cloudSessionState.status = "unauthenticated";
 	cloudSessionState.signIn.mockReset();
 	cloudSessionState.signOut.mockReset().mockResolvedValue(undefined);
+	historyBackMock.mockReset();
+	historyForwardMock.mockReset();
 	useUiStore.setState({ isCommandPaletteOpen: false, settingsModal: null });
 	getMock.mockReset();
 	getMock.mockResolvedValue({
@@ -355,12 +395,16 @@ afterEach(() => {
 });
 
 describe("Sidebar", () => {
-	it("does not show cloud sign-in controls while signed out", () => {
+	it("shows the cloud sign-in entry point while signed out", () => {
 		cloudSessionState.configured = true;
 		renderSidebar();
 
-		expect(screen.queryByLabelText("Sign in to AO Cloud")).not.toBeInTheDocument();
-		expect(screen.queryByText("Sign in")).not.toBeInTheDocument();
+		const signInControls = screen.getAllByLabelText("Sign in to AO Cloud");
+		expect(signInControls).toHaveLength(2);
+		const activeControl = signInControls.find((control) => control.tabIndex === 0);
+		expect(activeControl).toBeDefined();
+		fireEvent.click(activeControl!);
+		expect(cloudSessionState.signIn).toHaveBeenCalledOnce();
 	});
 
 	it("keeps cloud account controls visible while signed in", () => {
@@ -370,6 +414,16 @@ describe("Sidebar", () => {
 		renderSidebar();
 
 		expect(screen.getAllByLabelText("Signed in as user@example.com")).toHaveLength(2);
+	});
+
+	it("hides cloud account controls when the daemon reports the cloud offering off", () => {
+		cloudGateState.cloudEnabled = false;
+		cloudSessionState.configured = true;
+		cloudSessionState.status = "authenticated";
+		cloudSessionState.session = { user: { email: "user@example.com" } };
+		renderSidebar();
+
+		expect(screen.queryByLabelText("Signed in as user@example.com")).not.toBeInTheDocument();
 	});
 
 	it("suppresses focus chrome without removing keyboard focusability", () => {
@@ -563,7 +617,7 @@ describe("Sidebar", () => {
 		expect(screen.getByLabelText("Kill session")).toHaveProperty("tabIndex", 0);
 	});
 
-	it("keeps the message age visible while the label yields only the hover action space", () => {
+	it("fades the message age out in favor of the overlaid hover actions", () => {
 		const lastUserMessageAt = "2026-06-29T23:55:00Z";
 		renderSidebar({
 			workspaces: [{ ...workspace, sessions: [{ ...session, lastUserMessageAt }] }],
@@ -575,14 +629,16 @@ describe("Sidebar", () => {
 		const actionButtons = screen.getByLabelText("Pin session").parentElement;
 		const time = actions?.querySelector("time");
 
-		expect(openSession).toHaveClass("pr-[34px]");
+		expect(openSession).toHaveClass("pr-[36px]");
 		expect(openSession).toHaveClass(
-			"group-hover/session-row:pr-[78px]",
-			"group-focus-within/session-row:pr-[78px]",
+			"group-hover/session-row:pr-[50px]",
+			"group-focus-within/session-row:pr-[50px]",
 		);
 		expect(label).toHaveClass("min-w-0", "flex-1", "truncate");
 		expect(actions).toHaveAttribute("data-session-actions");
 		expect(actionButtons).toHaveClass(
+			"absolute",
+			"right-0.5",
 			"opacity-0",
 			"group-hover/session-row:pointer-events-auto",
 			"group-hover/session-row:opacity-100",
@@ -590,7 +646,13 @@ describe("Sidebar", () => {
 			"group-focus-within/session-row:opacity-100",
 		);
 		expect(time).toHaveAttribute("datetime", lastUserMessageAt);
-		expect(time).not.toHaveClass("opacity-0");
+		expect(time).toHaveClass(
+			"absolute",
+			"right-1.5",
+			"opacity-100",
+			"group-hover/session-row:opacity-0",
+			"group-focus-within/session-row:opacity-0",
+		);
 		expect(openSession).toHaveClass("pl-1.5");
 		expect(openSession.closest("li")).toHaveClass("pl-0.5");
 	});
@@ -1560,14 +1622,35 @@ describe("Sidebar", () => {
 		expect(document.documentElement.style.getPropertyValue("--ao-sidebar-w")).toBe(`${SIDEBAR_MIN_WIDTH}px`);
 	});
 
-	it("keeps an icon navigation rail when workspace pressure compacts the sidebar", () => {
-		renderSidebar({ autoCompact: true, initialOpen: false });
+	it("keeps the compact icon rail below the macOS traffic-light band", () => {
+		renderSidebar({ autoCompact: true, initialOpen: false, topbarOffset: "trafficLights" });
 
 		const sidebar = document.querySelector('[data-slot="sidebar"][data-state="collapsed"]');
 		expect(sidebar).toHaveAttribute("data-collapsible", "icon");
+		const compactToggle = document.querySelector('[data-slot="sidebar-header"] button[aria-label="Expand sidebar"]');
+		expect(compactToggle).toBeInTheDocument();
+		expect(compactToggle?.querySelector("svg")).toBeInTheDocument();
+		expect(screen.queryByText("Connect Mobile")).not.toBeVisible();
+		expect(screen.queryByText("Settings")).not.toBeVisible();
+		expect(document.querySelector('[data-slot="sidebar-container"]')).toHaveAttribute(
+			"data-topbar-offset",
+			"trafficLights",
+		);
 		expect(document.querySelector('[data-slot="sidebar-gap"]')).toHaveStyle({
 			width: "var(--sidebar-width-icon)",
 		});
+	});
+
+	it("keeps back and forward accessible from the compact rail on macOS/Linux", async () => {
+		compactRailCanGoBack.current = true;
+		compactRailCanGoForward.current = true;
+		renderSidebar({ autoCompact: true, initialOpen: false, topbarOffset: "trafficLights" });
+
+		await userEvent.click(screen.getByRole("button", { name: "Go back" }));
+		await userEvent.click(screen.getByRole("button", { name: "Go forward" }));
+
+		expect(historyBackMock).toHaveBeenCalledTimes(1);
+		expect(historyForwardMock).toHaveBeenCalledTimes(1);
 	});
 
 	it("flushes any queued rAF frame on pointer-up and persists the clamped width", async () => {

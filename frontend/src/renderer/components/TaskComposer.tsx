@@ -15,6 +15,9 @@ import { captureRendererEvent } from "../lib/telemetry";
 import { agentsQueryKey, agentsQueryOptions, refreshAgentsIfStale } from "../hooks/useAgentsQuery";
 import { type FileAttachmentPayload, useFileAttachments } from "../hooks/useFileAttachments";
 import { useSettings } from "../hooks/useSettings";
+import { useCloudCp } from "../hooks/useCloudCp";
+import { useCloudOrg } from "../hooks/useCloudOrg";
+import { cloudSessionsQueryKey, useCloudProjectsQuery } from "../hooks/useWorkspaceQuery";
 import {
 	agentModelsQueryKey,
 	agentModelsQueryOptions,
@@ -102,7 +105,45 @@ export function TaskComposer({
 		clear: clearAttachments,
 		toSettledPayload,
 	} = useFileAttachments();
-	const createTask = useCallback(
+	// Cloud vs local is decided here and nowhere else: a cloud project routes task
+	// creation to the control plane (which provisions a sandbox), while a local
+	// project keeps the existing daemon flow untouched.
+	const { client: cloudClient } = useCloudCp();
+	const { org: cloudOrg } = useCloudOrg();
+	const cloudProjects = useCloudProjectsQuery();
+	const isCloudProject =
+		Boolean(projectId) && (cloudProjects.data ?? []).some((project) => project.id === projectId);
+	// A cloud project is unknown to the local daemon, so the local model catalog
+	// must be queried agent-level (no project scope); otherwise the request 404s
+	// and the model dropdown spins forever. Local projects keep their scope.
+	const modelsProjectId = isCloudProject ? "" : (projectId ?? "");
+
+	const createCloudTask = useCallback(
+		async (input: CreateTaskInput): Promise<string> => {
+			void captureRendererEvent("ao.renderer.task_create_requested", { project_id: input.projectId });
+			if (!cloudOrg?.id) throw new Error(t("newTask.unableToStart"));
+			try {
+				const { session } = await cloudClient.createSession(cloudOrg.id, {
+					projectId: input.projectId,
+					kind: "worker",
+					harness: input.agent ?? "claude-code",
+					displayName: input.brief.trim().slice(0, 80) || (input.agent ?? "claude-code"),
+					prompt: input.brief,
+				});
+				// The control plane provisions the sandbox asynchronously; surface the
+				// new session on the board immediately.
+				void queryClient.invalidateQueries({ queryKey: cloudSessionsQueryKey });
+				void captureRendererEvent("ao.renderer.task_create_succeeded", { project_id: input.projectId });
+				return session.id;
+			} catch (err) {
+				void captureRendererEvent("ao.renderer.task_create_failed", { project_id: input.projectId });
+				throw err instanceof Error ? err : new Error(t("newTask.unableToStart"));
+			}
+		},
+		[cloudClient, cloudOrg, queryClient, t],
+	);
+
+	const createLocalTask = useCallback(
 		async (input: CreateTaskInput): Promise<string> => {
 			void captureRendererEvent("ao.renderer.task_create_requested", { project_id: input.projectId });
 			try {
@@ -136,9 +177,17 @@ export function TaskComposer({
 		[queryClient, t],
 	);
 
+	const createTask = useCallback(
+		(input: CreateTaskInput): Promise<string> =>
+			isCloudProject ? createCloudTask(input) : createLocalTask(input),
+		[isCloudProject, createCloudTask, createLocalTask],
+	);
+
 	const projectQuery = useQuery({
+		// A cloud project lives in the control plane, not the local daemon, so this
+		// local lookup would 404 (PROJECT_NOT_FOUND); skip it for cloud projects.
 		queryKey: ["project", projectId],
-		enabled: Boolean(projectId),
+		enabled: Boolean(projectId) && !isCloudProject,
 		queryFn: async () => {
 			const { data, error: apiError } = await apiClient.GET("/api/v1/projects/{id}", {
 				params: { path: { id: projectId ?? "" } },
@@ -173,15 +222,15 @@ export function TaskComposer({
 	const agentCatalog = agentsQuery.data;
 
 	// Shares the picker's query key, so this is the same fetch, not a second one.
-	const modelCatalogQuery = useQuery(agentModelsQueryOptions(selectedAgent, projectId ?? ""));
+	const modelCatalogQuery = useQuery(agentModelsQueryOptions(selectedAgent, modelsProjectId));
 	const revalidationQuery = useQuery({
 		queryKey: [
 			"agent-model-revalidation",
 			selectedAgent,
-			projectId ?? "",
+			modelsProjectId,
 			modelCatalogQuery.data?.validatedAt ?? "",
 		],
-		queryFn: () => revalidateAgentModels(selectedAgent, projectId ?? ""),
+		queryFn: () => revalidateAgentModels(selectedAgent, modelsProjectId),
 		enabled: selectedAgent !== "" && modelCatalogQuery.data?.refreshRecommended === true,
 		staleTime: Number.POSITIVE_INFINITY,
 		retry: false,
@@ -189,11 +238,11 @@ export function TaskComposer({
 	useEffect(() => {
 		if (revalidationQuery.data) {
 			queryClient.setQueryData(
-				agentModelsQueryKey(selectedAgent, projectId ?? ""),
+				agentModelsQueryKey(selectedAgent, modelsProjectId),
 				revalidationQuery.data,
 			);
 		}
-	}, [projectId, queryClient, revalidationQuery.data, selectedAgent]);
+	}, [modelsProjectId, queryClient, revalidationQuery.data, selectedAgent]);
 	const modelWarning =
 		(revalidationQuery.isError
 			? revalidationQuery.error instanceof Error
@@ -328,7 +377,7 @@ export function TaskComposer({
 				authorized: agentCatalog?.authorized,
 				installed: agentCatalog?.installed,
 				supported: agentCatalog?.supported,
-				disabled: agentsQuery.isFetching && agentCatalog === undefined,
+				disabled: isSubmitting || (agentsQuery.isFetching && agentCatalog === undefined),
 				onChange: (value) => {
 					setAgent(value);
 					setAgentTouched(true);
@@ -341,6 +390,7 @@ export function TaskComposer({
 				agentId: selectedAgent,
 				agentLabel: selectedAgentLabel,
 				projectId: projectId ?? "",
+				disabled: isSubmitting,
 				value: model,
 				mode,
 				catalog: modelCatalog,
@@ -398,6 +448,7 @@ function TaskModelPicker({
 	agentId,
 	agentLabel,
 	catalog,
+	disabled,
 	fetching,
 	loading,
 	value,
@@ -436,6 +487,7 @@ function TaskModelPicker({
 		return (
 			<SettingsOptionMenu
 				aria-label={t("newTask.model")}
+				disabled={disabled}
 				value={mode || "__default__"}
 				options={options}
 				triggerClassName="composer-chip composer-toolbar-option w-full justify-between"
@@ -473,6 +525,7 @@ function TaskModelPicker({
 				value={value}
 				models={displayModels}
 				allowCustom={catalog.allowCustom}
+				disabled={disabled}
 				emptyLabel={noOverrideLabel}
 				onChange={selectCatalogModel}
 				onCustom={selectCustomModel}
@@ -503,7 +556,7 @@ function TaskModelPicker({
 					!hasCatalog && "rounded-r-md!",
 				)}
 				value={value}
-				disabled={agentId === ""}
+				disabled={disabled || agentId === ""}
 				onChange={(event) => onModelChange(event.target.value)}
 				placeholder={fetching ? t("settings.models.loading") : noOverrideLabel}
 			/>
@@ -514,6 +567,7 @@ function TaskModelPicker({
 					value={value}
 					models={displayModels}
 					allowCustom={catalog.allowCustom}
+					disabled={disabled}
 					emptyLabel={noOverrideLabel}
 					onChange={selectCatalogModel}
 					onCustom={selectCustomModel}

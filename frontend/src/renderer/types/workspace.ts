@@ -1,9 +1,11 @@
 import { attentionZone as presentationAttentionZone } from "../lib/session-presentation";
 import {
 	AGENT_OPTIONS,
+	toKanbanColumn,
 	toSessionActivity,
 	toSessionStatus,
 	type AgentId,
+	type KanbanColumn,
 	type SessionActivity,
 	type SessionActivityState,
 	type SessionStatus,
@@ -11,8 +13,8 @@ import {
 
 import type { ReviewerHarnessId } from "../lib/reviewer-harnesses";
 
-export { toSessionActivity, toSessionStatus };
-export type { SessionActivity, SessionActivityState, SessionStatus };
+export { toKanbanColumn, toSessionActivity, toSessionStatus };
+export type { KanbanColumn, SessionActivity, SessionActivityState, SessionStatus };
 
 export type AgentProvider = AgentId | "fake";
 
@@ -82,13 +84,31 @@ export type WorkspaceSession = {
 	status: SessionStatus;
 	/** Stack-aware PR context derived by the daemon independently of runtime activity. */
 	scmStatus?: SessionStatus;
+	/**
+	 * Board lane derived by the daemon from durable delivery facts (PR
+	 * lifecycle, review runs, review ownership). `validating` and
+	 * `needs_review` are the same review-feedback loop seen from either side:
+	 * AO turning it, or a person taking the next turn. The board groups by this
+	 * and never re-derives a lane from {@link status}. For a daemon too old to
+	 * send one, {@link toKanbanColumn} keeps the placement the status already
+	 * implied rather than inventing a new one.
+	 */
+	kanbanColumn?: KanbanColumn;
+	/**
+	 * Phrase the daemon derived for what is happening inside
+	 * {@link kanbanColumn} — "Reviewing", "Fixing CI failures", "Needs human
+	 * review". It arrives renderable, so the UI prints it rather than mapping it.
+	 * Absent from a daemon too old to send one, which keeps the label
+	 * {@link status} already produced.
+	 */
+	displayStatus?: string;
 	/** Durable runtime fact from the daemon; independent of the derived SCM-aware status. */
 	isTerminated?: boolean;
 	/** User preference to tear down this session when its PR set completes through a merge. */
 	terminateOnPrMerge?: boolean;
 	/** Whether SCM review feedback is automatically injected into the worker. */
 	autoInjectReview?: boolean;
-	/** Default captured by newly created PRs for automatic CI-failure injection. */
+	/** Whether CI failures are automatically injected into the worker. */
 	autoInjectCI?: boolean;
 	/** ISO timestamp from the daemon — used for relative time in the inspector. */
 	createdAt?: string;
@@ -122,6 +142,12 @@ export type WorkspaceSession = {
 	 * done server-side, so {@link status} already reflects all of these.
 	 */
 	prs: PullRequestFacts[];
+	/**
+	 * Present only for sessions that run in a control-plane sandbox. Carries the
+	 * org the session is scoped to so its terminal can be opened against the CP;
+	 * absent for local sessions, which route through the local daemon.
+	 */
+	cloud?: { orgId: string };
 };
 
 // Tracker providers whose ids the intake daemon stamps sessions with, in
@@ -268,7 +294,13 @@ export type { AttentionZone } from "../lib/session-presentation";
 export type WorkspaceSummary = {
 	id: string;
 	name: string;
-	kind?: ProjectKind;
+	/**
+	 * Discriminator for where the project lives. Local projects carry the
+	 * daemon's ProjectKind (or undefined for older daemons); projects hosted by
+	 * the AO cloud control plane carry "cloud" — branch on `kind === "cloud"`.
+	 */
+	kind?: ProjectKind | "cloud";
+	/** Local checkout path; empty string for cloud projects (no local folder). */
 	path: string;
 	workspaceRepos?: WorkspaceRepoSummary[];
 	type?: "main" | "worktree";

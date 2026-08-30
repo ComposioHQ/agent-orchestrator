@@ -756,7 +756,7 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        /** Set the automatic CI-failure injection default for new session PRs */
+        /** Set automatic CI-failure injection for a session and its PRs */
         patch: operations["setSessionAutoInjectCI"];
         trace?: never;
     };
@@ -1049,6 +1049,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Remove one queued message without stopping the running turn */
+        post: operations["cancelQueuedSessionConversationTurn"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/edit": {
         parameters: {
             query?: never;
@@ -1060,6 +1077,23 @@ export interface paths {
         put?: never;
         /** Branch before and replace an earlier human prompt */
         post: operations["editSessionConversationMessage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/queue/edit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Rewrite one queued message before it dispatches */
+        post: operations["editQueuedSessionConversationTurn"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1668,6 +1702,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/settings/cloud-offering": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Turn the cloud offering on or off for this machine */
+        patch: operations["updateCloudOffering"];
+        trace?: never;
+    };
     "/api/v1/settings/session-interface": {
         parameters: {
             query?: never;
@@ -1763,7 +1814,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List compact token usage for session cards */
+        /** List compact token and estimated cost usage for session cards */
         get: operations["listCompactSessionUsage"];
         put?: never;
         post?: never;
@@ -1780,7 +1831,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get detailed token usage for one session */
+        /** Get detailed token and estimated cost usage for one session */
         get: operations["getSessionUsage"];
         put?: never;
         post?: never;
@@ -1885,12 +1936,6 @@ export interface components {
         AgentSwitchResponse: {
             switch: components["schemas"]["AgentSwitch"];
         };
-        AnthropicUsageDetailsResponse: {
-            anthropicCacheCreation1hInputTokens: null | number;
-            anthropicCacheCreation5mInputTokens: null | number;
-            anthropicCacheCreationInputTokens: null | number;
-            anthropicDirectUncachedInputTokens: null | number;
-        };
         AttachmentInput: {
             data: string;
             mimeType?: string;
@@ -1957,6 +2002,7 @@ export interface components {
             tokensBefore?: number;
         };
         CompactSessionUsageResponse: {
+            estimatedCost: null | components["schemas"]["EstimatedCostResponse"];
             incomplete: boolean;
             /** @description Canonical input plus output. Null when either component is unknown. */
             processedTokens: null | number;
@@ -2006,11 +2052,15 @@ export interface components {
             /** Format: date-time */
             createdAt: string;
             displayName?: string;
+            /** @enum {string} */
+            displayStatus: "Working" | "Blocked" | "Exited" | "No signal" | "Awaiting PR" | "Fixing CI failures" | "Addressing comments" | "Needs review" | "Review scheduled" | "Reviewing" | "Review pending" | "Draft" | "CI failing" | "Commented" | "Changes requested" | "Needs human review" | "Mergeable" | "Approved" | "Merged" | "Closed without merge" | "Terminated";
             harness?: string;
             id: string;
             isPinned: boolean;
             isTerminated: boolean;
             issueId?: string;
+            /** @enum {string} */
+            kanbanColumn: "building" | "validating" | "needs_review" | "ready" | "archive";
             kind: string;
             /** Format: date-time */
             lastUserMessageAt?: null | string;
@@ -2040,6 +2090,9 @@ export interface components {
         };
         ControllersSetSessionAutoReviewRequest: {
             enabled: boolean;
+        };
+        ControllersUpdateCloudOfferingRequest: {
+            enabled: null | boolean;
         };
         ConversationAccountPayload: {
             authMode?: string;
@@ -2258,7 +2311,7 @@ export interface components {
             rolledBack?: boolean;
             startedAt?: null | string;
             /** @enum {string} */
-            state: "queued" | "running" | "completed" | "recovered" | "interrupted" | "failed";
+            state: "queued" | "running" | "completed" | "recovered" | "interrupted" | "failed" | "cancelled";
         };
         ConversationTurnSettingsPayload: {
             /** @enum {string} */
@@ -2353,6 +2406,29 @@ export interface components {
             /** @enum {string} */
             state?: "queued" | "running" | "completed" | "recovered" | "interrupted" | "failed";
             turnId?: string;
+        };
+        EditQueuedConversationMessageRequest: {
+            text: string;
+        };
+        EstimatedCostResponse: {
+            /** Format: int64 */
+            cachedInputNanos: null | number;
+            /** @enum {string} */
+            coverage: "complete" | "partial";
+            /**
+             * Format: int64
+             * @description Every non-cache-read input charge, cache writes included.
+             */
+            inputNanos: null | number;
+            /** Format: int64 */
+            outputNanos: null | number;
+            /**
+             * @description Whether contributing billing providers were detected, inferred from model ownership, or both.
+             * @enum {string}
+             */
+            providerAttribution: "observed" | "inferred" | "mixed";
+            /** Format: int64 */
+            totalNanos: number;
         };
         ImportReport: {
             dryRun: boolean;
@@ -2557,10 +2633,6 @@ export interface components {
             kind: "session" | "pr";
             prUrl?: string;
             sessionId: string;
-        };
-        OpenAIUsageDetailsResponse: {
-            openaiCacheWriteInputTokens: null | number;
-            openaiReasoningOutputTokens: null | number;
         };
         OpenShellTerminalRequest: {
             /** @description Project whose root the shell starts in. Omitted opens the shell in the daemon data dir. */
@@ -3044,8 +3116,13 @@ export interface components {
         };
         SettingsResponse: {
             chatHarnesses: string[];
+            client: string;
+            cloudControlPlaneUrl: string;
+            cloudEnabled: boolean;
+            cloudOffering: boolean;
             /** @enum {string} */
             defaultSessionMode: "chat" | "tui";
+            localEnabled: boolean;
         };
         ShellTerminalEnvelope: {
             shellTerminal: components["schemas"]["ShellTerminalResponse"];
@@ -3223,46 +3300,29 @@ export interface components {
             /** @enum {string} */
             harness: "claude-code" | "codex";
             modelId?: string;
+            /** @description Canonical provider routing hint derived by the trusted local Claude hook. */
+            providerId?: string;
             subagentId?: string;
             subagentTranscriptPath?: string;
             transcriptPath?: string;
-        };
-        UsageMetricProvenanceResponse: {
-            /** @enum {string} */
-            cachedInputTokens: "reported" | "derived" | "unsupported" | "unknown";
-            /** @enum {string} */
-            inputTokens: "reported" | "derived" | "unsupported" | "unknown";
-            /** @enum {string} */
-            outputTokens: "reported" | "derived" | "unsupported" | "unknown";
-            /** @enum {string} */
-            uncachedInputTokens: "reported" | "derived" | "unsupported" | "unknown";
         };
         UsageModelResponse: {
             modelId: string;
             totals: components["schemas"]["UsageTotalsResponse"];
         };
-        UsageProviderDetailsResponse: {
-            anthropic?: components["schemas"]["AnthropicUsageDetailsResponse"];
-            openai?: components["schemas"]["OpenAIUsageDetailsResponse"];
-        };
         UsageTotalsResponse: {
             /** @description Deprecated compatibility alias for cachedInputTokens. */
             cacheReadTokens: null | number;
-            /** @description Deprecated compatibility aggregate of provider cache-write input counters. */
-            cacheWriteTokens: null | number;
             /** @description Input read from an existing provider cache. Cache hit percentage uses cachedInputTokens divided by inclusive inputTokens. */
             cachedInputTokens: null | number;
+            estimatedCost: null | components["schemas"]["EstimatedCostResponse"];
             /** @description Total input, including cached and uncached input. */
             inputTokens: null | number;
             /** @description Total output, including provider-specific subsets such as reasoning output. */
             outputTokens: null | number;
             /** @description Canonical input plus output. Null when either component is unknown. */
             processedTokens: null | number;
-            provenance: components["schemas"]["UsageMetricProvenanceResponse"];
-            providerDetails: components["schemas"]["UsageProviderDetailsResponse"];
-            /** @description Deprecated compatibility alias for the OpenAI reasoning-output subset. */
-            reasoningTokens: null | number;
-            /** @description Input not read from an existing provider cache. */
+            /** @description Input not read from an existing provider cache. Includes cache writes. */
             uncachedInputTokens: null | number;
         };
         WorkspaceCommitSummary: {
@@ -7109,6 +7169,65 @@ export interface operations {
             };
         };
     };
+    cancelQueuedSessionConversationTurn: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+                /** @description AO conversation turn identifier, from the snapshot's turns array. */
+                turnId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
     editSessionConversationMessage: {
         parameters: {
             query?: never;
@@ -7135,6 +7254,78 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["EditConversationMessageResponse"];
                 };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    editQueuedSessionConversationTurn: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+                /** @description AO conversation turn identifier, from the snapshot's turns array. */
+                turnId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EditQueuedConversationMessageRequest"];
+            };
+        };
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Bad Request */
             400: {
@@ -9666,6 +9857,57 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SettingsResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    updateCloudOffering: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ControllersUpdateCloudOfferingRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettingsResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
                 };
             };
             /** @description Internal Server Error */

@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
+import { useCanGoBack, useNavigate, useParams, useRouter, useRouterState } from "@tanstack/react-router";
 import {
 	DndContext,
 	DragOverlay,
@@ -22,12 +22,16 @@ import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-
 import { CSS } from "@dnd-kit/utilities";
 import {
 	AlertTriangle,
+	ArrowLeft,
+	ArrowRight,
 	ChevronRight,
 	Download,
 	Folder,
 	FolderOpen,
+	LogIn,
 	LogOut,
 	MoreVertical,
+	PanelLeft,
 	Pin,
 	PinOff,
 	Plus,
@@ -66,13 +70,15 @@ import { getSessionStatusDotView } from "../lib/session-presentation";
 import { deriveSessionAgentSwitchPresentation } from "../lib/agent-switch-presentation";
 import { aoBridge } from "../lib/bridge";
 import { useCommandPaletteEnabled } from "../hooks/useCommandPaletteEnabled";
-import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import { cloudSessionsQueryKey, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { usePinSession, useUnpinSession } from "../hooks/usePinSession";
+import { spawnCloudOrchestrator } from "../lib/cloud-orchestrator";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { renameSession } from "../lib/rename-session";
 import { formatTimeCompact, formatTimeTerse } from "../lib/format-time";
 import { useTerminateSession } from "../hooks/useTerminateSession";
 import { useResizable } from "../hooks/useResizable";
+import { useCloudGate } from "../hooks/useCloudGate";
 import { useShellMaybe } from "../lib/shell-context";
 import { useUpdateStatus } from "../hooks/useUpdateStatus";
 import { effectiveShortcutBindings, shortcutBindingKeys } from "../../shared/shortcuts";
@@ -107,6 +113,7 @@ import {
 } from "./ui/sidebar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import { OrchestratorIcon } from "./icons";
+import { Badge } from "./ui/badge";
 import aoLogo from "../../../assets/ao-logo.svg";
 import { cn } from "../lib/utils";
 import { useUiStore } from "../stores/ui-store"
@@ -114,13 +121,15 @@ import { useKeybindingsStore } from "../stores/keybindings-store";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { CreateProjectFlow, type CloneProjectInput, type CreateProjectInput } from "./CreateProjectFlow";
 import { ResizeHandle } from "./ResizeHandle";
-import { isMacPlatform, isWindowsPlatform } from "../lib/platform";
+import { isLinuxPlatform, isMacPlatform, isWindowsPlatform } from "../lib/platform";
 import { useCloudSession } from "../lib/cloud-session";
+import { useCanGoForward } from "./TitlebarNav";
 
 // macOS paints framed chrome: the fixed TitlebarNav cluster carries the
 // sidebar toggle + history arrows above this surface. Windows hangs the sidebar
 // under its custom titlebar.
 const isMac = isMacPlatform();
+const isLinux = isLinuxPlatform();
 const isWindows = isWindowsPlatform();
 const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined;
 
@@ -409,9 +418,13 @@ export function Sidebar({
 }: SidebarProps) {
 	const { t } = useTranslation();
 	const selection = useSelection();
-	const { state, setOpen } = useSidebar();
+	const { state, setOpen, toggleSidebar } = useSidebar();
 	const isCollapsed = state === "collapsed";
 	const [expandedChromeVisible, setExpandedChromeVisible] = useState(!isCollapsed);
+	const router = useRouter();
+	const canGoBack = useCanGoBack();
+	const canGoForward = useCanGoForward();
+	const showCompactRailHistory = autoCompact && isCollapsed && (isMac || isLinux) && !isWindows;
 	// One IPC subscription for both footer variants of the restart-to-update prompt.
 	const updateStatus = useUpdateStatus();
 	// Daemon status for the smoke suite's sr-only mirror in the footer. Null when
@@ -669,6 +682,53 @@ export function Sidebar({
 						</span>
 					)}
 				</div>
+				<Tooltip>
+					<TooltipTrigger asChild>
+						<button
+							aria-label={isCollapsed ? t("shell.expandSidebar") : t("shell.collapseSidebar")}
+							className="hidden size-control-board place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground group-data-[collapsible=icon]:grid [&_svg]:size-icon-base"
+							onClick={toggleSidebar}
+							type="button"
+						>
+							<PanelLeft aria-hidden="true" />
+						</button>
+					</TooltipTrigger>
+					<TooltipContent side="right">
+						{isCollapsed ? t("shell.expandSidebar") : t("shell.collapseSidebar")}
+					</TooltipContent>
+				</Tooltip>
+				{showCompactRailHistory ? (
+					<div className="flex flex-col items-center gap-1 pb-2">
+						<Tooltip>
+							<TooltipTrigger asChild>
+								<button
+									aria-label={t("titlebar.goBack")}
+									className="grid size-control-board place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground disabled:cursor-not-allowed disabled:opacity-55 disabled:hover:bg-transparent disabled:hover:text-muted-foreground [&_svg]:size-icon-base"
+									disabled={!canGoBack}
+									onClick={() => router.history.back()}
+									type="button"
+								>
+									<ArrowLeft aria-hidden="true" />
+								</button>
+							</TooltipTrigger>
+							<TooltipContent side="right">{t("titlebar.goBack")}</TooltipContent>
+						</Tooltip>
+						<Tooltip>
+							<TooltipTrigger asChild>
+								<button
+									aria-label={t("titlebar.goForward")}
+									className="grid size-control-board place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground disabled:cursor-not-allowed disabled:opacity-55 disabled:hover:bg-transparent disabled:hover:text-muted-foreground [&_svg]:size-icon-base"
+									disabled={!canGoForward}
+									onClick={() => router.history.forward()}
+									type="button"
+								>
+									<ArrowRight aria-hidden="true" />
+								</button>
+							</TooltipTrigger>
+							<TooltipContent side="right">{t("titlebar.goForward")}</TooltipContent>
+						</Tooltip>
+					</div>
+				) : null}
 			</SidebarHeader>
 
 			{/* Keep Search + section chrome fixed; only the project tree scrolls. */}
@@ -791,7 +851,7 @@ export function Sidebar({
 			    spacing stays inside the footer so there is no empty strip beneath
 			    the final action. */}
 			<SidebarFooter
-				className="relative mt-auto gap-0 overflow-hidden border-t border-border-strong px-2 !py-2 transition-[padding] duration-200 ease-linear group-data-[collapsible=icon]:min-h-20 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:border-t-0 group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:!pb-0 group-data-[collapsible=icon]:!pt-1.5"
+				className="relative mt-auto gap-0 overflow-hidden border-t border-border-strong px-2 !py-2 transition-[padding] duration-200 ease-linear group-data-[collapsible=icon]:min-h-20 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:border-t-0 group-data-[collapsible=icon]:overflow-visible group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:!pb-2 group-data-[collapsible=icon]:!pt-1.5"
 			>
 				{/* Always-present daemon status mirror for the smoke suite: no visible
 				    daemon-state copy is guaranteed to be mounted elsewhere. */}
@@ -802,9 +862,11 @@ export function Sidebar({
 				)}
 				<div
 					aria-hidden={isCollapsed || undefined}
-					className="sidebar-expanded-chrome relative flex w-full min-w-46.5 flex-col gap-0.5 transition-[opacity,transform] duration-150 ease-out group-data-[collapsible=icon]:pointer-events-none group-data-[collapsible=icon]:-translate-x-2 group-data-[collapsible=icon]:opacity-0"
+					hidden={isCollapsed}
+					className="sidebar-expanded-chrome relative flex w-full min-w-46.5 flex-col gap-0.5"
 				>
 					<UpdateStatusRow status={updateStatus} tabIndex={isCollapsed ? -1 : 0} />
+					<CloudSignInRow tabIndex={isCollapsed ? -1 : 0} />
 					<CloudAccountRow tabIndex={isCollapsed ? -1 : 0} />
 					<button
 						aria-label={t("settings.connectMobile")}
@@ -835,9 +897,10 @@ export function Sidebar({
 				</div>
 				<div
 					aria-hidden={!isCollapsed || undefined}
-					className="pointer-events-none absolute inset-x-1.5 bottom-0 top-auto flex min-h-row-md flex-col items-center justify-end gap-1 opacity-0 transition-opacity duration-150 ease-out group-data-[collapsible=icon]:pointer-events-auto group-data-[collapsible=icon]:opacity-100"
+					className="pointer-events-none absolute inset-x-1.5 bottom-0 top-auto flex min-h-row-md flex-col items-center justify-end gap-1 opacity-0 transition-opacity duration-150 ease-out group-data-[collapsible=icon]:pointer-events-auto group-data-[collapsible=icon]:!bottom-2 group-data-[collapsible=icon]:opacity-100"
 				>
 					<UpdateStatusRail status={updateStatus} tabIndex={isCollapsed ? 0 : -1} />
+					<CloudSignInRailButton tabIndex={isCollapsed ? 0 : -1} />
 					<CloudAccountRailButton tabIndex={isCollapsed ? 0 : -1} />
 					<Tooltip>
 						<TooltipTrigger asChild>
@@ -1049,6 +1112,22 @@ const ProjectItemContent = memo(function ProjectItemContent({
 			selection.goSession(workspace.id, orchestrator.id);
 			return;
 		}
+		// A cloud project has no local orchestrator-agent config, so the settings
+		// fallback below would dead-end it. Spawn the orchestrator as a cloud
+		// session in its own sandbox instead.
+		if (workspace.kind === "cloud") {
+			setIsSpawning(true);
+			try {
+				const sessionId = await spawnCloudOrchestrator(queryClient, workspace.id);
+				await queryClient.invalidateQueries({ queryKey: cloudSessionsQueryKey });
+				selection.goSession(workspace.id, sessionId);
+			} catch (err) {
+				console.error("Failed to spawn cloud orchestrator:", err);
+			} finally {
+				setIsSpawning(false);
+			}
+			return;
+		}
 		if (!hasConfiguredOrchestratorAgent(workspace)) {
 			selection.goSettings(workspace.id);
 			return;
@@ -1219,6 +1298,14 @@ const ProjectItemContent = memo(function ProjectItemContent({
 									>
 										{workspace.name}
 									</span>
+									{workspace.kind === "cloud" && (
+										<Badge
+											variant="outline"
+											className="sidebar-expanded-chrome h-4 shrink-0 px-1.5 text-2xs group-data-[collapsible=icon]:hidden"
+										>
+											{t("shell.cloudProjectBadge")}
+										</Badge>
+									)}
 								</SidebarMenuButton>
 								{/* Folder disclosure toggle: sibling of the nav button, absolutely positioned over
 	    the icon area so it intercepts clicks there without nesting buttons. */}
@@ -1610,7 +1697,10 @@ function SessionRow({
 					<input
 						aria-label={t("shell.renameSession", { title: session.title })}
 						autoFocus
-						className="h-full min-w-0 flex-1 appearance-none border-0 bg-transparent! p-0 text-sm text-foreground outline-none ring-0 focus:outline-none focus:ring-0"
+						className={cn(
+							"h-full min-w-0 flex-1 appearance-none border-0 bg-transparent! p-0 text-sm text-foreground outline-none ring-0 focus:outline-none focus:ring-0",
+							session.lastUserMessageAt && "pr-[36px]",
+						)}
 						data-session-inline-editor=""
 						maxLength={MAX_DISPLAY_NAME_LEN}
 						onBlur={() => void commit()}
@@ -1670,11 +1760,9 @@ function SessionRow({
 							aria-label={t("shell.openSession", { title: session.title })}
 							className={cn(
 								"flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-lg py-0 pl-1.5 text-left text-sm outline-hidden focus-visible:ring-2 focus-visible:ring-sidebar-ring",
-								session.lastUserMessageAt ? "pr-[34px]" : "pr-2.5",
+								session.lastUserMessageAt ? "pr-[36px]" : "pr-2.5",
 								!reorder?.isDragging &&
-									(session.lastUserMessageAt
-										? "group-hover/session-row:pr-[78px] group-focus-within/session-row:pr-[78px]"
-										: "group-hover/session-row:pr-[52px] group-focus-within/session-row:pr-[52px]"),
+									"group-hover/session-row:pr-[50px] group-focus-within/session-row:pr-[50px]",
 								reorder && "cursor-grab active:cursor-grabbing",
 								reorder?.isDragging && "!cursor-grabbing",
 							)}
@@ -1751,7 +1839,7 @@ const SessionMessageAge = memo(function SessionMessageAge({ session }: { session
 
 	return (
 		<time
-			className="min-w-0 shrink-0 whitespace-nowrap font-mono text-micro text-passive"
+			className="absolute inset-y-0 right-1.5 flex min-w-0 shrink-0 items-center whitespace-nowrap font-mono text-micro text-passive opacity-100 transition-opacity duration-100 ease-out group-hover/session-row:opacity-0 group-focus-within/session-row:opacity-0"
 			data-session-message-age=""
 			dateTime={session.lastUserMessageAt}
 			title={t("shell.lastMessageAt", { time: formatTimeCompact(session.lastUserMessageAt) })}
@@ -1775,13 +1863,13 @@ const SessionActions = memo(function SessionActions({
 
 	return (
 		<div
-			className="pointer-events-none absolute inset-y-0 right-1 z-chrome flex items-center gap-1"
+			className="pointer-events-none absolute inset-y-0 right-0 z-chrome"
 			data-session-actions=""
 			onPointerDown={(event) => event.stopPropagation()}
 		>
 			<div
 				className={cn(
-					"flex items-center gap-px opacity-0",
+					"absolute inset-y-0 right-0.5 flex items-center gap-px opacity-0 transition-opacity duration-100 ease-out",
 					!isDragging &&
 						"group-hover/session-row:pointer-events-auto group-hover/session-row:opacity-100 group-focus-within/session-row:pointer-events-auto group-focus-within/session-row:opacity-100",
 				)}
@@ -1816,13 +1904,64 @@ const SessionActions = memo(function SessionActions({
 	);
 });
 
+// CloudSignInRow: the entry point that starts the WorkOS sign-in flow. Shown
+// only when the cloud offering is enabled (entitled client + flag + control
+// plane), WorkOS is configured, and no one is signed in yet.
+function CloudSignInRow({ tabIndex }: { tabIndex: number }) {
+	const { t } = useTranslation();
+	const { cloudEnabled } = useCloudGate();
+	const { configured, status, signIn } = useCloudSession();
+	if (!configured || !cloudEnabled || status !== "unauthenticated") return null;
+
+	return (
+		<button
+			aria-label={t("shell.signInToAOCloud")}
+			className={cn(
+				NAV_ROW_CLASS,
+				"flex h-9 w-full items-center text-left [&_svg]:size-icon-md [&_svg]:shrink-0",
+			)}
+			onClick={() => signIn()}
+			tabIndex={tabIndex}
+			type="button"
+		>
+			<LogIn aria-hidden="true" />
+			<span className="tracking-tight">{t("shell.signInToAOCloud")}</span>
+		</button>
+	);
+}
+
+// Icon-rail variant for the collapsed sidebar.
+function CloudSignInRailButton({ tabIndex }: { tabIndex: number }) {
+	const { t } = useTranslation();
+	const { cloudEnabled } = useCloudGate();
+	const { configured, status, signIn } = useCloudSession();
+	if (!configured || !cloudEnabled || status !== "unauthenticated") return null;
+
+	return (
+		<Tooltip>
+			<TooltipTrigger asChild>
+				<button
+					aria-label={t("shell.signInToAOCloud")}
+					className="grid size-control-board place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-icon-base"
+					onClick={() => signIn()}
+					tabIndex={tabIndex}
+					type="button"
+				>
+					<LogIn aria-hidden="true" />
+				</button>
+			</TooltipTrigger>
+			<TooltipContent side="right">{t("shell.signInToAOCloud")}</TooltipContent>
+		</Tooltip>
+	);
+}
+
 // CloudAccountRow: shown above the Settings button for an existing cloud
-// session. The unauthenticated sign-in entry stays hidden until that flow is
-// ready to expose in the app again.
+// session (the signed-in state). The sign-in entry point is CloudSignInRow.
 function CloudAccountRow({ tabIndex }: { tabIndex: number }) {
 	const { t } = useTranslation();
+	const { cloudEnabled } = useCloudGate();
 	const { configured, session, status, signOut } = useCloudSession();
-	if (!configured || status !== "authenticated") return null;
+	if (!configured || !cloudEnabled || status !== "authenticated") return null;
 
 	return (
 		<DropdownMenu>
@@ -1857,8 +1996,9 @@ function CloudAccountRow({ tabIndex }: { tabIndex: number }) {
 // Icon-rail variant for collapsed sidebar.
 function CloudAccountRailButton({ tabIndex }: { tabIndex: number }) {
 	const { t } = useTranslation();
+	const { cloudEnabled } = useCloudGate();
 	const { configured, session, status, signOut } = useCloudSession();
-	if (!configured || status !== "authenticated") return null;
+	if (!configured || !cloudEnabled || status !== "authenticated") return null;
 
 	return (
 		<Tooltip>
@@ -2188,7 +2328,7 @@ function SidebarSearchButton({ onOpen }: { onOpen: () => void }) {
 					// Filled search trigger (Cursor-style): icon + label.
 					"h-8 gap-2 rounded-lg bg-muted px-2.5 text-sm font-normal text-muted-foreground",
 					"transition-[background-color,color] duration-150 ease-out hover:bg-interactive-hover! hover:text-foreground active:bg-interactive-hover! [&_svg]:size-icon-sm!",
-					"group-data-[collapsible=icon]:size-control-form! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:bg-transparent group-data-[collapsible=icon]:p-0! group-data-[collapsible=icon]:hover:bg-interactive-hover!",
+					"group-data-[collapsible=icon]:size-control-board! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:bg-transparent group-data-[collapsible=icon]:p-0! group-data-[collapsible=icon]:hover:bg-interactive-hover!",
 				)}
 			>
 				<Search strokeWidth={1.75} aria-hidden="true" />

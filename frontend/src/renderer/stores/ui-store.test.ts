@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { sidebarIsCompact, sidebarIsVisible, useUiStore } from "./ui-store";
+import { sidebarIsCompact, sidebarIsVisible, sidebarOccupiesLayout, useUiStore } from "./ui-store";
 
 describe("sidebar workspace pressure", () => {
 	beforeEach(() => {
@@ -25,7 +25,7 @@ describe("sidebar workspace pressure", () => {
 		expect(sidebarIsVisible(useUiStore.getState())).toBe(true);
 	});
 
-	it("lets the user reveal and close the sidebar under active pressure", () => {
+	it("returns a manually expanded sidebar to the compact rail under active pressure", () => {
 		useUiStore.getState().setSidebarAutoCollapsed(true);
 		useUiStore.getState().toggleSidebar();
 
@@ -36,11 +36,12 @@ describe("sidebar workspace pressure", () => {
 
 		useUiStore.getState().toggleSidebar();
 		state = useUiStore.getState();
-		expect(state.isSidebarOpen).toBe(false);
-		expect(sidebarIsCompact(state)).toBe(false);
+		expect(state.isSidebarOpen).toBe(true);
+		expect(sidebarIsCompact(state)).toBe(true);
+		expect(sidebarOccupiesLayout(state)).toBe(true);
 		expect(state.sidebarAutoCollapseOverride).toBe(false);
 		expect(sidebarIsVisible(state)).toBe(false);
-		expect(window.localStorage.getItem("ao.sidebar.open")).toBe("false");
+		expect(window.localStorage.getItem("ao.sidebar.open")).toBeNull();
 	});
 
 	it("does not revoke an explicit expansion when pressure fluctuates during motion", () => {
