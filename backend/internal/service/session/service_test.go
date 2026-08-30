@@ -594,11 +594,19 @@ func TestSessionSetReviewerHarnessRejectsUnknownHarness(t *testing.T) {
 	}
 }
 
-func TestSessionSetReviewerHarnessRejectsConfigWithoutHarness(t *testing.T) {
+func TestSessionSetReviewerHarnessAllowsConfigWithoutHarness(t *testing.T) {
 	st := newFakeStore()
 	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1"}
-	if _, err := (&Service{store: st}).SetReviewerHarness(context.Background(), "mer-1", "", domain.AgentConfig{Model: "gpt-5"}); err == nil {
-		t.Fatal("expected invalid reviewer config error")
+
+	sess, err := (&Service{store: st}).SetReviewerHarness(context.Background(), "mer-1", "", domain.AgentConfig{Model: "gpt-5"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.ReviewerHarness != "" || sess.ReviewerConfig.Model != "gpt-5" {
+		t.Fatalf("session reviewer override = (%q, %+v), want default harness with model override", sess.ReviewerHarness, sess.ReviewerConfig)
+	}
+	if stored := st.sessions["mer-1"]; stored.ReviewerHarness != "" || stored.ReviewerConfig.Model != "gpt-5" {
+		t.Fatalf("stored reviewer override = (%q, %+v), want default harness with model override", stored.ReviewerHarness, stored.ReviewerConfig)
 	}
 }
 
