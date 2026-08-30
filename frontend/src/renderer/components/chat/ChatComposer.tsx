@@ -535,28 +535,39 @@ export function ChatComposer({
 		setHighlighted(0);
 	}
 
+	const handleEnterKey = useCallback(
+		(event: globalThis.KeyboardEvent): boolean => {
+			const liveSnapshot = editor.current?.getSnapshot();
+			if (liveSnapshot) textRef.current = liveSnapshot.text;
+			const liveTrigger = liveSnapshot?.trigger;
+			const liveSuggestions = suggestionsFor(liveTrigger);
+			if (liveSuggestions.length > 0) {
+				if (textRef.current.trim() === "/compact" && onCompact) {
+					void submit();
+					return true;
+				}
+				triggerRef.current = liveTrigger;
+				const chosen = liveSuggestions[Math.min(highlightedRef.current, liveSuggestions.length - 1)];
+				if (chosen) pick(chosen.value);
+				return true;
+			}
+
+			const wantsSteer = (event.metaKey || event.ctrlKey) && canSteerDraft;
+			void submit(undefined, wantsSteer);
+			return true;
+		},
+		[canSteerDraft, onCompact, pick, suggestionsFor],
+	);
+
 	function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
 		if (event.nativeEvent.isComposing) return;
-		if (event.key === "Enter" && event.shiftKey) return;
-		// Read Lexical directly here. A fast typist can press Enter before React has
-		// rendered the state update for the last character, while the editor state is
-		// already current. Using the rendered `menuOpen` in that window sent the draft
-		// instead of accepting the visible completion.
+		// Enter is handled in Lexical before a newline is inserted; this handler is
+		// only for menu navigation and escape while a completion menu is open.
 		const liveSnapshot = editor.current?.getSnapshot();
 		if (liveSnapshot) textRef.current = liveSnapshot.text;
 		const liveTrigger = liveSnapshot?.trigger;
 		const liveSuggestions = suggestionsFor(liveTrigger);
 		if (liveSuggestions.length > 0) {
-			// `/compact` takes no arguments. Once its exact name is present, Enter
-			// executes it directly instead of merely accepting the highlighted row and
-			// requiring a second Enter on the inserted trailing space.
-			if (event.key === "Enter" && textRef.current.trim() === "/compact" && onCompact) {
-				event.preventDefault();
-				void submit();
-				return;
-			}
-			// Only these keys are taken while the menu is open. Everything else falls
-			// through to the editor, which is what keeps typing from being swallowed.
 			if (event.key === "ArrowDown" || event.key === "ArrowUp") {
 				event.preventDefault();
 				const next = moveHighlight(
@@ -568,17 +579,8 @@ export function ChatComposer({
 				setHighlighted(next);
 				return;
 			}
-			if (event.key === "Enter" || event.key === "Tab") {
-				event.preventDefault();
-				triggerRef.current = liveTrigger;
-				const chosen = liveSuggestions[Math.min(highlightedRef.current, liveSuggestions.length - 1)];
-				if (chosen) pick(chosen.value);
-				return;
-			}
 			if (event.key === "Escape") {
 				event.preventDefault();
-				// Stopped here so Escape closes the menu rather than travelling on to
-				// whatever surface is hosting the composer.
 				event.stopPropagation();
 				dismissedKeyRef.current = liveTrigger?.key ?? null;
 				setDismissedKey(dismissedKeyRef.current);
@@ -590,15 +592,7 @@ export function ChatComposer({
 			event.preventDefault();
 			clearEditor();
 			onCancelQueuedEdit();
-			return;
 		}
-
-		// Enter queues; Shift+Enter makes a newline; Cmd/Ctrl+Enter steers.
-		if (event.key !== "Enter") return;
-		if (event.shiftKey) return;
-		event.preventDefault();
-		const wantsSteer = (event.metaKey || event.ctrlKey) && canSteerDraft;
-		void submit(undefined, wantsSteer);
 	}
 
 	function onPaste(event: ClipboardEvent<HTMLDivElement>) {
@@ -623,10 +617,16 @@ export function ChatComposer({
 		void fileAttachments.addFiles(files);
 	}
 
-	const [metaHeld, setMetaHeld] = useState(false);
+	// Track Cmd/Ctrl for the send-button click path without re-rendering the composer
+	// on every modifier key event.
+	const modifierHeldRef = useRef(false);
 	useEffect(() => {
-		const onKey = (e: globalThis.KeyboardEvent) => setMetaHeld(e.metaKey || e.ctrlKey);
-		const onBlur = () => setMetaHeld(false);
+		const onKey = (event: globalThis.KeyboardEvent) => {
+			modifierHeldRef.current = event.metaKey || event.ctrlKey;
+		};
+		const onBlur = () => {
+			modifierHeldRef.current = false;
+		};
 		window.addEventListener("keydown", onKey);
 		window.addEventListener("keyup", onKey);
 		window.addEventListener("blur", onBlur);
@@ -636,7 +636,6 @@ export function ChatComposer({
 			window.removeEventListener("blur", onBlur);
 		};
 	}, []);
-	const activeDelivery = metaHeld && canSteerDraft ? "steer" : "queue";
 
 	const attachmentError = fileAttachments.error ?? sendError ?? commandError;
 	const withQueueStack = (form: ReactElement) =>
@@ -676,7 +675,7 @@ export function ChatComposer({
 				// Clicking send while Cmd/Ctrl is held has to mean what the indicator
 				// beside it says. Reading the same armed state the chip paints keeps the
 				// pointer and keyboard paths from disagreeing about where the message goes.
-				onSubmit={(event) => void submit(event, activeDelivery === "steer")}
+				onSubmit={(event) => void submit(event, modifierHeldRef.current && canSteerDraft)}
 				onDragOver={(event) => {
 					if (!canAttach) return;
 					event.preventDefault();
@@ -759,6 +758,7 @@ export function ChatComposer({
 					activeIndex={activeIndex}
 					onChange={onEditorChange}
 					onComplete={completeFromEditor}
+					onEnterKey={handleEnterKey}
 					onCompositionChange={setIsComposing}
 					onKeyDown={onKeyDown}
 					onPaste={onPaste}
