@@ -905,6 +905,20 @@ describe("unavailable states", () => {
 		expect(onSend).not.toHaveBeenCalled();
 	});
 
+	it("does not show a loading spinner when no queued edit is saving", () => {
+		renderComposer();
+		expect(
+			screen.getByRole("button", { name: "Send message" }).querySelector(".animate-spin"),
+		).not.toBeInTheDocument();
+	});
+
+	it("shows a loading spinner only while the queued edit being edited is saving", () => {
+		renderComposer({ editingQueuedTurnId: "turn-1", savingQueuedEditPending: true });
+		expect(
+			screen.getByRole("button", { name: "Send message" }).querySelector(".animate-spin"),
+		).toBeInTheDocument();
+	});
+
 	it("says a mid-turn message will be held", () => {
 		const { field } = renderComposer({ willQueue: true });
 		expect(field).toHaveAttribute(
@@ -934,5 +948,21 @@ describe("unavailable states", () => {
 
 		expect(onSend).toHaveBeenCalledWith("follow up");
 		expect(onInterrupt).not.toHaveBeenCalled();
+	});
+
+	it("explains when a send is blocked by the previous in-flight message", async () => {
+		const onSend = vi.fn().mockImplementation(
+			() => new Promise<void>(() => {
+				/* keep pending */
+			}),
+		);
+		render(<ChatComposer busy onSend={onSend} willQueue />);
+		const field = screen.getByLabelText("Message the agent");
+
+		await typeInComposer(field, "follow up");
+		await userEvent.keyboard("{Enter}");
+
+		expect(onSend).not.toHaveBeenCalled();
+		expect(screen.getByRole("alert")).toHaveTextContent(/still sending the previous message/i);
 	});
 });

@@ -1167,7 +1167,7 @@
 	"settings.project.intakeAssigneePlaceholder": "type username or * for any",
 	"settings.project.intakeDescription": "Auto-spawn worker sessions from matching tracker issues.",
 	"settings.project.intakeHelpAria": "What does enabling issue intake do?",
-	"settings.project.intakeTooltip": "Auto-spawns a worker session for each matching GitHub issue.",
+	"settings.project.intakeTooltip": "Auto-spawns a worker session for each matching tracker issue.",
 	"settings.migration.title": "Migration",
 	"settings.migration.description": "Import projects and orchestrator sessions from an earlier Agent Orchestrator install. Your old files are never modified, and this is safe to run more than once.",
 	"settings.migration.statusLabel": "Status",

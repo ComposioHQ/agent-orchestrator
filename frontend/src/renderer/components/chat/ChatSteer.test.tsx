@@ -18,11 +18,11 @@ describe("ChatComposer steering", () => {
 		);
 	}
 
-	it("shows delivery indicators while a turn is running", () => {
+	it("does not show delivery indicators in the composer while a turn is running", () => {
 		composer();
-		const delivery = screen.getByRole("group", { name: /where this message goes/i });
-		expect(within(delivery).getByText("Queue")).toBeInTheDocument();
-		expect(within(delivery).getByText("Steer")).toBeInTheDocument();
+		expect(screen.queryByRole("group", { name: /where this message goes/i })).not.toBeInTheDocument();
+		expect(screen.queryByText("Queue")).not.toBeInTheDocument();
+		expect(screen.queryByText("Steer")).not.toBeInTheDocument();
 	});
 
 	it("queues by default while a turn is running", async () => {
@@ -41,12 +41,12 @@ describe("ChatComposer steering", () => {
 		expect(screen.getByRole("status")).toHaveTextContent(/compaction turn is running/);
 	});
 
-	it("hides delivery indicators when the harness cannot steer", () => {
+	it("hides delivery indicators in the composer when the harness cannot steer", () => {
 		composer({ onSteer: undefined, canSteer: false });
 		expect(screen.queryByText("Steer")).not.toBeInTheDocument();
 	});
 
-	it("hides delivery indicators when no turn is in flight", () => {
+	it("hides delivery indicators in the composer when no turn is in flight", () => {
 		composer({ canSteer: false, willQueue: false });
 		expect(screen.queryByText("Steer")).not.toBeInTheDocument();
 	});
@@ -150,6 +150,9 @@ describe("ChatWorkspace steering", () => {
 			/>,
 		);
 
+		expect(screen.queryByText("Queue")).not.toBeInTheDocument();
+		expect(screen.getAllByRole("button", { name: "Steer this queued message into the running turn" })).toHaveLength(2);
+
 		await userEvent.click(screen.getAllByRole("button", { name: "Steer this queued message into the running turn" })[0]);
 		expect(onPromoteQueuedTurn).toHaveBeenCalledWith("queued-1");
 
@@ -225,7 +228,21 @@ describe("ChatWorkspace steering", () => {
 		expect(within(dock).getByText("second queued")).toBeVisible();
 	});
 
-	it("shows the delivery indicator only for a running turn without a pending approval", () => {
+	it("shows steer action on each queued message while a turn is running", () => {
+		render(
+			<ChatWorkspace
+				snapshot={withQueuedMessages()}
+				onSteer={vi.fn()}
+				onPromoteQueuedTurn={vi.fn()}
+			/>,
+		);
+
+		const dock = screen.getByTestId("queued-message-dock");
+		expect(within(dock).queryByText("Queue")).not.toBeInTheDocument();
+		expect(within(dock).getAllByRole("button", { name: "Steer this queued message into the running turn" })).toHaveLength(2);
+	});
+
+	it("does not show delivery indicators in the composer for a running turn without a pending approval", () => {
 		const snapshot = {
 			...chatFixture,
 			items: chatFixture.items.filter(
@@ -234,8 +251,8 @@ describe("ChatWorkspace steering", () => {
 			),
 		};
 		render(<ChatWorkspace snapshot={snapshot} onSteer={vi.fn()} />);
-		expect(screen.getByText("Steer")).toBeInTheDocument();
-		expect(screen.getByText("Queue")).toBeInTheDocument();
+		expect(screen.queryByText("Queue")).not.toBeInTheDocument();
+		expect(screen.queryByText("Steer")).not.toBeInTheDocument();
 	});
 
 	it("does not show delivery indicator on a settled conversation", () => {

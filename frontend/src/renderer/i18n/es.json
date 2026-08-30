@@ -1160,7 +1160,7 @@
 	"settings.project.intakeAssigneePlaceholder": "escribe un nombre de usuario o * para cualquiera",
 	"settings.project.intakeDescription": "Crea automáticamente sesiones de trabajo a partir de issues del tracker coincidentes.",
 	"settings.project.intakeHelpAria": "¿Qué hace activar la captación de issues?",
-	"settings.project.intakeTooltip": "Crea automáticamente una sesión de trabajo por cada issue de GitHub coincidente.",
+	"settings.project.intakeTooltip": "Crea automáticamente una sesión de trabajo por cada issue del tracker coincidente.",
 	"settings.migration.title": "Migración",
 	"settings.migration.description": "Importa proyectos y sesiones del orquestador de una instalación anterior de Agent Orchestrator. Tus archivos antiguos nunca se modifican y es seguro ejecutarlo más de una vez.",
 	"settings.migration.statusLabel": "Estado",

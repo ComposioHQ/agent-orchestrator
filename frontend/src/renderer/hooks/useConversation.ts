@@ -114,7 +114,7 @@ function claimConversationDispatch(
 		queryClient.getQueryData<ConversationDispatchTrackingBySession>(
 			conversationDispatchTrackingQueryKey,
 		) ?? {};
-	if (current[targetSessionId]) return false;
+	if (current[targetSessionId]?.state === "pending") return false;
 	queryClient.setQueryData<ConversationDispatchTrackingBySession>(
 		conversationDispatchTrackingQueryKey,
 		{
@@ -279,14 +279,20 @@ export function useConversationCommands(sessionId: string | undefined) {
 		},
 		[queryClient],
 	);
-	const invalidate = useCallback(async () => {
+	const invalidate = useCallback(() => {
 		if (sessionId) {
-			// Keep the mutation pending until the active conversation has refreshed. A
-			// queued message or landed steer should be visible before the composer clears,
-			// otherwise the action looks dropped even though the daemon accepted it.
-			await invalidateSession(sessionId);
+			// Refresh in the background. Awaiting the refetch in mutation onSuccess kept
+			// steer, queue, and approval mutations pending after the daemon had already
+			// answered, which left the composer spinner stuck and blocked further sends.
+			void invalidateSession(sessionId).catch(() => {});
 		}
 	}, [invalidateSession, sessionId]);
+	const refreshSessionInBackground = useCallback(
+		(targetSessionId: string) => {
+			void invalidateSession(targetSessionId).catch(() => {});
+		},
+		[invalidateSession],
+	);
 
 	const send = useMutation({
 		onMutate: (variables: ConversationSendMutationInput) => {
@@ -323,17 +329,29 @@ export function useConversationCommands(sessionId: string | undefined) {
 			if (error) throw error;
 			return data;
 		},
-		onSuccess: async (data, variables) => {
+		onSuccess: (data, variables) => {
 			const acceptedTurnId = data?.turnId;
 			if (acceptedTurnId) {
-				// A refetch can briefly return the pre-send snapshot. Keep the accepted
-				// turn locally visible as pending until that exact durable row arrives.
-				acceptConversationDispatch(
-					queryClient,
-					variables.targetSessionId,
-					variables.clientMessageId,
-					acceptedTurnId,
-				);
+				if (data.state === "queued") {
+					// A queued row is already durable and did not start a new provider turn,
+					// so keeping the accepted-turn safety marker would block the next queue
+					// entry until a refetch observes this id — and the composer would swallow
+					// further Enter presses with no error.
+					releaseConversationDispatch(
+						queryClient,
+						variables.targetSessionId,
+						variables.clientMessageId,
+					);
+				} else {
+					// A refetch can briefly return the pre-send snapshot. Keep the accepted
+					// turn locally visible as pending until that exact durable row arrives.
+					acceptConversationDispatch(
+						queryClient,
+						variables.targetSessionId,
+						variables.clientMessageId,
+						acceptedTurnId,
+					);
+				}
 			} else {
 				// A duplicate response intentionally has no turn id: the daemon already
 				// delivered this idempotency key, so there is no exact new row this
@@ -344,10 +362,11 @@ export function useConversationCommands(sessionId: string | undefined) {
 					variables.clientMessageId,
 				);
 			}
-			// Delivery is already authoritative at this point. A failed follow-up
-			// refresh must not reject the mutation: TanStack would then run onError
-			// and misclassify transport success, clearing the accepted safety marker.
-			await invalidateSession(variables.targetSessionId).catch(() => {});
+			// Delivery is already authoritative at this point. Refresh in the
+			// background so a slow conversation refetch cannot keep send.isPending
+			// true and leave the composer disabled or spinning after the daemon
+			// accepted the message.
+			void refreshSessionInBackground(variables.targetSessionId);
 		},
 		onError: (_error, variables) => {
 			releaseConversationDispatch(
@@ -408,11 +427,11 @@ export function useConversationCommands(sessionId: string | undefined) {
 			);
 			if (error) throw error;
 		},
-		onSuccess: (_data, variables) => invalidateSession(variables.targetSessionId),
+		onSuccess: (_data, variables) => refreshSessionInBackground(variables.targetSessionId),
 		// A failed interrupt (e.g. CHAT_NO_ACTIVE_TURN) means the cached turn
 		// state is wrong. Refetch so the UI discovers the real state instead of
 		// keeping a Working bar the user cannot dismiss.
-		onError: (_error, variables) => invalidateSession(variables.targetSessionId),
+		onError: (_error, variables) => refreshSessionInBackground(variables.targetSessionId),
 	});
 
 	const resume = useMutation({
@@ -608,7 +627,7 @@ export function useConversationCommands(sessionId: string | undefined) {
 			if (error) throw error;
 			return data;
 		},
-		onSuccess: async (data, variables) => {
+		onSuccess: (data, variables) => {
 			if (data?.turnId) {
 				acceptConversationDispatch(
 					queryClient,
@@ -619,7 +638,7 @@ export function useConversationCommands(sessionId: string | undefined) {
 			} else {
 				releaseConversationDispatch(queryClient, variables.targetSessionId, variables.requestId);
 			}
-			await invalidateSession(variables.targetSessionId).catch(() => {});
+			void refreshSessionInBackground(variables.targetSessionId);
 		},
 		onError: (_error, variables) => {
 			releaseConversationDispatch(queryClient, variables.targetSessionId, variables.requestId);
@@ -645,7 +664,7 @@ export function useConversationCommands(sessionId: string | undefined) {
 			if (error) throw error;
 			return data;
 		},
-		onSuccess: async (data, variables) => {
+		onSuccess: (data, variables) => {
 			if (data?.turnId) {
 				acceptConversationDispatch(
 					queryClient,
@@ -656,7 +675,7 @@ export function useConversationCommands(sessionId: string | undefined) {
 			} else {
 				releaseConversationDispatch(queryClient, variables.targetSessionId, variables.requestId);
 			}
-			await invalidateSession(variables.targetSessionId).catch(() => {});
+			void refreshSessionInBackground(variables.targetSessionId);
 		},
 		onError: (_error, variables) => {
 			releaseConversationDispatch(queryClient, variables.targetSessionId, variables.requestId);
@@ -810,6 +829,7 @@ export function useConversationCommands(sessionId: string | undefined) {
 			: undefined,
 		cancelQueuedTurnPendingTurnId: cancelQueuedTurn.isPending ? cancelQueuedTurn.variables : undefined,
 		editQueuedTurnPendingTurnId: editQueuedTurn.isPending ? editQueuedTurn.variables?.turnId : undefined,
+		sendPending: send.isPending && sendTargetsCurrentSession,
 		steerPending: steer.isPending,
 		/**
 		 * Why the last steer was refused, or undefined. Only the retryable and
@@ -831,7 +851,7 @@ export function useConversationCommands(sessionId: string | undefined) {
 				? apiErrorMessage(reloadMcp.error)
 				: undefined,
 		busy:
-			Boolean(trackedDispatch) ||
+			trackedDispatch?.state === "pending" ||
 			(send.isPending && sendTargetsCurrentSession) ||
 			resolve.isPending ||
 			resolveInput.isPending ||
