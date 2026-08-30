@@ -1,4 +1,4 @@
-import { useCallback, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { ChevronDown, Circle, Command, CornerDownLeft, Pencil, Trash2 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import type { ConversationMessage } from "../../types/conversation";
@@ -125,6 +125,7 @@ export function QueuedMessageDock({
 }) {
 	const [expanded, setExpanded] = useState(true);
 	const [errors, setErrors] = useState<Record<string, string>>({});
+	const scrollRef = useRef<HTMLDivElement>(null);
 
 	const runAction = useCallback(
 		async (turnId: string, action: () => Promise<unknown>) => {
@@ -150,6 +151,13 @@ export function QueuedMessageDock({
 	const hasMore = count > 1;
 	const isOpen = !hasMore || expanded;
 	const expandedRows = Math.min(count, QUEUE_DOCK_VISIBLE_ROWS);
+	const displayMessages = [...messages].reverse();
+
+	useEffect(() => {
+		if (!isOpen || count <= QUEUE_DOCK_VISIBLE_ROWS) return;
+		const scroll = scrollRef.current;
+		if (scroll) scroll.scrollTop = scroll.scrollHeight;
+	}, [count, isOpen]);
 
 	const rowProps = {
 		canSteer,
@@ -161,8 +169,10 @@ export function QueuedMessageDock({
 
 	return (
 		<div
-			className="queue-dock rounded-[var(--radius-chat-composer)] border border-border-strong bg-surface shadow-sm"
+			className="queue-dock overflow-hidden rounded-[var(--radius-chat-composer)] border border-border-strong bg-surface shadow-sm"
 			data-testid="queued-message-dock"
+			data-collapsible={hasMore ? "true" : "false"}
+			data-expanded={isOpen ? "true" : "false"}
 		>
 			<button
 				type="button"
@@ -203,8 +213,11 @@ export function QueuedMessageDock({
 						} as CSSProperties
 					}
 				>
-					<div className={cn("queue-dock-scroll", isOpen && count > QUEUE_DOCK_VISIBLE_ROWS && "queue-dock-scroll-active")}>
-						{messages.map(({ turnId, message }, index) => {
+					<div
+						ref={scrollRef}
+						className={cn("queue-dock-scroll", isOpen && count > QUEUE_DOCK_VISIBLE_ROWS && "queue-dock-scroll-active")}
+					>
+						{displayMessages.map(({ turnId, message }, index) => {
 							const busy =
 								promotePendingTurnId === turnId || cancelPendingTurnId === turnId;
 							return (
@@ -212,7 +225,7 @@ export function QueuedMessageDock({
 									key={turnId}
 									turnId={turnId}
 									message={message}
-									hiddenFromView={!isOpen && index > 0}
+									hiddenFromView={!isOpen && index !== displayMessages.length - 1}
 									busy={busy}
 									error={errors[turnId]}
 									{...rowProps}

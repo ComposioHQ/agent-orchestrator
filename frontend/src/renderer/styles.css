@@ -2213,33 +2213,30 @@ html.sidebar-reordering * {
 	animation: queue-dock-in 200ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
-/* The dock reserves one compact footprint, then lets the open queue float upward. */
+/* The parent reserves one compact footprint; the expanded dock floats above it. */
 .queue-dock {
 	--queue-dock-header-height: 2rem;
-	--queue-dock-collapsed-height: calc(var(--queue-dock-header-height) + var(--queue-dock-row-height, 2.25rem));
+	--queue-dock-row-height: 2.5rem;
+	--queue-dock-collapsed-height: calc(var(--queue-dock-header-height) + var(--queue-dock-row-height));
+}
+
+.cursor-chat-composer-queue {
 	position: relative;
 	height: var(--queue-dock-collapsed-height);
 }
 
-.queue-dock > button {
+.cursor-chat-composer-queue:has(.queue-dock[data-collapsible="true"][data-expanded="true"]) .queue-dock {
 	position: absolute;
 	right: 0;
 	bottom: 0;
 	left: 0;
-	z-index: 2;
-	height: var(--queue-dock-header-height);
-	background: var(--color-bg-secondary);
 }
 
 /* Clip-height collapse: one row stays visible when folded; up to five when open. */
 .queue-dock-body {
-	--queue-dock-row-height: 2.25rem;
+	--queue-dock-row-height: 2.5rem;
 	--queue-dock-visible-rows: 5;
-	position: absolute;
-	right: 0;
-	bottom: var(--queue-dock-header-height, 2rem);
-	left: 0;
-	z-index: 1;
+	position: relative;
 	overflow: hidden;
 	transition: max-height 420ms cubic-bezier(0.16, 1, 0.3, 1);
 	will-change: max-height;
@@ -2259,8 +2256,6 @@ html.sidebar-reordering * {
 
 .queue-dock-scroll {
 	overflow-y: hidden;
-	display: flex;
-	flex-direction: column-reverse;
 }
 
 .queue-dock-scroll-active {
@@ -2271,10 +2266,8 @@ html.sidebar-reordering * {
 	scrollbar-color: var(--color-scrollbar-board) transparent;
 }
 
-.queue-dock-body[data-expanded="true"] {
-	border: 1px solid var(--color-border-strong);
-	border-radius: var(--radius-chat-composer);
-	box-shadow: 0 8px 24px color-mix(in srgb, black 18%, transparent);
+.queue-dock-body[data-expanded="false"] [aria-hidden="true"] {
+	display: none;
 }
 
 .queue-dock-scroll::-webkit-scrollbar {

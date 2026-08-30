@@ -153,13 +153,17 @@ describe("ChatWorkspace steering", () => {
 		expect(screen.queryByText("Queue")).not.toBeInTheDocument();
 		expect(screen.getAllByRole("button", { name: "Steer this queued message into the running turn" })).toHaveLength(2);
 
-		await userEvent.click(screen.getAllByRole("button", { name: "Steer this queued message into the running turn" })[0]);
+		await userEvent.click(
+			within(screen.getByTestId("queued-message-queued-1")).getByRole("button", {
+				name: "Steer this queued message into the running turn",
+			}),
+		);
 		expect(onPromoteQueuedTurn).toHaveBeenCalledWith("queued-1");
 
-		await userEvent.click(screen.getAllByRole("button", { name: "Edit queued message" })[0]);
+		await userEvent.click(within(screen.getByTestId("queued-message-queued-1")).getByRole("button", { name: "Edit queued message" }));
 		expect(onBeginQueuedEdit).toHaveBeenCalledWith("queued-1", "first queued");
 
-		await userEvent.click(screen.getAllByRole("button", { name: "Delete queued message" })[0]);
+		await userEvent.click(within(screen.getByTestId("queued-message-queued-1")).getByRole("button", { name: "Delete queued message" }));
 		expect(onCancelQueuedTurn).toHaveBeenCalledWith("queued-1");
 	});
 
@@ -246,10 +250,10 @@ describe("ChatWorkspace steering", () => {
 			/>,
 		);
 
-		await userEvent.click(screen.getAllByRole("button", { name: "Edit queued message" })[0]);
+		await userEvent.click(within(screen.getByTestId("queued-message-queued-1")).getByRole("button", { name: "Edit queued message" }));
 		await waitFor(() => expect(screen.getByText(/editing/i)).toBeInTheDocument());
 
-		await userEvent.click(screen.getAllByRole("button", { name: "Delete queued message" })[0]);
+		await userEvent.click(within(screen.getByTestId("queued-message-queued-1")).getByRole("button", { name: "Delete queued message" }));
 		await waitFor(() => expect(onCancelQueuedTurn).toHaveBeenCalledWith("queued-1"));
 		await waitFor(() => expect(screen.queryByText(/editing/i)).not.toBeInTheDocument());
 	});
