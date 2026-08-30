@@ -256,21 +256,19 @@ func (e *Engine) TriggerWithSource(ctx stdctx.Context, workerID domain.SessionID
 	resolvedHarness := harness
 	resolvedConfig := config
 	hasHarnessOverride := override != ""
-	hasConfigOverride := !overrideConfig.IsZero() && (hasHarnessOverride || overrideConfig != resolvedConfig)
 	if hasHarnessOverride {
 		harness = override
-		if hasConfigOverride {
-			base := domain.AgentConfig{}
-			if override == resolvedHarness {
-				base = resolvedConfig
-			}
-			config = mergeReviewerAgentConfig(base, overrideConfig)
+		if override == resolvedHarness {
+			config = mergeReviewerAgentConfig(resolvedConfig, overrideConfig)
+		} else if !overrideConfig.IsZero() {
+			config = mergeReviewerAgentConfig(domain.AgentConfig{}, overrideConfig)
 		} else {
 			config = domain.AgentConfig{}
 		}
-	} else if hasConfigOverride {
+	} else if !overrideConfig.IsZero() {
 		config = mergeReviewerAgentConfig(config, overrideConfig)
 	}
+	hasConfigOverride := config != resolvedConfig
 	reviewRows, err := e.store.ListReviewsBySession(ctx, workerID)
 	if err != nil {
 		return TriggerResult{}, err

@@ -1003,6 +1003,33 @@ func TestTriggerWithPersistedReviewerConfigStillReusesSameCommit(t *testing.T) {
 	}
 }
 
+func TestTriggerWithPersistedReviewerConfigAndSameHarnessOverrideStillReusesSameCommit(t *testing.T) {
+	store := &fakeStore{
+		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", Harness: domain.ReviewerClaudeCode, ReviewerHandleID: "review-mer-1", AgentSessionID: "native-reviewer-1"},
+		runs: []domain.ReviewRun{{
+			ID: "run-1", SessionID: "mer-1", PRURL: "https://github.com/o/r/pull/1", TargetSHA: "sha1",
+			Harness: domain.ReviewerClaudeCode,
+			Status:  domain.ReviewRunComplete, Verdict: domain.VerdictApproved,
+		}},
+	}
+	worker := liveWorker()
+	worker.ReviewerHarness = domain.ReviewerClaudeCode
+	worker.ReviewerConfig = domain.AgentConfig{Model: "gpt-5"}
+	launcher := &fakeLauncher{alive: true, handle: "review-mer-1"}
+	eng := newEngineForTest(store, fakeSessions{rec: worker, ok: true}, prAt("sha1"), fakeProjects{}, launcher)
+
+	res, err := eng.Trigger(context.Background(), "mer-1", domain.ReviewerClaudeCode, domain.AgentConfig{Model: "gpt-5"})
+	if err != nil {
+		t.Fatalf("Trigger: %v", err)
+	}
+	if res.Created || res.Run.ID != "run-1" || len(store.runs) != 1 {
+		t.Fatalf("same persisted config with same harness override should reuse existing pass: %+v runs=%+v", res, store.runs)
+	}
+	if launcher.spawned || launcher.notified {
+		t.Fatalf("should not relaunch for unchanged persisted reviewer config with same harness override: %+v", launcher)
+	}
+}
+
 // Re-picking the harness that already reviewed this commit is not a second
 // opinion, so it must still reuse rather than run the same agent twice.
 func TestTriggerWithSameHarnessOverrideStillReuses(t *testing.T) {
