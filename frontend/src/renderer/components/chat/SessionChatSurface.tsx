@@ -246,12 +246,6 @@ export function SessionChatSurface({
 	const { paths, truncated } = useWorkspaceFilePaths(session.id, Boolean(snapshot));
 	const stageAttachments = useStageAttachments(session.id);
 	const openLinkInBrowser = useSessionBrowserLink(session);
-	// In-place agent switching is the same session-level operation in either
-	// interface; the chat header offers the same entry point the terminal pane's
-	// tab strip does. Mirrors CenterPane: dialog open flag plus the element the
-	// dialog anchors to (the workspace body, handed up by ChatWorkspace).
-	const [switchSelectorOpen, setSwitchSelectorOpen] = useState(false);
-	const [switchSelectorContainer, setSwitchSelectorContainer] = useState<HTMLDivElement | null>(null);
 	const observedSuccessfulSwitch = Boolean(
 		agentSwitch &&
 			observedSettledSwitchId === agentSwitch.id &&
