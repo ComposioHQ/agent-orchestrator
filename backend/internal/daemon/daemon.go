@@ -309,7 +309,7 @@ func Run() error {
 		}
 		return err
 	}
-	lcStack.trackerDone = startTrackerIntake(ctx, store, sessionSvc, log)
+	lcStack.trackerDone = startTrackerIntake(ctx, store, sessionSvc, newMultiTracker(cfg.GitLab, log), log)
 
 	agentSvc := agentsvc.NewWithDeps(agentsvc.Deps{Cache: store, InventoryCache: store, Discoverer: modelcatalog.Discoverer{}, Projects: store, Sessions: store})
 	hostCommands := systemexec.Adapter{}

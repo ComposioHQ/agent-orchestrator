@@ -393,7 +393,7 @@ func TestStartTrackerIntake_RunsEvenWithoutEnabledProjects(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	done := startTrackerIntake(ctx, store, svc, log)
+	done := startTrackerIntake(ctx, store, svc, newMultiTracker(config.GitLabConfig{}, log), log)
 
 	select {
 	case <-done:
@@ -409,17 +409,6 @@ func TestStartTrackerIntake_RunsEvenWithoutEnabledProjects(t *testing.T) {
 	}
 }
 
-func TestTrackerTokenSourcePrefersAOGitHubToken(t *testing.T) {
-	t.Setenv("AO_GITHUB_TOKEN", "ao-token")
-	t.Setenv("GITHUB_TOKEN", "github-token")
-	token, err := (&trackerTokenSource{}).Token(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if token != "ao-token" {
-		t.Fatalf("token = %q, want AO_GITHUB_TOKEN", token)
-	}
-}
 
 type captureRuntimeSender struct {
 	handle  ports.RuntimeHandle
