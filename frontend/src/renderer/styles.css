@@ -2272,6 +2272,11 @@ html.sidebar-reordering * {
 	flex-shrink: 0;
 }
 
+.queue-dock-actions svg {
+	display: block;
+	flex: none;
+}
+
 .queue-dock-scroll {
 	overflow-y: hidden;
 }

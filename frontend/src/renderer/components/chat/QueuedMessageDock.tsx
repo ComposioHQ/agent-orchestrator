@@ -48,7 +48,7 @@ function QueuedMessageRow({
 				>
 					{message.text}
 				</p>
-				<div className="queue-dock-actions flex shrink-0 items-center gap-0.5">
+				<div className="queue-dock-actions flex shrink-0 items-center gap-0.5 whitespace-nowrap">
 					{canSteer && onPromoteQueuedTurn ? (
 						<button
 							type="button"
@@ -60,9 +60,9 @@ function QueuedMessageRow({
 							aria-label="Steer this queued message into the running turn"
 							title="Steer into running turn"
 						>
-							<span className="inline-flex items-center gap-1 text-muted-foreground">
-								<Command aria-hidden="true" className="size-2.5" />
-								<CornerDownLeft aria-hidden="true" className="size-3" />
+							<span className="inline-flex shrink-0 items-center gap-1 text-muted-foreground">
+								<Command aria-hidden="true" className="size-3 shrink-0" strokeWidth={2} />
+								<CornerDownLeft aria-hidden="true" className="size-3 shrink-0" strokeWidth={2} />
 							</span>
 							Steer
 						</button>
@@ -76,7 +76,7 @@ function QueuedMessageRow({
 							aria-label="Edit queued message"
 							title="Edit"
 						>
-							<Pencil aria-hidden="true" className="size-3" />
+							<Pencil aria-hidden="true" className="size-3 shrink-0" strokeWidth={2} />
 						</button>
 					) : null}
 					{onCancelQueuedTurn ? (
@@ -90,7 +90,7 @@ function QueuedMessageRow({
 							aria-label="Delete queued message"
 							title="Delete"
 						>
-							<Trash2 aria-hidden="true" className="size-3" />
+							<Trash2 aria-hidden="true" className="size-3 shrink-0" strokeWidth={2} />
 						</button>
 					) : null}
 				</div>
