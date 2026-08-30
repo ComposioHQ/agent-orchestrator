@@ -25,10 +25,12 @@ type Verifier struct {
 	timeout  time.Duration
 }
 
+// NewVerifier creates a non-authenticating harness installation verifier.
 func NewVerifier(agents ports.AgentResolver, commands ports.CommandRunner) *Verifier {
 	return &Verifier{agents: agents, commands: commands, timeout: defaultVerifyTimeout}
 }
 
+// Verify resolves and version-probes the installed harness executable.
 func (v *Verifier) Verify(ctx context.Context, target Target) (VerifyResult, error) {
 	if !IsAgentTarget(target) {
 		return VerifyResult{}, fmt.Errorf("systeminstall: %s is not a harness", target)

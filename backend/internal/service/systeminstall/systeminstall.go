@@ -23,7 +23,9 @@ import (
 )
 
 var (
+	// ErrHarnessActive prevents installers from replacing a binary used by a live session.
 	ErrHarnessActive = errors.New("systeminstall: harness has an active session")
+	// ErrInstallMethod reports an unknown or currently unavailable install method.
 	ErrInstallMethod = errors.New("systeminstall: invalid install method")
 )
 
@@ -685,9 +687,9 @@ func (s *Service) transitionAgentJob(job *Job, status Status, output, errorMessa
 		job.ExpectedDestination = resolvedPath
 	}
 	job.UpdatedAt = &now
-	copy := *job
+	snapshot := *job
 	s.mu.Unlock()
-	return s.persistJob(context.Background(), copy)
+	return s.persistJob(context.Background(), snapshot)
 }
 
 func (s *Service) finishAgentJob(job *Job, status Status, output, errorMessage, resolvedPath string) {
@@ -701,9 +703,9 @@ func (s *Service) finishAgentJob(job *Job, status Status, output, errorMessage, 
 	}
 	job.FinishedAt = &now
 	job.UpdatedAt = &now
-	copy := *job
+	snapshot := *job
 	s.mu.Unlock()
-	if err := s.persistJob(context.Background(), copy); err != nil {
+	if err := s.persistJob(context.Background(), snapshot); err != nil {
 		s.mu.Lock()
 		job.Status = StatusFailed
 		job.Error = fmt.Sprintf("persist terminal install state: %v", err)

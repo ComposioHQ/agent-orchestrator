@@ -101,9 +101,9 @@ func (s *Service) agentMethodPlans(target Target) []Plan {
 		plans = []Plan{s.planUV(target, "mistral-vibe"), s.planPipx(target, "mistral-vibe")}
 	case TargetOMP:
 		if s.goos == "darwin" {
-			plans = []Plan{s.planBrew(target, "can1357/tap/omp"), s.planBun(target, "@oh-my-pi/pi-coding-agent")}
+			plans = []Plan{s.planBrew(target, "can1357/tap/omp"), s.planBun(target)}
 		} else {
-			plans = []Plan{s.planBun(target, "@oh-my-pi/pi-coding-agent")}
+			plans = []Plan{s.planBun(target)}
 		}
 	default:
 		plans = []Plan{s.planAgent(target)}
@@ -280,9 +280,9 @@ func (s *Service) planAgent(target Target) Plan {
 			"https://omp.sh/install.ps1",
 			"https://github.com/can1357/oh-my-pi")
 		if s.goos == "darwin" {
-			return withDocs(firstAvailable(preferred, s.planBrew(target, "can1357/tap/omp"), s.planBun(target, "@oh-my-pi/pi-coding-agent")), "https://github.com/can1357/oh-my-pi")
+			return withDocs(firstAvailable(preferred, s.planBrew(target, "can1357/tap/omp"), s.planBun(target)), "https://github.com/can1357/oh-my-pi")
 		}
-		return withDocs(firstAvailable(preferred, s.planBun(target, "@oh-my-pi/pi-coding-agent")), "https://github.com/can1357/oh-my-pi")
+		return withDocs(firstAvailable(preferred, s.planBun(target)), "https://github.com/can1357/oh-my-pi")
 	default:
 		return Plan{Target: target, Unsupported: true, Method: "manual", Reason: "unknown install target"}
 	}
@@ -316,7 +316,8 @@ func (s *Service) planUV(target Target, pkg string) Plan {
 	return Plan{Target: target, Method: "uv", Command: []string{"uv", "tool", "install", pkg}}
 }
 
-func (s *Service) planBun(target Target, pkg string) Plan {
+func (s *Service) planBun(target Target) Plan {
+	const pkg = "@oh-my-pi/pi-coding-agent"
 	if _, err := s.executables.LookPath("bun"); err != nil {
 		return Plan{Target: target, Unsupported: true, Method: "bun", Reason: "Bun was not found on PATH."}
 	}
