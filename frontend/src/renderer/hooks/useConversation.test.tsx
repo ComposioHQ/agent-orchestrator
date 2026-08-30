@@ -2,11 +2,13 @@ import { renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { refKey } from "../lib/hosts";
 import type { ReactNode } from "react";
 
-const { getMock, postMock, apiErrorCodeMock, apiErrorMessageMock } = vi.hoisted(() => ({
+const { getMock, postMock, clientForMock, apiErrorCodeMock, apiErrorMessageMock } = vi.hoisted(() => ({
 	getMock: vi.fn(),
 	postMock: vi.fn(),
+	clientForMock: vi.fn(),
 	apiErrorCodeMock: vi.fn(),
 	apiErrorMessageMock: vi.fn(),
 }));
@@ -17,10 +19,20 @@ vi.mock("../lib/api-client", () => ({
 	apiErrorMessage: apiErrorMessageMock,
 }));
 
-import {
-	useConversation,
-	useConversationCommands,
-} from "./useConversation";
+// clientFor(LOCAL_HOST) is the client apiClient already was, so the local
+// host resolves to the same fake the api-client mock installs.
+vi.mock("../lib/host-clients", () => ({
+	baseUrlFor: () => "http://127.0.0.1:3001",
+	connectedHosts: (() => {
+		const hosts: string[] = [];
+		return () => hosts;
+	})(),
+	subscribeConnectedHosts: () => () => undefined,
+	isHostReady: () => true,
+	clientFor: clientForMock,
+}));
+
+import { useConversation, useConversationCommands } from "./useConversation";
 import { workspaceQueryKey } from "./useWorkspaceQuery";
 
 function wrapper({ children }: { children: ReactNode }) {
@@ -86,8 +98,47 @@ const WIRE = {
 beforeEach(() => {
 	getMock.mockReset();
 	postMock.mockReset();
+	clientForMock.mockReset().mockReturnValue({ GET: getMock, POST: postMock, PATCH: vi.fn() });
 	apiErrorCodeMock.mockReset().mockReturnValue(undefined);
 	apiErrorMessageMock.mockReset().mockReturnValue("failed");
+});
+
+it("routes queued turn writes and pending state by the full session ref", async () => {
+	const cancelResponse = deferred<{ data: undefined; error: undefined }>();
+	postMock.mockReturnValueOnce(cancelResponse.promise).mockResolvedValue({ data: undefined, error: undefined });
+	const { result, rerender } = renderHook(
+		({ host }) => useConversationCommands({ host, id: "same-session" }),
+		{ initialProps: { host: "remote-a" }, wrapper },
+	);
+
+	let cancel!: Promise<unknown>;
+	act(() => {
+		cancel = result.current.cancelQueuedTurn("queued-1");
+	});
+	await waitFor(() => expect(result.current.cancelQueuedTurnPendingTurnId).toBe("queued-1"));
+	expect(clientForMock).toHaveBeenLastCalledWith("remote-a");
+	expect(postMock).toHaveBeenLastCalledWith(
+		"/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/cancel",
+		expect.objectContaining({
+			params: { path: { sessionId: "same-session", turnId: "queued-1" } },
+		}),
+	);
+
+	rerender({ host: "remote-b" });
+	expect(result.current.cancelQueuedTurnPendingTurnId).toBeUndefined();
+	cancelResponse.resolve({ data: undefined, error: undefined });
+	await act(async () => {
+		await cancel;
+		await result.current.editQueuedTurn("queued-2", "updated");
+	});
+	expect(clientForMock).toHaveBeenLastCalledWith("remote-b");
+	expect(postMock).toHaveBeenLastCalledWith(
+		"/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/queue/edit",
+		expect.objectContaining({
+			params: { path: { sessionId: "same-session", turnId: "queued-2" } },
+			body: { text: "updated" },
+		}),
+	);
 });
 
 describe("accepted conversation sends", () => {
@@ -109,7 +160,7 @@ describe("accepted conversation sends", () => {
 			<QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
 		);
 		const { result, rerender } = renderHook(
-			({ sessionId }) => useConversationCommands(sessionId),
+			({ sessionId }) => useConversationCommands({ host: "local", id: sessionId }),
 			{ initialProps: { sessionId: "ao-1" }, wrapper: HookWrapper },
 		);
 
@@ -143,7 +194,7 @@ describe("accepted conversation sends", () => {
 		const HookWrapper = ({ children }: { children: ReactNode }) => (
 			<QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
 		);
-		const firstMount = renderHook(() => useConversationCommands("ao-in-flight-remount"), {
+		const firstMount = renderHook(() => useConversationCommands({ host: "local", id: "ao-in-flight-remount" }), {
 			wrapper: HookWrapper,
 		});
 
@@ -156,7 +207,7 @@ describe("accepted conversation sends", () => {
 		});
 		firstMount.unmount();
 
-		const secondMount = renderHook(() => useConversationCommands("ao-in-flight-remount"), {
+		const secondMount = renderHook(() => useConversationCommands({ host: "local", id: "ao-in-flight-remount" }), {
 			wrapper: HookWrapper,
 		});
 		expect(secondMount.result.current.busy).toBe(true);
@@ -184,7 +235,7 @@ describe("accepted conversation sends", () => {
 		const HookWrapper = ({ children }: { children: ReactNode }) => (
 			<QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
 		);
-		const { result } = renderHook(() => useConversationCommands("ao-send-failure"), {
+		const { result } = renderHook(() => useConversationCommands({ host: "local", id: "ao-send-failure" }), {
 			wrapper: HookWrapper,
 		});
 
@@ -209,7 +260,7 @@ describe("accepted conversation sends", () => {
 		const HookWrapper = ({ children }: { children: ReactNode }) => (
 			<QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
 		);
-		const firstMount = renderHook(() => useConversationCommands("ao-duplicate-send"), {
+		const firstMount = renderHook(() => useConversationCommands({ host: "local", id: "ao-duplicate-send" }), {
 			wrapper: HookWrapper,
 		});
 
@@ -217,7 +268,7 @@ describe("accepted conversation sends", () => {
 			await firstMount.result.current.send("idempotent retry");
 		});
 		firstMount.unmount();
-		const secondMount = renderHook(() => useConversationCommands("ao-duplicate-send"), {
+		const secondMount = renderHook(() => useConversationCommands({ host: "local", id: "ao-duplicate-send" }), {
 			wrapper: HookWrapper,
 		});
 
@@ -237,7 +288,7 @@ describe("accepted conversation sends", () => {
 		const HookWrapper = ({ children }: { children: ReactNode }) => (
 			<QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
 		);
-		const firstMount = renderHook(() => useConversationCommands("ao-refresh-failure"), {
+		const firstMount = renderHook(() => useConversationCommands({ host: "local", id: "ao-refresh-failure" }), {
 			wrapper: HookWrapper,
 		});
 
@@ -252,7 +303,7 @@ describe("accepted conversation sends", () => {
 		expect(sendError).toBeUndefined();
 
 		firstMount.unmount();
-		const secondMount = renderHook(() => useConversationCommands("ao-refresh-failure"), {
+		const secondMount = renderHook(() => useConversationCommands({ host: "local", id: "ao-refresh-failure" }), {
 			wrapper: HookWrapper,
 		});
 		expect(secondMount.result.current.pendingAcceptedTurnId).toBe("turn-refresh-failed");
@@ -276,7 +327,7 @@ describe("accepted conversation sends", () => {
 		const HookWrapper = ({ children }: { children: ReactNode }) => (
 			<QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
 		);
-		const { result } = renderHook(() => useConversationCommands("ao-overlap"), {
+		const { result } = renderHook(() => useConversationCommands({ host: "local", id: "ao-overlap" }), {
 			wrapper: HookWrapper,
 		});
 
@@ -315,7 +366,7 @@ describe("accepted conversation sends", () => {
 		const HookWrapper = ({ children }: { children: ReactNode }) => (
 			<QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
 		);
-		const firstMount = renderHook(() => useConversationCommands("ao-remount"), {
+		const firstMount = renderHook(() => useConversationCommands({ host: "local", id: "ao-remount" }), {
 			wrapper: HookWrapper,
 		});
 
@@ -327,7 +378,7 @@ describe("accepted conversation sends", () => {
 		});
 		firstMount.unmount();
 
-		const secondMount = renderHook(() => useConversationCommands("ao-remount"), {
+		const secondMount = renderHook(() => useConversationCommands({ host: "local", id: "ao-remount" }), {
 			wrapper: HookWrapper,
 		});
 		expect(secondMount.result.current.pendingAcceptedTurnId).toBe("turn-after-remount");
@@ -357,7 +408,7 @@ describe("session-scoped conversation commands", () => {
 			<QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
 		);
 		const { result, rerender } = renderHook(
-			({ sessionId }) => useConversationCommands(sessionId),
+			({ sessionId }) => useConversationCommands({ host: "local", id: sessionId }),
 			{ initialProps: { sessionId: "ao-send-a" }, wrapper: HookWrapper },
 		);
 
@@ -375,8 +426,8 @@ describe("session-scoped conversation commands", () => {
 		await act(async () => {
 			await request;
 		});
-		expect(invalidate).toHaveBeenCalledWith({ queryKey: ["conversation", "ao-send-a"] });
-		expect(invalidate).not.toHaveBeenCalledWith({ queryKey: ["conversation", "ao-send-b"] });
+		expect(invalidate).toHaveBeenCalledWith({ queryKey: ["conversation", "local:ao-send-a"] });
+		expect(invalidate).not.toHaveBeenCalledWith({ queryKey: ["conversation", "local:ao-send-b"] });
 		expect(result.current.pendingAcceptedTurnId).toBeUndefined();
 	});
 
@@ -394,7 +445,7 @@ describe("session-scoped conversation commands", () => {
 			<QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
 		);
 		const { result, rerender } = renderHook(
-			({ sessionId }) => useConversationCommands(sessionId),
+			({ sessionId }) => useConversationCommands({ host: "local", id: sessionId }),
 			{ initialProps: { sessionId: "ao-command-a" }, wrapper: HookWrapper },
 		);
 
@@ -409,9 +460,9 @@ describe("session-scoped conversation commands", () => {
 
 		response.resolve({ data: undefined, error: { code: "CHAT_NO_ACTIVE_TURN" } });
 		await waitFor(() => {
-			expect(invalidate).toHaveBeenCalledWith({ queryKey: ["conversation", "ao-command-a"] });
+			expect(invalidate).toHaveBeenCalledWith({ queryKey: ["conversation", "local:ao-command-a"] });
 		});
-		expect(invalidate).not.toHaveBeenCalledWith({ queryKey: ["conversation", "ao-command-b"] });
+		expect(invalidate).not.toHaveBeenCalledWith({ queryKey: ["conversation", "local:ao-command-b"] });
 		expect(result.current.busy).toBe(false);
 		expect(result.current.error).toBeUndefined();
 	});
@@ -436,7 +487,7 @@ describe("session-scoped conversation commands", () => {
 				<QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
 			);
 			const { result, rerender } = renderHook(
-				({ sessionId }) => useConversationCommands(sessionId),
+				({ sessionId }) => useConversationCommands({ host: "local", id: sessionId }),
 				{ initialProps: { sessionId: "ao-turn-a" }, wrapper: HookWrapper },
 			);
 
@@ -470,8 +521,8 @@ describe("session-scoped conversation commands", () => {
 				await request;
 			});
 
-			expect(invalidate).toHaveBeenCalledWith({ queryKey: ["conversation", "ao-turn-a"] });
-			expect(invalidate).not.toHaveBeenCalledWith({ queryKey: ["conversation", "ao-turn-b"] });
+			expect(invalidate).toHaveBeenCalledWith({ queryKey: ["conversation", "local:ao-turn-a"] });
+			expect(invalidate).not.toHaveBeenCalledWith({ queryKey: ["conversation", "local:ao-turn-b"] });
 			expect(result.current.busy).toBe(false);
 			expect(result.current.pendingAcceptedTurnId).toBeUndefined();
 
@@ -508,7 +559,7 @@ describe("session-scoped conversation commands", () => {
 			const HookWrapper = ({ children }: { children: ReactNode }) => (
 				<QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
 			);
-			const { result } = renderHook(() => useConversationCommands("ao-turn-failure"), {
+			const { result } = renderHook(() => useConversationCommands({ host: "local", id: "ao-turn-failure" }), {
 				wrapper: HookWrapper,
 			});
 
@@ -576,7 +627,7 @@ describe("useConversation snapshot mapping", () => {
 			error: undefined,
 		});
 
-		const { result } = renderHook(() => useConversation("ao-1"), { wrapper });
+		const { result } = renderHook(() => useConversation({ host: "local", id: "ao-1" }), { wrapper });
 		await waitFor(() => expect(result.current.snapshot).toBeDefined());
 
 		expect(result.current.snapshot).toMatchObject({
@@ -600,7 +651,7 @@ describe("useConversation snapshot mapping", () => {
 	it("maps the provider state the timeline cannot express", async () => {
 		getMock.mockResolvedValue({ data: WIRE, error: undefined });
 
-		const { result } = renderHook(() => useConversation("ao-1"), { wrapper });
+		const { result } = renderHook(() => useConversation({ host: "local", id: "ao-1" }), { wrapper });
 		await waitFor(() => expect(result.current.snapshot).toBeDefined());
 		const snapshot = result.current.snapshot!;
 
@@ -640,7 +691,7 @@ describe("useConversation snapshot mapping", () => {
 			error: undefined,
 		});
 
-		const { result } = renderHook(() => useConversation("ao-1"), { wrapper });
+		const { result } = renderHook(() => useConversation({ host: "local", id: "ao-1" }), { wrapper });
 		await waitFor(() => expect(result.current.snapshot).toBeDefined());
 
 		expect(result.current.snapshot!.turns[0]).toMatchObject({
@@ -657,7 +708,7 @@ describe("useConversation snapshot mapping", () => {
 			error: undefined,
 		});
 
-		const { result } = renderHook(() => useConversation("ao-1"), { wrapper });
+		const { result } = renderHook(() => useConversation({ host: "local", id: "ao-1" }), { wrapper });
 		await waitFor(() => expect(result.current.snapshot).toBeDefined());
 
 		expect(result.current.snapshot!.modelReroute).toBeUndefined();
@@ -670,7 +721,7 @@ describe("useConversation snapshot mapping", () => {
 describe("conversation branching commands", () => {
 	it("edits through the dedicated endpoint without rolling back", async () => {
 		postMock.mockResolvedValue({ data: {}, error: undefined });
-		const { result } = renderHook(() => useConversationCommands("ao-1"), { wrapper });
+		const { result } = renderHook(() => useConversationCommands({ host: "local", id: "ao-1" }), { wrapper });
 
 		await act(async () => {
 			await result.current.editMessage("turn-2", "edited prompt");
@@ -690,7 +741,7 @@ describe("conversation branching commands", () => {
 
 	it("activates an existing branch", async () => {
 		postMock.mockResolvedValue({ data: {}, error: undefined });
-		const { result } = renderHook(() => useConversationCommands("ao-1"), { wrapper });
+		const { result } = renderHook(() => useConversationCommands({ host: "local", id: "ao-1" }), { wrapper });
 
 		await act(async () => {
 			await result.current.activateBranch("branch-previous");
@@ -709,7 +760,7 @@ describe("steering refusals", () => {
 			data: { sourceTurnId: "queued-2", providerTurnId: "provider-1", activityId: "activity-1" },
 			error: undefined,
 		});
-		const { result } = renderHook(() => useConversationCommands("ao-1"), { wrapper });
+		const { result } = renderHook(() => useConversationCommands({ host: "local", id: "ao-1" }), { wrapper });
 		await act(async () => {
 			await result.current.promoteQueuedTurn("queued-2");
 		});
@@ -724,7 +775,7 @@ describe("steering refusals", () => {
 		apiErrorMessageMock.mockReturnValue("a compaction turn is running.");
 		postMock.mockResolvedValue({ data: undefined, error: { code } });
 
-		const { result } = renderHook(() => useConversationCommands("ao-1"), { wrapper });
+		const { result } = renderHook(() => useConversationCommands({ host: "local", id: "ao-1" }), { wrapper });
 		await act(async () => {
 			await result.current.steer("go left").catch(() => {});
 		});
@@ -763,7 +814,7 @@ describe("tool server reload refusals", () => {
 		apiErrorCodeMock.mockReturnValue("CHAT_MCP_RELOAD_UNSUPPORTED");
 		postMock.mockResolvedValue({ data: undefined, error: { code: "CHAT_MCP_RELOAD_UNSUPPORTED" } });
 
-		const { result } = renderHook(() => useConversationCommands("ao-1"), { wrapper });
+		const { result } = renderHook(() => useConversationCommands({ host: "local", id: "ao-1" }), { wrapper });
 		await act(async () => {
 			await result.current.reloadMcpServers().catch(() => {});
 		});
@@ -780,7 +831,7 @@ describe("tool server reload refusals", () => {
 		apiErrorMessageMock.mockReturnValue("a turn is running");
 		postMock.mockResolvedValue({ data: undefined, error: { code: "CHAT_TURN_RUNNING" } });
 
-		const { result } = renderHook(() => useConversationCommands("ao-1"), { wrapper });
+		const { result } = renderHook(() => useConversationCommands({ host: "local", id: "ao-1" }), { wrapper });
 		await act(async () => {
 			await result.current.reloadMcpServers().catch(() => {});
 		});
@@ -801,7 +852,7 @@ describe("controller recovery", () => {
 		});
 		const invalidateSpy = vi.spyOn(QueryClient.prototype, "invalidateQueries");
 
-		const { result } = renderHook(() => useConversationCommands("ao-1"), { wrapper });
+		const { result } = renderHook(() => useConversationCommands({ host: "local", id: "ao-1" }), { wrapper });
 		act(() => {
 			result.current.interrupt();
 		});
@@ -811,7 +862,7 @@ describe("controller recovery", () => {
 				"/api/v1/sessions/{sessionId}/conversation/interrupt",
 				{ params: { path: { sessionId: "ao-1" } } },
 			);
-			expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["conversation", "ao-1"] });
+			expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["conversation", refKey({ host: "local", id: "ao-1" })] });
 		});
 		invalidateSpy.mockRestore();
 	});
@@ -820,7 +871,7 @@ describe("controller recovery", () => {
 		postMock.mockResolvedValue({ data: {}, error: undefined, response: { status: 200 } });
 		const invalidateSpy = vi.spyOn(QueryClient.prototype, "invalidateQueries");
 
-		const { result } = renderHook(() => useConversationCommands("ao-1"), { wrapper });
+		const { result } = renderHook(() => useConversationCommands({ host: "local", id: "ao-1" }), { wrapper });
 		await act(async () => {
 			await result.current.resumeAgent();
 		});
@@ -828,7 +879,7 @@ describe("controller recovery", () => {
 		expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/resume-agent", {
 			params: { path: { sessionId: "ao-1" } },
 		});
-		expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["conversation", "ao-1"] });
+		expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["conversation", refKey({ host: "local", id: "ao-1" })] });
 		expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: workspaceQueryKey });
 		invalidateSpy.mockRestore();
 	});

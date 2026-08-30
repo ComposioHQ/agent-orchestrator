@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { LOCAL_HOST, refKey } from "./hosts";
 
 const {
 	onStatusMock,
@@ -190,7 +191,7 @@ describe("createEventTransport", () => {
 
 			vi.advanceTimersByTime(200);
 			expect(queryClient.invalidateQueries).toHaveBeenCalledWith({
-				queryKey: ["conversation", "chat-1"],
+				queryKey: ["conversation", refKey({ host: LOCAL_HOST, id: "chat-1" })],
 			});
 			expect(queryClient.invalidateQueries).not.toHaveBeenCalledWith({ queryKey: ["workspaces"] });
 			expect(queryClient.invalidateQueries).not.toHaveBeenCalledWith({

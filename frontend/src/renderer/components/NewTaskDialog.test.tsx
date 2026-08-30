@@ -28,12 +28,27 @@ vi.mock("../lib/api-client", () => ({
 			: undefined,
 }));
 
+// clientFor(LOCAL_HOST) is the client apiClient already was, so the local
+// host resolves to the same fake the api-client mock installs.
+vi.mock("../lib/host-clients", () => ({
+	baseUrlFor: () => "http://127.0.0.1:3001",
+	connectedHosts: (() => {
+		// useSyncExternalStore requires a stable snapshot: a fresh [] each call
+		// re-renders forever.
+		const hosts: string[] = [];
+		return () => hosts;
+	})(),
+	subscribeConnectedHosts: () => () => undefined,
+	isHostReady: () => true,
+	clientFor: () => ({ GET: (...args: unknown[]) => getMock(...args), POST: (...args: unknown[]) => postMock(...args) }),
+}));
+
 function renderDialog() {
 	const onCreated = vi.fn();
 	const onOpenChange = vi.fn();
 	render(
 		<QueryClientProvider client={new QueryClient()}>
-			<NewTaskDialog open projectId="proj-1" onCreated={onCreated} onOpenChange={onOpenChange} />
+			<NewTaskDialog open project={{ host: "local", id: "proj-1" }} onCreated={onCreated} onOpenChange={onOpenChange} />
 		</QueryClientProvider>,
 	);
 	return { onCreated, onOpenChange };

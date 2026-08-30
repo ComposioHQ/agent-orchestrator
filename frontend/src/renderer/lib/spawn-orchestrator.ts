@@ -1,4 +1,6 @@
-import { apiClient, apiErrorCode, apiErrorMessage, apiErrorRequestId } from "./api-client";
+import { apiErrorCode, apiErrorMessage, apiErrorRequestId } from "./api-client";
+import { clientFor } from "./host-clients";
+import type { Ref } from "./hosts";
 import type { OrchestratorSpawnSource } from "./orchestrator-spawn-sources";
 import { captureRendererEvent } from "./telemetry";
 import type { SessionMode } from "../types/conversation";
@@ -42,15 +44,15 @@ export function isChatPreflightError(error: unknown): error is OrchestratorSpawn
  *  true the daemon first tears down any active orchestrator for the project, then
  *  re-spawns one on the canonical branch (reattaching the existing branch). */
 export async function spawnOrchestrator(
-	projectId: string,
+	project: Ref,
 	source: OrchestratorSpawnSource,
 	clean = false,
 	mode?: SessionMode,
 ): Promise<string> {
-	void captureRendererEvent("ao.renderer.orchestrator_spawn_requested", { project_id: projectId, source });
+	void captureRendererEvent("ao.renderer.orchestrator_spawn_requested", { project_id: project.id, source });
 	try {
-		const { data, error, response } = await apiClient.POST("/api/v1/orchestrators", {
-			body: { projectId, clean, ...(mode ? { mode } : {}) },
+		const { data, error, response } = await clientFor(project.host).POST("/api/v1/orchestrators", {
+			body: { projectId: project.id, clean, ...(mode ? { mode } : {}) },
 		});
 
 		if (error || !data?.orchestrator?.id) {
@@ -65,10 +67,10 @@ export async function spawnOrchestrator(
 			);
 		}
 
-		void captureRendererEvent("ao.renderer.orchestrator_spawn_succeeded", { project_id: projectId, source });
+		void captureRendererEvent("ao.renderer.orchestrator_spawn_succeeded", { project_id: project.id, source });
 		return data.orchestrator.id;
 	} catch (err) {
-		void captureRendererEvent("ao.renderer.orchestrator_spawn_failed", { project_id: projectId, source });
+		void captureRendererEvent("ao.renderer.orchestrator_spawn_failed", { project_id: project.id, source });
 		throw err;
 	}
 }

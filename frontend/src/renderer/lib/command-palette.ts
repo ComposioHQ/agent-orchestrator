@@ -22,25 +22,26 @@ import {
 } from "./session-reviews";
 import { appI18n, type MessageKey } from "../i18n";
 
+import { refKey, type HostId, type Ref } from "./hosts";
 export type CommandGroupId = "current" | "attention" | "projects" | "sessions" | "prs" | "global";
 
 export type NavigateTarget =
 	| { to: "/settings" }
-	| { to: "/projects/$projectId"; params: { projectId: string } }
-	| { to: "/projects/$projectId/settings"; params: { projectId: string } }
-	| { to: "/projects/$projectId/sessions/$sessionId"; params: { projectId: string; sessionId: string } };
+	| { to: "/host/$hostId/project/$projectId"; params: { hostId: string; projectId: string } }
+	| { to: "/host/$hostId/project/$projectId/settings"; params: { hostId: string; projectId: string } }
+	| { to: "/host/$hostId/session/$sessionId"; params: { hostId: string; sessionId: string } };
 
 export type CommandAction =
 	| { kind: "navigate"; target: NavigateTarget }
-	| { kind: "open-new-task"; projectId: string }
+	| { kind: "open-new-task"; project: Ref }
 	| { kind: "open-new-project" }
-	| { kind: "open-orchestrator"; projectId: string }
-	| { kind: "open-session-actions"; sessionId: string }
-	| { kind: "resume-session"; projectId: string; sessionId: string }
+	| { kind: "open-orchestrator"; project: Ref }
+	| { kind: "open-session-actions"; session: Ref }
+	| { kind: "resume-session"; session: Ref }
 	| { kind: "copy-branch"; branch: string }
 	| { kind: "open-pr"; url: string }
 	| { kind: "copy-pr-url"; url: string }
-	| { kind: "trigger-review"; reviewAction: ReviewRunActionKind; sessionId: string }
+	| { kind: "trigger-review"; reviewAction: ReviewRunActionKind; session: Ref }
 	| { kind: "toggle-theme" };
 
 export type CommandItem = {
@@ -58,6 +59,8 @@ export type CommandItem = {
 
 export type CommandPaletteContext = {
 	workspaces: WorkspaceSummary[];
+	/** Host the route is on; without it the current session cannot be resolved. */
+	currentHostId?: HostId;
 	currentProjectId?: string;
 	currentSessionId?: string;
 	restartingProjectIds?: ReadonlySet<string>;
@@ -117,10 +120,10 @@ export type WorkspaceSessionContext = {
 	session: WorkspaceSession;
 };
 
-function jumpTarget(workspace: WorkspaceSummary, session: WorkspaceSession): NavigateTarget {
+function jumpTarget(_workspace: WorkspaceSummary, session: WorkspaceSession): NavigateTarget {
 	return {
-		to: "/projects/$projectId/sessions/$sessionId",
-		params: { projectId: workspace.id, sessionId: session.id },
+		to: "/host/$hostId/session/$sessionId",
+		params: { hostId: session.host, sessionId: session.id },
 	};
 }
 
@@ -136,7 +139,7 @@ function sessionCommand(
 		subtitle: workspace.name,
 		zone: attentionZone(session),
 		keywords: [workspace.name, session.branch ?? "", session.issueId ?? ""],
-		action: { kind: "open-session-actions", sessionId: session.id },
+		action: { kind: "open-session-actions", session: { host: session.host, id: session.id } },
 	};
 }
 
@@ -162,7 +165,7 @@ export function buildSessionActions(
 			title: t("command.resumeAgent"),
 			subtitle: t("command.resumeAgentSubtitle"),
 			keywords: ["restore", "restart", "retry", "resume", session.title],
-			action: { kind: "resume-session", projectId: workspace.id, sessionId: session.id },
+			action: { kind: "resume-session", session: { host: session.host, id: session.id } },
 		});
 	}
 
@@ -180,22 +183,28 @@ export function buildSessionActions(
 	return items;
 }
 
-export function findSession(workspaces: WorkspaceSummary[], sessionId: string): WorkspaceSessionContext | undefined {
+// Takes a Ref, not a bare id: session ids are unique per host, not across them,
+// so an id alone matches whichever host sorts first in the tree.
+export function findSession(workspaces: WorkspaceSummary[], ref: Ref): WorkspaceSessionContext | undefined {
 	for (const workspace of workspaces) {
-		const match = workspace.sessions.find((session) => session.id === sessionId);
+		const match = workspace.sessions.find((session) => session.host === ref.host && session.id === ref.id);
 		if (match) return { workspace, session: match };
 	}
 	return undefined;
 }
 
 export function buildCommands(ctx: CommandPaletteContext, t: TFunction = appI18n.t): CommandItem[] {
-	const { workspaces, currentProjectId, currentSessionId, restartingProjectIds, reviewStatesBySessionId } = ctx;
+	const { workspaces, currentHostId, currentProjectId, currentSessionId, restartingProjectIds, reviewStatesBySessionId } =
+		ctx;
 	const items: CommandItem[] = [];
 
 	const currentProject = currentProjectId
 		? workspaces.find((workspace) => workspace.id === currentProjectId)
 		: undefined;
-	const currentSession = currentSessionId ? findSession(workspaces, currentSessionId)?.session : undefined;
+	const currentRef: Ref | undefined =
+		currentHostId && currentSessionId ? { host: currentHostId, id: currentSessionId } : undefined;
+	const currentSessionKey = currentRef ? refKey(currentRef) : undefined;
+	const currentSession = currentRef ? findSession(workspaces, currentRef)?.session : undefined;
 	const isProjectRestarting = Boolean(currentProject && restartingProjectIds?.has(currentProject.id));
 
 	items.push({
@@ -210,7 +219,7 @@ export function buildCommands(ctx: CommandPaletteContext, t: TFunction = appI18n
 			: isProjectRestarting
 				? t("command.orchestratorRestarting")
 				: undefined,
-		...(currentProject ? { action: { kind: "open-new-task" as const, projectId: currentProject.id } } : {}),
+		...(currentProject ? { action: { kind: "open-new-task" as const, project: { host: currentProject.host, id: currentProject.id } } } : {}),
 	});
 
 	if (currentProject) {
@@ -222,7 +231,7 @@ export function buildCommands(ctx: CommandPaletteContext, t: TFunction = appI18n
 			keywords: ["orchestrator", "spawn", currentProject.name],
 			disabled: isProjectRestarting,
 			disabledReason: isProjectRestarting ? t("command.orchestratorRestarting") : undefined,
-			action: { kind: "open-orchestrator", projectId: currentProject.id },
+			action: { kind: "open-orchestrator", project: { host: currentProject.host, id: currentProject.id } },
 		});
 		items.push({
 			id: "current-project-settings",
@@ -232,7 +241,10 @@ export function buildCommands(ctx: CommandPaletteContext, t: TFunction = appI18n
 			keywords: ["settings", "config", currentProject.name],
 			action: {
 				kind: "navigate",
-				target: { to: "/projects/$projectId/settings", params: { projectId: currentProject.id } },
+				target: {
+					to: "/host/$hostId/project/$projectId/settings",
+					params: { hostId: currentProject.host, projectId: currentProject.id },
+				},
 			},
 		});
 	}
@@ -253,14 +265,14 @@ export function buildCommands(ctx: CommandPaletteContext, t: TFunction = appI18n
 		.flatMap((workspace) => workerSessions(workspace.sessions).map((session) => ({ workspace, session })))
 		.filter(
 			({ session }) =>
-				session.id !== currentSessionId && (attentionZone(session) === "merge" || sessionNeedsAttention(session)),
+				refKey(session) !== currentSessionKey && (attentionZone(session) === "merge" || sessionNeedsAttention(session)),
 		)
 		.sort(
 			(a, b) =>
 				attentionZoneOrder.indexOf(attentionZone(a.session)) - attentionZoneOrder.indexOf(attentionZone(b.session)),
 		);
 
-	const attentionIds = new Set(attentionSessions.map(({ session }) => session.id));
+	const attentionKeys = new Set(attentionSessions.map(({ session }) => refKey(session)));
 
 	for (const { workspace, session } of attentionSessions) {
 		items.push(sessionCommand(workspace, session, "attention"));
@@ -272,13 +284,19 @@ export function buildCommands(ctx: CommandPaletteContext, t: TFunction = appI18n
 			group: "projects",
 			title: workspace.name,
 			keywords: [workspace.path],
-			action: { kind: "navigate", target: { to: "/projects/$projectId", params: { projectId: workspace.id } } },
+			action: {
+				kind: "navigate",
+				target: {
+					to: "/host/$hostId/project/$projectId",
+					params: { hostId: workspace.host, projectId: workspace.id },
+				},
+			},
 		});
 	}
 
 	for (const workspace of workspaces) {
 		for (const session of workerSessions(workspace.sessions).filter(
-			(session) => !attentionIds.has(session.id) && session.id !== currentSessionId,
+			(session) => !attentionKeys.has(refKey(session)) && refKey(session) !== currentSessionKey,
 		)) {
 			items.push({ ...sessionCommand(workspace, session, "sessions"), searchOnly: !sessionIsActive(session) });
 		}
@@ -314,8 +332,8 @@ export function buildCommands(ctx: CommandPaletteContext, t: TFunction = appI18n
 					action: {
 						kind: "navigate",
 						target: {
-							to: "/projects/$projectId/sessions/$sessionId",
-							params: { projectId: workspace.id, sessionId: session.id },
+							to: "/host/$hostId/session/$sessionId",
+							params: { hostId: session.host, sessionId: session.id },
 						},
 					},
 				});
@@ -409,7 +427,11 @@ function prReviewCommand(
 		disabledReason,
 		// The action kind rides along so the palette's telemetry reports the same
 		// enum the inspector does, rather than the translated label above it.
-		action: { kind: "trigger-review", reviewAction: reviewRunActionKind(states, false), sessionId: session.id },
+		action: {
+			kind: "trigger-review",
+			reviewAction: reviewRunActionKind(states, false),
+			session: { host: session.host, id: session.id },
+		},
 	};
 }
 

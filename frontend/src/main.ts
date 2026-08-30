@@ -106,6 +106,9 @@ import { dockBounceType, shouldReplaceBounce, shouldSignalAttention, shouldToast
 import { buildMacAppMenuTemplate, buildWindowsAppMenuTemplate } from "./main/menu";
 import { ancestorRepositorySetupWarning, scanImportFolder } from "./main/import-folder-scan";
 import { parseOpenFolderPathArg } from "./main/open-folder-arg";
+import { registerRemotesIpc, remotesFilePath } from "./main/remotes-main";
+import { RemoteRegistry } from "./main/remote-registry";
+import { startRemoteProxy } from "./main/remote-proxy";
 
 // Globals injected at compile time by @electron-forge/plugin-vite.
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
@@ -1786,6 +1789,9 @@ async function chooseDirectory(title: string): Promise<string | null> {
 	return result.filePaths[0] ?? null;
 }
 
+const remoteRegistry = new RemoteRegistry(startRemoteProxy);
+registerRemotesIpc(ipcMain, { file: remotesFilePath(), registry: remoteRegistry });
+
 ipcMain.handle("app:chooseDirectory", async (_event, title?: string) => {
 	return chooseDirectory(typeof title === "string" && title.trim() ? title : "Choose a git repository");
 });
@@ -2272,11 +2278,13 @@ app.on("before-quit", (event) => {
 	if (!browserCleanupComplete) {
 		event.preventDefault();
 		if (!browserQuitCleanupPromise) {
-			browserQuitCleanupPromise = disposeAllBrowserViewHosts().finally(() => {
-				browserCleanupComplete = true;
-				browserQuitCleanupPromise = null;
-				app.quit();
-			});
+			browserQuitCleanupPromise = Promise.all([disposeAllBrowserViewHosts(), remoteRegistry.closeAll()])
+				.then(() => undefined)
+				.finally(() => {
+					browserCleanupComplete = true;
+					browserQuitCleanupPromise = null;
+					app.quit();
+				});
 		}
 		return;
 	}

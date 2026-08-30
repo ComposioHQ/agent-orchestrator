@@ -1,4 +1,5 @@
 import type { PRState, PullRequestFacts, WorkspaceSummary } from "../types/workspace";
+import { LOCAL_HOST } from "./hosts";
 import type { SessionPRSummary } from "../hooks/useSessionScmSummary";
 import type { ShellTerminal } from "../hooks/useShellTerminals";
 
@@ -28,6 +29,7 @@ const demoPr = (
 // enough to exercise the tab strip's layout, selection, and close control.
 export const mockShellTerminals: ShellTerminal[] = [
 	{
+		host: LOCAL_HOST,
 		handleId: "shellterm-demo-1",
 		projectId: "ao-demo",
 		workingDir: "/Users/demo/Projects/ao-demo",
@@ -38,6 +40,7 @@ export const mockShellTerminals: ShellTerminal[] = [
 
 export const mockWorkspaces: WorkspaceSummary[] = [
 	{
+		host: LOCAL_HOST,
 		id: "ao-demo",
 		name: "ao-demo",
 		path: "/demo/ao-demo",
@@ -46,6 +49,7 @@ export const mockWorkspaces: WorkspaceSummary[] = [
 		accentColor: "var(--color-project-accent-mint)",
 		sessions: [
 			{
+				host: LOCAL_HOST,
 				id: "ao-demo-orchestrator",
 				terminalHandleId: "ao-demo-orchestrator/terminal_0",
 				workspaceId: "ao-demo",
@@ -61,6 +65,7 @@ export const mockWorkspaces: WorkspaceSummary[] = [
 				prs: [],
 			},
 			{
+				host: LOCAL_HOST,
 				id: "demo-working",
 				terminalHandleId: "demo-working/terminal_0",
 				workspaceId: "ao-demo",
@@ -80,6 +85,7 @@ export const mockWorkspaces: WorkspaceSummary[] = [
 				prs: [],
 			},
 			{
+				host: LOCAL_HOST,
 				id: "demo-needs-input",
 				terminalHandleId: "demo-needs-input/terminal_0",
 				workspaceId: "ao-demo",
@@ -99,6 +105,7 @@ export const mockWorkspaces: WorkspaceSummary[] = [
 				prs: [demoPr(318, "open", "passing", "changes_requested")],
 			},
 			{
+				host: LOCAL_HOST,
 				id: "demo-review-stack",
 				terminalHandleId: "demo-review-stack/terminal_0",
 				workspaceId: "ao-demo",
@@ -125,6 +132,7 @@ export const mockWorkspaces: WorkspaceSummary[] = [
 				],
 			},
 			{
+				host: LOCAL_HOST,
 				id: "demo-in-review",
 				terminalHandleId: "demo-in-review/terminal_0",
 				workspaceId: "ao-demo",
@@ -139,6 +147,7 @@ export const mockWorkspaces: WorkspaceSummary[] = [
 				prs: [demoPr(322, "open", "pending", "none", "unknown")],
 			},
 			{
+				host: LOCAL_HOST,
 				id: "demo-ready",
 				terminalHandleId: "demo-ready/terminal_0",
 				workspaceId: "ao-demo",
@@ -157,6 +166,7 @@ export const mockWorkspaces: WorkspaceSummary[] = [
 				prs: [demoPr(323, "open", "passing", "approved")],
 			},
 			{
+				host: LOCAL_HOST,
 				id: "demo-ci-failed",
 				terminalHandleId: "demo-ci-failed/terminal_0",
 				workspaceId: "ao-demo",
@@ -174,6 +184,7 @@ export const mockWorkspaces: WorkspaceSummary[] = [
 		],
 	},
 	{
+		host: LOCAL_HOST,
 		id: "docs-site",
 		name: "docs-site",
 		path: "/demo/docs-site",
@@ -182,6 +193,7 @@ export const mockWorkspaces: WorkspaceSummary[] = [
 		accentColor: "var(--color-project-accent-sky)",
 		sessions: [
 			{
+				host: LOCAL_HOST,
 				id: "docs-installation",
 				terminalHandleId: "docs-installation/terminal_0",
 				workspaceId: "docs-site",
@@ -196,6 +208,7 @@ export const mockWorkspaces: WorkspaceSummary[] = [
 				prs: [],
 			},
 			{
+				host: LOCAL_HOST,
 				id: "docs-ready",
 				terminalHandleId: "docs-ready/terminal_0",
 				workspaceId: "docs-site",

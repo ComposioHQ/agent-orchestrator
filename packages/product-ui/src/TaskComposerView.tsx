@@ -65,7 +65,7 @@ export type TaskComposerModelControl = {
 	mode: string;
 	onModeChange: (value: string) => void;
 	onModelChange: (value: string) => void;
-	projectId: string;
+	project: { host: string; id: string };
 	value: string;
 };
 

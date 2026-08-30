@@ -2,11 +2,12 @@ import { useEffect, useMemo, useRef } from "react";
 import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
 import { aoBridge } from "../lib/bridge";
 import { useNavigateToSession } from "../lib/navigate-to-session";
-import { attentionZone, workerSessions } from "../types/workspace";
+import { flattenHostSections, attentionZone, workerSessions } from "../types/workspace";
 import type { TraySessionEntry } from "../../shared/tray";
 
+import { LOCAL_HOST } from "../lib/hosts";
 export function TrayRuntime() {
-	const workspaces = useWorkspaceQuery().data ?? [];
+	const workspaces = flattenHostSections(useWorkspaceQuery().data);
 	const navigateToSession = useNavigateToSession();
 
 	const sessions = useMemo<TraySessionEntry[]>(() => {
@@ -38,7 +39,7 @@ export function TrayRuntime() {
 
 	useEffect(() => {
 		return aoBridge.tray.onOpenSession((target) => {
-			navigateToSession(target.projectId, target.sessionId);
+			navigateToSession({ host: LOCAL_HOST, id: target.sessionId });
 		});
 	}, [navigateToSession]);
 

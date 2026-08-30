@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { refKey } from "../lib/hosts";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { appI18n } from "../i18n";
 
@@ -36,7 +37,17 @@ vi.mock("@tanstack/react-router", () => ({
 
 vi.mock("../hooks/useWorkspaceQuery", () => ({
 	workspaceQueryKey: ["workspaces"],
-	useWorkspaceQuery: workspaceQueryMock,
+	useWorkspaceQuery: () => (() => {
+		// useWorkspaceQuery returns one section per host now; these fixtures still
+		// describe the local host's workspaces, so wrap them in its section.
+		const result = workspaceQueryMock();
+		return {
+			...result,
+			data: result.data
+				? [{ host: "local", label: "Local", status: "ready", workspaces: result.data, failure: null }]
+				: undefined,
+		};
+	})(),
 }));
 
 vi.mock("../hooks/useSessionUsageSummaries", () => ({
@@ -46,6 +57,21 @@ vi.mock("../hooks/useSessionUsageSummaries", () => ({
 vi.mock("../lib/api-client", () => ({
 	apiClient: { POST: (...args: unknown[]) => postMock(...args) },
 	apiErrorMessage: (_error: unknown, fallback: string) => fallback,
+}));
+
+// clientFor(LOCAL_HOST) is the client apiClient already was, so the local
+// host resolves to the same fake the api-client mock installs.
+vi.mock("../lib/host-clients", () => ({
+	baseUrlFor: () => "http://127.0.0.1:3001",
+	connectedHosts: (() => {
+		// useSyncExternalStore requires a stable snapshot: a fresh [] each call
+		// re-renders forever.
+		const hosts: string[] = [];
+		return () => hosts;
+	})(),
+	subscribeConnectedHosts: () => () => undefined,
+	isHostReady: () => true,
+	clientFor: () => ({ POST: (...args: unknown[]) => postMock(...args) }),
 }));
 
 vi.mock("../lib/bridge", () => ({
@@ -83,7 +109,7 @@ function renderBoardWithClient(queryClient: QueryClient, projectId?: string) {
 	return render(
 		<QueryClientProvider client={queryClient}>
 			<TooltipProvider>
-				<SessionsBoard projectId={projectId} />
+				<SessionsBoard project={projectId ? { host: "local", id: projectId } : undefined} />
 			</TooltipProvider>
 		</QueryClientProvider>,
 	);
@@ -168,11 +194,13 @@ describe("SessionsBoard", () => {
 		workspaceQueryMock.mockReturnValue({
 			data: [
 				{
+					host: "local",
 					id: "p1",
 					name: "solkit-ui",
 					path: "/tmp/solkit-ui",
 					sessions: [
 						{
+							host: "local",
 							id: "s1",
 							workspaceId: "p1",
 							workspaceName: "solkit-ui",
@@ -211,11 +239,13 @@ describe("SessionsBoard", () => {
 		workspaceQueryMock.mockReturnValue({
 			data: [
 				{
+					host: "local",
 					id: "p1",
 					name: "solkit-ui",
 					path: "/tmp/solkit-ui",
 					sessions: [
 						{
+							host: "local",
 							id: "orch-1",
 							workspaceId: "p1",
 							workspaceName: "solkit-ui",
@@ -251,6 +281,7 @@ describe("SessionsBoard", () => {
 		workspaceQueryMock.mockReturnValue({
 			data: [
 				{
+					host: "local",
 					id: "p1",
 					name: "solkit-ui",
 					path: "/tmp/solkit-ui",
@@ -270,11 +301,13 @@ describe("SessionsBoard", () => {
 		workspaceQueryMock.mockReturnValue({
 			data: [
 				{
+					host: "local",
 					id: "p1",
 					name: "radic",
 					path: "/tmp/radic",
 					sessions: [
 						{
+							host: "local",
 							id: "s1",
 							workspaceId: "p1",
 							workspaceName: "radic",
@@ -321,7 +354,7 @@ describe("SessionsBoard", () => {
 		usageQueryMock.mockReturnValue({
 			data: new Map([
 				[
-					"s-active",
+					refKey({ host: "local", id: "s-active" }),
 					{
 						estimatedCost: {
 							cachedInputNanos: 100_000_000,
@@ -338,7 +371,7 @@ describe("SessionsBoard", () => {
 					},
 				],
 				[
-					"s-empty",
+					refKey({ host: "local", id: "s-empty" }),
 					{
 						estimatedCost: null,
 						sessionId: "s-empty",
@@ -348,7 +381,7 @@ describe("SessionsBoard", () => {
 					},
 				],
 				[
-					"s-tokens",
+					refKey({ host: "local", id: "s-tokens" }),
 					{
 						estimatedCost: null,
 						sessionId: "s-tokens",
@@ -358,7 +391,7 @@ describe("SessionsBoard", () => {
 					},
 				],
 				[
-					"s-dead",
+					refKey({ host: "local", id: "s-dead" }),
 					{
 						estimatedCost: {
 							cachedInputNanos: null,
@@ -395,7 +428,7 @@ describe("SessionsBoard", () => {
 		expect(within(tokensOnlyCard).getByText("Unavailable · 800")).toHaveAttribute("aria-hidden", "true");
 		expect(within(tokensOnlyCard).getByText("Unavailable · 800 tokens")).toHaveClass("sr-only");
 		expect(tokensOnlyCard).not.toHaveTextContent(/[≈≥]\$/);
-		expect(usageQueryMock).toHaveBeenCalledWith("p1");
+		expect(usageQueryMock).toHaveBeenCalledWith({ host: "local", id: "p1" });
 
 		const archive = await expandArchive();
 		expect(within(archive).getByText("$0.02 · 1,900 tokens")).toHaveClass("sr-only");
@@ -418,7 +451,7 @@ describe("SessionsBoard", () => {
 		usageQueryMock.mockReturnValue({
 			data: new Map([
 				[
-					"s-keyboard",
+					refKey({ host: "local", id: "s-keyboard" }),
 					{
 						estimatedCost: {
 							cachedInputNanos: 100_000_000,
@@ -532,11 +565,13 @@ describe("SessionsBoard", () => {
 		workspaceQueryMock.mockReturnValue({
 			data: [
 				{
+					host: "local",
 					id: "p1",
 					name: "radic",
 					path: "/tmp/radic",
 					sessions: [
 						{
+							host: "local",
 							id: "s0",
 							workspaceId: "p1",
 							workspaceName: "radic",
@@ -549,6 +584,7 @@ describe("SessionsBoard", () => {
 							prs: [],
 						},
 						{
+							host: "local",
 							id: "s1",
 							workspaceId: "p1",
 							workspaceName: "radic",
@@ -561,6 +597,7 @@ describe("SessionsBoard", () => {
 							prs: [],
 						},
 						{
+							host: "local",
 							id: "s2",
 							workspaceId: "p1",
 							workspaceName: "radic",
@@ -592,7 +629,7 @@ describe("SessionsBoard", () => {
 		workspaceQueryMock.mockReturnValue({
 			data: [
 				workspaceWithSessions([
-					{
+					{ host: "local",
 						id: "s-exited",
 						workspaceId: "p1",
 						workspaceName: "radic",
@@ -805,11 +842,13 @@ describe("SessionsBoard", () => {
 		workspaceQueryMock.mockReturnValue({
 			data: [
 				{
+					host: "local",
 					id: "p1",
 					name: "radic",
 					path: "/tmp/radic",
 					sessions: [
 						{
+							host: "local",
 							id: "p1-active",
 							workspaceId: "p1",
 							workspaceName: "radic",
@@ -822,6 +861,7 @@ describe("SessionsBoard", () => {
 							prs: [],
 						},
 						{
+							host: "local",
 							id: "p1-idle",
 							workspaceId: "p1",
 							workspaceName: "radic",
@@ -836,11 +876,13 @@ describe("SessionsBoard", () => {
 					],
 				},
 				{
+					host: "local",
 					id: "p2",
 					name: "other",
 					path: "/tmp/other",
 					sessions: [
 						{
+							host: "local",
 							id: "p2-active",
 							workspaceId: "p2",
 							workspaceName: "other",
@@ -853,6 +895,7 @@ describe("SessionsBoard", () => {
 							prs: [],
 						},
 						{
+							host: "local",
 							id: "p2-idle",
 							workspaceId: "p2",
 							workspaceName: "other",
@@ -878,7 +921,7 @@ describe("SessionsBoard", () => {
 		view.rerender(
 			<QueryClientProvider client={queryClient}>
 				<TooltipProvider>
-					<SessionsBoard projectId="p2" />
+					<SessionsBoard project={{ host: "local", id: "p2" }} />
 				</TooltipProvider>
 			</QueryClientProvider>,
 		);
@@ -1022,8 +1065,8 @@ describe("SessionsBoard", () => {
 		);
 		expect(invalidate).toHaveBeenCalledWith({ queryKey: ["workspaces"] });
 		expect(navigateMock).toHaveBeenCalledWith({
-			to: "/projects/$projectId/sessions/$sessionId",
-			params: { projectId: "p1", sessionId: "s-dead" },
+			to: "/host/$hostId/session/$sessionId",
+			params: { hostId: "local", sessionId: "s-dead" },
 		});
 	});
 
@@ -1154,6 +1197,7 @@ describe("SessionsBoard", () => {
 			data: [
 				workspaceWithSessions([terminatedSession()]),
 				{
+					host: "local",
 					id: "p2",
 					name: "other",
 					path: "/tmp/other",
@@ -1172,7 +1216,7 @@ describe("SessionsBoard", () => {
 		view.rerender(
 			<QueryClientProvider client={queryClient}>
 				<TooltipProvider>
-					<SessionsBoard projectId="p2" />
+					<SessionsBoard project={{ host: "local", id: "p2" }} />
 				</TooltipProvider>
 			</QueryClientProvider>,
 		);
@@ -1195,6 +1239,7 @@ describe("SessionsBoard", () => {
 			data: [
 				workspaceWithSessions([terminatedSession()]),
 				{
+					host: "local",
 					id: "p2",
 					name: "other",
 					path: "/tmp/other",
@@ -1213,7 +1258,7 @@ describe("SessionsBoard", () => {
 		view.rerender(
 			<QueryClientProvider client={queryClient}>
 				<TooltipProvider>
-					<SessionsBoard projectId="p2" />
+					<SessionsBoard project={{ host: "local", id: "p2" }} />
 				</TooltipProvider>
 			</QueryClientProvider>,
 		);
@@ -1251,8 +1296,8 @@ describe("SessionsBoard", () => {
 
 		expect(postMock).not.toHaveBeenCalled();
 		expect(navigateMock).toHaveBeenCalledWith({
-			to: "/projects/$projectId/sessions/$sessionId",
-			params: { projectId: "p1", sessionId: "s-merged" },
+			to: "/host/$hostId/session/$sessionId",
+			params: { hostId: "local", sessionId: "s-merged" },
 		});
 	});
 
@@ -1442,6 +1487,7 @@ describe("SessionsBoard", () => {
 
 function workspaceWithSessions(sessions: WorkspaceSession[]): WorkspaceSummary {
 	return {
+		host: "local",
 		id: "p1",
 		name: "radic",
 		path: "/tmp/radic",
@@ -1453,6 +1499,7 @@ function boardSession(
 	overrides: Pick<WorkspaceSession, "id" | "title" | "status"> & Partial<WorkspaceSession>,
 ): WorkspaceSession {
 	return {
+		host: "local",
 		workspaceId: "p1",
 		workspaceName: "radic",
 		provider: "claude-code",
@@ -1479,6 +1526,7 @@ function activeAgentSwitch(
 
 function terminatedSession(overrides: Partial<WorkspaceSession> = {}): WorkspaceSession {
 	return {
+		host: "local",
 		id: "s-dead",
 		workspaceId: "p1",
 		workspaceName: "radic",

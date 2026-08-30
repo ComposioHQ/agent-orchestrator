@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { refKey, type Ref } from "../lib/hosts";
 import { useNavigate } from "@tanstack/react-router";
 import {
 	ProjectAgentsSettingsView,
@@ -19,14 +20,15 @@ import {
 	revalidateAgentModels,
 	type AgentModelCatalog,
 } from "../hooks/useAgentModelsQuery";
-import { agentsQueryKey, agentsQueryOptions, refreshAgentsIfStale } from "../hooks/useAgentsQuery";
+import { agentsQueryKeyFor, agentsQueryOptionsFor, refreshAgentsIfStale } from "../hooks/useAgentsQuery";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
-import { apiClient, apiErrorMessage } from "../lib/api-client";
+import { apiErrorMessage } from "../lib/api-client";
+import { clientFor } from "../lib/host-clients";
 import { captureOrchestratorReplacementFailure } from "../lib/orchestrator-replacement-telemetry";
 import { OrchestratorSpawnError, spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { captureRendererEvent } from "../lib/telemetry";
 import { type OrchestratorReplacementFailure, useUiStore } from "../stores/ui-store";
-import { newestActiveOrchestrator } from "../types/workspace";
+import { flattenHostSections, newestActiveOrchestrator } from "../types/workspace";
 import { RequiredAgentField } from "./CreateProjectAgentSheet";
 import { buildIntake, deriveGitHubRepo, IntakeFields, type IntakeForm } from "./IntakeFields";
 import { ProductExternalLink } from "./ProductExternalLink";
@@ -44,7 +46,7 @@ type TrackerIntakeConfig = components["schemas"]["TrackerIntakeConfig"];
 const PERMISSION_MODE_VALUES = ["default", "accept-edits", "auto", "bypass-permissions"] as const;
 const DEFAULT_BRANCH_AUTO = "auto";
 
-const projectQueryKey = (id: string) => ["project", id] as const;
+const projectQueryKey = (project: Ref) => ["project", refKey(project)] as const;
 
 type SettingsSaveResult = {
 	replacementError: string | null;
@@ -64,11 +66,11 @@ export interface ProjectSettingsSaveState {
 }
 
 export function ProjectSettingsForm({
-	projectId,
+	projectRef,
 	section = "general",
 	onSaveState,
 }: {
-	projectId: string;
+	projectRef: Ref;
 	section?: ProjectSettingsSection;
 	onSaveState?: (state: ProjectSettingsSaveState) => void;
 }) {
@@ -76,10 +78,10 @@ export function ProjectSettingsForm({
 	const queryClient = useQueryClient();
 
 	const query = useQuery({
-		queryKey: projectQueryKey(projectId),
+		queryKey: projectQueryKey(projectRef),
 		queryFn: async () => {
-			const { data, error } = await apiClient.GET("/api/v1/projects/{id}", {
-				params: { path: { id: projectId } },
+			const { data, error } = await clientFor(projectRef.host).GET("/api/v1/projects/{id}", {
+				params: { path: { id: projectRef.id } },
 			});
 			if (error) throw new Error(apiErrorMessage(error));
 			if (data?.status !== "ok") throw new Error(t("settings.project.degraded"));
@@ -97,14 +99,14 @@ export function ProjectSettingsForm({
 				</p>
 			) : (
 				<SettingsBody
-					key={projectId}
+					key={refKey(projectRef)}
 					project={query.data}
 					onSaved={() =>
 						queryClient.invalidateQueries({ queryKey: workspaceQueryKey }).catch(() => {
 							// Saving succeeds even if the cache refresh fails.
 						})
 					}
-					projectId={projectId}
+					projectRef={projectRef}
 					section={section}
 					onSaveState={onSaveState}
 				/>
@@ -115,13 +117,13 @@ export function ProjectSettingsForm({
 
 function SettingsBody({
 	project,
-	projectId,
+	projectRef,
 	onSaved,
 	section = "general",
 	onSaveState,
 }: {
 	project: Project;
-	projectId: string;
+	projectRef: Ref;
 	onSaved: () => Promise<void>;
 	section?: ProjectSettingsSection;
 	onSaveState?: (state: ProjectSettingsSaveState) => void;
@@ -132,9 +134,10 @@ function SettingsBody({
 	const closeSettings = useUiStore((state) => state.closeSettings);
 	const setOrchestratorReplacementError = useUiStore((state) => state.setOrchestratorReplacementError);
 	const workspaceQuery = useWorkspaceQuery();
+	const workspaces = flattenHostSections(workspaceQuery.data);
 	const config = project.config ?? {};
 	const isScratchProject = project.kind === "scratch";
-	const workspace = workspaceQuery.data?.find((item) => item.id === projectId);
+	const workspace = workspaces.find((item) => item.host === projectRef.host && item.id === projectRef.id);
 	const activeOrchestrator = newestActiveOrchestrator(workspace?.sessions ?? []);
 	const intake: TrackerIntakeConfig = config.trackerIntake ?? {};
 	const [form, setForm] = useState({
@@ -162,11 +165,11 @@ function SettingsBody({
 	const initialReviewerHarness = config.reviewers?.[0]?.harness ?? "";
 	const initialAutoReview = config.autoReview ?? false;
 	const missingRequiredAgent = form.workerAgent === "" || form.orchestratorAgent === "";
-	const agentsQuery = useQuery(agentsQueryOptions);
+	const agentsQuery = useQuery(agentsQueryOptionsFor(projectRef.host));
 	const agentCatalog = agentsQuery.data;
 	useEffect(() => {
 		void refreshAgentsIfStale().then((next) => {
-			if (next) queryClient.setQueryData(agentsQueryKey, next);
+			if (next) queryClient.setQueryData(agentsQueryKeyFor(projectRef.host), next);
 		});
 	}, [queryClient]);
 
@@ -191,7 +194,7 @@ function SettingsBody({
 
 	const mutation = useMutation({
 		mutationFn: async () => {
-			void captureRendererEvent("ao.renderer.settings_save_requested", { project_id: projectId });
+			void captureRendererEvent("ao.renderer.settings_save_requested", { project_id: projectRef.id });
 			const displayName = form.displayName.trim();
 			const {
 				model: _legacyModel,
@@ -249,8 +252,8 @@ function SettingsBody({
 						trackerIntake: buildIntake(intakeForm),
 						autoReview: form.autoReview,
 					};
-			const { error } = await apiClient.PUT("/api/v1/projects/{id}", {
-				params: { path: { id: projectId } },
+			const { error } = await clientFor(projectRef.host).PUT("/api/v1/projects/{id}", {
+				params: { path: { id: projectRef.id } },
 				body: { displayName, config: next },
 			});
 			if (error) throw new Error(apiErrorMessage(error));
@@ -259,7 +262,7 @@ function SettingsBody({
 				(activeOrchestrator && activeOrchestrator.provider !== form.orchestratorAgent)
 			) {
 				try {
-					const sessionId = await spawnOrchestrator(projectId, "settings", true);
+					const sessionId = await spawnOrchestrator(projectRef, "settings", true);
 					return {
 						replacementError: null,
 						replacementSessionId: sessionId,
@@ -290,12 +293,12 @@ function SettingsBody({
 			} satisfies SettingsSaveResult;
 		},
 		onSuccess: async (result) => {
-			void captureRendererEvent("ao.renderer.settings_save_succeeded", { project_id: projectId });
+			void captureRendererEvent("ao.renderer.settings_save_succeeded", { project_id: projectRef.id });
 			// Reported only when a review control actually changed, so the event
 			// counts decisions about reviews rather than every unrelated save.
 			if (reviewSettingsChanged) {
 				void captureRendererEvent("ao.renderer.review_settings_changed", {
-					project_id: projectId,
+					project_id: projectRef.id,
 					auto_review: form.autoReview,
 					reviewer_harness: form.reviewerHarness,
 					harness_is_default: form.reviewerHarness === "",
@@ -306,29 +309,29 @@ function SettingsBody({
 			setSavedAt(Date.now());
 			setReplacementError(result.replacementError);
 			setValidationError(null);
-			void queryClient.invalidateQueries({ queryKey: ["project", projectId] });
+			void queryClient.invalidateQueries({ queryKey: ["project", refKey(projectRef)] });
 			const workspaceRefresh = onSaved();
 
 			if (result.replacementSessionId) {
 				await workspaceRefresh;
 				closeSettings();
 				void navigate({
-					to: "/projects/$projectId/sessions/$sessionId",
-					params: { projectId, sessionId: result.replacementSessionId },
+					to: "/host/$hostId/session/$sessionId",
+					params: { hostId: projectRef.host, sessionId: result.replacementSessionId },
 				});
 				return;
 			}
 
 			if (result.replacementFailure) {
 				closeSettings();
-				setOrchestratorReplacementError(projectId, result.replacementFailure);
+				setOrchestratorReplacementError(projectRef, result.replacementFailure);
 				if (result.spawnError) {
-					captureOrchestratorReplacementFailure(result.spawnError, projectId);
+					captureOrchestratorReplacementFailure(result.spawnError, projectRef.id);
 				}
 			}
 		},
 		onError: () => {
-			void captureRendererEvent("ao.renderer.settings_save_failed", { project_id: projectId });
+			void captureRendererEvent("ao.renderer.settings_save_failed", { project_id: projectRef.id });
 		},
 	});
 
@@ -452,7 +455,7 @@ function SettingsBody({
 							<AgentModelField
 								role="worker"
 								agentId={form.workerAgent}
-								projectId={projectId}
+								projectRef={projectRef}
 								model={form.workerModel}
 								mode={form.workerMode}
 								onModelChange={(workerModel) => setForm((f) => ({ ...f, workerModel }))}
@@ -485,7 +488,7 @@ function SettingsBody({
 							<AgentModelField
 								role="orchestrator"
 								agentId={form.orchestratorAgent}
-								projectId={projectId}
+								projectRef={projectRef}
 								model={form.orchestratorModel}
 								mode={form.orchestratorMode}
 								onModelChange={(orchestratorModel) => setForm((f) => ({ ...f, orchestratorModel }))}
@@ -618,7 +621,7 @@ function SettingsBody({
 function AgentModelField({
 	role,
 	agentId,
-	projectId,
+	projectRef,
 	model,
 	mode,
 	onModelChange,
@@ -626,7 +629,7 @@ function AgentModelField({
 }: {
 	role: "worker" | "orchestrator";
 	agentId: string;
-	projectId: string;
+	projectRef: Ref;
 	model: string;
 	mode: string;
 	onModelChange: (value: string) => void;
@@ -635,20 +638,20 @@ function AgentModelField({
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 	const [customAgentId, setCustomAgentId] = useState<string | null>(null);
-	const query = useQuery(agentModelsQueryOptions(agentId, projectId));
+	const query = useQuery(agentModelsQueryOptions(agentId, projectRef));
 	const catalog: AgentModelCatalog | undefined = query.data;
 	const revalidationQuery = useQuery({
-		queryKey: ["agent-model-revalidation", agentId, projectId, catalog?.validatedAt ?? ""],
-		queryFn: () => revalidateAgentModels(agentId, projectId),
+		queryKey: ["agent-model-revalidation", agentId, refKey(projectRef), catalog?.validatedAt ?? ""],
+		queryFn: () => revalidateAgentModels(agentId, projectRef),
 		enabled: agentId !== "" && catalog?.refreshRecommended === true,
 		staleTime: Number.POSITIVE_INFINITY,
 		retry: false,
 	});
 	useEffect(() => {
 		if (revalidationQuery.data) {
-			queryClient.setQueryData(agentModelsQueryKey(agentId, projectId), revalidationQuery.data);
+			queryClient.setQueryData(agentModelsQueryKey(agentId, projectRef), revalidationQuery.data);
 		}
-	}, [agentId, projectId, queryClient, revalidationQuery.data]);
+	}, [agentId, projectRef, queryClient, revalidationQuery.data]);
 	const isMode = catalog?.selectionMode === "mode";
 	const label = t(`settings.models.${role}${isMode ? "Mode" : "Model"}`);
 	const datalistID = `${role}-model-options`;

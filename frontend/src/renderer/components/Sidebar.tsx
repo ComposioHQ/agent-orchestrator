@@ -1,6 +1,9 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useCanGoBack, useNavigate, useParams, useRouter, useRouterState } from "@tanstack/react-router";
+import { LOCAL_HOST, refKey, type HostId, type Ref } from "../lib/hosts";
+import { hostActionSuffix } from "../lib/host-disclosure";
+import { HostSwitcher } from "./HostSwitcher";
 import {
 	DndContext,
 	DragOverlay,
@@ -66,12 +69,13 @@ import {
 	type WorkspaceSummary,
 	sortedWorkerSessions,
 	workerSessions,
+	type HostSection,
 } from "../types/workspace";
 import { getSessionStatusDotView } from "../lib/session-presentation";
 import { deriveSessionAgentSwitchPresentation } from "../lib/agent-switch-presentation";
 import { aoBridge } from "../lib/bridge";
 import { useCommandPaletteEnabled } from "../hooks/useCommandPaletteEnabled";
-import { cloudSessionsQueryKey, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import { cloudSessionsQueryKey, workspaceHostQueryKey, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { usePinSession, useUnpinSession } from "../hooks/usePinSession";
 import { spawnCloudOrchestrator } from "../lib/cloud-orchestrator";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
@@ -326,6 +330,13 @@ function readExpandedProjectIds(): ReadonlySet<string> {
 	}
 }
 
+// Destructive controls name the machine they act on even though remote rows
+// are labelled. Empty on local, so that copy stays byte-identical to before.
+function useHostSuffix(host: HostId): string {
+	const { t } = useTranslation();
+	return hostActionSuffix(t, host);
+}
+
 type SidebarProps = {
 	/** Hide the sidebar's right edge stroke on the welcome board inset chrome. */
 	hideEdgeBorder?: boolean;
@@ -335,11 +346,11 @@ type SidebarProps = {
 	/** Chrome height to clear when underTopbar is set. Defaults to --size-toolbar. */
 	topbarOffset?: "toolbar" | "titlebar" | "trafficLights" | "session";
 	workspaceError?: string;
-	workspaces: WorkspaceSummary[];
+	hostSections: HostSection[];
 	onCloneProject: (input: CloneProjectInput) => Promise<void>;
 	onCreateProject: (input: CreateProjectInput) => Promise<void>;
 	onInitializeProject: (path: string) => Promise<void>;
-	onRemoveProject: (projectId: string) => Promise<void>;
+	onRemoveProject: (project: Ref) => Promise<void>;
 };
 
 // Selection state comes from the URL: which project/session is active is the
@@ -348,30 +359,24 @@ function useSelection() {
 	const navigate = useNavigate();
 	const openGlobalSettings = useUiStore((state) => state.openGlobalSettings);
 	const openProjectSettings = useUiStore((state) => state.openProjectSettings);
-	const params = useParams({ strict: false }) as {
-		projectId?: string;
-		sessionId?: string;
-	};
-	const pathname = useRouterState({
-		select: (state) => state.location.pathname,
-	});
+	const params = useParams({ strict: false }) as { hostId?: string; projectId?: string; sessionId?: string };
+	const pathname = useRouterState({ select: (state) => state.location.pathname });
 	const goHome = useCallback(() => void navigate({ to: "/" }), [navigate]);
 	const goGlobalSettings = useCallback(() => openGlobalSettings(), [openGlobalSettings]);
-	const goSettings = useCallback((projectId: string) => openProjectSettings(projectId), [openProjectSettings]);
+	const goSettings = useCallback((project: Ref) => openProjectSettings(project), [openProjectSettings]);
 	const goProject = useCallback(
-		(projectId: string) => void navigate({ to: "/projects/$projectId", params: { projectId } }),
+		(project: Ref) =>
+			void navigate({ to: "/host/$hostId/project/$projectId", params: { hostId: project.host, projectId: project.id } }),
 		[navigate],
 	);
 	const goSession = useCallback(
-		(projectId: string, sessionId: string) =>
-			void navigate({
-				to: "/projects/$projectId/sessions/$sessionId",
-				params: { projectId, sessionId },
-			}),
+		(session: Ref) =>
+			void navigate({ to: "/host/$hostId/session/$sessionId", params: { hostId: session.host, sessionId: session.id } }),
 		[navigate],
 	);
 	return useMemo(() => ({
 		isHome: pathname === "/",
+		activeHostId: params.hostId ?? LOCAL_HOST,
 		activeProjectId: params.projectId,
 		activeSessionId: params.sessionId,
 		goHome,
@@ -382,7 +387,7 @@ function useSelection() {
 		goSettings,
 		goProject,
 		goSession,
-	}), [goGlobalSettings, goHome, goProject, goSession, goSettings, params.projectId, params.sessionId, pathname]);
+	}), [goGlobalSettings, goHome, goProject, goSession, goSettings, openGlobalSettings, params.hostId, params.projectId, params.sessionId, pathname]);
 }
 
 // Colour tracks the session's board section, preserving SCM state while the
@@ -411,7 +416,7 @@ export function Sidebar({
 	underTopbar = true,
 	topbarOffset = "toolbar",
 	workspaceError,
-	workspaces,
+	hostSections,
 	onCloneProject,
 	onCreateProject,
 	onInitializeProject,
@@ -433,8 +438,10 @@ export function Sidebar({
 	const daemonStatus = useShellMaybe()?.daemonStatus ?? null;
 	const commandPaletteEnabled = useCommandPaletteEnabled();
 	const setCommandPaletteOpen = useUiStore((s) => s.setCommandPaletteOpen);
-	const initialActiveSessionProjectId = useRef(
-		selection.activeSessionId ? selection.activeProjectId : undefined,
+	const initialActiveSessionProjectKey = useRef(
+		selection.activeSessionId && selection.activeProjectId
+			? refKey({ host: selection.activeHostId, id: selection.activeProjectId })
+			: undefined,
 	).current;
 	useLayoutEffect(() => {
 		// Offcanvas: the panel slides off-screen on collapse — no need to hide content.
@@ -452,7 +459,7 @@ export function Sidebar({
 	);
 	const toggleProjectDisclosure = (id: string) => {
 		const routeFallbackActive =
-			initialActiveSessionProjectId === id && !dismissedInitialActiveProjectIds.has(id);
+			initialActiveSessionProjectKey === id && !dismissedInitialActiveProjectIds.has(id);
 		const currentlyExpanded = expandedIds.has(id) || routeFallbackActive;
 		setExpandedIds((prev) => {
 			const next = new Set(prev);
@@ -463,7 +470,7 @@ export function Sidebar({
 			return next;
 		});
 		setDismissedInitialActiveProjectIds((prev) => {
-			if (initialActiveSessionProjectId !== id) return prev;
+			if (initialActiveSessionProjectKey !== id) return prev;
 			const next = new Set(prev);
 			currentlyExpanded ? next.add(id) : next.delete(id);
 			return next;
@@ -500,13 +507,26 @@ export function Sidebar({
 		onExpand: () => setOpen(true),
 	});
 
+	const [hostFilter, setHostFilter] = useState<HostId | null>(null);
+	// A filter naming a host that has since gone away must not hide the tree.
+	const selectedHost = hostFilter !== null && hostSections.some(({ host }) => host === hostFilter) ? hostFilter : null;
+	const visibleHostSections =
+		selectedHost === null ? hostSections : hostSections.filter(({ host }) => host === selectedHost);
+	const workspaces = visibleHostSections
+		.filter((section) => section.status === "ready")
+		.flatMap((section) => section.workspaces);
+	const hostLabels = useMemo(
+		() => new Map(visibleHostSections.map(({ host, label }) => [host, label])),
+		[visibleHostSections],
+	);
+
 	const [projectOrder, setProjectOrder] = useState<string[]>([]);
 	const [sessionOrderByProject, setSessionOrderByProject] = useState<Record<string, string[]>>({});
 	const orderedWorkspaces = useMemo(
-		() => applyOrder(workspaces, (workspace) => workspace.id, projectOrder, "end"),
+		() => applyOrder(workspaces, (workspace) => refKey(workspace), projectOrder, "end"),
 		[projectOrder, workspaces],
 	);
-	const projectIds = useMemo(() => orderedWorkspaces.map((workspace) => workspace.id), [orderedWorkspaces]);
+	const projectIds = useMemo(() => orderedWorkspaces.map((workspace) => refKey(workspace)), [orderedWorkspaces]);
 	const reorderSensors = useReorderSensors();
 	const projectDragClickGuard = usePostDragClickGuard();
 	const [projectDragState, setProjectDragState] = useState<{
@@ -519,7 +539,7 @@ export function Sidebar({
 	useGrabbingCursor(projectDragState.activeId !== null);
 
 	const activeDragWorkspace = useMemo(
-		() => orderedWorkspaces.find((workspace) => workspace.id === projectDragState.activeId) ?? null,
+		() => orderedWorkspaces.find((workspace) => refKey(workspace) === projectDragState.activeId) ?? null,
 		[orderedWorkspaces, projectDragState.activeId],
 	);
 	const activeDragSessions = useMemo(
@@ -527,14 +547,14 @@ export function Sidebar({
 			? applyOrder(
 				sortedWorkerSessions(activeDragWorkspace.sessions).filter((session) => session.isTerminated !== true),
 				(session) => session.id,
-				sessionOrderByProject[activeDragWorkspace.id] ?? [],
+				sessionOrderByProject[refKey(activeDragWorkspace)] ?? [],
 				"start",
 			)
 			: [],
 		[activeDragWorkspace, sessionOrderByProject],
 	);
-	const recordSessionOrder = useCallback((projectId: string, order: string[]) => {
-		setSessionOrderByProject((previous) => ({ ...previous, [projectId]: order }));
+	const recordSessionOrder = useCallback((projectKey: string, order: string[]) => {
+		setSessionOrderByProject((previous) => ({ ...previous, [projectKey]: order }));
 	}, []);
 	const restrictProjectOverlayToRows = useCallback<Modifier>(({ transform }) => {
 		const bounds = projectDragBoundsRef.current;
@@ -782,7 +802,7 @@ export function Sidebar({
 								<PinnedSessionRow
 									key={session.id}
 									session={session}
-									active={selection.activeSessionId === session.id}
+									active={selection.activeHostId === session.host && selection.activeSessionId === session.id}
 									onOpenSession={selection.goSession}
 								/>
 								))}
@@ -806,6 +826,11 @@ export function Sidebar({
 						}
 					/>
 				</div>
+				{hostSections.length > 1 ? (
+					<div className="sidebar-expanded-chrome px-2.5 pb-2 group-data-[collapsible=icon]:hidden">
+						<HostSwitcher hosts={hostSections} value={selectedHost} onChange={setHostFilter} />
+					</div>
+				) : null}
 			</div>
 
 			<SidebarContent className="project-sidebar-scrollbar gap-0 px-2 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5">
@@ -817,7 +842,12 @@ export function Sidebar({
 								<p className="text-sm text-foreground">{t("shell.couldNotLoadProjects")}</p>
 								<p className="mt-1 text-caption text-passive">{workspaceError}</p>
 							</div>
-						) : workspaces.length === 0 ? null : (
+						) : visibleHostSections.every(
+								(section) =>
+									section.status === "ready" &&
+									section.streamState !== "disconnected" &&
+									section.workspaces.length === 0,
+							) ? null : (
 							<DndContext
 								collisionDetection={projectBlockCollision}
 								id={PROJECT_DND_ID}
@@ -828,19 +858,27 @@ export function Sidebar({
 								onDragEnd={onProjectDragEnd}
 								sensors={reorderSensors}
 							>
-								<SidebarMenu className="min-h-full gap-0.5 rounded-lg group-data-[collapsible=icon]:gap-1 group-data-[collapsible=icon]:rounded-none">
+								<SidebarMenu className="min-h-full gap-0.5 rounded-lg overflow-hidden group-data-[collapsible=icon]:gap-1 group-data-[collapsible=icon]:rounded-none group-data-[collapsible=icon]:overflow-visible">
+									{visibleHostSections
+										.filter((section) => section.status === "failed")
+										.map((section) => <HostFailureSection key={`failed:${section.host}`} section={section} />)}
+									{visibleHostSections
+										.filter((section) => section.status === "ready" && section.streamState === "disconnected")
+										.map((section) => <HostStreamOfflineNotice key={`stale:${section.host}`} section={section} />)}
 									{orderedWorkspaces.map((workspace) => (
 										<ProjectItem
-											key={workspace.id}
+											key={refKey(workspace)}
 											workspace={workspace}
-											expanded={expandedIds.has(workspace.id) || (initialActiveSessionProjectId === workspace.id && !dismissedInitialActiveProjectIds.has(workspace.id))}
-											suppressInitialExpandAnimation={expandedIds.has(workspace.id)}
+											hostLabel={hostLabels.get(workspace.host) ?? workspace.host}
+											projectKey={refKey(workspace)}
+											expanded={expandedIds.has(refKey(workspace)) || (initialActiveSessionProjectKey === refKey(workspace) && !dismissedInitialActiveProjectIds.has(refKey(workspace)))}
+											suppressInitialExpandAnimation={expandedIds.has(refKey(workspace))}
 											selection={selection}
 											draggingProjectId={projectDragState.activeId}
-											dropIndicator={projectDragState.overId === workspace.id ? projectDragState.placement ?? undefined : undefined}
+											dropIndicator={projectDragState.overId === refKey(workspace) ? projectDragState.placement ?? undefined : undefined}
 											consumeDragClick={projectDragClickGuard.consumeClick}
 											onSessionOrderChange={recordSessionOrder}
-											onToggle={() => toggleProjectDisclosure(workspace.id)}
+											onToggle={() => toggleProjectDisclosure(refKey(workspace))}
 											onRemoveProject={onRemoveProject}
 										/>
 									))}
@@ -851,9 +889,9 @@ export function Sidebar({
 										<ProjectDragPreview
 											expanded={
 												!isCollapsed &&
-												(expandedIds.has(activeDragWorkspace.id) ||
-													(initialActiveSessionProjectId === activeDragWorkspace.id &&
-														!dismissedInitialActiveProjectIds.has(activeDragWorkspace.id)))
+												(expandedIds.has(refKey(activeDragWorkspace)) ||
+													(initialActiveSessionProjectKey === refKey(activeDragWorkspace) &&
+														!dismissedInitialActiveProjectIds.has(refKey(activeDragWorkspace))))
 											}
 											selection={selection}
 											sessions={activeDragSessions}
@@ -973,8 +1011,66 @@ export function Sidebar({
 
 type Selection = ReturnType<typeof useSelection>;
 
+/**
+ * A host whose projects could not be loaded.
+ *
+ * It renders as a labelled section with a retry, never as a blank tree: the
+ * failure mode this exists for is one host going quiet and taking every other
+ * host's projects off screen with it. The local host is no exception — a local
+ * failure that hides itself is the same bug wearing a friendlier name.
+ */
+function HostFailureSection({ section }: { section: HostSection }) {
+	const { t } = useTranslation();
+	const queryClient = useQueryClient();
+	const label = section.host === LOCAL_HOST ? t("hosts.local") : section.label;
+	// Two unreachable hosts put two buttons called "Retry" in the same tree.
+	const hostSuffix = useHostSuffix(section.host);
+
+	return (
+		<SidebarMenuItem className="sidebar-expanded-chrome px-2.5 py-2 group-data-[collapsible=icon]:hidden">
+			<div role="alert">
+				<p className="text-sm font-medium text-foreground">{t("hosts.sectionFailed", { host: label })}</p>
+				<p className="mt-0.5 text-xs text-passive">{section.failure ?? t("hosts.unreachable")}</p>
+				<button
+					aria-label={`${t("hosts.retry")}${hostSuffix}`}
+					className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-accent hover:underline"
+					onClick={() => void queryClient.invalidateQueries({ queryKey: workspaceHostQueryKey(section.host) })}
+					type="button"
+				>
+					<RefreshCw aria-hidden="true" className="size-3" />
+					{t("hosts.retry")}
+				</button>
+			</div>
+		</SidebarMenuItem>
+	);
+}
+
+/**
+ * A host whose data still loads but whose event stream is down.
+ *
+ * The failure this catches is the quiet one: the board keeps rendering from the
+ * 15-second poll and simply stops being live, which reads as "my agent did
+ * nothing" rather than as a connection problem. role="status", not "alert" — it
+ * is degraded, not broken, and it can appear on a poll tick.
+ */
+function HostStreamOfflineNotice({ section }: { section: HostSection }) {
+	const { t } = useTranslation();
+	const label = section.host === LOCAL_HOST ? t("hosts.local") : section.label;
+
+	return (
+		<SidebarMenuItem className="sidebar-expanded-chrome px-2.5 py-2 group-data-[collapsible=icon]:hidden">
+			<div role="status">
+				<p className="text-sm font-medium text-foreground">{t("hosts.liveUpdatesOffline", { host: label })}</p>
+				<p className="mt-0.5 text-xs text-passive">{t("hosts.liveUpdatesOffline.hint")}</p>
+			</div>
+		</SidebarMenuItem>
+	);
+}
+
 type ProjectItemProps = {
 	workspace: WorkspaceSummary;
+	hostLabel: string;
+	projectKey: string;
 	expanded: boolean;
 	selection: Selection;
 	draggingProjectId?: string | null;
@@ -982,7 +1078,7 @@ type ProjectItemProps = {
 	consumeDragClick: (id: string) => boolean;
 	onSessionOrderChange: (projectId: string, order: string[]) => void;
 	onToggle: () => void;
-	onRemoveProject: (projectId: string) => Promise<void>;
+	onRemoveProject: (project: Ref) => Promise<void>;
 	suppressInitialExpandAnimation: boolean;
 };
 
@@ -997,10 +1093,10 @@ type ProjectItemDndProps = Pick<ProjectDraggable, "listeners" | "setActivatorNod
 // change (drag start/end or a different drop boundary), not for every transform.
 const ProjectItem = memo(function ProjectItem(props: ProjectItemProps) {
 	const { listeners, setActivatorNodeRef, setNodeRef: setDraggableNodeRef } = useDraggable({
-		id: props.workspace.id,
+		id: props.projectKey,
 	});
 	const { setNodeRef: setDroppableNodeRef } = useDroppable({
-		id: props.workspace.id,
+		id: props.projectKey,
 	});
 	return (
 		<ProjectItemContent
@@ -1015,6 +1111,8 @@ const ProjectItem = memo(function ProjectItem(props: ProjectItemProps) {
 
 const ProjectItemContent = memo(function ProjectItemContent({
 	workspace,
+	hostLabel,
+	projectKey,
 	expanded,
 	selection,
 	draggingProjectId,
@@ -1031,7 +1129,11 @@ const ProjectItemContent = memo(function ProjectItemContent({
 }: ProjectItemProps & ProjectItemDndProps) {
 	const { t } = useTranslation();
 	const prefersReducedMotion = useReducedMotion();
-	const activeProjectMatches = selection.activeProjectId === workspace.id;
+	const hostSuffix = useHostSuffix(workspace.host);
+	const projectLabel =
+		workspace.host === LOCAL_HOST ? workspace.name : t("hosts.qualified", { name: workspace.name, host: hostLabel });
+	const activeProjectMatches =
+		selection.activeHostId === workspace.host && selection.activeProjectId === workspace.id;
 	const dashboardActive = activeProjectMatches && !selection.activeSessionId;
 	const orchestratorActive =
 		activeProjectMatches &&
@@ -1055,9 +1157,10 @@ const ProjectItemContent = memo(function ProjectItemContent({
 		const id = requestAnimationFrame(() => setAnimReady(true));
 		return () => cancelAnimationFrame(id);
 	}, []);
-	const isProjectRestarting = useUiStore((state) => state.restartingProjectIds.has(workspace.id));
+	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
+	const isProjectRestarting = restartingProjectIds.has(refKey(workspace));
 	const requestNewTask = useUiStore((state) => state.requestNewTask);
-	const projectIsDragging = draggingProjectId === workspace.id;
+	const projectIsDragging = draggingProjectId === projectKey;
 	// Keep completed PR sessions reachable while their runtime still exists.
 	// Only termination removes a worker from the sidebar; archived sessions stay
 	// reachable through SessionsBoard.
@@ -1080,8 +1183,8 @@ const ProjectItemContent = memo(function ProjectItemContent({
 	const commitSessionOrder = useCallback((next: string[] | null) => {
 		if (!next) return;
 		setSessionOrder(next);
-		onSessionOrderChange(workspace.id, next);
-	}, [onSessionOrderChange, workspace.id]);
+		onSessionOrderChange(projectKey, next);
+	}, [onSessionOrderChange, projectKey]);
 
 	const onSessionDragEnd = useCallback(({ active, over }: DragEndEvent) => {
 		const sessionId = String(active.id);
@@ -1112,8 +1215,8 @@ const ProjectItemContent = memo(function ProjectItemContent({
 		if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
 	}, []);
 	const openSession = useCallback((sessionId: string) => {
-		selection.goSession(workspace.id, sessionId);
-	}, [selection, workspace.id]);
+		selection.goSession({ host: workspace.host, id: sessionId });
+	}, [selection, workspace.host]);
 	// The project's live orchestrator (if any) backs the hover Orchestrator
 	// button: navigate to it when present, otherwise spawn one first.
 	const orchestrator = newestActiveOrchestrator(workspace.sessions);
@@ -1130,7 +1233,7 @@ const ProjectItemContent = memo(function ProjectItemContent({
 		if (isProjectRestarting) return;
 		if (!expanded) toggleDisclosure();
 		if (orchestrator) {
-			selection.goSession(workspace.id, orchestrator.id);
+			selection.goSession({ host: orchestrator.host, id: orchestrator.id });
 			return;
 		}
 		// A cloud project has no local orchestrator-agent config, so the settings
@@ -1141,7 +1244,7 @@ const ProjectItemContent = memo(function ProjectItemContent({
 			try {
 				const sessionId = await spawnCloudOrchestrator(queryClient, workspace.id);
 				await queryClient.invalidateQueries({ queryKey: cloudSessionsQueryKey });
-				selection.goSession(workspace.id, sessionId);
+				selection.goSession({ host: workspace.host, id: sessionId });
 			} catch (err) {
 				console.error("Failed to spawn cloud orchestrator:", err);
 			} finally {
@@ -1150,14 +1253,14 @@ const ProjectItemContent = memo(function ProjectItemContent({
 			return;
 		}
 		if (!hasConfiguredOrchestratorAgent(workspace)) {
-			selection.goSettings(workspace.id);
+			selection.goSettings({ host: workspace.host, id: workspace.id });
 			return;
 		}
 		setIsSpawning(true);
 		try {
-			const sessionId = await spawnOrchestrator(workspace.id, "sidebar");
+			const sessionId = await spawnOrchestrator(workspace, "sidebar");
 			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
-			selection.goSession(workspace.id, sessionId);
+			selection.goSession({ host: workspace.host, id: sessionId });
 		} catch (err) {
 			console.error("Failed to spawn orchestrator:", err);
 		} finally {
@@ -1170,14 +1273,14 @@ const ProjectItemContent = memo(function ProjectItemContent({
 	// Do not treat orchestratorActive like the board: the project row is the
 	// one-click path back from the orchestrator button.
 	const onProjectClick = () => {
-		if (consumeDragClick(workspace.id)) return;
+		if (consumeDragClick(projectKey)) return;
 		if (!expanded) {
 			toggleDisclosure();
-			selection.goProject(workspace.id);
+			selection.goProject({ host: workspace.host, id: workspace.id });
 		} else if (dashboardActive) {
 			toggleDisclosure();
 		} else {
-			selection.goProject(workspace.id);
+			selection.goProject({ host: workspace.host, id: workspace.id });
 		}
 	};
 
@@ -1186,7 +1289,7 @@ const ProjectItemContent = memo(function ProjectItemContent({
 	// select click then a second click (felt like a double-click).
 	const onFolderClick = (event: MouseEvent) => {
 		event.stopPropagation();
-		if (consumeDragClick(workspace.id)) return;
+		if (consumeDragClick(projectKey)) return;
 		toggleDisclosure();
 	};
 
@@ -1204,7 +1307,7 @@ const ProjectItemContent = memo(function ProjectItemContent({
 		// after removal while the sidebar keeps progress/error feedback visible.
 		selection.goHome();
 		try {
-			await onRemoveProject(workspace.id);
+			await onRemoveProject(workspace);
 		} catch (err) {
 			const message = err instanceof Error ? err.message : t("shell.couldNotRemoveProject");
 			setRemoveError(message);
@@ -1223,7 +1326,7 @@ const ProjectItemContent = memo(function ProjectItemContent({
 					)}
 					data-dragging={projectIsDragging ? "true" : undefined}
 					data-project-drop-target=""
-					data-project-id={workspace.id}
+					data-project-id={projectKey}
 					data-sidebar="menu-item"
 					data-slot="sidebar-menu-item"
 					layout={draggingProjectId ? false : "position"}
@@ -1247,7 +1350,7 @@ const ProjectItemContent = memo(function ProjectItemContent({
 					<div
 						className="relative"
 						data-project-drag-row=""
-						data-project-id={workspace.id}
+						data-project-id={projectKey}
 						ref={setDraggableNodeRef}
 					>
 						<div
@@ -1268,7 +1371,7 @@ const ProjectItemContent = memo(function ProjectItemContent({
 									aria-current={dashboardActive ? "page" : undefined}
 									aria-expanded={expanded}
 									isActive={projectActive}
-									tooltip={workspace.name}
+									tooltip={projectLabel}
 									{...listeners}
 									onClick={onProjectClick}
 									ref={setActivatorNodeRef}
@@ -1317,7 +1420,7 @@ const ProjectItemContent = memo(function ProjectItemContent({
 										className="sidebar-expanded-chrome min-w-0 flex-1 translate-y-px truncate group-data-[collapsible=icon]:hidden"
 										data-project-label=""
 									>
-										{workspace.name}
+										{projectLabel}
 									</span>
 									{workspace.kind === "cloud" && (
 										<Badge
@@ -1399,12 +1502,12 @@ const ProjectItemContent = memo(function ProjectItemContent({
 										</button>
 									</DropdownMenuTrigger>
 									<DropdownMenuContent side="right" align="start" className="min-w-44">
-										<DropdownMenuItem disabled={isProjectRestarting} onSelect={() => requestNewTask(workspace.id)}>
+										<DropdownMenuItem disabled={isProjectRestarting} onSelect={() => requestNewTask({ host: workspace.host, id: workspace.id })}>
 											<Plus aria-hidden="true" />
 											{t("shell.newSession")}
 										</DropdownMenuItem>
 										<DropdownMenuSeparator />
-										<DropdownMenuItem onSelect={() => selection.goSettings(workspace.id)}>
+										<DropdownMenuItem onSelect={() => selection.goSettings({ host: workspace.host, id: workspace.id })}>
 											<Settings aria-hidden="true" />
 											{t("shell.projectSettings")}
 										</DropdownMenuItem>
@@ -1416,6 +1519,7 @@ const ProjectItemContent = memo(function ProjectItemContent({
 										>
 											<Trash2 aria-hidden="true" />
 											{t("shell.removeProjectTitle")}
+											{hostSuffix}
 										</DropdownMenuItem>
 									</DropdownMenuContent>
 								</DropdownMenu>
@@ -1460,7 +1564,7 @@ const ProjectItemContent = memo(function ProjectItemContent({
 											<DndContext
 										collisionDetection={closestCenter}
 										modifiers={[restrictToListBounds]}
-										id={sessionDndId(workspace.id)}
+										id={sessionDndId(projectKey)}
 										onDragStart={() => setSessionDragging(true)}
 									onDragCancel={onSessionDragCancel}
 										onDragEnd={onSessionDragEnd}
@@ -1475,7 +1579,7 @@ const ProjectItemContent = memo(function ProjectItemContent({
 													<SortableSessionRow
 														key={session.id}
 														session={session}
-														active={selection.activeSessionId === session.id}
+														active={selection.activeHostId === session.host && selection.activeSessionId === session.id}
 														consumeDragClick={sessionDragClickGuard.consumeClick}
 														layoutDependency={sessionLayoutDependency}
 														listIsDragging={sessionDragging}
@@ -1507,12 +1611,12 @@ const ProjectItemContent = memo(function ProjectItemContent({
 				</motion.li>
 			</ContextMenuTrigger>
 			<ContextMenuContent className="min-w-44">
-				<ContextMenuItem disabled={isProjectRestarting} onSelect={() => requestNewTask(workspace.id)}>
+				<ContextMenuItem disabled={isProjectRestarting} onSelect={() => requestNewTask({ host: workspace.host, id: workspace.id })}>
 					<Plus aria-hidden="true" />
 					{t("shell.newSession")}
 				</ContextMenuItem>
 				<ContextMenuSeparator />
-				<ContextMenuItem onSelect={() => selection.goSettings(workspace.id)}>
+				<ContextMenuItem onSelect={() => selection.goSettings({ host: workspace.host, id: workspace.id })}>
 					<Settings aria-hidden="true" />
 					{t("shell.projectSettings")}
 				</ContextMenuItem>
@@ -1524,6 +1628,7 @@ const ProjectItemContent = memo(function ProjectItemContent({
 				>
 					<Trash2 aria-hidden="true" />
 					{t("shell.removeProjectTitle")}
+					{hostSuffix}
 				</ContextMenuItem>
 			</ContextMenuContent>
 		</ContextMenu>
@@ -1534,7 +1639,8 @@ const ProjectItemContent = memo(function ProjectItemContent({
  * visible sessions travel with it without becoming collision targets. */
 const ProjectDragPreview = memo(function ProjectDragPreview({ workspace, expanded, selection, sessions }: { workspace: WorkspaceSummary; expanded: boolean; selection: Selection; sessions: WorkspaceSession[] }) {
 	const { t } = useTranslation();
-	const activeProjectMatches = selection.activeProjectId === workspace.id;
+	const activeProjectMatches =
+		selection.activeHostId === workspace.host && selection.activeProjectId === workspace.id;
 	const projectActive =
 		(activeProjectMatches && !selection.activeSessionId) ||
 		(activeProjectMatches && workspace.sessions.some((session) => session.id === selection.activeSessionId && session.kind === "orchestrator"));
@@ -1555,7 +1661,7 @@ const ProjectDragPreview = memo(function ProjectDragPreview({ workspace, expande
 					{sessions.map((session) => {
 						const switchPresentation = deriveSessionAgentSwitchPresentation(session);
 						const switchLabel = switchPresentation ? t(switchPresentation.compactLabelKey, switchPresentation.values) : undefined;
-						const active = selection.activeSessionId === session.id;
+						const active = selection.activeHostId === session.host && selection.activeSessionId === session.id;
 						return (
 							<div className="pl-4.5" key={session.id}>
 								<div className={cn("flex h-8 w-full items-center rounded-lg", active && "bg-interactive-active text-foreground")}>
@@ -1587,9 +1693,9 @@ const PinnedSessionRow = memo(function PinnedSessionRow({
 }: {
 	session: WorkspaceSession;
 	active: boolean;
-	onOpenSession: (projectId: string, sessionId: string) => void;
+	onOpenSession: (session: Ref) => void;
 }) {
-	const onOpen = useCallback(() => onOpenSession(session.workspaceId, session.id), [onOpenSession, session.id, session.workspaceId]);
+	const onOpen = useCallback(() => onOpenSession({ host: session.host, id: session.id }), [onOpenSession, session.host, session.id]);
 	return <SessionRow session={session} active={active} indented={false} onOpen={onOpen} />;
 });
 
@@ -1697,7 +1803,7 @@ function SessionRow({
 		const name = draft.trim();
 		if (!name || name === session.title) return;
 		try {
-			await renameSession(session.id, name);
+			await renameSession(session, name);
 			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 		} catch (err) {
 			console.error("Failed to rename session:", err);

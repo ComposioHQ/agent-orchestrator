@@ -1,6 +1,7 @@
 import { createFileRoute, Outlet, useMatchRoute, useNavigate, useParams } from "@tanstack/react-router";
+import { LOCAL_HOST, parseRefKey, refKey, type Ref } from "../lib/hosts";
 import { isCancelledError, useQueryClient } from "@tanstack/react-query";
-import { type CSSProperties, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { type CSSProperties, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { FolderPlus } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { CommandPalette } from "../components/CommandPalette";
@@ -24,8 +25,14 @@ import { agentModelsQueryOptions } from "../hooks/useAgentModelsQuery";
 import { useDaemonStatus } from "../hooks/useDaemonStatus";
 import { useOpenShellTerminal } from "../hooks/useShellTerminals";
 import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
-import { useWorkspaceQuery, workspaceQueryKey, workspaceQueryOptions } from "../hooks/useWorkspaceQuery";
+import {
+	useWorkspaceQuery,
+	workspaceHostQueryKey,
+	workspaceQueryKey,
+	workspaceQueryOptions,
+} from "../hooks/useWorkspaceQuery";
 import { apiClient, apiErrorCode, apiErrorMessage, hasTrustedApiBaseUrl } from "../lib/api-client";
+import { clientFor } from "../lib/host-clients";
 import { refreshDaemonStatus } from "../lib/daemon-status";
 import { usesPreviewWorkspaceData } from "../lib/preview-mode";
 import { addRendererExceptionStep, captureRendererEvent, captureRendererException } from "../lib/telemetry";
@@ -46,7 +53,14 @@ import {
 } from "../lib/platform";
 import { sidebarIsCompact, sidebarIsVisible, sidebarOccupiesLayout, useUiStore } from "../stores/ui-store";
 import { matchesRendererShortcut } from "../stores/keybindings-store";
-import { sessionIsActive, toProjectKind, type WorkspaceSummary } from "../types/workspace";
+import {
+	flattenHostSections,
+	sessionIsActive,
+	toProjectKind,
+	updateHostWorkspaces,
+	type HostSection,
+	type WorkspaceSummary,
+} from "../types/workspace";
 import type { components } from "../../api/schema";
 import { useAgentInventoryTelemetry } from "../hooks/useAgentInventoryTelemetry";
 
@@ -103,7 +117,7 @@ function ShellLayout() {
 	const matchRoute = useMatchRoute();
 	const queryClient = useQueryClient();
 	const workspaceQuery = useWorkspaceQuery();
-	const workspaces = workspaceQuery.data ?? [];
+	const workspaces = useMemo(() => flattenHostSections(workspaceQuery.data), [workspaceQuery.data]);
 	const daemonStatus = useDaemonStatus(queryClient);
 	const [workspaceStartupState, setWorkspaceStartupState] = useState<"loading" | "ready" | "error">("loading");
 	const workspaceStartupBaselineRef = useRef(0);
@@ -184,7 +198,7 @@ function ShellLayout() {
 	const handledShellNonceRef = useRef(newShellTerminalNonce);
 	const [isKeyboardShortcutsOpen, setIsKeyboardShortcutsOpen] = useState(false);
 	const [isKeyboardShortcutsSettingsOpen, setIsKeyboardShortcutsSettingsOpen] = useState(false);
-	const routeParams = useParams({ strict: false }) as { projectId?: string; sessionId?: string };
+	const routeParams = useParams({ strict: false }) as { hostId?: string; projectId?: string; sessionId?: string };
 	useEffect(() => {
 		document.addEventListener("click", handleModifierLinkClick);
 		return () => document.removeEventListener("click", handleModifierLinkClick);
@@ -248,23 +262,36 @@ function ShellLayout() {
 	// Project in scope for a new-session shortcut: the route's project, or the
 	// workspace owning the open session (so the shortcut works from a worker's
 	// detail view, where the URL carries only a sessionId).
-	const scopedProjectId = routeParams.projectId
-		? routeParams.projectId
+	const routeHost = routeParams.hostId ?? LOCAL_HOST;
+	const scopedProject: Ref | undefined = routeParams.projectId
+		? { host: routeHost, id: routeParams.projectId }
 		: routeParams.sessionId
-			? workspaces.find((workspace) => workspace.sessions.some((session) => session.id === routeParams.sessionId))?.id
+			? (() => {
+					// Session ids repeat across hosts, so the owner search is scoped to
+					// the route's host — otherwise the shortcut opens a shell, or a new
+					// task, on whichever machine sorts first in the tree.
+					const owner = workspaces.find((workspace) =>
+						workspace.sessions.some(
+							(session) => session.host === routeHost && session.id === routeParams.sessionId,
+						),
+					);
+					return owner ? { host: owner.host, id: owner.id } : undefined;
+				})()
 			: undefined;
+	const scopedProjectId = scopedProject?.id;
+	const scopedProjectHost = scopedProject?.host;
 	// Warms the New Task composer's model-catalog cache while the user is just
 	// looking at the project, so the picker never shows a loading flash the
 	// first time they actually open the dialog.
 	useEffect(() => {
-		if (!scopedProjectId) return;
-		const projectQueryKey = ["project", scopedProjectId];
+		if (!scopedProject) return;
+		const projectQueryKey = ["project", refKey(scopedProject)];
 		void queryClient
 			.prefetchQuery({
 				queryKey: projectQueryKey,
 				queryFn: async () => {
-					const { data, error: apiError } = await apiClient.GET("/api/v1/projects/{id}", {
-						params: { path: { id: scopedProjectId } },
+					const { data, error: apiError } = await clientFor(scopedProject.host).GET("/api/v1/projects/{id}", {
+						params: { path: { id: scopedProject.id } },
 					});
 					if (apiError) throw new Error(apiErrorMessage(apiError));
 					if (data?.status !== "ok") throw new Error("Project config unavailable");
@@ -275,10 +302,10 @@ function ShellLayout() {
 				const project = queryClient.getQueryData<components["schemas"]["Project"]>(projectQueryKey);
 				const defaultWorkerAgent = project?.config?.worker?.agent || project?.agent || "";
 				if (defaultWorkerAgent) {
-					void queryClient.prefetchQuery(agentModelsQueryOptions(defaultWorkerAgent, scopedProjectId));
+					void queryClient.prefetchQuery(agentModelsQueryOptions(defaultWorkerAgent, scopedProject));
 				}
 			});
-	}, [queryClient, scopedProjectId]);
+	}, [queryClient, scopedProject]);
 	// First-launch root board only (no projects in scope).
 	const isWelcomeBoard =
 		Boolean(matchRoute({ to: "/" })) &&
@@ -287,7 +314,7 @@ function ShellLayout() {
 		workspaces.length === 0;
 	const isSettingsRoute =
 		Boolean(matchRoute({ to: "/settings", fuzzy: true })) ||
-		Boolean(matchRoute({ to: "/projects/$projectId/settings", fuzzy: true }));
+		Boolean(matchRoute({ to: "/host/$hostId/project/$projectId/settings", fuzzy: true }));
 	// Welcome/settings always self-frame. Platforms that hide the shell-owned
 	// topbar (macOS) use the same full-height inset; session actions mount
 	// inside SessionView.
@@ -297,7 +324,9 @@ function ShellLayout() {
 	const orchestratorReplacementErrors = useUiStore((state) => state.orchestratorReplacementErrors);
 	const setOrchestratorReplacementError = useUiStore((state) => state.setOrchestratorReplacementError);
 	const setOrchestratorStartupError = useUiStore((state) => state.setOrchestratorStartupError);
-	const replacementErrorProjectId = Object.keys(orchestratorReplacementErrors)[0] ?? null;
+	const replacementErrorKey = Object.keys(orchestratorReplacementErrors)[0] ?? null;
+	// The store keys failures by refKey so two hosts' same-named projects cannot collide.
+	const replacementErrorRef = replacementErrorKey ? parseRefKey(replacementErrorKey) : null;
 	const isStartupLoading =
 		!usesPreviewWorkspaceData &&
 		!daemonStatus.code &&
@@ -305,9 +334,12 @@ function ShellLayout() {
 	const navigateSession = useCallback(
 		(direction: -1 | 1) => {
 			if (!scopedProjectId) return;
-			const sessions = (workspaces.find((workspace) => workspace.id === scopedProjectId)?.sessions ?? []).filter(
-				sessionIsActive,
-			);
+			// Project ids repeat across hosts too: cycling through the wrong host's
+			// project would navigate to a session on a machine the user left.
+			const sessions = (
+				workspaces.find((workspace) => workspace.host === scopedProjectHost && workspace.id === scopedProjectId)
+					?.sessions ?? []
+			).filter(sessionIsActive);
 			if (sessions.length === 0) return;
 			const currentIndex = sessions.findIndex((session) => session.id === routeParams.sessionId);
 			const nextIndex =
@@ -319,16 +351,24 @@ function ShellLayout() {
 			const session = sessions[nextIndex];
 			if (!session || session.id === routeParams.sessionId) return;
 			void navigate({
-				to: "/projects/$projectId/sessions/$sessionId",
-				params: { projectId: scopedProjectId, sessionId: session.id },
+				to: "/host/$hostId/session/$sessionId",
+				params: { hostId: session.host, sessionId: session.id },
 			});
 		},
-		[navigate, routeParams.sessionId, scopedProjectId, workspaces],
+		[navigate, routeParams.sessionId, scopedProjectHost, scopedProjectId, workspaces],
 	);
 
 	const updateWorkspaces = useCallback(
 		(updater: (workspaces: WorkspaceSummary[]) => WorkspaceSummary[]) => {
-			queryClient.setQueryData<WorkspaceSummary[]>(workspaceQueryKey, (current = []) => updater(current));
+			// The cache is per host now, so an optimistic edit has to name the host
+			// it belongs to; these are all local-project edits.
+			queryClient.setQueryData<HostSection[]>(workspaceHostQueryKey(LOCAL_HOST), (current) =>
+				updateHostWorkspaces(
+					current ?? [{ host: LOCAL_HOST, label: "Local", status: "ready", workspaces: [], failure: null }],
+					LOCAL_HOST,
+					updater,
+				),
+			);
 		},
 		[queryClient],
 	);
@@ -340,6 +380,7 @@ function ShellLayout() {
 			source: "project_add" | "project_clone",
 		) => {
 			const workspace: WorkspaceSummary = {
+				host: LOCAL_HOST,
 				id: project.id,
 				name: project.name,
 				kind: toProjectKind(project.kind),
@@ -351,7 +392,7 @@ function ShellLayout() {
 			};
 			void captureRendererEvent(`ao.renderer.${source}_succeeded`, { project_id: workspace.id });
 			updateWorkspaces((current) => [workspace, ...current.filter((item) => item.id !== workspace.id)]);
-			setOrchestratorStartupError(workspace.id, null);
+			setOrchestratorStartupError(workspace, null);
 			try {
 				void captureRendererEvent("ao.renderer.orchestrator_spawn_requested", {
 					project_id: workspace.id,
@@ -361,7 +402,7 @@ function ShellLayout() {
 					data: spawnData,
 					error: spawnError,
 					response: spawnResponse,
-				} = await apiClient.POST("/api/v1/sessions", {
+				} = await clientFor(workspace.host).POST("/api/v1/sessions", {
 					body: {
 						projectId: workspace.id,
 						kind: "orchestrator",
@@ -381,18 +422,21 @@ function ShellLayout() {
 				const sessionId = spawnData.session.id;
 				await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 				void navigate({
-					to: "/projects/$projectId/sessions/$sessionId",
-					params: { projectId: workspace.id, sessionId },
+					to: "/host/$hostId/session/$sessionId",
+					params: { hostId: workspace.host, sessionId },
 				});
 			} catch (spawnError) {
 				void captureRendererEvent("ao.renderer.orchestrator_spawn_failed", {
 					project_id: workspace.id,
 					source,
 				});
-				void navigate({ to: "/projects/$projectId", params: { projectId: workspace.id } });
+				void navigate({
+					to: "/host/$hostId/project/$projectId",
+					params: { hostId: workspace.host, projectId: workspace.id },
+				});
 				const message = spawnError instanceof Error ? spawnError.message : "Could not start orchestrator";
 				const startupMessage = `Project added, but orchestrator did not start: ${message}`;
-				setOrchestratorStartupError(workspace.id, startupMessage);
+				setOrchestratorStartupError(workspace, startupMessage);
 			}
 		},
 		[navigate, queryClient, setOrchestratorStartupError, updateWorkspaces],
@@ -492,16 +536,17 @@ function ShellLayout() {
 	}, []);
 
 	const removeProject = useCallback(
-		async (projectId: string) => {
+		async (project: Ref) => {
+			const projectId = project.id;
 			const isLastWorkspace =
-              workspaces.length === 1 && workspaces[0]?.id === projectId;
+				workspaces.length === 1 && workspaces[0]?.host === project.host && workspaces[0]?.id === projectId;
 			void addRendererExceptionStep("Project removal requested", {
 				source: "project-remove",
 				operation: "project_remove",
 				surface: "project_board",
 				project_id: projectId,
 			});
-			const { error } = await apiClient.DELETE("/api/v1/projects/{id}", {
+			const { error } = await clientFor(project.host).DELETE("/api/v1/projects/{id}", {
 				params: { path: { id: projectId } },
 			});
 			if (error) {
@@ -525,16 +570,16 @@ function ShellLayout() {
 	);
 
 	const restartOrchestrator = useCallback(
-		async (projectId: string, mode?: "chat" | "tui") => {
+		async (project: Ref, mode?: "chat" | "tui") => {
 			await restartProjectOrchestrator({
-				projectId,
+				project,
 				queryClient,
 				navigate,
 				setProjectRestarting,
 				setOrchestratorReplacementError,
 				mode,
 				onError: (error) => {
-					captureOrchestratorReplacementFailure(error, projectId);
+					captureOrchestratorReplacementFailure(error, project.id);
 				},
 			});
 		},
@@ -571,7 +616,7 @@ function ShellLayout() {
 		}
 
 		workspaceStartupBaselineRef.current =
-			queryClient.getQueryState(workspaceQueryKey)?.dataUpdatedAt ?? 0;
+			queryClient.getQueryState(workspaceHostQueryKey(LOCAL_HOST))?.dataUpdatedAt ?? 0;
 		setWorkspaceStartupState("loading");
 		void queryClient
 			.fetchQuery({ ...workspaceQueryOptions, staleTime: 0 })
@@ -639,7 +684,10 @@ function ShellLayout() {
 				const workspace = workspaces[Number(event.key) - 1];
 				if (workspace) {
 					event.preventDefault();
-					void navigate({ to: "/projects/$projectId", params: { projectId: workspace.id } });
+					void navigate({
+						to: "/host/$hostId/project/$projectId",
+						params: { hostId: workspace.host, projectId: workspace.id },
+					});
 				}
 			}
 		};
@@ -655,7 +703,7 @@ function ShellLayout() {
 		() =>
 			aoBridge.app.onNewSessionShortcut(() => {
 				if (scopedProjectId) {
-					requestNewTask(scopedProjectId);
+					if (scopedProject) requestNewTask(scopedProject);
 				} else {
 					requestCreateProject();
 				}
@@ -692,7 +740,10 @@ function ShellLayout() {
 		if (handledShellNonceRef.current === newShellTerminalNonce) return;
 		handledShellNonceRef.current = newShellTerminalNonce;
 		openShellTerminal.mutate(
-			{ projectId: scopedProjectId, sessionId: routeParams.sessionId },
+			{
+				project: scopedProject,
+				session: routeParams.sessionId ? { host: routeHost, id: routeParams.sessionId } : undefined,
+			},
 			{
 				onSuccess: (shell) => {
 					setActiveShellTerminal(shell.handleId);
@@ -837,7 +888,7 @@ function ShellLayout() {
 						onInitializeProject={initializeProjectRepository}
 						onRemoveProject={removeProject}
 						workspaceError={workspaceQuery.isError ? errorMessage(workspaceQuery.error) : undefined}
-						workspaces={workspaces}
+						hostSections={workspaceQuery.data ?? []}
 					/>
 					<main className={cn("flex min-w-0 flex-1 flex-col overflow-x-hidden", !sidebarHasLayout && "sidebar-hidden")}>
 						<div className="min-h-0 flex-1 overflow-x-hidden">
@@ -903,13 +954,13 @@ function ShellLayout() {
 					/>
 				</SidebarProvider>
 				<OrchestratorReplacementDialog
-					error={replacementErrorProjectId ? orchestratorReplacementErrors[replacementErrorProjectId] : undefined}
+					error={replacementErrorKey ? orchestratorReplacementErrors[replacementErrorKey] : undefined}
 					onOpenChange={(open) => {
-						if (!open && replacementErrorProjectId) setOrchestratorReplacementError(replacementErrorProjectId, null);
+						if (!open && replacementErrorRef) setOrchestratorReplacementError(replacementErrorRef, null);
 					}}
-					onRetry={(projectId) => void restartOrchestrator(projectId)}
-					onRetryAsTui={(projectId) => void restartOrchestrator(projectId, "tui")}
-					projectId={replacementErrorProjectId}
+					onRetry={(project) => void restartOrchestrator(project)}
+					onRetryAsTui={(project) => void restartOrchestrator(project, "tui")}
+					project={replacementErrorRef}
 					workspaces={workspaces}
 				/>
 					<CommandPalette />

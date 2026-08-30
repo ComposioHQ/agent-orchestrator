@@ -14,6 +14,21 @@ vi.mock("../../lib/api-client", () => ({
 	hasTrustedApiBaseUrl: () => true,
 }));
 
+// The workspace query fans out over hosts now; with the flag off that is a loop
+// of one, and clientFor(LOCAL_HOST) is the client apiClient already was.
+vi.mock("../../lib/host-clients", () => ({
+	clientFor: () => ({ GET: getMock, POST: vi.fn() }),
+	connectedHosts: (() => {
+		// useSyncExternalStore requires a stable snapshot: a fresh [] each call
+		// re-renders forever.
+		const hosts: string[] = [];
+		return () => hosts;
+	})(),
+	hostLabelFor: (host: string) => host,
+	isHostReady: () => true,
+	subscribeConnectedHosts: () => () => undefined,
+}));
+
 vi.mock("@tanstack/react-router", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("@tanstack/react-router")>();
 	return { ...actual, useNavigate: () => navigateMock };

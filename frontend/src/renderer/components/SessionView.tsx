@@ -1,4 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { refKey, type Ref } from "../lib/hosts";
 import { PanelRight, Plus } from "lucide-react";
 import { motion, useReducedMotion } from "motion/react";
 import {
@@ -58,9 +59,10 @@ import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
 import { useSessionHandoffMenu } from "../hooks/useSessionHandoffMenu";
 import { clearSwitchAgentState } from "../hooks/useSwitchAgent";
 import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
-import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { sessionWorkspaceFilesQueryOptions } from "../hooks/useSessionWorkspaceFiles";
 import { matchWorkspaceFilePath } from "../lib/workspace-file-path";
+import { apiErrorMessage } from "../lib/api-client";
+import { clientFor } from "../lib/host-clients";
 import { SHELL_PANEL_SPRING } from "../lib/motion-spring";
 import {
 	activateSessionFile,
@@ -73,7 +75,7 @@ import {
 import { hidesShellTopbar, isMacPlatform } from "../lib/platform";
 import { useShell } from "../lib/shell-context";
 import { cn } from "../lib/utils";
-import { isOrchestratorSession, sessionIsActive } from "../types/workspace";
+import { flattenHostSections, isOrchestratorSession, sessionIsActive } from "../types/workspace";
 import { terminalTargetBelongsToSession, type TerminalTarget } from "../types/terminal";
 import { matchesRendererShortcut } from "../stores/keybindings-store";
 import { useResolvedTheme, useUiStore, type InspectorView } from "../stores/ui-store";
@@ -227,9 +229,9 @@ function previewRevealKey(previewUrl?: string, previewRevision?: number): string
 	return `url:${target}`;
 }
 
-function browserIsVisible(sessionId: string, browserPoppedOut: boolean): boolean {
+function browserIsVisible(sessionKey: string, browserPoppedOut: boolean): boolean {
 	if (browserPoppedOut) return true;
-	const current = useUiStore.getState().inspectorSessions[sessionId];
+	const current = useUiStore.getState().inspectorSessions[sessionKey];
 	return (current?.isOpen ?? true) && (current?.view ?? "summary") === "browser";
 }
 
@@ -241,7 +243,7 @@ function reviewerTerminalFromReviews(data?: ReviewsResponse): ReviewerTerminalTa
 }
 
 type SessionViewProps = {
-	sessionId: string;
+	sessionRef: Ref;
 };
 
 // Mirrors the left sidebar: a Motion gap takes layout width while a sibling
@@ -374,15 +376,19 @@ function SessionInspectorRail({
 // x-transform). Summary/Reviews/Files share a utility width, while Browser
 // automatically grows into a co-work canvas. Chat readability clamps either
 // profile before the conversation can become unusably narrow.
-export function SessionView({ sessionId }: SessionViewProps) {
+export function SessionView({ sessionRef }: SessionViewProps) {
+	const sessionId = sessionRef.id;
+	// Per-session UI state is keyed by ref: two hosts can hand out the same
+	// session id, and an inspector opened on one must not open on the other.
+	const sessionKey = refKey(sessionRef);
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 	const workspaceQuery = useWorkspaceQuery();
-	const workspaces = workspaceQuery.data ?? [];
+	const workspaces = flattenHostSections(workspaceQuery.data);
 	const theme = useResolvedTheme();
 	const prefersReducedMotion = useReducedMotion();
-	const isInspectorOpen = useUiStore((state) => state.inspectorSessions[sessionId]?.isOpen ?? true);
-	const inspectorView = useUiStore((state) => state.inspectorSessions[sessionId]?.view ?? "summary");
+	const isInspectorOpen = useUiStore((state) => state.inspectorSessions[sessionKey]?.isOpen ?? true);
+	const inspectorView = useUiStore((state) => state.inspectorSessions[sessionKey]?.view ?? "summary");
 	const setInspectorOpenForSession = useUiStore((state) => state.setInspectorOpen);
 	const toggleInspector = useUiStore((state) => state.toggleInspector);
 	const setInspectorViewForSession = useUiStore((state) => state.setInspectorView);
@@ -473,10 +479,14 @@ export function SessionView({ sessionId }: SessionViewProps) {
 
 	useEffect(() => stopTerminalLiveResize, [stopTerminalLiveResize]);
 
-	const session = workspaces.flatMap((workspace) => workspace.sessions).find((s) => s.id === sessionId);
-	const interfaceSwitch = useSessionInterfaceTransition(session?.id);
+	// Session ids are unique per host, not across them: matching on id alone
+	// renders another host's same-id session under this route.
+	const session = workspaces
+		.flatMap((workspace) => workspace.sessions)
+		.find((candidate) => candidate.host === sessionRef.host && candidate.id === sessionId);
+	const interfaceSwitch = useSessionInterfaceTransition(session);
 	const reviewerQuery = useQuery({
-		queryKey: ["session-reviews", sessionId],
+		queryKey: ["session-reviews", refKey(sessionRef)],
 		enabled: Boolean(
 			window.ao && session && sessionIsActive(session) && !isOrchestratorSession(session) && session.prs.length > 0,
 		),
@@ -485,7 +495,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			return data?.reviews?.some((review) => review.status === "running") ? 2500 : false;
 		},
 		queryFn: async () => {
-			const { data, error } = await apiClient.GET("/api/v1/sessions/{sessionId}/reviews", {
+			const { data, error } = await clientFor(sessionRef.host).GET("/api/v1/sessions/{sessionId}/reviews", {
 				params: { path: { sessionId } },
 			});
 			if (error) throw new Error(apiErrorMessage(error, "Unable to load reviews"));
@@ -496,8 +506,10 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const reviewerTerminal = session && sessionIsActive(session) ? availableReviewerTerminal : undefined;
 
 	// Shell terminals opened inside a session live beside its pane as extra tabs,
-	// scoped to the session on screen so each session has its own shell set.
-	const allShellTerminals = useShellTerminals().data ?? [];
+	// scoped to the session on screen so each session has its own shell set. They
+	// live on that session's host, so that is the host that gets asked — and
+	// filtering the answer by bare session id is then unambiguous.
+	const allShellTerminals = useShellTerminals(sessionRef.host).data ?? [];
 	const shellTerminals = useMemo(
 		() => allShellTerminals.filter((shell) => shell.sessionId === sessionId),
 		[allShellTerminals, sessionId],
@@ -510,7 +522,8 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const setVisibleTerminalKind = useUiStore((state) => state.setVisibleTerminalKind);
 	const clearVisibleTerminalKind = useUiStore((state) => state.clearVisibleTerminalKind);
 	const renameShellTerminalByHandle = useCallback(
-		(handleId: string, title: string) => renameShellTerminal.mutate({ handleId, title }),
+		(handleId: string, title: string) =>
+			renameShellTerminal.mutate({ terminal: { host: sessionRef.host, id: handleId }, title }),
 		[renameShellTerminal],
 	);
 
@@ -519,15 +532,19 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	// workspace can no longer be resolved).
 	const addShellTerminal = useCallback(() => {
 		openShellTerminal.mutate(
-			{ projectId: session?.workspaceId, sessionId },
+			{
+				project: session ? { host: session.host, id: session.workspaceId } : undefined,
+				session: sessionRef,
+			},
 			{
 				onSuccess: (shell) => {
 					setActiveShellTerminal(shell.handleId);
 					setTerminalTarget({
 						generation: shell.createdAt,
+						host: shell.host,
 						kind: "shell",
 						handleId: shell.handleId,
-						sessionId,
+						session: sessionRef,
 						title: shell.title,
 					});
 				},
@@ -546,9 +563,10 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			}));
 			setTerminalTarget({
 				generation: shell.createdAt,
+				host: shell.host,
 				kind: "shell",
 				handleId: shell.handleId,
-				sessionId,
+				session: sessionRef,
 				title: shell.title,
 			});
 		},
@@ -567,9 +585,10 @@ export function SessionView({ sessionId }: SessionViewProps) {
 					setActiveShellTerminal(nextShell.handleId);
 					setTerminalTarget({
 						generation: nextShell.createdAt,
+						host: nextShell.host,
 						kind: "shell",
 						handleId: nextShell.handleId,
-						sessionId,
+						session: sessionRef,
 						title: nextShell.title,
 					});
 				} else {
@@ -579,7 +598,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			} else if (activeShellTerminalHandleId === handleId) {
 				setActiveShellTerminal(null);
 			}
-			closeShellTerminal.mutate(handleId);
+			closeShellTerminal.mutate({ host: sessionRef.host, id: handleId });
 		},
 		[
 			activeShellTerminalHandleId,
@@ -603,12 +622,12 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	}, [sessionId, setActiveShellTerminal]);
 	const selectReviewerTerminal = useCallback((target: ReviewerTerminalTarget) => {
 		setActiveShellTerminal(null);
-		setTerminalTarget({ kind: "reviewer", handleId: target.handleId, harness: target.harness, sessionId });
+		setTerminalTarget({ kind: "reviewer", handleId: target.handleId, harness: target.harness, session: sessionRef });
 		setFileTabsBySession((current) => ({
 			...current,
 			[sessionId]: activateSessionFile(current[sessionId] ?? EMPTY_SESSION_FILE_TABS, null),
 		}));
-	}, [sessionId, setActiveShellTerminal]);
+	}, [sessionId, sessionRef, setActiveShellTerminal]);
 	const openCenterFile = useCallback((path: string) => {
 		setFileTabsBySession((current) => ({
 			...current,
@@ -647,9 +666,10 @@ export function SessionView({ sessionId }: SessionViewProps) {
 				? current
 				: {
 						generation: shell.createdAt,
+						host: shell.host,
 						kind: "shell",
 						handleId: shell.handleId,
-						sessionId,
+						session: sessionRef,
 						title: shell.title,
 					},
 		);
@@ -738,14 +758,14 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			const nextSizing = inspectorSizing(next);
 			if (!sizingGeometryEqual(sizing, nextSizing)) prepareWorkspaceProfile(nextSizing);
 			publishWorkspaceDemand(nextSizing, browserWorkspacePressureActive(next));
-			setInspectorViewForSession(sessionId, next);
+			setInspectorViewForSession(sessionKey, next);
 		},
 		[
 			browserWorkspacePressureActive,
 			inspectorView,
 			prepareWorkspaceProfile,
 			publishWorkspaceDemand,
-			sessionId,
+			sessionKey,
 			setInspectorViewForSession,
 			sizing,
 		],
@@ -879,7 +899,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 				<Plus aria-hidden="true" className="size-icon-md" />
 			</TopbarButton>
 		) : null;
-	const fileAnnotation = useFileAnnotation(sessionId);
+	const fileAnnotation = useFileAnnotation(sessionId, sessionRef.host);
 	const centerFileTabs = (
 		<SessionFileTabs
 			state={fileTabs}
@@ -904,7 +924,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		previewRevision,
 	});
 	const browserAnnotationQueue = useBrowserAnnotationQueue({
-		sessionId: session?.id,
+		session,
 		navUrl: browserView.navState.url,
 	});
 	const browserUrl = browserView.navState.url.trim();
@@ -917,7 +937,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	// Entering a session for the first time ever always starts on Summary. This
 	// must fire exactly once per session's *lifetime*, not once per "was this
 	// the last session I looked at" or "is this view currently mounted" — so
-	// the initialized flag lives in the ui-store (inspectorSessions[sessionId])
+	// the initialized flag lives in the ui-store (inspectorSessions[sessionKey])
 	// rather than a component-local ref, and survives both re-entering a
 	// different previously-visited session and unmounting/remounting this view
 	// entirely (e.g. across route transitions). Treat browser content that
@@ -925,8 +945,8 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	// only preview work arriving afterward may reveal Browser automatically.
 	useLayoutEffect(() => {
 		if (!session) return;
-		initializeInspectorSession(sessionId, hasBrowserContent, hasInspector);
-	}, [hasBrowserContent, hasInspector, session, sessionId, initializeInspectorSession]);
+		initializeInspectorSession(sessionKey, hasBrowserContent, hasInspector);
+	}, [hasBrowserContent, hasInspector, initializeInspectorSession, session, sessionKey]);
 
 	useLayoutEffect(() => {
 		setTerminalTarget({ kind: "worker" });
@@ -937,7 +957,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	// Route props change one render before the passive reset above. Reject the
 	// previous session's shell/reviewer synchronously so its handle can never be
 	// cached under the destination session.
-	const routedTerminalTarget = terminalTargetBelongsToSession(terminalTarget, sessionId)
+	const routedTerminalTarget = terminalTargetBelongsToSession(terminalTarget, sessionRef)
 		? terminalTarget
 		: ({ kind: "worker" } satisfies TerminalTarget);
 	// Chat surface stays mounted in chat mode for worker, reviewer, and shell
@@ -961,7 +981,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		(nextOpen: boolean) => {
 			setHandoffDialogOpen(nextOpen);
 			if (!nextOpen && handoffSwitchError && session) {
-				clearSwitchAgentState(queryClient, session.id);
+				clearSwitchAgentState(queryClient, session);
 			}
 		},
 		[handoffSwitchError, queryClient, session],
@@ -1040,23 +1060,23 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	// Publish which one is showing: the notification runtime lives outside this
 	// subtree and must not treat "on the session route" as "watching the agent".
 	useEffect(() => {
-		setVisibleTerminalKind(sessionId, routedTerminalTarget.kind);
-		return () => clearVisibleTerminalKind(sessionId);
-	}, [clearVisibleTerminalKind, routedTerminalTarget.kind, sessionId, setVisibleTerminalKind]);
+		setVisibleTerminalKind(sessionKey, routedTerminalTarget.kind);
+		return () => clearVisibleTerminalKind(sessionKey);
+	}, [clearVisibleTerminalKind, routedTerminalTarget.kind, sessionKey, setVisibleTerminalKind]);
 
 	const prepareFilesInspector = useCallback(() => {
 		setBrowserPopOutState({ sessionId, phase: "docked" });
 		setFilesPoppedOut(false);
-		setFilesChangedOnly(sessionId, true);
+		setFilesChangedOnly(sessionKey, true);
 		transitionInspectorView("files");
-		setInspectorOpenForSession(sessionId, true);
-	}, [sessionId, setFilesChangedOnly, setInspectorOpenForSession, transitionInspectorView]);
+		setInspectorOpenForSession(sessionKey, true);
+	}, [sessionId, sessionKey, setFilesChangedOnly, setInspectorOpenForSession, transitionInspectorView]);
 
 	const fetchWorkspaceFiles = useCallback(async () => {
 		return queryClient.fetchQuery(
-			sessionWorkspaceFilesQueryOptions(sessionId, t("files.error.loadWorkspace")),
+			sessionWorkspaceFilesQueryOptions(sessionRef, t("files.error.loadWorkspace")),
 		);
-	}, [queryClient, sessionId, t]);
+	}, [queryClient, sessionRef, t]);
 
 	const openResolvedWorkspaceFile = useCallback(
 		async (rawPath: string) => {
@@ -1092,9 +1112,9 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			if (next) setBrowserPopOutState({ sessionId, phase: "docked" });
 			setFilesPoppedOut(next);
 			transitionInspectorView("files");
-			setInspectorOpenForSession(sessionId, true);
+			setInspectorOpenForSession(sessionKey, true);
 		},
-		[sessionId, setInspectorOpenForSession, transitionInspectorView],
+		[sessionId, sessionKey, setInspectorOpenForSession, transitionInspectorView],
 	);
 
 	const measureBrowserDockRect = useCallback(() => {
@@ -1182,14 +1202,14 @@ export function SessionView({ sessionId }: SessionViewProps) {
 
 	useEffect(() => {
 		if (!hasInspector) return;
-		const current = useUiStore.getState().inspectorSessions[sessionId];
+		const current = useUiStore.getState().inspectorSessions[sessionKey];
 		if (!hasBrowserContent) {
-			if (current?.browserContentRevealed) setBrowserContentRevealed(sessionId, false);
-			else if (current?.browserUnseen) setBrowserUnseen(sessionId, false);
+			if (current?.browserContentRevealed) setBrowserContentRevealed(sessionKey, false);
+			else if (current?.browserUnseen) setBrowserUnseen(sessionKey, false);
 			return;
 		}
 		if (current?.browserContentRevealed) return;
-		setBrowserContentRevealed(sessionId, true);
+		setBrowserContentRevealed(sessionKey, true);
 	}, [
 		hasBrowserContent,
 		hasInspector,
@@ -1211,9 +1231,9 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		if (baseline.key === previewKey) return;
 		previewBaselineRef.current = { sessionId, key: previewKey };
 		if (!previewKey) return;
-		setBrowserContentRevealed(sessionId, true);
-		if (browserIsVisible(sessionId, browserPoppedOut)) {
-			setBrowserUnseen(sessionId, false);
+		setBrowserContentRevealed(sessionKey, true);
+		if (browserIsVisible(sessionKey, browserPoppedOut)) {
+			setBrowserUnseen(sessionKey, false);
 			return;
 		}
 		// A new preview target used to force-switch the inspector to the Browser
@@ -1222,7 +1242,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		// chat). Match the agent-activity effect below: badge it as unseen and
 		// let the user open Browser themselves when they're ready, instead of
 		// grabbing focus out from under them.
-		setBrowserUnseen(sessionId, true);
+		setBrowserUnseen(sessionKey, true);
 	}, [
 		browserPoppedOut,
 		hasInspector,
@@ -1240,7 +1260,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	// on hasBrowserContent/browserContentRevealed missed exactly that case.
 	useEffect(() => {
 		if (!hasInspector || terminated || !browserView.agentBrowserActive) return;
-		if (!browserIsVisible(sessionId, browserPoppedOut)) setBrowserUnseen(sessionId, true);
+		if (!browserIsVisible(sessionKey, browserPoppedOut)) setBrowserUnseen(sessionKey, true);
 	}, [
 		browserPoppedOut,
 		browserView.agentBrowserActive,
@@ -1255,21 +1275,21 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	// Opening Browser consumes the pending activity indicator, including the
 	// case where the inspector was collapsed while already parked on Browser.
 	useEffect(() => {
-		if (hasInspector && browserIsVisible(sessionId, browserPoppedOut)) {
-			setBrowserUnseen(sessionId, false);
+		if (hasInspector && browserIsVisible(sessionKey, browserPoppedOut)) {
+			setBrowserUnseen(sessionKey, false);
 		}
-	}, [browserPoppedOut, hasInspector, inspectorView, isInspectorOpen, sessionId, setBrowserUnseen]);
+	}, [browserPoppedOut, hasInspector, inspectorView, isInspectorOpen, sessionKey, setBrowserUnseen]);
 
 	const handleToggleInspector = useCallback(() => {
 		const nextOpen = !isInspectorOpen;
 		publishWorkspaceDemand(sizing, browserWorkspacePressureActive(inspectorView, nextOpen));
-		toggleInspector(sessionId);
+		toggleInspector(sessionKey);
 	}, [
 		browserWorkspacePressureActive,
 		inspectorView,
 		isInspectorOpen,
 		publishWorkspaceDemand,
-		sessionId,
+		sessionKey,
 		sizing,
 		toggleInspector,
 	]);
@@ -1468,8 +1488,8 @@ export function SessionView({ sessionId }: SessionViewProps) {
 					<SessionInspectorRail
 						isOpen={isInspectorOpen}
 						onCloseAnimationComplete={handleInspectorCloseAnimationComplete}
-						onExpand={() => setInspectorOpenForSession(sessionId, true)}
-						sizing={sizing}
+							onExpand={() => setInspectorOpenForSession(sessionKey, true)}
+							sizing={sizing}
 						settledClosed={!isInspectorOpen && inspectorSettledClosed}
 						splitRef={sessionSplitRef}
 					>

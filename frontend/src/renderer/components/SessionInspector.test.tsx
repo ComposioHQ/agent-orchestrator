@@ -10,12 +10,14 @@ import {
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { refKey } from "../lib/hosts";
 import { SessionInspector } from "./SessionInspector";
 import { TooltipProvider } from "./ui/tooltip";
 import type { SessionPRSummary } from "../hooks/useSessionScmSummary";
 import { sessionScmSummaryQueryKey } from "../hooks/useSessionScmSummary";
 import { sessionWorkspaceFilesQueryKey } from "../hooks/useSessionWorkspaceFiles";
-import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import { workspaceHostQueryKey } from "../hooks/useWorkspaceQuery";
+import { LOCAL_HOST } from "../lib/hosts";
 import { useUiStore } from "../stores/ui-store";
 import type {
   PRState,
@@ -69,6 +71,26 @@ vi.mock("../lib/api-client", () => ({
   },
 }));
 
+// clientFor(LOCAL_HOST) is the client apiClient already was, so the local
+// host resolves to the same fake the api-client mock installs.
+vi.mock("../lib/host-clients", () => ({
+	baseUrlFor: () => "http://127.0.0.1:3001",
+	connectedHosts: (() => {
+		// useSyncExternalStore requires a stable snapshot: a fresh [] each call
+		// re-renders forever.
+		const hosts: string[] = [];
+		return () => hosts;
+	})(),
+	subscribeConnectedHosts: () => () => undefined,
+	isHostReady: () => true,
+	clientFor: () => ({
+    GET: getMock,
+    PATCH: patchMock,
+    POST: postMock,
+    PUT: putMock,
+  }),
+}));
+
 const pr = (
   n: number,
   state: PRState,
@@ -89,6 +111,7 @@ const session = (
   prs: PullRequestFacts[],
   overrides: Partial<WorkspaceSession> = {},
 ): WorkspaceSession => ({
+	host: "local",
   id: "sess-1",
   workspaceId: "ws-1",
   workspaceName: "my-app",
@@ -158,7 +181,10 @@ function renderWithQuery(
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
-  if (workspaces) client.setQueryData(workspaceQueryKey, workspaces);
+  if (workspaces)
+    client.setQueryData(workspaceHostQueryKey(LOCAL_HOST), [
+      { host: LOCAL_HOST, label: "Local", status: "ready", workspaces, failure: null },
+    ]);
   seed?.(client);
   return {
     ...render(
@@ -317,12 +343,12 @@ describe("SessionInspector tabs", () => {
     ).not.toBeInTheDocument();
     view.unmount();
 
-    useUiStore.getState().setBrowserUnseen(currentSession.id, true);
+    useUiStore.getState().setBrowserUnseen(refKey(currentSession), true);
     renderWithQuery(<SessionInspector session={currentSession} />);
     expect(screen.getByTestId("browser-unseen-indicator")).toBeInTheDocument();
 
     act(() =>
-      useUiStore.getState().setInspectorView(currentSession.id, "browser"),
+      useUiStore.getState().setInspectorView(refKey(currentSession), "browser"),
     );
     expect(
       screen.queryByTestId("browser-unseen-indicator"),
@@ -466,7 +492,7 @@ describe("SessionInspector PR section", () => {
       <SessionInspector session={session([pr(7, "open")])} />,
       undefined,
       (client) => {
-        client.setQueryData(sessionScmSummaryQueryKey("sess-1"), [
+        client.setQueryData(sessionScmSummaryQueryKey({ host: "local", id: "sess-1" }), [
           prSummary(7, "open", {
             review: {
               decision: "approved",
@@ -517,7 +543,7 @@ describe("SessionInspector PR section", () => {
       <SessionInspector session={session([pr(7, "open")])} />,
       undefined,
       (client) => {
-        client.setQueryData(sessionScmSummaryQueryKey("sess-1"), [readyPR]);
+        client.setQueryData(sessionScmSummaryQueryKey({ host: "local", id: "sess-1" }), [readyPR]);
       },
     );
 
@@ -561,7 +587,7 @@ describe("SessionInspector PR section", () => {
         <SessionInspector session={session([pr(7, "open")])} />,
         undefined,
         (client) => {
-          client.setQueryData(sessionScmSummaryQueryKey("sess-1"), [
+          client.setQueryData(sessionScmSummaryQueryKey({ host: "local", id: "sess-1" }), [
             prSummary(7, "open", {
               ci: { autoInjectCI: true, state: "passing", failingChecks: [] },
               review: { decision: "approved", hasUnresolvedHumanComments: false, unresolvedBy: [] },
@@ -579,7 +605,7 @@ describe("SessionInspector PR section", () => {
       <SessionInspector session={session([pr(7, "open")])} />,
       undefined,
       (client) => {
-        client.setQueryData(sessionScmSummaryQueryKey("sess-1"), [
+        client.setQueryData(sessionScmSummaryQueryKey({ host: "local", id: "sess-1" }), [
           prSummary(7, "open", {
             headSha: "",
             ci: { autoInjectCI: true, state: "passing", failingChecks: [] },
@@ -747,7 +773,7 @@ describe("SessionInspector PR section", () => {
       <SessionInspector session={session([pr(7, "open")])} />,
       undefined,
       (client) => {
-        client.setQueryData(sessionScmSummaryQueryKey("sess-1"), [failingPR]);
+        client.setQueryData(sessionScmSummaryQueryKey({ host: "local", id: "sess-1" }), [failingPR]);
       },
     );
 
@@ -1090,7 +1116,7 @@ describe("SessionInspector completion controls", () => {
       title: "orchestrator",
     });
     renderWithQuery(<SessionInspector session={worker} />, [
-      {
+      { host: "local",
         id: "ws-1",
         name: "my-app",
         path: "/repo",
@@ -1120,8 +1146,8 @@ describe("SessionInspector completion controls", () => {
     });
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(navigateMock).toHaveBeenCalledWith({
-      to: "/projects/$projectId/sessions/$sessionId",
-      params: { projectId: "ws-1", sessionId: "orch-1" },
+      to: "/host/$hostId/session/$sessionId",
+      params: { hostId: "local", sessionId: "orch-1" },
     });
   });
 
@@ -1148,8 +1174,8 @@ describe("SessionInspector completion controls", () => {
     await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(navigateMock).toHaveBeenCalledWith({
-      to: "/projects/$projectId",
-      params: { projectId: "ws-1" },
+      to: "/host/$hostId/project/$projectId",
+      params: { hostId: "local", projectId: "ws-1" },
     });
   });
 
@@ -1669,7 +1695,7 @@ describe("SessionInspector Activity section", () => {
       />,
       undefined,
       (client) =>
-        client.setQueryData(sessionScmSummaryQueryKey("sess-1"), summaries),
+        client.setQueryData(sessionScmSummaryQueryKey({ host: "local", id: "sess-1" }), summaries),
     );
 
     const section = screen
@@ -2281,8 +2307,8 @@ describe("SessionInspector summary reviews", () => {
         body: { url: reviewUrl },
       }),
     );
-    expect(useUiStore.getState().inspectorSessions["sess-1"]?.view).toBe("browser");
-    expect(useUiStore.getState().inspectorSessions["sess-1"]?.isOpen).toBe(true);
+    expect(useUiStore.getState().inspectorSessions[refKey({ host: "local", id: "sess-1" })]?.view).toBe("browser");
+    expect(useUiStore.getState().inspectorSessions[refKey({ host: "local", id: "sess-1" })]?.isOpen).toBe(true);
 
     await userEvent.click(screen.getByRole("button", { name: "Send to worker agent" }));
     await waitFor(() =>

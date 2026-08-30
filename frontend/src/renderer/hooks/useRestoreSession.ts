@@ -1,20 +1,22 @@
 import { useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { apiClient, apiErrorMessage } from "../lib/api-client";
+import { apiErrorMessage } from "../lib/api-client";
 import { aoBridge } from "../lib/bridge";
+import { clientFor } from "../lib/host-clients";
+import { refKey, type Ref } from "../lib/hosts";
 import { workspaceQueryKey } from "./useWorkspaceQuery";
 
 export type RestoreSessionResult =
 	{ status: "success" } | { status: "not_resumable"; message: string } | { status: "error"; message: string };
 
-export function useRestoreSession(): (sessionId: string) => Promise<RestoreSessionResult> {
+export function useRestoreSession(): (ref: Ref) => Promise<RestoreSessionResult> {
 	const queryClient = useQueryClient();
 
 	return useCallback(
-		async (sessionId: string) => {
+		async (ref: Ref) => {
 			try {
-				const { data, error } = await apiClient.POST("/api/v1/sessions/{sessionId}/restore", {
-					params: { path: { sessionId } },
+				const { data, error } = await clientFor(ref.host).POST("/api/v1/sessions/{sessionId}/restore", {
+					params: { path: { sessionId: ref.id } },
 				});
 				if (error) {
 					const code = (error as { code?: string }).code;
@@ -28,7 +30,7 @@ export function useRestoreSession(): (sessionId: string) => Promise<RestoreSessi
 				if (data?.restoreMode === "saved_prompt") {
 					void aoBridge.notifications
 						.show({
-							id: `restore-fallback:${sessionId}:${Date.now()}`,
+							id: `restore-fallback:${refKey(ref)}:${Date.now()}`,
 							title: "Started from saved prompt",
 							body: "AO could not resume the native agent session, so it started a new conversation from the saved prompt.",
 						})

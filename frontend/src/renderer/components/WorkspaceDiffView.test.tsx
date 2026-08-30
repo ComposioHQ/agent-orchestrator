@@ -15,6 +15,10 @@ vi.mock("../lib/api-client", () => ({
 	},
 }));
 
+vi.mock("../lib/host-clients", () => ({
+	clientFor: () => ({ POST: postMock }),
+}));
+
 /**
  * @tanstack/react-virtual falls back to a 150ms scroll-end debounce when the
  * environment has no `scrollend` event (jsdom). That timer is not cancelled on

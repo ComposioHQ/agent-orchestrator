@@ -117,12 +117,12 @@ export function SessionChatSurface({
 		hasOlder,
 		isLoadingOlder,
 		loadOlder,
-	} = useConversation(session.id);
+	} = useConversation(session);
 	// Route props can move to the destination before the old query observer drops
 	// its data. Treat that snapshot as unknown everywhere, especially at the work
 	// boundary that decides whether switching to Terminal needs user consent.
 	const snapshot = queriedSnapshot?.sessionId === session.id ? queriedSnapshot : undefined;
-	const commands = useConversationCommands(session.id);
+	const commands = useConversationCommands(session);
 	const { acknowledgeAcceptedTurn, pendingAcceptedTurnId } = commands;
 	const conversationWorkKnown = Boolean(snapshot);
 	const acceptedLocalTurnObserved = Boolean(
@@ -143,7 +143,7 @@ export function SessionChatSurface({
 		onConversationWorkChange?.({ controllerBusy, hasRunningTurn, queuedTurnCount });
 	}, [controllerBusy, conversationWorkKnown, hasRunningTurn, onConversationWorkChange, queuedTurnCount]);
 	const configOptions = useConversationConfigOptions(
-		session.id,
+		session,
 		Boolean(snapshot && can(snapshot, "config_options")),
 	);
 	// A provider config catalog may cover only model, only mode, or both.
@@ -159,16 +159,16 @@ export function SessionChatSurface({
 	// Only asked for once the conversation is actually readable: the catalog comes
 	// from the live controller, so there is nothing to fetch before then.
 	const { models } = useConversationModels(
-		session.id,
+		session,
 		Boolean(snapshot) && !hasProviderModel,
 	);
-	const { skills } = useConversationSkills(session.id, Boolean(snapshot));
-	const { paths, truncated } = useWorkspaceFilePaths(session.id, Boolean(snapshot));
-	const stageAttachments = useStageAttachments(session.id);
+	const { skills } = useConversationSkills(session, Boolean(snapshot));
+	const { paths, truncated } = useWorkspaceFilePaths(session, Boolean(snapshot));
+	const stageAttachments = useStageAttachments(session);
 	const openLinkInBrowser = useSessionBrowserLink(session);
 	// Agent-switch presentation for the chat surface progress track and input locks.
-	const switchMutation = useSwitchAgentState(session.id);
-	const agentSwitches = useAgentSwitches(session.id).data ?? [];
+	const switchMutation = useSwitchAgentState(session);
+	const agentSwitches = useAgentSwitches(session).data ?? [];
 	const activeHistorySwitch = findActiveAgentSwitch(agentSwitches);
 	const selectedDurableAgentSwitch = selectDurableAgentSwitch(
 		session.activeAgentSwitch,

@@ -3,7 +3,7 @@ import { useCallback, useEffect } from "react";
 import { Trans, useTranslation } from "react-i18next";
 import { defaultShortcutBindings, shortcutBindingLabel } from "../../shared/shortcuts";
 import { useOverflowScroll } from "../hooks/useOverflowScroll";
-import { useCloseShellTerminal, useRenameShellTerminal, useShellTerminals } from "../hooks/useShellTerminals";
+import { useCloseShellTerminal, useConnectedShellTerminals, useRenameShellTerminal } from "../hooks/useShellTerminals";
 import { useShell } from "../lib/shell-context";
 import { aoBridge } from "../lib/bridge";
 import { isMacPlatform } from "../lib/platform";
@@ -28,8 +28,10 @@ export function ShellTerminalsView() {
 	const { daemonStatus } = useShell();
 	const theme = useResolvedTheme();
 	// The standalone screen shows only session-less shells; a session's own
-	// shells belong to that session's tab strip, not this global list.
-	const shellTerminals = (useShellTerminals().data ?? []).filter((s) => !s.sessionId);
+	// shells belong to that session's tab strip, not this global list. It is the
+	// only home a shell opened on a remote host has, so it asks every connected
+	// host rather than just the local one.
+	const shellTerminals = useConnectedShellTerminals().filter((s) => !s.sessionId);
 	const closeShellTerminal = useCloseShellTerminal();
 	const renameShellTerminal = useRenameShellTerminal();
 	const requestNewShellTerminal = useUiStore((state) => state.requestNewShellTerminal);
@@ -62,7 +64,7 @@ export function ShellTerminalsView() {
 	useEffect(
 		() =>
 			aoBridge.app.onCloseShellTerminalShortcut(() => {
-				if (active) closeShellTerminal.mutate(active.handleId);
+				if (active) closeShellTerminal.mutate({ host: active.host, id: active.handleId });
 			}),
 		[active, closeShellTerminal],
 	);
@@ -115,8 +117,8 @@ export function ShellTerminalsView() {
 							<ShellTerminalTab
 								key={shell.handleId}
 								isActive={isActive}
-								onClose={() => closeShellTerminal.mutate(shell.handleId)}
-								onRename={(title) => renameShellTerminal.mutate({ handleId: shell.handleId, title })}
+								onClose={() => closeShellTerminal.mutate({ host: shell.host, id: shell.handleId })}
+								onRename={(title) => renameShellTerminal.mutate({ terminal: { host: shell.host, id: shell.handleId }, title })}
 								onSelect={() => setActiveShellTerminal(shell.handleId)}
 								shell={shell}
 							/>
@@ -153,9 +155,10 @@ export function ShellTerminalsView() {
 						fontSize={12}
 						terminalTarget={{
 							generation: active.createdAt,
+							host: active.host,
 							kind: "shell",
 							handleId: active.handleId,
-							sessionId: active.sessionId,
+							session: active.sessionId ? { host: active.host, id: active.sessionId } : undefined,
 							title: active.title,
 						}}
 						theme={theme}

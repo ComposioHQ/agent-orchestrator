@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { refKey } from "../lib/hosts";
 import { aoBridge } from "../lib/bridge";
 import type { NotificationDTO, NotificationListStatus } from "../lib/notifications";
 import { useUiStore } from "../stores/ui-store";
@@ -95,7 +96,17 @@ vi.mock("../hooks/useRestoreSession", () => ({
 }));
 
 vi.mock("../hooks/useWorkspaceQuery", () => ({
-	useWorkspaceQuery: () => workspaceQueryMock(),
+	useWorkspaceQuery: () => (() => {
+		// useWorkspaceQuery returns one section per host now; these fixtures still
+		// describe the local host's workspaces, so wrap them in its section.
+		const result = workspaceQueryMock();
+		return {
+			...result,
+			data: result.data
+				? [{ host: "local", label: "Local", status: "ready", workspaces: result.data, failure: null }]
+				: undefined,
+		};
+	})(),
 	workspaceQueryKey: ["workspaces"],
 }));
 
@@ -209,22 +220,22 @@ describe("NotificationRuntime", () => {
 	}
 
 	it("reports the session while its agent terminal is the one on screen", () => {
-		paramsMock.mockReturnValue({ sessionId: "sess-1" });
-		useUiStore.setState({ visibleTerminalKindBySession: { "sess-1": "worker" } });
+		paramsMock.mockReturnValue({ hostId: "local", sessionId: "sess-1" });
+		useUiStore.setState({ visibleTerminalKindBySession: { [refKey({ host: "local", id: "sess-1" })]: "worker" } });
 
 		expect(renderRuntime()()).toBe("sess-1");
 	});
 
 	it.each(["shell", "reviewer"] as const)("reports nothing while a %s terminal covers the agent", (kind) => {
-		paramsMock.mockReturnValue({ sessionId: "sess-1" });
-		useUiStore.setState({ visibleTerminalKindBySession: { "sess-1": kind } });
+		paramsMock.mockReturnValue({ hostId: "local", sessionId: "sess-1" });
+		useUiStore.setState({ visibleTerminalKindBySession: { [refKey({ host: "local", id: "sess-1" })]: kind } });
 
 		expect(renderRuntime()()).toBeUndefined();
 	});
 
 	it("reports nothing off a session route", () => {
 		paramsMock.mockReturnValue({});
-		useUiStore.setState({ visibleTerminalKindBySession: { "sess-1": "worker" } });
+		useUiStore.setState({ visibleTerminalKindBySession: { [refKey({ host: "local", id: "sess-1" })]: "worker" } });
 
 		expect(renderRuntime()()).toBeUndefined();
 	});
@@ -232,14 +243,14 @@ describe("NotificationRuntime", () => {
 	// The transport connects once and outlives navigation, so the getter has to
 	// read live state rather than close over the value it was created with.
 	it("tracks tab switches without reconnecting the stream", () => {
-		paramsMock.mockReturnValue({ sessionId: "sess-1" });
-		useUiStore.setState({ visibleTerminalKindBySession: { "sess-1": "worker" } });
+		paramsMock.mockReturnValue({ hostId: "local", sessionId: "sess-1" });
+		useUiStore.setState({ visibleTerminalKindBySession: { [refKey({ host: "local", id: "sess-1" })]: "worker" } });
 		const getVisibleAgentSessionId = renderRuntime();
 
-		useUiStore.setState({ visibleTerminalKindBySession: { "sess-1": "shell" } });
+		useUiStore.setState({ visibleTerminalKindBySession: { [refKey({ host: "local", id: "sess-1" })]: "shell" } });
 		expect(getVisibleAgentSessionId()).toBeUndefined();
 
-		useUiStore.setState({ visibleTerminalKindBySession: { "sess-1": "worker" } });
+		useUiStore.setState({ visibleTerminalKindBySession: { [refKey({ host: "local", id: "sess-1" })]: "worker" } });
 		expect(getVisibleAgentSessionId()).toBe("sess-1");
 		expect(connectMock).toHaveBeenCalledTimes(1);
 	});
@@ -484,8 +495,8 @@ describe("NotificationCenter", () => {
 
 		await userEvent.click(screen.getByText("The agent is waiting for your response."));
 		expect(navigateMock).toHaveBeenCalledWith({
-			to: "/projects/$projectId/sessions/$sessionId",
-			params: { projectId: "proj-1", sessionId: "sess-1" },
+			to: "/host/$hostId/session/$sessionId",
+			params: { hostId: "local", sessionId: "sess-1" },
 		});
 	});
 
@@ -496,8 +507,8 @@ describe("NotificationCenter", () => {
 		await userEvent.click(screen.getByLabelText("Fix checkout totals · PR #67"));
 		expect(window.open).not.toHaveBeenCalled();
 		expect(navigateMock).toHaveBeenCalledWith({
-			to: "/projects/$projectId/sessions/$sessionId",
-			params: { projectId: "proj-1", sessionId: "sess-2" },
+			to: "/host/$hostId/session/$sessionId",
+			params: { hostId: "local", sessionId: "sess-2" },
 		});
 	});
 
@@ -566,8 +577,8 @@ describe("NotificationCenter", () => {
 		await userEvent.keyboard("{Enter}");
 
 		expect(navigateMock).toHaveBeenCalledWith({
-			to: "/projects/$projectId/sessions/$sessionId",
-			params: { projectId: "proj-1", sessionId: "sess-1" },
+			to: "/host/$hostId/session/$sessionId",
+			params: { hostId: "local", sessionId: "sess-1" },
 		});
 	});
 
@@ -580,10 +591,10 @@ describe("NotificationCenter", () => {
 		expect(restoreSessionMock).not.toHaveBeenCalled();
 
 		await userEvent.click(screen.getByRole("button", { name: "Restore session" }));
-		await waitFor(() => expect(restoreSessionMock).toHaveBeenCalledWith("sess-dead"));
+		await waitFor(() => expect(restoreSessionMock).toHaveBeenCalledWith({ host: "local", id: "sess-dead" }));
 		expect(navigateMock).toHaveBeenCalledWith({
-			to: "/projects/$projectId/sessions/$sessionId",
-			params: { projectId: "proj-1", sessionId: "sess-dead" },
+			to: "/host/$hostId/session/$sessionId",
+			params: { hostId: "local", sessionId: "sess-dead" },
 		});
 	});
 
@@ -629,8 +640,8 @@ describe("NotificationCenter", () => {
 		await userEvent.click(screen.getByText("The agent session has ended."));
 		expect(restoreSessionMock).not.toHaveBeenCalled();
 		expect(navigateMock).toHaveBeenCalledWith({
-			to: "/projects/$projectId/sessions/$sessionId",
-			params: { projectId: "proj-1", sessionId: "sess-dead" },
+			to: "/host/$hostId/session/$sessionId",
+			params: { hostId: "local", sessionId: "sess-dead" },
 		});
 	});
 

@@ -5,7 +5,6 @@ import { ORCHESTRATOR_SPAWN_SOURCES } from "./orchestrator-spawn-sources";
 import { KNOWN_REVIEWER_HARNESS_IDS } from "./reviewer-harnesses";
 import { DEFAULT_POSTHOG_HOST, DEFAULT_POSTHOG_PROJECT_KEY } from "../../shared/posthog-config";
 import { EDITOR_IDS } from "../../shared/editor-handoff";
-import { captureExceptionToSentry, initSentry } from "./sentry";
 
 const POSTHOG_KEY = import.meta.env.VITE_AO_POSTHOG_KEY?.trim() || DEFAULT_POSTHOG_PROJECT_KEY;
 const POSTHOG_HOST = import.meta.env.VITE_AO_POSTHOG_HOST?.trim() || DEFAULT_POSTHOG_HOST;
@@ -443,6 +442,25 @@ async function sanitizeRendererContextProperties(properties?: TelemetryPropertie
 }
 
 const ORCHESTRATOR_SPAWN_SOURCE_SET = new Set<string>(ORCHESTRATOR_SPAWN_SOURCES);
+const HOST_CONNECT_RESULTS = new Set(["online", "unauthorized", "offline", "not-a-daemon"]);
+
+/**
+ * Host identity for the ao.renderer.host_* events.
+ *
+ * A host id IS a LAN address — "http://192.168.1.250:3011" — so it is never
+ * sent. Only its digest goes out, exactly as project ids do, which keeps hosts
+ * countable without naming a machine. `host_kind` stays in the clear because
+ * "the local daemon's stream dropped" and "a remote's did" are different bugs.
+ */
+async function sanitizeHostProperties(properties?: TelemetryProperties): Promise<TelemetryProperties> {
+	const safe: TelemetryProperties = {};
+	const hostIDHash = await hashedTelemetryID(properties?.host_id);
+	if (hostIDHash) safe.host_id_hash = hostIDHash;
+	if (properties?.host_kind === "local" || properties?.host_kind === "remote") {
+		safe.host_kind = properties.host_kind;
+	}
+	return safe;
+}
 
 const EDITOR_ID_SET = new Set<string>(EDITOR_IDS);
 const OPEN_TARGET_KIND_SET = new Set(["editor", "file_manager", "terminal"]);
@@ -593,6 +611,35 @@ export async function sanitizeRendererProperties(
 			}
 			if (properties?.outcome === "succeeded" || properties?.outcome === "failed") safe.outcome = properties.outcome;
 			break;
+		case "ao.renderer.host_connect": {
+			// Closed vocabularies on both: the four healths a probe can report and
+			// the three places one is run from. Duration is a latency, not data.
+			Object.assign(safe, await sanitizeHostProperties(properties));
+			if (typeof properties?.result === "string" && HOST_CONNECT_RESULTS.has(properties.result)) {
+				safe.result = properties.result;
+			}
+			if (properties?.source === "add" || properties?.source === "edit" || properties?.source === "probe") {
+				safe.source = properties.source;
+			}
+			if (typeof properties?.duration_ms === "number") safe.duration_ms = Math.round(properties.duration_ms);
+			break;
+		}
+		case "ao.renderer.host_stream_state": {
+			// An event with no case here emits with every property stripped, so the
+			// allowlist is what makes this signal exist at all.
+			Object.assign(safe, await sanitizeHostProperties(properties));
+			if (properties?.state === "connected" || properties?.state === "disconnected") safe.state = properties.state;
+			if (typeof properties?.reconnect_count === "number") safe.reconnect_count = properties.reconnect_count;
+			break;
+		}
+		case "ao.renderer.host_query_failed": {
+			// The failure message is deliberately absent: it is the daemon's own
+			// error text and can carry paths. A status separates a rotated
+			// password (401) from a host the proxy cannot reach (502).
+			Object.assign(safe, await sanitizeHostProperties(properties));
+			if (typeof properties?.status === "number") safe.status = properties.status;
+			break;
+		}
 		case "ao.renderer.review_settings_changed": {
 			// Which review controls a user actually touches is the question behind
 			// simplifying this surface: a dropdown nobody changes is a checkpoint
@@ -736,19 +783,15 @@ export async function initTelemetry(): Promise<boolean> {
 		// unpackaged build that has not opted in. The client is never created.
 		if (!bootstrap) return false;
 		disabledEventMatchers = bootstrap.disabledEvents ?? [];
-		const channel = releaseChannelFrom(await readUpdateSettingsForTelemetry());
-		telemetryContext = buildTelemetryContext(bootstrap.appVersion, bootstrap.platform, channel);
+		telemetryContext = buildTelemetryContext(
+			bootstrap.appVersion,
+			bootstrap.platform,
+			releaseChannelFrom(await readUpdateSettingsForTelemetry()),
+		);
 		posthog.init(POSTHOG_KEY, buildPostHogConfig(bootstrap.distinctId));
 		posthog.register({
 			...telemetryContext,
 			surface: "renderer",
-		});
-		// Same consent gate as PostHog. No-op unless VITE_AO_SENTRY_DSN is set.
-		void initSentry({
-			release: bootstrap.appVersion,
-			channel,
-			platform: bootstrap.platform,
-			distinctId: bootstrap.distinctId,
 		});
 		bindErrorHandlers();
 		startDailyActiveHeartbeat({
@@ -816,14 +859,6 @@ export async function captureRendererException(error: unknown, properties?: Reco
 	if (!(await initTelemetry())) return;
 	const safeProperties = withTelemetryContext(await sanitizeRendererExceptionProperties(error, properties));
 	posthog.captureException(normalizeException(error), safeProperties);
-	// Mirror into Sentry (no-op unless a DSN is configured). Source drives the
-	// category so a boundary crash classifies as render_crash.
-	const source = typeof properties?.source === "string" ? properties.source : undefined;
-	captureExceptionToSentry(normalizeException(error), {
-		category: source === "react-error-boundary" ? "render_crash" : undefined,
-		operation: typeof properties?.operation === "string" ? properties.operation : undefined,
-		unhandled: properties?.unhandled === true,
-	});
 }
 
 export async function addRendererExceptionStep(message: string, properties?: Record<string, unknown>): Promise<void> {

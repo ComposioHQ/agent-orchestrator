@@ -1,10 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { formatFileAnnotationMessage } from "../../shared/file-annotations";
-import { apiClient, apiErrorMessage } from "../lib/api-client";
+import { apiErrorMessage } from "../lib/api-client";
+import { clientFor } from "../lib/host-clients";
+import { LOCAL_HOST, type HostId } from "../lib/hosts";
 import type { ActiveFileAnnotationTarget, FileAnnotationModel, FileAnnotationStatus } from "../components/WorkspaceDiffView";
 
-export function useFileAnnotation(sessionId: string): FileAnnotationModel {
+export function useFileAnnotation(
+	sessionId: string,
+	// Defaults to the local daemon; SessionFileExplorer has no Ref yet. a8a2 threads it.
+	host: HostId = LOCAL_HOST,
+): FileAnnotationModel {
 	const { t } = useTranslation();
 	const [target, setTarget] = useState<ActiveFileAnnotationTarget | null>(null);
 	const [draft, setDraft] = useState("");
@@ -23,7 +29,7 @@ export function useFileAnnotation(sessionId: string): FileAnnotationModel {
 
 	useEffect(() => {
 		cancel();
-	}, [sessionId]);
+	}, [host, sessionId]);
 	useEffect(
 		() => () => {
 			if (sentTimerRef.current !== null) window.clearTimeout(sentTimerRef.current);
@@ -46,7 +52,7 @@ export function useFileAnnotation(sessionId: string): FileAnnotationModel {
 		setStatus("sending");
 		setError("");
 		try {
-			const { error: responseError } = await apiClient.POST("/api/v1/sessions/{sessionId}/send", {
+			const { error: responseError } = await clientFor(host).POST("/api/v1/sessions/{sessionId}/send", {
 				params: { path: { sessionId } },
 				body: { message: formatFileAnnotationMessage(target, draft) },
 			});

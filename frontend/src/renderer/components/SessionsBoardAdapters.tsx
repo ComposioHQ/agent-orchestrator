@@ -171,8 +171,8 @@ function DesktopSessionCard({
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 	const [confirmOpen, setConfirmOpen] = useState(false);
-	const summaries = sessionPRDisplaySummaries(session, useSessionScmSummary(session.id).data);
-	const termination = useTerminateSessionState(session.id);
+	const summaries = sessionPRDisplaySummaries(session, useSessionScmSummary(session).data);
+	const termination = useTerminateSessionState(session);
 	const showTerminate = interactive && session.isTerminated !== true && onTerminate;
 	const keepTerminateVisible = session.status === "merged";
 	const usagePresentation = toUsagePresentation(usage, t);
@@ -202,7 +202,7 @@ function DesktopSessionCard({
 					)}
 					onClick={(event) => {
 						event.stopPropagation();
-						clearTerminateSessionState(queryClient, session.id);
+						clearTerminateSessionState(queryClient, session);
 					}}
 					disabled={termination.isPending}
 					title={termination.isPending ? t("shell.killingSession") : t("shell.terminateSession")}

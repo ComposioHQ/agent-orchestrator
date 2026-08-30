@@ -3,12 +3,16 @@
 // the workspaces query — they are not sessions, never appear on the board, and
 // must not invalidate session state when they come and go.
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useSyncExternalStore } from "react";
 import type { components } from "../../api/schema";
-import { apiClient, apiErrorCode, hasTrustedApiBaseUrl } from "../lib/api-client";
+import { apiErrorCode } from "../lib/api-client";
 import { mockShellTerminals } from "../lib/mock-data";
+import { clientFor, connectedHosts, isHostReady, subscribeConnectedHosts } from "../lib/host-clients";
+import { LOCAL_HOST, refKey, type HostId, type Ref } from "../lib/hosts";
 
 export type ShellTerminal = {
+	host: HostId;
 	/** Runtime handle the terminal mux attaches to, exactly like a session pane's. */
 	handleId: string;
 	projectId?: string;
@@ -19,7 +23,7 @@ export type ShellTerminal = {
 	createdAt: string;
 };
 
-export const shellTerminalsQueryKey = ["shell-terminals"] as const;
+export const shellTerminalsQueryKey = (host: HostId) => ["shell-terminals", host] as const;
 const usePreviewData = import.meta.env.VITE_NO_ELECTRON === "1";
 
 function isLegacyDirectoryTitle(title: string, workingDir: string): boolean {
@@ -27,9 +31,10 @@ function isLegacyDirectoryTitle(title: string, workingDir: string): boolean {
 	return parts.at(-1) === title;
 }
 
-function toShellTerminal(t: components["schemas"]["ShellTerminalResponse"]): ShellTerminal {
+function toShellTerminal(host: HostId, t: components["schemas"]["ShellTerminalResponse"]): ShellTerminal {
 	const title = isLegacyDirectoryTitle(t.title, t.workingDir) ? "Terminal" : t.title;
 	return {
+		host,
 		handleId: t.handleId,
 		projectId: t.projectId,
 		sessionId: t.sessionId,
@@ -45,35 +50,43 @@ function toShellTerminal(t: components["schemas"]["ShellTerminalResponse"]): She
 // open/close mutate this array instead — keeping the tab strip fully
 // interactive (open, select, close) without a backend, which is what the e2e
 // suite drives.
-let previewShellTerminals: ShellTerminal[] = [...mockShellTerminals];
+let previewShellTerminals: ShellTerminal[] = mockShellTerminals.map((shell) => ({ ...shell, host: LOCAL_HOST }));
 let previewShellSeq = 0;
 
-async function fetchShellTerminals(): Promise<ShellTerminal[]> {
+async function fetchShellTerminals(host: HostId): Promise<ShellTerminal[]> {
 	if (usePreviewData) {
-		return previewShellTerminals;
+		return previewShellTerminals.filter((shell) => shell.host === host);
 	}
-	if (!hasTrustedApiBaseUrl()) {
+	if (!isHostReady(host)) {
 		return [];
 	}
-	const { data, error } = await apiClient.GET("/api/v1/shell-terminals");
+	const { data, error } = await clientFor(host).GET("/api/v1/shell-terminals");
 	if (error) throw error;
-	return (data?.shellTerminals ?? []).map(toShellTerminal);
+	return (data?.shellTerminals ?? []).map((shell) => toShellTerminal(host, shell));
 }
 
 // No refetchInterval: shell terminals only change when this client opens or
 // closes one, and both mutations invalidate the query. Polling would spend a
 // liveness probe per shell per interval for no new information.
-export const shellTerminalsQueryOptions = {
-	queryKey: shellTerminalsQueryKey,
-	queryFn: fetchShellTerminals,
+export const shellTerminalsQueryOptions = (host: HostId) => ({
+	queryKey: shellTerminalsQueryKey(host),
+	queryFn: () => fetchShellTerminals(host),
 	retry: 1,
-};
+});
 
-export function useShellTerminals() {
-	return useQuery(shellTerminalsQueryOptions);
+export function useShellTerminals(host: HostId = LOCAL_HOST) {
+	return useQuery(shellTerminalsQueryOptions(host));
 }
 
-export type OpenShellTerminalInput = { projectId?: string; sessionId?: string };
+export function useConnectedShellTerminals(): ShellTerminal[] {
+	const remotes = useSyncExternalStore(subscribeConnectedHosts, connectedHosts, connectedHosts);
+	return useQueries({
+		queries: [LOCAL_HOST, ...remotes].map(shellTerminalsQueryOptions),
+		combine: (results) => results.flatMap((result) => result.data ?? []),
+	});
+}
+
+export type OpenShellTerminalInput = { project?: Ref; session?: Ref };
 
 /**
  * Opens a shell in the given project's root (or the daemon data dir when
@@ -83,10 +96,15 @@ export type OpenShellTerminalInput = { projectId?: string; sessionId?: string };
 export function useOpenShellTerminal() {
 	const queryClient = useQueryClient();
 	return useMutation({
-		mutationFn: async ({ projectId, sessionId }: OpenShellTerminalInput = {}): Promise<ShellTerminal> => {
+		mutationFn: async ({ project, session }: OpenShellTerminalInput = {}): Promise<ShellTerminal> => {
+			if (project && session && project.host !== session.host) throw new Error("shell target hosts do not match");
+			const host = session?.host ?? project?.host ?? LOCAL_HOST;
+			const projectId = project?.id;
+			const sessionId = session?.id;
 			if (usePreviewData) {
 				previewShellSeq += 1;
 				const shell: ShellTerminal = {
+					host,
 					handleId: `shellterm-preview-${previewShellSeq}`,
 					projectId,
 					sessionId,
@@ -97,24 +115,24 @@ export function useOpenShellTerminal() {
 				previewShellTerminals = [...previewShellTerminals, shell];
 				return shell;
 			}
-			const body: OpenShellTerminalInput = {};
+			const body: { projectId?: string; sessionId?: string } = {};
 			if (projectId) body.projectId = projectId;
 			if (sessionId) body.sessionId = sessionId;
-			const { data, error } = await apiClient.POST("/api/v1/shell-terminals", { body });
+			const { data, error } = await clientFor(host).POST("/api/v1/shell-terminals", { body });
 			if (error) throw error;
 			if (!data) throw new Error("Daemon returned no shell terminal");
-			return toShellTerminal(data.shellTerminal);
+			return toShellTerminal(host, data.shellTerminal);
 		},
 		onSuccess: (shell) => {
 			// The POST already returned the authoritative terminal. Publish it to the
-			// shared list immediately so its tab can render and receive focus without
-			// waiting for a second daemon round trip. The background refetch still
-			// reconciles concurrent changes from another window.
-			queryClient.setQueryData<ShellTerminal[]>(shellTerminalsQueryKey, (current) => {
+			// host's list immediately so its tab can render and receive focus without
+			// waiting for a second daemon round trip.
+			const queryKey = shellTerminalsQueryKey(shell.host);
+			queryClient.setQueryData<ShellTerminal[]>(queryKey, (current) => {
 				if (current?.some((candidate) => candidate.handleId === shell.handleId)) return current;
 				return [...(current ?? []), shell];
 			});
-			void queryClient.invalidateQueries({ queryKey: shellTerminalsQueryKey });
+			void queryClient.invalidateQueries({ queryKey: shellTerminalsQueryKey(shell.host) });
 		},
 		// Without this, a failed open (worktree gone, no shell resolvable, daemon
 		// busy) leaves the "+" button looking like it silently did nothing.
@@ -128,85 +146,85 @@ export function useOpenShellTerminal() {
 export function useCloseShellTerminal() {
 	const queryClient = useQueryClient();
 	return useMutation({
-		mutationFn: async (handleId: string): Promise<void> => {
+		mutationFn: async (terminal: Ref): Promise<void> => {
 			if (usePreviewData) {
-				previewShellTerminals = previewShellTerminals.filter((s) => s.handleId !== handleId);
+				previewShellTerminals = previewShellTerminals.filter((s) => refKey({ host: s.host, id: s.handleId }) !== refKey(terminal));
 				return;
 			}
-			const { error } = await apiClient.DELETE("/api/v1/shell-terminals/{handleId}", {
-				params: { path: { handleId } },
+			const { error } = await clientFor(terminal.host).DELETE("/api/v1/shell-terminals/{handleId}", {
+				params: { path: { handleId: terminal.id } },
 			});
 			if (error) throw error;
 		},
-		onMutate: async (handleId) => {
-			const previous = queryClient.getQueryData<ShellTerminal[]>(shellTerminalsQueryKey);
+		onMutate: async (terminal) => {
+			const queryKey = shellTerminalsQueryKey(terminal.host);
+			const previous = queryClient.getQueryData<ShellTerminal[]>(queryKey);
 			const removeClosedShell = () => {
-				queryClient.setQueryData<ShellTerminal[]>(shellTerminalsQueryKey, (current) =>
-					current?.filter((shell) => shell.handleId !== handleId),
+				queryClient.setQueryData<ShellTerminal[]>(queryKey, (current) =>
+					current?.filter((shell) => shell.handleId !== terminal.id),
 				);
 			};
-			// Remove the pill synchronously. Waiting for cancellation first leaves the
-			// closed tab visible for the duration of an in-flight list request.
 			removeClosedShell();
-			await queryClient.cancelQueries({ queryKey: shellTerminalsQueryKey });
-			// A request that resolved while cancellation was being scheduled may have
-			// restored its stale snapshot; make the optimistic state authoritative.
+			await queryClient.cancelQueries({ queryKey });
 			removeClosedShell();
 			return { previous };
 		},
-		onError: (error, _handleId, context) => {
-			// A 404 means the daemon has already removed the shell, so restoring its
-			// stale tab would be misleading. Other failures put the tab back so the
-			// user can retry instead of losing access to a still-live PTY.
+		onError: (error, terminal, context) => {
 			if (apiErrorCode(error) !== "SHELL_TERMINAL_NOT_FOUND" && context?.previous) {
-				queryClient.setQueryData(shellTerminalsQueryKey, context.previous);
+				queryClient.setQueryData(shellTerminalsQueryKey(terminal.host), context.previous);
 			}
 		},
 		// Settled, not success: a close that 404s means the daemon already lost
 		// the shell, and the stale tab still needs to disappear.
-		onSettled: () => {
-			void queryClient.invalidateQueries({ queryKey: shellTerminalsQueryKey });
+		onSettled: (_data, _error, terminal) => {
+			void queryClient.invalidateQueries({ queryKey: shellTerminalsQueryKey(terminal.host) });
 		},
 	});
 }
 
-export type RenameShellTerminalInput = { handleId: string; title: string };
+export type RenameShellTerminalInput = { terminal: Ref; title: string };
 
 /** Renames a shell terminal's tab. The new title persists on the daemon. */
 export function useRenameShellTerminal() {
 	const queryClient = useQueryClient();
 	return useMutation({
-		mutationFn: async ({ handleId, title }: RenameShellTerminalInput): Promise<ShellTerminal> => {
+		mutationFn: async ({ terminal, title }: RenameShellTerminalInput): Promise<ShellTerminal> => {
 			if (usePreviewData) {
-				previewShellTerminals = previewShellTerminals.map((s) => (s.handleId === handleId ? { ...s, title } : s));
-				const shell = previewShellTerminals.find((s) => s.handleId === handleId);
+				previewShellTerminals = previewShellTerminals.map((s) =>
+					refKey({ host: s.host, id: s.handleId }) === refKey(terminal) ? { ...s, title } : s,
+				);
+				const shell = previewShellTerminals.find((s) => refKey({ host: s.host, id: s.handleId }) === refKey(terminal));
 				if (!shell) throw new Error("No such shell terminal");
 				return shell;
 			}
-			const { data, error } = await apiClient.PATCH("/api/v1/shell-terminals/{handleId}", {
-				params: { path: { handleId } },
+			const { data, error } = await clientFor(terminal.host).PATCH("/api/v1/shell-terminals/{handleId}", {
+				params: { path: { handleId: terminal.id } },
 				body: { title },
 			});
 			if (error) throw error;
 			if (!data) throw new Error("Daemon returned no shell terminal");
-			return toShellTerminal(data.shellTerminal);
+			return toShellTerminal(terminal.host, data.shellTerminal);
 		},
-		onMutate: async ({ handleId, title }) => {
-			await queryClient.cancelQueries({ queryKey: shellTerminalsQueryKey });
-			const previous = queryClient.getQueryData<ShellTerminal[]>(shellTerminalsQueryKey);
-			queryClient.setQueryData<ShellTerminal[]>(shellTerminalsQueryKey, (current) =>
-				current?.map((shell) => (shell.handleId === handleId ? { ...shell, title } : shell)),
+		onMutate: async ({ terminal, title }) => {
+			const queryKey = shellTerminalsQueryKey(terminal.host);
+			await queryClient.cancelQueries({ queryKey });
+			const previous = queryClient.getQueryData<ShellTerminal[]>(queryKey);
+			queryClient.setQueryData<ShellTerminal[]>(queryKey, (current) =>
+				current?.map((shell) => (shell.handleId === terminal.id ? { ...shell, title } : shell)),
 			);
 			return { previous };
 		},
-		onError: (_error, _input, context) => {
-			if (context?.previous) queryClient.setQueryData(shellTerminalsQueryKey, context.previous);
+		onError: (_error, { terminal }, context) => {
+			if (context?.previous) {
+				queryClient.setQueryData(shellTerminalsQueryKey(terminal.host), context.previous);
+			}
 		},
 		onSuccess: (shell) => {
-			queryClient.setQueryData<ShellTerminal[]>(shellTerminalsQueryKey, (current) =>
+			const queryKey = shellTerminalsQueryKey(shell.host);
+			queryClient.setQueryData<ShellTerminal[]>(queryKey, (current) =>
 				current?.map((candidate) => (candidate.handleId === shell.handleId ? shell : candidate)),
 			);
-			void queryClient.invalidateQueries({ queryKey: shellTerminalsQueryKey });
+			void queryClient.invalidateQueries({ queryKey });
 		},
 	});
 }

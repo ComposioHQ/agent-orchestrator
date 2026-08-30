@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { refKey, type Ref } from "../lib/hosts";
 import type { TerminalTarget } from "../types/terminal";
 import {
 	applyDocumentTheme,
@@ -24,7 +25,7 @@ export type SettingsModal =
 	| { scope: "global"; section?: GlobalSettingsSection }
 	| {
 			scope: "project";
-			projectId: string;
+			project: Ref;
 	  };
 
 /** Worker detail view toggles — Changes (Git rail) is the default. */
@@ -68,6 +69,8 @@ export type UiState = {
 	themeStyle: ThemeStyle;
 	/** When true, developer-only release controls are available. Default off. */
 	developerMode: boolean;
+	/** Experimental: connect to AO daemons on other machines. Default off; off means no remote host is ever contacted. */
+	remoteHosts: boolean;
 	restartingProjectIds: ReadonlySet<string>;
 	orchestratorReplacementErrors: Record<string, OrchestratorReplacementFailure>;
 	orchestratorStartupErrors: Record<string, string>;
@@ -75,7 +78,7 @@ export type UiState = {
 	// bumps on every request so a repeat press (even for the same project) still
 	// re-fires; the always-mounted GlobalNewTaskDialog consumes it. Selection
 	// still lives in the URL — this is a one-shot action, not persisted state.
-	newTaskRequest: { projectId: string; nonce: number } | null;
+	newTaskRequest: { project: Ref; nonce: number } | null;
 	// Bumps to ask the sidebar's create-project flow to open (the ⌘N fallback
 	// when no project is in scope).
 	createProjectNonce: number;
@@ -105,8 +108,9 @@ export type UiState = {
 	setThemePreference: (theme: ThemePreference) => void;
 	setThemeStyle: (style: ThemeStyle) => void;
 	setDeveloperMode: (enabled: boolean) => void;
+	setRemoteHosts: (enabled: boolean) => void;
 	openGlobalSettings: (section?: GlobalSettingsSection) => void;
-	openProjectSettings: (projectId: string) => void;
+	openProjectSettings: (project: Ref) => void;
 	closeSettings: () => void;
 	/** Refresh resolvedTheme from OS without writing light/dark to storage. */
 	syncSystemTheme: () => void;
@@ -129,10 +133,10 @@ export type UiState = {
 	setBrowserUnseen: (sessionId: string, unseen: boolean) => void;
 	setFilesChangedOnly: (sessionId: string, changedOnly: boolean) => void;
 	setCommandPaletteOpen: (open: boolean) => void;
-	setProjectRestarting: (projectId: string, restarting: boolean) => void;
-	setOrchestratorReplacementError: (projectId: string, failure: OrchestratorReplacementFailure | null) => void;
-	setOrchestratorStartupError: (projectId: string, message: string | null) => void;
-	requestNewTask: (projectId: string) => void;
+	setProjectRestarting: (project: Ref, restarting: boolean) => void;
+	setOrchestratorReplacementError: (project: Ref, failure: OrchestratorReplacementFailure | null) => void;
+	setOrchestratorStartupError: (project: Ref, message: string | null) => void;
+	requestNewTask: (project: Ref) => void;
 	requestCreateProject: () => void;
 	requestCreateProjectFromPath: (path: string) => void;
 	requestNewShellTerminal: () => void;
@@ -149,6 +153,7 @@ export type OrchestratorReplacementFailure = {
 
 const sidebarStorageKey = "ao.sidebar.open";
 const developerModeStorageKey = "ao.developerMode";
+const remoteHostsStorageKey = "ao.remoteHosts";
 function getLocalStorage() {
 	if (typeof window === "undefined" || !window.localStorage) return null;
 	return window.localStorage;
@@ -160,6 +165,10 @@ function initialSidebarOpen() {
 
 function initialDeveloperMode() {
 	return getLocalStorage()?.getItem(developerModeStorageKey) === "true";
+}
+
+function initialRemoteHosts() {
+	return getLocalStorage()?.getItem(remoteHostsStorageKey) === "true";
 }
 
 function inspectorState(sessions: Record<string, InspectorSessionState>, sessionId: string): InspectorSessionState {
@@ -201,6 +210,7 @@ export const useUiStore = create<UiState>((set, get) => ({
 	resolvedTheme: resolveTheme(initialThemePreference),
 	themeStyle: initialThemeStyle,
 	developerMode: initialDeveloperMode(),
+	remoteHosts: initialRemoteHosts(),
 	restartingProjectIds: new Set<string>(),
 	orchestratorReplacementErrors: {},
 	orchestratorStartupErrors: {},
@@ -232,8 +242,12 @@ export const useUiStore = create<UiState>((set, get) => ({
 		getLocalStorage()?.setItem(developerModeStorageKey, String(developerMode));
 		set({ developerMode });
 	},
+	setRemoteHosts: (remoteHosts) => {
+		getLocalStorage()?.setItem(remoteHostsStorageKey, String(remoteHosts));
+		set({ remoteHosts });
+	},
 	openGlobalSettings: (section) => set({ settingsModal: { scope: "global", section } }),
-	openProjectSettings: (projectId) => set({ settingsModal: { scope: "project", projectId } }),
+	openProjectSettings: (project) => set({ settingsModal: { scope: "project", project } }),
 	closeSettings: () => set({ settingsModal: null }),
 	syncSystemTheme: () => {
 		const { themePreference, resolvedTheme } = get();
@@ -368,38 +382,40 @@ export const useUiStore = create<UiState>((set, get) => ({
 			};
 		}),
 	setCommandPaletteOpen: (isCommandPaletteOpen) => set({ isCommandPaletteOpen }),
-	setProjectRestarting: (projectId, restarting) =>
+	setProjectRestarting: (project, restarting) =>
 		set((state) => {
 			const restartingProjectIds = new Set(state.restartingProjectIds);
+			const projectKey = refKey(project);
 			if (restarting) {
-				restartingProjectIds.add(projectId);
+				restartingProjectIds.add(projectKey);
 			} else {
-				restartingProjectIds.delete(projectId);
+				restartingProjectIds.delete(projectKey);
 			}
 			return { restartingProjectIds };
 		}),
-	setOrchestratorReplacementError: (projectId, failure) =>
+	setOrchestratorReplacementError: (project, failure) =>
 		set((state) => {
 			const orchestratorReplacementErrors = { ...state.orchestratorReplacementErrors };
 			if (failure) {
-				orchestratorReplacementErrors[projectId] = failure;
+				orchestratorReplacementErrors[refKey(project)] = failure;
 			} else {
-				delete orchestratorReplacementErrors[projectId];
+				delete orchestratorReplacementErrors[refKey(project)];
 			}
 			return { orchestratorReplacementErrors };
 		}),
-	setOrchestratorStartupError: (projectId, message) =>
+	setOrchestratorStartupError: (project, message) =>
 		set((state) => {
 			const orchestratorStartupErrors = { ...state.orchestratorStartupErrors };
+			const projectKey = refKey(project);
 			if (message) {
-				orchestratorStartupErrors[projectId] = message;
+				orchestratorStartupErrors[projectKey] = message;
 			} else {
-				delete orchestratorStartupErrors[projectId];
+				delete orchestratorStartupErrors[projectKey];
 			}
 			return { orchestratorStartupErrors };
 		}),
-	requestNewTask: (projectId) =>
-		set((state) => ({ newTaskRequest: { projectId, nonce: (state.newTaskRequest?.nonce ?? 0) + 1 } })),
+	requestNewTask: (project) =>
+		set((state) => ({ newTaskRequest: { project, nonce: (state.newTaskRequest?.nonce ?? 0) + 1 } })),
 	requestCreateProject: () => set((state) => ({ createProjectNonce: state.createProjectNonce + 1 })),
 	requestCreateProjectFromPath: (path) =>
 		set((state) => ({ folderDropRequest: { path, nonce: (state.folderDropRequest?.nonce ?? 0) + 1 } })),

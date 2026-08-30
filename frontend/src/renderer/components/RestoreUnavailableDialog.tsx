@@ -5,7 +5,7 @@ import { useTranslation } from "react-i18next";
 import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { useUiStore } from "../stores/ui-store";
-import { hasConfiguredOrchestratorAgent, isOrchestratorSession } from "../types/workspace";
+import { flattenHostSections, hasConfiguredOrchestratorAgent, isOrchestratorSession } from "../types/workspace";
 import type { WorkspaceSession } from "../types/workspace";
 import { Button } from "./ui/button";
 import {
@@ -25,10 +25,13 @@ type RestoreUnavailableDialogProps = {
 export function RestoreUnavailableDialog({ open, session, onOpenChange, onRecreated }: RestoreUnavailableDialogProps) {
 	const { t } = useTranslation();
 	const workspaceQuery = useWorkspaceQuery();
+	const workspaces = flattenHostSections(workspaceQuery.data);
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | undefined>();
 	const orchestrator = isOrchestratorSession(session);
-	const workspace = workspaceQuery.data?.find((candidate) => candidate.id === session.workspaceId);
+	const workspace = workspaces.find(
+		(candidate) => candidate.host === session.host && candidate.id === session.workspaceId,
+	);
 	const hasOrchestratorAgent = hasConfiguredOrchestratorAgent(workspace);
 	const checkingProject = workspaceQuery.isLoading && workspaceQuery.data === undefined;
 
@@ -36,13 +39,13 @@ export function RestoreUnavailableDialog({ open, session, onOpenChange, onRecrea
 		if (checkingProject) return;
 		if (!hasOrchestratorAgent) {
 			onOpenChange(false);
-			useUiStore.getState().openProjectSettings(session.workspaceId);
+			useUiStore.getState().openProjectSettings({ host: session.host, id: session.workspaceId });
 			return;
 		}
 		setBusy(true);
 		setError(undefined);
 		try {
-			const id = await spawnOrchestrator(session.workspaceId, "restore_dialog", true);
+			const id = await spawnOrchestrator({ host: session.host, id: session.workspaceId }, "restore_dialog", true);
 			onOpenChange(false);
 			onRecreated(id);
 		} catch (err) {

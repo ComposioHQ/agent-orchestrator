@@ -3,6 +3,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { agentModelsQueryKey } from "../hooks/useAgentModelsQuery";
+import { refKey } from "../lib/hosts";
 import type { AgentSwitchSummary, WorkspaceSession } from "../types/workspace";
 import { SwitchAgentDialog } from "./SwitchAgentDialog";
 
@@ -33,6 +34,7 @@ vi.mock("../hooks/useSwitchAgent", async (importOriginal) => {
 });
 
 const worker: WorkspaceSession = {
+	host: "local",
 	activity: { state: "active", lastActivityAt: "2026-06-10T00:00:00Z" },
 	branch: "ao/sess-1",
 	id: "sess-1",
@@ -56,7 +58,7 @@ function renderDialog(
 		defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
 	});
 	for (const agentId of ["claude-code", "codex"]) {
-		queryClient.setQueryData(agentModelsQueryKey(agentId, session.workspaceId), {
+		queryClient.setQueryData(agentModelsQueryKey(agentId, { host: session.host, id: session.workspaceId }), {
 			agentId,
 			allowCustom: false,
 			fetchedAt: "2026-06-10T00:00:00Z",
@@ -238,6 +240,7 @@ describe("SwitchAgentDialog", () => {
 				state: "starting_target",
 				targetHarness: "codex",
 			},
+			host: "local",
 		} satisfies WorkspaceSession;
 		const { queryClient } = renderDialog(recoverySession);
 		const invalidateQueries = vi.spyOn(queryClient, "invalidateQueries");
@@ -247,7 +250,7 @@ describe("SwitchAgentDialog", () => {
 		expect(within(dialog).queryByRole("button", { name: "Target agent" })).not.toBeInTheDocument();
 		await userEvent.click(within(dialog).getByRole("button", { name: "Refresh" }));
 
-		expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["session-agent-switches", "sess-1"] });
+		expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["session-agent-switches", refKey({ host: "local", id: "sess-1" })] });
 		expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["workspaces"] });
 	});
 
@@ -262,6 +265,7 @@ describe("SwitchAgentDialog", () => {
 				state: "source_stopped",
 				targetHarness: "codex",
 			},
+			host: "local",
 		} satisfies WorkspaceSession;
 		renderDialog(recoverySession);
 		const dialog = screen.getByRole("dialog", { name: "Switch agent" });
@@ -269,7 +273,7 @@ describe("SwitchAgentDialog", () => {
 		expect(within(dialog).getByText("Claude Code could not be restored")).toBeInTheDocument();
 		await userEvent.click(within(dialog).getByRole("button", { name: "Restore Claude Code" }));
 		expect(switchMocks.recoverMutate).toHaveBeenCalledWith({
-			sessionId: "sess-1",
+			session: { host: "local", id: "sess-1" },
 			switchId: "switch-source-recovery",
 		});
 		expect(within(dialog).queryByRole("button", { name: "Target agent" })).not.toBeInTheDocument();
@@ -286,6 +290,7 @@ describe("SwitchAgentDialog", () => {
 				state: "stopping_source",
 				targetHarness: "codex",
 			},
+			host: "local",
 		} satisfies WorkspaceSession;
 		renderDialog(recoverySession);
 		const dialog = screen.getByRole("dialog", { name: "Switch agent" });
@@ -293,7 +298,7 @@ describe("SwitchAgentDialog", () => {
 		expect(within(dialog).getByText("Claude Code status could not be confirmed")).toBeInTheDocument();
 		await userEvent.click(within(dialog).getByRole("button", { name: "Check Claude Code" }));
 		expect(switchMocks.recoverMutate).toHaveBeenCalledWith({
-			sessionId: "sess-1",
+			session: { host: "local", id: "sess-1" },
 			switchId: "switch-source-stop-recovery",
 		});
 	});

@@ -2,7 +2,9 @@ import { queryOptions } from "@tanstack/react-query";
 import type { components } from "../../api/schema";
 import { appI18n, type MessageKey } from "../i18n";
 import { sortedPRs, type WorkspaceSession } from "../types/workspace";
-import { apiClient, apiErrorMessage } from "./api-client";
+import { apiErrorMessage } from "./api-client";
+import { clientFor } from "./host-clients";
+import { refKey } from "./hosts";
 import { usesPreviewWorkspaceData as usePreviewData } from "./preview-mode";
 
 export type PRReviewState = components["schemas"]["PRReviewState"];
@@ -17,7 +19,7 @@ export type ReviewRunFacts = components["schemas"]["ReviewRun"];
  */
 export function sessionReviewsQueryOptions(session: WorkspaceSession, enabled: boolean, staleTime?: number) {
 	return queryOptions({
-		queryKey: ["session-reviews", session.id] as const,
+		queryKey: ["session-reviews", refKey(session)] as const,
 		enabled,
 		...(staleTime !== undefined ? { staleTime } : {}),
 		refetchInterval: (query) => {
@@ -27,7 +29,7 @@ export function sessionReviewsQueryOptions(session: WorkspaceSession, enabled: b
 		},
 		queryFn: async () => {
 			if (usePreviewData) return mockReviewsResponse(session);
-			const { data, error } = await apiClient.GET("/api/v1/sessions/{sessionId}/reviews", {
+			const { data, error } = await clientFor(session.host).GET("/api/v1/sessions/{sessionId}/reviews", {
 				params: { path: { sessionId: session.id } },
 			});
 			if (error) throw new Error(apiErrorMessage(error, "Unable to load reviews"));

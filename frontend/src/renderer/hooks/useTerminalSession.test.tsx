@@ -8,6 +8,7 @@ import { useTerminalSession, type AttachableTerminal } from "./useTerminalSessio
 import { workspaceQueryKey } from "./useWorkspaceQuery";
 
 const session: WorkspaceSession = {
+	host: "local",
 	id: "sess-1",
 	terminalHandleId: "handle-1",
 	workspaceId: "ws-1",

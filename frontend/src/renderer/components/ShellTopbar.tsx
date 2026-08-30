@@ -11,6 +11,7 @@ import {
 	isOrchestratorSession,
 	sessionIsActive,
 	type WorkspaceSession,
+	flattenHostSections,
 } from "../types/workspace";
 import { cloudSessionsQueryKey, useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import {
@@ -20,6 +21,7 @@ import {
 	useTerminateSessionState,
 } from "../hooks/useTerminateSession";
 import { spawnCloudOrchestrator } from "../lib/cloud-orchestrator";
+import { LOCAL_HOST, refKey, type Ref } from "../lib/hosts";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { addRendererExceptionStep, captureRendererEvent, captureRendererException } from "../lib/telemetry";
 import { sidebarOccupiesLayout, useUiStore } from "../stores/ui-store";
@@ -40,6 +42,7 @@ import {
 } from "../lib/agent-switch-presentation";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
+import { hostActionSuffix } from "../lib/host-disclosure";
 const isMac = isMacPlatform();
 const boardActionsInPanel = usesBoardActionsInPanel();
 const dragStyle = isMac ? ({ WebkitAppRegion: "drag" } as React.CSSProperties) : undefined;
@@ -82,10 +85,12 @@ export function ShellTopbar({
 	const { t } = useTranslation();
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
-	const params = useParams({ strict: false }) as { projectId?: string; sessionId?: string };
+	const params = useParams({ strict: false }) as { hostId?: string; projectId?: string; sessionId?: string };
 	const currentSessionId = params.sessionId;
+	const currentSessionKey =
+		params.hostId && currentSessionId ? refKey({ host: params.hostId, id: currentSessionId }) : undefined;
 	const isInspectorOpen = useUiStore((state) =>
-		currentSessionId ? (state.inspectorSessions[currentSessionId]?.isOpen ?? true) : false,
+		currentSessionKey ? (state.inspectorSessions[currentSessionKey]?.isOpen ?? true) : false,
 	);
 	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
 	const requestNewTask = useUiStore((state) => state.requestNewTask);
@@ -114,10 +119,15 @@ export function ShellTopbar({
 	const [isSpawning, setIsSpawning] = useState(false);
 	// Board-scope spawn failures surface where the board actions render.
 	const [boardSpawnError, setBoardSpawnError] = useState<string | null>(null);
-	const all = useWorkspaceQuery().data ?? [];
+	const all = flattenHostSections(useWorkspaceQuery().data);
 
+	// Session ids are unique per host, not across them: matching on id alone
+	// names another host's same-id session in the crumb, pill and kill button.
+	const routeHost = params.hostId ?? LOCAL_HOST;
 	const session = params.sessionId
-		? all.flatMap((workspace) => workspace.sessions).find((s) => s.id === params.sessionId)
+		? all
+				.flatMap((workspace) => workspace.sessions)
+				.find((candidate) => candidate.host === routeHost && candidate.id === params.sessionId)
 		: undefined;
 	const isSessionRoute = Boolean(params.sessionId);
 	const isOrchestrator = session ? isOrchestratorSession(session) : false;
@@ -127,13 +137,14 @@ export function ShellTopbar({
 	// removed, or data still loading) shows an empty crumb — never the raw
 	// route slug. "Board" is the root-board crumb only.
 	const projectId = session?.workspaceId ?? params.projectId;
+	const projectRef: Ref | undefined = projectId ? { host: routeHost, id: projectId } : undefined;
 	const isProjectBoardRoute = !isSessionRoute && Boolean(projectId);
 	const isRootBoardRoute = !isSessionRoute && !isProjectBoardRoute;
 	const project = projectId ? all.find((workspace) => workspace.id === projectId) : undefined;
 	const projectLabel = project?.name ?? session?.workspaceName ?? (projectId ? "" : t("shell.board"));
-	const orchestrator = projectId ? findProjectOrchestrator(all, projectId) : undefined;
+	const orchestrator = projectRef ? findProjectOrchestrator(all, projectRef) : undefined;
 	const orchestratorActivityLabel = orchestrator ? getAgentActivityView(orchestrator.activity, t).label : undefined;
-	const isProjectRestarting = projectId ? restartingProjectIds.has(projectId) : false;
+	const isProjectRestarting = projectRef ? restartingProjectIds.has(refKey(projectRef)) : false;
 	const orchestratorActionLabel = orchestrator ? t("shell.openOrchestrator") : t("shell.spawnOrchestrator");
 	const orchestratorTooltip = isProjectRestarting
 		? t("shell.restarting")
@@ -142,15 +153,20 @@ export function ShellTopbar({
 			: orchestratorActionLabel;
 
 	const openBoard = () =>
-		projectId ? void navigate({ to: "/projects/$projectId", params: { projectId } }) : void navigate({ to: "/" });
+		projectRef
+			? void navigate({
+					to: "/host/$hostId/project/$projectId",
+					params: { hostId: projectRef.host, projectId: projectRef.id },
+				})
+			: void navigate({ to: "/" });
 
 	const openNewTask = () => {
 		if (!projectId || isProjectRestarting) return;
-		requestNewTask(projectId);
+		if (projectRef) requestNewTask(projectRef);
 	};
 
 	const openOrchestrator = async () => {
-		if (!projectId) return;
+		if (!projectId || !projectRef) return;
 		setBoardSpawnError(null);
 		void addRendererExceptionStep("Orchestrator open requested", {
 			source: "orchestrator-open",
@@ -161,8 +177,8 @@ export function ShellTopbar({
 		void captureRendererEvent("ao.renderer.orchestrator_open_requested", { project_id: projectId });
 		if (orchestrator) {
 			void navigate({
-				to: "/projects/$projectId/sessions/$sessionId",
-				params: { projectId, sessionId: orchestrator.id },
+				to: "/host/$hostId/session/$sessionId",
+				params: { hostId: orchestrator.host, sessionId: orchestrator.id },
 			});
 			return;
 		}
@@ -188,17 +204,17 @@ export function ShellTopbar({
 		}
 		if (!hasConfiguredOrchestratorAgent(project)) {
 			if (project) {
-				useUiStore.getState().openProjectSettings(projectId);
+				if (projectRef) useUiStore.getState().openProjectSettings(projectRef);
 			}
 			return;
 		}
 		setIsSpawning(true);
 		try {
-			const sessionId = await spawnOrchestrator(projectId, "topbar");
+			const sessionId = await spawnOrchestrator(projectRef, "topbar");
 			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 			void navigate({
-				to: "/projects/$projectId/sessions/$sessionId",
-				params: { projectId, sessionId },
+				to: "/host/$hostId/session/$sessionId",
+				params: { hostId: routeHost, sessionId },
 			});
 		} catch (error) {
 			void captureRendererException(error, {
@@ -315,7 +331,7 @@ export function ShellTopbar({
 					<>
 						{isOrchestrator ? (
 							<>
-								<ProjectTerminationFeedback projectId={projectId} />
+								<ProjectTerminationFeedback project={projectRef} />
 								{sessionAction ? (
 									<div className="inline-flex shrink-0 items-center" style={noDragStyle}>
 										{sessionAction}
@@ -390,12 +406,15 @@ export function ShellTopbar({
 										onKilled={(workspaceId, orchestratorId) => {
 											if (orchestratorId) {
 												void navigate({
-													to: "/projects/$projectId/sessions/$sessionId",
-													params: { projectId: workspaceId, sessionId: orchestratorId },
+													to: "/host/$hostId/session/$sessionId",
+													params: { hostId: session.host, sessionId: orchestratorId },
 												});
 												return;
 											}
-											void navigate({ to: "/projects/$projectId", params: { projectId: workspaceId } });
+											void navigate({
+												to: "/host/$hostId/project/$projectId",
+												params: { hostId: session.host, projectId: workspaceId },
+											});
 										}}
 									/>
 								) : null}
@@ -458,7 +477,7 @@ export function TopbarKillButton({
 	const [confirmOpen, setConfirmOpen] = useState(false);
 	const queryClient = useQueryClient();
 	const kill = useTerminateSession();
-	const { error, isPending } = useTerminateSessionState(session.id);
+	const { error, isPending } = useTerminateSessionState(session);
 
 	const confirmKill = () => {
 		setConfirmOpen(false);
@@ -478,7 +497,7 @@ export function TopbarKillButton({
 						aria-label={isPending ? t("shell.killing") : t("shell.killSession")}
 						disabled={isPending}
 						onClick={() => {
-							clearTerminateSessionState(queryClient, session.id);
+							clearTerminateSessionState(queryClient, session);
 						}}
 						title={t("shell.killSession")}
 						variant="killIcon"
@@ -492,9 +511,11 @@ export function TopbarKillButton({
 	);
 }
 
-function ProjectTerminationFeedback({ projectId }: { projectId: string | undefined }) {
+function ProjectTerminationFeedback({ project }: { project: Ref | undefined }) {
 	const { t } = useTranslation();
-	const states = useProjectTerminateSessionStates(projectId);
+	// Two hosts can be terminating a session called the same thing; say which.
+	const hostSuffix = project ? hostActionSuffix(t, project.host) : "";
+	const states = useProjectTerminateSessionStates(project);
 	if (states.length === 0) return null;
 
 	return (
@@ -509,9 +530,10 @@ function ProjectTerminationFeedback({ projectId }: { projectId: string | undefin
 						className="max-w-40 truncate text-caption text-muted-foreground"
 						key={state.session.id}
 						role="status"
-						title={t("shell.killingNamed", { title: state.session.title })}
+						title={`${t("shell.killingNamed", { title: state.session.title })}${hostSuffix}`}
 					>
 						{t("shell.killingNamed", { title: state.session.title })}
+						{hostSuffix}
 					</span>
 				),
 			)}

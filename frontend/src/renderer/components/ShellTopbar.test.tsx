@@ -3,6 +3,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { refKey } from "../lib/hosts";
 import { useUiStore } from "../stores/ui-store";
 import type { SessionActivityState, WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { ShellTopbar, TopbarKillButton } from "./ShellTopbar";
@@ -11,7 +12,11 @@ import { TooltipProvider } from "./ui/tooltip";
 const { navigateMock, onKilledMock, paramsMock, postMock, spawnMock, useWorkspaceQueryMock } = vi.hoisted(() => ({
 	navigateMock: vi.fn(),
 	onKilledMock: vi.fn(),
-	paramsMock: { projectId: undefined as string | undefined, sessionId: undefined as string | undefined },
+	paramsMock: {
+		hostId: "local" as string | undefined,
+		projectId: undefined as string | undefined,
+		sessionId: undefined as string | undefined,
+	},
 	postMock: vi.fn(),
 	spawnMock: vi.fn(),
 	useWorkspaceQueryMock: vi.fn(),
@@ -27,7 +32,17 @@ vi.mock("@tanstack/react-router", async (importOriginal) => {
 });
 
 vi.mock("../hooks/useWorkspaceQuery", () => ({
-	useWorkspaceQuery: () => useWorkspaceQueryMock(),
+	useWorkspaceQuery: () => (() => {
+		// useWorkspaceQuery returns one section per host now; these fixtures still
+		// describe the local host's workspaces, so wrap them in its section.
+		const result = useWorkspaceQueryMock();
+		return {
+			...result,
+			data: result.data
+				? [{ host: "local", label: "Local", status: "ready", workspaces: result.data, failure: null }]
+				: undefined,
+		};
+	})(),
 	workspaceQueryKey: ["workspaces"],
 }));
 
@@ -44,6 +59,21 @@ vi.mock("../lib/api-client", () => ({
 	},
 }));
 
+// clientFor(LOCAL_HOST) is the client apiClient already was, so the local
+// host resolves to the same fake the api-client mock installs.
+vi.mock("../lib/host-clients", () => ({
+	baseUrlFor: () => "http://127.0.0.1:3001",
+	connectedHosts: (() => {
+		const hosts: string[] = [];
+		return () => hosts;
+	})(),
+	subscribeConnectedHosts: () => () => undefined,
+	isHostReady: () => true,
+	clientFor: () => ({
+		POST: postMock,
+	}),
+}));
+
 vi.mock("../lib/spawn-orchestrator", () => ({ spawnOrchestrator: spawnMock }));
 vi.mock("../lib/telemetry", () => ({
 	addRendererExceptionStep: vi.fn(),
@@ -56,6 +86,7 @@ vi.mock("./NotificationCenter", () => ({
 }));
 
 const worker: WorkspaceSession = {
+	host: "local",
 	id: "sess-1",
 	workspaceId: "proj-1",
 	workspaceName: "my-app",
@@ -76,6 +107,7 @@ const secondWorker: WorkspaceSession = {
 };
 
 const orchestrator: WorkspaceSession = {
+	host: "local",
 	id: "orch-1",
 	workspaceId: "proj-1",
 	workspaceName: "my-app",
@@ -121,6 +153,7 @@ function renderTopbarSessions(
 ) {
 	const data: WorkspaceSummary[] = [
 		{
+			host: "local",
 			id: sessions[0].workspaceId,
 			name: sessions[0].workspaceName,
 			path: "/repo/my-app",
@@ -176,6 +209,7 @@ async function clickKillDialogConfirm() {
 beforeEach(() => {
 	navigateMock.mockReset();
 	onKilledMock.mockReset();
+	paramsMock.hostId = "local";
 	paramsMock.projectId = undefined;
 	paramsMock.sessionId = undefined;
 	postMock.mockReset();
@@ -192,6 +226,35 @@ describe("ShellTopbar status pill", () => {
 		const header = screen.getByTestId("workspace-topbar-actions").closest("header");
 		expect(header).toHaveClass("pr-2");
 		expect(header).not.toHaveClass("pr-4");
+	});
+
+	// Regression: session ids are unique per host, not across them. Resolving the
+	// route's session by bare id names whichever host sorts first in the tree, so
+	// the crumb, status pill and kill button all describe the wrong machine.
+	it("names the session on the route's host, not the first matching id", () => {
+		const localTwin = sessionWith({ host: "local", title: "the local thing" });
+		const remoteTwin = sessionWith({ host: "remote", title: "the remote thing" });
+		useWorkspaceQueryMock.mockReturnValue({
+			data: [
+				{ host: "local", id: "proj-1", name: "my-app", path: "/repo/my-app", sessions: [localTwin] },
+				{ host: "remote", id: "proj-1", name: "my-app", path: "/repo/my-app", sessions: [remoteTwin] },
+			] satisfies WorkspaceSummary[],
+			isError: false,
+			isLoading: false,
+		});
+		paramsMock.hostId = "remote";
+		paramsMock.projectId = "proj-1";
+		paramsMock.sessionId = "sess-1";
+
+		render(
+			<QueryClientProvider client={new QueryClient()}>
+				<TooltipProvider>
+					<ShellTopbar />
+				</TooltipProvider>
+			</QueryClientProvider>,
+		);
+
+		expect(screen.getByTestId("session-topbar-identity").textContent).toContain("the remote thing");
 	});
 
 	it("shows the worker session name and activity in the full topbar identity", () => {
@@ -368,8 +431,8 @@ describe("ShellTopbar orchestrator actions", () => {
 		expect(screen.queryByText("my-app")).not.toBeInTheDocument();
 		await userEvent.click(kanbanButton);
 		expect(navigateMock).toHaveBeenCalledWith({
-			to: "/projects/$projectId",
-			params: { projectId: "proj-1" },
+			to: "/host/$hostId/project/$projectId",
+			params: { hostId: "local", projectId: "proj-1" },
 		});
 	});
 
@@ -382,8 +445,8 @@ describe("ShellTopbar orchestrator actions", () => {
 		expect(screen.getByRole("button", { name: "New task" })).toHaveClass("bg-raised");
 		await userEvent.click(kanbanButton);
 		expect(navigateMock).toHaveBeenCalledWith({
-			to: "/projects/$projectId",
-			params: { projectId: "proj-1" },
+			to: "/host/$hostId/project/$projectId",
+			params: { hostId: "local", projectId: "proj-1" },
 		});
 	});
 
@@ -391,6 +454,7 @@ describe("ShellTopbar orchestrator actions", () => {
 		useWorkspaceQueryMock.mockReturnValue({
 			data: [
 				{
+					host: "local",
 					id: "proj-1",
 					name: "my-app",
 					path: "/repo/my-app",
@@ -412,7 +476,7 @@ describe("ShellTopbar orchestrator actions", () => {
 
 		await userEvent.click(screen.getByRole("button", { name: "Open orchestrator" }));
 
-		expect(useUiStore.getState().settingsModal).toEqual({ scope: "project", projectId: "proj-1" });
+		expect(useUiStore.getState().settingsModal).toEqual({ scope: "project", project: { host: "local", id: "proj-1" } });
 		expect(navigateMock).not.toHaveBeenCalled();
 		expect(spawnMock).not.toHaveBeenCalled();
 	});
@@ -425,8 +489,8 @@ describe("ShellTopbar orchestrator actions", () => {
 		await clickKillDialogConfirm();
 
 		expect(navigateMock).toHaveBeenCalledWith({
-			to: "/projects/$projectId/sessions/$sessionId",
-			params: { projectId: "proj-1", sessionId: "orch-1" },
+			to: "/host/$hostId/session/$sessionId",
+			params: { hostId: "local", sessionId: "orch-1" },
 		});
 	});
 });
@@ -443,8 +507,8 @@ describe("ShellTopbar inspector state", () => {
 	it("sizes the pinned-action reserve for the current worker inspector state", () => {
 		useUiStore.setState({
 			inspectorSessions: {
-				"sess-1": { isOpen: true, view: "summary" },
-				"sess-2": { isOpen: false, view: "summary" },
+				[refKey({ host: "local", id: "sess-1" })]: { isOpen: true, view: "summary" },
+				[refKey({ host: "local", id: "sess-2" })]: { isOpen: false, view: "summary" },
 			},
 		});
 		const view = renderTopbarSessions([worker, secondWorker], "sess-1");
@@ -458,11 +522,11 @@ describe("ShellTopbar inspector state", () => {
 	});
 
 	it("keeps one reserve mounted while the inspector changes state", () => {
-		useUiStore.setState({ inspectorSessions: { "sess-1": { isOpen: false, view: "summary" } } });
+		useUiStore.setState({ inspectorSessions: { [refKey({ host: "local", id: "sess-1" })]: { isOpen: false, view: "summary" } } });
 		const view = renderTopbarSessions([worker], "sess-1");
 		const reserve = screen.getByTestId("session-pinned-actions-reserve");
 
-		useUiStore.setState({ inspectorSessions: { "sess-1": { isOpen: true, view: "summary" } } });
+		useUiStore.setState({ inspectorSessions: { [refKey({ host: "local", id: "sess-1" })]: { isOpen: true, view: "summary" } } });
 		view.rerenderTopbar();
 
 		expect(screen.getByTestId("session-pinned-actions-reserve")).toBe(reserve);

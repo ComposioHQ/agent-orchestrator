@@ -184,7 +184,7 @@ export function SettingsDialog() {
 						<div className={cn(settingsDialogBodyClass, "flex-1")}>
 							{displaySettings?.scope === "project" ? (
 								<ProjectSettingsForm
-									projectId={displaySettings.projectId}
+									projectRef={displaySettings.project}
 									section={activeProjectSection}
 									onSaveState={setProjectSaveState}
 								/>
