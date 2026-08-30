@@ -154,11 +154,11 @@ describe("ChatWorkspace steering", () => {
 		expect(screen.getAllByRole("button", { name: "Steer this queued message into the running turn" })).toHaveLength(1);
 
 		await userEvent.click(
-			within(screen.getByTestId("queued-message-queued-2")).getByRole("button", {
+			within(screen.getByTestId("queued-message-queued-1")).getByRole("button", {
 				name: "Steer this queued message into the running turn",
 			}),
 		);
-		expect(onPromoteQueuedTurn).toHaveBeenCalledWith("queued-2");
+		expect(onPromoteQueuedTurn).toHaveBeenCalledWith("queued-1");
 
 		await userEvent.click(within(screen.getByTestId("queued-message-queued-1")).getByRole("button", { name: "Edit queued message" }));
 		expect(onBeginQueuedEdit).toHaveBeenCalledWith("queued-1", "first queued");
