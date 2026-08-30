@@ -393,6 +393,7 @@ func (e *Engine) TriggerWithSource(ctx stdctx.Context, workerID domain.SessionID
 	queueRuns = append(queueRuns, created...)
 	queue := reviewQueue(queueRuns)
 	launchRun := queueRuns[0]
+	previousHandleID := reviewRow.ReviewerHandleID
 	launchAgentSessionID := reviewRow.AgentSessionID
 	if hasConfigOverride {
 		launchAgentSessionID = ""
@@ -432,6 +433,14 @@ func (e *Engine) TriggerWithSource(ctx stdctx.Context, workerID domain.SessionID
 				_ = e.launcher.Destroy(ctx, handleID)
 			}
 			return TriggerResult{}, failRuns(0, err)
+		}
+	}
+	if hasConfigOverride && previousHandleID != "" && previousHandleID != handleID {
+		if err := e.launcher.Destroy(ctx, previousHandleID); err != nil {
+			if handleID != "" {
+				_ = e.launcher.Destroy(ctx, handleID)
+			}
+			return TriggerResult{}, failRuns(0, fmt.Errorf("destroy previous reviewer: %w", err))
 		}
 	}
 	reviewRow, err = e.upsertReview(ctx, worker, harness, handleID, reviewRow.AgentSessionID, now)

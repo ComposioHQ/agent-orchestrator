@@ -1217,8 +1217,8 @@ func TestTriggerConfigOverrideRestartsAliveReviewerPane(t *testing.T) {
 	if !res.Created {
 		t.Fatalf("expected new run for config override: %+v", res)
 	}
-	if launcher.destroyed {
-		t.Fatalf("engine should not destroy the existing pane before replacement spawn succeeds: %+v", launcher)
+	if !launcher.destroyed || launcher.destroyedHandle != "review-mer-1" {
+		t.Fatalf("expected old reviewer pane destroyed after replacement launch: %+v", launcher)
 	}
 	if !launcher.spawned || launcher.notified {
 		t.Fatalf("config override should relaunch, not notify existing pane: %+v", launcher)
