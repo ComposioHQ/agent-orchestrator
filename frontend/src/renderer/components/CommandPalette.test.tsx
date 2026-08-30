@@ -593,7 +593,6 @@ describe("CommandPalette actions", () => {
 		fireEvent.keyDown(input, { key: "Enter" });
 		expect(useUiStore.getState().resolvedTheme).toBe("light");
 		expect(input).toHaveValue("toggle theme");
-		fireEvent.animationEnd(screen.getByLabelText("Command palette"));
 		await waitFor(() => expect(paletteInput()).toBeNull());
 	});
 

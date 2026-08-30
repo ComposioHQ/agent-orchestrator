@@ -927,10 +927,14 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		// Forward OSC 10/11/12 color replies only. Cursor's theme probe issues these
 		// on stdout; xterm answers on onData. Other onData bytes must not reach the
 		// PTY or agent TUIs break (Codex, etc.).
-		const oscColorForwarder = props.supportsCursorColorScheme
-			? createOscColorReportForwarder((report) => emitUserInput(report, "protocol"))
-			: null;
-		const oscColorInput = oscColorForwarder ? term.onData((data) => oscColorForwarder.push(data)) : null;
+		// Retained terminals can change providers without remounting. Keep the
+		// listener mounted, but consult the latest props before forwarding so a
+		// terminal that changes from Cursor to another agent never emits protocol
+		// bytes into the new agent's PTY.
+		const oscColorForwarder = createOscColorReportForwarder((report) => {
+			if (callbacksRef.current.supportsCursorColorScheme) emitUserInput(report, "protocol");
+		});
+		const oscColorInput = term.onData((data) => oscColorForwarder.push(data));
 		const keyInput = term.onKey(({ key }) => emitUserInput(key, "keyboard"));
 
 		// Translate wheel motion into SGR wheel reports for the pane (see
@@ -1117,7 +1121,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				}
 				if (hasEsc) {
 					const chunk = new TextDecoder().decode(data);
-					const reply = props.supportsCursorColorScheme
+					const reply = callbacksRef.current.supportsCursorColorScheme
 						? cursorColorSchemeReplyForOutput(chunk, callbacksRef.current.theme)
 						: null;
 					if (reply) {
@@ -1184,8 +1188,8 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			clearSuppressNativePaste();
 			for (const timer of schemeRetryTimers) window.clearTimeout(timer);
 			schemeRetryTimers = [];
-			oscColorForwarder?.dispose();
-			oscColorInput?.dispose();
+			oscColorForwarder.dispose();
+			oscColorInput.dispose();
 			keyInput.dispose();
 			notifyCursorSchemeRef.current = () => {};
 			announcedCursorSchemeRef.current = null;
