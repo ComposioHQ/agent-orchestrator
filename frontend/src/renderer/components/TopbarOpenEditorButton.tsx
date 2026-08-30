@@ -115,31 +115,35 @@ export function TopbarOpenEditorButton({
 			>
 				<Tooltip>
 					<TooltipTrigger asChild>
-						<TopbarButton
-							aria-label={preferred ? t("editor.openInAria", { name: preferred.name }) : t("editor.chooseEditor")}
-							className="hover:bg-transparent"
-							disabled={mainDisabled}
-							onClick={() => launch()}
-							variant="icon"
-						>
-							<TargetIcon target={preferred} className="size-icon-md" />
-						</TopbarButton>
+						<span className="inline-flex">
+							<TopbarButton
+								aria-label={preferred ? t("editor.openInAria", { name: preferred.name }) : t("editor.chooseEditor")}
+								className="hover:bg-transparent"
+								disabled={mainDisabled}
+								onClick={() => launch()}
+								variant="icon"
+							>
+								<TargetIcon target={preferred} className="size-icon-md" />
+							</TopbarButton>
+						</span>
 					</TooltipTrigger>
 					<TooltipContent side="bottom">{mainTitle}</TooltipContent>
 				</Tooltip>
 				<DropdownMenu onOpenChange={setMenuOpen}>
 					<Tooltip>
 						<TooltipTrigger asChild>
-							<DropdownMenuTrigger asChild>
-								<TopbarButton
-									aria-label={t("editor.openOptionsAria")}
-									className="hover:bg-transparent"
-									disabled={menuDisabled}
-									variant="icon"
-								>
-									<ChevronDown className="size-icon-sm" aria-hidden="true" />
-								</TopbarButton>
-							</DropdownMenuTrigger>
+							<span className="inline-flex">
+								<DropdownMenuTrigger asChild>
+									<TopbarButton
+										aria-label={t("editor.openOptionsAria")}
+										className="hover:bg-transparent"
+										disabled={menuDisabled}
+										variant="icon"
+									>
+										<ChevronDown className="size-icon-sm" aria-hidden="true" />
+									</TopbarButton>
+								</DropdownMenuTrigger>
+							</span>
 						</TooltipTrigger>
 						<TooltipContent side="bottom">{t("editor.openOptionsAria")}</TooltipContent>
 					</Tooltip>

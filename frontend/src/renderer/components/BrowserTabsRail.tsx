@@ -293,7 +293,7 @@ export const BrowserTabsRail = forwardRef<BrowserTabsRailHandle, BrowserTabsRail
 							<PinOff aria-hidden="true" className="size-icon-base" />
 						</button>
 					</TooltipTrigger>
-					<TooltipContent side="bottom">{t("browser.unpinTabs")}</TooltipContent>
+					<TooltipContent data-browser-native-overlay="true" side="bottom">{t("browser.unpinTabs")}</TooltipContent>
 				</Tooltip>
 			) : null}
 			<nav aria-label={t("browser.tabsAria", { count: tabs.length })} className="min-h-0 flex-1 overflow-y-auto">
@@ -548,25 +548,27 @@ function ExpandedTabRow({ active, chrome, closeTitle, onClose, onSelect, onlyTab
 			</button>
 			<Tooltip>
 				<TooltipTrigger asChild>
-					<button
-						aria-label={closeLabel}
-						className={cn(
-							"mr-1.5 grid size-control-sm shrink-0 place-items-center overflow-hidden rounded-sm text-passive opacity-0",
-							"transition-[opacity,color] hover:text-foreground",
-							"group-hover/tab-row:opacity-100 group-focus-within/tab-row:opacity-100",
-							"disabled:pointer-events-none",
-						)}
-						disabled={onlyTab}
-						onClick={(event) => {
-							event.stopPropagation();
-							onClose();
-						}}
-						type="button"
-					>
-						<X aria-hidden="true" className="size-icon-sm" />
-					</button>
+					<span className="inline-flex">
+						<button
+							aria-label={closeLabel}
+							className={cn(
+								"mr-1.5 grid size-control-sm shrink-0 place-items-center overflow-hidden rounded-sm text-passive opacity-0",
+								"transition-[opacity,color] hover:text-foreground",
+								"group-hover/tab-row:opacity-100 group-focus-within/tab-row:opacity-100",
+								"disabled:pointer-events-none",
+							)}
+							disabled={onlyTab}
+							onClick={(event) => {
+								event.stopPropagation();
+								onClose();
+							}}
+							type="button"
+						>
+							<X aria-hidden="true" className="size-icon-sm" />
+						</button>
+					</span>
 				</TooltipTrigger>
-				<TooltipContent side="bottom">{onlyTab ? closeTitle : closeLabel}</TooltipContent>
+				<TooltipContent data-browser-native-overlay="true" side="bottom">{onlyTab ? closeTitle : closeLabel}</TooltipContent>
 			</Tooltip>
 		</div>
 	);

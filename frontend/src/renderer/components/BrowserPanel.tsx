@@ -526,33 +526,37 @@ export function BrowserPanelView({
 			>
 				<Tooltip>
 					<TooltipTrigger asChild>
-						<Button
-							aria-label={t("browser.back")}
-							disabled={!navState.canGoBack}
-							onClick={() => void goBack()}
-							size="icon-sm"
-							type="button"
-							variant="ghost"
-						>
-							<ArrowLeft aria-hidden="true" className="size-icon-base" />
-						</Button>
+						<span className="inline-flex">
+							<Button
+								aria-label={t("browser.back")}
+								disabled={!navState.canGoBack}
+								onClick={() => void goBack()}
+								size="icon-sm"
+								type="button"
+								variant="ghost"
+							>
+								<ArrowLeft aria-hidden="true" className="size-icon-base" />
+							</Button>
+						</span>
 					</TooltipTrigger>
-					<TooltipContent side="bottom">{t("browser.back")}</TooltipContent>
+					<TooltipContent data-browser-native-overlay="true" side="bottom">{t("browser.back")}</TooltipContent>
 				</Tooltip>
 				<Tooltip>
 					<TooltipTrigger asChild>
-						<Button
-							aria-label={t("browser.forward")}
-							disabled={!navState.canGoForward}
-							onClick={() => void goForward()}
-							size="icon-sm"
-							type="button"
-							variant="ghost"
-						>
-							<ArrowRight aria-hidden="true" className="size-icon-base" />
-						</Button>
+						<span className="inline-flex">
+							<Button
+								aria-label={t("browser.forward")}
+								disabled={!navState.canGoForward}
+								onClick={() => void goForward()}
+								size="icon-sm"
+								type="button"
+								variant="ghost"
+							>
+								<ArrowRight aria-hidden="true" className="size-icon-base" />
+							</Button>
+						</span>
 					</TooltipTrigger>
-					<TooltipContent side="bottom">{t("browser.forward")}</TooltipContent>
+					<TooltipContent data-browser-native-overlay="true" side="bottom">{t("browser.forward")}</TooltipContent>
 				</Tooltip>
 				<Tooltip>
 					<TooltipTrigger asChild>
@@ -570,41 +574,43 @@ export function BrowserPanelView({
 							)}
 						</Button>
 					</TooltipTrigger>
-					<TooltipContent side="bottom">{navState.isLoading ? t("browser.stop") : t("browser.reload")}</TooltipContent>
+					<TooltipContent data-browser-native-overlay="true" side="bottom">{navState.isLoading ? t("browser.stop") : t("browser.reload")}</TooltipContent>
 				</Tooltip>
 				<Tooltip>
 					<TooltipTrigger asChild>
-						<Button
-							aria-label={
-								canRetryAnnotation
-									? t("browser.retryAnnotation")
-									: annotationMode || status === "picking"
-										? t("browser.cancelAnnotation")
-										: t("browser.annotate")
-							}
-							aria-pressed={annotationMode || status === "picking"}
-							className="browser-panel__annotate-btn relative"
-							disabled={!canAnnotate || status === "sending"}
-							onClick={() => void toggleAnnotationMode()}
-							size="icon-sm"
-							type="button"
-							variant="ghost"
-						>
-							<MousePointer2 aria-hidden="true" className="h-4 w-4" />
-							{annotationStatusLabel ? (
-								<span
-									aria-hidden="true"
-									className={cn(
-										"pointer-events-none absolute -right-0.5 -top-0.5 size-1.5 rounded-full",
-										status === "error" ? "bg-destructive" : "bg-accent",
-									)}
-								/>
-							) : agentStatusLabel ? (
-								<span aria-hidden="true" className="pointer-events-none absolute -right-0.5 -top-0.5 size-1.5 rounded-full bg-accent" />
-							) : null}
-						</Button>
+						<span className="inline-flex">
+							<Button
+								aria-label={
+									canRetryAnnotation
+										? t("browser.retryAnnotation")
+										: annotationMode || status === "picking"
+											? t("browser.cancelAnnotation")
+											: t("browser.annotate")
+								}
+								aria-pressed={annotationMode || status === "picking"}
+								className="browser-panel__annotate-btn relative"
+								disabled={!canAnnotate || status === "sending"}
+								onClick={() => void toggleAnnotationMode()}
+								size="icon-sm"
+								type="button"
+								variant="ghost"
+							>
+								<MousePointer2 aria-hidden="true" className="h-4 w-4" />
+								{annotationStatusLabel ? (
+									<span
+										aria-hidden="true"
+										className={cn(
+											"pointer-events-none absolute -right-0.5 -top-0.5 size-1.5 rounded-full",
+											status === "error" ? "bg-destructive" : "bg-accent",
+										)}
+									/>
+								) : agentStatusLabel ? (
+									<span aria-hidden="true" className="pointer-events-none absolute -right-0.5 -top-0.5 size-1.5 rounded-full bg-accent" />
+								) : null}
+							</Button>
+						</span>
 					</TooltipTrigger>
-					<TooltipContent side="bottom">
+					<TooltipContent data-browser-native-overlay="true" side="bottom">
 						{annotationStatusLabel || agentStatusLabel || (canRetryAnnotation ? t("browser.retryAnnotation") : t("browser.annotate"))}
 					</TooltipContent>
 				</Tooltip>
@@ -660,7 +666,7 @@ export function BrowserPanelView({
 								</Button>
 							</DropdownMenuTrigger>
 						</TooltipTrigger>
-						<TooltipContent side="bottom">{t("browser.devicePreset")}</TooltipContent>
+						<TooltipContent data-browser-native-overlay="true" side="bottom">{t("browser.devicePreset")}</TooltipContent>
 					</Tooltip>
 					{/* Opens directly over the live page (the toolbar sits right above the
 					    native browser view), so without this it renders behind the native
@@ -722,23 +728,25 @@ export function BrowserPanelView({
 				</DropdownMenu>
 				<Tooltip>
 					<TooltipTrigger asChild>
-						<Button
-							aria-label={t(devtoolsState.open ? "browser.closeDevTools" : "browser.openDevTools")}
-							aria-pressed={devtoolsState.open}
-							className={cn(
-								devtoolsState.open &&
-									"bg-accent-strong text-accent-foreground hover:bg-accent-strong dark:hover:bg-accent-strong",
-							)}
-							disabled={!canUseDevTools}
-							onClick={() => void (devtoolsState.open ? closeDevTools() : openDevTools())}
-							size="icon-sm"
-							type="button"
-							variant="ghost"
-						>
-							<Bug aria-hidden="true" className="size-icon-base" />
-						</Button>
+						<span className="inline-flex">
+							<Button
+								aria-label={t(devtoolsState.open ? "browser.closeDevTools" : "browser.openDevTools")}
+								aria-pressed={devtoolsState.open}
+								className={cn(
+									devtoolsState.open &&
+										"bg-accent-strong text-accent-foreground hover:bg-accent-strong dark:hover:bg-accent-strong",
+								)}
+								disabled={!canUseDevTools}
+								onClick={() => void (devtoolsState.open ? closeDevTools() : openDevTools())}
+								size="icon-sm"
+								type="button"
+								variant="ghost"
+							>
+								<Bug aria-hidden="true" className="size-icon-base" />
+							</Button>
+						</span>
 					</TooltipTrigger>
-					<TooltipContent side="bottom">
+					<TooltipContent data-browser-native-overlay="true" side="bottom">
 						{t(devtoolsState.open ? "browser.closeDevTools" : "browser.openDevTools")}
 					</TooltipContent>
 				</Tooltip>
@@ -758,7 +766,7 @@ export function BrowserPanelView({
 							)}
 						</Button>
 					</TooltipTrigger>
-					<TooltipContent side="bottom">{poppedOut ? t("browser.returnToPanel") : t("browser.popOut")}</TooltipContent>
+					<TooltipContent data-browser-native-overlay="true" side="bottom">{poppedOut ? t("browser.returnToPanel") : t("browser.popOut")}</TooltipContent>
 				</Tooltip>
 				{/* Docked mode has no reserved rail column by default (see
 				    BrowserTabsRail.tsx) — this trigger is the only way to reach the tab
@@ -809,7 +817,7 @@ export function BrowserPanelView({
 									<Plus aria-hidden="true" className="size-icon-base" />
 								</Button>
 							</TooltipTrigger>
-							<TooltipContent side="bottom">{t("browser.openNewTab")}</TooltipContent>
+							<TooltipContent data-browser-native-overlay="true" side="bottom">{t("browser.openNewTab")}</TooltipContent>
 						</Tooltip>
 					</div>
 				) : null}

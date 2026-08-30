@@ -98,38 +98,42 @@ export function HumanMessageEditor({
 			) : null}
 			<Tooltip>
 				<TooltipTrigger asChild>
-					<Button
-						type="button"
-						size="icon-sm"
-						variant="ghost"
-						onClick={onCancel}
-						disabled={pending}
-						aria-label={t("chat.edit.cancel")}
-						className="size-7"
-					>
-						<X aria-hidden="true" className="size-3.5" />
-					</Button>
+					<span className="inline-flex">
+						<Button
+							type="button"
+							size="icon-sm"
+							variant="ghost"
+							onClick={onCancel}
+							disabled={pending}
+							aria-label={t("chat.edit.cancel")}
+							className="size-7"
+						>
+							<X aria-hidden="true" className="size-3.5" />
+						</Button>
+					</span>
 				</TooltipTrigger>
 				<TooltipContent side="bottom">{t("chat.edit.cancel")}</TooltipContent>
 			</Tooltip>
 			<Tooltip>
 				<TooltipTrigger asChild>
-					<Button
-						type="button"
-						variant="ghost"
-						size="icon-sm"
-						onClick={submit}
-						disabled={sendDisabled}
-						aria-label={t("chat.edit.send")}
-						className={cn(
-							"size-7 rounded-full border-transparent",
-							sendDisabled
-								? "bg-primary text-primary-foreground"
-								: "bg-foreground text-background hover:bg-foreground/90 hover:text-background dark:hover:bg-foreground/90 dark:hover:text-background",
-						)}
-					>
-						{pending ? <Loader2 aria-hidden="true" className="size-3.5 animate-spin" /> : <ArrowUp aria-hidden="true" className="size-3.5" />}
-					</Button>
+					<span className="inline-flex">
+						<Button
+							type="button"
+							variant="ghost"
+							size="icon-sm"
+							onClick={submit}
+							disabled={sendDisabled}
+							aria-label={t("chat.edit.send")}
+							className={cn(
+								"size-7 rounded-full border-transparent",
+								sendDisabled
+									? "bg-primary text-primary-foreground"
+									: "bg-foreground text-background hover:bg-foreground/90 hover:text-background dark:hover:bg-foreground/90 dark:hover:text-background",
+							)}
+						>
+							{pending ? <Loader2 aria-hidden="true" className="size-3.5 animate-spin" /> : <ArrowUp aria-hidden="true" className="size-3.5" />}
+						</Button>
+					</span>
 				</TooltipTrigger>
 				<TooltipContent side="bottom">{busyMessage ?? t("chat.edit.sendShortcut")}</TooltipContent>
 			</Tooltip>

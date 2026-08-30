@@ -797,17 +797,19 @@ export function ChatComposer({
 								/>
 								<Tooltip>
 									<TooltipTrigger asChild>
-										<Button
-											type="button"
-											variant="ghost"
-											size="icon-sm"
-											disabled={disabled}
-											onClick={() => filePicker.current?.click()}
-											aria-label="Attach a file"
-											className="size-7 shrink-0 rounded-full p-0 text-muted-foreground hover:bg-white/5! hover:text-foreground"
-										>
-											<Plus aria-hidden="true" className="size-3.5 text-muted-foreground" />
-										</Button>
+										<span className="inline-flex">
+											<Button
+												type="button"
+												variant="ghost"
+												size="icon-sm"
+												disabled={disabled}
+												onClick={() => filePicker.current?.click()}
+												aria-label="Attach a file"
+												className="size-7 shrink-0 rounded-full p-0 text-muted-foreground hover:bg-white/5! hover:text-foreground"
+											>
+												<Plus aria-hidden="true" className="size-3.5 text-muted-foreground" />
+											</Button>
+										</span>
 									</TooltipTrigger>
 									<TooltipContent side="bottom">Attach a file</TooltipContent>
 								</Tooltip>
@@ -819,28 +821,30 @@ export function ChatComposer({
 					<div role="group" aria-label="Send message controls" className="flex h-7 shrink-0 items-center">
 						<Tooltip>
 							<TooltipTrigger asChild>
-								<Button
-									type={canStopTurn ? "button" : "submit"}
-									variant="ghost"
-									size="icon-sm"
-									disabled={canStopTurn ? false : !canSend}
-									onClick={canStopTurn ? onInterrupt : undefined}
-									aria-label={canStopTurn ? "Stop turn" : "Send message"}
-									className={cn(
-										"size-7 rounded-full border-transparent focus-visible:ring-ring/40",
-										canStopTurn || canSend
-											? "bg-foreground text-background hover:bg-foreground/90 hover:text-background dark:hover:bg-foreground/90 dark:hover:text-background"
-											: "bg-primary text-primary-foreground",
-									)}
-								>
-									{canStopTurn ? (
-										<Square aria-hidden="true" className="size-2.5 fill-current" />
-									) : steerPending || savingQueuedEditPending || sendPending ? (
-										<Loader2 aria-hidden="true" className="size-3.5 animate-spin" />
-									) : (
-										<ArrowUp aria-hidden="true" className="size-3.5" />
-									)}
-								</Button>
+								<span className="inline-flex">
+									<Button
+										type={canStopTurn ? "button" : "submit"}
+										variant="ghost"
+										size="icon-sm"
+										disabled={canStopTurn ? false : !canSend}
+										onClick={canStopTurn ? onInterrupt : undefined}
+										aria-label={canStopTurn ? "Stop turn" : "Send message"}
+										className={cn(
+											"size-7 rounded-full border-transparent focus-visible:ring-ring/40",
+											canStopTurn || canSend
+												? "bg-foreground text-background hover:bg-foreground/90 hover:text-background dark:hover:bg-foreground/90 dark:hover:text-background"
+												: "bg-primary text-primary-foreground",
+										)}
+									>
+										{canStopTurn ? (
+											<Square aria-hidden="true" className="size-2.5 fill-current" />
+										) : steerPending || savingQueuedEditPending || sendPending ? (
+											<Loader2 aria-hidden="true" className="size-3.5 animate-spin" />
+										) : (
+											<ArrowUp aria-hidden="true" className="size-3.5" />
+										)}
+									</Button>
+								</span>
 							</TooltipTrigger>
 							<TooltipContent side="bottom">{canStopTurn ? "Stop turn" : sendHint}</TooltipContent>
 						</Tooltip>

@@ -387,6 +387,50 @@ describe("BrowserPanel", () => {
 		expect(hookState.stop).toHaveBeenCalled();
 	});
 
+	it("marks toolbar tooltips as browser overlays so they paint above the live page", async () => {
+		// Same reasoning as the pinned-favicon overlay test: the toolbar sits
+		// directly above the native browser view, so an unmarked tooltip here
+		// would render behind the live page.
+		hookState.navState = {
+			viewId: "42:sess-1",
+			url: "http://localhost:5173/",
+			title: "Local app",
+			canGoBack: true,
+			canGoForward: false,
+			isLoading: false,
+		};
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		fireEvent.focus(screen.getByRole("button", { name: /back/i }));
+
+		const tooltip = await screen.findByRole("tooltip");
+		expect(tooltip.closest('[data-browser-native-overlay="true"]')).not.toBeNull();
+	});
+
+	it("still opens a tooltip for a disabled toolbar button", async () => {
+		// Disabled buttons never dispatch pointer/focus events natively, so the
+		// hover listener has to live on a wrapping span around the button rather
+		// than on the (potentially disabled) button itself.
+		hookState.navState = {
+			viewId: "42:sess-1",
+			url: "http://localhost:5173/",
+			title: "Local app",
+			canGoBack: false,
+			canGoForward: false,
+			isLoading: false,
+		};
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		const backButton = screen.getByRole("button", { name: /back/i });
+		expect(backButton).toBeDisabled();
+		const wrapper = backButton.parentElement;
+		expect(wrapper?.tagName).toBe("SPAN");
+
+		fireEvent.pointerMove(wrapper!, { pointerType: "mouse" });
+
+		expect(await screen.findByRole("tooltip")).toHaveTextContent(/back/i);
+	});
+
 	it("lets the user select a tab from the hover flyout", async () => {
 		hookState.tabs = [
 			{ id: "t1", url: "http://localhost:3000/", title: "First app", active: false },

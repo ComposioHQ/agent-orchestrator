@@ -90,18 +90,20 @@ export function ShellTerminalsView() {
 				</span>
 				<Tooltip>
 					<TooltipTrigger asChild>
-						<button
-							aria-label={t("terminal.scrollTabsLeft")}
-							className={cn(
-								"inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:pointer-events-none disabled:opacity-0",
-								!tabsOverflow.canScrollLeft && "invisible",
-							)}
-							disabled={!tabsOverflow.canScrollLeft}
-							onClick={() => tabsOverflow.scrollByDirection(-1)}
-							type="button"
-						>
-							<ChevronLeft aria-hidden="true" className="size-icon-md" />
-						</button>
+						<span className="inline-flex">
+							<button
+								aria-label={t("terminal.scrollTabsLeft")}
+								className={cn(
+									"inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:pointer-events-none disabled:opacity-0",
+									!tabsOverflow.canScrollLeft && "invisible",
+								)}
+								disabled={!tabsOverflow.canScrollLeft}
+								onClick={() => tabsOverflow.scrollByDirection(-1)}
+								type="button"
+							>
+								<ChevronLeft aria-hidden="true" className="size-icon-md" />
+							</button>
+						</span>
 					</TooltipTrigger>
 					<TooltipContent side="bottom">{t("terminal.scrollTabsLeft")}</TooltipContent>
 				</Tooltip>
@@ -130,18 +132,20 @@ export function ShellTerminalsView() {
 				</div>
 				<Tooltip>
 					<TooltipTrigger asChild>
-						<button
-							aria-label={t("terminal.scrollTabsRight")}
-							className={cn(
-								"inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:pointer-events-none disabled:opacity-0",
-								!tabsOverflow.canScrollRight && "invisible",
-							)}
-							disabled={!tabsOverflow.canScrollRight}
-							onClick={() => tabsOverflow.scrollByDirection(1)}
-							type="button"
-						>
-							<ChevronRight aria-hidden="true" className="size-icon-md" />
-						</button>
+						<span className="inline-flex">
+							<button
+								aria-label={t("terminal.scrollTabsRight")}
+								className={cn(
+									"inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:pointer-events-none disabled:opacity-0",
+									!tabsOverflow.canScrollRight && "invisible",
+								)}
+								disabled={!tabsOverflow.canScrollRight}
+								onClick={() => tabsOverflow.scrollByDirection(1)}
+								type="button"
+							>
+								<ChevronRight aria-hidden="true" className="size-icon-md" />
+							</button>
+						</span>
 					</TooltipTrigger>
 					<TooltipContent side="bottom">{t("terminal.scrollTabsRight")}</TooltipContent>
 				</Tooltip>

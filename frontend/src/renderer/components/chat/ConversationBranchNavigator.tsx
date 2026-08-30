@@ -21,17 +21,19 @@ export function ConversationBranchNavigator({
 		{point.previousBranchId ? (
 			<Tooltip>
 				<TooltipTrigger asChild>
-					<button
-						type="button"
-						disabled={pending}
-						onClick={() => {
-							void Promise.resolve(onActivate(point.previousBranchId as string)).catch(() => {});
-						}}
-						aria-label={t("chat.branch.previous")}
-						className="flex size-7 items-center justify-center rounded-md transition-[background-color,color,transform] hover:bg-interactive-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-logo-accent/40 disabled:opacity-45"
-					>
-						<ChevronLeft aria-hidden="true" className="size-3.5" />
-					</button>
+					<span className="inline-flex">
+						<button
+							type="button"
+							disabled={pending}
+							onClick={() => {
+								void Promise.resolve(onActivate(point.previousBranchId as string)).catch(() => {});
+							}}
+							aria-label={t("chat.branch.previous")}
+							className="flex size-7 items-center justify-center rounded-md transition-[background-color,color,transform] hover:bg-interactive-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-logo-accent/40 disabled:opacity-45"
+						>
+							<ChevronLeft aria-hidden="true" className="size-3.5" />
+						</button>
+					</span>
 				</TooltipTrigger>
 				<TooltipContent side="bottom">{t("chat.branch.previous")}</TooltipContent>
 			</Tooltip>
@@ -45,17 +47,19 @@ export function ConversationBranchNavigator({
 		{point.nextBranchId ? (
 			<Tooltip>
 				<TooltipTrigger asChild>
-					<button
-						type="button"
-						disabled={pending}
-						onClick={() => {
-							void Promise.resolve(onActivate(point.nextBranchId as string)).catch(() => {});
-						}}
-						aria-label={t("chat.branch.next")}
-						className="flex size-7 items-center justify-center rounded-md transition-[background-color,color,transform] hover:bg-interactive-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-logo-accent/40 disabled:opacity-45"
-					>
-						<ChevronRight aria-hidden="true" className="size-3.5" />
-					</button>
+					<span className="inline-flex">
+						<button
+							type="button"
+							disabled={pending}
+							onClick={() => {
+								void Promise.resolve(onActivate(point.nextBranchId as string)).catch(() => {});
+							}}
+							aria-label={t("chat.branch.next")}
+							className="flex size-7 items-center justify-center rounded-md transition-[background-color,color,transform] hover:bg-interactive-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-logo-accent/40 disabled:opacity-45"
+						>
+							<ChevronRight aria-hidden="true" className="size-3.5" />
+						</button>
+					</span>
 				</TooltipTrigger>
 				<TooltipContent side="bottom">{t("chat.branch.next")}</TooltipContent>
 			</Tooltip>

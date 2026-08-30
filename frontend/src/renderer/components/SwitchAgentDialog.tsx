@@ -347,20 +347,22 @@ export function SwitchAgentDialog({ agentSwitch, container, open, session, onOpe
 							</div>
 							<Tooltip>
 								<TooltipTrigger asChild>
-									<Button
-										aria-label={admissionPending ? t("newTask.starting") : t("switchAgent.confirm")}
-										className="size-(--size-settings-action-height)"
-										disabled={admissionPending}
-										size="none"
-										type="submit"
-										variant="primary"
-									>
-										{admissionPending ? (
-											<LoaderCircle className="size-icon-base animate-spin" aria-hidden="true" />
-										) : (
-											<Repeat2 className="size-4 stroke-[1.8]" aria-hidden="true" />
-										)}
-									</Button>
+									<span className="inline-flex">
+										<Button
+											aria-label={admissionPending ? t("newTask.starting") : t("switchAgent.confirm")}
+											className="size-(--size-settings-action-height)"
+											disabled={admissionPending}
+											size="none"
+											type="submit"
+											variant="primary"
+										>
+											{admissionPending ? (
+												<LoaderCircle className="size-icon-base animate-spin" aria-hidden="true" />
+											) : (
+												<Repeat2 className="size-4 stroke-[1.8]" aria-hidden="true" />
+											)}
+										</Button>
+									</span>
 								</TooltipTrigger>
 								<TooltipContent side="bottom">
 									{admissionPending ? t("newTask.starting") : t("switchAgent.confirm")}

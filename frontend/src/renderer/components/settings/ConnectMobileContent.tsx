@@ -337,22 +337,24 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 									</button>
 									<Tooltip>
 										<TooltipTrigger asChild>
-											<button
-												type="button"
-												aria-label={t("mobile.regenerate")}
-												className="ml-0.5 inline-flex size-5 items-center justify-center align-middle text-settings-muted transition-colors hover:text-settings-label disabled:opacity-50"
-												disabled={busy}
-												onClick={() => {
-													clearActionErrors();
-													regenerate.mutate();
-												}}
-											>
-												{regenerate.isPending ? (
-													<Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
-												) : (
-													<RotateCcw className="size-3.5" aria-hidden="true" />
-												)}
-											</button>
+											<span className="inline-flex">
+												<button
+													type="button"
+													aria-label={t("mobile.regenerate")}
+													className="ml-0.5 inline-flex size-5 items-center justify-center align-middle text-settings-muted transition-colors hover:text-settings-label disabled:opacity-50"
+													disabled={busy}
+													onClick={() => {
+														clearActionErrors();
+														regenerate.mutate();
+													}}
+												>
+													{regenerate.isPending ? (
+														<Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
+													) : (
+														<RotateCcw className="size-3.5" aria-hidden="true" />
+													)}
+												</button>
+											</span>
 										</TooltipTrigger>
 										<TooltipContent side="bottom">{t("mobile.regenerate")}</TooltipContent>
 									</Tooltip>

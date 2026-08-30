@@ -871,15 +871,17 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		session && !isOrchestrator ? (
 			<Tooltip>
 				<TooltipTrigger asChild>
-					<TopbarButton
-						aria-label={t("shortcut.new-shell-terminal")}
-						disabled={openShellTerminal.isPending}
-						onClick={addShellTerminal}
-						type="button"
-						variant="icon"
-					>
-						<Plus aria-hidden="true" className="size-icon-md" />
-					</TopbarButton>
+					<span className="inline-flex">
+						<TopbarButton
+							aria-label={t("shortcut.new-shell-terminal")}
+							disabled={openShellTerminal.isPending}
+							onClick={addShellTerminal}
+							type="button"
+							variant="icon"
+						>
+							<Plus aria-hidden="true" className="size-icon-md" />
+						</TopbarButton>
+					</span>
 				</TooltipTrigger>
 				<TooltipContent side="bottom">
 					{newTerminalError ?? t("terminal.newWithShortcut", { shortcut: newTerminalShortcutLabel })}

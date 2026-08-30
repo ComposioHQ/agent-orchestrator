@@ -2257,17 +2257,19 @@ function ReviewPanel({
 							{hasReviewerSession ? (
 								<Tooltip>
 									<TooltipTrigger asChild>
-										<Button
-											aria-label={isKilling ? t("inspector.review.killingSession") : t("inspector.review.killSession")}
-											className="h-control-md w-control-md shrink-0 p-0 text-error [&_svg]:size-icon-sm"
-											disabled={killDisabled}
-											onClick={onKill}
-											size="sm"
-											type="button"
-											variant="ghost"
-										>
-											<Trash2 aria-hidden="true" />
-										</Button>
+										<span className="inline-flex">
+											<Button
+												aria-label={isKilling ? t("inspector.review.killingSession") : t("inspector.review.killSession")}
+												className="h-control-md w-control-md shrink-0 p-0 text-error [&_svg]:size-icon-sm"
+												disabled={killDisabled}
+												onClick={onKill}
+												size="sm"
+												type="button"
+												variant="ghost"
+											>
+												<Trash2 aria-hidden="true" />
+											</Button>
+										</span>
 									</TooltipTrigger>
 									<TooltipContent side="bottom">
 										{isKilling ? t("inspector.review.killingSession") : t("inspector.review.killSession")}

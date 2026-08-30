@@ -209,35 +209,39 @@ export function WindowTitlebar() {
       </Tooltip>
       <Tooltip>
         <TooltipTrigger asChild>
-          <button
-            aria-label={t("titlebar.goBack")}
-            className="window-titlebar__toggle"
-            disabled={!canGoBack}
-            onClick={() => router.history.back()}
-            type="button"
-          >
-            <ArrowLeft
-              aria-hidden="true"
-              className="window-titlebar__toggle-icon"
-            />
-          </button>
+          <span className="inline-flex">
+            <button
+              aria-label={t("titlebar.goBack")}
+              className="window-titlebar__toggle"
+              disabled={!canGoBack}
+              onClick={() => router.history.back()}
+              type="button"
+            >
+              <ArrowLeft
+                aria-hidden="true"
+                className="window-titlebar__toggle-icon"
+              />
+            </button>
+          </span>
         </TooltipTrigger>
         <TooltipContent side="bottom">{t("titlebar.goBack")}</TooltipContent>
       </Tooltip>
       <Tooltip>
         <TooltipTrigger asChild>
-          <button
-            aria-label={t("titlebar.goForward")}
-            className="window-titlebar__toggle"
-            disabled={!canGoForward}
-            onClick={() => router.history.forward()}
-            type="button"
-          >
-            <ArrowRight
-              aria-hidden="true"
-              className="window-titlebar__toggle-icon"
-            />
-          </button>
+          <span className="inline-flex">
+            <button
+              aria-label={t("titlebar.goForward")}
+              className="window-titlebar__toggle"
+              disabled={!canGoForward}
+              onClick={() => router.history.forward()}
+              type="button"
+            >
+              <ArrowRight
+                aria-hidden="true"
+                className="window-titlebar__toggle-icon"
+              />
+            </button>
+          </span>
         </TooltipTrigger>
         <TooltipContent side="bottom">{t("titlebar.goForward")}</TooltipContent>
       </Tooltip>

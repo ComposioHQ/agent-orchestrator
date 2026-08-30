@@ -1204,15 +1204,17 @@ function TerminalEndedStrip({ canRestore, error, isRestoring, onRestore, variant
 				{canRestore && (
 					<Tooltip>
 						<TooltipTrigger asChild>
-							<button
-								type="button"
-								aria-label={t("terminal.restoreSession")}
-								className="inline-flex size-control-form shrink-0 items-center justify-center rounded-md border border-border bg-raised text-foreground transition hover:bg-interactive-hover disabled:cursor-not-allowed disabled:opacity-50"
-								disabled={isRestoring}
-								onClick={onRestore}
-							>
-								<RotateCcw className={cn("size-icon-base", isRestoring && "animate-spin")} aria-hidden="true" />
-							</button>
+							<span className="inline-flex">
+								<button
+									type="button"
+									aria-label={t("terminal.restoreSession")}
+									className="inline-flex size-control-form shrink-0 items-center justify-center rounded-md border border-border bg-raised text-foreground transition hover:bg-interactive-hover disabled:cursor-not-allowed disabled:opacity-50"
+									disabled={isRestoring}
+									onClick={onRestore}
+								>
+									<RotateCcw className={cn("size-icon-base", isRestoring && "animate-spin")} aria-hidden="true" />
+								</button>
+							</span>
 						</TooltipTrigger>
 						<TooltipContent side="bottom">{t("terminal.restoreSession")}</TooltipContent>
 					</Tooltip>

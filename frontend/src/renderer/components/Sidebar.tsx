@@ -722,29 +722,33 @@ export function Sidebar({
 					<div className="flex flex-col items-center gap-1 pb-2">
 						<Tooltip>
 							<TooltipTrigger asChild>
-								<button
-									aria-label={t("titlebar.goBack")}
-									className="grid size-control-board place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground disabled:cursor-not-allowed disabled:opacity-55 disabled:hover:bg-transparent disabled:hover:text-muted-foreground [&_svg]:size-icon-base"
-									disabled={!canGoBack}
-									onClick={() => router.history.back()}
-									type="button"
-								>
-									<ArrowLeft aria-hidden="true" />
-								</button>
+								<span className="inline-flex">
+									<button
+										aria-label={t("titlebar.goBack")}
+										className="grid size-control-board place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground disabled:cursor-not-allowed disabled:opacity-55 disabled:hover:bg-transparent disabled:hover:text-muted-foreground [&_svg]:size-icon-base"
+										disabled={!canGoBack}
+										onClick={() => router.history.back()}
+										type="button"
+									>
+										<ArrowLeft aria-hidden="true" />
+									</button>
+								</span>
 							</TooltipTrigger>
 							<TooltipContent side="right">{t("titlebar.goBack")}</TooltipContent>
 						</Tooltip>
 						<Tooltip>
 							<TooltipTrigger asChild>
-								<button
-									aria-label={t("titlebar.goForward")}
-									className="grid size-control-board place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground disabled:cursor-not-allowed disabled:opacity-55 disabled:hover:bg-transparent disabled:hover:text-muted-foreground [&_svg]:size-icon-base"
-									disabled={!canGoForward}
-									onClick={() => router.history.forward()}
-									type="button"
-								>
-									<ArrowRight aria-hidden="true" />
-								</button>
+								<span className="inline-flex">
+									<button
+										aria-label={t("titlebar.goForward")}
+										className="grid size-control-board place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground disabled:cursor-not-allowed disabled:opacity-55 disabled:hover:bg-transparent disabled:hover:text-muted-foreground [&_svg]:size-icon-base"
+										disabled={!canGoForward}
+										onClick={() => router.history.forward()}
+										type="button"
+									>
+										<ArrowRight aria-hidden="true" />
+									</button>
+								</span>
 							</TooltipTrigger>
 							<TooltipContent side="right">{t("titlebar.goForward")}</TooltipContent>
 						</Tooltip>
@@ -1357,24 +1361,26 @@ const ProjectItemContent = memo(function ProjectItemContent({
 							>
 								<Tooltip>
 									<TooltipTrigger asChild>
-										<button
-											aria-current={orchestratorActive ? "page" : undefined}
-											aria-label={
-												orchestrator
-													? t("shell.openProjectOrchestrator", {
-															name: workspace.name,
-														})
-													: t("shell.spawnProjectOrchestrator", {
-															name: workspace.name,
-														})
-											}
-											className={cn(HOVER_ACTION_CLASS, orchestratorActive && "text-foreground")}
-											disabled={isSpawning || isProjectRestarting}
-											onClick={() => void openOrchestrator()}
-											type="button"
-										>
-											<OrchestratorIcon aria-hidden="true" strokeWidth={orchestratorActive ? 2.5 : 2} />
-										</button>
+										<span className="inline-flex">
+											<button
+												aria-current={orchestratorActive ? "page" : undefined}
+												aria-label={
+													orchestrator
+														? t("shell.openProjectOrchestrator", {
+																name: workspace.name,
+															})
+														: t("shell.spawnProjectOrchestrator", {
+																name: workspace.name,
+															})
+												}
+												className={cn(HOVER_ACTION_CLASS, orchestratorActive && "text-foreground")}
+												disabled={isSpawning || isProjectRestarting}
+												onClick={() => void openOrchestrator()}
+												type="button"
+											>
+												<OrchestratorIcon aria-hidden="true" strokeWidth={orchestratorActive ? 2.5 : 2} />
+											</button>
+										</span>
 									</TooltipTrigger>
 									<TooltipContent>
 										{isProjectRestarting
@@ -2398,18 +2404,20 @@ function CreateProjectButton({
 			{({ disabled, choosePath, label }) => (
 				<Tooltip>
 					<TooltipTrigger asChild>
-						<button
-							aria-label={t("shell.newProject")}
-							className={cn(
-								"grid size-icon-xl shrink-0 place-items-center rounded-sm text-passive transition-colors hover:bg-interactive-hover hover:text-foreground",
-								hideTrigger && "hidden",
-							)}
-							disabled={disabled}
-							onClick={choosePath}
-							type="button"
-						>
-							<Plus className="size-icon-sm" aria-hidden="true" />
-						</button>
+						<span className="inline-flex">
+							<button
+								aria-label={t("shell.newProject")}
+								className={cn(
+									"grid size-icon-xl shrink-0 place-items-center rounded-sm text-passive transition-colors hover:bg-interactive-hover hover:text-foreground",
+									hideTrigger && "hidden",
+								)}
+								disabled={disabled}
+								onClick={choosePath}
+								type="button"
+							>
+								<Plus className="size-icon-sm" aria-hidden="true" />
+							</button>
+						</span>
 					</TooltipTrigger>
 					<TooltipContent>{label}</TooltipContent>
 				</Tooltip>

@@ -325,15 +325,17 @@ function ArchiveRestoreButton({
 	return (
 		<Tooltip>
 			<TooltipTrigger asChild>
-				<button
-					aria-label={label}
-					className="grid size-control-board-sm shrink-0 place-items-center rounded-md text-passive transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:cursor-not-allowed disabled:opacity-35"
-					disabled={isDisabled}
-					onClick={onClick}
-					type="button"
-				>
-					<RotateCcw className={cn("size-icon-md", isRestoring && "animate-spin")} aria-hidden="true" />
-				</button>
+				<span className="inline-flex">
+					<button
+						aria-label={label}
+						className="grid size-control-board-sm shrink-0 place-items-center rounded-md text-passive transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:cursor-not-allowed disabled:opacity-35"
+						disabled={isDisabled}
+						onClick={onClick}
+						type="button"
+					>
+						<RotateCcw className={cn("size-icon-md", isRestoring && "animate-spin")} aria-hidden="true" />
+					</button>
+				</span>
 			</TooltipTrigger>
 			<TooltipContent side="top">
 				{isRestoring ? t("shell.restoringSession") : t("shell.restoreSession")}
