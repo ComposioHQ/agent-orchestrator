@@ -1,9 +1,12 @@
 package daemon
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"strings"
+	"sync"
+	"time"
 
 	scmgitlab "github.com/aoagents/agent-orchestrator/backend/internal/adapters/scm/gitlab"
 	trackergithub "github.com/aoagents/agent-orchestrator/backend/internal/adapters/tracker/github"
@@ -11,10 +14,55 @@ import (
 	trackermulti "github.com/aoagents/agent-orchestrator/backend/internal/adapters/tracker/multi"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
 )
 
 func newGitHubTracker() (ports.Tracker, error) {
-	return trackergithub.New(trackergithub.Options{Token: trackergithub.EnvTokenSource{EnvVars: []string{"AO_GITHUB_TOKEN"}}})
+	return trackergithub.New(trackergithub.Options{Token: &ghTokenSource{}})
+}
+
+// ghTokenSource mirrors the SCM credential precedence: AO_GITHUB_TOKEN →
+// GITHUB_TOKEN (via EnvTokenSource) → `gh auth token` CLI fallback with
+// short-lived caching. This matches the old lazyGitHubTracker's token chain
+// and the GitLab tracker's DefaultTokenSource (env → glab CLI).
+type ghTokenSource struct {
+	mu        sync.Mutex
+	token     string
+	expiresAt time.Time
+}
+
+const (
+	ghTokenCacheTTL       = 5 * time.Minute
+	ghTokenCommandTimeout = 5 * time.Second
+)
+
+func (s *ghTokenSource) Token(ctx context.Context) (string, error) {
+	env := trackergithub.EnvTokenSource{EnvVars: []string{"AO_GITHUB_TOKEN"}}
+	if tok, err := env.Token(ctx); err == nil {
+		return tok, nil
+	} else if !errors.Is(err, trackergithub.ErrNoToken) {
+		return "", err
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now()
+	if s.token != "" && now.Before(s.expiresAt) {
+		return s.token, nil
+	}
+	cmdCtx, cancel := context.WithTimeout(ctx, ghTokenCommandTimeout)
+	defer cancel()
+	out, err := aoprocess.CommandContext(cmdCtx, "gh", "auth", "token").Output()
+	if err != nil {
+		return "", err
+	}
+	token := strings.TrimSpace(string(out))
+	if token == "" {
+		return "", trackergithub.ErrNoToken
+	}
+	s.token = token
+	s.expiresAt = now.Add(ghTokenCacheTTL)
+	return token, nil
 }
 
 // newGitLabTracker constructs a host-aware GitLab tracker. AllowedHosts and

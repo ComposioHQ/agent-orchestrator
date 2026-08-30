@@ -409,6 +409,30 @@ func TestStartTrackerIntake_RunsEvenWithoutEnabledProjects(t *testing.T) {
 	}
 }
 
+func TestGhTokenSourcePrefersAOGitHubToken(t *testing.T) {
+	t.Setenv("AO_GITHUB_TOKEN", "ao-token")
+	t.Setenv("GITHUB_TOKEN", "github-token")
+	token, err := (&ghTokenSource{}).Token(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if token != "ao-token" {
+		t.Fatalf("token = %q, want AO_GITHUB_TOKEN", token)
+	}
+}
+
+func TestGhTokenSourceFallsBackToGITHUBToken(t *testing.T) {
+	t.Setenv("AO_GITHUB_TOKEN", "")
+	t.Setenv("GITHUB_TOKEN", "github-token")
+	token, err := (&ghTokenSource{}).Token(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if token != "github-token" {
+		t.Fatalf("token = %q, want GITHUB_TOKEN", token)
+	}
+}
+
 type captureRuntimeSender struct {
 	handle  ports.RuntimeHandle
 	message string
