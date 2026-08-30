@@ -10,10 +10,17 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/observe/sentryobs"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 
 	_ "modernc.org/sqlite"
 )
+
+type panicAgentSwitchEventEncoder struct{}
+
+func (panicAgentSwitchEventEncoder) EncodeAgentSwitchFailureEvent(domain.AgentSwitchEventBuildInput) (ports.AgentSwitchFailureEncodedEvent, error) {
+	panic("injected canonical builder panic")
+}
 
 func openAgentSwitchFailureInternalStore(t *testing.T) (*Store, *sql.DB, domain.AgentSwitch, domain.AgentSwitchFault) {
 	t.Helper()
@@ -94,6 +101,9 @@ CREATE TABLE agent_switch_failure_delivery_state (
 		GateRetained: domain.AgentSwitchTriFalse, OccurredAt: now.Add(time.Second),
 	}
 	st := NewStore(db, db)
+	if err := st.ConfigureAgentSwitchFailureEventEncoder(context.Background(), sentryobs.AgentSwitchEventEncoder{}); err != nil {
+		t.Fatalf("configure event encoder: %v", err)
+	}
 	metadata := domain.AgentSwitchEventMetadata{
 		Release: "1.2.3", Environment: domain.AgentSwitchEnvironmentDevelopment,
 		Channel: domain.AgentSwitchChannelPreview, Platform: domain.AgentSwitchPlatformDaemon,
@@ -124,9 +134,7 @@ func internalFailedMutation(sw domain.AgentSwitch, fault domain.AgentSwitchFault
 
 func TestAgentSwitchFailureBuilderPanicRollsBackTelemetryOnly(t *testing.T) {
 	st, db, sw, fault := openAgentSwitchFailureInternalStore(t)
-	st.agentSwitchFailureEventBuilder = func(domain.AgentSwitchEventBuildInput) ([]byte, error) {
-		panic("injected canonical builder panic")
-	}
+	st.agentSwitchFailureEventEncoder = panicAgentSwitchEventEncoder{}
 	result, err := st.ApplyAgentSwitchMutation(context.Background(), internalFailedMutation(sw, fault))
 	if err != nil || !result.CoreChanged || result.Enrollment != domain.AgentSwitchEnrollmentLocalInvariantFailed {
 		t.Fatalf("builder panic result = %+v, err=%v", result, err)

@@ -323,7 +323,7 @@ func dispatcherTestClaim(now time.Time) ports.AgentSwitchFailureClaim {
 	return ports.AgentSwitchFailureClaim{
 		ID: eventID,
 		Event: domain.AgentSwitchFailureEvent{
-			EventID: eventID, EnvelopeEncodingVersion: domain.AgentSwitchEnvelopeEncodingV1,
+			EventID: eventID, EnvelopeEncodingVersion: 1,
 			CanonicalEventJSON: []byte(`{"event_id":"` + eventID + `"}`),
 		},
 		LeaseToken: "lease-token", ConsentGeneration: "generation", DeliveryEpoch: 7,

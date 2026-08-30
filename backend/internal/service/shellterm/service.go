@@ -223,6 +223,10 @@ func (s *Service) OpenShellTerminal(ctx context.Context, in OpenShellTerminalInp
 	if err != nil {
 		return ShellTerminal{}, err
 	}
+	openTerminals, err := s.store.SelectShellTerminalsByAppRunID(ctx, s.appRunID)
+	if err != nil {
+		return ShellTerminal{}, fmt.Errorf("open shell terminal: list existing terminals: %w", err)
+	}
 	argv := resolveUserLoginShell()
 	if len(argv) == 0 {
 		return ShellTerminal{}, apierr.Internal("SHELL_TERMINAL_NO_SHELL",
@@ -253,7 +257,7 @@ func (s *Service) OpenShellTerminal(ctx context.Context, in OpenShellTerminalInp
 		ProjectID:  projectID,
 		SessionID:  in.SessionID,
 		WorkingDir: workingDir,
-		Title:      shellTerminalTitle(workingDir),
+		Title:      nextShellTerminalTitle(openTerminals),
 		AppRunID:   s.appRunID,
 		CreatedAt:  s.now().UTC(),
 	}
@@ -269,6 +273,26 @@ func (s *Service) OpenShellTerminal(ctx context.Context, in OpenShellTerminalInp
 
 	s.log.Info("shell terminal opened", "handleId", handle.ID, "workingDir", workingDir)
 	return shellTerminalFromRecord(rec), nil
+}
+
+// nextShellTerminalTitle assigns a name at creation time. It never depends on
+// a tab's current UI position, so closing or reordering another tab cannot
+// rename an existing terminal.
+func nextShellTerminalTitle(terminals []ShellTerminalRecord) string {
+	maxNumber := 0
+	for _, terminal := range terminals {
+		if terminal.Title == "Terminal" {
+			if maxNumber < 1 {
+				maxNumber = 1
+			}
+			continue
+		}
+		var number int
+		if _, err := fmt.Sscanf(terminal.Title, "Terminal %d", &number); err == nil && number > maxNumber {
+			maxNumber = number
+		}
+	}
+	return fmt.Sprintf("Terminal %d", maxNumber+1)
 }
 
 // maxShellTerminalTitleLen bounds a user-supplied tab name. Tabs are truncated

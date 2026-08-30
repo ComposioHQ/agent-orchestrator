@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/telemetry/policyauthority"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -47,7 +48,7 @@ func TestHeadlessAuthorityTruthTable(t *testing.T) {
 			}
 			store := &policyStoreFake{}
 			coordinator := NewPolicyCoordinator(store, PolicyOptions{
-				DataDir: dir, TelemetryEvents: tc.envOn, TelemetryEventsExplicit: tc.explicit,
+				AuthorityReader: policyauthority.New(path), TelemetryEvents: tc.envOn, TelemetryEventsExplicit: tc.explicit,
 				DestinationFingerprint: "destination", ProductionEnabled: boolPtr(true),
 				Metadata: validMetadata(), NewBootToken: func() string { return "boot-token" },
 			})
@@ -76,7 +77,7 @@ func TestApplyPolicyTreatsBodyAsHintAndCannotForgeEnablement(t *testing.T) {
 	generation := "7f80c8a9-ec67-4a16-a067-a444ffcc5cca"
 	writePolicy(t, filepath.Join(dir, PolicyFileName), false, generation, 0o600)
 	store := &policyStoreFake{}
-	coordinator := NewPolicyCoordinator(store, PolicyOptions{DataDir: dir, TelemetryEvents: true, TelemetryEventsExplicit: true, DestinationFingerprint: "destination", ProductionEnabled: boolPtr(true), Metadata: validMetadata()})
+	coordinator := NewPolicyCoordinator(store, PolicyOptions{AuthorityReader: policyauthority.New(filepath.Join(dir, PolicyFileName)), TelemetryEvents: true, TelemetryEventsExplicit: true, DestinationFingerprint: "destination", ProductionEnabled: boolPtr(true), Metadata: validMetadata()})
 	if _, err := coordinator.ApplyPolicy(context.Background(), generation, true); err == nil {
 		t.Fatal("forged enabled hint was accepted for an off authority file")
 	}
@@ -93,7 +94,7 @@ func TestPrepareDisableLatchesGateUntilDisabledGenerationIsPurged(t *testing.T) 
 	writePolicy(t, path, true, onGeneration, 0o600)
 	store := &policyStoreFake{}
 	coordinator := NewPolicyCoordinator(store, PolicyOptions{
-		DataDir: dir, TelemetryEvents: true, TelemetryEventsExplicit: true,
+		AuthorityReader: policyauthority.New(path), TelemetryEvents: true, TelemetryEventsExplicit: true,
 		DestinationFingerprint: "destination", ProductionEnabled: boolPtr(true), Metadata: validMetadata(),
 	})
 	if err := coordinator.Synchronize(context.Background()); err != nil {
@@ -140,7 +141,7 @@ func TestDisabledApplyFailureDoesNotCachePurgeProof(t *testing.T) {
 	writePolicy(t, filepath.Join(dir, PolicyFileName), false, generation, 0o600)
 	store := &policyStoreFake{applyErr: errors.New("purge failed")}
 	coordinator := NewPolicyCoordinator(store, PolicyOptions{
-		DataDir: dir, TelemetryEvents: true, TelemetryEventsExplicit: true,
+		AuthorityReader: policyauthority.New(filepath.Join(dir, PolicyFileName)), TelemetryEvents: true, TelemetryEventsExplicit: true,
 		DestinationFingerprint: "destination", ProductionEnabled: boolPtr(true), Metadata: validMetadata(),
 	})
 	failed, err := coordinator.ApplyPolicy(context.Background(), generation, false)
@@ -175,7 +176,7 @@ func TestDisabledApplyAcknowledgesOnlyAfterAtomicStoreCommit(t *testing.T) {
 	releaseApply := make(chan struct{})
 	store := &policyStoreFake{applyStarted: applyStarted, releaseApply: releaseApply}
 	coordinator := NewPolicyCoordinator(store, PolicyOptions{
-		DataDir: dir, TelemetryEvents: true, TelemetryEventsExplicit: true,
+		AuthorityReader: policyauthority.New(filepath.Join(dir, PolicyFileName)), TelemetryEvents: true, TelemetryEventsExplicit: true,
 		DestinationFingerprint: "destination", ProductionEnabled: boolPtr(true), Metadata: validMetadata(),
 	})
 	type result struct {
@@ -208,6 +209,52 @@ func TestDisabledApplyAcknowledgesOnlyAfterAtomicStoreCommit(t *testing.T) {
 	}
 }
 
+func TestDisabledApplyAcknowledgesOnlyAfterProviderDrain(t *testing.T) {
+	dir := t.TempDir()
+	generation := "7f80c8a9-ec67-4a16-a067-a444ffcc5cca"
+	path := filepath.Join(dir, PolicyFileName)
+	writePolicy(t, path, false, generation, 0o600)
+	drainStarted := make(chan struct{}, 1)
+	releaseDrain := make(chan struct{})
+	coordinator := NewPolicyCoordinator(&policyStoreFake{}, PolicyOptions{
+		AuthorityReader: policyauthority.New(path), TelemetryEvents: true, TelemetryEventsExplicit: true,
+		DestinationFingerprint: "destination", ProductionEnabled: boolPtr(true), Metadata: validMetadata(),
+		ProviderDrain: func(ctx context.Context) error {
+			drainStarted <- struct{}{}
+			select {
+			case <-releaseDrain:
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		},
+	})
+	type result struct {
+		ack ports.AgentSwitchFailurePolicyAcknowledgement
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		ack, err := coordinator.ApplyPolicy(context.Background(), generation, false)
+		done <- result{ack: ack, err: err}
+	}()
+	select {
+	case <-drainStarted:
+	case <-time.After(time.Second):
+		t.Fatal("provider drain did not start")
+	}
+	select {
+	case got := <-done:
+		t.Fatalf("opt-out acknowledged before provider drain: %+v", got)
+	default:
+	}
+	close(releaseDrain)
+	got := <-done
+	if got.err != nil || !got.ack.GateDrained || !got.ack.PurgeConfirmed {
+		t.Fatalf("disabled apply result = %+v", got)
+	}
+}
+
 func TestPolicyOperationsDoNotOvertakeAtomicApply(t *testing.T) {
 	dir := t.TempDir()
 	generation := "7f80c8a9-ec67-4a16-a067-a444ffcc5cca"
@@ -216,7 +263,7 @@ func TestPolicyOperationsDoNotOvertakeAtomicApply(t *testing.T) {
 	releaseApply := make(chan struct{})
 	store := &policyStoreFake{applyStarted: applyStarted, releaseApply: releaseApply}
 	coordinator := NewPolicyCoordinator(store, PolicyOptions{
-		DataDir: dir, TelemetryEvents: true, TelemetryEventsExplicit: true,
+		AuthorityReader: policyauthority.New(filepath.Join(dir, PolicyFileName)), TelemetryEvents: true, TelemetryEventsExplicit: true,
 		DestinationFingerprint: "destination", ProductionEnabled: boolPtr(true), Metadata: validMetadata(),
 	})
 	applyDone := make(chan error, 1)
@@ -258,7 +305,7 @@ func TestInvalidAuthorityPurgesBeforeReportingUnavailable(t *testing.T) {
 	}
 	store := &policyStoreFake{}
 	coordinator := NewPolicyCoordinator(store, PolicyOptions{
-		DataDir: dir, TelemetryEvents: true, TelemetryEventsExplicit: true,
+		AuthorityReader: policyauthority.New(filepath.Join(dir, PolicyFileName)), TelemetryEvents: true, TelemetryEventsExplicit: true,
 		DestinationFingerprint: "destination", ProductionEnabled: boolPtr(true), Metadata: validMetadata(),
 	})
 	if err := coordinator.ForceDisabled(context.Background()); err != nil {
@@ -278,7 +325,7 @@ func TestEnrollmentFailureFallsBackToDisabledAtomicPurge(t *testing.T) {
 	writePolicy(t, filepath.Join(dir, PolicyFileName), true, generation, 0o600)
 	store := &policyStoreFake{enrollErr: errors.New("enrollment failed")}
 	coordinator := NewPolicyCoordinator(store, PolicyOptions{
-		DataDir: dir, TelemetryEvents: true, TelemetryEventsExplicit: true,
+		AuthorityReader: policyauthority.New(filepath.Join(dir, PolicyFileName)), TelemetryEvents: true, TelemetryEventsExplicit: true,
 		DestinationFingerprint: "destination", ProductionEnabled: boolPtr(true), Metadata: validMetadata(),
 	})
 	if err := coordinator.Synchronize(context.Background()); err == nil {
@@ -300,7 +347,7 @@ func TestGateChangeCancelsAndAwaitsRegisteredDeliveryWithoutInventingGeneration(
 	generation := "7f80c8a9-ec67-4a16-a067-a444ffcc5cca"
 	writePolicy(t, filepath.Join(dir, PolicyFileName), true, generation, 0o600)
 	store := &policyStoreFake{}
-	coordinator := NewPolicyCoordinator(store, PolicyOptions{DataDir: dir, TelemetryEvents: true, TelemetryEventsExplicit: true, DestinationFingerprint: "destination", ProductionEnabled: boolPtr(true), Metadata: validMetadata()})
+	coordinator := NewPolicyCoordinator(store, PolicyOptions{AuthorityReader: policyauthority.New(filepath.Join(dir, PolicyFileName)), TelemetryEvents: true, TelemetryEventsExplicit: true, DestinationFingerprint: "destination", ProductionEnabled: boolPtr(true), Metadata: validMetadata()})
 	if err := coordinator.Synchronize(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -369,7 +416,12 @@ func validMetadata() domain.AgentSwitchEventMetadata {
 func boolPtr(value bool) *bool { return &value }
 func writePolicy(t *testing.T, path string, enabled bool, generation string, mode os.FileMode) {
 	t.Helper()
-	record := policyDiskRecord{SchemaVersion: 1, EventsEnabled: enabled, ConsentGeneration: generation, UpdatedAt: "2026-08-28T10:15:30.000Z"}
+	record := map[string]any{
+		"schema_version":     1,
+		"events_enabled":     enabled,
+		"consent_generation": generation,
+		"updated_at":         "2026-08-28T10:15:30.000Z",
+	}
 	raw, err := json.Marshal(record)
 	if err != nil {
 		t.Fatal(err)

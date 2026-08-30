@@ -42,6 +42,20 @@ func (s *Store) ConfigureAgentSwitchFailureEventMetadata(ctx context.Context, me
 	return nil
 }
 
+// ConfigureAgentSwitchFailureEventEncoder injects the provider adapter used to
+// freeze immutable outbox bytes.
+func (s *Store) ConfigureAgentSwitchFailureEventEncoder(ctx context.Context, encoder ports.AgentSwitchFailureEventEncoder) error {
+	if encoder == nil {
+		return errors.New("configure agent switch failure event encoder: encoder is required")
+	}
+	if err := s.writeMu.LockContext(ctx); err != nil {
+		return err
+	}
+	defer s.writeMu.Unlock()
+	s.agentSwitchFailureEventEncoder = encoder
+	return nil
+}
+
 // ApplyAgentSwitchMutation atomically persists a switch mutation and its eligible failure event.
 func (s *Store) ApplyAgentSwitchMutation(ctx context.Context, mutation ports.AgentSwitchMutation) (ports.AgentSwitchMutationResult, error) {
 	return s.applyAgentSwitchMutation(ctx, mutation, false)
@@ -204,11 +218,13 @@ func (s *Store) enrollFaultTx(ctx context.Context, tx *sql.Tx, input failureEnro
 	if err := validateFailureEnrollment(input); err != nil {
 		return domain.AgentSwitchEnrollmentLocalInvariantFailed, err
 	}
+	q := gen.New(tx)
 	if input.ResolveReceipts && input.Switch != nil {
-		if _, err := tx.ExecContext(ctx, `
-UPDATE agent_switch_failure_receipts SET retain_until=?
-WHERE switch_id=? AND retain_until IS NULL AND durable_state_fingerprint<>?`,
-			input.Switch.UpdatedAt.Add(agentSwitchFailureTTL), input.Switch.ID, agentSwitchDurableFingerprint(*input.Switch)); err != nil {
+		if _, err := q.ResolveAgentSwitchFailureReceipts(ctx, gen.ResolveAgentSwitchFailureReceiptsParams{
+			RetainUntil:             sql.NullTime{Time: input.Switch.UpdatedAt.Add(agentSwitchFailureTTL), Valid: true},
+			SwitchID:                sql.NullString{String: string(input.Switch.ID), Valid: true},
+			DurableStateFingerprint: agentSwitchDurableFingerprint(*input.Switch),
+		}); err != nil {
 			return domain.AgentSwitchEnrollmentLocalInvariantFailed, err
 		}
 	}
@@ -219,14 +235,14 @@ WHERE switch_id=? AND retain_until IS NULL AND durable_state_fingerprint<>?`,
 	if !input.Authorization.Enabled {
 		return domain.AgentSwitchEnrollmentDisabled, nil
 	}
-	var enabled bool
-	var generation, destination string
-	if err := tx.QueryRowContext(ctx, `SELECT enabled,consent_generation,destination_fingerprint FROM agent_switch_failure_policy WHERE singleton=1`).Scan(&enabled, &generation, &destination); err != nil {
+	policy, err := q.GetAgentSwitchFailurePolicy(ctx)
+	if err != nil {
 		return domain.AgentSwitchEnrollmentLocalInvariantFailed, err
 	}
-	if !enabled {
+	if !policy.Enabled {
 		return domain.AgentSwitchEnrollmentDisabled, nil
 	}
+	generation, destination := policy.ConsentGeneration, policy.DestinationFingerprint
 	if generation != input.Authorization.ConsentGeneration || destination != input.Authorization.DestinationFingerprint {
 		return domain.AgentSwitchEnrollmentStaleGeneration, nil
 	}
@@ -255,7 +271,10 @@ WHERE switch_id=? AND retain_until IS NULL AND durable_state_fingerprint<>?`,
 	if err := domain.ValidateAgentSwitchEventMetadata(metadata); err != nil {
 		return domain.AgentSwitchEnrollmentLocalInvariantFailed, err
 	}
-	canonical, err := s.agentSwitchFailureEventBuilder(domain.AgentSwitchEventBuildInput{
+	if s.agentSwitchFailureEventEncoder == nil {
+		return domain.AgentSwitchEnrollmentLocalInvariantFailed, errors.New("agent switch failure event encoder is not configured")
+	}
+	encoded, err := s.agentSwitchFailureEventEncoder.EncodeAgentSwitchFailureEvent(domain.AgentSwitchEventBuildInput{
 		EventID: eventID, Fault: fault, Release: metadata.Release,
 		Environment: metadata.Environment, Channel: metadata.Channel,
 		Platform: metadata.Platform, OS: metadata.OS,
@@ -273,7 +292,6 @@ WHERE switch_id=? AND retain_until IS NULL AND durable_state_fingerprint<>?`,
 		retainUntil = sql.NullTime{Time: fault.OccurredAt.Add(agentSwitchFailureTTL), Valid: true}
 	}
 
-	q := gen.New(tx)
 	var receiptRows int64
 	if input.GuardCurrentSwitch && input.Switch != nil {
 		receiptRows, err = q.InsertAgentSwitchFailureReceiptForCurrentSwitch(ctx, gen.InsertAgentSwitchFailureReceiptForCurrentSwitchParams{
@@ -300,7 +318,7 @@ WHERE switch_id=? AND retain_until IS NULL AND durable_state_fingerprint<>?`,
 	expiresAt := fault.OccurredAt.Add(agentSwitchFailureTTL)
 	payloadRows, err := q.InsertAgentSwitchFailurePayload(ctx, gen.InsertAgentSwitchFailurePayloadParams{
 		ID: eventID, SchemaVersion: agentSwitchFailureSchemaVersion,
-		EnvelopeEncodingVersion: domain.AgentSwitchEnvelopeEncodingV1,
+		EnvelopeEncodingVersion: int64(encoded.EnvelopeEncodingVersion),
 		DedupeKey:               dedupeKey, DestinationFingerprint: destination, SwitchID: switchID,
 		ReportKind: string(fault.ReportKind), Scope: scopeName,
 		FailurePoint: string(fault.FailurePoint), ClassifierCallsite: string(fault.ClassifierCallsite),
@@ -313,7 +331,7 @@ WHERE switch_id=? AND retain_until IS NULL AND durable_state_fingerprint<>?`,
 		SourceStopConfirmed: string(fault.SourceStopConfirmed), TargetOwnerCommitted: string(fault.TargetOwnerCommitted),
 		GateRetained: string(fault.GateRetained), RequestedAt: requestedAt, OccurredAt: fault.OccurredAt,
 		SanitizedStack: frames, StackFingerprint: domain.AgentSwitchStackFingerprint(fault.Frames),
-		CanonicalEventJson: canonical, ExpiresAt: expiresAt, AvailableAt: fault.OccurredAt,
+		CanonicalEventJson: encoded.Payload, ExpiresAt: expiresAt, AvailableAt: fault.OccurredAt,
 		ConsentGeneration: generation,
 	})
 	if err != nil {
@@ -501,7 +519,7 @@ func (s *Store) ForceDisableAgentSwitchFailurePolicy(ctx context.Context, update
 	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	_, err := s.writeDB.ExecContext(ctx, `UPDATE agent_switch_failure_policy SET enabled=0,updated_at=? WHERE singleton=1`, updatedAt)
+	_, err := s.qw.ForceDisableAgentSwitchFailurePolicy(ctx, updatedAt)
 	return err
 }
 
@@ -520,12 +538,15 @@ func (s *Store) ApplyAgentSwitchFailurePolicy(ctx context.Context, policy ports.
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, `UPDATE agent_switch_failure_policy SET enabled=?,consent_generation=?,destination_fingerprint=?,updated_at=? WHERE singleton=1`,
-		policy.Authorization.Enabled, policy.Authorization.ConsentGeneration, policy.Authorization.DestinationFingerprint, policy.UpdatedAt); err != nil {
+	q := s.qw.WithTx(tx)
+	if _, err := q.ApplyAgentSwitchFailurePolicy(ctx, gen.ApplyAgentSwitchFailurePolicyParams{
+		Enabled: policy.Authorization.Enabled, ConsentGeneration: policy.Authorization.ConsentGeneration,
+		DestinationFingerprint: policy.Authorization.DestinationFingerprint, UpdatedAt: policy.UpdatedAt,
+	}); err != nil {
 		return err
 	}
 	if !policy.Authorization.Enabled {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM agent_switch_failure_outbox`); err != nil {
+		if _, err := q.PurgeAgentSwitchFailurePayloads(ctx); err != nil {
 			return err
 		}
 	}
@@ -536,11 +557,7 @@ func (s *Store) ApplyAgentSwitchFailurePolicy(ctx context.Context, policy ports.
 func (s *Store) PurgeAgentSwitchFailurePayloads(ctx context.Context) (int64, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	result, err := s.writeDB.ExecContext(ctx, `DELETE FROM agent_switch_failure_outbox`)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
+	return s.qw.PurgeAgentSwitchFailurePayloads(ctx)
 }
 
 // EnrollCurrentAgentSwitchRecoveryMarkers enrolls eligible recovery markers that remain current.
@@ -555,44 +572,14 @@ func (s *Store) EnrollCurrentAgentSwitchRecoveryMarkers(ctx context.Context, inp
 		return 0, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	rows, err := tx.QueryContext(ctx, `
-SELECT a.id,a.session_id,a.requested_at,a.updated_at,a.state,a.error_code,a.failure_point,
- a.from_harness,a.target_harness,a.target_start_mode,s.session_mode
-FROM agent_switches a JOIN sessions s ON s.id=a.session_id
-WHERE a.state NOT IN ('completed','failed')
-  AND a.error_code IN ('source_stop_unconfirmed','source_restore_unconfirmed','target_start_unconfirmed')`)
+	q := s.qw.WithTx(tx)
+	rows, err := q.ListCurrentAgentSwitchRecoveryMarkers(ctx)
 	if err != nil {
 		return 0, err
 	}
-	defer func() { _ = rows.Close() }()
-	type marker struct {
-		id                     domain.AgentSwitchID
-		sessionID              domain.SessionID
-		requestedAt, updatedAt time.Time
-		state                  domain.AgentSwitchState
-		code                   domain.AgentSwitchErrorCode
-		point                  domain.AgentSwitchFailurePoint
-		from, target           domain.AgentHarness
-		start                  domain.AgentSwitchTargetStartMode
-		mode                   domain.SessionMode
-	}
-	var markers []marker
-	for rows.Next() {
-		var m marker
-		if err := rows.Scan(&m.id, &m.sessionID, &m.requestedAt, &m.updatedAt, &m.state, &m.code, &m.point, &m.from, &m.target, &m.start, &m.mode); err != nil {
-			return 0, err
-		}
-		markers = append(markers, m)
-	}
-	if err := rows.Err(); err != nil {
-		return 0, err
-	}
-	if err := rows.Close(); err != nil {
-		return 0, err
-	}
 	var enrolled int64
-	for _, m := range markers {
-		point := m.point
+	for _, m := range rows {
+		point := domain.AgentSwitchFailurePoint(m.FailurePoint)
 		if point == "" {
 			point = domain.AgentSwitchFailureRecoveryExistingMarker
 		}
@@ -601,11 +588,11 @@ WHERE a.state NOT IN ('completed','failed')
 			continue
 		}
 		backend := domain.AgentSwitchRuntimeTMUX
-		if m.mode == domain.SessionModeChat {
+		if m.SessionMode == domain.SessionModeChat {
 			backend = domain.AgentSwitchRuntimeChatController
 		}
-		start := m.start
-		if m.state == domain.AgentSwitchStartingTarget && start == domain.AgentSwitchTargetStartPending {
+		start := m.TargetStartMode
+		if m.State == domain.AgentSwitchStartingTarget && start == domain.AgentSwitchTargetStartPending {
 			continue
 		}
 		if start == "" {
@@ -613,10 +600,10 @@ WHERE a.state NOT IN ('completed','failed')
 		}
 		fault := domain.AgentSwitchFault{
 			ReportKind: domain.AgentSwitchReportRecoveryRequired, FailurePoint: point,
-			ClassifierCallsite: entry.ClassifierCallsite, Phase: m.state,
-			ErrorCode: m.code, FaultCode: domain.AgentSwitchFaultNotApplicable,
-			Execution: domain.AgentSwitchExecutionExplicitRecovery, Mode: m.mode,
-			FromHarness: m.from, TargetHarness: m.target, TargetStartMode: start,
+			ClassifierCallsite: entry.ClassifierCallsite, Phase: m.State,
+			ErrorCode: domain.AgentSwitchErrorCode(m.ErrorCode), FaultCode: domain.AgentSwitchFaultNotApplicable,
+			Execution: domain.AgentSwitchExecutionExplicitRecovery, Mode: m.SessionMode,
+			FromHarness: m.FromHarness, TargetHarness: m.TargetHarness, TargetStartMode: start,
 			RuntimeBackend: backend, CallOutcome: domain.AgentSwitchCallEffectUnknown,
 			Ownership: domain.AgentSwitchOwnershipAmbiguous, Compensation: domain.AgentSwitchCompensationUncertain,
 			UserImpact: domain.AgentSwitchUserImpactGateRetained, SourceStopConfirmed: domain.AgentSwitchTriFalse,
@@ -625,9 +612,9 @@ WHERE a.state NOT IN ('completed','failed')
 			Frames:     []domain.AgentSwitchStackFrame{{Package: "storage.sqlite.store", Function: "Store.EnrollCurrentAgentSwitchRecoveryMarkers", Filename: "backend/internal/storage/sqlite/store/agent_switch_failure_store.go", Line: 1}},
 		}
 		sw := domain.AgentSwitch{
-			ID: m.id, SessionID: m.sessionID, State: m.state, ErrorCode: m.code,
-			FailurePoint: m.point, FromHarness: m.from, TargetHarness: m.target,
-			TargetStartMode: m.start, RequestedAt: m.requestedAt, UpdatedAt: m.updatedAt,
+			ID: m.ID, SessionID: m.SessionID, State: m.State, ErrorCode: domain.AgentSwitchErrorCode(m.ErrorCode),
+			FailurePoint: domain.AgentSwitchFailurePoint(m.FailurePoint), FromHarness: m.FromHarness, TargetHarness: m.TargetHarness,
+			TargetStartMode: m.TargetStartMode, RequestedAt: m.RequestedAt, UpdatedAt: m.UpdatedAt,
 		}
 		status := s.enrollFaultSavepoint(ctx, tx, failureEnrollmentInput{Switch: &sw, Fault: &fault, Authorization: input.Authorization, GuardCurrentSwitch: true})
 		if status == domain.AgentSwitchEnrollmentEnrolled {
@@ -652,28 +639,17 @@ func (s *Store) ClaimAgentSwitchFailure(ctx context.Context, input ports.AgentSw
 		return ports.AgentSwitchFailureClaim{}, false, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, `
-UPDATE agent_switch_failure_outbox SET discarded_at=?,lease_token=NULL,lease_consent_generation=NULL,lease_delivery_epoch=NULL,lease_expires_at=NULL,last_delivery_error_class='unauthorized'
-WHERE delivered_at IS NULL AND discarded_at IS NULL AND destination_fingerprint<>?
- AND EXISTS(SELECT 1 FROM agent_switch_failure_policy p WHERE p.singleton=1 AND p.enabled=1
-   AND p.consent_generation=? AND p.destination_fingerprint=?)`, input.Now, input.Authorization.DestinationFingerprint,
-		input.Authorization.ConsentGeneration, input.Authorization.DestinationFingerprint); err != nil {
+	q := s.qw.WithTx(tx)
+	if _, err := q.QuarantineAgentSwitchFailureDestinationMismatch(ctx, gen.QuarantineAgentSwitchFailureDestinationMismatchParams{
+		Now: sql.NullTime{Time: input.Now, Valid: true}, DestinationFingerprint: input.Authorization.DestinationFingerprint,
+		ConsentGeneration: input.Authorization.ConsentGeneration,
+	}); err != nil {
 		return ports.AgentSwitchFailureClaim{}, false, err
 	}
-	var claim ports.AgentSwitchFailureClaim
-	var encoding int
-	err = tx.QueryRowContext(ctx, `
-SELECT o.id,o.envelope_encoding_version,o.canonical_event_json,o.destination_fingerprint,o.expires_at,o.attempt_count
-FROM agent_switch_failure_outbox o JOIN agent_switch_failure_policy p ON p.singleton=1
-LEFT JOIN agent_switch_failure_delivery_state d ON d.destination_fingerprint=o.destination_fingerprint
-WHERE p.enabled=1 AND p.consent_generation=? AND p.destination_fingerprint=?
- AND o.destination_fingerprint=? AND o.delivered_at IS NULL AND o.discarded_at IS NULL
- AND o.available_at<=? AND o.expires_at>? AND (o.lease_token IS NULL OR o.lease_expires_at<=?)
- AND (d.error_not_before IS NULL OR d.error_not_before<=?) AND (d.all_not_before IS NULL OR d.all_not_before<=?)
-ORDER BY o.available_at,o.occurred_at,o.id LIMIT 1`,
-		input.Authorization.ConsentGeneration, input.Authorization.DestinationFingerprint,
-		input.Authorization.DestinationFingerprint, input.Now, input.Now, input.Now, input.Now, input.Now).
-		Scan(&claim.ID, &encoding, &claim.Event.CanonicalEventJSON, &claim.DestinationFingerprint, &claim.ExpiresAt, &claim.AttemptCount)
+	row, err := q.SelectClaimableAgentSwitchFailure(ctx, gen.SelectClaimableAgentSwitchFailureParams{
+		ConsentGeneration:      input.Authorization.ConsentGeneration,
+		DestinationFingerprint: input.Authorization.DestinationFingerprint, Now: input.Now,
+	})
 	if errors.Is(err, sql.ErrNoRows) {
 		if err := tx.Commit(); err != nil {
 			return ports.AgentSwitchFailureClaim{}, false, err
@@ -683,27 +659,24 @@ ORDER BY o.available_at,o.occurred_at,o.id LIMIT 1`,
 	if err != nil {
 		return ports.AgentSwitchFailureClaim{}, false, err
 	}
-	result, err := tx.ExecContext(ctx, `
-UPDATE agent_switch_failure_outbox SET lease_token=?,lease_consent_generation=?,lease_delivery_epoch=?,lease_expires_at=?
-WHERE id=? AND destination_fingerprint=? AND delivered_at IS NULL AND discarded_at IS NULL AND expires_at>?
- AND (lease_token IS NULL OR lease_expires_at<=?)
- AND EXISTS(SELECT 1 FROM agent_switch_failure_policy p WHERE p.singleton=1 AND p.enabled=1
-   AND p.consent_generation=? AND p.destination_fingerprint=?)
- AND NOT EXISTS(SELECT 1 FROM agent_switch_failure_delivery_state d WHERE d.destination_fingerprint=?
-   AND ((d.error_not_before IS NOT NULL AND d.error_not_before>?) OR (d.all_not_before IS NOT NULL AND d.all_not_before>?)))`,
-		input.LeaseToken, input.Authorization.ConsentGeneration, input.DeliveryEpoch, input.LeaseExpiresAt,
-		claim.ID, claim.DestinationFingerprint, input.Now, input.Now,
-		input.Authorization.ConsentGeneration, input.Authorization.DestinationFingerprint,
-		input.Authorization.DestinationFingerprint, input.Now, input.Now)
+	claim := ports.AgentSwitchFailureClaim{
+		ID: row.ID, DestinationFingerprint: row.DestinationFingerprint, ExpiresAt: row.ExpiresAt,
+		AttemptCount: row.AttemptCount,
+		Event:        domain.AgentSwitchFailureEvent{EventID: row.ID, EnvelopeEncodingVersion: int(row.EnvelopeEncodingVersion), CanonicalEventJSON: row.CanonicalEventJson},
+	}
+	n, err := q.LeaseAgentSwitchFailure(ctx, gen.LeaseAgentSwitchFailureParams{
+		LeaseToken:        sql.NullString{String: input.LeaseToken, Valid: true},
+		ConsentGeneration: sql.NullString{String: input.Authorization.ConsentGeneration, Valid: true},
+		DeliveryEpoch:     sql.NullInt64{Int64: input.DeliveryEpoch, Valid: true},
+		LeaseExpiresAt:    sql.NullTime{Time: input.LeaseExpiresAt, Valid: true}, ID: claim.ID,
+		DestinationFingerprint: claim.DestinationFingerprint, Now: input.Now,
+	})
 	if err != nil {
 		return ports.AgentSwitchFailureClaim{}, false, err
 	}
-	n, err := result.RowsAffected()
-	if err != nil || n != 1 {
+	if n != 1 {
 		return ports.AgentSwitchFailureClaim{}, false, err
 	}
-	claim.Event.EventID = claim.ID
-	claim.Event.EnvelopeEncodingVersion = encoding
 	claim.LeaseToken = input.LeaseToken
 	claim.ConsentGeneration = input.Authorization.ConsentGeneration
 	claim.DeliveryEpoch = input.DeliveryEpoch
@@ -717,20 +690,17 @@ WHERE id=? AND destination_fingerprint=? AND delivered_at IS NULL AND discarded_
 func (s *Store) BeginAgentSwitchFailureAttempt(ctx context.Context, input ports.AgentSwitchFailureAttempt) (bool, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	result, err := s.writeDB.ExecContext(ctx, `
-UPDATE agent_switch_failure_outbox SET attempt_count=attempt_count+1,last_attempt_at=?
-WHERE id=? AND lease_token=? AND lease_consent_generation=? AND lease_delivery_epoch=? AND destination_fingerprint=?
-	 AND lease_expires_at IS NOT NULL AND lease_expires_at>? AND expires_at>? AND delivered_at IS NULL AND discarded_at IS NULL
-	 AND EXISTS(SELECT 1 FROM agent_switch_failure_policy p WHERE p.singleton=1 AND p.enabled=1 AND p.consent_generation=? AND p.destination_fingerprint=?)
-	 AND NOT EXISTS(SELECT 1 FROM agent_switch_failure_delivery_state d WHERE d.destination_fingerprint=? AND ((d.error_not_before IS NOT NULL AND d.error_not_before>?) OR (d.all_not_before IS NOT NULL AND d.all_not_before>?)))`,
-		input.Now, input.ID, input.LeaseToken, input.ConsentGeneration, input.DeliveryEpoch,
-		input.DestinationFingerprint, input.Now, input.Now, input.ConsentGeneration, input.DestinationFingerprint,
-		input.DestinationFingerprint, input.Now, input.Now)
+	n, err := s.qw.BeginAgentSwitchFailureAttempt(ctx, gen.BeginAgentSwitchFailureAttemptParams{
+		Now: sql.NullTime{Time: input.Now, Valid: true}, ID: input.ID,
+		LeaseToken:             sql.NullString{String: input.LeaseToken, Valid: true},
+		ConsentGeneration:      sql.NullString{String: input.ConsentGeneration, Valid: true},
+		DeliveryEpoch:          sql.NullInt64{Int64: input.DeliveryEpoch, Valid: true},
+		DestinationFingerprint: input.DestinationFingerprint,
+	})
 	if err != nil {
 		return false, err
 	}
-	n, err := result.RowsAffected()
-	return n == 1, err
+	return n == 1, nil
 }
 
 // SettleAgentSwitchFailureDelivery atomically records the outcome of a leased delivery attempt.
@@ -742,21 +712,28 @@ func (s *Store) SettleAgentSwitchFailureDelivery(ctx context.Context, input port
 		return false, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	baseArgs := []any{input.ID, input.LeaseToken, input.ConsentGeneration, input.DeliveryEpoch, input.DestinationFingerprint}
+	q := s.qw.WithTx(tx)
+	leaseToken := sql.NullString{String: input.LeaseToken, Valid: true}
+	consentGeneration := sql.NullString{String: input.ConsentGeneration, Valid: true}
+	deliveryEpoch := sql.NullInt64{Int64: input.DeliveryEpoch, Valid: true}
 	retryNotBefore := input.Result.RetryNotBefore
-	var result sql.Result
+	var n int64
 	switch input.Result.Outcome {
 	case ports.DeliveryAccepted:
-		result, err = tx.ExecContext(ctx, `UPDATE agent_switch_failure_outbox SET delivered_at=?,lease_token=NULL,lease_consent_generation=NULL,lease_delivery_epoch=NULL,lease_expires_at=NULL,last_delivery_error_class='' WHERE id=? AND lease_token=? AND lease_consent_generation=? AND lease_delivery_epoch=? AND destination_fingerprint=? AND delivered_at IS NULL AND discarded_at IS NULL`, append([]any{input.SettledAt}, baseArgs...)...)
+		n, err = q.MarkAgentSwitchFailureDelivered(ctx, gen.MarkAgentSwitchFailureDeliveredParams{
+			SettledAt: sql.NullTime{Time: input.SettledAt, Valid: true}, ID: input.ID,
+			LeaseToken: leaseToken, ConsentGeneration: consentGeneration, DeliveryEpoch: deliveryEpoch,
+			DestinationFingerprint: input.DestinationFingerprint,
+		})
 	case ports.DeliveryTransientFailure:
-		var expiresAt time.Time
-		if err := tx.QueryRowContext(ctx, `
-SELECT expires_at FROM agent_switch_failure_outbox
-WHERE id=? AND lease_token=? AND lease_consent_generation=? AND lease_delivery_epoch=? AND destination_fingerprint=?
- AND delivered_at IS NULL AND discarded_at IS NULL`, baseArgs...).Scan(&expiresAt); errors.Is(err, sql.ErrNoRows) {
+		expiresAt, expiresErr := q.GetLeasedAgentSwitchFailureExpiresAt(ctx, gen.GetLeasedAgentSwitchFailureExpiresAtParams{
+			ID: input.ID, LeaseToken: leaseToken, ConsentGeneration: consentGeneration,
+			DeliveryEpoch: deliveryEpoch, DestinationFingerprint: input.DestinationFingerprint,
+		})
+		if errors.Is(expiresErr, sql.ErrNoRows) {
 			return false, nil
-		} else if err != nil {
-			return false, err
+		} else if expiresErr != nil {
+			return false, expiresErr
 		}
 		next := input.NextAvailableAt
 		if retryNotBefore.After(next) {
@@ -768,18 +745,25 @@ WHERE id=? AND lease_token=? AND lease_consent_generation=? AND lease_delivery_e
 		if input.Result.ThrottleScope != ports.DeliveryThrottleNone {
 			retryNotBefore = next
 		}
-		result, err = tx.ExecContext(ctx, `UPDATE agent_switch_failure_outbox SET available_at=?,lease_token=NULL,lease_consent_generation=NULL,lease_delivery_epoch=NULL,lease_expires_at=NULL,last_delivery_error_class=? WHERE id=? AND lease_token=? AND lease_consent_generation=? AND lease_delivery_epoch=? AND destination_fingerprint=? AND delivered_at IS NULL AND discarded_at IS NULL`, append([]any{next, input.Result.Class}, baseArgs...)...)
+		n, err = q.RetryAgentSwitchFailure(ctx, gen.RetryAgentSwitchFailureParams{
+			AvailableAt: next, ErrorClass: string(input.Result.Class), ID: input.ID,
+			LeaseToken: leaseToken, ConsentGeneration: consentGeneration, DeliveryEpoch: deliveryEpoch,
+			DestinationFingerprint: input.DestinationFingerprint,
+		})
 	case ports.DeliveryPermanentFailure:
-		result, err = tx.ExecContext(ctx, `UPDATE agent_switch_failure_outbox SET discarded_at=?,lease_token=NULL,lease_consent_generation=NULL,lease_delivery_epoch=NULL,lease_expires_at=NULL,last_delivery_error_class=? WHERE id=? AND lease_token=? AND lease_consent_generation=? AND lease_delivery_epoch=? AND destination_fingerprint=? AND delivered_at IS NULL AND discarded_at IS NULL`, append([]any{input.SettledAt, input.Result.Class}, baseArgs...)...)
+		n, err = q.DiscardAgentSwitchFailure(ctx, gen.DiscardAgentSwitchFailureParams{
+			SettledAt: sql.NullTime{Time: input.SettledAt, Valid: true}, ErrorClass: string(input.Result.Class), ID: input.ID,
+			LeaseToken: leaseToken, ConsentGeneration: consentGeneration, DeliveryEpoch: deliveryEpoch,
+			DestinationFingerprint: input.DestinationFingerprint,
+		})
 	case ports.DeliveryPolicyCancelled, ports.DeliveryShutdownCancelled:
-		result, err = tx.ExecContext(ctx, `UPDATE agent_switch_failure_outbox SET lease_token=NULL,lease_consent_generation=NULL,lease_delivery_epoch=NULL,lease_expires_at=NULL WHERE id=? AND lease_token=? AND lease_consent_generation=? AND lease_delivery_epoch=? AND destination_fingerprint=? AND delivered_at IS NULL AND discarded_at IS NULL`, baseArgs...)
+		n, err = q.ReleaseAgentSwitchFailureLease(ctx, gen.ReleaseAgentSwitchFailureLeaseParams{
+			ID: input.ID, LeaseToken: leaseToken, ConsentGeneration: consentGeneration,
+			DeliveryEpoch: deliveryEpoch, DestinationFingerprint: input.DestinationFingerprint,
+		})
 	default:
 		return false, errors.New("settle agent switch failure delivery: invalid outcome")
 	}
-	if err != nil {
-		return false, err
-	}
-	n, err := result.RowsAffected()
 	if err != nil {
 		return false, err
 	}
@@ -787,17 +771,15 @@ WHERE id=? AND lease_token=? AND lease_consent_generation=? AND lease_delivery_e
 		return false, nil
 	}
 	if retryNotBefore.After(input.SettledAt) && input.Result.ThrottleScope != ports.DeliveryThrottleNone {
-		var errorUntil, allUntil any
+		var errorUntil, allUntil sql.NullTime
 		if input.Result.ThrottleScope == ports.DeliveryThrottleErrorCategory {
-			errorUntil = retryNotBefore
+			errorUntil = sql.NullTime{Time: retryNotBefore, Valid: true}
 		} else {
-			allUntil = retryNotBefore
+			allUntil = sql.NullTime{Time: retryNotBefore, Valid: true}
 		}
-		if _, err := tx.ExecContext(ctx, `
-INSERT INTO agent_switch_failure_delivery_state(destination_fingerprint,error_not_before,all_not_before) VALUES(?,?,?)
-ON CONFLICT(destination_fingerprint) DO UPDATE SET
- error_not_before=CASE WHEN excluded.error_not_before IS NULL THEN error_not_before WHEN error_not_before IS NULL OR excluded.error_not_before>error_not_before THEN excluded.error_not_before ELSE error_not_before END,
- all_not_before=CASE WHEN excluded.all_not_before IS NULL THEN all_not_before WHEN all_not_before IS NULL OR excluded.all_not_before>all_not_before THEN excluded.all_not_before ELSE all_not_before END`, input.DestinationFingerprint, errorUntil, allUntil); err != nil {
+		if err := q.UpsertAgentSwitchFailureThrottle(ctx, gen.UpsertAgentSwitchFailureThrottleParams{
+			DestinationFingerprint: input.DestinationFingerprint, ErrorNotBefore: errorUntil, AllNotBefore: allUntil,
+		}); err != nil {
 			return false, err
 		}
 	}
@@ -811,11 +793,7 @@ ON CONFLICT(destination_fingerprint) DO UPDATE SET
 func (s *Store) ExpireAgentSwitchFailurePayloads(ctx context.Context, now time.Time) (int64, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	result, err := s.writeDB.ExecContext(ctx, `DELETE FROM agent_switch_failure_outbox WHERE expires_at<=?`, now)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
+	return s.qw.ExpireAgentSwitchFailurePayloads(ctx, now)
 }
 
 // ResolveAgentSwitchFailureReceipts retires obsolete receipts and removes expired receipt metadata.
@@ -830,19 +808,16 @@ func (s *Store) ResolveAgentSwitchFailureReceipts(ctx context.Context, input por
 		return 0, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	result, err := tx.ExecContext(ctx, `UPDATE agent_switch_failure_receipts SET retain_until=? WHERE switch_id=? AND retain_until IS NULL AND durable_state_fingerprint<>?`, input.ResolvedAt.Add(agentSwitchFailureTTL), input.SwitchID, input.DurableStateFingerprint)
+	q := s.qw.WithTx(tx)
+	n, err := q.ResolveAgentSwitchFailureReceipts(ctx, gen.ResolveAgentSwitchFailureReceiptsParams{
+		RetainUntil:             sql.NullTime{Time: input.ResolvedAt.Add(agentSwitchFailureTTL), Valid: true},
+		SwitchID:                sql.NullString{String: string(input.SwitchID), Valid: true},
+		DurableStateFingerprint: input.DurableStateFingerprint,
+	})
 	if err != nil {
 		return 0, err
 	}
-	n, err := result.RowsAffected()
-	if err != nil {
-		return 0, err
-	}
-	deleted, err := tx.ExecContext(ctx, `DELETE FROM agent_switch_failure_receipts WHERE retain_until IS NOT NULL AND retain_until<=?`, input.ResolvedAt)
-	if err != nil {
-		return 0, err
-	}
-	d, err := deleted.RowsAffected()
+	d, err := q.DeleteExpiredAgentSwitchFailureReceipts(ctx, sql.NullTime{Time: input.ResolvedAt, Valid: true})
 	if err != nil {
 		return 0, err
 	}
@@ -854,20 +829,23 @@ func (s *Store) ResolveAgentSwitchFailureReceipts(ctx context.Context, input por
 
 // AgentSwitchFailureBacklog summarizes queued, leased, delivered, and discarded failure payloads.
 func (s *Store) AgentSwitchFailureBacklog(ctx context.Context, now time.Time) (ports.AgentSwitchFailureBacklog, error) {
-	var out ports.AgentSwitchFailureBacklog
-	var oldest sql.NullTime
-	err := s.readDB.QueryRowContext(ctx, `SELECT
- COALESCE(SUM(CASE WHEN delivered_at IS NULL AND discarded_at IS NULL AND lease_token IS NULL THEN 1 ELSE 0 END),0),
- COALESCE(SUM(CASE WHEN delivered_at IS NULL AND discarded_at IS NULL AND lease_token IS NOT NULL THEN 1 ELSE 0 END),0),
- COALESCE(SUM(CASE WHEN delivered_at IS NOT NULL THEN 1 ELSE 0 END),0),
- COALESCE(SUM(CASE WHEN discarded_at IS NOT NULL THEN 1 ELSE 0 END),0),
- MIN(CASE WHEN delivered_at IS NULL AND discarded_at IS NULL AND available_at<=? THEN available_at END)
-FROM agent_switch_failure_outbox`, now).Scan(&out.Pending, &out.Leased, &out.Delivered, &out.Discarded, &oldest)
+	row, err := s.qr.AgentSwitchFailureBacklog(ctx, now)
 	if err != nil {
 		return ports.AgentSwitchFailureBacklog{}, err
 	}
-	if oldest.Valid {
-		out.OldestDue = oldest.Time
+	out := ports.AgentSwitchFailureBacklog{Pending: row.Pending, Leased: row.Leased, Delivered: row.Delivered, Discarded: row.Discarded}
+	switch oldest := row.OldestDue.(type) {
+	case time.Time:
+		out.OldestDue = oldest
+	case string:
+		parsed, parseErr := time.Parse(time.RFC3339Nano, oldest)
+		if parseErr != nil {
+			return ports.AgentSwitchFailureBacklog{}, parseErr
+		}
+		out.OldestDue = parsed
+	case nil:
+	default:
+		return ports.AgentSwitchFailureBacklog{}, fmt.Errorf("unsupported oldest agent switch failure timestamp type %T", row.OldestDue)
 	}
 	return out, nil
 }

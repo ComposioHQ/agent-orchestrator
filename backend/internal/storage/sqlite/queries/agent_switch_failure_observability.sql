@@ -70,6 +70,15 @@ ON CONFLICT DO NOTHING;
 -- name: PurgeAgentSwitchFailurePayloads :execrows
 DELETE FROM agent_switch_failure_outbox;
 
+-- name: ListCurrentAgentSwitchRecoveryMarkers :many
+SELECT a.id, a.session_id, a.requested_at, a.updated_at, a.state, a.error_code,
+       a.failure_point, a.from_harness, a.target_harness, a.target_start_mode,
+       s.session_mode
+FROM agent_switches a
+JOIN sessions s ON s.id = a.session_id
+WHERE a.state NOT IN ('completed', 'failed')
+  AND a.error_code IN ('source_stop_unconfirmed', 'source_restore_unconfirmed', 'target_start_unconfirmed');
+
 -- name: QuarantineAgentSwitchFailureDestinationMismatch :execrows
 UPDATE agent_switch_failure_outbox
 SET discarded_at = sqlc.arg(now), lease_token = NULL, lease_consent_generation = NULL,
@@ -148,6 +157,15 @@ WHERE agent_switch_failure_outbox.id = sqlc.arg(id)
         AND ((d.error_not_before IS NOT NULL AND d.error_not_before > sqlc.arg(now))
           OR (d.all_not_before IS NOT NULL AND d.all_not_before > sqlc.arg(now)))
   );
+
+-- name: GetLeasedAgentSwitchFailureExpiresAt :one
+SELECT expires_at
+FROM agent_switch_failure_outbox
+WHERE id = sqlc.arg(id) AND lease_token = sqlc.arg(lease_token)
+  AND lease_consent_generation = sqlc.arg(consent_generation)
+  AND lease_delivery_epoch = sqlc.arg(delivery_epoch)
+  AND destination_fingerprint = sqlc.arg(destination_fingerprint)
+  AND delivered_at IS NULL AND discarded_at IS NULL;
 
 -- name: MarkAgentSwitchFailureDelivered :execrows
 UPDATE agent_switch_failure_outbox

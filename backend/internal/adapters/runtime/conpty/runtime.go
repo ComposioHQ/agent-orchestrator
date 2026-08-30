@@ -72,6 +72,10 @@ type Options struct {
 	// AO_DATA_DIR overrides never share one registry -- see
 	// ptyregistry.SetRunFilePath. Empty uses the ~/.ao default.
 	RunFilePath string
+
+	// UnregisterHost overrides durable reservation cleanup. It exists for
+	// manager-level fault-contract tests; nil uses the registry adapter.
+	UnregisterHost func(string) error
 }
 
 // Runtime is the conpty runtime adapter.
@@ -96,13 +100,17 @@ func New(opts Options) *Runtime {
 	if sp == nil {
 		sp = defaultSpawnHost
 	}
+	unregisterHost := ptyregistry.Unregister
+	if opts.UnregisterHost != nil {
+		unregisterHost = opts.UnregisterHost
+	}
 	return &Runtime{
 		spawner:        sp,
 		killHost:       clientKill,
 		pidIsAlive:     pidAlive,
 		processFinder:  findProcess,
 		registerHost:   ptyregistry.Register,
-		unregisterHost: ptyregistry.Unregister,
+		unregisterHost: unregisterHost,
 		destroyWait:    500 * time.Millisecond,
 		destroyPoll:    25 * time.Millisecond,
 		sessions:       make(map[string]*hostSession),
@@ -172,7 +180,7 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 				// Keep the current-owner reservation in memory when durable
 				// cleanup fails. A later Destroy can safely retry unregistering
 				// it without spawning or killing any process.
-				return ports.RuntimeHandle{}, conptyCreateFailure(cause)
+				return ports.RuntimeHandle{}, conptyPartialCreateFailure(cause, handle, ports.RuntimeCleanupFailed)
 			}
 			r.mu.Lock()
 			delete(r.sessions, id)

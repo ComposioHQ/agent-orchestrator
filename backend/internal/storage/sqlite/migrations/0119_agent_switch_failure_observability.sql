@@ -76,7 +76,12 @@ INSERT INTO agent_switches_next (
 )
 SELECT
     id, session_id, idempotency_key, request_fingerprint, from_harness, target_harness,
-    target_native_session_ref, target_start_mode, state, agent_handoff_status,
+    target_native_session_ref, target_start_mode,
+    CASE
+        WHEN state = 'failed' AND error_code = 'source_stop_unconfirmed' THEN 'stopping_source'
+        ELSE state
+    END,
+    agent_handoff_status,
     source_transcript_status, semantic_handoff_included, agent_handoff_path, agent_handoff_hash,
     source_generation_id, target_generation_id, target_runtime_handle_id, target_acknowledged_at,
     error_code, '', requested_at, updated_at, final_handoff_path, final_handoff_hash

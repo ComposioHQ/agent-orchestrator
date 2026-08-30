@@ -4,21 +4,14 @@
 package agentswitch
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"os"
-	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/google/uuid"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -48,7 +41,7 @@ type PolicyStore interface {
 
 // PolicyOptions supplies authority location, release gates, metadata, and hooks.
 type PolicyOptions struct {
-	DataDir                 string
+	AuthorityReader         ports.AgentSwitchFailureAuthorityReader
 	TelemetryEvents         bool
 	TelemetryEventsExplicit bool
 	DestinationFingerprint  string
@@ -58,6 +51,7 @@ type PolicyOptions struct {
 	Now                     func() time.Time
 	NewBootToken            func() string
 	OnEventsChanged         func(bool)
+	ProviderDrain           func(context.Context) error
 }
 
 // PolicyCoordinator synchronizes durable consent and gates provider deliveries.
@@ -76,7 +70,6 @@ type PolicyCoordinator interface {
 type Coordinator struct {
 	store         PolicyStore
 	options       PolicyOptions
-	policyPath    string
 	bootToken     string
 	metadataReady bool
 
@@ -103,7 +96,7 @@ func NewPolicyCoordinator(store PolicyStore, options PolicyOptions) *Coordinator
 	if options.NewBootToken == nil {
 		options.NewBootToken = newBootToken
 	}
-	coordinator := &Coordinator{store: store, options: options, policyPath: filepath.Join(options.DataDir, PolicyFileName), calls: make(map[uint64]context.CancelFunc)}
+	coordinator := &Coordinator{store: store, options: options, calls: make(map[uint64]context.CancelFunc)}
 	coordinator.bootToken = options.NewBootToken()
 	if store != nil {
 		coordinator.metadataReady = store.ConfigureAgentSwitchFailureEventMetadata(context.Background(), options.Metadata) == nil
@@ -133,7 +126,7 @@ func (c *Coordinator) ForceDisabled(ctx context.Context) error {
 func (c *Coordinator) Synchronize(ctx context.Context) error {
 	c.operationMu.Lock()
 	defer c.operationMu.Unlock()
-	authority := c.readAuthority()
+	authority := c.readAuthority(ctx)
 	_, err := c.synchronizeAuthority(ctx, authority)
 	return err
 }
@@ -159,7 +152,7 @@ func (c *Coordinator) PrepareDisable(ctx context.Context) (ports.AgentSwitchFail
 func (c *Coordinator) ApplyPolicy(ctx context.Context, generation string, eventsEnabled bool) (ports.AgentSwitchFailurePolicyAcknowledgement, error) {
 	c.operationMu.Lock()
 	defer c.operationMu.Unlock()
-	authority := c.readAuthority()
+	authority := c.readAuthority(ctx)
 	if !authority.valid || authority.generation != generation || authority.eventsEnabled != eventsEnabled {
 		_ = c.closeGateAndDrain(ctx)
 		return ports.AgentSwitchFailurePolicyAcknowledgement{}, ErrPolicyHintMismatch
@@ -257,60 +250,24 @@ type authorityRead struct {
 	generation    string
 }
 
-func (c *Coordinator) readAuthority() authorityRead {
-	info, err := os.Lstat(c.policyPath)
+func (c *Coordinator) readAuthority(ctx context.Context) authorityRead {
+	if c.options.AuthorityReader == nil {
+		return authorityRead{}
+	}
+	snapshot, err := c.options.AuthorityReader.ReadAgentSwitchFailureAuthority(ctx)
 	if err != nil {
-		if os.IsNotExist(err) && c.options.TelemetryEventsExplicit && c.options.TelemetryEvents {
-			return authorityRead{valid: true, eventsEnabled: true, generation: c.bootToken}
+		return authorityRead{}
+	}
+	if !snapshot.Present {
+		return authorityRead{
+			valid: true, eventsEnabled: c.options.TelemetryEventsExplicit && c.options.TelemetryEvents,
+			generation: c.bootToken,
 		}
-		return authorityRead{valid: os.IsNotExist(err), generation: c.bootToken}
 	}
-	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 {
-		return authorityRead{}
+	return authorityRead{
+		valid: true, eventsEnabled: snapshot.EventsEnabled && c.options.TelemetryEventsExplicit && c.options.TelemetryEvents,
+		generation: snapshot.ConsentGeneration,
 	}
-	file, err := os.Open(c.policyPath)
-	if err != nil {
-		return authorityRead{}
-	}
-	defer func() { _ = file.Close() }()
-	decoder := json.NewDecoder(io.LimitReader(file, 4097))
-	decoder.DisallowUnknownFields()
-	var keys map[string]json.RawMessage
-	if err := decoder.Decode(&keys); err != nil || len(keys) != 4 || keys["schema_version"] == nil || keys["events_enabled"] == nil || keys["consent_generation"] == nil || keys["updated_at"] == nil {
-		return authorityRead{}
-	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		return authorityRead{}
-	}
-	raw, err := json.Marshal(keys)
-	if err != nil {
-		return authorityRead{}
-	}
-	decoder = json.NewDecoder(io.LimitReader(bytes.NewReader(raw), 4097))
-	decoder.DisallowUnknownFields()
-	var record policyDiskRecord
-	if err := decoder.Decode(&record); err != nil {
-		return authorityRead{}
-	}
-	if record.SchemaVersion != 1 || uuid.Validate(record.ConsentGeneration) != nil || !validPolicyTimestamp(record.UpdatedAt) {
-		return authorityRead{}
-	}
-	if !record.EventsEnabled {
-		return authorityRead{valid: true, generation: record.ConsentGeneration}
-	}
-	return authorityRead{valid: true, eventsEnabled: c.options.TelemetryEventsExplicit && c.options.TelemetryEvents, generation: record.ConsentGeneration}
-}
-
-type policyDiskRecord struct {
-	SchemaVersion     int    `json:"schema_version"`
-	EventsEnabled     bool   `json:"events_enabled"`
-	ConsentGeneration string `json:"consent_generation"`
-	UpdatedAt         string `json:"updated_at"`
-}
-
-func validPolicyTimestamp(value string) bool {
-	parsed, err := time.Parse(time.RFC3339Nano, value)
-	return err == nil && parsed.Location() == time.UTC
 }
 
 func (c *Coordinator) desiredAuthorization(authority authorityRead) domain.AgentSwitchReportingAuthorization {
@@ -424,6 +381,11 @@ func (c *Coordinator) closeGateAndDrain(ctx context.Context) error {
 	go func() { c.callWG.Wait(); close(done) }()
 	select {
 	case <-done:
+		if c.options.ProviderDrain != nil {
+			if err := c.options.ProviderDrain(ctx); err != nil {
+				return err
+			}
+		}
 		c.mu.Lock()
 		c.gateDrained = true
 		c.mu.Unlock()

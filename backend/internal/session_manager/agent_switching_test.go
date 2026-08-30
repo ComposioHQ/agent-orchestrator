@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/conpty"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -635,6 +636,15 @@ type switchCreateErrorRuntime struct {
 	createErr         error
 	createCalls       int
 	exactProbeHandles []string
+}
+
+type switchConPTYCreateRuntime struct {
+	*fakeRestartRuntime
+	target *conpty.Runtime
+}
+
+func (r *switchConPTYCreateRuntime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
+	return r.target.Create(ctx, cfg)
 }
 
 type switchRuntimeEffectError struct {
@@ -2368,6 +2378,41 @@ func TestPartialCreateCleanupFailureRetainsEvidenceAndGate(t *testing.T) {
 	}
 	if !manager.SessionMutationInProgress("proj-1") {
 		t.Fatal("partial create cleanup failure released the operation gate")
+	}
+}
+
+func TestConPTYReservationCleanupFailureRetainsManagerRecoveryGate(t *testing.T) {
+	spawnErr := errors.New("pty-host failed before starting")
+	cleanupErr := errors.New("reservation cleanup denied")
+	runtime := &switchConPTYCreateRuntime{
+		fakeRestartRuntime: &fakeRestartRuntime{fakeRuntime: &fakeRuntime{}},
+		target: conpty.New(conpty.Options{
+			RunFilePath: filepath.Join(t.TempDir(), "running.json"),
+			Spawner: func(context.Context, string, string, []string, map[string]string) (string, int, error) {
+				return "", 0, spawnErr
+			},
+			UnregisterHost: func(string) error { return cleanupErr },
+		}),
+	}
+	manager, store, _ := newSwitchTestManager(t, runtime)
+
+	sw, err := switchAgentSynchronously(context.Background(), manager, "proj-1", SwitchAgentConfig{
+		TargetHarness: domain.HarnessCodex, IdempotencyKey: "conpty-reservation-cleanup-failed",
+	})
+	if !errors.Is(err, spawnErr) || !errors.Is(err, cleanupErr) {
+		t.Fatalf("switch error = %v, want ConPTY spawn and reservation cleanup failures", err)
+	}
+	if sw.State != domain.AgentSwitchStartingTarget || sw.TargetRuntimeHandleID != "proj-1" || sw.ErrorCode != domain.AgentSwitchErrorTargetStartUnconfirmed {
+		t.Fatalf("retained switch = state %q handle %q code %q", sw.State, sw.TargetRuntimeHandleID, sw.ErrorCode)
+	}
+	if got := store.sessions["proj-1"]; got.Harness != domain.HarnessClaudeCode || got.Activity.State != domain.ActivityExited {
+		t.Fatalf("ConPTY partial target changed source ownership: %+v", got)
+	}
+	if runtime.created != 0 || len(runtime.destroyedIDs) != 1 || runtime.destroyedIDs[0] != "proj-1" {
+		t.Fatalf("ConPTY cleanup failure caused unsafe rollback: creates=%d destroys=%v", runtime.created, runtime.destroyedIDs)
+	}
+	if !manager.SessionMutationInProgress("proj-1") {
+		t.Fatal("ConPTY cleanup failure released the recovery gate")
 	}
 }
 

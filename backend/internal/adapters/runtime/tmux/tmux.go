@@ -611,10 +611,16 @@ func (r *Runtime) ProbeFencedRuntime(ctx context.Context, ref ports.FencedRuntim
 		}
 		return ports.FencedProbeResult{Liveness: ports.FencedUnknown, Reason: ports.FencedReasonGenerationMismatch}
 	}
-	if exactSupervisorFound && containsExactSupervisedWorkload(entries, panePID, string(ref.SessionID), ref.Generation) {
-		return ports.FencedProbeResult{Liveness: ports.FencedAlive, Reason: ports.FencedReasonExactMatch}
+	if exactSupervisorFound {
+		if containsExactSupervisedWorkload(entries, panePID, string(ref.SessionID), ref.Generation) {
+			return ports.FencedProbeResult{Liveness: ports.FencedAlive, Reason: ports.FencedReasonExactMatch}
+		}
+		return ports.FencedProbeResult{Liveness: ports.FencedDead, Reason: ports.FencedReasonExactAbsent}
 	}
-	return ports.FencedProbeResult{Liveness: ports.FencedDead, Reason: ports.FencedReasonExactAbsent}
+	// A live pane without the exact AO supervisor may contain a workload that a
+	// user manually relaunched from the preserved shell. That is not proof of
+	// the requested generation, but it is also not proof that the pane is dead.
+	return ports.FencedProbeResult{Liveness: ports.FencedUnknown, Reason: ports.FencedReasonIdentityMissing}
 }
 
 // IsSupervisedProcessAlive reports whether the managed workload for ref is

@@ -26,7 +26,6 @@ const POSTHOG_EVENT_NAME_ALIASES: Record<string, string> = {
 };
 
 let initPromise: Promise<boolean> | null = null;
-let postHogInitialized = false;
 let errorHandlersBound = false;
 let telemetryContext: TelemetryProperties = {};
 let fallbackActiveDate = "";
@@ -736,18 +735,16 @@ export async function initTelemetry(): Promise<boolean> {
 		// Null means the supervisor withheld it: no key, no data dir, or an
 		// unpackaged build that has not opted in. The client is never created.
 		if (!bootstrap) return false;
-		if (!bootstrap.eventsEnabled) return false;
 		disabledEventMatchers = bootstrap.disabledEvents ?? [];
 		const channel = releaseChannelFrom(await readUpdateSettingsForTelemetry());
 		telemetryContext = buildTelemetryContext(bootstrap.appVersion, bootstrap.platform, channel);
 		posthog.init(POSTHOG_KEY, buildPostHogConfig(bootstrap.distinctId));
-		postHogInitialized = true;
 		posthog.register({
 			...telemetryContext,
 			surface: "renderer",
 		});
-		// Typed renderer fault intake shares the same consent gate. Preload adds
-		// the latest main-owned generation; the renderer owns no Sentry SDK/DSN.
+		// Typed renderer fault intake has its own main-owned policy gate. PostHog
+		// product analytics are intentionally independent of that preference.
 		void initSentry({
 			release: bootstrap.appVersion,
 			channel,
@@ -795,68 +792,16 @@ export async function initTelemetry(): Promise<boolean> {
 	return attempt;
 }
 
-type PurgeablePostHog = Pick<typeof posthog, "opt_in_capturing" | "opt_out_capturing"> & {
-	_requestQueue?: unknown;
-	_retryQueue?: unknown;
-	__request_queue?: unknown;
-};
-
 /**
- * Drops renderer-owned telemetry that has not left the process yet. This uses
- * the pinned PostHog queue shapes deliberately: calling either durable queue's
- * public `unload` method would send the bytes that opt-out is trying to delete.
- * Unknown SDK shapes fail closed so Electron cannot acknowledge cleanup.
+ * Acknowledges the renderer part of failure-reporting cleanup. Renderer fault
+ * intake forwards directly through preload and owns no durable or retry queue;
+ * PostHog product-analytics queues are deliberately outside this policy.
  */
-export function clearRendererTelemetryQueues(client: PurgeablePostHog = posthog): void {
-	if (client !== posthog || postHogInitialized) client.opt_out_capturing();
-	purgePreDomRequestQueue(client.__request_queue);
-	purgeRequestQueue(client._requestQueue);
-	purgeRetryQueue(client._retryQueue);
-	minuteWindows.clear();
-	dayWindows.clear();
-	fallbackActiveDate = "";
-	fallbackRouteViewDate = "";
-	fallbackRouteViewSurfaces.clear();
-	const storage = telemetryStorage() as (DailyActiveStorage & Partial<Pick<Storage, "removeItem">>) | undefined;
-	storage?.removeItem?.(ACTIVE_STORAGE_KEY);
-	storage?.removeItem?.(ROUTE_VIEW_STORAGE_KEY);
-}
+export function clearRendererTelemetryQueues(): void {}
 
-function purgePreDomRequestQueue(value: unknown): void {
-	if (!Array.isArray(value)) throw new Error("PostHog pre-DOM request queue cannot be purged");
-	value.length = 0;
-}
-
-export function applyRendererTelemetryPolicy(enabled: boolean): void {
-	if (!enabled) return;
-	if (postHogInitialized) {
-		posthog.opt_in_capturing({ captureEventName: false });
-		return;
-	}
-	// A disabled bootstrap is memoized as false. Permit the same still-open
-	// renderer to initialize after main broadcasts a newly enabled generation.
-	initPromise = null;
-}
-
-function purgeRequestQueue(value: unknown): void {
-	if (value === undefined) return;
-	if (!value || typeof value !== "object") throw new Error("PostHog request queue cannot be purged");
-	const queue = value as { _queue?: unknown; _clearFlushTimeout?: unknown };
-	if (!Array.isArray(queue._queue) || typeof queue._clearFlushTimeout !== "function") throw new Error("PostHog request queue cannot be purged");
-	queue._queue.length = 0;
-	queue._clearFlushTimeout();
-}
-
-function purgeRetryQueue(value: unknown): void {
-	if (value === undefined) return;
-	if (!value || typeof value !== "object") throw new Error("PostHog retry queue cannot be purged");
-	const queue = value as { _queue?: unknown; _poller?: ReturnType<typeof setTimeout>; _isPolling?: boolean };
-	if (!Array.isArray(queue._queue) || typeof queue._isPolling !== "boolean") throw new Error("PostHog retry queue cannot be purged");
-	if (queue._poller !== undefined) clearTimeout(queue._poller);
-	queue._poller = undefined;
-	queue._isPolling = false;
-	queue._queue.length = 0;
-}
+// Failure-reporting enablement is enforced in preload/main. It never opts the
+// independent PostHog client in or out.
+export function applyRendererTelemetryPolicy(_enabled: boolean): void {}
 
 export async function captureRendererEvent(event: string, properties?: Record<string, unknown>): Promise<void> {
 	// Checked before the reservations so a silenced stream does not consume a

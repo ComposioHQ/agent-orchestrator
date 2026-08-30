@@ -58,7 +58,7 @@ func NewAgentSwitchFailureSender(destination AgentSwitchDestination, client *htt
 }
 
 func (sender *agentSwitchFailureSender) ObserveAgentSwitchFailure(ctx context.Context, event domain.AgentSwitchFailureEvent) ports.DeliveryResult {
-	if event.EnvelopeEncodingVersion != domain.AgentSwitchEnvelopeEncodingV1 {
+	if event.EnvelopeEncodingVersion != AgentSwitchEnvelopeEncodingV1 {
 		return permanentAgentSwitchDelivery(ports.DeliveryErrorUnsupportedEncoding)
 	}
 	if err := sender.destination.validate(); err != nil {
@@ -106,7 +106,7 @@ func (sender *agentSwitchFailureSender) ObserveAgentSwitchFailure(ctx context.Co
 
 func encodeAgentSwitchEnvelope(event domain.AgentSwitchFailureEvent) ([]byte, error) {
 	switch event.EnvelopeEncodingVersion {
-	case domain.AgentSwitchEnvelopeEncodingV1:
+	case AgentSwitchEnvelopeEncodingV1:
 		return EncodeAgentSwitchEnvelopeV1(event)
 	default:
 		return nil, ErrUnsupportedEnvelopeEncoding

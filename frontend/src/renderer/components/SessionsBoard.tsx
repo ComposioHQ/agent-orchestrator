@@ -292,7 +292,6 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			</Tooltip>
 			{boardOwnsNotificationCenter ? (
 				<>
-					<span aria-hidden="true" className="workspace-topbar__utility-separator" />
 					<NotificationCenter />
 				</>
 			) : null}
@@ -310,7 +309,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			    chooser was review feedback on #2432. */}
 			{!showWelcome && boardActionsInPanel && (boardLabel || actions) ? (
 				<div
-					className="workspace-topbar-container center-panel-titlebar flex h-toolbar shrink-0 items-center gap-2 border-b border-border-strong pr-4"
+					className="workspace-topbar-container center-panel-titlebar flex h-toolbar shrink-0 items-center gap-2 border-b border-border-strong pr-1"
 					style={dragStyle}
 				>
 					{boardLabel ? (

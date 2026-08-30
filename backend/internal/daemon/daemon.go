@@ -23,6 +23,7 @@ import (
 	chatdriverregistry "github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/registry"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/runtimeselect"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/systemexec"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/telemetry/policyauthority"
 	"github.com/aoagents/agent-orchestrator/backend/internal/autoreview"
 	"github.com/aoagents/agent-orchestrator/backend/internal/browserruntime"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
@@ -207,6 +208,9 @@ func Run() error {
 		return fmt.Errorf("open store: %w", err)
 	}
 	defer func() { _ = store.Close() }()
+	if err := store.ConfigureAgentSwitchFailureEventEncoder(context.Background(), sentryobs.AgentSwitchEventEncoder{}); err != nil {
+		return fmt.Errorf("configure agent switch failure event encoder: %w", err)
+	}
 
 	// Consent and event metadata are established before any reporting surface or
 	// recovery enrollment exists. SQLite is forced off first on every boot so a
@@ -216,13 +220,14 @@ func Run() error {
 		log.Warn("agent switch failure sender disabled", "error", destinationErr)
 	}
 	policyCoordinator := agentswitchobs.NewPolicyCoordinator(store, agentswitchobs.PolicyOptions{
-		DataDir:                 cfg.DataDir,
+		AuthorityReader:         policyauthority.New(filepath.Join(cfg.DataDir, agentswitchobs.PolicyFileName)),
 		TelemetryEvents:         cfg.Telemetry.Events,
 		TelemetryEventsExplicit: cfg.Telemetry.EventsExplicit,
 		DestinationFingerprint:  destination.Fingerprint,
 		StreamKillSwitched:      agentSwitchFailureStreamDisabled(cfg.Telemetry.DisabledEvents),
 		Metadata:                agentSwitchEventMetadata(cfg),
 		OnEventsChanged:         sentryobs.SetPolicyEnabled,
+		ProviderDrain:           sentryobs.Drain,
 	})
 	if err := policyCoordinator.ForceDisabled(context.Background()); err != nil {
 		return fmt.Errorf("force agent switch reporting disabled: %w", err)
@@ -243,20 +248,17 @@ func Run() error {
 	telemetrySink := newTelemetrySink(telemetryCfg, store, log)
 	defer func() { _ = telemetrySink.Close(context.Background()) }()
 	// Daemon Sentry: captures genuine 5xx/panics with their Go stack. Gated on
-	// the same consent switch as the remote telemetry sink (cfg.Telemetry.Events)
-	// so a user who has turned telemetry off never has faults reported, and a
-	// no-op besides unless a DSN is set. Flushed on shutdown so buffered faults
-	// send.
-	if policyCoordinator.EventsEnabled() {
-		if err := sentryobs.Init(sentryobs.Config{
-			DSN:         cfg.Telemetry.SentryDSN,
-			Release:     cfg.Telemetry.AppVersion,
-			Environment: sentryEnvironment(cfg.Telemetry.AppVersion),
-		}); err != nil {
-			log.Warn("daemon sentry disabled", "err", err)
-		}
-		defer sentryobs.Flush(2 * time.Second)
+	// Initialize the transport once so a later policy opt-in works without a
+	// daemon restart. The policy gate remains fail-closed and is checked before
+	// every capture; a blank DSN still leaves this as a no-op.
+	if err := sentryobs.Init(sentryobs.Config{
+		DSN:         cfg.Telemetry.SentryDSN,
+		Release:     cfg.Telemetry.AppVersion,
+		Environment: sentryEnvironment(cfg.Telemetry.AppVersion),
+	}); err != nil {
+		log.Warn("daemon sentry disabled", "err", err)
 	}
+	defer sentryobs.Flush(2 * time.Second)
 	telemetrySink.Emit(context.Background(), ports.TelemetryEvent{
 		Name:       "ao.daemon.started",
 		Source:     "daemon",
@@ -489,7 +491,7 @@ func Run() error {
 			usagePricing.Wait()
 		}()
 	}
-	if roots, rootsErr := usagesvc.DefaultSourceRoots(ctx); rootsErr != nil {
+	if roots, rootsErr := usagesvc.DefaultSourceRoots(ctx, cfg.DataDir); rootsErr != nil {
 		log.Warn("usage collection disabled", "err", rootsErr)
 	} else {
 		usageCollector = usagesvc.NewCollector(store, roots, func(reconcile bool) {
@@ -514,11 +516,7 @@ func Run() error {
 			ingestorConfig.RequestAttributionRepair = usagePricing.RepairLegacyAttribution
 		}
 		ingestor := usagepipeline.NewIngestor(store, ingestorConfig)
-		usagePipeline = usagepipeline.NewPipeline(store, ingestor, []string{
-			roots.ClaudeProjects,
-			roots.CodexSessions,
-			roots.CodexArchived,
-		}, usagepipeline.CoordinatorConfig{
+		usagePipeline = usagepipeline.NewPipeline(store, ingestor, usagePipelineWatchRoots(roots), usagepipeline.CoordinatorConfig{
 			Logger:     log,
 			Initialize: usageCollector.BackfillActive,
 			Reconcile: func(reconcileCtx context.Context) error {
@@ -772,6 +770,15 @@ func Run() error {
 		log.Error("cdc pipeline shutdown", "err", err)
 	}
 	return runErr
+}
+
+func usagePipelineWatchRoots(roots usagesvc.SourceRoots) []string {
+	return []string{
+		roots.ClaudeProjects,
+		roots.CodexSessions,
+		roots.CodexArchived,
+		roots.KimiHome,
+	}
 }
 
 func seedScratchProjectOnBoot(ctx context.Context, cfg config.Config, projects *projectsvc.Service) error {

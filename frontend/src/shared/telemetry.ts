@@ -86,12 +86,15 @@ export async function buildTelemetryBootstrap(
 	// bootstrap, so the renderer never constructs a PostHog client at all. That
 	// is stronger than gating each capture, because it also removes the SDK's
 	// own background requests.
+	if (!rendererTelemetryEnabled(env, isPackaged)) return null;
 	const dataDir = defaultDataDir(platform, env, homeDir);
 	if (!dataDir) return null;
 	if (!policy) return null;
-	const eventsEnabled = policy.eventsEnabled && policy.acknowledged && rendererTelemetryEnabled(env, isPackaged);
+	// This policy controls failure reporting only. Existing anonymous PostHog
+	// product analytics retain their own packaged/env gate above.
+	const eventsEnabled = policy.eventsEnabled && policy.acknowledged;
 	return {
-		distinctId: eventsEnabled ? await loadOrCreateTelemetryInstallId(dataDir) : "",
+		distinctId: await loadOrCreateTelemetryInstallId(dataDir),
 		appVersion,
 		platform,
 		disabledEvents: parseDisabledEvents(env.AO_TELEMETRY_DISABLED_EVENTS),

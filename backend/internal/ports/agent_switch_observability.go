@@ -7,6 +7,32 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
+// AgentSwitchFailureAuthoritySnapshot is the validated, provider-neutral
+// telemetry authority read by the filesystem adapter.
+type AgentSwitchFailureAuthoritySnapshot struct {
+	Present           bool
+	EventsEnabled     bool
+	ConsentGeneration string
+}
+
+// AgentSwitchFailureAuthorityReader isolates durable-authority I/O from policy
+// coordination.
+type AgentSwitchFailureAuthorityReader interface {
+	ReadAgentSwitchFailureAuthority(context.Context) (AgentSwitchFailureAuthoritySnapshot, error)
+}
+
+// AgentSwitchFailureEncodedEvent is the opaque output of the provider adapter.
+type AgentSwitchFailureEncodedEvent struct {
+	EnvelopeEncodingVersion int
+	Payload                 []byte
+}
+
+// AgentSwitchFailureEventEncoder keeps provider wire construction outside the
+// domain and persistence layers.
+type AgentSwitchFailureEventEncoder interface {
+	EncodeAgentSwitchFailureEvent(domain.AgentSwitchEventBuildInput) (AgentSwitchFailureEncodedEvent, error)
+}
+
 // DeliveryOutcome is the complete provider-neutral result of one bounded
 // delivery attempt. Cancellation values are local control decisions.
 type DeliveryOutcome string

@@ -34,9 +34,10 @@
 **Create:**
 
 - `backend/internal/domain/agent_switch_observability.go` — stable taxonomy, typed fault/event/policy/outbox values, applicability validation, dedupe and fingerprint construction.
-- `backend/internal/domain/agent_switch_observability_test.go` — exhaustive taxonomy, applicability, dedupe, canonical serialization, stack, and privacy tests.
+- `backend/internal/domain/agent_switch_observability_test.go` — exhaustive taxonomy, applicability, dedupe, stack, and privacy tests.
+- `backend/internal/observe/sentryobs/agent_switch_event.go` — provider-owned canonical Sentry serialization and bounded envelope encoding.
 - `backend/internal/ports/agent_switch_observability.go` — observer, reporting-policy, delivery-gate, and outbox store contracts.
-- `backend/internal/storage/sqlite/migrations/0117_agent_switch_failure_observability.sql` — `failure_point`, policy, receipt, outbox, and delivery-state schema.
+- `backend/internal/storage/sqlite/migrations/0119_agent_switch_failure_observability.sql` — `failure_point`, policy, receipt, outbox, and delivery-state schema.
 - `backend/internal/storage/sqlite/queries/agent_switch_failure_observability.sql` — policy synchronization, enrollment, claim, attempt, acknowledgement, retry, quarantine, purge, receipt-resolution, and diagnostics queries.
 - `backend/internal/storage/sqlite/store/agent_switch_failure_store.go` — atomic CAS/enrollment savepoint and delivery persistence implementation.
 - `backend/internal/storage/sqlite/store/agent_switch_failure_store_test.go` — atomicity, races, retention, delete-order, consent, TTL, and delivery-state tests.
@@ -302,7 +303,7 @@ git commit -m "fix: preserve unknown agent switch ownership"
 **Interfaces:**
 
 - Consumes: typed, enum-only switch facts plus trusted release/platform metadata and optional sanitized in-app frames.
-- Produces: `ValidateAgentSwitchFault(AgentSwitchFault) error`, `BuildAgentSwitchCanonicalEvent(AgentSwitchEventBuildInput) ([]byte, error)`, `AgentSwitchDedupeKey(AgentSwitchFault) string`, `AgentSwitchIssueFingerprint(AgentSwitchFault) []string`, and the provider-neutral observer/delivery types used by Tasks 4-9.
+- Produces: `ValidateAgentSwitchFault(AgentSwitchFault) error`, `AgentSwitchDedupeKey(AgentSwitchFault) string`, `AgentSwitchIssueFingerprint(AgentSwitchFault) []string`, and the provider-neutral observer/delivery types used by Tasks 4-9. The concrete `BuildAgentSwitchCanonicalEvent(AgentSwitchEventBuildInput) ([]byte, error)` implementation lives in the Sentry adapter and is injected into storage through the encoder port.
 
 - [ ] **Step 1: Write exhaustive failing taxonomy, applicability, canonical-byte, and privacy tests**
 
@@ -501,7 +502,7 @@ git commit -m "feat: define agent switch failure taxonomy"
 
 **Files:**
 
-- Create: `backend/internal/storage/sqlite/migrations/0117_agent_switch_failure_observability.sql`
+- Create: `backend/internal/storage/sqlite/migrations/0119_agent_switch_failure_observability.sql`
 - Create: `backend/internal/storage/sqlite/queries/agent_switch_failure_observability.sql`
 - Create: `backend/internal/storage/sqlite/store/agent_switch_failure_store.go`
 - Create: `backend/internal/storage/sqlite/store/agent_switch_failure_store_test.go`
@@ -509,7 +510,7 @@ git commit -m "feat: define agent switch failure taxonomy"
 - Modify: `backend/internal/storage/sqlite/store/agent_switching_store.go`
 - Modify: `backend/internal/ports/agent_switching.go`
 - Test: `backend/internal/storage/sqlite/migrate_agent_switching_schema_test.go`
-- Modify: `backend/internal/storage/sqlite/migrate_burned_versions_test.go` (append version 117 to the migration ledger)
+- Modify: `backend/internal/storage/sqlite/migrate_burned_versions_test.go` (append version 119 to the migration ledger)
 - Regenerate: `backend/internal/storage/sqlite/gen/agent_switch_failure_observability.sql.go`, `backend/internal/storage/sqlite/gen/agent_switching.sql.go`, `backend/internal/storage/sqlite/gen/models.go`
 
 **Interfaces:**
@@ -543,9 +544,9 @@ Add tests for: disabled/stale policy; zero-row CAS; repeated marker; acknowledge
 
 Run: `cd backend && go test ./internal/storage/sqlite/... -run 'AgentSwitchFailure|FailedMutationAndOutbox|OutboxSavepoint|Receipt|FailurePolicy' -count=1`
 
-Expected: FAIL because migration 0117 and failure-store operations do not exist.
+Expected: FAIL because migration 0119 and failure-store operations do not exist.
 
-- [ ] **Step 3: Add migration 0117 with the complete durable shape**
+- [ ] **Step 3: Add migration 0119 with the complete durable shape**
 
 ```sql
 -- +goose NO TRANSACTION
@@ -611,7 +612,7 @@ PRAGMA foreign_key_check;
 -- +goose StatementEnd
 ```
 
-Copy the exact current `agent_switches` definition from migration 0094, including every column and unrelated constraint. Add `failure_point TEXT NOT NULL DEFAULT ''`, copy every existing row with an empty point, and replace only its state/error constraint with: failed rows require a nonempty error other than `source_stop_unconfirmed`, `source_restore_unconfirmed`, or `target_start_unconfirmed`; `source_stop_unconfirmed` is valid only in `stopping_source`; `source_restore_unconfirmed` is valid only in `source_stopped` or `starting_target`; `target_start_unconfirmed` is valid only in `starting_target` with an empty target runtime handle; every other nonfailed row has an empty error. `delivery_unconfirmed` therefore remains a valid terminal failure. Recreate `idx_agent_switches_one_active_per_session`, `idx_agent_switches_session_history`, `agent_switches_target_native_scope_insert`, `agent_switches_target_native_scope_update`, `agent_switches_cdc_insert`, and `agent_switches_cdc_update`, using the latest 0103 CDC bodies. Add `failure_point` to every agent-switch query/projection and append migration 117 to the immutable migration ledger. The Down section is a documented no-op because rows may depend on the corrected constraint and safe downgrade is impossible. The schema test must prove failed rows reject all three retained markers, each valid nonterminal marker branch is accepted, current CDC triggers and indexes still exist with their latest definitions, and no store method writes `change_log`.
+Copy the exact current `agent_switches` definition from migration 0094, including every column and unrelated constraint. Add `failure_point TEXT NOT NULL DEFAULT ''`, copy every existing row with an empty point, and replace only its state/error constraint with: failed rows require a nonempty error other than `source_stop_unconfirmed`, `source_restore_unconfirmed`, or `target_start_unconfirmed`; `source_stop_unconfirmed` is valid only in `stopping_source`; `source_restore_unconfirmed` is valid only in `source_stopped` or `starting_target`; `target_start_unconfirmed` is valid only in `starting_target` with an empty target runtime handle; every other nonfailed row has an empty error. `delivery_unconfirmed` therefore remains a valid terminal failure. Recreate `idx_agent_switches_one_active_per_session`, `idx_agent_switches_session_history`, `agent_switches_target_native_scope_insert`, `agent_switches_target_native_scope_update`, `agent_switches_cdc_insert`, and `agent_switches_cdc_update`, using the latest 0103 CDC bodies. Add `failure_point` to every agent-switch query/projection and append migration 119 to the immutable migration ledger. The Down section is a documented no-op because rows may depend on the corrected constraint and safe downgrade is impossible. The schema test must prove failed rows reject all three retained markers, each valid nonterminal marker branch is accepted, current CDC triggers and indexes still exist with their latest definitions, and no store method writes `change_log`.
 
 - [ ] **Step 4: Add the exact atomic and dispatcher-facing store APIs**
 
@@ -650,7 +651,7 @@ Expected: PASS, including injected telemetry-local failure where the saga state 
 - [ ] **Step 5: Commit the durable foundation**
 
 ```bash
-git add backend/internal/storage/sqlite/migrations/0117_agent_switch_failure_observability.sql backend/internal/storage/sqlite/queries/agent_switch_failure_observability.sql backend/internal/storage/sqlite/queries/agent_switching.sql backend/internal/storage/sqlite/gen backend/internal/storage/sqlite/store/agent_switch_failure_store.go backend/internal/storage/sqlite/store/agent_switch_failure_store_test.go backend/internal/storage/sqlite/store/agent_switching_store.go backend/internal/storage/sqlite/migrate_agent_switching_schema_test.go backend/internal/storage/sqlite/migrate_burned_versions_test.go backend/internal/ports/agent_switching.go
+git add backend/internal/storage/sqlite/migrations/0119_agent_switch_failure_observability.sql backend/internal/storage/sqlite/queries/agent_switch_failure_observability.sql backend/internal/storage/sqlite/queries/agent_switching.sql backend/internal/storage/sqlite/gen backend/internal/storage/sqlite/store/agent_switch_failure_store.go backend/internal/storage/sqlite/store/agent_switch_failure_store_test.go backend/internal/storage/sqlite/store/agent_switching_store.go backend/internal/storage/sqlite/migrate_agent_switching_schema_test.go backend/internal/storage/sqlite/migrate_burned_versions_test.go backend/internal/ports/agent_switching.go
 git commit -m "feat: persist agent switch failure outbox"
 ```
 

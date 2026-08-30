@@ -294,6 +294,24 @@ describe("send keys", () => {
    Cmd, Ctrl, and the send control while a modifier is held — is pinned here.
 --------------------------------------------------------------------------- */
 
+describe("queued message edit", () => {
+	it("saves a queued edit while the composer is busy", async () => {
+		const onSend = vi.fn().mockResolvedValue(undefined);
+		render(
+			<ChatComposer
+				onSend={onSend}
+				busy
+				willQueue
+				editingQueuedTurnId="queued-1"
+				draftSeed={{ id: "queued-1", text: "hi" }}
+			/>,
+		);
+		await waitFor(() => expect(screen.getByLabelText("Message the agent")).toHaveTextContent("hi"));
+		await userEvent.keyboard("{Enter}");
+		await waitFor(() => expect(onSend).toHaveBeenCalledWith("hi"));
+	});
+});
+
 describe("steering", () => {
 	function renderSteerable(props: Partial<Parameters<typeof ChatComposer>[0]> = {}) {
 		const onSend = vi.fn();

@@ -1,13 +1,8 @@
 package domain
 
 import (
-	"bytes"
-	"encoding/json"
-	"os"
-	"path/filepath"
 	"reflect"
 	"sort"
-	"strings"
 	"testing"
 	"time"
 
@@ -398,12 +393,8 @@ func TestAgentSwitchStackApplicabilityUsesTaxonomyPriority(t *testing.T) {
 	require.Error(t, ValidateAgentSwitchFault(escalated), "full-tuple fatal escalation requires a stack even at a warning-default point")
 
 	escalated.Frames = completeSafeFaultFixture().Frames
-	raw := requireCanonicalEvent(t, escalated)
-	var event struct {
-		Level string `json:"level"`
-	}
-	require.NoError(t, json.Unmarshal(raw, &event))
-	require.Equal(t, string(AgentSwitchSeverityFatal), event.Level)
+	entry, _ := AgentSwitchFailureTaxonomy(escalated.FailurePoint)
+	require.Equal(t, AgentSwitchSeverityFatal, AgentSwitchSeverityForFault(escalated, entry.DefaultSeverity))
 }
 
 func TestAgentSwitchP2UserAndEnvironmentFaultsAreStacklessWarnings(t *testing.T) {
@@ -426,11 +417,7 @@ func TestAgentSwitchP2UserAndEnvironmentFaultsAreStacklessWarnings(t *testing.T)
 				require.Equal(t, AgentSwitchSeverityError, entry.DefaultSeverity, "full-tuple P2 classification must override an internal-point default")
 			}
 			require.NoError(t, ValidateAgentSwitchFault(tc.fault))
-			var event struct {
-				Level string `json:"level"`
-			}
-			require.NoError(t, json.Unmarshal(requireCanonicalEvent(t, tc.fault), &event))
-			require.Equal(t, string(AgentSwitchSeverityWarning), event.Level)
+			require.Equal(t, AgentSwitchSeverityWarning, AgentSwitchSeverityForFault(tc.fault, entry.DefaultSeverity))
 		})
 	}
 }
@@ -467,155 +454,6 @@ func TestValidateAgentSwitchFaultRejectsUnsafeFramesAndStackOverBound(t *testing
 	require.ErrorContains(t, ValidateAgentSwitchFault(fault), "16 KiB")
 }
 
-func TestBuildAgentSwitchCanonicalEventMatchesFrozenFixture(t *testing.T) {
-	raw := requireCanonicalEvent(t, completeSafeFaultFixture())
-	fixturePath := filepath.Join("..", "..", "..", "test", "fixtures", "agent-switch-observability", "envelope-v1.json")
-	want, err := os.ReadFile(fixturePath)
-	require.NoError(t, err)
-	require.Equal(t, bytes.TrimSpace(want), raw)
-
-	var decoded map[string]any
-	require.NoError(t, json.Unmarshal(raw, &decoded))
-	require.Equal(t, "0123456789abcdef0123456789abcdef", decoded["event_id"])
-	require.Equal(t, "2026-08-27T20:02:03.456789Z", decoded["timestamp"])
-	require.Equal(t, "Agent switch failed: chat / starting_target / chat_target_activation_commit", decoded["message"])
-	require.NotContains(t, decoded, "title")
-	exception := decoded["exception"].(map[string]any)
-	values := exception["values"].([]any)
-	require.Len(t, values, 1)
-	stacktrace := values[0].(map[string]any)["stacktrace"].(map[string]any)
-	frame := stacktrace["frames"].([]any)[0].(map[string]any)
-	require.Equal(t, "internal/session_manager", frame["module"])
-	require.Equal(t, float64(742), frame["lineno"])
-	require.NotContains(t, frame, "package")
-	require.NotContains(t, frame, "line")
-}
-
-func TestCanonicalAgentSwitchEventHasNoLocalIdentifiers(t *testing.T) {
-	raw := requireCanonicalEvent(t, completeSafeFaultFixture())
-	for _, forbidden := range []string{
-		"session-", "switch-", "/Users/", `C:\\Users\\`, "prompt text",
-		"provider-conversation", "runtime-handle", "idempotency", "https://",
-		"conversation", "generation-id", "artifact-hash", "pull/123",
-	} {
-		require.NotContains(t, string(raw), forbidden)
-	}
-	require.NotContains(t, string(raw), "ExecutionAttemptID")
-	require.NotContains(t, string(raw), "execution_attempt_id")
-}
-
-func TestCanonicalAgentSwitchEventIsByteStableAndDetachedFromInputs(t *testing.T) {
-	fault := completeSafeFaultFixture()
-	input := completeSafeBuildInput(fault)
-	first, err := BuildAgentSwitchCanonicalEvent(input)
-	require.NoError(t, err)
-
-	// Mutating caller-owned input after construction cannot enrich frozen bytes.
-	input.Release = "9.9.9-after-construction"
-	input.Environment = "development"
-	input.Fault.Frames[0].Function = "changedAfterConstruction"
-	require.NotContains(t, string(first), "after-construction")
-	require.NotContains(t, string(first), "changedAfterConstruction")
-
-	for i := 0; i < 20; i++ {
-		next, err := BuildAgentSwitchCanonicalEvent(completeSafeBuildInput(completeSafeFaultFixture()))
-		require.NoError(t, err)
-		require.Equal(t, first, next, "fixed structs must not depend on map iteration or process-local state")
-	}
-}
-
-func TestBuildAgentSwitchCanonicalEventRejectsInvalidEventIDAndMetadata(t *testing.T) {
-	tests := map[string]func(*AgentSwitchEventBuildInput){
-		"event id":            func(in *AgentSwitchEventBuildInput) { in.EventID = "ABC" },
-		"release URL":         func(in *AgentSwitchEventBuildInput) { in.Release = "https://release.invalid" },
-		"environment path":    func(in *AgentSwitchEventBuildInput) { in.Environment = "/Users/alice" },
-		"channel identifier":  func(in *AgentSwitchEventBuildInput) { in.Channel = "session-local-secret" },
-		"platform identifier": func(in *AgentSwitchEventBuildInput) { in.Platform = "switch-local-secret" },
-		"os UUID":             func(in *AgentSwitchEventBuildInput) { in.OS = "550e8400-e29b-41d4-a716-446655440000" },
-		"elapsed prompt":      func(in *AgentSwitchEventBuildInput) { in.ElapsedTimeBucket = "30 seconds of prompt text" },
-		"bounded OS":          func(in *AgentSwitchEventBuildInput) { in.OS = AgentSwitchOS(strings.Repeat("x", 129)) },
-	}
-	for name, mutate := range tests {
-		t.Run(name, func(t *testing.T) {
-			input := completeSafeBuildInput(completeSafeFaultFixture())
-			mutate(&input)
-			_, err := BuildAgentSwitchCanonicalEvent(input)
-			require.Error(t, err)
-		})
-	}
-}
-
-func TestAgentSwitchEventMetadataUsesClosedAllowlists(t *testing.T) {
-	unsafeValues := []string{
-		"artifact-hash-deadbeef",
-		"issue-123",
-		"/Users/alice/private",
-		"https://telemetry.invalid/value",
-		"550e8400-e29b-41d4-a716-446655440000",
-	}
-	for _, value := range unsafeValues {
-		tests := map[string]func(*AgentSwitchEventBuildInput){
-			"environment": func(in *AgentSwitchEventBuildInput) { in.Environment = AgentSwitchEnvironment(value) },
-			"channel":     func(in *AgentSwitchEventBuildInput) { in.Channel = AgentSwitchChannel(value) },
-			"platform":    func(in *AgentSwitchEventBuildInput) { in.Platform = AgentSwitchPlatform(value) },
-			"os":          func(in *AgentSwitchEventBuildInput) { in.OS = AgentSwitchOS(value) },
-			"elapsed":     func(in *AgentSwitchEventBuildInput) { in.ElapsedTimeBucket = AgentSwitchElapsedTimeBucket(value) },
-			"release":     func(in *AgentSwitchEventBuildInput) { in.Release = value },
-		}
-		for field, mutate := range tests {
-			t.Run(value+"/"+field, func(t *testing.T) {
-				input := completeSafeBuildInput(completeSafeFaultFixture())
-				mutate(&input)
-				_, err := BuildAgentSwitchCanonicalEvent(input)
-				require.Error(t, err)
-			})
-		}
-	}
-}
-
-func TestAgentSwitchReleaseRequiresStrictSemVer2(t *testing.T) {
-	for _, release := range []string{
-		"0.0.0",
-		"1.2.3",
-		"1.2.3-alpha",
-		"1.2.3-alpha-beta",
-		"1.2.3-alpha.1",
-		"1.2.3-0.3.7",
-		"1.2.3-x.7.z.92",
-		"1.2.3+build-7",
-		"1.2.3+001",
-		"1.2.3-alpha-beta+build-7.sha",
-		"1.2.3+" + strings.Repeat("a", 90),
-	} {
-		input := completeSafeBuildInput(completeSafeFaultFixture())
-		input.Release = release
-		_, err := BuildAgentSwitchCanonicalEvent(input)
-		require.NoError(t, err)
-	}
-	for _, release := range []string{
-		"v1.2.3",
-		"01.2.3",
-		"1.02.3",
-		"1.2.03",
-		"1.2",
-		"1.2.3-",
-		"1.2.3+",
-		"1.2.3-alpha..1",
-		"1.2.3+build..7",
-		"1.2.3-01",
-		"1.2.3-alpha.01",
-		"1.2.3-alpha_beta",
-		"1.2.3+build_7",
-		"1.2.3 alpha",
-		"1.2.3+" + strings.Repeat("a", 91),
-	} {
-		input := completeSafeBuildInput(completeSafeFaultFixture())
-		input.Release = release
-		_, err := BuildAgentSwitchCanonicalEvent(input)
-		require.Error(t, err)
-	}
-}
-
 func TestAgentSwitchMetadataEnumsAreClosed(t *testing.T) {
 	for _, value := range []AgentSwitchEnvironment{AgentSwitchEnvironmentStable, AgentSwitchEnvironmentNightly, AgentSwitchEnvironmentDevelopment} {
 		require.True(t, value.Valid())
@@ -643,59 +481,6 @@ func TestAgentSwitchMetadataEnumsAreClosed(t *testing.T) {
 	require.False(t, AgentSwitchElapsedTimeBucket("31_seconds").Valid())
 }
 
-func TestBuildAgentSwitchCanonicalEventRejectsSensitiveFrameStrings(t *testing.T) {
-	tests := map[string]func(*AgentSwitchStackFrame){
-		"module absolute path": func(frame *AgentSwitchStackFrame) { frame.Package = "/Users/alice/reverb" },
-		"module URL":           func(frame *AgentSwitchStackFrame) { frame.Package = "https://host/repo" },
-		"function identifier":  func(frame *AgentSwitchStackFrame) { frame.Function = "session-local-secret" },
-		"function arguments":   func(frame *AgentSwitchStackFrame) { frame.Function = "execute(secret)" },
-		"function receiver":    func(frame *AgentSwitchStackFrame) { frame.Function = "(*Manager).execute" },
-		"filename local path":  func(frame *AgentSwitchStackFrame) { frame.Filename = "/Users/alice/reverb/file.go" },
-		"filename identifier":  func(frame *AgentSwitchStackFrame) { frame.Filename = "backend/session-local-secret/file.go" },
-		"filename URL":         func(frame *AgentSwitchStackFrame) { frame.Filename = "https://host/file.go" },
-	}
-	for name, mutate := range tests {
-		t.Run(name, func(t *testing.T) {
-			input := completeSafeBuildInput(completeSafeFaultFixture())
-			mutate(&input.Fault.Frames[0])
-			_, err := BuildAgentSwitchCanonicalEvent(input)
-			require.Error(t, err)
-		})
-	}
-
-	unsafeValues := []string{
-		"/Users/alice/private.go",
-		"https://telemetry.invalid/file.go",
-		"550e8400-e29b-41d4-a716-446655440000",
-		"artifact-hash-deadbeef",
-		"issue-123",
-		"execute(args)",
-	}
-	for _, value := range unsafeValues {
-		fields := map[string]func(*AgentSwitchStackFrame){
-			"package":  func(frame *AgentSwitchStackFrame) { frame.Package = value },
-			"function": func(frame *AgentSwitchStackFrame) { frame.Function = value },
-			"filename": func(frame *AgentSwitchStackFrame) { frame.Filename = value },
-		}
-		for field, mutate := range fields {
-			t.Run(value+"/"+field, func(t *testing.T) {
-				input := completeSafeBuildInput(completeSafeFaultFixture())
-				mutate(&input.Fault.Frames[0])
-				_, err := BuildAgentSwitchCanonicalEvent(input)
-				require.Error(t, err)
-			})
-		}
-	}
-}
-
-func TestBuildAgentSwitchCanonicalEventEnforces60KiBBound(t *testing.T) {
-	require.Equal(t, 60<<10, AgentSwitchCanonicalEventMaxBytes)
-	input := completeSafeBuildInput(completeSafeFaultFixture())
-	input.Release = strings.Repeat("r", AgentSwitchCanonicalEventMaxBytes)
-	_, err := BuildAgentSwitchCanonicalEvent(input)
-	require.Error(t, err, "closed release grammar rejects unbounded input before final event-size enforcement")
-}
-
 func TestAgentSwitchDedupeAndIssueFingerprintAreStable(t *testing.T) {
 	fault := completeSafeFaultFixture()
 	scope := AgentSwitchDedupeScope{SwitchID: "switch-scope-a"}
@@ -705,9 +490,6 @@ func TestAgentSwitchDedupeAndIssueFingerprintAreStable(t *testing.T) {
 	other := requireAgentSwitchDedupeKey(t, AgentSwitchDedupeScope{SwitchID: "switch-scope-b"}, fault)
 	require.NotEqual(t, wantDedupe, other)
 	require.NotEqual(t, StableAgentSwitchEventID(wantDedupe), StableAgentSwitchEventID(other))
-	raw := requireCanonicalEvent(t, fault)
-	require.NotContains(t, string(raw), "switch-scope-a")
-	require.NotContains(t, string(raw), "switch-scope-b")
 	require.Equal(t, []string{
 		"agent-switch", "v1", "terminal_failure", "chat", "starting_target",
 		"chat_target_activation_commit", "target_ready_failed",
@@ -930,27 +712,6 @@ func completeSafeRollbackFaultFixture() AgentSwitchFault {
 	fault.GateRetained = AgentSwitchTriFalse
 	fault.Frames = nil
 	return fault
-}
-
-func completeSafeBuildInput(fault AgentSwitchFault) AgentSwitchEventBuildInput {
-	return AgentSwitchEventBuildInput{
-		EventID:           "0123456789abcdef0123456789abcdef",
-		Fault:             fault,
-		Release:           "1.2.3",
-		Environment:       AgentSwitchEnvironmentStable,
-		Channel:           AgentSwitchChannelStable,
-		Platform:          AgentSwitchPlatformDaemon,
-		OS:                AgentSwitchOSDarwin,
-		ElapsedTimeBucket: AgentSwitchElapsedUnder30Seconds,
-	}
-}
-
-func requireCanonicalEvent(t *testing.T, fault AgentSwitchFault) []byte {
-	t.Helper()
-	raw, err := BuildAgentSwitchCanonicalEvent(completeSafeBuildInput(fault))
-	require.NoError(t, err)
-	require.LessOrEqual(t, len(raw), AgentSwitchCanonicalEventMaxBytes)
-	return raw
 }
 
 func assertStructFields(t *testing.T, typ reflect.Type, want []string) {

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/observe/sentryobs"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 
@@ -51,6 +52,9 @@ func openAgentSwitchFailureFixtureWithMetadata(t *testing.T, configureMetadata b
 		t.Fatalf("open fixture database: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
+	if err := st.ConfigureAgentSwitchFailureEventEncoder(context.Background(), sentryobs.AgentSwitchEventEncoder{}); err != nil {
+		t.Fatalf("configure event encoder: %v", err)
+	}
 
 	now := time.Date(2026, time.August, 28, 8, 0, 0, 0, time.UTC)
 	if err := st.UpsertProject(context.Background(), domain.ProjectRecord{

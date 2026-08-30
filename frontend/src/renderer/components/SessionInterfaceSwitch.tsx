@@ -20,6 +20,7 @@ import {
 import { cn } from "../lib/utils";
 import { TopbarButton } from "./TopbarButton";
 import { Button } from "./ui/button";
+import { DropdownMenuItem } from "./ui/dropdown-menu";
 import {
 	Dialog,
 	DialogContent,
@@ -320,5 +321,36 @@ export function SessionInterfaceTransitionNotice({
 }
 
 export function SessionInterfaceActionGroup({ children }: { children: ReactNode }) {
-	return <div className="inline-flex shrink-0 items-center gap-px">{children}</div>;
+	return <div className="inline-flex shrink-0 items-center gap-2">{children}</div>;
+}
+
+export function SessionInterfaceSwitchMenuItem({
+	target,
+	supported,
+	disabledReason,
+	pending,
+	onClick,
+}: {
+	target: SessionInterfaceMode;
+	supported: boolean;
+	disabledReason?: string;
+	pending?: boolean;
+	onClick: () => void;
+}) {
+	const label = `Switch to ${targetLabel(target)}`;
+	const TargetIcon = target === "chat" ? MessageSquare : SquareTerminal;
+	return (
+		<DropdownMenuItem
+			disabled={!supported || pending}
+			onSelect={onClick}
+			title={supported ? label : disabledReason || label}
+		>
+			{pending ? (
+				<Loader2 aria-hidden="true" className="size-icon-lg animate-spin" />
+			) : (
+				<TargetIcon aria-hidden="true" className="size-icon-lg" />
+			)}
+			{label}
+		</DropdownMenuItem>
+	);
 }

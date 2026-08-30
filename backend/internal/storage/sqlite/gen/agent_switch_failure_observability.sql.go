@@ -213,6 +213,37 @@ func (q *Queries) GetAgentSwitchFailurePolicy(ctx context.Context) (AgentSwitchF
 	return i, err
 }
 
+const getLeasedAgentSwitchFailureExpiresAt = `-- name: GetLeasedAgentSwitchFailureExpiresAt :one
+SELECT expires_at
+FROM agent_switch_failure_outbox
+WHERE id = ?1 AND lease_token = ?2
+  AND lease_consent_generation = ?3
+  AND lease_delivery_epoch = ?4
+  AND destination_fingerprint = ?5
+  AND delivered_at IS NULL AND discarded_at IS NULL
+`
+
+type GetLeasedAgentSwitchFailureExpiresAtParams struct {
+	ID                     string
+	LeaseToken             sql.NullString
+	ConsentGeneration      sql.NullString
+	DeliveryEpoch          sql.NullInt64
+	DestinationFingerprint string
+}
+
+func (q *Queries) GetLeasedAgentSwitchFailureExpiresAt(ctx context.Context, arg GetLeasedAgentSwitchFailureExpiresAtParams) (time.Time, error) {
+	row := q.db.QueryRowContext(ctx, getLeasedAgentSwitchFailureExpiresAt,
+		arg.ID,
+		arg.LeaseToken,
+		arg.ConsentGeneration,
+		arg.DeliveryEpoch,
+		arg.DestinationFingerprint,
+	)
+	var expires_at time.Time
+	err := row.Scan(&expires_at)
+	return expires_at, err
+}
+
 const insertAgentSwitchFailurePayload = `-- name: InsertAgentSwitchFailurePayload :execrows
 INSERT INTO agent_switch_failure_outbox (
     id, schema_version, envelope_encoding_version, dedupe_key, destination_fingerprint,
@@ -467,6 +498,65 @@ func (q *Queries) LeaseAgentSwitchFailure(ctx context.Context, arg LeaseAgentSwi
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+const listCurrentAgentSwitchRecoveryMarkers = `-- name: ListCurrentAgentSwitchRecoveryMarkers :many
+SELECT a.id, a.session_id, a.requested_at, a.updated_at, a.state, a.error_code,
+       a.failure_point, a.from_harness, a.target_harness, a.target_start_mode,
+       s.session_mode
+FROM agent_switches a
+JOIN sessions s ON s.id = a.session_id
+WHERE a.state NOT IN ('completed', 'failed')
+  AND a.error_code IN ('source_stop_unconfirmed', 'source_restore_unconfirmed', 'target_start_unconfirmed')
+`
+
+type ListCurrentAgentSwitchRecoveryMarkersRow struct {
+	ID              domain.AgentSwitchID
+	SessionID       domain.SessionID
+	RequestedAt     time.Time
+	UpdatedAt       time.Time
+	State           domain.AgentSwitchState
+	ErrorCode       string
+	FailurePoint    string
+	FromHarness     domain.AgentHarness
+	TargetHarness   domain.AgentHarness
+	TargetStartMode domain.AgentSwitchTargetStartMode
+	SessionMode     domain.SessionMode
+}
+
+func (q *Queries) ListCurrentAgentSwitchRecoveryMarkers(ctx context.Context) ([]ListCurrentAgentSwitchRecoveryMarkersRow, error) {
+	rows, err := q.db.QueryContext(ctx, listCurrentAgentSwitchRecoveryMarkers)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListCurrentAgentSwitchRecoveryMarkersRow{}
+	for rows.Next() {
+		var i ListCurrentAgentSwitchRecoveryMarkersRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.SessionID,
+			&i.RequestedAt,
+			&i.UpdatedAt,
+			&i.State,
+			&i.ErrorCode,
+			&i.FailurePoint,
+			&i.FromHarness,
+			&i.TargetHarness,
+			&i.TargetStartMode,
+			&i.SessionMode,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const markAgentSwitchFailureDelivered = `-- name: MarkAgentSwitchFailureDelivered :execrows

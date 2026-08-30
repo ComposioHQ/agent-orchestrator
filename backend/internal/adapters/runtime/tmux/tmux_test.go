@@ -1102,6 +1102,22 @@ func TestProbeFencedRuntimeExactSupervisorWithoutChildIsDead(t *testing.T) {
 	}
 }
 
+func TestProbeFencedRuntimeManualRelaunchWithoutSupervisorIsUnknown(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	fr.outputs = [][]byte{
+		nil,
+		[]byte("100\n"),
+		[]byte("100 1 /bin/zsh -i\n101 100 codex resume native-1\n102 101 codex worker\n"),
+	}
+
+	got := r.ProbeFencedRuntime(context.Background(), ports.FencedRuntimeRef{
+		Handle: ports.RuntimeHandle{ID: "sess-1"}, SessionID: "sess-1", Generation: "launch-2",
+	})
+	if got.Liveness != ports.FencedUnknown || got.Reason != ports.FencedReasonIdentityMissing {
+		t.Fatalf("ProbeFencedRuntime manual relaunch = %+v, want unknown/identity_missing", got)
+	}
+}
+
 func TestProbeFencedRuntimeMalformedProcessRowIsUnknown(t *testing.T) {
 	r, fr := newTestRuntime(0)
 	fr.outputs = [][]byte{

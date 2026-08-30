@@ -146,7 +146,7 @@ func TestEncodeAgentSwitchEnvelopeV1MatchesFrozenFixture(t *testing.T) {
 	canonical := loadAgentSwitchFixture(t)
 	event := domain.AgentSwitchFailureEvent{
 		EventID:                 fixtureEventID,
-		EnvelopeEncodingVersion: domain.AgentSwitchEnvelopeEncodingV1,
+		EnvelopeEncodingVersion: AgentSwitchEnvelopeEncodingV1,
 		CanonicalEventJSON:      canonical,
 	}
 
@@ -556,7 +556,7 @@ func fixtureAgentSwitchEvent(t *testing.T) domain.AgentSwitchFailureEvent {
 	t.Helper()
 	return domain.AgentSwitchFailureEvent{
 		EventID:                 fixtureEventID,
-		EnvelopeEncodingVersion: domain.AgentSwitchEnvelopeEncodingV1,
+		EnvelopeEncodingVersion: AgentSwitchEnvelopeEncodingV1,
 		CanonicalEventJSON:      loadAgentSwitchFixture(t),
 	}
 }

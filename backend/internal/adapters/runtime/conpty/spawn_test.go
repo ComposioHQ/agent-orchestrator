@@ -186,8 +186,8 @@ func TestDefinitiveSpawnFailureRetainsCleanupAuthorityUntilUnregisterSucceeds(t 
 	if !errors.As(err, &effect) || !errors.Is(err, spawnErr) || !errors.Is(err, unregisterErr) {
 		t.Fatalf("Create definitive failure = %v, want joined spawn and unregister errors", err)
 	}
-	if effect.EffectOutcome() != ports.RuntimeEffectNone || effect.PossibleHandle().ID != "" {
-		t.Fatalf("definitive failure effect=%q handle=%+v, want none/empty", effect.EffectOutcome(), effect.PossibleHandle())
+	if effect.EffectOutcome() != ports.RuntimeEffectPossible || effect.CleanupOutcome() != ports.RuntimeCleanupFailed || effect.PossibleHandle().ID != "sess-cleanup-retry" {
+		t.Fatalf("definitive failure effect=%q cleanup=%q handle=%+v, want possible/failed/retained handle", effect.EffectOutcome(), effect.CleanupOutcome(), effect.PossibleHandle())
 	}
 	runtime.mu.Lock()
 	retained := runtime.sessions["sess-cleanup-retry"]

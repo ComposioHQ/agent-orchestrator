@@ -1,8 +1,9 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ChatComposer } from "./ChatComposer";
 import { ChatWorkspace } from "./ChatWorkspace";
+import { QueuedMessageDock } from "./QueuedMessageDock";
 import { chatFixture } from "../../lib/chat-fixture";
 import { typeInLexicalEditor } from "../../test/lexical";
 
@@ -98,8 +99,117 @@ describe("ChatWorkspace steering", () => {
 			/>,
 		);
 		const dock = screen.getByTestId("queued-message-dock");
+		expect(within(dock).getByText("2 Queued Messages")).toBeVisible();
 		expect(within(dock).getByText("first queued")).toBeVisible();
 		expect(within(dock).getByText("second queued")).toBeVisible();
+		expect(screen.queryByText("Queued · sends when the agent finishes")).not.toBeInTheDocument();
+	});
+
+	it("steers, edits, and deletes queued messages from the dock", async () => {
+		const onPromoteQueuedTurn = vi.fn().mockResolvedValue(undefined);
+		const onBeginQueuedEdit = vi.fn();
+		const onCancelQueuedTurn = vi.fn().mockResolvedValue(undefined);
+		render(
+			<QueuedMessageDock
+				messages={[
+					{
+						turnId: "queued-1",
+						message: {
+							kind: "message",
+							id: "queued-message-1",
+							turnId: "queued-1",
+							sequence: 100,
+							revision: 0,
+							role: "user",
+							origin: "human",
+							text: "first queued",
+							streaming: false,
+							createdAt: "2026-08-11T10:01:00Z",
+						},
+					},
+					{
+						turnId: "queued-2",
+						message: {
+							kind: "message",
+							id: "queued-message-2",
+							turnId: "queued-2",
+							sequence: 101,
+							revision: 0,
+							role: "user",
+							origin: "human",
+							text: "second queued",
+							streaming: false,
+							createdAt: "2026-08-11T10:02:00Z",
+						},
+					},
+				]}
+				canSteer
+				onPromoteQueuedTurn={onPromoteQueuedTurn}
+				onBeginQueuedEdit={onBeginQueuedEdit}
+				onCancelQueuedTurn={onCancelQueuedTurn}
+			/>,
+		);
+
+		await userEvent.click(screen.getAllByRole("button", { name: "Steer this queued message into the running turn" })[0]);
+		expect(onPromoteQueuedTurn).toHaveBeenCalledWith("queued-1");
+
+		await userEvent.click(screen.getAllByRole("button", { name: "Edit queued message" })[0]);
+		expect(onBeginQueuedEdit).toHaveBeenCalledWith("queued-1", "first queued");
+
+		await userEvent.click(screen.getAllByRole("button", { name: "Delete queued message" })[0]);
+		expect(onCancelQueuedTurn).toHaveBeenCalledWith("queued-1");
+	});
+
+	it("hides a cancelled queued message from the timeline", () => {
+		const base = withQueuedMessages();
+		const snapshot = {
+			...base,
+			turns: base.turns.map((turn) =>
+				turn.id === "queued-1"
+					? {
+							...turn,
+							state: "cancelled" as const,
+							completedAt: "2026-08-11T10:03:00Z",
+						}
+					: turn,
+			),
+			items: base.items.filter((item) => item.kind !== "message" || item.turnId !== "queued-1"),
+		};
+		render(<ChatWorkspace snapshot={snapshot} onSteer={vi.fn()} />);
+
+		expect(screen.queryByText("first queued")).not.toBeInTheDocument();
+		expect(within(screen.getByTestId("queued-message-dock")).getByText("second queued")).toBeVisible();
+	});
+
+	it("clears a queued edit when that message is deleted from the dock", async () => {
+		const onCancelQueuedTurn = vi.fn().mockResolvedValue(undefined);
+		render(
+			<ChatWorkspace
+				snapshot={withQueuedMessages()}
+				onSteer={vi.fn()}
+				onEditQueuedTurn={vi.fn()}
+				onCancelQueuedTurn={onCancelQueuedTurn}
+			/>,
+		);
+
+		await userEvent.click(screen.getAllByRole("button", { name: "Edit queued message" })[0]);
+		await waitFor(() => expect(screen.getByText(/editing/i)).toBeInTheDocument());
+
+		await userEvent.click(screen.getAllByRole("button", { name: "Delete queued message" })[0]);
+		await waitFor(() => expect(onCancelQueuedTurn).toHaveBeenCalledWith("queued-1"));
+		await waitFor(() => expect(screen.queryByText(/editing/i)).not.toBeInTheDocument());
+	});
+
+	it("shows the queued dock while messages are still queued between turns", () => {
+		const snapshot = {
+			...withQueuedMessages(),
+			turns: withQueuedMessages().turns.map((turn) =>
+				turn.state === "running" ? { ...turn, state: "completed" as const } : turn,
+			),
+		};
+		render(<ChatWorkspace snapshot={snapshot} onSteer={vi.fn()} />);
+		expect(screen.getByTestId("queued-message-dock")).toBeInTheDocument();
+		expect(within(screen.getByTestId("queued-message-dock")).getByText("first queued")).toBeVisible();
 	});
 
 	it("keeps queued messages docked after the conversation branches", () => {

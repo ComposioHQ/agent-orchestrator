@@ -18,13 +18,7 @@ import (
 // rollout's consent, privacy, and provider-configuration gates are complete.
 const AgentSwitchFailureProductionEnabled = false
 
-// AgentSwitchCanonicalEventMaxBytes bounds the serialized event payload sent
-// to an external failure-reporting provider.
-const (
-	AgentSwitchCanonicalEventMaxBytes = 60 << 10
-	AgentSwitchEnvelopeEncodingV1     = 1
-	agentSwitchStackMaxBytes          = 16 << 10
-)
+const agentSwitchStackMaxBytes = 16 << 10
 
 // AgentSwitchReportKind is the stable remote incident class.
 type AgentSwitchReportKind string
@@ -909,7 +903,6 @@ type AgentSwitchFailureEvent struct {
 }
 
 var (
-	agentSwitchEventIDPattern  = regexp.MustCompile(`^[0-9a-f]{32}$`)
 	agentSwitchTokenPattern    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+:-]*$`)
 	agentSwitchReleasePattern  = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$`)
 	agentSwitchNumericPattern  = regexp.MustCompile(`^\d+$`)
@@ -964,7 +957,7 @@ func ValidateAgentSwitchFault(fault AgentSwitchFault) error {
 	if err := validateAgentSwitchFrames(fault.Frames); err != nil {
 		return err
 	}
-	severity := severityForFault(fault, entry.DefaultSeverity)
+	severity := AgentSwitchSeverityForFault(fault, entry.DefaultSeverity)
 	if (severity == AgentSwitchSeverityFatal || severity == AgentSwitchSeverityError) && len(fault.Frames) == 0 {
 		return errors.New("P0 and P1 internal agent switch reports require sanitized capture-site frames")
 	}
@@ -1151,8 +1144,7 @@ func validObservedStartMode(mode AgentSwitchTargetStartMode) bool {
 }
 
 func validateAgentSwitchFrames(frames []AgentSwitchStackFrame) error {
-	canonicalFrames := make([]canonicalAgentSwitchFrame, len(frames))
-	for i, frame := range frames {
+	for _, frame := range frames {
 		if frame.Package == "" || len(frame.Package) > 128 || !agentSwitchPackagePattern.MatchString(frame.Package) {
 			return errors.New("stack frame package is not privacy-safe")
 		}
@@ -1169,12 +1161,8 @@ func validateAgentSwitchFrames(frames []AgentSwitchStackFrame) error {
 			strings.HasPrefix(frame.Filename, "../") {
 			return errors.New("stack frame filename must be repository-relative")
 		}
-		canonicalFrames[i] = canonicalAgentSwitchFrame{
-			Module: frame.Package, Function: frame.Function,
-			Filename: frame.Filename, Lineno: frame.Line, InApp: true,
-		}
 	}
-	raw, err := json.Marshal(canonicalFrames)
+	raw, err := json.Marshal(frames)
 	if err != nil {
 		return fmt.Errorf("marshal sanitized stack: %w", err)
 	}
@@ -1182,71 +1170,6 @@ func validateAgentSwitchFrames(frames []AgentSwitchStackFrame) error {
 		return errors.New("sanitized stack exceeds 16 KiB")
 	}
 	return nil
-}
-
-// BuildAgentSwitchCanonicalEvent validates input and returns the bounded,
-// deterministic provider payload.
-func BuildAgentSwitchCanonicalEvent(input AgentSwitchEventBuildInput) ([]byte, error) {
-	if !agentSwitchEventIDPattern.MatchString(input.EventID) {
-		return nil, errors.New("event ID must be exactly 32 lowercase hexadecimal characters")
-	}
-	if err := ValidateAgentSwitchFault(input.Fault); err != nil {
-		return nil, err
-	}
-	if !validAgentSwitchRelease(input.Release) {
-		return nil, errors.New("release is not bounded strict SemVer 2.0")
-	}
-	if !input.Environment.Valid() || !input.Channel.Valid() || !input.Platform.Valid() || !input.OS.Valid() || !input.ElapsedTimeBucket.Valid() {
-		return nil, errors.New("agent switch event metadata is outside its closed allowlist")
-	}
-
-	entry, _ := AgentSwitchFailureTaxonomy(input.Fault.FailurePoint)
-	frames := make([]canonicalAgentSwitchFrame, len(input.Fault.Frames))
-	for i, frame := range input.Fault.Frames {
-		frames[i] = canonicalAgentSwitchFrame{
-			Module: frame.Package, Function: frame.Function,
-			Filename: frame.Filename, Lineno: frame.Line, InApp: true,
-		}
-	}
-	event := canonicalAgentSwitchEvent{
-		EventID:   input.EventID,
-		Timestamp: input.Fault.OccurredAt.UTC().Format(time.RFC3339Nano),
-		Message:   "Agent switch failed: " + string(input.Fault.Mode) + " / " + string(input.Fault.Phase) + " / " + string(input.Fault.FailurePoint),
-		Level:     string(severityForFault(input.Fault, entry.DefaultSeverity)),
-		Platform:  input.Platform, Environment: input.Environment, Release: input.Release,
-		Exception: canonicalAgentSwitchExceptions{Values: []canonicalAgentSwitchException{{
-			Type: "AgentSwitchFailure", Value: "agent switch failure: " + eventFailureCode(input.Fault) + " at " + string(input.Fault.FailurePoint),
-			Stacktrace: canonicalAgentSwitchStacktrace{Frames: frames},
-		}}},
-		Fingerprint: AgentSwitchIssueFingerprint(input.Fault),
-		Tags: canonicalAgentSwitchTags{
-			Feature: "agent_switching", Platform: input.Platform,
-			ReportKind: input.Fault.ReportKind, Subsystem: entry.Subsystem,
-			Mode: input.Fault.Mode, Phase: input.Fault.Phase,
-			FailurePoint: input.Fault.FailurePoint, ErrorCode: input.Fault.ErrorCode,
-			FaultCode: input.Fault.FaultCode, Execution: input.Fault.Execution,
-			FromHarness: input.Fault.FromHarness, TargetHarness: input.Fault.TargetHarness,
-			TargetStartMode: input.Fault.TargetStartMode, RuntimeBackend: input.Fault.RuntimeBackend,
-			CallOutcome: input.Fault.CallOutcome, Ownership: input.Fault.Ownership,
-			Compensation: input.Fault.Compensation, UserImpact: input.Fault.UserImpact,
-			Release: input.Release, ClassifierCallsite: input.Fault.ClassifierCallsite,
-			Channel: input.Channel, OS: input.OS,
-		},
-		Contexts: canonicalAgentSwitchContexts{AgentSwitch: canonicalAgentSwitchContext{
-			SourceStopConfirmed:  input.Fault.SourceStopConfirmed,
-			TargetOwnerCommitted: input.Fault.TargetOwnerCommitted,
-			GateRetained:         input.Fault.GateRetained,
-			ElapsedTimeBucket:    input.ElapsedTimeBucket,
-		}},
-	}
-	raw, err := json.Marshal(event)
-	if err != nil {
-		return nil, fmt.Errorf("marshal canonical agent switch event: %w", err)
-	}
-	if len(raw) > AgentSwitchCanonicalEventMaxBytes {
-		return nil, errors.New("canonical agent switch event exceeds 60 KiB")
-	}
-	return raw, nil
 }
 
 func validAgentSwitchRelease(release string) bool {
@@ -1286,7 +1209,7 @@ func AgentSwitchDedupeKey(scope AgentSwitchDedupeScope, fault AgentSwitchFault) 
 		}
 		return nil
 	}
-	code := eventFailureCode(fault)
+	code := AgentSwitchFailureCode(fault)
 	switch fault.ReportKind {
 	case AgentSwitchReportTerminalFailure, AgentSwitchReportRecoveryRequired:
 		if err := validateID("switch ID", string(scope.SwitchID)); err != nil || scope.DaemonRunID != "" {
@@ -1335,17 +1258,21 @@ func AgentSwitchIssueFingerprint(fault AgentSwitchFault) []string {
 		}
 		return []string{"agent-switch", "panic", string(fault.Mode), string(fault.Phase), string(fault.FailurePoint), topFunction}
 	}
-	return []string{"agent-switch", "v1", string(fault.ReportKind), string(fault.Mode), string(fault.Phase), string(fault.FailurePoint), eventFailureCode(fault)}
+	return []string{"agent-switch", "v1", string(fault.ReportKind), string(fault.Mode), string(fault.Phase), string(fault.FailurePoint), AgentSwitchFailureCode(fault)}
 }
 
-func eventFailureCode(fault AgentSwitchFault) string {
+// AgentSwitchFailureCode returns the bounded semantic code used by grouping
+// and provider adapters.
+func AgentSwitchFailureCode(fault AgentSwitchFault) string {
 	if fault.ErrorCode != AgentSwitchErrorNotApplicable && fault.ErrorCode != "" {
 		return string(fault.ErrorCode)
 	}
 	return string(fault.FaultCode)
 }
 
-func severityForFault(fault AgentSwitchFault, fallback AgentSwitchSeverity) AgentSwitchSeverity {
+// AgentSwitchSeverityForFault derives severity from the complete normalized
+// fault tuple and the taxonomy fallback.
+func AgentSwitchSeverityForFault(fault AgentSwitchFault, fallback AgentSwitchSeverity) AgentSwitchSeverity {
 	if fault.Ownership == AgentSwitchOwnershipAmbiguous ||
 		(fault.TargetOwnerCommitted == AgentSwitchTriTrue && fault.Ownership != AgentSwitchOwnershipTarget) {
 		return AgentSwitchSeverityFatal
@@ -1374,78 +1301,6 @@ func contains[T comparable](values []T, target T) bool {
 		}
 	}
 	return false
-}
-
-type canonicalAgentSwitchEvent struct {
-	EventID     string                         `json:"event_id"`
-	Timestamp   string                         `json:"timestamp"`
-	Message     string                         `json:"message"`
-	Level       string                         `json:"level"`
-	Platform    AgentSwitchPlatform            `json:"platform"`
-	Environment AgentSwitchEnvironment         `json:"environment"`
-	Release     string                         `json:"release"`
-	Exception   canonicalAgentSwitchExceptions `json:"exception"`
-	Fingerprint []string                       `json:"fingerprint"`
-	Tags        canonicalAgentSwitchTags       `json:"tags"`
-	Contexts    canonicalAgentSwitchContexts   `json:"contexts"`
-}
-
-type canonicalAgentSwitchExceptions struct {
-	Values []canonicalAgentSwitchException `json:"values"`
-}
-
-type canonicalAgentSwitchException struct {
-	Type       string                         `json:"type"`
-	Value      string                         `json:"value"`
-	Stacktrace canonicalAgentSwitchStacktrace `json:"stacktrace"`
-}
-
-type canonicalAgentSwitchStacktrace struct {
-	Frames []canonicalAgentSwitchFrame `json:"frames"`
-}
-
-type canonicalAgentSwitchFrame struct {
-	Module   string `json:"module"`
-	Function string `json:"function"`
-	Filename string `json:"filename"`
-	Lineno   int    `json:"lineno"`
-	InApp    bool   `json:"in_app"`
-}
-
-type canonicalAgentSwitchTags struct {
-	Feature            string                        `json:"feature"`
-	Platform           AgentSwitchPlatform           `json:"platform"`
-	ReportKind         AgentSwitchReportKind         `json:"report_kind"`
-	Subsystem          string                        `json:"subsystem"`
-	Mode               SessionMode                   `json:"mode"`
-	Phase              AgentSwitchState              `json:"phase"`
-	FailurePoint       AgentSwitchFailurePoint       `json:"failure_point"`
-	ErrorCode          AgentSwitchErrorCode          `json:"error_code"`
-	FaultCode          AgentSwitchFaultCode          `json:"fault_code"`
-	Execution          AgentSwitchExecution          `json:"execution"`
-	FromHarness        AgentHarness                  `json:"from_harness"`
-	TargetHarness      AgentHarness                  `json:"target_harness"`
-	TargetStartMode    AgentSwitchTargetStartMode    `json:"target_start_mode"`
-	RuntimeBackend     AgentSwitchRuntimeBackend     `json:"runtime_backend"`
-	CallOutcome        AgentSwitchCallOutcome        `json:"call_outcome"`
-	Ownership          AgentSwitchOwnership          `json:"ownership"`
-	Compensation       AgentSwitchCompensation       `json:"compensation"`
-	UserImpact         AgentSwitchUserImpact         `json:"user_impact"`
-	Release            string                        `json:"release"`
-	ClassifierCallsite AgentSwitchClassifierCallsite `json:"classifier_callsite"`
-	Channel            AgentSwitchChannel            `json:"channel"`
-	OS                 AgentSwitchOS                 `json:"os"`
-}
-
-type canonicalAgentSwitchContexts struct {
-	AgentSwitch canonicalAgentSwitchContext `json:"agent_switch"`
-}
-
-type canonicalAgentSwitchContext struct {
-	SourceStopConfirmed  AgentSwitchTriState          `json:"source_stop_confirmed"`
-	TargetOwnerCommitted AgentSwitchTriState          `json:"target_owner_committed"`
-	GateRetained         AgentSwitchTriState          `json:"gate_retained"`
-	ElapsedTimeBucket    AgentSwitchElapsedTimeBucket `json:"elapsed_time_bucket"`
 }
 
 // StableAgentSwitchEventID derives a Sentry-compatible EventID from an opaque

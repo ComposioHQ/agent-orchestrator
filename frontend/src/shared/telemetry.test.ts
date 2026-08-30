@@ -56,9 +56,20 @@ test("buildTelemetryBootstrap withholds the bootstrap on an unpackaged build", a
 	tempDirs.push(dir);
 
 	const disabled = await buildTelemetryBootstrap({}, "0.11.2", "linux", dir, false, enabledPolicy);
-	expect(disabled?.eventsEnabled).toBe(false);
+	expect(disabled).toBeNull();
 	const optedIn = await buildTelemetryBootstrap({ AO_TELEMETRY_RENDERER: "on" }, "0.11.2", "linux", dir, false, enabledPolicy);
 	expect(optedIn?.appVersion).toBe("0.11.2");
+});
+
+test("failure-reporting opt-out does not withhold PostHog identity", async () => {
+	const dir = await mkdtemp(path.join(os.tmpdir(), "ao-telemetry-"));
+	tempDirs.push(dir);
+	const bootstrap = await buildTelemetryBootstrap({}, "0.11.2", "linux", dir, true, {
+		...enabledPolicy,
+		eventsEnabled: false,
+	});
+	expect(bootstrap?.eventsEnabled).toBe(false);
+	expect(bootstrap?.distinctId).toMatch(/^ins_/);
 });
 
 test("buildTelemetryBootstrap carries the deny list across the process boundary", async () => {
