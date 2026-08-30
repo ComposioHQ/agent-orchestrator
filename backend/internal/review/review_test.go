@@ -1012,6 +1012,45 @@ func TestTriggerRunsAnotherHarnessOnAnAlreadyApprovedCommit(t *testing.T) {
 	}
 }
 
+func TestTriggerHarnessOverrideDoesNotRestartRunningReviewJustBecauseResolvedConfigIsNonEmpty(t *testing.T) {
+	store := &fakeStore{
+		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", Harness: domain.ReviewerCodex, ReviewerHandleID: "codex-pane"},
+		runs: []domain.ReviewRun{{
+			ID: "run-1", SessionID: "mer-1", PRURL: "https://github.com/o/r/pull/1", TargetSHA: "sha1",
+			Harness: domain.ReviewerClaudeCode,
+			Status:  domain.ReviewRunRunning, Verdict: domain.VerdictNone,
+		}},
+	}
+	worker := liveWorker()
+	worker.ReviewerHarness = domain.ReviewerClaudeCode
+	worker.ReviewerConfig = domain.AgentConfig{Model: "gpt-5"}
+	launcher := &fakeLauncher{alive: true, handle: "codex-pane"}
+	eng := newEngineForTest(store, fakeSessions{rec: worker, ok: true}, prAt("sha1"), fakeProjects{}, launcher)
+
+	res, err := eng.Trigger(context.Background(), "mer-1", domain.ReviewerCodex, domain.AgentConfig{})
+	if err != nil {
+		t.Fatalf("Trigger: %v", err)
+	}
+	if !res.Created {
+		t.Fatalf("different harness should still create a second-opinion run: %+v", res)
+	}
+	if len(store.runs) != 2 {
+		t.Fatalf("runs = %+v, want original running pass plus new second-opinion run", store.runs)
+	}
+	if got := store.runs[0]; got.Status != domain.ReviewRunRunning || got.Harness != domain.ReviewerClaudeCode {
+		t.Fatalf("original run = %+v, want unchanged running claude-code pass", got)
+	}
+	if got := store.runs[1]; got.Harness != domain.ReviewerCodex || got.Status != domain.ReviewRunRunning {
+		t.Fatalf("new run = %+v, want running codex second-opinion pass", got)
+	}
+	if launcher.notified {
+		t.Fatalf("different harness should spawn a second-opinion reviewer, not notify existing pane: %+v", launcher)
+	}
+	if !launcher.spawned {
+		t.Fatalf("expected a new reviewer process for the different harness: %+v", launcher)
+	}
+}
+
 // The project default must not re-review an approved commit on every trigger.
 // Only an explicit pick counts as asking for a second opinion.
 func TestTriggerWithoutOverrideStillSkipsAnApprovedCommit(t *testing.T) {

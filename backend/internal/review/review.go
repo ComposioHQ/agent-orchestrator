@@ -256,10 +256,12 @@ func (e *Engine) TriggerWithSource(ctx stdctx.Context, workerID domain.SessionID
 	resolvedHarness := harness
 	resolvedConfig := config
 	hasHarnessOverride := override != ""
+	hasConfigOverride := false
 	if hasHarnessOverride {
 		harness = override
 		if override == resolvedHarness {
 			config = mergeReviewerAgentConfig(resolvedConfig, overrideConfig)
+			hasConfigOverride = config != resolvedConfig
 		} else if !overrideConfig.IsZero() {
 			config = mergeReviewerAgentConfig(domain.AgentConfig{}, overrideConfig)
 		} else {
@@ -267,8 +269,8 @@ func (e *Engine) TriggerWithSource(ctx stdctx.Context, workerID domain.SessionID
 		}
 	} else if !overrideConfig.IsZero() {
 		config = mergeReviewerAgentConfig(config, overrideConfig)
+		hasConfigOverride = config != resolvedConfig
 	}
-	hasConfigOverride := config != resolvedConfig
 	reviewRows, err := e.store.ListReviewsBySession(ctx, workerID)
 	if err != nil {
 		return TriggerResult{}, err
@@ -823,9 +825,11 @@ func reviewQueue(runs []domain.ReviewRun) []ports.ReviewTask {
 // otherwise up-to-date PR worth running again. A config-only override (for
 // example, picking a model under the same harness) always requests another
 // pass. A harness-only override only does so when it actually changes the
-// reviewer that produced the current result; re-picking the same harness must
-// still reuse. Legacy runs may have an empty harness, which means "the same
-// resolved harness as today" for this comparison.
+// reviewer whose pass is currently authoritative; re-picking the same harness
+// must still reuse. That remains true even while another harness is already
+// running: a different reviewer is a second opinion, not a restart. Legacy
+// runs may have an empty harness, which means "the same resolved harness as
+// today" for this comparison.
 func secondOpinionWanted(state PRReviewState, hasHarnessOverride, hasConfigOverride bool, harness domain.ReviewerHarness) bool {
 	if state.Status == ReviewStateIneligible {
 		return false
@@ -835,9 +839,6 @@ func secondOpinionWanted(state PRReviewState, hasHarnessOverride, hasConfigOverr
 	}
 	if hasConfigOverride {
 		return true
-	}
-	if state.Status == ReviewStateRunning {
-		return false
 	}
 	if !hasHarnessOverride {
 		return false
