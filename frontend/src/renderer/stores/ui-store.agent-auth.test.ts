@@ -3,7 +3,12 @@ import { useUiStore } from "./ui-store";
 
 describe("agent authentication flow state", () => {
 	beforeEach(() => {
-		useUiStore.setState({ agentAuthGeneration: 0, agentAuthTerminalRequest: null, agentAuthCheckRequest: null });
+		useUiStore.setState({
+			agentAuthGeneration: 0,
+			agentAuthCheckNonce: 0,
+			agentAuthTerminalRequest: null,
+			agentAuthCheckRequest: null,
+		});
 	});
 
 	it("retains the pending terminal after an unauthorized check", () => {
@@ -35,6 +40,26 @@ describe("agent authentication flow state", () => {
 			handleId: "shellterm-two",
 		});
 		expect(useUiStore.getState().agentAuthCheckRequest).toEqual(newCheck);
+	});
+
+	it("does not reuse a completed check nonce while an older probe is still in flight", () => {
+		useUiStore.getState().requestAgentAuthTerminal("codex", "shellterm-one");
+		useUiStore.getState().openGlobalSettings();
+		const delayedCheck = useUiStore.getState().agentAuthCheckRequest!;
+
+		useUiStore.getState().openGlobalSettings();
+		const supersedingCheck = useUiStore.getState().agentAuthCheckRequest!;
+		useUiStore.getState().completeAgentAuthCheck(supersedingCheck, false);
+
+		useUiStore.getState().openGlobalSettings();
+		const currentCheck = useUiStore.getState().agentAuthCheckRequest!;
+		useUiStore.getState().completeAgentAuthCheck(delayedCheck, true);
+
+		expect(useUiStore.getState().agentAuthCheckRequest).toEqual(currentCheck);
+		expect(useUiStore.getState().agentAuthTerminalRequest).toMatchObject({
+			agentId: "codex",
+			handleId: "shellterm-one",
+		});
 	});
 
 	it("keeps terminal generations monotonic after an authorized flow clears", () => {

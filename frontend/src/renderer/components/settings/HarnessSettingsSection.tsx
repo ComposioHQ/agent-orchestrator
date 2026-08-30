@@ -199,7 +199,7 @@ export function HarnessSettingsSection({ titleHidden = false }: { titleHidden?: 
 		updateAuthState(agentId, { pending: true, error: null });
 		try {
 			const result = await startAgentAuth.mutateAsync(agentId);
-			requestAgentAuthTerminal(agentId, result.terminal.handleId);
+			requestAgentAuthTerminal(agentId, result.terminal.handleId, result.guidance ?? "");
 		} catch (error) {
 			updateAuthState(agentId, { error: error instanceof Error ? error.message : t("settings.harness.authFailed") });
 			return undefined;

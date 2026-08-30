@@ -44,7 +44,7 @@ export type InspectorSessionState = {
 	initialized?: boolean;
 };
 
-export type AgentAuthTerminalRequest = { agentId: string; handleId: string; nonce: number };
+export type AgentAuthTerminalRequest = { agentId: string; handleId: string; guidance: string; nonce: number };
 export type AgentAuthCheckRequest = { agentId: string; handleId: string; generation: number; nonce: number };
 
 // Selection (which project/session is open) now lives in the URL — the router
@@ -97,6 +97,9 @@ export type UiState = {
 	// Monotonic across completed auth flows so the persistent shell never
 	// mistakes a later terminal request for one it already revealed.
 	agentAuthGeneration: number;
+	// Monotonic across individual auth probes so a delayed response can never
+	// match a later check after the current request has been cleared.
+	agentAuthCheckNonce: number;
 	// One-shot request to reveal a backend-created authentication terminal.
 	// The renderer carries only the returned terminal handle, never argv or credentials.
 	agentAuthTerminalRequest: AgentAuthTerminalRequest | null;
@@ -149,7 +152,7 @@ export type UiState = {
 	requestCreateProject: () => void;
 	requestCreateProjectFromPath: (path: string) => void;
 	requestNewShellTerminal: () => void;
-	requestAgentAuthTerminal: (agentId: string, handleId: string) => void;
+	requestAgentAuthTerminal: (agentId: string, handleId: string, guidance?: string) => void;
 	completeAgentAuthCheck: (request: AgentAuthCheckRequest, authorized: boolean) => void;
 	setActiveShellTerminal: (handleId: string | null) => void;
 	setVisibleTerminalKind: (sessionId: string, kind: TerminalTarget["kind"]) => void;
@@ -224,6 +227,7 @@ export const useUiStore = create<UiState>((set, get) => ({
 	folderDropRequest: null,
 	newShellTerminalNonce: 0,
 	agentAuthGeneration: 0,
+	agentAuthCheckNonce: 0,
 	agentAuthTerminalRequest: null,
 	agentAuthCheckRequest: null,
 	activeShellTerminalHandleId: null,
@@ -251,17 +255,20 @@ export const useUiStore = create<UiState>((set, get) => ({
 		set({ developerMode });
 	},
 	openGlobalSettings: (section) =>
-		set((state) => ({
-			settingsModal: { scope: "global", section },
-			agentAuthCheckRequest: state.agentAuthTerminalRequest
-				? {
+		set((state) => {
+			if (!state.agentAuthTerminalRequest) return { settingsModal: { scope: "global", section } };
+			const nonce = state.agentAuthCheckNonce + 1;
+			return {
+				settingsModal: { scope: "global", section },
+				agentAuthCheckNonce: nonce,
+				agentAuthCheckRequest: {
 					agentId: state.agentAuthTerminalRequest.agentId,
 					handleId: state.agentAuthTerminalRequest.handleId,
 					generation: state.agentAuthTerminalRequest.nonce,
-					nonce: (state.agentAuthCheckRequest?.nonce ?? 0) + 1,
-				}
-				: state.agentAuthCheckRequest,
-		})),
+					nonce,
+				},
+			};
+		}),
 	openProjectSettings: (projectId) => set({ settingsModal: { scope: "project", projectId } }),
 	closeSettings: () => set({ settingsModal: null }),
 	syncSystemTheme: () => {
@@ -433,13 +440,13 @@ export const useUiStore = create<UiState>((set, get) => ({
 	requestCreateProjectFromPath: (path) =>
 		set((state) => ({ folderDropRequest: { path, nonce: (state.folderDropRequest?.nonce ?? 0) + 1 } })),
 	requestNewShellTerminal: () => set((state) => ({ newShellTerminalNonce: state.newShellTerminalNonce + 1 })),
-	requestAgentAuthTerminal: (agentId, handleId) =>
+	requestAgentAuthTerminal: (agentId, handleId, guidance = "") =>
 		set((state) => {
 			const generation = state.agentAuthGeneration + 1;
 			return {
 				agentAuthGeneration: generation,
 				agentAuthCheckRequest: null,
-				agentAuthTerminalRequest: { agentId, handleId, nonce: generation },
+				agentAuthTerminalRequest: { agentId, handleId, guidance, nonce: generation },
 			};
 		}),
 	completeAgentAuthCheck: (request, authorized) =>
