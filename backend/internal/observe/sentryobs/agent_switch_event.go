@@ -12,8 +12,10 @@ import (
 )
 
 const (
+	// AgentSwitchCanonicalEventMaxBytes bounds the provider payload persisted in the outbox.
 	AgentSwitchCanonicalEventMaxBytes = 60 << 10
-	AgentSwitchEnvelopeEncodingV1     = 1
+	// AgentSwitchEnvelopeEncodingV1 identifies the initial immutable Sentry envelope encoding.
+	AgentSwitchEnvelopeEncodingV1 = 1
 )
 
 var canonicalEventIDPattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
@@ -22,6 +24,7 @@ var canonicalEventIDPattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
 // in the outbox. Provider field names and encoding versions live here.
 type AgentSwitchEventEncoder struct{}
 
+// EncodeAgentSwitchFailureEvent validates and encodes one normalized failure event.
 func (AgentSwitchEventEncoder) EncodeAgentSwitchFailureEvent(input domain.AgentSwitchEventBuildInput) (ports.AgentSwitchFailureEncodedEvent, error) {
 	raw, err := BuildAgentSwitchCanonicalEvent(input)
 	if err != nil {
