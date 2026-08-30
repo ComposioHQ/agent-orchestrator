@@ -106,15 +106,41 @@ func TestForwardTurnDeliversAfterReadiness(t *testing.T) {
 		t.Fatalf("turn not completed: %v", control.completed)
 	}
 
+	// The Enter is split from the body and follows after promptEnterDelay so
+	// the harness registers a submit keypress instead of a paste (issue #2342);
+	// read until it arrives.
+	injected := ""
+	deadline := time.Now().Add(3 * time.Second)
 	buffer := make([]byte, 256)
-	_ = read.SetReadDeadline(time.Now().Add(2 * time.Second))
-	n, err := read.Read(buffer)
-	if err != nil && !errors.Is(err, io.EOF) {
-		t.Fatalf("read injected input: %v", err)
+	for !strings.HasSuffix(injected, "\r") && time.Now().Before(deadline) {
+		_ = read.SetReadDeadline(time.Now().Add(2 * time.Second))
+		n, err := read.Read(buffer)
+		if err != nil && !errors.Is(err, io.EOF) {
+			t.Fatalf("read injected input: %v", err)
+		}
+		injected += string(buffer[:n])
 	}
-	injected := string(buffer[:n])
 	if !strings.HasPrefix(injected, "\x1b[200~") || !strings.HasSuffix(injected, "\x1b[201~\r") {
 		t.Fatalf("multi-line prompt not bracketed-paste wrapped: %q", injected)
+	}
+}
+
+func TestWriteAgentPromptPassesKeystrokesThrough(t *testing.T) {
+	s := &Supervisor{Control: &fakeControl{}, AgentTerminalID: "agent-1"}
+	read := agentPipe(t, s, "agent-1")
+	// A bare Enter keypress (interactive typing) must not be split or delayed.
+	start := time.Now()
+	if err := s.writeAgentPrompt("agent-1", []byte("\r")); err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(start); elapsed >= promptEnterDelay {
+		t.Fatalf("single keystroke delayed by %v", elapsed)
+	}
+	buffer := make([]byte, 8)
+	_ = read.SetReadDeadline(time.Now().Add(time.Second))
+	n, _ := read.Read(buffer)
+	if string(buffer[:n]) != "\r" {
+		t.Fatalf("keystroke mangled: %q", string(buffer[:n]))
 	}
 }
 

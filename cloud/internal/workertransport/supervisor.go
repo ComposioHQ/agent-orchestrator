@@ -163,10 +163,7 @@ func (s *Supervisor) forwardTurn(ctx context.Context) (bool, error) {
 			ctx, turn.ID, turn.Attempt, "interactive agent terminal is unavailable",
 		)
 	}
-	if err := s.writeTerminal(worker.TerminalCommand{
-		TerminalID: s.AgentTerminalID,
-		Data:       worker.EncodeTerminalInput(turn.Prompt),
-	}); err != nil {
+	if err := s.writeAgentPrompt(s.AgentTerminalID, worker.EncodeTerminalInput(turn.Prompt)); err != nil {
 		if failErr := s.Control.FailTurn(
 			ctx, turn.ID, turn.Attempt, err.Error(),
 		); failErr != nil {
@@ -222,7 +219,11 @@ func (s *Supervisor) handle(
 		var input worker.TerminalCommand
 		err = decodePayload(request.Payload, &input)
 		if err == nil {
-			err = s.writeTerminal(input)
+			if input.TerminalID == s.AgentTerminalID {
+				err = s.writeAgentPrompt(input.TerminalID, input.Data)
+			} else {
+				err = s.writeTerminal(input)
+			}
 			response = map[string]bool{"accepted": err == nil}
 		}
 	case "terminal.resize":
@@ -378,6 +379,31 @@ func (s *Supervisor) copyTerminalOutput(
 			return
 		}
 	}
+}
+
+// promptEnterDelay mirrors the desktop runtimes' paste-then-Enter pause (tmux
+// defaultEnterDelay, conpty ptyInputEnterDelay): a harness TUI that receives
+// message text and the trailing carriage return in one write treats the whole
+// burst as a paste and leaves the prompt unsubmitted (issue #2342). Splitting
+// the Enter off and pausing makes it a distinct submit keypress.
+const promptEnterDelay = 300 * time.Millisecond
+
+// writeAgentPrompt delivers an injected message to the agent terminal: body
+// first, a beat, then the submitting carriage return. Single keystrokes and
+// data without a trailing return pass through unchanged.
+func (s *Supervisor) writeAgentPrompt(terminalID string, data []byte) error {
+	if len(data) < 2 || data[len(data)-1] != '\r' {
+		return s.writeTerminal(worker.TerminalCommand{TerminalID: terminalID, Data: data})
+	}
+	if err := s.writeTerminal(worker.TerminalCommand{
+		TerminalID: terminalID, Data: data[:len(data)-1],
+	}); err != nil {
+		return err
+	}
+	time.Sleep(promptEnterDelay)
+	return s.writeTerminal(worker.TerminalCommand{
+		TerminalID: terminalID, Data: []byte("\r"),
+	})
 }
 
 func (s *Supervisor) writeTerminal(input worker.TerminalCommand) error {
