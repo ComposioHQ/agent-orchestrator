@@ -16,6 +16,7 @@ import type { MessageKey } from "../i18n";
 import { aoBridge } from "../lib/bridge";
 import { formatTimeCompact } from "../lib/format-time";
 import { formatEstimatedCost } from "../lib/format-cost";
+import { formatTokenCount } from "../lib/format-token-count";
 import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
 import {
 	agentSwitchStatusVisual,
@@ -277,7 +278,17 @@ function toUsagePresentation(
 	}
 	const cost = formatEstimatedCost(usage.estimatedCost);
 	if (!cost) {
-		return undefined;
+		if (processedTokens === null || processedTokens <= 0) {
+			return undefined;
+		}
+		const compactTokens = formatTokenCount(processedTokens).replace(/ tok$/, "");
+		const accessibleTokens = t("shell.usageTokens", {
+			count: processedTokens.toLocaleString("en-US"),
+		});
+		return {
+			accessibleLabel: accessibleTokens,
+			compactLabel: compactTokens,
+		};
 	}
 	if (processedTokens === null) {
 		return { accessibleLabel: cost, compactLabel: cost };

@@ -389,13 +389,14 @@ describe("SessionsBoard", () => {
 		expect(activeUsage).toHaveAttribute("aria-hidden", "true");
 		expect(screen.getByText("$1.24 · 12,300 tokens")).toHaveClass("sr-only");
 		expect(screen.queryByText(/processed/i)).not.toBeInTheDocument();
-		// Sessions without a dollar estimate do not show a usage metric.
+		// Sessions without a dollar estimate stay visible if they still have
+		// token usage; sessions with no cost and no tokens still show nothing.
 		const emptyCard = screen.getByText("empty worker").closest('[data-testid="board-session-card"]') as HTMLElement;
 		expect(within(emptyCard).queryByText("Unavailable")).not.toBeInTheDocument();
-		expect(within(emptyCard).queryByText("Unavailable · 0 tokens")).not.toBeInTheDocument();
+		expect(within(emptyCard).queryByText("0 tokens")).not.toBeInTheDocument();
 		const tokensOnlyCard = screen.getByText("tokens worker").closest('[data-testid="board-session-card"]') as HTMLElement;
-		expect(within(tokensOnlyCard).queryByText("Unavailable")).not.toBeInTheDocument();
-		expect(within(tokensOnlyCard).queryByText("Unavailable · 800 tokens")).not.toBeInTheDocument();
+		expect(within(tokensOnlyCard).getByText("800", { selector: "span" })).toHaveAttribute("aria-hidden", "true");
+		expect(within(tokensOnlyCard).getByText("800 tokens")).toHaveClass("sr-only");
 		expect(usageQueryMock).toHaveBeenCalledWith("p1");
 
 		const archive = await expandArchive();
@@ -452,6 +453,42 @@ describe("SessionsBoard", () => {
 
 		await userEvent.hover(usage);
 		expect(await screen.findByRole("tooltip")).toHaveTextContent("$1.24 · 12,400 tokens");
+	});
+
+	it("shows token-only usage when pricing is unavailable", async () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				workspaceWithSessions([
+					boardSession({ id: "s-tokens", title: "tokens worker", status: "idle" }),
+				]),
+			],
+			isError: false,
+			isSuccess: true,
+		});
+		usageQueryMock.mockReturnValue({
+			data: new Map([
+				[
+					"s-tokens",
+					{
+						estimatedCost: null,
+						incomplete: false,
+						sessionId: "s-tokens",
+						processedTokens: 12_400,
+						totalTokens: 12_400,
+					},
+				],
+			]),
+		});
+
+		renderBoard("p1");
+
+		const card = screen.getByText("tokens worker").closest('[data-testid="board-session-card"]') as HTMLElement;
+		const usage = within(card).getByText("12.4K", { selector: "span" });
+		expect(usage).toHaveAttribute("aria-hidden", "true");
+		expect(within(card).getByText("12,400 tokens")).toHaveClass("sr-only");
+
+		await userEvent.hover(usage);
+		expect(await screen.findByRole("tooltip")).toHaveTextContent("12,400 tokens");
 	});
 
 	it("styles a working card from its building lane without inferring from runtime activity", () => {
