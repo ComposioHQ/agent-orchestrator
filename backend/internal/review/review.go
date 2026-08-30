@@ -523,16 +523,12 @@ func (e *Engine) SwitchReviewer(
 	if err != nil {
 		return SessionReviews{}, err
 	}
-	persistHarness := harness
-	if persistHarness == "" && !config.IsZero() {
-		persistHarness = previousSelected
-	}
-	if ok, err := e.store.SetSessionReviewerConfig(ctx, workerID, persistHarness, config, e.clock()); err != nil {
+	if ok, err := e.store.SetSessionReviewerConfig(ctx, workerID, harness, config, e.clock()); err != nil {
 		return SessionReviews{}, err
 	} else if !ok {
 		return SessionReviews{}, fmt.Errorf("%w: worker session %q", ErrNotFound, workerID)
 	}
-	worker.ReviewerHarness = persistHarness
+	worker.ReviewerHarness = harness
 	worker.ReviewerConfig = config
 	selected, selectedConfig, err := e.reviewerSelection(ctx, worker)
 	if err != nil {

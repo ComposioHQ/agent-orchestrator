@@ -687,7 +687,7 @@ func TestSwitchReviewerRestartsLivePaneWhenOnlyConfigChanges(t *testing.T) {
 	}
 }
 
-func TestSwitchReviewerPinsResolvedHarnessWhenSavingDefaultReviewerConfig(t *testing.T) {
+func TestSwitchReviewerKeepsDefaultReviewerInheritanceWhenSavingConfig(t *testing.T) {
 	store := &fakeStore{}
 	worker := liveWorker()
 	launcher := &fakeLauncher{handle: "review-mer-2"}
@@ -703,8 +703,8 @@ func TestSwitchReviewerPinsResolvedHarnessWhenSavingDefaultReviewerConfig(t *tes
 	if len(store.reviewerConfigUpdates) != 1 {
 		t.Fatalf("reviewer config updates = %+v, want one", store.reviewerConfigUpdates)
 	}
-	if got := store.reviewerConfigUpdates[0]; got.harness != domain.ReviewerClaudeCode || got.config.Model != "claude-3.7" {
-		t.Fatalf("persisted reviewer config = %+v, want pinned claude-code + model", got)
+	if got := store.reviewerConfigUpdates[0]; got.harness != "" || got.config.Model != "claude-3.7" {
+		t.Fatalf("persisted reviewer config = %+v, want default reviewer + model", got)
 	}
 	if res.ReviewerHarness != domain.ReviewerClaudeCode {
 		t.Fatalf("result reviewer harness = %q, want claude-code", res.ReviewerHarness)
@@ -718,8 +718,8 @@ func TestSwitchReviewerPinsResolvedHarnessWhenSavingDefaultReviewerConfig(t *tes
 	if err != nil {
 		t.Fatalf("reviewerSelection after project change: %v", err)
 	}
-	if selected != domain.ReviewerClaudeCode || selectedConfig.Model != "claude-3.7" {
-		t.Fatalf("selection after project reviewer change = (%q, %+v), want pinned claude-code config", selected, selectedConfig)
+	if selected != domain.ReviewerOpenCode || selectedConfig.Model != "claude-3.7" {
+		t.Fatalf("selection after project reviewer change = (%q, %+v), want inherited opencode config", selected, selectedConfig)
 	}
 }
 
