@@ -333,16 +333,21 @@ func trackerRepo(project domain.ProjectRecord, cfg domain.TrackerIntakeConfig) (
 
 // parseRepoNative extracts the provider-native repo identifier ("owner/repo"
 // or "group/subgroup/repo") from a remote URL. For GitHub it accepts
-// github.com, *.github.com, and *.ghe.io hosts. For GitLab it accepts any
-// host (self-managed hosts are validated by the SCM provider at fetch time).
+// github.com, *.github.com, and *.ghe.io hosts. For GitLab and OneDev it
+// accepts any host (self-hosted hosts are validated against the adapter's
+// allowlist at fetch time).
 func parseRepoNative(remote string, provider domain.TrackerProvider) (string, bool) {
 	remote = strings.TrimSpace(remote)
 	if remote == "" {
 		return "", false
 	}
+	clean := cleanRepoPath
+	if provider == domain.TrackerProviderOneDev {
+		clean = cleanOneDevProjectPath
+	}
 	if strings.HasPrefix(remote, "git@") {
 		if _, rest, ok := strings.Cut(remote, ":"); ok {
-			return cleanRepoPath(rest), true
+			return clean(rest), true
 		}
 		return "", false
 	}
@@ -350,30 +355,39 @@ func parseRepoNative(remote string, provider domain.TrackerProvider) (string, bo
 		if provider == domain.TrackerProviderGitHub {
 			host := strings.TrimPrefix(strings.ToLower(u.Host), "www.")
 			if host == "github.com" || strings.HasSuffix(host, ".github.com") || strings.HasSuffix(host, ".ghe.io") {
-				return cleanRepoPath(u.Path), true
+				return clean(u.Path), true
 			}
 			return "", false
 		}
-		// GitLab: accept any host.
-		return cleanRepoPath(u.Path), true
+		// GitLab and OneDev: accept any host.
+		return clean(u.Path), true
 	}
-	return cleanRepoPath(remote), true
+	return clean(remote), true
 }
 
 // repoHostFromOrigin extracts the host from the SCM origin URL for the given
 // provider. For GitHub the host is always "" (GitHub tracker IDs don't use
 // Host). For GitLab, "gitlab.com" and "www.gitlab.com" normalize to ""
 // (zero value = gitlab.com); self-managed hosts pass through unchanged.
+//
+// OneDev has no public instance, so there is no host that normalizes away:
+// the remote's host is always carried through, port included. A OneDev remote
+// cloned over SSH names a different port than the REST API, which the OneDev
+// adapter resolves against its allowlist by hostname — so passing the git
+// authority through unchanged is correct rather than lossy.
 func repoHostFromOrigin(remote string, provider domain.TrackerProvider) string {
-	if provider != domain.TrackerProviderGitLab {
+	switch provider {
+	case domain.TrackerProviderGitLab:
+		host := strings.ToLower(strings.TrimSpace(hostFromRemote(remote)))
+		if host == "gitlab.com" || host == "www.gitlab.com" {
+			return ""
+		}
+		return host
+	case domain.TrackerProviderOneDev:
+		return strings.ToLower(strings.TrimSpace(hostFromRemote(remote)))
+	default:
 		return ""
 	}
-	host := hostFromRemote(remote)
-	host = strings.ToLower(strings.TrimSpace(host))
-	if host == "gitlab.com" || host == "www.gitlab.com" {
-		return ""
-	}
-	return host
 }
 
 // hostFromRemote extracts the hostname (with port) from a git remote URL,
@@ -394,6 +408,27 @@ func hostFromRemote(remote string) string {
 		return u.Host // includes port if present
 	}
 	return ""
+}
+
+// cleanOneDevProjectPath keeps a OneDev remote's whole project path. OneDev
+// projects form a tree rather than GitLab's owner/repo pair: a root project
+// ("productone") has no owner at all, and a nested one
+// ("Homelab/tools/curatarr") is identified by its full path, so the last-two-
+// segments rule cleanRepoPath applies would name a project that does not
+// exist.
+func cleanOneDevProjectPath(path string) string {
+	p := strings.Trim(strings.TrimSpace(path), "/")
+	p = strings.TrimSuffix(p, ".git")
+	p = strings.Trim(p, "/")
+	if p == "" {
+		return ""
+	}
+	for _, seg := range strings.Split(p, "/") {
+		if seg == "" || seg == "." || seg == ".." {
+			return ""
+		}
+	}
+	return p
 }
 
 func cleanRepoPath(path string) string {

@@ -222,7 +222,7 @@ type ListSessionsResponse struct {
 type SpawnSessionRequest struct {
 	ProjectID       domain.ProjectID       `json:"projectId"`
 	IssueID         domain.IssueID         `json:"issueId,omitempty"`
-	TrackerProvider domain.TrackerProvider `json:"trackerProvider,omitempty" enum:"github,gitlab"`
+	TrackerProvider domain.TrackerProvider `json:"trackerProvider,omitempty" enum:"github,gitlab,onedev"`
 	Kind            domain.SessionKind     `json:"kind,omitempty" enum:"worker,orchestrator"`
 	Harness         domain.AgentHarness    `json:"harness,omitempty" enum:"claude-code,codex,aider,opencode,grok,droid,amp,agy,crush,cursor,qwen,copilot,goose,auggie,continue,devin,cline,kimi,muse,kiro,kilocode,vibe,pi,kimchi,omp,prime-agent,autohand"`
 	Branch          string                 `json:"branch,omitempty"`

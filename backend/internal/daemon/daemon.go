@@ -309,7 +309,7 @@ func Run() error {
 		}
 		return err
 	}
-	lcStack.trackerDone = startTrackerIntake(ctx, store, sessionSvc, log)
+	lcStack.trackerDone = startTrackerIntake(ctx, store, sessionSvc, cfg.GitLab, cfg.OneDev, log)
 
 	agentSvc := agentsvc.NewWithDeps(agentsvc.Deps{Cache: store, InventoryCache: store, Discoverer: modelcatalog.Discoverer{}, Projects: store, Sessions: store})
 	hostCommands := systemexec.Adapter{}
@@ -394,10 +394,10 @@ func Run() error {
 		})
 		lcStack.LCM.SetUsageFinalizer(usageCollector)
 	}
-	lcStack.scmDone = startSCMObserver(ctx, store, lcStack.LCM, cfg.GitLab, log)
+	lcStack.scmDone = startSCMObserver(ctx, store, lcStack.LCM, cfg.GitLab, cfg.OneDev, log)
 	var prActions prsvc.ActionManager
-	prReader := newMultiSCMProvider(cfg.GitLab, log)
-	prMerger := newMultiSCMMerger(cfg.GitLab, log)
+	prReader := newMultiSCMProvider(cfg.GitLab, cfg.OneDev, log)
+	prMerger := newMultiSCMMerger(cfg.GitLab, cfg.OneDev, log)
 	if prReader != nil && prMerger != nil {
 		prActions = prsvc.NewActionService(prsvc.ActionDeps{Store: store, Merger: prMerger, Reader: prReader})
 	} else {

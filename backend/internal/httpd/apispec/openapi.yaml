@@ -9094,6 +9094,7 @@ components:
           enum:
           - github
           - gitlab
+          - onedev
           type: string
       required:
       - projectId
@@ -9310,6 +9311,7 @@ components:
           enum:
           - github
           - gitlab
+          - onedev
           type: string
         repo:
           type: string
