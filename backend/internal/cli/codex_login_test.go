@@ -147,7 +147,7 @@ func TestValidateOpenAIAPIKeyUsesBearerAuthAndRejectsUnauthorized(t *testing.T) 
 	}
 }
 
-func TestCodexLoginMenuListsEverySupportedMethod(t *testing.T) {
+func TestCodexLoginMenuGuidesUsersThroughEverySupportedMethod(t *testing.T) {
 	var stdout bytes.Buffer
 	deps := Deps{
 		In:                   strings.NewReader("x\n"),
@@ -163,10 +163,82 @@ func TestCodexLoginMenuListsEverySupportedMethod(t *testing.T) {
 	if err := cmd.Execute(); err == nil {
 		t.Fatal("Execute error = nil, want invalid selection error")
 	}
-	for _, label := range []string{"ChatGPT in browser", "Device code", "OpenAI API key", "Access token"} {
-		if !strings.Contains(stdout.String(), label) {
-			t.Errorf("menu missing %q:\n%s", label, stdout.String())
+	wantInOrder := []string{
+		"Sign in to Codex",
+		"Choose how you want to authenticate this profile.",
+		"PERSONAL ACCOUNT",
+		"ChatGPT in browser",
+		"Recommended",
+		"Continue using your ChatGPT account",
+		"Device code",
+		"Sign in on another device",
+		"DEVELOPER CREDENTIALS",
+		"OpenAI API key",
+		"validated before being saved",
+		"Access token",
+		"advanced or managed environments",
+		"Ctrl+C to cancel",
+		"Secret input stays hidden",
+	}
+	remaining := stdout.String()
+	for _, fragment := range wantInOrder {
+		index := strings.Index(remaining, fragment)
+		if index < 0 {
+			t.Fatalf("menu missing or misordered %q:\n%s", fragment, stdout.String())
 		}
+		remaining = remaining[index+len(fragment):]
+	}
+}
+
+func TestCodexLoginReportsCredentialVerificationAndCompletion(t *testing.T) {
+	var stdout bytes.Buffer
+	deps := Deps{
+		In:       strings.NewReader("3\n"),
+		Out:      &stdout,
+		Err:      &stdout,
+		LookPath: func(string) (string, error) { return "/codex", nil },
+		ReadSecret: func(io.Reader) ([]byte, error) {
+			return []byte("sk-test-secret"), nil
+		},
+		ValidateOpenAIAPIKey: func(context.Context, []byte) error { return nil },
+		RunInteractiveCommand: func(context.Context, string, []string, io.Reader, io.Writer, io.Writer) error {
+			return nil
+		},
+	}
+	cmd := newCodexLoginCommand(&commandContext{deps: deps.withDefaults()})
+	cmd.SetIn(deps.In)
+	cmd.SetOut(deps.Out)
+	cmd.SetErr(deps.Err)
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	for _, message := range []string{"Verifying API key with OpenAI", "API key verified", "Codex sign-in complete"} {
+		if !strings.Contains(stdout.String(), message) {
+			t.Fatalf("output missing progress message %q:\n%s", message, stdout.String())
+		}
+	}
+}
+
+func TestCodexLoginKeepsPipedOutputPlainWhenColorIsForced(t *testing.T) {
+	t.Setenv("NO_COLOR", "")
+	t.Setenv("FORCE_COLOR", "1")
+	var stdout bytes.Buffer
+	deps := Deps{
+		In:       strings.NewReader("x\n"),
+		Out:      &stdout,
+		Err:      &stdout,
+		LookPath: func(string) (string, error) { return "/codex", nil },
+	}
+	cmd := newCodexLoginCommand(&commandContext{deps: deps.withDefaults()})
+	cmd.SetIn(deps.In)
+	cmd.SetOut(deps.Out)
+	cmd.SetErr(deps.Err)
+	if err := cmd.Execute(); err == nil {
+		t.Fatal("Execute error = nil, want invalid selection error")
+	}
+	if strings.Contains(stdout.String(), "\x1b[") {
+		t.Fatalf("piped output contains terminal styling:\n%s", stdout.String())
 	}
 }
 
