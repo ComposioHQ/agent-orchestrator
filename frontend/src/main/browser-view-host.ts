@@ -1125,10 +1125,12 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 
 	const navigateEntry = async (entry: BrowserEntry, url: string): Promise<BrowserNavState> => {
 		await entry.ready;
-		cancelAnnotation(options, entry, "navigation");
 		const normalized = normalizeBrowserURL(url);
 		if (!isAllowedBrowserURL(normalized.href, options.rendererOrigin)) {
 			throw new Error("Unsupported browser URL");
+		}
+		if (!entry.annotationDraft || !isSameAnnotationPage(annotationDraftURL(entry.annotationDraft), normalized.href)) {
+			cancelAnnotation(options, entry, "navigation");
 		}
 		try {
 			await entry.view.webContents.loadURL(normalized.href);
@@ -1358,7 +1360,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		isRendererOwned(event, viewId) ? invokeNav(viewId, (contents) => contents.reload(), false, true) : emptyNavState(viewId),
 	);
 	handle("browser:stop", (event, viewId: string) =>
-		isRendererOwned(event, viewId) ? invokeNav(viewId, (contents) => contents.stop()) : emptyNavState(viewId),
+		isRendererOwned(event, viewId) ? invokeNav(viewId, (contents) => contents.stop(), true) : emptyNavState(viewId),
 	);
 	handle("browser:getTabs", (event, viewId: string) => {
 		const session = entries.get(viewId);
@@ -1937,6 +1939,10 @@ function hardenWebContents(
 			event.preventDefault();
 			entry.state = { ...entry.state, error: "Unsupported browser URL" };
 			shellContents(options).send("browser:navState", entry.state);
+			return;
+		}
+		if (entry.annotationDraft && !isSameAnnotationPage(annotationDraftURL(entry.annotationDraft), url)) {
+			cancelAnnotation(options, entry, "navigation");
 		}
 	};
 	contents.on("will-navigate", blockUnsafeNavigation);
@@ -1956,6 +1962,9 @@ function wireNavEvents(
 		if (isActive()) pushNavState(options, entry);
 	};
 	contents.on("did-navigate", (_event, url) => {
+		if (entry.annotationDraft && !isSameAnnotationPage(annotationDraftURL(entry.annotationDraft), url)) {
+			cancelAnnotation(options, entry, "navigation");
+		}
 		clearStaleFavicon(entry, url);
 		if (isActive()) syncActiveBounds();
 		update();
@@ -1963,19 +1972,18 @@ function wireNavEvents(
 	contents.on("did-navigate-in-page", update);
 	contents.on("page-title-updated", update);
 	contents.on("did-start-loading", () => {
-		if (entry.annotationDraft && !isSameAnnotationPage(annotationDraftURL(entry.annotationDraft), contents.getURL())) {
-			cancelAnnotation(options, entry, "navigation");
-		}
 		update();
 	});
 	contents.on("did-stop-loading", () => {
 		if (entry.annotationEnabled && entry.annotationDraft) {
 			contents.send("browser:annotation:setMode", { enabled: true, draft: entry.annotationDraft });
+			contents.focus();
 		}
 		update();
 	});
 	contents.on("did-fail-load", (_event, errorCode, errorDescription) => {
 		if (errorCode === -3) return;
+		cancelAnnotation(options, entry, "navigation");
 		if (isActive()) entry.view.setVisible?.(false);
 		entry.state = { ...readNavState(entry), error: String(errorDescription || "Unable to load page") };
 		if (isActive()) shellContents(options).send("browser:navState", entry.state);

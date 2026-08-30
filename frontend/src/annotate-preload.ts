@@ -41,13 +41,18 @@ window.addEventListener("beforeunload", () => {
 });
 
 function setEnabled(next: boolean, cancelReason: BrowserAnnotationCancelReason, draft?: BrowserAnnotationDraft): void {
-	if (enabled === next) return;
+	if (enabled === next) {
+		if (next && draft) {
+			resetSelectionState();
+			cleanupOverlay();
+			ensureOverlay();
+			renderHint();
+			restoreDraft(draft);
+		}
+		return;
+	}
 	enabled = next;
-	selectedElement = null;
-	selectedContext = null;
-	multiSelectActive = false;
-	multiSelectElements = [];
-	multiSelectContexts = null;
+	resetSelectionState();
 	if (hintFadeTimer) clearTimeout(hintFadeTimer);
 	if (enabled) {
 		ensureOverlay();
@@ -59,6 +64,14 @@ function setEnabled(next: boolean, cancelReason: BrowserAnnotationCancelReason, 
 		cleanupOverlay();
 		if (cancelReason !== "disabled") sendCancel(cancelReason);
 	}
+}
+
+function resetSelectionState(): void {
+	selectedElement = null;
+	selectedContext = null;
+	multiSelectActive = false;
+	multiSelectElements = [];
+	multiSelectContexts = null;
 }
 
 function installListeners(): void {
@@ -614,8 +627,9 @@ function restoreDraft(draft: BrowserAnnotationDraft): void {
 			return;
 		}
 	} else {
-		const elements = draft.selection.contexts.map(resolveDraftElement).filter((item): item is Element => Boolean(item));
-		if (elements.length > 0) {
+		const resolved = draft.selection.contexts.map(resolveDraftElement);
+		if (resolved.every((item): item is Element => item !== null)) {
+			const elements = resolved;
 			multiSelectElements = elements;
 			multiSelectContexts = draft.selection.contexts;
 			renderMultiSelections();
@@ -631,7 +645,8 @@ function restoreDraft(draft: BrowserAnnotationDraft): void {
 
 function resolveDraftElement(context: BrowserAnnotationContext): Element | null {
 	try {
-		return document.querySelector(context.selector);
+		const matches = document.querySelectorAll(context.selector);
+		return matches.length === 1 ? matches[0] : null;
 	} catch {
 		return null;
 	}
