@@ -256,6 +256,15 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 		onSuccess: invalidate,
 	});
 
+	const startRemoteAccess = useMutation({
+		mutationFn: async () => {
+			const { data, error } = await apiClient.POST("/api/v1/mobile/remote-access");
+			if (error) throw new Error(apiErrorMessage(error));
+			return data;
+		},
+		onSuccess: invalidate,
+	});
+
 	const regenerate = useMutation({
 		mutationFn: async () => {
 			const { data, error } = await apiClient.POST("/api/v1/mobile/regenerate");
@@ -296,10 +305,16 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 	// caveat to state rather than a failure to block on.
 	const remoteAccessUnavailable = status?.tunnel ? status.tunnel.supported === false : false;
 	const secureBlocked = mode === "tailscale" && (status?.securePairing?.enabled ?? false) && !secureActive;
-	const busy = enable.isPending || regenerate.isPending || disable.isPending || setSecure.isPending;
+	const busy =
+		enable.isPending ||
+		startRemoteAccess.isPending ||
+		regenerate.isPending ||
+		disable.isPending ||
+		setSecure.isPending;
 
 	const clearActionErrors = () => {
 		enable.reset();
+		startRemoteAccess.reset();
 		regenerate.reset();
 		disable.reset();
 		setSecure.reset();
@@ -332,6 +347,7 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 
 	const actionError =
 		(enable.error instanceof Error && enable.error.message) ||
+		(startRemoteAccess.error instanceof Error && startRemoteAccess.error.message) ||
 		(regenerate.error instanceof Error && regenerate.error.message) ||
 		(disable.error instanceof Error && disable.error.message) ||
 		(setSecure.error instanceof Error && setSecure.error.message) ||
@@ -545,9 +561,11 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 									"Works on this network only — cloudflared isn't installed, so this machine can't be reached from elsewhere.",
 								)}
 							</p>
-							{/* Re-enabling is what makes the daemon look for the binary
-							    again, so a fresh install takes effect without restarting. */}
-							<InstallCloudflared onInstalled={() => void query.refetch().then(() => enable.mutate())} />
+							{/* Deliberately not enable(): that mints a fresh password, so
+							    installing remote access would invalidate the phone the user
+							    had already paired. This re-checks for the binary and starts
+							    the connector, leaving the credential alone. */}
+							<InstallCloudflared onInstalled={() => void startRemoteAccess.mutate()} />
 						</div>
 					)}
 					{actionError && <p className="mt-3 text-xs text-error">{actionError}</p>}

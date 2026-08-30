@@ -81,10 +81,11 @@ func (t *TunnelRunner) runOnce(ctx context.Context) error {
 		return fmt.Errorf("start cloudflared: %w", err)
 	}
 	t.Runtime.Started()
+	pidOwner := newTunnelPIDOwner(t.PIDPath)
 
 	// Record the pid before anything can go wrong, so a daemon that dies in the
 	// next instant still leaves a trail to clean up.
-	if err := WriteTunnelPID(t.PIDPath, cmd.Process.Pid); err != nil {
+	if err := pidOwner.claim(cmd.Process.Pid); err != nil {
 		t.logger().Warn("could not record tunnel pid; a crash may orphan the connector", "error", err)
 	}
 
@@ -106,7 +107,7 @@ func (t *TunnelRunner) runOnce(ctx context.Context) error {
 	t.Runtime.Exited(waitErr)
 	// Only if this runner still owns the record: a replacement started while
 	// this one was unwinding will already have written its own pid there.
-	_ = RemoveOwnTunnelPIDFile(t.PIDPath, cmd.Process.Pid)
+	_ = pidOwner.release(cmd.Process.Pid)
 	if waitErr != nil && ctx.Err() == nil {
 		return waitErr
 	}

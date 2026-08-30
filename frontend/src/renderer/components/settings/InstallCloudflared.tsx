@@ -45,9 +45,8 @@ export function InstallCloudflared({ onInstalled }: { onInstalled: () => void })
 				setJob(data);
 				if (data.status === "running") return;
 				stopPolling();
-				// The daemon looks for the binary again when the bridge is
-				// enabled, so the caller re-enables rather than asking the user
-				// to restart AO.
+				// The caller asks the daemon to re-resolve and start only remote
+				// access. Re-enabling here would rotate the pairing password.
 				if (data.status === "succeeded") onInstalledRef.current();
 			})();
 		}, POLL_INTERVAL_MS);

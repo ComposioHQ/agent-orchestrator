@@ -542,3 +542,15 @@ func TestRemoveOwnTunnelPIDFileToleratesAMissingFile(t *testing.T) {
 		t.Fatalf("remove: %v", err)
 	}
 }
+
+// Start and cleanup belong to different runner goroutines during a restart.
+// They must nevertheless share one lock for the PID path; otherwise cleanup's
+// read-then-remove can erase a replacement written between those operations.
+func TestTunnelPIDOwnersForTheSamePathAreSerializedTogether(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tunnel.pid")
+	a := newTunnelPIDOwner(path)
+	b := newTunnelPIDOwner(path)
+	if a.mu != b.mu {
+		t.Fatal("PID owners for one path do not share the cleanup lock")
+	}
+}

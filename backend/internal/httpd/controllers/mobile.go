@@ -18,6 +18,7 @@ type mobileBridge interface {
 	Enable() (MobileStatusResponse, error)
 	Disable() error
 	Regenerate() (MobileStatusResponse, error)
+	StartRemoteAccess() (MobileStatusResponse, error)
 	SetSecurePairing(on bool) (MobileStatusResponse, error)
 }
 
@@ -41,6 +42,17 @@ func (c *MobileController) Status(w http.ResponseWriter, r *http.Request) {
 }
 
 // Enable turns the bridge on and returns the resulting status (with password).
+// StartRemoteAccess re-checks for a connector and starts it, leaving the
+// connection password alone so an already-paired phone keeps working.
+func (c *MobileController) StartRemoteAccess(w http.ResponseWriter, r *http.Request) {
+	res, err := c.Bridge.StartRemoteAccess()
+	if err != nil {
+		envelope.WriteAPIError(w, r, http.StatusInternalServerError, "internal", "MOBILE_REMOTE_ACCESS", err.Error(), nil)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, withWarning(res))
+}
+
 func (c *MobileController) Enable(w http.ResponseWriter, r *http.Request) {
 	res, err := c.Bridge.Enable()
 	if err != nil {
@@ -445,6 +457,32 @@ func (b *BridgeService) Enable() (MobileStatusResponse, error) {
 		return MobileStatusResponse{}, err
 	}
 	return b.enableWithPassword(pw)
+}
+
+// StartRemoteAccess looks for a connector again and starts it against the port
+// already bound, without touching the connection password.
+//
+// Exists because the obvious alternative is wrong: re-enabling would make the
+// daemon re-resolve, but Enable mints a fresh password, so installing
+// cloudflared would silently invalidate the phone that was already paired —
+// the user sets up remote access and loses the connection they were setting it
+// up for.
+//
+// A no-op while the bridge is disabled: there is no bound port to tunnel to,
+// and enabling is the user's decision to make, not a side effect of installing
+// a binary.
+func (b *BridgeService) StartRemoteAccess() (MobileStatusResponse, error) {
+	st, err := mobilebridge.Load(b.ConfigPath)
+	if err != nil {
+		return MobileStatusResponse{}, err
+	}
+	if !st.Enabled || !b.LAN.Running() {
+		return b.Status(), nil
+	}
+	if t := b.ensureTunnel(); t != nil {
+		t.Start(b.LAN.BoundPort())
+	}
+	return b.Status(), nil
 }
 
 // Regenerate rotates the connection password on the running listener, which

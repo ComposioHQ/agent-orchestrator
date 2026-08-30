@@ -715,6 +715,31 @@ paths:
       summary: Rotate the Connect Mobile password, dropping any connected phone
       tags:
       - mobile
+  /api/v1/mobile/remote-access:
+    post:
+      operationId: startMobileRemoteAccess
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MobileStatusResponse'
+          description: OK
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Forbidden
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Look for a connector again and start it, without rotating the password
+      tags:
+      - mobile
   /api/v1/mobile/secure-pairing:
     post:
       operationId: setMobileSecurePairing

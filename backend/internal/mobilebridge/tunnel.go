@@ -447,6 +447,35 @@ func CloudflaredArgs(localPort, metricsPort int) []string {
 // runner is still unwinding, and an unconditional delete on the way out erases
 // the live connector's record. Boot reaping then has nothing to find, and that
 // connector can never be cleaned up.
+var tunnelPIDLocks sync.Map // map[cleaned path]*sync.Mutex
+
+// tunnelPIDOwner serializes the complete claim/release transaction for one PID
+// path. Checking the recorded PID and removing the file are otherwise two
+// filesystem operations with a TOCTOU gap in which a replacement can claim it.
+// Separate runner generations get separate values but the same path lock.
+type tunnelPIDOwner struct {
+	path string
+	mu   *sync.Mutex
+}
+
+func newTunnelPIDOwner(path string) tunnelPIDOwner {
+	clean := filepath.Clean(path)
+	lock, _ := tunnelPIDLocks.LoadOrStore(clean, &sync.Mutex{})
+	return tunnelPIDOwner{path: path, mu: lock.(*sync.Mutex)}
+}
+
+func (o tunnelPIDOwner) claim(pid int) error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return WriteTunnelPID(o.path, pid)
+}
+
+func (o tunnelPIDOwner) release(pid int) error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return RemoveOwnTunnelPIDFile(o.path, pid)
+}
+
 func RemoveOwnTunnelPIDFile(path string, pid int) error {
 	if recorded, ok := ReadTunnelPID(path); ok && recorded != pid {
 		return nil // A replacement already owns the file; not ours to delete.

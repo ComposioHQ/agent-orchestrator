@@ -1,3 +1,4 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { ServerConfig } from "../config";
 
 /**
@@ -32,6 +33,11 @@ export const HEAD_CURSOR = Number.MAX_SAFE_INTEGER;
 export function eventCursorKey(cfg: ServerConfig): string {
 	if (cfg.hostId) return `ao.chat.events.host.${cfg.hostId}`;
 	return `ao.chat.events.${cfg.secure ? "https" : "http"}.${cfg.host}.${cfg.httpPort}`;
+}
+
+/** Remove replay state when the user forgets a machine. */
+export async function clearEventCursorForHost(hostId: string): Promise<void> {
+	await AsyncStorage.removeItem(`ao.chat.events.host.${hostId}`);
 }
 
 /**

@@ -51,14 +51,8 @@ type Identity struct {
 	Fingerprint string `json:"fingerprint"`
 	// Fingerprints is one hash per hardware interface.
 	//
-	// The aggregate above hashes every interface together, so it changes
-	// whenever the *set* changes — a dock, a replaced network card, an OS
-	// update renaming an interface — and each of those reissued the host id and
-	// silently unpaired every phone. Holding them separately lets the machine
-	// still be recognised when one comes or goes, while a machine with nothing
-	// in common is still treated as different, which is the point of binding at
-	// all: a copied ~/.ao must not answer as the original and collect a phone's
-	// token.
+	// These are diagnostic metadata. They are updated as hardware changes but
+	// never rotate HostID; identity belongs to this AO data directory.
 	Fingerprints []string `json:"fingerprints,omitempty"`
 }
 
@@ -83,27 +77,11 @@ func InterfaceFingerprints(ifaces []net.Interface) []string {
 	return out
 }
 
-// sameMachine is true when the two sets share any interface.
-//
-// One in common is deliberately enough. Requiring a majority would fail a
-// laptop that lost its only built-in NIC to a dock, and the binding is not a
-// secret — it stops a *copy* claiming the original's identity, and a copy
-// shares no hardware at all.
-func sameMachine(stored, current []string) bool {
-	have := make(map[string]bool, len(stored))
-	for _, f := range stored {
-		have[f] = true
-	}
-	for _, f := range current {
-		if have[f] {
-			return true
-		}
-	}
-	return false
-}
-
-// EnsureIdentityFor loads the identity at path, keeping its host id when the
-// machine is recognisable and issuing a new one when it is not.
+// EnsureIdentityFor loads the installation identity at path. Hardware hashes
+// are diagnostic metadata only: docks and NIC replacements must not silently
+// unpair every phone. Copying AO_DATA_DIR therefore copies the identity too;
+// resetting it is an explicit operation (remove identity.json), never an
+// inference made from today's network interfaces.
 func EnsureIdentityFor(path string, ifaces []net.Interface) (Identity, error) {
 	current := InterfaceFingerprints(ifaces)
 	aggregate := MachineFingerprint(ifaces)
@@ -111,32 +89,14 @@ func EnsureIdentityFor(path string, ifaces []net.Interface) (Identity, error) {
 	if b, err := os.ReadFile(path); err == nil {
 		var existing Identity
 		if json.Unmarshal(b, &existing) == nil && existing.HostID != "" {
-			switch {
-			case len(existing.Fingerprints) > 0 && sameMachine(existing.Fingerprints, current):
-				// Known machine whose interfaces moved: rebind to what is here
-				// now, so the next change is measured against the current set.
-				if !equalStrings(existing.Fingerprints, current) {
-					existing.Fingerprints = current
-					existing.Fingerprint = aggregate
-					if err := writeIdentity(path, existing); err != nil {
-						return Identity{}, err
-					}
-				}
-				return existing, nil
-			case len(existing.Fingerprints) == 0 && existing.Fingerprint == aggregate:
-				// Written before per-interface hashes existed. Same machine by
-				// the old measure, so keep the id and upgrade the record.
+			if !equalStrings(existing.Fingerprints, current) || existing.Fingerprint != aggregate {
 				existing.Fingerprints = current
+				existing.Fingerprint = aggregate
 				if err := writeIdentity(path, existing); err != nil {
 					return Identity{}, err
 				}
-				return existing, nil
-			case len(current) == 0 && len(existing.Fingerprints) == 0 && existing.Fingerprint == "":
-				// No hardware addresses to bind to, on a machine that had none
-				// when the id was issued. Churning the id every start would be
-				// worse than an unbound identity.
-				return existing, nil
 			}
+			return existing, nil
 		}
 	} else if !os.IsNotExist(err) {
 		return Identity{}, fmt.Errorf("read mobile identity: %w", err)

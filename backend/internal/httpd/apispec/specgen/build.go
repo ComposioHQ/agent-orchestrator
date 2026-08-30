@@ -1068,6 +1068,15 @@ func mobileOperations() []operation {
 			},
 		},
 		{
+			method: http.MethodPost, path: "/api/v1/mobile/remote-access", id: "startMobileRemoteAccess", tag: "mobile",
+			summary: "Look for a connector again and start it, without rotating the password",
+			resps: []respUnit{
+				{http.StatusOK, controllers.MobileStatusResponse{}},
+				{http.StatusForbidden, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+		{
 			method: http.MethodPost, path: "/api/v1/mobile/enable", id: "enableMobile", tag: "mobile",
 			summary: "Enable the Connect Mobile LAN bridge and issue a fresh password",
 			resps: []respUnit{

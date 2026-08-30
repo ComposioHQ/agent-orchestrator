@@ -18,6 +18,7 @@ export type PairDeps = {
 	/** Proves the winning endpoint actually serves us, with our credential. */
 	verify: (config: ServerConfig) => Promise<void>;
 	saveHost: (host: Host) => Promise<void>;
+	setActiveHost: (id: string) => Promise<void>;
 };
 
 /**
@@ -62,6 +63,7 @@ export async function pairFromCode(raw: string, deps: PairDeps): Promise<PairRes
 		lastConnected: Date.now(),
 	};
 	await deps.saveHost(host);
+	await deps.setActiveHost(host.id);
 
 	return { ok: true, config, host };
 }

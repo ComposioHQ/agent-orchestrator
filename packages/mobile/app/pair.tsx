@@ -18,7 +18,7 @@ import { haptics } from "../lib/haptics";
 import { clearOnboardingSkipped } from "../lib/onboardingStore";
 import { pairFromCode } from "../lib/pairFlow";
 import { isLegacyPairingCode, parsePairingCode } from "../lib/pairingCode";
-import { saveHost } from "../lib/hosts";
+import { saveHost, setActiveHost } from "../lib/hosts";
 import { probeEndpoint } from "../lib/connectRuntime";
 import { raceEndpoints } from "../lib/race";
 import { connectSheetRoute } from "../lib/sheetResult";
@@ -108,6 +108,7 @@ export default function PairScreen() {
 			race: (endpoints, expectedHostId) => raceEndpoints(endpoints, expectedHostId, probeEndpoint),
 			verify: async (config) => void (await pingServer(config)),
 			saveHost,
+			setActiveHost,
 		});
 
 		if (!result.ok) {

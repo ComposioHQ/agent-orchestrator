@@ -18,6 +18,10 @@ type fakeBridge struct{ enabled bool }
 func (f *fakeBridge) Status() MobileStatusResponse {
 	return MobileStatusResponse{Enabled: f.enabled, Host: "192.168.1.42", Port: 3011}
 }
+func (f *fakeBridge) StartRemoteAccess() (MobileStatusResponse, error) {
+	return MobileStatusResponse{}, nil
+}
+
 func (f *fakeBridge) Enable() (MobileStatusResponse, error) {
 	f.enabled = true
 	r := f.Status()
@@ -800,5 +804,54 @@ func TestEnableWithoutAConnectorStillWorks(t *testing.T) {
 	}
 	if b.tunnelStatus().Supported {
 		t.Fatal("no connector resolved, so remote access is not supported")
+	}
+}
+
+// Installing cloudflared used to re-enable the bridge so the daemon would look
+// for the new binary. Enable always mints a fresh password, so that silently
+// invalidated the phone already paired — the user installed remote access and
+// lost the connection they were setting it up for.
+func TestStartRemoteAccessKeepsThePairedPhoneWorking(t *testing.T) {
+	dir := t.TempDir()
+	lan := &fakeLAN{}
+	tun := &fakeTunnel{}
+	b := &BridgeService{
+		ConfigPath: filepath.Join(dir, "mobile.json"), LAN: lan, DefaultPort: 3011,
+	}
+	before, err := b.Enable()
+	if err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+
+	// cloudflared appears only now, as an install would leave it.
+	b.ResolveTunnel = func() TunnelController { return tun }
+	after, err := b.StartRemoteAccess()
+	if err != nil {
+		t.Fatalf("StartRemoteAccess: %v", err)
+	}
+
+	if after.Password != before.Password {
+		t.Fatal("password rotated: the phone paired a moment ago can no longer authenticate")
+	}
+	if tun.startedOn != 3011 {
+		t.Fatalf("connector started on %d, want the bound port 3011", tun.startedOn)
+	}
+}
+
+// Nothing to start, and nothing to break: the bridge is off, so this is a
+// no-op rather than an error the UI has to special-case.
+func TestStartRemoteAccessWhileDisabledDoesNothing(t *testing.T) {
+	dir := t.TempDir()
+	tun := &fakeTunnel{}
+	b := &BridgeService{
+		ConfigPath: filepath.Join(dir, "mobile.json"), LAN: &fakeLAN{}, DefaultPort: 3011,
+		ResolveTunnel: func() TunnelController { return tun },
+	}
+
+	if _, err := b.StartRemoteAccess(); err != nil {
+		t.Fatalf("StartRemoteAccess: %v", err)
+	}
+	if tun.startedOn != 0 {
+		t.Fatal("connector started while the bridge is disabled")
 	}
 }

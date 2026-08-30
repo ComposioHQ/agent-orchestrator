@@ -29,6 +29,7 @@ const deps = (over: Record<string, unknown> = {}) => ({
 	race: vi.fn(async () => ({ ok: true as const, endpoint: lan, hostId: "h_paired" })),
 	verify: vi.fn(async () => {}),
 	saveHost: vi.fn(async () => {}),
+	setActiveHost: vi.fn(async () => {}),
 	...over,
 });
 
@@ -53,6 +54,13 @@ describe("pairFromCode", () => {
 
 		expect(got.ok).toBe(true);
 		if (got.ok) expect(got.config.host).toBe("192.168.1.42");
+	});
+
+	it("makes the newly scanned machine active", async () => {
+		const d = deps();
+		await pairFromCode(`aomobile://pair#${code}`, d);
+
+		expect(d.setActiveHost).toHaveBeenCalledWith("h_paired");
 	});
 
 	// Verifying before storing is the existing behaviour and worth keeping: a

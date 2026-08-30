@@ -171,9 +171,9 @@ func TestEnsureIdentityKeepsTheHostIDWhenAnInterfaceIsRemoved(t *testing.T) {
 	}
 }
 
-// The protection this exists for: nothing in common means a different machine,
-// so the phone must stop trusting it.
-func TestEnsureIdentityStillRegeneratesOnAnUnrelatedMachine(t *testing.T) {
+// Host identity belongs to the AO installation, not to today's network card.
+// Replacing the only NIC must not silently unpair every phone.
+func TestEnsureIdentityKeepsTheHostIDWhenTheOnlyInterfaceIsReplaced(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "mobile", "identity.json")
 
 	original, err := EnsureIdentityFor(path, []net.Interface{iface("en0", "aa:bb:cc:dd:ee:01")})
@@ -186,8 +186,8 @@ func TestEnsureIdentityStillRegeneratesOnAnUnrelatedMachine(t *testing.T) {
 		t.Fatalf("EnsureIdentityFor moved: %v", err)
 	}
 
-	if moved.HostID == original.HostID {
-		t.Fatalf("copied config kept host id %q — machine B can impersonate machine A", moved.HostID)
+	if moved.HostID != original.HostID {
+		t.Fatalf("host id changed after NIC replacement: %q -> %q", original.HostID, moved.HostID)
 	}
 }
 

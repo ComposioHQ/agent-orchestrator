@@ -2,6 +2,7 @@ import { clearConfig } from "./config";
 import { activeHost, removeHost } from "./hosts";
 import { clearOnboardingSkipped } from "./onboardingStore";
 import { unpairFromServer } from "./push";
+import { clearEventCursorForHost } from "./chat/eventCursor";
 
 // "Disconnect & forget server" — the inverse of pairing. Until this existed
 // there was no way to un-pair a phone at all: clearing the host by hand left the
@@ -25,13 +26,23 @@ export async function forgetServer(): Promise<void> {
 	// machine in the list with its token in the keystore, so the next launch
 	// raced its endpoints and silently reconnected to the server just forgotten.
 	const host = await activeHost();
+	let upstreamError: unknown;
 	try {
 		await unpairFromServer();
-	} finally {
-		if (host) await removeHost(host.id);
-		await clearConfig();
-		// Re-arm onboarding: a user with no server should be offered the pairing
-		// flow again, not dropped on a bare Agents empty state.
-		await clearOnboardingSkipped();
+	} catch (error) {
+		upstreamError = error;
 	}
+
+	// Each local deletion is independent. A rejected SecureStore operation must
+	// not prevent the config, event cursor, or onboarding flag from being
+	// cleared; otherwise "forget" can leave a partially paired phone behind.
+	const cleanup = await Promise.allSettled([
+		host ? removeHost(host.id) : Promise.resolve(),
+		host ? clearEventCursorForHost(host.id) : Promise.resolve(),
+		clearConfig(),
+		clearOnboardingSkipped(),
+	]);
+	if (upstreamError) throw upstreamError;
+	const failed = cleanup.find((result): result is PromiseRejectedResult => result.status === "rejected");
+	if (failed) throw failed.reason;
 }

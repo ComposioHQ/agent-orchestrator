@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const calls: string[] = [];
 // Lets a test make the push step fail the way a SecureStore write can.
 let unpairThrows: Error | null = null;
+let removeHostThrows: Error | null = null;
 
 vi.mock("./push", () => ({
 	// forgetServer unpairs rather than merely unregistering: the phone is leaving
@@ -25,6 +26,12 @@ vi.mock("./hosts", () => ({
 	activeHost: vi.fn(async () => ({ id: "h_active" })),
 	removeHost: vi.fn(async (id: string) => {
 		calls.push(`removeHost:${id}`);
+		if (removeHostThrows) throw removeHostThrows;
+	}),
+}));
+vi.mock("./chat/eventCursor", () => ({
+	clearEventCursorForHost: vi.fn(async (id: string) => {
+		calls.push(`clearEventCursor:${id}`);
 	}),
 }));
 vi.mock("./onboardingStore", () => ({
@@ -39,6 +46,7 @@ describe("forgetServer", () => {
 	beforeEach(() => {
 		calls.length = 0;
 		unpairThrows = null;
+		removeHostThrows = null;
 	});
 
 	// Clearing only the config would leave the daemon still pushing to this
@@ -48,6 +56,7 @@ describe("forgetServer", () => {
 		expect(calls).toEqual([
 			"unpairFromServer",
 			"removeHost:h_active",
+			"clearEventCursor:h_active",
 			"clearConfig",
 			"clearOnboardingSkipped",
 		]);
@@ -79,6 +88,7 @@ describe("forgetServer and the host list", () => {
 	beforeEach(() => {
 		calls.length = 0;
 		unpairThrows = null;
+		removeHostThrows = null;
 	});
 
 	it("removes the paired machine, not just the resolved address", async () => {
@@ -97,5 +107,14 @@ describe("forgetServer and the host list", () => {
 
 		expect(calls).toContain("removeHost:h_active");
 		expect(calls).toContain("clearConfig");
+	});
+
+	it("finishes local cleanup when removing the host token fails", async () => {
+		removeHostThrows = new Error("SecureStore unavailable");
+
+		await expect(forgetServer()).rejects.toThrow("SecureStore unavailable");
+		expect(calls).toContain("clearEventCursor:h_active");
+		expect(calls).toContain("clearConfig");
+		expect(calls).toContain("clearOnboardingSkipped");
 	});
 });
