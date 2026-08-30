@@ -1146,7 +1146,13 @@ describe("XtermTerminal", () => {
 
 	it("does not forward raw xterm data/control bytes as user input", () => {
 		const onInput = vi.fn();
-		render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);
+		render(
+			<XtermTerminal
+				theme="dark"
+				supportsCursorColorScheme
+				onReady={(terminal) => terminal.onUserInput(onInput)}
+			/>,
+		);
 
 		// One onData hook exists for OSC 10/11/12 color replies (Cursor theme probes).
 		expect(state.lastTerminal!.dataListeners.size).toBe(1);
@@ -1157,6 +1163,12 @@ describe("XtermTerminal", () => {
 			listener("\x1b]11;rgb:f5f5/f5f5/f4f4\x07"),
 		);
 		expect(onInput).toHaveBeenCalledWith("\x1b]11;rgb:f5f5/f5f5/f4f4\x07", "protocol");
+	});
+
+	it("does not install Cursor protocol handling for generic terminals", () => {
+		render(<XtermTerminal theme="dark" />);
+
+		expect(state.lastTerminal!.dataListeners.size).toBe(0);
 	});
 
 	it("translates wheel motion into SGR wheel reports for zellij scrollback", () => {

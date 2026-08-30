@@ -10,6 +10,7 @@ export type OscTerminalColors = {
 
 const OSC_COLOR_REPORT = /^\u001b](?:10|11|12);[^\u0007\u001b]*(?:\u0007|\u001b\\)$/;
 const OSC_COLOR_PROBE = /\u001b\](?:10|11|12);\?/;
+const MAX_OSC_BUFFER_LENGTH = 16 * 1024;
 
 export function isOscColorReport(data: string): boolean {
 	return OSC_COLOR_REPORT.test(data);
@@ -80,6 +81,12 @@ export function createOscColorReportForwarder(emit: (report: string) => void): {
 	return {
 		push(data: string) {
 			buffer += data;
+			if (buffer.length > MAX_OSC_BUFFER_LENGTH) {
+				// An unterminated OSC must not retain arbitrary PTY output forever.
+				// Keep only the newest bounded suffix; the normal start-sequence check
+				// below will discard it unless it is still a valid partial report.
+				buffer = buffer.slice(-MAX_OSC_BUFFER_LENGTH);
+			}
 			for (;;) {
 				const match = buffer.match(complete);
 				if (!match) break;

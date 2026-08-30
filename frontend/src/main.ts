@@ -48,7 +48,7 @@ import {
 } from "./main/ui-settings";
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
-import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { chmod, copyFile, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -258,14 +258,15 @@ function resolvedDaemonDataDir(): string {
 // scheme here so it matches the xterm palette (not Electron nativeTheme alone).
 function persistTerminalThemeHint(scheme: "light" | "dark"): void {
 	const dir = resolvedDaemonDataDir();
-	void (async () => {
-		try {
-			await mkdir(dir, { recursive: true, mode: 0o750 });
-			await writeFile(path.join(dir, "terminal-theme"), `${scheme}\n`, { mode: 0o600 });
-		} catch (error) {
-			console.warn("AO: unable to persist terminal theme hint", error);
-		}
-	})();
+	try {
+		mkdirSync(dir, { recursive: true, mode: 0o750 });
+		const target = path.join(dir, "terminal-theme");
+		const temporary = `${target}.${process.pid}.tmp`;
+		writeFileSync(temporary, `${scheme}\n`, { mode: 0o600 });
+		renameSync(temporary, target);
+	} catch (error) {
+		console.warn("AO: unable to persist terminal theme hint", error);
+	}
 }
 
 nativeTheme.on("updated", syncNativeWindowBackground);

@@ -588,9 +588,12 @@ describe("CommandPalette actions", () => {
 	it("toggles the theme and closes", async () => {
 		renderPalette();
 		act(() => useUiStore.getState().setCommandPaletteOpen(true));
-		await screen.findByPlaceholderText(/search projects/i);
-		fireEvent.click(screen.getByText("Toggle theme"));
+		const input = await screen.findByPlaceholderText(/search projects/i);
+		fireEvent.change(input, { target: { value: "toggle theme" } });
+		fireEvent.keyDown(input, { key: "Enter" });
 		expect(useUiStore.getState().resolvedTheme).toBe("light");
+		expect(input).toHaveValue("toggle theme");
+		fireEvent.animationEnd(screen.getByLabelText("Command palette"));
 		await waitFor(() => expect(paletteInput()).toBeNull());
 	});
 
