@@ -182,7 +182,7 @@ export function QueuedMessageDock({
 				disabled={!hasMore}
 				className={cn(
 					"flex w-full items-center gap-2 px-3 py-2 text-left motion-reduce:transition-none",
-					hasMore && "cursor-pointer active:scale-[0.999] transition-transform duration-150 ease-out",
+					hasMore && "cursor-pointer",
 					!hasMore && "cursor-default",
 				)}
 				aria-expanded={hasMore ? expanded : undefined}
@@ -200,7 +200,11 @@ export function QueuedMessageDock({
 					<span aria-hidden="true" className="size-3.5 shrink-0" />
 				)}
 				<span className="text-xs font-medium text-muted-foreground">
-					{count} Queued {count === 1 ? "Message" : "Messages"}
+					<span
+						className="inline-block w-fit"
+					>
+						{count} Queued {count === 1 ? "Message" : "Messages"}
+					</span>
 					{editingTurnId ? " · editing" : ""}
 				</span>
 			</button>
