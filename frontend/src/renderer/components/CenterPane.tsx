@@ -607,7 +607,11 @@ export function CenterPane({
 											tabAction={sessionTabAction}
 										/>
 									) : (
-										<SessionPaneTab isActive={target.kind === "worker"} label={sessionTabLabel} />
+										<SessionPaneTab
+											isActive={target.kind === "worker"}
+											label={sessionTabLabel}
+											tabAction={sessionTabAction}
+										/>
 									)}
 									<Reorder.Group
 										as="div"
