@@ -65,33 +65,52 @@ const CLOUD_CP_WS_ORIGINS = (() => {
 	return origins;
 })();
 
-// CSP for the built renderer. The daemon is loopback-only, so network access is
+// CSP for the renderer. The daemon is loopback-only, so network access is
 // pinned to 127.0.0.1 (REST + SSE over http, terminal mux over ws), plus the
-// cloud control-plane websocket origins above. Injected at
-// build time rather than written into index.html because the dev server needs
-// inline scripts (react-refresh preamble) that a static meta tag would block.
-const CONTENT_SECURITY_POLICY = [
-	"default-src 'self'",
-	"script-src 'self'",
-	"style-src 'self' 'unsafe-inline'",
-	"img-src 'self' data: http://127.0.0.1:*",
-	"font-src 'self' data:",
-	["connect-src", "'self'", "http://127.0.0.1:*", "ws://127.0.0.1:*", ...POSTHOG_ORIGINS, ...CLOUD_CP_WS_ORIGINS]
-		.filter(Boolean)
-		.join(" "),
-	"object-src 'none'",
-	"base-uri 'self'",
-	"frame-src 'none'",
-].join("; ");
+// cloud control-plane websocket origins above. The policy is injected here
+// rather than written into index.html so the serve variant can differ: the
+// same directives apply in dev, relaxed only where the dev server itself
+// needs it. Enforcing CSP in dev keeps dev/packaged parity — a connect-src
+// gap then fails on the developer's screen, not weeks later in a packaged
+// build (that skew is exactly how the cloud-terminal block in #4666 shipped).
+function contentSecurityPolicy(mode: "build" | "serve"): string {
+	return [
+		"default-src 'self'",
+		// react-refresh injects its inline preamble in serve mode; a hash is
+		// impractical because the preamble changes with the plugin version.
+		mode === "serve" ? "script-src 'self' 'unsafe-inline'" : "script-src 'self'",
+		"style-src 'self' 'unsafe-inline'",
+		"img-src 'self' data: http://127.0.0.1:*",
+		"font-src 'self' data:",
+		[
+			"connect-src",
+			"'self'",
+			"http://127.0.0.1:*",
+			"ws://127.0.0.1:*",
+			// Vite serves on localhost, which 'self' does not cover for the ws://
+			// HMR socket.
+			mode === "serve" ? "ws://localhost:*" : "",
+			...POSTHOG_ORIGINS,
+			...CLOUD_CP_WS_ORIGINS,
+		]
+			.filter(Boolean)
+			.join(" "),
+		"object-src 'none'",
+		"base-uri 'self'",
+		"frame-src 'none'",
+	].join("; ");
+}
 
 const injectCspMeta: Plugin = {
 	name: "inject-csp-meta",
-	apply: "build",
-	transformIndexHtml() {
+	transformIndexHtml(_html, ctx) {
 		return [
 			{
 				tag: "meta",
-				attrs: { "http-equiv": "Content-Security-Policy", content: CONTENT_SECURITY_POLICY },
+				attrs: {
+					"http-equiv": "Content-Security-Policy",
+					content: contentSecurityPolicy(ctx.server ? "serve" : "build"),
+				},
 				injectTo: "head-prepend",
 			},
 		];
