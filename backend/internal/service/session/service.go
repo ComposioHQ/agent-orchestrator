@@ -36,6 +36,9 @@ type Store interface {
 	SetSessionAutoReview(ctx context.Context, id domain.SessionID, enabled bool, updatedAt time.Time) (bool, error)
 	GetDisplayPRFactsForSession(ctx context.Context, id domain.SessionID) (domain.PRFacts, bool, error)
 	ListPRFactsForSession(ctx context.Context, id domain.SessionID) ([]domain.PRFacts, error)
+	ListPRFactsForSessions(ctx context.Context, ids []domain.SessionID) (map[domain.SessionID][]domain.PRFacts, error)
+	ListCurrentHeadReviewRunsForSession(ctx context.Context, id domain.SessionID) ([]domain.CurrentHeadReviewRun, error)
+	ListCurrentHeadReviewRunsForSessions(ctx context.Context, ids []domain.SessionID) (map[domain.SessionID][]domain.CurrentHeadReviewRun, error)
 	ListPRsBySession(ctx context.Context, sessionID domain.SessionID) ([]domain.PullRequest, error)
 	ListSessionWorktrees(ctx context.Context, id domain.SessionID) ([]domain.SessionWorktreeRecord, error)
 	ListChecks(ctx context.Context, prURL string) ([]domain.PullRequestCheck, error)
@@ -821,12 +824,25 @@ func (s *Service) List(ctx context.Context, filter ListFilter) ([]domain.Session
 	for _, agentSwitch := range activeSwitches {
 		activeBySession[agentSwitch.SessionID] = agentSwitch
 	}
-	out := make([]domain.Session, 0, len(recs))
+	filtered := make([]domain.SessionRecord, 0, len(recs))
+	ids := make([]domain.SessionID, 0, len(recs))
 	for _, rec := range recs {
-		if !matchesSessionFilter(rec, filter) {
-			continue
+		if matchesSessionFilter(rec, filter) {
+			filtered = append(filtered, rec)
+			ids = append(ids, rec.ID)
 		}
-		sess, err := s.toSession(ctx, rec)
+	}
+	prsBySession, err := s.store.ListPRFactsForSessions(ctx, ids)
+	if err != nil {
+		return nil, fmt.Errorf("list pr facts: %w", err)
+	}
+	runsBySession, err := s.store.ListCurrentHeadReviewRunsForSessions(ctx, ids)
+	if err != nil {
+		return nil, fmt.Errorf("list review runs: %w", err)
+	}
+	out := make([]domain.Session, 0, len(filtered))
+	for _, rec := range filtered {
+		sess, err := s.toSessionWithFacts(rec, prsBySession[rec.ID], runsBySession[rec.ID])
 		if err != nil {
 			return nil, err
 		}
@@ -888,6 +904,25 @@ func (s *Service) Get(ctx context.Context, id domain.SessionID) (domain.Session,
 		sess.ActiveAgentSwitch = &activeSwitch
 	}
 	return sess, nil
+}
+
+func (s *Service) toSessionWithFacts(rec domain.SessionRecord, prs []domain.PRFacts, runs []domain.CurrentHeadReviewRun) (domain.Session, error) {
+	runs = canonicalizeCurrentHeadReviewRuns(prs, runs)
+	prs = deduplicatePRFacts(prs)
+	// Both derivations read the clock once, from the same instant: they share
+	// the no-signal rule, and two reads could put them either side of its grace
+	// period and have the card contradict its own status.
+	now := s.now()
+	presentation := deriveKanbanPresentation(rec, prs, runs, now, s.harnessSignals(rec.Harness))
+	return domain.Session{
+		SessionRecord:    rec,
+		Status:           deriveStatus(rec, prs, now, s.harnessSignals(rec.Harness)),
+		SCMStatus:        deriveSCMStatus(prs),
+		KanbanColumn:     presentation.Column,
+		DisplayStatus:    presentation.DisplayStatus,
+		TerminalHandleID: rec.Metadata.RuntimeHandleID,
+		PRs:              prs,
+	}, nil
 }
 
 // toAPIError maps the session engine's sentinel errors to their REST API
@@ -1102,14 +1137,26 @@ func (s *Service) toSession(ctx context.Context, rec domain.SessionRecord) (doma
 	if err != nil {
 		return domain.Session{}, fmt.Errorf("pr facts %s: %w", rec.ID, err)
 	}
-	prs = deduplicatePRFacts(prs)
-	return domain.Session{
-		SessionRecord:    rec,
-		Status:           deriveStatus(rec, prs, s.now(), s.harnessSignals(rec.Harness)),
-		SCMStatus:        deriveSCMStatus(prs),
-		TerminalHandleID: rec.Metadata.RuntimeHandleID,
-		PRs:              prs,
-	}, nil
+	runs, err := s.currentHeadReviewRuns(ctx, rec, prs)
+	if err != nil {
+		return domain.Session{}, err
+	}
+	return s.toSessionWithFacts(rec, prs, runs)
+}
+
+// currentHeadReviewRuns reads the session's AO review passes for the Kanban
+// reducer. Sessions the reducer already decides without them — terminated ones
+// and ones with no PR yet — skip the query, so listing a board of building
+// workers stays one read per session.
+func (s *Service) currentHeadReviewRuns(ctx context.Context, rec domain.SessionRecord, prs []domain.PRFacts) ([]domain.CurrentHeadReviewRun, error) {
+	if rec.IsTerminated || len(prs) == 0 {
+		return nil, nil
+	}
+	runs, err := s.store.ListCurrentHeadReviewRunsForSession(ctx, rec.ID)
+	if err != nil {
+		return nil, fmt.Errorf("review runs %s: %w", rec.ID, err)
+	}
+	return runs, nil
 }
 
 // now tolerates a zero-value Service (tests construct the struct literally

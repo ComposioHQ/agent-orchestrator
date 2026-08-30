@@ -137,6 +137,26 @@ describe("ACP session config options", () => {
 		expect(onChange).toHaveBeenCalledWith("fast-mode", { value: "on" });
 	});
 
+	it("keeps renamed boolean provider options beside the execution mode", async () => {
+		const user = userEvent.setup();
+		render(
+			<TurnSettingsBar
+				models={[]}
+				settings={{}}
+				configOptions={[
+					OPTIONS[0],
+					OPTIONS[2],
+					{ id: "turbo", name: "Turbo", type: "boolean", currentBoolean: false, choices: [] },
+				]}
+				onChangeConfigOption={vi.fn()}
+			/>,
+		);
+
+		await user.click(screen.getByRole("button", { name: "Model and reasoning effort for the next turn" }));
+		expect(screen.getByRole("switch", { name: "Turbo" })).toBeInTheDocument();
+		expect(screen.queryByText("More")).not.toBeInTheDocument();
+	});
+
 	it("keeps unclassified provider options accessible", async () => {
 		const user = userEvent.setup();
 		render(
@@ -245,11 +265,11 @@ describe("ACP session config options", () => {
 		await user.click(screen.getByRole("button", { name: "Approval policy for the next turn" }));
 		expect(screen.getByRole("menuitem", { name: "Ask for approval" })).toBeInTheDocument();
 		expect(screen.getByRole("menuitem", { name: "Approve for me" })).toBeInTheDocument();
-		expect(screen.getByRole("menuitem", { name: "Full access" })).toBeInTheDocument();
+		expect(screen.getByRole("menuitem", { name: "Bypass permissions" })).toBeInTheDocument();
 		expect(screen.queryByRole("menuitem", { name: "Default approvals" })).not.toBeInTheDocument();
 		expect(screen.queryByRole("menuitem", { name: "Accept edits" })).not.toBeInTheDocument();
 		expect(screen.queryByRole("menuitem", { name: "Auto-approve" })).not.toBeInTheDocument();
-		expect(screen.queryByRole("menuitem", { name: "Bypass permissions" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("menuitem", { name: "Full access" })).not.toBeInTheDocument();
 
 		await user.click(screen.getByRole("menuitem", { name: "Approve for me" }));
 		expect(onChange).toHaveBeenCalledWith({ approvalMode: "auto" });
@@ -278,6 +298,20 @@ describe("ACP session config options", () => {
 	it("labels bypass permission policy plainly", () => {
 		render(
 			<TurnSettingsBar
+				models={[]}
+				settings={{ approvalMode: "bypass-permissions" }}
+				onChange={vi.fn()}
+			/>,
+		);
+
+		expect(screen.getByRole("button", { name: "Approval policy for the next turn" })).toHaveTextContent(
+			"Bypass permissions",
+		);
+	});
+	it("distinguishes Codex bypass permissions from its default full-access posture", () => {
+		render(
+			<TurnSettingsBar
+				harness="codex"
 				models={[]}
 				settings={{ approvalMode: "bypass-permissions" }}
 				onChange={vi.fn()}

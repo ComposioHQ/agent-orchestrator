@@ -7,7 +7,7 @@ import {
 	SessionUsageMetricView,
 	type BoardPullRequestLabels,
 	type BoardSessionPresentation,
-	type BoardSplitLaneLabels,
+	type BoardColumnLabels,
 	type BoardUsagePresentation,
 	type ProductUITranslator,
 } from "@aoagents/product-ui";
@@ -15,6 +15,7 @@ import { Check, Copy, GitBranch, LoaderCircle, RotateCcw, Trash2 } from "lucide-
 import type { MessageKey } from "../i18n";
 import { aoBridge } from "../lib/bridge";
 import { formatTimeCompact } from "../lib/format-time";
+import { formatEstimatedCost } from "../lib/format-cost";
 import { formatTokenCount } from "../lib/format-token-count";
 import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
 import {
@@ -23,7 +24,7 @@ import {
 } from "../lib/agent-switch-presentation";
 import type { WorkspaceSession } from "../types/workspace";
 import { canonicalTrackerIssueId } from "../types/workspace";
-import { useSessionScmSummary } from "../hooks/useSessionScmSummary";
+import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
 import type { SessionUsageSummary } from "../hooks/useSessionUsageSummaries";
 import {
 	clearTerminateSessionState,
@@ -45,6 +46,8 @@ export function toBoardSessionPresentation(
 		activity: session.activity,
 		branch: session.branch,
 		id: session.id,
+		kanbanColumn: session.kanbanColumn,
+		displayStatus: session.displayStatus,
 		provider: session.provider,
 		status: session.status,
 		statusPresentation:
@@ -53,43 +56,19 @@ export function toBoardSessionPresentation(
 						className: switchVisual.className,
 						indicatorClassName: `${switchVisual.indicatorClassName}${switchVisual.breathe ? " animate-status-pulse" : ""}`,
 						label: t(switchPresentation.compactLabelKey, switchPresentation.values),
+						tone: switchVisual.tone,
 					}
 				: undefined,
 		title: session.title,
 		trackerIssueId: canonicalTrackerIssueId(session.issueId),
 		updatedAt: session.updatedAt,
+		lastUserMessageAt: session.lastUserMessageAt,
 	};
 }
 
-export function sessionsBoardLabels(t: TFunction): BoardSplitLaneLabels {
+export function sessionsBoardLabels(t: TFunction): BoardColumnLabels {
 	return {
 		columnAria: (label) => t("shell.sessionsAria", { label }),
-		countSessions: (count, label) => t("shell.countSessionsAria", { count, label }),
-		idleWorkingAria: t("shell.idleWorkingSessions"),
-		laneSummary: (primary, secondary) => t("shell.laneSummaryAria", { primary, secondary }),
-		readyMergedAria: t("shell.readyMergedSessions"),
-		tones: {
-			idle: {
-				label: t("status.idle"),
-				countLabel: t("shell.countLabel.idle"),
-				regionLabel: t("shell.idleSessions"),
-			},
-			working: {
-				label: t("status.working"),
-				countLabel: t("shell.countLabel.working"),
-				regionLabel: t("shell.workingSessions"),
-			},
-			ready: {
-				label: t("zone.merge"),
-				countLabel: t("shell.countLabel.readyToMerge"),
-				regionLabel: t("shell.readyToMergeSessions"),
-			},
-			merged: {
-				label: t("status.merged"),
-				countLabel: t("shell.countLabel.merged"),
-				regionLabel: t("shell.mergedSessions"),
-			},
-		},
 	};
 }
 
@@ -231,19 +210,31 @@ function DesktopSessionCard({
 				formatTime: formatTimeCompact,
 				intakeIssue: (id) => t("shell.intakeIssue", { id }),
 				pr: pullRequestLabels(t),
-				updatedAt: (time) => t("shell.updatedAt", { time }),
+				updatedAt: (timestamp: string) =>
+					t("shell.lastMessageAt", { time: formatTimeCompact(timestamp) }),
 			}}
 			onOpen={onOpen}
 			overlay={terminationOverlay}
 			prs={summaries.map((pr) => ({
+				commentCount: pr.review.unresolvedBy.reduce((count, reviewer) => count + reviewer.count, 0),
 				number: pr.number,
+				reviewerAvatars: (pr.review.reviews ?? [])
+					.map((review) => reviewerAvatarUrl(pr, review.reviewerId))
+					.filter((url): url is string => Boolean(url)),
 				state: pr.state,
 				url: prBrowserUrl(pr),
 			}))}
 			renderAvatar={(provider) => <AgentAvatar className="mt-0.5" provider={provider} />}
-			renderUsage={(presentation) => <DesktopUsageMetric usage={presentation} />}
 			session={toBoardSessionPresentation(session, t)}
 			translate={translate}
+			renderUsage={(usage) => (
+				<Tooltip>
+					<TooltipTrigger asChild>
+						<SessionUsageMetricView usage={usage} />
+					</TooltipTrigger>
+					<TooltipContent side="top">{usage.accessibleLabel}</TooltipContent>
+				</Tooltip>
+			)}
 			usage={usagePresentation}
 		/>
 	);
@@ -261,29 +252,54 @@ function pullRequestLabels(t: TFunction): BoardPullRequestLabels {
 	};
 }
 
+function reviewerAvatarUrl(pr: SessionPRSummary, reviewerId: string): string | undefined {
+	let origin: string;
+	try {
+		origin = new URL(prBrowserUrl(pr)).origin;
+	} catch {
+		return undefined;
+	}
+
+	const encodedReviewer = encodeURIComponent(reviewerId);
+	if (pr.provider === "github") return `${origin}/${encodedReviewer}.png`;
+	if (pr.provider === "gitlab") return `${origin}/-/avatar?username=${encodedReviewer}`;
+	return undefined;
+}
+
+// Keep the board metric scannable by showing cost only. The full cost/token
+// summary remains available from the hover tooltip and to screen readers.
 function toUsagePresentation(
 	usage: SessionUsageSummary | undefined,
 	t: TFunction,
 ): BoardUsagePresentation | undefined {
-	if (!usage || usage.processedTokens === null || usage.processedTokens <= 0) return undefined;
-	const compactCount = formatTokenCount(usage.processedTokens).replace(/ tok$/, "");
+	const processedTokens = usage?.processedTokens ?? null;
+	if (!usage) {
+		return undefined;
+	}
+	const cost = formatEstimatedCost(usage.estimatedCost);
+	if (!cost) {
+		if (processedTokens === null || processedTokens <= 0) {
+			return undefined;
+		}
+		const compactTokens = formatTokenCount(processedTokens).replace(/ tok$/, "");
+		const accessibleTokens = t("shell.usageTokens", {
+			count: processedTokens.toLocaleString("en-US"),
+		});
+		return {
+			accessibleLabel: accessibleTokens,
+			compactLabel: compactTokens,
+		};
+	}
+	if (processedTokens === null) {
+		return { accessibleLabel: cost, compactLabel: cost };
+	}
+	const accessibleTokens = t("shell.usageTokens", {
+		count: processedTokens.toLocaleString("en-US"),
+	});
 	return {
-		accessibleLabel: t("shell.usageProcessed", {
-			count: usage.processedTokens.toLocaleString("en-US"),
-		}),
-		compactLabel: t("shell.usageProcessedCompact", { count: compactCount }),
+		accessibleLabel: `${cost} · ${accessibleTokens}`,
+		compactLabel: cost,
 	};
-}
-
-function DesktopUsageMetric({ usage }: { usage: BoardUsagePresentation }) {
-	return (
-		<Tooltip>
-			<TooltipTrigger asChild>
-				<SessionUsageMetricView usage={usage} />
-			</TooltipTrigger>
-			<TooltipContent side="top">{usage.accessibleLabel}</TooltipContent>
-		</Tooltip>
-	);
 }
 
 function ArchiveRestoreButton({

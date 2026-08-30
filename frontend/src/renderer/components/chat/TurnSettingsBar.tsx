@@ -62,7 +62,7 @@ const CODEX_APPROVAL_COPY: Record<ApprovalMode, { label: string }> = {
 	default: { label: "Full access" },
 	"accept-edits": { label: "Ask for approval" },
 	auto: { label: "Approve for me" },
-	"bypass-permissions": { label: "Full access" },
+	"bypass-permissions": { label: "Bypass permissions" },
 };
 
 const CODEX_APPROVAL_ORDER: ApprovalMode[] = [
@@ -766,7 +766,7 @@ function isModeOption(option: ChatConfigOption): boolean {
 }
 
 function isInlineToggleOption(option: ChatConfigOption): boolean {
-	return /(?:^|[\s_-])fast(?:[\s_-]|$)/i.test(`${option.id} ${option.name}`);
+	return option.type === "boolean" || /(?:^|[\s_-])fast(?:[\s_-]|$)/i.test(`${option.id} ${option.name}`);
 }
 
 function optionIsEnabled(option: ChatConfigOption): boolean {
