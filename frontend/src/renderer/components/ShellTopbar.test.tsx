@@ -4,7 +4,12 @@ import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useUiStore } from "../stores/ui-store";
-import type { SessionActivityState, WorkspaceSession, WorkspaceSummary } from "../types/workspace";
+import {
+	CLOUD_PROJECT_KIND,
+	type SessionActivityState,
+	type WorkspaceSession,
+	type WorkspaceSummary,
+} from "../types/workspace";
 import { ShellTopbar, TopbarKillButton } from "./ShellTopbar";
 import { TooltipProvider } from "./ui/tooltip";
 
@@ -450,9 +455,9 @@ describe("ShellTopbar open-in-editor control", () => {
 		// Cloud sessions have no local workspace: the local daemon has never
 		// heard of them, so this control's own "workspace" query would 404 with
 		// "Unknown session" and surface that raw local-daemon error in the
-		// topbar (see issue #4570). Hiding the control for kind === "cloud"
+		// topbar (see issue #4570). Hiding the control for kind === CLOUD_PROJECT_KIND
 		// avoids the query entirely.
-		renderTopbarSessions([worker], "sess-1", false, undefined, "cloud");
+		renderTopbarSessions([worker], "sess-1", false, undefined, CLOUD_PROJECT_KIND);
 
 		await waitFor(() => {
 			expect(screen.queryByRole("button", { name: "Open in Cursor" })).not.toBeInTheDocument();
