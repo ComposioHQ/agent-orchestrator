@@ -42,8 +42,32 @@ const POSTHOG_ORIGINS = (() => {
 	return origins;
 })();
 
+// Cloud terminals attach over a ticketed wss:// dialed directly from the
+// renderer (the WorkOS token stays in the main process; the single-use ticket
+// is the socket's whole authorization — see lib/cloud-terminal-mux.ts), so the
+// packaged CSP must allow the control-plane origin or every cloud terminal
+// stays on "Connecting…" forever in built apps. The runtime URL is a daemon
+// setting the build cannot read; list the baked defaults and fold in a
+// developer's AO_CLOUD_CONTROL_PLANE_URL override so a custom control plane
+// keeps a working terminal in packaged builds too.
+const CLOUD_CP_WS_ORIGINS = (() => {
+	const origins = ["wss://staging-api.aoagents.dev", "wss://api.aoagents.dev"];
+	const override = process.env.AO_CLOUD_CONTROL_PLANE_URL?.trim();
+	if (!override) return origins;
+	let url: URL;
+	try {
+		url = new URL(override);
+	} catch {
+		return origins;
+	}
+	const origin = `${url.protocol === "http:" ? "ws:" : "wss:"}//${url.host}`;
+	if (!origins.includes(origin)) origins.push(origin);
+	return origins;
+})();
+
 // CSP for the built renderer. The daemon is loopback-only, so network access is
-// pinned to 127.0.0.1 (REST + SSE over http, terminal mux over ws). Injected at
+// pinned to 127.0.0.1 (REST + SSE over http, terminal mux over ws), plus the
+// cloud control-plane websocket origins above. Injected at
 // build time rather than written into index.html because the dev server needs
 // inline scripts (react-refresh preamble) that a static meta tag would block.
 const CONTENT_SECURITY_POLICY = [
@@ -52,7 +76,9 @@ const CONTENT_SECURITY_POLICY = [
 	"style-src 'self' 'unsafe-inline'",
 	"img-src 'self' data: http://127.0.0.1:*",
 	"font-src 'self' data:",
-	["connect-src", "'self'", "http://127.0.0.1:*", "ws://127.0.0.1:*", ...POSTHOG_ORIGINS].filter(Boolean).join(" "),
+	["connect-src", "'self'", "http://127.0.0.1:*", "ws://127.0.0.1:*", ...POSTHOG_ORIGINS, ...CLOUD_CP_WS_ORIGINS]
+		.filter(Boolean)
+		.join(" "),
 	"object-src 'none'",
 	"base-uri 'self'",
 	"frame-src 'none'",
