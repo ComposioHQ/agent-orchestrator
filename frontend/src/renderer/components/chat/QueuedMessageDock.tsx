@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { ChevronDown, Circle, CornerDownLeft, Pencil, Trash2 } from "lucide-react";
+import { ChevronDown, Circle, Command, CornerDownLeft, Pencil, Trash2 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import type { ConversationMessage } from "../../types/conversation";
 
@@ -85,11 +85,7 @@ export function QueuedMessageDock({
 								const busy =
 									promotePendingTurnId === turnId || cancelPendingTurnId === turnId;
 								return (
-									<div
-										key={turnId}
-										className="group/queue"
-										data-testid={`queued-message-${turnId}`}
-									>
+									<div key={turnId} data-testid={`queued-message-${turnId}`}>
 										<div className="flex min-h-9 min-w-0 items-center gap-2.5 px-3 py-1.5">
 											<Circle
 												aria-hidden="true"
@@ -102,12 +98,7 @@ export function QueuedMessageDock({
 											>
 												{message.text}
 											</p>
-											<div
-												className={cn(
-													"flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity duration-150 ease-out group-hover/queue:opacity-100 group-focus-within/queue:opacity-100 motion-reduce:transition-none",
-													busy && "opacity-100",
-												)}
-											>
+											<div className="flex shrink-0 items-center gap-0.5">
 												{canSteer && onPromoteQueuedTurn ? (
 													<button
 														type="button"
@@ -115,12 +106,15 @@ export function QueuedMessageDock({
 														onClick={() => {
 															void runAction(turnId, () => onPromoteQueuedTurn(turnId));
 														}}
-														className="flex h-7 items-center gap-1 rounded-md px-2 text-[11px] text-muted-foreground transition-[scale,background-color,color] duration-150 ease-out hover:bg-interactive-hover hover:text-foreground active:scale-[0.96] disabled:pointer-events-none disabled:opacity-50 motion-reduce:transition-none motion-reduce:active:scale-100"
+														className="inline-flex h-7 items-center gap-1.5 rounded-lg px-2 text-[11px] leading-none text-muted-foreground transition-[scale,background-color,color] duration-150 ease-out hover:bg-interactive-hover hover:text-foreground active:scale-[0.96] disabled:pointer-events-none disabled:opacity-50 motion-reduce:transition-none motion-reduce:active:scale-100"
 														aria-label="Steer this queued message into the running turn"
 														title="Steer into running turn"
 													>
-														<CornerDownLeft aria-hidden="true" className="size-3" />
-														<span>Steer</span>
+														<span className="inline-flex items-center gap-1 text-muted-foreground">
+															<Command aria-hidden="true" className="size-2.5" />
+															<CornerDownLeft aria-hidden="true" className="size-3" />
+														</span>
+														Steer
 													</button>
 												) : null}
 												{onBeginQueuedEdit ? (

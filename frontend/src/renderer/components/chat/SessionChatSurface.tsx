@@ -363,6 +363,7 @@ export function SessionChatSurface({
 				// covers the window before the controller reports, and it is the last word
 				// afterwards, since the capability is a property of the driver.
 				onSteer={can(renderSnapshot, "steer") && !commands.steerUnsupported ? commands.steer : undefined}
+				sendPending={commands.sendPending}
 				steerPending={commands.steerPending}
 				steerRefusal={commands.steerRefusal}
 				onPromoteQueuedTurn={

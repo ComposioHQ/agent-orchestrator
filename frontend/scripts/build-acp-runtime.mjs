@@ -11,7 +11,12 @@ import {
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
-import { createWorkDirectory, npmInvocation, pruneNodeDistribution } from "./build-acp-runtime-helpers.mjs";
+import {
+	createWorkDirectory,
+	npmInvocation,
+	patchClaudeRetryDetails,
+	pruneNodeDistribution,
+} from "./build-acp-runtime-helpers.mjs";
 
 const NODE_VERSION = "22.23.2";
 const scriptsDir = dirname(fileURLToPath(import.meta.url));
@@ -61,6 +66,14 @@ cpSync(join(sourceDir, "package-lock.json"), join(outDir, "package-lock.json"));
 
 const npm = npmInvocation(["ci", "--omit=dev", "--omit=optional", "--ignore-scripts"]);
 run(npm.command, npm.args, { cwd: outDir });
+patchClaudeRetryDetails(join(
+	outDir,
+	"node_modules",
+	"@agentclientprotocol",
+	"claude-agent-acp",
+	"dist",
+	"acp-agent.js",
+));
 
 // The Claude Agent SDK declares platform-native Claude executables as optional
 // dependencies. --omit=optional excludes them; this removal is defense-in-depth.
