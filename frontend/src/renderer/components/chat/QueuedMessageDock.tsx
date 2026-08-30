@@ -156,12 +156,12 @@ export function QueuedMessageDock({
 	const hasMore = count > 1;
 	const isOpen = !hasMore || expanded;
 	const expandedRows = Math.min(count, QUEUE_DOCK_VISIBLE_ROWS);
-	const displayMessages = messages;
+	const displayMessages = [...messages].reverse();
 
 	useEffect(() => {
 		if (!isOpen || count <= QUEUE_DOCK_VISIBLE_ROWS) return;
 		const scroll = scrollRef.current;
-		if (scroll) scroll.scrollTop = 0;
+		if (scroll) scroll.scrollTop = scroll.scrollHeight;
 	}, [count, isOpen]);
 
 	const rowProps = {
@@ -231,12 +231,12 @@ export function QueuedMessageDock({
 									key={turnId}
 									turnId={turnId}
 									message={message}
-									hiddenFromView={!isOpen && index > 0}
-									showNextUp={!isOpen && index === 0}
+									hiddenFromView={!isOpen && index !== displayMessages.length - 1}
+									showNextUp={!isOpen && index === displayMessages.length - 1}
 									busy={busy}
 									error={errors[turnId]}
 									{...rowProps}
-									canSteer={canSteer && index === 0}
+									canSteer={canSteer && index === displayMessages.length - 1}
 								/>
 							);
 						})}
