@@ -46,9 +46,20 @@ func MachineFingerprint(ifaces []net.Interface) string {
 // a different network cannot be mistaken for the paired machine.
 type Identity struct {
 	HostID string `json:"hostId"`
-	// Fingerprint is the MachineFingerprint this HostID was issued for. A
-	// mismatch means the file was carried to another machine.
+	// Fingerprint is the aggregate MachineFingerprint this HostID was issued
+	// for. Retained for identities written before Fingerprints existed.
 	Fingerprint string `json:"fingerprint"`
+	// Fingerprints is one hash per hardware interface.
+	//
+	// The aggregate above hashes every interface together, so it changes
+	// whenever the *set* changes — a dock, a replaced network card, an OS
+	// update renaming an interface — and each of those reissued the host id and
+	// silently unpaired every phone. Holding them separately lets the machine
+	// still be recognised when one comes or goes, while a machine with nothing
+	// in common is still treated as different, which is the point of binding at
+	// all: a copied ~/.ao must not answer as the original and collect a phone's
+	// token.
+	Fingerprints []string `json:"fingerprints,omitempty"`
 }
 
 // IdentityPath returns the identity file location under the data dir
@@ -57,31 +68,101 @@ func IdentityPath(dataDir string) string {
 	return filepath.Join(dataDir, "mobile", "identity.json")
 }
 
-// EnsureIdentity loads the identity at path, or issues a new one when the file
-// is missing, unreadable, or was issued for a different machine.
+// InterfaceFingerprints hashes each hardware interface separately, skipping
+// virtual ones exactly as MachineFingerprint does.
+func InterfaceFingerprints(ifaces []net.Interface) []string {
+	var out []string
+	for _, i := range ifaces {
+		if len(i.HardwareAddr) == 0 || hasVirtualName(i.Name) {
+			continue
+		}
+		h := sha256.Sum256([]byte(i.HardwareAddr.String()))
+		out = append(out, hex.EncodeToString(h[:])[:32])
+	}
+	sort.Strings(out)
+	return out
+}
+
+// sameMachine is true when the two sets share any interface.
 //
-// Rebinding on a fingerprint mismatch is deliberate. A copied ~/.ao must not let
-// another machine answer as this one, but failing hard would brick the daemon
-// after something as ordinary as a replaced network card. Reissuing keeps the
-// daemon working while the phone's stored hostId simply stops matching, which
-// is exactly the check the race already performs.
-func EnsureIdentity(path, fingerprint string) (Identity, error) {
+// One in common is deliberately enough. Requiring a majority would fail a
+// laptop that lost its only built-in NIC to a dock, and the binding is not a
+// secret — it stops a *copy* claiming the original's identity, and a copy
+// shares no hardware at all.
+func sameMachine(stored, current []string) bool {
+	have := make(map[string]bool, len(stored))
+	for _, f := range stored {
+		have[f] = true
+	}
+	for _, f := range current {
+		if have[f] {
+			return true
+		}
+	}
+	return false
+}
+
+// EnsureIdentityFor loads the identity at path, keeping its host id when the
+// machine is recognisable and issuing a new one when it is not.
+func EnsureIdentityFor(path string, ifaces []net.Interface) (Identity, error) {
+	current := InterfaceFingerprints(ifaces)
+	aggregate := MachineFingerprint(ifaces)
+
 	if b, err := os.ReadFile(path); err == nil {
 		var existing Identity
-		if json.Unmarshal(b, &existing) == nil &&
-			existing.HostID != "" &&
-			existing.Fingerprint == fingerprint {
-			return existing, nil
+		if json.Unmarshal(b, &existing) == nil && existing.HostID != "" {
+			switch {
+			case len(existing.Fingerprints) > 0 && sameMachine(existing.Fingerprints, current):
+				// Known machine whose interfaces moved: rebind to what is here
+				// now, so the next change is measured against the current set.
+				if !equalStrings(existing.Fingerprints, current) {
+					existing.Fingerprints = current
+					existing.Fingerprint = aggregate
+					if err := writeIdentity(path, existing); err != nil {
+						return Identity{}, err
+					}
+				}
+				return existing, nil
+			case len(existing.Fingerprints) == 0 && existing.Fingerprint == aggregate:
+				// Written before per-interface hashes existed. Same machine by
+				// the old measure, so keep the id and upgrade the record.
+				existing.Fingerprints = current
+				if err := writeIdentity(path, existing); err != nil {
+					return Identity{}, err
+				}
+				return existing, nil
+			case len(current) == 0 && len(existing.Fingerprints) == 0 && existing.Fingerprint == "":
+				// No hardware addresses to bind to, on a machine that had none
+				// when the id was issued. Churning the id every start would be
+				// worse than an unbound identity.
+				return existing, nil
+			}
 		}
 	} else if !os.IsNotExist(err) {
 		return Identity{}, fmt.Errorf("read mobile identity: %w", err)
 	}
 
-	issued := Identity{HostID: "h_" + uuid.NewString(), Fingerprint: fingerprint}
+	issued := Identity{
+		HostID:       "h_" + uuid.NewString(),
+		Fingerprint:  aggregate,
+		Fingerprints: current,
+	}
 	if err := writeIdentity(path, issued); err != nil {
 		return Identity{}, err
 	}
 	return issued, nil
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func writeIdentity(path string, id Identity) error {
@@ -107,5 +188,5 @@ func EnsureLocalIdentity(dataDir string) (Identity, error) {
 	if err != nil {
 		return Identity{}, fmt.Errorf("read interfaces: %w", err)
 	}
-	return EnsureIdentity(IdentityPath(dataDir), MachineFingerprint(ifaces))
+	return EnsureIdentityFor(IdentityPath(dataDir), ifaces)
 }

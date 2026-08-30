@@ -8,6 +8,16 @@ import (
 	"testing"
 )
 
+// iface builds an interface fixture. The MAC is parsed here rather than via hw
+// so these tests read as hardware, not as plumbing.
+func iface(name, mac string) net.Interface {
+	a, err := net.ParseMAC(mac)
+	if err != nil {
+		panic("bad MAC in test fixture: " + mac)
+	}
+	return net.Interface{Name: name, HardwareAddr: a}
+}
+
 func hw(t *testing.T, s string) net.HardwareAddr {
 	t.Helper()
 	a, err := net.ParseMAC(s)
@@ -76,7 +86,7 @@ func TestMachineFingerprintEmptyWhenNoHardwareAddresses(t *testing.T) {
 func TestEnsureIdentityCreatesAndPersistsAHostID(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "mobile", "identity.json")
 
-	got, err := EnsureIdentity(path, "fingerprint-a")
+	got, err := EnsureIdentityFor(path, []net.Interface{iface("en0", "aa:bb:cc:dd:ee:01")})
 	if err != nil {
 		t.Fatalf("EnsureIdentity: %v", err)
 	}
@@ -89,7 +99,7 @@ func TestEnsureIdentityCreatesAndPersistsAHostID(t *testing.T) {
 
 	// It must survive a daemon restart, or every restart would invalidate every
 	// paired phone's stored host identity.
-	again, err := EnsureIdentity(path, "fingerprint-a")
+	again, err := EnsureIdentityFor(path, []net.Interface{iface("en0", "aa:bb:cc:dd:ee:01")})
 	if err != nil {
 		t.Fatalf("second EnsureIdentity: %v", err)
 	}
@@ -98,33 +108,9 @@ func TestEnsureIdentityCreatesAndPersistsAHostID(t *testing.T) {
 	}
 }
 
-func TestEnsureIdentityRegeneratesWhenCarriedToAnotherMachine(t *testing.T) {
-	// A copied ~/.ao must not let machine B answer as machine A. Regenerating
-	// (rather than erroring) is deliberate: the phone's stored hostId then
-	// simply stops matching and it refuses the endpoint, while machine B keeps
-	// working. Erroring would brick the daemon on a swapped network card.
-	path := filepath.Join(t.TempDir(), "mobile", "identity.json")
-
-	original, err := EnsureIdentity(path, "fingerprint-a")
-	if err != nil {
-		t.Fatalf("EnsureIdentity: %v", err)
-	}
-
-	moved, err := EnsureIdentity(path, "fingerprint-b")
-	if err != nil {
-		t.Fatalf("EnsureIdentity after move: %v", err)
-	}
-	if moved.HostID == original.HostID {
-		t.Fatalf("copied config kept host id %q — machine B can impersonate machine A", moved.HostID)
-	}
-	if moved.Fingerprint != "fingerprint-b" {
-		t.Fatalf("fingerprint not rebound: got %q", moved.Fingerprint)
-	}
-}
-
 func TestEnsureIdentityWritesOwnerOnly(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "mobile", "identity.json")
-	if _, err := EnsureIdentity(path, "fingerprint-a"); err != nil {
+	if _, err := EnsureIdentityFor(path, []net.Interface{iface("en0", "aa:bb:cc:dd:ee:01")}); err != nil {
 		t.Fatalf("EnsureIdentity: %v", err)
 	}
 	fi, err := os.Stat(path)
@@ -133,5 +119,93 @@ func TestEnsureIdentityWritesOwnerOnly(t *testing.T) {
 	}
 	if perm := fi.Mode().Perm(); perm != 0o600 {
 		t.Fatalf("identity file mode %o, want 600", perm)
+	}
+}
+
+// The aggregate fingerprint hashed every interface together, so it changed
+// whenever the *set* changed: plugging in a dock, replacing a network card, or
+// an OS update renaming an interface all reissued the host id and silently
+// unpaired every phone. The binding is worth keeping — it stops a copied ~/.ao
+// answering as the original and fooling a phone into handing over its token —
+// but it has to survive ordinary hardware changes.
+func TestEnsureIdentityKeepsTheHostIDWhenAnInterfaceIsAdded(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "mobile", "identity.json")
+	laptop := []net.Interface{iface("en0", "aa:bb:cc:dd:ee:01")}
+
+	original, err := EnsureIdentityFor(path, laptop)
+	if err != nil {
+		t.Fatalf("EnsureIdentityFor: %v", err)
+	}
+
+	// Same laptop, now with a dock attached.
+	docked := append(laptop, iface("en5", "aa:bb:cc:dd:ee:99"))
+	got, err := EnsureIdentityFor(path, docked)
+	if err != nil {
+		t.Fatalf("EnsureIdentityFor docked: %v", err)
+	}
+
+	if got.HostID != original.HostID {
+		t.Fatalf("host id changed when a NIC was added: %q -> %q", original.HostID, got.HostID)
+	}
+}
+
+func TestEnsureIdentityKeepsTheHostIDWhenAnInterfaceIsRemoved(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "mobile", "identity.json")
+	docked := []net.Interface{
+		iface("en0", "aa:bb:cc:dd:ee:01"),
+		iface("en5", "aa:bb:cc:dd:ee:99"),
+	}
+
+	original, err := EnsureIdentityFor(path, docked)
+	if err != nil {
+		t.Fatalf("EnsureIdentityFor: %v", err)
+	}
+
+	undocked, err := EnsureIdentityFor(path, docked[:1])
+	if err != nil {
+		t.Fatalf("EnsureIdentityFor undocked: %v", err)
+	}
+
+	if undocked.HostID != original.HostID {
+		t.Fatalf("host id changed when a NIC was removed: %q -> %q", original.HostID, undocked.HostID)
+	}
+}
+
+// The protection this exists for: nothing in common means a different machine,
+// so the phone must stop trusting it.
+func TestEnsureIdentityStillRegeneratesOnAnUnrelatedMachine(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "mobile", "identity.json")
+
+	original, err := EnsureIdentityFor(path, []net.Interface{iface("en0", "aa:bb:cc:dd:ee:01")})
+	if err != nil {
+		t.Fatalf("EnsureIdentityFor: %v", err)
+	}
+
+	moved, err := EnsureIdentityFor(path, []net.Interface{iface("en0", "11:22:33:44:55:66")})
+	if err != nil {
+		t.Fatalf("EnsureIdentityFor moved: %v", err)
+	}
+
+	if moved.HostID == original.HostID {
+		t.Fatalf("copied config kept host id %q — machine B can impersonate machine A", moved.HostID)
+	}
+}
+
+// A machine with no hardware addresses at all cannot be bound, and must not
+// reissue its id on every start.
+func TestEnsureIdentityIsStableWithoutHardwareAddresses(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "mobile", "identity.json")
+
+	first, err := EnsureIdentityFor(path, nil)
+	if err != nil {
+		t.Fatalf("EnsureIdentityFor: %v", err)
+	}
+	second, err := EnsureIdentityFor(path, nil)
+	if err != nil {
+		t.Fatalf("EnsureIdentityFor again: %v", err)
+	}
+
+	if first.HostID != second.HostID {
+		t.Fatalf("host id churned with no interfaces: %q -> %q", first.HostID, second.HostID)
 	}
 }
