@@ -409,7 +409,6 @@ func TestStartTrackerIntake_RunsEvenWithoutEnabledProjects(t *testing.T) {
 	}
 }
 
-
 type captureRuntimeSender struct {
 	handle  ports.RuntimeHandle
 	message string
