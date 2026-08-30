@@ -10,6 +10,7 @@ import {
 	scaleBoundsForZoom,
 } from "./browser-view-host";
 import { NEW_SESSION_SHORTCUT_CHANNEL } from "../shared/shortcuts";
+import { parseAgentBrowserJSON } from "./agent-browser-runtime";
 
 vi.mock("electron", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("electron")>();
@@ -540,6 +541,182 @@ describe("browser:openTab navigation failure", () => {
 		};
 
 		expect(result.tabs.map((tab) => tab.id)).toEqual(["t1", "t2"]);
+	});
+});
+
+describe("browser:act", () => {
+	function setupActHost(runAction: (sessionId: string, action: string, args: Record<string, unknown>) => Promise<unknown>) {
+		const runtime = {
+			runAction: vi.fn(runAction),
+			closeSession: vi.fn(async () => undefined),
+			dispose: vi.fn(async () => undefined),
+		} as unknown as import("./agent-browser-runtime").AgentBrowserRuntime;
+		return { ...setupHost(runtime), runAction: runtime.runAction as unknown as ReturnType<typeof vi.fn> };
+	}
+
+	it("resolves an instruction to a ref via snapshot, then performs the action", async () => {
+		const { host, runAction } = setupActHost(async (_sessionId, action, args) => {
+			if (action === "snapshot") {
+				return { snapshot: '- button "Wrong display text" [ref=e99]', refs: { e3: { role: "button", name: "Submit" } } };
+			}
+			if (action === "click") return { clicked: args.ref };
+			return {};
+		});
+
+		const result = await host.execute("sess-1", "act", { instruction: "the submit button" });
+
+		expect(result).toMatchObject({ outcome: "matched", resolvedRef: "e3", retried: false });
+		expect(runAction).toHaveBeenCalledWith(
+			"sess-1",
+			"click",
+			{ ref: "e3" },
+			expect.objectContaining({ listTargets: expect.any(Function) }),
+			undefined,
+		);
+	});
+
+	it("uses --nth to check an unnamed checkbox instead of a button named Check", async () => {
+		const { host, runAction } = setupActHost(async (_sessionId, action, args) => {
+			if (action === "snapshot") {
+				return {
+					snapshot: '- checkbox [checked=false, ref=e1]\n- button "Check" [ref=e2]',
+					refs: { e1: { role: "checkbox", name: "" }, e2: { role: "button", name: "Check" } },
+				};
+			}
+			if (action === "check") return { checked: args.ref };
+			return {};
+		});
+
+		const result = await host.execute("sess-1", "act", {
+			instruction: "check the checkbox",
+			action: "check",
+			nth: 0,
+		});
+
+		expect(result).toMatchObject({ outcome: "matched", resolvedRef: "e1", retried: false });
+		expect(runAction.mock.calls.filter(([, action]) => action === "check")).toEqual([
+			expect.arrayContaining(["sess-1", "check", { ref: "e1" }]),
+		]);
+	});
+
+	it("retries once after a stale reference: re-snapshots, re-matches, and completes", async () => {
+		let snapshotCalls = 0;
+		const { host, runAction } = setupActHost(async (_sessionId, action, args) => {
+			if (action === "snapshot") {
+				snapshotCalls += 1;
+				const ref = snapshotCalls === 1 ? "e3" : "e5";
+				return { snapshot: `- button "Submit" [ref=${ref}]`, refs: { [ref]: { role: "button", name: "Submit" } } };
+			}
+			if (action === "click") {
+				if (args.ref === "e3") {
+					parseAgentBrowserJSON(JSON.stringify({ success: false, data: null, error: "Unknown ref: e3" }));
+				}
+				return { clicked: args.ref };
+			}
+			return {};
+		});
+
+		const result = await host.execute("sess-1", "act", { instruction: "the submit button" });
+
+		expect(result).toMatchObject({ outcome: "matched", resolvedRef: "e5", retried: true });
+		expect(snapshotCalls).toBe(2);
+		expect(runAction.mock.calls.filter(([, action]) => action === "click")).toHaveLength(2);
+	});
+
+	// Regression guard: retrying must not become an unbounded loop — exactly
+	// one retry, then the real failure surfaces as itself (an honest error
+	// beats silently doing nothing on a mutating action).
+	it("rethrows a stale reference as-is once the single retry is also stale", async () => {
+		let snapshotCalls = 0;
+		const { host } = setupActHost(async (_sessionId, action) => {
+			if (action === "snapshot") {
+				snapshotCalls += 1;
+				return { snapshot: '- button "Submit" [ref=e3]', refs: { e3: { role: "button", name: "Submit" } } };
+			}
+			throw Object.assign(new Error("Reference no longer resolves"), { code: "STALE_REFERENCE" });
+		});
+
+		await expect(host.execute("sess-1", "act", { instruction: "the submit button" })).rejects.toMatchObject({
+			code: "STALE_REFERENCE",
+		});
+		expect(snapshotCalls).toBe(2);
+	});
+
+	it("does not retry a generic command failure whose message says expired", async () => {
+		let snapshotCalls = 0;
+		let clickCalls = 0;
+		const { host } = setupActHost(async (_sessionId, action) => {
+			if (action === "snapshot") {
+				snapshotCalls += 1;
+				return { snapshot: '- button "Submit" [ref=e3]', refs: { e3: { role: "button", name: "Submit" } } };
+			}
+			clickCalls += 1;
+			throw Object.assign(new Error("Browser session expired"), { code: "AGENT_BROWSER_COMMAND_FAILED" });
+		});
+
+		await expect(host.execute("sess-1", "act", { instruction: "the submit button" })).rejects.toMatchObject({
+			code: "AGENT_BROWSER_COMMAND_FAILED",
+		});
+		expect(snapshotCalls).toBe(1);
+		expect(clickCalls).toBe(1);
+	});
+
+	it("reports ambiguous without performing an action when multiple elements match equally", async () => {
+		const { host, runAction } = setupActHost(async (_sessionId, action) => {
+			if (action === "snapshot") {
+				return {
+					snapshot: ['- button "Add to Cart" [ref=e1]', '- button "Add to Cart" [ref=e2]'].join("\n"),
+					refs: { e1: { role: "button", name: "Add to Cart" }, e2: { role: "button", name: "Add to Cart" } },
+				};
+			}
+			return {};
+		});
+
+		const result = await host.execute("sess-1", "act", { instruction: "add to cart" });
+
+		expect(result).toMatchObject({ outcome: "ambiguous" });
+		expect(runAction.mock.calls.every((call: unknown[]) => call[1] === "snapshot")).toBe(true);
+	});
+
+	it("reports no-match without performing an action when nothing scores", async () => {
+		const { host, runAction } = setupActHost(async (_sessionId, action) => {
+			if (action === "snapshot") return { snapshot: '- textbox "Email" [ref=e1]', refs: {} };
+			return {};
+		});
+
+		const result = await host.execute("sess-1", "act", { instruction: "the submit button" });
+
+		expect(result).toMatchObject({ outcome: "no-match" });
+		expect(runAction.mock.calls.every((call: unknown[]) => call[1] === "snapshot")).toBe(true);
+	});
+
+	it("uses --nth to disambiguate a tie instead of declining", async () => {
+		const { host } = setupActHost(async (_sessionId, action, args) => {
+			if (action === "snapshot") {
+				return {
+					snapshot: ['- button "Add to Cart" [ref=e1]', '- button "Add to Cart" [ref=e2]'].join("\n"),
+					refs: { e1: { role: "button", name: "Add to Cart" }, e2: { role: "button", name: "Add to Cart" } },
+				};
+			}
+			if (action === "click") return { clicked: args.ref };
+			return {};
+		});
+
+		const result = await host.execute("sess-1", "act", { instruction: "add to cart", nth: 1 });
+
+		expect(result).toMatchObject({ outcome: "matched", resolvedRef: "e2" });
+	});
+
+	it("requires an instruction", async () => {
+		const { host } = setupActHost(async () => ({}));
+		await expect(host.execute("sess-1", "act", {})).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+	});
+
+	it("rejects an unsupported verb rather than silently defaulting", async () => {
+		const { host } = setupActHost(async () => ({}));
+		await expect(host.execute("sess-1", "act", { instruction: "the submit button", action: "drag" })).rejects.toMatchObject({
+			code: "INVALID_ARGUMENT",
+		});
 	});
 });
 

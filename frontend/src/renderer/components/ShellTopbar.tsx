@@ -73,9 +73,11 @@ const PADDING_CLEARANCE_LINUX = 114;
 export function ShellTopbar({
 	embedded = false,
 	sessionAction,
+	compactActions = false,
 }: {
 	embedded?: boolean;
 	sessionAction?: ReactNode;
+	compactActions?: boolean;
 } = {}) {
 	const { t } = useTranslation();
 	const navigate = useNavigate();
@@ -215,7 +217,9 @@ export function ShellTopbar({
 	return (
 		<LayoutGroup id="shell-topbar">
 		<motion.header
-			className={embedded ? "contents" : cn(topbarHeaderClass, "workspace-topbar-container")}
+			className={
+				embedded ? "contents" : cn(topbarHeaderClass, "workspace-topbar-container", isSessionRoute && "pr-2")
+			}
 			style={embedded ? undefined : { ...dragStyle, paddingLeft }}
 		>
 			{!embedded ? (
@@ -252,7 +256,11 @@ export function ShellTopbar({
 
 			{!embedded ? <div className="min-w-0 flex-1" /> : null}
 
-			<div className="workspace-topbar-actions flex shrink-0 items-center" data-testid="workspace-topbar-actions">
+			<div
+				className="workspace-topbar-actions flex shrink-0 items-center"
+				data-compact-actions={compactActions ? "true" : "false"}
+				data-testid="workspace-topbar-actions"
+			>
 				{!boardActionsInPanel && isProjectBoardRoute ? (
 					<>
 						{boardSpawnError ? (
@@ -369,7 +377,7 @@ export function ShellTopbar({
 						    remains a separate visual target in the outer top-bar row. */}
 						{!isOrchestrator && session && (sessionAction || sessionIsActive(session)) ? (
 							<div
-								className="mr-0.5 inline-flex shrink-0 items-center gap-px"
+								className="inline-flex shrink-0 items-center gap-1"
 								data-testid="session-local-actions"
 								style={noDragStyle}
 							>
@@ -399,7 +407,7 @@ export function ShellTopbar({
 									<span className="inline-flex" style={noDragStyle}>
 										<TopbarButton
 											aria-label={t("shell.openOrchestrator")}
-											className="topbar-control--labeled"
+											className="topbar-control--labeled -mr-1"
 											data-priority="secondary"
 											disabled={isSpawning || isProjectRestarting}
 											onClick={() => void openOrchestrator()}

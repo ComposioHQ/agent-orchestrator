@@ -76,6 +76,8 @@ type Store interface {
 	CompleteQueuedTurnPromotion(ctx context.Context, conversationID, sourceTurnID, providerTurnID string, activity domain.ConversationActivity, now time.Time) error
 	CancelQueuedTurns(ctx context.Context, conversationID string, cutoff, now time.Time) error
 	CancelAllQueuedTurns(ctx context.Context, conversationID string, now time.Time) error
+	CancelQueuedTurnByID(ctx context.Context, conversationID, turnID string, now time.Time) error
+	UpdateQueuedTurnMessage(ctx context.Context, conversationID, turnID, text string, now time.Time) error
 
 	RetryPrompt(ctx context.Context, conversationID, turnID string) (domain.RetryPrompt, error)
 	RetryTurnIDForSource(ctx context.Context, conversationID, sourceTurnID string) (string, bool, error)

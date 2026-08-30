@@ -3,10 +3,10 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { deleteMock, postMock } = vi.hoisted(() => ({ deleteMock: vi.fn(), postMock: vi.fn() }));
+const { deleteMock, patchMock, postMock } = vi.hoisted(() => ({ deleteMock: vi.fn(), patchMock: vi.fn(), postMock: vi.fn() }));
 
 vi.mock("../lib/api-client", () => ({
-	apiClient: { DELETE: deleteMock, POST: postMock },
+	apiClient: { DELETE: deleteMock, PATCH: patchMock, POST: postMock },
 	apiErrorCode: (error: unknown) =>
 		typeof error === "object" && error !== null && "code" in error ? (error as { code?: string }).code : undefined,
 	hasTrustedApiBaseUrl: () => true,
@@ -17,6 +17,7 @@ import {
 	shellTerminalsQueryKey,
 	useCloseShellTerminal,
 	useOpenShellTerminal,
+	useRenameShellTerminal,
 } from "./useShellTerminals";
 
 const shells: ShellTerminal[] = [
@@ -50,6 +51,7 @@ function queryClientWithShells() {
 
 beforeEach(() => {
 	deleteMock.mockReset();
+	patchMock.mockReset();
 	postMock.mockReset();
 });
 
@@ -75,6 +77,23 @@ describe("useOpenShellTerminal", () => {
 		await act(async () => result.current.mutateAsync({}));
 
 		expect(queryClient.getQueryData(shellTerminalsQueryKey)).toEqual([shell]);
+	});
+});
+
+describe("useRenameShellTerminal", () => {
+	it("updates the visible tab title before the daemon responds", async () => {
+		let finishRename!: (result: { data: { shellTerminal: ShellTerminal } }) => void;
+		patchMock.mockReturnValue(new Promise((resolve) => (finishRename = resolve)));
+		const queryClient = queryClientWithShells();
+		const { result } = renderHook(() => useRenameShellTerminal(), { wrapper: wrapper(queryClient) });
+
+		act(() => result.current.mutate({ handleId: shells[0].handleId, title: "server — zsh" }));
+
+		await waitFor(() =>
+			expect(queryClient.getQueryData<ShellTerminal[]>(shellTerminalsQueryKey)?.[0]?.title).toBe("server — zsh"),
+		);
+		act(() => finishRename({ data: { shellTerminal: { ...shells[0], title: "server — zsh" } } }));
+		await waitFor(() => expect(result.current.isPending).toBe(false));
 	});
 });
 

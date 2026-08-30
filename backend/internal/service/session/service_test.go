@@ -34,6 +34,7 @@ type fakeStore struct {
 	activeSwitchGetErr  error
 	activeSwitchListErr error
 	pr                  map[domain.SessionID]domain.PRFacts
+	prFacts             map[domain.SessionID][]domain.PRFacts
 	prs                 map[domain.SessionID][]domain.PullRequest
 	projects            map[string]domain.ProjectRecord
 	worktrees           map[domain.SessionID][]domain.SessionWorktreeRecord
@@ -43,6 +44,9 @@ type fakeStore struct {
 	threads             map[string][]domain.PullRequestReviewThread
 	comments            map[string][]domain.PullRequestComment
 	commentsErr         error
+	reviewRuns          map[domain.SessionID][]domain.CurrentHeadReviewRun
+	listPRFactsCalls    int
+	listReviewRunsCalls int
 	num                 int
 }
 
@@ -51,6 +55,7 @@ func newFakeStore() *fakeStore {
 		sessions:       map[domain.SessionID]domain.SessionRecord{},
 		activeSwitches: map[domain.SessionID]domain.AgentSwitch{},
 		pr:             map[domain.SessionID]domain.PRFacts{},
+		prFacts:        map[domain.SessionID][]domain.PRFacts{},
 		prs:            map[domain.SessionID][]domain.PullRequest{},
 		projects:       map[string]domain.ProjectRecord{},
 		worktrees:      map[domain.SessionID][]domain.SessionWorktreeRecord{},
@@ -58,6 +63,31 @@ func newFakeStore() *fakeStore {
 		reviews:        map[string][]domain.PullRequestReview{},
 		threads:        map[string][]domain.PullRequestReviewThread{},
 		comments:       map[string][]domain.PullRequestComment{},
+		reviewRuns:     map[domain.SessionID][]domain.CurrentHeadReviewRun{},
+	}
+}
+
+func TestListBatchesKanbanReads(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer"}
+	st.sessions["mer-2"] = domain.SessionRecord{ID: "mer-2", ProjectID: "mer"}
+	st.pr["mer-1"] = domain.PRFacts{URL: "pr-1", HeadSHA: "head-1"}
+	st.pr["mer-2"] = domain.PRFacts{URL: "pr-2", HeadSHA: "head-2"}
+	st.reviewRuns["mer-1"] = []domain.CurrentHeadReviewRun{{SessionID: "mer-1", PRURL: "pr-1", Status: domain.ReviewRunRunning, ID: "run-1", CreatedAt: time.Now().UTC()}}
+	st.reviewRuns["mer-2"] = []domain.CurrentHeadReviewRun{{SessionID: "mer-2", PRURL: "pr-2", Status: domain.ReviewRunRunning, ID: "run-2", CreatedAt: time.Now().UTC()}}
+
+	list, err := (&Service{store: st}).List(context.Background(), ListFilter{ProjectID: "mer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("len(list) = %d, want 2", len(list))
+	}
+	if st.listPRFactsCalls != 1 {
+		t.Fatalf("ListPRFacts calls = %d, want 1 batched call", st.listPRFactsCalls)
+	}
+	if st.listReviewRunsCalls != 1 {
+		t.Fatalf("ListCurrentHeadReviewRuns calls = %d, want 1 batched call", st.listReviewRunsCalls)
 	}
 }
 
@@ -268,11 +298,47 @@ func (f *fakeStore) ListPRsBySession(_ context.Context, id domain.SessionID) ([]
 }
 
 func (f *fakeStore) ListPRFactsForSession(_ context.Context, id domain.SessionID) ([]domain.PRFacts, error) {
+	f.listPRFactsCalls++
+	if prs, ok := f.prFacts[id]; ok {
+		return append([]domain.PRFacts(nil), prs...), nil
+	}
 	pr, ok := f.pr[id]
 	if !ok {
 		return nil, nil
 	}
 	return []domain.PRFacts{pr}, nil
+}
+
+func (f *fakeStore) ListPRFactsForSessions(_ context.Context, ids []domain.SessionID) (map[domain.SessionID][]domain.PRFacts, error) {
+	f.listPRFactsCalls++
+	out := make(map[domain.SessionID][]domain.PRFacts, len(ids))
+	for _, id := range ids {
+		if prs, ok := f.prFacts[id]; ok {
+			out[id] = append([]domain.PRFacts(nil), prs...)
+			continue
+		}
+		pr, ok := f.pr[id]
+		if ok {
+			out[id] = []domain.PRFacts{pr}
+			continue
+		}
+		out[id] = []domain.PRFacts{}
+	}
+	return out, nil
+}
+
+func (f *fakeStore) ListCurrentHeadReviewRunsForSession(_ context.Context, id domain.SessionID) ([]domain.CurrentHeadReviewRun, error) {
+	f.listReviewRunsCalls++
+	return f.reviewRuns[id], nil
+}
+
+func (f *fakeStore) ListCurrentHeadReviewRunsForSessions(_ context.Context, ids []domain.SessionID) (map[domain.SessionID][]domain.CurrentHeadReviewRun, error) {
+	f.listReviewRunsCalls++
+	out := make(map[domain.SessionID][]domain.CurrentHeadReviewRun, len(ids))
+	for _, id := range ids {
+		out[id] = append([]domain.CurrentHeadReviewRun(nil), f.reviewRuns[id]...)
+	}
+	return out, nil
 }
 
 func (f *fakeStore) ListChecks(_ context.Context, prURL string) ([]domain.PullRequestCheck, error) {
@@ -4267,28 +4333,146 @@ func TestDeduplicatePRFactsCollapsesTransferredRepoAliasesWithSameHead(t *testin
 	now := time.Date(2026, 7, 31, 10, 0, 0, 0, time.UTC)
 	got := deduplicatePRFacts([]domain.PRFacts{
 		{
-			URL:            "https://github.com/AgentWrapper/agent-orchestrator/pull/3193",
-			Number:         3193,
-			ReviewComments: true,
-			SourceBranch:   "ao/mer-1/fix-sigpipe",
-			TargetBranch:   "main",
-			HeadSHA:        "same-head",
-			UpdatedAt:      now,
+			URL:                      "https://github.com/AgentWrapper/agent-orchestrator/pull/3193",
+			Number:                   3193,
+			ReviewComments:           true,
+			ExternalChangesRequested: true,
+			ExternalComments:         true,
+			SourceBranch:             "ao/mer-1/fix-sigpipe",
+			TargetBranch:             "main",
+			HeadSHA:                  "same-head",
+			UpdatedAt:                now,
 		},
 		{
-			URL:          "https://github.com/Untrivial-ai/agent-orchestrator/pull/3193",
-			Number:       3193,
-			SourceBranch: "ao/mer-1/fix-sigpipe",
-			TargetBranch: "main",
-			HeadSHA:      "same-head",
-			UpdatedAt:    now.Add(time.Minute),
+			URL:              "https://github.com/Untrivial-ai/agent-orchestrator/pull/3193",
+			Number:           3193,
+			ExternalApproved: true,
+			SourceBranch:     "ao/mer-1/fix-sigpipe",
+			TargetBranch:     "main",
+			HeadSHA:          "same-head",
+			UpdatedAt:        now.Add(time.Minute),
 		},
 	})
 	if len(got) != 1 {
 		t.Fatalf("facts = %d, want transferred aliases collapsed: %+v", len(got), got)
 	}
-	if got[0].URL != "https://github.com/Untrivial-ai/agent-orchestrator/pull/3193" || !got[0].ReviewComments {
+	if got[0].URL != "https://github.com/Untrivial-ai/agent-orchestrator/pull/3193" ||
+		!got[0].ReviewComments ||
+		!got[0].ExternalChangesRequested ||
+		!got[0].ExternalComments ||
+		!got[0].ExternalApproved {
 		t.Fatalf("merged facts = %+v, want newest URL and preserved comments", got[0])
+	}
+}
+
+func TestToSessionWithFactsRemapsTransferredAliasReviewRuns(t *testing.T) {
+	st := newFakeStore()
+	rec := domain.SessionRecord{
+		ID:                "mer-1",
+		ProjectID:         "mer",
+		UpdatedAt:         time.Date(2026, 8, 28, 10, 0, 0, 0, time.UTC),
+		AutoReviewEnabled: true,
+		AutoInjectReview:  true,
+	}
+	oldURL := "https://github.com/AgentWrapper/agent-orchestrator/pull/3193"
+	newURL := "https://github.com/Untrivial-ai/agent-orchestrator/pull/3193"
+	st.prFacts[rec.ID] = []domain.PRFacts{
+		{
+			URL:                      oldURL,
+			Number:                   3193,
+			Review:                   domain.ReviewRequired,
+			SourceBranch:             "ao/mer-1/fix-sigpipe",
+			TargetBranch:             "main",
+			HeadSHA:                  "same-head",
+			UpdatedAt:                rec.UpdatedAt,
+			ExternalChangesRequested: false,
+		},
+		{
+			URL:          newURL,
+			Number:       3193,
+			Review:       domain.ReviewRequired,
+			SourceBranch: "ao/mer-1/fix-sigpipe",
+			TargetBranch: "main",
+			HeadSHA:      "same-head",
+			UpdatedAt:    rec.UpdatedAt.Add(time.Minute),
+		},
+	}
+	st.reviewRuns[rec.ID] = []domain.CurrentHeadReviewRun{{
+		SessionID: rec.ID,
+		Harness:   "claude-code",
+		PRURL:     oldURL,
+		Status:    domain.ReviewRunRunning,
+		ID:        "run-old",
+		CreatedAt: rec.UpdatedAt,
+	}}
+
+	sess, err := (&Service{store: st, clock: func() time.Time { return rec.UpdatedAt.Add(2 * time.Minute) }}).toSessionWithFacts(rec, st.prFacts[rec.ID], st.reviewRuns[rec.ID])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.KanbanColumn != "validating" {
+		t.Fatalf("column = %q, want validating", sess.KanbanColumn)
+	}
+	if sess.DisplayStatus != "Reviewing" {
+		t.Fatalf("displayStatus = %q, want Reviewing", sess.DisplayStatus)
+	}
+	if len(sess.PRs) != 1 || sess.PRs[0].URL != newURL {
+		t.Fatalf("deduped PRs = %+v, want newest alias only", sess.PRs)
+	}
+}
+
+func TestToSessionWithFactsCanonicalAliasRunSupersedesOlderAliasRun(t *testing.T) {
+	st := newFakeStore()
+	rec := domain.SessionRecord{
+		ID:                "mer-2",
+		ProjectID:         "mer",
+		UpdatedAt:         time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC),
+		AutoReviewEnabled: true,
+		AutoInjectReview:  true,
+	}
+	oldURL := "https://github.com/AgentWrapper/agent-orchestrator/pull/4000"
+	newURL := "https://github.com/Untrivial-ai/agent-orchestrator/pull/4000"
+	st.prFacts[rec.ID] = []domain.PRFacts{
+		{
+			URL:          oldURL,
+			Number:       4000,
+			Review:       domain.ReviewRequired,
+			SourceBranch: "ao/mer-2/fix-review",
+			TargetBranch: "main",
+			HeadSHA:      "same-head",
+			UpdatedAt:    rec.UpdatedAt,
+		},
+		{
+			URL:          newURL,
+			Number:       4000,
+			Review:       domain.ReviewRequired,
+			SourceBranch: "ao/mer-2/fix-review",
+			TargetBranch: "main",
+			HeadSHA:      "same-head",
+			UpdatedAt:    rec.UpdatedAt.Add(time.Minute),
+		},
+	}
+	st.reviewRuns[rec.ID] = []domain.CurrentHeadReviewRun{
+		{
+			SessionID: rec.ID, Harness: "claude-code", PRURL: oldURL,
+			Status: domain.ReviewRunRunning, ID: "run-old", CreatedAt: rec.UpdatedAt,
+		},
+		{
+			SessionID: rec.ID, Harness: "claude-code", PRURL: newURL,
+			Status: domain.ReviewRunComplete, Verdict: domain.VerdictApproved,
+			ID: "run-new", CreatedAt: rec.UpdatedAt.Add(time.Minute),
+		},
+	}
+
+	sess, err := (&Service{store: st, clock: func() time.Time { return rec.UpdatedAt.Add(2 * time.Minute) }}).toSessionWithFacts(rec, st.prFacts[rec.ID], st.reviewRuns[rec.ID])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.KanbanColumn != "needs_review" {
+		t.Fatalf("column = %q, want needs_review", sess.KanbanColumn)
+	}
+	if sess.DisplayStatus != "Needs human review" {
+		t.Fatalf("displayStatus = %q, want Needs human review", sess.DisplayStatus)
 	}
 }
 

@@ -97,10 +97,30 @@ describe("TopbarOpenEditorButton", () => {
 	it("uses persisted Cursor as the primary target and sends no filesystem path", async () => {
 		renderButton();
 		const button = await screen.findByRole("button", { name: "Open in Cursor" });
-		expect(button).toHaveAttribute("data-priority", "primary");
-		expect(button.querySelector("[data-compact-label]")).toHaveTextContent("Open");
+		expect(button).not.toHaveAttribute("data-priority");
+		expect(button.querySelector("[data-compact-label]")).not.toBeInTheDocument();
+		expect(button.querySelector("svg")).toBeInTheDocument();
+		expect(button).toHaveClass("topbar-control--icon");
+		expect(button).not.toHaveClass("border", "bg-raised");
+		const options = screen.getByRole("button", { name: "Open workspace options" });
+		expect(options).toHaveClass("topbar-control--icon", "hover:bg-transparent");
+		expect(button).toHaveClass("hover:bg-transparent");
+		const group = button.parentElement;
+		expect(group).toHaveClass("gap-0", "rounded-md", "hover:bg-interactive-hover", "data-[state=open]:bg-interactive-hover");
+		expect(group).toHaveAttribute("data-state", "closed");
 		await userEvent.click(button);
 		await waitFor(() => expect(openMock).toHaveBeenCalledWith({ sessionId: "sess-1" }));
+	});
+
+	it("keeps the shared editor control highlighted while options are open", async () => {
+		renderButton();
+		const options = await screen.findByRole("button", { name: "Open workspace options" });
+		const group = options.parentElement;
+
+		await userEvent.click(options);
+
+		expect(group).toHaveAttribute("data-state", "open");
+		expect(group).toHaveClass("data-[state=open]:bg-interactive-hover");
 	});
 
 	it("keeps the no-editor state visible and offers Finder and Terminal", async () => {
