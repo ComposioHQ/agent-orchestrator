@@ -4,6 +4,8 @@ package systemexec
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -44,64 +46,100 @@ func (Adapter) RunInstall(ctx context.Context, command ports.InstallCommand, std
 	return cmd.Run()
 }
 
-// NPMGlobalPrefix asks npm for the actual global prefix under a short bound;
-// locating the npm executable alone says nothing about whether `npm -g` can
-// write where it needs to.
-func (Adapter) NPMGlobalPrefix() (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+// Probe takes one cancellation-aware snapshot of the package-manager facts
+// needed by every fixed recipe in a Settings response.
+func (Adapter) Probe(ctx context.Context) (ports.InstallCapabilities, error) {
+	var snapshot ports.InstallCapabilities
+
+	nodeVersion, nodeErr := capabilityOutput(ctx, "node", "--version")
+	npmVersion, npmVersionErr := capabilityOutput(ctx, "npm", "--version")
+	npmPrefix, npmPrefixErr := capabilityOutput(ctx, "npm", "prefix", "-g")
+	if err := ctx.Err(); err != nil {
+		return ports.InstallCapabilities{}, err
+	}
+	snapshot.NPM = ports.NPMInstallCapabilities{
+		NodeVersion: nodeVersion, NPMVersion: npmVersion, GlobalPrefix: npmPrefix,
+	}
+	snapshot.NPM.Err = errors.Join(nodeErr, npmVersionErr, npmPrefixErr)
+	if snapshot.NPM.Err == nil {
+		writable, err := pathWritable(ctx, npmPrefix)
+		if err != nil {
+			return ports.InstallCapabilities{}, err
+		}
+		snapshot.NPM.PrefixWritable = writable
+	}
+
+	brewPrefix, brewPrefixErr := capabilityOutput(ctx, "brew", "--prefix")
+	formulae, formulaErr := capabilityLines(ctx, "brew", "list", "--formula", "-1")
+	casks, caskErr := capabilityLines(ctx, "brew", "list", "--cask", "-1")
+	if err := ctx.Err(); err != nil {
+		return ports.InstallCapabilities{}, err
+	}
+	snapshot.Homebrew = ports.HomebrewInstallCapabilities{
+		Prefix: brewPrefix, Formulae: formulae, Casks: casks,
+		Err: errors.Join(brewPrefixErr, formulaErr, caskErr),
+	}
+	if snapshot.Homebrew.Err == nil {
+		writable, err := pathWritable(ctx, brewPrefix)
+		if err != nil {
+			return ports.InstallCapabilities{}, err
+		}
+		snapshot.Homebrew.PrefixWritable = writable
+	}
+	return snapshot, nil
+}
+
+func capabilityOutput(parent context.Context, name string, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(parent, 3*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "npm", "prefix", "-g").Output() //nolint:gosec // fixed read-only argv
+	cmd := exec.CommandContext(ctx, name, args...) //nolint:gosec // fixed read-only argv from Probe.
+	configureProcessGroup(cmd)
+	cmd.Cancel = func() error { return killProcessTree(cmd) }
+	cmd.WaitDelay = 5 * time.Second
+	out, err := cmd.Output()
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("%s %s: %w", name, strings.Join(args, " "), err)
 	}
 	return strings.TrimSpace(string(out)), nil
 }
 
-// HomebrewPrefix resolves the installation root whose ownership determines
-// whether Homebrew can install without privilege escalation.
-func (Adapter) HomebrewPrefix() (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	out, err := exec.CommandContext(ctx, "brew", "--prefix").Output() //nolint:gosec // fixed read-only argv
+func capabilityLines(ctx context.Context, name string, args ...string) (map[string]bool, error) {
+	out, err := capabilityOutput(ctx, name, args...)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	return strings.TrimSpace(string(out)), nil
+	items := make(map[string]bool)
+	for _, line := range strings.Split(out, "\n") {
+		if item := strings.TrimSpace(line); item != "" {
+			items[item] = true
+		}
+	}
+	return items, nil
 }
 
-// HomebrewPackageInstalled distinguishes a first install from an explicit
-// reinstall without mutating package-manager state.
-func (Adapter) HomebrewPackageInstalled(name string, cask bool) bool {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	args := []string{"list", "--versions"}
-	if cask {
-		args = append(args, "--cask")
-	}
-	args = append(args, name)
-	return exec.CommandContext(ctx, "brew", args...).Run() == nil //nolint:gosec // name comes from fixed server-owned recipes.
-}
-
-// PathWritable checks the nearest existing ancestor by creating and removing
+// pathWritable checks the nearest existing ancestor by creating and removing
 // a private temporary file. This honors ACLs and ownership more accurately
-// than permission-bit inspection.
-func (Adapter) PathWritable(path string) bool {
+// than permission-bit inspection and aborts promptly with its request.
+func pathWritable(ctx context.Context, path string) (bool, error) {
 	for {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
 		if _, err := os.Stat(path); err == nil {
 			file, createErr := os.CreateTemp(path, ".ao-write-check-*")
 			if createErr != nil {
-				return false
+				return false, nil
 			}
 			name := file.Name()
 			closeErr := file.Close()
 			removeErr := os.Remove(name)
-			return closeErr == nil && removeErr == nil
+			return closeErr == nil && removeErr == nil, nil
 		} else if !os.IsNotExist(err) {
-			return false
+			return false, nil
 		}
 		parent := filepath.Dir(path)
 		if parent == path {
-			return false
+			return false, nil
 		}
 		path = parent
 	}

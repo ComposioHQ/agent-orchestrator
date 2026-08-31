@@ -32,13 +32,40 @@ type InstallCommandRunner interface {
 	RunInstall(ctx context.Context, command InstallCommand, stdout, stderr io.Writer) error
 }
 
+// NPMInstallCapabilities is one request-scoped npm/Node preflight snapshot.
+// Err is manager-specific so an unavailable npm does not suppress viable
+// Homebrew recipes in the same catalog response.
+type NPMInstallCapabilities struct {
+	NodeVersion    string
+	NPMVersion     string
+	GlobalPrefix   string
+	PrefixWritable bool
+	Err            error
+}
+
+// HomebrewInstallCapabilities is one request-scoped Homebrew preflight
+// snapshot. Installed package maps come from successful full inventory reads;
+// callers must treat Err as unavailable rather than guessing "not installed".
+type HomebrewInstallCapabilities struct {
+	Prefix         string
+	PrefixWritable bool
+	Formulae       map[string]bool
+	Casks          map[string]bool
+	Err            error
+}
+
+// InstallCapabilities contains all subprocess-backed package-manager facts
+// used to resolve the server-owned recipe catalog for one request.
+type InstallCapabilities struct {
+	NPM      NPMInstallCapabilities
+	Homebrew HomebrewInstallCapabilities
+}
+
 // InstallCapabilityProbe resolves package-manager state that PATH lookup alone
-// cannot validate safely.
+// cannot validate safely. Probe must honor ctx and returns one immutable
+// snapshot so recipe resolution never reruns subprocesses per harness.
 type InstallCapabilityProbe interface {
-	NPMGlobalPrefix() (string, error)
-	HomebrewPrefix() (string, error)
-	HomebrewPackageInstalled(name string, cask bool) bool
-	PathWritable(path string) bool
+	Probe(ctx context.Context) (InstallCapabilities, error)
 }
 
 // AgentInstallJobRecord is the storage-bound representation of a daemon-owned

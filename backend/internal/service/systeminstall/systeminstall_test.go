@@ -15,10 +15,11 @@ import (
 )
 
 type installJobStoreFake struct {
-	mu        sync.Mutex
-	records   map[string]ports.AgentInstallJobRecord
-	history   []ports.AgentInstallJobRecord
-	upsertErr error
+	mu                 sync.Mutex
+	records            map[string]ports.AgentInstallJobRecord
+	history            []ports.AgentInstallJobRecord
+	upsertErr          error
+	upsertErrForStatus map[string]error
 }
 
 func newInstallJobStoreFake() *installJobStoreFake {
@@ -30,6 +31,9 @@ func (s *installJobStoreFake) UpsertAgentInstallJob(_ context.Context, record po
 	defer s.mu.Unlock()
 	if s.upsertErr != nil {
 		return s.upsertErr
+	}
+	if err := s.upsertErrForStatus[record.Status]; err != nil {
+		return err
 	}
 	s.records[record.Target] = record
 	s.history = append(s.history, record)
@@ -123,6 +127,9 @@ func newTestService(goos string, found ...string) *Service {
 		backgroundContext: backgroundContext,
 		stop:              stop,
 		executables:       executableFinderFunc(lookPathFound(found...)),
+		installCapabilities: installCapabilitiesStub{
+			prefix: "/Users/test/.npm", writable: true,
+		},
 		commands: testCommandRunner(func(ctx context.Context, argv []string) *exec.Cmd {
 			return exec.CommandContext(ctx, argv[0], argv[1:]...) //nolint:gosec // test-only, deterministic argv
 		}),
@@ -701,6 +708,47 @@ func TestListAgentJobsReturnsDurableJobs(t *testing.T) {
 	}
 	if len(jobs) != 1 || jobs[0].Target != TargetCodex || jobs[0].Status != StatusFailed {
 		t.Fatalf("jobs = %+v", jobs)
+	}
+}
+
+func TestTerminalPersistenceFailureOverridesStaleActiveDurableJob(t *testing.T) {
+	store := newInstallJobStoreFake()
+	store.upsertErrForStatus = map[string]error{string(StatusSucceeded): errors.New("database unavailable")}
+	s := newTestService("darwin", "npm")
+	s.installCapabilities = installCapabilitiesStub{prefix: "/Users/test/.npm", writable: true}
+	s.jobStore = store
+	s.commands = commandRunnerFunc(func(context.Context, []string, io.Writer, io.Writer) error { return nil })
+	s.verifier = harnessVerifierFunc(func(context.Context, Target) (VerifyResult, error) {
+		return VerifyResult{ResolvedPath: "/Users/test/.npm/bin/codex"}, nil
+	})
+
+	if _, err := s.StartAgent(context.Background(), TargetCodex, "npm"); err != nil {
+		t.Fatalf("StartAgent: %v", err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for {
+		s.mu.Lock()
+		terminal := s.jobs[TargetCodex] != nil && !activeStatus(s.jobs[TargetCodex].Status)
+		s.mu.Unlock()
+		if terminal || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	job, err := s.Status(context.Background(), TargetCodex)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if job.Status != StatusFailed || !strings.Contains(job.Error, "persist terminal install state") {
+		t.Fatalf("Status returned stale durable job: %+v", job)
+	}
+	jobs, err := s.AgentJobs(context.Background())
+	if err != nil {
+		t.Fatalf("AgentJobs: %v", err)
+	}
+	if len(jobs) != 1 || jobs[0].Status != StatusFailed || !strings.Contains(jobs[0].Error, "persist terminal install state") {
+		t.Fatalf("AgentJobs returned stale durable jobs: %+v", jobs)
 	}
 }
 

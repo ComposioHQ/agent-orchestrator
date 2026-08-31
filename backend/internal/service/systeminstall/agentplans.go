@@ -1,6 +1,9 @@
 package systeminstall
 
-import "fmt"
+import (
+	"context"
+	"fmt"
+)
 
 var agentDocumentationURLs = map[Target]string{
 	TargetClaudeCode: "https://code.claude.com/docs/en/installation",
@@ -27,12 +30,20 @@ var agentDocumentationURLs = map[Target]string{
 	TargetMuse:       "https://ai.meta.com/llama/",
 	TargetAgy:        "https://github.com/google-antigravity/antigravity-cli",
 	TargetAutohand:   "https://docs.autohand.ai/working-with-autohand-code/cli",
-	TargetKimchi:     "https://www.npmjs.com/package/@kimchi-dev/cli",
+	TargetKimchi:     "https://docs.kimchi.dev/docs/coding-getting-started",
 	TargetPrimeAgent: "https://github.com/PrimeIntellect-ai/prime-agent/blob/main/packages/coding-agent/docs/quickstart.md",
 	TargetOMP:        "https://github.com/can1357/oh-my-pi",
 }
 
 func (s *Service) agentMethodPlans(target Target) []Plan {
+	planner, err := s.newRequestPlanner(context.Background())
+	if err != nil {
+		return []Plan{{Target: target, Unsupported: true, Method: "manual", Reason: "install capabilities could not be inspected", DocsURL: agentDocumentationURLs[target]}}
+	}
+	return planner.agentMethodPlans(target)
+}
+
+func (s requestPlanner) agentMethodPlans(target Target) []Plan {
 	var plans []Plan
 	switch target {
 	case TargetClaudeCode:
@@ -97,6 +108,13 @@ func (s *Service) agentMethodPlans(target Target) []Plan {
 		} else {
 			plans = []Plan{s.planNPM(target, "autohand-cli")}
 		}
+	case TargetKimchi:
+		manual := manualPlan(target, "Kimchi's release installer must be run manually; AO does not execute mutable remote installer scripts.", agentDocumentationURLs[target])
+		if s.goos == "darwin" {
+			plans = []Plan{s.planBrew(target, "getkimchi/tap/kimchi"), manual}
+		} else {
+			plans = []Plan{manual}
+		}
 	case TargetVibe:
 		plans = []Plan{s.planUV(target, "mistral-vibe"), s.planPipx(target, "mistral-vibe")}
 	case TargetOMP:
@@ -115,6 +133,14 @@ func (s *Service) agentMethodPlans(target Target) []Plan {
 }
 
 func (s *Service) resolveAgentMethod(target Target, method string) (Plan, error) {
+	planner, err := s.newRequestPlanner(context.Background())
+	if err != nil {
+		return Plan{}, err
+	}
+	return planner.resolveAgentMethod(target, method)
+}
+
+func (s requestPlanner) resolveAgentMethod(target Target, method string) (Plan, error) {
 	for _, plan := range s.agentMethodPlans(target) {
 		if plan.Method != method {
 			continue
@@ -131,6 +157,14 @@ func (s *Service) resolveAgentMethod(target Target, method string) (Plan, error)
 // each Harness settings entry. The renderer never supplies any part of these
 // commands; it can only select the target id.
 func (s *Service) planAgent(target Target) Plan {
+	planner, err := s.newRequestPlanner(context.Background())
+	if err != nil {
+		return Plan{Target: target, Unsupported: true, Method: "manual", Reason: "install capabilities could not be inspected", DocsURL: agentDocumentationURLs[target]}
+	}
+	return planner.planAgent(target)
+}
+
+func (s requestPlanner) planAgent(target Target) Plan {
 	switch target {
 	case TargetClaudeCode:
 		preferred := s.officialByOS(target,
@@ -268,7 +302,11 @@ func (s *Service) planAgent(target Target) Plan {
 		}
 		return withDocs(firstAvailable(preferred, s.planNPM(target, "autohand-cli")), "https://docs.autohand.ai/working-with-autohand-code/cli")
 	case TargetKimchi:
-		return withDocs(s.planNPM(target, "@kimchi-dev/cli"), "https://www.npmjs.com/package/@kimchi-dev/cli")
+		manual := manualPlan(target, "Kimchi's release installer must be run manually; AO does not execute mutable remote installer scripts.", agentDocumentationURLs[target])
+		if s.goos == "darwin" {
+			return withDocs(firstAvailable(s.planBrew(target, "getkimchi/tap/kimchi"), manual), agentDocumentationURLs[target])
+		}
+		return manual
 	case TargetPrimeAgent:
 		if s.goos == "windows" {
 			return manualPlan(target, "Prime Agent currently documents macOS and Linux; use WSL on Windows.", "https://github.com/PrimeIntellect-ai/prime-agent/blob/main/packages/coding-agent/docs/quickstart.md")

@@ -5,28 +5,94 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 type installCapabilitiesStub struct {
 	prefix            string
 	prefixErr         error
+	nodeVersion       string
+	npmVersion        string
 	homebrewPrefix    string
 	homebrewErr       error
 	homebrewInstalled bool
 	writable          bool
+	calls             *int
+	probe             func(context.Context) error
 }
 
-func (s installCapabilitiesStub) NPMGlobalPrefix() (string, error) { return s.prefix, s.prefixErr }
-func (s installCapabilitiesStub) HomebrewPrefix() (string, error) {
-	if s.homebrewPrefix == "" && s.homebrewErr == nil {
-		return "/opt/homebrew", nil
+func (s installCapabilitiesStub) Probe(ctx context.Context) (ports.InstallCapabilities, error) {
+	if s.calls != nil {
+		(*s.calls)++
 	}
-	return s.homebrewPrefix, s.homebrewErr
+	if s.probe != nil {
+		if err := s.probe(ctx); err != nil {
+			return ports.InstallCapabilities{}, err
+		}
+	}
+	nodeVersion := s.nodeVersion
+	if nodeVersion == "" {
+		nodeVersion = "v22.19.0"
+	}
+	npmVersion := s.npmVersion
+	if npmVersion == "" {
+		npmVersion = "10.0.0"
+	}
+	homebrewPrefix := s.homebrewPrefix
+	if s.homebrewPrefix == "" && s.homebrewErr == nil {
+		homebrewPrefix = "/opt/homebrew"
+	}
+	formulae := map[string]bool{}
+	casks := map[string]bool{}
+	if s.homebrewInstalled {
+		formulae["codex"] = true
+		casks["codex"] = true
+	}
+	return ports.InstallCapabilities{
+		NPM: ports.NPMInstallCapabilities{
+			NodeVersion: nodeVersion, NPMVersion: npmVersion,
+			GlobalPrefix: s.prefix, PrefixWritable: s.writable, Err: s.prefixErr,
+		},
+		Homebrew: ports.HomebrewInstallCapabilities{
+			Prefix: homebrewPrefix, PrefixWritable: s.writable,
+			Formulae: formulae, Casks: casks, Err: s.homebrewErr,
+		},
+	}, nil
 }
-func (s installCapabilitiesStub) HomebrewPackageInstalled(string, bool) bool {
-	return s.homebrewInstalled
+
+func TestAgentPlansSnapshotsCapabilitiesOnce(t *testing.T) {
+	calls := 0
+	s := newTestService("darwin", "npm", "brew")
+	s.installCapabilities = installCapabilitiesStub{prefix: "/Users/test/.npm", writable: true, calls: &calls}
+	if _, err := s.AgentPlans(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatalf("capability probes = %d, want one snapshot for the request", calls)
+	}
 }
-func (s installCapabilitiesStub) PathWritable(string) bool { return s.writable }
+
+func TestAgentPlansCancelsCapabilitySnapshotWithRequest(t *testing.T) {
+	started := make(chan struct{})
+	s := newTestService("darwin", "npm", "brew")
+	s.installCapabilities = installCapabilitiesStub{probe: func(ctx context.Context) error {
+		close(started)
+		<-ctx.Done()
+		return ctx.Err()
+	}}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := s.AgentPlans(ctx)
+		done <- err
+	}()
+	<-started
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("AgentPlans error = %v, want context canceled", err)
+	}
+}
 
 func TestAgentPlansCoverEveryHarnessOnce(t *testing.T) {
 	s := newTestService("darwin", "npm", "brew", "curl", "bash", "sh", "bun", "uv", "python3")
@@ -123,7 +189,7 @@ func TestNPMPlanRequiresWritableGlobalPrefix(t *testing.T) {
 		caps       installCapabilitiesStub
 		wantReason string
 	}{
-		{name: "prefix lookup fails", caps: installCapabilitiesStub{prefixErr: errors.New("npm failed")}, wantReason: "could not be resolved"},
+		{name: "prefix lookup fails", caps: installCapabilitiesStub{prefixErr: errors.New("npm failed")}, wantReason: "could not be inspected"},
 		{name: "prefix not writable", caps: installCapabilitiesStub{prefix: "/usr/local", writable: false}, wantReason: "not writable"},
 	}
 	for _, tt := range tests {
@@ -145,6 +211,32 @@ func TestNPMPlanRequiresWritableGlobalPrefix(t *testing.T) {
 	}
 }
 
+func TestNPMPlanRequiresSupportedNodeAndNPMVersions(t *testing.T) {
+	tests := []struct {
+		name        string
+		nodeVersion string
+		npmVersion  string
+		wantReason  string
+	}{
+		{name: "old node", nodeVersion: "v22.18.0", npmVersion: "10.8.0", wantReason: "Node.js 22.19+"},
+		{name: "old npm", nodeVersion: "v22.19.0", npmVersion: "9.9.4", wantReason: "npm 10+"},
+		{name: "unparseable node", nodeVersion: "unknown", npmVersion: "10.8.0", wantReason: "could not be validated"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := newTestService("darwin", "npm")
+			s.installCapabilities = installCapabilitiesStub{
+				prefix: "/Users/test/.npm", writable: true,
+				nodeVersion: tt.nodeVersion, npmVersion: tt.npmVersion,
+			}
+			plan := s.planAgent(TargetCodex)
+			if !plan.Unsupported || !strings.Contains(plan.Reason, tt.wantReason) {
+				t.Fatalf("plan = %+v, want unavailable reason containing %q", plan, tt.wantReason)
+			}
+		})
+	}
+}
+
 func TestHomebrewPlanRequiresWritablePrefix(t *testing.T) {
 	s := newTestService("darwin", "brew")
 	s.installCapabilities = installCapabilitiesStub{homebrewPrefix: "/opt/homebrew", writable: false}
@@ -161,6 +253,44 @@ func TestHomebrewPlanReinstallsAnExistingPackage(t *testing.T) {
 	if got := strings.Join(plan.Command, " "); got != "brew reinstall --cask codex" {
 		t.Fatalf("command = %q, want an actual cask reinstall", got)
 	}
+}
+
+func TestHomebrewPlanFailsClosedWhenInstalledPackageProbeFails(t *testing.T) {
+	s := newTestService("darwin", "brew")
+	s.installCapabilities = installCapabilitiesStub{
+		homebrewPrefix: "/opt/homebrew", homebrewErr: errors.New("brew list timed out"), writable: true,
+	}
+	plan := s.planBrewCask(TargetCodex, "codex")
+	if !plan.Unsupported || !strings.Contains(plan.Reason, "could not be inspected") {
+		t.Fatalf("plan = %+v, want failed-closed Homebrew inspection error", plan)
+	}
+}
+
+func TestKimchiUsesOnlyDocumentedInstallMethods(t *testing.T) {
+	s := newTestService("darwin", "brew", "npm")
+	s.installCapabilities = installCapabilitiesStub{homebrewPrefix: "/opt/homebrew", writable: true}
+	plans, err := s.AgentPlans(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, agent := range plans {
+		if agent.AgentID != string(TargetKimchi) {
+			continue
+		}
+		if agent.DocumentationURL != "https://docs.kimchi.dev/docs/coding-getting-started" {
+			t.Fatalf("documentation URL = %q", agent.DocumentationURL)
+		}
+		if agent.Method != "homebrew" || agent.Command != "brew install getkimchi/tap/kimchi" {
+			t.Fatalf("recommended Kimchi plan = %+v", agent)
+		}
+		for _, method := range agent.Methods {
+			if method.ID == "npm" || strings.Contains(method.Command, "@kimchi-dev/cli") {
+				t.Fatalf("invalid Kimchi npm method remains: %+v", method)
+			}
+		}
+		return
+	}
+	t.Fatal("Kimchi plan not found")
 }
 
 func TestAgentPlansExposeEveryViableServerOwnedMethod(t *testing.T) {

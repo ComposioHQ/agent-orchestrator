@@ -3,11 +3,20 @@ package systemexec
 import (
 	"bytes"
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
+
+func TestProbeHonorsCanceledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := (Adapter{}).Probe(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Probe error = %v, want context canceled", err)
+	}
+}
 
 func TestRunInstallClosesStdinAndSetsControlledEnvironment(t *testing.T) {
 	t.Parallel()
@@ -27,12 +36,19 @@ func TestRunInstallClosesStdinAndSetsControlledEnvironment(t *testing.T) {
 
 func TestPathWritableUsesEffectiveFilesystemPermissions(t *testing.T) {
 	t.Parallel()
-	adapter := Adapter{}
 	writable := t.TempDir()
-	if !adapter.PathWritable(writable) {
+	got, err := pathWritable(context.Background(), writable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got {
 		t.Fatalf("PathWritable(%q) = false, want true", writable)
 	}
-	if adapter.PathWritable(writable+"/missing/child") != true {
+	got, err = pathWritable(context.Background(), writable+"/missing/child")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got {
 		t.Fatalf("PathWritable should accept a missing destination below a writable ancestor")
 	}
 }

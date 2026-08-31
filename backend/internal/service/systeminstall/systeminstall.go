@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -262,6 +263,26 @@ type Service struct {
 	installTimeout time.Duration
 }
 
+// requestPlanner carries one immutable capability snapshot through all recipe
+// resolution performed for a single HTTP/service request.
+type requestPlanner struct {
+	*Service
+	capabilities *ports.InstallCapabilities
+}
+
+func (s *Service) newRequestPlanner(ctx context.Context) (requestPlanner, error) {
+	planner := requestPlanner{Service: s}
+	if s.installCapabilities == nil {
+		return planner, nil
+	}
+	capabilities, err := s.installCapabilities.Probe(ctx)
+	if err != nil {
+		return requestPlanner{}, err
+	}
+	planner.capabilities = &capabilities
+	return planner, nil
+}
+
 // New returns a Service backed by explicit host-operation ports. The daemon
 // supplies their concrete adapter; core service code never invokes os/exec.
 func New(executables ports.ExecutableFinder, commands ports.CommandRunner) *Service {
@@ -296,9 +317,13 @@ func (s *Service) AgentPlans(ctx context.Context) ([]AgentPlan, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	planner, err := s.newRequestPlanner(ctx)
+	if err != nil {
+		return nil, err
+	}
 	out := make([]AgentPlan, 0, len(agentTargets))
 	for _, target := range agentTargets {
-		plans := s.agentMethodPlans(target)
+		plans := planner.agentMethodPlans(target)
 		recommended := recommendedPlanIndex(plans)
 		plan := plans[recommended]
 		methods := make([]AgentInstallMethod, 0, len(plans))
@@ -453,11 +478,15 @@ func (s *Service) StartAgent(ctx context.Context, target Target, method string) 
 
 	var plan Plan
 	var err error
+	planner, plannerErr := s.newRequestPlanner(ctx)
+	if plannerErr != nil {
+		return Job{}, plannerErr
+	}
 	if method == "" {
-		plans := s.agentMethodPlans(target)
+		plans := planner.agentMethodPlans(target)
 		plan = plans[recommendedPlanIndex(plans)]
 	} else {
-		plan, err = s.resolveAgentMethod(target, method)
+		plan, err = planner.resolveAgentMethod(target, method)
 		if err != nil {
 			return Job{}, err
 		}
@@ -540,6 +569,14 @@ func (s *Service) Status(ctx context.Context, target Target) (Job, error) {
 	if !Valid(target) {
 		return Job{}, fmt.Errorf("systeminstall: unknown target %q", target)
 	}
+	s.mu.Lock()
+	inMemory, ok := s.jobs[target]
+	if ok {
+		copy := *inMemory
+		s.mu.Unlock()
+		return copy, nil
+	}
+	s.mu.Unlock()
 	if IsAgentTarget(target) && s.jobStore != nil {
 		record, ok, err := s.jobStore.GetAgentInstallJob(ctx, string(target))
 		if err != nil {
@@ -550,28 +587,27 @@ func (s *Service) Status(ctx context.Context, target Target) (Job, error) {
 		}
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	job, ok := s.jobs[target]
-	if !ok {
-		plan := s.resolvePlan(target)
-		if IsAgentTarget(target) {
-			plans := s.agentMethodPlans(target)
-			plan = plans[recommendedPlanIndex(plans)]
+	var plan Plan
+	if IsAgentTarget(target) {
+		planner, err := s.newRequestPlanner(ctx)
+		if err != nil {
+			return Job{}, err
 		}
-		status := StatusIdle
-		if plan.Unsupported {
-			status = StatusUnsupported
-		}
-		return Job{
-			Target:  target,
-			Status:  status,
-			Command: displayCommand(plan),
-			Error:   plan.Reason,
-		}, nil
+		plans := planner.agentMethodPlans(target)
+		plan = plans[recommendedPlanIndex(plans)]
+	} else {
+		plan = s.resolvePlan(target)
 	}
-	return *job, nil
+	status := StatusIdle
+	if plan.Unsupported {
+		status = StatusUnsupported
+	}
+	return Job{
+		Target:  target,
+		Status:  status,
+		Command: displayCommand(plan),
+		Error:   plan.Reason,
+	}, nil
 }
 
 // AgentJobs returns the latest durable job for every harness that has one.
@@ -582,9 +618,24 @@ func (s *Service) AgentJobs(ctx context.Context) ([]Job, error) {
 			return nil, err
 		}
 		jobs := make([]Job, 0, len(records))
+		indexes := make(map[Target]int, len(records))
 		for _, record := range records {
-			jobs = append(jobs, jobFromRecord(record))
+			job := jobFromRecord(record)
+			indexes[job.Target] = len(jobs)
+			jobs = append(jobs, job)
 		}
+		s.mu.Lock()
+		for target, job := range s.jobs {
+			if IsAgentTarget(target) {
+				if index, ok := indexes[target]; ok {
+					jobs[index] = *job
+				} else {
+					indexes[target] = len(jobs)
+					jobs = append(jobs, *job)
+				}
+			}
+		}
+		s.mu.Unlock()
 		return jobs, nil
 	}
 	s.mu.Lock()
@@ -983,6 +1034,18 @@ func (s *Service) planGH() Plan {
 }
 
 func (s *Service) planNPM(target Target, pkg string) Plan {
+	if !IsAgentTarget(target) {
+		return (requestPlanner{Service: s}).planNPM(target, pkg)
+	}
+	planner, err := s.newRequestPlanner(context.Background())
+	if err != nil {
+		return Plan{Target: target, Unsupported: true, Method: "npm", Reason: "npm and Node.js capabilities could not be inspected."}
+	}
+	return planner.planNPM(target, pkg)
+}
+
+func (p requestPlanner) planNPM(target Target, pkg string) Plan {
+	s := p.Service
 	if _, err := s.executables.LookPath("npm"); err != nil {
 		return Plan{
 			Target: target, Unsupported: true,
@@ -990,14 +1053,37 @@ func (s *Service) planNPM(target Target, pkg string) Plan {
 		}
 	}
 	plan := Plan{Target: target, Command: []string{"npm", "install", "-g", pkg}, Method: "npm"}
-	if IsAgentTarget(target) && s.installCapabilities != nil {
-		prefix, err := s.installCapabilities.NPMGlobalPrefix()
-		if err != nil || prefix == "" {
+	if IsAgentTarget(target) {
+		if p.capabilities == nil || p.capabilities.NPM.Err != nil {
+			plan.Unsupported = true
+			plan.Reason = "npm and Node.js capabilities could not be inspected."
+			return plan
+		}
+		npm := p.capabilities.NPM
+		nodeVersion, nodeOK := parseToolVersion(npm.NodeVersion)
+		npmVersion, npmOK := parseToolVersion(npm.NPMVersion)
+		if !nodeOK || !npmOK {
+			plan.Unsupported = true
+			plan.Reason = "npm and Node.js versions could not be validated."
+			return plan
+		}
+		if !versionAtLeast(nodeVersion, minimumHarnessNodeVersion) {
+			plan.Unsupported = true
+			plan.Reason = fmt.Sprintf("Node.js 22.19+ is required for AO's npm harness recipes; found %s.", npm.NodeVersion)
+			return plan
+		}
+		if !versionAtLeast(npmVersion, minimumHarnessNPMVersion) {
+			plan.Unsupported = true
+			plan.Reason = fmt.Sprintf("npm 10+ is required for AO's npm harness recipes; found %s.", npm.NPMVersion)
+			return plan
+		}
+		prefix := npm.GlobalPrefix
+		if prefix == "" {
 			plan.Unsupported = true
 			plan.Reason = "npm's global install prefix could not be resolved."
 			return plan
 		}
-		if !s.installCapabilities.PathWritable(prefix) {
+		if !npm.PrefixWritable {
 			plan.Unsupported = true
 			plan.Reason = fmt.Sprintf("npm's global prefix %s is not writable by the current user. Configure a user-owned prefix; AO will not use sudo.", prefix)
 			return plan
@@ -1011,6 +1097,40 @@ func (s *Service) planNPM(target Target, pkg string) Plan {
 	return plan
 }
 
+var (
+	// The floor matches the strictest engine constraint among the fixed npm
+	// recipes (currently the Pi coding agent). Keeping it code-owned makes a
+	// package-recipe update review the runtime requirement at the same time.
+	minimumHarnessNodeVersion = [3]int{22, 19, 0}
+	minimumHarnessNPMVersion  = [3]int{10, 0, 0}
+)
+
+func parseToolVersion(value string) ([3]int, bool) {
+	value = strings.TrimPrefix(strings.TrimSpace(value), "v")
+	fields := strings.Split(value, ".")
+	if len(fields) == 0 || len(fields) > 3 {
+		return [3]int{}, false
+	}
+	var parsed [3]int
+	for index, field := range fields {
+		part, err := strconv.Atoi(field)
+		if err != nil || part < 0 {
+			return [3]int{}, false
+		}
+		parsed[index] = part
+	}
+	return parsed, true
+}
+
+func versionAtLeast(got, minimum [3]int) bool {
+	for index := range got {
+		if got[index] != minimum[index] {
+			return got[index] > minimum[index]
+		}
+	}
+	return true
+}
+
 func (s *Service) planOpencode() Plan {
 	if s.goos == "windows" {
 		return s.planWinget(TargetOpencode, "SST.opencode")
@@ -1022,31 +1142,64 @@ func (s *Service) planOpencode() Plan {
 }
 
 func (s *Service) planBrew(target Target, pkg string) Plan {
-	return s.planHomebrew(target, pkg, false)
+	if !IsAgentTarget(target) {
+		return (requestPlanner{Service: s}).planBrew(target, pkg)
+	}
+	planner, err := s.newRequestPlanner(context.Background())
+	if err != nil {
+		return Plan{Target: target, Unsupported: true, Method: "homebrew", Reason: "Homebrew packages could not be inspected."}
+	}
+	return planner.planBrew(target, pkg)
 }
 
 func (s *Service) planBrewCask(target Target, pkg string) Plan {
-	return s.planHomebrew(target, pkg, true)
+	if !IsAgentTarget(target) {
+		return (requestPlanner{Service: s}).planBrewCask(target, pkg)
+	}
+	planner, err := s.newRequestPlanner(context.Background())
+	if err != nil {
+		return Plan{Target: target, Unsupported: true, Method: "homebrew", Reason: "Homebrew packages could not be inspected."}
+	}
+	return planner.planBrewCask(target, pkg)
 }
 
-func (s *Service) planHomebrew(target Target, pkg string, cask bool) Plan {
+func (p requestPlanner) planBrew(target Target, pkg string) Plan {
+	return p.planHomebrew(target, pkg, false)
+}
+
+func (p requestPlanner) planBrewCask(target Target, pkg string) Plan {
+	return p.planHomebrew(target, pkg, true)
+}
+
+func (p requestPlanner) planHomebrew(target Target, pkg string, cask bool) Plan {
+	s := p.Service
 	if _, err := s.executables.LookPath("brew"); err != nil {
 		return Plan{
 			Target: target, Unsupported: true,
 			Method: "homebrew", Reason: "Homebrew was not found on PATH. Install it from https://brew.sh first, then retry.",
 		}
 	}
-	if IsAgentTarget(target) && s.installCapabilities != nil {
-		prefix, err := s.installCapabilities.HomebrewPrefix()
-		if err != nil || prefix == "" {
+	var installed bool
+	if IsAgentTarget(target) {
+		if p.capabilities == nil || p.capabilities.Homebrew.Err != nil {
+			return Plan{Target: target, Unsupported: true, Method: "homebrew", Reason: "Homebrew packages could not be inspected."}
+		}
+		homebrew := p.capabilities.Homebrew
+		prefix := homebrew.Prefix
+		if prefix == "" {
 			return Plan{Target: target, Unsupported: true, Method: "homebrew", Reason: "Homebrew's installation prefix could not be resolved."}
 		}
-		if !s.installCapabilities.PathWritable(prefix) {
+		if !homebrew.PrefixWritable {
 			return Plan{Target: target, Unsupported: true, Method: "homebrew", Reason: fmt.Sprintf("Homebrew's prefix %s is not writable by the current user. Repair Homebrew ownership; AO will not use sudo.", prefix)}
+		}
+		if cask {
+			installed = homebrewPackageInstalled(homebrew.Casks, pkg)
+		} else {
+			installed = homebrewPackageInstalled(homebrew.Formulae, pkg)
 		}
 	}
 	verb := "install"
-	if s.installCapabilities != nil && s.installCapabilities.HomebrewPackageInstalled(pkg, cask) {
+	if installed {
 		verb = "reinstall"
 	}
 	command := []string{"brew", verb}
@@ -1055,6 +1208,16 @@ func (s *Service) planHomebrew(target Target, pkg string, cask bool) Plan {
 	}
 	command = append(command, pkg)
 	return Plan{Target: target, Command: command, Method: "homebrew"}
+}
+
+func homebrewPackageInstalled(inventory map[string]bool, pkg string) bool {
+	if inventory[pkg] {
+		return true
+	}
+	if slash := strings.LastIndexByte(pkg, '/'); slash >= 0 {
+		return inventory[pkg[slash+1:]]
+	}
+	return false
 }
 
 func (s *Service) planWinget(target Target, id string) Plan {
