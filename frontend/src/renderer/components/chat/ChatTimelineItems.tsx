@@ -51,7 +51,6 @@ const activityIcon: Record<ActivityKind, typeof SquareTerminal> = {
 import { cn } from "../../lib/utils";
 import { caretNotation, stripAnsi } from "../../lib/ansi";
 import { getApiBaseUrl } from "../../lib/api-client";
-import { openLinkInSystemBrowser } from "../../lib/external-link-policy";
 import { ChatMarkdown } from "./ChatMarkdown";
 import { HighlightedCode } from "./HighlightedCode";
 import { CopyButton } from "./CopyButton";
@@ -1695,62 +1694,22 @@ function RerouteRow({ activity }: { activity: ConversationActivity }) {
  * reconnect row as `role="alert"` would interrupt a screen reader once per attempt.
  */
 function ErrorActivityRow({ activity }: { activity: ConversationActivity }) {
-	const { action, detail, headline } = providerErrorCopy(activity);
+	const { headline } = providerErrorCopy(activity);
 	return (
-		<div className="flex min-w-0 max-w-full flex-col items-start gap-0.5 overflow-hidden py-0.5 text-[11.5px] leading-snug text-muted-foreground">
+		<div className="flex min-w-0 max-w-full items-baseline overflow-hidden py-0.5 text-[11.5px] leading-snug text-muted-foreground">
 			<span className="wrap-anywhere min-w-0">{headline}</span>
-			{detail ? <span className="wrap-anywhere min-w-0 text-foreground">{detail}</span> : null}
-			{action ? (
-				<a
-					className="text-markdown-link underline decoration-markdown-link/45 underline-offset-2 transition-colors hover:text-markdown-link-hover"
-					href={action.href}
-					onClick={(event) => {
-						event.preventDefault();
-						void openLinkInSystemBrowser(action.href);
-					}}
-					rel="noreferrer noopener"
-					target="_blank"
-				>
-					{action.label}
-				</a>
-			) : null}
 		</div>
 	);
-}
-
-const OPENAI_BILLING_URL = "https://platform.openai.com/settings/organization/billing";
-
-type ProviderErrorCopy = {
-	headline: string;
-	detail?: string;
-	action?: { href: string; label: string };
-};
-
-function recoveryAction(action: unknown): ProviderErrorCopy["action"] {
-	if (action !== "openai_billing") return undefined;
-	return { href: OPENAI_BILLING_URL, label: "Add credits" };
 }
 
 /**
  * Prefer the provider's short status line and `additionalDetails` over a raw JSON
  * dump. Falls back to the stored text when it is already plain language.
  */
-export function providerErrorCopy(activity: ConversationActivity): ProviderErrorCopy {
-	const normalizedHeadline = String(activity.detail?.headline ?? "").trim();
-	const normalizedDetail = String(activity.detail?.detail ?? "").trim();
-	const action = recoveryAction(activity.detail?.action);
-	if (normalizedHeadline || normalizedDetail || action) {
-		const headline =
-			normalizedHeadline ||
-			String(activity.detail?.message ?? activity.summary ?? "").trim() ||
-			"Provider error";
-		return {
-			headline,
-			detail: normalizedDetail && normalizedDetail !== headline ? normalizedDetail : undefined,
-			action,
-		};
-	}
-
+export function providerErrorCopy(activity: ConversationActivity): {
+	headline: string;
+	detail?: string;
+} {
 	const candidates = [activity.detail?.message, activity.summary, activity.detail?.error];
 	for (const candidate of candidates) {
 		const raw = String(candidate ?? "").trim();
@@ -1766,7 +1725,7 @@ export function providerErrorCopy(activity: ConversationActivity): ProviderError
 	return { headline };
 }
 
-function unwrapProviderErrorJson(raw: string): ProviderErrorCopy | undefined {
+function unwrapProviderErrorJson(raw: string): { headline: string; detail?: string } | undefined {
 	const parsed = parseJsonObjectSuffix(raw);
 	const err = parsed
 		? parsed.error && typeof parsed.error === "object" && !Array.isArray(parsed.error)
@@ -1788,11 +1747,6 @@ function unwrapProviderErrorJson(raw: string): ProviderErrorCopy | undefined {
 	return { headline: message || additional };
 }
 
-function asJsonObject(value: unknown): Record<string, unknown> | undefined {
-	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
-	return value as Record<string, unknown>;
-}
-
 /** Read a complete string field from an envelope whose trailing JSON was truncated. */
 function readJsonStringField(raw: string, field: "message" | "additionalDetails"): string {
 	const match = new RegExp(`"${field}"\\s*:\\s*("(?:\\\\.|[^"\\\\])*")`).exec(raw);
@@ -1810,13 +1764,17 @@ function parseJsonObjectSuffix(raw: string): Record<string, unknown> | undefined
 	const start = raw.indexOf("{");
 	if (start < 0) return undefined;
 	const slice = raw.slice(start).trim();
+	const asObject = (value: unknown): Record<string, unknown> | undefined => {
+		if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+		return value as Record<string, unknown>;
+	};
 	try {
-		return asJsonObject(JSON.parse(slice) as unknown);
+		return asObject(JSON.parse(slice));
 	} catch {
 		const end = slice.lastIndexOf("}");
 		if (end <= 0) return undefined;
 		try {
-			return asJsonObject(JSON.parse(slice.slice(0, end + 1)) as unknown);
+			return asObject(JSON.parse(slice.slice(0, end + 1)));
 		} catch {
 			return undefined;
 		}

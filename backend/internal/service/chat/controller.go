@@ -619,50 +619,6 @@ func nativeHistoryActivityFingerprint(
 	return string(kind) + "\x00" + string(status) + "\x00" + summary + "\x00" + string(detail)
 }
 
-func normalizedChatErrorActivity(event ports.ChatEvent) (string, []byte) {
-	message := "provider error"
-	var detail []byte
-	if event.ErrorInfo != nil {
-		normalized := ports.ChatErrorInfo{
-			Headline: strings.TrimSpace(event.ErrorInfo.Headline),
-			Detail:   strings.TrimSpace(event.ErrorInfo.Detail),
-			Action:   event.ErrorInfo.Action,
-		}
-		if normalized.Headline == "" {
-			normalized.Headline = message
-		}
-		switch normalized.Action {
-		case "", ports.ChatRecoveryActionOpenAIBilling:
-		default:
-			normalized.Action = ""
-		}
-		message = normalized.Headline
-		detail, _ = json.Marshal(normalized)
-	} else if event.Err != nil {
-		message = event.Err.Error()
-	}
-	if len(detail) == 0 {
-		detail, _ = json.Marshal(map[string]string{"error": message})
-	}
-	return message, detail
-}
-
-func nativeHistoryEventActivityFingerprint(event ports.ChatEvent) (string, bool) {
-	switch event.Kind {
-	case ports.ChatEventActivityCompleted:
-		return nativeHistoryActivityFingerprint(
-			event.ActivityKind, event.ActivityStatus, event.Summary, event.Detail,
-		), true
-	case ports.ChatEventError:
-		summary, detail := normalizedChatErrorActivity(event)
-		return nativeHistoryActivityFingerprint(
-			domain.ActivityKindError, domain.ActivityStatusFailed, summary, detail,
-		), true
-	default:
-		return "", false
-	}
-}
-
 // reconcileNativeHistory maps a provider replay onto AO's existing durable
 // turns before any event is projected.
 //
@@ -875,7 +831,10 @@ func reconcileNativeHistory(
 			candidate.messages[fingerprint]--
 			matched = true
 		}
-		if fingerprint, ok := nativeHistoryEventActivityFingerprint(event); ok {
+		if event.Kind == ports.ChatEventActivityCompleted {
+			fingerprint := nativeHistoryActivityFingerprint(
+				event.ActivityKind, event.ActivityStatus, event.Summary, event.Detail,
+			)
 			if candidate.activities[fingerprint] > 0 {
 				candidate.activities[fingerprint]--
 				matched = true
@@ -2095,7 +2054,6 @@ func (c *Controller) projectEvent(ctx context.Context, event ports.ChatEvent) (b
 		"account":                event.Account,
 		"threadState":            event.ThreadState,
 		"mcpServers":             event.MCPServers,
-		"errorInfo":              event.ErrorInfo,
 	}
 	record["diff"] = event.Diff
 	if event.Input != nil {
@@ -2507,7 +2465,11 @@ func (c *Controller) apply(ctx context.Context, event ports.ChatEvent) error {
 		return nil
 
 	case ports.ChatEventError:
-		message, detail := normalizedChatErrorActivity(event)
+		message := "provider error"
+		if event.Err != nil {
+			message = event.Err.Error()
+		}
+		detail, _ := json.Marshal(map[string]string{"error": message})
 		return c.store.UpsertActivity(ctx, c.conversation.ID, event.ProviderTurnID,
 			domain.ConversationActivity{
 				ID:      c.newID(),

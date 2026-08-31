@@ -100,61 +100,12 @@ type providerTurn struct {
 	Status string `json:"status"`
 }
 
-// historyTurn keeps the failed turn's raw error alongside the generated item
-// types. codexproto.Turn would discard unknown TurnError members such as a
-// provider-supplied actionUrl before AO can decide whether the typed recovery
-// evidence is trustworthy.
-type historyTurn struct {
-	ID                 string
-	Status             codexproto.TurnStatus
-	Items              []codexproto.ThreadItem
-	Error              json.RawMessage
-	ErrorMemberTrusted bool
-}
-
-func (t *historyTurn) UnmarshalJSON(raw []byte) error {
-	var readable struct {
-		ID     string                  `json:"id"`
-		Status codexproto.TurnStatus   `json:"status"`
-		Items  []codexproto.ThreadItem `json:"items"`
-	}
-	if err := json.Unmarshal(raw, &readable); err != nil {
-		return err
-	}
-	members, ok := readJSONObjectMembers(raw)
-	if !ok {
-		return errors.New("history turn is not one complete JSON object")
-	}
-	*t = historyTurn{ID: readable.ID, Status: readable.Status, Items: readable.Items}
-	exactErrors := 0
-	hasAlias := false
-	for _, member := range members {
-		switch {
-		case member.name == "error":
-			exactErrors++
-			if t.Error == nil {
-				t.Error = append(json.RawMessage(nil), member.value...)
-			}
-		case strings.EqualFold(member.name, "error"):
-			hasAlias = true
-		}
-	}
-	t.ErrorMemberTrusted = exactErrors == 1 && !hasAlias
-	return nil
-}
-
-type historyThreadReadResponse struct {
-	Thread struct {
-		Turns []historyTurn `json:"turns"`
-	} `json:"thread"`
-}
-
 // ReadHistory returns a settled, provider-neutral replay of the native Codex
 // thread. It is how a TUI -> Chat handoff makes the work already visible in the
 // terminal visible in AO's structured timeline as well; resuming the thread alone
 // preserves model context but does not make app-server re-emit old notifications.
 func (c *conversation) ReadHistory(ctx context.Context) ([]ports.ChatEvent, error) {
-	var resp historyThreadReadResponse
+	var resp codexproto.ThreadReadResponse
 	includeTurns := true
 	if err := c.conn.request(ctx, codexproto.MethodThreadRead, codexproto.ThreadReadParams{
 		ThreadID:     c.threadID,
@@ -170,7 +121,7 @@ func (c *conversation) ReadHistory(ctx context.Context) ([]ports.ChatEvent, erro
 		}
 	}
 
-	events := make([]ports.ChatEvent, 0, len(resp.Thread.Turns)*5)
+	events := make([]ports.ChatEvent, 0, len(resp.Thread.Turns)*4)
 	for _, turn := range resp.Thread.Turns {
 		state := turnStateFrom(string(turn.Status))
 
@@ -229,57 +180,18 @@ func (c *conversation) ReadHistory(ctx context.Context) ([]ports.ChatEvent, erro
 			}
 		}
 
-		var turnErr error
-		if hasHistoryTurnError(turn.Error) {
-			info, err := normalizeHistoryTurnError(turn.Error, turn.ErrorMemberTrusted)
-			turnErr = err
-			events = append(events, ports.ChatEvent{
-				Kind:                   ports.ChatEventError,
-				ProviderEventID:        historyEventID(c.threadID, turn.ID, "error"),
-				ProviderTurnID:         turn.ID,
-				ProviderConversationID: c.threadID,
-				Err:                    err,
-				ErrorInfo:              info,
-			})
-		}
-
 		completed := ports.ChatEvent{
 			Kind:            ports.ChatEventTurnCompleted,
 			ProviderEventID: historyEventID(c.threadID, turn.ID, "completed"),
 			ProviderTurnID:  turn.ID,
 			TurnState:       state,
-			Err:             turnErr,
+		}
+		if turn.Error != nil && turn.Error.Message != "" {
+			completed.Err = errors.New(turn.Error.Message)
 		}
 		events = append(events, completed)
 	}
 	return events, nil
-}
-
-func hasHistoryTurnError(raw json.RawMessage) bool {
-	trimmed := strings.TrimSpace(string(raw))
-	return trimmed != "" && trimmed != "null"
-}
-
-// normalizeHistoryTurnError produces readable provider-neutral error detail from
-// any object-shaped TurnError, but grants an AO recovery action only to the exact
-// generated TurnError schema and exact Codex disconnect union recognized by the
-// live notification path. That split keeps future/malformed history visible
-// without treating provider prose or destinations as trusted controls.
-func normalizeHistoryTurnError(raw json.RawMessage, enclosingMemberTrusted bool) (*ports.ChatErrorInfo, error) {
-	info, readable := readableTurnErrorInfo(raw)
-	if !readable {
-		message := "provider error: " + truncateForLog(raw)
-		return &ports.ChatErrorInfo{Headline: message}, errors.New(message)
-	}
-
-	trusted, exactTurnError := decodeExactTurnError(raw)
-	if enclosingMemberTrusted && exactTurnError &&
-		strings.TrimSpace(trusted.Message) != "" &&
-		isResponseStreamDisconnected(trusted.CodexErrorInfo) &&
-		isPositiveCreditExhaustion(trusted.AdditionalDetails) {
-		info.Action = ports.ChatRecoveryActionOpenAIBilling
-	}
-	return info, errors.New(info.Headline)
 }
 
 // RefreshHistory performs another authoritative thread/read. Codex exposes a

@@ -19,11 +19,8 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"strings"
 	"sync"
 	"sync/atomic"
-
-	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/codexappserver/codexproto"
 )
 
 // frame is the union of every shape that crosses the wire.
@@ -51,9 +48,8 @@ func (e *rpcError) Error() string {
 
 // notification is a server->client message with no id.
 type notification struct {
-	Method   string
-	Params   json.RawMessage
-	RawFrame json.RawMessage
+	Method string
+	Params json.RawMessage
 }
 
 // serverRequest is a server->client message that expects a reply. Approvals and
@@ -177,81 +173,14 @@ func (c *conn) readLoop(r io.Reader) {
 			go c.answer(serverRequest{ID: *f.ID, Method: f.Method, Params: f.Params})
 		case f.ID != nil:
 			c.deliver(f)
-		default:
-			n, ok := notificationFromFrame(line, f)
-			if !ok {
-				continue
-			}
+		case f.Method != "":
 			select {
-			case c.notifications <- n:
+			case c.notifications <- notification{Method: f.Method, Params: f.Params}:
 			default:
-				c.log.Warn("dropped app-server notification: buffer full", "method", n.Method)
+				c.log.Warn("dropped app-server notification: buffer full", "method", f.Method)
 			}
 		}
 	}
-}
-
-// notificationFromFrame preserves exact canonical method/params members before
-// encoding/json can collapse duplicates or case aliases. Ambiguous non-error
-// notifications are dropped rather than projected as an arbitrary state change.
-// A frame containing a canonical error method is still delivered for readable
-// diagnostics; its raw frame later prevents it from minting a trusted action.
-func notificationFromFrame(raw json.RawMessage, decoded frame) (notification, bool) {
-	members, parsed := readJSONObjectMembers(raw)
-	method := ""
-	exactMethods := 0
-	hasCanonicalError := false
-	hasMethodAlias := false
-	var params json.RawMessage
-	exactParams := 0
-	hasParamsAlias := false
-	if parsed {
-		for _, member := range members {
-			switch member.name {
-			case "method":
-				exactMethods++
-				var candidate string
-				if json.Unmarshal(member.value, &candidate) != nil {
-					continue
-				}
-				if candidate == codexproto.MethodError {
-					hasCanonicalError = true
-				}
-				if method == "" || candidate == codexproto.MethodError {
-					method = candidate
-				}
-			case "params":
-				exactParams++
-				if params == nil {
-					params = append(json.RawMessage(nil), member.value...)
-				}
-			default:
-				if strings.EqualFold(member.name, "method") {
-					hasMethodAlias = true
-				}
-				if strings.EqualFold(member.name, "params") {
-					hasParamsAlias = true
-				}
-			}
-		}
-	}
-	if (exactMethods > 1 || hasMethodAlias || exactParams > 1 || hasParamsAlias) && !hasCanonicalError {
-		return notification{}, false
-	}
-	if method == "" {
-		method = decoded.Method
-	}
-	if params == nil {
-		params = decoded.Params
-	}
-	if method == "" {
-		return notification{}, false
-	}
-	return notification{
-		Method:   method,
-		Params:   params,
-		RawFrame: append(json.RawMessage(nil), raw...),
-	}, true
 }
 
 // readFrame reads one newline-delimited frame with no length cap, so a large
