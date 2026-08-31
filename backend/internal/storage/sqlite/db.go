@@ -1201,6 +1201,11 @@ BEGIN
 		addDDL: `ALTER TABLE conversation_turns ADD COLUMN promotion_started_at TIMESTAMP`},
 	{version: 89, table: "conversation_turns", column: "promoted_to_turn_id",
 		addDDL: `ALTER TABLE conversation_turns ADD COLUMN promoted_to_turn_id TEXT REFERENCES conversation_turns(id) ON DELETE SET NULL`},
+	// 0106_pr_comment_review_id.sql. Session projections join this column, so a
+	// field database that recorded 0106 without its physical effect must be
+	// repaired before the first list request.
+	{version: 106, table: "pr_comment", column: "review_id",
+		addDDL: `ALTER TABLE pr_comment ADD COLUMN review_id TEXT NOT NULL DEFAULT ''`},
 	// 0108_conversation_retry_source.sql. Some stacked development builds
 	// recorded 0108 without applying its physical schema; 0118 rebuilds this
 	// table and must see the retry lineage column before goose reaches it.
