@@ -14,6 +14,7 @@ import {
 } from "../../hooks/useCodexProfilesQuery";
 import { closeShellTerminal, shellTerminalsQueryKey } from "../../hooks/useShellTerminals";
 import type { TerminalSessionState } from "../../hooks/useTerminalSession";
+import { codexCapacityRemainingPercent } from "../../lib/codex-capacity";
 import { useShellMaybe } from "../../lib/shell-context";
 import {
 	type CodexProfileLoginTerminalWorkflow,
@@ -270,7 +271,8 @@ function CodexProfileRow({ profile, busy, loginWorkflow, loginActive, onCheckAga
 				: capacity.state === "unsupported"
 					? t("settings.codexProfiles.capacityUnsupported")
 					: t("settings.codexProfiles.capacityUnknown");
-	const capacityParts = [capacity.plan, capacity.usedPercent === undefined || capacity.usedPercent === null ? undefined : `${capacity.usedPercent}%`, capacity.resetsAt ? t("settings.codexProfiles.capacityResets", { value: new Date(capacity.resetsAt).toLocaleString() }) : undefined].filter(Boolean);
+	const remainingPercent = codexCapacityRemainingPercent(capacity.usedPercent);
+	const capacityParts = [capacity.plan, remainingPercent === undefined ? undefined : t("settings.codexProfiles.capacityRemaining", { percent: remainingPercent }), capacity.resetsAt ? t("settings.codexProfiles.capacityResets", { value: new Date(capacity.resetsAt).toLocaleString() }) : undefined].filter(Boolean);
 
 	return (
 		<div
