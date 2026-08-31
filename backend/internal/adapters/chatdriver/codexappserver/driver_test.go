@@ -767,9 +767,9 @@ func TestStartAndResumeAugmentNodePATHForNPMLauncher(t *testing.T) {
 			d.plugin = fakePlugin{bin: launcher, authStatus: ports.AgentAuthStatusAuthorized}
 			spawn := d.spawn
 			var childEnv []string
-			d.spawn = func(ctx context.Context, bin, workdir string, env []string) (*process, error) {
+			d.spawn = func(ctx context.Context, bin, workdir string, env, args []string) (*process, error) {
 				childEnv = append([]string(nil), env...)
-				return spawn(ctx, bin, workdir, env)
+				return spawn(ctx, bin, workdir, env, args)
 			}
 
 			conv, err := tc.run(context.Background(), d)
