@@ -2824,6 +2824,29 @@ func (q *Queries) SettleRunningConversationActivitiesForTurn(ctx context.Context
 	return err
 }
 
+const settleStreamingConversationMessagesForTurn = `-- name: SettleStreamingConversationMessagesForTurn :exec
+UPDATE conversation_messages
+SET streaming = 0, revision = revision + 1, updated_at = ?1
+WHERE conversation_id = ?2
+  AND turn_id = ?3
+  AND role = 'assistant'
+  AND streaming = 1
+`
+
+type SettleStreamingConversationMessagesForTurnParams struct {
+	UpdatedAt      time.Time
+	ConversationID string
+	TurnID         sql.NullString
+}
+
+// A streamed assistant item may not receive item/completed when steering causes
+// the provider to finish the turn without replaying it: the accumulated text is
+// still the durable answer, and the enclosing turn is the terminal boundary.
+func (q *Queries) SettleStreamingConversationMessagesForTurn(ctx context.Context, arg SettleStreamingConversationMessagesForTurnParams) error {
+	_, err := q.db.ExecContext(ctx, settleStreamingConversationMessagesForTurn, arg.UpdatedAt, arg.ConversationID, arg.TurnID)
+	return err
+}
+
 const updateConversationAccount = `-- name: UpdateConversationAccount :exec
 UPDATE conversations
 SET account_json = ?, updated_at = ?
