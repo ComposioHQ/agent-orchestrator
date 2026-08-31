@@ -386,8 +386,9 @@ function setDaemonStatus(nextStatus: DaemonStatus): void {
 	if (nextStatus.state !== "ready") disposeBrowserRuntimeLink();
 	daemonStatus = nextStatus;
 	getShellWebContents()?.send("daemon:status", daemonStatus);
-	if (nextStatus.state === "ready" && browserViewHost) {
-		establishBrowserRuntimeLink();
+	if (nextStatus.state === "ready") {
+		if (nextStatus.port) setRpcDaemonPort(nextStatus.port);
+		if (browserViewHost) establishBrowserRuntimeLink();
 	}
 }
 
@@ -1471,7 +1472,6 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 		portConfirmed = true;
 		stopDiscovery();
 		setDaemonStatus({ state: "ready", port });
-		setRpcDaemonPort(port);
 
 		// Establish the OS-native liveness link on the spawn path (we own this
 		// daemon). Holding the connection keeps the daemon alive; when Electron

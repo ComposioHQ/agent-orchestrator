@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { buildActivityPayload, pickRepresentativeStatus, startDiscordRpc, disposeDiscordRpc, getRpcStatus } from "./discord-rpc";
+import {
+	buildActivityPayload,
+	pickRepresentativeStatus,
+	startDiscordRpc,
+	disposeDiscordRpc,
+	getRpcStatus,
+} from "./discord-rpc";
 
 vi.mock("@xhayper/discord-rpc", () => {
 	class FakeClient {
@@ -88,42 +94,64 @@ describe("buildActivityPayload", () => {
 				{ status: "changes_requested", isTerminated: false, createdAt: "2026-01-01T00:00:01Z" },
 			],
 		);
-		expect(result!.state).toBe("Idle");
+		expect(result!.state).toBe("Addressing review");
+		expect(result!.details).toBe("Orchestrating 2 agents");
 	});
 
 	it("maps review_pending to 'In review'", () => {
 		const result = buildActivityPayload(
 			[{ status: "review_pending", isTerminated: false, createdAt: "2026-01-01T00:00:00Z" }],
 		);
-		expect(result!.state).toBe("Idle");
+		expect(result!.state).toBe("In review");
+		expect(result!.details).toBe("Orchestrating 1 agent");
 	});
 
 	it("maps pr_open to 'In review'", () => {
 		const result = buildActivityPayload(
 			[{ status: "pr_open", isTerminated: false, createdAt: "2026-01-01T00:00:00Z" }],
 		);
-		expect(result!.state).toBe("Idle");
+		expect(result!.state).toBe("In review");
+		expect(result!.details).toBe("Orchestrating 1 agent");
 	});
 
 	it("maps mergeable to 'Ready to merge'", () => {
 		const result = buildActivityPayload(
 			[{ status: "mergeable", isTerminated: false, createdAt: "2026-01-01T00:00:00Z" }],
 		);
-		expect(result!.state).toBe("Idle");
+		expect(result!.state).toBe("Ready to merge");
+		expect(result!.details).toBe("Orchestrating 1 agent");
 	});
 
 	it("maps approved to 'Ready to merge'", () => {
 		const result = buildActivityPayload(
 			[{ status: "approved", isTerminated: false, createdAt: "2026-01-01T00:00:00Z" }],
 		);
-		expect(result!.state).toBe("Idle");
+		expect(result!.state).toBe("Ready to merge");
+		expect(result!.details).toBe("Orchestrating 1 agent");
 	});
 
 	it("maps draft to 'Drafting PR'", () => {
 		const result = buildActivityPayload(
 			[{ status: "draft", isTerminated: false, createdAt: "2026-01-01T00:00:00Z" }],
 		);
-		expect(result!.state).toBe("Idle");
+		expect(result!.state).toBe("Drafting PR");
+		expect(result!.details).toBe("Orchestrating 1 agent");
+	});
+
+	it("maps ci_failed to 'Fixing CI' for a single session", () => {
+		const result = buildActivityPayload(
+			[{ status: "ci_failed", isTerminated: false, createdAt: "2026-01-01T00:00:00Z" }],
+		);
+		expect(result!.state).toBe("Fixing CI");
+		expect(result!.details).toBe("Orchestrating 1 agent");
+	});
+
+	it("maps changes_requested to 'Addressing review' for a single session", () => {
+		const result = buildActivityPayload(
+			[{ status: "changes_requested", isTerminated: false, createdAt: "2026-01-01T00:00:00Z" }],
+		);
+		expect(result!.state).toBe("Addressing review");
+		expect(result!.details).toBe("Orchestrating 1 agent");
 	});
 
 	it("shows AO idle for idle sessions", () => {
@@ -173,6 +201,26 @@ describe("buildActivityPayload", () => {
 		);
 		expect(result!.startTimestamp).toBe(startTime);
 	});
+
+	it("reports the representative state and total count independently in mixed sessions", () => {
+		const result = buildActivityPayload(
+			[
+				{ status: "working", isTerminated: false },
+				{ status: "ci_failed", isTerminated: false },
+				{ status: "review_pending", isTerminated: false },
+			],
+		);
+		expect(result!.state).toBe("Fixing CI");
+		expect(result!.details).toBe("Orchestrating 3 agents");
+	});
+
+	it("reports 'Fixing CI' with count 1 for a lone ci_failed session", () => {
+		const result = buildActivityPayload(
+			[{ status: "ci_failed", isTerminated: false }],
+		);
+		expect(result!.state).toBe("Fixing CI");
+		expect(result!.details).toBe("Orchestrating 1 agent");
+	});
 });
 
 describe("pickRepresentativeStatus", () => {
@@ -192,7 +240,7 @@ describe("pickRepresentativeStatus", () => {
 		expect(result!.count).toBe(0);
 	});
 
-	it("picks highest priority across mixed statuses", () => {
+	it("picks highest priority across mixed statuses and counts all active sessions", () => {
 		const result = pickRepresentativeStatus([
 			{ status: "working", isTerminated: false },
 			{ status: "idle", isTerminated: false },
@@ -200,10 +248,10 @@ describe("pickRepresentativeStatus", () => {
 			{ status: "pr_open", isTerminated: false },
 		]);
 		expect(result!.label).toBe("Waiting on you");
-		expect(result!.count).toBe(2);
+		expect(result!.count).toBe(3);
 	});
 
-	it("does not count idle or no-signal sessions as active agents", () => {
+	it("does not count idle or no-signal sessions as active", () => {
 		const result = pickRepresentativeStatus([
 			{ status: "working", isTerminated: false },
 			{ status: "idle", isTerminated: false },
@@ -212,13 +260,14 @@ describe("pickRepresentativeStatus", () => {
 		expect(result).toEqual({ label: "Working", count: 1 });
 	});
 
-	it("does not count review-only sessions as active agents", () => {
+	it("counts review-only sessions as active agents", () => {
 		const result = pickRepresentativeStatus([
 			{ status: "working", isTerminated: false },
 			{ status: "pr_open", isTerminated: false },
 			{ status: "approved", isTerminated: false },
 		]);
-		expect(result!.count).toBe(1);
+		expect(result!.count).toBe(3);
+		expect(result!.label).toBe("In review");
 	});
 });
 
@@ -253,5 +302,31 @@ describe("startDiscordRpc lifecycle", () => {
 		loginSpy.mockResolvedValueOnce(undefined);
 		await startDiscordRpc();
 		expect(getRpcStatus().state).toBe("connected");
+	});
+
+	it("does not install a timer or reconnect when disabled during a pending login", async () => {
+		const discordRpc = await import("@xhayper/discord-rpc");
+		let resolveLogin: () => void = () => {};
+		const loginPromise = new Promise<void>((resolve) => {
+			resolveLogin = resolve;
+		});
+		vi.spyOn(discordRpc.Client.prototype, "login").mockReturnValue(loginPromise);
+
+		const startPromise = startDiscordRpc();
+		expect(getRpcStatus().state).toBe("connecting");
+
+		await disposeDiscordRpc();
+		resolveLogin();
+
+		await startPromise;
+		expect(getRpcStatus().state).toBe("disconnected");
+
+		const loginSpy = vi.spyOn(discordRpc.Client.prototype, "login");
+		loginSpy.mockClear();
+		loginSpy.mockResolvedValueOnce(undefined);
+
+		await new Promise((resolve) => setTimeout(resolve, 100));
+		expect(loginSpy).not.toHaveBeenCalled();
+		expect(getRpcStatus().state).toBe("disconnected");
 	});
 });
