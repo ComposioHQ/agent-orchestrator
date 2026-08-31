@@ -1,4 +1,4 @@
-import { CircleAlert, CircleCheck, LoaderCircle, Plus, UserRound, X } from "lucide-react";
+import { ChevronDown, CircleAlert, CircleCheck, LoaderCircle, Plus, UserRound, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -271,8 +271,6 @@ function CodexProfileRow({ profile, busy, loginWorkflow, loginActive, onCheckAga
 				: capacity.state === "unsupported"
 					? t("settings.codexProfiles.capacityUnsupported")
 					: t("settings.codexProfiles.capacityUnknown");
-	const remainingPercent = codexCapacityRemainingPercent(capacity.usedPercent);
-	const capacityParts = [capacity.plan, remainingPercent === undefined ? undefined : t("settings.codexProfiles.capacityRemaining", { percent: remainingPercent }), capacity.resetsAt ? t("settings.codexProfiles.capacityResets", { value: new Date(capacity.resetsAt).toLocaleString() }) : undefined].filter(Boolean);
 
 	return (
 		<div
@@ -282,9 +280,9 @@ function CodexProfileRow({ profile, busy, loginWorkflow, loginActive, onCheckAga
 			tabIndex={-1}
 		>
 			<div className="flex items-start justify-between gap-3">
-				<div className="flex min-w-0 gap-3">
+				<div className="flex min-w-0 flex-1 gap-3">
 					<UserRound data-testid="codex-profile-icon" className="mt-0.5 size-5 shrink-0 text-muted-foreground" aria-hidden="true" />
-					<div className="min-w-0">
+					<div className="min-w-0 flex-1">
 						<div className="flex items-center gap-2">
 							<p className="truncate text-sm font-medium">{profile.label}</p>
 							<span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">{sourceLabel}</span>
@@ -302,11 +300,7 @@ function CodexProfileRow({ profile, busy, loginWorkflow, loginActive, onCheckAga
 						)}
 						{profile.status === "valid" && auth.freshness === "stale" && auth.reason ? <p className="mt-1 text-xs text-muted-foreground">{auth.reason}</p> : null}
 						{profile.status === "valid" ? (
-							<div className="mt-2 rounded border border-border/70 bg-muted/30 px-2.5 py-2 text-xs">
-								<p className="font-medium text-foreground">{capacityLabel}{capacity.freshness === "checking" ? <LoaderCircle className="ml-1 inline size-3 animate-spin" aria-label={t("settings.codexProfiles.checking")} /> : null}</p>
-								{capacityParts.length > 0 ? <p className="mt-0.5 text-muted-foreground">{capacityParts.join(" · ")}</p> : null}
-								{capacity.freshness === "stale" || capacity.state === "unknown" || capacity.state === "unsupported" ? <p className="mt-0.5 text-muted-foreground">{capacity.reason}</p> : null}
-							</div>
+							<CodexCapacityDetails capacity={capacity} capacityLabel={capacityLabel} />
 						) : null}
 					</div>
 				</div>
@@ -327,6 +321,112 @@ function CodexProfileRow({ profile, busy, loginWorkflow, loginActive, onCheckAga
 			) : null}
 		</div>
 	);
+}
+
+type CodexCapacity = CodexProfile["capacity"];
+type CodexCapacityBucket = NonNullable<CodexCapacity["overall"]>;
+type CodexCapacityWindow = NonNullable<CodexCapacityBucket["primary"]>;
+
+function CodexCapacityDetails({ capacity, capacityLabel }: { capacity: CodexCapacity; capacityLabel: string }) {
+	const { t } = useTranslation();
+	const [expanded, setExpanded] = useState(false);
+	const groups = [
+		...(capacity.overall ? [{ id: capacity.overall.limitId, title: t("settings.codexProfiles.generalUsageLimits"), bucket: capacity.overall }] : []),
+		...capacity.additionalBuckets.map((bucket) => ({
+			id: bucket.limitId,
+			title: t("settings.codexProfiles.modelUsageLimits", { name: bucket.displayName || bucket.limitId }),
+			bucket,
+		})),
+	].filter(({ bucket }) => bucket.primary || bucket.secondary);
+	const remainingPercent = codexCapacityRemainingPercent(capacity.usedPercent ?? capacity.overall?.primary?.usedPercent);
+	const capacityParts = [capacity.plan, remainingPercent === undefined ? undefined : t("settings.codexProfiles.capacityRemaining", { percent: remainingPercent })].filter(Boolean);
+	const summaryLabel = [capacityLabel, ...capacityParts].join(" · ");
+	const showReason = capacity.freshness === "stale" || capacity.state === "unknown" || capacity.state === "unsupported";
+
+	return (
+		<div className="mt-2 rounded border border-border/70 bg-muted/30 text-xs">
+			{groups.length > 0 ? (
+				<button
+					aria-expanded={expanded}
+					aria-label={summaryLabel}
+					className="flex w-full items-center justify-between gap-3 rounded px-2.5 py-2 text-left outline-none hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+					onClick={() => setExpanded((current) => !current)}
+					type="button"
+				>
+					<span className="min-w-0 truncate">
+						<span className="font-medium text-foreground">{capacityLabel}</span>
+						{capacityParts.length > 0 ? <span className="text-muted-foreground"> · {capacityParts.join(" · ")}</span> : null}
+						{capacity.freshness === "checking" ? <LoaderCircle className="ml-1 inline size-3 animate-spin" aria-label={t("settings.codexProfiles.checking")} /> : null}
+					</span>
+					<ChevronDown className={`size-4 shrink-0 text-muted-foreground transition-transform ${expanded ? "rotate-180" : ""}`} aria-hidden="true" />
+				</button>
+			) : (
+				<div className="px-2.5 py-2">
+					<p className="font-medium text-foreground">{capacityLabel}{capacity.freshness === "checking" ? <LoaderCircle className="ml-1 inline size-3 animate-spin" aria-label={t("settings.codexProfiles.checking")} /> : null}</p>
+					{capacityParts.length > 0 ? <p className="mt-0.5 text-muted-foreground">{capacityParts.join(" · ")}</p> : null}
+					{showReason ? <p className="mt-0.5 text-muted-foreground">{capacity.reason}</p> : null}
+				</div>
+			)}
+			{expanded ? (
+				<div className="space-y-3 border-t border-border/70 px-2.5 py-2.5">
+					{showReason ? <p className="text-muted-foreground">{capacity.reason}</p> : null}
+					{groups.map((group) => <CodexCapacityLimitGroup key={group.id} title={group.title} bucket={group.bucket} />)}
+				</div>
+			) : null}
+		</div>
+	);
+}
+
+function CodexCapacityLimitGroup({ title, bucket }: { title: string; bucket: CodexCapacityBucket }) {
+	const windows = [bucket.primary, bucket.secondary].filter((window): window is CodexCapacityWindow => Boolean(window));
+	return (
+		<section aria-label={title}>
+			<h4 className="mb-1.5 text-xs font-medium text-foreground">{title}</h4>
+			<div className="divide-y divide-border/70 overflow-hidden rounded-md border border-border/70 bg-background/35 px-2.5">
+				{windows.map((window, index) => <CodexCapacityLimitWindow key={`${window.windowDurationMinutes ?? "unknown"}-${index}`} window={window} />)}
+			</div>
+		</section>
+	);
+}
+
+function CodexCapacityLimitWindow({ window }: { window: CodexCapacityWindow }) {
+	const { t } = useTranslation();
+	const labelDescriptor = capacityWindowLabel(window.windowDurationMinutes);
+	const label = labelDescriptor.count === undefined ? t(labelDescriptor.key) : t(labelDescriptor.key, { count: labelDescriptor.count });
+	const remaining = Math.round(codexCapacityRemainingPercent(window.usedPercent) ?? 0);
+	return (
+		<div className="grid grid-cols-[minmax(0,1fr)_minmax(7rem,10rem)_auto] items-center gap-3 py-2.5">
+			<div className="min-w-0">
+				<p className="font-medium text-foreground">{label}</p>
+				{window.resetsAt ? <p className="mt-0.5 text-muted-foreground">{t("settings.codexProfiles.capacityResets", { value: new Date(window.resetsAt).toLocaleString() })}</p> : null}
+			</div>
+			<div
+				aria-label={`${label}: ${t("settings.codexProfiles.capacityRemaining", { percent: remaining })}`}
+				aria-valuemax={100}
+				aria-valuemin={0}
+				aria-valuenow={remaining}
+				className="h-1.5 overflow-hidden rounded-full bg-border"
+				role="progressbar"
+			>
+				<div className="h-full rounded-full bg-foreground transition-[width]" style={{ width: `${remaining}%` }} />
+			</div>
+			<p className="whitespace-nowrap text-right text-muted-foreground">{t("settings.codexProfiles.capacityRemaining", { percent: remaining })}</p>
+		</div>
+	);
+}
+
+type CapacityWindowLabel = {
+	key: "settings.codexProfiles.capacityWindowUnknown" | "settings.codexProfiles.capacityWindowWeekly" | "settings.codexProfiles.capacityWindowDaily" | "settings.codexProfiles.capacityWindowDays" | "settings.codexProfiles.capacityWindowHours" | "settings.codexProfiles.capacityWindowMinutes";
+	count?: number;
+};
+
+function capacityWindowLabel(minutes: number | null | undefined): CapacityWindowLabel {
+	if (!minutes || minutes <= 0) return { key: "settings.codexProfiles.capacityWindowUnknown" };
+	if (minutes === 10_080) return { key: "settings.codexProfiles.capacityWindowWeekly" };
+	if (minutes === 1_440) return { key: "settings.codexProfiles.capacityWindowDaily" };
+	if (minutes % 1_440 === 0) return { key: "settings.codexProfiles.capacityWindowDays", count: minutes / 1_440 };
+	if (minutes % 60 === 0) return { key: "settings.codexProfiles.capacityWindowHours", count: minutes / 60 };
+	return { key: "settings.codexProfiles.capacityWindowMinutes", count: minutes };
 }
 
 function CodexProfileLoginTerminalPanel({ workflow, onCheckAgain, onClose, onRetry, onTerminalState }: {

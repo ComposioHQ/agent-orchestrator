@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
 import { aoBridge } from "../../lib/bridge";
 import { useUiStore } from "../../stores/ui-store";
@@ -113,6 +113,78 @@ it("groups compact profile rows under the Codex provider", async () => {
 	expect(provider).toHaveAttribute("data-agent-provider", "codex");
 	expect(provider).toHaveTextContent("1 account");
 	expect(provider.querySelector("[data-profile-id='existing']")).toBeInTheDocument();
+});
+
+it("keeps each account's usage limits in an independent collapsed disclosure", async () => {
+	const existing = {
+		...profileResponse.profiles[0],
+		authentication: { ...profileResponse.profiles[0].authentication, state: "authorized", reasonCode: "authorized", reason: "signed in" },
+		authMethod: "chatgpt",
+		capacity: {
+			state: "available",
+			freshness: "fresh",
+			plan: "pro",
+			reasonCode: "capacity_available",
+			reason: "Capacity is available.",
+			overall: {
+				limitId: "codex",
+				primary: { usedPercent: 2, windowDurationMinutes: 10_080, resetsAt: "2026-09-07T04:45:59Z" },
+				reached: "not_reached",
+			},
+			additionalBuckets: [{
+				limitId: "codex_bengalfox",
+				displayName: "GPT-5.3-Codex-Spark",
+				primary: { usedPercent: 0, windowDurationMinutes: 300, resetsAt: "2026-08-31T12:44:38Z" },
+				secondary: { usedPercent: 0, windowDurationMinutes: 10_080, resetsAt: "2026-09-07T07:44:38Z" },
+				reached: "not_reached",
+			}],
+		},
+	};
+	const work = {
+		...existing,
+		id: "work",
+		label: "Work",
+		source: "managed",
+		capacity: {
+			...existing.capacity,
+			overall: {
+				limitId: "codex",
+				primary: { usedPercent: 40, windowDurationMinutes: 300, resetsAt: "2026-08-31T13:44:38Z" },
+				reached: "not_reached",
+			},
+			additionalBuckets: [],
+		},
+	};
+	const response = { ...profileResponse, profiles: [existing, work] };
+	getMock.mockResolvedValue({ data: response });
+	postMock.mockImplementation((path: string) => Promise.resolve({ data: path.endsWith("/ensure") ? response : {} }));
+
+	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+	render(<QueryClientProvider client={queryClient}><CodexProfilesSection /></QueryClientProvider>);
+
+	await screen.findByText("Work");
+	const existingCard = document.querySelector("[data-profile-id='existing']") as HTMLElement;
+	const workCard = document.querySelector("[data-profile-id='work']") as HTMLElement;
+	const existingToggle = within(existingCard).getByRole("button", { name: "Capacity available · pro · 98% left" });
+	const workToggle = within(workCard).getByRole("button", { name: "Capacity available · pro · 60% left" });
+	expect(existingToggle).toHaveAttribute("aria-expanded", "false");
+	expect(workToggle).toHaveAttribute("aria-expanded", "false");
+	expect(within(existingCard).queryByText("General usage limits")).not.toBeInTheDocument();
+	expect(within(workCard).queryByText("General usage limits")).not.toBeInTheDocument();
+
+	fireEvent.click(existingToggle);
+	expect(existingToggle).toHaveAttribute("aria-expanded", "true");
+	expect(within(existingCard).getByText("General usage limits")).toBeInTheDocument();
+	expect(within(existingCard).getByText("GPT-5.3-Codex-Spark usage limits")).toBeInTheDocument();
+	expect(within(existingCard).getByRole("progressbar", { name: "Weekly usage limit: 98% left" })).toHaveAttribute("aria-valuenow", "98");
+	expect(within(existingCard).getByRole("progressbar", { name: "5 hour usage limit: 100% left" })).toHaveAttribute("aria-valuenow", "100");
+	expect(within(existingCard).getAllByText("Weekly usage limit")).toHaveLength(2);
+	expect(within(workCard).queryByText("General usage limits")).not.toBeInTheDocument();
+	expect(within(workCard).queryByText("GPT-5.3-Codex-Spark usage limits")).not.toBeInTheDocument();
+
+	fireEvent.click(workToggle);
+	expect(within(workCard).getByText("General usage limits")).toBeInTheDocument();
+	expect(within(workCard).getByRole("progressbar", { name: "5 hour usage limit: 60% left" })).toHaveAttribute("aria-valuenow", "60");
 });
 
 it("collapses and expands the Codex provider group", async () => {
