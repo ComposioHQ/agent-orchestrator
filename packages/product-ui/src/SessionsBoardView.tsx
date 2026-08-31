@@ -484,7 +484,7 @@ function ReviewerAvatar({ avatar, className }: { avatar: BoardReviewerAvatar; cl
 			/>
 		);
 	}
-	return <span aria-label={avatar.login} className={cn(commonClassName, "inline-flex items-center justify-center bg-muted text-[9px] font-semibold text-muted-foreground")}>{reviewerInitials(avatar.login)}</span>;
+	return <span aria-hidden="true" className={cn(commonClassName, "inline-flex items-center justify-center bg-muted text-[9px] font-semibold text-muted-foreground")}>{reviewerInitials(avatar.login)}</span>;
 }
 
 function PullRequestLifecycleIcon({ state }: { state: BoardPullRequestState }) {
