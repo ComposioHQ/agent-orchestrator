@@ -55,7 +55,7 @@ import {
 	interfaceTransitionIsActive,
 	useSessionInterfaceTransition,
 } from "../hooks/useSessionInterfaceTransition";
-import { useWorkspaceSession } from "../hooks/useWorkspaceQuery";
+import { toCloudWorkspaceSession, useCloudSessionQuery, useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
 import { useSessionHandoffMenu } from "../hooks/useSessionHandoffMenu";
 import { clearSwitchAgentState } from "../hooks/useSwitchAgent";
 import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
@@ -244,6 +244,7 @@ function reviewerTerminalFromReviews(data?: ReviewsResponse): ReviewerTerminalTa
 type SessionViewProps = {
 	sessionId: string;
 	cloudOrgId?: string;
+	projectId?: string;
 };
 
 // Mirrors the left sidebar: a Motion gap takes layout width while a sibling
@@ -376,10 +377,14 @@ function SessionInspectorRail({
 // x-transform). Summary/Reviews/Files share a utility width, while Browser
 // automatically grows into a co-work canvas. Chat readability clamps either
 // profile before the conversation can become unusably narrow.
-export function SessionView({ sessionId, cloudOrgId }: SessionViewProps) {
+export function SessionView({ sessionId, cloudOrgId, projectId }: SessionViewProps) {
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
-	const workspaceQuery = useWorkspaceSession(sessionId);
+	const workspaceQuery = useWorkspaceQuery();
+	const workspaces = workspaceQuery.data ?? [];
+	const routedWorkspace = projectId ? workspaces.find((workspace) => workspace.id === projectId) : undefined;
+	const isCloudRoute = routedWorkspace?.kind === "cloud";
+	const cloudRouteSession = useCloudSessionQuery(cloudOrgId, sessionId, isCloudRoute);
 	const theme = useResolvedTheme();
 	const prefersReducedMotion = useReducedMotion();
 	const isInspectorOpen = useUiStore((state) => state.inspectorSessions[sessionId]?.isOpen ?? true);
@@ -506,7 +511,20 @@ export function SessionView({ sessionId, cloudOrgId }: SessionViewProps) {
 
 	useEffect(() => stopTerminalLiveResize, [stopTerminalLiveResize]);
 
-	const session = workspaceQuery.data;
+	const listedSession = workspaces.flatMap((workspace) => workspace.sessions).find((s) => s.id === sessionId);
+	// A newly-created Cloud session can be routed before the paginated session
+	// list refresh completes. Resolve that exact row from Cloud so terminal and
+	// interface operations retain {orgId, sessionId} instead of falling back to
+	// the local daemon and surfacing SESSION_NOT_FOUND.
+	const session =
+		listedSession ??
+		(isCloudRoute && routedWorkspace && cloudOrgId && cloudRouteSession.data
+			? toCloudWorkspaceSession(
+					cloudRouteSession.data,
+					{ id: routedWorkspace.id, displayName: routedWorkspace.name },
+					cloudOrgId,
+				)
+			: undefined);
 	const interfaceContext = session
 		? (session.cloud ?? null)
 		: cloudOrgId
