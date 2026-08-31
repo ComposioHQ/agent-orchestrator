@@ -342,7 +342,7 @@ func (c *Client) BootstrapWorker(ctx context.Context, id sandbox.ID, bootstrap s
 	// below the PTY buffer and give the reader a chance to drain between frames.
 	const (
 		chunkSize  = 512
-		chunkPause = 2 * time.Millisecond
+		chunkPause = time.Millisecond
 	)
 	for offset := 0; offset < len(encoded); offset += chunkSize {
 		end := min(offset+chunkSize, len(encoded))
