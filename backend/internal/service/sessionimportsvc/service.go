@@ -136,6 +136,12 @@ func (s *Service) findExisting(ctx context.Context, nativeID string) (domain.Ses
 		return domain.Session{}, false, err
 	}
 	for _, r := range recs {
+		// A terminated (deleted) session must not block a fresh re-import: the
+		// user expects "delete then import again" to produce a live session, with
+		// the old one kept only as history.
+		if r.IsTerminated {
+			continue
+		}
 		if r.Metadata.ProviderConversationID == nativeID || r.Metadata.AgentSessionID == nativeID {
 			sess, err := s.sessions.Get(ctx, r.ID)
 			if err != nil {
@@ -173,6 +179,11 @@ func (s *Service) resolveProject(ctx context.Context, cwd string) (domain.Projec
 func nativeIDSet(recs []domain.SessionRecord) map[string]struct{} {
 	set := make(map[string]struct{}, len(recs))
 	for _, r := range recs {
+		// Terminated sessions do not count as "already imported": a deleted
+		// import should reappear as importable, not greyed out.
+		if r.IsTerminated {
+			continue
+		}
 		if id := strings.TrimSpace(r.Metadata.ProviderConversationID); id != "" {
 			set[id] = struct{}{}
 		}

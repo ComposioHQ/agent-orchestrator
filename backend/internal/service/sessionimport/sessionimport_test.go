@@ -165,6 +165,24 @@ func TestDiscoverFlagsAlreadyImported(t *testing.T) {
 	}
 }
 
+func TestLocatePopulatesMetadata(t *testing.T) {
+	claudeDir, codexHome := buildFakeHome(t)
+	svc := NewService(nil, NewClaudeSourceAt(claudeDir), NewCodexSourceAt(codexHome, true))
+
+	// Locate must normalize scan options; a zero MaxScanBytes would read nothing
+	// and leave cwd empty, which breaks project resolution on import.
+	got, ok, err := svc.Locate(context.Background(), domain.HarnessClaudeCode, "11111111-1111-4111-8111-111111111111")
+	if err != nil || !ok {
+		t.Fatalf("locate: ok=%v err=%v", ok, err)
+	}
+	if got.CWD != "/Users/dev/project" {
+		t.Errorf("located cwd empty/wrong: %q", got.CWD)
+	}
+	if got.Title == "" {
+		t.Error("located title should be populated")
+	}
+}
+
 func TestCodexIDFromFileName(t *testing.T) {
 	cases := map[string]string{
 		"rollout-2026-08-01T07-07-49-019fbaf8-67a4-79b2-aa80-01283063aab8.jsonl": "019fbaf8-67a4-79b2-aa80-01283063aab8",

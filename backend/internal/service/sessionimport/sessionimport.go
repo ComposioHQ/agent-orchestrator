@@ -155,11 +155,14 @@ func (s *Service) Discover(ctx context.Context, opts DiscoverOptions) ([]Importa
 // still be imported by id.
 func (s *Service) Locate(ctx context.Context, provider domain.AgentHarness, nativeID string) (ImportableSession, bool, error) {
 	nativeID = strings.TrimSpace(nativeID)
+	// Normalize so the bounded head/tail reads use their real default size; a
+	// zero MaxScanBytes would read nothing and leave cwd/title empty.
+	opts := DiscoverOptions{}.normalized()
 	for _, src := range s.sources {
 		if src.Provider() != provider {
 			continue
 		}
-		found, err := src.Discover(ctx, DiscoverOptions{})
+		found, err := src.Discover(ctx, opts)
 		if err != nil {
 			return ImportableSession{}, false, err
 		}

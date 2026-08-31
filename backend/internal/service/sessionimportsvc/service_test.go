@@ -232,6 +232,55 @@ func TestImportRegistersProjectWhenNoneCovers(t *testing.T) {
 	}
 }
 
+func TestImportAfterDeleteCreatesFresh(t *testing.T) {
+	// A terminated session bound to the native id must not block re-import.
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := sessionimport.ImportableSession{
+		Provider:        domain.HarnessClaudeCode,
+		NativeSessionID: "nat-9",
+		ConfigDir:       "/home/user/.claude",
+		CWD:             repo,
+		Title:           "deleted then reimported",
+	}
+	src := &fakeSource{provider: domain.HarnessClaudeCode, sessions: []sessionimport.ImportableSession{target}}
+	sessions := &fakeSessions{}
+	store := &fakeStore{recs: []domain.SessionRecord{
+		{ID: "old", IsTerminated: true, Metadata: domain.SessionMetadata{ProviderConversationID: "nat-9"}},
+	}}
+	projects := &fakeProjects{list: []projectsvc.Summary{{ID: "p1", Path: repo}}}
+
+	svc := New(sessions, store, projects, src)
+	got, already, err := svc.Import(context.Background(), domain.HarnessClaudeCode, "nat-9")
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if already {
+		t.Error("a terminated prior import must not count as already imported")
+	}
+	if sessions.spawned.ResumeNativeSession == nil {
+		t.Error("expected a fresh spawn after the prior import was deleted")
+	}
+	if got.ID == "" {
+		t.Error("expected a new session")
+	}
+}
+
+func TestNativeIDSetSkipsTerminated(t *testing.T) {
+	set := nativeIDSet([]domain.SessionRecord{
+		{IsTerminated: true, Metadata: domain.SessionMetadata{ProviderConversationID: "dead"}},
+		{Metadata: domain.SessionMetadata{ProviderConversationID: "live"}},
+	})
+	if _, ok := set["dead"]; ok {
+		t.Error("terminated session should not be flagged already imported")
+	}
+	if _, ok := set["live"]; !ok {
+		t.Error("live session should be flagged already imported")
+	}
+}
+
 func TestNativeIDSetCollectsBothFields(t *testing.T) {
 	set := nativeIDSet([]domain.SessionRecord{
 		{Metadata: domain.SessionMetadata{ProviderConversationID: "pc1"}},
