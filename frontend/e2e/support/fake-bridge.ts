@@ -234,6 +234,12 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					closeStream: () => undefined,
 					onStreamEvent: unsubscribe,
 				},
+				rpc: {
+					getSettings: async () => ({ enabled: false }),
+					setSettings: async (settings) => settings,
+					getStatus: async () => ({ state: "disconnected" }),
+					onStatus: unsubscribe,
+				},
 			} satisfies AoBridge;
 			(window as unknown as { ao: unknown }).ao = ao;
 		},
@@ -706,6 +712,12 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					openStream: async () => ({ streamId: "stream_test" }),
 					closeStream: () => undefined,
 					onStreamEvent: unsubscribe,
+				},
+				rpc: {
+					getSettings: async () => ({ enabled: false }),
+					setSettings: async (settings) => settings,
+					getStatus: async () => ({ state: "disconnected" }),
+					onStatus: unsubscribe,
 				},
 			} satisfies AoBridge;
 			(window as unknown as { ao: unknown }).ao = ao;

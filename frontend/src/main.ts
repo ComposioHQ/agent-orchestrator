@@ -105,6 +105,22 @@ import { isAllowedAppExternalURL, openAllowedAppExternalURL } from "./main/exter
 import { dockBounceType, shouldReplaceBounce, shouldSignalAttention, shouldToast } from "./main/notification-signals";
 import { buildMacAppMenuTemplate, buildWindowsAppMenuTemplate } from "./main/menu";
 import { ancestorRepositorySetupWarning, scanImportFolder } from "./main/import-folder-scan";
+import {
+	startDiscordRpc,
+	disposeDiscordRpc,
+	setDaemonPort as setRpcDaemonPort,
+	setRpcSettings,
+	getRpcStatus,
+	onRpcStatus,
+} from "./main/discord-rpc";
+import { readRpcSettings, updateRpcSettings } from "./main/rpc-settings";
+import {
+	RPC_GET_SETTINGS_CHANNEL,
+	RPC_GET_STATUS_CHANNEL,
+	RPC_SET_SETTINGS_CHANNEL,
+	RPC_STATUS_CHANNEL,
+	type RpcSettings,
+} from "./shared/rpc";
 import { parseOpenFolderPathArg } from "./main/open-folder-arg";
 
 // Globals injected at compile time by @electron-forge/plugin-vite.
@@ -370,8 +386,9 @@ function setDaemonStatus(nextStatus: DaemonStatus): void {
 	if (nextStatus.state !== "ready") disposeBrowserRuntimeLink();
 	daemonStatus = nextStatus;
 	getShellWebContents()?.send("daemon:status", daemonStatus);
-	if (nextStatus.state === "ready" && browserViewHost) {
-		establishBrowserRuntimeLink();
+	if (nextStatus.state === "ready") {
+		if (nextStatus.port) setRpcDaemonPort(nextStatus.port);
+		if (browserViewHost) establishBrowserRuntimeLink();
 	}
 }
 
@@ -1870,6 +1887,24 @@ ipcMain.handle("updateSettings:set", async (_event, settings: UpdateSettings) =>
 	await setUpdateSettings(path.dirname(runFile), settings);
 });
 
+ipcMain.handle(RPC_GET_SETTINGS_CHANNEL, async (): Promise<RpcSettings> => {
+	const runFile = runFilePath();
+	if (!runFile) return { enabled: false };
+	return readRpcSettings(path.dirname(runFile));
+});
+ipcMain.handle(RPC_SET_SETTINGS_CHANNEL, async (_event, settings: RpcSettings): Promise<RpcSettings> => {
+	const runFile = runFilePath();
+	if (!runFile) return settings;
+	const next = await updateRpcSettings(path.dirname(runFile), () => settings);
+	await setRpcSettings(next);
+	return next;
+});
+ipcMain.handle(RPC_GET_STATUS_CHANNEL, () => getRpcStatus());
+
+onRpcStatus((status) => {
+	getShellWebContents()?.send(RPC_STATUS_CHANNEL, status);
+});
+
 ipcMain.handle("uiSettings:get", async (): Promise<UiSettings> => {
 	const runFile = runFilePath();
 	if (!runFile) return { ...DEFAULT_UI_SETTINGS };
@@ -2266,6 +2301,11 @@ app.whenReady().then(async () => {
 	await createWindow();
 	void startDaemon();
 	initAutoUpdates();
+	const rpcRunFile = runFilePath();
+	if (rpcRunFile) {
+		const rpcSettings = await readRpcSettings(path.dirname(rpcRunFile));
+		if (rpcSettings.enabled) void startDiscordRpc();
+	}
 
 	// Windows/Linux: on first launch, the deep-link URL may arrive as a
 	// process.argv entry (e.g. ao-app://callback?token=...).
@@ -2296,6 +2336,7 @@ app.whenReady().then(async () => {
 app.on("before-quit", (event) => {
 	browserQuitRequested = true;
 	disposeBrowserRuntimeLink();
+	disposeDiscordRpc();
 	trayLifecycle.dispose();
 	trayController = null;
 	if (!browserCleanupComplete) {

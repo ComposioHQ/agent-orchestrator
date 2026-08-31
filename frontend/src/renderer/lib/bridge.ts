@@ -179,11 +179,17 @@ export const aoBridge: AoBridge =
 			get: async () => ({ ...DEFAULT_UI_SETTINGS }),
 			set: async (settings) => coerceUiSettings({ ...DEFAULT_UI_SETTINGS, ...settings }),
 		},
-		keybindings: {
-			get: async () => ({}),
-			set: async (overrides) => overrides,
-			setRecording: async () => undefined,
-		},
+	keybindings: {
+		get: async () => ({}),
+		set: async (overrides) => overrides,
+		setRecording: async () => undefined,
+	},
+	rpc: {
+		getSettings: async () => ({ enabled: false }),
+		setSettings: async (settings) => settings,
+		getStatus: async () => ({ state: "disconnected" }),
+		onStatus: () => () => undefined,
+	},
 		updates: {
 			getStatus: async () => ({ state: "idle" }),
 			check: async () => undefined,
