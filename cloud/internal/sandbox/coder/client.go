@@ -311,6 +311,11 @@ func (c *Client) BootstrapWorker(ctx context.Context, id sandbox.ID, bootstrap s
 	query.Set("width", "120")
 	query.Set("height", "40")
 	query.Set("command", command)
+	// Bootstrap is a short-lived, non-interactive command. The buffered backend
+	// preserves its final output when the process exits; the screen backend is
+	// intended for reconnecting human terminals and can close before the success
+	// marker is delivered.
+	query.Set("backend_type", "buffered")
 	ptyURL.RawQuery = query.Encode()
 
 	headers := http.Header{"Coder-Session-Token": []string{c.token}}

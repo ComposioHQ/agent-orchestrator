@@ -94,3 +94,23 @@ AO_CLOUD_WORKER_HELPER_BINARY_PATH=/opt/ao/bin/ao
 
 Keep `AO_CLOUD_CODER_TOKEN` in the service plane's secret manager. Do not put it
 in the desktop app, a workspace environment variable, or AO's provider plan.
+
+For the AWS ECS deployment scripts, store those values in the environment's
+Secrets Manager JSON document (`ao-cloud/staging/coder` or
+`ao-cloud/production/coder`) using these keys:
+
+```json
+{
+  "url": "https://coder.customer.example",
+  "token": "<dedicated-user-api-token>",
+  "owner": "ao-integration",
+  "template_id": "<approved-template-uuid>",
+  "agent_name": "",
+  "parameters_json": "{}",
+  "worker_token_ttl": "15m"
+}
+```
+
+Grant the environment's ECS execution role `secretsmanager:GetSecretValue` on
+that secret, then deploy staging with `AO_CLOUD_SANDBOX_PROVIDER=coder`. The
+task-definition renderer removes stale NodeOps values when switching providers.

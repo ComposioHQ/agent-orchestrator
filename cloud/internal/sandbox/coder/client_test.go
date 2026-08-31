@@ -153,6 +153,9 @@ func TestBootstrapWorkerStreamsArchiveWithoutSecretsInURL(t *testing.T) {
 			if strings.Contains(request.URL.RawQuery, secret) {
 				t.Errorf("worker secret leaked into PTY URL")
 			}
+			if got := request.URL.Query().Get("backend_type"); got != "buffered" {
+				t.Errorf("PTY backend_type = %q, want buffered", got)
+			}
 			command := request.URL.Query().Get("command")
 			match := regexp.MustCompile(`count=([0-9]+)`).FindStringSubmatch(command)
 			if len(match) != 2 {
