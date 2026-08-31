@@ -1045,10 +1045,7 @@ func (s *Service) List(ctx context.Context, filter ListFilter) ([]domain.Session
 	}
 	out := make([]domain.Session, 0, len(filtered))
 	for _, rec := range filtered {
-		sess, err := s.toSessionWithFacts(rec, prsBySession[rec.ID], runsBySession[rec.ID])
-		if err != nil {
-			return nil, err
-		}
+		sess := s.toSessionWithFacts(rec, prsBySession[rec.ID], runsBySession[rec.ID])
 		if err := s.enrichCodexProfileSwitch(ctx, rec, &sess); err != nil {
 			return nil, err
 		}
@@ -1129,7 +1126,7 @@ func (s *Service) requireMutableSession(ctx context.Context, id domain.SessionID
 	return nil
 }
 
-func (s *Service) toSessionWithFacts(rec domain.SessionRecord, prs []domain.PRFacts, runs []domain.CurrentHeadReviewRun) (domain.Session, error) {
+func (s *Service) toSessionWithFacts(rec domain.SessionRecord, prs []domain.PRFacts, runs []domain.CurrentHeadReviewRun) domain.Session {
 	runs = canonicalizeCurrentHeadReviewRuns(prs, runs)
 	prs = deduplicatePRFacts(prs)
 	// Both derivations read the clock once, from the same instant: they share
@@ -1151,7 +1148,7 @@ func (s *Service) toSessionWithFacts(rec domain.SessionRecord, prs []domain.PRFa
 		summary := s.codexProfiles.CodexSessionProfileSummary(*rec.CodexProfileBinding)
 		session.CodexProfile = &summary
 	}
-	return session, nil
+	return session
 }
 
 // toAPIError maps the session engine's sentinel errors to their REST API
@@ -1391,10 +1388,7 @@ func (s *Service) toSession(ctx context.Context, rec domain.SessionRecord) (doma
 	if err != nil {
 		return domain.Session{}, err
 	}
-	session, err := s.toSessionWithFacts(rec, prs, runs)
-	if err != nil {
-		return domain.Session{}, err
-	}
+	session := s.toSessionWithFacts(rec, prs, runs)
 	if err := s.enrichCodexProfileSwitch(ctx, rec, &session); err != nil {
 		return domain.Session{}, err
 	}

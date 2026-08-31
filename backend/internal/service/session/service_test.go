@@ -4512,10 +4512,7 @@ func TestToSessionWithFactsRemapsTransferredAliasReviewRuns(t *testing.T) {
 		CreatedAt: rec.UpdatedAt,
 	}}
 
-	sess, err := (&Service{store: st, clock: func() time.Time { return rec.UpdatedAt.Add(2 * time.Minute) }}).toSessionWithFacts(rec, st.prFacts[rec.ID], st.reviewRuns[rec.ID])
-	if err != nil {
-		t.Fatal(err)
-	}
+	sess := (&Service{store: st, clock: func() time.Time { return rec.UpdatedAt.Add(2 * time.Minute) }}).toSessionWithFacts(rec, st.prFacts[rec.ID], st.reviewRuns[rec.ID])
 	if sess.KanbanColumn != "validating" {
 		t.Fatalf("column = %q, want validating", sess.KanbanColumn)
 	}
@@ -4570,10 +4567,7 @@ func TestToSessionWithFactsCanonicalAliasRunSupersedesOlderAliasRun(t *testing.T
 		},
 	}
 
-	sess, err := (&Service{store: st, clock: func() time.Time { return rec.UpdatedAt.Add(2 * time.Minute) }}).toSessionWithFacts(rec, st.prFacts[rec.ID], st.reviewRuns[rec.ID])
-	if err != nil {
-		t.Fatal(err)
-	}
+	sess := (&Service{store: st, clock: func() time.Time { return rec.UpdatedAt.Add(2 * time.Minute) }}).toSessionWithFacts(rec, st.prFacts[rec.ID], st.reviewRuns[rec.ID])
 	if sess.KanbanColumn != "needs_review" {
 		t.Fatalf("column = %q, want needs_review", sess.KanbanColumn)
 	}
