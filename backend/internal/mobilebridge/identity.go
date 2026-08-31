@@ -13,9 +13,9 @@ import (
 	"github.com/google/uuid"
 )
 
-// MachineFingerprint derives a stable identifier for this physical machine from
-// its hardware addresses. It is a heuristic, used only to notice that a copied
-// ~/.ao has been carried to a different machine — never as a secret.
+// MachineFingerprint records a diagnostic snapshot of this machine's hardware
+// addresses. It never decides HostID: hardware changes must not silently
+// unpair every phone, and copying AO_DATA_DIR intentionally copies identity.
 //
 // Deliberately independent of interface order (net.Interfaces() gives no
 // ordering guarantee) and of link state (Wi-Fi being off must not look like a
@@ -40,10 +40,10 @@ func MachineFingerprint(ifaces []net.Interface) string {
 	return hex.EncodeToString(h.Sum(nil))[:32]
 }
 
-// Identity is the daemon's stable, machine-bound identity as seen by paired
+// Identity is the daemon installation's stable identity as seen by paired
 // phones. It is not a secret: the phone compares the HostID it paired with
-// against the one /api/v1/identity reports, so that a private address reused on
-// a different network cannot be mistaken for the paired machine.
+// against the one /api/v1/identity reports, so a private address reused on a
+// different network cannot be mistaken for this AO installation.
 type Identity struct {
 	HostID string `json:"hostId"`
 	// Fingerprint is the aggregate MachineFingerprint this HostID was issued

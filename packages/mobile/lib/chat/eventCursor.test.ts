@@ -7,8 +7,9 @@ vi.mock("expo-secure-store", () => ({
 	getItemAsync: vi.fn(), setItemAsync: vi.fn(), deleteItemAsync: vi.fn(),
 }));
 
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { DEFAULT_CONFIG, type ServerConfig } from "../config";
-import { eventCursorKey, HEAD_CURSOR, initialCursorFor } from "./eventCursor";
+import { clearEventCursorsForHost, eventCursorKey, HEAD_CURSOR, initialCursorFor } from "./eventCursor";
 
 const cfg = (over: Partial<ServerConfig> = {}): ServerConfig => ({
 	...DEFAULT_CONFIG, host: "192.168.1.42", httpPort: "3011", secure: false, password: "pw", ...over,
@@ -40,6 +41,21 @@ describe("eventCursorKey", () => {
 		const b = eventCursorKey(cfg({ hostId: undefined, host: "10.0.0.5" }));
 		expect(a).not.toBe(b);
 		expect(a).toContain("192.168.1.42");
+	});
+});
+
+describe("clearEventCursorsForHost", () => {
+	it("uses address keys for a migrated host with no identity", async () => {
+		await clearEventCursorsForHost({
+			id: "",
+			name: "old desktop",
+			platform: "",
+			endpoints: [{ kind: "lan", host: "192.168.1.42", port: 3011, secure: false }],
+			lastConnected: 1,
+		});
+
+		expect(AsyncStorage.removeItem).toHaveBeenCalledWith("ao.chat.events.http.192.168.1.42.3011");
+		expect(AsyncStorage.removeItem).not.toHaveBeenCalledWith("ao.chat.events.host.");
 	});
 });
 

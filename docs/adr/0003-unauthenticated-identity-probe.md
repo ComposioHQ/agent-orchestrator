@@ -28,7 +28,7 @@ runs **only** behind the bearer-password `authMiddleware`
 
 Exempt exactly one route from `authMiddleware`: **`GET /api/v1/identity`**.
 
-It returns an opaque, machine-bound host id and the mobile contract version,
+It returns an opaque, installation-bound host id and the mobile contract version,
 and nothing else:
 
 ```json
@@ -44,13 +44,17 @@ The exemption is deliberately narrow, and there are tests for each constraint:
   be able to lock itself out by probing, and an unauthenticated probe carries no
   credential to get wrong.
 
-The host id is persisted at `~/.ao/mobile/identity.json` and bound to a
-fingerprint of the machine's hardware addresses, so a copied `~/.ao` cannot let
-another machine answer as this one. On a fingerprint mismatch the id is
-reissued rather than rejected: failing hard would brick the daemon after a
-replaced network card, whereas reissuing keeps that machine working while the
-phone's stored id simply stops matching — which is exactly the check the race
-performs.
+The host id is persisted at `~/.ao/mobile/identity.json` and belongs to that AO
+data directory. Hardware fingerprints are retained as diagnostic metadata but
+never rotate the id: docks, OS interface changes, and replacing the only network
+card must not silently unpair every phone. Resetting identity is explicit by
+removing this file while AO is stopped; the next start issues a new id.
+
+This means copying the complete `~/.ao` directory copies the identity too. That
+is the chosen tradeoff: predictable pairing across ordinary hardware changes
+instead of inferring identity from mutable network hardware. A copied data
+directory can pass the pre-auth identity check, so backups and migrations of
+`~/.ao` must be protected like the rest of AO's credentials and state.
 
 ## Consequences
 
@@ -61,8 +65,8 @@ worse exposure than disclosing an opaque identifier.
 What an unauthenticated caller on the LAN — or anyone who reaches the tunnel
 hostname — can now learn: that an AO daemon is present, and a random opaque id
 for it. They could already infer the first from the shape of the 401. The id is
-not a secret, carries no hostname, user, project, or platform, and is useless
-without the connection password.
+not a secret and carries no hostname, user, project, or platform. It does not
+authorize requests; the connection password is still required.
 
 AGENTS.md's LAN listener rule is amended to name this single exemption. Any
 future unauthenticated route needs its own ADR; this one is not a precedent for

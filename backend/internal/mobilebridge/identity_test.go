@@ -122,12 +122,9 @@ func TestEnsureIdentityWritesOwnerOnly(t *testing.T) {
 	}
 }
 
-// The aggregate fingerprint hashed every interface together, so it changed
-// whenever the *set* changed: plugging in a dock, replacing a network card, or
-// an OS update renaming an interface all reissued the host id and silently
-// unpaired every phone. The binding is worth keeping — it stops a copied ~/.ao
-// answering as the original and fooling a phone into handing over its token —
-// but it has to survive ordinary hardware changes.
+// Identity belongs to the AO installation. Hardware fingerprints remain useful
+// diagnostics, but plugging in a dock must not reissue the host id and silently
+// unpair every phone.
 func TestEnsureIdentityKeepsTheHostIDWhenAnInterfaceIsAdded(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "mobile", "identity.json")
 	laptop := []net.Interface{iface("en0", "aa:bb:cc:dd:ee:01")}
@@ -191,8 +188,8 @@ func TestEnsureIdentityKeepsTheHostIDWhenTheOnlyInterfaceIsReplaced(t *testing.T
 	}
 }
 
-// A machine with no hardware addresses at all cannot be bound, and must not
-// reissue its id on every start.
+// An installation with no hardware addresses must not reissue its id on every
+// start.
 func TestEnsureIdentityIsStableWithoutHardwareAddresses(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "mobile", "identity.json")
 

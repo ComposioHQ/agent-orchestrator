@@ -1,8 +1,8 @@
 import { clearConfig } from "./config";
-import { activeHost, removeHost } from "./hosts";
+import { activeHostMetadata, removeHost, type HostMetadata } from "./hosts";
 import { clearOnboardingSkipped } from "./onboardingStore";
 import { unpairFromServer } from "./push";
-import { clearEventCursorForHost } from "./chat/eventCursor";
+import { clearEventCursorsForHost } from "./chat/eventCursor";
 
 // "Disconnect & forget server" — the inverse of pairing. Until this existed
 // there was no way to un-pair a phone at all: clearing the host by hand left the
@@ -25,12 +25,19 @@ export async function forgetServer(): Promise<void> {
 	// config is only the last resolved address. Clearing that alone left the
 	// machine in the list with its token in the keystore, so the next launch
 	// raced its endpoints and silently reconnected to the server just forgotten.
-	const host = await activeHost();
+	let host: HostMetadata | null = null;
 	let upstreamError: unknown;
+	try {
+		host = await activeHostMetadata();
+	} catch (error) {
+		// Metadata is non-secret and normally cannot fail, but a storage failure
+		// must not skip the cleanup we can still perform.
+		upstreamError = error;
+	}
 	try {
 		await unpairFromServer();
 	} catch (error) {
-		upstreamError = error;
+		upstreamError ??= error;
 	}
 
 	// Each local deletion is independent. A rejected SecureStore operation must
@@ -38,7 +45,7 @@ export async function forgetServer(): Promise<void> {
 	// cleared; otherwise "forget" can leave a partially paired phone behind.
 	const cleanup = await Promise.allSettled([
 		host ? removeHost(host.id) : Promise.resolve(),
-		host ? clearEventCursorForHost(host.id) : Promise.resolve(),
+		host ? clearEventCursorsForHost(host) : Promise.resolve(),
 		clearConfig(),
 		clearOnboardingSkipped(),
 	]);

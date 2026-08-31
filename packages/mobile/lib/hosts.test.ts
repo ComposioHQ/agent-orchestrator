@@ -325,6 +325,19 @@ describe("the active host", () => {
 		expect((await activeHost())?.id).toBe("a");
 	});
 
+	it("reads active host metadata without opening the token store", async () => {
+		const SecureStore = await import("expo-secure-store");
+		const { saveHost, setActiveHost, activeHostMetadata } = await mod();
+		await saveHost(host("a"));
+		await setActiveHost("a");
+		vi.mocked(SecureStore.getItemAsync).mockClear();
+
+		const got = await activeHostMetadata();
+
+		expect(got?.id).toBe("a");
+		expect(SecureStore.getItemAsync).not.toHaveBeenCalled();
+	});
+
 	// A selection pointing at a machine that has since been forgotten must not
 	// strand the app with no host at all.
 	it("falls back to recency when the selected machine is gone", async () => {

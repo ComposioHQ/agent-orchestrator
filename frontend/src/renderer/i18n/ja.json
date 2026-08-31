@@ -441,6 +441,7 @@
 	"mobile.installConnector": "cloudflared をインストール",
 	"mobile.installingConnector": "cloudflared をインストール中…",
 	"mobile.installConnectorManual": "ターミナルでこれを実行してから、もう一度お試しください。",
+	"mobile.checkConnectorAgain": "再確認",
 	"mobile.noTailscaleHost": "このコンピュータで Tailscale が実行されていません。インストールしてサインインしてから、このウィンドウを開き直してください。",
 	"mobile.password": "パスワード",
 	"mobile.passwordCopied": "パスワードをコピーしました",

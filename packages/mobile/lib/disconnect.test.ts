@@ -7,6 +7,15 @@ const calls: string[] = [];
 // Lets a test make the push step fail the way a SecureStore write can.
 let unpairThrows: Error | null = null;
 let removeHostThrows: Error | null = null;
+let activeHostThrows: Error | null = null;
+
+const active = {
+	id: "h_active",
+	name: "active",
+	platform: "darwin",
+	endpoints: [{ kind: "lan" as const, host: "192.168.1.42", port: 3011, secure: false }],
+	lastConnected: 1,
+};
 
 vi.mock("./push", () => ({
 	// forgetServer unpairs rather than merely unregistering: the phone is leaving
@@ -23,15 +32,18 @@ vi.mock("./config", () => ({
 	}),
 }));
 vi.mock("./hosts", () => ({
-	activeHost: vi.fn(async () => ({ id: "h_active" })),
+	activeHostMetadata: vi.fn(async () => {
+		if (activeHostThrows) throw activeHostThrows;
+		return active;
+	}),
 	removeHost: vi.fn(async (id: string) => {
 		calls.push(`removeHost:${id}`);
 		if (removeHostThrows) throw removeHostThrows;
 	}),
 }));
 vi.mock("./chat/eventCursor", () => ({
-	clearEventCursorForHost: vi.fn(async (id: string) => {
-		calls.push(`clearEventCursor:${id}`);
+	clearEventCursorsForHost: vi.fn(async (host: typeof active) => {
+		calls.push(`clearEventCursor:${host.id}`);
 	}),
 }));
 vi.mock("./onboardingStore", () => ({
@@ -47,6 +59,7 @@ describe("forgetServer", () => {
 		calls.length = 0;
 		unpairThrows = null;
 		removeHostThrows = null;
+		activeHostThrows = null;
 	});
 
 	// Clearing only the config would leave the daemon still pushing to this
@@ -78,6 +91,15 @@ describe("forgetServer", () => {
 		expect(calls).toContain("clearConfig");
 		expect(calls).toContain("clearOnboardingSkipped");
 	});
+
+	it("still performs safe local cleanup when active-host lookup throws", async () => {
+		activeHostThrows = new Error("SecureStore unavailable");
+
+		await expect(forgetServer()).rejects.toThrow("SecureStore unavailable");
+		expect(calls).toContain("unpairFromServer");
+		expect(calls).toContain("clearConfig");
+		expect(calls).toContain("clearOnboardingSkipped");
+	});
 });
 
 // The bug this covers: forgetting cleared only the legacy config, so the host
@@ -89,6 +111,7 @@ describe("forgetServer and the host list", () => {
 		calls.length = 0;
 		unpairThrows = null;
 		removeHostThrows = null;
+		activeHostThrows = null;
 	});
 
 	it("removes the paired machine, not just the resolved address", async () => {

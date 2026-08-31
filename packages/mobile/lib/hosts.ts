@@ -38,7 +38,8 @@ const ACTIVE_HOST_KEY = "ao.activeHost";
 const tokenKey = (id: string) => `ao.hostToken.${id}`;
 
 /** What is written to AsyncStorage: everything except the token. */
-type StoredHost = Omit<Host, "token">;
+export type HostMetadata = Omit<Host, "token">;
+type StoredHost = HostMetadata;
 
 function isStoredHost(v: unknown): v is StoredHost {
 	if (typeof v !== "object" || v === null) return false;
@@ -136,7 +137,15 @@ export async function touchHost(id: string, at: number = Date.now()): Promise<vo
  * and a stale pointer cannot strand the app with no host at all.
  */
 export async function activeHost(): Promise<Host | null> {
-	const hosts = await loadHosts();
+	const host = await activeHostMetadata();
+	if (!host) return null;
+	return { ...host, token: (await SecureStore.getItemAsync(tokenKey(host.id))) ?? "" };
+}
+
+/** The selected machine without opening the token store. Cleanup uses this so
+ * a keychain read failure cannot prevent the user from forgetting a server. */
+export async function activeHostMetadata(): Promise<HostMetadata | null> {
+	const hosts = sortAndCap(await readStored());
 	if (hosts.length === 0) return null;
 	const selected = await AsyncStorage.getItem(ACTIVE_HOST_KEY);
 	return hosts.find((h) => h.id === selected) ?? hosts[0];

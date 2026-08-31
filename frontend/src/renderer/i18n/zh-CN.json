@@ -441,6 +441,7 @@
 	"mobile.installConnector": "安装 cloudflared",
 	"mobile.installingConnector": "正在安装 cloudflared…",
 	"mobile.installConnectorManual": "请在终端中运行以下命令，然后重试。",
+	"mobile.checkConnectorAgain": "再次检查",
 	"mobile.noTailscaleHost": "此电脑未运行 Tailscale。请安装并登录后重新打开此窗口。",
 	"mobile.password": "密码",
 	"mobile.passwordCopied": "密码已复制",

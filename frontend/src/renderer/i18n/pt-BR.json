@@ -443,6 +443,7 @@
 	"mobile.installConnector": "Instalar o cloudflared",
 	"mobile.installingConnector": "Instalando o cloudflared…",
 	"mobile.installConnectorManual": "Execute isto em um terminal e tente novamente.",
+	"mobile.checkConnectorAgain": "Verificar novamente",
 	"mobile.noTailscaleHost": "O Tailscale não está em execução neste computador. Instale-o, faça login e reabra esta janela.",
 	"mobile.password": "Senha",
 	"mobile.passwordCopied": "Senha copiada",

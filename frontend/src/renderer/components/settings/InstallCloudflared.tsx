@@ -90,6 +90,9 @@ export function InstallCloudflared({ onInstalled }: { onInstalled: () => void })
 					<code className="block overflow-x-auto rounded bg-(--color-bg-settings-input) px-2 py-1 text-xs text-settings-label">
 						{view.command}
 					</code>
+					<Button type="button" variant="footer" className="w-full" onClick={onInstalled}>
+						{t("mobile.checkConnectorAgain", "Check again")}
+					</Button>
 				</>
 			)}
 			{view.kind === "failed" && <p className="text-xs text-error">{view.reason}</p>}

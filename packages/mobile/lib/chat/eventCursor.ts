@@ -1,5 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import type { ServerConfig } from "../config";
+import { DEFAULT_CONFIG, type ServerConfig } from "../config";
+import type { HostMetadata } from "../hosts";
 
 /**
  * Where the event cursor is stored, and where a fresh client should start.
@@ -35,9 +36,25 @@ export function eventCursorKey(cfg: ServerConfig): string {
 	return `ao.chat.events.${cfg.secure ? "https" : "http"}.${cfg.host}.${cfg.httpPort}`;
 }
 
-/** Remove replay state when the user forgets a machine. */
-export async function clearEventCursorForHost(hostId: string): Promise<void> {
-	await AsyncStorage.removeItem(`ao.chat.events.host.${hostId}`);
+/** Remove every replay key a machine may have used. Identified hosts converge
+ * on one host key; migrated hosts use one address key per stored endpoint. */
+export async function clearEventCursorsForHost(host: HostMetadata): Promise<void> {
+	const keys = new Set<string>();
+	if (host.id) {
+		keys.add(eventCursorKey({ ...DEFAULT_CONFIG, hostId: host.id }));
+	}
+	for (const endpoint of host.endpoints) {
+		keys.add(
+			eventCursorKey({
+				...DEFAULT_CONFIG,
+				host: endpoint.host,
+				httpPort: String(endpoint.port),
+				secure: endpoint.secure,
+				...(host.id ? { hostId: host.id } : {}),
+			}),
+		);
+	}
+	await Promise.all([...keys].map((key) => AsyncStorage.removeItem(key)));
 }
 
 /**
