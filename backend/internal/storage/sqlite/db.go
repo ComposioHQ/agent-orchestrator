@@ -137,6 +137,9 @@ func migrate(db *sql.DB) error {
 	if err := repairRenumberedUsageCostMigrationHistory(db); err != nil {
 		return fmt.Errorf("repair renumbered usage-cost migration history: %w", err)
 	}
+	if err := repairRenumberedCodexProfileMigrationHistory(db); err != nil {
+		return fmt.Errorf("repair renumbered Codex profile migration history: %w", err)
+	}
 	if err := prepareUsageCostMigration(db); err != nil {
 		return fmt.Errorf("prepare usage cost migration: %w", err)
 	}
@@ -869,6 +872,134 @@ WHERE name = 'cloud_offering'`).Scan(&cloudShape); err != nil {
 		}
 	}
 
+	return tx.Commit()
+}
+
+// repairRenumberedCodexProfileMigrationHistory preserves development
+// databases opened before the stacked Codex-profile migrations were moved out
+// of version numbers subsequently claimed by main. Early Phase 1 builds used
+// 0117 to drop agent_inventory_cache and early Phase 3 builds used 0118 for
+// codex_session_bindings. Those numbers now belong to Kimi usage and cancelled
+// conversation turns. Phase 5 also occupied 0119 before moving to 0121.
+// Release collided entries only when their canonical physical effects are
+// absent, then record complete existing profile schemas at their canonical
+// versions so goose never attempts to create their tables twice.
+func repairRenumberedCodexProfileMigrationHistory(db *sql.DB) error {
+	var gooseTable int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'goose_db_version'`,
+	).Scan(&gooseTable); err != nil {
+		return err
+	}
+	if gooseTable == 0 {
+		return nil
+	}
+
+	latestApplied := func(version int64) (int, error) {
+		var applied int
+		err := db.QueryRow(`
+SELECT COALESCE((
+    SELECT is_applied FROM goose_db_version
+    WHERE version_id = ? ORDER BY id DESC LIMIT 1
+), 0)`, version).Scan(&applied)
+		return applied, err
+	}
+	applied117, err := latestApplied(117)
+	if err != nil {
+		return err
+	}
+	applied118, err := latestApplied(118)
+	if err != nil {
+		return err
+	}
+	applied120, err := latestApplied(120)
+	if err != nil {
+		return err
+	}
+	applied121, err := latestApplied(121)
+	if err != nil {
+		return err
+	}
+
+	var kimiUsageShape int
+	if err := db.QueryRow(`
+SELECT (SELECT COUNT(*) FROM sqlite_master
+        WHERE type = 'table' AND name = 'usage_bindings'
+          AND instr(COALESCE(sql, ''), '''kimi''') > 0)
+     + (SELECT COUNT(*) FROM sqlite_master
+        WHERE type = 'table' AND name = 'usage_sources'
+          AND instr(COALESCE(sql, ''), '''kimi_wire''') > 0)`).Scan(&kimiUsageShape); err != nil {
+		return err
+	}
+
+	var cancelledTurnShape int
+	if err := db.QueryRow(`
+SELECT COUNT(*) FROM sqlite_master
+WHERE type = 'table' AND name = 'conversation_turns'
+  AND instr(COALESCE(sql, ''), '''cancelled''') > 0`).Scan(&cancelledTurnShape); err != nil {
+		return err
+	}
+
+	var bindingShape int
+	if err := db.QueryRow(`
+SELECT (SELECT COUNT(*) FROM pragma_table_info('codex_session_bindings')
+        WHERE name IN ('session_id', 'profile_id', 'profile_source', 'codex_home', 'created_at'))
+     + (SELECT COUNT(*) FROM sqlite_master
+        WHERE type = 'trigger' AND name = 'codex_session_bindings_cdc_insert')`).Scan(&bindingShape); err != nil {
+		return err
+	}
+
+	var profileSwitchShape int
+	if err := db.QueryRow(`
+SELECT (SELECT COUNT(*) FROM pragma_table_info('codex_profile_switches')
+        WHERE name IN (
+            'id', 'source_session_id', 'target_session_id',
+            'source_profile_id', 'target_profile_id', 'phase',
+            'workspace_owner', 'final_handoff_path', 'final_handoff_hash',
+            'requested_at', 'updated_at'
+        ))
+     + (SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'archived_at')
+     + (SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND name IN (
+            'codex_profile_switches_cdc_insert',
+            'codex_profile_switches_cdc_update',
+            'sessions_cdc_profile_archive'
+        ))`).Scan(&profileSwitchShape); err != nil {
+		return err
+	}
+
+	release117 := applied117 != 0 && kimiUsageShape != 2
+	release118 := applied118 != 0 && cancelledTurnShape == 0
+	mark120 := bindingShape == 6 && applied120 == 0
+	mark121 := profileSwitchShape == 15 && applied121 == 0
+	if !release117 && !release118 && !mark120 && !mark121 {
+		return nil
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if release117 {
+		if _, err := tx.Exec(`DELETE FROM goose_db_version WHERE version_id = 117`); err != nil {
+			return err
+		}
+	}
+	if release118 {
+		if _, err := tx.Exec(`DELETE FROM goose_db_version WHERE version_id = 118`); err != nil {
+			return err
+		}
+	}
+	if mark120 {
+		if _, err := tx.Exec(`INSERT INTO goose_db_version (version_id, is_applied) VALUES (120, 1)`); err != nil {
+			return err
+		}
+	}
+	if mark121 {
+		if _, err := tx.Exec(`INSERT INTO goose_db_version (version_id, is_applied) VALUES (121, 1)`); err != nil {
+			return err
+		}
+	}
 	return tx.Commit()
 }
 
