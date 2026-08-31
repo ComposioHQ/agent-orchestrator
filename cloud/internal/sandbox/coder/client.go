@@ -458,7 +458,7 @@ func bootstrapCommand(bootstrap sandbox.WorkerBootstrap, encodedLength int) stri
 	script := "set -eu\n" +
 		"stage=$(mktemp -d)\nencoded=\"$stage/payload.b64\"\n" +
 		"trap 'code=$?; stty echo icanon 2>/dev/null || true; echo " + bootstrapFailed + ":$code' EXIT\n" +
-		"stty -echo -icanon min 1 time 0\ndd bs=1 count=" + strconv.Itoa(encodedLength) + " of=\"$encoded\" 2>/dev/null\nstty echo icanon\n" +
+		"stty -echo -icanon min 1 time 0\nhead -c " + strconv.Itoa(encodedLength) + " >\"$encoded\"\nstty echo icanon\n" +
 		"base64 -d \"$encoded\" | gzip -d | tar -xf - -C \"$stage\"\n" +
 		"sudo -n id -u " + shellQuote(workerUser) + " >/dev/null 2>&1 || sudo -n useradd -m " + shellQuote(workerUser) + "\n" +
 		"sudo -n mkdir -p /workspace/repository /workspace/.ao/worker /workspace/.ao/harness /workspace/.ao/repository-credentials\n" +

@@ -157,7 +157,7 @@ func TestBootstrapWorkerStreamsArchiveWithoutSecretsInURL(t *testing.T) {
 				t.Errorf("PTY backend_type = %q, want buffered", got)
 			}
 			command := request.URL.Query().Get("command")
-			match := regexp.MustCompile(`count=([0-9]+)`).FindStringSubmatch(command)
+			match := regexp.MustCompile(`head -c ([0-9]+)`).FindStringSubmatch(command)
 			if len(match) != 2 {
 				t.Errorf("bootstrap command did not include payload length")
 				return
