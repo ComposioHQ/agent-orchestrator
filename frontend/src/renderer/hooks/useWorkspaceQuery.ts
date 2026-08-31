@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import type { TraySessionEntry } from "../../shared/tray";
 import { useMemo } from "react";
 import type { components } from "../../api/schema";
 import { apiClient, hasTrustedApiBaseUrl } from "../lib/api-client";
@@ -19,6 +20,8 @@ import {
 	toSessionActivity,
 	toSessionStatus,
 	newestActiveOrchestrator,
+	attentionZone,
+	workerSessions,
 	type WorkspaceSession,
 	type WorkspaceSummary,
 } from "../types/workspace";
@@ -352,4 +355,43 @@ export function useWorkspaceScope(projectId?: string, sessionId?: string) {
 	// Match useWorkspaceQuery's local-first semantics: do not reveal cloud
 	// records before the local workspace query has resolved successfully.
 	return { ...local, data: local.data ?? (local.isSuccess ? cloudScope : undefined) };
+}
+
+function selectTraySessions(workspaces: WorkspaceSummary[]): TraySessionEntry[] {
+	const entries: TraySessionEntry[] = [];
+	for (const workspace of workspaces) {
+		for (const session of workerSessions(workspace.sessions)) {
+			const zone = attentionZone(session);
+			if ((zone === "merge" && session.status === "merged") || (zone !== "action" && zone !== "merge")) continue;
+			entries.push({
+				projectId: workspace.id,
+				projectName: workspace.name,
+				sessionId: session.id,
+				title: session.title,
+				zone,
+			});
+		}
+	}
+	return entries;
+}
+
+/**
+ * The tray lives for the whole app lifetime, but only attention-worthy worker
+ * sessions affect its native payload. Select that compact projection at the
+ * query boundary so ordinary streamed activity does not wake the runtime.
+ */
+export function useWorkspaceTraySessions() {
+	const local = useQuery({ ...workspaceQueryOptions, select: selectTraySessions });
+	const cloud = useCloudProjectsQuery();
+	const cloudSessions = useCloudSessionsQuery();
+	const { org, ready } = useCloudOrg();
+	const cloudEntries = useMemo(() => {
+		if (!ready || !org?.id || !cloud.data) return [];
+		return selectTraySessions(cloud.data.map((project) => toCloudWorkspace(project, cloudSessions.data ?? [], org.id)));
+	}, [cloud.data, cloudSessions.data, org?.id, ready]);
+	const data = useMemo(() => {
+		if (local.data === undefined) return undefined;
+		return cloudEntries.length === 0 ? local.data : [...local.data, ...cloudEntries];
+	}, [cloudEntries, local.data]);
+	return { ...local, data };
 }
