@@ -206,7 +206,7 @@ go test -race ./internal/adapters/chatdriver/acp ./internal/adapters/chatdriver/
 
 Observed: focused ACP/Cursor tests passed, and the authenticated live test passed in 41.45 seconds with `plan-proof.txt` created during the same AO turn. The race command remains part of final verification.
 
-- [ ] **Step 5: Commit the minimal fix**
+- [x] **Step 5: Commit the minimal fix**
 
 ```bash
 git add backend/internal/adapters/chatdriver/acp backend/internal/adapters/chatdriver/cursoracp backend/internal/service/chat
@@ -218,7 +218,7 @@ git commit -m "fix: continue cursor work after plan approval"
 **Files:**
 - Modify: `docs/superpowers/plans/2026-08-31-cursor-plan-continuation.md` to mark completed checkboxes and record the observed root cause.
 
-- [ ] **Step 1: Run repository checks**
+- [x] **Step 1: Run repository checks**
 
 ```bash
 npm run lint
@@ -227,7 +227,15 @@ npm run frontend:typecheck
 
 Expected: PASS, except the already-observed environment-dependent Codex protocol conformance mismatch must be reported separately if it recurs.
 
-- [ ] **Step 2: Confirm the branch contains no unrelated changes**
+Observed:
+
+- `npm run frontend:typecheck`: PASS after installing the fresh worktree's frontend and shared product-UI dependencies.
+- pinned `golangci-lint` v2.12.2: PASS with `0 issues`.
+- `npm run lint`: all changed Cursor/ACP packages passed, but the aggregate Go test step reported the pre-existing installed-Codex/schema mismatch plus two environment/load failures. The timing-sensitive CLI test passed immediately on retry; the project telemetry test passed with the machine's global GPG signing config disabled.
+- a CI-like `go test ./...` run with the incompatible local Codex binary hidden passed every package except `session_manager`, where the same reduced PATH also hid `tmux`; that package passed separately with `tmux` restored.
+- final authenticated Cursor live regression: PASS in 28.11 seconds.
+
+- [x] **Step 2: Confirm the branch contains no unrelated changes**
 
 ```bash
 git status --short
@@ -237,6 +245,6 @@ git diff --check origin/main...HEAD
 
 Expected: only the Cursor plan regression, its minimal proven fix, and this plan document; no whitespace errors.
 
-- [ ] **Step 3: Leave the work local**
+- [x] **Step 3: Leave the work local**
 
 Do not push and do not create a pull request. Report the branch name, worktree path, reproduction evidence, root cause, changed files, commits, and exact verification results.
