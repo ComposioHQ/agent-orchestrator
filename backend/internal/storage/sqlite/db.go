@@ -137,6 +137,9 @@ func migrate(db *sql.DB) error {
 	if err := repairRenumberedUsageCostMigrationHistory(db); err != nil {
 		return fmt.Errorf("repair renumbered usage-cost migration history: %w", err)
 	}
+	if err := repairRenumberedCodexProfileMigrationHistory(db); err != nil {
+		return fmt.Errorf("repair renumbered Codex profile migration history: %w", err)
+	}
 	if err := prepareUsageCostMigration(db); err != nil {
 		return fmt.Errorf("prepare usage cost migration: %w", err)
 	}
@@ -870,6 +873,53 @@ WHERE name = 'cloud_offering'`).Scan(&cloudShape); err != nil {
 	}
 
 	return tx.Commit()
+}
+
+// repairRenumberedCodexProfileMigrationHistory preserves development
+// databases opened before the stacked Codex-profile migrations were moved out
+// of version numbers subsequently claimed by main. Early Phase 1 builds used
+// 0117 to drop agent_inventory_cache; 0117 now enables Kimi usage. Release the
+// collided ledger entry only when the canonical physical effect is absent so
+// goose can apply the real migration. The drop remains safe at canonical 0119.
+func repairRenumberedCodexProfileMigrationHistory(db *sql.DB) error {
+	var gooseTable int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'goose_db_version'`,
+	).Scan(&gooseTable); err != nil {
+		return err
+	}
+	if gooseTable == 0 {
+		return nil
+	}
+
+	var applied117 int
+	if err := db.QueryRow(`
+SELECT COALESCE((
+    SELECT is_applied FROM goose_db_version
+    WHERE version_id = 117 ORDER BY id DESC LIMIT 1
+), 0)`).Scan(&applied117); err != nil {
+		return err
+	}
+	if applied117 == 0 {
+		return nil
+	}
+
+	var kimiUsageShape int
+	if err := db.QueryRow(`
+SELECT (SELECT COUNT(*) FROM sqlite_master
+        WHERE type = 'table' AND name = 'usage_bindings'
+          AND instr(COALESCE(sql, ''), '''kimi''') > 0)
+     + (SELECT COUNT(*) FROM sqlite_master
+        WHERE type = 'table' AND name = 'usage_sources'
+          AND instr(COALESCE(sql, ''), '''kimi_wire''') > 0)`).Scan(&kimiUsageShape); err != nil {
+		return err
+	}
+	if kimiUsageShape == 2 {
+		return nil
+	}
+
+	_, err := db.Exec(`DELETE FROM goose_db_version WHERE version_id = 117`)
+	return err
 }
 
 // repairRenumberedAgentSwitchMigrationHistory preserves databases opened by
