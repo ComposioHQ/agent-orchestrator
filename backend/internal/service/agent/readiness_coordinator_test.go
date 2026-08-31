@@ -559,6 +559,49 @@ func TestReadinessCoordinatorInvalidationTargetsOnlyRequiredObservation(t *testi
 	}
 }
 
+func TestReadinessCoordinatorRechecksAuthenticationAfterInstallTransition(t *testing.T) {
+	t.Parallel()
+	var installed atomic.Bool
+	agent := &readinessTestAgent{
+		resolve: func(context.Context) (string, error) {
+			if !installed.Load() {
+				return "", ports.ErrAgentBinaryNotFound
+			}
+			return "/bin/codex", nil
+		},
+		auth: func(context.Context) (ports.AgentAuthStatus, error) {
+			return ports.AgentAuthStatusAuthorized, nil
+		},
+	}
+	coordinator := newReadinessCoordinator(readinessCoordinatorConfig{
+		Agents: []agentregistry.HarnessAgent{readinessHarness("codex", "Codex", agent)},
+	})
+
+	initial, err := coordinator.Ensure(context.Background(), []string{"codex"}, domain.AgentReadinessPurposeLaunch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := initial[0].Installation.State; got != domain.AgentInstallationNotInstalled {
+		t.Fatalf("initial installation state = %q, want not_installed", got)
+	}
+	if got := agent.authCalls.Load(); got != 0 {
+		t.Fatalf("initial authentication checks = %d, want none", got)
+	}
+
+	installed.Store(true)
+	coordinator.Invalidate("codex", readinessInvalidateInstallation)
+	updated, err := coordinator.Ensure(context.Background(), []string{"codex"}, domain.AgentReadinessPurposeLaunch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := updated[0].Authentication.State; got != domain.AgentAuthenticationAuthorized {
+		t.Fatalf("authentication state after install = %q, want authorized", got)
+	}
+	if got := agent.authCalls.Load(); got != 1 {
+		t.Fatalf("authentication checks after install = %d, want 1", got)
+	}
+}
+
 func TestReadinessCoordinatorWarmDoesNotBlock(t *testing.T) {
 	t.Parallel()
 	started := make(chan struct{})
@@ -630,6 +673,48 @@ func TestReadinessCoordinatorFindInstalledIsBoundedAndDoesNotWaitForAuth(t *test
 		t.Fatalf("authentication checks = %d, want none in startup presence path", got)
 	}
 	close(slowRelease)
+}
+
+func TestReadinessCoordinatorFindInstalledDoesNotStarveLaterHarnesses(t *testing.T) {
+	t.Parallel()
+	daemonCtx, cancelDaemon := context.WithCancel(context.Background())
+	defer cancelDaemon()
+	release := make(chan struct{})
+	defer close(release)
+	agents := make([]agentregistry.HarnessAgent, 0, 5)
+	for _, id := range []string{"a", "b", "c", "d"} {
+		slow := &readinessTestAgent{
+			resolve: func(ctx context.Context) (string, error) {
+				select {
+				case <-release:
+					return "", ports.ErrAgentBinaryNotFound
+				case <-ctx.Done():
+					return "", ctx.Err()
+				}
+			},
+			auth: func(context.Context) (ports.AgentAuthStatus, error) {
+				return ports.AgentAuthStatusUnknown, nil
+			},
+		}
+		agents = append(agents, readinessHarness(id, id, slow))
+	}
+	installed := &readinessTestAgent{
+		resolve: func(context.Context) (string, error) { return "/bin/z", nil },
+		auth: func(context.Context) (ports.AgentAuthStatus, error) {
+			return ports.AgentAuthStatusAuthorized, nil
+		},
+	}
+	agents = append(agents, readinessHarness("z", "Z", installed))
+	coordinator := newReadinessCoordinator(readinessCoordinatorConfig{
+		Agents: agents, Context: daemonCtx, Workers: 4,
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	found, ok := coordinator.FindInstalled(ctx, domain.AgentReadinessPurposeLaunch)
+	if !ok || found.ID != "z" {
+		t.Fatalf("FindInstalled() = (%#v, %v), want Z", found, ok)
+	}
 }
 
 func TestReadinessCoordinatorWarmFinishesPresenceBeforeAuthentication(t *testing.T) {

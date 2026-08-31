@@ -561,7 +561,7 @@ func TestRefreshUsesSeparateTimeoutForAuthProbe(t *testing.T) {
 	}
 }
 
-func TestRefreshIsRateLimited(t *testing.T) {
+func TestRefreshForcesFreshReadinessChecks(t *testing.T) {
 	probes := 0
 	svc := NewWithAgents([]agentregistry.HarnessAgent{
 		{
@@ -580,12 +580,12 @@ func TestRefreshIsRateLimited(t *testing.T) {
 	if _, err := svc.Refresh(context.Background()); err != nil {
 		t.Fatalf("second Refresh: %v", err)
 	}
-	if probes != 1 {
-		t.Fatalf("probes = %d, want 1", probes)
+	if probes != 2 {
+		t.Fatalf("probes = %d, want 2", probes)
 	}
 }
 
-func TestRefreshFreshHonorsCoordinatorInvalidationAfterManualInstall(t *testing.T) {
+func TestRefreshFreshDetectsManualInstallWithoutInvalidation(t *testing.T) {
 	agent := &mutableInstallAgent{}
 	svc := NewWithAgents([]agentregistry.HarnessAgent{{
 		Harness: domain.AgentHarness("codex"),
@@ -605,7 +605,6 @@ func TestRefreshFreshHonorsCoordinatorInvalidationAfterManualInstall(t *testing.
 	}
 
 	agent.installed.Store(true)
-	svc.InvalidateAgentInstallation("codex")
 	fresh, err := svc.RefreshFresh(context.Background())
 	if err != nil {
 		t.Fatalf("RefreshFresh: %v", err)

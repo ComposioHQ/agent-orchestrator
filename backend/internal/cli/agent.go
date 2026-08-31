@@ -70,7 +70,7 @@ func newAgentListCommand(ctx *commandContext) *cobra.Command {
 		Short:   "List supported agents and local auth readiness",
 		Args:    noArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			inv, err := ctx.fetchAgentInventory(cmd.Context())
+			inv, err := ctx.fetchAgentInventory(cmd.Context(), opts.refresh)
 			if err != nil {
 				return err
 			}
@@ -80,9 +80,7 @@ func newAgentListCommand(ctx *commandContext) *cobra.Command {
 			return writeAgentList(cmd, inv)
 		},
 	}
-	cmd.Flags().BoolVar(&opts.refresh, "refresh", false, "Deprecated: readiness is always ensured before listing")
-	_ = cmd.Flags().MarkHidden("refresh")
-	_ = cmd.Flags().MarkDeprecated("refresh", "readiness is always ensured before listing")
+	cmd.Flags().BoolVar(&opts.refresh, "refresh", false, "Force fresh local install and auth checks before listing")
 	cmd.Flags().BoolVar(&opts.json, "json", false, "Output raw agent catalog JSON")
 	return cmd
 }

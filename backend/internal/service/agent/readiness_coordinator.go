@@ -168,6 +168,26 @@ func (c *readinessCoordinator) EnsureInstallation(ctx context.Context, agentIDs 
 	return c.ensure(ctx, agentIDs, purpose, readinessInvalidateInstallation)
 }
 
+// Force invalidates the requested observations before ensuring them. It is
+// reserved for explicit refresh actions; ordinary callers should use Ensure so
+// they benefit from the coordinator's freshness policy.
+func (c *readinessCoordinator) Force(ctx context.Context, agentIDs []string, purpose domain.AgentReadinessPurpose) ([]domain.AgentReadinessSnapshot, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if !purpose.Valid() {
+		return nil, fmt.Errorf("invalid readiness purpose %q", purpose)
+	}
+	ids, err := c.normalizeIDs(agentIDs)
+	if err != nil {
+		return nil, err
+	}
+	for _, id := range ids {
+		c.Invalidate(id, readinessInvalidateAll)
+	}
+	return c.ensure(ctx, ids, purpose, readinessInvalidateAll)
+}
+
 // FindInstalled returns as soon as one bounded installation-only ensure
 // confirms a harness. Checks already in progress remain shared and continue
 // under the daemon context after this caller stops waiting.
@@ -181,46 +201,24 @@ func (c *readinessCoordinator) FindInstalled(ctx context.Context, purpose domain
 	}
 	waitCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	jobs := make(chan string)
 	matches := make(chan domain.AgentReadinessSnapshot, 1)
 	done := make(chan struct{})
-	workers := min(c.workers, len(ids))
 	var wg sync.WaitGroup
-	wg.Add(workers)
-	for range workers {
-		go func() {
+	wg.Add(len(ids))
+	for _, id := range ids {
+		go func(id string) {
 			defer wg.Done()
-			for {
-				select {
-				case <-waitCtx.Done():
-					return
-				case id, ok := <-jobs:
-					if !ok {
-						return
-					}
-					snapshot, ensureErr := c.ensureOne(waitCtx, id, purpose, readinessInvalidateInstallation, true)
-					if ensureErr == nil && snapshot.Installation.State == domain.AgentInstallationInstalled {
-						select {
-						case matches <- snapshot:
-							cancel()
-						case <-waitCtx.Done():
-						}
-						return
-					}
-				}
-			}
-		}()
-	}
-	go func() {
-		defer close(jobs)
-		for _, id := range ids {
-			select {
-			case jobs <- id:
-			case <-waitCtx.Done():
+			snapshot, ensureErr := c.ensureOne(waitCtx, id, purpose, readinessInvalidateInstallation, true)
+			if ensureErr != nil || snapshot.Installation.State != domain.AgentInstallationInstalled {
 				return
 			}
-		}
-	}()
+			select {
+			case matches <- snapshot:
+				cancel()
+			case <-waitCtx.Done():
+			}
+		}(id)
+	}
 	go func() {
 		wg.Wait()
 		close(done)
@@ -343,7 +341,7 @@ func (c *readinessCoordinator) ensureOne(ctx context.Context, id string, purpose
 	entry.checking = needed
 	started := c.now()
 	c.mu.Unlock()
-	go c.runCheck(id, purpose, needed, presenceOnly, call, started)
+	go c.runCheck(id, purpose, needed, presenceOnly, requested&readinessInvalidateAuthentication != 0, call, started)
 
 	select {
 	case <-call.done:
@@ -379,12 +377,18 @@ func isReadinessFailureCode(code string) bool {
 	}
 }
 
-func (c *readinessCoordinator) runCheck(id string, purpose domain.AgentReadinessPurpose, needed readinessInvalidation, presenceOnly bool, call *readinessCall, started time.Time) {
+func (c *readinessCoordinator) runCheck(id string, purpose domain.AgentReadinessPurpose, needed readinessInvalidation, presenceOnly, includeAuthentication bool, call *readinessCall, started time.Time) {
 	item, ok := c.freshAgent(id)
 	install := domain.AgentInstallationObservation{}
 	auth := domain.AgentAuthenticationObservation{}
 	installFailed := false
 	authFailed := false
+	previousInstallState := domain.AgentInstallationUnknown
+	if needed&readinessInvalidateInstallation != 0 {
+		c.mu.Lock()
+		previousInstallState = c.entries[id].snapshot.Installation.State
+		c.mu.Unlock()
+	}
 	if !ok {
 		now := c.now()
 		install = failedInstallation(now, domain.AgentReadinessReasonInstallCheckFailed, "Installation check failed.")
@@ -392,6 +396,9 @@ func (c *readinessCoordinator) runCheck(id string, purpose domain.AgentReadiness
 	} else {
 		if needed&readinessInvalidateInstallation != 0 {
 			install, installFailed = c.checkInstallation(item, presenceOnly)
+			if includeAuthentication && !presenceOnly && !installFailed && install.State == domain.AgentInstallationInstalled && previousInstallState != domain.AgentInstallationInstalled {
+				needed |= readinessInvalidateAuthentication
+			}
 		}
 		if !installFailed {
 			state := install.State

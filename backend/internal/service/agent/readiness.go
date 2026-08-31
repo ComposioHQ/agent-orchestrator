@@ -140,18 +140,20 @@ func (s *Service) List(ctx context.Context) (Inventory, error) {
 	return projectInventory(readiness.Agents), nil
 }
 
-// Refresh is the legacy projection of a batch display ensure. The coordinator
-// decides freshness and coalesces native work.
+// Refresh is the legacy projection of an explicit forced display refresh.
 func (s *Service) Refresh(ctx context.Context) (Inventory, error) {
-	readiness, err := s.EnsureReadiness(ctx, nil, domain.AgentReadinessPurposeDisplay)
+	items, err := s.readiness.Force(ctx, nil, domain.AgentReadinessPurposeDisplay)
+	if err != nil {
+		return Inventory{}, err
+	}
+	readiness, err := s.withReadinessUsage(ctx, items)
 	if err != nil {
 		return Inventory{}, err
 	}
 	return projectInventory(readiness.Agents), nil
 }
 
-// RefreshFresh is retained for the system-check compatibility boundary. It no
-// longer forces freshness; all freshness policy belongs to the coordinator.
+// RefreshFresh is retained for the system-check compatibility boundary.
 func (s *Service) RefreshFresh(ctx context.Context) (Inventory, error) {
 	return s.Refresh(ctx)
 }

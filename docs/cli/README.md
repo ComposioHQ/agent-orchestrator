@@ -44,7 +44,7 @@ Every product command resolves to a daemon HTTP route. Run `ao <command>
 | `ao project set-config <id>`        | `PUT /api/v1/projects/{id}/config`             |
 | `ao project rm <id>`                | `DELETE /api/v1/projects/{id}`                 |
 | `ao agent ls`                       | `POST /api/v1/agents/readiness/ensure` (`display`) |
-| `ao agent ls --refresh`             | Deprecated hidden alias; same display ensure  |
+| `ao agent ls --refresh`             | `POST /api/v1/agents/refresh` (forced checks) |
 | `ao spawn`                          | Targeted launch ensure, then `POST /api/v1/sessions` |
 | `ao session ls`                     | `GET /api/v1/sessions`                         |
 | `ao session get <id>`               | `GET /api/v1/sessions/{id}`                    |

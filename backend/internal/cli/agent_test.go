@@ -44,12 +44,17 @@ func TestAgentListRefreshAndStatuses(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		appendPrimaryRequest(&requests, r)
 		w.Header().Set("Content-Type", "application/json")
-		if r.Method == http.MethodPost && r.URL.Path == "/api/v1/agents/readiness/ensure" {
-			_, _ = io.WriteString(w, `{"agents":[`+
-				`{"id":"aider","label":"Aider","installation":{"state":"installed"},"authentication":{"state":"unauthorized"},"effectiveReadiness":"not_ready","usageCount":0},`+
-				`{"id":"codex","label":"Codex","installation":{"state":"installed"},"authentication":{"state":"authorized"},"effectiveReadiness":"ready","usageCount":0},`+
-				`{"id":"goose","label":"Goose","installation":{"state":"installed"},"authentication":{"state":"unknown"},"effectiveReadiness":"unknown","usageCount":0},`+
-				`{"id":"opencode","label":"OpenCode","installation":{"state":"not_installed"},"authentication":{"state":"unknown"},"effectiveReadiness":"not_ready","usageCount":0}]}`)
+		if r.Method == http.MethodPost && r.URL.Path == "/api/v1/agents/refresh" {
+			_, _ = io.WriteString(w, `{"supported":[`+
+				`{"id":"aider","label":"Aider","authStatus":"unauthorized"},`+
+				`{"id":"codex","label":"Codex","authStatus":"authorized"},`+
+				`{"id":"goose","label":"Goose","authStatus":"unknown"},`+
+				`{"id":"opencode","label":"OpenCode","authStatus":"unknown"}],`+
+				`"installed":[`+
+				`{"id":"aider","label":"Aider","authStatus":"unauthorized"},`+
+				`{"id":"codex","label":"Codex","authStatus":"authorized"},`+
+				`{"id":"goose","label":"Goose","authStatus":"unknown"}],`+
+				`"authorized":[{"id":"codex","label":"Codex","authStatus":"authorized"}]}`)
 			return
 		}
 		http.NotFound(w, r)
@@ -66,7 +71,7 @@ func TestAgentListRefreshAndStatuses(t *testing.T) {
 			t.Fatalf("output missing %q:\n%s", want, out)
 		}
 	}
-	want := []string{"POST /api/v1/agents/readiness/ensure"}
+	want := []string{"POST /api/v1/agents/refresh"}
 	if !reflect.DeepEqual(requests, want) {
 		t.Fatalf("requests=%#v want %#v", requests, want)
 	}

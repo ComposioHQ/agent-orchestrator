@@ -198,7 +198,14 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 	return cmd
 }
 
-func (c *commandContext) fetchAgentInventory(ctx context.Context) (agentInventory, error) {
+func (c *commandContext) fetchAgentInventory(ctx context.Context, refresh bool) (agentInventory, error) {
+	if refresh {
+		var inventory agentInventory
+		if err := c.postJSON(ctx, "agents/refresh", struct{}{}, &inventory); err != nil {
+			return agentInventory{}, err
+		}
+		return inventory, nil
+	}
 	readiness, err := c.ensureAgentReadiness(ctx, nil, "display")
 	if err != nil {
 		return agentInventory{}, err
