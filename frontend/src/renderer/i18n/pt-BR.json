@@ -670,6 +670,7 @@
 	"settings.codexProfiles.count_one": "{{count}} conta",
 	"settings.codexProfiles.count_many": "{{count}} contas",
 	"settings.codexProfiles.count_other": "{{count}} contas",
+	"settings.codexProfiles.count_many": "{{count}} contas",
 	"settings.codexProfiles.existing": "Existente",
 	"settings.codexProfiles.label": "Nome da conta",
 	"settings.codexProfiles.labelPlaceholder": "Trabalho",
