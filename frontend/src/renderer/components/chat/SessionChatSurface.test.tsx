@@ -84,17 +84,19 @@ vi.mock("./ChatWorkspace", async () => {
 	return {
 		ChatWorkspace: ({
 			agentInputDisabled,
+			headerActions,
+			sessionTabAction,
 			newWorkDisabled,
 			onLinkOpen,
 			snapshot,
-			switchAgentControl,
 			shellTarget,
 		}: {
 			agentInputDisabled?: boolean;
+			headerActions?: ReactNode;
+			sessionTabAction?: ReactNode;
 			newWorkDisabled?: boolean;
 			onLinkOpen?: (url: string) => void;
 			snapshot: { sessionId?: string };
-			switchAgentControl?: ReactNode;
 			shellTarget?: { handleId: string };
 		}) => {
 			const [mountedSessionId] = useState(snapshot.sessionId);
@@ -110,33 +112,17 @@ vi.mock("./ChatWorkspace", async () => {
 					/>
 					{snapshot.sessionId ? <div>Mounted {mountedSessionId}</div> : null}
 					{snapshot.sessionId ? <div>Rendered {snapshot.sessionId}</div> : null}
+					{headerActions}
+					{sessionTabAction}
 					<button type="button" onClick={() => onLinkOpen?.(LINK)}>
 						Open chat link
 					</button>
 					{shellTarget ? <div data-testid="shell-target">{shellTarget.handleId}</div> : null}
-					{switchAgentControl}
 				</div>
 			);
 		},
 	};
 });
-
-vi.mock("../TerminalSwitchAgentButton", () => ({
-	TerminalSwitchAgentButton: ({
-		disabled,
-		presentation,
-	}: {
-		disabled?: boolean;
-		presentation?: { outcome: string };
-	}) => (
-		<button
-			aria-label="Switch agent"
-			data-outcome={presentation?.outcome}
-			disabled={disabled || presentation?.outcome === "in_progress"}
-			type="button"
-		/>
-	),
-}));
 
 import { SessionChatSurface } from "./SessionChatSurface";
 
@@ -388,22 +374,25 @@ describe("SessionChatSurface link routing", () => {
 		await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: workspaceQueryKey }));
 	});
 
-	// The chat surface offers the same in-place agent switch the terminal pane's
-	// tab strip does (#4033): the control must be reachable without leaving chat.
-	it("offers the in-place agent switch inside the chat surface", () => {
+	// SessionView owns the switch-agent control on the primary session tab; the chat
+	// surface forwards it into ChatWorkspace.
+	it("forwards session tab actions into the chat workspace", () => {
 		const queryClient = new QueryClient({
 			defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
 		});
 		render(
 			<Wrapper client={queryClient}>
-				<SessionChatSurface session={session} />
+				<SessionChatSurface
+					session={session}
+					sessionTabAction={<button type="button">Session actions</button>}
+				/>
 			</Wrapper>,
 		);
 
-		expect(screen.getByRole("button", { name: "Switch agent" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Session actions" })).toBeInTheDocument();
 	});
 
-	it("fences new work and agent switching without applying the decision-blocking agent lock", () => {
+	it("fences new work without applying the decision-blocking agent lock", () => {
 		const queryClient = new QueryClient({
 			defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
 		});
@@ -415,7 +404,6 @@ describe("SessionChatSurface link routing", () => {
 
 		expect(screen.getByTestId("chat-agent-input")).toHaveAttribute("data-disabled", "false");
 		expect(screen.getByTestId("chat-new-work")).toHaveAttribute("data-disabled", "true");
-		expect(screen.getByRole("button", { name: "Switch agent" })).toBeDisabled();
 	});
 
 	it.each([
@@ -431,7 +419,7 @@ describe("SessionChatSurface link routing", () => {
 			"recovery",
 			false,
 		],
-	] as const)("restores durable %s presentation and locks Chat input after reload", async (_name, overrides, outcome, buttonDisabled) => {
+	] as const)("restores durable %s presentation and locks Chat input after reload", async (_name, overrides, outcome, _buttonDisabled) => {
 		agentSwitchState.data = [
 			{
 				agentHandoffStatus: "not_attempted",
@@ -452,9 +440,6 @@ describe("SessionChatSurface link routing", () => {
 		await waitFor(() => {
 			expect(screen.getByTestId("chat-agent-switch-status")).toHaveAttribute("data-outcome", outcome);
 		});
-		const button = screen.getByRole("button", { name: "Switch agent" });
-		if (buttonDisabled) expect(button).toBeDisabled();
-		else expect(button).toBeEnabled();
 		expect(screen.getByTestId("chat-agent-input")).toHaveAttribute("data-disabled", "true");
 		expect(screen.getByTestId("chat-agent-switch-status")).toHaveAttribute("data-outcome", outcome);
 		if (outcome === "in_progress") {
@@ -523,9 +508,6 @@ describe("SessionChatSurface link routing", () => {
 
 		expect(screen.queryByTestId("chat-agent-switch-status")).not.toBeInTheDocument();
 		expect(screen.getByTestId("chat-agent-input")).toHaveAttribute("data-disabled", "false");
-		expect(screen.getByRole("button", { name: "Switch agent" })).not.toHaveAttribute(
-			"data-outcome",
-		);
 	});
 
 	it("keeps failure visible until a retry settles, then ignores a later controller stop", async () => {
@@ -576,17 +558,9 @@ describe("SessionChatSurface link routing", () => {
 		expect(screen.getByTestId("chat-agent-switch-status")).toHaveTextContent(
 			"Target agent is not installed",
 		);
-		expect(screen.getByRole("button", { name: "Switch agent" })).toHaveAttribute(
-			"data-outcome",
-			"failure",
-		);
 
 		await user.click(screen.getByRole("button", { name: "Close" }));
 		expect(screen.queryByTestId("chat-agent-switch-status")).not.toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "Switch agent" })).toHaveAttribute(
-			"data-outcome",
-			"failure",
-		);
 
 		const retrySwitch = {
 			agentHandoffStatus: "not_attempted",
@@ -627,10 +601,6 @@ describe("SessionChatSurface link routing", () => {
 			</Wrapper>,
 		);
 
-		expect(screen.getByRole("button", { name: "Switch agent" })).toHaveAttribute(
-			"data-outcome",
-			"success",
-		);
 		expect(screen.getByTestId("chat-agent-switch-status")).toHaveAttribute(
 			"data-outcome",
 			"success",
@@ -649,17 +619,10 @@ describe("SessionChatSurface link routing", () => {
 			"success",
 		);
 		expect(screen.getByTestId("chat-agent-input")).toHaveAttribute("data-disabled", "false");
-		expect(screen.getByRole("button", { name: "Switch agent" })).toHaveAttribute(
-			"data-outcome",
-			"success",
-		);
 
 		act(() => vi.advanceTimersByTime(3_000));
 		expect(screen.queryByTestId("chat-agent-switch-status")).not.toBeInTheDocument();
 		expect(screen.getByTestId("chat-agent-input")).toHaveAttribute("data-disabled", "false");
-		expect(screen.getByRole("button", { name: "Switch agent" })).not.toHaveAttribute(
-			"data-outcome",
-		);
 	});
 
 	it("keeps a selected shell renderable when the conversation is unavailable", () => {

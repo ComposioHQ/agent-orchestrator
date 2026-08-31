@@ -1146,11 +1146,54 @@ describe("XtermTerminal", () => {
 
 	it("does not forward raw xterm data/control bytes as user input", () => {
 		const onInput = vi.fn();
-		render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);
+		render(
+			<XtermTerminal
+				theme="dark"
+				supportsCursorColorScheme
+				onReady={(terminal) => terminal.onUserInput(onInput)}
+			/>,
+		);
 
-		expect(state.lastTerminal!.dataListeners.size).toBe(0);
+		// One onData hook exists for OSC 10/11/12 color replies (Cursor theme probes).
+		expect(state.lastTerminal!.dataListeners.size).toBe(1);
 		state.lastTerminal!.dataListeners.forEach((listener) => listener("\x1b[A"));
 		expect(onInput).not.toHaveBeenCalled();
+
+		state.lastTerminal!.dataListeners.forEach((listener) =>
+			listener("\x1b]11;rgb:f5f5/f5f5/f4f4\x07"),
+		);
+		expect(onInput).toHaveBeenCalledWith("\x1b]11;rgb:f5f5/f5f5/f4f4\x07", "protocol");
+	});
+
+	it("does not install Cursor protocol handling for generic terminals", () => {
+		const onInput = vi.fn();
+		render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);
+
+		state.lastTerminal!.dataListeners.forEach((listener) =>
+			listener("\x1b]11;rgb:f5f5/f5f5/f4f4\x07"),
+		);
+		expect(onInput).not.toHaveBeenCalled();
+	});
+
+	it("updates protocol handling when a retained terminal becomes a Cursor terminal", () => {
+		const onInput = vi.fn();
+		const { rerender } = render(
+			<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />,
+		);
+		onInput.mockClear();
+		rerender(
+			<XtermTerminal
+				theme="dark"
+				supportsCursorColorScheme
+				onReady={(terminal) => terminal.onUserInput(onInput)}
+			/>,
+		);
+		onInput.mockClear();
+		state.lastTerminal!.dataListeners.forEach((listener) =>
+			listener("\x1b]11;rgb:f5f5/f5f5/f4f4\x07"),
+		);
+
+		expect(onInput).toHaveBeenCalledWith("\x1b]11;rgb:f5f5/f5f5/f4f4\x07", "protocol");
 	});
 
 	it("translates wheel motion into SGR wheel reports for zellij scrollback", () => {

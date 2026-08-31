@@ -36,11 +36,15 @@ const {
 	checkUpdateMock,
 	cloudGateState,
 	cloudSessionState,
+	compactRailCanGoBack,
+	compactRailCanGoForward,
 	dragEnds,
 	dragOvers,
 	dragStarts,
 	downloadUpdateMock,
 	getMock,
+	historyBackMock,
+	historyForwardMock,
 	navigateMock,
 	mockParams,
 	renameSessionMock,
@@ -69,6 +73,10 @@ const {
 		downloadUpdateMock: vi.fn(),
 		checkUpdateMock: vi.fn(),
 		commandPaletteEnabled: { current: true },
+		compactRailCanGoBack: { current: false },
+		compactRailCanGoForward: { current: false },
+		historyBackMock: vi.fn(),
+		historyForwardMock: vi.fn(),
 	}),
 );
 
@@ -100,16 +108,35 @@ vi.mock("../hooks/useCommandPaletteEnabled", () => ({
 	useCommandPaletteEnabled: () => commandPaletteEnabled.current,
 }));
 
+vi.mock("../lib/platform", () => ({
+	isLinuxPlatform: () => false,
+	isMacPlatform: () => true,
+	isWindowsPlatform: () => false,
+}));
+
 vi.mock("@tanstack/react-router", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("@tanstack/react-router")>();
 	return {
 		...actual,
+		useCanGoBack: () => compactRailCanGoBack.current,
 		useNavigate: () => navigateMock,
 		useParams: () => ({ ...mockParams }),
+		useRouter: () => ({
+			history: {
+				back: historyBackMock,
+				forward: historyForwardMock,
+				location: { state: { __TSR_index: 0 } },
+				subscribe: vi.fn(() => () => undefined),
+			},
+		}),
 		useRouterState: ({ select }: { select: (state: { location: { pathname: string } }) => unknown }) =>
 			select({ location: { pathname: "/" } }),
 	};
 });
+
+vi.mock("./TitlebarNav", () => ({
+	useCanGoForward: () => compactRailCanGoForward.current,
+}));
 
 vi.mock("../lib/bridge", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("../lib/bridge")>();
@@ -212,6 +239,7 @@ function renderSidebar({
 	workspaces = [workspace],
 	initialOpen = true,
 	autoCompact = false,
+	topbarOffset = "toolbar",
 	expandedProjectIds,
 }: {
 	onCloneProject?: CloneProjectHandler;
@@ -222,6 +250,7 @@ function renderSidebar({
 	workspaces?: WorkspaceSummary[];
 	initialOpen?: boolean;
 	autoCompact?: boolean;
+	topbarOffset?: "toolbar" | "titlebar" | "trafficLights" | "session";
 	expandedProjectIds?: string[];
 } = {}) {
 	// Most legacy sidebar tests exercise session rows and assume their fixture
@@ -254,6 +283,7 @@ function renderSidebar({
 			<SidebarProvider defaultOpen={initialOpen}>
 				<Sidebar
 					autoCompact={autoCompact}
+					topbarOffset={topbarOffset}
 					onCloneProject={onCloneProject}
 					onCreateProject={onCreateProject}
 					onInitializeProject={onInitializeProject}
@@ -319,6 +349,8 @@ beforeEach(() => {
 	dragStarts.clear();
 	document.documentElement.style.removeProperty("--ao-sidebar-w");
 	commandPaletteEnabled.current = true;
+	compactRailCanGoBack.current = false;
+	compactRailCanGoForward.current = false;
 	cloudGateState.cloudEnabled = true;
 	cloudGateState.localEnabled = true;
 	cloudGateState.client = "";
@@ -327,6 +359,8 @@ beforeEach(() => {
 	cloudSessionState.status = "unauthenticated";
 	cloudSessionState.signIn.mockReset();
 	cloudSessionState.signOut.mockReset().mockResolvedValue(undefined);
+	historyBackMock.mockReset();
+	historyForwardMock.mockReset();
 	useUiStore.setState({ isCommandPaletteOpen: false, settingsModal: null });
 	getMock.mockReset();
 	getMock.mockResolvedValue({
@@ -1588,14 +1622,35 @@ describe("Sidebar", () => {
 		expect(document.documentElement.style.getPropertyValue("--ao-sidebar-w")).toBe(`${SIDEBAR_MIN_WIDTH}px`);
 	});
 
-	it("keeps an icon navigation rail when workspace pressure compacts the sidebar", () => {
-		renderSidebar({ autoCompact: true, initialOpen: false });
+	it("keeps the compact icon rail below the macOS traffic-light band", () => {
+		renderSidebar({ autoCompact: true, initialOpen: false, topbarOffset: "trafficLights" });
 
 		const sidebar = document.querySelector('[data-slot="sidebar"][data-state="collapsed"]');
 		expect(sidebar).toHaveAttribute("data-collapsible", "icon");
+		const compactToggle = document.querySelector('[data-slot="sidebar-header"] button[aria-label="Expand sidebar"]');
+		expect(compactToggle).toBeInTheDocument();
+		expect(compactToggle?.querySelector("svg")).toBeInTheDocument();
+		expect(screen.queryByText("Connect Mobile")).not.toBeVisible();
+		expect(screen.queryByText("Settings")).not.toBeVisible();
+		expect(document.querySelector('[data-slot="sidebar-container"]')).toHaveAttribute(
+			"data-topbar-offset",
+			"trafficLights",
+		);
 		expect(document.querySelector('[data-slot="sidebar-gap"]')).toHaveStyle({
 			width: "var(--sidebar-width-icon)",
 		});
+	});
+
+	it("keeps back and forward accessible from the compact rail on macOS/Linux", async () => {
+		compactRailCanGoBack.current = true;
+		compactRailCanGoForward.current = true;
+		renderSidebar({ autoCompact: true, initialOpen: false, topbarOffset: "trafficLights" });
+
+		await userEvent.click(screen.getByRole("button", { name: "Go back" }));
+		await userEvent.click(screen.getByRole("button", { name: "Go forward" }));
+
+		expect(historyBackMock).toHaveBeenCalledTimes(1);
+		expect(historyForwardMock).toHaveBeenCalledTimes(1);
 	});
 
 	it("flushes any queued rAF frame on pointer-up and persists the clamped width", async () => {

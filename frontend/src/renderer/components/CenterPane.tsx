@@ -22,6 +22,7 @@ import {
 	useAgentSwitches,
 } from "../hooks/useAgentSwitches";
 import { useObservedAgentSwitchLifecycle } from "../hooks/useObservedAgentSwitchLifecycle";
+import { useTabScrollEdges } from "../hooks/useTabScrollEdges";
 import { useSwitchAgentState } from "../hooks/useSwitchAgent";
 import { useTruncatedText } from "../hooks/useTruncatedText";
 import type { ShellTerminal } from "../hooks/useShellTerminals";
@@ -46,9 +47,9 @@ import {
 import { AgentAvatar } from "./AgentAvatar";
 import { AgentSwitchProgressTrack } from "./AgentSwitchProgressTrack";
 import { ShellTerminalTab } from "./ShellTerminalTab";
+import { TerminalTabFrame } from "./TerminalTabFrame";
 import { TerminalPane } from "./TerminalPane";
 import { SessionTopbarPortal } from "./SessionTopbarPortal";
-import { TerminalSwitchAgentButton } from "./TerminalSwitchAgentButton";
 
 type CenterPaneProps = {
 	session?: WorkspaceSession;
@@ -63,8 +64,13 @@ type CenterPaneProps = {
 	onSelectShellTerminal?: (handleId: string) => void;
 	onCloseShellTerminal?: (handleId: string) => void;
 	onRenameShellTerminal?: (handleId: string, title: string) => void;
-	/** Session actions consolidated into the terminal bar by SessionView. */
+	/** Workspace-level controls (e.g. shell topbar) rendered beside the tab strip. */
 	topbarActions?: ReactNode;
+	/** Agent-session actions (interface switch, handoff) on the primary session tab. */
+	sessionTabAction?: ReactNode;
+	/** Pinned beside the tab strip, before the workspace topbar actions. */
+	tabStripAction?: ReactNode;
+	handoffDialogOpen?: boolean;
 	workspaceTabs?: ReactNode;
 	workspaceFileActive?: boolean;
 	/** Stop forwarding the agent pane's keystrokes while its controller drains. */
@@ -131,20 +137,20 @@ export function CenterPane({
 	onCloseShellTerminal,
 	onRenameShellTerminal,
 	topbarActions,
+	sessionTabAction,
+	tabStripAction,
+	handoffDialogOpen = false,
 	workspaceTabs,
 	workspaceFileActive = false,
 	agentInputDisabled = false,
 }: CenterPaneProps) {
 	const { t } = useTranslation();
 	const paneRef = useRef<HTMLDivElement | null>(null);
-	const tabsOverflowRef = useRef<HTMLDivElement | null>(null);
 	const wheelZoomRemainderRef = useRef(0);
 	const lastWheelZoomAtRef = useRef(0);
 	const [fontSize, setFontSize] = useState(initialTerminalFontSize);
 	const [isFullscreen, setIsFullscreen] = useState(false);
 	const [terminalBounds, setTerminalBounds] = useState({ leftInset: 0, rightInset: 0, width: 0 });
-	const [switchSelectorOpen, setSwitchSelectorOpen] = useState(false);
-	const [switchSelectorContainer, setSwitchSelectorContainer] = useState<HTMLDivElement | null>(null);
 	const [terminalOrder, setTerminalOrder] = useState<TerminalOrder | null>(null);
 	const isSidebarOpen = useUiStore(sidebarOccupiesLayout);
 	const sessionId = session?.id;
@@ -176,6 +182,13 @@ export function CenterPane({
 		return [...ordered, ...byKey.values()];
 	}, [auxiliaryTerminals, sessionId, terminalOrder]);
 	const tabOverflowWatch = `${sessionId ?? ""}|${availableAuxiliaryKeys.join("|")}`;
+	const {
+		scrollRef: tabsOverflowRef,
+		scrollToEnd: scrollTabsToEnd,
+		showLeftFade,
+		showRightFade,
+	} = useTabScrollEdges([tabOverflowWatch]);
+	const previousShellCountRef = useRef(shellTerminals.length);
 	const agentSwitchesQuery = useAgentSwitches(session?.id ?? "");
 	const agentSwitches = agentSwitchesQuery.data ?? [];
 	const switchMutation = useSwitchAgentState(session?.id ?? "");
@@ -264,7 +277,7 @@ export function CenterPane({
 		presentation?.lockAgentTerminal && !presentation.allowSourceInput,
 	);
 	const workerInputDisabled =
-		target.kind === "worker" && (agentInputDisabled || switchLocksWorkerInput || switchSelectorOpen);
+		target.kind === "worker" && (agentInputDisabled || switchLocksWorkerInput || handoffDialogOpen);
 	const shownPresentation =
 		presentation?.outcome === "failure" && dismissedFailureSwitchId === agentSwitch?.id
 			? undefined
@@ -274,12 +287,10 @@ export function CenterPane({
 				: undefined
 			: presentation ?? displayedSuccessNotice?.presentation;
 	const shownAgentSwitch = agentSwitch ?? displayedSuccessNotice?.agentSwitch;
-	const switchControlPresentation =
-		presentation ?? displayedSuccessNotice?.presentation;
 	const sessionTabLabel = session
 		? isOrchestratorSession(session)
 			? t("shell.orchestrator")
-			: agentLabel(session.provider)
+			: session.title
 		: t("terminal.noSession");
 	const activeTerminalLabel =
 		target.kind === "shell"
@@ -287,10 +298,6 @@ export function CenterPane({
 			: target.kind === "reviewer"
 				? `${t("terminal.reviewer")} · ${target.harness}`
 				: (session?.title ?? sessionTabLabel);
-	useEffect(() => {
-		setSwitchSelectorOpen(false);
-	}, [session?.id]);
-
 	const reorderAuxiliaryTerminals = useCallback(
 		(nextKeys: string[]) => {
 			if (!sessionId) return;
@@ -431,6 +438,11 @@ export function CenterPane({
 	}, [isFullscreen, tabOverflowWatch]);
 
 	useEffect(() => {
+		if (shellTerminals.length > previousShellCountRef.current) scrollTabsToEnd();
+		previousShellCountRef.current = shellTerminals.length;
+	}, [scrollTabsToEnd, shellTerminals.length]);
+
+	useEffect(() => {
 		const activeKey =
 			target.kind === "shell"
 				? target.handleId
@@ -530,7 +542,7 @@ export function CenterPane({
 			<div className="session-topbar-surface flex min-w-0 flex-1" data-testid="session-workspace-topbar">
 				<div
 					className={cn(
-						"flex min-w-0 shrink items-center pr-3",
+						"flex min-w-0 shrink items-stretch",
 						!isFullscreen && !isSidebarOpen && isMac && "session-topbar-titlebar-clearance-mac",
 						!isFullscreen && !isSidebarOpen && isLinux && "session-topbar-titlebar-clearance-linux",
 					)}
@@ -541,87 +553,83 @@ export function CenterPane({
 				>
 					<div
 							aria-label={t("terminal.tabsAria")}
-							className="flex h-full min-w-0 flex-1 items-center"
+							className="flex h-full min-w-0 flex-1 items-stretch"
 							onKeyDown={handleTerminalTabListKeyDown}
 							role="tablist"
 						>
-							{/* The owning session is permanent and never participates in overflow or reordering. */}
-							{session ? (
-				<SessionPaneTab
-									isActive={target.kind === "worker" && !workspaceFileActive}
-					label={sessionTabLabel}
-					onSelect={onSelectSessionTerminal}
-					session={session}
-				/>
-							) : (
-								<SessionPaneTab isActive={target.kind === "worker"} label={sessionTabLabel} />
-							)}
-							<div
-								ref={tabsOverflowRef}
-								className="scrollbar-none flex min-w-flex-min flex-1 self-stretch items-center overflow-x-auto"
-							>
-								<Reorder.Group
-									as="div"
-									axis="x"
-									className="flex self-stretch"
-									onReorder={reorderAuxiliaryTerminals}
-									values={orderedAuxiliaryTerminals.map((terminal) => terminal.key)}
+							<div className="relative min-w-0 flex-1 self-stretch overflow-hidden">
+								<div
+									ref={tabsOverflowRef}
+									className="session-tab-scroll-region scrollbar-none flex h-full min-w-flex-min min-w-0 items-stretch overflow-x-auto"
 								>
-									{orderedAuxiliaryTerminals.map((terminal) => (
-										<DraggableTerminalTab key={terminal.key} value={terminal.key}>
-											{terminal.kind === "reviewer" ? (
-												<SessionPaneTab
-													appearance="connected"
-													icon={
-														<AgentAvatar
-															provider={terminal.terminal.harness}
-															className="size-terminal-agent-icon"
-															decorative
-														/>
-													}
-													isActive={target.kind === "reviewer"}
-													label={t("terminal.reviewer")}
-													onSelect={() => onSelectReviewerTerminal?.(terminal.terminal)}
-													title={terminal.terminal.harness}
-												/>
-											) : (
-												<ShellTerminalTab
-													appearance="connected"
-													isActive={target.kind === "shell" && target.handleId === terminal.terminal.handleId}
-													onClose={() => onCloseShellTerminal?.(terminal.terminal.handleId)}
-													onRename={
-														onRenameShellTerminal
-															? (title) => onRenameShellTerminal(terminal.terminal.handleId, title)
-															: undefined
-													}
-													onSelect={() => onSelectShellTerminal?.(terminal.terminal.handleId)}
-													shell={terminal.terminal}
-												/>
-											)}
-										</DraggableTerminalTab>
-									))}
-								</Reorder.Group>
-								{workspaceTabs}
+								<div className="flex w-max items-stretch">
+									{/* The owning session scrolls with its auxiliary terminals, but remains fixed in order. */}
+									{session ? (
+										<SessionPaneTab
+											isActive={target.kind === "worker" && !workspaceFileActive}
+											label={sessionTabLabel}
+											onSelect={onSelectSessionTerminal}
+											session={session}
+											tabAction={sessionTabAction}
+										/>
+									) : (
+										<SessionPaneTab isActive={target.kind === "worker"} label={sessionTabLabel} />
+									)}
+									<Reorder.Group
+										as="div"
+										axis="x"
+										className="flex items-stretch self-stretch"
+										onReorder={reorderAuxiliaryTerminals}
+										values={orderedAuxiliaryTerminals.map((terminal) => terminal.key)}
+									>
+										{orderedAuxiliaryTerminals.map((terminal) => (
+											<DraggableTerminalTab key={terminal.key} value={terminal.key}>
+												{terminal.kind === "reviewer" ? (
+													<SessionPaneTab
+														appearance="connected"
+														icon={
+															<AgentAvatar
+																provider={terminal.terminal.harness}
+																className="size-terminal-agent-icon"
+																decorative
+															/>
+														}
+														isActive={target.kind === "reviewer"}
+														label={t("terminal.reviewer")}
+														onSelect={() => onSelectReviewerTerminal?.(terminal.terminal)}
+														title={terminal.terminal.harness}
+													/>
+												) : (
+													<ShellTerminalTab
+														appearance="connected"
+														isActive={target.kind === "shell" && target.handleId === terminal.terminal.handleId}
+														onClose={() => onCloseShellTerminal?.(terminal.terminal.handleId)}
+														onRename={
+															onRenameShellTerminal
+																? (title) => onRenameShellTerminal(terminal.terminal.handleId, title)
+																: undefined
+														}
+																	onSelect={() => onSelectShellTerminal?.(terminal.terminal.handleId)}
+																	shell={terminal.terminal}
+													/>
+												)}
+											</DraggableTerminalTab>
+										))}
+									</Reorder.Group>
+									{workspaceTabs}
+								</div>
+							</div>
+								{showLeftFade ? <div aria-hidden="true" className="session-tab-scroll-fade session-tab-scroll-fade--left" /> : null}
+								{showRightFade ? <div aria-hidden="true" className="session-tab-scroll-fade" /> : null}
 							</div>
 					</div>
 				</div>
 				{isFullscreen ? null : (
 					<div
-						className="ml-auto flex shrink-0 items-center px-3"
+						className="ml-auto flex shrink-0 items-center gap-1 pl-2 pr-3"
 			data-testid="session-action-region"
 		>
-			{session ? (
-				<TerminalSwitchAgentButton
-					key={session.id}
-					agentSwitch={selectedCurrentAgentSwitch}
-					container={switchSelectorContainer}
-					onOpenChange={setSwitchSelectorOpen}
-					open={switchSelectorOpen}
-					presentation={switchControlPresentation}
-					session={session}
-					switchError={switchMutation.error}
-				/>
-			) : null}
+			{tabStripAction ? <div data-testid="session-tab-strip-action">{tabStripAction}</div> : null}
 			{topbarActions}
 					</div>
 				)}
@@ -637,7 +645,6 @@ export function CenterPane({
 		>
 			{isFullscreen ? terminalTopbar : <SessionTopbarPortal>{terminalTopbar}</SessionTopbarPortal>}
 			<div
-				ref={setSwitchSelectorContainer}
 				aria-label={t("terminal.panelAria", { title: activeTerminalLabel })}
 				className="relative min-h-0 flex-1"
 				role="tabpanel"
@@ -664,7 +671,7 @@ export function CenterPane({
 						theme={theme}
 					/>
 				</div>
-				{switchSelectorOpen ? null : shownPresentation && shownAgentSwitch && target.kind === "worker" ? (
+				{handoffDialogOpen ? null : shownPresentation && shownAgentSwitch && target.kind === "worker" ? (
 					<AgentSwitchTerminalOverlay
 						agentSwitch={shownAgentSwitch}
 						onDismiss={
@@ -854,13 +861,15 @@ type SessionPaneTabProps = {
 	session?: WorkspaceSession;
 	icon?: ReactNode;
 	title?: string;
+	/** Session-scoped controls (interface switch, handoff) beside the tab label. */
+	tabAction?: ReactNode;
 };
 
 // Shared tab chrome: the open tab is highlighted with the same rounded
 // background as the inspector rail tabs (Summary · Reviews · Browser), and
 // the full label only becomes the hover tooltip when the tab strip is
 // crowded enough to truncate it.
-function SessionPaneTab({
+export function SessionPaneTab({
 	label,
 	isActive,
 	appearance = "primary",
@@ -868,57 +877,34 @@ function SessionPaneTab({
 	session,
 	icon,
 	title,
+	tabAction,
 }: SessionPaneTabProps) {
 	const { t } = useTranslation();
 	const { ref, isTruncated } = useTruncatedText<HTMLButtonElement>(label);
-	const activity = session ? getAgentActivityView(session.activity, t) : undefined;
-	const activityLabel = activity?.label;
-	const activityTone = activity?.tone;
-	const activityBreathe = activity?.breathe;
+	const activityLabel = session ? getAgentActivityView(session.activity, t).label : undefined;
+	const providerLabel = session ? agentLabel(session.provider) : undefined;
 	const tabIcon = session ? <AgentAvatar className="size-terminal-agent-icon" decorative provider={session.provider} /> : icon;
 	const connected = appearance === "connected";
 	return (
-		<button
-			ref={ref}
-			aria-current={isActive}
-			aria-label={activityLabel ? `${label} · ${activityLabel}` : label}
-			aria-selected={isActive}
+		<TerminalTabFrame
+			action={tabAction ? <span data-testid="session-tab-action">{tabAction}</span> : undefined}
+			active={isActive}
+			buttonProps={{
+				"aria-current": isActive,
+				"aria-label": [label, providerLabel, activityLabel].filter(Boolean).join(" · "),
+				"aria-selected": isActive,
+				onClick: onSelect,
+				role: "tab",
+				tabIndex: isActive ? 0 : -1,
+				title: title ?? (isTruncated ? label : t("terminal.sessionAria")),
+				type: "button",
+			}}
+			buttonRef={ref}
+			className="w-shell-tab-connected min-w-shell-tab-min"
 			data-terminal-role={connected ? undefined : "primary"}
-			className={cn(
-				"group relative inline-flex self-stretch cursor-pointer items-center gap-1.5 truncate text-control leading-none transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent/50",
-				connected
-					? "w-shell-tab-connected min-w-shell-tab-min shrink-0 border-x border-transparent px-2 text-left font-normal"
-					: "min-w-0 max-w-shell-tab-max shrink overflow-hidden border-r border-border bg-surface px-3 font-medium text-foreground",
-				connected
-					? isActive
-						? "border-border-strong bg-overlay text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80"
-						: "text-passive hover:bg-interactive-hover/60 hover:text-foreground"
-					: isActive
-						? "bg-overlay text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80"
-						: "text-muted-foreground hover:bg-raised hover:text-foreground",
-				isActive ? "text-foreground" : "text-passive hover:text-foreground",
-			)}
-			onClick={onSelect}
-			role="tab"
-			tabIndex={isActive ? 0 : -1}
-			title={title ?? (isTruncated ? label : t("terminal.sessionAria"))}
-			type="button"
 		>
 			{tabIcon}
 			<span className="truncate">{label}</span>
-			{activityTone ? (
-				<span
-					aria-hidden="true"
-					className="inline-flex shrink-0 self-center items-center"
-					style={{ color: activityTone }}
-					title={activityLabel}
-				>
-					<span
-						className={cn("size-1.5 rounded-full", activityBreathe && "animate-status-pulse")}
-						style={{ background: activityTone }}
-					/>
-				</span>
-			) : null}
-		</button>
+		</TerminalTabFrame>
 	);
 }

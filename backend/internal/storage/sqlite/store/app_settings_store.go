@@ -38,7 +38,7 @@ func (s *Store) GetAppSettings(ctx context.Context) (AppSettings, error) {
 		// Normalized on read: a value written by a build that knows a mode this
 		// one does not must still resolve to something dispatchable.
 		DefaultSessionMode: domain.NormalizeSessionMode(row.DefaultSessionMode),
-		CloudOffering:      row.CloudOffering,
+		CloudOffering:      row.CloudOffering != 0,
 		UpdatedAt:          row.UpdatedAt,
 	}, nil
 }
@@ -64,7 +64,7 @@ func (s *Store) SetCloudOffering(ctx context.Context, enabled bool, now time.Tim
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	if err := s.qw.SetCloudOffering(ctx, gen.SetCloudOfferingParams{
-		CloudOffering: enabled,
+		CloudOffering: boolInt(enabled),
 		UpdatedAt:     now,
 	}); err != nil {
 		return fmt.Errorf("set cloud offering: %w", err)
