@@ -5,8 +5,10 @@ import (
 	"errors"
 	"io"
 	"log/slog"
-	"runtime"
+	"os"
+	"path/filepath"
 	"reflect"
+	"runtime"
 	"testing"
 	"time"
 
@@ -220,10 +222,15 @@ func newTestServiceWithSessions(rt *fakeShellRuntime, st *fakeShellTerminalStore
 	return svc
 }
 
-func TestOpenCommandTerminalStartsTrustedCommandInDataDir(t *testing.T) {
+func TestOpenCommandTerminalStartsTrustedCommandInDedicatedAuthWorkspace(t *testing.T) {
 	rt := newFakeShellRuntime()
 	st := &fakeShellTerminalStore{}
 	svc := newTestService(rt, st, &fakeProjectRootLocator{})
+	dataDir := t.TempDir()
+	svc.dataDir = dataDir
+	if err := os.WriteFile(filepath.Join(dataDir, "state.db"), []byte("daemon state"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	_, err := svc.OpenCommandTerminal(context.Background(), OpenCommandTerminalInput{
 		Argv:  []string{"pi"},
@@ -236,15 +243,23 @@ func TestOpenCommandTerminalStartsTrustedCommandInDataDir(t *testing.T) {
 	if len(rt.created) != 1 {
 		t.Fatalf("runtime creates = %d, want 1", len(rt.created))
 	}
-	if got := rt.created[0].WorkspacePath; got != "/data/dir" {
-		t.Errorf("workspace path = %q, want daemon data dir", got)
+	authWorkspace := filepath.Join(dataDir, authWorkspaceDirectoryName)
+	if got := rt.created[0].WorkspacePath; got != authWorkspace {
+		t.Errorf("workspace path = %q, want dedicated auth workspace %q", got, authWorkspace)
+	}
+	entries, err := os.ReadDir(authWorkspace)
+	if err != nil {
+		t.Fatalf("read auth workspace: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("auth workspace entries = %v, want an empty workspace", entries)
 	}
 	if got := rt.created[0].Argv; !reflect.DeepEqual(got, []string{"pi"}) {
 		t.Errorf("argv = %#v, want []string{\"pi\"}", got)
 	}
 	wantRecord := ShellTerminalRecord{
 		HandleID:   "shellterm-test1",
-		WorkingDir: "/data/dir",
+		WorkingDir: authWorkspace,
 		Title:      "Log in to Pi",
 		AppRunID:   testAppRunID,
 		CreatedAt:  time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC),
@@ -257,10 +272,29 @@ func TestOpenCommandTerminalStartsTrustedCommandInDataDir(t *testing.T) {
 	}
 }
 
+func TestOpenCommandTerminalDoesNotStartWhenAuthWorkspaceCannotBeCreated(t *testing.T) {
+	rt := newFakeShellRuntime()
+	svc := newTestService(rt, &fakeShellTerminalStore{}, &fakeProjectRootLocator{})
+	dataDir := t.TempDir()
+	blockedPath := filepath.Join(dataDir, "not-a-directory")
+	if err := os.WriteFile(blockedPath, []byte("file"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	svc.dataDir = blockedPath
+
+	if _, err := svc.OpenCommandTerminal(context.Background(), OpenCommandTerminalInput{Argv: []string{"pi"}, Title: "Log in to Pi"}); err == nil {
+		t.Fatal("OpenCommandTerminal succeeded despite an unusable auth workspace root")
+	}
+	if len(rt.created) != 0 {
+		t.Errorf("created = %#v, want no runtime when auth workspace setup fails", rt.created)
+	}
+}
+
 func TestOpenCommandTerminalDestroysRuntimeWhenPersistFails(t *testing.T) {
 	rt := newFakeShellRuntime()
 	st := &fakeShellTerminalStore{insertErr: errors.New("disk full")}
 	svc := newTestService(rt, st, &fakeProjectRootLocator{})
+	svc.dataDir = t.TempDir()
 
 	if _, err := svc.OpenCommandTerminal(context.Background(), OpenCommandTerminalInput{Argv: []string{"pi"}, Title: "Log in to Pi"}); err == nil {
 		t.Fatal("OpenCommandTerminal succeeded despite a failed insert")

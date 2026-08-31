@@ -29,7 +29,7 @@ var plans = []Plan{
 	plan("muse", ActionLogin, "Log in to Muse", []string{"muse", "login"}, "Native login flow", "https://ai.meta.com/llama/"),
 	plan("agy", ActionLogin, "Log in to Agy", []string{"agy"}, "Native first-run browser sign-in", "https://github.com/google-antigravity/antigravity-cli"),
 	plan("autohand", ActionSetup, "Set up Autohand", []string{"autohand"}, "Native first-run sign-in/settings", "https://docs.autohand.ai/working-with-autohand-code/cli"),
-	plan("kimchi", ActionSetup, "Set up Kimchi", []string{"kimchi", "setup"}, "Native setup; run /login in the terminal if needed", "https://www.npmjs.com/package/@kimchi-dev/cli"),
+	plan("kimchi", ActionLogin, "Log in to Kimchi", []string{"kimchi"}, "Run /login in the terminal", "https://docs.kimchi.dev/docs/kimchi-cli"),
 	plan("prime-agent", ActionLogin, "Log in to Prime Agent", []string{"prime-agent"}, "Run /login in the terminal", "https://github.com/PrimeIntellect-ai/prime-agent/blob/main/packages/coding-agent/docs/quickstart.md"),
 	plan("omp", ActionLogin, "Log in to OMP", []string{"omp"}, "Run /login in the terminal", "https://github.com/can1357/oh-my-pi"),
 }

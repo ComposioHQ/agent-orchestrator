@@ -43,7 +43,7 @@ func TestPlansMatchAuthenticationMatrix(t *testing.T) {
 		{"muse", "Log in to Muse", "muse", "Native login flow", "https://ai.meta.com/llama/", "", ActionLogin, []string{"muse", "login"}},
 		{"agy", "Log in to Agy", "agy", "Native first-run browser sign-in", "https://github.com/google-antigravity/antigravity-cli", "", ActionLogin, []string{"agy"}},
 		{"autohand", "Set up Autohand", "autohand", "Native first-run sign-in/settings", "https://docs.autohand.ai/working-with-autohand-code/cli", "", ActionSetup, []string{"autohand"}},
-		{"kimchi", "Set up Kimchi", "kimchi", "Native setup; run /login in the terminal if needed", "https://www.npmjs.com/package/@kimchi-dev/cli", "", ActionSetup, []string{"kimchi", "setup"}},
+		{"kimchi", "Log in to Kimchi", "kimchi", "Run /login in the terminal", "https://docs.kimchi.dev/docs/kimchi-cli", "", ActionLogin, []string{"kimchi"}},
 		{"prime-agent", "Log in to Prime Agent", "prime-agent", "Run /login in the terminal", "https://github.com/PrimeIntellect-ai/prime-agent/blob/main/packages/coding-agent/docs/quickstart.md", "", ActionLogin, []string{"prime-agent"}},
 		{"omp", "Log in to OMP", "omp", "Run /login in the terminal", "https://github.com/can1357/oh-my-pi", "", ActionLogin, []string{"omp"}},
 	}

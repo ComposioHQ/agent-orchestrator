@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -245,16 +247,23 @@ func (s *Service) OpenShellTerminal(ctx context.Context, in OpenShellTerminalInp
 	})
 }
 
+const authWorkspaceDirectoryName = "auth-workspace"
+
 // OpenCommandTerminal opens a daemon-trusted command in a standalone terminal.
-// Unlike OpenShellTerminal, it never receives public HTTP input and always
-// starts in the daemon data directory.
+// Unlike OpenShellTerminal, it never receives public HTTP input. Interactive
+// coding agents start in a dedicated workspace so they cannot mistake the
+// daemon's database/config/runtime directory for a project.
 func (s *Service) OpenCommandTerminal(ctx context.Context, in OpenCommandTerminalInput) (ShellTerminal, error) {
 	if err := validateOpenCommandTerminalInput(in); err != nil {
 		return ShellTerminal{}, err
 	}
+	authWorkspace := filepath.Join(s.dataDir, authWorkspaceDirectoryName)
+	if err := os.MkdirAll(authWorkspace, 0o700); err != nil {
+		return ShellTerminal{}, fmt.Errorf("open command terminal: create auth workspace: %w", err)
+	}
 	return s.openTerminal(ctx, openTerminalConfig{
 		argv:       in.Argv,
-		workingDir: s.dataDir,
+		workingDir: authWorkspace,
 		title:      in.Title,
 	})
 }

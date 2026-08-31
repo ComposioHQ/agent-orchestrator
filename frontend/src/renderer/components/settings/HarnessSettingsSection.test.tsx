@@ -241,6 +241,7 @@ describe("HarnessSettingsSection", () => {
 
 	it("refreshes authentication availability after installation succeeds", async () => {
 		let authPlanRequests = 0;
+		let installStarted = false;
 		let currentCatalog = {
 			supported: [{ id: "codex", label: "Codex" }],
 			installed: [] as typeof catalog.installed,
@@ -257,15 +258,16 @@ describe("HarnessSettingsSection", () => {
 					documentationUrl: "https://example.test/codex",
 				}] } } as never;
 			}
-			if (path === "/api/v1/agents/{agent}/install") {
-				return { data: { target: "codex", status: "succeeded" } } as never;
+			if (path === "/api/v1/agents/install-jobs") {
+				return { data: { jobs: installStarted ? [{ target: "codex", status: "succeeded" }] : [] } } as never;
 			}
 			return { data: undefined } as never;
 		});
 		vi.mocked(apiClient.POST).mockImplementation(async (path) => {
 			if (path === "/api/v1/agents/refresh") return { data: currentCatalog } as never;
 			if (path === "/api/v1/agents/{agent}/install") {
-				return { data: { target: "codex", status: "running" } } as never;
+				installStarted = true;
+				return { data: { target: "codex", status: "installing" } } as never;
 			}
 			if (path === "/api/v1/agents/{agent}/probe") {
 				const agent = { id: "codex", label: "Codex", authStatus: "unknown" };
