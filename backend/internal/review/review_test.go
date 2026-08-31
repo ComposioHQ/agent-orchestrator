@@ -1851,6 +1851,68 @@ func TestAutoTriggerStopsRetryingAfterThreeFailedRunsOnSameHead(t *testing.T) {
 	}
 }
 
+func TestAutoReviewHeadBlockedCapsFailedAutoRetriesPerHeadAndHarness(t *testing.T) {
+	prURL := "https://github.com/o/r/pull/1"
+	harness := domain.ReviewerClaudeCode
+	tests := []struct {
+		name string
+		runs []domain.ReviewRun
+		want bool
+	}{
+		{
+			name: "two failed auto runs do not block",
+			runs: []domain.ReviewRun{
+				{PRURL: prURL, TargetSHA: "sha1", Harness: harness, TriggerSource: domain.ReviewTriggerAuto, Status: domain.ReviewRunFailed},
+				{PRURL: prURL, TargetSHA: "sha1", Harness: harness, TriggerSource: domain.ReviewTriggerAuto, Status: domain.ReviewRunFailed},
+			},
+			want: false,
+		},
+		{
+			name: "three failed auto runs block",
+			runs: []domain.ReviewRun{
+				{PRURL: prURL, TargetSHA: "sha1", Harness: harness, TriggerSource: domain.ReviewTriggerAuto, Status: domain.ReviewRunFailed},
+				{PRURL: prURL, TargetSHA: "sha1", Harness: harness, TriggerSource: domain.ReviewTriggerAuto, Status: domain.ReviewRunFailed},
+				{PRURL: prURL, TargetSHA: "sha1", Harness: harness, TriggerSource: domain.ReviewTriggerAuto, Status: domain.ReviewRunFailed},
+			},
+			want: true,
+		},
+		{
+			name: "other harness does not count toward the cap",
+			runs: []domain.ReviewRun{
+				{PRURL: prURL, TargetSHA: "sha1", Harness: domain.ReviewerCodex, TriggerSource: domain.ReviewTriggerAuto, Status: domain.ReviewRunFailed},
+				{PRURL: prURL, TargetSHA: "sha1", Harness: domain.ReviewerCodex, TriggerSource: domain.ReviewTriggerAuto, Status: domain.ReviewRunFailed},
+				{PRURL: prURL, TargetSHA: "sha1", Harness: domain.ReviewerCodex, TriggerSource: domain.ReviewTriggerAuto, Status: domain.ReviewRunFailed},
+			},
+			want: false,
+		},
+		{
+			name: "other head sha does not count toward the cap",
+			runs: []domain.ReviewRun{
+				{PRURL: prURL, TargetSHA: "old-sha", Harness: harness, TriggerSource: domain.ReviewTriggerAuto, Status: domain.ReviewRunFailed},
+				{PRURL: prURL, TargetSHA: "old-sha", Harness: harness, TriggerSource: domain.ReviewTriggerAuto, Status: domain.ReviewRunFailed},
+				{PRURL: prURL, TargetSHA: "old-sha", Harness: harness, TriggerSource: domain.ReviewTriggerAuto, Status: domain.ReviewRunFailed},
+			},
+			want: false,
+		},
+		{
+			name: "manual failures do not count toward the cap",
+			runs: []domain.ReviewRun{
+				{PRURL: prURL, TargetSHA: "sha1", Harness: harness, TriggerSource: domain.ReviewTriggerManual, Status: domain.ReviewRunFailed},
+				{PRURL: prURL, TargetSHA: "sha1", Harness: harness, TriggerSource: domain.ReviewTriggerManual, Status: domain.ReviewRunFailed},
+				{PRURL: prURL, TargetSHA: "sha1", Harness: harness, TriggerSource: domain.ReviewTriggerManual, Status: domain.ReviewRunFailed},
+			},
+			want: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := autoReviewHeadBlocked(tt.runs, prURL, "sha1", harness); got != tt.want {
+				t.Fatalf("autoReviewHeadBlocked() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestAutoTriggerSkipsCappedFailedHeadButRunsOtherEligiblePRs(t *testing.T) {
 	pr1 := "https://github.com/o/r/pull/1"
 	pr2 := "https://github.com/o/r/pull/2"

@@ -128,6 +128,58 @@ func TestEvaluateSessionEligibility(t *testing.T) {
 	}
 }
 
+func TestExistingHeadReasonCapsFailedAutoRetriesPerHead(t *testing.T) {
+	prURL := "pr1"
+	tests := []struct {
+		name string
+		runs []domain.ReviewRun
+		want string
+	}{
+		{
+			name: "two failed auto runs do not block",
+			runs: []domain.ReviewRun{
+				{PRURL: prURL, TargetSHA: "sha1", Harness: domain.ReviewerCodex, TriggerSource: domain.ReviewTriggerAuto, Status: domain.ReviewRunFailed},
+				{PRURL: prURL, TargetSHA: "sha1", Harness: domain.ReviewerCodex, TriggerSource: domain.ReviewTriggerAuto, Status: domain.ReviewRunFailed},
+			},
+			want: "",
+		},
+		{
+			name: "three failed auto runs hit the retry limit",
+			runs: []domain.ReviewRun{
+				{PRURL: prURL, TargetSHA: "sha1", Harness: domain.ReviewerCodex, TriggerSource: domain.ReviewTriggerAuto, Status: domain.ReviewRunFailed},
+				{PRURL: prURL, TargetSHA: "sha1", Harness: domain.ReviewerCodex, TriggerSource: domain.ReviewTriggerAuto, Status: domain.ReviewRunFailed},
+				{PRURL: prURL, TargetSHA: "sha1", Harness: domain.ReviewerCodex, TriggerSource: domain.ReviewTriggerAuto, Status: domain.ReviewRunFailed},
+			},
+			want: "failed_same_sha_retry_limit",
+		},
+		{
+			name: "other sha does not count",
+			runs: []domain.ReviewRun{
+				{PRURL: prURL, TargetSHA: "old", Harness: domain.ReviewerCodex, TriggerSource: domain.ReviewTriggerAuto, Status: domain.ReviewRunFailed},
+				{PRURL: prURL, TargetSHA: "old", Harness: domain.ReviewerCodex, TriggerSource: domain.ReviewTriggerAuto, Status: domain.ReviewRunFailed},
+				{PRURL: prURL, TargetSHA: "old", Harness: domain.ReviewerCodex, TriggerSource: domain.ReviewTriggerAuto, Status: domain.ReviewRunFailed},
+			},
+			want: "",
+		},
+		{
+			name: "manual failures do not count",
+			runs: []domain.ReviewRun{
+				{PRURL: prURL, TargetSHA: "sha1", Harness: domain.ReviewerCodex, TriggerSource: domain.ReviewTriggerManual, Status: domain.ReviewRunFailed},
+				{PRURL: prURL, TargetSHA: "sha1", Harness: domain.ReviewerCodex, TriggerSource: domain.ReviewTriggerManual, Status: domain.ReviewRunFailed},
+				{PRURL: prURL, TargetSHA: "sha1", Harness: domain.ReviewerCodex, TriggerSource: domain.ReviewTriggerManual, Status: domain.ReviewRunFailed},
+			},
+			want: "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := existingHeadReason(tt.runs, prURL, "sha1"); got != tt.want {
+				t.Fatalf("existingHeadReason() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestEvaluateSessionRoutesSoleRunningReviewThroughEngine(t *testing.T) {
 	now := time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
 	running := domain.ReviewRun{PRURL: "pr1", TargetSHA: "sha1", Harness: domain.ReviewerCodex, Status: domain.ReviewRunRunning, CreatedAt: now}
