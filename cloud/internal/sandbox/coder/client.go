@@ -336,13 +336,27 @@ func (c *Client) BootstrapWorker(ctx context.Context, id sandbox.ID, bootstrap s
 	defer netConn.Close()
 
 	encoder := json.NewEncoder(netConn)
-	const chunkSize = 32 << 10
+	// Coder's reconnecting PTY writes each decoded Data field to the OS PTY but
+	// does not retry a short write. Large bursts can therefore be silently
+	// truncated while dd is receiving the bootstrap archive. Keep each write
+	// below the PTY buffer and give the reader a chance to drain between frames.
+	const (
+		chunkSize  = 1 << 10
+		chunkPause = time.Millisecond
+	)
 	for offset := 0; offset < len(encoded); offset += chunkSize {
 		end := min(offset+chunkSize, len(encoded))
 		if err := encoder.Encode(struct {
 			Data string `json:"data"`
 		}{Data: encoded[offset:end]}); err != nil {
 			return fmt.Errorf("coder: upload worker through PTY: %w", err)
+		}
+		if end < len(encoded) {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(chunkPause):
+			}
 		}
 	}
 	output, err := readBootstrapResult(ctx, netConn)
