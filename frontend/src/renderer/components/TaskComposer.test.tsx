@@ -281,7 +281,10 @@ describe("TaskComposer", () => {
 			return { data: { status: "ok", project: { agent: "codex", config: {} } } };
 		});
 		let rejectCreate!: (error: Error) => void;
-		h.post.mockReturnValueOnce(new Promise((_resolve, reject) => (rejectCreate = reject)));
+		h.post.mockImplementation((path: string) => {
+			if (path !== "/api/v1/orchestrators/delegate") return Promise.resolve({ data: undefined });
+			return new Promise((_resolve, reject) => (rejectCreate = reject));
+		});
 
 		render(
 			<Wrap>
@@ -299,7 +302,9 @@ describe("TaskComposer", () => {
 
 		fireEvent.click(screen.getByRole("button", { name: "Start task" }));
 
-		await waitFor(() => expect(h.post).toHaveBeenCalledOnce());
+		await waitFor(() =>
+			expect(h.post).toHaveBeenCalledWith("/api/v1/orchestrators/delegate", expect.anything()),
+		);
 		expect(agent).toBeDisabled();
 		expect(model).toBeDisabled();
 		expect(prompt).toBeDisabled();
@@ -355,7 +360,10 @@ describe("TaskComposer", () => {
 			return { data: { status: "ok", project: { agent: "codex", config: {} } } };
 		});
 		let rejectCreate!: (error: Error) => void;
-		h.post.mockReturnValueOnce(new Promise((_resolve, reject) => (rejectCreate = reject)));
+		h.post.mockImplementation((path: string) => {
+			if (path !== "/api/v1/orchestrators/delegate") return Promise.resolve({ data: undefined });
+			return new Promise((_resolve, reject) => (rejectCreate = reject));
+		});
 
 		render(
 			<Wrap>
@@ -368,7 +376,9 @@ describe("TaskComposer", () => {
 
 		fireEvent.click(screen.getByRole("button", { name: "Start task" }));
 
-		await waitFor(() => expect(h.post).toHaveBeenCalledOnce());
+		await waitFor(() =>
+			expect(h.post).toHaveBeenCalledWith("/api/v1/orchestrators/delegate", expect.anything()),
+		);
 		for (const control of modelControls) expect(control).toBeDisabled();
 
 		await act(async () => rejectCreate(new Error("creation failed")));
