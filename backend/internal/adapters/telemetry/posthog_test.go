@@ -297,6 +297,21 @@ func TestReviewPayloadAllowlistCoversTheReviewFunnel(t *testing.T) {
 	}
 }
 
+func TestOrchestratorSpawnPayloadKeepsAttributionFields(t *testing.T) {
+	got := sanitizeRemotePayload("ao.orchestrator.spawn_requested", map[string]any{
+		"clean":      true,
+		"mode":       "tui",
+		"source":     "restart",
+		"project_id": "must-not-export",
+	})
+	if got["clean"] != true || got["mode"] != "tui" || got["source"] != "restart" {
+		t.Fatalf("orchestrator attribution fields were dropped: %#v", got)
+	}
+	if _, ok := got["project_id"]; ok {
+		t.Fatalf("identifying project id survived sanitization: %#v", got)
+	}
+}
+
 // Review payloads carry counts, enums, and booleans. The review body is
 // reviewer prose about someone's code; the PR URL and SHA identify the
 // repository. None of them may survive into an exported property.

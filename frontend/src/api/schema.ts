@@ -3141,6 +3141,8 @@ export interface components {
             /** @enum {string} */
             mode?: "chat" | "tui";
             projectId: string;
+            /** @enum {string} */
+            source?: "board" | "restore_dialog" | "topbar" | "sidebar" | "project_add" | "settings" | "restart" | "command_palette";
         };
         SpawnOrchestratorResponse: {
             orchestrator: components["schemas"]["OrchestratorResponse"];

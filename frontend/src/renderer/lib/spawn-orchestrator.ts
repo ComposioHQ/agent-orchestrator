@@ -50,7 +50,7 @@ export async function spawnOrchestrator(
 	void captureRendererEvent("ao.renderer.orchestrator_spawn_requested", { project_id: projectId, source });
 	try {
 		const { data, error, response } = await apiClient.POST("/api/v1/orchestrators", {
-			body: { projectId, clean, ...(mode ? { mode } : {}) },
+			body: { projectId, clean, source, ...(mode ? { mode } : {}) },
 		});
 
 		if (error || !data?.orchestrator?.id) {

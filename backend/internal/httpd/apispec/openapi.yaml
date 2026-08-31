@@ -9019,6 +9019,17 @@ components:
           type: string
         projectId:
           type: string
+        source:
+          enum:
+          - board
+          - restore_dialog
+          - topbar
+          - sidebar
+          - project_add
+          - settings
+          - restart
+          - command_palette
+          type: string
       required:
       - projectId
       type: object

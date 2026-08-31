@@ -43,7 +43,7 @@ describe("spawnOrchestrator", () => {
 		const id = await spawnOrchestrator("proj", "restore_dialog", true);
 		expect(id).toBe("proj-9");
 		expect(apiClient.POST).toHaveBeenCalledWith("/api/v1/orchestrators", {
-			body: { projectId: "proj", clean: true },
+			body: { projectId: "proj", clean: true, source: "restore_dialog" },
 		});
 	});
 
@@ -55,7 +55,7 @@ describe("spawnOrchestrator", () => {
 		});
 		await spawnOrchestrator("proj", "board");
 		expect(apiClient.POST).toHaveBeenCalledWith("/api/v1/orchestrators", {
-			body: { projectId: "proj", clean: false },
+			body: { projectId: "proj", clean: false, source: "board" },
 		});
 	});
 
@@ -67,7 +67,7 @@ describe("spawnOrchestrator", () => {
 		});
 		await spawnOrchestrator("proj", "board", false, "tui");
 		expect(apiClient.POST).toHaveBeenCalledWith("/api/v1/orchestrators", {
-			body: { projectId: "proj", clean: false, mode: "tui" },
+			body: { projectId: "proj", clean: false, source: "board", mode: "tui" },
 		});
 	});
 

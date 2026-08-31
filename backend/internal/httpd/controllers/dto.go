@@ -1013,6 +1013,9 @@ type ReviewSessionIDParam struct {
 type SpawnOrchestratorRequest struct {
 	ProjectID domain.ProjectID `json:"projectId"`
 	Clean     bool             `json:"clean,omitempty"`
+	// Source identifies the renderer surface that initiated the request. It is
+	// diagnostic only and may be omitted by older or non-renderer clients.
+	Source string `json:"source,omitempty" enum:"board,restore_dialog,topbar,sidebar,project_add,settings,restart,command_palette"`
 	// Mode applies only when this request creates a project orchestrator. An
 	// idempotent ensure returns the existing orchestrator unchanged, and a clean
 	// replacement inherits the existing orchestrator's currently committed mode.

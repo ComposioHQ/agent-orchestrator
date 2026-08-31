@@ -1457,7 +1457,7 @@ describe("ProjectSettingsForm", () => {
 		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
 		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
 		expect(postMock).toHaveBeenCalledWith("/api/v1/orchestrators", {
-			body: { projectId: "proj-1", clean: true },
+			body: { projectId: "proj-1", clean: true, source: "settings" },
 		});
 		await expectReplacementNavigation();
 	});

@@ -3,6 +3,7 @@ package httpd
 import (
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -130,6 +131,7 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 			Svc:           deps.Sessions,
 			Activity:      deps.Activity,
 			Usage:         deps.UsageHooks,
+			Telemetry:     deps.Telemetry,
 			Attachments:   attachmentstore.New(cfg.DataDir),
 			PreviewServer: deps.PreviewServer,
 			Capabilities:  deps.SessionCapabilities,
@@ -164,7 +166,7 @@ func (a *API) Register(root chi.Router) {
 		r.Get("/openapi.yaml", apispec.ServeYAML)
 
 		r.Group(func(r chi.Router) {
-			r.Use(middleware.Timeout(timeout))
+			r.Use(restTimeout(timeout))
 			r.Use(presenceMiddleware(a.deps.Presence))
 			a.agents.Register(r)
 			a.projects.Register(r)
@@ -190,6 +192,28 @@ func (a *API) Register(root chi.Router) {
 		a.sessions.RegisterStreams(r)
 		a.events.Register(r)
 	})
+}
+
+// restTimeout keeps ordinary REST requests under the configured budget while
+// allowing an orchestrator spawn enough time to retire the current coordinator
+// and create its successor. The operation remains bounded; it simply must not
+// inherit a deadline shorter than its normal two-phase lifecycle.
+func restTimeout(ordinary time.Duration) func(http.Handler) http.Handler {
+	orchestrator := ordinary
+	if orchestrator < config.DefaultOrchestratorSpawnTimeout {
+		orchestrator = config.DefaultOrchestratorSpawnTimeout
+	}
+	return func(next http.Handler) http.Handler {
+		ordinaryHandler := middleware.Timeout(ordinary)(next)
+		orchestratorHandler := middleware.Timeout(orchestrator)(next)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodPost && r.URL.Path == "/api/v1/orchestrators" {
+				orchestratorHandler.ServeHTTP(w, r)
+				return
+			}
+			ordinaryHandler.ServeHTTP(w, r)
+		})
+	}
 }
 
 // notFoundJSON returns the locked envelope for unmatched routes. Chi's default

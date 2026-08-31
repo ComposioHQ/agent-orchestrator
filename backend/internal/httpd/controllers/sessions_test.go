@@ -1307,6 +1307,15 @@ func TestSessionsAPI_OrchestratorRejectsUnknownExplicitMode(t *testing.T) {
 	assertErrorCode(t, body, status, http.StatusBadRequest, "SESSION_MODE_INVALID")
 }
 
+func TestSessionsAPI_OrchestratorRejectsUnknownSource(t *testing.T) {
+	svc := newFakeSessionService()
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/orchestrators",
+		`{"projectId":"ao","source":"mystery"}`)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "ORCHESTRATOR_SOURCE_INVALID")
+}
+
 func TestSessionsAPI_PreviewDiscoversAndServesStaticIndex(t *testing.T) {
 	svc := newFakeSessionService()
 	workspace := t.TempDir()

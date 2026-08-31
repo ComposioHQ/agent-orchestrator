@@ -29,6 +29,11 @@ const (
 	// DefaultRequestTimeout bounds a single REST request. Long-lived terminal mux
 	// connections are mounted outside this timeout.
 	DefaultRequestTimeout = 60 * time.Second
+	// DefaultOrchestratorSpawnTimeout bounds project-orchestrator creation and
+	// replacement. A clean replacement performs both teardown and a full spawn,
+	// so the ordinary REST budget can expire after the old coordinator is gone
+	// but before its successor exists.
+	DefaultOrchestratorSpawnTimeout = 3 * time.Minute
 	// DefaultShutdownTimeout is the hard cap on graceful shutdown. After this
 	// the process exits even if connections are still draining.
 	DefaultShutdownTimeout = 10 * time.Second

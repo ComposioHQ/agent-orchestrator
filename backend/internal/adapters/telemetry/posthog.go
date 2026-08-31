@@ -158,6 +158,11 @@ var remotePayloadAllowlist = map[string]map[string]struct{}{
 		"kind":                   {},
 		"since_first_project_ms": {},
 	},
+	"ao.orchestrator.spawn_requested": {
+		"clean":  {},
+		"mode":   {},
+		"source": {},
+	},
 	"ao.review.triggered": {
 		"created_runs": {},
 		"harness":      {},

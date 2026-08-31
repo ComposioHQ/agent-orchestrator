@@ -22,6 +22,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/attachmentstore"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -150,6 +151,7 @@ type SessionsController struct {
 	Svc           SessionService
 	Activity      ActivityRecorder
 	Usage         UsageHookRecorder
+	Telemetry     ports.EventSink
 	Attachments   *attachmentstore.Store
 	PreviewServer ManagedPreviewServer
 	Capabilities  SessionCapabilityValidator
@@ -1547,6 +1549,12 @@ func (c *SessionsController) spawnOrchestrator(w http.ResponseWriter, r *http.Re
 			return
 		}
 	}
+	source, validSource := orchestratorSpawnSource(in.Source)
+	if !validSource {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "validation", "ORCHESTRATOR_SOURCE_INVALID", "source is not a recognized orchestrator spawn source", nil)
+		return
+	}
+	c.emitOrchestratorSpawnRequested(r, in, source)
 	sess, err := c.Svc.SpawnOrchestrator(r.Context(), in.ProjectID, in.Clean, in.Mode)
 	if err != nil {
 		envelope.WriteError(w, r, err)
@@ -1554,6 +1562,49 @@ func (c *SessionsController) spawnOrchestrator(w http.ResponseWriter, r *http.Re
 	}
 	envelope.WriteJSON(w, http.StatusCreated, SpawnOrchestratorResponse{
 		Orchestrator: OrchestratorResponse{ID: sess.ID, ProjectID: sess.ProjectID},
+	})
+}
+
+var orchestratorSpawnSources = map[string]struct{}{
+	"board":           {},
+	"restore_dialog":  {},
+	"topbar":          {},
+	"sidebar":         {},
+	"project_add":     {},
+	"settings":        {},
+	"restart":         {},
+	"command_palette": {},
+}
+
+func orchestratorSpawnSource(raw string) (string, bool) {
+	source := strings.TrimSpace(raw)
+	if source == "" {
+		return "unknown", true
+	}
+	_, ok := orchestratorSpawnSources[source]
+	return source, ok
+}
+
+func (c *SessionsController) emitOrchestratorSpawnRequested(r *http.Request, in SpawnOrchestratorRequest, source string) {
+	if c.Telemetry == nil {
+		return
+	}
+	projectID := in.ProjectID
+	payload := map[string]any{
+		"clean":  in.Clean,
+		"source": source,
+	}
+	if in.Mode != "" {
+		payload["mode"] = string(in.Mode)
+	}
+	c.Telemetry.Emit(context.Background(), ports.TelemetryEvent{
+		Name:       "ao.orchestrator.spawn_requested",
+		Source:     "sessions_controller",
+		OccurredAt: time.Now().UTC(),
+		Level:      ports.TelemetryLevelInfo,
+		ProjectID:  &projectID,
+		RequestID:  middleware.GetReqID(r.Context()),
+		Payload:    payload,
 	})
 }
 
