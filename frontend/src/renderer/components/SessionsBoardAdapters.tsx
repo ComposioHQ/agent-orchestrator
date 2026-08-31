@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import {
+	scmUserAvatarUrl,
 	SessionCardView,
 	SessionUsageMetricView,
 	type BoardPullRequestLabels,
@@ -24,7 +25,7 @@ import {
 } from "../lib/agent-switch-presentation";
 import type { WorkspaceSession } from "../types/workspace";
 import { canonicalTrackerIssueId } from "../types/workspace";
-import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
+import { useSessionScmSummary } from "../hooks/useSessionScmSummary";
 import type { SessionUsageSummary } from "../hooks/useSessionUsageSummaries";
 import {
 	clearTerminateSessionState,
@@ -218,9 +219,10 @@ function DesktopSessionCard({
 			prs={summaries.map((pr) => ({
 				commentCount: pr.review.unresolvedBy.reduce((count, reviewer) => count + reviewer.count, 0),
 				number: pr.number,
-				reviewerAvatars: (pr.review.reviews ?? [])
-					.map((review) => reviewerAvatarUrl(pr, review.reviewerId))
-					.filter((url): url is string => Boolean(url)),
+				reviewers: (pr.review.reviews ?? []).map((review) => ({
+					avatarUrl: scmUserAvatarUrl(pr.provider, prBrowserUrl(pr), review.reviewerId),
+					id: review.reviewerId,
+				})),
 				state: pr.state,
 				url: prBrowserUrl(pr),
 			}))}
@@ -250,20 +252,6 @@ function pullRequestLabels(t: TFunction): BoardPullRequestLabels {
 			open: t("pr.state.open"),
 		},
 	};
-}
-
-function reviewerAvatarUrl(pr: SessionPRSummary, reviewerId: string): string | undefined {
-	let origin: string;
-	try {
-		origin = new URL(prBrowserUrl(pr)).origin;
-	} catch {
-		return undefined;
-	}
-
-	const encodedReviewer = encodeURIComponent(reviewerId);
-	if (pr.provider === "github") return `${origin}/${encodedReviewer}.png`;
-	if (pr.provider === "gitlab") return `${origin}/-/avatar?username=${encodedReviewer}`;
-	return undefined;
 }
 
 // Keep the board metric scannable by showing cost only. The full cost/token

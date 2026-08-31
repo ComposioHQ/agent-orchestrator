@@ -1,7 +1,7 @@
 import { Fragment, type ReactNode } from "react";
 import type { ExternalLinkComponent } from "./external-link";
 import { ArrowUpRightIcon } from "./icons";
-import { GithubAvatar } from "./GithubAvatar";
+import { UserAvatar } from "./UserAvatar";
 import type {
 	PRCardPresentation,
 	PRCardStatus,
@@ -52,7 +52,7 @@ export function PRSummaryMeta({
 					className="inline-flex min-w-0 items-center gap-1 text-settings-label underline-offset-2 hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
 					href={`https://github.com/${encodeURIComponent(authorHandle)}`}
 				>
-					<GithubAvatar avatarUrl={pr.authorAvatarUrl} className="size-3" login={authorHandle} />
+					<UserAvatar className="size-3" imageUrl={pr.authorAvatarUrl} name={authorHandle} />
 					{authorHandle}
 				</ExternalLink>
 			) : (

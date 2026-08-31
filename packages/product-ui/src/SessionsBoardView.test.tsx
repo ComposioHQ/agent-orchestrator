@@ -359,6 +359,43 @@ describe("SessionsBoardView", () => {
 		expect(onOpen).toHaveBeenCalledOnce();
 	});
 
+	it("uses the shared loading and error fallback for reviewer avatars", () => {
+		const avatarUrl = "https://avatars.githubusercontent.com/ada?size=64";
+		render(
+			<SessionCardView
+				externalLink={ExternalLink}
+				labels={{
+					formatTime: () => "5m ago",
+					intakeIssue: (id) => `Issue ${id}`,
+					pr: {
+						short: "PR",
+						states: { closed: "closed", draft: "draft", merged: "merged", open: "open" },
+					},
+					updatedAt: (timestamp) => `Updated ${timestamp}`,
+				}}
+				prs={[{
+					commentCount: 1,
+					number: 10,
+					reviewers: [{ id: "ada-lovelace", avatarUrl }],
+					state: "open",
+					url: "https://example.com/pull/10",
+				}]}
+				renderAvatar={(provider) => <span role="img" aria-label={provider}>C</span>}
+				session={baseSession}
+			/>,
+		);
+
+		const prLink = screen.getByRole("link", { name: "PR #10 open" });
+		const image = prLink.querySelector("img");
+		expect(prLink).toHaveTextContent("AL");
+		expect(image).toHaveAttribute("src", avatarUrl);
+		if (image) fireEvent.load(image);
+		expect(prLink).not.toHaveTextContent("AL");
+		if (image) fireEvent.error(image);
+		expect(prLink).toHaveTextContent("AL");
+		expect(prLink.querySelector("img")).not.toBeInTheDocument();
+	});
+
 	it("truncates the status before card metrics can collide", () => {
 		render(
 			<SessionCardView

@@ -28,6 +28,7 @@ import {
 	type ProductUITranslator,
 } from "./session-presentation";
 import type { KanbanColumn, SessionActivity, SessionStatus } from "./session-models";
+import { UserAvatar } from "./UserAvatar";
 import { cn } from "./utils";
 
 export type BoardSessionPresentation = {
@@ -70,10 +71,15 @@ export type BoardSessionStatusPresentation = {
 
 export type BoardPullRequestState = "closed" | "open" | "draft" | "merged";
 
+export type BoardReviewerPresentation = {
+	id: string;
+	avatarUrl?: string;
+};
+
 export type BoardPullRequestPresentation = {
 	commentCount?: number;
 	number: number;
-	reviewerAvatars?: string[];
+	reviewers?: BoardReviewerPresentation[];
 	state: BoardPullRequestState;
 	url: string;
 };
@@ -424,14 +430,14 @@ function BoardPullRequestGroup({
 			<span className="sr-only">{statusLabel}</span>
 			{hasComments ? (
 				<div className="-ml-0.5 flex shrink-0 items-center pl-1">
-					{(pr.reviewerAvatars ?? [])
+					{(pr.reviewers ?? [])
 						.slice(0, 3)
-						.map((avatar, index) => (
-							<img
-								alt=""
+						.map((reviewer, index) => (
+							<UserAvatar
 								className={cn("size-5 rounded-full border-2 border-surface object-cover ring-1 ring-border", index > 0 && "-ml-1.5")}
-								key={`${avatar}-${index}`}
-								src={avatar}
+								imageUrl={reviewer.avatarUrl}
+								key={`${reviewer.id}-${index}`}
+								name={reviewer.id}
 							/>
 						))}
 				</div>
