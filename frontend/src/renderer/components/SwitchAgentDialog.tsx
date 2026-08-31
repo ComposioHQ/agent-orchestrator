@@ -45,6 +45,18 @@ export function canSwitchAgentHarness(value: string): value is SwitchAgentHarnes
 	return SWITCH_AGENT_OPTIONS.some((option) => option.value === value);
 }
 
+// SwitchAgentDialog is opened from a DropdownMenuItem ("Switch agent" in the
+// session actions menu). Radix closes that dropdown on the same click that
+// opens this dialog; since the dialog is non-modal (see below), its
+// DismissableLayer would otherwise treat the dropdown's residual pointer/
+// focus activity as an outside interaction and dismiss the dialog right
+// after it opens. Ignore only outside events that originate from the
+// just-dismissed menu/trigger so a genuine outside click still closes it.
+function isFromDismissedMenuTrigger(target: EventTarget | null): boolean {
+	if (!(target instanceof Element)) return false;
+	return Boolean(target.closest('[role="menuitem"], [role="menu"], [data-session-actions-trigger]'));
+}
+
 function SwitchTargetPicker({
 	currentHarness,
 	disabled,
@@ -228,6 +240,12 @@ export function SwitchAgentDialog({ agentSwitch, container, open, session, onOpe
 						data-testid="switch-agent-terminal-backdrop"
 					/>
 				}
+				onFocusOutside={(event) => {
+					if (isFromDismissedMenuTrigger(event.target)) event.preventDefault();
+				}}
+				onPointerDownOutside={(event) => {
+					if (isFromDismissedMenuTrigger(event.target)) event.preventDefault();
+				}}
 				showCloseButton={false}
 				className="absolute left-1/2 top-1/2 z-overlay w-[min(var(--size-dialog-md),calc(100%-var(--space-8)))] max-w-none -translate-x-1/2 -translate-y-1/2 gap-0 overflow-hidden rounded-xl border border-border-strong bg-surface/95 p-0 text-foreground shadow-xl shadow-black/20 data-[state=open]:animate-modal-in data-[state=closed]:animate-modal-out motion-reduce:animate-none"
 			>
