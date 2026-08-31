@@ -15,7 +15,6 @@
 package shellterm
 
 import (
-	"path/filepath"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -43,15 +42,13 @@ type OpenShellTerminalInput struct {
 	SessionID domain.SessionID `json:"sessionId,omitempty"`
 }
 
-// shellTerminalTitle labels a tab by the directory the shell started in, which
-// is the only thing that distinguishes one shell pane from another in the UI.
-// A path that has no usable base (a bare root, or an empty string) falls back
-// to a generic label rather than rendering an empty tab.
-func shellTerminalTitle(workingDir string) string {
-	base := filepath.Base(workingDir)
-	switch base {
-	case "", ".", string(filepath.Separator):
-		return "Shell"
-	}
-	return base
+// OpenCommandTerminalInput is the trusted backend-only request for a
+// standalone terminal running a fixed command. It must never be exposed as an
+// HTTP request shape: callers are responsible for constructing Argv and Env
+// from server-owned data.
+type OpenCommandTerminalInput struct {
+	Argv       []string
+	Env        map[string]string
+	WorkingDir string
+	Title      string
 }

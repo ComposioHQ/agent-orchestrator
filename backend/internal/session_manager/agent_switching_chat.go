@@ -36,7 +36,7 @@ func (m *Manager) executeChatAgentSwitch(
 	targetOwnerCommitted := false
 	targetOwnershipAmbiguous := false
 	skipTerminalization := false
-	targetEnv := m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env)
+	targetSetupEnv := m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env)
 	managedCodexProfile := false
 	if admitted.config.TargetHarness == domain.HarnessCodex {
 		launchContext, launchErr := m.codexLaunchForRecord(ctx, &rec)
@@ -44,11 +44,11 @@ func (m *Manager) executeChatAgentSwitch(
 			return result, launchErr
 		}
 		if launchContext != nil {
-			m.applyCodexLaunchEnvironment(rec.ID, targetEnv, *launchContext)
+			m.applyCodexLaunchEnvironment(rec.ID, targetSetupEnv, *launchContext)
 			managedCodexProfile = launchContext.Managed
 		}
 	}
-	m.augmentAgentRuntimeEnv(targetAgent, targetEnv)
+	m.augmentAgentRuntimeEnv(targetAgent, targetSetupEnv)
 
 	defer func() {
 		if panicValue := recover(); panicValue != nil {
@@ -68,7 +68,7 @@ func (m *Manager) executeChatAgentSwitch(
 		if retErr != nil && targetWorkspacePrepared && !targetOwnerCommitted && !targetOwnershipAmbiguous {
 			cleanupCtx, cancel := switchDurableContext(workerCtx)
 			cleanupErr := m.cleanupPreparedAgentWorkspaceStrict(
-				cleanupCtx, targetAgent, id, rec.Metadata.WorkspacePath, targetEnv)
+				cleanupCtx, targetAgent, id, rec.Metadata.WorkspacePath, targetSetupEnv)
 			cancel()
 			if cleanupErr != nil {
 				rollbackSafe = false
@@ -120,7 +120,7 @@ func (m *Manager) executeChatAgentSwitch(
 		if targetWorkspacePrepared && !targetOwnerCommitted && !targetOwnershipAmbiguous {
 			cleanupCtx, cancel := switchDurableContext(workerCtx)
 			m.cleanupPreparedAgentWorkspace(
-				cleanupCtx, targetAgent, id, rec.Metadata.WorkspacePath, targetEnv)
+				cleanupCtx, targetAgent, id, rec.Metadata.WorkspacePath, targetSetupEnv)
 			cancel()
 		}
 		if result.State.Terminal() && strings.TrimSpace(m.dataDir) != "" {
@@ -167,7 +167,7 @@ func (m *Manager) executeChatAgentSwitch(
 	if model := strings.TrimSpace(cfg.Model); model != "" {
 		agentConfig.Model = model
 	}
-	targetConfigDir, err := nativeConfigDir(ctx, targetAgent, targetEnv)
+	targetConfigDir, err := nativeConfigDir(ctx, targetAgent, targetSetupEnv)
 	if err != nil {
 		return result, fmt.Errorf("switch Chat agent %s: target config: %w", id, err)
 	}
@@ -295,7 +295,7 @@ func (m *Manager) executeChatAgentSwitch(
 	}
 	if err := m.prepareWorkspace(
 		ctx, targetAgent, rec.ID, rec.Metadata.WorkspacePath,
-		finalSystemPrompt, systemPromptFile, agentConfig, targetEnv,
+		finalSystemPrompt, systemPromptFile, agentConfig, targetSetupEnv,
 	); err != nil {
 		return result, fmt.Errorf("switch Chat agent %s: prepare target workspace: %w", id, err)
 	}
@@ -303,6 +303,20 @@ func (m *Manager) executeChatAgentSwitch(
 	if err := m.advanceAgentSwitch(ctx, store, &result, domain.AgentSwitchStartingTarget, nil); err != nil {
 		return result, fmt.Errorf("switch Chat agent %s: record target start: %w", id, err)
 	}
+	// Rotate only after the source controller is conclusively stopped. Persisting
+	// the target verifier any earlier would revoke the still-live source bearer
+	// during the reversible half of the switch.
+	credentialRecord, found, err := m.store.GetSession(ctx, id)
+	if err != nil {
+		return result, fmt.Errorf("switch Chat agent %s: reload stopped session for browser capability: %w", id, err)
+	}
+	if !found || credentialRecord.IsTerminated || credentialRecord.Harness != rec.Harness ||
+		domain.NormalizeSessionMode(credentialRecord.Mode) != domain.SessionModeChat ||
+		credentialRecord.Activity.State != domain.ActivityExited {
+		return result, fmt.Errorf("switch Chat agent %s: source ownership changed before browser capability rotation", id)
+	}
+	targetLaunchEnv := m.runtimeEnv(id, credentialRecord.ProjectID, credentialRecord.IssueID, project.Config.Env)
+	m.augmentAgentRuntimeEnv(targetAgent, targetLaunchEnv)
 
 	_, err = m.chat.StartChat(ctx, ChatStart{
 		SessionID:               id,
@@ -311,18 +325,36 @@ func (m *Manager) executeChatAgentSwitch(
 		Harness:                 cfg.TargetHarness,
 		DataDir:                 m.dataDir,
 		WorkspacePath:           rec.Metadata.WorkspacePath,
-		Env:                     targetEnv,
+		Env:                     targetLaunchEnv,
 		ManagedCodexProfile:     managedCodexProfile,
 		Model:                   agentConfig.Model,
 		Permissions:             agentConfig.Permissions,
 		SystemPrompt:            finalSystemPrompt,
 		AdditionalDirectories:   additionalDirectories,
+		ExpectedControllerOwner: credentialRecord.ControllerOwner(),
+		PrepareControllerEnv: func(launchCtx context.Context, expected domain.SessionControllerOwner) (map[string]string, error) {
+			prepared, launchEnv, prepareErr := m.prepareChatControllerEnv(
+				launchCtx, credentialRecord, project.Config.Env, expected,
+			)
+			if prepareErr != nil {
+				return nil, prepareErr
+			}
+			credentialRecord = prepared
+			m.augmentAgentRuntimeEnv(targetAgent, launchEnv)
+			return launchEnv, nil
+		},
 		ProviderConversationID:  providerConversationID,
 		ProviderScopeID:         chatSwitchProviderBoundaryID(result.ID),
 		ControllerGeneration:    string(targetGeneration),
 		SkipNativeHistoryImport: resumable,
 		ControllerReady: func(started ChatStarted) (ChatControllerCommit, error) {
 			emptyCommit := ChatControllerCommit{}
+			targetControllerOwner := chatControllerOwner(
+				credentialRecord, cfg.TargetHarness,
+				started.ProviderConversationID, started.ControllerGeneration,
+			)
+			targetControllerOwner.AgentSessionID = started.ProviderConversationID
+			targetControllerOwner.AgentSessionIDLaunchID = ""
 			if strings.TrimSpace(started.ProviderConversationID) == "" ||
 				started.ControllerGeneration != string(targetGeneration) {
 				return emptyCommit, errors.New("target Chat controller returned incomplete or mismatched identity")
@@ -384,8 +416,10 @@ func (m *Manager) executeChatAgentSwitch(
 				if committed {
 					result = current
 					targetOwnerCommitted = true
-					return ChatControllerCommit{Conversation: committedChatSwitchConversation(
-						started.Conversation, result.ID, activatedAt)}, nil
+					return ChatControllerCommit{
+						Conversation:    committedChatSwitchConversation(started.Conversation, result.ID, activatedAt),
+						ControllerOwner: targetControllerOwner,
+					}, nil
 				}
 				if !sourceStillOwns || resolutionErr != nil {
 					targetOwnershipAmbiguous = true
@@ -404,8 +438,10 @@ func (m *Manager) executeChatAgentSwitch(
 			targetOwnerCommitted = true
 			result.State = domain.AgentSwitchTargetReady
 			result.UpdatedAt = activatedAt
-			return ChatControllerCommit{Conversation: committedChatSwitchConversation(
-				started.Conversation, result.ID, activatedAt)}, nil
+			return ChatControllerCommit{
+				Conversation:    committedChatSwitchConversation(started.Conversation, result.ID, activatedAt),
+				ControllerOwner: targetControllerOwner,
+			}, nil
 		},
 	})
 	if err != nil {

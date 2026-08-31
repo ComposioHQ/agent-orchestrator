@@ -95,6 +95,8 @@ export type UiState = {
 	// session view (tabs beside the session's pane) and the standalone terminals
 	// view read it, so whichever one is on screen shows the same shell.
 	activeShellTerminalHandleId: string | null;
+	/** Active inline profile-login workflow. This is daemon-lifetime UI state only. */
+	codexProfileLoginTerminal: CodexProfileLoginTerminalWorkflow | null;
 	// Which terminal each mounted session is actually showing. The session pane
 	// renders one terminal at a time, so opening a shell or the reviewer swaps
 	// the agent's terminal off screen even though the route still points at that
@@ -137,6 +139,12 @@ export type UiState = {
 	requestCreateProjectFromPath: (path: string) => void;
 	requestNewShellTerminal: () => void;
 	setActiveShellTerminal: (handleId: string | null) => void;
+	startCodexProfileLoginTerminal: (profileId: string, terminal: CodexProfileLoginTerminal) => void;
+	updateCodexProfileLoginTerminal: (
+		handleId: string,
+		update: Partial<Pick<CodexProfileLoginTerminalWorkflow, "phase" | "reason">>,
+	) => void;
+	clearCodexProfileLoginTerminal: (handleId?: string) => void;
 	setVisibleTerminalKind: (sessionId: string, kind: TerminalTarget["kind"]) => void;
 	clearVisibleTerminalKind: (sessionId: string) => void;
 };
@@ -145,6 +153,28 @@ export type OrchestratorReplacementFailure = {
 	message: string;
 	code?: string;
 	requestId?: string;
+};
+
+export type CodexProfileLoginTerminalPhase =
+	| "running"
+	| "verifying"
+	| "unauthorized"
+	| "unverified"
+	| "timed_out"
+	| "closing";
+
+export type CodexProfileLoginTerminal = {
+	handleId: string;
+	title: string;
+	createdAt: string;
+};
+
+export type CodexProfileLoginTerminalWorkflow = {
+	profileId: string;
+	terminal: CodexProfileLoginTerminal;
+	phase: CodexProfileLoginTerminalPhase;
+	reason?: string;
+	startedAt: number;
 };
 
 const sidebarStorageKey = "ao.sidebar.open";
@@ -209,6 +239,7 @@ export const useUiStore = create<UiState>((set, get) => ({
 	folderDropRequest: null,
 	newShellTerminalNonce: 0,
 	activeShellTerminalHandleId: null,
+	codexProfileLoginTerminal: null,
 	visibleTerminalKindBySession: {},
 	setWorkbenchTab: (workbenchTab) => set({ workbenchTab }),
 	setThemePreference: (themePreference) => {
@@ -248,12 +279,18 @@ export const useUiStore = create<UiState>((set, get) => ({
 	toggleSidebar: () =>
 		set((state) => {
 			const wasVisible = sidebarIsVisible(state);
+			// While Browser pressure owns the compact rail, expand/collapse is a
+			// temporary override cycle. It must not mutate the durable preference:
+			// removing the rail's layout width lets the percentage-clamped inspector
+			// shift left after the sidebar animation has settled.
+			if (state.isSidebarOpen && state.isSidebarAutoCollapsed) {
+				return { sidebarAutoCollapseOverride: !state.sidebarAutoCollapseOverride };
+			}
 			const isSidebarOpen = !wasVisible;
 			getLocalStorage()?.setItem(sidebarStorageKey, String(isSidebarOpen));
 			return {
 				isSidebarOpen,
 				// Reopening under active workspace pressure is an explicit override.
-				// Closing clears it so the next open follows the current layout policy.
 				sidebarAutoCollapseOverride: isSidebarOpen && state.isSidebarAutoCollapsed,
 			};
 		}),
@@ -399,6 +436,23 @@ export const useUiStore = create<UiState>((set, get) => ({
 		set((state) => ({ folderDropRequest: { path, nonce: (state.folderDropRequest?.nonce ?? 0) + 1 } })),
 	requestNewShellTerminal: () => set((state) => ({ newShellTerminalNonce: state.newShellTerminalNonce + 1 })),
 	setActiveShellTerminal: (activeShellTerminalHandleId) => set({ activeShellTerminalHandleId }),
+	startCodexProfileLoginTerminal: (profileId, terminal) => set({
+		codexProfileLoginTerminal: {
+			profileId,
+			terminal,
+			phase: "running",
+			startedAt: Date.now(),
+		},
+	}),
+	updateCodexProfileLoginTerminal: (handleId, update) => set((state) => {
+		const current = state.codexProfileLoginTerminal;
+		if (!current || current.terminal.handleId !== handleId) return state;
+		return { codexProfileLoginTerminal: { ...current, ...update } };
+	}),
+	clearCodexProfileLoginTerminal: (handleId) => set((state) => {
+		if (handleId && state.codexProfileLoginTerminal?.terminal.handleId !== handleId) return state;
+		return { codexProfileLoginTerminal: null };
+	}),
 	setVisibleTerminalKind: (sessionId, kind) =>
 		set((state) =>
 			state.visibleTerminalKindBySession[sessionId] === kind

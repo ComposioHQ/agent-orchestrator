@@ -10,6 +10,7 @@ import {
 	ensureAgentReadiness,
 } from "./useAgentReadinessQuery";
 import { CODEX_PROFILE_DAEMON_RESET_EVENT, codexProfileLoginsQueryKey, codexProfilesQueryKey } from "./codex-profile-cache";
+import { useUiStore } from "../stores/ui-store";
 
 const STATUS_REFRESH_MS = 2_000;
 const READY_STATUS_REFRESH_MS = 10_000;
@@ -72,6 +73,7 @@ export function useDaemonStatus(queryClient: QueryClient = defaultQueryClient) {
 				queryClient.removeQueries({ queryKey: agentReadinessQueryKey, exact: true });
 				queryClient.removeQueries({ queryKey: codexProfilesQueryKey, exact: true });
 				queryClient.removeQueries({ queryKey: codexProfileLoginsQueryKey, exact: true });
+				useUiStore.getState().clearCodexProfileLoginTerminal();
 				window.dispatchEvent(new Event(CODEX_PROFILE_DAEMON_RESET_EVENT));
 			}
 			if (nextStatus.state === "ready" && nextStatus.port) {

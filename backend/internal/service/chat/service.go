@@ -141,6 +141,12 @@ type StartConfig struct {
 	SystemPrompt          string
 	AdditionalDirectories []string
 	MCPServers            []ports.ChatMCPServerConfig
+	// ExpectedControllerOwner is the durable controller identity observed before
+	// this launch. PrepareControllerEnv uses it as a compare-and-swap fence.
+	ExpectedControllerOwner domain.SessionControllerOwner
+	// PrepareControllerEnv rotates launch-only credentials inside the per-session
+	// controller gate. The returned environment is never retained in startConfigs.
+	PrepareControllerEnv func(context.Context, domain.SessionControllerOwner) (map[string]string, error)
 	// ProviderConversationID resumes an existing provider conversation when set.
 	ProviderConversationID string
 	// ProviderScopeID reserves the opaque-id namespace for a provider boundary
@@ -170,18 +176,21 @@ type StartConfig struct {
 // Carrying it back across the callback avoids a fallible database read after an
 // irreversible ownership transfer.
 type ControllerCommit struct {
-	Conversation domain.ConversationRecord
+	Conversation    domain.ConversationRecord
+	ControllerOwner domain.SessionControllerOwner
 }
 
 func controllerStartResult(
 	controller *Controller,
 	providerBoundary *domain.ConversationBranch,
+	commitProviderHistory func(context.Context) error,
 ) StartResult {
 	return StartResult{
 		ProviderConversationID: controller.ProviderConversationID(),
 		ControllerGeneration:   controller.Generation(),
 		Conversation:           controller.conversation,
 		ProviderBoundary:       providerBoundary,
+		CommitProviderHistory:  commitProviderHistory,
 	}
 }
 
@@ -189,11 +198,14 @@ func notifyControllerReady(
 	cfg StartConfig,
 	controller *Controller,
 	providerBoundary *domain.ConversationBranch,
+	commitProviderHistory func(context.Context) error,
 ) (ControllerCommit, error) {
 	if cfg.ControllerReady == nil {
 		return ControllerCommit{}, nil
 	}
-	commit, err := cfg.ControllerReady(controllerStartResult(controller, providerBoundary))
+	commit, err := cfg.ControllerReady(controllerStartResult(
+		controller, providerBoundary, commitProviderHistory,
+	))
 	if err != nil {
 		return ControllerCommit{}, fmt.Errorf("commit chat controller: %w", err)
 	}
@@ -338,6 +350,13 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	if freshProjectContext {
 		conversation, err = s.store.CreateProjectConversationWithContextReset(
 			ctx, conversationID, cfg.ProjectID, cfg.SessionID, resetBoundary, now)
+	} else if scope == domain.ConversationScopeProject &&
+		cfg.ProviderConversationID != "" && cfg.ProviderScopeID != "" {
+		// A coordinator-reserved provider boundary is an ownership transfer, not
+		// permission to steal a project narrative from a newer orchestrator.
+		// Require the durable current_session_id proof the coordinator observed;
+		// ControllerReady/CommitChatSpawn rechecks it after provider I/O.
+		conversation, err = s.store.ConversationForSession(ctx, cfg.SessionID)
 	} else {
 		conversation, err = s.store.CreateConversation(
 			ctx, conversationID, scope, cfg.ProjectID, cfg.SessionID, now)
@@ -403,6 +422,14 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 		}
 	}
 
+	launchEnv := cfg.Env
+	if cfg.PrepareControllerEnv != nil {
+		launchEnv, err = cfg.PrepareControllerEnv(ctx, cfg.ExpectedControllerOwner)
+		if err != nil {
+			return nil, fmt.Errorf("prepare chat controller environment: %w", err)
+		}
+	}
+
 	var conv ports.ChatConversation
 	if cfg.ProviderConversationID != "" {
 		conv, err = driver.Resume(ctx, ports.ChatResumeConfig{
@@ -410,7 +437,7 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 			ProviderConversationID: cfg.ProviderConversationID,
 			DataDir:                cfg.DataDir,
 			WorkspacePath:          cfg.WorkspacePath,
-			Env:                    cfg.Env,
+			Env:                    launchEnv,
 			ManagedCodexProfile:    cfg.ManagedCodexProfile,
 			Model:                  cfg.Model,
 			Permissions:            cfg.Permissions,
@@ -424,7 +451,7 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 			SessionID:             cfg.SessionID,
 			DataDir:               cfg.DataDir,
 			WorkspacePath:         cfg.WorkspacePath,
-			Env:                   cfg.Env,
+			Env:                   launchEnv,
 			ManagedCodexProfile:   cfg.ManagedCodexProfile,
 			Model:                 cfg.Model,
 			Permissions:           cfg.Permissions,
@@ -436,6 +463,15 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	}
 	if err != nil {
 		return nil, err
+	}
+	if cfg.ProviderConversationID != "" &&
+		conv.ProviderConversationID() != cfg.ProviderConversationID {
+		returned := conv.ProviderConversationID()
+		_ = conv.Close()
+		return nil, fmt.Errorf(
+			"resumed provider conversation handle %q does not match requested handle %q",
+			returned, cfg.ProviderConversationID,
+		)
 	}
 
 	// Claim the durable fence before the controller starts consuming events. A
@@ -475,6 +511,7 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	// replaced can be told apart from the current one's.
 	controller := newController(
 		cfg.SessionID, conversation, generation, cfg.Harness, conv, s.store, s.activity, s.log, s.newID, s.now, s.onAccountChanged)
+	var commitProviderHistory func(context.Context) error
 	if cfg.ProviderConversationID != "" && !cfg.SkipNativeHistoryImport {
 		// The provider's native thread is the continuity authority across TUI and
 		// Chat. Import it before the live projector starts so the first notification
@@ -498,21 +535,41 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 				cfg.SessionID, existing.Turns, existing.Messages, existing.Activities,
 			)
 		}
-		if err := controller.importNativeHistory(
+		events, historyErr := controller.readNativeHistory(
 			ctx, existing.Turns, existing.Messages, existing.Activities,
 			cfg.RequireNativeHistory, replayCheckpoint,
-		); err != nil {
+		)
+		if historyErr != nil {
+			_ = conv.Close()
+			return nil, historyErr
+		}
+		if providerBoundary != nil {
+			// The pending branch does not exist yet. Carry its stable replay into
+			// ControllerReady so SQLite can insert/activate the boundary, stage the
+			// generation, project every event onto that branch, and publish the
+			// live session as one transaction. Until then the terminated target is
+			// not exposed to input and no event can be attributed to the old root.
+			commitProviderHistory = func(commitCtx context.Context) error {
+				return controller.projectNativeHistory(commitCtx, events)
+			}
+		} else if err := controller.projectNativeHistory(ctx, events); err != nil {
 			_ = conv.Close()
 			return nil, err
 		}
 	}
-	commit, err := notifyControllerReady(cfg, controller, providerBoundary)
+	commit, err := notifyControllerReady(
+		cfg, controller, providerBoundary, commitProviderHistory,
+	)
 	if err != nil {
 		_ = conv.Close()
 		return nil, err
 	}
 	if providerBoundary != nil {
 		if cfg.ControllerReady == nil {
+			if commitProviderHistory != nil {
+				_ = conv.Close()
+				return nil, errors.New("commit native history: atomic provider-boundary lifecycle is unavailable")
+			}
 			if err := s.store.CreateAndActivateConversationBranch(
 				ctx, cfg.SessionID, *providerBoundary, generation, s.now(),
 			); err != nil {
@@ -538,6 +595,16 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 		controller.conversation.UpdatedAt = commit.Conversation.UpdatedAt
 		controller.settings = commit.Conversation.Settings
 	}
+	if commit.ControllerOwner != (domain.SessionControllerOwner{}) {
+		cfg.ExpectedControllerOwner = commit.ControllerOwner
+	} else {
+		cfg.ExpectedControllerOwner.Harness = cfg.Harness
+		cfg.ExpectedControllerOwner.Mode = domain.SessionModeChat
+		cfg.ExpectedControllerOwner.IsTerminated = false
+		cfg.ExpectedControllerOwner.RuntimeLaunchID = ""
+		cfg.ExpectedControllerOwner.ProviderConversationID = controller.ProviderConversationID()
+		cfg.ExpectedControllerOwner.ControllerGeneration = controller.Generation()
+	}
 	s.mu.Lock()
 	s.controllers[cfg.SessionID] = controller
 	s.startConfigs[cfg.SessionID] = cloneStartConfig(cfg)
@@ -548,6 +615,7 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	// reports ErrNoController instead of writing into a dead controller.
 	go func() {
 		controller.Wait()
+		controller.waitForBranchHandoff()
 		s.mu.Lock()
 		if current, ok := s.controllers[cfg.SessionID]; ok && current == controller {
 			delete(s.controllers, cfg.SessionID)
@@ -1051,25 +1119,27 @@ func (s *Service) StartChat(ctx context.Context, cfg StartRequest) (StartResult,
 	if err != nil {
 		return StartResult{}, err
 	}
-	return controllerStartResult(controller, nil), nil
+	return controllerStartResult(controller, nil, nil), nil
 }
 
 // StartRequest mirrors session_manager.ChatStart. Duplicated rather than
 // imported so the manager and this service do not depend on each other's types.
 type StartRequest struct {
-	SessionID             domain.SessionID
-	ProjectID             domain.ProjectID
-	Kind                  domain.SessionKind
-	Harness               domain.AgentHarness
-	DataDir               string
-	WorkspacePath         string
-	Env                   map[string]string
-	ManagedCodexProfile   bool
-	Model                 string
-	Permissions           ports.PermissionMode
-	SystemPrompt          string
-	AdditionalDirectories []string
-	MCPServers            []ports.ChatMCPServerConfig
+	SessionID               domain.SessionID
+	ProjectID               domain.ProjectID
+	Kind                    domain.SessionKind
+	Harness                 domain.AgentHarness
+	DataDir                 string
+	WorkspacePath           string
+	Env                     map[string]string
+	ManagedCodexProfile     bool
+	Model                   string
+	Permissions             ports.PermissionMode
+	SystemPrompt            string
+	AdditionalDirectories   []string
+	MCPServers              []ports.ChatMCPServerConfig
+	ExpectedControllerOwner domain.SessionControllerOwner
+	PrepareControllerEnv    func(context.Context, domain.SessionControllerOwner) (map[string]string, error)
 	// ProviderConversationID resumes a stored conversation. Empty starts fresh.
 	ProviderConversationID  string
 	ProviderScopeID         string
@@ -1090,6 +1160,10 @@ type StartResult struct {
 	// that is not active yet. ControllerReady must commit it atomically with the
 	// session's provider handle and controller generation.
 	ProviderBoundary *domain.ConversationBranch
+	// CommitProviderHistory projects a reconciled native replay inside the
+	// provider-boundary lifecycle transaction. It must never be invoked outside
+	// that transaction: the pending branch and generation do not exist yet.
+	CommitProviderHistory func(context.Context) error
 }
 
 // StartChatTurn delivers the initial prompt as a normal turn.

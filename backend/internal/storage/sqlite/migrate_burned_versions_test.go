@@ -121,8 +121,10 @@ var shippedMigrations = map[int64]string{
 	114: "0114_usage_cost_candidate_canonical_index.sql",
 	115: "0115_usage_measurement_and_provider_usage.sql",
 	116: "0116_usage_billing_provider_source.sql",
-	117: "0117_drop_agent_inventory_cache.sql",
-	118: "0118_codex_session_bindings.sql",
+	117: "0117_allow_kimi_usage.sql",
+	118: "0118_cancelled_conversation_turns.sql",
+	119: "0119_drop_agent_inventory_cache.sql",
+	120: "0120_codex_session_bindings.sql",
 }
 
 // burnedVersion reports version numbers that must never be (re)used: they

@@ -59,4 +59,12 @@ describe("TitlebarNav", () => {
 		const nav = container.querySelector('[data-slot="titlebar-nav"]');
 		expect(nav).toHaveClass("left-titlebar-cluster-left", "h-traffic-light-clearance", "-top-0.6");
 	});
+
+	it("hides the fixed navigation cluster while the sidebar is an icon rail", () => {
+		useUiStore.setState({ isSidebarAutoCollapsed: true });
+
+		const { container } = render(<TitlebarNav />);
+
+		expect(container.querySelector('[data-slot="titlebar-nav"]')).toBeNull();
+	});
 });

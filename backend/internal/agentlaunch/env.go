@@ -1,0 +1,224 @@
+package agentlaunch
+
+import (
+	"context"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"sort"
+	"strconv"
+	"strings"
+)
+
+// AugmentRuntimePATHForLaunchBinary prepends the resolved launch binary
+// directory to the child PATH. For Node-backed CLI shims, it also prepends a
+// concrete Node runtime directory so shebangs like #!/usr/bin/env node work for
+// children of GUI-launched processes whose PATH may omit shell-manager setup.
+func AugmentRuntimePATHForLaunchBinary(ctx context.Context, env map[string]string, argv []string, lookPath func(string) (string, error)) {
+	bin, ok := launchBinary(argv)
+	if !ok || !filepath.IsAbs(bin) {
+		return
+	}
+	launchDir := filepath.Dir(bin)
+	if launchDir == "." || launchDir == string(filepath.Separator) {
+		return
+	}
+	dirs := []string{launchDir}
+	if isNodeLaunchBinary(bin) {
+		if nodeDir := nodeRuntimeDir(ctx, lookPath); nodeDir != "" && nodeDir != launchDir {
+			dirs = append(dirs, nodeDir)
+		}
+	}
+	var parts []string
+	if path := env["PATH"]; path != "" {
+		parts = strings.Split(path, string(os.PathListSeparator))
+	}
+	for i := len(dirs) - 1; i >= 0; i-- {
+		if !containsPathDir(parts, dirs[i]) {
+			parts = append([]string{dirs[i]}, parts...)
+		}
+	}
+	env["PATH"] = strings.Join(parts, string(os.PathListSeparator))
+}
+
+func launchBinary(argv []string) (string, bool) {
+	if len(argv) == 0 {
+		return "", false
+	}
+	if filepath.Base(argv[0]) != "env" {
+		return argv[0], true
+	}
+	for _, arg := range argv[1:] {
+		if strings.Contains(arg, "=") {
+			continue
+		}
+		return arg, true
+	}
+	return "", false
+}
+
+func isNodeLaunchBinary(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return false
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = f.Close() }()
+	const maxShebangBytes = 4096
+	buf := make([]byte, maxShebangBytes)
+	n, _ := f.Read(buf)
+	line := string(buf[:n])
+	if newline := strings.IndexByte(line, '\n'); newline >= 0 {
+		line = line[:newline]
+	}
+	if !strings.HasPrefix(line, "#!") {
+		return false
+	}
+	for _, field := range strings.Fields(strings.TrimPrefix(line, "#!")) {
+		if filepath.Base(field) == "node" {
+			return true
+		}
+	}
+	return false
+}
+
+func containsPathDir(parts []string, dir string) bool {
+	for _, part := range parts {
+		if part == dir {
+			return true
+		}
+	}
+	return false
+}
+
+func nodeRuntimeDir(ctx context.Context, lookPath func(string) (string, error)) string {
+	if err := ctx.Err(); err != nil || runtime.GOOS == "windows" {
+		return ""
+	}
+	if lookPath == nil {
+		lookPath = exec.LookPath
+	}
+	if node, err := lookPath("node"); err == nil && node != "" {
+		return filepath.Dir(node)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	fnmDir := os.Getenv("FNM_DIR")
+	if fnmDir == "" {
+		if xdg := os.Getenv("XDG_DATA_HOME"); xdg != "" {
+			fnmDir = filepath.Join(xdg, "fnm")
+		} else if runtime.GOOS == "darwin" {
+			fnmDir = filepath.Join(home, "Library", "Application Support", "fnm")
+		} else {
+			fnmDir = filepath.Join(home, ".local", "share", "fnm")
+		}
+	}
+	voltaHome := os.Getenv("VOLTA_HOME")
+	if voltaHome == "" {
+		voltaHome = filepath.Join(home, ".volta")
+	}
+	nvm := versionedNodeMatches(filepath.Join(home, ".nvm", "versions", "node", "*", "bin", "node"))
+	if data, err := os.ReadFile(filepath.Join(home, ".nvm", "alias", "default")); err == nil {
+		fields := strings.Fields(string(data))
+		if len(fields) > 0 {
+			nvm = preferNodeVersion(nvm, fields[0])
+		}
+	}
+	fnmMatches := versionedNodeMatches(filepath.Join(fnmDir, "node-versions", "*", "installation", "bin", "node"))
+	candidates := make([]string, 0, len(nvm)+len(fnmMatches)+3)
+	candidates = append(candidates, nvm...)
+	candidates = append(candidates, fnmMatches...)
+	// Prefer explicitly selected/versioned runtimes over manager and package-
+	// manager shims. A dormant ~/.volta installation must not override the NVM
+	// default or newest fnm runtime merely because the GUI omitted shell setup.
+	candidates = append(candidates, filepath.Join(voltaHome, "bin", "node"), "/opt/homebrew/bin/node", "/usr/local/bin/node")
+	for _, candidate := range candidates {
+		if err := ctx.Err(); err != nil {
+			return ""
+		}
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() && info.Mode()&0o111 != 0 {
+			return filepath.Dir(candidate)
+		}
+	}
+	return ""
+}
+
+func versionedNodeMatches(pattern string) []string {
+	matches, _ := filepath.Glob(pattern)
+	sort.SliceStable(matches, func(i, j int) bool {
+		return compareNodeVersion(nodeVersionFromPath(matches[i]), nodeVersionFromPath(matches[j])) > 0
+	})
+	return matches
+}
+
+func nodeVersionFromPath(path string) string {
+	dir := filepath.Dir(path)
+	if filepath.Base(dir) == "bin" {
+		dir = filepath.Dir(dir)
+	}
+	if filepath.Base(dir) == "installation" {
+		dir = filepath.Dir(dir)
+	}
+	return filepath.Base(dir)
+}
+
+func preferNodeVersion(paths []string, version string) []string {
+	version = normalizeNodeVersion(version)
+	for i, path := range paths {
+		if normalizeNodeVersion(nodeVersionFromPath(path)) != version {
+			continue
+		}
+		out := make([]string, 0, len(paths))
+		out = append(out, path)
+		out = append(out, paths[:i]...)
+		out = append(out, paths[i+1:]...)
+		return out
+	}
+	return paths
+}
+
+func compareNodeVersion(a, b string) int {
+	av, aok := parseNodeVersion(a)
+	bv, bok := parseNodeVersion(b)
+	for i := range av {
+		if av[i] != bv[i] {
+			if av[i] > bv[i] {
+				return 1
+			}
+			return -1
+		}
+	}
+	if aok != bok {
+		if aok {
+			return 1
+		}
+		return -1
+	}
+	return strings.Compare(a, b)
+}
+
+func parseNodeVersion(version string) ([3]int, bool) {
+	var parsed [3]int
+	fields := strings.Split(normalizeNodeVersion(version), ".")
+	if len(fields) == 0 || fields[0] == "" {
+		return parsed, false
+	}
+	for i := 0; i < len(fields) && i < len(parsed); i++ {
+		n, err := strconv.Atoi(fields[i])
+		if err != nil {
+			return [3]int{}, false
+		}
+		parsed[i] = n
+	}
+	return parsed, true
+}
+
+func normalizeNodeVersion(version string) string {
+	return strings.TrimPrefix(strings.TrimSpace(version), "v")
+}

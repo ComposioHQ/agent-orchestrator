@@ -297,6 +297,57 @@ paths:
       summary: Start browser authentication for one Codex profile
       tags:
       - agents
+  /api/v1/agents/codex/profiles/{profileId}/login-terminal:
+    post:
+      operationId: openCodexProfileLoginTerminal
+      parameters:
+      - description: Codex profile identifier.
+        in: path
+        name: profileId
+        required: true
+        schema:
+          description: Codex profile identifier.
+          type: string
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpenCodexProfileLoginTerminalResponse'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Open a native Codex login terminal for one profile
+      tags:
+      - agents
   /api/v1/agents/codex/profiles/{profileId}/login/{operationId}/cancel:
     post:
       operationId: cancelCodexProfileLogin
@@ -3297,6 +3348,55 @@ paths:
       summary: Name the provider's conversation thread
       tags:
       - conversations
+  /api/v1/sessions/{sessionId}/conversation/turns/{turnId}/cancel:
+    post:
+      operationId: cancelQueuedSessionConversationTurn
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      - description: AO conversation turn identifier, from the snapshot's turns array.
+        in: path
+        name: turnId
+        required: true
+        schema:
+          description: AO conversation turn identifier, from the snapshot's turns
+            array.
+          type: string
+      responses:
+        "204":
+          description: No Content
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Remove one queued message without stopping the running turn
+      tags:
+      - conversations
   /api/v1/sessions/{sessionId}/conversation/turns/{turnId}/edit:
     post:
       operationId: editSessionConversationMessage
@@ -3360,6 +3460,67 @@ paths:
                 $ref: '#/components/schemas/APIError'
           description: Not Implemented
       summary: Branch before and replace an earlier human prompt
+      tags:
+      - conversations
+  /api/v1/sessions/{sessionId}/conversation/turns/{turnId}/queue/edit:
+    post:
+      operationId: editQueuedSessionConversationTurn
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      - description: AO conversation turn identifier, from the snapshot's turns array.
+        in: path
+        name: turnId
+        required: true
+        schema:
+          description: AO conversation turn identifier, from the snapshot's turns
+            array.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EditQueuedConversationMessageRequest'
+        required: true
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Rewrite one queued message before it dispatches
       tags:
       - conversations
   /api/v1/sessions/{sessionId}/conversation/turns/{turnId}/retry:
@@ -6574,6 +6735,30 @@ components:
           type: string
         displayName:
           type: string
+        displayStatus:
+          enum:
+          - Working
+          - Blocked
+          - Exited
+          - No signal
+          - Awaiting PR
+          - Fixing CI failures
+          - Addressing comments
+          - Needs review
+          - Review scheduled
+          - Reviewing
+          - Review pending
+          - Draft
+          - CI failing
+          - Commented
+          - Changes requested
+          - Needs human review
+          - Mergeable
+          - Approved
+          - Merged
+          - Closed without merge
+          - Terminated
+          type: string
         harness:
           type: string
         id:
@@ -6583,6 +6768,14 @@ components:
         isTerminated:
           type: boolean
         issueId:
+          type: string
+        kanbanColumn:
+          enum:
+          - building
+          - validating
+          - needs_review
+          - ready
+          - archive
           type: string
         kind:
           type: string
@@ -6692,6 +6885,8 @@ components:
       - updatedAt
       - isPinned
       - status
+      - kanbanColumn
+      - displayStatus
       - prs
       type: object
     ControllersSetSecurePairingRequest:
@@ -7291,6 +7486,7 @@ components:
           - recovered
           - interrupted
           - failed
+          - cancelled
           type: string
       required:
       - id
@@ -7574,6 +7770,13 @@ components:
       - sourceBranchId
       - activeBranchId
       type: object
+    EditQueuedConversationMessageRequest:
+      properties:
+        text:
+          type: string
+      required:
+      - text
+      type: object
     EnsureAgentReadinessRequest:
       properties:
         agentIds:
@@ -7590,6 +7793,10 @@ components:
       type: object
     EnsureCodexProfilesRequest:
       properties:
+        forceAuthenticationRefresh:
+          description: Bypass the profile authentication TTL for an active native
+            login terminal.
+          type: boolean
         profileIds:
           items:
             type: string
@@ -8162,6 +8369,16 @@ components:
       required:
       - kind
       - sessionId
+      type: object
+    OpenCodexProfileLoginTerminalResponse:
+      properties:
+        profileId:
+          type: string
+        shellTerminal:
+          $ref: '#/components/schemas/ShellTerminalResponse'
+      required:
+      - profileId
+      - shellTerminal
       type: object
     OpenShellTerminalRequest:
       properties:

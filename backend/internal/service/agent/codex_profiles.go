@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	"github.com/aoagents/agent-orchestrator/backend/internal/service/shellterm"
 )
 
 const (
@@ -39,6 +41,17 @@ type CodexProfileLoginStart struct {
 	AuthURL     string                         `json:"authUrl"`
 }
 
+// CodexProfileLoginTerminalStart identifies the standalone terminal opened for
+// one profile's native Codex login flow.
+type CodexProfileLoginTerminalStart struct {
+	ProfileID     string                  `json:"profileId"`
+	ShellTerminal shellterm.ShellTerminal `json:"shellTerminal"`
+}
+
+type codexProfileLoginTerminalOpener interface {
+	OpenCommandTerminal(context.Context, shellterm.OpenCommandTerminalInput) (shellterm.ShellTerminal, error)
+}
+
 type profileAuthCall struct{ done chan struct{} }
 
 type profileAuthState struct {
@@ -51,13 +64,15 @@ type profileAuthState struct {
 }
 
 type codexProfileManager struct {
-	ctx       context.Context
-	catalog   *codexProfileCatalog
-	factory   ports.CodexAccountClientFactory
-	logger    *slog.Logger
-	now       func() time.Time
-	newID     func() string
-	processes chan struct{}
+	ctx                 context.Context
+	catalog             *codexProfileCatalog
+	factory             ports.CodexAccountClientFactory
+	logger              *slog.Logger
+	now                 func() time.Time
+	newID               func() string
+	processes           chan struct{}
+	executable          func() (string, error)
+	loginTerminalOpener codexProfileLoginTerminalOpener
 
 	mu            sync.Mutex
 	auth          map[string]*profileAuthState
@@ -88,10 +103,56 @@ func newCodexProfileManager(ctx context.Context, root, existingHome string, fact
 	return &codexProfileManager{
 		ctx: ctx, catalog: newCodexProfileCatalog(root, existingHome, logger), factory: factory, logger: logger,
 		now: func() time.Time { return time.Now().UTC() }, newID: uuid.NewString,
-		processes: make(chan struct{}, codexProfileProcessLimit), auth: make(map[string]*profileAuthState),
+		executable: os.Executable,
+		processes:  make(chan struct{}, codexProfileProcessLimit), auth: make(map[string]*profileAuthState),
 		capabilities: unavailableCodexCapabilities(), logins: make(map[string]*codexLoginOperation),
 		loginStarting: make(map[string]struct{}),
 	}
+}
+
+func (m *codexProfileManager) openLoginTerminal(ctx context.Context, profileID string) (CodexProfileLoginTerminalStart, error) {
+	record, err := m.resolveLoginTerminalProfile(ctx, profileID)
+	if err != nil {
+		return CodexProfileLoginTerminalStart{}, err
+	}
+	return m.openResolvedLoginTerminal(ctx, record)
+}
+
+func (m *codexProfileManager) resolveLoginTerminalProfile(ctx context.Context, profileID string) (codexProfileRecord, error) {
+	if err := ctx.Err(); err != nil {
+		return codexProfileRecord{}, err
+	}
+	if err := m.catalog.refresh(); err != nil {
+		return codexProfileRecord{}, apierr.Unavailable("CODEX_PROFILE_MANAGEMENT_UNAVAILABLE", "Codex profile discovery is unavailable")
+	}
+	record, ok := m.catalog.record(strings.TrimSpace(profileID))
+	if !ok {
+		return codexProfileRecord{}, apierr.NotFound("CODEX_PROFILE_UNKNOWN", "Codex profile not found")
+	}
+	if record.Snapshot.Status != domain.CodexProfileStatusValid {
+		return codexProfileRecord{}, apierr.Conflict("CODEX_PROFILE_INVALID", "Codex profile is not valid", map[string]any{"profileId": record.Snapshot.ID})
+	}
+	return record, nil
+}
+
+func (m *codexProfileManager) openResolvedLoginTerminal(ctx context.Context, record codexProfileRecord) (CodexProfileLoginTerminalStart, error) {
+	if m.loginTerminalOpener == nil || m.executable == nil {
+		return CodexProfileLoginTerminalStart{}, apierr.Unavailable("CODEX_PROFILE_LOGIN_TERMINAL_UNAVAILABLE", "Codex login terminal is unavailable")
+	}
+	executable, err := m.executable()
+	if err != nil || strings.TrimSpace(executable) == "" {
+		return CodexProfileLoginTerminalStart{}, apierr.Unavailable("CODEX_PROFILE_LOGIN_TERMINAL_UNAVAILABLE", "Codex login terminal is unavailable")
+	}
+	terminal, err := m.loginTerminalOpener.OpenCommandTerminal(ctx, shellterm.OpenCommandTerminalInput{
+		Argv:       []string{executable, "codex-login"},
+		Env:        map[string]string{"CODEX_HOME": record.Home},
+		WorkingDir: record.Home,
+		Title:      "Codex login - " + record.Snapshot.Label,
+	})
+	if err != nil {
+		return CodexProfileLoginTerminalStart{}, apierr.Unavailable("CODEX_PROFILE_LOGIN_TERMINAL_UNAVAILABLE", "Codex login terminal could not be opened")
+	}
+	return CodexProfileLoginTerminalStart{ProfileID: record.Snapshot.ID, ShellTerminal: terminal}, nil
 }
 
 func unavailableCodexCapabilities() domain.CodexProfileCapabilities {
@@ -137,7 +198,7 @@ func (m *codexProfileManager) detectCapabilities(ctx context.Context) domain.Cod
 	return capabilities
 }
 
-func (m *codexProfileManager) ensure(ctx context.Context, profileIDs []string, purpose domain.AgentReadinessPurpose, installation domain.AgentInstallationState) (CodexProfiles, error) {
+func (m *codexProfileManager) ensure(ctx context.Context, profileIDs []string, purpose domain.AgentReadinessPurpose, installation domain.AgentInstallationState, forceAuthenticationRefresh bool) (CodexProfiles, error) {
 	if purpose != domain.AgentReadinessPurposeDisplay && purpose != domain.AgentReadinessPurposeLaunch {
 		return CodexProfiles{}, apierr.Invalid("INVALID_READINESS_PURPOSE", "Purpose must be display or launch", map[string]any{"purpose": purpose})
 	}
@@ -197,7 +258,7 @@ func (m *codexProfileManager) ensure(ctx context.Context, profileIDs []string, p
 			})
 			continue
 		}
-		if _, err := m.ensureAuthentication(ctx, record, purpose, false, false); err != nil {
+		if _, err := m.ensureAuthentication(ctx, record, purpose, forceAuthenticationRefresh, false); err != nil {
 			return CodexProfiles{}, err
 		}
 	}
@@ -417,14 +478,10 @@ func (m *codexProfileManager) invalidate(profileID string) {
 	})
 }
 
-func (m *codexProfileManager) create(ctx context.Context, label string) (domain.CodexProfileSnapshot, error) {
+func (m *codexProfileManager) create(_ context.Context, label string) (domain.CodexProfileSnapshot, error) {
 	label = strings.TrimSpace(label)
 	if !validCodexProfileLabel(label) {
 		return domain.CodexProfileSnapshot{}, apierr.Invalid("INVALID_CODEX_PROFILE_LABEL", "Profile label must be 1 to 80 characters without control characters", nil)
-	}
-	capabilities := m.detectCapabilities(ctx)
-	if err := requireBrowserLoginCapability(capabilities); err != nil {
-		return domain.CodexProfileSnapshot{}, err
 	}
 	record, err := m.catalog.create(label)
 	if errors.Is(err, errInvalidCodexProfileLabel) {
@@ -809,7 +866,7 @@ func (s *Service) CachedCodexProfiles(ctx context.Context) (CodexProfiles, error
 }
 
 // EnsureCodexProfiles rediscovers descriptors and ensures profile authentication.
-func (s *Service) EnsureCodexProfiles(ctx context.Context, profileIDs []string, purpose domain.AgentReadinessPurpose) (CodexProfiles, error) {
+func (s *Service) EnsureCodexProfiles(ctx context.Context, profileIDs []string, purpose domain.AgentReadinessPurpose, forceAuthenticationRefresh bool) (CodexProfiles, error) {
 	if err := ctx.Err(); err != nil {
 		return CodexProfiles{}, err
 	}
@@ -828,7 +885,7 @@ func (s *Service) EnsureCodexProfiles(ctx context.Context, profileIDs []string, 
 	if err != nil {
 		return CodexProfiles{}, err
 	}
-	result, err := s.codexProfiles.ensure(ctx, profileIDs, purpose, installation[0].Installation.State)
+	result, err := s.codexProfiles.ensure(ctx, profileIDs, purpose, installation[0].Installation.State, forceAuthenticationRefresh)
 	if err != nil {
 		return CodexProfiles{}, err
 	}
@@ -860,6 +917,34 @@ func (s *Service) CreateCodexProfile(ctx context.Context, label string) (domain.
 	return s.codexProfiles.create(ctx, label)
 }
 
+// SetCodexProfileLoginTerminalOpener late-binds the shell-terminal service,
+// which is constructed after the agent service during daemon startup.
+func (s *Service) SetCodexProfileLoginTerminalOpener(opener codexProfileLoginTerminalOpener) {
+	if s.codexProfiles != nil {
+		s.codexProfiles.loginTerminalOpener = opener
+	}
+}
+
+// OpenCodexProfileLoginTerminal opens the fixed native login helper for one
+// private profile home.
+func (s *Service) OpenCodexProfileLoginTerminal(ctx context.Context, profileID string) (CodexProfileLoginTerminalStart, error) {
+	if s.codexProfiles == nil {
+		return CodexProfileLoginTerminalStart{}, apierr.Unavailable("CODEX_PROFILE_MANAGEMENT_UNAVAILABLE", "Codex profile management is unavailable")
+	}
+	record, err := s.codexProfiles.resolveLoginTerminalProfile(ctx, profileID)
+	if err != nil {
+		return CodexProfileLoginTerminalStart{}, err
+	}
+	installation, err := s.codexProfileInstallation(ctx, true)
+	if err != nil {
+		return CodexProfileLoginTerminalStart{}, err
+	}
+	if codexInstallationConfirmedAbsent(installation) {
+		return CodexProfileLoginTerminalStart{}, apierr.Unavailable("CODEX_PROFILE_LOGIN_TERMINAL_UNAVAILABLE", "Codex is not installed")
+	}
+	return s.codexProfiles.openResolvedLoginTerminal(ctx, record)
+}
+
 // StartCodexProfileLogin starts a guarded browser login for one profile.
 func (s *Service) StartCodexProfileLogin(ctx context.Context, profileID string) (CodexProfileLoginStart, error) {
 	if s.codexProfiles == nil {
@@ -875,14 +960,30 @@ func (s *Service) StartCodexProfileLogin(ctx context.Context, profileID string) 
 }
 
 func (s *Service) requireCodexProfileInstallation(ctx context.Context) error {
-	installation, err := s.readiness.EnsureInstallation(ctx, []string{string(domain.HarnessCodex)}, domain.AgentReadinessPurposeDisplay)
+	installation, err := s.codexProfileInstallation(ctx, false)
 	if err != nil {
 		return err
 	}
-	if installation[0].Installation.State == domain.AgentInstallationNotInstalled {
+	if codexInstallationConfirmedAbsent(installation) {
 		return apierr.Unavailable("CODEX_PROFILE_MANAGEMENT_UNAVAILABLE", "Codex is not installed")
 	}
 	return nil
+}
+
+func (s *Service) codexProfileInstallation(ctx context.Context, force bool) (domain.AgentInstallationObservation, error) {
+	const codexID = string(domain.HarnessCodex)
+	if force {
+		s.readiness.Invalidate(codexID, readinessInvalidateInstallation)
+	}
+	installation, err := s.readiness.EnsureInstallation(ctx, []string{codexID}, domain.AgentReadinessPurposeDisplay)
+	if err != nil {
+		return domain.AgentInstallationObservation{}, err
+	}
+	return installation[0].Installation, nil
+}
+
+func codexInstallationConfirmedAbsent(installation domain.AgentInstallationObservation) bool {
+	return installation.State == domain.AgentInstallationNotInstalled && installation.Freshness == domain.AgentReadinessFresh
 }
 
 // SubscribeCodexProfileLogin streams the current and subsequent login state.
@@ -923,7 +1024,7 @@ func (s *Service) WarmCodexProfiles() {
 		if err := s.codexProfiles.catalog.refresh(); err != nil {
 			return
 		}
-		_, _ = s.EnsureCodexProfiles(s.codexProfiles.ctx, nil, domain.AgentReadinessPurposeDisplay)
+		_, _ = s.EnsureCodexProfiles(s.codexProfiles.ctx, nil, domain.AgentReadinessPurposeDisplay, false)
 	}()
 }
 
