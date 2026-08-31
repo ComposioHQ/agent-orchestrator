@@ -134,7 +134,7 @@ Expected before the fix: FAIL after the plan is accepted, with either a second a
 
 Observed with Cursor Agent `2026.08.25-3e8eec8`: AO received and accepted the plan, Cursor completed the original turn successfully, but `plan-proof.txt` was absent. No second approval occurred. Cursor remained in Plan mode, so accepting `cursor/create_plan` did not perform Cursor's separate Build transition into Agent mode.
 
-- [ ] **Step 5: Commit the isolated reproducer**
+- [x] **Step 5: Commit the isolated reproducer**
 
 ```bash
 git add backend/internal/adapters/chatdriver/cursoracp/live_test.go \
@@ -142,10 +142,12 @@ git add backend/internal/adapters/chatdriver/cursoracp/live_test.go \
 git commit -m "test: reproduce cursor plan continuation stall"
 ```
 
-### Task 2: Switch Cursor to Agent mode when its plan is accepted
+### Task 2: Continue the same AO turn in Cursor Agent mode
 
 **Files:**
 - Modify: `backend/internal/adapters/chatdriver/acp/extensions.go`
+- Modify: `backend/internal/adapters/chatdriver/acp/conversation.go`
+- Modify: `backend/internal/adapters/chatdriver/acp/driver_test.go`
 - Modify: `backend/internal/adapters/chatdriver/cursoracp/extensions.go`
 - Modify: `backend/internal/adapters/chatdriver/cursoracp/driver_test.go`
 
@@ -160,25 +162,28 @@ Use this decision table; do not modify more than the row selected by the trace.
 | Cursor emits an ordinary tool permission | no transport defect | preserve the permission request; improve only test/diagnostic wording because plan consent is not tool consent |
 | Cursor emits nothing until timeout | Cursor provider behavior | do not auto-grant or synthesize a detached turn; retain the regression and document the provider incompatibility with the captured Cursor version |
 
-Selected observation: Cursor emitted a successful turn completion immediately after the accepted plan but performed no implementation. The correction belongs in the Cursor extension adapter: AO must apply the advertised `mode=agent` session option as the Build transition before returning the accepted plan result.
+Selected observation: Cursor emitted a successful turn completion immediately after the accepted plan but performed no implementation. Applying the advertised `mode=agent` session option changed future turns but did not resume the already-running Plan prompt. The correction therefore has two bounded pieces: the Cursor extension adapter performs the explicit Build transition and requests continuation, while the generic ACP loop executes that one queued prompt before completing the same durable AO turn.
 
-- [ ] **Step 2: Write a deterministic failing test at the selected boundary**
+- [x] **Step 2: Write a deterministic failing test at the selected boundary**
 
-Extend `fakeExtensionBridge` with the existing `ChatConfigOptionController.SetConfigOption` signature. Update `TestHandleCreatePlanPublishesPlanAndUsesDurableApprovalFlow` to require `mode=agent`, add a rejected-plan case that requires no mode change, and add a mode-switch failure case that requires the error to surface.
+Extend `fakeExtensionBridge` with config and continuation methods. Update `TestHandleCreatePlanPublishesPlanAndUsesDurableApprovalFlow` to require `mode=agent` plus the continuation instruction, cover rejected/cancelled plans, and require mode/continuation failures to surface. Add a generic ACP transport test that requires two sequential provider prompts but only one AO turn-start/turn-complete pair.
 
 Run the single new test with `-count=1`; expected result is FAIL before implementation.
 
-- [ ] **Step 3: Implement the minimal correction**
+- [x] **Step 3: Implement the minimal correction**
 
-Add `SetConfigOption` to `ClientExtensionBridge`. After `handleCreatePlan` receives `accept`, call:
+Add `SetConfigOption` and `RequestTurnContinuation` to `ClientExtensionBridge`. After `handleCreatePlan` receives `accept`, call:
 
 ```go
 if _, err := bridge.SetConfigOption(ctx, "mode", ports.ChatConfigOptionValue{Select: "agent"}); err != nil {
 	return nil, fmt.Errorf("switch Cursor to agent mode after plan approval: %w", err)
 }
+if err := bridge.RequestTurnContinuation(ctx, "Implement the approved plan now."); err != nil {
+	return nil, fmt.Errorf("continue Cursor turn after plan approval: %w", err)
+}
 ```
 
-Then return the existing accepted response. Rejected and cancelled outcomes must return without changing mode. The implementation must keep these invariants:
+The generic ACP `runTurn` loop consumes a queued continuation only after the current prompt ends successfully, assigns it a fresh provider message ID, and emits no intermediate AO turn completion. Then the Cursor handler returns the existing accepted response. Rejected and cancelled outcomes must return without changing mode or scheduling work. The implementation must keep these invariants:
 
 ```text
 plan approval accepts only cursor/create_plan
@@ -187,7 +192,7 @@ rejected and cancelled plans never continue
 the existing provider turn remains the durable owner of all continuation events
 ```
 
-- [ ] **Step 4: Verify the deterministic and live regressions**
+- [x] **Step 4: Verify the deterministic and live regressions**
 
 Run:
 
@@ -199,7 +204,7 @@ AO_LIVE_CURSOR_ACP=1 go test ./internal/adapters/chatdriver/cursoracp \
 go test -race ./internal/adapters/chatdriver/acp ./internal/adapters/chatdriver/cursoracp
 ```
 
-Expected: all commands PASS. If the provider itself emits nothing, the live test remains an evidence-backed skipped/known-incompatibility test rather than adding speculative automatic steering.
+Observed: focused ACP/Cursor tests passed, and the authenticated live test passed in 41.45 seconds with `plan-proof.txt` created during the same AO turn. The race command remains part of final verification.
 
 - [ ] **Step 5: Commit the minimal fix**
 
