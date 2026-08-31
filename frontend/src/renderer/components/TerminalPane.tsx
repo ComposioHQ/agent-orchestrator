@@ -600,6 +600,7 @@ export function TerminalPane({
 	inputDisabled,
 	focusRequested,
 }: TerminalPaneProps) {
+	const { t } = useTranslation();
 	const terminalTarget =
 		requestedTerminalTarget &&
 		terminalTargetBelongsToSession(requestedTerminalTarget, session?.id)
@@ -668,7 +669,13 @@ export function TerminalPane({
 	// rather than surfacing a separate loading state or attaching xterm to a
 	// handle that cannot exist yet.
 	if (isOptimisticShell) {
-		return <div aria-label="Terminal" className="terminal-surface h-full" data-testid="optimistic-terminal" />;
+		return (
+			<div
+				aria-label={t("terminal.shellAria")}
+				className="terminal-surface h-full"
+				data-testid="optimistic-terminal"
+			/>
+		);
 	}
 
 	const props = {
