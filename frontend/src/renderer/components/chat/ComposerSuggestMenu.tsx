@@ -77,7 +77,7 @@ export function ComposerSuggestMenu({
 		if (highlighted === 0 && previous === 0 && (list.current?.scrollTop ?? 0) <= 1) return;
 		const row = list.current?.querySelector<HTMLElement>(`[data-index="${highlighted}"]`);
 		row?.scrollIntoView({ block: "nearest" });
-	}, [highlighted]);
+	}, [highlighted, items]);
 
 	useEffect(() => {
 		const node = list.current;
@@ -88,7 +88,7 @@ export function ComposerSuggestMenu({
 		const observer = new ResizeObserver(updateScrollIndicators);
 		observer.observe(node);
 		return () => observer.disconnect();
-	}, [kind, updateScrollIndicators]);
+	}, [items, updateScrollIndicators]);
 
 	if (items.length === 0) return null;
 

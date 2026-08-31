@@ -605,11 +605,8 @@ export function TerminalPane({
 		terminalTargetBelongsToSession(requestedTerminalTarget, session?.id)
 			? requestedTerminalTarget
 			: ({ kind: "worker" } satisfies TerminalTarget);
-	const shellTerminals = useShellTerminals().data ?? [];
-	const isOptimisticShell = Boolean(
-		terminalTarget.kind === "shell" &&
-			shellTerminals.some((shell) => shell.handleId === terminalTarget.handleId && shell.optimistic),
-	);
+	const isOptimisticShell =
+		terminalTarget.kind === "shell" && terminalTarget.handleId.startsWith("pending-shell:");
 	const cache = useContext(TerminalCacheContext);
 	const terminalKey =
 		terminalTarget?.kind === "reviewer" || terminalTarget?.kind === "shell"

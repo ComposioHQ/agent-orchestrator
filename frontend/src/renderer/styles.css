@@ -4744,7 +4744,6 @@ html[data-native-browser-composition="true"] .browser-popout-backdrop {
 	padding-inline: var(--space-2_5);
 	padding-block: var(--space-2);
 }
-
 /* Connect Mobile: the pairing QR and the wait before it. The placeholder is a
    real QR carrying decoy data, so it can dissolve into the finished code
    instead of being swapped for it. See PairingQr.tsx. */

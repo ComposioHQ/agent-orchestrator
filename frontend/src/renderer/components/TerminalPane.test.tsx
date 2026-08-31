@@ -285,7 +285,9 @@ describe("TerminalPane empty states", () => {
 		const view = renderCachedPane({
 			session: worker,
 			sessions: [worker],
-			shellTerminals: [shell],
+			// The authoritative shell can replace the optimistic cache row before
+			// the selected target changes. A pending handle itself is the contract.
+			shellTerminals: [],
 			terminalTarget: {
 				generation: shell.createdAt,
 				kind: "shell",
