@@ -52,7 +52,6 @@ import {
 	useRef,
 	useState,
 	type CSSProperties,
-	type KeyboardEvent,
 	type MouseEvent,
 	type ReactNode,
 } from "react";
@@ -652,48 +651,28 @@ export function Sidebar({
             36px board button wrapping the 22px accent mark. */}
 				<div
 					className={cn(
-						"flex shrink-0 items-center gap-1.5 px-0.5 group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-1 group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:pb-2",
+						"group/brand flex shrink-0 items-center gap-1.5 rounded-md px-0.5 group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-1 group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:pb-2",
 						commandPaletteEnabled ? "pb-2" : "pb-3",
 					)}
 				>
-					<Tooltip>
-						<TooltipTrigger asChild>
-							<button
-								aria-label={t("shell.orchestratorBoard")}
-								className={cn(
-									"grid h-5.5 w-5.5 shrink-0 place-items-center",
-									"group-data-[collapsible=icon]:size-control-board group-data-[collapsible=icon]:rounded-lg",
-									selection.isHome
-										? "group-data-[collapsible=icon]:bg-interactive-active"
-										: "group-data-[collapsible=icon]:hover:bg-interactive-hover",
-								)}
-								onClick={selection.goHome}
-								type="button"
-							>
-								<img src={aoLogo} alt="" aria-hidden="true" className="h-5.5 w-5.5 -translate-y-[3px] rounded-md object-cover" />
-							</button>
-						</TooltipTrigger>
-						<TooltipContent side="right" hidden={state !== "collapsed"}>
-							{t("shell.orchestratorBoard")}
-						</TooltipContent>
-					</Tooltip>
+					<span
+						className={cn(
+							"grid h-5.5 w-5.5 shrink-0 place-items-center",
+							"group-data-[collapsible=icon]:size-control-board group-data-[collapsible=icon]:rounded-lg",
+						)}
+					>
+						<img src={aoLogo} alt="" aria-hidden="true" className="h-5.5 w-5.5 -translate-y-[3px] rounded-md object-cover" />
+					</span>
 					{isWindows ? (
 						<span
-							aria-label={t("shell.orchestratorBoard")}
 							className="sidebar-expanded-chrome min-w-0 flex-1 truncate text-sm font-bold leading-tight tracking-tight-lg text-foreground group-data-[collapsible=icon]:hidden"
-							onClick={selection.goHome}
-							onKeyDown={(event: KeyboardEvent<HTMLSpanElement>) => {
-								if (event.key !== "Enter" && event.key !== " ") return;
-								event.preventDefault();
-								selection.goHome();
-							}}
-							role="button"
-							tabIndex={0}
 						>
 							Agent Orchestrator
 						</span>
 					) : (
-						<span className="sidebar-expanded-chrome min-w-0 flex-1 truncate text-sm font-bold leading-tight tracking-tight-lg text-foreground group-data-[collapsible=icon]:hidden">
+						<span
+							className="sidebar-expanded-chrome min-w-0 flex-1 truncate text-sm font-bold leading-tight tracking-tight-lg text-foreground group-data-[collapsible=icon]:hidden"
+						>
 							Agent Orchestrator
 						</span>
 					)}

@@ -4744,3 +4744,94 @@ html[data-native-browser-composition="true"] .browser-popout-backdrop {
 	padding-inline: var(--space-2_5);
 	padding-block: var(--space-2);
 }
+
+/* Connect Mobile: the pairing QR and the wait before it. The placeholder is a
+   real QR carrying decoy data, so it can dissolve into the finished code
+   instead of being swapped for it. See PairingQr.tsx. */
+/* A triangular ramp occupying half the cycle. With four layers offset by a
+   quarter cycle, two are always mid-ramp in opposite directions, so the
+   composite dissolves continuously instead of swapping one code for the next. */
+@keyframes ao-qr-decoy-cycle {
+	0% {
+		opacity: 0;
+	}
+	25% {
+		opacity: 0.5;
+	}
+	50% {
+		opacity: 0;
+	}
+	100% {
+		opacity: 0;
+	}
+}
+
+/* A slow wander, so the panel reads as working rather than frozen. Small
+   enough that it never looks like a layout bug. */
+@keyframes ao-qr-drift {
+	0%,
+	100% {
+		transform: translate3d(0, 0, 0);
+	}
+	25% {
+		transform: translate3d(-3px, 2px, 0);
+	}
+	50% {
+		transform: translate3d(2px, -3px, 0);
+	}
+	75% {
+		transform: translate3d(3px, 2px, 0);
+	}
+}
+
+@keyframes ao-qr-resolve-in {
+	from {
+		opacity: 0;
+		filter: blur(3px);
+		transform: scale(0.985);
+	}
+	to {
+		opacity: 1;
+		filter: blur(0);
+		transform: none;
+	}
+}
+
+@keyframes ao-qr-decoy-settle {
+	to {
+		opacity: 0;
+		filter: blur(4px);
+	}
+}
+
+.ao-qr-decoy {
+	opacity: 0;
+	animation: ao-qr-decoy-cycle 4800ms linear infinite;
+}
+
+.ao-qr-drift {
+	animation: ao-qr-drift 9s ease-in-out infinite;
+}
+
+/* The real code has arrived: stop cycling and clear away together. */
+.ao-qr-decoy--settling {
+	animation: ao-qr-decoy-settle 900ms ease-out forwards;
+}
+
+.ao-qr-resolved {
+	animation: ao-qr-resolve-in ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.ao-qr-decoy {
+		animation-duration: 9000ms;
+	}
+
+	.ao-qr-drift {
+		animation: none;
+	}
+
+	.ao-qr-resolved {
+		animation: none;
+	}
+}

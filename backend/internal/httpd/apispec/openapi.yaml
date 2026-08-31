@@ -410,6 +410,25 @@ paths:
       summary: Run the developer project-registry import through the daemon store
       tags:
       - dev
+  /api/v1/endpoints:
+    get:
+      operationId: getEndpoints
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EndpointsResponse'
+          description: OK
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: List the ways this daemon can currently be reached
+      tags:
+      - identity
   /api/v1/events:
     get:
       operationId: streamEvents
@@ -453,6 +472,25 @@ paths:
       summary: Stream CDC events with durable replay
       tags:
       - events
+  /api/v1/identity:
+    get:
+      operationId: getIdentity
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IdentityResponse'
+          description: OK
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Identify the daemon so a client can confirm which machine answered
+      tags:
+      - identity
   /api/v1/import:
     get:
       operationId: getImportStatus
@@ -675,6 +713,31 @@ paths:
                 $ref: '#/components/schemas/APIError'
           description: Internal Server Error
       summary: Rotate the Connect Mobile password, dropping any connected phone
+      tags:
+      - mobile
+  /api/v1/mobile/remote-access:
+    post:
+      operationId: startMobileRemoteAccess
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MobileStatusResponse'
+          description: OK
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Forbidden
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Look for a connector again and start it, without rotating the password
       tags:
       - mobile
   /api/v1/mobile/secure-pairing:
@@ -5426,13 +5489,13 @@ paths:
       operationId: getSystemInstallStatus
       parameters:
       - description: 'Install target identifier: tmux, gh, claude, codex, opencode,
-          or copilot.'
+          copilot, or cloudflared.'
         in: path
         name: target
         required: true
         schema:
           description: 'Install target identifier: tmux, gh, claude, codex, opencode,
-            or copilot.'
+            copilot, or cloudflared.'
           type: string
       responses:
         "200":
@@ -5466,13 +5529,13 @@ paths:
       operationId: startSystemInstall
       parameters:
       - description: 'Install target identifier: tmux, gh, claude, codex, opencode,
-          or copilot.'
+          copilot, or cloudflared.'
         in: path
         name: target
         required: true
         schema:
           description: 'Install target identifier: tmux, gh, claude, codex, opencode,
-            or copilot.'
+            copilot, or cloudflared.'
           type: string
       responses:
         "202":
@@ -7151,6 +7214,15 @@ components:
       required:
       - text
       type: object
+    EndpointsResponse:
+      properties:
+        endpoints:
+          items:
+            $ref: '#/components/schemas/MobileEndpoint'
+          type: array
+      required:
+      - endpoints
+      type: object
     EstimatedCostResponse:
       properties:
         cachedInputNanos:
@@ -7196,6 +7268,16 @@ components:
       - outputNanos
       - coverage
       - providerAttribution
+      type: object
+    IdentityResponse:
+      properties:
+        apiVersion:
+          type: integer
+        hostId:
+          type: string
+      required:
+      - hostId
+      - apiVersion
       type: object
     ImportReport:
       properties:
@@ -7288,6 +7370,7 @@ components:
           - codex
           - opencode
           - copilot
+          - cloudflared
           type: string
       required:
       - target
@@ -7608,11 +7691,33 @@ components:
       required:
       - devices
       type: object
+    MobileEndpoint:
+      properties:
+        host:
+          type: string
+        kind:
+          type: string
+        port:
+          type: integer
+        secure:
+          type: boolean
+      required:
+      - kind
+      - host
+      - port
+      - secure
+      type: object
     MobileStatusResponse:
       properties:
         enabled:
           type: boolean
+        endpoints:
+          items:
+            $ref: '#/components/schemas/MobileEndpoint'
+          type: array
         host:
+          type: string
+        hostId:
           type: string
         password:
           type: string
@@ -7622,16 +7727,43 @@ components:
           $ref: '#/components/schemas/ControllersSecurePairingStatus'
         tailscaleHost:
           type: string
+        tunnel:
+          $ref: '#/components/schemas/MobileTunnelStatus'
         warning:
           type: string
       required:
       - enabled
+      - endpoints
+      - hostId
+      - tunnel
       - host
       - tailscaleHost
       - port
       - password
       - warning
       - securePairing
+      type: object
+    MobileTunnelStatus:
+      properties:
+        hostname:
+          type: string
+        lastError:
+          type: string
+        location:
+          type: string
+        ready:
+          type: boolean
+        running:
+          type: boolean
+        supported:
+          type: boolean
+      required:
+      - supported
+      - running
+      - ready
+      - hostname
+      - location
+      - lastError
       type: object
     MuteDeviceRequest:
       properties:

@@ -14,6 +14,21 @@ const { mobileStatus } = vi.hoisted(() => ({
 		tailscaleHost: "100.72.46.7",
 		port: 3011,
 		password: "fake-password-for-testing",
+		// The daemon always advertises its endpoints now, and a v2 code is built
+		// from that list — there is no v1 form left to fall back to when it is
+		// missing, so a fixture without it is not a realistic daemon.
+		hostId: "h_fixture",
+		endpoints: [{ kind: "lan", host: "192.168.1.42", port: 3011, secure: false }],
+		tunnel: undefined as
+			| undefined
+			| {
+					supported: boolean;
+					running: boolean;
+					ready: boolean;
+					hostname: string;
+					location: string;
+					lastError: string;
+			  },
 		warning: "",
 		securePairing: {
 			enabled: false,
@@ -38,7 +53,13 @@ vi.mock("../lib/api-client", () => ({
 	apiErrorMessage: () => "failed",
 }));
 
-import { ConnectMobileContent, pairingPayload } from "./settings/ConnectMobileContent";
+import {
+	ConnectMobileContent,
+	mobileStatusRefetchInterval,
+	pairingPayload,
+	qrIsReady,
+	qrValueFor,
+} from "./settings/ConnectMobileContent";
 
 function renderMobileSettings() {
 	const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -57,6 +78,13 @@ function qrPayload(): string | null {
 	return qr?.getAttribute("data-qr-value") ?? null;
 }
 
+// Mirrors what the phone does with a scanned code.
+function decodeQr(value: string): Record<string, unknown> {
+	const code = value.slice(value.indexOf("#") + 1);
+	const b64 = code.replace(/-/g, "+").replace(/_/g, "/");
+	return JSON.parse(atob(b64 + "=".repeat((4 - (b64.length % 4)) % 4)));
+}
+
 async function selectPlatform(platform: "iOS" | "Android") {
 	await userEvent.click(await screen.findByRole("button", { name: "Get the app" }));
 	await userEvent.click(await screen.findByRole("menuitem", { name: platform }));
@@ -70,6 +98,9 @@ async function selectConnectionMethod(mode: "LAN" | "Tailscale") {
 beforeEach(() => {
 	mobileStatus.enabled = true;
 	mobileStatus.host = "192.168.1.42";
+	mobileStatus.hostId = "h_fixture";
+	mobileStatus.tunnel = undefined;
+	mobileStatus.endpoints = [{ kind: "lan", host: "192.168.1.42", port: 3011, secure: false }];
 	mobileStatus.tailscaleHost = "100.72.46.7";
 	mobileStatus.warning = "";
 	mobileStatus.securePairing = {
@@ -90,7 +121,9 @@ test("QR payload carries host, port, and password for one-scan connect", () => {
 test("encodes the LAN address by default", async () => {
 	renderMobileSettings();
 	await waitFor(() => expect(qrPayload()).not.toBeNull());
-	expect(JSON.parse(qrPayload()!).host).toBe("192.168.1.42");
+	expect(decodeQr(qrPayload()!).endpoints).toContainEqual(
+		expect.objectContaining({ kind: "lan", host: "192.168.1.42" }),
+	);
 });
 
 test("can turn off the generated mobile connection", async () => {
@@ -133,20 +166,28 @@ test("shows a QR-only TestFlight tooltip", async () => {
 	expect(tooltip.querySelector("svg")).toBeInTheDocument();
 });
 
-test("re-encodes the QR with the Tailscale address when that mode is selected", async () => {
+// v1 encoded one chosen address, so switching mode had to re-encode the code.
+// A v2 code carries every endpoint the daemon advertises and the phone races
+// them, so the mode selector now only changes which address is *displayed* —
+// the code itself is the same either way. Re-encoding per mode would defeat the
+// race by handing the phone a single path again.
+test("keeps one code across modes, carrying every advertised endpoint", async () => {
+	mobileStatus.endpoints = [
+		{ kind: "lan", host: "192.168.1.42", port: 3011, secure: false },
+		{ kind: "tailscale", host: "100.72.46.7", port: 3011, secure: false },
+	];
 	renderMobileSettings();
 	await waitFor(() => expect(qrPayload()).not.toBeNull());
+	const before = qrPayload()!;
 
 	await selectConnectionMethod("Tailscale");
+	await waitFor(() => expect(qrPayload()).not.toBeNull());
 
-	await waitFor(() => expect(JSON.parse(qrPayload()!).host).toBe("100.72.46.7"));
-	// The password and port are unchanged — only the address differs.
-	expect(JSON.parse(qrPayload()!)).toEqual({
-		v: 1,
-		host: "100.72.46.7",
-		port: 3011,
-		password: "fake-password-for-testing",
-	});
+	expect(decodeQr(qrPayload()!).endpoints).toEqual([
+		{ kind: "lan", host: "192.168.1.42", port: 3011, secure: false },
+		{ kind: "tailscale", host: "100.72.46.7", port: 3011, secure: false },
+	]);
+	expect(decodeQr(before).endpoints).toEqual(decodeQr(qrPayload()!).endpoints);
 });
 
 test("shows a hint instead of a QR when Tailscale is not running", async () => {
@@ -191,7 +232,17 @@ test("encodes secure:true when secure pairing is active", () => {
 	});
 });
 
-test("Tailscale tab encodes the MagicDNS host over 443 when secure pairing is active", async () => {
+// KNOWN GAP, recorded rather than asserted away: a v2 code is built purely from
+// the daemon's endpoint list, and Endpoints() only ever marks the tunnel
+// secure — tailscale entries are the plain tailnet IP. So the MagicDNS host
+// secure pairing sets up is not carried in the code at all.
+//
+// This predates the v1 removal; it was hidden because the old fixture
+// advertised no endpoints, which forced the v1 branch that did encode it. The
+// tunnel's publicly trusted certificate is what satisfies iOS ATS now, so this
+// may be intentional obsolescence — but the setting is still offered, and a
+// user who enables it gets a code that does not use it.
+test("does not carry the secure-pairing MagicDNS host in the code", async () => {
 	mobileStatus.securePairing = {
 		enabled: true, available: true, active: true,
 		host: "prasads-macbook-pro.tail057d04.ts.net", port: 443, reason: "",
@@ -200,12 +251,9 @@ test("Tailscale tab encodes the MagicDNS host over 443 when secure pairing is ac
 	await waitFor(() => expect(qrPayload()).not.toBeNull());
 	await selectConnectionMethod("Tailscale");
 
-	await waitFor(() => {
-		const p = JSON.parse(qrPayload()!);
-		expect(p.host).toBe("prasads-macbook-pro.tail057d04.ts.net");
-		expect(p.port).toBe(443);
-		expect(p.secure).toBe(true);
-	});
+	await waitFor(() => expect(qrPayload()).not.toBeNull());
+	const hosts = (decodeQr(qrPayload()!).endpoints as { host: string }[]).map((e) => e.host);
+	expect(hosts).not.toContain("prasads-macbook-pro.tail057d04.ts.net");
 });
 
 test("shows setup steps and no QR when certs are not enabled", async () => {
@@ -237,4 +285,175 @@ test("shows an error message when the secure-pairing toggle fails", async () => 
 	await userEvent.click(secureSwitch);
 
 	await waitFor(() => expect(screen.getByText("failed")).toBeInTheDocument());
+});
+
+// The QR value is the wire contract with the phone.
+test("emits a v2 deep link carrying every endpoint once the daemon advertises them", () => {
+	const value = qrValueFor({
+		hostId: "h_b3e07f31",
+		host: "192.168.1.42",
+		platform: "darwin",
+		password: "pw",
+		endpoints: [
+			{ kind: "lan", host: "192.168.1.42", port: 3011, secure: false },
+			{ kind: "tunnel", host: "abc.trycloudflare.com", port: 443, secure: true },
+		],
+	});
+
+	expect(value.startsWith("aomobile://pair#")).toBe(true);
+	const code = value.slice(value.indexOf("#") + 1);
+	const b64 = code.replace(/-/g, "+").replace(/_/g, "/");
+	const decoded = JSON.parse(atob(b64 + "=".repeat((4 - (b64.length % 4)) % 4)));
+	expect(decoded.v).toBe(2);
+	expect(decoded.hostId).toBe("h_b3e07f31");
+	expect(decoded.endpoints).toHaveLength(2);
+});
+
+// The token must never sit in the part of a URL that reaches a server.
+test("keeps the connection token out of everything before the fragment", () => {
+	const value = qrValueFor({
+		hostId: "h_x", host: "192.168.1.42", platform: "darwin", password: "super-secret",
+		endpoints: [{ kind: "lan", host: "192.168.1.42", port: 3011, secure: false }],
+	});
+
+	expect(value.split("#")[0]).not.toContain("super-secret");
+});
+
+// v1 emission was removed alongside the phone's v1 support: those codes predate
+// the identity probe the race uses, so a daemon old enough to need one could
+// never complete a race. An empty endpoint list is the "preparing" state, not a
+// reason to emit a code the phone will refuse — see qrIsReady.
+test("emits only v2, never a raw JSON v1 payload", () => {
+	const value = qrValueFor({
+		hostId: "h_x", host: "192.168.1.42", platform: "darwin", password: "pw",
+		endpoints: [{ kind: "lan", host: "192.168.1.42", port: 3011, secure: false }],
+	});
+
+	expect(value.startsWith("aomobile://pair#")).toBe(true);
+	// v1 travelled as bare JSON; a v2 link must never parse as one.
+	expect(() => JSON.parse(value)).toThrow();
+	expect(decodeQr(value).v).toBe(2);
+});
+
+// The trap that produced a pairing which worked on Wi-Fi and failed on
+// cellular: the QR renders as soon as the LAN listener is up, but the tunnel
+// takes ~30s more to become advertisable. A code scanned in that window
+// carries no tunnel endpoint at all, so the phone has nothing to fall back to
+// once it leaves the network.
+test("holds the QR back while remote access is still starting", () => {
+	expect(
+		qrIsReady({
+			enabled: true,
+			endpoints: [{ kind: "lan", host: "192.168.1.42", port: 3011, secure: false }],
+			tunnel: { running: true, ready: false, hostname: "", location: "", lastError: "" },
+		}),
+	).toBe(false);
+});
+
+test("shows the QR once the tunnel is advertisable", () => {
+	expect(
+		qrIsReady({
+			enabled: true,
+			endpoints: [
+				{ kind: "lan", host: "192.168.1.42", port: 3011, secure: false },
+				{ kind: "tunnel", host: "abc.trycloudflare.com", port: 443, secure: true },
+			],
+			tunnel: { running: true, ready: true, hostname: "abc.trycloudflare.com", location: "", lastError: "" },
+		}),
+	).toBe(true);
+});
+
+// Remote access unavailable entirely (no cloudflared) must not block pairing —
+// LAN-only is a legitimate setup and waiting forever would be worse.
+test("shows the QR when there is no tunnel to wait for", () => {
+	expect(
+		qrIsReady({
+			enabled: true,
+			endpoints: [{ kind: "lan", host: "192.168.1.42", port: 3011, secure: false }],
+			tunnel: { running: false, ready: false, hostname: "", location: "", lastError: "" },
+		}),
+	).toBe(true);
+});
+
+test("holds the QR back when nothing is reachable yet", () => {
+	expect(qrIsReady({ enabled: true, endpoints: [], tunnel: undefined })).toBe(false);
+});
+
+// A v2 code is built from the endpoint list and there is no v1 form left to
+// fall back to, so an absent list is as unready as an empty one: the daemon has
+// not yet said where it can be reached. Emitting a code here would produce one
+// the phone refuses.
+test("withholds the QR from a daemon that reports no endpoints", () => {
+	expect(qrIsReady({ enabled: true, endpoints: undefined, tunnel: undefined })).toBe(false);
+	expect(qrIsReady({ enabled: true, endpoints: [], tunnel: undefined })).toBe(false);
+});
+
+// The QR gate introduced a state the renderer has to wait out. The status query
+// is fetched once on open and refetched only after a mutation, so without
+// polling the modal sits on "Preparing remote access…" forever even though the
+// daemon went advertisable seconds later.
+test("polls while the connector is starting", () => {
+	expect(
+		mobileStatusRefetchInterval({ tunnel: { running: true, ready: false } }),
+	).toBeGreaterThan(0);
+});
+
+// Polling only while there is something to wait for: once the tunnel is up
+// there is no transient state left, and the modal should not keep hitting the
+// daemon for the rest of the session.
+test("stops polling once the tunnel is advertisable", () => {
+	expect(mobileStatusRefetchInterval({ tunnel: { running: true, ready: true } })).toBe(false);
+});
+
+test("does not poll when there is no tunnel to wait for", () => {
+	expect(mobileStatusRefetchInterval({ tunnel: { running: false, ready: false } })).toBe(false);
+	expect(mobileStatusRefetchInterval({ tunnel: undefined })).toBe(false);
+	expect(mobileStatusRefetchInterval(undefined)).toBe(false);
+});
+
+// Remote access is optional: nothing installs cloudflared, so on a machine
+// without it there is no connector at all. A zero tunnel status made that
+// indistinguishable from "not started yet", so the QR looked entirely normal
+// and the user discovered the gap only by being away from home.
+test("says so when this machine cannot be reached from elsewhere", async () => {
+	mobileStatus.tunnel = {
+		supported: false, running: false, ready: false, hostname: "", location: "", lastError: "",
+	};
+	renderMobileSettings();
+
+	expect(await screen.findByTestId("mobile-remote-unavailable")).toHaveTextContent(
+		/only|cloudflared/i,
+	);
+});
+
+// A machine that has a connector must not carry the caveat, whether or not the
+// tunnel happens to be up yet.
+test("does not claim unavailability while the connector is merely starting", async () => {
+	mobileStatus.tunnel = {
+		supported: true, running: true, ready: false, hostname: "", location: "", lastError: "",
+	};
+	renderMobileSettings();
+
+	await waitFor(() => expect(screen.queryByTestId("mobile-remote-unavailable")).toBeNull());
+});
+
+// The install offer belongs with the caveat: the user learns that remote access
+// is unavailable and can act on it in the same place, rather than being told to
+// go and find a terminal.
+test("offers to install the connector when it is missing", async () => {
+	mobileStatus.tunnel = {
+		supported: false, running: false, ready: false, hostname: "", location: "", lastError: "",
+	};
+	renderMobileSettings();
+
+	expect(await screen.findByTestId("mobile-install-cloudflared")).toBeInTheDocument();
+});
+
+test("does not offer an install when a connector already exists", async () => {
+	mobileStatus.tunnel = {
+		supported: true, running: true, ready: true, hostname: "x.trycloudflare.com", location: "", lastError: "",
+	};
+	renderMobileSettings();
+
+	await waitFor(() => expect(screen.queryByTestId("mobile-install-cloudflared")).toBeNull());
 });

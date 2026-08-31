@@ -337,6 +337,7 @@ func Run() error {
 		ConfigPath:  mobilebridge.Path(cfg.DataDir),
 		DefaultPort: mobilebridge.DefaultPort,
 	}
+	// HostID is assigned below, once the identity file has been read.
 	mc := &controllers.MobileController{Bridge: bs}
 	browserService := browsersvc.New(sessionSvc, browserBroker, browserAuthority)
 
@@ -471,8 +472,52 @@ func Run() error {
 		go dispatcher.Run(ctx)
 	}
 
+	// Managed remote-access connector. Reap first: a daemon that died without
+	// stopping its connector leaves a public tunnel to this machine running
+	// with nobody watching it.
+	tunnelPID := mobilebridge.TunnelPIDPath(cfg.DataDir)
+	if reapErr := mobilebridge.ReapStaleTunnel(tunnelPID, mobilebridge.IsLiveCloudflared, mobilebridge.KillProcess); reapErr != nil {
+		log.Warn("could not reap a stale mobile tunnel", "error", reapErr)
+	}
+	// Looked up again whenever the bridge is enabled, so a cloudflared the user
+	// installs from Connect Mobile is picked up without restarting AO.
+	bs.ResolveTunnel = func() controllers.TunnelController {
+		res := mobilebridge.ResolveCloudflared(mobilebridge.LocalCloudflaredLookup(cfg.DataDir))
+		if res.NeedsInstall {
+			return nil
+		}
+		log.Info("mobile remote access available", "cloudflared", res.Path, "source", res.Source)
+		return mobilebridge.NewManagedTunnel(mobilebridge.ManagedTunnelDeps{
+			Binary: res.Path, PIDPath: tunnelPID, Log: log,
+		})
+	}
+	if res := mobilebridge.ResolveCloudflared(mobilebridge.LocalCloudflaredLookup(cfg.DataDir)); !res.NeedsInstall {
+		log.Info("mobile remote access available", "cloudflared", res.Path, "source", res.Source)
+		bs.Tunnel = mobilebridge.NewManagedTunnel(mobilebridge.ManagedTunnelDeps{
+			Binary: res.Path, PIDPath: tunnelPID, Log: log,
+		})
+	} else {
+		// Not fatal: the LAN and Tailscale endpoints still work, and Connect
+		// Mobile behaves exactly as it did before remote access existed.
+		log.Info("mobile remote access unavailable; cloudflared not installed",
+			"rejectedSystemPath", res.SystemPath)
+	}
+
+	// Stable, machine-bound host identity, served by the unauthenticated
+	// GET /api/v1/identity probe. A failure here is not fatal: the probe then
+	// answers 501 and the phone falls back to pairing without identity
+	// verification, which is how it behaved before the probe existed.
+	hostIdentity, identityErr := mobilebridge.EnsureLocalIdentity(cfg.DataDir)
+	if identityErr != nil {
+		log.Warn("could not establish host identity; /api/v1/identity will report unimplemented", "error", identityErr)
+	}
+
+	bs.HostID = hostIdentity.HostID
+
 	srv, err := httpd.NewWithDeps(cfg, log, termMgr, httpd.APIDeps{
 		Projects:           projectSvc,
+		HostID:             hostIdentity.HostID,
+		Endpoints:          bs,
 		Agents:             agentSvc,
 		SystemChecks:       systemChecks,
 		Installer:          systemInstall,
@@ -625,6 +670,11 @@ func Run() error {
 	// authenticated LAN listener behind it. Best-effort and never blocking:
 	// boot restore re-applies it against the next bound port.
 	bs.ShutdownServe()
+	// And the connector before that again, for the same reason: cloudflared is
+	// a separate process that outlives this one, so leaving it would keep a
+	// public hostname resolving to a port that is about to close. Stopping it
+	// does not disable the bridge — boot restore starts a new one.
+	bs.ShutdownTunnel()
 	lanStopCtx, lanCancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer lanCancel()
 	if err := lan.Stop(lanStopCtx); err != nil {

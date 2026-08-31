@@ -279,20 +279,20 @@ function ShellLayout() {
 				}
 			});
 	}, [queryClient, scopedProjectId]);
-	// First-launch root board only (no projects in scope).
-	const isWelcomeBoard =
-		Boolean(matchRoute({ to: "/" })) &&
-		workspaceStartupState === "ready" &&
-		workspaceQuery.isSuccess &&
-		workspaces.length === 0;
+	// The root route is the intentionally minimal home surface, regardless of
+	// whether projects have already been registered.
+	const isHomeRoute = Boolean(matchRoute({ to: "/" }));
 	const isSettingsRoute =
 		Boolean(matchRoute({ to: "/settings", fuzzy: true })) ||
 		Boolean(matchRoute({ to: "/projects/$projectId/settings", fuzzy: true }));
 	// Welcome/settings always self-frame. Platforms that hide the shell-owned
 	// topbar (macOS) use the same full-height inset; session actions mount
 	// inside SessionView.
-	const selfFramedCenterPanel = isWelcomeBoard || isSettingsRoute;
-	const hideShellTopbar = selfFramedCenterPanel || shellTopbarHiddenByPlatform;
+	// Home keeps the shell's topbar hidden, but still renders inside the shared
+	// rounded center panel. Settings owns its complete frame and remains
+	// self-framed.
+	const selfFramedCenterPanel = isSettingsRoute;
+	const hideShellTopbar = isHomeRoute || selfFramedCenterPanel || shellTopbarHiddenByPlatform;
 	const setProjectRestarting = useUiStore((state) => state.setProjectRestarting);
 	const orchestratorReplacementErrors = useUiStore((state) => state.orchestratorReplacementErrors);
 	const setOrchestratorReplacementError = useUiStore((state) => state.setOrchestratorReplacementError);
@@ -835,7 +835,7 @@ function ShellLayout() {
               below its custom titlebar. */}
 				<Sidebar
 					autoCompact={isSidebarCompact}
-					hideEdgeBorder={isWelcomeBoard}
+					hideEdgeBorder={isHomeRoute}
 					underTopbar={isMac || isWindows || isLinux}
 						topbarOffset={isWindows ? "titlebar" : hideShellTopbar ? "trafficLights" : "toolbar"}
 						onCloneProject={cloneProject}
@@ -904,7 +904,7 @@ function ShellLayout() {
               though DOM hit-testing looks correct. */}
 					<TitlebarNav
 						hasSessionTopbar={Boolean(routeParams.sessionId)}
-						historyLocked={isWelcomeBoard}
+						historyLocked={isHomeRoute}
 						isFullScreen={isFullScreen}
 					/>
 				</SidebarProvider>

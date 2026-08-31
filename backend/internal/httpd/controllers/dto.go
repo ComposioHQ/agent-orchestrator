@@ -15,6 +15,8 @@ import (
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
 	"github.com/aoagents/agent-orchestrator/backend/internal/service/systemcheck"
 	"github.com/aoagents/agent-orchestrator/backend/internal/service/systeminstall"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/mobilebridge"
 )
 
 // HTTP response envelopes for the projects surface — the SINGLE definition of
@@ -1139,7 +1141,7 @@ type SystemRequirementsResponse = systemcheck.Report
 
 // InstallTargetParam is the {target} path parameter for /system/install routes.
 type InstallTargetParam struct {
-	Target string `path:"target" description:"Install target identifier: tmux, gh, claude, codex, opencode, or copilot."`
+	Target string `path:"target" description:"Install target identifier: tmux, gh, claude, codex, opencode, copilot, or cloudflared."`
 }
 
 // StartInstallResponse is the body of POST /api/v1/system/install/{target} (202).
@@ -1314,12 +1316,38 @@ type ResolveCommentsResponse struct {
 	Resolved int  `json:"resolved"`
 }
 
+// EndpointsResponse is the body of GET /api/v1/endpoints. The phone re-reads
+// it after every successful connect, so a rotated tunnel hostname or a changed
+// LAN address is picked up without re-pairing.
+type EndpointsResponse struct {
+	Endpoints []mobilebridge.Endpoint `json:"endpoints"`
+}
+
+// IdentityResponse is the body of the unauthenticated GET /api/v1/identity
+// probe. It is deliberately minimal: the route is reachable without the
+// connection password, so it must carry nothing but an opaque host id and the
+// mobile contract version.
+type IdentityResponse struct {
+	HostID     string `json:"hostId"`
+	APIVersion int    `json:"apiVersion"`
+}
+
 // MobileStatusResponse is the body of the Connect Mobile status/enable/disable/
 // regenerate endpoints. Password is populated only transiently, on enable and
 // regenerate responses (empty otherwise) — it is never persisted in plaintext.
 type MobileStatusResponse struct {
-	Enabled bool   `json:"enabled"`
-	Host    string `json:"host"`
+	Enabled bool `json:"enabled"`
+	// Endpoints is every way the phone can reach this daemon, in the client's
+	// preference order. The phone races them; Host/TailscaleHost below are the
+	// head of each kind, kept for the existing renderer.
+	Endpoints []mobilebridge.Endpoint `json:"endpoints"`
+	// HostID is this machine's stable identity, echoed into the pairing code.
+	// The phone checks every endpoint it races against this value.
+	HostID string `json:"hostId"`
+	// Tunnel is the managed remote-access connector's state, so the desktop can
+	// show progress during the tens of seconds before it is advertisable.
+	Tunnel mobilebridge.TunnelStatus `json:"tunnel"`
+	Host   string                    `json:"host"`
 	// TailscaleHost is this machine's 100.64.0.0/10 Tailscale address, or "" when
 	// Tailscale is not up. The renderer encodes it into the pairing QR when the
 	// user selects the Tailscale tab, and shows a hint instead when it is empty.
