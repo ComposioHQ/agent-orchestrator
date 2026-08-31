@@ -506,14 +506,14 @@ describe("slash commands", () => {
 		expect(selected).toBe(0);
 	});
 
-	it("scrolls the first result back into view when filtering resets selection", async () => {
+	it("does not force-scroll when filtering keeps the visible first result selected", async () => {
 		const scrollIntoView = vi.spyOn(Element.prototype, "scrollIntoView");
 		const { field } = renderComposer({ skills: SKILLS });
 		await typeInComposer(field, "/");
 		scrollIntoView.mockClear();
 		await typeInComposer(field, "r");
 
-		expect(scrollIntoView).toHaveBeenCalledWith({ block: "nearest" });
+		expect(scrollIntoView).not.toHaveBeenCalled();
 		scrollIntoView.mockRestore();
 	});
 
