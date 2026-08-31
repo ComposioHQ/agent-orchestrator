@@ -64,7 +64,7 @@ import type { BrowserViewModel } from "../hooks/useBrowserView";
 import { useUiStore } from "../stores/ui-store";
 import { Button } from "./ui/button";
 import { cn } from "../lib/utils";
-import { codexCapacityTranslationKey } from "../lib/codex-capacity";
+import { codexCapacityRemainingPercent, codexCapacityTranslationKey } from "../lib/codex-capacity";
 import { SessionTerminationPopover } from "./SessionTerminationPopover";
 import { CodexProfileSwitchControl } from "./CodexProfileSwitch";
 import { CodexAutomaticProfileSwitchControl } from "./CodexAutomaticProfileSwitch";
@@ -287,6 +287,7 @@ function SummaryView({
 	const prSummaries = sessionPRDisplaySummaries(session, query.data);
 	const prSectionTitle = prSummaries.length > 1 ? t("inspector.pullRequests", { count: prSummaries.length }) : t("inspector.pullRequest");
 	const hasPRs = prSummaries.length > 0;
+	const codexCapacityRemaining = codexCapacityRemainingPercent(session.codexProfile?.capacity?.usedPercent);
 	return (
 		<SessionInspectorSummaryView
 			activity={
@@ -302,7 +303,7 @@ function SummaryView({
 								<p className={cn("mt-0.5 text-2xs", session.codexProfile.capacity.state === "near_limit" || session.codexProfile.capacity.state === "exhausted" ? "text-warning" : "text-settings-muted")}>
 									{t("inspector.codexCapacity", {
 										state: t(codexCapacityTranslationKey(session.codexProfile.capacity.state)),
-										used: session.codexProfile.capacity.usedPercent === undefined || session.codexProfile.capacity.usedPercent === null ? "—" : `${session.codexProfile.capacity.usedPercent}%`,
+										remaining: codexCapacityRemaining === undefined ? "—" : `${codexCapacityRemaining}%`,
 									})}
 								</p>
 							) : null}

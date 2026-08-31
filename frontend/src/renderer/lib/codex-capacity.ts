@@ -18,7 +18,12 @@ export function codexCapacityTranslationKey(state: CodexCapacityState) {
 	}
 }
 
+export function codexCapacityRemainingPercent(usedPercent: number | null | undefined): number | undefined {
+	if (typeof usedPercent !== "number" || !Number.isFinite(usedPercent)) return undefined;
+	return Math.max(0, Math.min(100, 100 - usedPercent));
+}
+
 export function codexCapacitySummary(capacity: CodexCapacity, stateLabel: string): string {
-	const used = capacity.usedPercent === undefined || capacity.usedPercent === null ? undefined : `${capacity.usedPercent}%`;
-	return [capacity.plan, used, stateLabel].filter(Boolean).join(" · ");
+	const remaining = codexCapacityRemainingPercent(capacity.usedPercent);
+	return [capacity.plan, remaining === undefined ? undefined : `${remaining}%`, stateLabel].filter(Boolean).join(" · ");
 }

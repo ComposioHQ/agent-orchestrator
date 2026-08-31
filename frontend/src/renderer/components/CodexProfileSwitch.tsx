@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import type { WorkspaceSession } from "../types/workspace";
 import { cn } from "../lib/utils";
 import { aoBridge } from "../lib/bridge";
+import { codexCapacityRemainingPercent } from "../lib/codex-capacity";
 import { cacheCodexProfile, startCodexProfileLogin, useCodexProfileLoginEvents, type CodexProfileLoginEvent, type CodexProfileLoginStart } from "../hooks/useCodexProfilesQuery";
 import { useCodexProfileSwitchOptions, useControlCodexProfileSwitch, useStartCodexProfileSwitch } from "../hooks/useCodexProfileSwitch";
 
@@ -86,15 +87,16 @@ export function CodexProfileSwitchControl({ session }: { session: WorkspaceSessi
 					<div className="grid max-h-80 gap-2 overflow-y-auto px-5 py-4">
 						<p className="text-xs text-muted-foreground">{t("codexProfileSwitch.current", { profile: session.codexProfile.label })}</p>
 						{options.isLoading && !options.data ? <div className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="size-3.5 animate-spin" />{t("codexProfileSwitch.checking")}</div> : null}
-						{options.data?.candidates.map((candidate) => (
-							<div key={candidate.id} className={cn("rounded-lg border p-3", selected === candidate.id ? "border-primary" : "border-border")}>
+						{options.data?.candidates.map((candidate) => {
+							const remainingPercent = codexCapacityRemainingPercent(candidate.capacity.usedPercent);
+							return <div key={candidate.id} className={cn("rounded-lg border p-3", selected === candidate.id ? "border-primary" : "border-border")}>
 								<button className="w-full text-left disabled:opacity-55" disabled={!candidate.selectable} onClick={() => { setSelected(candidate.id); setAcknowledge(false); options.ensure(); }} type="button">
 									<span className="flex items-center justify-between gap-2 text-sm font-medium"><span>{candidate.label}</span>{candidate.recommended ? <span className="text-2xs text-success">{t("codexProfileSwitch.recommended")}</span> : null}</span>
-									<span className="mt-1 block text-2xs text-muted-foreground">{candidate.capacity.plan ? `${candidate.capacity.plan} · ` : ""}{candidate.capacity.usedPercent == null ? candidate.capacity.state : t("codexProfileSwitch.used", { percent: candidate.capacity.usedPercent })} · {candidate.reason}</span>
+									<span className="mt-1 block text-2xs text-muted-foreground">{candidate.capacity.plan ? `${candidate.capacity.plan} · ` : ""}{remainingPercent === undefined ? candidate.capacity.state : t("codexProfileSwitch.remaining", { percent: remainingPercent })} · {candidate.reason}</span>
 								</button>
 								{candidate.authentication.state === "unauthorized" ? <Button className="mt-2" size="sm" variant="outline" disabled={Boolean(login)} onClick={async () => { try { const next = await startCodexProfileLogin(candidate.id); setLogin(next); await aoBridge.app.openExternal(next.authUrl); } catch (cause) { setError(cause instanceof Error ? cause.message : "Sign-in failed"); } }}>{t("codexProfileSwitch.signIn")}</Button> : null}
-							</div>
-						))}
+							</div>;
+						})}
 						{selectedCandidate?.requiresCapacityAcknowledgement ? <label className="flex items-start gap-2 text-xs"><input checked={acknowledge} className="mt-0.5" onChange={(event) => setAcknowledge(event.target.checked)} type="checkbox" /><span>{t("codexProfileSwitch.capacityAcknowledgement")}</span></label> : null}
 						{error || start.error ? <p className="text-xs text-destructive" role="alert">{error ?? (start.error instanceof Error ? start.error.message : "Unable to start profile switch")}</p> : null}
 					</div>
