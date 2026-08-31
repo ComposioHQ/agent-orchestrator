@@ -471,7 +471,7 @@ export function TaskComposer({
 				label: t("newTask.profile"),
 				placeholder: t("newTask.selectProfile"),
 				value: profileId,
-				disabled: codexProfilesQuery.isLoading,
+				disabled: isSubmitting || codexProfilesQuery.isLoading,
 				onOpen: () => {
 					void ensureCodexProfiles().then((next) => cacheCodexProfiles(queryClient, next)).catch(() => undefined);
 				},
