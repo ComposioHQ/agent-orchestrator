@@ -24,6 +24,7 @@ type LaunchContext struct {
 	ParentSessionID string   `json:"parentSessionId,omitempty"`
 	Mode            string   `json:"mode"`
 	DeniedCommands  []string `json:"deniedCommands"`
+	Interface       string   `json:"interface"`
 	RepositoryURL   string   `json:"repositoryUrl"`
 	DefaultBranch   string   `json:"defaultBranch"`
 }

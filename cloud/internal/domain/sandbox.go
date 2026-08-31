@@ -122,6 +122,7 @@ type WorkerLaunch struct {
 	ParentSessionID string
 	Mode            string
 	DeniedCommands  []string
+	Interface       SessionInterface
 	RepositoryURL   string
 	DefaultBranch   string
 }
