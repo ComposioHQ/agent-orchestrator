@@ -29,6 +29,7 @@ import {
 } from "./session-presentation";
 import type { KanbanColumn, SessionActivity, SessionStatus } from "./session-models";
 import { cn } from "./utils";
+import { UserAvatar } from "./UserAvatar";
 
 export type BoardSessionPresentation = {
 	activity?: SessionActivity;
@@ -459,32 +460,8 @@ function BoardPullRequestGroup({
 	);
 }
 
-function reviewerInitials(login: string): string {
-	return login
-		.replace(/^@/, "")
-		.trim()
-		.split(/[-_\s]+/)
-		.filter(Boolean)
-		.slice(0, 2)
-		.map((part) => part[0]?.toUpperCase() ?? "")
-		.join("") || "?";
-}
-
 function ReviewerAvatar({ avatar, className }: { avatar: BoardReviewerAvatar; className?: string }) {
-	const [failed, setFailed] = useState(false);
-	const commonClassName = cn("size-5 rounded-full border-2 border-surface ring-1 ring-border", className);
-	if (avatar.url && !failed) {
-		return (
-			<img
-				alt=""
-				className={cn(commonClassName, "object-cover")}
-				onError={() => setFailed(true)}
-				referrerPolicy="no-referrer"
-				src={avatar.url}
-			/>
-		);
-	}
-	return <span aria-hidden="true" className={cn(commonClassName, "inline-flex items-center justify-center bg-muted text-[9px] font-semibold text-muted-foreground")}>{reviewerInitials(avatar.login)}</span>;
+	return <UserAvatar className={cn("size-5 border-2 border-surface ring-1 ring-border text-[9px]", className)} imageUrl={avatar.url} name={avatar.login} />;
 }
 
 function PullRequestLifecycleIcon({ state }: { state: BoardPullRequestState }) {

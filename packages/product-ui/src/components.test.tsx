@@ -23,7 +23,7 @@ describe("portable leaf components", () => {
 		const { container } = render(<GithubAvatar login="ada-lovelace" />);
 		const image = container.querySelector("img");
 
-		expect(image).toHaveAttribute("src", "https://github.com/ada-lovelace.png?size=64");
+		expect(image).toHaveAttribute("src", "https://avatars.githubusercontent.com/ada-lovelace?size=64");
 		if (image) fireEvent.error(image);
 		expect(container).toHaveTextContent("AL");
 	});
