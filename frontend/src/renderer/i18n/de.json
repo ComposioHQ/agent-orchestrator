@@ -871,6 +871,7 @@
 	"shell.dashboard": "Dashboard",
 	"shell.downloadUpdate": "Update herunterladen",
 	"shell.downloadUpdateVersion": "Update v{{version}} herunterladen",
+	"shell.dismissUpdateVersion": "Update v{{version}} für 24 Stunden ausblenden",
 	"shell.expandSidebar": "Seitenleiste ausklappen",
 	"shell.expandSidebarTitle": "Seitenleiste ausklappen · Ctrl+B",
 	"shell.intakeIssue": "Intake-Issue: {{id}}",

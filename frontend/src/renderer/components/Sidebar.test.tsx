@@ -1986,6 +1986,19 @@ describe("Sidebar", () => {
 		expect(downloadUpdateMock).toHaveBeenCalledTimes(1);
 	});
 
+	it("dismisses the current available update without downloading it", async () => {
+		updateStatusMock.mockResolvedValue({ state: "available", version: "9.9.9" });
+		renderSidebar();
+
+		await userEvent.click(await screen.findByRole("button", {
+			name: "Hide update v9.9.9 for 24 hours",
+		}));
+
+		expect(screen.queryByText("Update available")).not.toBeInTheDocument();
+		expect(screen.queryByLabelText("Download update v9.9.9")).not.toBeInTheDocument();
+		expect(downloadUpdateMock).not.toHaveBeenCalled();
+	});
+
 	it("keeps showing update activity while the automatic download is in progress", async () => {
 		updateStatusMock.mockResolvedValue({ state: "downloading", version: "9.9.9", percent: 42 });
 		renderSidebar();
@@ -1995,6 +2008,7 @@ describe("Sidebar", () => {
 		expect(screen.queryByLabelText(/Restart to install update/)).not.toBeInTheDocument();
 		// A download already in flight must not offer a second one.
 		expect(screen.queryByLabelText(/Download update/)).not.toBeInTheDocument();
+		expect(screen.queryByLabelText(/Hide update/)).not.toBeInTheDocument();
 	});
 
 	it("offers a retry when automatic update checks keep failing", async () => {
@@ -2024,6 +2038,7 @@ describe("Sidebar", () => {
 		// A build ready to install is more actionable than "checks are failing".
 		expect(await screen.findAllByLabelText("Restart to install update v9.9.9")).not.toHaveLength(0);
 		expect(screen.queryByLabelText("Retry update check")).not.toBeInTheDocument();
+		expect(screen.queryByLabelText(/Hide update/)).not.toBeInTheDocument();
 	});
 
 	it("stays quiet for a one-off update failure that has not become a streak", async () => {
