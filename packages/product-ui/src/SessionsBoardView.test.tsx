@@ -324,7 +324,13 @@ describe("SessionsBoardView", () => {
 				}}
 				onOpen={onOpen}
 				prs={[
-					{ number: 10, state: "open", url: "https://example.com/pull/10" },
+					{
+						commentCount: 1,
+						number: 10,
+						reviewerAvatars: [{ login: "ada-lovelace" }],
+						state: "open",
+						url: "https://example.com/pull/10",
+					},
 					{ number: 11, state: "open", url: "https://example.com/pull/11" },
 					{ number: 12, state: "merged", url: "https://example.com/pull/12" },
 				]}
@@ -346,6 +352,7 @@ describe("SessionsBoardView", () => {
 			"href",
 			"https://example.com/pull/12",
 		);
+		expect(screen.getByLabelText("ada-lovelace")).toHaveTextContent("AL");
 		// The full label is real text, not an aria-label on a generic span, and
 		// the compact form is hidden so it is not read out alongside it.
 		expect(screen.getByText("12,400 tokens")).toHaveClass("sr-only");
