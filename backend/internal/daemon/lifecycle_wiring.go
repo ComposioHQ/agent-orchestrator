@@ -496,6 +496,8 @@ func (c chatLauncher) StartChat(ctx context.Context, cfg sessionmanager.ChatStar
 		Permissions:             cfg.Permissions,
 		SystemPrompt:            cfg.SystemPrompt,
 		AdditionalDirectories:   cfg.AdditionalDirectories,
+		ExpectedControllerOwner: cfg.ExpectedControllerOwner,
+		PrepareControllerEnv:    cfg.PrepareControllerEnv,
 		ProviderConversationID:  cfg.ProviderConversationID,
 		ProviderScopeID:         cfg.ProviderScopeID,
 		ControllerGeneration:    cfg.ControllerGeneration,
@@ -512,7 +514,10 @@ func (c chatLauncher) StartChat(ctx context.Context, cfg sessionmanager.ChatStar
 				ProviderBoundary:       out.ProviderBoundary,
 				CommitProviderHistory:  out.CommitProviderHistory,
 			})
-			return chatsvc.ControllerCommit{Conversation: commit.Conversation}, err
+			return chatsvc.ControllerCommit{
+				Conversation:    commit.Conversation,
+				ControllerOwner: commit.ControllerOwner,
+			}, err
 		},
 	})
 	if err != nil {
