@@ -1,6 +1,6 @@
 import { createFileRoute, Outlet, useMatchRoute, useNavigate, useParams } from "@tanstack/react-router";
 import { isCancelledError, useQueryClient } from "@tanstack/react-query";
-import { type CSSProperties, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, type CSSProperties, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { FolderPlus } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { CommandPalette } from "../components/CommandPalette";
@@ -90,6 +90,52 @@ const isWindows = isWindowsPlatform();
 const isLinux = isLinuxPlatform();
 const framedAppTopbar = usesFramedAppTopbar();
 const shellTopbarHiddenByPlatform = hidesShellTopbar();
+
+/**
+ * The shell must observe the complete workspace list for the sidebar, but a
+ * streamed update there should not reconcile the active route surface. Keep
+ * the center frame behind a primitive-only memo boundary; SessionView and the
+ * board own their more granular workspace subscriptions.
+ */
+const ShellCenter = memo(function ShellCenter({
+	hideShellTopbar,
+	isSessionRoute,
+	selfFramedCenterPanel,
+}: {
+	hideShellTopbar: boolean;
+	isSessionRoute: boolean;
+	selfFramedCenterPanel: boolean;
+}) {
+	const panelClassName = isSessionRoute ? "center-panel-shell--session" : undefined;
+	if (hideShellTopbar) {
+		return selfFramedCenterPanel ? (
+			<Outlet />
+		) : (
+			<CenterPanelShell className={panelClassName}>
+				<div className="flex min-h-0 flex-1 flex-col">
+					<Outlet />
+				</div>
+			</CenterPanelShell>
+		);
+	}
+	if (framedAppTopbar) {
+		return (
+			<CenterPanelShell className={panelClassName}>
+				{isSessionRoute ? null : <ShellTopbar />}
+				<div className="flex min-h-0 flex-1 flex-col">
+					<Outlet />
+				</div>
+			</CenterPanelShell>
+		);
+	}
+	return (
+		<CenterPanelShell className={panelClassName}>
+			<div className="flex min-h-0 flex-1 flex-col">
+				<Outlet />
+			</div>
+		</CenterPanelShell>
+	);
+});
 
 // Persistent app shell: the Sidebar + shared state survive route changes; only
 // the <Outlet> content (board / session / settings / …) swaps. Lifted out of
@@ -864,33 +910,11 @@ function ShellLayout() {
 					<main className={cn("flex min-w-0 flex-1 flex-col overflow-x-hidden", !sidebarHasLayout && "sidebar-hidden")}>
 						<div className="min-h-0 flex-1 overflow-x-hidden">
 							{/* Board/session routes render inside the same inset box the welcome board and settings paint for themselves, so every screen sits within the app's outer boundary. */}
-							{hideShellTopbar ? (
-								selfFramedCenterPanel ? (
-									<Outlet />
-								) : (
-							// Platform hides shell topbar: full-height panel; session mounts actions in-panel.
-							<CenterPanelShell className={routeParams.sessionId ? "center-panel-shell--session" : undefined}>
-								<div className="flex min-h-0 flex-1 flex-col">
-									<Outlet />
-								</div>
-							</CenterPanelShell>
-						)
-					) : framedAppTopbar ? (
-						<CenterPanelShell className={routeParams.sessionId ? "center-panel-shell--session" : undefined}>
-							{routeParams.sessionId ? null : (
-								<ShellTopbar />
-							)}
-							<div className="flex min-h-0 flex-1 flex-col">
-								<Outlet />
-							</div>
-						</CenterPanelShell>
-					) : (
-						<CenterPanelShell className={routeParams.sessionId ? "center-panel-shell--session" : undefined}>
-							<div className="flex min-h-0 flex-1 flex-col">
-								<Outlet />
-							</div>
-						</CenterPanelShell>
-					)}
+							<ShellCenter
+								hideShellTopbar={hideShellTopbar}
+								isSessionRoute={Boolean(routeParams.sessionId)}
+								selfFramedCenterPanel={selfFramedCenterPanel}
+							/>
 						</div>
 					</main>
 					</div>
