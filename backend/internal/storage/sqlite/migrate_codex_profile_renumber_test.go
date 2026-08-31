@@ -26,6 +26,9 @@ func TestMigrateRepairsRenumberedCodexProfileHistory(t *testing.T) {
 		{version: 119, canonicalPath: "migrations/0121_codex_profile_switches.sql", legacyName: "codex_profile_switches.sql"},
 		{version: 120, canonicalPath: "migrations/0122_codex_automatic_profile_switching.sql", legacyName: "codex_automatic_profile_switching.sql"},
 	})
+	if _, err := db.Exec(`CREATE TABLE conversation_turns_next AS SELECT * FROM conversation_turns`); err != nil {
+		t.Fatalf("seed interrupted conversation-turn migration: %v", err)
+	}
 
 	if err := migrate(db); err != nil {
 		t.Fatalf("migrate renumbered Codex profile database: %v", err)
@@ -40,6 +43,13 @@ func TestMigrateRepairsRenumberedCodexProfileHistory(t *testing.T) {
 	assertTableColumnsPresent(t, db, "codex_profile_switches", "id", "source_session_id", "target_session_id", "phase", "workspace_owner")
 	assertTableColumnsPresent(t, db, "codex_profile_switches", "initiator", "automatic_attempt_id", "automatic_policy_revision")
 	assertTableColumnsPresent(t, db, "codex_automatic_profile_switch_attempts", "id", "source_session_id", "state", "outcome_code")
+	var stagingTable int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'conversation_turns_next'`).Scan(&stagingTable); err != nil {
+		t.Fatalf("read conversation turn staging table: %v", err)
+	}
+	if stagingTable != 0 {
+		t.Fatalf("conversation_turns_next remains after migration recovery")
+	}
 	var inventoryTable int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'agent_inventory_cache'`).Scan(&inventoryTable); err != nil {
 		t.Fatalf("read agent inventory table: %v", err)
