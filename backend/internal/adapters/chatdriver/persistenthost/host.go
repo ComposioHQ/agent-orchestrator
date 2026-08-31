@@ -31,6 +31,8 @@ const (
 	ProtocolVersion  = 1
 	maxDetachedBytes = 32 << 20
 	startupTimeout   = 10 * time.Second
+	// Host hello is local control-plane I/O and must not stall daemon recovery.
+	handshakeTimeout = time.Second
 )
 
 var (
@@ -339,12 +341,14 @@ func attach(ctx context.Context, d Descriptor, reconnected bool) (*Transport, er
 	if d.Version != ProtocolVersion {
 		return nil, fmt.Errorf("%w: host=%d daemon=%d", ErrIncompatible, d.Version, ProtocolVersion)
 	}
+	handshakeCtx, cancel := context.WithTimeout(ctx, handshakeTimeout)
+	defer cancel()
 	dialer := net.Dialer{}
-	conn, err := dialer.DialContext(ctx, "tcp", d.Address)
+	conn, err := dialer.DialContext(handshakeCtx, "tcp", d.Address)
 	if err != nil {
 		return nil, err
 	}
-	finishHandshake := bindConnToContext(ctx, conn)
+	finishHandshake := bindConnToContext(handshakeCtx, conn)
 	reader := bufio.NewReader(conn)
 	if err := json.NewEncoder(conn).Encode(hello{Version: ProtocolVersion, Token: d.Token, Action: "attach"}); err != nil {
 		_ = conn.Close()
@@ -400,12 +404,14 @@ func Shutdown(ctx context.Context, dataDir, sessionID string) error {
 	if err != nil {
 		return err
 	}
-	conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", d.Address)
+	handshakeCtx, cancel := context.WithTimeout(ctx, handshakeTimeout)
+	defer cancel()
+	conn, err := (&net.Dialer{}).DialContext(handshakeCtx, "tcp", d.Address)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = conn.Close() }()
-	finishHandshake := bindConnToContext(ctx, conn)
+	finishHandshake := bindConnToContext(handshakeCtx, conn)
 	if err := json.NewEncoder(conn).Encode(hello{Version: ProtocolVersion, Token: d.Token, Action: "shutdown"}); err != nil {
 		return finishHandshake(err)
 	}

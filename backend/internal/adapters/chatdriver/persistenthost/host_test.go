@@ -274,6 +274,46 @@ func TestAttachHonorsContextAfterDial(t *testing.T) {
 	}
 }
 
+func TestConnectOrStartTimesOutSilentLiveHost(t *testing.T) {
+	address, accepted := silentHandshakePeer(t)
+	dataDir := t.TempDir()
+	const sessionID = "silent-connect"
+	if err := writeDescriptor(dataDir, Descriptor{
+		Version:   ProtocolVersion,
+		SessionID: sessionID,
+		Address:   address,
+		Token:     "token",
+		PID:       os.Getpid(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	workdir := t.TempDir()
+
+	result := make(chan error, 1)
+	go func() {
+		_, err := ConnectOrStart(context.Background(), Config{
+			SessionID: sessionID,
+			DataDir:   dataDir,
+			Workdir:   workdir,
+			Argv:      []string{os.Args[0], "-test.run=TestProviderHelper"},
+		})
+		result <- err
+	}()
+
+	serverConn := awaitSilentHandshake(t, accepted)
+	defer func() { _ = serverConn.Close() }()
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, ErrOwnershipInconclusive) {
+			t.Fatalf("connect error = %v, want deadline exceeded ownership-inconclusive error", err)
+		}
+	case <-time.After(2 * time.Second):
+		_ = serverConn.Close()
+		<-result
+		t.Fatal("connect to silent live host exceeded the handshake limit")
+	}
+}
+
 func TestShutdownHonorsContextAfterDial(t *testing.T) {
 	address, accepted := silentHandshakePeer(t)
 	dataDir := t.TempDir()
@@ -304,6 +344,37 @@ func TestShutdownHonorsContextAfterDial(t *testing.T) {
 		_ = serverConn.Close()
 		<-result
 		t.Fatal("shutdown ignored its context after connecting")
+	}
+}
+
+func TestShutdownTimesOutSilentLiveHost(t *testing.T) {
+	address, accepted := silentHandshakePeer(t)
+	dataDir := t.TempDir()
+	const sessionID = "silent-shutdown-timeout"
+	if err := writeDescriptor(dataDir, Descriptor{
+		Version:   ProtocolVersion,
+		SessionID: sessionID,
+		Address:   address,
+		Token:     "token",
+		PID:       os.Getpid(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	result := make(chan error, 1)
+	go func() { result <- Shutdown(context.Background(), dataDir, sessionID) }()
+
+	serverConn := awaitSilentHandshake(t, accepted)
+	defer func() { _ = serverConn.Close() }()
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("shutdown error = %v, want context deadline exceeded", err)
+		}
+	case <-time.After(2 * time.Second):
+		_ = serverConn.Close()
+		<-result
+		t.Fatal("shutdown of silent live host exceeded the handshake limit")
 	}
 }
 
