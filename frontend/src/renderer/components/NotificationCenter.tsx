@@ -19,6 +19,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMarkAllNotificationsReadMutation, useNotificationsQuery } from "../hooks/useNotificationsQuery";
 import { useRestoreSession } from "../hooks/useRestoreSession";
 import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
+import type { WorkspaceSummary } from "../types/workspace";
 import { aoBridge } from "../lib/bridge";
 import { openLinkInSystemBrowser } from "../lib/external-link-policy";
 import { formatTimeCompact } from "../lib/format-time";
@@ -71,13 +72,17 @@ function useNotificationTargetNavigation() {
 	return { openPrimary, openSession };
 }
 
-function useSessionTerminationLookup(): {
+function useSessionTerminationLookup(
+	workspaces: WorkspaceSummary[] | undefined,
+	isError: boolean,
+	isSuccess: boolean,
+	refetch: () => void,
+): {
 	retryWorkspace: () => void;
 	sessionsReady: boolean;
 	terminatedIds: Set<string>;
 	workspaceError: boolean;
 } {
-	const { data: workspaces, isError, isSuccess, refetch } = useWorkspaceQuery();
 	const terminatedIds = useMemo(() => {
 		const ids = new Set<string>();
 		for (const workspace of workspaces ?? []) {
@@ -92,9 +97,7 @@ function useSessionTerminationLookup(): {
 	// Only successful workspace data is trustworthy. Pending and error both leave
 	// sessions non-navigable — a failed query must not treat terminated rows as live.
 	return {
-		retryWorkspace: () => {
-			void refetch();
-		},
+		retryWorkspace: refetch,
 		sessionsReady: isSuccess,
 		terminatedIds,
 		workspaceError: isError,
@@ -164,8 +167,21 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 	const allQuery = useNotificationsQuery("all", open);
 	const markAllRead = useMarkAllNotificationsReadMutation();
 	const restoreSession = useRestoreSession();
-	const { retryWorkspace, sessionsReady, terminatedIds, workspaceError } = useSessionTerminationLookup();
-	const { data: workspaces } = useWorkspaceQuery();
+	// This panel needs one workspace snapshot for both termination gating and
+	// human-readable notification metadata. Keep a single query observer here:
+	// two observers of the same full workspace tree caused duplicate derivation
+	// and render notifications for every streamed workspace update.
+	const workspaceQuery = useWorkspaceQuery();
+	const { data: workspaces } = workspaceQuery;
+	const retryWorkspace = useCallback(() => {
+		void workspaceQuery.refetch();
+	}, [workspaceQuery.refetch]);
+	const { sessionsReady, terminatedIds, workspaceError } = useSessionTerminationLookup(
+		workspaces,
+		workspaceQuery.isError,
+		workspaceQuery.isSuccess,
+		retryWorkspace,
+	);
 	// Resolve the human project + session names for each notification so the row
 	// can show where it came from (the DTO only carries opaque ids).
 	const sessionMeta = useMemo(() => {

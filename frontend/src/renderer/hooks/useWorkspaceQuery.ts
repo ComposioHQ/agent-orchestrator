@@ -18,6 +18,7 @@ import {
 	toProjectKind,
 	toSessionActivity,
 	toSessionStatus,
+	newestActiveOrchestrator,
 	type WorkspaceSession,
 	type WorkspaceSummary,
 } from "../types/workspace";
@@ -292,4 +293,46 @@ export function useWorkspaceSession(sessionId: string) {
 		return project ? toCloudWorkspaceSession(session, project, org.id) : undefined;
 	}, [cloud.data, cloudSessions.data, org?.id, ready, sessionId]);
 	return { ...local, data: local.data ?? cloudSession };
+}
+
+export type WorkspaceScope = {
+	project?: WorkspaceSummary;
+	session?: WorkspaceSession;
+	orchestrator?: WorkspaceSession;
+};
+
+function selectWorkspaceScope(
+	workspaces: WorkspaceSummary[],
+	projectId: string | undefined,
+	sessionId: string | undefined,
+): WorkspaceScope {
+	const session = sessionId
+		? workspaces.flatMap((workspace) => workspace.sessions).find((candidate) => candidate.id === sessionId)
+		: undefined;
+	const resolvedProjectId = session?.workspaceId ?? projectId;
+	const project = resolvedProjectId ? workspaces.find((workspace) => workspace.id === resolvedProjectId) : undefined;
+	return { project, session, orchestrator: project ? newestActiveOrchestrator(project.sessions) : undefined };
+}
+
+/**
+ * Subscribe shell chrome to just the routed project and session. This avoids
+ * redrawing the topbar for streamed activity from every other project.
+ */
+export function useWorkspaceScope(projectId?: string, sessionId?: string) {
+	const selectLocalScope = useMemo(
+		() => (workspaces: WorkspaceSummary[]) => selectWorkspaceScope(workspaces, projectId, sessionId),
+		[projectId, sessionId],
+	);
+	const local = useQuery({ ...workspaceQueryOptions, select: selectLocalScope });
+	const cloud = useCloudProjectsQuery();
+	const cloudSessions = useCloudSessionsQuery();
+	const { org, ready } = useCloudOrg();
+	const cloudScope = useMemo(() => {
+		if (!ready || !org?.id || !cloud.data) return undefined;
+		const workspaces = cloud.data.map((project) => toCloudWorkspace(project, cloudSessions.data ?? [], org.id));
+		return selectWorkspaceScope(workspaces, projectId, sessionId);
+	}, [cloud.data, cloudSessions.data, org?.id, projectId, ready, sessionId]);
+	// Match useWorkspaceQuery's local-first semantics: do not reveal cloud
+	// records before the local workspace query has resolved successfully.
+	return { ...local, data: local.data ?? (local.isSuccess ? cloudScope : undefined) };
 }
