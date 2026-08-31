@@ -582,6 +582,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 				},
 			},
 		);
+		if (!shell) return;
 		setFileTabsBySession((current) => ({
 			...current,
 			[sessionId]: activateSessionFile(current[sessionId] ?? EMPTY_SESSION_FILE_TABS, null),
