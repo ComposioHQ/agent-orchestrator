@@ -296,7 +296,7 @@ export function useWorkspaceSession(sessionId: string) {
 }
 
 export type WorkspaceScope = {
-	project?: WorkspaceSummary;
+	project?: Pick<WorkspaceSummary, "id" | "kind" | "name" | "orchestratorAgent">;
 	session?: WorkspaceSession;
 	orchestrator?: WorkspaceSession;
 };
@@ -310,8 +310,19 @@ function selectWorkspaceScope(
 		? workspaces.flatMap((workspace) => workspace.sessions).find((candidate) => candidate.id === sessionId)
 		: undefined;
 	const resolvedProjectId = session?.workspaceId ?? projectId;
-	const project = resolvedProjectId ? workspaces.find((workspace) => workspace.id === resolvedProjectId) : undefined;
-	return { project, session, orchestrator: project ? newestActiveOrchestrator(project.sessions) : undefined };
+	const workspace = resolvedProjectId ? workspaces.find((candidate) => candidate.id === resolvedProjectId) : undefined;
+	// Do not carry the project's complete sessions array into shell chrome. With
+	// React Query's structural sharing, this small metadata projection retains
+	// its identity when another session in the same project streams an update.
+	const project = workspace
+		? {
+				id: workspace.id,
+				kind: workspace.kind,
+				name: workspace.name,
+				orchestratorAgent: workspace.orchestratorAgent,
+			}
+		: undefined;
+	return { project, session, orchestrator: workspace ? newestActiveOrchestrator(workspace.sessions) : undefined };
 }
 
 /**
