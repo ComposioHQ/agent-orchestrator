@@ -880,10 +880,11 @@ WHERE name = 'cloud_offering'`).Scan(&cloudShape); err != nil {
 // of version numbers subsequently claimed by main. Early Phase 1 builds used
 // 0117 to drop agent_inventory_cache and early Phase 3 builds used 0118 for
 // codex_session_bindings. Those numbers now belong to Kimi usage and cancelled
-// conversation turns. Phase 5 also occupied 0119 before moving to 0121.
-// Release collided entries only when their canonical physical effects are
-// absent, then record complete existing profile schemas at their canonical
-// versions so goose never attempts to create their tables twice.
+// conversation turns. Phase 5 also occupied 0119 before moving to 0121, and
+// Phase 6 occupied 0120 before moving to 0122. Release collided entries only
+// when their canonical physical effects are absent, then record complete
+// existing profile schemas at their canonical versions so goose never
+// attempts to create their tables twice.
 func repairRenumberedCodexProfileMigrationHistory(db *sql.DB) error {
 	var gooseTable int
 	if err := db.QueryRow(
@@ -917,6 +918,10 @@ SELECT COALESCE((
 		return err
 	}
 	applied121, err := latestApplied(121)
+	if err != nil {
+		return err
+	}
+	applied122, err := latestApplied(122)
 	if err != nil {
 		return err
 	}
@@ -967,11 +972,35 @@ SELECT (SELECT COUNT(*) FROM pragma_table_info('codex_profile_switches')
 		return err
 	}
 
+	var automaticSwitchShape int
+	if err := db.QueryRow(`
+SELECT (SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN (
+            'codex_automatic_profile_switch_policies',
+            'codex_automatic_profile_switch_chain_sessions',
+            'codex_automatic_profile_switch_policy_profiles',
+            'codex_automatic_profile_switch_attempts',
+            'codex_automatic_profile_switch_attempt_candidates'
+        ))
+     + (SELECT COUNT(*) FROM pragma_table_info('codex_profile_switches')
+        WHERE name IN ('initiator', 'automatic_attempt_id', 'automatic_policy_revision'))
+     + (SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND name IN (
+            'codex_automatic_profile_switch_policy_requires_profiles',
+            'codex_automatic_profile_switch_policy_cdc_insert',
+            'codex_automatic_profile_switch_policy_cdc_update',
+            'codex_automatic_profile_switch_attempt_cdc_insert',
+            'codex_automatic_profile_switch_attempt_cdc_update'
+        ))
+     + (SELECT COUNT(*) FROM sqlite_master
+        WHERE type = 'index' AND name = 'idx_codex_profile_switches_automatic_attempt')`).Scan(&automaticSwitchShape); err != nil {
+		return err
+	}
+
 	release117 := applied117 != 0 && kimiUsageShape != 2
 	release118 := applied118 != 0 && cancelledTurnShape == 0
 	mark120 := bindingShape == 6 && applied120 == 0
 	mark121 := profileSwitchShape == 15 && applied121 == 0
-	if !release117 && !release118 && !mark120 && !mark121 {
+	mark122 := automaticSwitchShape == 14 && applied122 == 0
+	if !release117 && !release118 && !mark120 && !mark121 && !mark122 {
 		return nil
 	}
 
@@ -997,6 +1026,11 @@ SELECT (SELECT COUNT(*) FROM pragma_table_info('codex_profile_switches')
 	}
 	if mark121 {
 		if _, err := tx.Exec(`INSERT INTO goose_db_version (version_id, is_applied) VALUES (121, 1)`); err != nil {
+			return err
+		}
+	}
+	if mark122 {
+		if _, err := tx.Exec(`INSERT INTO goose_db_version (version_id, is_applied) VALUES (122, 1)`); err != nil {
 			return err
 		}
 	}
