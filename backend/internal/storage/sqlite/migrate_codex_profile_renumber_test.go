@@ -22,15 +22,18 @@ func TestMigrateRepairsRenumberedCodexProfileHistory(t *testing.T) {
 	upTo(t, db, 116)
 	applyLegacyCodexProfileMigrations(t, db, []legacyCodexProfileMigration{
 		{version: 117, canonicalPath: "migrations/0119_drop_agent_inventory_cache.sql", legacyName: "drop_agent_inventory_cache.sql"},
+		{version: 118, canonicalPath: "migrations/0120_codex_session_bindings.sql", legacyName: "codex_session_bindings.sql"},
 	})
 
 	if err := migrate(db); err != nil {
 		t.Fatalf("migrate renumbered Codex profile database: %v", err)
 	}
 
-	assertAppliedMigrations(t, db, 117, 118, 119)
+	assertAppliedMigrations(t, db, 117, 118, 119, 120)
 	assertTableSQLContains(t, db, "usage_bindings", "'kimi'")
 	assertTableSQLContains(t, db, "usage_sources", "'kimi_wire'")
+	assertTableSQLContains(t, db, "conversation_turns", "'cancelled'")
+	assertTableColumnsPresent(t, db, "codex_session_bindings", "session_id", "profile_id", "profile_source", "codex_home", "created_at")
 	var inventoryTable int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'agent_inventory_cache'`).Scan(&inventoryTable); err != nil {
 		t.Fatalf("read agent inventory table: %v", err)
@@ -97,5 +100,18 @@ func assertTableSQLContains(t *testing.T, db *sql.DB, table, fragment string) {
 	}
 	if !strings.Contains(schema, fragment) {
 		t.Fatalf("%s schema does not contain %q: %s", table, fragment, schema)
+	}
+}
+
+func assertTableColumnsPresent(t *testing.T, db *sql.DB, table string, columns ...string) {
+	t.Helper()
+	for _, column := range columns {
+		var present int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?`, table, column).Scan(&present); err != nil {
+			t.Fatalf("read %s.%s: %v", table, column, err)
+		}
+		if present != 1 {
+			t.Fatalf("%s.%s count = %d, want 1", table, column, present)
+		}
 	}
 }
