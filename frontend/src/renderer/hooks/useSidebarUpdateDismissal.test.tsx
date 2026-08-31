@@ -39,6 +39,18 @@ describe("useSidebarUpdateDismissal", () => {
 		expect(result.current.dismissed).toBe(false);
 	});
 
+	it("clears a dismissal that expired while the app was closed", () => {
+		localStorage.setItem(SIDEBAR_UPDATE_DISMISSAL_STORAGE_KEY, JSON.stringify({
+			version: "9.9.9",
+			dismissedUntil: Date.now() - 1,
+		}));
+
+		const { result } = renderHook(() => useSidebarUpdateDismissal("9.9.9"));
+
+		expect(result.current.dismissed).toBe(false);
+		expect(localStorage.getItem(SIDEBAR_UPDATE_DISMISSAL_STORAGE_KEY)).toBeNull();
+	});
+
 	it("fails open for malformed storage", () => {
 		localStorage.setItem(SIDEBAR_UPDATE_DISMISSAL_STORAGE_KEY, "not-json");
 		const { result } = renderHook(() => useSidebarUpdateDismissal("9.9.9"));

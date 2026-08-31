@@ -30,6 +30,10 @@ function readDismissal(): DismissedSidebarUpdate | null {
 			removeDismissal();
 			return null;
 		}
+		if (value.dismissedUntil <= Date.now()) {
+			removeDismissal();
+			return null;
+		}
 		return { version: value.version, dismissedUntil: value.dismissedUntil };
 	} catch {
 		removeDismissal();
