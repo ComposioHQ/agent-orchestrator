@@ -1,5 +1,4 @@
 import "./lib/apply-initial-theme";
-import { scan } from "react-scan";
 import React from "react";
 import { createRoot } from "react-dom/client";
 import { QueryClientProvider } from "@tanstack/react-query";
@@ -18,13 +17,6 @@ import { startUpdateTelemetry } from "./lib/update-telemetry";
 import { appI18n } from "./i18n";
 import { useLocaleStore } from "./stores/locale-store";
 import { useSoundNotificationsStore } from "./stores/sound-notifications-store";
-
-if (import.meta.env.DEV) {
-	scan({
-		enabled: true,
-		showToolbar: true,
-	});
-}
 
 const router = createAppRouter(queryClient);
 
