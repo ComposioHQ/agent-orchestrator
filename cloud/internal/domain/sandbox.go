@@ -70,8 +70,13 @@ type Sandbox struct {
 	WorkerLastSeenAt *time.Time
 	// StartupStartedAt is the beginning of the current running-intent
 	// provisioning attempt. Unlike UpdatedAt it survives repeated provider
-	// observations such as paused -> resuming -> paused.
+	// observations such as paused -> resuming -> paused. A startup repair
+	// resets it so every reinstalled worker gets a full startup window.
 	StartupStartedAt *time.Time
+	// StartupAttempts counts startup repairs since the worker last checked in
+	// (reset to zero on heartbeat). It bounds the repair loop: past the cap the
+	// sandbox is parked instead of reinstalled forever.
+	StartupAttempts int
 	// DeletionRequestedAt marks when deletion was first attempted. It bounds a
 	// deletion that a provider cannot converge (an unreclaimable box), so the
 	// reconciler gives up past a deadline instead of re-requesting Delete

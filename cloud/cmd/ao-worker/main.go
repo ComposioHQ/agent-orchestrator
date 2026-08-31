@@ -129,6 +129,21 @@ func run(logger *slog.Logger) error {
 		"repository_url", bootstrap.Launch.RepositoryURL,
 	)
 
+	// Check in immediately and keep heartbeating from here on: the repository
+	// checkout below can legitimately take minutes (large repository, slow
+	// host), and the control plane treats a bootstrapped-but-never-heartbeating
+	// worker as failed to start — repairing it with a reinstall that would kill
+	// a perfectly healthy clone mid-flight.
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	if renewed, err := client.heartbeat(ctx); err != nil {
+		logger.Warn("first heartbeat failed", "error", err)
+	} else if err := client.setToken(renewed); err != nil {
+		return err
+	}
+	results := make(chan error, 5)
+	go func() { results <- client.heartbeatLoop(runCtx, logger) }()
+
 	if worker.IsScratchRepositoryURL(bootstrap.Launch.RepositoryURL) {
 		if err := worker.PrepareScratchWorkspace(
 			ctx,
@@ -190,14 +205,6 @@ func run(logger *slog.Logger) error {
 			return fmt.Errorf("activate worker tooling: %w", err)
 		}
 	}
-	// Heartbeat before waiting out the first interval. Bootstrap registration is
-	// not a check-in, so a repaired worker can otherwise be replaced again
-	// before the control plane ever observes it.
-	if renewed, err := client.heartbeat(ctx); err != nil {
-		logger.Warn("first heartbeat failed", "error", err)
-	} else if err := client.setToken(renewed); err != nil {
-		return err
-	}
 	var agentCommand workerexec.Command
 	agentTerminalID := ""
 	pullRequestSocketPath := filepath.Join(dataDir, "ao-pull-request.sock")
@@ -241,16 +248,12 @@ func run(logger *slog.Logger) error {
 		agentTerminalID = agentTerminal.TerminalID
 	}
 
-	runCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
 	started := make(chan error, 1)
 	transportSupervisor := workertransport.Supervisor{
 		Control: client, Workspace: workspace, Logger: logger,
 		AgentCommand: agentCommand, AgentTerminalID: agentTerminalID,
 		Started: started,
 	}
-	results := make(chan error, 5)
-	go func() { results <- client.heartbeatLoop(runCtx, logger) }()
 	go func() { results <- transportSupervisor.Run(runCtx) }()
 	go func() {
 		results <- client.checkoutRenewalLoop(runCtx, logger, workspace, bootstrap.Launch.RepositoryURL)
