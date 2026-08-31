@@ -3685,6 +3685,44 @@ func TestMarkSpawnedPersistsChatControllerFacts(t *testing.T) {
 	}
 }
 
+// Model is the same allowlist omission as the chat resume handle above, one
+// field over: it is declared on SessionMetadata, has its own sessions.model
+// column, and is read back by the API — but mergeMetadata never copied it, so
+// every `ao spawn --model X` persisted an empty model and the session reported
+// no model at all.
+func TestMarkSpawnedPersistsResolvedModel(t *testing.T) {
+	ctx := context.Background()
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer"}
+	m := New(st, nil)
+
+	if err := m.MarkSpawned(ctx, "mer-1", domain.SessionMetadata{
+		WorkspacePath: "/ws",
+		Model:         "sonnet",
+	}); err != nil {
+		t.Fatalf("MarkSpawned: %v", err)
+	}
+
+	got, _, err := st.GetSession(ctx, "mer-1")
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if got.Metadata.Model != "sonnet" {
+		t.Fatalf("model = %q, want %q; a spawn's resolved model must survive the merge",
+			got.Metadata.Model, "sonnet")
+	}
+
+	// Merged rather than assigned: a relaunch that resolves no explicit model
+	// must leave the recorded one alone instead of blanking it.
+	if err := m.MarkSpawned(ctx, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws"}); err != nil {
+		t.Fatalf("second MarkSpawned: %v", err)
+	}
+	got, _, _ = st.GetSession(ctx, "mer-1")
+	if got.Metadata.Model != "sonnet" {
+		t.Fatalf("model = %q after a relaunch that resolved none, want it preserved", got.Metadata.Model)
+	}
+}
+
 func TestMarkChatSpawnedKeepsPreviousOwnerWhenAtomicBoundaryCommitFails(t *testing.T) {
 	ctx := context.Background()
 	st := newFakeStore()
