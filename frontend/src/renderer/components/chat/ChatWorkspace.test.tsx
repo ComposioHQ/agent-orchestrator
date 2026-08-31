@@ -24,6 +24,18 @@ const previousTabListeners = new Set<() => void>();
 const nextTabListeners = new Set<() => void>();
 const closeShellTerminalListeners = new Set<() => void>();
 const closeShellTerminalShortcutStates: boolean[] = [];
+const MESSAGE_DATE_FORMAT: Intl.DateTimeFormatOptions = {
+	month: "short",
+	day: "numeric",
+	year: "numeric",
+};
+const MESSAGE_TIME_FORMAT: Intl.DateTimeFormatOptions = {
+	hour: "2-digit",
+	minute: "2-digit",
+	hourCycle: "h23",
+};
+const messageDateFormatter = new Intl.DateTimeFormat(undefined, MESSAGE_DATE_FORMAT);
+const messageTimeFormatter = new Intl.DateTimeFormat(undefined, MESSAGE_TIME_FORMAT);
 type TerminalPaneTestProps = {
 	fontSize?: number;
 	focusRequested?: boolean;
@@ -277,7 +289,7 @@ describe("Chat message timestamps", () => {
 			</>,
 		);
 
-		expect(screen.getAllByLabelText(/^Sent \d{2}:\d{2}$/)).toHaveLength(2);
+		expect(screen.getAllByLabelText(`Sent ${messageTimeFormatter.format(new Date(today))}`)).toHaveLength(2);
 	});
 
 	it("labels yesterday and older messages with calendar dates", () => {
@@ -307,8 +319,10 @@ describe("Chat message timestamps", () => {
 			</>,
 		);
 
-		expect(screen.getByLabelText(/^Sent Yesterday · \d{2}:\d{2}$/)).toBeInTheDocument();
-		expect(screen.getByLabelText(/^Sent [A-Z][a-z]{2} \d{1,2}, \d{4}$/)).toBeInTheDocument();
+		expect(
+			screen.getByLabelText(`Sent Yesterday · ${messageTimeFormatter.format(new Date(messages[0].createdAt))}`),
+		).toBeInTheDocument();
+		expect(screen.getByLabelText(`Sent ${messageDateFormatter.format(new Date(messages[1].createdAt))}`)).toBeInTheDocument();
 	});
 });
 
