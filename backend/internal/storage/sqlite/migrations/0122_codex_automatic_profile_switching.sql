@@ -1,4 +1,4 @@
--- Migration 0120: chain-scoped Codex automatic profile switching.
+-- Migration 0122: chain-scoped Codex automatic profile switching.
 --
 -- The durable rows contain only explicit policy, safe evaluation decisions,
 -- and linkage to the Phase 5 switch engine. Authentication, provider capacity,

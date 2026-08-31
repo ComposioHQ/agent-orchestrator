@@ -362,6 +362,31 @@ func (s *Store) CommitChatSpawn(
 	rec domain.SessionRecord,
 	branch domain.ConversationBranch,
 ) error {
+	return s.commitChatSpawn(ctx, rec, branch, nil)
+}
+
+// CommitChatSpawnPrepared stages the reserved boundary and controller generation,
+// projects a reconciled native replay onto that branch, then publishes the live
+// session as one transaction. The staged ownership is invisible outside the
+// transaction, so input cannot reach the controller before its history exists.
+func (s *Store) CommitChatSpawnPrepared(
+	ctx context.Context,
+	rec domain.SessionRecord,
+	branch domain.ConversationBranch,
+	prepare func(context.Context) error,
+) error {
+	if prepare == nil {
+		return errors.New("commit Chat spawn: provider-history preparation is missing")
+	}
+	return s.commitChatSpawn(ctx, rec, branch, prepare)
+}
+
+func (s *Store) commitChatSpawn(
+	ctx context.Context,
+	rec domain.SessionRecord,
+	branch domain.ConversationBranch,
+	prepare func(context.Context) error,
+) error {
 	if rec.ID == "" || branch.ID == "" || branch.ConversationID == "" ||
 		branch.SessionID != rec.ID || branch.ParentBranchID == "" ||
 		branch.ProviderConversationID == "" ||
@@ -405,6 +430,27 @@ func (s *Store) CommitChatSpawn(
 		}
 		if rows != 1 {
 			return fmt.Errorf("move conversation head: conversation %s not found", branch.ConversationID)
+		}
+		if prepare != nil {
+			// Provider-event projection is fenced by controller generation. Stage
+			// that generation only inside this transaction, after the new branch is
+			// active, so the replay lands in the new provider namespace while the
+			// terminated target remains unavailable to every concurrent reader.
+			rows, err := q.ClaimChatControllerGeneration(ctx, gen.ClaimChatControllerGenerationParams{
+				ControllerGeneration: rec.Metadata.ControllerGeneration,
+				UpdatedAt:            rec.UpdatedAt,
+				ID:                   rec.ID,
+			})
+			if err != nil {
+				return fmt.Errorf("stage Chat controller generation: %w", err)
+			}
+			if rows != 1 {
+				return fmt.Errorf("stage Chat controller generation: Chat session %s not found", rec.ID)
+			}
+			txCtx := context.WithValue(ctx, conversationProjectionTxKey{}, q)
+			if err := prepare(txCtx); err != nil {
+				return fmt.Errorf("project native provider history: %w", err)
+			}
 		}
 		if err := q.UpdateSession(ctx, recordToUpdate(rec)); err != nil {
 			return fmt.Errorf("commit Chat session owner: %w", err)
@@ -1618,6 +1664,55 @@ func (s *Store) CancelAllQueuedTurns(
 	return nil
 }
 
+// CancelQueuedTurnByID removes one undispatched queue item without disturbing
+// later queue items or the running turn.
+func (s *Store) CancelQueuedTurnByID(
+	ctx context.Context,
+	conversationID, turnID string,
+	now time.Time,
+) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	rows, err := s.qw.CancelQueuedConversationTurnByID(ctx,
+		gen.CancelQueuedConversationTurnByIDParams{
+			CompletedAt:    sql.NullTime{Time: now, Valid: true},
+			ID:             turnID,
+			ConversationID: conversationID,
+		})
+	if err != nil {
+		return fmt.Errorf("cancel queued turn %s: %w", turnID, err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("%w: %s", ErrQueuedTurnNotAvailable, turnID)
+	}
+	return nil
+}
+
+// UpdateQueuedTurnMessage rewrites the durable human prompt for a turn that has
+// not yet dispatched. Attachments are cleared because the edit path is text-only.
+func (s *Store) UpdateQueuedTurnMessage(
+	ctx context.Context,
+	conversationID, turnID, text string,
+	now time.Time,
+) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	rows, err := s.qw.UpdateQueuedConversationMessageText(ctx,
+		gen.UpdateQueuedConversationMessageTextParams{
+			Text:           text,
+			UpdatedAt:      now,
+			ConversationID: conversationID,
+			TurnID:         sql.NullString{String: turnID, Valid: true},
+		})
+	if err != nil {
+		return fmt.Errorf("update queued turn message %s: %w", turnID, err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("%w: %s", ErrQueuedTurnNotAvailable, turnID)
+	}
+	return nil
+}
+
 // SettleTurnByID records a terminal state for a turn AO can name directly.
 //
 // Needed for a turn that never reached the provider: it has no provider turn id,
@@ -1928,6 +2023,16 @@ func (s *Store) ResolveApproval(
 	return nil
 }
 
+// HasPendingConversationInteractions reports whether the durable conversation
+// still contains an actionable approval or structured-input request.
+func (s *Store) HasPendingConversationInteractions(ctx context.Context, conversationID string) (bool, error) {
+	pending, err := s.qr.HasPendingConversationInteractions(ctx, conversationID)
+	if err != nil {
+		return false, fmt.Errorf("check pending interactions for %s: %w", conversationID, err)
+	}
+	return pending, nil
+}
+
 // FailPendingApprovals closes out anything the user can no longer answer, because
 // the provider call it was blocking is gone.
 func (s *Store) FailPendingApprovals(ctx context.Context, conversationID string, now time.Time) error {
@@ -1971,6 +2076,12 @@ func (s *Store) ProjectProviderEvent(
 	now time.Time,
 	project func(context.Context) error,
 ) (bool, error) {
+	if q, ok := ctx.Value(conversationProjectionTxKey{}).(*gen.Queries); ok && q != nil {
+		return projectProviderEventTx(
+			ctx, q, conversationID, session, generation,
+			providerEventID, method, payloadJSON, now, project,
+		)
+	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 
@@ -1980,6 +2091,28 @@ func (s *Store) ProjectProviderEvent(
 	}
 	defer func() { _ = tx.Rollback() }()
 	q := s.qw.WithTx(tx)
+	projected, err := projectProviderEventTx(
+		ctx, q, conversationID, session, generation,
+		providerEventID, method, payloadJSON, now, project,
+	)
+	if err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("commit provider event %s: %w", method, err)
+	}
+	return projected, nil
+}
+
+func projectProviderEventTx(
+	ctx context.Context,
+	q *gen.Queries,
+	conversationID string,
+	session domain.SessionID,
+	generation, providerEventID, method, payloadJSON string,
+	now time.Time,
+	project func(context.Context) error,
+) (bool, error) {
 	owner, err := q.GetSession(ctx, session)
 	if err != nil {
 		return false, fmt.Errorf("read controller generation for %s: %w", session, err)
@@ -1999,17 +2132,11 @@ func (s *Store) ProjectProviderEvent(
 		return false, fmt.Errorf("archive provider event %s: %w", method, err)
 	}
 	if inserted == 0 {
-		if err := tx.Commit(); err != nil {
-			return false, fmt.Errorf("commit duplicate provider event %s: %w", method, err)
-		}
 		return false, nil
 	}
 	txCtx := context.WithValue(ctx, conversationProjectionTxKey{}, q)
 	if err := project(txCtx); err != nil {
 		return false, fmt.Errorf("project provider event %s: %w", method, err)
-	}
-	if err := tx.Commit(); err != nil {
-		return false, fmt.Errorf("commit provider event %s: %w", method, err)
 	}
 	return true, nil
 }

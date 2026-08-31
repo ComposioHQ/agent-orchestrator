@@ -72,9 +72,9 @@ func (c *codexProfileCatalog) existingRecord() codexProfileRecord {
 	return codexProfileRecord{
 		Home: c.existingHome,
 		Snapshot: domain.CodexProfileSnapshot{
-			ID: codexExistingProfileID, Label: "Existing Codex profile",
+			ID: codexExistingProfileID, Label: "Existing Codex account",
 			Source: domain.CodexProfileSourceExisting, Status: domain.CodexProfileStatusValid,
-			ReasonCode: domain.CodexProfileReasonValid, Reason: "This Codex profile is available.",
+			ReasonCode: domain.CodexProfileReasonValid, Reason: "This Codex account is available.",
 			Authentication: uncheckedAuthentication(), AuthMethod: domain.CodexAuthMethodUnknown,
 			UsableByCurrentLaunches: true,
 		},
@@ -244,7 +244,7 @@ func (c *codexProfileCatalog) readManaged(id string) codexProfileRecord {
 		return codexProfileRecord{
 			Home: home,
 			Snapshot: domain.CodexProfileSnapshot{
-				ID: id, Label: "Unavailable Codex profile", Source: domain.CodexProfileSourceManaged,
+				ID: id, Label: "Unavailable Codex account", Source: domain.CodexProfileSourceManaged,
 				Status: domain.CodexProfileStatusBroken, ReasonCode: code, Reason: reason,
 				Authentication: uncheckedAuthentication(), AuthMethod: domain.CodexAuthMethodUnknown,
 			},
@@ -252,27 +252,27 @@ func (c *codexProfileCatalog) readManaged(id string) codexProfileRecord {
 	}
 	profileInfo, err := os.Lstat(profileDir)
 	if err != nil || !profileInfo.IsDir() || profileInfo.Mode()&os.ModeSymlink != 0 || profileInfo.Mode().Perm() != 0o700 {
-		return broken(domain.CodexProfileReasonUnsafePath, "This Codex profile has an unsafe directory layout.")
+		return broken(domain.CodexProfileReasonUnsafePath, "This Codex account has an unsafe directory layout.")
 	}
 	descriptorPath := filepath.Join(profileDir, codexProfileDescriptorFilename)
 	descriptor, err := readCodexProfileDescriptor(descriptorPath)
 	label := strings.TrimSpace(descriptor.Label)
 	if err != nil || descriptor.ID != id || descriptor.Version != codexProfileVersion || descriptor.Source != domain.CodexProfileSourceManaged || descriptor.CreatedAt.IsZero() || !validCodexProfileLabel(label) {
-		return broken(domain.CodexProfileReasonDescriptorInvalid, "This Codex profile descriptor is invalid.")
+		return broken(domain.CodexProfileReasonDescriptorInvalid, "This Codex account descriptor is invalid.")
 	}
 	homeInfo, err := os.Lstat(home)
 	if errors.Is(err, os.ErrNotExist) {
-		return broken(domain.CodexProfileReasonHomeMissing, "This Codex profile home is missing.")
+		return broken(domain.CodexProfileReasonHomeMissing, "This Codex account home is missing.")
 	}
 	if err != nil || !homeInfo.IsDir() || homeInfo.Mode()&os.ModeSymlink != 0 || homeInfo.Mode().Perm() != 0o700 {
-		return broken(domain.CodexProfileReasonUnsafePath, "This Codex profile has an unsafe home directory.")
+		return broken(domain.CodexProfileReasonUnsafePath, "This Codex account has an unsafe home directory.")
 	}
 	return codexProfileRecord{
 		Home: canonicalPath(home), CreatedAt: descriptor.CreatedAt,
 		Snapshot: domain.CodexProfileSnapshot{
 			ID: id, Label: label, Source: domain.CodexProfileSourceManaged,
 			Status: domain.CodexProfileStatusValid, ReasonCode: domain.CodexProfileReasonValid,
-			Reason: "This Codex profile is available.", Authentication: uncheckedAuthentication(),
+			Reason: "This Codex account is available.", Authentication: uncheckedAuthentication(),
 			AuthMethod:              domain.CodexAuthMethodUnknown,
 			UsableByCurrentLaunches: true,
 		},

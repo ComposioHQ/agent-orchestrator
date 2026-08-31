@@ -39,7 +39,7 @@ func toContractSessionFacts(rec domain.SessionRecord, signalCapable bool) contra
 		LastActivityAt: rec.Activity.LastActivityAt,
 		HasSignal:      !rec.FirstSignalAt.IsZero(),
 		SignalExpected: signalCapable && rec.Mode != domain.SessionModeChat,
-		IsTerminated:   rec.IsTerminated,
+		IsTerminated:   rec.IsTerminated || rec.ArchivedAt != nil,
 	}
 }
 

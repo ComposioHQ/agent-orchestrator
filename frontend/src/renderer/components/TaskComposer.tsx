@@ -8,7 +8,7 @@ import {
 } from "@aoagents/product-ui";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Loader2 } from "lucide-react";
+import { Loader2, UserRound } from "lucide-react";
 import { RequiredAgentField } from "./CreateProjectAgentSheet";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorCode, apiErrorMessage } from "../lib/api-client";
@@ -440,7 +440,7 @@ export function TaskComposer({
 				placeholder: t("newTask.selectAgent"),
 				value: selectedAgent,
 				agents: agentCatalog?.agents,
-				disabled: agentsQuery.isFetching && agentCatalog === undefined,
+				disabled: isSubmitting || (agentsQuery.isFetching && agentCatalog === undefined),
 				onChange: (value) => {
 					setAgent(value);
 					setAgentTouched(true);
@@ -453,6 +453,7 @@ export function TaskComposer({
 				agentId: selectedAgent,
 				agentLabel: selectedAgentLabel,
 				projectId: projectId ?? "",
+				disabled: isSubmitting,
 				value: model,
 				mode,
 				catalog: modelCatalog,
@@ -476,7 +477,7 @@ export function TaskComposer({
 				label: t("newTask.profile"),
 				placeholder: t("newTask.selectProfile"),
 				value: profileId,
-				disabled: codexProfilesQuery.isLoading,
+				disabled: isSubmitting || codexProfilesQuery.isLoading,
 				onOpen: () => {
 					void ensureCodexProfileCapacity().then((next) => cacheCodexProfiles(queryClient, next)).catch(() => undefined);
 				},
@@ -543,6 +544,14 @@ function DesktopProfileControl(control: TaskComposerProfileControl) {
 			onOpenChange={(open) => { if (open) control.onOpen(); }}
 			options={control.options.map((option) => ({ value: option.id, label: option.label, disabled: option.disabled }))}
 			placeholder={control.placeholder}
+			renderTrigger={(selected, placeholder) => (
+				<span className="flex min-w-0 items-center gap-2">
+					<UserRound className="size-icon-sm shrink-0 text-muted-foreground" aria-hidden="true" />
+					<span className="min-w-0 truncate text-control text-foreground" title={selected?.label ?? placeholder}>
+						{selected?.label ?? placeholder}
+					</span>
+				</span>
+			)}
 			triggerClassName="composer-chip composer-toolbar-option w-full justify-between"
 			value={control.value}
 		/>
@@ -564,6 +573,7 @@ function TaskModelPicker({
 	agentId,
 	agentLabel,
 	catalog,
+	disabled,
 	fetching,
 	loading,
 	value,
@@ -602,6 +612,7 @@ function TaskModelPicker({
 		return (
 			<SettingsOptionMenu
 				aria-label={t("newTask.model")}
+				disabled={disabled}
 				value={mode || "__default__"}
 				options={options}
 				triggerClassName="composer-chip composer-toolbar-option w-full justify-between"
@@ -639,6 +650,7 @@ function TaskModelPicker({
 				value={value}
 				models={displayModels}
 				allowCustom={catalog.allowCustom}
+				disabled={disabled}
 				emptyLabel={noOverrideLabel}
 				onChange={selectCatalogModel}
 				onCustom={selectCustomModel}
@@ -669,7 +681,7 @@ function TaskModelPicker({
 					!hasCatalog && "rounded-r-md!",
 				)}
 				value={value}
-				disabled={agentId === ""}
+				disabled={disabled || agentId === ""}
 				onChange={(event) => onModelChange(event.target.value)}
 				placeholder={fetching ? t("settings.models.loading") : noOverrideLabel}
 			/>
@@ -680,6 +692,7 @@ function TaskModelPicker({
 					value={value}
 					models={displayModels}
 					allowCustom={catalog.allowCustom}
+					disabled={disabled}
 					emptyLabel={noOverrideLabel}
 					onChange={selectCatalogModel}
 					onCustom={selectCustomModel}

@@ -252,16 +252,16 @@ func TestRestoreRoundTripPreservesMetadata(t *testing.T) {
 	}
 }
 
-// TestReconcile_TerminatesDeadLiveSessionAndReapsLeakedTmux exercises
+// TestReconcile_PreservesFailedLiveSessionAndReapsLeakedTmux exercises
 // Manager.Reconcile against a real sqlite.Store:
 //
 //   - Session A: is_terminated=0 but its runtime is GONE and it is a promptless
-//     KindWorker. reconcileLive marks it terminated. RestoreAll does NOT relaunch it
-//     (ErrNotResumable: no prompt, no session id, not an orchestrator). End state:
-//     is_terminated=true, runtime.Create count stays 0.
+//     KindWorker. Its blank relaunch is not resumable, so reconcileLive preserves
+//     the live record and worktree with exited activity. End state:
+//     is_terminated=false, runtime.Create count stays 0.
 //   - Session B: is_terminated=1 but its runtime is still ALIVE (leaked teardown)
 //     => Reconcile must call Destroy on its handle.
-func TestReconcile_TerminatesDeadLiveSessionAndReapsLeakedTmux(t *testing.T) {
+func TestReconcile_PreservesFailedLiveSessionAndReapsLeakedTmux(t *testing.T) {
 	ctx := context.Background()
 	st := newStack(t)
 
@@ -323,10 +323,9 @@ func TestReconcile_TerminatesDeadLiveSessionAndReapsLeakedTmux(t *testing.T) {
 		t.Fatalf("Reconcile: %v", err)
 	}
 
-	// Session A is a promptless KindWorker: reconcileLive captured its work and
-	// marked it terminated. RestoreAll skips it (ErrNotResumable: no prompt, no
-	// AgentSessionID, not an orchestrator). End state: is_terminated=true, no fresh
-	// runtime.Create (a blank relaunch would silently lose its task).
+	// Session A is a promptless KindWorker: reconcileLive cannot safely launch it
+	// blank, but must not treat that restart-time failure as a durable termination.
+	// It remains available for explicit recovery with its worktree intact.
 	gotA, ok, err := st.store.GetSession(ctx, recA.ID)
 	if err != nil {
 		t.Fatalf("get session A: %v", err)
@@ -334,8 +333,14 @@ func TestReconcile_TerminatesDeadLiveSessionAndReapsLeakedTmux(t *testing.T) {
 	if !ok {
 		t.Fatalf("session A: not found after Reconcile")
 	}
-	if !gotA.IsTerminated {
-		t.Fatalf("session A: want terminated (is_terminated=true) after crash recovery of promptless worker, got live")
+	if gotA.IsTerminated {
+		t.Fatalf("session A: restart-time relaunch failure terminated a recoverable session: %+v", gotA)
+	}
+	if gotA.Activity.State != domain.ActivityExited {
+		t.Fatalf("session A: activity = %q, want %q", gotA.Activity.State, domain.ActivityExited)
+	}
+	if gotA.Metadata.WorkspacePath != recA.Metadata.WorkspacePath || gotA.Metadata.Branch != recA.Metadata.Branch {
+		t.Fatalf("session A: workspace identity changed: got %+v, want %+v", gotA.Metadata, recA.Metadata)
 	}
 	// No runtime.Create: a promptless worker must not be blank-relaunched.
 	if st.rt.created != 0 {

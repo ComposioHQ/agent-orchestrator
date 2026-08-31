@@ -75,6 +75,7 @@ vi.mock("./XtermTerminal", () => ({
 				writeln: vi.fn(),
 				showLatestOutput: vi.fn(),
 				prepareForActivation: prepareForActivationMock,
+				notifyCursorColorScheme: vi.fn(),
 				onUserInput: vi.fn(() => disposable),
 				onResize: vi.fn(() => disposable),
 			});
@@ -222,6 +223,36 @@ function activeXterm(): HTMLElement {
 }
 
 describe("TerminalPane empty states", () => {
+	it("reports terminal attachment state changes to an optional observer", async () => {
+		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		const previousAO = window.ao;
+		window.ao = {} as typeof window.ao;
+		const onTerminalStateChange = vi.fn();
+		const target = {
+			kind: "shell" as const,
+			handleId: "shellterm-login-1",
+			generation: "2026-08-29T12:00:00Z",
+			title: "Codex login",
+		};
+		const view = render(
+			<QueryClientProvider client={queryClient}>
+				<TerminalPane daemonReady fontSize={12} onTerminalStateChange={onTerminalStateChange} terminalTarget={target} theme="dark" />
+			</QueryClientProvider>,
+		);
+		try {
+			await waitFor(() => expect(onTerminalStateChange).toHaveBeenLastCalledWith("idle"));
+			terminalState.value = "exited";
+			view.rerender(
+				<QueryClientProvider client={queryClient}>
+					<TerminalPane daemonReady fontSize={12} onTerminalStateChange={onTerminalStateChange} terminalTarget={target} theme="dark" />
+				</QueryClientProvider>,
+			);
+			await waitFor(() => expect(onTerminalStateChange).toHaveBeenLastCalledWith("exited"));
+		} finally {
+			window.ao = previousAO;
+		}
+	});
+
 	it("uses the full top, right, and bottom extent for the terminal grid", () => {
 		const view = renderPane({ ...worker, terminalHandleId: "term-1" });
 		try {
@@ -340,15 +371,20 @@ describe("TerminalPane replay cover", () => {
 		}
 	});
 
-	it("shows no loader text on a fast open", () => {
-		replaySettled.value = false;
-		const view = renderPane({ ...worker, terminalHandleId: "term-1" });
+	it("keeps the replay cover silent even when attachment takes longer", () => {
+		vi.useFakeTimers();
 		try {
-			// The label is delayed, so a session switch that resolves quickly never
-			// flashes a spinner — the whole point of a blank cover.
-			expect(screen.queryByText("Loading latest output…")).not.toBeInTheDocument();
+			replaySettled.value = false;
+			const view = renderPane({ ...worker, terminalHandleId: "term-1" });
+			try {
+				act(() => vi.advanceTimersByTime(1_000));
+				expect(screen.getByTestId("terminal-replay-cover")).toHaveAttribute("aria-hidden", "true");
+				expect(screen.queryByText("Loading latest output…")).not.toBeInTheDocument();
+			} finally {
+				view.restore();
+			}
 		} finally {
-			view.restore();
+			vi.useRealTimers();
 		}
 	});
 

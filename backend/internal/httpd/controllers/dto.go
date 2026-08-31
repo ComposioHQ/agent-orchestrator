@@ -1112,8 +1112,9 @@ type CodexProfilesResponse = agentsvc.CodexProfiles
 
 // EnsureCodexProfilesRequest selects profiles for a display-freshness ensure.
 type EnsureCodexProfilesRequest struct {
-	ProfileIDs []string                     `json:"profileIds,omitempty"`
-	Purpose    domain.AgentReadinessPurpose `json:"purpose" enum:"display"`
+	ProfileIDs                 []string                     `json:"profileIds,omitempty"`
+	Purpose                    domain.AgentReadinessPurpose `json:"purpose" enum:"display"`
+	ForceAuthenticationRefresh bool                         `json:"forceAuthenticationRefresh,omitempty" description:"Bypass the profile authentication TTL for an active native login terminal."`
 }
 
 // EnsureCodexProfileCapacityRequest selects discovered profiles for a
@@ -1132,6 +1133,13 @@ type CreateCodexProfileRequest struct {
 
 // CreateCodexProfileResponse is the newly created managed profile snapshot.
 type CreateCodexProfileResponse = domain.CodexProfileSnapshot
+
+// OpenCodexProfileLoginTerminalResponse is the standalone terminal opened for
+// one profile's native Codex login flow.
+type OpenCodexProfileLoginTerminalResponse struct {
+	ProfileID     string                `json:"profileId"`
+	ShellTerminal ShellTerminalResponse `json:"shellTerminal"`
+}
 
 // StartCodexProfileLoginResponse is an accepted in-memory browser login.
 type StartCodexProfileLoginResponse = agentsvc.CodexProfileLoginStart
@@ -1714,7 +1722,7 @@ type CompactConversationResponse struct {
 // ConversationTurnResponse is one request and the work that followed it.
 type ConversationTurnResponse struct {
 	ID             string `json:"id"`
-	State          string `json:"state" enum:"queued,running,completed,recovered,interrupted,failed"`
+	State          string `json:"state" enum:"queued,running,completed,recovered,interrupted,failed,cancelled"`
 	ProviderTurnID string `json:"providerTurnId,omitempty"`
 	// RetryOfTurnID is the failed source whose durable prompt created this turn.
 	RetryOfTurnID string `json:"retryOfTurnId,omitempty"`

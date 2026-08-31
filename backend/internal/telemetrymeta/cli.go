@@ -31,6 +31,7 @@ var routineInternalCLICommands = []string{
 	"ao orchestrator ls",
 	"ao hooks",
 	"ao pty-host",
+	"ao codex-login",
 }
 
 // CLIActorType infers the actor for legacy loopback CLI telemetry requests that
@@ -81,6 +82,7 @@ var legacyActorlessUserCLICommands = map[string]struct{}{
 	"ao agent profile":          {},
 	"ao agent profile ls":       {},
 	"ao browser":                {},
+	"ao browser act":            {},
 	"ao browser check":          {},
 	"ao browser click":          {},
 	"ao browser console":        {},

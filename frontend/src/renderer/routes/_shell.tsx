@@ -617,6 +617,12 @@ function ShellLayout() {
 		void aoBridge.theme?.set(themePreference);
 	}, [themePreference]);
 
+	// Cursor Agent reads TERM_THEME at spawn from this file. Persist the same
+	// resolved light/dark scheme the terminal uses, not nativeTheme alone.
+	useEffect(() => {
+		void aoBridge.theme?.persistTerminal(resolvedTheme);
+	}, [resolvedTheme]);
+
 	// Follow OS appearance while the user keeps Theme on System — updates
 	// resolvedTheme (and thus React consumers) without writing light/dark to storage.
 	useEffect(() => {

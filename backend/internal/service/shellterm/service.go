@@ -223,11 +223,39 @@ func (s *Service) OpenShellTerminal(ctx context.Context, in OpenShellTerminalInp
 	if err != nil {
 		return ShellTerminal{}, err
 	}
+	openTerminals, err := s.store.SelectShellTerminalsByAppRunID(ctx, s.appRunID)
+	if err != nil {
+		return ShellTerminal{}, fmt.Errorf("open shell terminal: list existing terminals: %w", err)
+	}
 	argv := resolveUserLoginShell()
 	if len(argv) == 0 {
 		return ShellTerminal{}, apierr.Internal("SHELL_TERMINAL_NO_SHELL",
 			"Could not determine a shell to launch. Set SHELL (macOS/Linux) or ComSpec (Windows).")
 	}
+	return s.openTerminal(ctx, openTerminalInput{
+		argv: argv, workingDir: workingDir, projectID: projectID,
+		sessionID: in.SessionID, title: nextShellTerminalTitle(openTerminals),
+	})
+}
+
+// OpenCommandTerminal starts a backend-owned command in a standalone terminal.
+// Unlike OpenShellTerminal, this input is never decoded from the public API.
+func (s *Service) OpenCommandTerminal(ctx context.Context, in OpenCommandTerminalInput) (ShellTerminal, error) {
+	return s.openTerminal(ctx, openTerminalInput{
+		argv: in.Argv, env: in.Env, workingDir: in.WorkingDir, title: in.Title,
+	})
+}
+
+type openTerminalInput struct {
+	argv       []string
+	env        map[string]string
+	workingDir string
+	projectID  domain.ProjectID
+	sessionID  domain.SessionID
+	title      string
+}
+
+func (s *Service) openTerminal(ctx context.Context, in openTerminalInput) (ShellTerminal, error) {
 	handleID, err := s.newHandleID()
 	if err != nil {
 		return ShellTerminal{}, fmt.Errorf("open shell terminal: handle id: %w", err)
@@ -238,8 +266,9 @@ func (s *Service) OpenShellTerminal(ctx context.Context, in OpenShellTerminalInp
 	// shellterm- prefix keeps the two namespaces disjoint.
 	handle, err := s.runtime.Create(ctx, ports.RuntimeConfig{
 		SessionID:     domain.SessionID(handleID),
-		WorkspacePath: workingDir,
-		Argv:          argv,
+		WorkspacePath: in.workingDir,
+		Argv:          in.argv,
+		Env:           in.env,
 	})
 	if err != nil {
 		return ShellTerminal{}, fmt.Errorf("open shell terminal %s: runtime: %w", handleID, err)
@@ -250,10 +279,10 @@ func (s *Service) OpenShellTerminal(ctx context.Context, in OpenShellTerminalInp
 		// The resolved project, not the requested one: a session-scoped open
 		// that named no project still belongs to the session's project, and
 		// persisting "" there would leave the row unattributable on the board.
-		ProjectID:  projectID,
-		SessionID:  in.SessionID,
-		WorkingDir: workingDir,
-		Title:      shellTerminalTitle(workingDir),
+		ProjectID:  in.projectID,
+		SessionID:  in.sessionID,
+		WorkingDir: in.workingDir,
+		Title:      in.title,
 		AppRunID:   s.appRunID,
 		CreatedAt:  s.now().UTC(),
 	}
@@ -267,8 +296,28 @@ func (s *Service) OpenShellTerminal(ctx context.Context, in OpenShellTerminalInp
 		return ShellTerminal{}, fmt.Errorf("open shell terminal %s: persist: %w", handle.ID, err)
 	}
 
-	s.log.Info("shell terminal opened", "handleId", handle.ID, "workingDir", workingDir)
+	s.log.Info("shell terminal opened", "handleId", handle.ID, "workingDir", in.workingDir)
 	return shellTerminalFromRecord(rec), nil
+}
+
+// nextShellTerminalTitle assigns a name at creation time. It never depends on
+// a tab's current UI position, so closing or reordering another tab cannot
+// rename an existing terminal.
+func nextShellTerminalTitle(terminals []ShellTerminalRecord) string {
+	maxNumber := 0
+	for _, terminal := range terminals {
+		if terminal.Title == "Terminal" {
+			if maxNumber < 1 {
+				maxNumber = 1
+			}
+			continue
+		}
+		var number int
+		if _, err := fmt.Sscanf(terminal.Title, "Terminal %d", &number); err == nil && number > maxNumber {
+			maxNumber = number
+		}
+	}
+	return fmt.Sprintf("Terminal %d", maxNumber+1)
 }
 
 // maxShellTerminalTitleLen bounds a user-supplied tab name. Tabs are truncated

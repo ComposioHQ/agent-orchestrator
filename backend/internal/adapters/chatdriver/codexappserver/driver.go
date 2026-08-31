@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/processenv"
+	"github.com/aoagents/agent-orchestrator/backend/internal/agentlaunch"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
@@ -215,7 +217,9 @@ func (v codexVersion) String() string {
 }
 
 func installedCodexVersion(ctx context.Context, bin string) (string, error) {
-	output, err := aoprocess.CommandContext(ctx, bin, "--version").CombinedOutput()
+	cmd := aoprocess.CommandContext(ctx, bin, "--version")
+	cmd.Env = codexProcessEnv(ctx, bin, nil)
+	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", err
 	}
@@ -330,7 +334,7 @@ func (d *Driver) connect(ctx context.Context, workdir string, env map[string]str
 	if managed {
 		args = []string{"-c", `cli_auth_credentials_store="file"`, "app-server"}
 	}
-	proc, err := d.spawn(ctx, bin, workdir, envSlice(env), args)
+	proc, err := d.spawn(ctx, bin, workdir, codexProcessEnv(ctx, bin, env), args)
 	if err != nil {
 		return nil, fmt.Errorf("%w: launch app-server: %w", ports.ErrChatDriverUnavailable, err)
 	}
@@ -456,4 +460,21 @@ func spawnAppServer(ctx context.Context, bin, workdir string, env, args []string
 // where the same shape failed outright with "Not logged in".
 func envSlice(env map[string]string) []string {
 	return processenv.Merge(env)
+}
+
+// codexProcessEnv applies the same executable-aware PATH augmentation as the
+// TUI runtime before either the compatibility probe or app-server starts. The
+// resolved npm launcher can be absolute and still depend on `#!/usr/bin/env
+// node`; Finder-launched daemons commonly resolve the launcher from inventory
+// while omitting the Node version manager from PATH.
+func codexProcessEnv(ctx context.Context, bin string, env map[string]string) []string {
+	overlay := make(map[string]string, len(env)+1)
+	for key, value := range env {
+		overlay[key] = value
+	}
+	if _, ok := overlay["PATH"]; !ok {
+		overlay["PATH"] = os.Getenv("PATH")
+	}
+	agentlaunch.AugmentRuntimePATHForLaunchBinary(ctx, overlay, []string{bin}, exec.LookPath)
+	return envSlice(overlay)
 }
