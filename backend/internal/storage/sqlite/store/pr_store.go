@@ -493,6 +493,17 @@ func (s *Store) ListPRComments(ctx context.Context, prURL string) ([]domain.Pull
 	return out, nil
 }
 
+// MarkPRCommentResolved records a provider-resolved review comment locally.
+func (s *Store) MarkPRCommentResolved(ctx context.Context, prURL, commentID string) (bool, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	affected, err := s.qw.MarkPRCommentResolved(ctx, gen.MarkPRCommentResolvedParams{PRURL: prURL, CommentID: commentID})
+	if err != nil {
+		return false, fmt.Errorf("mark pr comment resolved %s/%s: %w", prURL, commentID, err)
+	}
+	return affected > 0, nil
+}
+
 // ListPRReviewThreads returns a PR's review threads, oldest first.
 func (s *Store) ListPRReviewThreads(ctx context.Context, prURL string) ([]domain.PullRequestReviewThread, error) {
 	rows, err := s.qr.ListPRReviewThreads(ctx, prURL)
@@ -705,7 +716,7 @@ func genCommentParams(prURL string, c domain.PullRequestComment) gen.UpsertPRCom
 	return gen.UpsertPRCommentParams{
 		PRURL: prURL, CommentID: c.ID, Author: c.Author, File: c.File,
 		Line: int64(c.Line), Body: c.Body, Resolved: c.Resolved, CreatedAt: c.CreatedAt,
-		ThreadID: c.ThreadID, URL: c.URL, IsBot: boolInt(c.IsBot), AutoInjectReview: c.AutoInjectReview,
+		ThreadID: c.ThreadID, ReviewID: c.ReviewID, URL: c.URL, IsBot: boolInt(c.IsBot), AutoInjectReview: c.AutoInjectReview,
 	}
 }
 
@@ -713,13 +724,13 @@ func genLegacyCommentParams(prURL string, c domain.PullRequestComment) gen.Inser
 	return gen.InsertLegacyPRCommentParams{
 		PRURL: prURL, CommentID: c.ID, Author: c.Author, File: c.File,
 		Line: int64(c.Line), Body: c.Body, Resolved: c.Resolved, CreatedAt: c.CreatedAt,
-		ThreadID: "", URL: "", IsBot: 0,
+		ThreadID: "", ReviewID: c.ReviewID, URL: "", IsBot: 0,
 	}
 }
 
 func commentFromGen(c gen.PRComment) domain.PullRequestComment {
 	return domain.PullRequestComment{
-		ThreadID: c.ThreadID, ID: c.CommentID, Author: c.Author,
+		ThreadID: c.ThreadID, ReviewID: c.ReviewID, ID: c.CommentID, Author: c.Author,
 		File: c.File, Line: int(c.Line), Body: c.Body, URL: c.URL,
 		Resolved: c.Resolved, IsBot: c.IsBot != 0, CreatedAt: c.CreatedAt,
 		AutoInjectReview: c.AutoInjectReview,

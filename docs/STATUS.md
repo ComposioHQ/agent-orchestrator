@@ -48,8 +48,14 @@ surface (`npm run sqlc`, `npm run api`).
   archive/projection, controller-generation fencing, turns, messages,
   activities, approvals, structured input, usage, compaction, and rollback.
 - Chat drivers for the user's installed Codex (native app-server), Claude Code
-  (claude-agent-acp), OpenCode, and Droid. AO reuses each harness's existing
-  binary/auth resolution and does not bundle provider CLIs.
+  (claude-agent-acp), Cursor, OpenCode, Droid, Kimchi, Kimi, Pi, and OMP. OMP Chat uses
+  native `omp acp` and requires OMP 15.0.0 or newer. Pi's independently
+  installed pi-acp adapter does not enforce approval modes, so AO admits Pi Chat
+  only after the user explicitly chooses the per-session bypass-permissions
+  fallback. The binding reuses the existing Pi config environment and auth
+  probe and is never downloaded by AO. AO reuses each harness's existing
+  binary/auth/environment resolution and does not bundle provider CLIs. Cursor
+  is Chat-only until its ACP and TUI conversation ids are proven to share identity.
 - Project CRUD plus per-project config (`PUT /projects/{id}/config`).
 - PR action engine wired into the API: `POST /prs/{id}/merge` and
   `/prs/{id}/resolve-comments`.
@@ -79,8 +85,9 @@ surface (`npm run sqlc`, `npm run api`).
   ([#75](https://github.com/aoagents/agent-orchestrator/issues/75),
   [#108](https://github.com/aoagents/agent-orchestrator/issues/108),
   [#109](https://github.com/aoagents/agent-orchestrator/issues/109)).
-- Terminal mux over WebSocket (`/mux`): per-client `tmux attach` PTY on
-  Darwin/Linux; conpty loopback pty-host on Windows.
+- Terminal mux over WebSocket (`/mux`): detached native PTY host for new macOS
+  sessions, per-client `tmux attach` for Linux and persisted legacy macOS
+  handles, and a ConPTY loopback host on Windows.
 - Lifecycle reducer plus reaper (`internal/observe/reaper`).
 - Agent adapter platform under `internal/adapters/agent/` (25 adapters) with a
   registry and `ao hooks` activity dispatch.
@@ -181,11 +188,13 @@ surface (`npm run sqlc`, `npm run api`).
   sanitized network observer and temporary highlight cleanup as safety/UI
   plumbing. Focused checks and a fresh Windows x64 package pass; macOS/Linux
   packaging and manual lifecycle acceptance remain release verification work.
-- **Cross-interface visual history import**: provider-native context continues
-  across a compatible handoff, and Chat history already recorded by AO remains
-  durable. A first TUI→Chat switch does not reconstruct terminal screen output
-  as structured AO messages/tool cards; doing so requires a provider history
-  import contract with stable identities and deduplication.
+- **Cross-interface raw terminal history import**: compatible providers now
+  replay settled native history with stable identities (`thread/read` for Codex,
+  ACP `session/load` where advertised), and AO imports it idempotently before
+  activating Chat. ACP `session/resume` preserves model context but does not
+  replay history, so a TUI→Chat handoff fails closed for resume-only agents.
+  AO deliberately does not reconstruct PTY scrollback as messages/tool cards;
+  arbitrary terminal bytes are redraw artifacts, not canonical provider events.
 - **In-flight tool portability**: drain can finish accepted work and interrupt
   can cancel it, but no common provider protocol serializes a currently executing
   tool call or detached background process for adoption by another controller.

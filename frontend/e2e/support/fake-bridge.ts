@@ -1,7 +1,9 @@
 import type { Page } from "@playwright/test";
 
+import type { UpdateSettings, UpdateStatus } from "../../src/main/update-settings";
 import type { AoBridge } from "../../src/preload";
 import type { DaemonStatus } from "../../src/shared/daemon-status";
+import { coerceUiSettings, DEFAULT_UI_SETTINGS } from "../../src/shared/ui-locale";
 
 // The e2e suite runs the renderer under `dev:web` (VITE_NO_ELECTRON=1) with no
 // Electron preload, so `window.ao` is undefined and lib/bridge.ts falls back to
@@ -33,16 +35,25 @@ export type FakeBridgeOptions = {
 	daemonState?: "ready" | "starting" | "stopped" | "error";
 	/** REST port advertised when ready (mock data is served regardless). */
 	daemonPort?: number;
+	/** Desktop updater state surfaced in Settings > Updates. */
+	updateStatus?: UpdateStatus;
+	/** Persisted automatic-update policy surfaced in Settings > Updates. */
+	updateSettings?: UpdateSettings;
 };
 
 export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}): Promise<void> {
 	const version = opts.version ?? "9.9.9-test";
 	const daemonState = opts.daemonState ?? "ready";
 	const daemonPort = opts.daemonPort ?? 8080;
+	const updateStatus = opts.updateStatus ?? ({ state: "idle" } satisfies UpdateStatus);
+	const updateSettings =
+		opts.updateSettings ??
+		({ enabled: false, channel: "latest", nightlyAck: false, feature: null } satisfies UpdateSettings);
 
 	await page.addInitScript(
-		({ version, daemonState, daemonPort }) => {
+		({ version, daemonState, daemonPort, updateStatus, updateSettings }) => {
 			const unsubscribe = () => () => undefined;
+			let currentUpdateSettings = updateSettings;
 			const status: DaemonStatus =
 				daemonState === "ready" ? { state: "ready", port: daemonPort } : { state: daemonState };
 			const navState = (viewId: string) => ({
@@ -64,6 +75,8 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					openExternal: async () => undefined,
 					scanImportFolder: async ({ path }: { path: string }) => ({ path, repos: [] }),
 					checkAncestorRepo: async () => undefined,
+					getPathForFile: () => "",
+					onOpenFolderPath: () => () => undefined,
 					onNewSessionShortcut: unsubscribe,
 					onKeyboardShortcutsHelp: unsubscribe,
 					onNewShellTerminalShortcut: unsubscribe,
@@ -82,11 +95,15 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					onFontSizeShortcut: () => () => undefined,
 				},
 				window: {
-					setOverlay: async () => undefined,
+					isMaximized: async () => false,
+					onMaximized: () => () => undefined,
 					isFullScreen: async () => false,
 					onFullScreen: () => () => undefined,
 				},
-				theme: { set: async () => undefined },
+				theme: {
+					set: async () => undefined,
+					persistTerminal: async () => undefined,
+				},
 				menu: { action: async () => undefined, notifyShellFocus: () => undefined },
 				clipboard: {
 					writeText: async () => undefined,
@@ -101,6 +118,18 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 						listener(status);
 						return unsubscribe();
 					},
+				},
+				editorHandoff: {
+					getState: async () => ({
+						targets: [
+							{ id: "cursor" as const, name: "Cursor", kind: "editor" as const },
+							{ id: "file-manager" as const, name: "File Manager", kind: "file_manager" as const },
+							{ id: "terminal" as const, name: "Terminal", kind: "terminal" as const },
+						],
+						preferredEditorId: "cursor" as const,
+						workspaceAvailable: true,
+					}),
+					open: async () => ({ id: "cursor" as const, name: "Cursor", kind: "editor" as const }),
 				},
 				telemetry: {
 					getBootstrap: async () => null,
@@ -164,12 +193,14 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					setMigration: async () => undefined,
 				},
 				updateSettings: {
-					get: async () => ({ enabled: false, channel: "latest", nightlyAck: false, feature: null }),
-					set: async () => undefined,
+					get: async () => currentUpdateSettings,
+					set: async (next: UpdateSettings) => {
+						currentUpdateSettings = next;
+					},
 				},
 				uiSettings: {
-					get: async () => ({ locale: "en" }),
-					set: async (settings) => settings,
+					get: async () => ({ ...DEFAULT_UI_SETTINGS }),
+					set: async (settings) => coerceUiSettings({ ...DEFAULT_UI_SETTINGS, ...settings }),
 				},
 				keybindings: {
 					get: async () => ({}),
@@ -177,7 +208,7 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					setRecording: async () => undefined,
 				},
 				updates: {
-					getStatus: async () => ({ state: "idle" }),
+					getStatus: async () => updateStatus,
 					check: async () => undefined,
 					returnHome: async () => undefined,
 					download: async () => undefined,
@@ -191,22 +222,28 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					list: async () => [],
 					getActive: async () => null,
 				},
-			cloud: {
-				getSession: async () => null,
-				signIn: async () => undefined,
-				signOut: async () => undefined,
-				onSessionChanged: unsubscribe,
-			},
-			rpc: {
-				getSettings: async () => ({ enabled: false }),
-				setSettings: async (settings) => settings,
-				getStatus: async () => ({ state: "disconnected" }),
-				onStatus: unsubscribe,
-			},
-		} satisfies AoBridge;
+				cloud: {
+					getSession: async () => null,
+					signIn: async () => undefined,
+					signOut: async () => undefined,
+					onSessionChanged: unsubscribe,
+				},
+				cloudCp: {
+					request: async () => ({ status: 401, headers: {}, body: "" }),
+					openStream: async () => ({ streamId: "stream_test" }),
+					closeStream: () => undefined,
+					onStreamEvent: unsubscribe,
+				},
+				rpc: {
+					getSettings: async () => ({ enabled: false }),
+					setSettings: async (settings) => settings,
+					getStatus: async () => ({ state: "disconnected" }),
+					onStatus: unsubscribe,
+				},
+			} satisfies AoBridge;
 			(window as unknown as { ao: unknown }).ao = ao;
 		},
-		{ version, daemonState, daemonPort },
+		{ version, daemonState, daemonPort, updateStatus, updateSettings },
 	);
 }
 
@@ -303,9 +340,33 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 
 			const nowIso = new Date().toISOString();
 			type Session = Record<string, unknown>;
+			// The daemon derives the board lane; the fake stands in for it so
+			// driving a spec's status through setStatus still moves the card.
+			const kanbanColumnFor = (status: string): string => {
+				switch (status) {
+					case "merged":
+					case "approved":
+					case "mergeable":
+						return "ready";
+					case "terminated":
+						return "archive";
+					case "review_pending":
+					case "pr_open":
+					case "draft":
+						return "validating";
+					case "needs_input":
+					case "exited":
+					case "no_signal":
+					case "ci_failed":
+					case "changes_requested":
+						return "needs_review";
+					default:
+						return "building";
+				}
+			};
 			const makeWorker = (w: (typeof workers)[number]): Session => ({
 				id: w.id,
-				terminalHandleId: `${w.id}/terminal_0`,
+				terminalHandleId: (w.mode ?? "tui") === "tui" ? `${w.id}/terminal_0` : undefined,
 				workspaceId: projectId,
 				workspaceName: projectName,
 				title: w.title,
@@ -314,6 +375,7 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 				mode: w.mode ?? "tui",
 				branch: w.branch ?? `session/${w.id}`,
 				status: w.status ?? "working",
+				kanbanColumn: kanbanColumnFor(w.status ?? "working"),
 				createdAt: nowIso,
 				updatedAt: new Date().toISOString(),
 				activity: { state: w.activity ?? "active", lastActivityAt: new Date().toISOString() },
@@ -340,6 +402,7 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 						kind: "orchestrator",
 						branch: "main",
 						status: "working",
+						kanbanColumn: "building",
 						createdAt: nowIso,
 						updatedAt: nowIso,
 						activity: { state: "active", lastActivityAt: nowIso },
@@ -444,6 +507,7 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					const s = findSession(id);
 					if (!s) return;
 					s.status = status;
+					s.kanbanColumn = kanbanColumnFor(status);
 					s.displayStatus = undefined;
 					if (activity) s.activity = { state: activity, lastActivityAt: new Date().toISOString() };
 					touch(s);
@@ -502,6 +566,8 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					openExternal: async () => undefined,
 					scanImportFolder: async ({ path }: { path: string }) => ({ path, repos: [] }),
 					checkAncestorRepo: async () => undefined,
+					getPathForFile: () => "",
+					onOpenFolderPath: () => () => undefined,
 					onNewSessionShortcut: unsubscribe,
 					onKeyboardShortcutsHelp: unsubscribe,
 					onNewShellTerminalShortcut: unsubscribe,
@@ -520,11 +586,15 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					onFontSizeShortcut: () => () => undefined,
 				},
 				window: {
-					setOverlay: async () => undefined,
+					isMaximized: async () => false,
+					onMaximized: () => () => undefined,
 					isFullScreen: async () => false,
 					onFullScreen: () => () => undefined,
 				},
-				theme: { set: async () => undefined },
+				theme: {
+					set: async () => undefined,
+					persistTerminal: async () => undefined,
+				},
 				menu: { action: async () => undefined, notifyShellFocus: () => undefined },
 				clipboard: { writeText: async () => undefined, readText: async () => "" },
 				daemon: {
@@ -536,6 +606,18 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 						listener(status);
 						return unsubscribe();
 					},
+				},
+				editorHandoff: {
+					getState: async () => ({
+						targets: [
+							{ id: "cursor" as const, name: "Cursor", kind: "editor" as const },
+							{ id: "file-manager" as const, name: "File Manager", kind: "file_manager" as const },
+							{ id: "terminal" as const, name: "Terminal", kind: "terminal" as const },
+						],
+						preferredEditorId: "cursor" as const,
+						workspaceAvailable: true,
+					}),
+					open: async () => ({ id: "cursor" as const, name: "Cursor", kind: "editor" as const }),
 				},
 				telemetry: { getBootstrap: async () => null },
 				browser: {
@@ -596,8 +678,8 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					set: async () => undefined,
 				},
 				uiSettings: {
-					get: async () => ({ locale: "en" }),
-					set: async (settings) => settings,
+					get: async () => ({ ...DEFAULT_UI_SETTINGS }),
+					set: async (settings) => coerceUiSettings({ ...DEFAULT_UI_SETTINGS, ...settings }),
 				},
 				keybindings: {
 					get: async () => ({}),
@@ -619,19 +701,25 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					list: async () => [],
 					getActive: async () => null,
 				},
-			cloud: {
-				getSession: async () => null,
-				signIn: async () => undefined,
-				signOut: async () => undefined,
-				onSessionChanged: unsubscribe,
-			},
-			rpc: {
-				getSettings: async () => ({ enabled: false }),
-				setSettings: async (settings) => settings,
-				getStatus: async () => ({ state: "disconnected" }),
-				onStatus: unsubscribe,
-			},
-		} satisfies AoBridge;
+				cloud: {
+					getSession: async () => null,
+					signIn: async () => undefined,
+					signOut: async () => undefined,
+					onSessionChanged: unsubscribe,
+				},
+				cloudCp: {
+					request: async () => ({ status: 401, headers: {}, body: "" }),
+					openStream: async () => ({ streamId: "stream_test" }),
+					closeStream: () => undefined,
+					onStreamEvent: unsubscribe,
+				},
+				rpc: {
+					getSettings: async () => ({ enabled: false }),
+					setSettings: async (settings) => settings,
+					getStatus: async () => ({ state: "disconnected" }),
+					onStatus: unsubscribe,
+				},
+			} satisfies AoBridge;
 			(window as unknown as { ao: unknown }).ao = ao;
 		},
 		{ version, daemonPort, projectId, projectName, platform, workers },

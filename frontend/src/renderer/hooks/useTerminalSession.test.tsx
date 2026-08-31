@@ -96,6 +96,7 @@ type FakeTerminal = AttachableTerminal & {
 	compose(data: string): void;
 	shortcut(data: string): void;
 	wheel(data: string): void;
+	protocol(data: string): void;
 	emitResize(cols: number, rows: number): void;
 	completeWrites(): void;
 };
@@ -123,6 +124,7 @@ function createFakeTerminal(): FakeTerminal {
 			terminal.latestOutputRequests += 1;
 		},
 		prepareForActivation: async () => undefined,
+		notifyCursorColorScheme: () => undefined,
 		onUserInput: (listener) => {
 			inputListeners.add(listener);
 			return { dispose: () => inputListeners.delete(listener) };
@@ -136,6 +138,7 @@ function createFakeTerminal(): FakeTerminal {
 		compose: (data) => inputListeners.forEach((listener) => listener(data, "composition")),
 		shortcut: (data) => inputListeners.forEach((listener) => listener(data, "shortcut")),
 		wheel: (data) => inputListeners.forEach((listener) => listener(data, "wheel")),
+		protocol: (data) => inputListeners.forEach((listener) => listener(data, "protocol")),
 		emitResize: (cols, rows) => resizeListeners.forEach((listener) => listener({ cols, rows })),
 		completeWrites: () => {
 			for (const callback of terminal.pendingWriteCallbacks.splice(0)) callback();
@@ -261,6 +264,28 @@ describe("useTerminalSession", () => {
 		view.rerender({ daemonReady: true, isVisible: true, inputDisabled: false });
 		terminal.typeKeys("safe now\r");
 		expect(muxes[0].inputs).toEqual([["handle-1", "safe now\r"]]);
+	});
+
+	it("forwards protocol bytes while hidden or while a controller owns typing", () => {
+		const { view, terminal, muxes } = setup({ inputDisabled: true, isVisible: false });
+		act(() => muxes[0].emitOpened("handle-1"));
+
+		terminal.protocol("\x1b[?997;2n");
+		expect(muxes[0].inputs).toEqual([["handle-1", "\x1b[?997;2n"]]);
+
+		view.rerender({ daemonReady: true, isVisible: false, inputDisabled: true });
+		terminal.typeKeys("blocked");
+		expect(muxes[0].inputs).toEqual([["handle-1", "\x1b[?997;2n"]]);
+	});
+
+	it("queues protocol bytes until the mux opens, then flushes them", () => {
+		const { terminal, muxes } = setup();
+
+		terminal.protocol("\x1b[?997;1n");
+		expect(muxes[0].inputs).toEqual([]);
+
+		act(() => muxes[0].emitOpened("handle-1"));
+		expect(muxes[0].inputs).toEqual([["handle-1", "\x1b[?997;1n"]]);
 	});
 
 	it("keeps receiving output while hidden without accepting input or resizing the PTY", () => {

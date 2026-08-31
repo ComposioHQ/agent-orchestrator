@@ -78,6 +78,23 @@ export function ChatSessionScreen({ session }: { session: MobileChatSession }) {
 	const [keyboardHeight, setKeyboardHeight] = useState(0);
 	const terminated = "projectName" in session ? Boolean(session.isTerminal) : Boolean(session.isTerminated);
 	const interfaceTransitionActive = mobileInterfaceTransitionIsActive(interfaceSwitch.transition);
+	const interfaceTransitionNotice =
+		!interfaceTransitionActive &&
+		!interfaceSwitch.transition?.noticeAcknowledgedAt &&
+		(interfaceSwitch.transition?.phase === "failed" ||
+			interfaceSwitch.transition?.phase === "recovery_required")
+			? interfaceSwitch.transition
+			: undefined;
+	const interfaceTransitionRecovered =
+		interfaceTransitionNotice?.phase === "recovery_required" &&
+		interfaceTransitionNotice.errorCode === "DAEMON_RESTARTED";
+	const interfaceTransitionNoticeText =
+		interfaceTransitionNotice?.errorDetail ||
+		(interfaceTransitionRecovered
+			? "AO restored the session in its last committed interface."
+			: interfaceTransitionNotice?.phase === "recovery_required"
+				? "The interface switch needs recovery before more work is sent."
+				: "The interface switch failed; the current interface remains available.");
 	const turnActive = Boolean(
 		conversation.snapshot?.turns.some((turn) => turn.state === "running" || turn.state === "queued"),
 	);
@@ -264,8 +281,25 @@ export function ChatSessionScreen({ session }: { session: MobileChatSession }) {
 					action={mobileInterfaceTransitionIsCancellable(interfaceSwitch.transition) ? (interfaceSwitch.cancelling ? "Cancelling…" : "Cancel") : undefined}
 					onPress={interfaceSwitch.cancelling ? undefined : () => void interfaceSwitch.cancel().catch(() => {})}
 				/>
-			) : interfaceSwitch.transition?.phase === "failed" || interfaceSwitch.transition?.phase === "recovery_required" ? (
-				<InlineBanner tone="danger" icon="alert-triangle" text={interfaceSwitch.transition.errorDetail || "The interface switch failed; the current interface remains available."} />
+			) : interfaceTransitionNotice ? (
+				<InlineBanner
+					tone={interfaceTransitionRecovered ? "warning" : "danger"}
+					icon={interfaceTransitionRecovered ? "check-circle" : "alert-triangle"}
+					text={`${interfaceTransitionNoticeText}${
+						interfaceSwitch.acknowledgeNoticeError
+							? ` Could not dismiss: ${interfaceSwitch.acknowledgeNoticeError}`
+							: ""
+					}`}
+					action={interfaceSwitch.acknowledgingNotice ? "Dismissing…" : "Dismiss"}
+					onPress={
+						interfaceSwitch.acknowledgingNotice
+							? undefined
+							: () =>
+									void interfaceSwitch
+										.acknowledgeNotice(interfaceTransitionNotice.id)
+										.catch(() => {})
+					}
+				/>
 			) : null}
 			<ConversationBanners
 				snapshot={snapshot}
@@ -448,7 +482,7 @@ const makeStyles = (t: Theme) => StyleSheet.create({
 	centerCopy: { color: t.textSecondary, fontSize: 13, lineHeight: 19, textAlign: "center" },
 	centerAction: { minHeight: 42, justifyContent: "center", backgroundColor: t.blue, borderRadius: 11, paddingHorizontal: 15, marginTop: 4 },
 	centerActionText: { color: t.onAccent, fontSize: 13, fontWeight: "700" },
-	menuScrim: { ...StyleSheet.absoluteFillObject, backgroundColor: t.scrim },
+	menuScrim: { ...StyleSheet.absoluteFill, backgroundColor: t.scrim },
 	menu: { ...centeredConversationMenu, top: 76, maxHeight: "75%", backgroundColor: t.bgSurface, borderRadius: 16, borderWidth: 1, borderColor: t.borderDefault, overflow: "hidden" },
 	menuHeading: { color: t.textPrimary, fontSize: 14, fontWeight: "700", paddingHorizontal: 14, paddingTop: 14, paddingBottom: 8 },
 	menuRow: { minHeight: 57, flexDirection: "row", alignItems: "center", gap: 11, paddingHorizontal: 14, paddingVertical: 9, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: t.borderSubtle },

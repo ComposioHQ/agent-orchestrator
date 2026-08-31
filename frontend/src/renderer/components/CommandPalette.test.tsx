@@ -11,6 +11,7 @@ const spawnMock = vi.hoisted(() => vi.fn());
 const choosePathMock = vi.hoisted(() => vi.fn());
 const getMock = vi.hoisted(() => vi.fn());
 const postMock = vi.hoisted(() => vi.fn());
+const captureEventMock = vi.hoisted(() => vi.fn());
 const openExternalMock = vi.hoisted(() => vi.fn());
 const writeTextMock = vi.hoisted(() => vi.fn());
 const restoreMock = vi.hoisted(() => vi.fn());
@@ -106,7 +107,7 @@ vi.mock("../hooks/useWorkspaceQuery", () => ({
 }));
 
 vi.mock("../lib/shell-context", () => ({
-	useShell: () => ({ createProject: vi.fn(), initializeProjectRepository: vi.fn(), daemonStatus: {} }),
+	useShell: () => ({ cloneProject: vi.fn(), createProject: vi.fn(), initializeProjectRepository: vi.fn(), daemonStatus: {} }),
 }));
 
 vi.mock("../lib/spawn-orchestrator", () => ({ spawnOrchestrator: spawnMock }));
@@ -124,6 +125,8 @@ vi.mock("../lib/api-client", () => ({
 		return fallback;
 	},
 }));
+
+vi.mock("../lib/telemetry", () => ({ captureRendererEvent: captureEventMock }));
 
 vi.mock("../lib/bridge", () => ({
 	aoBridge: {
@@ -226,6 +229,7 @@ beforeEach(() => {
 	choosePathMock.mockReset();
 	getMock.mockReset();
 	postMock.mockReset();
+	captureEventMock.mockReset();
 	openExternalMock.mockReset();
 	writeTextMock.mockReset();
 	restoreMock.mockReset();
@@ -584,9 +588,11 @@ describe("CommandPalette actions", () => {
 	it("toggles the theme and closes", async () => {
 		renderPalette();
 		act(() => useUiStore.getState().setCommandPaletteOpen(true));
-		await screen.findByPlaceholderText(/search projects/i);
-		fireEvent.click(screen.getByText("Toggle theme"));
+		const input = await screen.findByPlaceholderText(/search projects/i);
+		fireEvent.change(input, { target: { value: "toggle theme" } });
+		fireEvent.keyDown(input, { key: "Enter" });
 		expect(useUiStore.getState().resolvedTheme).toBe("light");
+		expect(input).toHaveValue("toggle theme");
 		await waitFor(() => expect(paletteInput()).toBeNull());
 	});
 
@@ -667,6 +673,28 @@ describe("CommandPalette PR and review actions", () => {
 			}),
 		);
 		await waitFor(() => expect(paletteInput()).toBeNull());
+	});
+
+	// The palette is a manual on-ramp of its own. Before it was instrumented,
+	// every review started from here was missing from the adoption signal.
+	it("reports the palette as the surface that started the review", async () => {
+		mockReviews([reviewState("needs_review")]);
+		await openPaletteWithQuery("review");
+		fireEvent.click(await screen.findByText("Review latest commit #7"));
+		await waitFor(() =>
+			expect(captureEventMock).toHaveBeenCalledWith("ao.renderer.review_triggered", {
+				action: "run_latest",
+				has_override: false,
+				source: "command_palette",
+			}),
+		);
+	});
+
+	it("reports nothing when the review item is not eligible to run", async () => {
+		await openPaletteWithQuery("review");
+		expect(await screen.findByText("Not eligible for review")).toBeInTheDocument();
+		fireEvent.click(screen.getByText("Run review #7"));
+		expect(captureEventMock).not.toHaveBeenCalled();
 	});
 
 	it("shows Not eligible for review once the session review state loads", async () => {

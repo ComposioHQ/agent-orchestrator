@@ -15,7 +15,11 @@ import { useState } from "react";
 import { ChevronRight, Loader2 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { ActivityRow } from "./ChatTimelineItems";
-import { ACTIVITY_SUMMARY_BUTTON_CLASS, commandCategory } from "./activity-command";
+import {
+	ACTIVITY_SUMMARY_BUTTON_CLASS,
+	commandCategory,
+	isNonzeroCommandExit,
+} from "./activity-command";
 import type { ConversationActivity } from "../../types/conversation";
 
 export function ActivityRun({ activities }: { activities: ConversationActivity[] }) {
@@ -24,7 +28,10 @@ export function ActivityRun({ activities }: { activities: ConversationActivity[]
 	// choice either way.
 	const [override, setOverride] = useState<boolean | null>(null);
 	const running = activities.some((a) => a.status === "running");
-	const failed = activities.filter((a) => a.status === "failed").length;
+	const nonzeroExits = activities.filter(isNonzeroCommandExit).length;
+	const failed = activities.filter(
+		(activity) => activity.status === "failed" && !isNonzeroCommandExit(activity),
+	).length;
 	const cancelled = activities.filter((a) => a.status === "cancelled").length;
 
 	// A single call is its own best summary — collapsing one row into a count of
@@ -48,6 +55,11 @@ export function ActivityRun({ activities }: { activities: ConversationActivity[]
 				className={ACTIVITY_SUMMARY_BUTTON_CLASS}
 			>
 				<span className="text-[11.5px] text-muted-foreground">{summarize(activities)}</span>
+				{nonzeroExits > 0 ? (
+					<span className="text-[11px] text-muted-foreground/70">
+						{nonzeroExits} exited
+					</span>
+				) : null}
 				{failed > 0 ? (
 					<span className="text-[11px] text-destructive">
 						{failed} failed
@@ -73,7 +85,7 @@ export function ActivityRun({ activities }: { activities: ConversationActivity[]
 			</button>
 
 			{open ? (
-				<div className="cursor-chat-activity-panel mt-0.5 flex flex-col overflow-hidden rounded-md border border-border">
+				<div className="mt-1 flex flex-col gap-1">
 					{hierarchy.map((node) => <ActivityTree key={node.activity.id} node={node} />)}
 				</div>
 			) : null}
@@ -85,7 +97,7 @@ type ActivityNode = { activity: ConversationActivity; children: ActivityNode[] }
 
 function ActivityTree({ node }: { node: ActivityNode }) {
 	return (
-		<div className="flex flex-col [&>div>button]:px-[11px]">
+		<div className="flex flex-col">
 			<ActivityRow activity={node.activity} />
 			{node.children.length > 0 ? <NestedAgentRun nodes={node.children} /> : null}
 		</div>
@@ -103,7 +115,7 @@ function NestedAgentRun({ nodes }: { nodes: ActivityNode[] }) {
 				onClick={() => setOpen((current) => !current)}
 				aria-label={`Subagent ${count} ${count === 1 ? "step" : "steps"}`}
 				aria-expanded={open}
-				className="flex min-h-8 w-full items-center gap-2 px-2.5 text-left text-[11px] text-muted-foreground transition-colors hover:bg-interactive-hover"
+				className="flex min-h-8 w-full items-center gap-2 px-2.5 text-left text-[11px] text-muted-foreground outline-none transition-colors hover:bg-interactive-hover focus-visible:outline-none"
 			>
 				<ChevronRight aria-hidden="true" className={cn("size-3 transition-transform", open && "rotate-90")} />
 				<span className="font-medium text-foreground/80">Subagent</span>

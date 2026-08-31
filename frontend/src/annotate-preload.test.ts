@@ -319,7 +319,7 @@ describe("annotate preload", () => {
 		expect(root.querySelector('[data-action="cancel"]')).toBeNull();
 		expect(primaryAction).toBeTruthy();
 		expect(primaryAction).toHaveAttribute("aria-label", "Send annotation");
-		expect(primaryAction).toHaveAttribute("title", "Send (⌘/Ctrl + Enter)");
+		expect(primaryAction).toHaveAttribute("title", "Send (Enter)");
 		expect(primaryAction?.disabled).toBe(true);
 		expect(textarea).not.toBeNull();
 		expect(textarea).toHaveAttribute("rows", "1");
@@ -329,9 +329,7 @@ describe("annotate preload", () => {
 		);
 
 		textarea!.value = "Make this button easier to notice.";
-		textarea!.dispatchEvent(
-			new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true, cancelable: true }),
-		);
+		textarea!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
 
 		await vi.waitFor(() => {
 			expect(electronMocks.invoke).toHaveBeenCalledWith(

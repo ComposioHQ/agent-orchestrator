@@ -19,6 +19,31 @@ func (f fixedBrowserCapability) Issue(_ domain.SessionID) (string, string, error
 	return string(f), "verifier-1", nil
 }
 
+type browserCapabilityIssue struct {
+	token    string
+	verifier string
+	err      error
+}
+
+type scriptedBrowserCapabilities struct {
+	issues  []browserCapabilityIssue
+	calls   int
+	onIssue func(call int, id domain.SessionID)
+}
+
+func (s *scriptedBrowserCapabilities) Issue(id domain.SessionID) (string, string, error) {
+	call := s.calls
+	s.calls++
+	if s.onIssue != nil {
+		s.onIssue(call, id)
+	}
+	if call >= len(s.issues) {
+		return "", "", errors.New("unexpected browser capability issuance")
+	}
+	issue := s.issues[call]
+	return issue.token, issue.verifier, issue.err
+}
+
 func TestSpawnEnvProjectVarsCannotOverrideInternal(t *testing.T) {
 	env := spawnEnv("mer-1", "mer", "issue-9", "/data", map[string]string{
 		"FOO":        "bar",
@@ -67,6 +92,23 @@ func TestRuntimeEnvClearsDaemonBrowserRuntimeSecrets(t *testing.T) {
 	})
 	if env[EnvBrowserRuntimeToken] != "" || env[EnvBrowserRuntimeTokenStdin] != "" {
 		t.Fatalf("daemon browser runtime credentials leaked to worker: token=%q stdin=%q", env[EnvBrowserRuntimeToken], env[EnvBrowserRuntimeTokenStdin])
+	}
+}
+
+func TestRuntimeEnvPinsHooksToDaemonRunFile(t *testing.T) {
+	daemonRunFile := filepath.Join(t.TempDir(), "daemon-running.json")
+	t.Setenv("AO_RUN_FILE", filepath.Join(t.TempDir(), "inherited-wrong-daemon.json"))
+	manager := &Manager{
+		dataDir:     "/data",
+		runFilePath: daemonRunFile,
+		executable:  func() (string, error) { return filepath.Join("/opt", "aod", "ao"), nil },
+		logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	env := manager.runtimeEnv("mer-1", "mer", "", map[string]string{
+		"AO_RUN_FILE": "/project/cannot-redirect-hooks.json",
+	})
+	if got, want := env["AO_RUN_FILE"], daemonRunFile; got != want {
+		t.Fatalf("AO_RUN_FILE = %q, want daemon run-file %q", got, want)
 	}
 }
 

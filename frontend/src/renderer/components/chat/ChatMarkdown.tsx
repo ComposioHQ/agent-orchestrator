@@ -26,7 +26,6 @@
 import {
 	createContext,
 	Fragment,
-	isValidElement,
 	memo,
 	useContext,
 	useState,
@@ -36,8 +35,16 @@ import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { WrapText } from "lucide-react";
 import { cn } from "../../lib/utils";
+import { aoBridge } from "../../lib/bridge";
 import { canonicalLanguage } from "../../lib/code-highlight";
+import { fenceOf } from "../../lib/markdown-fence";
 import { isWebLink, openLinkInSystemBrowser } from "../../lib/external-link-policy";
+import {
+	ContextMenu,
+	ContextMenuContent,
+	ContextMenuItem,
+	ContextMenuTrigger,
+} from "../ui/context-menu";
 import { HighlightedCode } from "./HighlightedCode";
 import { CopyButton } from "./CopyButton";
 import "./code-theme.css";
@@ -142,7 +149,7 @@ function CodeBlock({ code, language }: { code: string; language?: string }) {
 						aria-label="Wrap long lines"
 						title="Wrap long lines"
 						className={cn(
-							"flex items-center rounded px-1.5 py-0.5 transition-colors hover:bg-interactive-hover hover:text-foreground",
+							"flex size-7 items-center justify-center rounded-md transition-[background-color,color,transform] hover:bg-interactive-hover hover:text-foreground",
 							wrap ? "text-accent" : "text-muted-foreground",
 						)}
 					>
@@ -151,7 +158,7 @@ function CodeBlock({ code, language }: { code: string; language?: string }) {
 					<CopyButton text={code} label="Copy code" />
 				</div>
 			</div>
-			<pre className="overflow-x-auto px-3 py-2.5">
+			<pre className="scrollbar-none overflow-x-auto px-3 py-2.5">
 				<code className="font-mono text-[12px] leading-[1.6] text-foreground">
 					<HighlightedCode code={code} language={grammar} streaming={streaming} />
 				</code>
@@ -160,29 +167,8 @@ function CodeBlock({ code, language }: { code: string; language?: string }) {
 	);
 }
 
-/** The text inside a node, for the copy button and language sniffing. */
-function textOf(children: ReactNode): string {
-	if (typeof children === "string") return children;
-	if (typeof children === "number") return String(children);
-	if (Array.isArray(children)) return children.map(textOf).join("");
-	if (children && typeof children === "object" && "props" in children) {
-		return textOf((children as { props?: { children?: ReactNode } }).props?.children);
-	}
-	return "";
-}
-
-const LANGUAGE_CLASS = /language-([\w+#-]+)/;
 const EMOJI_GRAPHEME = /\p{Extended_Pictographic}|\p{Regional_Indicator}|[#*0-9]\uFE0F?\u20E3/u;
 const GRAPHEME_SEGMENTER = new Intl.Segmenter(undefined, { granularity: "grapheme" });
-
-/** The fence inside a `pre`, or undefined if this is not a fenced block. */
-function fenceOf(children: ReactNode): { code: string; language?: string } | undefined {
-	if (!isValidElement<{ className?: string; children?: ReactNode }>(children)) return undefined;
-	return {
-		code: textOf(children.props.children).replace(/\n$/, ""),
-		language: LANGUAGE_CLASS.exec(children.props.className ?? "")?.[1],
-	};
-}
 
 function compactEmoji(children: ReactNode): ReactNode {
 	if (typeof children === "string") {
@@ -210,7 +196,7 @@ function compactEmoji(children: ReactNode): ReactNode {
 
 function MarkdownLink({ href, children }: { href?: string; children?: ReactNode }) {
 	const onLinkOpen = useContext(OpenChatLink);
-	return (
+	const anchor = (
 		<a
 			href={href}
 			target="_blank"
@@ -218,7 +204,10 @@ function MarkdownLink({ href, children }: { href?: string; children?: ReactNode 
 			onClick={(event) => {
 				if (!href) return;
 				event.preventDefault();
-				if (!event.altKey && onLinkOpen && isWebLink(href)) {
+				// Cmd/Ctrl-click (the VS Code/Slack convention) and Option/Alt-click
+				// escape the in-app panel and go straight to the system browser.
+				const toSystemBrowser = event.metaKey || event.ctrlKey || event.altKey;
+				if (!toSystemBrowser && onLinkOpen && isWebLink(href)) {
 					onLinkOpen(href);
 					return;
 				}
@@ -228,6 +217,24 @@ function MarkdownLink({ href, children }: { href?: string; children?: ReactNode 
 		>
 			{children}
 		</a>
+	);
+	if (!href) return anchor;
+	return (
+		<ContextMenu>
+			<ContextMenuTrigger asChild>{anchor}</ContextMenuTrigger>
+			<ContextMenuContent className="min-w-44">
+				{/* Only http(s) may reach shell.openExternal from here; other schemes
+				    still get their address copied. */}
+				{isWebLink(href) ? (
+					<ContextMenuItem onSelect={() => void openLinkInSystemBrowser(href)}>
+						Open in system browser
+					</ContextMenuItem>
+				) : null}
+				<ContextMenuItem onSelect={() => void aoBridge.clipboard.writeText(href)}>
+					Copy link address
+				</ContextMenuItem>
+			</ContextMenuContent>
+		</ContextMenu>
 	);
 }
 
@@ -322,7 +329,8 @@ const COMPONENTS: Components = {
 	del: ({ children }) => <del className="text-muted-foreground">{children}</del>,
 
 	// Match terminal links: a plain HTTP(S) click uses the session's AO Browser;
-	// Option/Alt-click and non-web schemes use the system browser.
+	// Cmd/Ctrl- or Option/Alt-click and non-web schemes use the system browser,
+	// and right-click offers the system browser and copying the address.
 	a: MarkdownLink,
 
 	img: ({ src, alt }) => (

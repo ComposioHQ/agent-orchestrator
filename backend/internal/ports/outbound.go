@@ -88,11 +88,20 @@ type Runtime interface {
 
 // StyledTerminalOutputReader is an optional runtime capability for safety
 // checks that must distinguish dim placeholder text from a human-authored
-// draft. Implementations return the same bounded pane excerpt as GetOutput but
-// preserve ANSI style sequences. Callers must fail closed when unavailable.
+// draft. Implementations return a bounded excerpt of the rendered current
+// viewport with ANSI cell styles preserved; raw terminal history is not valid
+// evidence for this contract. Callers must fail closed when unavailable.
 type StyledTerminalOutputReader interface {
 	GetStyledOutput(ctx context.Context, handle RuntimeHandle, lines int) (string, error)
 }
+
+// ErrStyledTerminalOutputUnavailable reports that a runtime implementation can
+// provide styled current-screen output in general, but not for this particular
+// handle. This occurs when a detached runtime host survives an AO upgrade from
+// a protocol version that predates rendered-surface support. Callers may use
+// their conservative no-surface fallback; every other read error remains an
+// inconclusive probe and must fail closed.
+var ErrStyledTerminalOutputUnavailable = errors.New("runtime: styled terminal output unavailable for handle")
 
 // RuntimeRestarter is an optional runtime capability for replacing the process
 // inside an existing terminal session. Implementations should preserve the
@@ -161,7 +170,7 @@ type ContainerReaper interface {
 
 // Stream is one live terminal attach: PTY-like bytes plus resize. Returned
 // already-open by a Runtime's Attach. tmux backs it with a local PTY around
-// their attach CLI; conpty backs it with a loopback connection to the pty-host.
+// its attach CLI; detached hosts use a loopback connection to the pty-host.
 type Stream interface {
 	io.ReadWriteCloser
 	Resize(rows, cols uint16) error
@@ -204,6 +213,23 @@ type Workspace interface {
 	// present are skipped. Owning this here keeps git/process execution inside the
 	// workspace adapter rather than leaking into callers.
 	AddExclude(ctx context.Context, info WorkspaceInfo, patterns ...string) error
+}
+
+// WorkspaceDefaultBranchRefresher is an optional capability for Git-backed
+// workspaces. Resolution is local-only so callers can retain the canonical ref
+// even when the subsequent best-effort network refresh fails.
+type WorkspaceDefaultBranchRefresher interface {
+	ResolveDefaultBranch(ctx context.Context, repoPath, configuredBranch string) (WorkspaceDefaultBranch, error)
+	FetchDefaultBranch(ctx context.Context, repoPath string, target WorkspaceDefaultBranch) error
+}
+
+// WorkspaceDefaultBranch is a locally resolved default-branch target. BaseRef
+// is canonical (for example refs/remotes/upstream/main), so materialization
+// never has to reconstruct the remote decision from an ambiguous slash.
+type WorkspaceDefaultBranch struct {
+	Remote  string
+	Branch  string
+	BaseRef string
 }
 
 // WorkspaceObserver is an optional read-only capability implemented by
@@ -303,14 +329,17 @@ var (
 	// actionable apierr instead of letting it fall through to an opaque 500
 	// with no message (issue #2775).
 	ErrRuntimeWorkspaceCwdMismatch = errors.New("runtime: session working directory mismatch")
-	// ErrRuntimeUnavailable reports that a liveness probe could not reach the
-	// runtime infrastructure at all (e.g. tmux "no server running" or "error
-	// connecting"). It says nothing about any individual session, so callers
-	// must treat it as an inconclusive probe, never as per-session death
-	// (issue #3475: reading a server-level outage as N session deaths archived
-	// every session on the board). Adapters wrap this sentinel via fmt.Errorf
-	// so callers can match it with errors.Is.
+	// ErrRuntimeUnavailable reports that the runtime infrastructure is
+	// conclusively absent (for example tmux reports "no server running"). Some
+	// recovery callers intentionally use that evidence to recreate a runtime.
 	ErrRuntimeUnavailable = errors.New("runtime: infrastructure unavailable")
+	// ErrRuntimeProbeInconclusive reports that a liveness probe could not inspect
+	// a possibly-live runtime (for example a transient socket error, missing
+	// compatible client, or client/server protocol mismatch). Callers must
+	// preserve the existing controller and must not recreate, destroy, archive,
+	// or otherwise treat the session as dead. Adapters wrap this sentinel via
+	// fmt.Errorf so callers can match it with errors.Is.
+	ErrRuntimeProbeInconclusive = errors.New("runtime: liveness probe inconclusive")
 )
 
 // WorkspaceConfig is the spec for creating or restoring a session's workspace.
@@ -326,10 +355,8 @@ type WorkspaceConfig struct {
 	// created from. Empty asks the workspace adapter to resolve an authoritative
 	// repository default; it must never infer from the checked-out branch.
 	BaseBranch string
-	// BaseRef is the repository-default comparison ref recorded when this
-	// workspace was first created. Restore carries it forward without
-	// re-resolving repository defaults; Create ignores it and resolves the
-	// current base itself.
+	// BaseRef is the exact canonical ref selected before any best-effort fetch.
+	// Restore carries it forward without re-resolving repository defaults.
 	BaseRef string
 	// RepoPath optionally overrides ProjectID-based repo resolution.
 	RepoPath string
@@ -364,6 +391,7 @@ type WorkspaceProjectConfig struct {
 	// BaseBranch applies only to RootRepoPath. Empty asks the workspace adapter
 	// to resolve that repository's default independently from every child.
 	BaseBranch string
+	BaseRef    string
 	Repos      []WorkspaceProjectRepoConfig
 }
 
@@ -376,6 +404,7 @@ type WorkspaceProjectRepoConfig struct {
 	// BaseBranch applies only to RepoPath. Empty asks the workspace adapter to
 	// resolve this repository's default independently from the workspace root.
 	BaseBranch string
+	BaseRef    string
 }
 
 // WorkspaceProjectInfo returns the root worktree plus every child worktree.

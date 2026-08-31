@@ -1,13 +1,14 @@
 import { useQueries, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { ArrowLeft, Loader2 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type AnimationEvent, type MutableRefObject } from "react";
 import { useTranslation } from "react-i18next";
 import { useCommandPaletteEnabled } from "../hooks/useCommandPaletteEnabled";
 import { useRestoreSession } from "../hooks/useRestoreSession";
-import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import { cloudSessionsQueryKey, useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { aoBridge } from "../lib/bridge";
+import { spawnCloudOrchestrator } from "../lib/cloud-orchestrator";
 import {
 	buildCommands,
 	buildSessionActions,
@@ -19,6 +20,7 @@ import {
 } from "../lib/command-palette";
 import { iconForCommand } from "../lib/command-palette-icons";
 import { isDialogOrMenuOpen } from "../lib/dom-selectors";
+import { captureRendererEvent } from "../lib/telemetry";
 import { isMacPlatform } from "../lib/platform";
 import { sessionReviewsQueryOptions, type PRReviewState } from "../lib/session-reviews";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
@@ -51,7 +53,7 @@ export function CommandPalette() {
 	const restoreSessionById = useRestoreSession();
 	const params = useParams({ strict: false }) as { projectId?: string; sessionId?: string };
 	const workspaces = useWorkspaceQuery().data ?? [];
-	const { createProject, initializeProjectRepository } = useShell();
+	const { cloneProject, createProject, initializeProjectRepository } = useShell();
 	const resolvedTheme = useUiStore((s) => s.resolvedTheme);
 	const setThemePreference = useUiStore((s) => s.setThemePreference);
 	const isOpen = useUiStore((s) => s.isCommandPaletteOpen);
@@ -72,6 +74,7 @@ export function CommandPalette() {
 	const composerBusyRef = useRef(false);
 	const viewRef = useRef(view);
 	viewRef.current = view;
+	const closeResetTimerRef = useRef<number | null>(null);
 
 	const currentSession = params.sessionId ? findSession(workspaces, params.sessionId)?.session : undefined;
 	const currentProjectId = currentSession?.workspaceId ?? params.projectId;
@@ -165,11 +168,43 @@ export function CommandPalette() {
 	}, []);
 
 	const closePalette = useCallback(() => {
+		// Keep the current query visible while Radix plays the closing animation.
+		// Clearing it here causes the palette to flash an empty search before it
+		// is removed, especially when an action also changes the theme.
+		runGenerationRef.current += 1;
 		setOpen(false);
 		setView({ mode: "root" });
 		setPendingDismiss(null);
-		resetTransient();
-	}, [setOpen, resetTransient]);
+		if (closeResetTimerRef.current !== null) window.clearTimeout(closeResetTimerRef.current);
+		// Reduced-motion mode disables the closing animation, so keep a fallback
+		// reset for environments where no animationend event will arrive.
+		closeResetTimerRef.current = window.setTimeout(() => {
+			closeResetTimerRef.current = null;
+			if (!useUiStore.getState().isCommandPaletteOpen) resetTransient();
+		}, 150);
+	}, [resetTransient, setOpen]);
+
+	const resetAfterClose = useCallback(() => {
+		if (closeResetTimerRef.current !== null) {
+			window.clearTimeout(closeResetTimerRef.current);
+			closeResetTimerRef.current = null;
+		}
+		if (!useUiStore.getState().isCommandPaletteOpen) resetTransient();
+	}, [resetTransient]);
+
+	useEffect(
+		() => () => {
+			if (closeResetTimerRef.current !== null) window.clearTimeout(closeResetTimerRef.current);
+		},
+		[],
+	);
+
+	const handlePaletteAnimationEnd = useCallback(
+		(event: AnimationEvent<HTMLDivElement>) => {
+			if (event.target === event.currentTarget) resetAfterClose();
+		},
+		[resetAfterClose],
+	);
 
 	const popToRoot = useCallback(() => {
 		setView({ mode: "root" });
@@ -274,6 +309,16 @@ export function CommandPalette() {
 				return;
 			}
 			const workspace = workspaces.find((candidate) => candidate.id === projectId);
+			// Cloud projects carry no local orchestrator-agent config; spawn the
+			// orchestrator as a cloud session in its own sandbox instead of falling
+			// through to the project-settings page.
+			if (workspace?.kind === "cloud") {
+				const sessionId = await spawnCloudOrchestrator(queryClient, projectId);
+				await queryClient.invalidateQueries({ queryKey: cloudSessionsQueryKey });
+				navigateToTarget({ to: "/projects/$projectId/sessions/$sessionId", params: { projectId, sessionId } });
+				closePalette();
+				return;
+			}
 			if (!hasConfiguredOrchestratorAgent(workspace)) {
 				if (workspace) {
 					navigateToTarget({ to: "/projects/$projectId/settings", params: { projectId } });
@@ -331,6 +376,16 @@ export function CommandPalette() {
 					closePalette();
 					break;
 				case "trigger-review": {
+					// Emitted before the request, like the inspector's: these renderer
+					// events count INTENT, and the daemon's ao.review.* events are the
+					// ground truth for what actually ran.
+					void captureRendererEvent("ao.renderer.review_triggered", {
+						action: action.reviewAction,
+						// The palette sends no body, so it can never carry a per-session
+						// reviewer override.
+						has_override: false,
+						source: "command_palette",
+					});
 					const { error: triggerError } = await apiClient.POST("/api/v1/sessions/{sessionId}/reviews/trigger", {
 						params: { path: { sessionId: action.sessionId } },
 					});
@@ -452,6 +507,7 @@ export function CommandPalette() {
 				open={isOpen}
 				onOpenChange={(open) => (open ? setOpen(true) : requestDismiss("close"))}
 				contentProps={{
+					onAnimationEnd: handlePaletteAnimationEnd,
 					onEscapeKeyDown: (event) => {
 						event.preventDefault();
 						if (event.isComposing) return;
@@ -588,6 +644,7 @@ export function CommandPalette() {
 
 			<CreateProjectFlow
 				mode="choose"
+				onCloneProject={cloneProject}
 				onCreateProject={createProject}
 				onInitializeProject={initializeProjectRepository}
 			>

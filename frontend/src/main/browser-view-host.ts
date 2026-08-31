@@ -21,10 +21,10 @@ import type {
 	BrowserAnnotationSubmitPayload,
 } from "../shared/browser-annotations";
 import { attachAppShortcuts } from "./app-shortcuts";
-import { MAX_BROWSER_TABS } from "../shared/browser-tabs";
 import type { KeybindingOverrides } from "../shared/shortcuts";
 import type { AgentBrowserRuntime } from "./agent-browser-runtime";
 import type { AgentBrowserTarget, AgentBrowserTargetProvider } from "./agent-browser-cdp-bridge";
+import { matchInstruction } from "./browser-act-matcher";
 
 function isValidAnnotationContext(value: unknown): value is BrowserAnnotationContext {
 	if (typeof value !== "object" || value === null) return false;
@@ -152,12 +152,15 @@ type BrowserWebContents = Pick<
 	| "mainFrame"
 	| "getTitle"
 	| "getURL"
+	| "getZoomFactor"
 	| "goBack"
 	| "goForward"
 	| "isLoading"
+	| "insertCSS"
 	| "loadURL"
 	| "on"
 	| "reload"
+	| "removeInsertedCSS"
 	| "send"
 	| "setWindowOpenHandler"
 	| "stop"
@@ -165,7 +168,36 @@ type BrowserWebContents = Pick<
 	openDevTools?: (options?: Pick<OpenDevToolsOptions, "mode" | "activate">) => void;
 	closeDevTools?: () => void;
 	close?: () => void;
-	session?: Pick<Session, "setPermissionCheckHandler" | "setPermissionRequestHandler">;
+	session?: Pick<Session, "setPermissionCheckHandler" | "setPermissionRequestHandler" | "webRequest">;
+};
+
+const browserScrollbarCSS = (zoomFactor: number): string => {
+	const effectiveZoom = Number.isFinite(zoomFactor) && zoomFactor > 0 ? zoomFactor : 1;
+	const thickness = Number((8 / effectiveZoom).toFixed(3));
+	return `
+	::-webkit-scrollbar {
+		width: ${thickness}px;
+		height: ${thickness}px;
+	}
+
+	::-webkit-scrollbar-button {
+		display: none;
+	}
+
+	::-webkit-scrollbar-track,
+	::-webkit-scrollbar-corner {
+		background: transparent;
+	}
+
+	::-webkit-scrollbar-thumb {
+		border-radius: 999px;
+		background: rgba(232, 232, 232, 0.72);
+	}
+
+	::-webkit-scrollbar-thumb:hover {
+		background: rgba(232, 232, 232, 0.86);
+	}
+`;
 };
 
 type BrowserViewLike = View & {
@@ -219,6 +251,12 @@ export type BrowserViewHost = {
 	toggleDevToolsForLastFocused: () => Promise<BrowserDevToolsState | null>;
 	// Drop the remembered panel; call when the shell gains focus for a real reason so a stale panel stops absorbing menu actions.
 	forgetLastFocusedPanel: () => void;
+	// Same "identical bounds are a no-op, so nudge and restore" trick
+	// window-composition.ts uses for the shell's own stale-surface bug, applied
+	// to the live page's own view. Call right after raising the transparent
+	// shell for an overlay (see the caller in main.ts) — see the comment above
+	// this method's implementation for why the live view needs it too.
+	refreshLastFocusedPanelSurface: () => void;
 };
 
 type BrowserEntry = {
@@ -257,6 +295,12 @@ type BrowserSessionEntry = {
 	nativeActiveTabId?: string;
 	nativeOperationQueue: Promise<void>;
 	devtoolsPlacement: BrowserDevToolsPlacement;
+	// Bounded browser diagnostics exposed only through an explicit errors query.
+	signals: {
+		entries: BrowserSignalEntry[];
+		webRequestRegistered: boolean;
+		webRequest?: Session["webRequest"];
+	};
 	devtools?: {
 		contents: BrowserWebContents;
 		placement: BrowserDevToolsPlacement;
@@ -274,6 +318,14 @@ type BrowserLogEntry = {
 	message: string;
 	source?: string;
 	line?: number;
+	timestamp: string;
+};
+
+// Text only — never a request/response body, matching the existing on-demand
+// network capture's privacy stance (see MAX_NETWORK_REQUESTS below).
+type BrowserSignalEntry = {
+	kind: "console-error" | "network-failure";
+	message: string;
 	timestamp: string;
 };
 
@@ -327,6 +379,10 @@ const BROWSER_VIEW_BORDER_RADIUS = 10;
 const DEFAULT_NETWORK_CAPTURE_SECONDS = 60;
 const MAX_NETWORK_CAPTURE_SECONDS = 300;
 const MAX_NETWORK_REQUESTS = 200;
+// Keep a bounded, metadata-only history for explicit errors queries. Browser
+// failures must never be pushed into an agent's live conversation on their own.
+const MAX_BROWSER_SIGNALS = MAX_NETWORK_REQUESTS;
+const MAX_BROWSER_SIGNAL_BYTES = 16 * 1024;
 const FAVICON_SIZE = 32;
 const MAX_FAVICON_BYTES = 256 * 1024;
 const DEFAULT_NATIVE_DEVTOOLS_PLACEMENT: BrowserDevToolsPlacement = "right";
@@ -458,9 +514,6 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	};
 
 	const createTab = (session: BrowserSessionEntry, activate: boolean, syncNativeOnActivate = false): BrowserEntry => {
-		if (session.tabs.size >= MAX_BROWSER_TABS) {
-			throw browserError("BROWSER_TAB_LIMIT", `Browser tab limit of ${MAX_BROWSER_TABS} reached`);
-		}
 		const view = new options.WebContentsView({
 			webPreferences: {
 				contextIsolation: true,
@@ -475,6 +528,22 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		view.setBorderRadius?.(BROWSER_VIEW_BORDER_RADIUS);
 		view.webContents.session?.setPermissionCheckHandler?.(() => false);
 		view.webContents.session?.setPermissionRequestHandler?.((_contents, _permission, callback) => callback(false));
+		let scrollbarStyleKey: string | undefined;
+		let scrollbarStyleUpdate = Promise.resolve();
+		const applyScrollbarStyle = (): void => {
+			scrollbarStyleUpdate = scrollbarStyleUpdate
+				.then(async () => {
+					const previousKey = scrollbarStyleKey;
+					scrollbarStyleKey = await view.webContents.insertCSS(
+						browserScrollbarCSS(view.webContents.getZoomFactor()),
+						{ cssOrigin: "user" },
+					);
+					if (previousKey) await view.webContents.removeInsertedCSS(previousKey);
+				})
+				.catch(() => undefined);
+		};
+		view.webContents.on("dom-ready", applyScrollbarStyle);
+		view.webContents.on("zoom-changed", applyScrollbarStyle);
 
 		const tabId = `t${session.nextTabNumber++}`;
 		const state: BrowserNavState = emptyNavState(session.viewId);
@@ -502,17 +571,44 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			session.devtools = undefined;
 			pushDevToolsState(session);
 		});
-		hardenWebContents(view.webContents, options, entry, () => {
-			const popup = createTab(session, true, true);
-			pushTabsState(options, session, { kind: "popup", tabId: popup.tabId });
-			return popup.view.webContents;
-		}, () => session.tabs.size < MAX_BROWSER_TABS);
+		// Always-on: level 0-2 are verbose/info/warning, 3 is error. This is a
+		// native WebContents event, not a CDP domain, so it never competes with
+		// agent-browser's own debugger attachment for this tab.
+		view.webContents.on("console-message", (_event, level, message, line, sourceId) => {
+			if (level < 3) return;
+			const location = sourceId ? `${sourceId}${typeof line === "number" ? `:${line}` : ""}` : "";
+			recordBrowserSignal(session, {
+				kind: "console-error",
+				message: location ? `${message} (${location})` : message,
+			});
+		});
+		hardenWebContents(
+			view.webContents,
+			options,
+			entry,
+			(url) => {
+				// Deliberately not the setWindowOpenHandler createWindow path: Electron's
+				// openGuestWindow requires the returned webContents to be one IT created
+				// from the options it computed for this exact guest-window-open event.
+				// AO's tabs are WebContentsViews created through its own createTab/openTab,
+				// with no such linkage — returning one there throws "Invalid webContents.
+				// Created window should be connected to webContents passed with options
+				// object" and crashes the whole app on every link click. Deny the guest
+				// window outright and open (and navigate) our own tab instead; openTab
+				// already handles URL validation and the "popup" tabs-state
+				// event this used to push manually.
+				void openTab(session, url, true, "popup", true).catch(() => undefined);
+			},
+		);
 		wireNavEvents(
 			view.webContents,
 			options,
 			entry,
 			() => entries.get(session.viewId)?.activeTabId === entry.tabId,
-			() => applySessionBounds(session, entry),
+			() => {
+				if (session.devtools && isBlankBrowserEntry(entry)) destroyDevTools(session);
+				applySessionBounds(session, entry);
+			},
 			() => pushTabsState(options, session),
 		);
 		wireFaviconEvents(view.webContents, entry, () => pushTabsState(options, session));
@@ -573,6 +669,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				agentBrowserCommands: 0,
 				nativeOperationQueue: Promise.resolve(),
 				devtoolsPlacement: DEFAULT_NATIVE_DEVTOOLS_PLACEMENT,
+				signals: { entries: [], webRequestRegistered: false },
 			};
 			entries.set(viewId, session);
 			viewIdsBySessionId.set(sessionId, viewId);
@@ -581,6 +678,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			// that invariant avoids an unnecessary tab command before the first action;
 			// later human selections and popups explicitly invalidate it.
 			session.nativeActiveTabId = session.activeTabId;
+			registerBrowserSignalWatcher(session);
 		}
 		if (rendererId !== undefined) {
 			const owners = rendererOwnersByViewId.get(viewId) ?? new Set<number>();
@@ -601,6 +699,50 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		return result;
 	};
 
+	// Failed XHR/fetch calls are session-partition-scoped (Electron's webRequest
+	// lives on the Session object, shared by every tab in this browser session),
+	// so this registers once per session rather than once per tab. resourceType
+	// "xhr" is Electron's classification for both real XHR and fetch() — there
+	// is no separate "fetch" resourceType in this Electron version.
+	const registerBrowserSignalWatcher = (session: BrowserSessionEntry): void => {
+		if (session.signals.webRequestRegistered) return;
+		const firstTab = session.tabs.values().next().value;
+		const electronSession = firstTab?.view.webContents.session;
+		// Optional in BrowserWebContents (real Electron always provides it; test
+		// doubles that don't care about network-failure signals can omit it).
+		if (!electronSession?.webRequest) return;
+		session.signals.webRequestRegistered = true;
+		session.signals.webRequest = electronSession.webRequest;
+		const filter = { urls: ["*://*/*"] };
+		electronSession.webRequest.onCompleted(filter, (details) => {
+			if (details.resourceType !== "xhr" || details.statusCode < 400) return;
+			recordBrowserSignal(session, {
+				kind: "network-failure",
+				message: `${details.method} ${details.url} → ${details.statusCode}`,
+			});
+		});
+		electronSession.webRequest.onErrorOccurred(filter, (details) => {
+			if (details.resourceType !== "xhr") return;
+			recordBrowserSignal(session, {
+				kind: "network-failure",
+				message: `${details.method} ${details.url} failed: ${details.error}`,
+			});
+		});
+	};
+
+	const recordBrowserSignal = (
+		session: BrowserSessionEntry,
+		entry: Omit<BrowserSignalEntry, "timestamp">,
+	): void => {
+		const { entries } = session.signals;
+		entries.push({
+			...entry,
+			message: externalText(entry.message, MAX_BROWSER_SIGNAL_BYTES),
+			timestamp: new Date().toISOString(),
+		});
+		if (entries.length > MAX_BROWSER_SIGNALS) entries.splice(0, entries.length - MAX_BROWSER_SIGNALS);
+	};
+
 	const ensureNativeActiveTab = async (session: BrowserSessionEntry, signal?: AbortSignal): Promise<void> => {
 		if (!options.agentBrowserRuntime) return;
 		while (session.nativeActiveTabId !== session.activeTabId) {
@@ -611,13 +753,52 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			// The human-facing BrowserView state is authoritative. Selecting through
 			// agent-browser updates its independent active_page_index before another
 			// native command is allowed to run.
-			await options.agentBrowserRuntime.runAction(
-				session.sessionId,
-				"tab-select",
-				{ tabId },
-				agentBrowserTargets(session),
-				signal,
-			);
+			try {
+				await options.agentBrowserRuntime.runAction(
+					session.sessionId,
+					"tab-select",
+					{ tabId },
+					agentBrowserTargets(session),
+					signal,
+				);
+			} catch (error) {
+				// The runtime keeps its own tab registry (a real, separate process —
+				// not derived live from session.tabs), which can drift after enough
+				// tab churn: observed live as "Tab tX not found; run `agent-browser
+				// tab` to list open tabs" for a tabId session.tabs still has. Retrying
+				// the exact same tab-select would fail identically forever, and every
+				// native browser operation for this session (select, close, click,
+				// snapshot, ...) routes through this loop — so a bare retry
+				// permanently wedges the whole session, not just this one call.
+				// Do what the runtime's own error message suggests: ask it to
+				// re-list tabs (which re-derives from session.tabs) before trying
+				// the select once more.
+				if (!isAgentBrowserCommandFailure(error)) throw error;
+				try {
+					await options.agentBrowserRuntime.runAction(session.sessionId, "tabs", {}, agentBrowserTargets(session), signal);
+					await options.agentBrowserRuntime.runAction(
+						session.sessionId,
+						"tab-select",
+						{ tabId },
+						agentBrowserTargets(session),
+						signal,
+					);
+				} catch (resyncError) {
+					if (!isAgentBrowserCommandFailure(resyncError)) throw resyncError;
+					// Still desynced after asking it to refresh — accept the drift
+					// rather than wedge the session forever. AO's own tab state
+					// (WebContentsView activation/close) doesn't depend on this and is
+					// unaffected either way; only the automation runtime's targeting of
+					// *this* tab stays stale until a future tab-new/tab-close resyncs
+					// it from its side — meaning a subsequent agent click/fill/snapshot
+					// can silently land on a different tab than intended. Every native
+					// operation routes through this loop first, so this is the one place
+					// that can log it without spamming on every call.
+					console.warn(
+						`[browser] automation runtime still can't target tab ${tabId} in session ${session.sessionId} after a resync attempt — accepting drift`,
+					);
+				}
+			}
 			session.nativeActiveTabId = tabId;
 		}
 	};
@@ -631,6 +812,12 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		url: string | undefined,
 		activate: boolean,
 		reason: "opened" | "popup" = "opened",
+		// A popup opened mid-automation (an agent clicked a link that opens a new
+		// tab) must sync the automation runtime's own active-target tracking too,
+		// the same way the old direct createTab(..., true) call for popups did —
+		// otherwise the runtime keeps issuing further actions against the tab the
+		// agent was on before the link, not the one it's actually looking at now.
+		syncNativeOnActivate = false,
 	): Promise<BrowserEntry> => {
 		let normalizedURL: string | undefined;
 		if (url) {
@@ -640,13 +827,24 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			}
 			normalizedURL = normalized.href;
 		}
-		const entry = createTab(session, activate);
+		const entry = createTab(session, activate, syncNativeOnActivate);
 		await entry.ready;
 		if (normalizedURL) {
 			const navigation = navigateEntry(entry, normalizedURL);
 			pushTabsState(options, session, { kind: reason, tabId: entry.tabId });
-			const state = await navigation;
-			if (state.error) throw browserError("NAVIGATION_FAILED", state.error);
+			// A failed load still yields a real, usable tab, exactly like
+			// navigating an *existing* tab to a dead URL — navigateEntry sets
+			// `.error` on the nav state (surfaced separately via
+			// browser:navState) and resolves normally rather than throwing.
+			// pushTabsState above already told the renderer this tab exists, so
+			// rejecting afterward corrupted every caller that inferred "tab
+			// exists" from "call succeeded": a dead localhost dev server (the
+			// overwhelmingly common case for Recently Closed entries — that's
+			// what ao preview produces) left reopenClosedTab's cap-failure
+			// rollback treating the failed load as "nothing happened," which
+			// resurrected the entry and restored it, forever, on every retry,
+			// while the tab it claimed didn't exist sat open with an error page.
+			await navigation;
 		} else {
 			pushTabsState(options, session, { kind: reason, tabId: entry.tabId });
 		}
@@ -661,6 +859,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			applyBrowserViewBounds(previous.view, OFFSCREEN_BOUNDS, false);
 		}
 		session.activeTabId = tabId;
+		if (session.devtools && isBlankBrowserEntry(next)) destroyDevTools(session);
 		applySessionBounds(session, next);
 		pushNavState(options, next);
 		if (notify) pushTabsState(options, session, { kind: "selected", tabId });
@@ -671,6 +870,18 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		return next;
 	}
 
+	// Re-verified 2026-08-19: a long-session report claimed tab close buttons
+	// eventually "stop working" (tab stays in the rail / count badge doesn't
+	// decrement). An accelerated stress repro -- open many tabs and
+	// close back to one, 20 cycles, interleaving selectTab/DevTools
+	// open-close/annotation-mode toggles -- against this real closeTab/
+	// destroyTabView path (see "browser tab lifecycle stress" in
+	// browser-view-host.test.ts) completed cleanly with no stuck or leaked
+	// tab. Several stabilization fixes already landed on main since the
+	// original report and likely already covered it: 73aa2c9bc (stabilize
+	// browser tab controls), 7d80f4a32 (prevent wrong tab content after
+	// switching), b00aa0414 (cancel stale overlay captures), and 4a98e4a92
+	// (release tab menu mirror on selection).
 	function closeTab(session: BrowserSessionEntry, tabId = session.activeTabId): BrowserTabsState {
 		if (session.tabs.size === 1) {
 			throw browserError("CANNOT_CLOSE_LAST_TAB", "The only browser tab cannot be closed");
@@ -774,6 +985,10 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		session: BrowserSessionEntry,
 	): Promise<BrowserDevToolsState> => {
 		const entry = activeEntry(session);
+		if (isBlankBrowserEntry(entry)) {
+			if (session.devtools) destroyDevTools(session);
+			return pushDevToolsState(session);
+		}
 		if (!entry.view.webContents.openDevTools) {
 			throw browserError("BROWSER_DEVTOOLS_UNAVAILABLE", "Browser DevTools are unavailable");
 		}
@@ -935,6 +1150,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		if (!session) throw browserError("BROWSER_TARGET_UNAVAILABLE", "Browser target is unavailable");
 		const entry = activeEntry(session);
 		cancelAnnotation(options, entry, "navigation");
+		if (session.devtools) destroyDevTools(session);
 		session.visible = false;
 		session.bounds = OFFSCREEN_BOUNDS;
 		applySessionBounds(session, entry);
@@ -978,6 +1194,10 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	const destroy = (viewId: string): void => {
 		const session = entries.get(viewId);
 		if (!session) return;
+		session.signals.entries.length = 0;
+		session.signals.webRequest?.onCompleted(null);
+		session.signals.webRequest?.onErrorOccurred(null);
+		session.signals.webRequest = undefined;
 		if (options.mainWindow.isDestroyed?.()) session.devtools = undefined;
 		else destroyDevTools(session);
 		void options.agentBrowserRuntime?.closeSession(session.sessionId);
@@ -1147,12 +1367,35 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		if (!options.agentBrowserRuntime) return closeTab(session, input.tabId);
 		return queueNativeOperation(session, async () => {
 			await ensureNativeActiveTab(session);
-			await options.agentBrowserRuntime!.runAction(
-				session.sessionId,
-				"tab-close",
-				{ tabId: input.tabId },
-				agentBrowserTargets(session),
-			);
+			try {
+				await options.agentBrowserRuntime!.runAction(
+					session.sessionId,
+					"tab-close",
+					{ tabId: input.tabId },
+					agentBrowserTargets(session),
+				);
+			} catch (error) {
+				// The automation runtime's own internal tab registry can drift from
+				// session.tabs over a long-running session (observed in practice as
+				// "Tab t5 not found; run `agent-browser tab` to list open tabs" even
+				// though session.tabs.has(input.tabId) above just confirmed AO still
+				// tracks it) — the runtime is a separate process AO doesn't fully
+				// control the internal bookkeeping of. Letting that failure bubble up
+				// left the tab stuck open with no way for the user to close it at all.
+				// The user's intent is unambiguous either way: close this tab. Fall
+				// back to AO's own close path, which only depends on session.tabs and
+				// the real WebContentsView, not the runtime's registry.
+				if (!isAgentBrowserCommandFailure(error)) throw error;
+				// runAction("tab-close") can partially succeed: the CDP bridge's own
+				// Target.closeTarget handling calls this same internal closeTab
+				// before the runtime reports the overall command as failed (observed
+				// live — the tab was already gone by the time this catch ran). Calling
+				// closeTab again here would throw TAB_NOT_FOUND for a tab that's
+				// already closed, exactly the outcome the user wanted — so treat
+				// "already gone" as success instead of retrying the close.
+				if (!session.tabs.has(input.tabId)) return listTabs(session);
+				return closeTab(session, input.tabId);
+			}
 			session.nativeActiveTabId = undefined;
 			await ensureNativeActiveTab(session);
 			return listTabs(session);
@@ -1265,6 +1508,76 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 						untrustedExternalContent: true,
 					};
 				}
+				case "act": {
+					const instruction = stringArg(args, "instruction", "INVALID_ARGUMENT", "instruction is required");
+					const verb = typeof args.action === "string" && args.action.trim() ? args.action.trim() : "click";
+					if (!ACT_VERBS.has(verb)) {
+						throw browserError("INVALID_ARGUMENT", `Unsupported act verb: ${verb}`);
+					}
+					const value =
+						verb === "fill" || verb === "type"
+							? stringArg(args, "value", "INVALID_ARGUMENT", "value is required", true)
+							: undefined;
+					const nth = typeof args.nth === "number" && Number.isFinite(args.nth) ? Math.trunc(args.nth) : undefined;
+					const nativeArgsForRef = (ref: string) => (value !== undefined ? { ref, text: value } : { ref });
+					const snapshotOnce = async (): Promise<{ text: string; refs: unknown }> => {
+						const result = await runNative("snapshot", { interactive: true });
+						if (typeof result.snapshot !== "string") {
+							throw browserError("BROWSER_AUTOMATION_INVALID_OUTPUT", "Browser snapshot output was invalid");
+						}
+						return { text: result.snapshot, refs: result.refs };
+					};
+					const unresolved = (outcome: "ambiguous" | "no-match", candidates: unknown, snapshot: string) => ({
+						outcome,
+						instruction,
+						...(outcome === "ambiguous" ? { candidates } : {}),
+						snapshot,
+						untrustedExternalContent: true as const,
+					});
+
+					const snapshot1 = await snapshotOnce();
+					const match1 = matchInstruction(instruction, snapshot1.refs, { nth });
+					if (match1.outcome !== "matched") return unresolved(match1.outcome, "candidates" in match1 ? match1.candidates : undefined, snapshot1.text);
+
+					try {
+						const result = await runNative(verb, nativeArgsForRef(match1.candidate.ref));
+						return {
+							outcome: "matched",
+							resolvedRef: match1.candidate.ref,
+							candidate: match1.candidate,
+							result,
+							retried: false,
+							untrustedExternalContent: true,
+						};
+					} catch (error) {
+						// Element attributes/positions on real pages shift between the
+						// snapshot that resolved a ref and the action that uses it, going
+						// stale — this is the one case worth a single automatic retry
+						// (re-snapshot, re-match the *original* instruction, try once
+						// more) rather than making the agent notice and redo the whole
+						// snapshot->click chain itself, which is the entire point of this
+						// primitive. Any other failure, or a second stale ref, rethrows as
+						// itself — an honest failure beats silently doing nothing on a
+						// mutating action, and this must not become an unbounded loop
+						// (mirrors ensureNativeActiveTab's "retry once, then surface
+						// reality" convention elsewhere in this file).
+						if (!isStaleReferenceError(error)) throw error;
+						const snapshot2 = await snapshotOnce();
+						const match2 = matchInstruction(instruction, snapshot2.refs, { nth });
+						if (match2.outcome !== "matched") {
+							return unresolved(match2.outcome, "candidates" in match2 ? match2.candidates : undefined, snapshot2.text);
+						}
+						const result = await runNative(verb, nativeArgsForRef(match2.candidate.ref));
+						return {
+							outcome: "matched",
+							resolvedRef: match2.candidate.ref,
+							candidate: match2.candidate,
+							result,
+							retried: true,
+							untrustedExternalContent: true,
+						};
+					}
+				}
 				case "click":
 				case "dblclick":
 				case "focus":
@@ -1357,8 +1670,14 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				case "network-clear":
 					return clearNetworkCapture(networkEntryFor(session));
 				case "console":
-				case "errors":
 					return normalizeNativeMessages(await runNative(action), action);
+				case "errors": {
+					const native = normalizeNativeMessages(await runNative(action), action);
+					return {
+						...native,
+						messages: [...native.messages, ...browserSignalMessages(session)],
+					};
+				}
 				default:
 					throw browserError("INVALID_ARGUMENT", `Unsupported browser action: ${action}`);
 			}
@@ -1400,6 +1719,34 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		},
 		forgetLastFocusedPanel: () => {
 			lastFocusedViewId = null;
+		},
+		// Reported live (macOS, maximized/popped-out panel): opening an overlay
+		// (e.g. a toolbar dropdown) over the browser panel blanks the live page
+		// to black instead of showing it behind the dropdown, and a plain bounds
+		// nudge alone was not enough to clear it (confirmed still reproducing
+		// after that first attempt). window-composition.ts documents the same
+		// class of bug for its own shell view — re-adding a WebContentsView to
+		// reorder it above others can leave its *previous* compositor surface on
+		// screen until something forces a real re-composite, and applying
+		// identical bounds is a no-op Electron ignores. That fix only refreshed
+		// the shell; the live page's own view needs an equivalent nudge whenever
+		// the shell is raised above it. A visibility toggle is a stronger,
+		// more direct signal to re-establish the view's compositor surface than
+		// a 1px bounds change alone, so do both.
+		refreshLastFocusedPanelSurface: () => {
+			if (lastFocusedViewId === null) return;
+			const session = entries.get(lastFocusedViewId);
+			if (!session || !session.visible) return;
+			const entry = activeEntry(session);
+			const bounds = session.bounds;
+			if (bounds.width <= 0 || bounds.height <= 0) return;
+			entry.view.setVisible?.(false);
+			applyBrowserViewBounds(entry.view, { ...bounds, height: Math.max(1, bounds.height - 1) });
+			setTimeout(() => {
+				const current = lastFocusedViewId !== null ? entries.get(lastFocusedViewId) : undefined;
+				if (!current || !current.visible) return;
+				applyBrowserViewBounds(activeEntry(current).view, current.bounds, true);
+			}, 0);
 		},
 	};
 }
@@ -1483,6 +1830,33 @@ function activeEntry(session: BrowserSessionEntry): BrowserEntry {
 	return entry;
 }
 
+function isBlankBrowserEntry(entry: BrowserEntry): boolean {
+	const url = entry.view.webContents.getURL();
+	return !url || url === "about:blank";
+}
+
+// agent-browser-runtime.ts's parseAgentBrowserJSON throws this exact code for
+// any command the automation runtime's own process reports success:false for
+// (e.g. its internal tab registry not recognizing a tabId session.tabs still
+// has) — distinguishing it from an unrelated failure (the binary missing,
+// the runtime already disposed, a malformed response) that a close-tab
+// fallback should NOT quietly swallow.
+function isAgentBrowserCommandFailure(error: unknown): boolean {
+	return Boolean(error && typeof error === "object" && "code" in error && error.code === "AGENT_BROWSER_COMMAND_FAILED");
+}
+
+// The `{ref[, text]}`-shaped action family "act" can resolve a target for and
+// then perform, matching every case in the switch above that only ever needs a
+// ref (or a ref plus text). "drag" (needs two independently-matched targets)
+// and "select" (needs matching an option's text within a resolved control, not
+// just the control) are harder matching problems and are deliberately excluded
+// from v1.
+const ACT_VERBS = new Set(["click", "dblclick", "focus", "hover", "fill", "type", "check", "uncheck"]);
+
+function isStaleReferenceError(error: unknown): boolean {
+	return Boolean(error && typeof error === "object" && "code" in error && error.code === "STALE_REFERENCE");
+}
+
 function tabResult(entry: BrowserEntry, active: boolean): BrowserTabState & { untrustedExternalContent: true } {
 	return {
 		id: entry.tabId,
@@ -1527,17 +1901,17 @@ function hardenWebContents(
 	contents: BrowserWebContents,
 	options: BrowserViewHostOptions,
 	entry: BrowserEntry,
-	createPopup: () => BrowserWebContents,
-	canCreatePopup: () => boolean,
+	openPopup: (url: string) => void,
 ): void {
 	contents.setWindowOpenHandler(({ url }) => {
-		if (!isAllowedBrowserURL(url, options.rendererOrigin) || !canCreatePopup()) {
+		if (!isAllowedBrowserURL(url, options.rendererOrigin)) {
 			return { action: "deny" };
 		}
-		return {
-			action: "allow",
-			createWindow: () => createPopup() as WebContents,
-		};
+		// Always deny — never return createWindow. See the call site's comment for
+		// why: Electron's own guest-window linkage check crashes the process
+		// otherwise. Open our own tab instead, outside Electron's guest-window flow.
+		openPopup(url);
+		return { action: "deny" };
 	});
 	const blockUnsafeNavigation = (event: Electron.Event, url: string) => {
 		if (!isAllowedBrowserURL(url, options.rendererOrigin)) {
@@ -2044,11 +2418,11 @@ function normalizeAgentBrowserURL(input: string): string {
 	return normalized.href;
 }
 
-function externalText(value: unknown): string {
+function externalText(value: unknown, maxBytes = MAX_EXTERNAL_TEXT_BYTES): string {
 	const raw = value == null ? "" : String(value);
 	const bytes = Buffer.from(raw, "utf8");
-	if (bytes.length <= MAX_EXTERNAL_TEXT_BYTES) return raw;
-	return `${bytes.subarray(0, MAX_EXTERNAL_TEXT_BYTES).toString("utf8")}\n[Content truncated at ${MAX_EXTERNAL_TEXT_BYTES} bytes]`;
+	if (bytes.length <= maxBytes) return raw;
+	return `${bytes.subarray(0, maxBytes).toString("utf8")}\n[Content truncated at ${maxBytes} bytes]`;
 }
 
 function markUntrusted(value: string): string {
@@ -2058,7 +2432,19 @@ function markUntrusted(value: string): string {
 	return `${UNTRUSTED_BEGIN}\n${escaped}\n${UNTRUSTED_END}`;
 }
 
-function normalizeNativeMessages(result: Record<string, unknown>, action: string): Record<string, unknown> {
+function browserSignalMessages(session: BrowserSessionEntry): BrowserLogEntry[] {
+	return session.signals.entries.map((entry) => ({
+		level: "error",
+		message: markUntrusted(externalText(entry.message)),
+		source: entry.kind === "console-error" ? "browser-console" : "browser-network",
+		timestamp: entry.timestamp,
+	}));
+}
+
+function normalizeNativeMessages(
+	result: Record<string, unknown>,
+	action: string,
+): { messages: BrowserLogEntry[]; untrustedExternalContent: true } {
 	const raw = Array.isArray(result.messages) ? result.messages : Array.isArray(result.value) ? result.value : [];
 	const messages = raw.map((item): BrowserLogEntry => {
 		if (typeof item === "string") {

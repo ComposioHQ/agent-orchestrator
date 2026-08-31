@@ -4,7 +4,7 @@ import { getApiBaseUrl, hasTrustedApiBaseUrl, subscribeApiBaseUrl } from "./api-
 import { setEventsConnectionState } from "./events-connection";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { sessionScmSummaryQueryKey } from "../hooks/useSessionScmSummary";
-import { conversationQueryKey } from "../hooks/useConversation";
+import { conversationQueryKey, conversationQueryRoot } from "../hooks/useConversation";
 import { agentSwitchesQueryRoot } from "../hooks/useAgentSwitches";
 import { sessionUsageQueryRoot } from "../hooks/useSessionUsageSummaries";
 
@@ -34,6 +34,8 @@ const CDC_EVENT_TYPES = [
 	"pr_session_changed",
 	"pr_review_thread_added",
 	"pr_review_thread_resolved",
+	"review_run_created",
+	"review_run_updated",
 ] as const;
 
 /**
@@ -48,12 +50,23 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 		connect() {
 			let debounce: ReturnType<typeof setTimeout> | undefined;
 			const pendingConversationSessions = new Set<string>();
+			const pendingInterfaceTransitionSessions = new Set<string>();
 			let workspaceInvalidationPending = false;
+			let allConversationsInvalidationPending = false;
 			let retryTimer: ReturnType<typeof setTimeout> | undefined;
 			let source: EventSource | undefined;
 			let sourceBaseUrl: string | undefined;
 			const refreshWorkspaces = (event?: Event) => {
 				let conversationOnly = false;
+				if (event === undefined) {
+					// A lifecycle refresh -- reconnect, daemon status change, base-URL change --
+					// carries no event, so we cannot know which conversations moved. Normally the
+					// replay that follows tells us, but when the event log has been truncated the
+					// daemon starts us at head and no CDC arrives at all. EventSource cannot read
+					// the header reporting that clamp, so refresh every conversation instead of
+					// leaving an open chat frozen on its pre-gap snapshot.
+					allConversationsInvalidationPending = true;
+				}
 				if (event && "data" in event) {
 					try {
 						const decoded = JSON.parse(String((event as MessageEvent).data)) as {
@@ -67,8 +80,19 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 						// sidebar but leaves a Chat timeline frozen on its pre-turn snapshot.
 						const payload =
 							typeof decoded.payload === "object" && decoded.payload !== null
-								? (decoded.payload as { conversationId?: unknown })
+								? (decoded.payload as {
+										conversationId?: unknown;
+										interfaceTransitionId?: unknown;
+								  })
 								: undefined;
+						if (
+							typeof decoded.sessionId === "string" &&
+							decoded.sessionId &&
+							typeof payload?.interfaceTransitionId === "string" &&
+							payload.interfaceTransitionId
+						) {
+							pendingInterfaceTransitionSessions.add(decoded.sessionId);
+						}
 						if (
 							typeof decoded.sessionId === "string" &&
 							decoded.sessionId &&
@@ -86,6 +110,10 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 				if (!conversationOnly) workspaceInvalidationPending = true;
 				if (debounce) clearTimeout(debounce);
 				debounce = setTimeout(() => {
+					if (allConversationsInvalidationPending) {
+						void queryClient.invalidateQueries({ queryKey: conversationQueryRoot });
+						allConversationsInvalidationPending = false;
+					}
 					if (workspaceInvalidationPending) {
 						void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 						void queryClient.invalidateQueries({ queryKey: agentSwitchesQueryRoot });
@@ -97,6 +125,12 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 						void queryClient.invalidateQueries({ queryKey: conversationQueryKey(sessionId) });
 					}
 					pendingConversationSessions.clear();
+					for (const sessionId of pendingInterfaceTransitionSessions) {
+						void queryClient.invalidateQueries({
+							queryKey: ["session-interface-transition", sessionId],
+						});
+					}
+					pendingInterfaceTransitionSessions.clear();
 				}, INVALIDATE_DEBOUNCE_MS);
 			};
 

@@ -120,8 +120,11 @@ spawn remains the authoritative runtime validation point. Use
 
 `ao preview` resolves its session from the `AO_SESSION_ID` environment variable
 (it is meant to run inside a session), not a flag. With no argument it
-autodetects an `index.html` in the session workspace; with a URL argument it
-opens that URL verbatim (`file://`, `http`, `https`).
+autodetects an `index.html` in the session workspace. Relative file targets are
+resolved from the session workspace root, regardless of the shell's current
+directory, and served through AO's confined loopback preview origin. Absolute
+paths and `file://` URLs must resolve inside that workspace; explicit HTTP and
+HTTPS targets remain regular browser URLs.
 
 `ao preview start [configuration]` loads `.ao/launch.json` from the session
 workspace, starts that exact command under a session-owned supervisor, selects
@@ -185,6 +188,7 @@ The CLI and daemon share the same environment-driven config:
 | `AO_REQUEST_TIMEOUT`  | `60s`                | REST request timeout.                                                                          |
 | `AO_SHUTDOWN_TIMEOUT` | `10s`                | Graceful shutdown cap.                                                                         |
 | `AO_KEEP_DAEMON`      | unset (off)          | Keep the desktop app's daemon running after the window closes; stop only via `ao stop`. (fork) |
+| `AO_DISABLE_GPU`      | unset (off)          | Skip Chromium hardware acceleration; escape hatch for broken Linux GPU drivers.                |
 
 The daemon always binds `127.0.0.1`.
 

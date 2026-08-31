@@ -48,6 +48,55 @@ func (q *Queries) AcknowledgeAgentSwitchTarget(ctx context.Context, arg Acknowle
 	return result.RowsAffected()
 }
 
+const activateChatSessionAgentSwitchTarget = `-- name: ActivateChatSessionAgentSwitchTarget :execrows
+UPDATE sessions SET
+    harness = ?1,
+    activity_state = 'idle',
+    activity_last_at = ?2,
+    first_signal_at = NULL,
+    runtime_handle_id = '',
+    runtime_launch_id = '',
+    agent_session_id = ?3,
+    agent_session_id_launch_id = '',
+    native_transcript_path = '',
+    provider_conversation_id = ?4,
+    controller_generation = ?5,
+    updated_at = ?2
+WHERE id = ?6
+  AND is_terminated = 0
+  AND session_mode = 'chat'
+  AND activity_state = 'exited'
+  AND harness = ?7
+  AND controller_generation = ?5
+  AND activity_last_at <= ?2
+`
+
+type ActivateChatSessionAgentSwitchTargetParams struct {
+	TargetHarness          domain.AgentHarness
+	ActivatedAt            time.Time
+	TargetNativeSessionID  string
+	ProviderConversationID string
+	ControllerGeneration   string
+	SessionID              domain.SessionID
+	ExpectedSourceHarness  domain.AgentHarness
+}
+
+func (q *Queries) ActivateChatSessionAgentSwitchTarget(ctx context.Context, arg ActivateChatSessionAgentSwitchTargetParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, activateChatSessionAgentSwitchTarget,
+		arg.TargetHarness,
+		arg.ActivatedAt,
+		arg.TargetNativeSessionID,
+		arg.ProviderConversationID,
+		arg.ControllerGeneration,
+		arg.SessionID,
+		arg.ExpectedSourceHarness,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const activateSessionAgentSwitchTarget = `-- name: ActivateSessionAgentSwitchTarget :execrows
 UPDATE sessions SET
     harness = ?1,
@@ -57,6 +106,7 @@ UPDATE sessions SET
     runtime_handle_id = ?3,
     runtime_launch_id = ?4,
     agent_session_id = ?5,
+    agent_session_id_launch_id = ?4,
     native_transcript_path = ?6,
     updated_at = ?2
 WHERE id = ?7
@@ -801,6 +851,39 @@ func (q *Queries) MarkAgentSwitchTargetReady(ctx context.Context, arg MarkAgentS
 	return result.RowsAffected()
 }
 
+const markChatSessionAgentSwitchSourceStopped = `-- name: MarkChatSessionAgentSwitchSourceStopped :execrows
+UPDATE sessions SET
+    activity_state = 'exited',
+    activity_last_at = ?1,
+    updated_at = ?1
+WHERE id = ?2
+  AND is_terminated = 0
+  AND session_mode = 'chat'
+  AND harness = ?3
+  AND controller_generation = ?4
+  AND activity_last_at <= ?1
+`
+
+type MarkChatSessionAgentSwitchSourceStoppedParams struct {
+	StoppedAt                          time.Time
+	SessionID                          domain.SessionID
+	ExpectedSourceHarness              domain.AgentHarness
+	ExpectedSourceControllerGeneration string
+}
+
+func (q *Queries) MarkChatSessionAgentSwitchSourceStopped(ctx context.Context, arg MarkChatSessionAgentSwitchSourceStoppedParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, markChatSessionAgentSwitchSourceStopped,
+		arg.StoppedAt,
+		arg.SessionID,
+		arg.ExpectedSourceHarness,
+		arg.ExpectedSourceControllerGeneration,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const markSessionAgentSwitchSourceStopped = `-- name: MarkSessionAgentSwitchSourceStopped :execrows
 UPDATE sessions SET
     activity_state = 'exited',
@@ -1007,23 +1090,25 @@ UPDATE sessions SET
     activity_last_at = ?2,
     first_signal_at = ?3,
     agent_session_id = ?4,
-    latest_user_prompt = ?5,
-    latest_assistant_update = ?6,
-    native_transcript_path = ?7,
-    updated_at = ?8
-WHERE sessions.id = ?9
+    agent_session_id_launch_id = ?5,
+    latest_user_prompt = ?6,
+    latest_user_prompt_at = ?7,
+    latest_assistant_update = ?8,
+    native_transcript_path = ?9,
+    updated_at = ?10
+WHERE sessions.id = ?11
   AND sessions.is_terminated = 0
-  AND sessions.harness = ?10
-  AND sessions.session_mode = ?11
+  AND sessions.harness = ?12
+  AND sessions.session_mode = ?13
   AND (
       (
-          ?11 <> 'chat'
-          AND sessions.runtime_launch_id = ?12
+          ?13 <> 'chat'
+          AND sessions.runtime_launch_id = ?14
       )
       OR
       (
-          ?11 = 'chat'
-          AND sessions.controller_generation = ?13
+          ?13 = 'chat'
+          AND sessions.controller_generation = ?15
       )
   )
   AND NOT EXISTS (
@@ -1042,7 +1127,9 @@ type UpdateSessionFromActivitySignalParams struct {
 	ActivityLastAt               time.Time
 	FirstSignalAt                sql.NullTime
 	AgentSessionID               string
+	AgentSessionIDLaunchID       string
 	LatestUserPrompt             string
+	LatestUserPromptAt           sql.NullTime
 	LatestAssistantUpdate        string
 	NativeTranscriptPath         string
 	UpdatedAt                    time.Time
@@ -1064,7 +1151,9 @@ func (q *Queries) UpdateSessionFromActivitySignal(ctx context.Context, arg Updat
 		arg.ActivityLastAt,
 		arg.FirstSignalAt,
 		arg.AgentSessionID,
+		arg.AgentSessionIDLaunchID,
 		arg.LatestUserPrompt,
+		arg.LatestUserPromptAt,
 		arg.LatestAssistantUpdate,
 		arg.NativeTranscriptPath,
 		arg.UpdatedAt,

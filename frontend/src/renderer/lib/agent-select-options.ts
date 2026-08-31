@@ -21,6 +21,14 @@ export function agentLabelCompare(a: AgentInfo, b: AgentInfo): number {
 	return a.label.localeCompare(b.label) || a.id.localeCompare(b.id);
 }
 
+export function agentUsageCompare(a: AgentInfo, b: AgentInfo): number {
+	const byFrequency = (b.usageCount ?? 0) - (a.usageCount ?? 0);
+	if (byFrequency !== 0) return byFrequency;
+	const byRecency = (b.lastUsedAt ?? "").localeCompare(a.lastUsedAt ?? "");
+	if (byRecency !== 0) return byRecency;
+	return 0;
+}
+
 function agentStatus(
 	installedAgent: AgentInfo | undefined,
 	isAuthorized: boolean,
@@ -76,5 +84,11 @@ export function buildRankedAgentOptions({
 				...agentStatus(installedAgent, isAuthorized, isAuthUnknown),
 			};
 		})
-		.sort((a, b) => a.rank - b.rank || a.priorityRank - b.priorityRank || agentLabelCompare(a, b));
+		.sort(
+			(a, b) =>
+				a.rank - b.rank ||
+				agentUsageCompare(a, b) ||
+				a.priorityRank - b.priorityRank ||
+				agentLabelCompare(a, b),
+		);
 }

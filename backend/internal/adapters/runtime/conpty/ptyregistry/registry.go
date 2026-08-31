@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 )
 
 // Entry is one registered pty-host process.
@@ -24,10 +25,46 @@ type Entry struct {
 // pidalive_windows.go).
 var pidAlive = defaultPidAlive
 
-// registryFile resolves ~/.ao/windows-pty-hosts.json. Uses os.UserHomeDir()
-// so t.Setenv("HOME", dir) in tests redirects reads/writes to a temp dir.
-// ponytail: HOME-based resolution; no AO_DATA_DIR override needed here.
+// overrideDir, when set, is the directory the registry file lives in for
+// this daemon instance, taking precedence over the ~/.ao default. Set once by
+// SetRunFilePath at daemon startup, before any session activity begins, so
+// the unsynchronized package var has no concurrent access to race against.
+var overrideDir string
+
+// registryMu makes each read-modify-write operation atomic within the daemon.
+// Session starts can run concurrently; without this lock two successful hosts
+// could race and leave only one recoverable registry entry on disk.
+var registryMu sync.Mutex
+
+// SetRunFilePath pins the registry to the directory containing this
+// instance's running.json (backend/internal/config's already-resolved,
+// absolute Config.RunFilePath). Two AO daemons on one machine — e.g. a
+// headless dev daemon and the desktop app, or two dev daemons — normally run
+// fully isolated via AO_RUN_FILE/AO_DATA_DIR overrides, but the registry
+// ignored that and always resolved to ~/.ao regardless: with the same
+// project checked out in both, their independently-numbered session ids
+// (e.g. "demo-website-2") could collide, and the second instance's
+// registration would silently overwrite the first's pty-host address,
+// attaching that session's terminal to the wrong process. Co-locating the
+// registry with each instance's own running.json keeps them isolated the
+// same way the SQLite store already is. An empty path clears any override,
+// reverting to the ~/.ao default.
+func SetRunFilePath(path string) {
+	if path == "" {
+		overrideDir = ""
+		return
+	}
+	overrideDir = filepath.Dir(path)
+}
+
+// registryFile resolves the pty-host registry path: overrideDir joined with
+// the registry filename when set via SetRunFilePath, otherwise
+// ~/.ao/windows-pty-hosts.json via os.UserHomeDir() so t.Setenv("HOME", dir)
+// in tests redirects reads/writes to a temp dir.
 func registryFile() (string, error) {
+	if overrideDir != "" {
+		return filepath.Join(overrideDir, "windows-pty-hosts.json"), nil
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
@@ -116,6 +153,8 @@ func writeRaw(entries []Entry) error {
 // Register adds or replaces the entry for entry.SessionID. registeredAt must
 // be set by the caller (e.g. time.Now().UTC().Format(time.RFC3339)).
 func Register(entry Entry) error {
+	registryMu.Lock()
+	defer registryMu.Unlock()
 	next := make([]Entry, 0)
 	for _, e := range readRaw() {
 		if e.SessionID != entry.SessionID {
@@ -128,6 +167,8 @@ func Register(entry Entry) error {
 
 // Unregister removes the entry for sessionID. No-op if absent.
 func Unregister(sessionID string) error {
+	registryMu.Lock()
+	defer registryMu.Unlock()
 	all := readRaw()
 	next := make([]Entry, 0, len(all))
 	for _, e := range all {
@@ -144,6 +185,8 @@ func Unregister(sessionID string) error {
 // List returns all entries whose PtyHostPID is still alive, auto-pruning dead
 // ones. The file is rewritten if any entries were pruned.
 func List() ([]Entry, error) {
+	registryMu.Lock()
+	defer registryMu.Unlock()
 	all := readRaw()
 	live := make([]Entry, 0, len(all))
 	for _, e := range all {
@@ -161,5 +204,7 @@ func List() ([]Entry, error) {
 
 // Clear deletes the registry file. Best-effort; used by tests and recovery.
 func Clear() error {
+	registryMu.Lock()
+	defer registryMu.Unlock()
 	return writeRaw(nil)
 }
