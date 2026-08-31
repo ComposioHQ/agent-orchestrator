@@ -62,6 +62,10 @@ func (f *fakeConversationService) EditQueuedTurn(context.Context, domain.Session
 	return nil
 }
 
+func (f *fakeConversationService) ReorderQueuedTurns(context.Context, domain.SessionID, []string) error {
+	return nil
+}
+
 func (f *fakeChatService) PromoteQueuedTurn(
 	context.Context,
 	domain.SessionID,
@@ -75,6 +79,10 @@ func (f *fakeChatService) CancelQueuedTurn(context.Context, domain.SessionID, st
 }
 
 func (f *fakeChatService) EditQueuedTurn(context.Context, domain.SessionID, string, string) error {
+	return nil
+}
+
+func (f *fakeChatService) ReorderQueuedTurns(context.Context, domain.SessionID, []string) error {
 	return nil
 }
 

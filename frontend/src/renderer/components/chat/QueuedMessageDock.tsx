@@ -1,13 +1,36 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
-import { ChevronDown, Circle, CornerDownLeft, Pencil, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { flushSync } from "react-dom";
+import {
+	DndContext,
+	PointerSensor,
+	closestCenter,
+	type DragEndEvent,
+	useSensor,
+	useSensors,
+} from "@dnd-kit/core";
+import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import { ChevronDown, Circle, CornerDownLeft, GripVertical, Pencil, Trash2 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import type { ConversationMessage } from "../../types/conversation";
 
 export type QueuedMessage = { turnId: string; message: ConversationMessage };
 
 const QUEUE_DOCK_VISIBLE_ROWS = 5;
+const REORDER_ACTIVATION_DISTANCE = 4;
 
-function QueuedMessageRow({
+function reorderById(ids: string[], activeId: string, overId: string): string[] | null {
+	if (activeId === overId) return null;
+	const from = ids.indexOf(activeId);
+	const to = ids.indexOf(overId);
+	if (from < 0 || to < 0) return null;
+	const next = [...ids];
+	const [moved] = next.splice(from, 1);
+	next.splice(to, 0, moved);
+	return next;
+}
+
+function SortableQueuedMessageRow({
 	turnId,
 	message,
 	hiddenFromView,
@@ -19,6 +42,7 @@ function QueuedMessageRow({
 	busy,
 	error,
 	onRunAction,
+	reorderEnabled,
 }: {
 	turnId: string;
 	message: ConversationMessage;
@@ -31,10 +55,22 @@ function QueuedMessageRow({
 	busy?: boolean;
 	error?: string;
 	onRunAction: (turnId: string, action: () => Promise<unknown>) => void;
+	reorderEnabled?: boolean;
 }) {
+	const { attributes, listeners, setActivatorNodeRef, setNodeRef, transform, transition, isDragging } =
+		useSortable({
+			id: turnId,
+			disabled: !reorderEnabled,
+		});
+
 	return (
 		<div
-			className="queue-dock-row group/queued-row"
+			ref={setNodeRef}
+			className={cn("queue-dock-row group/queued-row", isDragging && "relative z-[1]")}
+			style={{
+				transform: transform ? CSS.Transform.toString({ ...transform, x: 0, scaleX: 1, scaleY: 1 }) : undefined,
+				transition,
+			}}
 			data-testid={`queued-message-${turnId}`}
 			aria-hidden={hiddenFromView ? true : undefined}
 			inert={hiddenFromView ? true : undefined}
@@ -109,6 +145,20 @@ function QueuedMessageRow({
 							<Trash2 aria-hidden="true" className="shrink-0" width={12} height={12} strokeWidth={2} />
 						</button>
 					) : null}
+					{reorderEnabled ? (
+						<button
+							type="button"
+							ref={setActivatorNodeRef}
+							{...attributes}
+							{...listeners}
+							disabled={busy}
+							className="flex size-7 cursor-grab items-center justify-center rounded-md text-muted-foreground touch-none active:cursor-grabbing disabled:pointer-events-none disabled:opacity-50"
+							aria-label="Drag to reorder queued message"
+							title="Drag to reorder"
+						>
+							<GripVertical aria-hidden="true" className="shrink-0" width={12} height={12} strokeWidth={2} />
+						</button>
+					) : null}
 				</div>
 			</div>
 			{error ? (
@@ -129,6 +179,7 @@ export function QueuedMessageDock({
 	onPromoteQueuedTurn,
 	onBeginQueuedEdit,
 	onCancelQueuedTurn,
+	onReorderQueuedTurns,
 	promotePendingTurnId,
 	cancelPendingTurnId,
 }: {
@@ -140,6 +191,7 @@ export function QueuedMessageDock({
 	onPromoteQueuedTurn?: (turnId: string) => Promise<unknown>;
 	onBeginQueuedEdit?: (turnId: string, text: string) => void;
 	onCancelQueuedTurn?: (turnId: string) => Promise<unknown>;
+	onReorderQueuedTurns?: (turnIds: string[]) => Promise<unknown>;
 	promotePendingTurnId?: string;
 	cancelPendingTurnId?: string;
 }) {
@@ -148,9 +200,15 @@ export function QueuedMessageDock({
 	const [optimisticallySteeredTurnIds, setOptimisticallySteeredTurnIds] = useState<Set<string>>(
 		() => new Set(),
 	);
+	const [displayOrder, setDisplayOrder] = useState<string[] | null>(null);
 	const scrollRef = useRef<HTMLDivElement>(null);
 	const [handledSteerNextRequest, setHandledSteerNextRequest] = useState(steerNextRequest ?? 0);
 	const steerNextInFlight = useRef(false);
+	const reorderSensors = useSensors(
+		useSensor(PointerSensor, {
+			activationConstraint: { distance: REORDER_ACTIVATION_DISTANCE },
+		}),
+	);
 
 	const runAction = useCallback(
 		async (turnId: string, action: () => Promise<unknown>) => {
@@ -177,7 +235,49 @@ export function QueuedMessageDock({
 	const hasMore = count > 1;
 	const isOpen = !hasMore || expanded;
 	const expandedRows = Math.min(count, QUEUE_DOCK_VISIBLE_ROWS);
-	const displayMessages = [...visibleMessages].reverse();
+	const messagesByTurnId = useMemo(
+		() => new Map(visibleMessages.map((message) => [message.turnId, message])),
+		[visibleMessages],
+	);
+	const fifoTurnIds = useMemo(() => visibleMessages.map(({ turnId }) => turnId), [visibleMessages]);
+	const defaultDisplayTurnIds = useMemo(() => [...fifoTurnIds].reverse(), [fifoTurnIds]);
+	const displayTurnIds = useMemo(() => {
+		if (!displayOrder) return defaultDisplayTurnIds;
+		const known = new Set(fifoTurnIds);
+		const ordered = displayOrder.filter((turnId) => known.has(turnId));
+		const missing = fifoTurnIds.filter((turnId) => !ordered.includes(turnId));
+		return [...ordered, ...missing];
+	}, [defaultDisplayTurnIds, displayOrder, fifoTurnIds]);
+	const displayMessages = useMemo(
+		() =>
+			displayTurnIds.flatMap((turnId) => {
+				const message = messagesByTurnId.get(turnId);
+				return message ? [message] : [];
+			}),
+		[displayTurnIds, messagesByTurnId],
+	);
+	const reorderEnabled =
+		Boolean(onReorderQueuedTurns) && count > 1 && isOpen;
+
+	const fifoTurnIdSetKey = useMemo(
+		() => [...fifoTurnIds].sort().join("\0"),
+		[fifoTurnIds],
+	);
+
+	useEffect(() => {
+		setDisplayOrder(null);
+	}, [fifoTurnIdSetKey]);
+
+	useEffect(() => {
+		if (!displayOrder) return;
+		const expectedFifo = [...displayOrder].reverse();
+		if (
+			expectedFifo.length === fifoTurnIds.length &&
+			expectedFifo.every((turnId, index) => turnId === fifoTurnIds[index])
+		) {
+			setDisplayOrder(null);
+		}
+	}, [displayOrder, fifoTurnIds]);
 
 	const promoteQueuedTurn = useCallback(
 		async (turnId: string) => {
@@ -230,6 +330,20 @@ export function QueuedMessageDock({
 		const scroll = scrollRef.current;
 		if (scroll) scroll.scrollTop = scroll.scrollHeight;
 	}, [count, isOpen]);
+
+	const onDragEnd = useCallback(
+		({ active, over }: DragEndEvent) => {
+			if (!over || !onReorderQueuedTurns) return;
+			const nextDisplay = reorderById(displayTurnIds, String(active.id), String(over.id));
+			if (!nextDisplay) return;
+			const fifoOrder = [...nextDisplay].reverse();
+			flushSync(() => setDisplayOrder(nextDisplay));
+			void onReorderQueuedTurns(fifoOrder).catch(() => {
+				setDisplayOrder(null);
+			});
+		},
+		[displayTurnIds, onReorderQueuedTurns],
+	);
 
 	const rowProps = {
 		canSteer,
@@ -293,28 +407,40 @@ export function QueuedMessageDock({
 						} as CSSProperties
 					}
 				>
-					<div
-						ref={scrollRef}
-						className={cn("queue-dock-scroll", isOpen && count > QUEUE_DOCK_VISIBLE_ROWS && "queue-dock-scroll-active")}
+					<DndContext
+						collisionDetection={closestCenter}
+						onDragEnd={onDragEnd}
+						sensors={reorderSensors}
 					>
-						{displayMessages.map(({ turnId, message }, index) => {
-							const busy =
-								promotePendingTurnId === turnId || cancelPendingTurnId === turnId;
-							return (
-								<QueuedMessageRow
-									key={turnId}
-									turnId={turnId}
-									message={message}
-									hiddenFromView={!isOpen && index !== displayMessages.length - 1}
-									showHoverSteer={canSteer && (index !== displayMessages.length - 1 || !canSteerNext)}
-									busy={busy}
-									error={errors[turnId]}
-									{...rowProps}
-									canSteer={canSteer && canSteerNext && index === displayMessages.length - 1}
-								/>
-							);
-						})}
-					</div>
+						<SortableContext items={displayTurnIds} strategy={verticalListSortingStrategy}>
+							<div
+								ref={scrollRef}
+								className={cn(
+									"queue-dock-scroll",
+									isOpen && count > QUEUE_DOCK_VISIBLE_ROWS && "queue-dock-scroll-active",
+								)}
+							>
+								{displayMessages.map(({ turnId, message }, index) => {
+									const busy =
+										promotePendingTurnId === turnId || cancelPendingTurnId === turnId;
+									return (
+										<SortableQueuedMessageRow
+											key={turnId}
+											turnId={turnId}
+											message={message}
+											hiddenFromView={!isOpen && index !== displayMessages.length - 1}
+											showHoverSteer={canSteer && (index !== displayMessages.length - 1 || !canSteerNext)}
+											busy={busy}
+											error={errors[turnId]}
+											reorderEnabled={reorderEnabled && !busy}
+											{...rowProps}
+											canSteer={canSteer && canSteerNext && index === displayMessages.length - 1}
+										/>
+									);
+								})}
+							</div>
+						</SortableContext>
+					</DndContext>
 				</div>
 			) : null}
 		</div>

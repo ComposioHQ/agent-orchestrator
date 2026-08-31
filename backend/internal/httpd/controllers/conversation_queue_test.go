@@ -113,3 +113,54 @@ func TestCancelQueuedTurnRoute(t *testing.T) {
 		t.Fatalf("svc saw session=%q turn=%q", svc.session, svc.turnID)
 	}
 }
+
+type reorderQueuedStub struct {
+	*fakeConversationService
+	session domain.SessionID
+	turnIDs []string
+	err     error
+}
+
+func (s *reorderQueuedStub) ReorderQueuedTurns(
+	_ context.Context,
+	session domain.SessionID,
+	turnIDs []string,
+) error {
+	s.session, s.turnIDs = session, append([]string(nil), turnIDs...)
+	return s.err
+}
+
+func postReorderQueuedTurns(t *testing.T, svc *reorderQueuedStub, turnIDs []string) int {
+	t.Helper()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := httptest.NewServer(httpd.NewRouterWithControl(config.Config{}, log, nil, httpd.APIDeps{
+		Sessions:      newFakeSessionService(),
+		Conversations: svc,
+	}, httpd.ControlDeps{}))
+	t.Cleanup(srv.Close)
+
+	body, err := json.Marshal(map[string][]string{"turnIds": turnIDs})
+	if err != nil {
+		t.Fatalf("encode request: %v", err)
+	}
+	resp, err := http.Post(
+		srv.URL+"/api/v1/sessions/p1-1/conversation/queue/reorder",
+		"application/json",
+		bytes.NewReader(body),
+	)
+	if err != nil {
+		t.Fatalf("POST queue/reorder: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	return resp.StatusCode
+}
+
+func TestReorderQueuedTurnsRoute(t *testing.T) {
+	svc := &reorderQueuedStub{fakeConversationService: &fakeConversationService{}}
+	if status := postReorderQueuedTurns(t, svc, []string{"queued-2", "queued-1", "queued-3"}); status != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", status, http.StatusNoContent)
+	}
+	if svc.session != "p1-1" || len(svc.turnIDs) != 3 || svc.turnIDs[0] != "queued-2" {
+		t.Fatalf("svc saw session=%q turnIDs=%v", svc.session, svc.turnIDs)
+	}
+}
