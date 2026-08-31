@@ -25,7 +25,7 @@ type Control interface {
 	CompleteTransport(context.Context, string, int, any) error
 	FailTransport(context.Context, string, int, string, string) error
 	PublishTerminalOutput(context.Context, string, []byte) error
-	PublishTerminalExit(context.Context, string, int) error
+	PublishTerminalExit(context.Context, string, int, bool) error
 }
 
 type Supervisor struct {
@@ -79,9 +79,10 @@ type ChatRunner interface {
 }
 
 type terminalProcess struct {
-	cancel  context.CancelFunc
-	pty     *os.File
-	cleanup func()
+	cancel                context.CancelFunc
+	pty                   *os.File
+	cleanup               func()
+	interfaceHandoffClose bool
 }
 
 func (s *Supervisor) Run(ctx context.Context) error {
@@ -166,6 +167,12 @@ func (s *Supervisor) Run(ctx context.Context) error {
 }
 
 func (s *Supervisor) forwardTurn(ctx context.Context) (bool, error) {
+	// The Chat controller owns the durable turn queue while ChatUI is active.
+	// Do not claim a turn here: doing so races the headless runner and either
+	// drops the turn or fails it before the Chat controller can execute it.
+	if s.iface.Current() == InterfaceChat {
+		return false, nil
+	}
 	// Leave queued turns on the control plane until the agent TUI is ready to
 	// receive them; claiming earlier would type the prompt into a terminal that
 	// has not started accepting input. Terminal-less sessions skip the gate so
@@ -179,11 +186,6 @@ func (s *Supervisor) forwardTurn(ctx context.Context) (bool, error) {
 	}
 	if turn.CancelRequested {
 		return true, s.Control.CompleteTurn(ctx, turn.ID, turn.Attempt, true)
-	}
-	if s.iface.Current() == InterfaceChat {
-		return true, s.Control.FailTurn(
-			ctx, turn.ID, turn.Attempt, "turns are claimed by the chat controller",
-		)
 	}
 	if s.AgentTerminalID == "" {
 		return true, s.Control.FailTurn(
@@ -327,19 +329,23 @@ func (s *Supervisor) openTerminal(ctx context.Context, input worker.TerminalComm
 		s.mu.Unlock()
 		return err
 	}
-	s.terminals[input.TerminalID] = &terminalProcess{
+	process := &terminalProcess{
 		cancel:  cancel,
 		pty:     terminalPTY,
 		cleanup: cleanup,
 	}
+	s.terminals[input.TerminalID] = process
 	s.mu.Unlock()
 
 	go s.copyTerminalOutput(processCtx, input.TerminalID, terminalPTY)
-	go func() {
+	go func(process *terminalProcess) {
 		_ = command.Wait()
 		s.mu.Lock()
 		current := s.terminals[input.TerminalID]
-		delete(s.terminals, input.TerminalID)
+		if current == process {
+			delete(s.terminals, input.TerminalID)
+		}
+		handoff := process.interfaceHandoffClose
 		s.mu.Unlock()
 		if current != nil {
 			_ = current.pty.Close()
@@ -352,10 +358,11 @@ func (s *Supervisor) openTerminal(ctx context.Context, input worker.TerminalComm
 			exitCtx,
 			input.TerminalID,
 			command.ProcessState.ExitCode(),
+			handoff,
 		); err != nil && exitCtx.Err() == nil {
 			s.Logger.Warn("publish terminal exit", "error", err, "terminal_id", input.TerminalID)
 		}
-	}()
+	}(process)
 	return nil
 }
 
@@ -471,9 +478,22 @@ func (s *Supervisor) resizeTerminal(input worker.TerminalCommand) error {
 }
 
 func (s *Supervisor) closeTerminal(id string) {
+	s.closeTerminalWithReason(id, false)
+}
+
+// closeTerminalForInterfaceHandoff closes the source TUI without reporting the
+// whole Cloud session as exited. The Chat controller takes ownership next.
+func (s *Supervisor) closeTerminalForInterfaceHandoff(id string) {
+	s.closeTerminalWithReason(id, true)
+}
+
+func (s *Supervisor) closeTerminalWithReason(id string, interfaceHandoff bool) {
 	s.mu.Lock()
 	terminal := s.terminals[id]
 	delete(s.terminals, id)
+	if terminal != nil && interfaceHandoff {
+		terminal.interfaceHandoffClose = true
+	}
 	s.mu.Unlock()
 	if terminal != nil {
 		_ = terminal.pty.Close()
