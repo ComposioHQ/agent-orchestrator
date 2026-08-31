@@ -15,7 +15,7 @@ import {
 	MessageSquareDot,
 	RotateCcw,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMarkAllNotificationsReadMutation, useNotificationsQuery } from "../hooks/useNotificationsQuery";
 import { useRestoreSession } from "../hooks/useRestoreSession";
 import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
@@ -251,25 +251,25 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 			});
 	}, [ackRetryNonce, markAllMutate, open, t, unreadQuery.isLoading, visibleUnreadKey]);
 
-	const setPanelOpen = (nextOpen: boolean) => {
+	const setPanelOpen = useCallback((nextOpen: boolean) => {
 		setOpen(nextOpen);
 		if (!nextOpen) {
 			keepLatestNotificationsPage(queryClient, unreadNotificationsQueryKey);
 			keepLatestNotificationsPage(queryClient, recentNotificationsQueryKey);
 		}
-	};
+	}, [queryClient]);
 
 	const retryMarkRead = () => {
 		setMarkReadError(null);
 		setAckRetryNonce((nonce) => nonce + 1);
 	};
 
-	const openSessionAndDismiss = (notification: NotificationDTO) => {
+	const openSessionAndDismiss = useCallback((notification: NotificationDTO) => {
 		openSession(notification);
 		setPanelOpen(false);
-	};
+	}, [openSession, setPanelOpen]);
 
-	const restoreAndOpen = async (notification: NotificationDTO) => {
+	const restoreAndOpen = useCallback(async (notification: NotificationDTO) => {
 		const sessionId = notification.target.sessionId || notification.sessionId;
 		if (!sessionId || restoringSessionId) return;
 		setRestoringSessionId(sessionId);
@@ -285,7 +285,7 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 		} finally {
 			setRestoringSessionId(undefined);
 		}
-	};
+	}, [openSession, restoreSession, restoringSessionId, setPanelOpen, t]);
 
 	const loadEarlierOnScroll = (event: React.UIEvent<HTMLDivElement>) => {
 		const list = event.currentTarget;
@@ -375,6 +375,7 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 					>
 						{notifications.map((notification) => {
 							const sessionId = notification.target.sessionId || notification.sessionId;
+							const meta = sessionId ? sessionMeta.get(sessionId) : undefined;
 							const terminated = Boolean(sessionId) && terminatedIds.has(sessionId);
 							// Restoring only makes sense when an agent is actually paused waiting
 							// on input. PR outcomes (ready_to_merge, pr_merged, pr_closed_unmerged)
@@ -386,12 +387,13 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 								<NotificationItem
 									highlighted={highlightedIds.has(notification.id) || notification.status === "unread"}
 									key={notification.id}
-									meta={sessionId ? sessionMeta.get(sessionId) : undefined}
 									notification={notification}
 									onOpenSession={openSessionAndDismiss}
-									onRestore={() => void restoreAndOpen(notification)}
+									onRestore={restoreAndOpen}
 									restoring={restoringSessionId === sessionId}
 									restoreDisabled={restoringSessionId !== undefined}
+									projectName={meta?.projectName}
+									sessionName={meta?.sessionName}
 									sessionsReady={sessionsReady}
 									terminated={terminated}
 									offerRestore={offerRestore}
@@ -449,26 +451,28 @@ function NotificationEmpty({ icon: Icon, message }: { icon: typeof Bell; message
  * viewable there instead of being gated behind restore. PR titles stay a real
  * link so a PR row can open the PR without a separate icon button.
  */
-function NotificationItem({
+const NotificationItem = memo(function NotificationItem({
 	highlighted,
-	meta,
 	notification,
 	offerRestore,
 	onOpenSession,
 	onRestore,
+	projectName,
 	restoring,
 	restoreDisabled,
+	sessionName,
 	sessionsReady,
 	terminated,
 }: {
 	highlighted: boolean;
-	meta?: { projectName: string; sessionName: string };
 	notification: NotificationDTO;
 	offerRestore: boolean;
 	onOpenSession: (notification: NotificationDTO) => void;
-	onRestore: () => void;
+	onRestore: (notification: NotificationDTO) => void;
+	projectName?: string;
 	restoring: boolean;
 	restoreDisabled: boolean;
+	sessionName?: string;
 	sessionsReady: boolean;
 	terminated: boolean;
 }) {
@@ -476,9 +480,9 @@ function NotificationItem({
 	const Icon = notificationIcon(notification.type);
 	const sessionId = notification.target.sessionId || notification.sessionId;
 	const canOpenSession = Boolean(sessionId) && sessionsReady && (!terminated || !offerRestore);
-	const copy = notificationCopy(notification, meta?.sessionName);
+	const copy = notificationCopy(notification, sessionName);
 	const titleLink = notificationPRTitleLink(notification, copy.title);
-	const showSessionMeta = Boolean(meta?.sessionName) && !notificationMentions(copy, meta?.sessionName ?? "");
+	const showSessionMeta = Boolean(sessionName) && !notificationMentions(copy, sessionName ?? "");
 	const openRow = () => {
 		if (canOpenSession) onOpenSession(notification);
 	};
@@ -553,13 +557,13 @@ function NotificationItem({
 							{copy.body}
 						</p>
 					) : null}
-					{meta && (meta.projectName || showSessionMeta) ? (
+					{projectName || showSessionMeta ? (
 						<p className="mt-1 flex min-w-0 items-center gap-1.5 text-caption leading-none text-passive">
-							{meta.projectName ? (
-								<span className="truncate font-medium text-muted-foreground">{meta.projectName}</span>
+							{projectName ? (
+								<span className="truncate font-medium text-muted-foreground">{projectName}</span>
 							) : null}
-							{meta.projectName && showSessionMeta ? <span aria-hidden="true">·</span> : null}
-							{showSessionMeta ? <span className="truncate">{meta.sessionName}</span> : null}
+							{projectName && showSessionMeta ? <span aria-hidden="true">·</span> : null}
+							{showSessionMeta ? <span className="truncate">{sessionName}</span> : null}
 						</p>
 					) : null}
 				</div>
@@ -577,7 +581,7 @@ function NotificationItem({
 									disabled={restoreDisabled}
 									onClick={(event) => {
 										event.stopPropagation();
-										onRestore();
+								onRestore(notification);
 									}}
 									type="button"
 								>
@@ -593,7 +597,7 @@ function NotificationItem({
 			</div>
 		</div>
 	);
-}
+});
 
 type NotificationCopy = Pick<NotificationDTO, "body" | "title">;
 
