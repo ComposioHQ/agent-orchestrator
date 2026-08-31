@@ -40,6 +40,37 @@ func (s *Store) UpdateSession(ctx context.Context, rec domain.SessionRecord) err
 	return s.qw.UpdateSession(ctx, recordToUpdate(rec))
 }
 
+// UpdateBrowserCapabilityVerifier rotates only the verifier when the caller's
+// controller-owner snapshot is still current. It deliberately leaves every
+// other mutable session field untouched.
+func (s *Store) UpdateBrowserCapabilityVerifier(
+	ctx context.Context,
+	id domain.SessionID,
+	expected domain.SessionControllerOwner,
+	verifier string,
+	updatedAt time.Time,
+) (bool, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	rows, err := s.qw.UpdateBrowserCapabilityVerifier(ctx, gen.UpdateBrowserCapabilityVerifierParams{
+		BrowserCapabilityVerifier:      verifier,
+		UpdatedAt:                      updatedAt,
+		ID:                             id,
+		ExpectedHarness:                expected.Harness,
+		ExpectedSessionMode:            domain.NormalizeSessionMode(expected.Mode),
+		ExpectedIsTerminated:           expected.IsTerminated,
+		ExpectedRuntimeLaunchID:        expected.RuntimeLaunchID,
+		ExpectedAgentSessionID:         expected.AgentSessionID,
+		ExpectedAgentSessionIDLaunchID: expected.AgentSessionIDLaunchID,
+		ExpectedProviderConversationID: expected.ProviderConversationID,
+		ExpectedControllerGeneration:   expected.ControllerGeneration,
+	})
+	if err != nil {
+		return false, fmt.Errorf("update browser capability verifier for %s: %w", id, err)
+	}
+	return rows > 0, nil
+}
+
 // UpdateSessionFromActivitySignal projects activity-derived session metadata
 // only when the signal still belongs to the session's active harness launch.
 func (s *Store) UpdateSessionFromActivitySignal(ctx context.Context, rec domain.SessionRecord) (bool, error) {

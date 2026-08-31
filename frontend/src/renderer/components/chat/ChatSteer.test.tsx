@@ -1,8 +1,9 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ChatComposer } from "./ChatComposer";
 import { ChatWorkspace } from "./ChatWorkspace";
+import { QueuedMessageDock } from "./QueuedMessageDock";
 import { chatFixture } from "../../lib/chat-fixture";
 import { typeInLexicalEditor } from "../../test/lexical";
 
@@ -11,17 +12,33 @@ import { typeInLexicalEditor } from "../../test/lexical";
 // silently would be worse than the queueing it replaces.
 
 describe("ChatComposer steering", () => {
+	const queuedMessage = (turnId: string, text: string) => ({
+		turnId,
+		message: {
+			kind: "message" as const,
+			id: `message-${turnId}`,
+			turnId,
+			sequence: 1,
+			revision: 0,
+			role: "user" as const,
+			origin: "human" as const,
+			text,
+			streaming: false,
+			createdAt: "2026-08-11T10:01:00Z",
+		},
+	});
+
 	function composer(props: Partial<Parameters<typeof ChatComposer>[0]> = {}) {
 		return render(
 			<ChatComposer onSend={vi.fn()} willQueue onSteer={vi.fn()} canSteer {...props} />,
 		);
 	}
 
-	it("shows delivery indicators while a turn is running", () => {
+	it("does not show delivery indicators in the composer while a turn is running", () => {
 		composer();
-		const delivery = screen.getByRole("group", { name: /where this message goes/i });
-		expect(within(delivery).getByText("Queue")).toBeInTheDocument();
-		expect(within(delivery).getByText("Steer")).toBeInTheDocument();
+		expect(screen.queryByRole("group", { name: /where this message goes/i })).not.toBeInTheDocument();
+		expect(screen.queryByText("Queue")).not.toBeInTheDocument();
+		expect(screen.queryByText("Steer")).not.toBeInTheDocument();
 	});
 
 	it("queues by default while a turn is running", async () => {
@@ -35,17 +52,88 @@ describe("ChatComposer steering", () => {
 		expect(onSteer).not.toHaveBeenCalled();
 	});
 
+	it("keeps Cmd/Ctrl+Enter steering available without advertising it", async () => {
+		const onSteer = vi.fn().mockResolvedValue(undefined);
+		composer({ onSteer });
+
+		await typeInLexicalEditor(screen.getByRole("combobox"), "steer this draft");
+		await userEvent.keyboard("{Control>}{Enter}{/Control}");
+
+		expect(onSteer).toHaveBeenCalledWith("steer this draft");
+		expect(screen.queryByText(/steer/i)).not.toBeInTheDocument();
+	});
+
+	it("steers the next queued message on empty Enter and removes it immediately", async () => {
+		const onPromoteQueuedTurn = vi.fn().mockResolvedValue(undefined);
+		render(
+			<ChatComposer
+				onSend={vi.fn()}
+				willQueue
+				onSteer={vi.fn()}
+				canSteer
+				queuedDock={
+					<QueuedMessageDock
+						messages={[queuedMessage("queued-1", "first"), queuedMessage("queued-2", "next")]}
+						canSteer
+						onPromoteQueuedTurn={onPromoteQueuedTurn}
+					/>
+				}
+			/>,
+		);
+
+		await userEvent.click(screen.getByRole("combobox"));
+		await userEvent.keyboard("{Enter}");
+
+		await waitFor(() => expect(onPromoteQueuedTurn).toHaveBeenCalledWith("queued-1"));
+		expect(screen.queryByTestId("queued-message-queued-1")).not.toBeInTheDocument();
+	});
+
+	it("drains every queued steer request that arrives while a promotion is pending", async () => {
+		let resolveFirstPromotion: (() => void) | undefined;
+		const firstPromotion = new Promise<void>((resolve) => {
+			resolveFirstPromotion = resolve;
+		});
+		const onPromoteQueuedTurn = vi
+			.fn()
+			.mockImplementationOnce(() => firstPromotion)
+			.mockResolvedValueOnce(undefined);
+		const messages = [queuedMessage("queued-1", "first"), queuedMessage("queued-2", "next")];
+		const { rerender } = render(
+			<QueuedMessageDock
+				messages={messages}
+				canSteer
+				canSteerNext
+				steerNextRequest={0}
+				onPromoteQueuedTurn={onPromoteQueuedTurn}
+			/>,
+		);
+
+		rerender(
+			<QueuedMessageDock
+				messages={messages}
+				canSteer
+				canSteerNext
+				steerNextRequest={2}
+				onPromoteQueuedTurn={onPromoteQueuedTurn}
+			/>,
+		);
+
+		await waitFor(() => expect(onPromoteQueuedTurn).toHaveBeenCalledWith("queued-1"));
+		resolveFirstPromotion?.();
+		await waitFor(() => expect(onPromoteQueuedTurn).toHaveBeenNthCalledWith(2, "queued-2"));
+	});
+
 	it("reports the daemon's refusal without a second message of its own", () => {
 		composer({ steerRefusal: "A compaction turn is running. Try again once it finishes." });
 		expect(screen.getByRole("status")).toHaveTextContent(/compaction turn is running/);
 	});
 
-	it("hides delivery indicators when the harness cannot steer", () => {
+	it("hides delivery indicators in the composer when the harness cannot steer", () => {
 		composer({ onSteer: undefined, canSteer: false });
 		expect(screen.queryByText("Steer")).not.toBeInTheDocument();
 	});
 
-	it("hides delivery indicators when no turn is in flight", () => {
+	it("hides delivery indicators in the composer when no turn is in flight", () => {
 		composer({ canSteer: false, willQueue: false });
 		expect(screen.queryByText("Steer")).not.toBeInTheDocument();
 	});
@@ -98,8 +186,179 @@ describe("ChatWorkspace steering", () => {
 			/>,
 		);
 		const dock = screen.getByTestId("queued-message-dock");
+		expect(within(dock).getByText("2 Queued Messages")).toBeVisible();
 		expect(within(dock).getByText("first queued")).toBeVisible();
 		expect(within(dock).getByText("second queued")).toBeVisible();
+		expect(screen.queryByText("Queued · sends when the agent finishes")).not.toBeInTheDocument();
+	});
+
+	it("steers, edits, and deletes queued messages from the dock", async () => {
+		const onPromoteQueuedTurn = vi.fn().mockResolvedValue(undefined);
+		const onBeginQueuedEdit = vi.fn();
+		const onCancelQueuedTurn = vi.fn().mockResolvedValue(undefined);
+		render(
+			<QueuedMessageDock
+				messages={[
+					{
+						turnId: "queued-1",
+						message: {
+							kind: "message",
+							id: "queued-message-1",
+							turnId: "queued-1",
+							sequence: 100,
+							revision: 0,
+							role: "user",
+							origin: "human",
+							text: "first queued",
+							streaming: false,
+							createdAt: "2026-08-11T10:01:00Z",
+						},
+					},
+					{
+						turnId: "queued-2",
+						message: {
+							kind: "message",
+							id: "queued-message-2",
+							turnId: "queued-2",
+							sequence: 101,
+							revision: 0,
+							role: "user",
+							origin: "human",
+							text: "second queued",
+							streaming: false,
+							createdAt: "2026-08-11T10:02:00Z",
+						},
+					},
+				]}
+				canSteer
+				onPromoteQueuedTurn={onPromoteQueuedTurn}
+				onBeginQueuedEdit={onBeginQueuedEdit}
+				onCancelQueuedTurn={onCancelQueuedTurn}
+			/>,
+		);
+
+		expect(screen.queryByText("Queue")).not.toBeInTheDocument();
+		expect(
+			within(screen.getByTestId("queued-message-queued-1")).getAllByRole("button", {
+				name: "Steer this queued message into the running turn",
+			}),
+		).toHaveLength(1);
+
+		await userEvent.click(
+			within(screen.getByTestId("queued-message-queued-2")).getByRole("button", {
+				name: "Steer this queued message into the running turn",
+			}),
+		);
+		expect(onPromoteQueuedTurn).toHaveBeenCalledWith("queued-2");
+		expect(screen.queryByTestId("queued-message-queued-2")).not.toBeInTheDocument();
+
+		await userEvent.click(within(screen.getByTestId("queued-message-queued-1")).getByRole("button", { name: "Edit queued message" }));
+		expect(onBeginQueuedEdit).toHaveBeenCalledWith("queued-1", "first queued");
+
+		await userEvent.click(within(screen.getByTestId("queued-message-queued-1")).getByRole("button", { name: "Delete queued message" }));
+		expect(onCancelQueuedTurn).toHaveBeenCalledWith("queued-1");
+	});
+
+	it("keeps the next queued message visible when the dock is collapsed", async () => {
+		render(
+			<QueuedMessageDock
+				messages={[
+					{
+						turnId: "queued-1",
+						message: {
+							kind: "message",
+							id: "queued-message-1",
+							turnId: "queued-1",
+							sequence: 100,
+							revision: 0,
+							role: "user",
+							origin: "human",
+							text: "first queued",
+							streaming: false,
+							createdAt: "2026-08-11T10:01:00Z",
+						},
+					},
+					{
+						turnId: "queued-2",
+						message: {
+							kind: "message",
+							id: "queued-message-2",
+							turnId: "queued-2",
+							sequence: 101,
+							revision: 0,
+							role: "user",
+							origin: "human",
+							text: "second queued",
+							streaming: false,
+							createdAt: "2026-08-11T10:02:00Z",
+						},
+					},
+				]}
+			/>,
+		);
+
+		const dock = screen.getByTestId("queued-message-dock");
+		expect(within(dock).getByText("first queued")).toBeVisible();
+		expect(within(dock).getByText("second queued")).toBeVisible();
+
+		await userEvent.click(screen.getByRole("button", { expanded: true }));
+		expect(screen.getByRole("button", { expanded: false })).toBeInTheDocument();
+		expect(within(dock).getByText("first queued")).toBeVisible();
+		const hiddenRow = within(dock).getByTestId("queued-message-queued-2");
+		expect(hiddenRow).toHaveAttribute("aria-hidden", "true");
+		expect(hiddenRow).toHaveAttribute("inert");
+	});
+
+	it("hides a cancelled queued message from the timeline", () => {
+		const base = withQueuedMessages();
+		const snapshot = {
+			...base,
+			turns: base.turns.map((turn) =>
+				turn.id === "queued-1"
+					? {
+							...turn,
+							state: "cancelled" as const,
+							completedAt: "2026-08-11T10:03:00Z",
+						}
+					: turn,
+			),
+			items: base.items.filter((item) => item.kind !== "message" || item.turnId !== "queued-1"),
+		};
+		render(<ChatWorkspace snapshot={snapshot} onSteer={vi.fn()} />);
+
+		expect(screen.queryByText("first queued")).not.toBeInTheDocument();
+		expect(within(screen.getByTestId("queued-message-dock")).getByText("second queued")).toBeVisible();
+	});
+
+	it("clears a queued edit when that message is deleted from the dock", async () => {
+		const onCancelQueuedTurn = vi.fn().mockResolvedValue(undefined);
+		render(
+			<ChatWorkspace
+				snapshot={withQueuedMessages()}
+				onSteer={vi.fn()}
+				onEditQueuedTurn={vi.fn()}
+				onCancelQueuedTurn={onCancelQueuedTurn}
+			/>,
+		);
+
+		await userEvent.click(within(screen.getByTestId("queued-message-queued-1")).getByRole("button", { name: "Edit queued message" }));
+		await waitFor(() => expect(screen.getByText(/editing/i)).toBeInTheDocument());
+
+		await userEvent.click(within(screen.getByTestId("queued-message-queued-1")).getByRole("button", { name: "Delete queued message" }));
+		await waitFor(() => expect(onCancelQueuedTurn).toHaveBeenCalledWith("queued-1"));
+		await waitFor(() => expect(screen.queryByText(/editing/i)).not.toBeInTheDocument());
+	});
+
+	it("shows the queued dock while messages are still queued between turns", () => {
+		const snapshot = {
+			...withQueuedMessages(),
+			turns: withQueuedMessages().turns.map((turn) =>
+				turn.state === "running" ? { ...turn, state: "completed" as const } : turn,
+			),
+		};
+		render(<ChatWorkspace snapshot={snapshot} onSteer={vi.fn()} />);
+		expect(screen.getByTestId("queued-message-dock")).toBeInTheDocument();
+		expect(within(screen.getByTestId("queued-message-dock")).getByText("first queued")).toBeVisible();
 	});
 
 	it("keeps queued messages docked after the conversation branches", () => {
@@ -115,7 +374,30 @@ describe("ChatWorkspace steering", () => {
 		expect(within(dock).getByText("second queued")).toBeVisible();
 	});
 
-	it("shows the delivery indicator only for a running turn without a pending approval", () => {
+	it("shows the standard steer action on the next row and hover steer on later rows", () => {
+		render(
+			<ChatWorkspace
+				snapshot={withQueuedMessages()}
+				onSteer={vi.fn()}
+				onPromoteQueuedTurn={vi.fn()}
+			/>,
+		);
+
+		const dock = screen.getByTestId("queued-message-dock");
+		expect(within(dock).queryByText("Queue")).not.toBeInTheDocument();
+		expect(
+			within(screen.getByTestId("queued-message-queued-1")).getByRole("button", {
+				name: "Steer this queued message into the running turn",
+			}),
+		).toBeInTheDocument();
+		expect(
+			within(screen.getByTestId("queued-message-queued-2")).getByRole("button", {
+				name: "Steer this queued message into the running turn",
+			}),
+		).toBeInTheDocument();
+	});
+
+	it("does not show delivery indicators in the composer for a running turn without a pending approval", () => {
 		const snapshot = {
 			...chatFixture,
 			items: chatFixture.items.filter(
@@ -124,8 +406,8 @@ describe("ChatWorkspace steering", () => {
 			),
 		};
 		render(<ChatWorkspace snapshot={snapshot} onSteer={vi.fn()} />);
-		expect(screen.getByText("Steer")).toBeInTheDocument();
-		expect(screen.getByText("Queue")).toBeInTheDocument();
+		expect(screen.queryByText("Queue")).not.toBeInTheDocument();
+		expect(screen.queryByText("Steer")).not.toBeInTheDocument();
 	});
 
 	it("does not show delivery indicator on a settled conversation", () => {
