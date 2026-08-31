@@ -31,7 +31,7 @@ export function StoreUpdateSheet({
 		<SheetScreen title="Update available" subtitle={describePrompt({ version, storeConfirmed, storeName })}>
 			<View style={s.body}>
 				<Text style={s.blurb}>
-					New fixes ship against the newer build, so this one stops receiving over-the-air updates.
+					Update to the latest version for the best experience.
 				</Text>
 				<Button title="Update" icon="download" onPress={onUpdate} />
 				<Button title="Not now" variant="ghost" onPress={onDismiss} />
