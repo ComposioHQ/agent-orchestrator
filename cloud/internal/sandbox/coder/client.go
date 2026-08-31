@@ -40,6 +40,7 @@ const (
 	bootstrapOK         = "__AO_BOOTSTRAP_OK__"
 	bootstrapFailed     = "__AO_BOOTSTRAP_FAILED__"
 	bootstrapUploadACK  = "__AO_UPLOAD_ACK__"
+	bootstrapUploadDone = "__AO_UPLOAD_DONE__"
 )
 
 var userPattern = regexp.MustCompile(`^[a-z_][a-z0-9_-]{0,31}$`)
@@ -309,19 +310,35 @@ func (c *Client) BootstrapWorker(ctx context.Context, id sandbox.ID, bootstrap s
 		return fmt.Errorf("coder: build PTY URL: %w", err)
 	}
 	query := ptyURL.Query()
-	query.Set("reconnect", uuid.NewString())
 	query.Set("width", "120")
 	query.Set("height", "40")
 	query.Set("command", command)
 	// Bootstrap is a short-lived, non-interactive command. The buffered backend
-	// preserves its final output when the process exits; the screen backend is
-	// intended for reconnecting human terminals and can close before the success
-	// marker is delivered.
+	// lets the command finish after AO disconnects once the upload is accepted.
 	query.Set("backend_type", "buffered")
 	ptyURL.RawQuery = query.Encode()
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if err := c.bootstrapThroughPTY(ctx, ptyURL, encoded); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+	}
+	return fmt.Errorf("coder: bootstrap worker after PTY retries: %w", lastErr)
+}
+
+func (c *Client) bootstrapThroughPTY(ctx context.Context, ptyURL *url.URL, encoded string) error {
+	attemptURL := *ptyURL
+	query := attemptURL.Query()
+	query.Set("reconnect", uuid.NewString())
+	attemptURL.RawQuery = query.Encode()
 
 	headers := http.Header{"Coder-Session-Token": []string{c.token}}
-	conn, response, err := websocket.Dial(ctx, ptyURL.String(), &websocket.DialOptions{
+	conn, response, err := websocket.Dial(ctx, attemptURL.String(), &websocket.DialOptions{
 		HTTPClient: c.http, HTTPHeader: headers,
 	})
 	if err != nil {
@@ -351,24 +368,14 @@ func (c *Client) BootstrapWorker(ctx context.Context, id sandbox.ID, bootstrap s
 		end := min(offset+chunkSize, len(encoded))
 		chunk := encoded[offset:end]
 		line := fmt.Sprintf("data:%d:%d:%s\n", sequence, len(chunk), chunk)
-		if err := sendBootstrapFrame(ctx, encoder, output, line, sequence+1); err != nil {
+		wanted := fmt.Sprintf("%s:%d", bootstrapUploadACK, sequence+1)
+		if err := sendBootstrapFrame(ctx, encoder, output, line, wanted); err != nil {
 			return err
 		}
 		sequence++
 	}
-	if err := encoder.Encode(struct {
-		Data string `json:"data"`
-	}{Data: fmt.Sprintf("done:%d:0:\n", sequence)}); err != nil {
-		return fmt.Errorf("coder: finish worker upload through PTY: %w", err)
-	}
-	result, err := readBootstrapResult(ctx, output)
-	if err != nil {
-		return err
-	}
-	if strings.Contains(result, bootstrapOK) {
-		return nil
-	}
-	return fmt.Errorf("coder: worker bootstrap did not complete: %s", sanitizePTYOutput(result))
+	return sendBootstrapFrame(ctx, encoder, output,
+		fmt.Sprintf("done:%d:0:\n", sequence), bootstrapUploadDone)
 }
 
 func sendBootstrapFrame(
@@ -376,13 +383,12 @@ func sendBootstrapFrame(
 	encoder *json.Encoder,
 	output <-chan ptyOutput,
 	line string,
-	expectedACK int,
+	wanted string,
 ) error {
 	const (
 		maxAttempts = 6
 		ackTimeout  = 2 * time.Second
 	)
-	wanted := fmt.Sprintf("%s:%d", bootstrapUploadACK, expectedACK)
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		if err := encoder.Encode(struct {
 			Data string `json:"data"`
@@ -516,7 +522,7 @@ func bootstrapCommand(bootstrap sandbox.WorkerBootstrap, encodedLength int) stri
 		"  case \"$declared\" in ''|*[!0-9]*) continue ;; esac\n" +
 		"  if [ \"$kind\" = data ] && [ \"$sequence\" -eq \"$expected\" ] && [ \"${#chunk}\" -eq \"$declared\" ] && [ $((received + declared)) -le \"$target\" ]; then\n" +
 		"    printf %s \"$chunk\" >>\"$encoded\"\n    received=$((received + declared))\n    expected=$((expected + 1))\n    echo " + bootstrapUploadACK + ":$expected\n" +
-		"  elif [ \"$kind\" = done ] && [ \"$received\" -eq \"$target\" ]; then\n    break\n  fi\ndone\nstty echo icanon\n" +
+		"  elif [ \"$kind\" = done ] && [ \"$received\" -eq \"$target\" ]; then\n    echo " + bootstrapUploadDone + "\n    break\n  fi\ndone\nstty echo icanon\n" +
 		"base64 -d \"$encoded\" | gzip -d | tar -xf - -C \"$stage\"\n" +
 		"sudo -n id -u " + shellQuote(workerUser) + " >/dev/null 2>&1 || sudo -n useradd -m " + shellQuote(workerUser) + "\n" +
 		"sudo -n mkdir -p /workspace/repository /workspace/.ao/worker /workspace/.ao/harness /workspace/.ao/repository-credentials\n" +

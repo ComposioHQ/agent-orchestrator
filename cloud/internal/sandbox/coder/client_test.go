@@ -203,6 +203,7 @@ func TestBootstrapWorkerStreamsArchiveWithoutSecretsInURL(t *testing.T) {
 					_, _ = io.WriteString(netConnection, fmt.Sprintf("%s:%d\r\n", bootstrapUploadACK, expectedSequence))
 				}
 				if parts[0] == "done" && encoded.Len() == wanted {
+					_, _ = io.WriteString(netConnection, bootstrapUploadDone+"\r\n")
 					break
 				}
 			}
