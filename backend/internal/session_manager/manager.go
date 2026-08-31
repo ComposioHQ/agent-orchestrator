@@ -1603,7 +1603,11 @@ func (m *Manager) RollbackSpawn(ctx context.Context, id domain.SessionID) (delet
 // A session whose runtime handle or workspace path is missing (e.g. spawn
 // failed partway, handle lost after a crash) is still terminated after the
 // available destroy steps are skipped so it can be cleaned up from the
-// dashboard.
+// dashboard. Calling Kill again for an already-terminated row is idempotent:
+// it clears only session-scoped preview/browser/prompt artifacts and leaves
+// runtime/workspace reclamation to Cleanup. That distinction matters for
+// historical orchestrators whose canonical workspace is shared by the live
+// replacement.
 func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 	if err := m.beginAgentOperation(ctx, id, agentOperationKill); err != nil {
 		if errors.Is(err, errAgentOperationInProgress) {
@@ -1634,6 +1638,9 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 	// from under the current owner. Cleanup separately refuses reclamation while
 	// a live orchestrator still owns the same path.
 	if rec.IsTerminated {
+		m.stopPreviewBestEffort(ctx, id)
+		m.destroyBrowserBestEffort(ctx, id)
+		m.cleanupSystemPromptDir(id)
 		return false, nil
 	}
 	m.stopPreviewBestEffort(ctx, id)
@@ -3923,9 +3930,6 @@ func (m *Manager) Cleanup(ctx context.Context, project domain.ProjectID) (Cleanu
 			m.cleanupSystemPromptDir(rec.ID)
 			continue
 		}
-		if h := runtimeHandle(rec.Metadata); h.ID != "" {
-			_ = m.runtime.Destroy(ctx, h) // best effort; usually already gone
-		}
 		if reason := m.cleanupOne(ctx, rec, ws); reason != "" {
 			result.Skipped = append(result.Skipped, CleanupSkip{SessionID: rec.ID, Reason: reason})
 			continue
@@ -3970,6 +3974,13 @@ func (m *Manager) cleanupOne(ctx context.Context, rec domain.SessionRecord, ws p
 		if shared {
 			return "workspace is owned by active orchestrator"
 		}
+	}
+	// Runtime teardown belongs inside the same fenced operation as workspace
+	// reclamation. In particular, an orchestrator restored after Cleanup's list
+	// snapshot can reuse its deterministic runtime handle; destroying the stale
+	// snapshot's handle before the locked re-read would kill the new controller.
+	if h := runtimeHandle(rec.Metadata); h.ID != "" {
+		_ = m.runtime.Destroy(ctx, h) // best effort; usually already gone
 	}
 	release, closeErr := m.beginShellTerminalTeardown(ctx, rec.ID)
 	if closeErr != nil {

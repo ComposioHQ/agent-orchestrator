@@ -40,6 +40,7 @@ type fakeStore struct {
 	updateSessionErr   error
 	conversationErr    error
 	conversationOwners map[domain.SessionID]domain.ConversationRecord
+	listSessionsAfter  func()
 	// agentSwitchStore is wired only by agent-switch tests so fakeLCM can model
 	// Lifecycle Manager's atomic ownership-boundary commands.
 	agentSwitchStore any
@@ -132,6 +133,10 @@ func (f *fakeStore) ListSessions(_ context.Context, p domain.ProjectID) ([]domai
 		if r.ProjectID == p {
 			out = append(out, r)
 		}
+	}
+	if after := f.listSessionsAfter; after != nil {
+		f.listSessionsAfter = nil
+		after()
 	}
 	return out, nil
 }
@@ -2691,6 +2696,11 @@ func TestKill_TearsDownRuntimeAndWorkspace(t *testing.T) {
 
 func TestKill_AlreadyTerminatedIsNoopAndPreservesWorkspace(t *testing.T) {
 	m, st, rt, ws := newManager()
+	preview := &fakePreviewLifecycle{}
+	browser := &fakeBrowserLifecycle{}
+	m.preview = preview
+	m.browser = browser
+	m.dataDir = t.TempDir()
 	rec := mkLive("mer-1")
 	rec.IsTerminated = true
 	rec.Activity.State = domain.ActivityExited
@@ -2699,6 +2709,9 @@ func TestKill_AlreadyTerminatedIsNoopAndPreservesWorkspace(t *testing.T) {
 		SessionID: rec.ID, RepoName: domain.RootWorkspaceRepoName,
 		Branch: rec.Metadata.Branch, WorktreePath: rec.Metadata.WorkspacePath, State: "active",
 	}}
+	if _, err := m.writeSystemPromptFile(rec.ID, "historical prompt"); err != nil {
+		t.Fatal(err)
+	}
 
 	freed, err := m.Kill(ctx, rec.ID)
 	if err != nil || freed {
@@ -2707,6 +2720,13 @@ func TestKill_AlreadyTerminatedIsNoopAndPreservesWorkspace(t *testing.T) {
 	if rt.destroyed != 0 || ws.destroyed != 0 {
 		t.Fatalf("terminated session teardown = runtime:%d workspace:%d, want none", rt.destroyed, ws.destroyed)
 	}
+	if !reflect.DeepEqual(preview.stopped, []domain.SessionID{rec.ID}) {
+		t.Fatalf("preview stops = %v, want [%s]", preview.stopped, rec.ID)
+	}
+	if !reflect.DeepEqual(browser.destroyed, []domain.SessionID{rec.ID}) {
+		t.Fatalf("browser destroys = %v, want [%s]", browser.destroyed, rec.ID)
+	}
+	requireNoPromptDir(t, m.dataDir, rec.ID)
 	if rows := st.worktrees[rec.ID]; len(rows) != 1 || rows[0].WorktreePath != rec.Metadata.WorkspacePath {
 		t.Fatalf("terminated session worktree inventory = %+v, want preserved", rows)
 	}
@@ -3336,6 +3356,35 @@ func TestCleanup_ReclaimsTerminalWorkspaces(t *testing.T) {
 	}
 	if ws.destroyed != 1 {
 		t.Fatal("live workspace must not be destroyed")
+	}
+}
+
+func TestCleanup_DoesNotDestroyRuntimeRestoredAfterOrchestratorSnapshot(t *testing.T) {
+	m, st, rt, ws := newManager()
+	rec := mkLive("mer-1")
+	rec.Kind = domain.KindOrchestrator
+	rec.IsTerminated = true
+	rec.Activity.State = domain.ActivityExited
+	st.sessions[rec.ID] = rec
+	st.listSessionsAfter = func() {
+		current := st.sessions[rec.ID]
+		current.IsTerminated = false
+		current.Activity.State = domain.ActivityIdle
+		st.sessions[rec.ID] = current
+	}
+
+	res, err := m.Cleanup(ctx, rec.ProjectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Cleaned) != 0 || len(res.Skipped) != 1 || res.Skipped[0].SessionID != rec.ID {
+		t.Fatalf("Cleanup result = %+v, want restored orchestrator skipped", res)
+	}
+	if res.Skipped[0].Reason != "session is no longer terminated" {
+		t.Fatalf("Cleanup skip reason = %q", res.Skipped[0].Reason)
+	}
+	if rt.destroyed != 0 || ws.destroyed != 0 {
+		t.Fatalf("restored orchestrator teardown = runtime:%d workspace:%d, want none", rt.destroyed, ws.destroyed)
 	}
 }
 
