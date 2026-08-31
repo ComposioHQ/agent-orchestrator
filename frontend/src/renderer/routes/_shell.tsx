@@ -150,6 +150,10 @@ function ShellLayout() {
 	const queryClient = useQueryClient();
 	const workspaceQuery = useWorkspaceQuery();
 	const workspaces = workspaceQuery.data ?? [];
+	// Global shortcut listeners need the latest workspace list, but recreating
+	// those subscriptions for every streamed activity update is avoidable.
+	const workspacesRef = useRef(workspaces);
+	workspacesRef.current = workspaces;
 	const daemonStatus = useDaemonStatus(queryClient);
 	const [workspaceStartupState, setWorkspaceStartupState] = useState<"loading" | "ready" | "error">("loading");
 	const workspaceStartupBaselineRef = useRef(0);
@@ -351,7 +355,7 @@ function ShellLayout() {
 	const navigateSession = useCallback(
 		(direction: -1 | 1) => {
 			if (!scopedProjectId) return;
-			const sessions = (workspaces.find((workspace) => workspace.id === scopedProjectId)?.sessions ?? []).filter(
+			const sessions = (workspacesRef.current.find((workspace) => workspace.id === scopedProjectId)?.sessions ?? []).filter(
 				sessionIsActive,
 			);
 			if (sessions.length === 0) return;
@@ -369,7 +373,7 @@ function ShellLayout() {
 				params: { projectId: scopedProjectId, sessionId: session.id },
 			});
 		},
-		[navigate, routeParams.sessionId, scopedProjectId, workspaces],
+		[navigate, routeParams.sessionId, scopedProjectId],
 	);
 
 	const updateWorkspaces = useCallback(
@@ -688,7 +692,7 @@ function ShellLayout() {
 				return;
 			}
 			if (matchesRendererShortcut("open-project", event)) {
-				const workspace = workspaces[Number(event.key) - 1];
+				const workspace = workspacesRef.current[Number(event.key) - 1];
 				if (workspace) {
 					event.preventDefault();
 					void navigate({ to: "/projects/$projectId", params: { projectId: workspace.id } });
@@ -697,7 +701,7 @@ function ShellLayout() {
 		};
 		window.addEventListener("keydown", handleKeyDown);
 		return () => window.removeEventListener("keydown", handleKeyDown);
-	}, [navigate, toggleSidebar, workspaces]);
+	}, [navigate, toggleSidebar]);
 
 	// New session (⌘N / Ctrl+Shift+N) is detected in the main process and
 	// delivered here, so it fires even when focus is inside xterm or a native
