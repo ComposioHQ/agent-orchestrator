@@ -25,7 +25,7 @@ import {
 import { NotificationCenter } from "./NotificationCenter";
 import { ResizeHandle } from "./ResizeHandle";
 import { SessionFileExplorer } from "./SessionFileExplorer";
-import { SessionFileTab } from "./SessionFileTabs";
+import { SessionFileTab, SessionFileTabActions } from "./SessionFileTabs";
 import { SessionFileWorkspace } from "./SessionFileWorkspace";
 import { SessionActionsMenu } from "./SessionActionsMenu";
 import { SessionInspector } from "./SessionInspector";
@@ -40,7 +40,6 @@ import { SwitchAgentDialog } from "./SwitchAgentDialog";
 import { SessionTopbarHost } from "./SessionTopbarPortal";
 import { TerminalSwitchAgentButton } from "./TerminalSwitchAgentButton";
 import { TopbarButton } from "./TopbarButton";
-import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import { useBrowserView } from "../hooks/useBrowserView";
 import { useFileAnnotation } from "../hooks/useFileAnnotation";
 import { useResizable } from "../hooks/useResizable";
@@ -65,6 +64,7 @@ import { matchWorkspaceFilePath } from "../lib/workspace-file-path";
 import { SHELL_PANEL_SPRING } from "../lib/motion-spring";
 import {
 	activateSessionFile,
+	closeAllSessionFiles,
 	closeSessionFile,
 	EMPTY_SESSION_FILE_TABS,
 	openSessionFile,
@@ -786,6 +786,20 @@ export function SessionView({ sessionId, cloudOrgId, projectId }: SessionViewPro
 		}
 		removeAuxiliaryTab(`file:${path}`);
 	}, [activateAuxiliaryTab, adjacentAuxiliaryTab, fileTabs.activePath, removeAuxiliaryTab, sessionId]);
+	const closeAllCenterFiles = useCallback(() => {
+		setFileTabsBySession((current) => ({ ...current, [sessionId]: closeAllSessionFiles() }));
+		setAuxiliaryTabOrderBySession((current) => {
+			const currentOrder = current[sessionId];
+			if (!currentOrder?.some((key) => key.startsWith("file:"))) return current;
+			const nextOrder = currentOrder.filter((key) => !key.startsWith("file:"));
+			if (nextOrder.length === 0) {
+				const { [sessionId]: _removed, ...rest } = current;
+				return rest;
+			}
+			return { ...current, [sessionId]: nextOrder };
+		});
+	}, [sessionId]);
+
 	// The shell layout owns opening (it is mounted on every route, so the button
 	// and ⌘T / Ctrl+T work everywhere); this view only follows the result. When a new
 	// shell becomes active while a session is on screen, switch the pane to it —
@@ -1023,21 +1037,15 @@ export function SessionView({ sessionId, cloudOrgId, projectId }: SessionViewPro
 	const newTerminalError = openShellTerminal.error ? apiErrorMessage(openShellTerminal.error) : undefined;
 	const newShellTerminalAction =
 		session && !isOrchestrator ? (
-			<Tooltip>
-				<TooltipTrigger asChild>
-					<TopbarButton
-						aria-label={t("shortcut.new-shell-terminal")}
-						onClick={addShellTerminal}
-						type="button"
-						variant="icon"
-					>
-						<Plus aria-hidden="true" className="size-icon-md" />
-					</TopbarButton>
-				</TooltipTrigger>
-				<TooltipContent side="bottom">
-					{newTerminalError ?? t("terminal.newWithShortcut", { shortcut: newTerminalShortcutLabel })}
-				</TooltipContent>
-			</Tooltip>
+			<TopbarButton
+				aria-label={t("shortcut.new-shell-terminal")}
+				onClick={addShellTerminal}
+				title={newTerminalError ?? t("terminal.newWithShortcut", { shortcut: newTerminalShortcutLabel })}
+				type="button"
+				variant="icon"
+			>
+				<Plus aria-hidden="true" className="size-icon-md" />
+			</TopbarButton>
 		) : null;
 	const fileAnnotation = useFileAnnotation(sessionId);
 	const centerFileTabs = useMemo(
@@ -1057,6 +1065,9 @@ export function SessionView({ sessionId, cloudOrgId, projectId }: SessionViewPro
 			})),
 		[activateCenterFile, closeCenterFile, fileAnnotation, fileTabs.activePath, fileTabs.openPaths],
 	);
+	const centerFileTabActions = fileTabs.openPaths.length > 0 ? (
+		<SessionFileTabActions onCloseAll={closeAllCenterFiles} />
+	) : undefined;
 	const activeWorkspaceTabKey = fileTabs.activePath ? `file:${fileTabs.activePath}` : undefined;
 	const previewUrl = session?.previewUrl?.trim() || undefined;
 	const previewRevision = session?.previewRevision;
@@ -1138,11 +1149,15 @@ export function SessionView({ sessionId, cloudOrgId, projectId }: SessionViewPro
 	useEffect(() => {
 		if (handoffSwitchError) setHandoffDialogOpen(true);
 	}, [handoffSwitchError]);
+	// Keep the switch visible on the session tab, rather than only in the
+	// overflow menu. In particular, a Cloud tab can be selected before its
+	// row reaches the list cache; the visible control then makes its resolving
+	// state explicit instead of looking like the feature disappeared.
 	const interfaceSwitchInlineStatus =
-		session && showInterfaceSwitchAction ? (
+		showInterfaceSwitchAction ? (
 			<SessionInterfaceSwitchButton
 				target={interfaceTarget}
-				supported={Boolean(interfaceSwitch.status?.supported) && !activeInterfaceTransition}
+				supported={session?.cloud ? Boolean(interfaceSwitch.status?.supported) : true}
 				disabledReason={
 					interfaceSwitch.isLoading
 						? "Checking whether this agent can switch interfaces…"
@@ -1184,9 +1199,8 @@ export function SessionView({ sessionId, cloudOrgId, projectId }: SessionViewPro
 			switchError={handoffSwitchError}
 		/>
 	) : null;
-	const cloudInterfaceSwitchAction = session?.cloud ? interfaceSwitchInlineStatus : null;
 	const sessionTabActions = (
-		<SessionActionsMenu inlineStatus={session?.cloud ? undefined : interfaceSwitchInlineStatus}>
+		<SessionActionsMenu inlineStatus={interfaceSwitchInlineStatus}>
 			{interfaceSwitchMenuItem}
 			{handoffMenuItem}
 		</SessionActionsMenu>
@@ -1194,14 +1208,10 @@ export function SessionView({ sessionId, cloudOrgId, projectId }: SessionViewPro
 	const compactSessionChrome = adaptiveWorkspaceActive;
 	const sessionHeaderActions = (
 		<div
-			className="session-topbar-session-chrome flex shrink-0 items-center gap-1"
+			className="session-topbar-session-chrome flex shrink-0 items-center"
 			data-compact-session-chrome={compactSessionChrome ? "true" : "false"}
 		>
-			<ShellTopbar
-				compactActions={compactSessionChrome}
-				embedded
-				sessionAction={cloudInterfaceSwitchAction}
-			/>
+			<ShellTopbar compactActions={compactSessionChrome} embedded />
 		</div>
 	);
 
@@ -1576,6 +1586,7 @@ export function SessionView({ sessionId, cloudOrgId, projectId }: SessionViewPro
 									tabStripAction={newShellTerminalAction}
 									handoffDialogOpen={handoffDialogOpen}
 									workspaceTabs={centerFileTabs}
+									workspaceTabActions={centerFileTabActions}
 									workspaceActiveTabKey={activeWorkspaceTabKey}
 									auxiliaryTabOrder={resolvedAuxiliaryTabOrder}
 									onAuxiliaryTabOrderChange={setAuxiliaryTabOrder}
@@ -1611,6 +1622,7 @@ export function SessionView({ sessionId, cloudOrgId, projectId }: SessionViewPro
 									tabStripAction={newShellTerminalAction}
 									handoffDialogOpen={handoffDialogOpen}
 									workspaceTabs={centerFileTabs}
+									workspaceTabActions={centerFileTabActions}
 									workspaceActiveTabKey={activeWorkspaceTabKey}
 									auxiliaryTabOrder={resolvedAuxiliaryTabOrder}
 									onAuxiliaryTabOrderChange={setAuxiliaryTabOrder}
@@ -1679,22 +1691,16 @@ export function SessionView({ sessionId, cloudOrgId, projectId }: SessionViewPro
 			</div>
 			{hasInspector ? (
 				<div className="session-pinned-actions" data-testid="session-pinned-actions" style={noDragStyle}>
-					<Tooltip>
-						<TooltipTrigger asChild>
-							<TopbarButton
-								aria-label={isInspectorOpen ? t("shell.closeInspector") : t("shell.openInspector")}
-								aria-pressed={isInspectorOpen}
-								onClick={handleToggleInspector}
-								style={noDragStyle}
-								variant="icon"
-							>
-								<PanelRight className="size-icon-md" aria-hidden="true" />
-							</TopbarButton>
-						</TooltipTrigger>
-						<TooltipContent side="bottom">
-							{isInspectorOpen ? t("shell.closeInspectorTitle") : t("shell.openInspectorTitle")}
-						</TooltipContent>
-					</Tooltip>
+					<TopbarButton
+						aria-label={isInspectorOpen ? t("shell.closeInspector") : t("shell.openInspector")}
+						aria-pressed={isInspectorOpen}
+						onClick={handleToggleInspector}
+						style={noDragStyle}
+						title={isInspectorOpen ? t("shell.closeInspectorTitle") : t("shell.openInspectorTitle")}
+						variant="icon"
+					>
+						<PanelRight className="size-icon-md" aria-hidden="true" />
+					</TopbarButton>
 					{/* Keep the global notification action trailing at the window edge. */}
 					<NotificationCenter style={noDragStyle} />
 				</div>
