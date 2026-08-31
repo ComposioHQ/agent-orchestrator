@@ -880,9 +880,10 @@ WHERE name = 'cloud_offering'`).Scan(&cloudShape); err != nil {
 // of version numbers subsequently claimed by main. Early Phase 1 builds used
 // 0117 to drop agent_inventory_cache and early Phase 3 builds used 0118 for
 // codex_session_bindings. Those numbers now belong to Kimi usage and cancelled
-// conversation turns. Release collided entries only when their canonical
-// physical effects are absent, then record an existing binding schema at its
-// canonical 0120 so goose never attempts to create the table twice.
+// conversation turns. Phase 5 also occupied 0119 before moving to 0121.
+// Release collided entries only when their canonical physical effects are
+// absent, then record complete existing profile schemas at their canonical
+// versions so goose never attempts to create their tables twice.
 func repairRenumberedCodexProfileMigrationHistory(db *sql.DB) error {
 	var gooseTable int
 	if err := db.QueryRow(
@@ -915,6 +916,10 @@ SELECT COALESCE((
 	if err != nil {
 		return err
 	}
+	applied121, err := latestApplied(121)
+	if err != nil {
+		return err
+	}
 
 	var kimiUsageShape int
 	if err := db.QueryRow(`
@@ -944,10 +949,29 @@ SELECT (SELECT COUNT(*) FROM pragma_table_info('codex_session_bindings')
 		return err
 	}
 
+	var profileSwitchShape int
+	if err := db.QueryRow(`
+SELECT (SELECT COUNT(*) FROM pragma_table_info('codex_profile_switches')
+        WHERE name IN (
+            'id', 'source_session_id', 'target_session_id',
+            'source_profile_id', 'target_profile_id', 'phase',
+            'workspace_owner', 'final_handoff_path', 'final_handoff_hash',
+            'requested_at', 'updated_at'
+        ))
+     + (SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'archived_at')
+     + (SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND name IN (
+            'codex_profile_switches_cdc_insert',
+            'codex_profile_switches_cdc_update',
+            'sessions_cdc_profile_archive'
+        ))`).Scan(&profileSwitchShape); err != nil {
+		return err
+	}
+
 	release117 := applied117 != 0 && kimiUsageShape != 2
 	release118 := applied118 != 0 && cancelledTurnShape == 0
 	mark120 := bindingShape == 6 && applied120 == 0
-	if !release117 && !release118 && !mark120 {
+	mark121 := profileSwitchShape == 15 && applied121 == 0
+	if !release117 && !release118 && !mark120 && !mark121 {
 		return nil
 	}
 
@@ -968,6 +992,11 @@ SELECT (SELECT COUNT(*) FROM pragma_table_info('codex_session_bindings')
 	}
 	if mark120 {
 		if _, err := tx.Exec(`INSERT INTO goose_db_version (version_id, is_applied) VALUES (120, 1)`); err != nil {
+			return err
+		}
+	}
+	if mark121 {
+		if _, err := tx.Exec(`INSERT INTO goose_db_version (version_id, is_applied) VALUES (121, 1)`); err != nil {
 			return err
 		}
 	}

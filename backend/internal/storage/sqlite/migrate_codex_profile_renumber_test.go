@@ -23,17 +23,20 @@ func TestMigrateRepairsRenumberedCodexProfileHistory(t *testing.T) {
 	applyLegacyCodexProfileMigrations(t, db, []legacyCodexProfileMigration{
 		{version: 117, canonicalPath: "migrations/0119_drop_agent_inventory_cache.sql", legacyName: "drop_agent_inventory_cache.sql"},
 		{version: 118, canonicalPath: "migrations/0120_codex_session_bindings.sql", legacyName: "codex_session_bindings.sql"},
+		{version: 119, canonicalPath: "migrations/0121_codex_profile_switches.sql", legacyName: "codex_profile_switches.sql"},
 	})
 
 	if err := migrate(db); err != nil {
 		t.Fatalf("migrate renumbered Codex profile database: %v", err)
 	}
 
-	assertAppliedMigrations(t, db, 117, 118, 119, 120)
+	assertAppliedMigrations(t, db, 117, 118, 119, 120, 121)
 	assertTableSQLContains(t, db, "usage_bindings", "'kimi'")
 	assertTableSQLContains(t, db, "usage_sources", "'kimi_wire'")
 	assertTableSQLContains(t, db, "conversation_turns", "'cancelled'")
 	assertTableColumnsPresent(t, db, "codex_session_bindings", "session_id", "profile_id", "profile_source", "codex_home", "created_at")
+	assertTableColumnsPresent(t, db, "sessions", "archived_at")
+	assertTableColumnsPresent(t, db, "codex_profile_switches", "id", "source_session_id", "target_session_id", "phase", "workspace_owner")
 	var inventoryTable int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'agent_inventory_cache'`).Scan(&inventoryTable); err != nil {
 		t.Fatalf("read agent inventory table: %v", err)
