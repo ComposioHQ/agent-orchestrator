@@ -4,6 +4,7 @@ import { Folder, Star } from "lucide-react";
 import { aoBridge } from "../lib/bridge";
 import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
 import type { WorkspaceSummary } from "../types/workspace";
+import { BoardWelcome } from "./BoardEmptyStates";
 import { TopbarButton } from "./TopbarButton";
 
 const GITHUB_REPOSITORY_URL = "https://github.com/Untrivial-ai/agent-orchestrator";
@@ -41,6 +42,8 @@ export function HomePage() {
 		.slice()
 		.sort((left, right) => latestProjectTimestamp(right).localeCompare(latestProjectTimestamp(left)))
 		.slice(0, 3);
+
+	if (workspaceQuery.isSuccess && projects.length === 0) return <BoardWelcome />;
 
 	return (
 		<div className="flex min-h-full items-center justify-center px-6 py-16">

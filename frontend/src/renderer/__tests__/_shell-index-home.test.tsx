@@ -13,7 +13,11 @@ vi.mock("@tanstack/react-router", async (importOriginal) => ({
 }));
 
 vi.mock("../hooks/useWorkspaceQuery", () => ({
-	useWorkspaceQuery: () => ({ data: routeMocks.workspaces }),
+	useWorkspaceQuery: () => ({ data: routeMocks.workspaces, isSuccess: true }),
+}));
+
+vi.mock("../components/BoardEmptyStates", () => ({
+	BoardWelcome: () => <div data-testid="board-welcome" />,
 }));
 
 import { HomePage } from "../components/HomePage";
@@ -24,7 +28,15 @@ beforeEach(() => {
 });
 
 describe("shell index route", () => {
-	it("renders the home page instead of redirecting to a scratch board", async () => {
+	it("restores first-run onboarding when no projects exist", async () => {
+		render(<HomePage />);
+
+		expect(screen.getByTestId("board-welcome")).toBeInTheDocument();
+		expect(screen.queryByText("Jump back right in")).not.toBeInTheDocument();
+		expect(routeMocks.navigate).not.toHaveBeenCalled();
+	});
+
+	it("renders the home page instead of redirecting to a scratch board when projects exist", async () => {
 		routeMocks.workspaces = [
 			{
 				id: "scratch",
