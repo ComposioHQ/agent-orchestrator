@@ -1,6 +1,7 @@
-// xterm answers OSC 10/11/12 queries (fg/bg/cursor) on its onData stream.
-// Cursor Agent's theme probe issues those queries on stdout and listens on
-// stdin; AO must return the live palette or the prompt bar defaults to dark.
+// xterm emits OSC 4/10/11/12 color reports on its onData stream. AO forwards
+// only strict, complete reports back to the PTY. Cursor Agent's theme probe
+// specifically issues OSC 10/11/12 queries on stdout and listens on stdin; AO
+// must return the live palette or the prompt bar defaults to dark.
 
 export type OscTerminalColors = {
 	foreground: string;
@@ -95,30 +96,30 @@ export function createOscColorReportForwarder(emit: (report: string) => void): {
 					buffer = buffer.endsWith("\x1b") ? "\x1b" : "";
 					return;
 				}
-			if (oscStart > 0) buffer = buffer.slice(oscStart);
+				if (oscStart > 0) buffer = buffer.slice(oscStart);
 
-			const match = buffer.match(COMPLETE_OSC_COLOR_REPORT);
-			if (match) {
-				emit(match[0]);
-				buffer = buffer.slice(match[0].length);
-				continue;
-			}
+				const match = buffer.match(COMPLETE_OSC_COLOR_REPORT);
+				if (match) {
+					emit(match[0]);
+					buffer = buffer.slice(match[0].length);
+					continue;
+				}
 
-			const bel = buffer.indexOf("\x07");
-			const st = buffer.indexOf("\x1b\\");
-			const terminator = bel === -1 ? st : st === -1 ? bel : Math.min(bel, st);
-			if (terminator !== -1) {
-				buffer = buffer.slice(terminator + (terminator === st ? 2 : 1));
-				continue;
-			}
+				const bel = buffer.indexOf("\x07");
+				const st = buffer.indexOf("\x1b\\");
+				const terminator = bel === -1 ? st : st === -1 ? bel : Math.min(bel, st);
+				if (terminator !== -1) {
+					buffer = buffer.slice(terminator + (terminator === st ? 2 : 1));
+					continue;
+				}
 
-			const nextOscStart = buffer.indexOf("\x1b]", 2);
-			if (nextOscStart !== -1) {
-				buffer = buffer.slice(nextOscStart);
-				continue;
+				const nextOscStart = buffer.indexOf("\x1b]", 2);
+				if (nextOscStart !== -1) {
+					buffer = buffer.slice(nextOscStart);
+					continue;
+				}
+				return;
 			}
-			return;
-		}
 		},
 		dispose() {
 			buffer = "";

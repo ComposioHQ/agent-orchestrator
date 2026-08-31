@@ -100,6 +100,40 @@ describe("createOscColorReportForwarder", () => {
 		forwarder.dispose();
 	});
 
+	it("accepts OSC 4 palette boundary indexes", () => {
+		const forwarded: string[] = [];
+		const forwarder = createOscColorReportForwarder((report) => forwarded.push(report));
+
+		forwarder.push("\x1b]4;0;rgb:0000/0000/0000\x07\x1b]4;255;rgb:ffff/ffff/ffff\x1b\\");
+
+		expect(forwarded).toEqual([
+			"\x1b]4;0;rgb:0000/0000/0000\x07",
+			"\x1b]4;255;rgb:ffff/ffff/ffff\x1b\\",
+		]);
+		forwarder.dispose();
+	});
+
+	it("rejects OSC 4 palette indexes above 255", () => {
+		const forwarded: string[] = [];
+		const forwarder = createOscColorReportForwarder((report) => forwarded.push(report));
+
+		forwarder.push("\x1b]4;256;rgb:ffff/ffff/ffff\x07");
+
+		expect(forwarded).toEqual([]);
+		forwarder.dispose();
+	});
+
+	it("recovers after oversized unterminated input", () => {
+		const forwarded: string[] = [];
+		const forwarder = createOscColorReportForwarder((report) => forwarded.push(report));
+
+		forwarder.push(`\x1b]11;${"x".repeat(20_000)}`);
+		forwarder.push("\x1b]11;rgb:f5f5/f5f5/f4f4\x07");
+
+		expect(forwarded).toEqual(["\x1b]11;rgb:f5f5/f5f5/f4f4\x07"]);
+		forwarder.dispose();
+	});
+
 	it("rejects generic xterm data and malformed color reports", () => {
 		const forwarded: string[] = [];
 		const forwarder = createOscColorReportForwarder((report) => forwarded.push(report));
