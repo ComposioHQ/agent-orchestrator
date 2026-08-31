@@ -135,6 +135,12 @@ type StartConfig struct {
 	SystemPrompt          string
 	AdditionalDirectories []string
 	MCPServers            []ports.ChatMCPServerConfig
+	// ExpectedControllerOwner is the durable controller identity observed before
+	// this launch. PrepareControllerEnv uses it as a compare-and-swap fence.
+	ExpectedControllerOwner domain.SessionControllerOwner
+	// PrepareControllerEnv rotates launch-only credentials inside the per-session
+	// controller gate. The returned environment is never retained in startConfigs.
+	PrepareControllerEnv func(context.Context, domain.SessionControllerOwner) (map[string]string, error)
 	// ProviderConversationID resumes an existing provider conversation when set.
 	ProviderConversationID string
 	// ProviderScopeID reserves the opaque-id namespace for a provider boundary
@@ -164,7 +170,8 @@ type StartConfig struct {
 // Carrying it back across the callback avoids a fallible database read after an
 // irreversible ownership transfer.
 type ControllerCommit struct {
-	Conversation domain.ConversationRecord
+	Conversation    domain.ConversationRecord
+	ControllerOwner domain.SessionControllerOwner
 }
 
 func controllerStartResult(
@@ -409,6 +416,14 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 		}
 	}
 
+	launchEnv := cfg.Env
+	if cfg.PrepareControllerEnv != nil {
+		launchEnv, err = cfg.PrepareControllerEnv(ctx, cfg.ExpectedControllerOwner)
+		if err != nil {
+			return nil, fmt.Errorf("prepare chat controller environment: %w", err)
+		}
+	}
+
 	var conv ports.ChatConversation
 	if cfg.ProviderConversationID != "" {
 		conv, err = driver.Resume(ctx, ports.ChatResumeConfig{
@@ -416,7 +431,7 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 			ProviderConversationID: cfg.ProviderConversationID,
 			DataDir:                cfg.DataDir,
 			WorkspacePath:          cfg.WorkspacePath,
-			Env:                    cfg.Env,
+			Env:                    launchEnv,
 			Model:                  cfg.Model,
 			Permissions:            cfg.Permissions,
 			SystemPrompt:           cfg.SystemPrompt,
@@ -429,7 +444,7 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 			SessionID:             cfg.SessionID,
 			DataDir:               cfg.DataDir,
 			WorkspacePath:         cfg.WorkspacePath,
-			Env:                   cfg.Env,
+			Env:                   launchEnv,
 			Model:                 cfg.Model,
 			Permissions:           cfg.Permissions,
 			SystemPrompt:          cfg.SystemPrompt,
@@ -572,6 +587,16 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 		controller.conversation.UpdatedAt = commit.Conversation.UpdatedAt
 		controller.settings = commit.Conversation.Settings
 	}
+	if commit.ControllerOwner != (domain.SessionControllerOwner{}) {
+		cfg.ExpectedControllerOwner = commit.ControllerOwner
+	} else {
+		cfg.ExpectedControllerOwner.Harness = cfg.Harness
+		cfg.ExpectedControllerOwner.Mode = domain.SessionModeChat
+		cfg.ExpectedControllerOwner.IsTerminated = false
+		cfg.ExpectedControllerOwner.RuntimeLaunchID = ""
+		cfg.ExpectedControllerOwner.ProviderConversationID = controller.ProviderConversationID()
+		cfg.ExpectedControllerOwner.ControllerGeneration = controller.Generation()
+	}
 	s.mu.Lock()
 	s.controllers[cfg.SessionID] = controller
 	s.startConfigs[cfg.SessionID] = cloneStartConfig(cfg)
@@ -582,6 +607,7 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	// reports ErrNoController instead of writing into a dead controller.
 	go func() {
 		controller.Wait()
+		controller.waitForBranchHandoff()
 		s.mu.Lock()
 		if current, ok := s.controllers[cfg.SessionID]; ok && current == controller {
 			delete(s.controllers, cfg.SessionID)
@@ -1091,18 +1117,20 @@ func (s *Service) StartChat(ctx context.Context, cfg StartRequest) (StartResult,
 // StartRequest mirrors session_manager.ChatStart. Duplicated rather than
 // imported so the manager and this service do not depend on each other's types.
 type StartRequest struct {
-	SessionID             domain.SessionID
-	ProjectID             domain.ProjectID
-	Kind                  domain.SessionKind
-	Harness               domain.AgentHarness
-	DataDir               string
-	WorkspacePath         string
-	Env                   map[string]string
-	Model                 string
-	Permissions           ports.PermissionMode
-	SystemPrompt          string
-	AdditionalDirectories []string
-	MCPServers            []ports.ChatMCPServerConfig
+	SessionID               domain.SessionID
+	ProjectID               domain.ProjectID
+	Kind                    domain.SessionKind
+	Harness                 domain.AgentHarness
+	DataDir                 string
+	WorkspacePath           string
+	Env                     map[string]string
+	Model                   string
+	Permissions             ports.PermissionMode
+	SystemPrompt            string
+	AdditionalDirectories   []string
+	MCPServers              []ports.ChatMCPServerConfig
+	ExpectedControllerOwner domain.SessionControllerOwner
+	PrepareControllerEnv    func(context.Context, domain.SessionControllerOwner) (map[string]string, error)
 	// ProviderConversationID resumes a stored conversation. Empty starts fresh.
 	ProviderConversationID  string
 	ProviderScopeID         string

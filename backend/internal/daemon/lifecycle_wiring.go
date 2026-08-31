@@ -184,10 +184,13 @@ func (m sessionLifecycleMessenger) Send(ctx context.Context, id domain.SessionID
 
 // startSession builds the controller-facing session service: a session manager
 // over the selected runtime, routed git/scratch workspaces, the shared store +
-// LCM, the per-session agent resolver, and the agent messenger. The returned
-// service is mounted at httpd APIDeps.Sessions. It also returns the manager so
-// the caller can wire Reconcile into the boot sequence.
-func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, messenger ports.AgentMessenger, telemetry ports.EventSink, agents ports.AgentResolver, previewLifecycle sessionmanager.PreviewLifecycle, browserLifecycle sessionmanager.BrowserLifecycle, browserCapabilities sessionmanager.BrowserCapabilityIssuer, chat sessionmanager.ChatLauncher, defaults sessionmanager.SessionModeDefaults, log *slog.Logger) (*sessionsvc.Service, reviewsvc.Manager, sessionLifecycle, error) {
+// LCM, the per-session agent resolver, and the agent messenger. The tracker is
+// built once by the caller (Run) and shared with the intake observer; it may
+// be nil (no usable credentials) — the service's nil-guard handles that
+// (issue #2685). The returned service is mounted at httpd APIDeps.Sessions.
+// It also returns the manager so the caller can wire Reconcile into the boot
+// sequence.
+func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, messenger ports.AgentMessenger, telemetry ports.EventSink, agents ports.AgentResolver, previewLifecycle sessionmanager.PreviewLifecycle, browserLifecycle sessionmanager.BrowserLifecycle, browserCapabilities sessionmanager.BrowserCapabilityIssuer, chat sessionmanager.ChatLauncher, defaults sessionmanager.SessionModeDefaults, tracker ports.Tracker, log *slog.Logger) (*sessionsvc.Service, reviewsvc.Manager, sessionLifecycle, error) {
 	gitWS, err := gitworktree.New(gitworktree.Options{
 		// Per-session worktrees live under the data dir, so a single AO_DATA_DIR
 		// override moves all durable per-user state together.
@@ -230,12 +233,6 @@ func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.
 		ReconcileWorkers:    startupReconcileWorkers,
 	})
 	scmProvider := newMultiSCMProvider(cfg.GitLab, log)
-	// Build the multi-tracker dispatching to both GitHub and GitLab. The
-	// multi-tracker returns a true nil ports.Tracker when no provider has
-	// usable credentials, preserving the `s.tracker == nil` guard in
-	// withIssueContext (issue #2685). When one provider's token is missing,
-	// the other still serves issue lookups.
-	tracker := newMultiTracker(cfg.GitLab, log)
 	sessionSvc := sessionsvc.NewWithDeps(sessionsvc.Deps{
 		Manager:           mgr,
 		Store:             store,
@@ -246,9 +243,9 @@ func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.
 		Telemetry:         telemetry,
 		Logger:            log,
 		BackgroundContext: ctx,
-		// no_signal only makes sense for harnesses whose adapters install
-		// activity hooks; the deriver registry is the source of truth for that.
-		SignalCapable: activitydispatch.SupportsHarness,
+		// no_signal only makes sense for harnesses with complete lifecycle signal
+		// coverage; partial callbacks cannot prove that silence is abnormal.
+		SignalCapable: activitydispatch.FullySupportsHarness,
 	})
 	// Triggering a review spawns a reviewer over the worker's worktree, resolved
 	// from the reviewer registry (distinct from the worker agent set). The
@@ -499,6 +496,8 @@ func (c chatLauncher) StartChat(ctx context.Context, cfg sessionmanager.ChatStar
 		Permissions:             cfg.Permissions,
 		SystemPrompt:            cfg.SystemPrompt,
 		AdditionalDirectories:   cfg.AdditionalDirectories,
+		ExpectedControllerOwner: cfg.ExpectedControllerOwner,
+		PrepareControllerEnv:    cfg.PrepareControllerEnv,
 		ProviderConversationID:  cfg.ProviderConversationID,
 		ProviderScopeID:         cfg.ProviderScopeID,
 		ControllerGeneration:    cfg.ControllerGeneration,
@@ -515,7 +514,10 @@ func (c chatLauncher) StartChat(ctx context.Context, cfg sessionmanager.ChatStar
 				ProviderBoundary:       out.ProviderBoundary,
 				CommitProviderHistory:  out.CommitProviderHistory,
 			})
-			return chatsvc.ControllerCommit{Conversation: commit.Conversation}, err
+			return chatsvc.ControllerCommit{
+				Conversation:    commit.Conversation,
+				ControllerOwner: commit.ControllerOwner,
+			}, err
 		},
 	})
 	if err != nil {

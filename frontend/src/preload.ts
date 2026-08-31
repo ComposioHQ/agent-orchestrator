@@ -245,6 +245,8 @@ const api = {
 		// WebContentsView previews (which follow prefers-color-scheme) stay in sync
 		// with the shell. "system" lets both follow the OS.
 		set: (preference: "light" | "dark" | "system") => ipcRenderer.invoke("theme:set", preference) as Promise<void>,
+		persistTerminal: (scheme: "light" | "dark") =>
+			ipcRenderer.invoke("theme:persist-terminal", scheme) as Promise<void>,
 	},
 	menu: {
 		action: (action: string) => ipcRenderer.invoke("menu:action", action) as Promise<void>,
@@ -305,6 +307,13 @@ const api = {
 			ipcRenderer.on("browser:navState", wrapped);
 			return () => {
 				ipcRenderer.off("browser:navState", wrapped);
+			};
+		},
+		onPageFocus: (listener: (viewId: string) => void) => {
+			const wrapped = (_event: Electron.IpcRendererEvent, viewId: string) => listener(viewId);
+			ipcRenderer.on("browser:pageFocus", wrapped);
+			return () => {
+				ipcRenderer.off("browser:pageFocus", wrapped);
 			};
 		},
 		onTabsState: (listener: (state: BrowserTabsState) => void) => {

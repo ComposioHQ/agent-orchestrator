@@ -64,14 +64,18 @@ type fakeConversation struct {
 	events                 chan ports.ChatEvent
 	providerConversationID string
 
-	mu        sync.Mutex
-	sent      []ports.ChatUserMessage
-	caps      ports.ChatCapabilities
-	resolved  map[string]ports.ChatDecision
-	turnSeq   int
-	sendErr   error
-	onSend    func(providerTurnID string)
-	closeOnce sync.Once
+	mu                 sync.Mutex
+	sent               []ports.ChatUserMessage
+	caps               ports.ChatCapabilities
+	resolved           map[string]ports.ChatDecision
+	turnSeq            int
+	sendErr            error
+	onSend             func(providerTurnID string)
+	onClose            func()
+	closeStarted       chan struct{}
+	closeEventsRelease <-chan struct{}
+	closeSignalOnce    sync.Once
+	closeOnce          sync.Once
 }
 
 type nativeHistoryConversation struct {
@@ -243,7 +247,28 @@ func (f *fakeConversation) ResolveRequest(_ context.Context, id string, d ports.
 }
 
 func (f *fakeConversation) Close() error {
-	f.closeOnce.Do(func() { close(f.events) })
+	f.mu.Lock()
+	onClose := f.onClose
+	closeStarted := f.closeStarted
+	closeEventsRelease := f.closeEventsRelease
+	f.mu.Unlock()
+	if onClose != nil {
+		onClose()
+	}
+	if closeStarted != nil {
+		f.closeSignalOnce.Do(func() { close(closeStarted) })
+	}
+	closeEvents := func() {
+		f.closeOnce.Do(func() { close(f.events) })
+	}
+	if closeEventsRelease != nil {
+		go func() {
+			<-closeEventsRelease
+			closeEvents()
+		}()
+		return nil
+	}
+	closeEvents()
 	return nil
 }
 
@@ -2442,6 +2467,80 @@ func TestApprovalIsStoredPendingWithProviderDecisions(t *testing.T) {
 	if len(resolvedDetail.Decisions) != 3 {
 		t.Fatalf("resolved decision options = %d, want preserved 3", len(resolvedDetail.Decisions))
 	}
+	if !hasActivitySignal(h.activity.snapshot(), domain.ActivityWaitingInput, "chat.approval.requested") {
+		t.Fatalf("activity signals = %v, want waiting_input on approval request", h.activity.snapshot())
+	}
+	if !hasActivitySignal(h.activity.snapshot(), domain.ActivityActive, "chat.approval.resolved") {
+		t.Fatalf("activity signals = %v, want active after approval resolve", h.activity.snapshot())
+	}
+}
+
+func TestResolvingOneOfMultipleApprovalsKeepsWaitingInput(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{Text: "go", ClientMessageID: "c1"}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	for _, requestID := range []string{"approval-1", "approval-2"} {
+		h.conv.emit(ports.ChatEvent{
+			Kind: ports.ChatEventApprovalRequested, ProviderTurnID: "provider-turn-1",
+			ProviderItemID: requestID, RequestID: requestID, Summary: "Approve " + requestID,
+			Decisions: []ports.ChatDecisionOption{{ID: "accept", Label: "Approve", Kind: ports.ChatDecisionAllowOnce}},
+		})
+	}
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return len(s.Activities) == 2 &&
+			s.Activities[0].Status == domain.ActivityStatusPending &&
+			s.Activities[1].Status == domain.ActivityStatusPending
+	})
+
+	if err := h.svc.Resolve(ctx, testSession, "approval-1", ports.ChatDecision{ID: "accept"}); err != nil {
+		t.Fatalf("Resolve first: %v", err)
+	}
+	if got := countActivitySignals(h.activity.snapshot(), domain.ActivityActive, "chat.approval.resolved"); got != 0 {
+		t.Fatalf("active resolution signals after first approval = %d, want 0 while another approval is pending", got)
+	}
+
+	if err := h.svc.Resolve(ctx, testSession, "approval-2", ports.ChatDecision{ID: "accept"}); err != nil {
+		t.Fatalf("Resolve second: %v", err)
+	}
+	if got := countActivitySignals(h.activity.snapshot(), domain.ActivityActive, "chat.approval.resolved"); got != 1 {
+		t.Fatalf("active resolution signals after final approval = %d, want 1", got)
+	}
+}
+
+func TestProviderResolutionKeepsWaitingInputUntilFinalApproval(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{Text: "go", ClientMessageID: "c1"}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	for _, requestID := range []string{"approval-1", "approval-2"} {
+		h.conv.emit(ports.ChatEvent{
+			Kind: ports.ChatEventApprovalRequested, ProviderTurnID: "provider-turn-1",
+			ProviderItemID: requestID, RequestID: requestID, Summary: "Approve " + requestID,
+		})
+	}
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool { return len(s.Activities) == 2 })
+
+	h.conv.emit(ports.ChatEvent{Kind: ports.ChatEventApprovalResolved, RequestID: "approval-1"})
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return s.Activities[0].Status == domain.ActivityStatusResolved
+	})
+	if got := countActivitySignals(h.activity.snapshot(), domain.ActivityActive, "chat.approval.resolved"); got != 0 {
+		t.Fatalf("active provider-resolution signals after first approval = %d, want 0", got)
+	}
+
+	h.conv.emit(ports.ChatEvent{Kind: ports.ChatEventApprovalResolved, RequestID: "approval-2"})
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if got := countActivitySignals(h.activity.snapshot(), domain.ActivityActive, "chat.approval.resolved"); got == 1 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("active provider-resolution signals after final approval = %d, want 1",
+		countActivitySignals(h.activity.snapshot(), domain.ActivityActive, "chat.approval.resolved"))
 }
 
 // A controller that dies mid-turn must not leave the turn looking like it is still
@@ -3520,6 +3619,79 @@ func TestStartWaitsForStoppedControllerCleanupBeforeRelaunch(t *testing.T) {
 	}
 }
 
+func TestConcurrentReconcileAndResumeShareOneCredentialedControllerLaunch(t *testing.T) {
+	st := openStore(t)
+	conversation := newFakeConversation()
+	providerStarted := make(chan struct{})
+	releaseProvider := make(chan struct{})
+	var providerOnce sync.Once
+	var providerStarts atomic.Int32
+	var launchedEnv map[string]string
+	driver := fakeDriver{conv: conversation}
+	driver.start = func(cfg ports.ChatStartConfig) (ports.ChatConversation, error) {
+		providerStarts.Add(1)
+		launchedEnv = maps.Clone(cfg.Env)
+		providerOnce.Do(func() { close(providerStarted) })
+		<-releaseProvider
+		return conversation, nil
+	}
+
+	var prepared atomic.Int32
+	var ids atomic.Int32
+	prepare := func(context.Context, domain.SessionControllerOwner) (map[string]string, error) {
+		call := prepared.Add(1)
+		return map[string]string{"AO_BROWSER_CAPABILITY": fmt.Sprintf("token-%d", call)}, nil
+	}
+	svc := chatsvc.New(chatsvc.Options{
+		Store: st, Sessions: st, Drivers: fakeRegistry{driver: driver},
+		Log: slog.New(slog.DiscardHandler), NewID: func() string { return fmt.Sprintf("gate-id-%d", ids.Add(1)) },
+	})
+	t.Cleanup(func() { _ = svc.Stop(context.Background(), testSession) })
+	cfg := chatsvc.StartConfig{
+		SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex,
+		WorkspacePath: t.TempDir(), Env: map[string]string{"AO_BROWSER_CAPABILITY": "stale"},
+		PrepareControllerEnv: prepare,
+	}
+	type startResult struct {
+		controller *chatsvc.Controller
+		err        error
+	}
+	results := make(chan startResult, 2)
+	go func() {
+		controller, err := svc.Start(context.Background(), cfg)
+		results <- startResult{controller, err}
+	}()
+	<-providerStarted
+	secondEntered := make(chan struct{})
+	go func() {
+		close(secondEntered)
+		controller, err := svc.Start(context.Background(), cfg)
+		results <- startResult{controller, err}
+	}()
+	<-secondEntered
+	select {
+	case result := <-results:
+		t.Fatalf("a concurrent Start escaped the controller gate: controller=%p err=%v", result.controller, result.err)
+	case <-time.After(25 * time.Millisecond):
+	}
+	if got := prepared.Load(); got != 1 {
+		t.Fatalf("credential preparations while first launch is blocked = %d, want 1", got)
+	}
+	close(releaseProvider)
+	first := <-results
+	second := <-results
+	if first.err != nil || second.err != nil || first.controller != second.controller {
+		t.Fatalf("concurrent Starts = (%p, %v), (%p, %v), want the same live controller",
+			first.controller, first.err, second.controller, second.err)
+	}
+	if got := providerStarts.Load(); got != 1 {
+		t.Fatalf("provider starts = %d, want 1", got)
+	}
+	if got := launchedEnv["AO_BROWSER_CAPABILITY"]; got != "token-1" {
+		t.Fatalf("provider capability = %q, want token-1", got)
+	}
+}
+
 // The cancellation belongs to the moment stop was pressed. A message typed after
 // that is the user asking for new work, and must not be swept up by it.
 func TestMessageTypedAfterStopIsStillDelivered(t *testing.T) {
@@ -3990,6 +4162,16 @@ func hasActivitySignal(signals []ports.ActivitySignal, state domain.ActivityStat
 		}
 	}
 	return false
+}
+
+func countActivitySignals(signals []ports.ActivitySignal, state domain.ActivityState, event string) int {
+	count := 0
+	for _, signal := range signals {
+		if signal.State == state && signal.Event == event {
+			count++
+		}
+	}
+	return count
 }
 
 // The #3749 desync: a turn is 'running' on disk while the in-memory controller

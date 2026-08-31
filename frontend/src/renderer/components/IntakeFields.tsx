@@ -19,10 +19,11 @@ export type IntakeForm = {
 	assignee: string;
 };
 
-// Only "github" is a valid TrackerIntakeConfig["provider"] today (see the
-// backend's openapi enum). Adding Linear/Jira later means: the backend enum
-// grows, IntakeFields gains a provider <Select> + per-provider scope fields,
-// and buildIntake switches the scope field it emits.
+// The provider is not set here — the daemon infers it from the project's repo
+// origin URL (github.com → github, any other host → gitlab). Adding
+// Linear/Jira later means: the backend enum grows, IntakeFields gains a
+// provider <Select> + per-provider scope fields, and buildIntake switches the
+// scope field it emits.
 
 // intakeNeedsRule mirrors the backend guard (TrackerIntakeConfig.Validate):
 // enabling intake requires an assignee so it cannot drain an entire issue
@@ -37,18 +38,19 @@ export function intakeNeedsRule(form: IntakeForm): boolean {
 export function buildIntake(form: IntakeForm): TrackerIntakeConfig | undefined {
 	const next: TrackerIntakeConfig = {
 		enabled: form.enabled || undefined,
-		provider: form.enabled ? "github" : undefined,
+		provider: undefined,
 		repo: form.repo.trim() || undefined,
 		assignee: form.assignee.trim() || undefined,
 	};
 	return Object.values(next).some((v) => v !== undefined) ? next : undefined;
 }
 
-// deriveGitHubRepo mirrors the daemon's parseGitHubRepoNative (observer.go):
-// derive "owner/repo" from a git origin URL for display only. The daemon does
-// the authoritative derivation server-side at poll time; this is purely so a
-// settings card can show which repo intake will actually poll.
-export function deriveGitHubRepo(remote?: string): string | undefined {
+// deriveRepoPath mirrors the daemon's server-side path derivation
+// (observe/trackerintake/observer.go): extract the provider-native repo path
+// from a git origin URL for display only. The daemon does the authoritative
+// derivation server-side at poll time; this is purely so a settings card can
+// show which repo intake will actually poll.
+export function deriveRepoPath(remote?: string): string | undefined {
 	const trimmed = remote?.trim();
 	if (!trimmed) return undefined;
 	let path: string | undefined;
@@ -67,9 +69,25 @@ export function deriveGitHubRepo(remote?: string): string | undefined {
 		.replace(/^\/+|\/+$/g, "")
 		.split("/");
 	if (parts.length < 2) return undefined;
-	const owner = parts[parts.length - 2].trim();
-	const repo = parts[parts.length - 1].trim();
-	return owner && repo ? `${owner}/${repo}` : undefined;
+	// Keep all segments: GitHub uses owner/repo (2 parts), GitLab uses the full
+	// namespace path (group/subgroup/repo).
+	return parts.join("/");
+}
+
+// deriveRepoHost extracts the host from a git origin URL for building repo
+// links. Returns undefined for SSH URLs without a parseable host.
+export function deriveRepoHost(remote?: string): string | undefined {
+	const trimmed = remote?.trim();
+	if (!trimmed) return undefined;
+	if (trimmed.startsWith("git@")) {
+		const afterAt = trimmed.split("@")[1];
+		return afterAt?.split(":")[0];
+	}
+	try {
+		return new URL(trimmed).host || undefined;
+	} catch {
+		return undefined;
+	}
 }
 
 // IntakeFields renders the shared "Tracker intake" controls: an enable checkbox
@@ -78,7 +96,7 @@ export function deriveGitHubRepo(remote?: string): string | undefined {
 // however they like.
 //
 // repoPreview is only meaningful once a project exists and its git origin is
-// known: pass `{ show: true, value }` from settings to render the repo link
+// known: pass `{ value, host }` from settings to render the repo link
 // row, and omit it from the create sheet (the origin URL isn't available there,
 // and the daemon derives the repo regardless).
 export function IntakeFields({
@@ -92,7 +110,7 @@ export function IntakeFields({
 }: {
 	form: IntakeForm;
 	onChange: (patch: Partial<IntakeForm>) => void;
-	repoPreview?: { value?: string };
+	repoPreview?: { value?: string; host?: string };
 	// compact drops the descriptive/help prose and folds the explanation into an
 	// info-icon tooltip — used by the create-project sheet, which stays minimal.
 	compact?: boolean;
@@ -118,7 +136,7 @@ export function IntakeFields({
 							<SettingsRow label={t("settings.project.repository")}>
 								{repoPreview.value ? (
 									<a
-										href={`https://github.com/${repoPreview.value}`}
+										href={`https://${repoPreview.host ?? "github.com"}/${repoPreview.value}`}
 										target="_blank"
 										rel="noopener noreferrer"
 										className="settings-row-value text-settings-accent hover:underline"
@@ -187,7 +205,7 @@ export function IntakeFields({
 						<IntakeField label={t("settings.project.repository")} labelClassName={labelClassName}>
 							{repoPreview.value ? (
 								<a
-									href={`https://github.com/${repoPreview.value}`}
+									href={`https://${repoPreview.host ?? "github.com"}/${repoPreview.value}`}
 									target="_blank"
 									rel="noopener noreferrer"
 									className="text-control text-accent hover:underline"

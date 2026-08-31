@@ -105,6 +105,38 @@ func TestUsageBindingAndSourceIdempotency(t *testing.T) {
 	}
 }
 
+// TestActiveKimiBindingRemainsDiscoverable catches removing live Kimi
+// bindings from the bounded reconciliation queue after the main source exists.
+func TestActiveKimiBindingRemainsDiscoverable(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	sess := seedUsageSession(t, s, domain.HarnessKimi)
+	now := time.Unix(1700000000, 0).UTC()
+	binding := mustUpsertUsageBinding(t, s, sess, now, domain.UsageBindingRecord{
+		NativeRootID: "kimi-live",
+		State:        domain.UsageBindingActive,
+	})
+	mustInsertUsageSource(t, s, now, domain.UsageSourceRecord{
+		BindingID:       binding.ID,
+		Kind:            domain.UsageSourceKimiWire,
+		NativeSessionID: binding.NativeRootID,
+		ArtifactPath:    "/tmp/kimi/main/wire.jsonl",
+		FileIdentity:    "kimi-main",
+		State:           domain.UsageSourceActive,
+	})
+
+	pending, err := s.HasPendingUsageDiscovery(ctx)
+	mustNoError(t, err)
+	if !pending {
+		t.Fatal("active Kimi binding did not keep bounded child discovery active")
+	}
+	discovery, err := s.ListUsageDiscoveryBindings(ctx, 8)
+	mustNoError(t, err)
+	if len(discovery) != 1 || discovery[0].ID != binding.ID {
+		t.Fatalf("discovery bindings = %+v, want Kimi binding %d", discovery, binding.ID)
+	}
+}
+
 func TestListLatestRetiredCodexReplacementClaimsByPath(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -1676,6 +1708,45 @@ func seedUsageSession(t *testing.T, s *sqlite.Store, harness domain.AgentHarness
 	got, err := s.CreateSession(ctx, rec)
 	mustNoError(t, err, "create usage session")
 	return got
+}
+
+// TestKimiUsageEventRoundTrip catches schema or validation changes that accept
+// Kimi sessions in the app but reject their certified usage source or canonical
+// Anthropic-shaped token event at the storage boundary.
+func TestKimiUsageEventRoundTrip(t *testing.T) {
+	s := newTestStore(t)
+	now := time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
+	session := seedUsageSession(t, s, domain.HarnessKimi)
+	binding := mustUpsertUsageBinding(t, s, session, now, domain.UsageBindingRecord{
+		NativeRootID: "kimi-session",
+		State:        domain.UsageBindingActive,
+	})
+	source := mustInsertUsageSource(t, s, now, domain.UsageSourceRecord{
+		BindingID:       binding.ID,
+		Kind:            domain.UsageSourceKimiWire,
+		NativeSessionID: "kimi-session",
+		ArtifactPath:    "/tmp/kimi/sessions/kimi-session/agents/main/wire.jsonl",
+		FileIdentity:    "dev:ino",
+		State:           domain.UsageSourcePending,
+	})
+	event := anthropicUsageEvent("kimi-event", 13, 8, 21, 5)
+	event.ModelID = "kimi-for-coding"
+	if err := s.ApplyUsageChunk(context.Background(), source.ID, 0, source.UpdatedAt, domain.SourceCursorState{
+		ByteOffset: 100, State: domain.UsageSourceActive, ParserStateJSON: `{}`,
+		UpdatedAt: now,
+	}, []domain.ModelUsageEvent{event}); err != nil {
+		t.Fatalf("apply Kimi usage: %v", err)
+	}
+
+	models, err := s.ListUsageModelAggregates(context.Background(), session.ID)
+	mustNoError(t, err)
+	if len(models) != 1 || models[0].Harness != domain.HarnessKimi || models[0].ModelID != "kimi-for-coding" ||
+		usageTokenValue(models[0].Tokens.InputTokens) != 42 ||
+		usageTokenValue(models[0].Tokens.CachedInputTokens) != 21 ||
+		usageTokenValue(models[0].Tokens.UncachedInputTokens) != 21 ||
+		usageTokenValue(models[0].Tokens.OutputTokens) != 5 {
+		t.Fatalf("Kimi aggregate = %+v", models)
+	}
 }
 
 func seedUsageSource(t *testing.T, s *sqlite.Store, sess domain.SessionRecord, now time.Time) domain.UsageSourceRecord {

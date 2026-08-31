@@ -1,9 +1,11 @@
 import { attentionZone as presentationAttentionZone } from "../lib/session-presentation";
 import {
 	AGENT_OPTIONS,
+	toKanbanColumn,
 	toSessionActivity,
 	toSessionStatus,
 	type AgentId,
+	type KanbanColumn,
 	type SessionActivity,
 	type SessionActivityState,
 	type SessionStatus,
@@ -11,8 +13,8 @@ import {
 
 import type { ReviewerHarnessId } from "../lib/reviewer-harnesses";
 
-export { toSessionActivity, toSessionStatus };
-export type { SessionActivity, SessionActivityState, SessionStatus };
+export { toKanbanColumn, toSessionActivity, toSessionStatus };
+export type { KanbanColumn, SessionActivity, SessionActivityState, SessionStatus };
 
 export type AgentProvider = AgentId | "fake";
 
@@ -82,6 +84,24 @@ export type WorkspaceSession = {
 	status: SessionStatus;
 	/** Stack-aware PR context derived by the daemon independently of runtime activity. */
 	scmStatus?: SessionStatus;
+	/**
+	 * Board lane derived by the daemon from durable delivery facts (PR
+	 * lifecycle, review runs, review ownership). `validating` and
+	 * `needs_review` are the same review-feedback loop seen from either side:
+	 * AO turning it, or a person taking the next turn. The board groups by this
+	 * and never re-derives a lane from {@link status}. For a daemon too old to
+	 * send one, {@link toKanbanColumn} keeps the placement the status already
+	 * implied rather than inventing a new one.
+	 */
+	kanbanColumn?: KanbanColumn;
+	/**
+	 * Phrase the daemon derived for what is happening inside
+	 * {@link kanbanColumn} — "Reviewing", "Fixing CI failures", "Needs human
+	 * review". It arrives renderable, so the UI prints it rather than mapping it.
+	 * Absent from a daemon too old to send one, which keeps the label
+	 * {@link status} already produced.
+	 */
+	displayStatus?: string;
 	/** Durable runtime fact from the daemon; independent of the derived SCM-aware status. */
 	isTerminated?: boolean;
 	/** User preference to tear down this session when its PR set completes through a merge. */
@@ -147,6 +167,9 @@ export function canonicalTrackerIssueId(issueId?: string): string | undefined {
 }
 
 export type ProjectKind = "single_repo" | "workspace" | "scratch";
+
+/** Sentinel `kind` value for projects hosted by the AO cloud control plane. */
+export const CLOUD_PROJECT_KIND = "cloud" as const;
 
 const projectKinds = new Set<ProjectKind>(["single_repo", "workspace", "scratch"]);
 
@@ -277,9 +300,10 @@ export type WorkspaceSummary = {
 	/**
 	 * Discriminator for where the project lives. Local projects carry the
 	 * daemon's ProjectKind (or undefined for older daemons); projects hosted by
-	 * the AO cloud control plane carry "cloud" — branch on `kind === "cloud"`.
+	 * the AO cloud control plane carry CLOUD_PROJECT_KIND — branch on
+	 * `kind === CLOUD_PROJECT_KIND`.
 	 */
-	kind?: ProjectKind | "cloud";
+	kind?: ProjectKind | typeof CLOUD_PROJECT_KIND;
 	/** Local checkout path; empty string for cloud projects (no local folder). */
 	path: string;
 	workspaceRepos?: WorkspaceRepoSummary[];

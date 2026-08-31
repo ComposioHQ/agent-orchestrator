@@ -32,6 +32,7 @@ import (
 const (
 	nativeHistorySettlePoll  = 100 * time.Millisecond
 	nativeHistorySettleLimit = 45 * time.Second
+	branchHandoffReportLimit = 5 * time.Second
 	retryClientMessagePrefix = "retry-attempt/"
 )
 
@@ -75,6 +76,8 @@ type Store interface {
 	CompleteQueuedTurnPromotion(ctx context.Context, conversationID, sourceTurnID, providerTurnID string, activity domain.ConversationActivity, now time.Time) error
 	CancelQueuedTurns(ctx context.Context, conversationID string, cutoff, now time.Time) error
 	CancelAllQueuedTurns(ctx context.Context, conversationID string, now time.Time) error
+	CancelQueuedTurnByID(ctx context.Context, conversationID, turnID string, now time.Time) error
+	UpdateQueuedTurnMessage(ctx context.Context, conversationID, turnID, text string, now time.Time) error
 
 	RetryPrompt(ctx context.Context, conversationID, turnID string) (domain.RetryPrompt, error)
 	RetryTurnIDForSource(ctx context.Context, conversationID, sourceTurnID string) (string, bool, error)
@@ -109,6 +112,7 @@ type Store interface {
 	UpsertActivity(ctx context.Context, conversationID, providerTurnID string, activity domain.ConversationActivity, now time.Time) error
 	MarkCompacted(ctx context.Context, conversationID string, at time.Time) error
 	ResolveApproval(ctx context.Context, conversationID, requestID, detailJSON string, now time.Time) error
+	HasPendingConversationInteractions(ctx context.Context, conversationID string) (bool, error)
 	FailPendingApprovals(ctx context.Context, conversationID string, now time.Time) error
 	FailPendingInputs(ctx context.Context, conversationID string, now time.Time) error
 
@@ -168,6 +172,10 @@ type Controller struct {
 	sendMu sync.Mutex
 
 	mu sync.Mutex
+	// suppressStoppedActivity marks a deliberate branch-controller retirement.
+	// The replacement generation owns lifecycle state; publishing an exited fact
+	// from the source would make that replacement unable to report active work.
+	suppressStoppedActivity bool
 	// activeTurn maps a provider turn id to AO's turn id for the turn currently
 	// in flight, so a completion can be attributed without a round trip.
 	pendingTurnID string
@@ -192,7 +200,8 @@ type Controller struct {
 	// Interface drain keeps dispatching accepted rows; interface interrupt and an
 	// idle branch mutation stop dispatch entirely. The target controller is not
 	// started until this controller reports quiescent and is closed.
-	handoff controllerHandoff
+	handoff           controllerHandoff
+	branchHandoffDone chan struct{}
 
 	// account, threadState and mcpServers are merged here before being written,
 	// because the provider reports each of them in pieces: account/updated carries
@@ -1542,6 +1551,7 @@ func (c *Controller) BeginIdleBranchHandoff(ctx context.Context) error {
 		return fmt.Errorf("check queue before branch handoff: %w", err)
 	}
 	c.handoff = controllerHandoffIdleBranch
+	c.branchHandoffDone = make(chan struct{})
 	return nil
 }
 
@@ -1551,10 +1561,40 @@ func (c *Controller) AbortHandoff() {
 	c.mu.Lock()
 	resumeDispatch := c.handoff == controllerHandoffInterfaceDrain ||
 		c.handoff == controllerHandoffInterfaceInterrupt
+	branchHandoffDone := c.branchHandoffDone
+	c.branchHandoffDone = nil
 	c.handoff = controllerHandoffNone
 	c.mu.Unlock()
+	if branchHandoffDone != nil {
+		close(branchHandoffDone)
+	}
 	if resumeDispatch {
 		go c.drain(context.WithoutCancel(context.Background()))
+	}
+}
+
+// completeBranchHandoff releases stopped-controller registry cleanup without
+// reopening the obsolete source's intake. Commands may already hold a pointer
+// captured before the registry swap, so the fence must remain closed forever.
+func (c *Controller) completeBranchHandoff() {
+	c.mu.Lock()
+	branchHandoffDone := c.branchHandoffDone
+	c.branchHandoffDone = nil
+	c.mu.Unlock()
+	if branchHandoffDone != nil {
+		close(branchHandoffDone)
+	}
+}
+
+// waitForBranchHandoff keeps the registry's stopped-controller cleanup from
+// deleting a deliberately closed source while its forked replacement is being
+// resumed and installed. Ordinary stops have no latch and return immediately.
+func (c *Controller) waitForBranchHandoff() {
+	c.mu.Lock()
+	done := c.branchHandoffDone
+	c.mu.Unlock()
+	if done != nil {
+		<-done
 	}
 }
 
@@ -1569,6 +1609,7 @@ func (c *Controller) Resolve(ctx context.Context, requestID string, decision por
 		ctx, c.conversation.ID, requestID, string(detail), c.now()); err != nil {
 		return fmt.Errorf("record approval %s: %w", requestID, err)
 	}
+	c.reportInteractionResolved(ctx, "chat.approval.resolved", c.now())
 	return nil
 }
 
@@ -1595,6 +1636,7 @@ func (c *Controller) ResolveInput(
 		ctx, c.conversation.ID, requestID, string(detail), c.now()); err != nil {
 		return fmt.Errorf("record input %s: %w", requestID, err)
 	}
+	c.reportInteractionResolved(ctx, "chat.input.resolved", c.now())
 	return nil
 }
 
@@ -1963,6 +2005,35 @@ func (c *Controller) Close(ctx context.Context) error {
 	}
 }
 
+// closeForBranchHandoff retires a source controller without publishing a
+// session-level exit. Branch replacement is an in-place writer handoff, not the
+// end of the session; the replacement generation continues the lifecycle.
+func (c *Controller) closeForBranchHandoff(ctx context.Context) error {
+	c.prepareBranchHandoffStop()
+	return c.Close(ctx)
+}
+
+func (c *Controller) prepareBranchHandoffStop() {
+	c.mu.Lock()
+	c.suppressStoppedActivity = true
+	c.mu.Unlock()
+}
+
+func (c *Controller) reportFailedBranchHandoff(ctx context.Context) {
+	c.mu.Lock()
+	c.suppressStoppedActivity = false
+	stopped := c.state == ports.ChatControllerStopped
+	c.mu.Unlock()
+	if !stopped {
+		// project will publish the ordinary stop boundary when the stream ends.
+		return
+	}
+	reportCtx, cancel := context.WithTimeout(
+		context.WithoutCancel(ctx), branchHandoffReportLimit)
+	defer cancel()
+	c.reportActivity(reportCtx, domain.ActivityExited, "chat.controller.stopped", c.now())
+}
+
 // Wait blocks until the controller's event stream has ended.
 func (c *Controller) Wait() { <-c.stopped }
 
@@ -2000,6 +2071,7 @@ func (c *Controller) project() {
 
 	c.mu.Lock()
 	c.state = ports.ChatControllerStopped
+	suppressStoppedActivity := c.suppressStoppedActivity
 	c.mu.Unlock()
 
 	// The stream has ended, so nothing more can arrive for this controller. This
@@ -2017,7 +2089,9 @@ func (c *Controller) project() {
 	// transport cannot. Report the same lifecycle boundary here so the session
 	// does not remain durably active, idle, or blocked after its controller died.
 	// ControllerGeneration fences this write from a replacement controller.
-	c.reportActivity(ctx, domain.ActivityExited, "chat.controller.stopped", now)
+	if !suppressStoppedActivity {
+		c.reportActivity(ctx, domain.ActivityExited, "chat.controller.stopped", now)
+	}
 	if _, err := c.store.CleanupOwnedControllerWork(
 		ctx, c.sessionID, c.conversation.ID, c.generation, now,
 	); err != nil {
@@ -2505,16 +2579,21 @@ func (c *Controller) afterProject(ctx context.Context, event ports.ChatEvent, pr
 		c.drainLocked(ctx)
 	case ports.ChatEventApprovalRequested:
 		c.reportActivity(ctx, domain.ActivityWaitingInput, "chat.approval.requested", now)
+	case ports.ChatEventApprovalResolved:
+		c.reportInteractionResolved(ctx, "chat.approval.resolved", now)
 	case ports.ChatEventInputRequested:
 		c.reportActivity(ctx, domain.ActivityWaitingInput, "chat.input.requested", now)
+	case ports.ChatEventInputResolved:
+		c.reportInteractionResolved(ctx, "chat.input.resolved", now)
 	case ports.ChatEventControllerState:
 		// Volatile state moves only after the provider event and all of its durable
 		// cleanup committed. Otherwise a rollback can say "stopped" in memory while
 		// SQLite still contains live work.
 		c.mu.Lock()
 		c.state = event.ControllerState
+		suppressStoppedActivity := c.suppressStoppedActivity
 		c.mu.Unlock()
-		if event.ControllerState == ports.ChatControllerStopped {
+		if event.ControllerState == ports.ChatControllerStopped && !suppressStoppedActivity {
 			c.reportActivity(ctx, domain.ActivityExited, "chat.controller.stopped", now)
 		}
 	case ports.ChatEventAccountChanged:
@@ -2522,6 +2601,19 @@ func (c *Controller) afterProject(ctx context.Context, event ports.ChatEvent, pr
 			c.reportActivity(ctx, domain.ActivityWaitingInput, "chat.account.reauth", now)
 		}
 	}
+}
+
+func (c *Controller) reportInteractionResolved(ctx context.Context, event string, now time.Time) {
+	pending, err := c.store.HasPendingConversationInteractions(ctx, c.conversation.ID)
+	if err != nil {
+		c.log.Debug("chat pending-interaction check failed",
+			"session", c.sessionID, "event", event, "error", err)
+		return
+	}
+	if pending {
+		return
+	}
+	c.reportActivity(ctx, domain.ActivityActive, event, now)
 }
 
 // applyThreadTitle records a title the provider reports for the thread and, when
