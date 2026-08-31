@@ -341,8 +341,8 @@ func (c *Client) BootstrapWorker(ctx context.Context, id sandbox.ID, bootstrap s
 	// truncated while dd is receiving the bootstrap archive. Keep each write
 	// below the PTY buffer and give the reader a chance to drain between frames.
 	const (
-		chunkSize  = 1 << 10
-		chunkPause = time.Millisecond
+		chunkSize  = 512
+		chunkPause = 5 * time.Millisecond
 	)
 	for offset := 0; offset < len(encoded); offset += chunkSize {
 		end := min(offset+chunkSize, len(encoded))
