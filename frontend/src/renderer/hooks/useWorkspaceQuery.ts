@@ -268,3 +268,28 @@ export function useWorkspaceQuery() {
 	}, [localData, cloudData, cloudSessionData, orgId, ready]);
 	return { ...local, data };
 }
+
+/**
+ * Subscribe a detail surface to one session instead of the complete workspace
+ * tree. TanStack Query applies structural sharing to the selected value, so an
+ * activity update elsewhere no longer redraws the open session workspace.
+ */
+export function useWorkspaceSession(sessionId: string) {
+	const selectLocalSession = useMemo(
+		() => (workspaces: WorkspaceSummary[]) =>
+			workspaces.flatMap((workspace) => workspace.sessions).find((session) => session.id === sessionId),
+		[sessionId],
+	);
+	const local = useQuery({ ...workspaceQueryOptions, select: selectLocalSession });
+	const cloud = useCloudProjectsQuery();
+	const cloudSessions = useCloudSessionsQuery();
+	const { org, ready } = useCloudOrg();
+	const cloudSession = useMemo(() => {
+		if (!ready || !org?.id || !cloud.data || !cloudSessions.data) return undefined;
+		const session = cloudSessions.data.find((candidate) => candidate.id === sessionId);
+		if (!session) return undefined;
+		const project = cloud.data.find((candidate) => candidate.id === session.projectId);
+		return project ? toCloudWorkspaceSession(session, project, org.id) : undefined;
+	}, [cloud.data, cloudSessions.data, org?.id, ready, sessionId]);
+	return { ...local, data: local.data ?? cloudSession };
+}

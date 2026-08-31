@@ -54,7 +54,7 @@ import {
 	interfaceTransitionIsActive,
 	useSessionInterfaceTransition,
 } from "../hooks/useSessionInterfaceTransition";
-import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
+import { useWorkspaceSession } from "../hooks/useWorkspaceQuery";
 import { useSessionHandoffMenu } from "../hooks/useSessionHandoffMenu";
 import { clearSwitchAgentState } from "../hooks/useSwitchAgent";
 import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
@@ -378,8 +378,7 @@ function SessionInspectorRail({
 export function SessionView({ sessionId }: SessionViewProps) {
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
-	const workspaceQuery = useWorkspaceQuery();
-	const workspaces = workspaceQuery.data ?? [];
+	const workspaceQuery = useWorkspaceSession(sessionId);
 	const theme = useResolvedTheme();
 	const prefersReducedMotion = useReducedMotion();
 	const isInspectorOpen = useUiStore((state) => state.inspectorSessions[sessionId]?.isOpen ?? true);
@@ -506,7 +505,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 
 	useEffect(() => stopTerminalLiveResize, [stopTerminalLiveResize]);
 
-	const session = workspaces.flatMap((workspace) => workspace.sessions).find((s) => s.id === sessionId);
+	const session = workspaceQuery.data;
 	const interfaceSwitch = useSessionInterfaceTransition(session?.id);
 	const reviewerQuery = useQuery({
 		queryKey: ["session-reviews", sessionId],

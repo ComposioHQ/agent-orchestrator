@@ -534,6 +534,12 @@ vi.mock("../hooks/useWorkspaceQuery", () => ({
 		data: workspaceQueryState.data,
 		isLoading: workspaceQueryState.isLoading,
 	}),
+	useWorkspaceSession: (sessionId: string) => ({
+		data: workspaceQueryState.data
+			?.flatMap((workspace) => workspace.sessions)
+			.find((session) => session.id === sessionId),
+		isLoading: workspaceQueryState.isLoading,
+	}),
 }));
 // Standalone shell terminals are orthogonal to the split under test, and their
 // real hooks would need a QueryClientProvider this suite deliberately omits.
