@@ -35,6 +35,7 @@ import { cn } from "../lib/utils";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { useRestoreSession } from "../hooks/useRestoreSession";
 import { useAutoResumeAgent } from "../hooks/useAutoResumeAgent";
+import { useSpawnFreshTerminal } from "../hooks/useSpawnFreshTerminal";
 import { useShellTerminals } from "../hooks/useShellTerminals";
 import { useCloudCp } from "../hooks/useCloudCp";
 import { createCloudTerminalMux } from "../lib/cloud-terminal-mux";
@@ -1049,12 +1050,14 @@ function AttachedTerminal({
 	}, [canRestoreSession, isRestoring, restoreSessionById, session?.id, t]);
 
 	const autoResumeAgent = useAutoResumeAgent();
+	const spawnFreshTerminal = useSpawnFreshTerminal();
 	const [autoResumed, setAutoResumed] = useState(false);
 	const [autoResumeBanner, setAutoResumeBanner] = useState<string | undefined>();
 
 	// Auto-resume: when a non-terminated session's terminal is confirmed
 	// permanently dead (state === "exited"), attempt native-only resume via the
-	// agent's adapter. Only fires for worker sessions with native recovery support.
+	// agent's adapter. If native recovery is not available, fallback to spawning
+	// a fresh login shell PTY in the same workspace so the session entry stays visible and usable.
 	useEffect(() => {
 		if (
 			state !== "exited" ||
@@ -1067,7 +1070,7 @@ function AttachedTerminal({
 			return;
 		}
 		let cancelled = false;
-		void autoResumeAgent(session.id).then((result) => {
+		void autoResumeAgent(session.id).then(async (result) => {
 			if (cancelled) return;
 			if (result.status === "resumed") {
 				setAutoResumed(true);
@@ -1075,12 +1078,23 @@ function AttachedTerminal({
 				setAutoResumeBanner(
 					`Session expired after restart — resumed via ${providerName}'s native session recovery`,
 				);
+				return;
+			}
+			if (result.status === "no_native_resume") {
+				const freshResult = await spawnFreshTerminal(session.id);
+				if (cancelled) return;
+				if (freshResult.status === "success") {
+					setAutoResumed(true);
+					setAutoResumeBanner(
+						"Previous process could not be recovered — opened a fresh terminal in this workspace",
+					);
+				}
 			}
 		});
 		return () => {
 			cancelled = true;
 		};
-	}, [state, session?.id, session?.isTerminated, session?.provider, terminalTarget?.kind, autoResumed, autoResumeAgent]);
+	}, [state, session?.id, session?.isTerminated, session?.provider, terminalTarget?.kind, autoResumed, autoResumeAgent, spawnFreshTerminal]);
 
 	useEffect(() => {
 		if (!terminal) return;

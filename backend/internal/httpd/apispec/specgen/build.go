@@ -1854,6 +1854,18 @@ func sessionOperations() []operation {
 			},
 		},
 		{
+			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/spawn-fresh-terminal", id: "spawnFreshTerminal", tag: "sessions",
+			summary:    "Spawn a fresh login shell PTY for an unrecoverable dead session",
+			pathParams: []any{controllers.SessionIDParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ResumeAgentResponse{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
 			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/switch-agent", id: "switchSessionAgent", tag: "sessions",
 			summary:    "Switch a logical AO session to another agent harness",
 			pathParams: []any{controllers.SessionIDParam{}},

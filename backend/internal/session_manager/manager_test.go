@@ -1942,6 +1942,61 @@ func TestAutoResumeAgent_RequiresLiveExitedSession(t *testing.T) {
 	}
 }
 
+func TestSpawnFreshTerminal_SucceedsForDeadUnresumableSession(t *testing.T) {
+	baseRuntime := &fakeRuntime{aliveByHandle: map[string]bool{"tmux-mer-1": false}}
+	runtime := &fakeRestartRuntime{fakeRuntime: baseRuntime}
+	// agent whose GetRestoreCommand returns ok=false
+	agent := unresumableAgent{argv: []string{"agent", "run"}}
+	m, st, _ := newExitedResumeManager(t, runtime, agent)
+
+	// Step 1: AutoResume fails with ErrNoNativeResume for this unresumable agent
+	_, err := m.AutoResumeAgentWithMode(ctx, "mer-1")
+	if !errors.Is(err, ErrNoNativeResume) {
+		t.Fatalf("AutoResumeAgentWithMode err = %v, want ErrNoNativeResume", err)
+	}
+
+	// Step 2: Fallback to SpawnFreshTerminal
+	result, err := m.SpawnFreshTerminal(ctx, "mer-1")
+	if err != nil {
+		t.Fatalf("SpawnFreshTerminal: %v", err)
+	}
+	if result.Mode != RestoreModeFresh {
+		t.Fatalf("restore mode = %q, want %q", result.Mode, RestoreModeFresh)
+	}
+
+	// Step 3: Verify the session remains in the session list, is NOT terminated, and is idle
+	got, ok := st.sessions["mer-1"]
+	if !ok {
+		t.Fatal("session mer-1 was removed from store, want it preserved")
+	}
+	if got.IsTerminated {
+		t.Fatalf("session IsTerminated = true, want false")
+	}
+	if got.Activity.State != domain.ActivityIdle {
+		t.Fatalf("session activity state = %v, want idle", got.Activity.State)
+	}
+	if got.Metadata.RuntimeHandleID == "" {
+		t.Fatal("session RuntimeHandleID is empty, want fresh handle")
+	}
+	if baseRuntime.created != 1 {
+		t.Fatalf("baseRuntime.created = %d, want 1", baseRuntime.created)
+	}
+}
+
+func TestSpawnFreshTerminal_RejectsTerminatedSession(t *testing.T) {
+	runtime := &fakeRuntime{aliveByHandle: map[string]bool{"tmux-mer-1": true}}
+	agent := unresumableAgent{argv: []string{"agent", "run"}}
+	m, st, _ := newExitedResumeManager(t, runtime, agent)
+
+	rec := st.sessions["mer-1"]
+	rec.IsTerminated = true
+	st.sessions["mer-1"] = rec
+
+	if _, err := m.SpawnFreshTerminal(ctx, "mer-1"); !errors.Is(err, ErrTerminated) {
+		t.Fatalf("terminated SpawnFreshTerminal error = %v, want ErrTerminated", err)
+	}
+}
+
 func TestSpawn_RejectsMissingRoleHarness(t *testing.T) {
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}

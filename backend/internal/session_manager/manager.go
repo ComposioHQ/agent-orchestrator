@@ -24,6 +24,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
 	"github.com/aoagents/agent-orchestrator/backend/internal/sessionguard"
+	"github.com/aoagents/agent-orchestrator/backend/internal/service/shellterm"
 	"github.com/aoagents/agent-orchestrator/backend/internal/skillassets"
 	"github.com/aoagents/agent-orchestrator/backend/internal/tmuxbin"
 )
@@ -1998,6 +1999,107 @@ func (m *Manager) AutoResumeAgentWithMode(ctx context.Context, id domain.Session
 	}
 	handle := ports.RuntimeHandle{ID: meta.RuntimeHandleID}
 	return m.relaunchSessionWithPolicy(ctx, "auto-resume agent", rec, project, ws, &handle, false, false, true)
+}
+
+// SpawnFreshTerminal launches a fresh login shell PTY for a dead session in its
+// existing workspace when native agent recovery is not possible. It preserves the
+// session row and workspace so the user retains their task context.
+func (m *Manager) SpawnFreshTerminal(ctx context.Context, id domain.SessionID) (RestoreResult, error) {
+	if err := m.beginAgentResume(ctx, id); err != nil {
+		return RestoreResult{}, fmt.Errorf("spawn fresh terminal %s: %w", id, err)
+	}
+	defer m.endAgentResume(id)
+	if active, err := m.hasActiveInterfaceTransition(ctx, id); err != nil {
+		return RestoreResult{}, fmt.Errorf("spawn fresh terminal %s: interface transition: %w", id, err)
+	} else if active {
+		return RestoreResult{}, fmt.Errorf("spawn fresh terminal %s: %w", id, ErrInterfaceTransitionInProgress)
+	}
+	rec, ok, err := m.store.GetSession(ctx, id)
+	if err != nil {
+		return RestoreResult{}, fmt.Errorf("spawn fresh terminal %s: %w", id, err)
+	}
+	if !ok {
+		return RestoreResult{}, fmt.Errorf("spawn fresh terminal %s: %w", id, ErrNotFound)
+	}
+	if rec.IsTerminated {
+		return RestoreResult{}, fmt.Errorf("spawn fresh terminal %s: %w", id, ErrTerminated)
+	}
+	mode := domain.NormalizeSessionMode(rec.Mode)
+	if mode == domain.SessionModeChat {
+		return RestoreResult{}, fmt.Errorf("spawn fresh terminal %s: chat sessions do not use terminal runtimes", id)
+	}
+	project, err := m.loadProject(ctx, rec.ProjectID)
+	if err != nil {
+		return RestoreResult{}, fmt.Errorf("spawn fresh terminal %s: %w", id, err)
+	}
+	meta := rec.Metadata
+	if meta.WorkspacePath == "" ||
+		(meta.Branch == "" && project.Kind.WithDefault() != domain.ProjectKindScratch) {
+		return RestoreResult{}, fmt.Errorf("spawn fresh terminal %s: %w", id, ErrIncompleteHandle)
+	}
+	ws := ports.WorkspaceInfo{
+		Path:      meta.WorkspacePath,
+		Branch:    meta.Branch,
+		SessionID: rec.ID,
+		ProjectID: rec.ProjectID,
+	}
+	return m.relaunchFreshShell(ctx, rec, project, ws)
+}
+
+func (m *Manager) relaunchFreshShell(ctx context.Context, rec domain.SessionRecord, project domain.ProjectRecord, ws ports.WorkspaceInfo) (RestoreResult, error) {
+	shellArgv := shellterm.ResolveUserLoginShell()
+	if len(shellArgv) == 0 {
+		return RestoreResult{}, errors.New("spawn fresh terminal: no usable user login shell found")
+	}
+	var env map[string]string
+	var err error
+	rec, env, err = m.prepareWorkerLaunchEnv(ctx, rec, project.Config.Env)
+	if err != nil {
+		return RestoreResult{}, fmt.Errorf("spawn fresh terminal %s: %w", rec.ID, err)
+	}
+	m.augmentRuntimePATHForLaunchBinary(ctx, env, shellArgv)
+	launchID := m.newLaunchID()
+	if err := m.lcm.PrepareLaunch(rec.ID, launchID); err != nil {
+		return RestoreResult{}, fmt.Errorf("spawn fresh terminal %s: prepare launch: %w", rec.ID, err)
+	}
+	defer m.lcm.CancelLaunch(rec.ID, launchID)
+
+	runtimeCfg := ports.RuntimeConfig{
+		SessionID:     rec.ID,
+		WorkspacePath: ws.Path,
+		Argv:          shellArgv,
+		Env:           env,
+	}
+	var handle ports.RuntimeHandle
+	if rec.Metadata.RuntimeHandleID != "" {
+		handle, err = m.restartRuntime(ctx, ports.RuntimeHandle{ID: rec.Metadata.RuntimeHandleID}, runtimeCfg)
+	} else {
+		handle, err = m.runtime.Create(ctx, runtimeCfg)
+	}
+	if err != nil {
+		return RestoreResult{}, fmt.Errorf("spawn fresh terminal %s: runtime: %w", rec.ID, err)
+	}
+
+	metadata := domain.SessionMetadata{
+		Branch:                    ws.Branch,
+		WorkspacePath:             ws.Path,
+		WorkspaceRepoPath:         ws.RepoPath,
+		RuntimeHandleID:           handle.ID,
+		RuntimeLaunchID:           launchID,
+		AgentSessionID:            rec.Metadata.AgentSessionID,
+		Prompt:                    rec.Metadata.Prompt,
+		BrowserCapabilityVerifier: rec.Metadata.BrowserCapabilityVerifier,
+	}
+	if err := m.lcm.MarkSpawned(ctx, rec.ID, metadata); err != nil {
+		_ = m.runtime.Destroy(ctx, handle)
+		return RestoreResult{}, fmt.Errorf("spawn fresh terminal %s: completed: %w", rec.ID, err)
+	}
+
+	updated, err := m.getRecord(ctx, rec.ID)
+	if err != nil {
+		return RestoreResult{}, err
+	}
+	return RestoreResult{Session: updated, Mode: RestoreModeFresh}, nil
 }
 
 func (m *Manager) relaunchSession(ctx context.Context, operation string, rec domain.SessionRecord, project domain.ProjectRecord, ws ports.WorkspaceInfo, restartHandle *ports.RuntimeHandle) (RestoreResult, error) {

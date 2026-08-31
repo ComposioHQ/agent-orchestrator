@@ -67,6 +67,7 @@ type commander interface {
 	RestoreWithMode(ctx context.Context, id domain.SessionID) (sessionmanager.RestoreResult, error)
 	ResumeAgentWithMode(ctx context.Context, id domain.SessionID) (sessionmanager.RestoreResult, error)
 	AutoResumeAgentWithMode(ctx context.Context, id domain.SessionID) (sessionmanager.RestoreResult, error)
+	SpawnFreshTerminal(ctx context.Context, id domain.SessionID) (sessionmanager.RestoreResult, error)
 	Kill(ctx context.Context, id domain.SessionID) (bool, error)
 	RetireForReplacement(ctx context.Context, id domain.SessionID) error
 	WaitForMessageDeliveryReady(ctx context.Context, id domain.SessionID) error
@@ -547,6 +548,19 @@ func (s *Service) ResumeAgent(ctx context.Context, id domain.SessionID) (ResumeA
 // state without silently relaunching.
 func (s *Service) AutoResumeAgent(ctx context.Context, id domain.SessionID) (ResumeAgentOutcome, error) {
 	res, err := s.manager.AutoResumeAgentWithMode(ctx, id)
+	if err != nil {
+		return ResumeAgentOutcome{}, toAPIError(err)
+	}
+	session, err := s.toSession(ctx, res.Session)
+	if err != nil {
+		return ResumeAgentOutcome{}, err
+	}
+	return ResumeAgentOutcome{Session: session, Mode: restoreModeView(res.Mode)}, nil
+}
+
+// SpawnFreshTerminal launches a fresh login shell PTY for an unrecoverable dead session.
+func (s *Service) SpawnFreshTerminal(ctx context.Context, id domain.SessionID) (ResumeAgentOutcome, error) {
+	res, err := s.manager.SpawnFreshTerminal(ctx, id)
 	if err != nil {
 		return ResumeAgentOutcome{}, toAPIError(err)
 	}

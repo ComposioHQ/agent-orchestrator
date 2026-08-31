@@ -6,7 +6,7 @@ import (
 	"runtime"
 )
 
-// resolveUserLoginShell returns the argv a standalone terminal launches.
+// ResolveUserLoginShell returns the argv a standalone terminal launches.
 //
 // Unlike an agent session — where the argv is a specific CLI the adapter
 // resolved and the runtime must be able to prove exists — a shell terminal
@@ -17,7 +17,7 @@ import (
 // The fallbacks are last-resort only: an empty argv would be rejected by the
 // runtime adapters, so a terminal that cannot name a shell must not open at
 // all rather than open something unusable.
-func resolveUserLoginShell() []string {
+func ResolveUserLoginShell() []string {
 	if runtime.GOOS == "windows" {
 		return resolveWindowsShell()
 	}
