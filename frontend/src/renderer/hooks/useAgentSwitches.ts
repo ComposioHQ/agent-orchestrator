@@ -85,10 +85,10 @@ async function fetchAgentSwitches(sessionId: string): Promise<AgentSwitch[]> {
 	return data?.switches ?? [];
 }
 
-export function useAgentSwitches(sessionId: string) {
+export function useAgentSwitches(sessionId: string, enabled = true) {
 	return useQuery({
 		queryKey: agentSwitchesQueryKey(sessionId),
-		enabled: Boolean(sessionId),
+		enabled: enabled && Boolean(sessionId),
 		queryFn: () => (usesPreviewWorkspaceData ? Promise.resolve([]) : fetchAgentSwitches(sessionId)),
 		// Keep active sagas fresh even if the CDC connection is temporarily
 		// unavailable. Source-recovery endpoints accept work asynchronously, so
