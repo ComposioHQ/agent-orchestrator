@@ -1975,14 +1975,17 @@ function wireNavEvents(
 		update();
 	});
 	contents.on("did-stop-loading", () => {
-		if (entry.annotationEnabled && entry.annotationDraft) {
-			contents.send("browser:annotation:setMode", { enabled: true, draft: entry.annotationDraft });
+		if (entry.annotationEnabled) {
+			contents.send("browser:annotation:setMode", {
+				enabled: true,
+				...(entry.annotationDraft ? { draft: entry.annotationDraft } : {}),
+			});
 			contents.focus();
 		}
 		update();
 	});
-	contents.on("did-fail-load", (_event, errorCode, errorDescription) => {
-		if (errorCode === -3) return;
+	contents.on("did-fail-load", (_event, errorCode, errorDescription, _validatedURL, isMainFrame) => {
+		if (!isMainFrame || errorCode === -3) return;
 		cancelAnnotation(options, entry, "navigation");
 		if (isActive()) entry.view.setVisible?.(false);
 		entry.state = { ...readNavState(entry), error: String(errorDescription || "Unable to load page") };

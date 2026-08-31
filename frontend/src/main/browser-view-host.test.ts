@@ -1873,7 +1873,13 @@ describe("browser:setBounds", () => {
 			visible: true,
 		});
 
-		webContentsListeners.get("did-fail-load")?.({} as never, -105 as never, "Name not resolved" as never);
+		webContentsListeners.get("did-fail-load")?.(
+			{} as never,
+			-105 as never,
+			"Name not resolved" as never,
+			"http://localhost:4173/" as never,
+			true as never,
+		);
 		expect(view.setVisible).toHaveBeenLastCalledWith(false);
 
 		view.setBounds.mockClear();
@@ -1948,6 +1954,22 @@ describe("browser annotation IPC", () => {
 		expect(webContents.focus).toHaveBeenCalledOnce();
 	});
 
+	it("re-enables annotation picking after a reload before any element is selected", async () => {
+		const { invoke, sent, webContents, webContentsListeners } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+		await invoke("browser:navigate", { viewId: "1:sess-1", url: "http://localhost:4173/" });
+		await invoke("browser:annotation:setMode", { viewId: "1:sess-1", enabled: true });
+		webContents.send.mockClear();
+		webContents.focus.mockClear();
+
+		await invoke("browser:reload", "1:sess-1");
+		webContentsListeners.get("did-stop-loading")?.();
+
+		expect(sent).not.toContainEqual({ channel: "browser:annotation:canceled", payload: expect.anything() });
+		expect(webContents.send).toHaveBeenCalledWith("browser:annotation:setMode", { enabled: true });
+		expect(webContents.focus).toHaveBeenCalledOnce();
+	});
+
 	it("preserves a draft when the same URL is submitted again by preview revision or the address bar", async () => {
 		const { invoke, send, sent, webContents, webContentsListeners } = setupHost();
 		await invoke("browser:ensure", "sess-1");
@@ -2004,9 +2026,37 @@ describe("browser annotation IPC", () => {
 
 		await invoke("browser:annotation:setMode", { viewId: "1:sess-1", enabled: true });
 		send("browser:annotation:draft", 99, annotationDraft());
-		webContentsListeners.get("did-fail-load")?.({} as never, -105 as never, "Name not resolved" as never);
+		webContentsListeners.get("did-fail-load")?.(
+			{} as never,
+			-105 as never,
+			"Name not resolved" as never,
+			"http://localhost:4173/" as never,
+			true as never,
+		);
 
 		expect(sent.filter(({ channel }) => channel === "browser:annotation:canceled")).toHaveLength(2);
+	});
+
+	it("keeps a top-level draft when a subframe load fails", async () => {
+		const { invoke, send, sent, webContents, webContentsListeners } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+		await invoke("browser:navigate", { viewId: "1:sess-1", url: "http://localhost:4173/" });
+		await invoke("browser:annotation:setMode", { viewId: "1:sess-1", enabled: true });
+		const draft = annotationDraft();
+		send("browser:annotation:draft", 99, draft);
+		webContents.send.mockClear();
+
+		webContentsListeners.get("did-fail-load")?.(
+			{} as never,
+			-105 as never,
+			"Iframe name not resolved" as never,
+			"http://invalid.test/frame" as never,
+			false as never,
+		);
+		webContentsListeners.get("did-stop-loading")?.();
+
+		expect(sent).not.toContainEqual({ channel: "browser:annotation:canceled", payload: expect.anything() });
+		expect(webContents.send).toHaveBeenCalledWith("browser:annotation:setMode", { enabled: true, draft });
 	});
 
 	it("forwards a single-element preview annotation submission to the renderer-owned view", async () => {
