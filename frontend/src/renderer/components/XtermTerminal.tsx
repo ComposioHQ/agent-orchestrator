@@ -48,7 +48,7 @@ import {
 	type OscTerminalColors,
 } from "../lib/osc-color-report";
 import { buildTerminalThemes } from "../lib/terminal-themes";
-import { useUiStore, type Theme } from "../stores/ui-store";
+import { useUiStore, type Theme, type ThemeStyle } from "../stores/ui-store";
 import { TerminalSearch } from "./TerminalSearch";
 import {
 	DropdownMenu,
@@ -310,7 +310,9 @@ export function XtermTerminal(props: XtermTerminalProps) {
 	const announcedCursorSchemeRef = useRef<Theme | null>(null);
 	const searchAddonRef = useRef<SearchAddon | null>(null);
 	const fitRef = useRef<(() => void) | null>(null);
-	const colorSchemeReporterRef = useRef<((theme: Theme) => void) | null>(null);
+	const colorSchemeReporterRef = useRef<
+		((theme: Theme, themeStyle: ThemeStyle, force?: boolean) => void) | null
+	>(null);
 	const contextMenuActionsRef = useRef<TerminalContextMenuActions | null>(null);
 	const [contextMenu, setContextMenu] = useState<TerminalContextMenuState>({
 		canCopy: false,
@@ -381,7 +383,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		if (!term) return;
 		const { dark, light } = buildTerminalThemes();
 		term.options.theme = props.theme === "dark" ? dark : light;
-		colorSchemeReporterRef.current?.(props.theme);
+		colorSchemeReporterRef.current?.(props.theme, themeStyle);
 	}, [props.theme, themeStyle]);
 
 	useEffect(() => {
@@ -634,9 +636,11 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		// OpenTUI clients use it to receive live light/dark changes after startup.
 		let colorSchemeUpdatesEnabled = false;
 		let currentColorScheme = props.theme;
-		const reportColorScheme = (theme: Theme, force = false) => {
-			const changed = theme !== currentColorScheme;
+		let currentThemeStyle = themeStyle;
+		const reportColorScheme = (theme: Theme, nextThemeStyle: ThemeStyle, force = false) => {
+			const changed = theme !== currentColorScheme || nextThemeStyle !== currentThemeStyle;
 			currentColorScheme = theme;
+			currentThemeStyle = nextThemeStyle;
 			if (!force && (!colorSchemeUpdatesEnabled || !changed)) return;
 			emitUserInput(`\x1b[?997;${theme === "dark" ? 1 : 2}n`, "protocol");
 		};
@@ -649,6 +653,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				if (!hasCsiMode(params, COLOR_SCHEME_UPDATE_MODE)) return false;
 				colorSchemeUpdatesEnabled = true;
 				currentColorScheme = callbacksRef.current.theme;
+				currentThemeStyle = useUiStore.getState().themeStyle;
 				return params.length === 1;
 			},
 		);
@@ -672,7 +677,11 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			{ prefix: "?", final: "n" },
 			(params) => {
 				if (!hasCsiMode(params, COLOR_SCHEME_QUERY)) return false;
-				reportColorScheme(callbacksRef.current.theme, true);
+				reportColorScheme(
+					callbacksRef.current.theme,
+					useUiStore.getState().themeStyle,
+					true,
+				);
 				return params.length === 1;
 			},
 		);

@@ -1257,6 +1257,26 @@ describe("XtermTerminal", () => {
 		expect(onInput).not.toHaveBeenCalled();
 	});
 
+	it("reports named palette changes to mode 2031 subscribers", () => {
+		const onInput = vi.fn();
+		useUiStore.setState({ themeStyle: "orchestrate" });
+
+		try {
+			render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);
+			const setMode = state.lastTerminal!.csiHandlers.find(
+				({ id }) => id.prefix === "?" && id.final === "h",
+			);
+
+			expect(setMode?.callback([2031])).toBe(true);
+			onInput.mockClear();
+			act(() => useUiStore.getState().setThemeStyle("github"));
+
+			expect(onInput).toHaveBeenLastCalledWith("\x1b[?997;1n", "protocol");
+		} finally {
+			act(() => useUiStore.setState({ themeStyle: "orchestrate" }));
+		}
+	});
+
 	it("leaves unrelated private modes for xterm to handle", () => {
 		render(<XtermTerminal theme="light" />);
 		const setMode = state.lastTerminal!.csiHandlers.find(
