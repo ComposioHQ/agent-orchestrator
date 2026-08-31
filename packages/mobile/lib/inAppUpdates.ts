@@ -1,7 +1,7 @@
 import { requireOptionalNativeModule } from "expo";
 import * as Application from "expo-application";
 import { Linking, Platform } from "react-native";
-import { lookupUrl, parseLookup, playStoreUrls, type StoreCheck } from "./storeUpdate";
+import { localeRegion, lookupUrl, parseLookup, playStoreUrls, type StoreCheck } from "./storeUpdate";
 
 // The effect side of `storeUpdate.ts`: ask the stores, and open them. Split out
 // so the policy stays unit-testable, like `githubLink.ts`/`openGitHub.ts`.
@@ -55,18 +55,14 @@ async function run(): Promise<StoreCheck | null> {
 }
 
 /**
- * The device's storefront, or null when the locale does not name one. Locale
- * source matches `lib/voice/deviceProvider.ts`.
- *
- * Only a real region subtag counts: a bare "en" has no region, and its last
- * segment is the language — sending that as `country` would ask for a storefront
- * that does not exist.
+ * The device's storefront, or null when the locale does not name one — a guess
+ * sent as `country` would ask for a storefront that does not exist. Locale
+ * source matches `lib/voice/deviceProvider.ts`; the subtag walk lives in
+ * `localeRegion` so it is unit-testable.
  */
 function storefront(): string | null {
 	try {
-		const parts = Intl.DateTimeFormat().resolvedOptions().locale.split("-");
-		const region = parts.length > 1 ? parts[parts.length - 1] : null;
-		return region && /^[A-Za-z]{2}$/.test(region) ? region : null;
+		return localeRegion(Intl.DateTimeFormat().resolvedOptions().locale);
 	} catch {
 		return null;
 	}

@@ -6,6 +6,7 @@ import {
 	floorSignal,
 	floorTarget,
 	describeStoreRow,
+	localeRegion,
 	lookupUrl,
 	MAX_DISMISSALS,
 	nextSnooze,
@@ -15,6 +16,7 @@ import {
 	shouldPrompt,
 	type Snooze,
 	type StoreCheck,
+	storeRowResult,
 	tierOf,
 } from "./storeUpdate";
 
@@ -173,6 +175,13 @@ describe("floorTarget", () => {
 		expect(floorTarget({ min: "", latest: "" })).toBeUndefined();
 		expect(floorTarget({})).toBeUndefined();
 	});
+
+	// The same filter as floorSignal: a "v1.4.0" the tier ignores must not name
+	// the sheet or key the snooze either — the two must agree on what a version is.
+	it("skips a value floorSignal would reject", () => {
+		expect(floorTarget({ latest: "v1.4.0", min: "1.3.0" })).toBe("1.3.0");
+		expect(floorTarget({ latest: "v1.4.0" })).toBeUndefined();
+	});
 });
 
 describe("playStoreUrls", () => {
@@ -231,6 +240,45 @@ describe("describeStoreRow", () => {
 
 	it("invites a first check before anything has run", () => {
 		expect(describeStoreRow(idle)).toEqual({ value: "Check now", tone: "default", busy: false, action: "check" });
+	});
+});
+
+// The Settings row and the launch nudge read the same tier, so they cannot
+// disagree: during the unlisted-iOS window the sheet says a version is
+// available, and this row must not answer "Up to date" to the user who opened
+// Settings to act on it.
+describe("storeRowResult", () => {
+	it("reports available whenever the launch nudge would fire, floor included", () => {
+		expect(storeRowResult({ updateAvailable: true }, "recommended")).toEqual({ kind: "available" });
+		expect(storeRowResult({ updateAvailable: true }, "required")).toEqual({ kind: "available" });
+		// The store says nothing is listed; the floor still knows better.
+		expect(storeRowResult({ updateAvailable: false }, "recommended")).toEqual({ kind: "available" });
+	});
+
+	it("reports an unreachable store as an error only when the floor is silent too", () => {
+		expect(storeRowResult(null, "none")).toEqual({ kind: "error" });
+		expect(storeRowResult(null, "recommended")).toEqual({ kind: "available" });
+	});
+
+	it("is up to date only when the store and the floor both are", () => {
+		expect(storeRowResult({ updateAvailable: false }, "none")).toEqual({ kind: "up-to-date" });
+	});
+});
+
+describe("localeRegion", () => {
+	it("finds the region wherever it sits", () => {
+		expect(localeRegion("en-US")).toBe("US");
+		expect(localeRegion("zh-Hans-CN")).toBe("CN");
+		expect(localeRegion("ca-ES-valencia")).toBe("ES");
+		expect(localeRegion("en-US-u-ca-gregory")).toBe("US");
+	});
+
+	it("answers null rather than guessing", () => {
+		expect(localeRegion("en")).toBeNull();
+		// "ca" here is the calendar extension key, not Canada.
+		expect(localeRegion("en-u-ca-gregory")).toBeNull();
+		// A UN M.49 numeric region; the iTunes lookup only takes ISO alpha-2.
+		expect(localeRegion("es-419")).toBeNull();
 	});
 });
 

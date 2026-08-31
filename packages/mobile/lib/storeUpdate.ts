@@ -80,9 +80,13 @@ function usableVersion(v: string | null | undefined): string | null {
 	return trimmed && /^\d{1,4}(\.\d{1,4}){0,2}$/.test(trimmed) ? trimmed : null;
 }
 
-/** The version a floor is pointing at, for copy and for keying the snooze. */
+/**
+ * The version a floor is pointing at, for copy and for keying the snooze. Same
+ * `usableVersion` filter as `floorSignal`, so a value that cannot move the tier
+ * cannot name the sheet or key the snooze either.
+ */
 export function floorTarget(floor: Floor): string | undefined {
-	return floor.latest || floor.min || undefined;
+	return usableVersion(floor.latest) ?? usableVersion(floor.min) ?? undefined;
 }
 
 /** What the floor alone would ask for, before the store gets a say. */
@@ -108,6 +112,21 @@ export function lookupUrl(bundleId: string, region?: string | null): string {
 	const url = `https://itunes.apple.com/lookup?bundleId=${encodeURIComponent(bundleId)}`;
 	const country = region?.trim().toLowerCase();
 	return country && /^[a-z]{2}$/.test(country) ? `${url}&country=${country}` : url;
+}
+
+/**
+ * The region subtag of a BCP 47 locale, or null when it has none: the first
+ * 2-alpha subtag after the language. Script subtags are 4 alpha and variants at
+ * least 4 characters, so before the extensions nothing else is 2 letters — and
+ * the scan stops at the first singleton, where `-u-ca-gregory` would otherwise
+ * offer its calendar key "ca" up as a country.
+ */
+export function localeRegion(locale: string): string | null {
+	for (const part of locale.split("-").slice(1)) {
+		if (part.length === 1) break;
+		if (/^[A-Za-z]{2}$/.test(part)) return part;
+	}
+	return null;
 }
 
 /**
@@ -183,7 +202,7 @@ export function shouldPrompt({
 	stalenessDays,
 }: {
 	tier: StoreTier;
-	/** What we are nudging toward — the store's version, or the floor's. */
+	/** What this ask is keyed on — the floor's version when one is set, else the store's. */
 	version: string | undefined;
 	snooze: Snooze | null;
 	now: number;
@@ -201,7 +220,7 @@ export function shouldPrompt({
 	return now - snooze.lastPromptAt >= PROMPT_INTERVAL_MS;
 }
 
-/** The snooze record after the user dismisses a nudge for `storeVersion`. */
+/** The snooze record after a nudge for `target` went nowhere — dismissed, or "Update" opened nothing. */
 export function nextSnooze(prev: Snooze | null, target: string | undefined, now: number): Snooze {
 	const version = target ?? "";
 	const carried = prev && prev.version === version ? prev.dismissals : 0;
@@ -234,6 +253,19 @@ export type StoreRow = {
 	busy: boolean;
 	action: "check" | "open" | null;
 };
+
+/**
+ * One manual check's conclusion. Takes the tier rather than the raw check so
+ * the floor weighs in exactly as it does at launch — otherwise a floor-driven
+ * nudge coexists with a green "Up to date" in Settings, each calling the other
+ * a liar. An unreachable store reads as an error only when the floor is silent
+ * too: the floor knowing of an update is an answer, not a failed check.
+ */
+export function storeRowResult(check: StoreCheck | null, tier: StoreTier): StoreRowResult {
+	if (tier !== "none") return { kind: "available" };
+	if (check === null) return { kind: "error" };
+	return { kind: "up-to-date" };
+}
 
 /**
  * What the Settings store row shows and does. Worded to match the OTA row right

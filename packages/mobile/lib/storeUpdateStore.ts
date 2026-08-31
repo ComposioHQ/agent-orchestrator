@@ -10,7 +10,7 @@ import type { Snooze } from "./storeUpdate";
 
 export const STORE_UPDATE_KEY = "ao.storeUpdate";
 
-/** How often the nudge was dismissed, and for which store version. Never throws. */
+/** How often the nudge was dismissed, and for which version. Never throws. */
 export async function loadSnooze(): Promise<Snooze | null> {
 	try {
 		const raw = await AsyncStorage.getItem(STORE_UPDATE_KEY);

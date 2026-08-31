@@ -77,17 +77,24 @@ export function StoreUpdateManager(): null {
 			// launch with a sheet the user can dismiss anyway.
 			tier = "recommended";
 		}
-		// The version we are nudging toward: the store's when it answered, otherwise
-		// the floor's — which is constant, so a device with flaky Play access does
-		// not reset its own dismissal count every launch.
 		const confirmed = check?.updateAvailable === true;
-		const target = confirmed ? check?.storeVersion : floorTarget(VERSION_FLOOR);
-		const args = { tier, version: target, snooze: snooze ?? null, now: Date.now() };
+		// What the sheet names: the store's version when it answered, else the floor's.
+		const display = confirmed ? check?.storeVersion : floorTarget(VERSION_FLOOR);
+		// What the snooze is keyed on: the floor's version while the floor has an
+		// opinion about this install. That stays constant whether or not the store
+		// answers, so a device with flaky Play access does not reset its own
+		// dismissal count every launch by alternating between the floor's version
+		// string and Play's versionCode. The cost: a spent count then restarts when
+		// the floor moves, not when the store does — the floor is the ask. Once the
+		// install is above the floor, prompts are store-driven and the store's
+		// version keys them, so a new release resets a spent count as before.
+		const key = floor === "none" ? check?.storeVersion : floorTarget(VERSION_FLOOR);
+		const args = { tier, version: key, snooze: snooze ?? null, now: Date.now() };
 		if (!shouldPrompt({ ...args, stalenessDays: check?.playStalenessDays })) return;
-		openSheet(check, target, confirmed);
+		openSheet(check, display, key, confirmed);
 	}
 
-	function openSheet(check: StoreCheck | null, target: string | undefined, confirmed: boolean) {
+	function openSheet(check: StoreCheck | null, display: string | undefined, key: string | undefined, confirmed: boolean) {
 		// The check above is allowed 12s; if the user opened something in the
 		// meantime, don't land a sheet on top of it. Leaving `ran` false gives the
 		// prompt another chance when they come back to the board.
@@ -95,23 +102,31 @@ export function StoreUpdateManager(): null {
 			ran.current = false;
 			return;
 		}
+		const snoozeNow = () => {
+			const next = nextSnooze(snooze ?? null, key, Date.now());
+			setSnooze(next);
+			void saveSnooze(next);
+		};
 		router.push(
 			storeUpdateSheetRoute({
 				// A store-confirmed version is only nameable on iOS — Android's is a
 				// versionCode. A floor version is a real version string either way.
-				version: confirmed && Platform.OS !== "ios" ? undefined : target,
+				version: confirmed && Platform.OS !== "ios" ? undefined : display,
 				storeConfirmed: confirmed,
 				onAction: (action) => {
 					if (action === "update") {
 						// Only Play's flow leaves a download to recover; a listing does not.
 						void openOrStartUpdate(check).then((via) => {
 							started.current = via === "play";
+							// Nothing opened — a floor-driven nudge on a device with no
+							// TestFlight, say. The sheet is already gone, so without a
+							// snooze the same dead end would replay every launch, never
+							// counting toward MAX_DISMISSALS.
+							if (via === "none") snoozeNow();
 						});
 						return;
 					}
-					const next = nextSnooze(snooze ?? null, target, Date.now());
-					setSnooze(next);
-					void saveSnooze(next);
+					snoozeNow();
 				},
 			}),
 		);

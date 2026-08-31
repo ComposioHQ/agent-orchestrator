@@ -20,7 +20,8 @@ import { openGitHub } from "../../lib/openGitHub";
 import { checkStore, openOrStartUpdate } from "../../lib/inAppUpdates";
 import { useApp } from "../../lib/store";
 import { checkAndDownload, describeUpdateRow, type UpdateOutcome } from "../../lib/updates";
-import { describeStoreRow, type StoreCheck, type StoreRowResult } from "../../lib/storeUpdate";
+import { describeStoreRow, floorSignal, storeRowResult, tierOf, type StoreCheck, type StoreRowResult } from "../../lib/storeUpdate";
+import { VERSION_FLOOR } from "../../lib/versionFloor";
 import { useTabScrollToTop } from "../../lib/useTabScrollToTop";
 import { Dot, ScreenHeader, SettingsGroup, SettingsRow, SettingsToggle } from "../../lib/ui";
 import { useTheme, useThemedStyles, useThemeState } from "../../lib/ThemeProvider";
@@ -390,15 +391,15 @@ function StoreUpdateRow() {
 		try {
 			const result = await checkStore();
 			setCheck(result);
-			// An unreachable store surfaces as an error here, where at launch it stays
-			// silent: the user asked for this one.
-			if (result === null) {
-				setLast({ kind: "error" });
-				haptics.error();
-			} else {
-				setLast({ kind: result.updateAvailable ? "available" : "up-to-date" });
-				haptics.success();
-			}
+			// The same floor pass the launch nudge makes, so the two surfaces cannot
+			// disagree during the window where the floor is the only signal. An
+			// unreachable store still surfaces as an error here, where at launch it
+			// stays silent: the user asked for this one.
+			const floor = floorSignal(Application.nativeApplicationVersion, VERSION_FLOOR);
+			const outcome = storeRowResult(result, tierOf(result, Platform.OS, floor));
+			setLast(outcome);
+			if (outcome.kind === "error") haptics.error();
+			else haptics.success();
 		} finally {
 			setChecking(false);
 		}
