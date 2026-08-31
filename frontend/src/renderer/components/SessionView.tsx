@@ -1149,11 +1149,15 @@ export function SessionView({ sessionId, cloudOrgId, projectId }: SessionViewPro
 	useEffect(() => {
 		if (handoffSwitchError) setHandoffDialogOpen(true);
 	}, [handoffSwitchError]);
+	// Keep the switch visible on the session tab, rather than only in the
+	// overflow menu. In particular, a Cloud tab can be selected before its
+	// row reaches the list cache; the visible control then makes its resolving
+	// state explicit instead of looking like the feature disappeared.
 	const interfaceSwitchInlineStatus =
-		session && showInterfaceSwitchAction && activeInterfaceTransition ? (
+		showInterfaceSwitchAction ? (
 			<SessionInterfaceSwitchButton
 				target={interfaceTarget}
-				supported={Boolean(interfaceSwitch.status?.supported) && !activeInterfaceTransition}
+				supported={session?.cloud ? Boolean(interfaceSwitch.status?.supported) : true}
 				disabledReason={
 					interfaceSwitch.isLoading
 						? "Checking whether this agent can switch interfaces…"
