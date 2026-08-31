@@ -157,7 +157,7 @@ func TestBootstrapWorkerStreamsArchiveWithoutSecretsInURL(t *testing.T) {
 				t.Errorf("PTY backend_type = %q, want buffered", got)
 			}
 			command := request.URL.Query().Get("command")
-			match := regexp.MustCompile(`head -c ([0-9]+)`).FindStringSubmatch(command)
+			match := regexp.MustCompile(`target=([0-9]+)`).FindStringSubmatch(command)
 			if len(match) != 2 {
 				t.Errorf("bootstrap command did not include payload length")
 				return
@@ -173,7 +173,9 @@ func TestBootstrapWorkerStreamsArchiveWithoutSecretsInURL(t *testing.T) {
 			defer netConnection.Close()
 			decoder := json.NewDecoder(netConnection)
 			var encoded strings.Builder
-			for encoded.Len() < wanted {
+			expectedSequence := 0
+			truncatedFirstCopy := false
+			for {
 				var request struct {
 					Data string `json:"data"`
 				}
@@ -181,7 +183,25 @@ func TestBootstrapWorkerStreamsArchiveWithoutSecretsInURL(t *testing.T) {
 					t.Errorf("decode PTY input: %v", err)
 					return
 				}
-				encoded.WriteString(request.Data)
+				if !truncatedFirstCopy && strings.HasPrefix(request.Data, "data:0:") {
+					request.Data = strings.TrimSuffix(request.Data, "\n")
+					request.Data = request.Data[:len(request.Data)-1] + "\n"
+					truncatedFirstCopy = true
+				}
+				parts := strings.SplitN(strings.TrimSuffix(request.Data, "\n"), ":", 4)
+				if len(parts) != 4 {
+					continue
+				}
+				sequence, sequenceErr := strconv.Atoi(parts[1])
+				declared, declaredErr := strconv.Atoi(parts[2])
+				if parts[0] == "data" && sequenceErr == nil && declaredErr == nil &&
+					sequence == expectedSequence && len(parts[3]) == declared {
+					encoded.WriteString(parts[3])
+					expectedSequence++
+				}
+				if parts[0] == "done" && encoded.Len() == wanted {
+					break
+				}
 			}
 			archive, err := base64.StdEncoding.DecodeString(encoded.String())
 			if err != nil {

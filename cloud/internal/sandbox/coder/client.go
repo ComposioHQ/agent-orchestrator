@@ -337,27 +337,38 @@ func (c *Client) BootstrapWorker(ctx context.Context, id sandbox.ID, bootstrap s
 
 	encoder := json.NewEncoder(netConn)
 	// Coder's reconnecting PTY writes each decoded Data field to the OS PTY but
-	// does not retry a short write. Large bursts can therefore be silently
-	// truncated while dd is receiving the bootstrap archive. Keep each write
-	// below the PTY buffer and give the reader a chance to drain between frames.
+	// does not retry a short write. Frame the archive as canonical terminal lines
+	// with sequence and length metadata, and send redundant copies. The receiver
+	// appends only the first complete copy for the expected sequence, so a short
+	// write cannot silently corrupt or stall the bootstrap archive.
 	const (
-		chunkSize  = 512
-		chunkPause = time.Millisecond
+		chunkSize   = 2_000
+		chunkCopies = 3
+		chunkPause  = time.Millisecond
 	)
+	sequence := 0
 	for offset := 0; offset < len(encoded); offset += chunkSize {
 		end := min(offset+chunkSize, len(encoded))
-		if err := encoder.Encode(struct {
-			Data string `json:"data"`
-		}{Data: encoded[offset:end]}); err != nil {
-			return fmt.Errorf("coder: upload worker through PTY: %w", err)
-		}
-		if end < len(encoded) {
+		chunk := encoded[offset:end]
+		line := fmt.Sprintf("data:%d:%d:%s\n", sequence, len(chunk), chunk)
+		for copyIndex := 0; copyIndex < chunkCopies; copyIndex++ {
+			if err := encoder.Encode(struct {
+				Data string `json:"data"`
+			}{Data: line}); err != nil {
+				return fmt.Errorf("coder: upload worker through PTY: %w", err)
+			}
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
 			case <-time.After(chunkPause):
 			}
 		}
+		sequence++
+	}
+	if err := encoder.Encode(struct {
+		Data string `json:"data"`
+	}{Data: fmt.Sprintf("done:%d:0:\n", sequence)}); err != nil {
+		return fmt.Errorf("coder: finish worker upload through PTY: %w", err)
 	}
 	output, err := readBootstrapResult(ctx, netConn)
 	if err != nil {
@@ -458,7 +469,13 @@ func bootstrapCommand(bootstrap sandbox.WorkerBootstrap, encodedLength int) stri
 	script := "set -eu\n" +
 		"stage=$(mktemp -d)\nencoded=\"$stage/payload.b64\"\n" +
 		"trap 'code=$?; stty echo icanon 2>/dev/null || true; echo " + bootstrapFailed + ":$code' EXIT\n" +
-		"stty -echo -icanon min 1 time 0\nhead -c " + strconv.Itoa(encodedLength) + " >\"$encoded\"\nstty echo icanon\n" +
+		"target=" + strconv.Itoa(encodedLength) + "\nexpected=0\nreceived=0\n: >\"$encoded\"\nstty -echo icanon\n" +
+		"while IFS=: read -r kind sequence declared chunk; do\n" +
+		"  case \"$sequence\" in ''|*[!0-9]*) continue ;; esac\n" +
+		"  case \"$declared\" in ''|*[!0-9]*) continue ;; esac\n" +
+		"  if [ \"$kind\" = data ] && [ \"$sequence\" -eq \"$expected\" ] && [ \"${#chunk}\" -eq \"$declared\" ] && [ $((received + declared)) -le \"$target\" ]; then\n" +
+		"    printf %s \"$chunk\" >>\"$encoded\"\n    received=$((received + declared))\n    expected=$((expected + 1))\n" +
+		"  elif [ \"$kind\" = done ] && [ \"$received\" -eq \"$target\" ]; then\n    break\n  fi\ndone\nstty echo icanon\n" +
 		"base64 -d \"$encoded\" | gzip -d | tar -xf - -C \"$stage\"\n" +
 		"sudo -n id -u " + shellQuote(workerUser) + " >/dev/null 2>&1 || sudo -n useradd -m " + shellQuote(workerUser) + "\n" +
 		"sudo -n mkdir -p /workspace/repository /workspace/.ao/worker /workspace/.ao/harness /workspace/.ao/repository-credentials\n" +
