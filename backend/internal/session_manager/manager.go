@@ -819,6 +819,14 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	// request AO cannot honor should cost nothing, not leave a terminated row and
 	// a worktree behind. Chat inherited from the daemon preference is best-effort:
 	// if it is unavailable for this harness or installation, fall back to TUI.
+	// Importing an existing provider conversation requires the structured chat
+	// controller: the resume-and-replay path lives there, not in the TUI runtime.
+	// Pin Chat before mode resolution so an installation that cannot run Chat
+	// fails the import cleanly instead of silently falling back to a fresh TUI.
+	if cfg.ResumeNativeSession != nil {
+		cfg.RequestedMode = domain.SessionModeChat
+	}
+
 	modeExplicitlyRequested := cfg.RequestedMode.Valid()
 	mode := m.resolveSessionMode(ctx, cfg.RequestedMode)
 	if mode == domain.SessionModeChat {

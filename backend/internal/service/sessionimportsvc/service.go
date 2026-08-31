@@ -1,0 +1,248 @@
+// Package sessionimportsvc turns an on-disk agent conversation, discovered by
+// the sessionimport scanners, into a resumable AO chat session. It is the bridge
+// between provider transcripts and AO's session/project services: it resolves
+// (or registers) the project the conversation ran in, then spawns a chat session
+// bound to the provider's native id so the prior transcript is replayed.
+package sessionimportsvc
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"unicode/utf8"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
+	"github.com/aoagents/agent-orchestrator/backend/internal/service/sessionimport"
+)
+
+// maxImportDisplayName matches the session display-name cap the rest of the app
+// enforces, so an imported session's label looks native. Users can rename it.
+const maxImportDisplayName = 20
+
+// SessionService creates and reads AO sessions.
+type SessionService interface {
+	Spawn(context.Context, ports.SpawnConfig) (domain.Session, int, int, error)
+	Get(context.Context, domain.SessionID) (domain.Session, error)
+}
+
+// SessionStore enumerates persisted sessions for the idempotency check.
+type SessionStore interface {
+	ListAllSessions(context.Context) ([]domain.SessionRecord, error)
+}
+
+// ProjectService resolves or registers the project an imported conversation
+// lands in.
+type ProjectService interface {
+	List(context.Context) ([]projectsvc.Summary, error)
+	Add(context.Context, projectsvc.AddInput) (projectsvc.Project, error)
+}
+
+var (
+	// ErrImportSessionNotFound is returned when the requested native conversation
+	// is no longer on disk.
+	ErrImportSessionNotFound = errors.New("importable session not found")
+	// ErrImportProjectUnresolved is returned when no project covers the
+	// conversation's working directory and one cannot be created (e.g. the
+	// directory is not a git repository with a commit).
+	ErrImportProjectUnresolved = errors.New("cannot resolve a project for the session working directory")
+)
+
+// Service discovers on-disk agent conversations and imports one as a resumable
+// AO chat session.
+type Service struct {
+	disco    *sessionimport.Service
+	sessions SessionService
+	store    SessionStore
+	projects ProjectService
+}
+
+// New builds the import service over the given provider sources. Discovery flags
+// already-imported conversations using the session store.
+func New(sessions SessionService, store SessionStore, projects ProjectService, sources ...sessionimport.Source) *Service {
+	s := &Service{sessions: sessions, store: store, projects: projects}
+	s.disco = sessionimport.NewService(s.existingNativeIDs, sources...)
+	return s
+}
+
+// Discover lists importable conversations across every provider.
+func (s *Service) Discover(ctx context.Context, opts sessionimport.DiscoverOptions) ([]sessionimport.ImportableSession, error) {
+	return s.disco.Discover(ctx, opts)
+}
+
+// Import creates a resumable AO chat session from an existing provider
+// conversation. It is idempotent: if a session already bound to nativeID exists,
+// that session is returned with alreadyImported=true and nothing new is created.
+func (s *Service) Import(ctx context.Context, provider domain.AgentHarness, nativeID string) (domain.Session, bool, error) {
+	nativeID = strings.TrimSpace(nativeID)
+	if nativeID == "" {
+		return domain.Session{}, false, ErrImportSessionNotFound
+	}
+
+	if existing, ok, err := s.findExisting(ctx, nativeID); err != nil {
+		return domain.Session{}, false, err
+	} else if ok {
+		return existing, true, nil
+	}
+
+	target, ok, err := s.disco.Locate(ctx, provider, nativeID)
+	if err != nil {
+		return domain.Session{}, false, err
+	}
+	if !ok {
+		return domain.Session{}, false, ErrImportSessionNotFound
+	}
+
+	projectID, err := s.resolveProject(ctx, target.CWD)
+	if err != nil {
+		return domain.Session{}, false, err
+	}
+
+	session, _, _, err := s.sessions.Spawn(ctx, ports.SpawnConfig{
+		ProjectID:     projectID,
+		Kind:          domain.KindWorker,
+		Harness:       provider,
+		RequestedMode: domain.SessionModeChat,
+		DisplayName:   importDisplayName(target.Title),
+		ResumeNativeSession: &ports.ResumeNativeSession{
+			Provider:        provider,
+			NativeSessionID: nativeID,
+			ConfigDir:       target.ConfigDir,
+		},
+	})
+	if err != nil {
+		return domain.Session{}, false, fmt.Errorf("import session: %w", err)
+	}
+	return session, false, nil
+}
+
+// existingNativeIDs collects the native ids AO already has a session for, used
+// by discovery to flag duplicates.
+func (s *Service) existingNativeIDs(ctx context.Context) (map[string]struct{}, error) {
+	recs, err := s.store.ListAllSessions(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return nativeIDSet(recs), nil
+}
+
+func (s *Service) findExisting(ctx context.Context, nativeID string) (domain.Session, bool, error) {
+	recs, err := s.store.ListAllSessions(ctx)
+	if err != nil {
+		return domain.Session{}, false, err
+	}
+	for _, r := range recs {
+		if r.Metadata.ProviderConversationID == nativeID || r.Metadata.AgentSessionID == nativeID {
+			sess, err := s.sessions.Get(ctx, r.ID)
+			if err != nil {
+				return domain.Session{}, false, err
+			}
+			return sess, true, nil
+		}
+	}
+	return domain.Session{}, false, nil
+}
+
+// resolveProject finds a registered project covering cwd, or registers the git
+// repository containing cwd as a new project.
+func (s *Service) resolveProject(ctx context.Context, cwd string) (domain.ProjectID, error) {
+	cwd = strings.TrimSpace(cwd)
+	if cwd == "" {
+		return "", ErrImportProjectUnresolved
+	}
+
+	projects, err := s.projects.List(ctx)
+	if err != nil {
+		return "", err
+	}
+	if id, ok := bestProjectForDir(projects, cwd); ok {
+		return id, nil
+	}
+
+	created, err := s.projects.Add(ctx, projectsvc.AddInput{Path: gitRoot(cwd)})
+	if err != nil {
+		return "", fmt.Errorf("%w: %v", ErrImportProjectUnresolved, err)
+	}
+	return created.ID, nil
+}
+
+func nativeIDSet(recs []domain.SessionRecord) map[string]struct{} {
+	set := make(map[string]struct{}, len(recs))
+	for _, r := range recs {
+		if id := strings.TrimSpace(r.Metadata.ProviderConversationID); id != "" {
+			set[id] = struct{}{}
+		}
+		if id := strings.TrimSpace(r.Metadata.AgentSessionID); id != "" {
+			set[id] = struct{}{}
+		}
+	}
+	return set
+}
+
+// bestProjectForDir returns the registered project whose path most specifically
+// covers dir (exact match or nearest ancestor). Longest matching path wins so a
+// nested project is preferred over its parent.
+func bestProjectForDir(projects []projectsvc.Summary, dir string) (domain.ProjectID, bool) {
+	dir = filepath.Clean(dir)
+	var (
+		bestID  domain.ProjectID
+		bestLen = -1
+	)
+	for _, p := range projects {
+		pp := filepath.Clean(strings.TrimSpace(p.Path))
+		if pp == "" {
+			continue
+		}
+		if pp == dir || dirIsAncestor(pp, dir) {
+			if len(pp) > bestLen {
+				bestID = p.ID
+				bestLen = len(pp)
+			}
+		}
+	}
+	return bestID, bestLen >= 0
+}
+
+// dirIsAncestor reports whether parent is a strict ancestor directory of child.
+func dirIsAncestor(parent, child string) bool {
+	rel, err := filepath.Rel(parent, child)
+	if err != nil {
+		return false
+	}
+	if rel == "." || rel == ".." {
+		return false
+	}
+	return !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// gitRoot walks up from dir to the nearest directory containing a .git entry,
+// returning that directory. If none is found, dir itself is returned so Add can
+// surface a clear "not a git repository" error.
+func gitRoot(dir string) string {
+	orig := filepath.Clean(dir)
+	d := orig
+	for {
+		if _, err := os.Stat(filepath.Join(d, ".git")); err == nil {
+			return d
+		}
+		parent := filepath.Dir(d)
+		if parent == d {
+			return orig
+		}
+		d = parent
+	}
+}
+
+// importDisplayName trims a provider title to the app's display-name cap.
+func importDisplayName(title string) string {
+	title = strings.TrimSpace(title)
+	if utf8.RuneCountInString(title) <= maxImportDisplayName {
+		return title
+	}
+	runes := []rune(title)
+	return strings.TrimSpace(string(runes[:maxImportDisplayName-1])) + "…"
+}

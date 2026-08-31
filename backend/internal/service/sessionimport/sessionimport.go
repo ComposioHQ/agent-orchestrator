@@ -149,6 +149,29 @@ func (s *Service) Discover(ctx context.Context, opts DiscoverOptions) ([]Importa
 	return all, errors.Join(errs...)
 }
 
+// Locate returns the importable conversation for one provider + native id, or
+// ok=false when it is no longer on disk. It scans that provider's source with no
+// age or count limit so an older conversation the discovery window dropped can
+// still be imported by id.
+func (s *Service) Locate(ctx context.Context, provider domain.AgentHarness, nativeID string) (ImportableSession, bool, error) {
+	nativeID = strings.TrimSpace(nativeID)
+	for _, src := range s.sources {
+		if src.Provider() != provider {
+			continue
+		}
+		found, err := src.Discover(ctx, DiscoverOptions{})
+		if err != nil {
+			return ImportableSession{}, false, err
+		}
+		for _, f := range found {
+			if f.NativeSessionID == nativeID {
+				return f, true, nil
+			}
+		}
+	}
+	return ImportableSession{}, false, nil
+}
+
 func (s *Service) flagImported(ctx context.Context, sessions []ImportableSession) error {
 	if s.existing == nil || len(sessions) == 0 {
 		return nil
