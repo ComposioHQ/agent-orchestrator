@@ -622,6 +622,8 @@
 	"settings.codexProfiles.capacityUnknown": "容量未知",
 	"settings.codexProfiles.capacityRemaining": "剩余 {{percent}}%",
 	"settings.codexProfiles.generalUsageLimits": "常规使用限额",
+	"settings.codexProfiles.generalUsage": "常规",
+	"settings.codexProfiles.usageLimits": "使用限额",
 	"settings.codexProfiles.modelUsageLimits": "{{name}} 使用限额",
 	"settings.codexProfiles.capacityWindowUnknown": "使用限额",
 	"settings.codexProfiles.capacityWindowWeekly": "每周使用限额",

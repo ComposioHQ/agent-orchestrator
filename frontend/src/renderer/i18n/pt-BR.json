@@ -649,6 +649,8 @@
 	"settings.codexProfiles.capacityUnknown": "Capacidade desconhecida",
 	"settings.codexProfiles.capacityRemaining": "{{percent}}% restante",
 	"settings.codexProfiles.generalUsageLimits": "Limites gerais de uso",
+	"settings.codexProfiles.generalUsage": "Geral",
+	"settings.codexProfiles.usageLimits": "Limites de uso",
 	"settings.codexProfiles.modelUsageLimits": "Limites de uso do {{name}}",
 	"settings.codexProfiles.capacityWindowUnknown": "Limite de uso",
 	"settings.codexProfiles.capacityWindowWeekly": "Limite de uso semanal",

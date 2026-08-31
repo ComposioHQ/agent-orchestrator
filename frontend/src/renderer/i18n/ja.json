@@ -640,6 +640,8 @@
 	"settings.codexProfiles.capacityUnknown": "容量は不明です",
 	"settings.codexProfiles.capacityRemaining": "残り {{percent}}%",
 	"settings.codexProfiles.generalUsageLimits": "一般使用量の上限",
+	"settings.codexProfiles.generalUsage": "一般",
+	"settings.codexProfiles.usageLimits": "使用量上限",
 	"settings.codexProfiles.modelUsageLimits": "{{name}} の使用量上限",
 	"settings.codexProfiles.capacityWindowUnknown": "使用量上限",
 	"settings.codexProfiles.capacityWindowWeekly": "週間使用量上限",

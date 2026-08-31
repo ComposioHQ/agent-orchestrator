@@ -286,6 +286,7 @@ function CodexProfileRow({ profile, busy, loginWorkflow, loginActive, onCheckAga
 						<div className="flex items-center gap-2">
 							<p className="truncate text-sm font-medium">{profile.label}</p>
 							<span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">{sourceLabel}</span>
+							{capacity.plan ? <span className="rounded border border-border/70 px-1.5 py-0.5 text-[10px] capitalize text-muted-foreground">{capacity.plan}</span> : null}
 						</div>
 						<p className="mt-0.5 text-xs text-muted-foreground">{profile.usableByCurrentLaunches ? t("settings.codexProfiles.availableForLaunches") : t("settings.codexProfiles.notLaunchable")}</p>
 						{profile.status === "broken" ? <>
@@ -330,22 +331,20 @@ type CodexCapacityWindow = NonNullable<CodexCapacityBucket["primary"]>;
 function CodexCapacityDetails({ capacity, capacityLabel }: { capacity: CodexCapacity; capacityLabel: string }) {
 	const { t } = useTranslation();
 	const [expanded, setExpanded] = useState(false);
-	const groups = [
-		...(capacity.overall ? [{ id: capacity.overall.limitId, title: t("settings.codexProfiles.generalUsageLimits"), bucket: capacity.overall }] : []),
-		...capacity.additionalBuckets.map((bucket) => ({
-			id: bucket.limitId,
-			title: t("settings.codexProfiles.modelUsageLimits", { name: bucket.displayName || bucket.limitId }),
-			bucket,
-		})),
-	].filter(({ bucket }) => bucket.primary || bucket.secondary);
-	const remainingPercent = codexCapacityRemainingPercent(capacity.usedPercent ?? capacity.overall?.primary?.usedPercent);
-	const capacityParts = [capacity.plan, remainingPercent === undefined ? undefined : t("settings.codexProfiles.capacityRemaining", { percent: remainingPercent })].filter(Boolean);
-	const summaryLabel = [capacityLabel, ...capacityParts].join(" · ");
+	const rows = [
+		...(capacity.overall ? capacityBucketRows(capacity.overall, t("settings.codexProfiles.generalUsage")) : []),
+		...capacity.additionalBuckets.flatMap((bucket) => capacityBucketRows(bucket, bucket.displayName || bucket.limitId)),
+	];
+	const rawRemainingPercent = codexCapacityRemainingPercent(capacity.usedPercent ?? capacity.overall?.primary?.usedPercent);
+	const remainingPercent = rawRemainingPercent === undefined ? undefined : Math.round(rawRemainingPercent);
+	const remainingLabel = remainingPercent === undefined ? undefined : t("settings.codexProfiles.capacityRemaining", { percent: remainingPercent });
+	const summaryLabel = [t("settings.codexProfiles.usageLimits"), remainingLabel].filter(Boolean).join(" · ");
 	const showReason = capacity.freshness === "stale" || capacity.state === "unknown" || capacity.state === "unsupported";
+	const summaryTone = capacityRemainingTone(remainingPercent);
 
 	return (
 		<div className="mt-2 rounded border border-border/70 bg-muted/30 text-xs">
-			{groups.length > 0 ? (
+			{rows.length > 0 ? (
 				<button
 					aria-expanded={expanded}
 					aria-label={summaryLabel}
@@ -353,9 +352,16 @@ function CodexCapacityDetails({ capacity, capacityLabel }: { capacity: CodexCapa
 					onClick={() => setExpanded((current) => !current)}
 					type="button"
 				>
-					<span className="min-w-0 truncate">
-						<span className="font-medium text-foreground">{capacityLabel}</span>
-						{capacityParts.length > 0 ? <span className="text-muted-foreground"> · {capacityParts.join(" · ")}</span> : null}
+					<span className="flex min-w-0 flex-1 items-center gap-3">
+						<span className="shrink-0 font-medium text-foreground">{t("settings.codexProfiles.usageLimits")}</span>
+						{remainingPercent !== undefined ? (
+							<span className="ml-auto flex min-w-0 flex-1 items-center justify-end gap-2">
+								<span className="hidden h-1.5 max-w-28 flex-1 overflow-hidden rounded-full bg-border sm:block" aria-hidden="true">
+									<span className={`block h-full rounded-full ${summaryTone.bar}`} style={{ width: `${remainingPercent}%` }} />
+								</span>
+								<span className={`whitespace-nowrap ${summaryTone.text}`}>{remainingLabel}</span>
+							</span>
+						) : null}
 						{capacity.freshness === "checking" ? <LoaderCircle className="ml-1 inline size-3 animate-spin" aria-label={t("settings.codexProfiles.checking")} /> : null}
 					</span>
 					<ChevronDown className={`size-4 shrink-0 text-muted-foreground transition-transform ${expanded ? "rotate-180" : ""}`} aria-hidden="true" />
@@ -363,56 +369,58 @@ function CodexCapacityDetails({ capacity, capacityLabel }: { capacity: CodexCapa
 			) : (
 				<div className="px-2.5 py-2">
 					<p className="font-medium text-foreground">{capacityLabel}{capacity.freshness === "checking" ? <LoaderCircle className="ml-1 inline size-3 animate-spin" aria-label={t("settings.codexProfiles.checking")} /> : null}</p>
-					{capacityParts.length > 0 ? <p className="mt-0.5 text-muted-foreground">{capacityParts.join(" · ")}</p> : null}
+					{remainingLabel ? <p className="mt-0.5 text-muted-foreground">{remainingLabel}</p> : null}
 					{showReason ? <p className="mt-0.5 text-muted-foreground">{capacity.reason}</p> : null}
 				</div>
 			)}
 			{expanded ? (
-				<div className="space-y-3 border-t border-border/70 px-2.5 py-2.5">
+				<div className="divide-y divide-border/70 border-t border-border/70 px-2.5">
 					{showReason ? <p className="text-muted-foreground">{capacity.reason}</p> : null}
-					{groups.map((group) => <CodexCapacityLimitGroup key={group.id} title={group.title} bucket={group.bucket} />)}
+					{rows.map((row) => <CodexCapacityLimitWindow key={row.id} name={row.name} window={row.window} />)}
 				</div>
 			) : null}
 		</div>
 	);
 }
 
-function CodexCapacityLimitGroup({ title, bucket }: { title: string; bucket: CodexCapacityBucket }) {
-	const windows = [bucket.primary, bucket.secondary].filter((window): window is CodexCapacityWindow => Boolean(window));
-	return (
-		<section aria-label={title}>
-			<h4 className="mb-1.5 text-xs font-medium text-foreground">{title}</h4>
-			<div className="divide-y divide-border/70 overflow-hidden rounded-md border border-border/70 bg-background/35 px-2.5">
-				{windows.map((window, index) => <CodexCapacityLimitWindow key={`${window.windowDurationMinutes ?? "unknown"}-${index}`} window={window} />)}
-			</div>
-		</section>
-	);
+function capacityBucketRows(bucket: CodexCapacityBucket, name: string): Array<{ id: string; name: string; window: CodexCapacityWindow }> {
+	return [bucket.primary, bucket.secondary]
+		.filter((window): window is CodexCapacityWindow => Boolean(window))
+		.map((window, index) => ({ id: `${bucket.limitId}-${window.windowDurationMinutes ?? "unknown"}-${index}`, name, window }));
 }
 
-function CodexCapacityLimitWindow({ window }: { window: CodexCapacityWindow }) {
+function CodexCapacityLimitWindow({ name, window }: { name: string; window: CodexCapacityWindow }) {
 	const { t } = useTranslation();
 	const labelDescriptor = capacityWindowLabel(window.windowDurationMinutes);
 	const label = labelDescriptor.count === undefined ? t(labelDescriptor.key) : t(labelDescriptor.key, { count: labelDescriptor.count });
 	const remaining = Math.round(codexCapacityRemainingPercent(window.usedPercent) ?? 0);
+	const tone = capacityRemainingTone(remaining);
 	return (
-		<div className="grid grid-cols-[minmax(0,1fr)_minmax(7rem,10rem)_auto] items-center gap-3 py-2.5">
+		<div className="grid grid-cols-1 gap-2 py-2.5 sm:grid-cols-[minmax(0,1fr)_minmax(7rem,10rem)_auto] sm:items-center sm:gap-3">
 			<div className="min-w-0">
-				<p className="font-medium text-foreground">{label}</p>
-				{window.resetsAt ? <p className="mt-0.5 text-muted-foreground">{t("settings.codexProfiles.capacityResets", { value: new Date(window.resetsAt).toLocaleString() })}</p> : null}
+				<p className="truncate font-medium text-foreground">{name}</p>
+				<p className="mt-0.5 text-muted-foreground">{label}</p>
+				{window.resetsAt ? <p className="mt-0.5 text-[11px] text-muted-foreground">{t("settings.codexProfiles.capacityResets", { value: new Date(window.resetsAt).toLocaleString() })}</p> : null}
 			</div>
 			<div
-				aria-label={`${label}: ${t("settings.codexProfiles.capacityRemaining", { percent: remaining })}`}
+				aria-label={`${name}, ${label}: ${t("settings.codexProfiles.capacityRemaining", { percent: remaining })}`}
 				aria-valuemax={100}
 				aria-valuemin={0}
 				aria-valuenow={remaining}
 				className="h-1.5 overflow-hidden rounded-full bg-border"
 				role="progressbar"
 			>
-				<div className="h-full rounded-full bg-foreground transition-[width]" style={{ width: `${remaining}%` }} />
+				<div className={`h-full rounded-full transition-[width] ${tone.bar}`} style={{ width: `${remaining}%` }} />
 			</div>
-			<p className="whitespace-nowrap text-right text-muted-foreground">{t("settings.codexProfiles.capacityRemaining", { percent: remaining })}</p>
+			<p className={`whitespace-nowrap sm:text-right ${tone.text}`}>{t("settings.codexProfiles.capacityRemaining", { percent: remaining })}</p>
 		</div>
 	);
+}
+
+function capacityRemainingTone(remaining: number | undefined): { bar: string; text: string } {
+	if (remaining !== undefined && remaining < 5) return { bar: "bg-error", text: "text-error" };
+	if (remaining !== undefined && remaining < 20) return { bar: "bg-warning", text: "text-warning" };
+	return { bar: "bg-foreground", text: "text-muted-foreground" };
 }
 
 type CapacityWindowLabel = {

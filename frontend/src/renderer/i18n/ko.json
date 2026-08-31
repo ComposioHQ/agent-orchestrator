@@ -640,6 +640,8 @@
 	"settings.codexProfiles.capacityUnknown": "용량 알 수 없음",
 	"settings.codexProfiles.capacityRemaining": "{{percent}}% 남음",
 	"settings.codexProfiles.generalUsageLimits": "일반 사용 한도",
+	"settings.codexProfiles.generalUsage": "일반",
+	"settings.codexProfiles.usageLimits": "사용 한도",
 	"settings.codexProfiles.modelUsageLimits": "{{name}} 사용 한도",
 	"settings.codexProfiles.capacityWindowUnknown": "사용 한도",
 	"settings.codexProfiles.capacityWindowWeekly": "주간 사용 한도",
