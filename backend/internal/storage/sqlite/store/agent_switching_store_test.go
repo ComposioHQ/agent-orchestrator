@@ -167,6 +167,14 @@ func TestActivateChatAgentSwitchTargetMovesSourceGenerationToTarget(t *testing.T
 	advanceAgentSwitchFixtureWithMutation(ctx, t, s, &sw, domain.AgentSwitchStartingTarget, now.Add(3*time.Second), func(next *domain.AgentSwitch) {
 		next.TargetNativeSessionRef = &target.ID
 	})
+	credentialed, ok, err := s.GetSession(ctx, session.ID)
+	if err != nil || !ok {
+		t.Fatalf("get stopped Chat session for capability rotation: ok=%v err=%v", ok, err)
+	}
+	credentialed.Metadata.BrowserCapabilityVerifier = "target-chat-verifier"
+	if err := s.UpdateSession(ctx, credentialed); err != nil {
+		t.Fatalf("persist target Chat verifier: %v", err)
+	}
 	activatedAt := now.Add(5 * time.Second)
 	if ok, err := s.ActivateChatAgentSwitchTarget(ctx, domain.AgentSwitchChatTargetActivation{
 		SwitchID: sw.ID, SessionID: session.ID,
@@ -186,7 +194,8 @@ func TestActivateChatAgentSwitchTargetMovesSourceGenerationToTarget(t *testing.T
 	if got.Mode != domain.SessionModeChat || got.Harness != domain.HarnessCodex ||
 		got.Metadata.RuntimeHandleID != "" || got.Metadata.RuntimeLaunchID != "" ||
 		got.Metadata.ProviderConversationID != "target-chat-native" ||
-		got.Metadata.ControllerGeneration != "target-chat-generation" {
+		got.Metadata.ControllerGeneration != "target-chat-generation" ||
+		got.Metadata.BrowserCapabilityVerifier != "target-chat-verifier" {
 		t.Fatalf("activated Chat session = %+v", got)
 	}
 	conversation, err = s.ConversationForSession(ctx, session.ID)

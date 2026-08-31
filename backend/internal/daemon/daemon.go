@@ -417,7 +417,15 @@ func Run() error {
 		NewID:    uuid.NewString,
 	})
 
-	sessionSvc, reviewSvc, sessMgr, err := startSession(ctx, cfg, runtimeAdapter, store, lcStack.LCM, messenger, telemetrySink, agents, managedPreview, browserBroker, browserAuthority, chatLauncher{svc: chatSvc}, settingsSvc, policyCoordinator, log)
+	// Build the multi-tracker dispatching to both GitHub and GitLab once,
+	// shared between the session service and the intake observer below.
+	// Env-configured tokens are validated eagerly here; CLI credential probing
+	// (`gh auth token`) stays lazy inside the multi-tracker so boot is not
+	// blocked. May be nil (no usable credentials) — the session service's
+	// nil-guard and the intake resolver's backoff both tolerate that
+	// (issue #2685).
+	tracker := newMultiTracker(cfg.GitLab, log)
+	sessionSvc, reviewSvc, sessMgr, err := startSession(ctx, cfg, runtimeAdapter, store, lcStack.LCM, messenger, telemetrySink, agents, managedPreview, browserBroker, browserAuthority, chatLauncher{svc: chatSvc}, settingsSvc, policyCoordinator, tracker, log)
 	if err != nil {
 		stop()
 		lcStack.Stop()
@@ -426,6 +434,9 @@ func Run() error {
 		}
 		return fmt.Errorf("wire session service: %w", err)
 	}
+
+	// servers isn't clobbered. See preview_wiring.go (issue #4500).
+	wireManagedPreviewExit(managedPreview, sessionSvc, log)
 	sessMgr.SetTerminalInputGate(termMgr)
 	lifecycleMessenger.Bind(sessionLifecycleMessenger{sessMgr})
 	lcStack.LCM.SetCompletionTerminator(sessMgr)
@@ -441,7 +452,7 @@ func Run() error {
 		}
 		return err
 	}
-	lcStack.trackerDone = startTrackerIntake(ctx, store, sessionSvc, log)
+	lcStack.trackerDone = startTrackerIntake(ctx, store, sessionSvc, tracker, log)
 
 	agentSvc := agentsvc.NewWithDeps(agentsvc.Deps{Cache: store, InventoryCache: store, Discoverer: modelcatalog.Discoverer{}, Projects: store, Sessions: store})
 	hostCommands := systemexec.Adapter{}

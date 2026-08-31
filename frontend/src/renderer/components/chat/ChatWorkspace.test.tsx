@@ -460,6 +460,42 @@ describe("ChatWorkspace timeline", () => {
 		expect(onInterrupt).toHaveBeenCalledOnce();
 	});
 
+	it("replaces the generic working label with Claude's live retry count and backoff", () => {
+		const snapshot = structuredClone(chatFixture);
+		snapshot.items = snapshot.items.filter(
+			(item) =>
+				!(
+					item.kind === "activity" &&
+					item.activityKind === "approval" &&
+					item.status === "pending"
+				),
+		);
+		snapshot.items.push({
+			kind: "activity",
+			id: "retry-1",
+			turnId: "turn-2",
+			sequence: 100,
+			revision: 2,
+			activityKind: "system",
+			status: "running",
+			summary: "Reconnecting to Claude, attempt 2 of 10.",
+			detail: {
+				event: "provider.failure",
+				category: "connection",
+				severity: "warning",
+				text: "The API request failed. Trying again in 4s.",
+			},
+			createdAt: "2026-08-28T00:00:00Z",
+		});
+
+		render(<ChatWorkspace snapshot={snapshot} onInterrupt={vi.fn()} />);
+
+		const status = screen.getByTestId("live-turn-status");
+		expect(status).toHaveTextContent("Reconnecting to Claude, attempt 2 of 10.");
+		expect(status).toHaveTextContent("The API request failed. Trying again in 4s.");
+		expect(status).not.toHaveTextContent("Working for");
+	});
+
 	it("interrupts the active turn when Escape is pressed", () => {
 		const onInterrupt = vi.fn();
 		const snapshot = structuredClone(chatFixture);

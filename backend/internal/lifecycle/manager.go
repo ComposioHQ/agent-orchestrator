@@ -1280,8 +1280,8 @@ func (m *Manager) ActivateAgentSwitchTarget(
 	return writer.ActivateAgentSwitchTarget(ctx, activation)
 }
 
-// ActivateChatAgentSwitchTarget atomically transfers a stopped Chat session to
-// the structured controller generation that Chat Service already claimed.
+// ActivateChatAgentSwitchTarget atomically transfers a stopped Chat session
+// from the fenced source generation to the structured target controller.
 func (m *Manager) ActivateChatAgentSwitchTarget(
 	ctx context.Context,
 	activation domain.AgentSwitchChatTargetActivation,
