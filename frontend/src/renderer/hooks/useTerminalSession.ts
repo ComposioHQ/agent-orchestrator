@@ -24,7 +24,7 @@ import { workspaceQueryKey } from "./useWorkspaceQuery";
  * The slice of xterm's Terminal the attachment needs. Structural, so tests can
  * drive the hook with a tiny fake instead of a real xterm + DOM.
  */
-export type TerminalUserInputSource = "keyboard" | "paste" | "composition" | "shortcut" | "wheel";
+export type TerminalUserInputSource = "keyboard" | "paste" | "composition" | "shortcut" | "wheel" | "protocol";
 
 export type AttachableTerminal = {
 	cols: number;
@@ -45,8 +45,9 @@ export type AttachableTerminal = {
 	 * without exposing an intermediate row.
 	 */
 	prepareForActivation: () => Promise<void>;
+	/** Tell Cursor Agent the live light/dark scheme (private 997 notification). */
+	notifyCursorColorScheme: () => void;
 	onUserInput: (listener: (data: string, source: TerminalUserInputSource) => void) => { dispose: () => void };
-	onTerminalResponse: (listener: (data: string) => void) => { dispose: () => void };
 	onResize: (listener: (size: { cols: number; rows: number }) => void) => { dispose: () => void };
 };
 
@@ -209,6 +210,7 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		replayTailQuietTimer: null as ReturnType<typeof setTimeout> | null,
 		replayTailCapTimer: null as ReturnType<typeof setTimeout> | null,
 		replayTailPending: false,
+		queuedProtocolInputs: [] as string[],
 		// The current attachment's flush, published so teardown can land buffered
 		// bytes instead of discarding them (the closure lives inside connect).
 		flushReplay: null as ((preserveBeforeTeardown?: boolean) => void) | null,
@@ -263,6 +265,7 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		r.replayChunks = [];
 		r.replayBytes = 0;
 		r.replayTailPending = false;
+		r.queuedProtocolInputs = [];
 		r.lastPublishedGrid = null;
 		// Nothing is buffering any more, so nothing should stay covered. connect()
 		// re-arms the gate immediately after calling this, in the same tick, so
@@ -581,6 +584,8 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 				setError(undefined);
 				setHasAttached(true);
 				transition("attached");
+				terminal.notifyCursorColorScheme();
+				flushQueuedProtocolInputs();
 				// Bound the gate from here: the daemon fires onOpen from setPTY and
 				// starts copyOut immediately after, so the replay is imminent and
 				// the cap now measures the burst rather than the connect handshake.
@@ -647,13 +652,31 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 				}
 			}),
 		);
-		const input = terminal.onUserInput((data) => {
-			if (
-				!isCurrentAttachment(generation, handle, mux) ||
-				!r.inputReady ||
-				optionsRef.current.inputDisabled ||
-				optionsRef.current.isVisible === false
-			) {
+		const flushQueuedProtocolInputs = () => {
+			if (!isCurrentAttachment(generation, handle, mux) || !r.inputReady) return;
+			for (const queued of r.queuedProtocolInputs) {
+				mux.sendInput(handle, queued);
+			}
+			r.queuedProtocolInputs = [];
+		};
+		const input = terminal.onUserInput((data, source) => {
+			if (!isCurrentAttachment(generation, handle, mux)) {
+				return;
+			}
+			if (source === "protocol") {
+				if (!r.inputReady) {
+					r.queuedProtocolInputs.push(data);
+					return;
+				}
+				mux.sendInput(handle, data);
+				return;
+			}
+			if (!r.inputReady) {
+				return;
+			}
+			// Agent color-scheme bytes are not human input — forwarding them must not
+			// flush the replay gate or reveal the tail (that was the theme-toggle jank).
+			if (optionsRef.current.inputDisabled || optionsRef.current.isVisible === false) {
 				return;
 			}
 			// Input is accepted from `opened`, which lands before the replay — so a
@@ -663,10 +686,6 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 			// end the gate immediately.
 			if (r.replayBuffering) flushReplay();
 			else revealReplayTail();
-			mux.sendInput(handle, data);
-		});
-		const terminalResponse = terminal.onTerminalResponse((data) => {
-			if (!isCurrentAttachment(generation, handle, mux) || !r.inputReady) return;
 			mux.sendInput(handle, data);
 		});
 		// xterm only fires onResize when the grid actually changed; the debounce
@@ -689,7 +708,6 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		});
 		r.disposers.push(
 			() => input.dispose(),
-			() => terminalResponse.dispose(),
 			() => resize.dispose(),
 		);
 
@@ -896,6 +914,11 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 		},
 		[teardownMux],
 	);
+
+	useEffect(() => {
+		if (!replaySettled) return;
+		runtime.current.terminal?.notifyCursorColorScheme();
+	}, [replaySettled]);
 
 	return { attach, state, error, replaySettled, hasAttached, syncVisibleSize };
 }

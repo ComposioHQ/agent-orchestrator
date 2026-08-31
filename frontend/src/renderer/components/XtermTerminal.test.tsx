@@ -1168,38 +1168,60 @@ describe("XtermTerminal", () => {
 
 	it("does not forward raw xterm data/control bytes as user input", () => {
 		const onInput = vi.fn();
+		render(
+			<XtermTerminal
+				theme="dark"
+				supportsCursorColorScheme
+				onReady={(terminal) => terminal.onUserInput(onInput)}
+			/>,
+		);
+
+		// One onData hook exists for OSC 10/11/12 color replies (Cursor theme probes).
+		expect(state.lastTerminal!.dataListeners.size).toBe(1);
+		state.lastTerminal!.dataListeners.forEach((listener) => listener("\x1b[A"));
+		expect(onInput).not.toHaveBeenCalled();
+
+		state.lastTerminal!.dataListeners.forEach((listener) =>
+			listener("\x1b]11;rgb:f5f5/f5f5/f4f4\x07"),
+		);
+		expect(onInput).toHaveBeenCalledWith("\x1b]11;rgb:f5f5/f5f5/f4f4\x07", "protocol");
+	});
+
+	it("does not install Cursor protocol handling for generic terminals", () => {
+		const onInput = vi.fn();
 		render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);
 
-		state.lastTerminal!.dataListeners.forEach((listener) => listener("\x1b[A"));
+		state.lastTerminal!.dataListeners.forEach((listener) =>
+			listener("\x1b]11;rgb:f5f5/f5f5/f4f4\x07"),
+		);
 		expect(onInput).not.toHaveBeenCalled();
 	});
 
-	it("routes xterm color reports without forwarding raw input", () => {
-		const onResponse = vi.fn();
-		render(<XtermTerminal theme="light" onReady={(terminal) => terminal.onTerminalResponse(onResponse)} />);
+	it("updates protocol handling when a retained terminal becomes a Cursor terminal", () => {
+		const onInput = vi.fn();
+		const { rerender } = render(
+			<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />,
+		);
+		onInput.mockClear();
+		rerender(
+			<XtermTerminal
+				theme="dark"
+				supportsCursorColorScheme
+				onReady={(terminal) => terminal.onUserInput(onInput)}
+			/>,
+		);
+		onInput.mockClear();
+		state.lastTerminal!.dataListeners.forEach((listener) =>
+			listener("\x1b]11;rgb:f5f5/f5f5/f4f4\x07"),
+		);
 
-		expect(state.lastTerminal!.dataListeners.size).toBe(1);
-		state.lastTerminal!.dataListeners.forEach((listener) => {
-			listener("typed text");
-			listener("\x1b[A");
-			listener("\x1b]4;0;rgb:2424/2929/2f2f\x1b\\");
-			listener("\x1b]10;rgb:1111/2222/3333\x1b\\");
-			listener("\x1b]11;rgb:ffff/ffff/ffff\x1b\\");
-			listener("\x1b]12;rgb:4444/5555/6666\x1b\\");
-		});
-
-		expect(onResponse.mock.calls).toEqual([
-			["\x1b]4;0;rgb:2424/2929/2f2f\x1b\\"],
-			["\x1b]10;rgb:1111/2222/3333\x1b\\"],
-			["\x1b]11;rgb:ffff/ffff/ffff\x1b\\"],
-			["\x1b]12;rgb:4444/5555/6666\x1b\\"],
-		]);
+		expect(onInput).toHaveBeenCalledWith("\x1b]11;rgb:f5f5/f5f5/f4f4\x07", "protocol");
 	});
 
 	it("reports live light and dark changes to mode 2031 subscribers", () => {
-		const onResponse = vi.fn();
+		const onInput = vi.fn();
 		const view = render(
-			<XtermTerminal theme="light" onReady={(terminal) => terminal.onTerminalResponse(onResponse)} />,
+			<XtermTerminal theme="light" onReady={(terminal) => terminal.onUserInput(onInput)} />,
 		);
 		const setMode = state.lastTerminal!.csiHandlers.find(
 			({ id }) => id.prefix === "?" && id.final === "h",
@@ -1210,26 +1232,26 @@ describe("XtermTerminal", () => {
 
 		expect(setMode?.callback([2031])).toBe(true);
 		view.rerender(
-			<XtermTerminal theme="dark" onReady={(terminal) => terminal.onTerminalResponse(onResponse)} />,
+			<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />,
 		);
-		expect(onResponse).toHaveBeenLastCalledWith("\x1b[?997;1n");
+		expect(onInput).toHaveBeenLastCalledWith("\x1b[?997;1n", "protocol");
 
 		view.rerender(
-			<XtermTerminal theme="light" onReady={(terminal) => terminal.onTerminalResponse(onResponse)} />,
+			<XtermTerminal theme="light" onReady={(terminal) => terminal.onUserInput(onInput)} />,
 		);
-		expect(onResponse).toHaveBeenLastCalledWith("\x1b[?997;2n");
+		expect(onInput).toHaveBeenLastCalledWith("\x1b[?997;2n", "protocol");
 
 		expect(resetMode?.callback([2031])).toBe(true);
-		onResponse.mockClear();
+		onInput.mockClear();
 		view.rerender(
-			<XtermTerminal theme="dark" onReady={(terminal) => terminal.onTerminalResponse(onResponse)} />,
+			<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />,
 		);
-		expect(onResponse).not.toHaveBeenCalled();
+		expect(onInput).not.toHaveBeenCalled();
 	});
 
 	it("answers color-scheme capability and current-mode queries", () => {
-		const onResponse = vi.fn();
-		render(<XtermTerminal theme="light" onReady={(terminal) => terminal.onTerminalResponse(onResponse)} />);
+		const onInput = vi.fn();
+		render(<XtermTerminal theme="light" onReady={(terminal) => terminal.onUserInput(onInput)} />);
 		const capabilityQuery = state.lastTerminal!.csiHandlers.find(
 			({ id }) => id.prefix === "?" && id.intermediates === "$" && id.final === "p",
 		);
@@ -1239,7 +1261,10 @@ describe("XtermTerminal", () => {
 
 		expect(capabilityQuery?.callback([2031])).toBe(true);
 		expect(modeQuery?.callback([996])).toBe(true);
-		expect(onResponse.mock.calls).toEqual([["\x1b[?2031;2$y"], ["\x1b[?997;2n"]]);
+		expect(onInput.mock.calls).toEqual([
+			["\x1b[?2031;2$y", "protocol"],
+			["\x1b[?997;2n", "protocol"],
+		]);
 	});
 
 	it("translates wheel motion into SGR wheel reports for zellij scrollback", () => {

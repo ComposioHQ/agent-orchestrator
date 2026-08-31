@@ -7,6 +7,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorCode, hasTrustedApiBaseUrl } from "../lib/api-client";
 import { mockShellTerminals } from "../lib/mock-data";
+import { isWindowsPlatform } from "../lib/platform";
+import { terminalShellRequestValue, useTerminalShellStore } from "../stores/terminal-shell-store";
 
 export type ShellTerminal = {
 	/** Runtime handle the terminal mux attaches to, exactly like a session pane's. */
@@ -73,7 +75,7 @@ export function useShellTerminals() {
 	return useQuery(shellTerminalsQueryOptions);
 }
 
-export type OpenShellTerminalInput = { projectId?: string; sessionId?: string };
+export type OpenShellTerminalInput = { projectId?: string; sessionId?: string; shell?: string };
 
 /**
  * Opens a shell in the given project's root (or the daemon data dir when
@@ -83,7 +85,7 @@ export type OpenShellTerminalInput = { projectId?: string; sessionId?: string };
 export function useOpenShellTerminal() {
 	const queryClient = useQueryClient();
 	return useMutation({
-		mutationFn: async ({ projectId, sessionId }: OpenShellTerminalInput = {}): Promise<ShellTerminal> => {
+		mutationFn: async ({ projectId, sessionId, shell }: OpenShellTerminalInput = {}): Promise<ShellTerminal> => {
 			if (usePreviewData) {
 				previewShellSeq += 1;
 				const shell: ShellTerminal = {
@@ -100,6 +102,10 @@ export function useOpenShellTerminal() {
 			const body: OpenShellTerminalInput = {};
 			if (projectId) body.projectId = projectId;
 			if (sessionId) body.sessionId = sessionId;
+			if (isWindowsPlatform()) {
+				await useTerminalShellStore.getState().load();
+				body.shell = shell ?? terminalShellRequestValue(useTerminalShellStore.getState().preference);
+			}
 			const { data, error } = await apiClient.POST("/api/v1/shell-terminals", { body });
 			if (error) throw error;
 			if (!data) throw new Error("Daemon returned no shell terminal");
@@ -120,6 +126,9 @@ export function useOpenShellTerminal() {
 		// busy) leaves the "+" button looking like it silently did nothing.
 		onError: (error) => {
 			console.error("Failed to open shell terminal:", error);
+			if (isWindowsPlatform() && apiErrorCode(error) === "SHELL_TERMINAL_SHELL_UNAVAILABLE") {
+				void useTerminalShellStore.getState().setPreference({ kind: "auto" });
+			}
 		},
 	});
 }

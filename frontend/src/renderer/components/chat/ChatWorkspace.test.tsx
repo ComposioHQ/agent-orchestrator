@@ -171,6 +171,7 @@ const chatSession = {
 	mode: "chat",
 	status: "working",
 	updatedAt: "2026-08-15T00:00:00Z",
+	activity: { state: "active", lastActivityAt: "2026-08-15T00:00:00Z" },
 	prs: [],
 } satisfies WorkspaceSession;
 
@@ -350,21 +351,39 @@ describe("ChatWorkspace timeline", () => {
 		expect(onDecide).toHaveBeenCalledWith("drain-approval", "allow_once");
 	});
 
-	it("uses the shared session topbar chrome for workers and orchestrators", () => {
-		const view = render(<ChatWorkspace snapshot={chatFixture} sessionRole="worker" />);
+	it("labels worker and orchestrator primary tabs with accessible provider context", () => {
+		const view = render(<ChatWorkspace snapshot={chatFixture} session={chatSession} sessionRole="worker" />);
 
 		expect(screen.getByLabelText("Chat")).toHaveAttribute("data-session-role", "worker");
 		expect(screen.getByTestId("session-workspace-topbar")).toBeInTheDocument();
 		expect(screen.getByTestId("session-terminal-region")).toBeInTheDocument();
-		expect(screen.getByRole("tab", { name: chatFixture.title })).toBeInTheDocument();
+		const workerTab = screen.getByRole("tab", { name: "Reviewer chat · Codex · Working" });
+		expect(workerTab).toHaveTextContent(chatSession.title);
+		expect(workerTab).not.toHaveTextContent("Codex");
+		expect(workerTab.querySelector('img[aria-hidden="true"]')).toBeInTheDocument();
 
-		view.rerender(<ChatWorkspace snapshot={chatFixture} sessionRole="orchestrator" />);
+		view.rerender(
+			<ChatWorkspace
+				snapshot={chatFixture}
+				session={{ ...chatSession, id: "ao-demo-orchestrator", kind: "orchestrator" }}
+				sessionRole="orchestrator"
+			/>,
+		);
 
 		expect(screen.getByLabelText("Chat")).toHaveAttribute("data-session-role", "orchestrator");
 		expect(screen.getByTestId("session-workspace-topbar")).toBeInTheDocument();
 		const actionRegion = screen.getByTestId("session-action-region");
 		expect(actionRegion).toHaveClass("pl-2", "pr-3");
 		expect(actionRegion).not.toHaveClass("px-3");
+		expect(screen.getByRole("tab", { name: "Orchestrator · Codex · Working" })).toBeInTheDocument();
+
+		view.rerender(
+			<ChatWorkspace
+				snapshot={chatFixture}
+				session={{ ...chatSession, id: "legacy-orchestrator", kind: undefined }}
+			/>,
+		);
+		expect(screen.getByRole("tab", { name: "Orchestrator · Codex · Working" })).toBeInTheDocument();
 	});
 
 	it("clears the fixed titlebar nav when the sidebar is collapsed, like the terminal session", () => {
@@ -394,7 +413,7 @@ describe("ChatWorkspace timeline", () => {
 		);
 
 		const terminalRegion = screen.getByTestId("session-terminal-region");
-		expect(terminalRegion).toContainElement(screen.getByRole("tab", { name: /^Codex/ }));
+		expect(terminalRegion).toContainElement(screen.getByRole("tab", { name: /^Reviewer chat/ }));
 		expect(terminalRegion).toContainElement(screen.getByRole("button", { name: "Session tab action" }));
 		expect(screen.getByTestId("session-tab-action")).toContainElement(
 			screen.getByRole("button", { name: "Session tab action" }),
@@ -458,6 +477,42 @@ describe("ChatWorkspace timeline", () => {
 		expect(screen.getByLabelText("Message the agent").closest("form")).toContainElement(stop);
 		await user.click(stop);
 		expect(onInterrupt).toHaveBeenCalledOnce();
+	});
+
+	it("replaces the generic working label with Claude's live retry count and backoff", () => {
+		const snapshot = structuredClone(chatFixture);
+		snapshot.items = snapshot.items.filter(
+			(item) =>
+				!(
+					item.kind === "activity" &&
+					item.activityKind === "approval" &&
+					item.status === "pending"
+				),
+		);
+		snapshot.items.push({
+			kind: "activity",
+			id: "retry-1",
+			turnId: "turn-2",
+			sequence: 100,
+			revision: 2,
+			activityKind: "system",
+			status: "running",
+			summary: "Reconnecting to Claude, attempt 2 of 10.",
+			detail: {
+				event: "provider.failure",
+				category: "connection",
+				severity: "warning",
+				text: "The API request failed. Trying again in 4s.",
+			},
+			createdAt: "2026-08-28T00:00:00Z",
+		});
+
+		render(<ChatWorkspace snapshot={snapshot} onInterrupt={vi.fn()} />);
+
+		const status = screen.getByTestId("live-turn-status");
+		expect(status).toHaveTextContent("Reconnecting to Claude, attempt 2 of 10.");
+		expect(status).toHaveTextContent("The API request failed. Trying again in 4s.");
+		expect(status).not.toHaveTextContent("Working for");
 	});
 
 	it("interrupts the active turn when Escape is pressed", () => {
@@ -970,15 +1025,13 @@ describe("ChatWorkspace timeline", () => {
 		expect(scrollbar).toHaveAttribute("aria-valuenow", "100");
 	});
 
-	it("hides conversation minimap markers while the inspector is open", () => {
+	it("disables the conversation minimap while the inspector is open", () => {
 		useUiStore.setState({
 			inspectorSessions: { "ao-long": { isOpen: true, view: "summary" } },
 		});
 		render(<ChatWorkspace snapshot={chatFixtureLongHistory(8)} />);
 		const log = screen.getByRole("log");
-		const scrollbar = screen.getByRole("scrollbar", {
-			name: "Conversation scrollbar",
-		});
+		const scrollbar = screen.getByTestId("chat-conversation-minimap");
 		stubGeometry(log, {
 			scrollHeight: 4000,
 			clientHeight: 800,
@@ -991,7 +1044,59 @@ describe("ChatWorkspace timeline", () => {
 		});
 		fireEvent.scroll(log);
 
+		expect(scrollbar).toHaveAttribute("aria-hidden", "true");
+		expect(scrollbar).toHaveClass("pointer-events-none");
 		expect(scrollbar.querySelectorAll("[data-chat-scroll-marker]")).toHaveLength(0);
+
+		fireEvent.wheel(scrollbar, { deltaY: 200 });
+		expect(log.scrollTop).toBe(1000);
+	});
+
+	it("re-enables the conversation minimap when the inspector closes again", async () => {
+		useUiStore.setState({
+			inspectorSessions: { "ao-long": { isOpen: false, view: "summary" } },
+		});
+		render(<ChatWorkspace snapshot={chatFixtureLongHistory(8)} />);
+		const log = screen.getByRole("log");
+		const scrollbar = screen.getByTestId("chat-conversation-minimap");
+		stubGeometry(log, {
+			scrollHeight: 4000,
+			clientHeight: 800,
+			scrollTop: 1000,
+		});
+		stubGeometry(scrollbar, {
+			scrollHeight: 800,
+			clientHeight: 800,
+			scrollTop: 0,
+		});
+		fireEvent.scroll(log);
+
+		expect(scrollbar.querySelectorAll("[data-chat-scroll-marker]").length).toBeGreaterThan(0);
+		fireEvent.wheel(scrollbar, { deltaY: 200 });
+		expect(log.scrollTop).toBe(1200);
+
+		act(() => {
+			useUiStore.setState({
+				inspectorSessions: { "ao-long": { isOpen: true, view: "summary" } },
+			});
+		});
+		await waitFor(() => {
+			expect(scrollbar).toHaveAttribute("aria-hidden", "true");
+		});
+		fireEvent.wheel(scrollbar, { deltaY: 200 });
+		expect(log.scrollTop).toBe(1200);
+
+		act(() => {
+			useUiStore.setState({
+				inspectorSessions: { "ao-long": { isOpen: false, view: "summary" } },
+			});
+		});
+		await waitFor(() => {
+			expect(scrollbar).not.toHaveAttribute("aria-hidden", "true");
+			expect(scrollbar.querySelectorAll("[data-chat-scroll-marker]").length).toBeGreaterThan(0);
+		});
+		fireEvent.wheel(scrollbar, { deltaY: 200 });
+		expect(log.scrollTop).toBe(1400);
 	});
 
 	it("previews the request and response for a hovered conversation marker", () => {
@@ -1821,7 +1926,7 @@ describe("ChatWorkspace reviewer tabs", () => {
 			/>,
 		);
 
-		const chatTab = screen.getByRole("tab", { name: /^Codex/ });
+		const chatTab = screen.getByRole("tab", { name: /^Reviewer chat/ });
 		const reviewerTab = screen.getByRole("tab", { name: "Reviewer" });
 		expect(chatTab).toHaveClass("px-2", "cursor-pointer");
 		expect(chatTab.closest("[data-terminal-tab-frame]")).toHaveClass("self-stretch");
@@ -1964,7 +2069,7 @@ describe("ChatWorkspace reviewer tabs", () => {
 		};
 		const view = render(<ChatWorkspace {...common} />);
 		const chatTab = screen.getByRole("tab", {
-			name: /^Codex/,
+			name: /^Reviewer chat/,
 		});
 		const reviewerTab = screen.getByRole("tab", { name: "Reviewer" });
 		expect(chatTab).toHaveAttribute("tabindex", "0");
@@ -1988,7 +2093,7 @@ describe("ChatWorkspace reviewer tabs", () => {
 
 		view.rerender(<ChatWorkspace {...common} reviewerTarget={reviewerTarget} />);
 		const activeReviewerTab = screen.getByRole("tab", { name: "Reviewer" });
-		expect(screen.getByRole("tab", { name: /^Codex/ })).toHaveAttribute(
+		expect(screen.getByRole("tab", { name: /^Reviewer chat/ })).toHaveAttribute(
 			"tabindex",
 			"-1",
 		);
@@ -1997,7 +2102,7 @@ describe("ChatWorkspace reviewer tabs", () => {
 		activeReviewerTab.focus();
 		fireEvent.keyDown(activeReviewerTab, { key: "Home" });
 		expect(onSelectChat).toHaveBeenCalledOnce();
-		expect(screen.getByRole("tab", { name: /^Codex/ })).toHaveFocus();
+		expect(screen.getByRole("tab", { name: /^Reviewer chat/ })).toHaveFocus();
 
 		onSelectChat.mockClear();
 		activeReviewerTab.focus();
@@ -2167,7 +2272,7 @@ describe("ChatWorkspace shell tabs", () => {
 			/>,
 		);
 
-		const workerTab = screen.getByRole("tab", { name: /^Codex/ });
+		const workerTab = screen.getByRole("tab", { name: /^Reviewer chat/ });
 		workerTab.focus();
 		fireEvent.keyDown(workerTab, { key: "Tab", ctrlKey: true });
 

@@ -25,6 +25,16 @@
 	animation: none;
 	mix-blend-mode: normal;
 }
+
+/* While data-theme flips, kill per-element color tweens (composer, search,
+   switches). Without this they animate for hundreds of ms and read as a
+   white box in dark mode / a black strip in light mode. */
+:root[data-theme-transition="active"] *,
+:root[data-theme-transition="active"] *::before,
+:root[data-theme-transition="active"] *::after {
+	transition-duration: 0ms !important;
+	transition-delay: 0ms !important;
+}
 @theme inline {
 	--font-sans: var(--font-family-base);
 	--font-mono: var(--font-family-mono);
@@ -2190,6 +2200,8 @@ html.sidebar-reordering * {
 	border-color: var(--composer-border);
 	background: var(--composer-bg);
 	box-shadow: none;
+	/* Border only — background must snap with the view-transition theme cut. */
+	transition: border-color 150ms ease-out;
 }
 
 .cursor-chat-composer[data-attached-top] {
@@ -2213,9 +2225,142 @@ html.sidebar-reordering * {
 	animation: queue-dock-in 200ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
+/* The parent reserves one compact footprint; the expanded dock floats above it. */
+.cursor-chat-composer-queue {
+	--queue-dock-header-height: 2rem;
+	--queue-dock-row-height: 2.5rem;
+	--queue-dock-collapsed-height: calc(var(--queue-dock-header-height) + var(--queue-dock-row-height));
+	position: relative;
+	height: var(--queue-dock-collapsed-height);
+	min-height: var(--queue-dock-collapsed-height);
+	flex-shrink: 0;
+}
+
+.cursor-chat-composer-queue .queue-dock {
+	position: absolute;
+	right: 0;
+	bottom: 0;
+	left: 0;
+}
+
+/* Clip-height collapse: one row stays visible when folded; up to five when open. */
+.queue-dock-body {
+	--queue-dock-row-height: 2.5rem;
+	--queue-dock-visible-rows: 5;
+	position: relative;
+	overflow: hidden;
+	height: var(--queue-dock-row-height);
+	transition: height 420ms cubic-bezier(0.16, 1, 0.3, 1);
+	will-change: height;
+}
+
+.queue-dock {
+	height: var(--queue-dock-collapsed-height, 4.5rem);
+	transition: height 420ms cubic-bezier(0.16, 1, 0.3, 1);
+	will-change: height;
+}
+
+.queue-dock[data-collapsible="true"][data-expanded="true"] {
+	height: calc(
+		var(--queue-dock-header-height, 2rem) +
+		var(--queue-dock-row-height, 2.5rem) * var(--queue-dock-expanded-rows, 5)
+	);
+}
+
+.queue-dock-body[data-collapsible="true"][data-expanded="false"] {
+	height: var(--queue-dock-row-height);
+}
+
+.queue-dock-body[data-collapsible="true"][data-expanded="true"] {
+	height: calc(var(--queue-dock-row-height) * var(--queue-dock-expanded-rows, 5));
+}
+
+.queue-dock-body[data-collapsible="false"] {
+	height: calc(var(--queue-dock-row-height) * var(--queue-dock-expanded-rows, 1));
+}
+
+.queue-dock-actions {
+	min-width: max-content;
+	flex-shrink: 0;
+}
+
+.queue-dock-actions svg {
+	display: block;
+	flex: none;
+}
+
+.cursor-chat-surface .queue-dock-toggle:not(:disabled):active {
+	transform: none;
+}
+
+.cursor-chat-surface .queue-dock-toggle:hover .queue-dock-label {
+	color: var(--color-foreground);
+}
+
+.queue-dock-scroll {
+	display: flex;
+	min-height: 100%;
+	flex-direction: column;
+	justify-content: flex-end;
+	overflow-y: hidden;
+}
+
+.queue-dock-scroll > .queue-dock-row {
+	flex: none;
+}
+
+.queue-dock-scroll-active {
+	min-height: 0;
+	max-height: 100%;
+	height: 100%;
+	justify-content: flex-start;
+	overflow-y: auto;
+	overscroll-behavior: contain;
+	scrollbar-width: thin;
+	scrollbar-color: var(--color-scrollbar-board) transparent;
+}
+
+.queue-dock-body[data-expanded="false"] .queue-dock-row[aria-hidden="true"] {
+	display: none;
+}
+
+.queue-dock-scroll::-webkit-scrollbar {
+	width: 8px;
+}
+
+.queue-dock-scroll::-webkit-scrollbar-button {
+	display: none;
+	width: 0;
+	height: 0;
+}
+
+.queue-dock-scroll::-webkit-scrollbar-track,
+.queue-dock-scroll::-webkit-scrollbar-corner {
+	background: transparent;
+}
+
+.queue-dock-scroll::-webkit-scrollbar-thumb {
+	border-radius: 999px;
+	background: var(--color-scrollbar-board);
+}
+
+.queue-dock-scroll::-webkit-scrollbar-thumb:hover {
+	background: color-mix(in oklch, var(--color-scrollbar-board) 80%, var(--color-text-muted));
+}
+
 @media (prefers-reduced-motion: reduce) {
 	.queue-dock-enter {
 		animation: none;
+	}
+
+	.queue-dock-body {
+		transition: none;
+		will-change: auto;
+	}
+
+	.queue-dock {
+		transition: none;
+		will-change: auto;
 	}
 }
 
@@ -4098,6 +4243,19 @@ body:has(#root .platform-linux) > .browser-popout-overlay {
 	backdrop-filter: blur(10px);
 }
 
+.browser-panel__toolbar > :not(.browser-panel__url-wrap):not(button) {
+	transition:
+		opacity 140ms ease,
+		visibility 0s linear;
+}
+
+.browser-panel__toolbar--url-takeover > :not(.browser-panel__url-wrap):not(.browser-panel__navigation-btn) {
+	visibility: hidden;
+	opacity: 0;
+	pointer-events: none;
+	transition-delay: 0s, 140ms;
+}
+
 .browser-panel {
 	container-name: browser-panel;
 	container-type: inline-size;
@@ -4289,13 +4447,19 @@ body:has(#root .platform-linux) > .browser-popout-overlay {
 	flex: 1;
 }
 
+.browser-panel__url-wrap {
+	height: 29px;
+}
+
 .browser-panel__toolbar button {
 	border-radius: 7px;
 	transition:
 		background var(--duration-fast) ease,
 		color var(--duration-fast) ease,
 		transform var(--duration-fast) ease,
-		box-shadow var(--duration-fast) ease;
+		box-shadow var(--duration-fast) ease,
+		opacity 140ms ease,
+		visibility 0s linear;
 }
 
 .browser-panel__toolbar button:not(:disabled):hover {
@@ -4313,21 +4477,14 @@ body:has(#root .platform-linux) > .browser-popout-overlay {
 	color: var(--fg);
 }
 
-.browser-panel__url-icon {
-	position: absolute;
-	left: 10px;
-	top: 50%;
-	z-index: 1;
-	width: 15px;
-	height: 15px;
-	transform: translateY(-50%);
-	color: var(--fg-passive);
-	pointer-events: none;
-}
-
 .browser-panel__url-input {
+	position: absolute;
+	top: 0;
+	right: 0;
+	left: 0;
+	z-index: 0;
+	width: auto;
 	height: 29px;
-	padding-left: 29px;
 	border-color: color-mix(in srgb, var(--color-border) 72%, transparent);
 	border-radius: 7px;
 	background:
@@ -4337,6 +4494,17 @@ body:has(#root .platform-linux) > .browser-popout-overlay {
 		0 1px 8px color-mix(in srgb, black 9%, transparent);
 	font-family: var(--font-mono);
 	font-size: 12px;
+	transition:
+		left 180ms cubic-bezier(0.2, 0.8, 0.2, 1),
+		right 180ms cubic-bezier(0.2, 0.8, 0.2, 1),
+		box-shadow var(--duration-fast) ease,
+		background-color var(--duration-fast) ease;
+}
+
+.browser-panel__toolbar--url-takeover .browser-panel__url-input {
+	left: var(--browser-url-expand-left, 0);
+	right: var(--browser-url-expand-right, 0);
+	z-index: 2;
 }
 
 .browser-panel__url-input:focus {
@@ -4524,7 +4692,9 @@ html[data-native-browser-composition="true"] .browser-popout-backdrop {
 	}
 
 	.browser-panel,
-	.browser-panel__toolbar button {
+	.browser-panel__toolbar button,
+	.browser-panel__toolbar > :not(.browser-panel__url-wrap),
+	.browser-panel__url-input {
 		transition: none;
 	}
 

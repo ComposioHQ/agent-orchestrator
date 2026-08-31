@@ -3619,6 +3619,79 @@ func TestStartWaitsForStoppedControllerCleanupBeforeRelaunch(t *testing.T) {
 	}
 }
 
+func TestConcurrentReconcileAndResumeShareOneCredentialedControllerLaunch(t *testing.T) {
+	st := openStore(t)
+	conversation := newFakeConversation()
+	providerStarted := make(chan struct{})
+	releaseProvider := make(chan struct{})
+	var providerOnce sync.Once
+	var providerStarts atomic.Int32
+	var launchedEnv map[string]string
+	driver := fakeDriver{conv: conversation}
+	driver.start = func(cfg ports.ChatStartConfig) (ports.ChatConversation, error) {
+		providerStarts.Add(1)
+		launchedEnv = maps.Clone(cfg.Env)
+		providerOnce.Do(func() { close(providerStarted) })
+		<-releaseProvider
+		return conversation, nil
+	}
+
+	var prepared atomic.Int32
+	var ids atomic.Int32
+	prepare := func(context.Context, domain.SessionControllerOwner) (map[string]string, error) {
+		call := prepared.Add(1)
+		return map[string]string{"AO_BROWSER_CAPABILITY": fmt.Sprintf("token-%d", call)}, nil
+	}
+	svc := chatsvc.New(chatsvc.Options{
+		Store: st, Sessions: st, Drivers: fakeRegistry{driver: driver},
+		Log: slog.New(slog.DiscardHandler), NewID: func() string { return fmt.Sprintf("gate-id-%d", ids.Add(1)) },
+	})
+	t.Cleanup(func() { _ = svc.Stop(context.Background(), testSession) })
+	cfg := chatsvc.StartConfig{
+		SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex,
+		WorkspacePath: t.TempDir(), Env: map[string]string{"AO_BROWSER_CAPABILITY": "stale"},
+		PrepareControllerEnv: prepare,
+	}
+	type startResult struct {
+		controller *chatsvc.Controller
+		err        error
+	}
+	results := make(chan startResult, 2)
+	go func() {
+		controller, err := svc.Start(context.Background(), cfg)
+		results <- startResult{controller, err}
+	}()
+	<-providerStarted
+	secondEntered := make(chan struct{})
+	go func() {
+		close(secondEntered)
+		controller, err := svc.Start(context.Background(), cfg)
+		results <- startResult{controller, err}
+	}()
+	<-secondEntered
+	select {
+	case result := <-results:
+		t.Fatalf("a concurrent Start escaped the controller gate: controller=%p err=%v", result.controller, result.err)
+	case <-time.After(25 * time.Millisecond):
+	}
+	if got := prepared.Load(); got != 1 {
+		t.Fatalf("credential preparations while first launch is blocked = %d, want 1", got)
+	}
+	close(releaseProvider)
+	first := <-results
+	second := <-results
+	if first.err != nil || second.err != nil || first.controller != second.controller {
+		t.Fatalf("concurrent Starts = (%p, %v), (%p, %v), want the same live controller",
+			first.controller, first.err, second.controller, second.err)
+	}
+	if got := providerStarts.Load(); got != 1 {
+		t.Fatalf("provider starts = %d, want 1", got)
+	}
+	if got := launchedEnv["AO_BROWSER_CAPABILITY"]; got != "token-1" {
+		t.Fatalf("provider capability = %q, want token-1", got)
+	}
+}
+
 // The cancellation belongs to the moment stop was pressed. A message typed after
 // that is the user asking for new work, and must not be swept up by it.
 func TestMessageTypedAfterStopIsStillDelivered(t *testing.T) {

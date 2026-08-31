@@ -102,6 +102,7 @@ vi.mock("../lib/api-client", () => ({
 	apiClient: {
 		GET: reviewGetMock,
 	},
+	apiErrorCode: (error: { code?: string }) => error.code,
 	apiErrorMessage: (_error: unknown, fallback: string) => fallback,
 }));
 
@@ -193,6 +194,7 @@ vi.mock("./TerminalSwitchAgentButton", () => ({
 }));
 vi.mock("./chat/SessionChatSurface", () => ({
 	SessionChatSurface: ({
+		session,
 		onOpenShell,
 		onOpenFile,
 		headerActions,
@@ -205,10 +207,15 @@ vi.mock("./chat/SessionChatSurface", () => ({
 		shellTerminals = [],
 		shellTarget,
 		onSelectShellTerminal,
+		onCloseShellTerminal,
 		workspaceTabs,
+		workspaceTabActions,
 		newWorkDisabled,
 		onConversationWorkChange,
+		auxiliaryTabOrder,
+		onAuxiliaryTabOrderChange,
 	}: {
+		session: WorkspaceSession;
 		onOpenShell?: () => void;
 		onOpenFile?: (path: string) => void;
 		headerActions?: ReactNode;
@@ -221,19 +228,47 @@ vi.mock("./chat/SessionChatSurface", () => ({
 		shellTerminals?: Array<{ handleId: string; title: string }>;
 		shellTarget?: { kind: "shell"; handleId: string };
 		onSelectShellTerminal?: (handleId: string) => void;
-		workspaceTabs?: ReactNode;
+		onCloseShellTerminal?: (handleId: string) => void;
+		workspaceTabs?: Array<{ key: string; content: ReactNode; onSelect: () => void }>;
+		workspaceTabActions?: ReactNode;
 		newWorkDisabled?: boolean;
 		onConversationWorkChange?: (state: typeof chatSurfaceWorkState) => void;
+		auxiliaryTabOrder?: string[];
+		onAuxiliaryTabOrderChange?: (keys: string[]) => void;
 	}) => (
 		<div
 			data-new-work-disabled={newWorkDisabled ? "true" : "false"}
 			data-testid="chat-surface"
 		>
 			chat surface
+			<div data-testid={`auxiliary-tab-order-${session.id}`}>
+				{auxiliaryTabOrder?.join("|") ?? ""}
+			</div>
+			<button
+				type="button"
+				onClick={() => onAuxiliaryTabOrderChange?.(["sh-a", "file:src/panel.tsx"])}
+			>
+				reorder auxiliary tabs
+			</button>
+			<button
+				type="button"
+				onClick={() =>
+					onAuxiliaryTabOrderChange?.(["sh-a", "reviewer:review-sess-1", "file:src/panel.tsx"])
+				}
+			>
+				reorder reviewer tab
+			</button>
+			<button
+				type="button"
+				onClick={() => onAuxiliaryTabOrderChange?.(["file:src/panel.tsx", "sh-a"])}
+			>
+				reorder visible tabs
+			</button>
 			{headerActions}
 			{sessionTabAction}
 			<div role="tablist">
-				{workspaceTabs}
+				{workspaceTabs?.map((tab) => <div key={tab.key}>{tab.content}</div>)}
+				{workspaceTabActions}
 				{tabStripAction}
 			</div>
 			{onOpenFile ? (
@@ -256,13 +291,14 @@ vi.mock("./chat/SessionChatSurface", () => ({
 			) : null}
 			<div data-testid="shell-tabs">
 				{shellTerminals.map((shell) => (
-					<button
-						key={shell.handleId}
-						onClick={() => onSelectShellTerminal?.(shell.handleId)}
-						type="button"
-					>
-						{shell.title}
-					</button>
+					<div key={shell.handleId}>
+						<button onClick={() => onSelectShellTerminal?.(shell.handleId)} type="button">
+							{shell.title}
+						</button>
+						<button onClick={() => onCloseShellTerminal?.(shell.handleId)} type="button">
+							close {shell.title}
+						</button>
+					</div>
 				))}
 			</div>
 			{shellTarget ? <div data-testid="terminal-target">shell</div> : null}
@@ -292,8 +328,10 @@ vi.mock("./CenterPane", () => ({
 		sessionTabAction,
 		tabStripAction,
 		workspaceTabs,
+		workspaceTabActions,
 		reviewerTerminal,
 		terminalTarget,
+		auxiliaryTabOrder,
 	}: {
 		session?: WorkspaceSession;
 		shellTerminals?: Array<{ handleId: string; title: string }>;
@@ -304,16 +342,22 @@ vi.mock("./CenterPane", () => ({
 		topbarActions?: ReactNode;
 		sessionTabAction?: ReactNode;
 		tabStripAction?: ReactNode;
-		workspaceTabs?: ReactNode;
+		workspaceTabs?: Array<{ key: string; content: ReactNode; onSelect: () => void }>;
+		workspaceTabActions?: ReactNode;
 		reviewerTerminal?: { handleId: string; harness: string };
 		terminalTarget?: { kind: string; handleId?: string };
+		auxiliaryTabOrder?: string[];
 	}) => (
 		<div>
 			terminal center
+			<div data-testid={`auxiliary-tab-order-tui-${session?.id ?? "none"}`}>
+				{auxiliaryTabOrder?.join("|") ?? ""}
+			</div>
 			{topbarActions}
 			{sessionTabAction}
 			<div role="tablist">
-				{workspaceTabs}
+				{workspaceTabs?.map((tab) => <div key={tab.key}>{tab.content}</div>)}
+				{workspaceTabActions}
 				{tabStripAction}
 			</div>
 			<div data-testid="terminal-target">
@@ -715,6 +759,29 @@ describe("SessionView", () => {
 		expect(openShellTerminalMock).toHaveBeenCalledWith({ projectId: "proj-1", sessionId: "sess-2" }, expect.anything());
 	});
 
+	it("activates a new terminal opened while a file tab is selected", async () => {
+		const shell = {
+			handleId: "sh-after-file",
+			projectId: "proj-1",
+			sessionId: "sess-1",
+			title: "Terminal 1",
+			workingDir: "/p",
+			createdAt: "2026-08-31T00:00:00Z",
+		};
+		openShellTerminalMock.mockImplementation((_input, options) => {
+			shellTerminalsState.data = [shell];
+			options.onSuccess(shell);
+		});
+		render(<SessionView sessionId="sess-1" />);
+
+		fireEvent.click(screen.getByRole("button", { name: "view review file" }));
+		expect(await screen.findByTestId("session-file-workspace")).toHaveTextContent("src/panel.tsx");
+
+		fireEvent.click(screen.getByRole("button", { name: "New terminal" }));
+		expect(screen.queryByTestId("session-file-workspace")).not.toBeInTheDocument();
+		expect(screen.getByTestId("terminal-target")).toHaveTextContent("sh-after-file");
+	});
+
 	it("does not offer a new terminal for orchestrator sessions", () => {
 		render(<SessionView sessionId="sess-orch" />);
 
@@ -771,6 +838,147 @@ describe("SessionView", () => {
 		fireEvent.click(screen.getByRole("button", { name: "select chat tab" }));
 		expect(screen.getByText("chat surface")).toBeInTheDocument();
 		expect(screen.queryByTestId("terminal-target")).not.toBeInTheDocument();
+	});
+
+	it("preserves mixed tab order across session navigation and interface changes", async () => {
+		workerSession("sess-1").mode = "chat";
+		workerSession("sess-2").mode = "chat";
+		shellTerminalsState.data = [
+			{
+				handleId: "sh-a",
+				projectId: "proj-1",
+				sessionId: "sess-1",
+				title: "session one shell",
+				workingDir: "/p",
+				createdAt: "2026-08-31T00:00:00Z",
+			},
+		];
+		const view = render(<SessionView sessionId="sess-1" />);
+
+		fireEvent.click(screen.getByRole("button", { name: "view review file" }));
+		await screen.findByTestId("session-file-workspace");
+		fireEvent.click(screen.getByRole("button", { name: "reorder auxiliary tabs" }));
+		expect(screen.getByTestId("auxiliary-tab-order-sess-1")).toHaveTextContent(
+			"sh-a|file:src/panel.tsx",
+		);
+
+		view.rerender(<SessionView sessionId="sess-2" />);
+		view.rerender(<SessionView sessionId="sess-1" />);
+
+		expect(screen.getByTestId("auxiliary-tab-order-sess-1")).toHaveTextContent(
+			"sh-a|file:src/panel.tsx",
+		);
+
+		workerSession("sess-1").mode = "tui";
+		view.rerender(<SessionView sessionId="sess-1" />);
+		expect(screen.getByTestId("auxiliary-tab-order-tui-sess-1")).toHaveTextContent(
+			"sh-a|file:src/panel.tsx",
+		);
+	});
+
+	it("selects the adjacent shell when closing a reordered file tab", async () => {
+		workerSession("sess-1").mode = "chat";
+		shellTerminalsState.data = [
+			{
+				handleId: "sh-a",
+				projectId: "proj-1",
+				sessionId: "sess-1",
+				title: "session one shell",
+				workingDir: "/p",
+				createdAt: "2026-08-31T00:00:00Z",
+			},
+		];
+		render(<SessionView sessionId="sess-1" />);
+
+		fireEvent.click(screen.getByRole("button", { name: "view review file" }));
+		await screen.findByTestId("session-file-workspace");
+		fireEvent.click(screen.getByRole("button", { name: "reorder auxiliary tabs" }));
+		fireEvent.click(screen.getByRole("button", { name: "Close panel.tsx" }));
+
+		expect(screen.queryByTestId("session-file-workspace")).not.toBeInTheDocument();
+		expect(screen.getByTestId("terminal-target")).toHaveTextContent("shell");
+	});
+
+	it("preserves a reordered reviewer position while the session is inactive", async () => {
+		const worker = workerSession("sess-1");
+		worker.mode = "chat";
+		worker.prs = [
+			{
+				url: "https://github.com/acme/repo/pull/7",
+				number: 7,
+				state: "open",
+				ci: "passing",
+				review: "none",
+				mergeability: "mergeable",
+				reviewComments: false,
+				updatedAt: "2026-06-15T00:00:00Z",
+			},
+		];
+		shellTerminalsState.data = [
+			{
+				handleId: "sh-a",
+				projectId: "proj-1",
+				sessionId: "sess-1",
+				title: "session one shell",
+				workingDir: "/p",
+				createdAt: "2026-08-31T00:00:00Z",
+			},
+		];
+		reviewGetMock.mockResolvedValueOnce({
+			data: { reviewerHandleId: "review-sess-1", reviewerHarness: "codex", reviews: [] },
+			error: undefined,
+		});
+		const view = render(<SessionView sessionId="sess-1" />);
+
+		await screen.findByRole("button", { name: "Reviewer" });
+		fireEvent.click(screen.getByRole("button", { name: "view review file" }));
+		await screen.findByTestId("session-file-workspace");
+		fireEvent.click(screen.getByRole("button", { name: "reorder reviewer tab" }));
+		expect(screen.getByTestId("auxiliary-tab-order-sess-1")).toHaveTextContent(
+			"sh-a|reviewer:review-sess-1|file:src/panel.tsx",
+		);
+
+		worker.status = "terminated";
+		worker.isTerminated = true;
+		view.rerender(<SessionView sessionId="sess-1" />);
+		fireEvent.click(screen.getByRole("button", { name: "reorder visible tabs" }));
+		worker.status = "working";
+		worker.isTerminated = false;
+		view.rerender(<SessionView sessionId="sess-1" />);
+
+		await screen.findByRole("button", { name: "Reviewer" });
+		expect(screen.getByTestId("auxiliary-tab-order-sess-1")).toHaveTextContent(
+			"file:src/panel.tsx|reviewer:review-sess-1|sh-a",
+		);
+	});
+
+	it("keeps a shell's reordered position when closing it fails", async () => {
+		workerSession("sess-1").mode = "chat";
+		shellTerminalsState.data = [
+			{
+				handleId: "sh-a",
+				projectId: "proj-1",
+				sessionId: "sess-1",
+				title: "session one shell",
+				workingDir: "/p",
+				createdAt: "2026-08-31T00:00:00Z",
+			},
+		];
+		closeShellTerminalMock.mockImplementation((_handleId, options) => {
+			options?.onError?.({ code: "SHELL_TERMINAL_CLOSE_FAILED" });
+		});
+		const view = render(<SessionView sessionId="sess-1" />);
+
+		fireEvent.click(screen.getByRole("button", { name: "view review file" }));
+		await screen.findByTestId("session-file-workspace");
+		fireEvent.click(screen.getByRole("button", { name: "reorder auxiliary tabs" }));
+		fireEvent.click(screen.getByRole("button", { name: "session one shell" }));
+		fireEvent.click(screen.getByRole("button", { name: "close session one shell" }));
+		view.rerender(<SessionView sessionId="sess-1" />);
+
+		expect(screen.getByTestId("auxiliary-tab-order-sess-1")).toHaveTextContent(
+			"sh-a|file:src/panel.tsx",
+		);
 	});
 
 	it.each([
@@ -1207,14 +1415,14 @@ describe("SessionView", () => {
 		expect(screen.getByTestId("terminal-target")).toHaveTextContent("sh-b");
 
 		fireEvent.click(screen.getByRole("button", { name: "close second shell" }));
-		expect(closeShellTerminalMock).toHaveBeenCalledWith("sh-b");
+		expect(closeShellTerminalMock).toHaveBeenCalledWith("sh-b", expect.any(Object));
 		expect(screen.getByTestId("terminal-target")).toHaveTextContent("sh-a");
 		expect(useUiStore.getState().activeShellTerminalHandleId).toBe("sh-a");
 
 		shellTerminalsState.data = shellTerminalsState.data.filter((shell) => shell.handleId !== "sh-b");
 		view.rerender(<SessionView sessionId="sess-1" />);
 		fireEvent.click(screen.getByRole("button", { name: "close first shell" }));
-		expect(closeShellTerminalMock).toHaveBeenCalledWith("sh-a");
+		expect(closeShellTerminalMock).toHaveBeenCalledWith("sh-a", expect.any(Object));
 		expect(screen.getByTestId("terminal-target")).toHaveTextContent("worker");
 		expect(useUiStore.getState().activeShellTerminalHandleId).toBeNull();
 	});

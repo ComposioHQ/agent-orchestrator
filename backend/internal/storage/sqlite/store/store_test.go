@@ -273,6 +273,62 @@ func TestSessionPersistsBrowserCapabilityVerifier(t *testing.T) {
 	}
 }
 
+func TestBrowserCapabilityRotationIsNarrowAndControllerOwnerFenced(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	rec := sampleRecord("mer")
+	rec.Mode = domain.SessionModeChat
+	rec.Metadata.ProviderConversationID = "thread-1"
+	rec.Metadata.ControllerGeneration = "generation-1"
+	created, err := s.CreateSession(ctx, rec)
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	expected := created.ControllerOwner()
+
+	concurrent := created
+	concurrent.DisplayName = "newer display name"
+	concurrent.Activity = domain.Activity{State: domain.ActivityActive, LastActivityAt: created.UpdatedAt.Add(2 * time.Second)}
+	concurrent.UpdatedAt = created.UpdatedAt.Add(2 * time.Second)
+	if err := s.UpdateSession(ctx, concurrent); err != nil {
+		t.Fatalf("UpdateSession concurrent facts: %v", err)
+	}
+	applied, err := s.UpdateBrowserCapabilityVerifier(
+		ctx, created.ID, expected, "verifier-2", created.UpdatedAt.Add(time.Second),
+	)
+	if err != nil || !applied {
+		t.Fatalf("UpdateBrowserCapabilityVerifier: applied=%v err=%v", applied, err)
+	}
+	updated, ok, err := s.GetSession(ctx, created.ID)
+	if err != nil || !ok {
+		t.Fatalf("GetSession: ok=%v err=%v", ok, err)
+	}
+	if updated.Metadata.BrowserCapabilityVerifier != "verifier-2" ||
+		updated.DisplayName != concurrent.DisplayName || updated.Activity != concurrent.Activity ||
+		!updated.UpdatedAt.Equal(concurrent.UpdatedAt) {
+		t.Fatalf("narrow verifier update changed unrelated facts: got=%+v", updated)
+	}
+
+	if err := s.ClaimChatControllerGeneration(
+		ctx, created.ID, "generation-2", concurrent.UpdatedAt.Add(time.Second)); err != nil {
+		t.Fatalf("ClaimChatControllerGeneration: %v", err)
+	}
+	applied, err = s.UpdateBrowserCapabilityVerifier(
+		ctx, created.ID, expected, "stale-verifier", concurrent.UpdatedAt.Add(2*time.Second),
+	)
+	if err != nil || applied {
+		t.Fatalf("stale owner verifier update: applied=%v err=%v", applied, err)
+	}
+	updated, _, err = s.GetSession(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("GetSession after stale update: %v", err)
+	}
+	if updated.Metadata.BrowserCapabilityVerifier != "verifier-2" {
+		t.Fatalf("stale owner replaced verifier with %q", updated.Metadata.BrowserCapabilityVerifier)
+	}
+}
+
 func TestProjectCRUDAndArchive(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

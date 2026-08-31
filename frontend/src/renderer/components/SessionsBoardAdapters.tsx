@@ -218,9 +218,10 @@ function DesktopSessionCard({
 			prs={summaries.map((pr) => ({
 				commentCount: pr.review.unresolvedBy.reduce((count, reviewer) => count + reviewer.count, 0),
 				number: pr.number,
-				reviewerAvatars: (pr.review.reviews ?? [])
-					.map((review) => reviewerAvatarUrl(pr, review.reviewerId))
-					.filter((url): url is string => Boolean(url)),
+				reviewerAvatars: (pr.review.reviews ?? []).map((review) => ({
+					login: review.reviewerId,
+					url: reviewerAvatarUrl(pr, review.reviewerId),
+				})),
 				state: pr.state,
 				url: prBrowserUrl(pr),
 			}))}
