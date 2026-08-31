@@ -341,7 +341,7 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 				<NotificationWorkspaceState>
 					{({ retryWorkspace, sessionMeta, sessionsReady, terminatedIds, workspaceError }) => (
 						<>
-				{markReadError ? (
+							{markReadError ? (
 					<div
 						aria-live="polite"
 						className="flex items-center justify-between gap-2 border-b border-border bg-error/5 px-4 py-2 text-caption text-error"
@@ -598,7 +598,7 @@ const NotificationItem = memo(function NotificationItem({
 									disabled={restoreDisabled}
 									onClick={(event) => {
 										event.stopPropagation();
-								onRestore(notification);
+										onRestore(notification);
 									}}
 									type="button"
 								>
