@@ -56,13 +56,14 @@ func TestStartOpensResolvedPlanAndReturnsSafeTerminal(t *testing.T) {
 		t.Fatalf("OpenCommandTerminal calls = %d, want 1", opener.calls)
 	}
 	wantInput := shellterm.OpenCommandTerminalInput{
-		Argv:  []string{"/test/bin/pi"},
-		Title: "Log in to Pi",
+		Argv:         []string{"/test/bin/pi"},
+		Title:        "Log in to Pi",
+		InitialInput: "/login",
 	}
 	if !reflect.DeepEqual(opener.input, wantInput) {
 		t.Fatalf("OpenCommandTerminal input = %#v, want %#v", opener.input, wantInput)
 	}
-	if got.AgentID != "pi" || got.Action != ActionLogin || got.Guidance != "Run /login in the terminal" || got.Terminal != terminal {
+	if got.AgentID != "pi" || got.Action != ActionLogin || got.Guidance != "Authentication opens automatically in this terminal" || got.Terminal != terminal {
 		t.Fatalf("Start(pi) = %#v, want display-safe Pi result with terminal %#v", got, terminal)
 	}
 	data, err := json.Marshal(got)

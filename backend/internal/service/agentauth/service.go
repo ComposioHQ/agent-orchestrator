@@ -51,6 +51,7 @@ type Plan struct {
 	Reason           string `json:"reason,omitempty"`
 	command          []string
 	title            string
+	initialInput     string
 }
 
 // TerminalOpener opens the daemon-trusted terminal used for a native
@@ -107,7 +108,8 @@ func (s *Service) Plan(ctx context.Context, agentID string) (Plan, error) {
 
 // Start opens the reviewed native authentication flow for agentID. Callers
 // choose only the registry key; command arguments come exclusively from the
-// resolved private plan fields. Any later terminal input is user-entered.
+// resolved private plan fields. Reviewed slash commands may also be injected
+// after the terminal reports output so users do not have to type them.
 func (s *Service) Start(ctx context.Context, agentID string) (StartResult, error) {
 	plan, ok := planByAgentID[agentID]
 	if !ok {
@@ -124,8 +126,9 @@ func (s *Service) Start(ctx context.Context, agentID string) (StartResult, error
 		return StartResult{}, apierr.Internal("AGENT_AUTH_TERMINAL_UNAVAILABLE", "Authentication terminal service is unavailable.")
 	}
 	terminal, err := s.terminals.OpenCommandTerminal(ctx, shellterm.OpenCommandTerminalInput{
-		Argv:  plan.command,
-		Title: plan.title,
+		Argv:         plan.command,
+		Title:        plan.title,
+		InitialInput: plan.initialInput,
 	})
 	if err != nil {
 		return StartResult{}, err

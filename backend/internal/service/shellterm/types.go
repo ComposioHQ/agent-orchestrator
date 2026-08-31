@@ -46,9 +46,10 @@ type OpenShellTerminalInput struct {
 // OpenCommandTerminalInput is a daemon-trusted command terminal request. It
 // is intentionally separate from OpenShellTerminalInput: public callers may
 // open only the user's login shell, while backend callers provide a reviewed
-// command. Interactive input is left to the user after the terminal is durable
-// and visible; process age is not a reliable readiness signal.
+// command. InitialInput is private backend-only input from the reviewed auth
+// registry; it is sent only after the PTY produces output.
 type OpenCommandTerminalInput struct {
-	Argv  []string
-	Title string
+	Argv         []string
+	Title        string
+	InitialInput string
 }

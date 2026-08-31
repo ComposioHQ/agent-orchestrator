@@ -27,14 +27,14 @@ func TestPlansMatchAuthenticationMatrix(t *testing.T) {
 		{"copilot", "Log in to GitHub Copilot", "copilot", "Native GitHub device/browser flow", "https://docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli/install-copilot-cli", "", ActionLogin, []string{"copilot", "login"}},
 		{"grok", "Log in to Grok", "grok", "Native login; device-auth remains available inside the CLI", "https://docs.x.ai/build/overview", "", ActionLogin, []string{"grok", "login"}},
 		{"kimi", "Log in to Kimi", "kimi", "Native browser flow", "https://moonshotai.github.io/kimi-code/en/", "", ActionLogin, []string{"kimi", "login"}},
-		{"pi", "Log in to Pi", "pi", "Run /login in the terminal", "https://github.com/earendil-works/pi", "", ActionLogin, []string{"pi"}},
+		{"pi", "Log in to Pi", "pi", "Authentication opens automatically in this terminal", "https://github.com/earendil-works/pi", "/login", ActionLogin, []string{"pi"}},
 		{"amp", "Log in to Amp", "amp", "Native browser flow", "https://ampcode.com/manual", "", ActionLogin, []string{"amp", "login"}},
 		{"auggie", "Log in to Auggie", "auggie", "Native browser flow", "https://docs.augmentcode.com/cli/overview", "", ActionLogin, []string{"auggie", "login"}},
-		{"droid", "Log in to Droid", "droid", "Run /login in the terminal", "https://docs.factory.ai/droid-cli/cli-reference", "", ActionLogin, []string{"droid"}},
+		{"droid", "Log in to Droid", "droid", "Authentication opens automatically in this terminal", "https://docs.factory.ai/droid-cli/cli-reference", "/login", ActionLogin, []string{"droid"}},
 		{"crush", "Set up Crush", "crush", "Native provider picker; AO forwards terminal input without persisting or logging the raw input, while Crush controls credential storage", "https://github.com/charmbracelet/crush", "", ActionSetup, []string{"crush"}},
 		{"cline", "Log in to Cline", "cline", "Native authentication flow", "https://github.com/cline/cline", "", ActionLogin, []string{"cline", "auth"}},
 		{"goose", "Set up Goose", "goose", "Native provider configuration; AO forwards terminal input without persisting or logging the raw input, while Goose controls credential storage", "https://block.github.io/goose/index.html", "", ActionSetup, []string{"goose", "configure"}},
-		{"qwen", "Set up Qwen", "qwen", "Run /auth to configure a provider; AO forwards terminal input without persisting or logging the raw input, while Qwen controls credential storage", "https://qwenlm.github.io/qwen-code-docs/en/users/configuration/auth/", "", ActionSetup, []string{"qwen"}},
+		{"qwen", "Set up Qwen", "qwen", "Provider setup opens automatically in this terminal", "https://qwenlm.github.io/qwen-code-docs/en/users/configuration/auth/", "/auth", ActionSetup, []string{"qwen"}},
 		{"continue", "Log in to Continue", "cn", "Native browser flow", "https://docs.continue.dev/cli/quickstart", "", ActionLogin, []string{"cn", "login"}},
 		{"devin", "", "", "Open official API-key/environment setup docs; AO stores no key", "https://docs.devin.ai/get-started/devin-intro", "", ActionInstructions, nil},
 		{"kiro", "Log in to Kiro", "kiro-cli", "Native browser flow; device flow remains a CLI option", "https://kiro.dev/docs/getting-started/installation/", "", ActionLogin, []string{"kiro-cli", "login"}},
@@ -43,9 +43,9 @@ func TestPlansMatchAuthenticationMatrix(t *testing.T) {
 		{"muse", "Log in to Muse", "muse", "Native login flow", "https://ai.meta.com/llama/", "", ActionLogin, []string{"muse", "login"}},
 		{"agy", "Log in to Agy", "agy", "Native first-run browser sign-in", "https://github.com/google-antigravity/antigravity-cli", "", ActionLogin, []string{"agy"}},
 		{"autohand", "Set up Autohand", "autohand", "Native first-run sign-in/settings", "https://docs.autohand.ai/working-with-autohand-code/cli", "", ActionSetup, []string{"autohand"}},
-		{"kimchi", "Log in to Kimchi", "kimchi", "Run /login in the terminal", "https://docs.kimchi.dev/docs/kimchi-cli", "", ActionLogin, []string{"kimchi"}},
-		{"prime-agent", "Log in to Prime Agent", "prime-agent", "Run /login in the terminal", "https://github.com/PrimeIntellect-ai/prime-agent/blob/main/packages/coding-agent/docs/quickstart.md", "", ActionLogin, []string{"prime-agent"}},
-		{"omp", "Log in to OMP", "omp", "Run /login in the terminal", "https://github.com/can1357/oh-my-pi", "", ActionLogin, []string{"omp"}},
+		{"kimchi", "Log in to Kimchi", "kimchi", "Native browser login flow", "https://docs.kimchi.dev/docs/kimchi-cli", "", ActionLogin, []string{"kimchi", "login"}},
+		{"prime-agent", "Log in to Prime Agent", "prime-agent", "Authentication opens automatically in this terminal", "https://github.com/PrimeIntellect-ai/prime-agent/blob/main/packages/coding-agent/docs/quickstart.md", "/login", ActionLogin, []string{"prime-agent"}},
+		{"omp", "Log in to OMP", "omp", "Authentication opens automatically in this terminal", "https://github.com/can1357/oh-my-pi", "/login", ActionLogin, []string{"omp"}},
 	}
 
 	svc := New(foundExecutables(cases), nil)
@@ -67,7 +67,7 @@ func TestPlansMatchAuthenticationMatrix(t *testing.T) {
 		if len(wantCommand) > 0 {
 			wantCommand[0] = "/test/bin/" + want.executable
 		}
-		if got.title != want.title || got.DisplayCommand != strings.Join(want.argv, " ") || !reflect.DeepEqual(got.command, wantCommand) {
+		if got.title != want.title || got.DisplayCommand != strings.Join(want.argv, " ") || !reflect.DeepEqual(got.command, wantCommand) || got.initialInput != want.initialInput {
 			t.Fatalf("plan %q terminal = title %q display %q argv %#v, want title %q display %q argv %#v", want.id, got.title, got.DisplayCommand, got.command, want.title, strings.Join(want.argv, " "), wantCommand)
 		}
 		data, err := json.Marshal(got)

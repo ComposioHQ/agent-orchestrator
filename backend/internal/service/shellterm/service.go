@@ -20,12 +20,13 @@ import (
 )
 
 // ShellRuntime is the slice of the runtime adapter a shell terminal needs:
-// spawn a PTY around an argv, tear it down, and answer whether it is still
-// alive. It is deliberately narrower than ports.Runtime — a shell terminal
-// never reads captured output the way the activity observer does.
+// spawn a PTY around an argv, exchange reviewed auth input, tear it down, and
+// answer whether it is still alive.
 type ShellRuntime interface {
 	Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error)
 	Destroy(ctx context.Context, handle ports.RuntimeHandle) error
+	GetOutput(ctx context.Context, handle ports.RuntimeHandle, lines int) (string, error)
+	SendMessage(ctx context.Context, handle ports.RuntimeHandle, message string) error
 	IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool, error)
 }
 
@@ -261,11 +262,46 @@ func (s *Service) OpenCommandTerminal(ctx context.Context, in OpenCommandTermina
 	if err := os.MkdirAll(authWorkspace, 0o700); err != nil {
 		return ShellTerminal{}, fmt.Errorf("open command terminal: create auth workspace: %w", err)
 	}
-	return s.openTerminal(ctx, openTerminalConfig{
+	terminal, err := s.openTerminal(ctx, openTerminalConfig{
 		argv:       in.Argv,
 		workingDir: authWorkspace,
 		title:      in.Title,
 	})
+	if err != nil {
+		return ShellTerminal{}, err
+	}
+	if in.InitialInput != "" {
+		go s.sendInitialInputWhenReady(context.WithoutCancel(ctx), ports.RuntimeHandle{ID: terminal.HandleID}, in.InitialInput)
+	}
+	return terminal, nil
+}
+
+const (
+	initialInputTimeout      = 10 * time.Second
+	initialInputPollInterval = 50 * time.Millisecond
+	initialInputOutputLines  = 20
+)
+
+func (s *Service) sendInitialInputWhenReady(ctx context.Context, handle ports.RuntimeHandle, input string) {
+	ctx, cancel := context.WithTimeout(ctx, initialInputTimeout)
+	defer cancel()
+	ticker := time.NewTicker(initialInputPollInterval)
+	defer ticker.Stop()
+	for {
+		output, err := s.runtime.GetOutput(ctx, handle, initialInputOutputLines)
+		if err == nil && strings.TrimSpace(output) != "" {
+			if err := s.runtime.SendMessage(ctx, handle, input); err != nil {
+				s.log.Warn("authentication terminal initial input failed", "handleId", handle.ID, "error", err)
+			}
+			return
+		}
+		select {
+		case <-ctx.Done():
+			s.log.Warn("authentication terminal did not become ready for initial input", "handleId", handle.ID)
+			return
+		case <-ticker.C:
+		}
+	}
 }
 
 type openTerminalConfig struct {

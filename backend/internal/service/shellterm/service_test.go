@@ -28,11 +28,14 @@ func testLogger() *slog.Logger {
 type fakeShellRuntime struct {
 	created   []ports.RuntimeConfig
 	destroyed []string
-	sent      []sentInput
+	sentCh    chan sentInput
 
-	createErr  error
-	destroyErr error
-	sendErr    error
+	createErr   error
+	destroyErr  error
+	sendErr     error
+	output      string
+	outputErr   error
+	outputReady <-chan struct{}
 	// aliveByHandle answers IsAlive; a handle absent from the map is dead.
 	aliveByHandle map[string]bool
 	aliveErr      error
@@ -44,7 +47,7 @@ type sentInput struct {
 }
 
 func newFakeShellRuntime() *fakeShellRuntime {
-	return &fakeShellRuntime{aliveByHandle: map[string]bool{}}
+	return &fakeShellRuntime{aliveByHandle: map[string]bool{}, sentCh: make(chan sentInput, 1)}
 }
 
 func (f *fakeShellRuntime) Create(_ context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
@@ -69,8 +72,24 @@ func (f *fakeShellRuntime) Destroy(_ context.Context, handle ports.RuntimeHandle
 }
 
 func (f *fakeShellRuntime) SendInput(_ context.Context, handle ports.RuntimeHandle, input string) error {
-	f.sent = append(f.sent, sentInput{handleID: handle.ID, input: input})
+	sent := sentInput{handleID: handle.ID, input: input}
+	f.sentCh <- sent
 	return f.sendErr
+}
+
+func (f *fakeShellRuntime) SendMessage(ctx context.Context, handle ports.RuntimeHandle, input string) error {
+	return f.SendInput(ctx, handle, input)
+}
+
+func (f *fakeShellRuntime) GetOutput(_ context.Context, _ ports.RuntimeHandle, _ int) (string, error) {
+	if f.outputReady != nil {
+		select {
+		case <-f.outputReady:
+		default:
+			return "", f.outputErr
+		}
+	}
+	return f.output, f.outputErr
 }
 
 func (f *fakeShellRuntime) IsAlive(_ context.Context, handle ports.RuntimeHandle) (bool, error) {
@@ -224,6 +243,7 @@ func newTestServiceWithSessions(rt *fakeShellRuntime, st *fakeShellTerminalStore
 
 func TestOpenCommandTerminalStartsTrustedCommandInDedicatedAuthWorkspace(t *testing.T) {
 	rt := newFakeShellRuntime()
+	rt.output = "Pi is ready"
 	st := &fakeShellTerminalStore{}
 	svc := newTestService(rt, st, &fakeProjectRootLocator{})
 	dataDir := t.TempDir()
@@ -233,8 +253,9 @@ func TestOpenCommandTerminalStartsTrustedCommandInDedicatedAuthWorkspace(t *test
 	}
 
 	_, err := svc.OpenCommandTerminal(context.Background(), OpenCommandTerminalInput{
-		Argv:  []string{"pi"},
-		Title: "Log in to Pi",
+		Argv:         []string{"pi"},
+		Title:        "Log in to Pi",
+		InitialInput: "/login",
 	})
 	if err != nil {
 		t.Fatalf("OpenCommandTerminal: %v", err)
@@ -267,8 +288,45 @@ func TestOpenCommandTerminalStartsTrustedCommandInDedicatedAuthWorkspace(t *test
 	if !reflect.DeepEqual(st.records, []ShellTerminalRecord{wantRecord}) {
 		t.Errorf("records = %#v, want %#v", st.records, []ShellTerminalRecord{wantRecord})
 	}
-	if len(rt.sent) != 0 {
-		t.Errorf("sent = %#v, want interactive input left to the user", rt.sent)
+	select {
+	case got := <-rt.sentCh:
+		if want := (sentInput{handleID: "shellterm-test1", input: "/login"}); got != want {
+			t.Errorf("sent = %#v, want %#v", got, want)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("automatic login input was not sent")
+	}
+}
+
+func TestOpenCommandTerminalWaitsForOutputBeforeSendingInitialInput(t *testing.T) {
+	ready := make(chan struct{})
+	rt := newFakeShellRuntime()
+	rt.output = "Droid is ready"
+	rt.outputReady = ready
+	svc := newTestService(rt, &fakeShellTerminalStore{}, &fakeProjectRootLocator{})
+	svc.dataDir = t.TempDir()
+
+	if _, err := svc.OpenCommandTerminal(context.Background(), OpenCommandTerminalInput{
+		Argv:         []string{"droid"},
+		Title:        "Log in to Droid",
+		InitialInput: "/login",
+	}); err != nil {
+		t.Fatalf("OpenCommandTerminal: %v", err)
+	}
+
+	select {
+	case got := <-rt.sentCh:
+		t.Fatalf("initial input sent before terminal output: %#v", got)
+	case <-time.After(2 * initialInputPollInterval):
+	}
+	close(ready)
+	select {
+	case got := <-rt.sentCh:
+		if want := (sentInput{handleID: "shellterm-test1", input: "/login"}); got != want {
+			t.Errorf("sent = %#v, want %#v", got, want)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("automatic login input was not sent after terminal output")
 	}
 }
 

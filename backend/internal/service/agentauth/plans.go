@@ -13,14 +13,14 @@ var plans = []Plan{
 	plan("copilot", ActionLogin, "Log in to GitHub Copilot", []string{"copilot", "login"}, "Native GitHub device/browser flow", "https://docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli/install-copilot-cli"),
 	plan("grok", ActionLogin, "Log in to Grok", []string{"grok", "login"}, "Native login; device-auth remains available inside the CLI", "https://docs.x.ai/build/overview"),
 	plan("kimi", ActionLogin, "Log in to Kimi", []string{"kimi", "login"}, "Native browser flow", "https://moonshotai.github.io/kimi-code/en/"),
-	plan("pi", ActionLogin, "Log in to Pi", []string{"pi"}, "Run /login in the terminal", "https://github.com/earendil-works/pi"),
+	interactivePlan("pi", ActionLogin, "Log in to Pi", []string{"pi"}, "/login", "Authentication opens automatically in this terminal", "https://github.com/earendil-works/pi"),
 	plan("amp", ActionLogin, "Log in to Amp", []string{"amp", "login"}, "Native browser flow", "https://ampcode.com/manual"),
 	plan("auggie", ActionLogin, "Log in to Auggie", []string{"auggie", "login"}, "Native browser flow", "https://docs.augmentcode.com/cli/overview"),
-	plan("droid", ActionLogin, "Log in to Droid", []string{"droid"}, "Run /login in the terminal", "https://docs.factory.ai/droid-cli/cli-reference"),
+	interactivePlan("droid", ActionLogin, "Log in to Droid", []string{"droid"}, "/login", "Authentication opens automatically in this terminal", "https://docs.factory.ai/droid-cli/cli-reference"),
 	plan("crush", ActionSetup, "Set up Crush", []string{"crush"}, "Native provider picker; AO forwards terminal input without persisting or logging the raw input, while Crush controls credential storage", "https://github.com/charmbracelet/crush"),
 	plan("cline", ActionLogin, "Log in to Cline", []string{"cline", "auth"}, "Native authentication flow", "https://github.com/cline/cline"),
 	plan("goose", ActionSetup, "Set up Goose", []string{"goose", "configure"}, "Native provider configuration; AO forwards terminal input without persisting or logging the raw input, while Goose controls credential storage", "https://block.github.io/goose/index.html"),
-	plan("qwen", ActionSetup, "Set up Qwen", []string{"qwen"}, "Run /auth to configure a provider; AO forwards terminal input without persisting or logging the raw input, while Qwen controls credential storage", "https://qwenlm.github.io/qwen-code-docs/en/users/configuration/auth/"),
+	interactivePlan("qwen", ActionSetup, "Set up Qwen", []string{"qwen"}, "/auth", "Provider setup opens automatically in this terminal", "https://qwenlm.github.io/qwen-code-docs/en/users/configuration/auth/"),
 	plan("continue", ActionLogin, "Log in to Continue", []string{"cn", "login"}, "Native browser flow", "https://docs.continue.dev/cli/quickstart"),
 	plan("devin", ActionInstructions, "", nil, "Open official API-key/environment setup docs; AO stores no key", "https://docs.devin.ai/get-started/devin-intro"),
 	plan("kiro", ActionLogin, "Log in to Kiro", []string{"kiro-cli", "login"}, "Native browser flow; device flow remains a CLI option", "https://kiro.dev/docs/getting-started/installation/"),
@@ -29,9 +29,15 @@ var plans = []Plan{
 	plan("muse", ActionLogin, "Log in to Muse", []string{"muse", "login"}, "Native login flow", "https://ai.meta.com/llama/"),
 	plan("agy", ActionLogin, "Log in to Agy", []string{"agy"}, "Native first-run browser sign-in", "https://github.com/google-antigravity/antigravity-cli"),
 	plan("autohand", ActionSetup, "Set up Autohand", []string{"autohand"}, "Native first-run sign-in/settings", "https://docs.autohand.ai/working-with-autohand-code/cli"),
-	plan("kimchi", ActionLogin, "Log in to Kimchi", []string{"kimchi"}, "Run /login in the terminal", "https://docs.kimchi.dev/docs/kimchi-cli"),
-	plan("prime-agent", ActionLogin, "Log in to Prime Agent", []string{"prime-agent"}, "Run /login in the terminal", "https://github.com/PrimeIntellect-ai/prime-agent/blob/main/packages/coding-agent/docs/quickstart.md"),
-	plan("omp", ActionLogin, "Log in to OMP", []string{"omp"}, "Run /login in the terminal", "https://github.com/can1357/oh-my-pi"),
+	plan("kimchi", ActionLogin, "Log in to Kimchi", []string{"kimchi", "login"}, "Native browser login flow", "https://docs.kimchi.dev/docs/kimchi-cli"),
+	interactivePlan("prime-agent", ActionLogin, "Log in to Prime Agent", []string{"prime-agent"}, "/login", "Authentication opens automatically in this terminal", "https://github.com/PrimeIntellect-ai/prime-agent/blob/main/packages/coding-agent/docs/quickstart.md"),
+	interactivePlan("omp", ActionLogin, "Log in to OMP", []string{"omp"}, "/login", "Authentication opens automatically in this terminal", "https://github.com/can1357/oh-my-pi"),
+}
+
+func interactivePlan(agentID string, action Action, title string, command []string, initialInput, guidance, docs string) Plan {
+	p := plan(agentID, action, title, command, guidance, docs)
+	p.initialInput = initialInput
+	return p
 }
 
 var planByAgentID = func() map[string]Plan {

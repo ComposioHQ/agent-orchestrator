@@ -1,12 +1,22 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { apiClient } from "../../lib/api-client";
 import { appI18n } from "../../i18n";
-import { agentsQueryKey, type AgentCatalog } from "../../hooks/useAgentsQuery";
 import { useUiStore } from "../../stores/ui-store";
 import { HarnessSettingsSection } from "./HarnessSettingsSection";
+
+const terminalMock = vi.hoisted(() => ({
+	onStateChange: null as ((state: "connecting" | "connected" | "exited" | "error") => void) | null,
+}));
+
+vi.mock("../TerminalPane", () => ({
+	TerminalPane: (props: { onTerminalStateChange?: typeof terminalMock.onStateChange }) => {
+		terminalMock.onStateChange = props.onTerminalStateChange ?? null;
+		return <div data-testid="inline-harness-auth-terminal" />;
+	},
+}));
 
 function catalogWithInstalled(...installed: string[]) {
 	return {
@@ -83,6 +93,7 @@ describe("HarnessSettingsSection", () => {
 		await appI18n.changeLanguage("en");
 		window.ao!.clipboard.writeText = vi.fn().mockResolvedValue(undefined);
 		useUiStore.setState({ agentAuthTerminalRequest: null, agentAuthCheckRequest: null });
+		terminalMock.onStateChange = null;
 		vi.spyOn(apiClient, "GET").mockImplementation(async (path) => {
 			if (path === "/api/v1/agents/readiness") return { data: catalog } as never;
 			if (path === "/api/v1/agents/installers") return { data: plans } as never;
@@ -98,6 +109,7 @@ describe("HarnessSettingsSection", () => {
 			}
 			return { data: undefined } as never;
 		});
+		vi.spyOn(apiClient, "DELETE").mockResolvedValue({ data: undefined } as never);
 	});
 
 	afterEach(() => vi.restoreAllMocks());
@@ -163,7 +175,7 @@ describe("HarnessSettingsSection", () => {
 		expect(gooseRow).toHaveTextContent("goose is not on PATH");
 	});
 
-	it("requests the returned authentication terminal when Login is clicked", async () => {
+	it("shows the returned authentication terminal inline when Login is clicked", async () => {
 		const unauthorized = {
 			...catalog,
 			installed: [{ id: "codex", label: "Codex", authStatus: "unauthorized" }],
@@ -187,11 +199,12 @@ describe("HarnessSettingsSection", () => {
 
 		await user.click(await within(codexRow).findByRole("button", { name: "Login" }));
 
-		await waitFor(() => expect(useUiStore.getState().agentAuthTerminalRequest?.handleId).toBe("shellterm-login"));
-		expect(useUiStore.getState().agentAuthTerminalRequest?.agentId).toBe("codex");
+		expect(await within(codexRow).findByTestId("inline-harness-auth-terminal")).toBeInTheDocument();
+		expect(useUiStore.getState().activeShellTerminalHandleId).toBeNull();
+		expect(useUiStore.getState().agentAuthTerminalRequest).toBeNull();
 	});
 
-	it("rechecks the selected agent when Settings reopens after login", async () => {
+	it("verifies login and closes the inline terminal when the command exits", async () => {
 		let currentCatalog = {
 			...catalog,
 			installed: [{ id: "codex", label: "Codex", authStatus: "unauthorized" }],
@@ -216,27 +229,57 @@ describe("HarnessSettingsSection", () => {
 			return { data: undefined } as never;
 		});
 		const user = userEvent.setup();
-		const first = renderSection();
-		const firstCodexRow = (await screen.findByText("Codex")).closest('[data-agent="codex"]') as HTMLElement;
-		expect(await within(firstCodexRow).findByRole("button", { name: "Check login" })).toBeInTheDocument();
-		await user.click(await within(firstCodexRow).findByRole("button", { name: "Login" }));
-		await waitFor(() => expect(useUiStore.getState().agentAuthTerminalRequest?.handleId).toBe("shellterm-login"));
-		first.unmount();
+		renderSection();
+		const codexRow = (await screen.findByText("Codex")).closest('[data-agent="codex"]') as HTMLElement;
+		await user.click(await within(codexRow).findByRole("button", { name: "Login" }));
+		await within(codexRow).findByTestId("inline-harness-auth-terminal");
+		await act(async () => terminalMock.onStateChange?.("exited"));
 
-		useUiStore.getState().openGlobalSettings();
-		expect(useUiStore.getState().agentAuthCheckRequest?.agentId).toBe("codex");
-		const second = renderSection();
-
-		await screen.findByText("Codex");
 		await waitFor(() => expect(apiClient.POST).toHaveBeenCalledWith("/api/v1/agents/{agent}/probe", {
 			params: { path: { agent: "codex" } },
 		}));
-		await waitFor(() => expect((second.queryClient.getQueryData<AgentCatalog>(agentsQueryKey)?.installed[0])?.authStatus).toBe("authorized"));
-		await waitFor(() => {
-			const codexRow = screen.getByText("Codex").closest('[data-agent="codex"]') as HTMLElement;
-			expect(within(codexRow).getAllByText("Logged in")).toHaveLength(2);
+		await waitFor(() => expect(apiClient.DELETE).toHaveBeenCalledWith("/api/v1/shell-terminals/{handleId}", {
+			params: { path: { handleId: "shellterm-login" } },
+		}));
+		await waitFor(() => expect(within(codexRow).queryByTestId("inline-harness-auth-terminal")).not.toBeInTheDocument());
+		expect(within(codexRow).getAllByText("Logged in")).toHaveLength(2);
+	});
+
+	it("retries after the daemon has already pruned the previous authentication terminal", async () => {
+		const unauthorized = {
+			...catalog,
+			installed: [{ id: "codex", label: "Codex", authStatus: "unauthorized" }],
+			authorized: [],
+		};
+		let authStarts = 0;
+		vi.mocked(apiClient.GET).mockImplementation(async (path) => {
+			if (path === "/api/v1/agents") return { data: unauthorized } as never;
+			if (path === "/api/v1/agents/installers") return { data: plans } as never;
+			if (path === "/api/v1/agents/auth-plans") return { data: authPlans } as never;
+			return { data: undefined } as never;
 		});
-		expect(useUiStore.getState().agentAuthCheckRequest).toBeNull();
+		vi.mocked(apiClient.POST).mockImplementation(async (path) => {
+			if (path === "/api/v1/agents/{agent}/auth") {
+				authStarts += 1;
+				return { data: { agentId: "codex", action: "login", terminal: { handleId: `shellterm-login-${authStarts}`, workingDir: "/tmp/ao", title: "Log in to Codex", createdAt: new Date().toISOString() } } } as never;
+			}
+			if (path === "/api/v1/agents/{agent}/probe") {
+				return { data: { agent: unauthorized.installed[0], supported: true, installed: true } } as never;
+			}
+			return { data: undefined } as never;
+		});
+		vi.mocked(apiClient.DELETE).mockResolvedValue({ error: { code: "SHELL_TERMINAL_NOT_FOUND" } } as never);
+		const user = userEvent.setup();
+		renderSection();
+		const codexRow = (await screen.findByText("Codex")).closest('[data-agent="codex"]') as HTMLElement;
+		await user.click(await within(codexRow).findByRole("button", { name: "Login" }));
+		await within(codexRow).findByTestId("harness-auth-terminal");
+		await act(async () => terminalMock.onStateChange?.("exited"));
+		const panel = await within(codexRow).findByTestId("harness-auth-terminal");
+		await user.click(await within(panel).findByRole("button", { name: "Login" }));
+
+		await waitFor(() => expect(authStarts).toBe(2));
+		expect(within(codexRow).getByTestId("harness-auth-terminal")).toBeInTheDocument();
 	});
 
 	it("refreshes authentication availability after installation succeeds", async () => {

@@ -204,19 +204,21 @@ export function useOpenShellTerminal() {
 }
 
 /** Closes a shell and destroys its PTY. */
+export async function closeShellTerminal(handleId: string): Promise<void> {
+	if (usePreviewData) {
+		previewShellTerminals = previewShellTerminals.filter((shell) => shell.handleId !== handleId);
+		return;
+	}
+	const { error } = await apiClient.DELETE("/api/v1/shell-terminals/{handleId}", {
+		params: { path: { handleId } },
+	});
+	if (error) throw error;
+}
+
 export function useCloseShellTerminal() {
 	const queryClient = useQueryClient();
 	return useMutation({
-		mutationFn: async (handleId: string): Promise<void> => {
-			if (usePreviewData) {
-				previewShellTerminals = previewShellTerminals.filter((s) => s.handleId !== handleId);
-				return;
-			}
-			const { error } = await apiClient.DELETE("/api/v1/shell-terminals/{handleId}", {
-				params: { path: { handleId } },
-			});
-			if (error) throw error;
-		},
+		mutationFn: closeShellTerminal,
 		onMutate: async (handleId) => {
 			const previous = queryClient.getQueryData<ShellTerminal[]>(shellTerminalsQueryKey);
 			const removeClosedShell = () => {
