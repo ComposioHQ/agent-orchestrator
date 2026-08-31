@@ -1024,7 +1024,6 @@ const ProjectItemContent = memo(function ProjectItemContent({
 	const [confirmOpen, setConfirmOpen] = useState(false);
 	const [isSpawning, setIsSpawning] = useState(false);
 	const [projectPressed, setProjectPressed] = useState(false);
-	const [rowHovered, setRowHovered] = useState(false);
 	// Skip enter animation on first mount — sessions arrive async and we don't
 	// want them to slide in on every sidebar load. Only animate on subsequent
 	// expand/collapse toggles.
@@ -1206,8 +1205,6 @@ const ProjectItemContent = memo(function ProjectItemContent({
 					data-sidebar="menu-item"
 					data-slot="sidebar-menu-item"
 					layout={draggingProjectId ? false : "position"}
-					onMouseEnter={() => setRowHovered(true)}
-					onMouseLeave={() => setRowHovered(false)}
 					ref={setDroppableNodeRef}
 					transition={prefersReducedMotion ? { duration: 0 } : { type: "spring", stiffness: 520, damping: 42, mass: 0.55 }}
 				>
@@ -1270,20 +1267,23 @@ const ProjectItemContent = memo(function ProjectItemContent({
 										className="relative inline-flex size-icon-md shrink-0 translate-y-px items-center justify-center text-muted-foreground group-data-[collapsible=icon]:hidden"
 										data-project-folder-visual=""
 									>
-										{rowHovered && !draggingProjectId ? (
-											<motion.span
-												animate={{ rotate: expanded ? 90 : 0 }}
-												initial={false}
-												transition={prefersReducedMotion ? { duration: 0 } : { duration: 0.14, ease: [0.25, 0.46, 0.45, 0.94] }}
-												className="inline-flex size-icon-md items-center justify-center"
-											>
-												<ChevronRight strokeWidth={1.75} />
-											</motion.span>
-										) : expanded ? (
-											<FolderOpen strokeWidth={1.75} />
-										) : (
-											<Folder strokeWidth={1.75} />
-										)}
+										<span
+											className={cn(
+												"inline-flex size-icon-md items-center justify-center transition-opacity duration-150 group-hover/menu-item:opacity-0",
+												draggingProjectId && "group-hover/menu-item:opacity-100",
+											)}
+										>
+											{expanded ? <FolderOpen strokeWidth={1.75} /> : <Folder strokeWidth={1.75} />}
+										</span>
+										<span
+											className={cn(
+												"absolute inline-flex size-icon-md items-center justify-center opacity-0 transition-[opacity,transform] duration-150 group-hover/menu-item:opacity-100",
+												expanded && "rotate-90",
+												draggingProjectId && "group-hover/menu-item:opacity-0",
+											)}
+										>
+											<ChevronRight strokeWidth={1.75} />
+										</span>
 									</span>
 									{/* Collapsed icon rail: folder icon */}
 									<span

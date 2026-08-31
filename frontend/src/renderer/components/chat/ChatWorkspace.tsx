@@ -76,7 +76,7 @@ import {
 import { HumanMessageEditor } from "./HumanMessageEditor";
 import { ChatLinkProvider } from "./ChatMarkdown";
 import { ChatComposer } from "./ChatComposer";
-import { QueuedMessageDock } from "./QueuedMessageDock";
+import { QueuedMessageDock, type QueuedMessage } from "./QueuedMessageDock";
 import { ActivityRun } from "./ActivityRun";
 import { TurnPlan } from "./TurnPlan";
 import { TurnSettingsBar } from "./TurnSettingsBar";
@@ -178,6 +178,45 @@ type MessageEditDraft = {
 	content: ConversationContentSummary[];
 	reconstructedContext: boolean;
 };
+
+/**
+ * A stream refresh replaces the complete snapshot object. Queue prompts do not
+ * change while a running turn emits output, so retain the previous list when its
+ * contents are equal and avoid redrawing the dock and composer subtree.
+ */
+function useQueuedMessages(snapshot: ConversationSnapshot): QueuedMessage[] {
+	const previous = useRef<QueuedMessage[]>([]);
+	return useMemo(() => {
+		const messagesByTurn = new Map(
+			snapshot.items
+				.filter(
+					(item): item is ConversationMessage =>
+						item.kind === "message" &&
+						item.role === "user" &&
+						item.origin === "human" &&
+						Boolean(item.turnId),
+				)
+				.map((message) => [message.turnId as string, message]),
+		);
+		const next = snapshot.turns.flatMap((queuedTurn) => {
+			if (queuedTurn.state !== "queued") return [];
+			const message = messagesByTurn.get(queuedTurn.id);
+			return message ? [{ turnId: queuedTurn.id, message }] : [];
+		});
+		const current = previous.current;
+		if (
+			current.length === next.length &&
+			current.every(
+				(entry, index) =>
+					entry.turnId === next[index]?.turnId && sameContent(entry.message, next[index]?.message),
+			)
+		) {
+			return current;
+		}
+		previous.current = next;
+		return next;
+	}, [snapshot.items, snapshot.turns]);
+}
 
 export interface ChatWorkspaceProps {
 	snapshot: ConversationSnapshot;
@@ -524,24 +563,9 @@ export function ChatWorkspace({
 			return { ...current, [snapshot.sessionId]: next };
 		});
 	}, [auxiliaryTabOrder, availableTabKeys, onAuxiliaryTabOrderChange, snapshot.sessionId]);
-	const queuedMessages = useMemo(() => {
-		const messagesByTurn = new Map(
-			snapshot.items
-				.filter(
-					(item): item is ConversationMessage =>
-						item.kind === "message" &&
-						item.role === "user" &&
-						item.origin === "human" &&
-						Boolean(item.turnId),
-				)
-				.map((message) => [message.turnId as string, message]),
-		);
-		return snapshot.turns.flatMap((queuedTurn) => {
-			if (queuedTurn.state !== "queued") return [];
-			const message = messagesByTurn.get(queuedTurn.id);
-			return message ? [{ turnId: queuedTurn.id, message }] : [];
-		});
-	}, [snapshot.items, snapshot.turns]);
+	const queuedMessages = useQueuedMessages(snapshot);
+	const stablePromoteQueuedTurn = useStableCallback(onPromoteQueuedTurn);
+	const stableCancelQueuedTurn = useStableCallback(onCancelQueuedTurn);
 	const [queueEdit, setQueueEdit] = useState<{ turnId: string; text: string } | undefined>();
 	useEffect(() => {
 		if (!queueEdit) return;
@@ -552,10 +576,10 @@ export function ChatWorkspace({
 	const handleCancelQueuedTurn = useCallback(
 		async (turnId: string) => {
 			if (!onCancelQueuedTurn) return;
-			await onCancelQueuedTurn(turnId);
+			await stableCancelQueuedTurn(turnId);
 			setQueueEdit((current) => (current?.turnId === turnId ? undefined : current));
 		},
-		[onCancelQueuedTurn],
+		[stableCancelQueuedTurn],
 	);
 	const handleComposerSend = useCallback(
 		async (text: string, attachments?: Parameters<NonNullable<typeof onSend>>[1]) => {
@@ -574,6 +598,22 @@ export function ChatWorkspace({
 		},
 		[onEditQueuedTurn, onSend, queueEdit],
 	);
+	const composerSend = useStableCallback(handleComposerSend);
+	const stableInterrupt = useStableCallback(onInterrupt);
+	const stableSteer = useStableCallback(onSteer);
+	const beginQueuedEdit = useCallback(
+		(turnId: string, text: string) => {
+			if (newWorkDisabled) return;
+			setQueueEdit({ turnId, text });
+		},
+		[newWorkDisabled],
+	);
+	const cancelQueuedEdit = useCallback(() => setQueueEdit(undefined), []);
+	const promoteQueuedTurn = useCallback(
+		async (turnId: string) => stablePromoteQueuedTurn(turnId),
+		[stablePromoteQueuedTurn],
+	);
+	const steer = useCallback(async (text: string) => stableSteer(text), [stableSteer]);
 	// The turn a confirmation is open for. Undo is not reversible and it changes what
 	// the agent knows, so it is never one click.
 	const [confirming, setConfirming] = useState<string | undefined>(undefined);
@@ -774,6 +814,86 @@ export function ChatWorkspace({
 				return !latest || item.sequence > latest.sequence ? item : latest;
 			}, undefined),
 		[snapshot.items, turn],
+	);
+	const stableSettings = useStableValue(snapshot.settings);
+	const stableModelReroute = useStableValue(snapshot.modelReroute);
+	const stablePendingApproval = useStableValue(pendingApproval);
+	const composerSettings = useMemo(
+		() =>
+			onChooseSettings || onChooseConfigOption ? (
+				<TurnSettingsBar
+					models={models ?? []}
+					settings={stableSettings}
+					reroute={stableModelReroute}
+					onChange={newWorkDisabled ? undefined : onChooseSettings}
+					configOptions={configOptions ?? []}
+					onChangeConfigOption={newWorkDisabled ? undefined : onChooseConfigOption}
+					configPending={configOptionPending}
+					error={configOptionError}
+					disabled={
+						snapshot.controller.state === "stopped" || configOptionPending || newWorkDisabled
+					}
+				/>
+			) : null,
+		[
+			configOptionError,
+			configOptionPending,
+			configOptions,
+			models,
+			newWorkDisabled,
+			onChooseConfigOption,
+			onChooseSettings,
+			snapshot.controller.state,
+			stableModelReroute,
+			stableSettings,
+		],
+	);
+	const composerApproval = useMemo(
+		() =>
+			stablePendingApproval ? (
+				<ApprovalCard
+					activity={stablePendingApproval}
+					onDecide={onDecide}
+					busy={busy}
+					embedded
+				/>
+			) : undefined,
+		[busy, onDecide, stablePendingApproval],
+	);
+	const canSteerQueuedMessage =
+		Boolean(onSteer) && can(snapshot, "steer") && turn?.state === "running";
+	const composerQueuedDock = useMemo(
+		() =>
+			queuedMessages.length > 0 ? (
+				<QueuedMessageDock
+					messages={queuedMessages}
+					editingTurnId={queueEdit?.turnId}
+					canSteer={canSteerQueuedMessage}
+					onPromoteQueuedTurn={newWorkDisabled ? undefined : promoteQueuedTurn}
+					onBeginQueuedEdit={
+						newWorkDisabled || !onEditQueuedTurn ? undefined : beginQueuedEdit
+					}
+					onCancelQueuedTurn={newWorkDisabled ? undefined : handleCancelQueuedTurn}
+					promotePendingTurnId={promoteQueuedTurnPendingTurnId}
+					cancelPendingTurnId={cancelQueuedTurnPendingTurnId}
+				/>
+			) : null,
+		[
+			beginQueuedEdit,
+			canSteerQueuedMessage,
+			cancelQueuedTurnPendingTurnId,
+			handleCancelQueuedTurn,
+			newWorkDisabled,
+			onEditQueuedTurn,
+			promoteQueuedTurn,
+			promoteQueuedTurnPendingTurnId,
+			queueEdit?.turnId,
+			queuedMessages,
+		],
+	);
+	const composerDraftSeed = useMemo(
+		() => (queueEdit ? { id: queueEdit.turnId, text: queueEdit.text } : undefined),
+		[queueEdit],
 	);
 	// Empty chats center the prompt; once a turn or item exists the composer docks
 	// at the bottom and stays there for the rest of the session.
@@ -990,71 +1110,19 @@ export function ChatWorkspace({
 							>
 								{discarded > 0 ? <RolledBackNotice count={discarded} /> : null}
 								<ChatComposer
-									queuedDock={
-										queuedMessages.length > 0 ? (
-											<QueuedMessageDock
-												messages={queuedMessages}
-												editingTurnId={queueEdit?.turnId}
-												canSteer={
-													Boolean(onSteer) &&
-													can(snapshot, "steer") &&
-													turn?.state === "running"
-												}
-												onPromoteQueuedTurn={newWorkDisabled ? undefined : onPromoteQueuedTurn}
-												onBeginQueuedEdit={
-													newWorkDisabled || !onEditQueuedTurn
-														? undefined
-														: (turnId, text) => setQueueEdit({ turnId, text })
-												}
-												onCancelQueuedTurn={
-													newWorkDisabled ? undefined : handleCancelQueuedTurn
-												}
-												promotePendingTurnId={promoteQueuedTurnPendingTurnId}
-												cancelPendingTurnId={cancelQueuedTurnPendingTurnId}
-											/>
-										) : null
-									}
-									approval={
-										pendingApproval ? (
-											<ApprovalCard
-												activity={pendingApproval}
-												onDecide={onDecide}
-												busy={busy}
-												embedded
-											/>
-										) : undefined
-									}
-									onSend={(text, attachments) => handleComposerSend(text, attachments)}
-									draftSeed={
-										queueEdit ? { id: queueEdit.turnId, text: queueEdit.text } : undefined
-									}
+									queuedDock={composerQueuedDock}
+									approval={composerApproval}
+									onSend={composerSend}
+									draftSeed={composerDraftSeed}
 									editingQueuedTurnId={queueEdit?.turnId}
 									savingQueuedEditPending={Boolean(
 										queueEdit?.turnId &&
 											editQueuedTurnPendingTurnId === queueEdit.turnId,
 									)}
-									onCancelQueuedEdit={() => setQueueEdit(undefined)}
-									onInterrupt={turn && !newWorkDisabled ? onInterrupt : undefined}
+									onCancelQueuedEdit={cancelQueuedEdit}
+									onInterrupt={turn && !newWorkDisabled ? stableInterrupt : undefined}
 									commandError={commandError}
-									settings={
-										onChooseSettings || onChooseConfigOption ? (
-											<TurnSettingsBar
-												models={models ?? []}
-												settings={snapshot.settings}
-												reroute={snapshot.modelReroute}
-												onChange={newWorkDisabled ? undefined : onChooseSettings}
-												configOptions={configOptions ?? []}
-												onChangeConfigOption={newWorkDisabled ? undefined : onChooseConfigOption}
-												configPending={configOptionPending}
-												error={configOptionError}
-												disabled={
-													snapshot.controller.state === "stopped" ||
-													configOptionPending ||
-													newWorkDisabled
-												}
-											/>
-										) : null
-									}
+									settings={composerSettings}
 									busy={busy}
 									willQueue={Boolean(turn)}
 									disabled={snapshot.controller.state === "stopped" || newWorkDisabled}
@@ -1067,7 +1135,7 @@ export function ChatWorkspace({
 									autoFocusKey={snapshot.sessionId}
 									// Steering is only meaningful into a turn that is running. A queued turn
 									// has not reached the provider, so there is nothing to steer.
-									onSteer={newWorkDisabled ? undefined : onSteer}
+									onSteer={newWorkDisabled ? undefined : steer}
 									canSteer={Boolean(onSteer) && turn?.state === "running"}
 									sendPending={sendPending}
 									steerPending={steerPending}
@@ -2679,6 +2747,13 @@ function useStableCallback<Args extends unknown[], Result>(
 	// Only ever called from an event handler, which runs after the commit that
 	// updated the ref — there is no render-phase caller to read a stale closure.
 	return useCallback((...args: Args) => latest.current?.(...args), []);
+}
+
+/** Retain an unchanged JSON-shaped value across snapshot refreshes. */
+function useStableValue<T>(value: T): T {
+	const previous = useRef(value);
+	if (!sameContent(previous.current, value)) previous.current = value;
+	return previous.current;
 }
 
 type TimelineGroup = {

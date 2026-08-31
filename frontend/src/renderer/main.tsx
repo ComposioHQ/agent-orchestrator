@@ -23,7 +23,6 @@ if (import.meta.env.DEV) {
 	scan({
 		enabled: true,
 		showToolbar: true,
-		trackUnnecessaryRenders: true,
 	});
 }
 

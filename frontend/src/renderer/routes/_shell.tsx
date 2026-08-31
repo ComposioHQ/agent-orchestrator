@@ -1,6 +1,6 @@
 import { createFileRoute, Outlet, useMatchRoute, useNavigate, useParams } from "@tanstack/react-router";
 import { isCancelledError, useQueryClient } from "@tanstack/react-query";
-import { type CSSProperties, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { type CSSProperties, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { FolderPlus } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { CommandPalette } from "../components/CommandPalette";
@@ -743,10 +743,26 @@ function ShellLayout() {
 			}),
 		[],
 	);
+	const shellContextValue = useMemo(
+		() => ({
+			daemonStatus,
+			workspaceStartupState,
+			cloneProject,
+			createProject,
+			initializeProjectRepository,
+		}),
+		[
+			cloneProject,
+			createProject,
+			daemonStatus,
+			initializeProjectRepository,
+			workspaceStartupState,
+		],
+	);
 
 	return (
 		<ShellProvider
-			value={{ daemonStatus, workspaceStartupState, cloneProject, createProject, initializeProjectRepository }}
+			value={shellContextValue}
 		>
 			<SessionTopbarProvider>
 				<NotificationRuntime />
