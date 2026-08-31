@@ -1608,7 +1608,10 @@ function Timeline({
 	// state arrives, the old prompt is no longer the message being edited.
 	useEffect(() => setMessageEdit(undefined), [snapshot.activeBranchId, snapshot.sessionId]);
 	useEffect(() => {
-		if (isInspectorOpen) setHoveredMarker(null);
+		if (isInspectorOpen) {
+			drag.current = null;
+			setHoveredMarker(null);
+		}
 	}, [isInspectorOpen]);
 	const consumedRetrySources = useMemo(() => retrySourceTurnIds(snapshot), [snapshot]);
 	const retryableTurns = useMemo(

@@ -1052,6 +1052,53 @@ describe("ChatWorkspace timeline", () => {
 		expect(log.scrollTop).toBe(1000);
 	});
 
+	it("re-enables the conversation minimap when the inspector closes again", async () => {
+		useUiStore.setState({
+			inspectorSessions: { "ao-long": { isOpen: false, view: "summary" } },
+		});
+		render(<ChatWorkspace snapshot={chatFixtureLongHistory(8)} />);
+		const log = screen.getByRole("log");
+		const scrollbar = screen.getByTestId("chat-conversation-minimap");
+		stubGeometry(log, {
+			scrollHeight: 4000,
+			clientHeight: 800,
+			scrollTop: 1000,
+		});
+		stubGeometry(scrollbar, {
+			scrollHeight: 800,
+			clientHeight: 800,
+			scrollTop: 0,
+		});
+		fireEvent.scroll(log);
+
+		expect(scrollbar.querySelectorAll("[data-chat-scroll-marker]").length).toBeGreaterThan(0);
+		fireEvent.wheel(scrollbar, { deltaY: 200 });
+		expect(log.scrollTop).toBe(1200);
+
+		act(() => {
+			useUiStore.setState({
+				inspectorSessions: { "ao-long": { isOpen: true, view: "summary" } },
+			});
+		});
+		await waitFor(() => {
+			expect(scrollbar).toHaveAttribute("aria-hidden", "true");
+		});
+		fireEvent.wheel(scrollbar, { deltaY: 200 });
+		expect(log.scrollTop).toBe(1200);
+
+		act(() => {
+			useUiStore.setState({
+				inspectorSessions: { "ao-long": { isOpen: false, view: "summary" } },
+			});
+		});
+		await waitFor(() => {
+			expect(scrollbar).not.toHaveAttribute("aria-hidden", "true");
+			expect(scrollbar.querySelectorAll("[data-chat-scroll-marker]").length).toBeGreaterThan(0);
+		});
+		fireEvent.wheel(scrollbar, { deltaY: 200 });
+		expect(log.scrollTop).toBe(1400);
+	});
+
 	it("previews the request and response for a hovered conversation marker", () => {
 		useUiStore.setState({
 			inspectorSessions: {
