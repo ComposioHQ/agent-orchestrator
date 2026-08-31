@@ -11,6 +11,9 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -82,6 +85,14 @@ type Plan struct {
 	NeedsRoot   bool     // Command must run as root; the caller supplies the privilege
 	Unsupported bool
 	Reason      string // set when Unsupported, or as extra context otherwise
+	// InstalledBinaryPath, when set, names the exact binary the install is
+	// expected to produce. run() accepts the install as succeeded if this file
+	// exists even when LookPath(target) can't find it on PATH — necessary for
+	// the gh direct-download fallback, which drops gh.exe into
+	// %LOCALAPPDATA%\Microsoft\WindowsApps and depends on that directory being
+	// on PATH; on stripped/no-winget Windows it may not be, so the concrete
+	// path is the source of truth for verification (#4449 review).
+	InstalledBinaryPath string
 }
 
 // Status is the lifecycle state of an install Job.
@@ -197,7 +208,7 @@ func (s *Service) Start(ctx context.Context, target Target) (Job, error) {
 	}
 	s.jobs[target] = job
 
-	go s.run(plan.Command, job) //nolint:gosec // G118: the async job deliberately outlives the starting HTTP request and owns a bounded timeout.
+	go s.run(plan, job) //nolint:gosec // G118: the async job deliberately outlives the starting HTTP request and owns a bounded timeout.
 
 	return *job, nil
 }
@@ -239,12 +250,12 @@ func (s *Service) Status(ctx context.Context, target Target) (Job, error) {
 // concurrent Start/Status calls never race with this goroutine's writes.
 // The run is bounded by installTimeout so a stalled installer eventually
 // surfaces as a failure instead of pinning the target in StatusRunning.
-func (s *Service) run(argv []string, job *Job) {
+func (s *Service) run(plan Plan, job *Job) {
 	ctx, cancel := context.WithTimeout(context.Background(), s.installTimeout)
 	defer cancel()
 
 	out := &capturedOutput{max: maxOutputBytes}
-	runErr := s.commands.Run(ctx, argv, out, out)
+	runErr := s.commands.Run(ctx, plan.Command, out, out)
 	now := time.Now()
 
 	s.mu.Lock()
@@ -261,12 +272,74 @@ func (s *Service) run(argv []string, job *Job) {
 		job.Error = runErr.Error()
 		return
 	}
-	if path, err := s.executables.LookPath(string(job.Target)); err != nil || path == "" {
+	if err := s.verifyInstalled(plan, string(job.Target)); err != nil {
 		job.Status = StatusFailed
-		job.Error = fmt.Sprintf("install command finished but %s is still not in PATH", job.Target)
+		job.Error = err.Error()
 		return
 	}
 	job.Status = StatusSucceeded
+}
+
+// verifyInstalled reports whether target is usable after its install command
+// finished. The PATH lookup is the primary signal for most targets; the gh
+// direct-download fallback writes to a directory that may not be on this
+// process's PATH yet, so it additionally proves the recorded binary actually
+// executes (not just that a file exists) and registers its directory on the
+// current process PATH so child processes spawned from this already-running
+// daemon inherit it too (#4449 review).
+func (s *Service) verifyInstalled(plan Plan, target string) error {
+	if path, err := s.executables.LookPath(target); err == nil && path != "" {
+		return nil
+	}
+	if plan.InstalledBinaryPath == "" {
+		return fmt.Errorf("install command finished but %s is still not in PATH", target)
+	}
+	if err := s.probeInstalledBinary(plan.InstalledBinaryPath); err != nil {
+		return fmt.Errorf("install command finished but %s is still not on PATH and %s did not run: %w", target, plan.InstalledBinaryPath, err)
+	}
+	registerOnProcessPath(filepath.Dir(plan.InstalledBinaryPath))
+	return nil
+}
+
+// probeInstalledBinary executes the installed binary with a version probe to
+// confirm it is present and actually runs, rather than merely existing on
+// disk. Only the gh fallback sets InstalledBinaryPath today, for which
+// --version is a stable, exit-0 probe; the argv is fixed and never takes
+// caller input.
+func (s *Service) probeInstalledBinary(binPath string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	return s.commands.Run(ctx, []string{binPath, "--version"}, io.Discard, io.Discard) //nolint:gosec // G204: fixed argv from a hardcoded plan path, never caller input
+}
+
+// registerOnProcessPath appends dir to the current process's PATH if it isn't
+// already there, so LookPath and child processes spawned after this point can
+// resolve binaries a just-finished installer dropped into dir. The install
+// script separately persists the entry in the User PATH, but that only applies
+// to processes started after an environment refresh — this updates the running
+// daemon for the rest of its lifetime.
+func registerOnProcessPath(dir string) {
+	if dir == "" {
+		return
+	}
+	pathVal := os.Getenv("PATH")
+	for _, entry := range strings.Split(pathVal, string(os.PathListSeparator)) {
+		if strings.EqualFold(entry, dir) {
+			return
+		}
+	}
+	var updated string
+	if pathVal == "" {
+		updated = dir
+	} else {
+		updated = pathVal + string(os.PathListSeparator) + dir
+	}
+	if err := os.Setenv("PATH", updated); err != nil {
+		// The PATH we hand to children of this process just won't include the
+		// fresh install dir; the job itself is already verified as succeeded via
+		// the binary probe, so this is non-fatal.
+		return
+	}
 }
 
 func displayCommand(plan Plan) string {
@@ -343,7 +416,7 @@ func (s *Service) planTmux() Plan {
 func (s *Service) planGH() Plan {
 	switch s.goos {
 	case "windows":
-		return s.planWinget(TargetGH, "GitHub.cli")
+		return s.planGHWindows()
 	case "darwin":
 		return s.planBrew(TargetGH, "gh")
 	case "linux":
@@ -355,6 +428,63 @@ func (s *Service) planGH() Plan {
 		})
 	default:
 		return Plan{Target: TargetGH, Unsupported: true, Reason: "gh installation is not supported on this platform."}
+	}
+}
+
+// ghWindowsDownloadScript installs GitHub CLI without winget: it fetches the
+// latest official windows_amd64 zip from the cli/cli GitHub Releases and
+// copies bin\*.exe into %LOCALAPPDATA%\Microsoft\WindowsApps, which is on the
+// default per-user PATH, so the post-run LookPath("gh") verification in run()
+// succeeds without touching the registry or requiring a shell restart. The
+// script is a hardcoded constant — same security invariant as every other
+// argv in this package; no caller-supplied string ever reaches it.
+const ghWindowsDownloadScript = `$ErrorActionPreference = 'Stop'
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+$release = Invoke-RestMethod -Uri 'https://api.github.com/repos/cli/cli/releases/latest'
+$asset = $release.assets | Where-Object { $_.name -like 'gh_*_windows_amd64.zip' } | Select-Object -First 1
+if (-not $asset) { throw 'no gh windows_amd64 asset found in the latest cli/cli release' }
+$stage = Join-Path ([IO.Path]::GetTempPath()) ('ao-gh-' + [Guid]::NewGuid().ToString('N'))
+Invoke-WebRequest -Uri $asset.browser_download_url -OutFile "$stage.zip"
+Expand-Archive -Path "$stage.zip" -DestinationPath $stage -Force
+$dest = Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps'
+New-Item -ItemType Directory -Force -Path $dest | Out-Null
+Copy-Item -Path (Join-Path $stage '*\bin\*.exe') -Destination $dest -Force
+Remove-Item -Recurse -Force $stage
+Remove-Item -Force "$stage.zip"
+# Self-verify: a missing binary means the extraction/copy failed, and the job
+# must be reported as failed rather than silently reporting success.
+if (-not (Test-Path (Join-Path $dest 'gh.exe'))) { throw 'gh.exe was not found after extraction; install failed' }
+# Register the destination on the user PATH so future sessions and child shells
+# (e.g. terminals AO spawns for the agent) can find gh even when WindowsApps is
+# absent from the default PATH on stripped/no-winget images. The User-scope Path
+# can be unset on a fresh/stripped profile, so coalesce it to '' before use.
+$userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+if (-not $userPath) { $userPath = '' }
+if ($userPath -notlike "*$dest*") {
+    $newPath = if ($userPath -eq '') { $dest } else { $userPath.TrimEnd(';') + ';' + $dest }
+    [Environment]::SetEnvironmentVariable('Path', $newPath, 'User')
+}
+Write-Output ("installed gh " + $release.tag_name + " to " + $dest)`
+
+// planGHWindows resolves gh on Windows. Winget with a pinned --source winget
+// is preferred (see planWinget); machines without winget at all — LTSC/Server
+// or stripped installs, exactly the fresh machines this installer targets —
+// fall back to the hardcoded direct download above instead of dead-ending as
+// Unsupported. The fallback records the concrete binary path it writes so the
+// post-install check can confirm success even when that directory isn't on the
+// daemon's PATH (#4449 review).
+func (s *Service) planGHWindows() Plan {
+	if _, err := s.executables.LookPath("winget"); err == nil {
+		return s.planWinget(TargetGH, "GitHub.cli")
+	}
+	dest := filepath.Join(os.Getenv("LOCALAPPDATA"), "Microsoft", "WindowsApps")
+	return Plan{
+		Target: TargetGH,
+		Command: []string{
+			"powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+			"-Command", ghWindowsDownloadScript,
+		},
+		InstalledBinaryPath: filepath.Join(dest, "gh.exe"),
 	}
 }
 
@@ -396,11 +526,29 @@ func (s *Service) planBrew(target Target, pkg string) Plan {
 	return Plan{Target: target, Command: []string{"brew", "install", pkg}}
 }
 
+// planWinget resolves target via winget with the source pinned to the winget
+// community repository and every agreement flag set. Without --source, winget
+// also queries msstore; on a fresh Windows profile that source has never been
+// initialized, so its very first use blocks on an interactive Y/N prompt to
+// accept the Terms of Transaction and region sharing. The daemon runs
+// installs with no TTY attached, so that prompt can never be answered and
+// winget exits 0x8a150042 (APPINSTALLER_CLI_ERROR_PROMPT_INPUT_ERROR) — see
+// issue #4449 and upstream microsoft/winget-cli#2819. Pinning --source winget
+// bypasses msstore entirely, and the two accept flags ensure no remaining
+// source- or package-agreement prompt can block a non-interactive run.
 func (s *Service) planWinget(target Target, id string) Plan {
 	if _, err := s.executables.LookPath("winget"); err != nil {
 		return Plan{Target: target, Unsupported: true, Reason: "winget was not found on PATH."}
 	}
-	return Plan{Target: target, Command: []string{"winget", "install", "-e", "--id", id}}
+	return Plan{
+		Target: target,
+		Command: []string{
+			"winget", "install", "-e", "--id", id,
+			"--source", "winget",
+			"--accept-package-agreements",
+			"--accept-source-agreements",
+		},
+	}
 }
 
 // linuxPackageManagers is probed in this fixed order; the first one found on

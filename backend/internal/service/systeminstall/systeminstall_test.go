@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -97,12 +99,20 @@ func TestPlanFor(t *testing.T) {
 			wantUnsupported: true, wantReasonHas: "No supported Linux package manager",
 		},
 		{
-			name: "gh windows uses winget", target: TargetGH, goos: "windows", found: []string{"winget"},
-			wantCommand: []string{"winget", "install", "-e", "--id", "GitHub.cli"},
+			name: "gh windows uses pinned winget source", target: TargetGH, goos: "windows", found: []string{"winget"},
+			wantCommand: []string{
+				"winget", "install", "-e", "--id", "GitHub.cli",
+				"--source", "winget",
+				"--accept-package-agreements",
+				"--accept-source-agreements",
+			},
 		},
 		{
-			name: "gh windows without winget is unsupported", target: TargetGH, goos: "windows",
-			wantUnsupported: true, wantReasonHas: "winget was not found",
+			// gh without winget no longer dead-ends as Unsupported; the
+			// direct-download fallback is covered in detail by
+			// TestGHWindowsFallsBackToDirectDownload below.
+			name: "gh windows without winget still resolves a runnable plan", target: TargetGH, goos: "windows",
+			wantCommand: nil,
 		},
 		{
 			name: "gh darwin uses brew", target: TargetGH, goos: "darwin", found: []string{"brew"},
@@ -129,8 +139,21 @@ func TestPlanFor(t *testing.T) {
 			wantCommand: []string{"npm", "install", "-g", "@github/copilot"},
 		},
 		{
-			name: "opencode windows uses winget", target: TargetOpencode, goos: "windows", found: []string{"winget"},
-			wantCommand: []string{"winget", "install", "-e", "--id", "SST.opencode"},
+			name: "opencode windows uses pinned winget source", target: TargetOpencode, goos: "windows", found: []string{"winget"},
+			wantCommand: []string{
+				"winget", "install", "-e", "--id", "SST.opencode",
+				"--source", "winget",
+				"--accept-package-agreements",
+				"--accept-source-agreements",
+			},
+		},
+		{
+			// The direct-download fallback is gh-only: opencode on Windows
+			// still requires winget, so a missing winget must stay Unsupported
+			// with the manual remedy rather than silently changing install
+			// routes for this target.
+			name: "opencode windows without winget is unsupported", target: TargetOpencode, goos: "windows",
+			wantUnsupported: true, wantReasonHas: "winget was not found",
 		},
 		{
 			name: "opencode darwin uses the curl pipeline via bash", target: TargetOpencode, goos: "darwin", found: []string{"curl", "bash"},
@@ -168,6 +191,120 @@ func TestPlanFor(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestGHWindowsFallsBackToDirectDownload pins the shape of the no-winget gh
+// plan: a hardcoded, fully non-interactive PowerShell run that downloads the
+// official windows_amd64 zip from cli/cli GitHub Releases and copies
+// bin\*.exe into %LOCALAPPDATA%\Microsoft\WindowsApps — on the default
+// per-user PATH, so the post-run LookPath verification succeeds without
+// registry edits or shell restarts (#4449).
+func TestGHWindowsFallsBackToDirectDownload(t *testing.T) {
+	plan := newTestService("windows").planFor(TargetGH)
+	if plan.Unsupported {
+		t.Fatalf("Unsupported = true, want a runnable fallback plan (reason=%q)", plan.Reason)
+	}
+	if got := strings.Join(plan.Command, " "); !strings.HasPrefix(got, "powershell -NoProfile -NonInteractive") {
+		t.Fatalf("Command = %v, want a non-interactive powershell invocation", plan.Command)
+	}
+	script := plan.Command[len(plan.Command)-1]
+	for _, want := range []string{
+		"https://api.github.com/repos/cli/cli/releases/latest",
+		"gh_*_windows_amd64.zip",
+		"Microsoft\\WindowsApps",
+		// The User-scope Path can be unset on a fresh/stripped profile, so the
+		// script must coalesce it to '' before appending, or the fallback
+		// throws after gh.exe was already copied (#4449 review).
+		"$userPath = ''",
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("download script missing %q:\n%s", want, script)
+		}
+	}
+	// The plan must record the exact binary it installs so run() can confirm
+	// success even when the destination isn't on the daemon's PATH (#4449).
+	if plan.InstalledBinaryPath == "" {
+		t.Fatal("InstalledBinaryPath is empty, want the concrete gh.exe path")
+	}
+	if !strings.Contains(plan.InstalledBinaryPath, "WindowsApps") || !strings.HasSuffix(plan.InstalledBinaryPath, "gh.exe") {
+		t.Fatalf("InstalledBinaryPath = %q, want a WindowsApps/gh.exe path", plan.InstalledBinaryPath)
+	}
+}
+
+// TestRun_SucceedsWhenInstalledBinaryRuns covers the reviewer concern from
+// #4449: merely existing on disk is not enough — run() must confirm the
+// installed binary actually executes, and register its directory on the current
+// process PATH so child shells spawned from this already-running daemon inherit
+// it, before reporting success.
+func TestRun_SucceedsWhenInstalledBinaryRuns(t *testing.T) {
+	s := newTestService("windows") // no winget -> gh resolves to the direct-download fallback
+	plan := s.planFor(TargetGH)
+	if plan.Unsupported {
+		t.Fatalf("Unsupported = true, want the download fallback plan")
+	}
+	if plan.InstalledBinaryPath == "" {
+		t.Fatal("InstalledBinaryPath is empty, want the concrete gh.exe path for the fallback")
+	}
+	binPath := filepath.Join(t.TempDir(), "gh.exe")
+	if err := os.WriteFile(binPath, []byte("fake"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	plan.InstalledBinaryPath = binPath
+
+	var ran [][]string
+	s.commands = commandRunnerFunc(func(_ context.Context, argv []string, _, _ io.Writer) error {
+		ran = append(ran, argv)
+		return nil // install script and the version probe both "succeed"
+	})
+	origPath := os.Getenv("PATH")
+	defer os.Setenv("PATH", origPath)
+
+	job := &Job{Target: TargetGH}
+	s.run(plan, job)
+	if job.Status != StatusSucceeded {
+		t.Fatalf("Status = %q, want %q (error=%q)", job.Status, StatusSucceeded, job.Error)
+	}
+	if len(ran) != 2 {
+		t.Fatalf("commands run = %d (%v), want 2 (install then version probe)", len(ran), ran)
+	}
+	probe := ran[len(ran)-1]
+	if probe[0] != binPath || len(probe) != 2 || probe[1] != "--version" {
+		t.Fatalf("probe argv = %v, want [%s --version]", probe, binPath)
+	}
+	if !strings.Contains(os.Getenv("PATH"), filepath.Dir(binPath)) {
+		t.Fatalf("PATH = %q, want it to include %s for child processes spawned from this daemon", os.Getenv("PATH"), filepath.Dir(binPath))
+	}
+}
+
+// TestRun_FailsWhenInstalledBinaryCannotRun confirms that if neither PATH nor a
+// runnable installed binary yields the tool, the job is reported failed (and
+// the error names the missing binary so the user sees what went wrong).
+func TestRun_FailsWhenInstalledBinaryCannotRun(t *testing.T) {
+	s := newTestService("windows")
+	plan := s.planFor(TargetGH)
+	if plan.InstalledBinaryPath == "" {
+		t.Fatal("want InstalledBinaryPath set by the fallback")
+	}
+	missing := filepath.Join(t.TempDir(), "does-not-exist-gh.exe")
+	plan.InstalledBinaryPath = missing
+
+	s.commands = commandRunnerFunc(func(_ context.Context, argv []string, _, _ io.Writer) error {
+		if argv[0] == plan.Command[0] {
+			return nil // install script succeeds
+		}
+		return errors.New("exec: no such file or directory") // version probe of the missing binary fails
+	})
+	origPath := os.Getenv("PATH")
+	defer os.Setenv("PATH", origPath)
+
+	job := &Job{Target: TargetGH}
+	s.run(plan, job)
+	if job.Status != StatusFailed {
+		t.Fatalf("Status = %q, want %q", job.Status, StatusFailed)
+	}
+	if !strings.Contains(job.Error, missing) {
+		t.Fatalf("Error = %q, want it to name the missing binary path", job.Error)
 	}
 }
 
