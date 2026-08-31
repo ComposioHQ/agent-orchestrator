@@ -138,7 +138,7 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 		return ports.RuntimeHandle{}, conptyCreateFailure(fmt.Errorf("conpty: session %q already exists; destroy before re-creating", id))
 	}
 	r.mu.Unlock()
-	existing, resolveErr := r.resolveWithEvidence(id)
+	existing, resolveErr := r.resolveWithEvidence(ctx, id)
 	if resolveErr != nil {
 		return ports.RuntimeHandle{}, conptyCreateFailure(fmt.Errorf("conpty: inspect existing ownership for %q: %w", id, resolveErr))
 	}
@@ -258,7 +258,7 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 // never receive a false-success teardown while a provider may still be alive.
 // Unknown/already-gone sessions remain idempotent.
 func (r *Runtime) Destroy(ctx context.Context, handle ports.RuntimeHandle) error {
-	sess, err := r.resolveWithEvidence(handle.ID)
+	sess, err := r.resolveWithEvidence(ctx, handle.ID)
 	if err != nil {
 		return errors.Join(ports.ErrRuntimeProbeInconclusive, fmt.Errorf("conpty: resolve runtime %q for destroy: %w", handle.ID, err))
 	}
@@ -355,7 +355,7 @@ func (r *Runtime) waitForPIDExit(ctx context.Context, pid int) (bool, error) {
 // tmux returns a non-nil error for transient failures for the same
 // reason; conpty matches that contract here.
 func (r *Runtime) IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool, error) {
-	sess, err := r.resolveWithEvidence(handle.ID)
+	sess, err := r.resolveWithEvidence(ctx, handle.ID)
 	if err != nil {
 		return false, err
 	}
@@ -376,10 +376,12 @@ func (r *Runtime) ProbeFencedRuntime(ctx context.Context, ref ports.FencedRuntim
 	if ref.Handle.ID == "" || ref.SessionID == "" || ref.Generation == "" || ref.Handle.ID != string(ref.SessionID) {
 		return ports.FencedProbeResult{Liveness: ports.FencedUnknown, Reason: ports.FencedReasonIdentityMissing}
 	}
-	sess, err := r.resolveWithEvidence(ref.Handle.ID)
+	sess, err := r.resolveWithEvidence(ctx, ref.Handle.ID)
 	if err != nil {
 		reason := ports.FencedReasonRegistryUnreadable
-		if errors.Is(err, ptyregistry.ErrRegistryMalformed) {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			reason = ports.FencedReasonProbeFailed
+		} else if errors.Is(err, ptyregistry.ErrRegistryMalformed) {
 			reason = ports.FencedReasonRegistryMalformed
 		}
 		return ports.FencedProbeResult{Liveness: ports.FencedUnknown, Reason: reason}
@@ -414,7 +416,10 @@ func (r *Runtime) ProbeFencedRuntime(ctx context.Context, ref ports.FencedRuntim
 // agent process. When a generation ref is supplied, the launch id captured at
 // Create (and persisted in the recovery registry) must match exactly.
 func (r *Runtime) IsSupervisedProcessAlive(ctx context.Context, handle ports.RuntimeHandle, ref ports.SupervisedProcessRef) (bool, error) {
-	sess := r.resolve(handle.ID)
+	sess, err := r.resolveWithEvidence(ctx, handle.ID)
+	if err != nil {
+		return false, fmt.Errorf("conpty: resolve supervised runtime %q: %w", handle.ID, err)
+	}
 	if sess == nil {
 		return false, nil
 	}
@@ -445,7 +450,10 @@ func (r *Runtime) IsExactSupervisedProcessAlive(ctx context.Context, handle port
 
 // SendMessage chunks message and writes it to the pty-host followed by Enter.
 func (r *Runtime) SendMessage(ctx context.Context, handle ports.RuntimeHandle, message string) error {
-	sess := r.resolve(handle.ID)
+	sess, err := r.resolveWithEvidence(ctx, handle.ID)
+	if err != nil {
+		return fmt.Errorf("conpty: resolve runtime %q for message: %w", handle.ID, err)
+	}
 	if sess == nil {
 		return fmt.Errorf("conpty: session %q not found", handle.ID)
 	}
@@ -454,7 +462,10 @@ func (r *Runtime) SendMessage(ctx context.Context, handle ports.RuntimeHandle, m
 
 // Interrupt sends Ctrl-C to the PTY without tearing down the terminal host.
 func (r *Runtime) Interrupt(ctx context.Context, handle ports.RuntimeHandle) error {
-	sess := r.resolve(handle.ID)
+	sess, err := r.resolveWithEvidence(ctx, handle.ID)
+	if err != nil {
+		return fmt.Errorf("conpty: resolve runtime %q for interrupt: %w", handle.ID, err)
+	}
 	if sess == nil {
 		return fmt.Errorf("conpty: session %q not found", handle.ID)
 	}
@@ -464,7 +475,10 @@ func (r *Runtime) Interrupt(ctx context.Context, handle ports.RuntimeHandle) err
 // SendInput writes raw terminal input without appending Enter. It is intended
 // for TUI keybindings such as Escape rather than prompt text.
 func (r *Runtime) SendInput(ctx context.Context, handle ports.RuntimeHandle, input string) error {
-	sess := r.resolve(handle.ID)
+	sess, err := r.resolveWithEvidence(ctx, handle.ID)
+	if err != nil {
+		return fmt.Errorf("conpty: resolve runtime %q for input: %w", handle.ID, err)
+	}
 	if sess == nil {
 		return fmt.Errorf("conpty: session %q not found", handle.ID)
 	}
@@ -476,7 +490,10 @@ func (r *Runtime) GetOutput(ctx context.Context, handle ports.RuntimeHandle, lin
 	if lines <= 0 {
 		return "", fmt.Errorf("conpty: lines must be > 0")
 	}
-	sess := r.resolve(handle.ID)
+	sess, err := r.resolveWithEvidence(ctx, handle.ID)
+	if err != nil {
+		return "", fmt.Errorf("conpty: resolve runtime %q for output: %w", handle.ID, err)
+	}
 	if sess == nil {
 		return "", fmt.Errorf("conpty: session %q not found", handle.ID)
 	}
@@ -490,7 +507,10 @@ func (r *Runtime) GetStyledOutput(ctx context.Context, handle ports.RuntimeHandl
 	if lines <= 0 {
 		return "", fmt.Errorf("conpty: lines must be > 0")
 	}
-	sess := r.resolve(handle.ID)
+	sess, err := r.resolveWithEvidence(ctx, handle.ID)
+	if err != nil {
+		return "", fmt.Errorf("conpty: resolve runtime %q for styled output: %w", handle.ID, err)
+	}
 	if sess == nil {
 		return "", fmt.Errorf("conpty: session %q not found", handle.ID)
 	}
@@ -537,14 +557,13 @@ func (r *Runtime) resolveHostProtocol(ctx context.Context, sess *hostSession) (i
 	return version, nil
 }
 
-// resolve looks up a session by id: first the in-memory map, then the B2
-// registry (for daemon-restart recovery). Returns nil if not found either way.
-func (r *Runtime) resolve(id string) *hostSession {
-	sess, _ := r.resolveWithEvidence(id)
-	return sess
-}
-
-func (r *Runtime) resolveWithEvidence(id string) (*hostSession, error) {
+// resolveWithEvidence looks up a session by id: first the in-memory map, then
+// the B2 registry (for daemon-restart recovery). It returns nil only when a
+// complete, uncancelled registry scan proves the session is absent.
+func (r *Runtime) resolveWithEvidence(ctx context.Context, id string) (*hostSession, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	r.mu.Lock()
 	sess, exists := r.sessions[id]
 	r.mu.Unlock()
@@ -556,7 +575,7 @@ func (r *Runtime) resolveWithEvidence(id string) (*hostSession, error) {
 	}
 
 	// Registry fallback: scan for the entry by session id.
-	entries, complete, err := ptyregistry.Scan()
+	entries, complete, err := ptyregistry.Scan(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -564,6 +583,9 @@ func (r *Runtime) resolveWithEvidence(id string) (*hostSession, error) {
 		return nil, errors.New("conpty: pty registry scan incomplete")
 	}
 	for _, e := range entries {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if e.SessionID != id {
 			continue
 		}

@@ -110,6 +110,22 @@ export class TelemetryPolicyAuthority {
 		return this.snapshot();
 	}
 
+	async retryPendingReplacement(): Promise<TelemetryPolicySnapshot> {
+		if (!this.loaded) await this.load();
+		if (this.current.acknowledged) return this.snapshot();
+		if (!this.durabilitySupported) {
+			throw new Error("telemetry policy durable replacement is unsupported on Windows");
+		}
+		if (!this.writable) throw new Error("telemetry policy authority is unsafe and cannot be replaced");
+		await this.replace({
+			schema_version: 1,
+			events_enabled: this.current.eventsEnabled,
+			consent_generation: this.current.consentGeneration,
+			updated_at: this.current.updatedAt,
+		});
+		return this.snapshot();
+	}
+
 	private newRecord(eventsEnabled: boolean): TelemetryPolicyDiskRecord {
 		return {
 			schema_version: 1,

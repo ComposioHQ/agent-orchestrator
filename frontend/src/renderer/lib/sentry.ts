@@ -13,7 +13,7 @@ function domainOf(operation?: string): string | undefined {
 	const index = parts.indexOf("v1"); return index >= 0 ? parts[index + 1] : parts[0];
 }
 function tagsFor(meta: CaptureMeta, triage: Triage): Record<string, string> {
-	return Object.fromEntries(Object.entries({ platform: context.platform ?? "desktop", surface: meta.surface, domain: meta.domain, operation: meta.operation, category: meta.category, code: meta.code, http_status: meta.httpStatus?.toString(), apierr_kind: meta.kind, request_id: meta.requestId, severity: triage.severity, owner: triage.owner }).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
+	return Object.fromEntries(Object.entries({ platform: context.platform ?? "desktop", surface: meta.surface, domain: meta.domain, operation: meta.operation, category: meta.category, code: meta.code, http_status: meta.httpStatus?.toString(), apierr_kind: meta.kind, severity: triage.severity, owner: triage.owner }).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
 }
 export function captureExceptionToSentry(error: unknown, meta: CaptureMeta = {}): void {
 	const triage = classifyError(meta);

@@ -14,6 +14,7 @@ type Authority = {
 	load(): Promise<TelemetryPolicySnapshot>;
 	snapshot(): TelemetryPolicySnapshot;
 	setEventsEnabled(enabled: boolean): Promise<TelemetryPolicySnapshot>;
+	retryPendingReplacement(): Promise<TelemetryPolicySnapshot>;
 };
 
 type DaemonPolicyClient = {
@@ -71,15 +72,27 @@ export class DesktopTelemetryController {
 		return this.serialize(async () => {
 			if (this.view.state === "applied") return this.snapshot();
 			let desktopCleanupFailed = false;
+			let authorityVerified = false;
 			try {
-				const ack = await this.options.daemon.applyPolicy(this.view.consentGeneration, this.view.eventsEnabled);
-				if (!this.acknowledges(this.view.eventsEnabled, this.view.consentGeneration, ack)) throw new Error("policy was not acknowledged");
-				if (!this.view.eventsEnabled && this.pendingDesktopCleanup && !(await this.pendingDesktopCleanup())) { desktopCleanupFailed = true; throw new Error("desktop cleanup is incomplete"); }
+				let snapshot = this.options.authority.snapshot();
+				if (!snapshot.acknowledged) snapshot = await this.options.authority.retryPendingReplacement();
+				authorityVerified = snapshot.acknowledged &&
+					snapshot.consentGeneration === this.view.consentGeneration &&
+					snapshot.eventsEnabled === this.view.eventsEnabled;
+				if (!authorityVerified) throw new Error("durable policy authority was not acknowledged");
+				const ack = await this.options.daemon.applyPolicy(snapshot.consentGeneration, snapshot.eventsEnabled);
+				if (!this.acknowledges(snapshot.eventsEnabled, snapshot.consentGeneration, ack)) throw new Error("policy was not acknowledged");
+				if (!snapshot.eventsEnabled && this.pendingDesktopCleanup && !(await this.pendingDesktopCleanup())) { desktopCleanupFailed = true; throw new Error("desktop cleanup is incomplete"); }
 				this.pendingDesktopCleanup = null;
-				this.view = { ...this.view, state: "applied", acknowledged: true, reason: this.baseReason() };
+				this.view = this.toView(snapshot, "applied", this.baseReason());
 				if (this.captureEnabled(this.view) && !this.transport) this.transport = await this.options.transportFactory();
 			} catch {
-				this.view = { ...this.view, state: "cleanup_pending", acknowledged: false, reason: desktopCleanupFailed ? "cleanup_failed" : "daemon_cleanup_pending" };
+				this.view = {
+					...this.view,
+					state: authorityVerified ? "cleanup_pending" : "cleanup_failed",
+					acknowledged: false,
+					reason: desktopCleanupFailed || !authorityVerified ? "cleanup_failed" : "daemon_cleanup_pending",
+				};
 			}
 			this.publish(); return this.snapshot();
 		});
@@ -109,6 +122,18 @@ export class DesktopTelemetryController {
 		let transportDrained = true;
 		try { await closingTransport?.closeAndDrain(); } catch { transportDrained = false; }
 		this.transport = null;
+		this.pendingDesktopCleanup = async () => {
+			let purged = true;
+			if (!visibilityDrained) {
+				try { await this.options.visibility?.disableAndDrain(); visibilityDrained = true; } catch { purged = false; }
+			}
+			if (!transportDrained) {
+				try { await closingTransport?.closeAndDrain(); transportDrained = true; } catch { purged = false; }
+			}
+			try { await closingTransport?.clearCache(); } catch { purged = false; }
+			try { await this.options.clearRendererQueues?.(); } catch { purged = false; }
+			return purged;
+		};
 		try { await this.options.daemon.prepareDisable(); } catch { /* durable off still proceeds */ }
 		let snapshot: TelemetryPolicySnapshot;
 		try { snapshot = await this.options.authority.setEventsEnabled(false); }
@@ -123,18 +148,6 @@ export class DesktopTelemetryController {
 			const ack = await this.options.daemon.applyPolicy(snapshot.consentGeneration, false);
 			applied = ack.consentGeneration === snapshot.consentGeneration && !ack.eventsEnabled && ack.gateDrained && ack.purgeConfirmed;
 		} catch { applied = false; }
-		this.pendingDesktopCleanup = async () => {
-			let purged = true;
-			if (!visibilityDrained) {
-				try { await this.options.visibility?.disableAndDrain(); visibilityDrained = true; } catch { purged = false; }
-			}
-			if (!transportDrained) {
-				try { await closingTransport?.closeAndDrain(); transportDrained = true; } catch { purged = false; }
-			}
-			try { await closingTransport?.clearCache(); } catch { purged = false; }
-			try { await this.options.clearRendererQueues?.(); } catch { purged = false; }
-			return purged;
-		};
 		const desktopPurged = await this.pendingDesktopCleanup();
 		if (desktopPurged) this.pendingDesktopCleanup = null;
 		const cleanupApplied = applied && desktopPurged;

@@ -60,6 +60,36 @@ func TestProbeFencedRuntimeRegistryMalformedIsUnknown(t *testing.T) {
 	}
 }
 
+func TestRegistryResolutionHonorsCallerCancellation(t *testing.T) {
+	isolateRegistry(t)
+	spawnCalls := 0
+	rt := New(Options{Spawner: func(context.Context, string, string, []string, map[string]string) (string, int, error) {
+		spawnCalls++
+		return "127.0.0.1:1", livePID(), nil
+	}})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, createErr := rt.Create(ctx, ports.RuntimeConfig{
+		SessionID: "sess-cancelled", WorkspacePath: t.TempDir(), Argv: []string{"codex"},
+	})
+	if !errors.Is(createErr, context.Canceled) || spawnCalls != 0 {
+		t.Fatalf("Create cancelled during resolution = err %v spawnCalls %d, want context cancellation before spawn", createErr, spawnCalls)
+	}
+	if err := rt.Destroy(ctx, ports.RuntimeHandle{ID: "sess-cancelled"}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Destroy cancelled during resolution = %v, want context cancellation", err)
+	}
+	if _, err := rt.IsAlive(ctx, ports.RuntimeHandle{ID: "sess-cancelled"}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("IsAlive cancelled during resolution = %v, want context cancellation", err)
+	}
+	probe := rt.ProbeFencedRuntime(ctx, ports.FencedRuntimeRef{
+		Handle: ports.RuntimeHandle{ID: "sess-cancelled"}, SessionID: "sess-cancelled", Generation: "launch-1",
+	})
+	if probe.Liveness != ports.FencedUnknown || probe.Reason != ports.FencedReasonProbeFailed {
+		t.Fatalf("ProbeFencedRuntime cancelled during resolution = %+v, want unknown/probe_failed", probe)
+	}
+}
+
 func TestProbeFencedRuntimeGenerationMismatchIsUnknown(t *testing.T) {
 	isolateRegistry(t)
 	rt := New(Options{})
@@ -323,7 +353,7 @@ func TestCreate_RegistersSession(t *testing.T) {
 	}
 
 	// Registry must have the entry.
-	entries, err := ptyregistry.List()
+	entries, err := ptyregistry.List(context.Background())
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -762,7 +792,7 @@ func TestDestroy_KillsHostAndCleansUp(t *testing.T) {
 	}
 
 	// Registry entry must be gone.
-	entries, _ := ptyregistry.List()
+	entries, _ := ptyregistry.List(context.Background())
 	for _, e := range entries {
 		if e.SessionID == "sess-destroy" {
 			t.Fatal("expected registry entry removed after Destroy")

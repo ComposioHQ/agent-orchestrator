@@ -1,6 +1,10 @@
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { TelemetryPolicySnapshot } from "../shared/telemetry-policy";
 import { DesktopTelemetryController } from "./desktop-telemetry-controller";
+import { nodeTelemetryPolicyFileSystem, TelemetryPolicyAuthority } from "./telemetry-policy-file";
 
 describe("DesktopTelemetryController", () => {
 	it("cancels visibility before disable and advances it with every trusted generation", async () => {
@@ -39,6 +43,73 @@ describe("DesktopTelemetryController", () => {
 		await controller.initialize();
 		await expect(controller.setEventsEnabled(false, "generation-on")).rejects.toThrow("write failed");
 		expect(controller.snapshot()).toMatchObject({ eventsEnabled: false, acknowledged: false, state: "cleanup_failed" });
+	});
+
+	it("retries the durable off generation and preserved desktop purge after a post-rename fsync failure", async () => {
+		const dataDir = await mkdtemp(path.join(os.tmpdir(), "ao-controller-policy-"));
+		try {
+			const enabledGeneration = "7f80c8a9-ec67-4a16-a067-a444ffcc5cca";
+			await writeFile(path.join(dataDir, "telemetry_policy.json"), `${JSON.stringify({
+				schema_version: 1,
+				events_enabled: true,
+				consent_generation: enabledGeneration,
+				updated_at: "2026-08-28T10:15:30.000Z",
+			})}\n`, { mode: 0o600 });
+			let failDirectorySync = false;
+			const base = nodeTelemetryPolicyFileSystem;
+			const authority = new TelemetryPolicyAuthority({
+				dataDir,
+				packagedDefault: false,
+				platform: "linux",
+				fs: {
+					...base,
+					syncDirectory: async (target) => {
+						if (failDirectorySync) {
+							failDirectorySync = false;
+							throw new Error("directory fsync failed");
+						}
+						await base.syncDirectory(target);
+					},
+				},
+			});
+			const transport = { closeAndDrain: vi.fn(), capture: vi.fn(), clearCache: vi.fn() };
+			const clearRendererQueues = vi.fn();
+			const daemon = {
+				prepareDisable: vi.fn().mockResolvedValue({ status: "applied", consentGeneration: enabledGeneration, eventsEnabled: false, gateDrained: true, purgeConfirmed: false }),
+				applyPolicy: vi.fn().mockImplementation(async (generation: string, enabled: boolean) => ({ status: "applied", consentGeneration: generation, eventsEnabled: enabled, gateDrained: !enabled, purgeConfirmed: !enabled })),
+			};
+			const controller = new DesktopTelemetryController({
+				authority,
+				daemon,
+				transportFactory: async () => transport,
+				environmentAllowsEvents: true,
+				productionEnabled: true,
+				clearRendererQueues,
+			});
+			await controller.initialize();
+			failDirectorySync = true;
+
+			await expect(controller.setEventsEnabled(false, enabledGeneration)).rejects.toThrow("directory fsync failed");
+			const pending = authority.snapshot();
+			expect(pending).toMatchObject({ eventsEnabled: false, acknowledged: false });
+			expect(transport.clearCache).not.toHaveBeenCalled();
+			expect(clearRendererQueues).not.toHaveBeenCalled();
+
+			const retried = await controller.retryPendingCleanup();
+
+			expect(retried).toMatchObject({
+				eventsEnabled: false,
+				consentGeneration: pending.consentGeneration,
+				acknowledged: true,
+				state: "applied",
+			});
+			expect(authority.snapshot()).toMatchObject({ consentGeneration: pending.consentGeneration, acknowledged: true });
+			expect(daemon.applyPolicy).toHaveBeenLastCalledWith(pending.consentGeneration, false);
+			expect(transport.clearCache).toHaveBeenCalledOnce();
+			expect(clearRendererQueues).toHaveBeenCalledOnce();
+		} finally {
+			await rm(dataDir, { recursive: true, force: true });
+		}
 	});
 
 	it("writes one durable off generation even when prepare is unavailable and remains pending without purge acknowledgement", async () => {
@@ -138,5 +209,6 @@ class AuthorityFake {
 	snapshot() { return { ...this.current }; }
 	async load() { return this.snapshot(); }
 	async setEventsEnabled(enabled: boolean) { this.writes.push(enabled); this.writeSpy(); if (this.failWrites) throw new Error("write failed"); this.current = { eventsEnabled: enabled, consentGeneration: `generation-${this.writes.length}`, updatedAt: "2026-08-28T10:15:31.000Z", acknowledged: true }; return this.snapshot(); }
+	async retryPendingReplacement() { if (this.failWrites) throw new Error("write failed"); this.current = { ...this.current, acknowledged: true }; return this.snapshot(); }
 	readonly durabilitySupported = true;
 }

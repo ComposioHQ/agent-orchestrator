@@ -28,7 +28,7 @@ import {
 	type UpdateCheckOptions,
 } from "./main/auto-updater";
 import { listFeatureBuilds, getActiveFeatureBuild } from "./main/feature-builds";
-import { initMainSentry, rendererCaptureAllowed } from "./main/sentry-main";
+import { initMainSentry, sanitizeRendererCapture } from "./main/sentry-main";
 import { TelemetryPolicyAuthority, resolveDesktopDataDir } from "./main/telemetry-policy-file";
 import { DaemonTelemetryPolicyClient } from "./main/daemon-telemetry-policy-client";
 import { DesktopTelemetryController } from "./main/desktop-telemetry-controller";
@@ -1873,8 +1873,9 @@ ipcMain.on(TELEMETRY_RENDERER_QUEUES_CLEARED_CHANNEL, (event, input: unknown) =>
 	finishRendererQueuePurge(result.requestId, result.ok ? undefined : new Error("renderer telemetry queue purge failed"));
 });
 ipcMain.handle("telemetry:capture", (_event, request: RendererTelemetryCapture) => {
-	if (!telemetryPolicyController || !rendererCaptureAllowed(request)) return false;
-	return telemetryPolicyController.capture(request);
+	const sanitized = sanitizeRendererCapture(request);
+	if (!telemetryPolicyController || !sanitized) return false;
+	return telemetryPolicyController.capture(sanitized);
 });
 ipcMain.on(AGENT_SWITCH_VISIBILITY_IPC_CHANNEL, (event, request: unknown) => {
 	const trustedSender = trustedShellWebContents.get(event.sender.id);

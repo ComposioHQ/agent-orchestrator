@@ -4,6 +4,7 @@
 package ptyregistry
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -87,12 +88,21 @@ func registryFile() (string, error) {
 // readRaw reads and strictly parses the registry. A missing file is a complete
 // empty snapshot; read and parse failures are incomplete evidence and must
 // never be collapsed into absence.
-func readRaw() ([]Entry, bool, error) {
+func readRaw(ctx context.Context) ([]Entry, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
 	path, err := registryFile()
 	if err != nil {
 		return nil, false, err
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
 	data, err := os.ReadFile(path)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, false, ctxErr
+	}
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, true, nil
@@ -103,8 +113,14 @@ func readRaw() ([]Entry, bool, error) {
 	if err := json.Unmarshal(data, &parsed); err != nil {
 		return nil, false, fmt.Errorf("%w: %w", ErrRegistryMalformed, err)
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
 	out := make([]Entry, 0, len(parsed))
 	for _, raw := range parsed {
+		if err := ctx.Err(); err != nil {
+			return out, false, err
+		}
 		var e Entry
 		if err := json.Unmarshal(raw, &e); err != nil {
 			return out, false, fmt.Errorf("%w: %w", ErrRegistryMalformed, err)
@@ -169,7 +185,7 @@ func writeRaw(entries []Entry) error {
 func Register(entry Entry) error {
 	registryMu.Lock()
 	defer registryMu.Unlock()
-	all, complete, err := scanLocked()
+	all, complete, err := scanLocked(context.Background())
 	if err != nil || !complete {
 		return errors.Join(err, errors.New("conpty pty registry scan incomplete"))
 	}
@@ -187,7 +203,7 @@ func Register(entry Entry) error {
 func Unregister(sessionID string) error {
 	registryMu.Lock()
 	defer registryMu.Unlock()
-	all, complete, err := scanLocked()
+	all, complete, err := scanLocked(context.Background())
 	if err != nil || !complete {
 		return errors.Join(err, errors.New("conpty pty registry scan incomplete"))
 	}
@@ -206,19 +222,28 @@ func Unregister(sessionID string) error {
 // Scan returns the live registry entries and whether the scan is complete.
 // Dead entries are pruned only after a complete read and parse. Any read,
 // parse, or prune-write failure returns incomplete evidence.
-func Scan() (entries []Entry, complete bool, err error) {
+func Scan(ctx context.Context) (entries []Entry, complete bool, err error) {
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
 	registryMu.Lock()
 	defer registryMu.Unlock()
-	return scanLocked()
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
+	return scanLocked(ctx)
 }
 
-func scanLocked() (entries []Entry, complete bool, err error) {
-	all, complete, err := readRaw()
+func scanLocked(ctx context.Context) (entries []Entry, complete bool, err error) {
+	all, complete, err := readRaw(ctx)
 	if err != nil || !complete {
 		return all, false, err
 	}
 	live := make([]Entry, 0, len(all))
 	for _, e := range all {
+		if err := ctx.Err(); err != nil {
+			return live, false, err
+		}
 		if e.PtyHostPID == 0 && e.PipePath == UnresolvedPipePath {
 			// A prelaunch reservation has no PID to probe. Retain it until an
 			// exact owner replaces or explicitly unregisters the reservation.
@@ -226,9 +251,18 @@ func scanLocked() (entries []Entry, complete bool, err error) {
 		} else if pidAlive(e.PtyHostPID) {
 			live = append(live, e)
 		}
+		if err := ctx.Err(); err != nil {
+			return live, false, err
+		}
 	}
 	if len(live) != len(all) {
+		if err := ctx.Err(); err != nil {
+			return live, false, err
+		}
 		if err := rewriteRegistry(live); err != nil {
+			return live, false, err
+		}
+		if err := ctx.Err(); err != nil {
 			return live, false, err
 		}
 	}
@@ -237,8 +271,8 @@ func scanLocked() (entries []Entry, complete bool, err error) {
 
 // List preserves the ordinary registry consumer API while surfacing every
 // incomplete scan as an error.
-func List() ([]Entry, error) {
-	entries, _, err := Scan()
+func List(ctx context.Context) ([]Entry, error) {
+	entries, _, err := Scan(ctx)
 	return entries, err
 }
 

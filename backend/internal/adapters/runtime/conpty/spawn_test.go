@@ -136,7 +136,7 @@ func TestStartedHostKillFailureRetainsPartialCreateEvidence(t *testing.T) {
 	if probe.Liveness != ports.FencedUnknown {
 		t.Fatalf("ProbeFencedRuntime after failed cleanup = %+v, want unknown", probe)
 	}
-	entries, complete, scanErr := ptyregistry.Scan()
+	entries, complete, scanErr := ptyregistry.Scan(context.Background())
 	if scanErr != nil || !complete || len(entries) != 1 || entries[0].SessionID != "sess-kill-failed" {
 		t.Fatalf("registry after recovered cleanup = entries %+v complete=%v err=%v, want retained evidence", entries, complete, scanErr)
 	}
@@ -264,7 +264,7 @@ func TestPendingPIDZeroReservationRemainsUnknownAcrossScanAndRestart(t *testing.
 	if err := ptyregistry.Register(entry); err != nil {
 		t.Fatal(err)
 	}
-	entries, complete, err := ptyregistry.Scan()
+	entries, complete, err := ptyregistry.Scan(context.Background())
 	if err != nil || !complete || len(entries) != 1 || !reflect.DeepEqual(entries[0], entry) {
 		t.Fatalf("pending registry scan = entries %+v complete=%v err=%v, want retained reservation", entries, complete, err)
 	}

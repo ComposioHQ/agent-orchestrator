@@ -72,6 +72,38 @@ describe("TelemetryPolicyAuthority", () => {
 		expect(authority.snapshot().acknowledged).toBe(false);
 	});
 
+	it("retries an unacknowledged replacement without changing its generation", async () => {
+		const dataDir = await makeDir();
+		const base = nodeTelemetryPolicyFileSystem;
+		let syncAttempts = 0;
+		const authority = new TelemetryPolicyAuthority({
+			dataDir,
+			packagedDefault: false,
+			platform: "linux",
+			fs: {
+				...base,
+				syncDirectory: async (target) => {
+					syncAttempts++;
+					if (syncAttempts === 1) throw new Error("directory fsync failed");
+					await base.syncDirectory(target);
+				},
+			},
+		});
+		await expect(authority.load()).rejects.toThrow("directory fsync failed");
+		const pending = authority.snapshot();
+		expect(pending.acknowledged).toBe(false);
+
+		const retried = await authority.retryPendingReplacement();
+
+		expect(retried).toMatchObject({
+			eventsEnabled: pending.eventsEnabled,
+			consentGeneration: pending.consentGeneration,
+			updatedAt: pending.updatedAt,
+			acknowledged: true,
+		});
+		expect(syncAttempts).toBe(2);
+	});
+
 	it("keeps Windows fail closed until a write-through replacement helper exists", async () => {
 		const dataDir = await makeDir();
 		const authority = new TelemetryPolicyAuthority({ dataDir, packagedDefault: true, platform: "win32" });
