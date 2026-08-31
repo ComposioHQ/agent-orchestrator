@@ -29,6 +29,7 @@ import {
 	type WheelEvent as ReactWheelEvent,
 } from "react";
 import { ArrowDown, Loader2, TriangleAlert, Undo2 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { cn } from "../../lib/utils";
 import { sameContent, useStableList } from "../../lib/stable-list";
 import { useTabScrollEdges } from "../../hooks/useTabScrollEdges";
@@ -46,7 +47,11 @@ import { agentLabel } from "../../lib/agent-options";
 import type { ShellTerminal } from "../../hooks/useShellTerminals";
 import { sidebarOccupiesLayout, useUiStore } from "../../stores/ui-store";
 import type { TerminalTarget } from "../../types/terminal";
-import type { SessionKind, WorkspaceSession } from "../../types/workspace";
+import {
+	isOrchestratorSession,
+	type SessionKind,
+	type WorkspaceSession,
+} from "../../types/workspace";
 import { AgentAvatar } from "../AgentAvatar";
 import { SessionPaneTab } from "../CenterPane";
 import { Button } from "../ui/button";
@@ -294,6 +299,7 @@ export interface ChatWorkspaceProps {
 
 export function ChatWorkspace({
 	snapshot,
+	sessionTitle,
 	sessionRole = "worker",
 	headerActions,
 	sessionTabAction,
@@ -753,6 +759,8 @@ export function ChatWorkspace({
 		>
 			<ChatHeader
 				snapshot={snapshot}
+				sessionTitle={sessionTitle}
+				sessionRole={sessionRole}
 				reviewerTerminal={reviewerTerminal}
 				onOpenReviewerTerminal={onOpenReviewerTerminal}
 				reviewerActive={reviewerActive}
@@ -1125,6 +1133,8 @@ function readableItems(snapshot: ConversationSnapshot): ConversationItem[] {
 
 function ChatHeader({
 	snapshot,
+	sessionTitle,
+	sessionRole,
 	reviewerTerminal,
 	onOpenReviewerTerminal,
 	reviewerActive,
@@ -1145,6 +1155,8 @@ function ChatHeader({
 	session,
 }: {
 	snapshot: ConversationSnapshot;
+	sessionTitle?: string;
+	sessionRole: SessionKind;
 	reviewerTerminal?: { handleId: string; harness: string };
 	onOpenReviewerTerminal?: (target: { handleId: string; harness: string }) => void;
 	/** The reviewer tab is selected; the chat tab is the clickable alternative. */
@@ -1169,7 +1181,14 @@ function ChatHeader({
 	inline?: boolean;
 	topbarBounds: TopbarBounds;
 }) {
-	const label = agentLabel(snapshot.harness);
+	const { t } = useTranslation();
+	const providerLabel = agentLabel(snapshot.harness);
+	const sessionIsOrchestrator = session
+		? isOrchestratorSession(session)
+		: sessionRole === "orchestrator";
+	const label = sessionIsOrchestrator
+		? t("shell.orchestrator")
+		: (sessionTitle || session?.title || snapshot.title || snapshot.sessionId);
 	const tabScrollWatch = `${session?.id ?? ""}|${reviewerTerminal?.handleId ?? ""}|${(shellTerminals ?? []).map((shell) => shell.handleId).join("|")}`;
 	const {
 		scrollRef: tabsOverflowRef,
@@ -1223,7 +1242,7 @@ function ChatHeader({
 						) : (
 							<button
 								aria-current={timelineActive ? true : undefined}
-								aria-label={label}
+								aria-label={`${label} · ${providerLabel}`}
 								aria-selected={timelineActive}
 								data-terminal-role="primary"
 								className={cn(
