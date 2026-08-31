@@ -137,6 +137,9 @@ func migrate(db *sql.DB) error {
 	if err := repairRenumberedUsageCostMigrationHistory(db); err != nil {
 		return fmt.Errorf("repair renumbered usage-cost migration history: %w", err)
 	}
+	if err := prepareCancelledConversationTurnsMigration(db); err != nil {
+		return fmt.Errorf("prepare cancelled conversation-turn migration: %w", err)
+	}
 	if err := repairRenumberedCodexProfileMigrationHistory(db); err != nil {
 		return fmt.Errorf("repair renumbered Codex profile migration history: %w", err)
 	}
@@ -172,6 +175,47 @@ func migrate(db *sql.DB) error {
 		return fmt.Errorf("run migrations: %w", err)
 	}
 	return reconcileSchema(db)
+}
+
+// prepareCancelledConversationTurnsMigration repairs the staging table left
+// by an interrupted 0118 table rebuild. The migration runs without a wrapping
+// transaction because it temporarily disables foreign keys, so a process exit
+// can leave conversation_turns_next behind and make every retry fail at CREATE
+// TABLE. When the source table remains it is still authoritative and the stale
+// copy is discarded. If the interruption happened after the source was
+// dropped, promote the staging table back to the source name and let 0118
+// perform the complete rebuild again.
+func prepareCancelledConversationTurnsMigration(db *sql.DB) error {
+	var sourceTable, stagingTable int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'conversation_turns'`,
+	).Scan(&sourceTable); err != nil {
+		return err
+	}
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'conversation_turns_next'`,
+	).Scan(&stagingTable); err != nil {
+		return err
+	}
+	if stagingTable == 0 {
+		return nil
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if sourceTable != 0 {
+		if _, err := tx.Exec(`DROP TABLE conversation_turns_next`); err != nil {
+			return err
+		}
+	} else {
+		if _, err := tx.Exec(`ALTER TABLE conversation_turns_next RENAME TO conversation_turns`); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // prepareUsageCostMigration releases a falsely-applied usage migration before
