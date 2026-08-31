@@ -640,38 +640,40 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			if (!force && (!colorSchemeUpdatesEnabled || !changed)) return;
 			emitUserInput(`\x1b[?997;${theme === "dark" ? 1 : 2}n`, "protocol");
 		};
+		const hasCsiMode = (params: (number | number[])[], mode: number) =>
+			params.some((param) => param === mode);
 		colorSchemeReporterRef.current = reportColorScheme;
 		const setColorSchemeUpdates = term.parser.registerCsiHandler(
 			{ prefix: "?", final: "h" },
 			(params) => {
-				if (params.length !== 1 || params[0] !== COLOR_SCHEME_UPDATE_MODE) return false;
+				if (!hasCsiMode(params, COLOR_SCHEME_UPDATE_MODE)) return false;
 				colorSchemeUpdatesEnabled = true;
 				currentColorScheme = callbacksRef.current.theme;
-				return true;
+				return params.length === 1;
 			},
 		);
 		const resetColorSchemeUpdates = term.parser.registerCsiHandler(
 			{ prefix: "?", final: "l" },
 			(params) => {
-				if (params.length !== 1 || params[0] !== COLOR_SCHEME_UPDATE_MODE) return false;
+				if (!hasCsiMode(params, COLOR_SCHEME_UPDATE_MODE)) return false;
 				colorSchemeUpdatesEnabled = false;
-				return true;
+				return params.length === 1;
 			},
 		);
 		const queryColorSchemeCapability = term.parser.registerCsiHandler(
 			{ prefix: "?", intermediates: "$", final: "p" },
 			(params) => {
-				if (params.length !== 1 || params[0] !== COLOR_SCHEME_UPDATE_MODE) return false;
+				if (!hasCsiMode(params, COLOR_SCHEME_UPDATE_MODE)) return false;
 				emitUserInput(`\x1b[?${COLOR_SCHEME_UPDATE_MODE};${colorSchemeUpdatesEnabled ? 1 : 2}$y`, "protocol");
-				return true;
+				return params.length === 1;
 			},
 		);
 		const queryColorScheme = term.parser.registerCsiHandler(
 			{ prefix: "?", final: "n" },
 			(params) => {
-				if (params.length !== 1 || params[0] !== COLOR_SCHEME_QUERY) return false;
+				if (!hasCsiMode(params, COLOR_SCHEME_QUERY)) return false;
 				reportColorScheme(callbacksRef.current.theme, true);
-				return true;
+				return params.length === 1;
 			},
 		);
 		const terminalColorsForScheme = (scheme: Theme): OscTerminalColors => {

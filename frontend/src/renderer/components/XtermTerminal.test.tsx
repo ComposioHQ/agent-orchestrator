@@ -1257,6 +1257,73 @@ describe("XtermTerminal", () => {
 		expect(onInput).not.toHaveBeenCalled();
 	});
 
+	it("leaves unrelated private modes for xterm to handle", () => {
+		render(<XtermTerminal theme="light" />);
+		const setMode = state.lastTerminal!.csiHandlers.find(
+			({ id }) => id.prefix === "?" && id.final === "h",
+		);
+
+		expect(setMode?.callback([25])).toBe(false);
+	});
+
+	it("enables color-scheme updates from mixed private mode sets without consuming them", () => {
+		const onInput = vi.fn();
+		const view = render(
+			<XtermTerminal theme="light" onReady={(terminal) => terminal.onUserInput(onInput)} />,
+		);
+		const setMode = state.lastTerminal!.csiHandlers.find(
+			({ id }) => id.prefix === "?" && id.final === "h",
+		);
+
+		expect(setMode?.callback([2031, 25])).toBe(false);
+		view.rerender(
+			<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />,
+		);
+		expect(onInput).toHaveBeenLastCalledWith("\x1b[?997;1n", "protocol");
+	});
+
+	it("disables color-scheme updates from mixed private mode resets without consuming them", () => {
+		const onInput = vi.fn();
+		const view = render(
+			<XtermTerminal theme="light" onReady={(terminal) => terminal.onUserInput(onInput)} />,
+		);
+		const setMode = state.lastTerminal!.csiHandlers.find(
+			({ id }) => id.prefix === "?" && id.final === "h",
+		);
+		const resetMode = state.lastTerminal!.csiHandlers.find(
+			({ id }) => id.prefix === "?" && id.final === "l",
+		);
+
+		expect(setMode?.callback([2031])).toBe(true);
+		expect(resetMode?.callback([2031, 25])).toBe(false);
+		view.rerender(
+			<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />,
+		);
+		expect(onInput).not.toHaveBeenCalled();
+	});
+
+	it("answers mixed color-scheme capability queries without consuming them", () => {
+		const onInput = vi.fn();
+		render(<XtermTerminal theme="light" onReady={(terminal) => terminal.onUserInput(onInput)} />);
+		const capabilityQuery = state.lastTerminal!.csiHandlers.find(
+			({ id }) => id.prefix === "?" && id.intermediates === "$" && id.final === "p",
+		);
+
+		expect(capabilityQuery?.callback([2031, 25])).toBe(false);
+		expect(onInput).toHaveBeenCalledWith("\x1b[?2031;2$y", "protocol");
+	});
+
+	it("answers mixed color-scheme mode queries without consuming them", () => {
+		const onInput = vi.fn();
+		render(<XtermTerminal theme="light" onReady={(terminal) => terminal.onUserInput(onInput)} />);
+		const modeQuery = state.lastTerminal!.csiHandlers.find(
+			({ id }) => id.prefix === "?" && id.final === "n",
+		);
+
+		expect(modeQuery?.callback([996, 25])).toBe(false);
+		expect(onInput).toHaveBeenCalledWith("\x1b[?997;2n", "protocol");
+	});
+
 	it("answers color-scheme capability and current-mode queries", () => {
 		const onInput = vi.fn();
 		render(<XtermTerminal theme="light" onReady={(terminal) => terminal.onUserInput(onInput)} />);
