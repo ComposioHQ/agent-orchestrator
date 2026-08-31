@@ -308,7 +308,7 @@ describe("SessionsBoardView", () => {
 
 	it("renders a neutral card with grouped multi-PR, usage, and action presentation", () => {
 		const onOpen = vi.fn();
-		render(
+		const { container } = render(
 			<SessionCardView
 				action={<button type="button">Restore</button>}
 				branchAction={<button type="button">Copy branch</button>}
@@ -327,7 +327,12 @@ describe("SessionsBoardView", () => {
 					{
 						commentCount: 1,
 						number: 10,
-						reviewerAvatars: [{ login: "ada-lovelace" }],
+						reviewerAvatars: [
+							{
+								login: "ada-lovelace",
+								url: "https://avatars.githubusercontent.com/u/1?v=4",
+							},
+						],
 						state: "open",
 						url: "https://example.com/pull/10",
 					},
@@ -352,7 +357,12 @@ describe("SessionsBoardView", () => {
 			"href",
 			"https://example.com/pull/12",
 		);
-		expect(screen.getByLabelText("ada-lovelace")).toHaveTextContent("AL");
+		const reviewerAvatar = container.querySelector(
+			'img[src="https://avatars.githubusercontent.com/u/1?v=4"]',
+		);
+		expect(reviewerAvatar).not.toBeNull();
+		expect(reviewerAvatar).toHaveAttribute("src", "https://avatars.githubusercontent.com/u/1?v=4");
+		expect(reviewerAvatar).toHaveAttribute("referrerpolicy", "no-referrer");
 		// The full label is real text, not an aria-label on a generic span, and
 		// the compact form is hidden so it is not read out alongside it.
 		expect(screen.getByText("12,400 tokens")).toHaveClass("sr-only");

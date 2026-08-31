@@ -474,7 +474,15 @@ function ReviewerAvatar({ avatar, className }: { avatar: BoardReviewerAvatar; cl
 	const [failed, setFailed] = useState(false);
 	const commonClassName = cn("size-5 rounded-full border-2 border-surface ring-1 ring-border", className);
 	if (avatar.url && !failed) {
-		return <img alt="" className={cn(commonClassName, "object-cover")} onError={() => setFailed(true)} src={avatar.url} />;
+		return (
+			<img
+				alt=""
+				className={cn(commonClassName, "object-cover")}
+				onError={() => setFailed(true)}
+				referrerPolicy="no-referrer"
+				src={avatar.url}
+			/>
+		);
 	}
 	return <span aria-label={avatar.login} className={cn(commonClassName, "inline-flex items-center justify-center bg-muted text-[9px] font-semibold text-muted-foreground")}>{reviewerInitials(avatar.login)}</span>;
 }
