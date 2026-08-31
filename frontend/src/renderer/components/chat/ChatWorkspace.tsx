@@ -29,6 +29,7 @@ import {
 	type WheelEvent as ReactWheelEvent,
 } from "react";
 import { ArrowDown, Loader2, TriangleAlert, Undo2 } from "lucide-react";
+import { Reorder, useDragControls } from "motion/react";
 import { useTranslation } from "react-i18next";
 import { cn } from "../../lib/utils";
 import { sameContent, useStableList } from "../../lib/stable-list";
@@ -135,6 +136,32 @@ function initialTerminalFontSize(): number {
 
 type ReviewerTerminalTarget = Extract<TerminalTarget, { kind: "reviewer" }>;
 type ShellTerminalTarget = Extract<TerminalTarget, { kind: "shell" }>;
+type WorkspaceTab = { key: string; content: ReactNode; onSelect: () => void };
+type ChatAuxiliaryTab =
+	| { key: string; kind: "reviewer"; terminal: { handleId: string; harness: string } }
+	| { key: string; kind: "shell"; terminal: ShellTerminal }
+	| { key: string; kind: "workspace"; tab: WorkspaceTab };
+
+function DraggableChatTab({ children, value }: { children: ReactNode; value: string }) {
+	const dragControls = useDragControls();
+	return (
+		<Reorder.Item
+			as="div"
+			className="flex shrink-0 self-stretch touch-pan-y"
+			data-terminal-tab-key={value}
+			drag="x"
+			dragControls={dragControls}
+			dragListener={false}
+			onPointerDown={(event: ReactPointerEvent<HTMLDivElement>) => {
+				if ((event.target as HTMLElement).closest("[data-terminal-tab-action],input,a")) return;
+				dragControls.start(event);
+			}}
+			value={value}
+		>
+			{children}
+		</Reorder.Item>
+	);
+}
 
 const isMac = isMacPlatform();
 const isLinux = isLinuxPlatform();
@@ -165,8 +192,9 @@ export interface ChatWorkspaceProps {
 	/** Pinned beside the tab strip, before the workspace topbar actions. */
 	tabStripAction?: ReactNode;
 	/** File tabs coordinated by SessionView, appended to the native chat tab strip. */
-	workspaceTabs?: ReactNode;
-	workspaceFileActive?: boolean;
+	workspaceTabs?: WorkspaceTab[];
+	workspaceTabActions?: ReactNode;
+	workspaceActiveTabKey?: string;
 	/** Suppress a transient stopped snapshot while a mode handoff installs Chat. */
 	controllerTransitioning?: boolean;
 	/** Freeze agent-owned Chat controls while a durable session mutation owns input. */
@@ -305,7 +333,8 @@ export function ChatWorkspace({
 	sessionTabAction,
 	tabStripAction,
 	workspaceTabs,
-	workspaceFileActive = false,
+	workspaceTabActions,
+	workspaceActiveTabKey,
 	controllerTransitioning,
 	agentInputDisabled = false,
 	newWorkDisabled = false,
@@ -428,6 +457,56 @@ export function ChatWorkspace({
 	// session temporarily becomes terminated and later returns.
 	const reviewerActive = Boolean(reviewerTarget && session);
 	const shellActive = Boolean(shellTarget && session);
+	const auxiliaryTabs = useMemo<ChatAuxiliaryTab[]>(
+		() => [
+			...(reviewerTerminal
+				? [{ key: `reviewer:${reviewerTerminal.handleId}`, kind: "reviewer" as const, terminal: reviewerTerminal }]
+				: []),
+			...(shellTerminals ?? []).map((terminal) => ({ key: terminal.handleId, kind: "shell" as const, terminal })),
+			...(workspaceTabs ?? []).map((tab) => ({ key: tab.key, kind: "workspace" as const, tab })),
+		],
+		[reviewerTerminal, shellTerminals, workspaceTabs],
+	);
+	const availableTabKeys = useMemo(() => auxiliaryTabs.map((tab) => tab.key), [auxiliaryTabs]);
+	const [tabOrderBySession, setTabOrderBySession] = useState<Record<string, string[]>>({});
+	const orderedAuxiliaryTabs = useMemo(() => {
+		const preferred = tabOrderBySession[snapshot.sessionId] ?? [];
+		const byKey = new Map(auxiliaryTabs.map((tab) => [tab.key, tab]));
+		const ordered = preferred.flatMap((key) => {
+			const tab = byKey.get(key);
+			if (!tab) return [];
+			byKey.delete(key);
+			return [tab];
+		});
+		return [...ordered, ...byKey.values()];
+	}, [auxiliaryTabs, snapshot.sessionId, tabOrderBySession]);
+	const reorderAuxiliaryTabs = useCallback(
+		(nextKeys: string[]) => {
+			const available = new Set(availableTabKeys);
+			const next = nextKeys.filter((key, index) => available.has(key) && nextKeys.indexOf(key) === index);
+			for (const key of availableTabKeys) {
+				if (!next.includes(key)) next.push(key);
+			}
+			setTabOrderBySession((current) => ({ ...current, [snapshot.sessionId]: next }));
+		},
+		[availableTabKeys, snapshot.sessionId],
+	);
+	useEffect(() => {
+		setTabOrderBySession((current) => {
+			const currentOrder = current[snapshot.sessionId] ?? [];
+			const available = new Set(availableTabKeys);
+			const next = currentOrder.filter((key) => available.has(key));
+			for (const key of availableTabKeys) {
+				if (!next.includes(key)) next.push(key);
+			}
+			if (next.length === currentOrder.length && next.every((key, index) => key === currentOrder[index])) return current;
+			if (next.length === 0) {
+				const { [snapshot.sessionId]: _removed, ...rest } = current;
+				return rest;
+			}
+			return { ...current, [snapshot.sessionId]: next };
+		});
+	}, [availableTabKeys, snapshot.sessionId]);
 	const queuedMessages = useMemo(() => {
 		const messagesByTurn = new Map(
 			snapshot.items
@@ -577,20 +656,14 @@ export function ChatWorkspace({
 	// tabs there is nothing to cycle to and the shortcut is a no-op.
 	const selectAdjacentTab = useCallback(
 		(direction: -1 | 1) => {
-			const tabs = [
-				{ kind: "chat" as const },
-				...(reviewerTerminal ? [{ kind: "reviewer" as const }] : []),
-				...(shellTerminals ?? []).map((shell) => ({
-					kind: "shell" as const,
-					handleId: shell.handleId,
-				})),
-			];
+			const tabs = [{ key: "chat", kind: "chat" as const }, ...orderedAuxiliaryTabs];
 			if (tabs.length <= 1) return;
-			const activeIndex = shellActive
-				? tabs.findIndex((tab) => tab.kind === "shell" && tab.handleId === shellTarget?.handleId)
+			const activeKey = workspaceActiveTabKey ?? (shellActive
+				? shellTarget?.handleId
 				: reviewerActive
-					? tabs.findIndex((tab) => tab.kind === "reviewer")
-					: 0;
+					? `reviewer:${reviewerTerminal?.handleId}`
+					: "chat");
+			const activeIndex = tabs.findIndex((tab) => tab.key === activeKey);
 			const currentIndex = activeIndex >= 0 ? activeIndex : 0;
 			const next = tabs[(currentIndex + direction + tabs.length) % tabs.length];
 			if (!next) return;
@@ -599,10 +672,14 @@ export function ChatWorkspace({
 				return;
 			}
 			if (next.kind === "reviewer") {
-				if (reviewerTerminal) onOpenReviewerTerminal?.(reviewerTerminal);
+				onOpenReviewerTerminal?.(next.terminal);
 				return;
 			}
-			onSelectShellTerminal?.(next.handleId);
+			if (next.kind === "shell") {
+				onSelectShellTerminal?.(next.terminal.handleId);
+				return;
+			}
+			next.tab.onSelect();
 		},
 		[
 			onOpenReviewerTerminal,
@@ -610,9 +687,10 @@ export function ChatWorkspace({
 			onSelectShellTerminal,
 			reviewerActive,
 			reviewerTerminal,
+			orderedAuxiliaryTabs,
 			shellActive,
 			shellTarget,
-			shellTerminals,
+			workspaceActiveTabKey,
 		],
 	);
 	const handleChatTabsKeyDown = useCallback(
@@ -761,11 +839,9 @@ export function ChatWorkspace({
 				snapshot={snapshot}
 				sessionTitle={sessionTitle}
 				sessionRole={sessionRole}
-				reviewerTerminal={reviewerTerminal}
 				onOpenReviewerTerminal={onOpenReviewerTerminal}
 				reviewerActive={reviewerActive}
 				onSelectChat={onSelectChat}
-				shellTerminals={shellTerminals}
 				shellActiveHandleId={shellActive ? shellTarget?.handleId : undefined}
 				onSelectShellTerminal={onSelectShellTerminal}
 				onCloseShellTerminal={onCloseShellTerminal}
@@ -775,8 +851,10 @@ export function ChatWorkspace({
 				session={session}
 				sessionTabAction={sessionTabAction}
 				tabStripAction={tabStripAction}
-				workspaceTabs={workspaceTabs}
-				workspaceFileActive={workspaceFileActive}
+				workspaceTabActions={workspaceTabActions}
+				workspaceActiveTabKey={workspaceActiveTabKey}
+				orderedAuxiliaryTabs={orderedAuxiliaryTabs}
+				onReorderAuxiliaryTabs={reorderAuxiliaryTabs}
 				inline={isFullscreen}
 				topbarBounds={topbarBounds}
 			/>
@@ -1135,11 +1213,9 @@ function ChatHeader({
 	snapshot,
 	sessionTitle,
 	sessionRole,
-	reviewerTerminal,
 	onOpenReviewerTerminal,
 	reviewerActive,
 	onSelectChat,
-	shellTerminals,
 	shellActiveHandleId,
 	onSelectShellTerminal,
 	onCloseShellTerminal,
@@ -1148,8 +1224,10 @@ function ChatHeader({
 	headerActions,
 	sessionTabAction,
 	tabStripAction,
-	workspaceTabs,
-	workspaceFileActive = false,
+	workspaceTabActions,
+	workspaceActiveTabKey,
+	orderedAuxiliaryTabs,
+	onReorderAuxiliaryTabs,
 	inline,
 	topbarBounds,
 	session,
@@ -1157,14 +1235,11 @@ function ChatHeader({
 	snapshot: ConversationSnapshot;
 	sessionTitle?: string;
 	sessionRole: SessionKind;
-	reviewerTerminal?: { handleId: string; harness: string };
 	onOpenReviewerTerminal?: (target: { handleId: string; harness: string }) => void;
 	/** The reviewer tab is selected; the chat tab is the clickable alternative. */
 	reviewerActive?: boolean;
 	/** Return the tab strip to the chat tab. */
 	onSelectChat?: () => void;
-	/** This session's standalone shells, as tabs after the reviewer. */
-	shellTerminals?: ShellTerminal[];
 	/** The selected shell tab, if any. */
 	shellActiveHandleId?: string;
 	onSelectShellTerminal?: (handleId: string) => void;
@@ -1174,8 +1249,10 @@ function ChatHeader({
 	headerActions?: ReactNode;
 	sessionTabAction?: ReactNode;
 	tabStripAction?: ReactNode;
-	workspaceTabs?: ReactNode;
-	workspaceFileActive?: boolean;
+	workspaceTabActions?: ReactNode;
+	workspaceActiveTabKey?: string;
+	orderedAuxiliaryTabs: ChatAuxiliaryTab[];
+	onReorderAuxiliaryTabs: (keys: string[]) => void;
 	session?: WorkspaceSession;
 	/** Fullscreen content cannot see the normal topbar portal outside its subtree. */
 	inline?: boolean;
@@ -1189,21 +1266,20 @@ function ChatHeader({
 	const label = sessionIsOrchestrator
 		? t("shell.orchestrator")
 		: (sessionTitle || session?.title || snapshot.title || snapshot.sessionId);
-	const tabScrollWatch = `${session?.id ?? ""}|${reviewerTerminal?.handleId ?? ""}|${(shellTerminals ?? []).map((shell) => shell.handleId).join("|")}`;
+	const tabScrollWatch = `${session?.id ?? ""}|${orderedAuxiliaryTabs.map((tab) => tab.key).join("|")}`;
 	const {
 		scrollRef: tabsOverflowRef,
 		scrollToEnd: scrollTabsToEnd,
 		showLeftFade,
 		showRightFade,
 	} = useTabScrollEdges([tabScrollWatch]);
-	const previousShellCountRef = useRef(shellTerminals?.length ?? 0);
+	const previousTabCountRef = useRef(orderedAuxiliaryTabs.length);
 	useEffect(() => {
-		const shellCount = shellTerminals?.length ?? 0;
-		if (shellCount > previousShellCountRef.current) scrollTabsToEnd();
-		previousShellCountRef.current = shellCount;
-	}, [scrollTabsToEnd, shellTerminals?.length]);
+		if (orderedAuxiliaryTabs.length > previousTabCountRef.current) scrollTabsToEnd();
+		previousTabCountRef.current = orderedAuxiliaryTabs.length;
+	}, [orderedAuxiliaryTabs.length, scrollTabsToEnd]);
 	// The chat tab is "selected" only when neither terminal pane is the body.
-	const timelineActive = !workspaceFileActive && !reviewerActive && !shellActiveHandleId;
+	const timelineActive = !workspaceActiveTabKey && !reviewerActive && !shellActiveHandleId;
 	// Match CenterPane: when the sidebar is off-canvas, the fixed TitlebarNav
 	// cluster sits over the session tab strip. Terminal already reserves that
 	// space; chat must too or the back/forward buttons land on the tab label.
@@ -1253,7 +1329,7 @@ function ChatHeader({
 								)}
 								onClick={timelineActive ? undefined : onSelectChat}
 								role="tab"
-								tabIndex={timelineActive || (!reviewerTerminal && !shellTerminals?.length) ? 0 : -1}
+								tabIndex={timelineActive || orderedAuxiliaryTabs.length === 0 ? 0 : -1}
 								title={label}
 								type="button"
 							>
@@ -1264,47 +1340,51 @@ function ChatHeader({
 						<div className="relative min-w-0 flex-1 self-stretch overflow-hidden">
 							<div ref={tabsOverflowRef} className="scrollbar-none flex h-full min-w-flex-min min-w-0 items-stretch overflow-x-auto">
 								<div className="flex w-max items-stretch">
-								{reviewerTerminal ? (
-									<button
-										aria-current={reviewerActive ? true : undefined}
-										aria-label="Reviewer"
-										aria-selected={Boolean(reviewerActive)}
-										className={cn(
-											"group relative inline-flex min-w-shell-tab-min max-w-shell-tab-max self-stretch cursor-pointer items-center gap-1.5 border-r border-border px-3 text-control font-medium leading-none transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent/50",
-											reviewerActive
-												? "bg-overlay text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80"
-												: "text-muted-foreground hover:bg-raised hover:text-foreground",
-										)}
-										onClick={() => onOpenReviewerTerminal?.(reviewerTerminal)}
-										role="tab"
-										tabIndex={reviewerActive ? 0 : -1}
-										title={reviewerTerminal.harness}
-										type="button"
-									>
-										<AgentAvatar
-											className="size-icon-base"
-											decorative
-											provider={reviewerTerminal.harness}
-										/>
-										<span className="truncate">Reviewer</span>
-									</button>
-								) : null}
-								{(shellTerminals ?? []).map((shell) => (
-									<ShellTerminalTab
-										key={shell.handleId}
-										appearance="connected"
-										isActive={shell.handleId === shellActiveHandleId}
-										onClose={() => onCloseShellTerminal?.(shell.handleId)}
-										onRename={
-											onRenameShellTerminal
-												? (title) => onRenameShellTerminal(shell.handleId, title)
-												: undefined
-										}
-										onSelect={() => onSelectShellTerminal?.(shell.handleId)}
-										shell={shell}
-									/>
-								))}
-								{workspaceTabs}
+								<Reorder.Group
+									as="div"
+									axis="x"
+									className="flex items-stretch self-stretch"
+									onReorder={onReorderAuxiliaryTabs}
+									values={orderedAuxiliaryTabs.map((tab) => tab.key)}
+								>
+									{orderedAuxiliaryTabs.map((tab) => (
+										<DraggableChatTab key={tab.key} value={tab.key}>
+											{tab.kind === "reviewer" ? (
+												<button
+													aria-current={reviewerActive ? true : undefined}
+													aria-label="Reviewer"
+													aria-selected={Boolean(reviewerActive)}
+													className={cn(
+														"group relative inline-flex min-w-shell-tab-min max-w-shell-tab-max self-stretch cursor-pointer items-center gap-1.5 border-r border-border px-3 text-control font-medium leading-none transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent/50",
+														reviewerActive
+															? "bg-overlay text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80"
+															: "text-muted-foreground hover:bg-raised hover:text-foreground",
+													)}
+													onClick={() => onOpenReviewerTerminal?.(tab.terminal)}
+													role="tab"
+													tabIndex={reviewerActive ? 0 : -1}
+													title={tab.terminal.harness}
+													type="button"
+												>
+													<AgentAvatar className="size-icon-base" decorative provider={tab.terminal.harness} />
+													<span className="truncate">Reviewer</span>
+												</button>
+											) : tab.kind === "shell" ? (
+												<ShellTerminalTab
+													appearance="connected"
+													isActive={tab.terminal.handleId === shellActiveHandleId}
+													onClose={() => onCloseShellTerminal?.(tab.terminal.handleId)}
+													onRename={onRenameShellTerminal ? (title) => onRenameShellTerminal(tab.terminal.handleId, title) : undefined}
+													onSelect={() => onSelectShellTerminal?.(tab.terminal.handleId)}
+													shell={tab.terminal}
+												/>
+											) : (
+												tab.tab.content
+											)}
+										</DraggableChatTab>
+									))}
+								</Reorder.Group>
+								{workspaceTabActions}
 								</div>
 							</div>
 							{showLeftFade ? <div aria-hidden="true" className="session-tab-scroll-fade session-tab-scroll-fade--left" /> : null}

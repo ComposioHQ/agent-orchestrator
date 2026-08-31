@@ -25,7 +25,7 @@ import {
 import { NotificationCenter } from "./NotificationCenter";
 import { ResizeHandle } from "./ResizeHandle";
 import { SessionFileExplorer } from "./SessionFileExplorer";
-import { SessionFileTabs } from "./SessionFileTabs";
+import { SessionFileTab, SessionFileTabActions } from "./SessionFileTabs";
 import { SessionFileWorkspace } from "./SessionFileWorkspace";
 import { SessionActionsMenu } from "./SessionActionsMenu";
 import { SessionInspector } from "./SessionInspector";
@@ -523,6 +523,10 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			{
 				onSuccess: (shell) => {
 					setActiveShellTerminal(shell.handleId);
+					setFileTabsBySession((current) => ({
+						...current,
+						[sessionId]: activateSessionFile(current[sessionId] ?? EMPTY_SESSION_FILE_TABS, null),
+					}));
 					setTerminalTarget({
 						generation: shell.createdAt,
 						kind: "shell",
@@ -880,15 +884,27 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			</TopbarButton>
 		) : null;
 	const fileAnnotation = useFileAnnotation(sessionId);
-	const centerFileTabs = (
-		<SessionFileTabs
-			state={fileTabs}
-			onAddFeedback={(path) => fileAnnotation.begin({ path, side: "file" })}
-			onActivateFile={activateCenterFile}
-			onCloseFile={closeCenterFile}
-			onCloseAll={closeAllCenterFiles}
-		/>
+	const centerFileTabs = useMemo(
+		() =>
+			fileTabs.openPaths.map((path) => ({
+				key: `file:${path}`,
+				content: (
+					<SessionFileTab
+						active={fileTabs.activePath === path}
+						onActivate={() => activateCenterFile(path)}
+						onAddFeedback={() => fileAnnotation.begin({ path, side: "file" })}
+						onClose={() => closeCenterFile(path)}
+						path={path}
+					/>
+				),
+				onSelect: () => activateCenterFile(path),
+			})),
+		[activateCenterFile, closeCenterFile, fileAnnotation, fileTabs.activePath, fileTabs.openPaths],
 	);
+	const centerFileTabActions = fileTabs.openPaths.length > 0 ? (
+		<SessionFileTabActions onCloseAll={closeAllCenterFiles} />
+	) : undefined;
+	const activeWorkspaceTabKey = fileTabs.activePath ? `file:${fileTabs.activePath}` : undefined;
 	const previewUrl = session?.previewUrl?.trim() || undefined;
 	const previewRevision = session?.previewRevision;
 	const browserSlotVisible = Boolean(
@@ -1402,7 +1418,8 @@ export function SessionView({ sessionId }: SessionViewProps) {
 									tabStripAction={newShellTerminalAction}
 									handoffDialogOpen={handoffDialogOpen}
 									workspaceTabs={centerFileTabs}
-									workspaceFileActive={Boolean(fileTabs.activePath)}
+									workspaceTabActions={centerFileTabActions}
+									workspaceActiveTabKey={activeWorkspaceTabKey}
 									controllerTransitioning={chatControllerTransitioning}
 									newWorkDisabled={chatNewWorkDisabled}
 									onConversationWorkChange={handleConversationWorkChange}
@@ -1435,7 +1452,8 @@ export function SessionView({ sessionId }: SessionViewProps) {
 									tabStripAction={newShellTerminalAction}
 									handoffDialogOpen={handoffDialogOpen}
 									workspaceTabs={centerFileTabs}
-									workspaceFileActive={Boolean(fileTabs.activePath)}
+									workspaceTabActions={centerFileTabActions}
+									workspaceActiveTabKey={activeWorkspaceTabKey}
 								/>
 							)}
 							</div>

@@ -206,6 +206,7 @@ vi.mock("./chat/SessionChatSurface", () => ({
 		shellTarget,
 		onSelectShellTerminal,
 		workspaceTabs,
+		workspaceTabActions,
 		newWorkDisabled,
 		onConversationWorkChange,
 	}: {
@@ -221,7 +222,8 @@ vi.mock("./chat/SessionChatSurface", () => ({
 		shellTerminals?: Array<{ handleId: string; title: string }>;
 		shellTarget?: { kind: "shell"; handleId: string };
 		onSelectShellTerminal?: (handleId: string) => void;
-		workspaceTabs?: ReactNode;
+		workspaceTabs?: Array<{ key: string; content: ReactNode; onSelect: () => void }>;
+		workspaceTabActions?: ReactNode;
 		newWorkDisabled?: boolean;
 		onConversationWorkChange?: (state: typeof chatSurfaceWorkState) => void;
 	}) => (
@@ -233,7 +235,8 @@ vi.mock("./chat/SessionChatSurface", () => ({
 			{headerActions}
 			{sessionTabAction}
 			<div role="tablist">
-				{workspaceTabs}
+				{workspaceTabs?.map((tab) => <div key={tab.key}>{tab.content}</div>)}
+				{workspaceTabActions}
 				{tabStripAction}
 			</div>
 			{onOpenFile ? (
@@ -292,6 +295,7 @@ vi.mock("./CenterPane", () => ({
 		sessionTabAction,
 		tabStripAction,
 		workspaceTabs,
+		workspaceTabActions,
 		reviewerTerminal,
 		terminalTarget,
 	}: {
@@ -304,7 +308,8 @@ vi.mock("./CenterPane", () => ({
 		topbarActions?: ReactNode;
 		sessionTabAction?: ReactNode;
 		tabStripAction?: ReactNode;
-		workspaceTabs?: ReactNode;
+		workspaceTabs?: Array<{ key: string; content: ReactNode; onSelect: () => void }>;
+		workspaceTabActions?: ReactNode;
 		reviewerTerminal?: { handleId: string; harness: string };
 		terminalTarget?: { kind: string; handleId?: string };
 	}) => (
@@ -313,7 +318,8 @@ vi.mock("./CenterPane", () => ({
 			{topbarActions}
 			{sessionTabAction}
 			<div role="tablist">
-				{workspaceTabs}
+				{workspaceTabs?.map((tab) => <div key={tab.key}>{tab.content}</div>)}
+				{workspaceTabActions}
 				{tabStripAction}
 			</div>
 			<div data-testid="terminal-target">
@@ -713,6 +719,29 @@ describe("SessionView", () => {
 		expect(newTerminalButton).toHaveAttribute("title", "New terminal (Ctrl+T)");
 		fireEvent.click(newTerminalButton);
 		expect(openShellTerminalMock).toHaveBeenCalledWith({ projectId: "proj-1", sessionId: "sess-2" }, expect.anything());
+	});
+
+	it("activates a new terminal opened while a file tab is selected", async () => {
+		const shell = {
+			handleId: "sh-after-file",
+			projectId: "proj-1",
+			sessionId: "sess-1",
+			title: "Terminal 1",
+			workingDir: "/p",
+			createdAt: "2026-08-31T00:00:00Z",
+		};
+		openShellTerminalMock.mockImplementation((_input, options) => {
+			shellTerminalsState.data = [shell];
+			options.onSuccess(shell);
+		});
+		render(<SessionView sessionId="sess-1" />);
+
+		fireEvent.click(screen.getByRole("button", { name: "view review file" }));
+		expect(await screen.findByTestId("session-file-workspace")).toHaveTextContent("src/panel.tsx");
+
+		fireEvent.click(screen.getByRole("button", { name: "New terminal" }));
+		expect(screen.queryByTestId("session-file-workspace")).not.toBeInTheDocument();
+		expect(screen.getByTestId("terminal-target")).toHaveTextContent("sh-after-file");
 	});
 
 	it("does not offer a new terminal for orchestrator sessions", () => {
