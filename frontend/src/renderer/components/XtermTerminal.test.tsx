@@ -1187,14 +1187,22 @@ describe("XtermTerminal", () => {
 		expect(onInput).toHaveBeenCalledWith("\x1b]11;rgb:f5f5/f5f5/f4f4\x07", "protocol");
 	});
 
-	it("does not install Cursor protocol handling for generic terminals", () => {
+	it("forwards validated OSC replies for generic terminals without forwarding raw control bytes", () => {
 		const onInput = vi.fn();
-		render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);
-
-		state.lastTerminal!.dataListeners.forEach((listener) =>
-			listener("\x1b]11;rgb:f5f5/f5f5/f4f4\x07"),
+		render(
+			<XtermTerminal
+				theme="dark"
+				paneScrollsByKeyboard
+				onReady={(terminal) => terminal.onUserInput(onInput)}
+			/>,
 		);
+
+		state.lastTerminal!.dataListeners.forEach((listener) => listener("\x1b[?997;1n"));
 		expect(onInput).not.toHaveBeenCalled();
+		state.lastTerminal!.dataListeners.forEach((listener) =>
+			listener("\x1b]4;196;rgb:ffff/0000/8000\x07"),
+		);
+		expect(onInput).toHaveBeenCalledWith("\x1b]4;196;rgb:ffff/0000/8000\x07", "protocol");
 	});
 
 	it("updates protocol handling when a retained terminal becomes a Cursor terminal", () => {

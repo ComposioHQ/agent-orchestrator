@@ -972,15 +972,13 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		// those bytes through the mux writes dirty input into the real Codex PTY and
 		// corrupts the TUI. Keyboard is the only safe generic text path here; paste,
 		// composition, shortcuts, and wheel reports are emitted explicitly below.
-		// Forward OSC 10/11/12 color replies only. Cursor's theme probe issues these
-		// on stdout; xterm answers on onData. Other onData bytes must not reach the
-		// PTY or agent TUIs break (Codex, etc.).
+		// Forward validated OSC 4/10/11/12 color replies only. xterm answers them
+		// on onData; other bytes must not reach the PTY or agent TUIs break.
 		// Retained terminals can change providers without remounting. Keep the
-		// listener mounted, but consult the latest props before forwarding so a
-		// terminal that changes from Cursor to another agent never emits protocol
-		// bytes into the new agent's PTY.
+		// listener mounted for every provider so standard color replies continue to
+		// reach the PTY after a provider change.
 		const oscColorForwarder = createOscColorReportForwarder((report) => {
-			if (callbacksRef.current.supportsCursorColorScheme) emitUserInput(report, "protocol");
+			emitUserInput(report, "protocol");
 		});
 		const oscColorInput = term.onData((data) => oscColorForwarder.push(data));
 		const keyInput = term.onKey(({ key }) => emitUserInput(key, "keyboard"));
