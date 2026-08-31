@@ -534,12 +534,15 @@ export function SessionView({ sessionId, cloudOrgId, projectId }: SessionViewPro
 	const cloudSessionWorkspace = directCloudWorkspace ?? routedWorkspace;
 	const session =
 		listedSession ??
-		(cloudOrgId && cloudRouteSession.data && cloudSessionWorkspace
+		(cloudOrgId && cloudRouteSession.data
 			? toCloudWorkspaceSession(
 					cloudRouteSession.data,
 					{
-						id: cloudSessionWorkspace.id,
-						displayName: cloudSessionWorkspace.name,
+						// A session lookup remains authoritative even if the projects list
+						// is refetching. Do not turn a real Cloud row into "Session not
+						// found" merely because its parent list is temporarily absent.
+						id: cloudSessionWorkspace?.id ?? cloudRouteSession.data.projectId,
+						displayName: cloudSessionWorkspace?.name ?? "Cloud project",
 					},
 					cloudOrgId,
 				)
