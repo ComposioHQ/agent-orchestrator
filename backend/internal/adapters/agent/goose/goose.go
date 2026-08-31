@@ -304,7 +304,7 @@ func isOfficialGooseBinary(ctx context.Context, binary string) bool {
 	probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 
-	out, err := aoprocess.CommandContext(probeCtx, binary, "--version").CombinedOutput()
+	out, err := aoprocess.CommandContextForPath(probeCtx, binary, "--version").CombinedOutput()
 	if err != nil || probeCtx.Err() != nil {
 		return false
 	}
