@@ -4243,6 +4243,19 @@ body:has(#root .platform-linux) > .browser-popout-overlay {
 	backdrop-filter: blur(10px);
 }
 
+.browser-panel__toolbar > :not(.browser-panel__url-wrap):not(button) {
+	transition:
+		opacity 140ms ease,
+		visibility 0s linear;
+}
+
+.browser-panel__toolbar--url-takeover > :not(.browser-panel__url-wrap):not(.browser-panel__navigation-btn) {
+	visibility: hidden;
+	opacity: 0;
+	pointer-events: none;
+	transition-delay: 0s, 140ms;
+}
+
 .browser-panel {
 	container-name: browser-panel;
 	container-type: inline-size;
@@ -4434,13 +4447,19 @@ body:has(#root .platform-linux) > .browser-popout-overlay {
 	flex: 1;
 }
 
+.browser-panel__url-wrap {
+	height: 29px;
+}
+
 .browser-panel__toolbar button {
 	border-radius: 7px;
 	transition:
 		background var(--duration-fast) ease,
 		color var(--duration-fast) ease,
 		transform var(--duration-fast) ease,
-		box-shadow var(--duration-fast) ease;
+		box-shadow var(--duration-fast) ease,
+		opacity 140ms ease,
+		visibility 0s linear;
 }
 
 .browser-panel__toolbar button:not(:disabled):hover {
@@ -4458,21 +4477,14 @@ body:has(#root .platform-linux) > .browser-popout-overlay {
 	color: var(--fg);
 }
 
-.browser-panel__url-icon {
-	position: absolute;
-	left: 10px;
-	top: 50%;
-	z-index: 1;
-	width: 15px;
-	height: 15px;
-	transform: translateY(-50%);
-	color: var(--fg-passive);
-	pointer-events: none;
-}
-
 .browser-panel__url-input {
+	position: absolute;
+	top: 0;
+	right: 0;
+	left: 0;
+	z-index: 0;
+	width: auto;
 	height: 29px;
-	padding-left: 29px;
 	border-color: color-mix(in srgb, var(--color-border) 72%, transparent);
 	border-radius: 7px;
 	background:
@@ -4482,6 +4494,17 @@ body:has(#root .platform-linux) > .browser-popout-overlay {
 		0 1px 8px color-mix(in srgb, black 9%, transparent);
 	font-family: var(--font-mono);
 	font-size: 12px;
+	transition:
+		left 180ms cubic-bezier(0.2, 0.8, 0.2, 1),
+		right 180ms cubic-bezier(0.2, 0.8, 0.2, 1),
+		box-shadow var(--duration-fast) ease,
+		background-color var(--duration-fast) ease;
+}
+
+.browser-panel__toolbar--url-takeover .browser-panel__url-input {
+	left: var(--browser-url-expand-left, 0);
+	right: var(--browser-url-expand-right, 0);
+	z-index: 2;
 }
 
 .browser-panel__url-input:focus {
@@ -4669,7 +4692,9 @@ html[data-native-browser-composition="true"] .browser-popout-backdrop {
 	}
 
 	.browser-panel,
-	.browser-panel__toolbar button {
+	.browser-panel__toolbar button,
+	.browser-panel__toolbar > :not(.browser-panel__url-wrap),
+	.browser-panel__url-input {
 		transition: none;
 	}
 
