@@ -1025,15 +1025,13 @@ describe("ChatWorkspace timeline", () => {
 		expect(scrollbar).toHaveAttribute("aria-valuenow", "100");
 	});
 
-	it("hides conversation minimap markers while the inspector is open", () => {
+	it("disables the conversation minimap while the inspector is open", () => {
 		useUiStore.setState({
 			inspectorSessions: { "ao-long": { isOpen: true, view: "summary" } },
 		});
 		render(<ChatWorkspace snapshot={chatFixtureLongHistory(8)} />);
 		const log = screen.getByRole("log");
-		const scrollbar = screen.getByRole("scrollbar", {
-			name: "Conversation scrollbar",
-		});
+		const scrollbar = screen.getByTestId("chat-conversation-minimap");
 		stubGeometry(log, {
 			scrollHeight: 4000,
 			clientHeight: 800,
@@ -1046,7 +1044,12 @@ describe("ChatWorkspace timeline", () => {
 		});
 		fireEvent.scroll(log);
 
+		expect(scrollbar).toHaveAttribute("aria-hidden", "true");
+		expect(scrollbar).toHaveClass("pointer-events-none");
 		expect(scrollbar.querySelectorAll("[data-chat-scroll-marker]")).toHaveLength(0);
+
+		fireEvent.wheel(scrollbar, { deltaY: 200 });
+		expect(log.scrollTop).toBe(1000);
 	});
 
 	it("previews the request and response for a hovered conversation marker", () => {
