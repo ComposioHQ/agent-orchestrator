@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -187,6 +188,7 @@ func TestBootstrapWorkerStreamsArchiveWithoutSecretsInURL(t *testing.T) {
 					request.Data = strings.TrimSuffix(request.Data, "\n")
 					request.Data = request.Data[:len(request.Data)-1] + "\n"
 					truncatedFirstCopy = true
+					_, _ = io.WriteString(netConnection, "ignored incomplete frame\r\n")
 				}
 				parts := strings.SplitN(strings.TrimSuffix(request.Data, "\n"), ":", 4)
 				if len(parts) != 4 {
@@ -198,6 +200,7 @@ func TestBootstrapWorkerStreamsArchiveWithoutSecretsInURL(t *testing.T) {
 					sequence == expectedSequence && len(parts[3]) == declared {
 					encoded.WriteString(parts[3])
 					expectedSequence++
+					_, _ = io.WriteString(netConnection, fmt.Sprintf("%s:%d\r\n", bootstrapUploadACK, expectedSequence))
 				}
 				if parts[0] == "done" && encoded.Len() == wanted {
 					break

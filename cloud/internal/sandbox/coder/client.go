@@ -5,6 +5,7 @@ package coder
 
 import (
 	"archive/tar"
+	"bufio"
 	"bytes"
 	"compress/gzip"
 	"context"
@@ -15,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"path"
@@ -38,6 +40,7 @@ const (
 	workspaceNamePrefix = "ao-"
 	bootstrapOK         = "__AO_BOOTSTRAP_OK__"
 	bootstrapFailed     = "__AO_BOOTSTRAP_FAILED__"
+	bootstrapUploadACK  = "__AO_UPLOAD_ACK__"
 )
 
 var userPattern = regexp.MustCompile(`^[a-z_][a-z0-9_-]{0,31}$`)
@@ -336,43 +339,31 @@ func (c *Client) BootstrapWorker(ctx context.Context, id sandbox.ID, bootstrap s
 	defer netConn.Close()
 
 	encoder := json.NewEncoder(netConn)
+	reader := bufio.NewReader(netConn)
 	// Coder's reconnecting PTY writes each decoded Data field to the OS PTY but
 	// does not retry a short write. Frame the archive as canonical terminal lines
-	// with sequence and length metadata, and send redundant copies. The receiver
-	// appends only the first complete copy for the expected sequence, so a short
-	// write cannot silently corrupt or stall the bootstrap archive.
-	const (
-		// Canonical terminals accept at least 4 KiB per line. Stay below that
-		// ceiling while keeping the full worker upload inside Coder's short-lived
-		// reconnecting-PTY window.
-		chunkSize   = 3_000
-		chunkCopies = 3
-	)
+	// with sequence and length metadata. The receiver acknowledges only a
+	// complete frame for the expected sequence; retrying an unacknowledged frame
+	// makes Coder's unreported short writes recoverable without tripling the
+	// shell work and exceeding the reconnecting-PTY lifetime.
+	const chunkSize = 3_000 // below the canonical terminal's 4 KiB line ceiling
 	sequence := 0
 	for offset := 0; offset < len(encoded); offset += chunkSize {
 		end := min(offset+chunkSize, len(encoded))
 		chunk := encoded[offset:end]
 		line := fmt.Sprintf("data:%d:%d:%s\n", sequence, len(chunk), chunk)
-		for copyIndex := 0; copyIndex < chunkCopies; copyIndex++ {
-			if err := encoder.Encode(struct {
-				Data string `json:"data"`
-			}{Data: line}); err != nil {
-				return fmt.Errorf("coder: upload worker through PTY: %w", err)
-			}
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			default:
-			}
+		if err := sendBootstrapFrame(ctx, netConn, encoder, reader, line, sequence+1); err != nil {
+			return err
 		}
 		sequence++
 	}
+	_ = netConn.SetReadDeadline(time.Time{})
 	if err := encoder.Encode(struct {
 		Data string `json:"data"`
 	}{Data: fmt.Sprintf("done:%d:0:\n", sequence)}); err != nil {
 		return fmt.Errorf("coder: finish worker upload through PTY: %w", err)
 	}
-	output, err := readBootstrapResult(ctx, netConn)
+	output, err := readBootstrapResult(ctx, reader)
 	if err != nil {
 		return err
 	}
@@ -380,6 +371,52 @@ func (c *Client) BootstrapWorker(ctx context.Context, id sandbox.ID, bootstrap s
 		return nil
 	}
 	return fmt.Errorf("coder: worker bootstrap did not complete: %s", sanitizePTYOutput(output))
+}
+
+func sendBootstrapFrame(
+	ctx context.Context,
+	connection net.Conn,
+	encoder *json.Encoder,
+	reader *bufio.Reader,
+	line string,
+	expectedACK int,
+) error {
+	const (
+		maxAttempts = 6
+		ackTimeout  = 2 * time.Second
+	)
+	wanted := fmt.Sprintf("%s:%d", bootstrapUploadACK, expectedACK)
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		if err := encoder.Encode(struct {
+			Data string `json:"data"`
+		}{Data: line}); err != nil {
+			return fmt.Errorf("coder: upload worker through PTY: %w", err)
+		}
+		deadline := time.Now().Add(ackTimeout)
+		if contextDeadline, ok := ctx.Deadline(); ok && contextDeadline.Before(deadline) {
+			deadline = contextDeadline
+		}
+		if err := connection.SetReadDeadline(deadline); err != nil {
+			return fmt.Errorf("coder: set workspace PTY upload deadline: %w", err)
+		}
+		response, err := reader.ReadString('\n')
+		if strings.Contains(response, wanted) {
+			return nil
+		}
+		if strings.Contains(response, bootstrapFailed) {
+			return fmt.Errorf("coder: worker bootstrap failed during upload: %s", sanitizePTYOutput(response))
+		}
+		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			var netError net.Error
+			if !errors.As(err, &netError) || !netError.Timeout() {
+				return fmt.Errorf("coder: read workspace PTY upload acknowledgement: %w", err)
+			}
+		}
+	}
+	return errors.New("coder: workspace PTY repeatedly dropped an upload frame")
 }
 
 func validateBootstrap(bootstrap sandbox.WorkerBootstrap) error {
@@ -476,7 +513,7 @@ func bootstrapCommand(bootstrap sandbox.WorkerBootstrap, encodedLength int) stri
 		"  case \"$sequence\" in ''|*[!0-9]*) continue ;; esac\n" +
 		"  case \"$declared\" in ''|*[!0-9]*) continue ;; esac\n" +
 		"  if [ \"$kind\" = data ] && [ \"$sequence\" -eq \"$expected\" ] && [ \"${#chunk}\" -eq \"$declared\" ] && [ $((received + declared)) -le \"$target\" ]; then\n" +
-		"    printf %s \"$chunk\" >>\"$encoded\"\n    received=$((received + declared))\n    expected=$((expected + 1))\n" +
+		"    printf %s \"$chunk\" >>\"$encoded\"\n    received=$((received + declared))\n    expected=$((expected + 1))\n    echo " + bootstrapUploadACK + ":$expected\n" +
 		"  elif [ \"$kind\" = done ] && [ \"$received\" -eq \"$target\" ]; then\n    break\n  fi\ndone\nstty echo icanon\n" +
 		"base64 -d \"$encoded\" | gzip -d | tar -xf - -C \"$stage\"\n" +
 		"sudo -n id -u " + shellQuote(workerUser) + " >/dev/null 2>&1 || sudo -n useradd -m " + shellQuote(workerUser) + "\n" +
