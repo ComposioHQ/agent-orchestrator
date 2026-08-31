@@ -135,8 +135,8 @@ let automaticCheckNetFailureCounted = false;
 let activeUpdaterPhase: UpdatePhase = "check";
 let pendingUpdateVersion: string | undefined;
 // Session-scoped time of the most recent completed feed check. Packaged apps
-// check at launch when automatic updates are enabled, while disabled installs
-// truthfully remain "not checked yet" until the user asks.
+// check the selected channel at launch regardless of whether automatic
+// downloading is enabled.
 let lastCheckedAtMs: number | undefined;
 
 // emitUpdateOutcome pushes an update outcome to renderers on a channel separate
