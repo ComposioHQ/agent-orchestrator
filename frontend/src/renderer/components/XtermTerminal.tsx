@@ -38,6 +38,15 @@ import { TERMINAL_FONT_SIZE_DEFAULT } from "../lib/design-tokens";
 import { isWebLink, openLinkInSystemBrowser } from "../lib/external-link-policy";
 import { isMacPlatform } from "../lib/platform";
 import { applyDocumentTheme, applyDocumentThemeStyle } from "../lib/theme";
+import {
+	buildCursorColorSchemeNotification,
+	cursorColorSchemeReplyForOutput,
+} from "../lib/cursor-color-scheme";
+import {
+	buildOscColorReports,
+	createOscColorReportForwarder,
+	type OscTerminalColors,
+} from "../lib/osc-color-report";
 import { buildTerminalThemes } from "../lib/terminal-themes";
 import { useUiStore, type Theme } from "../stores/ui-store";
 import { TerminalSearch } from "./TerminalSearch";
@@ -74,6 +83,8 @@ export type XtermTerminalProps = {
 	onVisibleSize?: (cols: number, rows: number) => void;
 	/** Hidden retained terminals keep parsing output but expose no UI overlays. */
 	isVisible?: boolean;
+	/** Cursor Agent understands AO's terminal color protocol; generic terminals do not. */
+	supportsCursorColorScheme?: boolean;
 	/** Move keyboard focus into xterm when a controller needs human input. */
 	focusRequested?: boolean;
 	/**
@@ -293,6 +304,8 @@ export function XtermTerminal(props: XtermTerminalProps) {
 	const scrollbarTrackRef = useRef<HTMLDivElement | null>(null);
 	const scrollbarThumbRef = useRef<HTMLDivElement | null>(null);
 	const termRef = useRef<Terminal | null>(null);
+	const notifyCursorSchemeRef = useRef<(scheme: Theme, force?: boolean, retry?: boolean) => void>(() => {});
+	const announcedCursorSchemeRef = useRef<Theme | null>(null);
 	const searchAddonRef = useRef<SearchAddon | null>(null);
 	const fitRef = useRef<(() => void) | null>(null);
 	const contextMenuActionsRef = useRef<TerminalContextMenuActions | null>(null);
@@ -366,6 +379,12 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		const { dark, light } = buildTerminalThemes();
 		term.options.theme = props.theme === "dark" ? dark : light;
 	}, [props.theme, themeStyle]);
+
+	useEffect(() => {
+		if (!termRef.current || !props.supportsCursorColorScheme) return;
+		announcedCursorSchemeRef.current = null;
+		notifyCursorSchemeRef.current(props.theme, true, true);
+	}, [props.theme, props.supportsCursorColorScheme]);
 
 	useEffect(() => {
 		const term = termRef.current;
@@ -607,6 +626,28 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			if (data.length === 0) return;
 			userInputListeners.forEach((listener) => listener(data, source));
 		};
+		const terminalColorsForScheme = (scheme: Theme): OscTerminalColors => {
+			const palette = buildTerminalThemes()[scheme];
+			return {
+				foreground: palette.foreground ?? "",
+				background: palette.background ?? "",
+				cursor: palette.cursor ?? palette.foreground ?? "",
+			};
+		};
+		const notifyCursorScheme = (scheme: Theme, force = false, retry = false) => {
+			if (!force && announcedCursorSchemeRef.current === scheme) return;
+			announcedCursorSchemeRef.current = scheme;
+			const bytes =
+				buildOscColorReports(terminalColorsForScheme(scheme)) +
+				buildCursorColorSchemeNotification(scheme);
+			const send = () => emitUserInput(bytes, "protocol");
+			send();
+			if (!retry) return;
+			for (const timer of schemeRetryTimers) window.clearTimeout(timer);
+			schemeRetryTimers = [50, 200].map((delayMs) => window.setTimeout(send, delayMs));
+		};
+		let schemeRetryTimers: number[] = [];
+		notifyCursorSchemeRef.current = notifyCursorScheme;
 		const pasteText = (text: string) => {
 			const prepared = preparePastedText(text);
 			const bracketed = term.modes.bracketedPasteMode && term.options.ignoreBracketedPasteMode !== true;
@@ -883,6 +924,17 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		// those bytes through the mux writes dirty input into the real Codex PTY and
 		// corrupts the TUI. Keyboard is the only safe generic text path here; paste,
 		// composition, shortcuts, and wheel reports are emitted explicitly below.
+		// Forward OSC 10/11/12 color replies only. Cursor's theme probe issues these
+		// on stdout; xterm answers on onData. Other onData bytes must not reach the
+		// PTY or agent TUIs break (Codex, etc.).
+		// Retained terminals can change providers without remounting. Keep the
+		// listener mounted, but consult the latest props before forwarding so a
+		// terminal that changes from Cursor to another agent never emits protocol
+		// bytes into the new agent's PTY.
+		const oscColorForwarder = createOscColorReportForwarder((report) => {
+			if (callbacksRef.current.supportsCursorColorScheme) emitUserInput(report, "protocol");
+		});
+		const oscColorInput = term.onData((data) => oscColorForwarder.push(data));
 		const keyInput = term.onKey(({ key }) => emitUserInput(key, "keyboard"));
 
 		// Translate wheel motion into SGR wheel reports for the pane (see
@@ -1059,14 +1111,37 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			// Forward xterm's write callback: it fires once THIS chunk has been
 			// parsed into the buffer, which is what lets the attachment reveal the
 			// pane at the replay's settled scroll position (issue #3160).
-			write: (data, done) =>
+			write: (data, done) => {
+				let hasEsc = false;
+				for (let i = 0; i < data.length; i++) {
+					if (data[i] === 0x1b) {
+						hasEsc = true;
+						break;
+					}
+				}
+				if (hasEsc) {
+					const chunk = new TextDecoder().decode(data);
+					const reply = callbacksRef.current.supportsCursorColorScheme
+						? cursorColorSchemeReplyForOutput(chunk, callbacksRef.current.theme)
+						: null;
+					if (reply) {
+						announcedCursorSchemeRef.current = null;
+						notifyCursorScheme(callbacksRef.current.theme, true, true);
+					}
+				}
 				term.write(data, () => {
 					scheduleScrollbarUpdate();
 					done?.();
-				}),
+				});
+			},
 			writeln: (line) => term.writeln(line, scheduleScrollbarUpdate),
 			showLatestOutput,
 			prepareForActivation,
+			notifyCursorColorScheme: () => {
+				if (callbacksRef.current.supportsCursorColorScheme) {
+					notifyCursorScheme(callbacksRef.current.theme, false, true);
+				}
+			},
 			onUserInput: (listener) => {
 				userInputListeners.add(listener);
 				return { dispose: () => userInputListeners.delete(listener) };
@@ -1111,7 +1186,13 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			contextMenuActionsRef.current = null;
 			cancelActivationPreparation?.();
 			clearSuppressNativePaste();
+			for (const timer of schemeRetryTimers) window.clearTimeout(timer);
+			schemeRetryTimers = [];
+			oscColorForwarder.dispose();
+			oscColorInput.dispose();
 			keyInput.dispose();
+			notifyCursorSchemeRef.current = () => {};
+			announcedCursorSchemeRef.current = null;
 			userInputListeners.clear();
 			try {
 				term.dispose();

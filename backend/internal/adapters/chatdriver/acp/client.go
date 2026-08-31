@@ -480,6 +480,13 @@ func (c *conversation) SessionUpdate(_ context.Context, params acpsdk.SessionNot
 	}
 
 	update := params.Update
+	providerOutputResumed := update.AgentMessageChunk != nil ||
+		update.AgentThoughtChunk != nil ||
+		update.ToolCall != nil ||
+		update.Plan != nil
+	if providerOutputResumed {
+		c.completeProviderFailure(turnID)
+	}
 	switch {
 	case update.AgentMessageChunk != nil:
 		id := c.providerItemID(messageID(update.AgentMessageChunk.MessageId, "assistant", turnID))
@@ -543,8 +550,15 @@ func (c *conversation) SessionUpdate(_ context.Context, params acpsdk.SessionNot
 		c.emitDiffs(turnID, tool.content)
 	case update.Plan != nil:
 		c.emit(ports.ChatEvent{Kind: ports.ChatEventPlanUpdated, ProviderTurnID: turnID, Plan: normalizePlan(update.Plan.Entries)})
-	case update.SessionInfoUpdate != nil && update.SessionInfoUpdate.Title != nil:
-		c.emit(ports.ChatEvent{Kind: ports.ChatEventThreadRenamed, Title: *update.SessionInfoUpdate.Title})
+	case update.SessionInfoUpdate != nil:
+		if update.SessionInfoUpdate.Title != nil {
+			c.emit(ports.ChatEvent{Kind: ports.ChatEventThreadRenamed, Title: *update.SessionInfoUpdate.Title})
+		}
+		if turnID != "" {
+			if event, ok := c.sessionFailureEvent(turnID, update.SessionInfoUpdate.Meta); ok {
+				c.emit(event)
+			}
+		}
 	case update.ConfigOptionUpdate != nil:
 		// The update is a complete replacement, not a delta. Model changes can
 		// rebuild effort and fast-mode choices, including removing an option.
@@ -756,6 +770,81 @@ func nestedMap(meta map[string]any, key string) map[string]any {
 	}
 	value, _ := meta[key].(map[string]any)
 	return value
+}
+
+// sessionFailureEvent translates the retry/failure extension advertised by
+// claude-agent-acp into an ordinary durable activity. The extension is parsed at
+// the ACP boundary so neither the service nor the renderer depends on its vendor
+// namespace. A stable provider item id makes successive retry attempts update one
+// row; settling the enclosing turn then settles this running status with it.
+func (c *conversation) sessionFailureEvent(
+	turnID string,
+	meta map[string]any,
+) (ports.ChatEvent, bool) {
+	jetbrains := nestedMap(meta, "jetbrains")
+	air := nestedMap(jetbrains, "air")
+	version, versionOK := number(air["version"])
+	failure := nestedMap(air, "sessionFailure")
+	if !versionOK || version < 1 || failure == nil {
+		return ports.ChatEvent{}, false
+	}
+
+	id, _ := failure["id"].(string)
+	title, _ := failure["title"].(string)
+	id = strings.TrimSpace(id)
+	title = strings.TrimSpace(title)
+	if id == "" || title == "" {
+		return ports.ChatEvent{}, false
+	}
+
+	detailMap := map[string]any{"event": "provider.failure"}
+	for _, key := range []string{"category", "severity"} {
+		if value, ok := failure[key].(string); ok && strings.TrimSpace(value) != "" {
+			detailMap[key] = strings.TrimSpace(value)
+		}
+	}
+	if details, ok := failure["details"].(string); ok && strings.TrimSpace(details) != "" {
+		detailMap["text"] = strings.TrimSpace(details)
+	}
+	if revision, ok := number(failure["revision"]); ok && revision >= 0 {
+		detailMap["revision"] = revision
+	}
+	detail, _ := json.Marshal(detailMap)
+	event := ports.ChatEvent{
+		Kind:           ports.ChatEventActivityStarted,
+		ProviderTurnID: turnID,
+		// Some adapters mint a fresh extension incident id for every retry when
+		// their provider turn id is not known yet. AO already has the durable turn
+		// boundary, so key the live failure to that boundary and update one row.
+		ProviderItemID: c.providerItemID("session-failure:" + turnID),
+		ActivityKind:   domain.ActivityKindSystem,
+		ActivityStatus: domain.ActivityStatusRunning,
+		Summary:        title,
+		Detail:         detail,
+	}
+	c.mu.Lock()
+	c.providerFailure = &event
+	c.mu.Unlock()
+	return event, true
+}
+
+// completeProviderFailure removes a stale retry warning as soon as the provider
+// produces substantive output again. The AIR extension advances failures but
+// deliberately sends no recovery update, so AO closes its normalized activity
+// on the first message, thought, tool call, or plan after the failure.
+func (c *conversation) completeProviderFailure(turnID string) {
+	c.mu.Lock()
+	if c.providerFailure == nil || c.providerFailure.ProviderTurnID != turnID {
+		c.mu.Unlock()
+		return
+	}
+	event := *c.providerFailure
+	c.providerFailure = nil
+	c.mu.Unlock()
+
+	event.Kind = ports.ChatEventActivityCompleted
+	event.ActivityStatus = domain.ActivityStatusCompleted
+	c.emit(event)
 }
 
 func cloneMeta(meta map[string]any) map[string]any {
