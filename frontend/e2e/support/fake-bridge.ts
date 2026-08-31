@@ -181,6 +181,7 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					onTabsState: unsubscribe,
 					onAgentActivity: unsubscribe,
 					onDevToolsState: unsubscribe,
+					onPageFocus: unsubscribe,
 				},
 				notifications: {
 					show: async () => undefined,
@@ -666,6 +667,7 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					onTabsState: unsubscribe,
 					onAgentActivity: unsubscribe,
 					onDevToolsState: unsubscribe,
+					onPageFocus: unsubscribe,
 				},
 				notifications: {
 					show: async () => undefined,

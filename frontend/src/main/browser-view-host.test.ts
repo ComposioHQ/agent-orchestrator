@@ -11,6 +11,7 @@ import {
 	scaleBoundsForZoom,
 } from "./browser-view-host";
 import { NEW_SESSION_SHORTCUT_CHANNEL, NEW_SHELL_TERMINAL_SHORTCUT_CHANNEL } from "../shared/shortcuts";
+import type { BrowserAnnotationDraft } from "../shared/browser-annotations";
 import { parseAgentBrowserJSON } from "./agent-browser-runtime";
 
 vi.mock("electron", async (importOriginal) => {
@@ -20,6 +21,23 @@ vi.mock("electron", async (importOriginal) => {
 
 type InvokeHandler = (event: unknown, ...args: unknown[]) => unknown;
 type EventHandler = (event: { sender: { id: number; getZoomFactor?: () => number } }, ...args: unknown[]) => unknown;
+
+function annotationDraft(url = "http://localhost:4173/"): BrowserAnnotationDraft {
+	return {
+		instruction: "Keep this text after refresh",
+		selection: {
+			kind: "element",
+			context: {
+				url,
+				tag: "button",
+				classes: [],
+				selector: "button#save",
+				size: { width: 80, height: 30 },
+				computedStyle: {},
+			},
+		},
+	};
+}
 
 function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").AgentBrowserRuntime) {
 	let currentURL = "";
@@ -1993,7 +2011,13 @@ describe("browser:setBounds", () => {
 			visible: true,
 		});
 
-		webContentsListeners.get("did-fail-load")?.({} as never, -105 as never, "Name not resolved" as never);
+		webContentsListeners.get("did-fail-load")?.(
+			{} as never,
+			-105 as never,
+			"Name not resolved" as never,
+			"http://localhost:4173/" as never,
+			true as never,
+		);
 		expect(view.setVisible).toHaveBeenLastCalledWith(false);
 
 		view.setBounds.mockClear();
@@ -2043,6 +2067,134 @@ describe("browser annotation IPC", () => {
 		await invoke("browser:annotation:setMode", { viewId: "1:sess-1", enabled: false });
 
 		expect(webContents.focus).not.toHaveBeenCalled();
+	});
+
+	it("preserves and restores an unfinished annotation when the toolbar reloads the page", async () => {
+		const { invoke, send, sent, webContents, webContentsListeners } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+		await invoke("browser:navigate", { viewId: "1:sess-1", url: "http://localhost:4173/" });
+		await invoke("browser:annotation:setMode", { viewId: "1:sess-1", enabled: true });
+		const draft = annotationDraft();
+		send("browser:annotation:draft", 99, draft);
+		webContents.send.mockClear();
+		webContents.focus.mockClear();
+
+		await invoke("browser:reload", "1:sess-1");
+		webContentsListeners.get("did-start-loading")?.();
+		webContentsListeners.get("did-stop-loading")?.();
+
+		expect(webContents.reload).toHaveBeenCalledOnce();
+		expect(sent).not.toContainEqual({
+			channel: "browser:annotation:canceled",
+			payload: expect.anything(),
+		});
+		expect(webContents.send).toHaveBeenCalledWith("browser:annotation:setMode", { enabled: true, draft });
+		expect(webContents.focus).toHaveBeenCalledOnce();
+	});
+
+	it("re-enables annotation picking after a reload before any element is selected", async () => {
+		const { invoke, sent, webContents, webContentsListeners } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+		await invoke("browser:navigate", { viewId: "1:sess-1", url: "http://localhost:4173/" });
+		await invoke("browser:annotation:setMode", { viewId: "1:sess-1", enabled: true });
+		webContents.send.mockClear();
+		webContents.focus.mockClear();
+
+		await invoke("browser:reload", "1:sess-1");
+		webContentsListeners.get("did-stop-loading")?.();
+
+		expect(sent).not.toContainEqual({ channel: "browser:annotation:canceled", payload: expect.anything() });
+		expect(webContents.send).toHaveBeenCalledWith("browser:annotation:setMode", { enabled: true });
+		expect(webContents.focus).toHaveBeenCalledOnce();
+	});
+
+	it("preserves a draft when the same URL is submitted again by preview revision or the address bar", async () => {
+		const { invoke, send, sent, webContents, webContentsListeners } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+		await invoke("browser:navigate", { viewId: "1:sess-1", url: "http://localhost:4173/" });
+		await invoke("browser:annotation:setMode", { viewId: "1:sess-1", enabled: true });
+		const draft = annotationDraft();
+		send("browser:annotation:draft", 99, draft);
+		webContents.send.mockClear();
+
+		await invoke("browser:navigate", { viewId: "1:sess-1", url: "http://localhost:4173/" });
+		webContentsListeners.get("did-stop-loading")?.();
+
+		expect(sent).not.toContainEqual({ channel: "browser:annotation:canceled", payload: expect.anything() });
+		expect(webContents.send).toHaveBeenCalledWith("browser:annotation:setMode", { enabled: true, draft });
+	});
+
+	it("cancels a draft when a page-driven main-frame navigation targets another document", async () => {
+		const { invoke, send, sent, webContents, webContentsListeners } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+		await invoke("browser:navigate", { viewId: "1:sess-1", url: "http://localhost:4173/" });
+		await invoke("browser:annotation:setMode", { viewId: "1:sess-1", enabled: true });
+		send("browser:annotation:draft", 99, annotationDraft());
+		webContents.send.mockClear();
+
+		webContentsListeners.get("will-navigate")?.(
+			{ preventDefault: vi.fn() } as never,
+			"http://localhost:4173/another-page" as never,
+		);
+		webContentsListeners.get("did-stop-loading")?.();
+
+		expect(sent).toContainEqual({
+			channel: "browser:annotation:canceled",
+			payload: { viewId: "1:sess-1", reason: "navigation" },
+		});
+		expect(webContents.send).not.toHaveBeenCalledWith(
+			"browser:annotation:setMode",
+			expect.objectContaining({ enabled: true }),
+		);
+	});
+
+	it("clears a draft when a reload is stopped or fails", async () => {
+		const { invoke, send, sent, webContentsListeners } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+		await invoke("browser:navigate", { viewId: "1:sess-1", url: "http://localhost:4173/" });
+		await invoke("browser:annotation:setMode", { viewId: "1:sess-1", enabled: true });
+		send("browser:annotation:draft", 99, annotationDraft());
+
+		await invoke("browser:stop", "1:sess-1");
+
+		expect(sent).toContainEqual({
+			channel: "browser:annotation:canceled",
+			payload: { viewId: "1:sess-1", reason: "navigation" },
+		});
+
+		await invoke("browser:annotation:setMode", { viewId: "1:sess-1", enabled: true });
+		send("browser:annotation:draft", 99, annotationDraft());
+		webContentsListeners.get("did-fail-load")?.(
+			{} as never,
+			-105 as never,
+			"Name not resolved" as never,
+			"http://localhost:4173/" as never,
+			true as never,
+		);
+
+		expect(sent.filter(({ channel }) => channel === "browser:annotation:canceled")).toHaveLength(2);
+	});
+
+	it("keeps a top-level draft when a subframe load fails", async () => {
+		const { invoke, send, sent, webContents, webContentsListeners } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+		await invoke("browser:navigate", { viewId: "1:sess-1", url: "http://localhost:4173/" });
+		await invoke("browser:annotation:setMode", { viewId: "1:sess-1", enabled: true });
+		const draft = annotationDraft();
+		send("browser:annotation:draft", 99, draft);
+		webContents.send.mockClear();
+
+		webContentsListeners.get("did-fail-load")?.(
+			{} as never,
+			-105 as never,
+			"Iframe name not resolved" as never,
+			"http://invalid.test/frame" as never,
+			false as never,
+		);
+		webContentsListeners.get("did-stop-loading")?.();
+
+		expect(sent).not.toContainEqual({ channel: "browser:annotation:canceled", payload: expect.anything() });
+		expect(webContents.send).toHaveBeenCalledWith("browser:annotation:setMode", { enabled: true, draft });
 	});
 
 	it("forwards a single-element preview annotation submission to the renderer-owned view", async () => {
@@ -2343,6 +2495,7 @@ describe("getLastFocusedPanelContents", () => {
 	// Mock that captures each panel's "focus" listener so the test can fire it.
 	function setup() {
 		let focusListener: (() => void) | undefined;
+		const shellSend = vi.fn();
 		const webContents = {
 			canGoBack: () => false,
 			canGoForward: () => false,
@@ -2370,7 +2523,7 @@ describe("getLastFocusedPanelContents", () => {
 			mainWindow: {
 				contentView: { addChildView: () => undefined, removeChildView: () => undefined },
 				getContentBounds: () => ({ x: 0, y: 0, width: 800, height: 600 }),
-				webContents: { id: 1, send: () => undefined },
+				webContents: { id: 1, send: shellSend },
 			} as never,
 			ipcMain: { handle: record, on: record, removeHandler: () => undefined, off: () => undefined } as never,
 			shell: { openExternal: async () => undefined },
@@ -2382,7 +2535,7 @@ describe("getLastFocusedPanelContents", () => {
 		});
 		const call = (channel: string, ...args: unknown[]) =>
 			handlers.get(channel)!({ sender: { id: 1, getZoomFactor: () => 1 } }, ...args);
-		return { host, call, webContents, focus: () => focusListener?.() };
+		return { host, call, shellSend, webContents, focus: () => focusListener?.() };
 	}
 
 	it("is null until a panel is focused", async () => {
@@ -2392,11 +2545,12 @@ describe("getLastFocusedPanelContents", () => {
 	});
 
 	it("tracks the focused panel, then clears on hide and destroy", async () => {
-		const { host, call, webContents, focus } = setup();
+		const { host, call, shellSend, webContents, focus } = setup();
 		await call("browser:ensure", "s");
 
 		focus();
 		expect(host.getLastFocusedPanelContents()).toBe(webContents);
+		expect(shellSend).toHaveBeenCalledWith("browser:pageFocus", "1:s");
 
 		call("browser:setBounds", { viewId: "1:s", rect: { x: 0, y: 0, width: 10, height: 10 }, visible: false });
 		expect(host.getLastFocusedPanelContents()).toBeNull();

@@ -162,6 +162,7 @@ describe("BrowserPanel", () => {
 	const annotationCancelListeners = new Set<(payload: BrowserAnnotationCancelPayload) => void>();
 	let focusLocationListener: ((viewId: string) => void) | undefined;
 	let reopenClosedTabListener: ((viewId: string) => void) | undefined;
+	const pageFocusListeners = new Set<(viewId: string) => void>();
 
 	beforeEach(() => {
 		hookState.navigate.mockReset();
@@ -190,6 +191,11 @@ describe("BrowserPanel", () => {
 		postMock.mockResolvedValue({ data: {} });
 		annotationSubmitListeners.clear();
 		annotationCancelListeners.clear();
+		pageFocusListeners.clear();
+		window.ao!.browser.onPageFocus = vi.fn((listener: (viewId: string) => void) => {
+			pageFocusListeners.add(listener);
+			return () => pageFocusListeners.delete(listener);
+		});
 		window.ao!.browser.onAnnotationSubmit = vi.fn((listener: (payload: BrowserAnnotationSubmitPayload) => void) => {
 			annotationSubmitListeners.add(listener);
 			return () => {
@@ -263,6 +269,62 @@ describe("BrowserPanel", () => {
 		act(() => reopenClosedTabListener?.("42:sess-1"));
 
 		expect(hookState.reopenClosedTab).toHaveBeenCalledWith("latest");
+	});
+
+	it("shows only the site address until the URL input is focused", () => {
+		hookState.navState = {
+			...hookState.navState,
+			url: "https://www.google.com/search?q=agent+orchestrator#results",
+		};
+
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		expect(screen.getByRole("textbox", { name: /browser url/i })).toHaveValue("google.com");
+	});
+
+	it("expands the URL input, reveals the full URL, and selects it on focus", async () => {
+		const url = "https://www.google.com/search?q=agent+orchestrator#results";
+		hookState.navState = { ...hookState.navState, url, canGoBack: true };
+		const user = userEvent.setup();
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+		const toolbar = screen.getByTestId("browser-toolbar");
+		const input = screen.getByRole("textbox", { name: /browser url/i }) as HTMLInputElement;
+
+		await user.click(input);
+
+		await waitFor(() => {
+			expect(input).toHaveValue(url);
+			expect(input.selectionStart).toBe(0);
+			expect(input.selectionEnd).toBe(url.length);
+		});
+		expect(toolbar).toHaveClass("browser-panel__toolbar--url-takeover");
+		expect(within(toolbar).getByRole("button", { name: /back/i })).toHaveClass("browser-panel__navigation-btn");
+		expect(within(toolbar).getByRole("button", { name: /forward/i })).toHaveClass("browser-panel__navigation-btn");
+		expect(within(toolbar).getByRole("button", { name: /reload/i })).toHaveClass("browser-panel__navigation-btn");
+
+		act(() => {
+			for (const listener of pageFocusListeners) listener("42:sess-1");
+		});
+
+		expect(input).toHaveValue("google.com");
+		expect(toolbar).not.toHaveClass("browser-panel__toolbar--url-takeover");
+		expect(within(toolbar).getByRole("button", { name: /back/i })).toBeInTheDocument();
+	});
+
+	it("keeps the normal toolbar and full URL while maximized", async () => {
+		const url = "https://www.google.com/search?q=agent+orchestrator";
+		hookState.navState = { ...hookState.navState, url };
+		const user = userEvent.setup();
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut session={session} />);
+		const toolbar = screen.getByTestId("browser-toolbar");
+		const input = screen.getByRole("textbox", { name: /browser url/i });
+
+		expect(input).toHaveValue(url);
+		await user.click(input);
+
+		expect(toolbar).not.toHaveClass("browser-panel__toolbar--url-takeover");
+		expect(within(toolbar).getByRole("button", { name: /back/i })).toBeInTheDocument();
+		expect(within(toolbar).getByRole("button", { name: /reload/i })).toBeInTheDocument();
 	});
 
 	it("constrains the device frame to a named preset's width, and clears it back to fit", async () => {
@@ -853,13 +915,10 @@ describe("BrowserPanel", () => {
 		expect(screen.getByTestId("browser-viewport")).toHaveClass("browser-panel__viewport");
 	});
 
-	it("keeps URL icon placement controlled by the browser shell CSS", () => {
+	it("does not render a globe icon in the URL input", () => {
 		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
 
-		const icon = screen.getByTestId("browser-url-icon");
-		expect(icon).toHaveClass("browser-panel__url-icon");
-		expect(icon).not.toHaveClass("top-1/2");
-		expect(icon).not.toHaveClass("-translate-y-1/2");
+		expect(screen.queryByTestId("browser-url-icon")).not.toBeInTheDocument();
 	});
 	it("disables annotation mode when no page is loaded", () => {
 		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
@@ -1251,6 +1310,16 @@ describe("BrowserPanel", () => {
 		});
 
 		expect(screen.queryByText("Pick element")).not.toBeInTheDocument();
+	});
+
+	it("uses AO orange for the active annotation status dot", async () => {
+		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		const annotateButton = screen.getByRole("button", { name: /annotate/i });
+		await userEvent.click(annotateButton);
+
+		expect(annotateButton.querySelector('span[aria-hidden="true"]')).toHaveClass("bg-status-needs-you");
 	});
 
 	it("keeps the browser viewport transparent once a native page is loaded, so overlays don't blank it", () => {
