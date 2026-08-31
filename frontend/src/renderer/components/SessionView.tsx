@@ -1220,8 +1220,11 @@ export function SessionView({ sessionId, cloudOrgId, projectId }: SessionViewPro
 			className="session-topbar-session-chrome flex shrink-0 items-center gap-1"
 			data-compact-session-chrome={compactSessionChrome ? "true" : "false"}
 		>
-			{cloudInterfaceSwitchAction}
-			<ShellTopbar compactActions={compactSessionChrome} embedded />
+			<ShellTopbar
+				compactActions={compactSessionChrome}
+				embedded
+				sessionAction={cloudInterfaceSwitchAction}
+			/>
 		</div>
 	);
 
