@@ -29,6 +29,7 @@ import {
 	type WheelEvent as ReactWheelEvent,
 } from "react";
 import { ArrowDown, Loader2, TriangleAlert, Undo2 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { cn } from "../../lib/utils";
 import { sameContent, useStableList } from "../../lib/stable-list";
 import { useTabScrollEdges } from "../../hooks/useTabScrollEdges";
@@ -46,7 +47,11 @@ import { agentLabel } from "../../lib/agent-options";
 import type { ShellTerminal } from "../../hooks/useShellTerminals";
 import { sidebarOccupiesLayout, useUiStore } from "../../stores/ui-store";
 import type { TerminalTarget } from "../../types/terminal";
-import type { SessionKind, WorkspaceSession } from "../../types/workspace";
+import {
+	isOrchestratorSession,
+	type SessionKind,
+	type WorkspaceSession,
+} from "../../types/workspace";
 import { AgentAvatar } from "../AgentAvatar";
 import { SessionPaneTab } from "../CenterPane";
 import { Button } from "../ui/button";
@@ -294,6 +299,7 @@ export interface ChatWorkspaceProps {
 
 export function ChatWorkspace({
 	snapshot,
+	sessionTitle,
 	sessionRole = "worker",
 	headerActions,
 	sessionTabAction,
@@ -753,6 +759,8 @@ export function ChatWorkspace({
 		>
 			<ChatHeader
 				snapshot={snapshot}
+				sessionTitle={sessionTitle}
+				sessionRole={sessionRole}
 				reviewerTerminal={reviewerTerminal}
 				onOpenReviewerTerminal={onOpenReviewerTerminal}
 				reviewerActive={reviewerActive}
@@ -1125,6 +1133,8 @@ function readableItems(snapshot: ConversationSnapshot): ConversationItem[] {
 
 function ChatHeader({
 	snapshot,
+	sessionTitle,
+	sessionRole,
 	reviewerTerminal,
 	onOpenReviewerTerminal,
 	reviewerActive,
@@ -1145,6 +1155,8 @@ function ChatHeader({
 	session,
 }: {
 	snapshot: ConversationSnapshot;
+	sessionTitle?: string;
+	sessionRole: SessionKind;
 	reviewerTerminal?: { handleId: string; harness: string };
 	onOpenReviewerTerminal?: (target: { handleId: string; harness: string }) => void;
 	/** The reviewer tab is selected; the chat tab is the clickable alternative. */
@@ -1169,7 +1181,14 @@ function ChatHeader({
 	inline?: boolean;
 	topbarBounds: TopbarBounds;
 }) {
-	const label = agentLabel(snapshot.harness);
+	const { t } = useTranslation();
+	const providerLabel = agentLabel(snapshot.harness);
+	const sessionIsOrchestrator = session
+		? isOrchestratorSession(session)
+		: sessionRole === "orchestrator";
+	const label = sessionIsOrchestrator
+		? t("shell.orchestrator")
+		: (sessionTitle || session?.title || snapshot.title || snapshot.sessionId);
 	const tabScrollWatch = `${session?.id ?? ""}|${reviewerTerminal?.handleId ?? ""}|${(shellTerminals ?? []).map((shell) => shell.handleId).join("|")}`;
 	const {
 		scrollRef: tabsOverflowRef,
@@ -1223,7 +1242,7 @@ function ChatHeader({
 						) : (
 							<button
 								aria-current={timelineActive ? true : undefined}
-								aria-label={label}
+								aria-label={`${label} · ${providerLabel}`}
 								aria-selected={timelineActive}
 								data-terminal-role="primary"
 								className={cn(
@@ -2178,7 +2197,15 @@ const TurnGroup = memo(function TurnGroup({
 	queued: boolean;
 	newHumanMessageIds: ReadonlySet<string>;
 }) {
-	const runs = useMemo(() => runsOf(group.items), [group.items]);
+	const runs = useMemo(
+		() =>
+			runsOf(
+				group.liveProviderFailure
+					? group.items.filter((item) => item.id !== group.liveProviderFailure?.id)
+					: group.items,
+			),
+		[group.items, group.liveProviderFailure],
+	);
 	const copyableMessageId = group.outcome
 		? [...group.items]
 				.reverse()
@@ -2248,7 +2275,11 @@ const TurnGroup = memo(function TurnGroup({
 				/>
 			) : null}
 			{group.live ? (
-				<TurnLiveStatus startedAt={group.liveStartedAt} blocked={group.blocked} />
+				<TurnLiveStatus
+					startedAt={group.liveStartedAt}
+					blocked={group.blocked}
+					providerFailure={group.liveProviderFailure}
+				/>
 			) : null}
 			{/* No assistant prose to hang the undo / duration on — still offer them
 			    before the outcome divider so a tool-only turn is not stuck without a
@@ -2283,7 +2314,15 @@ const TurnGroup = memo(function TurnGroup({
 	);
 });
 
-function TurnLiveStatus({ startedAt, blocked }: { startedAt?: string; blocked?: boolean }) {
+function TurnLiveStatus({
+	startedAt,
+	blocked,
+	providerFailure,
+}: {
+	startedAt?: string;
+	blocked?: boolean;
+	providerFailure?: ConversationActivity;
+}) {
 	const [elapsed, setElapsed] = useState(() => elapsedSince(startedAt));
 
 	useEffect(() => {
@@ -2297,6 +2336,31 @@ function TurnLiveStatus({ startedAt, blocked }: { startedAt?: string; blocked?: 
 			<span role="alert" className="sr-only">
 				The agent is waiting for your decision.
 			</span>
+		);
+	}
+	if (providerFailure) {
+		return (
+			<div
+				role="status"
+				aria-live="polite"
+				className="flex min-h-8 items-start gap-2 px-1 py-1"
+				data-testid="live-turn-status"
+			>
+				<TriangleAlert
+					aria-hidden="true"
+					className="mt-0.5 size-3.5 shrink-0 text-warning"
+				/>
+				<span className="flex min-w-0 flex-col gap-0.5">
+					<strong className="text-xs font-medium text-warning">
+						{providerFailure.summary}
+					</strong>
+					{providerFailure.detail?.text ? (
+						<span className="text-[11px] leading-snug text-muted-foreground">
+							{providerFailure.detail.text}
+						</span>
+					) : null}
+				</span>
+			</div>
 		);
 	}
 
@@ -2527,6 +2591,8 @@ type TimelineGroup = {
 	live?: boolean;
 	liveStartedAt?: string;
 	blocked?: boolean;
+	/** A live provider failure replaces the generic Working label until the turn settles. */
+	liveProviderFailure?: ConversationActivity;
 	/** The provider accepted this turn, so there is history it can be asked to drop. */
 	rollbackable?: boolean;
 };
@@ -2691,6 +2757,14 @@ function groupByTurn(snapshot: ConversationSnapshot): TimelineGroup[] {
 				(item.activityKind === "approval" || item.activityKind === "user_input") &&
 				item.status === "pending",
 		);
+		group.liveProviderFailure = [...group.items]
+			.reverse()
+			.find(
+				(item): item is ConversationActivity =>
+					item.kind === "activity" &&
+					item.status === "running" &&
+					item.detail?.event === "provider.failure",
+			);
 		if (turn.state === "running" || turn.state === "queued" || turn.state === "cancelled") continue;
 		group.rollbackable = Boolean(turn.providerTurnId);
 		group.outcome = {

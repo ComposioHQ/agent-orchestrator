@@ -1,7 +1,7 @@
 import { useQueries, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { ArrowLeft, Loader2 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type AnimationEvent, type MutableRefObject } from "react";
 import { useTranslation } from "react-i18next";
 import { useCommandPaletteEnabled } from "../hooks/useCommandPaletteEnabled";
 import { useRestoreSession } from "../hooks/useRestoreSession";
@@ -74,6 +74,7 @@ export function CommandPalette() {
 	const composerBusyRef = useRef(false);
 	const viewRef = useRef(view);
 	viewRef.current = view;
+	const closeResetTimerRef = useRef<number | null>(null);
 
 	const currentSession = params.sessionId ? findSession(workspaces, params.sessionId)?.session : undefined;
 	const currentProjectId = currentSession?.workspaceId ?? params.projectId;
@@ -167,11 +168,43 @@ export function CommandPalette() {
 	}, []);
 
 	const closePalette = useCallback(() => {
+		// Keep the current query visible while Radix plays the closing animation.
+		// Clearing it here causes the palette to flash an empty search before it
+		// is removed, especially when an action also changes the theme.
+		runGenerationRef.current += 1;
 		setOpen(false);
 		setView({ mode: "root" });
 		setPendingDismiss(null);
-		resetTransient();
-	}, [setOpen, resetTransient]);
+		if (closeResetTimerRef.current !== null) window.clearTimeout(closeResetTimerRef.current);
+		// Reduced-motion mode disables the closing animation, so keep a fallback
+		// reset for environments where no animationend event will arrive.
+		closeResetTimerRef.current = window.setTimeout(() => {
+			closeResetTimerRef.current = null;
+			if (!useUiStore.getState().isCommandPaletteOpen) resetTransient();
+		}, 150);
+	}, [resetTransient, setOpen]);
+
+	const resetAfterClose = useCallback(() => {
+		if (closeResetTimerRef.current !== null) {
+			window.clearTimeout(closeResetTimerRef.current);
+			closeResetTimerRef.current = null;
+		}
+		if (!useUiStore.getState().isCommandPaletteOpen) resetTransient();
+	}, [resetTransient]);
+
+	useEffect(
+		() => () => {
+			if (closeResetTimerRef.current !== null) window.clearTimeout(closeResetTimerRef.current);
+		},
+		[],
+	);
+
+	const handlePaletteAnimationEnd = useCallback(
+		(event: AnimationEvent<HTMLDivElement>) => {
+			if (event.target === event.currentTarget) resetAfterClose();
+		},
+		[resetAfterClose],
+	);
 
 	const popToRoot = useCallback(() => {
 		setView({ mode: "root" });
@@ -474,6 +507,7 @@ export function CommandPalette() {
 				open={isOpen}
 				onOpenChange={(open) => (open ? setOpen(true) : requestDismiss("close"))}
 				contentProps={{
+					onAnimationEnd: handlePaletteAnimationEnd,
 					onEscapeKeyDown: (event) => {
 						event.preventDefault();
 						if (event.isComposing) return;
