@@ -87,7 +87,6 @@ export function ShellTopbar({
 	const isInspectorOpen = useUiStore((state) =>
 		currentSessionId ? (state.inspectorSessions[currentSessionId]?.isOpen ?? true) : false,
 	);
-	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
 	const requestNewTask = useUiStore((state) => state.requestNewTask);
 	const isSidebarOpen = useUiStore(sidebarOccupiesLayout);
 	const isFullScreen = useWindowFullScreen();
@@ -124,13 +123,15 @@ export function ShellTopbar({
 	// removed, or data still loading) shows an empty crumb — never the raw
 	// route slug. "Board" is the root-board crumb only.
 	const projectId = session?.workspaceId ?? params.projectId;
+	const isProjectRestarting = useUiStore((state) =>
+		projectId ? state.restartingProjectIds.has(projectId) : false,
+	);
 	const isProjectBoardRoute = !isSessionRoute && Boolean(projectId);
 	const isRootBoardRoute = !isSessionRoute && !isProjectBoardRoute;
 	const project = workspaceScope?.project;
 	const projectLabel = project?.name ?? session?.workspaceName ?? (projectId ? "" : t("shell.board"));
 	const orchestrator = workspaceScope?.orchestrator;
 	const orchestratorActivityLabel = orchestrator ? getAgentActivityView(orchestrator.activity, t).label : undefined;
-	const isProjectRestarting = projectId ? restartingProjectIds.has(projectId) : false;
 	const orchestratorActionLabel = orchestrator ? t("shell.openOrchestrator") : t("shell.spawnOrchestrator");
 	const orchestratorTooltip = isProjectRestarting
 		? t("shell.restarting")
