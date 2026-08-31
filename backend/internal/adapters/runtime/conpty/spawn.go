@@ -1,6 +1,5 @@
-// spawn.go - injectable hostSpawner seam. The real detached-process spawn is
-// Windows-only (spawn_windows.go). This file defines the type and the
-// defaultSpawnHost variable; the non-windows stub is in spawn_other.go.
+// spawn.go - shared detached pty-host spawn support. Platform files provide
+// defaultSpawnHost; tests can inject a hostSpawner through Options.
 package conpty
 
 import (
@@ -45,4 +44,45 @@ func stripEnvAssignments(argv []string) (assignments, rest []string) {
 		return nil, argv
 	}
 	return argv[1:i], argv[i:]
+}
+
+// interactiveTerminalEnv builds the environment inherited by the detached
+// pty-host and, in turn, by the interactive agent process it owns.
+//
+// AO itself may run under an agent or CI process that sets NO_COLOR for
+// captured logs. That ambient preference must not leak into an interactive
+// terminal. Projects can still opt out of color explicitly through RuntimeConfig
+// or an `env NO_COLOR=...` argv prefix. The native PTY and its xterm clients
+// support 24-bit SGR color, so advertise that capability consistently with the
+// legacy tmux runtime.
+func interactiveTerminalEnv(base []string, configured map[string]string, assignments []string) []string {
+	env := make([]string, 0, len(base)+len(configured)+len(assignments)+2)
+	appendEntry := func(entry string, explicit bool) {
+		key, _, ok := strings.Cut(entry, "=")
+		if !ok {
+			env = append(env, entry)
+			return
+		}
+		switch key {
+		case "TERM", "COLORTERM":
+			return
+		case "NO_COLOR":
+			if !explicit {
+				return
+			}
+		}
+		env = append(env, entry)
+	}
+
+	for _, entry := range base {
+		appendEntry(entry, false)
+	}
+	for key, value := range configured {
+		appendEntry(key+"="+value, true)
+	}
+	for _, entry := range assignments {
+		appendEntry(entry, true)
+	}
+	env = append(env, "TERM=xterm-256color", "COLORTERM=truecolor")
+	return env
 }

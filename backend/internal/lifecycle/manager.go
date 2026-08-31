@@ -67,6 +67,19 @@ type chatSpawnStore interface {
 	CommitChatSpawn(context.Context, domain.SessionRecord, domain.ConversationBranch) error
 }
 
+// preparedChatSpawnStore extends the atomic Chat publication boundary with
+// native-history projection. The callback runs on the same SQLite transaction
+// after the provider boundary and generation are staged, but before the live
+// session record is published. It remains optional for focused lifecycle fakes.
+type preparedChatSpawnStore interface {
+	CommitChatSpawnPrepared(
+		context.Context,
+		domain.SessionRecord,
+		domain.ConversationBranch,
+		func(context.Context) error,
+	) error
+}
+
 // agentSwitchSourceStopStore and agentSwitchTargetActivationStore are the
 // atomic persistence primitives used at the two agent-switch ownership
 // boundaries. They remain optional so focused lifecycle reducer fakes do not
@@ -769,6 +782,11 @@ type toolFlight struct {
 	// NOT be mistaken for the approval). Either way, empty means nothing
 	// tool-shaped may clear the block and it lifts only at a turn boundary.
 	blockedCandidate string
+	// cursorPending counts native Cursor permission dialogs by execution family
+	// and bounded tool name. Cursor does not provide tool-use ids, so a matching
+	// after-execution event can clear only its own key, and the session remains
+	// blocked until every observed dialog has completed.
+	cursorPending map[string]int
 }
 
 // maxInflightTools caps a session's in-flight map so lost posts cannot grow
@@ -786,6 +804,34 @@ func isPostToolUseEvent(event string) bool {
 	// post-tool-use-fail is retained for Kimchi hook files installed before the
 	// adapter switched to AO's canonical failure event name.
 	return event == "post-tool-use" || event == "post-tool-use-failure" || event == "post-tool-use-fail"
+}
+
+func cursorBeforeExecutionKey(s ports.ActivitySignal) (string, bool) {
+	if s.ToolName == "" {
+		return "", false
+	}
+	switch s.Event {
+	case "before-shell-execution":
+		return "shell\x00" + s.ToolName, true
+	case "before-mcp-execution":
+		return "mcp\x00" + s.ToolName, true
+	default:
+		return "", false
+	}
+}
+
+func cursorResolvedExecutionKey(s ports.ActivitySignal) (string, bool) {
+	if s.ToolName == "" {
+		return "", false
+	}
+	switch s.Event {
+	case "after-shell-execution", "cursor-shell-terminal-failure":
+		return "shell\x00" + s.ToolName, true
+	case "after-mcp-execution", "cursor-mcp-terminal-failure":
+		return "mcp\x00" + s.ToolName, true
+	default:
+		return "", false
+	}
 }
 
 // isTurnBoundaryEvent reports the events that reliably mean the pending
@@ -837,6 +883,15 @@ func (m *Manager) applyToolPrecedenceLocked(id domain.SessionID, cur domain.Acti
 
 	switch {
 	case s.State == domain.ActivityBlocked:
+		if key, ok := cursorBeforeExecutionKey(s); ok {
+			f := ensure()
+			f.blockedCandidate = ""
+			if f.cursorPending == nil {
+				f.cursorPending = map[string]int{}
+			}
+			f.cursorPending[key]++
+			return s
+		}
 		// Entering (or re-asserting) blocked: snapshot the dialog's identity.
 		// permission-request carries the blocking tool_name; the Notification
 		// duplicate does not and must not wipe an existing snapshot.
@@ -851,6 +906,7 @@ func (m *Manager) applyToolPrecedenceLocked(id domain.SessionID, cur domain.Acti
 		// candidate is recorded and the block clears only at a turn boundary
 		// (fail-closed).
 		f := ensure()
+		f.cursorPending = nil
 		// Recompute only when this signal identifies a dialog. Claude can emit an
 		// identity-less Notification duplicate after permission-request; that
 		// duplicate must not erase the candidate captured by the first signal.
@@ -890,14 +946,28 @@ func (m *Manager) applyToolPrecedenceLocked(id domain.SessionID, cur domain.Acti
 		case isTurnBoundaryEvent(s.Event):
 			delete(m.flights, id)
 			return s
-		case isPostToolUseEvent(s.Event) &&
-			fl != nil && fl.blockedCandidate != "" && s.ToolUseID == fl.blockedCandidate:
-			// The single unambiguous blocking tool finished: the dialog was
-			// answered. Clear the candidate so a later dialog in the same turn
-			// starts from a clean slate.
-			fl.blockedCandidate = ""
-			return s
 		default:
+			if fl != nil {
+				if key, ok := cursorResolvedExecutionKey(s); ok && fl.cursorPending[key] > 0 {
+					if fl.cursorPending[key] == 1 {
+						delete(fl.cursorPending, key)
+					} else {
+						fl.cursorPending[key]--
+					}
+					if len(fl.cursorPending) == 0 {
+						delete(m.flights, id)
+						return s
+					}
+					return suppressed
+				}
+				if isPostToolUseEvent(s.Event) && fl.blockedCandidate != "" && s.ToolUseID == fl.blockedCandidate {
+					// The single unambiguous blocking tool finished: the dialog was
+					// answered. Clear the candidate so a later dialog in the same turn
+					// starts from a clean slate.
+					fl.blockedCandidate = ""
+					return s
+				}
+			}
 			// Subagent/sibling tool traffic (including a same-name sibling when
 			// the block was ambiguous), notification sub-types (idle_prompt,
 			// agent_completed), and anything else that is not proof the dialog
@@ -996,7 +1066,7 @@ func (m *Manager) resolveNotifications(ctx context.Context, resolutions ...ports
 
 // MarkSpawned marks a newly spawned or restored session live and stores runtime/workspace handles.
 func (m *Manager) MarkSpawned(ctx context.Context, id domain.SessionID, metadata domain.SessionMetadata) error {
-	return m.markSpawned(ctx, id, metadata, nil)
+	return m.markSpawned(ctx, id, metadata, nil, nil)
 }
 
 // MarkChatSpawned atomically marks a Chat controller live and publishes the
@@ -1013,7 +1083,30 @@ func (m *Manager) MarkChatSpawned(
 		strings.TrimSpace(metadata.ControllerGeneration) == "" {
 		return fmt.Errorf("lifecycle: Chat provider boundary for %q has incomplete or mismatched ownership", id)
 	}
-	return m.markSpawned(ctx, id, metadata, &boundary)
+	return m.markSpawned(ctx, id, metadata, &boundary, nil)
+}
+
+// MarkChatSpawnedPrepared publishes native history together with its reserved
+// provider boundary and lifecycle owner. The preparation callback is executed
+// only by the storage transaction; no controller is registered and the session
+// remains externally unavailable until the complete unit commits.
+func (m *Manager) MarkChatSpawnedPrepared(
+	ctx context.Context,
+	id domain.SessionID,
+	metadata domain.SessionMetadata,
+	boundary domain.ConversationBranch,
+	prepare func(context.Context) error,
+) error {
+	if prepare == nil {
+		return errors.New("lifecycle: Chat provider-history preparation is missing")
+	}
+	if boundary.ID == "" || boundary.ConversationID == "" || boundary.SessionID != id ||
+		boundary.ProviderConversationID == "" || boundary.ProviderScopeID != boundary.ID ||
+		metadata.ProviderConversationID != boundary.ProviderConversationID ||
+		strings.TrimSpace(metadata.ControllerGeneration) == "" {
+		return fmt.Errorf("lifecycle: Chat provider boundary for %q has incomplete or mismatched ownership", id)
+	}
+	return m.markSpawned(ctx, id, metadata, &boundary, prepare)
 }
 
 func (m *Manager) markSpawned(
@@ -1021,6 +1114,7 @@ func (m *Manager) markSpawned(
 	id domain.SessionID,
 	metadata domain.SessionMetadata,
 	boundary *domain.ConversationBranch,
+	prepare func(context.Context) error,
 ) error {
 	launchID := strings.TrimSpace(metadata.RuntimeLaunchID)
 	reactivator, err := func() (sessionUsageReactivator, error) {
@@ -1047,12 +1141,20 @@ func (m *Manager) markSpawned(
 			if err := m.store.UpdateSession(ctx, rec); err != nil {
 				return nil, err
 			}
-		} else {
+		} else if prepare == nil {
 			writer, ok := m.store.(chatSpawnStore)
 			if !ok {
 				return nil, errors.New("lifecycle: atomic Chat spawn persistence is unavailable")
 			}
 			if err := writer.CommitChatSpawn(ctx, rec, *boundary); err != nil {
+				return nil, err
+			}
+		} else {
+			writer, ok := m.store.(preparedChatSpawnStore)
+			if !ok {
+				return nil, errors.New("lifecycle: atomic Chat provider-history persistence is unavailable")
+			}
+			if err := writer.CommitChatSpawnPrepared(ctx, rec, *boundary, prepare); err != nil {
 				return nil, err
 			}
 		}

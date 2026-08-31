@@ -147,6 +147,20 @@ SELECT
         WHERE pr_comment.pr_url = pr.url
           AND pr_comment.resolved = 0
           AND pr_comment.is_bot = 0
+          AND NOT EXISTS (
+              SELECT 1
+              FROM review_run
+              WHERE pr_comment.review_id != ''
+                AND review_run.github_review_id != ''
+                AND review_run.github_review_id = pr_comment.review_id
+          )
+    ) AS external_comments,
+    EXISTS (
+        SELECT 1
+        FROM pr_comment
+        WHERE pr_comment.pr_url = pr.url
+          AND pr_comment.resolved = 0
+          AND pr_comment.is_bot = 0
     ) AS review_comments
 FROM pr
 WHERE pr.session_id = ?
@@ -157,15 +171,16 @@ LIMIT 1
 `
 
 type GetDisplayPRFactsBySessionRow struct {
-	URL            string
-	Number         int64
-	PRState        domain.PRState
-	ReviewDecision domain.ReviewDecision
-	CIState        domain.CIState
-	Mergeability   domain.Mergeability
-	HeadSha        string
-	UpdatedAt      time.Time
-	ReviewComments bool
+	URL              string
+	Number           int64
+	PRState          domain.PRState
+	ReviewDecision   domain.ReviewDecision
+	CIState          domain.CIState
+	Mergeability     domain.Mergeability
+	HeadSha          string
+	UpdatedAt        time.Time
+	ExternalComments bool
+	ReviewComments   bool
 }
 
 func (q *Queries) GetDisplayPRFactsBySession(ctx context.Context, sessionID domain.SessionID) (GetDisplayPRFactsBySessionRow, error) {
@@ -180,6 +195,7 @@ func (q *Queries) GetDisplayPRFactsBySession(ctx context.Context, sessionID doma
 		&i.Mergeability,
 		&i.HeadSha,
 		&i.UpdatedAt,
+		&i.ExternalComments,
 		&i.ReviewComments,
 	)
 	return i, err
@@ -396,6 +412,47 @@ func (q *Queries) GetPRLastNudgeSignature(ctx context.Context, url string) (stri
 }
 
 const listPRFactsBySession = `-- name: ListPRFactsBySession :many
+WITH current_pr AS (
+    SELECT url, head_sha
+    FROM pr
+    WHERE pr.session_id = ?1
+),
+eligible_external_review AS (
+    -- Each human reviewer's CURRENT verdict on the PR's current head. Reviews
+    -- for an older explicit target_sha are stale and must not drive current
+    -- readiness. Empty target_sha is kept as a compatibility fallback for
+    -- older provider rows that did not record which head they reviewed.
+    SELECT pr_reviews.pr_url, pr_reviews.author, pr_reviews.review_id, pr_reviews.state, pr_reviews.submitted_at
+    FROM pr_reviews
+    JOIN current_pr ON current_pr.url = pr_reviews.pr_url
+    WHERE pr_reviews.is_bot = 0
+      AND pr_reviews.state IN ('approved', 'changes_requested')
+      AND (pr_reviews.target_sha = '' OR pr_reviews.target_sha = current_pr.head_sha)
+      AND NOT EXISTS (
+          SELECT 1
+          FROM review_run
+          WHERE review_run.github_review_id != ''
+            AND review_run.github_review_id = pr_reviews.review_id
+      )
+),
+external_review AS (
+    -- Keep this query body ASCII. A multi-byte character anywhere in it makes
+    -- sqlc 1.31 truncate the tail of the generated SQL by the extra byte count
+    -- (an em dash here silently cut ` + "`" + `DESC` + "`" + ` to ` + "`" + `DE` + "`" + `), the same class of parser
+    -- bug documented in queries/sessions.sql and queries/changelog.sql.
+    SELECT eligible_external_review.pr_url, eligible_external_review.state
+    FROM eligible_external_review
+    WHERE NOT EXISTS (
+        SELECT 1
+        FROM eligible_external_review newer
+        WHERE newer.pr_url = eligible_external_review.pr_url
+          AND newer.author = eligible_external_review.author
+          AND (
+              newer.submitted_at > eligible_external_review.submitted_at
+              OR (newer.submitted_at = eligible_external_review.submitted_at AND newer.review_id > eligible_external_review.review_id)
+          )
+    )
+)
 SELECT
     pr.url,
     pr.number,
@@ -413,29 +470,60 @@ SELECT
         WHERE pr_comment.pr_url = pr.url
           AND pr_comment.resolved = 0
           AND pr_comment.is_bot = 0
-    ) AS review_comments
+          AND NOT EXISTS (
+              SELECT 1
+              FROM review_run
+              WHERE pr_comment.review_id != ''
+                AND review_run.github_review_id != ''
+                AND review_run.github_review_id = pr_comment.review_id
+          )
+    ) AS external_comments,
+    EXISTS (
+        SELECT 1
+        FROM pr_comment
+        WHERE pr_comment.pr_url = pr.url
+          AND pr_comment.resolved = 0
+          AND pr_comment.is_bot = 0
+    ) AS review_comments,
+    EXISTS (
+        SELECT 1
+        FROM external_review
+        WHERE external_review.pr_url = pr.url
+          AND external_review.state = 'approved'
+    ) AS external_approved,
+    EXISTS (
+        SELECT 1
+        FROM external_review
+        WHERE external_review.pr_url = pr.url
+          AND external_review.state = 'changes_requested'
+    ) AS external_changes_requested
 FROM pr
-WHERE pr.session_id = ?
+WHERE pr.session_id = ?1
 ORDER BY pr.updated_at DESC
 `
 
 type ListPRFactsBySessionRow struct {
-	URL            string
-	Number         int64
-	PRState        domain.PRState
-	ReviewDecision domain.ReviewDecision
-	CIState        domain.CIState
-	Mergeability   domain.Mergeability
-	SourceBranch   string
-	TargetBranch   string
-	HeadSha        string
-	UpdatedAt      time.Time
-	ReviewComments bool
+	URL                      string
+	Number                   int64
+	PRState                  domain.PRState
+	ReviewDecision           domain.ReviewDecision
+	CIState                  domain.CIState
+	Mergeability             domain.Mergeability
+	SourceBranch             string
+	TargetBranch             string
+	HeadSha                  string
+	UpdatedAt                time.Time
+	ExternalComments         bool
+	ReviewComments           bool
+	ExternalApproved         bool
+	ExternalChangesRequested bool
 }
 
 // All PR snapshots for a session (every state), with source/target branch for
-// stack derivation and the unresolved-comment flag. The status aggregator
-// filters open vs merged/closed in Go and derives stacks from the branches.
+// stack derivation, the unresolved-comment flag, and the human review verdicts
+// AO did not author. The status aggregator filters open vs merged/closed in Go
+// and derives stacks from the branches; the Kanban reducer needs the
+// AO/external split because the aggregate review_decision mixes both sources.
 func (q *Queries) ListPRFactsBySession(ctx context.Context, sessionID domain.SessionID) ([]ListPRFactsBySessionRow, error) {
 	rows, err := q.db.QueryContext(ctx, listPRFactsBySession, sessionID)
 	if err != nil {
@@ -456,7 +544,171 @@ func (q *Queries) ListPRFactsBySession(ctx context.Context, sessionID domain.Ses
 			&i.TargetBranch,
 			&i.HeadSha,
 			&i.UpdatedAt,
+			&i.ExternalComments,
 			&i.ReviewComments,
+			&i.ExternalApproved,
+			&i.ExternalChangesRequested,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPRFactsBySessions = `-- name: ListPRFactsBySessions :many
+WITH wanted_session AS (
+    SELECT CAST(j.value AS TEXT) AS session_id
+    FROM json_each(?) AS j
+),
+current_pr AS (
+    SELECT pr.session_id, pr.url, pr.head_sha
+    FROM pr
+    JOIN wanted_session ON wanted_session.session_id = pr.session_id
+),
+eligible_external_review AS (
+    -- Each human reviewer's CURRENT verdict on the PR's current head. Reviews
+    -- for an older explicit target_sha are stale and must not drive current
+    -- readiness. Empty target_sha is kept as a compatibility fallback for
+    -- older provider rows that did not record which head they reviewed.
+    SELECT current_pr.session_id, pr_reviews.pr_url, pr_reviews.author, pr_reviews.review_id, pr_reviews.state, pr_reviews.submitted_at
+    FROM pr_reviews
+    JOIN current_pr ON current_pr.url = pr_reviews.pr_url
+    WHERE pr_reviews.is_bot = 0
+      AND pr_reviews.state IN ('approved', 'changes_requested')
+      AND (pr_reviews.target_sha = '' OR pr_reviews.target_sha = current_pr.head_sha)
+      AND NOT EXISTS (
+          SELECT 1
+          FROM review_run
+          WHERE review_run.github_review_id != ''
+            AND review_run.github_review_id = pr_reviews.review_id
+      )
+),
+external_review AS (
+    -- Keep this query body ASCII. A multi-byte character anywhere in it makes
+    -- sqlc 1.31 truncate the tail of the generated SQL by the extra byte count
+    -- (an em dash here silently cut ` + "`" + `DESC` + "`" + ` to ` + "`" + `DE` + "`" + `), the same class of parser
+    -- bug documented in queries/sessions.sql and queries/changelog.sql.
+    SELECT
+        eligible_external_review.session_id,
+        eligible_external_review.pr_url,
+        eligible_external_review.state
+    FROM eligible_external_review
+    WHERE NOT EXISTS (
+        SELECT 1
+        FROM eligible_external_review newer
+        WHERE newer.pr_url = eligible_external_review.pr_url
+          AND newer.author = eligible_external_review.author
+          AND (
+              newer.submitted_at > eligible_external_review.submitted_at
+              OR (newer.submitted_at = eligible_external_review.submitted_at AND newer.review_id > eligible_external_review.review_id)
+          )
+    )
+)
+SELECT
+    pr.session_id,
+    pr.url,
+    pr.number,
+    pr.pr_state,
+    pr.review_decision,
+    pr.ci_state,
+    pr.mergeability,
+    pr.source_branch,
+    pr.target_branch,
+    pr.head_sha,
+    pr.updated_at,
+    EXISTS (
+        SELECT 1
+        FROM pr_comment
+        WHERE pr_comment.pr_url = pr.url
+          AND pr_comment.resolved = 0
+          AND pr_comment.is_bot = 0
+          AND NOT EXISTS (
+              SELECT 1
+              FROM review_run
+              WHERE pr_comment.review_id != ''
+                AND review_run.github_review_id != ''
+                AND review_run.github_review_id = pr_comment.review_id
+          )
+    ) AS external_comments,
+    EXISTS (
+        SELECT 1
+        FROM pr_comment
+        WHERE pr_comment.pr_url = pr.url
+          AND pr_comment.resolved = 0
+          AND pr_comment.is_bot = 0
+    ) AS review_comments,
+    EXISTS (
+        SELECT 1
+        FROM external_review
+        WHERE external_review.pr_url = pr.url
+          AND external_review.session_id = pr.session_id
+          AND external_review.state = 'approved'
+    ) AS external_approved,
+    EXISTS (
+        SELECT 1
+        FROM external_review
+        WHERE external_review.pr_url = pr.url
+          AND external_review.session_id = pr.session_id
+          AND external_review.state = 'changes_requested'
+    ) AS external_changes_requested
+FROM pr
+JOIN wanted_session ON wanted_session.session_id = pr.session_id
+ORDER BY pr.session_id, pr.updated_at DESC
+`
+
+type ListPRFactsBySessionsRow struct {
+	SessionID                domain.SessionID
+	URL                      string
+	Number                   int64
+	PRState                  domain.PRState
+	ReviewDecision           domain.ReviewDecision
+	CIState                  domain.CIState
+	Mergeability             domain.Mergeability
+	SourceBranch             string
+	TargetBranch             string
+	HeadSha                  string
+	UpdatedAt                time.Time
+	ExternalComments         bool
+	ReviewComments           bool
+	ExternalApproved         bool
+	ExternalChangesRequested bool
+}
+
+// Batch form of ListPRFactsBySession for board/session-list reads. The JSON
+// array of session ids keeps the list path bounded instead of issuing one PR
+// query per card.
+func (q *Queries) ListPRFactsBySessions(ctx context.Context, jsonEach interface{}) ([]ListPRFactsBySessionsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listPRFactsBySessions, jsonEach)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListPRFactsBySessionsRow{}
+	for rows.Next() {
+		var i ListPRFactsBySessionsRow
+		if err := rows.Scan(
+			&i.SessionID,
+			&i.URL,
+			&i.Number,
+			&i.PRState,
+			&i.ReviewDecision,
+			&i.CIState,
+			&i.Mergeability,
+			&i.SourceBranch,
+			&i.TargetBranch,
+			&i.HeadSha,
+			&i.UpdatedAt,
+			&i.ExternalComments,
+			&i.ReviewComments,
+			&i.ExternalApproved,
+			&i.ExternalChangesRequested,
 		); err != nil {
 			return nil, err
 		}
@@ -473,7 +725,7 @@ func (q *Queries) ListPRFactsBySession(ctx context.Context, sessionID domain.Ses
 
 const listPRsBySession = `-- name: ListPRsBySession :many
 SELECT url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at, provider, host, repo, source_branch, target_branch, head_sha, title, additions, deletions, changed_files, author, base_sha, merge_commit_sha, is_draft, is_merged, is_closed, provider_state, provider_mergeable, provider_merge_state_status, html_url, created_at_provider, updated_at_provider, merged_at_provider, closed_at_provider, metadata_hash, ci_hash, review_hash, observed_at, ci_observed_at, review_observed_at, last_nudge_signature, state_changed_at, auto_inject_ci, provider_id FROM pr
-WHERE session_id = ?
+WHERE pr.session_id = ?
 ORDER BY updated_at DESC
 `
 

@@ -31,6 +31,23 @@ UPDATE sessions SET
     is_pinned = ?, pinned_at = ?, auto_inject_review = ?, auto_inject_ci = ?
 WHERE id = ?;
 
+-- name: UpdateBrowserCapabilityVerifier :execrows
+-- Rotate only the browser credential for the exact controller owner observed by
+-- the launcher. This must not replay a stale SessionRecord over newer lifecycle,
+-- activity, termination, or provider ownership facts.
+UPDATE sessions SET
+    browser_capability_verifier = sqlc.arg(browser_capability_verifier),
+    updated_at = MAX(updated_at, sqlc.arg(updated_at))
+WHERE id = sqlc.arg(id)
+  AND harness = sqlc.arg(expected_harness)
+  AND session_mode = sqlc.arg(expected_session_mode)
+  AND is_terminated = sqlc.arg(expected_is_terminated)
+  AND runtime_launch_id = sqlc.arg(expected_runtime_launch_id)
+  AND agent_session_id = sqlc.arg(expected_agent_session_id)
+  AND agent_session_id_launch_id = sqlc.arg(expected_agent_session_id_launch_id)
+  AND provider_conversation_id = sqlc.arg(expected_provider_conversation_id)
+  AND controller_generation = sqlc.arg(expected_controller_generation);
+
 -- name: RecordSessionLatestUserPrompt :execrows
 UPDATE sessions SET
     latest_user_prompt = sqlc.arg(latest_user_prompt),

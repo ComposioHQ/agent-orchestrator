@@ -63,6 +63,7 @@ const deferredLocalizationFiles = new Set([
 	"components/chat/SessionChatSurface.tsx",
 	"components/chat/TurnPlan.tsx",
 	"components/chat/TurnSettingsBar.tsx",
+	"components/chat/QueuedMessageDock.tsx",
 ]);
 
 function rendererFiles(directory: string): string[] {

@@ -539,6 +539,74 @@ INSERT INTO model_usage_events (
 	}
 }
 
+// TestKimiUsageMigrationPreservesCurrentUsageFacts covers 0117 directly. The
+// harness/source enum rebuild must retain columns introduced by 0113-0116 and
+// leave the bounded provider usage object untouched.
+func TestKimiUsageMigrationPreservesCurrentUsageFacts(t *testing.T) {
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "ao.db")+pragmas)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	db.SetMaxOpenConns(1)
+	t.Cleanup(func() { _ = db.Close() })
+	upTo(t, db, 116)
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err := db.Exec(`
+INSERT INTO projects (id, path, registered_at, config) VALUES ('kimi-migration', '/repo/kimi', ?, '{}');
+INSERT INTO sessions (id, project_id, num, harness, activity_last_at, created_at, updated_at)
+VALUES ('kimi-migration-1', 'kimi-migration', 1, 'claude-code', ?, ?, ?);
+INSERT INTO usage_bindings (
+    id, session_id, harness, native_root_id, state, updated_at, provider_hint
+) VALUES (1, 'kimi-migration-1', 'claude-code', 'root', 'complete', ?, 'anthropic');
+INSERT INTO usage_sources (id, binding_id, kind, artifact_path, state, updated_at)
+VALUES (1, 1, 'claude_main', '/tmp/claude.jsonl', 'complete', ?);
+INSERT INTO model_usage_events (
+    id, binding_id, usage_source_id, provider_id, billing_provider_id,
+    billing_provider_source, model_id, usage_measurement_kind,
+    input_tokens, cached_input_tokens, uncached_input_tokens, output_tokens,
+    provider_usage_json, source_event_key
+) VALUES (
+    1, 1, 1, 'anthropic', 'anthropic', 'observed', 'claude-test',
+    'native_reported', 100, 40, 60, 20,
+    '{"input_tokens":60,"cache_read_input_tokens":40,"output_tokens":20}',
+    'pre-kimi'
+);`, now, now, now, now, now, now); err != nil {
+		t.Fatalf("seed pre-Kimi usage schema: %v", err)
+	}
+
+	if err := migrate(db); err != nil {
+		t.Fatalf("apply Kimi usage migration: %v", err)
+	}
+
+	var providerHint, measurementKind, providerUsage, billingSource string
+	if err := db.QueryRow(`
+SELECT binding.provider_hint, event.usage_measurement_kind,
+       event.provider_usage_json, event.billing_provider_source
+FROM usage_bindings binding
+JOIN model_usage_events event ON event.binding_id = binding.id
+WHERE event.source_event_key = 'pre-kimi'`).Scan(
+		&providerHint, &measurementKind, &providerUsage, &billingSource,
+	); err != nil {
+		t.Fatalf("read usage facts after Kimi migration: %v", err)
+	}
+	if providerHint != "anthropic" || measurementKind != "native_reported" ||
+		providerUsage != `{"input_tokens":60,"cache_read_input_tokens":40,"output_tokens":20}` ||
+		billingSource != "observed" {
+		t.Fatalf("migrated usage facts = hint:%q kind:%q usage:%q billing-source:%q",
+			providerHint, measurementKind, providerUsage, billingSource)
+	}
+
+	if _, err := db.Exec(`
+INSERT INTO usage_bindings (session_id, harness, native_root_id, state, updated_at)
+VALUES ('kimi-migration-1', 'kimi', 'kimi-root', 'active', ?);
+INSERT INTO usage_sources (binding_id, kind, artifact_path, state, updated_at)
+SELECT id, 'kimi_wire', '/tmp/kimi/wire.jsonl', 'active', ?
+FROM usage_bindings WHERE harness = 'kimi';`, now, now); err != nil {
+		t.Fatalf("insert Kimi usage binding and source: %v", err)
+	}
+}
+
 func openMigratedTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "ao.db")+pragmas)

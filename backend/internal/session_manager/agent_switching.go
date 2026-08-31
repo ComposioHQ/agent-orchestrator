@@ -1190,6 +1190,7 @@ func (m *Manager) prepareTargetActivation(ctx context.Context, store ports.Agent
 			managedCodexProfile = launchContext.Managed
 		}
 	}
+	pinRuntimePermissionEnv(env, config.Permissions)
 	m.augmentAgentRuntimeEnv(agent, env)
 	configDir, err := nativeConfigDir(ctx, agent, env)
 	if err != nil {
