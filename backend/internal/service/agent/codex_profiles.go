@@ -159,51 +159,6 @@ func (m *codexProfileManager) openResolvedLoginTerminal(ctx context.Context, rec
 	return CodexProfileLoginTerminalStart{ProfileID: record.Snapshot.ID, ShellTerminal: terminal}, nil
 }
 
-func (m *codexProfileManager) openLoginTerminal(ctx context.Context, profileID string) (CodexProfileLoginTerminalStart, error) {
-	record, err := m.resolveLoginTerminalProfile(ctx, profileID)
-	if err != nil {
-		return CodexProfileLoginTerminalStart{}, err
-	}
-	return m.openResolvedLoginTerminal(ctx, record)
-}
-
-func (m *codexProfileManager) resolveLoginTerminalProfile(ctx context.Context, profileID string) (codexProfileRecord, error) {
-	if err := ctx.Err(); err != nil {
-		return codexProfileRecord{}, err
-	}
-	if err := m.catalog.refresh(); err != nil {
-		return codexProfileRecord{}, apierr.Unavailable("CODEX_PROFILE_MANAGEMENT_UNAVAILABLE", "Codex profile discovery is unavailable")
-	}
-	record, ok := m.catalog.record(strings.TrimSpace(profileID))
-	if !ok {
-		return codexProfileRecord{}, apierr.NotFound("CODEX_PROFILE_UNKNOWN", "Codex profile not found")
-	}
-	if record.Snapshot.Status != domain.CodexProfileStatusValid {
-		return codexProfileRecord{}, apierr.Conflict("CODEX_PROFILE_INVALID", "Codex profile is not valid", map[string]any{"profileId": record.Snapshot.ID})
-	}
-	return record, nil
-}
-
-func (m *codexProfileManager) openResolvedLoginTerminal(ctx context.Context, record codexProfileRecord) (CodexProfileLoginTerminalStart, error) {
-	if m.loginTerminalOpener == nil || m.executable == nil {
-		return CodexProfileLoginTerminalStart{}, apierr.Unavailable("CODEX_PROFILE_LOGIN_TERMINAL_UNAVAILABLE", "Codex login terminal is unavailable")
-	}
-	executable, err := m.executable()
-	if err != nil || strings.TrimSpace(executable) == "" {
-		return CodexProfileLoginTerminalStart{}, apierr.Unavailable("CODEX_PROFILE_LOGIN_TERMINAL_UNAVAILABLE", "Codex login terminal is unavailable")
-	}
-	terminal, err := m.loginTerminalOpener.OpenCommandTerminal(ctx, shellterm.OpenCommandTerminalInput{
-		Argv:       []string{executable, "codex-login"},
-		Env:        map[string]string{"CODEX_HOME": record.Home},
-		WorkingDir: record.Home,
-		Title:      "Codex login - " + record.Snapshot.Label,
-	})
-	if err != nil {
-		return CodexProfileLoginTerminalStart{}, apierr.Unavailable("CODEX_PROFILE_LOGIN_TERMINAL_UNAVAILABLE", "Codex login terminal could not be opened")
-	}
-	return CodexProfileLoginTerminalStart{ProfileID: record.Snapshot.ID, ShellTerminal: terminal}, nil
-}
-
 func unavailableCodexCapabilities() domain.CodexProfileCapabilities {
 	unknown := domain.CodexCapabilityObservation{State: domain.CodexCapabilityUnknown, ReasonCode: domain.CodexCapabilityReasonUnknown, Reason: "Codex capability detection has not completed."}
 	return domain.CodexProfileCapabilities{AccountRead: unknown, BrowserLogin: unknown, CapacityRead: unknown}

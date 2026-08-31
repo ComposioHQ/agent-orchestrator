@@ -774,7 +774,10 @@ func (s *Service) restoreClosedSourceController(
 	conversation := source.conversation
 	conversation.ActiveBranchID = branch.ID
 	replacement := newController(
-		id, conversation, generation, source.harness, provider, s.store, s.activity, s.log, s.newID, s.now, s.onAccountChanged)
+		id, conversation, generation, source.harness, source.codexProfileID,
+		provider, s.store, s.activity, s.log, s.newID, s.now,
+		s.onAccountChanged, s.onCapacityChanged,
+	)
 	if err := s.store.ActivateConversationBranch(recoveryCtx, id, conversation.ID, branch.ID,
 		providerConversationID, generation, s.now()); err != nil {
 		_ = provider.Close()
