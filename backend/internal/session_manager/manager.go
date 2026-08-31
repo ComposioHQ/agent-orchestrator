@@ -60,6 +60,10 @@ var (
 	// with the system prompt only). Workers without a task and without a native
 	// session id have nothing meaningful to restore.
 	ErrNotResumable = errors.New("session: nothing to resume from")
+	// ErrNoNativeResume means the agent's adapter cannot natively resume its
+	// conversation (GetRestoreCommand returned ok=false). Auto-resume only
+	// fires for native transcript continuations, never fresh re-launches.
+	ErrNoNativeResume = errors.New("session: no native resume available")
 	// ErrSwitchInProgress means an agent switch is already running for this
 	// session. The API maps it to a 409 so a double-submit does not race two
 	// teardown/relaunch cycles over one worktree.
@@ -1939,11 +1943,68 @@ func (m *Manager) ResumeAgentWithMode(ctx context.Context, id domain.SessionID) 
 	return m.relaunchSession(ctx, "resume agent", rec, project, ws, &handle)
 }
 
-func (m *Manager) relaunchSession(ctx context.Context, operation string, rec domain.SessionRecord, project domain.ProjectRecord, ws ports.WorkspaceInfo, restartHandle *ports.RuntimeHandle) (RestoreResult, error) {
-	return m.relaunchSessionWithPolicy(ctx, operation, rec, project, ws, restartHandle, false, false)
+// AutoResumeAgentWithMode is the automatic counterpart of ResumeAgentWithMode.
+// It fires only when the agent's adapter can natively continue its conversation
+// (GetRestoreCommand returns ok=true). If native resume is unavailable it
+// returns ErrNoNativeResume so the caller falls back to the clean "session
+// ended" state without silently relaunching from a saved prompt.
+func (m *Manager) AutoResumeAgentWithMode(ctx context.Context, id domain.SessionID) (RestoreResult, error) {
+	if err := m.beginAgentResume(ctx, id); err != nil {
+		return RestoreResult{}, fmt.Errorf("auto-resume agent %s: %w", id, err)
+	}
+	defer m.endAgentResume(id)
+	if active, err := m.hasActiveInterfaceTransition(ctx, id); err != nil {
+		return RestoreResult{}, fmt.Errorf("auto-resume agent %s: interface transition: %w", id, err)
+	} else if active {
+		return RestoreResult{}, fmt.Errorf("auto-resume agent %s: %w", id, ErrInterfaceTransitionInProgress)
+	}
+	rec, ok, err := m.store.GetSession(ctx, id)
+	if err != nil {
+		return RestoreResult{}, fmt.Errorf("auto-resume agent %s: %w", id, err)
+	}
+	if !ok {
+		return RestoreResult{}, fmt.Errorf("auto-resume agent %s: %w", id, ErrNotFound)
+	}
+	if rec.IsTerminated {
+		return RestoreResult{}, fmt.Errorf("auto-resume agent %s: %w", id, ErrTerminated)
+	}
+	mode := domain.NormalizeSessionMode(rec.Mode)
+	if mode == domain.SessionModeChat && m.chat != nil && m.chat.HasLiveChatController(id) {
+		return RestoreResult{}, fmt.Errorf("auto-resume agent %s: %w", id, ErrAgentNotExited)
+	}
+	if rec.Activity.State != domain.ActivityExited {
+		if mode != domain.SessionModeChat || m.chat == nil {
+			return RestoreResult{}, fmt.Errorf("auto-resume agent %s: %w", id, ErrAgentNotExited)
+		}
+	}
+	project, err := m.loadProject(ctx, rec.ProjectID)
+	if err != nil {
+		return RestoreResult{}, fmt.Errorf("auto-resume agent %s: %w", id, err)
+	}
+	meta := rec.Metadata
+	if meta.WorkspacePath == "" ||
+		(meta.Branch == "" && project.Kind.WithDefault() != domain.ProjectKindScratch) ||
+		(mode != domain.SessionModeChat && meta.RuntimeHandleID == "") {
+		return RestoreResult{}, fmt.Errorf("auto-resume agent %s: %w", id, ErrIncompleteHandle)
+	}
+	ws := ports.WorkspaceInfo{
+		Path:      meta.WorkspacePath,
+		Branch:    meta.Branch,
+		SessionID: rec.ID,
+		ProjectID: rec.ProjectID,
+	}
+	if mode == domain.SessionModeChat {
+		return RestoreResult{}, fmt.Errorf("auto-resume agent %s: %w", id, ErrNoNativeResume)
+	}
+	handle := ports.RuntimeHandle{ID: meta.RuntimeHandleID}
+	return m.relaunchSessionWithPolicy(ctx, "auto-resume agent", rec, project, ws, &handle, false, false, true)
 }
 
-func (m *Manager) relaunchSessionWithPolicy(ctx context.Context, operation string, rec domain.SessionRecord, project domain.ProjectRecord, ws ports.WorkspaceInfo, restartHandle *ports.RuntimeHandle, forceFresh, requireNativeHistory bool) (RestoreResult, error) {
+func (m *Manager) relaunchSession(ctx context.Context, operation string, rec domain.SessionRecord, project domain.ProjectRecord, ws ports.WorkspaceInfo, restartHandle *ports.RuntimeHandle) (RestoreResult, error) {
+	return m.relaunchSessionWithPolicy(ctx, operation, rec, project, ws, restartHandle, false, false, false)
+}
+
+func (m *Manager) relaunchSessionWithPolicy(ctx context.Context, operation string, rec domain.SessionRecord, project domain.ProjectRecord, ws ports.WorkspaceInfo, restartHandle *ports.RuntimeHandle, forceFresh, requireNativeHistory, nativeOnly bool) (RestoreResult, error) {
 	// Relaunch dispatches from the currently committed persisted mode, never from
 	// a caller hint. The interface-transition coordinator changes that fact only
 	// after stopping the old controller, then reuses this ordinary restore path.
@@ -1997,7 +2058,7 @@ func (m *Manager) relaunchSessionWithPolicy(ctx context.Context, operation strin
 			systemPrompt, systemPromptFile, agentConfig, rec.Kind, m.dataDir, true)
 	} else {
 		argv, delivery, mode, err = restoreArgv(ctx, agent, rec.ID, ws.Path, rec.Metadata,
-			systemPrompt, systemPromptFile, agentConfig, rec.Kind, rec.Harness, m.dataDir)
+			systemPrompt, systemPromptFile, agentConfig, rec.Kind, rec.Harness, m.dataDir, nativeOnly)
 	}
 	if err != nil {
 		m.cleanupSystemPromptDir(rec.ID)
@@ -4322,7 +4383,7 @@ func sleepContext(ctx context.Context, d time.Duration) error {
 // signals via ok=false (e.g. no native session id captured yet). Returns
 // ErrNotResumable when transcript-preserving restore is required but unavailable,
 // or when a promptless, unresumable worker has nothing to restore from.
-func restoreArgv(ctx context.Context, agent ports.Agent, id domain.SessionID, workspacePath string, meta domain.SessionMetadata, systemPrompt, systemPromptFile string, agentConfig ports.AgentConfig, kind domain.SessionKind, _ domain.AgentHarness, dataDir string) ([]string, ports.PromptDeliveryStrategy, RestoreMode, error) {
+func restoreArgv(ctx context.Context, agent ports.Agent, id domain.SessionID, workspacePath string, meta domain.SessionMetadata, systemPrompt, systemPromptFile string, agentConfig ports.AgentConfig, kind domain.SessionKind, _ domain.AgentHarness, dataDir string, nativeOnly bool) ([]string, ports.PromptDeliveryStrategy, RestoreMode, error) {
 	ref := ports.SessionRef{
 		ID:            string(id),
 		WorkspacePath: workspacePath,
@@ -4334,6 +4395,9 @@ func restoreArgv(ctx context.Context, agent ports.Agent, id domain.SessionID, wo
 	}
 	if ok {
 		return cmd, ports.PromptDeliveryInCommand, RestoreModeNative, nil
+	}
+	if nativeOnly {
+		return nil, "", "", ErrNoNativeResume
 	}
 	return freshLaunchArgv(ctx, agent, id, workspacePath, meta, systemPrompt,
 		systemPromptFile, agentConfig, kind, dataDir, false)

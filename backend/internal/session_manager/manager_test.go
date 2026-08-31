@@ -579,6 +579,23 @@ func (a launchArgvAgent) GetRestoreCommand(context.Context, ports.RestoreConfig)
 	return a.argv, true, nil
 }
 
+type unresumableAgent struct {
+	fakeAgent
+	argv []string
+}
+
+func (a unresumableAgent) GetLaunchCommand(context.Context, ports.LaunchConfig) ([]string, error) {
+	return a.argv, nil
+}
+
+func (unresumableAgent) GetRestoreCommand(context.Context, ports.RestoreConfig) ([]string, bool, error) {
+	return nil, false, nil
+}
+
+func (unresumableAgent) ExitDetectionMode() ports.AgentExitDetectionMode {
+	return ports.AgentExitDetectionSupervisor
+}
+
 type supervisedLaunchAgent struct{ launchArgvAgent }
 
 func (supervisedLaunchAgent) ExitDetectionMode() ports.AgentExitDetectionMode {
@@ -1861,6 +1878,67 @@ func TestResumeAgent_ReleasesInputGateAfterInterfaceTransitionRejection(t *testi
 				t.Fatal("interface-transition rejection left input admission closed")
 			}
 		})
+	}
+}
+
+func TestAutoResumeAgent_SucceedsForNativeRestore(t *testing.T) {
+	baseRuntime := &fakeRuntime{aliveByHandle: map[string]bool{"tmux-mer-1": true}}
+	runtime := &fakeRestartRuntime{fakeRuntime: baseRuntime}
+	agent := supervisedLaunchAgent{launchArgvAgent{argv: []string{"codex", "resume", "agent-x"}}}
+	m, st, _ := newExitedResumeManager(t, runtime, agent)
+
+	result, err := m.AutoResumeAgentWithMode(ctx, "mer-1")
+	if err != nil {
+		t.Fatalf("AutoResumeAgentWithMode: %v", err)
+	}
+	if result.Mode != RestoreModeNative {
+		t.Fatalf("resume mode = %q, want %q", result.Mode, RestoreModeNative)
+	}
+	got := st.sessions["mer-1"]
+	if got.IsTerminated || got.Activity.State != domain.ActivityIdle {
+		t.Fatalf("resumed session = %+v, want live idle", got)
+	}
+}
+
+func TestAutoResumeAgent_FailsWithErrNoNativeResumeWhenNotResumable(t *testing.T) {
+	baseRuntime := &fakeRuntime{aliveByHandle: map[string]bool{"tmux-mer-1": true}}
+	runtime := &fakeRestartRuntime{fakeRuntime: baseRuntime}
+	// agent whose GetRestoreCommand returns ok=false
+	agent := unresumableAgent{argv: []string{"agent", "run"}}
+	m, st, _ := newExitedResumeManager(t, runtime, agent)
+
+	_, err := m.AutoResumeAgentWithMode(ctx, "mer-1")
+	if !errors.Is(err, ErrNoNativeResume) {
+		t.Fatalf("AutoResumeAgentWithMode err = %v, want ErrNoNativeResume", err)
+	}
+	// Verify session remained exited and was NOT relaunched
+	got := st.sessions["mer-1"]
+	if got.Activity.State != domain.ActivityExited {
+		t.Fatalf("session activity = %v, want exited", got.Activity.State)
+	}
+	if baseRuntime.created != 0 || runtime.restarted != 0 {
+		t.Fatalf("auto-resume must not launch or recreate runtime on ErrNoNativeResume: created=%d restarted=%d",
+			baseRuntime.created, runtime.restarted)
+	}
+}
+
+func TestAutoResumeAgent_RequiresLiveExitedSession(t *testing.T) {
+	runtime := &fakeRuntime{aliveByHandle: map[string]bool{"tmux-mer-1": true}}
+	agent := supervisedLaunchAgent{launchArgvAgent{argv: []string{"codex", "resume", "agent-x"}}}
+	m, st, _ := newExitedResumeManager(t, runtime, agent)
+
+	rec := st.sessions["mer-1"]
+	rec.Activity.State = domain.ActivityIdle
+	st.sessions["mer-1"] = rec
+	if _, err := m.AutoResumeAgentWithMode(ctx, "mer-1"); !errors.Is(err, ErrAgentNotExited) {
+		t.Fatalf("idle auto-resume error = %v, want ErrAgentNotExited", err)
+	}
+
+	rec.Activity.State = domain.ActivityExited
+	rec.IsTerminated = true
+	st.sessions["mer-1"] = rec
+	if _, err := m.AutoResumeAgentWithMode(ctx, "mer-1"); !errors.Is(err, ErrTerminated) {
+		t.Fatalf("terminated auto-resume error = %v, want ErrTerminated", err)
 	}
 }
 

@@ -2197,6 +2197,13 @@ func (f *fakeCommander) ResumeAgentWithMode(_ context.Context, id domain.Session
 	}
 	return f.restoreResult, nil
 }
+func (f *fakeCommander) AutoResumeAgentWithMode(_ context.Context, id domain.SessionID) (sessionmanager.RestoreResult, error) {
+	f.resumed = append(f.resumed, id)
+	if f.restoreErr != nil {
+		return sessionmanager.RestoreResult{}, f.restoreErr
+	}
+	return f.restoreResult, nil
+}
 func (f *fakeCommander) Kill(_ context.Context, id domain.SessionID) (bool, error) {
 	if f.killErr != nil {
 		return false, f.killErr

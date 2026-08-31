@@ -2135,6 +2135,51 @@ paths:
       summary: Set the auto-inject review setting for a session
       tags:
       - sessions
+  /api/v1/sessions/{sessionId}/auto-resume-agent:
+    post:
+      operationId: autoResumeAgent
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResumeAgentResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Auto-resume an exited agent via native session recovery only
+      tags:
+      - sessions
   /api/v1/sessions/{sessionId}/auto-review:
     put:
       operationId: setSessionAutoReview

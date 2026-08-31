@@ -1130,18 +1130,18 @@ func TestIsAliveReturnsFalseNilOnCantFindSession(t *testing.T) {
 	}
 }
 
-// A conclusively absent server means the tmux runtime handle is gone, although
-// the agent may still be alive as an orphan. Surface the infrastructure-level
-// sentinel rather than a per-session false result: the reaper treats errors as
-// failed probes, while explicit recovery paths may recreate the missing server.
-func TestIsAliveReportsNoServerAsRuntimeUnavailable(t *testing.T) {
+// After a reboot the tmux server is gone and every session it hosted is
+// permanently dead. Surface (false, nil) — the same definitive signal as a
+// missing session — so attachment.go calls markExited() immediately instead
+// of retrying with backoff forever. Fixes #4641.
+func TestIsAliveReportsNoServerAsPermanentDeath(t *testing.T) {
 	r, fr := newTestRuntime(0)
 	fr.outputs = [][]byte{[]byte("no server running on /tmp/tmux-1000/default")}
 	fr.err = &exec.ExitError{}
 
 	alive, err := r.IsAlive(context.Background(), ports.RuntimeHandle{ID: "sess-1"})
-	if !errors.Is(err, ports.ErrRuntimeUnavailable) {
-		t.Fatalf("IsAlive err = %v, want ports.ErrRuntimeUnavailable", err)
+	if err != nil {
+		t.Fatalf("IsAlive err = %v, want nil (permanent death)", err)
 	}
 	if alive {
 		t.Fatal("alive = true, want false")

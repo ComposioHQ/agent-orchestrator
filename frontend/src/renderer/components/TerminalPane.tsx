@@ -34,6 +34,7 @@ import {
 import { cn } from "../lib/utils";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { useRestoreSession } from "../hooks/useRestoreSession";
+import { useAutoResumeAgent } from "../hooks/useAutoResumeAgent";
 import { useShellTerminals } from "../hooks/useShellTerminals";
 import { useCloudCp } from "../hooks/useCloudCp";
 import { createCloudTerminalMux } from "../lib/cloud-terminal-mux";
@@ -1047,6 +1048,40 @@ function AttachedTerminal({
 		}
 	}, [canRestoreSession, isRestoring, restoreSessionById, session?.id, t]);
 
+	const autoResumeAgent = useAutoResumeAgent();
+	const [autoResumed, setAutoResumed] = useState(false);
+	const [autoResumeBanner, setAutoResumeBanner] = useState<string | undefined>();
+
+	// Auto-resume: when a non-terminated session's terminal is confirmed
+	// permanently dead (state === "exited"), attempt native-only resume via the
+	// agent's adapter. Only fires for worker sessions with native recovery support.
+	useEffect(() => {
+		if (
+			state !== "exited" ||
+			!session?.id ||
+			session.isTerminated ||
+			terminalTarget?.kind === "reviewer" ||
+			terminalTarget?.kind === "shell" ||
+			autoResumed
+		) {
+			return;
+		}
+		let cancelled = false;
+		void autoResumeAgent(session.id).then((result) => {
+			if (cancelled) return;
+			if (result.status === "resumed") {
+				setAutoResumed(true);
+				const providerName = session.provider ?? "agent";
+				setAutoResumeBanner(
+					`Session expired after restart — resumed via ${providerName}'s native session recovery`,
+				);
+			}
+		});
+		return () => {
+			cancelled = true;
+		};
+	}, [state, session?.id, session?.isTerminated, session?.provider, terminalTarget?.kind, autoResumed, autoResumeAgent]);
+
 	useEffect(() => {
 		if (!terminal) return;
 		let current = true;
@@ -1089,7 +1124,7 @@ function AttachedTerminal({
 		Boolean(handleId) &&
 		(!replaySettled || replayPaintPending) &&
 		(state === "connecting" || state === "attached");
-	const showEndedState = state === "exited" || canRestoreSession;
+	const showEndedState = (state === "exited" || canRestoreSession) && !autoResumed;
 	const emptyStateTitle = session ? t("terminal.startingSession") : "Agent Orchestrator";
 	const emptyStateMessage = session
 		? session.kind === "orchestrator"
@@ -1143,6 +1178,11 @@ function AttachedTerminal({
 				{banner && (
 					<div className="absolute inset-x-3 top-2 rounded-md border border-border bg-surface/95 px-3 py-1.5 font-mono text-caption text-muted-foreground">
 						{banner}
+					</div>
+				)}
+				{autoResumeBanner && !banner && (
+					<div className="absolute inset-x-3 top-2 z-10 rounded-md border border-border bg-surface/95 px-3 py-1.5 font-mono text-caption text-muted-foreground">
+						{autoResumeBanner}
 					</div>
 				)}
 			</div>

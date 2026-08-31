@@ -2,7 +2,6 @@ package tmux
 
 import (
 	"context"
-	"errors"
 	"os"
 	"os/exec"
 	"strings"
@@ -68,14 +67,13 @@ func TestRuntimeIntegration(t *testing.T) {
 	}
 
 	// Destroy and verify liveness goes false. When this was the server's last
-	// session the server itself exits with it, and the probe reports the
-	// server-level outage as ErrRuntimeUnavailable rather than a per-session
-	// false result (issue #3475); both outcomes mean the tmux handle is gone.
+	// session the server itself exits with it; both "session not found" and
+	// "no server running" are definitive (false, nil) now (#4641).
 	if err := r.Destroy(ctx, h); err != nil {
 		t.Fatalf("Destroy: %v", err)
 	}
 	alive, err = r.IsAlive(ctx, h)
-	if err != nil && !errors.Is(err, ports.ErrRuntimeUnavailable) {
+	if err != nil {
 		t.Fatalf("IsAlive after destroy: %v", err)
 	}
 	if alive {

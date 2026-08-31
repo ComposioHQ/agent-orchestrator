@@ -332,6 +332,14 @@ func (f *fakeSessionService) ResumeAgent(_ context.Context, id domain.SessionID)
 	return sessionsvc.ResumeAgentOutcome{Session: s, Mode: sessionsvc.RestoreModeViewNative}, nil
 }
 
+func (f *fakeSessionService) AutoResumeAgent(_ context.Context, id domain.SessionID) (sessionsvc.ResumeAgentOutcome, error) {
+	s := f.sessions[id]
+	s.Activity.State = domain.ActivityIdle
+	s.Status = domain.StatusIdle
+	f.sessions[id] = s
+	return sessionsvc.ResumeAgentOutcome{Session: s, Mode: sessionsvc.RestoreModeViewNative}, nil
+}
+
 func (f *fakeSessionService) SwitchAgent(_ context.Context, id domain.SessionID, cfg sessionsvc.SwitchAgentInput) (domain.AgentSwitch, error) {
 	if f.switchErr != nil {
 		return domain.AgentSwitch{}, f.switchErr
@@ -1065,6 +1073,19 @@ func TestSessionsAPI_ListSpawnGetAndActions(t *testing.T) {
 	mustJSON(t, body, &resumed)
 	if resumed.SessionID != "ao-2" || resumed.ResumeMode != "native" {
 		t.Fatalf("resume response = %#v", resumed)
+	}
+
+	body, status, _ = doRequest(t, srv, "POST", "/api/v1/sessions/ao-2/auto-resume-agent", "")
+	if status != http.StatusOK {
+		t.Fatalf("auto-resume agent = %d, want 200; body=%s", status, body)
+	}
+	var autoResumed struct {
+		SessionID  string `json:"sessionId"`
+		ResumeMode string `json:"resumeMode"`
+	}
+	mustJSON(t, body, &autoResumed)
+	if autoResumed.SessionID != "ao-2" || autoResumed.ResumeMode != "native" {
+		t.Fatalf("auto-resume response = %#v", autoResumed)
 	}
 
 	body, status, _ = doRequest(t, srv, "PATCH", "/api/v1/sessions/ao-2", `{"displayName":"Renamed"}`)
