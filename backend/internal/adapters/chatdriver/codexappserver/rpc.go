@@ -102,7 +102,10 @@ type conn struct {
 	readErr error
 }
 
-const notificationBuffer = 4096
+const (
+	maxNotificationQueuedBytes = 32 << 20
+	notificationQueueOverhead  = 64
+)
 
 func newConn(w io.WriteCloser, r io.Reader, log *slog.Logger, onReq serverRequestHandler) *conn {
 	return newConnAt(w, r, log, onReq, 0)
@@ -114,7 +117,7 @@ func newConnAt(w io.WriteCloser, r io.Reader, log *slog.Logger, onReq serverRequ
 		log:               log,
 		pending:           make(map[int64]chan frame),
 		notificationInput: make(chan notification),
-		notifications:     make(chan notification, notificationBuffer),
+		notifications:     make(chan notification),
 		onServerRequest:   onReq,
 		done:              make(chan struct{}),
 	}
@@ -131,8 +134,13 @@ func newConnAt(w io.WriteCloser, r io.Reader, log *slog.Logger, onReq serverRequ
 func (c *conn) relayNotifications() {
 	defer close(c.notifications)
 	var queued []notification
+	queuedBytes := 0
 	input := c.notificationInput
 	for input != nil || len(queued) > 0 {
+		receive := input
+		if queuedBytes >= maxNotificationQueuedBytes {
+			receive = nil
+		}
 		var output chan notification
 		var next notification
 		if len(queued) > 0 {
@@ -140,17 +148,26 @@ func (c *conn) relayNotifications() {
 			next = queued[0]
 		}
 		select {
-		case n, ok := <-input:
+		case n, ok := <-receive:
 			if !ok {
 				input = nil
 				continue
 			}
 			queued = append(queued, n)
+			queuedBytes += notificationBytes(n)
 		case output <- next:
+			queuedBytes -= notificationBytes(next)
 			queued[0] = notification{}
 			queued = queued[1:]
+			if len(queued) == 0 {
+				queued = nil
+			}
 		}
 	}
+}
+
+func notificationBytes(n notification) int {
+	return notificationQueueOverhead + len(n.Method) + len(n.Params)
 }
 
 // notifications the caller consumes. Closed when the connection ends.

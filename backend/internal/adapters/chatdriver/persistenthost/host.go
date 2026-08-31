@@ -344,14 +344,19 @@ func attach(ctx context.Context, d Descriptor, reconnected bool) (*Transport, er
 	if err != nil {
 		return nil, err
 	}
+	finishHandshake := bindConnToContext(ctx, conn)
 	reader := bufio.NewReader(conn)
 	if err := json.NewEncoder(conn).Encode(hello{Version: ProtocolVersion, Token: d.Token, Action: "attach"}); err != nil {
 		_ = conn.Close()
-		return nil, err
+		return nil, finishHandshake(err)
 	}
 	var response helloResponse
 	line, err := reader.ReadBytes('\n')
 	if err != nil {
+		_ = conn.Close()
+		return nil, finishHandshake(err)
+	}
+	if err := finishHandshake(nil); err != nil {
 		_ = conn.Close()
 		return nil, err
 	}
@@ -373,6 +378,18 @@ func attach(ctx context.Context, d Descriptor, reconnected bool) (*Transport, er
 	return &Transport{Stdin: conn, Stdout: reader, Reconnected: reconnected, NextRequestID: response.NextRequestID}, nil
 }
 
+func bindConnToContext(ctx context.Context, conn net.Conn) func(error) error {
+	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	return func(err error) error {
+		stop()
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			_ = conn.Close()
+			return ctxErr
+		}
+		return err
+	}
+}
+
 // Shutdown terminates an authenticated host. Missing or unreachable hosts are
 // harmless; callers use this only for explicit session destruction/orphan reap.
 func Shutdown(ctx context.Context, dataDir, sessionID string) error {
@@ -388,11 +405,15 @@ func Shutdown(ctx context.Context, dataDir, sessionID string) error {
 		return err
 	}
 	defer func() { _ = conn.Close() }()
+	finishHandshake := bindConnToContext(ctx, conn)
 	if err := json.NewEncoder(conn).Encode(hello{Version: ProtocolVersion, Token: d.Token, Action: "shutdown"}); err != nil {
-		return err
+		return finishHandshake(err)
 	}
 	var response helloResponse
 	if err := json.NewDecoder(conn).Decode(&response); err != nil {
+		return finishHandshake(err)
+	}
+	if err := finishHandshake(nil); err != nil {
 		return err
 	}
 	if !response.OK {

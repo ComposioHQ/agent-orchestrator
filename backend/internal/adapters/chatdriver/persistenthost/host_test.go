@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"strconv"
 	"testing"
@@ -243,6 +244,132 @@ func TestAttachRejectsBadCapabilityAndVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 	<-done
+}
+
+func TestAttachHonorsContextAfterDial(t *testing.T) {
+	address, accepted := silentHandshakePeer(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() {
+		_, attachErr := attach(ctx, Descriptor{
+			Version: ProtocolVersion,
+			Address: address,
+			Token:   "token",
+		}, true)
+		result <- attachErr
+	}()
+
+	serverConn := awaitSilentHandshake(t, accepted)
+	defer func() { _ = serverConn.Close() }()
+	cancel()
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("attach error = %v, want context canceled", err)
+		}
+	case <-time.After(3 * time.Second):
+		_ = serverConn.Close()
+		<-result
+		t.Fatal("attach ignored its context after connecting")
+	}
+}
+
+func TestShutdownHonorsContextAfterDial(t *testing.T) {
+	address, accepted := silentHandshakePeer(t)
+	dataDir := t.TempDir()
+	const sessionID = "silent-shutdown"
+	if err := writeDescriptor(dataDir, Descriptor{
+		Version:   ProtocolVersion,
+		SessionID: sessionID,
+		Address:   address,
+		Token:     "token",
+		PID:       os.Getpid(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() { result <- Shutdown(ctx, dataDir, sessionID) }()
+
+	serverConn := awaitSilentHandshake(t, accepted)
+	defer func() { _ = serverConn.Close() }()
+	cancel()
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("shutdown error = %v, want context canceled", err)
+		}
+	case <-time.After(3 * time.Second):
+		_ = serverConn.Close()
+		<-result
+		t.Fatal("shutdown ignored its context after connecting")
+	}
+}
+
+func TestAttachedTransportOutlivesHandshakeContext(t *testing.T) {
+	dataDir := t.TempDir()
+	cfg := Config{SessionID: "context-detached", DataDir: dataDir, Workdir: t.TempDir(),
+		Env:  append(os.Environ(), "AO_CHAT_HOST_PROVIDER_HELPER=1"),
+		Argv: []string{os.Args[0], "-test.run=TestProviderHelper"}}
+	done := make(chan error, 1)
+	go func() { done <- Run(context.Background(), cfg) }()
+	d := awaitDescriptor(t, dataDir, cfg.SessionID)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	transport, err := attach(ctx, d, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	if pid := requestProviderPID(t, transport, 1, "still-connected"); pid <= 0 {
+		t.Fatalf("provider pid after handshake cancellation = %d", pid)
+	}
+
+	_ = transport.Stdin.Close()
+	if err := Shutdown(context.Background(), dataDir, cfg.SessionID); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+type silentHandshake struct {
+	conn net.Conn
+	err  error
+}
+
+func silentHandshakePeer(t *testing.T) (string, <-chan silentHandshake) {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	accepted := make(chan silentHandshake, 1)
+	go func() {
+		conn, acceptErr := listener.Accept()
+		if acceptErr == nil {
+			_, acceptErr = bufio.NewReader(conn).ReadBytes('\n')
+		}
+		accepted <- silentHandshake{conn: conn, err: acceptErr}
+	}()
+	return listener.Addr().String(), accepted
+}
+
+func awaitSilentHandshake(t *testing.T, accepted <-chan silentHandshake) net.Conn {
+	t.Helper()
+	select {
+	case result := <-accepted:
+		if result.err != nil {
+			t.Fatalf("accept silent handshake: %v", result.err)
+		}
+		return result.conn
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for silent handshake")
+		return nil
+	}
 }
 
 func TestReconcileKeepsDurableSessionAndStopsOrphan(t *testing.T) {
