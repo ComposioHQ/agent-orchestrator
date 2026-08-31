@@ -210,13 +210,18 @@ function toCloudWorkspace(
 	};
 }
 
-export function useCloudProjectsQuery() {
+type WorkspaceSubscriptionOptions = {
+	subscribed?: boolean;
+};
+
+export function useCloudProjectsQuery(options: WorkspaceSubscriptionOptions = {}) {
 	const { client, ready, baseUrl } = useCloudCp();
 	const { org } = useCloudOrg();
 	const orgId = org?.id;
 	return useQuery({
 		queryKey: [...cloudProjectsQueryKey, baseUrl, orgId ?? ""],
 		enabled: ready && orgId !== undefined,
+		subscribed: options.subscribed,
 		retry: 1,
 		queryFn: async (): Promise<CloudCpProject[]> => {
 			if (orgId === undefined) return [];
@@ -228,13 +233,14 @@ export function useCloudProjectsQuery() {
 	});
 }
 
-export function useCloudSessionsQuery() {
+export function useCloudSessionsQuery(options: WorkspaceSubscriptionOptions = {}) {
 	const { client, ready, baseUrl } = useCloudCp();
 	const { org } = useCloudOrg();
 	const orgId = org?.id;
 	return useQuery({
 		queryKey: [...cloudSessionsQueryKey, baseUrl, orgId ?? ""],
 		enabled: ready && orgId !== undefined,
+		subscribed: options.subscribed,
 		retry: 1,
 		// A provisioning sandbox changes state without a client action, so poll to
 		// reflect requested -> running -> ready the same way local sessions stream.
@@ -247,10 +253,10 @@ export function useCloudSessionsQuery() {
 	});
 }
 
-export function useWorkspaceQuery() {
-	const local = useQuery(workspaceQueryOptions);
-	const cloud = useCloudProjectsQuery();
-	const cloudSessions = useCloudSessionsQuery();
+export function useWorkspaceQuery(options: WorkspaceSubscriptionOptions = {}) {
+	const local = useQuery({ ...workspaceQueryOptions, subscribed: options.subscribed });
+	const cloud = useCloudProjectsQuery(options);
+	const cloudSessions = useCloudSessionsQuery(options);
 	const { org, ready } = useCloudOrg();
 	const orgId = org?.id;
 	const localData = local.data;
