@@ -290,7 +290,7 @@ export function CenterPane({
 	const sessionTabLabel = session
 		? isOrchestratorSession(session)
 			? t("shell.orchestrator")
-			: agentLabel(session.provider)
+			: session.title
 		: t("terminal.noSession");
 	const activeTerminalLabel =
 		target.kind === "shell"
@@ -882,6 +882,7 @@ export function SessionPaneTab({
 	const { t } = useTranslation();
 	const { ref, isTruncated } = useTruncatedText<HTMLButtonElement>(label);
 	const activityLabel = session ? getAgentActivityView(session.activity, t).label : undefined;
+	const providerLabel = session ? agentLabel(session.provider) : undefined;
 	const tabIcon = session ? <AgentAvatar className="size-terminal-agent-icon" decorative provider={session.provider} /> : icon;
 	const connected = appearance === "connected";
 	return (
@@ -890,7 +891,7 @@ export function SessionPaneTab({
 			active={isActive}
 			buttonProps={{
 				"aria-current": isActive,
-				"aria-label": activityLabel ? `${label} · ${activityLabel}` : label,
+				"aria-label": [label, providerLabel, activityLabel].filter(Boolean).join(" · "),
 				"aria-selected": isActive,
 				onClick: onSelect,
 				role: "tab",

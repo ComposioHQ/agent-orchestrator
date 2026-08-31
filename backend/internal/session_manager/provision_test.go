@@ -19,6 +19,31 @@ func (f fixedBrowserCapability) Issue(_ domain.SessionID) (string, string, error
 	return string(f), "verifier-1", nil
 }
 
+type browserCapabilityIssue struct {
+	token    string
+	verifier string
+	err      error
+}
+
+type scriptedBrowserCapabilities struct {
+	issues  []browserCapabilityIssue
+	calls   int
+	onIssue func(call int, id domain.SessionID)
+}
+
+func (s *scriptedBrowserCapabilities) Issue(id domain.SessionID) (string, string, error) {
+	call := s.calls
+	s.calls++
+	if s.onIssue != nil {
+		s.onIssue(call, id)
+	}
+	if call >= len(s.issues) {
+		return "", "", errors.New("unexpected browser capability issuance")
+	}
+	issue := s.issues[call]
+	return issue.token, issue.verifier, issue.err
+}
+
 func TestSpawnEnvProjectVarsCannotOverrideInternal(t *testing.T) {
 	env := spawnEnv("mer-1", "mer", "issue-9", "/data", map[string]string{
 		"FOO":        "bar",

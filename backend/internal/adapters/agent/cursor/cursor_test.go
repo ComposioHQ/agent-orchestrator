@@ -464,6 +464,21 @@ func TestAugmentRuntimeEnvUsesAODataDir(t *testing.T) {
 	}
 }
 
+func TestAugmentRuntimeEnvAdvertisesTerminalThemeHint(t *testing.T) {
+	dataDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dataDir, "terminal-theme"), []byte("dark\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	env := map[string]string{}
+	(&Plugin{resolvedBinary: "cursor-agent"}).AugmentRuntimeEnv(env, dataDir)
+	if env["TERM_THEME"] != "dark" {
+		t.Fatalf("TERM_THEME = %q, want dark", env["TERM_THEME"])
+	}
+	if env["COLORFGBG"] != "15;0" {
+		t.Fatalf("COLORFGBG = %q, want 15;0", env["COLORFGBG"])
+	}
+}
+
 func TestGetAgentHooksUsesCursorDataDirOverride(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "cursor-agent"}
 	workspace := t.TempDir()

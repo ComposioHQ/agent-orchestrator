@@ -302,6 +302,9 @@ func Run() error {
 		}
 		return fmt.Errorf("wire session service: %w", err)
 	}
+
+	// servers isn't clobbered. See preview_wiring.go (issue #4500).
+	wireManagedPreviewExit(managedPreview, sessionSvc, log)
 	sessMgr.SetTerminalInputGate(termMgr)
 	lifecycleMessenger.Bind(sessionLifecycleMessenger{sessMgr})
 	lcStack.LCM.SetCompletionTerminator(sessMgr)
