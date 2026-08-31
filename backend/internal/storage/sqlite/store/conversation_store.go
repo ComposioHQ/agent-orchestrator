@@ -1017,6 +1017,14 @@ func (s *Store) SettleTurn(
 	}); err != nil {
 		return fmt.Errorf("settle turn %s: %w", turn.ID, err)
 	}
+	if err := q.SettleStreamingConversationMessagesForTurn(ctx,
+		gen.SettleStreamingConversationMessagesForTurnParams{
+			UpdatedAt:      now,
+			ConversationID: conversationID,
+			TurnID:         sql.NullString{String: turn.ID, Valid: true},
+		}); err != nil {
+		return fmt.Errorf("settle streaming messages for turn %s: %w", turn.ID, err)
+	}
 	if err := q.SettleRunningConversationActivitiesForTurn(ctx,
 		gen.SettleRunningConversationActivitiesForTurnParams{
 			Status:         terminalActivityStatus(state),
