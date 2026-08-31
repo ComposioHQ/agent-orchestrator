@@ -74,6 +74,9 @@ type CenterPaneProps = {
 	workspaceTabs?: CenterPaneWorkspaceTab[];
 	workspaceTabActions?: ReactNode;
 	workspaceActiveTabKey?: string;
+	/** Session-owned order shared with the Chat surface. */
+	auxiliaryTabOrder?: string[];
+	onAuxiliaryTabOrderChange?: (keys: string[]) => void;
 	/** Stop forwarding the agent pane's keystrokes while its controller drains. */
 	agentInputDisabled?: boolean;
 };
@@ -149,6 +152,8 @@ export function CenterPane({
 	workspaceTabs,
 	workspaceTabActions,
 	workspaceActiveTabKey,
+	auxiliaryTabOrder,
+	onAuxiliaryTabOrderChange,
 	agentInputDisabled = false,
 }: CenterPaneProps) {
 	const { t } = useTranslation();
@@ -179,7 +184,7 @@ export function CenterPane({
 	);
 	const availableAuxiliaryKeys = useMemo(() => auxiliaryTabs.map((tab) => tab.key), [auxiliaryTabs]);
 	const orderedAuxiliaryTabs = useMemo(() => {
-		const preferred = sessionId ? (tabOrderBySession[sessionId] ?? []) : [];
+		const preferred = auxiliaryTabOrder ?? (sessionId ? (tabOrderBySession[sessionId] ?? []) : []);
 		const byKey = new Map(auxiliaryTabs.map((tab) => [tab.key, tab]));
 		const ordered = preferred.flatMap((key) => {
 			const tab = byKey.get(key);
@@ -188,7 +193,7 @@ export function CenterPane({
 			return [tab];
 		});
 		return [...ordered, ...byKey.values()];
-	}, [auxiliaryTabs, sessionId, tabOrderBySession]);
+	}, [auxiliaryTabOrder, auxiliaryTabs, sessionId, tabOrderBySession]);
 	const tabOverflowWatch = `${sessionId ?? ""}|${availableAuxiliaryKeys.join("|")}`;
 	const {
 		scrollRef: tabsOverflowRef,
@@ -314,9 +319,10 @@ export function CenterPane({
 			for (const key of availableAuxiliaryKeys) {
 				if (!next.includes(key)) next.push(key);
 			}
-			setTabOrderBySession((current) => ({ ...current, [sessionId]: next }));
+			if (onAuxiliaryTabOrderChange) onAuxiliaryTabOrderChange(next);
+			else setTabOrderBySession((current) => ({ ...current, [sessionId]: next }));
 		},
-		[availableAuxiliaryKeys, sessionId],
+		[availableAuxiliaryKeys, onAuxiliaryTabOrderChange, sessionId],
 	);
 	const selectAdjacentTab = useCallback(
 		(direction: -1 | 1) => {
@@ -350,6 +356,17 @@ export function CenterPane({
 
 	useEffect(() => {
 		if (!sessionId) return;
+		if (auxiliaryTabOrder) {
+			const available = new Set(availableAuxiliaryKeys);
+			const keys = auxiliaryTabOrder.filter((key) => available.has(key));
+			for (const key of availableAuxiliaryKeys) {
+				if (!keys.includes(key)) keys.push(key);
+			}
+			if (!keys.every((key, index) => key === auxiliaryTabOrder[index]) || keys.length !== auxiliaryTabOrder.length) {
+				onAuxiliaryTabOrderChange?.(keys);
+			}
+			return;
+		}
 		setTabOrderBySession((current) => {
 			const currentOrder = current[sessionId] ?? [];
 			const available = new Set(availableAuxiliaryKeys);
@@ -364,7 +381,7 @@ export function CenterPane({
 			}
 			return { ...current, [sessionId]: keys };
 		});
-	}, [availableAuxiliaryKeys, sessionId]);
+	}, [auxiliaryTabOrder, availableAuxiliaryKeys, onAuxiliaryTabOrderChange, sessionId]);
 
 	useEffect(() => {
 		if (!switchMutation.isPending || currentAgentSwitch) return;

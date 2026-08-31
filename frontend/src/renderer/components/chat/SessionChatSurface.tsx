@@ -72,6 +72,8 @@ export function SessionChatSurface({
 	workspaceTabs,
 	workspaceTabActions,
 	workspaceActiveTabKey,
+	auxiliaryTabOrder,
+	onAuxiliaryTabOrderChange,
 	controllerTransitioning,
 	newWorkDisabled,
 	onConversationWorkChange,
@@ -104,6 +106,9 @@ export function SessionChatSurface({
 	workspaceTabs?: Array<{ key: string; content: ReactNode; onSelect: () => void }>;
 	workspaceTabActions?: ReactNode;
 	workspaceActiveTabKey?: string;
+	/** Session-owned order shared with the terminal UI surface. */
+	auxiliaryTabOrder?: string[];
+	onAuxiliaryTabOrderChange?: (keys: string[]) => void;
 	/** The target controller is being installed by an interface handoff. */
 	controllerTransitioning?: boolean;
 	/** An interface handoff fences new agent work while current-turn decisions remain available. */
@@ -317,6 +322,8 @@ export function SessionChatSurface({
 				workspaceTabs={workspaceTabs}
 				workspaceTabActions={workspaceTabActions}
 				workspaceActiveTabKey={workspaceActiveTabKey}
+				auxiliaryTabOrder={auxiliaryTabOrder}
+				onAuxiliaryTabOrderChange={onAuxiliaryTabOrderChange}
 				controllerTransitioning={controllerTransitioning}
 				hasOlder={hasOlder}
 				loadingOlder={isLoadingOlder}

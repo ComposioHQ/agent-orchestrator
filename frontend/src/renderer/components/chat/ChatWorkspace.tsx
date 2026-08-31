@@ -195,6 +195,9 @@ export interface ChatWorkspaceProps {
 	workspaceTabs?: WorkspaceTab[];
 	workspaceTabActions?: ReactNode;
 	workspaceActiveTabKey?: string;
+	/** Session-owned order shared with the terminal UI surface. */
+	auxiliaryTabOrder?: string[];
+	onAuxiliaryTabOrderChange?: (keys: string[]) => void;
 	/** Suppress a transient stopped snapshot while a mode handoff installs Chat. */
 	controllerTransitioning?: boolean;
 	/** Freeze agent-owned Chat controls while a durable session mutation owns input. */
@@ -335,6 +338,8 @@ export function ChatWorkspace({
 	workspaceTabs,
 	workspaceTabActions,
 	workspaceActiveTabKey,
+	auxiliaryTabOrder,
+	onAuxiliaryTabOrderChange,
 	controllerTransitioning,
 	agentInputDisabled = false,
 	newWorkDisabled = false,
@@ -470,7 +475,7 @@ export function ChatWorkspace({
 	const availableTabKeys = useMemo(() => auxiliaryTabs.map((tab) => tab.key), [auxiliaryTabs]);
 	const [tabOrderBySession, setTabOrderBySession] = useState<Record<string, string[]>>({});
 	const orderedAuxiliaryTabs = useMemo(() => {
-		const preferred = tabOrderBySession[snapshot.sessionId] ?? [];
+		const preferred = auxiliaryTabOrder ?? tabOrderBySession[snapshot.sessionId] ?? [];
 		const byKey = new Map(auxiliaryTabs.map((tab) => [tab.key, tab]));
 		const ordered = preferred.flatMap((key) => {
 			const tab = byKey.get(key);
@@ -479,7 +484,7 @@ export function ChatWorkspace({
 			return [tab];
 		});
 		return [...ordered, ...byKey.values()];
-	}, [auxiliaryTabs, snapshot.sessionId, tabOrderBySession]);
+	}, [auxiliaryTabOrder, auxiliaryTabs, snapshot.sessionId, tabOrderBySession]);
 	const reorderAuxiliaryTabs = useCallback(
 		(nextKeys: string[]) => {
 			const available = new Set(availableTabKeys);
@@ -487,11 +492,23 @@ export function ChatWorkspace({
 			for (const key of availableTabKeys) {
 				if (!next.includes(key)) next.push(key);
 			}
-			setTabOrderBySession((current) => ({ ...current, [snapshot.sessionId]: next }));
+			if (onAuxiliaryTabOrderChange) onAuxiliaryTabOrderChange(next);
+			else setTabOrderBySession((current) => ({ ...current, [snapshot.sessionId]: next }));
 		},
-		[availableTabKeys, snapshot.sessionId],
+		[availableTabKeys, onAuxiliaryTabOrderChange, snapshot.sessionId],
 	);
 	useEffect(() => {
+		if (auxiliaryTabOrder) {
+			const available = new Set(availableTabKeys);
+			const next = auxiliaryTabOrder.filter((key) => available.has(key));
+			for (const key of availableTabKeys) {
+				if (!next.includes(key)) next.push(key);
+			}
+			if (!next.every((key, index) => key === auxiliaryTabOrder[index]) || next.length !== auxiliaryTabOrder.length) {
+				onAuxiliaryTabOrderChange?.(next);
+			}
+			return;
+		}
 		setTabOrderBySession((current) => {
 			const currentOrder = current[snapshot.sessionId] ?? [];
 			const available = new Set(availableTabKeys);
@@ -506,7 +523,7 @@ export function ChatWorkspace({
 			}
 			return { ...current, [snapshot.sessionId]: next };
 		});
-	}, [availableTabKeys, snapshot.sessionId]);
+	}, [auxiliaryTabOrder, availableTabKeys, onAuxiliaryTabOrderChange, snapshot.sessionId]);
 	const queuedMessages = useMemo(() => {
 		const messagesByTurn = new Map(
 			snapshot.items
