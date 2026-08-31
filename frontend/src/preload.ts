@@ -309,6 +309,13 @@ const api = {
 				ipcRenderer.off("browser:navState", wrapped);
 			};
 		},
+		onPageFocus: (listener: (viewId: string) => void) => {
+			const wrapped = (_event: Electron.IpcRendererEvent, viewId: string) => listener(viewId);
+			ipcRenderer.on("browser:pageFocus", wrapped);
+			return () => {
+				ipcRenderer.off("browser:pageFocus", wrapped);
+			};
+		},
 		onTabsState: (listener: (state: BrowserTabsState) => void) => {
 			const wrapped = (_event: Electron.IpcRendererEvent, state: BrowserTabsState) => listener(state);
 			ipcRenderer.on("browser:tabsState", wrapped);
