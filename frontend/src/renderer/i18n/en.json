@@ -124,6 +124,7 @@
 	"command.jumpToSession": "Jump to session",
 	"command.keepEditing": "Keep editing",
 	"command.newProject": "New project",
+	"command.importSession": "Import a session",
 	"command.newTask": "New task",
 	"command.noResults": "No results.",
 	"command.noCurrentProject": "No current project",

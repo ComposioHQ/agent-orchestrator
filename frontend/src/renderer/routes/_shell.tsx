@@ -4,6 +4,7 @@ import { memo, type CSSProperties, useCallback, useEffect, useLayoutEffect, useM
 import { FolderPlus } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { CommandPalette } from "../components/CommandPalette";
+import { ImportSessionDialog } from "../components/ImportSessionDialog";
 import { CenterPanelShell } from "../components/CenterPanelShell";
 import { DaemonFailureBanner } from "../components/DaemonFailureBanner";
 import { NotificationRuntime } from "../components/NotificationCenter";
@@ -157,6 +158,8 @@ function ShellLayout() {
 	const daemonStatus = useDaemonStatus(queryClient);
 	const [workspaceStartupState, setWorkspaceStartupState] = useState<"loading" | "ready" | "error">("loading");
 	const workspaceStartupBaselineRef = useRef(0);
+	const importSessionOpen = useUiStore((state) => state.importSessionOpen);
+	const setImportSessionOpen = useUiStore((state) => state.setImportSessionOpen);
 	const themePreference = useUiStore((state) => state.themePreference);
 	const resolvedTheme = useUiStore((state) => state.resolvedTheme);
 	const themeStyle = useUiStore((state) => state.themeStyle);
@@ -963,6 +966,10 @@ function ShellLayout() {
 					workspaces={workspaces}
 				/>
 					<CommandPalette />
+					<ImportSessionDialog
+						open={importSessionOpen}
+						onOpenChange={(open) => setImportSessionOpen(open)}
+					/>
 				</div>
 				</TerminalCacheProvider>
 			</SessionTopbarProvider>
