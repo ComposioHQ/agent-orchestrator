@@ -342,9 +342,11 @@ func (c *Client) BootstrapWorker(ctx context.Context, id sandbox.ID, bootstrap s
 	// appends only the first complete copy for the expected sequence, so a short
 	// write cannot silently corrupt or stall the bootstrap archive.
 	const (
-		chunkSize   = 2_000
+		// Canonical terminals accept at least 4 KiB per line. Stay below that
+		// ceiling while keeping the full worker upload inside Coder's short-lived
+		// reconnecting-PTY window.
+		chunkSize   = 3_000
 		chunkCopies = 3
-		chunkPause  = time.Millisecond
 	)
 	sequence := 0
 	for offset := 0; offset < len(encoded); offset += chunkSize {
@@ -360,7 +362,7 @@ func (c *Client) BootstrapWorker(ctx context.Context, id sandbox.ID, bootstrap s
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
-			case <-time.After(chunkPause):
+			default:
 			}
 		}
 		sequence++
