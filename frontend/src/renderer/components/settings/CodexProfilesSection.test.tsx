@@ -30,7 +30,7 @@ vi.mock("../TerminalPane", () => ({
 const profileResponse = {
 	profiles: [{
 		id: "existing",
-		label: "Existing Codex profile",
+		label: "Existing Codex account",
 		source: "existing",
 		status: "valid",
 		reasonCode: "profile_valid",
@@ -75,7 +75,7 @@ it("opens a profile-scoped login terminal inline without leaving settings", asyn
 	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 	const openExternal = vi.spyOn(aoBridge.app, "openExternal").mockResolvedValue(undefined);
 	render(<QueryClientProvider client={queryClient}><CodexProfilesSection /></QueryClientProvider>);
-	await screen.findByText("Existing Codex profile");
+	await screen.findByText("Existing Codex account");
 	expect(screen.getByText("Signed out")).toBeInTheDocument();
 	expect(screen.getByText("Available for Codex task launches")).toBeInTheDocument();
 	fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
@@ -90,15 +90,15 @@ it("opens a profile-scoped login terminal inline without leaving settings", asyn
 	expect(useUiStore.getState().settingsModal).toEqual({ scope: "global", section: "agents" });
 	expect(screen.getByTestId("codex-profile-login-terminal")).toBeInTheDocument();
 	expect(screen.getByTestId("inline-terminal-body")).toBeInTheDocument();
-	expect(screen.getByRole("button", { name: "Add profile" })).toBeDisabled();
-	expect(screen.getByRole("button", { name: "Codex 1 profile" })).toBeDisabled();
+	expect(screen.getByRole("button", { name: "Add account" })).toBeDisabled();
+	expect(screen.getByRole("button", { name: "Codex 1 account" })).toBeDisabled();
 	openExternal.mockRestore();
 });
 
-it("renders the profile icon without a background wrapper", async () => {
+it("renders the profile icon without a background tile", async () => {
 	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 	render(<QueryClientProvider client={queryClient}><CodexProfilesSection /></QueryClientProvider>);
-	await screen.findByText("Existing Codex profile");
+	await screen.findByText("Existing Codex account");
 	const icon = screen.getByTestId("codex-profile-icon");
 	expect(icon.tagName).toBe("svg");
 	expect(icon).toHaveClass("size-5", "shrink-0", "text-muted-foreground");
@@ -108,27 +108,27 @@ it("renders the profile icon without a background wrapper", async () => {
 it("groups compact profile rows under the Codex provider", async () => {
 	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 	render(<QueryClientProvider client={queryClient}><CodexProfilesSection /></QueryClientProvider>);
-	await screen.findByText("Existing Codex profile");
+	await screen.findByText("Existing Codex account");
 	const provider = screen.getByRole("region", { name: "Codex" });
 	expect(provider).toHaveAttribute("data-agent-provider", "codex");
-	expect(provider).toHaveTextContent("1 profile");
+	expect(provider).toHaveTextContent("1 account");
 	expect(provider.querySelector("[data-profile-id='existing']")).toBeInTheDocument();
 });
 
 it("collapses and expands the Codex provider group", async () => {
 	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 	render(<QueryClientProvider client={queryClient}><CodexProfilesSection /></QueryClientProvider>);
-	await screen.findByText("Existing Codex profile");
-	const toggle = screen.getByRole("button", { name: "Codex 1 profile" });
+	await screen.findByText("Existing Codex account");
+	const toggle = screen.getByRole("button", { name: "Codex 1 account" });
 	expect(toggle).toHaveAttribute("aria-expanded", "true");
 
 	fireEvent.click(toggle);
 	expect(toggle).toHaveAttribute("aria-expanded", "false");
-	expect(screen.queryByText("Existing Codex profile")).not.toBeInTheDocument();
+	expect(screen.queryByText("Existing Codex account")).not.toBeInTheDocument();
 
 	fireEvent.click(toggle);
 	expect(toggle).toHaveAttribute("aria-expanded", "true");
-	expect(screen.getByText("Existing Codex profile")).toBeInTheDocument();
+	expect(screen.getByText("Existing Codex account")).toBeInTheDocument();
 });
 
 it("expands only the affected profile and disables other sign-in actions", async () => {
@@ -137,7 +137,7 @@ it("expands only the affected profile and disables other sign-in actions", async
 		id: "72d4db6e-da2c-414c-a6a9-fdbd09a006b6",
 		label: "Work",
 		source: "managed",
-		usableByCurrentLaunches: false,
+		usableByCurrentLaunches: true,
 	};
 	const twoProfiles = { ...profileResponse, profiles: [...profileResponse.profiles, managed] };
 	getMock.mockResolvedValue({ data: twoProfiles });
@@ -175,9 +175,9 @@ it("creates a managed profile, then opens its login terminal", async () => {
 	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 	const openExternal = vi.spyOn(aoBridge.app, "openExternal").mockResolvedValue(undefined);
 	render(<QueryClientProvider client={queryClient}><CodexProfilesSection /></QueryClientProvider>);
-	await screen.findByText("Existing Codex profile");
-	fireEvent.click(screen.getByRole("button", { name: "Add profile" }));
-	fireEvent.change(screen.getByRole("textbox", { name: "Profile label" }), { target: { value: "Work" } });
+	await screen.findByText("Existing Codex account");
+	fireEvent.click(screen.getByRole("button", { name: "Add account" }));
+	fireEvent.change(screen.getByRole("textbox", { name: "Account label" }), { target: { value: "Work" } });
 	fireEvent.click(screen.getByRole("button", { name: "Create" }));
 	await waitFor(() => expect(postMock).toHaveBeenCalledWith("/api/v1/agents/codex/profiles", { body: { label: "Work" } }));
 	await waitFor(() => expect(postMock).toHaveBeenCalledWith("/api/v1/agents/codex/profiles/{profileId}/login-terminal", { params: { path: { profileId: managed.id } } }));
@@ -223,7 +223,7 @@ it("verifies once after terminal exit, cleans up, and leaves the signed-in card 
 	});
 	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 	render(<QueryClientProvider client={queryClient}><CodexProfilesSection /></QueryClientProvider>);
-	await screen.findByText("Existing Codex profile");
+	await screen.findByText("Existing Codex account");
 	fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
 	await screen.findByTestId("inline-terminal-body");
 
@@ -245,13 +245,13 @@ it("verifies once after terminal exit, cleans up, and leaves the signed-in card 
 it("retains terminal output with Retry after Codex remains signed out", async () => {
 	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 	render(<QueryClientProvider client={queryClient}><CodexProfilesSection /></QueryClientProvider>);
-	await screen.findByText("Existing Codex profile");
+	await screen.findByText("Existing Codex account");
 	fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
 	await screen.findByTestId("inline-terminal-body");
 
 	act(() => terminalStateCallback.value?.("exited"));
 
-	await screen.findAllByText("Codex still reports this profile as signed out.");
+	await screen.findAllByText("Codex still reports this account as signed out.");
 	expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled();
 	expect(screen.getAllByRole("button", { name: "Close sign-in" }).length).toBeGreaterThan(0);
 	expect(screen.getByTestId("inline-terminal-body")).toBeInTheDocument();
@@ -281,7 +281,7 @@ it("retains an unverifiable terminal and checks again without starting a replace
 	});
 	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 	render(<QueryClientProvider client={queryClient}><CodexProfilesSection /></QueryClientProvider>);
-	await screen.findByText("Existing Codex profile");
+	await screen.findByText("Existing Codex account");
 	fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
 	await screen.findByTestId("inline-terminal-body");
 
@@ -313,7 +313,7 @@ it("cleans up the old terminal before retrying one signed-out profile", async ()
 	});
 	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 	render(<QueryClientProvider client={queryClient}><CodexProfilesSection /></QueryClientProvider>);
-	await screen.findByText("Existing Codex profile");
+	await screen.findByText("Existing Codex account");
 	fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
 	await screen.findByTestId("inline-terminal-body");
 	act(() => terminalStateCallback.value?.("exited"));
@@ -330,7 +330,7 @@ it("cleans up the old terminal before retrying one signed-out profile", async ()
 it("uses one upper-bound timeout and retains the profile card", async () => {
 	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 	render(<QueryClientProvider client={queryClient}><CodexProfilesSection /></QueryClientProvider>);
-	await screen.findByText("Existing Codex profile");
+	await screen.findByText("Existing Codex account");
 	act(() => useUiStore.setState({
 		codexProfileLoginTerminal: {
 			profileId: "existing",
@@ -342,7 +342,7 @@ it("uses one upper-bound timeout and retains the profile card", async () => {
 
 	await waitFor(() => expect(useUiStore.getState().codexProfileLoginTerminal?.phase).toBe("timed_out"));
 	expect(screen.getAllByText("Sign-in timed out. Retry or close this terminal.")).toHaveLength(2);
-	expect(screen.getByText("Existing Codex profile")).toBeInTheDocument();
+	expect(screen.getByText("Existing Codex account")).toBeInTheDocument();
 	expect(deleteMock).toHaveBeenCalledWith("/api/v1/shell-terminals/{handleId}", {
 		params: { path: { handleId: "shellterm-timeout" } },
 	});
@@ -370,9 +370,9 @@ it("keeps terminal login available when structured authentication is unknown", a
 	postMock.mockResolvedValue({ data: unavailable });
 	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 	render(<QueryClientProvider client={queryClient}><CodexProfilesSection /></QueryClientProvider>);
-	await screen.findByText("Existing Codex profile");
+	await screen.findByText("Existing Codex account");
 	expect(screen.getByText("Authentication unknown")).toBeInTheDocument();
 	expect(screen.queryByText("Capability check unavailable.")).not.toBeInTheDocument();
-	expect(screen.getByRole("button", { name: "Add profile" })).toBeEnabled();
+	expect(screen.getByRole("button", { name: "Add account" })).toBeEnabled();
 	expect(screen.getByRole("button", { name: "Sign in" })).toBeEnabled();
 });

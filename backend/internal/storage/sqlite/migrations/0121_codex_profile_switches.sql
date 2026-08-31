@@ -1,4 +1,4 @@
--- Migration 0119: durable assisted Codex profile continuations.
+-- Migration 0121: durable assisted Codex profile continuations.
 --
 -- Capacity and authentication remain daemon-memory observations. This schema
 -- retains only the confirmed request, ownership boundaries, immutable handoff

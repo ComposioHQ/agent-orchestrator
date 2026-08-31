@@ -239,8 +239,66 @@ restarts into a pending update and shows what is running. Dev builds
   `--environment` selects the EAS environment variables and is required from SDK 55.
   Start production at a partial rollout and widen it from the EAS dashboard once it looks healthy.
   Publish from the machine that builds, so the fingerprint is computed with the same
-  inputs. `eas update:list --channel production` shows what is live,
-  `eas update:insights` shows adoption, and `eas update:rollback` reverts.
+  inputs. `eas update:list --branch production` shows what is live (note `--branch`,
+  not `--channel`), `eas update:insights` shows adoption, and
+  `eas update:roll-back-to-embedded` reverts.
+
+### Build or update?
+
+Don't judge by eye — a diff that touches only `.ts`/`.tsx` can still need a build if it
+also touches `app.json`, a plugin, or a dependency. Ask the tool:
+
+```bash
+eas fingerprint:compare
+```
+
+Matches the live build's fingerprint → ship an update. Doesn't match → it needs a build,
+however JS-only the diff looks. `google-services.json`, `eas.json`, `.gitignore` and the
+masked-view Android manifest are excluded from the hash (see `fingerprint.config.js`);
+everything else that feeds the native build is in it, including `.easignore` — editing
+even its comments moves the runtime version.
+
+### Rules that keep this working
+
+- **Never let a fingerprint input differ between machines, or between the build state
+  and the publish state.** Every OTA failure this project has hit was one of these, and
+  they are all silent: the publish succeeds, the dashboard says live, and no device ever
+  matches. Four have been found and closed; assume there is a fifth.
+- **Updates published before a build are invisible to that build.** `useEmbeddedUpdate`
+  serves the embedded bundle when it is newer than anything on the branch. So after every
+  production build, re-publish any JS fixes that still matter — or cut the build from a
+  commit that already contains them. Otherwise users on the fresh binary quietly regress
+  while the dashboard still shows those updates as live.
+- **`roll-back-to-embedded` is per-runtime.** It prompts for one runtime version, and
+  runtimes are per-platform. In an incident you must run it **twice**, once for iOS and
+  once for Android. Rolling back one platform turns the dashboard green while half your
+  users stay broken.
+- **Don't change dependencies between a build and the updates published against it.**
+  `npx expo install --check` moves the fingerprint. Run it before a build, never after.
+  `expo-doctor` reporting patch drift a week after shipping is normal and is not a reason
+  to rebuild.
+- **Start Metro with `--clear` after any `npm ci` or dependency change**, or you get
+  "Unable to resolve module X" for a package that is demonstrably installed.
+- **`eas.json` is `skip-worktree`** on the publishing machine so local App Store Connect
+  submit credentials stay out of the public repo. EAS Build reads the committed file, so
+  any local edit to it — a new profile, a channel change — never reaches a build until
+  the bit is cleared and the change is committed.
+- **`google-services.json` reaches EAS Build as the `GOOGLE_SERVICES_JSON` file
+  environment variable**, not by being committed. Never go back to a temp commit: that
+  required deleting the file's line from `.gitignore`, which is itself a fingerprint
+  input, and it put a public-repo leak one `git push` away.
+
+### Verified, and not
+
+Checked on device against real builds (Android `307dee3c…`, iOS `66d18d1d…`): build and
+publishing-machine fingerprints matching, the Settings check-and-restart path, cold start
+applying on the second launch, and rollback to embedded over populated storage without a
+crash.
+
+**The 15-minute resume path is covered by unit tests only.** `onForeground` is tested
+directly; the `AppState` wiring around it has never been exercised on a device. Note also
+that any foreground resets the timer, so testing it needs one uninterrupted background
+stretch.
 
 ## Troubleshooting
 

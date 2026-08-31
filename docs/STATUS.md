@@ -85,8 +85,9 @@ surface (`npm run sqlc`, `npm run api`).
   ([#75](https://github.com/aoagents/agent-orchestrator/issues/75),
   [#108](https://github.com/aoagents/agent-orchestrator/issues/108),
   [#109](https://github.com/aoagents/agent-orchestrator/issues/109)).
-- Terminal mux over WebSocket (`/mux`): per-client `tmux attach` PTY on
-  Darwin/Linux; conpty loopback pty-host on Windows.
+- Terminal mux over WebSocket (`/mux`): detached native PTY host for new macOS
+  sessions, per-client `tmux attach` for Linux and persisted legacy macOS
+  handles, and a ConPTY loopback host on Windows.
 - Lifecycle reducer plus reaper (`internal/observe/reaper`).
 - Agent adapter platform under `internal/adapters/agent/` (25 adapters) with a
   registry and `ao hooks` activity dispatch.
