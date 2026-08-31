@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 )
 
 // Entry is one registered pty-host process.
@@ -29,6 +30,11 @@ var pidAlive = defaultPidAlive
 // SetRunFilePath at daemon startup, before any session activity begins, so
 // the unsynchronized package var has no concurrent access to race against.
 var overrideDir string
+
+// registryMu makes each read-modify-write operation atomic within the daemon.
+// Session starts can run concurrently; without this lock two successful hosts
+// could race and leave only one recoverable registry entry on disk.
+var registryMu sync.Mutex
 
 // SetRunFilePath pins the registry to the directory containing this
 // instance's running.json (backend/internal/config's already-resolved,
@@ -147,6 +153,8 @@ func writeRaw(entries []Entry) error {
 // Register adds or replaces the entry for entry.SessionID. registeredAt must
 // be set by the caller (e.g. time.Now().UTC().Format(time.RFC3339)).
 func Register(entry Entry) error {
+	registryMu.Lock()
+	defer registryMu.Unlock()
 	next := make([]Entry, 0)
 	for _, e := range readRaw() {
 		if e.SessionID != entry.SessionID {
@@ -159,6 +167,8 @@ func Register(entry Entry) error {
 
 // Unregister removes the entry for sessionID. No-op if absent.
 func Unregister(sessionID string) error {
+	registryMu.Lock()
+	defer registryMu.Unlock()
 	all := readRaw()
 	next := make([]Entry, 0, len(all))
 	for _, e := range all {
@@ -175,6 +185,8 @@ func Unregister(sessionID string) error {
 // List returns all entries whose PtyHostPID is still alive, auto-pruning dead
 // ones. The file is rewritten if any entries were pruned.
 func List() ([]Entry, error) {
+	registryMu.Lock()
+	defer registryMu.Unlock()
 	all := readRaw()
 	live := make([]Entry, 0, len(all))
 	for _, e := range all {
@@ -192,5 +204,7 @@ func List() ([]Entry, error) {
 
 // Clear deletes the registry file. Best-effort; used by tests and recovery.
 func Clear() error {
+	registryMu.Lock()
+	defer registryMu.Unlock()
 	return writeRaw(nil)
 }

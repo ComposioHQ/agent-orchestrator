@@ -816,6 +816,58 @@ func (q *Queries) SetSessionTerminateOnPRMerge(ctx context.Context, arg SetSessi
 	return result.RowsAffected()
 }
 
+const updateBrowserCapabilityVerifier = `-- name: UpdateBrowserCapabilityVerifier :execrows
+UPDATE sessions SET
+    browser_capability_verifier = ?1,
+    updated_at = MAX(updated_at, ?2)
+WHERE id = ?3
+  AND harness = ?4
+  AND session_mode = ?5
+  AND is_terminated = ?6
+  AND runtime_launch_id = ?7
+  AND agent_session_id = ?8
+  AND agent_session_id_launch_id = ?9
+  AND provider_conversation_id = ?10
+  AND controller_generation = ?11
+`
+
+type UpdateBrowserCapabilityVerifierParams struct {
+	BrowserCapabilityVerifier      string
+	UpdatedAt                      interface{}
+	ID                             domain.SessionID
+	ExpectedHarness                domain.AgentHarness
+	ExpectedSessionMode            domain.SessionMode
+	ExpectedIsTerminated           bool
+	ExpectedRuntimeLaunchID        string
+	ExpectedAgentSessionID         string
+	ExpectedAgentSessionIDLaunchID string
+	ExpectedProviderConversationID string
+	ExpectedControllerGeneration   string
+}
+
+// Rotate only the browser credential for the exact controller owner observed by
+// the launcher. This must not replay a stale SessionRecord over newer lifecycle,
+// activity, termination, or provider ownership facts.
+func (q *Queries) UpdateBrowserCapabilityVerifier(ctx context.Context, arg UpdateBrowserCapabilityVerifierParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateBrowserCapabilityVerifier,
+		arg.BrowserCapabilityVerifier,
+		arg.UpdatedAt,
+		arg.ID,
+		arg.ExpectedHarness,
+		arg.ExpectedSessionMode,
+		arg.ExpectedIsTerminated,
+		arg.ExpectedRuntimeLaunchID,
+		arg.ExpectedAgentSessionID,
+		arg.ExpectedAgentSessionIDLaunchID,
+		arg.ExpectedProviderConversationID,
+		arg.ExpectedControllerGeneration,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const updateSession = `-- name: UpdateSession :exec
 UPDATE sessions SET
     issue_id = ?, kind = ?, harness = ?, reviewer_harness = ?, auto_review_enabled = ?, display_name = ?,

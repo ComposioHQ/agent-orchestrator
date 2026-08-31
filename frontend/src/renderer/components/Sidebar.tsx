@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
+import { useCanGoBack, useNavigate, useParams, useRouter, useRouterState } from "@tanstack/react-router";
 import {
 	DndContext,
 	DragOverlay,
@@ -22,6 +22,8 @@ import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-
 import { CSS } from "@dnd-kit/utilities";
 import {
 	AlertTriangle,
+	ArrowLeft,
+	ArrowRight,
 	ChevronRight,
 	Download,
 	Folder,
@@ -29,6 +31,7 @@ import {
 	LogIn,
 	LogOut,
 	MoreVertical,
+	PanelLeft,
 	Pin,
 	PinOff,
 	Plus,
@@ -119,13 +122,15 @@ import { useKeybindingsStore } from "../stores/keybindings-store";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { CreateProjectFlow, type CloneProjectInput, type CreateProjectInput } from "./CreateProjectFlow";
 import { ResizeHandle } from "./ResizeHandle";
-import { isMacPlatform, isWindowsPlatform } from "../lib/platform";
+import { isLinuxPlatform, isMacPlatform, isWindowsPlatform } from "../lib/platform";
 import { useCloudSession } from "../lib/cloud-session";
+import { useCanGoForward } from "./TitlebarNav";
 
 // macOS paints framed chrome: the fixed TitlebarNav cluster carries the
 // sidebar toggle + history arrows above this surface. Windows hangs the sidebar
 // under its custom titlebar.
 const isMac = isMacPlatform();
+const isLinux = isLinuxPlatform();
 const isWindows = isWindowsPlatform();
 const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined;
 
@@ -414,9 +419,13 @@ export function Sidebar({
 }: SidebarProps) {
 	const { t } = useTranslation();
 	const selection = useSelection();
-	const { state, setOpen } = useSidebar();
+	const { state, setOpen, toggleSidebar } = useSidebar();
 	const isCollapsed = state === "collapsed";
 	const [expandedChromeVisible, setExpandedChromeVisible] = useState(!isCollapsed);
+	const router = useRouter();
+	const canGoBack = useCanGoBack();
+	const canGoForward = useCanGoForward();
+	const showCompactRailHistory = autoCompact && isCollapsed && (isMac || isLinux) && !isWindows;
 	// One IPC subscription for both footer variants of the restart-to-update prompt.
 	const updateStatus = useUpdateStatus();
 	// Daemon status for the smoke suite's sr-only mirror in the footer. Null when
@@ -694,6 +703,53 @@ export function Sidebar({
 						</span>
 					)}
 				</div>
+				<Tooltip>
+					<TooltipTrigger asChild>
+						<button
+							aria-label={isCollapsed ? t("shell.expandSidebar") : t("shell.collapseSidebar")}
+							className="hidden size-control-board place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground group-data-[collapsible=icon]:grid [&_svg]:size-icon-base"
+							onClick={toggleSidebar}
+							type="button"
+						>
+							<PanelLeft aria-hidden="true" />
+						</button>
+					</TooltipTrigger>
+					<TooltipContent side="right">
+						{isCollapsed ? t("shell.expandSidebar") : t("shell.collapseSidebar")}
+					</TooltipContent>
+				</Tooltip>
+				{showCompactRailHistory ? (
+					<div className="flex flex-col items-center gap-1 pb-2">
+						<Tooltip>
+							<TooltipTrigger asChild>
+								<button
+									aria-label={t("titlebar.goBack")}
+									className="grid size-control-board place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground disabled:cursor-not-allowed disabled:opacity-55 disabled:hover:bg-transparent disabled:hover:text-muted-foreground [&_svg]:size-icon-base"
+									disabled={!canGoBack}
+									onClick={() => router.history.back()}
+									type="button"
+								>
+									<ArrowLeft aria-hidden="true" />
+								</button>
+							</TooltipTrigger>
+							<TooltipContent side="right">{t("titlebar.goBack")}</TooltipContent>
+						</Tooltip>
+						<Tooltip>
+							<TooltipTrigger asChild>
+								<button
+									aria-label={t("titlebar.goForward")}
+									className="grid size-control-board place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground disabled:cursor-not-allowed disabled:opacity-55 disabled:hover:bg-transparent disabled:hover:text-muted-foreground [&_svg]:size-icon-base"
+									disabled={!canGoForward}
+									onClick={() => router.history.forward()}
+									type="button"
+								>
+									<ArrowRight aria-hidden="true" />
+								</button>
+							</TooltipTrigger>
+							<TooltipContent side="right">{t("titlebar.goForward")}</TooltipContent>
+						</Tooltip>
+					</div>
+				) : null}
 			</SidebarHeader>
 
 			{/* Keep Search + section chrome fixed; only the project tree scrolls. */}
@@ -816,7 +872,7 @@ export function Sidebar({
 			    spacing stays inside the footer so there is no empty strip beneath
 			    the final action. */}
 			<SidebarFooter
-				className="relative mt-auto gap-0 overflow-hidden border-t border-border-strong px-2 !py-2 transition-[padding] duration-200 ease-linear group-data-[collapsible=icon]:min-h-20 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:border-t-0 group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:!pb-0 group-data-[collapsible=icon]:!pt-1.5"
+				className="relative mt-auto gap-0 overflow-hidden border-t border-border-strong px-2 !py-2 transition-[padding] duration-200 ease-linear group-data-[collapsible=icon]:min-h-20 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:border-t-0 group-data-[collapsible=icon]:overflow-visible group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:!pb-2 group-data-[collapsible=icon]:!pt-1.5"
 			>
 				{/* Always-present daemon status mirror for the smoke suite: no visible
 				    daemon-state copy is guaranteed to be mounted elsewhere. */}
@@ -827,7 +883,8 @@ export function Sidebar({
 				)}
 				<div
 					aria-hidden={isCollapsed || undefined}
-					className="sidebar-expanded-chrome relative flex w-full min-w-46.5 flex-col gap-0.5 transition-[opacity,transform] duration-150 ease-out group-data-[collapsible=icon]:pointer-events-none group-data-[collapsible=icon]:-translate-x-2 group-data-[collapsible=icon]:opacity-0"
+					hidden={isCollapsed}
+					className="sidebar-expanded-chrome relative flex w-full min-w-46.5 flex-col gap-0.5"
 				>
 					<UpdateStatusRow status={updateStatus} tabIndex={isCollapsed ? -1 : 0} />
 					<CloudSignInRow tabIndex={isCollapsed ? -1 : 0} />
@@ -861,7 +918,7 @@ export function Sidebar({
 				</div>
 				<div
 					aria-hidden={!isCollapsed || undefined}
-					className="pointer-events-none absolute inset-x-1.5 bottom-0 top-auto flex min-h-row-md flex-col items-center justify-end gap-1 opacity-0 transition-opacity duration-150 ease-out group-data-[collapsible=icon]:pointer-events-auto group-data-[collapsible=icon]:opacity-100"
+					className="pointer-events-none absolute inset-x-1.5 bottom-0 top-auto flex min-h-row-md flex-col items-center justify-end gap-1 opacity-0 transition-opacity duration-150 ease-out group-data-[collapsible=icon]:pointer-events-auto group-data-[collapsible=icon]:!bottom-2 group-data-[collapsible=icon]:opacity-100"
 				>
 					<UpdateStatusRail status={updateStatus} tabIndex={isCollapsed ? 0 : -1} />
 					<CloudSignInRailButton tabIndex={isCollapsed ? 0 : -1} />
@@ -2291,8 +2348,8 @@ function SidebarSearchButton({ onOpen }: { onOpen: () => void }) {
 				className={cn(
 					// Filled search trigger (Cursor-style): icon + label.
 					"h-8 gap-2 rounded-lg bg-muted px-2.5 text-sm font-normal text-muted-foreground",
-					"transition-[background-color,color] duration-150 ease-out hover:bg-interactive-hover! hover:text-foreground active:bg-interactive-hover! [&_svg]:size-icon-sm!",
-					"group-data-[collapsible=icon]:size-control-form! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:bg-transparent group-data-[collapsible=icon]:p-0! group-data-[collapsible=icon]:hover:bg-interactive-hover!",
+					"hover:bg-interactive-hover! hover:text-foreground active:bg-interactive-hover! [&_svg]:size-icon-sm!",
+					"group-data-[collapsible=icon]:size-control-board! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:bg-transparent group-data-[collapsible=icon]:p-0! group-data-[collapsible=icon]:hover:bg-interactive-hover!",
 				)}
 			>
 				<Search strokeWidth={1.75} aria-hidden="true" />

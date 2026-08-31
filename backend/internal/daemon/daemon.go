@@ -171,7 +171,7 @@ func Run() error {
 		return err
 	}
 
-	// Terminal streaming: the selected runtime (tmux on macOS/Linux, conpty on Windows) supplies the
+	// Terminal streaming: the selected platform runtime supplies the
 	// attach Stream and liveness; the CDC broadcaster feeds the session-state channel. The manager
 	// is handed to httpd, which mounts it at /mux. Raw PTY bytes never flow
 	// through the CDC change_log -- only session-state events do.
@@ -287,7 +287,15 @@ func Run() error {
 
 	agentSvc := agentsvc.NewWithDeps(agentsvc.Deps{Cache: store, Discoverer: modelcatalog.Discoverer{}, Projects: store, Sessions: store, Context: ctx, Logger: log})
 
-	sessionSvc, reviewSvc, sessMgr, err := startSession(ctx, cfg, runtimeAdapter, store, lcStack.LCM, messenger, telemetrySink, agents, agentSvc, managedPreview, browserBroker, browserAuthority, chatLauncher{svc: chatSvc}, settingsSvc, log)
+	// Build the multi-tracker dispatching to both GitHub and GitLab once,
+	// shared between the session service and the intake observer below.
+	// Env-configured tokens are validated eagerly here; CLI credential probing
+	// (`gh auth token`) stays lazy inside the multi-tracker so boot is not
+	// blocked. May be nil (no usable credentials) — the session service's
+	// nil-guard and the intake resolver's backoff both tolerate that
+	// (issue #2685).
+	tracker := newMultiTracker(cfg.GitLab, log)
+	sessionSvc, reviewSvc, sessMgr, err := startSession(ctx, cfg, runtimeAdapter, store, lcStack.LCM, messenger, telemetrySink, agents, agentSvc, managedPreview, browserBroker, browserAuthority, chatLauncher{svc: chatSvc}, settingsSvc, tracker, log)
 	if err != nil {
 		stop()
 		lcStack.Stop()
@@ -296,6 +304,9 @@ func Run() error {
 		}
 		return fmt.Errorf("wire session service: %w", err)
 	}
+
+	// servers isn't clobbered. See preview_wiring.go (issue #4500).
+	wireManagedPreviewExit(managedPreview, sessionSvc, log)
 	sessMgr.SetTerminalInputGate(termMgr)
 	lifecycleMessenger.Bind(sessionLifecycleMessenger{sessMgr})
 	lcStack.LCM.SetCompletionTerminator(sessMgr)
@@ -311,7 +322,7 @@ func Run() error {
 		}
 		return err
 	}
-	lcStack.trackerDone = startTrackerIntake(ctx, store, sessionSvc, log)
+	lcStack.trackerDone = startTrackerIntake(ctx, store, sessionSvc, tracker, log)
 
 	hostCommands := systemexec.Adapter{}
 	systemChecks := systemcheck.New(agentSvc, hostCommands)
@@ -369,7 +380,7 @@ func Run() error {
 			usagePricing.Wait()
 		}()
 	}
-	if roots, rootsErr := usagesvc.DefaultSourceRoots(ctx); rootsErr != nil {
+	if roots, rootsErr := usagesvc.DefaultSourceRoots(ctx, cfg.DataDir); rootsErr != nil {
 		log.Warn("usage collection disabled", "err", rootsErr)
 	} else {
 		usageCollector = usagesvc.NewCollector(store, roots, func(reconcile bool) {
@@ -394,11 +405,7 @@ func Run() error {
 			ingestorConfig.RequestAttributionRepair = usagePricing.RepairLegacyAttribution
 		}
 		ingestor := usagepipeline.NewIngestor(store, ingestorConfig)
-		usagePipeline = usagepipeline.NewPipeline(store, ingestor, []string{
-			roots.ClaudeProjects,
-			roots.CodexSessions,
-			roots.CodexArchived,
-		}, usagepipeline.CoordinatorConfig{
+		usagePipeline = usagepipeline.NewPipeline(store, ingestor, usagePipelineWatchRoots(roots), usagepipeline.CoordinatorConfig{
 			Logger:     log,
 			Initialize: usageCollector.BackfillActive,
 			Reconcile: func(reconcileCtx context.Context) error {
@@ -651,6 +658,15 @@ func installedAgentHarness(target systeminstall.Target) (string, bool) {
 		return "copilot", true
 	default:
 		return "", false
+	}
+}
+
+func usagePipelineWatchRoots(roots usagesvc.SourceRoots) []string {
+	return []string{
+		roots.ClaudeProjects,
+		roots.CodexSessions,
+		roots.CodexArchived,
+		roots.KimiHome,
 	}
 }
 
