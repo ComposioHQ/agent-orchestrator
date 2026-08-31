@@ -92,6 +92,7 @@ export function CommandPalette() {
 	// Review states are fetched only while the palette is open; the shared query
 	// key means sessions already viewed in the inspector reuse the cached data.
 	const reviewQuerySummary = useQueries({
+		subscribed: isOpen,
 		queries: sessionsWithOpenPRs.map((session) =>
 			sessionReviewsQueryOptions(session, isOpen, PALETTE_REVIEW_STALE_TIME_MS),
 		),
