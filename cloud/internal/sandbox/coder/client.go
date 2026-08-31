@@ -16,7 +16,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"path"
@@ -339,7 +338,7 @@ func (c *Client) BootstrapWorker(ctx context.Context, id sandbox.ID, bootstrap s
 	defer netConn.Close()
 
 	encoder := json.NewEncoder(netConn)
-	reader := bufio.NewReader(netConn)
+	output := streamPTYOutput(netConn)
 	// Coder's reconnecting PTY writes each decoded Data field to the OS PTY but
 	// does not retry a short write. Frame the archive as canonical terminal lines
 	// with sequence and length metadata. The receiver acknowledges only a
@@ -352,32 +351,30 @@ func (c *Client) BootstrapWorker(ctx context.Context, id sandbox.ID, bootstrap s
 		end := min(offset+chunkSize, len(encoded))
 		chunk := encoded[offset:end]
 		line := fmt.Sprintf("data:%d:%d:%s\n", sequence, len(chunk), chunk)
-		if err := sendBootstrapFrame(ctx, netConn, encoder, reader, line, sequence+1); err != nil {
+		if err := sendBootstrapFrame(ctx, encoder, output, line, sequence+1); err != nil {
 			return err
 		}
 		sequence++
 	}
-	_ = netConn.SetReadDeadline(time.Time{})
 	if err := encoder.Encode(struct {
 		Data string `json:"data"`
 	}{Data: fmt.Sprintf("done:%d:0:\n", sequence)}); err != nil {
 		return fmt.Errorf("coder: finish worker upload through PTY: %w", err)
 	}
-	output, err := readBootstrapResult(ctx, reader)
+	result, err := readBootstrapResult(ctx, output)
 	if err != nil {
 		return err
 	}
-	if strings.Contains(output, bootstrapOK) {
+	if strings.Contains(result, bootstrapOK) {
 		return nil
 	}
-	return fmt.Errorf("coder: worker bootstrap did not complete: %s", sanitizePTYOutput(output))
+	return fmt.Errorf("coder: worker bootstrap did not complete: %s", sanitizePTYOutput(result))
 }
 
 func sendBootstrapFrame(
 	ctx context.Context,
-	connection net.Conn,
 	encoder *json.Encoder,
-	reader *bufio.Reader,
+	output <-chan ptyOutput,
 	line string,
 	expectedACK int,
 ) error {
@@ -392,29 +389,34 @@ func sendBootstrapFrame(
 		}{Data: line}); err != nil {
 			return fmt.Errorf("coder: upload worker through PTY: %w", err)
 		}
-		deadline := time.Now().Add(ackTimeout)
-		if contextDeadline, ok := ctx.Deadline(); ok && contextDeadline.Before(deadline) {
-			deadline = contextDeadline
-		}
-		if err := connection.SetReadDeadline(deadline); err != nil {
-			return fmt.Errorf("coder: set workspace PTY upload deadline: %w", err)
-		}
-		response, err := reader.ReadString('\n')
-		if strings.Contains(response, wanted) {
-			return nil
-		}
-		if strings.Contains(response, bootstrapFailed) {
-			return fmt.Errorf("coder: worker bootstrap failed during upload: %s", sanitizePTYOutput(response))
-		}
-		if err != nil {
-			if ctx.Err() != nil {
+		timer := time.NewTimer(ackTimeout)
+		for {
+			select {
+			case <-ctx.Done():
+				timer.Stop()
 				return ctx.Err()
-			}
-			var netError net.Error
-			if !errors.As(err, &netError) || !netError.Timeout() {
-				return fmt.Errorf("coder: read workspace PTY upload acknowledgement: %w", err)
+			case <-timer.C:
+				goto retry
+			case response, ok := <-output:
+				if !ok {
+					timer.Stop()
+					return errors.New("coder: workspace PTY closed during worker upload")
+				}
+				if strings.Contains(response.data, wanted) {
+					timer.Stop()
+					return nil
+				}
+				if strings.Contains(response.data, bootstrapFailed) {
+					timer.Stop()
+					return fmt.Errorf("coder: worker bootstrap failed during upload: %s", sanitizePTYOutput(response.data))
+				}
+				if response.err != nil {
+					timer.Stop()
+					return fmt.Errorf("coder: read workspace PTY upload acknowledgement: %w", response.err)
+				}
 			}
 		}
+	retry:
 	}
 	return errors.New("coder: workspace PTY repeatedly dropped an upload frame")
 }
@@ -532,48 +534,51 @@ func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
-func readBootstrapResult(ctx context.Context, reader io.Reader) (string, error) {
-	result := make(chan struct {
-		output string
-		err    error
-	}, 1)
+type ptyOutput struct {
+	data string
+	err  error
+}
+
+func streamPTYOutput(reader io.Reader) <-chan ptyOutput {
+	result := make(chan ptyOutput)
 	go func() {
-		var output bytes.Buffer
-		buffer := make([]byte, 16<<10)
-		for output.Len() < maxPTYOutput {
-			count, err := reader.Read(buffer)
-			if count > 0 {
-				_, _ = output.Write(buffer[:count])
-				text := output.String()
-				if strings.Contains(text, bootstrapOK) || strings.Contains(text, bootstrapFailed) {
-					result <- struct {
-						output string
-						err    error
-					}{output: text}
-					return
-				}
+		defer close(result)
+		buffered := bufio.NewReader(reader)
+		total := 0
+		for total < maxPTYOutput {
+			line, err := buffered.ReadString('\n')
+			total += len(line)
+			if line != "" || err != nil {
+				result <- ptyOutput{data: line, err: err}
 			}
 			if err != nil {
-				result <- struct {
-					output string
-					err    error
-				}{output: output.String(), err: err}
 				return
 			}
 		}
-		result <- struct {
-			output string
-			err    error
-		}{output: output.String(), err: errors.New("coder: PTY output exceeded limit")}
+		result <- ptyOutput{err: errors.New("coder: PTY output exceeded limit")}
 	}()
-	select {
-	case <-ctx.Done():
-		return "", ctx.Err()
-	case value := <-result:
-		if value.err != nil && !strings.Contains(value.output, bootstrapOK) {
-			return value.output, fmt.Errorf("coder: read workspace PTY: %w", value.err)
+	return result
+}
+
+func readBootstrapResult(ctx context.Context, output <-chan ptyOutput) (string, error) {
+	var result strings.Builder
+	for {
+		select {
+		case <-ctx.Done():
+			return result.String(), ctx.Err()
+		case value, ok := <-output:
+			if !ok {
+				return result.String(), io.EOF
+			}
+			result.WriteString(value.data)
+			text := result.String()
+			if strings.Contains(text, bootstrapOK) || strings.Contains(text, bootstrapFailed) {
+				return text, nil
+			}
+			if value.err != nil {
+				return text, fmt.Errorf("coder: read workspace PTY: %w", value.err)
+			}
 		}
-		return value.output, nil
 	}
 }
 
