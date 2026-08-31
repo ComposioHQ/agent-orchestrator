@@ -2058,7 +2058,7 @@ function UpdateStatusRow({
 		// A manual check leaves autoDownload off, so without this the row would
 		// announce an update and offer nothing to act on.
 		return (
-			<div className="flex w-full items-center gap-1">
+			<div className="flex w-full items-center gap-1" data-testid="sidebar-update-available">
 				<button
 					aria-label={
 						status.version
@@ -2071,14 +2071,19 @@ function UpdateStatusRow({
 					type="button"
 				>
 					<Download aria-hidden="true" className="size-icon-lg shrink-0" />
-					<span className="min-w-0 flex-1 truncate tracking-tight">{t("shell.updateAvailable")}</span>
-					{status.version && <span className="sr-only">{t("shell.versionAvailable", { version: status.version })}</span>}
-					<span aria-hidden="true" className="h-2 w-2 shrink-0 rounded-full bg-red-500" />
+					<span className="min-w-0 flex-1">
+						<span className="block truncate tracking-tight">{t("shell.updateAvailable")}</span>
+						{status.version && (
+							<span className="block truncate text-caption font-normal text-passive">
+								{t("shell.versionAvailable", { version: status.version })}
+							</span>
+						)}
+					</span>
 				</button>
 				{status.version && (
 					<button
 						aria-label={t("shell.dismissUpdateVersion", { version: status.version })}
-						className="grid size-8 shrink-0 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground"
+						className="grid size-8 shrink-0 place-items-center text-muted-foreground transition-colors hover:text-foreground"
 						onClick={onDismissAvailable}
 						tabIndex={tabIndex}
 						type="button"
@@ -2094,25 +2099,13 @@ function UpdateStatusRow({
 		return (
 			<div
 				aria-live="polite"
-				className={cn(NAV_ROW_CLASS, "relative flex w-full items-center text-left [&_svg]:size-icon-md [&_svg]:shrink-0")}
+				className={cn(NAV_ROW_CLASS, "flex w-full items-center text-left [&_svg]:size-icon-md [&_svg]:shrink-0")}
+				data-testid="sidebar-update-downloading"
 				role="status"
 			>
-				<span className="relative grid size-icon-lg shrink-0 place-items-center" aria-hidden="true">
-					<svg className="absolute inset-0 size-full -rotate-90" viewBox="0 0 24 24" fill="none">
-						<circle cx="12" cy="12" r="9" className="stroke-current/15" strokeWidth="2.5" />
-						<circle
-							cx="12"
-							cy="12"
-							r="9"
-							className="stroke-primary transition-[stroke-dasharray] duration-300"
-							strokeWidth="2.5"
-							strokeLinecap="round"
-							strokeDasharray={`${percent * 0.5655} 56.55`}
-						/>
-					</svg>
-				</span>
+				<Download aria-hidden="true" className="size-icon-lg shrink-0" />
 				<span className="min-w-0 flex-1 truncate tabular-nums">
-					{t("settings.updates.downloading", { percent: status.percent ?? 0 })}
+					{t("settings.updates.downloading", { percent })}
 				</span>
 			</div>
 		);
@@ -2127,6 +2120,7 @@ function UpdateStatusRow({
 			<button
 				aria-label={t("shell.retryUpdateCheck")}
 				className="flex w-full items-center gap-2.5 rounded-lg border border-warning/35 bg-warning/12 p-2.5 text-left text-control font-medium text-warning transition-colors hover:bg-warning/18 [&_svg]:text-warning"
+				data-testid="sidebar-update-failed"
 				onClick={() => void aoBridge.updates.check()}
 				tabIndex={tabIndex}
 				type="button"
@@ -2150,18 +2144,24 @@ function UpdateStatusRow({
 					: t("shell.restartInstallUpdate")
 			}
 			className={cn(
-				NAV_ROW_CLASS,
-				"flex w-full items-center text-left [&_svg]:size-icon-md [&_svg]:shrink-0",
-				escalated && "text-working hover:text-working [&_svg]:text-working",
+				"flex w-full items-center gap-2.5 rounded-lg border border-primary/35 bg-primary/12 p-2.5 text-left text-control font-medium text-primary transition-colors hover:bg-primary/18 [&_svg]:text-primary",
+				escalated &&
+					"border-working/35 bg-working/12 text-working hover:bg-working/18 [&_svg]:text-working",
 			)}
+			data-testid="sidebar-update-ready"
 			onClick={() => void aoBridge.updates.install()}
 			tabIndex={tabIndex}
 			type="button"
 		>
 			<RefreshCw aria-hidden="true" className="size-icon-lg shrink-0" />
-			<span className="min-w-0 flex-1 truncate tracking-tight">{t("shell.restartToUpdate")}</span>
-			{status.version && <span className="sr-only">{t("shell.versionReady", { version: status.version })}</span>}
-			<span aria-hidden="true" className={cn("h-2 w-2 shrink-0 rounded-full", escalated ? "bg-working" : "bg-red-500")} />
+			<span className="min-w-0 flex-1">
+				<span className="block truncate tracking-tight">{t("shell.restartToUpdate")}</span>
+				{status.version && (
+					<span className="block truncate text-caption font-normal">
+						{t("shell.versionReady", { version: status.version })}
+					</span>
+				)}
+			</span>
 		</button>
 	);
 }
