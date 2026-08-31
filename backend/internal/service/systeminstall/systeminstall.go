@@ -572,9 +572,9 @@ func (s *Service) Status(ctx context.Context, target Target) (Job, error) {
 	s.mu.Lock()
 	inMemory, ok := s.jobs[target]
 	if ok {
-		copy := *inMemory
+		snapshot := *inMemory
 		s.mu.Unlock()
-		return copy, nil
+		return snapshot, nil
 	}
 	s.mu.Unlock()
 	if IsAgentTarget(target) && s.jobStore != nil {

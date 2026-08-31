@@ -128,7 +128,7 @@ func pathWritable(ctx context.Context, path string) (bool, error) {
 		if _, err := os.Stat(path); err == nil {
 			file, createErr := os.CreateTemp(path, ".ao-write-check-*")
 			if createErr != nil {
-				return false, nil
+				return false, nil //nolint:nilerr // inability to create the probe file means not writable.
 			}
 			name := file.Name()
 			closeErr := file.Close()

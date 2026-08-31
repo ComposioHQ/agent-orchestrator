@@ -35,14 +35,6 @@ var agentDocumentationURLs = map[Target]string{
 	TargetOMP:        "https://github.com/can1357/oh-my-pi",
 }
 
-func (s *Service) agentMethodPlans(target Target) []Plan {
-	planner, err := s.newRequestPlanner(context.Background())
-	if err != nil {
-		return []Plan{{Target: target, Unsupported: true, Method: "manual", Reason: "install capabilities could not be inspected", DocsURL: agentDocumentationURLs[target]}}
-	}
-	return planner.agentMethodPlans(target)
-}
-
 func (s requestPlanner) agentMethodPlans(target Target) []Plan {
 	var plans []Plan
 	switch target {
