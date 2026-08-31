@@ -283,6 +283,28 @@ describe("useBrowserView", () => {
 		expect(bridge.openTab).toHaveBeenCalledWith({ viewId: "42:sess-1", url: "http://localhost:4173/" });
 	});
 
+	it("can reopen a tab immediately after receiving its keyboard-close event", async () => {
+		const bridge = setupBridge();
+		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
+		await waitFor(() => expect(result.current.tabs.map((tab) => tab.id)).toEqual(["t1"]));
+
+		await act(async () => {
+			bridge.emitTabs({
+				viewId: "42:sess-1",
+				activeTabId: "t1",
+				tabs: [{ id: "t1", url: "http://localhost:3000/", title: "First", active: true }],
+				change: {
+					kind: "closed",
+					tabId: "t2",
+					tab: { id: "t2", url: "http://localhost:4173/", title: "Keyboard closed", active: false },
+				},
+			});
+			await result.current.reopenClosedTab("t2");
+		});
+
+		expect(bridge.openTab).toHaveBeenCalledWith({ viewId: "42:sess-1", url: "http://localhost:4173/" });
+	});
+
 	it("reopens a closed tab beyond the former tab cap", async () => {
 		const bridge = setupBridge();
 		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));

@@ -378,10 +378,9 @@ export function BrowserPanelView({
 		() =>
 			window.ao?.browser.onReopenClosedTab((targetViewId) => {
 				if (targetViewId !== viewId) return;
-				const latest = closedTabs[0];
-				if (latest) void reopenClosedTab(latest.id);
+				void reopenClosedTab();
 			}),
-		[closedTabs, reopenClosedTab, viewId],
+		[reopenClosedTab, viewId],
 	);
 
 	const tabSensors = useSensors(

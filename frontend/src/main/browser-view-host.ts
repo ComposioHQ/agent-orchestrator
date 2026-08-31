@@ -22,7 +22,7 @@ import type {
 	BrowserAnnotationSubmitPayload,
 } from "../shared/browser-annotations";
 import { attachAppShortcuts } from "./app-shortcuts";
-import type { KeybindingOverrides } from "../shared/shortcuts";
+import type { AppShortcutId, KeybindingOverrides, ShortcutChord } from "../shared/shortcuts";
 import type { AgentBrowserRuntime } from "./agent-browser-runtime";
 import type { AgentBrowserTarget, AgentBrowserTargetProvider } from "./agent-browser-cdp-bridge";
 import { matchInstruction } from "./browser-act-matcher";
@@ -174,6 +174,25 @@ export function browserShortcutAction(input: BrowserShortcutInput, isMac: boolea
 		}
 	}
 	return null;
+}
+
+export function shouldHandleAppShortcutInBrowserContext(
+	id: AppShortcutId,
+	chord: ShortcutChord,
+	isMac: boolean,
+): boolean {
+	if (id === "new-shell-terminal" || id === "close-shell-terminal") return false;
+	return browserShortcutAction(
+		{
+			key: chord.key,
+			control: chord.ctrl,
+			meta: chord.meta,
+			shift: chord.shift,
+			alt: chord.alt,
+			type: "keyDown",
+		},
+		isMac,
+	) === null;
 }
 
 type BrowserWebContents = Pick<
@@ -668,7 +687,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			true,
 			options.getKeybindingOverrides,
 			options.isKeybindingRecording,
-			(id) => id !== "new-shell-terminal" && id !== "close-shell-terminal",
+			(id, chord) => shouldHandleAppShortcutInBrowserContext(id, chord, Boolean(options.isMac)),
 			(id) => {
 				if (id !== "toggle-browser-devtools") return;
 				lastFocusedViewId = session.viewId;
@@ -1027,7 +1046,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				return;
 			}
 			if (action === "reopen-tab") {
-				reopenClosedTab(session);
+				void queueNativeOperation(session, async () => reopenClosedTab(session)).catch(() => undefined);
 				return;
 			}
 			const closingTabId = session.activeTabId;

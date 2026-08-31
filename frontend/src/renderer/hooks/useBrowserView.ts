@@ -71,7 +71,7 @@ export type BrowserViewModel = {
 	openTab: (url?: string) => Promise<void>;
 	reorderTabs: (orderedIds: string[]) => void;
 	closedTabs: ClosedBrowserTab[];
-	reopenClosedTab: (tabId: string) => Promise<void>;
+	reopenClosedTab: (tabId?: string) => Promise<void>;
 	devtoolsState: BrowserDevToolsState;
 	openDevTools: () => Promise<void>;
 	closeDevTools: () => Promise<void>;
@@ -242,11 +242,10 @@ export function useBrowserView({
 	// actually shown.
 	const updateClosedTabs = useCallback(
 		(updater: (current: ClosedBrowserTab[]) => ClosedBrowserTab[]) => {
-			setClosedTabs((current) => {
-				const next = updater(current);
-				closedTabsBySession.set(sessionId, next);
-				return next;
-			});
+			const current = closedTabsBySession.get(sessionId) ?? [];
+			const next = updater(current);
+			closedTabsBySession.set(sessionId, next);
+			setClosedTabs(next);
 		},
 		[sessionId],
 	);
@@ -663,19 +662,20 @@ export function useBrowserView({
 	);
 
 	const reopenClosedTab = useCallback(
-		async (tabId: string) => {
-			const entry = closedTabs.find((tab) => tab.id === tabId);
+		async (tabId?: string) => {
+			const current = closedTabsBySession.get(sessionId) ?? [];
+			const entry = tabId ? current.find((tab) => tab.id === tabId) : current[0];
 			if (!entry) return;
-			updateClosedTabs((current) => current.filter((tab) => tab.id !== tabId));
+			updateClosedTabs((tabs) => tabs.filter((tab) => tab.id !== entry.id));
 			try {
 				await openTab(entry.url);
 			} catch {
 				// Restore the entry instead of losing it when tab creation fails.
-				updateClosedTabs((current) => [entry, ...current.filter((tab) => tab.id !== tabId)].slice(0, MAX_CLOSED_TABS));
+				updateClosedTabs((tabs) => [entry, ...tabs.filter((tab) => tab.id !== entry.id)].slice(0, MAX_CLOSED_TABS));
 				showTabNotice("Couldn't reopen that tab");
 			}
 		},
-		[closedTabs, openTab, showTabNotice, updateClosedTabs],
+		[openTab, sessionId, showTabNotice, updateClosedTabs],
 	);
 
 	const runDevtools = useCallback(

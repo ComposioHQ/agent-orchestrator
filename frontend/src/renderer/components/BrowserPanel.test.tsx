@@ -268,7 +268,7 @@ describe("BrowserPanel", () => {
 
 		act(() => reopenClosedTabListener?.("42:sess-1"));
 
-		expect(hookState.reopenClosedTab).toHaveBeenCalledWith("latest");
+		expect(hookState.reopenClosedTab).toHaveBeenCalledWith();
 	});
 
 	it("shows only the site address until the URL input is focused", () => {

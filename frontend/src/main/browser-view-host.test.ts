@@ -10,7 +10,11 @@ import {
 	normalizeBrowserURL,
 	scaleBoundsForZoom,
 } from "./browser-view-host";
-import { NEW_SESSION_SHORTCUT_CHANNEL, NEW_SHELL_TERMINAL_SHORTCUT_CHANNEL } from "../shared/shortcuts";
+import {
+	FOCUS_TERMINAL_SHORTCUT_CHANNEL,
+	NEW_SESSION_SHORTCUT_CHANNEL,
+	NEW_SHELL_TERMINAL_SHORTCUT_CHANNEL,
+} from "../shared/shortcuts";
 import type { BrowserAnnotationDraft } from "../shared/browser-annotations";
 import { parseAgentBrowserJSON } from "./agent-browser-runtime";
 
@@ -318,7 +322,10 @@ describe("browser shortcut routing", () => {
 
 		const reopenEvent = emitBeforeInput({ key: "t", control: true, shift: true });
 		expect(reopenEvent.preventDefault).toHaveBeenCalled();
-		expect(shellSend).toHaveBeenCalledWith("browser:reopenClosedTab", state.viewId);
+		await vi.waitFor(() => {
+			expect(shellSend).toHaveBeenCalledWith("browser:reopenClosedTab", state.viewId);
+		});
+		expect(shellSend).not.toHaveBeenCalledWith(FOCUS_TERMINAL_SHORTCUT_CHANNEL);
 
 		const openEvent = emitBeforeInput({ key: "t", control: true });
 		expect(openEvent.preventDefault).toHaveBeenCalledOnce();
@@ -378,6 +385,29 @@ describe("browser shortcut routing", () => {
 		const shiftSpaceEvent = emitBeforeInput({ key: " ", shift: true });
 		expect(spaceEvent.preventDefault).not.toHaveBeenCalled();
 		expect(shiftSpaceEvent.preventDefault).not.toHaveBeenCalled();
+	});
+
+	it("orders a reopen request after an in-flight keyboard tab close", async () => {
+		const { emitBeforeInput, invoke, shellSend } = setupHost();
+		const state = await invoke("browser:ensure", "sess-1");
+
+		emitBeforeInput({ key: "t", control: true });
+		await vi.waitFor(async () => {
+			const tabs = (await invoke("browser:getTabs", state.viewId)) as unknown as BrowserTabsState;
+			expect(tabs.tabs).toHaveLength(2);
+		});
+		shellSend.mockClear();
+
+		emitBeforeInput({ key: "w", control: true });
+		emitBeforeInput({ key: "t", control: true, shift: true });
+
+		await vi.waitFor(() => {
+			const channels = shellSend.mock.calls.map(([channel]) => channel);
+			expect(channels.indexOf("browser:tabsState")).toBeGreaterThanOrEqual(0);
+			expect(channels.indexOf("browser:reopenClosedTab")).toBeGreaterThan(
+				channels.indexOf("browser:tabsState"),
+			);
+		});
 	});
 });
 
