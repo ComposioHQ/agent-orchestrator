@@ -1282,6 +1282,16 @@ BEGIN
 		addDDL: `ALTER TABLE conversation_turns ADD COLUMN promotion_started_at TIMESTAMP`},
 	{version: 89, table: "conversation_turns", column: "promoted_to_turn_id",
 		addDDL: `ALTER TABLE conversation_turns ADD COLUMN promoted_to_turn_id TEXT REFERENCES conversation_turns(id) ON DELETE SET NULL`},
+	// 0108_conversation_retry_source.sql. Some stacked development builds
+	// recorded 0108 without applying its physical schema; 0118 rebuilds this
+	// table and must see the retry lineage column before goose reaches it.
+	{version: 108, table: "conversation_turns", column: "retry_of_turn_id",
+		addDDL: `ALTER TABLE conversation_turns ADD COLUMN retry_of_turn_id TEXT REFERENCES conversation_turns(id) ON DELETE RESTRICT`,
+		postAdd: []string{
+			`CREATE UNIQUE INDEX IF NOT EXISTS idx_conversation_turns_retry_source
+    ON conversation_turns(conversation_id, retry_of_turn_id)
+    WHERE retry_of_turn_id IS NOT NULL`,
+		}},
 }
 
 // reconcileSchema verifies that the columns in schemaRepairs physically exist
