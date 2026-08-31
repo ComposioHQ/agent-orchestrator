@@ -141,6 +141,9 @@ fi
 # Same worker CVE allowlist as deploy-staging.sh. Inspector flags unpatched
 # Debian packages pulled in by git; a zero HIGH/CRITICAL gate would block every
 # promote until Debian ships fixes. New HIGH/CRITICAL IDs still fail the gate.
+# The glibc, libssh2, and sqlite3 additions are classified by Debian as minor
+# no-DSA issues in Trixie; patched packages exist only in unstable as of
+# 2026-08-31.
 verify_scan() {
 	local image="$1"
 	local repository_uri="${image%@sha256:*}"
@@ -154,7 +157,7 @@ verify_scan() {
 	)"
 	# CVE-2026-14456 is a scanner false positive for Debian's OpenSSL 3.0:
 	# its QUIC listener was introduced in OpenSSL 3.5.
-	if ! SCAN="$scan" ALLOWLIST="${AO_CLOUD_SCAN_CVE_ALLOWLIST:-CVE-2026-57432 CVE-2026-45186 CVE-2026-12087 CVE-2025-15661 CVE-2026-58051 CVE-2026-7017 CVE-2026-48962 CVE-2026-57433 CVE-2026-66032 CVE-2026-48961 CVE-2026-48959 CVE-2026-66034 CVE-2026-58050 CVE-2026-13221 CVE-2026-14456 CVE-2026-66046}" python3 - <<'PY'
+	if ! SCAN="$scan" ALLOWLIST="${AO_CLOUD_SCAN_CVE_ALLOWLIST:-CVE-2026-57432 CVE-2026-45186 CVE-2026-12087 CVE-2025-15661 CVE-2026-58051 CVE-2026-7017 CVE-2026-48962 CVE-2026-57433 CVE-2026-66032 CVE-2026-48961 CVE-2026-48959 CVE-2026-66034 CVE-2026-58050 CVE-2026-13221 CVE-2026-14456 CVE-2026-66046 CVE-2026-66035 CVE-2026-5450 CVE-2026-11824 CVE-2026-5928 CVE-2026-66033 CVE-2026-11822}" python3 - <<'PY'
 import json
 import os
 import sys
