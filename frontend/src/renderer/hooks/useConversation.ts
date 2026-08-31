@@ -869,7 +869,6 @@ export function useConversationCommands(sessionId: string | undefined) {
 			: undefined,
 		cancelQueuedTurnPendingTurnId: cancelQueuedTurn.isPending ? cancelQueuedTurn.variables : undefined,
 		editQueuedTurnPendingTurnId: editQueuedTurn.isPending ? editQueuedTurn.variables?.turnId : undefined,
-		reorderQueuedTurnsPending: reorderQueuedTurns.isPending,
 		sendPending: send.isPending && sendTargetsCurrentSession,
 		steerPending: steer.isPending,
 		/**

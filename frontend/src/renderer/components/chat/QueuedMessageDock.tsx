@@ -34,8 +34,9 @@ function SortableQueuedMessageRow({
 	turnId,
 	message,
 	hiddenFromView,
-	showHoverSteer,
+	showPersistentSteer,
 	canSteer,
+	suppressHoverSteer,
 	onPromoteQueuedTurn,
 	onBeginQueuedEdit,
 	onCancelQueuedTurn,
@@ -47,8 +48,9 @@ function SortableQueuedMessageRow({
 	turnId: string;
 	message: ConversationMessage;
 	hiddenFromView?: boolean;
-	showHoverSteer?: boolean;
+	showPersistentSteer?: boolean;
 	canSteer?: boolean;
+	suppressHoverSteer?: boolean;
 	onPromoteQueuedTurn?: (turnId: string) => Promise<unknown>;
 	onBeginQueuedEdit?: (turnId: string, text: string) => void;
 	onCancelQueuedTurn?: (turnId: string) => Promise<unknown>;
@@ -88,7 +90,7 @@ function SortableQueuedMessageRow({
 					{message.text}
 				</p>
 				<div className="queue-dock-actions flex shrink-0 items-center gap-0.5 whitespace-nowrap">
-					{showHoverSteer && onPromoteQueuedTurn ? (
+					{onPromoteQueuedTurn && canSteer && !showPersistentSteer && !suppressHoverSteer ? (
 						<button
 							type="button"
 							disabled={busy}
@@ -102,7 +104,7 @@ function SortableQueuedMessageRow({
 							Steer
 						</button>
 					) : null}
-					{canSteer && onPromoteQueuedTurn ? (
+					{showPersistentSteer && onPromoteQueuedTurn ? (
 						<button
 							type="button"
 							disabled={busy}
@@ -201,7 +203,10 @@ export function QueuedMessageDock({
 		() => new Set(),
 	);
 	const [displayOrder, setDisplayOrder] = useState<string[] | null>(null);
+	const [hoverSteerSuppressed, setHoverSteerSuppressed] = useState(false);
+	const [reorderError, setReorderError] = useState<string | undefined>();
 	const scrollRef = useRef<HTMLDivElement>(null);
+	const hoverSteerSuppressTimer = useRef<number | undefined>(undefined);
 	const [handledSteerNextRequest, setHandledSteerNextRequest] = useState(steerNextRequest ?? 0);
 	const steerNextInFlight = useRef(false);
 	const reorderSensors = useSensors(
@@ -258,6 +263,27 @@ export function QueuedMessageDock({
 	);
 	const reorderEnabled =
 		Boolean(onReorderQueuedTurns) && count > 1 && isOpen;
+	const nextQueuedTurnId = fifoTurnIds[0];
+
+	const suppressHoverSteer = useCallback(() => {
+		setHoverSteerSuppressed(true);
+		if (hoverSteerSuppressTimer.current !== undefined) {
+			window.clearTimeout(hoverSteerSuppressTimer.current);
+		}
+		hoverSteerSuppressTimer.current = window.setTimeout(() => {
+			setHoverSteerSuppressed(false);
+			hoverSteerSuppressTimer.current = undefined;
+		}, 200);
+	}, []);
+
+	useEffect(
+		() => () => {
+			if (hoverSteerSuppressTimer.current !== undefined) {
+				window.clearTimeout(hoverSteerSuppressTimer.current);
+			}
+		},
+		[],
+	);
 
 	const fifoTurnIdSetKey = useMemo(
 		() => [...fifoTurnIds].sort().join("\0"),
@@ -305,7 +331,7 @@ export function QueuedMessageDock({
 		}
 		if (steerNextInFlight.current) return;
 
-		const next = displayMessages[displayMessages.length - 1];
+		const next = displayMessages.find((message) => message.turnId === nextQueuedTurnId);
 		if (!next) {
 			setHandledSteerNextRequest(steerNextRequest);
 			return;
@@ -319,6 +345,7 @@ export function QueuedMessageDock({
 		canSteerNext,
 		displayMessages,
 		handledSteerNextRequest,
+		nextQueuedTurnId,
 		onPromoteQueuedTurn,
 		promoteQueuedTurn,
 		runAction,
@@ -333,16 +360,21 @@ export function QueuedMessageDock({
 
 	const onDragEnd = useCallback(
 		({ active, over }: DragEndEvent) => {
+			suppressHoverSteer();
 			if (!over || !onReorderQueuedTurns) return;
 			const nextDisplay = reorderById(displayTurnIds, String(active.id), String(over.id));
 			if (!nextDisplay) return;
 			const fifoOrder = [...nextDisplay].reverse();
+			setReorderError(undefined);
 			flushSync(() => setDisplayOrder(nextDisplay));
-			void onReorderQueuedTurns(fifoOrder).catch(() => {
+			void onReorderQueuedTurns(fifoOrder).catch((error) => {
 				setDisplayOrder(null);
+				setReorderError(
+					error instanceof Error ? error.message : "Could not reorder queued messages.",
+				);
 			});
 		},
-		[displayTurnIds, onReorderQueuedTurns],
+		[displayTurnIds, onReorderQueuedTurns, suppressHoverSteer],
 	);
 
 	const rowProps = {
@@ -351,6 +383,7 @@ export function QueuedMessageDock({
 		onBeginQueuedEdit,
 		onCancelQueuedTurn,
 		onRunAction: runAction,
+		suppressHoverSteer: hoverSteerSuppressed,
 	};
 
 	return (
@@ -410,6 +443,7 @@ export function QueuedMessageDock({
 					<DndContext
 						collisionDetection={closestCenter}
 						onDragEnd={onDragEnd}
+						onDragStart={suppressHoverSteer}
 						sensors={reorderSensors}
 					>
 						<SortableContext items={displayTurnIds} strategy={verticalListSortingStrategy}>
@@ -423,24 +457,29 @@ export function QueuedMessageDock({
 								{displayMessages.map(({ turnId, message }, index) => {
 									const busy =
 										promotePendingTurnId === turnId || cancelPendingTurnId === turnId;
+									const isNextQueuedTurn = turnId === nextQueuedTurnId;
 									return (
 										<SortableQueuedMessageRow
 											key={turnId}
 											turnId={turnId}
 											message={message}
 											hiddenFromView={!isOpen && index !== displayMessages.length - 1}
-											showHoverSteer={canSteer && (index !== displayMessages.length - 1 || !canSteerNext)}
+											showPersistentSteer={Boolean(canSteer && canSteerNext && isNextQueuedTurn)}
 											busy={busy}
 											error={errors[turnId]}
 											reorderEnabled={reorderEnabled && !busy}
 											{...rowProps}
-											canSteer={canSteer && canSteerNext && index === displayMessages.length - 1}
 										/>
 									);
 								})}
 							</div>
 						</SortableContext>
 					</DndContext>
+					{reorderError ? (
+						<p role="status" className="px-3 pb-2 text-[11px] text-warning">
+							{reorderError}
+						</p>
+					) : null}
 				</div>
 			) : null}
 		</div>
