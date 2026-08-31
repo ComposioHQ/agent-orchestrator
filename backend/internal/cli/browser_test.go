@@ -119,6 +119,46 @@ func TestBrowserUntrustedTextCannotBeSpoofedByPageContent(t *testing.T) {
 	}
 }
 
+func TestBrowserActOutputKeepsTrustBoundaryLineDelimited(t *testing.T) {
+	tests := []struct {
+		name   string
+		result map[string]any
+	}{
+		{
+			name: "matched",
+			result: map[string]any{
+				"outcome": "matched", "resolvedRef": "e3",
+				"candidate": map[string]any{"role": "button", "name": "Submit"},
+			},
+		},
+		{
+			name: "ambiguous",
+			result: map[string]any{
+				"outcome":    "ambiguous",
+				"candidates": []any{map[string]any{"role": "button", "name": "Submit", "ref": "e3"}},
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var output bytes.Buffer
+			cmd := &cobra.Command{}
+			cmd.SetOut(&output)
+			if err := writeBrowserResult(cmd, "act", test.result); err != nil {
+				t.Fatal(err)
+			}
+			text := output.String()
+			wantBlock := "\n" + browserUntrustedBegin + "\nSubmit\n" + browserUntrustedEnd + "\n"
+			if !strings.Contains(text, wantBlock) {
+				t.Fatalf("trust boundary is not line-delimited: %q", text)
+			}
+			if strings.Contains(text, `\n`) {
+				t.Fatalf("trust boundary contains escaped newlines: %q", text)
+			}
+		})
+	}
+}
+
 func TestBrowserClickAndWaitArguments(t *testing.T) {
 	setBrowserIdentity(t)
 	cfg := setConfigEnv(t)
@@ -138,6 +178,24 @@ func TestBrowserClickAndWaitArguments(t *testing.T) {
 	}
 	if capture.body.Action != "wait" || capture.body.Args["text"] != "Ready" || capture.body.Args["timeoutMs"] != float64(2500) {
 		t.Fatalf("wait = %#v", capture.body)
+	}
+}
+
+func TestBrowserActForwardsExplicitEmptyValue(t *testing.T) {
+	setBrowserIdentity(t)
+	cfg := setConfigEnv(t)
+	capture := &browserRequestCapture{}
+	srv := browserCLIServer(t, capture)
+	writeRunFileFor(t, cfg, srv)
+	deps := Deps{ProcessAlive: func(int) bool { return true }}
+
+	_, errOut, err := executeCLI(t, deps, "browser", "act", "the search field", "--action", "fill", "--value", "")
+	if err != nil {
+		t.Fatalf("act err=%v stderr=%s", err, errOut)
+	}
+	value, ok := capture.body.Args["value"]
+	if !ok || value != "" {
+		t.Fatalf("act value = %#v, present=%v; want explicit empty string", value, ok)
 	}
 }
 

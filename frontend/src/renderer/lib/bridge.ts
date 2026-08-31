@@ -41,6 +41,7 @@ export const aoBridge: AoBridge =
 		},
 		theme: {
 			set: async () => undefined,
+			persistTerminal: async () => undefined,
 		},
 		menu: {
 			action: async () => undefined,
@@ -142,6 +143,10 @@ export const aoBridge: AoBridge =
 			selectTab: async ({ viewId, tabId }) => ({ viewId, activeTabId: tabId, tabs: [] }),
 			closeTab: async ({ viewId }) => ({ viewId, activeTabId: "", tabs: [] }),
 			openTab: async ({ viewId }) => ({ viewId, activeTabId: "", tabs: [] }),
+			notifyPanelUsed: () => undefined,
+			notifyPanelBlur: () => undefined,
+			onFocusLocation: () => () => undefined,
+			onReopenClosedTab: () => () => undefined,
 			devtools: async ({ viewId, operation }) => ({
 				viewId,
 				open: operation !== "close",
@@ -150,6 +155,7 @@ export const aoBridge: AoBridge =
 			destroy: () => undefined,
 			setAnnotationMode: async () => undefined,
 			onNavState: () => () => undefined,
+			onPageFocus: () => () => undefined,
 			onTabsState: () => () => undefined,
 			onAgentActivity: () => () => undefined,
 			onDevToolsState: () => () => undefined,

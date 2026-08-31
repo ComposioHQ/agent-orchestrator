@@ -134,6 +134,7 @@ func mountMobile(r chi.Router, c *controllers.MobileController) {
 	}
 	r.Get("/api/v1/mobile/status", c.Status)
 	r.Post("/api/v1/mobile/enable", c.Enable)
+	r.Post("/api/v1/mobile/remote-access", c.StartRemoteAccess)
 	r.Post("/api/v1/mobile/disable", c.Disable)
 	r.Post("/api/v1/mobile/regenerate", c.Regenerate)
 	r.Post("/api/v1/mobile/secure-pairing", c.SecurePairing)

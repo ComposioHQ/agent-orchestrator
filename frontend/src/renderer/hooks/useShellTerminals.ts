@@ -7,6 +7,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorCode, hasTrustedApiBaseUrl } from "../lib/api-client";
 import { mockShellTerminals } from "../lib/mock-data";
+import { isWindowsPlatform } from "../lib/platform";
+import { terminalShellRequestValue, useTerminalShellStore } from "../stores/terminal-shell-store";
 
 export type ShellTerminal = {
 	/** Runtime handle the terminal mux attaches to, exactly like a session pane's. */
@@ -22,13 +24,21 @@ export type ShellTerminal = {
 export const shellTerminalsQueryKey = ["shell-terminals"] as const;
 const usePreviewData = import.meta.env.VITE_NO_ELECTRON === "1";
 
+function isLegacyDirectoryTitle(title: string, workingDir: string): boolean {
+	const parts = workingDir.split(/[\\/]/).filter(Boolean);
+	return parts.at(-1) === title;
+}
+
 function toShellTerminal(t: components["schemas"]["ShellTerminalResponse"]): ShellTerminal {
+	const title = isLegacyDirectoryTitle(t.title, t.workingDir) ? "Terminal" : t.title;
 	return {
 		handleId: t.handleId,
 		projectId: t.projectId,
 		sessionId: t.sessionId,
 		workingDir: t.workingDir,
-		title: t.title,
+		// Shell tabs used to be named after their initial directory. Normalize
+		// those persisted legacy labels so existing tabs adopt the new idle state.
+		title: title === "Terminal" ? "Terminal 1" : title,
 		createdAt: t.createdAt,
 	};
 }
@@ -65,7 +75,7 @@ export function useShellTerminals() {
 	return useQuery(shellTerminalsQueryOptions);
 }
 
-export type OpenShellTerminalInput = { projectId?: string; sessionId?: string };
+export type OpenShellTerminalInput = { projectId?: string; sessionId?: string; shell?: string };
 
 /**
  * Opens a shell in the given project's root (or the daemon data dir when
@@ -75,7 +85,7 @@ export type OpenShellTerminalInput = { projectId?: string; sessionId?: string };
 export function useOpenShellTerminal() {
 	const queryClient = useQueryClient();
 	return useMutation({
-		mutationFn: async ({ projectId, sessionId }: OpenShellTerminalInput = {}): Promise<ShellTerminal> => {
+		mutationFn: async ({ projectId, sessionId, shell }: OpenShellTerminalInput = {}): Promise<ShellTerminal> => {
 			if (usePreviewData) {
 				previewShellSeq += 1;
 				const shell: ShellTerminal = {
@@ -83,7 +93,7 @@ export function useOpenShellTerminal() {
 					projectId,
 					sessionId,
 					workingDir: `/Users/demo/Projects/${projectId ?? "ao"}`,
-					title: projectId ?? "shell",
+					title: `Terminal ${previewShellSeq}`,
 					createdAt: new Date().toISOString(),
 				};
 				previewShellTerminals = [...previewShellTerminals, shell];
@@ -92,6 +102,10 @@ export function useOpenShellTerminal() {
 			const body: OpenShellTerminalInput = {};
 			if (projectId) body.projectId = projectId;
 			if (sessionId) body.sessionId = sessionId;
+			if (isWindowsPlatform()) {
+				await useTerminalShellStore.getState().load();
+				body.shell = shell ?? terminalShellRequestValue(useTerminalShellStore.getState().preference);
+			}
 			const { data, error } = await apiClient.POST("/api/v1/shell-terminals", { body });
 			if (error) throw error;
 			if (!data) throw new Error("Daemon returned no shell terminal");
@@ -112,6 +126,9 @@ export function useOpenShellTerminal() {
 		// busy) leaves the "+" button looking like it silently did nothing.
 		onError: (error) => {
 			console.error("Failed to open shell terminal:", error);
+			if (isWindowsPlatform() && apiErrorCode(error) === "SHELL_TERMINAL_SHELL_UNAVAILABLE") {
+				void useTerminalShellStore.getState().setPreference({ kind: "auto" });
+			}
 		},
 	});
 }
@@ -183,7 +200,21 @@ export function useRenameShellTerminal() {
 			if (!data) throw new Error("Daemon returned no shell terminal");
 			return toShellTerminal(data.shellTerminal);
 		},
-		onSuccess: () => {
+		onMutate: async ({ handleId, title }) => {
+			await queryClient.cancelQueries({ queryKey: shellTerminalsQueryKey });
+			const previous = queryClient.getQueryData<ShellTerminal[]>(shellTerminalsQueryKey);
+			queryClient.setQueryData<ShellTerminal[]>(shellTerminalsQueryKey, (current) =>
+				current?.map((shell) => (shell.handleId === handleId ? { ...shell, title } : shell)),
+			);
+			return { previous };
+		},
+		onError: (_error, _input, context) => {
+			if (context?.previous) queryClient.setQueryData(shellTerminalsQueryKey, context.previous);
+		},
+		onSuccess: (shell) => {
+			queryClient.setQueryData<ShellTerminal[]>(shellTerminalsQueryKey, (current) =>
+				current?.map((candidate) => (candidate.handleId === shell.handleId ? shell : candidate)),
+			);
 			void queryClient.invalidateQueries({ queryKey: shellTerminalsQueryKey });
 		},
 	});

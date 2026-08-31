@@ -28,9 +28,12 @@ import {
 	type ReactNode,
 	type WheelEvent as ReactWheelEvent,
 } from "react";
-import { ArrowDown, CornerDownRight, Loader2, TriangleAlert, Undo2 } from "lucide-react";
+import { ArrowDown, Loader2, TriangleAlert, Undo2 } from "lucide-react";
+import { Reorder, useDragControls } from "motion/react";
+import { useTranslation } from "react-i18next";
 import { cn } from "../../lib/utils";
 import { sameContent, useStableList } from "../../lib/stable-list";
+import { useTabScrollEdges } from "../../hooks/useTabScrollEdges";
 import { getApiBaseUrl, subscribeApiBaseUrl } from "../../lib/api-client";
 import { aoBridge } from "../../lib/bridge";
 import { isDialogOrMenuOpen } from "../../lib/dom-selectors";
@@ -45,8 +48,13 @@ import { agentLabel } from "../../lib/agent-options";
 import type { ShellTerminal } from "../../hooks/useShellTerminals";
 import { sidebarOccupiesLayout, useUiStore } from "../../stores/ui-store";
 import type { TerminalTarget } from "../../types/terminal";
-import type { SessionKind, WorkspaceSession } from "../../types/workspace";
+import {
+	isOrchestratorSession,
+	type SessionKind,
+	type WorkspaceSession,
+} from "../../types/workspace";
 import { AgentAvatar } from "../AgentAvatar";
+import { SessionPaneTab } from "../CenterPane";
 import { Button } from "../ui/button";
 import { ConfirmDialog } from "../ConfirmDialog";
 import { SessionTopbarPortal } from "../SessionTopbarPortal";
@@ -68,6 +76,7 @@ import {
 import { HumanMessageEditor } from "./HumanMessageEditor";
 import { ChatLinkProvider } from "./ChatMarkdown";
 import { ChatComposer } from "./ChatComposer";
+import { QueuedMessageDock } from "./QueuedMessageDock";
 import { ActivityRun } from "./ActivityRun";
 import { TurnPlan } from "./TurnPlan";
 import { TurnSettingsBar } from "./TurnSettingsBar";
@@ -80,6 +89,7 @@ import {
 	can,
 	isCompaction,
 	isSteer,
+	hiddenTimelineTurnIds,
 	queuedTurnIds,
 	type ConversationPlan,
 	type ConversationSnapshot,
@@ -126,6 +136,32 @@ function initialTerminalFontSize(): number {
 
 type ReviewerTerminalTarget = Extract<TerminalTarget, { kind: "reviewer" }>;
 type ShellTerminalTarget = Extract<TerminalTarget, { kind: "shell" }>;
+type WorkspaceTab = { key: string; content: ReactNode; onSelect: () => void };
+type ChatAuxiliaryTab =
+	| { key: string; kind: "reviewer"; terminal: { handleId: string; harness: string } }
+	| { key: string; kind: "shell"; terminal: ShellTerminal }
+	| { key: string; kind: "workspace"; tab: WorkspaceTab };
+
+function DraggableChatTab({ children, value }: { children: ReactNode; value: string }) {
+	const dragControls = useDragControls();
+	return (
+		<Reorder.Item
+			as="div"
+			className="flex shrink-0 self-stretch touch-pan-y"
+			data-terminal-tab-key={value}
+			drag="x"
+			dragControls={dragControls}
+			dragListener={false}
+			onPointerDown={(event: ReactPointerEvent<HTMLDivElement>) => {
+				if ((event.target as HTMLElement).closest("[data-terminal-tab-action],input,a")) return;
+				dragControls.start(event);
+			}}
+			value={value}
+		>
+			{children}
+		</Reorder.Item>
+	);
+}
 
 const isMac = isMacPlatform();
 const isLinux = isLinuxPlatform();
@@ -151,13 +187,23 @@ export interface ChatWorkspaceProps {
 	sessionRole?: SessionKind;
 	/** Session-level actions owned above the conversation surface. */
 	headerActions?: ReactNode;
+	/** Agent-session actions on the primary chat tab (interface switch, handoff). */
+	sessionTabAction?: ReactNode;
+	/** Pinned beside the tab strip, before the workspace topbar actions. */
+	tabStripAction?: ReactNode;
 	/** File tabs coordinated by SessionView, appended to the native chat tab strip. */
-	workspaceTabs?: ReactNode;
-	workspaceFileActive?: boolean;
+	workspaceTabs?: WorkspaceTab[];
+	workspaceTabActions?: ReactNode;
+	workspaceActiveTabKey?: string;
+	/** Session-owned order shared with the terminal UI surface. */
+	auxiliaryTabOrder?: string[];
+	onAuxiliaryTabOrderChange?: (keys: string[]) => void;
 	/** Suppress a transient stopped snapshot while a mode handoff installs Chat. */
 	controllerTransitioning?: boolean;
 	/** Freeze agent-owned Chat controls while a durable session mutation owns input. */
 	agentInputDisabled?: boolean;
+	/** Fence new agent work without blocking decisions required by the current turn. */
+	newWorkDisabled?: boolean;
 	reviewerTerminal?: { handleId: string; harness: string };
 	onOpenReviewerTerminal?: (target: { handleId: string; harness: string }) => void;
 	/** Older durable history is available but not loaded into the DOM yet. */
@@ -201,11 +247,6 @@ export interface ChatWorkspaceProps {
 	onSelectShellTerminal?: (handleId: string) => void;
 	onCloseShellTerminal?: (handleId: string) => void;
 	onRenameShellTerminal?: (handleId: string, title: string) => void;
-	/** The in-place agent-switch control. Owned by the surface (which owns query
-	    wiring) so this pure view stays renderable without query providers. */
-	switchAgentControl?: ReactNode;
-	/** Receives the body element the agent-switch dialog anchors to. */
-	switchDialogContainer?: (node: HTMLDivElement | null) => void;
 	/** Daemon readiness for the reviewer terminal pane. */
 	daemonReady?: boolean;
 	/** Resolved color theme for the reviewer terminal pane. */
@@ -271,9 +312,16 @@ export interface ChatWorkspaceProps {
 	 * is worse than none.
 	 */
 	onSteer?: (text: string) => Promise<unknown>;
+	sendPending?: boolean;
 	steerPending?: boolean;
 	/** Why the last steer was refused, from the daemon's typed answer. */
 	steerRefusal?: string;
+	onPromoteQueuedTurn?: (turnId: string) => Promise<unknown>;
+	onEditQueuedTurn?: (turnId: string, text: string) => Promise<unknown>;
+	onCancelQueuedTurn?: (turnId: string) => Promise<unknown>;
+	promoteQueuedTurnPendingTurnId?: string;
+	cancelQueuedTurnPendingTurnId?: string;
+	editQueuedTurnPendingTurnId?: string;
 	/** Start the tool servers again. Absent when the harness cannot. */
 	onReloadMcpServers?: () => void;
 	reloadingMcpServers?: boolean;
@@ -282,12 +330,19 @@ export interface ChatWorkspaceProps {
 
 export function ChatWorkspace({
 	snapshot,
+	sessionTitle,
 	sessionRole = "worker",
 	headerActions,
+	sessionTabAction,
+	tabStripAction,
 	workspaceTabs,
-	workspaceFileActive = false,
+	workspaceTabActions,
+	workspaceActiveTabKey,
+	auxiliaryTabOrder,
+	onAuxiliaryTabOrderChange,
 	controllerTransitioning,
 	agentInputDisabled = false,
+	newWorkDisabled = false,
 	reviewerTerminal,
 	onOpenReviewerTerminal,
 	session,
@@ -298,8 +353,6 @@ export function ChatWorkspace({
 	onSelectShellTerminal,
 	onCloseShellTerminal,
 	onRenameShellTerminal,
-	switchAgentControl,
-	switchDialogContainer,
 	daemonReady,
 	theme,
 	hasOlder,
@@ -345,8 +398,15 @@ export function ChatWorkspace({
 	onStageAttachments,
 	nativeImages,
 	onSteer,
+	sendPending,
 	steerPending,
 	steerRefusal,
+	onPromoteQueuedTurn,
+	onEditQueuedTurn,
+	onCancelQueuedTurn,
+	promoteQueuedTurnPendingTurnId,
+	cancelQueuedTurnPendingTurnId,
+	editQueuedTurnPendingTurnId,
 	onReloadMcpServers,
 	reloadingMcpServers,
 	mcpReloadError,
@@ -362,6 +422,7 @@ export function ChatWorkspace({
 	const handleChatKeyDown = useCallback(
 		(event: ReactKeyboardEvent<HTMLElement>) => {
 			if (
+				newWorkDisabled ||
 				event.key !== "Escape" ||
 				event.defaultPrevented ||
 				isDialogOrMenuOpen() ||
@@ -376,7 +437,7 @@ export function ChatWorkspace({
 			event.preventDefault();
 			onInterrupt();
 		},
-		[hasPendingInteraction, onInterrupt, turn],
+		[hasPendingInteraction, newWorkDisabled, onInterrupt, turn],
 	);
 	const handleChatSurfaceClick = useCallback((event: ReactMouseEvent<HTMLElement>) => {
 		const target = event.target;
@@ -401,6 +462,68 @@ export function ChatWorkspace({
 	// session temporarily becomes terminated and later returns.
 	const reviewerActive = Boolean(reviewerTarget && session);
 	const shellActive = Boolean(shellTarget && session);
+	const auxiliaryTabs = useMemo<ChatAuxiliaryTab[]>(
+		() => [
+			...(reviewerTerminal
+				? [{ key: `reviewer:${reviewerTerminal.handleId}`, kind: "reviewer" as const, terminal: reviewerTerminal }]
+				: []),
+			...(shellTerminals ?? []).map((terminal) => ({ key: terminal.handleId, kind: "shell" as const, terminal })),
+			...(workspaceTabs ?? []).map((tab) => ({ key: tab.key, kind: "workspace" as const, tab })),
+		],
+		[reviewerTerminal, shellTerminals, workspaceTabs],
+	);
+	const availableTabKeys = useMemo(() => auxiliaryTabs.map((tab) => tab.key), [auxiliaryTabs]);
+	const [tabOrderBySession, setTabOrderBySession] = useState<Record<string, string[]>>({});
+	const orderedAuxiliaryTabs = useMemo(() => {
+		const preferred = auxiliaryTabOrder ?? tabOrderBySession[snapshot.sessionId] ?? [];
+		const byKey = new Map(auxiliaryTabs.map((tab) => [tab.key, tab]));
+		const ordered = preferred.flatMap((key) => {
+			const tab = byKey.get(key);
+			if (!tab) return [];
+			byKey.delete(key);
+			return [tab];
+		});
+		return [...ordered, ...byKey.values()];
+	}, [auxiliaryTabOrder, auxiliaryTabs, snapshot.sessionId, tabOrderBySession]);
+	const reorderAuxiliaryTabs = useCallback(
+		(nextKeys: string[]) => {
+			const available = new Set(availableTabKeys);
+			const next = nextKeys.filter((key, index) => available.has(key) && nextKeys.indexOf(key) === index);
+			for (const key of availableTabKeys) {
+				if (!next.includes(key)) next.push(key);
+			}
+			if (onAuxiliaryTabOrderChange) onAuxiliaryTabOrderChange(next);
+			else setTabOrderBySession((current) => ({ ...current, [snapshot.sessionId]: next }));
+		},
+		[availableTabKeys, onAuxiliaryTabOrderChange, snapshot.sessionId],
+	);
+	useEffect(() => {
+		if (auxiliaryTabOrder) {
+			const available = new Set(availableTabKeys);
+			const next = auxiliaryTabOrder.filter((key) => available.has(key));
+			for (const key of availableTabKeys) {
+				if (!next.includes(key)) next.push(key);
+			}
+			if (!next.every((key, index) => key === auxiliaryTabOrder[index]) || next.length !== auxiliaryTabOrder.length) {
+				onAuxiliaryTabOrderChange?.(next);
+			}
+			return;
+		}
+		setTabOrderBySession((current) => {
+			const currentOrder = current[snapshot.sessionId] ?? [];
+			const available = new Set(availableTabKeys);
+			const next = currentOrder.filter((key) => available.has(key));
+			for (const key of availableTabKeys) {
+				if (!next.includes(key)) next.push(key);
+			}
+			if (next.length === currentOrder.length && next.every((key, index) => key === currentOrder[index])) return current;
+			if (next.length === 0) {
+				const { [snapshot.sessionId]: _removed, ...rest } = current;
+				return rest;
+			}
+			return { ...current, [snapshot.sessionId]: next };
+		});
+	}, [auxiliaryTabOrder, availableTabKeys, onAuxiliaryTabOrderChange, snapshot.sessionId]);
 	const queuedMessages = useMemo(() => {
 		const messagesByTurn = new Map(
 			snapshot.items
@@ -419,6 +542,38 @@ export function ChatWorkspace({
 			return message ? [{ turnId: queuedTurn.id, message }] : [];
 		});
 	}, [snapshot.items, snapshot.turns]);
+	const [queueEdit, setQueueEdit] = useState<{ turnId: string; text: string } | undefined>();
+	useEffect(() => {
+		if (!queueEdit) return;
+		if (!queuedMessages.some((message) => message.turnId === queueEdit.turnId)) {
+			setQueueEdit(undefined);
+		}
+	}, [queueEdit, queuedMessages]);
+	const handleCancelQueuedTurn = useCallback(
+		async (turnId: string) => {
+			if (!onCancelQueuedTurn) return;
+			await onCancelQueuedTurn(turnId);
+			setQueueEdit((current) => (current?.turnId === turnId ? undefined : current));
+		},
+		[onCancelQueuedTurn],
+	);
+	const handleComposerSend = useCallback(
+		async (text: string, attachments?: Parameters<NonNullable<typeof onSend>>[1]) => {
+			if (queueEdit) {
+				if (attachments && attachments.length > 0) {
+					throw new Error("Queued message edits cannot include attachments.");
+				}
+				if (!onEditQueuedTurn) {
+					throw new Error("Queued message edits are unavailable right now.");
+				}
+				await onEditQueuedTurn(queueEdit.turnId, text);
+				setQueueEdit(undefined);
+				return;
+			}
+			return onSend?.(text, attachments);
+		},
+		[onEditQueuedTurn, onSend, queueEdit],
+	);
 	// The turn a confirmation is open for. Undo is not reversible and it changes what
 	// the agent knows, so it is never one click.
 	const [confirming, setConfirming] = useState<string | undefined>(undefined);
@@ -518,20 +673,14 @@ export function ChatWorkspace({
 	// tabs there is nothing to cycle to and the shortcut is a no-op.
 	const selectAdjacentTab = useCallback(
 		(direction: -1 | 1) => {
-			const tabs = [
-				{ kind: "chat" as const },
-				...(reviewerTerminal ? [{ kind: "reviewer" as const }] : []),
-				...(shellTerminals ?? []).map((shell) => ({
-					kind: "shell" as const,
-					handleId: shell.handleId,
-				})),
-			];
+			const tabs = [{ key: "chat", kind: "chat" as const }, ...orderedAuxiliaryTabs];
 			if (tabs.length <= 1) return;
-			const activeIndex = shellActive
-				? tabs.findIndex((tab) => tab.kind === "shell" && tab.handleId === shellTarget?.handleId)
+			const activeKey = workspaceActiveTabKey ?? (shellActive
+				? shellTarget?.handleId
 				: reviewerActive
-					? tabs.findIndex((tab) => tab.kind === "reviewer")
-					: 0;
+					? `reviewer:${reviewerTerminal?.handleId}`
+					: "chat");
+			const activeIndex = tabs.findIndex((tab) => tab.key === activeKey);
 			const currentIndex = activeIndex >= 0 ? activeIndex : 0;
 			const next = tabs[(currentIndex + direction + tabs.length) % tabs.length];
 			if (!next) return;
@@ -540,10 +689,14 @@ export function ChatWorkspace({
 				return;
 			}
 			if (next.kind === "reviewer") {
-				if (reviewerTerminal) onOpenReviewerTerminal?.(reviewerTerminal);
+				onOpenReviewerTerminal?.(next.terminal);
 				return;
 			}
-			onSelectShellTerminal?.(next.handleId);
+			if (next.kind === "shell") {
+				onSelectShellTerminal?.(next.terminal.handleId);
+				return;
+			}
+			next.tab.onSelect();
 		},
 		[
 			onOpenReviewerTerminal,
@@ -551,9 +704,10 @@ export function ChatWorkspace({
 			onSelectShellTerminal,
 			reviewerActive,
 			reviewerTerminal,
+			orderedAuxiliaryTabs,
 			shellActive,
 			shellTarget,
-			shellTerminals,
+			workspaceActiveTabKey,
 		],
 	);
 	const handleChatTabsKeyDown = useCallback(
@@ -599,7 +753,7 @@ export function ChatWorkspace({
 
 	// Offered only while the agent is idle. The daemon refuses a rollback mid-turn,
 	// and a control that exists to be refused is worse than one that waits.
-	const rollbackTarget = onRollback && !turn ? (id: string) => setConfirming(id) : undefined;
+	const rollbackTarget = onRollback && !turn && !newWorkDisabled ? (id: string) => setConfirming(id) : undefined;
 	const discarded = snapshot.turns.filter((t) => t.rolledBack).length;
 
 	const brokenServers = useMemo(() => brokenMcpServers(snapshot), [snapshot]);
@@ -700,28 +854,28 @@ export function ChatWorkspace({
 		>
 			<ChatHeader
 				snapshot={snapshot}
-				reviewerTerminal={reviewerTerminal}
+				sessionTitle={sessionTitle}
+				sessionRole={sessionRole}
 				onOpenReviewerTerminal={onOpenReviewerTerminal}
 				reviewerActive={reviewerActive}
 				onSelectChat={onSelectChat}
-				shellTerminals={shellTerminals}
 				shellActiveHandleId={shellActive ? shellTarget?.handleId : undefined}
 				onSelectShellTerminal={onSelectShellTerminal}
 				onCloseShellTerminal={onCloseShellTerminal}
 				onRenameShellTerminal={onRenameShellTerminal}
 				onTabsKeyDown={handleChatTabsKeyDown}
-				switchAgentControl={switchAgentControl}
 				headerActions={headerActions}
-				workspaceTabs={workspaceTabs}
-				workspaceFileActive={workspaceFileActive}
+				session={session}
+				sessionTabAction={sessionTabAction}
+				tabStripAction={tabStripAction}
+				workspaceTabActions={workspaceTabActions}
+				workspaceActiveTabKey={workspaceActiveTabKey}
+				orderedAuxiliaryTabs={orderedAuxiliaryTabs}
+				onReorderAuxiliaryTabs={reorderAuxiliaryTabs}
 				inline={isFullscreen}
 				topbarBounds={topbarBounds}
 			/>
-			{/* The body host anchors the agent-switch dialog and holds whichever tab is
-			    active: the reviewer pane, a shell pane, or the chat timeline. The
-			    container ref is handed up so the surface (not this pure view) owns the
-			    dialog's state. */}
-			<div className="relative flex min-h-0 flex-1 flex-col" ref={switchDialogContainer}>
+			<div className="relative flex min-h-0 flex-1 flex-col">
 				{reviewerTarget && session ? (
 					<div
 						aria-label="Reviewer terminal"
@@ -785,7 +939,7 @@ export function ChatWorkspace({
 					<ControllerBanner
 						controller={snapshot.controller}
 						transitioning={controllerTransitioning}
-						onResume={onResumeAgent}
+						onResume={newWorkDisabled ? undefined : onResumeAgent}
 						resuming={resumingAgent}
 						resumeError={resumeError}
 						onOpenShell={onOpenShell}
@@ -795,7 +949,7 @@ export function ChatWorkspace({
 					{snapshot.threadState ? <ThreadStateBanner threadState={snapshot.threadState} /> : null}
 					<McpServerBanner
 						servers={brokenServers}
-						onReload={onReloadMcpServers}
+						onReload={newWorkDisabled ? undefined : onReloadMcpServers}
 						reloading={reloadingMcpServers}
 						turnInFlight={Boolean(turn)}
 						error={mcpReloadError}
@@ -824,6 +978,7 @@ export function ChatWorkspace({
 								onActivateBranch={onActivateBranch}
 								activateBranchPending={activateBranchPending}
 								activateBranchError={activateBranchError}
+								newWorkDisabled={newWorkDisabled}
 							/>
 						</ChatLinkProvider>
 
@@ -835,10 +990,28 @@ export function ChatWorkspace({
 							>
 								{discarded > 0 ? <RolledBackNotice count={discarded} /> : null}
 								<ChatComposer
-									attachedTop={turn?.state === "running" && queuedMessages.length > 0}
 									queuedDock={
-										turn?.state === "running" && queuedMessages.length > 0 ? (
-											<QueuedMessageDock messages={queuedMessages} />
+										queuedMessages.length > 0 ? (
+											<QueuedMessageDock
+												messages={queuedMessages}
+												editingTurnId={queueEdit?.turnId}
+												canSteer={
+													Boolean(onSteer) &&
+													can(snapshot, "steer") &&
+													turn?.state === "running"
+												}
+												onPromoteQueuedTurn={newWorkDisabled ? undefined : onPromoteQueuedTurn}
+												onBeginQueuedEdit={
+													newWorkDisabled || !onEditQueuedTurn
+														? undefined
+														: (turnId, text) => setQueueEdit({ turnId, text })
+												}
+												onCancelQueuedTurn={
+													newWorkDisabled ? undefined : handleCancelQueuedTurn
+												}
+												promotePendingTurnId={promoteQueuedTurnPendingTurnId}
+												cancelPendingTurnId={cancelQueuedTurnPendingTurnId}
+											/>
 										) : null
 									}
 									approval={
@@ -851,8 +1024,17 @@ export function ChatWorkspace({
 											/>
 										) : undefined
 									}
-									onSend={(text, attachments) => onSend?.(text, attachments)}
-									onInterrupt={turn ? onInterrupt : undefined}
+									onSend={(text, attachments) => handleComposerSend(text, attachments)}
+									draftSeed={
+										queueEdit ? { id: queueEdit.turnId, text: queueEdit.text } : undefined
+									}
+									editingQueuedTurnId={queueEdit?.turnId}
+									savingQueuedEditPending={Boolean(
+										queueEdit?.turnId &&
+											editQueuedTurnPendingTurnId === queueEdit.turnId,
+									)}
+									onCancelQueuedEdit={() => setQueueEdit(undefined)}
+									onInterrupt={turn && !newWorkDisabled ? onInterrupt : undefined}
 									commandError={commandError}
 									settings={
 										onChooseSettings || onChooseConfigOption ? (
@@ -860,32 +1042,37 @@ export function ChatWorkspace({
 												models={models ?? []}
 												settings={snapshot.settings}
 												reroute={snapshot.modelReroute}
-												onChange={onChooseSettings}
+												onChange={newWorkDisabled ? undefined : onChooseSettings}
 												configOptions={configOptions ?? []}
-												onChangeConfigOption={onChooseConfigOption}
+												onChangeConfigOption={newWorkDisabled ? undefined : onChooseConfigOption}
 												configPending={configOptionPending}
 												error={configOptionError}
-												disabled={snapshot.controller.state === "stopped" || configOptionPending}
+												disabled={
+													snapshot.controller.state === "stopped" ||
+													configOptionPending ||
+													newWorkDisabled
+												}
 											/>
 										) : null
 									}
 									busy={busy}
 									willQueue={Boolean(turn)}
-									disabled={snapshot.controller.state === "stopped"}
+									disabled={snapshot.controller.state === "stopped" || newWorkDisabled}
 									skills={skills}
 									filePaths={filePaths}
 									filePathsTruncated={filePathsTruncated}
-									onStageAttachments={onStageAttachments}
+									onStageAttachments={newWorkDisabled ? undefined : onStageAttachments}
 									nativeImages={nativeImages}
 									autoFocus={!reviewerActive}
 									autoFocusKey={snapshot.sessionId}
 									// Steering is only meaningful into a turn that is running. A queued turn
 									// has not reached the provider, so there is nothing to steer.
-									onSteer={onSteer}
+									onSteer={newWorkDisabled ? undefined : onSteer}
 									canSteer={Boolean(onSteer) && turn?.state === "running"}
+									sendPending={sendPending}
 									steerPending={steerPending}
 									steerRefusal={steerRefusal}
-									onCompact={onCompact}
+									onCompact={newWorkDisabled ? undefined : onCompact}
 									compacting={compacting}
 									compactUnavailable={compactUnavailable}
 									compactBlocked={Boolean(turn)}
@@ -1041,50 +1228,75 @@ function readableItems(snapshot: ConversationSnapshot): ConversationItem[] {
 
 function ChatHeader({
 	snapshot,
-	reviewerTerminal,
+	sessionTitle,
+	sessionRole,
 	onOpenReviewerTerminal,
 	reviewerActive,
 	onSelectChat,
-	shellTerminals,
 	shellActiveHandleId,
 	onSelectShellTerminal,
 	onCloseShellTerminal,
 	onRenameShellTerminal,
 	onTabsKeyDown,
-	switchAgentControl,
 	headerActions,
-	workspaceTabs,
-	workspaceFileActive = false,
+	sessionTabAction,
+	tabStripAction,
+	workspaceTabActions,
+	workspaceActiveTabKey,
+	orderedAuxiliaryTabs,
+	onReorderAuxiliaryTabs,
 	inline,
 	topbarBounds,
+	session,
 }: {
 	snapshot: ConversationSnapshot;
-	reviewerTerminal?: { handleId: string; harness: string };
+	sessionTitle?: string;
+	sessionRole: SessionKind;
 	onOpenReviewerTerminal?: (target: { handleId: string; harness: string }) => void;
 	/** The reviewer tab is selected; the chat tab is the clickable alternative. */
 	reviewerActive?: boolean;
 	/** Return the tab strip to the chat tab. */
 	onSelectChat?: () => void;
-	/** This session's standalone shells, as tabs after the reviewer. */
-	shellTerminals?: ShellTerminal[];
 	/** The selected shell tab, if any. */
 	shellActiveHandleId?: string;
 	onSelectShellTerminal?: (handleId: string) => void;
 	onCloseShellTerminal?: (handleId: string) => void;
 	onRenameShellTerminal?: (handleId: string, title: string) => void;
 	onTabsKeyDown?: (event: ReactKeyboardEvent<HTMLDivElement>) => void;
-	/** The in-place agent-switch control, same entry point as the terminal pane. */
-	switchAgentControl?: ReactNode;
 	headerActions?: ReactNode;
-	workspaceTabs?: ReactNode;
-	workspaceFileActive?: boolean;
+	sessionTabAction?: ReactNode;
+	tabStripAction?: ReactNode;
+	workspaceTabActions?: ReactNode;
+	workspaceActiveTabKey?: string;
+	orderedAuxiliaryTabs: ChatAuxiliaryTab[];
+	onReorderAuxiliaryTabs: (keys: string[]) => void;
+	session?: WorkspaceSession;
 	/** Fullscreen content cannot see the normal topbar portal outside its subtree. */
 	inline?: boolean;
 	topbarBounds: TopbarBounds;
 }) {
-	const label = agentLabel(snapshot.harness);
+	const { t } = useTranslation();
+	const providerLabel = agentLabel(snapshot.harness);
+	const sessionIsOrchestrator = session
+		? isOrchestratorSession(session)
+		: sessionRole === "orchestrator";
+	const label = sessionIsOrchestrator
+		? t("shell.orchestrator")
+		: (sessionTitle || session?.title || snapshot.title || snapshot.sessionId);
+	const tabScrollWatch = `${session?.id ?? ""}|${orderedAuxiliaryTabs.map((tab) => tab.key).join("|")}`;
+	const {
+		scrollRef: tabsOverflowRef,
+		scrollToEnd: scrollTabsToEnd,
+		showLeftFade,
+		showRightFade,
+	} = useTabScrollEdges([tabScrollWatch]);
+	const previousTabCountRef = useRef(orderedAuxiliaryTabs.length);
+	useEffect(() => {
+		if (orderedAuxiliaryTabs.length > previousTabCountRef.current) scrollTabsToEnd();
+		previousTabCountRef.current = orderedAuxiliaryTabs.length;
+	}, [orderedAuxiliaryTabs.length, scrollTabsToEnd]);
 	// The chat tab is "selected" only when neither terminal pane is the body.
-	const timelineActive = !workspaceFileActive && !reviewerActive && !shellActiveHandleId;
+	const timelineActive = !workspaceActiveTabKey && !reviewerActive && !shellActiveHandleId;
 	// Match CenterPane: when the sidebar is off-canvas, the fixed TitlebarNav
 	// cluster sits over the session tab strip. Terminal already reserves that
 	// space; chat must too or the back/forward buttons land on the tab label.
@@ -1097,7 +1309,7 @@ function ChatHeader({
 			>
 				<div
 					className={cn(
-						"flex min-w-0 shrink items-center pr-3",
+						"flex min-w-0 shrink items-stretch",
 						!isSidebarOpen && isMac && "session-topbar-titlebar-clearance-mac",
 						!isSidebarOpen && isLinux && "session-topbar-titlebar-clearance-linux",
 					)}
@@ -1108,80 +1320,100 @@ function ChatHeader({
 				>
 					<div
 						aria-label="Chat tabs"
-						className="scrollbar-none flex h-full min-w-flex-min flex-1 items-center overflow-x-auto"
+						className="flex h-full min-w-0 flex-1 items-stretch"
 						onKeyDown={onTabsKeyDown ?? handleTerminalTabListKeyDown}
 						role="tablist"
 					>
-						<button
-							aria-current={timelineActive ? true : undefined}
-							aria-label={label}
-							aria-selected={timelineActive}
-							data-terminal-role="primary"
-							className={cn(
-								"group relative inline-flex min-w-shell-tab-min max-w-shell-tab-max self-stretch cursor-pointer items-center gap-1.5 border-r border-border px-3 text-control font-medium leading-none transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent/50",
-								timelineActive
-									? "bg-overlay text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80"
-									: "text-muted-foreground hover:bg-raised hover:text-foreground",
-							)}
-							onClick={timelineActive ? undefined : onSelectChat}
-							role="tab"
-							tabIndex={timelineActive || (!reviewerTerminal && !shellTerminals?.length) ? 0 : -1}
-							title={label}
-							type="button"
-						>
-							<AgentAvatar className="size-icon-base" decorative provider={snapshot.harness} />
-							<span className="truncate">{label}</span>
-						</button>
-						{reviewerTerminal ? (
+						{session ? (
+							<SessionPaneTab
+								isActive={timelineActive}
+								label={label}
+								onSelect={timelineActive ? undefined : onSelectChat}
+								session={session}
+								tabAction={sessionTabAction}
+							/>
+						) : (
 							<button
-								aria-current={reviewerActive ? true : undefined}
-								aria-label="Reviewer"
-								aria-selected={Boolean(reviewerActive)}
+								aria-current={timelineActive ? true : undefined}
+								aria-label={`${label} · ${providerLabel}`}
+								aria-selected={timelineActive}
+								data-terminal-role="primary"
 								className={cn(
-									"group relative inline-flex min-w-shell-tab-min max-w-shell-tab-max self-stretch cursor-pointer items-center gap-1.5 border-r border-border px-3 text-control font-medium leading-none transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent/50",
-									reviewerActive
+									"group relative inline-flex min-w-shell-tab-min max-w-shell-tab-max shrink-0 self-stretch cursor-pointer items-center gap-1.5 border-r border-border px-3 text-control font-medium leading-none transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent/50",
+									timelineActive
 										? "bg-overlay text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80"
 										: "text-muted-foreground hover:bg-raised hover:text-foreground",
 								)}
-								onClick={() => onOpenReviewerTerminal?.(reviewerTerminal)}
+								onClick={timelineActive ? undefined : onSelectChat}
 								role="tab"
-								tabIndex={reviewerActive ? 0 : -1}
-								title={reviewerTerminal.harness}
+								tabIndex={timelineActive || orderedAuxiliaryTabs.length === 0 ? 0 : -1}
+								title={label}
 								type="button"
 							>
-								<AgentAvatar
-									className="size-icon-base"
-									decorative
-									provider={reviewerTerminal.harness}
-								/>
-								<span className="truncate">Reviewer</span>
+								<AgentAvatar className="size-icon-base" decorative provider={snapshot.harness} />
+								<span className="truncate">{label}</span>
 							</button>
-						) : null}
-						{/* The same shared shell tab the terminal pane strip and the
-						    standalone terminals screen use, so all three never drift. */}
-						{(shellTerminals ?? []).map((shell) => (
-							<ShellTerminalTab
-								key={shell.handleId}
-								appearance="connected"
-								isActive={shell.handleId === shellActiveHandleId}
-								onClose={() => onCloseShellTerminal?.(shell.handleId)}
-								onRename={
-									onRenameShellTerminal
-										? (title) => onRenameShellTerminal(shell.handleId, title)
-										: undefined
-								}
-								onSelect={() => onSelectShellTerminal?.(shell.handleId)}
-								shell={shell}
-							/>
-						))}
-						{workspaceTabs}
+						)}
+						<div className="relative min-w-0 flex-1 self-stretch overflow-hidden">
+							<div ref={tabsOverflowRef} className="scrollbar-none flex h-full min-w-flex-min min-w-0 items-stretch overflow-x-auto">
+								<div className="flex w-max items-stretch">
+								<Reorder.Group
+									as="div"
+									axis="x"
+									className="flex items-stretch self-stretch"
+									onReorder={onReorderAuxiliaryTabs}
+									values={orderedAuxiliaryTabs.map((tab) => tab.key)}
+								>
+									{orderedAuxiliaryTabs.map((tab) => (
+										<DraggableChatTab key={tab.key} value={tab.key}>
+											{tab.kind === "reviewer" ? (
+												<button
+													aria-current={reviewerActive ? true : undefined}
+													aria-label="Reviewer"
+													aria-selected={Boolean(reviewerActive)}
+													className={cn(
+														"group relative inline-flex min-w-shell-tab-min max-w-shell-tab-max self-stretch cursor-pointer items-center gap-1.5 border-r border-border px-3 text-control font-medium leading-none transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent/50",
+														reviewerActive
+															? "bg-overlay text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80"
+															: "text-muted-foreground hover:bg-raised hover:text-foreground",
+													)}
+													onClick={() => onOpenReviewerTerminal?.(tab.terminal)}
+													role="tab"
+													tabIndex={reviewerActive ? 0 : -1}
+													title={tab.terminal.harness}
+													type="button"
+												>
+													<AgentAvatar className="size-icon-base" decorative provider={tab.terminal.harness} />
+													<span className="truncate">Reviewer</span>
+												</button>
+											) : tab.kind === "shell" ? (
+												<ShellTerminalTab
+													appearance="connected"
+													isActive={tab.terminal.handleId === shellActiveHandleId}
+													onClose={() => onCloseShellTerminal?.(tab.terminal.handleId)}
+													onRename={onRenameShellTerminal ? (title) => onRenameShellTerminal(tab.terminal.handleId, title) : undefined}
+													onSelect={() => onSelectShellTerminal?.(tab.terminal.handleId)}
+													shell={tab.terminal}
+												/>
+											) : (
+												tab.tab.content
+											)}
+										</DraggableChatTab>
+									))}
+								</Reorder.Group>
+								{workspaceTabActions}
+								</div>
+							</div>
+							{showLeftFade ? <div aria-hidden="true" className="session-tab-scroll-fade session-tab-scroll-fade--left" /> : null}
+							{showRightFade ? <div aria-hidden="true" className="session-tab-scroll-fade" /> : null}
+						</div>
 					</div>
 				</div>
 				<div
-					className="ml-auto flex shrink-0 items-center gap-1 px-3"
+					className="ml-auto flex shrink-0 items-center gap-1 pl-2 pr-3"
 					data-testid="session-action-region"
 				>
-					{switchAgentControl}
+					{tabStripAction ? <div data-testid="session-tab-strip-action">{tabStripAction}</div> : null}
 					{headerActions}
 				</div>
 			</div>
@@ -1333,6 +1565,7 @@ function Timeline({
 	onActivateBranch,
 	activateBranchPending,
 	activateBranchError,
+	newWorkDisabled,
 }: {
 	snapshot: ConversationSnapshot;
 	hasOlder?: boolean;
@@ -1352,6 +1585,7 @@ function Timeline({
 	onActivateBranch?: (branchId: string) => Promise<unknown> | void;
 	activateBranchPending?: boolean;
 	activateBranchError?: string;
+	newWorkDisabled?: boolean;
 }) {
 	const scroller = useRef<HTMLDivElement>(null);
 	const scrollContent = useRef<HTMLDivElement>(null);
@@ -1381,6 +1615,7 @@ function Timeline({
 			visible: boolean;
 		}>,
 	});
+	const minimapEnabled = scrollbar.visible && !isInspectorOpen;
 	const queued = useMemo(() => queuedTurnIds(snapshot), [snapshot]);
 	const decide = useStableCallback(onDecide);
 	const resolveInput = useStableCallback(onResolveInput);
@@ -1391,8 +1626,8 @@ function Timeline({
 	const apiBaseUrl = useSyncExternalStore(subscribeApiBaseUrl, getApiBaseUrl, getApiBaseUrl);
 	const editHumanMessage = useStableCallback(onEditHumanMessage);
 	const activateBranch = useStableCallback(onActivateBranch);
-	const canEditHumanMessage = Boolean(onEditHumanMessage);
-	const canActivateBranch = Boolean(onActivateBranch);
+	const canEditHumanMessage = Boolean(onEditHumanMessage) && !newWorkDisabled;
+	const canActivateBranch = Boolean(onActivateBranch) && !newWorkDisabled;
 	const canForkHistoricalContext = can(snapshot, "fork");
 	const canReconstructHistoricalContext =
 		can(snapshot, "prompt_replay") && can(snapshot, "embedded_context");
@@ -1469,6 +1704,12 @@ function Timeline({
 	// become active even when the provider send ends ambiguously; once that durable
 	// state arrives, the old prompt is no longer the message being edited.
 	useEffect(() => setMessageEdit(undefined), [snapshot.activeBranchId, snapshot.sessionId]);
+	useEffect(() => {
+		if (isInspectorOpen) {
+			drag.current = null;
+			setHoveredMarker(null);
+		}
+	}, [isInspectorOpen]);
 	const consumedRetrySources = useMemo(() => retrySourceTurnIds(snapshot), [snapshot]);
 	const retryableTurns = useMemo(
 		() =>
@@ -1551,7 +1792,12 @@ function Timeline({
 		lastSeenLatestSequence.current = snapshot.latestSequence;
 		if (added.size > 0) setNewHumanMessageIds(added);
 	}, [items, snapshot.latestSequence]);
-	const grouped = useMemo(() => groupByTurn({ ...snapshot, items }), [snapshot, items]);
+	const grouped = useMemo(() => {
+		const hiddenTurns = hiddenTimelineTurnIds(snapshot);
+		return groupByTurn({ ...snapshot, items }).filter(
+			(group) => !group.turnId || !hiddenTurns.has(group.turnId),
+		);
+	}, [snapshot, items]);
 	const groups = useStableList(grouped, groupKey, sameGroup);
 	const navigableGroups = useMemo(() => groups.filter(groupHasHumanPrompt), [groups]);
 	const previews = useMemo(() => navigableGroups.map(groupPreview), [navigableGroups]);
@@ -1685,7 +1931,7 @@ function Timeline({
 	}
 
 	function onScrollbarPointerDown(event: ReactPointerEvent<HTMLDivElement>) {
-		if (!scrollbar.visible) return;
+		if (!minimapEnabled) return;
 		const track = scrollTrack.current;
 		const node = scroller.current;
 		if (!track || !node) return;
@@ -1705,6 +1951,7 @@ function Timeline({
 	}
 
 	function onScrollbarPointerMove(event: ReactPointerEvent<HTMLDivElement>) {
+		if (!minimapEnabled) return;
 		const active = drag.current;
 		const node = scroller.current;
 		const track = scrollTrack.current;
@@ -1739,6 +1986,7 @@ function Timeline({
 	}
 
 	function onScrollbarWheel(event: ReactWheelEvent<HTMLDivElement>) {
+		if (!minimapEnabled) return;
 		const node = scroller.current;
 		if (!node) return;
 		event.preventDefault();
@@ -1747,6 +1995,7 @@ function Timeline({
 	}
 
 	function onScrollbarKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+		if (!minimapEnabled) return;
 		const node = scroller.current;
 		if (!node) return;
 		const maxScroll = Math.max(0, node.scrollHeight - node.clientHeight);
@@ -1812,7 +2061,10 @@ function Timeline({
 										},
 										pending: retryControl.pending && retrySelected,
 										error: retrySelected ? retryControl.error : undefined,
-										disabled: Boolean(turn) || Boolean(retryControl.pending),
+										disabled:
+											Boolean(turn) ||
+											Boolean(retryControl.pending) ||
+											Boolean(newWorkDisabled),
 									}
 								: undefined;
 						return (
@@ -1837,7 +2089,7 @@ function Timeline({
 									onCancelMessageEdit={cancelMessageEdit}
 									onSubmitMessageEdit={submitMessageEdit}
 									editPending={editPending}
-									editBusy={editBusy}
+									editBusy={Boolean(editBusy || newWorkDisabled)}
 									editError={editError}
 									branchPoints={branchPoints}
 									editableTurns={editableTurns}
@@ -1864,7 +2116,7 @@ function Timeline({
 								text={messageEdit.text}
 								content={messageEdit.content}
 								pending={Boolean(editPending)}
-								busy={Boolean(editBusy)}
+								busy={Boolean(editBusy || newWorkDisabled)}
 								error={editError}
 								reconstructedContext={messageEdit.reconstructedContext}
 								onDraftChange={updateMessageEdit}
@@ -1887,7 +2139,9 @@ function Timeline({
 			<div
 				ref={scrollTrack}
 				role="scrollbar"
-				tabIndex={scrollbar.visible ? 0 : -1}
+				data-testid="chat-conversation-minimap"
+				tabIndex={minimapEnabled ? 0 : -1}
+				aria-hidden={isInspectorOpen || undefined}
 				aria-label="Conversation scrollbar"
 				aria-orientation="vertical"
 				aria-valuemin={0}
@@ -1900,7 +2154,7 @@ function Timeline({
 				onWheel={onScrollbarWheel}
 				onKeyDown={onScrollbarKeyDown}
 				onFocus={() => {
-					if (scrollbar.markers.length === 0) return;
+					if (!minimapEnabled || scrollbar.markers.length === 0) return;
 					setHoveredMarker(
 						Math.min(
 							scrollbar.markers.length - 1,
@@ -1912,11 +2166,11 @@ function Timeline({
 				onPointerLeave={() => setHoveredMarker(null)}
 				className={cn(
 					"group/scroll absolute inset-y-3 right-1 z-10 w-6 touch-none rounded-full outline-none transition-opacity focus-visible:ring-1 focus-visible:ring-logo-accent/60",
-					scrollbar.visible ? "cursor-pointer opacity-100" : "pointer-events-none opacity-0",
+					minimapEnabled ? "cursor-pointer opacity-100" : "pointer-events-none opacity-0",
 				)}
 			>
 				<div className="absolute inset-0 cursor-grab group-active/scroll:cursor-grabbing">
-					{!isInspectorOpen
+					{minimapEnabled
 						? scrollbar.markers.map((marker, index) => {
 								const distance =
 									hoveredMarker === null
@@ -1947,7 +2201,7 @@ function Timeline({
 						: null}
 				</div>
 
-				{!isInspectorOpen &&
+				{minimapEnabled &&
 				hoveredMarker !== null &&
 				scrollbar.markers[hoveredMarker] &&
 				previews[hoveredMarker] ? (
@@ -2052,7 +2306,15 @@ const TurnGroup = memo(function TurnGroup({
 	queued: boolean;
 	newHumanMessageIds: ReadonlySet<string>;
 }) {
-	const runs = useMemo(() => runsOf(group.items), [group.items]);
+	const runs = useMemo(
+		() =>
+			runsOf(
+				group.liveProviderFailure
+					? group.items.filter((item) => item.id !== group.liveProviderFailure?.id)
+					: group.items,
+			),
+		[group.items, group.liveProviderFailure],
+	);
 	const copyableMessageId = group.outcome
 		? [...group.items]
 				.reverse()
@@ -2122,7 +2384,11 @@ const TurnGroup = memo(function TurnGroup({
 				/>
 			) : null}
 			{group.live ? (
-				<TurnLiveStatus startedAt={group.liveStartedAt} blocked={group.blocked} />
+				<TurnLiveStatus
+					startedAt={group.liveStartedAt}
+					blocked={group.blocked}
+					providerFailure={group.liveProviderFailure}
+				/>
 			) : null}
 			{/* No assistant prose to hang the undo / duration on — still offer them
 			    before the outcome divider so a tool-only turn is not stuck without a
@@ -2157,7 +2423,15 @@ const TurnGroup = memo(function TurnGroup({
 	);
 });
 
-function TurnLiveStatus({ startedAt, blocked }: { startedAt?: string; blocked?: boolean }) {
+function TurnLiveStatus({
+	startedAt,
+	blocked,
+	providerFailure,
+}: {
+	startedAt?: string;
+	blocked?: boolean;
+	providerFailure?: ConversationActivity;
+}) {
 	const [elapsed, setElapsed] = useState(() => elapsedSince(startedAt));
 
 	useEffect(() => {
@@ -2171,6 +2445,31 @@ function TurnLiveStatus({ startedAt, blocked }: { startedAt?: string; blocked?: 
 			<span role="alert" className="sr-only">
 				The agent is waiting for your decision.
 			</span>
+		);
+	}
+	if (providerFailure) {
+		return (
+			<div
+				role="status"
+				aria-live="polite"
+				className="flex min-h-8 items-start gap-2 px-1 py-1"
+				data-testid="live-turn-status"
+			>
+				<TriangleAlert
+					aria-hidden="true"
+					className="mt-0.5 size-3.5 shrink-0 text-warning"
+				/>
+				<span className="flex min-w-0 flex-col gap-0.5">
+					<strong className="text-xs font-medium text-warning">
+						{providerFailure.summary}
+					</strong>
+					{providerFailure.detail?.text ? (
+						<span className="text-[11px] leading-snug text-muted-foreground">
+							{providerFailure.detail.text}
+						</span>
+					) : null}
+				</span>
+			</div>
 		);
 	}
 
@@ -2401,6 +2700,8 @@ type TimelineGroup = {
 	live?: boolean;
 	liveStartedAt?: string;
 	blocked?: boolean;
+	/** A live provider failure replaces the generic Working label until the turn settles. */
+	liveProviderFailure?: ConversationActivity;
 	/** The provider accepted this turn, so there is history it can be asked to drop. */
 	rollbackable?: boolean;
 };
@@ -2565,7 +2866,15 @@ function groupByTurn(snapshot: ConversationSnapshot): TimelineGroup[] {
 				(item.activityKind === "approval" || item.activityKind === "user_input") &&
 				item.status === "pending",
 		);
-		if (turn.state === "running" || turn.state === "queued") continue;
+		group.liveProviderFailure = [...group.items]
+			.reverse()
+			.find(
+				(item): item is ConversationActivity =>
+					item.kind === "activity" &&
+					item.status === "running" &&
+					item.detail?.event === "provider.failure",
+			);
+		if (turn.state === "running" || turn.state === "queued" || turn.state === "cancelled") continue;
 		group.rollbackable = Boolean(turn.providerTurnId);
 		group.outcome = {
 			state: turn.state,
@@ -2578,55 +2887,4 @@ function groupByTurn(snapshot: ConversationSnapshot): TimelineGroup[] {
 	}
 
 	return groups;
-}
-
-/* -------------------------------------------------------------------------- */
-
-function QueuedMessageDock({
-	messages,
-}: {
-	messages: Array<{ turnId: string; message: ConversationMessage }>;
-}) {
-	const [errors] = useState<Record<string, string>>({});
-
-	const reversed = [...messages].reverse();
-	const lastIndex = reversed.length - 1;
-
-	return (
-		<div
-			className="-mb-2 max-h-40 overflow-y-auto rounded-t-[var(--radius-chat-composer)] border border-b-0 border-border-strong bg-surface"
-			data-testid="queued-message-dock"
-		>
-			{reversed.map(({ turnId, message }, index) => {
-				const isNext = index === lastIndex;
-				return (
-					<div
-						key={turnId}
-						className="border-b border-border last:border-b-0"
-						data-testid={`queued-message-${turnId}`}
-					>
-						<div className="flex h-8 min-w-0 items-center gap-2 px-3">
-							<span
-								className="min-w-0 flex-1 truncate text-xs text-muted-foreground"
-								title={message.text}
-							>
-								{message.text}
-							</span>
-							{isNext ? (
-								<CornerDownRight
-									aria-hidden="true"
-									className="size-3 shrink-0 text-muted-foreground"
-								/>
-							) : null}
-						</div>
-						{errors[turnId] ? (
-							<p role="status" className="px-3 pb-1 text-[11px] text-warning">
-								{errors[turnId]}
-							</p>
-						) : null}
-					</div>
-				);
-			})}
-		</div>
-	);
 }

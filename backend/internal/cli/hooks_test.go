@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/pricing"
 )
@@ -273,6 +274,36 @@ func TestHooks_NotificationReportsBlocked(t *testing.T) {
 	}
 }
 
+func TestHooks_AiderNotificationDoesNotReadInheritedStdin(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "ao-7")
+	cfg := setConfigEnv(t)
+	srv, capture := activityServer(t, http.StatusOK, `{"ok":true}`)
+	writeRunFileFor(t, cfg, srv)
+
+	reader, writer := io.Pipe()
+	defer writer.Close()
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := executeCLI(t, Deps{
+			In:           reader,
+			ProcessAlive: func(int) bool { return true },
+		}, "hooks", "aider", "notification")
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Aider notification blocked on inherited stdin")
+	}
+	if capture.hits != 1 || capturedState(t, capture) != "waiting_input" {
+		t.Fatalf("activity capture = %+v, want one waiting_input report", *capture)
+	}
+}
+
 func TestHooks_IdlePromptReportsIdle(t *testing.T) {
 	t.Setenv("AO_SESSION_ID", "ao-7")
 	cfg := setConfigEnv(t)
@@ -399,6 +430,29 @@ func TestHooks_StopReportsConversationFacts(t *testing.T) {
 	}
 	if req.TranscriptPath != "/tmp/provider/session.jsonl" {
 		t.Fatalf("transcript path = %q", req.TranscriptPath)
+	}
+}
+
+func TestHooks_ContinueStopReportsClaudeCompatibleConversationFacts(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "ao-7")
+	cfg := setConfigEnv(t)
+	srv, capture := activityServer(t, http.StatusOK, `{"ok":true}`)
+	writeRunFileFor(t, cfg, srv)
+
+	payload := `{"prompt":"finish the Continue fix","last_assistant_message":"I updated the detector.","transcript_path":"/tmp/continue/session.jsonl"}`
+	_, _, err := executeCLI(t, Deps{
+		In:           strings.NewReader(payload),
+		ProcessAlive: func(int) bool { return true },
+	}, "hooks", "continue", "stop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var req setActivityAPIRequest
+	if err := json.Unmarshal([]byte(capture.body), &req); err != nil {
+		t.Fatal(err)
+	}
+	if req.LatestUserPrompt != "finish the Continue fix" || req.LatestAssistantUpdate != "I updated the detector." || req.TranscriptPath != "/tmp/continue/session.jsonl" {
+		t.Fatalf("conversation facts = %#v", req)
 	}
 }
 

@@ -18,7 +18,7 @@
 		"@expo/vector-icons": "^15.0.3",
 		"@fressh/react-native-xtermjs-webview": "^0.0.8",
 		"@react-native-async-storage/async-storage": "2.2.0",
-		"expo": "^57.0.15",
+		"expo": "~57.0.18",
 		"expo-application": "~57.0.2",
 		"expo-build-properties": "~57.0.13",
 		"expo-camera": "~57.0.4",
@@ -30,6 +30,7 @@
 		"expo-font": "~57.0.1",
 		"expo-haptics": "~57.0.1",
 		"expo-image-picker": "~57.0.12",
+		"expo-in-app-updates": "^0.12.0",
 		"expo-linking": "~57.0.7",
 		"expo-notifications": "~57.0.13",
 		"expo-router": "~57.0.15",
@@ -37,13 +38,20 @@
 		"expo-speech-recognition": "^56.0.1",
 		"expo-splash-screen": "~57.0.7",
 		"expo-status-bar": "~57.0.1",
-		"expo-updates": "~57.0.16",
+		"expo-updates": "~57.0.19",
 		"posthog-react-native": "^4.62.0",
 		"react": "19.2.3",
 		"react-native": "0.86.3",
 		"react-native-safe-area-context": "~5.7.0",
 		"react-native-screens": "~4.26.0",
 		"react-native-webview": "13.16.1"
+	},
+	"expo": {
+		"autolinking": {
+			"apple": {
+				"exclude": ["expo-in-app-updates"]
+			}
+		}
 	},
 	"devDependencies": {
 		"@types/node": "^26.2.0",

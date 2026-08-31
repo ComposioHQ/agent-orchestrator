@@ -363,6 +363,28 @@ describe("ProjectSettingsForm", () => {
 		expect(repoLink).toHaveAttribute("href", "https://github.com/acme/project-one");
 	});
 
+	it("renders self-managed GitLab nested-group remotes with host and full namespace", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "git@gitlab.company.com:eng/platform/agent-ops.git",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+			},
+		});
+
+		renderSettings();
+
+		const repoLink = await screen.findByRole("link", {
+			name: "git@gitlab.company.com:eng/platform/agent-ops.git",
+		});
+		expect(repoLink).toHaveAttribute("href", "https://gitlab.company.com/eng/platform/agent-ops");
+	});
+
 	it("renders ssh remotes as clickable https links", async () => {
 		mockProject({
 			id: "proj-1",
@@ -1350,7 +1372,6 @@ describe("ProjectSettingsForm", () => {
 		const body = putMock.mock.calls[0]?.[1]?.body;
 		expect(body.config.trackerIntake).toEqual({
 			enabled: true,
-			provider: "github",
 			assignee: "octocat",
 		});
 	});

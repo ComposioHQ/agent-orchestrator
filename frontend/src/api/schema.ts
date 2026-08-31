@@ -157,6 +157,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/endpoints": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List the ways this daemon can currently be reached */
+        get: operations["getEndpoints"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/events": {
         parameters: {
             query?: never;
@@ -166,6 +183,23 @@ export interface paths {
         };
         /** Stream CDC events with durable replay */
         get: operations["streamEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/identity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Identify the daemon so a client can confirm which machine answered */
+        get: operations["getIdentity"];
         put?: never;
         post?: never;
         delete?: never;
@@ -272,6 +306,23 @@ export interface paths {
         put?: never;
         /** Rotate the Connect Mobile password, dropping any connected phone */
         post: operations["regenerateMobile"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/mobile/remote-access": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Look for a connector again and start it, without rotating the password */
+        post: operations["startMobileRemoteAccess"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1049,6 +1100,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Remove one queued message without stopping the running turn */
+        post: operations["cancelQueuedSessionConversationTurn"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/edit": {
         parameters: {
             query?: never;
@@ -1060,6 +1128,23 @@ export interface paths {
         put?: never;
         /** Branch before and replace an earlier human prompt */
         post: operations["editSessionConversationMessage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/queue/edit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Rewrite one queued message before it dispatches */
+        post: operations["editQueuedSessionConversationTurn"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2018,11 +2103,15 @@ export interface components {
             /** Format: date-time */
             createdAt: string;
             displayName?: string;
+            /** @enum {string} */
+            displayStatus: "Working" | "Blocked" | "Exited" | "No signal" | "Awaiting PR" | "Fixing CI failures" | "Addressing comments" | "Needs review" | "Review scheduled" | "Reviewing" | "Review pending" | "Draft" | "CI failing" | "Commented" | "Changes requested" | "Needs human review" | "Mergeable" | "Approved" | "Merged" | "Closed without merge" | "Terminated";
             harness?: string;
             id: string;
             isPinned: boolean;
             isTerminated: boolean;
             issueId?: string;
+            /** @enum {string} */
+            kanbanColumn: "building" | "validating" | "needs_review" | "ready" | "archive";
             kind: string;
             /** Format: date-time */
             lastUserMessageAt?: null | string;
@@ -2273,7 +2362,7 @@ export interface components {
             rolledBack?: boolean;
             startedAt?: null | string;
             /** @enum {string} */
-            state: "queued" | "running" | "completed" | "recovered" | "interrupted" | "failed";
+            state: "queued" | "running" | "completed" | "recovered" | "interrupted" | "failed" | "cancelled";
         };
         ConversationTurnSettingsPayload: {
             /** @enum {string} */
@@ -2369,6 +2458,12 @@ export interface components {
             state?: "queued" | "running" | "completed" | "recovered" | "interrupted" | "failed";
             turnId?: string;
         };
+        EditQueuedConversationMessageRequest: {
+            text: string;
+        };
+        EndpointsResponse: {
+            endpoints: components["schemas"]["MobileEndpoint"][];
+        };
         EstimatedCostResponse: {
             /** Format: int64 */
             cachedInputNanos: null | number;
@@ -2388,6 +2483,10 @@ export interface components {
             providerAttribution: "observed" | "inferred" | "mixed";
             /** Format: int64 */
             totalNanos: number;
+        };
+        IdentityResponse: {
+            apiVersion: number;
+            hostId: string;
         };
         ImportReport: {
             dryRun: boolean;
@@ -2431,7 +2530,7 @@ export interface components {
              * @description Install target this job ran (or is running) for.
              * @enum {string}
              */
-            target: "tmux" | "gh" | "claude" | "codex" | "opencode" | "copilot";
+            target: "tmux" | "gh" | "claude" | "codex" | "opencode" | "copilot" | "cloudflared";
         };
         KillReviewResponse: {
             reviewerHandleId: string;
@@ -2551,14 +2650,31 @@ export interface components {
         MobileDevicesResponse: {
             devices: components["schemas"]["MobileDeviceResponse"][];
         };
+        MobileEndpoint: {
+            host: string;
+            kind: string;
+            port: number;
+            secure: boolean;
+        };
         MobileStatusResponse: {
             enabled: boolean;
+            endpoints: components["schemas"]["MobileEndpoint"][];
             host: string;
+            hostId: string;
             password: string;
             port: number;
             securePairing: components["schemas"]["ControllersSecurePairingStatus"];
             tailscaleHost: string;
+            tunnel: components["schemas"]["MobileTunnelStatus"];
             warning: string;
+        };
+        MobileTunnelStatus: {
+            hostname: string;
+            lastError: string;
+            location: string;
+            ready: boolean;
+            running: boolean;
+            supported: boolean;
         };
         MuteDeviceRequest: {
             /** @description True to stop sending push notifications to this device. */
@@ -2598,6 +2714,8 @@ export interface components {
             projectId?: string;
             /** @description Agent session the shell is scoped to, so it appears only in that session's tab strip. Omitted makes it a standalone shell. */
             sessionId?: string;
+            /** @description Windows shell selector: auto, git-bash, pwsh, powershell, cmd, or a custom executable path. Ignored on macOS and Linux. */
+            shell?: string;
         };
         OrchestratorResponse: {
             id: string;
@@ -3876,6 +3994,35 @@ export interface operations {
             };
         };
     };
+    getEndpoints: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EndpointsResponse"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
     streamEvents: {
         parameters: {
             query?: {
@@ -3913,6 +4060,35 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    getIdentity: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IdentityResponse"];
                 };
             };
             /** @description Not Implemented */
@@ -4212,6 +4388,44 @@ export interface operations {
         };
     };
     regenerateMobile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MobileStatusResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    startMobileRemoteAccess: {
         parameters: {
             query?: never;
             header?: never;
@@ -7128,6 +7342,65 @@ export interface operations {
             };
         };
     };
+    cancelQueuedSessionConversationTurn: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+                /** @description AO conversation turn identifier, from the snapshot's turns array. */
+                turnId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
     editSessionConversationMessage: {
         parameters: {
             query?: never;
@@ -7154,6 +7427,78 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["EditConversationMessageResponse"];
                 };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    editQueuedSessionConversationTurn: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+                /** @description AO conversation turn identifier, from the snapshot's turns array. */
+                turnId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EditQueuedConversationMessageRequest"];
+            };
+        };
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Bad Request */
             400: {
@@ -10032,7 +10377,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Install target identifier: tmux, gh, claude, codex, opencode, or copilot. */
+                /** @description Install target identifier: tmux, gh, claude, codex, opencode, copilot, or cloudflared. */
                 target: string;
             };
             cookie?: never;
@@ -10082,7 +10427,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Install target identifier: tmux, gh, claude, codex, opencode, or copilot. */
+                /** @description Install target identifier: tmux, gh, claude, codex, opencode, copilot, or cloudflared. */
                 target: string;
             };
             cookie?: never;
