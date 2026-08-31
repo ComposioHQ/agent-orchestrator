@@ -272,7 +272,7 @@
 	"codexProfileSwitch.current": "Current profile: {{profile}}",
 	"codexProfileSwitch.checking": "Checking profiles…",
 	"codexProfileSwitch.recommended": "Recommended",
-	"codexProfileSwitch.used": "{{percent}}% used",
+	"codexProfileSwitch.remaining": "{{percent}} % verbleibend",
 	"codexProfileSwitch.capacityAcknowledgement": "Capacity is unknown, stale, or unsupported. Continue with this manually selected profile anyway.",
 	"codexProfileSwitch.signIn": "Sign in",
 	"codexProfileSwitch.keep": "Keep current profile",
