@@ -15,7 +15,7 @@ import {
 	MessageSquareDot,
 	RotateCcw,
 } from "lucide-react";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMarkAllNotificationsReadMutation, useNotificationsQuery } from "../hooks/useNotificationsQuery";
 import { useRestoreSession } from "../hooks/useRestoreSession";
 import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
@@ -104,6 +104,44 @@ function useSessionTerminationLookup(
 	};
 }
 
+/**
+ * Radix only mounts PopoverContent while the bell is open. Keeping the broad
+ * workspace observer here means streamed workspace activity cannot wake the
+ * always-mounted bell while its panel is closed.
+ */
+function NotificationWorkspaceState({
+	children,
+}: {
+	children: (state: {
+		retryWorkspace: () => void;
+		sessionMeta: Map<string, { projectName: string; sessionName: string }>;
+		sessionsReady: boolean;
+		terminatedIds: Set<string>;
+		workspaceError: boolean;
+	}) => ReactNode;
+}) {
+	const workspaceQuery = useWorkspaceQuery();
+	const retryWorkspace = useCallback(() => {
+		void workspaceQuery.refetch();
+	}, [workspaceQuery.refetch]);
+	const { sessionsReady, terminatedIds, workspaceError } = useSessionTerminationLookup(
+		workspaceQuery.data,
+		workspaceQuery.isError,
+		workspaceQuery.isSuccess,
+		retryWorkspace,
+	);
+	const sessionMeta = useMemo(() => {
+		const map = new Map<string, { projectName: string; sessionName: string }>();
+		for (const workspace of workspaceQuery.data ?? []) {
+			for (const session of workspace.sessions) {
+				map.set(session.id, { projectName: workspace.name, sessionName: session.title });
+			}
+		}
+		return map;
+	}, [workspaceQuery.data]);
+	return <>{children({ retryWorkspace, sessionMeta, sessionsReady, terminatedIds, workspaceError })}</>;
+}
+
 export function NotificationRuntime() {
 	const queryClient = useQueryClient();
 	const { openPrimary } = useNotificationTargetNavigation();
@@ -167,32 +205,6 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 	const allQuery = useNotificationsQuery("all", open);
 	const markAllRead = useMarkAllNotificationsReadMutation();
 	const restoreSession = useRestoreSession();
-	// This panel needs one workspace snapshot for both termination gating and
-	// human-readable notification metadata. Keep a single query observer here:
-	// two observers of the same full workspace tree caused duplicate derivation
-	// and render notifications for every streamed workspace update.
-	const workspaceQuery = useWorkspaceQuery();
-	const { data: workspaces } = workspaceQuery;
-	const retryWorkspace = useCallback(() => {
-		void workspaceQuery.refetch();
-	}, [workspaceQuery.refetch]);
-	const { sessionsReady, terminatedIds, workspaceError } = useSessionTerminationLookup(
-		workspaces,
-		workspaceQuery.isError,
-		workspaceQuery.isSuccess,
-		retryWorkspace,
-	);
-	// Resolve the human project + session names for each notification so the row
-	// can show where it came from (the DTO only carries opaque ids).
-	const sessionMeta = useMemo(() => {
-		const map = new Map<string, { projectName: string; sessionName: string }>();
-		for (const workspace of workspaces ?? []) {
-			for (const session of workspace.sessions) {
-				map.set(session.id, { projectName: workspace.name, sessionName: session.title });
-			}
-		}
-		return map;
-	}, [workspaces]);
 	const notifications = useMemo(() => getCachedNotifications(allQuery.data), [allQuery.data]);
 	const unreadCount = getCachedUnreadCount(unreadQuery.data);
 	const { openSession } = useNotificationTargetNavigation();
@@ -326,7 +338,9 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 				<div className="border-b border-border bg-[var(--color-overlay-subtle)] px-4 py-3.5">
 					<p className="text-subtitle font-semibold tracking-tight text-foreground">{t("notify.title")}</p>
 				</div>
-
+				<NotificationWorkspaceState>
+					{({ retryWorkspace, sessionMeta, sessionsReady, terminatedIds, workspaceError }) => (
+						<>
 				{markReadError ? (
 					<div
 						aria-live="polite"
@@ -425,6 +439,9 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 						) : null}
 					</div>
 				)}
+						</>
+					)}
+				</NotificationWorkspaceState>
 			</PopoverContent>
 		</Popover>
 	);
