@@ -9,7 +9,20 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
+	"github.com/aoagents/agent-orchestrator/backend/internal/service/sessionimport"
 )
+
+// fakeSource is a discovery source returning canned conversations, so import
+// orchestration can be exercised without touching disk.
+type fakeSource struct {
+	provider domain.AgentHarness
+	sessions []sessionimport.ImportableSession
+}
+
+func (f *fakeSource) Provider() domain.AgentHarness { return f.provider }
+func (f *fakeSource) Discover(context.Context, sessionimport.DiscoverOptions) ([]sessionimport.ImportableSession, error) {
+	return f.sessions, nil
+}
 
 func TestBestProjectForDir(t *testing.T) {
 	projects := []projectsvc.Summary{
@@ -139,6 +152,83 @@ func TestImportIsIdempotent(t *testing.T) {
 	}
 	if sessions.spawned.Harness != "" {
 		t.Error("idempotent import must not spawn a new session")
+	}
+}
+
+func TestImportSpawnsChatSessionBoundToNativeID(t *testing.T) {
+	target := sessionimport.ImportableSession{
+		Provider:        domain.HarnessClaudeCode,
+		NativeSessionID: "nat-1",
+		ConfigDir:       "/home/user/.claude",
+		CWD:             "/Users/dev/code",
+		Title:           "A conversation worth continuing",
+	}
+	src := &fakeSource{provider: domain.HarnessClaudeCode, sessions: []sessionimport.ImportableSession{target}}
+	sessions := &fakeSessions{}
+	store := &fakeStore{}
+	projects := &fakeProjects{list: []projectsvc.Summary{{ID: "proj-existing", Path: "/Users/dev/code"}}}
+	svc := New(sessions, store, projects, src)
+
+	got, already, err := svc.Import(context.Background(), domain.HarnessClaudeCode, "nat-1")
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if already {
+		t.Error("fresh import should not be flagged already imported")
+	}
+	if got.ID == "" {
+		t.Error("expected a spawned session")
+	}
+
+	cfg := sessions.spawned
+	if cfg.ProjectID != "proj-existing" {
+		t.Errorf("expected the covering project, got %q", cfg.ProjectID)
+	}
+	if cfg.Harness != domain.HarnessClaudeCode {
+		t.Errorf("harness: got %q", cfg.Harness)
+	}
+	if cfg.RequestedMode != domain.SessionModeChat {
+		t.Errorf("import must be chat mode, got %q", cfg.RequestedMode)
+	}
+	if cfg.ResumeNativeSession == nil {
+		t.Fatal("ResumeNativeSession must be set so the transcript is replayed")
+	}
+	if cfg.ResumeNativeSession.NativeSessionID != "nat-1" ||
+		cfg.ResumeNativeSession.ConfigDir != "/home/user/.claude" ||
+		cfg.ResumeNativeSession.Provider != domain.HarnessClaudeCode {
+		t.Errorf("ResumeNativeSession not populated correctly: %+v", cfg.ResumeNativeSession)
+	}
+	if projects.added.Path != "" {
+		t.Errorf("a covering project existed; no new project should be registered (added %q)", projects.added.Path)
+	}
+}
+
+func TestImportRegistersProjectWhenNoneCovers(t *testing.T) {
+	// A real git repo so gitRoot resolves and Add is exercised with a valid path.
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := sessionimport.ImportableSession{
+		Provider:        domain.HarnessCodex,
+		NativeSessionID: "codex-root-1",
+		ConfigDir:       "/home/user/.codex",
+		CWD:             repo,
+		Title:           "codex thread",
+	}
+	src := &fakeSource{provider: domain.HarnessCodex, sessions: []sessionimport.ImportableSession{target}}
+	sessions := &fakeSessions{}
+	projects := &fakeProjects{} // no projects -> must register one
+
+	svc := New(sessions, &fakeStore{}, projects, src)
+	if _, _, err := svc.Import(context.Background(), domain.HarnessCodex, "codex-root-1"); err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if projects.added.Path != filepath.Clean(repo) {
+		t.Errorf("expected a project registered at the repo root %q, got %q", repo, projects.added.Path)
+	}
+	if sessions.spawned.ProjectID != "created-1" {
+		t.Errorf("expected the newly created project, got %q", sessions.spawned.ProjectID)
 	}
 }
 

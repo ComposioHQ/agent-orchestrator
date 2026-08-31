@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apispec"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
 	"github.com/aoagents/agent-orchestrator/backend/internal/service/sessionimport"
+	"github.com/aoagents/agent-orchestrator/backend/internal/service/sessionimportsvc"
 )
 
 // defaultImportableWindowDays bounds discovery to recent conversations unless
@@ -126,7 +128,14 @@ func (c *SessionsController) importSession(w http.ResponseWriter, r *http.Reques
 
 	session, alreadyImported, err := c.Import.Import(r.Context(), provider, nativeID)
 	if err != nil {
-		envelope.WriteError(w, r, err)
+		switch {
+		case errors.Is(err, sessionimportsvc.ErrImportSessionNotFound):
+			envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "IMPORT_SESSION_NOT_FOUND", "no importable session with that id was found", nil)
+		case errors.Is(err, sessionimportsvc.ErrImportProjectUnresolved):
+			envelope.WriteAPIError(w, r, http.StatusUnprocessableEntity, "unprocessable_entity", "IMPORT_PROJECT_UNRESOLVED", "the conversation's working directory is not a git repository, so no project could be resolved", nil)
+		default:
+			envelope.WriteError(w, r, err)
+		}
 		return
 	}
 
