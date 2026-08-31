@@ -449,7 +449,7 @@ export function Sidebar({
 	const [dismissedInitialActiveProjectIds, setDismissedInitialActiveProjectIds] = useState<ReadonlySet<string>>(
 		() => new Set(),
 	);
-	const toggleProjectDisclosure = (id: string) => {
+	const toggleProjectDisclosure = useCallback((id: string) => {
 		const routeFallbackActive =
 			initialActiveSessionProjectId === id && !dismissedInitialActiveProjectIds.has(id);
 		const currentlyExpanded = expandedIds.has(id) || routeFallbackActive;
@@ -467,7 +467,7 @@ export function Sidebar({
 			currentlyExpanded ? next.add(id) : next.delete(id);
 			return next;
 		});
-	};
+	}, [dismissedInitialActiveProjectIds, expandedIds, initialActiveSessionProjectId]);
 	// Section disclosure: Pinned header collapses its body. Projects stays open.
 	const [pinnedOpen, setPinnedOpen] = useState(true);
 	// Fetch the running app version to derive the build channel. Channel is
@@ -819,7 +819,7 @@ export function Sidebar({
 											dropIndicator={projectDragState.overId === workspace.id ? projectDragState.placement ?? undefined : undefined}
 											consumeDragClick={projectDragClickGuard.consumeClick}
 											onSessionOrderChange={recordSessionOrder}
-											onToggle={() => toggleProjectDisclosure(workspace.id)}
+											onToggle={toggleProjectDisclosure}
 											onRemoveProject={onRemoveProject}
 										/>
 									))}
@@ -960,7 +960,7 @@ type ProjectItemProps = {
 	dropIndicator?: "before" | "after";
 	consumeDragClick: (id: string) => boolean;
 	onSessionOrderChange: (projectId: string, order: string[]) => void;
-	onToggle: () => void;
+	onToggle: (projectId: string) => void;
 	onRemoveProject: (projectId: string) => Promise<void>;
 	suppressInitialExpandAnimation: boolean;
 };
@@ -1097,7 +1097,7 @@ const ProjectItemContent = memo(function ProjectItemContent({
 	const orchestrator = newestActiveOrchestrator(workspace.sessions);
 	const toggleDisclosure = () => {
 		hasInteractedWithDisclosure.current = true;
-		onToggle();
+		onToggle(workspace.id);
 	};
 
 	// Mirrors ShellTopbar's launcher: attach to the running orchestrator, or
