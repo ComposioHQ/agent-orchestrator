@@ -29,6 +29,7 @@ import {
 	type WheelEvent as ReactWheelEvent,
 } from "react";
 import { ArrowDown, Loader2, TriangleAlert, Undo2 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { cn } from "../../lib/utils";
 import { sameContent, useStableList } from "../../lib/stable-list";
 import { useTabScrollEdges } from "../../hooks/useTabScrollEdges";
@@ -46,7 +47,11 @@ import { agentLabel } from "../../lib/agent-options";
 import type { ShellTerminal } from "../../hooks/useShellTerminals";
 import { sidebarOccupiesLayout, useUiStore } from "../../stores/ui-store";
 import type { TerminalTarget } from "../../types/terminal";
-import type { SessionKind, WorkspaceSession } from "../../types/workspace";
+import {
+	isOrchestratorSession,
+	type SessionKind,
+	type WorkspaceSession,
+} from "../../types/workspace";
 import { AgentAvatar } from "../AgentAvatar";
 import { SessionPaneTab } from "../CenterPane";
 import { Button } from "../ui/button";
@@ -294,6 +299,7 @@ export interface ChatWorkspaceProps {
 
 export function ChatWorkspace({
 	snapshot,
+	sessionTitle,
 	sessionRole = "worker",
 	headerActions,
 	sessionTabAction,
@@ -753,6 +759,8 @@ export function ChatWorkspace({
 		>
 			<ChatHeader
 				snapshot={snapshot}
+				sessionTitle={sessionTitle}
+				sessionRole={sessionRole}
 				reviewerTerminal={reviewerTerminal}
 				onOpenReviewerTerminal={onOpenReviewerTerminal}
 				reviewerActive={reviewerActive}
@@ -1125,6 +1133,8 @@ function readableItems(snapshot: ConversationSnapshot): ConversationItem[] {
 
 function ChatHeader({
 	snapshot,
+	sessionTitle,
+	sessionRole,
 	reviewerTerminal,
 	onOpenReviewerTerminal,
 	reviewerActive,
@@ -1145,6 +1155,8 @@ function ChatHeader({
 	session,
 }: {
 	snapshot: ConversationSnapshot;
+	sessionTitle?: string;
+	sessionRole: SessionKind;
 	reviewerTerminal?: { handleId: string; harness: string };
 	onOpenReviewerTerminal?: (target: { handleId: string; harness: string }) => void;
 	/** The reviewer tab is selected; the chat tab is the clickable alternative. */
@@ -1169,7 +1181,14 @@ function ChatHeader({
 	inline?: boolean;
 	topbarBounds: TopbarBounds;
 }) {
-	const label = agentLabel(snapshot.harness);
+	const { t } = useTranslation();
+	const providerLabel = agentLabel(snapshot.harness);
+	const sessionIsOrchestrator = session
+		? isOrchestratorSession(session)
+		: sessionRole === "orchestrator";
+	const label = sessionIsOrchestrator
+		? t("shell.orchestrator")
+		: (sessionTitle || session?.title || snapshot.title || snapshot.sessionId);
 	const tabScrollWatch = `${session?.id ?? ""}|${reviewerTerminal?.handleId ?? ""}|${(shellTerminals ?? []).map((shell) => shell.handleId).join("|")}`;
 	const {
 		scrollRef: tabsOverflowRef,
@@ -1223,7 +1242,7 @@ function ChatHeader({
 						) : (
 							<button
 								aria-current={timelineActive ? true : undefined}
-								aria-label={label}
+								aria-label={`${label} · ${providerLabel}`}
 								aria-selected={timelineActive}
 								data-terminal-role="primary"
 								className={cn(
@@ -1499,6 +1518,7 @@ function Timeline({
 			visible: boolean;
 		}>,
 	});
+	const minimapEnabled = scrollbar.visible && !isInspectorOpen;
 	const queued = useMemo(() => queuedTurnIds(snapshot), [snapshot]);
 	const decide = useStableCallback(onDecide);
 	const resolveInput = useStableCallback(onResolveInput);
@@ -1587,6 +1607,12 @@ function Timeline({
 	// become active even when the provider send ends ambiguously; once that durable
 	// state arrives, the old prompt is no longer the message being edited.
 	useEffect(() => setMessageEdit(undefined), [snapshot.activeBranchId, snapshot.sessionId]);
+	useEffect(() => {
+		if (isInspectorOpen) {
+			drag.current = null;
+			setHoveredMarker(null);
+		}
+	}, [isInspectorOpen]);
 	const consumedRetrySources = useMemo(() => retrySourceTurnIds(snapshot), [snapshot]);
 	const retryableTurns = useMemo(
 		() =>
@@ -1808,7 +1834,7 @@ function Timeline({
 	}
 
 	function onScrollbarPointerDown(event: ReactPointerEvent<HTMLDivElement>) {
-		if (!scrollbar.visible) return;
+		if (!minimapEnabled) return;
 		const track = scrollTrack.current;
 		const node = scroller.current;
 		if (!track || !node) return;
@@ -1828,6 +1854,7 @@ function Timeline({
 	}
 
 	function onScrollbarPointerMove(event: ReactPointerEvent<HTMLDivElement>) {
+		if (!minimapEnabled) return;
 		const active = drag.current;
 		const node = scroller.current;
 		const track = scrollTrack.current;
@@ -1862,6 +1889,7 @@ function Timeline({
 	}
 
 	function onScrollbarWheel(event: ReactWheelEvent<HTMLDivElement>) {
+		if (!minimapEnabled) return;
 		const node = scroller.current;
 		if (!node) return;
 		event.preventDefault();
@@ -1870,6 +1898,7 @@ function Timeline({
 	}
 
 	function onScrollbarKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+		if (!minimapEnabled) return;
 		const node = scroller.current;
 		if (!node) return;
 		const maxScroll = Math.max(0, node.scrollHeight - node.clientHeight);
@@ -2013,7 +2042,9 @@ function Timeline({
 			<div
 				ref={scrollTrack}
 				role="scrollbar"
-				tabIndex={scrollbar.visible ? 0 : -1}
+				data-testid="chat-conversation-minimap"
+				tabIndex={minimapEnabled ? 0 : -1}
+				aria-hidden={isInspectorOpen || undefined}
 				aria-label="Conversation scrollbar"
 				aria-orientation="vertical"
 				aria-valuemin={0}
@@ -2026,7 +2057,7 @@ function Timeline({
 				onWheel={onScrollbarWheel}
 				onKeyDown={onScrollbarKeyDown}
 				onFocus={() => {
-					if (scrollbar.markers.length === 0) return;
+					if (!minimapEnabled || scrollbar.markers.length === 0) return;
 					setHoveredMarker(
 						Math.min(
 							scrollbar.markers.length - 1,
@@ -2038,11 +2069,11 @@ function Timeline({
 				onPointerLeave={() => setHoveredMarker(null)}
 				className={cn(
 					"group/scroll absolute inset-y-3 right-1 z-10 w-6 touch-none rounded-full outline-none transition-opacity focus-visible:ring-1 focus-visible:ring-logo-accent/60",
-					scrollbar.visible ? "cursor-pointer opacity-100" : "pointer-events-none opacity-0",
+					minimapEnabled ? "cursor-pointer opacity-100" : "pointer-events-none opacity-0",
 				)}
 			>
 				<div className="absolute inset-0 cursor-grab group-active/scroll:cursor-grabbing">
-					{!isInspectorOpen
+					{minimapEnabled
 						? scrollbar.markers.map((marker, index) => {
 								const distance =
 									hoveredMarker === null
@@ -2073,7 +2104,7 @@ function Timeline({
 						: null}
 				</div>
 
-				{!isInspectorOpen &&
+				{minimapEnabled &&
 				hoveredMarker !== null &&
 				scrollbar.markers[hoveredMarker] &&
 				previews[hoveredMarker] ? (

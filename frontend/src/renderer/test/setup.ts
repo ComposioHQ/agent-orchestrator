@@ -244,6 +244,7 @@ if (typeof window !== "undefined") {
 			destroy: () => undefined,
 			setAnnotationMode: async () => undefined,
 			onNavState: () => () => undefined,
+			onPageFocus: () => () => undefined,
 			onTabsState: () => () => undefined,
 			onAgentActivity: () => () => undefined,
 			onDevToolsState: () => () => undefined,

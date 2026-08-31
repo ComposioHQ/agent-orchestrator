@@ -6,6 +6,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { animate, LayoutGroup, motion, useMotionValue, useReducedMotion } from "motion/react";
 import { NotificationCenter } from "./NotificationCenter";
 import {
+	CLOUD_PROJECT_KIND,
 	findProjectOrchestrator,
 	hasConfiguredOrchestratorAgent,
 	isOrchestratorSession,
@@ -169,7 +170,7 @@ export function ShellTopbar({
 		// Cloud projects carry no local orchestrator-agent config; spawn the
 		// orchestrator as a cloud session in its own sandbox instead of falling
 		// through to the project-settings page.
-		if (project?.kind === "cloud") {
+		if (project?.kind === CLOUD_PROJECT_KIND) {
 			setIsSpawning(true);
 			try {
 				const sessionId = await spawnCloudOrchestrator(queryClient, projectId);
@@ -360,8 +361,11 @@ export function ShellTopbar({
 						{/* Open-in-editor leads the session actions: it is the only
 						    non-destructive one, and it must sit left of Kill. Kept outside
 						    the local-actions group because Electron main independently
-						    reports whether this session has a live workspace. */}
-						{session ? (
+						    reports whether this session has a live workspace. Cloud sessions
+						    have no local workspace to hand off to an editor: the local daemon
+						    has never heard of them, so querying it just surfaces its 404 as a
+						    confusing "Unknown session" error (see workspace.ts's `kind` doc). */}
+						{session && project?.kind !== CLOUD_PROJECT_KIND ? (
 							// Keyed per session so a stale launch error does not carry over
 							// when switching sessions. The prefix keeps it distinct from the
 							// kill button's key: identical sibling keys make React duplicate
