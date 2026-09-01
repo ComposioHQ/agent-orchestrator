@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
+import { memo, useEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
@@ -72,26 +72,26 @@ export function sessionsBoardLabels(t: TFunction): BoardColumnLabels {
 	};
 }
 
-export function BoardSessionCardAdapter({
-	onOpen,
-	onTerminate,
+export const BoardSessionCardAdapter = memo(function BoardSessionCardAdapter({
+	onOpenSession,
+	onTerminateSession,
 	session,
 	usage,
 }: {
-	onOpen: () => void;
-	onTerminate: () => void;
+	onOpenSession: (session: WorkspaceSession) => void;
+	onTerminateSession: (session: WorkspaceSession) => void;
 	session: WorkspaceSession;
 	usage?: SessionUsageSummary;
 }) {
 	return (
 		<DesktopSessionCard
-			onOpen={onOpen}
-			onTerminate={onTerminate}
+			onOpen={() => onOpenSession(session)}
+			onTerminate={() => onTerminateSession(session)}
 			session={session}
 			usage={usage}
 		/>
 	);
-}
+});
 
 export function ArchivedSessionCardAdapter({
 	isRestoreDisabled,
@@ -128,7 +128,7 @@ export function ArchivedSessionCardAdapter({
 	);
 }
 
-function DesktopSessionCard({
+const DesktopSessionCard = memo(function DesktopSessionCard({
 	action,
 	branchAction,
 	footer,
@@ -239,7 +239,7 @@ function DesktopSessionCard({
 			usage={usagePresentation}
 		/>
 	);
-}
+});
 
 function pullRequestLabels(t: TFunction): BoardPullRequestLabels {
 	return {

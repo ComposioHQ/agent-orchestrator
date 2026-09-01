@@ -362,6 +362,38 @@ describe("TerminalPane empty states", () => {
 			view.restore();
 		}
 	});
+
+	it("selects a temporary shell without attaching xterm to its temporary handle", () => {
+		const shell = {
+			handleId: "pending-shell:test",
+			sessionId: worker.id,
+			workingDir: "",
+			title: "Terminal 1",
+			createdAt: "2026-08-31T00:00:00Z",
+			optimistic: true,
+		} satisfies ShellTerminal;
+		const view = renderCachedPane({
+			session: worker,
+			sessions: [worker],
+			// The authoritative shell can replace the optimistic cache row before
+			// the selected target changes. A pending handle itself is the contract.
+			shellTerminals: [],
+			terminalTarget: {
+				generation: shell.createdAt,
+				kind: "shell",
+				handleId: shell.handleId,
+				sessionId: worker.id,
+				title: shell.title,
+			},
+		});
+		try {
+			expect(screen.getByTestId("optimistic-terminal")).toBeInTheDocument();
+			expect(screen.queryByTestId("xterm")).not.toBeInTheDocument();
+			expect(terminalSessionOptions.at(-1)?.shellTerminalHandleId).toBeUndefined();
+		} finally {
+			view.restore();
+		}
+	});
 });
 
 // Initial-replay cover (issue #3160): xterm stays mounted and ingesting behind
@@ -518,6 +550,23 @@ describe("TerminalCacheProvider", () => {
 			view.show(sessions[0]);
 			await waitFor(() => expect(activeXterm()).toBe(oldest));
 			expect(xtermMounts.value).toBe(7);
+		} finally {
+			view.restore();
+		}
+	});
+
+	it("reveals a cached terminal immediately while its activation preparation is still pending", async () => {
+		prepareForActivationMock.mockImplementation(() => new Promise<void>(() => undefined));
+		const view = renderCachedPane({ session: sessionA, sessions: [sessionA, sessionB] });
+		try {
+			const terminalA = await waitFor(() => activeXterm());
+			view.show(sessionB);
+			await waitFor(() => expect(activeXterm()).not.toBe(terminalA));
+
+			view.show(sessionA);
+			const host = document.querySelector<HTMLElement>(`[data-terminal-cache-key^="session:${sessionA.id}:worker|"]`);
+			expect(host).toHaveAttribute("data-terminal-activation-phase", "visible");
+			expect(host?.style.visibility).not.toBe("hidden");
 		} finally {
 			view.restore();
 		}

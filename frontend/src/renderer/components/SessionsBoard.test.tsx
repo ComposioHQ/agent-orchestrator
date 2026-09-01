@@ -38,6 +38,13 @@ vi.mock("@tanstack/react-router", () => ({
 vi.mock("../hooks/useWorkspaceQuery", () => ({
 	workspaceQueryKey: ["workspaces"],
 	useWorkspaceQuery: workspaceQueryMock,
+	useWorkspaceScope: (projectId?: string) => {
+		const query = workspaceQueryMock();
+		return {
+			...query,
+			data: { project: query.data?.find((workspace: WorkspaceSummary) => workspace.id === projectId) },
+		};
+	},
 }));
 
 vi.mock("../hooks/useSessionUsageSummaries", () => ({
