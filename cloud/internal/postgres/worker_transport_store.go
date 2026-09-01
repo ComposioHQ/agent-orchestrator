@@ -19,6 +19,8 @@ const (
 	maxOutstandingWorkerRequests    = 10
 	maxOutstandingWorkspaceRequests = 6
 	maxTerminalOutputBytes          = 4 << 20
+	maxTerminalInputBytes           = 16 << 10
+	terminalRequestTTL              = 15 * time.Second
 	// interactiveSessionLease prevents the idle scanner from pausing a sandbox
 	// while a user is connecting to either terminal surface.
 	interactiveSessionLease = 2 * time.Minute
@@ -685,7 +687,41 @@ func (s *Store) QueueTerminalInput(
 		"inputId":    inputID,
 		"data":       data,
 	})
-	return s.queueTerminalRequest(ctx, terminal, "terminal.input", inputID, payload)
+	return s.withOrg(ctx, terminal.OrgID, func(tx pgx.Tx) error {
+		// Serialize terminal enqueue operations per session. Besides preserving the
+		// existing created_at order across simultaneous terminal connections, this
+		// keeps a resize from being inserted between selecting a coalescing target
+		// and appending input to it.
+		if _, err := tx.Exec(ctx,
+			`SELECT id FROM ao_sessions
+			WHERE org_id = $1 AND id = $2
+			FOR UPDATE`,
+			terminal.OrgID, terminal.SessionID,
+		); err != nil {
+			return err
+		}
+		if err := terminalRequestReady(ctx, tx, terminal); err != nil {
+			return err
+		}
+		if inputID != "" {
+			exists, err := terminalRequestExists(
+				ctx, tx, terminal, "terminal.input", inputID,
+			)
+			if err != nil || exists {
+				return err
+			}
+		} else {
+			coalesced, err := coalescePendingTerminalInput(ctx, tx, terminal, data)
+			if err != nil || coalesced {
+				return err
+			}
+		}
+		_, err := createWorkerRequest(
+			ctx, tx, terminal.OrgID, terminal.SessionID,
+			"terminal.input", payload, terminalRequestTTL, "",
+		)
+		return err
+	})
 }
 
 func (s *Store) QueueTerminalResize(
@@ -709,37 +745,12 @@ func (s *Store) queueTerminalRequest(
 	payload []byte,
 ) error {
 	return s.withOrg(ctx, terminal.OrgID, func(tx pgx.Tx) error {
-		var current bool
-		if err := tx.QueryRow(ctx,
-			`SELECT EXISTS (
-				SELECT 1 FROM ao_terminal_sessions terminal
-				JOIN ao_worker_connections worker
-				  ON worker.org_id = terminal.org_id
-				 AND worker.session_id = terminal.session_id
-				 AND worker.epoch = terminal.worker_epoch
-				 AND worker.disconnected_at IS NULL
-				WHERE terminal.org_id = $1 AND terminal.session_id = $2
-				  AND terminal.id = $3 AND terminal.worker_epoch = $4
-				  AND terminal.state = 'open' AND terminal.expires_at > now()
-			)`,
-			terminal.OrgID, terminal.SessionID, terminal.ID, terminal.WorkerEpoch,
-		).Scan(&current); err != nil {
+		if err := terminalRequestReady(ctx, tx, terminal); err != nil {
 			return err
 		}
-		if !current {
-			return ErrWorkerUnavailable
-		}
 		if idempotencyKey != "" {
-			var exists bool
-			if err := tx.QueryRow(ctx,
-				`SELECT EXISTS (
-					SELECT 1 FROM ao_worker_requests
-					WHERE org_id = $1 AND session_id = $2 AND kind = $3
-					  AND payload->>'terminalId' = $4
-					  AND payload->>'inputId' = $5
-				)`,
-				terminal.OrgID, terminal.SessionID, kind, terminal.ID, idempotencyKey,
-			).Scan(&exists); err != nil {
+			exists, err := terminalRequestExists(ctx, tx, terminal, kind, idempotencyKey)
+			if err != nil {
 				return err
 			}
 			if exists {
@@ -747,10 +758,129 @@ func (s *Store) queueTerminalRequest(
 			}
 		}
 		_, err := createWorkerRequest(
-			ctx, tx, terminal.OrgID, terminal.SessionID, kind, payload, 15*time.Second, "",
+			ctx, tx, terminal.OrgID, terminal.SessionID, kind, payload, terminalRequestTTL, "",
 		)
 		return err
 	})
+}
+
+func terminalRequestReady(
+	ctx context.Context,
+	tx pgx.Tx,
+	terminal domain.TerminalSession,
+) error {
+	var current bool
+	if err := tx.QueryRow(ctx,
+		`SELECT EXISTS (
+			SELECT 1 FROM ao_terminal_sessions terminal
+			JOIN ao_worker_connections worker
+			  ON worker.org_id = terminal.org_id
+			 AND worker.session_id = terminal.session_id
+			 AND worker.epoch = terminal.worker_epoch
+			 AND worker.disconnected_at IS NULL
+			WHERE terminal.org_id = $1 AND terminal.session_id = $2
+			  AND terminal.id = $3 AND terminal.worker_epoch = $4
+			  AND terminal.state = 'open' AND terminal.expires_at > now()
+		)`,
+		terminal.OrgID, terminal.SessionID, terminal.ID, terminal.WorkerEpoch,
+	).Scan(&current); err != nil {
+		return err
+	}
+	if !current {
+		return ErrWorkerUnavailable
+	}
+	return nil
+}
+
+func terminalRequestExists(
+	ctx context.Context,
+	tx pgx.Tx,
+	terminal domain.TerminalSession,
+	kind string,
+	idempotencyKey string,
+) (bool, error) {
+	var exists bool
+	err := tx.QueryRow(ctx,
+		`SELECT EXISTS (
+			SELECT 1 FROM ao_worker_requests
+			WHERE org_id = $1 AND session_id = $2 AND kind = $3
+			  AND payload->>'terminalId' = $4
+			  AND payload->>'inputId' = $5
+		)`,
+		terminal.OrgID, terminal.SessionID, kind, terminal.ID, idempotencyKey,
+	).Scan(&exists)
+	return exists, err
+}
+
+func coalescePendingTerminalInput(
+	ctx context.Context,
+	tx pgx.Tx,
+	terminal domain.TerminalSession,
+	data []byte,
+) (bool, error) {
+	var requestID string
+	var kind, status string
+	var payload []byte
+	err := tx.QueryRow(ctx,
+		`SELECT id, kind, status, payload
+		FROM ao_worker_requests
+		WHERE org_id = $1 AND session_id = $2 AND worker_epoch = $3
+		  AND kind IN ('terminal.input', 'terminal.resize')
+		  AND status IN ('pending', 'claimed') AND expires_at > now()
+		  AND payload->>'terminalId' = $4
+		ORDER BY created_at DESC, id DESC
+		LIMIT 1
+		FOR UPDATE`,
+		terminal.OrgID, terminal.SessionID, terminal.WorkerEpoch, terminal.ID,
+	).Scan(&requestID, &kind, &status, &payload)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	// Only an unclaimed input at the tail of the terminal stream is safe to
+	// extend. A claimed input may already have reached the PTY, while a resize is
+	// an ordering boundary for full-screen TUIs.
+	if kind != "terminal.input" || status != "pending" {
+		return false, nil
+	}
+	coalesced, ok := appendTerminalInputPayload(payload, terminal.ID, data)
+	if !ok {
+		return false, nil
+	}
+	tag, err := tx.Exec(ctx,
+		`UPDATE ao_worker_requests
+		SET payload = $1, expires_at = now() + $2::interval, updated_at = now()
+		WHERE org_id = $3 AND session_id = $4 AND id = $5
+		  AND worker_epoch = $6 AND kind = 'terminal.input'
+		  AND status = 'pending'`,
+		coalesced, intervalString(terminalRequestTTL), terminal.OrgID,
+		terminal.SessionID, requestID, terminal.WorkerEpoch,
+	)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+func appendTerminalInputPayload(payload []byte, terminalID string, data []byte) ([]byte, bool) {
+	var input struct {
+		TerminalID string `json:"terminalId"`
+		InputID    string `json:"inputId,omitempty"`
+		Data       []byte `json:"data"`
+	}
+	if json.Unmarshal(payload, &input) != nil ||
+		input.TerminalID != terminalID ||
+		input.InputID != "" ||
+		len(input.Data) == 0 ||
+		len(data) == 0 ||
+		len(input.Data)+len(data) > maxTerminalInputBytes {
+		return nil, false
+	}
+	input.Data = append(input.Data, data...)
+	coalesced, err := json.Marshal(input)
+	return coalesced, err == nil
 }
 
 func (s *Store) CloseTerminal(ctx context.Context, terminal domain.TerminalSession) error {
