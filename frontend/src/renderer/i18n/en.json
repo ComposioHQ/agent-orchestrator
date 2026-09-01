@@ -139,7 +139,7 @@
 	"createProject.chooseProjectFolder": "Choose a project folder",
 	"createProject.chooseRepo": "Choose a project repository",
 	"createProject.chooseWorkspace": "Choose a workspace folder",
-	"createProject.cloneAndStart": "Clone",
+	"createProject.cloneAndStart": "Clone Project",
 	"createProject.cloneBack": "Back to code source",
 	"createProject.cloneBackToDetails": "Back to clone details",
 	"createProject.cloneChoose": "Choose",
