@@ -316,7 +316,7 @@ func (c *Client) BootstrapWorker(ctx context.Context, id sandbox.ID, bootstrap s
 	query.Set("height", "40")
 	query.Set("command", command)
 	// Bootstrap is a short-lived, non-interactive command. The buffered backend
-	// lets the command finish after AO disconnects once the upload is accepted.
+	// preserves the final result after the upload while AO keeps the PTY open.
 	query.Set("backend_type", "buffered")
 	ptyURL.RawQuery = query.Encode()
 	var lastErr error
@@ -352,12 +352,16 @@ func (c *Client) bootstrapThroughPTY(ctx context.Context, ptyURL *url.URL, encod
 		}
 		return fmt.Errorf("coder: open workspace PTY: %w", err)
 	}
-	defer conn.CloseNow()
-	netConn := websocket.NetConn(context.Background(), conn, websocket.MessageBinary)
-	defer netConn.Close()
+	streamCtx, stopStream := context.WithCancel(ctx)
+	netConn := websocket.NetConn(streamCtx, conn, websocket.MessageBinary)
+	output, outputDone := streamPTYOutput(streamCtx, netConn)
+	defer func() {
+		stopStream()
+		_ = conn.CloseNow()
+		<-outputDone
+	}()
 
 	encoder := json.NewEncoder(netConn)
-	output := streamPTYOutput(netConn)
 	// Coder's reconnecting PTY writes each decoded Data field to the OS PTY but
 	// does not retry a short write. Frame the archive as canonical terminal lines
 	// with sequence and length metadata. The receiver acknowledges only a
@@ -376,8 +380,18 @@ func (c *Client) bootstrapThroughPTY(ctx context.Context, ptyURL *url.URL, encod
 		}
 		sequence++
 	}
-	return sendBootstrapFrame(ctx, encoder, output,
-		fmt.Sprintf("done:%d:0:\n", sequence), bootstrapUploadDone)
+	if err := sendBootstrapFrame(ctx, encoder, output,
+		fmt.Sprintf("done:%d:0:\n", sequence), bootstrapUploadDone); err != nil {
+		return err
+	}
+	result, err := readBootstrapResult(ctx, output)
+	if err != nil {
+		return err
+	}
+	if strings.Contains(result, bootstrapOK) {
+		return nil
+	}
+	return fmt.Errorf("coder: worker bootstrap failed: %s", sanitizePTYOutput(result))
 }
 
 func sendBootstrapFrame(
@@ -547,9 +561,11 @@ type ptyOutput struct {
 	err  error
 }
 
-func streamPTYOutput(reader io.Reader) <-chan ptyOutput {
+func streamPTYOutput(ctx context.Context, reader io.Reader) (<-chan ptyOutput, <-chan struct{}) {
 	result := make(chan ptyOutput)
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		defer close(result)
 		buffered := bufio.NewReader(reader)
 		total := 0
@@ -557,15 +573,22 @@ func streamPTYOutput(reader io.Reader) <-chan ptyOutput {
 			line, err := buffered.ReadString('\n')
 			total += len(line)
 			if line != "" || err != nil {
-				result <- ptyOutput{data: line, err: err}
+				select {
+				case result <- ptyOutput{data: line, err: err}:
+				case <-ctx.Done():
+					return
+				}
 			}
 			if err != nil {
 				return
 			}
 		}
-		result <- ptyOutput{err: errors.New("coder: PTY output exceeded limit")}
+		select {
+		case result <- ptyOutput{err: errors.New("coder: PTY output exceeded limit")}:
+		case <-ctx.Done():
+		}
 	}()
-	return result
+	return result, done
 }
 
 func readBootstrapResult(ctx context.Context, output <-chan ptyOutput) (string, error) {
