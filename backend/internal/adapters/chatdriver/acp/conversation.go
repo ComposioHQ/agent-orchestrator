@@ -306,7 +306,7 @@ func (c *conversation) ReconnectedLive() bool { return c.proc.reconnected }
 // ActivateLiveReconnect installs the durable turn correlation before releasing
 // replayed ACP updates to the SDK. This prevents a replacement daemon from
 // attributing output to an empty turn or starting a second root prompt.
-func (c *conversation) ActivateLiveReconnect(providerTurnID string) error {
+func (c *conversation) ActivateLiveReconnect(ctx context.Context, providerTurnID string) error {
 	if !c.proc.reconnected || c.liveState == nil || c.proc.gate == nil {
 		return nil
 	}
@@ -315,10 +315,10 @@ func (c *conversation) ActivateLiveReconnect(providerTurnID string) error {
 	case c.liveState.ActivePrompt && !durableBusy:
 		return fmt.Errorf("%w: ACP host has an active prompt but no durable running turn",
 			ports.ErrChatRecoveryInconclusive)
-	case durableBusy && !c.liveState.ActivePrompt && !c.liveState.PendingResult:
+	case durableBusy && !c.liveState.ActivePrompt && c.liveState.PendingResultEventID == "":
 		return fmt.Errorf("%w: durable turn %q is running but the ACP host is idle",
 			ports.ErrChatRecoveryInconclusive, providerTurnID)
-	case c.liveState.PendingResult && !durableBusy:
+	case c.liveState.PendingResultEventID != "" && !durableBusy:
 		// The old controller committed the terminal event but died before its ACK.
 		// The replay is already queued on this socket, so acknowledge it and ignore
 		// that one private completion after opening the reader gate.
@@ -330,7 +330,7 @@ func (c *conversation) ActivateLiveReconnect(providerTurnID string) error {
 		c.ignorePromptResult = true
 		c.terminalEventID = c.liveState.PendingResultEventID
 		c.mu.Unlock()
-		if err := c.conn.NotifyExtension(context.Background(), "_ao/persistent_prompt_ack", map[string]string{
+		if err := c.conn.NotifyExtension(ctx, persistenthost.ACPPromptAckMethod, map[string]string{
 			"eventId": c.liveState.PendingResultEventID,
 		}); err != nil {
 			return fmt.Errorf("acknowledge committed persistent ACP result: %w", err)
@@ -607,7 +607,6 @@ func (c *conversation) Interrupt(ctx context.Context, providerTurnID string) err
 	c.mu.Lock()
 	active := c.activeTurn
 	sessionID := c.sessionID
-	turnCancel := c.turnCancel
 	if active == "" || c.settlingTurn == active || (providerTurnID != "" && providerTurnID != active) {
 		c.mu.Unlock()
 		return ports.ErrChatNoActiveTurn
@@ -633,14 +632,9 @@ func (c *conversation) Interrupt(ctx context.Context, providerTurnID string) err
 	if err != nil {
 		return fmt.Errorf("ACP session/cancel: %w", err)
 	}
-	// session/cancel is a notification: a conforming agent may accept it without
-	// completing the outstanding Prompt RPC. Once the notification is accepted,
-	// cancel AO's local request too so Stop cannot report success while the
-	// controller remains busy forever. Do this only after a successful write;
-	// otherwise the caller must see that cancellation was not delivered.
-	if turnCancel != nil {
-		turnCancel()
-	}
+	// The provider owns the root Prompt until it returns a terminal result. Keep
+	// AO busy after accepting session/cancel so a restart cannot start a second
+	// root prompt while the first one is still executing downstream.
 	return nil
 }
 
@@ -682,16 +676,26 @@ func (c *conversation) ResolveRequest(
 }
 
 func (c *conversation) Close() error {
+	return c.closeProvider(false)
+}
+
+// Terminate destroys the provider host. Close deliberately only detaches during
+// daemon shutdown or updater replacement.
+func (c *conversation) Terminate() error {
+	return c.closeProvider(true)
+}
+
+func (c *conversation) closeProvider(terminate bool) error {
 	var closeErr error
 	c.closeOnce.Do(func() {
 		c.mu.Lock()
 		c.closed = true
 		persistent := c.proc.terminate != nil
-		c.detaching = persistent
+		c.detaching = persistent && !terminate
 		cancel := c.turnCancel
 		sessionID := c.sessionID
 		c.mu.Unlock()
-		if persistent {
+		if persistent && !terminate {
 			closeErr = c.proc.stop()
 			return
 		}
@@ -705,50 +709,25 @@ func (c *conversation) Close() error {
 			_, _ = c.conn.CloseSession(closeCtx, acpsdk.CloseSessionRequest{SessionId: acpsdk.SessionId(sessionID)})
 			cancelClose()
 		}
-		closeErr = c.proc.stop()
+		if persistent {
+			closeErr = c.proc.terminate()
+		} else {
+			closeErr = c.proc.stop()
+		}
 	})
 	return closeErr
 }
 
-// Terminate destroys the provider host. Close deliberately only detaches during
-// daemon shutdown or updater replacement.
-func (c *conversation) Terminate() error {
-	var terminateErr error
-	c.closeOnce.Do(func() {
-		c.mu.Lock()
-		c.closed = true
-		cancel := c.turnCancel
-		sessionID := c.sessionID
-		c.mu.Unlock()
-		if cancel != nil {
-			cancel()
-		}
-		c.failPendingPermissions()
-		c.failPendingInputs()
-		if sessionID != "" {
-			closeCtx, cancelClose := context.WithTimeout(context.Background(), 2*time.Second)
-			_, _ = c.conn.CloseSession(closeCtx, acpsdk.CloseSessionRequest{SessionId: acpsdk.SessionId(sessionID)})
-			cancelClose()
-		}
-		if c.proc.terminate != nil {
-			terminateErr = c.proc.terminate()
-		} else {
-			terminateErr = c.proc.stop()
-		}
-	})
-	return terminateErr
-}
-
 // AcknowledgeProviderEvent lets the host discard a prompt journal only after
 // the terminal event was committed by the controller.
-func (c *conversation) AcknowledgeProviderEvent(providerEventID string) error {
+func (c *conversation) AcknowledgeProviderEvent(ctx context.Context, providerEventID string) error {
 	c.mu.Lock()
 	terminal := c.terminalEventID
 	c.mu.Unlock()
 	if providerEventID == "" || providerEventID != terminal || c.proc.terminate == nil {
 		return nil
 	}
-	return c.conn.NotifyExtension(context.Background(), "_ao/persistent_prompt_ack", map[string]string{
+	return c.conn.NotifyExtension(ctx, persistenthost.ACPPromptAckMethod, map[string]string{
 		"eventId": providerEventID,
 	})
 }

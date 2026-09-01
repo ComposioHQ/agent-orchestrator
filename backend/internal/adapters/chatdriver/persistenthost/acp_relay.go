@@ -1,13 +1,13 @@
 package persistenthost
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 )
 
 const (
-	acpPromptAckMethod = "_ao/persistent_prompt_ack"
 	// ACPEventIDMetaKey identifies one replayable provider event. AO assigns the
 	// value to every durable event derived from that frame.
 	ACPEventIDMetaKey = "ao.persistentEventId"
@@ -32,10 +32,11 @@ type acpRelay struct {
 	state             ACPState
 	promptJournal     *acpPromptJournal
 	promptResult      []byte
+	cancelRequested   bool
 }
 
-func newACPRelay(journalPath string) (*acpRelay, error) {
-	journal, err := openACPPromptJournal(journalPath)
+func newACPRelay(ctx context.Context, journalPath string) (*acpRelay, error) {
+	journal, err := openACPPromptJournal(ctx, journalPath)
 	if err != nil {
 		return nil, err
 	}
@@ -49,12 +50,11 @@ func (r *acpRelay) snapshot() *ACPState {
 	state := r.state
 	state.InitializeResult = append(json.RawMessage(nil), state.InitializeResult...)
 	state.SessionResult = append(json.RawMessage(nil), state.SessionResult...)
-	state.PendingResult = len(r.promptResult) > 0
 	return &state
 }
 
-func (r *acpRelay) replayTo(dst io.Writer) error {
-	if err := r.promptJournal.replayTo(dst); err != nil {
+func (r *acpRelay) replayTo(ctx context.Context, dst io.Writer) error {
+	if err := r.promptJournal.replayTo(ctx, dst); err != nil {
 		return err
 	}
 	if len(r.promptResult) > 0 {
@@ -66,30 +66,35 @@ func (r *acpRelay) replayTo(dst io.Writer) error {
 
 func (r *acpRelay) close() { r.promptJournal.close() }
 
-func (r *acpRelay) clientFrame(frame []byte, generation uint64) ([]byte, error) {
+func (r *acpRelay) clientFrame(ctx context.Context, frame []byte, generation uint64) ([]byte, error) {
 	var envelope map[string]json.RawMessage
 	if json.Unmarshal(frame, &envelope) != nil {
 		return frame, nil //nolint:nilerr // preserve malformed input so the ACP peer owns its protocol error
 	}
 	var method string
 	_ = json.Unmarshal(envelope["method"], &method)
-	if method == acpPromptAckMethod {
+	if method == ACPPromptAckMethod {
 		var params struct {
 			EventID string `json:"eventId"`
 		}
 		_ = json.Unmarshal(envelope["params"], &params)
 		if params.EventID != "" && params.EventID == r.state.PendingResultEventID {
-			if err := r.promptJournal.reset(); err != nil {
+			if err := r.promptJournal.reset(ctx); err != nil {
 				return nil, err
 			}
 			r.promptResult = nil
-			r.state.PendingResult = false
 			r.state.PendingResultEventID = ""
 		}
 		return nil, nil
 	}
 	if method == "$/cancel_request" {
 		return r.clientCancellation(envelope, frame, generation), nil
+	}
+	if method == "session/cancel" && r.state.ActivePrompt {
+		if r.cancelRequested {
+			return nil, nil
+		}
+		r.cancelRequested = true
 	}
 	id := envelope["id"]
 	if method == "" && len(id) > 0 {
@@ -108,9 +113,9 @@ func (r *acpRelay) clientFrame(frame []byte, generation uint64) ([]byte, error) 
 	envelope["id"] = providerID
 	if method == "session/prompt" {
 		r.state.ActivePrompt = true
-		r.state.PendingResult = false
 		r.state.PendingResultEventID = ""
-		if err := r.promptJournal.reset(); err != nil {
+		r.cancelRequested = false
+		if err := r.promptJournal.reset(ctx); err != nil {
 			return nil, err
 		}
 		r.promptResult = nil
@@ -143,7 +148,12 @@ func (r *acpRelay) clientCancellation(
 // providerFrame returns the daemon-facing frame and whether it is retained in
 // the active-prompt journal. A journaled frame must not also enter the generic
 // detached buffer or it would be replayed twice.
-func (r *acpRelay) providerFrame(frame []byte, generation uint64, attached bool) ([]byte, bool, error) {
+func (r *acpRelay) providerFrame(
+	ctx context.Context,
+	frame []byte,
+	generation uint64,
+	attached bool,
+) ([]byte, bool, error) {
 	var envelope map[string]json.RawMessage
 	if json.Unmarshal(frame, &envelope) != nil {
 		return frame, false, nil //nolint:nilerr // preserve malformed output for the SDK's protocol error
@@ -160,7 +170,7 @@ func (r *acpRelay) providerFrame(frame []byte, generation uint64, attached bool)
 			eventID := r.newEventID()
 			injectMeta(envelope, ACPEventIDMetaKey, eventID)
 			rewritten := marshalFrame(envelope, frame)
-			if err := r.promptJournal.append(rewritten); err != nil {
+			if err := r.promptJournal.append(ctx, rewritten); err != nil {
 				return nil, false, err
 			}
 			if !attached {
@@ -183,11 +193,11 @@ func (r *acpRelay) providerFrame(frame []byte, generation uint64, attached bool)
 
 	if request.method == "session/prompt" {
 		r.state.ActivePrompt = false
+		r.cancelRequested = false
 		eventID := r.newEventID()
 		injectResultMeta(envelope, ACPEventIDMetaKey, eventID)
 		rewritten := rewriteResponseID(envelope, request.clientID, frame)
 		r.promptResult = promptResultNotification(envelope, eventID)
-		r.state.PendingResult = true
 		r.state.PendingResultEventID = eventID
 		if !attached {
 			return nil, true, nil
@@ -226,7 +236,6 @@ func (r *acpRelay) captureResponse(request acpClientRequest, envelope map[string
 		r.state.InitializeResult = append(json.RawMessage(nil), result...)
 	case "session/new", "session/load", "session/resume":
 		r.state.SessionResult = append(json.RawMessage(nil), result...)
-		r.state.SessionMethod = request.method
 		var response struct {
 			SessionID string `json:"sessionId"`
 		}

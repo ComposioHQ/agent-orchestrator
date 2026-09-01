@@ -95,7 +95,7 @@ func sendLiveTurn(
 					t.Fatalf("turn state = %q; answer=%q", event.TurnState, answer.String())
 				}
 				if acknowledger, ok := conversation.(ports.ChatProviderEventAcknowledger); ok {
-					if err := acknowledger.AcknowledgeProviderEvent(event.ProviderEventID); err != nil {
+					if err := acknowledger.AcknowledgeProviderEvent(context.Background(), event.ProviderEventID); err != nil {
 						t.Fatalf("acknowledge turn: %v", err)
 					}
 				}

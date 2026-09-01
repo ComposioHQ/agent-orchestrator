@@ -8,6 +8,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
@@ -18,6 +19,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -47,6 +49,9 @@ const (
 	// ACPPromptResultMethod is an AO-private notification emitted when an ACP
 	// prompt finishes after the daemon attachment that issued it has gone away.
 	ACPPromptResultMethod = "_ao/persistent_prompt_result"
+	// ACPPromptAckMethod acknowledges that AO durably committed a replayed prompt
+	// result, allowing the host to discard its prompt journal.
+	ACPPromptAckMethod = "_ao/persistent_prompt_ack"
 	// ACPRequestIDMetaKey carries one host-stable identity on replayable
 	// provider-to-client requests such as permissions and elicitations.
 	ACPRequestIDMetaKey = "ao.persistentRequestId"
@@ -57,8 +62,8 @@ var (
 	ErrAttached = errors.New("chat host already has a controller")
 	// ErrUnauthorized reports an invalid host capability.
 	ErrUnauthorized = errors.New("chat host authentication failed")
-	// ErrIncompatible reports a control-plane protocol version mismatch.
-	ErrIncompatible = errors.New("chat host protocol incompatible")
+	// ErrIncompatible reports a control-plane or provider-launch mismatch.
+	ErrIncompatible = errors.New("chat host incompatible")
 	// ErrHostExists reports an atomic per-session launch-lock conflict.
 	ErrHostExists = errors.New("chat host already exists")
 	// ErrOwnershipInconclusive means a descriptor or live host exists, but this
@@ -69,23 +74,25 @@ var (
 
 // Descriptor is the private connection record published by a running host.
 type Descriptor struct {
-	Version   int       `json:"version"`
-	SessionID string    `json:"sessionId"`
-	Protocol  Protocol  `json:"protocol,omitempty"`
-	Address   string    `json:"address"`
-	Token     string    `json:"token"`
-	PID       int       `json:"pid"`
-	StartedAt time.Time `json:"startedAt"`
+	Version           int       `json:"version"`
+	SessionID         string    `json:"sessionId"`
+	Protocol          Protocol  `json:"protocol,omitempty"`
+	LaunchFingerprint string    `json:"launchFingerprint,omitempty"`
+	Address           string    `json:"address"`
+	Token             string    `json:"token"`
+	PID               int       `json:"pid"`
+	StartedAt         time.Time `json:"startedAt"`
 }
 
 // Config identifies one provider process and its AO session ownership.
 type Config struct {
-	SessionID string
-	DataDir   string
-	Workdir   string
-	Env       []string
-	Argv      []string
-	Protocol  Protocol
+	SessionID         string
+	DataDir           string
+	Workdir           string
+	Env               []string
+	Argv              []string
+	Protocol          Protocol
+	LaunchFingerprint string
 }
 
 // ACPState is the connection-scoped state needed to reconstruct an ACP client
@@ -94,9 +101,7 @@ type ACPState struct {
 	InitializeResult     json.RawMessage `json:"initializeResult,omitempty"`
 	SessionResult        json.RawMessage `json:"sessionResult,omitempty"`
 	SessionID            string          `json:"sessionId,omitempty"`
-	SessionMethod        string          `json:"sessionMethod,omitempty"`
 	ActivePrompt         bool            `json:"activePrompt,omitempty"`
-	PendingResult        bool            `json:"pendingResult,omitempty"`
 	PendingResultEventID string          `json:"pendingResultEventId,omitempty"`
 }
 
@@ -110,10 +115,9 @@ type Transport struct {
 }
 
 type hello struct {
-	Version  int      `json:"version"`
-	Token    string   `json:"token"`
-	Action   string   `json:"action"`
-	Protocol Protocol `json:"protocol,omitempty"`
+	Version int    `json:"version"`
+	Token   string `json:"token"`
+	Action  string `json:"action"`
 }
 
 type helloResponse struct {
@@ -248,12 +252,50 @@ func randomToken() (string, error) {
 	return hex.EncodeToString(b[:]), nil
 }
 
+// ComputeLaunchFingerprint identifies the provider-effective inputs that must
+// match before a replacement daemon adopts an already-running ACP process.
+func ComputeLaunchFingerprint(workdir string, env, argv []string, protocol Protocol) string {
+	env = append([]string(nil), env...)
+	sort.Strings(env)
+	payload, _ := json.Marshal(struct {
+		Workdir  string   `json:"workdir"`
+		Env      []string `json:"env"`
+		Argv     []string `json:"argv"`
+		Protocol Protocol `json:"protocol"`
+	}{workdir, env, argv, protocol})
+	sum := sha256.Sum256(payload)
+	return hex.EncodeToString(sum[:])
+}
+
+func resolvedLaunchFingerprint(cfg Config) string {
+	if cfg.LaunchFingerprint != "" {
+		return cfg.LaunchFingerprint
+	}
+	return ComputeLaunchFingerprint(cfg.Workdir, cfg.Env, cfg.Argv, cfg.Protocol)
+}
+
+func validateDescriptor(cfg Config, d Descriptor) error {
+	if d.Protocol != cfg.Protocol {
+		return fmt.Errorf("%w: host protocol=%q requested=%q", ErrIncompatible, d.Protocol, cfg.Protocol)
+	}
+	// Codex raw hosts predate this ACP compatibility contract and retain their
+	// existing version/protocol fencing.
+	if d.Protocol == ProtocolRaw {
+		return nil
+	}
+	if wanted := resolvedLaunchFingerprint(cfg); d.LaunchFingerprint != wanted {
+		return fmt.Errorf("%w: provider launch configuration changed", ErrIncompatible)
+	}
+	return nil
+}
+
 // ConnectOrStart attaches to an existing compatible host or starts one with the
 // current AO executable. Failed/incompatible probes never terminate that host.
 func ConnectOrStart(ctx context.Context, cfg Config) (*Transport, error) {
+	cfg.LaunchFingerprint = resolvedLaunchFingerprint(cfg)
 	if d, err := readDescriptor(cfg.DataDir, cfg.SessionID); err == nil {
-		if d.Protocol != cfg.Protocol {
-			return nil, fmt.Errorf("%w: host protocol=%q requested=%q", ErrIncompatible, d.Protocol, cfg.Protocol)
+		if err := validateDescriptor(cfg, d); err != nil {
+			return nil, err
 		}
 		transport, attachErr := attach(ctx, d, true)
 		if attachErr == nil {
@@ -310,6 +352,9 @@ func ConnectOrStart(ctx context.Context, cfg Config) (*Transport, error) {
 		}
 		d, err := readDescriptor(cfg.DataDir, cfg.SessionID)
 		if err == nil {
+			if compatibleErr := validateDescriptor(cfg, d); compatibleErr != nil {
+				return nil, compatibleErr
+			}
 			transport, attachErr := attach(ctx, d, false)
 			if attachErr == nil {
 				return transport, nil
@@ -387,7 +432,7 @@ func attach(ctx context.Context, d Descriptor, reconnected bool) (*Transport, er
 	}
 	finishHandshake := bindConnToContext(handshakeCtx, conn)
 	reader := bufio.NewReader(conn)
-	if err := json.NewEncoder(conn).Encode(hello{Version: ProtocolVersion, Token: d.Token, Action: "attach", Protocol: d.Protocol}); err != nil {
+	if err := json.NewEncoder(conn).Encode(hello{Version: ProtocolVersion, Token: d.Token, Action: "attach"}); err != nil {
 		_ = conn.Close()
 		return nil, finishHandshake(err)
 	}
@@ -452,7 +497,7 @@ func Shutdown(ctx context.Context, dataDir, sessionID string) error {
 	}
 	defer func() { _ = conn.Close() }()
 	finishHandshake := bindConnToContext(handshakeCtx, conn)
-	if err := json.NewEncoder(conn).Encode(hello{Version: ProtocolVersion, Token: d.Token, Action: "shutdown", Protocol: d.Protocol}); err != nil {
+	if err := json.NewEncoder(conn).Encode(hello{Version: ProtocolVersion, Token: d.Token, Action: "shutdown"}); err != nil {
 		return finishHandshake(err)
 	}
 	var response helloResponse
@@ -507,7 +552,8 @@ func Run(ctx context.Context, cfg Config) error {
 
 	d := Descriptor{
 		Version: ProtocolVersion, SessionID: cfg.SessionID, Protocol: cfg.Protocol,
-		Address: listener.Addr().String(), Token: token, PID: os.Getpid(), StartedAt: time.Now().UTC(),
+		LaunchFingerprint: resolvedLaunchFingerprint(cfg),
+		Address:           listener.Addr().String(), Token: token, PID: os.Getpid(), StartedAt: time.Now().UTC(),
 	}
 	if err := writeDescriptor(cfg.DataDir, d); err != nil {
 		_ = killProviderProcess(child)
@@ -517,13 +563,12 @@ func Run(ctx context.Context, cfg Config) error {
 	defer func() { _ = os.Remove(path) }()
 
 	h := &host{
-		listener: listener, child: child, stdin: stdin, token: token,
-		protocol: cfg.Protocol,
+		ctx: ctx, listener: listener, child: child, stdin: stdin, token: token,
 		detached: make([][]byte, 0, 64), pendingRequests: make(map[string]*pendingRequest),
 		shutdown: make(chan struct{}),
 	}
 	if cfg.Protocol == ProtocolACP {
-		h.acp, err = newACPRelay(filepath.Join(filepath.Dir(path), "acp-prompt.journal"))
+		h.acp, err = newACPRelay(ctx, filepath.Join(filepath.Dir(path), "acp-prompt.journal"))
 		if err != nil {
 			_ = killProviderProcess(child)
 			return err
@@ -569,11 +614,11 @@ func Run(ctx context.Context, cfg Config) error {
 }
 
 type host struct {
+	ctx      context.Context
 	listener net.Listener
 	child    *exec.Cmd
 	stdin    io.WriteCloser
 	token    string
-	protocol Protocol
 	acp      *acpRelay
 
 	mu               sync.Mutex
@@ -616,11 +661,6 @@ func (h *host) handle(conn net.Conn) {
 		_ = conn.Close()
 		return
 	}
-	if request.Protocol != h.protocol {
-		_ = json.NewEncoder(conn).Encode(helloResponse{Error: ErrIncompatible.Error()})
-		_ = conn.Close()
-		return
-	}
 	if subtle.ConstantTimeCompare([]byte(request.Token), []byte(h.token)) != 1 {
 		_ = json.NewEncoder(conn).Encode(helloResponse{Error: ErrUnauthorized.Error()})
 		_ = conn.Close()
@@ -654,7 +694,7 @@ func (h *host) handle(conn net.Conn) {
 	}
 	writeErr := json.NewEncoder(conn).Encode(response)
 	if writeErr == nil && h.acp != nil {
-		writeErr = h.acp.replayTo(conn)
+		writeErr = h.acp.replayTo(h.ctx, conn)
 	}
 	if writeErr == nil {
 		for _, frame := range h.detached {
@@ -684,7 +724,7 @@ func (h *host) handle(conn net.Conn) {
 			h.mu.Lock()
 			if h.acp != nil {
 				var relayErr error
-				providerFrame, relayErr = h.acp.clientFrame(frame, generation)
+				providerFrame, relayErr = h.acp.clientFrame(h.ctx, frame, generation)
 				if relayErr != nil {
 					h.shutdownOnce.Do(func() { close(h.shutdown) })
 					h.mu.Unlock()
@@ -757,7 +797,9 @@ func (h *host) forwardProvider(stdout io.Reader) error {
 			journaled := false
 			if h.acp != nil {
 				var relayErr error
-				frame, journaled, relayErr = h.acp.providerFrame(frame, h.clientGeneration, h.client != nil)
+				frame, journaled, relayErr = h.acp.providerFrame(
+					h.ctx, frame, h.clientGeneration, h.client != nil,
+				)
 				if relayErr != nil {
 					h.mu.Unlock()
 					return relayErr

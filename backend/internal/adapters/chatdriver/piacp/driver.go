@@ -43,8 +43,7 @@ func New(plugin piPlugin, log *slog.Logger) ports.ChatDriver {
 
 func buildConfig(plugin piPlugin, resolve binaryResolver, log *slog.Logger) acpdriver.Config {
 	return acpdriver.Config{
-		Harness:    domain.HarnessPi,
-		Persistent: true,
+		Harness: domain.HarnessPi,
 		Capabilities: ports.ChatCapabilities{
 			ports.ChatCapabilityStreaming: true,
 			ports.ChatCapabilityTools:     true,

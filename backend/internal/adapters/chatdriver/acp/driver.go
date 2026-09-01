@@ -82,7 +82,7 @@ type Config struct {
 	// live process. The initial permission mode is the launch-time value.
 	ValidateTurnSettings TurnSettingsValidator
 	// Persistent keeps the provider's initialized ACP connection outside the
-	// daemon. Shipped bindings enable it; direct-pipe unit tests leave it false.
+	// daemon. Bindings enable it only after their real provider restart gate passes.
 	Persistent bool
 }
 
@@ -354,7 +354,7 @@ func (d *Driver) connect(
 		proc, d.log, cfg.ProviderScopeID, d.cfg.ClientExtension, d.cfg.ClientExtensionAliases,
 	)
 	if proc.reconnected {
-		state := procState(proc)
+		state := proc.acpState
 		if state == nil || len(state.InitializeResult) == 0 || len(state.SessionResult) == 0 || state.SessionID == "" {
 			_ = conv.Close()
 			return nil, acpsdk.InitializeResponse{}, nil, fmt.Errorf(
@@ -438,14 +438,18 @@ func (d *Driver) connectProcess(
 	if !filepath.IsAbs(cfg.DataDir) {
 		return nil, fmt.Errorf("%w: persistent ACP host requires an absolute data directory", ports.ErrChatDriverUnavailable)
 	}
-	connectHost := d.connectHost
-	if connectHost == nil {
-		connectHost = persistenthost.ConnectOrStart
-	}
-	transport, err := connectHost(ctx, persistenthost.Config{
+	argv := append([]string{launch.Command}, launch.Args...)
+	fingerprintEnv := append(processenv.FingerprintEntries(launch.Env),
+		"_AO_MODEL="+cfg.Model,
+		"_AO_PERMISSIONS="+string(ports.NormalizePermissionMode(cfg.Permissions)),
+		"_AO_SYSTEM_PROMPT="+cfg.SystemPrompt,
+	)
+	transport, err := d.connectHost(ctx, persistenthost.Config{
 		SessionID: string(cfg.SessionID), DataDir: cfg.DataDir, Workdir: cfg.WorkspacePath,
-		Env:  processenv.Merge(launch.Env),
-		Argv: append([]string{launch.Command}, launch.Args...), Protocol: persistenthost.ProtocolACP,
+		Env: processenv.Merge(launch.Env), Argv: argv, Protocol: persistenthost.ProtocolACP,
+		LaunchFingerprint: persistenthost.ComputeLaunchFingerprint(
+			cfg.WorkspacePath, fingerprintEnv, argv, persistenthost.ProtocolACP,
+		),
 	})
 	if err != nil {
 		if cfg.AllowConcurrentHostReplacement && errors.Is(err, persistenthost.ErrAttached) {
@@ -473,16 +477,6 @@ func (d *Driver) connectProcess(
 		return persistenthost.Shutdown(shutdownCtx, cfg.DataDir, string(cfg.SessionID))
 	})
 	return proc, nil
-}
-
-func procState(proc *process) *persistenthost.ACPState {
-	if proc == nil || proc.acpState == nil {
-		return nil
-	}
-	state := *proc.acpState
-	state.InitializeResult = append(json.RawMessage(nil), proc.acpState.InitializeResult...)
-	state.SessionResult = append(json.RawMessage(nil), proc.acpState.SessionResult...)
-	return &state
 }
 
 type persistentSessionResult struct {

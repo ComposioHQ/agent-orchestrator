@@ -523,13 +523,9 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 		cfg.SessionID, conversation, generation, conv, s.store, s.activity, s.log, s.newID, s.now)
 	var commitProviderHistory func(context.Context) error
 	if liveReconnect {
-		controller.restoreLiveTurnOwnership(liveRows.Turns)
+		providerTurnID := controller.restoreLiveTurnOwnership(liveRows.Turns)
 		if activator, ok := conv.(ports.ChatLiveReconnectActivator); ok {
-			providerTurnID := ""
-			if turn := latestLiveProviderTurn(liveRows.Turns); turn != nil {
-				providerTurnID = turn.ProviderTurnID
-			}
-			if err := activator.ActivateLiveReconnect(providerTurnID); err != nil {
+			if err := activator.ActivateLiveReconnect(ctx, providerTurnID); err != nil {
 				cleanupUnpublishedConversation(conv, false)
 				return nil, err
 			}

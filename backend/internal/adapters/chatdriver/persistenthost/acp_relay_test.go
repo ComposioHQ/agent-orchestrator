@@ -2,6 +2,7 @@ package persistenthost
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"path/filepath"
 	"strings"
@@ -36,7 +37,7 @@ func TestACPRelayReclaimsPromptAcrossAttachment(t *testing.T) {
 	}
 
 	state := relay.snapshot()
-	if state.SessionID != "session-live" || state.ActivePrompt || !state.PendingResult ||
+	if state.SessionID != "session-live" || state.ActivePrompt ||
 		state.PendingResultEventID == "" || len(state.InitializeResult) == 0 {
 		t.Fatalf("reconnect state = %+v", state)
 	}
@@ -60,7 +61,7 @@ func TestACPRelayReclaimsPromptAcrossAttachment(t *testing.T) {
 		t.Fatalf("mismatched ack discarded %d replay frames", len(replay))
 	}
 	ack, _ := json.Marshal(map[string]any{
-		"jsonrpc": "2.0", "method": acpPromptAckMethod,
+		"jsonrpc": "2.0", "method": ACPPromptAckMethod,
 		"params": map[string]string{"eventId": state.PendingResultEventID},
 	})
 	if frame := relayClientFrame(t, relay, append(ack, '\n'), 2); len(frame) != 0 {
@@ -108,9 +109,29 @@ func TestACPRelayRewritesClientCancellationToProviderRequestID(t *testing.T) {
 	}
 }
 
+func TestACPRelayDeduplicatesSessionCancelAcrossAttachments(t *testing.T) {
+	relay := newTestACPRelay(t)
+	prompt := relayClientFrame(t, relay,
+		[]byte(`{"jsonrpc":"2.0","id":1,"method":"session/prompt","params":{}}`+"\n"), 1)
+	cancel := []byte(`{"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":"s"}}` + "\n")
+	if frame := relayClientFrame(t, relay, cancel, 1); len(frame) == 0 {
+		t.Fatal("first session/cancel was suppressed")
+	}
+	if frame := relayClientFrame(t, relay, cancel, 2); len(frame) != 0 {
+		t.Fatalf("duplicate session/cancel crossed attachment boundary: %s", frame)
+	}
+
+	relayProviderFrame(t, relay, []byte(`{"jsonrpc":"2.0","id":`+frameID(t, prompt)+`,"result":{"stopReason":"cancelled"}}`+"\n"), 2, true)
+	relayClientFrame(t, relay,
+		[]byte(`{"jsonrpc":"2.0","id":2,"method":"session/prompt","params":{}}`+"\n"), 2)
+	if frame := relayClientFrame(t, relay, cancel, 2); len(frame) == 0 {
+		t.Fatal("new prompt inherited prior cancellation")
+	}
+}
+
 func newTestACPRelay(t *testing.T) *acpRelay {
 	t.Helper()
-	relay, err := newACPRelay(filepath.Join(t.TempDir(), "prompt.journal"))
+	relay, err := newACPRelay(context.Background(), filepath.Join(t.TempDir(), "prompt.journal"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +142,7 @@ func newTestACPRelay(t *testing.T) *acpRelay {
 func relayReplayFrames(t *testing.T, relay *acpRelay) [][]byte {
 	t.Helper()
 	var replay bytes.Buffer
-	if err := relay.replayTo(&replay); err != nil {
+	if err := relay.replayTo(context.Background(), &replay); err != nil {
 		t.Fatal(err)
 	}
 	lines := bytes.SplitAfter(replay.Bytes(), []byte{'\n'})
@@ -136,7 +157,7 @@ func relayReplayFrames(t *testing.T, relay *acpRelay) [][]byte {
 
 func relayClientFrame(t *testing.T, relay *acpRelay, frame []byte, generation uint64) []byte {
 	t.Helper()
-	rewritten, err := relay.clientFrame(frame, generation)
+	rewritten, err := relay.clientFrame(context.Background(), frame, generation)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +172,7 @@ func relayProviderFrame(
 	attached bool,
 ) ([]byte, bool) {
 	t.Helper()
-	rewritten, journaled, err := relay.providerFrame(frame, generation, attached)
+	rewritten, journaled, err := relay.providerFrame(context.Background(), frame, generation, attached)
 	if err != nil {
 		t.Fatal(err)
 	}

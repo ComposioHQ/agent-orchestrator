@@ -19,9 +19,8 @@ import (
 // the user's Droid installation.
 func New(plugin nativeacp.Plugin, log *slog.Logger) ports.ChatDriver {
 	return nativeacp.New(plugin, nativeacp.Config{
-		Harness:    domain.HarnessDroid,
-		Persistent: true,
-		Configure:  configure,
+		Harness:   domain.HarnessDroid,
+		Configure: configure,
 	}, log)
 }
 

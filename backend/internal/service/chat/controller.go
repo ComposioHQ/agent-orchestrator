@@ -316,14 +316,15 @@ func newController(
 // before a replacement daemon publishes a reconnected controller. The provider
 // kept running while AO was detached, so forgetting this turn would let a new
 // Send start a second root turn on the same native conversation.
-func (c *Controller) restoreLiveTurnOwnership(turns []domain.ConversationTurn) {
+func (c *Controller) restoreLiveTurnOwnership(turns []domain.ConversationTurn) string {
 	latest := latestLiveProviderTurn(turns)
 	if latest == nil {
-		return
+		return ""
 	}
 	c.pendingTurnID = latest.ProviderTurnID
 	c.ackedTurnID = latest.ProviderTurnID
 	c.state = ports.ChatControllerBusy
+	return latest.ProviderTurnID
 }
 
 func latestLiveProviderTurn(turns []domain.ConversationTurn) *domain.ConversationTurn {
@@ -2133,7 +2134,7 @@ func (c *Controller) project() {
 		}
 		if err == nil {
 			if acknowledger, ok := c.conv.(ports.ChatProviderEventAcknowledger); ok && event.ProviderEventID != "" {
-				if ackErr := acknowledger.AcknowledgeProviderEvent(event.ProviderEventID); ackErr != nil {
+				if ackErr := acknowledger.AcknowledgeProviderEvent(ctx, event.ProviderEventID); ackErr != nil {
 					c.log.Warn("failed to acknowledge persistent provider event",
 						"session", c.sessionID, "providerEventId", event.ProviderEventID, "error", ackErr)
 				}

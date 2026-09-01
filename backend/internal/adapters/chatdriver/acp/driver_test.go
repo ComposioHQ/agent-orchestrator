@@ -26,10 +26,14 @@ import (
 func TestMain(m *testing.M) {
 	if len(os.Args) >= 7 && os.Args[1] == "chat-host" {
 		protocol := persistenthost.ProtocolRaw
+		fingerprint := ""
 		separator := 5
 		if os.Args[5] == string(persistenthost.ProtocolACP) {
 			protocol = persistenthost.ProtocolACP
-			separator = 6
+			if len(os.Args) > 6 {
+				fingerprint = os.Args[6]
+			}
+			separator = 7
 		}
 		if len(os.Args) <= separator || os.Args[separator] != "--" {
 			os.Exit(2)
@@ -37,6 +41,7 @@ func TestMain(m *testing.M) {
 		err := persistenthost.Run(context.Background(), persistenthost.Config{
 			SessionID: os.Args[2], DataDir: os.Args[3], Workdir: os.Args[4],
 			Env: os.Environ(), Argv: os.Args[separator+1:], Protocol: protocol,
+			LaunchFingerprint: fingerprint,
 		})
 		if err != nil {
 			_, _ = fmt.Fprintln(os.Stderr, err)
@@ -165,7 +170,7 @@ func TestPersistentACPDriverSurvivesRealProcessDetach(t *testing.T) {
 	if !second.(ports.ChatLiveReconnector).ReconnectedLive() {
 		t.Fatal("replacement did not identify the same live ACP process")
 	}
-	if err := second.(ports.ChatLiveReconnectActivator).ActivateLiveReconnect(ref.ProviderTurnID); err != nil {
+	if err := second.(ports.ChatLiveReconnectActivator).ActivateLiveReconnect(context.Background(), ref.ProviderTurnID); err != nil {
 		t.Fatalf("activate replacement: %v", err)
 	}
 
@@ -189,7 +194,7 @@ func TestPersistentACPDriverSurvivesRealProcessDetach(t *testing.T) {
 		completed.TurnState != domain.TurnStateCompleted || completed.ProviderEventID == "" {
 		t.Fatalf("reconnect events: first=%#v replay=%#v completed=%#v", firstDelta, replayedDelta, completed)
 	}
-	if err := second.(ports.ChatProviderEventAcknowledger).AcknowledgeProviderEvent(completed.ProviderEventID); err != nil {
+	if err := second.(ports.ChatProviderEventAcknowledger).AcknowledgeProviderEvent(context.Background(), completed.ProviderEventID); err != nil {
 		t.Fatalf("acknowledge completion: %v", err)
 	}
 
@@ -260,7 +265,7 @@ func TestPersistentACPDriverReplaysOnePermissionAndOriginalResponder(t *testing.
 		t.Fatalf("Resume: %v", err)
 	}
 	defer func() { _ = second.(ports.ChatProviderTerminator).Terminate() }()
-	if err := second.(ports.ChatLiveReconnectActivator).ActivateLiveReconnect(ref.ProviderTurnID); err != nil {
+	if err := second.(ports.ChatLiveReconnectActivator).ActivateLiveReconnect(context.Background(), ref.ProviderTurnID); err != nil {
 		t.Fatal(err)
 	}
 	_ = nextEvent(t, second.Events())
@@ -282,7 +287,7 @@ func TestPersistentACPDriverReplaysOnePermissionAndOriginalResponder(t *testing.
 	if completed.TurnState != domain.TurnStateCompleted || completed.ProviderTurnID != ref.ProviderTurnID {
 		t.Fatalf("completion after approval = %#v", completed)
 	}
-	if err := second.(ports.ChatProviderEventAcknowledger).AcknowledgeProviderEvent(completed.ProviderEventID); err != nil {
+	if err := second.(ports.ChatProviderEventAcknowledger).AcknowledgeProviderEvent(context.Background(), completed.ProviderEventID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -329,7 +334,7 @@ func TestPersistentACPResumeAdoptsLivePromptWithoutSecondSetup(t *testing.T) {
 			Stdin: daemon, Stdout: daemon, Reconnected: true,
 			ACPState: &persistenthost.ACPState{
 				InitializeResult: initialize, SessionResult: session,
-				SessionID: "provider-session", SessionMethod: "session/new", ActivePrompt: true,
+				SessionID: "provider-session", ActivePrompt: true,
 			},
 		}, nil
 	}
@@ -352,7 +357,7 @@ func TestPersistentACPResumeAdoptsLivePromptWithoutSecondSetup(t *testing.T) {
 		t.Fatal("replacement ACP client wrote setup traffic before activation")
 	}
 	_ = host.SetReadDeadline(time.Time{})
-	if err := conv.ActivateLiveReconnect("durable-turn"); err != nil {
+	if err := conv.ActivateLiveReconnect(context.Background(), "durable-turn"); err != nil {
 		t.Fatalf("ActivateLiveReconnect: %v", err)
 	}
 
@@ -383,7 +388,7 @@ func TestPersistentACPResumeAdoptsLivePromptWithoutSecondSetup(t *testing.T) {
 		ack, _ := bufio.NewReader(host).ReadBytes('\n')
 		ackResult <- ack
 	}()
-	if err := conv.AcknowledgeProviderEvent(completed.ProviderEventID); err != nil {
+	if err := conv.AcknowledgeProviderEvent(context.Background(), completed.ProviderEventID); err != nil {
 		t.Fatalf("acknowledge: %v", err)
 	}
 	select {
@@ -424,8 +429,7 @@ func TestPersistentACPReconnectAcknowledgesAlreadyCommittedPrompt(t *testing.T) 
 			Stdin: daemon, Stdout: daemon, Reconnected: true,
 			ACPState: &persistenthost.ACPState{
 				InitializeResult: initialize, SessionResult: session,
-				SessionID: "provider-session", SessionMethod: "session/new",
-				PendingResult: true, PendingResultEventID: "acp-host:9",
+				SessionID: "provider-session", PendingResultEventID: "acp-host:9",
 			},
 		}, nil
 	}
@@ -454,7 +458,7 @@ func TestPersistentACPReconnectAcknowledgesAlreadyCommittedPrompt(t *testing.T) 
 	// No durable running turn means the terminal event was already committed.
 	// Reconnect must close the commit/ACK crash window without projecting it a
 	// second time or becoming permanently unrecoverable.
-	if err := conv.ActivateLiveReconnect(""); err != nil {
+	if err := conv.ActivateLiveReconnect(context.Background(), ""); err != nil {
 		t.Fatalf("ActivateLiveReconnect: %v", err)
 	}
 	select {
@@ -979,8 +983,11 @@ func TestACPDriverValidatesHandshakeIdentityBeforeOpeningSession(t *testing.T) {
 	}
 }
 
-func TestACPInterruptCancelsTheLocalPromptAfterNotifyingTheAgent(t *testing.T) {
-	agent := &fakeAgent{promptBlock: true, promptStarted: make(chan struct{}, 1)}
+func TestACPInterruptWaitsForProviderPromptCompletion(t *testing.T) {
+	cancelReceived := make(chan struct{}, 1)
+	promptReceived := make(chan struct{}, 1)
+	completePrompt := make(chan struct{})
+	responseSent := make(chan error, 1)
 	driver := New(Config{
 		Harness: domain.HarnessOpenCode,
 		Capabilities: ports.ChatCapabilities{
@@ -992,7 +999,7 @@ func TestACPInterruptCancelsTheLocalPromptAfterNotifyingTheAgent(t *testing.T) {
 			return Launch{Command: "fake"}, nil
 		},
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	driver.spawn = fakeSpawn(agent)
+	driver.spawn = delayedCancelSpawn(promptReceived, cancelReceived, completePrompt, responseSent)
 
 	conversation, err := driver.Start(context.Background(), ports.ChatStartConfig{
 		WorkspacePath: t.TempDir(),
@@ -1010,14 +1017,39 @@ func TestACPInterruptCancelsTheLocalPromptAfterNotifyingTheAgent(t *testing.T) {
 		t.Fatalf("StartDeferredTurn: %v", err)
 	}
 	select {
-	case <-agent.promptStarted:
+	case <-promptReceived:
 	case <-time.After(time.Second):
-		t.Fatal("Prompt did not start")
+		t.Fatal("provider did not receive ACP prompt request")
 	}
 	if err := conversation.Interrupt(context.Background(), ref.ProviderTurnID); err != nil {
 		t.Fatalf("Interrupt: %v", err)
 	}
 
+	select {
+	case <-cancelReceived:
+	case <-time.After(time.Second):
+		t.Fatal("provider did not receive ACP cancel notification")
+	}
+
+	// Accepting session/cancel is not a terminal result. AO must remain busy
+	// until the provider resolves the original session/prompt request.
+	quiet := time.After(100 * time.Millisecond)
+	for {
+		select {
+		case event := <-conversation.Events():
+			if event.Kind == ports.ChatEventTurnCompleted {
+				t.Fatalf("turn completed before provider prompt returned: %#v", event)
+			}
+		case <-quiet:
+			close(completePrompt)
+			if err := <-responseSent; err != nil {
+				t.Fatalf("provider prompt response: %v", err)
+			}
+			goto waitForCompletion
+		}
+	}
+
+waitForCompletion:
 	for {
 		event := nextEvent(t, conversation.Events())
 		if event.Kind == ports.ChatEventTurnCompleted {
@@ -1027,22 +1059,81 @@ func TestACPInterruptCancelsTheLocalPromptAfterNotifyingTheAgent(t *testing.T) {
 			break
 		}
 	}
-	// The SDK may emit a second idempotent session/cancel while unwinding the
-	// locally cancelled Prompt request. What matters is that the explicit
-	// notification was sent and the local request settled. Notification handling
-	// is asynchronous, so observe it rather than assuming it ran before the turn
-	// completion event.
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
-		agent.mu.Lock()
-		cancelCalls := agent.cancelCalls
-		agent.mu.Unlock()
-		if cancelCalls >= 1 {
-			return
-		}
-		time.Sleep(time.Millisecond)
+}
+
+func delayedCancelSpawn(
+	promptReceived chan<- struct{},
+	cancelReceived chan<- struct{},
+	completePrompt <-chan struct{},
+	responseSent chan<- error,
+) spawnFunc {
+	return func(Launch, string) (*process, error) {
+		clientToAgentR, clientToAgentW := io.Pipe()
+		agentToClientR, agentToClientW := io.Pipe()
+		go func() {
+			decoder := json.NewDecoder(clientToAgentR)
+			encoder := json.NewEncoder(agentToClientW)
+			var promptID json.RawMessage
+			for {
+				var request struct {
+					ID     json.RawMessage `json:"id"`
+					Method string          `json:"method"`
+				}
+				if err := decoder.Decode(&request); err != nil {
+					return
+				}
+				switch request.Method {
+				case "initialize":
+					_ = encoder.Encode(map[string]any{
+						"jsonrpc": "2.0", "id": request.ID,
+						"result": map[string]any{
+							"protocolVersion":   acpsdk.ProtocolVersionNumber,
+							"agentCapabilities": map[string]any{},
+							"authMethods":       []any{},
+						},
+					})
+				case "session/new":
+					_ = encoder.Encode(map[string]any{
+						"jsonrpc": "2.0", "id": request.ID,
+						"result": map[string]any{"sessionId": "cancel-session"},
+					})
+				case "session/prompt":
+					promptID = append(json.RawMessage(nil), request.ID...)
+					select {
+					case promptReceived <- struct{}{}:
+					default:
+					}
+				case "session/cancel":
+					select {
+					case cancelReceived <- struct{}{}:
+					default:
+					}
+					<-completePrompt
+					responseSent <- encoder.Encode(map[string]any{
+						"jsonrpc": "2.0", "id": promptID,
+						"result": map[string]any{"stopReason": "cancelled"},
+					})
+				case "session/close":
+					_ = encoder.Encode(map[string]any{
+						"jsonrpc": "2.0", "id": request.ID, "result": map[string]any{},
+					})
+				}
+			}
+		}()
+		var once sync.Once
+		return &process{
+			stdin: clientToAgentW, stdout: agentToClientR,
+			stop: func() error {
+				once.Do(func() {
+					_ = clientToAgentW.Close()
+					_ = clientToAgentR.Close()
+					_ = agentToClientW.Close()
+					_ = agentToClientR.Close()
+				})
+				return nil
+			},
+		}, nil
 	}
-	t.Fatal("ACP cancel notification was not handled")
 }
 
 func TestACPDriverNegotiatesRichClientCapabilitiesAndNativePromptContent(t *testing.T) {

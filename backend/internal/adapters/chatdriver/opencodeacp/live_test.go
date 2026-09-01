@@ -66,7 +66,7 @@ func TestLiveOpenCodeACP(t *testing.T) {
 					t.Fatalf("answer = %q", answer.String())
 				}
 				if acknowledger, ok := conversation.(ports.ChatProviderEventAcknowledger); ok {
-					if err := acknowledger.AcknowledgeProviderEvent(event.ProviderEventID); err != nil {
+					if err := acknowledger.AcknowledgeProviderEvent(context.Background(), event.ProviderEventID); err != nil {
 						t.Fatalf("acknowledge turn: %v", err)
 					}
 				}

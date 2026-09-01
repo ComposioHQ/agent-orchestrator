@@ -62,7 +62,7 @@ func TestLiveDroidACP(t *testing.T) {
 				if !strings.Contains(answer.String(), "AO Droid ACP works") {
 					t.Fatalf("answer = %q", answer.String())
 				}
-				if err := conversation.(ports.ChatProviderEventAcknowledger).AcknowledgeProviderEvent(event.ProviderEventID); err != nil {
+				if err := conversation.(ports.ChatProviderEventAcknowledger).AcknowledgeProviderEvent(context.Background(), event.ProviderEventID); err != nil {
 					t.Fatalf("acknowledge: %v", err)
 				}
 				return

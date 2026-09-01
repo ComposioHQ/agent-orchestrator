@@ -254,7 +254,7 @@ func waitForLiveTurn(
 				if !interrupt && event.TurnState != domain.TurnStateCompleted {
 					t.Fatalf("turn state = %q; answer=%q", event.TurnState, answer.String())
 				}
-				if err := conv.(ports.ChatProviderEventAcknowledger).AcknowledgeProviderEvent(event.ProviderEventID); err != nil {
+				if err := conv.(ports.ChatProviderEventAcknowledger).AcknowledgeProviderEvent(context.Background(), event.ProviderEventID); err != nil {
 					t.Fatalf("acknowledge: %v", err)
 				}
 				return answer.String()

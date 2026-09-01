@@ -85,10 +85,12 @@ connection-scoped ACP state that a replacement SDK client cannot infer:
   retained by the host and receive host-stable interaction IDs. Replaying a
   request therefore restores the same durable AO approval/input and its response
   is forwarded once using the provider's original JSON-RPC ID.
-- The shared ACP implementation applies to Claude Code, Cursor, OpenCode, Droid,
-  Kimi, Kimchi, Pi, and OMP. Provider-specific launch arguments, permission
-  policies, versions, environment, and native recovery capabilities remain in
-  their existing bindings; persistence does not broaden any provider permission.
+- The shared ACP implementation is enabled for Claude Code, Cursor, and OpenCode,
+  whose real restart gates passed. Other ACP bindings stay daemon-owned until
+  their own authenticated provider matrix passes. Provider-specific launch
+  arguments, permission policies, versions, environment, and native recovery
+  capabilities remain in their existing bindings; persistence does not broaden
+  any provider permission.
 
 The host inherits the already-resolved provider environment once at launch; no
 credentials are written to its descriptor. Possession of the descriptor
@@ -97,12 +99,12 @@ security boundary. The daemon never exposes this transport through its HTTP API.
 
 ## Compatibility and update handoff
 
-The descriptor protocol is explicitly versioned. A new daemon attaches only to
-the exact supported version and leaves an incompatible live host untouched. This
-fails closed—without spawning a competing provider—until an explicit compatible
-handoff or session termination occurs. Provider protocol compatibility is
-inherited from the already-running binary because reconnect does not relaunch or
-renegotiate it.
+The descriptor protocol is explicitly versioned and includes a fingerprint of
+the provider worktree, protocol, argv, and environment. A new daemon attaches
+only to the exact supported version and matching launch configuration, leaving
+an incompatible live host untouched. This fails closed—without spawning a
+competing provider—until an explicit compatible handoff or session termination
+occurs.
 
 The ACP journal protects daemon replacement, including forced daemon death; it
 does not make the provider recoverable after the host or machine itself dies. A
@@ -112,7 +114,7 @@ host and is not a second provider-history database.
 
 ## Consequences
 
-- Closing/updating AO no longer terminates a Codex or ACP Chat harness or
+- Closing/updating AO no longer terminates Codex or an enabled ACP Chat harness or
   interrupts its active generation. Reopen latency loses provider launch,
   initialization, and native resume; it retains daemon reconciliation and
   native-history repair.

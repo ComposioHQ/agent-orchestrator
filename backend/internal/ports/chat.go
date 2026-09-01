@@ -950,13 +950,13 @@ type ChatLiveReconnector interface {
 // ChatLiveReconnectActivator releases provider replay only after the service
 // has restored the durable active-turn correlation for the same live process.
 type ChatLiveReconnectActivator interface {
-	ActivateLiveReconnect(providerTurnID string) error
+	ActivateLiveReconnect(ctx context.Context, providerTurnID string) error
 }
 
 // ChatProviderEventAcknowledger lets a persistent provider discard replay
 // state only after the controller commits the matching event.
 type ChatProviderEventAcknowledger interface {
-	AcknowledgeProviderEvent(providerEventID string) error
+	AcknowledgeProviderEvent(ctx context.Context, providerEventID string) error
 }
 
 // ChatHistoryReader is optionally implemented by a conversation whose native

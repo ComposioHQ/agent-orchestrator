@@ -24,8 +24,7 @@ func New(plugin nativeacp.Plugin, log *slog.Logger) ports.ChatDriver {
 
 func newDriver(plugin nativeacp.Plugin, probe nativeacp.VersionProbe, log *slog.Logger) ports.ChatDriver {
 	return nativeacp.New(plugin, nativeacp.Config{
-		Harness:    domain.HarnessOMP,
-		Persistent: true,
+		Harness: domain.HarnessOMP,
 		Capabilities: ports.ChatCapabilities{
 			ports.ChatCapabilityUsage: true,
 			ports.ChatCapabilityDiffs: true,

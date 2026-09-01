@@ -1,6 +1,7 @@
 package persistenthost
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -21,7 +22,10 @@ type acpPromptJournal struct {
 	size int64
 }
 
-func openACPPromptJournal(path string) (*acpPromptJournal, error) {
+func openACPPromptJournal(ctx context.Context, path string) (*acpPromptJournal, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("open persistent ACP prompt journal: %w", err)
@@ -33,7 +37,10 @@ func openACPPromptJournal(path string) (*acpPromptJournal, error) {
 	return &acpPromptJournal{path: path, file: file}, nil
 }
 
-func (j *acpPromptJournal) append(frame []byte) error {
+func (j *acpPromptJournal) append(ctx context.Context, frame []byte) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if int64(len(frame)) > maxACPJournalBytes-j.size {
 		return fmt.Errorf("%w: limit=%d", errACPJournalFull, maxACPJournalBytes)
 	}
@@ -48,7 +55,10 @@ func (j *acpPromptJournal) append(frame []byte) error {
 	return nil
 }
 
-func (j *acpPromptJournal) replayTo(dst io.Writer) error {
+func (j *acpPromptJournal) replayTo(ctx context.Context, dst io.Writer) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if j.size == 0 {
 		return nil
 	}
@@ -66,7 +76,10 @@ func (j *acpPromptJournal) replayTo(dst io.Writer) error {
 	return nil
 }
 
-func (j *acpPromptJournal) reset() error {
+func (j *acpPromptJournal) reset(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := j.file.Truncate(0); err != nil {
 		return fmt.Errorf("truncate persistent ACP prompt journal: %w", err)
 	}

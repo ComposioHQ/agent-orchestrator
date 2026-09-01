@@ -17,10 +17,14 @@ import (
 func TestMain(m *testing.M) {
 	if len(os.Args) >= 6 && os.Args[1] == "chat-host" {
 		protocol := ProtocolRaw
+		fingerprint := ""
 		separator := 5
 		if len(os.Args) > 5 && os.Args[5] == string(ProtocolACP) {
 			protocol = ProtocolACP
-			separator = 6
+			if len(os.Args) > 6 {
+				fingerprint = os.Args[6]
+			}
+			separator = 7
 		}
 		if len(os.Args) <= separator || os.Args[separator] != "--" {
 			os.Exit(2)
@@ -28,6 +32,7 @@ func TestMain(m *testing.M) {
 		err := Run(context.Background(), Config{
 			SessionID: os.Args[2], DataDir: os.Args[3], Workdir: os.Args[4],
 			Env: os.Environ(), Argv: os.Args[separator+1:], Protocol: protocol,
+			LaunchFingerprint: fingerprint,
 		})
 		if err != nil {
 			_, _ = fmt.Fprintln(os.Stderr, err)
@@ -130,7 +135,8 @@ func TestACPHostPreservesPromptCorrelationAndJournal(t *testing.T) {
 
 	second := awaitAttach(t, d)
 	if second.ACPState == nil || second.ACPState.SessionID != "acp-session-live" ||
-		len(second.ACPState.InitializeResult) == 0 || (!second.ACPState.ActivePrompt && !second.ACPState.PendingResult) {
+		len(second.ACPState.InitializeResult) == 0 ||
+		(!second.ACPState.ActivePrompt && second.ACPState.PendingResultEventID == "") {
 		t.Fatalf("reconnect state = %+v", second.ACPState)
 	}
 	secondReader := bufio.NewReader(second.Stdout)
@@ -161,7 +167,7 @@ func TestACPHostPreservesPromptCorrelationAndJournal(t *testing.T) {
 	_ = second.Stdin.Close()
 
 	third := awaitAttach(t, d)
-	if third.ACPState == nil || third.ACPState.PendingResult || third.ACPState.ActivePrompt {
+	if third.ACPState == nil || third.ACPState.PendingResultEventID != "" || third.ACPState.ActivePrompt {
 		t.Fatalf("acknowledged state = %+v", third.ACPState)
 	}
 	if got := requestProviderPID(t, third, 1, "pid"); got != pid {
@@ -410,25 +416,23 @@ func TestConnectOrStartTimesOutSilentLiveHost(t *testing.T) {
 	address, accepted := silentHandshakePeer(t)
 	dataDir := t.TempDir()
 	const sessionID = "silent-connect"
-	if err := writeDescriptor(dataDir, Descriptor{
-		Version:   ProtocolVersion,
+	workdir := t.TempDir()
+	cfg := Config{
 		SessionID: sessionID,
-		Address:   address,
-		Token:     "token",
-		PID:       os.Getpid(),
+		DataDir:   dataDir,
+		Workdir:   workdir,
+		Argv:      []string{os.Args[0], "-test.run=TestProviderHelper"},
+	}
+	if err := writeDescriptor(dataDir, Descriptor{
+		Version: ProtocolVersion, SessionID: sessionID, LaunchFingerprint: resolvedLaunchFingerprint(cfg),
+		Address: address, Token: "token", PID: os.Getpid(),
 	}); err != nil {
 		t.Fatal(err)
 	}
-	workdir := t.TempDir()
 
 	result := make(chan error, 1)
 	go func() {
-		_, err := ConnectOrStart(context.Background(), Config{
-			SessionID: sessionID,
-			DataDir:   dataDir,
-			Workdir:   workdir,
-			Argv:      []string{os.Args[0], "-test.run=TestProviderHelper"},
-		})
+		_, err := ConnectOrStart(context.Background(), cfg)
 		result <- err
 	}()
 
@@ -443,6 +447,49 @@ func TestConnectOrStartTimesOutSilentLiveHost(t *testing.T) {
 		_ = serverConn.Close()
 		<-result
 		t.Fatal("connect to silent live host exceeded the handshake limit")
+	}
+}
+
+func TestConnectOrStartRejectsChangedProviderLaunch(t *testing.T) {
+	dataDir := t.TempDir()
+	cfg := Config{SessionID: "launch-fingerprint", DataDir: dataDir, Workdir: t.TempDir(),
+		Env:  append(os.Environ(), "AO_CHAT_HOST_PROVIDER_HELPER=1"),
+		Argv: []string{os.Args[0], "-test.run=TestProviderHelper"}, Protocol: ProtocolACP}
+	done := make(chan error, 1)
+	go func() { done <- Run(context.Background(), cfg) }()
+	_ = awaitDescriptor(t, dataDir, cfg.SessionID)
+	t.Cleanup(func() {
+		_ = Shutdown(context.Background(), dataDir, cfg.SessionID)
+		<-done
+	})
+
+	changed := cfg
+	changed.Argv = append(append([]string(nil), cfg.Argv...), "--different")
+	if _, err := ConnectOrStart(context.Background(), changed); !errors.Is(err, ErrIncompatible) {
+		t.Fatalf("changed launch error = %v, want ErrIncompatible", err)
+	}
+}
+
+func TestValidateDescriptorAllowsLegacyRawHostOnly(t *testing.T) {
+	cfg := Config{Workdir: t.TempDir(), Argv: []string{"provider"}}
+	if err := validateDescriptor(cfg, Descriptor{Protocol: ProtocolRaw}); err != nil {
+		t.Fatalf("legacy raw descriptor: %v", err)
+	}
+	cfg.Protocol = ProtocolACP
+	if err := validateDescriptor(cfg, Descriptor{Protocol: ProtocolACP}); !errors.Is(err, ErrIncompatible) {
+		t.Fatalf("legacy ACP descriptor error = %v, want ErrIncompatible", err)
+	}
+}
+
+func TestComputeLaunchFingerprintCanonicalizesProviderEnvironment(t *testing.T) {
+	first := ComputeLaunchFingerprint("/work", []string{"B=2", "A=1"}, []string{"provider"}, ProtocolACP)
+	second := ComputeLaunchFingerprint("/work", []string{"A=1", "B=2"}, []string{"provider"}, ProtocolACP)
+	if first != second {
+		t.Fatal("environment ordering changed provider launch fingerprint")
+	}
+	changed := ComputeLaunchFingerprint("/work", []string{"A=changed", "B=2"}, []string{"provider"}, ProtocolACP)
+	if first == changed {
+		t.Fatal("provider environment change retained launch fingerprint")
 	}
 }
 
