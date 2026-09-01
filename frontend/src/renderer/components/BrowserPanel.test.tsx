@@ -99,7 +99,7 @@ const session: WorkspaceSession = {
 	prs: [],
 };
 
-it("reorders horizontal browser tabs around the drop target", () => {
+it("reorders browser tabs around the drop target", () => {
 	expect(reorderBrowserTabs(["t1", "t2", "t3"], "t1", "t3")).toEqual(["t2", "t3", "t1"]);
 	expect(reorderBrowserTabs(["t1", "t2", "t3"], "t2", "missing")).toBeNull();
 });
@@ -1386,7 +1386,39 @@ describe("BrowserPanel", () => {
 			expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
 		});
 
-		it("closes a tab directly from the pinned rail on hover", async () => {
+		it("keeps selection and drag activation on the favicon while the close action is visible", async () => {
+			pinRail();
+			hookState.tabs = [
+				{ id: "t1", url: "http://localhost:3000/", title: "First app", active: false },
+				{ id: "t2", url: "http://localhost:4173/", title: "Second app", active: true },
+			];
+			hookState.activeTabId = "t2";
+			render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+			const rail = screen.getByTestId("browser-tabs-rail");
+			const pinnedTabs = within(rail.querySelector("nav") as HTMLElement);
+			const firstTab = pinnedTabs.getByRole("button", { name: "First app — localhost:3000" });
+			const secondTab = pinnedTabs.getByRole("button", { name: "Second app — localhost:4173" });
+			const closeButton = pinnedTabs.getByRole("button", { name: "Close tab First app" });
+			fireEvent.pointerEnter(firstTab);
+
+			expect(closeButton).toHaveClass("group-hover/tab-icon:opacity-100");
+			await userEvent.click(firstTab);
+
+			expect(hookState.selectTab).toHaveBeenCalledWith("t1");
+			expect(hookState.closeTab).not.toHaveBeenCalled();
+
+			expect(firstTab).toHaveAttribute("aria-roledescription", "sortable");
+			fireEvent.pointerDown(firstTab, { button: 0, clientX: 16, clientY: 48, isPrimary: true, pointerId: 1 });
+			fireEvent.pointerMove(secondTab, { clientX: 16, clientY: 80, pointerId: 1 });
+
+			expect(firstTab).toHaveAttribute("aria-pressed", "true");
+			fireEvent.pointerUp(secondTab, { clientX: 16, clientY: 80, pointerId: 1 });
+			expect(secondTab).toBeInTheDocument();
+			expect(closeButton).not.toHaveClass("absolute");
+		});
+
+		it("closes only from the distinct pinned-rail close action", async () => {
 			pinRail();
 			hookState.tabs = [
 				{ id: "t1", url: "http://localhost:3000/", title: "First app", active: false },
@@ -1399,13 +1431,27 @@ describe("BrowserPanel", () => {
 			const pinnedTabs = within(rail.querySelector("nav") as HTMLElement);
 			const closeButton = pinnedTabs.getByRole("button", { name: "Close tab First app" });
 			fireEvent.pointerEnter(pinnedTabs.getByRole("button", { name: "First app — localhost:3000" }));
-
-			expect(closeButton).toHaveClass("group-hover/tab-icon:opacity-100");
 			await userEvent.click(closeButton);
 
 			expect(hookState.closeTab).toHaveBeenCalledWith("t1");
 			expect(hookState.selectTab).not.toHaveBeenCalled();
 			expect(screen.getByTestId("browser-tabs-flyout")).toHaveAttribute("data-state", "closed");
+		});
+
+		it("keeps the pinned close action disabled for the only tab", async () => {
+			pinRail();
+			hookState.tabs = [{ id: "t1", url: "http://localhost:3000/", title: "First app", active: true }];
+			hookState.activeTabId = "t1";
+			render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+			const rail = screen.getByTestId("browser-tabs-rail");
+			const closeButton = within(rail.querySelector("nav") as HTMLElement).getByRole("button", {
+				name: "Close tab First app",
+			});
+			expect(closeButton).toBeDisabled();
+			await userEvent.click(closeButton);
+
+			expect(hookState.closeTab).not.toHaveBeenCalled();
 		});
 
 		it("still opens the flyout on hover while the rail is collapsed", () => {
@@ -1429,7 +1475,7 @@ describe("BrowserPanel", () => {
 			expect(screen.getByTestId("browser-tabs-flyout")).toHaveAttribute("data-state", "open");
 		});
 
-		it("names the site in a tooltip when a pinned favicon takes focus", async () => {
+		it("suppresses the site tooltip when pinned-tab focus reveals the close action", () => {
 			pinRail();
 			hookState.tabs = [
 				{ id: "t1", url: "http://localhost:3000/", title: "First app", active: false },
@@ -1440,15 +1486,13 @@ describe("BrowserPanel", () => {
 
 			fireEvent.focus(screen.getByRole("button", { name: "First app — localhost:3000" }));
 
-			const tooltip = await screen.findByRole("tooltip");
-			expect(tooltip).toHaveTextContent("First app");
-			expect(tooltip).toHaveTextContent("localhost:3000");
+			expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
 		});
 
-		it("marks the tooltip as a browser overlay so it paints above the live page", async () => {
+		it("marks the focused close action as a browser overlay so it paints above the live page", () => {
 			// The live page is a native view above the transparent shell; the shell
 			// is only raised for elements matching OPEN_BROWSER_OVERLAY_SELECTOR, so
-			// an unmarked tooltip would render behind the page and be invisible.
+			// an unmarked close action extending left of the rail would be unreachable.
 			pinRail();
 			hookState.tabs = [
 				{ id: "t1", url: "http://localhost:3000/", title: "First app", active: false },
@@ -1459,8 +1503,12 @@ describe("BrowserPanel", () => {
 
 			fireEvent.focus(screen.getByRole("button", { name: "First app — localhost:3000" }));
 
-			const tooltip = await screen.findByRole("tooltip");
-			expect(tooltip.closest('[data-browser-native-overlay="true"]')).not.toBeNull();
+			const rail = screen.getByTestId("browser-tabs-rail");
+			const closeButton = within(rail.querySelector("nav") as HTMLElement).getByRole("button", {
+				name: "Close tab First app",
+			});
+			expect(closeButton).toHaveAttribute("data-browser-native-overlay", "true");
+			expect(closeButton).toHaveAttribute("data-state", "open");
 			expect(document.querySelector(OPEN_BROWSER_OVERLAY_SELECTOR)).not.toBeNull();
 		});
 	});

@@ -20,7 +20,6 @@ import {
 } from "@dnd-kit/core";
 import {
 	SortableContext,
-	arrayMove,
 	sortableKeyboardCoordinates,
 	useSortable,
 	verticalListSortingStrategy,
@@ -30,8 +29,8 @@ import { Globe2, History, Pin, PinOff, Plus, X } from "lucide-react";
 import type { BrowserTabState } from "../../main/browser-view-host";
 import type { ClosedBrowserTab } from "../hooks/useBrowserView";
 import { browserTabLabel } from "../lib/browser-tab-label";
+import { reorderBrowserTabs } from "../lib/browser-tab-order";
 import { useResizable } from "../hooks/useResizable";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import { cn } from "../lib/utils";
 
 const RAIL_DEFAULT_WIDTH = 220;
@@ -220,12 +219,13 @@ export const BrowserTabsRail = forwardRef<BrowserTabsRailHandle, BrowserTabsRail
 	const handleDragEnd = useCallback(
 		(event: DragEndEvent) => {
 			const { active, over } = event;
-			if (!over || active.id === over.id) return;
-			const ids = tabs.map((tab) => tab.id);
-			const oldIndex = ids.indexOf(String(active.id));
-			const newIndex = ids.indexOf(String(over.id));
-			if (oldIndex === -1 || newIndex === -1) return;
-			onReorderTabs(arrayMove(ids, oldIndex, newIndex));
+			if (!over) return;
+			const orderedIds = reorderBrowserTabs(
+				tabs.map((tab) => tab.id),
+				String(active.id),
+				String(over.id),
+			);
+			if (orderedIds) onReorderTabs(orderedIds);
 		},
 		[onReorderTabs, tabs],
 	);
@@ -245,8 +245,8 @@ export const BrowserTabsRail = forwardRef<BrowserTabsRailHandle, BrowserTabsRail
 			// Only the collapsed (0px) rail opens the flyout on hover. Pinned already
 			// renders every tab as a favicon row, so opening the flyout there covered
 			// the live page with a duplicate of the list the user is already looking
-			// at; each favicon carries a tooltip naming its site instead. The toolbar
-			// trigger is likewise hidden while pinned (BrowserPanel.tsx's
+			// at; each favicon exposes its own adjacent close action instead. The
+			// toolbar trigger is likewise hidden while pinned (BrowserPanel.tsx's
 			// showTabsTrigger), so this is the last path into the flyout.
 			onBlur={
 				collapsed
@@ -292,13 +292,16 @@ export const BrowserTabsRail = forwardRef<BrowserTabsRailHandle, BrowserTabsRail
 					<PinOff aria-hidden="true" className="size-icon-base" />
 				</button>
 			) : null}
-			<nav aria-label={t("browser.tabsAria", { count: tabs.length })} className="min-h-0 flex-1 overflow-y-auto">
+			<nav
+				aria-label={t("browser.tabsAria", { count: tabs.length })}
+				className={cn(
+					"min-h-0 flex-1 overflow-y-auto",
+					pinned && !expanded && "w-15 -translate-x-7",
+				)}
+			>
 				{collapsed ? null : (
 					<DndContext collisionDetection={closestCenter} onDragEnd={handleDragEnd} sensors={sensors}>
 						<SortableContext items={tabIds} strategy={verticalListSortingStrategy}>
-							{/* No app-wide TooltipProvider exists (each site mounts its own),
-							    so the pinned rail's favicon tooltips need one here. */}
-							<TooltipProvider delayDuration={250}>
 							<div className="flex flex-col">
 								{tabs.map((tab) =>
 									expanded ? (
@@ -324,7 +327,6 @@ export const BrowserTabsRail = forwardRef<BrowserTabsRailHandle, BrowserTabsRail
 									),
 								)}
 							</div>
-							</TooltipProvider>
 						</SortableContext>
 					</DndContext>
 				)}
@@ -481,59 +483,41 @@ function ClosedTabsSection({
 function IconTabRow({ active, chrome, closeTitle, onClose, onSelect, onlyTab, tab }: TabRowProps) {
 	const { t } = useTranslation();
 	const [hovered, setHovered] = useState(false);
-	const [tooltipOpen, setTooltipOpen] = useState(false);
+	const [focused, setFocused] = useState(false);
 	const label = browserTabLabel(tab.title, tab.url);
 	const closeLabel = t("browser.closeTab", { title: label.title });
+	const closeVisible = hovered || focused;
 	return (
 		<div
-			className={cn(
-				"group/tab-icon relative flex h-8 w-full items-center overflow-hidden",
-				active && "bg-interactive-active",
-			)}
-			onPointerEnter={() => {
-				setHovered(true);
-				setTooltipOpen(false);
+			className="group/tab-icon flex h-8 w-full items-center"
+			onBlurCapture={(event) => {
+				if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+				setFocused(false);
 			}}
+			onFocusCapture={() => setFocused(true)}
+			onPointerEnter={() => setHovered(true)}
 			onPointerLeave={() => setHovered(false)}
 			ref={chrome?.setNodeRef}
 			style={chrome?.style}
 		>
-			<Tooltip
-				onOpenChange={(open) => setTooltipOpen(hovered ? false : open)}
-				open={tooltipOpen}
+			<button
+				aria-current={active ? "true" : undefined}
+				aria-label={`${label.title} — ${label.subtitle}`}
+				className={cn(
+					"order-2 flex h-full w-8 shrink-0 items-center justify-center p-1.5 transition-colors",
+					"hover:bg-interactive-hover",
+					active && "bg-interactive-active",
+				)}
+				onClick={onSelect}
+				type="button"
+				{...chrome?.dragProps}
 			>
-				<TooltipTrigger asChild>
-					<button
-						aria-current={active ? "true" : undefined}
-						aria-label={`${label.title} — ${label.subtitle}`}
-						className="flex h-full w-full items-center justify-center p-1.5"
-						onClick={onSelect}
-						type="button"
-						{...chrome?.dragProps}
-					>
-						<TabFavicon
-							className={cn(
-								"size-icon-base transition-[opacity,transform] duration-150 ease-out",
-								"group-hover/tab-icon:scale-75 group-hover/tab-icon:opacity-0",
-								"group-focus-within/tab-icon:scale-75 group-focus-within/tab-icon:opacity-0",
-							)}
-							tab={tab}
-						/>
-					</button>
-				</TooltipTrigger>
-				{/* The rail hugs the right edge, so the tooltip opens leftward over the
-				    page. `data-browser-native-overlay` raises the transparent shell above
-				    the live native page for as long as it shows — without it the tooltip
-				    paints behind the page and is invisible (see dom-selectors.ts). */}
-				<TooltipContent data-browser-native-overlay="true" side="left">
-					<span className="block max-w-56 truncate font-medium">{label.title}</span>
-					<span className="block max-w-56 truncate text-muted-foreground">{label.subtitle}</span>
-				</TooltipContent>
-			</Tooltip>
+				<TabFavicon className="size-icon-base" tab={tab} />
+			</button>
 			<button
 				aria-label={closeLabel}
 				className={cn(
-					"pointer-events-none absolute left-[calc(50%_-_0.5px)] top-1/2 grid size-7 -translate-x-1/2 -translate-y-1/2 scale-90 place-items-center rounded-md",
+					"pointer-events-none order-1 grid size-7 shrink-0 scale-90 place-items-center rounded-md",
 					"bg-interactive-hover text-muted-foreground opacity-0",
 					"transition-[opacity,transform,background-color,color] duration-150 ease-out",
 					"hover:bg-interactive-active hover:text-foreground active:scale-95",
@@ -542,6 +526,8 @@ function IconTabRow({ active, chrome, closeTitle, onClose, onSelect, onlyTab, ta
 					"focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent/60",
 					"disabled:pointer-events-none",
 				)}
+				data-browser-native-overlay="true"
+				data-state={closeVisible ? "open" : "closed"}
 				disabled={onlyTab}
 				onClick={(event) => {
 					event.stopPropagation();
