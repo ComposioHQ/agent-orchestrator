@@ -49,6 +49,7 @@ func (f *fakeControl) FailTransport(context.Context, string, int, string, string
 }
 func (f *fakeControl) PublishTerminalOutput(context.Context, string, []byte) error  { return nil }
 func (f *fakeControl) PublishTerminalExit(context.Context, string, int, bool) error { return nil }
+func (f *fakeControl) AgentSessionID(context.Context) (string, error)               { return "", nil }
 
 // agentPipe registers a pipe-backed agent terminal on the supervisor and
 // returns the read side, so tests observe exactly what forwardTurn types into
