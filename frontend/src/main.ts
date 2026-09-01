@@ -1865,6 +1865,7 @@ async function chooseDirectory(title: string): Promise<string | null> {
 ipcMain.handle("app:chooseDirectory", async (_event, title?: string) => {
 	return chooseDirectory(typeof title === "string" && title.trim() ? title : "Choose a git repository");
 });
+ipcMain.handle("app:getHomeDirectory", () => os.homedir());
 ipcMain.handle("app:scanImportFolder", async (_event, input: { path: string; mode: "project" | "workspace" }) => {
 	await ensureShellEnv();
 	return scanImportFolder(input.path, input.mode, { env: daemonEnv(), homeDir: os.homedir() });

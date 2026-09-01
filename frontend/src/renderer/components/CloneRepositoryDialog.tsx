@@ -162,31 +162,23 @@ export default function CloneRepositoryDialog({
 								<Label htmlFor="cloneDestination" className="text-[13px] font-semibold text-[var(--color-text-import-title)]">
 									{t("createProject.cloneDestination")}
 								</Label>
-								<div className="flex gap-2">
-									<div className="relative min-w-0 flex-1">
-										<span className="pointer-events-none absolute inset-y-0 left-3 flex w-4 items-center justify-center text-[var(--color-text-import-muted)]">
-											<Folder className="size-4" aria-hidden="true" />
-										</span>
-										<Input
-											id="cloneDestination"
-											aria-describedby={destinationError ? "cloneDestinationError" : undefined}
-											aria-invalid={destinationError ? true : undefined}
-											className="cursor-default bg-[var(--color-bg-import-card)] pl-10 font-mono text-[13px]"
-											placeholder={t("createProject.cloneDestinationPlaceholder")}
-											readOnly
-											value={value.destinationParent}
-										/>
-									</div>
-									<Button
-										type="button"
-										variant="outline"
-										className="h-control-form! px-4"
-										disabled={disabled || choosingDestination}
-										onClick={() => void chooseDestination()}
-									>
+								<button
+									type="button"
+									id="cloneDestination"
+									aria-describedby={destinationError ? "cloneDestinationError" : undefined}
+									aria-invalid={destinationError ? true : undefined}
+									className="flex h-control-form w-full items-center overflow-hidden rounded-md border border-transparent bg-[var(--color-bg-import-card)] text-left text-[13px] text-foreground outline-none hover:bg-accent/50 focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50"
+									disabled={disabled || choosingDestination}
+									onClick={() => void chooseDestination()}
+								>
+									<span className="flex min-w-0 flex-1 items-center gap-3 px-3">
+										<Folder className="size-4 shrink-0 text-[var(--color-text-import-muted)]" aria-hidden="true" />
+										<span className="truncate font-mono">{value.destinationParent || t("createProject.cloneDestinationPlaceholder")}</span>
+									</span>
+									<span className="flex h-full shrink-0 items-center border-l border-border/60 px-4 text-foreground">
 										{choosingDestination ? t("createProject.opening") : t("createProject.cloneChoose")}
-									</Button>
-								</div>
+									</span>
+								</button>
 								{destinationError ? (
 									<p id="cloneDestinationError" className="text-pretty text-[12px] leading-5 text-destructive" role="alert">
 										{destinationError}
