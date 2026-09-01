@@ -226,6 +226,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/imports/prepare-git": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Run approved Git preparation actions for project import onboarding */
+        post: operations["prepareImportGit"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/imports/validate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Validate a selected folder for project import onboarding */
+        post: operations["validateImport"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/mobile/devices": {
         parameters: {
             query?: never;
@@ -2484,6 +2518,26 @@ export interface components {
             /** Format: int64 */
             totalNanos: number;
         };
+        GitPreparationEvent: {
+            /** @enum {string} */
+            action: "git_init" | "git_commit" | "set_remote";
+            error?: string;
+            message?: string;
+            /** @enum {string} */
+            state: "pending" | "running" | "success" | "error";
+        };
+        GitPreparationInput: {
+            approvedActions: string[];
+            /** @enum {string} */
+            importKind: "project";
+            initialCommitMessage?: string;
+            path: string;
+            remoteUrl?: string;
+        };
+        GitPreparationResult: {
+            events: components["schemas"]["GitPreparationEvent"][];
+            validation: components["schemas"]["ImportValidationResult"];
+        };
         IdentityResponse: {
             apiVersion: number;
             hostId: string;
@@ -2500,6 +2554,20 @@ export interface components {
         ImportStatusResponse: {
             available: boolean;
             legacyRoot: string;
+        };
+        ImportValidationInput: {
+            /** @enum {string} */
+            importKind: "project";
+            path: string;
+        };
+        ImportValidationResult: {
+            blockingErrors: string[];
+            childRepos?: components["schemas"]["RepoGitStatus"][];
+            importKind: string;
+            isValid: boolean;
+            /** @enum {string} */
+            nextStep: "error" | "choose_import_kind" | "prepare_git" | "continue";
+            root: components["schemas"]["RepoGitStatus"];
         };
         InitializeRepositoryInput: {
             path: string;
@@ -2845,6 +2913,16 @@ export interface components {
             displayName: string;
             ok: boolean;
             sessionId: string;
+        };
+        RepoGitStatus: {
+            blockingErrors: string[];
+            hasCommit: boolean;
+            hasOrigin: boolean;
+            isEmptyFolder: boolean;
+            isRepo: boolean;
+            needsGitInit: boolean;
+            repoPath: string;
+            requiredActions: string[];
         };
         ResolveCommentsResponse: {
             ok: boolean;
@@ -4160,6 +4238,90 @@ export interface operations {
             };
             /** @description Internal Server Error */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    prepareImportGit: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GitPreparationInput"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitPreparationResult"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    validateImport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImportValidationInput"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportValidationResult"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -2,11 +2,14 @@ package importer
 
 import (
 	"context"
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 )
 
 type fakeStore struct {
@@ -74,5 +77,235 @@ func TestRun_ImportsProjects(t *testing.T) {
 func TestNew_DefaultsRoot(t *testing.T) {
 	if New(Deps{Store: newFakeStore()}).root == "" {
 		t.Fatal("empty Root should fall back to the default legacy root")
+	}
+}
+
+func TestValidateProjectImportReadyRepositoryContinues(t *testing.T) {
+	ctx := context.Background()
+	repo := gitRepoWithOrigin(t)
+	svc := New(Deps{Store: newFakeStore()})
+
+	result, err := svc.Validate(ctx, ImportValidationInput{ImportKind: ImportKindProject, Path: repo})
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if !result.IsValid || result.NextStep != ImportNextStepContinue {
+		t.Fatalf("result = %#v, want valid continue", result)
+	}
+	if !result.Root.IsRepo || !result.Root.HasCommit || !result.Root.HasOrigin || len(result.Root.RequiredActions) != 0 {
+		t.Fatalf("root status = %#v, want ready git repo", result.Root)
+	}
+}
+
+func TestValidateProjectImportPlainFolderNeedsPreparation(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	svc := New(Deps{Store: newFakeStore()})
+
+	result, err := svc.Validate(ctx, ImportValidationInput{ImportKind: ImportKindProject, Path: root})
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if !result.IsValid || result.NextStep != ImportNextStepPrepareGit {
+		t.Fatalf("result = %#v, want prepare_git", result)
+	}
+	wantActions(t, result.Root.RequiredActions, []string{GitPreparationActionInit, GitPreparationActionCommit, GitPreparationActionSetRemote})
+	if _, err := os.Stat(filepath.Join(root, ".git")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Validate mutated git metadata: %v", err)
+	}
+}
+
+func TestValidateProjectImportMissingPathReturnsBlockingError(t *testing.T) {
+	ctx := context.Background()
+	missing := filepath.Join(t.TempDir(), "missing")
+	svc := New(Deps{Store: newFakeStore()})
+
+	result, err := svc.Validate(ctx, ImportValidationInput{ImportKind: ImportKindProject, Path: missing})
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if result.IsValid || result.NextStep != ImportNextStepError {
+		t.Fatalf("result = %#v, want invalid error", result)
+	}
+	wantActions(t, result.BlockingErrors, []string{"INVALID_PATH"})
+	if _, err := os.Stat(missing); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Validate created missing path: %v", err)
+	}
+}
+
+func TestValidateProjectImportUnbornRepositoryNeedsCommitAndRemote(t *testing.T) {
+	ctx := context.Background()
+	repo := filepath.Join(t.TempDir(), "repo")
+	if out, err := exec.Command("git", "init", "-b", "main", repo).CombinedOutput(); err != nil {
+		t.Fatalf("git init unborn: %v (%s)", err, out)
+	}
+	svc := New(Deps{Store: newFakeStore()})
+
+	result, err := svc.Validate(ctx, ImportValidationInput{ImportKind: ImportKindProject, Path: repo})
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if !result.IsValid || result.NextStep != ImportNextStepPrepareGit || !result.Root.IsRepo || result.Root.HasCommit {
+		t.Fatalf("result = %#v, want unborn repo needing preparation", result)
+	}
+	wantActions(t, result.Root.RequiredActions, []string{GitPreparationActionCommit, GitPreparationActionSetRemote})
+}
+
+func TestValidateProjectImportParentWithChildReposChoosesImportKind(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	child := filepath.Join(root, "child")
+	gitRepoWithCommitNoOrigin(t, child)
+	svc := New(Deps{Store: newFakeStore()})
+
+	result, err := svc.Validate(ctx, ImportValidationInput{ImportKind: ImportKindProject, Path: root})
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if !result.IsValid || result.NextStep != ImportNextStepChooseImportKind || len(result.ChildRepos) != 1 {
+		t.Fatalf("result = %#v, want child repo choice", result)
+	}
+	if result.ChildRepos[0].RepoPath != child || !result.ChildRepos[0].IsRepo {
+		t.Fatalf("childRepos = %#v, want direct child repo", result.ChildRepos)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".git")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Validate mutated parent git metadata: %v", err)
+	}
+}
+
+func TestPrepareGitRequiresApprovalBeforeMutation(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	svc := New(Deps{Store: newFakeStore()})
+
+	_, err := svc.PrepareGit(ctx, GitPreparationInput{
+		ImportKind:      ImportKindProject,
+		Path:            root,
+		ApprovedActions: []string{GitPreparationActionInit},
+		RemoteURL:       "https://example.invalid/repo.git",
+	})
+	wantCode(t, err, "IMPORT_ACTION_APPROVAL_REQUIRED")
+	if _, err := os.Stat(filepath.Join(root, ".git")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("PrepareGit mutated without full approval: %v", err)
+	}
+}
+
+func TestPrepareGitRunsApprovedMissingActionsInOrder(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	svc := New(Deps{Store: newFakeStore()})
+
+	result, err := svc.PrepareGit(ctx, GitPreparationInput{
+		ImportKind: ImportKindProject,
+		Path:       root,
+		ApprovedActions: []string{
+			GitPreparationActionInit,
+			GitPreparationActionCommit,
+			GitPreparationActionSetRemote,
+		},
+		RemoteURL: "https://example.invalid/repo.git",
+	})
+	if err != nil {
+		t.Fatalf("PrepareGit: %v", err)
+	}
+	if result.Validation.NextStep != ImportNextStepContinue || !result.Validation.Root.HasCommit || !result.Validation.Root.HasOrigin {
+		t.Fatalf("validation = %#v, want ready repository", result.Validation)
+	}
+	wantEventActions(t, result.Events, []string{
+		GitPreparationActionInit,
+		GitPreparationActionInit,
+		GitPreparationActionInit,
+		GitPreparationActionCommit,
+		GitPreparationActionCommit,
+		GitPreparationActionCommit,
+		GitPreparationActionSetRemote,
+		GitPreparationActionSetRemote,
+		GitPreparationActionSetRemote,
+	})
+	if out, err := exec.Command("git", "-C", root, "remote", "get-url", "origin").CombinedOutput(); err != nil || string(out) != "https://example.invalid/repo.git\n" {
+		t.Fatalf("origin = %q, %v", out, err)
+	}
+}
+
+func TestPrepareGitDoesNotOverwriteExistingOrigin(t *testing.T) {
+	ctx := context.Background()
+	repo := gitRepoWithOrigin(t)
+	svc := New(Deps{Store: newFakeStore()})
+
+	result, err := svc.PrepareGit(ctx, GitPreparationInput{
+		ImportKind:      ImportKindProject,
+		Path:            repo,
+		ApprovedActions: []string{GitPreparationActionSetRemote},
+		RemoteURL:       "https://example.invalid/new.git",
+	})
+	if err != nil {
+		t.Fatalf("PrepareGit: %v", err)
+	}
+	if len(result.Events) != 0 {
+		t.Fatalf("events = %#v, want no missing actions", result.Events)
+	}
+	if out, err := exec.Command("git", "-C", repo, "remote", "get-url", "origin").CombinedOutput(); err != nil || string(out) != "https://example.invalid/original.git\n" {
+		t.Fatalf("origin = %q, %v", out, err)
+	}
+}
+
+func gitRepoWithOrigin(t *testing.T) string {
+	t.Helper()
+	return gitRepoWithCommitWithOrigin(t, t.TempDir(), "https://example.invalid/original.git")
+}
+
+func gitRepoWithCommitNoOrigin(t *testing.T, dir string) {
+	t.Helper()
+	gitRepoWithCommitWithOrigin(t, dir, "")
+}
+
+func gitRepoWithCommitWithOrigin(t *testing.T, dir, origin string) string {
+	t.Helper()
+	if out, err := exec.Command("git", "init", "-b", "main", dir).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v (%s)", err, out)
+	}
+	if out, err := exec.Command("git", "-C", dir, "-c", "user.email=ao@example.com", "-c", "user.name=AO Test", "commit", "--allow-empty", "-m", "initial").CombinedOutput(); err != nil {
+		t.Fatalf("git commit: %v (%s)", err, out)
+	}
+	if origin != "" {
+		if out, err := exec.Command("git", "-C", dir, "remote", "add", "origin", origin).CombinedOutput(); err != nil {
+			t.Fatalf("git remote add: %v (%s)", err, out)
+		}
+	}
+	return dir
+}
+
+func wantActions(t *testing.T, got, want []string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("actions = %#v, want %#v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("actions = %#v, want %#v", got, want)
+		}
+	}
+}
+
+func wantEventActions(t *testing.T, got []GitPreparationEvent, want []string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("events = %#v, want actions %#v", got, want)
+	}
+	for i := range want {
+		if got[i].Action != want[i] {
+			t.Fatalf("events = %#v, want actions %#v", got, want)
+		}
+	}
+}
+
+func wantCode(t *testing.T, err error, code string) {
+	t.Helper()
+	var apiErr *apierr.Error
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("error = %v, want *apierr.Error", err)
+	}
+	if apiErr.Code != code {
+		t.Fatalf("code = %q, want %q", apiErr.Code, code)
 	}
 }

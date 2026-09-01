@@ -540,6 +540,68 @@ paths:
       summary: Run the legacy AO project import through the daemon store
       tags:
       - import
+  /api/v1/imports/prepare-git:
+    post:
+      operationId: prepareImportGit
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GitPreparationInput'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GitPreparationResult'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Run approved Git preparation actions for project import onboarding
+      tags:
+      - import
+  /api/v1/imports/validate:
+    post:
+      operationId: validateImport
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ImportValidationInput'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportValidationResult'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Validate a selected folder for project import onboarding
+      tags:
+      - import
   /api/v1/mobile/devices:
     get:
       operationId: listMobileDevices
@@ -7269,6 +7331,64 @@ components:
       - coverage
       - providerAttribution
       type: object
+    GitPreparationEvent:
+      properties:
+        action:
+          enum:
+          - git_init
+          - git_commit
+          - set_remote
+          type: string
+        error:
+          type: string
+        message:
+          type: string
+        state:
+          enum:
+          - pending
+          - running
+          - success
+          - error
+          type: string
+      required:
+      - action
+      - state
+      type: object
+    GitPreparationInput:
+      properties:
+        approvedActions:
+          items:
+            type: string
+          type: array
+        importKind:
+          enum:
+          - project
+          minLength: 1
+          type: string
+        initialCommitMessage:
+          type: string
+        path:
+          minLength: 1
+          type: string
+        remoteUrl:
+          type: string
+      required:
+      - importKind
+      - path
+      - approvedActions
+      type: object
+    GitPreparationResult:
+      properties:
+        events:
+          items:
+            $ref: '#/components/schemas/GitPreparationEvent'
+          type: array
+        validation:
+          $ref: '#/components/schemas/ImportValidationResult'
+      required:
+      - events
+      - validation
+      type: object
     IdentityResponse:
       properties:
         apiVersion:
@@ -7312,6 +7432,50 @@ components:
       required:
       - available
       - legacyRoot
+      type: object
+    ImportValidationInput:
+      properties:
+        importKind:
+          enum:
+          - project
+          minLength: 1
+          type: string
+        path:
+          minLength: 1
+          type: string
+      required:
+      - importKind
+      - path
+      type: object
+    ImportValidationResult:
+      properties:
+        blockingErrors:
+          items:
+            type: string
+          type: array
+        childRepos:
+          items:
+            $ref: '#/components/schemas/RepoGitStatus'
+          type: array
+        importKind:
+          type: string
+        isValid:
+          type: boolean
+        nextStep:
+          enum:
+          - error
+          - choose_import_kind
+          - prepare_git
+          - continue
+          type: string
+        root:
+          $ref: '#/components/schemas/RepoGitStatus'
+      required:
+      - importKind
+      - isValid
+      - blockingErrors
+      - root
+      - nextStep
       type: object
     InitializeRepositoryInput:
       properties:
@@ -8176,6 +8340,38 @@ components:
       - ok
       - sessionId
       - displayName
+      type: object
+    RepoGitStatus:
+      properties:
+        blockingErrors:
+          items:
+            type: string
+          type: array
+        hasCommit:
+          type: boolean
+        hasOrigin:
+          type: boolean
+        isEmptyFolder:
+          type: boolean
+        isRepo:
+          type: boolean
+        needsGitInit:
+          type: boolean
+        repoPath:
+          type: string
+        requiredActions:
+          items:
+            type: string
+          type: array
+      required:
+      - repoPath
+      - isRepo
+      - hasCommit
+      - hasOrigin
+      - isEmptyFolder
+      - needsGitInit
+      - requiredActions
+      - blockingErrors
       type: object
     ResolveCommentsResponse:
       properties:
