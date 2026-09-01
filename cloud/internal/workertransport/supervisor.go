@@ -38,6 +38,11 @@ type Supervisor struct {
 	PollInterval    time.Duration
 	Logger          *slog.Logger
 
+	// StreamDialer, when non-nil, enables the PROTOTYPE duplex terminal
+	// stream (AO_CLOUD_TERMINAL_STREAM=1): one persistent socket per open
+	// terminal carrying PTY output up and terminal input down.
+	StreamDialer StreamDialer
+
 	// ChatRunner is the headless turn-based Chat controller. Nil means the
 	// session cannot switch into the Chat interface.
 	ChatRunner ChatRunner
@@ -90,6 +95,23 @@ type terminalProcess struct {
 	pty                   *os.File
 	cleanup               func()
 	interfaceHandoffClose bool
+
+	// stream is the live duplex socket for this terminal (prototype), nil
+	// whenever the stream is disconnected. Output falls back to HTTP POSTs.
+	streamMu sync.Mutex
+	stream   TerminalStream
+}
+
+func (p *terminalProcess) setStream(stream TerminalStream) {
+	p.streamMu.Lock()
+	p.stream = stream
+	p.streamMu.Unlock()
+}
+
+func (p *terminalProcess) currentStream() TerminalStream {
+	p.streamMu.Lock()
+	defer p.streamMu.Unlock()
+	return p.stream
 }
 
 func (s *Supervisor) Run(ctx context.Context) error {
@@ -344,7 +366,10 @@ func (s *Supervisor) openTerminal(ctx context.Context, input worker.TerminalComm
 	s.terminals[input.TerminalID] = process
 	s.mu.Unlock()
 
-	go s.copyTerminalOutput(processCtx, input.TerminalID, terminalPTY)
+	if s.StreamDialer != nil {
+		go s.runTerminalStream(processCtx, input.TerminalID, process)
+	}
+	go s.copyTerminalOutput(processCtx, input.TerminalID, terminalPTY, process)
 	go func(process *terminalProcess) {
 		_ = command.Wait()
 		s.mu.Lock()
@@ -409,6 +434,7 @@ func (s *Supervisor) copyTerminalOutput(
 	ctx context.Context,
 	terminalID string,
 	reader io.Reader,
+	process *terminalProcess,
 ) {
 	buffer := make([]byte, 16<<10)
 	for {
@@ -418,9 +444,18 @@ func (s *Supervisor) copyTerminalOutput(
 				s.agentOutputAt.CompareAndSwap(0, time.Now().UnixNano())
 			}
 			data := append([]byte(nil), buffer[:count]...)
-			if outputErr := s.Control.PublishTerminalOutput(ctx, terminalID, data); outputErr != nil &&
-				ctx.Err() == nil {
-				s.Logger.Warn("publish terminal output", "error", outputErr, "terminal_id", terminalID)
+			// PROTOTYPE: prefer the duplex stream; the control plane persists
+			// the frame server-side, so a successful stream write replaces the
+			// HTTP POST entirely. Any failure falls back to the POST path.
+			delivered := false
+			if stream := process.currentStream(); stream != nil {
+				delivered = stream.WriteOutput(ctx, data) == nil
+			}
+			if !delivered {
+				if outputErr := s.Control.PublishTerminalOutput(ctx, terminalID, data); outputErr != nil &&
+					ctx.Err() == nil {
+					s.Logger.Warn("publish terminal output", "error", outputErr, "terminal_id", terminalID)
+				}
 			}
 		}
 		if err != nil {

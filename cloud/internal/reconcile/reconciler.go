@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -1084,6 +1085,12 @@ func (r *Reconciler) workerSpec(ctx context.Context, record domain.Sandbox) (san
 	}
 	if record.Provider == sandbox.ProviderDocker || r.options.AllowAnonymousCheckout {
 		workerEnvironment["AO_CLOUD_ALLOW_ANONYMOUS_GITHUB_CHECKOUT"] = "true"
+	}
+	// PROTOTYPE: the duplex terminal stream flag must be set on both sides, so
+	// a control plane running with it enabled passes it into the workers it
+	// provisions. Unset by default, which provisions workers exactly as before.
+	if stream := strings.TrimSpace(os.Getenv("AO_CLOUD_TERMINAL_STREAM")); stream != "" {
+		workerEnvironment["AO_CLOUD_TERMINAL_STREAM"] = stream
 	}
 	return sandbox.Spec{
 		Name:             "ao-" + record.SessionID,

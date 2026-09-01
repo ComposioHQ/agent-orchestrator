@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -158,6 +159,10 @@ type Server struct {
 	credentialValidator     credentialValidator
 	webhookMaxBody          int64
 	handler                 http.Handler
+	// PROTOTYPE: duplex terminal stream (AO_CLOUD_TERMINAL_STREAM=1). The
+	// bridge is process-local, so this assumes a single control-plane instance.
+	terminalStreamEnabled bool
+	terminalStreams       *terminalBridge
 }
 
 type Options struct {
@@ -237,6 +242,8 @@ func New(options Options) *Server {
 		secretCipher:            options.SecretCipher,
 		credentialValidator:     options.CredentialValidator,
 		webhookMaxBody:          webhookMaxBody,
+		terminalStreamEnabled:   os.Getenv("AO_CLOUD_TERMINAL_STREAM") == "1",
+		terminalStreams:         newTerminalBridge(),
 	}
 	if server.credentialValidator == nil {
 		server.credentialValidator = newAgentCredentialValidator(nil)
@@ -320,6 +327,8 @@ func New(options Options) *Server {
 			router.Post("/worker/transport/{requestId}/complete", server.workerCompleteTransport)
 			router.Post("/worker/transport/{requestId}/fail", server.workerFailTransport)
 			router.Post("/worker/terminals/{terminalId}/output", server.workerTerminalOutput)
+			// PROTOTYPE duplex stream; 404s unless AO_CLOUD_TERMINAL_STREAM=1.
+			router.Get("/worker/terminals/{terminalId}/stream", server.workerTerminalStream)
 			router.Post("/worker/terminals/{terminalId}/exit", server.workerTerminalExit)
 			router.Post("/worker/terminals/agent", server.workerEnsureAgentTerminal)
 		})

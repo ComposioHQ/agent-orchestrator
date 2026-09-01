@@ -243,7 +243,15 @@ func (s *Server) readTerminalInput(
 		if len(data) == 0 {
 			continue
 		}
-		if err := retryTerminalRequest(ctx, func() error {
+		// PROTOTYPE fast path: with a live duplex worker stream, push the
+		// keystroke straight down it and skip the durable Postgres queue.
+		// Durability tradeoff (documented): an in-flight keystroke is lost if
+		// the stream drops at that instant — the same contract as SSH. Without
+		// a live stream this falls back to the existing durable queue.
+		if s.terminalStreamEnabled &&
+			s.terminalStreams.pushInput(terminal.SessionID, terminal.ID, data) {
+			// Delivered over the stream.
+		} else if err := retryTerminalRequest(ctx, func() error {
 			return s.store.QueueTerminalInput(ctx, terminal, message.InputID, data)
 		}); err != nil {
 			return err
@@ -297,6 +305,15 @@ func (s *Server) writeTerminalOutput(
 	defer ticker.Stop()
 	startupDeadline := time.NewTimer(terminalReadyTimeout)
 	defer startupDeadline.Stop()
+	// PROTOTYPE: subscribe to pushed frames from the duplex worker stream.
+	// A nil channel (flag off) blocks forever in the select, so the existing
+	// poll loop is untouched when the prototype is disabled.
+	var pushed chan bridgeFrame
+	if s.terminalStreamEnabled {
+		subscription, unsubscribe := s.terminalStreams.subscribe(terminal.ID)
+		defer unsubscribe()
+		pushed = subscription
+	}
 	replayComplete := false
 	startingSent := false
 	ready := false
@@ -361,14 +378,48 @@ func (s *Server) writeTerminalOutput(
 		if state == "closed" {
 			return connection.Close(websocket.StatusNormalClosure, "terminal process exited")
 		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-startupDeadline.C:
-			if !ready {
-				return errTerminalProcessUnavailable
+	wait:
+		for {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-startupDeadline.C:
+				if !ready {
+					return errTerminalProcessUnavailable
+				}
+			case frame := <-pushed:
+				// Forward a pushed frame immediately when it is exactly the
+				// next sequence; anything else (replay still running, a gap
+				// from a missed push, a duplicate the poll already sent) is
+				// left to the 50ms Postgres poll to reconcile.
+				if !replayComplete {
+					break wait
+				}
+				if frame.Sequence <= after {
+					continue
+				}
+				if frame.Sequence != after+1 {
+					break wait
+				}
+				var err error
+				writeMu.Lock()
+				if structured {
+					err = writeTerminalMessage(ctx, connection, terminalServerMessage{
+						Type:     "output",
+						Data:     base64.StdEncoding.EncodeToString(frame.Data),
+						Sequence: frame.Sequence,
+					})
+				} else {
+					err = connection.Write(ctx, websocket.MessageBinary, frame.Data)
+				}
+				writeMu.Unlock()
+				if err != nil {
+					return err
+				}
+				after = frame.Sequence
+			case <-ticker.C:
+				break wait
 			}
-		case <-ticker.C:
 		}
 	}
 }

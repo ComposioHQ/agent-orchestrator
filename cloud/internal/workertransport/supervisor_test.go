@@ -162,13 +162,13 @@ func TestForwardTurnFailsLoudlyWithoutAgentTerminal(t *testing.T) {
 
 func TestCopyTerminalOutputArmsReadiness(t *testing.T) {
 	s := &Supervisor{Control: &fakeControl{}, AgentTerminalID: "agent-1"}
-	s.copyTerminalOutput(context.Background(), "agent-1", strings.NewReader("banner"))
+	s.copyTerminalOutput(context.Background(), "agent-1", strings.NewReader("banner"), &terminalProcess{})
 	if s.agentOutputAt.Load() == 0 {
 		t.Fatal("agent output did not arm the readiness gate")
 	}
 
 	other := &Supervisor{Control: &fakeControl{}, AgentTerminalID: "agent-1"}
-	other.copyTerminalOutput(context.Background(), "workspace-1", strings.NewReader("x"))
+	other.copyTerminalOutput(context.Background(), "workspace-1", strings.NewReader("x"), &terminalProcess{})
 	if other.agentOutputAt.Load() != 0 {
 		t.Fatal("workspace terminal output must not arm the agent readiness gate")
 	}

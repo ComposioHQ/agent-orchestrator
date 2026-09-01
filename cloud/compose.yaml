@@ -57,6 +57,8 @@ services:
       AO_CLOUD_REPOSITORY_BROKER_URL: "${AO_CLOUD_REPOSITORY_BROKER_URL:-}"
       AO_CLOUD_REPOSITORY_BROKER_TOKEN: "${AO_CLOUD_REPOSITORY_BROKER_TOKEN:-}"
       AO_CLOUD_ENV_CONTROL_TOKEN: "${AO_CLOUD_ENV_CONTROL_TOKEN:-}"
+      # PROTOTYPE: duplex terminal stream flag (default off / empty).
+      AO_CLOUD_TERMINAL_STREAM: "${AO_CLOUD_TERMINAL_STREAM:-}"
     group_add:
       - "${AO_CLOUD_DOCKER_GID:-0}"
     volumes:

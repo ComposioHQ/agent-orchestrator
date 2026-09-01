@@ -266,6 +266,12 @@ func run(logger *slog.Logger) error {
 		InitialInterface: committedInterface,
 		AgentSessionID:   bootstrap.Launch.AgentSessionID,
 	}
+	if os.Getenv("AO_CLOUD_TERMINAL_STREAM") == "1" {
+		// PROTOTYPE: persistent duplex terminal stream. Default off; the flag
+		// is passed through by the control plane's sandbox provisioning.
+		transportSupervisor.StreamDialer = client.dialTerminalStream
+		logger.Info("terminal stream prototype enabled")
+	}
 	go func() { results <- transportSupervisor.Run(runCtx) }()
 	go func() {
 		results <- client.checkoutRenewalLoop(runCtx, logger, workspace, bootstrap.Launch.RepositoryURL)
