@@ -473,7 +473,9 @@ func (s *Service) SpawnOrchestrator(
 // It reports ok=false for any failure — an unresumable adapter, a workspace
 // restore error, or a resumed session that fails the same replacement
 // verification a fresh spawn would — so the caller can fall back to a cold
-// spawn without leaking a half-restored session.
+// spawn without leaking a half-restored session. If failure occurs after
+// RestoreWithMode has already relaunched the runtime, it retires that
+// just-resumed runtime so the fallback spawn starts from a clean slate.
 func (s *Service) resumeRetiredOrchestrator(ctx context.Context, project domain.ProjectRecord, id domain.SessionID) (domain.Session, bool) {
 	res, err := s.manager.RestoreWithMode(ctx, id)
 	if err != nil {
@@ -487,11 +489,17 @@ func (s *Service) resumeRetiredOrchestrator(ctx context.Context, project domain.
 		if s.logger != nil {
 			s.logger.Warn("orchestrator resume: read back resumed session failed; respawning cold", "sessionID", id, "error", err)
 		}
+		if retErr := s.manager.RetireForReplacement(ctx, id); retErr != nil && s.logger != nil {
+			s.logger.Warn("orchestrator resume: failed to retire resumed session after read back error", "sessionID", id, "error", retErr)
+		}
 		return domain.Session{}, false
 	}
 	if err := s.verifyOrchestratorReplacement(project, sess); err != nil {
 		if s.logger != nil {
 			s.logger.Warn("orchestrator resume: resumed session failed replacement verification; respawning cold", "sessionID", id, "error", err)
+		}
+		if retErr := s.manager.RetireForReplacement(ctx, id); retErr != nil && s.logger != nil {
+			s.logger.Warn("orchestrator resume: failed to retire resumed session after verification failure", "sessionID", id, "error", retErr)
 		}
 		return domain.Session{}, false
 	}
