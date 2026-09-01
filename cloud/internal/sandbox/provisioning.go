@@ -64,6 +64,17 @@ type CoderConfig struct {
 	WorkerTokenTTL time.Duration
 }
 
+// CoderSessionProfile is the non-secret provider contract stamped onto one
+// session. Reconciliation reads these values from the durable sandbox row; a
+// later deployment configuration change must not move or recreate that session.
+type CoderSessionProfile struct {
+	Owner       string            `json:"owner"`
+	TemplateID  string            `json:"templateId"`
+	AgentName   string            `json:"agentName"`
+	Parameters  map[string]string `json:"parameters"`
+	DurableRoot string            `json:"durableRoot"`
+}
+
 // CoderWorkspaceLayout is the provider-specific filesystem contract between AO
 // and a Coder template. DurableRoot must be the template's persistent volume
 // mount point; every path AO must retain across stop/start is derived beneath it.
@@ -107,6 +118,60 @@ func NewCoderWorkspaceLayout(durableRoot string) (CoderWorkspaceLayout, error) {
 	}, nil
 }
 
+// DecodeCoderSessionProfile reads and validates the Coder contract stored in a
+// sandbox resource profile. Connection credentials deliberately remain outside
+// this profile and come from the configured provider connection.
+func DecodeCoderSessionProfile(raw json.RawMessage) (CoderSessionProfile, error) {
+	var resource struct {
+		Coder *CoderSessionProfile `json:"coder"`
+	}
+	if len(raw) == 0 {
+		return CoderSessionProfile{}, errors.New("Coder session resource profile is required")
+	}
+	if err := json.Unmarshal(raw, &resource); err != nil {
+		return CoderSessionProfile{}, fmt.Errorf("decode Coder session resource profile: %w", err)
+	}
+	if resource.Coder == nil {
+		return CoderSessionProfile{}, errors.New("Coder session resource profile is required")
+	}
+	profile := *resource.Coder
+	profile.Owner = strings.TrimSpace(profile.Owner)
+	profile.TemplateID = strings.TrimSpace(profile.TemplateID)
+	profile.AgentName = strings.TrimSpace(profile.AgentName)
+	if profile.Owner == "" {
+		return CoderSessionProfile{}, errors.New("Coder session owner is required")
+	}
+	if profile.TemplateID == "" {
+		return CoderSessionProfile{}, errors.New("Coder session template ID is required")
+	}
+	parameters, err := normalizedCoderParameters(profile.Parameters)
+	if err != nil {
+		return CoderSessionProfile{}, err
+	}
+	profile.Parameters = parameters
+	layout, err := NewCoderWorkspaceLayout(profile.DurableRoot)
+	if err != nil {
+		return CoderSessionProfile{}, err
+	}
+	profile.DurableRoot = layout.DurableRoot
+	return profile, nil
+}
+
+func normalizedCoderParameters(parameters map[string]string) (map[string]string, error) {
+	normalized := make(map[string]string, len(parameters))
+	for name, value := range parameters {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			return nil, errors.New("Coder template parameter name must not be empty")
+		}
+		if _, exists := normalized[name]; exists {
+			return nil, fmt.Errorf("Coder template parameter %q is duplicated", name)
+		}
+		normalized[name] = value
+	}
+	return normalized, nil
+}
+
 func (c CoderConfig) Validate() error {
 	endpoint, err := url.Parse(strings.TrimSpace(c.BaseURL))
 	if err != nil || endpoint.Host == "" || endpoint.User != nil ||
@@ -121,6 +186,9 @@ func (c CoderConfig) Validate() error {
 		return errors.New("AO_CLOUD_CODER_TEMPLATE_ID is required")
 	}
 	if _, err := NewCoderWorkspaceLayout(c.DurableRoot); err != nil {
+		return err
+	}
+	if _, err := normalizedCoderParameters(c.Parameters); err != nil {
 		return err
 	}
 	if c.WorkerTokenTTL <= 0 {
@@ -247,12 +315,16 @@ func (d ProvisioningDefaults) SessionPlan(harness string) (Plan, error) {
 		if err := d.Coder.Validate(); err != nil {
 			return Plan{}, err
 		}
+		parameters, err := normalizedCoderParameters(d.Coder.Parameters)
+		if err != nil {
+			return Plan{}, err
+		}
 		resourceProfile["coder"] = map[string]any{
 			"baseUrl":               strings.TrimRight(strings.TrimSpace(d.Coder.BaseURL), "/"),
 			"owner":                 strings.TrimSpace(d.Coder.Owner),
 			"templateId":            strings.TrimSpace(d.Coder.TemplateID),
 			"agentName":             strings.TrimSpace(d.Coder.AgentName),
-			"parameters":            d.Coder.Parameters,
+			"parameters":            parameters,
 			"durableRoot":           strings.TrimSpace(d.Coder.DurableRoot),
 			"workerTokenTtlSeconds": int64(d.Coder.WorkerTokenTTL / time.Second),
 		}

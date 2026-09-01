@@ -991,9 +991,6 @@ type providerProfile struct {
 		Ingress          string `json:"ingress"`
 		AutoPauseSeconds int    `json:"autoPauseSeconds"`
 	} `json:"nodeOps"`
-	Coder struct {
-		DurableRoot string `json:"durableRoot"`
-	} `json:"coder"`
 }
 
 type workerWorkspaceLayout struct {
@@ -1015,7 +1012,11 @@ func workspaceLayout(record domain.Sandbox, profile providerProfile) (workerWork
 			codexHome:    "/workspace/.ao/home/.codex",
 		}, nil
 	}
-	coderLayout, err := sandbox.NewCoderWorkspaceLayout(profile.Coder.DurableRoot)
+	coderProfile, err := sandbox.DecodeCoderSessionProfile(record.ResourceProfile)
+	if err != nil {
+		return workerWorkspaceLayout{}, fmt.Errorf("coder workspace layout: %w", err)
+	}
+	coderLayout, err := sandbox.NewCoderWorkspaceLayout(coderProfile.DurableRoot)
 	if err != nil {
 		return workerWorkspaceLayout{}, fmt.Errorf("coder workspace layout: %w", err)
 	}
@@ -1032,10 +1033,7 @@ func workspaceLayout(record domain.Sandbox, profile providerProfile) (workerWork
 func (r *Reconciler) workerSpec(ctx context.Context, record domain.Sandbox) (sandbox.Spec, error) {
 	var profile providerProfile
 	if len(record.ResourceProfile) > 0 {
-		if err := json.Unmarshal(record.ResourceProfile, &profile); err != nil &&
-			record.Provider == sandbox.ProviderCoder {
-			return sandbox.Spec{}, fmt.Errorf("decode sandbox resource profile: %w", err)
-		}
+		_ = json.Unmarshal(record.ResourceProfile, &profile)
 	}
 	layout, err := workspaceLayout(record, profile)
 	if err != nil {

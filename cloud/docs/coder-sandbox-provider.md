@@ -61,11 +61,19 @@ AO derives every stateful path beneath that root:
 | Codex configuration and conversations | `.ao/home/.codex` |
 | AO/Coder restore identity | `.ao/durable-session-id` |
 
-The durable root is stamped into each session's provider plan, so changing the
-deployment setting does not move existing sessions. A first bootstrap writes a
-session identity marker; a bootstrap after stop/start must find the same marker
-or it fails instead of silently launching a fresh agent against an empty
-filesystem.
+The owner, template ID, template parameters, selected agent, and durable root
+are stamped into each session's provider plan. Reconciliation binds the current
+deployment-scoped Coder connection credential to that stored profile, so a
+later configuration change does not move or recreate existing sessions with
+new defaults. Coder workspace responses must match the planned owner,
+deterministic workspace name, and template ID before AO adopts the workspace,
+accepts a provider ID, or uploads worker credentials. Configure
+`AO_CLOUD_CODER_OWNER` as the canonical owner name returned by Coder, not an
+alias such as `me`.
+
+A first bootstrap writes a session identity marker; a bootstrap after
+stop/start must find the same marker or it fails instead of silently launching
+a fresh agent against an empty filesystem.
 
 The normal workspace user must have passwordless `sudo` for the pilot
 bootstrap. AO uses it to:

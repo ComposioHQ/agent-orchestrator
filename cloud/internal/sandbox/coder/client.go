@@ -58,13 +58,14 @@ type Config struct {
 
 // Client manages AO-owned workspaces through one dedicated Coder user.
 type Client struct {
-	baseURL    string
-	token      string
-	owner      string
-	templateID string
-	agentName  string
-	parameters map[string]string
-	http       *http.Client
+	baseURL               string
+	token                 string
+	owner                 string
+	templateID            string
+	agentName             string
+	parameters            map[string]string
+	expectedWorkspaceName string
+	http                  *http.Client
 }
 
 var (
@@ -86,7 +87,8 @@ func New(config Config) (*Client, error) {
 	if strings.TrimSpace(config.Owner) == "" {
 		return nil, errors.New("coder: workspace owner is required")
 	}
-	if _, err := uuid.Parse(strings.TrimSpace(config.TemplateID)); err != nil {
+	templateID, err := uuid.Parse(strings.TrimSpace(config.TemplateID))
+	if err != nil {
 		return nil, errors.New("coder: template ID must be a UUID")
 	}
 	httpClient := config.HTTPClient
@@ -105,11 +107,39 @@ func New(config Config) (*Client, error) {
 		baseURL:    strings.TrimRight(endpoint.String(), "/"),
 		token:      strings.TrimSpace(config.Token),
 		owner:      strings.TrimSpace(config.Owner),
-		templateID: strings.TrimSpace(config.TemplateID),
+		templateID: templateID.String(),
 		agentName:  strings.TrimSpace(config.AgentName),
 		parameters: parameters,
 		http:       httpClient,
 	}, nil
+}
+
+// ForSandbox binds the deployment-scoped connection credential to the
+// non-secret Coder contract stored on one session. The returned client is safe
+// to use only for that session's deterministic workspace identity.
+func (c *Client) ForSandbox(record domain.Sandbox) (sandbox.Provider, error) {
+	if strings.TrimSpace(record.SessionID) == "" {
+		return nil, errors.New("coder: durable session ID is required")
+	}
+	profile, err := sandbox.DecodeCoderSessionProfile(record.ResourceProfile)
+	if err != nil {
+		return nil, fmt.Errorf("coder: resolve durable session profile: %w", err)
+	}
+	templateID, err := uuid.Parse(profile.TemplateID)
+	if err != nil {
+		return nil, errors.New("coder: durable session template ID must be a UUID")
+	}
+	parameters := make(map[string]string, len(profile.Parameters))
+	for name, value := range profile.Parameters {
+		parameters[name] = value
+	}
+	sessionClient := *c
+	sessionClient.owner = profile.Owner
+	sessionClient.templateID = templateID.String()
+	sessionClient.agentName = profile.AgentName
+	sessionClient.parameters = parameters
+	sessionClient.expectedWorkspaceName = WorkspaceName(record.SessionID)
+	return &sessionClient, nil
 }
 
 type workspace struct {
@@ -169,6 +199,12 @@ func (c *Client) Create(ctx context.Context, spec sandbox.Spec) (sandbox.Environ
 	if name == "" {
 		return sandbox.Environment{}, errors.New("coder: workspace name is required")
 	}
+	if c.expectedWorkspaceName != "" && name != c.expectedWorkspaceName {
+		return sandbox.Environment{}, fmt.Errorf(
+			"coder: session workspace name mismatch: got %q, want %q",
+			name, c.expectedWorkspaceName,
+		)
+	}
 	parameterNames := make([]string, 0, len(c.parameters))
 	for parameterName := range c.parameters {
 		parameterNames = append(parameterNames, parameterName)
@@ -186,6 +222,9 @@ func (c *Client) Create(ctx context.Context, spec sandbox.Spec) (sandbox.Environ
 	if err := c.do(ctx, http.MethodPost, "/api/v2/users/"+url.PathEscape(c.owner)+"/workspaces", body, &view); err != nil {
 		return sandbox.Environment{}, err
 	}
+	if err := c.validateWorkspaceIdentity(view, name); err != nil {
+		return sandbox.Environment{}, err
+	}
 	return c.toEnvironment(view), nil
 }
 
@@ -195,15 +234,27 @@ func (c *Client) Get(ctx context.Context, id sandbox.ID) (sandbox.Environment, e
 	if err := c.do(ctx, http.MethodGet, "/api/v2/workspaces/"+url.PathEscape(string(id)), nil, &view); err != nil {
 		return sandbox.Environment{}, err
 	}
+	if c.expectedWorkspaceName != "" {
+		if err := c.validateWorkspaceIdentity(view, c.expectedWorkspaceName); err != nil {
+			return sandbox.Environment{}, err
+		}
+	}
 	return c.toEnvironment(view), nil
 }
 
 // FindBySession recovers a workspace after a control-plane crash between
 // provider creation and persistence of the returned Coder workspace ID.
 func (c *Client) FindBySession(ctx context.Context, sessionID string) (sandbox.Environment, bool, error) {
+	expectedName := WorkspaceName(sessionID)
+	if c.expectedWorkspaceName != "" && expectedName != c.expectedWorkspaceName {
+		return sandbox.Environment{}, false, fmt.Errorf(
+			"coder: session workspace name mismatch: got %q, want %q",
+			expectedName, c.expectedWorkspaceName,
+		)
+	}
 	var view workspace
 	requestPath := "/api/v2/users/" + url.PathEscape(c.owner) + "/workspace/" +
-		url.PathEscape(WorkspaceName(sessionID))
+		url.PathEscape(expectedName)
 	err := c.do(ctx, http.MethodGet, requestPath, nil, &view)
 	if errors.Is(err, sandbox.ErrNotFound) {
 		return sandbox.Environment{}, false, nil
@@ -211,10 +262,32 @@ func (c *Client) FindBySession(ctx context.Context, sessionID string) (sandbox.E
 	if err != nil {
 		return sandbox.Environment{}, false, err
 	}
+	if err := c.validateWorkspaceIdentity(view, expectedName); err != nil {
+		return sandbox.Environment{}, false, err
+	}
 	if normalizeState(view.LatestBuild.Status) == sandbox.StateDeleted {
 		return sandbox.Environment{}, false, nil
 	}
 	return c.toEnvironment(view), true, nil
+}
+
+func (c *Client) validateWorkspaceIdentity(view workspace, expectedName string) error {
+	if view.Name != expectedName {
+		return fmt.Errorf(
+			"coder: workspace name mismatch: got %q, want %q", view.Name, expectedName,
+		)
+	}
+	if view.OwnerName != c.owner {
+		return fmt.Errorf(
+			"coder: workspace owner mismatch: got %q, want %q", view.OwnerName, c.owner,
+		)
+	}
+	if view.TemplateID != c.templateID {
+		return fmt.Errorf(
+			"coder: workspace template mismatch: got %q, want %q", view.TemplateID, c.templateID,
+		)
+	}
+	return nil
 }
 
 func (c *Client) Start(ctx context.Context, id sandbox.ID) error {
@@ -295,6 +368,13 @@ func (c *Client) BootstrapWorker(ctx context.Context, id sandbox.ID, bootstrap s
 	}
 	var view workspace
 	if err := c.do(ctx, http.MethodGet, "/api/v2/workspaces/"+url.PathEscape(string(id)), nil, &view); err != nil {
+		return err
+	}
+	expectedName := c.expectedWorkspaceName
+	if expectedName == "" {
+		expectedName = WorkspaceName(bootstrap.DurableIdentity)
+	}
+	if err := c.validateWorkspaceIdentity(view, expectedName); err != nil {
 		return err
 	}
 	agent, ok := c.selectAgent(view)

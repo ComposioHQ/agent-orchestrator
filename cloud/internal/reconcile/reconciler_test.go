@@ -27,7 +27,7 @@ func TestWorkerSpecUsesPersistedCoderWorkspaceLayout(t *testing.T) {
 	t.Parallel()
 	store := &workerSpecStore{}
 	reconciler := New(store, nil, Options{PublicURL: "https://cloud.example.com"})
-	profile := json.RawMessage(`{"coder":{"durableRoot":"/customer/persistent"}}`)
+	profile := json.RawMessage(`{"coder":{"owner":"planned-owner","templateId":"2a2e262c-b31c-4202-946d-a19ad45d1fd2","parameters":{"region":"us-west-2"},"durableRoot":"/customer/persistent"}}`)
 	spec, err := reconciler.workerSpec(context.Background(), domain.Sandbox{
 		SessionID: "session-1", OrgID: "org-1", Provider: sandbox.ProviderCoder,
 		ResourceProfile: profile,
@@ -75,7 +75,7 @@ func TestWorkerSpecRejectsCoderWithoutDurableContractBeforeIssuingTicket(t *test
 	_, err := reconciler.workerSpec(context.Background(), domain.Sandbox{
 		SessionID: "session-1", OrgID: "org-1", Provider: sandbox.ProviderCoder,
 	})
-	if err == nil || !strings.Contains(err.Error(), "AO_CLOUD_CODER_DURABLE_ROOT") {
+	if err == nil || !strings.Contains(err.Error(), "session resource profile") {
 		t.Fatalf("workerSpec error = %v", err)
 	}
 	if store.issued != 0 {

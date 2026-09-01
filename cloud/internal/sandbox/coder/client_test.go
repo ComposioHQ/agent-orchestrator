@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/cloud/internal/domain"
 	"github.com/aoagents/agent-orchestrator/cloud/internal/sandbox"
 	"github.com/coder/websocket"
 )
@@ -292,6 +293,123 @@ func TestNewRejectsUnsafeConfiguration(t *testing.T) {
 	}
 }
 
+func TestForSandboxUsesDurableSessionProfile(t *testing.T) {
+	t.Parallel()
+	client := newTestClient(t, "https://coder.example.com", map[string]string{"source": "deployment"})
+	provider, err := client.ForSandbox(domain.Sandbox{
+		SessionID:       "session-1",
+		ResourceProfile: json.RawMessage(`{"coder":{"owner":"planned-owner","templateId":"2a2e262c-b31c-4202-946d-a19ad45d1fd2","agentName":"planned-agent","parameters":{"source":"session"},"durableRoot":"/persistent/coder"}}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	scoped := provider.(*Client)
+	if scoped == client {
+		t.Fatal("ForSandbox returned the deployment singleton")
+	}
+	if scoped.owner != "planned-owner" || scoped.templateID != testTemplateID ||
+		scoped.agentName != "planned-agent" || scoped.parameters["source"] != "session" ||
+		scoped.expectedWorkspaceName != WorkspaceName("session-1") {
+		t.Fatalf("unexpected scoped client: %+v", scoped)
+	}
+	if client.owner != "ao-integration" || client.parameters["source"] != "deployment" {
+		t.Fatal("ForSandbox mutated the deployment client")
+	}
+}
+
+func TestScopedCreateUsesDurableOwnerTemplateAndParameters(t *testing.T) {
+	t.Parallel()
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/api/v2/users/planned-owner/workspaces" {
+			http.Error(writer, "unexpected route", http.StatusNotFound)
+			return
+		}
+		var body createWorkspaceRequest
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			t.Errorf("decode create request: %v", err)
+		}
+		if body.TemplateID != testTemplateID || body.Name != WorkspaceName("session-1") ||
+			len(body.RichParameterValues) != 1 || body.RichParameterValues[0] != (buildParameter{Name: "source", Value: "session"}) {
+			t.Errorf("create request did not use durable profile: %+v", body)
+		}
+		view := healthyWorkspace()
+		view.OwnerName = "planned-owner"
+		writer.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(writer).Encode(view)
+	}))
+	defer server.Close()
+	client := scopedTestClient(t, server.URL)
+	if _, err := client.Create(context.Background(), sandbox.Spec{SessionID: "session-1"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestFindBySessionRejectsWorkspaceIdentityMismatch(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		mutate func(*workspace)
+		want   string
+	}{
+		{name: "name", mutate: func(view *workspace) { view.Name = "ao-other" }, want: "workspace name mismatch"},
+		{name: "owner", mutate: func(view *workspace) { view.OwnerName = "other-owner" }, want: "workspace owner mismatch"},
+		{name: "template", mutate: func(view *workspace) { view.TemplateID = "a4ecb7eb-58dc-438f-8fb8-3787236dd43d" }, want: "workspace template mismatch"},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+				view := healthyWorkspace()
+				view.OwnerName = "planned-owner"
+				test.mutate(&view)
+				writer.Header().Set("Content-Type", "application/json")
+				if err := json.NewEncoder(writer).Encode(view); err != nil {
+					t.Errorf("write workspace: %v", err)
+				}
+			}))
+			defer server.Close()
+			client := scopedTestClient(t, server.URL)
+			_, found, err := client.FindBySession(context.Background(), "session-1")
+			if err == nil || !strings.Contains(err.Error(), test.want) || found {
+				t.Fatalf("FindBySession = found %t, error %v", found, err)
+			}
+		})
+	}
+}
+
+func TestBootstrapRejectsWorkspaceMismatchBeforePTYUpload(t *testing.T) {
+	t.Parallel()
+	ptyCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch {
+		case request.URL.Path == "/api/v2/workspaces/"+testWorkspaceID:
+			view := healthyWorkspace()
+			view.OwnerName = "planned-owner"
+			view.TemplateID = "a4ecb7eb-58dc-438f-8fb8-3787236dd43d"
+			writer.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(writer).Encode(view)
+		case strings.Contains(request.URL.Path, "/pty"):
+			ptyCalls++
+			http.Error(writer, "must not upload", http.StatusInternalServerError)
+		default:
+			http.Error(writer, "unexpected route", http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	client := scopedTestClient(t, server.URL)
+	err := client.BootstrapWorker(context.Background(), testWorkspaceID, sandbox.WorkerBootstrap{
+		Binary: []byte("worker"), Destination: "/usr/local/bin/ao-worker", User: "ao-worker",
+		DurableRoot: "/mnt/ao", DurableIdentity: "session-1",
+	})
+	if err == nil || !strings.Contains(err.Error(), "workspace template mismatch") {
+		t.Fatalf("BootstrapWorker error = %v", err)
+	}
+	if ptyCalls != 0 {
+		t.Fatalf("opened %d PTYs for a mismatched workspace", ptyCalls)
+	}
+}
+
 func TestValidateBootstrapRejectsUnsafeDurableContract(t *testing.T) {
 	t.Parallel()
 	base := sandbox.WorkerBootstrap{
@@ -383,18 +501,40 @@ func newTestClient(t *testing.T, baseURL string, parameters map[string]string) *
 	return client
 }
 
+func scopedTestClient(t *testing.T, baseURL string) *Client {
+	t.Helper()
+	base := newTestClient(t, baseURL, map[string]string{"source": "deployment"})
+	provider, err := base.ForSandbox(domain.Sandbox{
+		SessionID:       "session-1",
+		ResourceProfile: json.RawMessage(`{"coder":{"owner":"planned-owner","templateId":"2a2e262c-b31c-4202-946d-a19ad45d1fd2","agentName":"dev","parameters":{"source":"session"},"durableRoot":"/persistent/coder"}}`),
+	})
+	if err != nil {
+		t.Fatalf("scope client: %v", err)
+	}
+	return provider.(*Client)
+}
+
 func writeWorkspace(t *testing.T, writer http.ResponseWriter, status, agentStatus string, healthy bool) {
 	t.Helper()
 	writer.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(writer).Encode(workspace{
-		ID: testWorkspaceID, Name: "ao-test", OwnerName: "ao-integration", TemplateID: testTemplateID,
-		Health: workspaceHealth{Healthy: healthy},
-		LatestBuild: workspaceBuild{Status: status, Resources: []workspaceResource{{Agents: []workspaceAgent{{
-			ID: testAgentID, Name: "dev", Status: agentStatus, LifecycleState: "ready",
-			Health: workspaceHealth{Healthy: healthy},
-		}}}}},
-	}); err != nil {
+	view := healthyWorkspace()
+	view.LatestBuild.Status = status
+	view.LatestBuild.Resources[0].Agents[0].Status = agentStatus
+	view.LatestBuild.Resources[0].Agents[0].Health.Healthy = healthy
+	view.Health.Healthy = healthy
+	if err := json.NewEncoder(writer).Encode(view); err != nil {
 		t.Errorf("write workspace: %v", err)
+	}
+}
+
+func healthyWorkspace() workspace {
+	return workspace{
+		ID: testWorkspaceID, Name: WorkspaceName("session-1"), OwnerName: "ao-integration", TemplateID: testTemplateID,
+		Health: workspaceHealth{Healthy: true},
+		LatestBuild: workspaceBuild{Status: "running", Resources: []workspaceResource{{Agents: []workspaceAgent{{
+			ID: testAgentID, Name: "dev", Status: "connected", LifecycleState: "ready",
+			Health: workspaceHealth{Healthy: true},
+		}}}}},
 	}
 }
 
