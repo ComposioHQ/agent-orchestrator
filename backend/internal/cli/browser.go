@@ -36,6 +36,13 @@ type browserCommandResponseDTO struct {
 	Result    map[string]any `json:"result"`
 }
 
+type browserScreenshotFileResult struct {
+	Path   string `json:"path"`
+	Size   int64  `json:"size"`
+	Width  int    `json:"width"`
+	Height int    `json:"height"`
+}
+
 const browserCapabilityHeader = "X-AO-Browser-Capability"
 const maxBrowserWaitMillis = 55_000
 const (
@@ -424,25 +431,36 @@ func newBrowserCommand(ctx *commandContext) *cobra.Command {
 	waitCmd.Flags().IntVar(&timeoutMS, "timeout", 10_000, "condition timeout in milliseconds")
 	cmd.AddCommand(waitCmd)
 
-	cmd.AddCommand(&cobra.Command{
+	var screenshotBase64 bool
+	screenshot := &cobra.Command{
 		Use:   "screenshot [path]",
 		Short: "Capture the current page to a PNG file",
-		Args:  atMostOneArg,
+		Long: "Capture the current page to a PNG file. JSON output writes the file and returns compact metadata.\n" +
+			"To return inline base64 image data instead, omit the path and use --base64 with --json.",
+		Args: atMostOneArg,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if screenshotBase64 && !jsonOutput {
+				return usageError{errors.New("--base64 requires --json")}
+			}
+			if screenshotBase64 && len(args) != 0 {
+				return usageError{errors.New("--base64 cannot be combined with a screenshot path")}
+			}
 			resp, err := ctx.browserAction(cmd.Context(), "screenshot", nil)
 			if err != nil {
 				return err
 			}
-			if jsonOutput {
+			if screenshotBase64 {
 				return writeJSON(cmd.OutOrStdout(), resp)
 			}
 			path := "ao-browser-" + ctx.deps.Now().Format("20060102-150405.000") + ".png"
 			if len(args) == 1 {
 				path = args[0]
 			}
-			return writeBrowserScreenshot(cmd, resp.Result, path)
+			return writeBrowserScreenshot(cmd, resp.Result, path, jsonOutput)
 		},
-	})
+	}
+	screenshot.Flags().BoolVar(&screenshotBase64, "base64", false, "include inline base64 image data in JSON output (cannot be used with a path)")
+	cmd.AddCommand(screenshot)
 
 	var networkDuration int
 	networkCmd := &cobra.Command{
@@ -810,7 +828,7 @@ func writeBrowserNetworkResult(cmd *cobra.Command, action string, result map[str
 	return err
 }
 
-func writeBrowserScreenshot(cmd *cobra.Command, result map[string]any, target string) error {
+func writeBrowserScreenshot(cmd *cobra.Command, result map[string]any, target string, jsonOutput bool) error {
 	encoded, _ := result["data"].(string)
 	if encoded == "" {
 		return errors.New("browser returned an empty screenshot")
@@ -830,18 +848,41 @@ func writeBrowserScreenshot(cmd *cobra.Command, result map[string]any, target st
 		}
 		return err
 	}
-	defer func() { _ = file.Close() }()
-	if _, err := file.Write(data); err != nil {
-		return err
+	written, writeErr := file.Write(data)
+	closeErr := file.Close()
+	if writeErr != nil {
+		return writeErr
 	}
-	width := numberString(result["width"])
-	height := numberString(result["height"])
+	if closeErr != nil {
+		return closeErr
+	}
+	width := numberInt(result["width"])
+	height := numberInt(result["height"])
+	if jsonOutput {
+		return writeJSON(cmd.OutOrStdout(), browserScreenshotFileResult{
+			Path:   abs,
+			Size:   int64(written),
+			Width:  width,
+			Height: height,
+		})
+	}
 	size := ""
-	if width != "" && height != "" {
-		size = " (" + width + "x" + height + ")"
+	if width > 0 && height > 0 {
+		size = fmt.Sprintf(" (%dx%d)", width, height)
 	}
 	_, err = fmt.Fprintf(cmd.OutOrStdout(), "Saved %s%s\n", abs, size)
 	return err
+}
+
+func numberInt(v any) int {
+	switch n := v.(type) {
+	case float64:
+		return int(n)
+	case int:
+		return n
+	default:
+		return 0
+	}
 }
 
 func numberString(v any) string {
