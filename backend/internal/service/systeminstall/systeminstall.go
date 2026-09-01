@@ -135,8 +135,9 @@ func (f executableFinderFunc) LookPath(file string) (string, error) { return f(f
 type Plan struct {
 	Target              Target
 	Command             []string // argv, e.g. ["brew", "install", "tmux"]
-	Manager             string   // resolving package manager ("brew", "apt-get", ...), empty when none applies
-	NeedsRoot           bool     // Command must run as root; the caller supplies the privilege
+	Script              *ports.InstallScriptCommand
+	Manager             string // resolving package manager ("brew", "apt-get", ...), empty when none applies
+	NeedsRoot           bool   // Command must run as root; the caller supplies the privilege
 	Unsupported         bool
 	Reason              string // set when Unsupported, or as extra context otherwise
 	Method              string
@@ -370,6 +371,8 @@ func installMethodLabel(method string) string {
 		return "pipx"
 	case "bun":
 		return "Bun"
+	case "official-installer":
+		return "Official installer"
 	default:
 		return "Manual installation"
 	}
@@ -945,6 +948,9 @@ func (s *Service) resolvePlan(target Target) Plan {
 }
 
 func displayCommand(plan Plan) string {
+	if plan.Script != nil {
+		return fmt.Sprintf("%s <downloaded from %s>", strings.Join(plan.Script.Interpreter, " "), plan.Script.URL)
+	}
 	argv := plan.Command
 	if plan.NeedsRoot && len(argv) > 0 {
 		argv = append([]string{"sudo"}, argv...)

@@ -3,6 +3,8 @@ package systeminstall
 import (
 	"context"
 	"fmt"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 var agentDocumentationURLs = map[Target]string{
@@ -39,25 +41,27 @@ func (s requestPlanner) agentMethodPlans(target Target) []Plan {
 	var plans []Plan
 	switch target {
 	case TargetClaudeCode:
+		official := s.officialByOS(target, "https://claude.ai/install.sh", "bash", "https://claude.ai/install.ps1", agentDocumentationURLs[target])
 		if s.goos == "darwin" {
-			plans = []Plan{s.planBrewCask(target, "claude-code"), s.planNPM(target, "@anthropic-ai/claude-code")}
+			plans = []Plan{s.planBrewCask(target, "claude-code"), s.planNPM(target, "@anthropic-ai/claude-code"), official}
 		} else {
-			plans = []Plan{s.planNPM(target, "@anthropic-ai/claude-code")}
+			plans = []Plan{s.planNPM(target, "@anthropic-ai/claude-code"), official}
 		}
 	case TargetCodex:
+		official := s.officialByOS(target, "https://chatgpt.com/codex/install.sh", "sh", "https://chatgpt.com/codex/install.ps1", agentDocumentationURLs[target])
 		if s.goos == "darwin" {
-			plans = []Plan{s.planBrewCask(target, "codex"), s.planNPM(target, "@openai/codex")}
+			plans = []Plan{s.planBrewCask(target, "codex"), s.planNPM(target, "@openai/codex"), official}
 		} else {
-			plans = []Plan{s.planNPM(target, "@openai/codex")}
+			plans = []Plan{s.planNPM(target, "@openai/codex"), official}
 		}
 	case TargetOpencode:
 		switch s.goos {
 		case "windows":
 			plans = []Plan{s.planWinget(target, "SST.opencode")}
 		case "darwin":
-			plans = []Plan{s.planBrew(target, "anomalyco/tap/opencode"), s.planNPM(target, "opencode-ai@latest")}
+			plans = []Plan{s.planBrew(target, "anomalyco/tap/opencode"), s.planNPM(target, "opencode-ai@latest"), s.planShellInstaller(target, "https://opencode.ai/install", "bash")}
 		default:
-			plans = []Plan{s.planNPM(target, "opencode-ai@latest")}
+			plans = []Plan{s.planNPM(target, "opencode-ai@latest"), s.planShellInstaller(target, "https://opencode.ai/install", "bash")}
 		}
 	case TargetCopilot:
 		switch s.goos {
@@ -70,17 +74,22 @@ func (s requestPlanner) agentMethodPlans(target Target) []Plan {
 		}
 	case TargetPi:
 		plans = []Plan{s.planNPM(target, "@earendil-works/pi-coding-agent")}
+		if s.goos != "windows" {
+			plans = append(plans, s.planShellInstaller(target, "https://pi.dev/install.sh", "sh"))
+		}
 	case TargetAmp:
+		official := s.officialByOS(target, "https://ampcode.com/install.sh", "bash", "https://ampcode.com/install.ps1", agentDocumentationURLs[target])
 		if s.goos == "darwin" {
-			plans = []Plan{s.planBrew(target, "ampcode/tap/ampcode"), s.planNPM(target, "@ampcode/cli")}
+			plans = []Plan{s.planBrew(target, "ampcode/tap/ampcode"), s.planNPM(target, "@ampcode/cli"), official}
 		} else {
-			plans = []Plan{s.planNPM(target, "@ampcode/cli")}
+			plans = []Plan{s.planNPM(target, "@ampcode/cli"), official}
 		}
 	case TargetDroid:
+		official := s.officialByOS(target, "https://app.factory.ai/cli", "sh", "https://app.factory.ai/cli/windows", agentDocumentationURLs[target])
 		if s.goos == "darwin" {
-			plans = []Plan{s.planBrewCask(target, "droid"), s.planNPM(target, "droid")}
+			plans = []Plan{s.planBrewCask(target, "droid"), s.planNPM(target, "droid"), official}
 		} else {
-			plans = []Plan{s.planNPM(target, "droid")}
+			plans = []Plan{s.planNPM(target, "droid"), official}
 		}
 	case TargetCrush:
 		if s.goos == "darwin" {
@@ -89,16 +98,18 @@ func (s requestPlanner) agentMethodPlans(target Target) []Plan {
 			plans = []Plan{s.planNPM(target, "@charmland/crush")}
 		}
 	case TargetQwen:
+		official := s.officialByOS(target, "https://qwen-code-assets.oss-cn-hangzhou.aliyuncs.com/installation/install-qwen-standalone.sh", "bash", "https://qwen-code-assets.oss-cn-hangzhou.aliyuncs.com/installation/install-qwen-standalone.ps1", agentDocumentationURLs[target])
 		if s.goos == "darwin" {
-			plans = []Plan{s.planBrew(target, "qwen-code"), s.planNPM(target, "@qwen-code/qwen-code@latest")}
+			plans = []Plan{s.planBrew(target, "qwen-code"), s.planNPM(target, "@qwen-code/qwen-code@latest"), official}
 		} else {
-			plans = []Plan{s.planNPM(target, "@qwen-code/qwen-code@latest")}
+			plans = []Plan{s.planNPM(target, "@qwen-code/qwen-code@latest"), official}
 		}
 	case TargetAutohand:
+		official := s.officialByOS(target, "https://autohand.ai/install.sh", "sh", "https://autohand.ai/install.ps1", agentDocumentationURLs[target])
 		if s.goos == "darwin" {
-			plans = []Plan{s.planBrew(target, "autohandai/code/autohand-code"), s.planNPM(target, "autohand-cli")}
+			plans = []Plan{s.planBrew(target, "autohandai/code/autohand-code"), s.planNPM(target, "autohand-cli"), official}
 		} else {
-			plans = []Plan{s.planNPM(target, "autohand-cli")}
+			plans = []Plan{s.planNPM(target, "autohand-cli"), official}
 		}
 	case TargetKimchi:
 		manual := manualPlan(target, "Kimchi's release installer must be run manually; AO does not execute mutable remote installer scripts.", agentDocumentationURLs[target])
@@ -110,10 +121,11 @@ func (s requestPlanner) agentMethodPlans(target Target) []Plan {
 	case TargetVibe:
 		plans = []Plan{s.planUV(target, "mistral-vibe"), s.planPipx(target, "mistral-vibe")}
 	case TargetOMP:
+		official := s.officialByOS(target, "https://omp.sh/install", "sh", "https://omp.sh/install.ps1", agentDocumentationURLs[target])
 		if s.goos == "darwin" {
-			plans = []Plan{s.planBrew(target, "can1357/tap/omp"), s.planBun(target)}
+			plans = []Plan{s.planBrew(target, "can1357/tap/omp"), s.planBun(target), official}
 		} else {
-			plans = []Plan{s.planBun(target)}
+			plans = []Plan{s.planBun(target), official}
 		}
 	default:
 		plans = []Plan{s.planAgent(target)}
@@ -326,17 +338,31 @@ func (s *Service) officialByOS(target Target, unixURL, unixShell, windowsURL, do
 }
 
 func (s *Service) planShellInstaller(target Target, url, shell string) Plan {
+	resolved, err := s.executables.LookPath(shell)
+	if err != nil {
+		return Plan{Target: target, Unsupported: true, Method: "official-installer", Reason: fmt.Sprintf("%s was not found on PATH.", shell)}
+	}
 	return Plan{
-		Target: target, Unsupported: true, Method: "manual",
-		Reason: fmt.Sprintf("AO does not automatically execute mutable remote installer scripts. Follow the vendor instructions for %s using %s.", url, shell),
+		Target: target, Method: "official-installer",
+		Script: &ports.InstallScriptCommand{URL: url, Interpreter: []string{resolved}},
 	}
 }
 
 func (s *Service) planPowerShellInstaller(target Target, url string) Plan {
-	return Plan{
-		Target: target, Unsupported: true, Method: "manual",
-		Reason: fmt.Sprintf("AO does not automatically execute mutable remote installer scripts. Follow the vendor instructions for %s in PowerShell.", url),
+	for _, shell := range []string{"pwsh.exe", "powershell.exe", "pwsh", "powershell"} {
+		resolved, err := s.executables.LookPath(shell)
+		if err != nil {
+			continue
+		}
+		return Plan{
+			Target: target, Method: "official-installer",
+			Script: &ports.InstallScriptCommand{
+				URL:         url,
+				Interpreter: []string{resolved, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File"},
+			},
+		}
 	}
+	return Plan{Target: target, Unsupported: true, Method: "official-installer", Reason: "PowerShell was not found on PATH."}
 }
 
 func (s *Service) planUV(target Target, pkg string) Plan {

@@ -142,36 +142,67 @@ func TestAgentPlanSelectsAvailableFallback(t *testing.T) {
 	}
 }
 
-func TestAgentPlansNeverAutoExecuteRemoteScriptsOrSudo(t *testing.T) {
-	s := newTestService(
-		"darwin", "npm", "brew", "curl", "bash", "sh", "pwsh", "bun", "uv", "pipx",
-	)
-	for _, target := range agentTargets {
-		plan := s.planAgent(target)
-		command := strings.Join(plan.Command, " ")
-		if strings.Contains(command, "sudo") {
-			t.Errorf("%s command contains sudo: %q", target, command)
-		}
-		if strings.Contains(command, "curl") || strings.Contains(command, "irm ") || strings.Contains(command, "|") {
-			t.Errorf("%s command executes a mutable remote script: %q", target, command)
-		}
-		if len(plan.Command) >= 2 && (plan.Command[1] == "-c" || plan.Command[1] == "-Command") {
-			t.Errorf("%s command uses a shell evaluation boundary: %q", target, command)
-		}
+func TestOfficialInstallerPlansAreAutomaticAndServerOwned(t *testing.T) {
+	tests := []struct {
+		goos        string
+		target      Target
+		found       []string
+		wantURL     string
+		wantProgram string
+	}{
+		{"darwin", TargetCursor, []string{"bash"}, "https://cursor.com/install", "bash"},
+		{"windows", TargetCursor, []string{"pwsh.exe"}, "https://cursor.com/install?win32=true", "pwsh.exe"},
+		{"linux", TargetAider, []string{"sh"}, "https://aider.chat/install.sh", "sh"},
+		{"linux", TargetGrok, []string{"bash"}, "https://x.ai/cli/install.sh", "bash"},
+		{"linux", TargetKimi, []string{"bash"}, "https://code.kimi.com/kimi-code/install.sh", "bash"},
+		{"linux", TargetGoose, []string{"bash"}, "https://github.com/aaif-goose/goose/releases/download/stable/download_cli.sh", "bash"},
+		{"linux", TargetDevin, []string{"bash"}, "https://cli.devin.ai/install.sh", "bash"},
+		{"windows", TargetKiro, []string{"powershell.exe"}, "https://cli.kiro.dev/install.ps1", "powershell.exe"},
+		{"linux", TargetMuse, []string{"bash"}, "https://dev.meta.ai/install.sh", "bash"},
+		{"windows", TargetAgy, []string{"pwsh"}, "https://antigravity.google/cli/install.ps1", "pwsh"},
+		{"linux", TargetPrimeAgent, []string{"sh"}, "https://app.primeintellect.ai/prime-agent/install.sh", "sh"},
+	}
+	for _, tt := range tests {
+		t.Run(string(tt.target)+"/"+tt.goos, func(t *testing.T) {
+			plan := newTestService(tt.goos, tt.found...).planAgent(tt.target)
+			if plan.Unsupported || plan.Method != "official-installer" || plan.Script == nil {
+				t.Fatalf("plan = %+v", plan)
+			}
+			if plan.Script.URL != tt.wantURL || plan.Script.Interpreter[0] != "/usr/bin/"+tt.wantProgram {
+				t.Fatalf("script = %+v", plan.Script)
+			}
+			if len(plan.Command) != 0 {
+				t.Fatalf("remote plan exposed executable argv: %v", plan.Command)
+			}
+		})
 	}
 }
 
-func TestScriptOnlyHarnessesAreManual(t *testing.T) {
-	s := newTestService("darwin", "curl", "bash", "sh", "pwsh")
-	for _, target := range []Target{TargetCursor, TargetAider, TargetGrok, TargetKimi, TargetGoose, TargetDevin, TargetKiro, TargetMuse, TargetAgy, TargetPrimeAgent} {
-		plan := s.planAgent(target)
-		if !plan.Unsupported || plan.Method != "manual" || len(plan.Command) != 0 {
-			t.Errorf("%s plan = %+v, want manual with no command", target, plan)
-		}
-		if plan.DocsURL == "" {
-			t.Errorf("%s manual plan has no documentation URL", target)
-		}
+func TestPackageManagerMethodsStayPreferredBeforeOfficialInstaller(t *testing.T) {
+	s := newTestService("darwin", "brew", "npm", "sh")
+	s.installCapabilities = installCapabilitiesStub{
+		prefix: "/Users/test/.npm", homebrewPrefix: "/opt/homebrew", writable: true,
 	}
+	plans, err := s.AgentPlans(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, plan := range plans {
+		if plan.AgentID != string(TargetCodex) {
+			continue
+		}
+		if len(plan.Methods) != 3 {
+			t.Fatalf("methods = %+v", plan.Methods)
+		}
+		want := []string{"homebrew", "npm", "official-installer"}
+		for i, method := range plan.Methods {
+			if method.ID != want[i] || method.Recommended != (i == 0) {
+				t.Fatalf("method[%d] = %+v", i, method)
+			}
+		}
+		return
+	}
+	t.Fatal("codex plan not found")
 }
 
 func TestVibeRequiresIsolatedToolInstaller(t *testing.T) {
@@ -307,14 +338,17 @@ func TestAgentPlansExposeEveryViableServerOwnedMethod(t *testing.T) {
 			break
 		}
 	}
-	if len(codex.Methods) != 2 {
-		t.Fatalf("codex methods = %+v, want homebrew and npm", codex.Methods)
+	if len(codex.Methods) != 3 {
+		t.Fatalf("codex methods = %+v, want homebrew, npm, and official installer", codex.Methods)
 	}
 	if codex.Methods[0].ID != "homebrew" || !codex.Methods[0].Recommended || !codex.Methods[0].Available {
 		t.Fatalf("first method = %+v, want recommended viable homebrew", codex.Methods[0])
 	}
 	if codex.Methods[1].ID != "npm" || codex.Methods[1].Recommended || !codex.Methods[1].Available {
 		t.Fatalf("second method = %+v, want alternate viable npm", codex.Methods[1])
+	}
+	if codex.Methods[2].ID != "official-installer" || codex.Methods[2].Recommended || codex.Methods[2].Available {
+		t.Fatalf("third method = %+v, want unavailable official installer without sh", codex.Methods[2])
 	}
 	if strings.Contains(codex.Methods[0].Command, "curl") || strings.Contains(codex.Methods[1].Command, "curl") {
 		t.Fatalf("codex methods include remote script execution: %+v", codex.Methods)
