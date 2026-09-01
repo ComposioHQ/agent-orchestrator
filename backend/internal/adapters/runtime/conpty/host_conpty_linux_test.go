@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/creack/pty"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 // TestMain lets the detached-spawn integration test re-exec this test binary
@@ -364,5 +366,53 @@ func TestLinuxPTYCloseFailsClosedWhenLeaderStartTimeIsZero(t *testing.T) {
 	// Verify the dummy process is still running and unharmed.
 	if !pidAlive(dummyPID) {
 		t.Fatalf("unrelated process %d was killed by Close() when leaderStartTime was zero", dummyPID)
+	}
+}
+
+func TestLinuxRuntimeDestroyReapsTermIgnoringProcessTreeEndToEnd(t *testing.T) {
+	isolateRegistry(t)
+	runtime := New(Options{Spawner: defaultSpawnHost})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	handle, err := runtime.Create(ctx, ports.RuntimeConfig{
+		SessionID:     "term-reap-e2e",
+		WorkspacePath: t.TempDir(),
+		Argv: []string{
+			"/bin/sh", "-c", `trap '' TERM; (trap '' TERM; printf 'term-trap-ready\n'; sleep 30) & wait`,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Wait for process readiness output.
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		out, outErr := runtime.GetOutput(context.Background(), handle, 10)
+		if outErr == nil && strings.Contains(out, "term-trap-ready") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for term-trap-ready output: %q (err: %v)", out, outErr)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	sess := runtime.resolve(handle.ID)
+	if sess == nil {
+		t.Fatal("session not found in runtime")
+	}
+	hostPID := sess.pid
+
+	// Destroy the session through the runtime.
+	if err := runtime.Destroy(context.Background(), handle); err != nil {
+		t.Fatalf("Destroy: %v", err)
+	}
+
+	// Ensure pty-host is gone.
+	if pidAlive(hostPID) {
+		t.Fatalf("pty-host pid %d survived Destroy", hostPID)
 	}
 }

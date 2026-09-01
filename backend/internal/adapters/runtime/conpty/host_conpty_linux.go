@@ -36,7 +36,7 @@ type linuxPTYConn struct {
 	leaderStartTime uint64
 }
 
-const linuxPTYCloseGrace = 500 * time.Millisecond
+const linuxPTYCloseGrace = 250 * time.Millisecond
 
 func newConPTY(cwd, shellCmd string, shellArgs []string) (ptyConn, error) {
 	// shellCmd and shellArgs are the runtime launch argv assembled by AO's
