@@ -478,37 +478,65 @@ function ClosedTabsSection({
 	);
 }
 
-function IconTabRow({ active, chrome, onSelect, tab }: TabRowProps) {
+function IconTabRow({ active, chrome, closeTitle, onClose, onSelect, onlyTab, tab }: TabRowProps) {
+	const { t } = useTranslation();
 	const label = browserTabLabel(tab.title, tab.url);
+	const closeLabel = t("browser.closeTab", { title: label.title });
 	return (
-		<Tooltip>
-			<TooltipTrigger asChild>
-				<button
-					aria-current={active ? "true" : undefined}
-					aria-label={`${label.title} — ${label.subtitle}`}
-					className={cn(
-						"flex h-8 w-full items-center justify-center overflow-hidden p-1.5 transition-colors",
-						"hover:bg-interactive-hover",
-						active && "bg-interactive-active",
-					)}
-					onClick={onSelect}
-					ref={chrome?.setNodeRef}
-					style={chrome?.style}
-					type="button"
-					{...chrome?.dragProps}
-				>
-					<TabFavicon className="size-icon-base" tab={tab} />
-				</button>
-			</TooltipTrigger>
-			{/* The rail hugs the right edge, so the tooltip opens leftward over the
-			    page. `data-browser-native-overlay` raises the transparent shell above
-			    the live native page for as long as it shows — without it the tooltip
-			    paints behind the page and is invisible (see dom-selectors.ts). */}
-			<TooltipContent data-browser-native-overlay="true" side="left">
-				<span className="block max-w-56 truncate font-medium">{label.title}</span>
-				<span className="block max-w-56 truncate text-muted-foreground">{label.subtitle}</span>
-			</TooltipContent>
-		</Tooltip>
+		<div
+			className={cn(
+				"group/tab-icon relative flex h-8 w-full items-center overflow-hidden transition-colors",
+				"hover:bg-interactive-hover",
+				active && "bg-interactive-active",
+			)}
+			ref={chrome?.setNodeRef}
+			style={chrome?.style}
+		>
+			<Tooltip>
+				<TooltipTrigger asChild>
+					<button
+						aria-current={active ? "true" : undefined}
+						aria-label={`${label.title} — ${label.subtitle}`}
+						className="flex h-full w-full items-center justify-center p-1.5"
+						onClick={onSelect}
+						type="button"
+						{...chrome?.dragProps}
+					>
+						<TabFavicon
+							className="size-icon-base transition-opacity group-hover/tab-icon:opacity-0 group-focus-within/tab-icon:opacity-0"
+							tab={tab}
+						/>
+					</button>
+				</TooltipTrigger>
+				{/* The rail hugs the right edge, so the tooltip opens leftward over the
+				    page. `data-browser-native-overlay` raises the transparent shell above
+				    the live native page for as long as it shows — without it the tooltip
+				    paints behind the page and is invisible (see dom-selectors.ts). */}
+				<TooltipContent data-browser-native-overlay="true" side="left">
+					<span className="block max-w-56 truncate font-medium">{label.title}</span>
+					<span className="block max-w-56 truncate text-muted-foreground">{label.subtitle}</span>
+				</TooltipContent>
+			</Tooltip>
+			<button
+				aria-label={closeLabel}
+				className={cn(
+					"pointer-events-none absolute inset-1.5 grid size-icon-base place-items-center rounded-sm text-passive opacity-0",
+					"transition-[opacity,color] hover:text-foreground",
+					"group-hover/tab-icon:pointer-events-auto group-hover/tab-icon:opacity-100",
+					"group-focus-within/tab-icon:pointer-events-auto group-focus-within/tab-icon:opacity-100",
+					"disabled:pointer-events-none",
+				)}
+				disabled={onlyTab}
+				onClick={(event) => {
+					event.stopPropagation();
+					onClose();
+				}}
+				title={onlyTab ? closeTitle : closeLabel}
+				type="button"
+			>
+				<X aria-hidden="true" className="size-icon-sm" />
+			</button>
+		</div>
 	);
 }
 

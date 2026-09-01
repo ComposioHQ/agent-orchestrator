@@ -1376,6 +1376,28 @@ describe("BrowserPanel", () => {
 			expect(screen.getByTestId("browser-tabs-flyout")).toHaveAttribute("data-state", "closed");
 		});
 
+		it("closes a tab directly from the pinned rail on hover", async () => {
+			pinRail();
+			hookState.tabs = [
+				{ id: "t1", url: "http://localhost:3000/", title: "First app", active: false },
+				{ id: "t2", url: "http://localhost:4173/", title: "Second app", active: true },
+			];
+			hookState.activeTabId = "t2";
+			render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+			const rail = screen.getByTestId("browser-tabs-rail");
+			const pinnedTabs = within(rail.querySelector("nav") as HTMLElement);
+			const closeButton = pinnedTabs.getByRole("button", { name: "Close tab First app" });
+			fireEvent.pointerEnter(pinnedTabs.getByRole("button", { name: "First app — localhost:3000" }));
+
+			expect(closeButton).toHaveClass("group-hover/tab-icon:opacity-100");
+			await userEvent.click(closeButton);
+
+			expect(hookState.closeTab).toHaveBeenCalledWith("t1");
+			expect(hookState.selectTab).not.toHaveBeenCalled();
+			expect(screen.getByTestId("browser-tabs-flyout")).toHaveAttribute("data-state", "closed");
+		});
+
 		it("still opens the flyout on hover while the rail is collapsed", () => {
 			hookState.tabs = [
 				{ id: "t1", url: "http://localhost:3000/", title: "First app", active: false },
