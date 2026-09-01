@@ -166,6 +166,7 @@ func assertLiveDurableState(
 	query.Set("height", "40")
 	query.Set("backend_type", "buffered")
 	query.Set("command", "sh -lc "+shellQuote(script))
+	query.Set("reconnect", uuid.NewString())
 	ptyURL.RawQuery = query.Encode()
 	connection, response, err := websocket.Dial(ctx, ptyURL.String(), &websocket.DialOptions{
 		HTTPClient: client.http,
