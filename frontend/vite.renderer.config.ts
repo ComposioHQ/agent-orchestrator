@@ -80,7 +80,8 @@ function contentSecurityPolicy(mode: "build" | "serve"): string {
 		// impractical because the preamble changes with the plugin version.
 		mode === "serve" ? "script-src 'self' 'unsafe-inline'" : "script-src 'self'",
 		"style-src 'self' 'unsafe-inline'",
-		"img-src 'self' data: http://127.0.0.1:*",
+		// GitHub Enterprise hosts intentionally remain on initials fallback; only the public avatar CDN is allowlisted.
+		"img-src 'self' data: http://127.0.0.1:* https://avatars.githubusercontent.com",
 		"font-src 'self' data:",
 		[
 			"connect-src",
