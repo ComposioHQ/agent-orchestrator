@@ -1,17 +1,11 @@
 import { COMPANY } from "@ao/shared/constants";
-import {
-  ArrowUpRight,
-  CalendarDays,
-  GitBranch,
-  Sparkles,
-  Users,
-} from "lucide-react";
+import { ArrowUpRight, GitBranch, Sparkles, Users } from "lucide-react";
 import type { Metadata } from "next";
-import Image from "next/image";
 
 const eventUrl = "https://luma.com/embed/event/evt-gkxbXap1DCJThsE/simple";
 const pageUrl = `${COMPANY.MARKETING_URL}/hackathons/syndicate/`;
 const lumaUrl = "https://luma.com/event/evt-gkxbXap1DCJThsE";
+const participantPassUrl = "https://aoagents.dev/hackathons/syndicate/pass/";
 
 const highlights = [
   {
@@ -63,28 +57,12 @@ export const metadata: Metadata = {
 
 export default function SyndicateHackathonPage() {
   return (
-    <main className="min-h-[100dvh] overflow-hidden bg-background text-foreground">
+    <main className="min-h-[100dvh] overflow-hidden bg-background font-sans text-foreground">
       <section className="relative px-4 pb-16 pt-16 sm:px-8 sm:pb-20 sm:pt-20 lg:px-[30px] lg:pb-24 lg:pt-24">
-        <div className="pointer-events-none absolute inset-0 opacity-35">
-          <Image
-            src="/optimized/hero-background.webp"
-            alt=""
-            fill
-            priority
-            sizes="100vw"
-            className="object-cover"
-          />
-        </div>
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_20%_10%,rgba(210,86,17,0.18),transparent_34%),linear-gradient(to_bottom,rgba(24,24,22,0.2),var(--background)_88%)]" />
-
-        <div className="relative mx-auto max-w-7xl">
+        <div className="mx-auto max-w-7xl">
           <div className="grid items-center gap-10 lg:grid-cols-[minmax(0,0.92fr)_minmax(460px,600px)] lg:gap-14">
             <div className="max-w-3xl">
-              <div className="inline-flex items-center gap-2 rounded-3xl border border-border bg-background/70 px-3 py-1.5 font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground backdrop-blur">
-                <CalendarDays className="size-3.5 text-brand-light" aria-hidden="true" />
-                AO Hackathons
-              </div>
-              <h1 className="mt-6 max-w-4xl text-balance text-[clamp(42px,8vw,92px)] font-normal leading-[0.96] tracking-normal text-foreground">
+              <h1 className="max-w-4xl text-balance text-[clamp(42px,8vw,92px)] font-normal leading-[0.96] tracking-normal text-foreground">
                 Syndicate Hackathon
               </h1>
               <p className="mt-6 max-w-2xl text-pretty text-lg leading-8 text-muted-foreground sm:text-xl">
@@ -92,39 +70,33 @@ export default function SyndicateHackathonPage() {
                 Register on Luma and bring an idea worth handing to a fleet.
               </p>
 
-              <div className="mt-8 flex flex-wrap gap-2">
-                {["Agent orchestration", "Parallel branches", "Community demos"].map(
-                  (item) => (
-                    <span
-                      key={item}
-                      className="rounded-3xl border border-border bg-card/70 px-4 py-2 text-sm text-foreground/85 backdrop-blur"
-                    >
-                      {item}
-                    </span>
-                  ),
-                )}
+              <div className="mt-8 flex flex-wrap gap-3">
+                <a
+                  href={participantPassUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-2 rounded-3xl bg-primary px-5 py-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+                >
+                  Get your participant pass
+                  <ArrowUpRight className="size-4" aria-hidden="true" />
+                </a>
+                <a
+                  href={lumaUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-2 rounded-3xl border border-border px-5 py-3 text-sm font-medium text-foreground transition-colors hover:bg-muted"
+                >
+                  Open event on Luma
+                  <ArrowUpRight className="size-4" aria-hidden="true" />
+                </a>
               </div>
-
-              <a
-                href={lumaUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="mt-8 inline-flex items-center gap-2 rounded-3xl bg-primary px-5 py-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
-              >
-                Open event on Luma
-                <ArrowUpRight className="size-4" aria-hidden="true" />
-              </a>
             </div>
 
             <div className="relative">
-              <div className="absolute -inset-4 rounded-[8px] border border-brand/25 bg-brand/10 blur-2xl" />
               <div className="relative overflow-hidden rounded-[8px] border border-border bg-card/90 shadow-2xl shadow-black/35 backdrop-blur">
                 <div className="flex items-center justify-between border-b border-border px-4 py-3 sm:px-5">
                   <div>
-                    <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
-                      Registration
-                    </p>
-                    <h2 className="mt-1 text-base font-medium tracking-normal text-foreground">
+                    <h2 className="text-base font-medium tracking-normal text-foreground">
                       Reserve your spot
                     </h2>
                   </div>

@@ -1,15 +1,8 @@
 import { COMPANY } from "@ao/shared/constants";
-import {
-  ArrowRight,
-  ArrowUpRight,
-  CalendarDays,
-  CircleDot,
-  Trophy,
-  Users,
-} from "lucide-react";
+import { ArrowRight, ArrowUpRight } from "lucide-react";
 import type { Metadata } from "next";
-import Image from "next/image";
 import Link from "next/link";
+import { TextScramble } from "./TextScramble";
 
 const pageUrl = `${COMPANY.MARKETING_URL}/hackathons/`;
 
@@ -46,39 +39,14 @@ export const metadata: Metadata = {
   },
 };
 
-const pastStats = [
-  { icon: CalendarDays, label: "Aug 12-13", detail: "Two-day online sprint" },
-  { icon: Users, label: "311 went", detail: "Community builders on Luma" },
-  { icon: Trophy, label: "$200 prizes", detail: "Plus AO merch for standouts" },
-] as const;
-
 export default function HackathonsPage() {
   return (
-    <main className="min-h-[100dvh] overflow-hidden bg-background text-foreground">
+    <main className="min-h-[100dvh] overflow-hidden bg-background font-sans text-foreground">
       <section className="relative px-4 pb-16 pt-16 sm:px-8 sm:pb-20 sm:pt-20 lg:px-[30px] lg:pb-24 lg:pt-24">
-        <div className="pointer-events-none absolute inset-0 opacity-30">
-          <Image
-            src="/optimized/hero-background.webp"
-            alt=""
-            fill
-            priority
-            sizes="100vw"
-            className="object-cover"
-          />
-        </div>
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_18%_8%,rgba(210,86,17,0.2),transparent_32%),linear-gradient(to_bottom,rgba(24,24,22,0.08),var(--background)_78%)]" />
-
-        <div className="relative mx-auto max-w-7xl">
+        <div className="mx-auto max-w-7xl">
           <div className="max-w-4xl">
-            <div className="inline-flex items-center gap-2 rounded-3xl border border-border bg-background/70 px-3 py-1.5 font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground backdrop-blur">
-              <CalendarDays
-                className="size-3.5 text-brand-light"
-                aria-hidden="true"
-              />
-              AO Hackathons
-            </div>
-            <h1 className="mt-6 text-balance text-[clamp(44px,8vw,96px)] font-normal leading-[0.96] tracking-normal text-foreground">
-              Build with agents, then show the work.
+            <h1 className="relative text-balance text-[clamp(44px,8vw,96px)] font-normal leading-[1.02] tracking-normal text-foreground">
+              <TextScramble text="Build with agents, then show the work." />
             </h1>
             <p className="mt-6 max-w-2xl text-pretty text-lg leading-8 text-muted-foreground sm:text-xl">
               Community build sprints for people turning AO into their coding
@@ -89,28 +57,9 @@ export default function HackathonsPage() {
 
           <div className="mt-12 grid gap-5 lg:grid-cols-[minmax(0,1.05fr)_minmax(360px,0.95fr)] lg:items-stretch">
             <article className="group relative overflow-hidden rounded-[8px] border border-border bg-card/85 backdrop-blur">
-              <div className="absolute inset-0 opacity-45">
-                <Image
-                  src="/optimized/feature3.webp"
-                  alt=""
-                  fill
-                  sizes="(max-width: 1024px) 100vw, 55vw"
-                  className="object-cover transition-transform duration-700 group-hover:scale-[1.02]"
-                />
-              </div>
-              <div className="absolute inset-0 bg-gradient-to-br from-background via-background/85 to-background/35" />
-              <div className="relative flex min-h-[520px] flex-col justify-between p-6 sm:p-8 lg:p-10">
+              <div className="flex min-h-[520px] flex-col justify-between p-6 sm:p-8 lg:p-10">
                 <div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="inline-flex items-center gap-2 rounded-3xl border border-brand/35 bg-brand/15 px-3 py-1.5 font-mono text-[11px] uppercase tracking-[0.18em] text-brand-light">
-                      <CircleDot className="size-3" aria-hidden="true" />
-                      Upcoming
-                    </span>
-                    <span className="rounded-3xl border border-border bg-background/70 px-3 py-1.5 text-sm text-muted-foreground">
-                      Registration open
-                    </span>
-                  </div>
-                  <h2 className="mt-7 max-w-2xl text-balance text-[clamp(34px,5vw,64px)] font-normal leading-[0.98] tracking-normal text-foreground">
+                  <h2 className="max-w-2xl text-balance text-[clamp(34px,5vw,64px)] font-normal leading-[0.98] tracking-normal text-foreground">
                     Syndicate Hackathon
                   </h2>
                   <p className="mt-5 max-w-xl text-base leading-7 text-muted-foreground sm:text-lg">
@@ -132,10 +81,7 @@ export default function HackathonsPage() {
             <article className="rounded-[8px] border border-border bg-card/75 p-6 backdrop-blur sm:p-8 lg:p-10">
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-muted-foreground">
-                    Past Hackathon
-                  </p>
-                  <h2 className="mt-4 text-3xl font-normal leading-tight tracking-normal text-foreground sm:text-4xl">
+                  <h2 className="text-3xl font-normal leading-tight tracking-normal text-foreground sm:text-4xl">
                     The Orchestra
                   </h2>
                 </div>
@@ -156,43 +102,6 @@ export default function HackathonsPage() {
                 and ship with agents running on their own machines.
               </p>
 
-              <div className="mt-8 grid gap-3">
-                {pastStats.map((item) => {
-                  const Icon = item.icon;
-                  return (
-                    <div
-                      key={item.label}
-                      className="flex items-center gap-4 rounded-[8px] border border-border bg-background/50 p-4"
-                    >
-                      <Icon
-                        className="size-5 shrink-0 text-brand-light"
-                        aria-hidden="true"
-                      />
-                      <div>
-                        <div className="text-sm font-medium tracking-normal text-foreground">
-                          {item.label}
-                        </div>
-                        <div className="mt-1 text-sm text-muted-foreground">
-                          {item.detail}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-
-              <div className="mt-8 flex flex-wrap gap-2">
-                {["Teams up to 4", "Demo video required", "Public repo required"].map(
-                  (item) => (
-                    <span
-                      key={item}
-                      className="rounded-3xl border border-border px-3 py-1.5 text-sm text-muted-foreground"
-                    >
-                      {item}
-                    </span>
-                  ),
-                )}
-              </div>
             </article>
           </div>
         </div>
