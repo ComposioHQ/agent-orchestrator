@@ -121,11 +121,35 @@ func TestRunningBuildWaitsForHealthyAgent(t *testing.T) {
 	view := workspace{
 		ID: testWorkspaceID, Name: "ao-test", Health: workspaceHealth{Healthy: true},
 		LatestBuild: workspaceBuild{Status: "running", Resources: []workspaceResource{{
-			Agents: []workspaceAgent{{ID: testAgentID, Status: "connecting", Health: workspaceHealth{Healthy: true}}},
+			Agents: []workspaceAgent{{
+				ID: testAgentID, Status: "connecting", LifecycleState: "starting",
+				Health: workspaceHealth{Healthy: true},
+			}},
 		}}},
 	}
 	if environment := client.toEnvironment(view); environment.State != sandbox.StateProvisioning {
 		t.Fatalf("state = %q, want provisioning", environment.State)
+	}
+}
+
+func TestRunningBuildWaitsForAgentStartupScript(t *testing.T) {
+	t.Parallel()
+	client := &Client{}
+	view := workspace{
+		ID: testWorkspaceID, Name: "ao-test", Health: workspaceHealth{Healthy: true},
+		LatestBuild: workspaceBuild{Status: "running", Resources: []workspaceResource{{
+			Agents: []workspaceAgent{{
+				ID: testAgentID, Status: "connected", LifecycleState: "starting",
+				Health: workspaceHealth{Healthy: true},
+			}},
+		}}},
+	}
+	if environment := client.toEnvironment(view); environment.State != sandbox.StateProvisioning {
+		t.Fatalf("state = %q, want provisioning", environment.State)
+	}
+	view.LatestBuild.Resources[0].Agents[0].LifecycleState = "ready"
+	if environment := client.toEnvironment(view); environment.State != sandbox.StateRunning {
+		t.Fatalf("ready state = %q, want running", environment.State)
 	}
 }
 
@@ -285,7 +309,8 @@ func writeWorkspace(t *testing.T, writer http.ResponseWriter, status, agentStatu
 		ID: testWorkspaceID, Name: "ao-test", OwnerName: "ao-integration", TemplateID: testTemplateID,
 		Health: workspaceHealth{Healthy: healthy},
 		LatestBuild: workspaceBuild{Status: status, Resources: []workspaceResource{{Agents: []workspaceAgent{{
-			ID: testAgentID, Name: "dev", Status: agentStatus, Health: workspaceHealth{Healthy: healthy},
+			ID: testAgentID, Name: "dev", Status: agentStatus, LifecycleState: "ready",
+			Health: workspaceHealth{Healthy: healthy},
 		}}}}},
 	}); err != nil {
 		t.Errorf("write workspace: %v", err)

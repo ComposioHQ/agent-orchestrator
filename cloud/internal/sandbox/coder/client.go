@@ -135,10 +135,11 @@ type workspaceResource struct {
 }
 
 type workspaceAgent struct {
-	ID     string          `json:"id"`
-	Name   string          `json:"name"`
-	Status string          `json:"status"`
-	Health workspaceHealth `json:"health"`
+	ID             string          `json:"id"`
+	Name           string          `json:"name"`
+	Status         string          `json:"status"`
+	LifecycleState string          `json:"lifecycle_state"`
+	Health         workspaceHealth `json:"health"`
 }
 
 type buildParameter struct {
@@ -249,7 +250,8 @@ func (c *Client) toEnvironment(view workspace) sandbox.Environment {
 	agent, _ := c.selectAgent(view)
 	state := normalizeState(view.LatestBuild.Status)
 	if state == sandbox.StateRunning &&
-		(agent.ID == "" || agent.Status != "connected" || !agent.Health.Healthy || !view.Health.Healthy) {
+		(agent.ID == "" || agent.Status != "connected" || agent.LifecycleState != "ready" ||
+			!agent.Health.Healthy || !view.Health.Healthy) {
 		state = sandbox.StateProvisioning
 	}
 	return sandbox.Environment{
