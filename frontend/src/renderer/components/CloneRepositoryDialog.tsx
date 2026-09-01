@@ -48,7 +48,8 @@ export default function CloneRepositoryDialog({
 	const targetPath = repositoryName && value.destinationParent
 		? joinCloneDestination(value.destinationParent, repositoryName)
 		: "";
-	const urlError = submitted && !repositoryName ? t("createProject.cloneInvalidUrl") : null;
+	const hasRemoteUrl = value.remoteUrl.trim().length > 0;
+	const urlError = hasRemoteUrl && !repositoryName ? t("createProject.cloneInvalidUrl") : null;
 	const destinationError = submitted && !value.destinationParent ? t("createProject.cloneDestinationRequired") : null;
 
 	const chooseDestination = async () => {
@@ -188,11 +189,11 @@ export default function CloneRepositoryDialog({
 						</div>
 
 						<div className="flex shrink-0 justify-end gap-2 px-4 pb-4 pt-3">
-							<div className="flex items-center justify-end gap-3">
-								<Button type="submit" variant="primary" disabled={disabled || choosingDestination}>
+							{!urlError ? (
+								<Button type="submit" variant="primary" disabled={disabled || choosingDestination || !repositoryName || !value.destinationParent}>
 									{t("createProject.cloneContinue")}
 								</Button>
-							</div>
+							) : null}
 						</div>
 					</form>
 				</Dialog.Content>
