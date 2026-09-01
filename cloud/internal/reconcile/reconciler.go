@@ -1056,6 +1056,7 @@ func (r *Reconciler) workerSpec(ctx context.Context, record domain.Sandbox) (san
 			"worker:turn:poll",
 			"worker:turn:complete",
 			"worker:credential:read",
+			"worker:session:read",
 			"worker:git",
 			"worker:orchestrate",
 			"worker:report",
