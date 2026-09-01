@@ -780,6 +780,146 @@ func TestIsAliveAdoptsSessionFromLegacyDefaultSocket(t *testing.T) {
 	}
 }
 
+func TestIsAliveAdoptsSessionFromHistoricalPrivateSocket(t *testing.T) {
+	const historicalSocket = "/tmp/ao-legacy-private.sock"
+	r := New(Options{
+		Binary:           "bundled-tmux-test",
+		LegacyBinary:     "system-tmux-test",
+		SocketName:       "ao",
+		LegacySocketPath: historicalSocket,
+		Timeout:          time.Second,
+	})
+	fr := &fakeRunnerSequence{results: []fakeRunnerResult{
+		{out: []byte("can't find session: sess-1"), err: &exec.ExitError{}},
+		{}, // historical private-socket discovery
+		{}, // first has-session call after discovery
+		{}, // cached second has-session call
+	}}
+	r.runner = fr
+	handle := ports.RuntimeHandle{ID: "sess-1"}
+
+	for i := 0; i < 2; i++ {
+		alive, err := r.IsAlive(context.Background(), handle)
+		if err != nil || !alive {
+			t.Fatalf("IsAlive call %d = (%v, %v), want (true, nil)", i+1, alive, err)
+		}
+	}
+	want := [][]string{
+		append([]string{"-L", "ao"}, hasSessionArgs("sess-1")...),
+		append([]string{"-S", historicalSocket, "-f", os.DevNull}, hasSessionArgs("sess-1")...),
+		append([]string{"-S", historicalSocket, "-f", os.DevNull}, hasSessionArgs("sess-1")...),
+		append([]string{"-S", historicalSocket, "-f", os.DevNull}, hasSessionArgs("sess-1")...),
+	}
+	if len(fr.calls) != len(want) {
+		t.Fatalf("calls = %d, want %d: %+v", len(fr.calls), len(want), fr.calls)
+	}
+	for i := range want {
+		if fr.calls[i].name != "bundled-tmux-test" {
+			t.Fatalf("call %d binary = %q, want bundled-tmux-test", i, fr.calls[i].name)
+		}
+		if !reflect.DeepEqual(fr.calls[i].args, want[i]) {
+			t.Fatalf("call %d args = %#v, want %#v", i, fr.calls[i].args, want[i])
+		}
+	}
+}
+
+func TestIsAliveAdoptsHistoricalPrivateSocketFromDefaultPrimary(t *testing.T) {
+	const historicalSocket = "/tmp/ao-legacy-private.sock"
+	r := New(Options{
+		Binary:           "tmux-test",
+		LegacySocketPath: historicalSocket,
+		Timeout:          time.Second,
+	})
+	fr := &fakeRunnerSequence{results: []fakeRunnerResult{
+		{out: []byte("can't find session: sess-1"), err: &exec.ExitError{}},
+		{}, // historical private-socket discovery
+		{}, // has-session on the adopted historical socket
+	}}
+	r.runner = fr
+
+	alive, err := r.IsAlive(context.Background(), ports.RuntimeHandle{ID: "sess-1"})
+	if err != nil || !alive {
+		t.Fatalf("IsAlive = (%v, %v), want (true, nil)", alive, err)
+	}
+	want := [][]string{
+		hasSessionArgs("sess-1"),
+		append([]string{"-S", historicalSocket, "-f", os.DevNull}, hasSessionArgs("sess-1")...),
+		append([]string{"-S", historicalSocket, "-f", os.DevNull}, hasSessionArgs("sess-1")...),
+	}
+	if len(fr.calls) != len(want) {
+		t.Fatalf("calls = %d, want %d: %+v", len(fr.calls), len(want), fr.calls)
+	}
+	for i := range want {
+		if !reflect.DeepEqual(fr.calls[i].args, want[i]) {
+			t.Fatalf("call %d args = %#v, want %#v", i, fr.calls[i].args, want[i])
+		}
+	}
+}
+
+func TestIsAliveChecksLegacyDefaultAfterHistoricalPrivateSocketIsMissing(t *testing.T) {
+	const historicalSocket = "/tmp/ao-legacy-private.sock"
+	r := New(Options{
+		Binary:           "bundled-tmux-test",
+		LegacyBinary:     "system-tmux-test",
+		SocketName:       "ao",
+		LegacySocketPath: historicalSocket,
+		Timeout:          time.Second,
+	})
+	fr := &fakeRunnerSequence{results: []fakeRunnerResult{
+		{out: []byte("can't find session: sess-1"), err: &exec.ExitError{}},
+		{out: []byte("no server running on " + historicalSocket), err: &exec.ExitError{}},
+		{}, // legacy default-socket discovery
+		{}, // has-session on the adopted legacy default socket
+	}}
+	r.runner = fr
+
+	alive, err := r.IsAlive(context.Background(), ports.RuntimeHandle{ID: "sess-1"})
+	if err != nil || !alive {
+		t.Fatalf("IsAlive = (%v, %v), want (true, nil)", alive, err)
+	}
+	want := [][]string{
+		append([]string{"-L", "ao"}, hasSessionArgs("sess-1")...),
+		append([]string{"-S", historicalSocket, "-f", os.DevNull}, hasSessionArgs("sess-1")...),
+		append([]string{"-L", "default"}, hasSessionArgs("sess-1")...),
+		append([]string{"-L", "default"}, hasSessionArgs("sess-1")...),
+	}
+	wantBinaries := []string{"bundled-tmux-test", "bundled-tmux-test", "system-tmux-test", "system-tmux-test"}
+	if len(fr.calls) != len(want) {
+		t.Fatalf("calls = %d, want %d: %+v", len(fr.calls), len(want), fr.calls)
+	}
+	for i := range want {
+		if fr.calls[i].name != wantBinaries[i] || !reflect.DeepEqual(fr.calls[i].args, want[i]) {
+			t.Fatalf("call %d = %q %#v, want %q %#v", i, fr.calls[i].name, fr.calls[i].args, wantBinaries[i], want[i])
+		}
+	}
+}
+
+func TestIsAliveReportsHistoricalPrivateSocketFailureAsInconclusive(t *testing.T) {
+	r := New(Options{
+		Binary:           "bundled-tmux-test",
+		LegacyBinary:     "system-tmux-test",
+		SocketName:       "ao",
+		LegacySocketPath: "/tmp/ao-legacy-private.sock",
+		Timeout:          time.Second,
+	})
+	fr := &fakeRunnerSequence{results: []fakeRunnerResult{
+		{out: []byte("can't find session: sess-1"), err: &exec.ExitError{}},
+		{out: []byte("error connecting to historical socket (Connection refused)"), err: &exec.ExitError{}},
+	}}
+	r.runner = fr
+
+	alive, err := r.IsAlive(context.Background(), ports.RuntimeHandle{ID: "sess-1"})
+	if !errors.Is(err, ports.ErrRuntimeProbeInconclusive) {
+		t.Fatalf("IsAlive err = %v, want ports.ErrRuntimeProbeInconclusive", err)
+	}
+	if alive {
+		t.Fatal("alive = true, want false with inconclusive error")
+	}
+	if len(fr.calls) != 2 {
+		t.Fatalf("calls = %d, want current and historical probes only", len(fr.calls))
+	}
+}
+
 func TestIsAliveAdoptsLegacyDefaultSessionWhenNamedSocketDoesNotExist(t *testing.T) {
 	r := New(Options{
 		Binary:       "bundled-tmux-test",
@@ -1482,8 +1622,27 @@ func TestAttachCommandUsesSystemTmuxForLegacyDefaultSocket(t *testing.T) {
 		SocketName:   "ao",
 		Timeout:      time.Second,
 	})
-	argv := r.attachCommandForSocket("sess-1", "")
+	argv := r.attachCommandForSocket("sess-1", r.legacyDefaultSocketTarget())
 	want := []string{"/opt/homebrew/bin/tmux", "-L", "default", "-u", "-T", "RGB", "attach-session", "-t", "sess-1"}
+	if !reflect.DeepEqual(argv, want) {
+		t.Fatalf("argv = %#v, want %#v", argv, want)
+	}
+}
+
+func TestAttachCommandUsesHistoricalPrivateSocket(t *testing.T) {
+	r := New(Options{
+		Binary:           "/opt/ao/resources/tmux/bin/tmux",
+		SocketName:       "ao",
+		LegacySocketPath: "/Users/example/.ao/tmux-legacy.sock",
+		Timeout:          time.Second,
+	})
+	argv := r.attachCommandForSocket("sess-1", r.historicalPrivateSocketTarget())
+	want := []string{
+		"/opt/ao/resources/tmux/bin/tmux",
+		"-S", "/Users/example/.ao/tmux-legacy.sock",
+		"-f", os.DevNull,
+		"-u", "-T", "RGB", "attach-session", "-t", "sess-1",
+	}
 	if !reflect.DeepEqual(argv, want) {
 		t.Fatalf("argv = %#v, want %#v", argv, want)
 	}

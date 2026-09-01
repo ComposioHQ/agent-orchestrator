@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -254,6 +255,61 @@ func TestRuntimeIntegrationAdoptsLegacyDefaultWhenNamedSocketDoesNotExist(t *tes
 	}
 	if out, probeErr := exec.Command(systemTmux, "-L", "ao", "list-sessions").CombinedOutput(); probeErr == nil {
 		t.Fatalf("legacy discovery unexpectedly created named AO server: %s", out)
+	}
+}
+
+func TestRuntimeIntegrationAdoptsHistoricalPrivateSocket(t *testing.T) {
+	systemTmux, err := exec.LookPath("tmux")
+	if err != nil {
+		t.Skip("tmux unavailable")
+	}
+
+	// Reproduce the upgrade boundary that stranded live sessions on the
+	// deterministic -S socket while the next release moved back to -L ao.
+	tmuxTmpDir, err := os.MkdirTemp("/tmp", "ao-tmux-private-migration-test-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmuxTmpDir) })
+	t.Setenv("TMUX_TMPDIR", tmuxTmpDir)
+	historicalSocket := filepath.Join(tmuxTmpDir, "tmux-historical.sock")
+	legacyID := strings.ReplaceAll(t.Name(), "/", "_") + "_legacy"
+	t.Cleanup(func() {
+		_ = exec.Command(systemTmux, "-S", historicalSocket, "kill-server").Run()
+		_ = exec.Command(systemTmux, "-L", "ao", "kill-server").Run()
+	})
+	if out, startErr := exec.Command(
+		systemTmux,
+		"-S", historicalSocket,
+		"-f", os.DevNull,
+		"new-session", "-d", "-s", legacyID,
+		"sh",
+	).CombinedOutput(); startErr != nil {
+		t.Fatalf("start historical private tmux session: %v: %s", startErr, out)
+	}
+
+	r := New(Options{
+		Binary:           systemTmux,
+		LegacyBinary:     systemTmux,
+		SocketName:       "ao",
+		LegacySocketPath: historicalSocket,
+		Timeout:          5 * time.Second,
+	})
+	r.enterDelay = 0
+	handle := ports.RuntimeHandle{ID: legacyID}
+	alive, err := r.IsAlive(context.Background(), handle)
+	if err != nil || !alive {
+		t.Fatalf("historical private-socket session = (%v, %v), want (true, nil)", alive, err)
+	}
+	if err := r.SendMessage(context.Background(), handle, "echo historical-private-send-ok"); err != nil {
+		t.Fatalf("SendMessage to historical private session: %v", err)
+	}
+	out := waitForOutput(t, r, handle, "historical-private-send-ok", 5*time.Second)
+	if !strings.Contains(out, "historical-private-send-ok") {
+		t.Fatalf("historical private output = %q, want historical-private-send-ok", out)
+	}
+	if out, probeErr := exec.Command(systemTmux, "-L", "ao", "list-sessions").CombinedOutput(); probeErr == nil {
+		t.Fatalf("historical discovery unexpectedly created named AO server: %s", out)
 	}
 }
 

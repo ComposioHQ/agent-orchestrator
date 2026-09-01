@@ -51,31 +51,39 @@ var getenv = os.Getenv
 // Options configures a tmux Runtime. Every field has a sensible default (see
 // New), so the zero value is usable.
 type Options struct {
-	Binary       string        // default configured/bundled/system tmux resolution
-	LegacyBinary string        // default system tmux from PATH when SocketName is set; used only for pre-private-socket sessions
-	SocketName   string        // default $AO_TMUX_SOCKET_NAME; empty uses tmux's machine-wide default socket
-	Shell        string        // default $SHELL else /bin/sh
-	Timeout      time.Duration // default 5s
-	ChunkSize    int           // default 16*1024
-	EnterDelay   time.Duration // pause after pasting a non-empty message before pressing Enter; default defaultEnterDelay. Conpty already does this (ptyInputEnterDelay); tmux lacked it, so a large multiline paste could absorb the trailing Enter and leave the prompt unsubmitted (issue #2342).
-	ReapGrace    time.Duration // grace between SIGTERM and SIGKILL when reaping a pane's leftover background processes on Destroy; default defaultReapGrace.
+	Binary           string        // default configured/bundled/system tmux resolution
+	LegacyBinary     string        // default system tmux from PATH when SocketName is set; used only for pre-private-socket sessions
+	SocketName       string        // default $AO_TMUX_SOCKET_NAME; empty uses tmux's machine-wide default socket
+	LegacySocketPath string        // deterministic absolute -S socket path used by the historical private-socket release
+	Shell            string        // default $SHELL else /bin/sh
+	Timeout          time.Duration // default 5s
+	ChunkSize        int           // default 16*1024
+	EnterDelay       time.Duration // pause after pasting a non-empty message before pressing Enter; default defaultEnterDelay. Conpty already does this (ptyInputEnterDelay); tmux lacked it, so a large multiline paste could absorb the trailing Enter and leave the prompt unsubmitted (issue #2342).
+	ReapGrace        time.Duration // grace between SIGTERM and SIGKILL when reaping a pane's leftover background processes on Destroy; default defaultReapGrace.
+}
+
+type socketTarget struct {
+	name            string
+	path            string
+	useLegacyBinary bool
 }
 
 // Runtime runs agent sessions inside tmux sessions, driving them via the tmux
 // CLI. It implements ports.Runtime.
 type Runtime struct {
-	binary         string
-	legacyBinary   string
-	socketName     string
-	shell          string
-	timeout        time.Duration
-	chunkSize      int
-	enterDelay     time.Duration
-	reapGrace      time.Duration
-	runner         runner
-	reapSessions   func(ctx context.Context, pids []int, grace time.Duration)
-	socketMu       sync.RWMutex
-	sessionSockets map[string]string
+	binary           string
+	legacyBinary     string
+	socketName       string
+	legacySocketPath string
+	shell            string
+	timeout          time.Duration
+	chunkSize        int
+	enterDelay       time.Duration
+	reapGrace        time.Duration
+	runner           runner
+	reapSessions     func(ctx context.Context, pids []int, grace time.Duration)
+	socketMu         sync.RWMutex
+	sessionSockets   map[string]socketTarget
 }
 
 var _ ports.Runtime = (*Runtime)(nil)
@@ -301,17 +309,18 @@ func New(opts Options) *Runtime {
 		}
 	}
 	return &Runtime{
-		binary:         binary,
-		legacyBinary:   legacyBinary,
-		socketName:     socketName,
-		shell:          shellPath,
-		timeout:        timeout,
-		chunkSize:      chunkSize,
-		enterDelay:     enterDelay,
-		reapGrace:      reapGrace,
-		runner:         execRunner{},
-		reapSessions:   killSessionsByPID,
-		sessionSockets: make(map[string]string),
+		binary:           binary,
+		legacyBinary:     legacyBinary,
+		socketName:       socketName,
+		legacySocketPath: strings.TrimSpace(opts.LegacySocketPath),
+		shell:            shellPath,
+		timeout:          timeout,
+		chunkSize:        chunkSize,
+		enterDelay:       enterDelay,
+		reapGrace:        reapGrace,
+		runner:           execRunner{},
+		reapSessions:     killSessionsByPID,
+		sessionSockets:   make(map[string]socketTarget),
 	}
 }
 
@@ -337,7 +346,7 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 	if _, err := r.run(ctx, args...); err != nil {
 		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: create session %s: %w", id, err)
 	}
-	r.rememberSessionSocket(id, r.socketName)
+	r.rememberSessionSocket(id, r.primarySocketTarget())
 	if err := r.verifyPaneWorkingDirectory(ctx, id, cfg.WorkspacePath); err != nil {
 		_ = r.Destroy(context.Background(), ports.RuntimeHandle{ID: id})
 		return ports.RuntimeHandle{}, err
@@ -741,11 +750,11 @@ func (r *Runtime) Attach(ctx context.Context, handle ports.RuntimeHandle, rows, 
 	if err != nil {
 		return nil, err
 	}
-	socketName, err := r.socketForSession(ctx, id)
+	target, err := r.socketForSession(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("tmux runtime: attach session %s: %w", id, err)
 	}
-	argv := r.attachCommandForSocket(id, socketName)
+	argv := r.attachCommandForSocket(id, target)
 	return ptyexec.Spawn(ctx, argv, attachEnv(os.Environ()), rows, cols)
 }
 
@@ -772,16 +781,18 @@ func (r *Runtime) attachCommand(handle ports.RuntimeHandle) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	return r.attachCommandForSocket(id, r.socketName), nil
+	return r.attachCommandForSocket(id, r.primarySocketTarget()), nil
 }
 
-func (r *Runtime) attachCommandForSocket(id, socketName string) []string {
+func (r *Runtime) attachCommandForSocket(id string, target socketTarget) []string {
 	// The embedded xterm renderer supports 24-bit SGR colors. Tell this tmux
 	// client explicitly so tmux forwards RGB instead of quantizing it to the
 	// xterm-256color palette. -T is available in AO's minimum tmux version (3.2).
-	argv := []string{r.binaryForSocket(socketName)}
-	if socketName != "" {
-		argv = append(argv, "-L", socketName)
+	argv := []string{r.binaryForSocket(target)}
+	if target.path != "" {
+		argv = append(argv, "-S", target.path, "-f", os.DevNull)
+	} else if target.name != "" {
+		argv = append(argv, "-L", target.name)
 	} else if r.socketName != "" {
 		// A legacy session means tmux's historical machine default, never the
 		// socket named by an inherited TMUX from an AO worker or nested shell.
@@ -815,84 +826,127 @@ func attachEnv(base []string) []string {
 
 // run wraps runner.Run with a per-call timeout context.
 func (r *Runtime) run(ctx context.Context, args ...string) ([]byte, error) {
-	return r.runOnSocket(ctx, r.socketName, args...)
+	return r.runOnSocket(ctx, r.primarySocketTarget(), args...)
 }
 
-func (r *Runtime) runOnSocket(ctx context.Context, socketName string, args ...string) ([]byte, error) {
-	if socketName != "" {
-		args = append([]string{"-L", socketName}, args...)
+func (r *Runtime) runOnSocket(ctx context.Context, target socketTarget, args ...string) ([]byte, error) {
+	if target.path != "" {
+		args = append([]string{"-S", target.path, "-f", os.DevNull}, args...)
+	} else if target.name != "" {
+		args = append([]string{"-L", target.name}, args...)
 	} else if r.socketName != "" {
 		// Pin legacy discovery and commands to the historical machine default.
 		// Without -L, tmux honors inherited TMUX and may target an unrelated
 		// nested server whose session name happens to collide with AO's handle.
 		args = append([]string{"-L", "default"}, args...)
 	}
-	return r.runCommand(ctx, r.binaryForSocket(socketName), args...)
+	return r.runCommand(ctx, r.binaryForSocket(target), args...)
 }
 
-func (r *Runtime) binaryForSocket(socketName string) string {
-	if socketName == "" && r.socketName != "" {
+func (r *Runtime) binaryForSocket(target socketTarget) string {
+	if target.useLegacyBinary {
 		return r.legacyBinary
 	}
 	return r.binary
 }
 
-// runForSession routes sessions created before AO introduced its private tmux
-// socket back to tmux's legacy default socket. The decision is discovered once
-// per daemon lifetime and cached. New sessions always use socketName.
+func (r *Runtime) primarySocketTarget() socketTarget {
+	return socketTarget{name: r.socketName}
+}
+
+func (r *Runtime) historicalPrivateSocketTarget() socketTarget {
+	return socketTarget{path: r.legacySocketPath}
+}
+
+func (r *Runtime) legacyDefaultSocketTarget() socketTarget {
+	return socketTarget{useLegacyBinary: true}
+}
+
+// runForSession routes old sessions back to the tmux namespace that still owns
+// them. The decision is discovered once per daemon lifetime and cached. New
+// sessions always use the primary target.
 func (r *Runtime) runForSession(ctx context.Context, id string, args ...string) ([]byte, error) {
-	socketName, err := r.socketForSession(ctx, id)
+	target, err := r.socketForSession(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	return r.runOnSocket(ctx, socketName, args...)
+	return r.runOnSocket(ctx, target, args...)
 }
 
-func (r *Runtime) socketForSession(ctx context.Context, id string) (string, error) {
-	if r.socketName == "" {
-		return "", nil
+func (r *Runtime) socketForSession(ctx context.Context, id string) (socketTarget, error) {
+	primary := r.primarySocketTarget()
+	if r.socketName == "" && r.legacySocketPath == "" {
+		return primary, nil
 	}
 	r.socketMu.RLock()
-	socketName, ok := r.sessionSockets[id]
+	target, ok := r.sessionSockets[id]
 	r.socketMu.RUnlock()
 	if ok {
-		return socketName, nil
+		return target, nil
 	}
 
-	out, err := r.runOnSocket(ctx, r.socketName, hasSessionArgs(id)...)
+	out, err := r.runOnSocket(ctx, primary, hasSessionArgs(id)...)
 	if err == nil {
-		r.rememberSessionSocket(id, r.socketName)
-		return r.socketName, nil
+		r.rememberSessionSocket(id, primary)
+		return primary, nil
 	}
-	// Only cross the migration boundary when the private server definitively
-	// lacks this session. An ambiguous probe stays on the private socket so a
+	// Only cross the migration boundary when the current server definitively
+	// lacks this session. An ambiguous probe stays on the current socket so a
 	// transient error cannot redirect a live session elsewhere.
 	if !sessionMissingOutput(string(out)) &&
 		!serverNotRunningOutput(string(out)) &&
 		!migrationSocketAbsentOutput(string(out)) {
-		return r.socketName, nil
+		return primary, nil
+	}
+
+	if r.legacySocketPath != "" {
+		historical := r.historicalPrivateSocketTarget()
+		historicalOut, historicalErr := r.runOnSocket(ctx, historical, hasSessionArgs(id)...)
+		if historicalErr == nil {
+			r.rememberSessionSocket(id, historical)
+			return historical, nil
+		}
+		if ctx.Err() != nil {
+			return socketTarget{}, ctx.Err()
+		}
+		if !sessionMissingOutput(string(historicalOut)) &&
+			!serverNotRunningOutput(string(historicalOut)) &&
+			!migrationSocketAbsentOutput(string(historicalOut)) {
+			return socketTarget{}, fmt.Errorf(
+				"%w: bundled tmux could not inspect historical private-socket session %s: %w",
+				ports.ErrRuntimeProbeInconclusive,
+				id,
+				historicalErr,
+			)
+		}
+	}
+	if r.socketName == "" {
+		// The current target is already tmux's default namespace, so there is no
+		// separate legacy-default route left to inspect.
+		return primary, nil
 	}
 	if r.legacyBinary == "" {
-		return "", fmt.Errorf(
+		return socketTarget{}, fmt.Errorf(
 			"%w: cannot inspect legacy default-socket session %s because system tmux is unavailable",
 			ports.ErrRuntimeProbeInconclusive,
 			id,
 		)
 	}
-	legacyOut, legacyErr := r.runOnSocket(ctx, "", hasSessionArgs(id)...)
+	legacyDefault := r.legacyDefaultSocketTarget()
+	legacyOut, legacyErr := r.runOnSocket(ctx, legacyDefault, hasSessionArgs(id)...)
 	if legacyErr == nil {
-		r.rememberSessionSocket(id, "")
-		return "", nil
+		r.rememberSessionSocket(id, legacyDefault)
+		return legacyDefault, nil
 	}
 	if ctx.Err() != nil {
-		return "", ctx.Err()
+		return socketTarget{}, ctx.Err()
 	}
 	if sessionMissingOutput(string(legacyOut)) || serverNotRunningOutput(string(legacyOut)) {
-		// Both known sockets definitively lack the session. Return the private
+		// Every known socket definitively lacks the session. Return the current
 		// target so IsAlive's ordinary exact-session handling reports false.
-		return r.socketName, nil
+		return primary, nil
 	}
-	return "", fmt.Errorf(
+	return socketTarget{}, fmt.Errorf(
 		"%w: system tmux %q could not inspect legacy default-socket session %s: %w",
 		ports.ErrRuntimeProbeInconclusive,
 		r.legacyBinary,
@@ -901,9 +955,9 @@ func (r *Runtime) socketForSession(ctx context.Context, id string) (string, erro
 	)
 }
 
-func (r *Runtime) rememberSessionSocket(id, socketName string) {
+func (r *Runtime) rememberSessionSocket(id string, target socketTarget) {
 	r.socketMu.Lock()
-	r.sessionSockets[id] = socketName
+	r.sessionSockets[id] = target
 	r.socketMu.Unlock()
 }
 
