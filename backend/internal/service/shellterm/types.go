@@ -40,4 +40,5 @@ type ShellTerminal struct {
 type OpenShellTerminalInput struct {
 	ProjectID domain.ProjectID `json:"projectId,omitempty"`
 	SessionID domain.SessionID `json:"sessionId,omitempty"`
+	Shell     string           `json:"shell,omitempty"`
 }

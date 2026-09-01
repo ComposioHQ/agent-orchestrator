@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import { memo, useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { ChevronDown, Circle, CornerDownLeft, Pencil, Trash2 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import type { ConversationMessage } from "../../types/conversation";
@@ -7,7 +7,7 @@ export type QueuedMessage = { turnId: string; message: ConversationMessage };
 
 const QUEUE_DOCK_VISIBLE_ROWS = 5;
 
-function QueuedMessageRow({
+const QueuedMessageRow = memo(function QueuedMessageRow({
 	turnId,
 	message,
 	hiddenFromView,
@@ -118,9 +118,9 @@ function QueuedMessageRow({
 			) : null}
 		</div>
 	);
-}
+});
 
-export function QueuedMessageDock({
+export const QueuedMessageDock = memo(function QueuedMessageDock({
 	messages,
 	editingTurnId,
 	canSteer,
@@ -319,4 +319,4 @@ export function QueuedMessageDock({
 			) : null}
 		</div>
 	);
-}
+});

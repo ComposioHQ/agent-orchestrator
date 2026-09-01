@@ -36,6 +36,7 @@ import {
 	useRef,
 	useState,
 	isValidElement,
+	memo,
 	type ClipboardEvent,
 	type DragEvent,
 	type FormEvent,
@@ -74,7 +75,7 @@ function withAttachmentReferences(text: string, paths: string[]): string {
 	return `${lead}Attached files (read these files in the workspace):\n${paths.map((path) => `- ${path}`).join("\n")}`;
 }
 
-export function ChatComposer({
+export const ChatComposer = memo(function ChatComposer({
 	onSend,
 	busy,
 	willQueue,
@@ -872,4 +873,4 @@ export function ChatComposer({
 				</div>
 			</form>,
 	);
-}
+});
