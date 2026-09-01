@@ -135,8 +135,8 @@ let automaticCheckNetFailureCounted = false;
 let activeUpdaterPhase: UpdatePhase = "check";
 let pendingUpdateVersion: string | undefined;
 // Session-scoped time of the most recent completed feed check. Packaged apps
-// check at launch when automatic updates are enabled, while disabled installs
-// truthfully remain "not checked yet" until the user asks.
+// check the selected channel at launch regardless of whether automatic
+// downloading is enabled.
 let lastCheckedAtMs: number | undefined;
 
 // emitUpdateOutcome pushes an update outcome to renderers on a channel separate
@@ -770,8 +770,7 @@ function automaticUpdateCheckInterval(settings: UpdateSettings): number {
 
 async function runAutomaticUpdateCheck(
   stateDir: string,
-): Promise<number | undefined> {
-  let shouldSchedule = true;
+): Promise<number> {
   let nextIntervalMs =
     automaticUpdateTimerIntervalMs ?? STABLE_AUTOMATIC_UPDATE_CHECK_INTERVAL_MS;
   try {
@@ -780,19 +779,15 @@ async function runAutomaticUpdateCheck(
         stateDir,
         await readUpdateSettings(stateDir),
       );
-      if (!settings.enabled) {
-        shouldSchedule = false;
-        // Stop while this serialized snapshot still owns updater ordering. A
-        // later settings write that enables updates can then schedule safely.
-        stopPeriodicAutomaticUpdateCheck();
-        return;
-      }
       nextIntervalMs = automaticUpdateCheckInterval(settings);
 
       escalationStateDir = stateDir;
       wireUpdaterEvents();
       configureFeed(settings);
-      autoUpdater.autoDownload = true;
+      // Discovery is always on for the selected release channel. This preference
+      // controls only whether electron-updater downloads the discovered build or
+      // leaves it in `available` for the sidebar action.
+      autoUpdater.autoDownload = settings.enabled;
       applyInstallOnQuitPolicy();
       // Only nightly resolves a direct feed. Skipping the await entirely on the
       // other channels keeps this check's event ordering exactly as it was.
@@ -801,7 +796,9 @@ async function runAutomaticUpdateCheck(
         : undefined;
       try {
         const result = await autoUpdater.checkForUpdates();
-        if (result?.downloadPromise) await result.downloadPromise;
+        if (settings.enabled && result?.downloadPromise) {
+          await result.downloadPromise;
+        }
       } catch (err) {
         // electron-updater normally also emits "error" (handled in
         // wireUpdaterEvents); a reject-only failure must still restore the
@@ -822,7 +819,7 @@ async function runAutomaticUpdateCheck(
   } catch (err) {
     console.error("auto-update check failed:", err);
   }
-  return shouldSchedule ? nextIntervalMs : undefined;
+  return nextIntervalMs;
 }
 
 function schedulePeriodicAutomaticUpdateCheck(
@@ -857,12 +854,10 @@ function reconcileAutomaticUpdateSchedule(
   stateDir: string,
   settings: UpdateSettings,
 ): void {
-  if (settings.enabled)
-    schedulePeriodicAutomaticUpdateCheck(
-      stateDir,
-      automaticUpdateCheckInterval(settings),
-    );
-  else stopPeriodicAutomaticUpdateCheck();
+  schedulePeriodicAutomaticUpdateCheck(
+    stateDir,
+    automaticUpdateCheckInterval(settings),
+  );
 }
 
 async function requestAutomaticUpdateCheck(
@@ -878,7 +873,8 @@ async function requestAutomaticUpdateCheck(
 }
 
 // startAutoUpdates configures electron-updater from the user's ~/.ao settings.
-// It is a thin shell: all policy (channel, opt-in) comes from update-settings.
+// Channel controls discovery; enabled controls whether a discovered build is
+// downloaded automatically. Both preferences come from update-settings.
 // Caller guards on app.isPackaged.
 export async function startAutoUpdates(stateDir: string): Promise<void> {
   startRetirementPollTimer(stateDir);

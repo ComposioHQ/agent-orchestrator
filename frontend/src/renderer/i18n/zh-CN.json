@@ -855,6 +855,7 @@
 	"shell.dashboard": "仪表盘",
 	"shell.downloadUpdate": "下载更新",
 	"shell.downloadUpdateVersion": "下载更新 v{{version}}",
+	"shell.dismissUpdateVersion": "将更新 v{{version}} 隐藏 24 小时",
 	"shell.expandSidebar": "展开侧边栏",
 	"shell.expandSidebarTitle": "展开侧边栏 · Ctrl+B",
 	"shell.intakeIssue": "Intake 议题：{{id}}",

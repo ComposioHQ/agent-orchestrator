@@ -1034,6 +1034,70 @@ func (s *Store) SettleTurn(
 		}); err != nil {
 		return fmt.Errorf("settle running activities for turn %s: %w", turn.ID, err)
 	}
+	if state == domain.TurnStateCompleted {
+		if err := finalizeCompletedTurnPlan(ctx, q, turn, now); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// finalizeCompletedTurnPlan reconciles the two durable plan projections when a
+// provider completes a turn without sending a final plan notification. The raw
+// provider event remains unchanged; this only records AO's terminal inference.
+func finalizeCompletedTurnPlan(
+	ctx context.Context,
+	q *gen.Queries,
+	turn gen.ConversationTurn,
+	now time.Time,
+) error {
+	if turn.PlanJson == "" {
+		return nil
+	}
+	var plan domain.ConversationPlan
+	if err := json.Unmarshal([]byte(turn.PlanJson), &plan); err != nil {
+		return fmt.Errorf("decode plan for completed turn %s: %w", turn.ID, err)
+	}
+	changed := false
+	for i := range plan.Steps {
+		if plan.Steps[i].Status != domain.PlanStepCompleted {
+			plan.Steps[i].Status = domain.PlanStepCompleted
+			changed = true
+		}
+	}
+	if !changed {
+		return nil
+	}
+
+	encodedPlan, err := json.Marshal(plan)
+	if err != nil {
+		return fmt.Errorf("encode finalized plan for turn %s: %w", turn.ID, err)
+	}
+	if _, err := q.UpdateConversationTurnPlan(ctx, gen.UpdateConversationTurnPlanParams{
+		PlanJson:       string(encodedPlan),
+		ConversationID: turn.ConversationID,
+		ProviderTurnID: turn.ProviderTurnID,
+	}); err != nil {
+		return fmt.Errorf("finalize turn plan %s: %w", turn.ID, err)
+	}
+
+	detail := map[string]any{"event": "plan", "steps": plan.Steps}
+	if plan.Explanation != "" {
+		detail["explanation"] = plan.Explanation
+	}
+	encodedDetail, err := json.Marshal(detail)
+	if err != nil {
+		return fmt.Errorf("encode finalized plan activity for turn %s: %w", turn.ID, err)
+	}
+	if err := q.FinalizeConversationPlanActivity(ctx, gen.FinalizeConversationPlanActivityParams{
+		Summary:        fmt.Sprintf("Plan %d/%d steps done", len(plan.Steps), len(plan.Steps)),
+		DetailJson:     string(encodedDetail),
+		UpdatedAt:      now,
+		ConversationID: turn.ConversationID,
+		TurnID:         sql.NullString{String: turn.ID, Valid: true},
+	}); err != nil {
+		return fmt.Errorf("finalize plan activity for turn %s: %w", turn.ID, err)
+	}
 	return nil
 }
 

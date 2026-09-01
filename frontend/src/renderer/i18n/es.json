@@ -881,6 +881,7 @@
 	"shell.dashboard": "Panel",
 	"shell.downloadUpdate": "Descargar actualización",
 	"shell.downloadUpdateVersion": "Descargar actualización v{{version}}",
+	"shell.dismissUpdateVersion": "Ocultar la actualización v{{version}} durante 24 horas",
 	"shell.expandSidebar": "Expandir barra lateral",
 	"shell.expandSidebarTitle": "Expandir barra lateral · Ctrl+B",
 	"shell.intakeIssue": "Issue de captación: {{id}}",

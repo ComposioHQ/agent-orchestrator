@@ -621,6 +621,9 @@ func Run() error {
 		startupReconcileDone = done
 		go func() {
 			defer close(done)
+			if reconcileErr := reconcilePersistentChatHosts(ctx, cfg.DataDir, store); reconcileErr != nil {
+				log.Error("persistent chat host reconciliation on boot failed", "err", reconcileErr)
+			}
 			if reconcileErr := sessMgr.ReconcileBackground(ctx); reconcileErr != nil {
 				log.Error("background session reconciliation on boot failed", "err", reconcileErr)
 			}
@@ -651,9 +654,11 @@ func Run() error {
 	switchCancel()
 	managedPreview.Close()
 	<-previewDone
-	// Close chat controllers before the lifecycle stack: each owns an app-server
-	// child process, and closing them also settles any turn left in flight so a
-	// restart does not read a half-finished turn as still working.
+	// Detach chat controllers before stopping the lifecycle stack. Persistent
+	// provider hosts deliberately survive this daemon and preserve in-flight
+	// turns; the replacement daemon reconnects to the same initialized stream and
+	// consumes host-replayed output. Explicit session termination, not daemon
+	// shutdown, destroys them.
 	chatStopCtx, chatCancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	chatSvc.StopAll(chatStopCtx)
 	chatCancel()

@@ -567,44 +567,46 @@ export function BrowserPanelView({
 			ref={panelRef}
 			role="tabpanel"
 		>
-			<div className="browser-panel__tab-bar" data-testid="browser-tab-bar">
-				<DndContext
-					collisionDetection={closestCenter}
-					onDragCancel={() => setTopTabDragActive(false)}
-					onDragEnd={handleTopTabDragEnd}
-					onDragStart={() => setTopTabDragActive(true)}
-					sensors={tabSensors}
-				>
-					<SortableContext items={tabs.map((tab) => tab.id)} strategy={horizontalListSortingStrategy}>
-						<div
-							aria-label={t("browser.tabs")}
-							className="browser-panel__tab-strip"
-							onKeyDown={topTabDragActive ? undefined : handleTabListKeyDown}
-							role="tablist"
-						>
-							{tabs.map((tab) => (
-								<SortableBrowserTopTab
-									key={tab.id}
-									onClose={handleCloseTab}
-									onSelect={handleSelectTab}
-									onlyTab={tabs.length === 1}
-									selected={tab.id === activeTabId}
-									tab={tab}
-								/>
-							))}
-						</div>
-					</SortableContext>
-				</DndContext>
-				<button
-					aria-label={t("browser.openNewTab")}
-					className="browser-panel__tab-new"
-					onClick={() => void handleOpenTab()}
-					title={t("browser.openNewTab")}
-					type="button"
-				>
-					<Plus aria-hidden="true" className="size-icon-base" />
-				</button>
-			</div>
+			{poppedOut ? (
+				<div className="browser-panel__tab-bar" data-testid="browser-tab-bar">
+					<DndContext
+						collisionDetection={closestCenter}
+						onDragCancel={() => setTopTabDragActive(false)}
+						onDragEnd={handleTopTabDragEnd}
+						onDragStart={() => setTopTabDragActive(true)}
+						sensors={tabSensors}
+					>
+						<SortableContext items={tabs.map((tab) => tab.id)} strategy={horizontalListSortingStrategy}>
+							<div
+								aria-label={t("browser.tabs")}
+								className="browser-panel__tab-strip"
+								onKeyDown={topTabDragActive ? undefined : handleTabListKeyDown}
+								role="tablist"
+							>
+								{tabs.map((tab) => (
+									<SortableBrowserTopTab
+										key={tab.id}
+										onClose={handleCloseTab}
+										onSelect={handleSelectTab}
+										onlyTab={tabs.length === 1}
+										selected={tab.id === activeTabId}
+										tab={tab}
+									/>
+								))}
+							</div>
+						</SortableContext>
+					</DndContext>
+					<button
+						aria-label={t("browser.openNewTab")}
+						className="browser-panel__tab-new"
+						onClick={() => void handleOpenTab()}
+						title={t("browser.openNewTab")}
+						type="button"
+					>
+						<Plus aria-hidden="true" className="size-icon-base" />
+					</button>
+				</div>
+			) : null}
 			<form
 				className={cn(
 					"browser-panel__toolbar flex shrink-0 min-w-0 items-center gap-1 border-b border-border bg-surface",

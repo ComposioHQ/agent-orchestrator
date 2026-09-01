@@ -871,6 +871,7 @@
 	"shell.dashboard": "ダッシュボード",
 	"shell.downloadUpdate": "アップデートをダウンロード",
 	"shell.downloadUpdateVersion": "アップデート v{{version}} をダウンロード",
+	"shell.dismissUpdateVersion": "アップデート v{{version}} を24時間非表示にする",
 	"shell.expandSidebar": "サイドバーを展開",
 	"shell.expandSidebarTitle": "サイドバーを展開 · Ctrl+B",
 	"shell.intakeIssue": "インテーク Issue: {{id}}",

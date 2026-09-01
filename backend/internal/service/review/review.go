@@ -15,6 +15,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/lifecycle"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	"github.com/aoagents/agent-orchestrator/backend/internal/reqid"
 	reviewcore "github.com/aoagents/agent-orchestrator/backend/internal/review"
 	"github.com/aoagents/agent-orchestrator/backend/internal/telemetrymeta"
 )
@@ -142,7 +143,7 @@ func WithTelemetry(sink ports.EventSink) Option {
 // or the target SHA: the body is reviewer prose about someone's code, and the URL
 // and SHA identify the repository. The daemon's remote allowlist would drop
 // unknown keys anyway, but the intent belongs at the call site.
-func (s *Service) emit(name string, sessionID domain.SessionID, payload map[string]any) {
+func (s *Service) emit(ctx context.Context, name string, sessionID domain.SessionID, payload map[string]any) {
 	if s.telemetry == nil {
 		return
 	}
@@ -153,6 +154,7 @@ func (s *Service) emit(name string, sessionID domain.SessionID, payload map[stri
 		OccurredAt: s.clock(),
 		Level:      ports.TelemetryLevelInfo,
 		SessionID:  &session,
+		RequestID:  reqid.FromContext(ctx),
 		Payload:    payload,
 	})
 }
@@ -223,7 +225,7 @@ func (s *Service) RequestRereview(ctx context.Context, workerID domain.SessionID
 		}
 		return err
 	}
-	s.emit("ao.review.rereview_requested", workerID, map[string]any{
+	s.emit(ctx, "ao.review.rereview_requested", workerID, map[string]any{
 		"provider": pr.Provider,
 	})
 	return nil
@@ -378,7 +380,7 @@ func (s *Service) ResolveReviewComment(ctx context.Context, workerID domain.Sess
 	} else if !updated {
 		return fmt.Errorf("%w: review comment is not tracked for this PR", ErrNotFound)
 	}
-	s.emit("ao.review.comment_resolved", workerID, map[string]any{"provider": pr.Provider})
+	s.emit(ctx, "ao.review.comment_resolved", workerID, map[string]any{"provider": pr.Provider})
 	return nil
 }
 
@@ -412,7 +414,7 @@ func (s *Service) triggerWithSource(
 ) (reviewcore.TriggerResult, error) {
 	result, err := s.engineTrigger(ctx, workerID, harness, source)
 	if err != nil {
-		s.emit("ao.review.trigger_failed", workerID, map[string]any{
+		s.emit(ctx, "ao.review.trigger_failed", workerID, map[string]any{
 			"error_kind": reviewErrorKind(err),
 			"trigger":    string(source),
 		})
@@ -433,7 +435,7 @@ func (s *Service) triggerWithSource(
 	// or up-to-date one, which the engine also reports as success. harness is the
 	// one actually used, resolved by the engine, not the caller's override, which
 	// may be empty.
-	s.emit("ao.review.triggered", workerID, map[string]any{
+	s.emit(ctx, "ao.review.triggered", workerID, map[string]any{
 		"harness":      string(result.Run.Harness),
 		"created_runs": len(result.CreatedRuns),
 		"reused":       len(result.CreatedRuns) == 0,
@@ -448,7 +450,7 @@ func (s *Service) Cancel(ctx context.Context, workerID domain.SessionID) (review
 	if err != nil {
 		return result, err
 	}
-	s.emit("ao.review.cancelled", workerID, map[string]any{
+	s.emit(ctx, "ao.review.cancelled", workerID, map[string]any{
 		"cancelled_runs": len(result.CancelledRuns),
 	})
 	return result, nil
@@ -625,7 +627,7 @@ func (s *Service) submitOne(ctx context.Context, workerID domain.SessionID, revi
 		// Only on the real running -> complete transition. Re-submitting an
 		// already-complete run returns early below, so telemetry stays idempotent
 		// the same way the store does.
-		s.emit("ao.review.submitted", workerID, map[string]any{
+		s.emit(ctx, "ao.review.submitted", workerID, map[string]any{
 			"harness":            string(run.Harness),
 			"verdict":            string(verdict),
 			"duration_ms":        s.clock().Sub(run.CreatedAt).Milliseconds(),

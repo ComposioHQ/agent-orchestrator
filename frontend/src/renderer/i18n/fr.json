@@ -881,6 +881,7 @@
 	"shell.dashboard": "Tableau de bord",
 	"shell.downloadUpdate": "Télécharger la mise à jour",
 	"shell.downloadUpdateVersion": "Télécharger la mise à jour v{{version}}",
+	"shell.dismissUpdateVersion": "Masquer la mise à jour v{{version}} pendant 24 heures",
 	"shell.expandSidebar": "Développer la barre latérale",
 	"shell.expandSidebarTitle": "Développer la barre latérale · Ctrl+B",
 	"shell.intakeIssue": "Issue d'intake : {{id}}",

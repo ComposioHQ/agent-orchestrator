@@ -99,7 +99,7 @@ const session: WorkspaceSession = {
 	prs: [],
 };
 
-it("reorders horizontal browser tabs around the drop target", () => {
+it("reorders browser tabs around the drop target", () => {
 	expect(reorderBrowserTabs(["t1", "t2", "t3"], "t1", "t3")).toEqual(["t2", "t3", "t1"]);
 	expect(reorderBrowserTabs(["t1", "t2", "t3"], "t2", "missing")).toBeNull();
 });
@@ -516,7 +516,7 @@ describe("BrowserPanel", () => {
 			{ id: "t2", url: "http://localhost:4173/", title: "Second app", active: true },
 		];
 		hookState.activeTabId = "t2";
-		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut session={session} />);
 
 		const tabList = screen.getByRole("tablist", { name: "Browser tabs" });
 		const firstTab = within(tabList).getByRole("tab", { name: "First app" });
@@ -534,7 +534,7 @@ describe("BrowserPanel", () => {
 			{ id: "t2", url: "http://localhost:4173/", title: "Second app", active: false },
 		];
 		hookState.activeTabId = "t1";
-		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut session={session} />);
 
 		const tabList = screen.getByRole("tablist", { name: "Browser tabs" });
 		const firstTab = within(tabList).getByRole("tab", { name: "First app" });
@@ -552,7 +552,7 @@ describe("BrowserPanel", () => {
 			{ id: "t2", url: "http://localhost:4173/", title: "Second app", active: false },
 		];
 		hookState.activeTabId = "t1";
-		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut session={session} />);
 
 		const tabList = screen.getByRole("tablist", { name: "Browser tabs" });
 		await userEvent.click(within(tabList).getByRole("button", { name: "Close tab Second app" }));
@@ -561,11 +561,18 @@ describe("BrowserPanel", () => {
 	});
 
 	it("opens a new browser tab from the horizontal tab strip", async () => {
-		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut session={session} />);
 
 		await userEvent.click(within(screen.getByTestId("browser-tab-bar")).getByRole("button", { name: "Open new tab" }));
 
 		expect(hookState.openTab).toHaveBeenCalledOnce();
+	});
+
+	it("keeps the horizontal tab strip out of docked mode", () => {
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		expect(screen.queryByTestId("browser-tab-bar")).not.toBeInTheDocument();
+		expect(screen.getByTestId("browser-tabs-rail")).toBeInTheDocument();
 	});
 
 	it("does not render a tab-specific agent marker", async () => {
@@ -1352,9 +1359,10 @@ describe("BrowserPanel", () => {
 			window.localStorage.removeItem("ao.browserTabs.railPinned");
 		});
 
-		it("does not open the flyout when hovering the pinned rail", () => {
+		it("shows the close affordance without opening a competing hover overlay", () => {
 			// Pinned already shows every tab as a favicon row, so the flyout would
-			// just cover the live page with a duplicate of what's on screen.
+			// just cover the live page with a duplicate of what's on screen. The
+			// site tooltip is likewise suppressed while the close action is visible.
 			pinRail();
 			hookState.tabs = [
 				{ id: "t1", url: "http://localhost:3000/", title: "First app", active: false },
@@ -1366,6 +1374,7 @@ describe("BrowserPanel", () => {
 			vi.useFakeTimers();
 			try {
 				fireEvent.pointerEnter(screen.getByTestId("browser-tabs-rail"));
+				fireEvent.pointerEnter(screen.getByRole("button", { name: "First app — localhost:3000" }));
 				act(() => {
 					vi.advanceTimersByTime(300);
 				});
@@ -1374,6 +1383,91 @@ describe("BrowserPanel", () => {
 			}
 
 			expect(screen.getByTestId("browser-tabs-flyout")).toHaveAttribute("data-state", "closed");
+			expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+		});
+
+		it("keeps selection and drag activation on the favicon while the close action is visible", async () => {
+			pinRail();
+			hookState.tabs = [
+				{ id: "t1", url: "http://localhost:3000/", title: "First app", active: false },
+				{ id: "t2", url: "http://localhost:4173/", title: "Second app", active: true },
+			];
+			hookState.activeTabId = "t2";
+			render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+			const rail = screen.getByTestId("browser-tabs-rail");
+			const pinnedTabs = within(rail.querySelector("nav") as HTMLElement);
+			const firstTab = pinnedTabs.getByRole("button", { name: "First app — localhost:3000" });
+			const secondTab = pinnedTabs.getByRole("button", { name: "Second app — localhost:4173" });
+			const closeButton = pinnedTabs.getByRole("button", { name: "Close tab First app" });
+			fireEvent.pointerEnter(firstTab);
+
+			expect(closeButton).toHaveClass("group-hover/tab-icon:opacity-100");
+			await userEvent.click(firstTab);
+
+			expect(hookState.selectTab).toHaveBeenCalledWith("t1");
+			expect(hookState.closeTab).not.toHaveBeenCalled();
+
+			expect(firstTab).toHaveAttribute("aria-roledescription", "sortable");
+			vi.useFakeTimers();
+			try {
+				fireEvent.pointerDown(firstTab, {
+					button: 0,
+					clientX: 16,
+					clientY: 48,
+					isPrimary: true,
+					pointerId: 1,
+				});
+				fireEvent.pointerMove(secondTab, { clientX: 16, clientY: 80, pointerId: 1 });
+
+				expect(firstTab).toHaveAttribute("aria-pressed", "true");
+				fireEvent.pointerUp(secondTab, { clientX: 16, clientY: 80, pointerId: 1 });
+				// dnd-kit removes its capture-phase click suppressor 50 ms after
+				// a completed drag. Flush that teardown before the next test.
+				act(() => vi.advanceTimersByTime(50));
+			} finally {
+				vi.useRealTimers();
+			}
+			expect(secondTab).toBeInTheDocument();
+			expect(closeButton).not.toHaveClass("absolute");
+		});
+
+		it("closes only from the distinct pinned-rail close action", async () => {
+			pinRail();
+			hookState.tabs = [
+				{ id: "t1", url: "http://localhost:3000/", title: "First app", active: false },
+				{ id: "t2", url: "http://localhost:4173/", title: "Second app", active: true },
+			];
+			hookState.activeTabId = "t2";
+			render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+			const rail = screen.getByTestId("browser-tabs-rail");
+			const pinnedTabs = within(rail.querySelector("nav") as HTMLElement);
+			const closeButton = pinnedTabs.getByRole("button", { name: "Close tab First app" });
+			fireEvent.pointerEnter(pinnedTabs.getByRole("button", { name: "First app — localhost:3000" }));
+			expect(closeButton).toHaveAttribute("data-state", "open");
+			expect(closeButton).toBeEnabled();
+			await userEvent.click(closeButton);
+
+			expect(hookState.closeTab).toHaveBeenCalledWith("t1");
+			expect(hookState.selectTab).not.toHaveBeenCalled();
+			expect(screen.getByTestId("browser-tabs-flyout")).toHaveAttribute("data-state", "closed");
+		});
+
+		it("keeps the pinned close action disabled for the only tab", async () => {
+			pinRail();
+			hookState.tabs = [{ id: "t1", url: "http://localhost:3000/", title: "First app", active: true }];
+			hookState.activeTabId = "t1";
+			render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+			const rail = screen.getByTestId("browser-tabs-rail");
+			const closeButton = within(rail.querySelector("nav") as HTMLElement).getByRole("button", {
+				name: "Close tab First app",
+			});
+			expect(closeButton).toBeDisabled();
+			await userEvent.click(closeButton);
+
+			expect(hookState.closeTab).not.toHaveBeenCalled();
 		});
 
 		it("still opens the flyout on hover while the rail is collapsed", () => {
@@ -1397,7 +1491,7 @@ describe("BrowserPanel", () => {
 			expect(screen.getByTestId("browser-tabs-flyout")).toHaveAttribute("data-state", "open");
 		});
 
-		it("names the site in a tooltip when a pinned favicon takes focus", async () => {
+		it("suppresses the site tooltip when pinned-tab focus reveals the close action", () => {
 			pinRail();
 			hookState.tabs = [
 				{ id: "t1", url: "http://localhost:3000/", title: "First app", active: false },
@@ -1408,15 +1502,13 @@ describe("BrowserPanel", () => {
 
 			fireEvent.focus(screen.getByRole("button", { name: "First app — localhost:3000" }));
 
-			const tooltip = await screen.findByRole("tooltip");
-			expect(tooltip).toHaveTextContent("First app");
-			expect(tooltip).toHaveTextContent("localhost:3000");
+			expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
 		});
 
-		it("marks the tooltip as a browser overlay so it paints above the live page", async () => {
+		it("marks the focused close action as a browser overlay so it paints above the live page", () => {
 			// The live page is a native view above the transparent shell; the shell
 			// is only raised for elements matching OPEN_BROWSER_OVERLAY_SELECTOR, so
-			// an unmarked tooltip would render behind the page and be invisible.
+			// an unmarked close action extending left of the rail would be unreachable.
 			pinRail();
 			hookState.tabs = [
 				{ id: "t1", url: "http://localhost:3000/", title: "First app", active: false },
@@ -1427,8 +1519,12 @@ describe("BrowserPanel", () => {
 
 			fireEvent.focus(screen.getByRole("button", { name: "First app — localhost:3000" }));
 
-			const tooltip = await screen.findByRole("tooltip");
-			expect(tooltip.closest('[data-browser-native-overlay="true"]')).not.toBeNull();
+			const rail = screen.getByTestId("browser-tabs-rail");
+			const closeButton = within(rail.querySelector("nav") as HTMLElement).getByRole("button", {
+				name: "Close tab First app",
+			});
+			expect(closeButton).toHaveAttribute("data-browser-native-overlay", "true");
+			expect(closeButton).toHaveAttribute("data-state", "open");
 			expect(document.querySelector(OPEN_BROWSER_OVERLAY_SELECTOR)).not.toBeNull();
 		});
 	});
