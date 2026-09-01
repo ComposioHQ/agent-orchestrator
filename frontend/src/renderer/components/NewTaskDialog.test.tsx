@@ -111,7 +111,7 @@ describe("NewTaskDialog", () => {
 		expect(screen.queryByRole("button", { name: "Close new task dialog" })).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Agent" })).toHaveTextContent("Claude Code");
-		expect(await screen.findByRole("textbox", { name: "Model" })).toHaveValue("");
+		expect(await screen.findByRole("button", { name: "Model" })).toHaveTextContent("Use Claude Code's default");
 		expect(screen.getByRole("button", { name: "Add file" })).toBeInTheDocument();
 		expect(screen.getByLabelText("Task").getAttribute("placeholder")).toBeTruthy();
 		expect(screen.queryByLabelText("Title")).not.toBeInTheDocument();
@@ -135,7 +135,9 @@ describe("NewTaskDialog", () => {
 		await waitForAgentCatalog();
 
 		await user.type(screen.getByLabelText("Task"), brief);
-		await user.type(await screen.findByRole("textbox", { name: "Model" }), "placeholder-model");
+		await user.click(await screen.findByRole("button", { name: "Model" }));
+		await user.type(screen.getByRole("searchbox", { name: "Search model" }), "placeholder-model");
+		await user.click(screen.getByRole("menuitem", { name: "Use “placeholder-model” as a custom model" }));
 		await user.click(screen.getByRole("button", { name: "Start task" }));
 
 		await waitFor(() => expect(requestBody).not.toThrow());
@@ -260,7 +262,7 @@ describe("NewTaskDialog", () => {
 		await waitForAgentCatalog();
 
 		expect(screen.queryByLabelText("Branch")).not.toBeInTheDocument();
-		expect(await screen.findByRole("textbox", { name: "Model" })).toHaveValue("");
+		expect(await screen.findByRole("button", { name: "Model" })).toHaveTextContent("Use Claude Code's default");
 
 		await user.type(screen.getByLabelText("Task"), "Build a quick prototype in scratch.");
 		await user.click(screen.getByRole("button", { name: "Start task" }));

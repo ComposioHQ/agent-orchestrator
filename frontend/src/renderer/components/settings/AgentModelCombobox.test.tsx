@@ -66,8 +66,9 @@ describe("AgentModelCombobox", () => {
 		renderCombobox(models);
 		await userEvent.click(screen.getByRole("button", { name: "Worker model" }));
 
-		// Agent default, 50 catalog models, and the custom-model action.
-		expect(screen.getAllByRole("menuitem")).toHaveLength(52);
+		// Agent default and 50 catalog models. The custom-model action appears
+		// only after the user types a value that does not match the catalog.
+		expect(screen.getAllByRole("menuitem")).toHaveLength(51);
 		expect(screen.getByText("Showing 50 of 1,397 matching models — type to narrow")).toBeInTheDocument();
 		expect(screen.queryByRole("menuitem", { name: /Model 1000/ })).not.toBeInTheDocument();
 	});
@@ -79,12 +80,28 @@ describe("AgentModelCombobox", () => {
 				label: index === 8 ? "GPT Luna" : `GPT ${index}`,
 				provider: "OpenAI",
 			})),
+			{ allowCustom: false, customModelEntry: "none" },
 		);
 
 		await userEvent.click(screen.getByRole("button", { name: "Worker model" }));
 
 		expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
 		expect(screen.queryByText(/matching models/)).not.toBeInTheDocument();
+	});
+
+	it("uses the search field to enter a direct model ID for a compact catalog", async () => {
+		const { onCustom } = renderCombobox([
+			{ id: "gpt-5.6-sol", label: "Sol" },
+			{ id: "gpt-5.6-luna", label: "Luna" },
+		]);
+
+		await userEvent.click(screen.getByRole("button", { name: "Worker model" }));
+		const search = screen.getByRole("searchbox", { name: "Search worker model" });
+		expect(screen.queryByRole("menuitem", { name: "Enter model ID…" })).not.toBeInTheDocument();
+		await userEvent.type(search, "private/model-id");
+		await userEvent.click(screen.getByRole("menuitem", { name: "Use “private/model-id” as a custom model" }));
+
+		expect(onCustom).toHaveBeenCalledWith("private/model-id");
 	});
 
 	it("adds simple model search at ten models", async () => {

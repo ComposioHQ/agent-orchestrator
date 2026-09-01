@@ -635,7 +635,6 @@ function AgentModelField({
 }) {
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
-	const [customAgentId, setCustomAgentId] = useState<string | null>(null);
 	const query = useQuery(agentModelsQueryOptions(agentId, projectId));
 	const catalog: AgentModelCatalog | undefined = query.data;
 	const revalidationQuery = useQuery({
@@ -652,7 +651,6 @@ function AgentModelField({
 	}, [agentId, projectId, queryClient, revalidationQuery.data]);
 	const isMode = catalog?.selectionMode === "mode";
 	const label = t(`settings.models.${role}${isMode ? "Mode" : "Model"}`);
-	const datalistID = `${role}-model-options`;
 	const warning =
 		(revalidationQuery.isError
 			? revalidationQuery.error instanceof Error
@@ -698,24 +696,16 @@ function AgentModelField({
 		);
 	}
 
-	const hasCatalog = catalog?.selectionMode === "catalog" && (catalog.models?.length ?? 0) > 0;
 	const customModelEntry = catalog?.customModelEntry ?? (catalog?.allowCustom ? "direct" : "none");
-	const modelIsInCatalog = catalog?.models?.some((item) => item.id === model) ?? false;
-	const showCustomInput =
-		customModelEntry === "direct" &&
-		hasCatalog &&
-		(customAgentId === agentId || (model !== "" && !modelIsInCatalog));
 	const refreshCatalog = async () => {
 		const refreshed = await refreshAgentModels(agentId, projectId);
 		queryClient.setQueryData(agentModelsQueryKey(agentId, projectId), refreshed);
 	};
 	const selectCatalogModel = (value: string) => {
-		setCustomAgentId(null);
 		onModelChange(value);
 		onModeChange("");
 	};
 	const selectCustomModel = (value: string) => {
-		setCustomAgentId(agentId);
 		onModelChange(value);
 		onModeChange("");
 	};
@@ -723,51 +713,19 @@ function AgentModelField({
 		<>
 			<SettingsRow label={label}>
 				<div className="flex min-w-0 items-center gap-2">
-					{!showCustomInput && (hasCatalog || customModelEntry !== "direct") ? (
-						<AgentModelCombobox
-							aria-label={label}
-							value={model}
-									models={catalog?.models ?? []}
-									allowCustom={catalog?.allowCustom}
-							customModelEntry={customModelEntry}
-							agentLabel={agentId}
-							onRefresh={refreshCatalog}
-							disabled={query.isFetching || agentId === ""}
-							onChange={selectCatalogModel}
-							onCustom={selectCustomModel}
-							triggerClassName="justify-end"
-						/>
-					) : (
-						<>
-							<input
-								id={datalistID}
-								aria-label={label}
-								className="settings-inline-input settings-model-control"
-								value={model}
-								disabled={agentId === ""}
-								onChange={(event) => {
-									onModelChange(event.target.value);
-									onModeChange("");
-								}}
-								placeholder={query.isFetching ? t("settings.models.loading") : t("settings.project.agentDefault")}
-							/>
-							{hasCatalog && (
-								<AgentModelCombobox
-									aria-label={t("settings.models.optionsAria", { label })}
-									value={model}
-									models={catalog?.models ?? []}
-									allowCustom={catalog?.allowCustom}
-									customModelEntry={customModelEntry}
-									agentLabel={agentId}
-									onRefresh={refreshCatalog}
-									onChange={selectCatalogModel}
-									onCustom={selectCustomModel}
-									triggerLabel={t("settings.models.browse")}
-									triggerClassName="shrink-0"
-								/>
-							)}
-						</>
-					)}
+					<AgentModelCombobox
+						aria-label={label}
+						value={model}
+						models={catalog?.models ?? []}
+						allowCustom={catalog?.allowCustom}
+						customModelEntry={customModelEntry}
+						agentLabel={agentId}
+						onRefresh={refreshCatalog}
+						disabled={query.isFetching || agentId === ""}
+						onChange={selectCatalogModel}
+						onCustom={selectCustomModel}
+						triggerClassName="justify-end"
+					/>
 				</div>
 			</SettingsRow>
 			{warning && <p className="px-1 text-xs leading-row text-warning">{warning}</p>}

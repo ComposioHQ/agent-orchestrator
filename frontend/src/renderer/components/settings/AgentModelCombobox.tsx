@@ -101,7 +101,7 @@ export function AgentModelCombobox({
 	const normalizedSearch = normalizeSearch(search);
 	const searchIndex = useMemo(() => buildModelSearchIndex(models), [models]);
 	const selected = searchIndex.byID.get(normalizeSearch(value));
-	const showSearch = models.length >= MODEL_SEARCH_THRESHOLD;
+	const showSearch = allowDirectCustom || models.length >= MODEL_SEARCH_THRESHOLD;
 	const hasMultipleProviders = useMemo(
 		() =>
 			new Set(
@@ -135,7 +135,7 @@ export function AgentModelCombobox({
 	const customSearchValue = search.trim();
 	const showCustomSearchAction = allowDirectCustom && customSearchValue !== "" && rankedModels.length === 0;
 	const noOverrideLabel = emptyLabel ?? t("settings.models.agentDefault");
-	const currentLabel = triggerLabel ?? selected?.label ?? noOverrideLabel;
+	const currentLabel = (triggerLabel ?? selected?.label ?? value) || noOverrideLabel;
 	const scrollRef = useRef<HTMLDivElement>(null);
 	const [canScrollDown, setCanScrollDown] = useState(false);
 	const updateScrollCue = useCallback(() => {
@@ -281,14 +281,6 @@ export function AgentModelCombobox({
 						)}
 						{normalizedSearch !== "" && rankedModels.length === 0 && !allowDirectCustom && (
 							<p className="px-2 py-1.5 text-xs text-settings-muted">{t("settings.models.noMatches")}</p>
-						)}
-						{normalizedSearch === "" && allowDirectCustom && (
-							<>
-								<DropdownMenuSeparator />
-								<DropdownMenuItem onSelect={() => onCustom("")} className={modelItemClass(false)}>
-									{t("settings.models.custom")}
-								</DropdownMenuItem>
-							</>
 						)}
 						{normalizedSearch === "" && entryMode !== "direct" && (
 							<>
