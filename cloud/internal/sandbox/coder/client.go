@@ -400,8 +400,9 @@ func (c *Client) BootstrapWorker(ctx context.Context, id sandbox.ID, bootstrap s
 	// preserves the final result after the upload while AO keeps the PTY open.
 	query.Set("backend_type", "buffered")
 	ptyURL.RawQuery = query.Encode()
+	const bootstrapAttempts = 5
 	var lastErr error
-	for attempt := 0; attempt < 3; attempt++ {
+	for attempt := 0; attempt < bootstrapAttempts; attempt++ {
 		if err := c.bootstrapThroughPTY(ctx, ptyURL, encoded); err == nil {
 			return nil
 		} else {
@@ -409,6 +410,15 @@ func (c *Client) BootstrapWorker(ctx context.Context, id sandbox.ID, bootstrap s
 		}
 		if ctx.Err() != nil {
 			return ctx.Err()
+		}
+		if attempt+1 < bootstrapAttempts {
+			timer := time.NewTimer(time.Second)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return ctx.Err()
+			case <-timer.C:
+			}
 		}
 	}
 	return fmt.Errorf("coder: bootstrap worker after PTY retries: %w", lastErr)

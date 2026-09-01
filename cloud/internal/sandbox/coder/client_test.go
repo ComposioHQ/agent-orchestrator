@@ -324,6 +324,57 @@ func TestBootstrapWorkerPropagatesPostUploadFailure(t *testing.T) {
 	}
 }
 
+func TestBootstrapWorkerRetriesPTYBeforeReady(t *testing.T) {
+	t.Parallel()
+
+	var (
+		mu       sync.Mutex
+		attempts int
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/api/v2/workspaces/" + testWorkspaceID:
+			writeWorkspace(t, writer, "running", "connected", true)
+		case "/api/v2/workspaceagents/" + testAgentID + "/pty":
+			mu.Lock()
+			attempts++
+			attempt := attempts
+			mu.Unlock()
+			if attempt < 3 {
+				connection, err := websocket.Accept(writer, request, nil)
+				if err != nil {
+					t.Errorf("accept websocket: %v", err)
+					return
+				}
+				_ = connection.Close(websocket.StatusNormalClosure, "")
+				return
+			}
+			serveBootstrapPTY(t, writer, request, func(_ *websocket.Conn, output io.Writer) {
+				_, _ = io.WriteString(output, bootstrapOK+"\r\n")
+			})
+		default:
+			http.Error(writer, "unexpected route", http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	client := newTestClient(t, server.URL, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	err := client.BootstrapWorker(ctx, testWorkspaceID, sandbox.WorkerBootstrap{
+		Binary: []byte("worker-binary"), Destination: "/usr/local/bin/ao-worker",
+		User: "ao-worker", DurableRoot: "/mnt/ao", DurableIdentity: "session-1",
+	})
+	if err != nil {
+		t.Fatalf("bootstrap after transient PTY closes: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if attempts != 3 {
+		t.Fatalf("PTY attempts = %d, want 3", attempts)
+	}
+}
+
 func TestBootstrapThroughPTYRejectsPrematureClose(t *testing.T) {
 	t.Parallel()
 
