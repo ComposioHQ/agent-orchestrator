@@ -4427,13 +4427,13 @@ body:has(#root .platform-linux) > .browser-popout-overlay {
 }
 
 @container browser-panel (min-width: 640px) {
-	.browser-panel__tab-bar {
+	.browser-panel--popped-out .browser-panel__tab-bar {
 		display: flex;
 	}
 
-	.browser-panel__toolbar-new-tab,
-	.browser-panel__toolbar-tabs-trigger,
-	.browser-tabs-rail {
+	.browser-panel--popped-out .browser-panel__toolbar-new-tab,
+	.browser-panel--popped-out .browser-panel__toolbar-tabs-trigger,
+	.browser-panel--popped-out .browser-tabs-rail {
 		display: none;
 	}
 }

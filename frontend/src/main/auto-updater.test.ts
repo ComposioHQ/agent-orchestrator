@@ -406,7 +406,7 @@ describe("startAutoUpdates", () => {
     }
   });
 
-  it("schedules only feature-pin retirement polling when automatic updates are disabled", async () => {
+  it("checks stable on launch and hourly when automatic downloads are disabled", async () => {
     vi.useFakeTimers();
     const setIntervalSpy = vi.spyOn(globalThis, "setInterval");
     const { module, autoUpdater } = await importAutoUpdater({
@@ -418,12 +418,31 @@ describe("startAutoUpdates", () => {
 
     await module.startAutoUpdates(stateDir);
 
-    expect(autoUpdater.checkForUpdates).not.toHaveBeenCalled();
-    expect(setIntervalSpy).toHaveBeenCalledTimes(1);
-    expect(setIntervalSpy).toHaveBeenCalledWith(
-      expect.any(Function),
-      30 * 60 * 1000,
-    );
+    expect(autoUpdater.autoDownload).toBe(false);
+    expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(1);
+    const { delay } = latestInterval(setIntervalSpy);
+    expect(delay).toBe(60 * 60 * 1000);
+    await vi.advanceTimersByTimeAsync(delay);
+    expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(2);
+  });
+
+  it("checks nightly every 15 minutes when automatic downloads are disabled", async () => {
+    vi.useFakeTimers();
+    const setIntervalSpy = vi.spyOn(globalThis, "setInterval");
+    const { module, autoUpdater } = await importAutoUpdater({
+      enabled: false,
+      channel: "nightly",
+      nightlyAck: true,
+      feature: null,
+    });
+
+    await module.startAutoUpdates(stateDir);
+
+    expect(autoUpdater.channel).toBe("nightly");
+    expect(autoUpdater.allowPrerelease).toBe(true);
+    expect(autoUpdater.autoDownload).toBe(false);
+    expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(1);
+    expect(latestInterval(setIntervalSpy).delay).toBe(15 * 60 * 1000);
   });
 
   it("does not stack periodic automatic or retirement timers across repeated startAutoUpdates calls", async () => {
@@ -1597,7 +1616,7 @@ describe("startAutoUpdates", () => {
     );
 
     await module.startAutoUpdates(stateDir);
-    expect(setIntervalSpy).toHaveBeenCalledTimes(1);
+    expect(setIntervalSpy).toHaveBeenCalledTimes(2);
 
     await module.setUpdateSettings(stateDir, { ...current, enabled: true });
     expect(setIntervalSpy.mock.calls.map(([, delay]) => delay)).toContain(
@@ -1613,8 +1632,10 @@ describe("startAutoUpdates", () => {
 
     await module.setUpdateSettings(stateDir, { ...current, enabled: false });
     expect(clearIntervalSpy).toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
-    expect(autoUpdater.checkForUpdates).not.toHaveBeenCalled();
+    expect(latestInterval(setIntervalSpy).delay).toBe(15 * 60 * 1000);
+    await vi.advanceTimersByTimeAsync(15 * 60 * 1000);
+    expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(2);
+    expect(autoUpdater.autoDownload).toBe(false);
   });
 
   it("does not let a stale disabled check clear a concurrently enabled scheduler", async () => {
@@ -1652,7 +1673,7 @@ describe("startAutoUpdates", () => {
     await flushMicrotasks();
 
     await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
-    expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(2);
+    expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(3);
   });
 
   it("coalesces hourly ticks while an automatic check is still running", async () => {

@@ -41,6 +41,7 @@ import {
 	Smartphone,
 	Trash2,
 	User,
+	X,
 } from "lucide-react";
 import {
 	useCallback,
@@ -81,6 +82,7 @@ import { useTerminateSession } from "../hooks/useTerminateSession";
 import { useResizable } from "../hooks/useResizable";
 import { useCloudGate } from "../hooks/useCloudGate";
 import { useShellMaybe } from "../lib/shell-context";
+import { useSidebarUpdateDismissal } from "../hooks/useSidebarUpdateDismissal";
 import { useUpdateStatus } from "../hooks/useUpdateStatus";
 import { effectiveShortcutBindings, shortcutBindingKeys } from "../../shared/shortcuts";
 import {
@@ -429,6 +431,8 @@ export function Sidebar({
 	const showCompactRailHistory = autoCompact && isCollapsed && (isMac || isLinux) && !isWindows;
 	// One IPC subscription for both footer variants of the restart-to-update prompt.
 	const updateStatus = useUpdateStatus();
+	const availableUpdateVersion = updateStatus.state === "available" ? updateStatus.version : undefined;
+	const updateDismissal = useSidebarUpdateDismissal(availableUpdateVersion);
 	// Daemon status for the smoke suite's sr-only mirror in the footer. Null when
 	// rendered outside the shell (unit tests) — the mirror simply doesn't render.
 	const daemonStatus = useShellMaybe()?.daemonStatus ?? null;
@@ -864,7 +868,12 @@ export function Sidebar({
 					hidden={isCollapsed}
 					className="sidebar-expanded-chrome relative flex w-full min-w-46.5 flex-col gap-0.5"
 				>
-					<UpdateStatusRow status={updateStatus} tabIndex={isCollapsed ? -1 : 0} />
+					<UpdateStatusRow
+						availableDismissed={updateDismissal.dismissed}
+						onDismissAvailable={updateDismissal.dismiss}
+						status={updateStatus}
+						tabIndex={isCollapsed ? -1 : 0}
+					/>
 					<CloudSignInRow tabIndex={isCollapsed ? -1 : 0} />
 					<CloudAccountRow tabIndex={isCollapsed ? -1 : 0} />
 					<button
@@ -898,7 +907,11 @@ export function Sidebar({
 					aria-hidden={!isCollapsed || undefined}
 					className="pointer-events-none absolute inset-x-1.5 bottom-0 top-auto flex min-h-row-md flex-col items-center justify-end gap-1 opacity-0 transition-opacity duration-150 ease-out group-data-[collapsible=icon]:pointer-events-auto group-data-[collapsible=icon]:!bottom-2 group-data-[collapsible=icon]:opacity-100"
 				>
-					<UpdateStatusRail status={updateStatus} tabIndex={isCollapsed ? 0 : -1} />
+					<UpdateStatusRail
+						availableDismissed={updateDismissal.dismissed}
+						status={updateStatus}
+						tabIndex={isCollapsed ? 0 : -1}
+					/>
 					<CloudSignInRailButton tabIndex={isCollapsed ? 0 : -1} />
 					<CloudAccountRailButton tabIndex={isCollapsed ? 0 : -1} />
 					<Tooltip>
@@ -2078,28 +2091,57 @@ function CloudAccountRailButton({ tabIndex }: { tabIndex: number }) {
 // sidebar: an available build downloads on click, progress reports itself, and
 // a staged build becomes the restart action. Idle/checking states stay quiet so
 // routine background checks do not flash in the sidebar.
-function UpdateStatusRow({ status, tabIndex }: { status: UpdateStatus; tabIndex: number }) {
+function UpdateStatusRow({
+	availableDismissed,
+	onDismissAvailable,
+	status,
+	tabIndex,
+}: {
+	availableDismissed: boolean;
+	onDismissAvailable: () => void;
+	status: UpdateStatus;
+	tabIndex: number;
+}) {
 	const { t } = useTranslation();
 	if (status.state === "available") {
+		if (availableDismissed) return null;
 		// A manual check leaves autoDownload off, so without this the row would
 		// announce an update and offer nothing to act on.
 		return (
-			<button
-				aria-label={
-					status.version
-						? t("shell.downloadUpdateVersion", { version: status.version })
-						: t("shell.downloadUpdate")
-				}
-				className={cn(NAV_ROW_CLASS, "flex w-full items-center text-left [&_svg]:size-icon-md [&_svg]:shrink-0")}
-				onClick={() => void aoBridge.updates.download()}
-				tabIndex={tabIndex}
-				type="button"
-			>
-				<Download aria-hidden="true" className="size-icon-lg shrink-0" />
-				<span className="min-w-0 flex-1 truncate tracking-tight">{t("shell.updateAvailable")}</span>
-				{status.version && <span className="sr-only">{t("shell.versionAvailable", { version: status.version })}</span>}
-				<span aria-hidden="true" className="h-2 w-2 shrink-0 rounded-full bg-red-500" />
-			</button>
+			<div className="flex w-full items-center gap-1" data-testid="sidebar-update-available">
+				<button
+					aria-label={
+						status.version
+							? t("shell.downloadUpdateVersion", { version: status.version })
+							: t("shell.downloadUpdate")
+					}
+					className={cn(NAV_ROW_CLASS, "flex min-w-0 flex-1 items-center text-left [&_svg]:size-icon-md [&_svg]:shrink-0")}
+					onClick={() => void aoBridge.updates.download()}
+					tabIndex={tabIndex}
+					type="button"
+				>
+					<Download aria-hidden="true" className="size-icon-lg shrink-0" />
+					<span className="min-w-0 flex-1">
+						<span className="block truncate tracking-tight">{t("shell.updateAvailable")}</span>
+						{status.version && (
+							<span className="block truncate text-caption font-normal text-passive">
+								{t("shell.versionAvailable", { version: status.version })}
+							</span>
+						)}
+					</span>
+				</button>
+				{status.version && (
+					<button
+						aria-label={t("shell.dismissUpdateVersion", { version: status.version })}
+						className="grid size-8 shrink-0 place-items-center text-muted-foreground transition-colors hover:text-foreground"
+						onClick={onDismissAvailable}
+						tabIndex={tabIndex}
+						type="button"
+					>
+						<X aria-hidden="true" className="size-icon-base" />
+					</button>
+				)}
+			</div>
 		);
 	}
 	if (status.state === "downloading") {
@@ -2107,25 +2149,13 @@ function UpdateStatusRow({ status, tabIndex }: { status: UpdateStatus; tabIndex:
 		return (
 			<div
 				aria-live="polite"
-				className={cn(NAV_ROW_CLASS, "relative flex w-full items-center text-left [&_svg]:size-icon-md [&_svg]:shrink-0")}
+				className={cn(NAV_ROW_CLASS, "flex w-full items-center text-left [&_svg]:size-icon-md [&_svg]:shrink-0")}
+				data-testid="sidebar-update-downloading"
 				role="status"
 			>
-				<span className="relative grid size-icon-lg shrink-0 place-items-center" aria-hidden="true">
-					<svg className="absolute inset-0 size-full -rotate-90" viewBox="0 0 24 24" fill="none">
-						<circle cx="12" cy="12" r="9" className="stroke-current/15" strokeWidth="2.5" />
-						<circle
-							cx="12"
-							cy="12"
-							r="9"
-							className="stroke-primary transition-[stroke-dasharray] duration-300"
-							strokeWidth="2.5"
-							strokeLinecap="round"
-							strokeDasharray={`${percent * 0.5655} 56.55`}
-						/>
-					</svg>
-				</span>
+				<Download aria-hidden="true" className="size-icon-lg shrink-0" />
 				<span className="min-w-0 flex-1 truncate tabular-nums">
-					{t("settings.updates.downloading", { percent: status.percent ?? 0 })}
+					{t("settings.updates.downloading", { percent })}
 				</span>
 			</div>
 		);
@@ -2140,6 +2170,7 @@ function UpdateStatusRow({ status, tabIndex }: { status: UpdateStatus; tabIndex:
 			<button
 				aria-label={t("shell.retryUpdateCheck")}
 				className="flex w-full items-center gap-2.5 rounded-lg border border-warning/35 bg-warning/12 p-2.5 text-left text-control font-medium text-warning transition-colors hover:bg-warning/18 [&_svg]:text-warning"
+				data-testid="sidebar-update-failed"
 				onClick={() => void aoBridge.updates.check()}
 				tabIndex={tabIndex}
 				type="button"
@@ -2163,27 +2194,42 @@ function UpdateStatusRow({ status, tabIndex }: { status: UpdateStatus; tabIndex:
 					: t("shell.restartInstallUpdate")
 			}
 			className={cn(
-				NAV_ROW_CLASS,
-				"flex w-full items-center text-left [&_svg]:size-icon-md [&_svg]:shrink-0",
-				escalated && "text-working hover:text-working [&_svg]:text-working",
+				"flex w-full items-center gap-2.5 rounded-lg border border-primary/35 bg-primary/12 p-2.5 text-left text-control font-medium text-primary transition-colors hover:bg-primary/18 [&_svg]:text-primary",
+				escalated &&
+					"border-working/35 bg-working/12 text-working hover:bg-working/18 [&_svg]:text-working",
 			)}
+			data-testid="sidebar-update-ready"
 			onClick={() => void aoBridge.updates.install()}
 			tabIndex={tabIndex}
 			type="button"
 		>
 			<RefreshCw aria-hidden="true" className="size-icon-lg shrink-0" />
-			<span className="min-w-0 flex-1 truncate tracking-tight">{t("shell.restartToUpdate")}</span>
-			{status.version && <span className="sr-only">{t("shell.versionReady", { version: status.version })}</span>}
-			<span aria-hidden="true" className={cn("h-2 w-2 shrink-0 rounded-full", escalated ? "bg-working" : "bg-red-500")} />
+			<span className="min-w-0 flex-1">
+				<span className="block truncate tracking-tight">{t("shell.restartToUpdate")}</span>
+				{status.version && (
+					<span className="block truncate text-caption font-normal">
+						{t("shell.versionReady", { version: status.version })}
+					</span>
+				)}
+			</span>
 		</button>
 	);
 }
 
 // Icon-rail variant of UpdateStatusRow. An available build downloads on click
 // and a staged one installs; an in-flight download is informational.
-function UpdateStatusRail({ status, tabIndex }: { status: UpdateStatus; tabIndex: number }) {
+function UpdateStatusRail({
+	availableDismissed,
+	status,
+	tabIndex,
+}: {
+	availableDismissed: boolean;
+	status: UpdateStatus;
+	tabIndex: number;
+}) {
 	const { t } = useTranslation();
 	if (status.state === "available") {
+		if (availableDismissed) return null;
 		const label = t("settings.updates.available", { version: status.version ? ` (v${status.version})` : "" });
 		return (
 			<Tooltip>

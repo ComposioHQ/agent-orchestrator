@@ -516,7 +516,7 @@ describe("BrowserPanel", () => {
 			{ id: "t2", url: "http://localhost:4173/", title: "Second app", active: true },
 		];
 		hookState.activeTabId = "t2";
-		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut session={session} />);
 
 		const tabList = screen.getByRole("tablist", { name: "Browser tabs" });
 		const firstTab = within(tabList).getByRole("tab", { name: "First app" });
@@ -534,7 +534,7 @@ describe("BrowserPanel", () => {
 			{ id: "t2", url: "http://localhost:4173/", title: "Second app", active: false },
 		];
 		hookState.activeTabId = "t1";
-		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut session={session} />);
 
 		const tabList = screen.getByRole("tablist", { name: "Browser tabs" });
 		const firstTab = within(tabList).getByRole("tab", { name: "First app" });
@@ -552,7 +552,7 @@ describe("BrowserPanel", () => {
 			{ id: "t2", url: "http://localhost:4173/", title: "Second app", active: false },
 		];
 		hookState.activeTabId = "t1";
-		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut session={session} />);
 
 		const tabList = screen.getByRole("tablist", { name: "Browser tabs" });
 		await userEvent.click(within(tabList).getByRole("button", { name: "Close tab Second app" }));
@@ -561,11 +561,18 @@ describe("BrowserPanel", () => {
 	});
 
 	it("opens a new browser tab from the horizontal tab strip", async () => {
-		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut session={session} />);
 
 		await userEvent.click(within(screen.getByTestId("browser-tab-bar")).getByRole("button", { name: "Open new tab" }));
 
 		expect(hookState.openTab).toHaveBeenCalledOnce();
+	});
+
+	it("keeps the horizontal tab strip out of docked mode", () => {
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		expect(screen.queryByTestId("browser-tab-bar")).not.toBeInTheDocument();
+		expect(screen.getByTestId("browser-tabs-rail")).toBeInTheDocument();
 	});
 
 	it("does not render a tab-specific agent marker", async () => {

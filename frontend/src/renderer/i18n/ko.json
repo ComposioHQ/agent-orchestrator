@@ -871,6 +871,7 @@
 	"shell.dashboard": "대시보드",
 	"shell.downloadUpdate": "업데이트 다운로드",
 	"shell.downloadUpdateVersion": "업데이트 v{{version}} 다운로드",
+	"shell.dismissUpdateVersion": "업데이트 v{{version}}을 24시간 숨기기",
 	"shell.expandSidebar": "사이드바 펼치기",
 	"shell.expandSidebarTitle": "사이드바 펼치기 · Ctrl+B",
 	"shell.intakeIssue": "인테이크 이슈: {{id}}",
