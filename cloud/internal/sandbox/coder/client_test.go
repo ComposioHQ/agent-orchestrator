@@ -260,21 +260,141 @@ func TestBootstrapWorkerStreamsArchiveWithoutSecretsInURL(t *testing.T) {
 	client := newTestClient(t, server.URL, nil)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	err := client.BootstrapWorker(ctx, testWorkspaceID, sandbox.WorkerBootstrap{
-		Binary: []byte("worker-binary"), Destination: "/usr/local/bin/ao-worker",
-		HelperBinary: []byte("helper-binary"), HelperDestination: "/usr/local/bin/ao",
-		User: "ao-worker", Environment: map[string]string{"AO_WORKER_TOKEN": secret},
-		DurableRoot: "/mnt/ao", DurableIdentity: "session-1",
-	})
-	if err != nil {
-		t.Fatalf("bootstrap: %v", err)
+	bootstrapResult := make(chan error, 1)
+	go func() {
+		bootstrapResult <- client.BootstrapWorker(ctx, testWorkspaceID, sandbox.WorkerBootstrap{
+			Binary: []byte("worker-binary"), Destination: "/usr/local/bin/ao-worker",
+			HelperBinary: []byte("helper-binary"), HelperDestination: "/usr/local/bin/ao",
+			User: "ao-worker", Environment: map[string]string{"AO_WORKER_TOKEN": secret},
+			DurableRoot: "/mnt/ao", DurableIdentity: "session-1",
+		})
+	}()
+	var files map[string]string
+	select {
+	case files = <-archiveResult:
+	case <-ctx.Done():
+		t.Fatalf("receive bootstrap archive: %v", ctx.Err())
 	}
-	files := <-archiveResult
 	if files["ao-worker"] != "worker-binary" || files["ao"] != "helper-binary" {
 		t.Fatalf("unexpected binaries in archive: %+v", files)
 	}
 	if !strings.Contains(files["worker.env"], secret) {
 		t.Fatalf("worker environment missing from archive")
+	}
+	if err := <-bootstrapResult; err != nil {
+		t.Fatalf("bootstrap: %v", err)
+	}
+}
+
+func TestBootstrapWorkerPropagatesPostUploadFailure(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/api/v2/workspaces/" + testWorkspaceID:
+			writeWorkspace(t, writer, "running", "connected", true)
+		case "/api/v2/workspaceagents/" + testAgentID + "/pty":
+			serveBootstrapPTY(t, writer, request, func(_ *websocket.Conn, output io.Writer) {
+				_, _ = io.WriteString(output, bootstrapFailed+":23\r\n")
+			})
+		default:
+			http.Error(writer, "unexpected route", http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	client := newTestClient(t, server.URL, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	err := client.BootstrapWorker(ctx, testWorkspaceID, sandbox.WorkerBootstrap{
+		Binary: []byte("worker-binary"), Destination: "/usr/local/bin/ao-worker",
+		User: "ao-worker", DurableRoot: "/mnt/ao", DurableIdentity: "session-1",
+	})
+	if err == nil || !strings.Contains(err.Error(), bootstrapFailed+":23") {
+		t.Fatalf("bootstrap error = %v, want post-upload failure", err)
+	}
+}
+
+func TestBootstrapThroughPTYRejectsPrematureClose(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		serveBootstrapPTY(t, writer, request, func(connection *websocket.Conn, _ io.Writer) {
+			_ = connection.Close(websocket.StatusNormalClosure, "")
+		})
+	}))
+	defer server.Close()
+	client := newTestClient(t, server.URL, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	err := client.bootstrapThroughPTY(ctx, mustParseURL(t, server.URL+"/pty"), "payload")
+	if err == nil || !strings.Contains(err.Error(), "read workspace PTY") {
+		t.Fatalf("bootstrap error = %v, want premature-close error", err)
+	}
+}
+
+func TestBootstrapThroughPTYCancellationStopsOutput(t *testing.T) {
+	t.Parallel()
+
+	uploaded := make(chan struct{})
+	releaseServer := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseServer) }) }
+	defer release()
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		serveBootstrapPTY(t, writer, request, func(_ *websocket.Conn, _ io.Writer) {
+			close(uploaded)
+			<-releaseServer
+		})
+	}))
+	defer server.Close()
+	client := newTestClient(t, server.URL, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() {
+		result <- client.bootstrapThroughPTY(ctx, mustParseURL(t, server.URL+"/pty"), "payload")
+	}()
+	select {
+	case <-uploaded:
+	case <-time.After(5 * time.Second):
+		t.Fatal("bootstrap upload did not complete")
+	}
+	cancel()
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("bootstrap error = %v, want context canceled", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("bootstrap did not return after cancellation")
+	}
+	release()
+}
+
+func TestStreamPTYOutputCancellationDoesNotBlock(t *testing.T) {
+	t.Parallel()
+
+	reader, writer := io.Pipe()
+	defer reader.Close()
+	defer writer.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	_, done := streamPTYOutput(ctx, reader)
+	written := make(chan struct{})
+	go func() {
+		_, _ = io.WriteString(writer, "unconsumed output\n")
+		close(written)
+	}()
+	select {
+	case <-written:
+	case <-time.After(5 * time.Second):
+		t.Fatal("PTY reader did not consume output")
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("PTY output goroutine blocked after cancellation")
 	}
 }
 
@@ -536,6 +656,69 @@ func healthyWorkspace() workspace {
 			Health: workspaceHealth{Healthy: true},
 		}}}}},
 	}
+}
+
+func serveBootstrapPTY(
+	t *testing.T,
+	writer http.ResponseWriter,
+	request *http.Request,
+	afterUpload func(*websocket.Conn, io.Writer),
+) {
+	t.Helper()
+	connection, err := websocket.Accept(writer, request, nil)
+	if err != nil {
+		t.Errorf("accept websocket: %v", err)
+		return
+	}
+	defer connection.CloseNow()
+	netConnection := websocket.NetConn(context.Background(), connection, websocket.MessageBinary)
+	defer netConnection.Close()
+	decoder := json.NewDecoder(netConnection)
+	expectedSequence := 0
+	for {
+		var input struct {
+			Data string `json:"data"`
+		}
+		if err := decoder.Decode(&input); err != nil {
+			t.Errorf("decode PTY input: %v", err)
+			return
+		}
+		parts := strings.SplitN(strings.TrimSuffix(input.Data, "\n"), ":", 4)
+		if len(parts) != 4 {
+			continue
+		}
+		sequence, sequenceErr := strconv.Atoi(parts[1])
+		declared, declaredErr := strconv.Atoi(parts[2])
+		if sequenceErr != nil || declaredErr != nil {
+			continue
+		}
+		if parts[0] == "data" && sequence == expectedSequence && len(parts[3]) == declared {
+			expectedSequence++
+			if _, err := io.WriteString(netConnection,
+				fmt.Sprintf("%s:%d\r\n", bootstrapUploadACK, expectedSequence)); err != nil {
+				t.Errorf("write upload acknowledgement: %v", err)
+				return
+			}
+			continue
+		}
+		if parts[0] == "done" && sequence == expectedSequence && declared == 0 {
+			if _, err := io.WriteString(netConnection, bootstrapUploadDone+"\r\n"); err != nil {
+				t.Errorf("write upload completion: %v", err)
+				return
+			}
+			afterUpload(connection, netConnection)
+			return
+		}
+	}
+}
+
+func mustParseURL(t *testing.T, value string) *url.URL {
+	t.Helper()
+	parsed, err := url.Parse(value)
+	if err != nil {
+		t.Fatalf("parse URL: %v", err)
+	}
+	return parsed
 }
 
 func readArchive(t *testing.T, compressed []byte) map[string]string {

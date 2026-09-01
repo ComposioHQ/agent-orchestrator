@@ -66,6 +66,18 @@ func TestLiveLifecycle(t *testing.T) {
 	if environment.Target == "" {
 		t.Fatal("running workspace carried no healthy agent target")
 	}
+	bootstrapFailure := client.BootstrapWorker(ctx, environment.ID, sandbox.WorkerBootstrap{
+		Binary: []byte("#!/bin/sh\nexit 0\n"), Destination: "/proc/ao-worker", User: "ao-worker",
+		Environment: map[string]string{"AO_CODER_LIVE_TEST": "expected-install-failure"},
+		DurableRoot: durableRoot, DurableIdentity: sessionID,
+	})
+	if bootstrapFailure == nil {
+		t.Fatal("bootstrap to unwritable destination succeeded")
+	}
+	if !strings.Contains(bootstrapFailure.Error(), bootstrapFailed) {
+		t.Fatalf("bootstrap to unwritable destination did not report post-upload failure: %v", bootstrapFailure)
+	}
+	t.Log("observed expected post-upload bootstrap failure")
 	if err := client.BootstrapWorker(ctx, environment.ID, sandbox.WorkerBootstrap{
 		Binary:      []byte("#!/bin/sh\nset -eu\necho live > \"$AO_WORKSPACE_DIR/uncommitted.txt\"\nmkdir -p \"$CLAUDE_CONFIG_DIR/projects/live\" \"$CODEX_HOME/sessions\"\necho '{}' > \"$CLAUDE_CONFIG_DIR/projects/live/conversation.jsonl\"\necho state > \"$CODEX_HOME/sessions/thread.jsonl\"\nsleep 300\n"),
 		Destination: "/usr/local/bin/ao-worker", User: "ao-worker",
@@ -161,9 +173,15 @@ func assertLiveDurableState(
 		t.Fatalf("open persistence probe PTY: %v", err)
 	}
 	defer connection.CloseNow()
-	netConnection := websocket.NetConn(context.Background(), connection, websocket.MessageBinary)
-	defer netConnection.Close()
-	output, err := readBootstrapResult(ctx, streamPTYOutput(netConnection))
+	streamContext, stopStream := context.WithCancel(ctx)
+	netConnection := websocket.NetConn(streamContext, connection, websocket.MessageBinary)
+	outputChannel, outputDone := streamPTYOutput(streamContext, netConnection)
+	defer func() {
+		stopStream()
+		_ = connection.CloseNow()
+		<-outputDone
+	}()
+	output, err := readBootstrapResult(ctx, outputChannel)
 	if err != nil || !strings.Contains(output, bootstrapOK) {
 		t.Fatalf("durable repository/harness state did not survive stop/start: %s: %v", sanitizePTYOutput(output), err)
 	}
