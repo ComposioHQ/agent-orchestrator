@@ -149,7 +149,7 @@
 	"createProject.cloneCredentialsHint": "Private repositories use credentials already configured for Git on this computer.",
 	"createProject.cloneDescription": "Add a repository from a URL.",
 	"createProject.cloneDestination": "Clone into",
-	"createProject.cloneDestinationPlaceholder": "Choose a parent folder",
+	"createProject.cloneDestinationPlaceholder": "Choose a folder",
 	"createProject.cloneDestinationRequired": "Choose a destination folder.",
 	"createProject.cloneFailedTitle": "Could not clone repository",
 	"createProject.cloneFromGit": "Clone from Git",

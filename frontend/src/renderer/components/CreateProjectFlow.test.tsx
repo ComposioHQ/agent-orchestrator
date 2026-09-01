@@ -8,15 +8,17 @@ import { CreateProjectFlow, type CloneProjectInput, type CreateProjectInput } fr
 const bridgeMocks = vi.hoisted(() => ({
 	checkAncestorRepo: vi.fn(),
 	chooseDirectory: vi.fn(),
+	getHomeDirectory: vi.fn(),
 	scanImportFolder: vi.fn(),
 }));
 
 vi.mock("../lib/bridge", () => ({
 	aoBridge: {
 		app: {
-			checkAncestorRepo: bridgeMocks.checkAncestorRepo,
-			chooseDirectory: bridgeMocks.chooseDirectory,
-			scanImportFolder: bridgeMocks.scanImportFolder,
+		getHomeDirectory: bridgeMocks.getHomeDirectory,
+		checkAncestorRepo: bridgeMocks.checkAncestorRepo,
+		chooseDirectory: bridgeMocks.chooseDirectory,
+		scanImportFolder: bridgeMocks.scanImportFolder,
 		},
 	},
 }));
@@ -115,6 +117,7 @@ const noop = {
 
 beforeEach(() => {
 	bridgeMocks.checkAncestorRepo.mockReset().mockResolvedValue(undefined);
+	bridgeMocks.getHomeDirectory.mockReset().mockResolvedValue("/Users/tester");
 	bridgeMocks.chooseDirectory.mockReset();
 	bridgeMocks.scanImportFolder.mockReset().mockImplementation(async ({ path }: { path: string }) => okScan(path));
 	cloudMocks.cloudEnabled = false;
