@@ -175,7 +175,7 @@ export default function CloneRepositoryDialog({
 										<Folder className="size-4 shrink-0 text-[var(--color-text-import-muted)]" aria-hidden="true" />
 										<span className="truncate">{value.destinationParent || t("createProject.cloneDestinationPlaceholder")}</span>
 									</span>
-									<span className="flex h-full shrink-0 items-center border-l border-border/60 px-4 text-foreground hover:bg-accent">
+									<span className="flex h-full shrink-0 items-center border-l border-border/60 px-4 text-foreground hover:bg-foreground/10">
 										{choosingDestination ? t("createProject.opening") : t("createProject.cloneChoose")}
 									</span>
 								</button>
