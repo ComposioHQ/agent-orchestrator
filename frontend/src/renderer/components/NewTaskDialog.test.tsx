@@ -52,6 +52,10 @@ function requestBody() {
 	return (call[1] as { body: Record<string, unknown> }).body;
 }
 
+function delegateCalls() {
+	return postMock.mock.calls.filter(([path]) => path === "/api/v1/orchestrators/delegate");
+}
+
 const agentInventory = {
 	agents: [
 		agentReadiness("claude-code", "Claude Code"),
@@ -141,12 +145,18 @@ describe("NewTaskDialog", () => {
 	}, 20_000);
 
 	it("offers an explicit Terminal UI retry when Chat preflight fails", async () => {
-		postMock
-			.mockResolvedValueOnce({
-				data: undefined,
-				error: { code: "CHAT_AUTH_REQUIRED", message: "Claude Code needs login" },
-			})
-			.mockResolvedValueOnce({ data: { ok: true, workerId: "worker-tui" }, error: undefined });
+		let delegateAttempts = 0;
+		postMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/agents/readiness/ensure") return { data: agentInventory, error: undefined };
+			delegateAttempts += 1;
+			if (delegateAttempts === 1) {
+				return {
+					data: undefined,
+					error: { code: "CHAT_AUTH_REQUIRED", message: "Claude Code needs login" },
+				};
+			}
+			return { data: { ok: true, workerId: "worker-tui" }, error: undefined };
+		});
 		const { onCreated } = renderDialog();
 		const user = userEvent.setup();
 		await waitForAgentCatalog();
@@ -158,8 +168,8 @@ describe("NewTaskDialog", () => {
 		expect(requestBody()).not.toHaveProperty("mode");
 		await user.click(fallback);
 
-		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(2));
-		const retryBody = (postMock.mock.calls[1][1] as { body: Record<string, unknown> }).body;
+		await waitFor(() => expect(delegateCalls()).toHaveLength(2));
+		const retryBody = (delegateCalls()[1][1] as { body: Record<string, unknown> }).body;
 		expect(retryBody.mode).toBe("tui");
 		expect(onCreated).toHaveBeenCalledWith("worker-tui");
 	});
