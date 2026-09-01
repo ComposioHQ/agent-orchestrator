@@ -41,6 +41,13 @@ const (
 	bootstrapFailed     = "__AO_BOOTSTRAP_FAILED__"
 	bootstrapUploadACK  = "__AO_UPLOAD_ACK__"
 	bootstrapUploadDone = "__AO_UPLOAD_DONE__"
+	// Coder rejects deadline extension requests less than 30 minutes in the
+	// future. Keep the provider contract here rather than leaking it into the
+	// provider-neutral reconciler.
+	coderMinimumDeadlineLeadTime = 30 * time.Minute
+	// Leave enough room for clock skew and request transit after AO computes the
+	// deadline but before Coder validates it.
+	coderDeadlineRequestMargin = time.Minute
 )
 
 var userPattern = regexp.MustCompile(`^[a-z_][a-z0-9_-]{0,31}$`)
@@ -240,6 +247,10 @@ func (c *Client) Resume(ctx context.Context, id sandbox.ID) error {
 // work or recent user interaction. Coder applies template maximum-runtime
 // policy to this request.
 func (c *Client) ExtendDeadline(ctx context.Context, id sandbox.ID, deadline time.Time) error {
+	minimumDeadline := time.Now().UTC().Add(coderMinimumDeadlineLeadTime + coderDeadlineRequestMargin)
+	if deadline.Before(minimumDeadline) {
+		deadline = minimumDeadline
+	}
 	return c.do(ctx, http.MethodPut,
 		"/api/v2/workspaces/"+url.PathEscape(string(id))+"/extend",
 		struct {

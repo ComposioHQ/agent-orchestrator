@@ -165,6 +165,9 @@ func TestActiveWorkExtendsNearCoderDeadline(t *testing.T) {
 	if provider.extensions[0].Before(started.Add(activeDeadlineExtension - time.Second)) {
 		t.Fatalf("extended deadline = %s, want about %s from now", provider.extensions[0], activeDeadlineExtension)
 	}
+	if provider.extensions[0].After(started.Add(activeDeadlineExtension + time.Second)) {
+		t.Fatalf("extended deadline = %s, want provider-neutral request about %s from now", provider.extensions[0], activeDeadlineExtension)
+	}
 }
 
 func TestIdleWorkDoesNotExtendCoderDeadline(t *testing.T) {

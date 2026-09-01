@@ -55,11 +55,13 @@ specific session, sending a message, or requesting an interactive workspace
 operation records resume intent; list requests and terminal reconnects do not.
 
 While an AO turn is queued/running or a recent user interaction lease is live,
-the reconciler keeps a Coder deadline at least ten minutes ahead, refreshing
-when it falls within five minutes. It calls `PUT
-/api/v2/workspaces/{id}/extend` only when Coder already reports a deadline, so a
-template with autostop disabled does not gain one. Extension failures are
-reported without misclassifying or replacing otherwise healthy compute.
+the provider-neutral reconciler requests a deadline ten minutes ahead when the
+current deadline falls within five minutes. The Coder provider raises that
+request to Coder's 30-minute minimum plus one minute of clock and network
+margin. It calls `PUT /api/v2/workspaces/{id}/extend` only when Coder already
+reports a deadline, so a template with autostop disabled does not gain one.
+Extension failures are reported without misclassifying or replacing otherwise
+healthy compute.
 
 ## Template contract
 

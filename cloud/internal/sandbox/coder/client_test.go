@@ -182,7 +182,7 @@ func TestAutostopMapsToExternalIdleStop(t *testing.T) {
 
 func TestExtendDeadline(t *testing.T) {
 	t.Parallel()
-	wanted := time.Date(2026, time.September, 1, 3, 4, 5, 0, time.UTC)
+	wanted := time.Now().UTC().Add(2 * time.Hour).Round(time.Second)
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.Method != http.MethodPut || request.URL.Path != "/api/v2/workspaces/"+testWorkspaceID+"/extend" {
 			http.Error(writer, "unexpected route", http.StatusNotFound)
@@ -203,6 +203,45 @@ func TestExtendDeadline(t *testing.T) {
 	client := newTestClient(t, server.URL, nil)
 	if err := client.ExtendDeadline(context.Background(), testWorkspaceID, wanted); err != nil {
 		t.Fatalf("extend deadline: %v", err)
+	}
+}
+
+func TestExtendDeadlineSatisfiesCoderMinimum(t *testing.T) {
+	t.Parallel()
+	sentDeadline := make(chan time.Time, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPut || request.URL.Path != "/api/v2/workspaces/"+testWorkspaceID+"/extend" {
+			http.Error(writer, "unexpected route", http.StatusNotFound)
+			return
+		}
+		var body struct {
+			Deadline time.Time `json:"deadline"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			http.Error(writer, "invalid deadline", http.StatusBadRequest)
+			return
+		}
+		// Match Coder's validation: an extension below 30 minutes from the
+		// provider's current clock is rejected.
+		if body.Deadline.Before(time.Now().Add(coderMinimumDeadlineLeadTime)) {
+			http.Error(writer, "deadline must be at least 30 minutes in the future", http.StatusBadRequest)
+			return
+		}
+		sentDeadline <- body.Deadline
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	client := newTestClient(t, server.URL, nil)
+	started := time.Now().UTC()
+	requested := started.Add(10 * time.Minute)
+	if err := client.ExtendDeadline(context.Background(), testWorkspaceID, requested); err != nil {
+		t.Fatalf("extend deadline: %v", err)
+	}
+	deadline := <-sentDeadline
+	minimumWithMargin := started.Add(coderMinimumDeadlineLeadTime + coderDeadlineRequestMargin)
+	if deadline.Before(minimumWithMargin) {
+		t.Fatalf("deadline = %s, want at least %s", deadline, minimumWithMargin)
 	}
 }
 
