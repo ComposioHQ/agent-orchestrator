@@ -599,7 +599,7 @@ func bootstrapArchive(bootstrap sandbox.WorkerBootstrap) ([]byte, error) {
 	}{
 		{name: "ao-worker", mode: 0o700, data: bootstrap.Binary},
 		{name: "worker.env", mode: 0o600, data: []byte(environmentFile(bootstrap.Environment))},
-		{name: "launch.sh", mode: 0o700, data: []byte("#!/bin/sh\nset -eu\nset -a\n. \"$1\"\nset +a\nrm -f \"$1\"\nexec \"$2\"\n")},
+		{name: "launch.sh", mode: 0o700, data: []byte("#!/bin/sh\nset -eu\nprintf '%s\\n' \"$$\" >\"$3\"\nset -a\n. \"$1\"\nset +a\nrm -f \"$1\"\nexec \"$2\"\n")},
 	}
 	if len(bootstrap.HelperBinary) > 0 {
 		files = append(files, struct {
@@ -653,6 +653,10 @@ func bootstrapCommand(bootstrap sandbox.WorkerBootstrap, encodedLength int) stri
 	if len(bootstrap.HelperBinary) > 0 {
 		helperInstall = "sudo -n install -m 0755 \"$stage/ao\" " + shellQuote(bootstrap.HelperDestination) + "\n"
 	}
+	workerEnvironment := path.Join(layout.WorkerData, "worker.env")
+	workerLauncher := path.Join(layout.WorkerData, "launch.sh")
+	workerLog := path.Join(layout.WorkerData, "worker.log")
+	workerPID := path.Join(layout.WorkerData, "worker.pid")
 	script := "set -eu\n" +
 		"stage=$(mktemp -d)\nencoded=\"$stage/payload.b64\"\n" +
 		"trap 'code=$?; stty echo icanon 2>/dev/null || true; echo " + bootstrapFailed + ":$code' EXIT\n" +
@@ -681,10 +685,17 @@ func bootstrapCommand(bootstrap sandbox.WorkerBootstrap, encodedLength int) stri
 		"  printf '%s\\n' " + shellQuote(strings.TrimSpace(bootstrap.DurableIdentity)) + " | sudo -n tee \"$identity_file\" >/dev/null\nfi\n" +
 		"sudo -n chown -R " + shellQuote(workerUser+":"+workerUser) + " " + shellQuote(layout.Repository) + " " + shellQuote(path.Dir(layout.WorkerData)) + "\n" +
 		"sudo -n install -m 0755 \"$stage/ao-worker\" " + shellQuote(workerDestination) + "\n" + helperInstall +
-		"sudo -n install -o " + shellQuote(workerUser) + " -g " + shellQuote(workerUser) + " -m 0600 \"$stage/worker.env\" " + shellQuote(path.Join(layout.WorkerData, "worker.env")) + "\n" +
-		"sudo -n install -o " + shellQuote(workerUser) + " -g " + shellQuote(workerUser) + " -m 0700 \"$stage/launch.sh\" " + shellQuote(path.Join(layout.WorkerData, "launch.sh")) + "\n" +
+		"sudo -n install -o " + shellQuote(workerUser) + " -g " + shellQuote(workerUser) + " -m 0600 \"$stage/worker.env\" " + shellQuote(workerEnvironment) + "\n" +
+		"sudo -n install -o " + shellQuote(workerUser) + " -g " + shellQuote(workerUser) + " -m 0700 \"$stage/launch.sh\" " + shellQuote(workerLauncher) + "\n" +
 		"sudo -n pkill -u " + shellQuote(workerUser) + " -f " + shellQuote(workerDestination) + " 2>/dev/null || true\n" +
-		"sudo -n -u " + shellQuote(workerUser) + " sh -c " + shellQuote("nohup "+shellQuote(path.Join(layout.WorkerData, "launch.sh"))+" "+shellQuote(path.Join(layout.WorkerData, "worker.env"))+" "+shellQuote(workerDestination)+" >"+shellQuote(path.Join(layout.WorkerData, "worker.log"))+" 2>&1 </dev/null &") + "\n" +
+		"sudo -n rm -f " + shellQuote(workerPID) + "\n" +
+		"sudo -n -u " + shellQuote(workerUser) + " sh -c " + shellQuote("nohup "+shellQuote(workerLauncher)+" "+shellQuote(workerEnvironment)+" "+shellQuote(workerDestination)+" "+shellQuote(workerPID)+" >"+shellQuote(workerLog)+" 2>&1 </dev/null &") + "\n" +
+		"attempt=0\nworker_pid=\nwhile [ \"$attempt\" -lt 5 ]; do\n" +
+		"  if sudo -n test -s " + shellQuote(workerPID) + "; then worker_pid=$(sudo -n cat " + shellQuote(workerPID) + "); fi\n" +
+		"  case \"$worker_pid\" in ''|*[!0-9]*) ;; *) if kill -0 \"$worker_pid\" 2>/dev/null; then break; fi ;; esac\n" +
+		"  worker_pid=\nattempt=$((attempt + 1))\nsleep 1\ndone\n" +
+		"case \"$worker_pid\" in ''|*[!0-9]*) echo 'AO worker did not start' >&2; exit 1 ;; esac\n" +
+		"sleep 1\nkill -0 \"$worker_pid\" 2>/dev/null || { echo 'AO worker exited during startup' >&2; exit 1; }\n" +
 		"rm -rf \"$stage\"\ntrap - EXIT\necho " + bootstrapOK + "\n"
 	return "sh -lc " + shellQuote(script)
 }

@@ -191,6 +191,8 @@ func TestBootstrapWorkerStreamsArchiveWithoutSecretsInURL(t *testing.T) {
 				"/mnt/ao/.ao/home/.codex",
 				"mountpoint -q",
 				"/mnt/ao/.ao/durable-session-id",
+				"/mnt/ao/.ao/worker/worker.pid",
+				"kill -0",
 			} {
 				if !strings.Contains(command, expected) {
 					t.Errorf("bootstrap command missing durable path contract %q", expected)
@@ -284,6 +286,9 @@ func TestBootstrapWorkerStreamsArchiveWithoutSecretsInURL(t *testing.T) {
 	}
 	if !strings.Contains(files["worker.env"], secret) {
 		t.Fatalf("worker environment missing from archive")
+	}
+	if !strings.Contains(files["launch.sh"], `>"$3"`) {
+		t.Fatalf("worker launcher does not publish its process ID: %q", files["launch.sh"])
 	}
 	if err := <-bootstrapResult; err != nil {
 		t.Fatalf("bootstrap: %v", err)
