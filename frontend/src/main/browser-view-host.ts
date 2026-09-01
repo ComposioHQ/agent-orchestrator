@@ -2618,7 +2618,9 @@ export function sanitizeBrowserURL(raw: string): string {
 
 export function sanitizeBrowserTitle(raw: string): string {
 	const title = raw.trim();
-	if (/^[a-z][a-z\d+.-]*:\S/i.test(title)) return sanitizeBrowserURL(title);
+	if (/^(?:[a-z][a-z\d+.-]*:\/\/|(?:about|mailto|data|javascript|blob):)/i.test(title)) {
+		return sanitizeBrowserURL(title);
+	}
 	return sanitizeURLsInText(raw);
 }
 

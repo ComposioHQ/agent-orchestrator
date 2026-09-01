@@ -54,10 +54,27 @@ describe("browser URL sanitization", () => {
 		expect(sanitizeBrowserTitle(`Portal ${signed}`)).toBe(
 			"Portal https://example.test/access?token=%5Bredacted%5D",
 		);
+		expect(sanitizeBrowserTitle("custom://alice:password@example.test/path?token=opaque#private")).toBe(
+			"custom:[redacted]",
+		);
 		expect(sanitizeBrowserTitle("about:blank")).toBe("about:blank");
 		expect(sanitizeBrowserTitle("mailto:operator@example.test?token=opaque")).toBe("mailto:[redacted]");
+		expect(sanitizeBrowserTitle("data:text/plain,opaque")).toBe("data:[redacted]");
+		expect(sanitizeBrowserTitle("javascript:alert('opaque')")).toBe("javascript:[redacted]");
+		expect(sanitizeBrowserTitle("blob:https://example.test/opaque")).toBe("blob:[redacted]");
 		expect(sanitizeBrowserTitle("Status: all systems operational")).toBe("Status: all systems operational");
 		expect(sanitizeBrowserTitle("Government access portal")).toBe("Government access portal");
+	});
+
+	it.each([
+		["compact status label", "Status:degraded", "Status:degraded"],
+		[
+			"compact URL label",
+			"Docs:https://alice:password@example.test/path?token=opaque#private",
+			"Docs:https://example.test/path?token=%5Bredacted%5D",
+		],
+	])("preserves %s while sanitizing embedded URLs", (_name, input, expected) => {
+		expect(sanitizeBrowserTitle(input)).toBe(expected);
 	});
 });
 
