@@ -102,31 +102,18 @@ func (c *linuxPTYConn) Close() error {
 	var closeErr error
 	c.closeOnce.Do(func() {
 		if c.leaderPID > 0 && c.leaderStartTime > 0 {
-			// Scan /proc once to discover verified session members.
+			// Phase 1: Discover session members and signal SIGTERM.
 			procs := linuxFindSessionProcesses(c.leaderPID, c.leaderStartTime)
 			if len(procs) > 0 {
-				validPIDs := make(map[int]bool, len(procs))
-				pids := make([]int, 0, len(procs))
-				for _, p := range procs {
-					validPIDs[p.pid] = true
-					pids = append(pids, p.pid)
-				}
-
-				// Phase 1: Graceful SIGTERM to session processes and valid groups
-				signalLinuxSessionProcs(procs, validPIDs, syscall.SIGTERM)
-				if !waitForPIDsExit(pids, linuxPTYCloseGrace) {
-					// Phase 2: Forceful SIGKILL escalation for surviving processes
-					aliveProcs := make([]linuxProcInfo, 0, len(procs))
-					alivePIDs := make([]int, 0, len(pids))
-					for _, p := range procs {
-						if pidAlive(p.pid) {
-							aliveProcs = append(aliveProcs, p)
-							alivePIDs = append(alivePIDs, p.pid)
-						}
-					}
-					if len(aliveProcs) > 0 {
-						signalLinuxSessionProcs(aliveProcs, validPIDs, syscall.SIGKILL)
-						_ = waitForPIDsExit(alivePIDs, linuxPTYCloseGrace)
+				signalValidatedSessionProcs(procs, syscall.SIGTERM)
+				if !waitForProcIdentitiesExit(procs, linuxPTYCloseGrace) {
+					// Phase 2: Rediscover current validated session members before SIGKILL escalation.
+					// This filters out processes that exited during the grace period (even if their
+					// PID was recycled) and discovers any late children spawned during the grace period.
+					escalateProcs := linuxFindSessionProcesses(c.leaderPID, c.leaderStartTime)
+					if len(escalateProcs) > 0 {
+						signalValidatedSessionProcs(escalateProcs, syscall.SIGKILL)
+						_ = waitForProcIdentitiesExit(escalateProcs, linuxPTYCloseGrace)
 					}
 				}
 			}
@@ -148,6 +135,9 @@ type linuxProcInfo struct {
 }
 
 func readLinuxProcInfo(pid int) (linuxProcInfo, error) {
+	if pid <= 0 {
+		return linuxProcInfo{}, errors.New("invalid pid")
+	}
 	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
 	if err != nil {
 		return linuxProcInfo{}, err
@@ -249,28 +239,71 @@ func linuxFindSessionProcesses(sid int, leaderStartTime uint64) []linuxProcInfo 
 	return sessionProcs
 }
 
-func signalLinuxSessionProcs(procs []linuxProcInfo, validPIDs map[int]bool, sig syscall.Signal) {
-	for _, p := range procs {
-		_ = syscall.Kill(p.pid, sig)
+// processAliveWithIdentity verifies that the process at pid is currently alive,
+// is not a zombie, and has the exact expected startTime.
+func processAliveWithIdentity(pid int, expectedStartTime uint64) bool {
+	if pid <= 0 || expectedStartTime == 0 {
+		return false
 	}
+	info, err := readLinuxProcInfo(pid)
+	if err != nil || info.zombie {
+		return false
+	}
+	return info.startTime == expectedStartTime
+}
+
+// signalProcessIfIdentityMatches verifies the process's current startTime immediately
+// before dispatching the signal to prevent killing a recycled PID (TOCTOU guard).
+func signalProcessIfIdentityMatches(pid int, expectedStartTime uint64, sig syscall.Signal) bool {
+	if !processAliveWithIdentity(pid, expectedStartTime) {
+		return false
+	}
+	_ = syscall.Kill(pid, sig)
+	return true
+}
+
+// signalProcessGroupIfIdentityMatches verifies the group leader's current startTime
+// immediately before dispatching the signal to the process group.
+func signalProcessGroupIfIdentityMatches(pgid int, expectedStartTime uint64, sig syscall.Signal) bool {
+	if !processAliveWithIdentity(pgid, expectedStartTime) {
+		return false
+	}
+	_ = syscall.Kill(-pgid, sig)
+	return true
+}
+
+func signalValidatedSessionProcs(procs []linuxProcInfo, sig syscall.Signal) {
+	validPIDs := make(map[int]uint64, len(procs))
+	for _, p := range procs {
+		validPIDs[p.pid] = p.startTime
+	}
+
+	// 1. Signal each individual process directly with pre-signal start-time validation
+	for _, p := range procs {
+		signalProcessIfIdentityMatches(p.pid, p.startTime, sig)
+	}
+
+	// 2. Only signal process groups whose group leader identity is verified right now
 	signaledPGRPs := make(map[int]bool)
 	for _, p := range procs {
-		if p.pgrp > 1 && validPIDs[p.pgrp] && !signaledPGRPs[p.pgrp] {
-			signaledPGRPs[p.pgrp] = true
-			_ = syscall.Kill(-p.pgrp, sig)
+		if p.pgrp > 1 && !signaledPGRPs[p.pgrp] {
+			if leaderStartTime, ok := validPIDs[p.pgrp]; ok {
+				signaledPGRPs[p.pgrp] = true
+				signalProcessGroupIfIdentityMatches(p.pgrp, leaderStartTime, sig)
+			}
 		}
 	}
 }
 
-func waitForPIDsExit(pids []int, timeout time.Duration) bool {
+func waitForProcIdentitiesExit(procs []linuxProcInfo, timeout time.Duration) bool {
 	deadline := time.NewTimer(timeout)
 	defer deadline.Stop()
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
 	for {
 		alive := false
-		for _, pid := range pids {
-			if pidAlive(pid) {
+		for _, p := range procs {
+			if processAliveWithIdentity(p.pid, p.startTime) {
 				alive = true
 				break
 			}
@@ -280,8 +313,8 @@ func waitForPIDsExit(pids []int, timeout time.Duration) bool {
 		}
 		select {
 		case <-deadline.C:
-			for _, pid := range pids {
-				if pidAlive(pid) {
+			for _, p := range procs {
+				if processAliveWithIdentity(p.pid, p.startTime) {
 					return false
 				}
 			}

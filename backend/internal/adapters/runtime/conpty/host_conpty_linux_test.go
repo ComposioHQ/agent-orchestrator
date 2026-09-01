@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -414,5 +415,72 @@ func TestLinuxRuntimeDestroyReapsTermIgnoringProcessTreeEndToEnd(t *testing.T) {
 	// Ensure pty-host is gone.
 	if pidAlive(hostPID) {
 		t.Fatalf("pty-host pid %d survived Destroy", hostPID)
+	}
+}
+
+func TestLinuxPTYCloseDoesNotKillRecycledPIDDuringGracePeriod(t *testing.T) {
+	// Start an independent innocent dummy process representing an unrelated process.
+	dummy := exec.Command("/bin/sh", "-c", "sleep 30")
+	if err := dummy.Start(); err != nil {
+		t.Fatal(err)
+	}
+	dummyPID := dummy.Process.Pid
+	t.Cleanup(func() {
+		if dummy.Process != nil {
+			_ = dummy.Process.Kill()
+			_ = dummy.Wait()
+		}
+	})
+
+	dummyInfo, err := readLinuxProcInfo(dummyPID)
+	if err != nil {
+		t.Fatalf("reading dummy proc info: %v", err)
+	}
+
+	// Start a real TERM-ignoring process that will keep the grace-period wait alive
+	// and force escalation to Phase 2 (SIGKILL).
+	termIgnore := exec.Command("/bin/sh", "-c", "trap '' TERM; sleep 30")
+	if err := termIgnore.Start(); err != nil {
+		t.Fatal(err)
+	}
+	termIgnorePID := termIgnore.Process.Pid
+	t.Cleanup(func() {
+		if termIgnore.Process != nil {
+			_ = termIgnore.Process.Kill()
+			_ = termIgnore.Wait()
+		}
+	})
+	termIgnoreInfo, err := readLinuxProcInfo(termIgnorePID)
+	if err != nil {
+		t.Fatalf("reading termIgnore proc info: %v", err)
+	}
+
+	// Simulate a candidate list containing a recycled PID (stale start time) alongside
+	// the active TERM-ignoring process.
+	procs := []linuxProcInfo{
+		{pid: dummyPID, startTime: dummyInfo.startTime - 1000}, // recycled/mismatched identity
+		{pid: termIgnorePID, startTime: termIgnoreInfo.startTime},
+	}
+
+	// 1. Pre-signal validation must reject dummyPID on SIGTERM
+	signaled := signalProcessIfIdentityMatches(dummyPID, dummyInfo.startTime-1000, syscall.SIGTERM)
+	if signaled {
+		t.Fatal("signalProcessIfIdentityMatches signaled dummyPID despite start time mismatch")
+	}
+
+	// 2. Waiting on identities must recognize dummyPID as dead/unmatched while waiting for termIgnore
+	if waitForProcIdentitiesExit(procs, 100*time.Millisecond) {
+		t.Fatal("waitForProcIdentitiesExit returned true while termIgnore was still running")
+	}
+
+	// 3. Pre-signal validation must reject dummyPID on SIGKILL escalation
+	signaledKill := signalProcessIfIdentityMatches(dummyPID, dummyInfo.startTime-1000, syscall.SIGKILL)
+	if signaledKill {
+		t.Fatal("signalProcessIfIdentityMatches signaled dummyPID on SIGKILL escalation despite start time mismatch")
+	}
+
+	// Verify dummy is still running and unharmed
+	if !pidAlive(dummyPID) {
+		t.Fatalf("unrelated process %d was killed during grace period escalation", dummyPID)
 	}
 }
