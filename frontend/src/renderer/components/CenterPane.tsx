@@ -202,7 +202,7 @@ export function CenterPane({
 		showRightFade,
 	} = useTabScrollEdges([tabOverflowWatch]);
 	const previousTabCountRef = useRef(availableAuxiliaryKeys.length);
-	const agentSwitchesQuery = useAgentSwitches(session?.id ?? "");
+	const agentSwitchesQuery = useAgentSwitches(session?.id ?? "", !session?.cloud);
 	const agentSwitches = agentSwitchesQuery.data ?? [];
 	const switchMutation = useSwitchAgentState(session?.id ?? "");
 	const mountedSessionIdRef = useRef(session?.id);
@@ -607,7 +607,11 @@ export function CenterPane({
 											tabAction={sessionTabAction}
 										/>
 									) : (
-										<SessionPaneTab isActive={target.kind === "worker"} label={sessionTabLabel} />
+										<SessionPaneTab
+											isActive={target.kind === "worker"}
+											label={sessionTabLabel}
+											tabAction={sessionTabAction}
+										/>
 									)}
 									<Reorder.Group
 										as="div"
