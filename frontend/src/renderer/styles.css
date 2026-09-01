@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "tw-animate-css";
 @import "../styles/tokens.css";
 @import "@fontsource-variable/geist";
 @import "@fontsource-variable/geist-mono";

@@ -1116,22 +1116,29 @@ function SessionControls({ session }: { session: WorkspaceSession }) {
 			{session.kind === "orchestrator" ? null : canTerminateNow ? (
 				<div className="flex items-center justify-between gap-3 py-1">
 					<span className="min-w-0 text-xs font-medium text-settings-label">{t("inspector.terminateShort")}</span>
-					<SessionTerminationPopover
-						onConfirm={confirmTermination}
-						onOpenChange={setConfirmOpen}
-						open={confirmOpen}
-						session={session}
-						trigger={
-							<button
-								aria-label={t("inspector.terminate")}
-								className="inline-flex size-control-md items-center justify-center rounded-sm text-passive transition-colors hover:bg-error/10 hover:text-error focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
-								onClick={() => clearTerminateSessionState(queryClient, session.id)}
-								type="button"
-							>
-								<Trash2 className="size-icon-sm" aria-hidden="true" />
-							</button>
-						}
-					/>
+					<Tooltip>
+						<TooltipTrigger asChild>
+							<span className="inline-flex">
+								<SessionTerminationPopover
+									onConfirm={confirmTermination}
+									onOpenChange={setConfirmOpen}
+									open={confirmOpen}
+									session={session}
+									trigger={
+										<button
+											aria-label={t("inspector.terminate")}
+											className="inline-flex size-control-md items-center justify-center rounded-sm text-passive transition-colors hover:bg-error/10 hover:text-error focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+											onClick={() => clearTerminateSessionState(queryClient, session.id)}
+											type="button"
+										>
+											<Trash2 className="size-icon-sm" aria-hidden="true" />
+										</button>
+									}
+								/>
+							</span>
+						</TooltipTrigger>
+						<TooltipContent side="bottom">{t("inspector.terminate")}</TooltipContent>
+					</Tooltip>
 				</div>
 			) : (
 				<>
@@ -2236,36 +2243,39 @@ function ReviewPanel({
 					<div className="flex min-h-10 min-w-0 items-center justify-between gap-3 py-2">
 						<span className="text-xs font-medium text-foreground">{t("inspector.review.session")}</span>
 						<div className="flex min-w-0 items-center justify-end gap-1.5">
-							<Tooltip>
-								<TooltipTrigger asChild>
-									<Button
-										aria-label={primaryReviewActionLabel}
-										className="shrink-0 gap-1 px-1.5 text-xs [&_svg]:size-icon-sm"
-										disabled={reviewRunning ? isCancelling || isKilling || isSwitchingReviewer : runDisabled || autoReviewEnabled}
-										onClick={reviewRunning ? onCancel : onTrigger}
-										size="sm"
-										type="button"
-										variant={reviewRunning ? "ghost" : reviewHasRun ? "secondary" : "primary"}
-									>
-										{reviewRunning ? <X aria-hidden="true" /> : <Play aria-hidden="true" />}
-										<span className="review-run-action-label">{primaryReviewActionLabel}</span>
-									</Button>
-								</TooltipTrigger>
-								<TooltipContent side="top">{primaryReviewActionLabel}</TooltipContent>
-							</Tooltip>
-							{hasReviewerSession ? (
-								<Button
-								aria-label={isKilling ? t("inspector.review.killingSession") : t("inspector.review.killSession")}
-								className="h-control-md w-control-md shrink-0 p-0 text-error [&_svg]:size-icon-sm"
-								disabled={killDisabled}
-								onClick={onKill}
+							<Button
+								aria-label={primaryReviewActionLabel}
+								className="shrink-0 gap-1 px-1.5 text-xs [&_svg]:size-icon-sm"
+								disabled={reviewRunning ? isCancelling || isKilling || isSwitchingReviewer : runDisabled || autoReviewEnabled}
+								onClick={reviewRunning ? onCancel : onTrigger}
 								size="sm"
-								title={isKilling ? t("inspector.review.killingSession") : t("inspector.review.killSession")}
 								type="button"
-								variant="ghost"
+								variant={reviewRunning ? "ghost" : reviewHasRun ? "secondary" : "primary"}
 							>
-								<Trash2 aria-hidden="true" />
+								{reviewRunning ? <X aria-hidden="true" /> : <Play aria-hidden="true" />}
+								<span className="review-run-action-label">{primaryReviewActionLabel}</span>
 							</Button>
+							{hasReviewerSession ? (
+								<Tooltip>
+									<TooltipTrigger asChild>
+										<span className="inline-flex">
+											<Button
+												aria-label={isKilling ? t("inspector.review.killingSession") : t("inspector.review.killSession")}
+												className="h-control-md w-control-md shrink-0 p-0 text-error [&_svg]:size-icon-sm"
+												disabled={killDisabled}
+												onClick={onKill}
+												size="sm"
+												type="button"
+												variant="ghost"
+											>
+												<Trash2 aria-hidden="true" />
+											</Button>
+										</span>
+									</TooltipTrigger>
+									<TooltipContent side="bottom">
+										{isKilling ? t("inspector.review.killingSession") : t("inspector.review.killSession")}
+									</TooltipContent>
+								</Tooltip>
 							) : null}
 						</div>
 					</div>

@@ -1,8 +1,17 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, render as rtlRender, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { StrictMode } from "react";
+import { StrictMode, type ReactElement } from "react";
 import { ActivityRow, AssistantMessage, TurnOutcome } from "./ChatTimelineItems";
 import type { ConversationMessage } from "../../types/conversation";
+import { TooltipProvider } from "../ui/tooltip";
+
+function render(ui: ReactElement) {
+	const result = rtlRender(<TooltipProvider>{ui}</TooltipProvider>);
+	return {
+		...result,
+		rerender: (nextUi: ReactElement) => result.rerender(<TooltipProvider>{nextUi}</TooltipProvider>),
+	};
+}
 
 let nextFrame = 1;
 let frames = new Map<number, FrameRequestCallback>();

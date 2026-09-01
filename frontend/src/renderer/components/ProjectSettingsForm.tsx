@@ -35,7 +35,7 @@ import { AgentModelCombobox } from "./settings/AgentModelCombobox";
 import { SettingsOptionMenu } from "./settings/SettingsOptionMenu";
 import { SettingsRow } from "./settings/SettingsRow";
 import { Switch } from "./ui/switch";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 type Project = components["schemas"]["Project"];
 type ProjectConfig = components["schemas"]["ProjectConfig"];
@@ -530,22 +530,20 @@ function SettingsBody({
 								<span className="whitespace-nowrap text-sm leading-5 text-settings-label">
 									{t("settings.project.autoReviewToggle")}
 								</span>
-								<TooltipProvider delayDuration={0}>
-									<Tooltip>
-										<TooltipTrigger asChild>
-											<button
-												type="button"
-												className="inline-flex size-5 items-center justify-center rounded-md text-settings-muted transition-colors hover:bg-settings-menu-selected hover:text-settings-label focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none"
-												aria-label={t("settings.project.autoReviewDescription")}
-											>
-												<Info className="size-icon-sm" aria-hidden="true" />
-											</button>
-										</TooltipTrigger>
-										<TooltipContent className="max-w-72 leading-normal" side="top">
-											{t("settings.project.autoReviewDescription")}
-										</TooltipContent>
-									</Tooltip>
-								</TooltipProvider>
+								<Tooltip>
+									<TooltipTrigger asChild>
+										<button
+											type="button"
+											className="inline-flex size-5 items-center justify-center rounded-md text-settings-muted transition-colors hover:bg-settings-menu-selected hover:text-settings-label focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none"
+											aria-label={t("settings.project.autoReviewDescription")}
+										>
+											<Info className="size-icon-sm" aria-hidden="true" />
+										</button>
+									</TooltipTrigger>
+									<TooltipContent className="max-w-72 leading-normal" side="top">
+										{t("settings.project.autoReviewDescription")}
+									</TooltipContent>
+								</Tooltip>
 							</div>
 							<div className="flex min-w-0 flex-1 items-center justify-end">
 								<Switch

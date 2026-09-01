@@ -1,16 +1,22 @@
-import { act, fireEvent, render, renderHook, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render as rtlRender, renderHook, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { ReactElement } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { BrowserPanel, BrowserPanelView, useBrowserAnnotationQueue } from "./BrowserPanel";
 import { reorderBrowserTabs } from "../lib/browser-tab-order";
 import { useBrowserView, type BrowserNavState } from "../hooks/useBrowserView";
 import { OPEN_BROWSER_OVERLAY_SELECTOR } from "../lib/dom-selectors";
 import type { WorkspaceSession } from "../types/workspace";
+import { TooltipProvider } from "./ui/tooltip";
 import type {
 	BrowserAnnotationCancelPayload,
 	BrowserAnnotationContext,
 	BrowserAnnotationSubmitPayload,
 } from "../../shared/browser-annotations";
+
+function render(ui: ReactElement) {
+	return rtlRender(<TooltipProvider>{ui}</TooltipProvider>);
+}
 
 const postMock = vi.hoisted(() => vi.fn());
 
@@ -484,6 +490,50 @@ describe("BrowserPanel", () => {
 		expect(hookState.stop).toHaveBeenCalled();
 	});
 
+	it("marks toolbar tooltips as browser overlays so they paint above the live page", async () => {
+		// Same reasoning as the pinned-favicon overlay test: the toolbar sits
+		// directly above the native browser view, so an unmarked tooltip here
+		// would render behind the live page.
+		hookState.navState = {
+			viewId: "42:sess-1",
+			url: "http://localhost:5173/",
+			title: "Local app",
+			canGoBack: true,
+			canGoForward: false,
+			isLoading: false,
+		};
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		fireEvent.focus(screen.getByRole("button", { name: /back/i }));
+
+		const tooltip = await screen.findByRole("tooltip");
+		expect(tooltip.closest('[data-browser-native-overlay="true"]')).not.toBeNull();
+	});
+
+	it("still opens a tooltip for a disabled toolbar button", async () => {
+		// Disabled buttons never dispatch pointer/focus events natively, so the
+		// hover listener has to live on a wrapping span around the button rather
+		// than on the (potentially disabled) button itself.
+		hookState.navState = {
+			viewId: "42:sess-1",
+			url: "http://localhost:5173/",
+			title: "Local app",
+			canGoBack: false,
+			canGoForward: false,
+			isLoading: false,
+		};
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		const backButton = screen.getByRole("button", { name: /back/i });
+		expect(backButton).toBeDisabled();
+		const wrapper = backButton.parentElement;
+		expect(wrapper?.tagName).toBe("SPAN");
+
+		fireEvent.pointerMove(wrapper!, { pointerType: "mouse" });
+
+		expect(await screen.findByRole("tooltip")).toHaveTextContent(/back/i);
+	});
+
 	it("lets the user select a tab from the hover flyout", async () => {
 		hookState.tabs = [
 			{ id: "t1", url: "http://localhost:3000/", title: "First app", active: false },
@@ -610,7 +660,7 @@ describe("BrowserPanel", () => {
 		expect(hookState.openDevTools).toHaveBeenCalledOnce();
 
 		hookState.devtoolsState = { viewId: "42:sess-1", open: true, activeTabId: "t1" };
-		rerender(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+		rerender(<TooltipProvider><BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} /></TooltipProvider>);
 		expect(screen.getAllByRole("button")).toHaveLength(toolbarButtonCount);
 		const closeButton = screen.getByRole("button", { name: "Close DevTools" });
 		expect(closeButton).toHaveAttribute("aria-pressed", "true");
@@ -631,7 +681,7 @@ describe("BrowserPanel", () => {
 		expect(screen.getByRole("button", { name: "Open DevTools" })).toBeDisabled();
 
 		hookState.navState = { ...hookState.navState, url: "http://localhost:3000/" };
-		rerender(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+		rerender(<TooltipProvider><BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} /></TooltipProvider>);
 		expect(screen.getByRole("button", { name: "Open DevTools" })).toBeEnabled();
 	});
 
@@ -642,7 +692,7 @@ describe("BrowserPanel", () => {
 		expect(screen.getByTestId("browser-panel")).toHaveAttribute("data-browser-native-page", "empty");
 
 		hookState.navState = { ...hookState.navState, url: "http://localhost:3000/" };
-		rerender(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+		rerender(<TooltipProvider><BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} /></TooltipProvider>);
 		expect(screen.getByTestId("browser-panel")).toHaveAttribute("data-browser-native-page", "live");
 	});
 
@@ -851,7 +901,7 @@ describe("BrowserPanel", () => {
 		let rail = screen.getByTestId("browser-tabs-rail");
 		expect(viewport.compareDocumentPosition(rail) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 
-		rerender(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut session={session} />);
+		rerender(<TooltipProvider><BrowserPanel active onTogglePopOut={() => undefined} poppedOut session={session} /></TooltipProvider>);
 		viewport = screen.getByTestId("browser-viewport");
 		rail = screen.getByTestId("browser-tabs-rail");
 		expect(viewport.compareDocumentPosition(rail) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -1103,7 +1153,7 @@ describe("BrowserPanel", () => {
 		});
 		expect(postMock).toHaveBeenCalledTimes(1);
 
-		rerender(<PersistentBrowserPanelView currentSession={session} visible={false} />);
+		rerender(<TooltipProvider><PersistentBrowserPanelView currentSession={session} visible={false} /></TooltipProvider>);
 		expect(postMock).toHaveBeenCalledTimes(1);
 
 		await act(async () => {
@@ -1114,7 +1164,7 @@ describe("BrowserPanel", () => {
 		expect((postMock.mock.calls[0][1].body as { message: string }).message).toContain("Make this button blue.");
 		expect((postMock.mock.calls[1][1].body as { message: string }).message).toContain("Make this heading shorter.");
 
-		rerender(<PersistentBrowserPanelView currentSession={session} visible />);
+		rerender(<TooltipProvider><PersistentBrowserPanelView currentSession={session} visible /></TooltipProvider>);
 		expect(await screen.findByText("Sent")).toBeInTheDocument();
 		expect((postMock.mock.calls[1][1].body as { message: string }).message).toContain("Make this heading shorter.");
 	});
@@ -1155,23 +1205,27 @@ describe("BrowserPanel", () => {
 			});
 		});
 		rerender(
-			<BrowserPanel
-				active
-				onTogglePopOut={() => undefined}
-				poppedOut={false}
-				session={{ ...session, status: "working" }}
-			/>,
+			<TooltipProvider>
+				<BrowserPanel
+					active
+					onTogglePopOut={() => undefined}
+					poppedOut={false}
+					session={{ ...session, status: "working" }}
+				/>
+			</TooltipProvider>,
 		);
 		await act(async () => {
 			resolvePost({ data: {} });
 		});
 		rerender(
-			<BrowserPanel
-				active
-				onTogglePopOut={() => undefined}
-				poppedOut={false}
-				session={{ ...session, status: "idle" }}
-			/>,
+			<TooltipProvider>
+				<BrowserPanel
+					active
+					onTogglePopOut={() => undefined}
+					poppedOut={false}
+					session={{ ...session, status: "idle" }}
+				/>
+			</TooltipProvider>,
 		);
 		expect(await screen.findByText("Sent")).toBeInTheDocument();
 		expect(postMock).toHaveBeenCalledTimes(2);

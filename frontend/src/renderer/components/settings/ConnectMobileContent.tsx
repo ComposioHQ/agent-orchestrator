@@ -13,7 +13,7 @@ import { PairingQr } from "./PairingQr";
 import { InstallCloudflared } from "./InstallCloudflared";
 import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../ui/tooltip";
+import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 
 const QR_CODE_SIZE = 204;
 const TESTFLIGHT_QR_SIZE = 140;
@@ -422,8 +422,7 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 								<li>{t("mobile.ios.step1")}</li>
 								<li>
 									{t("mobile.ios.step2")}{" "}
-									<TooltipProvider delayDuration={0}>
-										<Tooltip>
+									<Tooltip>
 										<TooltipTrigger asChild>
 											<button
 												type="button"
@@ -440,16 +439,14 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 												<StyledQRCode value={TESTFLIGHT_URL} size={TESTFLIGHT_QR_SIZE} showLogo={false} className="block" />
 											</div>
 										</TooltipContent>
-										</Tooltip>
-									</TooltipProvider>
+									</Tooltip>
 								</li>
 							</>
 						) : (
 							<>
 								<li>
 									{t("mobile.android.step1")}{" "}
-									<TooltipProvider delayDuration={0}>
-										<Tooltip>
+									<Tooltip>
 										<TooltipTrigger asChild>
 											<button
 												type="button"
@@ -466,8 +463,7 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 												<StyledQRCode value={ANDROID_PLAY_STORE_URL} size={TESTFLIGHT_QR_SIZE} showLogo={false} className="block" />
 											</div>
 										</TooltipContent>
-										</Tooltip>
-									</TooltipProvider>
+									</Tooltip>
 								</li>
 							</>
 						)}
@@ -494,23 +490,29 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 									>
 										{copied ? <Check className="size-3.5" aria-hidden="true" /> : <Copy className="size-3.5" aria-hidden="true" />}
 									</button>
-									<button
-										type="button"
-										aria-label={t("mobile.regenerate")}
-										title={t("mobile.regenerate")}
-										className="ml-0.5 inline-flex size-5 items-center justify-center align-middle text-settings-muted transition-colors hover:text-settings-label disabled:opacity-50"
-										disabled={busy}
-										onClick={() => {
-											clearActionErrors();
-											regenerate.mutate();
-										}}
-									>
-										{regenerate.isPending ? (
-											<Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
-										) : (
-											<RotateCcw className="size-3.5" aria-hidden="true" />
-										)}
-									</button>
+									<Tooltip>
+										<TooltipTrigger asChild>
+											<span className="inline-flex">
+												<button
+													type="button"
+													aria-label={t("mobile.regenerate")}
+													className="ml-0.5 inline-flex size-5 items-center justify-center align-middle text-settings-muted transition-colors hover:text-settings-label disabled:opacity-50"
+													disabled={busy}
+													onClick={() => {
+														clearActionErrors();
+														regenerate.mutate();
+													}}
+												>
+													{regenerate.isPending ? (
+														<Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
+													) : (
+														<RotateCcw className="size-3.5" aria-hidden="true" />
+													)}
+												</button>
+											</span>
+										</TooltipTrigger>
+										<TooltipContent side="bottom">{t("mobile.regenerate")}</TooltipContent>
+									</Tooltip>
 								</li>
 							</>
 						)}
