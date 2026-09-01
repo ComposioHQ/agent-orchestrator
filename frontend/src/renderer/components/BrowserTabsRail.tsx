@@ -480,19 +480,28 @@ function ClosedTabsSection({
 
 function IconTabRow({ active, chrome, closeTitle, onClose, onSelect, onlyTab, tab }: TabRowProps) {
 	const { t } = useTranslation();
+	const [hovered, setHovered] = useState(false);
+	const [tooltipOpen, setTooltipOpen] = useState(false);
 	const label = browserTabLabel(tab.title, tab.url);
 	const closeLabel = t("browser.closeTab", { title: label.title });
 	return (
 		<div
 			className={cn(
-				"group/tab-icon relative flex h-8 w-full items-center overflow-hidden transition-colors",
-				"hover:bg-interactive-hover",
+				"group/tab-icon relative flex h-8 w-full items-center overflow-hidden",
 				active && "bg-interactive-active",
 			)}
+			onPointerEnter={() => {
+				setHovered(true);
+				setTooltipOpen(false);
+			}}
+			onPointerLeave={() => setHovered(false)}
 			ref={chrome?.setNodeRef}
 			style={chrome?.style}
 		>
-			<Tooltip>
+			<Tooltip
+				onOpenChange={(open) => setTooltipOpen(hovered ? false : open)}
+				open={tooltipOpen}
+			>
 				<TooltipTrigger asChild>
 					<button
 						aria-current={active ? "true" : undefined}
@@ -503,7 +512,11 @@ function IconTabRow({ active, chrome, closeTitle, onClose, onSelect, onlyTab, ta
 						{...chrome?.dragProps}
 					>
 						<TabFavicon
-							className="size-icon-base transition-opacity group-hover/tab-icon:opacity-0 group-focus-within/tab-icon:opacity-0"
+							className={cn(
+								"size-icon-base transition-[opacity,transform] duration-150 ease-out",
+								"group-hover/tab-icon:scale-75 group-hover/tab-icon:opacity-0",
+								"group-focus-within/tab-icon:scale-75 group-focus-within/tab-icon:opacity-0",
+							)}
 							tab={tab}
 						/>
 					</button>
@@ -520,10 +533,13 @@ function IconTabRow({ active, chrome, closeTitle, onClose, onSelect, onlyTab, ta
 			<button
 				aria-label={closeLabel}
 				className={cn(
-					"pointer-events-none absolute inset-1.5 grid size-icon-base place-items-center rounded-sm text-passive opacity-0",
-					"transition-[opacity,color] hover:text-foreground",
-					"group-hover/tab-icon:pointer-events-auto group-hover/tab-icon:opacity-100",
-					"group-focus-within/tab-icon:pointer-events-auto group-focus-within/tab-icon:opacity-100",
+					"pointer-events-none absolute inset-0.5 grid size-7 scale-90 place-items-center rounded-md",
+					"bg-interactive-hover text-muted-foreground opacity-0",
+					"transition-[opacity,transform,background-color,color] duration-150 ease-out",
+					"hover:bg-destructive/15 hover:text-destructive active:scale-95",
+					"group-hover/tab-icon:pointer-events-auto group-hover/tab-icon:scale-100 group-hover/tab-icon:opacity-100",
+					"group-focus-within/tab-icon:pointer-events-auto group-focus-within/tab-icon:scale-100 group-focus-within/tab-icon:opacity-100",
+					"focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent/60",
 					"disabled:pointer-events-none",
 				)}
 				disabled={onlyTab}

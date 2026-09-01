@@ -1352,9 +1352,10 @@ describe("BrowserPanel", () => {
 			window.localStorage.removeItem("ao.browserTabs.railPinned");
 		});
 
-		it("does not open the flyout when hovering the pinned rail", () => {
+		it("shows the close affordance without opening a competing hover overlay", () => {
 			// Pinned already shows every tab as a favicon row, so the flyout would
-			// just cover the live page with a duplicate of what's on screen.
+			// just cover the live page with a duplicate of what's on screen. The
+			// site tooltip is likewise suppressed while the close action is visible.
 			pinRail();
 			hookState.tabs = [
 				{ id: "t1", url: "http://localhost:3000/", title: "First app", active: false },
@@ -1366,6 +1367,7 @@ describe("BrowserPanel", () => {
 			vi.useFakeTimers();
 			try {
 				fireEvent.pointerEnter(screen.getByTestId("browser-tabs-rail"));
+				fireEvent.pointerEnter(screen.getByRole("button", { name: "First app — localhost:3000" }));
 				act(() => {
 					vi.advanceTimersByTime(300);
 				});
@@ -1374,6 +1376,7 @@ describe("BrowserPanel", () => {
 			}
 
 			expect(screen.getByTestId("browser-tabs-flyout")).toHaveAttribute("data-state", "closed");
+			expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
 		});
 
 		it("closes a tab directly from the pinned rail on hover", async () => {
