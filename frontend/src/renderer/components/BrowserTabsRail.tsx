@@ -536,7 +536,7 @@ function IconTabRow({ active, chrome, closeTitle, onClose, onSelect, onlyTab, ta
 					"pointer-events-none absolute inset-0.5 grid size-7 scale-90 place-items-center rounded-md",
 					"bg-interactive-hover text-muted-foreground opacity-0",
 					"transition-[opacity,transform,background-color,color] duration-150 ease-out",
-					"hover:bg-destructive/15 hover:text-destructive active:scale-95",
+					"hover:bg-interactive-active hover:text-foreground active:scale-95",
 					"group-hover/tab-icon:pointer-events-auto group-hover/tab-icon:scale-100 group-hover/tab-icon:opacity-100",
 					"group-focus-within/tab-icon:pointer-events-auto group-focus-within/tab-icon:scale-100 group-focus-within/tab-icon:opacity-100",
 					"focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent/60",
