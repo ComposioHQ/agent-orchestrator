@@ -13,6 +13,8 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd"
+	chatsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/chat"
+	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite/store"
 )
 
 type editQueuedStub struct {
@@ -139,10 +141,15 @@ func postReorderQueuedTurns(t *testing.T, svc *reorderQueuedStub, turnIDs []stri
 	}, httpd.ControlDeps{}))
 	t.Cleanup(srv.Close)
 
-	body, err := json.Marshal(map[string][]string{"turnIds": turnIDs})
-	if err != nil {
-		t.Fatalf("encode request: %v", err)
+	var body []byte
+	var err error
+	if turnIDs != nil {
+		body, err = json.Marshal(map[string][]string{"turnIds": turnIDs})
+		if err != nil {
+			t.Fatalf("encode request: %v", err)
+		}
 	}
+
 	resp, err := http.Post(
 		srv.URL+"/api/v1/sessions/p1-1/conversation/queue/reorder",
 		"application/json",
@@ -162,5 +169,35 @@ func TestReorderQueuedTurnsRoute(t *testing.T) {
 	}
 	if svc.session != "p1-1" || len(svc.turnIDs) != 3 || svc.turnIDs[0] != "queued-2" {
 		t.Fatalf("svc saw session=%q turnIDs=%v", svc.session, svc.turnIDs)
+	}
+}
+
+func TestReorderQueuedTurnsRouteRejectsEmptyOrder(t *testing.T) {
+	svc := &reorderQueuedStub{fakeConversationService: &fakeConversationService{}}
+	if status := postReorderQueuedTurns(t, svc, []string{}); status != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", status, http.StatusBadRequest)
+	}
+	if svc.turnIDs != nil {
+		t.Fatalf("service should not be called for empty order, got turnIDs=%v", svc.turnIDs)
+	}
+}
+
+func TestReorderQueuedTurnsRouteRejectsInvalidOrder(t *testing.T) {
+	svc := &reorderQueuedStub{
+		fakeConversationService: &fakeConversationService{},
+		err:                     chatsvc.ErrInvalidQueuedTurnOrder,
+	}
+	if status := postReorderQueuedTurns(t, svc, []string{"queued-1", "missing"}); status != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", status, http.StatusBadRequest)
+	}
+}
+
+func TestReorderQueuedTurnsRouteRejectsUnavailableTurn(t *testing.T) {
+	svc := &reorderQueuedStub{
+		fakeConversationService: &fakeConversationService{},
+		err:                     store.ErrQueuedTurnNotAvailable,
+	}
+	if status := postReorderQueuedTurns(t, svc, []string{"queued-2", "queued-1"}); status != http.StatusConflict {
+		t.Fatalf("status = %d, want %d", status, http.StatusConflict)
 	}
 }
