@@ -640,10 +640,12 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		// agent-browser's own debugger attachment for this tab.
 		view.webContents.on("console-message", (_event, level, message, line, sourceId) => {
 			if (level < 3) return;
-			const location = sourceId ? `${sourceId}${typeof line === "number" ? `:${line}` : ""}` : "";
+			const location = sourceId
+				? `${sanitizeBrowserURL(sourceId)}${typeof line === "number" ? `:${line}` : ""}`
+				: "";
 			recordBrowserSignal(session, {
 				kind: "console-error",
-				message: location ? `${message} (${location})` : message,
+				message: location ? `${sanitizeURLsInText(message)} (${location})` : sanitizeURLsInText(message),
 			});
 		});
 		hardenWebContents(
@@ -785,14 +787,14 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			if (details.resourceType !== "xhr" || details.statusCode < 400) return;
 			recordBrowserSignal(session, {
 				kind: "network-failure",
-				message: `${details.method} ${details.url} → ${details.statusCode}`,
+				message: `${details.method} ${sanitizeBrowserURL(details.url)} → ${details.statusCode}`,
 			});
 		});
 		electronSession.webRequest.onErrorOccurred(filter, (details) => {
 			if (details.resourceType !== "xhr") return;
 			recordBrowserSignal(session, {
 				kind: "network-failure",
-				message: `${details.method} ${details.url} failed: ${details.error}`,
+				message: `${details.method} ${sanitizeBrowserURL(details.url)} failed: ${details.error}`,
 			});
 		});
 	};
@@ -1667,7 +1669,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				case "open": {
 					const url = stringArg(args, "url", "URL_REQUIRED", "url is required");
 					await runNative(action, { url: normalizeAgentBrowserURL(url) });
-					return pushNavState(options, activeEntry(session));
+					return agentNavState(pushNavState(options, activeEntry(session)));
 				}
 				case "snapshot": {
 					const result = await runNative(action, { interactive: Boolean(args.interactive) });
@@ -1774,24 +1776,24 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 						targetRef: stringArg(args, "targetRef", "REFERENCE_REQUIRED", "target ref is required"),
 					});
 				case "unhighlight":
-					return unhighlightEntry(entry);
+					return agentURLResult(await unhighlightEntry(entry));
 				case "tabs":
-					return listTabs(session);
+					return agentTabsResult(session);
 				case "tab-new": {
 					const url =
 						typeof args.url === "string" && args.url.trim() ? normalizeAgentBrowserURL(args.url) : undefined;
 					await runNative(action, { url });
-					return tabResult(activeEntry(session), true);
+					return agentTabResult(activeEntry(session), true);
 				}
 				case "tab-select": {
 					await runNative(action, { tabId: stringArg(args, "tabId", "TAB_ID_REQUIRED", "tabId is required") });
-					return tabResult(activeEntry(session), true);
+					return agentTabResult(activeEntry(session), true);
 				}
 				case "tab-close": {
 					const tabId =
 						typeof args.tabId === "string" && args.tabId.trim() ? args.tabId.trim() : session.activeTabId;
 					await runNative(action, { tabId });
-					return { closedTabId: tabId, ...listTabs(session) };
+					return { closedTabId: tabId, ...agentTabsResult(session) };
 				}
 				case "scroll":
 					return runNative(action, {
@@ -1809,7 +1811,18 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 						property,
 						ref: typeof args.ref === "string" && args.ref.trim() ? args.ref : undefined,
 					});
-					return { ...result, value: result.value ?? result[property] };
+					const value = result.value ?? result[property];
+					const safeValue =
+						property === "url"
+							? sanitizeBrowserURL(String(value ?? ""))
+							: property === "title"
+								? sanitizeBrowserTitle(String(value ?? ""))
+								: value;
+					return {
+						...result,
+						...(property === "url" || property === "title" ? { [property]: safeValue } : {}),
+						value: safeValue,
+					};
 				}
 				case "wait":
 					return runNative(action, args);
@@ -2040,6 +2053,44 @@ function tabResult(entry: BrowserEntry, active: boolean): BrowserTabState & { un
 		active,
 		...(entry.favicon ? { favicon: entry.favicon } : {}),
 		untrustedExternalContent: true,
+	};
+}
+
+// Renderer IPC deliberately keeps the real URL for the address bar and tab
+// navigation. Agent/daemon responses use this separate projection because they
+// are retained in tool output and transcripts.
+function agentTabResult(entry: BrowserEntry, active: boolean): BrowserTabState & { untrustedExternalContent: true } {
+	const tab = tabResult(entry, active);
+	return {
+		...tab,
+		url: sanitizeBrowserURL(tab.url),
+		title: sanitizeBrowserTitle(tab.title),
+	};
+}
+
+function agentTabsResult(session: BrowserSessionEntry): BrowserTabsState & { untrustedExternalContent: true } {
+	return {
+		viewId: session.viewId,
+		activeTabId: session.activeTabId,
+		tabs: [...session.tabs.values()].map((entry) => agentTabResult(entry, entry.tabId === session.activeTabId)),
+		untrustedExternalContent: true,
+	};
+}
+
+function agentNavState(state: BrowserNavState): BrowserNavState {
+	return {
+		...state,
+		url: sanitizeBrowserURL(state.url),
+		title: sanitizeBrowserTitle(state.title),
+		...(state.error ? { error: sanitizeURLsInText(state.error) } : {}),
+	};
+}
+
+function agentURLResult(result: unknown): unknown {
+	if (!result || typeof result !== "object" || !("url" in result)) return result;
+	return {
+		...result,
+		url: sanitizeBrowserURL(String(result.url ?? "")),
 	};
 }
 
@@ -2436,14 +2487,14 @@ function handleNetworkDebuggerEvent(entry: BrowserEntry, method: string, params:
 		if (previous && Object.keys(redirect).length > 0) {
 			applyNetworkResponse(previous, redirect);
 			finishNetworkRequest(previous, timestamp);
-			previous.redirectedTo = sanitizeNetworkURL(url);
+			previous.redirectedTo = sanitizeBrowserURL(url);
 		}
 		const wallTime = finiteNumber(params.wallTime);
 		const item: InternalBrowserNetworkRequest = {
 			id: `n${capture.nextSequence++}`,
 			protocolRequestId: requestID,
 			method: typeof request.method === "string" ? request.method : "GET",
-			url: sanitizeNetworkURL(url),
+			url: sanitizeBrowserURL(url),
 			resourceType: typeof params.type === "string" ? params.type.toLowerCase() : undefined,
 			startedAt: wallTime ? new Date(wallTime * 1_000).toISOString() : new Date().toISOString(),
 			startedMonotonic: timestamp,
@@ -2535,13 +2586,17 @@ function selectedNetworkHeaders(value: unknown, kind: "request" | "response"): R
 		const name = rawName.toLowerCase();
 		if (!allowed.has(name)) continue;
 		let headerValue = typeof rawValue === "string" ? rawValue : String(rawValue);
-		if (name === "referer" || name === "location") headerValue = sanitizeNetworkURL(headerValue);
+		if (name === "referer" || name === "location") headerValue = sanitizeBrowserURL(headerValue);
 		selected[name] = headerValue.slice(0, 1_000);
 	}
 	return Object.keys(selected).length > 0 ? selected : undefined;
 }
 
-function sanitizeNetworkURL(raw: string): string {
+// Safe-to-retain URL form: keep the location useful while removing values that
+// commonly carry credentials or one-time handoff material.
+export function sanitizeBrowserURL(raw: string): string {
+	if (!raw) return "";
+	if (raw === "about:blank") return raw;
 	try {
 		const url = new URL(raw);
 		if (!["http:", "https:", "file:"].includes(url.protocol)) {
@@ -2556,8 +2611,21 @@ function sanitizeNetworkURL(raw: string): string {
 		return url.href;
 	} catch {
 		const withoutFragment = raw.split("#", 1)[0] ?? "";
-		return (withoutFragment.split("?", 1)[0] ?? "").slice(0, 2_000);
+		const withoutQuery = withoutFragment.split("?", 1)[0] ?? "";
+		return withoutQuery.replace(/^([a-z][a-z\d+.-]*:\/\/)[^/@\s]+@/i, "$1").slice(0, 2_000);
 	}
+}
+
+export function sanitizeBrowserTitle(raw: string): string {
+	const title = raw.trim();
+	if (/^(?:[a-z][a-z\d+.-]*:\/\/|(?:about|mailto|data|javascript|blob):)/i.test(title)) {
+		return sanitizeBrowserURL(title);
+	}
+	return sanitizeURLsInText(raw);
+}
+
+function sanitizeURLsInText(raw: string): string {
+	return raw.replace(/\b(?:https?|file):\/\/[^\s<>"']+/gi, (match) => sanitizeBrowserURL(match));
 }
 
 function objectValue(value: unknown): Record<string, unknown> {
@@ -2662,7 +2730,7 @@ function normalizeNativeMessages(
 		if (typeof item === "string") {
 			return {
 				level: action === "errors" ? "error" : "log",
-				message: markUntrusted(externalText(item)),
+				message: markUntrusted(externalText(sanitizeURLsInText(item))),
 				timestamp: new Date().toISOString(),
 			};
 		}
@@ -2683,7 +2751,7 @@ function normalizeNativeMessages(
 					: JSON.stringify(record);
 		return {
 			level,
-			message: markUntrusted(externalText(message)),
+			message: markUntrusted(externalText(sanitizeURLsInText(message))),
 			timestamp: typeof record.timestamp === "string" ? record.timestamp : new Date().toISOString(),
 		};
 	});
