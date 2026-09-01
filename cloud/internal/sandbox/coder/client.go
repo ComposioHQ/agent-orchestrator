@@ -376,8 +376,18 @@ func (c *Client) bootstrapThroughPTY(ctx context.Context, ptyURL *url.URL, encod
 		}
 		sequence++
 	}
-	return sendBootstrapFrame(ctx, encoder, output,
-		fmt.Sprintf("done:%d:0:\n", sequence), bootstrapUploadDone)
+	if err := sendBootstrapFrame(ctx, encoder, output,
+		fmt.Sprintf("done:%d:0:\n", sequence), bootstrapUploadDone); err != nil {
+		return err
+	}
+	result, err := readBootstrapResult(ctx, output)
+	if err != nil {
+		return err
+	}
+	if !strings.Contains(result, bootstrapOK) {
+		return fmt.Errorf("coder: worker bootstrap failed: %s", sanitizePTYOutput(result))
+	}
+	return nil
 }
 
 func sendBootstrapFrame(
@@ -441,6 +451,15 @@ func validateBootstrap(bootstrap sandbox.WorkerBootstrap) error {
 	}
 	if !userPattern.MatchString(strings.TrimSpace(bootstrap.User)) {
 		return fmt.Errorf("coder: worker user %q is invalid", bootstrap.User)
+	}
+	if _, err := sandbox.NewCoderWorkspaceLayout(bootstrap.DurableRoot); err != nil {
+		return fmt.Errorf("coder: durable workspace root: %w", err)
+	}
+	identity := strings.TrimSpace(bootstrap.DurableIdentity)
+	if identity == "" || len(identity) > 200 || strings.IndexFunc(identity, func(character rune) bool {
+		return character < ' ' || character == 0x7f
+	}) >= 0 {
+		return errors.New("coder: durable workspace identity is invalid")
 	}
 	for key := range bootstrap.Environment {
 		if !regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`).MatchString(key) {
@@ -511,6 +530,11 @@ func environmentFile(environment map[string]string) string {
 func bootstrapCommand(bootstrap sandbox.WorkerBootstrap, encodedLength int) string {
 	workerUser := strings.TrimSpace(bootstrap.User)
 	workerDestination := strings.TrimSpace(bootstrap.Destination)
+	layout, _ := sandbox.NewCoderWorkspaceLayout(bootstrap.DurableRoot)
+	requireIdentity := "0"
+	if bootstrap.RequireDurableIdentity {
+		requireIdentity = "1"
+	}
 	helperInstall := ""
 	if len(bootstrap.HelperBinary) > 0 {
 		helperInstall = "sudo -n install -m 0755 \"$stage/ao\" " + shellQuote(bootstrap.HelperDestination) + "\n"
@@ -527,13 +551,26 @@ func bootstrapCommand(bootstrap sandbox.WorkerBootstrap, encodedLength int) stri
 		"  elif [ \"$kind\" = done ] && [ \"$received\" -eq \"$target\" ]; then\n    echo " + bootstrapUploadDone + "\n    break\n  fi\ndone\nstty echo icanon\n" +
 		"base64 -d \"$encoded\" | gzip -d | tar -xf - -C \"$stage\"\n" +
 		"sudo -n id -u " + shellQuote(workerUser) + " >/dev/null 2>&1 || sudo -n useradd -m " + shellQuote(workerUser) + "\n" +
-		"sudo -n mkdir -p /workspace/repository /workspace/.ao/worker /workspace/.ao/harness /workspace/.ao/repository-credentials\n" +
-		"sudo -n chown -R " + shellQuote(workerUser+":"+workerUser) + " /workspace\n" +
+		"durable_root=" + shellQuote(layout.DurableRoot) + "\n" +
+		"if [ ! -d \"$durable_root\" ] || [ -L \"$durable_root\" ] || ! mountpoint -q \"$durable_root\"; then\n" +
+		"  echo 'configured Coder durable root is not a mounted directory' >&2\n  exit 1\nfi\n" +
+		"sudo -n mkdir -p " + shellQuote(layout.Repository) + " " + shellQuote(layout.WorkerData) + " " +
+		shellQuote(layout.Home) + " " + shellQuote(layout.ClaudeConfig) + " " + shellQuote(layout.CodexHome) + "\n" +
+		"identity_file=" + shellQuote(layout.DurableIdentity) + "\n" +
+		"if sudo -n test -f \"$identity_file\"; then\n" +
+		"  existing_identity=$(sudo -n cat \"$identity_file\")\n" +
+		"  if [ \"$existing_identity\" != " + shellQuote(strings.TrimSpace(bootstrap.DurableIdentity)) + " ]; then\n" +
+		"    echo 'Coder durable root belongs to a different AO session' >&2\n    exit 1\n  fi\n" +
+		"elif [ " + requireIdentity + " -eq 1 ]; then\n" +
+		"  echo 'Coder durable state did not survive workspace stop/start' >&2\n  exit 1\n" +
+		"else\n" +
+		"  printf '%s\\n' " + shellQuote(strings.TrimSpace(bootstrap.DurableIdentity)) + " | sudo -n tee \"$identity_file\" >/dev/null\nfi\n" +
+		"sudo -n chown -R " + shellQuote(workerUser+":"+workerUser) + " " + shellQuote(layout.Repository) + " " + shellQuote(path.Dir(layout.WorkerData)) + "\n" +
 		"sudo -n install -m 0755 \"$stage/ao-worker\" " + shellQuote(workerDestination) + "\n" + helperInstall +
-		"sudo -n install -o " + shellQuote(workerUser) + " -g " + shellQuote(workerUser) + " -m 0600 \"$stage/worker.env\" /workspace/.ao/worker/worker.env\n" +
-		"sudo -n install -o " + shellQuote(workerUser) + " -g " + shellQuote(workerUser) + " -m 0700 \"$stage/launch.sh\" /workspace/.ao/worker/launch.sh\n" +
+		"sudo -n install -o " + shellQuote(workerUser) + " -g " + shellQuote(workerUser) + " -m 0600 \"$stage/worker.env\" " + shellQuote(path.Join(layout.WorkerData, "worker.env")) + "\n" +
+		"sudo -n install -o " + shellQuote(workerUser) + " -g " + shellQuote(workerUser) + " -m 0700 \"$stage/launch.sh\" " + shellQuote(path.Join(layout.WorkerData, "launch.sh")) + "\n" +
 		"sudo -n pkill -u " + shellQuote(workerUser) + " -f " + shellQuote(workerDestination) + " 2>/dev/null || true\n" +
-		"sudo -n -u " + shellQuote(workerUser) + " sh -c " + shellQuote("nohup /workspace/.ao/worker/launch.sh /workspace/.ao/worker/worker.env "+shellQuote(workerDestination)+" >/workspace/.ao/worker/worker.log 2>&1 </dev/null &") + "\n" +
+		"sudo -n -u " + shellQuote(workerUser) + " sh -c " + shellQuote("nohup "+shellQuote(path.Join(layout.WorkerData, "launch.sh"))+" "+shellQuote(path.Join(layout.WorkerData, "worker.env"))+" "+shellQuote(workerDestination)+" >"+shellQuote(path.Join(layout.WorkerData, "worker.log"))+" 2>&1 </dev/null &") + "\n" +
 		"rm -rf \"$stage\"\ntrap - EXIT\necho " + bootstrapOK + "\n"
 	return "sh -lc " + shellQuote(script)
 }

@@ -80,6 +80,7 @@ func provisioningDefaults(cfg config.Config) sandbox.ProvisioningDefaults {
 			TemplateID:     cfg.CoderTemplateID,
 			AgentName:      cfg.CoderAgentName,
 			Parameters:     cfg.CoderParameters,
+			DurableRoot:    cfg.CoderDurableRoot,
 			WorkerTokenTTL: cfg.CoderWorkerTokenTTL,
 		},
 	}

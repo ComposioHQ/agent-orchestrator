@@ -20,15 +20,18 @@ type ID string
 
 // Spec describes a sandbox to create.
 type Spec struct {
-	Name              string
-	SessionID         string
-	OrgID             string
-	ResourceProfile   domain.ResourceProfile
-	Shape             string
-	RootFS            string
-	Ingress           string
-	Environment       map[string]string
-	Labels            map[string]string
+	Name            string
+	SessionID       string
+	OrgID           string
+	ResourceProfile domain.ResourceProfile
+	Shape           string
+	RootFS          string
+	Ingress         string
+	Environment     map[string]string
+	Labels          map[string]string
+	// DurableRoot is provider-specific persisted workspace storage. It remains
+	// empty for providers whose established contract already owns persistence.
+	DurableRoot       string
 	AutoDeleteMinutes int
 	// AutoPauseSeconds is disabled when zero.
 	AutoPauseSeconds int
@@ -52,6 +55,13 @@ type WorkerBootstrap struct {
 	HelperDestination string
 	User              string
 	Environment       map[string]string
+	// DurableRoot and DurableIdentity are used by providers whose compute is
+	// replaced on stop/start while a template-backed filesystem is retained.
+	// RequireDurableIdentity makes a restore fail closed if the original volume
+	// marker is missing or belongs to another session.
+	DurableRoot            string
+	DurableIdentity        string
+	RequireDurableIdentity bool
 }
 
 // Bootstrapper installs and starts an AO worker in an existing sandbox.

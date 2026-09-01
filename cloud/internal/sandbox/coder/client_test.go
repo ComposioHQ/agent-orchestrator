@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -182,6 +183,18 @@ func TestBootstrapWorkerStreamsArchiveWithoutSecretsInURL(t *testing.T) {
 				t.Errorf("PTY backend_type = %q, want buffered", got)
 			}
 			command := request.URL.Query().Get("command")
+			for _, expected := range []string{
+				"/mnt/ao/repository",
+				"/mnt/ao/.ao/worker",
+				"/mnt/ao/.ao/home/.claude",
+				"/mnt/ao/.ao/home/.codex",
+				"mountpoint -q",
+				"/mnt/ao/.ao/durable-session-id",
+			} {
+				if !strings.Contains(command, expected) {
+					t.Errorf("bootstrap command missing durable path contract %q", expected)
+				}
+			}
 			match := regexp.MustCompile(`target=([0-9]+)`).FindStringSubmatch(command)
 			if len(match) != 2 {
 				t.Errorf("bootstrap command did not include payload length")
@@ -250,6 +263,7 @@ func TestBootstrapWorkerStreamsArchiveWithoutSecretsInURL(t *testing.T) {
 		Binary: []byte("worker-binary"), Destination: "/usr/local/bin/ao-worker",
 		HelperBinary: []byte("helper-binary"), HelperDestination: "/usr/local/bin/ao",
 		User: "ao-worker", Environment: map[string]string{"AO_WORKER_TOKEN": secret},
+		DurableRoot: "/mnt/ao", DurableIdentity: "session-1",
 	})
 	if err != nil {
 		t.Fatalf("bootstrap: %v", err)
@@ -275,6 +289,73 @@ func TestNewRejectsUnsafeConfiguration(t *testing.T) {
 		if _, err := New(config); err == nil {
 			t.Fatalf("New(%+v) succeeded", config)
 		}
+	}
+}
+
+func TestValidateBootstrapRejectsUnsafeDurableContract(t *testing.T) {
+	t.Parallel()
+	base := sandbox.WorkerBootstrap{
+		Binary: []byte("worker"), Destination: "/usr/local/bin/ao-worker",
+		User: "ao-worker", DurableRoot: "/mnt/ao", DurableIdentity: "session-1",
+	}
+	tests := []struct {
+		name   string
+		mutate func(*sandbox.WorkerBootstrap)
+	}{
+		{name: "missing root", mutate: func(value *sandbox.WorkerBootstrap) { value.DurableRoot = "" }},
+		{name: "root filesystem", mutate: func(value *sandbox.WorkerBootstrap) { value.DurableRoot = "/" }},
+		{name: "unclean root", mutate: func(value *sandbox.WorkerBootstrap) { value.DurableRoot = "/mnt/../ao" }},
+		{name: "missing identity", mutate: func(value *sandbox.WorkerBootstrap) { value.DurableIdentity = "" }},
+		{name: "identity control", mutate: func(value *sandbox.WorkerBootstrap) { value.DurableIdentity = "bad\nidentity" }},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			value := base
+			test.mutate(&value)
+			if err := validateBootstrap(value); err == nil {
+				t.Fatal("validateBootstrap succeeded")
+			}
+		})
+	}
+}
+
+func TestBootstrapThroughPTYReportsFailureAfterUpload(t *testing.T) {
+	t.Parallel()
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		connection, err := websocket.Accept(writer, request, nil)
+		if err != nil {
+			t.Errorf("accept websocket: %v", err)
+			return
+		}
+		defer connection.CloseNow()
+		netConnection := websocket.NetConn(context.Background(), connection, websocket.MessageBinary)
+		defer netConnection.Close()
+		var frame struct {
+			Data string `json:"data"`
+		}
+		if err := json.NewDecoder(netConnection).Decode(&frame); err != nil {
+			t.Errorf("decode done frame: %v", err)
+			return
+		}
+		if !strings.HasPrefix(frame.Data, "done:0:") {
+			t.Errorf("unexpected frame: %q", frame.Data)
+		}
+		_, _ = io.WriteString(netConnection, bootstrapUploadDone+"\r\n")
+		_, _ = io.WriteString(netConnection, bootstrapFailed+":1\r\n")
+	}))
+	defer server.Close()
+	client := newTestClient(t, server.URL, nil)
+	ptyURL, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err = client.bootstrapThroughPTY(ctx, ptyURL, "")
+	if err == nil || !strings.Contains(err.Error(), "worker bootstrap failed") {
+		t.Fatalf("bootstrapThroughPTY error = %v", err)
 	}
 }
 

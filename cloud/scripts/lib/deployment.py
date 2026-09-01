@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import copy
 import json
+import posixpath
 import re
 from typing import Any
 from urllib.parse import urlparse
@@ -43,6 +44,7 @@ CODER_SECRET_ENV = {
     "AO_CLOUD_CODER_TEMPLATE_ID": "template_id",
     "AO_CLOUD_CODER_AGENT_NAME": "agent_name",
     "AO_CLOUD_CODER_PARAMETERS_JSON": "parameters_json",
+    "AO_CLOUD_CODER_DURABLE_ROOT": "durable_root",
     "AO_CLOUD_CODER_WORKER_TOKEN_TTL": "worker_token_ttl",
 }
 WORKER_SECRET_ENV = {
@@ -135,9 +137,18 @@ def _validate_coder_settings(coder: dict[str, Any]) -> None:
         or base_url.fragment
     ):
         raise ValueError("Coder url must be an absolute HTTPS origin")
-    for key in ("token", "owner", "template_id"):
+    for key in ("token", "owner", "template_id", "durable_root"):
         if not coder[key].strip():
             raise ValueError(f"Coder {key} must not be empty")
+    durable_root = coder["durable_root"]
+    if (
+        len(durable_root) > 1024
+        or not durable_root.startswith("/")
+        or durable_root == "/"
+        or posixpath.normpath(durable_root) != durable_root
+        or any(ord(character) < 32 or ord(character) == 127 for character in durable_root)
+    ):
+        raise ValueError("Coder durable_root must be a safe absolute non-root path")
     try:
         parameters = json.loads(coder["parameters_json"])
     except json.JSONDecodeError as error:

@@ -69,6 +69,7 @@ def coder_settings():
             "template_id": "template-uuid",
             "agent_name": "main",
             "parameters_json": '{"instance_type":"t3.medium"}',
+            "durable_root": "/home/coder",
             "worker_token_ttl": "15m",
         },
         hosted_settings()[1],
@@ -332,6 +333,12 @@ class HostedSettingsTests(unittest.TestCase):
         coder, worker = coder_settings()
         coder["url"] = "http://coder.example.com"
         with self.assertRaisesRegex(ValueError, "HTTPS origin"):
+            validate_hosted_settings(coder, worker, provider="coder")
+
+    def test_rejects_unsafe_coder_durable_root(self):
+        coder, worker = coder_settings()
+        coder["durable_root"] = "/home/coder/../ephemeral"
+        with self.assertRaisesRegex(ValueError, "safe absolute non-root path"):
             validate_hosted_settings(coder, worker, provider="coder")
 
 

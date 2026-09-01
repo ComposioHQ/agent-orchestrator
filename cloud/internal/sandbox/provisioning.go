@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"path"
 	"strings"
 	"time"
 )
@@ -59,7 +60,51 @@ type CoderConfig struct {
 	TemplateID     string
 	AgentName      string
 	Parameters     map[string]string
+	DurableRoot    string
 	WorkerTokenTTL time.Duration
+}
+
+// CoderWorkspaceLayout is the provider-specific filesystem contract between AO
+// and a Coder template. DurableRoot must be the template's persistent volume
+// mount point; every path AO must retain across stop/start is derived beneath it.
+type CoderWorkspaceLayout struct {
+	DurableRoot     string
+	Repository      string
+	WorkerData      string
+	Home            string
+	ClaudeConfig    string
+	CodexHome       string
+	DurableIdentity string
+}
+
+// NewCoderWorkspaceLayout validates and expands the configured Coder volume
+// mount. Bootstrap separately verifies that DurableRoot is an actual mount point
+// inside the workspace before AO writes anything beneath it.
+func NewCoderWorkspaceLayout(durableRoot string) (CoderWorkspaceLayout, error) {
+	durableRoot = strings.TrimSpace(durableRoot)
+	if durableRoot == "" {
+		return CoderWorkspaceLayout{}, errors.New("AO_CLOUD_CODER_DURABLE_ROOT is required")
+	}
+	if len(durableRoot) > 1024 || !strings.HasPrefix(durableRoot, "/") ||
+		path.Clean(durableRoot) != durableRoot || durableRoot == "/" ||
+		strings.IndexFunc(durableRoot, func(character rune) bool {
+			return character < ' ' || character == 0x7f
+		}) >= 0 {
+		return CoderWorkspaceLayout{}, errors.New(
+			"AO_CLOUD_CODER_DURABLE_ROOT must be a safe absolute non-root path",
+		)
+	}
+	aoRoot := path.Join(durableRoot, ".ao")
+	home := path.Join(aoRoot, "home")
+	return CoderWorkspaceLayout{
+		DurableRoot:     durableRoot,
+		Repository:      path.Join(durableRoot, "repository"),
+		WorkerData:      path.Join(aoRoot, "worker"),
+		Home:            home,
+		ClaudeConfig:    path.Join(home, ".claude"),
+		CodexHome:       path.Join(home, ".codex"),
+		DurableIdentity: path.Join(aoRoot, "durable-session-id"),
+	}, nil
 }
 
 func (c CoderConfig) Validate() error {
@@ -74,6 +119,9 @@ func (c CoderConfig) Validate() error {
 	}
 	if strings.TrimSpace(c.TemplateID) == "" {
 		return errors.New("AO_CLOUD_CODER_TEMPLATE_ID is required")
+	}
+	if _, err := NewCoderWorkspaceLayout(c.DurableRoot); err != nil {
+		return err
 	}
 	if c.WorkerTokenTTL <= 0 {
 		return errors.New("AO_CLOUD_CODER_WORKER_TOKEN_TTL must be positive")
@@ -205,12 +253,14 @@ func (d ProvisioningDefaults) SessionPlan(harness string) (Plan, error) {
 			"templateId":            strings.TrimSpace(d.Coder.TemplateID),
 			"agentName":             strings.TrimSpace(d.Coder.AgentName),
 			"parameters":            d.Coder.Parameters,
+			"durableRoot":           strings.TrimSpace(d.Coder.DurableRoot),
 			"workerTokenTtlSeconds": int64(d.Coder.WorkerTokenTTL / time.Second),
 		}
 		bootstrapContext["coder"] = map[string]any{
-			"owner":      strings.TrimSpace(d.Coder.Owner),
-			"templateId": strings.TrimSpace(d.Coder.TemplateID),
-			"agentName":  strings.TrimSpace(d.Coder.AgentName),
+			"owner":       strings.TrimSpace(d.Coder.Owner),
+			"templateId":  strings.TrimSpace(d.Coder.TemplateID),
+			"agentName":   strings.TrimSpace(d.Coder.AgentName),
+			"durableRoot": strings.TrimSpace(d.Coder.DurableRoot),
 		}
 	}
 	resourceJSON, err := json.Marshal(resourceProfile)
