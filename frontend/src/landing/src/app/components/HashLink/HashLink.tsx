@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
 import type { ComponentPropsWithoutRef, MouseEvent } from "react";
 
 type LinkProps = ComponentPropsWithoutRef<typeof Link>;
@@ -20,8 +19,6 @@ type LinkProps = ComponentPropsWithoutRef<typeof Link>;
  * degrades to a real navigation with JS off.
  */
 export function HashLink({ href, onClick, ...props }: LinkProps) {
-	const pathname = usePathname();
-
 	const raw = typeof href === "string" ? href : null;
 	const hashIndex = raw?.indexOf("#") ?? -1;
 	const targetId = hashIndex >= 0 ? raw?.slice(hashIndex + 1) : undefined;
@@ -41,7 +38,7 @@ export function HashLink({ href, onClick, ...props }: LinkProps) {
 		) {
 			return;
 		}
-		if (!targetId || targetPath !== pathname) return;
+		if (!targetId || targetPath !== window.location.pathname) return;
 
 		const target = document.getElementById(targetId);
 		if (!target) return;
