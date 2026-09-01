@@ -181,8 +181,8 @@ export function tierOf(check: StoreCheck | null, platform: string, floor: StoreT
 
 /**
  * The sheet's subtitle. Only claims the store has a build when the store said so
- * — a floor-driven nudge during the TestFlight window would otherwise point at
- * an App Store page that does not exist yet.
+ * — a floor-driven nudge can fire before the store finishes processing a
+ * release, and would otherwise point at a version nobody can install yet.
  */
 export function describePrompt(input: { version?: string; storeConfirmed: boolean; storeName: string }): string {
 	const where = input.storeConfirmed ? `on the ${input.storeName}` : "available";
