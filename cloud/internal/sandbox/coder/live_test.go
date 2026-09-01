@@ -58,7 +58,10 @@ func TestLiveLifecycle(t *testing.T) {
 			defer cleanupCancel()
 			if cleanupErr := client.Delete(cleanupContext, environment.ID); cleanupErr != nil {
 				t.Errorf("cleanup workspace %s: %v", environment.ID, cleanupErr)
+				return
 			}
+			waitForDeleted(t, cleanupContext, client, environment.ID)
+			t.Logf("cleanup confirmed workspace %s is absent", environment.ID)
 		}
 	}()
 
@@ -113,10 +116,12 @@ func TestLiveLifecycle(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("restore bootstrap did not find durable session identity: %v", err)
 	}
+	t.Logf("accepted durable session identity %s after Coder stop/start", sessionID)
 	if err := client.Delete(ctx, environment.ID); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
 	waitForDeleted(t, ctx, client, environment.ID)
+	t.Logf("cleanup confirmed workspace %s is absent", environment.ID)
 	deleted = true
 }
 
