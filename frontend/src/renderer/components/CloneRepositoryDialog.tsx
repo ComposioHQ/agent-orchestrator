@@ -273,7 +273,9 @@ export function repositoryNameFromGitUrl(raw: string): string | null {
 			return null;
 		}
 	}
-	const lastSegment = remotePath.replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? "";
+	const segments = remotePath.replace(/[\\/]+$/, "").split(/[\\/]/).filter(Boolean);
+	if (segments.length < 2) return null;
+	const lastSegment = segments[segments.length - 1] ?? "";
 	const name = lastSegment.replace(/\.git$/, "");
 	if (!name || name === "." || name === ".." || /[\\/<>:"|?*]/.test(name)) return null;
 	return name;
