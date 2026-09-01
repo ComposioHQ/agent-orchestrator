@@ -17,14 +17,14 @@ RELEASE="${1:-$HEAD_SHA}"
 IMAGE_TAG="${RELEASE//+/-}-linux-amd64"
 
 # CVE allowlist shared with promote-production.sh. These CRITICAL/HIGH findings
-# are unpatched 2026 CVEs in base OS packages (perl, libssh2, expat) that git
+# are unpatched 2026 CVEs in base OS packages (perl, libssh2, expat, openssl, util-linux) that git
 # pulls into the worker image; no fix exists in Debian 12 or 13 yet. The worker
 # runs inside an ephemeral, single-tenant, isolated CreateOS sandbox that
 # already executes untrusted agent code. Keep this list in sync with production
 # promote. Remove entries as Debian ships fixes; the worker stage's apt-get
 # upgrade then clears them on rebuild. CVE-2026-14456 is a scanner false
 # positive for Debian's OpenSSL 3.0: its QUIC listener was introduced in 3.5.
-SCAN_CVE_ALLOWLIST="${AO_CLOUD_SCAN_CVE_ALLOWLIST:-CVE-2026-57432 CVE-2026-45186 CVE-2026-12087 CVE-2025-15661 CVE-2026-58051 CVE-2026-7017 CVE-2026-48962 CVE-2026-57433 CVE-2026-66032 CVE-2026-48961 CVE-2026-48959 CVE-2026-66034 CVE-2026-58050 CVE-2026-13221 CVE-2026-14456 CVE-2026-66046}"
+SCAN_CVE_ALLOWLIST="${AO_CLOUD_SCAN_CVE_ALLOWLIST:-CVE-2026-57432 CVE-2026-45186 CVE-2026-12087 CVE-2025-15661 CVE-2026-58051 CVE-2026-7017 CVE-2026-48962 CVE-2026-57433 CVE-2026-66032 CVE-2026-48961 CVE-2026-48959 CVE-2026-66034 CVE-2026-58050 CVE-2026-13221 CVE-2026-14456 CVE-2026-66046 CVE-2026-63076 CVE-2026-53615 CVE-2026-54874 CVE-2026-63072}"
 
 AWS_OPTIONS=(--region "$REGION")
 if [[ -n "${AWS_PROFILE:-}" ]]; then

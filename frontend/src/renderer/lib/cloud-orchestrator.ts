@@ -1,6 +1,7 @@
 import type { QueryClient } from "@tanstack/react-query";
 import { createRendererCloudCpClient } from "../hooks/useCloudCp";
 import { settingsQueryKey, type Settings } from "../hooks/useSettings";
+import { captureRendererEvent } from "./telemetry";
 
 // A cloud project has no locally-configured orchestrator agent (that config
 // lives in the local daemon's project settings), so the launchers must not
@@ -27,12 +28,18 @@ export async function spawnCloudOrchestrator(queryClient: QueryClient, projectId
 	const me = await client.me();
 	const orgId = me.organizations[0]?.id;
 	if (orgId === undefined) throw new Error("No cloud organization is available.");
-	const { session } = await client.createSession(orgId, {
-		projectId,
-		kind: "orchestrator",
-		harness: "claude-code",
-		displayName: "Orchestrator",
-		prompt: ORCHESTRATOR_KICKOFF_PROMPT,
-	});
-	return session.id;
+	try {
+		const { session } = await client.createSession(orgId, {
+			projectId,
+			kind: "orchestrator",
+			harness: "claude-code",
+			displayName: "Orchestrator",
+			prompt: ORCHESTRATOR_KICKOFF_PROMPT,
+		});
+		void captureRendererEvent("ao.renderer.cloud_orchestrator_spawn_succeeded", { project_id: projectId });
+		return session.id;
+	} catch (error) {
+		void captureRendererEvent("ao.renderer.cloud_orchestrator_spawn_failed", { project_id: projectId });
+		throw error;
+	}
 }
