@@ -307,12 +307,12 @@ export function CreateProjectFlow({
 	};
 
 	const label = isInitializing
-			? hasModePicker
-				? t("createProject.initializing")
-				: t("createProject.settingUp")
-			: isCreating
-				? t("createProject.creating")
-				: resolvedIdleLabel;
+		? hasModePicker
+			? t("createProject.initializing")
+			: t("createProject.settingUp")
+		: isCreating
+			? t("createProject.creating")
+			: resolvedIdleLabel;
 
 	return (
 		<>

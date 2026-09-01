@@ -44,8 +44,7 @@ export default function CloneRepositoryDialog({
 	const [choosingDestination, setChoosingDestination] = useState(false);
 	const [destinationPickerError, setDestinationPickerError] = useState<string | null>(null);
 	const repositoryName = repositoryNameFromGitUrl(value.remoteUrl);
-	const repositoryOwner = repositoryOwnerFromGitUrl(value.remoteUrl);
-	const avatarUrl = repositoryAvatarUrlFromGitUrl(value.remoteUrl);
+	const repositoryAvatar = repositoryAvatarFromGitUrl(value.remoteUrl);
 	const targetPath = repositoryName && value.destinationParent
 		? joinCloneDestination(value.destinationParent, repositoryName)
 		: "";
@@ -145,7 +144,7 @@ export default function CloneRepositoryDialog({
 										value={value.remoteUrl}
 										onChange={(event) => onChange({ ...value, remoteUrl: event.target.value })}
 									/>
-									<RepositoryOwnerIcon remoteUrl={value.remoteUrl} owner={repositoryOwner} avatarUrl={avatarUrl} />
+									<RepositoryOwnerIcon owner={repositoryAvatar?.owner ?? null} avatarUrl={repositoryAvatar?.url ?? null} />
 								</div>
 								{urlError ? (
 									<p id="cloneRepositoryUrlError" className="text-pretty text-[12px] leading-5 text-destructive" role="alert">
@@ -220,18 +219,16 @@ export default function CloneRepositoryDialog({
 function RepositoryOwnerIcon({
 	avatarUrl,
 	owner,
-	remoteUrl,
 }: {
 	avatarUrl: string | null;
 	owner: string | null;
-	remoteUrl: string;
 }) {
 	const [avatarState, setAvatarState] = useState<"loading" | "loaded" | "failed">("loading");
 	const hasOwner = Boolean(owner);
 
 	useEffect(() => {
 		setAvatarState(avatarUrl ? "loading" : "failed");
-	}, [avatarUrl, remoteUrl]);
+	}, [avatarUrl]);
 
 	const visible = hasOwner;
 	const showAvatar = visible && avatarUrl && avatarState === "loaded";
@@ -241,21 +238,20 @@ function RepositoryOwnerIcon({
 	return (
 		<span className="pointer-events-none absolute left-3 top-1/2 z-10 flex size-4 -translate-y-1/2 items-center justify-center text-[var(--color-text-import-muted)]" aria-hidden="true">
 			<span className="relative block size-4">
-			{!visible ? <Link2 className="absolute inset-0 size-4" /> : null}
-			{avatarUrl ? (
-				<img
-					alt=""
-					className={`${showAvatar ? "opacity-100" : "opacity-0"} absolute inset-0 size-4 rounded-full object-cover outline outline-1 -outline-offset-1 outline-black/10 transition-none dark:outline-white/10`}
-					draggable={false}
-					onError={() => setAvatarState("failed")}
-					onLoad={() => setAvatarState("loaded")}
-					referrerPolicy="no-referrer"
-					src={avatarUrl}
-					key={avatarUrl}
-				/>
-			) : null}
-			{showSkeleton ? <span className="absolute inset-0 size-4 animate-pulse rounded-full bg-muted-foreground/40" /> : null}
-			{showFallback ? <span className="absolute inset-0 size-4 rounded-full bg-muted text-center text-[9px] font-semibold leading-4 text-muted-foreground">{ownerInitials(owner)}</span> : null}
+				{!visible ? <Link2 className="absolute inset-0 size-4" /> : null}
+				{avatarUrl ? (
+					<img
+						alt=""
+						className={`${showAvatar ? "opacity-100" : "opacity-0"} absolute inset-0 size-4 rounded-full object-cover outline outline-1 -outline-offset-1 outline-black/10 transition-none dark:outline-white/10`}
+						draggable={false}
+						onError={() => setAvatarState("failed")}
+						onLoad={() => setAvatarState("loaded")}
+						referrerPolicy="no-referrer"
+						src={avatarUrl}
+					/>
+				) : null}
+				{showSkeleton ? <span className="absolute inset-0 size-4 animate-pulse rounded-full bg-muted-foreground/40" /> : null}
+				{showFallback ? <span className="absolute inset-0 size-4 rounded-full bg-muted text-center text-[9px] font-semibold leading-4 text-muted-foreground">{ownerInitials(owner)}</span> : null}
 			</span>
 		</span>
 	);
@@ -297,27 +293,22 @@ export function repositoryNameFromGitUrl(raw: string): string | null {
 	return name;
 }
 
-export function repositoryOwnerFromGitUrl(raw: string): string | null {
-	return repositoryRemoteParts(raw)?.owner ?? null;
-}
-
-export function repositoryAvatarUrlFromGitUrl(raw: string): string | null {
+export function repositoryAvatarFromGitUrl(raw: string): { owner: string; url: string } | null {
 	const remote = repositoryRemoteParts(raw);
 	if (!remote) return null;
 	const encodedOwner = encodeURIComponent(remote.owner);
-
-		switch (remote.host) {
+	switch (remote.host) {
 		case "github.com":
-			return `https://github.com/${encodedOwner}.png`;
+			return { owner: remote.owner, url: `https://github.com/${encodedOwner}.png` };
 		case "gitlab.com":
-			return `https://gitlab.com/-/avatar?username=${encodedOwner}`;
+			return { owner: remote.owner, url: `https://gitlab.com/-/avatar?username=${encodedOwner}` };
 		case "bitbucket.org":
-			return `https://bitbucket.org/account/${encodedOwner}/avatar/64/`;
+			return { owner: remote.owner, url: `https://bitbucket.org/account/${encodedOwner}/avatar/64/` };
 		default:
 			// Azure DevOps and self-hosted providers do not share one public avatar
 			// endpoint. Unavatar knows the common provider URL shapes and the
 			// initials fallback keeps this non-blocking when it cannot resolve one.
-			return `https://unavatar.io/${encodeURIComponent(remote.host)}/${encodedOwner}`;
+			return { owner: remote.owner, url: `https://unavatar.io/${encodeURIComponent(remote.host)}/${encodedOwner}` };
 	}
 }
 
