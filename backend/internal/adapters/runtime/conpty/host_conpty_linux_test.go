@@ -7,6 +7,7 @@ import (
 	"context"
 	"io"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -141,9 +142,14 @@ func TestLinuxPTYCloseReapsTermIgnoringProcessGroup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pgid := conn.PID()
-	if !linuxProcessGroupAlive(pgid) {
-		t.Fatalf("process group %d was not alive after launch", pgid)
+	linuxConn, ok := conn.(*linuxPTYConn)
+	if !ok {
+		t.Fatalf("connection type = %T", conn)
+	}
+	leaderPID := linuxConn.leaderPID
+	leaderStartTime := linuxConn.leaderStartTime
+	if !linuxSessionAlive(leaderPID, leaderStartTime) {
+		t.Fatalf("session %d was not alive after launch", leaderPID)
 	}
 	ready := make([]byte, 128)
 	n, err := conn.Read(ready)
@@ -155,11 +161,11 @@ func TestLinuxPTYCloseReapsTermIgnoringProcessGroup(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 	deadline := time.Now().Add(2 * time.Second)
-	for linuxProcessGroupAlive(pgid) && time.Now().Before(deadline) {
+	for linuxSessionAlive(leaderPID, leaderStartTime) && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
 	}
-	if linuxProcessGroupAlive(pgid) {
-		t.Fatalf("process group %d survived PTY close", pgid)
+	if linuxSessionAlive(leaderPID, leaderStartTime) {
+		t.Fatalf("session %d survived PTY close", leaderPID)
 	}
 }
 
@@ -170,7 +176,12 @@ func TestLinuxPTYCloseReapsOrphanedBackgroundJobWhenLeaderExitsEarly(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	leaderPID := conn.PID()
+	linuxConn, ok := conn.(*linuxPTYConn)
+	if !ok {
+		t.Fatalf("connection type = %T", conn)
+	}
+	leaderPID := linuxConn.leaderPID
+	leaderStartTime := linuxConn.leaderStartTime
 
 	ready := make([]byte, 128)
 	n, err := conn.Read(ready)
@@ -184,7 +195,7 @@ func TestLinuxPTYCloseReapsOrphanedBackgroundJobWhenLeaderExitsEarly(t *testing.
 		t.Fatal("leader process did not exit early as expected")
 	}
 
-	if !linuxSessionAlive(leaderPID) {
+	if !linuxSessionAlive(leaderPID, leaderStartTime) {
 		t.Fatalf("session %d had no live background processes after leader exit", leaderPID)
 	}
 
@@ -193,10 +204,10 @@ func TestLinuxPTYCloseReapsOrphanedBackgroundJobWhenLeaderExitsEarly(t *testing.
 	}
 
 	deadline := time.Now().Add(2 * time.Second)
-	for linuxSessionAlive(leaderPID) && time.Now().Before(deadline) {
+	for linuxSessionAlive(leaderPID, leaderStartTime) && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
 	}
-	if linuxSessionAlive(leaderPID) {
+	if linuxSessionAlive(leaderPID, leaderStartTime) {
 		t.Fatalf("orphaned background process in session %d survived PTY close", leaderPID)
 	}
 }
@@ -208,7 +219,12 @@ func TestLinuxPTYCloseReapsDescendantWithOwnProcessGroup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	leaderPID := conn.PID()
+	linuxConn, ok := conn.(*linuxPTYConn)
+	if !ok {
+		t.Fatalf("connection type = %T", conn)
+	}
+	leaderPID := linuxConn.leaderPID
+	leaderStartTime := linuxConn.leaderStartTime
 
 	ready := make([]byte, 128)
 	n, err := conn.Read(ready)
@@ -216,7 +232,7 @@ func TestLinuxPTYCloseReapsDescendantWithOwnProcessGroup(t *testing.T) {
 		t.Fatalf("waiting for job-control descendant readiness: output=%q err=%v", ready[:n], err)
 	}
 
-	procs := linuxFindSessionProcesses(leaderPID)
+	procs := linuxFindSessionProcesses(leaderPID, leaderStartTime)
 	foundSeparatePGID := false
 	for _, p := range procs {
 		if p.pgrp != leaderPID {
@@ -233,10 +249,86 @@ func TestLinuxPTYCloseReapsDescendantWithOwnProcessGroup(t *testing.T) {
 	}
 
 	deadline := time.Now().Add(2 * time.Second)
-	for linuxSessionAlive(leaderPID) && time.Now().Before(deadline) {
+	for linuxSessionAlive(leaderPID, leaderStartTime) && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
 	}
-	if linuxSessionAlive(leaderPID) {
+	if linuxSessionAlive(leaderPID, leaderStartTime) {
 		t.Fatalf("descendant with separate process group in session %d survived PTY close", leaderPID)
+	}
+}
+
+func TestLinuxPTYCloseDoesNotKillUnrelatedProcessAfterPIDReuse(t *testing.T) {
+	// Start an independent dummy process representing an unrelated process running on the host.
+	dummy := exec.Command("/bin/sh", "-c", "sleep 30")
+	if err := dummy.Start(); err != nil {
+		t.Fatal(err)
+	}
+	dummyPID := dummy.Process.Pid
+	t.Cleanup(func() {
+		if dummy.Process != nil {
+			_ = dummy.Process.Kill()
+			_ = dummy.Wait()
+		}
+	})
+
+	dummyInfo, err := readLinuxProcInfo(dummyPID)
+	if err != nil {
+		t.Fatalf("reading dummy proc info: %v", err)
+	}
+
+	// Create a simulated linuxPTYConn whose leaderPID matches dummyPID,
+	// but whose recorded leaderStartTime is from an earlier epoch (simulating a recycled PID).
+	conn := &linuxPTYConn{
+		leaderPID:       dummyPID,
+		leaderStartTime: dummyInfo.startTime - 1000, // mismatch: earlier time
+		doneC:           make(chan struct{}),
+	}
+	close(conn.doneC)
+
+	// Close() must detect the start-time mismatch and send NO signals to dummyPID.
+	if err := conn.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	// Verify the dummy process is still running and unharmed.
+	if !pidAlive(dummyPID) {
+		t.Fatalf("unrelated process %d was killed by Close() despite PID identity mismatch", dummyPID)
+	}
+}
+
+func TestLinuxPTYCloseDelayedAfterFullSessionExit(t *testing.T) {
+	conn, err := newConPTY(t.TempDir(), "/bin/sh", []string{
+		"-c", `printf 'done\n'; exit 0`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	linuxConn, ok := conn.(*linuxPTYConn)
+	if !ok {
+		t.Fatalf("connection type = %T", conn)
+	}
+	leaderPID := linuxConn.leaderPID
+
+	ready := make([]byte, 128)
+	n, err := conn.Read(ready)
+	if err != nil || !strings.Contains(string(ready[:n]), "done") {
+		t.Fatalf("waiting for exit: output=%q err=%v", ready[:n], err)
+	}
+
+	select {
+	case <-conn.Done():
+	case <-time.After(2 * time.Second):
+		t.Fatal("process did not exit")
+	}
+
+	// Ensure the leader process has exited
+	deadline := time.Now().Add(2 * time.Second)
+	for pidAlive(leaderPID) && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// Delayed close on an already fully-dead session must succeed cleanly without error.
+	if err := conn.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
 	}
 }

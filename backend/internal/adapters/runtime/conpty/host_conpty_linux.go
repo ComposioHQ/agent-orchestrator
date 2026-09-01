@@ -31,6 +31,9 @@ type linuxPTYConn struct {
 	exitMu    sync.Mutex
 	exitCode  int
 	exited    bool
+
+	leaderPID       int
+	leaderStartTime uint64
 }
 
 const linuxPTYCloseGrace = 500 * time.Millisecond
@@ -50,7 +53,22 @@ func newConPTY(cwd, shellCmd string, shellArgs []string) (ptyConn, error) {
 		return nil, fmt.Errorf("linux pty: start command: %w", err)
 	}
 
-	c := &linuxPTYConn{pty: f, cmd: cmd, doneC: make(chan struct{})}
+	leaderPID := 0
+	var leaderStartTime uint64
+	if cmd.Process != nil {
+		leaderPID = cmd.Process.Pid
+		if info, err := readLinuxProcInfo(leaderPID); err == nil {
+			leaderStartTime = info.startTime
+		}
+	}
+
+	c := &linuxPTYConn{
+		pty:             f,
+		cmd:             cmd,
+		doneC:           make(chan struct{}),
+		leaderPID:       leaderPID,
+		leaderStartTime: leaderStartTime,
+	}
 	go c.wait()
 	return c, nil
 }
@@ -83,28 +101,30 @@ func (c *linuxPTYConn) Resize(cols, rows int) error {
 func (c *linuxPTYConn) Close() error {
 	var closeErr error
 	c.closeOnce.Do(func() {
-		if c.cmd.Process != nil && c.cmd.Process.Pid > 0 {
-			sid := c.cmd.Process.Pid
-			// The PTY child was started as a session leader (setsid). Reap all
-			// descendant processes and process groups in the session so background
-			// jobs and shells with job control cannot outlive terminal teardown.
-			killLinuxSession(sid, syscall.SIGTERM)
-			if !waitForLinuxSessionExit(sid, linuxPTYCloseGrace) {
-				killLinuxSession(sid, syscall.SIGKILL)
-				_ = waitForLinuxSessionExit(sid, linuxPTYCloseGrace)
+		if c.leaderPID > 0 {
+			// The PTY child was started as a session leader (setsid). Discover and
+			// reap all validated processes in the session so background jobs cannot
+			// outlive teardown, without signaling stale/recycled PIDs.
+			killLinuxSession(c.leaderPID, c.leaderStartTime, syscall.SIGTERM)
+			if !waitForLinuxSessionExit(c.leaderPID, c.leaderStartTime, linuxPTYCloseGrace) {
+				killLinuxSession(c.leaderPID, c.leaderStartTime, syscall.SIGKILL)
+				_ = waitForLinuxSessionExit(c.leaderPID, c.leaderStartTime, linuxPTYCloseGrace)
 			}
 		}
-		closeErr = c.pty.Close()
+		if c.pty != nil {
+			closeErr = c.pty.Close()
+		}
 	})
 	return closeErr
 }
 
 type linuxProcInfo struct {
-	pid    int
-	ppid   int
-	pgrp   int
-	sid    int
-	zombie bool
+	pid       int
+	ppid      int
+	pgrp      int
+	sid       int
+	startTime uint64
+	zombie    bool
 }
 
 func readLinuxProcInfo(pid int) (linuxProcInfo, error) {
@@ -119,26 +139,28 @@ func readLinuxProcInfo(pid int) (linuxProcInfo, error) {
 		return linuxProcInfo{}, errors.New("malformed /proc stat")
 	}
 	fields := strings.Fields(string(data[closeIdx+2:]))
-	if len(fields) < 4 {
+	if len(fields) < 20 {
 		return linuxProcInfo{}, errors.New("truncated /proc stat")
 	}
 	state := fields[0]
 	ppid, err1 := strconv.Atoi(fields[1])
 	pgrp, err2 := strconv.Atoi(fields[2])
 	sid, err3 := strconv.Atoi(fields[3])
-	if err1 != nil || err2 != nil || err3 != nil {
+	startTime, err4 := strconv.ParseUint(fields[19], 10, 64)
+	if err1 != nil || err2 != nil || err3 != nil || err4 != nil {
 		return linuxProcInfo{}, errors.New("invalid /proc stat numeric fields")
 	}
 	return linuxProcInfo{
-		pid:    pid,
-		ppid:   ppid,
-		pgrp:   pgrp,
-		sid:    sid,
-		zombie: state == "Z",
+		pid:       pid,
+		ppid:      ppid,
+		pgrp:      pgrp,
+		sid:       sid,
+		startTime: startTime,
+		zombie:    state == "Z",
 	}, nil
 }
 
-func linuxFindSessionProcesses(sid int) []linuxProcInfo {
+func linuxFindSessionProcesses(sid int, leaderStartTime uint64) []linuxProcInfo {
 	if sid <= 0 {
 		return nil
 	}
@@ -147,6 +169,7 @@ func linuxFindSessionProcesses(sid int) []linuxProcInfo {
 		return nil
 	}
 	selfPID := os.Getpid()
+	procMap := make(map[int]linuxProcInfo)
 	var allProcs []linuxProcInfo
 	for _, entry := range entries {
 		if !entry.IsDir() {
@@ -160,15 +183,29 @@ func linuxFindSessionProcesses(sid int) []linuxProcInfo {
 		if err != nil {
 			continue
 		}
+		procMap[pid] = info
 		allProcs = append(allProcs, info)
 	}
 
+	// Validate the session leader identity if a process with PID sid is currently in /proc.
+	if leaderProc, ok := procMap[sid]; ok {
+		// If PID sid is occupied by a process with a different start time than our recorded
+		// leader start time, the PID has been recycled for an unrelated process or session.
+		if leaderStartTime > 0 && leaderProc.startTime != leaderStartTime {
+			return nil
+		}
+	}
+
 	inSession := make(map[int]bool)
-	inSession[sid] = true
+	if leaderProc, ok := procMap[sid]; ok && (leaderStartTime == 0 || leaderProc.startTime == leaderStartTime) {
+		inSession[sid] = true
+	}
 
 	for _, p := range allProcs {
-		if p.sid == sid || p.pgrp == sid {
-			inSession[p.pid] = true
+		if p.sid == sid {
+			if leaderStartTime == 0 || p.startTime >= leaderStartTime {
+				inSession[p.pid] = true
+			}
 		}
 	}
 
@@ -176,8 +213,10 @@ func linuxFindSessionProcesses(sid int) []linuxProcInfo {
 		added := false
 		for _, p := range allProcs {
 			if !inSession[p.pid] && inSession[p.ppid] {
-				inSession[p.pid] = true
-				added = true
+				if leaderStartTime == 0 || p.startTime >= leaderStartTime {
+					inSession[p.pid] = true
+					added = true
+				}
 			}
 		}
 		if !added {
@@ -194,65 +233,66 @@ func linuxFindSessionProcesses(sid int) []linuxProcInfo {
 	return sessionProcs
 }
 
-func killLinuxSession(sid int, sig syscall.Signal) {
+func killLinuxSession(sid int, leaderStartTime uint64, sig syscall.Signal) {
 	if sid <= 0 {
 		return
 	}
-	_ = syscall.Kill(-sid, sig)
-	_ = syscall.Kill(sid, sig)
+	// Discover and validate session members BEFORE signaling any PID or PGID.
+	// Do NOT unconditionally signal sid or -sid.
+	procs := linuxFindSessionProcesses(sid, leaderStartTime)
+	if len(procs) == 0 {
+		return
+	}
 
-	procs := linuxFindSessionProcesses(sid)
+	validPIDs := make(map[int]bool, len(procs))
+	for _, p := range procs {
+		validPIDs[p.pid] = true
+	}
+
+	// 1. Signal every individual validated process in the session directly
 	for _, p := range procs {
 		_ = syscall.Kill(p.pid, sig)
-		if p.pgrp > 1 {
+	}
+
+	// 2. Only signal process groups whose group leader is a validated member of our session
+	signaledPGRPs := make(map[int]bool)
+	for _, p := range procs {
+		if p.pgrp > 1 && validPIDs[p.pgrp] && !signaledPGRPs[p.pgrp] {
+			signaledPGRPs[p.pgrp] = true
 			_ = syscall.Kill(-p.pgrp, sig)
 		}
 	}
 }
 
-func waitForLinuxSessionExit(sid int, timeout time.Duration) bool {
+func waitForLinuxSessionExit(sid int, leaderStartTime uint64, timeout time.Duration) bool {
 	deadline := time.NewTimer(timeout)
 	defer deadline.Stop()
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		if !linuxSessionAlive(sid) {
+		if !linuxSessionAlive(sid, leaderStartTime) {
 			return true
 		}
 		select {
 		case <-deadline.C:
-			return !linuxSessionAlive(sid)
+			return !linuxSessionAlive(sid, leaderStartTime)
 		case <-ticker.C:
 		}
 	}
 }
 
-func linuxSessionAlive(sid int) bool {
+func linuxSessionAlive(sid int, leaderStartTime uint64) bool {
 	if sid <= 0 {
 		return false
 	}
-	procs := linuxFindSessionProcesses(sid)
-	if len(procs) > 0 {
-		return true
-	}
-	return linuxProcessGroupAlive(sid)
-}
-
-func linuxProcessGroupAlive(pgid int) bool {
-	if pgid <= 0 {
-		return false
-	}
-	err := syscall.Kill(-pgid, 0)
-	return err == nil || errors.Is(err, syscall.EPERM)
+	procs := linuxFindSessionProcesses(sid, leaderStartTime)
+	return len(procs) > 0
 }
 
 func (c *linuxPTYConn) Done() <-chan struct{} { return c.doneC }
 
 func (c *linuxPTYConn) PID() int {
-	if c.cmd.Process == nil {
-		return 0
-	}
-	return c.cmd.Process.Pid
+	return c.leaderPID
 }
 
 func (c *linuxPTYConn) ExitCode() (int, bool) {
