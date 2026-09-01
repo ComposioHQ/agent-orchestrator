@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -57,6 +58,17 @@ func TestLiveLifecycle(t *testing.T) {
 	if environment.Target == "" {
 		t.Fatal("running workspace carried no healthy agent target")
 	}
+	bootstrapFailure := client.BootstrapWorker(ctx, environment.ID, sandbox.WorkerBootstrap{
+		Binary: []byte("#!/bin/sh\nexit 0\n"), Destination: "/proc/ao-worker", User: "ao-worker",
+		Environment: map[string]string{"AO_CODER_LIVE_TEST": "expected-install-failure"},
+	})
+	if bootstrapFailure == nil {
+		t.Fatal("bootstrap to unwritable destination succeeded")
+	}
+	if !strings.Contains(bootstrapFailure.Error(), bootstrapFailed) {
+		t.Fatalf("bootstrap to unwritable destination did not report post-upload failure: %v", bootstrapFailure)
+	}
+	t.Log("observed expected post-upload bootstrap failure")
 	if err := client.BootstrapWorker(ctx, environment.ID, sandbox.WorkerBootstrap{
 		Binary:      []byte("#!/bin/sh\nmkdir -p /workspace/.ao/worker\necho live > /workspace/.ao/worker/coder-live-test\nsleep 300\n"),
 		Destination: "/usr/local/bin/ao-worker", User: "ao-worker",
