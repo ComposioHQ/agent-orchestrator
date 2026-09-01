@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"sync"
 	"testing"
 	"time"
 
@@ -34,11 +35,13 @@ type fakeShellRuntime struct {
 	destroyErr  error
 	sendErr     error
 	output      string
+	outputMu    sync.RWMutex
 	outputErr   error
 	outputReady <-chan struct{}
 	// aliveByHandle answers IsAlive; a handle absent from the map is dead.
 	aliveByHandle map[string]bool
 	aliveErr      error
+	handlePrefix  string
 }
 
 type sentInput struct {
@@ -55,8 +58,9 @@ func (f *fakeShellRuntime) Create(_ context.Context, cfg ports.RuntimeConfig) (p
 		return ports.RuntimeHandle{}, f.createErr
 	}
 	f.created = append(f.created, cfg)
-	f.aliveByHandle[string(cfg.SessionID)] = true
-	return ports.RuntimeHandle{ID: string(cfg.SessionID)}, nil
+	handleID := f.handlePrefix + string(cfg.SessionID)
+	f.aliveByHandle[handleID] = true
+	return ports.RuntimeHandle{ID: handleID}, nil
 }
 
 func (f *fakeShellRuntime) Destroy(_ context.Context, handle ports.RuntimeHandle) error {
@@ -89,7 +93,15 @@ func (f *fakeShellRuntime) GetOutput(_ context.Context, _ ports.RuntimeHandle, _
 			return "", f.outputErr
 		}
 	}
+	f.outputMu.RLock()
+	defer f.outputMu.RUnlock()
 	return f.output, f.outputErr
+}
+
+func (f *fakeShellRuntime) setOutput(output string) {
+	f.outputMu.Lock()
+	defer f.outputMu.Unlock()
+	f.output = output
 }
 
 func (f *fakeShellRuntime) IsAlive(_ context.Context, handle ports.RuntimeHandle) (bool, error) {
@@ -243,7 +255,7 @@ func newTestServiceWithSessions(rt *fakeShellRuntime, st *fakeShellTerminalStore
 
 func TestOpenCommandTerminalStartsTrustedCommandInDedicatedAuthWorkspace(t *testing.T) {
 	rt := newFakeShellRuntime()
-	rt.output = "Pi is ready"
+	rt.output = "pi v0.80.2"
 	st := &fakeShellTerminalStore{}
 	svc := newTestService(rt, st, &fakeProjectRootLocator{})
 	dataDir := t.TempDir()
@@ -253,9 +265,10 @@ func TestOpenCommandTerminalStartsTrustedCommandInDedicatedAuthWorkspace(t *test
 	}
 
 	_, err := svc.OpenCommandTerminal(context.Background(), OpenCommandTerminalInput{
-		Argv:         []string{"pi"},
-		Title:        "Log in to Pi",
-		InitialInput: "/login",
+		Argv:                    []string{"pi"},
+		Title:                   "Log in to Pi",
+		InitialInput:            "/login",
+		InitialInputReadyStates: readyStates("pi v"),
 	})
 	if err != nil {
 		t.Fatalf("OpenCommandTerminal: %v", err)
@@ -264,7 +277,8 @@ func TestOpenCommandTerminalStartsTrustedCommandInDedicatedAuthWorkspace(t *test
 	if len(rt.created) != 1 {
 		t.Fatalf("runtime creates = %d, want 1", len(rt.created))
 	}
-	authWorkspace := filepath.Join(dataDir, authWorkspaceDirectoryName)
+	authWorkspaceRoot := filepath.Join(dataDir, authWorkspaceDirectoryName)
+	authWorkspace := filepath.Join(authWorkspaceRoot, "shellterm-test1")
 	if got := rt.created[0].WorkspacePath; got != authWorkspace {
 		t.Errorf("workspace path = %q, want dedicated auth workspace %q", got, authWorkspace)
 	}
@@ -298,18 +312,19 @@ func TestOpenCommandTerminalStartsTrustedCommandInDedicatedAuthWorkspace(t *test
 	}
 }
 
-func TestOpenCommandTerminalWaitsForOutputBeforeSendingInitialInput(t *testing.T) {
+func TestOpenCommandTerminalWaitsForReadinessMarkerBeforeSendingInitialInput(t *testing.T) {
 	ready := make(chan struct{})
 	rt := newFakeShellRuntime()
-	rt.output = "Droid is ready"
+	rt.output = "Checking for updates..."
 	rt.outputReady = ready
 	svc := newTestService(rt, &fakeShellTerminalStore{}, &fakeProjectRootLocator{})
 	svc.dataDir = t.TempDir()
 
 	if _, err := svc.OpenCommandTerminal(context.Background(), OpenCommandTerminalInput{
-		Argv:         []string{"droid"},
-		Title:        "Log in to Droid",
-		InitialInput: "/login",
+		Argv:                    []string{"droid"},
+		Title:                   "Log in to Droid",
+		InitialInput:            "/login",
+		InitialInputReadyStates: readyStates("Press h + Enter to show shortcuts"),
 	}); err != nil {
 		t.Fatalf("OpenCommandTerminal: %v", err)
 	}
@@ -322,11 +337,170 @@ func TestOpenCommandTerminalWaitsForOutputBeforeSendingInitialInput(t *testing.T
 	close(ready)
 	select {
 	case got := <-rt.sentCh:
+		t.Fatalf("initial input sent for unrelated startup output: %#v", got)
+	case <-time.After(2 * initialInputPollInterval):
+	}
+	rt.setOutput("Press h + Enter to show shortcuts")
+	select {
+	case got := <-rt.sentCh:
 		if want := (sentInput{handleID: "shellterm-test1", input: "/login"}); got != want {
 			t.Errorf("sent = %#v, want %#v", got, want)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("automatic login input was not sent after terminal output")
+	}
+}
+
+func TestOpenCommandTerminalEntersQwenVimInsertModeBeforeAuth(t *testing.T) {
+	rt := newFakeShellRuntime()
+	rt.output = "-- NORMAL --"
+	svc := newTestService(rt, &fakeShellTerminalStore{}, &fakeProjectRootLocator{})
+	svc.dataDir = t.TempDir()
+
+	if _, err := svc.OpenCommandTerminal(context.Background(), OpenCommandTerminalInput{
+		Argv:         []string{"qwen"},
+		Title:        "Set up Qwen",
+		InitialInput: "/auth",
+		InitialInputReadyStates: []InitialInputReadyState{
+			{Text: "Type your message or @path/to/file"},
+			{Text: "-- NORMAL --", RawPrefix: "i"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, want := range []sentInput{
+		{handleID: "shellterm-test1", input: "i"},
+		{handleID: "shellterm-test1", input: "/auth"},
+	} {
+		select {
+		case got := <-rt.sentCh:
+			if got != want {
+				t.Fatalf("sent = %#v, want %#v", got, want)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("automatic Qwen input %q was not sent", want.input)
+		}
+	}
+}
+
+func TestOpenCommandTerminalCanConfirmReviewedPromptWithEnterOnly(t *testing.T) {
+	rt := newFakeShellRuntime()
+	rt.output = "Trust this folder?"
+	svc := newTestService(rt, &fakeShellTerminalStore{}, &fakeProjectRootLocator{})
+	svc.dataDir = t.TempDir()
+
+	if _, err := svc.OpenCommandTerminal(context.Background(), OpenCommandTerminalInput{
+		Argv:                    []string{"droid", "/login"},
+		Title:                   "Log in to Droid",
+		InitialInputReadyStates: readyStates("Trust this folder?"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case got := <-rt.sentCh:
+		if want := (sentInput{handleID: "shellterm-test1", input: ""}); got != want {
+			t.Fatalf("sent = %#v, want Enter-only submission %#v", got, want)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("reviewed trust prompt was not confirmed")
+	}
+}
+
+func readyStates(text string) []InitialInputReadyState {
+	return []InitialInputReadyState{{Text: text}}
+}
+
+func TestOpenCommandTerminalUsesPrivateWorkspacePerFlow(t *testing.T) {
+	rt := newFakeShellRuntime()
+	st := &fakeShellTerminalStore{}
+	svc := newTestService(rt, st, &fakeProjectRootLocator{})
+	svc.dataDir = t.TempDir()
+
+	first, err := svc.OpenCommandTerminal(context.Background(), OpenCommandTerminalInput{Argv: []string{"pi"}, Title: "Log in to Pi"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(first.WorkingDir, "agent-created-file"), []byte("private"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	second, err := svc.OpenCommandTerminal(context.Background(), OpenCommandTerminalInput{Argv: []string{"droid"}, Title: "Log in to Droid"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if first.WorkingDir == second.WorkingDir {
+		t.Fatalf("auth flows share workspace %q", first.WorkingDir)
+	}
+	if filepath.Dir(first.WorkingDir) != filepath.Join(svc.dataDir, authWorkspaceDirectoryName) || filepath.Dir(second.WorkingDir) != filepath.Join(svc.dataDir, authWorkspaceDirectoryName) {
+		t.Fatalf("auth workspaces = %q and %q, want private children of auth root", first.WorkingDir, second.WorkingDir)
+	}
+	entries, err := os.ReadDir(second.WorkingDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("second auth workspace inherited entries: %v", entries)
+	}
+}
+
+func TestCloseCommandTerminalRemovesPrivateWorkspace(t *testing.T) {
+	rt := newFakeShellRuntime()
+	svc := newTestService(rt, &fakeShellTerminalStore{}, &fakeProjectRootLocator{})
+	svc.dataDir = t.TempDir()
+	term, err := svc.OpenCommandTerminal(context.Background(), OpenCommandTerminalInput{Argv: []string{"pi"}, Title: "Log in to Pi"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(term.WorkingDir, "created-by-agent"), []byte("state"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := svc.CloseShellTerminal(context.Background(), term.HandleID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(term.WorkingDir); !os.IsNotExist(err) {
+		t.Fatalf("auth workspace still exists after terminal close: %v", err)
+	}
+}
+
+func TestCloseCommandTerminalRemovesPrivateWorkspaceForWrappedRuntimeHandle(t *testing.T) {
+	rt := newFakeShellRuntime()
+	rt.handlePrefix = "ptyhost-v1:"
+	svc := newTestService(rt, &fakeShellTerminalStore{}, &fakeProjectRootLocator{})
+	svc.dataDir = t.TempDir()
+	term, err := svc.OpenCommandTerminal(context.Background(), OpenCommandTerminalInput{Argv: []string{"pi"}, Title: "Log in to Pi"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if term.HandleID != "ptyhost-v1:shellterm-test1" {
+		t.Fatalf("handle = %q, want wrapped native handle", term.HandleID)
+	}
+
+	if err := svc.CloseShellTerminal(context.Background(), term.HandleID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(term.WorkingDir); !os.IsNotExist(err) {
+		t.Fatalf("auth workspace still exists after wrapped terminal close: %v", err)
+	}
+}
+
+func TestCloseCommandTerminalKeepsWorkspaceWhileRuntimeIsAlive(t *testing.T) {
+	rt := newFakeShellRuntime()
+	rt.destroyErr = errors.New("runtime refused to stop")
+	svc := newTestService(rt, &fakeShellTerminalStore{}, &fakeProjectRootLocator{})
+	svc.dataDir = t.TempDir()
+	term, err := svc.OpenCommandTerminal(context.Background(), OpenCommandTerminalInput{Argv: []string{"pi"}, Title: "Log in to Pi"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := svc.CloseShellTerminal(context.Background(), term.HandleID); err == nil {
+		t.Fatal("CloseShellTerminal succeeded while runtime remained alive")
+	}
+	if _, err := os.Stat(term.WorkingDir); err != nil {
+		t.Fatalf("live terminal's auth workspace was removed: %v", err)
 	}
 }
 
@@ -363,6 +537,29 @@ func TestOpenCommandTerminalDestroysRuntimeWhenPersistFails(t *testing.T) {
 	if len(st.records) != 0 {
 		t.Errorf("records = %#v, want no persisted terminal", st.records)
 	}
+	entries, err := os.ReadDir(filepath.Join(svc.dataDir, authWorkspaceDirectoryName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("auth workspace root contains rollback leftovers: %v", entries)
+	}
+}
+
+func TestOpenCommandTerminalKeepsWorkspaceWhenPersistRollbackRuntimeSurvives(t *testing.T) {
+	rt := newFakeShellRuntime()
+	rt.destroyErr = errors.New("runtime refused to stop")
+	st := &fakeShellTerminalStore{insertErr: errors.New("disk full")}
+	svc := newTestService(rt, st, &fakeProjectRootLocator{})
+	svc.dataDir = t.TempDir()
+
+	if _, err := svc.OpenCommandTerminal(context.Background(), OpenCommandTerminalInput{Argv: []string{"pi"}, Title: "Log in to Pi"}); err == nil {
+		t.Fatal("OpenCommandTerminal succeeded despite a failed insert")
+	}
+	workspace := filepath.Join(svc.dataDir, authWorkspaceDirectoryName, "shellterm-test1")
+	if _, err := os.Stat(workspace); err != nil {
+		t.Fatalf("live rollback runtime's workspace was removed: %v", err)
+	}
 }
 
 func TestOpenCommandTerminalRejectsInvalidInput(t *testing.T) {
@@ -371,6 +568,7 @@ func TestOpenCommandTerminalRejectsInvalidInput(t *testing.T) {
 		{Argv: []string{"pi"}},
 		{Argv: []string{"pi"}, Title: "   "},
 		{Argv: []string{"pi"}, Title: string(make([]rune, maxShellTerminalTitleLen+1))},
+		{Argv: []string{"pi"}, Title: "Log in to Pi", InitialInput: "/login"},
 	}
 	for _, in := range cases {
 		t.Run(in.Title, func(t *testing.T) {
@@ -1185,6 +1383,26 @@ func TestListShellTerminalsForCurrentAppRunPrunesTerminalsWhoseShellExited(t *te
 	}
 	if len(st.records) != 0 {
 		t.Errorf("records = %+v, want the dead row deleted", st.records)
+	}
+}
+
+func TestListShellTerminalsPrunesWrappedCommandTerminalWorkspace(t *testing.T) {
+	rt := newFakeShellRuntime()
+	rt.handlePrefix = "ptyhost-v1:"
+	st := &fakeShellTerminalStore{}
+	svc := newTestService(rt, st, &fakeProjectRootLocator{})
+	svc.dataDir = t.TempDir()
+	term, err := svc.OpenCommandTerminal(context.Background(), OpenCommandTerminalInput{Argv: []string{"pi"}, Title: "Log in to Pi"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	delete(rt.aliveByHandle, term.HandleID)
+
+	if _, err := svc.ListShellTerminalsForCurrentAppRun(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(term.WorkingDir); !os.IsNotExist(err) {
+		t.Fatalf("wrapped dead terminal workspace still exists after pruning: %v", err)
 	}
 }
 

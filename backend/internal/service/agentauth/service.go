@@ -6,6 +6,7 @@ package agentauth
 import (
 	"context"
 	"fmt"
+	"maps"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 	"github.com/aoagents/agent-orchestrator/backend/internal/service/shellterm"
@@ -42,16 +43,18 @@ const (
 // Plan is the display-safe authentication plan for one harness. Trusted
 // command and terminal details remain private to this package.
 type Plan struct {
-	AgentID          string `json:"agentId"`
-	Action           Action `json:"action"`
-	Available        bool   `json:"available"`
-	DisplayCommand   string `json:"displayCommand,omitempty"`
-	Guidance         string `json:"guidance,omitempty"`
-	DocumentationURL string `json:"documentationUrl"`
-	Reason           string `json:"reason,omitempty"`
-	command          []string
-	title            string
-	initialInput     string
+	AgentID                 string `json:"agentId"`
+	Action                  Action `json:"action"`
+	Available               bool   `json:"available"`
+	DisplayCommand          string `json:"displayCommand,omitempty"`
+	Guidance                string `json:"guidance,omitempty"`
+	DocumentationURL        string `json:"documentationUrl"`
+	Reason                  string `json:"reason,omitempty"`
+	command                 []string
+	title                   string
+	initialInput            string
+	initialInputReadyStates []shellterm.InitialInputReadyState
+	env                     map[string]string
 }
 
 // TerminalOpener opens the daemon-trusted terminal used for a native
@@ -126,9 +129,11 @@ func (s *Service) Start(ctx context.Context, agentID string) (StartResult, error
 		return StartResult{}, apierr.Internal("AGENT_AUTH_TERMINAL_UNAVAILABLE", "Authentication terminal service is unavailable.")
 	}
 	terminal, err := s.terminals.OpenCommandTerminal(ctx, shellterm.OpenCommandTerminalInput{
-		Argv:         plan.command,
-		Title:        plan.title,
-		InitialInput: plan.initialInput,
+		Argv:                    plan.command,
+		Title:                   plan.title,
+		Env:                     plan.env,
+		InitialInput:            plan.initialInput,
+		InitialInputReadyStates: plan.initialInputReadyStates,
 	})
 	if err != nil {
 		return StartResult{}, err
@@ -143,6 +148,8 @@ func (s *Service) Start(ctx context.Context, agentID string) (StartResult, error
 
 func (s *Service) resolve(ctx context.Context, plan Plan) Plan {
 	plan.command = append([]string(nil), plan.command...)
+	plan.env = maps.Clone(plan.env)
+	plan.initialInputReadyStates = append([]shellterm.InitialInputReadyState(nil), plan.initialInputReadyStates...)
 	if len(plan.command) == 0 {
 		plan.Available = true
 		return plan

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
+	"github.com/aoagents/agent-orchestrator/backend/internal/service/shellterm"
 )
 
 func TestPlansMatchAuthenticationMatrix(t *testing.T) {
@@ -27,10 +28,10 @@ func TestPlansMatchAuthenticationMatrix(t *testing.T) {
 		{"copilot", "Log in to GitHub Copilot", "copilot", "Native GitHub device/browser flow", "https://docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli/install-copilot-cli", "", ActionLogin, []string{"copilot", "login"}},
 		{"grok", "Log in to Grok", "grok", "Native login; device-auth remains available inside the CLI", "https://docs.x.ai/build/overview", "", ActionLogin, []string{"grok", "login"}},
 		{"kimi", "Log in to Kimi", "kimi", "Native browser flow", "https://moonshotai.github.io/kimi-code/en/", "", ActionLogin, []string{"kimi", "login"}},
-		{"pi", "Log in to Pi", "pi", "Authentication opens automatically in this terminal", "https://github.com/earendil-works/pi", "/login", ActionLogin, []string{"pi"}},
+		{"pi", "Log in to Pi", "pi", "Authentication opens automatically in this terminal", "https://github.com/earendil-works/pi", "/login", ActionLogin, []string{"pi", "--verbose"}},
 		{"amp", "Log in to Amp", "amp", "Native browser flow", "https://ampcode.com/manual", "", ActionLogin, []string{"amp", "login"}},
 		{"auggie", "Log in to Auggie", "auggie", "Native browser flow", "https://docs.augmentcode.com/cli/overview", "", ActionLogin, []string{"auggie", "login"}},
-		{"droid", "Log in to Droid", "droid", "Authentication opens automatically in this terminal", "https://docs.factory.ai/droid-cli/cli-reference", "/login", ActionLogin, []string{"droid"}},
+		{"droid", "Log in to Droid", "droid", "Authentication opens automatically in this terminal", "https://docs.factory.ai/droid-cli/cli-reference", "", ActionLogin, []string{"droid", "/login"}},
 		{"crush", "Log in to Crush", "crush", "Native Charm Hyper login flow; GitHub Copilot remains available as a platform option", "https://github.com/charmbracelet/crush", "", ActionLogin, []string{"crush", "login"}},
 		{"cline", "Log in to Cline", "cline", "Native authentication flow", "https://github.com/cline/cline", "", ActionLogin, []string{"cline", "auth"}},
 		{"goose", "Set up Goose", "goose", "Native provider configuration; AO forwards terminal input without persisting or logging the raw input, while Goose controls credential storage", "https://block.github.io/goose/index.html", "", ActionSetup, []string{"goose", "configure"}},
@@ -50,6 +51,13 @@ func TestPlansMatchAuthenticationMatrix(t *testing.T) {
 
 	svc := New(foundExecutables(cases), nil)
 	plans := svc.Plans(context.Background())
+	readyStatesByAgent := map[string][]shellterm.InitialInputReadyState{
+		"pi":          {{Text: "pi v"}},
+		"droid":       {{Text: "Trust this folder?"}},
+		"qwen":        {{Text: "Type your message or @path/to/file"}, {Text: "-- INSERT --"}, {Text: "-- NORMAL --", RawPrefix: "i"}},
+		"prime-agent": {{Text: "for shortcuts"}},
+		"omp":         {{Text: "╭── π"}},
+	}
 	if len(plans) != len(cases) {
 		t.Fatalf("Plans() returned %d plans, want %d", len(plans), len(cases))
 	}
@@ -67,14 +75,17 @@ func TestPlansMatchAuthenticationMatrix(t *testing.T) {
 		if len(wantCommand) > 0 {
 			wantCommand[0] = "/test/bin/" + want.executable
 		}
-		if got.title != want.title || got.DisplayCommand != strings.Join(want.argv, " ") || !reflect.DeepEqual(got.command, wantCommand) || got.initialInput != want.initialInput {
+		if got.title != want.title || got.DisplayCommand != strings.Join(want.argv, " ") || !reflect.DeepEqual(got.command, wantCommand) || got.initialInput != want.initialInput || !reflect.DeepEqual(got.initialInputReadyStates, readyStatesByAgent[want.id]) {
 			t.Fatalf("plan %q terminal = title %q display %q argv %#v, want title %q display %q argv %#v", want.id, got.title, got.DisplayCommand, got.command, want.title, strings.Join(want.argv, " "), wantCommand)
+		}
+		if want.id == "qwen" && !reflect.DeepEqual(got.env, map[string]string{"QWEN_CODE_LANG": "en"}) {
+			t.Fatalf("qwen auth environment = %#v, want stable English readiness locale", got.env)
 		}
 		data, err := json.Marshal(got)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if strings.Contains(string(data), "command") || strings.Contains(string(data), "initialInput") {
+		if strings.Contains(string(data), "command") || strings.Contains(string(data), "initialInput") || strings.Contains(string(data), "ReadyText") {
 			t.Fatalf("plan %q serialized trusted command data: %s", want.id, data)
 		}
 	}
