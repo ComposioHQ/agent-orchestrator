@@ -32,7 +32,14 @@ func TestCursorACPTurnSurvivesDaemonSIGKILL(t *testing.T) {
 	if os.Getenv("AO_LIVE_CURSOR_ACP") != "1" {
 		t.Skip("set AO_LIVE_CURSOR_ACP=1 to run the real Cursor restart E2E")
 	}
-	runACPTurnSurvivesDaemonSIGKILL(t, "cursor", "cursor-agent", "CURSOR-DAEMON-SURVIVED")
+	runACPTurnSurvivesDaemonRestart(t, "cursor", "cursor-agent", "CURSOR-DAEMON-SURVIVED", false)
+}
+
+func TestCursorACPTurnSurvivesGracefulDaemonRestart(t *testing.T) {
+	if os.Getenv("AO_LIVE_CURSOR_ACP") != "1" {
+		t.Skip("set AO_LIVE_CURSOR_ACP=1 to run the real Cursor restart E2E")
+	}
+	runACPTurnSurvivesDaemonRestart(t, "cursor", "cursor-agent", "CURSOR-GRACEFUL-DAEMON-SURVIVED", true)
 }
 
 func TestDroidACPTurnSurvivesDaemonSIGKILL(t *testing.T) {
@@ -65,6 +72,11 @@ func TestOMPACPTurnSurvivesDaemonSIGKILL(t *testing.T) {
 
 func runACPTurnSurvivesDaemonSIGKILL(t *testing.T, harness, binary, token string) {
 	t.Helper()
+	runACPTurnSurvivesDaemonRestart(t, harness, binary, token, false)
+}
+
+func runACPTurnSurvivesDaemonRestart(t *testing.T, harness, binary, token string, graceful bool) {
+	t.Helper()
 	if _, err := exec.LookPath(binary); err != nil {
 		t.Skipf("%s is not on PATH: %v", binary, err)
 	}
@@ -90,7 +102,11 @@ func runACPTurnSurvivesDaemonSIGKILL(t *testing.T, harness, binary, token string
 		harness+"-long")
 	waitForProviderMarker(t, d, session, startedMarker, harness)
 	hostBefore := persistentHostPID(t, dataDir, session)
-	d.kill()
+	if graceful {
+		d.stop()
+	} else {
+		d.kill()
+	}
 	if !processAlive(hostBefore) {
 		t.Fatalf("detached ACP host %d died with the daemon", hostBefore)
 	}
