@@ -41,7 +41,7 @@
 ### Task 2: Persist recoverable installation jobs
 
 **Files:**
-- Create: `backend/internal/storage/sqlite/migrations/0119_agent_install_jobs.sql`
+- Create: `backend/internal/storage/sqlite/migrations/0120_agent_install_jobs.sql`
 - Create: `backend/internal/storage/sqlite/queries/agent_install_jobs.sql`
 - Create: `backend/internal/storage/sqlite/store/agent_install_job_store.go`
 - Create: `backend/internal/storage/sqlite/store/agent_install_job_store_test.go`

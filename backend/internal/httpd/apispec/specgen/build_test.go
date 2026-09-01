@@ -38,6 +38,27 @@ func TestBuild_MatchesEmbedded(t *testing.T) {
 	}
 }
 
+func TestBuild_InstallJobTargetRemainsAnEnum(t *testing.T) {
+	got, err := specgen.Build()
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	var doc struct {
+		Components struct {
+			Schemas map[string]openAPISchemaNode `yaml:"schemas"`
+		} `yaml:"components"`
+	}
+	if err := yaml.Unmarshal(got, &doc); err != nil {
+		t.Fatalf("parse generated OpenAPI: %v", err)
+	}
+	targets := doc.Components.Schemas["InstallJob"].Properties["target"].Enum
+	for _, target := range []string{"tmux", "cloudflared", "cursor", "prime-agent"} {
+		if !slices.Contains(targets, target) {
+			t.Fatalf("InstallJob.target enum = %v, missing %q", targets, target)
+		}
+	}
+}
+
 func TestBuild_SpawnHarnessEnumIncludesPrimeAgent(t *testing.T) {
 	got, err := specgen.Build()
 	if err != nil {

@@ -94,7 +94,7 @@ vi.mock("@dnd-kit/core", async (importOriginal) => {
 			if (id && onDragEnd) dragEnds.set(id, onDragEnd);
 			if (id && onDragOver) dragOvers.set(id, onDragOver);
 			if (id && onDragStart) dragStarts.set(id, onDragStart);
-			return children;
+			return <div data-dnd-context={id}>{children}</div>;
 		},
 		DragOverlay: ({ children }: { children: React.ReactNode }) => children,
 	};
@@ -1978,12 +1978,30 @@ describe("Sidebar", () => {
 		const buttons = await screen.findAllByLabelText("Download update v9.9.9");
 		expect(buttons.length).toBeGreaterThan(0);
 		expect(screen.getByText("Update available")).toBeInTheDocument();
-		expect(screen.getByText("v9.9.9")).toBeInTheDocument();
+		const availableRow = screen.getByTestId("sidebar-update-available");
+		expect(within(availableRow).getByText("v9.9.9")).toBeVisible();
+		expect(availableRow.querySelector(".rounded-full")).toBeNull();
+		expect(screen.getByRole("button", { name: "Hide update v9.9.9 for 24 hours" })).not.toHaveClass(
+			"bg-interactive-hover",
+		);
 		// Nothing is staged yet, so the restart action must not be offered.
 		expect(screen.queryByLabelText(/Restart to install update/)).not.toBeInTheDocument();
 
 		await userEvent.click(buttons[0]);
 		expect(downloadUpdateMock).toHaveBeenCalledTimes(1);
+	});
+
+	it("dismisses the current available update without downloading it", async () => {
+		updateStatusMock.mockResolvedValue({ state: "available", version: "9.9.9" });
+		renderSidebar();
+
+		await userEvent.click(await screen.findByRole("button", {
+			name: "Hide update v9.9.9 for 24 hours",
+		}));
+
+		expect(screen.queryByText("Update available")).not.toBeInTheDocument();
+		expect(screen.queryByLabelText("Download update v9.9.9")).not.toBeInTheDocument();
+		expect(downloadUpdateMock).not.toHaveBeenCalled();
 	});
 
 	it("keeps showing update activity while the automatic download is in progress", async () => {
@@ -1992,9 +2010,13 @@ describe("Sidebar", () => {
 
 		await waitFor(() => expect(updateStatusMock).toHaveBeenCalled());
 		expect(screen.getByText("Downloading… 42%")).toBeInTheDocument();
+		const downloadingRow = screen.getByTestId("sidebar-update-downloading");
+		expect(downloadingRow).not.toHaveClass("border");
+		expect(downloadingRow.querySelector("svg circle")).toBeNull();
 		expect(screen.queryByLabelText(/Restart to install update/)).not.toBeInTheDocument();
 		// A download already in flight must not offer a second one.
 		expect(screen.queryByLabelText(/Download update/)).not.toBeInTheDocument();
+		expect(screen.queryByLabelText(/Hide update/)).not.toBeInTheDocument();
 	});
 
 	it("offers a retry when automatic update checks keep failing", async () => {
@@ -2007,6 +2029,10 @@ describe("Sidebar", () => {
 		const buttons = await screen.findAllByLabelText("Retry update check");
 		expect(buttons.length).toBeGreaterThan(0);
 		expect(screen.getByText("Update check failed")).toBeInTheDocument();
+		const failedRow = screen.getByTestId("sidebar-update-failed");
+		expect(failedRow).toHaveClass("border", "border-warning/35", "bg-warning/12", "text-warning");
+		expect(within(failedRow).getByText("Retry update check")).toBeVisible();
+		expect(failedRow.querySelector(".rounded-full")).toBeNull();
 
 		await userEvent.click(buttons[0]);
 		expect(checkUpdateMock).toHaveBeenCalledTimes(1);
@@ -2023,7 +2049,12 @@ describe("Sidebar", () => {
 
 		// A build ready to install is more actionable than "checks are failing".
 		expect(await screen.findAllByLabelText("Restart to install update v9.9.9")).not.toHaveLength(0);
+		const readyRow = screen.getByTestId("sidebar-update-ready");
+		expect(readyRow).toHaveClass("border", "border-primary/35", "bg-primary/12", "text-primary");
+		expect(within(readyRow).getByText("v9.9.9 ready")).toBeVisible();
+		expect(readyRow.querySelector(".rounded-full")).toBeNull();
 		expect(screen.queryByLabelText("Retry update check")).not.toBeInTheDocument();
+		expect(screen.queryByLabelText(/Hide update/)).not.toBeInTheDocument();
 	});
 
 	it("stays quiet for a one-off update failure that has not become a streak", async () => {
@@ -2064,6 +2095,22 @@ describe("Sidebar", () => {
 		act(() => dragEnds.get("sidebar-projects")?.({ active: { id: "bravo" }, over: { id: "alpha" } }));
 
 		expect(Array.from(document.querySelectorAll("[data-project-label]"), (node) => node.textContent)).toEqual(["Bravo", "Alpha"]);
+	});
+
+	it("pauses nested session drag contexts during a project drag", async () => {
+		renderSidebar({
+			workspaces: [
+				{ ...workspace, id: "alpha", name: "Alpha", sessions: [{ ...session, id: "alpha-session", workspaceId: "alpha" }] },
+				{ ...workspace, id: "bravo", name: "Bravo", sessions: [{ ...session, id: "bravo-session", workspaceId: "bravo" }] },
+			],
+		});
+
+		expect(document.querySelectorAll('[data-dnd-context^="sidebar-sessions-"]')).toHaveLength(2);
+
+		act(() => dragStarts.get("sidebar-projects")?.({ active: { id: "alpha" } }));
+
+		await waitFor(() => expect(document.querySelectorAll('[data-dnd-context^="sidebar-sessions-"]')).toHaveLength(0));
+		expect(screen.getAllByRole("button", { name: "Open fix login" })).toHaveLength(2);
 	});
 
 	it("commits a session drop within its project", () => {
@@ -2115,7 +2162,9 @@ describe("Sidebar", () => {
 		act(() => dragEnds.get("sidebar-sessions-proj-1")?.({ active: { id: "second" }, over: { id: "first" } }));
 		act(() => dragStarts.get("sidebar-projects")?.({ active: { id: "proj-1" } }));
 
-		expect(document.querySelector("[data-project-drag-overlay]")).toHaveTextContent(/Project One.*Second.*First/);
+		const overlay = document.querySelector("[data-project-drag-overlay]");
+		expect(overlay).toHaveTextContent(/Project One.*Second.*First/);
+		expect(overlay?.querySelector("[data-project-drag-preview-session]")).toHaveClass("pl-0.5");
 	});
 
 	it("keeps hidden sessions out of compact project drag previews", () => {
@@ -2153,7 +2202,9 @@ describe("Sidebar", () => {
 				over: { id: "alpha", rect: { height: 32, top: 0 } },
 			}));
 
-			const indicator = document.querySelector("[data-project-drop-indicator]");
+			const target = document.querySelector('[data-project-id="alpha"]');
+			expect(target).toHaveAttribute("data-drop-indicator", "before");
+			const indicator = target?.querySelector('[data-project-drop-indicator="before"]');
 			expect(indicator).toHaveClass("bg-foreground");
 			expect(indicator).not.toHaveClass("bg-white");
 		} finally {

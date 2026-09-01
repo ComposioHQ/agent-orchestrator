@@ -67,6 +67,9 @@ const (
 	TargetKimchi     Target = "kimchi"
 	TargetPrimeAgent Target = "prime-agent"
 	TargetOMP        Target = "omp"
+	// TargetCloudflared is the optional connector that makes a paired phone
+	// reachable from outside the local network.
+	TargetCloudflared Target = "cloudflared"
 )
 
 // agentTargets is the stable settings-page order.
@@ -89,7 +92,7 @@ var agentTargetSet = func() map[Target]bool {
 
 // knownTargets is the exhaustive allowlist backing Valid.
 var knownTargets = func() map[Target]bool {
-	out := map[Target]bool{TargetTmux: true, TargetGH: true, TargetClaude: true}
+	out := map[Target]bool{TargetTmux: true, TargetGH: true, TargetClaude: true, TargetCloudflared: true}
 	for _, target := range agentTargets {
 		out[target] = true
 	}
@@ -201,7 +204,7 @@ const defaultInstallTimeout = 15 * time.Minute
 
 // Job is the tracked state of one install run for a Target.
 type Job struct {
-	Target              Target `json:"target" description:"Fixed install target this job ran (or is running) for."`
+	Target              Target `json:"target" enum:"tmux,gh,claude,claude-code,codex,cursor,opencode,aider,copilot,grok,kimi,pi,amp,auggie,droid,crush,cline,goose,qwen,continue,devin,kiro,kilocode,vibe,muse,agy,autohand,kimchi,prime-agent,omp,cloudflared" description:"Fixed install target this job ran (or is running) for."`
 	Status              Status `json:"status" enum:"idle,running,installing,verifying,succeeded,failed,unsupported,interrupted" description:"Current lifecycle state of the job."`
 	Method              string `json:"method,omitempty" description:"Server-owned installation method selected for this harness job."`
 	Command             string `json:"command,omitempty" description:"Human-readable install command, e.g. \"brew install tmux\", for display even before/without output."`
@@ -1016,6 +1019,8 @@ func (s *Service) planFor(target Target) Plan {
 		return s.planNPM(TargetCopilot, "@github/copilot")
 	case TargetOpencode:
 		return s.planOpencode()
+	case TargetCloudflared:
+		return s.planCloudflared()
 	default:
 		return Plan{Target: target, Unsupported: true, Reason: "unknown install target"}
 	}
@@ -1052,6 +1057,31 @@ func (s *Service) planGH() Plan {
 		})
 	default:
 		return Plan{Target: TargetGH, Unsupported: true, Reason: "gh installation is not supported on this platform."}
+	}
+}
+
+// planCloudflared mirrors planGH: Cloudflare publishes cloudflared through
+// Homebrew and winget, and Linux distributions package it too.
+//
+// Deliberately not a downloaded binary. Fetching a release archive ourselves
+// would mean pinning per-platform URLs, verifying checksums and clearing
+// macOS quarantine before executing it — a fourth install shape this package
+// does not have, for a tool the three it does have already cover. The one
+// curl-piped target here is opencode, and only because that is the vendor's
+// own documented installer.
+func (s *Service) planCloudflared() Plan {
+	switch s.goos {
+	case "windows":
+		return s.planWinget(TargetCloudflared, "Cloudflare.cloudflared")
+	case "darwin":
+		return s.planBrew(TargetCloudflared, "cloudflared")
+	case "linux":
+		return s.planLinuxPackage(TargetCloudflared, func(string) string { return "cloudflared" })
+	default:
+		return Plan{
+			Target: TargetCloudflared, Unsupported: true,
+			Reason: "cloudflared installation is not supported on this platform.",
+		}
 	}
 }
 
@@ -1244,9 +1274,18 @@ func homebrewPackageInstalled(inventory map[string]bool, pkg string) bool {
 
 func (s *Service) planWinget(target Target, id string) Plan {
 	if _, err := s.executables.LookPath("winget"); err != nil {
-		return Plan{Target: target, Unsupported: true, Method: "winget", Reason: "winget was not found on PATH."}
+		plan := Plan{Target: target, Unsupported: true, Reason: "winget was not found on PATH."}
+		if IsAgentTarget(target) {
+			plan.Method = "winget"
+		}
+		return plan
 	}
-	return Plan{Target: target, Command: []string{"winget", "install", "-e", "--id", id, "--silent", "--accept-package-agreements", "--accept-source-agreements", "--disable-interactivity"}, Method: "winget"}
+	command := []string{"winget", "install", "-e", "--id", id}
+	if IsAgentTarget(target) {
+		command = append(command, "--silent", "--accept-package-agreements", "--accept-source-agreements", "--disable-interactivity")
+		return Plan{Target: target, Command: command, Method: "winget"}
+	}
+	return Plan{Target: target, Command: command}
 }
 
 func withDocs(plan Plan, docsURL string) Plan {

@@ -3,13 +3,21 @@ import { net } from "electron";
 import {
 	type BrowserNavState,
 	type BrowserTabsState,
+	browserShortcutAction,
 	clampBoundsToWindow,
 	createBrowserViewHost,
 	isAllowedBrowserURL,
 	normalizeBrowserURL,
+	sanitizeBrowserTitle,
+	sanitizeBrowserURL,
 	scaleBoundsForZoom,
 } from "./browser-view-host";
-import { NEW_SESSION_SHORTCUT_CHANNEL } from "../shared/shortcuts";
+import {
+	FOCUS_TERMINAL_SHORTCUT_CHANNEL,
+	NEW_SESSION_SHORTCUT_CHANNEL,
+	NEW_SHELL_TERMINAL_SHORTCUT_CHANNEL,
+} from "../shared/shortcuts";
+import type { BrowserAnnotationDraft } from "../shared/browser-annotations";
 import { parseAgentBrowserJSON } from "./agent-browser-runtime";
 
 vi.mock("electron", async (importOriginal) => {
@@ -17,13 +25,100 @@ vi.mock("electron", async (importOriginal) => {
 	return { ...actual, net: { fetch: vi.fn() } };
 });
 
+describe("browser URL sanitization", () => {
+	it.each([
+		["ordinary URL", "https://example.test/docs/page", "https://example.test/docs/page"],
+		[
+			"query values and fragment",
+			"https://example.test/access?token=opaque-high-entropy-value&state=another-secret#private",
+			"https://example.test/access?token=%5Bredacted%5D&state=%5Bredacted%5D",
+		],
+		[
+			"embedded credentials",
+			"https://alice:password@example.test/private?next=secret",
+			"https://example.test/private?next=%5Bredacted%5D",
+		],
+		["blank page", "about:blank", "about:blank"],
+		[
+			"malformed URL",
+			"https://alice:password@example test/private?token=secret#private",
+			"https://example test/private",
+		],
+	])("sanitizes %s", (_name, input, expected) => {
+		expect(sanitizeBrowserURL(input)).toBe(expected);
+	});
+
+	it("sanitizes URL-shaped and URL-containing titles", () => {
+		const signed = "https://example.test/access?token=opaque#private";
+		expect(sanitizeBrowserTitle(signed)).toBe("https://example.test/access?token=%5Bredacted%5D");
+		expect(sanitizeBrowserTitle(`Portal ${signed}`)).toBe(
+			"Portal https://example.test/access?token=%5Bredacted%5D",
+		);
+		expect(sanitizeBrowserTitle("custom://alice:password@example.test/path?token=opaque#private")).toBe(
+			"custom:[redacted]",
+		);
+		expect(sanitizeBrowserTitle("about:blank")).toBe("about:blank");
+		expect(sanitizeBrowserTitle("mailto:operator@example.test?token=opaque")).toBe("mailto:[redacted]");
+		expect(sanitizeBrowserTitle("data:text/plain,opaque")).toBe("data:[redacted]");
+		expect(sanitizeBrowserTitle("javascript:alert('opaque')")).toBe("javascript:[redacted]");
+		expect(sanitizeBrowserTitle("blob:https://example.test/opaque")).toBe("blob:[redacted]");
+		expect(sanitizeBrowserTitle("Status: all systems operational")).toBe("Status: all systems operational");
+		expect(sanitizeBrowserTitle("Government access portal")).toBe("Government access portal");
+	});
+
+	it.each([
+		["compact status label", "Status:degraded", "Status:degraded"],
+		[
+			"compact URL label",
+			"Docs:https://alice:password@example.test/path?token=opaque#private",
+			"Docs:https://example.test/path?token=%5Bredacted%5D",
+		],
+	])("preserves %s while sanitizing embedded URLs", (_name, input, expected) => {
+		expect(sanitizeBrowserTitle(input)).toBe(expected);
+	});
+});
+
 type InvokeHandler = (event: unknown, ...args: unknown[]) => unknown;
 type EventHandler = (event: { sender: { id: number; getZoomFactor?: () => number } }, ...args: unknown[]) => unknown;
+
+function annotationDraft(url = "http://localhost:4173/"): BrowserAnnotationDraft {
+	return {
+		instruction: "Keep this text after refresh",
+		selection: {
+			kind: "element",
+			context: {
+				url,
+				tag: "button",
+				classes: [],
+				selector: "button#save",
+				size: { width: 80, height: 30 },
+				computedStyle: {},
+			},
+		},
+	};
+}
 
 function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").AgentBrowserRuntime) {
 	let currentURL = "";
 	let browserZoomFactor = 1;
 	const webContentsListeners = new Map<string, (...args: never[]) => void>();
+	const shellWebContentsListeners = new Map<string, (...args: never[]) => void>();
+	const addListener = (
+		listeners: Map<string, (...args: never[]) => void>,
+		event: string,
+		listener: (...args: never[]) => void,
+	) => {
+		const previous = listeners.get(event);
+		listeners.set(
+			event,
+			previous
+				? (...args) => {
+						previous(...args);
+						listener(...args);
+					}
+				: listener,
+		);
+	};
 	const debuggerListeners = new Map<string, (...args: never[]) => void>();
 	let debuggerAttached = false;
 	const openDevTools = vi.fn();
@@ -74,7 +169,7 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 			currentURL = url;
 		}),
 		on: (event: string, listener: (...args: never[]) => void) => {
-			webContentsListeners.set(event, listener);
+			addListener(webContentsListeners, event, listener);
 		},
 		executeJavaScript: vi.fn(async (_script: string) => undefined),
 		focus: vi.fn(),
@@ -144,6 +239,9 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 				id: 1,
 				focus: shellFocus,
 				send: shellSend,
+				on: (event: string, listener: (...args: never[]) => void) => {
+					addListener(shellWebContentsListeners, event, listener);
+				},
 			},
 		} as never,
 		ipcMain: {
@@ -196,9 +294,26 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 		);
 		return event;
 	};
+	const emitShellBeforeInput = (input: {
+		key: string;
+		control?: boolean;
+		meta?: boolean;
+		shift?: boolean;
+		alt?: boolean;
+		type?: string;
+		isAutoRepeat?: boolean;
+	}) => {
+		const event = { preventDefault: vi.fn() };
+		shellWebContentsListeners.get("before-input-event")?.(
+			event as never,
+			{ control: false, meta: false, shift: false, alt: false, type: "keyDown", ...input } as never,
+		);
+		return event;
+	};
 	return {
 		emit,
 		emitBeforeInput,
+		emitShellBeforeInput,
 		host,
 		invoke,
 		invokeFromTab,
@@ -224,6 +339,132 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 		debuggerSendCommand,
 	};
 }
+
+describe("browser shortcut matching", () => {
+	it("matches contextual browser shortcuts with platform-native primary modifiers", () => {
+		const input = { control: true, meta: false, shift: false, alt: false, type: "keyDown" };
+		expect(browserShortcutAction({ ...input, key: "T" }, false)).toBe("new-tab");
+		expect(browserShortcutAction({ ...input, key: "w" }, false)).toBe("close-tab");
+		expect(browserShortcutAction({ ...input, key: "l" }, false)).toBe("focus-location");
+		expect(browserShortcutAction({ ...input, key: "r" }, false)).toBe("reload");
+		expect(browserShortcutAction({ ...input, key: "t", shift: true }, false)).toBe("reopen-tab");
+		expect(browserShortcutAction({ ...input, key: "t", control: false, meta: true }, true)).toBe("new-tab");
+	});
+
+	it("leaves Space and Shift+Space to Chromium so browser form controls can accept spaces", () => {
+		const input = { key: " ", control: false, meta: false, shift: false, alt: false, type: "keyDown" };
+		expect(browserShortcutAction(input, false)).toBeNull();
+		expect(browserShortcutAction({ ...input, shift: true }, false)).toBeNull();
+	});
+
+	it("rejects extra and wrong-platform modifiers", () => {
+		const input = { key: "t", control: true, meta: false, shift: false, alt: false, type: "keyDown" };
+		expect(browserShortcutAction({ ...input, key: "r", shift: true }, false)).toBeNull();
+		expect(browserShortcutAction({ ...input, meta: true }, false)).toBeNull();
+		expect(browserShortcutAction(input, true)).toBeNull();
+	});
+});
+
+describe("browser shortcut routing", () => {
+	it("opens, focuses, and closes browser tabs without dispatching terminal shortcuts", async () => {
+		const { emitBeforeInput, invoke, shellSend, webContents } = setupHost();
+		const state = await invoke("browser:ensure", "sess-1");
+		shellSend.mockClear();
+
+		const focusEvent = emitBeforeInput({ key: "l", control: true });
+		expect(focusEvent.preventDefault).toHaveBeenCalledOnce();
+		expect(shellSend).toHaveBeenCalledWith("browser:focusLocation", state.viewId);
+
+		const reopenEvent = emitBeforeInput({ key: "t", control: true, shift: true });
+		expect(reopenEvent.preventDefault).toHaveBeenCalled();
+		await vi.waitFor(() => {
+			expect(shellSend).toHaveBeenCalledWith("browser:reopenClosedTab", state.viewId);
+		});
+		expect(shellSend).not.toHaveBeenCalledWith(FOCUS_TERMINAL_SHORTCUT_CHANNEL);
+
+		const openEvent = emitBeforeInput({ key: "t", control: true });
+		expect(openEvent.preventDefault).toHaveBeenCalledOnce();
+		await vi.waitFor(async () => {
+			const tabs = (await invoke("browser:getTabs", state.viewId)) as unknown as BrowserTabsState;
+			expect(tabs.tabs).toHaveLength(2);
+		});
+		expect(shellSend).not.toHaveBeenCalledWith(NEW_SHELL_TERMINAL_SHORTCUT_CHANNEL);
+
+		const closeEvent = emitBeforeInput({ key: "w", control: true });
+		expect(closeEvent.preventDefault).toHaveBeenCalled();
+		await vi.waitFor(async () => {
+			const tabs = (await invoke("browser:getTabs", state.viewId)) as unknown as BrowserTabsState;
+			expect(tabs.tabs).toHaveLength(1);
+		});
+		expect(webContents.close).toHaveBeenCalledOnce();
+		expect(shellSend).toHaveBeenCalledWith(
+			"browser:tabsState",
+			expect.objectContaining({
+				change: expect.objectContaining({
+					kind: "closed",
+					tabId: expect.any(String),
+					tab: expect.objectContaining({ active: false }),
+				}),
+			}),
+		);
+
+		emitBeforeInput({ key: "w", control: true });
+		await Promise.resolve();
+		expect(webContents.close).toHaveBeenCalledOnce();
+	});
+
+	it("routes shell key input to the browser only while its panel is last used", async () => {
+		const { emitShellBeforeInput, host, invoke, send, shellSend } = setupHost();
+		const state = await invoke("browser:ensure", "sess-1");
+		shellSend.mockClear();
+
+		send("browser:panelUsed", 1, state.viewId);
+		const event = emitShellBeforeInput({ key: "l", control: true });
+		expect(event.preventDefault).toHaveBeenCalledOnce();
+		expect(shellSend).toHaveBeenCalledWith("browser:focusLocation", state.viewId);
+		expect(host.isLastUsedBrowser()).toBe(true);
+
+		host.forgetLastFocusedPanel();
+		const ignored = emitShellBeforeInput({ key: "l", control: true });
+		expect(ignored.preventDefault).not.toHaveBeenCalled();
+	});
+
+	it("reloads the active native page without intercepting Chromium's Space behavior", async () => {
+		const { emitBeforeInput, invoke, webContents } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+
+		emitBeforeInput({ key: "r", control: true });
+		expect(webContents.reload).toHaveBeenCalledOnce();
+
+		const spaceEvent = emitBeforeInput({ key: " " });
+		const shiftSpaceEvent = emitBeforeInput({ key: " ", shift: true });
+		expect(spaceEvent.preventDefault).not.toHaveBeenCalled();
+		expect(shiftSpaceEvent.preventDefault).not.toHaveBeenCalled();
+	});
+
+	it("orders a reopen request after an in-flight keyboard tab close", async () => {
+		const { emitBeforeInput, invoke, shellSend } = setupHost();
+		const state = await invoke("browser:ensure", "sess-1");
+
+		emitBeforeInput({ key: "t", control: true });
+		await vi.waitFor(async () => {
+			const tabs = (await invoke("browser:getTabs", state.viewId)) as unknown as BrowserTabsState;
+			expect(tabs.tabs).toHaveLength(2);
+		});
+		shellSend.mockClear();
+
+		emitBeforeInput({ key: "w", control: true });
+		emitBeforeInput({ key: "t", control: true, shift: true });
+
+		await vi.waitFor(() => {
+			const channels = shellSend.mock.calls.map(([channel]) => channel);
+			expect(channels.indexOf("browser:tabsState")).toBeGreaterThanOrEqual(0);
+			expect(channels.indexOf("browser:reopenClosedTab")).toBeGreaterThan(
+				channels.indexOf("browser:tabsState"),
+			);
+		});
+	});
+});
 
 describe("browser scrollbar styling", () => {
 	it("injects AO-styled horizontal and vertical scrollbars whenever a browser page becomes ready", async () => {
@@ -1183,6 +1424,30 @@ describe("agent browser runtime", () => {
 		expect(webContents.loadURL.mock.calls.some(([url]) => url !== "about:blank")).toBe(false);
 	});
 
+	it("redacts signed tab metadata only at the agent response boundary", async () => {
+		const { host, invoke } = setupTabHost();
+		const signed =
+			"https://alice:password@example.test/access?token=opaque-high-entropy-value&state=another-secret#private";
+		const safe = "https://example.test/access?token=%5Bredacted%5D&state=%5Bredacted%5D";
+
+		const opened = (await host.execute("sess-1", "open", { url: signed })) as BrowserNavState;
+		const ensured = (await invoke("browser:ensure", "sess-1")) as BrowserNavState;
+		const agentTabs = (await host.execute("sess-1", "tabs")) as BrowserTabsState;
+		const current = await host.execute("sess-1", "get", { property: "url" });
+		const unhighlighted = await host.execute("sess-1", "unhighlight");
+		const rendererTabs = (await invoke("browser:getTabs", ensured.viewId)) as BrowserTabsState;
+
+		expect(opened).toMatchObject({ url: safe, title: `Title ${safe}` });
+		expect(agentTabs.tabs[0]).toMatchObject({ url: safe, title: `Title ${safe}` });
+		expect(current).toMatchObject({ value: safe });
+		expect(unhighlighted).toMatchObject({ url: safe });
+		const agentOutput = JSON.stringify({ opened, agentTabs, current, unhighlighted });
+		expect(agentOutput).not.toContain("opaque-high-entropy-value");
+		expect(agentOutput).not.toContain("another-secret");
+		expect(agentOutput).not.toContain("password");
+		expect(rendererTabs.tabs[0]).toMatchObject({ url: signed, title: `Title ${signed}` });
+	});
+
 	it("destroys a headless session target through the daemon lifecycle command", async () => {
 		const { host, webContents } = setupHost();
 		await host.execute("sess-1", "tabs");
@@ -1425,7 +1690,26 @@ describe("agent browser runtime", () => {
 			const { host, views } = setupTabHost();
 			await host.execute("sess-1", "open", { url: "http://localhost:3000" });
 
-			views[0].webContents.emitConsoleMessage(3, "render failed", 42, "http://localhost:3000/app.js");
+			views[0].webContents.emitConsoleMessage(
+				3,
+				"render failed at https://example.test/page?token=console-secret#private",
+				42,
+				"http://localhost:3000/app.js?token=source-secret#private",
+			);
+			const onCompleted = views[0].webContents.session.webRequest.onCompleted.mock.calls[0]?.[1] as
+				| ((details: {
+						resourceType: string;
+						method: string;
+						url: string;
+						statusCode: number;
+				  }) => void)
+				| undefined;
+			onCompleted?.({
+				resourceType: "xhr",
+				method: "POST",
+				url: "https://alice:completed-password@example.test/api/data?token=completed-secret#private",
+				statusCode: 403,
+			});
 			const onErrorOccurred = views[0].webContents.session.webRequest.onErrorOccurred.mock.calls[0]?.[1] as
 				| ((details: {
 						resourceType: string;
@@ -1437,7 +1721,7 @@ describe("agent browser runtime", () => {
 			onErrorOccurred?.({
 				resourceType: "xhr",
 				method: "GET",
-				url: "http://localhost:3000/api/data",
+				url: "http://bob:error-password@localhost:3000/api/data?token=request-secret#private",
 				error: "net::ERR_CONNECTION_REFUSED",
 			});
 
@@ -1447,15 +1731,25 @@ describe("agent browser runtime", () => {
 				messages: Array<{ level: string; message: string }>;
 			};
 
-			expect(result.messages).toHaveLength(2);
+			expect(result.messages).toHaveLength(3);
 			expect(result.messages[0]).toMatchObject({ level: "error" });
 			expect(result.messages[0]?.message).toContain(
-				"render failed (http://localhost:3000/app.js:42)",
+				"render failed at https://example.test/page?token=%5Bredacted%5D (http://localhost:3000/app.js?token=%5Bredacted%5D:42)",
 			);
 			expect(result.messages[1]).toMatchObject({ level: "error" });
 			expect(result.messages[1]?.message).toContain(
-				"GET http://localhost:3000/api/data failed: net::ERR_CONNECTION_REFUSED",
+				"POST https://example.test/api/data?token=%5Bredacted%5D → 403",
 			);
+			expect(result.messages[2]).toMatchObject({ level: "error" });
+			expect(result.messages[2]?.message).toContain(
+				"GET http://localhost:3000/api/data?token=%5Bredacted%5D failed: net::ERR_CONNECTION_REFUSED",
+			);
+			expect(JSON.stringify(result)).not.toContain("console-secret");
+			expect(JSON.stringify(result)).not.toContain("source-secret");
+			expect(JSON.stringify(result)).not.toContain("completed-secret");
+			expect(JSON.stringify(result)).not.toContain("completed-password");
+			expect(JSON.stringify(result)).not.toContain("request-secret");
+			expect(JSON.stringify(result)).not.toContain("error-password");
 		} finally {
 			fetchSpy.mockReset();
 			vi.useRealTimers();
@@ -1855,7 +2149,13 @@ describe("browser:setBounds", () => {
 			visible: true,
 		});
 
-		webContentsListeners.get("did-fail-load")?.({} as never, -105 as never, "Name not resolved" as never);
+		webContentsListeners.get("did-fail-load")?.(
+			{} as never,
+			-105 as never,
+			"Name not resolved" as never,
+			"http://localhost:4173/" as never,
+			true as never,
+		);
 		expect(view.setVisible).toHaveBeenLastCalledWith(false);
 
 		view.setBounds.mockClear();
@@ -1905,6 +2205,134 @@ describe("browser annotation IPC", () => {
 		await invoke("browser:annotation:setMode", { viewId: "1:sess-1", enabled: false });
 
 		expect(webContents.focus).not.toHaveBeenCalled();
+	});
+
+	it("preserves and restores an unfinished annotation when the toolbar reloads the page", async () => {
+		const { invoke, send, sent, webContents, webContentsListeners } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+		await invoke("browser:navigate", { viewId: "1:sess-1", url: "http://localhost:4173/" });
+		await invoke("browser:annotation:setMode", { viewId: "1:sess-1", enabled: true });
+		const draft = annotationDraft();
+		send("browser:annotation:draft", 99, draft);
+		webContents.send.mockClear();
+		webContents.focus.mockClear();
+
+		await invoke("browser:reload", "1:sess-1");
+		webContentsListeners.get("did-start-loading")?.();
+		webContentsListeners.get("did-stop-loading")?.();
+
+		expect(webContents.reload).toHaveBeenCalledOnce();
+		expect(sent).not.toContainEqual({
+			channel: "browser:annotation:canceled",
+			payload: expect.anything(),
+		});
+		expect(webContents.send).toHaveBeenCalledWith("browser:annotation:setMode", { enabled: true, draft });
+		expect(webContents.focus).toHaveBeenCalledOnce();
+	});
+
+	it("re-enables annotation picking after a reload before any element is selected", async () => {
+		const { invoke, sent, webContents, webContentsListeners } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+		await invoke("browser:navigate", { viewId: "1:sess-1", url: "http://localhost:4173/" });
+		await invoke("browser:annotation:setMode", { viewId: "1:sess-1", enabled: true });
+		webContents.send.mockClear();
+		webContents.focus.mockClear();
+
+		await invoke("browser:reload", "1:sess-1");
+		webContentsListeners.get("did-stop-loading")?.();
+
+		expect(sent).not.toContainEqual({ channel: "browser:annotation:canceled", payload: expect.anything() });
+		expect(webContents.send).toHaveBeenCalledWith("browser:annotation:setMode", { enabled: true });
+		expect(webContents.focus).toHaveBeenCalledOnce();
+	});
+
+	it("preserves a draft when the same URL is submitted again by preview revision or the address bar", async () => {
+		const { invoke, send, sent, webContents, webContentsListeners } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+		await invoke("browser:navigate", { viewId: "1:sess-1", url: "http://localhost:4173/" });
+		await invoke("browser:annotation:setMode", { viewId: "1:sess-1", enabled: true });
+		const draft = annotationDraft();
+		send("browser:annotation:draft", 99, draft);
+		webContents.send.mockClear();
+
+		await invoke("browser:navigate", { viewId: "1:sess-1", url: "http://localhost:4173/" });
+		webContentsListeners.get("did-stop-loading")?.();
+
+		expect(sent).not.toContainEqual({ channel: "browser:annotation:canceled", payload: expect.anything() });
+		expect(webContents.send).toHaveBeenCalledWith("browser:annotation:setMode", { enabled: true, draft });
+	});
+
+	it("cancels a draft when a page-driven main-frame navigation targets another document", async () => {
+		const { invoke, send, sent, webContents, webContentsListeners } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+		await invoke("browser:navigate", { viewId: "1:sess-1", url: "http://localhost:4173/" });
+		await invoke("browser:annotation:setMode", { viewId: "1:sess-1", enabled: true });
+		send("browser:annotation:draft", 99, annotationDraft());
+		webContents.send.mockClear();
+
+		webContentsListeners.get("will-navigate")?.(
+			{ preventDefault: vi.fn() } as never,
+			"http://localhost:4173/another-page" as never,
+		);
+		webContentsListeners.get("did-stop-loading")?.();
+
+		expect(sent).toContainEqual({
+			channel: "browser:annotation:canceled",
+			payload: { viewId: "1:sess-1", reason: "navigation" },
+		});
+		expect(webContents.send).not.toHaveBeenCalledWith(
+			"browser:annotation:setMode",
+			expect.objectContaining({ enabled: true }),
+		);
+	});
+
+	it("clears a draft when a reload is stopped or fails", async () => {
+		const { invoke, send, sent, webContentsListeners } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+		await invoke("browser:navigate", { viewId: "1:sess-1", url: "http://localhost:4173/" });
+		await invoke("browser:annotation:setMode", { viewId: "1:sess-1", enabled: true });
+		send("browser:annotation:draft", 99, annotationDraft());
+
+		await invoke("browser:stop", "1:sess-1");
+
+		expect(sent).toContainEqual({
+			channel: "browser:annotation:canceled",
+			payload: { viewId: "1:sess-1", reason: "navigation" },
+		});
+
+		await invoke("browser:annotation:setMode", { viewId: "1:sess-1", enabled: true });
+		send("browser:annotation:draft", 99, annotationDraft());
+		webContentsListeners.get("did-fail-load")?.(
+			{} as never,
+			-105 as never,
+			"Name not resolved" as never,
+			"http://localhost:4173/" as never,
+			true as never,
+		);
+
+		expect(sent.filter(({ channel }) => channel === "browser:annotation:canceled")).toHaveLength(2);
+	});
+
+	it("keeps a top-level draft when a subframe load fails", async () => {
+		const { invoke, send, sent, webContents, webContentsListeners } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+		await invoke("browser:navigate", { viewId: "1:sess-1", url: "http://localhost:4173/" });
+		await invoke("browser:annotation:setMode", { viewId: "1:sess-1", enabled: true });
+		const draft = annotationDraft();
+		send("browser:annotation:draft", 99, draft);
+		webContents.send.mockClear();
+
+		webContentsListeners.get("did-fail-load")?.(
+			{} as never,
+			-105 as never,
+			"Iframe name not resolved" as never,
+			"http://invalid.test/frame" as never,
+			false as never,
+		);
+		webContentsListeners.get("did-stop-loading")?.();
+
+		expect(sent).not.toContainEqual({ channel: "browser:annotation:canceled", payload: expect.anything() });
+		expect(webContents.send).toHaveBeenCalledWith("browser:annotation:setMode", { enabled: true, draft });
 	});
 
 	it("forwards a single-element preview annotation submission to the renderer-owned view", async () => {
@@ -2205,6 +2633,7 @@ describe("getLastFocusedPanelContents", () => {
 	// Mock that captures each panel's "focus" listener so the test can fire it.
 	function setup() {
 		let focusListener: (() => void) | undefined;
+		const shellSend = vi.fn();
 		const webContents = {
 			canGoBack: () => false,
 			canGoForward: () => false,
@@ -2232,7 +2661,7 @@ describe("getLastFocusedPanelContents", () => {
 			mainWindow: {
 				contentView: { addChildView: () => undefined, removeChildView: () => undefined },
 				getContentBounds: () => ({ x: 0, y: 0, width: 800, height: 600 }),
-				webContents: { id: 1, send: () => undefined },
+				webContents: { id: 1, send: shellSend },
 			} as never,
 			ipcMain: { handle: record, on: record, removeHandler: () => undefined, off: () => undefined } as never,
 			shell: { openExternal: async () => undefined },
@@ -2244,7 +2673,7 @@ describe("getLastFocusedPanelContents", () => {
 		});
 		const call = (channel: string, ...args: unknown[]) =>
 			handlers.get(channel)!({ sender: { id: 1, getZoomFactor: () => 1 } }, ...args);
-		return { host, call, webContents, focus: () => focusListener?.() };
+		return { host, call, shellSend, webContents, focus: () => focusListener?.() };
 	}
 
 	it("is null until a panel is focused", async () => {
@@ -2254,11 +2683,12 @@ describe("getLastFocusedPanelContents", () => {
 	});
 
 	it("tracks the focused panel, then clears on hide and destroy", async () => {
-		const { host, call, webContents, focus } = setup();
+		const { host, call, shellSend, webContents, focus } = setup();
 		await call("browser:ensure", "s");
 
 		focus();
 		expect(host.getLastFocusedPanelContents()).toBe(webContents);
+		expect(shellSend).toHaveBeenCalledWith("browser:pageFocus", "1:s");
 
 		call("browser:setBounds", { viewId: "1:s", rect: { x: 0, y: 0, width: 10, height: 10 }, visible: false });
 		expect(host.getLastFocusedPanelContents()).toBeNull();

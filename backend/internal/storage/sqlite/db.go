@@ -131,6 +131,9 @@ func migrate(db *sql.DB) error {
 	if err := goose.SetDialect("sqlite3"); err != nil {
 		return fmt.Errorf("set goose dialect: %w", err)
 	}
+	if err := repairRenumberedAgentInstallJobsMigrationHistory(db); err != nil {
+		return fmt.Errorf("repair renumbered agent-install-jobs migration history: %w", err)
+	}
 	if err := repairRenumberedChatMigrationHistory(db); err != nil {
 		return fmt.Errorf("repair renumbered chat migration history: %w", err)
 	}
@@ -169,6 +172,74 @@ func migrate(db *sql.DB) error {
 		return fmt.Errorf("run migrations: %w", err)
 	}
 	return reconcileSchema(db)
+}
+
+// repairRenumberedAgentInstallJobsMigrationHistory preserves development
+// databases opened while the harness-installer feature owned version 0119.
+// Main later assigned 0119 to completed-plan finalization, so record the
+// physically present installer table at its canonical 0120 version and release
+// 0119 for Goose to apply its current migration.
+func repairRenumberedAgentInstallJobsMigrationHistory(db *sql.DB) error {
+	var gooseTable int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'goose_db_version'`,
+	).Scan(&gooseTable); err != nil {
+		return err
+	}
+	if gooseTable == 0 {
+		return nil
+	}
+
+	// Require the complete table signature from the legacy feature migration.
+	// This keeps an unrelated table with the same name from rewriting history.
+	var installJobShape int
+	if err := db.QueryRow(`
+SELECT COUNT(*) FROM pragma_table_info('agent_install_jobs')
+WHERE name IN (
+    'target', 'status', 'method', 'command', 'expected_destination',
+    'output', 'error', 'started_at', 'finished_at', 'updated_at'
+)`).Scan(&installJobShape); err != nil {
+		return err
+	}
+	if installJobShape != 10 {
+		return nil
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	readApplied := func(version int64) (int, error) {
+		var applied int
+		err := tx.QueryRow(`
+SELECT COALESCE((
+    SELECT is_applied FROM goose_db_version
+    WHERE version_id = ? ORDER BY id DESC LIMIT 1
+), 0)`, version).Scan(&applied)
+		return applied, err
+	}
+	legacyApplied, err := readApplied(119)
+	if err != nil {
+		return err
+	}
+	canonicalApplied, err := readApplied(120)
+	if err != nil {
+		return err
+	}
+	if legacyApplied == 0 || canonicalApplied != 0 {
+		return tx.Commit()
+	}
+	if _, err := tx.Exec(
+		`INSERT INTO goose_db_version (version_id, is_applied) VALUES (120, 1)`,
+	); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM goose_db_version WHERE version_id = 119`); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // prepareUsageCostMigration releases a falsely-applied usage migration before

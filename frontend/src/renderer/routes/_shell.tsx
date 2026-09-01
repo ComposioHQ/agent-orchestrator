@@ -1,6 +1,6 @@
 import { createFileRoute, Outlet, useMatchRoute, useNavigate, useParams } from "@tanstack/react-router";
 import { isCancelledError, useQueryClient } from "@tanstack/react-query";
-import { type CSSProperties, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { memo, type CSSProperties, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { FolderPlus } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { CommandPalette } from "../components/CommandPalette";
@@ -91,6 +91,52 @@ const isLinux = isLinuxPlatform();
 const framedAppTopbar = usesFramedAppTopbar();
 const shellTopbarHiddenByPlatform = hidesShellTopbar();
 
+/**
+ * The shell must observe the complete workspace list for the sidebar, but a
+ * streamed update there should not reconcile the active route surface. Keep
+ * the center frame behind a primitive-only memo boundary; SessionView and the
+ * board own their more granular workspace subscriptions.
+ */
+const ShellCenter = memo(function ShellCenter({
+	hideShellTopbar,
+	isSessionRoute,
+	selfFramedCenterPanel,
+}: {
+	hideShellTopbar: boolean;
+	isSessionRoute: boolean;
+	selfFramedCenterPanel: boolean;
+}) {
+	const panelClassName = isSessionRoute ? "center-panel-shell--session" : undefined;
+	if (hideShellTopbar) {
+		return selfFramedCenterPanel ? (
+			<Outlet />
+		) : (
+			<CenterPanelShell className={panelClassName}>
+				<div className="flex min-h-0 flex-1 flex-col">
+					<Outlet />
+				</div>
+			</CenterPanelShell>
+		);
+	}
+	if (framedAppTopbar) {
+		return (
+			<CenterPanelShell className={panelClassName}>
+				{isSessionRoute ? null : <ShellTopbar />}
+				<div className="flex min-h-0 flex-1 flex-col">
+					<Outlet />
+				</div>
+			</CenterPanelShell>
+		);
+	}
+	return (
+		<CenterPanelShell className={panelClassName}>
+			<div className="flex min-h-0 flex-1 flex-col">
+				<Outlet />
+			</div>
+		</CenterPanelShell>
+	);
+});
+
 // Persistent app shell: the Sidebar + shared state survive route changes; only
 // the <Outlet> content (board / session / settings / …) swaps. Lifted out of
 // the old single <App>, with selection now owned by the router (route params)
@@ -104,6 +150,10 @@ function ShellLayout() {
 	const queryClient = useQueryClient();
 	const workspaceQuery = useWorkspaceQuery();
 	const workspaces = workspaceQuery.data ?? [];
+	// Global shortcut listeners need the latest workspace list, but recreating
+	// those subscriptions for every streamed activity update is avoidable.
+	const workspacesRef = useRef(workspaces);
+	workspacesRef.current = workspaces;
 	const daemonStatus = useDaemonStatus(queryClient);
 	const [workspaceStartupState, setWorkspaceStartupState] = useState<"loading" | "ready" | "error">("loading");
 	const workspaceStartupBaselineRef = useRef(0);
@@ -279,20 +329,20 @@ function ShellLayout() {
 				}
 			});
 	}, [queryClient, scopedProjectId]);
-	// First-launch root board only (no projects in scope).
-	const isWelcomeBoard =
-		Boolean(matchRoute({ to: "/" })) &&
-		workspaceStartupState === "ready" &&
-		workspaceQuery.isSuccess &&
-		workspaces.length === 0;
+	// The root route is the intentionally minimal home surface, regardless of
+	// whether projects have already been registered.
+	const isHomeRoute = Boolean(matchRoute({ to: "/" }));
 	const isSettingsRoute =
 		Boolean(matchRoute({ to: "/settings", fuzzy: true })) ||
 		Boolean(matchRoute({ to: "/projects/$projectId/settings", fuzzy: true }));
 	// Welcome/settings always self-frame. Platforms that hide the shell-owned
 	// topbar (macOS) use the same full-height inset; session actions mount
 	// inside SessionView.
-	const selfFramedCenterPanel = isWelcomeBoard || isSettingsRoute;
-	const hideShellTopbar = selfFramedCenterPanel || shellTopbarHiddenByPlatform;
+	// Home keeps the shell's topbar hidden, but still renders inside the shared
+	// rounded center panel. Settings owns its complete frame and remains
+	// self-framed.
+	const selfFramedCenterPanel = isSettingsRoute;
+	const hideShellTopbar = isHomeRoute || selfFramedCenterPanel || shellTopbarHiddenByPlatform;
 	const setProjectRestarting = useUiStore((state) => state.setProjectRestarting);
 	const orchestratorReplacementErrors = useUiStore((state) => state.orchestratorReplacementErrors);
 	const setOrchestratorReplacementError = useUiStore((state) => state.setOrchestratorReplacementError);
@@ -305,7 +355,7 @@ function ShellLayout() {
 	const navigateSession = useCallback(
 		(direction: -1 | 1) => {
 			if (!scopedProjectId) return;
-			const sessions = (workspaces.find((workspace) => workspace.id === scopedProjectId)?.sessions ?? []).filter(
+			const sessions = (workspacesRef.current.find((workspace) => workspace.id === scopedProjectId)?.sessions ?? []).filter(
 				sessionIsActive,
 			);
 			if (sessions.length === 0) return;
@@ -323,7 +373,7 @@ function ShellLayout() {
 				params: { projectId: scopedProjectId, sessionId: session.id },
 			});
 		},
-		[navigate, routeParams.sessionId, scopedProjectId, workspaces],
+		[navigate, routeParams.sessionId, scopedProjectId],
 	);
 
 	const updateWorkspaces = useCallback(
@@ -617,6 +667,12 @@ function ShellLayout() {
 		void aoBridge.theme?.set(themePreference);
 	}, [themePreference]);
 
+	// Cursor Agent reads TERM_THEME at spawn from this file. Persist the same
+	// resolved light/dark scheme the terminal uses, not nativeTheme alone.
+	useEffect(() => {
+		void aoBridge.theme?.persistTerminal(resolvedTheme);
+	}, [resolvedTheme]);
+
 	// Follow OS appearance while the user keeps Theme on System — updates
 	// resolvedTheme (and thus React consumers) without writing light/dark to storage.
 	useEffect(() => {
@@ -636,7 +692,7 @@ function ShellLayout() {
 				return;
 			}
 			if (matchesRendererShortcut("open-project", event)) {
-				const workspace = workspaces[Number(event.key) - 1];
+				const workspace = workspacesRef.current[Number(event.key) - 1];
 				if (workspace) {
 					event.preventDefault();
 					void navigate({ to: "/projects/$projectId", params: { projectId: workspace.id } });
@@ -645,7 +701,7 @@ function ShellLayout() {
 		};
 		window.addEventListener("keydown", handleKeyDown);
 		return () => window.removeEventListener("keydown", handleKeyDown);
-	}, [navigate, toggleSidebar, workspaces]);
+	}, [navigate, toggleSidebar]);
 
 	// New session (⌘N / Ctrl+Shift+N) is detected in the main process and
 	// delivered here, so it fires even when focus is inside xterm or a native
@@ -737,10 +793,26 @@ function ShellLayout() {
 			}),
 		[],
 	);
+	const shellContextValue = useMemo(
+		() => ({
+			daemonStatus,
+			workspaceStartupState,
+			cloneProject,
+			createProject,
+			initializeProjectRepository,
+		}),
+		[
+			cloneProject,
+			createProject,
+			daemonStatus,
+			initializeProjectRepository,
+			workspaceStartupState,
+		],
+	);
 
 	return (
 		<ShellProvider
-			value={{ daemonStatus, workspaceStartupState, cloneProject, createProject, initializeProjectRepository }}
+			value={shellContextValue}
 		>
 			<SessionTopbarProvider>
 				<NotificationRuntime />
@@ -829,7 +901,7 @@ function ShellLayout() {
               below its custom titlebar. */}
 				<Sidebar
 					autoCompact={isSidebarCompact}
-					hideEdgeBorder={isWelcomeBoard}
+					hideEdgeBorder={isHomeRoute}
 					underTopbar={isMac || isWindows || isLinux}
 						topbarOffset={isWindows ? "titlebar" : hideShellTopbar ? "trafficLights" : "toolbar"}
 						onCloneProject={cloneProject}
@@ -842,33 +914,11 @@ function ShellLayout() {
 					<main className={cn("flex min-w-0 flex-1 flex-col overflow-x-hidden", !sidebarHasLayout && "sidebar-hidden")}>
 						<div className="min-h-0 flex-1 overflow-x-hidden">
 							{/* Board/session routes render inside the same inset box the welcome board and settings paint for themselves, so every screen sits within the app's outer boundary. */}
-							{hideShellTopbar ? (
-								selfFramedCenterPanel ? (
-									<Outlet />
-								) : (
-							// Platform hides shell topbar: full-height panel; session mounts actions in-panel.
-							<CenterPanelShell className={routeParams.sessionId ? "center-panel-shell--session" : undefined}>
-								<div className="flex min-h-0 flex-1 flex-col">
-									<Outlet />
-								</div>
-							</CenterPanelShell>
-						)
-					) : framedAppTopbar ? (
-						<CenterPanelShell className={routeParams.sessionId ? "center-panel-shell--session" : undefined}>
-							{routeParams.sessionId ? null : (
-								<ShellTopbar />
-							)}
-							<div className="flex min-h-0 flex-1 flex-col">
-								<Outlet />
-							</div>
-						</CenterPanelShell>
-					) : (
-						<CenterPanelShell className={routeParams.sessionId ? "center-panel-shell--session" : undefined}>
-							<div className="flex min-h-0 flex-1 flex-col">
-								<Outlet />
-							</div>
-						</CenterPanelShell>
-					)}
+							<ShellCenter
+								hideShellTopbar={hideShellTopbar}
+								isSessionRoute={Boolean(routeParams.sessionId)}
+								selfFramedCenterPanel={selfFramedCenterPanel}
+							/>
 						</div>
 					</main>
 					</div>
@@ -898,7 +948,7 @@ function ShellLayout() {
               though DOM hit-testing looks correct. */}
 					<TitlebarNav
 						hasSessionTopbar={Boolean(routeParams.sessionId)}
-						historyLocked={isWelcomeBoard}
+						historyLocked={isHomeRoute}
 						isFullScreen={isFullScreen}
 					/>
 				</SidebarProvider>

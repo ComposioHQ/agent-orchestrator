@@ -113,6 +113,20 @@ describe("HarnessSettingsSection", () => {
 		}));
 	});
 
+	it("allows an installed harness to be reinstalled with its recommended method", async () => {
+		const user = userEvent.setup();
+		renderSection();
+		const row = (await screen.findByText("Claude Code")).closest('[data-agent="claude-code"]') as HTMLElement;
+		const reinstall = await within(row).findByRole("button", { name: "Reinstall" });
+
+		await user.click(reinstall);
+
+		await waitFor(() => expect(apiClient.POST).toHaveBeenCalledWith("/api/v1/agents/{agent}/install", {
+			params: { path: { agent: "claude-code" } },
+			body: { method: "homebrew" },
+		}));
+	});
+
 	it("starts an official vendor installer with one click and no instructions dialog", async () => {
 		vi.mocked(apiClient.POST).mockImplementation(async (path) => {
 			if (path === "/api/v1/agents/{agent}/install") {

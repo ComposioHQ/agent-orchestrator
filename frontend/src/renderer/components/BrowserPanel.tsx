@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import {
+	memo,
+	useCallback,
+	useEffect,
+	useRef,
+	useState,
+	type FocusEvent,
+	type FormEvent,
+} from "react";
 import { useTranslation } from "react-i18next";
 import {
 	DndContext,
@@ -296,6 +304,7 @@ export function BrowserPanel({
 }
 
 export function BrowserPanelView({
+	active,
 	poppedOut,
 	onTogglePopOut,
 	browserView,
@@ -329,6 +338,8 @@ export function BrowserPanelView({
 		setAnnotationMode,
 	} = browserView;
 	const [urlInput, setUrlInput] = useState(navState.url);
+	const [urlEditing, setUrlEditing] = useState(false);
+	const urlTakeover = urlEditing && !poppedOut;
 	const { beginPicking, cancelPicking, enqueue, error, failPicking, queuedCount, retryQueued, status } =
 		annotationQueue;
 	const hasNativeBrowser = Boolean(window.ao?.browser);
@@ -347,6 +358,32 @@ export function BrowserPanelView({
 	const [pinned, setPinned] = useState(() => window.localStorage.getItem(RAIL_PINNED_STORAGE_KEY) === "1");
 	const showTabsTrigger = !poppedOut && !pinned && tabs.length >= 2;
 	const [topTabDragActive, setTopTabDragActive] = useState(false);
+
+	useEffect(() => {
+		if (!viewId) return;
+		if (active) window.ao?.browser.notifyPanelUsed(viewId);
+		else window.ao?.browser.notifyPanelBlur(viewId);
+		return () => window.ao?.browser.notifyPanelBlur(viewId);
+	}, [active, viewId]);
+
+	useEffect(
+		() =>
+			window.ao?.browser.onFocusLocation((targetViewId) => {
+				if (targetViewId !== viewId) return;
+				urlInputRef.current?.focus();
+				urlInputRef.current?.select();
+			}),
+		[viewId],
+	);
+	useEffect(
+		() =>
+			window.ao?.browser.onReopenClosedTab((targetViewId) => {
+				if (targetViewId !== viewId) return;
+				void reopenClosedTab();
+			}),
+		[reopenClosedTab, viewId],
+	);
+
 	const tabSensors = useSensors(
 		useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
 		useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
@@ -390,6 +427,22 @@ export function BrowserPanelView({
 	}, [navState.url]);
 
 	useEffect(() => {
+		if (!urlEditing) return;
+		const frame = window.requestAnimationFrame(() => urlInputRef.current?.select());
+		return () => window.cancelAnimationFrame(frame);
+	}, [urlEditing]);
+
+	useEffect(() => {
+		const onPageFocus = window.ao?.browser.onPageFocus;
+		if (!onPageFocus) return;
+		return onPageFocus((focusedViewId) => {
+			if (focusedViewId !== viewId) return;
+			urlInputRef.current?.blur();
+			setUrlEditing(false);
+		});
+	}, [viewId]);
+
+	useEffect(() => {
 		const offSubmit = window.ao?.browser.onAnnotationSubmit((payload) => {
 			if (payload.viewId !== viewId) return;
 			enqueue(payload);
@@ -408,6 +461,23 @@ export function BrowserPanelView({
 		event.preventDefault();
 		const nextURL = urlInput.trim();
 		if (nextURL) void navigate(nextURL);
+	};
+
+	const beginUrlEditing = () => {
+		const input = urlInputRef.current;
+		const wrapper = input?.parentElement;
+		const toolbar = input?.closest<HTMLElement>(".browser-panel__toolbar");
+		if (!poppedOut && wrapper && toolbar) {
+			const wrapperRect = wrapper.getBoundingClientRect();
+			const toolbarRect = toolbar.getBoundingClientRect();
+			const navigationButtons = toolbar.querySelectorAll<HTMLElement>(".browser-panel__navigation-btn");
+			const lastNavigationButton = navigationButtons.item(navigationButtons.length - 1);
+			const targetLeft = lastNavigationButton?.getBoundingClientRect().right ?? toolbarRect.left + 4;
+			wrapper.style.setProperty("--browser-url-expand-left", `${targetLeft + 2 - wrapperRect.left}px`);
+			wrapper.style.setProperty("--browser-url-expand-right", `${wrapperRect.right - toolbarRect.right + 4}px`);
+		}
+		setUrlInput(navState.url);
+		setUrlEditing(true);
 	};
 
 	const toggleAnnotationMode = async () => {
@@ -451,6 +521,12 @@ export function BrowserPanelView({
 		},
 		[selectTab],
 	);
+	const handleCloseTab = useCallback(
+		(tabId: string) => {
+			void closeTab(tabId);
+		},
+		[closeTab],
+	);
 
 	const annotationStatusLabel =
 		status === "picking"
@@ -477,54 +553,71 @@ export function BrowserPanelView({
 			data-browser-dock-target={poppedOut ? undefined : ""}
 			data-browser-native-page={navState.url ? "live" : "empty"}
 			data-testid="browser-panel"
+			onBlurCapture={(event: FocusEvent<HTMLDivElement>) => {
+				if (viewId && !event.currentTarget.contains(event.relatedTarget)) {
+					window.ao?.browser.notifyPanelBlur(viewId);
+				}
+			}}
+			onFocusCapture={() => {
+				if (viewId) window.ao?.browser.notifyPanelUsed(viewId);
+			}}
+			onPointerDownCapture={() => {
+				if (viewId) window.ao?.browser.notifyPanelUsed(viewId);
+			}}
 			ref={panelRef}
 			role="tabpanel"
 		>
-			<div className="browser-panel__tab-bar" data-testid="browser-tab-bar">
-				<DndContext
-					collisionDetection={closestCenter}
-					onDragCancel={() => setTopTabDragActive(false)}
-					onDragEnd={handleTopTabDragEnd}
-					onDragStart={() => setTopTabDragActive(true)}
-					sensors={tabSensors}
-				>
-					<SortableContext items={tabs.map((tab) => tab.id)} strategy={horizontalListSortingStrategy}>
-						<div
-							aria-label={t("browser.tabs")}
-							className="browser-panel__tab-strip"
-							onKeyDown={topTabDragActive ? undefined : handleTabListKeyDown}
-							role="tablist"
-						>
-							{tabs.map((tab) => (
-								<SortableBrowserTopTab
-									key={tab.id}
-									onClose={() => void closeTab(tab.id)}
-									onSelect={() => void handleSelectTab(tab.id)}
-									onlyTab={tabs.length === 1}
-									selected={tab.id === activeTabId}
-									tab={tab}
-								/>
-							))}
-						</div>
-					</SortableContext>
-				</DndContext>
-				<button
-					aria-label={t("browser.openNewTab")}
-					className="browser-panel__tab-new"
-					onClick={() => void handleOpenTab()}
-					title={t("browser.openNewTab")}
-					type="button"
-				>
-					<Plus aria-hidden="true" className="size-icon-base" />
-				</button>
-			</div>
+			{poppedOut ? (
+				<div className="browser-panel__tab-bar" data-testid="browser-tab-bar">
+					<DndContext
+						collisionDetection={closestCenter}
+						onDragCancel={() => setTopTabDragActive(false)}
+						onDragEnd={handleTopTabDragEnd}
+						onDragStart={() => setTopTabDragActive(true)}
+						sensors={tabSensors}
+					>
+						<SortableContext items={tabs.map((tab) => tab.id)} strategy={horizontalListSortingStrategy}>
+							<div
+								aria-label={t("browser.tabs")}
+								className="browser-panel__tab-strip"
+								onKeyDown={topTabDragActive ? undefined : handleTabListKeyDown}
+								role="tablist"
+							>
+								{tabs.map((tab) => (
+									<SortableBrowserTopTab
+										key={tab.id}
+										onClose={handleCloseTab}
+										onSelect={handleSelectTab}
+										onlyTab={tabs.length === 1}
+										selected={tab.id === activeTabId}
+										tab={tab}
+									/>
+								))}
+							</div>
+						</SortableContext>
+					</DndContext>
+					<button
+						aria-label={t("browser.openNewTab")}
+						className="browser-panel__tab-new"
+						onClick={() => void handleOpenTab()}
+						title={t("browser.openNewTab")}
+						type="button"
+					>
+						<Plus aria-hidden="true" className="size-icon-base" />
+					</button>
+				</div>
+			) : null}
 			<form
-				className="browser-panel__toolbar flex shrink-0 min-w-0 items-center gap-1 border-b border-border bg-surface"
+				className={cn(
+					"browser-panel__toolbar flex shrink-0 min-w-0 items-center gap-1 border-b border-border bg-surface",
+					urlTakeover && "browser-panel__toolbar--url-takeover",
+				)}
 				data-testid="browser-toolbar"
 				onSubmit={submit}
 			>
 				<Button
 					aria-label={t("browser.back")}
+					className="browser-panel__navigation-btn"
 					disabled={!navState.canGoBack}
 					onClick={() => void goBack()}
 					size="icon-sm"
@@ -535,6 +628,7 @@ export function BrowserPanelView({
 				</Button>
 				<Button
 					aria-label={t("browser.forward")}
+					className="browser-panel__navigation-btn"
 					disabled={!navState.canGoForward}
 					onClick={() => void goForward()}
 					size="icon-sm"
@@ -545,6 +639,7 @@ export function BrowserPanelView({
 				</Button>
 				<Button
 					aria-label={navState.isLoading ? t("browser.stop") : t("browser.reload")}
+					className="browser-panel__navigation-btn"
 					onClick={() => void (navState.isLoading ? stop() : reload())}
 					size="icon-sm"
 					type="button"
@@ -584,7 +679,7 @@ export function BrowserPanelView({
 							aria-hidden="true"
 							className={cn(
 								"pointer-events-none absolute -right-0.5 -top-0.5 size-1.5 rounded-full",
-								status === "error" ? "bg-destructive" : "bg-accent",
+								status === "error" ? "bg-destructive" : "bg-status-needs-you",
 							)}
 						/>
 					) : agentStatusLabel ? (
@@ -601,18 +696,15 @@ export function BrowserPanelView({
 					</span>
 				) : null}
 					<div className="browser-panel__url-wrap relative min-w-0 flex-1">
-						<Globe2
-							aria-hidden="true"
-							className="browser-panel__url-icon"
-							data-testid="browser-url-icon"
-						/>
 					<Input
 						aria-label={t("browser.url")}
-						className="browser-panel__url-input h-browser-url pl-browser-url font-mono text-xs"
+						className="browser-panel__url-input h-browser-url font-mono text-xs"
+						onBlur={() => setUrlEditing(false)}
 						onChange={(event) => setUrlInput(event.target.value)}
+						onFocus={beginUrlEditing}
 						placeholder={t("browser.urlPlaceholder")}
 						ref={urlInputRef}
-						value={urlInput}
+						value={urlEditing || poppedOut ? urlInput : compactBrowserAddress(navState.url)}
 					/>
 				</div>
 				{tabNotice ? (
@@ -850,7 +942,7 @@ export function BrowserPanelView({
 	);
 }
 
-function SortableBrowserTopTab({
+const SortableBrowserTopTab = memo(function SortableBrowserTopTab({
 	tab,
 	selected,
 	onlyTab,
@@ -860,8 +952,8 @@ function SortableBrowserTopTab({
 	tab: BrowserViewModel["tabs"][number];
 	selected: boolean;
 	onlyTab: boolean;
-	onSelect: () => void;
-	onClose: () => void;
+	onSelect: (tabId: string) => void;
+	onClose: (tabId: string) => void;
 }) {
 	const { t } = useTranslation();
 	const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: tab.id });
@@ -882,7 +974,7 @@ function SortableBrowserTopTab({
 				{...listeners}
 				aria-selected={selected}
 				className="browser-panel__tab-select"
-				onClick={onSelect}
+				onClick={() => void onSelect(tab.id)}
 				role="tab"
 				tabIndex={selected ? 0 : -1}
 				title={label.title}
@@ -899,7 +991,7 @@ function SortableBrowserTopTab({
 				aria-label={closeLabel}
 				className="browser-panel__tab-close"
 				disabled={onlyTab}
-				onClick={onClose}
+				onClick={() => onClose(tab.id)}
 				title={onlyTab ? t("browser.onlyTab") : closeLabel}
 				type="button"
 			>
@@ -907,6 +999,23 @@ function SortableBrowserTopTab({
 			</button>
 		</div>
 	);
+});
+
+function compactBrowserAddress(url: string): string {
+	if (!url) return "";
+	try {
+		const parsed = new URL(url);
+		if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+			return parsed.host.replace(/^www\./i, "");
+		}
+		if (parsed.protocol === "file:") {
+			const name = parsed.pathname.split("/").filter(Boolean).at(-1);
+			return name ? decodeURIComponent(name) : url;
+		}
+		return parsed.host || url;
+	} catch {
+		return url;
+	}
 }
 
 function agentActivityLabel(activity: BrowserViewModel["agentBrowserActivity"], active: boolean): string {

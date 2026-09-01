@@ -236,7 +236,11 @@ export function HarnessSettingsSection({ titleHidden = false }: { titleHidden?: 
 									<Button size="sm" onClick={() => selectedMethodId && void startInstall(agentId, selectedMethodId)} disabled={pending || !selectedMethodId}>{t("settings.harness.reinstall")}</Button>
 								</div>
 							) : isInstalled ? (
-								<span className="inline-flex items-center gap-1 text-xs font-medium text-success"><Check className="size-4" aria-hidden="true" />{t("settings.harness.installed")}</span>
+								<div className="flex items-center gap-1.5">
+									<span className="inline-flex items-center gap-1 text-xs font-medium text-success"><Check className="size-4" aria-hidden="true" />{t("settings.harness.installed")}</span>
+									{methodSelect}
+									<Button size="sm" variant="outline" onClick={() => selectedMethodId && void startInstall(agentId, selectedMethodId)} disabled={pending || !selectedMethodId}>{t("settings.harness.reinstall")}</Button>
+								</div>
 							) : !plan && installers.isPending ? (
 								<span className="inline-flex items-center gap-1.5 text-xs text-settings-muted" role="status"><LoaderCircle className="size-4 animate-spin" aria-hidden="true" /></span>
 							) : availableMethods.length > 0 ? (

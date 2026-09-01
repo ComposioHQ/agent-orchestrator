@@ -27,12 +27,16 @@
  */
 
 import {
+	cloneElement,
 	useCallback,
 	useEffect,
 	useId,
+	useLayoutEffect,
 	useMemo,
 	useRef,
 	useState,
+	isValidElement,
+	memo,
 	type ClipboardEvent,
 	type DragEvent,
 	type FormEvent,
@@ -71,7 +75,7 @@ function withAttachmentReferences(text: string, paths: string[]): string {
 	return `${lead}Attached files (read these files in the workspace):\n${paths.map((path) => `- ${path}`).join("\n")}`;
 }
 
-export function ChatComposer({
+export const ChatComposer = memo(function ChatComposer({
 	onSend,
 	busy,
 	willQueue,
@@ -180,6 +184,7 @@ export function ChatComposer({
 	const [isComposing, setIsComposing] = useState(false);
 	const [dragging, setDragging] = useState(false);
 	const [sendError, setSendError] = useState<string | null>(null);
+	const [steerNextRequest, setSteerNextRequest] = useState(0);
 	// The DOM event is the source of truth while React catches up with the draft
 	// transition. This keeps Enter-after-fast-typing from observing stale state.
 	const textRef = useRef("");
@@ -196,6 +201,7 @@ export function ChatComposer({
 	const stagedDelivery = useRef<{ signature: string; paths: string[] } | null>(null);
 	const submitInFlight = useRef<Promise<void> | null>(null);
 	const menuId = useId();
+	const hadQueuedDockRef = useRef(Boolean(queuedDock));
 	const previousTrigger = useRef<ComposerTrigger | undefined>(undefined);
 	const triggerRef = useRef<ComposerTrigger | undefined>(undefined);
 
@@ -245,22 +251,33 @@ export function ChatComposer({
 		!savingQueuedEditPending &&
 		(savingQueuedEdit || !busy);
 	const canStopTurn = Boolean(willQueue && onInterrupt && !disabled && !hasDraft && !savingQueuedEdit);
-	// Steering delivers text only, so a draft carrying files cannot take that
-	// path. Treating it as unavailable — rather than steering the text and
-	// dropping the files, or refusing on an empty body with attachments staged —
-	// keeps the armed state something the composer can actually honour.
+	// Cmd/Ctrl+Enter remains an intentionally quiet power-user path for steering
+	// typed text into the running turn. The visible hint stays queue-only.
 	const canSteerDraft = Boolean(canSteer && onSteer) && !staged && !savingQueuedEdit;
+	const canSteerNext =
+		Boolean(canSteer && onSteer) &&
+		!disabled &&
+		!hasDraft &&
+		!savingQueuedEdit &&
+		Boolean(queuedDock);
 	const sendHint = menuOpen
 		? "Enter to insert"
 		: savingQueuedEdit
 			? "⏎ save edit"
-			: willQueue && canSteerDraft
-				? "⏎ queue · ⌘⏎ steer"
-				: willQueue
-					? "⏎ queue"
-					: "Enter to send";
+			: willQueue
+				? "⏎ queue"
+				: "Enter to send";
 	const draftSeedId = draftSeed?.id;
 	const draftSeedText = draftSeed?.text;
+	const queuedDockWithSteer = isValidElement(queuedDock)
+		? cloneElement(
+				queuedDock as ReactElement<{
+					canSteerNext?: boolean;
+					steerNextRequest?: number;
+				}>,
+				{ canSteerNext, steerNextRequest },
+			)
+		: queuedDock;
 
 	const focusEditor = useCallback(() => {
 		if (!autoFocus || disabled) return;
@@ -270,6 +287,17 @@ export function ChatComposer({
 	useEffect(() => {
 		focusEditor();
 	}, [autoFocusKey, focusEditor]);
+
+	const hasQueuedDock = Boolean(queuedDock);
+	const restoreFocusAfterQueueAppears =
+		hasQueuedDock &&
+		!hadQueuedDockRef.current &&
+		typeof document !== "undefined" &&
+		document.activeElement?.getAttribute("aria-label") === "Message the agent";
+	useLayoutEffect(() => {
+		hadQueuedDockRef.current = hasQueuedDock;
+		if (restoreFocusAfterQueueAppears) editor.current?.focus();
+	}, [hasQueuedDock, restoreFocusAfterQueueAppears]);
 
 	useEffect(() => {
 		if (!autoFocus) return;
@@ -552,11 +580,15 @@ export function ChatComposer({
 				return true;
 			}
 
+			if (canSteerNext && !textRef.current.trim()) {
+				setSteerNextRequest((request) => request + 1);
+				return true;
+			}
 			const wantsSteer = (event.metaKey || event.ctrlKey) && canSteerDraft;
 			void submit(undefined, wantsSteer);
 			return true;
 		},
-		[canSteerDraft, onCompact, pick, suggestionsFor],
+		[canSteerDraft, canSteerNext, onCompact, pick, suggestionsFor],
 	);
 
 	function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
@@ -617,8 +649,8 @@ export function ChatComposer({
 		void fileAttachments.addFiles(files);
 	}
 
-	// Track Cmd/Ctrl for the send-button click path without re-rendering the composer
-	// on every modifier key event.
+	// Keep the hidden Cmd/Ctrl steering shortcut available for the send-button path
+	// without rerendering the composer for every modifier key event.
 	const modifierHeldRef = useRef(false);
 	useEffect(() => {
 		const onKey = (event: globalThis.KeyboardEvent) => {
@@ -639,18 +671,18 @@ export function ChatComposer({
 
 	const attachmentError = fileAttachments.error ?? sendError ?? commandError;
 	const withQueueStack = (form: ReactElement) =>
-		queuedDock ? (
-			<div className="relative flex w-full flex-col">
+		(
+			<div className="relative mx-auto flex w-full max-w-3xl flex-col">
+				{queuedDock ? (
 				<div
 					className="cursor-chat-composer-queue queue-dock-enter relative z-10 mx-auto mb-2 w-[calc(100%-2rem)]"
 					data-testid="queued-composer-dock"
 				>
-					{queuedDock}
+					{queuedDockWithSteer}
 				</div>
+				) : null}
 				{form}
 			</div>
-		) : (
-			form
 		);
 
 	if (approval) {
@@ -658,7 +690,7 @@ export function ChatComposer({
 			<form
 				onSubmit={(event) => event.preventDefault()}
 				data-attached-top={attachedTop && !queuedDock ? true : undefined}
-				className="cursor-chat-composer relative flex flex-col gap-1.5 border px-3 py-3 transition-[background,border-color,box-shadow]"
+				className="cursor-chat-composer relative flex flex-col gap-1.5 border px-3 py-3"
 			>
 				{approval}
 				{commandError ? (
@@ -672,10 +704,8 @@ export function ChatComposer({
 
 	return withQueueStack(
 		<form
-				// Clicking send while Cmd/Ctrl is held has to mean what the indicator
-				// beside it says. Reading the same armed state the chip paints keeps the
-				// pointer and keyboard paths from disagreeing about where the message goes.
-				onSubmit={(event) => void submit(event, modifierHeldRef.current && canSteerDraft)}
+			// Cmd/Ctrl steering remains available as a quiet power-user action.
+			onSubmit={(event) => void submit(event, modifierHeldRef.current && canSteerDraft)}
 				onDragOver={(event) => {
 					if (!canAttach) return;
 					event.preventDefault();
@@ -696,7 +726,7 @@ export function ChatComposer({
 						editor.current?.focus();
 					}
 				}}
-				className="cursor-chat-composer relative flex cursor-text flex-col gap-1.5 border px-3 pt-3 pb-3 transition-[background,border-color,box-shadow]"
+				className="cursor-chat-composer relative flex cursor-text flex-col gap-1.5 border px-3 pt-3 pb-3"
 			>
 				{menuOpen && trigger ? (
 					<ComposerSuggestMenu
@@ -843,4 +873,4 @@ export function ChatComposer({
 				</div>
 			</form>,
 	);
-}
+});

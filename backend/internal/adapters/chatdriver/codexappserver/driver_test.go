@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/persistenthost"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -248,6 +249,86 @@ func TestStartCompletesHandshakeAndOpensThread(t *testing.T) {
 	// Default permissions must match what AO already gives a Codex TUI session.
 	if params.ApprovalPolicy != "never" || params.Sandbox != "danger-full-access" {
 		t.Errorf("default posture = %q/%q, want never/danger-full-access", params.ApprovalPolicy, params.Sandbox)
+	}
+}
+
+func TestResumeReconnectsInitializedHostWithoutNativeResume(t *testing.T) {
+	d, srv := newTestDriver(t)
+	proc, err := d.spawn(context.Background(), "codex", "/tmp/ws", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.persistent = true
+	d.connectHost = func(context.Context, persistenthost.Config) (*persistenthost.Transport, error) {
+		return &persistenthost.Transport{
+			Stdin: proc.stdin, Stdout: proc.stdout, Reconnected: true, NextRequestID: 41,
+		}, nil
+	}
+
+	conv, err := d.Resume(context.Background(), ports.ChatResumeConfig{
+		SessionID: "ao-reconnect", ProviderConversationID: "thread-survived",
+		DataDir: t.TempDir(), WorkspacePath: "/tmp/ws",
+	})
+	if err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	defer func() { _ = conv.Close() }()
+	if got := conv.ProviderConversationID(); got != "thread-survived" {
+		t.Fatalf("provider conversation id = %q", got)
+	}
+	if srv.sentMethod("initialize") || srv.sentMethod("thread/resume") {
+		t.Fatalf("reconnect repeated handshake: initialize=%v resume=%v",
+			srv.sentMethod("initialize"), srv.sentMethod("thread/resume"))
+	}
+
+	lister := conv.(ports.ChatModelLister)
+	if _, err := lister.ListModels(context.Background()); err != nil {
+		t.Fatalf("ListModels: %v", err)
+	}
+	request := srv.awaitFrame(func(f frame) bool { return f.Method == "model/list" })
+	if request.ID == nil || string(*request.ID) != "42" {
+		t.Fatalf("first request id after reconnect = %v, want 42", request.ID)
+	}
+}
+
+func TestResumeStagesDirectProcessWhenBranchSourceOwnsHost(t *testing.T) {
+	d, srv := newTestDriver(t)
+	d.persistent = true
+	d.connectHost = func(context.Context, persistenthost.Config) (*persistenthost.Transport, error) {
+		return nil, persistenthost.ErrAttached
+	}
+	conv, err := d.Resume(context.Background(), ports.ChatResumeConfig{
+		SessionID: "ao-branch", ProviderConversationID: "thread-branch",
+		DataDir: t.TempDir(), WorkspacePath: "/tmp/ws", AllowConcurrentHostReplacement: true,
+	})
+	if err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	defer func() { _ = conv.Close() }()
+	if !srv.sentMethod("initialize") || !srv.sentMethod("thread/resume") {
+		t.Fatalf("branch staging handshake: initialize=%v resume=%v",
+			srv.sentMethod("initialize"), srv.sentMethod("thread/resume"))
+	}
+}
+
+func TestResumeDoesNotCompeteWithAttachedHostDuringDaemonOverlap(t *testing.T) {
+	d, srv := newTestDriver(t)
+	d.persistent = true
+	d.connectHost = func(context.Context, persistenthost.Config) (*persistenthost.Transport, error) {
+		return nil, persistenthost.ErrAttached
+	}
+	_, err := d.Resume(context.Background(), ports.ChatResumeConfig{
+		SessionID: "ao-overlap", ProviderConversationID: "thread-live",
+		DataDir: t.TempDir(), WorkspacePath: "/tmp/ws",
+	})
+	if err == nil || !errors.Is(err, persistenthost.ErrAttached) {
+		t.Fatalf("Resume error = %v, want attached-host refusal", err)
+	}
+	if !errors.Is(err, ports.ErrChatRecoveryInconclusive) {
+		t.Fatalf("Resume error = %v, want recovery-inconclusive classification", err)
+	}
+	if srv.sentMethod("initialize") || srv.sentMethod("thread/resume") {
+		t.Fatal("daemon overlap launched a competing direct provider")
 	}
 }
 

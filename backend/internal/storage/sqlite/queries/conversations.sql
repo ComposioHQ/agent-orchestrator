@@ -481,6 +481,17 @@ UPDATE conversation_turns
 SET state = ?, error_message = ?, completed_at = COALESCE(completed_at, ?)
 WHERE id = ?;
 
+-- A streamed assistant item may not receive item/completed when steering causes
+-- the provider to finish the turn without replaying it: the accumulated text is
+-- still the durable answer, and the enclosing turn is the terminal boundary.
+-- name: SettleStreamingConversationMessagesForTurn :exec
+UPDATE conversation_messages
+SET streaming = 0, revision = revision + 1, updated_at = sqlc.arg(updated_at)
+WHERE conversation_id = sqlc.arg(conversation_id)
+  AND turn_id = sqlc.arg(turn_id)
+  AND role = 'assistant'
+  AND streaming = 1;
+
 -- A provider can acknowledge an interrupted/failed turn without first emitting
 -- item/completed for the command it killed. Settle those rows with the enclosing
 -- turn so clients never show a permanent live spinner for work that has stopped.
@@ -490,6 +501,20 @@ SET status = sqlc.arg(status), revision = revision + 1, updated_at = sqlc.arg(up
 WHERE conversation_activities.conversation_id = sqlc.arg(conversation_id)
   AND turn_id = sqlc.arg(turn_id)
   AND status = 'running';
+
+-- Successful completion is the terminal fact for a plan even when the provider
+-- omits its customary final plan notification. Keep the timeline copy identical
+-- to the turn copy that SettleTurn finalizes from the same event.
+-- name: FinalizeConversationPlanActivity :exec
+UPDATE conversation_activities
+SET status = 'completed',
+    summary = sqlc.arg(summary),
+    detail_json = sqlc.arg(detail_json),
+    revision = revision + 1,
+    updated_at = sqlc.arg(updated_at)
+WHERE conversation_activities.conversation_id = sqlc.arg(conversation_id)
+  AND turn_id = sqlc.arg(turn_id)
+  AND kind = 'plan';
 
 -- The same invariant applies when startup discovers work abandoned by a dead
 -- controller. This runs before SettleOrphanedConversationTurns while their turn
