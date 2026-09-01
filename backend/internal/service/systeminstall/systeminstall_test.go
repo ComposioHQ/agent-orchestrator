@@ -556,6 +556,70 @@ func TestAgentVendorScriptInstallPersistsInstallVerifySuccessLifecycle(t *testin
 	}
 }
 
+func TestAgentVendorScriptInstallFailsWithoutRunner(t *testing.T) {
+	s := newTestService("linux", "bash")
+	if _, err := s.StartAgent(context.Background(), TargetCursor, "official-installer"); err != nil {
+		t.Fatal(err)
+	}
+	waitForStatus(t, s, TargetCursor, StatusFailed)
+	job, _ := s.Status(context.Background(), TargetCursor)
+	if !strings.Contains(job.Error, "runner is not configured") {
+		t.Fatalf("error = %q", job.Error)
+	}
+}
+
+func TestAgentVendorScriptInstallPreservesDigestOnRunnerFailure(t *testing.T) {
+	s := newTestService("linux", "bash")
+	s.installScripts = installScriptRunnerFunc(func(context.Context, ports.InstallScriptCommand, io.Writer, io.Writer) (ports.InstallScriptResult, error) {
+		return ports.InstallScriptResult{SHA256: "deadbeef"}, errors.New("installer exited 7")
+	})
+	if _, err := s.StartAgent(context.Background(), TargetCursor, "official-installer"); err != nil {
+		t.Fatal(err)
+	}
+	waitForStatus(t, s, TargetCursor, StatusFailed)
+	job, _ := s.Status(context.Background(), TargetCursor)
+	if job.Error != "installer exited 7" || !strings.Contains(job.Output, "sha256: deadbeef") {
+		t.Fatalf("job = %+v", job)
+	}
+}
+
+func TestAgentVendorScriptInstallTimeoutAndShutdown(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		stop       bool
+		wantStatus Status
+		wantError  string
+	}{
+		{name: "timeout", wantStatus: StatusFailed, wantError: "timed out"},
+		{name: "shutdown", stop: true, wantStatus: StatusInterrupted, wantError: "shutdown interrupted"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			s := newTestService("linux", "bash")
+			s.installTimeout = 50 * time.Millisecond
+			started := make(chan struct{})
+			s.installScripts = installScriptRunnerFunc(func(ctx context.Context, _ ports.InstallScriptCommand, _, _ io.Writer) (ports.InstallScriptResult, error) {
+				close(started)
+				<-ctx.Done()
+				return ports.InstallScriptResult{}, ctx.Err()
+			})
+			if _, err := s.StartAgent(context.Background(), TargetCursor, "official-installer"); err != nil {
+				t.Fatal(err)
+			}
+			<-started
+			if test.stop {
+				if err := s.Close(context.Background()); err != nil {
+					t.Fatal(err)
+				}
+			}
+			waitForStatus(t, s, TargetCursor, test.wantStatus)
+			job, _ := s.Status(context.Background(), TargetCursor)
+			if !strings.Contains(job.Error, test.wantError) {
+				t.Fatalf("error = %q", job.Error)
+			}
+		})
+	}
+}
+
 func TestAgentInstallRejectsConcurrentWorkForSameHarness(t *testing.T) {
 	release := make(chan struct{})
 	started := make(chan struct{})

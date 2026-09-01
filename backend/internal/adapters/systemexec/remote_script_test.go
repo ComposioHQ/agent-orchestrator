@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -60,6 +61,26 @@ func TestRunInstallScriptCleansUpAfterExecutionFailure(t *testing.T) {
 	entries, readErr := os.ReadDir(filepath.Join(dataDir, "installers", "tmp"))
 	if readErr != nil || len(entries) != 0 {
 		t.Fatalf("temporary scripts remain after failure: %v, %v", entries, readErr)
+	}
+}
+
+func TestRunInstallScriptCancellationCleansUp(t *testing.T) {
+	t.Parallel()
+	server := httptest.NewTLSServer(httpHandler("#!/bin/sh\nsleep 5"))
+	t.Cleanup(server.Close)
+	dataDir := t.TempDir()
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	_, err := newAdapter(dataDir, server.Client()).RunInstallScript(ctx, ports.InstallScriptCommand{
+		URL: server.URL, Interpreter: []string{"sh"},
+	}, io.Discard, io.Discard)
+	if err == nil {
+		t.Fatal("expected cancellation")
+	}
+	entries, readErr := os.ReadDir(filepath.Join(dataDir, "installers", "tmp"))
+	if readErr != nil || len(entries) != 0 {
+		t.Fatalf("temporary scripts remain after cancellation: %v, %v", entries, readErr)
 	}
 }
 
