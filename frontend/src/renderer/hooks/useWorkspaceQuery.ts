@@ -182,13 +182,19 @@ function toCloudWorkspaceSession(
 		branch: session.branch || undefined,
 		status: toSessionStatus(session.status, session.isTerminated),
 		isTerminated: session.isTerminated,
+		runtimeConnected: session.runtimeConnected,
 		createdAt: session.createdAt,
 		updatedAt: session.updatedAt,
 		activity: toSessionActivity({ state: session.activityState }),
 		prs: [],
 		// Marks this as a control-plane session so the terminal opens against the
 		// CP (ticket + sandbox WebSocket) instead of the local daemon mux.
-		cloud: { orgId },
+		cloud: {
+			orgId,
+			sandboxProvider: session.sandboxProvider,
+			desiredState: session.desiredState,
+			observedState: session.observedState,
+		},
 	};
 }
 

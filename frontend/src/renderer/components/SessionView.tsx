@@ -41,6 +41,7 @@ import { SessionTopbarHost } from "./SessionTopbarPortal";
 import { TerminalSwitchAgentButton } from "./TerminalSwitchAgentButton";
 import { TopbarButton } from "./TopbarButton";
 import { useBrowserView } from "../hooks/useBrowserView";
+import { useCloudCp } from "../hooks/useCloudCp";
 import { useFileAnnotation } from "../hooks/useFileAnnotation";
 import { useResizable } from "../hooks/useResizable";
 import {
@@ -54,11 +55,12 @@ import {
 	interfaceTransitionIsActive,
 	useSessionInterfaceTransition,
 } from "../hooks/useSessionInterfaceTransition";
-import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
+import { cloudSessionsQueryKey, useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
 import { useSessionHandoffMenu } from "../hooks/useSessionHandoffMenu";
 import { clearSwitchAgentState } from "../hooks/useSwitchAgent";
 import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
 import { apiClient, apiErrorCode, apiErrorMessage } from "../lib/api-client";
+import { cloudLifecycleStage, type CloudLifecycleStage } from "../lib/cloud-lifecycle";
 import { sessionWorkspaceFilesQueryOptions } from "../hooks/useSessionWorkspaceFiles";
 import { matchWorkspaceFilePath } from "../lib/workspace-file-path";
 import { SHELL_PANEL_SPRING } from "../lib/motion-spring";
@@ -129,6 +131,43 @@ type InterfaceSwitchDialogScope = {
 };
 
 type WorkspaceLayoutMode = "utility" | "browser" | "files";
+
+function CloudLifecycleStatus({ stage }: { stage: CloudLifecycleStage }) {
+	const { t } = useTranslation();
+	const label = {
+		paused_by_coder: t("cloud.lifecycle.pausedByCoder"),
+		resuming_workspace: t("cloud.lifecycle.resumingWorkspace"),
+		waiting_for_coder_agent: t("cloud.lifecycle.waitingForCoderAgent"),
+		starting_ao_worker: t("cloud.lifecycle.startingAoWorker"),
+		restoring_agent: t("cloud.lifecycle.restoringAgent"),
+		connected: t("cloud.lifecycle.connected"),
+	}[stage];
+	const settled = stage === "connected";
+	const paused = stage === "paused_by_coder";
+	return (
+		<motion.div
+			animate={{ opacity: 1, y: 0 }}
+			aria-live="polite"
+			className={cn(
+				"absolute right-3 top-3 z-20 flex h-7 items-center gap-2 rounded-sm border px-2.5",
+				"bg-background/92 font-mono text-[11px] tracking-tight shadow-sm backdrop-blur-sm",
+				settled ? "border-success/30 text-passive" : "border-border/80 text-foreground",
+			)}
+			data-cloud-lifecycle-stage={stage}
+			initial={{ opacity: 0, y: -4 }}
+			role="status"
+		>
+			<span
+				aria-hidden="true"
+				className={cn(
+					"size-1.5 rounded-full",
+					settled ? "bg-success" : paused ? "bg-warning" : "animate-pulse bg-primary",
+				)}
+			/>
+			{label}
+		</motion.div>
+	);
+}
 
 type InspectorSizing = {
 	chatMinWidth: number;
@@ -379,6 +418,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 	const workspaceQuery = useWorkspaceQuery();
+	const { client: cloudCpClient } = useCloudCp();
 	const workspaces = workspaceQuery.data ?? [];
 	const theme = useResolvedTheme();
 	const prefersReducedMotion = useReducedMotion();
@@ -507,6 +547,20 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	useEffect(() => stopTerminalLiveResize, [stopTerminalLiveResize]);
 
 	const session = workspaces.flatMap((workspace) => workspace.sessions).find((s) => s.id === sessionId);
+	const cloudResumeRef = useRef("");
+	const requestCloudResume = useCallback(async () => {
+		if (!session?.cloud) return;
+		await cloudCpClient.resumeSession(session.cloud.orgId, session.id);
+		await queryClient.invalidateQueries({ queryKey: cloudSessionsQueryKey });
+	}, [cloudCpClient, queryClient, session]);
+	useEffect(() => {
+		if (!session?.cloud || cloudResumeRef.current === session.id) return;
+		cloudResumeRef.current = session.id;
+		void requestCloudResume().catch(() => {
+			// Keep the paused lifecycle projection visible. A message, shell open,
+			// or later route visit can issue a fresh explicit resume intent.
+		});
+	}, [requestCloudResume, session]);
 	const interfaceSwitch = useSessionInterfaceTransition(session?.id);
 	const reviewerQuery = useQuery({
 		queryKey: ["session-reviews", sessionId],
@@ -583,7 +637,12 @@ export function SessionView({ sessionId }: SessionViewProps) {
 				},
 			},
 		);
-	}, [openShellTerminal, sessionId, session?.cloud, session?.workspaceId, setActiveShellTerminal]);
+	}, [
+		openShellTerminal,
+		session,
+		sessionId,
+		setActiveShellTerminal,
+	]);
 
 	const activateAuxiliaryTab = useCallback(
 		(key?: string) => {
@@ -1458,6 +1517,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			</div>
 		);
 	}
+	const cloudStage = cloudLifecycleStage(session);
 
 	return (
 		<div className="relative flex h-full min-h-0 flex-col bg-background text-foreground" data-testid="session-detail">
@@ -1489,6 +1549,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 							data-testid="session-topbar-host"
 						/>
 						<div className="relative min-h-0 flex-1" ref={bindHandoffDialogContainer}>
+							{cloudStage ? <CloudLifecycleStatus stage={cloudStage} /> : null}
 							{session && handoffDialogContainer ? (
 								<SwitchAgentDialog
 									agentSwitch={handoffAgentSwitch}

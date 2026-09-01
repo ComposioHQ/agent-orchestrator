@@ -9,6 +9,8 @@ import { apiClient, apiErrorCode, hasTrustedApiBaseUrl } from "../lib/api-client
 import { mockShellTerminals } from "../lib/mock-data";
 import { isWindowsPlatform } from "../lib/platform";
 import { terminalShellRequestValue, useTerminalShellStore } from "../stores/terminal-shell-store";
+import { useCloudCp } from "./useCloudCp";
+import { cloudSessionsQueryKey } from "./useWorkspaceQuery";
 
 export type ShellTerminal = {
 	/** Runtime handle the terminal mux attaches to, exactly like a session pane's. */
@@ -100,6 +102,7 @@ function nextCloudShellTitle(terminals: ShellTerminal[], sessionId: string): str
  */
 export function useOpenShellTerminal() {
 	const queryClient = useQueryClient();
+	const { client: cloudCpClient } = useCloudCp();
 	return useMutation({
 		mutationFn: async ({ projectId, sessionId, shell, cloud }: OpenShellTerminalInput = {}): Promise<ShellTerminal> => {
 			if (usePreviewData) {
@@ -117,6 +120,8 @@ export function useOpenShellTerminal() {
 			}
 			if (cloud) {
 				if (!sessionId) throw new Error("A cloud shell terminal must belong to a session");
+				await cloudCpClient.resumeSession(cloud.orgId, sessionId);
+				await queryClient.invalidateQueries({ queryKey: cloudSessionsQueryKey });
 				const current = queryClient.getQueryData<ShellTerminal[]>(shellTerminalsQueryKey) ?? [];
 				const shell: ShellTerminal = {
 					handleId: `cloud-shell-${crypto.randomUUID()}`,

@@ -14,6 +14,7 @@ const { deleteMock, postMock, isWindowsMock } = vi.hoisted(() => ({
 	postMock: vi.fn(),
 	isWindowsMock: vi.fn(() => false),
 }));
+const cloudResumeMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../lib/api-client", () => ({
 	apiClient: { DELETE: deleteMock, PATCH: patchMock, POST: postMock },
@@ -23,6 +24,9 @@ vi.mock("../lib/api-client", () => ({
 }));
 
 vi.mock("../lib/platform", () => ({ isWindowsPlatform: isWindowsMock }));
+vi.mock("./useCloudCp", () => ({
+	useCloudCp: () => ({ client: { resumeSession: cloudResumeMock } }),
+}));
 vi.mock("../stores/terminal-shell-store", () => ({
 	terminalShellRequestValue: (preference: { kind: string; path?: string }) =>
 		preference.kind === "custom" ? preference.path?.trim() || "auto" : preference.kind,
@@ -70,6 +74,8 @@ beforeEach(() => {
 	deleteMock.mockReset();
 	patchMock.mockReset();
 	postMock.mockReset();
+	cloudResumeMock.mockReset();
+	cloudResumeMock.mockResolvedValue({ session: { desiredState: "running" } });
 	isWindowsMock.mockReturnValue(false);
 	shellStoreMock.load.mockClear();
 	shellStoreMock.setPreference.mockClear();
@@ -169,6 +175,7 @@ describe("useOpenShellTerminal", () => {
 		);
 
 		expect(postMock).not.toHaveBeenCalled();
+		expect(cloudResumeMock).toHaveBeenCalledWith("cloud-org", "cloud-session");
 		expect(shell).toMatchObject({
 			projectId: "cloud-project",
 			sessionId: "cloud-session",
