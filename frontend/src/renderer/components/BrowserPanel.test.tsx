@@ -1409,16 +1409,30 @@ describe("BrowserPanel", () => {
 			expect(hookState.closeTab).not.toHaveBeenCalled();
 
 			expect(firstTab).toHaveAttribute("aria-roledescription", "sortable");
-			fireEvent.pointerDown(firstTab, { button: 0, clientX: 16, clientY: 48, isPrimary: true, pointerId: 1 });
-			fireEvent.pointerMove(secondTab, { clientX: 16, clientY: 80, pointerId: 1 });
+			vi.useFakeTimers();
+			try {
+				fireEvent.pointerDown(firstTab, {
+					button: 0,
+					clientX: 16,
+					clientY: 48,
+					isPrimary: true,
+					pointerId: 1,
+				});
+				fireEvent.pointerMove(secondTab, { clientX: 16, clientY: 80, pointerId: 1 });
 
-			expect(firstTab).toHaveAttribute("aria-pressed", "true");
-			fireEvent.pointerUp(secondTab, { clientX: 16, clientY: 80, pointerId: 1 });
+				expect(firstTab).toHaveAttribute("aria-pressed", "true");
+				fireEvent.pointerUp(secondTab, { clientX: 16, clientY: 80, pointerId: 1 });
+				// dnd-kit removes its capture-phase click suppressor 50 ms after
+				// a completed drag. Flush that teardown before the next test.
+				act(() => vi.advanceTimersByTime(50));
+			} finally {
+				vi.useRealTimers();
+			}
 			expect(secondTab).toBeInTheDocument();
 			expect(closeButton).not.toHaveClass("absolute");
 		});
 
-		it("closes only from the distinct pinned-rail close action", async () => {
+		it("closes only from the distinct pinned-rail close action", () => {
 			pinRail();
 			hookState.tabs = [
 				{ id: "t1", url: "http://localhost:3000/", title: "First app", active: false },
@@ -1431,7 +1445,9 @@ describe("BrowserPanel", () => {
 			const pinnedTabs = within(rail.querySelector("nav") as HTMLElement);
 			const closeButton = pinnedTabs.getByRole("button", { name: "Close tab First app" });
 			fireEvent.pointerEnter(pinnedTabs.getByRole("button", { name: "First app — localhost:3000" }));
-			await userEvent.click(closeButton);
+			expect(closeButton).toHaveAttribute("data-state", "open");
+			expect(closeButton).toBeEnabled();
+			fireEvent.click(closeButton);
 
 			expect(hookState.closeTab).toHaveBeenCalledWith("t1");
 			expect(hookState.selectTab).not.toHaveBeenCalled();
