@@ -1,9 +1,7 @@
 import * as Dialog from "@radix-ui/react-dialog";
-import { ProjectSourcePickerView, type ProjectSource } from "@aoagents/product-ui";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import {
-	ArrowRight,
 	CheckCircle2,
 	ChevronRight,
 	Cloud,
@@ -42,6 +40,7 @@ const CloneRepositoryDialog = lazy(() => import("./CloneRepositoryDialog"));
 const LAST_CLONE_DESTINATION_KEY = "ao.clone.lastDestinationParent";
 
 type CreateProjectFlowMode = ProjectKind | "choose";
+type ProjectSource = "clone" | "local" | "workspace";
 
 /** Where the new project should live: on this machine or in AO Cloud. */
 type ProjectOffering = "local" | "cloud";
@@ -506,8 +505,8 @@ function CreateProjectSourceDialog({
 	return (
 		<Dialog.Root open={open} onOpenChange={onOpenChange}>
 			<Dialog.Portal>
-				<Dialog.Overlay className="dialog-overlay data-[state=open]:animate-overlay-in" />
-				<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay w-[min(var(--size-import-modal-max),calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 border-0 bg-transparent p-0 shadow-none outline-none data-[state=open]:animate-modal-in">
+				<Dialog.Overlay className="dialog-overlay data-[state=open]:animate-overlay-in data-[state=closed]:animate-overlay-out" />
+				<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay w-[min(560px,calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 border-0 bg-transparent p-0 shadow-none outline-none data-[state=open]:animate-modal-in data-[state=closed]:animate-modal-out motion-reduce:animate-none">
 					<div className="flex w-full flex-col items-center gap-3">
 						{cloudEnabled && (
 							<ProjectOfferingTabs disabled={disabled} offering={offering} onOfferingChange={onOfferingChange} />
@@ -815,41 +814,75 @@ function ImportSourcePicker({
 	onSelect: (source: ProjectSource) => void;
 }) {
 	const { t } = useTranslation();
+	const sources: Array<{ source: ProjectSource; icon: ReactNode; label: string; description: string }> = [
+		{
+			source: "clone",
+			icon: <GitFork className="size-5" aria-hidden="true" strokeWidth={1.8} />,
+			label: t("createProject.cloneFromGit"),
+			description: t("createProject.cloneFromGitDesc"),
+		},
+		{
+			source: "local",
+			icon: <FolderOpen className="size-5" aria-hidden="true" strokeWidth={1.8} />,
+			label: t("createProject.openLocal"),
+			description: t("createProject.openLocalDesc"),
+		},
+		{
+			source: "workspace",
+			icon: <Folders className="size-5" aria-hidden="true" strokeWidth={1.8} />,
+			label: t("createProject.addWorkspace"),
+			description: t("createProject.workspaceDesc"),
+		},
+	];
 	return (
-		<>
-			{dialog && (
-				<>
-					<Dialog.Title className="sr-only">{t("createProject.addCodeTitle")}</Dialog.Title>
-					<Dialog.Description className="sr-only">{t("createProject.addCodeDescription")}</Dialog.Description>
-				</>
+		<div className="relative w-full max-w-[520px] overflow-hidden rounded-lg border border-border bg-popover text-popover-foreground shadow-xl">
+			{dialog ? (
+				<Dialog.Title className="settings-dialog-title px-4 pt-3">{t("createProject.addCodeTitle")}</Dialog.Title>
+			) : (
+				<h2 className="settings-dialog-title px-4 pt-3">{t("createProject.addCodeTitle")}</h2>
 			)}
-			<ProjectSourcePickerView
-				dialog={dialog}
-				disabled={disabled}
-				onClose={onClose}
-				onSelect={onSelect}
-				closeIcon={<X className="size-5" aria-hidden="true" strokeWidth={1.67} />}
-				arrowIcon={<ArrowRight className="size-4" aria-hidden="true" />}
-				cloneIcon={<GitFork className="size-[14px] shrink-0" aria-hidden="true" />}
-				folderIcon={<FolderOpen className="size-[14px] shrink-0" aria-hidden="true" />}
-				workspaceIcon={<Folders className="size-5" aria-hidden="true" />}
-				labels={{
-					title: t("createProject.addCodeTitle"),
-					description: t("createProject.addCodeDescription"),
-					clone: t("createProject.cloneFromGit"),
-					cloneDescription: t("createProject.cloneFromGitDesc"),
-					cloneExample: "github.com/acme/web-app",
-					cloneBranchExample: "origin / main",
-					local: t("createProject.openLocal"),
-					localDescription: t("createProject.openLocalDesc"),
-					localExample: "~/Development/web-app",
-					localBranchExample: "main",
-					workspace: t("createProject.addWorkspace"),
-					workspaceDescription: t("createProject.workspaceDesc"),
-					close: t("createProject.closeDialog"),
-				}}
-			/>
-		</>
+			{dialog ? (
+				<Dialog.Description className="px-4 pb-3 pt-1 text-[13px] leading-5 text-muted-foreground">
+					{t("createProject.addCodeDescription")}
+				</Dialog.Description>
+			) : (
+				<p className="px-4 pb-3 pt-1 text-[13px] leading-5 text-muted-foreground">
+					{t("createProject.addCodeDescription")}
+				</p>
+			)}
+			<div className="mx-4 mb-4 overflow-hidden rounded-md border border-border/50 bg-[var(--color-bg-import-modal)]">
+				<div className="flex flex-col divide-y divide-border/50">
+				{sources.map(({ source, icon, label, description }) => (
+					<button
+						key={source}
+						type="button"
+						className="group flex min-h-[76px] items-center gap-3 px-3.5 py-3 text-left hover:bg-accent/50 active:bg-accent disabled:pointer-events-none disabled:opacity-50"
+						disabled={disabled}
+						onClick={() => onSelect(source)}
+					>
+						<span className="grid w-9 shrink-0 place-items-center text-muted-foreground group-hover:text-foreground">
+							{icon}
+						</span>
+						<span className="min-w-0">
+							<span className="block text-[14px] font-medium text-foreground">{label}</span>
+							<span className="mt-0.5 block text-[12px] leading-5 text-muted-foreground">{description}</span>
+						</span>
+					</button>
+				))}
+				</div>
+			</div>
+			{dialog && onClose ? (
+				<button
+					type="button"
+					className="settings-close-button absolute right-3 top-3"
+					aria-label={t("createProject.closeDialog")}
+					disabled={disabled}
+					onClick={onClose}
+				>
+					<X className="size-4" aria-hidden="true" />
+				</button>
+			) : null}
+		</div>
 	);
 }
 
