@@ -37,6 +37,7 @@ const (
 	maxErrorBody        = 64 << 10
 	maxPTYOutput        = 1 << 20
 	workspaceNamePrefix = "ao-"
+	bootstrapReady      = "__AO_BOOTSTRAP_READY__"
 	bootstrapOK         = "__AO_BOOTSTRAP_OK__"
 	bootstrapFailed     = "__AO_BOOTSTRAP_FAILED__"
 	bootstrapUploadACK  = "__AO_UPLOAD_ACK__"
@@ -441,6 +442,9 @@ func (c *Client) bootstrapThroughPTY(ctx context.Context, ptyURL *url.URL, encod
 		<-outputDone
 	}()
 
+	if err := waitForBootstrapReady(ctx, output); err != nil {
+		return err
+	}
 	encoder := json.NewEncoder(netConn)
 	// Coder's reconnecting PTY writes each decoded Data field to the OS PTY but
 	// does not retry a short write. Frame the archive as canonical terminal lines
@@ -472,6 +476,32 @@ func (c *Client) bootstrapThroughPTY(ctx context.Context, ptyURL *url.URL, encod
 		return nil
 	}
 	return fmt.Errorf("coder: worker bootstrap failed: %s", sanitizePTYOutput(result))
+}
+
+func waitForBootstrapReady(ctx context.Context, output <-chan ptyOutput) error {
+	timer := time.NewTimer(10 * time.Second)
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timer.C:
+			return errors.New("coder: workspace PTY did not become ready for worker upload")
+		case response, ok := <-output:
+			if !ok {
+				return errors.New("coder: workspace PTY closed before worker upload was ready")
+			}
+			if strings.Contains(response.data, bootstrapReady) {
+				return nil
+			}
+			if strings.Contains(response.data, bootstrapFailed) {
+				return fmt.Errorf("coder: worker bootstrap failed before upload: %s", sanitizePTYOutput(response.data))
+			}
+			if response.err != nil {
+				return fmt.Errorf("coder: read workspace PTY before worker upload: %w", response.err)
+			}
+		}
+	}
 }
 
 func sendBootstrapFrame(
@@ -626,7 +656,7 @@ func bootstrapCommand(bootstrap sandbox.WorkerBootstrap, encodedLength int) stri
 	script := "set -eu\n" +
 		"stage=$(mktemp -d)\nencoded=\"$stage/payload.b64\"\n" +
 		"trap 'code=$?; stty echo icanon 2>/dev/null || true; echo " + bootstrapFailed + ":$code' EXIT\n" +
-		"target=" + strconv.Itoa(encodedLength) + "\nexpected=0\nreceived=0\n: >\"$encoded\"\nstty -echo icanon\n" +
+		"target=" + strconv.Itoa(encodedLength) + "\nexpected=0\nreceived=0\n: >\"$encoded\"\nstty -echo icanon\necho " + bootstrapReady + "\n" +
 		"while IFS=: read -r kind sequence declared chunk; do\n" +
 		"  case \"$sequence\" in ''|*[!0-9]*) continue ;; esac\n" +
 		"  case \"$declared\" in ''|*[!0-9]*) continue ;; esac\n" +

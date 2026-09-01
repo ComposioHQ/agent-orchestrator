@@ -210,6 +210,10 @@ func TestBootstrapWorkerStreamsArchiveWithoutSecretsInURL(t *testing.T) {
 			defer connection.CloseNow()
 			netConnection := websocket.NetConn(context.Background(), connection, websocket.MessageBinary)
 			defer netConnection.Close()
+			if _, err := io.WriteString(netConnection, bootstrapReady+"\r\n"); err != nil {
+				t.Errorf("write bootstrap ready: %v", err)
+				return
+			}
 			decoder := json.NewDecoder(netConnection)
 			var encoded strings.Builder
 			expectedSequence := 0
@@ -331,6 +335,30 @@ func TestBootstrapThroughPTYRejectsPrematureClose(t *testing.T) {
 	err := client.bootstrapThroughPTY(ctx, mustParseURL(t, server.URL+"/pty"), "payload")
 	if err == nil || !strings.Contains(err.Error(), "read workspace PTY") {
 		t.Fatalf("bootstrap error = %v, want premature-close error", err)
+	}
+}
+
+func TestWaitForBootstrapReadyIgnoresEarlierOutput(t *testing.T) {
+	t.Parallel()
+
+	output := make(chan ptyOutput, 2)
+	output <- ptyOutput{data: "shell startup noise\r\n"}
+	output <- ptyOutput{data: bootstrapReady + "\r\n"}
+	close(output)
+
+	if err := waitForBootstrapReady(context.Background(), output); err != nil {
+		t.Fatalf("waitForBootstrapReady error = %v", err)
+	}
+}
+
+func TestWaitForBootstrapReadyRejectsPrematureClose(t *testing.T) {
+	t.Parallel()
+
+	output := make(chan ptyOutput)
+	close(output)
+	if err := waitForBootstrapReady(context.Background(), output); err == nil ||
+		!strings.Contains(err.Error(), "closed before worker upload was ready") {
+		t.Fatalf("waitForBootstrapReady error = %v, want premature-close error", err)
 	}
 }
 
@@ -570,6 +598,10 @@ func TestBootstrapThroughPTYReportsFailureAfterUpload(t *testing.T) {
 		defer connection.CloseNow()
 		netConnection := websocket.NetConn(context.Background(), connection, websocket.MessageBinary)
 		defer netConnection.Close()
+		if _, err := io.WriteString(netConnection, bootstrapReady+"\r\n"); err != nil {
+			t.Errorf("write bootstrap ready: %v", err)
+			return
+		}
 		var frame struct {
 			Data string `json:"data"`
 		}
@@ -673,6 +705,10 @@ func serveBootstrapPTY(
 	defer connection.CloseNow()
 	netConnection := websocket.NetConn(context.Background(), connection, websocket.MessageBinary)
 	defer netConnection.Close()
+	if _, err := io.WriteString(netConnection, bootstrapReady+"\r\n"); err != nil {
+		t.Errorf("write bootstrap ready: %v", err)
+		return
+	}
 	decoder := json.NewDecoder(netConnection)
 	expectedSequence := 0
 	for {
