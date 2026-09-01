@@ -87,17 +87,6 @@ export function CreateProjectFlow({
 		destinationParent:
 			typeof window === "undefined" ? "" : (window.localStorage.getItem(LAST_CLONE_DESTINATION_KEY) ?? ""),
 	}));
-	useEffect(() => {
-		if (cloneDetails.destinationParent) return;
-		let active = true;
-		void aoBridge.app.getHomeDirectory().then((homeDirectory) => {
-			if (!active || !homeDirectory) return;
-			setCloneDetails((current) => current.destinationParent ? current : { ...current, destinationParent: homeDirectory });
-		});
-		return () => {
-			active = false;
-		};
-	}, [cloneDetails.destinationParent]);
 	const [cloneSelection, setCloneSelection] = useState<CloneRepositorySelection | null>(null);
 	const [folderPickerOpen, setFolderPickerOpen] = useState(false);
 	const [childTransitioning, setChildTransitioning] = useState(false);

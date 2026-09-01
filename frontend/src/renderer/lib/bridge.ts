@@ -8,7 +8,6 @@ export const aoBridge: AoBridge =
 	({
 		app: {
 			getVersion: async () => "0.0.0-preview",
-			getHomeDirectory: async () => "",
 			chooseDirectory: async () => null,
 			openExternal: async (url: string) => {
 				window.open(url, "_blank", "noopener,noreferrer");
