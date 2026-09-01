@@ -15,6 +15,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	"github.com/aoagents/agent-orchestrator/backend/internal/reqid"
 	"github.com/aoagents/agent-orchestrator/backend/internal/sessionguard"
 )
 
@@ -1020,6 +1021,9 @@ func (m *Manager) waitingInputEvents(next domain.SessionRecord, prevState domain
 func (m *Manager) emitTelemetry(ctx context.Context, ev ports.TelemetryEvent) {
 	if m.telemetry == nil {
 		return
+	}
+	if ev.RequestID == "" {
+		ev.RequestID = reqid.FromContext(ctx)
 	}
 	m.telemetry.Emit(ctx, ev)
 }

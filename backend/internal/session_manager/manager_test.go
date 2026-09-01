@@ -7733,6 +7733,44 @@ func TestReconcileLive_ProbeErrorIsNotDeath(t *testing.T) {
 	}
 }
 
+func TestReconcileLive_InconclusiveChatRecoveryDoesNotTeardown(t *testing.T) {
+	st := newFakeStore()
+	st.projects["p1"] = domain.ProjectRecord{ID: "p1", Config: testRoleAgents()}
+	ws := &fakeWorkspace{stashRef: "refs/ao/preserved/chat-live"}
+	lcm := &fakeLCM{store: st}
+	chat := &recordingLauncher{
+		startErr: fmt.Errorf("persistent host unavailable: %w", ports.ErrChatRecoveryInconclusive),
+	}
+	m := New(Deps{
+		Runtime: &fakeRuntime{}, Agents: fakeAgents{}, Workspace: ws, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: lcm, Chat: chat,
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+	rec := domain.SessionRecord{
+		ID: "chat-live", ProjectID: "p1", Harness: domain.HarnessCodex,
+		Mode: domain.SessionModeChat,
+		Metadata: domain.SessionMetadata{
+			Branch: "ao/chat-live", WorkspacePath: "/wt/chat-live",
+			ProviderConversationID: "thread-live", ControllerGeneration: "generation-old",
+		},
+	}
+	st.sessions[rec.ID] = rec
+
+	err := m.reconcileLive(context.Background(), rec)
+	if !errors.Is(err, ports.ErrChatRecoveryInconclusive) {
+		t.Fatalf("reconcileLive error = %v, want ErrChatRecoveryInconclusive", err)
+	}
+	if ws.stashCalls != 0 || lcm.terminated[rec.ID] != 0 {
+		t.Fatalf("inconclusive live host must remain intact: stash=%d terminated=%d",
+			ws.stashCalls, lcm.terminated[rec.ID])
+	}
+	for _, call := range ws.calls {
+		if call == "ForceDestroy:chat-live" {
+			t.Fatalf("inconclusive live host lost its worktree: calls=%v", ws.calls)
+		}
+	}
+}
+
 func TestReconcileLive_InconclusiveRuntimeProbeDoesNotRelaunch(t *testing.T) {
 	st := newFakeStore()
 	st.projects["p1"] = domain.ProjectRecord{ID: "p1", Config: testRoleAgents()}

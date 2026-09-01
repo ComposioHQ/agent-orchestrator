@@ -872,6 +872,7 @@
 	"shell.dashboard": "Dashboard",
 	"shell.downloadUpdate": "Download update",
 	"shell.downloadUpdateVersion": "Download update v{{version}}",
+	"shell.dismissUpdateVersion": "Hide update v{{version}} for 24 hours",
 	"shell.expandSidebar": "Expand sidebar",
 	"shell.expandSidebarTitle": "Expand sidebar · Ctrl+B",
 	"shell.intakeIssue": "Intake issue: {{id}}",
