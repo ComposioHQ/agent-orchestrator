@@ -54,6 +54,9 @@ describe("browser URL sanitization", () => {
 		expect(sanitizeBrowserTitle(`Portal ${signed}`)).toBe(
 			"Portal https://example.test/access?token=%5Bredacted%5D",
 		);
+		expect(sanitizeBrowserTitle("about:blank")).toBe("about:blank");
+		expect(sanitizeBrowserTitle("mailto:operator@example.test?token=opaque")).toBe("mailto:[redacted]");
+		expect(sanitizeBrowserTitle("Status: all systems operational")).toBe("Status: all systems operational");
 		expect(sanitizeBrowserTitle("Government access portal")).toBe("Government access portal");
 	});
 });
@@ -1676,6 +1679,20 @@ describe("agent browser runtime", () => {
 				42,
 				"http://localhost:3000/app.js?token=source-secret#private",
 			);
+			const onCompleted = views[0].webContents.session.webRequest.onCompleted.mock.calls[0]?.[1] as
+				| ((details: {
+						resourceType: string;
+						method: string;
+						url: string;
+						statusCode: number;
+				  }) => void)
+				| undefined;
+			onCompleted?.({
+				resourceType: "xhr",
+				method: "POST",
+				url: "https://alice:completed-password@example.test/api/data?token=completed-secret#private",
+				statusCode: 403,
+			});
 			const onErrorOccurred = views[0].webContents.session.webRequest.onErrorOccurred.mock.calls[0]?.[1] as
 				| ((details: {
 						resourceType: string;
@@ -1687,7 +1704,7 @@ describe("agent browser runtime", () => {
 			onErrorOccurred?.({
 				resourceType: "xhr",
 				method: "GET",
-				url: "http://localhost:3000/api/data?token=request-secret#private",
+				url: "http://bob:error-password@localhost:3000/api/data?token=request-secret#private",
 				error: "net::ERR_CONNECTION_REFUSED",
 			});
 
@@ -1697,18 +1714,25 @@ describe("agent browser runtime", () => {
 				messages: Array<{ level: string; message: string }>;
 			};
 
-			expect(result.messages).toHaveLength(2);
+			expect(result.messages).toHaveLength(3);
 			expect(result.messages[0]).toMatchObject({ level: "error" });
 			expect(result.messages[0]?.message).toContain(
 				"render failed at https://example.test/page?token=%5Bredacted%5D (http://localhost:3000/app.js?token=%5Bredacted%5D:42)",
 			);
 			expect(result.messages[1]).toMatchObject({ level: "error" });
 			expect(result.messages[1]?.message).toContain(
+				"POST https://example.test/api/data?token=%5Bredacted%5D → 403",
+			);
+			expect(result.messages[2]).toMatchObject({ level: "error" });
+			expect(result.messages[2]?.message).toContain(
 				"GET http://localhost:3000/api/data?token=%5Bredacted%5D failed: net::ERR_CONNECTION_REFUSED",
 			);
 			expect(JSON.stringify(result)).not.toContain("console-secret");
 			expect(JSON.stringify(result)).not.toContain("source-secret");
+			expect(JSON.stringify(result)).not.toContain("completed-secret");
+			expect(JSON.stringify(result)).not.toContain("completed-password");
 			expect(JSON.stringify(result)).not.toContain("request-secret");
+			expect(JSON.stringify(result)).not.toContain("error-password");
 		} finally {
 			fetchSpy.mockReset();
 			vi.useRealTimers();

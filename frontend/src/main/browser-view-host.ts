@@ -787,7 +787,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			if (details.resourceType !== "xhr" || details.statusCode < 400) return;
 			recordBrowserSignal(session, {
 				kind: "network-failure",
-				message: `${details.method} ${details.url} → ${details.statusCode}`,
+				message: `${details.method} ${sanitizeBrowserURL(details.url)} → ${details.statusCode}`,
 			});
 		});
 		electronSession.webRequest.onErrorOccurred(filter, (details) => {
@@ -2618,7 +2618,7 @@ export function sanitizeBrowserURL(raw: string): string {
 
 export function sanitizeBrowserTitle(raw: string): string {
 	const title = raw.trim();
-	if (/^[a-z][a-z\d+.-]*:/i.test(title)) return sanitizeBrowserURL(title);
+	if (/^[a-z][a-z\d+.-]*:\S/i.test(title)) return sanitizeBrowserURL(title);
 	return sanitizeURLsInText(raw);
 }
 
