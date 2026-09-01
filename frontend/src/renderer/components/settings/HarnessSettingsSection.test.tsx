@@ -11,6 +11,7 @@ const catalog = {
 		{ id: "claude-code", label: "Claude Code" },
 		{ id: "codex", label: "Codex" },
 		{ id: "cursor", label: "Cursor" },
+		{ id: "goose", label: "Goose" },
 	],
 	installed: [{ id: "claude-code", label: "Claude Code" }],
 	authorized: [],
@@ -40,6 +41,11 @@ const plans = {
 			agentId: "cursor", available: true, automatic: true, method: "official-installer",
 			command: "bash <downloaded from https://cursor.com/install>", documentationUrl: "https://cursor.com/cli",
 			methods: [{ id: "official-installer", label: "Official installer", available: true, recommended: true, command: "bash <downloaded from https://cursor.com/install>" }],
+		},
+		{
+			agentId: "goose", available: false, automatic: false, method: "manual",
+			reason: "Goose does not publish a native Windows CLI installer; use WSL or the desktop download.",
+			documentationUrl: "https://block.github.io/goose/index.html", methods: [],
 		},
 	],
 };
@@ -127,6 +133,13 @@ describe("HarnessSettingsSection", () => {
 			body: { method: "official-installer" },
 		}));
 		expect(row).toHaveTextContent("Installing…");
+	});
+
+	it("keeps unsupported native Windows harnesses on vendor instructions", async () => {
+		renderSection();
+		const row = (await screen.findByText("Goose")).closest('[data-agent="goose"]') as HTMLElement;
+		expect(await within(row).findByRole("button", { name: "Instructions" })).toBeEnabled();
+		expect(within(row).queryByRole("button", { name: "Install" })).not.toBeInTheDocument();
 	});
 
 	it("does not treat a historical successful job as current installation inventory", async () => {

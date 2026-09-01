@@ -203,6 +203,15 @@ func TestAgentInstallPlansNeverUseShellEvaluationOrSudo(t *testing.T) {
 	}
 }
 
+func TestOfficialInstallersRejectUnsupportedOperatingSystems(t *testing.T) {
+	for _, target := range []Target{TargetCodex, TargetCursor, TargetKiro, TargetKimchi, TargetGoose, TargetDevin, TargetMuse, TargetPrimeAgent} {
+		plan := newTestService("freebsd", "sh", "bash", "pwsh").planAgent(target)
+		if !plan.Unsupported || plan.Script != nil {
+			t.Fatalf("%s plan = %+v, want manual unsupported plan", target, plan)
+		}
+	}
+}
+
 func TestPackageManagerMethodsStayPreferredBeforeOfficialInstaller(t *testing.T) {
 	s := newTestService("darwin", "brew", "npm", "sh")
 	s.installCapabilities = installCapabilitiesStub{

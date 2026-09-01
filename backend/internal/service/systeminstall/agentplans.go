@@ -60,8 +60,10 @@ func (s requestPlanner) agentMethodPlans(target Target) []Plan {
 			plans = []Plan{s.planWinget(target, "SST.opencode")}
 		case "darwin":
 			plans = []Plan{s.planBrew(target, "anomalyco/tap/opencode"), s.planNPM(target, "opencode-ai@latest"), s.planShellInstaller(target, "https://opencode.ai/install", "bash")}
-		default:
+		case "linux":
 			plans = []Plan{s.planNPM(target, "opencode-ai@latest"), s.planShellInstaller(target, "https://opencode.ai/install", "bash")}
+		default:
+			plans = []Plan{s.planNPM(target, "opencode-ai@latest")}
 		}
 	case TargetCopilot:
 		switch s.goos {
@@ -74,7 +76,7 @@ func (s requestPlanner) agentMethodPlans(target Target) []Plan {
 		}
 	case TargetPi:
 		plans = []Plan{s.planNPM(target, "@earendil-works/pi-coding-agent")}
-		if s.goos != "windows" {
+		if s.goos == "darwin" || s.goos == "linux" {
 			plans = append(plans, s.planShellInstaller(target, "https://pi.dev/install.sh", "sh"))
 		}
 	case TargetAmp:
@@ -183,12 +185,10 @@ func (s requestPlanner) planAgent(target Target) Plan {
 		}
 		return withDocs(firstAvailable(preferred, s.planNPM(target, "@anthropic-ai/claude-code")), "https://code.claude.com/docs/en/installation")
 	case TargetCodex:
-		var preferred Plan
-		if s.goos == "windows" {
-			preferred = s.planPowerShellInstaller(target, "https://chatgpt.com/codex/install.ps1")
-		} else {
-			preferred = s.planShellInstaller(target, "https://chatgpt.com/codex/install.sh", "sh")
-		}
+		preferred := s.officialByOS(target,
+			"https://chatgpt.com/codex/install.sh", "sh",
+			"https://chatgpt.com/codex/install.ps1",
+			"https://github.com/openai/codex")
 		if s.goos == "darwin" {
 			return withDocs(firstAvailable(preferred, s.planBrewCask(target, "codex"), s.planNPM(target, "@openai/codex")), "https://github.com/openai/codex")
 		}
@@ -228,7 +228,7 @@ func (s requestPlanner) planAgent(target Target) Plan {
 			"https://code.kimi.com/kimi-code/install.ps1",
 			"https://moonshotai.github.io/kimi-code/en/")
 	case TargetPi:
-		if s.goos != "windows" {
+		if s.goos == "darwin" || s.goos == "linux" {
 			return withDocs(firstAvailable(s.planShellInstaller(target, "https://pi.dev/install.sh", "sh"), s.planNPM(target, "@earendil-works/pi-coding-agent")), "https://github.com/earendil-works/pi")
 		}
 		return withDocs(s.planNPM(target, "@earendil-works/pi-coding-agent"), "https://github.com/earendil-works/pi")
@@ -263,6 +263,9 @@ func (s requestPlanner) planAgent(target Target) Plan {
 		if s.goos == "windows" {
 			return manualPlan(target, "Goose does not publish a native Windows CLI installer; use WSL or the desktop download.", "https://block.github.io/goose/index.html")
 		}
+		if s.goos != "darwin" && s.goos != "linux" {
+			return manualPlan(target, "Goose publishes this installer for macOS and Linux only.", "https://block.github.io/goose/index.html")
+		}
 		return withDocs(s.planShellInstaller(target, "https://github.com/aaif-goose/goose/releases/download/stable/download_cli.sh", "bash"), "https://block.github.io/goose/index.html")
 	case TargetQwen:
 		preferred := s.officialByOS(target,
@@ -279,6 +282,9 @@ func (s requestPlanner) planAgent(target Target) Plan {
 		if s.goos == "windows" {
 			return manualPlan(target, "Devin for Terminal documents installation through WSL on Windows.", "https://docs.devin.ai/get-started/devin-intro")
 		}
+		if s.goos != "darwin" && s.goos != "linux" {
+			return manualPlan(target, "Devin for Terminal publishes this installer for macOS and Linux only.", "https://docs.devin.ai/get-started/devin-intro")
+		}
 		return withDocs(s.planShellInstaller(target, "https://cli.devin.ai/install.sh", "bash"), "https://docs.devin.ai/get-started/devin-intro")
 	case TargetKiro:
 		return s.officialByOS(target,
@@ -292,6 +298,9 @@ func (s requestPlanner) planAgent(target Target) Plan {
 	case TargetMuse:
 		if s.goos == "windows" {
 			return manualPlan(target, "Muse Code does not currently publish a native Windows installer.", "https://ai.meta.com/llama/")
+		}
+		if s.goos != "darwin" && s.goos != "linux" {
+			return manualPlan(target, "Muse Code publishes this installer for macOS and Linux only.", "https://ai.meta.com/llama/")
 		}
 		return withDocs(s.planShellInstaller(target, "https://dev.meta.ai/install.sh", "bash"), "https://ai.meta.com/llama/")
 	case TargetAgy:
@@ -321,6 +330,9 @@ func (s requestPlanner) planAgent(target Target) Plan {
 		if s.goos == "windows" {
 			return manualPlan(target, "Prime Agent currently documents macOS and Linux; use WSL on Windows.", "https://github.com/PrimeIntellect-ai/prime-agent/blob/main/packages/coding-agent/docs/quickstart.md")
 		}
+		if s.goos != "darwin" && s.goos != "linux" {
+			return manualPlan(target, "Prime Agent publishes this installer for macOS and Linux only.", "https://github.com/PrimeIntellect-ai/prime-agent/blob/main/packages/coding-agent/docs/quickstart.md")
+		}
 		return withDocs(s.planShellInstaller(target, "https://app.primeintellect.ai/prime-agent/install.sh", "sh"), "https://github.com/PrimeIntellect-ai/prime-agent/blob/main/packages/coding-agent/docs/quickstart.md")
 	case TargetOMP:
 		preferred := s.officialByOS(target,
@@ -337,10 +349,14 @@ func (s requestPlanner) planAgent(target Target) Plan {
 }
 
 func (s *Service) officialByOS(target Target, unixURL, unixShell, windowsURL, docsURL string) Plan {
-	if s.goos == "windows" {
+	switch s.goos {
+	case "windows":
 		return withDocs(s.planPowerShellInstaller(target, windowsURL), docsURL)
+	case "darwin", "linux":
+		return withDocs(s.planShellInstaller(target, unixURL, unixShell), docsURL)
+	default:
+		return manualPlan(target, fmt.Sprintf("The official installer does not support %s.", s.goos), docsURL)
 	}
-	return withDocs(s.planShellInstaller(target, unixURL, unixShell), docsURL)
 }
 
 func (s *Service) planShellInstaller(target Target, url, shell string) Plan {

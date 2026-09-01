@@ -45,6 +45,24 @@ func TestRunInstallScriptDownloadsExecutesAndCleansUp(t *testing.T) {
 	}
 }
 
+func TestRunInstallScriptCleansUpAfterExecutionFailure(t *testing.T) {
+	t.Parallel()
+	server := httptest.NewTLSServer(httpHandler("#!/bin/sh\nexit 7"))
+	t.Cleanup(server.Close)
+	dataDir := t.TempDir()
+
+	_, err := newAdapter(dataDir, server.Client()).RunInstallScript(context.Background(), ports.InstallScriptCommand{
+		URL: server.URL, Interpreter: []string{"sh"},
+	}, io.Discard, io.Discard)
+	if err == nil {
+		t.Fatal("expected execution failure")
+	}
+	entries, readErr := os.ReadDir(filepath.Join(dataDir, "installers", "tmp"))
+	if readErr != nil || len(entries) != 0 {
+		t.Fatalf("temporary scripts remain after failure: %v, %v", entries, readErr)
+	}
+}
+
 func TestRunInstallScriptAllowsFiveHTTPSRedirects(t *testing.T) {
 	t.Parallel()
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -39,7 +39,7 @@ func (a Adapter) RunInstallScript(ctx context.Context, command ports.InstallScri
 
 	downloadCtx, cancelDownload := context.WithTimeout(ctx, remoteScriptDownloadTimeout)
 	defer cancelDownload()
-	req, err := http.NewRequestWithContext(downloadCtx, http.MethodGet, command.URL, nil)
+	req, err := http.NewRequestWithContext(downloadCtx, http.MethodGet, command.URL, http.NoBody)
 	if err != nil {
 		return result, fmt.Errorf("create installer request: %w", err)
 	}
@@ -57,13 +57,16 @@ func (a Adapter) RunInstallScript(ctx context.Context, command ports.InstallScri
 	if err != nil {
 		return result, fmt.Errorf("download installer: %w", err)
 	}
-	defer response.Body.Close()
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		return result, fmt.Errorf("download installer: HTTP %s", response.Status)
+		return result, errors.Join(fmt.Errorf("download installer: HTTP %s", response.Status), response.Body.Close())
 	}
 	body, err := io.ReadAll(io.LimitReader(response.Body, remoteScriptMaxBytes+1))
+	closeErr := response.Body.Close()
 	if err != nil {
-		return result, fmt.Errorf("read installer: %w", err)
+		return result, errors.Join(fmt.Errorf("read installer: %w", err), closeErr)
+	}
+	if closeErr != nil {
+		return result, fmt.Errorf("close installer response: %w", closeErr)
 	}
 	if len(body) > remoteScriptMaxBytes {
 		return result, fmt.Errorf("installer exceeds %d-byte download limit", remoteScriptMaxBytes)
@@ -75,15 +78,17 @@ func (a Adapter) RunInstallScript(ctx context.Context, command ports.InstallScri
 	if err := os.MkdirAll(a.installerRoot, 0o700); err != nil {
 		return result, fmt.Errorf("create installer scratch directory: %w", err)
 	}
-	if err := os.Chmod(a.installerRoot, 0o700); err != nil {
+	if err := os.Chmod(a.installerRoot, 0o700); err != nil { //nolint:gosec // Private directories need owner traversal.
 		return result, fmt.Errorf("secure installer scratch directory: %w", err)
 	}
 	jobDir, err := os.MkdirTemp(a.installerRoot, "job-*")
 	if err != nil {
 		return result, fmt.Errorf("create installer job directory: %w", err)
 	}
-	if err := os.Chmod(jobDir, 0o700); err != nil {
-		_ = os.RemoveAll(jobDir)
+	defer func() {
+		err = errors.Join(err, os.RemoveAll(jobDir))
+	}()
+	if err := os.Chmod(jobDir, 0o700); err != nil { //nolint:gosec // Private directories need owner traversal.
 		return result, fmt.Errorf("secure installer job directory: %w", err)
 	}
 	extension := ".sh"
@@ -93,17 +98,14 @@ func (a Adapter) RunInstallScript(ctx context.Context, command ports.InstallScri
 	}
 	scriptPath := filepath.Join(jobDir, "installer"+extension)
 	if err := os.WriteFile(scriptPath, body, 0o600); err != nil {
-		_ = os.RemoveAll(jobDir)
 		return result, fmt.Errorf("write installer script: %w", err)
 	}
 	if err := os.Chmod(scriptPath, 0o600); err != nil {
-		_ = os.RemoveAll(jobDir)
 		return result, fmt.Errorf("secure installer script: %w", err)
 	}
 
 	argv := append([]string(nil), command.Interpreter...)
 	argv = append(argv, scriptPath)
-	runErr := a.RunInstall(ctx, ports.InstallCommand{Argv: argv, Env: command.Env}, stdout, stderr)
-	cleanupErr := os.RemoveAll(jobDir)
-	return result, errors.Join(runErr, cleanupErr)
+	err = a.RunInstall(ctx, ports.InstallCommand{Argv: argv, Env: command.Env}, stdout, stderr)
+	return result, err
 }

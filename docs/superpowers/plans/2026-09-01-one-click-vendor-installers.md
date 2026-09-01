@@ -306,6 +306,7 @@ Use this complete URL registry; do not discover URLs dynamically:
 | Muse | `https://dev.meta.ai/install.sh` / `bash` | none; keep unsupported instructions |
 | AGY | `https://antigravity.google/cli/install.sh` / `bash` | `https://antigravity.google/cli/install.ps1` |
 | Autohand | `https://autohand.ai/install.sh` / `sh` | `https://autohand.ai/install.ps1` |
+| Kimchi | `https://github.com/getkimchi/kimchi/releases/latest/download/install.sh` / `sh` | `https://github.com/getkimchi/kimchi/releases/latest/download/install.ps1` |
 | Prime Agent | `https://app.primeintellect.ai/prime-agent/install.sh` / `sh` | none; keep WSL instructions |
 | OMP | `https://omp.sh/install` / `sh` | `https://omp.sh/install.ps1` |
 
