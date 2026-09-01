@@ -80,7 +80,10 @@ function contentSecurityPolicy(mode: "build" | "serve"): string {
 		// impractical because the preamble changes with the plugin version.
 		mode === "serve" ? "script-src 'self' 'unsafe-inline'" : "script-src 'self'",
 		"style-src 'self' 'unsafe-inline'",
-		"img-src 'self' data: http://127.0.0.1:*",
+		// Provider avatars are fetched directly by the renderer. GitHub redirects
+		// profile images to avatars.githubusercontent.com, so both the provider
+		// and its image host must be allowed here.
+		"img-src 'self' data: http://127.0.0.1:* https://github.com https://*.githubusercontent.com https://gitlab.com https://*.gitlab.com https://bitbucket.org https://*.bitbucket.org https://unavatar.io",
 		"font-src 'self' data:",
 		[
 			"connect-src",
