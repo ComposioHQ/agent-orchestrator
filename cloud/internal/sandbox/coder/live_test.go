@@ -94,7 +94,7 @@ func TestLiveLifecycle(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("bootstrap: %v", err)
 	}
-	assertLiveDurableState(t, ctx, client, environment.Target, durableRoot)
+	assertLiveDurableState(t, ctx, client, environment.Target, durableRoot, sessionID)
 	if err := client.Stop(ctx, environment.ID); err != nil {
 		t.Fatalf("stop: %v", err)
 	}
@@ -103,7 +103,7 @@ func TestLiveLifecycle(t *testing.T) {
 		t.Fatalf("start: %v", err)
 	}
 	environment = waitForState(t, ctx, client, environment.ID, sandbox.StateRunning)
-	assertLiveDurableState(t, ctx, client, environment.Target, durableRoot)
+	assertLiveDurableState(t, ctx, client, environment.Target, durableRoot, sessionID)
 	// A restore bootstrap requires the marker written before Stop. If the
 	// template recreated its filesystem, bootstrap fails before starting a new
 	// worker and the live test catches the persistence contract violation.
@@ -131,17 +131,20 @@ func assertLiveDurableState(
 	client *Client,
 	agentID string,
 	durableRoot string,
+	sessionID string,
 ) {
 	t.Helper()
 	checks := []struct {
 		path    string
 		content string
 	}{
+		{path.Join(durableRoot, ".ao", "durable-session-id"), sessionID},
 		{path.Join(durableRoot, "repository", "uncommitted.txt"), "live"},
 		{path.Join(durableRoot, ".ao", "home", ".claude", "projects", "live", "conversation.jsonl"), "{}"},
 		{path.Join(durableRoot, ".ao", "home", ".codex", "sessions", "thread.jsonl"), "state"},
 	}
 	var condition strings.Builder
+	var diagnostics strings.Builder
 	for index, check := range checks {
 		if index > 0 {
 			condition.WriteString(" && ")
@@ -153,10 +156,24 @@ func assertLiveDurableState(
 		condition.WriteString(")\" = ")
 		condition.WriteString(shellQuote(check.content))
 		condition.WriteString(" ]")
+		diagnostics.WriteString("if [ ! -f ")
+		diagnostics.WriteString(shellQuote(check.path))
+		diagnostics.WriteString(" ]; then echo ")
+		diagnostics.WriteString(shellQuote("missing:" + check.path))
+		diagnostics.WriteString("; elif [ \"$(cat ")
+		diagnostics.WriteString(shellQuote(check.path))
+		diagnostics.WriteString(")\" != ")
+		diagnostics.WriteString(shellQuote(check.content))
+		diagnostics.WriteString(" ]; then echo ")
+		diagnostics.WriteString(shellQuote("mismatch:" + check.path))
+		diagnostics.WriteString("; fi\n")
 	}
 	script := "set -u\nattempt=0\nwhile [ $attempt -lt 30 ]; do\n" +
 		"  if " + condition.String() + "; then echo " + bootstrapOK + "; exit 0; fi\n" +
-		"  attempt=$((attempt + 1))\n  sleep 1\ndone\nexit 1\n"
+		"  attempt=$((attempt + 1))\n  sleep 1\ndone\n" + diagnostics.String() +
+		"if [ -f " + shellQuote(path.Join(durableRoot, ".ao", "worker", "worker.log")) +
+		" ]; then echo worker-log:; tail -c 2048 " + shellQuote(path.Join(durableRoot, ".ao", "worker", "worker.log")) +
+		"; fi\necho " + bootstrapFailed + ":1\nexit 1\n"
 	ptyURL, err := url.Parse(client.baseURL + "/api/v2/workspaceagents/" + url.PathEscape(agentID) + "/pty")
 	if err != nil {
 		t.Fatalf("build persistence probe URL: %v", err)
