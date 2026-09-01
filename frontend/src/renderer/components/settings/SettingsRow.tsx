@@ -38,6 +38,8 @@ export function SettingsInlineInput({
 	label,
 	value,
 	onChange,
+	onCommit,
+	onCancel,
 	placeholder,
 	className,
 }: {
@@ -45,6 +47,8 @@ export function SettingsInlineInput({
 	label: string;
 	value: string;
 	onChange: (value: string) => void;
+	onCommit?: (value: string) => void;
+	onCancel?: () => void;
 	placeholder?: string;
 	className?: string;
 }) {
@@ -60,7 +64,10 @@ export function SettingsInlineInput({
 		input.select();
 	}, [editing]);
 
-	const finishEditing = () => setEditing(false);
+	const finishEditing = () => {
+		setEditing(false);
+		onCommit?.(value);
+	};
 
 	const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
 		if (event.key === "Enter") {
@@ -71,7 +78,8 @@ export function SettingsInlineInput({
 		if (event.key === "Escape") {
 			event.preventDefault();
 			event.stopPropagation();
-			finishEditing();
+			setEditing(false);
+			onCancel?.();
 		}
 	};
 
@@ -112,6 +120,8 @@ export function SettingsInputRow({
 	id,
 	value,
 	onChange,
+	onCommit,
+	onCancel,
 	placeholder,
 }: {
 	icon?: LucideIcon;
@@ -119,11 +129,21 @@ export function SettingsInputRow({
 	id: string;
 	value: string;
 	onChange: (value: string) => void;
+	onCommit?: (value: string) => void;
+	onCancel?: () => void;
 	placeholder?: string;
 }) {
 	return (
 		<SettingsRow icon={icon} label={label}>
-			<SettingsInlineInput id={id} label={label} value={value} onChange={onChange} placeholder={placeholder} />
+			<SettingsInlineInput
+				id={id}
+				label={label}
+				value={value}
+				onChange={onChange}
+				onCommit={onCommit}
+				onCancel={onCancel}
+				placeholder={placeholder}
+			/>
 		</SettingsRow>
 	);
 }

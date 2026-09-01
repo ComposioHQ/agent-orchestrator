@@ -227,7 +227,11 @@ func (s *Service) OpenShellTerminal(ctx context.Context, in OpenShellTerminalInp
 	if err != nil {
 		return ShellTerminal{}, fmt.Errorf("open shell terminal: list existing terminals: %w", err)
 	}
-	argv := resolveUserLoginShell()
+	argv, usedFallback := resolveUserLoginShell(in.Shell)
+	if usedFallback {
+		return ShellTerminal{}, apierr.Invalid("SHELL_TERMINAL_SHELL_UNAVAILABLE",
+			fmt.Sprintf("The selected shell is unavailable: %s. Choose another shell in Settings.", in.Shell), nil)
+	}
 	if len(argv) == 0 {
 		return ShellTerminal{}, apierr.Internal("SHELL_TERMINAL_NO_SHELL",
 			"Could not determine a shell to launch. Set SHELL (macOS/Linux) or ComSpec (Windows).")

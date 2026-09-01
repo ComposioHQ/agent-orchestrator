@@ -13,6 +13,7 @@ import { randomUUID } from "node:crypto";
 import type {
 	BrowserAnnotationCancelPayload,
 	BrowserAnnotationContext,
+	BrowserAnnotationDraft,
 	BrowserAnnotationModeInput,
 	BrowserAnnotationPageCancelPayload,
 	BrowserAnnotationPageSubmitPayload,
@@ -21,7 +22,7 @@ import type {
 	BrowserAnnotationSubmitPayload,
 } from "../shared/browser-annotations";
 import { attachAppShortcuts } from "./app-shortcuts";
-import type { KeybindingOverrides } from "../shared/shortcuts";
+import type { AppShortcutId, KeybindingOverrides, ShortcutChord } from "../shared/shortcuts";
 import type { AgentBrowserRuntime } from "./agent-browser-runtime";
 import type { AgentBrowserTarget, AgentBrowserTargetProvider } from "./agent-browser-cdp-bridge";
 import { matchInstruction } from "./browser-act-matcher";
@@ -90,6 +91,7 @@ export type BrowserTabsState = {
 	change?: {
 		kind: "opened" | "popup" | "selected" | "closed";
 		tabId: string;
+		tab?: BrowserTabState;
 	};
 };
 
@@ -138,6 +140,60 @@ type BrowserOpenTabInput = {
 	viewId: string;
 	url?: string;
 };
+
+type BrowserShortcutInput = {
+	key: string;
+	control: boolean;
+	meta: boolean;
+	shift: boolean;
+	alt: boolean;
+	type: string;
+	isAutoRepeat?: boolean;
+};
+
+export type BrowserShortcutAction =
+	| "new-tab"
+	| "reopen-tab"
+	| "close-tab"
+	| "focus-location"
+	| "reload";
+
+export function browserShortcutAction(input: BrowserShortcutInput, isMac: boolean): BrowserShortcutAction | null {
+	const primaryModifier = isMac ? input.meta && !input.control : input.control && !input.meta;
+	if (primaryModifier && !input.alt) {
+		if (input.shift) return input.key.toLowerCase() === "t" ? "reopen-tab" : null;
+		switch (input.key.toLowerCase()) {
+			case "t":
+				return "new-tab";
+			case "w":
+				return "close-tab";
+			case "l":
+				return "focus-location";
+			case "r":
+				return "reload";
+		}
+	}
+	return null;
+}
+
+export function shouldHandleAppShortcutInBrowserContext(
+	id: AppShortcutId,
+	chord: ShortcutChord,
+	isMac: boolean,
+): boolean {
+	if (id === "new-shell-terminal" || id === "close-shell-terminal") return false;
+	return browserShortcutAction(
+		{
+			key: chord.key,
+			control: chord.ctrl,
+			meta: chord.meta,
+			shift: chord.shift,
+			alt: chord.alt,
+			type: "keyDown",
+		},
+		isMac,
+	) === null;
+}
 
 type BrowserWebContents = Pick<
 	WebContents,
@@ -251,6 +307,8 @@ export type BrowserViewHost = {
 	toggleDevToolsForLastFocused: () => Promise<BrowserDevToolsState | null>;
 	// Drop the remembered panel; call when the shell gains focus for a real reason so a stale panel stops absorbing menu actions.
 	forgetLastFocusedPanel: () => void;
+	// Whether browser-owned UI was the most recently used application surface.
+	isLastUsedBrowser: () => boolean;
 	// Same "identical bounds are a no-op, so nudge and restore" trick
 	// window-composition.ts uses for the shell's own stale-surface bug, applied
 	// to the live page's own view. Call right after raising the transparent
@@ -266,6 +324,7 @@ type BrowserEntry = {
 	ready: Promise<void>;
 	state: BrowserNavState;
 	annotationEnabled: boolean;
+	annotationDraft: BrowserAnnotationDraft | null;
 	networkCapture?: BrowserNetworkCapture;
 	favicon?: string;
 	// URL of the favicon currently applied to `favicon` (fetch succeeded).
@@ -466,8 +525,12 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	let disposePromise: Promise<void> | null = null;
 	// viewId of the panel that most recently held focus; cleared when it is hidden or destroyed.
 	let lastFocusedViewId: string | null = null;
+	// Separate from native focus: the address bar and tab strip live in the shell
+	// renderer, but browser shortcuts must continue to target their panel.
+	let lastUsedViewId: string | null = null;
 	const forgetIfFocused = (viewId: string): void => {
 		if (lastFocusedViewId === viewId) lastFocusedViewId = null;
+		if (lastUsedViewId === viewId) lastUsedViewId = null;
 	};
 	const setAgentBrowserActivity = (
 		session: BrowserSessionEntry,
@@ -554,6 +617,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			ready: Promise.resolve(),
 			state,
 			annotationEnabled: false,
+			annotationDraft: null,
 		};
 		session.tabs.set(tabId, entry);
 		tabsByWebContentsId.set(view.webContents.id, entry);
@@ -623,7 +687,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			true,
 			options.getKeybindingOverrides,
 			options.isKeybindingRecording,
-			(id) => id !== "close-shell-terminal" || options.isCloseShellTerminalShortcutEnabled?.() !== false,
+			(id, chord) => shouldHandleAppShortcutInBrowserContext(id, chord, Boolean(options.isMac)),
 			(id) => {
 				if (id !== "toggle-browser-devtools") return;
 				lastFocusedViewId = session.viewId;
@@ -632,7 +696,10 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		);
 		view.webContents.on("focus", () => {
 			lastFocusedViewId = session.viewId;
+			lastUsedViewId = session.viewId;
+			shellWebContents.send("browser:pageFocus", session.viewId);
 		});
+		attachBrowserShortcuts(view.webContents, () => session, true);
 		// A newly-created WebContentsView reports about:blank before its renderer
 		// has actually been initialized. CDP commands can hang until that initial
 		// document has completed, so make readiness explicit for every tab.
@@ -888,6 +955,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		}
 		const tab = session.tabs.get(tabId);
 		if (!tab) throw browserError("TAB_NOT_FOUND", `Browser tab ${tabId} does not exist`);
+		const closedTab = tabResult(tab, false);
 		const wasActive = tabId === session.activeTabId;
 		disposeNetworkCapture(tab, "tab-closed");
 		if (session.networkTabId === tabId) session.networkTabId = undefined;
@@ -898,9 +966,105 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			const nextTabId = [...session.tabs.keys()].at(-1)!;
 			activateTab(session, nextTabId, false);
 		}
-		const state = listTabs(session, { kind: "closed", tabId });
+		const state = listTabs(session, { kind: "closed", tabId, tab: closedTab });
 		shellContents(options).send("browser:tabsState", state);
 		return state;
+	}
+
+	const openUserTab = async (session: BrowserSessionEntry, url?: string): Promise<BrowserTabsState> => {
+		if (!options.agentBrowserRuntime) {
+			await openTab(session, url, true);
+			return listTabs(session);
+		}
+		return queueNativeOperation(session, async () => {
+			await options.agentBrowserRuntime!.runAction(
+				session.sessionId,
+				"tab-new",
+				{ url },
+				agentBrowserTargets(session),
+			);
+			session.nativeActiveTabId = session.activeTabId;
+			return listTabs(session);
+		});
+	};
+
+	const closeUserTab = async (session: BrowserSessionEntry, tabId: string): Promise<BrowserTabsState> => {
+		if (session.tabs.size === 1) return listTabs(session);
+		if (!session.tabs.has(tabId)) return listTabs(session);
+		if (!options.agentBrowserRuntime) return closeTab(session, tabId);
+		return queueNativeOperation(session, async () => {
+			await ensureNativeActiveTab(session);
+			try {
+				await options.agentBrowserRuntime!.runAction(
+					session.sessionId,
+					"tab-close",
+					{ tabId },
+					agentBrowserTargets(session),
+				);
+			} catch (error) {
+				if (!isAgentBrowserCommandFailure(error)) throw error;
+				if (!session.tabs.has(tabId)) return listTabs(session);
+				return closeTab(session, tabId);
+			}
+			session.nativeActiveTabId = undefined;
+			await ensureNativeActiveTab(session);
+			return listTabs(session);
+		});
+	};
+
+	const focusLocation = (session: BrowserSessionEntry): void => {
+		lastUsedViewId = session.viewId;
+		shellWebContents.focus();
+		shellWebContents.send("browser:focusLocation", session.viewId);
+	};
+	const reopenClosedTab = (session: BrowserSessionEntry): void => {
+		shellWebContents.send("browser:reopenClosedTab", session.viewId);
+	};
+	function attachBrowserShortcuts(
+		contents: Pick<WebContents, "on">,
+		getSession: () => BrowserSessionEntry | undefined,
+		isNativePage: boolean,
+	): void {
+		contents.on("before-input-event", (event, input) => {
+			if (input.type !== "keyDown" || input.isAutoRepeat || options.isKeybindingRecording?.()) return;
+			const action = browserShortcutAction(input, Boolean(options.isMac));
+			if (!action) return;
+			const session = getSession();
+			if (!session) return;
+			event.preventDefault();
+			lastUsedViewId = session.viewId;
+			if (action === "focus-location") {
+				focusLocation(session);
+				return;
+			}
+			if (action === "reload") {
+				activeEntry(session).view.webContents.reload();
+				return;
+			}
+			if (action === "new-tab") {
+				void openUserTab(session).then(() => focusLocation(session)).catch(() => undefined);
+				return;
+			}
+			if (action === "reopen-tab") {
+				void queueNativeOperation(session, async () => reopenClosedTab(session)).catch(() => undefined);
+				return;
+			}
+			const closingTabId = session.activeTabId;
+			void closeUserTab(session, closingTabId)
+				.then(() => {
+					if (isNativePage && session.tabs.has(session.activeTabId)) {
+						activeEntry(session).view.webContents.focus();
+					}
+				})
+				.catch(() => undefined);
+		});
+	}
+
+	if (typeof shellWebContents.on === "function") {
+		attachBrowserShortcuts(shellWebContents, () => {
+			if (lastUsedViewId === null) return undefined;
+			return entries.get(lastUsedViewId);
+		}, false);
 	}
 
 	function agentBrowserTargets(session: BrowserSessionEntry): AgentBrowserTargetProvider {
@@ -1122,10 +1286,12 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 
 	const navigateEntry = async (entry: BrowserEntry, url: string): Promise<BrowserNavState> => {
 		await entry.ready;
-		cancelAnnotation(options, entry, "navigation");
 		const normalized = normalizeBrowserURL(url);
 		if (!isAllowedBrowserURL(normalized.href, options.rendererOrigin)) {
 			throw new Error("Unsupported browser URL");
+		}
+		if (!entry.annotationDraft || !isSameAnnotationPage(annotationDraftURL(entry.annotationDraft), normalized.href)) {
+			cancelAnnotation(options, entry, "navigation");
 		}
 		try {
 			await entry.view.webContents.loadURL(normalized.href);
@@ -1235,12 +1401,15 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		viewId: string,
 		action: (contents: BrowserWebContents) => void,
 		cancelForNavigation = false,
+		reapplyBounds = false,
 	): BrowserNavState => {
 		const session = entries.get(viewId);
 		if (!session) return emptyNavState(viewId);
 		const entry = activeEntry(session);
 		if (cancelForNavigation) {
 			cancelAnnotation(options, entry, "navigation");
+		}
+		if (cancelForNavigation || reapplyBounds) {
 			applySessionBounds(session, entry);
 		}
 		action(entry.view.webContents);
@@ -1253,8 +1422,18 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		if (!session) return;
 		const entry = activeEntry(session);
 		entry.annotationEnabled = input.enabled;
-		entry.view.webContents.send("browser:annotation:setMode", { enabled: input.enabled });
+		if (!input.enabled) entry.annotationDraft = null;
+		entry.view.webContents.send("browser:annotation:setMode", {
+			enabled: input.enabled,
+			...(input.enabled && entry.annotationDraft ? { draft: entry.annotationDraft } : {}),
+		});
 		if (input.enabled) entry.view.webContents.focus();
+	};
+
+	const updateAnnotationDraft = (event: IpcMainEvent, draft: BrowserAnnotationDraft | undefined): void => {
+		const entry = tabsByWebContentsId.get(event.sender.id);
+		if (!entry?.annotationEnabled || !isValidAnnotationDraft(draft)) return;
+		entry.annotationDraft = draft;
 	};
 
 	const forwardAnnotationSubmit = async (
@@ -1273,6 +1452,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			return;
 		}
 		entry.annotationEnabled = false;
+		entry.annotationDraft = null;
 		// Captured now, before returning: the preload only tears down the
 		// highlight overlay after this handler resolves, so the frame we grab
 		// here still has the selection ring(s) on it and not the prompt box
@@ -1295,6 +1475,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		const viewId = entry?.state.viewId;
 		if (!viewId || !entry) return;
 		entry.annotationEnabled = false;
+		entry.annotationDraft = null;
 		const forwarded: BrowserAnnotationCancelPayload = {
 			viewId,
 			reason: payload?.reason ?? "cancel",
@@ -1337,10 +1518,10 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			: emptyNavState(viewId),
 	);
 	handle("browser:reload", (event, viewId: string) =>
-		isRendererOwned(event, viewId) ? invokeNav(viewId, (contents) => contents.reload(), true) : emptyNavState(viewId),
+		isRendererOwned(event, viewId) ? invokeNav(viewId, (contents) => contents.reload(), false, true) : emptyNavState(viewId),
 	);
 	handle("browser:stop", (event, viewId: string) =>
-		isRendererOwned(event, viewId) ? invokeNav(viewId, (contents) => contents.stop()) : emptyNavState(viewId),
+		isRendererOwned(event, viewId) ? invokeNav(viewId, (contents) => contents.stop(), true) : emptyNavState(viewId),
 	);
 	handle("browser:getTabs", (event, viewId: string) => {
 		const session = entries.get(viewId);
@@ -1401,6 +1582,12 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			return listTabs(session);
 		});
 	});
+	on("browser:panelUsed", (event, viewId: string) => {
+		if (isRendererOwned(event, viewId) && entries.has(viewId)) lastUsedViewId = viewId;
+	});
+	on("browser:panelBlur", (event, viewId: string) => {
+		if (isRendererOwned(event, viewId) && lastUsedViewId === viewId) lastUsedViewId = null;
+	});
 	handle("browser:devtools", (event, input: BrowserDevToolsInput) => {
 		if (!input || typeof input.viewId !== "string" || !isRendererOwned(event, input.viewId)) {
 			return emptyDevToolsState(input?.viewId ?? "");
@@ -1423,22 +1610,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			}
 			url = normalized.href;
 		}
-		if (!options.agentBrowserRuntime) {
-			await openTab(session, url, true);
-			return listTabs(session);
-		}
-		return queueNativeOperation(session, async () => {
-			// Let agent-browser create UI tabs too so its stable tab registry and
-			// AO's WebContentsView IDs stay aligned for later select/close commands.
-			await options.agentBrowserRuntime!.runAction(
-				session.sessionId,
-				"tab-new",
-				{ url },
-				agentBrowserTargets(session),
-			);
-			session.nativeActiveTabId = session.activeTabId;
-			return listTabs(session);
-		});
+		return openUserTab(session, url);
 	});
 	handle("browser:annotation:setMode", (event, input: BrowserAnnotationModeInput) => setAnnotationMode(event, input));
 	on("browser:destroy", (event, viewId: string) => {
@@ -1450,6 +1622,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	on("browser:annotation:cancel", (event, payload: BrowserAnnotationPageCancelPayload) =>
 		forwardAnnotationCancel(event, payload),
 	);
+	on("browser:annotation:draft", (event, draft: BrowserAnnotationDraft) => updateAnnotationDraft(event, draft));
 
 	return {
 		execute: async (sessionId, action, args = {}, signal) => {
@@ -1719,7 +1892,9 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		},
 		forgetLastFocusedPanel: () => {
 			lastFocusedViewId = null;
+			lastUsedViewId = null;
 		},
+		isLastUsedBrowser: () => lastUsedViewId !== null && entries.has(lastUsedViewId),
 		// Reported live (macOS, maximized/popped-out panel): opening an overlay
 		// (e.g. a toolbar dropdown) over the browser panel blanks the live page
 		// to black instead of showing it behind the dropdown, and a plain bounds
@@ -1918,6 +2093,10 @@ function hardenWebContents(
 			event.preventDefault();
 			entry.state = { ...entry.state, error: "Unsupported browser URL" };
 			shellContents(options).send("browser:navState", entry.state);
+			return;
+		}
+		if (entry.annotationDraft && !isSameAnnotationPage(annotationDraftURL(entry.annotationDraft), url)) {
+			cancelAnnotation(options, entry, "navigation");
 		}
 	};
 	contents.on("will-navigate", blockUnsafeNavigation);
@@ -1937,6 +2116,9 @@ function wireNavEvents(
 		if (isActive()) pushNavState(options, entry);
 	};
 	contents.on("did-navigate", (_event, url) => {
+		if (entry.annotationDraft && !isSameAnnotationPage(annotationDraftURL(entry.annotationDraft), url)) {
+			cancelAnnotation(options, entry, "navigation");
+		}
 		clearStaleFavicon(entry, url);
 		if (isActive()) syncActiveBounds();
 		update();
@@ -1944,14 +2126,21 @@ function wireNavEvents(
 	contents.on("did-navigate-in-page", update);
 	contents.on("page-title-updated", update);
 	contents.on("did-start-loading", () => {
-		cancelAnnotation(options, entry, "navigation");
 		update();
 	});
 	contents.on("did-stop-loading", () => {
+		if (entry.annotationEnabled) {
+			contents.send("browser:annotation:setMode", {
+				enabled: true,
+				...(entry.annotationDraft ? { draft: entry.annotationDraft } : {}),
+			});
+			contents.focus();
+		}
 		update();
 	});
-	contents.on("did-fail-load", (_event, errorCode, errorDescription) => {
-		if (errorCode === -3) return;
+	contents.on("did-fail-load", (_event, errorCode, errorDescription, _validatedURL, isMainFrame) => {
+		if (!isMainFrame || errorCode === -3) return;
+		cancelAnnotation(options, entry, "navigation");
 		if (isActive()) entry.view.setVisible?.(false);
 		entry.state = { ...readNavState(entry), error: String(errorDescription || "Unable to load page") };
 		if (isActive()) shellContents(options).send("browser:navState", entry.state);
@@ -2044,11 +2233,34 @@ function cancelAnnotation(
 ): void {
 	if (!entry.annotationEnabled) return;
 	entry.annotationEnabled = false;
+	entry.annotationDraft = null;
 	entry.view.webContents.send("browser:annotation:setMode", { enabled: false });
 	shellContents(options).send("browser:annotation:canceled", {
 		viewId: entry.state.viewId,
 		reason,
 	});
+}
+
+function annotationDraftURL(draft: BrowserAnnotationDraft): string {
+	return draft.selection.kind === "element" ? draft.selection.context.url : (draft.selection.contexts[0]?.url ?? "");
+}
+
+function isSameAnnotationPage(source: string, destination: string): boolean {
+	try {
+		const sourceURL = new URL(source);
+		const destinationURL = new URL(destination);
+		sourceURL.hash = "";
+		destinationURL.hash = "";
+		return sourceURL.href === destinationURL.href;
+	} catch {
+		return source === destination;
+	}
+}
+
+function isValidAnnotationDraft(value: unknown): value is BrowserAnnotationDraft {
+	if (!value || typeof value !== "object") return false;
+	const draft = value as Partial<BrowserAnnotationDraft>;
+	return typeof draft.instruction === "string" && isValidAnnotationSelection(draft.selection);
 }
 
 function pushNavState(options: BrowserViewHostOptions, entry: BrowserEntry): BrowserNavState {

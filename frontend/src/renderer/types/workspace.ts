@@ -168,6 +168,9 @@ export function canonicalTrackerIssueId(issueId?: string): string | undefined {
 
 export type ProjectKind = "single_repo" | "workspace" | "scratch";
 
+/** Sentinel `kind` value for projects hosted by the AO cloud control plane. */
+export const CLOUD_PROJECT_KIND = "cloud" as const;
+
 const projectKinds = new Set<ProjectKind>(["single_repo", "workspace", "scratch"]);
 
 export function toProjectKind(kind?: string): ProjectKind | undefined {
@@ -297,9 +300,10 @@ export type WorkspaceSummary = {
 	/**
 	 * Discriminator for where the project lives. Local projects carry the
 	 * daemon's ProjectKind (or undefined for older daemons); projects hosted by
-	 * the AO cloud control plane carry "cloud" — branch on `kind === "cloud"`.
+	 * the AO cloud control plane carry CLOUD_PROJECT_KIND — branch on
+	 * `kind === CLOUD_PROJECT_KIND`.
 	 */
-	kind?: ProjectKind | "cloud";
+	kind?: ProjectKind | typeof CLOUD_PROJECT_KIND;
 	/** Local checkout path; empty string for cloud projects (no local folder). */
 	path: string;
 	workspaceRepos?: WorkspaceRepoSummary[];

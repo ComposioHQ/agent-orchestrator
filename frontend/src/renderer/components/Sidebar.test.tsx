@@ -94,7 +94,7 @@ vi.mock("@dnd-kit/core", async (importOriginal) => {
 			if (id && onDragEnd) dragEnds.set(id, onDragEnd);
 			if (id && onDragOver) dragOvers.set(id, onDragOver);
 			if (id && onDragStart) dragStarts.set(id, onDragStart);
-			return children;
+			return <div data-dnd-context={id}>{children}</div>;
 		},
 		DragOverlay: ({ children }: { children: React.ReactNode }) => children,
 	};
@@ -2066,6 +2066,22 @@ describe("Sidebar", () => {
 		expect(Array.from(document.querySelectorAll("[data-project-label]"), (node) => node.textContent)).toEqual(["Bravo", "Alpha"]);
 	});
 
+	it("pauses nested session drag contexts during a project drag", async () => {
+		renderSidebar({
+			workspaces: [
+				{ ...workspace, id: "alpha", name: "Alpha", sessions: [{ ...session, id: "alpha-session", workspaceId: "alpha" }] },
+				{ ...workspace, id: "bravo", name: "Bravo", sessions: [{ ...session, id: "bravo-session", workspaceId: "bravo" }] },
+			],
+		});
+
+		expect(document.querySelectorAll('[data-dnd-context^="sidebar-sessions-"]')).toHaveLength(2);
+
+		act(() => dragStarts.get("sidebar-projects")?.({ active: { id: "alpha" } }));
+
+		await waitFor(() => expect(document.querySelectorAll('[data-dnd-context^="sidebar-sessions-"]')).toHaveLength(0));
+		expect(screen.getAllByRole("button", { name: "Open fix login" })).toHaveLength(2);
+	});
+
 	it("commits a session drop within its project", () => {
 		renderSidebar({
 			workspaces: [{
@@ -2115,7 +2131,9 @@ describe("Sidebar", () => {
 		act(() => dragEnds.get("sidebar-sessions-proj-1")?.({ active: { id: "second" }, over: { id: "first" } }));
 		act(() => dragStarts.get("sidebar-projects")?.({ active: { id: "proj-1" } }));
 
-		expect(document.querySelector("[data-project-drag-overlay]")).toHaveTextContent(/Project One.*Second.*First/);
+		const overlay = document.querySelector("[data-project-drag-overlay]");
+		expect(overlay).toHaveTextContent(/Project One.*Second.*First/);
+		expect(overlay?.querySelector("[data-project-drag-preview-session]")).toHaveClass("pl-0.5");
 	});
 
 	it("keeps hidden sessions out of compact project drag previews", () => {
@@ -2153,7 +2171,9 @@ describe("Sidebar", () => {
 				over: { id: "alpha", rect: { height: 32, top: 0 } },
 			}));
 
-			const indicator = document.querySelector("[data-project-drop-indicator]");
+			const target = document.querySelector('[data-project-id="alpha"]');
+			expect(target).toHaveAttribute("data-drop-indicator", "before");
+			const indicator = target?.querySelector('[data-project-drop-indicator="before"]');
 			expect(indicator).toHaveClass("bg-foreground");
 			expect(indicator).not.toHaveClass("bg-white");
 		} finally {
