@@ -102,20 +102,25 @@ func (c *linuxPTYConn) Close() error {
 	var closeErr error
 	c.closeOnce.Do(func() {
 		if c.leaderPID > 0 && c.leaderStartTime > 0 {
-			// Phase 1: Discover session members and signal SIGTERM.
+			// Phase 1: Discover session members and send graceful SIGTERM.
 			procs := linuxFindSessionProcesses(c.leaderPID, c.leaderStartTime)
 			if len(procs) > 0 {
 				signalValidatedSessionProcs(procs, syscall.SIGTERM)
-				if !waitForProcIdentitiesExit(procs, linuxPTYCloseGrace) {
-					// Phase 2: Rediscover current validated session members before SIGKILL escalation.
-					// This filters out processes that exited during the grace period (even if their
-					// PID was recycled) and discovers any late children spawned during the grace period.
-					escalateProcs := linuxFindSessionProcesses(c.leaderPID, c.leaderStartTime)
-					if len(escalateProcs) > 0 {
-						signalValidatedSessionProcs(escalateProcs, syscall.SIGKILL)
-						_ = waitForProcIdentitiesExit(escalateProcs, linuxPTYCloseGrace)
-					}
+				_ = waitForProcIdentitiesExit(procs, linuxPTYCloseGrace)
+			}
+
+			// Phase 2: Unconditionally rediscover validated session members.
+			// This catches:
+			// (a) Processes that ignored or were slow to handle SIGTERM.
+			// (b) Late children spawned by a SIGTERM trap/exit handler before the parent exited.
+			// A bounded loop ensures repeated sweeps with SIGKILL until the session is empty.
+			for attempt := 0; attempt < 3; attempt++ {
+				remaining := linuxFindSessionProcesses(c.leaderPID, c.leaderStartTime)
+				if len(remaining) == 0 {
+					break
 				}
+				signalValidatedSessionProcs(remaining, syscall.SIGKILL)
+				_ = waitForProcIdentitiesExit(remaining, linuxPTYCloseGrace)
 			}
 		}
 		if c.pty != nil {

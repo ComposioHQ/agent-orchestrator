@@ -484,3 +484,40 @@ func TestLinuxPTYCloseDoesNotKillRecycledPIDDuringGracePeriod(t *testing.T) {
 		t.Fatalf("unrelated process %d was killed during grace period escalation", dummyPID)
 	}
 }
+
+func TestLinuxPTYCloseReapsLateChildSpawnedInTERMHandler(t *testing.T) {
+	// A parent process traps TERM: on receiving TERM, it spawns a background sleep job
+	// in the same session and exits immediately (0.05s).
+	conn, err := newConPTY(t.TempDir(), "/bin/bash", []string{
+		"-c", `trap 'sleep 30 & exit 0' TERM; printf 'trap-ready\n'; while true; do sleep 1; done`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	linuxConn, ok := conn.(*linuxPTYConn)
+	if !ok {
+		t.Fatalf("connection type = %T", conn)
+	}
+	leaderPID := linuxConn.leaderPID
+	leaderStartTime := linuxConn.leaderStartTime
+
+	ready := make([]byte, 128)
+	n, err := conn.Read(ready)
+	if err != nil || !strings.Contains(string(ready[:n]), "trap-ready") {
+		t.Fatalf("waiting for trap readiness: output=%q err=%v", ready[:n], err)
+	}
+
+	// Close() will send SIGTERM. The parent's trap handler will spawn a late child
+	// in the session and exit. Close() must discover and reap this late child.
+	if err := conn.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for linuxSessionAlive(leaderPID, leaderStartTime) && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if linuxSessionAlive(leaderPID, leaderStartTime) {
+		t.Fatalf("late child spawned during TERM handler in session %d survived Close()", leaderPID)
+	}
+}
