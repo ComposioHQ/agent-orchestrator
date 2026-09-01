@@ -24,12 +24,11 @@ const (
 	// before falling back. A 30s ticket expired mid-fallback, so every upgrade
 	// arrived already dead and the client retried forever. The ticket stays
 	// single-use and session-scoped; only the window to redeem it is wider.
-	terminalTicketTTL          = 5 * time.Minute
-	terminalReadyTimeout       = 20 * time.Second
-	terminalSessionTTL         = 30 * time.Minute
-	agentTerminalTTL           = 24 * time.Hour
-	terminalInteractionTTL     = 2 * time.Minute
-	terminalInteractionRefresh = 30 * time.Second
+	terminalTicketTTL      = 5 * time.Minute
+	terminalReadyTimeout   = 20 * time.Second
+	terminalSessionTTL     = 30 * time.Minute
+	agentTerminalTTL       = 24 * time.Hour
+	terminalInteractionTTL = 2 * time.Minute
 )
 
 var errTerminalProcessUnavailable = errors.New("terminal process unavailable")
@@ -122,12 +121,6 @@ func (s *Server) connectTerminal(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
-	if err := s.store.RefreshTerminalInteraction(ctx, terminal, terminalInteractionTTL); err != nil {
-		if s.logger != nil {
-			s.logger.Debug("start terminal interaction lease", "error", err, "terminal_id", terminal.ID)
-		}
-	}
-	go s.refreshTerminalInteraction(ctx, terminal)
 	structured := r.URL.Query().Get("protocol") == "2"
 	if structured && terminal.Kind == "workspace" {
 		// Workspace reconnects create a fresh shell. Tell the client to discard
@@ -160,24 +153,6 @@ func (s *Server) connectTerminal(w http.ResponseWriter, r *http.Request) {
 	}
 	status, reason := terminalStreamClose(err, terminal.Kind)
 	_ = connection.Close(status, reason)
-}
-
-func (s *Server) refreshTerminalInteraction(ctx context.Context, terminal domain.TerminalSession) {
-	ticker := time.NewTicker(terminalInteractionRefresh)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			if err := s.store.RefreshTerminalInteraction(ctx, terminal, terminalInteractionTTL); err != nil {
-				if !errors.Is(err, context.Canceled) && s.logger != nil {
-					s.logger.Debug("refresh terminal interaction lease", "error", err, "terminal_id", terminal.ID)
-				}
-				return
-			}
-		}
-	}
 }
 
 func terminalStreamClose(err error, kind string) (websocket.StatusCode, string) {
@@ -242,6 +217,9 @@ func (s *Server) readTerminalInput(
 		}
 		if len(data) == 0 {
 			continue
+		}
+		if err := s.store.RefreshTerminalInteraction(ctx, terminal, terminalInteractionTTL); err != nil {
+			return err
 		}
 		if err := retryTerminalRequest(ctx, func() error {
 			return s.store.QueueTerminalInput(ctx, terminal, message.InputID, data)

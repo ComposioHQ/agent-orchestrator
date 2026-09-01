@@ -239,6 +239,7 @@ All resource routes use `/api/cloud/v1`. Project and session creation require an
 | `POST` | `/orgs/{orgId}/projects/scratch` | Idempotently create a private repository, project, and orchestrator session |
 | `GET/POST` | `/orgs/{orgId}/sessions` | List or create sessions |
 | `GET` | `/orgs/{orgId}/sessions/{sessionId}` | Read a session |
+| `POST` | `/orgs/{orgId}/sessions/{sessionId}/resume` | Record explicit per-session resume intent |
 | `POST` | `/orgs/{orgId}/sessions/{sessionId}/messages` | Durably queue a message |
 | `GET` | `/orgs/{orgId}/sessions/{sessionId}/chat-events` | Replay committed client events |
 | `GET` | `/orgs/{orgId}/sessions/{sessionId}/events` | Replay and stream client events over SSE |

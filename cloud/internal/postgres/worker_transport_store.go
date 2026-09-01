@@ -21,7 +21,7 @@ const (
 	maxTerminalOutputBytes          = 4 << 20
 	maxActiveTerminalSessions       = 8
 	// interactiveSessionLease prevents the idle scanner from pausing a sandbox
-	// while a user is connecting to either terminal surface.
+	// while an explicit resume or fresh terminal input is still active.
 	interactiveSessionLease = 2 * time.Minute
 )
 
@@ -328,35 +328,9 @@ func (s *Store) IssueTerminalTicket(
 	orgID, sessionID, kind string,
 	ttl time.Duration,
 ) (string, []string, error) {
-	// Terminal access is an explicit proof of life. Wake an idle-paused sandbox
-	// and reserve a short interaction lease in a committed transaction before
-	// checking worker readiness so the idle scanner cannot immediately undo the
-	// wake while the browser waits for the worker. The browser retries ticket
-	// creation while the reconciler resumes the provider and the worker
-	// heartbeats again.
-	if err := s.withSessionAccess(ctx, principal, orgID, sessionID, func(tx pgx.Tx, _ sessionAccess) error {
-		_, err := tx.Exec(ctx,
-			`UPDATE ao_sandboxes
-			SET desired_state = CASE WHEN desired_state = 'paused' THEN 'running' ELSE desired_state END,
-				reconcile_after = CASE WHEN desired_state = 'paused' THEN now() ELSE reconcile_after END,
-				startup_started_at = CASE
-					WHEN desired_state = 'paused' THEN now()
-					ELSE startup_started_at
-				END,
-				interactive_until = CASE
-					WHEN interactive_until IS NULL OR interactive_until < now() + $3::interval
-						THEN now() + $3::interval
-					ELSE interactive_until
-				END,
-				updated_at = now()
-			WHERE org_id = $1 AND session_id = $2`,
-			orgID, sessionID, intervalString(interactiveSessionLease),
-		)
-		return err
-	}); err != nil {
-		return "", nil, err
-	}
-
+	// Ticket minting is transport plumbing, not user intent. Retained panes may
+	// retry this call in the background, so it must never wake or keep compute
+	// alive. The explicit resume endpoint and actual terminal input own that.
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
 		return "", nil, fmt.Errorf("generate terminal ticket: %w", err)
@@ -419,27 +393,24 @@ func (s *Store) IssueTerminalTicket(
 	return token, scopes, nil
 }
 
-// RefreshTerminalInteraction extends the short wake lease for a visible
-// workspace terminal. Agent streams are retained in the browser for output
-// continuity, so they deliberately do not prevent normal idle pause.
+// RefreshTerminalInteraction extends the short wake lease after actual user
+// input. Merely opening or retaining either terminal stream is not activity.
 func (s *Store) RefreshTerminalInteraction(
 	ctx context.Context,
 	terminal domain.TerminalSession,
 	ttl time.Duration,
 ) error {
-	if terminal.Kind != "workspace" {
-		return nil
-	}
 	return s.withOrg(ctx, terminal.OrgID, func(tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx,
 			`UPDATE ao_sandboxes
-			SET interactive_until = now() + $1::interval, updated_at = now()
+			SET interactive_until = now() + $1::interval,
+				reconcile_after = now(), updated_at = now()
 			WHERE org_id = $2 AND session_id = $3
 			  AND desired_state = 'running'
 			  AND EXISTS (
 				SELECT 1 FROM ao_terminal_sessions
 				WHERE org_id = $2 AND session_id = $3 AND id = $4
-				  AND worker_epoch = $5 AND kind = 'workspace'
+				  AND worker_epoch = $5
 				  AND state IN ('opening', 'open') AND expires_at > now()
 			  )`,
 			intervalString(ttl), terminal.OrgID, terminal.SessionID,

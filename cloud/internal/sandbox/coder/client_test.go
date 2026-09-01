@@ -162,6 +162,50 @@ func TestTransitionalBuildIsNotReportedStopped(t *testing.T) {
 	}
 }
 
+func TestAutostopMapsToExternalIdleStop(t *testing.T) {
+	t.Parallel()
+	client := &Client{}
+	view := workspace{
+		ID:          testWorkspaceID,
+		LatestBuild: workspaceBuild{Status: "stopped", Reason: "autostop"},
+	}
+	environment := client.toEnvironment(view)
+	if environment.State != sandbox.StateStopped || environment.StopCause != sandbox.StopCauseExternalIdle {
+		t.Fatalf("environment = %+v, want stopped external idle", environment)
+	}
+
+	view.LatestBuild.Reason = "initiator"
+	if environment := client.toEnvironment(view); environment.StopCause != "" {
+		t.Fatalf("manual stop cause = %q, want ambiguous", environment.StopCause)
+	}
+}
+
+func TestExtendDeadline(t *testing.T) {
+	t.Parallel()
+	wanted := time.Date(2026, time.September, 1, 3, 4, 5, 0, time.UTC)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPut || request.URL.Path != "/api/v2/workspaces/"+testWorkspaceID+"/extend" {
+			http.Error(writer, "unexpected route", http.StatusNotFound)
+			return
+		}
+		var body struct {
+			Deadline time.Time `json:"deadline"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			t.Errorf("decode deadline: %v", err)
+		}
+		if !body.Deadline.Equal(wanted) {
+			t.Errorf("deadline = %s, want %s", body.Deadline, wanted)
+		}
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	client := newTestClient(t, server.URL, nil)
+	if err := client.ExtendDeadline(context.Background(), testWorkspaceID, wanted); err != nil {
+		t.Fatalf("extend deadline: %v", err)
+	}
+}
+
 func TestBootstrapWorkerStreamsArchiveWithoutSecretsInURL(t *testing.T) {
 	t.Parallel()
 

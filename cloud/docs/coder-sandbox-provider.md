@@ -28,6 +28,7 @@ AO calls these Coder API surfaces:
 | Inspect | `GET /api/v2/workspaces/{id}` |
 | Recover by AO session | `GET /api/v2/users/{owner}/workspace/{name}` |
 | Start, stop, delete | `POST /api/v2/workspaces/{id}/builds` |
+| Extend an active workspace deadline | `PUT /api/v2/workspaces/{id}/extend` |
 | Install or repair worker | `GET /api/v2/workspaceagents/{agent}/pty` (WebSocket) |
 
 For a quick Community Edition pilot, an API token with `coder:all` is bounded by
@@ -36,9 +37,29 @@ versions that support composite API-token scopes, the narrower set AO needs is
 `coder:workspaces.create`, `coder:workspaces.operate`,
 `coder:workspaces.delete`, and `coder:workspaces.access`.
 
+Deadline extension uses the already-required `coder:workspaces.operate` scope;
+this lifecycle slice adds no additional named Coder API-token scope. The
+ordinary user must still be allowed to operate its own workspace, and the
+template's maximum-runtime policy remains authoritative.
+
 The service plane needs HTTPS and WebSocket connectivity to the Coder URL.
 Workspaces need outbound HTTPS connectivity to `AO_CLOUD_PUBLIC_URL`; neither
 Coder nor the workspace needs inbound connectivity from the AO desktop app.
+
+## Autostop and explicit resume
+
+AO reads the latest Coder build reason. A stopped build whose reason is
+`autostop` or `dormancy` is mapped to the provider-neutral external-idle cause,
+accepted as an AO paused lifecycle state, and left stopped. Opening that
+specific session, sending a message, or requesting an interactive workspace
+operation records resume intent; list requests and terminal reconnects do not.
+
+While an AO turn is queued/running or a recent user interaction lease is live,
+the reconciler keeps a Coder deadline at least ten minutes ahead, refreshing
+when it falls within five minutes. It calls `PUT
+/api/v2/workspaces/{id}/extend` only when Coder already reports a deadline, so a
+template with autostop disabled does not gain one. Extension failures are
+reported without misclassifying or replacing otherwise healthy compute.
 
 ## Template contract
 

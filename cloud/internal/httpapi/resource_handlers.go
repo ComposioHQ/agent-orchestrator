@@ -61,6 +61,9 @@ type sessionResponse struct {
 	ActivityState    string    `json:"activityState"`
 	Status           string    `json:"status"`
 	RuntimeConnected bool      `json:"runtimeConnected"`
+	SandboxProvider  string    `json:"sandboxProvider,omitempty"`
+	DesiredState     string    `json:"desiredState,omitempty"`
+	ObservedState    string    `json:"observedState,omitempty"`
 	RuntimeState     string    `json:"runtimeState,omitempty"`
 	RuntimeError     string    `json:"runtimeError,omitempty"`
 	IsTerminated     bool      `json:"isTerminated"`
@@ -381,21 +384,27 @@ func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"items": items, "page": page})
 }
 
-// wakePausedSessions asks the reconciler to resume this user's idle-paused
-// sandboxes. It intentionally does not wait for NodeOps or a worker heartbeat;
-// callers continue to use the regular session projection for readiness.
-func (s *Server) wakePausedSessions(w http.ResponseWriter, r *http.Request) {
+// resumeSession records one explicit user intent and lets the reconciler own
+// every slow provider/worker transition. The response is the accepted intent,
+// not a claim that the workspace is connected yet.
+func (s *Server) resumeSession(w http.ResponseWriter, r *http.Request) {
 	orgID := chi.URLParam(r, "orgId")
-	if requireUUID(orgID, "orgId") != nil {
-		writeError(w, r, http.StatusBadRequest, "invalid_request", "orgId must be a UUID.")
+	sessionID := chi.URLParam(r, "sessionId")
+	if requireUUID(orgID, "orgId") != nil || requireUUID(sessionID, "sessionId") != nil {
+		writeError(w, r, http.StatusBadRequest, "invalid_request", "orgId and sessionId must be UUIDs.")
 		return
 	}
-	woken, err := s.store.WakePausedSessions(r.Context(), principalFrom(r), orgID)
+	lifecycle, err := s.store.ResumeSession(
+		r.Context(), principalFrom(r), orgID, sessionID,
+	)
 	if err != nil {
 		s.writeStoreError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusAccepted, map[string]any{"woken": woken})
+	writeJSON(w, http.StatusAccepted, map[string]any{"session": map[string]any{
+		"id": lifecycle.SessionID, "sandboxProvider": lifecycle.Provider,
+		"desiredState": lifecycle.DesiredState, "observedState": lifecycle.ObservedState,
+	}})
 }
 
 func (s *Server) getSession(w http.ResponseWriter, r *http.Request) {
@@ -522,6 +531,9 @@ func toSessionResponse(session domain.Session, prs []contract.PRFacts) sessionRe
 		ActivityState:    string(session.ActivityState),
 		Status:           string(session.Status(time.Now().UTC(), prs)),
 		RuntimeConnected: session.RuntimeConnected,
+		SandboxProvider:  session.SandboxProvider,
+		DesiredState:     session.DesiredState,
+		ObservedState:    session.ObservedState,
 		RuntimeState:     session.RuntimeState,
 		RuntimeError:     session.RuntimeError,
 		IsTerminated:     session.IsTerminated,
