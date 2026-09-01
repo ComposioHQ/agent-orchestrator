@@ -39,7 +39,7 @@ func TestLiveKimchiACP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	defer conversation.Close()
+	defer conversation.(ports.ChatProviderTerminator).Terminate()
 
 	// Send a turn and verify streaming + completion.
 	ref, err := conversation.SendTurn(ctx, ports.ChatUserMessage{
@@ -72,6 +72,9 @@ func TestLiveKimchiACP(t *testing.T) {
 				}
 				if !strings.Contains(answer.String(), "AO Kimchi ACP works") {
 					t.Fatalf("answer = %q", answer.String())
+				}
+				if err := conversation.(ports.ChatProviderEventAcknowledger).AcknowledgeProviderEvent(event.ProviderEventID); err != nil {
+					t.Fatalf("acknowledge: %v", err)
 				}
 				return
 			}

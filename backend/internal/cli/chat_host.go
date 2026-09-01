@@ -17,15 +17,22 @@ func newChatHostCommand() *cobra.Command {
 		Hidden:             true,
 		DisableFlagParsing: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) < 5 || args[3] != "--" {
-				return usageError{errors.New("chat-host requires <session> <data-dir> <workdir> -- <provider> [args...]")}
+			protocol := persistenthost.ProtocolRaw
+			separator := 3
+			if len(args) > 3 && args[3] == string(persistenthost.ProtocolACP) {
+				protocol = persistenthost.ProtocolACP
+				separator = 4
+			}
+			if len(args) < separator+2 || args[separator] != "--" {
+				return usageError{errors.New("chat-host requires <session> <data-dir> <workdir> [acp] -- <provider> [args...]")}
 			}
 			return persistenthost.Run(cmd.Context(), persistenthost.Config{
 				SessionID: strings.TrimSpace(args[0]),
 				DataDir:   args[1],
 				Workdir:   args[2],
 				Env:       os.Environ(),
-				Argv:      args[4:],
+				Argv:      args[separator+1:],
+				Protocol:  protocol,
 			})
 		},
 	}

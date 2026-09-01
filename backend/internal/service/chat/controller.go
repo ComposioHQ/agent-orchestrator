@@ -317,6 +317,16 @@ func newController(
 // kept running while AO was detached, so forgetting this turn would let a new
 // Send start a second root turn on the same native conversation.
 func (c *Controller) restoreLiveTurnOwnership(turns []domain.ConversationTurn) {
+	latest := latestLiveProviderTurn(turns)
+	if latest == nil {
+		return
+	}
+	c.pendingTurnID = latest.ProviderTurnID
+	c.ackedTurnID = latest.ProviderTurnID
+	c.state = ports.ChatControllerBusy
+}
+
+func latestLiveProviderTurn(turns []domain.ConversationTurn) *domain.ConversationTurn {
 	var latest *domain.ConversationTurn
 	for i := range turns {
 		turn := &turns[i]
@@ -327,12 +337,7 @@ func (c *Controller) restoreLiveTurnOwnership(turns []domain.ConversationTurn) {
 			latest = turn
 		}
 	}
-	if latest == nil {
-		return
-	}
-	c.pendingTurnID = latest.ProviderTurnID
-	c.ackedTurnID = latest.ProviderTurnID
-	c.state = ports.ChatControllerBusy
+	return latest
 }
 
 // start begins live provider consumption after any durable native history has
@@ -2125,6 +2130,14 @@ func (c *Controller) project() {
 				"session", c.sessionID, "kind", event.Kind, "error", err)
 		} else if projected {
 			c.afterProject(ctx, event, primaryTurn)
+		}
+		if err == nil {
+			if acknowledger, ok := c.conv.(ports.ChatProviderEventAcknowledger); ok && event.ProviderEventID != "" {
+				if ackErr := acknowledger.AcknowledgeProviderEvent(event.ProviderEventID); ackErr != nil {
+					c.log.Warn("failed to acknowledge persistent provider event",
+						"session", c.sessionID, "providerEventId", event.ProviderEventID, "error", ackErr)
+				}
+			}
 		}
 		if lifecycle {
 			c.sendMu.Unlock()

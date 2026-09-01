@@ -1,7 +1,7 @@
 // Package persistenthost keeps a provider stdio process alive while AO's daemon
-// is replaced. The host is deliberately provider-neutral: it forwards newline-
-// delimited protocol frames and knows only how to authenticate one controller,
-// replay output produced while detached, and terminate explicitly.
+// is replaced. Raw protocols are forwarded unchanged. ACP uses a small relay
+// that preserves connection-scoped initialization, session, request-correlation,
+// and in-flight prompt state across daemon attachments.
 package persistenthost
 
 import (
@@ -35,6 +35,23 @@ const (
 	handshakeTimeout = time.Second
 )
 
+// Protocol selects the provider-wire behavior owned by the host.
+type Protocol string
+
+const (
+	// ProtocolRaw preserves the original newline-delimited forwarding profile.
+	ProtocolRaw Protocol = ""
+	// ProtocolACP enables the host-owned ACP correlation and replay profile.
+	ProtocolACP Protocol = "acp"
+
+	// ACPPromptResultMethod is an AO-private notification emitted when an ACP
+	// prompt finishes after the daemon attachment that issued it has gone away.
+	ACPPromptResultMethod = "_ao/persistent_prompt_result"
+	// ACPRequestIDMetaKey carries one host-stable identity on replayable
+	// provider-to-client requests such as permissions and elicitations.
+	ACPRequestIDMetaKey = "ao.persistentRequestId"
+)
+
 var (
 	// ErrAttached reports that another daemon controller owns the host.
 	ErrAttached = errors.New("chat host already has a controller")
@@ -54,6 +71,7 @@ var (
 type Descriptor struct {
 	Version   int       `json:"version"`
 	SessionID string    `json:"sessionId"`
+	Protocol  Protocol  `json:"protocol,omitempty"`
 	Address   string    `json:"address"`
 	Token     string    `json:"token"`
 	PID       int       `json:"pid"`
@@ -67,6 +85,19 @@ type Config struct {
 	Workdir   string
 	Env       []string
 	Argv      []string
+	Protocol  Protocol
+}
+
+// ACPState is the connection-scoped state needed to reconstruct an ACP client
+// without initializing or resuming the same live provider a second time.
+type ACPState struct {
+	InitializeResult     json.RawMessage `json:"initializeResult,omitempty"`
+	SessionResult        json.RawMessage `json:"sessionResult,omitempty"`
+	SessionID            string          `json:"sessionId,omitempty"`
+	SessionMethod        string          `json:"sessionMethod,omitempty"`
+	ActivePrompt         bool            `json:"activePrompt,omitempty"`
+	PendingResult        bool            `json:"pendingResult,omitempty"`
+	PendingResultEventID string          `json:"pendingResultEventId,omitempty"`
 }
 
 // Transport is one authenticated attachment to a persistent provider host.
@@ -75,18 +106,21 @@ type Transport struct {
 	Stdout        io.Reader
 	Reconnected   bool
 	NextRequestID int64
+	ACPState      *ACPState
 }
 
 type hello struct {
-	Version int    `json:"version"`
-	Token   string `json:"token"`
-	Action  string `json:"action"`
+	Version  int      `json:"version"`
+	Token    string   `json:"token"`
+	Action   string   `json:"action"`
+	Protocol Protocol `json:"protocol,omitempty"`
 }
 
 type helloResponse struct {
-	OK            bool   `json:"ok"`
-	Error         string `json:"error,omitempty"`
-	NextRequestID int64  `json:"nextRequestId,omitempty"`
+	OK            bool      `json:"ok"`
+	Error         string    `json:"error,omitempty"`
+	NextRequestID int64     `json:"nextRequestId,omitempty"`
+	ACPState      *ACPState `json:"acpState,omitempty"`
 }
 
 func hostDir(dataDir, sessionID string) (string, error) {
@@ -218,6 +252,9 @@ func randomToken() (string, error) {
 // current AO executable. Failed/incompatible probes never terminate that host.
 func ConnectOrStart(ctx context.Context, cfg Config) (*Transport, error) {
 	if d, err := readDescriptor(cfg.DataDir, cfg.SessionID); err == nil {
+		if d.Protocol != cfg.Protocol {
+			return nil, fmt.Errorf("%w: host protocol=%q requested=%q", ErrIncompatible, d.Protocol, cfg.Protocol)
+		}
 		transport, attachErr := attach(ctx, d, true)
 		if attachErr == nil {
 			return transport, nil
@@ -350,7 +387,7 @@ func attach(ctx context.Context, d Descriptor, reconnected bool) (*Transport, er
 	}
 	finishHandshake := bindConnToContext(handshakeCtx, conn)
 	reader := bufio.NewReader(conn)
-	if err := json.NewEncoder(conn).Encode(hello{Version: ProtocolVersion, Token: d.Token, Action: "attach"}); err != nil {
+	if err := json.NewEncoder(conn).Encode(hello{Version: ProtocolVersion, Token: d.Token, Action: "attach", Protocol: d.Protocol}); err != nil {
 		_ = conn.Close()
 		return nil, finishHandshake(err)
 	}
@@ -379,7 +416,10 @@ func attach(ctx context.Context, d Descriptor, reconnected bool) (*Transport, er
 			return nil, errors.New(response.Error)
 		}
 	}
-	return &Transport{Stdin: conn, Stdout: reader, Reconnected: reconnected, NextRequestID: response.NextRequestID}, nil
+	return &Transport{
+		Stdin: conn, Stdout: reader, Reconnected: reconnected,
+		NextRequestID: response.NextRequestID, ACPState: response.ACPState,
+	}, nil
 }
 
 func bindConnToContext(ctx context.Context, conn net.Conn) func(error) error {
@@ -412,7 +452,7 @@ func Shutdown(ctx context.Context, dataDir, sessionID string) error {
 	}
 	defer func() { _ = conn.Close() }()
 	finishHandshake := bindConnToContext(handshakeCtx, conn)
-	if err := json.NewEncoder(conn).Encode(hello{Version: ProtocolVersion, Token: d.Token, Action: "shutdown"}); err != nil {
+	if err := json.NewEncoder(conn).Encode(hello{Version: ProtocolVersion, Token: d.Token, Action: "shutdown", Protocol: d.Protocol}); err != nil {
 		return finishHandshake(err)
 	}
 	var response helloResponse
@@ -451,6 +491,7 @@ func Run(ctx context.Context, cfg Config) error {
 	child := exec.Command(cfg.Argv[0], cfg.Argv[1:]...) //nolint:gosec // provider argv is constructed by AO's driver.
 	child.Dir = cfg.Workdir
 	child.Env = cfg.Env
+	configureProviderProcess(child)
 	stdin, err := child.StdinPipe()
 	if err != nil {
 		return err
@@ -464,9 +505,12 @@ func Run(ctx context.Context, cfg Config) error {
 		return err
 	}
 
-	d := Descriptor{Version: ProtocolVersion, SessionID: cfg.SessionID, Address: listener.Addr().String(), Token: token, PID: os.Getpid(), StartedAt: time.Now().UTC()}
+	d := Descriptor{
+		Version: ProtocolVersion, SessionID: cfg.SessionID, Protocol: cfg.Protocol,
+		Address: listener.Addr().String(), Token: token, PID: os.Getpid(), StartedAt: time.Now().UTC(),
+	}
 	if err := writeDescriptor(cfg.DataDir, d); err != nil {
-		_ = child.Process.Kill()
+		_ = killProviderProcess(child)
 		return err
 	}
 	path, _ := descriptorPath(cfg.DataDir, cfg.SessionID)
@@ -474,8 +518,17 @@ func Run(ctx context.Context, cfg Config) error {
 
 	h := &host{
 		listener: listener, child: child, stdin: stdin, token: token,
+		protocol: cfg.Protocol,
 		detached: make([][]byte, 0, 64), pendingRequests: make(map[string]*pendingRequest),
 		shutdown: make(chan struct{}),
+	}
+	if cfg.Protocol == ProtocolACP {
+		h.acp, err = newACPRelay(filepath.Join(filepath.Dir(path), "acp-prompt.journal"))
+		if err != nil {
+			_ = killProviderProcess(child)
+			return err
+		}
+		defer h.acp.close()
 	}
 	h.cond = sync.NewCond(&h.mu)
 	providerDone := make(chan error, 1)
@@ -487,13 +540,18 @@ func Run(ctx context.Context, cfg Config) error {
 		_ = stdin.Close()
 		select {
 		case <-providerDone:
+			// Wrapper adapters may exit before their provider child. The hosted
+			// process group is the ownership boundary, so explicit shutdown reaps
+			// any descendant that did not follow stdin closure.
+			_ = killProviderProcess(child)
 		case <-time.After(3 * time.Second):
-			_ = child.Process.Kill()
+			_ = killProviderProcess(child)
 		}
 	}
 	var runErr error
 	select {
-	case <-providerDone:
+	case runErr = <-providerDone:
+		_ = killProviderProcess(child)
 	case <-h.shutdown:
 		stopProvider()
 	case <-ctx.Done():
@@ -501,7 +559,7 @@ func Run(ctx context.Context, cfg Config) error {
 		stopProvider()
 	case err := <-acceptDone:
 		if err != nil && !errors.Is(err, net.ErrClosed) {
-			_ = child.Process.Kill()
+			_ = killProviderProcess(child)
 			return err
 		}
 	}
@@ -515,17 +573,20 @@ type host struct {
 	child    *exec.Cmd
 	stdin    io.WriteCloser
 	token    string
+	protocol Protocol
+	acp      *acpRelay
 
-	mu              sync.Mutex
-	cond            *sync.Cond
-	client          net.Conn
-	detached        [][]byte
-	detachedBytes   int
-	pendingRequests map[string]*pendingRequest
-	pendingOrder    []string
-	maxRequestID    int64
-	shutdown        chan struct{}
-	shutdownOnce    sync.Once
+	mu               sync.Mutex
+	cond             *sync.Cond
+	client           net.Conn
+	clientGeneration uint64
+	detached         [][]byte
+	detachedBytes    int
+	pendingRequests  map[string]*pendingRequest
+	pendingOrder     []string
+	maxRequestID     int64
+	shutdown         chan struct{}
+	shutdownOnce     sync.Once
 }
 
 type pendingRequest struct {
@@ -555,6 +616,11 @@ func (h *host) handle(conn net.Conn) {
 		_ = conn.Close()
 		return
 	}
+	if request.Protocol != h.protocol {
+		_ = json.NewEncoder(conn).Encode(helloResponse{Error: ErrIncompatible.Error()})
+		_ = conn.Close()
+		return
+	}
 	if subtle.ConstantTimeCompare([]byte(request.Token), []byte(h.token)) != 1 {
 		_ = json.NewEncoder(conn).Encode(helloResponse{Error: ErrUnauthorized.Error()})
 		_ = conn.Close()
@@ -580,7 +646,16 @@ func (h *host) handle(conn net.Conn) {
 		return
 	}
 	h.client = conn
-	writeErr := json.NewEncoder(conn).Encode(helloResponse{OK: true, NextRequestID: h.maxRequestID})
+	h.clientGeneration++
+	generation := h.clientGeneration
+	response := helloResponse{OK: true, NextRequestID: h.maxRequestID}
+	if h.acp != nil {
+		response.ACPState = h.acp.snapshot()
+	}
+	writeErr := json.NewEncoder(conn).Encode(response)
+	if writeErr == nil && h.acp != nil {
+		writeErr = h.acp.replayTo(conn)
+	}
 	if writeErr == nil {
 		for _, frame := range h.detached {
 			if _, writeErr = conn.Write(frame); writeErr != nil {
@@ -605,10 +680,26 @@ func (h *host) handle(conn net.Conn) {
 	for {
 		frame, readErr := reader.ReadBytes('\n')
 		if len(frame) > 0 {
-			if _, err := h.stdin.Write(frame); err != nil {
+			providerFrame := frame
+			h.mu.Lock()
+			if h.acp != nil {
+				var relayErr error
+				providerFrame, relayErr = h.acp.clientFrame(frame, generation)
+				if relayErr != nil {
+					h.shutdownOnce.Do(func() { close(h.shutdown) })
+					h.mu.Unlock()
+					h.detach(conn)
+					return
+				}
+			}
+			h.mu.Unlock()
+			if len(providerFrame) == 0 {
+				continue
+			}
+			if _, err := h.stdin.Write(providerFrame); err != nil {
 				readErr = err
 			} else {
-				h.observeClientFrame(frame)
+				h.observeClientFrame(providerFrame)
 			}
 		}
 		if readErr != nil {
@@ -663,6 +754,22 @@ func (h *host) forwardProvider(stdout io.Reader) error {
 		frame, err := reader.ReadBytes('\n')
 		if len(frame) > 0 {
 			h.mu.Lock()
+			journaled := false
+			if h.acp != nil {
+				var relayErr error
+				frame, journaled, relayErr = h.acp.providerFrame(frame, h.clientGeneration, h.client != nil)
+				if relayErr != nil {
+					h.mu.Unlock()
+					return relayErr
+				}
+			}
+			if len(frame) == 0 {
+				h.mu.Unlock()
+				if err != nil {
+					return err
+				}
+				continue
+			}
 			if requestID, ok := serverRequestID(frame); ok {
 				if _, exists := h.pendingRequests[requestID]; !exists {
 					h.pendingRequests[requestID] = &pendingRequest{frame: append([]byte(nil), frame...)}
@@ -677,12 +784,12 @@ func (h *host) forwardProvider(stdout io.Reader) error {
 					_ = h.client.Close()
 					h.client = nil
 					h.bufferPendingRequestsLocked()
-					if _, pending := serverRequestID(frame); !pending {
+					if _, pending := serverRequestID(frame); !pending && !journaled {
 						h.bufferFrameLocked(frame)
 					}
 				}
 			} else {
-				if requestID, pending := serverRequestID(frame); !pending || !h.pendingRequests[requestID].buffered {
+				if requestID, pending := serverRequestID(frame); !journaled && (!pending || !h.pendingRequests[requestID].buffered) {
 					h.bufferFrameLocked(frame)
 					if pending {
 						h.pendingRequests[requestID].buffered = true

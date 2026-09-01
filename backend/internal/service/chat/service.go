@@ -524,6 +524,16 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	var commitProviderHistory func(context.Context) error
 	if liveReconnect {
 		controller.restoreLiveTurnOwnership(liveRows.Turns)
+		if activator, ok := conv.(ports.ChatLiveReconnectActivator); ok {
+			providerTurnID := ""
+			if turn := latestLiveProviderTurn(liveRows.Turns); turn != nil {
+				providerTurnID = turn.ProviderTurnID
+			}
+			if err := activator.ActivateLiveReconnect(providerTurnID); err != nil {
+				cleanupUnpublishedConversation(conv, false)
+				return nil, err
+			}
+		}
 	}
 	if cfg.ProviderConversationID != "" && !cfg.SkipNativeHistoryImport && !liveReconnect {
 		// The provider's native thread is the continuity authority across TUI and
@@ -640,15 +650,21 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 }
 
 // cleanupUnpublishedConversation rolls back a provider opened before its AO
-// controller was published. A fresh thread has no durable resume handle and must
-// be destroyed; a resumed thread is detached so a transient AO persistence or
-// import failure cannot interrupt provider work that was already in flight.
+// controller was published. A fresh host must be destroyed even when it opened a
+// stored provider conversation; only a proven attachment to the same live host
+// is detached so transient AO persistence cannot interrupt work in flight.
 func cleanupUnpublishedConversation(conv ports.ChatConversation, fresh bool) {
-	if fresh {
-		if terminator, ok := conv.(ports.ChatProviderTerminator); ok {
-			_ = terminator.Terminate()
-			return
-		}
+	terminator, canTerminate := conv.(ports.ChatProviderTerminator)
+	liveReconnect := false
+	if reconnected, ok := conv.(ports.ChatLiveReconnector); ok {
+		liveReconnect = reconnected.ReconnectedLive()
+	}
+	// A newly launched persistent process must not be orphaned merely because it
+	// was opening an existing provider conversation. Only attachment to the same
+	// already-live process is preserve-on-failure ownership.
+	if canTerminate && (fresh || !liveReconnect) {
+		_ = terminator.Terminate()
+		return
 	}
 	_ = conv.Close()
 }

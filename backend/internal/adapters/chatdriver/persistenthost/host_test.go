@@ -15,10 +15,19 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	if len(os.Args) >= 6 && os.Args[1] == "chat-host" && os.Args[5] == "--" {
+	if len(os.Args) >= 6 && os.Args[1] == "chat-host" {
+		protocol := ProtocolRaw
+		separator := 5
+		if len(os.Args) > 5 && os.Args[5] == string(ProtocolACP) {
+			protocol = ProtocolACP
+			separator = 6
+		}
+		if len(os.Args) <= separator || os.Args[separator] != "--" {
+			os.Exit(2)
+		}
 		err := Run(context.Background(), Config{
 			SessionID: os.Args[2], DataDir: os.Args[3], Workdir: os.Args[4],
-			Env: os.Environ(), Argv: os.Args[6:],
+			Env: os.Environ(), Argv: os.Args[separator+1:], Protocol: protocol,
 		})
 		if err != nil {
 			_, _ = fmt.Fprintln(os.Stderr, err)
@@ -31,6 +40,10 @@ func TestMain(m *testing.M) {
 
 func TestProviderHelper(t *testing.T) {
 	if os.Getenv("AO_CHAT_HOST_PROVIDER_HELPER") != "1" {
+		return
+	}
+	if os.Getenv("AO_CHAT_HOST_ACP_HELPER") == "1" {
+		runACPProviderHelper()
 		return
 	}
 	scanner := bufio.NewScanner(os.Stdin)
@@ -58,6 +71,125 @@ func TestProviderHelper(t *testing.T) {
 		_, _ = fmt.Fprintf(os.Stdout, `{"id":%d,"result":{"pid":%d}}`+"\n", frame.ID, os.Getpid())
 	}
 	os.Exit(0)
+}
+
+func runACPProviderHelper() {
+	scanner := bufio.NewScanner(os.Stdin)
+	for scanner.Scan() {
+		var frame struct {
+			ID     json.RawMessage `json:"id"`
+			Method string          `json:"method"`
+		}
+		if json.Unmarshal(scanner.Bytes(), &frame) != nil {
+			continue
+		}
+		switch frame.Method {
+		case "initialize":
+			_, _ = fmt.Fprintf(os.Stdout, `{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"agentCapabilities":{"sessionCapabilities":{"resume":{}}},"authMethods":[]}}`+"\n", frame.ID)
+		case "session/new":
+			_, _ = fmt.Fprintf(os.Stdout, `{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"acp-session-live"}}`+"\n", frame.ID)
+		case "session/prompt":
+			_, _ = fmt.Fprintln(os.Stdout, `{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"acp-session-live","update":{"agent_message_chunk":{"content":{"type":"text","text":"before restart"}}}}}`)
+			time.Sleep(100 * time.Millisecond)
+			_, _ = fmt.Fprintf(os.Stdout, `{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"end_turn","providerPid":%d}}`+"\n", frame.ID, os.Getpid())
+		case "pid":
+			_, _ = fmt.Fprintf(os.Stdout, `{"jsonrpc":"2.0","id":%s,"result":{"pid":%d}}`+"\n", frame.ID, os.Getpid())
+		}
+	}
+}
+
+func TestACPHostPreservesPromptCorrelationAndJournal(t *testing.T) {
+	dataDir := t.TempDir()
+	cfg := Config{
+		SessionID: "acp-live", DataDir: dataDir, Workdir: t.TempDir(), Protocol: ProtocolACP,
+		Env:  append(os.Environ(), "AO_CHAT_HOST_PROVIDER_HELPER=1", "AO_CHAT_HOST_ACP_HELPER=1"),
+		Argv: []string{os.Args[0], "-test.run=TestProviderHelper"},
+	}
+	done := make(chan error, 1)
+	go func() { done <- Run(context.Background(), cfg) }()
+	d := awaitDescriptor(t, dataDir, cfg.SessionID)
+	if d.Protocol != ProtocolACP {
+		t.Fatalf("descriptor protocol = %q", d.Protocol)
+	}
+	first, err := attach(context.Background(), d, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader := bufio.NewReader(first.Stdout)
+	sendFrame(t, first, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`)
+	_ = readFrame(t, reader)
+	sendFrame(t, first, `{"jsonrpc":"2.0","id":2,"method":"session/new","params":{"cwd":"/tmp","mcpServers":[]}}`)
+	_ = readFrame(t, reader)
+	pid := requestProviderPID(t, first, 3, "pid")
+	sendFrame(t, first, `{"jsonrpc":"2.0","id":4,"method":"session/prompt","params":{"sessionId":"acp-session-live","prompt":[]}}`)
+	update := readFrame(t, reader)
+	if !bytes.Contains(update, []byte(`"session/update"`)) || !bytes.Contains(update, []byte(ACPEventIDMetaKey)) {
+		t.Fatalf("live update = %s", update)
+	}
+	_ = first.Stdin.Close()
+
+	second := awaitAttach(t, d)
+	if second.ACPState == nil || second.ACPState.SessionID != "acp-session-live" ||
+		len(second.ACPState.InitializeResult) == 0 || (!second.ACPState.ActivePrompt && !second.ACPState.PendingResult) {
+		t.Fatalf("reconnect state = %+v", second.ACPState)
+	}
+	secondReader := bufio.NewReader(second.Stdout)
+	replayedUpdate := readFrame(t, secondReader)
+	if !bytes.Contains(replayedUpdate, []byte(`"session/update"`)) {
+		t.Fatalf("replayed update = %s", replayedUpdate)
+	}
+	completion := readFrame(t, secondReader)
+	if !bytes.Contains(completion, []byte(ACPPromptResultMethod)) ||
+		!bytes.Contains(completion, []byte(fmt.Sprintf(`"providerPid":%d`, pid))) {
+		t.Fatalf("replayed completion = %s", completion)
+	}
+	var completed struct {
+		Params struct {
+			EventID string `json:"eventId"`
+		} `json:"params"`
+	}
+	if err := json.Unmarshal(completion, &completed); err != nil || completed.Params.EventID == "" {
+		t.Fatalf("completion event identity: %q: %v", completion, err)
+	}
+	sendFrame(t, second, fmt.Sprintf(
+		`{"jsonrpc":"2.0","method":"_ao/persistent_prompt_ack","params":{"eventId":%q}}`,
+		completed.Params.EventID,
+	))
+	if got := requestProviderPID(t, second, 1, "pid"); got != pid {
+		t.Fatalf("provider pid changed across daemon attachment: %d -> %d", pid, got)
+	}
+	_ = second.Stdin.Close()
+
+	third := awaitAttach(t, d)
+	if third.ACPState == nil || third.ACPState.PendingResult || third.ACPState.ActivePrompt {
+		t.Fatalf("acknowledged state = %+v", third.ACPState)
+	}
+	if got := requestProviderPID(t, third, 1, "pid"); got != pid {
+		t.Fatalf("provider pid changed after acknowledged replay: %d -> %d", pid, got)
+	}
+	_ = third.Stdin.Close()
+	if err := Shutdown(context.Background(), dataDir, cfg.SessionID); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func sendFrame(t *testing.T, transport *Transport, frame string) {
+	t.Helper()
+	if _, err := fmt.Fprintln(transport.Stdin, frame); err != nil {
+		t.Fatalf("send frame: %v", err)
+	}
+}
+
+func readFrame(t *testing.T, reader *bufio.Reader) []byte {
+	t.Helper()
+	line, err := reader.ReadBytes('\n')
+	if err != nil {
+		t.Fatalf("read frame: %v", err)
+	}
+	return line
 }
 
 func TestHostReconnectsSameProviderAndReplaysDetachedOutput(t *testing.T) {

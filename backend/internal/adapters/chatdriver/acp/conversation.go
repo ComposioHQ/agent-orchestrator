@@ -16,6 +16,7 @@ import (
 	acpsdk "github.com/coder/acp-go-sdk"
 	"github.com/google/uuid"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/persistenthost"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -85,35 +86,39 @@ type conversation struct {
 	log             *slog.Logger
 	providerScopeID string
 
-	mu                sync.Mutex
-	sessionID         string
-	capabilities      ports.ChatCapabilities
-	prepared          *preparedTurn
-	activeTurn        string
-	settlingTurn      string
-	turnCancel        context.CancelFunc
-	interrupt         *interruptAttempt
-	pending           map[string]*parkedPermission
-	pendingInputs     map[string]*parkedInput
-	messages          map[string]string
-	thoughts          map[string]string
-	nestedMessages    map[string]nestedMessageState
-	tools             map[string]*toolState
-	providerFailure   *ports.ChatEvent
-	configOptions     []ports.ChatConfigOption
-	skills            []ports.ChatSkill
-	skillsKnown       bool
-	closed            bool
-	modeFor           func(ports.PermissionMode) string
-	optionsFor        func(ports.ChatTurnSettings) []SessionOption
-	permissionMode    ports.PermissionMode
-	permissionFor     PermissionPolicy
-	initialPermission ports.PermissionMode
-	validateSettings  TurnSettingsValidator
-	extensionFor      ClientExtensionHandler
-	extensionMethods  map[string]string
-	legacyModel       bool
-	legacyMode        bool
+	mu                 sync.Mutex
+	sessionID          string
+	capabilities       ports.ChatCapabilities
+	prepared           *preparedTurn
+	activeTurn         string
+	settlingTurn       string
+	turnCancel         context.CancelFunc
+	interrupt          *interruptAttempt
+	pending            map[string]*parkedPermission
+	pendingInputs      map[string]*parkedInput
+	messages           map[string]string
+	thoughts           map[string]string
+	nestedMessages     map[string]nestedMessageState
+	tools              map[string]*toolState
+	providerFailure    *ports.ChatEvent
+	configOptions      []ports.ChatConfigOption
+	skills             []ports.ChatSkill
+	skillsKnown        bool
+	closed             bool
+	modeFor            func(ports.PermissionMode) string
+	optionsFor         func(ports.ChatTurnSettings) []SessionOption
+	permissionMode     ports.PermissionMode
+	permissionFor      PermissionPolicy
+	initialPermission  ports.PermissionMode
+	validateSettings   TurnSettingsValidator
+	extensionFor       ClientExtensionHandler
+	extensionMethods   map[string]string
+	legacyModel        bool
+	legacyMode         bool
+	liveState          *persistenthost.ACPState
+	detaching          bool
+	terminalEventID    string
+	ignorePromptResult bool
 
 	eventMu      sync.RWMutex
 	events       chan ports.ChatEvent
@@ -134,6 +139,11 @@ var _ ports.ChatConfigOptionController = (*conversation)(nil)
 var _ ports.ChatSkillLister = (*conversation)(nil)
 var _ ports.ChatSteerer = (*conversation)(nil)
 var _ ports.ChatInputResponder = (*conversation)(nil)
+var _ ports.ChatProviderPreserver = (*conversation)(nil)
+var _ ports.ChatProviderTerminator = (*conversation)(nil)
+var _ ports.ChatLiveReconnector = (*conversation)(nil)
+var _ ports.ChatLiveReconnectActivator = (*conversation)(nil)
+var _ ports.ChatProviderEventAcknowledger = (*conversation)(nil)
 var _ acpsdk.Client = (*conversation)(nil)
 var _ acpsdk.ClientExperimental = (*conversation)(nil)
 var _ acpsdk.ExtensionMethodHandler = (*conversation)(nil)
@@ -284,6 +294,60 @@ func (c *conversation) Capabilities() ports.ChatCapabilities {
 }
 
 func (c *conversation) Events() <-chan ports.ChatEvent { return c.events }
+
+// PreservesProviderOnClose reports that Close detaches only when this
+// conversation is backed by the daemon-independent host.
+func (c *conversation) PreservesProviderOnClose() bool { return c.proc.terminate != nil }
+
+// ReconnectedLive distinguishes the same initialized ACP connection from a
+// replacement process recovered with session/load or session/resume.
+func (c *conversation) ReconnectedLive() bool { return c.proc.reconnected }
+
+// ActivateLiveReconnect installs the durable turn correlation before releasing
+// replayed ACP updates to the SDK. This prevents a replacement daemon from
+// attributing output to an empty turn or starting a second root prompt.
+func (c *conversation) ActivateLiveReconnect(providerTurnID string) error {
+	if !c.proc.reconnected || c.liveState == nil || c.proc.gate == nil {
+		return nil
+	}
+	durableBusy := strings.TrimSpace(providerTurnID) != ""
+	switch {
+	case c.liveState.ActivePrompt && !durableBusy:
+		return fmt.Errorf("%w: ACP host has an active prompt but no durable running turn",
+			ports.ErrChatRecoveryInconclusive)
+	case durableBusy && !c.liveState.ActivePrompt && !c.liveState.PendingResult:
+		return fmt.Errorf("%w: durable turn %q is running but the ACP host is idle",
+			ports.ErrChatRecoveryInconclusive, providerTurnID)
+	case c.liveState.PendingResult && !durableBusy:
+		// The old controller committed the terminal event but died before its ACK.
+		// The replay is already queued on this socket, so acknowledge it and ignore
+		// that one private completion after opening the reader gate.
+		if c.liveState.PendingResultEventID == "" {
+			return fmt.Errorf("%w: persistent ACP result has no event identity",
+				ports.ErrChatRecoveryInconclusive)
+		}
+		c.mu.Lock()
+		c.ignorePromptResult = true
+		c.terminalEventID = c.liveState.PendingResultEventID
+		c.mu.Unlock()
+		if err := c.conn.NotifyExtension(context.Background(), "_ao/persistent_prompt_ack", map[string]string{
+			"eventId": c.liveState.PendingResultEventID,
+		}); err != nil {
+			return fmt.Errorf("acknowledge committed persistent ACP result: %w", err)
+		}
+	}
+	c.mu.Lock()
+	if durableBusy {
+		c.activeTurn = providerTurnID
+		c.messages = make(map[string]string)
+		c.thoughts = make(map[string]string)
+		c.nestedMessages = make(map[string]nestedMessageState)
+		c.tools = make(map[string]*toolState)
+	}
+	c.mu.Unlock()
+	c.proc.gate.Open()
+	return nil
+}
 
 // SendTurn prepares the long-lived ACP prompt request. AO's controller starts it
 // through StartDeferredTurn only after the provider turn id is durable.
@@ -442,12 +506,32 @@ func (c *conversation) runTurn(ctx context.Context, sessionID string, turn prepa
 	})
 
 	c.mu.Lock()
+	if c.detaching {
+		c.mu.Unlock()
+		return
+	}
 	c.settlingTurn = turn.id
 	interrupt := c.interrupt
 	c.mu.Unlock()
-	c.settleOpenItems(turn.id)
+	c.finishPrompt(turn.id, resp, err, interrupt)
+}
+
+func (c *conversation) finishPrompt(
+	turnID string,
+	resp acpsdk.PromptResponse,
+	err error,
+	interrupt *interruptAttempt,
+) {
+	c.mu.Lock()
+	if c.detaching {
+		c.mu.Unlock()
+		return
+	}
+	c.settlingTurn = turnID
+	c.mu.Unlock()
+	c.settleOpenItems(turnID)
 	interruptedLocally := false
-	if interrupt != nil && interrupt.turnID == turn.id {
+	if interrupt != nil && interrupt.turnID == turnID {
 		// ACP cancellation and Prompt completion can race. Wait for the sender's
 		// definitive result before classifying the turn so a failed notification
 		// cannot look interrupted and an accepted one cannot look failed.
@@ -466,7 +550,7 @@ func (c *conversation) runTurn(ctx context.Context, sessionID string, turn prepa
 				}})
 				err = normalizeACPError("ACP session/prompt", err)
 			}
-			c.emit(ports.ChatEvent{Kind: ports.ChatEventError, ProviderTurnID: turn.id, Err: err})
+			c.emit(ports.ChatEvent{Kind: ports.ChatEventError, ProviderTurnID: turnID, Err: err})
 		}
 	} else {
 		state = turnState(resp.StopReason)
@@ -485,11 +569,18 @@ func (c *conversation) runTurn(ctx context.Context, sessionID string, turn prepa
 			}})
 		}
 	}
-	c.emit(ports.ChatEvent{Kind: ports.ChatEventTurnCompleted, ProviderTurnID: turn.id, TurnState: state})
+	eventID, _ := resp.Meta[persistenthost.ACPEventIDMetaKey].(string)
+	c.mu.Lock()
+	c.terminalEventID = eventID
+	c.mu.Unlock()
+	c.emit(ports.ChatEvent{
+		Kind: ports.ChatEventTurnCompleted, ProviderEventID: eventID,
+		ProviderTurnID: turnID, TurnState: state,
+	})
 	c.emit(ports.ChatEvent{Kind: ports.ChatEventControllerState, ControllerState: ports.ChatControllerReady})
 
 	c.mu.Lock()
-	if c.activeTurn == turn.id {
+	if c.activeTurn == turnID {
 		c.activeTurn = ""
 		c.settlingTurn = ""
 		c.turnCancel = nil
@@ -595,9 +686,15 @@ func (c *conversation) Close() error {
 	c.closeOnce.Do(func() {
 		c.mu.Lock()
 		c.closed = true
+		persistent := c.proc.terminate != nil
+		c.detaching = persistent
 		cancel := c.turnCancel
 		sessionID := c.sessionID
 		c.mu.Unlock()
+		if persistent {
+			closeErr = c.proc.stop()
+			return
+		}
 		if cancel != nil {
 			cancel()
 		}
@@ -613,10 +710,58 @@ func (c *conversation) Close() error {
 	return closeErr
 }
 
+// Terminate destroys the provider host. Close deliberately only detaches during
+// daemon shutdown or updater replacement.
+func (c *conversation) Terminate() error {
+	var terminateErr error
+	c.closeOnce.Do(func() {
+		c.mu.Lock()
+		c.closed = true
+		cancel := c.turnCancel
+		sessionID := c.sessionID
+		c.mu.Unlock()
+		if cancel != nil {
+			cancel()
+		}
+		c.failPendingPermissions()
+		c.failPendingInputs()
+		if sessionID != "" {
+			closeCtx, cancelClose := context.WithTimeout(context.Background(), 2*time.Second)
+			_, _ = c.conn.CloseSession(closeCtx, acpsdk.CloseSessionRequest{SessionId: acpsdk.SessionId(sessionID)})
+			cancelClose()
+		}
+		if c.proc.terminate != nil {
+			terminateErr = c.proc.terminate()
+		} else {
+			terminateErr = c.proc.stop()
+		}
+	})
+	return terminateErr
+}
+
+// AcknowledgeProviderEvent lets the host discard a prompt journal only after
+// the terminal event was committed by the controller.
+func (c *conversation) AcknowledgeProviderEvent(providerEventID string) error {
+	c.mu.Lock()
+	terminal := c.terminalEventID
+	c.mu.Unlock()
+	if providerEventID == "" || providerEventID != terminal || c.proc.terminate == nil {
+		return nil
+	}
+	return c.conn.NotifyExtension(context.Background(), "_ao/persistent_prompt_ack", map[string]string{
+		"eventId": providerEventID,
+	})
+}
+
 func (c *conversation) watchConnection() {
 	<-c.conn.Done()
-	c.failPendingPermissions()
-	c.failPendingInputs()
+	c.mu.Lock()
+	detaching := c.detaching
+	c.mu.Unlock()
+	if !detaching {
+		c.failPendingPermissions()
+		c.failPendingInputs()
+	}
 	c.emit(ports.ChatEvent{Kind: ports.ChatEventControllerState, ControllerState: ports.ChatControllerStopped})
 	c.eventMu.Lock()
 	if !c.eventsClosed {
@@ -633,6 +778,15 @@ func (c *conversation) emit(event ports.ChatEvent) {
 	c.eventMu.RLock()
 	defer c.eventMu.RUnlock()
 	if c.eventsClosed {
+		return
+	}
+	if c.proc != nil && c.proc.terminate != nil {
+		// Host-journaled frames must reach durable projection; dropping one here
+		// would make a successful replay look exactly-once while losing content.
+		select {
+		case c.events <- event:
+		case <-c.conn.Done():
+		}
 		return
 	}
 	select {

@@ -19,7 +19,8 @@ import (
 // remain owned by that installation.
 func New(plugin nativeacp.Plugin, log *slog.Logger) ports.ChatDriver {
 	return nativeacp.New(plugin, nativeacp.Config{
-		Harness: domain.HarnessKimi,
+		Harness:    domain.HarnessKimi,
+		Persistent: true,
 		Capabilities: ports.ChatCapabilities{
 			ports.ChatCapabilityHistory: true,
 			ports.ChatCapabilityPlans:   true,

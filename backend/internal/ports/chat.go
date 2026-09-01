@@ -947,6 +947,18 @@ type ChatLiveReconnector interface {
 	ReconnectedLive() bool
 }
 
+// ChatLiveReconnectActivator releases provider replay only after the service
+// has restored the durable active-turn correlation for the same live process.
+type ChatLiveReconnectActivator interface {
+	ActivateLiveReconnect(providerTurnID string) error
+}
+
+// ChatProviderEventAcknowledger lets a persistent provider discard replay
+// state only after the controller commits the matching event.
+type ChatProviderEventAcknowledger interface {
+	AcknowledgeProviderEvent(providerEventID string) error
+}
+
 // ChatHistoryReader is optionally implemented by a conversation whose native
 // protocol can read the durable thread it resumed. Events are returned oldest
 // first, settled, and with stable ProviderEventID values so importing the same

@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/commanddetail"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/persistenthost"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -84,7 +85,7 @@ func (c *conversation) RequestPermission(
 	if params.ToolCall.Title != nil && strings.TrimSpace(*params.ToolCall.Title) != "" {
 		summary = *params.ToolCall.Title
 	}
-	selected, err := c.RequestApproval(ctx, ClientApprovalRequest{
+	selected, err := c.requestApproval(ctx, stableACPRequestID(params.Meta), ClientApprovalRequest{
 		Summary: summary, ActivityKind: activityKindFromTool(pointerValue(params.ToolCall.Kind)),
 		Detail:    approvalToolDetail(params.ToolCall, activityKindFromTool(pointerValue(params.ToolCall.Kind))),
 		Decisions: decisions,
@@ -102,10 +103,20 @@ func (c *conversation) RequestApproval(
 	ctx context.Context,
 	params ClientApprovalRequest,
 ) (string, error) {
+	return c.requestApproval(ctx, "", params)
+}
+
+func (c *conversation) requestApproval(
+	ctx context.Context,
+	requestID string,
+	params ClientApprovalRequest,
+) (string, error) {
 	if len(params.Decisions) == 0 {
 		return "", nil
 	}
-	requestID := uuid.NewString()
+	if requestID == "" {
+		requestID = uuid.NewString()
+	}
 	options := make(map[string]json.RawMessage, len(params.Decisions))
 	for _, option := range params.Decisions {
 		options[option.ID] = append(json.RawMessage(nil), option.Raw...)
@@ -192,7 +203,13 @@ func (c *conversation) UnstableCreateElicitation(
 		return acpsdk.NewUnstableCreateElicitationResponseCancel(), errors.New("ACP elicitation has no mode")
 	}
 
-	response, err := c.RequestInput(ctx, request)
+	requestID := ""
+	if params.Form != nil {
+		requestID = stableACPRequestID(params.Form.Meta)
+	} else if params.Url != nil {
+		requestID = stableACPRequestID(params.Url.Meta)
+	}
+	response, err := c.requestInput(ctx, requestID, request)
 	if err != nil {
 		return acpsdk.NewUnstableCreateElicitationResponseCancel(), err
 	}
@@ -204,7 +221,17 @@ func (c *conversation) RequestInput(
 	ctx context.Context,
 	request ports.ChatInputRequest,
 ) (ports.ChatInputResponse, error) {
-	requestID := uuid.NewString()
+	return c.requestInput(ctx, "", request)
+}
+
+func (c *conversation) requestInput(
+	ctx context.Context,
+	requestID string,
+	request ports.ChatInputRequest,
+) (ports.ChatInputResponse, error) {
+	if requestID == "" {
+		requestID = uuid.NewString()
+	}
 	parked := &parkedInput{request: request, result: make(chan ports.ChatInputResponse, 1)}
 	c.mu.Lock()
 	if c.closed {
@@ -233,6 +260,11 @@ func (c *conversation) RequestInput(
 		c.emit(ports.ChatEvent{Kind: ports.ChatEventInputResolved, RequestID: requestID})
 		return ports.ChatInputResponse{Action: ports.ChatInputActionCancel}, nil
 	}
+}
+
+func stableACPRequestID(meta map[string]any) string {
+	requestID, _ := meta[persistenthost.ACPRequestIDMetaKey].(string)
+	return strings.TrimSpace(requestID)
 }
 
 // UpdatePlan publishes a provider extension plan on the active AO turn.
@@ -478,6 +510,15 @@ func (c *conversation) SessionUpdate(_ context.Context, params acpsdk.SessionNot
 	if sessionID != "" && string(params.SessionId) != sessionID {
 		return fmt.Errorf("ACP update for unexpected session %q", params.SessionId)
 	}
+	sourceID := stableACPEventID(params.Meta)
+	sourceIndex := 0
+	emit := func(event ports.ChatEvent) {
+		if sourceID != "" {
+			event.ProviderEventID = fmt.Sprintf("%s:%d", sourceID, sourceIndex)
+			sourceIndex++
+		}
+		c.emit(event)
+	}
 
 	update := params.Update
 	providerOutputResumed := update.AgentMessageChunk != nil ||
@@ -485,7 +526,7 @@ func (c *conversation) SessionUpdate(_ context.Context, params acpsdk.SessionNot
 		update.ToolCall != nil ||
 		update.Plan != nil
 	if providerOutputResumed {
-		c.completeProviderFailure(turnID)
+		c.completeProviderFailure(turnID, emit)
 	}
 	switch {
 	case update.AgentMessageChunk != nil:
@@ -500,18 +541,18 @@ func (c *conversation) SessionUpdate(_ context.Context, params acpsdk.SessionNot
 				c.mu.Unlock()
 				detail, _ := json.Marshal(map[string]any{"parentProviderItemId": parentID, "nestedAgent": true})
 				if !existed {
-					c.emit(ports.ChatEvent{Kind: ports.ChatEventActivityStarted, ProviderTurnID: turnID,
+					emit(ports.ChatEvent{Kind: ports.ChatEventActivityStarted, ProviderTurnID: turnID,
 						ProviderItemID: id, ActivityKind: domain.ActivityKindMCPTool,
 						ActivityStatus: domain.ActivityStatusRunning, Summary: "Subagent response", Detail: detail})
 				}
-				c.emit(ports.ChatEvent{Kind: ports.ChatEventActivityText, ProviderTurnID: turnID,
+				emit(ports.ChatEvent{Kind: ports.ChatEventActivityText, ProviderTurnID: turnID,
 					ProviderItemID: id, Delta: delta})
 				break
 			}
 			c.mu.Lock()
 			c.messages[id] += delta
 			c.mu.Unlock()
-			c.emit(ports.ChatEvent{Kind: ports.ChatEventMessageDelta, ProviderTurnID: turnID, ProviderItemID: id, Delta: delta})
+			emit(ports.ChatEvent{Kind: ports.ChatEventMessageDelta, ProviderTurnID: turnID, ProviderItemID: id, Delta: delta})
 		}
 	case update.AgentThoughtChunk != nil:
 		id := c.providerItemID(messageID(update.AgentThoughtChunk.MessageId, "thought", turnID))
@@ -521,11 +562,11 @@ func (c *conversation) SessionUpdate(_ context.Context, params acpsdk.SessionNot
 			c.thoughts[id] += delta
 			c.mu.Unlock()
 			if !existed {
-				c.emit(ports.ChatEvent{Kind: ports.ChatEventActivityStarted, ProviderTurnID: turnID,
+				emit(ports.ChatEvent{Kind: ports.ChatEventActivityStarted, ProviderTurnID: turnID,
 					ProviderItemID: id, ActivityKind: domain.ActivityKindReasoning,
 					ActivityStatus: domain.ActivityStatusRunning, Summary: "Reasoning"})
 			}
-			c.emit(ports.ChatEvent{Kind: ports.ChatEventReasoningDelta, ProviderTurnID: turnID, ProviderItemID: id, Delta: delta})
+			emit(ports.ChatEvent{Kind: ports.ChatEventReasoningDelta, ProviderTurnID: turnID, ProviderItemID: id, Delta: delta})
 		}
 	case update.ToolCall != nil:
 		tool := &toolState{
@@ -538,25 +579,25 @@ func (c *conversation) SessionUpdate(_ context.Context, params acpsdk.SessionNot
 		c.mu.Lock()
 		c.tools[tool.id] = tool
 		c.mu.Unlock()
-		c.emit(c.toolEvent(turnID, tool, toolTerminal(tool.status)))
-		c.emitDiffs(turnID, tool.content)
+		emit(c.toolEvent(turnID, tool, toolTerminal(tool.status)))
+		c.emitDiffs(turnID, tool.content, emit)
 	case update.ToolCallUpdate != nil:
 		tool := c.mergeToolUpdate(update.ToolCallUpdate)
 		if delta := terminalOutput(update.ToolCallUpdate.Meta); delta != "" {
-			c.emit(ports.ChatEvent{Kind: ports.ChatEventCommandOutputDelta, ProviderTurnID: turnID,
+			emit(ports.ChatEvent{Kind: ports.ChatEventCommandOutputDelta, ProviderTurnID: turnID,
 				ProviderItemID: c.providerItemID(tool.id), Delta: delta})
 		}
-		c.emit(c.toolEvent(turnID, tool, toolTerminal(tool.status)))
-		c.emitDiffs(turnID, tool.content)
+		emit(c.toolEvent(turnID, tool, toolTerminal(tool.status)))
+		c.emitDiffs(turnID, tool.content, emit)
 	case update.Plan != nil:
-		c.emit(ports.ChatEvent{Kind: ports.ChatEventPlanUpdated, ProviderTurnID: turnID, Plan: normalizePlan(update.Plan.Entries)})
+		emit(ports.ChatEvent{Kind: ports.ChatEventPlanUpdated, ProviderTurnID: turnID, Plan: normalizePlan(update.Plan.Entries)})
 	case update.SessionInfoUpdate != nil:
 		if update.SessionInfoUpdate.Title != nil {
-			c.emit(ports.ChatEvent{Kind: ports.ChatEventThreadRenamed, Title: *update.SessionInfoUpdate.Title})
+			emit(ports.ChatEvent{Kind: ports.ChatEventThreadRenamed, Title: *update.SessionInfoUpdate.Title})
 		}
 		if turnID != "" {
 			if event, ok := c.sessionFailureEvent(turnID, update.SessionInfoUpdate.Meta); ok {
-				c.emit(event)
+				emit(event)
 			}
 		}
 	case update.ConfigOptionUpdate != nil:
@@ -578,12 +619,17 @@ func (c *conversation) SessionUpdate(_ context.Context, params acpsdk.SessionNot
 			usage.Cost = &cost
 			usage.Currency = update.UsageUpdate.Cost.Currency
 		}
-		c.emit(ports.ChatEvent{Kind: ports.ChatEventUsage, Usage: usage})
+		emit(ports.ChatEvent{Kind: ports.ChatEventUsage, Usage: usage})
 		if limits := claudeRateLimits(update.UsageUpdate.Meta); limits != nil {
-			c.emit(ports.ChatEvent{Kind: ports.ChatEventRateLimits, RateLimits: limits})
+			emit(ports.ChatEvent{Kind: ports.ChatEventRateLimits, RateLimits: limits})
 		}
 	}
 	return nil
+}
+
+func stableACPEventID(meta map[string]any) string {
+	eventID, _ := meta[persistenthost.ACPEventIDMetaKey].(string)
+	return strings.TrimSpace(eventID)
 }
 
 func contentText(content acpsdk.ContentBlock) string {
@@ -832,7 +878,7 @@ func (c *conversation) sessionFailureEvent(
 // produces substantive output again. The AIR extension advances failures but
 // deliberately sends no recovery update, so AO closes its normalized activity
 // on the first message, thought, tool call, or plan after the failure.
-func (c *conversation) completeProviderFailure(turnID string) {
+func (c *conversation) completeProviderFailure(turnID string, emit func(ports.ChatEvent)) {
 	c.mu.Lock()
 	if c.providerFailure == nil || c.providerFailure.ProviderTurnID != turnID {
 		c.mu.Unlock()
@@ -844,7 +890,7 @@ func (c *conversation) completeProviderFailure(turnID string) {
 
 	event.Kind = ports.ChatEventActivityCompleted
 	event.ActivityStatus = domain.ActivityStatusCompleted
-	c.emit(event)
+	emit(event)
 }
 
 func cloneMeta(meta map[string]any) map[string]any {
@@ -945,7 +991,11 @@ func toolTerminal(status acpsdk.ToolCallStatus) bool {
 	return status == acpsdk.ToolCallStatusCompleted || status == acpsdk.ToolCallStatusFailed
 }
 
-func (c *conversation) emitDiffs(turnID string, content []acpsdk.ToolCallContent) {
+func (c *conversation) emitDiffs(
+	turnID string,
+	content []acpsdk.ToolCallContent,
+	emit func(ports.ChatEvent),
+) {
 	files := make([]ports.ChatDiffFile, 0)
 	for _, item := range content {
 		if item.Diff == nil {
@@ -967,7 +1017,7 @@ func (c *conversation) emitDiffs(turnID string, content []acpsdk.ToolCallContent
 		})
 	}
 	if len(files) > 0 {
-		c.emit(ports.ChatEvent{Kind: ports.ChatEventTurnDiff, ProviderTurnID: turnID, Diff: &ports.ChatTurnDiff{Files: files}})
+		emit(ports.ChatEvent{Kind: ports.ChatEventTurnDiff, ProviderTurnID: turnID, Diff: &ports.ChatTurnDiff{Files: files}})
 	}
 }
 
