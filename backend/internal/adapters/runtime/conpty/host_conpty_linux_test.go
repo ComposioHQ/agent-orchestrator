@@ -332,3 +332,37 @@ func TestLinuxPTYCloseDelayedAfterFullSessionExit(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 }
+
+func TestLinuxPTYCloseFailsClosedWhenLeaderStartTimeIsZero(t *testing.T) {
+	// Start an independent dummy process representing an innocent process on the host.
+	dummy := exec.Command("/bin/sh", "-c", "sleep 30")
+	if err := dummy.Start(); err != nil {
+		t.Fatal(err)
+	}
+	dummyPID := dummy.Process.Pid
+	t.Cleanup(func() {
+		if dummy.Process != nil {
+			_ = dummy.Process.Kill()
+			_ = dummy.Wait()
+		}
+	})
+
+	// Create a simulated linuxPTYConn whose leaderPID matches dummyPID,
+	// but whose recorded leaderStartTime is 0 (simulating failed identity capture).
+	conn := &linuxPTYConn{
+		leaderPID:       dummyPID,
+		leaderStartTime: 0, // identity unavailable: must fail closed
+		doneC:           make(chan struct{}),
+	}
+	close(conn.doneC)
+
+	// Close() must fail closed: send NO signals to dummyPID or its process group.
+	if err := conn.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	// Verify the dummy process is still running and unharmed.
+	if !pidAlive(dummyPID) {
+		t.Fatalf("unrelated process %d was killed by Close() when leaderStartTime was zero", dummyPID)
+	}
+}

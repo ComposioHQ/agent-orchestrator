@@ -101,7 +101,7 @@ func (c *linuxPTYConn) Resize(cols, rows int) error {
 func (c *linuxPTYConn) Close() error {
 	var closeErr error
 	c.closeOnce.Do(func() {
-		if c.leaderPID > 0 {
+		if c.leaderPID > 0 && c.leaderStartTime > 0 {
 			// The PTY child was started as a session leader (setsid). Discover and
 			// reap all validated processes in the session so background jobs cannot
 			// outlive teardown, without signaling stale/recycled PIDs.
@@ -161,7 +161,7 @@ func readLinuxProcInfo(pid int) (linuxProcInfo, error) {
 }
 
 func linuxFindSessionProcesses(sid int, leaderStartTime uint64) []linuxProcInfo {
-	if sid <= 0 {
+	if sid <= 0 || leaderStartTime == 0 {
 		return nil
 	}
 	entries, err := os.ReadDir("/proc")
@@ -191,19 +191,19 @@ func linuxFindSessionProcesses(sid int, leaderStartTime uint64) []linuxProcInfo 
 	if leaderProc, ok := procMap[sid]; ok {
 		// If PID sid is occupied by a process with a different start time than our recorded
 		// leader start time, the PID has been recycled for an unrelated process or session.
-		if leaderStartTime > 0 && leaderProc.startTime != leaderStartTime {
+		if leaderProc.startTime != leaderStartTime {
 			return nil
 		}
 	}
 
 	inSession := make(map[int]bool)
-	if leaderProc, ok := procMap[sid]; ok && (leaderStartTime == 0 || leaderProc.startTime == leaderStartTime) {
+	if leaderProc, ok := procMap[sid]; ok && leaderProc.startTime == leaderStartTime {
 		inSession[sid] = true
 	}
 
 	for _, p := range allProcs {
 		if p.sid == sid {
-			if leaderStartTime == 0 || p.startTime >= leaderStartTime {
+			if p.startTime >= leaderStartTime {
 				inSession[p.pid] = true
 			}
 		}
@@ -213,7 +213,7 @@ func linuxFindSessionProcesses(sid int, leaderStartTime uint64) []linuxProcInfo 
 		added := false
 		for _, p := range allProcs {
 			if !inSession[p.pid] && inSession[p.ppid] {
-				if leaderStartTime == 0 || p.startTime >= leaderStartTime {
+				if p.startTime >= leaderStartTime {
 					inSession[p.pid] = true
 					added = true
 				}
@@ -234,7 +234,7 @@ func linuxFindSessionProcesses(sid int, leaderStartTime uint64) []linuxProcInfo 
 }
 
 func killLinuxSession(sid int, leaderStartTime uint64, sig syscall.Signal) {
-	if sid <= 0 {
+	if sid <= 0 || leaderStartTime == 0 {
 		return
 	}
 	// Discover and validate session members BEFORE signaling any PID or PGID.
@@ -282,7 +282,7 @@ func waitForLinuxSessionExit(sid int, leaderStartTime uint64, timeout time.Durat
 }
 
 func linuxSessionAlive(sid int, leaderStartTime uint64) bool {
-	if sid <= 0 {
+	if sid <= 0 || leaderStartTime == 0 {
 		return false
 	}
 	procs := linuxFindSessionProcesses(sid, leaderStartTime)
