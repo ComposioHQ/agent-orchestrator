@@ -15,6 +15,7 @@ const captureEventMock = vi.hoisted(() => vi.fn());
 const openExternalMock = vi.hoisted(() => vi.fn());
 const writeTextMock = vi.hoisted(() => vi.fn());
 const restoreMock = vi.hoisted(() => vi.fn());
+const workspaceSubscriptionMock = vi.hoisted(() => vi.fn());
 
 const ctx = vi.hoisted(() => {
 	const workspaces: WorkspaceSummary[] = [
@@ -102,7 +103,10 @@ vi.mock("../hooks/useCommandPaletteEnabled", () => ({
 }));
 
 vi.mock("../hooks/useWorkspaceQuery", () => ({
-	useWorkspaceQuery: () => ({ data: ctx.workspaces }),
+	useWorkspaceQuery: (options: { subscribed?: boolean }) => {
+		workspaceSubscriptionMock(options);
+		return { data: ctx.workspaces };
+	},
 	workspaceQueryKey: ["workspaces"],
 }));
 
@@ -233,6 +237,7 @@ beforeEach(() => {
 	openExternalMock.mockReset();
 	writeTextMock.mockReset();
 	restoreMock.mockReset();
+	workspaceSubscriptionMock.mockReset();
 	restoreMock.mockResolvedValue({ status: "success" });
 	act(() => {
 		useUiStore.setState({
@@ -250,6 +255,14 @@ afterEach(() => {
 });
 
 describe("CommandPalette gating", () => {
+	it("subscribes to workspace updates only while open", () => {
+		renderPalette();
+		expect(workspaceSubscriptionMock).toHaveBeenLastCalledWith({ subscribed: false });
+
+		act(() => useUiStore.getState().setCommandPaletteOpen(true));
+		expect(workspaceSubscriptionMock).toHaveBeenLastCalledWith({ subscribed: true });
+	});
+
 	it("renders nothing and binds no shortcut on a disabled (stable) build", () => {
 		ctx.enabled = false;
 		renderPalette();

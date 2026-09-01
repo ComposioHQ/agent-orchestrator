@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState, type MouseEvent } from "react";
+import { memo, useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
@@ -180,11 +180,11 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const activeProjectIdRef = useRef(projectId);
 	activeProjectIdRef.current = projectId;
 
-	const openSession = (session: WorkspaceSession) =>
+	const openSession = useCallback((session: WorkspaceSession) =>
 		void navigate({
 			to: "/projects/$projectId/sessions/$sessionId",
 			params: { projectId: session.workspaceId, sessionId: session.id },
-		});
+		}), [navigate]);
 
 	const openOrchestrator = async (mode?: "tui") => {
 		if (!projectId || isProjectRestarting) return;
@@ -393,8 +393,8 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 						labels={boardLabels}
 						renderSessionCard={(session) => (
 							<BoardSessionCardAdapter
-								onOpen={() => openSession(session)}
-								onTerminate={() => terminateSession.mutate(session)}
+								onOpenSession={openSession}
+								onTerminateSession={terminateSession.mutate}
 								session={session}
 								usage={usageBySession.get(session.id)}
 							/>

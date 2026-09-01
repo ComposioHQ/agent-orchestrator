@@ -1,5 +1,11 @@
 import { ContextMenu as ContextMenuPrimitive } from "radix-ui";
 import { cn } from "../../lib/utils";
+import {
+	actionMenuContentClass,
+	actionMenuItemClass,
+	actionMenuLabelClass,
+	actionMenuSeparatorClass,
+} from "./menu-styles";
 
 export const ContextMenu = ContextMenuPrimitive.Root;
 export const ContextMenuTrigger = ContextMenuPrimitive.Trigger;
@@ -14,8 +20,9 @@ export function ContextMenuContent({
 		<ContextMenuPrimitive.Portal>
 			<ContextMenuPrimitive.Content
 				className={cn(
-					"z-overlay min-w-[10rem] overflow-hidden rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-md",
-					"data-[state=open]:animate-overlay-in",
+					actionMenuContentClass,
+					"origin-(--radix-context-menu-content-transform-origin)",
+					"data-[state=open]:animate-popover-in data-[state=closed]:animate-popover-out",
 					className,
 				)}
 				{...props}
@@ -32,9 +39,7 @@ export function ContextMenuItem({
 	return (
 		<ContextMenuPrimitive.Item
 			className={cn(
-				"relative flex cursor-default select-none items-center gap-2.5 rounded-md px-2 py-1.5 text-control outline-none transition-colors",
-				"text-muted-foreground focus:bg-surface focus:text-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
-				"[&_svg]:size-icon-lg [&_svg]:shrink-0 [&_svg]:text-passive",
+				actionMenuItemClass,
 				inset && "pl-8",
 				className,
 			)}
@@ -51,7 +56,7 @@ export function ContextMenuLabel({
 	return (
 		<ContextMenuPrimitive.Label
 			className={cn(
-				"px-2 py-1.5 text-micro tracking-wide text-passive",
+				actionMenuLabelClass,
 				inset && "pl-8",
 				className,
 			)}
@@ -64,5 +69,5 @@ export function ContextMenuSeparator({
 	className,
 	...props
 }: React.ComponentProps<typeof ContextMenuPrimitive.Separator>) {
-	return <ContextMenuPrimitive.Separator className={cn("-mx-1 my-1 h-px bg-border", className)} {...props} />;
+	return <ContextMenuPrimitive.Separator className={cn(actionMenuSeparatorClass, className)} {...props} />;
 }

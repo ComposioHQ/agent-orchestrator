@@ -163,16 +163,22 @@ export function WindowTitlebar() {
     };
   }, []);
 
-  // Tell main to forget the last-focused panel whenever real shell UI (not this menu) gets focus, so its fallback target doesn't go stale.
+  // Tell main when a non-browser shell surface is used. BrowserPanel reports
+  // its own interactions separately; the titlebar menu intentionally preserves
+  // the previous target so its actions still apply to the underlying panel.
   useEffect(() => {
-    if (!isWindows) return;
-    const onFocusIn = (event: FocusEvent) => {
+    const onShellUse = (event: Event) => {
       const target = event.target as HTMLElement | null;
       if (target?.closest('[class*="window-titlebar"]')) return;
+      if (target?.closest('[data-testid="browser-panel"]')) return;
       void window.ao?.menu?.notifyShellFocus();
     };
-    document.addEventListener("focusin", onFocusIn);
-    return () => document.removeEventListener("focusin", onFocusIn);
+    document.addEventListener("focusin", onShellUse);
+    document.addEventListener("pointerdown", onShellUse, true);
+    return () => {
+      document.removeEventListener("focusin", onShellUse);
+      document.removeEventListener("pointerdown", onShellUse, true);
+    };
   }, []);
 
   if (!isWindows) return null;

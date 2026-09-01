@@ -297,6 +297,22 @@ const api = {
 			ipcRenderer.invoke("browser:closeTab", input) as Promise<BrowserTabsState>,
 		openTab: (input: { viewId: string; url?: string }) =>
 			ipcRenderer.invoke("browser:openTab", input) as Promise<BrowserTabsState>,
+		notifyPanelUsed: (viewId: string) => ipcRenderer.send("browser:panelUsed", viewId),
+		notifyPanelBlur: (viewId: string) => ipcRenderer.send("browser:panelBlur", viewId),
+		onFocusLocation: (listener: (viewId: string) => void) => {
+			const wrapped = (_event: Electron.IpcRendererEvent, viewId: string) => listener(viewId);
+			ipcRenderer.on("browser:focusLocation", wrapped);
+			return () => {
+				ipcRenderer.off("browser:focusLocation", wrapped);
+			};
+		},
+		onReopenClosedTab: (listener: (viewId: string) => void) => {
+			const wrapped = (_event: Electron.IpcRendererEvent, viewId: string) => listener(viewId);
+			ipcRenderer.on("browser:reopenClosedTab", wrapped);
+			return () => {
+				ipcRenderer.off("browser:reopenClosedTab", wrapped);
+			};
+		},
 		devtools: (input: BrowserDevToolsInput) =>
 			ipcRenderer.invoke("browser:devtools", input) as Promise<BrowserDevToolsState>,
 		destroy: (viewId: string) => ipcRenderer.send("browser:destroy", viewId),

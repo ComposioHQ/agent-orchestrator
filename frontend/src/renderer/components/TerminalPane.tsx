@@ -70,7 +70,7 @@ type TerminalCacheDescriptor = {
 
 type CachedTerminalEntry = TerminalCacheDescriptor & {
 	activationId: number;
-	activationPhase: "parked" | "preparing" | "ready" | "revealed" | "visible";
+	activationPhase: "parked" | "visible";
 	container: HTMLDivElement;
 	discardOnDeactivate?: boolean;
 	props: TerminalPaneProps;
@@ -169,7 +169,6 @@ function setTerminalPhase(
 	entry.activationPhase = phase;
 	entry.container.dataset.terminalActivationPhase = phase;
 	const interactive = phase === "visible";
-	const rendered = phase === "revealed" || interactive;
 	entry.container.inert = !interactive;
 	if (interactive) {
 		entry.container.removeAttribute("aria-hidden");
@@ -178,7 +177,7 @@ function setTerminalPhase(
 		entry.container.setAttribute("aria-hidden", "true");
 		entry.container.style.pointerEvents = "none";
 	}
-	if (rendered) {
+	if (interactive) {
 		entry.container.style.visibility = "";
 	} else {
 		entry.container.style.visibility = "hidden";
@@ -197,39 +196,23 @@ function parkTerminal(entry: CachedTerminalEntry, parking: HTMLDivElement): void
 
 function showTerminal(entry: CachedTerminalEntry, slot: HTMLDivElement): void {
 	entry.activationId += 1;
-	// A retained renderer already has the latest hidden output. Prepare it at the
-	// bottom while hidden so returning to a worker never exposes the historical
-	// viewport the user happened to leave behind.
-	setTerminalPhase(entry, entry.terminal ? "preparing" : "visible");
-	if (entry.activationPhase === "visible") entry.container.style.visibility = "";
+	// Do not hide a retained terminal while it crosses xterm's two paint-frame
+	// preparation cycle: that made every return to a tab flash blank.
+	setTerminalPhase(entry, "visible");
 	entry.container.style.width = "100%";
 	entry.container.style.height = "100%";
 	slot.appendChild(entry.container);
-}
-
-function revealTerminal(entry: CachedTerminalEntry): void {
-	setTerminalPhase(entry, "revealed");
-}
-
-function activateTerminal(entry: CachedTerminalEntry): void {
-	setTerminalPhase(entry, "visible");
 }
 
 function CachedTerminalPortal({
 	active,
 	entry,
 	onFatal,
-	onPrepared,
-	onReveal,
-	onActivated,
 	onTerminalReady,
 }: {
 	active: boolean;
 	entry: CachedTerminalEntry;
 	onFatal: (cacheKey: string, message: string) => void;
-	onPrepared: (cacheKey: string, activationId: number) => void;
-	onReveal: (cacheKey: string, activationId: number) => void;
-	onActivated: (cacheKey: string, activationId: number) => void;
 	onTerminalReady: (cacheKey: string, terminal: AttachableTerminal) => void;
 }) {
 	const handleFatal = useCallback(
@@ -244,41 +227,17 @@ function CachedTerminalPortal({
 	);
 	useLayoutEffect(() => {
 		const terminal = entry.terminal;
-		if (!active || entry.activationPhase !== "preparing" || !terminal) return;
-		const activationId = entry.activationId;
-		let current = true;
-		void terminal.prepareForActivation().then(() => {
-			if (current) onPrepared(entry.cacheKey, activationId);
-		});
-		return () => {
-			current = false;
-		};
+		if (!active || entry.activationPhase !== "visible" || !terminal) return;
+		// Fit and scroll after the host is visible. This retains the cache's
+		// settled viewport behavior without putting a blank frame in front of it.
+		void terminal.prepareForActivation();
 	}, [
 		active,
 		entry,
 		entry.activationId,
 		entry.activationPhase,
 		entry.terminal,
-		onPrepared,
 	]);
-	useLayoutEffect(() => {
-		if (!active || entry.activationPhase !== "ready") return;
-		onReveal(entry.cacheKey, entry.activationId);
-	}, [active, entry, entry.activationId, entry.activationPhase, onReveal]);
-	useLayoutEffect(() => {
-		if (!active || entry.activationPhase !== "revealed") return;
-		const activationId = entry.activationId;
-		let paintFrame: number | null = null;
-		const revealFrame = requestAnimationFrame(() => {
-			paintFrame = requestAnimationFrame(() => {
-				onActivated(entry.cacheKey, activationId);
-			});
-		});
-		return () => {
-			cancelAnimationFrame(revealFrame);
-			if (paintFrame !== null) cancelAnimationFrame(paintFrame);
-		};
-	}, [active, entry, entry.activationId, entry.activationPhase, onActivated]);
 	return createPortal(
 		<AttachedTerminal
 			{...entry.props}
@@ -490,57 +449,6 @@ export function TerminalCacheProvider({
 		[rerender],
 	);
 
-	const markPrepared = useCallback(
-		(cacheKey: string, activationId: number) => {
-			const entry = entriesRef.current.get(cacheKey);
-			if (
-				!entry ||
-				entry.activationId !== activationId ||
-				entry.activationPhase !== "preparing" ||
-				activeRef.current?.key !== cacheKey
-			) {
-				return;
-			}
-			setTerminalPhase(entry, "ready");
-			rerender();
-		},
-		[rerender],
-	);
-
-	const markReveal = useCallback(
-		(cacheKey: string, activationId: number) => {
-			const entry = entriesRef.current.get(cacheKey);
-			if (
-				!entry ||
-				entry.activationId !== activationId ||
-				entry.activationPhase !== "ready" ||
-				activeRef.current?.key !== cacheKey
-			) {
-				return;
-			}
-			revealTerminal(entry);
-			rerender();
-		},
-		[rerender],
-	);
-
-	const markActivated = useCallback(
-		(cacheKey: string, activationId: number) => {
-			const entry = entriesRef.current.get(cacheKey);
-			if (
-				!entry ||
-				entry.activationId !== activationId ||
-				entry.activationPhase !== "revealed" ||
-				activeRef.current?.key !== cacheKey
-			) {
-				return;
-			}
-			activateTerminal(entry);
-			rerender();
-		},
-		[rerender],
-	);
-
 	// Daemon readiness and theme are shell-wide. Parked entries must observe
 	// them too so reconnect and rendering behavior never depends on the route
 	// that happened to be active when they were parked.
@@ -648,10 +556,7 @@ export function TerminalCacheProvider({
 					active={activeRef.current?.key === entry.cacheKey}
 					entry={entry}
 					key={entry.cacheKey}
-					onActivated={markActivated}
 					onFatal={markFatal}
-					onPrepared={markPrepared}
-					onReveal={markReveal}
 					onTerminalReady={markTerminalReady}
 				/>
 			))}
@@ -695,11 +600,14 @@ export function TerminalPane({
 	inputDisabled,
 	focusRequested,
 }: TerminalPaneProps) {
+	const { t } = useTranslation();
 	const terminalTarget =
 		requestedTerminalTarget &&
 		terminalTargetBelongsToSession(requestedTerminalTarget, session?.id)
 			? requestedTerminalTarget
 			: ({ kind: "worker" } satisfies TerminalTarget);
+	const isOptimisticShell =
+		terminalTarget.kind === "shell" && terminalTarget.handleId.startsWith("pending-shell:");
 	const cache = useContext(TerminalCacheContext);
 	const terminalKey =
 		terminalTarget?.kind === "reviewer" || terminalTarget?.kind === "shell"
@@ -754,6 +662,19 @@ export function TerminalPane({
 					</span>
 				))}
 			</pre>
+		);
+	}
+	// The tab is intentionally selected before the daemon allocates its handle.
+	// Keep that short bridge visually indistinguishable from an empty terminal,
+	// rather than surfacing a separate loading state or attaching xterm to a
+	// handle that cannot exist yet.
+	if (isOptimisticShell) {
+		return (
+			<div
+				aria-label={t("terminal.shellAria")}
+				className="terminal-surface h-full"
+				data-testid="optimistic-terminal"
+			/>
 		);
 	}
 
@@ -956,7 +877,9 @@ function AttachedTerminal({
 }) {
 	const { t } = useTranslation();
 	const attachSession =
-		session && terminalTarget?.kind === "reviewer"
+		terminalTarget?.kind === "shell"
+			? undefined
+			: session && terminalTarget?.kind === "reviewer"
 			? { ...session, terminalHandleId: terminalTarget.handleId }
 			: session;
 	// One terminal instance per logical-terminal + handle generation. The shell

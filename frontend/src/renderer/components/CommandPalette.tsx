@@ -52,13 +52,16 @@ export function CommandPalette() {
 	const queryClient = useQueryClient();
 	const restoreSessionById = useRestoreSession();
 	const params = useParams({ strict: false }) as { projectId?: string; sessionId?: string };
-	const workspaces = useWorkspaceQuery().data ?? [];
 	const { cloneProject, createProject, initializeProjectRepository } = useShell();
 	const resolvedTheme = useUiStore((s) => s.resolvedTheme);
 	const setThemePreference = useUiStore((s) => s.setThemePreference);
 	const isOpen = useUiStore((s) => s.isCommandPaletteOpen);
 	const setOpen = useUiStore((s) => s.setCommandPaletteOpen);
 	const restartingProjectIds = useUiStore((s) => s.restartingProjectIds);
+	// The palette stays mounted to preserve its close animation and global
+	// shortcut. While closed, commands are invisible, so retain the cached
+	// snapshot without subscribing this hidden surface to streamed updates.
+	const workspaces = useWorkspaceQuery({ subscribed: isOpen }).data ?? [];
 
 	const [view, setView] = useState<PaletteView>({ mode: "root" });
 	const [query, setQuery] = useState("");
@@ -89,6 +92,7 @@ export function CommandPalette() {
 	// Review states are fetched only while the palette is open; the shared query
 	// key means sessions already viewed in the inspector reuse the cached data.
 	const reviewQuerySummary = useQueries({
+		subscribed: isOpen,
 		queries: sessionsWithOpenPRs.map((session) =>
 			sessionReviewsQueryOptions(session, isOpen, PALETTE_REVIEW_STALE_TIME_MS),
 		),
