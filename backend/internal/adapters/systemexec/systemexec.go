@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,14 +18,31 @@ import (
 )
 
 // Adapter implements the host executable and command-runner ports.
-type Adapter struct{}
+type Adapter struct {
+	installerRoot string
+	httpClient    *http.Client
+}
 
 var (
 	_ ports.ExecutableFinder       = Adapter{}
 	_ ports.CommandRunner          = Adapter{}
 	_ ports.InstallCommandRunner   = Adapter{}
+	_ ports.InstallScriptRunner    = Adapter{}
 	_ ports.InstallCapabilityProbe = Adapter{}
 )
+
+// New creates a host adapter whose installer scratch space stays inside AO's
+// configured data directory.
+func New(dataDir string) Adapter {
+	return newAdapter(dataDir, http.DefaultClient)
+}
+
+func newAdapter(dataDir string, client *http.Client) Adapter {
+	return Adapter{
+		installerRoot: filepath.Join(dataDir, "installers", "tmp"),
+		httpClient:    client,
+	}
+}
 
 // LookPath resolves file against the daemon process PATH.
 func (Adapter) LookPath(file string) (string, error) {

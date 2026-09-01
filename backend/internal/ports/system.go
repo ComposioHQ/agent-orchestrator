@@ -32,6 +32,26 @@ type InstallCommandRunner interface {
 	RunInstall(ctx context.Context, command InstallCommand, stdout, stderr io.Writer) error
 }
 
+// InstallScriptCommand is a daemon-owned remote installer recipe. The caller
+// selects the exact URL and interpreter; the adapter downloads the complete
+// script before executing it.
+type InstallScriptCommand struct {
+	URL         string
+	Interpreter []string
+	Env         []string
+}
+
+// InstallScriptResult records display-safe evidence about a downloaded script.
+type InstallScriptResult struct {
+	SHA256 string
+}
+
+// InstallScriptRunner downloads and executes a fixed remote installer without
+// exposing script authority to clients.
+type InstallScriptRunner interface {
+	RunInstallScript(ctx context.Context, command InstallScriptCommand, stdout, stderr io.Writer) (InstallScriptResult, error)
+}
+
 // NPMInstallCapabilities is one request-scoped npm/Node preflight snapshot.
 // Err is manager-specific so an unavailable npm does not suppress viable
 // Homebrew recipes in the same catalog response.
