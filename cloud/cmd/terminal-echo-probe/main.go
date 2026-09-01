@@ -163,7 +163,7 @@ func run() error {
 		len(samples),
 		samples[0].Round(time.Millisecond),
 		samples[len(samples)/2].Round(time.Millisecond),
-		(sum/time.Duration(len(samples))).Round(time.Millisecond),
+		(sum / time.Duration(len(samples))).Round(time.Millisecond),
 		samples[len(samples)-1].Round(time.Millisecond),
 	)
 	return nil
