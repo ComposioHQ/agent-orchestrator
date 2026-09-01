@@ -297,6 +297,15 @@ func (s *Server) writeTerminalOutput(
 	defer ticker.Stop()
 	startupDeadline := time.NewTimer(terminalReadyTimeout)
 	defer startupDeadline.Stop()
+	// With the stream enabled, a Postgres NOTIFY wakes this loop the moment a
+	// new output row commits; the ticker stays as the cross-replica and
+	// missed-notification fallback.
+	var wake chan struct{}
+	if s.terminalStreamEnabled {
+		var cancelWake func()
+		wake, cancelWake = s.terminalStreams.subscribeOutput(terminal.ID)
+		defer cancelWake()
+	}
 	replayComplete := false
 	startingSent := false
 	ready := false
@@ -368,6 +377,7 @@ func (s *Server) writeTerminalOutput(
 			if !ready {
 				return errTerminalProcessUnavailable
 			}
+		case <-wake:
 		case <-ticker.C:
 		}
 	}
