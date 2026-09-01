@@ -54,6 +54,7 @@ type CreateProjectAgentSheetProps = {
 	path: string | null;
 	repositorySetupNeeded?: boolean;
 	repositorySetupWarning?: string | null;
+	showOverlay?: boolean;
 };
 
 type SheetError = {
@@ -113,6 +114,7 @@ export function CreateProjectAgentSheet({
 	path,
 	repositorySetupNeeded = false,
 	repositorySetupWarning = null,
+	showOverlay = true,
 }: CreateProjectAgentSheetProps) {
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
@@ -177,7 +179,7 @@ export function CreateProjectAgentSheet({
 	return (
 		<Dialog.Root open={open} onOpenChange={(next) => !isBusy && onOpenChange(next)}>
 			<Dialog.Portal>
-				<Dialog.Overlay className="dialog-overlay data-[state=open]:animate-overlay-in" />
+				{showOverlay ? <Dialog.Overlay className="dialog-overlay data-[state=open]:animate-overlay-in" /> : null}
 				<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay w-[min(520px,calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-lg border border-border bg-popover p-0 text-popover-foreground shadow-xl data-[state=open]:animate-modal-in data-[state=closed]:animate-modal-out motion-reduce:animate-none">
 					<Dialog.Description className="sr-only">{t("createProject.projectAgents")}</Dialog.Description>
 					<ProjectSetupHeaderView
@@ -456,7 +458,7 @@ export const RequiredAgentField = memo(function RequiredAgentField({
 				triggerClassName={cn(
 					chipStyle === "composer"
 						? "composer-chip composer-toolbar-option w-full justify-between"
-						: "h-control-form w-full justify-between rounded-md border border-input bg-input px-3 hover:bg-muted data-[state=open]:bg-muted",
+						: "h-control-form w-full justify-between rounded-md bg-input px-3 hover:bg-muted data-[state=open]:bg-muted",
 					invalid && "text-error",
 					triggerClassName,
 				)}

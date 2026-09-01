@@ -47,7 +47,7 @@ type ProjectOffering = "local" | "cloud";
 
 // Shared create-project flow. Local projects/workspaces use the native folder
 // picker; remote projects progressively reveal a lazily loaded clone form.
-// Every source converges on the same agent sheet and project-start behavior.
+// Local sources converge on the agent sheet and project-start behavior.
 export function CreateProjectFlow({
 	children,
 	droppedPath,
@@ -125,6 +125,7 @@ export function CreateProjectFlow({
 	const [offering, setOffering] = useState<ProjectOffering>("local");
 
 	const hasModePicker = mode === "choose";
+	const agentSheetOpen = selectedPath !== null;
 	const isBusy = isChoosingPath || isCreating || isInitializing;
 
 	const transitionToChild = (open: () => void) => {
@@ -251,15 +252,17 @@ export function CreateProjectFlow({
 		startFlow(droppedPath.path);
 	}, [droppedPath]);
 
-	const createProject = async (selection: CreateProjectAgentSelection) => {
-		if (!selectedPath) return;
+	const createProject = async (selection: CreateProjectAgentSelection, cloneOverride?: CloneRepositorySelection) => {
+		const activeClone = cloneOverride ?? cloneSelection;
+		const activePath = selectedPath;
+		if (!activePath && !activeClone) return;
 		setError(null);
 		setIsCreating(true);
 		try {
-			if (cloneSelection) {
+			if (activeClone) {
 				await onCloneProject({
-					remoteUrl: cloneSelection.remoteUrl,
-					destinationParent: cloneSelection.destinationParent,
+					remoteUrl: activeClone.remoteUrl,
+					destinationParent: activeClone.destinationParent,
 					...selection,
 				});
 				setSelectedPath(null);
@@ -269,31 +272,35 @@ export function CreateProjectFlow({
 			if (selectedKind === "single_repo" && repositorySetup) {
 				setIsCreating(false);
 				setIsInitializing(true);
-				await onInitializeProject(selectedPath);
+				await onInitializeProject(activePath!);
 				setRepositorySetup(null);
 				setRepositorySetupWarning(null);
 				setIsInitializing(false);
 				setIsCreating(true);
 			}
-			await onCreateProject({ path: selectedPath, asWorkspace: selectedKind === "workspace", ...selection });
+			await onCreateProject({ path: activePath!, asWorkspace: selectedKind === "workspace", ...selection });
 			setSelectedPath(null);
 		} catch (err) {
 			const code = err instanceof Error && "code" in err ? (err.code as string | undefined) : undefined;
 			const message = err instanceof Error ? err.message : t("createProject.couldNotAdd");
-			if (!cloneSelection && selectedKind === "single_repo" && isRepositorySetupRecoveryCode(code)) {
+			if (!activeClone && selectedKind === "single_repo" && isRepositorySetupRecoveryCode(code)) {
 				setRepositorySetup(code);
 			}
 			setError(message);
-			if (hasModePicker && !cloneSelection) {
+			if (activeClone) {
+				setModePickerOpen(true);
+				setCloneDialogOpen(true);
+			}
+			if (hasModePicker && !activeClone) {
 				if (shouldScanCreateFailure(message)) {
 					try {
 						const scan = await aoBridge.app.scanImportFolder({
-							path: selectedPath,
+							path: activePath!,
 							mode: selectedKind === "workspace" ? "workspace" : "project",
 						});
 						setValidationScan(scan);
 					} catch {
-						setValidationScan({ path: selectedPath, repos: [] });
+						setValidationScan({ path: activePath!, repos: [] });
 					}
 				} else {
 					setValidationScan(null);
@@ -351,7 +358,7 @@ export function CreateProjectFlow({
 			{hasModePicker && (
 				<>
 					<CreateProjectSourceDialog
-						childOpen={childTransitioning || cloneDialogOpen || folderPickerOpen}
+						childOpen={childTransitioning || cloneDialogOpen || folderPickerOpen || agentSheetOpen}
 						cloudAvailable={cloudAvailable}
 						cloudEnabled={cloudEnabled}
 						disabled={isBusy}
@@ -360,7 +367,7 @@ export function CreateProjectFlow({
 						onOfferingChange={setOffering}
 						onSignIn={cloudSignIn}
 						open={modePickerOpen}
-						onOpenChange={(open) => {
+				onOpenChange={(open) => {
 							if (isBusy) return;
 							setModePickerOpen(open);
 							// Dismissed without picking a kind — don't let a stale dropped
@@ -393,9 +400,9 @@ export function CreateProjectFlow({
 							onContinue={(next) => {
 								setCloneSelection(next);
 								setSelectedKind("single_repo");
-								setSelectedPath(next.targetPath);
-								setModePickerOpen(false);
 								setCloneDialogOpen(false);
+								setModePickerOpen(false);
+								void createProject(next, next);
 							}}
 							open
 							value={cloneDetails}
@@ -412,7 +419,6 @@ export function CreateProjectFlow({
 							if (!validationScan || error) return;
 							setFolderPickerOpen(false);
 							setSelectedPath(validationScan.path);
-							setModePickerOpen(false);
 						}}
 						onBack={() => {
 							setError(null);
@@ -438,10 +444,11 @@ export function CreateProjectFlow({
 				isCreating={isCreating}
 				isInitializing={isInitializing}
 				kind={selectedKind}
-				onOpenChange={(open) => {
+					onOpenChange={(open) => {
 					if (!open) {
 						setSelectedPath(null);
 						setCloneSelection(null);
+						setModePickerOpen(false);
 						if (!folderPickerOpen) {
 							setError(null);
 						}
@@ -456,10 +463,11 @@ export function CreateProjectFlow({
 						: undefined
 				}
 				onSubmit={createProject}
-				open={selectedPath !== null}
+				open={agentSheetOpen}
 				path={selectedPath}
 				repositorySetupNeeded={repositorySetup !== null}
 				repositorySetupWarning={repositorySetupWarning}
+				showOverlay={!hasModePicker}
 			/>
 			{error && !hasModePicker && (
 				<span className="sr-only" role="status">

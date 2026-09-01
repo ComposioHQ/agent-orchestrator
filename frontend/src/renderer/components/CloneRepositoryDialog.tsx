@@ -1,8 +1,13 @@
 import * as Dialog from "@radix-ui/react-dialog";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, Folder, Link2, X } from "lucide-react";
 import { type FormEvent, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import type { components } from "../../api/schema";
+import { agentsQueryKey, agentsQueryOptions, refreshAgentsIfStale } from "../hooks/useAgentsQuery";
 import { aoBridge } from "../lib/bridge";
+import { buildIntake, IntakeFields, intakeNeedsRule, type IntakeForm } from "./IntakeFields";
+import { defaultAuthorizedAgent, RequiredAgentField, type CreateProjectAgentSelection } from "./CreateProjectAgentSheet";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
@@ -14,7 +19,7 @@ export type CloneRepositoryDetails = {
 
 export type CloneRepositorySelection = CloneRepositoryDetails & {
 	targetPath: string;
-};
+} & CreateProjectAgentSelection;
 
 export const LAST_CLONE_DESTINATION_KEY = "ao.clone.lastDestinationParent";
 
@@ -40,6 +45,17 @@ export default function CloneRepositoryDialog({
 	value: CloneRepositoryDetails;
 }) {
 	const { t } = useTranslation();
+	const queryClient = useQueryClient();
+	const agentsQuery = useQuery({ ...agentsQueryOptions, enabled: open });
+	const agentOptions = agentsQuery.data?.authorized ?? [];
+	const installedAgents = agentsQuery.data?.installed ?? [];
+	const supportedAgents = agentsQuery.data?.supported ?? [];
+	const isLoadingAgents = agentsQuery.data === undefined && agentsQuery.isFetching;
+	const [workerAgent, setWorkerAgent] = useState("");
+	const [orchestratorAgent, setOrchestratorAgent] = useState("");
+	const [workerAgentTouched, setWorkerAgentTouched] = useState(false);
+	const [orchestratorAgentTouched, setOrchestratorAgentTouched] = useState(false);
+	const [intake, setIntake] = useState<IntakeForm>({ enabled: false, repo: "", assignee: "" });
 	const [submitted, setSubmitted] = useState(false);
 	const [choosingDestination, setChoosingDestination] = useState(false);
 	const [destinationPickerError, setDestinationPickerError] = useState<string | null>(null);
@@ -48,6 +64,32 @@ export default function CloneRepositoryDialog({
 	const hasRemoteUrl = value.remoteUrl.trim().length > 0;
 	const urlError = hasRemoteUrl && !repositoryName ? t("createProject.cloneInvalidUrl") : null;
 	const destinationError = submitted && !value.destinationParent ? t("createProject.cloneDestinationRequired") : null;
+	const intakeIncomplete = intakeNeedsRule(intake);
+	const canSubmit = Boolean(repositoryName && value.destinationParent && workerAgent && orchestratorAgent) && !intakeIncomplete && !disabled && !choosingDestination && !isLoadingAgents;
+
+	useEffect(() => {
+		if (!open) return;
+		void refreshAgentsIfStale().then((next) => {
+			if (next) queryClient.setQueryData(agentsQueryKey, next);
+		});
+	}, [open, queryClient]);
+
+	useEffect(() => {
+		if (!open) return;
+		const defaultAgent = defaultAuthorizedAgent(agentOptions);
+		if (!workerAgentTouched) setWorkerAgent(defaultAgent);
+		if (!orchestratorAgentTouched) setOrchestratorAgent(defaultAgent);
+	}, [agentOptions, open, orchestratorAgentTouched, workerAgentTouched]);
+
+	useEffect(() => {
+		if (open) return;
+		setWorkerAgent("");
+		setOrchestratorAgent("");
+		setWorkerAgentTouched(false);
+		setOrchestratorAgentTouched(false);
+		setIntake({ enabled: false, repo: "", assignee: "" });
+		setSubmitted(false);
+	}, [open]);
 
 	const chooseDestination = async () => {
 		setDestinationPickerError(null);
@@ -72,11 +114,14 @@ export default function CloneRepositoryDialog({
 	const submit = (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();
 		setSubmitted(true);
-		if (!repositoryName || !value.destinationParent || disabled) return;
+		if (!canSubmit || !repositoryName || !value.destinationParent) return;
 		onContinue({
 			...value,
 			remoteUrl: value.remoteUrl.trim(),
 			targetPath: joinCloneDestination(value.destinationParent, repositoryName),
+			workerAgent,
+			orchestratorAgent,
+			trackerIntake: buildIntake(intake),
 		});
 	};
 
@@ -183,12 +228,44 @@ export default function CloneRepositoryDialog({
 								) : null}
 							</div>
 
+							<div className="grid gap-4 sm:grid-cols-2">
+								<AgentSelectField
+									label={t("createProject.workerAgent")}
+									placeholder={t("createProject.selectWorker")}
+									value={workerAgent}
+									authorized={agentOptions}
+									installed={installedAgents}
+									supported={supportedAgents}
+									disabled={isLoadingAgents}
+									onChange={(next) => {
+										setWorkerAgent(next);
+										setWorkerAgentTouched(true);
+									}}
+								/>
+								<AgentSelectField
+									label={t("createProject.orchestratorAgent")}
+									placeholder={t("createProject.selectOrchestrator")}
+									value={orchestratorAgent}
+									authorized={agentOptions}
+									installed={installedAgents}
+									supported={supportedAgents}
+									disabled={isLoadingAgents}
+									onChange={(next) => {
+										setOrchestratorAgent(next);
+										setOrchestratorAgentTouched(true);
+									}}
+								/>
+							</div>
+							<div>
+								<IntakeFields form={intake} onChange={(patch) => setIntake((current) => ({ ...current, ...patch }))} compact />
+							</div>
+
 						</div>
 
 						<div className="flex shrink-0 justify-end gap-2 px-4 pb-4 pt-3">
 							{!urlError ? (
-								<Button type="submit" variant="primary" disabled={disabled || choosingDestination || !repositoryName || !value.destinationParent}>
-									{t("createProject.cloneContinue")}
+								<Button type="submit" variant="primary" disabled={!canSubmit}>
+									{t("createProject.cloneAndStart")}
 								</Button>
 							) : null}
 						</div>
@@ -196,6 +273,47 @@ export default function CloneRepositoryDialog({
 				</Dialog.Content>
 			</Dialog.Portal>
 		</Dialog.Root>
+	);
+}
+
+type AgentInfo = components["schemas"]["AgentInfo"];
+
+function AgentSelectField({
+	authorized,
+	disabled,
+	installed,
+	label,
+	onChange,
+	placeholder,
+	supported,
+	value,
+}: {
+	authorized: AgentInfo[];
+	disabled: boolean;
+	installed: AgentInfo[];
+	label: string;
+	onChange: (value: string) => void;
+	placeholder: string;
+	supported: AgentInfo[];
+	value: string;
+}) {
+	return (
+		<div className="space-y-1.5">
+			<Label className="text-[13px] font-semibold text-foreground">{label}</Label>
+			<RequiredAgentField
+				id={label}
+				label={label}
+				placeholder={placeholder}
+				value={value}
+				authorized={authorized}
+				installed={installed}
+				supported={supported}
+				disabled={disabled}
+				chipStyle="field"
+				variant="chip"
+				onChange={onChange}
+			/>
+		</div>
 	);
 }
 

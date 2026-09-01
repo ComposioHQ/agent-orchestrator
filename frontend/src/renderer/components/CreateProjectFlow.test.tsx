@@ -195,7 +195,7 @@ describe("CreateProjectFlow droppedPath", () => {
 		rerender(<CreateProjectFlow mode="choose" {...noop} droppedPath={{ nonce: 2, path: "/dropped/second" }} />);
 
 		expect(screen.getByTestId("agent-sheet")).toHaveAttribute("data-path", "/dropped/first");
-		expect(screen.queryByRole("button", { name: /Open local folder/ })).not.toBeInTheDocument();
+		expect(screen.getByRole("dialog")).toHaveClass("opacity-0");
 	});
 
 	it("ignores a drop while the clone-from-Git dialog is open", async () => {
