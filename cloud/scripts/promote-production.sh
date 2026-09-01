@@ -276,6 +276,7 @@ register_api_task() {
 			--set-secret "AO_CLOUD_CODER_TEMPLATE_ID=${sandbox_secret_arn}:template_id::"
 			--set-secret "AO_CLOUD_CODER_AGENT_NAME=${sandbox_secret_arn}:agent_name::"
 			--set-secret "AO_CLOUD_CODER_PARAMETERS_JSON=${sandbox_secret_arn}:parameters_json::"
+			--set-secret "AO_CLOUD_CODER_DURABLE_ROOT=${sandbox_secret_arn}:durable_root::"
 			--set-secret "AO_CLOUD_CODER_WORKER_TOKEN_TTL=${sandbox_secret_arn}:worker_token_ttl::"
 		)
 	else

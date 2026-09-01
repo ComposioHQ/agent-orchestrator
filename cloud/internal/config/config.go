@@ -94,6 +94,7 @@ type Config struct {
 	CoderTemplateID     string
 	CoderAgentName      string
 	CoderParameters     map[string]string
+	CoderDurableRoot    string
 	CoderWorkerTokenTTL time.Duration
 
 	GitHub GitHubConfig
@@ -221,6 +222,9 @@ func Load() (Config, error) {
 		CoderTemplateID: strings.TrimSpace(os.Getenv("AO_CLOUD_CODER_TEMPLATE_ID")),
 		CoderAgentName:  strings.TrimSpace(os.Getenv("AO_CLOUD_CODER_AGENT_NAME")),
 		CoderParameters: coderParametersEnv,
+		CoderDurableRoot: strings.TrimSpace(
+			os.Getenv("AO_CLOUD_CODER_DURABLE_ROOT"),
+		),
 		CoderWorkerTokenTTL: durationEnv(
 			"AO_CLOUD_CODER_WORKER_TOKEN_TTL", sandbox.DefaultWorkerTokenTTL,
 		),
@@ -360,6 +364,7 @@ func Load() (Config, error) {
 			TemplateID:     cfg.CoderTemplateID,
 			AgentName:      cfg.CoderAgentName,
 			Parameters:     cfg.CoderParameters,
+			DurableRoot:    cfg.CoderDurableRoot,
 			WorkerTokenTTL: cfg.CoderWorkerTokenTTL,
 		}).Validate(); err != nil {
 			return Config{}, err

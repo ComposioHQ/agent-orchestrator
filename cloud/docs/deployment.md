@@ -110,11 +110,14 @@ directly from its environment-scoped secret. Provider auto-pause is
 intentionally absent from this deployment configuration.
 
 `coder` is a JSON secret with `url`, `token`, `owner`, `template_id`,
-`agent_name`, `parameters_json`, and `worker_token_ttl`. `parameters_json` must
-be a JSON object whose values are strings; use `{}` when the approved template
-has no parameters. The deployment validates only the selected provider and
-removes the other provider's environment variables and secret references from
-the new task definition. The ECS execution role needs
+`agent_name`, `parameters_json`, `durable_root`, and `worker_token_ttl`.
+`durable_root` is the approved template's exact persistent-volume mount point,
+not a deployment-wide assumption about the Coder user's home. It must be an
+absolute normalized non-root path. `parameters_json` must be a JSON object whose
+values are strings; use `{}` when the approved template has no parameters. The
+deployment validates only the selected provider and removes the other
+provider's environment variables and secret references from the new task
+definition. The ECS execution role needs
 `secretsmanager:GetSecretValue` for the selected environment-scoped provider
 secret.
 
