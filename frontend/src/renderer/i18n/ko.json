@@ -1159,7 +1159,7 @@
 	"orchestratorReplacement.close": "닫기",
 	"orchestratorReplacement.openCurrent": "현재 오케스트레이터 열기",
 	"orchestratorReplacement.retry": "다시 시도",
-	"settings.project.enableIssueIntake": "이슈 인테이크 사용",
+	"settings.project.enableIssueIntake": "할당된 이슈 작업",
 	"settings.project.repository": "저장소",
 	"settings.project.repoNotDetected": "이 프로젝트의 git origin에서 GitHub 저장소를 감지할 수 없습니다.",
 	"settings.project.assignee": "담당자",

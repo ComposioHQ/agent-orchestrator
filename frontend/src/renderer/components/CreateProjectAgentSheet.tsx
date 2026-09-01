@@ -178,7 +178,7 @@ export function CreateProjectAgentSheet({
 		<Dialog.Root open={open} onOpenChange={(next) => !isBusy && onOpenChange(next)}>
 			<Dialog.Portal>
 				<Dialog.Overlay className="dialog-overlay data-[state=open]:animate-overlay-in" />
-				<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay w-[min(480px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 rounded-agents-sheet border border-[var(--color-border-agents-sheet)] bg-[var(--color-bg-agents-sheet)] p-0 text-[var(--color-text-agents-sheet-title)] shadow-[var(--shadow-import-modal)] data-[state=open]:animate-modal-in">
+				<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay flex max-h-[min(640px,calc(100svh-24px))] w-[min(640px,calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-lg border border-border bg-popover p-0 text-popover-foreground shadow-xl data-[state=open]:animate-modal-in data-[state=closed]:animate-modal-out motion-reduce:animate-none">
 					<ProjectSetupHeaderView
 						CloseButton={ProjectSheetCloseButton}
 						Description={Dialog.Description}
@@ -220,8 +220,9 @@ export function CreateProjectAgentSheet({
 									supported={supportedAgents}
 									disabled={isLoadingAgents}
 									labelClassName="agents-sheet-label"
-									triggerClassName="agents-sheet-control"
-									contentClassName="agents-sheet-menu"
+									triggerClassName="composer-toolbar-option w-full justify-between"
+									contentClassName="settings-agent-menu-surface"
+									variant="chip"
 									onChange={(value) => {
 										setWorkerAgent(value);
 										setWorkerAgentTouched(true);
@@ -239,8 +240,9 @@ export function CreateProjectAgentSheet({
 									supported={supportedAgents}
 									disabled={isLoadingAgents}
 									labelClassName="agents-sheet-label"
-									triggerClassName="agents-sheet-control"
-									contentClassName="agents-sheet-menu"
+									triggerClassName="composer-toolbar-option w-full justify-between"
+									contentClassName="settings-agent-menu-surface"
+									variant="chip"
 									onChange={(value) => {
 										setOrchestratorAgent(value);
 										setOrchestratorAgentTouched(true);
@@ -328,7 +330,7 @@ function ProjectSheetCloseButton({
 		<Dialog.Close asChild>
 			<button
 				type="button"
-				className="settings-close-button"
+				className="settings-close-button absolute right-3 top-3"
 				aria-label={ariaLabel}
 				disabled={disabled}
 			>

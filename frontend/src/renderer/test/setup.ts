@@ -99,6 +99,7 @@ if (typeof window !== "undefined") {
 	window.ao = {
 		app: {
 			getVersion: async () => "0.0.0-test",
+			getHomeDirectory: async () => "/Users/tester",
 			chooseDirectory: async () => null,
 			openExternal: async () => undefined,
 			scanImportFolder: async ({ path }: { path: string }) => ({ path, repos: [] }),

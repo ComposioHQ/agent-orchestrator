@@ -45,9 +45,6 @@ export default function CloneRepositoryDialog({
 	const [destinationPickerError, setDestinationPickerError] = useState<string | null>(null);
 	const repositoryName = repositoryNameFromGitUrl(value.remoteUrl);
 	const repositoryAvatar = repositoryAvatarFromGitUrl(value.remoteUrl);
-	const targetPath = repositoryName && value.destinationParent
-		? joinCloneDestination(value.destinationParent, repositoryName)
-		: "";
 	const hasRemoteUrl = value.remoteUrl.trim().length > 0;
 	const urlError = hasRemoteUrl && !repositoryName ? t("createProject.cloneInvalidUrl") : null;
 	const destinationError = submitted && !value.destinationParent ? t("createProject.cloneDestinationRequired") : null;

@@ -206,13 +206,13 @@ export function ProjectSetupHeaderView({
 	title: string;
 }) {
 	return (
-		<div className="flex items-start justify-between gap-4 border-b border-[var(--color-border-agents-sheet)] p-(--size-import-dialog-padding)">
+		<div className="relative flex shrink-0 items-start gap-3 px-4 pt-3">
 			{leadingAction}
-			<div className="min-w-0">
-				<Title className="text-subtitle font-semibold text-[var(--color-text-agents-sheet-title)]">
+			<div className="min-w-0 flex-1 pr-8">
+				<Title className="text-[18px] font-semibold text-foreground">
 					{title}
 				</Title>
-				<Description className="mt-1 break-all text-xs text-[var(--color-text-agents-sheet-description)]">
+				<Description className="mt-1 break-all text-[13px] leading-5 text-muted-foreground">
 					{path}
 				</Description>
 			</div>
@@ -268,19 +268,19 @@ export function ProjectSetupFormView({
 		if (canSubmit) onSubmit();
 	};
 	return (
-		<form className="space-y-5 p-(--size-import-dialog-padding)" onSubmit={submit}>
+		<form className="space-y-4 px-4 pb-1 pt-4" onSubmit={submit}>
 			<div className="grid gap-4 sm:grid-cols-2">
 				{agentControls.worker}
 				{agentControls.orchestrator}
 			</div>
 
 			{agents.loading && (
-				<p className="text-xs leading-row text-[var(--color-text-agents-sheet-description)]" role="status">
+				<p className="text-[12px] leading-5 text-muted-foreground" role="status">
 					{agents.loadingMessage}
 				</p>
 			)}
 
-			<p className="text-xs leading-row text-[var(--color-text-agents-sheet-description)]">
+			<p className="text-[12px] leading-5 text-muted-foreground">
 				{agents.cacheMessage}
 			</p>
 
@@ -293,7 +293,7 @@ export function ProjectSetupFormView({
 					{agents.onRetry && (
 						<button
 							type="button"
-							className="shrink-0 rounded text-[var(--color-text-agents-sheet-title)] underline-offset-2 hover:underline disabled:pointer-events-none disabled:opacity-50"
+							className="shrink-0 rounded text-foreground underline-offset-2 hover:underline disabled:pointer-events-none disabled:opacity-50"
 							disabled={agents.refreshing}
 							onClick={agents.onRetry}
 						>
@@ -303,10 +303,10 @@ export function ProjectSetupFormView({
 				</div>
 			)}
 
-			<div className="border-t border-[var(--color-border-agents-sheet)] pt-5">{intakeControl}</div>
+			<div className="border-t border-border/60 pt-4">{intakeControl}</div>
 
 			{setupNotice && (
-				<div className="rounded-lg border border-[var(--color-border-agents-sheet)] bg-[var(--color-bg-agents-sheet-control)]/80 px-3 py-2.5 text-xs leading-body-md text-[var(--color-text-agents-sheet-description)]">
+				<div className="rounded-md border border-border/60 bg-muted/40 px-3 py-2.5 text-xs leading-body-md text-muted-foreground">
 					<p>{setupNotice.message}</p>
 					{setupNotice.warning && <p className="mt-2 text-warning">{setupNotice.warning}</p>}
 				</div>
@@ -326,20 +326,20 @@ export function ProjectSetupFormView({
 						<p
 							className={
 								alert.tone === "warning"
-									? "font-medium text-[var(--color-text-agents-sheet-title)]"
+									? "font-medium text-foreground"
 									: "font-medium text-destructive"
 							}
 						>
 							{alert.title}
 						</p>
-						<p className="text-[var(--color-text-agents-sheet-description)]">{alert.message}</p>
+						<p className="text-muted-foreground">{alert.message}</p>
 					</div>
 				</div>
 			)}
 
-			<div className="flex items-center justify-end gap-3 pt-1">
+			<div className="flex items-center justify-end gap-2 px-0 pb-0 pt-1">
 				<button
-					className="settings-footer-button disabled:pointer-events-none disabled:opacity-50"
+					className="inline-flex h-control-form items-center justify-center rounded-md border border-border bg-transparent px-3 text-sm text-foreground hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
 					type="button"
 					disabled={isBusy}
 					onClick={onCancel}
@@ -347,7 +347,7 @@ export function ProjectSetupFormView({
 					{cancelLabel}
 				</button>
 				<button
-					className="settings-footer-button settings-footer-button-primary disabled:pointer-events-none disabled:opacity-50"
+					className="inline-flex h-control-form items-center justify-center rounded-md bg-primary px-3 text-sm text-primary-foreground hover:bg-primary/80 disabled:pointer-events-none disabled:opacity-50"
 					type="submit"
 					disabled={!canSubmit}
 				>

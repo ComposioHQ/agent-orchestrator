@@ -41,7 +41,7 @@ function renderSheet(onSubmit = vi.fn().mockResolvedValue(undefined), queryClien
 async function chooseOption(trigger: HTMLElement, optionName: string) {
 	await userEvent.click(trigger);
 	const escaped = optionName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-	await userEvent.click(await screen.findByRole("option", { name: new RegExp(escaped, "i") }));
+	await userEvent.click(await screen.findByRole("menuitem", { name: new RegExp(escaped, "i") }));
 }
 
 describe("CreateProjectAgentSheet", () => {
@@ -120,7 +120,7 @@ describe("CreateProjectAgentSheet", () => {
 		await chooseOption(screen.getByLabelText("Worker agent"), "claude-code");
 		await chooseOption(screen.getByLabelText("Orchestrator agent"), "codex");
 
-		await userEvent.click(screen.getByLabelText("Enable issue intake"));
+		await userEvent.click(screen.getByLabelText("Work on assigned issues"));
 		// Enabled with no eligibility rule → submit stays disabled (compact sheet
 		// carries no inline guard prose; gating is the disabled button).
 		expect(screen.getByRole("button", { name: "Create and start" })).toBeDisabled();
@@ -142,7 +142,7 @@ describe("CreateProjectAgentSheet", () => {
 		expect(screen.getByLabelText("What does enabling issue intake do?")).toBeInTheDocument();
 		expect(screen.queryByText(/Auto-spawn worker sessions from matching tracker issues/)).not.toBeInTheDocument();
 
-		await userEvent.click(screen.getByLabelText("Enable issue intake"));
+		await userEvent.click(screen.getByLabelText("Work on assigned issues"));
 		expect(screen.queryByText("Repository")).not.toBeInTheDocument();
 		expect(screen.queryByText(/Reads credentials from/)).not.toBeInTheDocument();
 	});

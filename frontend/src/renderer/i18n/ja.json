@@ -1159,7 +1159,7 @@
 	"orchestratorReplacement.close": "閉じる",
 	"orchestratorReplacement.openCurrent": "現在のオーケストレーターを開く",
 	"orchestratorReplacement.retry": "再試行",
-	"settings.project.enableIssueIntake": "Issue インテークを有効化",
+	"settings.project.enableIssueIntake": "割り当てられたIssueに取り組む",
 	"settings.project.repository": "リポジトリ",
 	"settings.project.repoNotDetected": "このプロジェクトの git origin から GitHub リポジトリを検出できませんでした。",
 	"settings.project.assignee": "担当者",

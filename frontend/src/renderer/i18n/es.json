@@ -1170,7 +1170,7 @@
 	"orchestratorReplacement.close": "Cerrar",
 	"orchestratorReplacement.openCurrent": "Abrir orquestador actual",
 	"orchestratorReplacement.retry": "Reintentar",
-	"settings.project.enableIssueIntake": "Activar captación de issues",
+	"settings.project.enableIssueIntake": "Trabajar en issues asignados",
 	"settings.project.repository": "Repositorio",
 	"settings.project.repoNotDetected": "No se pudo detectar un repo de GitHub a partir del origen git de este proyecto.",
 	"settings.project.assignee": "Asignado",

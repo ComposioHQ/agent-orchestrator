@@ -172,32 +172,31 @@ export function IntakeFields({
 						{t("settings.project.intakeDescription")}
 				</p>
 			)}
-			<div className="flex items-center gap-2">
-				<label className="flex items-center gap-2.5 text-control text-foreground">
-					<input
-						type="checkbox"
-						className="size-icon-base accent-accent"
-						checked={form.enabled}
-						onChange={(e) => onChange({ enabled: e.target.checked })}
-					/>
-					{t("settings.project.enableIssueIntake")}
-				</label>
-				{compact && (
-					<TooltipProvider delayDuration={0}>
-						<Tooltip>
-							<TooltipTrigger asChild>
-								<button
-									type="button"
-									className="grid size-icon-base place-items-center rounded-full text-muted-foreground hover:text-foreground focus-visible:outline-none"
-									aria-label={t("settings.project.intakeHelpAria")}
-								>
-									<Info className="size-3.5" aria-hidden="true" />
-								</button>
-							</TooltipTrigger>
-							<TooltipContent>{t("settings.project.intakeTooltip")}</TooltipContent>
-						</Tooltip>
-					</TooltipProvider>
-				)}
+			<div className="flex items-center justify-between gap-3">
+				<div className="flex items-center gap-2.5 text-control text-foreground">
+					<span>{t("settings.project.enableIssueIntake")}</span>
+					{compact && (
+						<TooltipProvider delayDuration={0}>
+							<Tooltip>
+								<TooltipTrigger asChild>
+									<button
+										type="button"
+										className="grid size-icon-base place-items-center rounded-full text-muted-foreground hover:text-foreground focus-visible:outline-none"
+										aria-label={t("settings.project.intakeHelpAria")}
+									>
+										<Info className="size-3.5" aria-hidden="true" />
+									</button>
+								</TooltipTrigger>
+								<TooltipContent>{t("settings.project.intakeTooltip")}</TooltipContent>
+							</Tooltip>
+						</TooltipProvider>
+					)}
+				</div>
+				<Switch
+					aria-label={t("settings.project.enableIssueIntake")}
+					checked={form.enabled}
+					onCheckedChange={(enabled) => onChange({ enabled })}
+				/>
 			</div>
 			{form.enabled && (
 				<>
