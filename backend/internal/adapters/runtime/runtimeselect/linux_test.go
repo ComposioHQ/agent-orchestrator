@@ -19,7 +19,7 @@ func TestLinuxRuntimeCreatesDirectHandle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if handle.ID != directHandlePrefix+"session-1" {
+	if handle.ID != linuxDirectHandlePrefix+"session-1" {
 		t.Fatalf("handle = %q, want versioned direct handle", handle.ID)
 	}
 	if len(legacy.calls) != 0 {
@@ -95,7 +95,7 @@ func TestLinuxRuntimeRoutesVersionedHandlesToDirectHost(t *testing.T) {
 	legacy := &restartableFakeBackend{}
 	direct := &fakeBackend{}
 	runtime := newLinuxRuntime(legacy, direct, nil)
-	handle := ports.RuntimeHandle{ID: directHandlePrefix + "new-session"}
+	handle := ports.RuntimeHandle{ID: linuxDirectHandlePrefix + "new-session"}
 
 	if _, err := runtime.GetOutput(context.Background(), handle, 10); err != nil {
 		t.Fatal(err)
@@ -128,11 +128,11 @@ func TestLinuxRuntimeRestartPreservesBackend(t *testing.T) {
 		t.Fatalf("legacy restart calls = %v, handles = %v", legacy.calls, legacy.handles)
 	}
 
-	directHandle, err := runtime.Restart(context.Background(), ports.RuntimeHandle{ID: directHandlePrefix + "session-1"}, cfg)
+	directHandle, err := runtime.Restart(context.Background(), ports.RuntimeHandle{ID: linuxDirectHandlePrefix + "session-1"}, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if directHandle.ID != directHandlePrefix+"session-1" {
+	if directHandle.ID != linuxDirectHandlePrefix+"session-1" {
 		t.Fatalf("direct restart handle = %q", directHandle.ID)
 	}
 	if !reflect.DeepEqual(direct.calls, []string{"destroy", "create:session-1"}) {
@@ -150,7 +150,7 @@ func TestLinuxRuntimeRestartCanFallBackToTmux(t *testing.T) {
 	cfg := ports.RuntimeConfig{SessionID: "session-1"}
 
 	handle, err := runtime.Restart(context.Background(), ports.RuntimeHandle{
-		ID: directHandlePrefix + "session-1",
+		ID: linuxDirectHandlePrefix + "session-1",
 	}, cfg)
 	if err != nil {
 		t.Fatal(err)

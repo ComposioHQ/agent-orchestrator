@@ -162,3 +162,81 @@ func TestLinuxPTYCloseReapsTermIgnoringProcessGroup(t *testing.T) {
 		t.Fatalf("process group %d survived PTY close", pgid)
 	}
 }
+
+func TestLinuxPTYCloseReapsOrphanedBackgroundJobWhenLeaderExitsEarly(t *testing.T) {
+	conn, err := newConPTY(t.TempDir(), "/bin/sh", []string{
+		"-c", `printf 'bg-ready\n'; (trap '' HUP; sleep 30) & sleep 0.05; exit 0`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	leaderPID := conn.PID()
+
+	ready := make([]byte, 128)
+	n, err := conn.Read(ready)
+	if err != nil || !strings.Contains(string(ready[:n]), "bg-ready") {
+		t.Fatalf("waiting for background job readiness: output=%q err=%v", ready[:n], err)
+	}
+
+	select {
+	case <-conn.Done():
+	case <-time.After(2 * time.Second):
+		t.Fatal("leader process did not exit early as expected")
+	}
+
+	if !linuxSessionAlive(leaderPID) {
+		t.Fatalf("session %d had no live background processes after leader exit", leaderPID)
+	}
+
+	if err := conn.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for linuxSessionAlive(leaderPID) && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if linuxSessionAlive(leaderPID) {
+		t.Fatalf("orphaned background process in session %d survived PTY close", leaderPID)
+	}
+}
+
+func TestLinuxPTYCloseReapsDescendantWithOwnProcessGroup(t *testing.T) {
+	conn, err := newConPTY(t.TempDir(), "/bin/bash", []string{
+		"-c", `set -m; (trap '' TERM HUP; printf 'pg-child-ready\n'; sleep 30) & wait`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	leaderPID := conn.PID()
+
+	ready := make([]byte, 128)
+	n, err := conn.Read(ready)
+	if err != nil || !strings.Contains(string(ready[:n]), "pg-child-ready") {
+		t.Fatalf("waiting for job-control descendant readiness: output=%q err=%v", ready[:n], err)
+	}
+
+	procs := linuxFindSessionProcesses(leaderPID)
+	foundSeparatePGID := false
+	for _, p := range procs {
+		if p.pgrp != leaderPID {
+			foundSeparatePGID = true
+			break
+		}
+	}
+	if !foundSeparatePGID {
+		t.Fatalf("expected at least one process with distinct pgid in session %d, found: %+v", leaderPID, procs)
+	}
+
+	if err := conn.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for linuxSessionAlive(leaderPID) && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if linuxSessionAlive(leaderPID) {
+		t.Fatalf("descendant with separate process group in session %d survived PTY close", leaderPID)
+	}
+}

@@ -3,11 +3,14 @@
 package conpty
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"math"
 	"os"
 	"os/exec"
+	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -17,8 +20,8 @@ import (
 
 // linuxPTYConn is a native Linux pseudoterminal owned by the detached host.
 // The child starts in its own session/process group (creack/pty's StartWithSize
-// does this), so teardown can reap the whole launched process tree rather than
-// leaving dev servers or other descendants behind.
+// sets Setsid: true), so teardown can reap the whole launched process tree
+// and session rather than leaving background jobs or altered process groups behind.
 type linuxPTYConn struct {
 	pty *os.File
 	cmd *exec.Cmd
@@ -80,21 +83,15 @@ func (c *linuxPTYConn) Resize(cols, rows int) error {
 func (c *linuxPTYConn) Close() error {
 	var closeErr error
 	c.closeOnce.Do(func() {
-		if c.cmd.Process != nil {
-			select {
-			case <-c.doneC:
-			default:
-				// The PTY child is a session leader. Signal its process group so
-				// descendants cannot outlive a terminal AO explicitly destroys.
-				pgid := c.cmd.Process.Pid
-				_ = syscall.Kill(-pgid, syscall.SIGTERM)
-				if !waitForLinuxProcessGroupExit(pgid, linuxPTYCloseGrace) {
-					_ = syscall.Kill(-pgid, syscall.SIGKILL)
-					select {
-					case <-c.doneC:
-					case <-time.After(linuxPTYCloseGrace):
-					}
-				}
+		if c.cmd.Process != nil && c.cmd.Process.Pid > 0 {
+			sid := c.cmd.Process.Pid
+			// The PTY child was started as a session leader (setsid). Reap all
+			// descendant processes and process groups in the session so background
+			// jobs and shells with job control cannot outlive terminal teardown.
+			killLinuxSession(sid, syscall.SIGTERM)
+			if !waitForLinuxSessionExit(sid, linuxPTYCloseGrace) {
+				killLinuxSession(sid, syscall.SIGKILL)
+				_ = waitForLinuxSessionExit(sid, linuxPTYCloseGrace)
 			}
 		}
 		closeErr = c.pty.Close()
@@ -102,24 +99,149 @@ func (c *linuxPTYConn) Close() error {
 	return closeErr
 }
 
-func waitForLinuxProcessGroupExit(pgid int, timeout time.Duration) bool {
+type linuxProcInfo struct {
+	pid    int
+	ppid   int
+	pgrp   int
+	sid    int
+	zombie bool
+}
+
+func readLinuxProcInfo(pid int) (linuxProcInfo, error) {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return linuxProcInfo{}, err
+	}
+	// /proc/[pid]/stat format: pid (comm) state ppid pgrp session ...
+	// The comm field is enclosed in parentheses and may contain spaces or ')'.
+	closeIdx := bytes.LastIndexByte(data, ')')
+	if closeIdx == -1 || closeIdx+2 >= len(data) {
+		return linuxProcInfo{}, errors.New("malformed /proc stat")
+	}
+	fields := strings.Fields(string(data[closeIdx+2:]))
+	if len(fields) < 4 {
+		return linuxProcInfo{}, errors.New("truncated /proc stat")
+	}
+	state := fields[0]
+	ppid, err1 := strconv.Atoi(fields[1])
+	pgrp, err2 := strconv.Atoi(fields[2])
+	sid, err3 := strconv.Atoi(fields[3])
+	if err1 != nil || err2 != nil || err3 != nil {
+		return linuxProcInfo{}, errors.New("invalid /proc stat numeric fields")
+	}
+	return linuxProcInfo{
+		pid:    pid,
+		ppid:   ppid,
+		pgrp:   pgrp,
+		sid:    sid,
+		zombie: state == "Z",
+	}, nil
+}
+
+func linuxFindSessionProcesses(sid int) []linuxProcInfo {
+	if sid <= 0 {
+		return nil
+	}
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return nil
+	}
+	selfPID := os.Getpid()
+	var allProcs []linuxProcInfo
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		pid, err := strconv.Atoi(entry.Name())
+		if err != nil || pid <= 1 || pid == selfPID {
+			continue
+		}
+		info, err := readLinuxProcInfo(pid)
+		if err != nil {
+			continue
+		}
+		allProcs = append(allProcs, info)
+	}
+
+	inSession := make(map[int]bool)
+	inSession[sid] = true
+
+	for _, p := range allProcs {
+		if p.sid == sid || p.pgrp == sid {
+			inSession[p.pid] = true
+		}
+	}
+
+	for {
+		added := false
+		for _, p := range allProcs {
+			if !inSession[p.pid] && inSession[p.ppid] {
+				inSession[p.pid] = true
+				added = true
+			}
+		}
+		if !added {
+			break
+		}
+	}
+
+	var sessionProcs []linuxProcInfo
+	for _, p := range allProcs {
+		if inSession[p.pid] && !p.zombie {
+			sessionProcs = append(sessionProcs, p)
+		}
+	}
+	return sessionProcs
+}
+
+func killLinuxSession(sid int, sig syscall.Signal) {
+	if sid <= 0 {
+		return
+	}
+	_ = syscall.Kill(-sid, sig)
+	_ = syscall.Kill(sid, sig)
+
+	procs := linuxFindSessionProcesses(sid)
+	for _, p := range procs {
+		_ = syscall.Kill(p.pid, sig)
+		if p.pgrp > 1 {
+			_ = syscall.Kill(-p.pgrp, sig)
+		}
+	}
+}
+
+func waitForLinuxSessionExit(sid int, timeout time.Duration) bool {
 	deadline := time.NewTimer(timeout)
 	defer deadline.Stop()
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		if !linuxProcessGroupAlive(pgid) {
+		if !linuxSessionAlive(sid) {
 			return true
 		}
 		select {
 		case <-deadline.C:
-			return !linuxProcessGroupAlive(pgid)
+			return !linuxSessionAlive(sid)
 		case <-ticker.C:
 		}
 	}
 }
 
+func linuxSessionAlive(sid int) bool {
+	if sid <= 0 {
+		return false
+	}
+	procs := linuxFindSessionProcesses(sid)
+	if len(procs) > 0 {
+		return true
+	}
+	return linuxProcessGroupAlive(sid)
+}
+
 func linuxProcessGroupAlive(pgid int) bool {
+	if pgid <= 0 {
+		return false
+	}
 	err := syscall.Kill(-pgid, 0)
 	return err == nil || errors.Is(err, syscall.EPERM)
 }
