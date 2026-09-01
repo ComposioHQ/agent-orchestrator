@@ -29,6 +29,10 @@ const state = vi.hoisted(() => ({
 		focus: ReturnType<typeof vi.fn>;
 		selectAll: ReturnType<typeof vi.fn>;
 		dataListeners: Set<(data: string) => void>;
+		csiHandlers: Array<{
+			callback: (params: (number | number[])[]) => boolean | Promise<boolean>;
+			id: { final: string; intermediates?: string; prefix?: string };
+		}>;
 		keyListeners: Set<(event: { key: string }) => void>;
 		selectionListeners: Set<() => void>;
 		scrollListeners: Set<() => void>;
@@ -61,6 +65,24 @@ vi.mock("@xterm/xterm", () => ({
 		focus = vi.fn();
 		selectAll = vi.fn();
 		dataListeners = new Set<(data: string) => void>();
+		csiHandlers: Array<{
+			callback: (params: (number | number[])[]) => boolean | Promise<boolean>;
+			id: { final: string; intermediates?: string; prefix?: string };
+		}> = [];
+		parser = {
+			registerCsiHandler: (
+				id: { final: string; intermediates?: string; prefix?: string },
+				callback: (params: (number | number[])[]) => boolean | Promise<boolean>,
+			) => {
+				const handler = { callback, id };
+				this.csiHandlers.push(handler);
+				return {
+					dispose: () => {
+						this.csiHandlers = this.csiHandlers.filter((candidate) => candidate !== handler);
+					},
+				};
+			},
+		};
 		keyListeners = new Set<(event: { key: string }) => void>();
 		selectionListeners = new Set<() => void>();
 		scrollListeners = new Set<() => void>();
@@ -1165,14 +1187,22 @@ describe("XtermTerminal", () => {
 		expect(onInput).toHaveBeenCalledWith("\x1b]11;rgb:f5f5/f5f5/f4f4\x07", "protocol");
 	});
 
-	it("does not install Cursor protocol handling for generic terminals", () => {
+	it("forwards validated OSC replies for generic terminals without forwarding raw control bytes", () => {
 		const onInput = vi.fn();
-		render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);
-
-		state.lastTerminal!.dataListeners.forEach((listener) =>
-			listener("\x1b]11;rgb:f5f5/f5f5/f4f4\x07"),
+		render(
+			<XtermTerminal
+				theme="dark"
+				paneScrollsByKeyboard
+				onReady={(terminal) => terminal.onUserInput(onInput)}
+			/>,
 		);
+
+		state.lastTerminal!.dataListeners.forEach((listener) => listener("\x1b[?997;1n"));
 		expect(onInput).not.toHaveBeenCalled();
+		state.lastTerminal!.dataListeners.forEach((listener) =>
+			listener("\x1b]4;196;rgb:ffff/0000/8000\x07"),
+		);
+		expect(onInput).toHaveBeenCalledWith("\x1b]4;196;rgb:ffff/0000/8000\x07", "protocol");
 	});
 
 	it("updates protocol handling when a retained terminal becomes a Cursor terminal", () => {
@@ -1194,6 +1224,142 @@ describe("XtermTerminal", () => {
 		);
 
 		expect(onInput).toHaveBeenCalledWith("\x1b]11;rgb:f5f5/f5f5/f4f4\x07", "protocol");
+	});
+
+	it("reports live light and dark changes to mode 2031 subscribers", () => {
+		const onInput = vi.fn();
+		const view = render(
+			<XtermTerminal theme="light" onReady={(terminal) => terminal.onUserInput(onInput)} />,
+		);
+		const setMode = state.lastTerminal!.csiHandlers.find(
+			({ id }) => id.prefix === "?" && id.final === "h",
+		);
+		const resetMode = state.lastTerminal!.csiHandlers.find(
+			({ id }) => id.prefix === "?" && id.final === "l",
+		);
+
+		expect(setMode?.callback([2031])).toBe(true);
+		view.rerender(
+			<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />,
+		);
+		expect(onInput).toHaveBeenLastCalledWith("\x1b[?997;1n", "protocol");
+
+		view.rerender(
+			<XtermTerminal theme="light" onReady={(terminal) => terminal.onUserInput(onInput)} />,
+		);
+		expect(onInput).toHaveBeenLastCalledWith("\x1b[?997;2n", "protocol");
+
+		expect(resetMode?.callback([2031])).toBe(true);
+		onInput.mockClear();
+		view.rerender(
+			<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />,
+		);
+		expect(onInput).not.toHaveBeenCalled();
+	});
+
+	it("reports named palette changes to mode 2031 subscribers", () => {
+		const onInput = vi.fn();
+		useUiStore.setState({ themeStyle: "orchestrate" });
+
+		try {
+			render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);
+			const setMode = state.lastTerminal!.csiHandlers.find(
+				({ id }) => id.prefix === "?" && id.final === "h",
+			);
+
+			expect(setMode?.callback([2031])).toBe(true);
+			onInput.mockClear();
+			act(() => useUiStore.getState().setThemeStyle("github"));
+
+			expect(onInput).toHaveBeenLastCalledWith("\x1b[?997;1n", "protocol");
+		} finally {
+			act(() => useUiStore.setState({ themeStyle: "orchestrate" }));
+		}
+	});
+
+	it("leaves unrelated private modes for xterm to handle", () => {
+		render(<XtermTerminal theme="light" />);
+		const setMode = state.lastTerminal!.csiHandlers.find(
+			({ id }) => id.prefix === "?" && id.final === "h",
+		);
+
+		expect(setMode?.callback([25])).toBe(false);
+	});
+
+	it("enables color-scheme updates from mixed private mode sets without consuming them", () => {
+		const onInput = vi.fn();
+		const view = render(
+			<XtermTerminal theme="light" onReady={(terminal) => terminal.onUserInput(onInput)} />,
+		);
+		const setMode = state.lastTerminal!.csiHandlers.find(
+			({ id }) => id.prefix === "?" && id.final === "h",
+		);
+
+		expect(setMode?.callback([2031, 25])).toBe(false);
+		view.rerender(
+			<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />,
+		);
+		expect(onInput).toHaveBeenLastCalledWith("\x1b[?997;1n", "protocol");
+	});
+
+	it("disables color-scheme updates from mixed private mode resets without consuming them", () => {
+		const onInput = vi.fn();
+		const view = render(
+			<XtermTerminal theme="light" onReady={(terminal) => terminal.onUserInput(onInput)} />,
+		);
+		const setMode = state.lastTerminal!.csiHandlers.find(
+			({ id }) => id.prefix === "?" && id.final === "h",
+		);
+		const resetMode = state.lastTerminal!.csiHandlers.find(
+			({ id }) => id.prefix === "?" && id.final === "l",
+		);
+
+		expect(setMode?.callback([2031])).toBe(true);
+		expect(resetMode?.callback([2031, 25])).toBe(false);
+		view.rerender(
+			<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />,
+		);
+		expect(onInput).not.toHaveBeenCalled();
+	});
+
+	it("answers mixed color-scheme capability queries without consuming them", () => {
+		const onInput = vi.fn();
+		render(<XtermTerminal theme="light" onReady={(terminal) => terminal.onUserInput(onInput)} />);
+		const capabilityQuery = state.lastTerminal!.csiHandlers.find(
+			({ id }) => id.prefix === "?" && id.intermediates === "$" && id.final === "p",
+		);
+
+		expect(capabilityQuery?.callback([2031, 25])).toBe(false);
+		expect(onInput).toHaveBeenCalledWith("\x1b[?2031;2$y", "protocol");
+	});
+
+	it("answers mixed color-scheme mode queries without consuming them", () => {
+		const onInput = vi.fn();
+		render(<XtermTerminal theme="light" onReady={(terminal) => terminal.onUserInput(onInput)} />);
+		const modeQuery = state.lastTerminal!.csiHandlers.find(
+			({ id }) => id.prefix === "?" && id.final === "n",
+		);
+
+		expect(modeQuery?.callback([996, 25])).toBe(false);
+		expect(onInput).toHaveBeenCalledWith("\x1b[?997;2n", "protocol");
+	});
+
+	it("answers color-scheme capability and current-mode queries", () => {
+		const onInput = vi.fn();
+		render(<XtermTerminal theme="light" onReady={(terminal) => terminal.onUserInput(onInput)} />);
+		const capabilityQuery = state.lastTerminal!.csiHandlers.find(
+			({ id }) => id.prefix === "?" && id.intermediates === "$" && id.final === "p",
+		);
+		const modeQuery = state.lastTerminal!.csiHandlers.find(
+			({ id }) => id.prefix === "?" && id.final === "n",
+		);
+
+		expect(capabilityQuery?.callback([2031])).toBe(true);
+		expect(modeQuery?.callback([996])).toBe(true);
+		expect(onInput.mock.calls).toEqual([
+			["\x1b[?2031;2$y", "protocol"],
+			["\x1b[?997;2n", "protocol"],
+		]);
 	});
 
 	it("translates wheel motion into SGR wheel reports for zellij scrollback", () => {

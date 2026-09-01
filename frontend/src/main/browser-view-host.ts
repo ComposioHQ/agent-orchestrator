@@ -22,7 +22,7 @@ import type {
 	BrowserAnnotationSubmitPayload,
 } from "../shared/browser-annotations";
 import { attachAppShortcuts } from "./app-shortcuts";
-import type { KeybindingOverrides } from "../shared/shortcuts";
+import type { AppShortcutId, KeybindingOverrides, ShortcutChord } from "../shared/shortcuts";
 import type { AgentBrowserRuntime } from "./agent-browser-runtime";
 import type { AgentBrowserTarget, AgentBrowserTargetProvider } from "./agent-browser-cdp-bridge";
 import { matchInstruction } from "./browser-act-matcher";
@@ -91,6 +91,7 @@ export type BrowserTabsState = {
 	change?: {
 		kind: "opened" | "popup" | "selected" | "closed";
 		tabId: string;
+		tab?: BrowserTabState;
 	};
 };
 
@@ -139,6 +140,60 @@ type BrowserOpenTabInput = {
 	viewId: string;
 	url?: string;
 };
+
+type BrowserShortcutInput = {
+	key: string;
+	control: boolean;
+	meta: boolean;
+	shift: boolean;
+	alt: boolean;
+	type: string;
+	isAutoRepeat?: boolean;
+};
+
+export type BrowserShortcutAction =
+	| "new-tab"
+	| "reopen-tab"
+	| "close-tab"
+	| "focus-location"
+	| "reload";
+
+export function browserShortcutAction(input: BrowserShortcutInput, isMac: boolean): BrowserShortcutAction | null {
+	const primaryModifier = isMac ? input.meta && !input.control : input.control && !input.meta;
+	if (primaryModifier && !input.alt) {
+		if (input.shift) return input.key.toLowerCase() === "t" ? "reopen-tab" : null;
+		switch (input.key.toLowerCase()) {
+			case "t":
+				return "new-tab";
+			case "w":
+				return "close-tab";
+			case "l":
+				return "focus-location";
+			case "r":
+				return "reload";
+		}
+	}
+	return null;
+}
+
+export function shouldHandleAppShortcutInBrowserContext(
+	id: AppShortcutId,
+	chord: ShortcutChord,
+	isMac: boolean,
+): boolean {
+	if (id === "new-shell-terminal" || id === "close-shell-terminal") return false;
+	return browserShortcutAction(
+		{
+			key: chord.key,
+			control: chord.ctrl,
+			meta: chord.meta,
+			shift: chord.shift,
+			alt: chord.alt,
+			type: "keyDown",
+		},
+		isMac,
+	) === null;
+}
 
 type BrowserWebContents = Pick<
 	WebContents,
@@ -252,6 +307,8 @@ export type BrowserViewHost = {
 	toggleDevToolsForLastFocused: () => Promise<BrowserDevToolsState | null>;
 	// Drop the remembered panel; call when the shell gains focus for a real reason so a stale panel stops absorbing menu actions.
 	forgetLastFocusedPanel: () => void;
+	// Whether browser-owned UI was the most recently used application surface.
+	isLastUsedBrowser: () => boolean;
 	// Same "identical bounds are a no-op, so nudge and restore" trick
 	// window-composition.ts uses for the shell's own stale-surface bug, applied
 	// to the live page's own view. Call right after raising the transparent
@@ -468,8 +525,12 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	let disposePromise: Promise<void> | null = null;
 	// viewId of the panel that most recently held focus; cleared when it is hidden or destroyed.
 	let lastFocusedViewId: string | null = null;
+	// Separate from native focus: the address bar and tab strip live in the shell
+	// renderer, but browser shortcuts must continue to target their panel.
+	let lastUsedViewId: string | null = null;
 	const forgetIfFocused = (viewId: string): void => {
 		if (lastFocusedViewId === viewId) lastFocusedViewId = null;
+		if (lastUsedViewId === viewId) lastUsedViewId = null;
 	};
 	const setAgentBrowserActivity = (
 		session: BrowserSessionEntry,
@@ -626,7 +687,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			true,
 			options.getKeybindingOverrides,
 			options.isKeybindingRecording,
-			(id) => id !== "close-shell-terminal" || options.isCloseShellTerminalShortcutEnabled?.() !== false,
+			(id, chord) => shouldHandleAppShortcutInBrowserContext(id, chord, Boolean(options.isMac)),
 			(id) => {
 				if (id !== "toggle-browser-devtools") return;
 				lastFocusedViewId = session.viewId;
@@ -635,8 +696,10 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		);
 		view.webContents.on("focus", () => {
 			lastFocusedViewId = session.viewId;
+			lastUsedViewId = session.viewId;
 			shellWebContents.send("browser:pageFocus", session.viewId);
 		});
+		attachBrowserShortcuts(view.webContents, () => session, true);
 		// A newly-created WebContentsView reports about:blank before its renderer
 		// has actually been initialized. CDP commands can hang until that initial
 		// document has completed, so make readiness explicit for every tab.
@@ -892,6 +955,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		}
 		const tab = session.tabs.get(tabId);
 		if (!tab) throw browserError("TAB_NOT_FOUND", `Browser tab ${tabId} does not exist`);
+		const closedTab = tabResult(tab, false);
 		const wasActive = tabId === session.activeTabId;
 		disposeNetworkCapture(tab, "tab-closed");
 		if (session.networkTabId === tabId) session.networkTabId = undefined;
@@ -902,9 +966,105 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			const nextTabId = [...session.tabs.keys()].at(-1)!;
 			activateTab(session, nextTabId, false);
 		}
-		const state = listTabs(session, { kind: "closed", tabId });
+		const state = listTabs(session, { kind: "closed", tabId, tab: closedTab });
 		shellContents(options).send("browser:tabsState", state);
 		return state;
+	}
+
+	const openUserTab = async (session: BrowserSessionEntry, url?: string): Promise<BrowserTabsState> => {
+		if (!options.agentBrowserRuntime) {
+			await openTab(session, url, true);
+			return listTabs(session);
+		}
+		return queueNativeOperation(session, async () => {
+			await options.agentBrowserRuntime!.runAction(
+				session.sessionId,
+				"tab-new",
+				{ url },
+				agentBrowserTargets(session),
+			);
+			session.nativeActiveTabId = session.activeTabId;
+			return listTabs(session);
+		});
+	};
+
+	const closeUserTab = async (session: BrowserSessionEntry, tabId: string): Promise<BrowserTabsState> => {
+		if (session.tabs.size === 1) return listTabs(session);
+		if (!session.tabs.has(tabId)) return listTabs(session);
+		if (!options.agentBrowserRuntime) return closeTab(session, tabId);
+		return queueNativeOperation(session, async () => {
+			await ensureNativeActiveTab(session);
+			try {
+				await options.agentBrowserRuntime!.runAction(
+					session.sessionId,
+					"tab-close",
+					{ tabId },
+					agentBrowserTargets(session),
+				);
+			} catch (error) {
+				if (!isAgentBrowserCommandFailure(error)) throw error;
+				if (!session.tabs.has(tabId)) return listTabs(session);
+				return closeTab(session, tabId);
+			}
+			session.nativeActiveTabId = undefined;
+			await ensureNativeActiveTab(session);
+			return listTabs(session);
+		});
+	};
+
+	const focusLocation = (session: BrowserSessionEntry): void => {
+		lastUsedViewId = session.viewId;
+		shellWebContents.focus();
+		shellWebContents.send("browser:focusLocation", session.viewId);
+	};
+	const reopenClosedTab = (session: BrowserSessionEntry): void => {
+		shellWebContents.send("browser:reopenClosedTab", session.viewId);
+	};
+	function attachBrowserShortcuts(
+		contents: Pick<WebContents, "on">,
+		getSession: () => BrowserSessionEntry | undefined,
+		isNativePage: boolean,
+	): void {
+		contents.on("before-input-event", (event, input) => {
+			if (input.type !== "keyDown" || input.isAutoRepeat || options.isKeybindingRecording?.()) return;
+			const action = browserShortcutAction(input, Boolean(options.isMac));
+			if (!action) return;
+			const session = getSession();
+			if (!session) return;
+			event.preventDefault();
+			lastUsedViewId = session.viewId;
+			if (action === "focus-location") {
+				focusLocation(session);
+				return;
+			}
+			if (action === "reload") {
+				activeEntry(session).view.webContents.reload();
+				return;
+			}
+			if (action === "new-tab") {
+				void openUserTab(session).then(() => focusLocation(session)).catch(() => undefined);
+				return;
+			}
+			if (action === "reopen-tab") {
+				void queueNativeOperation(session, async () => reopenClosedTab(session)).catch(() => undefined);
+				return;
+			}
+			const closingTabId = session.activeTabId;
+			void closeUserTab(session, closingTabId)
+				.then(() => {
+					if (isNativePage && session.tabs.has(session.activeTabId)) {
+						activeEntry(session).view.webContents.focus();
+					}
+				})
+				.catch(() => undefined);
+		});
+	}
+
+	if (typeof shellWebContents.on === "function") {
+		attachBrowserShortcuts(shellWebContents, () => {
+			if (lastUsedViewId === null) return undefined;
+			return entries.get(lastUsedViewId);
+		}, false);
 	}
 
 	function agentBrowserTargets(session: BrowserSessionEntry): AgentBrowserTargetProvider {
@@ -1422,6 +1582,12 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			return listTabs(session);
 		});
 	});
+	on("browser:panelUsed", (event, viewId: string) => {
+		if (isRendererOwned(event, viewId) && entries.has(viewId)) lastUsedViewId = viewId;
+	});
+	on("browser:panelBlur", (event, viewId: string) => {
+		if (isRendererOwned(event, viewId) && lastUsedViewId === viewId) lastUsedViewId = null;
+	});
 	handle("browser:devtools", (event, input: BrowserDevToolsInput) => {
 		if (!input || typeof input.viewId !== "string" || !isRendererOwned(event, input.viewId)) {
 			return emptyDevToolsState(input?.viewId ?? "");
@@ -1444,22 +1610,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			}
 			url = normalized.href;
 		}
-		if (!options.agentBrowserRuntime) {
-			await openTab(session, url, true);
-			return listTabs(session);
-		}
-		return queueNativeOperation(session, async () => {
-			// Let agent-browser create UI tabs too so its stable tab registry and
-			// AO's WebContentsView IDs stay aligned for later select/close commands.
-			await options.agentBrowserRuntime!.runAction(
-				session.sessionId,
-				"tab-new",
-				{ url },
-				agentBrowserTargets(session),
-			);
-			session.nativeActiveTabId = session.activeTabId;
-			return listTabs(session);
-		});
+		return openUserTab(session, url);
 	});
 	handle("browser:annotation:setMode", (event, input: BrowserAnnotationModeInput) => setAnnotationMode(event, input));
 	on("browser:destroy", (event, viewId: string) => {
@@ -1741,7 +1892,9 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		},
 		forgetLastFocusedPanel: () => {
 			lastFocusedViewId = null;
+			lastUsedViewId = null;
 		},
+		isLastUsedBrowser: () => lastUsedViewId !== null && entries.has(lastUsedViewId),
 		// Reported live (macOS, maximized/popped-out panel): opening an overlay
 		// (e.g. a toolbar dropdown) over the browser panel blanks the live page
 		// to black instead of showing it behind the dropdown, and a plain bounds

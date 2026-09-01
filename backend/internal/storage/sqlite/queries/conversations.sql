@@ -502,6 +502,20 @@ WHERE conversation_activities.conversation_id = sqlc.arg(conversation_id)
   AND turn_id = sqlc.arg(turn_id)
   AND status = 'running';
 
+-- Successful completion is the terminal fact for a plan even when the provider
+-- omits its customary final plan notification. Keep the timeline copy identical
+-- to the turn copy that SettleTurn finalizes from the same event.
+-- name: FinalizeConversationPlanActivity :exec
+UPDATE conversation_activities
+SET status = 'completed',
+    summary = sqlc.arg(summary),
+    detail_json = sqlc.arg(detail_json),
+    revision = revision + 1,
+    updated_at = sqlc.arg(updated_at)
+WHERE conversation_activities.conversation_id = sqlc.arg(conversation_id)
+  AND turn_id = sqlc.arg(turn_id)
+  AND kind = 'plan';
+
 -- The same invariant applies when startup discovers work abandoned by a dead
 -- controller. This runs before SettleOrphanedConversationTurns while their turn
 -- states still identify the affected rows.
