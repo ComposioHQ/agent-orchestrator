@@ -251,8 +251,10 @@ export function repositoryNameFromGitUrl(raw: string): string | null {
 	const value = raw.trim();
 	if (!value || /\s/.test(value) || value.startsWith("-")) return null;
 	let remotePath = "";
+	let host = "";
 	const scpMatch = value.match(/^[^/@:\s]+@[^/:\s]+:(.+)$/);
 	if (scpMatch?.[1]) {
+		host = value.match(/^[^/@:\s]+@([^/:\s]+):/)?.[1]?.toLowerCase() ?? "";
 		remotePath = scpMatch[1];
 	} else {
 		try {
@@ -265,6 +267,7 @@ export function repositoryNameFromGitUrl(raw: string): string | null {
 			) {
 				return null;
 			}
+			host = parsed.hostname.toLowerCase();
 			// URL.pathname preserves percent escapes, while Go's net/url exposes a
 			// decoded URL.Path to the daemon. Decode once so this preview names the
 			// exact directory the daemon will create, including escaped separators.
@@ -275,6 +278,14 @@ export function repositoryNameFromGitUrl(raw: string): string | null {
 	}
 	const segments = remotePath.replace(/[\\/]+$/, "").split(/[\\/]/).filter(Boolean);
 	if (segments.length < 2) return null;
+	const providerSubpage = segments[2];
+	if (
+		(host === "github.com" && ["actions", "blob", "commit", "commits", "compare", "issues", "pull", "releases", "settings", "tree", "wiki"].includes(providerSubpage ?? "")) ||
+		(host === "bitbucket.org" && providerSubpage === "pull-requests") ||
+		(host === "gitlab.com" && segments.includes("merge_requests"))
+	) {
+		return null;
+	}
 	const lastSegment = segments[segments.length - 1] ?? "";
 	const name = lastSegment.replace(/\.git$/, "");
 	if (!name || name === "." || name === ".." || /[\\/<>:"|?*]/.test(name)) return null;

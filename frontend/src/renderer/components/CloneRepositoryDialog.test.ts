@@ -22,6 +22,7 @@ describe("clone repository input", () => {
 		"ssh://git:secret@example.com/acme/repo.git",
 		"https://github.com/acme/two words.git",
 		"https://github.com/ronishrohan",
+		"https://github.com/Untrivial-ai/agent-orchestrator/pull/4715",
 		"file:///tmp/bad%ZZ.git",
 	])("rejects unsafe or incomplete URL %s", (remoteUrl) => {
 		expect(repositoryNameFromGitUrl(remoteUrl)).toBeNull();
