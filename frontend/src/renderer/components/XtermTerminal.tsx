@@ -1171,7 +1171,10 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			// parsed into the buffer, which is what lets the attachment reveal the
 			// pane at the replay's settled scroll position (issue #3160).
 			write: (data, done) => {
-				if (disposed) return;
+				if (disposed) {
+					done?.();
+					return;
+				}
 				let hasEsc = false;
 				for (let i = 0; i < data.length; i++) {
 					if (data[i] === 0x1b) {

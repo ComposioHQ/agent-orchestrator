@@ -313,6 +313,24 @@ describe("XtermTerminal", () => {
 		}
 	});
 
+	it("settles a pending write when terminal cleanup wins the race", () => {
+		let terminal: AttachableTerminal | undefined;
+		const view = render(
+			<XtermTerminal
+				theme="dark"
+				onReady={(ready) => {
+					terminal = ready;
+				}}
+			/>,
+		);
+		const done = vi.fn();
+
+		view.unmount();
+		terminal!.write(new Uint8Array([0x61]), done);
+
+		expect(done).toHaveBeenCalledOnce();
+	});
+
 	it("preserves the agent TUI palette without contrast remapping", () => {
 		render(<XtermTerminal theme="dark" />);
 
