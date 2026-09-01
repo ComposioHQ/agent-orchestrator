@@ -694,8 +694,8 @@ func bootstrapCommand(bootstrap sandbox.WorkerBootstrap, encodedLength int) stri
 		"  if sudo -n test -s " + shellQuote(workerPID) + "; then worker_pid=$(sudo -n cat " + shellQuote(workerPID) + "); fi\n" +
 		"  case \"$worker_pid\" in ''|*[!0-9]*) ;; *) if kill -0 \"$worker_pid\" 2>/dev/null; then break; fi ;; esac\n" +
 		"  worker_pid=\nattempt=$((attempt + 1))\nsleep 1\ndone\n" +
-		"case \"$worker_pid\" in ''|*[!0-9]*) echo 'AO worker did not start' >&2; exit 1 ;; esac\n" +
-		"sleep 1\nkill -0 \"$worker_pid\" 2>/dev/null || { echo 'AO worker exited during startup' >&2; exit 1; }\n" +
+		"case \"$worker_pid\" in ''|*[!0-9]*) echo 'AO worker did not start' >&2; sudo -n test ! -f " + shellQuote(workerLog) + " || sudo -n tail -c 2048 " + shellQuote(workerLog) + " >&2; exit 1 ;; esac\n" +
+		"sleep 1\nkill -0 \"$worker_pid\" 2>/dev/null || { echo 'AO worker exited during startup' >&2; sudo -n test ! -f " + shellQuote(workerLog) + " || sudo -n tail -c 2048 " + shellQuote(workerLog) + " >&2; exit 1; }\n" +
 		"rm -rf \"$stage\"\ntrap - EXIT\necho " + bootstrapOK + "\n"
 	return "sh -lc " + shellQuote(script)
 }
