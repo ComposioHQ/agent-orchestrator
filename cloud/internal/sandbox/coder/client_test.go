@@ -193,6 +193,7 @@ func TestBootstrapWorkerStreamsArchiveWithoutSecretsInURL(t *testing.T) {
 				"/mnt/ao/.ao/durable-session-id",
 				"/mnt/ao/.ao/worker/worker.pid",
 				"kill -0",
+				"chmod o+x",
 			} {
 				if !strings.Contains(command, expected) {
 					t.Errorf("bootstrap command missing durable path contract %q", expected)

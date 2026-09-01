@@ -682,6 +682,7 @@ func bootstrapCommand(bootstrap sandbox.WorkerBootstrap, encodedLength int) stri
 		"durable_root=" + shellQuote(layout.DurableRoot) + "\n" +
 		"if [ ! -d \"$durable_root\" ] || [ -L \"$durable_root\" ] || ! mountpoint -q \"$durable_root\"; then\n" +
 		"  echo 'configured Coder durable root is not a mounted directory' >&2\n  exit 1\nfi\n" +
+		"sudo -n chmod o+x \"$durable_root\"\n" +
 		"sudo -n mkdir -p " + shellQuote(layout.Repository) + " " + shellQuote(layout.WorkerData) + " " +
 		shellQuote(layout.Home) + " " + shellQuote(layout.ClaudeConfig) + " " + shellQuote(layout.CodexHome) + "\n" +
 		"identity_file=" + shellQuote(layout.DurableIdentity) + "\n" +

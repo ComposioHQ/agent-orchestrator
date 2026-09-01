@@ -75,6 +75,11 @@ A first bootstrap writes a session identity marker; a bootstrap after
 stop/start must find the same marker or it fails instead of silently launching
 a fresh agent against an empty filesystem.
 
+Because the worker runs as a separate OS user, bootstrap preserves the durable
+root's existing mode bits while adding traversal-only (`o+x`) access to that
+mount point. It does not make the root listable or readable. Only the derived
+`repository` and `.ao` subdirectories are assigned to `ao-worker`.
+
 The normal workspace user must have passwordless `sudo` for the pilot
 bootstrap. AO uses it to:
 
