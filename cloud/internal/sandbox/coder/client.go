@@ -463,20 +463,27 @@ func (c *Client) bootstrapThroughPTY(ctx context.Context, ptyURL *url.URL, encod
 	// complete frame for the expected sequence; retrying an unacknowledged frame
 	// makes Coder's unreported short writes recoverable without tripling the
 	// shell work and exceeding the reconnecting-PTY lifetime.
-	const chunkSize = 3_000 // below the canonical terminal's 4 KiB line ceiling
+	const (
+		chunkSize    = 3_000 // below the canonical terminal's 4 KiB line ceiling
+		uploadWindow = 8     // bound PTY buffering while amortizing WAN round trips
+	)
 	sequence := 0
-	for offset := 0; offset < len(encoded); offset += chunkSize {
-		end := min(offset+chunkSize, len(encoded))
-		chunk := encoded[offset:end]
-		line := fmt.Sprintf("data:%d:%d:%s\n", sequence, len(chunk), chunk)
-		wanted := fmt.Sprintf("%s:%d", bootstrapUploadACK, sequence+1)
-		if err := sendBootstrapFrame(ctx, encoder, output, line, wanted); err != nil {
+	for offset := 0; offset < len(encoded); {
+		frames := make([]string, 0, uploadWindow)
+		for len(frames) < uploadWindow && offset < len(encoded) {
+			end := min(offset+chunkSize, len(encoded))
+			chunk := encoded[offset:end]
+			frames = append(frames, fmt.Sprintf("data:%d:%d:%s\n", sequence, len(chunk), chunk))
+			sequence++
+			offset = end
+		}
+		wanted := fmt.Sprintf("%s:%d", bootstrapUploadACK, sequence)
+		if err := sendBootstrapWindow(ctx, encoder, output, frames, wanted); err != nil {
 			return err
 		}
-		sequence++
 	}
-	if err := sendBootstrapFrame(ctx, encoder, output,
-		fmt.Sprintf("done:%d:0:\n", sequence), bootstrapUploadDone); err != nil {
+	if err := sendBootstrapWindow(ctx, encoder, output,
+		[]string{fmt.Sprintf("done:%d:0:\n", sequence)}, bootstrapUploadDone); err != nil {
 		return err
 	}
 	result, err := readBootstrapResult(ctx, output, bootstrapResultWait)
@@ -515,22 +522,30 @@ func waitForBootstrapReady(ctx context.Context, output <-chan ptyOutput) error {
 	}
 }
 
-func sendBootstrapFrame(
+// sendBootstrapWindow pipelines a bounded group of canonical PTY lines, then
+// waits for the receiver's cumulative acknowledgement. If Coder short-writes a
+// frame, replaying the whole window is safe: the shell ignores already-accepted
+// sequence numbers, accepts the first missing one, and then continues through
+// the replayed suffix. This retains the upload's loss recovery without paying
+// one WAN round trip per 3 KiB frame.
+func sendBootstrapWindow(
 	ctx context.Context,
 	encoder *json.Encoder,
 	output <-chan ptyOutput,
-	line string,
+	lines []string,
 	wanted string,
 ) error {
 	const (
-		maxAttempts = 6
+		maxAttempts = 12
 		ackTimeout  = 2 * time.Second
 	)
 	for attempt := 0; attempt < maxAttempts; attempt++ {
-		if err := encoder.Encode(struct {
-			Data string `json:"data"`
-		}{Data: line}); err != nil {
-			return fmt.Errorf("coder: upload worker through PTY: %w", err)
+		for _, line := range lines {
+			if err := encoder.Encode(struct {
+				Data string `json:"data"`
+			}{Data: line}); err != nil {
+				return fmt.Errorf("coder: upload worker through PTY: %w", err)
+			}
 		}
 		timer := time.NewTimer(ackTimeout)
 		for {
@@ -545,7 +560,7 @@ func sendBootstrapFrame(
 					timer.Stop()
 					return errors.New("coder: workspace PTY closed during worker upload")
 				}
-				if strings.Contains(response.data, wanted) {
+				if strings.TrimSpace(response.data) == wanted {
 					timer.Stop()
 					return nil
 				}
@@ -561,7 +576,7 @@ func sendBootstrapFrame(
 		}
 	retry:
 	}
-	return errors.New("coder: workspace PTY repeatedly dropped an upload frame")
+	return errors.New("coder: workspace PTY repeatedly dropped an upload window")
 }
 
 func validateBootstrap(bootstrap sandbox.WorkerBootstrap) error {

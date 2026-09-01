@@ -727,6 +727,67 @@ func TestBootstrapThroughPTYReportsFailureAfterUpload(t *testing.T) {
 	}
 }
 
+func TestBootstrapThroughPTYPipelinesUploadWindows(t *testing.T) {
+	t.Parallel()
+	const (
+		chunkSize    = 3_000
+		uploadWindow = 8
+	)
+	encoded := strings.Repeat("x", chunkSize*(uploadWindow+2))
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		connection, err := websocket.Accept(writer, request, nil)
+		if err != nil {
+			t.Errorf("accept websocket: %v", err)
+			return
+		}
+		defer connection.CloseNow()
+		netConnection := websocket.NetConn(context.Background(), connection, websocket.MessageBinary)
+		defer netConnection.Close()
+		if _, err := io.WriteString(netConnection, bootstrapReady+"\r\n"); err != nil {
+			t.Errorf("write bootstrap ready: %v", err)
+			return
+		}
+		decoder := json.NewDecoder(netConnection)
+		expectedSequence := 0
+		nextAcknowledgement := uploadWindow
+		for {
+			var frame struct {
+				Data string `json:"data"`
+			}
+			if err := decoder.Decode(&frame); err != nil {
+				t.Errorf("decode PTY input: %v", err)
+				return
+			}
+			parts := strings.SplitN(strings.TrimSuffix(frame.Data, "\n"), ":", 4)
+			if len(parts) != 4 {
+				continue
+			}
+			sequence, sequenceErr := strconv.Atoi(parts[1])
+			if parts[0] == "data" && sequenceErr == nil && sequence == expectedSequence {
+				expectedSequence++
+				if expectedSequence == nextAcknowledgement || expectedSequence == uploadWindow+2 {
+					_, _ = io.WriteString(netConnection,
+						fmt.Sprintf("%s:%d\r\n", bootstrapUploadACK, expectedSequence))
+					nextAcknowledgement += uploadWindow
+				}
+				continue
+			}
+			if parts[0] == "done" && sequence == expectedSequence {
+				_, _ = io.WriteString(netConnection, bootstrapUploadDone+"\r\n")
+				_, _ = io.WriteString(netConnection, bootstrapOK+"\r\n")
+				return
+			}
+		}
+	}))
+	defer server.Close()
+	client := newTestClient(t, server.URL, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := client.bootstrapThroughPTY(ctx, mustParseURL(t, server.URL), encoded); err != nil {
+		t.Fatalf("bootstrapThroughPTY: %v", err)
+	}
+}
+
 func TestGetTreatsDeletedWorkspaceAsNotFound(t *testing.T) {
 	t.Parallel()
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
