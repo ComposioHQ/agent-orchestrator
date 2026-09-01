@@ -65,8 +65,8 @@ Every product command resolves to a daemon HTTP route. Run `ao <command>
 
 `ao agent ls` asks the daemon to ensure display readiness, then prints the
 existing table or legacy JSON projection. The daemon alone decides whether a
-native check is needed. `--refresh` remains as a hidden deprecated alias with
-identical, non-forcing behavior.
+native check is needed. `--refresh` is a deprecated compatibility flag that
+forces fresh installation and authentication checks before printing.
 
 `ao spawn` resolves project context in this order: explicit `--project`,
 `AO_PROJECT_ID`, `AO_SESSION_ID` (by fetching the current session from the

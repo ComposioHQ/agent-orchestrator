@@ -87,6 +87,10 @@ function setupBridge() {
 				{ id: "t2", url: "", title: "", active: true },
 			],
 		})),
+		notifyPanelUsed: vi.fn(),
+		notifyPanelBlur: vi.fn(),
+		onFocusLocation: vi.fn(() => () => undefined),
+		onReopenClosedTab: vi.fn(() => () => undefined),
 		devtools: vi.fn(
 			async ({ viewId, operation, placement }: {
 				viewId: string;
@@ -252,6 +256,53 @@ describe("useBrowserView", () => {
 		await act(() => result.current.reopenClosedTab("t2"));
 		expect(bridge.openTab).toHaveBeenCalledWith({ viewId: "42:sess-1", url: "http://localhost:4173/" });
 		expect(result.current.closedTabs).toEqual([]);
+	});
+
+	it("remembers a tab closed by a main-process keyboard shortcut", async () => {
+		const bridge = setupBridge();
+		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
+		await waitFor(() => expect(result.current.tabs.map((tab) => tab.id)).toEqual(["t1"]));
+
+		act(() =>
+			bridge.emitTabs({
+				viewId: "42:sess-1",
+				activeTabId: "t1",
+				tabs: [{ id: "t1", url: "http://localhost:3000/", title: "First", active: true }],
+				change: {
+					kind: "closed",
+					tabId: "t2",
+					tab: { id: "t2", url: "http://localhost:4173/", title: "Keyboard closed", active: false },
+				},
+			}),
+		);
+
+		expect(result.current.closedTabs).toEqual([
+			{ id: "t2", url: "http://localhost:4173/", title: "Keyboard closed", favicon: undefined },
+		]);
+		await act(() => result.current.reopenClosedTab("t2"));
+		expect(bridge.openTab).toHaveBeenCalledWith({ viewId: "42:sess-1", url: "http://localhost:4173/" });
+	});
+
+	it("can reopen a tab immediately after receiving its keyboard-close event", async () => {
+		const bridge = setupBridge();
+		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
+		await waitFor(() => expect(result.current.tabs.map((tab) => tab.id)).toEqual(["t1"]));
+
+		await act(async () => {
+			bridge.emitTabs({
+				viewId: "42:sess-1",
+				activeTabId: "t1",
+				tabs: [{ id: "t1", url: "http://localhost:3000/", title: "First", active: true }],
+				change: {
+					kind: "closed",
+					tabId: "t2",
+					tab: { id: "t2", url: "http://localhost:4173/", title: "Keyboard closed", active: false },
+				},
+			});
+			await result.current.reopenClosedTab("t2");
+		});
+
+		expect(bridge.openTab).toHaveBeenCalledWith({ viewId: "42:sess-1", url: "http://localhost:4173/" });
 	});
 
 	it("reopens a closed tab beyond the former tab cap", async () => {

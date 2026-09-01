@@ -22,7 +22,7 @@ import type {
 	BrowserAnnotationSubmitPayload,
 } from "../shared/browser-annotations";
 import { attachAppShortcuts } from "./app-shortcuts";
-import type { KeybindingOverrides } from "../shared/shortcuts";
+import type { AppShortcutId, KeybindingOverrides, ShortcutChord } from "../shared/shortcuts";
 import type { AgentBrowserRuntime } from "./agent-browser-runtime";
 import type { AgentBrowserTarget, AgentBrowserTargetProvider } from "./agent-browser-cdp-bridge";
 import { matchInstruction } from "./browser-act-matcher";
@@ -91,6 +91,7 @@ export type BrowserTabsState = {
 	change?: {
 		kind: "opened" | "popup" | "selected" | "closed";
 		tabId: string;
+		tab?: BrowserTabState;
 	};
 };
 
@@ -139,6 +140,60 @@ type BrowserOpenTabInput = {
 	viewId: string;
 	url?: string;
 };
+
+type BrowserShortcutInput = {
+	key: string;
+	control: boolean;
+	meta: boolean;
+	shift: boolean;
+	alt: boolean;
+	type: string;
+	isAutoRepeat?: boolean;
+};
+
+export type BrowserShortcutAction =
+	| "new-tab"
+	| "reopen-tab"
+	| "close-tab"
+	| "focus-location"
+	| "reload";
+
+export function browserShortcutAction(input: BrowserShortcutInput, isMac: boolean): BrowserShortcutAction | null {
+	const primaryModifier = isMac ? input.meta && !input.control : input.control && !input.meta;
+	if (primaryModifier && !input.alt) {
+		if (input.shift) return input.key.toLowerCase() === "t" ? "reopen-tab" : null;
+		switch (input.key.toLowerCase()) {
+			case "t":
+				return "new-tab";
+			case "w":
+				return "close-tab";
+			case "l":
+				return "focus-location";
+			case "r":
+				return "reload";
+		}
+	}
+	return null;
+}
+
+export function shouldHandleAppShortcutInBrowserContext(
+	id: AppShortcutId,
+	chord: ShortcutChord,
+	isMac: boolean,
+): boolean {
+	if (id === "new-shell-terminal" || id === "close-shell-terminal") return false;
+	return browserShortcutAction(
+		{
+			key: chord.key,
+			control: chord.ctrl,
+			meta: chord.meta,
+			shift: chord.shift,
+			alt: chord.alt,
+			type: "keyDown",
+		},
+		isMac,
+	) === null;
+}
 
 type BrowserWebContents = Pick<
 	WebContents,
@@ -252,6 +307,8 @@ export type BrowserViewHost = {
 	toggleDevToolsForLastFocused: () => Promise<BrowserDevToolsState | null>;
 	// Drop the remembered panel; call when the shell gains focus for a real reason so a stale panel stops absorbing menu actions.
 	forgetLastFocusedPanel: () => void;
+	// Whether browser-owned UI was the most recently used application surface.
+	isLastUsedBrowser: () => boolean;
 	// Same "identical bounds are a no-op, so nudge and restore" trick
 	// window-composition.ts uses for the shell's own stale-surface bug, applied
 	// to the live page's own view. Call right after raising the transparent
@@ -468,8 +525,12 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	let disposePromise: Promise<void> | null = null;
 	// viewId of the panel that most recently held focus; cleared when it is hidden or destroyed.
 	let lastFocusedViewId: string | null = null;
+	// Separate from native focus: the address bar and tab strip live in the shell
+	// renderer, but browser shortcuts must continue to target their panel.
+	let lastUsedViewId: string | null = null;
 	const forgetIfFocused = (viewId: string): void => {
 		if (lastFocusedViewId === viewId) lastFocusedViewId = null;
+		if (lastUsedViewId === viewId) lastUsedViewId = null;
 	};
 	const setAgentBrowserActivity = (
 		session: BrowserSessionEntry,
@@ -579,10 +640,12 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		// agent-browser's own debugger attachment for this tab.
 		view.webContents.on("console-message", (_event, level, message, line, sourceId) => {
 			if (level < 3) return;
-			const location = sourceId ? `${sourceId}${typeof line === "number" ? `:${line}` : ""}` : "";
+			const location = sourceId
+				? `${sanitizeBrowserURL(sourceId)}${typeof line === "number" ? `:${line}` : ""}`
+				: "";
 			recordBrowserSignal(session, {
 				kind: "console-error",
-				message: location ? `${message} (${location})` : message,
+				message: location ? `${sanitizeURLsInText(message)} (${location})` : sanitizeURLsInText(message),
 			});
 		});
 		hardenWebContents(
@@ -626,7 +689,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			true,
 			options.getKeybindingOverrides,
 			options.isKeybindingRecording,
-			(id) => id !== "close-shell-terminal" || options.isCloseShellTerminalShortcutEnabled?.() !== false,
+			(id, chord) => shouldHandleAppShortcutInBrowserContext(id, chord, Boolean(options.isMac)),
 			(id) => {
 				if (id !== "toggle-browser-devtools") return;
 				lastFocusedViewId = session.viewId;
@@ -635,8 +698,10 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		);
 		view.webContents.on("focus", () => {
 			lastFocusedViewId = session.viewId;
+			lastUsedViewId = session.viewId;
 			shellWebContents.send("browser:pageFocus", session.viewId);
 		});
+		attachBrowserShortcuts(view.webContents, () => session, true);
 		// A newly-created WebContentsView reports about:blank before its renderer
 		// has actually been initialized. CDP commands can hang until that initial
 		// document has completed, so make readiness explicit for every tab.
@@ -722,14 +787,14 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			if (details.resourceType !== "xhr" || details.statusCode < 400) return;
 			recordBrowserSignal(session, {
 				kind: "network-failure",
-				message: `${details.method} ${details.url} → ${details.statusCode}`,
+				message: `${details.method} ${sanitizeBrowserURL(details.url)} → ${details.statusCode}`,
 			});
 		});
 		electronSession.webRequest.onErrorOccurred(filter, (details) => {
 			if (details.resourceType !== "xhr") return;
 			recordBrowserSignal(session, {
 				kind: "network-failure",
-				message: `${details.method} ${details.url} failed: ${details.error}`,
+				message: `${details.method} ${sanitizeBrowserURL(details.url)} failed: ${details.error}`,
 			});
 		});
 	};
@@ -892,6 +957,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		}
 		const tab = session.tabs.get(tabId);
 		if (!tab) throw browserError("TAB_NOT_FOUND", `Browser tab ${tabId} does not exist`);
+		const closedTab = tabResult(tab, false);
 		const wasActive = tabId === session.activeTabId;
 		disposeNetworkCapture(tab, "tab-closed");
 		if (session.networkTabId === tabId) session.networkTabId = undefined;
@@ -902,9 +968,105 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			const nextTabId = [...session.tabs.keys()].at(-1)!;
 			activateTab(session, nextTabId, false);
 		}
-		const state = listTabs(session, { kind: "closed", tabId });
+		const state = listTabs(session, { kind: "closed", tabId, tab: closedTab });
 		shellContents(options).send("browser:tabsState", state);
 		return state;
+	}
+
+	const openUserTab = async (session: BrowserSessionEntry, url?: string): Promise<BrowserTabsState> => {
+		if (!options.agentBrowserRuntime) {
+			await openTab(session, url, true);
+			return listTabs(session);
+		}
+		return queueNativeOperation(session, async () => {
+			await options.agentBrowserRuntime!.runAction(
+				session.sessionId,
+				"tab-new",
+				{ url },
+				agentBrowserTargets(session),
+			);
+			session.nativeActiveTabId = session.activeTabId;
+			return listTabs(session);
+		});
+	};
+
+	const closeUserTab = async (session: BrowserSessionEntry, tabId: string): Promise<BrowserTabsState> => {
+		if (session.tabs.size === 1) return listTabs(session);
+		if (!session.tabs.has(tabId)) return listTabs(session);
+		if (!options.agentBrowserRuntime) return closeTab(session, tabId);
+		return queueNativeOperation(session, async () => {
+			await ensureNativeActiveTab(session);
+			try {
+				await options.agentBrowserRuntime!.runAction(
+					session.sessionId,
+					"tab-close",
+					{ tabId },
+					agentBrowserTargets(session),
+				);
+			} catch (error) {
+				if (!isAgentBrowserCommandFailure(error)) throw error;
+				if (!session.tabs.has(tabId)) return listTabs(session);
+				return closeTab(session, tabId);
+			}
+			session.nativeActiveTabId = undefined;
+			await ensureNativeActiveTab(session);
+			return listTabs(session);
+		});
+	};
+
+	const focusLocation = (session: BrowserSessionEntry): void => {
+		lastUsedViewId = session.viewId;
+		shellWebContents.focus();
+		shellWebContents.send("browser:focusLocation", session.viewId);
+	};
+	const reopenClosedTab = (session: BrowserSessionEntry): void => {
+		shellWebContents.send("browser:reopenClosedTab", session.viewId);
+	};
+	function attachBrowserShortcuts(
+		contents: Pick<WebContents, "on">,
+		getSession: () => BrowserSessionEntry | undefined,
+		isNativePage: boolean,
+	): void {
+		contents.on("before-input-event", (event, input) => {
+			if (input.type !== "keyDown" || input.isAutoRepeat || options.isKeybindingRecording?.()) return;
+			const action = browserShortcutAction(input, Boolean(options.isMac));
+			if (!action) return;
+			const session = getSession();
+			if (!session) return;
+			event.preventDefault();
+			lastUsedViewId = session.viewId;
+			if (action === "focus-location") {
+				focusLocation(session);
+				return;
+			}
+			if (action === "reload") {
+				activeEntry(session).view.webContents.reload();
+				return;
+			}
+			if (action === "new-tab") {
+				void openUserTab(session).then(() => focusLocation(session)).catch(() => undefined);
+				return;
+			}
+			if (action === "reopen-tab") {
+				void queueNativeOperation(session, async () => reopenClosedTab(session)).catch(() => undefined);
+				return;
+			}
+			const closingTabId = session.activeTabId;
+			void closeUserTab(session, closingTabId)
+				.then(() => {
+					if (isNativePage && session.tabs.has(session.activeTabId)) {
+						activeEntry(session).view.webContents.focus();
+					}
+				})
+				.catch(() => undefined);
+		});
+	}
+
+	if (typeof shellWebContents.on === "function") {
+		attachBrowserShortcuts(shellWebContents, () => {
+			if (lastUsedViewId === null) return undefined;
+			return entries.get(lastUsedViewId);
+		}, false);
 	}
 
 	function agentBrowserTargets(session: BrowserSessionEntry): AgentBrowserTargetProvider {
@@ -1422,6 +1584,12 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			return listTabs(session);
 		});
 	});
+	on("browser:panelUsed", (event, viewId: string) => {
+		if (isRendererOwned(event, viewId) && entries.has(viewId)) lastUsedViewId = viewId;
+	});
+	on("browser:panelBlur", (event, viewId: string) => {
+		if (isRendererOwned(event, viewId) && lastUsedViewId === viewId) lastUsedViewId = null;
+	});
 	handle("browser:devtools", (event, input: BrowserDevToolsInput) => {
 		if (!input || typeof input.viewId !== "string" || !isRendererOwned(event, input.viewId)) {
 			return emptyDevToolsState(input?.viewId ?? "");
@@ -1444,22 +1612,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			}
 			url = normalized.href;
 		}
-		if (!options.agentBrowserRuntime) {
-			await openTab(session, url, true);
-			return listTabs(session);
-		}
-		return queueNativeOperation(session, async () => {
-			// Let agent-browser create UI tabs too so its stable tab registry and
-			// AO's WebContentsView IDs stay aligned for later select/close commands.
-			await options.agentBrowserRuntime!.runAction(
-				session.sessionId,
-				"tab-new",
-				{ url },
-				agentBrowserTargets(session),
-			);
-			session.nativeActiveTabId = session.activeTabId;
-			return listTabs(session);
-		});
+		return openUserTab(session, url);
 	});
 	handle("browser:annotation:setMode", (event, input: BrowserAnnotationModeInput) => setAnnotationMode(event, input));
 	on("browser:destroy", (event, viewId: string) => {
@@ -1516,7 +1669,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				case "open": {
 					const url = stringArg(args, "url", "URL_REQUIRED", "url is required");
 					await runNative(action, { url: normalizeAgentBrowserURL(url) });
-					return pushNavState(options, activeEntry(session));
+					return agentNavState(pushNavState(options, activeEntry(session)));
 				}
 				case "snapshot": {
 					const result = await runNative(action, { interactive: Boolean(args.interactive) });
@@ -1623,24 +1776,24 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 						targetRef: stringArg(args, "targetRef", "REFERENCE_REQUIRED", "target ref is required"),
 					});
 				case "unhighlight":
-					return unhighlightEntry(entry);
+					return agentURLResult(await unhighlightEntry(entry));
 				case "tabs":
-					return listTabs(session);
+					return agentTabsResult(session);
 				case "tab-new": {
 					const url =
 						typeof args.url === "string" && args.url.trim() ? normalizeAgentBrowserURL(args.url) : undefined;
 					await runNative(action, { url });
-					return tabResult(activeEntry(session), true);
+					return agentTabResult(activeEntry(session), true);
 				}
 				case "tab-select": {
 					await runNative(action, { tabId: stringArg(args, "tabId", "TAB_ID_REQUIRED", "tabId is required") });
-					return tabResult(activeEntry(session), true);
+					return agentTabResult(activeEntry(session), true);
 				}
 				case "tab-close": {
 					const tabId =
 						typeof args.tabId === "string" && args.tabId.trim() ? args.tabId.trim() : session.activeTabId;
 					await runNative(action, { tabId });
-					return { closedTabId: tabId, ...listTabs(session) };
+					return { closedTabId: tabId, ...agentTabsResult(session) };
 				}
 				case "scroll":
 					return runNative(action, {
@@ -1658,7 +1811,18 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 						property,
 						ref: typeof args.ref === "string" && args.ref.trim() ? args.ref : undefined,
 					});
-					return { ...result, value: result.value ?? result[property] };
+					const value = result.value ?? result[property];
+					const safeValue =
+						property === "url"
+							? sanitizeBrowserURL(String(value ?? ""))
+							: property === "title"
+								? sanitizeBrowserTitle(String(value ?? ""))
+								: value;
+					return {
+						...result,
+						...(property === "url" || property === "title" ? { [property]: safeValue } : {}),
+						value: safeValue,
+					};
 				}
 				case "wait":
 					return runNative(action, args);
@@ -1741,7 +1905,9 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		},
 		forgetLastFocusedPanel: () => {
 			lastFocusedViewId = null;
+			lastUsedViewId = null;
 		},
+		isLastUsedBrowser: () => lastUsedViewId !== null && entries.has(lastUsedViewId),
 		// Reported live (macOS, maximized/popped-out panel): opening an overlay
 		// (e.g. a toolbar dropdown) over the browser panel blanks the live page
 		// to black instead of showing it behind the dropdown, and a plain bounds
@@ -1887,6 +2053,44 @@ function tabResult(entry: BrowserEntry, active: boolean): BrowserTabState & { un
 		active,
 		...(entry.favicon ? { favicon: entry.favicon } : {}),
 		untrustedExternalContent: true,
+	};
+}
+
+// Renderer IPC deliberately keeps the real URL for the address bar and tab
+// navigation. Agent/daemon responses use this separate projection because they
+// are retained in tool output and transcripts.
+function agentTabResult(entry: BrowserEntry, active: boolean): BrowserTabState & { untrustedExternalContent: true } {
+	const tab = tabResult(entry, active);
+	return {
+		...tab,
+		url: sanitizeBrowserURL(tab.url),
+		title: sanitizeBrowserTitle(tab.title),
+	};
+}
+
+function agentTabsResult(session: BrowserSessionEntry): BrowserTabsState & { untrustedExternalContent: true } {
+	return {
+		viewId: session.viewId,
+		activeTabId: session.activeTabId,
+		tabs: [...session.tabs.values()].map((entry) => agentTabResult(entry, entry.tabId === session.activeTabId)),
+		untrustedExternalContent: true,
+	};
+}
+
+function agentNavState(state: BrowserNavState): BrowserNavState {
+	return {
+		...state,
+		url: sanitizeBrowserURL(state.url),
+		title: sanitizeBrowserTitle(state.title),
+		...(state.error ? { error: sanitizeURLsInText(state.error) } : {}),
+	};
+}
+
+function agentURLResult(result: unknown): unknown {
+	if (!result || typeof result !== "object" || !("url" in result)) return result;
+	return {
+		...result,
+		url: sanitizeBrowserURL(String(result.url ?? "")),
 	};
 }
 
@@ -2283,14 +2487,14 @@ function handleNetworkDebuggerEvent(entry: BrowserEntry, method: string, params:
 		if (previous && Object.keys(redirect).length > 0) {
 			applyNetworkResponse(previous, redirect);
 			finishNetworkRequest(previous, timestamp);
-			previous.redirectedTo = sanitizeNetworkURL(url);
+			previous.redirectedTo = sanitizeBrowserURL(url);
 		}
 		const wallTime = finiteNumber(params.wallTime);
 		const item: InternalBrowserNetworkRequest = {
 			id: `n${capture.nextSequence++}`,
 			protocolRequestId: requestID,
 			method: typeof request.method === "string" ? request.method : "GET",
-			url: sanitizeNetworkURL(url),
+			url: sanitizeBrowserURL(url),
 			resourceType: typeof params.type === "string" ? params.type.toLowerCase() : undefined,
 			startedAt: wallTime ? new Date(wallTime * 1_000).toISOString() : new Date().toISOString(),
 			startedMonotonic: timestamp,
@@ -2382,13 +2586,17 @@ function selectedNetworkHeaders(value: unknown, kind: "request" | "response"): R
 		const name = rawName.toLowerCase();
 		if (!allowed.has(name)) continue;
 		let headerValue = typeof rawValue === "string" ? rawValue : String(rawValue);
-		if (name === "referer" || name === "location") headerValue = sanitizeNetworkURL(headerValue);
+		if (name === "referer" || name === "location") headerValue = sanitizeBrowserURL(headerValue);
 		selected[name] = headerValue.slice(0, 1_000);
 	}
 	return Object.keys(selected).length > 0 ? selected : undefined;
 }
 
-function sanitizeNetworkURL(raw: string): string {
+// Safe-to-retain URL form: keep the location useful while removing values that
+// commonly carry credentials or one-time handoff material.
+export function sanitizeBrowserURL(raw: string): string {
+	if (!raw) return "";
+	if (raw === "about:blank") return raw;
 	try {
 		const url = new URL(raw);
 		if (!["http:", "https:", "file:"].includes(url.protocol)) {
@@ -2403,8 +2611,21 @@ function sanitizeNetworkURL(raw: string): string {
 		return url.href;
 	} catch {
 		const withoutFragment = raw.split("#", 1)[0] ?? "";
-		return (withoutFragment.split("?", 1)[0] ?? "").slice(0, 2_000);
+		const withoutQuery = withoutFragment.split("?", 1)[0] ?? "";
+		return withoutQuery.replace(/^([a-z][a-z\d+.-]*:\/\/)[^/@\s]+@/i, "$1").slice(0, 2_000);
 	}
+}
+
+export function sanitizeBrowserTitle(raw: string): string {
+	const title = raw.trim();
+	if (/^(?:[a-z][a-z\d+.-]*:\/\/|(?:about|mailto|data|javascript|blob):)/i.test(title)) {
+		return sanitizeBrowserURL(title);
+	}
+	return sanitizeURLsInText(raw);
+}
+
+function sanitizeURLsInText(raw: string): string {
+	return raw.replace(/\b(?:https?|file):\/\/[^\s<>"']+/gi, (match) => sanitizeBrowserURL(match));
 }
 
 function objectValue(value: unknown): Record<string, unknown> {
@@ -2509,7 +2730,7 @@ function normalizeNativeMessages(
 		if (typeof item === "string") {
 			return {
 				level: action === "errors" ? "error" : "log",
-				message: markUntrusted(externalText(item)),
+				message: markUntrusted(externalText(sanitizeURLsInText(item))),
 				timestamp: new Date().toISOString(),
 			};
 		}
@@ -2530,7 +2751,7 @@ function normalizeNativeMessages(
 					: JSON.stringify(record);
 		return {
 			level,
-			message: markUntrusted(externalText(message)),
+			message: markUntrusted(externalText(sanitizeURLsInText(message))),
 			timestamp: typeof record.timestamp === "string" ? record.timestamp : new Date().toISOString(),
 		};
 	});

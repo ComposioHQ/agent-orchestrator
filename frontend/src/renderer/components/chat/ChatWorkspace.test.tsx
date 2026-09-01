@@ -1,5 +1,6 @@
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render as rtlRender, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { ReactElement } from "react";
 import { typeInLexicalEditor } from "../../test/lexical";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatWorkspace, promptSpacerHeight, promptTopInset } from "./ChatWorkspace";
@@ -17,6 +18,15 @@ import type { ConversationMessage, ConversationSnapshot } from "../../types/conv
 import { setApiBaseUrl } from "../../lib/api-client";
 import { useUiStore } from "../../stores/ui-store";
 import type { WorkspaceSession } from "../../types/workspace";
+import { TooltipProvider } from "../ui/tooltip";
+
+function render(ui: ReactElement) {
+	const result = rtlRender(<TooltipProvider>{ui}</TooltipProvider>);
+	return {
+		...result,
+		rerender: (nextUi: ReactElement) => result.rerender(<TooltipProvider>{nextUi}</TooltipProvider>),
+	};
+}
 
 const writeText = vi.fn(async (_text: string) => undefined);
 const menuAction = vi.fn(async (_action: string) => undefined);
@@ -1050,6 +1060,53 @@ describe("ChatWorkspace timeline", () => {
 
 		fireEvent.wheel(scrollbar, { deltaY: 200 });
 		expect(log.scrollTop).toBe(1000);
+	});
+
+	it("re-enables the conversation minimap when the inspector closes again", async () => {
+		useUiStore.setState({
+			inspectorSessions: { "ao-long": { isOpen: false, view: "summary" } },
+		});
+		render(<ChatWorkspace snapshot={chatFixtureLongHistory(8)} />);
+		const log = screen.getByRole("log");
+		const scrollbar = screen.getByTestId("chat-conversation-minimap");
+		stubGeometry(log, {
+			scrollHeight: 4000,
+			clientHeight: 800,
+			scrollTop: 1000,
+		});
+		stubGeometry(scrollbar, {
+			scrollHeight: 800,
+			clientHeight: 800,
+			scrollTop: 0,
+		});
+		fireEvent.scroll(log);
+
+		expect(scrollbar.querySelectorAll("[data-chat-scroll-marker]").length).toBeGreaterThan(0);
+		fireEvent.wheel(scrollbar, { deltaY: 200 });
+		expect(log.scrollTop).toBe(1200);
+
+		act(() => {
+			useUiStore.setState({
+				inspectorSessions: { "ao-long": { isOpen: true, view: "summary" } },
+			});
+		});
+		await waitFor(() => {
+			expect(scrollbar).toHaveAttribute("aria-hidden", "true");
+		});
+		fireEvent.wheel(scrollbar, { deltaY: 200 });
+		expect(log.scrollTop).toBe(1200);
+
+		act(() => {
+			useUiStore.setState({
+				inspectorSessions: { "ao-long": { isOpen: false, view: "summary" } },
+			});
+		});
+		await waitFor(() => {
+			expect(scrollbar).not.toHaveAttribute("aria-hidden", "true");
+			expect(scrollbar.querySelectorAll("[data-chat-scroll-marker]").length).toBeGreaterThan(0);
+		});
+		fireEvent.wheel(scrollbar, { deltaY: 200 });
+		expect(log.scrollTop).toBe(1400);
 	});
 
 	it("previews the request and response for a hovered conversation marker", () => {

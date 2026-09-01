@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import { agentReadinessQueryKey } from "../hooks/useAgentReadinessQuery";
 import { agentReadiness } from "../test/agent-readiness-fixtures";
 import { CreateProjectAgentSheet, defaultAuthorizedAgent, RequiredAgentField } from "./CreateProjectAgentSheet";
+import { TooltipProvider } from "./ui/tooltip";
 
 function renderSheet(onSubmit = vi.fn().mockResolvedValue(undefined), queryClient?: QueryClient) {
 	queryClient ??= new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -15,14 +16,16 @@ function renderSheet(onSubmit = vi.fn().mockResolvedValue(undefined), queryClien
 	}
 	render(
 		<QueryClientProvider client={queryClient}>
-			<CreateProjectAgentSheet
-				isCreating={false}
-				kind="single_repo"
-				onOpenChange={() => undefined}
-				onSubmit={onSubmit}
-				open={true}
-				path="/repo/new-project"
-			/>
+			<TooltipProvider>
+				<CreateProjectAgentSheet
+					isCreating={false}
+					kind="single_repo"
+					onOpenChange={() => undefined}
+					onSubmit={onSubmit}
+					open={true}
+					path="/repo/new-project"
+				/>
+			</TooltipProvider>
 		</QueryClientProvider>,
 	);
 	return onSubmit;

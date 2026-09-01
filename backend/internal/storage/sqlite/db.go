@@ -143,6 +143,9 @@ func migrate(db *sql.DB) error {
 	if err := repairRenumberedCodexProfileMigrationHistory(db); err != nil {
 		return fmt.Errorf("repair renumbered Codex profile migration history: %w", err)
 	}
+	if err := repairRenumberedAgentInventoryMigrationHistory(db); err != nil {
+		return fmt.Errorf("repair renumbered agent-inventory migration history: %w", err)
+	}
 	if err := prepareUsageCostMigration(db); err != nil {
 		return fmt.Errorf("prepare usage cost migration: %w", err)
 	}
@@ -924,7 +927,7 @@ WHERE name = 'cloud_offering'`).Scan(&cloudShape); err != nil {
 // of version numbers subsequently claimed by main. Early Phase 1 builds used
 // 0117 to drop agent_inventory_cache; 0117 now enables Kimi usage. Release the
 // collided ledger entry only when the canonical physical effect is absent so
-// goose can apply the real migration. The drop remains safe at canonical 0119.
+// goose can apply the real migration. The drop remains safe at canonical 0120.
 func repairRenumberedCodexProfileMigrationHistory(db *sql.DB) error {
 	var gooseTable int
 	if err := db.QueryRow(
@@ -964,6 +967,71 @@ SELECT (SELECT COUNT(*) FROM sqlite_master
 
 	_, err := db.Exec(`DELETE FROM goose_db_version WHERE version_id = 117`)
 	return err
+}
+
+// repairRenumberedAgentInventoryMigrationHistory preserves development
+// databases opened while this branch used 0119 to drop agent_inventory_cache.
+// Main now owns 0119 for completed-plan finalization and the identical cache
+// drop lives at 0120. A recorded 0119 plus an absent cache table uniquely
+// identifies the branch history: mark the physical drop at 0120, then release
+// 0119 so goose can apply main's data repair with WithAllowMissing.
+func repairRenumberedAgentInventoryMigrationHistory(db *sql.DB) error {
+	var gooseTable int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'goose_db_version'`,
+	).Scan(&gooseTable); err != nil {
+		return err
+	}
+	if gooseTable == 0 {
+		return nil
+	}
+
+	var applied119 int
+	if err := db.QueryRow(`
+SELECT COALESCE((
+    SELECT is_applied FROM goose_db_version
+    WHERE version_id = 119 ORDER BY id DESC LIMIT 1
+), 0)`).Scan(&applied119); err != nil {
+		return err
+	}
+	if applied119 == 0 {
+		return nil
+	}
+	var applied120 int
+	if err := db.QueryRow(`
+SELECT COALESCE((
+    SELECT is_applied FROM goose_db_version
+    WHERE version_id = 120 ORDER BY id DESC LIMIT 1
+), 0)`).Scan(&applied120); err != nil {
+		return err
+	}
+	if applied120 != 0 {
+		return nil
+	}
+
+	var inventoryTable int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'agent_inventory_cache'`,
+	).Scan(&inventoryTable); err != nil {
+		return err
+	}
+	if inventoryTable != 0 {
+		return nil
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.Exec(`INSERT INTO goose_db_version (version_id, is_applied) VALUES (120, 1)`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM goose_db_version WHERE version_id = 119`); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // repairRenumberedAgentSwitchMigrationHistory preserves databases opened by

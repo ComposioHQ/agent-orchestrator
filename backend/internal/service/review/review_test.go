@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-chi/chi/v5/middleware"
+
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/lifecycle"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -544,7 +546,8 @@ func TestSubmitReportsReviewOutcome(t *testing.T) {
 		WithClock(func() time.Time { return created.Add(90 * time.Second) }),
 	)
 
-	if _, err := svc.Submit(context.Background(), "worker-1", "run-1",
+	ctx := context.WithValue(context.Background(), middleware.RequestIDKey, "req-1")
+	if _, err := svc.Submit(ctx, "worker-1", "run-1",
 		domain.VerdictChangesRequested, "please rename this", "gh-review-42"); err != nil {
 		t.Fatalf("Submit: %v", err)
 	}
@@ -568,6 +571,11 @@ func TestSubmitReportsReviewOutcome(t *testing.T) {
 	}
 	if got[0].SessionID == nil || *got[0].SessionID != "worker-1" {
 		t.Fatalf("SessionID = %#v, want worker-1", got[0].SessionID)
+	}
+	// The emit path detaches from the request context on purpose; the request id
+	// must still be carried so review rows join to the HTTP request.
+	if got[0].RequestID != "req-1" {
+		t.Fatalf("RequestID = %q, want req-1", got[0].RequestID)
 	}
 }
 

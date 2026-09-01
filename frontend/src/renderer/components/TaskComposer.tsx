@@ -13,7 +13,8 @@ import type { components } from "../../api/schema";
 import { apiClient, apiErrorCode, apiErrorMessage } from "../lib/api-client";
 import { captureRendererEvent } from "../lib/telemetry";
 import {
-	agentReadinessQueryKey,
+	cacheAgentReadiness,
+	ensureAgentReadiness,
 	useAgentReadinessQuery,
 	useEnsureAgentReadiness,
 } from "../hooks/useAgentReadinessQuery";
@@ -50,6 +51,8 @@ const CHAT_PREFLIGHT_CODES = new Set([
 	"CHAT_DRIVER_INCOMPATIBLE",
 	"CHAT_AUTH_REQUIRED",
 ]);
+
+const READINESS_RECONCILE_CODES = new Set(["AGENT_BINARY_NOT_FOUND", "CHAT_AUTH_REQUIRED"]);
 
 class TaskCreateError extends Error {
 	constructor(
@@ -174,7 +177,19 @@ export function TaskComposer({
 				return data.workerId;
 			} catch (err) {
 				void captureRendererEvent("ao.renderer.task_create_failed", { project_id: input.projectId });
-				void queryClient.invalidateQueries({ queryKey: agentReadinessQueryKey });
+				if (
+					err instanceof TaskCreateError &&
+					err.code &&
+					READINESS_RECONCILE_CODES.has(err.code) &&
+					input.agent
+				) {
+					try {
+						const completed = await ensureAgentReadiness([input.agent], "launch");
+						cacheAgentReadiness(queryClient, completed);
+					} catch {
+						// Preserve the launch error when opportunistic reconciliation fails.
+					}
+				}
 				throw err instanceof Error ? err : new Error(t("newTask.unableToStart"));
 			}
 		},
@@ -210,7 +225,12 @@ export function TaskComposer({
 	const globalDefaultAgent = projectQuery.data?.agent ?? "";
 	const defaultWorkerAgent = projectWorkerAgent || globalDefaultAgent;
 	const selectedAgent = agent || defaultWorkerAgent;
-	useEnsureAgentReadiness({ agentIds: selectedAgent ? [selectedAgent] : [] });
+	useEnsureAgentReadiness();
+	useEnsureAgentReadiness({
+		agentIds: selectedAgent ? [selectedAgent] : [],
+		enabled: selectedAgent !== "",
+		purpose: "launch",
+	});
 	const defaultWorkerModel =
 		projectQuery.data?.config?.worker?.agentConfig?.model ?? projectQuery.data?.config?.agentConfig?.model ?? "";
 	const defaultWorkerMode =

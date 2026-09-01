@@ -17,7 +17,7 @@ import (
 // authentication.
 var startupBinaryProbeTimeout = 500 * time.Millisecond
 
-// ProbeResult describes a fresh readiness probe for one supported agent.
+// ProbeResult describes launch-fresh readiness for one supported agent.
 type ProbeResult struct {
 	Agent     Info `json:"agent"`
 	Supported bool `json:"supported"`

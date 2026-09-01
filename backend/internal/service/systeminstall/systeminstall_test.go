@@ -96,6 +96,32 @@ func TestPlanFor(t *testing.T) {
 			name: "tmux linux no package manager is unsupported", target: TargetTmux, goos: "linux",
 			wantUnsupported: true, wantReasonHas: "No supported Linux package manager",
 		},
+		// cloudflared is what makes a phone reachable from outside the local
+		// network. Nothing installed it before, so a machine without it showed a
+		// normal QR that only ever worked on Wi-Fi.
+		{
+			name: "cloudflared darwin uses brew", target: TargetCloudflared, goos: "darwin", found: []string{"brew"},
+			wantCommand: []string{"brew", "install", "cloudflared"},
+		},
+		{
+			name: "cloudflared darwin without brew is unsupported", target: TargetCloudflared, goos: "darwin",
+			wantUnsupported: true, wantReasonHas: "Homebrew",
+		},
+		{
+			name: "cloudflared windows uses winget", target: TargetCloudflared, goos: "windows", found: []string{"winget"},
+			wantCommand: []string{"winget", "install", "-e", "--id", "Cloudflare.cloudflared"},
+		},
+		{
+			name: "cloudflared windows without winget is unsupported", target: TargetCloudflared, goos: "windows",
+			wantUnsupported: true, wantReasonHas: "winget",
+		},
+		// Same rule as every other Linux target: these need root, and AO never
+		// asks for a password, so it hands over the command instead.
+		{
+			name: "cloudflared linux is unsupported with instructions", target: TargetCloudflared, goos: "linux",
+			found: []string{"apt-get"}, wantUnsupported: true, wantReasonHas: "administrator password",
+			wantCommand: []string{"apt-get", "install", "-y", "cloudflared"},
+		},
 		{
 			name: "gh windows uses winget", target: TargetGH, goos: "windows", found: []string{"winget"},
 			wantCommand: []string{"winget", "install", "-e", "--id", "GitHub.cli"},
