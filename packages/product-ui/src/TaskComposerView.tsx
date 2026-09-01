@@ -113,6 +113,7 @@ export type TaskComposerViewProps = {
 	onPromptChange: (value: string) => void;
 	renderAgentControl: (control: TaskComposerAgentControl) => ReactNode;
 	renderModelControl: (control: TaskComposerModelControl) => ReactNode;
+	showModelControl?: boolean;
 	submission: TaskComposerSubmission;
 };
 
@@ -188,6 +189,7 @@ export function TaskComposerView({
 	onPromptChange,
 	renderAgentControl,
 	renderModelControl,
+	showModelControl = true,
 	submission,
 }: TaskComposerViewProps) {
 	const promptId = useId();
@@ -370,10 +372,14 @@ export function TaskComposerView({
 					<div className="composer-toolbar-slot">
 						{renderAgentControl({ ...agent, id: agentId })}
 					</div>
-					<span className="composer-toolbar-divider" aria-hidden="true" />
-					<div className="composer-toolbar-slot">
-						{renderModelControl({ ...model, id: modelId })}
-					</div>
+					{showModelControl ? (
+						<>
+							<span className="composer-toolbar-divider" aria-hidden="true" />
+							<div className="composer-toolbar-slot">
+								{renderModelControl({ ...model, id: modelId })}
+							</div>
+						</>
+					) : null}
 				</div>
 
 				<button

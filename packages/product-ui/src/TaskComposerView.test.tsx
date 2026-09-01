@@ -113,6 +113,16 @@ describe("TaskComposerView", () => {
 		expect(screen.getByRole("group", { name: "Runs with" })).toHaveClass("composer-run-controls");
 	});
 
+	it("can hide the model control while project validation is unresolved", () => {
+		render(<TaskComposerView {...viewProps({ showModelControl: false })} />);
+
+		const runControls = screen.getByRole("group", { name: "Runs with" });
+		expect(screen.getByRole("button", { name: "Agent" })).toBeInTheDocument();
+		expect(screen.queryByRole("textbox", { name: "Model" })).not.toBeInTheDocument();
+		expect(runControls.querySelectorAll(".composer-toolbar-slot")).toHaveLength(1);
+		expect(runControls.querySelector(".composer-toolbar-divider")).toBeNull();
+	});
+
 	it("keeps the surrounding controls stable while typing", () => {
 		const renderAgentControl = vi.fn((control) => <button type="button">{control.value}</button>);
 		render(<TaskComposerView {...viewProps({ renderAgentControl })} />);

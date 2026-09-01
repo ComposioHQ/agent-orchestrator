@@ -30,11 +30,11 @@ async function requestAgentModels(
 	return result.data as AgentModelCatalog;
 }
 
-export function agentModelsQueryOptions(agentId: string, projectId: string) {
+export function agentModelsQueryOptions(agentId: string, projectId: string, enabled = true) {
 	return queryOptions({
 		queryKey: agentModelsQueryKey(agentId, projectId),
 		queryFn: () => requestAgentModels(agentId, projectId, "cached"),
-		enabled: agentId !== "",
+		enabled: enabled && agentId !== "",
 		staleTime: MODEL_CATALOG_VALIDATION_INTERVAL_MS,
 	});
 }

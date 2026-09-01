@@ -146,13 +146,14 @@ describe("TaskComposer", () => {
 		expect(h.agentValues).toHaveLength(1);
 	});
 
-	it("keeps agent and model in equal stable toolbar tracks", () => {
+	it("keeps agent and model in equal stable toolbar tracks", async () => {
 		render(
 			<Wrap>
 				<TaskComposer projectId="proj-1" onCreated={vi.fn()} />
 			</Wrap>,
 		);
 
+		await screen.findByLabelText("Model");
 		const runControls = screen.getByRole("group", { name: "Runs with" });
 		expect(runControls).toHaveClass("composer-run-controls");
 		expect(runControls.closest(".composer-toolbar")).not.toBeNull();
@@ -160,6 +161,40 @@ describe("TaskComposer", () => {
 		expect(screen.getByTestId("agent-field").closest(".composer-toolbar-slot")).not.toBeNull();
 		expect(screen.getByLabelText("Model").closest(".composer-toolbar-slot")).not.toBeNull();
 		expect(runControls.querySelector(".composer-toolbar-divider")).not.toBeNull();
+	});
+
+	it("hides model selection until the local project validates successfully", async () => {
+		h.get.mockImplementation(async (path: string) => {
+			if (path.includes("/models")) {
+				return {
+					data: {
+						agent: "codex",
+						selectionMode: "text",
+						models: [{ id: "gpt-5", label: "GPT-5", isDefault: true }],
+						allowCustom: true,
+					},
+				};
+			}
+			return { error: { message: "Default branch is unresolved" } };
+		});
+
+		render(
+			<Wrap>
+				<TaskComposer projectId="proj-1" onCreated={vi.fn()} />
+			</Wrap>,
+		);
+
+		await waitFor(() => expect(h.get).toHaveBeenCalledWith("/api/v1/projects/{id}", expect.anything()));
+		fireEvent.click(screen.getByTestId("agent-field"));
+
+		const runControls = screen.getByRole("group", { name: "Runs with" });
+		expect(runControls.querySelectorAll(".composer-toolbar-slot")).toHaveLength(1);
+		expect(runControls.querySelector(".composer-toolbar-divider")).toBeNull();
+		expect(screen.queryByLabelText("Model")).not.toBeInTheDocument();
+		expect(h.get).not.toHaveBeenCalledWith(
+			"/api/v1/agents/{agent}/models",
+			expect.anything(),
+		);
 	});
 
 	it("keeps the file attach control in the bottom action row", () => {

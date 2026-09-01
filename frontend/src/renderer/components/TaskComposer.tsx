@@ -220,9 +220,12 @@ export function TaskComposer({
 	const projectModelForSelectedAgent = selectedAgent === defaultWorkerAgent ? defaultWorkerModel : "";
 	const projectModeForSelectedAgent = selectedAgent === defaultWorkerAgent ? defaultWorkerMode : "";
 	const agentCatalog = agentsQuery.data;
+	const projectReadyForModelSelection = isCloudProject || (Boolean(projectId) && projectQuery.isSuccess);
 
 	// Shares the picker's query key, so this is the same fetch, not a second one.
-	const modelCatalogQuery = useQuery(agentModelsQueryOptions(selectedAgent, modelsProjectId));
+	const modelCatalogQuery = useQuery(
+		agentModelsQueryOptions(selectedAgent, modelsProjectId, projectReadyForModelSelection),
+	);
 	const revalidationQuery = useQuery({
 		queryKey: [
 			"agent-model-revalidation",
@@ -231,7 +234,10 @@ export function TaskComposer({
 			modelCatalogQuery.data?.validatedAt ?? "",
 		],
 		queryFn: () => revalidateAgentModels(selectedAgent, modelsProjectId),
-		enabled: selectedAgent !== "" && modelCatalogQuery.data?.refreshRecommended === true,
+		enabled:
+			projectReadyForModelSelection &&
+			selectedAgent !== "" &&
+			modelCatalogQuery.data?.refreshRecommended === true,
 		staleTime: Number.POSITIVE_INFINITY,
 		retry: false,
 	});
@@ -429,6 +435,7 @@ export function TaskComposer({
 			}}
 			renderAgentControl={(control) => <DesktopAgentControl {...control} />}
 			renderModelControl={(control) => <TaskModelPicker {...control} />}
+			showModelControl={projectReadyForModelSelection}
 		/>
 	);
 }
