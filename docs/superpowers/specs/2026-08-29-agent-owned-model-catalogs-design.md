@@ -29,7 +29,7 @@ AO does not fall back to a bundled model-ID table. A failed discovery returns th
 
 ## Claude Code Discovery
 
-Claude Code has no machine-readable model-list command. AO therefore runs the adapter-resolved Claude executable in a temporary private PTY using the project working directory and environment. It starts accessibility-oriented terminal output with no prompt, waits for an empty composer, writes `/model` followed by Enter, and captures the complete stable numbered menu.
+Claude Code has no machine-readable model-list command. AO therefore runs the adapter-resolved Claude executable in a temporary private PTY using the project working directory and environment. It starts accessibility-oriented terminal output in Claude's safe mode, with a fresh temporary `CLAUDE_CONFIG_DIR`, waits for an empty composer, writes `/model` followed by Enter, and captures the complete stable numbered menu. Safe mode suppresses user and project hooks and other customizations during the probe; the isolated config directory keeps any provider session state out of the user's normal Claude history and is removed after the process closes.
 
 AO never selects a menu entry, submits a user prompt, answers workspace trust or authentication, or creates an AO session. It closes the terminal immediately after capture. AO therefore requests no model inference, although Claude may perform authentication and catalog network activity.
 

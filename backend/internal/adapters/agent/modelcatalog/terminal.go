@@ -51,9 +51,20 @@ func discoverTerminalCatalog(ctx context.Context, request ports.AgentModelDiscov
 		return base, errors.New("agent binary is not installed")
 	}
 	args := []string{request.Binary}
+	discoveryEnv := request.Env
 	switch request.AgentID {
 	case "claude-code":
-		args = append(args, "--ax-screen-reader")
+		configDir, err := os.MkdirTemp("", "ao-claude-model-catalog-")
+		if err != nil {
+			return base, fmt.Errorf("claude-code model discovery isolation: %w", err)
+		}
+		defer func() { _ = os.RemoveAll(configDir) }()
+		discoveryEnv = make(map[string]string, len(request.Env)+1)
+		for key, value := range request.Env {
+			discoveryEnv[key] = value
+		}
+		discoveryEnv["CLAUDE_CONFIG_DIR"] = configDir
+		args = append(args, "--ax-screen-reader", "--safe-mode")
 	case "muse":
 		args = append(args, "--no-session-log")
 	default:
@@ -62,7 +73,7 @@ func discoverTerminalCatalog(ctx context.Context, request ports.AgentModelDiscov
 
 	runCtx, cancel := context.WithTimeout(ctx, commandTimeout)
 	defer cancel()
-	stream, err := spawn(runCtx, args, mergedEnvironment(os.Environ(), request.Env), request.WorkingDir, modelTerminalRows, modelTerminalColumns)
+	stream, err := spawn(runCtx, args, mergedEnvironment(os.Environ(), discoveryEnv), request.WorkingDir, modelTerminalRows, modelTerminalColumns)
 	if err != nil {
 		return base, fmt.Errorf("%s model discovery: %w", request.AgentID, err)
 	}

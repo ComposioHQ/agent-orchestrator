@@ -3,6 +3,8 @@ package modelcatalog
 import (
 	"context"
 	"io"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
@@ -111,6 +113,16 @@ func (s *blockingModelStream) Close() error {
 
 func newScriptedModelStream(initial, afterWrite string) *scriptedModelStream {
 	return &scriptedModelStream{reads: [][]byte{[]byte(initial), []byte(afterWrite)}, wrote: make(chan struct{})}
+}
+
+func environmentValue(env []string, key string) string {
+	prefix := key + "="
+	for i := len(env) - 1; i >= 0; i-- {
+		if strings.HasPrefix(env[i], prefix) {
+			return strings.TrimPrefix(env[i], prefix)
+		}
+	}
+	return ""
 }
 
 func (s *scriptedModelStream) Read(buf []byte) (int, error) {
@@ -272,7 +284,7 @@ func TestDiscoverClaudeModelsUsesPrivateTerminalAndClosesIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(gotArgv, []string{"/bin/claude", "--ax-screen-reader"}) {
+	if !reflect.DeepEqual(gotArgv, []string{"/bin/claude", "--ax-screen-reader", "--safe-mode"}) {
 		t.Fatalf("argv = %q", gotArgv)
 	}
 	if gotDir != "/work/project" || !environmentContains(gotEnv, "AO_TEST=yes") {
@@ -283,6 +295,40 @@ func TestDiscoverClaudeModelsUsesPrivateTerminalAndClosesIt(t *testing.T) {
 	}
 	if len(got.Models) != 2 || got.Models[0].ID != "sonnet" || !got.Models[0].IsDefault || got.Source != "cli" {
 		t.Fatalf("catalog = %#v", got)
+	}
+}
+
+func TestDiscoverClaudeModelsIsolatesSessionStateAndHooks(t *testing.T) {
+	stream := newScriptedModelStream("$\n", "1. Default — Default model\n2. Fable — Fable 5\n3. Sonnet — Sonnet 5\nEnter selection [1-3], or Escape to cancel:\n")
+	var isolatedConfigDir string
+	spawn := func(_ context.Context, argv, env []string, _ string, _, _ uint16) (ports.Stream, error) {
+		if !reflect.DeepEqual(argv, []string{"/bin/claude", "--ax-screen-reader", "--safe-mode"}) {
+			t.Fatalf("argv = %q", argv)
+		}
+		isolatedConfigDir = environmentValue(env, "CLAUDE_CONFIG_DIR")
+		if isolatedConfigDir == "" || isolatedConfigDir == "/real/claude" {
+			t.Fatalf("CLAUDE_CONFIG_DIR = %q, want isolated directory", isolatedConfigDir)
+		}
+		if err := os.WriteFile(filepath.Join(isolatedConfigDir, "session.jsonl"), []byte("probe"), 0o600); err != nil {
+			t.Fatalf("write isolated session fixture: %v", err)
+		}
+		return stream, nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	_, err := discoverTerminalCatalog(ctx, ports.AgentModelDiscoveryRequest{
+		AgentID: "claude-code", Binary: "/bin/claude",
+		Env: map[string]string{"CLAUDE_CONFIG_DIR": "/real/claude"},
+	}, spawn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if isolatedConfigDir == "" {
+		t.Fatal("spawn did not receive an isolated config directory")
+	}
+	if _, err := os.Stat(isolatedConfigDir); !os.IsNotExist(err) {
+		t.Fatalf("isolated config directory still exists: stat err = %v", err)
 	}
 }
 
