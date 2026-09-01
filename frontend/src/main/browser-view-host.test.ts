@@ -8,6 +8,8 @@ import {
 	createBrowserViewHost,
 	isAllowedBrowserURL,
 	normalizeBrowserURL,
+	sanitizeBrowserTitle,
+	sanitizeBrowserURL,
 	scaleBoundsForZoom,
 } from "./browser-view-host";
 import {
@@ -21,6 +23,39 @@ import { parseAgentBrowserJSON } from "./agent-browser-runtime";
 vi.mock("electron", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("electron")>();
 	return { ...actual, net: { fetch: vi.fn() } };
+});
+
+describe("browser URL sanitization", () => {
+	it.each([
+		["ordinary URL", "https://example.test/docs/page", "https://example.test/docs/page"],
+		[
+			"query values and fragment",
+			"https://example.test/access?token=opaque-high-entropy-value&state=another-secret#private",
+			"https://example.test/access?token=%5Bredacted%5D&state=%5Bredacted%5D",
+		],
+		[
+			"embedded credentials",
+			"https://alice:password@example.test/private?next=secret",
+			"https://example.test/private?next=%5Bredacted%5D",
+		],
+		["blank page", "about:blank", "about:blank"],
+		[
+			"malformed URL",
+			"https://alice:password@example test/private?token=secret#private",
+			"https://example test/private",
+		],
+	])("sanitizes %s", (_name, input, expected) => {
+		expect(sanitizeBrowserURL(input)).toBe(expected);
+	});
+
+	it("sanitizes URL-shaped and URL-containing titles", () => {
+		const signed = "https://example.test/access?token=opaque#private";
+		expect(sanitizeBrowserTitle(signed)).toBe("https://example.test/access?token=%5Bredacted%5D");
+		expect(sanitizeBrowserTitle(`Portal ${signed}`)).toBe(
+			"Portal https://example.test/access?token=%5Bredacted%5D",
+		);
+		expect(sanitizeBrowserTitle("Government access portal")).toBe("Government access portal");
+	});
 });
 
 type InvokeHandler = (event: unknown, ...args: unknown[]) => unknown;
@@ -1369,6 +1404,30 @@ describe("agent browser runtime", () => {
 		expect(webContents.loadURL.mock.calls.some(([url]) => url !== "about:blank")).toBe(false);
 	});
 
+	it("redacts signed tab metadata only at the agent response boundary", async () => {
+		const { host, invoke } = setupTabHost();
+		const signed =
+			"https://alice:password@example.test/access?token=opaque-high-entropy-value&state=another-secret#private";
+		const safe = "https://example.test/access?token=%5Bredacted%5D&state=%5Bredacted%5D";
+
+		const opened = (await host.execute("sess-1", "open", { url: signed })) as BrowserNavState;
+		const ensured = (await invoke("browser:ensure", "sess-1")) as BrowserNavState;
+		const agentTabs = (await host.execute("sess-1", "tabs")) as BrowserTabsState;
+		const current = await host.execute("sess-1", "get", { property: "url" });
+		const unhighlighted = await host.execute("sess-1", "unhighlight");
+		const rendererTabs = (await invoke("browser:getTabs", ensured.viewId)) as BrowserTabsState;
+
+		expect(opened).toMatchObject({ url: safe, title: `Title ${safe}` });
+		expect(agentTabs.tabs[0]).toMatchObject({ url: safe, title: `Title ${safe}` });
+		expect(current).toMatchObject({ value: safe });
+		expect(unhighlighted).toMatchObject({ url: safe });
+		const agentOutput = JSON.stringify({ opened, agentTabs, current, unhighlighted });
+		expect(agentOutput).not.toContain("opaque-high-entropy-value");
+		expect(agentOutput).not.toContain("another-secret");
+		expect(agentOutput).not.toContain("password");
+		expect(rendererTabs.tabs[0]).toMatchObject({ url: signed, title: `Title ${signed}` });
+	});
+
 	it("destroys a headless session target through the daemon lifecycle command", async () => {
 		const { host, webContents } = setupHost();
 		await host.execute("sess-1", "tabs");
@@ -1611,7 +1670,12 @@ describe("agent browser runtime", () => {
 			const { host, views } = setupTabHost();
 			await host.execute("sess-1", "open", { url: "http://localhost:3000" });
 
-			views[0].webContents.emitConsoleMessage(3, "render failed", 42, "http://localhost:3000/app.js");
+			views[0].webContents.emitConsoleMessage(
+				3,
+				"render failed at https://example.test/page?token=console-secret#private",
+				42,
+				"http://localhost:3000/app.js?token=source-secret#private",
+			);
 			const onErrorOccurred = views[0].webContents.session.webRequest.onErrorOccurred.mock.calls[0]?.[1] as
 				| ((details: {
 						resourceType: string;
@@ -1623,7 +1687,7 @@ describe("agent browser runtime", () => {
 			onErrorOccurred?.({
 				resourceType: "xhr",
 				method: "GET",
-				url: "http://localhost:3000/api/data",
+				url: "http://localhost:3000/api/data?token=request-secret#private",
 				error: "net::ERR_CONNECTION_REFUSED",
 			});
 
@@ -1636,12 +1700,15 @@ describe("agent browser runtime", () => {
 			expect(result.messages).toHaveLength(2);
 			expect(result.messages[0]).toMatchObject({ level: "error" });
 			expect(result.messages[0]?.message).toContain(
-				"render failed (http://localhost:3000/app.js:42)",
+				"render failed at https://example.test/page?token=%5Bredacted%5D (http://localhost:3000/app.js?token=%5Bredacted%5D:42)",
 			);
 			expect(result.messages[1]).toMatchObject({ level: "error" });
 			expect(result.messages[1]?.message).toContain(
-				"GET http://localhost:3000/api/data failed: net::ERR_CONNECTION_REFUSED",
+				"GET http://localhost:3000/api/data?token=%5Bredacted%5D failed: net::ERR_CONNECTION_REFUSED",
 			);
+			expect(JSON.stringify(result)).not.toContain("console-secret");
+			expect(JSON.stringify(result)).not.toContain("source-secret");
+			expect(JSON.stringify(result)).not.toContain("request-secret");
 		} finally {
 			fetchSpy.mockReset();
 			vi.useRealTimers();
