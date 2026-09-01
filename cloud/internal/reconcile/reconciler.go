@@ -24,6 +24,7 @@ type Store interface {
 	ClaimSandboxes(ctx context.Context, owner string, limit int, lease time.Duration) ([]domain.Sandbox, error)
 	RenewSandboxClaim(ctx context.Context, owner, orgID, sessionID string, lease time.Duration) error
 	UpdateSandboxObservation(ctx context.Context, owner, orgID, sessionID, providerEnvironmentID, observedState, lastError string, reconcileAfter time.Time) error
+	AcceptSandboxProviderPause(ctx context.Context, owner, orgID, sessionID, providerEnvironmentID string, reconcileAfter time.Time) (bool, error)
 	RecordSandboxFailure(ctx context.Context, owner, orgID, sessionID, providerEnvironmentID, lastError string) error
 	ReleaseSandboxClaim(ctx context.Context, owner, orgID, sessionID string, reconcileAfter time.Time) error
 	IssueAccessTicket(ctx context.Context, orgID, sessionID, purpose string, scopes []string, ttl time.Duration) (string, error)
@@ -123,6 +124,10 @@ const (
 	// supervision.
 	inlineRunningWait = 6 * time.Second
 	inlineRunningPoll = 300 * time.Millisecond
+	// Active work refreshes a provider deadline when it enters the shorter
+	// window, leaving a second window of tolerance for reconcile/API jitter.
+	activeDeadlineRefreshWindow = 5 * time.Minute
+	activeDeadlineExtension     = 10 * time.Minute
 )
 
 // Reconciler converges durable sandbox intent with provider state.
@@ -505,6 +510,8 @@ func (r *Reconciler) reconcileSandbox(ctx context.Context, record domain.Sandbox
 		return r.observe(ctx, record, string(environment.ID), domain.SandboxObservedStopped, "", 30*time.Second)
 	}
 
+	r.extendActiveDeadline(ctx, record, environment, provider)
+
 	switch environment.State {
 	case sandbox.StateDeleted:
 		return r.observe(ctx, record, "", domain.SandboxObservedRequested,
@@ -512,6 +519,23 @@ func (r *Reconciler) reconcileSandbox(ctx context.Context, record domain.Sandbox
 	case sandbox.StateDeleting:
 		return r.observe(ctx, record, string(environment.ID), domain.SandboxObservedDeleting, "", 2*time.Second)
 	case sandbox.StateStopped, sandbox.StatePaused:
+		if environment.StopCause == sandbox.StopCauseExternalIdle && !record.KeepAlive {
+			accepted, err := r.store.AcceptSandboxProviderPause(
+				ctx, r.owner, record.OrgID, record.SessionID,
+				string(environment.ID), time.Now().Add(30*time.Second),
+			)
+			if err != nil {
+				return err
+			}
+			if accepted {
+				r.log.Info("accepted provider idle stop",
+					"session_id", record.SessionID,
+					"provider", record.Provider,
+					"provider_id", environment.ID,
+				)
+			}
+			return nil
+		}
 		if record.Provider == sandbox.ProviderDocker {
 			// A stopped sandbox already observed as stopped was intentionally
 			// paused. It must be recreated immediately on wake; otherwise a
@@ -579,6 +603,39 @@ func (r *Reconciler) reconcileSandbox(ctx context.Context, record domain.Sandbox
 		// not-yet-ready. Guessing "running" would suppress the startup
 		// deadline and strand the session in silence.
 		return r.observe(ctx, record, string(environment.ID), domain.SandboxObservedProvisioning, "", 5*time.Second)
+	}
+}
+
+func (r *Reconciler) extendActiveDeadline(
+	ctx context.Context,
+	record domain.Sandbox,
+	environment sandbox.Environment,
+	provider sandbox.Provider,
+) {
+	if !record.KeepAlive || environment.Deadline == nil ||
+		(environment.State != sandbox.StateRunning && environment.State != sandbox.StateProvisioning) {
+		return
+	}
+	extender, ok := provider.(sandbox.DeadlineExtender)
+	if !ok {
+		return
+	}
+	now := time.Now()
+	if environment.Deadline.After(now.Add(activeDeadlineRefreshWindow)) {
+		return
+	}
+	deadline := now.Add(activeDeadlineExtension)
+	if err := extender.ExtendDeadline(ctx, environment.ID, deadline); err != nil {
+		// Losing a deadline bump must not rewrite a healthy worker as failed or
+		// trigger replacement compute. Keep supervising and retry on the next
+		// provider observation; operators still receive the precise API error.
+		r.log.Warn("extend active sandbox deadline",
+			"session_id", record.SessionID,
+			"provider", record.Provider,
+			"provider_id", environment.ID,
+			"deadline", deadline,
+			"err", err,
+		)
 	}
 }
 
@@ -863,7 +920,7 @@ func (r *Reconciler) terminate(
 
 func (r *Reconciler) providerStartupTimeoutError() error {
 	return fmt.Errorf(
-		"The NodeOps VM did not become ready within %s. AO kept the existing VM and will retry.",
+		"The sandbox did not become ready within %s. AO kept the existing environment and will retry.",
 		r.options.StartupTimeout,
 	)
 }

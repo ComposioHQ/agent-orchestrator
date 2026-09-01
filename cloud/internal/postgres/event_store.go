@@ -86,16 +86,21 @@ func sendMessageTx(
 		return domain.ClientEvent{}, err
 	}
 	// A user message is proof of life: wake a sandbox the idle-pause scanner
-	// paused for silence. No-op (0 rows) for a sandbox that was never paused,
-	// or paused for another reason (deleted, user-stopped) — this only ever
-	// widens desired_state from 'paused' to 'running', never overrides a
-	// desired 'stopped' or 'deleted' set explicitly elsewhere.
+	// paused for silence and schedule reconciliation immediately even when the
+	// sandbox was already running, so provider deadline extension cannot wait
+	// for the next ordinary observation. This never overrides a desired
+	// 'stopped' or 'deleted' set explicitly elsewhere.
 	if _, err := tx.Exec(
 		ctx,
 		`UPDATE ao_sandboxes
-		SET desired_state = 'running', startup_started_at = now(),
+		SET desired_state = 'running',
+			startup_started_at = CASE
+				WHEN desired_state = 'paused' THEN now()
+				ELSE startup_started_at
+			END,
 			reconcile_after = now(), updated_at = now()
-		WHERE session_id = $1 AND org_id = $2 AND desired_state = 'paused'`,
+		WHERE session_id = $1 AND org_id = $2
+			AND desired_state IN ('running', 'paused')`,
 		sessionID, orgID,
 	); err != nil {
 		return domain.ClientEvent{}, err

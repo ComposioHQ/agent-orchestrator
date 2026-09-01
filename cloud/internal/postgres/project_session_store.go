@@ -629,7 +629,7 @@ func createSessionTx(
 		FROM generated
 		RETURNING id, org_id, project_id, kind, harness, display_name, branch,
 			mode, denied_commands, activity_state, is_terminated,
-			false, '', '', created_at, updated_at`,
+			false, '', '', '', '', '', created_at, updated_at`,
 		orgID,
 		input.ProjectID,
 		input.Kind,
@@ -845,6 +845,9 @@ const sessionSelect = `
 			SELECT 1 FROM ao_worker_connections worker
 			WHERE worker.session_id = session.id AND worker.disconnected_at IS NULL
 		),
+		COALESCE(sandbox.provider, ''),
+		COALESCE(sandbox.desired_state, ''),
+		COALESCE(sandbox.observed_state, ''),
 		COALESCE(sandbox.observed_state, ''),
 		COALESCE(sandbox.last_error, ''),
 		session.created_at, session.updated_at
@@ -905,6 +908,9 @@ func scanSession(row scanner, session *domain.Session) error {
 		&activity,
 		&session.IsTerminated,
 		&session.RuntimeConnected,
+		&session.SandboxProvider,
+		&session.DesiredState,
+		&session.ObservedState,
 		&session.RuntimeState,
 		&session.RuntimeError,
 		&session.CreatedAt,

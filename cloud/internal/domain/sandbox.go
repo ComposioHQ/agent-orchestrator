@@ -77,8 +77,20 @@ type Sandbox struct {
 	// reconciler gives up past a deadline instead of re-requesting Delete
 	// forever. Nil until the first deletion tick stamps it.
 	DeletionRequestedAt *time.Time
-	LastError           string
-	UpdatedAt           time.Time
+	// KeepAlive is derived when the row is claimed from an active AO turn or a
+	// short user-interaction lease. It is never stored as display state.
+	KeepAlive bool
+	LastError string
+	UpdatedAt time.Time
+}
+
+// SandboxLifecycle is the small intent/observation projection returned by an
+// explicit resume request.
+type SandboxLifecycle struct {
+	SessionID     string
+	Provider      string
+	DesiredState  string
+	ObservedState string
 }
 
 // SandboxRef identifies a session sandbox across organizations.

@@ -14,6 +14,7 @@ const (
 	ProviderDaytona = "daytona"
 	ProviderECS     = "ecs"
 	ProviderNodeOps = "nodeops"
+	ProviderCoder   = "coder"
 
 	DefaultProvider       = ProviderDocker
 	DefaultWorkerTokenTTL = 15 * time.Minute
@@ -50,6 +51,34 @@ type DockerConfig struct {
 	Network        string
 	Namespace      string
 	WorkerTokenTTL time.Duration
+}
+
+type CoderConfig struct {
+	BaseURL        string
+	Owner          string
+	TemplateID     string
+	AgentName      string
+	Parameters     map[string]string
+	WorkerTokenTTL time.Duration
+}
+
+func (c CoderConfig) Validate() error {
+	endpoint, err := url.Parse(strings.TrimSpace(c.BaseURL))
+	if err != nil || endpoint.Host == "" || endpoint.User != nil ||
+		(endpoint.Scheme != "http" && endpoint.Scheme != "https") ||
+		(endpoint.Path != "" && endpoint.Path != "/") || endpoint.RawQuery != "" || endpoint.Fragment != "" {
+		return errors.New("AO_CLOUD_CODER_URL must be an absolute http or https origin")
+	}
+	if strings.TrimSpace(c.Owner) == "" {
+		return errors.New("AO_CLOUD_CODER_OWNER is required")
+	}
+	if strings.TrimSpace(c.TemplateID) == "" {
+		return errors.New("AO_CLOUD_CODER_TEMPLATE_ID is required")
+	}
+	if c.WorkerTokenTTL <= 0 {
+		return errors.New("AO_CLOUD_CODER_WORKER_TOKEN_TTL must be positive")
+	}
+	return nil
 }
 
 func (c DockerConfig) Validate() error {
@@ -98,6 +127,7 @@ type ProvisioningDefaults struct {
 	Release  string
 	NodeOps  NodeOpsConfig
 	Docker   DockerConfig
+	Coder    CoderConfig
 }
 
 type Plan struct {
@@ -164,6 +194,23 @@ func (d ProvisioningDefaults) SessionPlan(harness string) (Plan, error) {
 			"workerImage": strings.TrimSpace(d.Docker.WorkerImage),
 			"network":     strings.TrimSpace(d.Docker.Network),
 			"namespace":   strings.TrimSpace(d.Docker.Namespace),
+		}
+	} else if provider == ProviderCoder {
+		if err := d.Coder.Validate(); err != nil {
+			return Plan{}, err
+		}
+		resourceProfile["coder"] = map[string]any{
+			"baseUrl":               strings.TrimRight(strings.TrimSpace(d.Coder.BaseURL), "/"),
+			"owner":                 strings.TrimSpace(d.Coder.Owner),
+			"templateId":            strings.TrimSpace(d.Coder.TemplateID),
+			"agentName":             strings.TrimSpace(d.Coder.AgentName),
+			"parameters":            d.Coder.Parameters,
+			"workerTokenTtlSeconds": int64(d.Coder.WorkerTokenTTL / time.Second),
+		}
+		bootstrapContext["coder"] = map[string]any{
+			"owner":      strings.TrimSpace(d.Coder.Owner),
+			"templateId": strings.TrimSpace(d.Coder.TemplateID),
+			"agentName":  strings.TrimSpace(d.Coder.AgentName),
 		}
 	}
 	resourceJSON, err := json.Marshal(resourceProfile)

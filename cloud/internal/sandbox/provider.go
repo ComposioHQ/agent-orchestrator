@@ -3,6 +3,7 @@ package sandbox
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/cloud/internal/domain"
 )
@@ -37,11 +38,20 @@ type Spec struct {
 // Environment is the provider-neutral view of a sandbox. State is always one of
 // the AO vocabulary values the reconciler switches on, never a provider string.
 type Environment struct {
-	ID       ID
-	Name     string
-	State    string
-	Target   string
-	Resource domain.ResourceProfile
+	ID        ID
+	Name      string
+	State     string
+	Target    string
+	Resource  domain.ResourceProfile
+	Deadline  *time.Time
+	StopCause string
+}
+
+// DeadlineExtender is an optional provider capability. The reconciler uses it
+// only while durable AO work or a recent interactive gesture says the sandbox
+// is active. Providers without native deadlines keep their existing behavior.
+type DeadlineExtender interface {
+	ExtendDeadline(context.Context, ID, time.Time) error
 }
 
 // WorkerBootstrap contains the worker executable and launch environment.
@@ -90,3 +100,8 @@ const (
 	StateDeleting     = "deleting"
 	StateDeleted      = "deleted"
 )
+
+// Provider-neutral stop causes. An empty cause is deliberately ambiguous and
+// preserves the existing restore behavior. StopCauseExternalIdle is positive
+// evidence that the provider applied its own idle/autostop policy.
+const StopCauseExternalIdle = "external_idle"

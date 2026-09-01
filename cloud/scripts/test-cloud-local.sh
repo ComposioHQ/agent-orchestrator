@@ -296,14 +296,14 @@ elif mode == "wake":
     token = state["token"]
     org_id = state["orgId"]
     session_id = state["sessionId"]
-    woken = request(
+    resume = request(
         "POST",
-        f"/api/cloud/v1/orgs/{org_id}/sessions/wake",
+        f"/api/cloud/v1/orgs/{org_id}/sessions/{session_id}/resume",
         token=token,
         expected=202,
-    ).get("woken", 0)
-    if woken < 1:
-        raise RuntimeError(f"wake did not resume the paused smoke session: {woken=}")
+    )["session"]
+    if resume.get("desiredState") != "running":
+        raise RuntimeError(f"resume did not record running intent: {resume!r}")
     wait_for_running(org_id, session_id, token)
     request(
         "POST",

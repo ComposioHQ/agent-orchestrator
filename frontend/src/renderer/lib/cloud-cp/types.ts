@@ -176,6 +176,9 @@ export interface CloudCpSession {
 	activityState: string;
 	status: string;
 	runtimeConnected: boolean;
+	sandboxProvider?: string;
+	desiredState?: string;
+	observedState?: string;
 	runtimeState?: string;
 	runtimeError?: string;
 	isTerminated: boolean;
@@ -205,9 +208,14 @@ export interface CloudCpSessionDeletedResponse {
 	};
 }
 
-/** POST /orgs/{orgId}/sessions/wake responds 202 with the number of sandboxes queued to resume. */
-export interface CloudCpWakeSessionsResponse {
-	woken: number;
+/** POST /orgs/{orgId}/sessions/{sessionId}/resume accepts user resume intent. */
+export interface CloudCpResumeSessionResponse {
+	session: {
+		id: string;
+		sandboxProvider: string;
+		desiredState: string;
+		observedState: string;
+	};
 }
 
 // ---------------------------------------------------------------------------
