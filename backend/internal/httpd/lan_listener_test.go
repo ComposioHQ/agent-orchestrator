@@ -117,3 +117,39 @@ func TestLANManagerStartStopIdempotent(t *testing.T) {
 	}
 	_ = m.Stop(ctx) // second stop is a no-op
 }
+
+// End-to-end through the real LAN stack (lanControlBlock + authMiddleware +
+// router): the identity probe answers without a credential, and nothing else
+// does. The middleware unit tests cover the exemption in isolation; this covers
+// the composition, which is where a wiring mistake would actually live.
+func TestLANManagerServesIdentityProbeWithoutAPassword(t *testing.T) {
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, "ok")
+	})
+	st := &authState{}
+	st.setHash(mobilebridge.HashPassword("secret12"))
+	m := NewLANManager(inner, st, 0, slog.Default(), nil)
+	port, err := m.Start(0)
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	defer m.Stop(context.Background())
+
+	get := func(path string) int {
+		t.Helper()
+		req, _ := http.NewRequest(http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d%s", port, path), nil)
+		resp, err := http.DefaultClient.Do(req) // deliberately no Authorization
+		if err != nil {
+			t.Fatalf("GET %s: %v", path, err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		return resp.StatusCode
+	}
+
+	if code := get("/api/v1/identity"); code != http.StatusOK {
+		t.Errorf("unauthenticated GET /api/v1/identity got %d, want 200", code)
+	}
+	if code := get("/api/v1/sessions"); code != http.StatusUnauthorized {
+		t.Errorf("unauthenticated GET /api/v1/sessions got %d, want 401", code)
+	}
+}

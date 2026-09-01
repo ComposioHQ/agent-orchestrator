@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import type { TraySessionEntry } from "../../shared/tray";
 import { useMemo } from "react";
 import type { components } from "../../api/schema";
 import { apiClient, hasTrustedApiBaseUrl } from "../lib/api-client";
@@ -18,6 +19,9 @@ import {
 	toProjectKind,
 	toSessionActivity,
 	toSessionStatus,
+	newestActiveOrchestrator,
+	attentionZone,
+	workerSessions,
 	type WorkspaceSession,
 	type WorkspaceSummary,
 } from "../types/workspace";
@@ -209,13 +213,18 @@ function toCloudWorkspace(
 	};
 }
 
-export function useCloudProjectsQuery() {
+type WorkspaceSubscriptionOptions = {
+	subscribed?: boolean;
+};
+
+export function useCloudProjectsQuery(options: WorkspaceSubscriptionOptions = {}) {
 	const { client, ready, baseUrl } = useCloudCp();
 	const { org } = useCloudOrg();
 	const orgId = org?.id;
 	return useQuery({
 		queryKey: [...cloudProjectsQueryKey, baseUrl, orgId ?? ""],
 		enabled: ready && orgId !== undefined,
+		subscribed: options.subscribed,
 		retry: 1,
 		queryFn: async (): Promise<CloudCpProject[]> => {
 			if (orgId === undefined) return [];
@@ -227,13 +236,14 @@ export function useCloudProjectsQuery() {
 	});
 }
 
-export function useCloudSessionsQuery() {
+export function useCloudSessionsQuery(options: WorkspaceSubscriptionOptions = {}) {
 	const { client, ready, baseUrl } = useCloudCp();
 	const { org } = useCloudOrg();
 	const orgId = org?.id;
 	return useQuery({
 		queryKey: [...cloudSessionsQueryKey, baseUrl, orgId ?? ""],
 		enabled: ready && orgId !== undefined,
+		subscribed: options.subscribed,
 		retry: 1,
 		// A provisioning sandbox changes state without a client action, so poll to
 		// reflect requested -> running -> ready the same way local sessions stream.
@@ -246,10 +256,10 @@ export function useCloudSessionsQuery() {
 	});
 }
 
-export function useWorkspaceQuery() {
-	const local = useQuery(workspaceQueryOptions);
-	const cloud = useCloudProjectsQuery();
-	const cloudSessions = useCloudSessionsQuery();
+export function useWorkspaceQuery(options: WorkspaceSubscriptionOptions = {}) {
+	const local = useQuery({ ...workspaceQueryOptions, subscribed: options.subscribed });
+	const cloud = useCloudProjectsQuery(options);
+	const cloudSessions = useCloudSessionsQuery(options);
 	const { org, ready } = useCloudOrg();
 	const orgId = org?.id;
 	const localData = local.data;
@@ -266,5 +276,122 @@ export function useWorkspaceQuery() {
 		const sessions = cloudSessionData ?? [];
 		return [...localData, ...cloudData.map((project) => toCloudWorkspace(project, sessions, orgId))];
 	}, [localData, cloudData, cloudSessionData, orgId, ready]);
+	return { ...local, data };
+}
+
+/**
+ * Subscribe a detail surface to one session instead of the complete workspace
+ * tree. TanStack Query applies structural sharing to the selected value, so an
+ * activity update elsewhere no longer redraws the open session workspace.
+ */
+export function useWorkspaceSession(sessionId: string) {
+	const selectLocalSession = useMemo(
+		() => (workspaces: WorkspaceSummary[]) =>
+			workspaces.flatMap((workspace) => workspace.sessions).find((session) => session.id === sessionId),
+		[sessionId],
+	);
+	const local = useQuery({ ...workspaceQueryOptions, select: selectLocalSession });
+	const cloud = useCloudProjectsQuery();
+	const cloudSessions = useCloudSessionsQuery();
+	const { org, ready } = useCloudOrg();
+	const cloudSession = useMemo(() => {
+		if (!ready || !org?.id || !cloud.data || !cloudSessions.data) return undefined;
+		const session = cloudSessions.data.find((candidate) => candidate.id === sessionId);
+		if (!session) return undefined;
+		const project = cloud.data.find((candidate) => candidate.id === session.projectId);
+		return project ? toCloudWorkspaceSession(session, project, org.id) : undefined;
+	}, [cloud.data, cloudSessions.data, org?.id, ready, sessionId]);
+	return { ...local, data: local.data ?? cloudSession };
+}
+
+export type WorkspaceScope = {
+	project?: Pick<WorkspaceSummary, "id" | "kind" | "name" | "orchestratorAgent">;
+	session?: WorkspaceSession;
+	orchestrator?: WorkspaceSession;
+};
+
+function selectWorkspaceScope(
+	workspaces: WorkspaceSummary[],
+	projectId: string | undefined,
+	sessionId: string | undefined,
+): WorkspaceScope {
+	const session = sessionId
+		? workspaces.flatMap((workspace) => workspace.sessions).find((candidate) => candidate.id === sessionId)
+		: undefined;
+	const resolvedProjectId = session?.workspaceId ?? projectId;
+	const workspace = resolvedProjectId ? workspaces.find((candidate) => candidate.id === resolvedProjectId) : undefined;
+	// Do not carry the project's complete sessions array into shell chrome. With
+	// React Query's structural sharing, this small metadata projection retains
+	// its identity when another session in the same project streams an update.
+	const project = workspace
+		? {
+				id: workspace.id,
+				kind: workspace.kind,
+				name: workspace.name,
+				orchestratorAgent: workspace.orchestratorAgent,
+			}
+		: undefined;
+	return { project, session, orchestrator: workspace ? newestActiveOrchestrator(workspace.sessions) : undefined };
+}
+
+/**
+ * Subscribe shell chrome to just the routed project and session. This avoids
+ * redrawing the topbar for streamed activity from every other project.
+ */
+export function useWorkspaceScope(projectId?: string, sessionId?: string) {
+	const selectLocalScope = useMemo(
+		() => (workspaces: WorkspaceSummary[]) => selectWorkspaceScope(workspaces, projectId, sessionId),
+		[projectId, sessionId],
+	);
+	const local = useQuery({ ...workspaceQueryOptions, select: selectLocalScope });
+	const cloud = useCloudProjectsQuery();
+	const cloudSessions = useCloudSessionsQuery();
+	const { org, ready } = useCloudOrg();
+	const cloudScope = useMemo(() => {
+		if (!ready || !org?.id || !cloud.data) return undefined;
+		const workspaces = cloud.data.map((project) => toCloudWorkspace(project, cloudSessions.data ?? [], org.id));
+		return selectWorkspaceScope(workspaces, projectId, sessionId);
+	}, [cloud.data, cloudSessions.data, org?.id, projectId, ready, sessionId]);
+	// Match useWorkspaceQuery's local-first semantics: do not reveal cloud
+	// records before the local workspace query has resolved successfully.
+	return { ...local, data: local.data ?? (local.isSuccess ? cloudScope : undefined) };
+}
+
+function selectTraySessions(workspaces: WorkspaceSummary[]): TraySessionEntry[] {
+	const entries: TraySessionEntry[] = [];
+	for (const workspace of workspaces) {
+		for (const session of workerSessions(workspace.sessions)) {
+			const zone = attentionZone(session);
+			if ((zone === "merge" && session.status === "merged") || (zone !== "action" && zone !== "merge")) continue;
+			entries.push({
+				projectId: workspace.id,
+				projectName: workspace.name,
+				sessionId: session.id,
+				title: session.title,
+				zone,
+			});
+		}
+	}
+	return entries;
+}
+
+/**
+ * The tray lives for the whole app lifetime, but only attention-worthy worker
+ * sessions affect its native payload. Select that compact projection at the
+ * query boundary so ordinary streamed activity does not wake the runtime.
+ */
+export function useWorkspaceTraySessions() {
+	const local = useQuery({ ...workspaceQueryOptions, select: selectTraySessions });
+	const cloud = useCloudProjectsQuery();
+	const cloudSessions = useCloudSessionsQuery();
+	const { org, ready } = useCloudOrg();
+	const cloudEntries = useMemo(() => {
+		if (!ready || !org?.id || !cloud.data) return [];
+		return selectTraySessions(cloud.data.map((project) => toCloudWorkspace(project, cloudSessions.data ?? [], org.id)));
+	}, [cloud.data, cloudSessions.data, org?.id, ready]);
+	const data = useMemo(() => {
+		if (local.data === undefined) return undefined;
+		return cloudEntries.length === 0 ? local.data : [...local.data, ...cloudEntries];
+	}, [cloudEntries, local.data]);
 	return { ...local, data };
 }

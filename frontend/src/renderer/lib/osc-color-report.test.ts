@@ -55,13 +55,93 @@ describe("cursorOscProbeRepliesForOutput", () => {
 });
 
 describe("createOscColorReportForwarder", () => {
+	it("forwards a complete BEL-terminated OSC 11 report", () => {
+		const forwarded: string[] = [];
+		const forwarder = createOscColorReportForwarder((report) => forwarded.push(report));
+
+		forwarder.push("\x1b]11;rgb:f5f5/f5f5/f4f4\x07");
+
+		expect(forwarded).toEqual(["\x1b]11;rgb:f5f5/f5f5/f4f4\x07"]);
+		forwarder.dispose();
+	});
+
+	it("forwards concatenated OSC 10 and OSC 11 reports", () => {
+		const forwarded: string[] = [];
+		const forwarder = createOscColorReportForwarder((report) => forwarded.push(report));
+
+		forwarder.push(
+			"\x1b]10;rgb:2424/2929/2f2f\x07\x1b]11;rgb:f5f5/f5f5/f4f4\x1b\\",
+		);
+
+		expect(forwarded).toEqual([
+			"\x1b]10;rgb:2424/2929/2f2f\x07",
+			"\x1b]11;rgb:f5f5/f5f5/f4f4\x1b\\",
+		]);
+		forwarder.dispose();
+	});
+
 	it("buffers split OSC replies before forwarding", () => {
 		const forwarded: string[] = [];
 		const forwarder = createOscColorReportForwarder((report) => forwarded.push(report));
-		forwarder.push("\x1b]11;rgb:f5f5/f5f5/f");
+		forwarder.push("\x1b");
 		expect(forwarded).toEqual([]);
-		forwarder.push("4f4\x07");
+		forwarder.push("]11;rgb:f5f5/f5f5/f4f4\x07");
 		expect(forwarded).toEqual(["\x1b]11;rgb:f5f5/f5f5/f4f4\x07"]);
+		forwarder.dispose();
+	});
+
+	it("forwards indexed OSC 4 color reports", () => {
+		const forwarded: string[] = [];
+		const forwarder = createOscColorReportForwarder((report) => forwarded.push(report));
+
+		forwarder.push("\x1b]4;196;rgb:ffff/0000/8000\x1b\\");
+
+		expect(forwarded).toEqual(["\x1b]4;196;rgb:ffff/0000/8000\x1b\\"]);
+		forwarder.dispose();
+	});
+
+	it("accepts OSC 4 palette boundary indexes", () => {
+		const forwarded: string[] = [];
+		const forwarder = createOscColorReportForwarder((report) => forwarded.push(report));
+
+		forwarder.push("\x1b]4;0;rgb:0000/0000/0000\x07\x1b]4;255;rgb:ffff/ffff/ffff\x1b\\");
+
+		expect(forwarded).toEqual([
+			"\x1b]4;0;rgb:0000/0000/0000\x07",
+			"\x1b]4;255;rgb:ffff/ffff/ffff\x1b\\",
+		]);
+		forwarder.dispose();
+	});
+
+	it("rejects OSC 4 palette indexes above 255", () => {
+		const forwarded: string[] = [];
+		const forwarder = createOscColorReportForwarder((report) => forwarded.push(report));
+
+		forwarder.push("\x1b]4;256;rgb:ffff/ffff/ffff\x07");
+
+		expect(forwarded).toEqual([]);
+		forwarder.dispose();
+	});
+
+	it("recovers after oversized unterminated input", () => {
+		const forwarded: string[] = [];
+		const forwarder = createOscColorReportForwarder((report) => forwarded.push(report));
+
+		forwarder.push(`\x1b]11;${"x".repeat(20_000)}`);
+		forwarder.push("\x1b]11;rgb:f5f5/f5f5/f4f4\x07");
+
+		expect(forwarded).toEqual(["\x1b]11;rgb:f5f5/f5f5/f4f4\x07"]);
+		forwarder.dispose();
+	});
+
+	it("rejects generic xterm data and malformed color reports", () => {
+		const forwarded: string[] = [];
+		const forwarder = createOscColorReportForwarder((report) => forwarded.push(report));
+
+		forwarder.push("\x1b[A");
+		forwarder.push("\x1b]11;rgb:f5f5/f5f5/not-a-color\x07");
+
+		expect(forwarded).toEqual([]);
 		forwarder.dispose();
 	});
 });

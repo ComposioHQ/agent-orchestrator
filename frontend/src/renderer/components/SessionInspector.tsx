@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "@tanstack/react-router";
-import { useEffect, useId, useState, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useId, useState, type ReactNode } from "react";
 import type { TFunction } from "i18next";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -177,11 +177,12 @@ export function SessionInspector({
 		session ? Boolean(state.inspectorSessions[session.id]?.browserUnseen) : false,
 	);
 	const filesChangedCount = useSessionWorkspaceFilesChangedCount(session?.id);
-	const setView = (next: InspectorView) => {
+	const setView = useCallback((next: InspectorView) => {
 		setInternalView(next);
 		onViewChange?.(next);
 		if (next === "files") onOpenFiles?.();
-	};
+	}, [onOpenFiles, onViewChange]);
+	const openReviews = useCallback(() => setView("reviews"), [setView]);
 	// A persisted/controlled Reviews selection can outlive the last reviewable PR.
 	// Keep the shell on a real, visible tab instead of rendering an empty, unlabelled body.
 	const reviewsAvailable = reviewsTabVisible(session);
@@ -239,7 +240,7 @@ export function SessionInspector({
 					session ? <ReviewsView onOpenReviewFile={onOpenReviewFile} onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} /> : undefined
 				}
 				summaryView={
-					session ? <SummaryView canOpenReviews={reviewsAvailable} onOpenReviews={() => setView("reviews")} session={session} /> : undefined
+					session ? <SummaryView canOpenReviews={reviewsAvailable} onOpenReviews={openReviews} session={session} /> : undefined
 				}
 				tabs={tabs}
 			/>
@@ -262,7 +263,7 @@ function normalizeReviewerId(value: string | undefined): string {
 	return value?.trim().replace(/^@+/, "").toLowerCase() ?? "";
 }
 
-function SummaryView({
+const SummaryView = memo(function SummaryView({
 	canOpenReviews,
 	onOpenReviews,
 	session,
@@ -327,9 +328,9 @@ function SummaryView({
 			}
 		/>
 	);
-}
+});
 
-function ReviewsView({
+const ReviewsView = memo(function ReviewsView({
 	session,
 	onOpenReviewFile,
 	onOpenReviewerTerminal,
@@ -343,7 +344,7 @@ function ReviewsView({
 			<ReviewsSection onOpenReviewFile={onOpenReviewFile} onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} />
 		</div>
 	);
-}
+});
 
 function InspectorPolicyRow({
 	id,

@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import {
+	memo,
+	useCallback,
+	useEffect,
+	useRef,
+	useState,
+	type FocusEvent,
+	type FormEvent,
+} from "react";
 import { useTranslation } from "react-i18next";
 import {
 	DndContext,
@@ -297,6 +305,7 @@ export function BrowserPanel({
 }
 
 export function BrowserPanelView({
+	active,
 	poppedOut,
 	onTogglePopOut,
 	browserView,
@@ -350,6 +359,32 @@ export function BrowserPanelView({
 	const [pinned, setPinned] = useState(() => window.localStorage.getItem(RAIL_PINNED_STORAGE_KEY) === "1");
 	const showTabsTrigger = !poppedOut && !pinned && tabs.length >= 2;
 	const [topTabDragActive, setTopTabDragActive] = useState(false);
+
+	useEffect(() => {
+		if (!viewId) return;
+		if (active) window.ao?.browser.notifyPanelUsed(viewId);
+		else window.ao?.browser.notifyPanelBlur(viewId);
+		return () => window.ao?.browser.notifyPanelBlur(viewId);
+	}, [active, viewId]);
+
+	useEffect(
+		() =>
+			window.ao?.browser.onFocusLocation((targetViewId) => {
+				if (targetViewId !== viewId) return;
+				urlInputRef.current?.focus();
+				urlInputRef.current?.select();
+			}),
+		[viewId],
+	);
+	useEffect(
+		() =>
+			window.ao?.browser.onReopenClosedTab((targetViewId) => {
+				if (targetViewId !== viewId) return;
+				void reopenClosedTab();
+			}),
+		[reopenClosedTab, viewId],
+	);
+
 	const tabSensors = useSensors(
 		useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
 		useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
@@ -487,6 +522,12 @@ export function BrowserPanelView({
 		},
 		[selectTab],
 	);
+	const handleCloseTab = useCallback(
+		(tabId: string) => {
+			void closeTab(tabId);
+		},
+		[closeTab],
+	);
 
 	const annotationStatusLabel =
 		status === "picking"
@@ -513,6 +554,17 @@ export function BrowserPanelView({
 			data-browser-dock-target={poppedOut ? undefined : ""}
 			data-browser-native-page={navState.url ? "live" : "empty"}
 			data-testid="browser-panel"
+			onBlurCapture={(event: FocusEvent<HTMLDivElement>) => {
+				if (viewId && !event.currentTarget.contains(event.relatedTarget)) {
+					window.ao?.browser.notifyPanelBlur(viewId);
+				}
+			}}
+			onFocusCapture={() => {
+				if (viewId) window.ao?.browser.notifyPanelUsed(viewId);
+			}}
+			onPointerDownCapture={() => {
+				if (viewId) window.ao?.browser.notifyPanelUsed(viewId);
+			}}
 			ref={panelRef}
 			role="tabpanel"
 		>
@@ -534,8 +586,8 @@ export function BrowserPanelView({
 							{tabs.map((tab) => (
 								<SortableBrowserTopTab
 									key={tab.id}
-									onClose={() => void closeTab(tab.id)}
-									onSelect={() => void handleSelectTab(tab.id)}
+									onClose={handleCloseTab}
+									onSelect={handleSelectTab}
 									onlyTab={tabs.length === 1}
 									selected={tab.id === activeTabId}
 									tab={tab}
@@ -931,7 +983,7 @@ export function BrowserPanelView({
 	);
 }
 
-function SortableBrowserTopTab({
+const SortableBrowserTopTab = memo(function SortableBrowserTopTab({
 	tab,
 	selected,
 	onlyTab,
@@ -941,8 +993,8 @@ function SortableBrowserTopTab({
 	tab: BrowserViewModel["tabs"][number];
 	selected: boolean;
 	onlyTab: boolean;
-	onSelect: () => void;
-	onClose: () => void;
+	onSelect: (tabId: string) => void;
+	onClose: (tabId: string) => void;
 }) {
 	const { t } = useTranslation();
 	const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: tab.id });
@@ -963,7 +1015,7 @@ function SortableBrowserTopTab({
 				{...listeners}
 				aria-selected={selected}
 				className="browser-panel__tab-select"
-				onClick={onSelect}
+				onClick={() => void onSelect(tab.id)}
 				role="tab"
 				tabIndex={selected ? 0 : -1}
 				title={label.title}
@@ -980,7 +1032,7 @@ function SortableBrowserTopTab({
 				aria-label={closeLabel}
 				className="browser-panel__tab-close"
 				disabled={onlyTab}
-				onClick={onClose}
+				onClick={() => onClose(tab.id)}
 				title={onlyTab ? t("browser.onlyTab") : closeLabel}
 				type="button"
 			>
@@ -988,7 +1040,7 @@ function SortableBrowserTopTab({
 			</button>
 		</div>
 	);
-}
+});
 
 function compactBrowserAddress(url: string): string {
 	if (!url) return "";

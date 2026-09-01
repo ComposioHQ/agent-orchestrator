@@ -3,13 +3,18 @@ import { net } from "electron";
 import {
 	type BrowserNavState,
 	type BrowserTabsState,
+	browserShortcutAction,
 	clampBoundsToWindow,
 	createBrowserViewHost,
 	isAllowedBrowserURL,
 	normalizeBrowserURL,
 	scaleBoundsForZoom,
 } from "./browser-view-host";
-import { NEW_SESSION_SHORTCUT_CHANNEL } from "../shared/shortcuts";
+import {
+	FOCUS_TERMINAL_SHORTCUT_CHANNEL,
+	NEW_SESSION_SHORTCUT_CHANNEL,
+	NEW_SHELL_TERMINAL_SHORTCUT_CHANNEL,
+} from "../shared/shortcuts";
 import type { BrowserAnnotationDraft } from "../shared/browser-annotations";
 import { parseAgentBrowserJSON } from "./agent-browser-runtime";
 
@@ -42,6 +47,23 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 	let currentURL = "";
 	let browserZoomFactor = 1;
 	const webContentsListeners = new Map<string, (...args: never[]) => void>();
+	const shellWebContentsListeners = new Map<string, (...args: never[]) => void>();
+	const addListener = (
+		listeners: Map<string, (...args: never[]) => void>,
+		event: string,
+		listener: (...args: never[]) => void,
+	) => {
+		const previous = listeners.get(event);
+		listeners.set(
+			event,
+			previous
+				? (...args) => {
+						previous(...args);
+						listener(...args);
+					}
+				: listener,
+		);
+	};
 	const debuggerListeners = new Map<string, (...args: never[]) => void>();
 	let debuggerAttached = false;
 	const openDevTools = vi.fn();
@@ -92,7 +114,7 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 			currentURL = url;
 		}),
 		on: (event: string, listener: (...args: never[]) => void) => {
-			webContentsListeners.set(event, listener);
+			addListener(webContentsListeners, event, listener);
 		},
 		executeJavaScript: vi.fn(async (_script: string) => undefined),
 		focus: vi.fn(),
@@ -162,6 +184,9 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 				id: 1,
 				focus: shellFocus,
 				send: shellSend,
+				on: (event: string, listener: (...args: never[]) => void) => {
+					addListener(shellWebContentsListeners, event, listener);
+				},
 			},
 		} as never,
 		ipcMain: {
@@ -214,9 +239,26 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 		);
 		return event;
 	};
+	const emitShellBeforeInput = (input: {
+		key: string;
+		control?: boolean;
+		meta?: boolean;
+		shift?: boolean;
+		alt?: boolean;
+		type?: string;
+		isAutoRepeat?: boolean;
+	}) => {
+		const event = { preventDefault: vi.fn() };
+		shellWebContentsListeners.get("before-input-event")?.(
+			event as never,
+			{ control: false, meta: false, shift: false, alt: false, type: "keyDown", ...input } as never,
+		);
+		return event;
+	};
 	return {
 		emit,
 		emitBeforeInput,
+		emitShellBeforeInput,
 		host,
 		invoke,
 		invokeFromTab,
@@ -242,6 +284,132 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 		debuggerSendCommand,
 	};
 }
+
+describe("browser shortcut matching", () => {
+	it("matches contextual browser shortcuts with platform-native primary modifiers", () => {
+		const input = { control: true, meta: false, shift: false, alt: false, type: "keyDown" };
+		expect(browserShortcutAction({ ...input, key: "T" }, false)).toBe("new-tab");
+		expect(browserShortcutAction({ ...input, key: "w" }, false)).toBe("close-tab");
+		expect(browserShortcutAction({ ...input, key: "l" }, false)).toBe("focus-location");
+		expect(browserShortcutAction({ ...input, key: "r" }, false)).toBe("reload");
+		expect(browserShortcutAction({ ...input, key: "t", shift: true }, false)).toBe("reopen-tab");
+		expect(browserShortcutAction({ ...input, key: "t", control: false, meta: true }, true)).toBe("new-tab");
+	});
+
+	it("leaves Space and Shift+Space to Chromium so browser form controls can accept spaces", () => {
+		const input = { key: " ", control: false, meta: false, shift: false, alt: false, type: "keyDown" };
+		expect(browserShortcutAction(input, false)).toBeNull();
+		expect(browserShortcutAction({ ...input, shift: true }, false)).toBeNull();
+	});
+
+	it("rejects extra and wrong-platform modifiers", () => {
+		const input = { key: "t", control: true, meta: false, shift: false, alt: false, type: "keyDown" };
+		expect(browserShortcutAction({ ...input, key: "r", shift: true }, false)).toBeNull();
+		expect(browserShortcutAction({ ...input, meta: true }, false)).toBeNull();
+		expect(browserShortcutAction(input, true)).toBeNull();
+	});
+});
+
+describe("browser shortcut routing", () => {
+	it("opens, focuses, and closes browser tabs without dispatching terminal shortcuts", async () => {
+		const { emitBeforeInput, invoke, shellSend, webContents } = setupHost();
+		const state = await invoke("browser:ensure", "sess-1");
+		shellSend.mockClear();
+
+		const focusEvent = emitBeforeInput({ key: "l", control: true });
+		expect(focusEvent.preventDefault).toHaveBeenCalledOnce();
+		expect(shellSend).toHaveBeenCalledWith("browser:focusLocation", state.viewId);
+
+		const reopenEvent = emitBeforeInput({ key: "t", control: true, shift: true });
+		expect(reopenEvent.preventDefault).toHaveBeenCalled();
+		await vi.waitFor(() => {
+			expect(shellSend).toHaveBeenCalledWith("browser:reopenClosedTab", state.viewId);
+		});
+		expect(shellSend).not.toHaveBeenCalledWith(FOCUS_TERMINAL_SHORTCUT_CHANNEL);
+
+		const openEvent = emitBeforeInput({ key: "t", control: true });
+		expect(openEvent.preventDefault).toHaveBeenCalledOnce();
+		await vi.waitFor(async () => {
+			const tabs = (await invoke("browser:getTabs", state.viewId)) as unknown as BrowserTabsState;
+			expect(tabs.tabs).toHaveLength(2);
+		});
+		expect(shellSend).not.toHaveBeenCalledWith(NEW_SHELL_TERMINAL_SHORTCUT_CHANNEL);
+
+		const closeEvent = emitBeforeInput({ key: "w", control: true });
+		expect(closeEvent.preventDefault).toHaveBeenCalled();
+		await vi.waitFor(async () => {
+			const tabs = (await invoke("browser:getTabs", state.viewId)) as unknown as BrowserTabsState;
+			expect(tabs.tabs).toHaveLength(1);
+		});
+		expect(webContents.close).toHaveBeenCalledOnce();
+		expect(shellSend).toHaveBeenCalledWith(
+			"browser:tabsState",
+			expect.objectContaining({
+				change: expect.objectContaining({
+					kind: "closed",
+					tabId: expect.any(String),
+					tab: expect.objectContaining({ active: false }),
+				}),
+			}),
+		);
+
+		emitBeforeInput({ key: "w", control: true });
+		await Promise.resolve();
+		expect(webContents.close).toHaveBeenCalledOnce();
+	});
+
+	it("routes shell key input to the browser only while its panel is last used", async () => {
+		const { emitShellBeforeInput, host, invoke, send, shellSend } = setupHost();
+		const state = await invoke("browser:ensure", "sess-1");
+		shellSend.mockClear();
+
+		send("browser:panelUsed", 1, state.viewId);
+		const event = emitShellBeforeInput({ key: "l", control: true });
+		expect(event.preventDefault).toHaveBeenCalledOnce();
+		expect(shellSend).toHaveBeenCalledWith("browser:focusLocation", state.viewId);
+		expect(host.isLastUsedBrowser()).toBe(true);
+
+		host.forgetLastFocusedPanel();
+		const ignored = emitShellBeforeInput({ key: "l", control: true });
+		expect(ignored.preventDefault).not.toHaveBeenCalled();
+	});
+
+	it("reloads the active native page without intercepting Chromium's Space behavior", async () => {
+		const { emitBeforeInput, invoke, webContents } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+
+		emitBeforeInput({ key: "r", control: true });
+		expect(webContents.reload).toHaveBeenCalledOnce();
+
+		const spaceEvent = emitBeforeInput({ key: " " });
+		const shiftSpaceEvent = emitBeforeInput({ key: " ", shift: true });
+		expect(spaceEvent.preventDefault).not.toHaveBeenCalled();
+		expect(shiftSpaceEvent.preventDefault).not.toHaveBeenCalled();
+	});
+
+	it("orders a reopen request after an in-flight keyboard tab close", async () => {
+		const { emitBeforeInput, invoke, shellSend } = setupHost();
+		const state = await invoke("browser:ensure", "sess-1");
+
+		emitBeforeInput({ key: "t", control: true });
+		await vi.waitFor(async () => {
+			const tabs = (await invoke("browser:getTabs", state.viewId)) as unknown as BrowserTabsState;
+			expect(tabs.tabs).toHaveLength(2);
+		});
+		shellSend.mockClear();
+
+		emitBeforeInput({ key: "w", control: true });
+		emitBeforeInput({ key: "t", control: true, shift: true });
+
+		await vi.waitFor(() => {
+			const channels = shellSend.mock.calls.map(([channel]) => channel);
+			expect(channels.indexOf("browser:tabsState")).toBeGreaterThanOrEqual(0);
+			expect(channels.indexOf("browser:reopenClosedTab")).toBeGreaterThan(
+				channels.indexOf("browser:tabsState"),
+			);
+		});
+	});
+});
 
 describe("browser scrollbar styling", () => {
 	it("injects AO-styled horizontal and vertical scrollbars whenever a browser page becomes ready", async () => {
