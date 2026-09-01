@@ -13,6 +13,22 @@ export type GitRepoScanResult = {
 	branch: string;
 	remote: string;
 	hasRemote: boolean;
+	/**
+	 * Whether HEAD resolves to a commit (false for unborn repositories).
+	 * Always populated; used by the import preflight to distinguish a
+	 * committed remote-less repository from an unborn one (issue #4679).
+	 */
+	hasCommit: boolean;
+	/**
+	 * The current `git symbolic-ref --short HEAD` of the repository, when HEAD
+	 * is not detached. Empty when HEAD is unborn or detached. Never derived
+	 * from a remote (the upstream `branch` field does that).
+	 *
+	 * Issue #4679: the import flow uses this as a *candidate* default branch
+	 * for the user to confirm, since spawn-time inference from a temporary
+	 * checkout is unsafe.
+	 */
+	checkedOutBranch: string;
 	status: "ok" | "error";
 	reason?: string;
 	needsGitInit?: boolean;
@@ -108,6 +124,16 @@ async function isGitRepo(repoPath: string, options: ScanOptions = {}): Promise<b
 	}
 }
 
+async function resolveCheckedOutBranch(repoPath: string, options: ScanOptions = {}): Promise<string> {
+	try {
+		const ref = await gitOutput(repoPath, ["symbolic-ref", "--short", "HEAD"], options);
+		return ref;
+	} catch {
+		// HEAD is unborn or detached — no checked-out branch to surface.
+		return "";
+	}
+}
+
 async function resolveDefaultBranch(repoPath: string, options: ScanOptions = {}): Promise<string> {
 	try {
 		const ref = await gitOutput(repoPath, ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], options);
@@ -135,6 +161,8 @@ async function scanGitRepo(
 				branch: "",
 				remote: "",
 				hasRemote: false,
+				hasCommit: false,
+				checkedOutBranch: "",
 				status: "ok",
 				needsGitInit: true,
 			};
@@ -149,6 +177,8 @@ async function scanGitRepo(
 					branch: "HEAD",
 					remote: "",
 					hasRemote: false,
+					hasCommit: false,
+					checkedOutBranch: "",
 					status: "error",
 					reason: "Bare repositories cannot be imported.",
 				};
@@ -163,15 +193,18 @@ async function scanGitRepo(
 			branch: "",
 			remote: "",
 			hasRemote: false,
+			hasCommit: false,
+			checkedOutBranch: "",
 			status: "ok",
 			needsGitInit: true,
 		};
 	}
 	if (!(await isGitRepo(repoPath, options))) return null;
-	const [branchResult, remoteResult, headResult] = await Promise.allSettled([
+	const [branchResult, remoteResult, headResult, checkedOutResult] = await Promise.allSettled([
 		resolveDefaultBranch(repoPath, options),
 		gitOutput(repoPath, ["remote", "get-url", "origin"], options),
 		gitOutput(repoPath, ["rev-parse", "--verify", "HEAD"], options),
+		resolveCheckedOutBranch(repoPath, options),
 	]);
 	const hasHead = headResult.status === "fulfilled";
 	const hasRemote = remoteResult.status === "fulfilled" && remoteResult.value.length > 0;
@@ -183,6 +216,8 @@ async function scanGitRepo(
 		branch: branchResult.status === "fulfilled" && branchResult.value ? branchResult.value : "HEAD",
 		remote: remoteResult.status === "fulfilled" ? remoteResult.value : "",
 		hasRemote,
+		hasCommit: hasHead,
+		checkedOutBranch: checkedOutResult.status === "fulfilled" ? checkedOutResult.value : "",
 		status: validationReason ? "error" : "ok",
 		reason: validationReason,
 		needsGitInit: !validationReason && (!hasHead || !hasRemote),
@@ -227,6 +262,8 @@ export async function scanImportFolder(
 						branch: "HEAD",
 						remote: "",
 						hasRemote: false,
+						hasCommit: false,
+						checkedOutBranch: "",
 						status: "error",
 						reason: safetyReason,
 					},

@@ -38,6 +38,19 @@ export type CreateProjectInput = { path: string; asWorkspace?: boolean } & Creat
 export type CloneProjectInput = Pick<CloneRepositorySelection, "remoteUrl" | "destinationParent"> &
 	CreateProjectAgentSelection;
 
+/**
+ * A committed Git repository with no remote has no origin/HEAD to resolve a
+ * default branch from at spawn time (issue #4679). The import preflight offers
+ * the repo's current symbolic HEAD as a candidate for explicit confirmation;
+ * it never hardcodes a branch name.
+ */
+export function remotelessDefaultBranchCandidate(repo: ImportFolderScan["repos"][number] | undefined): string | null {
+	if (!repo || repo.hasRemote || !repo.hasCommit) return null;
+	const candidate = repo.checkedOutBranch?.trim() || repo.branch;
+	if (!candidate || candidate === "HEAD" || candidate === "auto") return null;
+	return candidate;
+}
+
 const CloneRepositoryDialog = lazy(() => import("./CloneRepositoryDialog"));
 const LAST_CLONE_DESTINATION_KEY = "ao.clone.lastDestinationParent";
 
@@ -98,6 +111,12 @@ export function CreateProjectFlow({
 	const [isInitializing, setIsInitializing] = useState(false);
 	const [repositorySetup, setRepositorySetup] = useState<"NOT_A_GIT_REPO" | "PROJECT_UNBORN" | null>(null);
 	const [repositorySetupWarning, setRepositorySetupWarning] = useState<string | null>(null);
+	// Default-branch candidate for a committed remote-less repo, surfaced by
+	// projectRepositoryPreflight. Issue #4679: spawn-time inference from a
+	// local checkout is unsafe, so the import flow must capture an explicit
+	// branch instead. Empty/null = no candidate (e.g. remote present, or
+	// unborn repo). Cleared whenever the user re-picks a folder.
+	const [defaultBranchCandidate, setDefaultBranchCandidate] = useState<string | null>(null);
 	// A path that arrived via droppedPath, staged until the user confirms
 	// Workspace vs Project. Consumed exactly once by openFolderStep.
 	const [pendingDropPath, setPendingDropPath] = useState<string | null>(null);
@@ -136,6 +155,7 @@ export function CreateProjectFlow({
 		setValidationScan(null);
 		setRepositorySetup(null);
 		setRepositorySetupWarning(null);
+		setDefaultBranchCandidate(null);
 		setSelectedKind(kind);
 		setIsChoosingPath(true);
 		try {
@@ -155,6 +175,7 @@ export function CreateProjectFlow({
 				}
 				setRepositorySetup(preflight.setupCode);
 				setRepositorySetupWarning(preflight.setupWarning);
+				setDefaultBranchCandidate(remotelessDefaultBranchCandidate(preflight.scan?.repos[0]));
 			}
 			if (path && kind === "workspace") {
 				try {
@@ -402,6 +423,7 @@ export function CreateProjectFlow({
 				isCreating={isCreating}
 				isInitializing={isInitializing}
 				kind={selectedKind}
+				defaultBranchCandidate={selectedKind === "single_repo" ? defaultBranchCandidate : null}
 				onOpenChange={(open) => {
 					if (!open) {
 						setSelectedPath(null);

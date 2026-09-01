@@ -27,4 +27,27 @@ describe("createProjectConfig", () => {
 			trackerIntake: { enabled: true, provider: "github", assignee: "octocat" },
 		});
 	});
+
+	it("persists an explicitly confirmed default branch for remote-less repositories", () => {
+		expect(
+			createProjectConfig({
+				workerAgent: "codex",
+				orchestratorAgent: "claude-code",
+				defaultBranch: "trunk",
+			}),
+		).toEqual({
+			worker: { agent: "codex" },
+			orchestrator: { agent: "claude-code" },
+			defaultBranch: "trunk",
+		});
+	});
+
+	it("omits defaultBranch when the import flow does not confirm one", () => {
+		expect(
+			createProjectConfig({
+				workerAgent: "codex",
+				orchestratorAgent: "claude-code",
+			}),
+		).not.toHaveProperty("defaultBranch");
+	});
 });

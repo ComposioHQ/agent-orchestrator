@@ -75,6 +75,18 @@ export type ImportRepoScan = {
 	branch: string;
 	remote: string;
 	hasRemote: boolean;
+	/**
+	 * Whether HEAD resolves to a commit (false for unborn repositories).
+	 * Always populated; used by the import preflight to distinguish a
+	 * committed remote-less repository from an unborn one (issue #4679).
+	 */
+	hasCommit?: boolean;
+	/**
+	 * The current `git symbolic-ref --short HEAD`, when HEAD is not detached.
+	 * Empty when HEAD is unborn or detached. Issue #4679: surfaced as the
+	 * candidate default branch the user is asked to confirm.
+	 */
+	checkedOutBranch?: string;
 	status?: "ok" | "error";
 	reason?: string;
 	needsGitInit?: boolean;

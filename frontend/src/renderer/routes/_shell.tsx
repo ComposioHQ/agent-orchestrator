@@ -75,6 +75,8 @@ type CreateProjectConfigInput = {
 	workerAgent: string;
 	orchestratorAgent: string;
 	trackerIntake?: components["schemas"]["TrackerIntakeConfig"];
+	/** Explicit default branch confirmed at import time (remote-less repos). */
+	defaultBranch?: string;
 };
 
 export function createProjectConfig(input: CreateProjectConfigInput): components["schemas"]["ProjectConfig"] {
@@ -82,6 +84,9 @@ export function createProjectConfig(input: CreateProjectConfigInput): components
 		worker: { agent: input.workerAgent as components["schemas"]["RoleOverride"]["agent"] },
 		orchestrator: { agent: input.orchestratorAgent as components["schemas"]["RoleOverride"]["agent"] },
 		...(input.trackerIntake ? { trackerIntake: input.trackerIntake } : {}),
+		// An explicitly confirmed branch is persisted in ProjectConfig.DefaultBranch
+		// so spawn never has to infer the base branch for remote-less repositories.
+		...(input.defaultBranch ? { defaultBranch: input.defaultBranch } : {}),
 	};
 }
 
@@ -454,6 +459,7 @@ function ShellLayout() {
 			workerAgent: string;
 			orchestratorAgent: string;
 			trackerIntake?: components["schemas"]["TrackerIntakeConfig"];
+			defaultBranch?: string;
 			asWorkspace?: boolean;
 		}) => {
 			void addRendererExceptionStep("Project add requested", {

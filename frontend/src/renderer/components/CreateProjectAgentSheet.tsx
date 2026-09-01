@@ -38,6 +38,8 @@ export type CreateProjectAgentSelection = {
 	workerAgent: string;
 	orchestratorAgent: string;
 	trackerIntake?: TrackerIntakeConfig;
+	/** Explicitly confirmed default branch (remote-less repositories, #4679). */
+	defaultBranch?: string;
 };
 
 const EMPTY_INTAKE: IntakeForm = { enabled: false, repo: "", assignee: "" };
@@ -54,6 +56,8 @@ type CreateProjectAgentSheetProps = {
 	path: string | null;
 	repositorySetupNeeded?: boolean;
 	repositorySetupWarning?: string | null;
+	/** Prefilled HEAD branch offered for explicit confirmation (remote-less repos). */
+	defaultBranchCandidate?: string | null;
 };
 
 type SheetError = {
@@ -113,6 +117,7 @@ export function CreateProjectAgentSheet({
 	path,
 	repositorySetupNeeded = false,
 	repositorySetupWarning = null,
+	defaultBranchCandidate = null,
 }: CreateProjectAgentSheetProps) {
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
@@ -135,6 +140,7 @@ export function CreateProjectAgentSheet({
 	const [orchestratorAgent, setOrchestratorAgent] = useState("");
 	const [workerAgentTouched, setWorkerAgentTouched] = useState(false);
 	const [orchestratorAgentTouched, setOrchestratorAgentTouched] = useState(false);
+	const [defaultBranch, setDefaultBranch] = useState("");
 	const isBusy = isCreating || isInitializing;
 	const [intake, setIntake] = useState<IntakeForm>(EMPTY_INTAKE);
 	const intakeIncomplete = intakeNeedsRule(intake);
@@ -165,12 +171,18 @@ export function CreateProjectAgentSheet({
 	}, [agentOptions, open, orchestratorAgentTouched, workerAgentTouched]);
 
 	useEffect(() => {
+		if (!open) return;
+		if (defaultBranchCandidate) setDefaultBranch(defaultBranchCandidate);
+	}, [defaultBranchCandidate, open]);
+
+	useEffect(() => {
 		if (!open) {
 			setWorkerAgent("");
 			setOrchestratorAgent("");
 			setWorkerAgentTouched(false);
 			setOrchestratorAgentTouched(false);
 			setIntake(EMPTY_INTAKE);
+			setDefaultBranch("");
 		}
 	}, [open, path]);
 
@@ -288,7 +300,7 @@ export function CreateProjectAgentSheet({
 						isBusy={isBusy}
 						onCancel={() => onOpenChange(false)}
 						onSubmit={() =>
-							void onSubmit({ workerAgent, orchestratorAgent, trackerIntake: buildIntake(intake) })
+							void onSubmit({ workerAgent, orchestratorAgent, trackerIntake: buildIntake(intake), ...(defaultBranchCandidate ? { defaultBranch: defaultBranch.trim() || undefined } : {}) })
 						}
 						setupNotice={
 							repositorySetupNeeded

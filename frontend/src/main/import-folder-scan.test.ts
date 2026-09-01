@@ -90,6 +90,44 @@ describe("scanImportFolder", () => {
 		]);
 	});
 
+	it("reports a committed remote-less repository with hasCommit and its checked-out branch", async () => {
+		const root = await tempDir();
+		const repo = path.join(root, "local-only");
+		await git(["init", "-b", "trunk", repo]);
+		await writeFile(path.join(repo, "README.md"), "hello\n");
+		await git(["add", "README.md"], repo);
+		await git(["commit", "-m", "initial"], repo);
+
+		const scan = await scanImportFolder(repo, "project");
+
+		expect(scan.repos).toEqual([
+			expect.objectContaining({
+				name: "local-only",
+				hasRemote: false,
+				hasCommit: true,
+				checkedOutBranch: "trunk",
+				status: "ok",
+			}),
+		]);
+	});
+
+	it("reports an unborn repository with hasCommit false", async () => {
+		const root = await tempDir();
+		const repo = path.join(root, "fresh");
+		await git(["init", "-b", "main", repo]);
+
+		const scan = await scanImportFolder(repo, "project");
+
+		expect(scan.repos).toEqual([
+			expect.objectContaining({
+				name: "fresh",
+				hasRemote: false,
+				hasCommit: false,
+				status: "ok",
+			}),
+		]);
+	});
+
 	it("leaves a plain non-nested project folder setup-ready", async () => {
 		const root = await tempDir();
 		const selected = path.join(root, "plain");
