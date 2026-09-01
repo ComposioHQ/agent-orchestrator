@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/persistenthost"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/processenv"
 	"github.com/aoagents/agent-orchestrator/backend/internal/agentlaunch"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -52,14 +53,22 @@ type codexPlugin interface {
 type process struct {
 	stdin  io.WriteCloser
 	stdout io.Reader
+	// reconnected means the provider process and initialized protocol connection
+	// survived a prior daemon. The replacement must not initialize/resume it a
+	// second time.
+	reconnected   bool
+	nextRequestID int64
 	// stop releases the process. It must be safe to call more than once.
 	stop func() error
+	// terminate destroys a persistent host for explicit session shutdown.
+	terminate func() error
 }
 
 // spawnFunc launches an app-server. Injected so tests never exec anything.
 type spawnFunc func(ctx context.Context, bin, workdir string, env []string) (*process, error)
 
 type versionProbeFunc func(context.Context, string) (string, error)
+type persistentConnectFunc func(context.Context, persistenthost.Config) (*persistenthost.Transport, error)
 
 // Driver opens Codex conversations over `codex app-server`.
 type Driver struct {
@@ -67,6 +76,8 @@ type Driver struct {
 	log          *slog.Logger
 	spawn        spawnFunc
 	versionProbe versionProbeFunc
+	persistent   bool
+	connectHost  persistentConnectFunc
 }
 
 // New builds a Chat driver over the existing Codex agent plugin.
@@ -76,7 +87,7 @@ func New(plugin codexPlugin, log *slog.Logger) *Driver {
 	}
 	return &Driver{
 		plugin: plugin, log: log, spawn: spawnAppServer,
-		versionProbe: installedCodexVersion,
+		versionProbe: installedCodexVersion, persistent: true, connectHost: persistenthost.ConnectOrStart,
 	}
 }
 
@@ -244,9 +255,15 @@ func (d *Driver) Start(ctx context.Context, cfg ports.ChatStartConfig) (ports.Ch
 		return nil, fmt.Errorf("workspace path must be absolute, got %q", cfg.WorkspacePath)
 	}
 
-	conv, err := d.connect(ctx, cfg.WorkspacePath, cfg.Env)
+	conv, reconnected, err := d.connectSession(ctx, cfg.SessionID, cfg.DataDir, cfg.WorkspacePath, cfg.Env, cfg.AllowConcurrentHostReplacement)
 	if err != nil {
 		return nil, err
+	}
+	if reconnected {
+		// A fresh-start request colliding with a surviving host is a durable-state
+		// mismatch, not permission to destroy a provider that may still be working.
+		_ = conv.Close()
+		return nil, errors.New("persistent chat host already owns a provider conversation for a fresh session")
 	}
 
 	policy, sandbox := approvalSettings(cfg.Permissions)
@@ -272,11 +289,11 @@ func (d *Driver) Start(ctx context.Context, cfg ports.ChatStartConfig) (ports.Ch
 	openCtx, cancel := context.WithTimeout(ctx, handshakeTimeout)
 	defer cancel()
 	if err := conv.conn.request(openCtx, "thread/start", params, &resp); err != nil {
-		_ = conv.Close()
+		_ = conv.Terminate()
 		return nil, fmt.Errorf("thread/start: %w", err)
 	}
 	if resp.Thread.ID == "" {
-		_ = conv.Close()
+		_ = conv.Terminate()
 		return nil, errors.New("thread/start returned no thread id")
 	}
 
@@ -294,9 +311,16 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 		return nil, fmt.Errorf("workspace path must be absolute, got %q", cfg.WorkspacePath)
 	}
 
-	conv, err := d.connect(ctx, cfg.WorkspacePath, cfg.Env)
+	conv, reconnected, err := d.connectSession(ctx, cfg.SessionID, cfg.DataDir, cfg.WorkspacePath, cfg.Env, cfg.AllowConcurrentHostReplacement)
 	if err != nil {
 		return nil, err
+	}
+	if reconnected {
+		// The host preserved the already-initialized app-server connection and its
+		// loaded thread. Host replay bridges output and unresolved server requests
+		// across the daemon detach without waiting for the active turn to settle.
+		conv.start(cfg.ProviderConversationID, cfg.Model, "")
+		return conv, nil
 	}
 
 	policy, sandbox := approvalSettings(cfg.Permissions)
@@ -323,7 +347,7 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 	}
 	err = conv.conn.request(resumeCtx, "thread/resume", params, &resp)
 	if err != nil {
-		_ = conv.Close()
+		_ = conv.Terminate()
 		// Deliberately not falling back to thread/start: silently opening a new
 		// conversation would present unrelated history as continuous.
 		return nil, fmt.Errorf("%w: %w", ports.ErrChatResumeFailed, err)
@@ -346,30 +370,92 @@ func (d *Driver) connect(ctx context.Context, workdir string, env map[string]str
 	}
 
 	conv := newConversation(proc, d.log)
+	if err := d.initialize(ctx, conv); err != nil {
+		_ = conv.Close()
+		return nil, err
+	}
+	return conv, nil
+}
 
+func (d *Driver) connectSession(
+	ctx context.Context,
+	sessionID domain.SessionID,
+	dataDir, workdir string,
+	env map[string]string,
+	allowConcurrentHostReplacement bool,
+) (*conversation, bool, error) {
+	// Injected driver tests intentionally retain the direct pipe launcher. The
+	// shipped driver uses spawnAppServer and therefore the persistent host.
+	if !d.persistent {
+		conv, err := d.connect(ctx, workdir, env)
+		return conv, false, err
+	}
+	bin, err := d.plugin.ResolveBinary(ctx)
+	if err != nil {
+		return nil, false, fmt.Errorf("%w: %w", ports.ErrChatDriverUnavailable, err)
+	}
+	transport, err := d.connectHost(ctx, persistenthost.Config{
+		SessionID: string(sessionID),
+		DataDir:   dataDir,
+		Workdir:   workdir,
+		Env:       envSlice(env),
+		Argv:      []string{bin, "app-server"},
+	})
+	if err != nil {
+		// Branch activation intentionally stages a replacement controller before
+		// terminating the source. The persistent host correctly refuses that second
+		// owner; retain the established safe handoff by staging this replacement in
+		// a direct app-server. On the next daemon reconciliation it is resumed into a
+		// persistent host. Other host failures fail closed and never spawn a rival.
+		if allowConcurrentHostReplacement && errors.Is(err, persistenthost.ErrAttached) {
+			conv, directErr := d.connect(ctx, workdir, env)
+			return conv, false, directErr
+		}
+		if errors.Is(err, persistenthost.ErrOwnershipInconclusive) ||
+			errors.Is(err, persistenthost.ErrAttached) ||
+			errors.Is(err, persistenthost.ErrIncompatible) ||
+			errors.Is(err, persistenthost.ErrUnauthorized) {
+			return nil, false, fmt.Errorf("%w: persistent host: %w", ports.ErrChatRecoveryInconclusive, err)
+		}
+		return nil, false, fmt.Errorf("%w: persistent host: %w", ports.ErrChatDriverUnavailable, err)
+	}
+	proc := &process{
+		stdin:         transport.Stdin,
+		stdout:        transport.Stdout,
+		reconnected:   transport.Reconnected,
+		nextRequestID: transport.NextRequestID,
+		stop:          transport.Stdin.Close,
+		terminate: func() error {
+			_ = transport.Stdin.Close()
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			return persistenthost.Shutdown(shutdownCtx, dataDir, string(sessionID))
+		},
+	}
+	conv := newConversation(proc, d.log)
+	if transport.Reconnected {
+		return conv, true, nil
+	}
+	if err := d.initialize(ctx, conv); err != nil {
+		_ = conv.Terminate()
+		return nil, false, err
+	}
+	return conv, false, nil
+}
+
+func (d *Driver) initialize(ctx context.Context, conv *conversation) error {
 	initCtx, cancel := context.WithTimeout(ctx, handshakeTimeout)
 	defer cancel()
 	if err := conv.conn.request(initCtx, "initialize", map[string]any{
-		"clientInfo": map[string]any{
-			"name":    clientName,
-			"title":   clientTitle,
-			"version": clientVersion,
-		},
-		"capabilities": map[string]any{
-			"experimentalApi":           true,
-			"optOutNotificationMethods": nil,
-		},
+		"clientInfo":   map[string]any{"name": clientName, "title": clientTitle, "version": clientVersion},
+		"capabilities": map[string]any{"experimentalApi": true, "optOutNotificationMethods": nil},
 	}, nil); err != nil {
-		_ = conv.Close()
-		// A handshake the provider rejects means a protocol AO cannot speak.
-		return nil, fmt.Errorf("%w: initialize: %w", ports.ErrChatDriverIncompatible, err)
+		return fmt.Errorf("%w: initialize: %w", ports.ErrChatDriverIncompatible, err)
 	}
-
 	if err := conv.conn.notify("initialized", nil); err != nil {
-		_ = conv.Close()
-		return nil, fmt.Errorf("notify initialized: %w", err)
+		return fmt.Errorf("notify initialized: %w", err)
 	}
-	return conv, nil
+	return nil
 }
 
 // approvalSettings maps AO's existing per-session permission mode onto Codex's

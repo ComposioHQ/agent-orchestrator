@@ -5,6 +5,7 @@ import { ActivityIndicator, Platform, Pressable, RefreshControl, SectionList, St
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { attentionOf, type DashboardSession } from "../../lib/api";
 import { classifyConnectionFailure, describeConnectionFailure } from "../../lib/connectionError";
+import { tunnelMayHaveRotated } from "../../lib/staleTunnel";
 import { haptics } from "../../lib/haptics";
 import { groupSessions, type BoardSection, type BoardZone } from "../../lib/agentsView";
 import { ProjectSwitcher } from "../../lib/ProjectSwitcher";
@@ -25,7 +26,7 @@ export default function FleetScreen() {
 	const styles = useThemedStyles(makeStyles);
 	const router = useRouter();
 	const insets = useSafeAreaInsets();
-	const { configured, loading, error, errorStatus, connection, config, refresh, activeProjectId, notificationsUnread } =
+	const { configured, loading, error, errorStatus, connection, config, refresh, activeProjectId, notificationsUnread, activeEndpoints } =
 		useApp();
 	const sessions = useVisibleSessions();
 	const [refreshing, setRefreshing] = useState(false);
@@ -51,12 +52,22 @@ export default function FleetScreen() {
 	// into the same human copy the pairing screens use, keyed on the cause.
 	const failure = useMemo(
 		() =>
-			describeConnectionFailure(classifyConnectionFailure(errorStatus ?? undefined), {
-				host: config?.host ?? "",
-				port: config?.httpPort ?? "",
-				platform: Platform.OS,
-			}),
-		[errorStatus, config?.host, config?.httpPort],
+			describeConnectionFailure(
+				// A stored tunnel that no longer answers means the hostname
+				// rotated, which no amount of retrying fixes — rescanning does.
+				// Distinguished here rather than in the classifier because it
+				// depends on what the machine advertised, not on a status code.
+				classifyConnectionFailure(errorStatus ?? undefined) === "unreachable" &&
+					tunnelMayHaveRotated(activeEndpoints, connection === "open")
+					? "tunnel-rotated"
+					: classifyConnectionFailure(errorStatus ?? undefined),
+				{
+					host: config?.host ?? "",
+					port: config?.httpPort ?? "",
+					platform: Platform.OS,
+				},
+			),
+		[errorStatus, config?.host, config?.httpPort, activeEndpoints, connection],
 	);
 
 	const counts = useMemo(() => {
