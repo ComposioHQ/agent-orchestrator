@@ -1,13 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { ArrowUpRight, Check, Copy, Loader2, RotateCcw } from "lucide-react";
 import { apiClient, apiErrorMessage } from "../../lib/api-client";
 import { aoBridge } from "../../lib/bridge";
 import { captureRendererEvent } from "../../lib/telemetry";
-import { ANDROID_PLAY_STORE_URL, TESTFLIGHT_URL } from "./ConnectMobileGetApp";
+import { ANDROID_PLAY_STORE_URL, IOS_APP_STORE_URL } from "./ConnectMobileGetApp";
 import { reasonMessage, type SetupMode } from "./ConnectMobileSetup";
-import { SettingsOptionMenu, type SettingsOption } from "./SettingsOptionMenu";
+// SettingsOptionMenu/SettingsOption return with the commented-out picker below.
+// import { SettingsOptionMenu, type SettingsOption } from "./SettingsOptionMenu";
 import { StyledQRCode } from "./StyledQRCode";
 import { PairingQr } from "./PairingQr";
 import { InstallCloudflared } from "./InstallCloudflared";
@@ -16,7 +17,27 @@ import { Switch } from "../ui/switch";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 
 const QR_CODE_SIZE = 204;
-const TESTFLIGHT_QR_SIZE = 140;
+const STORE_QR_SIZE = 140;
+
+const STORE_LINKS = [
+	{
+		key: "ios",
+		Icon: AppleIcon,
+		url: IOS_APP_STORE_URL,
+		labelKey: "mobile.ios",
+		ariaKey: "mobile.iosStoreAria",
+		testId: "ios-store-qr",
+	},
+	{
+		key: "android",
+		Icon: AndroidIcon,
+		url: ANDROID_PLAY_STORE_URL,
+		labelKey: "mobile.android",
+		ariaKey: "mobile.androidSignupAria",
+		testId: "android-play-qr",
+	},
+] as const;
+
 
 import {
 	buildPairingOffer,
@@ -128,8 +149,6 @@ const PAIRING_LINK_BASE = "aomobile://pair";
  *  real pairing payload so a sneaky scan through the blur gets nothing. */
 const PLACEHOLDER_QR_VALUE = "agent-orchestrator";
 
-type MobilePlatform = "ios" | "android";
-
 function AppleIcon({ className }: { className?: string }) {
 	return (
 		<svg aria-hidden="true" className={className} fill="currentColor" viewBox="0 0 384 512">
@@ -146,8 +165,8 @@ function AndroidIcon({ className }: { className?: string }) {
 	);
 }
 
-/** Trailing "Join now ↗" link at the end of a walkthrough step. Border-bottom
- *  instead of text-decoration so the underline runs under the arrow too. */
+/** Trailing store link at the end of a walkthrough step. Border-bottom instead
+ *  of text-decoration so the underline runs under the arrow too. */
 const STEP_LINK_CLASS =
 	"inline-flex items-center gap-0.5 border-b border-[color-mix(in_oklch,var(--color-settings-label)_45%,transparent)] align-baseline text-settings-label transition-colors hover:border-current hover:text-settings-title";
 
@@ -198,22 +217,16 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 	const queryClient = useQueryClient();
 	const [copied, setCopied] = useState(false);
 	const copiedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-	const [platform, setPlatform] = useState<MobilePlatform>("ios");
+	// mode stays pinned to "lan" while the connection picker below is commented
+	// out — setMode is still called by the close-reset effect. Restore both
+	// together.
 	const [mode, setMode] = useState<SetupMode>("lan");
-	const platformOptions = [
-		{ value: "ios", label: t("mobile.ios"), icon: <AppleIcon className="size-4 shrink-0 !text-settings-title" /> },
-		{ value: "android", label: t("mobile.android"), icon: <AndroidIcon className="size-4 shrink-0 !text-settings-title" /> },
-	] satisfies SettingsOption<MobilePlatform>[];
+	/*
 	const modeOptions = [
 		{ value: "lan", label: t("mobile.lan") },
 		{ value: "tailscale", label: t("mobile.tailscale") },
 	] satisfies SettingsOption<SetupMode>[];
-	const renderPlatformOption = (option: SettingsOption<MobilePlatform>) => (
-		<span className="flex min-w-0 items-center gap-1.5">
-			<span className="flex w-5 shrink-0 justify-center">{option.icon}</span>
-			<span className="min-w-0">{option.label}</span>
-		</span>
-	);
+	*/
 
 	useEffect(() => {
 		return () => {
@@ -388,20 +401,16 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 			<p className="text-xs leading-4 text-settings-muted">{t("mobile.description")}</p>
 
 			<div className="flex flex-col gap-6 sm:flex-row sm:items-start">
-				{/* Left: platform + connection pickers above one combined walkthrough. */}
+				{/* Left: the walkthrough. */}
 				<div className="flex min-w-0 flex-1 flex-col">
+					{/* Connection picker hidden for now (2026-09-01). `mode` stays wired
+					    up and pinned to its "lan" default, so the QR — which races every
+					    advertised endpoint, tunnel included — is unaffected. What this
+					    does take off-screen is Tailscale's setup step and the
+					    secure-pairing toggle, which iPhone-over-Tailscale requires.
+					    Restore this block to bring both back. */}
+					{/*
 					<div className="flex flex-nowrap items-center gap-2">
-						<SettingsOptionMenu
-							aria-label={t("mobile.getApp")}
-							value={platform}
-							options={platformOptions}
-							onChange={setPlatform}
-							triggerClassName="w-44 justify-between"
-							renderMenuItem={renderPlatformOption}
-							renderTrigger={(selected) => selected && renderPlatformOption(selected)}
-							menuClassName="!w-44 !min-w-0"
-							menuAlign="start"
-						/>
 						<SettingsOptionMenu
 							aria-label={t("mobile.connectionMethod")}
 							value={mode}
@@ -412,67 +421,44 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 							menuAlign="start"
 						/>
 					</div>
+					*/}
 
-					{/* One walkthrough per platform × connection combo. Steps are plain
-					    text with a trailing "Join now ↗" link; address/password join
-					    the list once the QR is generated. */}
+					{/* One walkthrough per connection method. Steps are plain text with
+					    trailing store links; address/password join the list once the QR
+					    is generated. */}
 					<ol className="settings-mobile-steps mt-4 !text-[13px] !leading-6 !text-[color-mix(in_oklch,var(--color-settings-label)_75%,var(--color-text-settings-muted))]">
-						{platform === "ios" ? (
-							<>
-								<li>{t("mobile.ios.step1")}</li>
-								<li>
-									{t("mobile.ios.step2")}{" "}
+						{/* Both stores are a public one-tap listing now, so the step names
+						    both rather than making people pick a platform first — the
+						    choice only ever selected which of these two links to show. */}
+						<li>
+							{t("mobile.getApp.step1")}{" "}
+							{STORE_LINKS.map(({ key, Icon, url, labelKey, ariaKey, testId }, index) => (
+								<Fragment key={key}>
+									{index > 0 ? <span className="mx-1 text-settings-muted">{t("mobile.getApp.or")}</span> : null}
 									<Tooltip>
 										<TooltipTrigger asChild>
 											<button
 												type="button"
 												className={STEP_LINK_CLASS}
-												aria-label={t("mobile.joinTestFlightAria")}
-												onClick={() => void aoBridge.app.openExternal(TESTFLIGHT_URL)}
+												aria-label={t(ariaKey)}
+												onClick={() => void aoBridge.app.openExternal(url)}
 											>
-												{t("mobile.scanTestFlight")}
+												<Icon className="size-3.5 shrink-0" />
+												{t(labelKey)}
 												<ArrowUpRight className="size-3.5" aria-hidden="true" />
 											</button>
 										</TooltipTrigger>
-										<TooltipContent side="bottom" className="p-2" data-testid="testflight-qr">
+										<TooltipContent side="bottom" className="p-2" data-testid={testId}>
 											<div className="rounded-md bg-(--color-bg-settings-input) p-2">
-												<StyledQRCode value={TESTFLIGHT_URL} size={TESTFLIGHT_QR_SIZE} showLogo={false} className="block" />
+												<StyledQRCode value={url} size={STORE_QR_SIZE} showLogo={false} className="block" />
 											</div>
 										</TooltipContent>
 									</Tooltip>
-								</li>
-							</>
-						) : (
-							<>
-								<li>
-									{t("mobile.android.step1")}{" "}
-									<Tooltip>
-										<TooltipTrigger asChild>
-											<button
-												type="button"
-												className={STEP_LINK_CLASS}
-												aria-label={t("mobile.androidSignupAria")}
-												onClick={() => void aoBridge.app.openExternal(ANDROID_PLAY_STORE_URL)}
-											>
-												{t("mobile.getApp")}
-												<ArrowUpRight className="size-3.5" aria-hidden="true" />
-											</button>
-										</TooltipTrigger>
-										<TooltipContent side="bottom" className="p-2" data-testid="android-play-qr">
-											<div className="rounded-md bg-(--color-bg-settings-input) p-2">
-												<StyledQRCode value={ANDROID_PLAY_STORE_URL} size={TESTFLIGHT_QR_SIZE} showLogo={false} className="block" />
-											</div>
-										</TooltipContent>
-									</Tooltip>
-								</li>
-							</>
-						)}
-						{mode === "lan" ? (
-							<li>{t("mobile.lan.step1")}</li>
-						) : (
-							<li>{t("mobile.tailscale.step1")}</li>
-						)}
-						<li>{platform === "ios" ? t("mobile.ios.step3") : t("mobile.android.step3")}</li>
+								</Fragment>
+							))}
+						</li>
+						{mode === "tailscale" ? <li>{t("mobile.tailscale.step1")}</li> : null}
+						<li>{t("mobile.pairStep")}</li>
 						{showRealQR && (
 							<>
 								<li data-testid="mobile-pairing-address">
@@ -540,11 +526,9 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 									aria-label={t("mobile.securePairing")}
 								/>
 							</div>
-							{platform === "ios" && (
-								<p className="text-caption leading-(--leading-settings-mobile-hint) text-settings-muted">
-									{t("mobile.tailscale.iosHint")}
-								</p>
-							)}
+							<p className="text-caption leading-(--leading-settings-mobile-hint) text-settings-muted">
+								{t("mobile.tailscale.iosHint")}
+							</p>
 							{(status.securePairing?.enabled ?? false) && secureReasonText && (
 								<p className="text-caption leading-(--leading-settings-mobile-hint) text-warning">{secureReasonText}</p>
 							)}
