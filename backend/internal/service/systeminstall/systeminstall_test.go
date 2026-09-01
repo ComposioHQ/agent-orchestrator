@@ -94,6 +94,12 @@ func (f commandRunnerFunc) Run(ctx context.Context, argv []string, stdout, stder
 	return f(ctx, argv, stdout, stderr)
 }
 
+type installScriptRunnerFunc func(context.Context, ports.InstallScriptCommand, io.Writer, io.Writer) (ports.InstallScriptResult, error)
+
+func (f installScriptRunnerFunc) RunInstallScript(ctx context.Context, command ports.InstallScriptCommand, stdout, stderr io.Writer) (ports.InstallScriptResult, error) {
+	return f(ctx, command, stdout, stderr)
+}
+
 func testCommandRunner(command func(context.Context, []string) *exec.Cmd) commandRunnerFunc {
 	return func(ctx context.Context, argv []string, stdout, stderr io.Writer) error {
 		cmd := command(ctx, argv)
@@ -501,6 +507,52 @@ func TestAgentInstallPersistsInstallVerifySuccessLifecycle(t *testing.T) {
 	}
 	if strings.Join(statuses, ",") != "installing,verifying,succeeded" {
 		t.Fatalf("persisted statuses = %v", statuses)
+	}
+}
+
+func TestAgentVendorScriptInstallPersistsInstallVerifySuccessLifecycle(t *testing.T) {
+	store := newInstallJobStoreFake()
+	s := newTestService("linux", "bash")
+	s.jobStore = store
+	captured := make(chan ports.InstallScriptCommand, 1)
+	s.installScripts = installScriptRunnerFunc(func(_ context.Context, command ports.InstallScriptCommand, stdout, _ io.Writer) (ports.InstallScriptResult, error) {
+		captured <- command
+		_, _ = io.WriteString(stdout, "installed\n")
+		return ports.InstallScriptResult{SHA256: "abc123"}, nil
+	})
+	s.verifier = harnessVerifierFunc(func(context.Context, Target) (VerifyResult, error) {
+		return VerifyResult{ResolvedPath: "/home/test/.local/bin/agent", Output: "cursor 1.2.3\n"}, nil
+	})
+
+	job, err := s.StartAgent(context.Background(), TargetCursor, "official-installer")
+	if err != nil {
+		t.Fatalf("StartAgent: %v", err)
+	}
+	if job.Status != StatusInstalling || job.Method != "official-installer" {
+		t.Fatalf("initial job = %+v", job)
+	}
+	waitForStatus(t, s, TargetCursor, StatusSucceeded)
+	command := <-captured
+	if command.URL != "https://cursor.com/install" {
+		t.Fatalf("URL = %q", command.URL)
+	}
+	final, err := s.Status(context.Background(), TargetCursor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(final.Output, "source: https://cursor.com/install") ||
+		!strings.Contains(final.Output, "sha256: abc123") ||
+		!strings.Contains(final.Output, "cursor 1.2.3") {
+		t.Fatalf("output = %q", final.Output)
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	var statuses []string
+	for _, record := range store.history {
+		statuses = append(statuses, record.Status)
+	}
+	if strings.Join(statuses, ",") != "installing,verifying,succeeded" {
+		t.Fatalf("statuses = %v", statuses)
 	}
 }
 

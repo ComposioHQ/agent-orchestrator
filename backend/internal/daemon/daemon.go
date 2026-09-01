@@ -323,7 +323,7 @@ func Run() error {
 	lcStack.trackerDone = startTrackerIntake(ctx, store, sessionSvc, tracker, log)
 
 	agentSvc := agentsvc.NewWithDeps(agentsvc.Deps{Cache: store, InventoryCache: store, Discoverer: modelcatalog.Discoverer{}, Projects: store, Sessions: store})
-	hostCommands := systemexec.Adapter{}
+	hostCommands := systemexec.New(cfg.DataDir)
 	systemChecks := systemcheck.New(agentSvc, hostCommands)
 	systemInstall := systeminstall.NewWithDeps(hostCommands, hostCommands, systeminstall.Deps{
 		JobStore: store,

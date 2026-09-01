@@ -250,6 +250,7 @@ type Service struct {
 	executables         ports.ExecutableFinder
 	commands            ports.CommandRunner
 	installCommands     ports.InstallCommandRunner
+	installScripts      ports.InstallScriptRunner
 	installCapabilities ports.InstallCapabilityProbe
 	jobStore            ports.AgentInstallJobStore
 	verifier            HarnessVerifier
@@ -294,6 +295,7 @@ func New(executables ports.ExecutableFinder, commands ports.CommandRunner) *Serv
 // dependencies supplied by the daemon.
 func NewWithDeps(executables ports.ExecutableFinder, commands ports.CommandRunner, deps Deps) *Service {
 	installCommands, _ := commands.(ports.InstallCommandRunner)
+	installScripts, _ := commands.(ports.InstallScriptRunner)
 	installCapabilities, _ := executables.(ports.InstallCapabilityProbe)
 	backgroundContext, stop := context.WithCancel(context.Background())
 	return &Service{
@@ -301,6 +303,7 @@ func NewWithDeps(executables ports.ExecutableFinder, commands ports.CommandRunne
 		executables:         executables,
 		commands:            commands,
 		installCommands:     installCommands,
+		installScripts:      installScripts,
 		installCapabilities: installCapabilities,
 		jobStore:            deps.JobStore,
 		verifier:            deps.Verifier,
@@ -811,14 +814,27 @@ func (s *Service) runAgentInstall(parent context.Context, plan Plan, job *Job) {
 	ctx, cancel := context.WithTimeout(parent, s.installTimeout)
 	defer cancel()
 	out := &capturedOutput{max: maxOutputBytes}
+	env := []string{
+		"CI=1", "NONINTERACTIVE=1", "HOMEBREW_NO_AUTO_UPDATE=1",
+		"NPM_CONFIG_AUDIT=false", "NPM_CONFIG_FUND=false",
+	}
 	var runErr error
-	if s.installCommands != nil {
+	if plan.Script != nil {
+		if s.installScripts == nil {
+			runErr = errors.New("remote installer runner is not configured")
+		} else {
+			command := *plan.Script
+			command.Env = append([]string(nil), env...)
+			var result ports.InstallScriptResult
+			result, runErr = s.installScripts.RunInstallScript(ctx, command, out, out)
+			if result.SHA256 != "" {
+				_, _ = fmt.Fprintf(out, "\nsource: %s\nsha256: %s\n", command.URL, result.SHA256)
+			}
+		}
+	} else if s.installCommands != nil {
 		runErr = s.installCommands.RunInstall(ctx, ports.InstallCommand{
 			Argv: plan.Command,
-			Env: []string{
-				"CI=1", "NONINTERACTIVE=1", "HOMEBREW_NO_AUTO_UPDATE=1",
-				"NPM_CONFIG_AUDIT=false", "NPM_CONFIG_FUND=false",
-			},
+			Env:  env,
 		}, out, out)
 	} else {
 		runErr = s.commands.Run(ctx, plan.Command, out, out)
