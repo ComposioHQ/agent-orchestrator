@@ -120,7 +120,7 @@ describe("CreateProjectAgentSheet", () => {
 		await chooseOption(screen.getByLabelText("Worker agent"), "claude-code");
 		await chooseOption(screen.getByLabelText("Orchestrator agent"), "codex");
 
-		await userEvent.click(screen.getByLabelText("Work on assigned issues"));
+		await userEvent.click(screen.getByLabelText("Automatically work on assigned issues"));
 		// Enabled with no eligibility rule → submit stays disabled (compact sheet
 		// carries no inline guard prose; gating is the disabled button).
 		expect(screen.getByRole("button", { name: "Create and start" })).toBeDisabled();
@@ -142,7 +142,7 @@ describe("CreateProjectAgentSheet", () => {
 		expect(screen.getByLabelText("What does enabling issue intake do?")).toBeInTheDocument();
 		expect(screen.queryByText(/Auto-spawn worker sessions from matching tracker issues/)).not.toBeInTheDocument();
 
-		await userEvent.click(screen.getByLabelText("Work on assigned issues"));
+		await userEvent.click(screen.getByLabelText("Automatically work on assigned issues"));
 		expect(screen.queryByText("Repository")).not.toBeInTheDocument();
 		expect(screen.queryByText(/Reads credentials from/)).not.toBeInTheDocument();
 	});

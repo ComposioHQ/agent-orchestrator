@@ -202,7 +202,7 @@ export function ProjectSetupHeaderView({
 	closeLabel: string;
 	disabled: boolean;
 	leadingAction?: ReactNode;
-	path: string;
+	path?: string;
 	title: string;
 }) {
 	return (
@@ -212,9 +212,7 @@ export function ProjectSetupHeaderView({
 				<Title className="text-[18px] font-semibold text-foreground">
 					{title}
 				</Title>
-				<Description className="mt-1 break-all text-[13px] leading-5 text-muted-foreground">
-					{path}
-				</Description>
+				{path ? <Description className="mt-1 break-all text-[13px] leading-5 text-muted-foreground">{path}</Description> : null}
 			</div>
 			<CloseButton aria-label={closeLabel} disabled={disabled}>
 				{closeIcon}
@@ -245,7 +243,6 @@ export function ProjectSetupFormView({
 }: {
 	agentControls: { worker: ReactNode; orchestrator: ReactNode };
 	agents: {
-		cacheMessage: string;
 		error?: string | null;
 		loading: boolean;
 		loadingMessage: string;
@@ -257,11 +254,11 @@ export function ProjectSetupFormView({
 	canSubmit: boolean;
 	intakeControl: ReactNode;
 	isBusy: boolean;
-	onCancel: () => void;
+	onCancel?: () => void;
 	onSubmit: () => void;
 	setupNotice?: { message: string; warning?: string | null } | null;
 	submitLabel: string;
-	cancelLabel: string;
+	cancelLabel?: string;
 }) {
 	const submit = (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();
@@ -279,10 +276,6 @@ export function ProjectSetupFormView({
 					{agents.loadingMessage}
 				</p>
 			)}
-
-			<p className="text-[12px] leading-5 text-muted-foreground">
-				{agents.cacheMessage}
-			</p>
 
 			{agents.error && (
 				<div
@@ -337,15 +330,15 @@ export function ProjectSetupFormView({
 				</div>
 			)}
 
-			<div className="flex items-center justify-end gap-2 px-0 pb-0 pt-1">
-				<button
+			<div className="flex items-center justify-end gap-2 pb-4 pt-1">
+				{onCancel && cancelLabel ? <button
 					className="inline-flex h-control-form items-center justify-center rounded-md border border-border bg-transparent px-3 text-sm text-foreground hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
 					type="button"
 					disabled={isBusy}
 					onClick={onCancel}
 				>
 					{cancelLabel}
-				</button>
+				</button> : null}
 				<button
 					className="inline-flex h-control-form items-center justify-center rounded-md bg-primary px-3 text-sm text-primary-foreground hover:bg-primary/80 disabled:pointer-events-none disabled:opacity-50"
 					type="submit"

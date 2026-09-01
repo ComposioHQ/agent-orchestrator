@@ -178,7 +178,8 @@ export function CreateProjectAgentSheet({
 		<Dialog.Root open={open} onOpenChange={(next) => !isBusy && onOpenChange(next)}>
 			<Dialog.Portal>
 				<Dialog.Overlay className="dialog-overlay data-[state=open]:animate-overlay-in" />
-				<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay flex max-h-[min(640px,calc(100svh-24px))] w-[min(640px,calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-lg border border-border bg-popover p-0 text-popover-foreground shadow-xl data-[state=open]:animate-modal-in data-[state=closed]:animate-modal-out motion-reduce:animate-none">
+				<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay w-[min(520px,calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-lg border border-border bg-popover p-0 text-popover-foreground shadow-xl data-[state=open]:animate-modal-in data-[state=closed]:animate-modal-out motion-reduce:animate-none">
+					<Dialog.Description className="sr-only">{t("createProject.projectAgents")}</Dialog.Description>
 					<ProjectSetupHeaderView
 						CloseButton={ProjectSheetCloseButton}
 						Description={Dialog.Description}
@@ -200,17 +201,14 @@ export function CreateProjectAgentSheet({
 								</Button>
 							) : undefined
 						}
-						path={path ?? ""}
-						title={
-							kind === "workspace"
-								? t("createProject.workspaceAgents")
-								: t("createProject.projectAgents")
-						}
+						title={kind === "workspace" ? t("createProject.workspaceAgents") : t("createProject.projectAgents")}
 					/>
 					<ProjectSetupFormView
 						agentControls={{
 							worker: (
-								<RequiredAgentField
+								<div className="space-y-1.5">
+									<Label className="agents-sheet-label">{t("createProject.workerAgent")}</Label>
+									<RequiredAgentField
 									id="newProjectWorkerAgent"
 									label={t("createProject.workerAgent")}
 									placeholder={t("createProject.selectWorker")}
@@ -219,18 +217,21 @@ export function CreateProjectAgentSheet({
 									installed={installedAgents}
 									supported={supportedAgents}
 									disabled={isLoadingAgents}
-									labelClassName="agents-sheet-label"
-									triggerClassName="composer-toolbar-option w-full justify-between"
+									triggerClassName="w-full justify-between"
 									contentClassName="settings-agent-menu-surface"
+									chipStyle="field"
 									variant="chip"
 									onChange={(value) => {
 										setWorkerAgent(value);
 										setWorkerAgentTouched(true);
 									}}
-								/>
+									/>
+								</div>
 							),
 							orchestrator: (
-								<RequiredAgentField
+								<div className="space-y-1.5">
+									<Label className="agents-sheet-label">{t("createProject.orchestratorAgent")}</Label>
+									<RequiredAgentField
 									id="newProjectOrchestratorAgent"
 									label={t("createProject.orchestratorAgent")}
 									placeholder={t("createProject.selectOrchestrator")}
@@ -239,19 +240,19 @@ export function CreateProjectAgentSheet({
 									installed={installedAgents}
 									supported={supportedAgents}
 									disabled={isLoadingAgents}
-									labelClassName="agents-sheet-label"
-									triggerClassName="composer-toolbar-option w-full justify-between"
+									triggerClassName="w-full justify-between"
 									contentClassName="settings-agent-menu-surface"
+									chipStyle="field"
 									variant="chip"
 									onChange={(value) => {
 										setOrchestratorAgent(value);
 										setOrchestratorAgentTouched(true);
 									}}
-								/>
+									/>
+								</div>
 							),
 						}}
 						agents={{
-							cacheMessage: t("createProject.agentsCached"),
 							error: displayError,
 							loading: isLoadingAgents,
 							loadingMessage: t("createProject.loadingAgents"),
@@ -277,7 +278,6 @@ export function CreateProjectAgentSheet({
 								: null
 						}
 						canSubmit={canSubmit}
-						cancelLabel={t("createProject.cancel")}
 						intakeControl={
 							<IntakeFields
 								form={intake}
@@ -288,7 +288,6 @@ export function CreateProjectAgentSheet({
 							/>
 						}
 						isBusy={isBusy}
-						onCancel={() => onOpenChange(false)}
 						onSubmit={() =>
 							void onSubmit({ workerAgent, orchestratorAgent, trackerIntake: buildIntake(intake) })
 						}
@@ -355,6 +354,7 @@ export const RequiredAgentField = memo(function RequiredAgentField({
 	triggerClassName,
 	labelClassName,
 	contentClassName,
+	chipStyle = "composer",
 	value,
 	variant = "stacked",
 }: {
@@ -373,6 +373,7 @@ export const RequiredAgentField = memo(function RequiredAgentField({
 	triggerClassName?: string;
 	labelClassName?: string;
 	contentClassName?: string;
+	chipStyle?: "composer" | "field";
 	value: string;
 	variant?: "stacked" | "settings-row" | "chip";
 }) {
@@ -453,7 +454,9 @@ export const RequiredAgentField = memo(function RequiredAgentField({
 				onChange={onChange}
 				menuAlign="start"
 				triggerClassName={cn(
-					"composer-chip composer-toolbar-option w-full justify-between",
+					chipStyle === "composer"
+						? "composer-chip composer-toolbar-option w-full justify-between"
+						: "h-control-form w-full justify-between rounded-md border border-input bg-input px-3 hover:bg-muted data-[state=open]:bg-muted",
 					invalid && "text-error",
 					triggerClassName,
 				)}
