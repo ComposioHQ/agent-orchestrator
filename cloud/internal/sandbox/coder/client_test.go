@@ -194,6 +194,7 @@ func TestBootstrapWorkerStreamsArchiveWithoutSecretsInURL(t *testing.T) {
 				"/mnt/ao/.ao/worker/worker.pid",
 				"kill -0",
 				"chmod o+x",
+				"sudo -n -b -u",
 			} {
 				if !strings.Contains(command, expected) {
 					t.Errorf("bootstrap command missing durable path contract %q", expected)
