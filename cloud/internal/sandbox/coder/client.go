@@ -127,6 +127,12 @@ func (c *Client) ForSandbox(record domain.Sandbox) (sandbox.Provider, error) {
 	if err != nil {
 		return nil, fmt.Errorf("coder: resolve durable session profile: %w", err)
 	}
+	if profile.BaseURL != c.baseURL {
+		return nil, fmt.Errorf(
+			"coder: durable session deployment %q does not match configured deployment %q",
+			profile.BaseURL, c.baseURL,
+		)
+	}
 	templateID, err := uuid.Parse(profile.TemplateID)
 	if err != nil {
 		return nil, errors.New("coder: durable session template ID must be a UUID")
@@ -558,6 +564,9 @@ func sendBootstrapWindow(
 			case response, ok := <-output:
 				if !ok {
 					timer.Stop()
+					if err := ctx.Err(); err != nil {
+						return err
+					}
 					return errors.New("coder: workspace PTY closed during worker upload")
 				}
 				if strings.TrimSpace(response.data) == wanted {

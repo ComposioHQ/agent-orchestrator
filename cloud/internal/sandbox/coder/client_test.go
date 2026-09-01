@@ -544,7 +544,7 @@ func TestForSandboxUsesDurableSessionProfile(t *testing.T) {
 	client := newTestClient(t, "https://coder.example.com", map[string]string{"source": "deployment"})
 	provider, err := client.ForSandbox(domain.Sandbox{
 		SessionID:       "session-1",
-		ResourceProfile: json.RawMessage(`{"coder":{"owner":"planned-owner","templateId":"2a2e262c-b31c-4202-946d-a19ad45d1fd2","agentName":"planned-agent","parameters":{"source":"session"},"durableRoot":"/persistent/coder"}}`),
+		ResourceProfile: json.RawMessage(`{"coder":{"baseUrl":"https://coder.example.com","owner":"planned-owner","templateId":"2a2e262c-b31c-4202-946d-a19ad45d1fd2","agentName":"planned-agent","parameters":{"source":"session"},"durableRoot":"/persistent/coder"}}`),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -560,6 +560,20 @@ func TestForSandboxUsesDurableSessionProfile(t *testing.T) {
 	}
 	if client.owner != "ao-integration" || client.parameters["source"] != "deployment" {
 		t.Fatal("ForSandbox mutated the deployment client")
+	}
+}
+
+func TestForSandboxRejectsCoderDeploymentChange(t *testing.T) {
+	t.Parallel()
+	client := newTestClient(t, "https://coder.example.com", nil)
+	_, err := client.ForSandbox(domain.Sandbox{
+		SessionID: "session-1",
+		ResourceProfile: json.RawMessage(
+			`{"coder":{"baseUrl":"https://other-coder.example.com","owner":"planned-owner","templateId":"2a2e262c-b31c-4202-946d-a19ad45d1fd2","parameters":{},"durableRoot":"/persistent/coder"}}`,
+		),
+	})
+	if err == nil || !strings.Contains(err.Error(), "does not match configured deployment") {
+		t.Fatalf("ForSandbox error = %v", err)
 	}
 }
 
@@ -788,6 +802,89 @@ func TestBootstrapThroughPTYPipelinesUploadWindows(t *testing.T) {
 	}
 }
 
+func TestBootstrapThroughPTYPipelineReplaysFromDroppedMiddleFrame(t *testing.T) {
+	t.Parallel()
+	const (
+		chunkSize    = 3_000
+		uploadWindow = 8
+		droppedFrame = 3
+	)
+	encoded := strings.Repeat("replay-safe-", 2_750)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		connection, err := websocket.Accept(writer, request, nil)
+		if err != nil {
+			t.Errorf("accept websocket: %v", err)
+			return
+		}
+		defer connection.CloseNow()
+		netConnection := websocket.NetConn(context.Background(), connection, websocket.MessageBinary)
+		defer netConnection.Close()
+		if _, err := io.WriteString(netConnection, bootstrapReady+"\r\n"); err != nil {
+			t.Errorf("write bootstrap ready: %v", err)
+			return
+		}
+		decoder := json.NewDecoder(netConnection)
+		expectedSequence := 0
+		dropped := false
+		arrivals := make(map[int]int)
+		var reconstructed strings.Builder
+		for {
+			var frame struct {
+				Data string `json:"data"`
+			}
+			if err := decoder.Decode(&frame); err != nil {
+				t.Errorf("decode PTY input: %v", err)
+				return
+			}
+			parts := strings.SplitN(strings.TrimSuffix(frame.Data, "\n"), ":", 4)
+			if len(parts) != 4 {
+				continue
+			}
+			sequence, sequenceErr := strconv.Atoi(parts[1])
+			declared, declaredErr := strconv.Atoi(parts[2])
+			if parts[0] == "data" && sequenceErr == nil && declaredErr == nil {
+				arrivals[sequence]++
+				if sequence != expectedSequence {
+					continue
+				}
+				if sequence == droppedFrame && !dropped {
+					dropped = true
+					continue
+				}
+				if len(parts[3]) != declared {
+					t.Errorf("frame %d length = %d, want %d", sequence, len(parts[3]), declared)
+					return
+				}
+				reconstructed.WriteString(parts[3])
+				expectedSequence++
+				if expectedSequence%uploadWindow == 0 || reconstructed.Len() == len(encoded) {
+					_, _ = io.WriteString(netConnection,
+						fmt.Sprintf("%s:%d\r\n", bootstrapUploadACK, expectedSequence))
+				}
+				continue
+			}
+			if parts[0] == "done" && sequence == expectedSequence {
+				if !dropped || arrivals[0] < 2 || arrivals[droppedFrame] < 2 {
+					t.Errorf("window was not replayed after loss: dropped=%t arrivals=%v", dropped, arrivals)
+				}
+				if reconstructed.String() != encoded {
+					t.Errorf("reconstructed payload differs: got %d bytes, want %d", reconstructed.Len(), len(encoded))
+				}
+				_, _ = io.WriteString(netConnection, bootstrapUploadDone+"\r\n")
+				_, _ = io.WriteString(netConnection, bootstrapOK+"\r\n")
+				return
+			}
+		}
+	}))
+	defer server.Close()
+	client := newTestClient(t, server.URL, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+	defer cancel()
+	if err := client.bootstrapThroughPTY(ctx, mustParseURL(t, server.URL), encoded); err != nil {
+		t.Fatalf("bootstrapThroughPTY: %v", err)
+	}
+}
+
 func TestGetTreatsDeletedWorkspaceAsNotFound(t *testing.T) {
 	t.Parallel()
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
@@ -817,7 +914,7 @@ func scopedTestClient(t *testing.T, baseURL string) *Client {
 	base := newTestClient(t, baseURL, map[string]string{"source": "deployment"})
 	provider, err := base.ForSandbox(domain.Sandbox{
 		SessionID:       "session-1",
-		ResourceProfile: json.RawMessage(`{"coder":{"owner":"planned-owner","templateId":"2a2e262c-b31c-4202-946d-a19ad45d1fd2","agentName":"dev","parameters":{"source":"session"},"durableRoot":"/persistent/coder"}}`),
+		ResourceProfile: json.RawMessage(fmt.Sprintf(`{"coder":{"baseUrl":%q,"owner":"planned-owner","templateId":"2a2e262c-b31c-4202-946d-a19ad45d1fd2","agentName":"dev","parameters":{"source":"session"},"durableRoot":"/persistent/coder"}}`, baseURL)),
 	})
 	if err != nil {
 		t.Fatalf("scope client: %v", err)

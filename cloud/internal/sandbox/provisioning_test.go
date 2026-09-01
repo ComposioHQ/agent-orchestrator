@@ -72,6 +72,7 @@ func TestCoderSessionPlanPersistsDurableRoot(t *testing.T) {
 	} {
 		var decoded struct {
 			Coder struct {
+				BaseURL     string `json:"baseUrl"`
 				DurableRoot string `json:"durableRoot"`
 			} `json:"coder"`
 		}
@@ -81,12 +82,16 @@ func TestCoderSessionPlanPersistsDurableRoot(t *testing.T) {
 		if decoded.Coder.DurableRoot != "/persistent/ao" {
 			t.Errorf("%s durable root = %q", name, decoded.Coder.DurableRoot)
 		}
+		if name == "resource profile" && decoded.Coder.BaseURL != "https://coder.example.com" {
+			t.Errorf("%s base URL = %q", name, decoded.Coder.BaseURL)
+		}
 	}
 	profile, err := DecodeCoderSessionProfile(plan.ResourceProfile)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if profile.Owner != "owner" || profile.TemplateID != templateID ||
+	if profile.BaseURL != "https://coder.example.com" ||
+		profile.Owner != "owner" || profile.TemplateID != templateID ||
 		profile.AgentName != "dev" || profile.Parameters["region"] != "us-west-2" ||
 		profile.DurableRoot != "/persistent/ao" {
 		t.Fatalf("unexpected durable profile: %+v", profile)
@@ -98,10 +103,12 @@ func TestDecodeCoderSessionProfileRejectsIncompleteContract(t *testing.T) {
 	profiles := []json.RawMessage{
 		nil,
 		json.RawMessage(`{}`),
-		json.RawMessage(`{"coder":{"templateId":"template","durableRoot":"/mnt/ao"}}`),
-		json.RawMessage(`{"coder":{"owner":"owner","durableRoot":"/mnt/ao"}}`),
-		json.RawMessage(`{"coder":{"owner":"owner","templateId":"template"}}`),
-		json.RawMessage(`{"coder":{"owner":"owner","templateId":"template","durableRoot":"/mnt/ao","parameters":{"x":"one"," x ":"two"}}}`),
+		json.RawMessage(`{"coder":{"owner":"owner","templateId":"template","durableRoot":"/mnt/ao"}}`),
+		json.RawMessage(`{"coder":{"baseUrl":"https://coder.example.com","templateId":"template","durableRoot":"/mnt/ao"}}`),
+		json.RawMessage(`{"coder":{"baseUrl":"https://coder.example.com","owner":"owner","durableRoot":"/mnt/ao"}}`),
+		json.RawMessage(`{"coder":{"baseUrl":"https://coder.example.com","owner":"owner","templateId":"template"}}`),
+		json.RawMessage(`{"coder":{"baseUrl":"https://coder.example.com/path","owner":"owner","templateId":"template","durableRoot":"/mnt/ao"}}`),
+		json.RawMessage(`{"coder":{"baseUrl":"https://coder.example.com","owner":"owner","templateId":"template","durableRoot":"/mnt/ao","parameters":{"x":"one"," x ":"two"}}}`),
 	}
 	for index, raw := range profiles {
 		if _, err := DecodeCoderSessionProfile(raw); err == nil {

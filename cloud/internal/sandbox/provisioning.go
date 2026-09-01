@@ -68,6 +68,7 @@ type CoderConfig struct {
 // session. Reconciliation reads these values from the durable sandbox row; a
 // later deployment configuration change must not move or recreate that session.
 type CoderSessionProfile struct {
+	BaseURL     string            `json:"baseUrl"`
 	Owner       string            `json:"owner"`
 	TemplateID  string            `json:"templateId"`
 	AgentName   string            `json:"agentName"`
@@ -135,6 +136,11 @@ func DecodeCoderSessionProfile(raw json.RawMessage) (CoderSessionProfile, error)
 		return CoderSessionProfile{}, errors.New("Coder session resource profile is required")
 	}
 	profile := *resource.Coder
+	baseURL, err := normalizedCoderBaseURL(profile.BaseURL)
+	if err != nil {
+		return CoderSessionProfile{}, err
+	}
+	profile.BaseURL = baseURL
 	profile.Owner = strings.TrimSpace(profile.Owner)
 	profile.TemplateID = strings.TrimSpace(profile.TemplateID)
 	profile.AgentName = strings.TrimSpace(profile.AgentName)
@@ -155,6 +161,16 @@ func DecodeCoderSessionProfile(raw json.RawMessage) (CoderSessionProfile, error)
 	}
 	profile.DurableRoot = layout.DurableRoot
 	return profile, nil
+}
+
+func normalizedCoderBaseURL(value string) (string, error) {
+	endpoint, err := url.Parse(strings.TrimSpace(value))
+	if err != nil || endpoint.Host == "" || endpoint.User != nil ||
+		(endpoint.Scheme != "http" && endpoint.Scheme != "https") ||
+		(endpoint.Path != "" && endpoint.Path != "/") || endpoint.RawQuery != "" || endpoint.Fragment != "" {
+		return "", errors.New("Coder session base URL must be an absolute http or https origin")
+	}
+	return strings.TrimRight(endpoint.String(), "/"), nil
 }
 
 func normalizedCoderParameters(parameters map[string]string) (map[string]string, error) {
