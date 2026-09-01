@@ -393,7 +393,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 						labels={boardLabels}
 							renderSessionCard={(session) => (
 								<BoardSessionCardAdapter
-									onOpen={openSession}
+								onOpen={() => openSession(session)}
 									onTerminate={() => terminateSession.mutate(session)}
 									session={session}
 								usage={usageBySession.get(session.id)}
