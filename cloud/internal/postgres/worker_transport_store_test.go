@@ -13,6 +13,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/cloud/internal/domain"
 	"github.com/aoagents/agent-orchestrator/cloud/internal/worker"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 func TestAppendTerminalInputPayloadPreservesOrderedBytes(t *testing.T) {
@@ -152,6 +153,77 @@ func TestQueueTerminalInputCoalescesOnlyThePendingTail(t *testing.T) {
 	); err != nil || ok || request.ID != "" {
 		t.Fatalf("extra request = %+v, ok = %v, err = %v", request, ok, err)
 	}
+}
+
+func TestTerminalRequestOrderUsesPostLockTimestamp(t *testing.T) {
+	store, terminal, workerID := newTerminalQueueFixture(t)
+	ctx := context.Background()
+
+	// Transaction A starts first, but B acquires the session lock and enqueues a
+	// resize first. Transaction timestamps would put A ahead of B even though the
+	// lock defines the opposite mutation order.
+	txA := beginTerminalQueueTransaction(t, store, terminal.OrgID)
+	var startedA time.Time
+	if err := txA.QueryRow(ctx, `SELECT transaction_timestamp()`).Scan(&startedA); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(1500 * time.Millisecond)
+	txB := beginTerminalQueueTransaction(t, store, terminal.OrgID)
+	var startedB time.Time
+	if err := txB.QueryRow(ctx, `SELECT transaction_timestamp()`).Scan(&startedB); err != nil {
+		t.Fatal(err)
+	}
+	if !startedB.After(startedA) {
+		t.Fatalf("transaction B started at %s, want after A at %s", startedB, startedA)
+	}
+
+	resizePayload, err := json.Marshal(map[string]any{
+		"terminalId": terminal.ID,
+		"columns":    120,
+		"rows":       40,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := queueTerminalRequest(
+		ctx, txB, terminal, "terminal.resize", "", resizePayload,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := txB.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := queueTerminalInput(ctx, txA, terminal, "input-a", []byte("a")); err != nil {
+		t.Fatal(err)
+	}
+	if err := txA.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	resize := claimTerminalRequest(t, store, terminal, workerID, "terminal.resize")
+	completeTerminalRequest(t, store, terminal, workerID, resize)
+	input := claimTerminalRequest(t, store, terminal, workerID, "terminal.input")
+	if data := terminalRequestData(t, input); !bytes.Equal(data, []byte("a")) {
+		t.Fatalf("input = %v, want %v", data, []byte("a"))
+	}
+	if remaining := time.Until(input.ExpiresAt); remaining < terminalRequestTTL-time.Second {
+		t.Fatalf("input TTL remaining = %s, want at least %s", remaining, terminalRequestTTL-time.Second)
+	}
+}
+
+func beginTerminalQueueTransaction(t *testing.T, store *Store, orgID string) pgx.Tx {
+	t.Helper()
+	tx, err := store.pool.Begin(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = tx.Rollback(context.Background()) })
+	if _, err := tx.Exec(
+		context.Background(), `SELECT set_config('ao.org_id', $1, true)`, orgID,
+	); err != nil {
+		t.Fatal(err)
+	}
+	return tx
 }
 
 func newTerminalQueueFixture(
