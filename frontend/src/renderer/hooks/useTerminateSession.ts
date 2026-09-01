@@ -1,14 +1,34 @@
 import { type QueryClient, useMutation, useMutationState, useQueryClient } from "@tanstack/react-query";
 import type { WorkspaceSession } from "../types/workspace";
-import { workspaceQueryKey } from "./useWorkspaceQuery";
+import { cloudSessionsQueryKey, workspaceQueryKey } from "./useWorkspaceQuery";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { captureRendererEvent } from "../lib/telemetry";
+import { createRendererCloudCpClient } from "./useCloudCp";
+import { settingsQueryKey, type Settings } from "./useSettings";
 
 type TerminateSessionOptions = {
 	onSuccess?: (session: WorkspaceSession) => void;
 };
 
 export const terminateSessionMutationKey = ["terminate-session"] as const;
+
+async function terminateSession(queryClient: QueryClient, session: WorkspaceSession): Promise<void> {
+	if (session.cloud) {
+		const settings = queryClient.getQueryData<Settings>(settingsQueryKey);
+		const baseUrl = settings?.cloudControlPlaneUrl ?? "";
+		if (baseUrl === "") throw new Error("The cloud control plane is not configured.");
+		await createRendererCloudCpClient(baseUrl).deleteSession(session.cloud.orgId, session.id);
+		return;
+	}
+
+	const { error, response } = await apiClient.POST("/api/v1/sessions/{sessionId}/kill", {
+		params: { path: { sessionId: session.id } },
+	});
+	if (error) {
+		const fallback = response ? `Failed to terminate session (${response.status})` : "Failed to terminate session";
+		throw new Error(apiErrorMessage(error, fallback));
+	}
+}
 
 type TerminateSessionMutationState = {
 	error: unknown;
@@ -57,17 +77,14 @@ export function useTerminateSession(options: TerminateSessionOptions = {}) {
 		mutationKey: terminateSessionMutationKey,
 		mutationFn: async (session: WorkspaceSession) => {
 			void captureRendererEvent("ao.renderer.session_kill_requested", { project_id: session.workspaceId });
-			const { error, response } = await apiClient.POST("/api/v1/sessions/{sessionId}/kill", {
-				params: { path: { sessionId: session.id } },
-			});
-			if (error) {
-				const fallback = response ? `Failed to terminate session (${response.status})` : "Failed to terminate session";
-				throw new Error(apiErrorMessage(error, fallback));
-			}
+			await terminateSession(queryClient, session);
 		},
 		onSuccess: async (_data, session) => {
 			void captureRendererEvent("ao.renderer.session_kill_succeeded", { project_id: session.workspaceId });
-			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+			await Promise.all([
+				queryClient.invalidateQueries({ queryKey: workspaceQueryKey }),
+				session.cloud ? queryClient.invalidateQueries({ queryKey: cloudSessionsQueryKey }) : Promise.resolve(),
+			]);
 			options.onSuccess?.(session);
 		},
 		onError: (_error, session) => {
