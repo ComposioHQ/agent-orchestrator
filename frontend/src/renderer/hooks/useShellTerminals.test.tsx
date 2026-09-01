@@ -152,6 +152,38 @@ describe("useOpenShellTerminal", () => {
 		});
 		await waitFor(() => expect(shellStoreMock.setPreference).toHaveBeenCalledWith({ kind: "auto" }));
 	});
+
+	it("creates cloud shell metadata without asking the local daemon", async () => {
+		const queryClient = new QueryClient({
+			defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
+		});
+		queryClient.setQueryData(shellTerminalsQueryKey, []);
+		const open = renderHook(() => useOpenShellTerminal(), { wrapper: wrapper(queryClient) });
+
+		const shell = await act(async () =>
+			open.result.current.mutateAsync({
+				projectId: "cloud-project",
+				sessionId: "cloud-session",
+				cloud: { orgId: "cloud-org" },
+			}),
+		);
+
+		expect(postMock).not.toHaveBeenCalled();
+		expect(shell).toMatchObject({
+			projectId: "cloud-project",
+			sessionId: "cloud-session",
+			workingDir: "/workspace/repository",
+			title: "Terminal 1",
+			cloud: { orgId: "cloud-org" },
+		});
+		expect(shell.handleId).toMatch(/^cloud-shell-/);
+		expect(queryClient.getQueryData(shellTerminalsQueryKey)).toEqual([shell]);
+
+		const close = renderHook(() => useCloseShellTerminal(), { wrapper: wrapper(queryClient) });
+		await act(async () => close.result.current.mutateAsync(shell.handleId));
+		expect(deleteMock).not.toHaveBeenCalled();
+		expect(queryClient.getQueryData(shellTerminalsQueryKey)).toEqual([]);
+	});
 });
 
 describe("useRenameShellTerminal", () => {

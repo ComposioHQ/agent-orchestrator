@@ -565,7 +565,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	// workspace can no longer be resolved).
 	const addShellTerminal = useCallback(() => {
 		openShellTerminal.mutate(
-			{ projectId: session?.workspaceId, sessionId },
+			{ projectId: session?.workspaceId, sessionId, cloud: session?.cloud },
 			{
 				onSuccess: (shell) => {
 					setActiveShellTerminal(shell.handleId);
@@ -583,7 +583,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 				},
 			},
 		);
-	}, [openShellTerminal, sessionId, session?.workspaceId, setActiveShellTerminal]);
+	}, [openShellTerminal, sessionId, session?.cloud, session?.workspaceId, setActiveShellTerminal]);
 
 	const activateAuxiliaryTab = useCallback(
 		(key?: string) => {
