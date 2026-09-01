@@ -1,6 +1,6 @@
 // Package runtimeselect picks the correct runtime backend by platform. Windows
 // uses ConPTY, while macOS and Linux route legacy handles to tmux while creating
-// new sessions on a detached native PTY host.
+// new sessions on a detached native PTY host. Other platforms default to tmux.
 package runtimeselect
 
 import (
@@ -38,22 +38,20 @@ func New(log *slog.Logger, runFilePath string) Runtime {
 	case "windows":
 		return conpty.New(conpty.Options{RunFilePath: runFilePath})
 	case "darwin":
-		return newDarwinRuntime(
-			tmux.New(tmux.Options{}),
-			conpty.New(conpty.Options{RunFilePath: runFilePath}),
-			log,
-		)
-	case "linux":
-		return newLinuxRuntime(
-			tmux.New(tmux.Options{}),
-			conpty.New(conpty.Options{RunFilePath: runFilePath}),
-			log,
-		)
-	default:
 		return newHybridRuntime(
 			tmux.New(tmux.Options{}),
 			conpty.New(conpty.Options{RunFilePath: runFilePath}),
 			log,
+			"macOS",
 		)
+	case "linux":
+		return newHybridRuntime(
+			tmux.New(tmux.Options{}),
+			conpty.New(conpty.Options{RunFilePath: runFilePath}),
+			log,
+			"Linux",
+		)
+	default:
+		return tmux.New(tmux.Options{})
 	}
 }

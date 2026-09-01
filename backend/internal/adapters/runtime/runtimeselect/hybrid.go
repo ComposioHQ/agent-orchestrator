@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"runtime"
 	"strings"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -16,8 +15,6 @@ import (
 // remain permanently routed to tmux. The version leaves room for a future host
 // protocol migration without guessing from session metadata.
 const directHandlePrefix = "ptyhost-v1:"
-const darwinDirectHandlePrefix = directHandlePrefix
-const linuxDirectHandlePrefix = directHandlePrefix
 
 // routedBackend captures the capabilities the daemon conditionally consumes.
 // Both tmux and the detached PTY host provide them; keeping them on the router
@@ -42,22 +39,14 @@ var _ ports.StyledTerminalOutputReader = (*hybridRuntime)(nil)
 var _ ports.SupervisedProcessInspector = (*hybridRuntime)(nil)
 var _ ports.ExactSupervisedProcessInspector = (*hybridRuntime)(nil)
 
-func newHybridRuntime(legacy, direct routedBackend, log *slog.Logger, platform ...string) *hybridRuntime {
+func newHybridRuntime(legacy, direct routedBackend, log *slog.Logger, platform string) *hybridRuntime {
 	if log == nil {
 		log = slog.Default()
 	}
-	p := "native"
-	if len(platform) > 0 && platform[0] != "" {
-		p = platform[0]
-	} else {
-		switch runtime.GOOS {
-		case "darwin":
-			p = "macOS"
-		case "linux":
-			p = "Linux"
-		}
+	if platform == "" {
+		platform = "native"
 	}
-	return &hybridRuntime{legacy: legacy, direct: direct, log: log, platform: p}
+	return &hybridRuntime{legacy: legacy, direct: direct, log: log, platform: platform}
 }
 
 // Create opts only new sessions into the native PTY host. If host startup

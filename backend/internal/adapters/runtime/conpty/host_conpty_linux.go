@@ -102,13 +102,33 @@ func (c *linuxPTYConn) Close() error {
 	var closeErr error
 	c.closeOnce.Do(func() {
 		if c.leaderPID > 0 && c.leaderStartTime > 0 {
-			// The PTY child was started as a session leader (setsid). Discover and
-			// reap all validated processes in the session so background jobs cannot
-			// outlive teardown, without signaling stale/recycled PIDs.
-			killLinuxSession(c.leaderPID, c.leaderStartTime, syscall.SIGTERM)
-			if !waitForLinuxSessionExit(c.leaderPID, c.leaderStartTime, linuxPTYCloseGrace) {
-				killLinuxSession(c.leaderPID, c.leaderStartTime, syscall.SIGKILL)
-				_ = waitForLinuxSessionExit(c.leaderPID, c.leaderStartTime, linuxPTYCloseGrace)
+			// Scan /proc once to discover verified session members.
+			procs := linuxFindSessionProcesses(c.leaderPID, c.leaderStartTime)
+			if len(procs) > 0 {
+				validPIDs := make(map[int]bool, len(procs))
+				pids := make([]int, 0, len(procs))
+				for _, p := range procs {
+					validPIDs[p.pid] = true
+					pids = append(pids, p.pid)
+				}
+
+				// Phase 1: Graceful SIGTERM to session processes and valid groups
+				signalLinuxSessionProcs(procs, validPIDs, syscall.SIGTERM)
+				if !waitForPIDsExit(pids, linuxPTYCloseGrace) {
+					// Phase 2: Forceful SIGKILL escalation for surviving processes
+					aliveProcs := make([]linuxProcInfo, 0, len(procs))
+					alivePIDs := make([]int, 0, len(pids))
+					for _, p := range procs {
+						if pidAlive(p.pid) {
+							aliveProcs = append(aliveProcs, p)
+							alivePIDs = append(alivePIDs, p.pid)
+						}
+					}
+					if len(aliveProcs) > 0 {
+						signalLinuxSessionProcs(aliveProcs, validPIDs, syscall.SIGKILL)
+						_ = waitForPIDsExit(alivePIDs, linuxPTYCloseGrace)
+					}
+				}
 			}
 		}
 		if c.pty != nil {
@@ -197,10 +217,6 @@ func linuxFindSessionProcesses(sid int, leaderStartTime uint64) []linuxProcInfo 
 	}
 
 	inSession := make(map[int]bool)
-	if leaderProc, ok := procMap[sid]; ok && leaderProc.startTime == leaderStartTime {
-		inSession[sid] = true
-	}
-
 	for _, p := range allProcs {
 		if p.sid == sid {
 			if p.startTime >= leaderStartTime {
@@ -233,28 +249,10 @@ func linuxFindSessionProcesses(sid int, leaderStartTime uint64) []linuxProcInfo 
 	return sessionProcs
 }
 
-func killLinuxSession(sid int, leaderStartTime uint64, sig syscall.Signal) {
-	if sid <= 0 || leaderStartTime == 0 {
-		return
-	}
-	// Discover and validate session members BEFORE signaling any PID or PGID.
-	// Do NOT unconditionally signal sid or -sid.
-	procs := linuxFindSessionProcesses(sid, leaderStartTime)
-	if len(procs) == 0 {
-		return
-	}
-
-	validPIDs := make(map[int]bool, len(procs))
-	for _, p := range procs {
-		validPIDs[p.pid] = true
-	}
-
-	// 1. Signal every individual validated process in the session directly
+func signalLinuxSessionProcs(procs []linuxProcInfo, validPIDs map[int]bool, sig syscall.Signal) {
 	for _, p := range procs {
 		_ = syscall.Kill(p.pid, sig)
 	}
-
-	// 2. Only signal process groups whose group leader is a validated member of our session
 	signaledPGRPs := make(map[int]bool)
 	for _, p := range procs {
 		if p.pgrp > 1 && validPIDs[p.pgrp] && !signaledPGRPs[p.pgrp] {
@@ -264,18 +262,30 @@ func killLinuxSession(sid int, leaderStartTime uint64, sig syscall.Signal) {
 	}
 }
 
-func waitForLinuxSessionExit(sid int, leaderStartTime uint64, timeout time.Duration) bool {
+func waitForPIDsExit(pids []int, timeout time.Duration) bool {
 	deadline := time.NewTimer(timeout)
 	defer deadline.Stop()
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		if !linuxSessionAlive(sid, leaderStartTime) {
+		alive := false
+		for _, pid := range pids {
+			if pidAlive(pid) {
+				alive = true
+				break
+			}
+		}
+		if !alive {
 			return true
 		}
 		select {
 		case <-deadline.C:
-			return !linuxSessionAlive(sid, leaderStartTime)
+			for _, pid := range pids {
+				if pidAlive(pid) {
+					return false
+				}
+			}
+			return true
 		case <-ticker.C:
 		}
 	}

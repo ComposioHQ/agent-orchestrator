@@ -98,16 +98,16 @@ func (fakeStream) Write(p []byte) (int, error) { return len(p), nil }
 func (fakeStream) Close() error                { return nil }
 func (fakeStream) Resize(_, _ uint16) error    { return nil }
 
-func TestDarwinRuntimeCreatesDirectHandle(t *testing.T) {
+func TestHybridRuntimeCreatesDirectHandle(t *testing.T) {
 	legacy := &restartableFakeBackend{}
 	direct := &fakeBackend{}
-	runtime := newDarwinRuntime(legacy, direct, nil)
+	runtime := newHybridRuntime(legacy, direct, nil, "macOS")
 
 	handle, err := runtime.Create(context.Background(), ports.RuntimeConfig{SessionID: "session-1"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if handle.ID != darwinDirectHandlePrefix+"session-1" {
+	if handle.ID != directHandlePrefix+"session-1" {
 		t.Fatalf("handle = %q, want versioned direct handle", handle.ID)
 	}
 	if len(legacy.calls) != 0 {
@@ -115,10 +115,10 @@ func TestDarwinRuntimeCreatesDirectHandle(t *testing.T) {
 	}
 }
 
-func TestDarwinRuntimeFallsBackToTmuxWhenDirectCreateFails(t *testing.T) {
+func TestHybridRuntimeFallsBackToTmuxWhenDirectCreateFails(t *testing.T) {
 	legacy := &restartableFakeBackend{}
 	direct := &fakeBackend{createErr: errors.New("host unavailable")}
-	runtime := newDarwinRuntime(legacy, direct, nil)
+	runtime := newHybridRuntime(legacy, direct, nil, "Linux")
 
 	handle, err := runtime.Create(context.Background(), ports.RuntimeConfig{SessionID: "session-1"})
 	if err != nil {
@@ -132,12 +132,12 @@ func TestDarwinRuntimeFallsBackToTmuxWhenDirectCreateFails(t *testing.T) {
 	}
 }
 
-func TestDarwinRuntimeReportsBothCreationFailures(t *testing.T) {
+func TestHybridRuntimeReportsBothCreationFailures(t *testing.T) {
 	directErr := errors.New("host unavailable")
 	fallbackErr := errors.New("tmux unavailable")
 	legacy := &restartableFakeBackend{fakeBackend: fakeBackend{createErr: fallbackErr}}
 	direct := &fakeBackend{createErr: directErr}
-	runtime := newDarwinRuntime(legacy, direct, nil)
+	runtime := newHybridRuntime(legacy, direct, nil, "macOS")
 
 	_, err := runtime.Create(context.Background(), ports.RuntimeConfig{SessionID: "session-1"})
 	if !errors.Is(err, directErr) || !errors.Is(err, fallbackErr) {
@@ -145,10 +145,10 @@ func TestDarwinRuntimeReportsBothCreationFailures(t *testing.T) {
 	}
 }
 
-func TestDarwinRuntimeRoutesPersistedLegacyHandlesToTmux(t *testing.T) {
+func TestHybridRuntimeRoutesPersistedLegacyHandlesToTmux(t *testing.T) {
 	legacy := &restartableFakeBackend{}
 	direct := &fakeBackend{}
-	runtime := newDarwinRuntime(legacy, direct, nil)
+	runtime := newHybridRuntime(legacy, direct, nil, "Linux")
 	ctx := context.Background()
 	handle := ports.RuntimeHandle{ID: "existing-session"}
 	ref := ports.SupervisedProcessRef{SessionID: domain.SessionID("existing-session"), LaunchID: "launch-1"}
@@ -179,11 +179,11 @@ func TestDarwinRuntimeRoutesPersistedLegacyHandlesToTmux(t *testing.T) {
 	}
 }
 
-func TestDarwinRuntimeRoutesVersionedHandlesToDirectHost(t *testing.T) {
+func TestHybridRuntimeRoutesVersionedHandlesToDirectHost(t *testing.T) {
 	legacy := &restartableFakeBackend{}
 	direct := &fakeBackend{}
-	runtime := newDarwinRuntime(legacy, direct, nil)
-	handle := ports.RuntimeHandle{ID: darwinDirectHandlePrefix + "new-session"}
+	runtime := newHybridRuntime(legacy, direct, nil, "macOS")
+	handle := ports.RuntimeHandle{ID: directHandlePrefix + "new-session"}
 
 	if _, err := runtime.GetOutput(context.Background(), handle, 10); err != nil {
 		t.Fatal(err)
@@ -199,10 +199,10 @@ func TestDarwinRuntimeRoutesVersionedHandlesToDirectHost(t *testing.T) {
 	}
 }
 
-func TestDarwinRuntimeRestartPreservesBackend(t *testing.T) {
+func TestHybridRuntimeRestartPreservesBackend(t *testing.T) {
 	legacy := &restartableFakeBackend{}
 	direct := &fakeBackend{}
-	runtime := newDarwinRuntime(legacy, direct, nil)
+	runtime := newHybridRuntime(legacy, direct, nil, "Linux")
 	cfg := ports.RuntimeConfig{SessionID: "session-1"}
 
 	legacyHandle, err := runtime.Restart(context.Background(), ports.RuntimeHandle{ID: "session-1"}, cfg)
@@ -216,11 +216,11 @@ func TestDarwinRuntimeRestartPreservesBackend(t *testing.T) {
 		t.Fatalf("legacy restart calls = %v, handles = %v", legacy.calls, legacy.handles)
 	}
 
-	directHandle, err := runtime.Restart(context.Background(), ports.RuntimeHandle{ID: darwinDirectHandlePrefix + "session-1"}, cfg)
+	directHandle, err := runtime.Restart(context.Background(), ports.RuntimeHandle{ID: directHandlePrefix + "session-1"}, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if directHandle.ID != darwinDirectHandlePrefix+"session-1" {
+	if directHandle.ID != directHandlePrefix+"session-1" {
 		t.Fatalf("direct restart handle = %q", directHandle.ID)
 	}
 	if !reflect.DeepEqual(direct.calls, []string{"destroy", "create:session-1"}) {
@@ -231,14 +231,14 @@ func TestDarwinRuntimeRestartPreservesBackend(t *testing.T) {
 	}
 }
 
-func TestDarwinRuntimeRestartCanFallBackToTmux(t *testing.T) {
+func TestHybridRuntimeRestartCanFallBackToTmux(t *testing.T) {
 	legacy := &restartableFakeBackend{}
 	direct := &fakeBackend{createErr: errors.New("replacement host unavailable")}
-	runtime := newDarwinRuntime(legacy, direct, nil)
+	runtime := newHybridRuntime(legacy, direct, nil, "macOS")
 	cfg := ports.RuntimeConfig{SessionID: "session-1"}
 
 	handle, err := runtime.Restart(context.Background(), ports.RuntimeHandle{
-		ID: darwinDirectHandlePrefix + "session-1",
+		ID: directHandlePrefix + "session-1",
 	}, cfg)
 	if err != nil {
 		t.Fatal(err)
