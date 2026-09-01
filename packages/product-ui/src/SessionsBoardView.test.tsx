@@ -327,10 +327,10 @@ describe("SessionsBoardView", () => {
 					{
 						commentCount: 1,
 						number: 10,
-						reviewerAvatars: [
+						reviewers: [
 							{
-								login: "ada-lovelace",
-								url: "https://avatars.githubusercontent.com/u/1?v=4",
+								id: "ada-lovelace",
+								avatarUrl: "https://avatars.githubusercontent.com/u/1?v=4",
 							},
 						],
 						state: "open",
@@ -339,7 +339,7 @@ describe("SessionsBoardView", () => {
 					{
 						commentCount: 1,
 						number: 11,
-						reviewerAvatars: [{ login: "grace-hopper" }],
+						reviewers: [{ id: "grace-hopper" }],
 						state: "open",
 						url: "https://example.com/pull/11",
 					},
