@@ -533,7 +533,7 @@ function IconTabRow({ active, chrome, closeTitle, onClose, onSelect, onlyTab, ta
 			<button
 				aria-label={closeLabel}
 				className={cn(
-					"pointer-events-none absolute left-1/2 top-1/2 grid size-7 -translate-x-1/2 -translate-y-1/2 scale-90 place-items-center rounded-md",
+					"pointer-events-none absolute left-[calc(50%_-_0.5px)] top-1/2 grid size-7 -translate-x-1/2 -translate-y-1/2 scale-90 place-items-center rounded-md",
 					"bg-interactive-hover text-muted-foreground opacity-0",
 					"transition-[opacity,transform,background-color,color] duration-150 ease-out",
 					"hover:bg-interactive-active hover:text-foreground active:scale-95",
