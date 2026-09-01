@@ -123,7 +123,7 @@ describe("HarnessSettingsSection", () => {
 		expect(within(codexRow as HTMLElement).queryByRole("button", { name: "Login" })).not.toBeInTheDocument();
 	});
 
-	it("shows login, setup, instructions, unavailable, and authorized states", async () => {
+	it("shows login, setup, unavailable, and authorized states", async () => {
 		const rowCatalog = {
 			supported: [
 				{ id: "claude-code", label: "Claude Code" }, { id: "codex", label: "Codex" },
@@ -133,16 +133,19 @@ describe("HarnessSettingsSection", () => {
 				{ id: "claude-code", label: "Claude Code", authStatus: "authorized" },
 				{ id: "codex", label: "Codex", authStatus: "unauthorized" },
 				{ id: "aider", label: "Aider", authStatus: "unknown" },
-				{ id: "devin", label: "Devin", authStatus: "unknown" },
+				{ id: "devin", label: "Devin", authStatus: "authorized" },
 				{ id: "goose", label: "Goose", authStatus: "unknown" },
 			],
-			authorized: [{ id: "claude-code", label: "Claude Code", authStatus: "authorized" }],
+			authorized: [
+				{ id: "claude-code", label: "Claude Code", authStatus: "authorized" },
+				{ id: "devin", label: "Devin", authStatus: "authorized" },
+			],
 		};
 		const rowPlans = { plans: [
 			{ agentId: "claude-code", action: "login", available: true, documentationUrl: "https://example.test/claude" },
 			{ agentId: "codex", action: "login", available: true, documentationUrl: "https://example.test/codex" },
 			{ agentId: "aider", action: "setup", available: true, documentationUrl: "https://example.test/aider" },
-			{ agentId: "devin", action: "instructions", available: true, documentationUrl: "https://example.test/devin" },
+			{ agentId: "devin", action: "login", available: true, documentationUrl: "https://example.test/devin" },
 			{ agentId: "goose", action: "setup", available: false, reason: "goose is not on PATH", documentationUrl: "https://example.test/goose" },
 		] };
 		vi.mocked(apiClient.GET).mockImplementation(async (path) => {
@@ -170,7 +173,10 @@ describe("HarnessSettingsSection", () => {
 		expect(within(aiderRow).getByRole("button", { name: "Set up" })).toBeInTheDocument();
 		expect(within(aiderRow).getByRole("button", { name: "Check login" })).toBeInTheDocument();
 		expect(aiderRow).toHaveTextContent("Login status unknown");
-		expect(within(devinRow).getByRole("button", { name: "Instructions" })).toBeInTheDocument();
+		expect(within(devinRow).getAllByText("Logged in")).toHaveLength(2);
+		expect(within(devinRow).queryByRole("button", { name: "Instructions" })).not.toBeInTheDocument();
+		expect(within(devinRow).queryByRole("button", { name: "Login" })).not.toBeInTheDocument();
+		expect(within(devinRow).queryByRole("button", { name: "Check login" })).not.toBeInTheDocument();
 		expect(within(gooseRow).getByRole("button", { name: "Set up" })).toBeDisabled();
 		expect(gooseRow).toHaveTextContent("goose is not on PATH");
 	});

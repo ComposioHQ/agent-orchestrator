@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/authprobe"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -22,7 +23,7 @@ func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) 
 	} else if ok {
 		return status, nil
 	}
-	return ports.AgentAuthStatusUnknown, nil
+	return authprobe.CLIStatusWithTimeout(ctx, binary, [][]string{{"auth", "status"}}, 8*time.Second)
 }
 
 func devinLocalAuthStatus(ctx context.Context, binary string) (ports.AgentAuthStatus, bool, error) {

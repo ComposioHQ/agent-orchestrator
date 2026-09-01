@@ -25,7 +25,6 @@ func TestStartRejectsUnstartablePlans(t *testing.T) {
 	}{
 		{name: "unknown target", agentID: "not-a-harness", code: "AGENT_AUTH_TARGET_UNKNOWN"},
 		{name: "unavailable command", agentID: "codex", code: "AGENT_AUTH_UNAVAILABLE"},
-		{name: "instructions only", agentID: "devin", code: "AGENT_AUTH_INSTRUCTIONS_ONLY"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -38,6 +37,25 @@ func TestStartRejectsUnstartablePlans(t *testing.T) {
 	}
 	if opener.calls != 0 {
 		t.Fatalf("OpenCommandTerminal calls = %d, want 0", opener.calls)
+	}
+}
+
+func TestStartOpensDevinNativeLogin(t *testing.T) {
+	t.Parallel()
+
+	opener := &recordingTerminalOpener{}
+	svc := New(foundExecutable("devin"), opener)
+
+	_, err := svc.Start(context.Background(), "devin")
+	if err != nil {
+		t.Fatalf("Start(devin): %v", err)
+	}
+	want := shellterm.OpenCommandTerminalInput{
+		Argv:  []string{"/test/bin/devin", "auth", "login"},
+		Title: "Log in to Devin",
+	}
+	if !reflect.DeepEqual(opener.input, want) {
+		t.Fatalf("OpenCommandTerminal input = %#v, want %#v", opener.input, want)
 	}
 }
 
