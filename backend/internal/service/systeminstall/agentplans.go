@@ -112,11 +112,14 @@ func (s requestPlanner) agentMethodPlans(target Target) []Plan {
 			plans = []Plan{s.planNPM(target, "autohand-cli"), official}
 		}
 	case TargetKimchi:
-		manual := manualPlan(target, "Kimchi's release installer must be run manually; AO does not execute mutable remote installer scripts.", agentDocumentationURLs[target])
+		official := s.officialByOS(target,
+			"https://github.com/getkimchi/kimchi/releases/latest/download/install.sh", "sh",
+			"https://github.com/getkimchi/kimchi/releases/latest/download/install.ps1",
+			agentDocumentationURLs[target])
 		if s.goos == "darwin" {
-			plans = []Plan{s.planBrew(target, "getkimchi/tap/kimchi"), manual}
+			plans = []Plan{s.planBrew(target, "getkimchi/tap/kimchi"), official}
 		} else {
-			plans = []Plan{manual}
+			plans = []Plan{official}
 		}
 	case TargetVibe:
 		plans = []Plan{s.planUV(target, "mistral-vibe"), s.planPipx(target, "mistral-vibe")}
@@ -306,11 +309,14 @@ func (s requestPlanner) planAgent(target Target) Plan {
 		}
 		return withDocs(firstAvailable(preferred, s.planNPM(target, "autohand-cli")), "https://docs.autohand.ai/working-with-autohand-code/cli")
 	case TargetKimchi:
-		manual := manualPlan(target, "Kimchi's release installer must be run manually; AO does not execute mutable remote installer scripts.", agentDocumentationURLs[target])
+		official := s.officialByOS(target,
+			"https://github.com/getkimchi/kimchi/releases/latest/download/install.sh", "sh",
+			"https://github.com/getkimchi/kimchi/releases/latest/download/install.ps1",
+			agentDocumentationURLs[target])
 		if s.goos == "darwin" {
-			return withDocs(firstAvailable(s.planBrew(target, "getkimchi/tap/kimchi"), manual), agentDocumentationURLs[target])
+			return withDocs(firstAvailable(s.planBrew(target, "getkimchi/tap/kimchi"), official), agentDocumentationURLs[target])
 		}
-		return manual
+		return official
 	case TargetPrimeAgent:
 		if s.goos == "windows" {
 			return manualPlan(target, "Prime Agent currently documents macOS and Linux; use WSL on Windows.", "https://github.com/PrimeIntellect-ai/prime-agent/blob/main/packages/coding-agent/docs/quickstart.md")

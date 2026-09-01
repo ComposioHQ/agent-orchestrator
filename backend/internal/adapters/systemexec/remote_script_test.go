@@ -69,6 +69,38 @@ func TestRunInstallScriptAllowsFiveHTTPSRedirects(t *testing.T) {
 	}
 }
 
+func TestRunInstallScriptRejectsTooManyOrInsecureRedirects(t *testing.T) {
+	t.Parallel()
+	t.Run("more than five redirects", func(t *testing.T) {
+		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			step, _ := strconv.Atoi(r.URL.Query().Get("step"))
+			http.Redirect(w, r, "/?step="+strconv.Itoa(step+1), http.StatusFound)
+		}))
+		t.Cleanup(server.Close)
+		_, err := newAdapter(t.TempDir(), server.Client()).RunInstallScript(context.Background(), ports.InstallScriptCommand{
+			URL: server.URL + "/?step=0", Interpreter: []string{"sh"},
+		}, io.Discard, io.Discard)
+		if err == nil || !strings.Contains(err.Error(), "redirect limit") {
+			t.Fatalf("error = %v", err)
+		}
+	})
+
+	t.Run("HTTPS redirect to HTTP", func(t *testing.T) {
+		plain := httptest.NewServer(httpHandler("#!/bin/sh\nexit 0"))
+		t.Cleanup(plain.Close)
+		secure := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, plain.URL, http.StatusFound)
+		}))
+		t.Cleanup(secure.Close)
+		_, err := newAdapter(t.TempDir(), secure.Client()).RunInstallScript(context.Background(), ports.InstallScriptCommand{
+			URL: secure.URL, Interpreter: []string{"sh"},
+		}, io.Discard, io.Discard)
+		if err == nil || !strings.Contains(err.Error(), "redirect must remain HTTPS") {
+			t.Fatalf("error = %v", err)
+		}
+	})
+}
+
 func TestRunInstallScriptRejectsUnsafeDownloads(t *testing.T) {
 	t.Parallel()
 	t.Run("plain HTTP", func(t *testing.T) {

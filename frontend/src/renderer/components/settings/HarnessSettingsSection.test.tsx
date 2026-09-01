@@ -10,6 +10,7 @@ const catalog = {
 	supported: [
 		{ id: "claude-code", label: "Claude Code" },
 		{ id: "codex", label: "Codex" },
+		{ id: "cursor", label: "Cursor" },
 	],
 	installed: [{ id: "claude-code", label: "Claude Code" }],
 	authorized: [],
@@ -34,6 +35,11 @@ const plans = {
 			agentId: "aider", available: true, automatic: true, method: "pipx",
 			command: "pipx install aider-chat", documentationUrl: "https://aider.chat/docs/install.html",
 			methods: [{ id: "pipx", label: "pipx", available: true, recommended: true, command: "pipx install aider-chat" }],
+		},
+		{
+			agentId: "cursor", available: true, automatic: true, method: "official-installer",
+			command: "bash <downloaded from https://cursor.com/install>", documentationUrl: "https://cursor.com/cli",
+			methods: [{ id: "official-installer", label: "Official installer", available: true, recommended: true, command: "bash <downloaded from https://cursor.com/install>" }],
 		},
 	],
 };
@@ -99,6 +105,28 @@ describe("HarnessSettingsSection", () => {
 			params: { path: { agent: "codex" } },
 			body: { method: "homebrew" },
 		}));
+	});
+
+	it("starts an official vendor installer with one click and no instructions dialog", async () => {
+		vi.mocked(apiClient.POST).mockImplementation(async (path) => {
+			if (path === "/api/v1/agents/{agent}/install") {
+				return { data: { target: "cursor", status: "installing", method: "official-installer" } } as never;
+			}
+			return { data: undefined } as never;
+		});
+		const user = userEvent.setup();
+		renderSection();
+		const row = (await screen.findByText("Cursor")).closest('[data-agent="cursor"]') as HTMLElement;
+		await waitFor(() => expect(row).toHaveTextContent("Available via Official installer"));
+		expect(within(row).queryByRole("button", { name: "Instructions" })).not.toBeInTheDocument();
+
+		await user.click(within(row).getByRole("button", { name: "Install" }));
+
+		await waitFor(() => expect(apiClient.POST).toHaveBeenCalledWith("/api/v1/agents/{agent}/install", {
+			params: { path: { agent: "cursor" } },
+			body: { method: "official-installer" },
+		}));
+		expect(row).toHaveTextContent("Installing…");
 	});
 
 	it("does not treat a historical successful job as current installation inventory", async () => {

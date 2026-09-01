@@ -27,7 +27,7 @@ Automatic installers never use `sudo`, never inherit interactive stdin, and use 
 - npm methods require a supported Node/npm and a writable global prefix.
 - Python harnesses prefer `uv tool`, then `pipx`; raw global `pip` is not an automatic fallback.
 - Homebrew methods require a usable writable Homebrew installation.
-- Mutable `curl | shell` recipes are not executed automatically. Script-only vendors receive manual instructions unless they publish a pinned artifact with a verifiable checksum or signature.
+- Official HTTPS installer scripts may run automatically, but AO must download the complete response into its own bounded temporary directory first, record its SHA-256 digest, execute the saved file with a fixed interpreter argv and closed stdin, then remove it. AO never evaluates `curl | shell` pipelines.
 
 ### Diagnostics and recovery
 
@@ -43,7 +43,7 @@ The branch is updated from canonical `main`. For conflicts, current `main` owns 
 
 ## API shape
 
-- `GET /api/v1/agents/installers` returns harnesses with viable methods, recommended method, availability reason, and manual instructions when no automatic method is safe.
+- `GET /api/v1/agents/installers` returns harnesses with viable methods, recommended method, availability reason, and manual instructions only when no supported package-manager or official-installer method is available.
 - `GET /api/v1/agents/install-jobs` returns the latest durable job per harness.
 - `POST /api/v1/agents/{agent}/install` accepts `{ "method": "<server method id>" }`.
 - `GET /api/v1/agents/{agent}/install` remains available for a single job.

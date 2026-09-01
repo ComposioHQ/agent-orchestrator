@@ -160,6 +160,7 @@ func TestOfficialInstallerPlansAreAutomaticAndServerOwned(t *testing.T) {
 		{"windows", TargetKiro, []string{"powershell.exe"}, "https://cli.kiro.dev/install.ps1", "powershell.exe"},
 		{"linux", TargetMuse, []string{"bash"}, "https://dev.meta.ai/install.sh", "bash"},
 		{"windows", TargetAgy, []string{"pwsh"}, "https://antigravity.google/cli/install.ps1", "pwsh"},
+		{"linux", TargetKimchi, []string{"sh"}, "https://github.com/getkimchi/kimchi/releases/latest/download/install.sh", "sh"},
 		{"linux", TargetPrimeAgent, []string{"sh"}, "https://app.primeintellect.ai/prime-agent/install.sh", "sh"},
 	}
 	for _, tt := range tests {
@@ -175,6 +176,30 @@ func TestOfficialInstallerPlansAreAutomaticAndServerOwned(t *testing.T) {
 				t.Fatalf("remote plan exposed executable argv: %v", plan.Command)
 			}
 		})
+	}
+}
+
+func TestAgentInstallPlansNeverUseShellEvaluationOrSudo(t *testing.T) {
+	found := []string{"brew", "npm", "pnpm", "bun", "uv", "pipx", "winget", "bash", "sh", "pwsh.exe", "powershell.exe"}
+	for _, goos := range []string{"darwin", "linux", "windows"} {
+		s := newTestService(goos, found...)
+		planner, err := s.newRequestPlanner(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, target := range agentTargets {
+			for _, plan := range planner.agentMethodPlans(target) {
+				argv := append([]string(nil), plan.Command...)
+				if plan.Script != nil {
+					argv = append(argv, plan.Script.Interpreter...)
+				}
+				for _, arg := range argv {
+					if arg == "sudo" || arg == "-c" || arg == "-Command" || strings.Contains(arg, "|") {
+						t.Fatalf("%s/%s/%s contains shell-evaluated argument %q: %+v", goos, target, plan.Method, arg, plan)
+					}
+				}
+			}
+		}
 	}
 }
 
@@ -298,7 +323,7 @@ func TestHomebrewPlanFailsClosedWhenInstalledPackageProbeFails(t *testing.T) {
 }
 
 func TestKimchiUsesOnlyDocumentedInstallMethods(t *testing.T) {
-	s := newTestService("darwin", "brew", "npm")
+	s := newTestService("darwin", "brew", "npm", "sh")
 	s.installCapabilities = installCapabilitiesStub{homebrewPrefix: "/opt/homebrew", writable: true}
 	plans, err := s.AgentPlans(context.Background())
 	if err != nil {
@@ -318,6 +343,9 @@ func TestKimchiUsesOnlyDocumentedInstallMethods(t *testing.T) {
 			if method.ID == "npm" || strings.Contains(method.Command, "@kimchi-dev/cli") {
 				t.Fatalf("invalid Kimchi npm method remains: %+v", method)
 			}
+		}
+		if len(agent.Methods) != 2 || agent.Methods[1].ID != "official-installer" || !agent.Methods[1].Available {
+			t.Fatalf("Kimchi official installer missing: %+v", agent.Methods)
 		}
 		return
 	}

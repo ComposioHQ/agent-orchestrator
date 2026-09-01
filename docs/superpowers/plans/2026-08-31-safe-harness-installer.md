@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Never use `sudo` or automatic `curl | shell` execution.
+- Never use `sudo` or a `curl | shell` pipeline. Official HTTPS scripts must be downloaded completely with size, redirect, and timeout bounds before AO executes the saved file with a fixed interpreter.
 - Installer stdin is closed and recipes use noninteractive modes where supported.
 - The client sends only a server-issued method identifier, never argv or shell text.
 - Verification resolves the exact binary through the canonical harness adapter and does not probe authentication.
@@ -71,10 +71,10 @@
 - Produces: stable `InstallMethod.ID`, `Recommended`, `ExpectedDestination`, and viability diagnostics
 - Produces: a command execution request that explicitly closes stdin and carries a controlled environment
 
-- [ ] Add table tests proving script-only recipes are manual, Vibe prefers `uv tool` then `pipx`, npm requires a writable prefix, unsupported methods report why, and no argv contains `sudo` or a shell pipeline.
+- [ ] Add table tests proving official script recipes use the bounded downloader, Vibe prefers `uv tool` then `pipx`, npm requires a writable prefix, unsupported methods report why, and no executable argv contains `sudo`, `-c`, or a shell pipeline.
 - [ ] Add adapter tests proving installer commands receive closed stdin, bounded context, and noninteractive environment.
-- [ ] Run the focused tests and confirm failures against the old first-available and `curl | shell` behavior.
-- [ ] Implement explicit viable-method discovery and remove raw pip plus mutable official-script execution.
+- [ ] Run the focused tests and confirm failures against the old first-available and direct `curl | shell` behavior.
+- [ ] Implement explicit viable-method discovery, remove raw pip, and route official scripts through the bounded download-to-file runner.
 - [ ] Implement the narrow execution request without changing unrelated command runners.
 - [ ] Rerun the focused tests and commit as `fix: make harness install methods capability aware`.
 
