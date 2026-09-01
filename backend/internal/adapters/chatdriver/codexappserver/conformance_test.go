@@ -177,6 +177,13 @@ func TestGeneratedProtocolMatchesTheInstalledProvider(t *testing.T) {
 		t.Skipf("provider declined to emit its schema (%v): %s", err, out)
 	}
 
+	// An older provider is always missing methods that later builds added, so the
+	// comparison below has to know which case it is looking at before it can call a
+	// gap drift.
+	installedOut, installedErr := exec.Command(bin, "--version").CombinedOutput()
+	olderProvider := installedErr == nil &&
+		providerOlderThanGenerated(string(installedOut), codexproto.ProviderVersion)
+
 	live := methodsFromSchema(t, dir)
 	generated := map[string]bool{}
 	for _, m := range codexproto.Methods {
@@ -204,11 +211,36 @@ func TestGeneratedProtocolMatchesTheInstalledProvider(t *testing.T) {
 			len(missing), truncate(missing))
 	}
 	// A method AO's generated file has and the provider does not is the dangerous
-	// direction: any call to it fails at runtime.
-	if len(extra) > 0 {
+	// direction: any call to it fails at runtime. That only means drift when the
+	// provider is at least the build this file was generated from. On an older
+	// provider the same gap just means the developer has not updated codex, which is
+	// not a defect in the checkout and must not fail the suite.
+	switch {
+	case len(extra) > 0 && olderProvider:
+		t.Logf("installed provider (%s) predates the generated %q, so it does not declare "+
+			"%d method(s) this file has; update codex or regenerate to compare them: %v",
+			strings.TrimSpace(string(installedOut)), codexproto.ProviderVersion,
+			len(extra), truncate(extra))
+	case len(extra) > 0:
 		t.Errorf("generated protocol declares %d method(s) the installed provider does not: %v",
 			len(extra), truncate(extra))
 	}
+}
+
+// providerOlderThanGenerated reports whether the installed provider predates the
+// build the generated file describes. Unparseable output on either side reports
+// false, which keeps the strict comparison: a version that cannot be read is not
+// evidence that the gap is benign.
+func providerOlderThanGenerated(installedVersionOutput, generatedProviderVersion string) bool {
+	installed, ok := parseCodexVersion(installedVersionOutput)
+	if !ok {
+		return false
+	}
+	generated, ok := parseCodexVersion(generatedProviderVersion)
+	if !ok {
+		return false
+	}
+	return installed.less(generated)
 }
 
 func methodsFromSchema(t *testing.T, dir string) map[string]bool {
@@ -315,5 +347,52 @@ func TestRealtimeStaysUnreachableUntilTheProviderPublishesAnEntryPoint(t *testin
 			"Voice is buildable — see this test's comment for what that entails. "+
 			"Regenerate the protocol and decide whether to take it on; if not, "+
 			"record the decision here so this stops reporting it.", startable)
+	}
+}
+
+func TestProviderOlderThanGenerated(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		installed string
+		generated string
+		want      bool
+	}{
+		{
+			name:      "older patch is older",
+			installed: "codex-cli 0.142.5",
+			generated: "codex-cli 0.146.0",
+			want:      true,
+		},
+		{
+			name:      "same build is not older",
+			installed: "codex-cli 0.146.0",
+			generated: "codex-cli 0.146.0",
+			want:      false,
+		},
+		{
+			name:      "newer build is not older",
+			installed: "codex-cli 0.147.1",
+			generated: "codex-cli 0.146.0",
+			want:      false,
+		},
+		{
+			name:      "unreadable installed output keeps the strict comparison",
+			installed: "codex-cli unknown",
+			generated: "codex-cli 0.146.0",
+			want:      false,
+		},
+		{
+			name:      "unreadable generated version keeps the strict comparison",
+			installed: "codex-cli 0.142.5",
+			generated: "unknown",
+			want:      false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := providerOlderThanGenerated(tc.installed, tc.generated); got != tc.want {
+				t.Errorf("providerOlderThanGenerated(%q, %q) = %v; want %v",
+					tc.installed, tc.generated, got, tc.want)
+			}
+		})
 	}
 }
