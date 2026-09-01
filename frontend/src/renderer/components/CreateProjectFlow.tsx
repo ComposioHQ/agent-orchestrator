@@ -92,7 +92,8 @@ export function CreateProjectFlow({
 		let active = true;
 		void aoBridge.app.getHomeDirectory().then((homeDirectory) => {
 			if (!active || !homeDirectory) return;
-			setCloneDetails((current) => current.destinationParent ? current : { ...current, destinationParent: homeDirectory });
+			const defaultDestination = `${homeDirectory.replace(/[\\/]+$/, "")}/.ao`;
+			setCloneDetails((current) => current.destinationParent ? current : { ...current, destinationParent: defaultDestination });
 		});
 		return () => {
 			active = false;
