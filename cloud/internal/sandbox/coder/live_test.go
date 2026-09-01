@@ -204,7 +204,7 @@ func assertLiveDurableState(
 		_ = connection.CloseNow()
 		<-outputDone
 	}()
-	output, err := readBootstrapResult(ctx, outputChannel)
+	output, err := readBootstrapResult(ctx, outputChannel, bootstrapResultWait)
 	if err != nil || !strings.Contains(output, bootstrapOK) {
 		t.Fatalf("durable repository/harness state did not survive stop/start: %s: %v", sanitizePTYOutput(output), err)
 	}

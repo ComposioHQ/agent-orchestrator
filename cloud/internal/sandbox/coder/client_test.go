@@ -443,6 +443,23 @@ func TestWaitForBootstrapReadyRejectsPrematureClose(t *testing.T) {
 	}
 }
 
+func TestReadBootstrapResultTimesOut(t *testing.T) {
+	t.Parallel()
+
+	output := make(chan ptyOutput)
+	started := time.Now()
+	result, err := readBootstrapResult(context.Background(), output, 10*time.Millisecond)
+	if err == nil || !strings.Contains(err.Error(), "did not report the worker bootstrap result") {
+		t.Fatalf("readBootstrapResult error = %v, want bounded-result error", err)
+	}
+	if result != "" {
+		t.Fatalf("readBootstrapResult output = %q, want empty", result)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("readBootstrapResult elapsed = %s, want bounded wait", elapsed)
+	}
+}
+
 func TestBootstrapThroughPTYCancellationStopsOutput(t *testing.T) {
 	t.Parallel()
 

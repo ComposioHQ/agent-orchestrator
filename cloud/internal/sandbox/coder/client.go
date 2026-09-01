@@ -42,6 +42,7 @@ const (
 	bootstrapFailed     = "__AO_BOOTSTRAP_FAILED__"
 	bootstrapUploadACK  = "__AO_UPLOAD_ACK__"
 	bootstrapUploadDone = "__AO_UPLOAD_DONE__"
+	bootstrapResultWait = 2 * time.Minute
 )
 
 var userPattern = regexp.MustCompile(`^[a-z_][a-z0-9_-]{0,31}$`)
@@ -478,7 +479,7 @@ func (c *Client) bootstrapThroughPTY(ctx context.Context, ptyURL *url.URL, encod
 		fmt.Sprintf("done:%d:0:\n", sequence), bootstrapUploadDone); err != nil {
 		return err
 	}
-	result, err := readBootstrapResult(ctx, output)
+	result, err := readBootstrapResult(ctx, output, bootstrapResultWait)
 	if err != nil {
 		return err
 	}
@@ -751,12 +752,16 @@ func streamPTYOutput(ctx context.Context, reader io.Reader) (<-chan ptyOutput, <
 	return result, done
 }
 
-func readBootstrapResult(ctx context.Context, output <-chan ptyOutput) (string, error) {
+func readBootstrapResult(ctx context.Context, output <-chan ptyOutput, timeout time.Duration) (string, error) {
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
 	var result strings.Builder
 	for {
 		select {
 		case <-ctx.Done():
 			return result.String(), ctx.Err()
+		case <-timer.C:
+			return result.String(), errors.New("coder: workspace PTY did not report the worker bootstrap result")
 		case value, ok := <-output:
 			if !ok {
 				return result.String(), io.EOF
