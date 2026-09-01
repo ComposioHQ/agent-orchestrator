@@ -160,6 +160,8 @@ function PersistentBrowserPanelView({
 describe("BrowserPanel", () => {
 	const annotationSubmitListeners = new Set<(payload: BrowserAnnotationSubmitPayload) => void>();
 	const annotationCancelListeners = new Set<(payload: BrowserAnnotationCancelPayload) => void>();
+	let focusLocationListener: ((viewId: string) => void) | undefined;
+	let reopenClosedTabListener: ((viewId: string) => void) | undefined;
 	const pageFocusListeners = new Set<(viewId: string) => void>();
 
 	beforeEach(() => {
@@ -206,6 +208,20 @@ describe("BrowserPanel", () => {
 				annotationCancelListeners.delete(listener);
 			};
 		});
+		window.ao!.browser.notifyPanelUsed = vi.fn();
+		window.ao!.browser.notifyPanelBlur = vi.fn();
+		window.ao!.browser.onFocusLocation = vi.fn((listener: (viewId: string) => void) => {
+			focusLocationListener = listener;
+			return () => {
+				if (focusLocationListener === listener) focusLocationListener = undefined;
+			};
+		});
+		window.ao!.browser.onReopenClosedTab = vi.fn((listener: (viewId: string) => void) => {
+			reopenClosedTabListener = listener;
+			return () => {
+				if (reopenClosedTabListener === listener) reopenClosedTabListener = undefined;
+			};
+		});
 		hookState.previewUrl = undefined;
 		hookState.tabs = [{ id: "t1", url: "", title: "", active: true }];
 		hookState.activeTabId = "t1";
@@ -228,6 +244,31 @@ describe("BrowserPanel", () => {
 		await userEvent.type(input, "localhost:5173{Enter}");
 
 		expect(hookState.navigate).toHaveBeenCalledWith("localhost:5173");
+	});
+
+	it("marks browser UI as used and focuses the address bar for a matching shortcut request", async () => {
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+		const input = screen.getByRole("textbox", { name: /browser url/i }) as HTMLInputElement;
+		input.value = "http://localhost:5173/path";
+
+		act(() => focusLocationListener?.("42:sess-1"));
+
+		expect(input).toHaveFocus();
+		expect(input.selectionStart).toBe(0);
+		expect(input.selectionEnd).toBe(input.value.length);
+		expect(window.ao!.browser.notifyPanelUsed).toHaveBeenCalledWith("42:sess-1");
+	});
+
+	it("reopens the most recently closed tab for a matching shortcut request", () => {
+		hookState.closedTabs = [
+			{ id: "latest", url: "http://localhost:5173/latest", title: "Latest" },
+			{ id: "older", url: "http://localhost:5173/older", title: "Older" },
+		];
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		act(() => reopenClosedTabListener?.("42:sess-1"));
+
+		expect(hookState.reopenClosedTab).toHaveBeenCalledWith();
 	});
 
 	it("shows only the site address until the URL input is focused", () => {

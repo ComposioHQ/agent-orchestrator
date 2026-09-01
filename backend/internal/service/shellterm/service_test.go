@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"runtime"
 	"testing"
 	"time"
 
@@ -234,6 +235,32 @@ func TestOpenShellTerminalStartsLoginShellInProjectRoot(t *testing.T) {
 	}
 	if len(st.records) != 1 || st.records[0].AppRunID != testAppRunID {
 		t.Fatalf("record not persisted against the current app run: %+v", st.records)
+	}
+}
+
+func TestOpenShellTerminalRejectsUnavailableWindowsShell(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows shell selection only applies on Windows")
+	}
+	t.Setenv("PATH", "")
+	t.Setenv("ComSpec", "")
+	rt := newFakeShellRuntime()
+	st := &fakeShellTerminalStore{}
+	svc := newTestService(rt, st, nil)
+
+	_, err := svc.OpenShellTerminal(context.Background(), OpenShellTerminalInput{Shell: `C:\missing\shell.exe`})
+	if err == nil {
+		t.Fatal("OpenShellTerminal succeeded for an unavailable shell")
+	}
+	var apiErr *apierr.Error
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("error = %v, want API error", err)
+	}
+	if apiErr.Code != "SHELL_TERMINAL_SHELL_UNAVAILABLE" {
+		t.Fatalf("error code = %q, want SHELL_TERMINAL_SHELL_UNAVAILABLE", apiErr.Code)
+	}
+	if len(rt.created) != 0 {
+		t.Fatal("runtime was created despite an unavailable shell")
 	}
 }
 

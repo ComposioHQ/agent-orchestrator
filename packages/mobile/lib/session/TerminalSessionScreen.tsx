@@ -617,7 +617,7 @@ export default function TerminalScreen() {
 	const [preview, setPreview] = useState<{ entry: string; url: string } | null>(null);
 	const previewWebRef = useRef<WebView>(null);
 
-	const { sessions, orchestrators, restore, refresh } = useApp();
+	const { sessions, orchestrators, restore, refresh, config: activeConfig } = useApp();
 	const known = sessions.find((s) => s.id === sessionId) ?? orchestrators.find((o) => o.id === sessionId) ?? null;
 	// Runtime handles are opaque. Native macOS PTYs are versioned (ptyhost-v1:),
 	// so using the session id here would incorrectly route the attach to legacy
@@ -740,10 +740,21 @@ export default function TerminalScreen() {
 	}, [navigation, id, leave, params.title, shellOnly]);
 
 	// Load config, then connect the mux socket.
+	// Rebuilt whenever the active endpoint changes, not only when the session
+	// does. The app re-races its endpoints when the network moves — losing
+	// Wi-Fi hands the session to Tailscale or the tunnel — and a mux still
+	// pointed at the previous address stays disconnected on a blank screen
+	// until the screen is closed and reopened.
+	const activeBaseUrl = activeConfig
+		? `${activeConfig.secure ? "https" : "http"}://${activeConfig.host}:${activeConfig.httpPort}`
+		: "";
+
 	useEffect(() => {
 		let disposed = false;
 		(async () => {
-			const config = await loadConfig();
+			// Prefer the endpoint the race settled on; fall back to storage on the
+			// first render, before the store has resolved one.
+			const config = activeConfig ?? (await loadConfig());
 			if (disposed) return;
 			setCfg(config);
 			if (!isConfigured(config)) return;
@@ -790,7 +801,11 @@ export default function TerminalScreen() {
 			xtermReadyRef.current = false;
 			pendingOutputRef.current = [];
 		};
-	}, [terminalHandleId]);
+		// activeBaseUrl, not activeConfig: the object identity changes on every
+		// resolve, and rebuilding the mux on each one would tear down a healthy
+		// terminal for no reason.
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [terminalHandleId, activeBaseUrl]);
 
 	useLayoutEffect(() => {
 		xtermReadyRef.current = false;

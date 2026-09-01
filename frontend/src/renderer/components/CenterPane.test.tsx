@@ -927,7 +927,36 @@ describe("CenterPane toolbar session label", () => {
 		expect(tabLabels()).toEqual(["do the thing", "agent-orchestrator-0", "Reviewer", "agent-orchestrator-1"]);
 	});
 
-	it("drops a session's remembered terminal order after navigating away", () => {
+	it("appends new terminals after open files and reorders terminals with files", () => {
+		Object.defineProperty(HTMLElement.prototype, "scrollTo", {
+			configurable: true,
+			value: vi.fn(),
+		});
+		const shells = makeShells(2);
+		const fileTab = {
+			key: "file:.gitignore",
+			content: <button role="tab">.gitignore</button>,
+			onSelect: vi.fn(),
+		};
+		const view = renderCenterPane({ session: worker, shellTerminals: [shells[0]], workspaceTabs: [fileTab] });
+		const tabLabels = () =>
+			Array.from(screen.getByRole("tablist", { name: "Open terminals" }).querySelectorAll('[role="tab"]')).map(
+				(tab) => tab.textContent,
+			);
+
+		expect(tabLabels()).toEqual(["do the thing", "agent-orchestrator-0", ".gitignore"]);
+		view.rerender(
+			<TooltipProvider>
+				<CenterPane daemonReady session={worker} shellTerminals={shells} theme="dark" workspaceTabs={[fileTab]} />
+			</TooltipProvider>,
+		);
+		expect(tabLabels()).toEqual(["do the thing", "agent-orchestrator-0", ".gitignore", "agent-orchestrator-1"]);
+
+		act(() => reorderMocks.onReorder?.(["file:.gitignore", "h-1", "h-0"]));
+		expect(tabLabels()).toEqual(["do the thing", ".gitignore", "agent-orchestrator-1", "agent-orchestrator-0"]);
+	});
+
+	it("restores a session's remembered tab order after navigating away", () => {
 		const shells = makeShells(2);
 		const view = renderCenterPane({ session: worker, shellTerminals: shells });
 		const tabLabels = () =>
@@ -949,7 +978,7 @@ describe("CenterPane toolbar session label", () => {
 			</TooltipProvider>,
 		);
 
-		expect(tabLabels()).toEqual(["do the thing", "agent-orchestrator-0", "agent-orchestrator-1"]);
+		expect(tabLabels()).toEqual(["do the thing", "agent-orchestrator-1", "agent-orchestrator-0"]);
 	});
 
 	it("scrolls the tab strip horizontally with the mouse wheel", () => {
