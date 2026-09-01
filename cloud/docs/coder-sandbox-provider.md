@@ -43,13 +43,38 @@ Coder nor the workspace needs inbound connectivity from the AO desktop app.
 ## Template contract
 
 The approved template must create a Linux workspace with at least one
-`coder_agent`. The normal workspace user must have passwordless `sudo` for the
-pilot bootstrap. AO uses it to:
+`coder_agent` and one persistent volume mount dedicated to workspace state.
+Configure that exact mount point with `AO_CLOUD_CODER_DURABLE_ROOT`; it is not
+assumed to be `/home/coder`. The root must be an absolute, normalized, non-root
+path, must exist as a non-symlink mount point, and must survive Coder `stop` then
+`start`. The template must include the `mountpoint` utility so bootstrap can
+verify the contract before writing state.
+
+AO derives every stateful path beneath that root:
+
+| State | Path relative to the durable root |
+| --- | --- |
+| Repository and uncommitted files | `repository` |
+| AO worker token, Git helper, sockets, and logs | `.ao/worker` |
+| Worker `HOME` | `.ao/home` |
+| Claude Code configuration and conversations | `.ao/home/.claude` |
+| Codex configuration and conversations | `.ao/home/.codex` |
+| AO/Coder restore identity | `.ao/durable-session-id` |
+
+The durable root is stamped into each session's provider plan, so changing the
+deployment setting does not move existing sessions. A first bootstrap writes a
+session identity marker; a bootstrap after stop/start must find the same marker
+or it fails instead of silently launching a fresh agent against an empty
+filesystem.
+
+The normal workspace user must have passwordless `sudo` for the pilot
+bootstrap. AO uses it to:
 
 - create the unprivileged `ao-worker` OS user;
 - install the release-pinned `ao-worker` and AO helper binaries under
   `/usr/local/bin`;
-- create and assign `/workspace` to the worker user; and
+- create and assign only the derived repository and `.ao` directories to the
+  worker user; and
 - launch the worker, which then dials the AO service plane and sends its own
   heartbeats.
 
@@ -80,6 +105,7 @@ AO_CLOUD_CODER_OWNER=ao-integration
 AO_CLOUD_CODER_TEMPLATE_ID=<approved-template-uuid>
 AO_CLOUD_CODER_AGENT_NAME=<optional-agent-name>
 AO_CLOUD_CODER_PARAMETERS_JSON={"instance_type":"t3.medium","region":"us-west-2"}
+AO_CLOUD_CODER_DURABLE_ROOT=<template-persistent-volume-mount>
 AO_CLOUD_CODER_WORKER_TOKEN_TTL=15m
 ```
 
@@ -107,9 +133,30 @@ Secrets Manager JSON document (`ao-cloud/staging/coder` or
   "template_id": "<approved-template-uuid>",
   "agent_name": "",
   "parameters_json": "{}",
+  "durable_root": "/template-specific/persistent-mount",
   "worker_token_ttl": "15m"
 }
 ```
+
+Before enabling idle pause for a Coder template, run the opt-in lifecycle test
+against that exact template and root. It creates a disposable workspace, writes
+the durable session marker plus representative repository, Claude, and Codex
+state, stops and starts the workspace, requires the original marker during
+restore bootstrap, and deletes the workspace:
+
+```bash
+cd cloud
+CODER_LIVE_URL=https://coder.customer.example \
+CODER_LIVE_TOKEN=... \
+CODER_LIVE_OWNER=ao-integration \
+CODER_LIVE_TEMPLATE_ID=... \
+CODER_LIVE_DURABLE_ROOT=/template-specific/persistent-mount \
+go test ./internal/sandbox/coder -run TestLiveLifecycle -count=1 -v
+```
+
+Set `CODER_LIVE_AGENT_NAME` and `CODER_LIVE_PARAMETERS_JSON` when the approved
+template requires them. Do not treat a successful workspace start alone as a
+persistence check; the restore bootstrap is the gate.
 
 Grant the environment's ECS execution role `secretsmanager:GetSecretValue` on
 that secret, then deploy staging with `AO_CLOUD_SANDBOX_PROVIDER=coder`. The
