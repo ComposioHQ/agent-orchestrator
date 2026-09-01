@@ -18,7 +18,7 @@ function initials(name: string): string {
 		.join("") || "?";
 }
 
-/** Shared avatar rendering: initials remain until the image loads, then return on error. */
+/** A provider-neutral avatar that keeps its initials visible until the image is usable. */
 export function UserAvatar({ name, imageUrl, className }: UserAvatarProps) {
 	const normalizedName = name.replace(/^@/, "").trim();
 	const normalizedImageUrl = imageUrl?.trim() ?? "";

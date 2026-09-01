@@ -1,14 +1,14 @@
+import { scmUserAvatarUrl } from "./scm-avatar";
 import { UserAvatar } from "./UserAvatar";
 
 export type GithubAvatarProps = {
 	login: string;
+	avatarUrl?: string;
 	className?: string;
 };
 
-export function GithubAvatar({ login, className }: GithubAvatarProps) {
+export function GithubAvatar({ login, avatarUrl, className }: GithubAvatarProps) {
 	const normalizedLogin = login.replace(/^@/, "").trim();
-	const avatarURL = normalizedLogin
-		? `https://avatars.githubusercontent.com/${encodeURIComponent(normalizedLogin)}?size=64`
-		: "";
-	return <UserAvatar className={className} imageUrl={avatarURL} name={normalizedLogin} />;
+	const imageUrl = avatarUrl?.trim() || scmUserAvatarUrl("github", "https://github.com", normalizedLogin);
+	return <UserAvatar className={className} imageUrl={imageUrl} name={normalizedLogin} />;
 }

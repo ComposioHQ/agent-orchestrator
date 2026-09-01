@@ -28,8 +28,8 @@ import {
 	type ProductUITranslator,
 } from "./session-presentation";
 import type { KanbanColumn, SessionActivity, SessionStatus } from "./session-models";
-import { cn } from "./utils";
 import { UserAvatar } from "./UserAvatar";
+import { cn } from "./utils";
 
 export type BoardSessionPresentation = {
 	activity?: SessionActivity;
@@ -71,15 +71,15 @@ export type BoardSessionStatusPresentation = {
 
 export type BoardPullRequestState = "closed" | "open" | "draft" | "merged";
 
-export type BoardReviewerAvatar = {
-	login: string;
-	url?: string;
+export type BoardReviewerPresentation = {
+	id: string;
+	avatarUrl?: string;
 };
 
 export type BoardPullRequestPresentation = {
 	commentCount?: number;
 	number: number;
-	reviewerAvatars?: BoardReviewerAvatar[];
+	reviewers?: BoardReviewerPresentation[];
 	state: BoardPullRequestState;
 	url: string;
 };
@@ -430,13 +430,14 @@ function BoardPullRequestGroup({
 			<span className="sr-only">{statusLabel}</span>
 			{hasComments ? (
 				<div className="-ml-0.5 flex shrink-0 items-center pl-1">
-					{(pr.reviewerAvatars ?? [])
+					{(pr.reviewers ?? [])
 						.slice(0, 3)
-						.map((avatar, index) => (
-							<ReviewerAvatar
-								avatar={avatar}
-								className={index > 0 ? "-ml-1.5" : undefined}
-								key={`${avatar.login}-${index}`}
+						.map((reviewer, index) => (
+							<UserAvatar
+								className={cn("size-5 rounded-full border-2 border-surface object-cover ring-1 ring-border", index > 0 && "-ml-1.5")}
+								imageUrl={reviewer.avatarUrl}
+								key={`${reviewer.id}-${index}`}
+								name={reviewer.id}
 							/>
 						))}
 				</div>
@@ -458,10 +459,6 @@ function BoardPullRequestGroup({
 			})}
 		</div>
 	);
-}
-
-function ReviewerAvatar({ avatar, className }: { avatar: BoardReviewerAvatar; className?: string }) {
-	return <UserAvatar className={cn("size-5 border-2 border-surface ring-1 ring-border text-[9px]", className)} imageUrl={avatar.url} name={avatar.login} />;
 }
 
 function PullRequestLifecycleIcon({ state }: { state: BoardPullRequestState }) {
