@@ -1489,22 +1489,74 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 	let portConfirmed = false;
 	let runFileTimer: ReturnType<typeof setInterval> | undefined;
 	let fallbackTimer: ReturnType<typeof setTimeout> | undefined;
+	let readinessTimer: ReturnType<typeof setTimeout> | undefined;
+	let readinessPollingStopped = false;
 
-	const stopDiscovery = () => {
+	const stopPortDiscovery = () => {
 		if (runFileTimer) clearInterval(runFileTimer);
 		runFileTimer = undefined;
 		if (fallbackTimer) clearTimeout(fallbackTimer);
 		fallbackTimer = undefined;
 	};
 
-	const reportBoundPort = (port: number) => {
-		if (portConfirmed || daemonProcess !== child || daemonStoppingProcess === child) return;
-		portConfirmed = true;
-		stopDiscovery();
-		setDaemonStatus({ state: "ready", port });
+	const stopDiscovery = () => {
+		stopPortDiscovery();
+		readinessPollingStopped = true;
+		if (readinessTimer) clearTimeout(readinessTimer);
+		readinessTimer = undefined;
+	};
 
-		// Establish the OS-native liveness link on the spawn path (we own this
-		// daemon). Holding the connection keeps the daemon alive; when Electron
+	const childIsCurrent = () =>
+		daemonProcess === child && daemonStoppingProcess !== child && startEpoch === daemonStartEpoch;
+
+	const pollReadiness = async (port: number): Promise<void> => {
+		if (readinessPollingStopped || !childIsCurrent()) return;
+
+		const ready = await readDaemonProbe(port, "readyz");
+		// The probe can outlive an explicit stop, restart, or child exit. Never let
+		// that stale completion publish readiness for a different daemon generation.
+		if (readinessPollingStopped || !childIsCurrent()) return;
+		if (!ready) {
+			readinessTimer = setTimeout(() => {
+				readinessTimer = undefined;
+				void pollReadiness(port);
+			}, RUN_FILE_POLL_MS);
+			return;
+		}
+
+		readinessPollingStopped = true;
+		const identityMessage = daemonIdentityError(launch, ready);
+		if (identityMessage) {
+			setDaemonStatus({
+				state: "error",
+				port,
+				pid: ready.pid,
+				executablePath: ready.executablePath,
+				workingDirectory: ready.workingDirectory,
+				message: identityMessage,
+				code: "identity_mismatch",
+			});
+			return;
+		}
+
+		setDaemonStatus({
+			state: "ready",
+			port,
+			pid: ready.pid,
+			executablePath: ready.executablePath,
+			workingDirectory: ready.workingDirectory,
+		});
+	};
+
+	const reportBoundPort = (port: number) => {
+		if (portConfirmed || !childIsCurrent()) return;
+		portConfirmed = true;
+		stopPortDiscovery();
+		setDaemonStatus({ state: "starting", port });
+
+		// Establish the OS-native liveness link as soon as the listener is bound,
+		// before startup recovery can exceed the daemon's supervisor grace period.
+		// Holding the connection keeps the daemon alive; when Electron
 		// exits for any reason, the OS closes the fd and the daemon detects EOF,
 		// then self-stops after its ~5s grace period. The attach paths link only
 		// when the daemon is app-owned (see establishSupervisorLink +
@@ -1522,6 +1574,7 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 		if (!keep) {
 			establishSupervisorLink();
 		}
+		void pollReadiness(port);
 	};
 
 	// One scanner per stream: each keeps its own partial-line buffer.
@@ -1564,8 +1617,8 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 
 	// Neither source confirmed startup yet. The child is still alive and both
 	// discovery mechanisms remain active, so surface this as slow progress rather
-	// than a failure. A later listen line or running.json handshake still moves
-	// the same launch to ready.
+	// than a failure. A later listen line or running.json handshake confirms the
+	// port, after which /readyz polling tracks startup recovery to completion.
 	fallbackTimer = setTimeout(() => {
 		if (portConfirmed || daemonProcess !== child || daemonStoppingProcess === child) return;
 		// Keep running.json polling alive after surfacing slow startup. In

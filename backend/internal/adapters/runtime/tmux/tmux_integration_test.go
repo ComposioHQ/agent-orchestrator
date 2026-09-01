@@ -146,25 +146,26 @@ func TestRuntimeIntegrationLegacyDefaultSocketIgnoresInheritedTMUX(t *testing.T)
 	legacyID := strings.ReplaceAll(t.Name(), "/", "_") + "_legacy"
 	spoofID := strings.ReplaceAll(t.Name(), "/", "_") + "_spoof"
 	privateID := strings.ReplaceAll(t.Name(), "/", "_") + "_private"
+	runFile := filepath.Join(tmuxTmpDir, "running.json")
 	for _, socketName := range []string{"default", "spoof", "ao"} {
 		t.Cleanup(func() {
 			_ = exec.Command(systemTmux, "-L", socketName, "kill-server").Run()
 		})
 	}
-	start := func(socketName, sessionID string) {
+	start := func(socketName, sessionID, command string) {
 		t.Helper()
 		if out, startErr := exec.Command(
 			systemTmux,
 			"-L", socketName,
 			"new-session", "-d", "-s", sessionID,
-			"sleep 30",
+			command,
 		).CombinedOutput(); startErr != nil {
 			t.Fatalf("start tmux -L %s: %v: %s", socketName, startErr, out)
 		}
 	}
-	start("default", legacyID)
-	start("spoof", spoofID)
-	start("ao", privateID)
+	start("default", legacyID, ownedPaneCommand(runFile, legacyID, "launch-1"))
+	start("spoof", spoofID, "sleep 30")
+	start("ao", privateID, "sleep 30")
 
 	spoofIdentity, err := exec.Command(
 		systemTmux,
@@ -183,6 +184,7 @@ func TestRuntimeIntegrationLegacyDefaultSocketIgnoresInheritedTMUX(t *testing.T)
 		Binary:       systemTmux,
 		LegacyBinary: systemTmux,
 		SocketName:   "ao",
+		RunFilePath:  runFile,
 		Timeout:      5 * time.Second,
 	})
 	alive, err := r.IsAlive(context.Background(), ports.RuntimeHandle{ID: legacyID})
@@ -213,6 +215,7 @@ func TestRuntimeIntegrationAdoptsLegacyDefaultWhenNamedSocketDoesNotExist(t *tes
 	t.Cleanup(func() { _ = os.RemoveAll(tmuxTmpDir) })
 	t.Setenv("TMUX_TMPDIR", tmuxTmpDir)
 	legacyID := strings.ReplaceAll(t.Name(), "/", "_") + "_legacy"
+	runFile := filepath.Join(tmuxTmpDir, "running.json")
 	for _, socketName := range []string{"default", "ao"} {
 		t.Cleanup(func() {
 			_ = exec.Command(systemTmux, "-L", socketName, "kill-server").Run()
@@ -222,7 +225,7 @@ func TestRuntimeIntegrationAdoptsLegacyDefaultWhenNamedSocketDoesNotExist(t *tes
 		systemTmux,
 		"-L", "default",
 		"new-session", "-d", "-s", legacyID,
-		"sh",
+		ownedPaneCommand(runFile, legacyID, "launch-1"),
 	).CombinedOutput(); startErr != nil {
 		t.Fatalf("start legacy tmux session: %v: %s", startErr, out)
 	}
@@ -238,6 +241,7 @@ func TestRuntimeIntegrationAdoptsLegacyDefaultWhenNamedSocketDoesNotExist(t *tes
 		Binary:       systemTmux,
 		LegacyBinary: systemTmux,
 		SocketName:   "ao",
+		RunFilePath:  runFile,
 		Timeout:      5 * time.Second,
 	})
 	r.enterDelay = 0
@@ -274,6 +278,7 @@ func TestRuntimeIntegrationAdoptsHistoricalPrivateSocket(t *testing.T) {
 	t.Setenv("TMUX_TMPDIR", tmuxTmpDir)
 	historicalSocket := filepath.Join(tmuxTmpDir, "tmux-historical.sock")
 	legacyID := strings.ReplaceAll(t.Name(), "/", "_") + "_legacy"
+	runFile := filepath.Join(tmuxTmpDir, "running.json")
 	t.Cleanup(func() {
 		_ = exec.Command(systemTmux, "-S", historicalSocket, "kill-server").Run()
 		_ = exec.Command(systemTmux, "-L", "ao", "kill-server").Run()
@@ -283,7 +288,7 @@ func TestRuntimeIntegrationAdoptsHistoricalPrivateSocket(t *testing.T) {
 		"-S", historicalSocket,
 		"-f", os.DevNull,
 		"new-session", "-d", "-s", legacyID,
-		"sh",
+		ownedPaneCommand(runFile, legacyID, "launch-1"),
 	).CombinedOutput(); startErr != nil {
 		t.Fatalf("start historical private tmux session: %v: %s", startErr, out)
 	}
@@ -293,6 +298,7 @@ func TestRuntimeIntegrationAdoptsHistoricalPrivateSocket(t *testing.T) {
 		LegacyBinary:     systemTmux,
 		SocketName:       "ao",
 		LegacySocketPath: historicalSocket,
+		RunFilePath:      runFile,
 		Timeout:          5 * time.Second,
 	})
 	r.enterDelay = 0
@@ -310,6 +316,195 @@ func TestRuntimeIntegrationAdoptsHistoricalPrivateSocket(t *testing.T) {
 	}
 	if out, probeErr := exec.Command(systemTmux, "-L", "ao", "list-sessions").CombinedOutput(); probeErr == nil {
 		t.Fatalf("historical discovery unexpectedly created named AO server: %s", out)
+	}
+}
+
+func TestRuntimeIntegrationSanitizedLegacyHandleSurvivesCanonicalizationAndTwoRuntimeReplacements(t *testing.T) {
+	systemTmux, err := exec.LookPath("tmux")
+	if err != nil {
+		t.Skip("tmux unavailable")
+	}
+
+	tmuxTmpDir, err := os.MkdirTemp("/tmp", "ao-tmux-sanitized-continuity-test-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmuxTmpDir) })
+	t.Setenv("TMUX_TMPDIR", tmuxTmpDir)
+
+	historicalSocket := filepath.Join(tmuxTmpDir, "tmux-historical.sock")
+	runFile := filepath.Join(tmuxTmpDir, "running.json")
+	rawSessionID := domain.SessionID("project/feature with spaces and 🚀/" + strings.Repeat("very-long-", 6))
+	tmuxID := SessionName(string(rawSessionID))
+	const launchID = "launch-before-daemon-replacement"
+	if tmuxID == string(rawSessionID) {
+		t.Fatalf("tmux session name = raw session id %q, want sanitization", tmuxID)
+	}
+	t.Cleanup(func() {
+		_ = exec.Command(systemTmux, "-S", historicalSocket, "kill-server").Run()
+		for _, socketName := range []string{"ao", "replacement-one", "replacement-two"} {
+			_ = exec.Command(systemTmux, "-L", socketName, "kill-server").Run()
+		}
+	})
+	if out, startErr := exec.Command(
+		systemTmux,
+		"-S", historicalSocket,
+		"-f", os.DevNull,
+		"new-session", "-d", "-s", tmuxID,
+		ownedPaneCommand(runFile, string(rawSessionID), launchID),
+	).CombinedOutput(); startErr != nil {
+		t.Fatalf("start sanitized historical tmux session: %v: %s", startErr, out)
+	}
+
+	resolver := New(Options{
+		Binary:           systemTmux,
+		LegacyBinary:     systemTmux,
+		SocketName:       "ao",
+		LegacySocketPath: historicalSocket,
+		RunFilePath:      runFile,
+		Timeout:          5 * time.Second,
+	})
+	resolved, found, err := resolver.ResolveRuntimeHandle(
+		context.Background(),
+		ports.RuntimeHandle{ID: tmuxID},
+		ports.SupervisedProcessRef{SessionID: rawSessionID, LaunchID: launchID},
+	)
+	if err != nil || !found {
+		t.Fatalf("ResolveRuntimeHandle = (%q, %v, %v), want canonical historical handle", resolved.ID, found, err)
+	}
+
+	// The first replacement has no discovery cache. Identity must still compare
+	// the pane's raw AO_SESSION_ID while routing the qualified handle by tmuxID.
+	firstReplacement := New(Options{
+		Binary:       systemTmux,
+		LegacyBinary: systemTmux,
+		SocketName:   "replacement-one",
+		RunFilePath:  runFile,
+		Timeout:      5 * time.Second,
+	})
+	identity, err := firstReplacement.InspectRuntimeIdentity(context.Background(), resolved, rawSessionID)
+	if err != nil || !identity.OwnershipProven || identity.LaunchID != launchID {
+		t.Fatalf("InspectRuntimeIdentity = (%+v, %v), want proven raw identity", identity, err)
+	}
+
+	// A second replacement restarts through the already-canonical handle. The
+	// pane target must remain the sanitized name on the historical socket.
+	secondReplacement := New(Options{
+		Binary:       systemTmux,
+		LegacyBinary: systemTmux,
+		SocketName:   "replacement-two",
+		RunFilePath:  runFile,
+		Timeout:      5 * time.Second,
+	})
+	secondReplacement.enterDelay = 0
+	restarted, err := secondReplacement.Restart(context.Background(), resolved, ports.RuntimeConfig{
+		SessionID:     rawSessionID,
+		WorkspacePath: t.TempDir(),
+		Argv:          []string{"sh", "-c", "echo sanitized-restart-ok"},
+	})
+	if err != nil {
+		t.Fatalf("Restart after second Runtime replacement: %v", err)
+	}
+	if restarted != resolved {
+		t.Fatalf("Restart handle = %+v, want canonical handle %+v", restarted, resolved)
+	}
+	out := waitForOutput(t, secondReplacement, restarted, "sanitized-restart-ok", 5*time.Second)
+	if !strings.Contains(out, "sanitized-restart-ok") {
+		t.Fatalf("restart output = %q, want sanitized-restart-ok", out)
+	}
+	if alive, probeErr := secondReplacement.IsAlive(context.Background(), restarted); probeErr != nil || !alive {
+		t.Fatalf("IsAlive after second Runtime replacement = (%v, %v), want (true, nil)", alive, probeErr)
+	}
+
+	if probeOut, probeErr := exec.Command(
+		systemTmux,
+		"-S", historicalSocket,
+		"has-session", "-t", "="+tmuxID,
+	).CombinedOutput(); probeErr != nil {
+		t.Fatalf("probe restarted sanitized tmux target: %v: %s", probeErr, probeOut)
+	}
+	nameOut, err := exec.Command(
+		systemTmux,
+		"-S", historicalSocket,
+		"list-sessions", "-F", "#{session_name}",
+	).CombinedOutput()
+	if err != nil {
+		t.Fatalf("read restarted tmux session name: %v: %s", err, nameOut)
+	}
+	if got := strings.TrimSpace(string(nameOut)); got != tmuxID {
+		t.Fatalf("restarted tmux session = %q, want sanitized target %q", got, tmuxID)
+	}
+	for _, socketName := range []string{"replacement-one", "replacement-two"} {
+		if stray, listErr := exec.Command(systemTmux, "-L", socketName, "list-sessions").CombinedOutput(); listErr == nil {
+			t.Errorf("qualified-handle operation created or used %s namespace: %s", socketName, stray)
+		}
+	}
+}
+
+func TestRuntimeIntegrationBareHandleRejectsSameNameAcrossNamespaces(t *testing.T) {
+	systemTmux, err := exec.LookPath("tmux")
+	if err != nil {
+		t.Skip("tmux unavailable")
+	}
+
+	// Put all three servers under a test-owned tmux root. The same session name
+	// intentionally exists on each one; selecting the first match would attach
+	// to an arbitrary controller and make later destructive operations unsafe.
+	tmuxTmpDir, err := os.MkdirTemp("/tmp", "ao-tmux-ambiguity-test-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmuxTmpDir) })
+	t.Setenv("TMUX_TMPDIR", tmuxTmpDir)
+	historicalSocket := filepath.Join(tmuxTmpDir, "tmux-historical.sock")
+	const sessionID = "same-session"
+
+	t.Cleanup(func() {
+		_ = exec.Command(systemTmux, "-L", "ao", "kill-server").Run()
+		_ = exec.Command(systemTmux, "-L", "default", "kill-server").Run()
+		_ = exec.Command(systemTmux, "-S", historicalSocket, "kill-server").Run()
+	})
+	start := func(args ...string) {
+		t.Helper()
+		command := append(append([]string(nil), args...),
+			"new-session", "-d", "-s", sessionID, "sleep 30")
+		if out, startErr := exec.Command(systemTmux, command...).CombinedOutput(); startErr != nil {
+			t.Fatalf("start tmux %v: %v: %s", args, startErr, out)
+		}
+	}
+	start("-L", "ao")
+	start("-L", "default")
+	start("-S", historicalSocket, "-f", os.DevNull)
+
+	r := New(Options{
+		Binary:           systemTmux,
+		LegacyBinary:     systemTmux,
+		SocketName:       "ao",
+		LegacySocketPath: historicalSocket,
+		Timeout:          5 * time.Second,
+	})
+	alive, probeErr := r.IsAlive(context.Background(), ports.RuntimeHandle{ID: sessionID})
+	if alive {
+		t.Error("ambiguous bare handle reported alive")
+	}
+	if !errors.Is(probeErr, ports.ErrRuntimeProbeInconclusive) {
+		t.Errorf("IsAlive error = %v, want ErrRuntimeProbeInconclusive", probeErr)
+	}
+	var ambiguity runtimeAmbiguity
+	if !errors.As(probeErr, &ambiguity) || !ambiguity.RuntimeAmbiguity() {
+		t.Errorf("IsAlive error = %v, want typed runtime ambiguity", probeErr)
+	}
+
+	// Ambiguity detection is read-only: all three candidates must still exist.
+	for label, args := range map[string][]string{
+		"named":      {"-L", "ao"},
+		"default":    {"-L", "default"},
+		"historical": {"-S", historicalSocket, "-f", os.DevNull},
+	} {
+		probe := append(append([]string(nil), args...), "has-session", "-t", "="+sessionID)
+		if out, liveErr := exec.Command(systemTmux, probe...).CombinedOutput(); liveErr != nil {
+			t.Errorf("%s candidate was mutated during ambiguous discovery: %v: %s", label, liveErr, out)
+		}
 	}
 }
 

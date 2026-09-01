@@ -42,12 +42,18 @@ func New(log *slog.Logger, runFilePath string) Runtime {
 		return conpty.New(conpty.Options{RunFilePath: runFilePath})
 	case "darwin":
 		return newDarwinRuntime(
-			tmux.New(tmux.Options{LegacySocketPath: legacyPrivateTmuxSocketPath(runFilePath)}),
+			tmux.New(tmux.Options{
+				LegacySocketPath: legacyPrivateTmuxSocketPath(runFilePath),
+				RunFilePath:      runFilePath,
+			}),
 			conpty.New(conpty.Options{RunFilePath: runFilePath}),
 			log,
 		)
 	default:
-		return tmux.New(tmux.Options{LegacySocketPath: legacyPrivateTmuxSocketPath(runFilePath)})
+		return tmux.New(tmux.Options{
+			LegacySocketPath: legacyPrivateTmuxSocketPath(runFilePath),
+			RunFilePath:      runFilePath,
+		})
 	}
 }
 

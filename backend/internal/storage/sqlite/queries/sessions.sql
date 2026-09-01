@@ -48,6 +48,70 @@ WHERE id = sqlc.arg(id)
   AND provider_conversation_id = sqlc.arg(expected_provider_conversation_id)
   AND controller_generation = sqlc.arg(expected_controller_generation);
 
+-- name: CanonicalizeRuntimeHandle :execrows
+-- Upgrade one ownership-proven legacy TUI route and its recovered supervisor
+-- generation atomically. No activity or user-visible recency changes: this is
+-- provenance for the same surviving controller, not a new lifecycle event.
+UPDATE sessions SET
+    runtime_handle_id = sqlc.arg(canonical_runtime_handle_id),
+    runtime_launch_id = sqlc.arg(actual_runtime_launch_id),
+    agent_session_id_launch_id = CASE
+        WHEN agent_session_id != '' AND
+             (agent_session_id_launch_id = '' OR agent_session_id_launch_id = sqlc.arg(expected_runtime_launch_id))
+        THEN sqlc.arg(actual_runtime_launch_id)
+        ELSE agent_session_id_launch_id
+    END
+WHERE id = sqlc.arg(id)
+  AND session_mode = 'tui'
+  AND session_mode = sqlc.arg(expected_session_mode)
+  AND is_terminated = 0
+  AND is_terminated = sqlc.arg(expected_is_terminated)
+  AND harness = sqlc.arg(expected_harness)
+  AND runtime_handle_id = sqlc.arg(expected_runtime_handle_id)
+  AND runtime_launch_id = sqlc.arg(expected_runtime_launch_id)
+  AND agent_session_id = sqlc.arg(expected_agent_session_id)
+  AND agent_session_id_launch_id = sqlc.arg(expected_agent_session_id_launch_id)
+  AND provider_conversation_id = sqlc.arg(expected_provider_conversation_id)
+  AND controller_generation = sqlc.arg(expected_controller_generation);
+
+-- name: RepairExitedActivityFromRuntime :execrows
+-- Startup may repair a stale Exited fact only after the exact current TUI
+-- supervisor generation was proved alive and recovery supplied a non-exited
+-- activity fact. Full owner + handle fencing keeps a delayed observation from
+-- resurrecting a replaced or terminated controller.
+UPDATE sessions SET
+    activity_state = sqlc.arg(recovered_activity_state),
+    activity_last_at = sqlc.arg(observed_at),
+    updated_at = MAX(updated_at, sqlc.arg(observed_at))
+WHERE id = sqlc.arg(id)
+  AND session_mode = 'tui'
+  AND session_mode = sqlc.arg(expected_session_mode)
+  AND is_terminated = 0
+  AND is_terminated = sqlc.arg(expected_is_terminated)
+  AND activity_state = 'exited'
+  AND harness = sqlc.arg(expected_harness)
+  AND runtime_handle_id = sqlc.arg(expected_runtime_handle_id)
+  AND runtime_launch_id = sqlc.arg(expected_runtime_launch_id)
+  AND agent_session_id = sqlc.arg(expected_agent_session_id)
+  AND agent_session_id_launch_id = sqlc.arg(expected_agent_session_id_launch_id)
+  AND provider_conversation_id = sqlc.arg(expected_provider_conversation_id)
+  AND controller_generation = sqlc.arg(expected_controller_generation);
+
+-- name: LatestNonExitedSessionActivity :one
+-- change_log is the immutable history of durable activity facts. Startup uses
+-- the latest pre-exit fact only as a compatibility fallback when a surviving
+-- legacy TUI cannot expose an authoritative current-screen activity reading.
+SELECT
+    CAST(json_extract(payload, '$.activity') AS TEXT) AS activity_state,
+    created_at AS observed_at
+FROM change_log
+WHERE session_id = sqlc.arg(session_id)
+  AND event_type IN ('session_created', 'session_updated')
+  AND json_type(payload, '$.activity') = 'text'
+  AND json_extract(payload, '$.activity') IN ('active', 'idle', 'waiting_input', 'blocked')
+ORDER BY seq DESC
+LIMIT 1;
+
 -- name: RecordSessionLatestUserPrompt :execrows
 UPDATE sessions SET
     latest_user_prompt = sqlc.arg(latest_user_prompt),

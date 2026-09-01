@@ -180,7 +180,7 @@ describe("resolveDaemonFromRunFile", () => {
 		expect(result).toBeNull();
 	});
 
-	it("reports an error (not a spawn) when the daemon is up but not ready", async () => {
+	it("reports starting when the daemon is healthy but startup recovery is not ready", async () => {
 		const result = await resolveDaemonFromRunFile({
 			runFileContents: runFile(4242, 3001),
 			isProcessAlive: ALIVE,
@@ -190,15 +190,12 @@ describe("resolveDaemonFromRunFile", () => {
 			}),
 			identityError: NO_IDENTITY_ERROR,
 		});
-		expect(result).toEqual({
-			state: "error",
+		expect(result).toMatchObject({
+			state: "starting",
 			port: 3001,
 			pid: 4242,
-			executablePath: undefined,
-			workingDirectory: undefined,
-			message: "An AO daemon is already running, but it is not ready yet.",
-			code: "not_ready",
 		});
+		expect(result).not.toHaveProperty("code");
 	});
 
 	it("surfaces a foreign-daemon identity error", async () => {
@@ -279,7 +276,7 @@ describe("resolveDaemonFromPort", () => {
 		});
 	});
 
-	it("reports an error (not a spawn) when the serving daemon is not ready yet", async () => {
+	it("reports starting when the serving daemon is healthy but startup recovery is not ready", async () => {
 		const result = await resolveDaemonFromPort({
 			expectedPort: 3001,
 			probe: fakeProbe({
@@ -288,15 +285,12 @@ describe("resolveDaemonFromPort", () => {
 			}),
 			identityError: NO_IDENTITY_ERROR,
 		});
-		expect(result).toEqual({
-			state: "error",
+		expect(result).toMatchObject({
+			state: "starting",
 			port: 3001,
 			pid: 777,
-			executablePath: undefined,
-			workingDirectory: undefined,
-			message: "An AO daemon is already running, but it is not ready yet.",
-			code: "not_ready",
 		});
+		expect(result).not.toHaveProperty("code");
 	});
 
 	it("reports an identity error (not a silent attach) for a foreign daemon binary on the port", async () => {
@@ -343,6 +337,7 @@ describe("end-to-end against a real daemon server", () => {
 		service?: string;
 		executablePath?: string;
 		workingDirectory?: string;
+		ready?: boolean;
 	}): Promise<number> {
 		const service = opts.service ?? DAEMON_SERVICE_NAME;
 		const server = createServer((req, res) => {
@@ -359,6 +354,11 @@ describe("end-to-end against a real daemon server", () => {
 				return;
 			}
 			if (url === "/readyz") {
+				if (opts.ready === false) {
+					res.writeHead(503, { "content-type": "application/json" });
+					res.end(JSON.stringify({ status: "starting", ...base }));
+					return;
+				}
 				res.writeHead(200, { "content-type": "application/json" });
 				res.end(JSON.stringify({ status: "ready", ...base }));
 				return;
@@ -424,6 +424,17 @@ describe("end-to-end against a real daemon server", () => {
 			executablePath: undefined,
 			workingDirectory: undefined,
 		});
+	});
+
+	it("reports starting over real HTTP while healthz is 200 and readyz is 503", async () => {
+		const port = await startServer({ pid: 556, ready: false });
+		const result = await resolveDaemonFromPort({
+			expectedPort: port,
+			probe: realProbe,
+			identityError: NO_IDENTITY_ERROR,
+		});
+		expect(result).toMatchObject({ state: "starting", port, pid: 556 });
+		expect(result).not.toHaveProperty("code");
 	});
 
 	it("returns null when the port is closed (caller spawns)", async () => {

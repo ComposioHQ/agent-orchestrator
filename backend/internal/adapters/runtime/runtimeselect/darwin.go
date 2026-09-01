@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -37,6 +38,8 @@ var _ ports.RuntimeRestarter = (*darwinRuntime)(nil)
 var _ ports.StyledTerminalOutputReader = (*darwinRuntime)(nil)
 var _ ports.SupervisedProcessInspector = (*darwinRuntime)(nil)
 var _ ports.ExactSupervisedProcessInspector = (*darwinRuntime)(nil)
+var _ ports.RuntimeHandleResolver = (*darwinRuntime)(nil)
+var _ ports.RuntimeIdentityInspector = (*darwinRuntime)(nil)
 
 func newDarwinRuntime(legacy, direct routedBackend, log *slog.Logger) *darwinRuntime {
 	if log == nil {
@@ -116,6 +119,31 @@ func (r *darwinRuntime) IsSupervisedProcessAlive(ctx context.Context, handle por
 func (r *darwinRuntime) IsExactSupervisedProcessAlive(ctx context.Context, handle ports.RuntimeHandle, ref ports.SupervisedProcessRef) (bool, error) {
 	backend, raw := r.route(handle)
 	return backend.IsExactSupervisedProcessAlive(ctx, raw, ref)
+}
+
+// ResolveRuntimeHandle only canonicalizes legacy tmux identities. A ptyhost
+// handle already carries its backend and protocol version in the outer prefix,
+// so it is durable as-is and must never be offered to the tmux migration path.
+func (r *darwinRuntime) ResolveRuntimeHandle(ctx context.Context, handle ports.RuntimeHandle, owner ports.SupervisedProcessRef) (ports.RuntimeHandle, bool, error) {
+	if strings.HasPrefix(handle.ID, darwinDirectHandlePrefix) {
+		return handle, true, nil
+	}
+	resolver, ok := r.legacy.(ports.RuntimeHandleResolver)
+	if !ok {
+		return ports.RuntimeHandle{}, false, fmt.Errorf("macOS legacy runtime does not support handle resolution")
+	}
+	return resolver.ResolveRuntimeHandle(ctx, handle, owner)
+}
+
+func (r *darwinRuntime) InspectRuntimeIdentity(ctx context.Context, handle ports.RuntimeHandle, expectedSessionID domain.SessionID) (ports.RuntimeIdentity, error) {
+	if strings.HasPrefix(handle.ID, darwinDirectHandlePrefix) {
+		return ports.RuntimeIdentity{}, nil
+	}
+	inspector, ok := r.legacy.(ports.RuntimeIdentityInspector)
+	if !ok {
+		return ports.RuntimeIdentity{}, fmt.Errorf("macOS legacy runtime does not support identity inspection")
+	}
+	return inspector.InspectRuntimeIdentity(ctx, handle, expectedSessionID)
 }
 
 // Restart preserves tmux's in-place restart behavior for every legacy handle.

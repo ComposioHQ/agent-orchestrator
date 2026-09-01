@@ -172,9 +172,9 @@ type Controller struct {
 	sendMu sync.Mutex
 
 	mu sync.Mutex
-	// suppressStoppedActivity marks a deliberate branch-controller retirement.
-	// The replacement generation owns lifecycle state; publishing an exited fact
-	// from the source would make that replacement unable to report active work.
+	// suppressStoppedActivity marks a deliberate controller detach or retirement.
+	// A planned daemon detach is not evidence that the agent exited, and an
+	// in-place replacement owns the next lifecycle state.
 	suppressStoppedActivity bool
 	// activeTurn maps a provider turn id to AO's turn id for the turn currently
 	// in flight, so a completion can be attributed without a round trip.
@@ -202,9 +202,9 @@ type Controller struct {
 	// started until this controller reports quiescent and is closed.
 	handoff           controllerHandoff
 	branchHandoffDone chan struct{}
-	// preserveProviderOnStop is set before deliberate daemon detach. It prevents
-	// the closing controller from projecting a false provider exit or failing work
-	// that the detached host continues to run.
+	// preserveProviderOnStop is set when deliberate daemon detach leaves the
+	// provider host running. Unlike suppressStoppedActivity, this also prevents
+	// cleanup of work that the detached host continues to own.
 	preserveProviderOnStop bool
 
 	// account, threadState and mcpServers are merged here before being written,
@@ -2013,17 +2013,19 @@ func (c *Controller) Rollback(ctx context.Context, turnID string) (int, error) {
 	return discarded, nil
 }
 
-// Close detaches this daemon's controller. Persistent provider hosts keep the
-// native connection and any in-flight turn alive; non-persistent drivers retain
-// their historical process-close behavior. The persistent host replays detached
-// output and unresolved provider requests to the replacement controller.
+// Close detaches this daemon's controller. A planned detach never publishes a
+// session-level exit: closing a non-persistent provider is an implementation
+// consequence, not evidence that the user ended the session. Persistent provider
+// hosts additionally keep the native connection and in-flight turn alive so they
+// can replay detached output to the replacement controller.
 func (c *Controller) Close(ctx context.Context) error {
 	c.once.Do(func() {
+		c.mu.Lock()
+		c.suppressStoppedActivity = true
 		if preserver, ok := c.conv.(ports.ChatProviderPreserver); ok && preserver.PreservesProviderOnClose() {
-			c.mu.Lock()
 			c.preserveProviderOnStop = true
-			c.mu.Unlock()
 		}
+		c.mu.Unlock()
 		c.closeErr = c.conv.Close()
 	})
 	select {

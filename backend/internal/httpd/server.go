@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
@@ -27,6 +28,7 @@ type Server struct {
 
 	shutdownRequested chan struct{}
 	shutdownOnce      sync.Once
+	ready             atomic.Bool
 }
 
 // NewWithDeps constructs a Server with API dependencies supplied by the daemon
@@ -67,6 +69,7 @@ func NewWithDeps(cfg config.Config, log *slog.Logger, termMgr *terminal.Manager,
 	srv.http = &http.Server{
 		Handler: NewRouterWithControl(cfg, log, termMgr, deps, ControlDeps{
 			RequestShutdown: srv.requestShutdown,
+			IsReady:         srv.ready.Load,
 		}),
 		// ReadHeaderTimeout guards against slow-loris even on loopback;
 		// per-request body/handler timeouts are applied per-surface.
@@ -92,15 +95,19 @@ func (s *Server) Run(ctx context.Context) error {
 	return s.run(ctx, nil)
 }
 
-// RunWithReady is Run with a callback invoked after the listener has been
-// published and its serving goroutine has started. The callback must return
-// promptly; it is intended for boot work that can safely continue while the
-// daemon serves read-only durable state.
-func (s *Server) RunWithReady(ctx context.Context, onReady func()) error {
+// RunWithReady is Run with startup work invoked after the listener has been
+// published and its serving goroutine has started. Liveness is available while
+// the callback runs; readiness is published only when the callback succeeds.
+// A callback failure keeps the server live but unready until shutdown.
+func (s *Server) RunWithReady(ctx context.Context, onReady func() error) error {
 	return s.run(ctx, onReady)
 }
 
-func (s *Server) run(ctx context.Context, onReady func()) error {
+func (s *Server) run(ctx context.Context, onReady func() error) error {
+	// Run has no deferred startup work and is ready as soon as it serves. A
+	// RunWithReady callback gates readiness until all recovery has completed.
+	s.ready.Store(onReady == nil)
+
 	info := runfile.Info{
 		PID:                   os.Getpid(),
 		Port:                  s.boundPort(),
@@ -129,15 +136,21 @@ func (s *Server) run(ctx context.Context, onReady func()) error {
 		}
 		serveErr <- nil
 	}()
+	var startupErr error
 	if onReady != nil {
-		onReady()
+		startupErr = onReady()
+		if startupErr == nil {
+			s.ready.Store(true)
+		} else {
+			s.log.Error("startup recovery failed; daemon remains unready", "err", startupErr)
+		}
 	}
 
 	select {
 	case err := <-serveErr:
 		// Serve died on its own (bind already happened, so this is a real
 		// runtime failure) before any shutdown signal.
-		return err
+		return errors.Join(startupErr, err)
 	case <-s.shutdownRequested:
 		s.log.Info("shutdown requested over HTTP", "timeout", s.cfg.ShutdownTimeout)
 	case <-ctx.Done():
@@ -151,11 +164,11 @@ func (s *Server) run(ctx context.Context, onReady func()) error {
 		// The deadline elapsed with connections still open; force them closed.
 		s.log.Warn("graceful shutdown timed out, forcing close", "err", err)
 		_ = s.http.Close()
-		return fmt.Errorf("graceful shutdown exceeded %s: %w", s.cfg.ShutdownTimeout, err)
+		return errors.Join(startupErr, fmt.Errorf("graceful shutdown exceeded %s: %w", s.cfg.ShutdownTimeout, err))
 	}
 
 	s.log.Info("daemon stopped cleanly")
-	return <-serveErr
+	return errors.Join(startupErr, <-serveErr)
 }
 
 func (s *Server) boundPort() int {

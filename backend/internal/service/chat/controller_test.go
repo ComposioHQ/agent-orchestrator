@@ -3632,6 +3632,35 @@ func TestServiceStopAllOnlyDetachesPersistentConversation(t *testing.T) {
 	}
 }
 
+func TestServiceStopAllPlannedDetachDoesNotPublishExitForNonPersistentProvider(t *testing.T) {
+	t.Run("planned daemon detach", func(t *testing.T) {
+		provider := newFakeConversation()
+		h := newHarnessWithConversation(t, provider)
+
+		h.svc.StopAll(context.Background())
+
+		for _, signal := range h.activity.snapshot() {
+			if signal.State == domain.ActivityExited {
+				t.Fatalf("planned daemon detach published a false provider exit: %+v", h.activity.snapshot())
+			}
+		}
+	})
+
+	t.Run("unexpected provider stop", func(t *testing.T) {
+		provider := newFakeConversation()
+		h := newHarnessWithConversation(t, provider)
+
+		if err := provider.Close(); err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+		h.ctrl.Wait()
+
+		if !hasActivitySignal(h.activity.snapshot(), domain.ActivityExited, "chat.controller.stopped") {
+			t.Fatalf("unexpected provider stop did not publish exit: %+v", h.activity.snapshot())
+		}
+	})
+}
+
 func TestServiceLiveReconnectSkipsSettledHistoryBarrier(t *testing.T) {
 	st := openStore(t)
 	native := &nativeHistoryConversation{fakeConversation: newFakeConversation(), err: ports.ErrChatHistoryUnsettled}

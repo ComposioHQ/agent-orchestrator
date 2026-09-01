@@ -39,6 +39,69 @@ func (q *Queries) ActivateConversationBranchSession(ctx context.Context, arg Act
 	return result.RowsAffected()
 }
 
+const canonicalizeRuntimeHandle = `-- name: CanonicalizeRuntimeHandle :execrows
+UPDATE sessions SET
+    runtime_handle_id = ?1,
+    runtime_launch_id = ?2,
+    agent_session_id_launch_id = CASE
+        WHEN agent_session_id != '' AND
+             (agent_session_id_launch_id = '' OR agent_session_id_launch_id = ?3)
+        THEN ?2
+        ELSE agent_session_id_launch_id
+    END
+WHERE id = ?4
+  AND session_mode = 'tui'
+  AND session_mode = ?5
+  AND is_terminated = 0
+  AND is_terminated = ?6
+  AND harness = ?7
+  AND runtime_handle_id = ?8
+  AND runtime_launch_id = ?3
+  AND agent_session_id = ?9
+  AND agent_session_id_launch_id = ?10
+  AND provider_conversation_id = ?11
+  AND controller_generation = ?12
+`
+
+type CanonicalizeRuntimeHandleParams struct {
+	CanonicalRuntimeHandleID       string
+	ActualRuntimeLaunchID          string
+	ExpectedRuntimeLaunchID        string
+	ID                             domain.SessionID
+	ExpectedSessionMode            domain.SessionMode
+	ExpectedIsTerminated           bool
+	ExpectedHarness                domain.AgentHarness
+	ExpectedRuntimeHandleID        string
+	ExpectedAgentSessionID         string
+	ExpectedAgentSessionIDLaunchID string
+	ExpectedProviderConversationID string
+	ExpectedControllerGeneration   string
+}
+
+// Upgrade one ownership-proven legacy TUI route and its recovered supervisor
+// generation atomically. No activity or user-visible recency changes: this is
+// provenance for the same surviving controller, not a new lifecycle event.
+func (q *Queries) CanonicalizeRuntimeHandle(ctx context.Context, arg CanonicalizeRuntimeHandleParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, canonicalizeRuntimeHandle,
+		arg.CanonicalRuntimeHandleID,
+		arg.ActualRuntimeLaunchID,
+		arg.ExpectedRuntimeLaunchID,
+		arg.ID,
+		arg.ExpectedSessionMode,
+		arg.ExpectedIsTerminated,
+		arg.ExpectedHarness,
+		arg.ExpectedRuntimeHandleID,
+		arg.ExpectedAgentSessionID,
+		arg.ExpectedAgentSessionIDLaunchID,
+		arg.ExpectedProviderConversationID,
+		arg.ExpectedControllerGeneration,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const claimChatControllerGeneration = `-- name: ClaimChatControllerGeneration :execrows
 UPDATE sessions
 SET controller_generation = ?, updated_at = ?
@@ -324,6 +387,34 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) er
 		arg.AutoInjectCI,
 	)
 	return err
+}
+
+const latestNonExitedSessionActivity = `-- name: LatestNonExitedSessionActivity :one
+SELECT
+    CAST(json_extract(payload, '$.activity') AS TEXT) AS activity_state,
+    created_at AS observed_at
+FROM change_log
+WHERE session_id = ?1
+  AND event_type IN ('session_created', 'session_updated')
+  AND json_type(payload, '$.activity') = 'text'
+  AND json_extract(payload, '$.activity') IN ('active', 'idle', 'waiting_input', 'blocked')
+ORDER BY seq DESC
+LIMIT 1
+`
+
+type LatestNonExitedSessionActivityRow struct {
+	ActivityState string
+	ObservedAt    time.Time
+}
+
+// change_log is the immutable history of durable activity facts. Startup uses
+// the latest pre-exit fact only as a compatibility fallback when a surviving
+// legacy TUI cannot expose an authoritative current-screen activity reading.
+func (q *Queries) LatestNonExitedSessionActivity(ctx context.Context, sessionID *domain.SessionID) (LatestNonExitedSessionActivityRow, error) {
+	row := q.db.QueryRowContext(ctx, latestNonExitedSessionActivity, sessionID)
+	var i LatestNonExitedSessionActivityRow
+	err := row.Scan(&i.ActivityState, &i.ObservedAt)
+	return i, err
 }
 
 const listAllSessions = `-- name: ListAllSessions :many
@@ -648,6 +739,66 @@ type RenameSessionParams struct {
 
 func (q *Queries) RenameSession(ctx context.Context, arg RenameSessionParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, renameSession, arg.DisplayName, arg.UpdatedAt, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const repairExitedActivityFromRuntime = `-- name: RepairExitedActivityFromRuntime :execrows
+UPDATE sessions SET
+    activity_state = ?1,
+    activity_last_at = ?2,
+    updated_at = MAX(updated_at, ?2)
+WHERE id = ?3
+  AND session_mode = 'tui'
+  AND session_mode = ?4
+  AND is_terminated = 0
+  AND is_terminated = ?5
+  AND activity_state = 'exited'
+  AND harness = ?6
+  AND runtime_handle_id = ?7
+  AND runtime_launch_id = ?8
+  AND agent_session_id = ?9
+  AND agent_session_id_launch_id = ?10
+  AND provider_conversation_id = ?11
+  AND controller_generation = ?12
+`
+
+type RepairExitedActivityFromRuntimeParams struct {
+	RecoveredActivityState         domain.ActivityState
+	ObservedAt                     time.Time
+	ID                             domain.SessionID
+	ExpectedSessionMode            domain.SessionMode
+	ExpectedIsTerminated           bool
+	ExpectedHarness                domain.AgentHarness
+	ExpectedRuntimeHandleID        string
+	ExpectedRuntimeLaunchID        string
+	ExpectedAgentSessionID         string
+	ExpectedAgentSessionIDLaunchID string
+	ExpectedProviderConversationID string
+	ExpectedControllerGeneration   string
+}
+
+// Startup may repair a stale Exited fact only after the exact current TUI
+// supervisor generation was proved alive and recovery supplied a non-exited
+// activity fact. Full owner + handle fencing keeps a delayed observation from
+// resurrecting a replaced or terminated controller.
+func (q *Queries) RepairExitedActivityFromRuntime(ctx context.Context, arg RepairExitedActivityFromRuntimeParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, repairExitedActivityFromRuntime,
+		arg.RecoveredActivityState,
+		arg.ObservedAt,
+		arg.ID,
+		arg.ExpectedSessionMode,
+		arg.ExpectedIsTerminated,
+		arg.ExpectedHarness,
+		arg.ExpectedRuntimeHandleID,
+		arg.ExpectedRuntimeLaunchID,
+		arg.ExpectedAgentSessionID,
+		arg.ExpectedAgentSessionIDLaunchID,
+		arg.ExpectedProviderConversationID,
+		arg.ExpectedControllerGeneration,
+	)
 	if err != nil {
 		return 0, err
 	}

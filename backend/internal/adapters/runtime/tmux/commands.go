@@ -99,6 +99,13 @@ func listPanePIDsArgs(id string) []string {
 	return []string{"list-panes", "-s", "-t", exactSessionTarget(id), "-F", "#{pane_pid}"}
 }
 
+// paneStartCommandsArgs returns tmux's immutable launch command for every pane.
+// Legacy-handle resolution uses this as ownership provenance rather than
+// trusting a globally collidable session name.
+func paneStartCommandsArgs(id string) []string {
+	return []string{"list-panes", "-s", "-t", exactSessionTarget(id), "-F", "#{pane_start_command}"}
+}
+
 // sendKeysLiteralArgs builds args for `tmux send-keys -t <id> -l <chunk>`.
 // The -l flag stops tmux interpreting words like "Enter" as key names so the
 // text is sent verbatim.

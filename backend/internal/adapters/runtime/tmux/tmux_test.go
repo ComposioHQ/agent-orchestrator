@@ -81,7 +81,7 @@ func newTestRuntime(chunkSize int) (*Runtime, *fakeRunner) {
 func countCalls(fr *fakeRunner, subcommand string) int {
 	n := 0
 	for _, c := range fr.calls {
-		if len(c.args) > 0 && c.args[0] == subcommand {
+		if tmuxSubcommand(c.args) == subcommand {
 			n++
 		}
 	}
@@ -354,8 +354,8 @@ func TestCreateIssuesNewSessionAndStatusOff(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if h.ID != "sess-1" {
-		t.Fatalf("handle ID = %q, want sess-1", h.ID)
+	if !strings.HasPrefix(h.ID, "tmux-v1:") {
+		t.Fatalf("handle ID = %q, want durable tmux-v1 qualified handle", h.ID)
 	}
 	// Expect 6 calls: new-session, display-message cwd verification,
 	// set-option status, set-option mouse, set-option window-size, has-session.
@@ -364,7 +364,7 @@ func TestCreateIssuesNewSessionAndStatusOff(t *testing.T) {
 	}
 
 	// Call 0: new-session
-	if got := fr.calls[0].args[0]; got != "new-session" {
+	if got := tmuxSubcommand(fr.calls[0].args); got != "new-session" {
 		t.Fatalf("call[0] = %q, want new-session", got)
 	}
 	// Check -s <id>, -c <cwd> are present.
@@ -381,29 +381,181 @@ func TestCreateIssuesNewSessionAndStatusOff(t *testing.T) {
 	}
 
 	// Call 1: verify pane cwd.
-	if got, want := fr.calls[1].args, paneCurrentPathArgs("sess-1"); !reflect.DeepEqual(got, want) {
+	if got, want := tmuxCommandArgs(fr.calls[1].args), paneCurrentPathArgs("sess-1"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("call[1] = %#v, want %#v", got, want)
 	}
 
 	// Call 2: set-option status off (plain target, pane-targeting does not use =).
-	if got, want := fr.calls[2].args, setStatusOffArgs("sess-1"); !reflect.DeepEqual(got, want) {
+	if got, want := tmuxCommandArgs(fr.calls[2].args), setStatusOffArgs("sess-1"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("call[2] = %#v, want %#v", got, want)
 	}
 
 	// Call 3: set-option mouse on (enables wheel-scroll of the pane).
-	if got, want := fr.calls[3].args, setMouseOnArgs("sess-1"); !reflect.DeepEqual(got, want) {
+	if got, want := tmuxCommandArgs(fr.calls[3].args), setMouseOnArgs("sess-1"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("call[3] = %#v, want %#v", got, want)
 	}
 
 	// Call 4: set-option window-size largest (multi-client sizing, see
 	// setWindowSizeLargestArgs).
-	if got, want := fr.calls[4].args, setWindowSizeLargestArgs("sess-1"); !reflect.DeepEqual(got, want) {
+	if got, want := tmuxCommandArgs(fr.calls[4].args), setWindowSizeLargestArgs("sess-1"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("call[4] = %#v, want %#v", got, want)
 	}
 
 	// Call 5: has-session (IsAlive, uses exact-match target =sess-1).
-	if got, want := fr.calls[5].args, hasSessionArgs("sess-1"); !reflect.DeepEqual(got, want) {
+	if got, want := tmuxCommandArgs(fr.calls[5].args), hasSessionArgs("sess-1"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("call[5] = %#v, want %#v", got, want)
+	}
+}
+
+// TestQualifiedHandleRoutesEveryOperationAfterRuntimeRestart is the durable
+// handle contract. The Runtime that created the session is deliberately thrown
+// away, and its replacement is configured with a different primary socket. A
+// qualified handle must still route every operation to the socket that actually
+// owns the session; an in-memory sessionSockets cache cannot satisfy this test.
+func TestQualifiedHandleRoutesEveryOperationAfterRuntimeRestart(t *testing.T) {
+	creator := New(Options{
+		Binary:     "tmux-test",
+		SocketName: "ao",
+		Timeout:    time.Second,
+		Shell:      "/bin/sh",
+	})
+	createRunner := &fakeRunner{outputs: [][]byte{
+		nil, []byte("/tmp/ws\n"), nil, nil, nil, nil,
+	}}
+	creator.runner = createRunner
+	creator.enterDelay = 0
+	creator.reapSessions = (&recordingReaper{}).reap
+
+	handle, err := creator.Create(context.Background(), ports.RuntimeConfig{
+		SessionID:     "sess-1",
+		WorkspacePath: "/tmp/ws",
+		Argv:          []string{"agent"},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if !strings.HasPrefix(handle.ID, "tmux-v1:") {
+		t.Errorf("Create handle = %q, want durable versioned tmux-v1 handle", handle.ID)
+	}
+	if handle.ID == "sess-1" {
+		t.Error("Create returned the legacy bare session name")
+	}
+
+	// A changed primary socket makes accidental rediscovery observable. The
+	// durable handle, not this fresh Runtime's configuration, must win.
+	restarted := New(Options{
+		Binary:     "tmux-test",
+		SocketName: "replacement-primary",
+		Timeout:    time.Second,
+		Shell:      "/bin/sh",
+	})
+	routeRunner := &fakeRunner{outputs: [][]byte{
+		nil,                // IsAlive
+		[]byte("screen\n"), // GetOutput
+		[]byte("styled\n"), // GetStyledOutput
+		nil,                // Interrupt
+		nil,                // SendInput
+		nil, nil,           // SendMessage text + Enter
+		nil, nil, // Restart respawn + liveness
+		[]byte("100\n"),
+		[]byte("100 1 /bin/sh\n101 100 /opt/ao agent-process supervise --session sess-1 --launch launch-1 -- codex\n102 101 codex\n"),
+		[]byte("100\n"),
+		[]byte("100 1 /bin/sh\n101 100 /opt/ao agent-process supervise --session sess-1 --launch launch-1 -- codex\n102 101 codex\n"),
+		nil, nil, // Destroy pane list + kill
+	}}
+	restarted.runner = routeRunner
+	restarted.enterDelay = 0
+	restarted.reapSessions = (&recordingReaper{}).reap
+
+	if alive, probeErr := restarted.IsAlive(context.Background(), handle); probeErr != nil || !alive {
+		t.Errorf("IsAlive = (%v, %v), want (true, nil)", alive, probeErr)
+	}
+	if _, outputErr := restarted.GetOutput(context.Background(), handle, 10); outputErr != nil {
+		t.Errorf("GetOutput: %v", outputErr)
+	}
+	if _, outputErr := restarted.GetStyledOutput(context.Background(), handle, 10); outputErr != nil {
+		t.Errorf("GetStyledOutput: %v", outputErr)
+	}
+	if interruptErr := restarted.Interrupt(context.Background(), handle); interruptErr != nil {
+		t.Errorf("Interrupt: %v", interruptErr)
+	}
+	if inputErr := restarted.SendInput(context.Background(), handle, "\x1b"); inputErr != nil {
+		t.Errorf("SendInput: %v", inputErr)
+	}
+	if sendErr := restarted.SendMessage(context.Background(), handle, "hello"); sendErr != nil {
+		t.Errorf("SendMessage: %v", sendErr)
+	}
+	if _, restartErr := restarted.Restart(context.Background(), handle, ports.RuntimeConfig{
+		SessionID:     "sess-1",
+		WorkspacePath: "/tmp/ws",
+		Argv:          []string{"agent", "resume"},
+	}); restartErr != nil {
+		t.Errorf("Restart: %v", restartErr)
+	}
+	owner := ports.SupervisedProcessRef{SessionID: "sess-1", LaunchID: "launch-1"}
+	if alive, inspectErr := restarted.IsSupervisedProcessAlive(context.Background(), handle, owner); inspectErr != nil || !alive {
+		t.Errorf("IsSupervisedProcessAlive = (%v, %v), want (true, nil)", alive, inspectErr)
+	}
+	if alive, inspectErr := restarted.IsExactSupervisedProcessAlive(context.Background(), handle, owner); inspectErr != nil || !alive {
+		t.Errorf("IsExactSupervisedProcessAlive = (%v, %v), want (true, nil)", alive, inspectErr)
+	}
+	if destroyErr := restarted.Destroy(context.Background(), handle); destroyErr != nil {
+		t.Errorf("Destroy: %v", destroyErr)
+	}
+
+	attachArgv, attachErr := restarted.attachCommand(handle)
+	if attachErr != nil {
+		t.Errorf("terminal attach command: %v", attachErr)
+	} else if len(attachArgv) < 3 || attachArgv[1] != "-L" || attachArgv[2] != "ao" {
+		t.Errorf("terminal attach argv = %#v, want qualified handle's -L ao target", attachArgv)
+	}
+
+	if len(routeRunner.calls) == 0 {
+		t.Fatal("fresh Runtime made no tmux calls")
+	}
+	for i, call := range routeRunner.calls {
+		if call.name == "ps" {
+			continue
+		}
+		if call.name != "tmux-test" {
+			t.Errorf("call %d binary = %q, want tmux-test", i, call.name)
+			continue
+		}
+		if len(call.args) < 3 || call.args[0] != "-L" || call.args[1] != "ao" {
+			t.Errorf("call %d %s routed to %q, want direct named:ao routing from durable handle",
+				i, tmuxSubcommand(call.args), probeNamespace(call.args))
+		}
+	}
+}
+
+func TestCreateOnDefaultPinsCreationAndReturnedHandleToSameNamespace(t *testing.T) {
+	creator := New(Options{Binary: "tmux-test", Timeout: time.Second, Shell: "/bin/sh"})
+	createRunner := &fakeRunner{outputs: [][]byte{nil, []byte("/tmp/ws\n"), nil, nil, nil, nil}}
+	creator.runner = createRunner
+	creator.reapSessions = (&recordingReaper{}).reap
+	handle, err := creator.Create(context.Background(), ports.RuntimeConfig{
+		SessionID:     "sess-1",
+		WorkspacePath: "/tmp/ws",
+		Argv:          []string{"agent"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, call := range createRunner.calls {
+		if len(call.args) < 3 || call.args[0] != "-L" || call.args[1] != "default" {
+			t.Fatalf("creation call %d = %#v, want explicit -L default", i, call.args)
+		}
+	}
+
+	fresh := New(Options{Binary: "tmux-test", SocketName: "replacement", Timeout: time.Second})
+	routeRunner := &fakeRunner{}
+	fresh.runner = routeRunner
+	if alive, probeErr := fresh.IsAlive(context.Background(), handle); probeErr != nil || !alive {
+		t.Fatalf("fresh IsAlive = (%v, %v)", alive, probeErr)
+	}
+	if len(routeRunner.calls) != 1 || len(routeRunner.calls[0].args) < 3 ||
+		routeRunner.calls[0].args[0] != "-L" || routeRunner.calls[0].args[1] != "default" {
+		t.Fatalf("qualified operation = %+v, want explicit -L default", routeRunner.calls)
 	}
 }
 
@@ -566,8 +718,8 @@ func TestVerifyPaneWorkingDirectoryRetriesUntilMatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if h.ID != "sess-1" {
-		t.Fatalf("handle ID = %q, want sess-1", h.ID)
+	if !strings.HasPrefix(h.ID, "tmux-v1:") {
+		t.Fatalf("handle ID = %q, want durable tmux-v1 qualified handle", h.ID)
 	}
 	if got := countCalls(fr, "display-message"); got != 2 {
 		t.Fatalf("pane cwd verification attempts = %d, want 2 (stale then matching)", got)
@@ -623,7 +775,7 @@ func TestCreateDestroysAndReturnsErrorWhenNotAlive(t *testing.T) {
 	}
 	sawHasSession := false
 	for _, c := range fr3.calls {
-		if len(c.args) > 0 && c.args[0] == "has-session" {
+		if tmuxSubcommand(c.args) == "has-session" {
 			sawHasSession = true
 		}
 	}
@@ -633,7 +785,7 @@ func TestCreateDestroysAndReturnsErrorWhenNotAlive(t *testing.T) {
 	// Verify Destroy was called (kill-session).
 	hasKill := false
 	for _, c := range fr3.calls {
-		if len(c.args) > 0 && c.args[0] == "kill-session" {
+		if tmuxSubcommand(c.args) == "kill-session" {
 			hasKill = true
 		}
 	}
@@ -655,10 +807,10 @@ type fakeRunnerSelectiveErr struct {
 
 func (f *fakeRunnerSelectiveErr) Run(_ context.Context, env []string, name string, args ...string) ([]byte, error) {
 	f.calls = append(f.calls, runnerCall{env: append([]string(nil), env...), name: name, args: append([]string(nil), args...)})
-	if len(args) > 0 && args[0] == f.exitErrOn {
+	if tmuxSubcommand(args) == f.exitErrOn {
 		return f.errOutput, &exec.ExitError{}
 	}
-	if len(args) > 0 && args[0] == "display-message" {
+	if tmuxSubcommand(args) == "display-message" {
 		return []byte("/tmp/ws\n"), nil
 	}
 	return nil, nil
@@ -690,6 +842,614 @@ func (f *fakeRunnerSequence) Run(_ context.Context, env []string, name string, a
 	return res.out, res.err
 }
 
+// runtimeAmbiguity is the typed error contract for a legacy handle found in
+// more than one namespace. The production error may expose richer candidate
+// details; callers only need a stable errors.As classification.
+type runtimeAmbiguity interface {
+	error
+	RuntimeAmbiguity() bool
+}
+
+func ownedPaneCommand(runFile, sessionID, launchID string) string {
+	return "export AO_RUN_FILE=" + shellQuote(runFile) + "; " +
+		"export AO_SESSION_ID=" + shellQuote(sessionID) + "; " +
+		"export AO_SUPERVISED_PROCESS='1'; " +
+		": 'agent-process' 'supervise' '--session' '" + sessionID + "' '--launch' '" + launchID + "' '--' 'codex'; exec sh"
+}
+
+func legacyPaneCommand(sessionID, launchID string) string {
+	return "export AO_SESSION_ID=" + shellQuote(sessionID) + "; " +
+		"export AO_SUPERVISED_PROCESS='1'; " +
+		": 'agent-process' 'supervise' '--session' '" + sessionID + "' '--launch' '" + launchID + "' '--' 'codex'; exec sh"
+}
+
+// namespaceProbeRunner scripts read-only has-session results by socket target,
+// so legacy discovery tests do not depend on probe order.
+type namespaceProbeRunner struct {
+	calls   []runnerCall
+	results map[string]fakeRunnerResult
+}
+
+func (f *namespaceProbeRunner) Run(_ context.Context, env []string, name string, args ...string) ([]byte, error) {
+	call := runnerCall{env: append([]string(nil), env...), name: name, args: append([]string(nil), args...)}
+	f.calls = append(f.calls, call)
+	result, ok := f.results[probeNamespace(args)]
+	if !ok {
+		return []byte("unexpected tmux namespace"), errors.New("unexpected tmux namespace")
+	}
+	return result.out, result.err
+}
+
+func probeNamespace(args []string) string {
+	if len(args) >= 2 && args[0] == "-L" {
+		if args[1] == "default" {
+			return "default"
+		}
+		return "named:" + args[1]
+	}
+	if len(args) >= 2 && args[0] == "-S" {
+		return "path:" + args[1]
+	}
+	return "default"
+}
+
+func tmuxSubcommand(args []string) string {
+	args = tmuxCommandArgs(args)
+	if len(args) == 0 {
+		return ""
+	}
+	return args[0]
+}
+
+func tmuxCommandArgs(args []string) []string {
+	for len(args) > 0 {
+		switch args[0] {
+		case "-L", "-S", "-f":
+			if len(args) < 2 {
+				return nil
+			}
+			args = args[2:]
+		default:
+			return args
+		}
+	}
+	return nil
+}
+
+func assertOnlyLegacyProbes(t *testing.T, calls []runnerCall, wantNamespaces ...string) {
+	t.Helper()
+	seen := make(map[string]int, len(wantNamespaces))
+	for _, call := range calls {
+		if tmuxSubcommand(call.args) == "has-session" {
+			seen[probeNamespace(call.args)]++
+		}
+		joined := strings.Join(call.args, " ")
+		for _, mutating := range []string{"new-session", "respawn-pane", "kill-session", "send-keys", "paste-buffer", "load-buffer"} {
+			if strings.Contains(joined, mutating) {
+				t.Errorf("legacy resolution issued mutating %s command: %q %#v", mutating, call.name, call.args)
+			}
+		}
+	}
+	for _, namespace := range wantNamespaces {
+		if seen[namespace] != 1 {
+			t.Errorf("namespace %q probe count = %d, want exactly 1; calls=%+v", namespace, seen[namespace], calls)
+		}
+	}
+}
+
+func TestBareLegacyHandleReportsAmbiguityAcrossAllNamespacesWithoutMutation(t *testing.T) {
+	const historicalSocket = "/tmp/ao-legacy-private.sock"
+	r := New(Options{
+		Binary:           "bundled-tmux-test",
+		LegacyBinary:     "system-tmux-test",
+		SocketName:       "ao",
+		LegacySocketPath: historicalSocket,
+		Timeout:          time.Second,
+	})
+	fr := &namespaceProbeRunner{results: map[string]fakeRunnerResult{
+		"named:ao":                 {}, // same bare name exists here
+		"path:" + historicalSocket: {}, // and here
+		"default":                  {}, // and here
+	}}
+	r.runner = fr
+
+	alive, err := r.IsAlive(context.Background(), ports.RuntimeHandle{ID: "sess-1"})
+	if alive {
+		t.Error("ambiguous bare handle reported alive")
+	}
+	if !errors.Is(err, ports.ErrRuntimeProbeInconclusive) {
+		t.Errorf("IsAlive error = %v, want ErrRuntimeProbeInconclusive", err)
+	}
+	var ambiguity runtimeAmbiguity
+	if !errors.As(err, &ambiguity) || !ambiguity.RuntimeAmbiguity() {
+		t.Errorf("IsAlive error = %v, want typed runtime ambiguity", err)
+	}
+	assertOnlyLegacyProbes(t, fr.calls, "named:ao", "path:"+historicalSocket, "default")
+}
+
+func TestBareLegacyHandleProbeFailureIsInconclusiveAndDoesNotAdoptOrMutate(t *testing.T) {
+	const historicalSocket = "/tmp/ao-legacy-private.sock"
+	r := New(Options{
+		Binary:           "bundled-tmux-test",
+		LegacyBinary:     "system-tmux-test",
+		SocketName:       "ao",
+		LegacySocketPath: historicalSocket,
+		Timeout:          time.Second,
+	})
+	fr := &namespaceProbeRunner{results: map[string]fakeRunnerResult{
+		"named:ao": {}, // one plausible live owner is not enough while another probe failed
+		"path:" + historicalSocket: {
+			out: []byte("error connecting to historical socket (Connection refused)"),
+			err: &exec.ExitError{},
+		},
+		"default": {out: []byte("can't find session: sess-1"), err: &exec.ExitError{}},
+	}}
+	r.runner = fr
+
+	alive, err := r.IsAlive(context.Background(), ports.RuntimeHandle{ID: "sess-1"})
+	if alive {
+		t.Error("partially observed bare handle reported alive")
+	}
+	if !errors.Is(err, ports.ErrRuntimeProbeInconclusive) {
+		t.Errorf("IsAlive error = %v, want ErrRuntimeProbeInconclusive", err)
+	}
+	var ambiguity runtimeAmbiguity
+	if errors.As(err, &ambiguity) {
+		t.Errorf("probe failure was mislabeled as duplicate-owner ambiguity: %v", err)
+	}
+	assertOnlyLegacyProbes(t, fr.calls, "named:ao", "path:"+historicalSocket, "default")
+}
+
+func TestResolveRuntimeHandleUsesExactOwnerToDisambiguateLegacyDuplicates(t *testing.T) {
+	const historicalSocket = "/tmp/ao-legacy-private.sock"
+	const runFile = "/tmp/ao/running.json"
+	r := New(Options{
+		Binary:           "bundled-tmux-test",
+		LegacyBinary:     "system-tmux-test",
+		SocketName:       "ao",
+		LegacySocketPath: historicalSocket,
+		RunFilePath:      runFile,
+		Timeout:          time.Second,
+	})
+	fr := &fakeRunnerSequence{results: []fakeRunnerResult{
+		{}, // named candidate exists
+		{}, // historical candidate exists
+		{out: []byte("can't find session: sess-1"), err: &exec.ExitError{}},
+		{out: []byte(ownedPaneCommand(runFile, "sess-1", "launch-1") + "\n")},
+		{out: []byte(ownedPaneCommand(runFile, "sess-1", "launch-2") + "\n")},
+		{out: []byte("100\n")},
+		{out: []byte("100 1 /bin/sh\n")},
+		{out: []byte("200\n")},
+		{out: []byte("200 1 /bin/sh\n")},
+	}}
+	r.runner = fr
+
+	resolved, found, err := r.ResolveRuntimeHandle(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, ports.SupervisedProcessRef{
+		SessionID: "sess-1",
+		LaunchID:  "launch-2",
+	})
+	if err != nil || !found {
+		t.Fatalf("ResolveRuntimeHandle = (%q, %v, %v), want qualified historical handle", resolved.ID, found, err)
+	}
+	if !strings.HasPrefix(resolved.ID, "tmux-v1:") {
+		t.Fatalf("resolved handle = %q, want tmux-v1 qualified handle", resolved.ID)
+	}
+
+	// The resolved handle must carry its historical socket across Runtime
+	// replacement; proving this through IsAlive avoids coupling the test to the
+	// opaque wire encoding.
+	fresh := New(Options{
+		Binary:       "bundled-tmux-test",
+		LegacyBinary: "system-tmux-test",
+		SocketName:   "replacement-primary",
+		Timeout:      time.Second,
+	})
+	routeRunner := &namespaceProbeRunner{results: map[string]fakeRunnerResult{
+		"path:" + historicalSocket: {},
+	}}
+	fresh.runner = routeRunner
+	if alive, probeErr := fresh.IsAlive(context.Background(), resolved); probeErr != nil || !alive {
+		t.Fatalf("resolved handle IsAlive = (%v, %v), want (true, nil)", alive, probeErr)
+	}
+	if len(routeRunner.calls) != 1 || probeNamespace(routeRunner.calls[0].args) != "path:"+historicalSocket {
+		t.Fatalf("resolved calls = %+v, want one direct historical-socket probe", routeRunner.calls)
+	}
+}
+
+func TestResolveRuntimeHandlePrefersLiveNewerOwnerOverDeadDBMatchingOwner(t *testing.T) {
+	const historicalSocket = "/tmp/ao-legacy-private.sock"
+	const runFile = "/tmp/ao/running.json"
+	r := New(Options{
+		Binary:           "bundled-tmux-test",
+		LegacyBinary:     "system-tmux-test",
+		SocketName:       "ao",
+		LegacySocketPath: historicalSocket,
+		RunFilePath:      runFile,
+		Timeout:          time.Second,
+	})
+	fr := &fakeRunnerSequence{results: []fakeRunnerResult{
+		{},
+		{},
+		{out: []byte("can't find session: sess-1"), err: &exec.ExitError{}},
+		{out: []byte(ownedPaneCommand(runFile, "sess-1", "launch-db-old") + "\n")},
+		{out: []byte(ownedPaneCommand(runFile, "sess-1", "launch-live-new") + "\n")},
+		{out: []byte("100\n")},
+		{out: []byte("100 1 /bin/sh\n")},
+		{out: []byte("200\n")},
+		{out: []byte("200 1 /bin/sh\n201 200 /opt/ao agent-process supervise --session sess-1 --launch launch-live-new -- codex\n202 201 codex\n")},
+	}}
+	r.runner = fr
+
+	resolved, found, err := r.ResolveRuntimeHandle(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, ports.SupervisedProcessRef{
+		SessionID: "sess-1",
+		LaunchID:  "launch-db-old",
+	})
+	if err != nil || !found {
+		t.Fatalf("ResolveRuntimeHandle = (%q, %v, %v), want live newer historical owner", resolved.ID, found, err)
+	}
+	route, err := decodeRuntimeHandle(resolved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if route.target.kind != socketTargetPath || route.target.value != historicalSocket {
+		t.Fatalf("resolved target = %+v, want live historical socket", route.target)
+	}
+}
+
+func TestResolveRuntimeHandleUsesRawSanitizedSessionWhenSelectingLiveOwner(t *testing.T) {
+	const historicalSocket = "/tmp/ao-legacy-private.sock"
+	const runFile = "/tmp/ao/running.json"
+	rawSessionID := domain.SessionID("project/feature#42." + strings.Repeat("very-long-", 6))
+	tmuxID := SessionName(string(rawSessionID))
+	if tmuxID == string(rawSessionID) {
+		t.Fatalf("tmux session name = raw session id %q, want sanitization", tmuxID)
+	}
+
+	r := New(Options{
+		Binary:           "bundled-tmux-test",
+		LegacyBinary:     "system-tmux-test",
+		SocketName:       "ao",
+		LegacySocketPath: historicalSocket,
+		RunFilePath:      runFile,
+		Timeout:          time.Second,
+	})
+	fr := &fakeRunnerSequence{results: []fakeRunnerResult{
+		{},
+		{},
+		{out: []byte("can't find session: " + tmuxID), err: &exec.ExitError{}},
+		{out: []byte(ownedPaneCommand(runFile, string(rawSessionID), "launch-db-old") + "\n")},
+		{out: []byte(ownedPaneCommand(runFile, string(rawSessionID), "launch-live-new") + "\n")},
+		{out: []byte("100\n")},
+		{out: []byte("100 1 /bin/sh\n")},
+		{out: []byte("200\n")},
+		{out: []byte("200 1 /bin/sh\n201 200 /opt/ao agent-process supervise --session " + string(rawSessionID) + " --launch launch-live-new -- codex\n202 201 codex\n")},
+	}}
+	r.runner = fr
+
+	resolved, found, err := r.ResolveRuntimeHandle(context.Background(), ports.RuntimeHandle{ID: tmuxID}, ports.SupervisedProcessRef{
+		SessionID: rawSessionID,
+		LaunchID:  "launch-db-old",
+	})
+	if err != nil || !found {
+		t.Fatalf("ResolveRuntimeHandle = (%q, %v, %v), want live newer historical owner", resolved.ID, found, err)
+	}
+	route, err := decodeRuntimeHandle(resolved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if route.id != tmuxID || route.target.kind != socketTargetPath || route.target.value != historicalSocket {
+		t.Fatalf("resolved route = %+v, want live historical owner under sanitized id %q", route, tmuxID)
+	}
+}
+
+func TestResolveRuntimeHandleRepairsStaleLaunchFromUniqueOwnedHistoricalPane(t *testing.T) {
+	const historicalSocket = "/tmp/ao-legacy-private.sock"
+	const runFile = "/tmp/ao/running.json"
+	const actualLaunch = "launch-actual"
+	r := New(Options{
+		Binary:           "bundled-tmux-test",
+		LegacyBinary:     "system-tmux-test",
+		SocketName:       "ao",
+		LegacySocketPath: historicalSocket,
+		RunFilePath:      runFile,
+		Timeout:          time.Second,
+	})
+	fr := &fakeRunnerSequence{results: []fakeRunnerResult{
+		{}, // same-named foreign session on the current named namespace
+		{}, // AO-owned historical session
+		{out: []byte("can't find session: sess-1"), err: &exec.ExitError{}},
+		{out: []byte("sleep 30\n")},
+		{out: []byte(ownedPaneCommand(runFile, "sess-1", actualLaunch) + "\n")},
+	}}
+	r.runner = fr
+
+	resolved, found, err := r.ResolveRuntimeHandle(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, ports.SupervisedProcessRef{
+		SessionID: "sess-1",
+		LaunchID:  "launch-stale-in-db",
+	})
+	if err != nil || !found {
+		t.Fatalf("ResolveRuntimeHandle = (%q, %v, %v), want owned historical target", resolved.ID, found, err)
+	}
+
+	identityRunner := &namespaceProbeRunner{results: map[string]fakeRunnerResult{
+		"path:" + historicalSocket: {out: []byte(ownedPaneCommand(runFile, "sess-1", actualLaunch) + "\n")},
+	}}
+	r.runner = identityRunner
+	identity, err := r.InspectRuntimeIdentity(context.Background(), resolved, "sess-1")
+	if err != nil || !identity.OwnershipProven || identity.LaunchID != actualLaunch {
+		t.Fatalf("InspectRuntimeIdentity = (%+v, %v), want proven launch %q", identity, err, actualLaunch)
+	}
+	if len(identityRunner.calls) != 1 || tmuxSubcommand(identityRunner.calls[0].args) != "list-panes" {
+		t.Fatalf("identity calls = %+v, want one fresh pane_start_command read", identityRunner.calls)
+	}
+}
+
+func TestResolveRuntimeHandlePreservesRawIdentityForSanitizedSessionAcrossRuntimeReplacements(t *testing.T) {
+	const historicalSocket = "/tmp/ao-legacy-private.sock"
+	const runFile = "/tmp/ao/running.json"
+	const actualLaunch = "launch-actual"
+	rawSessionID := domain.SessionID("project/feature with spaces and 🚀/" + strings.Repeat("very-long-", 6))
+	tmuxID, err := tmuxSessionName(rawSessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tmuxID == string(rawSessionID) {
+		t.Fatalf("tmux session name = raw session id %q, want sanitization", tmuxID)
+	}
+
+	resolver := New(Options{
+		Binary:           "bundled-tmux-test",
+		LegacyBinary:     "system-tmux-test",
+		SocketName:       "ao",
+		LegacySocketPath: historicalSocket,
+		RunFilePath:      runFile,
+		Timeout:          time.Second,
+	})
+	resolveRunner := &fakeRunnerSequence{results: []fakeRunnerResult{
+		{out: []byte("can't find session: " + tmuxID), err: &exec.ExitError{}},
+		{},
+		{out: []byte("can't find session: " + tmuxID), err: &exec.ExitError{}},
+		{out: []byte(ownedPaneCommand(runFile, string(rawSessionID), actualLaunch) + "\n")},
+	}}
+	resolver.runner = resolveRunner
+
+	resolved, found, err := resolver.ResolveRuntimeHandle(
+		context.Background(),
+		ports.RuntimeHandle{ID: tmuxID},
+		ports.SupervisedProcessRef{SessionID: rawSessionID, LaunchID: actualLaunch},
+	)
+	if err != nil || !found {
+		t.Fatalf("ResolveRuntimeHandle = (%q, %v, %v), want canonical historical handle", resolved.ID, found, err)
+	}
+	route, err := decodeRuntimeHandle(resolved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if route.id != tmuxID || route.target.kind != socketTargetPath || route.target.value != historicalSocket {
+		t.Fatalf("resolved route = %+v, want sanitized session %q on historical socket", route, tmuxID)
+	}
+
+	// A replacement daemon must reread the raw AO_SESSION_ID from the pane while
+	// continuing to address tmux by the sanitized name carried in the handle.
+	inspector := New(Options{
+		Binary:       "replacement-tmux-test",
+		LegacyBinary: "system-tmux-test",
+		SocketName:   "replacement-primary",
+		RunFilePath:  runFile,
+		Timeout:      time.Second,
+	})
+	inspectRunner := &namespaceProbeRunner{results: map[string]fakeRunnerResult{
+		"path:" + historicalSocket: {out: []byte(ownedPaneCommand(runFile, string(rawSessionID), actualLaunch) + "\n")},
+	}}
+	inspector.runner = inspectRunner
+	identity, err := inspector.InspectRuntimeIdentity(context.Background(), resolved, rawSessionID)
+	if err != nil || !identity.OwnershipProven || identity.LaunchID != actualLaunch {
+		t.Fatalf("InspectRuntimeIdentity = (%+v, %v), want raw-session ownership for launch %q", identity, err, actualLaunch)
+	}
+	if len(inspectRunner.calls) != 1 || !reflect.DeepEqual(
+		tmuxCommandArgs(inspectRunner.calls[0].args),
+		paneStartCommandsArgs(tmuxID),
+	) {
+		t.Fatalf("identity calls = %+v, want direct pane lookup by sanitized tmux id %q", inspectRunner.calls, tmuxID)
+	}
+
+	// A second replacement must restart and probe the same qualified target;
+	// neither operation may rediscover by the raw domain session id.
+	restarted := New(Options{
+		Binary:       "second-replacement-tmux-test",
+		LegacyBinary: "system-tmux-test",
+		SocketName:   "second-replacement-primary",
+		Timeout:      time.Second,
+		Shell:        "/bin/sh",
+	})
+	restartRunner := &fakeRunnerSequence{results: []fakeRunnerResult{{}, {}}}
+	restarted.runner = restartRunner
+	restartedHandle, err := restarted.Restart(context.Background(), resolved, ports.RuntimeConfig{
+		SessionID:     rawSessionID,
+		WorkspacePath: "/tmp/worktree",
+		Argv:          []string{"agent", "resume"},
+	})
+	if err != nil {
+		t.Fatalf("Restart: %v", err)
+	}
+	if restartedHandle != resolved {
+		t.Fatalf("Restart handle = %+v, want qualified handle %+v", restartedHandle, resolved)
+	}
+	if len(restartRunner.calls) != 2 {
+		t.Fatalf("restart calls = %+v, want respawn and liveness probe", restartRunner.calls)
+	}
+	for i, call := range restartRunner.calls {
+		if got := probeNamespace(call.args); got != "path:"+historicalSocket {
+			t.Errorf("restart call %d namespace = %q, want historical socket", i, got)
+		}
+	}
+	if got := tmuxCommandArgs(restartRunner.calls[0].args); len(got) < 4 || got[0] != "respawn-pane" || got[3] != tmuxID+":0.0" {
+		t.Fatalf("restart argv = %#v, want sanitized pane target %q", got, tmuxID+":0.0")
+	}
+	if got := tmuxCommandArgs(restartRunner.calls[1].args); !reflect.DeepEqual(got, hasSessionArgs(tmuxID)) {
+		t.Fatalf("restart liveness argv = %#v, want %#v", got, hasSessionArgs(tmuxID))
+	}
+}
+
+func TestPaneRuntimeIdentityRequiresExactAOProvenance(t *testing.T) {
+	command := ownedPaneCommand("/tmp/ao/running.json", "sess-1", "launch-actual")
+	if launchID, owned := paneRuntimeIdentity(command, "sess-1", "/tmp/ao/running.json"); !owned || launchID != "launch-actual" {
+		t.Fatalf("paneRuntimeIdentity = (%q, %v), want exact owned launch", launchID, owned)
+	}
+	for label, candidate := range map[string]string{
+		"other run file": strings.Replace(command, "'/tmp/ao/running.json'", "'/tmp/other/running.json'", 1),
+		"other session":  strings.Replace(command, "'sess-1'", "'sess-foreign'", 1),
+		"no marker":      strings.Replace(command, "export AO_SUPERVISED_PROCESS='1'; ", "", 1),
+		"no supervisor":  strings.Replace(command, "'agent-process'", "'foreign-process'", 1),
+	} {
+		if _, owned := paneRuntimeIdentity(candidate, "sess-1", "/tmp/ao/running.json"); owned {
+			t.Errorf("%s candidate was accepted as AO-owned: %q", label, candidate)
+		}
+	}
+}
+
+func TestResolveRuntimeHandleAllowsLaunchFencedPreRunFilePaneWithoutRepairAuthority(t *testing.T) {
+	const historicalSocket = "/tmp/ao-legacy-private.sock"
+	const runFile = "/tmp/ao/running.json"
+	const launchID = "launch-durable"
+	r := New(Options{
+		Binary:           "bundled-tmux-test",
+		LegacyBinary:     "system-tmux-test",
+		SocketName:       "ao",
+		LegacySocketPath: historicalSocket,
+		RunFilePath:      runFile,
+		Timeout:          time.Second,
+	})
+	fr := &fakeRunnerSequence{results: []fakeRunnerResult{
+		{out: []byte("can't find session: sess-1"), err: &exec.ExitError{}},
+		{},
+		{out: []byte("can't find session: sess-1"), err: &exec.ExitError{}},
+		{out: []byte(legacyPaneCommand("sess-1", launchID) + "\n")},
+	}}
+	r.runner = fr
+	resolved, found, err := r.ResolveRuntimeHandle(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, ports.SupervisedProcessRef{
+		SessionID: "sess-1",
+		LaunchID:  launchID,
+	})
+	if err != nil || !found {
+		t.Fatalf("ResolveRuntimeHandle = (%q, %v, %v), want launch-fenced legacy pane", resolved.ID, found, err)
+	}
+
+	r.runner = &namespaceProbeRunner{results: map[string]fakeRunnerResult{
+		"path:" + historicalSocket: {out: []byte(legacyPaneCommand("sess-1", launchID) + "\n")},
+	}}
+	identity, err := r.InspectRuntimeIdentity(context.Background(), resolved, "sess-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identity.OwnershipProven {
+		t.Fatalf("pre-run-file identity = %+v, must not authorize stale-launch repair", identity)
+	}
+	if identity.LaunchID != launchID {
+		t.Fatalf("pre-run-file launch = %q, want %q", identity.LaunchID, launchID)
+	}
+}
+
+func TestResolveRuntimeHandleRejectsMismatchedPresentRunFileEvenWhenLaunchMatches(t *testing.T) {
+	const runFile = "/tmp/ao/running.json"
+	r := New(Options{Binary: "tmux-test", RunFilePath: runFile, Timeout: time.Second})
+	fr := &fakeRunnerSequence{results: []fakeRunnerResult{
+		{},
+		{out: []byte(ownedPaneCommand("/tmp/other/running.json", "sess-1", "launch-1") + "\n")},
+	}}
+	r.runner = fr
+	_, found, err := r.ResolveRuntimeHandle(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, ports.SupervisedProcessRef{
+		SessionID: "sess-1",
+		LaunchID:  "launch-1",
+	})
+	if found || !errors.Is(err, ports.ErrRuntimeProbeInconclusive) {
+		t.Fatalf("ResolveRuntimeHandle = (found=%v, err=%v), want foreign run-file rejected", found, err)
+	}
+}
+
+func TestResolveRuntimeHandleWithoutOwnerRejectsLegacyDuplicates(t *testing.T) {
+	const historicalSocket = "/tmp/ao-legacy-private.sock"
+	const runFile = "/tmp/ao/running.json"
+	r := New(Options{
+		Binary:           "bundled-tmux-test",
+		LegacyBinary:     "system-tmux-test",
+		SocketName:       "ao",
+		LegacySocketPath: historicalSocket,
+		RunFilePath:      runFile,
+		Timeout:          time.Second,
+	})
+	fr := &fakeRunnerSequence{results: []fakeRunnerResult{
+		{},
+		{},
+		{out: []byte("can't find session: sess-1"), err: &exec.ExitError{}},
+		{out: []byte(ownedPaneCommand(runFile, "sess-1", "launch-1") + "\n")},
+		{out: []byte(ownedPaneCommand(runFile, "sess-1", "launch-2") + "\n")},
+		{out: []byte("100\n")},
+		{out: []byte("100 1 /bin/sh\n")},
+		{out: []byte("200\n")},
+		{out: []byte("200 1 /bin/sh\n")},
+	}}
+	r.runner = fr
+
+	resolved, found, err := r.ResolveRuntimeHandle(
+		context.Background(),
+		ports.RuntimeHandle{ID: "sess-1"},
+		ports.SupervisedProcessRef{},
+	)
+	if found || resolved.ID != "" {
+		t.Fatalf("ResolveRuntimeHandle = (%q, %v, %v), want unresolved ambiguity", resolved.ID, found, err)
+	}
+	if !errors.Is(err, ports.ErrRuntimeProbeInconclusive) {
+		t.Fatalf("ResolveRuntimeHandle error = %v, want ErrRuntimeProbeInconclusive", err)
+	}
+	var ambiguity runtimeAmbiguity
+	if !errors.As(err, &ambiguity) || !ambiguity.RuntimeAmbiguity() {
+		t.Fatalf("ResolveRuntimeHandle error = %v, want typed runtime ambiguity", err)
+	}
+	assertOnlyLegacyProbes(t, fr.calls, "named:ao", "path:"+historicalSocket, "default")
+}
+
+func TestResolveRuntimeHandleReturnsQualifiedHandleUnchangedWithoutProbing(t *testing.T) {
+	r := New(Options{Binary: "tmux-test", SocketName: "replacement", Timeout: time.Second})
+	fr := &fakeRunner{err: errors.New("must not probe")}
+	r.runner = fr
+	handle, err := qualifiedRuntimeHandle("sess-1", socketTarget{kind: socketTargetNamed, value: "ao"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, found, err := r.ResolveRuntimeHandle(context.Background(), handle, ports.SupervisedProcessRef{})
+	if err != nil || !found || resolved != handle {
+		t.Fatalf("ResolveRuntimeHandle = (%q, %v, %v), want unchanged qualified handle", resolved.ID, found, err)
+	}
+	if len(fr.calls) != 0 {
+		t.Fatalf("qualified resolution probed runtime: %+v", fr.calls)
+	}
+}
+
+func TestResolveRuntimeHandleReturnsNotFoundOnlyAfterEveryNamespaceIsAbsent(t *testing.T) {
+	const historicalSocket = "/tmp/ao-legacy-private.sock"
+	r := New(Options{
+		Binary:           "bundled-tmux-test",
+		LegacyBinary:     "system-tmux-test",
+		SocketName:       "ao",
+		LegacySocketPath: historicalSocket,
+		RunFilePath:      "/tmp/ao/running.json",
+		Timeout:          time.Second,
+	})
+	missing := fakeRunnerResult{out: []byte("can't find session: sess-1"), err: &exec.ExitError{}}
+	fr := &namespaceProbeRunner{results: map[string]fakeRunnerResult{
+		"named:ao":                 missing,
+		"path:" + historicalSocket: missing,
+		"default":                  missing,
+	}}
+	r.runner = fr
+	resolved, found, err := r.ResolveRuntimeHandle(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, ports.SupervisedProcessRef{})
+	if err != nil || found || resolved.ID != "" {
+		t.Fatalf("ResolveRuntimeHandle = (%q, %v, %v), want conclusive not found", resolved.ID, found, err)
+	}
+	assertOnlyLegacyProbes(t, fr.calls, "named:ao", "path:"+historicalSocket, "default")
+}
+
 func TestRestartRespawnsExistingPaneAndPreservesHandle(t *testing.T) {
 	r, fr := newTestRuntime(0)
 	handle := ports.RuntimeHandle{ID: "sess-1"}
@@ -710,10 +1470,10 @@ func TestRestartRespawnsExistingPaneAndPreservesHandle(t *testing.T) {
 	if len(fr.calls) != 2 {
 		t.Fatalf("calls = %d, want respawn + liveness probe", len(fr.calls))
 	}
-	if args := fr.calls[0].args; len(args) < 6 || args[0] != "respawn-pane" || args[1] != "-k" || args[3] != "sess-1:0.0" || args[5] != "/tmp/ws" {
+	if args := tmuxCommandArgs(fr.calls[0].args); len(args) < 6 || args[0] != "respawn-pane" || args[1] != "-k" || args[3] != "sess-1:0.0" || args[5] != "/tmp/ws" {
 		t.Fatalf("respawn args = %#v", args)
 	}
-	if args := fr.calls[1].args; !reflect.DeepEqual(args, hasSessionArgs("sess-1")) {
+	if args := tmuxCommandArgs(fr.calls[1].args); !reflect.DeepEqual(args, hasSessionArgs("sess-1")) {
 		t.Fatalf("liveness args = %#v, want %#v", args, hasSessionArgs("sess-1"))
 	}
 }
@@ -734,17 +1494,21 @@ func TestRestartRejectsMismatchedSessionHandle(t *testing.T) {
 }
 
 func TestIsAliveAdoptsSessionFromLegacyDefaultSocket(t *testing.T) {
+	const runFile = "/tmp/ao/running.json"
 	r := New(Options{
 		Binary:       "bundled-tmux-test",
 		LegacyBinary: "system-tmux-test",
 		SocketName:   "ao",
+		RunFilePath:  runFile,
 		Timeout:      time.Second,
 	})
 	fr := &fakeRunnerSequence{results: []fakeRunnerResult{
 		{out: []byte("can't find session: sess-1"), err: &exec.ExitError{}},
-		{}, // legacy default-socket discovery
-		{}, // first has-session call after discovery
-		{}, // cached second has-session call
+		{},
+		{out: []byte(ownedPaneCommand(runFile, "sess-1", "launch-1") + "\n")},
+		{out: []byte("can't find session: sess-1"), err: &exec.ExitError{}},
+		{},
+		{out: []byte(ownedPaneCommand(runFile, "sess-1", "launch-1") + "\n")},
 	}}
 	r.runner = fr
 	handle := ports.RuntimeHandle{ID: "sess-1"}
@@ -758,12 +1522,16 @@ func TestIsAliveAdoptsSessionFromLegacyDefaultSocket(t *testing.T) {
 	want := [][]string{
 		append([]string{"-L", "ao"}, hasSessionArgs("sess-1")...),
 		append([]string{"-L", "default"}, hasSessionArgs("sess-1")...),
+		append([]string{"-L", "default"}, paneStartCommandsArgs("sess-1")...),
+		append([]string{"-L", "ao"}, hasSessionArgs("sess-1")...),
 		append([]string{"-L", "default"}, hasSessionArgs("sess-1")...),
-		append([]string{"-L", "default"}, hasSessionArgs("sess-1")...),
+		append([]string{"-L", "default"}, paneStartCommandsArgs("sess-1")...),
 	}
 	wantBinaries := []string{
 		"bundled-tmux-test",
 		"system-tmux-test",
+		"system-tmux-test",
+		"bundled-tmux-test",
 		"system-tmux-test",
 		"system-tmux-test",
 	}
@@ -782,18 +1550,24 @@ func TestIsAliveAdoptsSessionFromLegacyDefaultSocket(t *testing.T) {
 
 func TestIsAliveAdoptsSessionFromHistoricalPrivateSocket(t *testing.T) {
 	const historicalSocket = "/tmp/ao-legacy-private.sock"
+	const runFile = "/tmp/ao/running.json"
 	r := New(Options{
 		Binary:           "bundled-tmux-test",
 		LegacyBinary:     "system-tmux-test",
 		SocketName:       "ao",
 		LegacySocketPath: historicalSocket,
+		RunFilePath:      runFile,
 		Timeout:          time.Second,
 	})
 	fr := &fakeRunnerSequence{results: []fakeRunnerResult{
 		{out: []byte("can't find session: sess-1"), err: &exec.ExitError{}},
-		{}, // historical private-socket discovery
-		{}, // first has-session call after discovery
-		{}, // cached second has-session call
+		{},
+		{out: []byte("can't find session: sess-1"), err: &exec.ExitError{}},
+		{out: []byte(ownedPaneCommand(runFile, "sess-1", "launch-1") + "\n")},
+		{out: []byte("can't find session: sess-1"), err: &exec.ExitError{}},
+		{},
+		{out: []byte("can't find session: sess-1"), err: &exec.ExitError{}},
+		{out: []byte(ownedPaneCommand(runFile, "sess-1", "launch-1") + "\n")},
 	}}
 	r.runner = fr
 	handle := ports.RuntimeHandle{ID: "sess-1"}
@@ -807,15 +1581,23 @@ func TestIsAliveAdoptsSessionFromHistoricalPrivateSocket(t *testing.T) {
 	want := [][]string{
 		append([]string{"-L", "ao"}, hasSessionArgs("sess-1")...),
 		append([]string{"-S", historicalSocket, "-f", os.DevNull}, hasSessionArgs("sess-1")...),
+		append([]string{"-L", "default"}, hasSessionArgs("sess-1")...),
+		append([]string{"-S", historicalSocket, "-f", os.DevNull}, paneStartCommandsArgs("sess-1")...),
+		append([]string{"-L", "ao"}, hasSessionArgs("sess-1")...),
 		append([]string{"-S", historicalSocket, "-f", os.DevNull}, hasSessionArgs("sess-1")...),
-		append([]string{"-S", historicalSocket, "-f", os.DevNull}, hasSessionArgs("sess-1")...),
+		append([]string{"-L", "default"}, hasSessionArgs("sess-1")...),
+		append([]string{"-S", historicalSocket, "-f", os.DevNull}, paneStartCommandsArgs("sess-1")...),
 	}
 	if len(fr.calls) != len(want) {
 		t.Fatalf("calls = %d, want %d: %+v", len(fr.calls), len(want), fr.calls)
 	}
+	wantBinaries := []string{
+		"bundled-tmux-test", "bundled-tmux-test", "system-tmux-test", "bundled-tmux-test",
+		"bundled-tmux-test", "bundled-tmux-test", "system-tmux-test", "bundled-tmux-test",
+	}
 	for i := range want {
-		if fr.calls[i].name != "bundled-tmux-test" {
-			t.Fatalf("call %d binary = %q, want bundled-tmux-test", i, fr.calls[i].name)
+		if fr.calls[i].name != wantBinaries[i] {
+			t.Fatalf("call %d binary = %q, want %q", i, fr.calls[i].name, wantBinaries[i])
 		}
 		if !reflect.DeepEqual(fr.calls[i].args, want[i]) {
 			t.Fatalf("call %d args = %#v, want %#v", i, fr.calls[i].args, want[i])
@@ -825,15 +1607,17 @@ func TestIsAliveAdoptsSessionFromHistoricalPrivateSocket(t *testing.T) {
 
 func TestIsAliveAdoptsHistoricalPrivateSocketFromDefaultPrimary(t *testing.T) {
 	const historicalSocket = "/tmp/ao-legacy-private.sock"
+	const runFile = "/tmp/ao/running.json"
 	r := New(Options{
 		Binary:           "tmux-test",
 		LegacySocketPath: historicalSocket,
+		RunFilePath:      runFile,
 		Timeout:          time.Second,
 	})
 	fr := &fakeRunnerSequence{results: []fakeRunnerResult{
 		{out: []byte("can't find session: sess-1"), err: &exec.ExitError{}},
-		{}, // historical private-socket discovery
-		{}, // has-session on the adopted historical socket
+		{},
+		{out: []byte(ownedPaneCommand(runFile, "sess-1", "launch-1") + "\n")},
 	}}
 	r.runner = fr
 
@@ -842,9 +1626,9 @@ func TestIsAliveAdoptsHistoricalPrivateSocketFromDefaultPrimary(t *testing.T) {
 		t.Fatalf("IsAlive = (%v, %v), want (true, nil)", alive, err)
 	}
 	want := [][]string{
-		hasSessionArgs("sess-1"),
+		append([]string{"-L", "default"}, hasSessionArgs("sess-1")...),
 		append([]string{"-S", historicalSocket, "-f", os.DevNull}, hasSessionArgs("sess-1")...),
-		append([]string{"-S", historicalSocket, "-f", os.DevNull}, hasSessionArgs("sess-1")...),
+		append([]string{"-S", historicalSocket, "-f", os.DevNull}, paneStartCommandsArgs("sess-1")...),
 	}
 	if len(fr.calls) != len(want) {
 		t.Fatalf("calls = %d, want %d: %+v", len(fr.calls), len(want), fr.calls)
@@ -858,18 +1642,20 @@ func TestIsAliveAdoptsHistoricalPrivateSocketFromDefaultPrimary(t *testing.T) {
 
 func TestIsAliveChecksLegacyDefaultAfterHistoricalPrivateSocketIsMissing(t *testing.T) {
 	const historicalSocket = "/tmp/ao-legacy-private.sock"
+	const runFile = "/tmp/ao/running.json"
 	r := New(Options{
 		Binary:           "bundled-tmux-test",
 		LegacyBinary:     "system-tmux-test",
 		SocketName:       "ao",
 		LegacySocketPath: historicalSocket,
+		RunFilePath:      runFile,
 		Timeout:          time.Second,
 	})
 	fr := &fakeRunnerSequence{results: []fakeRunnerResult{
 		{out: []byte("can't find session: sess-1"), err: &exec.ExitError{}},
 		{out: []byte("no server running on " + historicalSocket), err: &exec.ExitError{}},
-		{}, // legacy default-socket discovery
-		{}, // has-session on the adopted legacy default socket
+		{},
+		{out: []byte(ownedPaneCommand(runFile, "sess-1", "launch-1") + "\n")},
 	}}
 	r.runner = fr
 
@@ -881,7 +1667,7 @@ func TestIsAliveChecksLegacyDefaultAfterHistoricalPrivateSocketIsMissing(t *test
 		append([]string{"-L", "ao"}, hasSessionArgs("sess-1")...),
 		append([]string{"-S", historicalSocket, "-f", os.DevNull}, hasSessionArgs("sess-1")...),
 		append([]string{"-L", "default"}, hasSessionArgs("sess-1")...),
-		append([]string{"-L", "default"}, hasSessionArgs("sess-1")...),
+		append([]string{"-L", "default"}, paneStartCommandsArgs("sess-1")...),
 	}
 	wantBinaries := []string{"bundled-tmux-test", "bundled-tmux-test", "system-tmux-test", "system-tmux-test"}
 	if len(fr.calls) != len(want) {
@@ -905,6 +1691,7 @@ func TestIsAliveReportsHistoricalPrivateSocketFailureAsInconclusive(t *testing.T
 	fr := &fakeRunnerSequence{results: []fakeRunnerResult{
 		{out: []byte("can't find session: sess-1"), err: &exec.ExitError{}},
 		{out: []byte("error connecting to historical socket (Connection refused)"), err: &exec.ExitError{}},
+		{out: []byte("can't find session: sess-1"), err: &exec.ExitError{}},
 	}}
 	r.runner = fr
 
@@ -915,16 +1702,18 @@ func TestIsAliveReportsHistoricalPrivateSocketFailureAsInconclusive(t *testing.T
 	if alive {
 		t.Fatal("alive = true, want false with inconclusive error")
 	}
-	if len(fr.calls) != 2 {
-		t.Fatalf("calls = %d, want current and historical probes only", len(fr.calls))
+	if len(fr.calls) != 3 {
+		t.Fatalf("calls = %d, want every configured namespace probed", len(fr.calls))
 	}
 }
 
 func TestIsAliveAdoptsLegacyDefaultSessionWhenNamedSocketDoesNotExist(t *testing.T) {
+	const runFile = "/tmp/ao/running.json"
 	r := New(Options{
 		Binary:       "bundled-tmux-test",
 		LegacyBinary: "system-tmux-test",
 		SocketName:   "ao",
+		RunFilePath:  runFile,
 		Timeout:      time.Second,
 	})
 	fr := &fakeRunnerSequence{results: []fakeRunnerResult{
@@ -932,8 +1721,8 @@ func TestIsAliveAdoptsLegacyDefaultSessionWhenNamedSocketDoesNotExist(t *testing
 			out: []byte("error connecting to /private/tmp/tmux-501/ao (No such file or directory)"),
 			err: &exec.ExitError{},
 		},
-		{}, // legacy default-socket discovery
-		{}, // has-session on the adopted legacy socket
+		{},
+		{out: []byte(ownedPaneCommand(runFile, "sess-1", "launch-1") + "\n")},
 	}}
 	r.runner = fr
 
@@ -944,7 +1733,7 @@ func TestIsAliveAdoptsLegacyDefaultSessionWhenNamedSocketDoesNotExist(t *testing
 	want := [][]string{
 		append([]string{"-L", "ao"}, hasSessionArgs("sess-1")...),
 		append([]string{"-L", "default"}, hasSessionArgs("sess-1")...),
-		append([]string{"-L", "default"}, hasSessionArgs("sess-1")...),
+		append([]string{"-L", "default"}, paneStartCommandsArgs("sess-1")...),
 	}
 	wantBinaries := []string{"bundled-tmux-test", "system-tmux-test", "system-tmux-test"}
 	if len(fr.calls) != len(want) {
@@ -982,15 +1771,13 @@ func TestIsAliveKeepsAmbiguousNamedSocketFailureInNamedNamespace(t *testing.T) {
 		t.Fatal("alive = true, want false with inconclusive error")
 	}
 	if len(fr.calls) != 2 {
-		t.Fatalf("calls = %d, want named discovery and named liveness probe", len(fr.calls))
+		t.Fatalf("calls = %d, want named and default namespace probes", len(fr.calls))
 	}
-	for i, call := range fr.calls {
-		if call.name != "bundled-tmux-test" {
-			t.Fatalf("call %d binary = %q, want bundled-tmux-test", i, call.name)
-		}
-		if len(call.args) < 2 || call.args[0] != "-L" || call.args[1] != "ao" {
-			t.Fatalf("call %d args = %#v, want named ao socket", i, call.args)
-		}
+	if fr.calls[0].name != "bundled-tmux-test" || probeNamespace(fr.calls[0].args) != "named:ao" {
+		t.Fatalf("named probe = %+v", fr.calls[0])
+	}
+	if fr.calls[1].name != "system-tmux-test" || probeNamespace(fr.calls[1].args) != "default" {
+		t.Fatalf("default probe = %+v", fr.calls[1])
 	}
 }
 
@@ -1079,7 +1866,7 @@ func TestDestroyIsIdempotentWhenSessionMissing(t *testing.T) {
 	if err := r.Destroy(context.Background(), ports.RuntimeHandle{ID: "sess-1"}); err != nil {
 		t.Fatalf("Destroy: %v", err)
 	}
-	if len(fr.calls) != 2 || fr.calls[0].args[0] != "list-panes" || fr.calls[1].args[0] != "kill-session" {
+	if len(fr.calls) != 2 || tmuxSubcommand(fr.calls[0].args) != "list-panes" || tmuxSubcommand(fr.calls[1].args) != "kill-session" {
 		t.Fatalf("calls = %#v, want list-panes then kill-session", fr.calls)
 	}
 }
@@ -1113,10 +1900,10 @@ func TestDestroyArgs(t *testing.T) {
 	}
 	// list-panes discovers pane sessions; kill-session (exact-match target
 	// =<id>) tears the session down.
-	if got, want := fr.calls[0].args, listPanePIDsArgs("sess-1"); !reflect.DeepEqual(got, want) {
+	if got, want := tmuxCommandArgs(fr.calls[0].args), listPanePIDsArgs("sess-1"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("list-panes args = %#v, want %#v", got, want)
 	}
-	if got, want := fr.calls[1].args, killSessionArgs("sess-1"); !reflect.DeepEqual(got, want) {
+	if got, want := tmuxCommandArgs(fr.calls[1].args), killSessionArgs("sess-1"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("destroy args = %#v, want %#v", got, want)
 	}
 }
@@ -1251,7 +2038,7 @@ func TestIsAliveReturnsTrueOnExitZero(t *testing.T) {
 	if !alive {
 		t.Fatal("alive = false, want true")
 	}
-	if got, want := fr.calls[0].args, hasSessionArgs("sess-1"); !reflect.DeepEqual(got, want) {
+	if got, want := tmuxCommandArgs(fr.calls[0].args), hasSessionArgs("sess-1"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("has-session args = %#v, want %#v", got, want)
 	}
 }
@@ -1329,16 +2116,16 @@ func TestSendMessageChunksAndSendsEnter(t *testing.T) {
 	if len(fr.calls) != 4 {
 		t.Fatalf("calls = %d, want 4 (3 chunks + Enter)", len(fr.calls))
 	}
-	if got, want := fr.calls[0].args, sendKeysLiteralArgs("sess-1", "hello"); !reflect.DeepEqual(got, want) {
+	if got, want := tmuxCommandArgs(fr.calls[0].args), sendKeysLiteralArgs("sess-1", "hello"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("chunk 1 args = %#v, want %#v", got, want)
 	}
-	if got, want := fr.calls[1].args, sendKeysLiteralArgs("sess-1", "世"); !reflect.DeepEqual(got, want) {
+	if got, want := tmuxCommandArgs(fr.calls[1].args), sendKeysLiteralArgs("sess-1", "世"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("chunk 2 args = %#v, want %#v", got, want)
 	}
-	if got, want := fr.calls[2].args, sendKeysLiteralArgs("sess-1", "界"); !reflect.DeepEqual(got, want) {
+	if got, want := tmuxCommandArgs(fr.calls[2].args), sendKeysLiteralArgs("sess-1", "界"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("chunk 3 args = %#v, want %#v", got, want)
 	}
-	if got, want := fr.calls[3].args, sendEnterArgs("sess-1"); !reflect.DeepEqual(got, want) {
+	if got, want := tmuxCommandArgs(fr.calls[3].args), sendEnterArgs("sess-1"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("Enter args = %#v, want %#v", got, want)
 	}
 }
@@ -1349,8 +2136,8 @@ func TestSendMessageUsesLiteralFlag(t *testing.T) {
 		t.Fatalf("SendMessage: %v", err)
 	}
 	// First call must use -l so "Enter" is sent literally, not as a key binding.
-	if fr.calls[0].args[3] != "-l" {
-		t.Fatalf("send-keys args[3] = %q, want -l", fr.calls[0].args[3])
+	if args := tmuxCommandArgs(fr.calls[0].args); args[3] != "-l" {
+		t.Fatalf("send-keys args[3] = %q, want -l", args[3])
 	}
 }
 
@@ -1386,7 +2173,7 @@ func TestSendMessageDelaysBeforeEnter(t *testing.T) {
 	if len(fr.calls) != 2 {
 		t.Fatalf("calls = %d, want 2 (chunk + Enter)", len(fr.calls))
 	}
-	if got, want := fr.calls[1].args, sendEnterArgs("sess-1"); !reflect.DeepEqual(got, want) {
+	if got, want := tmuxCommandArgs(fr.calls[1].args), sendEnterArgs("sess-1"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("Enter args = %#v, want %#v", got, want)
 	}
 
@@ -1404,7 +2191,7 @@ func TestSendMessageDelaysBeforeEnter(t *testing.T) {
 	if len(frNudge.calls) != 1 {
 		t.Fatalf("nudge calls = %d, want 1 (Enter only)", len(frNudge.calls))
 	}
-	if got, want := frNudge.calls[0].args, sendEnterArgs("sess-1"); !reflect.DeepEqual(got, want) {
+	if got, want := tmuxCommandArgs(frNudge.calls[0].args), sendEnterArgs("sess-1"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("nudge Enter args = %#v, want %#v", got, want)
 	}
 }
@@ -1430,7 +2217,7 @@ func TestSendMessageEnterSurvivesCallerCancel(t *testing.T) {
 	if len(fr.calls) != 2 {
 		t.Fatalf("calls = %d, want 2 (chunk + Enter despite the caller cancel after the paste)", len(fr.calls))
 	}
-	if got, want := fr.calls[1].args, sendEnterArgs("sess-1"); !reflect.DeepEqual(got, want) {
+	if got, want := tmuxCommandArgs(fr.calls[1].args), sendEnterArgs("sess-1"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("Enter args = %#v, want %#v", got, want)
 	}
 }
@@ -1465,10 +2252,10 @@ func TestSendMessageRemainingChunksSurviveCallerCancel(t *testing.T) {
 	if len(fr.calls) != 3 {
 		t.Fatalf("calls = %d, want 3 (two chunks + Enter)", len(fr.calls))
 	}
-	if got, want := fr.calls[1].args, sendKeysLiteralArgs("sess-1", "world"); !reflect.DeepEqual(got, want) {
+	if got, want := tmuxCommandArgs(fr.calls[1].args), sendKeysLiteralArgs("sess-1", "world"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("chunk 2 args = %#v, want %#v", got, want)
 	}
-	if got, want := fr.calls[2].args, sendEnterArgs("sess-1"); !reflect.DeepEqual(got, want) {
+	if got, want := tmuxCommandArgs(fr.calls[2].args), sendEnterArgs("sess-1"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("Enter args = %#v, want %#v", got, want)
 	}
 }
@@ -1506,7 +2293,7 @@ func TestInterruptSendsCtrlC(t *testing.T) {
 	if err := r.Interrupt(context.Background(), ports.RuntimeHandle{ID: "sess-1"}); err != nil {
 		t.Fatalf("Interrupt: %v", err)
 	}
-	if got, want := fr.calls[0].args, sendInterruptArgs("sess-1"); !reflect.DeepEqual(got, want) {
+	if got, want := tmuxCommandArgs(fr.calls[0].args), sendInterruptArgs("sess-1"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("interrupt args = %#v, want %#v", got, want)
 	}
 }
@@ -1519,7 +2306,7 @@ func TestSendInputSendsEscapeWithoutEnter(t *testing.T) {
 	if len(fr.calls) != 1 {
 		t.Fatalf("calls = %d, want 1", len(fr.calls))
 	}
-	if got, want := fr.calls[0].args, sendKeysLiteralArgs("sess-1", "\x1b"); !reflect.DeepEqual(got, want) {
+	if got, want := tmuxCommandArgs(fr.calls[0].args), sendKeysLiteralArgs("sess-1", "\x1b"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("escape args = %#v, want %#v", got, want)
 	}
 }
@@ -1568,7 +2355,7 @@ func TestGetOutputArgs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetOutput: %v", err)
 	}
-	if got, want := fr.calls[0].args, capturePaneArgs("sess-1", 10); !reflect.DeepEqual(got, want) {
+	if got, want := tmuxCommandArgs(fr.calls[0].args), capturePaneArgs("sess-1", 10); !reflect.DeepEqual(got, want) {
 		t.Fatalf("capture-pane args = %#v, want %#v", got, want)
 	}
 }
@@ -1584,7 +2371,7 @@ func TestGetStyledOutputPreservesCaptureMode(t *testing.T) {
 	if !strings.Contains(out, "\x1b[2m") {
 		t.Fatalf("styled output lost SGR sequence: %q", out)
 	}
-	if got, want := fr.calls[0].args, capturePaneStyledArgs("sess-1", 10); !reflect.DeepEqual(got, want) {
+	if got, want := tmuxCommandArgs(fr.calls[0].args), capturePaneStyledArgs("sess-1", 10); !reflect.DeepEqual(got, want) {
 		t.Fatalf("capture-pane args = %#v, want %#v", got, want)
 	}
 }
@@ -1597,7 +2384,7 @@ func TestAttachCommandReturnsExpectedArgv(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AttachCommand: %v", err)
 	}
-	want := []string{"/usr/bin/tmux", "-u", "-T", "RGB", "attach-session", "-t", "sess-1"}
+	want := []string{"/usr/bin/tmux", "-L", "default", "-u", "-T", "RGB", "attach-session", "-t", "sess-1"}
 	if !reflect.DeepEqual(argv, want) {
 		t.Fatalf("argv = %#v, want %#v", argv, want)
 	}
@@ -1622,7 +2409,10 @@ func TestAttachCommandUsesSystemTmuxForLegacyDefaultSocket(t *testing.T) {
 		SocketName:   "ao",
 		Timeout:      time.Second,
 	})
-	argv := r.attachCommandForSocket("sess-1", r.legacyDefaultSocketTarget())
+	argv, err := r.attachCommandForSocket("sess-1", r.legacyDefaultSocketTarget())
+	if err != nil {
+		t.Fatal(err)
+	}
 	want := []string{"/opt/homebrew/bin/tmux", "-L", "default", "-u", "-T", "RGB", "attach-session", "-t", "sess-1"}
 	if !reflect.DeepEqual(argv, want) {
 		t.Fatalf("argv = %#v, want %#v", argv, want)
@@ -1636,7 +2426,10 @@ func TestAttachCommandUsesHistoricalPrivateSocket(t *testing.T) {
 		LegacySocketPath: "/Users/example/.ao/tmux-legacy.sock",
 		Timeout:          time.Second,
 	})
-	argv := r.attachCommandForSocket("sess-1", r.historicalPrivateSocketTarget())
+	argv, err := r.attachCommandForSocket("sess-1", r.historicalPrivateSocketTarget())
+	if err != nil {
+		t.Fatal(err)
+	}
 	want := []string{
 		"/opt/ao/resources/tmux/bin/tmux",
 		"-S", "/Users/example/.ao/tmux-legacy.sock",

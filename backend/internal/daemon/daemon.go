@@ -197,9 +197,11 @@ func Run() error {
 		log.Warn("notification resolution reconcile failed", "err", err)
 	}
 
-	// Bring up the Lifecycle Manager and the reaper first: it makes the session
-	// lifecycle write path live (reducer write -> store -> DB trigger ->
-	// change_log -> poller -> broadcaster) and gives startSession the shared LCM.
+	// Bring up the Lifecycle Manager first: it makes the session lifecycle write
+	// path live (reducer write -> store -> DB trigger -> change_log -> poller ->
+	// broadcaster) and gives startSession the shared LCM. Periodic runtime
+	// observers start only after startup reconciliation has canonicalized legacy
+	// handles and folded the initial runtime facts.
 	// The agent resolver is built before the LCM so lifecycle can consume the
 	// adapter-declared active-turn steering capability; startSession reuses it.
 	defaultAgent := cfg.Agent
@@ -615,22 +617,18 @@ func Run() error {
 		}()
 	}
 
-	var startupReconcileDone <-chan struct{}
-	runErr := srv.RunWithReady(ctx, func() {
-		done := make(chan struct{})
-		startupReconcileDone = done
-		go func() {
-			defer close(done)
-			if reconcileErr := reconcilePersistentChatHosts(ctx, cfg.DataDir, store); reconcileErr != nil {
-				log.Error("persistent chat host reconciliation on boot failed", "err", reconcileErr)
-			}
-			if reconcileErr := sessMgr.ReconcileBackground(ctx); reconcileErr != nil {
-				log.Error("background session reconciliation on boot failed", "err", reconcileErr)
-			}
-			if reconcileErr := lcStack.ReconcileRuntime(ctx); reconcileErr != nil {
-				log.Error("background agent-process reconciliation on boot failed", "err", reconcileErr)
-			}
-		}()
+	runErr := srv.RunWithReady(ctx, func() error {
+		if reconcileErr := reconcilePersistentChatHosts(ctx, cfg.DataDir, store); reconcileErr != nil {
+			return fmt.Errorf("persistent chat host reconciliation on boot: %w", reconcileErr)
+		}
+		if reconcileErr := sessMgr.ReconcileBackground(ctx); reconcileErr != nil {
+			return fmt.Errorf("startup session reconciliation on boot: %w", reconcileErr)
+		}
+		if reconcileErr := lcStack.ReconcileRuntime(ctx); reconcileErr != nil {
+			return fmt.Errorf("startup agent-process reconciliation on boot: %w", reconcileErr)
+		}
+		lcStack.StartObservers(ctx)
+		return nil
 	})
 
 	// Both graceful shutdown paths (SIGTERM and POST /shutdown) funnel through
@@ -644,9 +642,6 @@ func Run() error {
 	// via defer) avoids the LIFO trap where a Stop() that blocks on ctx-cancel
 	// runs before the cancel: a non-signal exit path would hang otherwise.
 	stop()
-	if startupReconcileDone != nil {
-		<-startupReconcileDone
-	}
 	switchStopCtx, switchCancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	if err := sessMgr.WaitAgentSwitchWorkers(switchStopCtx); err != nil {
 		log.Error("agent switch worker shutdown", "err", err)

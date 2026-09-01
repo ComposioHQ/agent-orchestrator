@@ -84,7 +84,8 @@ export type RunFileResolveDeps = {
 /**
  * Attach decision driven by the running.json handshake. Returns:
  *   - a "ready" status   → attach to the recorded daemon,
- *   - an "error" status  → a daemon is up but unusable (not ready / foreign);
+ *   - a "starting" status → a daemon is live but still recovering,
+ *   - an "error" status  → a daemon is up but unusable (foreign / inconsistent);
  *                          surface it rather than spawn,
  *   - null               → the run-file is absent/stale/inconsistent; the caller
  *                          should fall through to {@link resolveDaemonFromPort}.
@@ -114,8 +115,9 @@ export type PortProbeResolveDeps = {
  * Attach decision driven by a direct /healthz probe of the expected port,
  * independent of the run-file (issue #367 backstop). Returns:
  *   - a "ready" status  → attach to the daemon serving the port,
- *   - an "error" status → a daemon serves the port but is unusable (not ready, or
- *                         a foreign binary the identity check refuses); surface it
+ *   - a "starting" status → a daemon is live but still recovering,
+ *   - an "error" status → a daemon serves the port but is unusable (inconsistent,
+ *                         or a foreign binary the identity check refuses); surface it
  *                         rather than spawn (spawning would only collide and die),
  *   - null              → nothing genuine answers the port; the caller should spawn.
  *
@@ -133,9 +135,8 @@ export async function resolveDaemonFromPort(deps: PortProbeResolveDeps): Promise
 /**
  * Shared tail of both attach paths: given a daemon confirmed serving /healthz on
  * `port` with PID `pid`, confirm it is ready and is the daemon we expect, and
- * build the resulting DaemonStatus. Returns an "error" status (never null) — by
- * here a daemon is definitely occupying the port, so spawning is never the right
- * move.
+ * build the resulting DaemonStatus. Returns a status (never null) — by here a
+ * daemon is definitely occupying the port, so spawning is never the right move.
  */
 async function readinessStatus(
 	port: number,
@@ -145,7 +146,16 @@ async function readinessStatus(
 	identityError: (probe: DaemonProbe) => string | null,
 ): Promise<DaemonStatus> {
 	const ready = await probe(port, "readyz");
-	if (!ready || ready.pid !== pid) {
+	if (!ready) {
+		return {
+			state: "starting",
+			port,
+			pid,
+			executablePath: health.executablePath,
+			workingDirectory: health.workingDirectory,
+		};
+	}
+	if (ready.pid !== pid) {
 		return {
 			state: "error",
 			port,

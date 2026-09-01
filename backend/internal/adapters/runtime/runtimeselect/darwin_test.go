@@ -12,10 +12,15 @@ import (
 )
 
 type fakeBackend struct {
-	createHandle ports.RuntimeHandle
-	createErr    error
-	calls        []string
-	handles      []ports.RuntimeHandle
+	createHandle  ports.RuntimeHandle
+	createErr     error
+	resolveHandle ports.RuntimeHandle
+	resolveFound  bool
+	resolveErr    error
+	identity      ports.RuntimeIdentity
+	identityErr   error
+	calls         []string
+	handles       []ports.RuntimeHandle
 }
 
 func (f *fakeBackend) record(call string, handle ports.RuntimeHandle) {
@@ -82,6 +87,19 @@ func (f *fakeBackend) IsSupervisedProcessAlive(_ context.Context, handle ports.R
 func (f *fakeBackend) IsExactSupervisedProcessAlive(_ context.Context, handle ports.RuntimeHandle, _ ports.SupervisedProcessRef) (bool, error) {
 	f.record("exact", handle)
 	return true, nil
+}
+
+func (f *fakeBackend) ResolveRuntimeHandle(_ context.Context, handle ports.RuntimeHandle, _ ports.SupervisedProcessRef) (ports.RuntimeHandle, bool, error) {
+	f.record("resolve", handle)
+	if f.resolveHandle.ID != "" || f.resolveErr != nil || f.resolveFound {
+		return f.resolveHandle, f.resolveFound, f.resolveErr
+	}
+	return handle, true, nil
+}
+
+func (f *fakeBackend) InspectRuntimeIdentity(_ context.Context, handle ports.RuntimeHandle, _ domain.SessionID) (ports.RuntimeIdentity, error) {
+	f.record("identity", handle)
+	return f.identity, f.identityErr
 }
 
 type restartableFakeBackend struct{ fakeBackend }
@@ -196,6 +214,60 @@ func TestDarwinRuntimeRoutesVersionedHandlesToDirectHost(t *testing.T) {
 	}
 	if len(legacy.calls) != 0 {
 		t.Fatalf("legacy calls = %v, want none", legacy.calls)
+	}
+}
+
+func TestDarwinRuntimeResolvesOnlyLegacyTmuxHandles(t *testing.T) {
+	legacy := &restartableFakeBackend{fakeBackend: fakeBackend{
+		resolveHandle: ports.RuntimeHandle{ID: "tmux-v1:resolved"},
+		resolveFound:  true,
+		identity: ports.RuntimeIdentity{
+			LaunchID:        "launch-actual",
+			OwnershipProven: true,
+		},
+	}}
+	direct := &fakeBackend{}
+	runtime := newDarwinRuntime(legacy, direct, nil)
+	ctx := context.Background()
+	owner := ports.SupervisedProcessRef{SessionID: "existing-session", LaunchID: "launch-1"}
+
+	resolved, found, err := runtime.ResolveRuntimeHandle(ctx, ports.RuntimeHandle{ID: "existing-session"}, owner)
+	if err != nil || !found || resolved.ID != "tmux-v1:resolved" {
+		t.Fatalf("legacy ResolveRuntimeHandle = (%q, %v, %v)", resolved.ID, found, err)
+	}
+	if !reflect.DeepEqual(legacy.calls, []string{"resolve"}) {
+		t.Fatalf("legacy calls = %v, want resolve", legacy.calls)
+	}
+	if len(direct.calls) != 0 {
+		t.Fatalf("direct calls after legacy resolution = %v, want none", direct.calls)
+	}
+
+	directHandle := ports.RuntimeHandle{ID: darwinDirectHandlePrefix + "native-session"}
+	resolved, found, err = runtime.ResolveRuntimeHandle(ctx, directHandle, owner)
+	if err != nil || !found || resolved != directHandle {
+		t.Fatalf("direct ResolveRuntimeHandle = (%q, %v, %v), want unchanged", resolved.ID, found, err)
+	}
+	if !reflect.DeepEqual(legacy.calls, []string{"resolve"}) {
+		t.Fatalf("ptyhost handle was forwarded to legacy backend: %v", legacy.calls)
+	}
+	if len(direct.calls) != 0 {
+		t.Fatalf("ptyhost handle invoked direct backend resolution: %v", direct.calls)
+	}
+
+	identity, err := runtime.InspectRuntimeIdentity(ctx, ports.RuntimeHandle{ID: "tmux-v1:resolved"}, "existing-session")
+	if err != nil || !identity.OwnershipProven || identity.LaunchID != "launch-actual" {
+		t.Fatalf("legacy identity = (%+v, %v)", identity, err)
+	}
+	if !reflect.DeepEqual(legacy.calls, []string{"resolve", "identity"}) {
+		t.Fatalf("legacy calls after identity = %v, want resolve, identity", legacy.calls)
+	}
+
+	identity, err = runtime.InspectRuntimeIdentity(ctx, directHandle, "native-session")
+	if err != nil || identity != (ports.RuntimeIdentity{}) {
+		t.Fatalf("direct identity = (%+v, %v), want zero identity", identity, err)
+	}
+	if !reflect.DeepEqual(legacy.calls, []string{"resolve", "identity"}) {
+		t.Fatalf("ptyhost identity was forwarded to tmux: %v", legacy.calls)
 	}
 }
 

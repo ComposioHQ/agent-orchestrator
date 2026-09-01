@@ -266,15 +266,19 @@ func TestReconcileLive_ChatRelaunchesInExistingWorktree(t *testing.T) {
 	}
 }
 
-func TestReconcileLive_ChatCompatibilityFailureLeavesNativeResumeRecoverable(t *testing.T) {
+func TestReconcileLive_ChatCompatibilityFailurePreservesLifecycleAndNativeResume(t *testing.T) {
 	launcher := &recordingLauncher{startErr: fmt.Errorf("read Codex version: exit status 127: %w", ports.ErrChatDriverIncompatible)}
 	m, st, rt := newChatManager(launcher)
 	ws := m.workspace.(*fakeWorkspace)
 	lcm := m.lcm.(*fakeLCM)
+	activityAt := time.Date(2026, time.August, 27, 16, 40, 0, 0, time.UTC)
+	firstSignalAt := activityAt.Add(-time.Minute)
 	rec := domain.SessionRecord{
 		ID: "mer-1", ProjectID: chatTestProject, Kind: domain.KindWorker,
 		Harness: domain.HarnessCodex, Mode: domain.SessionModeChat,
-		Activity: domain.Activity{State: domain.ActivityActive},
+		Activity:      domain.Activity{State: domain.ActivityActive, LastActivityAt: activityAt},
+		FirstSignalAt: firstSignalAt,
+		UpdatedAt:     activityAt,
 		Metadata: domain.SessionMetadata{
 			Branch: "ao/mer-1/root", WorkspacePath: "/ws/mer-1",
 			ProviderConversationID: "01a03c61-23a9-7111-95e9-2bacb04eb064",
@@ -287,8 +291,9 @@ func TestReconcileLive_ChatCompatibilityFailureLeavesNativeResumeRecoverable(t *
 		t.Fatalf("reconcileLive error = %v, want ErrChatDriverIncompatible", err)
 	}
 	got := st.sessions[rec.ID]
-	if got.IsTerminated || got.Activity.State != domain.ActivityExited {
-		t.Fatalf("failed Chat resume = %+v, want live/exited", got)
+	if got.IsTerminated != rec.IsTerminated || got.Activity != rec.Activity || !got.FirstSignalAt.Equal(rec.FirstSignalAt) {
+		t.Fatalf("restart-time Chat failure changed lifecycle facts: got %+v, want activity=%+v firstSignalAt=%v terminated=%v",
+			got, rec.Activity, rec.FirstSignalAt, rec.IsTerminated)
 	}
 	if got.Metadata.ProviderConversationID != rec.Metadata.ProviderConversationID {
 		t.Fatalf("provider conversation id = %q, want preserved %q", got.Metadata.ProviderConversationID, rec.Metadata.ProviderConversationID)
@@ -304,7 +309,7 @@ func TestReconcileLive_ChatCompatibilityFailureLeavesNativeResumeRecoverable(t *
 	}
 }
 
-func TestReconcileLive_ChatFailureAfterGenerationClaimLeavesSessionExited(t *testing.T) {
+func TestReconcileLive_ChatFailureAfterGenerationClaimPreservesLifecycle(t *testing.T) {
 	base := &recordingLauncher{}
 	m, st, rt := newChatManager(base)
 	launcher := &generationClaimFailureLauncher{
@@ -317,10 +322,13 @@ func TestReconcileLive_ChatFailureAfterGenerationClaimLeavesSessionExited(t *tes
 	ws := m.workspace.(*fakeWorkspace)
 	lcm := m.lcm.(*fakeLCM)
 	now := time.Date(2026, time.August, 27, 16, 54, 0, 0, time.UTC)
+	firstSignalAt := now.Add(-time.Minute)
 	rec := domain.SessionRecord{
 		ID: "mer-1", ProjectID: chatTestProject, Kind: domain.KindWorker,
 		Harness: domain.HarnessCodex, Mode: domain.SessionModeChat,
-		Activity: domain.Activity{State: domain.ActivityActive}, UpdatedAt: now,
+		Activity:      domain.Activity{State: domain.ActivityActive, LastActivityAt: now},
+		FirstSignalAt: firstSignalAt,
+		UpdatedAt:     now,
 		Metadata: domain.SessionMetadata{
 			Branch: "ao/mer-1/root", WorkspacePath: "/ws/mer-1",
 			ProviderConversationID: "thread-existing", ControllerGeneration: "old-generation",
@@ -333,8 +341,9 @@ func TestReconcileLive_ChatFailureAfterGenerationClaimLeavesSessionExited(t *tes
 		t.Fatalf("reconcileLive error = %v, want post-claim history failure", err)
 	}
 	got := st.sessions[rec.ID]
-	if got.IsTerminated || got.Activity.State != domain.ActivityExited {
-		t.Fatalf("post-claim Chat failure = %+v, want live/exited", got)
+	if got.IsTerminated != rec.IsTerminated || got.Activity != rec.Activity || !got.FirstSignalAt.Equal(rec.FirstSignalAt) {
+		t.Fatalf("post-claim Chat failure changed lifecycle facts: got %+v, want activity=%+v firstSignalAt=%v terminated=%v",
+			got, rec.Activity, rec.FirstSignalAt, rec.IsTerminated)
 	}
 	if got.Metadata.ControllerGeneration != "claimed-generation" {
 		t.Fatalf("controller generation = %q, want claimed epoch retained as stale-signal fence", got.Metadata.ControllerGeneration)

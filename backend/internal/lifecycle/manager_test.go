@@ -679,6 +679,25 @@ func TestRuntimeObservation_ConfirmedDeathIsSuppressedDuringSessionMutation(t *t
 	}
 }
 
+func TestRuntimeObservation_ExitedWorkloadIsSuppressedDuringSessionMutation(t *testing.T) {
+	m, st, _ := newManager()
+	m.SetSessionOperationGate(fixedSessionOperationGate(true))
+	rec := working("mer-1")
+	rec.Metadata.RuntimeLaunchID = "launch-1"
+	st.sessions["mer-1"] = rec
+
+	if err := m.ApplyRuntimeObservation(ctx, "mer-1", ports.RuntimeFacts{
+		Runtime:  ports.ProbeAlive,
+		Workload: ports.ProbeDead,
+		LaunchID: "launch-1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions["mer-1"]; got != rec {
+		t.Fatalf("workload observation mutated session during exclusive operation: got %+v, want %+v", got, rec)
+	}
+}
+
 func TestRuntimeObservation_FailedProbeDoesNotMutate(t *testing.T) {
 	m, st, _ := newManager()
 	st.sessions["mer-1"] = working("mer-1")

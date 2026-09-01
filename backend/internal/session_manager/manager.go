@@ -237,6 +237,32 @@ type lifecycleRecorder interface {
 	MarkTerminated(ctx context.Context, id domain.SessionID) error
 }
 
+// runtimeRecoveryRecorder is the purpose-specific lifecycle seam used only by
+// restart reconciliation. Session Manager may establish runtime provenance,
+// but Lifecycle Manager remains the sole writer of durable controller and
+// activity facts.
+type runtimeRecoveryRecorder interface {
+	CanonicalizeRuntimeHandle(
+		context.Context,
+		domain.SessionID,
+		domain.SessionControllerOwner,
+		string,
+		string,
+		string,
+	) (bool, error)
+	RepairExitedActivityFromRuntime(
+		context.Context,
+		domain.SessionID,
+		domain.SessionControllerOwner,
+		string,
+		domain.Activity,
+	) (bool, error)
+}
+
+type runtimeActivityHistory interface {
+	LatestNonExitedSessionActivity(context.Context, domain.SessionID) (domain.Activity, bool, error)
+}
+
 // ShellTerminalCloser gates a session's scoped shell terminals around every
 // path that releases its worktree (Kill, Cleanup, RetireForReplacement, the
 // explicit shutdown save-and-teardown path), so none of them removes a
@@ -1910,9 +1936,11 @@ func (m *Manager) ResumeAgentWithMode(ctx context.Context, id domain.SessionID) 
 		// Builds before the controller-stop lifecycle fix can leave a Chat row
 		// idle, active, or blocked even though no controller survived. The live
 		// registry is authoritative for whether a duplicate Chat controller could
-		// be created, so recover only when it confirms there is none. TUI keeps its
-		// existing durable-exited precondition.
-		if mode != domain.SessionModeChat || m.chat == nil {
+		// be created, so recover only when it confirms there is none. A TUI row may
+		// likewise retain its pre-recovery activity after a startup relaunch failed;
+		// below, runtime probes must conclusively prove that exact workload absent
+		// before replacing it.
+		if mode == domain.SessionModeChat && m.chat == nil {
 			return RestoreResult{}, fmt.Errorf("resume agent %s: %w", id, ErrAgentNotExited)
 		}
 	}
@@ -1936,6 +1964,60 @@ func (m *Manager) ResumeAgentWithMode(ctx context.Context, id domain.SessionID) 
 		return m.relaunchSession(ctx, "resume agent", rec, project, ws, nil)
 	}
 	handle := ports.RuntimeHandle{ID: meta.RuntimeHandleID}
+	persistedHandleID := handle.ID
+	resolvedRec, resolvedHandle, found, err := m.resolveRuntimeForRecovery(ctx, rec)
+	if err != nil {
+		return RestoreResult{}, fmt.Errorf("resume agent %s: %w", id, err)
+	}
+	rec = resolvedRec
+	if found {
+		handle = resolvedHandle
+	}
+	if rec.Activity.State != domain.ActivityExited && found {
+		alive, probeErr := m.runtime.IsAlive(ctx, handle)
+		switch {
+		case probeErr == nil:
+		case errors.Is(probeErr, ports.ErrRuntimeUnavailable):
+			alive = false
+		default:
+			return RestoreResult{}, fmt.Errorf(
+				"resume agent %s: probe existing runtime: %w",
+				id,
+				errors.Join(ports.ErrRuntimeProbeInconclusive, probeErr),
+			)
+		}
+		if alive {
+			if handle.ID == persistedHandleID {
+				rec, err = m.refreshQualifiedRuntimeIdentity(ctx, rec, handle)
+				if err != nil {
+					return RestoreResult{}, fmt.Errorf("resume agent %s: %w", id, err)
+				}
+			}
+			inspector, ok := m.runtime.(ports.ExactSupervisedProcessInspector)
+			if !ok || strings.TrimSpace(rec.Metadata.RuntimeLaunchID) == "" {
+				return RestoreResult{}, fmt.Errorf(
+					"resume agent %s: exact workload inspection unavailable: %w",
+					id,
+					ports.ErrRuntimeProbeInconclusive,
+				)
+			}
+			exactAlive, inspectErr := inspector.IsExactSupervisedProcessAlive(
+				ctx,
+				handle,
+				ports.SupervisedProcessRef{SessionID: rec.ID, LaunchID: rec.Metadata.RuntimeLaunchID},
+			)
+			if inspectErr != nil {
+				return RestoreResult{}, fmt.Errorf(
+					"resume agent %s: inspect exact workload: %w",
+					id,
+					errors.Join(ports.ErrRuntimeProbeInconclusive, inspectErr),
+				)
+			}
+			if exactAlive {
+				return RestoreResult{}, fmt.Errorf("resume agent %s: %w", id, ErrAgentNotExited)
+			}
+		}
+	}
 	return m.relaunchSession(ctx, "resume agent", rec, project, ws, &handle)
 }
 
@@ -2227,16 +2309,324 @@ func (m *Manager) saveAndTeardownOne(ctx context.Context, rec domain.SessionReco
 	return nil
 }
 
-// reconcileLive handles a single non-terminated session on boot. If its runtime
-// session is still alive (tmux is the persistence layer, so it survives a daemon
-// crash) we adopt it: a no-op, the agent keeps running. If the runtime is gone,
-// reattach the existing worktree and relaunch the controller in place. An
-// ordinary daemon restart must not turn every live session into a serial
-// stash/remove/recreate cycle before the HTTP listener can bind.
+// resolveRuntimeForRecovery turns a legacy runtime name into a durable route
+// before Session Manager uses it. A changed route is publishable only after the
+// runtime proves its immutable AO/session provenance and Lifecycle Manager
+// atomically advances the handle and launch generation. Losing that CAS stops
+// reconciliation: an unpersisted route is never safe to adopt or mutate.
+func (m *Manager) resolveRuntimeForRecovery(
+	ctx context.Context,
+	rec domain.SessionRecord,
+) (domain.SessionRecord, ports.RuntimeHandle, bool, error) {
+	legacy := runtimeHandle(rec.Metadata)
+	if strings.TrimSpace(legacy.ID) == "" {
+		return rec, ports.RuntimeHandle{}, false, nil
+	}
+	resolver, ok := m.runtime.(ports.RuntimeHandleResolver)
+	if !ok {
+		return rec, legacy, true, nil
+	}
+	resolved, found, err := resolver.ResolveRuntimeHandle(ctx, legacy, ports.SupervisedProcessRef{
+		SessionID: rec.ID,
+		LaunchID:  rec.Metadata.RuntimeLaunchID,
+	})
+	if err != nil {
+		return rec, ports.RuntimeHandle{}, false, fmt.Errorf(
+			"resolve runtime handle %q: %w",
+			legacy.ID,
+			errors.Join(ports.ErrRuntimeProbeInconclusive, err),
+		)
+	}
+	if !found {
+		return rec, ports.RuntimeHandle{}, false, nil
+	}
+	if strings.TrimSpace(resolved.ID) == "" {
+		return rec, ports.RuntimeHandle{}, false, fmt.Errorf(
+			"resolve runtime handle %q returned an empty route: %w",
+			legacy.ID,
+			ports.ErrRuntimeProbeInconclusive,
+		)
+	}
+	if resolved.ID == legacy.ID {
+		// The route is already durable. Probe liveness before inspecting its
+		// immutable identity: a missing qualified runtime is conclusive relaunch
+		// evidence, not an identity-inspection failure.
+		return rec, resolved, true, nil
+	}
+	inspector, ok := m.runtime.(ports.RuntimeIdentityInspector)
+	if !ok {
+		return rec, ports.RuntimeHandle{}, false, fmt.Errorf(
+			"inspect resolved runtime handle %q: %w",
+			resolved.ID,
+			ports.ErrRuntimeProbeInconclusive,
+		)
+	}
+	identity, err := inspector.InspectRuntimeIdentity(ctx, resolved, rec.ID)
+	if err != nil {
+		return rec, ports.RuntimeHandle{}, false, fmt.Errorf(
+			"inspect resolved runtime handle %q: %w",
+			resolved.ID,
+			errors.Join(ports.ErrRuntimeProbeInconclusive, err),
+		)
+	}
+	identity.LaunchID = strings.TrimSpace(identity.LaunchID)
+	expectedLaunchID := strings.TrimSpace(rec.Metadata.RuntimeLaunchID)
+	// Historical panes created before AO_RUN_FILE can still be routed when their
+	// immutable supervisor session+launch exactly matches the durable owner. That
+	// weaker proof may qualify the route, but it must never rewrite a stale launch
+	// fence; only full AO-instance ownership provenance may do that.
+	if identity.LaunchID == "" ||
+		(!identity.OwnershipProven &&
+			(expectedLaunchID == "" || identity.LaunchID != expectedLaunchID)) {
+		return rec, ports.RuntimeHandle{}, false, fmt.Errorf(
+			"resolved runtime handle %q has no exact AO ownership provenance: %w",
+			resolved.ID,
+			ports.ErrRuntimeProbeInconclusive,
+		)
+	}
+	recorder, ok := m.lcm.(runtimeRecoveryRecorder)
+	if !ok {
+		return rec, ports.RuntimeHandle{}, false, errors.New("runtime recovery lifecycle persistence is unavailable")
+	}
+	expectedOwner := rec.ControllerOwner()
+	applied, err := recorder.CanonicalizeRuntimeHandle(
+		ctx,
+		rec.ID,
+		expectedOwner,
+		legacy.ID,
+		resolved.ID,
+		identity.LaunchID,
+	)
+	if err != nil {
+		return rec, ports.RuntimeHandle{}, false, fmt.Errorf("persist resolved runtime handle for %s: %w", rec.ID, err)
+	}
+	if !applied {
+		return rec, ports.RuntimeHandle{}, false, fmt.Errorf("persist resolved runtime handle for %s: controller ownership changed", rec.ID)
+	}
+
+	rec.Metadata.RuntimeHandleID = resolved.ID
+	rec.Metadata.RuntimeLaunchID = identity.LaunchID
+	if rec.Metadata.AgentSessionID != "" &&
+		(rec.Metadata.AgentSessionIDLaunchID == "" ||
+			rec.Metadata.AgentSessionIDLaunchID == expectedOwner.RuntimeLaunchID) {
+		rec.Metadata.AgentSessionIDLaunchID = identity.LaunchID
+	}
+	return rec, resolved, true, nil
+}
+
+// refreshQualifiedRuntimeIdentity inspects an already-durable live route for a
+// newer fully-proven supervisor generation. This covers a failed in-place
+// restart that respawned the same pane but crashed before publishing its launch
+// fence. Weak provenance never rewrites the durable generation.
+func (m *Manager) refreshQualifiedRuntimeIdentity(
+	ctx context.Context,
+	rec domain.SessionRecord,
+	handle ports.RuntimeHandle,
+) (domain.SessionRecord, error) {
+	inspector, ok := m.runtime.(ports.RuntimeIdentityInspector)
+	if !ok {
+		return rec, nil
+	}
+	identity, err := inspector.InspectRuntimeIdentity(ctx, handle, rec.ID)
+	if err != nil {
+		return rec, fmt.Errorf(
+			"inspect runtime identity for %s: %w",
+			rec.ID,
+			errors.Join(ports.ErrRuntimeProbeInconclusive, err),
+		)
+	}
+	identity.LaunchID = strings.TrimSpace(identity.LaunchID)
+	if !identity.OwnershipProven || identity.LaunchID == "" ||
+		identity.LaunchID == strings.TrimSpace(rec.Metadata.RuntimeLaunchID) {
+		return rec, nil
+	}
+	recorder, ok := m.lcm.(runtimeRecoveryRecorder)
+	if !ok {
+		return rec, errors.New("runtime recovery lifecycle persistence is unavailable")
+	}
+	expectedOwner := rec.ControllerOwner()
+	applied, err := recorder.CanonicalizeRuntimeHandle(
+		ctx,
+		rec.ID,
+		expectedOwner,
+		handle.ID,
+		handle.ID,
+		identity.LaunchID,
+	)
+	if err != nil {
+		return rec, fmt.Errorf("persist runtime identity for %s: %w", rec.ID, err)
+	}
+	if !applied {
+		return rec, fmt.Errorf("persist runtime identity for %s: controller ownership changed", rec.ID)
+	}
+	rec.Metadata.RuntimeLaunchID = identity.LaunchID
+	if rec.Metadata.AgentSessionID != "" &&
+		(rec.Metadata.AgentSessionIDLaunchID == "" ||
+			rec.Metadata.AgentSessionIDLaunchID == expectedOwner.RuntimeLaunchID) {
+		rec.Metadata.AgentSessionIDLaunchID = identity.LaunchID
+	}
+	return rec, nil
+}
+
+// repairExitedFromExactRuntime repairs a stale Exited activity fact only when
+// the canonical route contains the exact current supervisor generation and its
+// managed workload. Runtime-session liveness by itself is deliberately not
+// enough evidence to resurrect a session.
+func (m *Manager) repairExitedFromExactRuntime(
+	ctx context.Context,
+	rec domain.SessionRecord,
+	handle ports.RuntimeHandle,
+) error {
+	if rec.Activity.State != domain.ActivityExited ||
+		strings.TrimSpace(rec.Metadata.RuntimeLaunchID) == "" {
+		return nil
+	}
+	inspector, ok := m.runtime.(ports.ExactSupervisedProcessInspector)
+	if !ok {
+		return nil
+	}
+	exactAlive, err := inspector.IsExactSupervisedProcessAlive(ctx, handle, ports.SupervisedProcessRef{
+		SessionID: rec.ID,
+		LaunchID:  rec.Metadata.RuntimeLaunchID,
+	})
+	if err != nil {
+		return fmt.Errorf(
+			"inspect exact workload for %s: %w",
+			rec.ID,
+			errors.Join(ports.ErrRuntimeProbeInconclusive, err),
+		)
+	}
+	if !exactAlive {
+		return nil
+	}
+	recovered, err := m.recoverRuntimeActivity(ctx, rec, handle)
+	if err != nil {
+		return fmt.Errorf("recover activity for %s: %w", rec.ID, err)
+	}
+	// Close the observation race between the first exact-workload proof and the
+	// activity read. A controller that exited while its screen/history was being
+	// inspected must remain Exited.
+	exactAlive, err = inspector.IsExactSupervisedProcessAlive(ctx, handle, ports.SupervisedProcessRef{
+		SessionID: rec.ID,
+		LaunchID:  rec.Metadata.RuntimeLaunchID,
+	})
+	if err != nil {
+		return fmt.Errorf(
+			"recheck exact workload for %s: %w",
+			rec.ID,
+			errors.Join(ports.ErrRuntimeProbeInconclusive, err),
+		)
+	}
+	if !exactAlive {
+		return nil
+	}
+	recorder, ok := m.lcm.(runtimeRecoveryRecorder)
+	if !ok {
+		return errors.New("runtime recovery lifecycle persistence is unavailable")
+	}
+	applied, err := recorder.RepairExitedActivityFromRuntime(
+		ctx, rec.ID, rec.ControllerOwner(), handle.ID, recovered,
+	)
+	if err != nil {
+		return fmt.Errorf("repair exited activity for %s: %w", rec.ID, err)
+	}
+	if !applied {
+		return fmt.Errorf("repair exited activity for %s: controller ownership changed", rec.ID)
+	}
+	return nil
+}
+
+// recoverRuntimeActivity prefers an authoritative current-screen observation.
+// Agents without that capability fall back to the last durable non-exited fact
+// from SQLite's immutable activity history. Process liveness alone never
+// chooses Idle (or any other activity state).
+func (m *Manager) recoverRuntimeActivity(
+	ctx context.Context,
+	rec domain.SessionRecord,
+	handle ports.RuntimeHandle,
+) (domain.Activity, error) {
+	if m.agents != nil {
+		agent, ok := m.agents.Agent(rec.Harness)
+		if !ok {
+			return m.latestDurableRuntimeActivity(ctx, rec.ID)
+		}
+		if surface, ok := agent.(ports.TerminalSurfaceInspector); ok {
+			if styled, ok := m.runtime.(ports.StyledTerminalOutputReader); ok {
+				output, err := styled.GetStyledOutput(ctx, handle, interfaceTransitionOutputLines)
+				switch {
+				case err == nil:
+					if state, known := activityFromTerminalSurface(surface.InspectTerminalSurface(output).Work); known {
+						return domain.Activity{State: state, LastActivityAt: m.clock()}, nil
+					}
+				case !errors.Is(err, ports.ErrStyledTerminalOutputUnavailable):
+					return domain.Activity{}, errors.Join(ports.ErrRuntimeProbeInconclusive, err)
+				}
+			}
+		}
+		if detector, ok := agent.(ports.TerminalActivityDetector); ok {
+			output, err := m.runtime.GetOutput(ctx, handle, interfaceTransitionOutputLines)
+			if err != nil {
+				return domain.Activity{}, errors.Join(ports.ErrRuntimeProbeInconclusive, err)
+			}
+			if state, authoritative := detector.DetectTerminalActivity(output); authoritative && recoverableActivityState(state) {
+				return domain.Activity{State: state, LastActivityAt: m.clock()}, nil
+			}
+		}
+	}
+	return m.latestDurableRuntimeActivity(ctx, rec.ID)
+}
+
+func (m *Manager) latestDurableRuntimeActivity(
+	ctx context.Context,
+	id domain.SessionID,
+) (domain.Activity, error) {
+	history, ok := m.store.(runtimeActivityHistory)
+	if !ok {
+		return domain.Activity{}, errors.New("runtime activity history is unavailable")
+	}
+	activity, found, err := history.LatestNonExitedSessionActivity(ctx, id)
+	if err != nil {
+		return domain.Activity{}, err
+	}
+	if !found || !recoverableActivityState(activity.State) {
+		return domain.Activity{}, errors.New("no prior non-exited activity fact exists")
+	}
+	return activity, nil
+}
+
+func activityFromTerminalSurface(work ports.TerminalSurfaceWorkState) (domain.ActivityState, bool) {
+	switch work {
+	case ports.TerminalSurfaceWorkActive:
+		return domain.ActivityActive, true
+	case ports.TerminalSurfaceWorkIdle:
+		return domain.ActivityIdle, true
+	case ports.TerminalSurfaceWorkWaitingInput:
+		return domain.ActivityWaitingInput, true
+	case ports.TerminalSurfaceWorkBlocked:
+		return domain.ActivityBlocked, true
+	default:
+		return "", false
+	}
+}
+
+func recoverableActivityState(state domain.ActivityState) bool {
+	switch state {
+	case domain.ActivityActive, domain.ActivityIdle, domain.ActivityWaitingInput, domain.ActivityBlocked:
+		return true
+	default:
+		return false
+	}
+}
+
+// reconcileLive handles a single non-terminated session on boot. If its exact
+// runtime route is still alive, it is adopted without changing activity. If a
+// historical false Exited fact exists, only exact current-workload proof may
+// repair it. If the runtime is conclusively gone, reconciliation reattaches the
+// existing worktree and relaunches the controller in place.
 //
-// If in-place recovery fails, preserve the live record, worktree, and native
-// conversation identity. A restart-time dependency failure is not user intent
-// to terminate the session; the controller can be retried through Resume Agent.
+// If in-place recovery fails, preserve the live record, worktree, lifecycle,
+// and native conversation identity. A restart-time dependency failure is not
+// an agent exit; the controller can be retried through Resume Agent.
 func (m *Manager) reconcileLive(ctx context.Context, rec domain.SessionRecord) error {
 	project, err := m.loadProject(ctx, rec.ProjectID)
 	if err != nil {
@@ -2253,6 +2643,17 @@ func (m *Manager) reconcileLive(ctx context.Context, rec domain.SessionRecord) e
 
 	if !isChat {
 		handle := runtimeHandle(rec.Metadata)
+		persistedHandleID := handle.ID
+		if handle.ID != "" {
+			var found bool
+			rec, handle, found, err = m.resolveRuntimeForRecovery(ctx, rec)
+			if err != nil {
+				return fmt.Errorf("reconcile %s: %w", rec.ID, err)
+			}
+			if !found {
+				handle = ports.RuntimeHandle{}
+			}
+		}
 		if handle.ID != "" {
 			alive, err := m.runtime.IsAlive(ctx, handle)
 			switch {
@@ -2266,7 +2667,13 @@ func (m *Manager) reconcileLive(ctx context.Context, rec domain.SessionRecord) e
 				return fmt.Errorf("reconcile %s: probe: %w", rec.ID, err)
 			}
 			if alive {
-				return nil // adopt: the session survived the crash.
+				if handle.ID == persistedHandleID {
+					rec, err = m.refreshQualifiedRuntimeIdentity(ctx, rec, handle)
+					if err != nil {
+						return fmt.Errorf("reconcile %s: %w", rec.ID, err)
+					}
+				}
+				return m.repairExitedFromExactRuntime(ctx, rec, handle)
 			}
 		}
 	}
@@ -2286,15 +2693,17 @@ func (m *Manager) reconcileLive(ctx context.Context, rec domain.SessionRecord) e
 	}
 	// A provider or runtime dependency can be temporarily unavailable during an
 	// app restart (for example, a GUI-launched daemon may have a sparse PATH).
-	// That is not user intent to terminate the AO session, remove its worktree,
-	// or retire an orchestrator. Preserve the durable session and native resume
-	// identity, but expose the stopped controller as an exited workload so the
-	// existing Resume Agent path can retry it in place.
-	committed, preserveErr := m.preserveFailedReconcileRelaunch(ctx, rec)
-	if preserveErr != nil {
-		return fmt.Errorf("reconcile %s: relaunch failed and commit state became uncertain: %w", rec.ID, errors.Join(restoreErr, preserveErr))
+	// That failure is not an activity observation. Re-read only to distinguish a
+	// controller that committed immediately before returning an error; otherwise
+	// preserve every lifecycle fact exactly as it was.
+	current, ok, readErr := m.store.GetSession(ctx, rec.ID)
+	if readErr != nil {
+		return fmt.Errorf("reconcile %s: relaunch failed and commit state became uncertain: %w", rec.ID, errors.Join(restoreErr, readErr))
 	}
-	if committed {
+	if !ok {
+		return fmt.Errorf("reconcile %s: relaunch failed and session disappeared: %w", rec.ID, errors.Join(restoreErr, ErrNotFound))
+	}
+	if m.relaunchCommitted(rec, current) {
 		m.logger.Warn("reconcile: relaunch reported an error after the controller commit; preserving the live session", "sessionID", rec.ID, "error", restoreErr)
 		return nil
 	}
@@ -2321,61 +2730,6 @@ func (m *Manager) relaunchCommitted(before, after domain.SessionRecord) bool {
 	}
 	handleID := after.Metadata.RuntimeHandleID
 	return handleID != "" && handleID != before.Metadata.RuntimeHandleID
-}
-
-// preserveFailedReconcileRelaunch transitions the current controller epoch to
-// exited without using the boot snapshot as a CAS token. Launch preparation can
-// legitimately persist metadata (notably the browser capability verifier)
-// before runtime creation fails, so the current row must be read immediately
-// before the activity signal. Since ApplyActivitySignal intentionally treats a
-// stale CAS as a no-op, reread and retry rather than claiming recovery succeeded
-// while the session is still active and exposed to the reaper.
-func (m *Manager) preserveFailedReconcileRelaunch(ctx context.Context, before domain.SessionRecord) (bool, error) {
-	const maxAttempts = 3
-	for range maxAttempts {
-		current, ok, err := m.store.GetSession(ctx, before.ID)
-		if err != nil {
-			return false, err
-		}
-		if !ok {
-			return false, ErrNotFound
-		}
-		if m.relaunchCommitted(before, current) {
-			return true, nil
-		}
-		if current.IsTerminated || current.Activity.State == domain.ActivityExited {
-			return false, nil
-		}
-
-		signal := ports.ActivitySignal{
-			Valid:             true,
-			State:             domain.ActivityExited,
-			ExpectedUpdatedAt: current.UpdatedAt,
-		}
-		if domain.NormalizeSessionMode(current.Mode) == domain.SessionModeChat {
-			signal.ControllerGeneration = current.Metadata.ControllerGeneration
-		} else {
-			signal.LaunchID = current.Metadata.RuntimeLaunchID
-		}
-		if err := m.lcm.ApplyActivitySignal(ctx, before.ID, signal); err != nil {
-			return false, err
-		}
-
-		after, ok, err := m.store.GetSession(ctx, before.ID)
-		if err != nil {
-			return false, err
-		}
-		if !ok {
-			return false, ErrNotFound
-		}
-		if m.relaunchCommitted(before, after) {
-			return true, nil
-		}
-		if after.IsTerminated || after.Activity.State == domain.ActivityExited {
-			return false, nil
-		}
-	}
-	return false, errors.New("session changed while recording failed relaunch")
 }
 
 // reconcileReap kills the leaked tmux session of a session the DB already marks
@@ -2405,26 +2759,25 @@ func (m *Manager) reconcileReap(ctx context.Context, rec domain.SessionRecord) e
 
 // Reconcile is the full boot-time consistency pass. It remains the synchronous
 // entry point for callers that need reconciliation to have completed before
-// proceeding. The daemon uses ReconcileStartupSafety before it starts serving,
-// then runs ReconcileBackground after its listener is live so durable project
-// metadata is available without waiting on worktree and runtime restoration.
+// proceeding. The daemon uses ReconcileStartupSafety before binding its
+// listener, then runs ReconcileBackground while liveness is available but
+// readiness remains gated.
 //
 // It replaces the bare RestoreAll
 // call so that however the previous daemon died (clean shutdown, SIGKILL, or
 // crash), live reality matches the DB:
 //
 //  1. Live pass: for each non-terminated session, adopt it if its runtime
-//     survived, else relaunch in place while preserving failed attempts as
-//     recoverable exited sessions (reconcileLive).
+//     survived, else relaunch in place. Failed recovery preserves the prior
+//     lifecycle facts and keeps daemon readiness closed (reconcileLive).
 //  2. Reap pass: for each terminated session whose runtime leaked, kill it
 //     (reconcileReap). Runs before restore so a restored session does not
 //     collide with a leaked tmux of the same name.
 //  3. Restore pass: relaunch shutdown-saved sessions (existing RestoreAll).
 //
-// Ordinary per-session liveness failures remain best-effort. Durable
-// agent-switch discovery/recovery is different: an error there aborts this
-// pass so the daemon cannot serve with an unknown switch and an open input
-// fence.
+// Every candidate is still attempted, but unresolved live-session failures are
+// aggregated and returned. The daemon uses that result to keep readiness closed
+// rather than publishing an intermediate or unverified board state.
 func (m *Manager) Reconcile(ctx context.Context) error {
 	if err := m.ReconcileStartupSafety(ctx); err != nil {
 		return err
@@ -2451,15 +2804,18 @@ func (m *Manager) ReconcileStartupSafety(ctx context.Context) error {
 }
 
 // ReconcileBackground performs the potentially slow runtime, worktree, and
-// saved-session restoration passes. It is deliberately separate from the
-// startup safety pass so the daemon can serve durable SQLite-backed project
-// and session metadata while this best-effort work continues.
+// saved-session restoration passes. It is separate from the pre-listener
+// safety pass so the daemon can publish liveness during recovery; clients must
+// wait for readiness before consuming session state.
 func (m *Manager) ReconcileBackground(ctx context.Context) error {
 	recs, err := m.store.ListAllSessions(ctx)
 	if err != nil {
 		return fmt.Errorf("reconcile: list sessions: %w", err)
 	}
-	m.reconcileLivePass(ctx, recs)
+	var unresolved []error
+	if err := m.reconcileLivePass(ctx, recs); err != nil {
+		unresolved = append(unresolved, fmt.Errorf("reconcile: live pass: %w", err))
+	}
 	for _, rec := range recs {
 		if !rec.IsTerminated {
 			continue
@@ -2469,16 +2825,16 @@ func (m *Manager) ReconcileBackground(ctx context.Context) error {
 		}
 	}
 	if err := m.RestoreAll(ctx); err != nil {
-		return err
+		unresolved = append(unresolved, err)
 	}
 	if err := m.deliverAllTransitionMessages(ctx); err != nil {
 		m.logger.Error("reconcile: transition-message delivery deferred for retry", "error", err)
 	}
 	m.wakeTransitionMessageDispatcher()
-	return nil
+	return errors.Join(unresolved...)
 }
 
-func (m *Manager) reconcileLivePass(ctx context.Context, recs []domain.SessionRecord) {
+func (m *Manager) reconcileLivePass(ctx context.Context, recs []domain.SessionRecord) error {
 	candidates := make([]domain.SessionRecord, 0, len(recs))
 	ids := make([]domain.SessionID, 0, len(recs))
 	for _, rec := range recs {
@@ -2489,7 +2845,7 @@ func (m *Manager) reconcileLivePass(ctx context.Context, recs []domain.SessionRe
 		ids = append(ids, rec.ID)
 	}
 	if len(candidates) == 0 {
-		return
+		return nil
 	}
 	// Reserve every candidate before starting the bounded worker pool. Otherwise
 	// sessions queued behind slow probes remain open to input and the periodic
@@ -2497,28 +2853,31 @@ func (m *Manager) reconcileLivePass(ctx context.Context, recs []domain.SessionRe
 	acquired, err := m.beginAgentOperations(ctx, ids, agentOperationReconcile)
 	if err != nil {
 		m.logger.Warn("reconcile: could not fence live sessions", "error", err)
-		return
+		return fmt.Errorf("fence live sessions: %w", err)
 	}
 	acquiredSet := make(map[domain.SessionID]struct{}, len(acquired))
 	for _, id := range acquired {
 		acquiredSet[id] = struct{}{}
 	}
 	live := make([]domain.SessionRecord, 0, len(acquired))
+	unresolved := make([]error, 0, len(candidates)-len(acquired))
 	for _, rec := range candidates {
 		if _, ok := acquiredSet[rec.ID]; !ok {
 			m.logger.Warn("reconcile: session remains input-gated pending unambiguous agent-switch recovery", "sessionID", rec.ID)
+			unresolved = append(unresolved, fmt.Errorf("session %s: reconciliation fence unavailable", rec.ID))
 			continue
 		}
 		live = append(live, rec)
 	}
 	if len(live) == 0 {
-		return
+		return errors.Join(unresolved...)
 	}
 	workers := m.reconcileWorkers
 	if workers > len(live) {
 		workers = len(live)
 	}
 	jobs := make(chan domain.SessionRecord)
+	failures := make(chan error, len(live))
 	var wg sync.WaitGroup
 	wg.Add(workers)
 	for range workers {
@@ -2531,6 +2890,7 @@ func (m *Manager) reconcileLivePass(ctx context.Context, recs []domain.SessionRe
 				}()
 				if err != nil {
 					m.logger.Error("reconcile: live pass failed, skipping", "sessionID", rec.ID, "error", err)
+					failures <- fmt.Errorf("session %s: %w", rec.ID, err)
 				}
 			}
 		}()
@@ -2540,6 +2900,11 @@ func (m *Manager) reconcileLivePass(ctx context.Context, recs []domain.SessionRe
 	}
 	close(jobs)
 	wg.Wait()
+	close(failures)
+	for err := range failures {
+		unresolved = append(unresolved, err)
+	}
+	return errors.Join(unresolved...)
 }
 
 // RestoreAll relaunches every terminated session that was saved by the last

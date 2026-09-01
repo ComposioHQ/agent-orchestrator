@@ -71,6 +71,102 @@ func (s *Store) UpdateBrowserCapabilityVerifier(
 	return rows > 0, nil
 }
 
+// CanonicalizeRuntimeHandle atomically upgrades a legacy TUI route together
+// with the supervisor generation proven to own it. This is controller
+// provenance, not an activity event, so it deliberately leaves UpdatedAt and
+// every unrelated session fact untouched.
+func (s *Store) CanonicalizeRuntimeHandle(
+	ctx context.Context,
+	id domain.SessionID,
+	expected domain.SessionControllerOwner,
+	expectedHandleID string,
+	canonicalHandleID string,
+	actualLaunchID string,
+) (bool, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	rows, err := s.qw.CanonicalizeRuntimeHandle(ctx, gen.CanonicalizeRuntimeHandleParams{
+		CanonicalRuntimeHandleID:       canonicalHandleID,
+		ActualRuntimeLaunchID:          actualLaunchID,
+		ExpectedRuntimeLaunchID:        expected.RuntimeLaunchID,
+		ID:                             id,
+		ExpectedSessionMode:            domain.NormalizeSessionMode(expected.Mode),
+		ExpectedIsTerminated:           expected.IsTerminated,
+		ExpectedHarness:                expected.Harness,
+		ExpectedRuntimeHandleID:        expectedHandleID,
+		ExpectedAgentSessionID:         expected.AgentSessionID,
+		ExpectedAgentSessionIDLaunchID: expected.AgentSessionIDLaunchID,
+		ExpectedProviderConversationID: expected.ProviderConversationID,
+		ExpectedControllerGeneration:   expected.ControllerGeneration,
+	})
+	if err != nil {
+		return false, fmt.Errorf("canonicalize runtime handle for %s: %w", id, err)
+	}
+	return rows > 0, nil
+}
+
+// RepairExitedActivityFromRuntime repairs a historical false-exit only while
+// the exact TUI controller owner and canonical runtime route observed by the
+// caller are still current.
+func (s *Store) RepairExitedActivityFromRuntime(
+	ctx context.Context,
+	id domain.SessionID,
+	expected domain.SessionControllerOwner,
+	expectedHandleID string,
+	recovered domain.Activity,
+) (bool, error) {
+	if !isRecoverableRuntimeActivity(recovered.State) || recovered.LastActivityAt.IsZero() {
+		return false, fmt.Errorf("repair exited activity from runtime for %s: invalid recovered activity %q", id, recovered.State)
+	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	rows, err := s.qw.RepairExitedActivityFromRuntime(ctx, gen.RepairExitedActivityFromRuntimeParams{
+		RecoveredActivityState:         recovered.State,
+		ObservedAt:                     recovered.LastActivityAt,
+		ID:                             id,
+		ExpectedSessionMode:            domain.NormalizeSessionMode(expected.Mode),
+		ExpectedIsTerminated:           expected.IsTerminated,
+		ExpectedHarness:                expected.Harness,
+		ExpectedRuntimeHandleID:        expectedHandleID,
+		ExpectedRuntimeLaunchID:        expected.RuntimeLaunchID,
+		ExpectedAgentSessionID:         expected.AgentSessionID,
+		ExpectedAgentSessionIDLaunchID: expected.AgentSessionIDLaunchID,
+		ExpectedProviderConversationID: expected.ProviderConversationID,
+		ExpectedControllerGeneration:   expected.ControllerGeneration,
+	})
+	if err != nil {
+		return false, fmt.Errorf("repair exited activity from runtime for %s: %w", id, err)
+	}
+	return rows > 0, nil
+}
+
+// LatestNonExitedSessionActivity returns the last durable activity fact before
+// a historical false exit. It is a compatibility fallback for legacy sessions
+// whose current TUI does not expose an authoritative activity surface.
+func (s *Store) LatestNonExitedSessionActivity(ctx context.Context, id domain.SessionID) (domain.Activity, bool, error) {
+	row, err := s.qr.LatestNonExitedSessionActivity(ctx, &id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.Activity{}, false, nil
+	}
+	if err != nil {
+		return domain.Activity{}, false, fmt.Errorf("latest non-exited activity for %s: %w", id, err)
+	}
+	state := domain.ActivityState(row.ActivityState)
+	if !isRecoverableRuntimeActivity(state) {
+		return domain.Activity{}, false, fmt.Errorf("latest non-exited activity for %s: invalid state %q", id, state)
+	}
+	return domain.Activity{State: state, LastActivityAt: row.ObservedAt}, true, nil
+}
+
+func isRecoverableRuntimeActivity(state domain.ActivityState) bool {
+	switch state {
+	case domain.ActivityActive, domain.ActivityIdle, domain.ActivityWaitingInput, domain.ActivityBlocked:
+		return true
+	default:
+		return false
+	}
+}
+
 // UpdateSessionFromActivitySignal projects activity-derived session metadata
 // only when the signal still belongs to the session's active harness launch.
 func (s *Store) UpdateSessionFromActivitySignal(ctx context.Context, rec domain.SessionRecord) (bool, error) {

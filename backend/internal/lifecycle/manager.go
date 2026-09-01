@@ -61,6 +61,28 @@ type controllerEpochStore interface {
 	) (bool, error)
 }
 
+// runtimeRecoveryStore owns the two narrow startup-reconciliation writes.
+// Both are full controller-owner CAS operations: runtime observations may
+// refine provenance or repair a historical false exit, but may never replay a
+// stale SessionRecord over a concurrent controller transition.
+type runtimeRecoveryStore interface {
+	CanonicalizeRuntimeHandle(
+		context.Context,
+		domain.SessionID,
+		domain.SessionControllerOwner,
+		string,
+		string,
+		string,
+	) (bool, error)
+	RepairExitedActivityFromRuntime(
+		context.Context,
+		domain.SessionID,
+		domain.SessionControllerOwner,
+		string,
+		domain.Activity,
+	) (bool, error)
+}
+
 // chatSpawnStore commits the lifecycle facts and the provider boundary in one
 // transaction. A fresh provider must never become the durable session owner
 // while the conversation head still names the provider it replaced.
@@ -409,6 +431,9 @@ func (m *Manager) ApplyRuntimeObservation(ctx context.Context, id domain.Session
 		if cur.IsTerminated || !matchesLaunch(cur) {
 			return cur, false
 		}
+		if m.sessionMutationInProgress(id) {
+			return cur, false
+		}
 		currentLaunch := cur.Metadata.RuntimeLaunchID
 		if currentLaunch != "" && f.Runtime == ports.ProbeAlive && f.Workload == ports.ProbeDead {
 			if cur.Activity.State == domain.ActivityExited {
@@ -420,9 +445,6 @@ func (m *Manager) ApplyRuntimeObservation(ctx context.Context, id domain.Session
 			return next, true
 		}
 		if !runtimeClearlyDead(f, cur.Activity, now, m.window) {
-			return cur, false
-		}
-		if m.sessionMutationInProgress(id) {
 			return cur, false
 		}
 		finalizer = m.usageFinalizer
@@ -438,9 +460,10 @@ func (m *Manager) ApplyRuntimeObservation(ctx context.Context, id domain.Session
 
 	terminated := false
 	err := m.mutate(ctx, id, func(cur domain.SessionRecord, now time.Time) (domain.SessionRecord, bool) {
-		if cur.IsTerminated || !cur.UpdatedAt.Equal(terminationRevision) ||
+		if cur.IsTerminated || m.sessionMutationInProgress(id) ||
+			!cur.UpdatedAt.Equal(terminationRevision) ||
 			cur.Metadata.RuntimeLaunchID != terminationLaunch || !matchesLaunch(cur) ||
-			!runtimeClearlyDead(f, cur.Activity, now, m.window) || m.sessionMutationInProgress(id) {
+			!runtimeClearlyDead(f, cur.Activity, now, m.window) {
 			return cur, false
 		}
 		next := cur
@@ -1155,6 +1178,77 @@ func (m *Manager) markSpawned(
 	}
 	reactivateSessionUsage(ctx, id, launchID, reactivator)
 	return nil
+}
+
+// CanonicalizeRuntimeHandle persists an ownership-proven runtime route and
+// supervisor generation as one controller-owner-fenced provenance update.
+// It intentionally does not advance activity or user-visible recency.
+func (m *Manager) CanonicalizeRuntimeHandle(
+	ctx context.Context,
+	id domain.SessionID,
+	expected domain.SessionControllerOwner,
+	expectedHandleID string,
+	canonicalHandleID string,
+	actualLaunchID string,
+) (bool, error) {
+	if strings.TrimSpace(string(id)) == "" ||
+		domain.NormalizeSessionMode(expected.Mode) != domain.SessionModeTUI ||
+		expected.IsTerminated ||
+		strings.TrimSpace(expectedHandleID) == "" ||
+		strings.TrimSpace(canonicalHandleID) == "" ||
+		strings.TrimSpace(actualLaunchID) == "" {
+		return false, errors.New("lifecycle: invalid runtime canonicalization")
+	}
+	writer, ok := m.store.(runtimeRecoveryStore)
+	if !ok {
+		return false, errors.New("lifecycle: runtime recovery persistence is unavailable")
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return writer.CanonicalizeRuntimeHandle(
+		ctx, id, expected, expectedHandleID, canonicalHandleID, actualLaunchID,
+	)
+}
+
+// RepairExitedActivityFromRuntime repairs a historical false-exit only after
+// reconciliation proved the exact current TUI supervisor and workload alive.
+// The owner and handle CAS makes any concurrent controller change a no-op.
+func (m *Manager) RepairExitedActivityFromRuntime(
+	ctx context.Context,
+	id domain.SessionID,
+	expected domain.SessionControllerOwner,
+	expectedHandleID string,
+	recovered domain.Activity,
+) (bool, error) {
+	if strings.TrimSpace(string(id)) == "" ||
+		domain.NormalizeSessionMode(expected.Mode) != domain.SessionModeTUI ||
+		expected.IsTerminated ||
+		strings.TrimSpace(expectedHandleID) == "" ||
+		strings.TrimSpace(expected.RuntimeLaunchID) == "" ||
+		!recoverableRuntimeActivity(recovered.State) {
+		return false, errors.New("lifecycle: invalid runtime activity repair")
+	}
+	writer, ok := m.store.(runtimeRecoveryStore)
+	if !ok {
+		return false, errors.New("lifecycle: runtime recovery persistence is unavailable")
+	}
+	if recovered.LastActivityAt.IsZero() {
+		recovered.LastActivityAt = m.clock()
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return writer.RepairExitedActivityFromRuntime(ctx, id, expected, expectedHandleID, recovered)
+}
+
+func recoverableRuntimeActivity(state domain.ActivityState) bool {
+	switch state {
+	case domain.ActivityActive, domain.ActivityIdle, domain.ActivityWaitingInput, domain.ActivityBlocked:
+		return true
+	default:
+		return false
+	}
 }
 
 // CommitControllerEpoch atomically changes which controller owns a live

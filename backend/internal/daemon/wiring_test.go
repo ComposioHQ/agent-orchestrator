@@ -597,6 +597,13 @@ func TestWiring_StartLifecycleThreadsMessengerIntoLCM(t *testing.T) {
 	stack := startLifecycle(ctx, store, tmux.New(tmux.Options{}), messenger, nil, nil, nil, log)
 	t.Cleanup(stack.Stop)
 	t.Cleanup(cancel)
+	if stack.reaperDone != nil || stack.activityDone != nil {
+		t.Fatal("periodic lifecycle observers started before startup reconciliation")
+	}
+	stack.StartObservers(ctx)
+	if stack.reaperDone == nil || stack.activityDone == nil {
+		t.Fatal("periodic lifecycle observers did not start at the readiness boundary")
+	}
 
 	obs := ports.SCMObservation{
 		Fetched: true,

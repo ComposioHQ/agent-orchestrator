@@ -329,6 +329,171 @@ func TestBrowserCapabilityRotationIsNarrowAndControllerOwnerFenced(t *testing.T)
 	}
 }
 
+func TestRuntimeRecoveryWritesAreNarrowAndOwnerFenced(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	rec := sampleRecord("mer")
+	rec.Mode = domain.SessionModeTUI
+	rec.DisplayName = "preserve me"
+	rec.Activity = domain.Activity{State: domain.ActivityExited, LastActivityAt: rec.UpdatedAt.Add(-time.Minute)}
+	rec.Metadata.RuntimeHandleID = "legacy-handle"
+	rec.Metadata.RuntimeLaunchID = "stale-launch"
+	rec.Metadata.AgentSessionID = "native-1"
+	rec.Metadata.AgentSessionIDLaunchID = "stale-launch"
+	created, err := s.CreateSession(ctx, rec)
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	initialUpdatedAt := created.UpdatedAt
+
+	applied, err := s.CanonicalizeRuntimeHandle(
+		ctx, created.ID, created.ControllerOwner(),
+		"legacy-handle", "tmux-v1:qualified", "proven-launch",
+	)
+	if err != nil || !applied {
+		t.Fatalf("CanonicalizeRuntimeHandle: applied=%v err=%v", applied, err)
+	}
+	canonical, ok, err := s.GetSession(ctx, created.ID)
+	if err != nil || !ok {
+		t.Fatalf("GetSession canonical: ok=%v err=%v", ok, err)
+	}
+	if canonical.Metadata.RuntimeHandleID != "tmux-v1:qualified" ||
+		canonical.Metadata.RuntimeLaunchID != "proven-launch" ||
+		canonical.Metadata.AgentSessionIDLaunchID != "proven-launch" {
+		t.Fatalf("canonical runtime identity = %+v", canonical.Metadata)
+	}
+	if canonical.Activity != created.Activity || canonical.DisplayName != created.DisplayName ||
+		!canonical.UpdatedAt.Equal(initialUpdatedAt) {
+		t.Fatalf("canonicalization changed unrelated facts: %+v", canonical)
+	}
+
+	applied, err = s.CanonicalizeRuntimeHandle(
+		ctx, created.ID, created.ControllerOwner(),
+		"legacy-handle", "tmux-v1:stale", "stale-attempt",
+	)
+	if err != nil || applied {
+		t.Fatalf("stale CanonicalizeRuntimeHandle: applied=%v err=%v", applied, err)
+	}
+
+	observedAt := initialUpdatedAt.Add(5 * time.Minute)
+	recoveredActivity := domain.Activity{State: domain.ActivityActive, LastActivityAt: observedAt}
+	applied, err = s.RepairExitedActivityFromRuntime(
+		ctx, created.ID, canonical.ControllerOwner(), "tmux-v1:qualified", recoveredActivity,
+	)
+	if err != nil || !applied {
+		t.Fatalf("RepairExitedActivityFromRuntime: applied=%v err=%v", applied, err)
+	}
+	repaired, ok, err := s.GetSession(ctx, created.ID)
+	if err != nil || !ok {
+		t.Fatalf("GetSession repaired: ok=%v err=%v", ok, err)
+	}
+	if repaired.Activity != recoveredActivity ||
+		!repaired.UpdatedAt.Equal(observedAt) {
+		t.Fatalf("repaired activity = %+v updatedAt=%v", repaired.Activity, repaired.UpdatedAt)
+	}
+	if repaired.Metadata != canonical.Metadata || repaired.DisplayName != canonical.DisplayName {
+		t.Fatalf("activity repair changed unrelated facts: %+v", repaired)
+	}
+
+	beforeNoop := repaired
+	applied, err = s.RepairExitedActivityFromRuntime(
+		ctx, created.ID, repaired.ControllerOwner(), "tmux-v1:qualified",
+		domain.Activity{State: domain.ActivityIdle, LastActivityAt: observedAt.Add(time.Minute)},
+	)
+	if err != nil || applied {
+		t.Fatalf("non-exited repair: applied=%v err=%v", applied, err)
+	}
+	afterNoop, _, err := s.GetSession(ctx, created.ID)
+	if err != nil || afterNoop != beforeNoop {
+		t.Fatalf("non-exited repair changed row: got %+v want %+v err=%v", afterNoop, beforeNoop, err)
+	}
+
+	concurrent := repaired
+	concurrent.Activity = domain.Activity{State: domain.ActivityExited, LastActivityAt: observedAt.Add(time.Minute)}
+	concurrent.Metadata.RuntimeLaunchID = "concurrent-launch"
+	concurrent.UpdatedAt = observedAt.Add(time.Minute)
+	if err := s.UpdateSession(ctx, concurrent); err != nil {
+		t.Fatalf("UpdateSession concurrent owner: %v", err)
+	}
+	applied, err = s.RepairExitedActivityFromRuntime(
+		ctx, created.ID, repaired.ControllerOwner(), "tmux-v1:qualified",
+		domain.Activity{State: domain.ActivityIdle, LastActivityAt: observedAt.Add(2 * time.Minute)},
+	)
+	if err != nil || applied {
+		t.Fatalf("stale-owner repair: applied=%v err=%v", applied, err)
+	}
+	afterStale, _, err := s.GetSession(ctx, created.ID)
+	if err != nil || afterStale != concurrent {
+		t.Fatalf("stale-owner repair changed row: got %+v want %+v err=%v", afterStale, concurrent, err)
+	}
+}
+
+func TestRuntimeCanonicalizationPreservesNewerNativeIdentityFence(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	rec := sampleRecord("mer")
+	rec.Mode = domain.SessionModeTUI
+	rec.Metadata.RuntimeHandleID = "legacy-handle"
+	rec.Metadata.RuntimeLaunchID = "stale-launch"
+	rec.Metadata.AgentSessionID = "native-1"
+	rec.Metadata.AgentSessionIDLaunchID = "newer-native-launch"
+	created, err := s.CreateSession(ctx, rec)
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	applied, err := s.CanonicalizeRuntimeHandle(
+		ctx, created.ID, created.ControllerOwner(),
+		"legacy-handle", "tmux-v1:qualified", "proven-launch",
+	)
+	if err != nil || !applied {
+		t.Fatalf("CanonicalizeRuntimeHandle: applied=%v err=%v", applied, err)
+	}
+	got, _, err := s.GetSession(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if got.Metadata.RuntimeLaunchID != "proven-launch" ||
+		got.Metadata.AgentSessionIDLaunchID != "newer-native-launch" {
+		t.Fatalf("canonicalization rebound newer native identity: %+v", got.Metadata)
+	}
+}
+
+func TestLatestNonExitedSessionActivityReturnsFactBeforeHistoricalExit(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "history")
+	rec := sampleRecord("history")
+	rec.Mode = domain.SessionModeTUI
+	rec.Activity.State = domain.ActivityIdle
+	created, err := s.CreateSession(ctx, rec)
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	activeAt := created.UpdatedAt.Add(time.Minute)
+	created.Activity = domain.Activity{State: domain.ActivityActive, LastActivityAt: activeAt}
+	created.UpdatedAt = activeAt
+	if err := s.UpdateSession(ctx, created); err != nil {
+		t.Fatalf("UpdateSession active: %v", err)
+	}
+	exitedAt := activeAt.Add(time.Minute)
+	created.Activity = domain.Activity{State: domain.ActivityExited, LastActivityAt: exitedAt}
+	created.UpdatedAt = exitedAt
+	if err := s.UpdateSession(ctx, created); err != nil {
+		t.Fatalf("UpdateSession exited: %v", err)
+	}
+
+	activity, found, err := s.LatestNonExitedSessionActivity(ctx, created.ID)
+	if err != nil || !found {
+		t.Fatalf("LatestNonExitedSessionActivity: found=%v err=%v", found, err)
+	}
+	if activity.State != domain.ActivityActive || !activity.LastActivityAt.Equal(activeAt) {
+		t.Fatalf("latest non-exited activity = %+v, want active at %v", activity, activeAt)
+	}
+}
+
 func TestProjectCRUDAndArchive(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
