@@ -11,6 +11,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -21,6 +22,35 @@ import (
 
 	"github.com/coder/websocket"
 )
+
+// hostOverrideTransport routes requests by a Host header different from the
+// dialed address — used to reach an environment through its load balancer
+// before its DNS record exists (AO_HOST_HEADER), optionally skipping TLS
+// verification when the SNI certificate cannot match (AO_TLS_INSECURE=1).
+type hostOverrideTransport struct {
+	base http.RoundTripper
+	host string
+}
+
+func (t *hostOverrideTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if t.host != "" {
+		req.Host = t.host
+	}
+	return t.base.RoundTrip(req)
+}
+
+func probeHTTPClient() *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	if os.Getenv("AO_TLS_INSECURE") == "1" {
+		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+	}
+	return &http.Client{
+		Transport: &hostOverrideTransport{
+			base: transport,
+			host: strings.TrimSpace(os.Getenv("AO_HOST_HEADER")),
+		},
+	}
+}
 
 func main() {
 	if err := run(); err != nil {
@@ -51,7 +81,8 @@ func run() error {
 		bytes.NewReader([]byte(`{"kind":"workspace"}`)))
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
+	httpClient := probeHTTPClient()
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -68,7 +99,7 @@ func run() error {
 		"%s/terminal?ticket=%s&kind=workspace&protocol=2",
 		wsBase, ticket.Ticket,
 	)
-	conn, _, err := websocket.Dial(ctx, wsURL, nil)
+	conn, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{HTTPClient: httpClient})
 	if err != nil {
 		return fmt.Errorf("dial: %w", err)
 	}
