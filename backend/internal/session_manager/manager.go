@@ -766,12 +766,10 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	}
 
 	// Resolve the effective agent config (project base + role override + spawn
-	// override) and validate the model before any durable state is created. A
-	// model the harness cannot honor should not leave a seed row behind.
+	// override) before durable state is created. Model validation is intentionally
+	// deferred until after workspace materialization so project/workspace setup
+	// errors are reported before model-selection errors.
 	agentConfig := applySpawnAgentConfig(effectiveAgentConfig(cfg.Kind, project.Config), cfg.AgentConfig)
-	if err := validateSpawnModel(cfg.Harness, agentConfig.Model); err != nil {
-		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w: %s", ErrUnsupportedModel, err.Error())
-	}
 	// Adapters whose model picker is an agent-owned mode list (e.g. Amp) keep
 	// their selectable values in AgentConfig.Mode. Normalize a copy for the
 	// adapter so `ao spawn --agent amp --model high` launches Amp with `--mode
@@ -847,6 +845,11 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		// in session lists (e.g. when gitworktree refuses the branch).
 		m.rollbackSpawnSeedRow(ctx, id)
 		return domain.SessionRecord{}, 0, 0, wrapSpawnStage(id, ErrWorkspaceCreate, err)
+	}
+
+	if err := validateSpawnModel(cfg.Harness, agentConfig.Model); err != nil {
+		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, false)
+		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: %w: %s", id, ErrUnsupportedModel, err.Error())
 	}
 
 	// Per-project workspace provisioning: symlink shared files, then run any

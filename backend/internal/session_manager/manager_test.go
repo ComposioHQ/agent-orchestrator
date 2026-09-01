@@ -1346,9 +1346,29 @@ func TestSpawnModelValidation(t *testing.T) {
 		t.Fatalf("amp launch model = %q, want empty after routing to mode", agent.lastConfig.Model)
 	}
 
-	// Amp rejects a model outside its mode list.
+	// Workspace validation happens before model validation so onboarding reports
+	// project/workspace setup problems (for example unresolved default branches)
+	// before model-selection problems.
+	ws.createErr = ports.ErrWorkspaceDefaultBranchUnresolved
 	before := len(st.sessions)
 	_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, AgentConfig: ports.AgentConfig{Model: "invalid-mode"}})
+	if err == nil {
+		t.Fatal("expected workspace creation to fail")
+	}
+	if !errors.Is(err, ports.ErrWorkspaceDefaultBranchUnresolved) {
+		t.Fatalf("err = %v, want ErrWorkspaceDefaultBranchUnresolved", err)
+	}
+	if errors.Is(err, ErrUnsupportedModel) {
+		t.Fatalf("err = %v, should not report ErrUnsupportedModel before workspace validation", err)
+	}
+	if len(st.sessions) != before {
+		t.Fatalf("workspace failure left a session row behind: %d sessions, want %d", len(st.sessions), before)
+	}
+	ws.createErr = nil
+
+	// Amp rejects a model outside its mode list.
+	before = len(st.sessions)
+	_, _, _, err = m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, AgentConfig: ports.AgentConfig{Model: "invalid-mode"}})
 	if err == nil {
 		t.Fatal("expected amp to reject invalid-mode")
 	}
