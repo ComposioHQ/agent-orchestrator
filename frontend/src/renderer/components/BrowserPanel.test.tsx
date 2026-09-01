@@ -1432,7 +1432,7 @@ describe("BrowserPanel", () => {
 			expect(closeButton).not.toHaveClass("absolute");
 		});
 
-		it("closes only from the distinct pinned-rail close action", () => {
+		it("closes only from the distinct pinned-rail close action", async () => {
 			pinRail();
 			hookState.tabs = [
 				{ id: "t1", url: "http://localhost:3000/", title: "First app", active: false },
@@ -1447,7 +1447,7 @@ describe("BrowserPanel", () => {
 			fireEvent.pointerEnter(pinnedTabs.getByRole("button", { name: "First app — localhost:3000" }));
 			expect(closeButton).toHaveAttribute("data-state", "open");
 			expect(closeButton).toBeEnabled();
-			fireEvent.click(closeButton);
+			await userEvent.click(closeButton);
 
 			expect(hookState.closeTab).toHaveBeenCalledWith("t1");
 			expect(hookState.selectTab).not.toHaveBeenCalled();
