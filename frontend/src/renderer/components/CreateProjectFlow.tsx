@@ -306,9 +306,7 @@ export function CreateProjectFlow({
 		}
 	};
 
-	const label = isChoosingPath
-		? t("createProject.opening")
-		: isInitializing
+	const label = isInitializing
 			? hasModePicker
 				? t("createProject.initializing")
 				: t("createProject.settingUp")
