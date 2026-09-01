@@ -670,13 +670,13 @@ func bootstrapCommand(bootstrap sandbox.WorkerBootstrap, encodedLength int) stri
 	script := "set -eu\n" +
 		"stage=$(mktemp -d)\nencoded=\"$stage/payload.b64\"\n" +
 		"trap 'code=$?; stty echo icanon 2>/dev/null || true; echo " + bootstrapFailed + ":$code' EXIT\n" +
-		"target=" + strconv.Itoa(encodedLength) + "\nexpected=0\nreceived=0\n: >\"$encoded\"\nstty -echo icanon\necho " + bootstrapReady + "\n" +
+		"target=" + strconv.Itoa(encodedLength) + "\nexpected=0\nreceived=0\n: >\"$encoded\"\nstty -echo icanon 2>/dev/null || true\necho " + bootstrapReady + "\n" +
 		"while IFS=: read -r kind sequence declared chunk; do\n" +
 		"  case \"$sequence\" in ''|*[!0-9]*) continue ;; esac\n" +
 		"  case \"$declared\" in ''|*[!0-9]*) continue ;; esac\n" +
 		"  if [ \"$kind\" = data ] && [ \"$sequence\" -eq \"$expected\" ] && [ \"${#chunk}\" -eq \"$declared\" ] && [ $((received + declared)) -le \"$target\" ]; then\n" +
 		"    printf %s \"$chunk\" >>\"$encoded\"\n    received=$((received + declared))\n    expected=$((expected + 1))\n    echo " + bootstrapUploadACK + ":$expected\n" +
-		"  elif [ \"$kind\" = done ] && [ \"$received\" -eq \"$target\" ]; then\n    echo " + bootstrapUploadDone + "\n    break\n  fi\ndone\nstty echo icanon\n" +
+		"  elif [ \"$kind\" = done ] && [ \"$received\" -eq \"$target\" ]; then\n    echo " + bootstrapUploadDone + "\n    break\n  fi\ndone\nstty echo icanon 2>/dev/null || true\n" +
 		"base64 -d \"$encoded\" | gzip -d | tar -xf - -C \"$stage\"\n" +
 		"sudo -n id -u " + shellQuote(workerUser) + " >/dev/null 2>&1 || sudo -n useradd -m " + shellQuote(workerUser) + "\n" +
 		"durable_root=" + shellQuote(layout.DurableRoot) + "\n" +

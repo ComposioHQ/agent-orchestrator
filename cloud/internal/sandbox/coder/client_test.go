@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
@@ -294,6 +295,28 @@ func TestBootstrapWorkerStreamsArchiveWithoutSecretsInURL(t *testing.T) {
 	}
 	if err := <-bootstrapResult; err != nil {
 		t.Fatalf("bootstrap: %v", err)
+	}
+}
+
+func TestBootstrapCommandRunsThroughUploadWithPipedInput(t *testing.T) {
+	t.Parallel()
+
+	command := bootstrapCommand(sandbox.WorkerBootstrap{
+		Destination: "/usr/local/bin/ao-worker", User: "ao-worker",
+		DurableRoot: "/mnt/ao", DurableIdentity: "session-1",
+	}, 0)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	process := exec.CommandContext(ctx, "sh", "-c", command)
+	process.Stdin = strings.NewReader("done:0:0:\n")
+	output, err := process.CombinedOutput()
+	if err == nil {
+		t.Fatal("empty bootstrap payload unexpectedly succeeded")
+	}
+	for _, marker := range []string{bootstrapReady, bootstrapUploadDone, bootstrapFailed} {
+		if !strings.Contains(string(output), marker) {
+			t.Fatalf("bootstrap output %q missing %s", output, marker)
+		}
 	}
 }
 
