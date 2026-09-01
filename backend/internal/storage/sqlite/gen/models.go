@@ -280,7 +280,6 @@ type PR struct {
 	ReviewObservedAt         sql.NullTime
 	LastNudgeSignature       string
 	StateChangedAt           sql.NullTime
-	AutoInjectCI             bool
 	ProviderID               string
 }
 

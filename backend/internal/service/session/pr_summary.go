@@ -43,7 +43,8 @@ type PRConflictFile = contract.PullRequestConflictFile
 // ListPRSummaries returns all PRs owned by a session with concise SCM details
 // assembled from persisted PR/check/review facts.
 func (s *Service) ListPRSummaries(ctx context.Context, id domain.SessionID) ([]PRSummary, error) {
-	if _, ok, err := s.store.GetSession(ctx, id); err != nil {
+	session, ok, err := s.store.GetSession(ctx, id)
+	if err != nil {
 		return nil, fmt.Errorf("get %s: %w", id, err)
 	} else if !ok {
 		return nil, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
@@ -81,13 +82,13 @@ func (s *Service) ListPRSummaries(ctx context.Context, id domain.SessionID) ([]P
 			}
 			comments = append(comments, prComments...)
 		}
-		out = append(out, summarizePR(group.primary, checks, reviews, threads, comments))
+		out = append(out, summarizePR(group.primary, checks, reviews, threads, comments, session.AutoInjectCI))
 	}
 	sortPRSummaries(out)
 	return out, nil
 }
 
-func summarizePR(pr domain.PullRequest, checks []domain.PullRequestCheck, reviews []domain.PullRequestReview, threads []domain.PullRequestReviewThread, comments []domain.PullRequestComment) PRSummary {
+func summarizePR(pr domain.PullRequest, checks []domain.PullRequestCheck, reviews []domain.PullRequestReview, threads []domain.PullRequestReviewThread, comments []domain.PullRequestComment, autoInjectCI bool) PRSummary {
 	return PRSummary{
 		URL:              pr.URL,
 		HTMLURL:          firstNonEmpty(pr.HTMLURL, pr.URL),
@@ -103,7 +104,7 @@ func summarizePR(pr domain.PullRequest, checks []domain.PullRequestCheck, review
 		Additions:        pr.Additions,
 		Deletions:        pr.Deletions,
 		ChangedFiles:     pr.ChangedFiles,
-		CI:               summarizeCI(pr, checks),
+		CI:               summarizeCI(pr, checks, autoInjectCI),
 		Review:           summarizeReview(pr, comments, reviews),
 		Mergeability:     summarizeMergeability(pr, threads),
 		StateChangedAt:   summarizePRStateChangedAt(pr),
@@ -131,9 +132,9 @@ func summarizePRStateChangedAt(pr domain.PullRequest) time.Time {
 	}
 }
 
-func summarizeCI(pr domain.PullRequest, checks []domain.PullRequestCheck) PRCISummary {
+func summarizeCI(pr domain.PullRequest, checks []domain.PullRequestCheck, autoInjectCI bool) PRCISummary {
 	state := ciOrUnknown(pr.CI)
-	out := PRCISummary{State: state, AutoInjectCI: pr.AutoInjectCI}
+	out := PRCISummary{State: state, AutoInjectCI: autoInjectCI}
 	if state != domain.CIFailing || pr.Merged || pr.Closed {
 		return out
 	}

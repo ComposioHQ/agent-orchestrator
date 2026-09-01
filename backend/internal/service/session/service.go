@@ -710,8 +710,8 @@ func (s *Service) SetAutoInjectReview(ctx context.Context, id domain.SessionID, 
 	return s.Get(ctx, id)
 }
 
-// SetAutoInjectCI persists the default automatic CI-failure injection policy
-// for PRs created after this update. Existing PRs keep their captured policy.
+// SetAutoInjectCI persists the automatic CI-failure injection policy for every
+// PR associated with the session.
 func (s *Service) SetAutoInjectCI(ctx context.Context, id domain.SessionID, autoInject bool) (domain.Session, error) {
 	updated, err := s.store.SetSessionAutoInjectCI(ctx, id, autoInject, time.Now().UTC())
 	if err != nil {

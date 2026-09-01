@@ -828,7 +828,7 @@ WHERE name = 'billing_provider_source'`).Scan(&providerSource); err != nil {
 		}
 	}
 
-	var latestPromptShape, branchShape, prTriggerShape, cloudShape int
+	var latestPromptShape, branchShape, prTriggerShape, prPolicyColumn, cloudShape int
 	if err := tx.QueryRow(`
 SELECT COUNT(*) FROM pragma_table_info('sessions')
 WHERE name = 'latest_user_prompt_at'`).Scan(&latestPromptShape); err != nil {
@@ -846,6 +846,11 @@ WHERE type = 'trigger' AND name = 'pr_cdc_update'
 		return err
 	}
 	if err := tx.QueryRow(`
+SELECT COUNT(*) FROM pragma_table_info('pr')
+WHERE name = 'auto_inject_ci'`).Scan(&prPolicyColumn); err != nil {
+		return err
+	}
+	if err := tx.QueryRow(`
 SELECT COUNT(*) FROM pragma_table_info('app_settings')
 WHERE name = 'cloud_offering'`).Scan(&cloudShape); err != nil {
 		return err
@@ -856,7 +861,10 @@ WHERE name = 'cloud_offering'`).Scan(&cloudShape); err != nil {
 	}{
 		{version: 109, present: latestPromptShape != 0},
 		{version: 110, present: branchShape == 4},
-		{version: 111, present: prTriggerShape != 0},
+		// Migration 0120 deliberately removes the PR policy column and replaces
+		// the trigger. In that final shape, 0111 remains historically applied
+		// even though its former trigger predicate is no longer present.
+		{version: 111, present: prTriggerShape != 0 || prPolicyColumn == 0},
 		{version: 112, present: cloudShape != 0},
 	} {
 		if migration.present {

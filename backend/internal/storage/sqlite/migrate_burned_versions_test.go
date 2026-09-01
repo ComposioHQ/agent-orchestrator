@@ -124,6 +124,7 @@ var shippedMigrations = map[int64]string{
 	117: "0117_allow_kimi_usage.sql",
 	118: "0118_cancelled_conversation_turns.sql",
 	119: "0119_finalize_completed_conversation_plans.sql",
+	120: "0120_session_ci_injection_policy.sql",
 }
 
 // burnedVersion reports version numbers that must never be (re)used: they
@@ -336,7 +337,6 @@ INSERT INTO projects (
 	}
 	for table, want := range map[string][]string{
 		"sessions":      {"diff_base_sha", "diff_base_ref", "reviewer_harness", "browser_capability_verifier", "auto_inject_review", "auto_inject_ci"},
-		"pr":            {"auto_inject_ci"},
 		"notifications": {"resolved_at"},
 	} {
 		for _, column := range want {
