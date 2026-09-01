@@ -158,7 +158,6 @@
 	"createProject.cloneRepositoryUrlPlaceholder": "https://github.com/org/repository.git",
 	"createProject.cloning": "クローン中...",
 	"createProject.cloneTitle": "Git リポジトリをクローン",
-	"createProject.cloneWillCreate": "AO が作成する場所",
 	"createProject.closeAgents": "プロジェクトエージェントのダイアログを閉じる",
 	"createProject.closeDialog": "新規プロジェクトのダイアログを閉じる",
 	"createProject.closeImport": "インポートダイアログを閉じる",

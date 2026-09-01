@@ -158,7 +158,6 @@
 	"createProject.cloneRepositoryUrlPlaceholder": "https://github.com/org/repository.git",
 	"createProject.cloning": "Wird geklont...",
 	"createProject.cloneTitle": "Git-Repository klonen",
-	"createProject.cloneWillCreate": "AO erstellt",
 	"createProject.closeAgents": "Projekt-Agenten-Dialog schließen",
 	"createProject.closeDialog": "Dialog „Neues Projekt“ schließen",
 	"createProject.closeImport": "Import-Dialog schließen",

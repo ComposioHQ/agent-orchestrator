@@ -158,7 +158,6 @@
 	"createProject.cloneRepositoryUrlPlaceholder": "https://github.com/org/repository.git",
 	"createProject.cloning": "正在克隆...",
 	"createProject.cloneTitle": "克隆 Git 仓库",
-	"createProject.cloneWillCreate": "AO 将创建",
 	"createProject.closeAgents": "关闭项目代理对话框",
 	"createProject.closeDialog": "关闭新建项目对话框",
 	"createProject.closeImport": "关闭导入对话框",

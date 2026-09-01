@@ -158,7 +158,6 @@
 	"createProject.cloneRepositoryUrlPlaceholder": "https://github.com/org/repository.git",
 	"createProject.cloning": "복제 중...",
 	"createProject.cloneTitle": "Git 저장소 복제",
-	"createProject.cloneWillCreate": "AO가 생성할 위치",
 	"createProject.closeAgents": "프로젝트 에이전트 대화상자 닫기",
 	"createProject.closeDialog": "새 프로젝트 대화상자 닫기",
 	"createProject.closeImport": "가져오기 대화상자 닫기",

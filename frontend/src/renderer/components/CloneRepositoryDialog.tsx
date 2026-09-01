@@ -1,5 +1,5 @@
 import * as Dialog from "@radix-ui/react-dialog";
-import { ChevronLeft, Folder, GitBranch, Link2, X } from "lucide-react";
+import { ChevronLeft, Folder, Link2, X } from "lucide-react";
 import { type FormEvent, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { aoBridge } from "../lib/bridge";
@@ -185,21 +185,6 @@ export default function CloneRepositoryDialog({
 								) : null}
 							</div>
 
-							{targetPath ? (
-								<div className="flex items-center gap-3 rounded-md border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] px-3 py-2.5">
-									<span className="grid size-4 shrink-0 place-items-center text-[var(--color-text-import-muted)]">
-										<GitBranch className="size-4" aria-hidden="true" />
-									</span>
-									<div className="min-w-0">
-										<p className="text-[12px] font-medium text-[var(--color-text-import-muted)]">
-											{t("createProject.cloneWillCreate")}
-										</p>
-										<p className="mt-0.5 truncate font-mono text-[13px] font-semibold text-[var(--color-text-import-title)]" title={targetPath}>
-											{targetPath}
-										</p>
-									</div>
-								</div>
-							) : null}
 						</div>
 
 						<div className="flex shrink-0 justify-end gap-2 px-4 pb-4 pt-3">
