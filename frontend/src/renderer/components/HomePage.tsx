@@ -61,15 +61,15 @@ function HomeActionCard({
 	return (
 		<button
 			aria-label={ariaLabel}
-			className="flex min-h-[108px] flex-col justify-between gap-3 rounded-welcome-panel border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] p-4 text-left transition-colors hover:bg-[var(--color-bg-import-card-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:pointer-events-none disabled:opacity-50"
+			className="flex w-full items-center gap-3 rounded-welcome-panel border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] px-4 py-3 text-left transition-colors hover:bg-[var(--color-bg-import-card-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:pointer-events-none disabled:opacity-50"
 			disabled={disabled}
 			onClick={onClick}
 			type="button"
 		>
-			<span className="grid size-9 place-items-center rounded-lg border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-chip)] text-[var(--color-text-import-muted)]">
+			<span className="grid size-8 shrink-0 place-items-center rounded-lg bg-[color-mix(in_srgb,var(--color-bg-import-chip)_60%,transparent)] text-[var(--color-text-import-muted)]">
 				{icon}
 			</span>
-			<span className="text-[14px] font-medium leading-5 text-[var(--color-text-import-title)]">{label}</span>
+			<span className="min-w-0 text-[14px] font-medium leading-5 text-[var(--color-text-import-title)]">{label}</span>
 		</button>
 	);
 }
@@ -166,7 +166,7 @@ export function HomePage() {
 						/>
 						<div
 							aria-hidden="true"
-							className="min-h-[108px] rounded-welcome-panel border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] p-4 opacity-50"
+							className="rounded-welcome-panel border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] px-4 py-3 opacity-50"
 						/>
 					</div>
 
