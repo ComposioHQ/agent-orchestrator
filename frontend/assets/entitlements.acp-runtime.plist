@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	Entitlements for the Node runtime packaged under Resources/acp-runtime.
+
+	@electron/osx-sign's default entitlements grant allow-jit but not
+	allow-unsigned-executable-memory. Electron's own Chromium build tolerates
+	that because it maps JIT pages with MAP_JIT. A stock nodejs.org build does
+	not: on x86_64 V8's baseline compiler makes its code pages executable with
+	plain mprotect, which the hardened runtime refuses without the entitlement
+	below. The process then aborts inside v8::base::OS::SetPermissions on the
+	first tier-up, which on Intel Macs killed the Claude ACP adapter before it
+	could answer the ACP handshake (#4442). arm64 was unaffected, so the crash
+	only ever reproduced on Intel hardware.
+
+	The rest of this list reproduces @electron/osx-sign's macOS defaults, which
+	this file replaces wholesale for the files it is applied to.
+	-->
+	<key>com.apple.security.cs.allow-jit</key>
+	<true/>
+	<key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+	<true/>
+	<key>com.apple.security.device.audio-input</key>
+	<true/>
+	<key>com.apple.security.device.bluetooth</key>
+	<true/>
+	<key>com.apple.security.device.camera</key>
+	<true/>
+	<key>com.apple.security.device.print</key>
+	<true/>
+	<key>com.apple.security.device.usb</key>
+	<true/>
+	<key>com.apple.security.personal-information.location</key>
+	<true/>
+</dict>
+</plist>

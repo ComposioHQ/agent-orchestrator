@@ -52,6 +52,34 @@ function parseReleaseRepo(value: string | undefined): { owner: string; name: str
 	return { owner, name };
 }
 
+// AO's packaged Node runtime, relative to the signed .app bundle. Matched by
+// path segments so an unrelated "node" binary elsewhere in the bundle keeps the
+// signer's default entitlements.
+const ACP_RUNTIME_NODE_SEGMENTS = ["acp-runtime", "node", "bin", "node"];
+
+export function isPackagedNodeRuntime(filePath: string): boolean {
+	const parts = filePath.split(path.sep);
+	const start = parts.lastIndexOf(ACP_RUNTIME_NODE_SEGMENTS[0]);
+	if (start === -1) return false;
+	const tail = parts.slice(start);
+	return (
+		tail.length === ACP_RUNTIME_NODE_SEGMENTS.length &&
+		tail.every((part, index) => part === ACP_RUNTIME_NODE_SEGMENTS[index])
+	);
+}
+
+// Per-file signing options. The packaged Node runtime needs
+// allow-unsigned-executable-memory, which @electron/osx-sign's defaults omit;
+// without it V8's baseline compiler aborts on Intel Macs and the Claude ACP
+// adapter dies before the handshake (#4442). Every other file returns {} so the
+// signer keeps applying its own defaults - notably the inherit entitlements
+// Electron's helper apps require, which a blanket override would break.
+export function optionsForFile(filePath: string) {
+	return isPackagedNodeRuntime(filePath)
+		? { entitlements: "assets/entitlements.acp-runtime.plist" }
+		: {};
+}
+
 const config: ForgeConfig = {
 	packagerConfig: {
 		asar: true,
@@ -73,9 +101,9 @@ const config: ForgeConfig = {
 		//    `notarytool store-credentials`. See ao-macos-signed-release runbook.
 		// Both are valid NotaryToolCredentials, so no cast is needed.
 		osxSign: process.env.APPLE_SIGNING_IDENTITY
-			? { identity: process.env.APPLE_SIGNING_IDENTITY }
+			? { identity: process.env.APPLE_SIGNING_IDENTITY, optionsForFile }
 			: process.env.CSC_LINK
-				? {}
+				? { optionsForFile }
 				: undefined,
 		osxNotarize: process.env.AO_NOTARY_PROFILE
 			? { keychainProfile: process.env.AO_NOTARY_PROFILE }
