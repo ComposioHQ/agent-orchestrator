@@ -633,7 +633,23 @@ function CloneProjectProgressDialog({
 }) {
 	const { t } = useTranslation();
 	const isStarting = phase === "starting";
-	const progress = isStarting ? 78 : 42;
+	const [elapsedSeconds, setElapsedSeconds] = useState(0);
+
+	useEffect(() => {
+		if (!open || error) return;
+		setElapsedSeconds(0);
+		const interval = window.setInterval(() => setElapsedSeconds((seconds) => seconds + 1), 1000);
+		return () => window.clearInterval(interval);
+	}, [error, open]);
+
+	const status = isStarting
+		? "Starting orchestrator"
+		: elapsedSeconds < 15
+			? "Cloning repository"
+		: elapsedSeconds < 45
+				? "Downloading repository history"
+				: "Still working. Large repositories can take a few minutes."
+	;
 
 	return (
 		<Dialog.Root open={open} onOpenChange={() => undefined}>
@@ -660,18 +676,16 @@ function CloneProjectProgressDialog({
 							<div className="flex items-center gap-3">
 								<LoaderCircle className="size-5 animate-spin text-[var(--color-text-import-muted)]" aria-hidden="true" />
 								<p className="text-[14px] font-medium text-foreground">
-									{isStarting ? "Starting orchestrator" : "Cloning repository"}
+									{status}
 								</p>
 							</div>
 							<div
 								aria-label="Project setup progress"
-								aria-valuemax={100}
-								aria-valuemin={0}
-								aria-valuenow={progress}
 								className="h-1.5 overflow-hidden rounded-full bg-muted"
+								aria-valuetext={status}
 								role="progressbar"
 							>
-								<div className="h-full rounded-full bg-primary transition-[width] duration-500" style={{ width: `${progress}%` }} />
+								<div className="h-full w-1/3 animate-pulse rounded-full bg-primary" />
 							</div>
 						</div>
 					)}
