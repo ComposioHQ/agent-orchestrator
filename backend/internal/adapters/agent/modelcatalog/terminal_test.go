@@ -161,20 +161,46 @@ func TestDiscovererReturnsStaticClaudeCatalogWithoutTerminal(t *testing.T) {
 	if got.Source != "catalog" || !got.AllowCustom || got.SelectionMode != ports.ModelSelectionCatalog {
 		t.Fatalf("catalog = %#v", got)
 	}
-	wantIDs := map[string]bool{
-		"sonnet": true, "claude-fable-5-1": true, "opus": true, "haiku": true, "opus[1m]": true,
+	wantModels := map[string]string{
+		"sonnet": "Sonnet", "fable": "Fable 5.1", "opus": "Opus", "haiku": "Haiku", "opus[1m]": "Opus (1M context)",
 	}
-	if len(got.Models) != len(wantIDs) {
-		t.Fatalf("models = %#v, want %d entries", got.Models, len(wantIDs))
+	if len(got.Models) != len(wantModels) {
+		t.Fatalf("models = %#v, want %d entries", got.Models, len(wantModels))
 	}
 	for _, model := range got.Models {
-		if !wantIDs[model.ID] {
+		if label, ok := wantModels[model.ID]; !ok || model.Label != label {
 			t.Fatalf("unexpected model %q in %#v", model.ID, got.Models)
 		}
 		if model.IsDefault {
 			t.Fatalf("model %q marked default without a configured model", model.ID)
 		}
 	}
+}
+
+func TestDiscovererAddsConfiguredClaudeModelOutsideStaticCatalog(t *testing.T) {
+	t.Setenv("ANTHROPIC_MODEL", "")
+	t.Setenv("HOME", t.TempDir())
+	request := ports.AgentModelDiscoveryRequest{
+		AgentID: "claude-code",
+		Env:     map[string]string{"ANTHROPIC_MODEL": "claude-opus-4-5-20251101"},
+	}
+
+	got, err := (Discoverer{}).Discover(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Models) != 6 {
+		t.Fatalf("models = %#v, want five static models plus configured model", got.Models)
+	}
+	for _, model := range got.Models {
+		if model.ID == "claude-opus-4-5-20251101" {
+			if model.Label != model.ID || !model.IsDefault {
+				t.Fatalf("configured model = %#v", model)
+			}
+			return
+		}
+	}
+	t.Fatalf("configured model missing from %#v", got.Models)
 }
 
 func TestDiscoverMuseModelsUsesNoSessionLog(t *testing.T) {

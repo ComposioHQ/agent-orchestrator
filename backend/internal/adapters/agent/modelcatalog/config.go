@@ -288,30 +288,34 @@ func parseGooseModels(raw []byte) ([]ports.AgentModelInfo, error) {
 	var config struct {
 		ActiveProvider string `yaml:"active_provider"`
 		Providers      map[string]struct {
-			Enabled bool     `yaml:"enabled"`
-			Model   string   `yaml:"model"`
-			Models  []string `yaml:"models"`
+			Model  string   `yaml:"model"`
+			Models []string `yaml:"models"`
 		} `yaml:"providers"`
 	}
 	if err := yaml.Unmarshal(raw, &config); err != nil {
 		return nil, err
 	}
-	var models []ports.AgentModelInfo
-	for provider, item := range config.Providers {
-		ids := append([]string(nil), item.Models...)
-		if strings.TrimSpace(item.Model) != "" {
-			ids = append(ids, item.Model)
+	// AO can pass Goose a model override but not a provider override. Offering
+	// another provider's models would produce a launch Goose cannot reproduce.
+	provider := strings.TrimSpace(config.ActiveProvider)
+	item, ok := config.Providers[provider]
+	if !ok || provider == "" {
+		return nil, nil
+	}
+	ids := append([]string(nil), item.Models...)
+	if strings.TrimSpace(item.Model) != "" {
+		ids = append(ids, item.Model)
+	}
+	models := make([]ports.AgentModelInfo, 0, len(ids))
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
 		}
-		for _, id := range ids {
-			id = strings.TrimSpace(id)
-			if id == "" {
-				continue
-			}
-			models = append(models, ports.AgentModelInfo{
-				ID: id, Label: id, Provider: provider,
-				IsDefault: provider == config.ActiveProvider && id == strings.TrimSpace(item.Model),
-			})
-		}
+		models = append(models, ports.AgentModelInfo{
+			ID: id, Label: id, Provider: provider,
+			IsDefault: id == strings.TrimSpace(item.Model),
+		})
 	}
 	return normalize(models), nil
 }

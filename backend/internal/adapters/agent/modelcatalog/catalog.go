@@ -168,7 +168,7 @@ func (d Discoverer) Discover(ctx context.Context, request ports.AgentModelDiscov
 func claudeCodeModels() []ports.AgentModelInfo {
 	return []ports.AgentModelInfo{
 		{ID: "sonnet", Label: "Sonnet"},
-		{ID: "claude-fable-5-1", Label: "Fable"},
+		{ID: "fable", Label: "Fable 5.1"},
 		{ID: "opus", Label: "Opus"},
 		{ID: "haiku", Label: "Haiku"},
 		{ID: "opus[1m]", Label: "Opus (1M context)"},

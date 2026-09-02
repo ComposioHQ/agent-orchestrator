@@ -220,8 +220,15 @@ func applyClaudeConfiguredDefault(models []ports.AgentModelInfo, workingDir stri
 	if configured == "" {
 		return models
 	}
+	matched := false
 	for i := range models {
 		models[i].IsDefault = strings.EqualFold(models[i].ID, configured)
+		matched = matched || models[i].IsDefault
+	}
+	if !matched {
+		// Claude accepts custom aliases and pinned snapshots beyond the static
+		// picker snapshot. Keep the effective configured model visible.
+		models = append(models, ports.AgentModelInfo{ID: configured, Label: configured, IsDefault: true})
 	}
 	return models
 }

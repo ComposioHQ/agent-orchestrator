@@ -113,13 +113,14 @@ defaults:
 	}
 }
 
-func TestParseGooseModelsReturnsEveryConfiguredProviderModel(t *testing.T) {
+func TestParseGooseModelsReturnsOnlyActiveProviderModels(t *testing.T) {
 	models, err := parseGooseModels([]byte(`
 active_provider: anthropic
 providers:
   anthropic:
     enabled: true
     model: claude-sonnet-4-6
+    models: [claude-haiku-4-5]
   openrouter:
     enabled: true
     model: openai/gpt-5.6-sol
@@ -129,7 +130,7 @@ providers:
 	}
 	want := []ports.AgentModelInfo{
 		{ID: "claude-sonnet-4-6", Label: "claude-sonnet-4-6", Provider: "anthropic", IsDefault: true},
-		{ID: "openai/gpt-5.6-sol", Label: "openai/gpt-5.6-sol", Provider: "openrouter"},
+		{ID: "claude-haiku-4-5", Label: "claude-haiku-4-5", Provider: "anthropic"},
 	}
 	if !reflect.DeepEqual(models, want) {
 		t.Fatalf("models = %#v, want %#v", models, want)
