@@ -5592,6 +5592,14 @@ paths:
         schema:
           description: Restrict to one provider, e.g. claude-code or codex.
           type: string
+      - description: Restrict to conversations that ran inside this project. Empty
+          lists every conversation on the machine.
+        in: query
+        name: projectId
+        schema:
+          description: Restrict to conversations that ran inside this project. Empty
+            lists every conversation on the machine.
+          type: string
       responses:
         "200":
           content:

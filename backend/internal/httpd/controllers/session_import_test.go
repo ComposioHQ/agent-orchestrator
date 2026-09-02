@@ -17,11 +17,13 @@ type fakeImportService struct {
 	discover    []sessionimport.ImportableSession
 	discoverErr error
 	lastOpts    sessionimport.DiscoverOptions
+	lastProject domain.ProjectID
 	imported    map[string]bool
 }
 
-func (f *fakeImportService) Discover(_ context.Context, opts sessionimport.DiscoverOptions) ([]sessionimport.ImportableSession, error) {
+func (f *fakeImportService) Discover(_ context.Context, opts sessionimport.DiscoverOptions, projectID domain.ProjectID) ([]sessionimport.ImportableSession, error) {
 	f.lastOpts = opts
+	f.lastProject = projectID
 	return f.discover, f.discoverErr
 }
 

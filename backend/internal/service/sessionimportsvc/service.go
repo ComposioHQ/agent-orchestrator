@@ -69,9 +69,31 @@ func New(sessions SessionService, store SessionStore, projects ProjectService, s
 	return s
 }
 
-// Discover lists importable conversations across every provider.
-func (s *Service) Discover(ctx context.Context, opts sessionimport.DiscoverOptions) ([]sessionimport.ImportableSession, error) {
-	return s.disco.Discover(ctx, opts)
+// Discover lists importable conversations across every provider. A non-empty
+// projectID narrows the list to conversations that ran inside that project, so
+// a project's own settings can offer just its history instead of everything on
+// the machine.
+func (s *Service) Discover(ctx context.Context, opts sessionimport.DiscoverOptions, projectID domain.ProjectID) ([]sessionimport.ImportableSession, error) {
+	found, err := s.disco.Discover(ctx, opts)
+	if err != nil || projectID == "" {
+		return found, err
+	}
+
+	projects, err := s.projects.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// Resolve each conversation the same way import does, so what a project
+	// lists is exactly what importing from it would produce. Matching the most
+	// specific project means a nested repo's conversations belong to the nested
+	// project, not to its parent.
+	scoped := make([]sessionimport.ImportableSession, 0, len(found))
+	for _, session := range found {
+		if id, ok := bestProjectForDir(projects, session.CWD); ok && id == projectID {
+			scoped = append(scoped, session)
+		}
+	}
+	return scoped, nil
 }
 
 // Import creates a resumable AO chat session from an existing provider

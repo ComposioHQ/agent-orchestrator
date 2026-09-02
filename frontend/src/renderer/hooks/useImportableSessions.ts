@@ -23,20 +23,21 @@ export interface ImportableSession {
 
 export const importableSessionsQueryKey = ["importable-sessions"] as const;
 
-async function fetchImportable(days: number): Promise<ImportableSession[]> {
+async function fetchImportable(days: number, projectId?: string): Promise<ImportableSession[]> {
 	const { data, error } = await apiClient.GET("/api/v1/sessions/importable", {
-		params: { query: { days } },
+		params: { query: projectId ? { days, projectId } : { days } },
 	});
 	if (error) throw new Error(apiErrorMessage(error, "Failed to load importable sessions"));
 	return (data?.sessions ?? []) as ImportableSession[];
 }
 
 // useImportableSessions lists agent conversations on disk that can be imported.
-// The query is disabled in preview (no-Electron) mode where there is no daemon.
-export function useImportableSessions(days = 60, enabled = true) {
+// A projectId narrows the list to that project's own history. The query is
+// disabled in preview (no-Electron) mode where there is no daemon.
+export function useImportableSessions(days = 60, enabled = true, projectId?: string) {
 	return useQuery({
-		queryKey: [...importableSessionsQueryKey, days],
-		queryFn: () => fetchImportable(days),
+		queryKey: [...importableSessionsQueryKey, days, projectId ?? "all"],
+		queryFn: () => fetchImportable(days, projectId),
 		enabled: enabled && !usePreviewData,
 		throwOnError: false,
 	});

@@ -10785,6 +10785,8 @@ export interface operations {
                 days?: number;
                 /** @description Restrict to one provider, e.g. claude-code or codex. */
                 provider?: string;
+                /** @description Restrict to conversations that ran inside this project. Empty lists every conversation on the machine. */
+                projectId?: string;
             };
             header?: never;
             path?: never;

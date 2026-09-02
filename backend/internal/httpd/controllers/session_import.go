@@ -28,7 +28,7 @@ const maxImportablePerProvider = 100
 // each record. Import returns the AO session and whether it already existed (an
 // idempotent re-import returns the existing session with alreadyImported=true).
 type SessionImportService interface {
-	Discover(ctx context.Context, opts sessionimport.DiscoverOptions) ([]sessionimport.ImportableSession, error)
+	Discover(ctx context.Context, opts sessionimport.DiscoverOptions, projectID domain.ProjectID) ([]sessionimport.ImportableSession, error)
 	Import(ctx context.Context, provider domain.AgentHarness, nativeSessionID string) (session domain.Session, alreadyImported bool, err error)
 }
 
@@ -48,8 +48,9 @@ type ImportableSessionView struct {
 
 // ListImportableSessionsQuery is the discovery query.
 type ListImportableSessionsQuery struct {
-	Days     int    `query:"days,omitempty" description:"Only include conversations active within the last N days (default 60, 0 disables the age filter)."`
-	Provider string `query:"provider,omitempty" description:"Restrict to one provider, e.g. claude-code or codex."`
+	Days      int    `query:"days,omitempty" description:"Only include conversations active within the last N days (default 60, 0 disables the age filter)."`
+	Provider  string `query:"provider,omitempty" description:"Restrict to one provider, e.g. claude-code or codex."`
+	ProjectID string `query:"projectId,omitempty" description:"Restrict to conversations that ran inside this project. Empty lists every conversation on the machine."`
 }
 
 // ListImportableSessionsResponse is the discovery result.
@@ -90,7 +91,8 @@ func (c *SessionsController) listImportable(w http.ResponseWriter, r *http.Reque
 		opts.Since = time.Now().AddDate(0, 0, -days)
 	}
 
-	sessions, err := c.Import.Discover(r.Context(), opts)
+	projectID := domain.ProjectID(strings.TrimSpace(r.URL.Query().Get("projectId")))
+	sessions, err := c.Import.Discover(r.Context(), opts, projectID)
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return

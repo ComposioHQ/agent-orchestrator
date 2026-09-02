@@ -304,3 +304,46 @@ func TestNativeIDSetCollectsBothFields(t *testing.T) {
 		t.Errorf("unexpected set size: %d", len(set))
 	}
 }
+
+func TestDiscoverScopedToProject(t *testing.T) {
+	// Three conversations: one in a project, one in a nested project inside it,
+	// and one in a directory no project covers.
+	sessions := []sessionimport.ImportableSession{
+		{Provider: domain.HarnessClaudeCode, NativeSessionID: "in-root", CWD: "/Users/dev/code", Meaning: sessionimport.MeaningMeaningful},
+		{Provider: domain.HarnessClaudeCode, NativeSessionID: "in-nested", CWD: "/Users/dev/code/app/sub", Meaning: sessionimport.MeaningMeaningful},
+		{Provider: domain.HarnessClaudeCode, NativeSessionID: "elsewhere", CWD: "/tmp/scratch", Meaning: sessionimport.MeaningMeaningful},
+	}
+	src := &fakeSource{provider: domain.HarnessClaudeCode, sessions: sessions}
+	projects := &fakeProjects{list: []projectsvc.Summary{
+		{ID: "root", Path: "/Users/dev/code"},
+		{ID: "nested", Path: "/Users/dev/code/app"},
+	}}
+	svc := New(&fakeSessions{}, &fakeStore{}, projects, src)
+
+	// No project: everything on the machine, which is what global settings offer.
+	all, err := svc.Discover(context.Background(), sessionimport.DiscoverOptions{}, "")
+	if err != nil {
+		t.Fatalf("discover all: %v", err)
+	}
+	if len(all) != 3 {
+		t.Fatalf("unscoped discovery should list every conversation, got %d", len(all))
+	}
+
+	// A project lists only its own history, and the nested project's
+	// conversation belongs to the nested project rather than its parent.
+	scoped, err := svc.Discover(context.Background(), sessionimport.DiscoverOptions{}, "root")
+	if err != nil {
+		t.Fatalf("discover scoped: %v", err)
+	}
+	if len(scoped) != 1 || scoped[0].NativeSessionID != "in-root" {
+		t.Fatalf("want only the root project's conversation, got %+v", scoped)
+	}
+
+	nested, err := svc.Discover(context.Background(), sessionimport.DiscoverOptions{}, "nested")
+	if err != nil {
+		t.Fatalf("discover nested: %v", err)
+	}
+	if len(nested) != 1 || nested[0].NativeSessionID != "in-nested" {
+		t.Fatalf("the most specific project should win, got %+v", nested)
+	}
+}

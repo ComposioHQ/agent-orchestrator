@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import type { GlobalSettingsSection as GlobalSettingsPage } from "../stores/ui-store";
 import { GeneralSettingsSection } from "./settings/GeneralSettingsSection";
 import { HarnessSettingsSection } from "./settings/HarnessSettingsSection";
+import { ImportSessionsSection } from "./settings/ImportSessionsSection";
 import { CloudCredentialsSection } from "./settings/CloudCredentialsSection";
 import { ConnectMobileContent } from "./settings/ConnectMobileContent";
 import { KeyboardShortcutsContent } from "./settings/KeyboardShortcutsContent";
@@ -44,6 +45,8 @@ export function GlobalSettingsForm({
 			{(all || section === "general") && <GeneralSettingsSection titleHidden={titleHidden} />}
 
 			{(all || section === "harness") && <HarnessSettingsSection titleHidden={titleHidden} />}
+
+			{(all || section === "importSessions") && <ImportSessionsSection titleHidden={titleHidden} />}
 
 			{(all || section === "browserProfiles") && <BrowserProfilesSection titleHidden={titleHidden} />}
 			{(all || section === "cloud") && <CloudCredentialsSection titleHidden={titleHidden} />}
