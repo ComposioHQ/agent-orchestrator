@@ -961,6 +961,7 @@
 	"shortcut.movedBody": "{{binding}} を {{from}} から {{to}} に移動しました",
 	"shortcut.new-session": "新しいセッション",
 	"shortcut.new-shell-terminal": "新しいターミナル",
+	"shortcut.new-shell-terminal-context": "ワーカーセッションとターミナル画面で使用できます",
 	"shortcut.next-session": "次のセッション",
 	"shortcut.next-tab": "次のタブ",
 	"shortcut.noMatching": "一致するコマンドがありません。",

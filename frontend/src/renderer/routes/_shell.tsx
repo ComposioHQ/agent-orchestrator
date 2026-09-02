@@ -22,7 +22,7 @@ import { WindowTitlebar } from "../components/WindowTitlebar";
 import { TerminalCacheProvider } from "../components/TerminalPane";
 import { agentModelsQueryOptions } from "../hooks/useAgentModelsQuery";
 import { useDaemonStatus } from "../hooks/useDaemonStatus";
-import { useOpenShellTerminal } from "../hooks/useShellTerminals";
+import { type OpenShellTerminalInput, useOpenShellTerminal } from "../hooks/useShellTerminals";
 import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
 import { useWorkspaceQuery, workspaceQueryKey, workspaceQueryOptions } from "../hooks/useWorkspaceQuery";
 import { apiClient, apiErrorCode, apiErrorMessage, hasTrustedApiBaseUrl } from "../lib/api-client";
@@ -46,7 +46,7 @@ import {
 } from "../lib/platform";
 import { sidebarIsCompact, sidebarIsVisible, sidebarOccupiesLayout, useUiStore } from "../stores/ui-store";
 import { matchesRendererShortcut } from "../stores/keybindings-store";
-import { sessionIsActive, toProjectKind, type WorkspaceSummary } from "../types/workspace";
+import { isOrchestratorSession, sessionIsActive, toProjectKind, type WorkspaceSummary } from "../types/workspace";
 import type { components } from "../../api/schema";
 import { useAgentInventoryTelemetry } from "../hooks/useAgentInventoryTelemetry";
 
@@ -83,6 +83,32 @@ export function createProjectConfig(input: CreateProjectConfigInput): components
 		orchestrator: { agent: input.orchestratorAgent as components["schemas"]["RoleOverride"]["agent"] },
 		...(input.trackerIntake ? { trackerIntake: input.trackerIntake } : {}),
 	};
+}
+
+type ShellTerminalRouteParams = { projectId?: string; sessionId?: string };
+
+/**
+ * Resolve the exact terminal scope at shortcut-dispatch time. The shortcut is
+ * intentionally contextual: standalone terminals and worker sessions expose
+ * it, while boards, settings, and orchestrator sessions do not. Unknown
+ * sessions remain eligible so the existing backend session gate stays the
+ * authority during workspace refreshes.
+ */
+function shellTerminalShortcutTarget(
+	routeParams: ShellTerminalRouteParams,
+	workspaces: WorkspaceSummary[],
+	isTerminalsRoute: boolean,
+): OpenShellTerminalInput | null {
+	if (routeParams.sessionId) {
+		const session = workspaces
+			.flatMap((workspace) => workspace.sessions)
+			.find((candidate) => candidate.id === routeParams.sessionId);
+		if (session ? isOrchestratorSession(session) : routeParams.sessionId.endsWith("-orchestrator")) return null;
+		const projectId = routeParams.projectId ?? session?.workspaceId;
+		return { ...(projectId ? { projectId } : {}), sessionId: routeParams.sessionId };
+	}
+	if (!isTerminalsRoute) return null;
+	return routeParams.projectId ? { projectId: routeParams.projectId } : {};
 }
 
 const isMac = isMacPlatform();
@@ -172,7 +198,6 @@ function ShellLayout() {
 	const requestNewTask = useUiStore((state) => state.requestNewTask);
 	const requestCreateProject = useUiStore((state) => state.requestCreateProject);
 	const requestCreateProjectFromPath = useUiStore((state) => state.requestCreateProjectFromPath);
-	const requestNewShellTerminal = useUiStore((state) => state.requestNewShellTerminal);
 	const newShellTerminalNonce = useUiStore((state) => state.newShellTerminalNonce);
 	const setActiveShellTerminal = useUiStore((state) => state.setActiveShellTerminal);
 	const openShellTerminal = useOpenShellTerminal();
@@ -234,7 +259,7 @@ function ShellLayout() {
 	const handledShellNonceRef = useRef(newShellTerminalNonce);
 	const [isKeyboardShortcutsOpen, setIsKeyboardShortcutsOpen] = useState(false);
 	const [isKeyboardShortcutsSettingsOpen, setIsKeyboardShortcutsSettingsOpen] = useState(false);
-	const routeParams = useParams({ strict: false }) as { projectId?: string; sessionId?: string };
+	const routeParams = useParams({ strict: false }) as ShellTerminalRouteParams;
 	useEffect(() => {
 		document.addEventListener("click", handleModifierLinkClick);
 		return () => document.removeEventListener("click", handleModifierLinkClick);
@@ -333,6 +358,37 @@ function ShellLayout() {
 	// whether projects have already been registered.
 	const isHomeRoute = Boolean(matchRoute({ to: "/" }));
 	const isTerminalsRoute = Boolean(matchRoute({ to: "/terminals" }));
+	const shellTerminalShortcutTargetValue = shellTerminalShortcutTarget(routeParams, workspaces, isTerminalsRoute);
+	const openShellTerminalForTarget = useCallback(
+		(target: OpenShellTerminalInput) => {
+			const shell = openShellTerminal.open(target, {
+				onSuccess: (openedShell, optimisticShell) => {
+					// Do not steal focus back if the user selected another tab while
+					// the daemon was opening this shell.
+					if (useUiStore.getState().activeShellTerminalHandleId === optimisticShell.handleId) {
+						setActiveShellTerminal(openedShell.handleId);
+					}
+				},
+				onError: (_error, optimisticShell) => {
+					// The mutation removes only its own optimistic cache entry. Clear
+					// the shared selection only when it still points at that failed tab.
+					if (useUiStore.getState().activeShellTerminalHandleId === optimisticShell.handleId) {
+						setActiveShellTerminal(null);
+					}
+				},
+			});
+			setActiveShellTerminal(shell.handleId);
+			if (!target.sessionId) void navigate({ to: "/terminals" });
+		},
+		[navigate, openShellTerminal, setActiveShellTerminal],
+	);
+	// The bridge subscription is intentionally stable across route transitions.
+	// Its callback reads these refs once per keypress, capturing one coherent
+	// target and avoiding a cleanup/re-subscribe window between app surfaces.
+	const shellTerminalShortcutTargetRef = useRef(shellTerminalShortcutTargetValue);
+	shellTerminalShortcutTargetRef.current = shellTerminalShortcutTargetValue;
+	const openShellTerminalForTargetRef = useRef(openShellTerminalForTarget);
+	openShellTerminalForTargetRef.current = openShellTerminalForTarget;
 	const isSettingsRoute =
 		Boolean(matchRoute({ to: "/settings", fuzzy: true })) ||
 		Boolean(matchRoute({ to: "/projects/$projectId/settings", fuzzy: true }));
@@ -730,55 +786,31 @@ function ShellLayout() {
 		[requestCreateProjectFromPath],
 	);
 
-	// New standalone terminal (⌘T / Ctrl+T), also detected in the main process so it
-	// fires from inside a terminal pane. It raises the same store signal as the
-	// tab-strip + button so the two cannot drift apart.
+	// New terminal (⌘T / Ctrl+T), detected in the main process so it fires from
+	// inside xterm and native Browser views. The stable listener resolves a
+	// capability target at dispatch time: worker sessions and /terminals accept
+	// it; boards, settings, and orchestrator sessions ignore it (#4772).
 	useEffect(
 		() =>
 			aoBridge.app.onNewShellTerminalShortcut(() => {
-				// The project board is not a terminal surface — ⌘T here used to yank
-				// users into the standalone /terminals route (#4772). Sessions and the
-				// dedicated terminals view keep the shortcut; explicit UI can still
-				// open shells from the board.
-				if (routeParams.sessionId || isTerminalsRoute) {
-					requestNewShellTerminal();
-				}
+				const target = shellTerminalShortcutTargetRef.current;
+				if (target) openShellTerminalForTargetRef.current(target);
 			}),
-		[isTerminalsRoute, requestNewShellTerminal, routeParams.sessionId],
+		[],
 	);
 
-	// The shell layout is the single consumer of that signal, because it is the
-	// only component mounted on EVERY route. Owning it here is what lets the
-	// topbar + button and the keyboard shortcut work from a session or the
-	// standalone terminals view alike — when the session view owned it, both
-	// silently did nothing outside a session, since nothing was listening.
-	//
-	// Where the new shell becomes visible depends on where the user is: inside a
-	// session it joins that pane's tab strip; on /terminals it joins that strip;
-	// explicit board UI can still route here without the keyboard shortcut.
+	// Explicit UI still raises the existing store signal. Keep that legacy path
+	// separate from shortcut capability gating so a future board button can
+	// intentionally open /terminals without making the keyboard shortcut global.
 	useEffect(() => {
 		if (handledShellNonceRef.current === newShellTerminalNonce) return;
 		handledShellNonceRef.current = newShellTerminalNonce;
-		const shell = openShellTerminal.open(
-			{ projectId: scopedProjectId, sessionId: routeParams.sessionId },
-			{
-				onSuccess: (openedShell) => {
-					setActiveShellTerminal(openedShell.handleId);
-				},
-			},
-		);
-		if (!shell) return;
-		setActiveShellTerminal(shell.handleId);
-		if (!routeParams.sessionId) {
-			void navigate({ to: "/terminals" });
-		}
+		openShellTerminalForTarget({ projectId: scopedProjectId, sessionId: routeParams.sessionId });
 	}, [
 		newShellTerminalNonce,
-		openShellTerminal,
+		openShellTerminalForTarget,
 		scopedProjectId,
 		routeParams.sessionId,
-		navigate,
-		setActiveShellTerminal,
 	]);
 
 	useEffect(

@@ -21,6 +21,11 @@ export const shortcutLabelKeys: Record<AppShortcutId, MessageKey> = {
 	"toggle-browser-devtools": "titlebar.devtools",
 };
 
+/** Optional scope guidance for shortcuts that are intentionally contextual. */
+export const shortcutDescriptionKeys: Partial<Record<AppShortcutId, MessageKey>> = {
+	"new-shell-terminal": "shortcut.new-shell-terminal-context",
+};
+
 export const shortcutCategoryLabelKeys: Record<ShortcutCategory, MessageKey> = {
 	General: "shortcut.category.general",
 	Navigation: "shortcut.category.navigation",

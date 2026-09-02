@@ -6,7 +6,7 @@ import {
 } from "../../shared/shortcuts";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
-import { shortcutCategoryLabelKeys, shortcutLabelKeys } from "../i18n/key-maps";
+import { shortcutCategoryLabelKeys, shortcutDescriptionKeys, shortcutLabelKeys } from "../i18n/key-maps";
 import type { AppShortcutId, ShortcutCategory } from "../../shared/shortcuts";
 import { useCommandPaletteEnabled } from "../hooks/useCommandPaletteEnabled";
 import { useKeybindingsStore } from "../stores/keybindings-store";
@@ -21,6 +21,10 @@ function shortcutCategoryLabel(category: ShortcutCategory, t: TFunction): string
 	return t(shortcutCategoryLabelKeys[category]);
 }
 
+function shortcutDescription(id: AppShortcutId, t: TFunction): string | undefined {
+	const key = shortcutDescriptionKeys[id];
+	return key ? t(key) : undefined;
+}
 
 type KeyboardShortcutsDialogProps = {
 	open: boolean;
@@ -69,9 +73,18 @@ export function KeyboardShortcutsDialog({
 									{shortcutCategoryLabel(category, t)}
 								</h2>
 								<div className="flex flex-col">
-									{shortcuts.map((shortcut) => (
-										<div className="flex min-h-11 items-center justify-between gap-5 py-1.5" key={shortcut.id}>
-											<p className="min-w-0 text-control font-medium text-foreground">{shortcutLabel(shortcut.id, t)}</p>
+									{shortcuts.map((shortcut) => {
+										const description = shortcutDescription(shortcut.id, t);
+										return (
+											<div className="flex min-h-11 items-center justify-between gap-5 py-1.5" key={shortcut.id}>
+											<div className="min-w-0">
+												<p className="text-control font-medium text-foreground">{shortcutLabel(shortcut.id, t)}</p>
+												{description ? (
+													<p className="mt-0.5 text-caption text-muted-foreground">
+														{description}
+													</p>
+												) : null}
+											</div>
 											<div className="flex shrink-0 flex-col items-end gap-1">
 												{effectiveShortcutBindings(shortcut.id, isMac, overrides).map((binding, bindingIndex) => {
 													const keys = shortcutBindingKeys(binding, isMac);
@@ -93,8 +106,9 @@ export function KeyboardShortcutsDialog({
 													);
 												})}
 											</div>
-										</div>
-									))}
+											</div>
+										);
+									})}
 								</div>
 							</section>
 						);

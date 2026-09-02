@@ -19,6 +19,14 @@ const shellMocks = vi.hoisted(() => {
 		routeParams: {} as { projectId?: string; sessionId?: string },
 		routeSearch: {} as Record<string, unknown>,
 		matchRouteTarget: null as string | null,
+		pendingShellSequence: 0,
+		openShellCallbacks: new Map<
+			string,
+			{
+				onSuccess?: (shell: Record<string, unknown>, optimisticShell: Record<string, unknown>) => void;
+				onError?: (error: unknown, optimisticShell: Record<string, unknown>) => void;
+			}
+		>(),
 		workspaces: [] as WorkspaceSummary[],
 		workspaceQuery: {
 			data: [] as WorkspaceSummary[],
@@ -47,15 +55,28 @@ const shellMocks = vi.hoisted(() => {
 			state.newShellTerminalListener = listener;
 			return vi.fn();
 		}),
-		openShellTerminal: vi.fn((input: { projectId?: string; sessionId?: string }) => ({
-			handleId: "pending-shell:test",
-			projectId: input.projectId,
-			sessionId: input.sessionId,
-			workingDir: "",
-			title: "Terminal 1",
-			createdAt: new Date().toISOString(),
-			optimistic: true as const,
-		})),
+		openShellTerminal: vi.fn(
+			(
+				input: { projectId?: string; sessionId?: string },
+				callbacks?: {
+					onSuccess?: (shell: Record<string, unknown>, optimisticShell: Record<string, unknown>) => void;
+					onError?: (error: unknown, optimisticShell: Record<string, unknown>) => void;
+				},
+			) => {
+				state.pendingShellSequence += 1;
+				const shell = {
+					handleId: `pending-shell:${state.pendingShellSequence}`,
+					projectId: input.projectId,
+					sessionId: input.sessionId,
+					workingDir: "",
+					title: `Terminal ${state.pendingShellSequence}`,
+					createdAt: new Date().toISOString(),
+					optimistic: true as const,
+				};
+				state.openShellCallbacks.set(shell.handleId, callbacks ?? {});
+				return shell;
+			},
+		),
 		onOpenSettingsShortcut: vi.fn((listener: () => void) => {
 			state.openSettingsListener = listener;
 			return vi.fn();
@@ -266,6 +287,19 @@ const workspaces = [
 		path: "/two",
 		sessions: [{ id: "sess-cross", workspaceId: "proj-2", status: "working" }],
 	},
+	{
+		id: "proj-orchestrator",
+		name: "Orchestrator Project",
+		path: "/orchestrator",
+		sessions: [
+			{
+				id: "sess-orchestrator",
+				kind: "orchestrator",
+				workspaceId: "proj-orchestrator",
+				status: "working",
+			},
+		],
+	},
 ] as unknown as WorkspaceSummary[];
 
 async function renderShell() {
@@ -299,6 +333,8 @@ beforeEach(() => {
 	shellMocks.onKeyboardShortcutsHelp.mockClear();
 	shellMocks.onNewShellTerminalShortcut.mockClear();
 	shellMocks.openShellTerminal.mockClear();
+	shellMocks.state.openShellCallbacks.clear();
+	shellMocks.state.pendingShellSequence = 0;
 	shellMocks.state.newShellTerminalListener = undefined;
 	shellMocks.onOpenSettingsShortcut.mockClear();
 	shellMocks.onPreviousSessionShortcut.mockClear();
@@ -538,10 +574,14 @@ describe("shell sidebar toggle", () => {
 });
 
 describe("shell new-shell-terminal shortcut subscription", () => {
-	function pressNewShellTerminal() {
+	function newShellTerminalListener() {
 		const listener = shellMocks.state.newShellTerminalListener;
 		if (!listener) throw new Error("new-shell-terminal listener was not registered");
-		act(() => listener());
+		return listener;
+	}
+
+	function pressNewShellTerminal() {
+		act(() => newShellTerminalListener()());
 	}
 
 	// Regression: the shell LAYOUT must own this, not the session view. When the
@@ -553,8 +593,9 @@ describe("shell new-shell-terminal shortcut subscription", () => {
 
 		pressNewShellTerminal();
 
-		expect(useUiStore.getState().newShellTerminalNonce).toBe(1);
+		expect(useUiStore.getState().newShellTerminalNonce).toBe(0);
 		expect(shellMocks.openShellTerminal).toHaveBeenCalledTimes(1);
+		expect(shellMocks.navigate).toHaveBeenCalledWith({ to: "/terminals" });
 	});
 
 	// Regression (#4772): ⌘T on the project board must not yank users into /terminals.
@@ -566,6 +607,30 @@ describe("shell new-shell-terminal shortcut subscription", () => {
 
 		expect(useUiStore.getState().newShellTerminalNonce).toBe(0);
 		expect(shellMocks.openShellTerminal).not.toHaveBeenCalled();
+		expect(shellMocks.navigate).not.toHaveBeenCalled();
+	});
+
+	it("preserves the explicit board action that intentionally opens the Terminals view", async () => {
+		shellMocks.state.routeParams = { projectId: "proj-1" };
+		await renderShell();
+
+		act(() => useUiStore.getState().requestNewShellTerminal());
+
+		expect(shellMocks.openShellTerminal).toHaveBeenCalledWith(
+			expect.objectContaining({ projectId: "proj-1", sessionId: undefined }),
+			expect.anything(),
+		);
+		expect(shellMocks.navigate).toHaveBeenCalledWith({ to: "/terminals" });
+	});
+
+	it("ignores the shortcut for orchestrator sessions that do not expose a terminal action", async () => {
+		shellMocks.state.routeParams = { sessionId: "sess-orchestrator" };
+		await renderShell();
+
+		pressNewShellTerminal();
+
+		expect(shellMocks.openShellTerminal).not.toHaveBeenCalled();
+		expect(shellMocks.navigate).not.toHaveBeenCalled();
 	});
 
 	// Regression: a terminal opened from a session view must carry the session
@@ -597,15 +662,88 @@ describe("shell new-shell-terminal shortcut subscription", () => {
 		);
 	});
 
-	it("re-fires on a repeat press so a second terminal can be opened", async () => {
+	it("does not collapse two shortcut events delivered in the same render batch", async () => {
 		shellMocks.state.routeParams = { sessionId: "sess-1" };
 		await renderShell();
 
+		act(() => {
+			const listener = newShellTerminalListener();
+			listener();
+			listener();
+		});
+
+		expect(useUiStore.getState().newShellTerminalNonce).toBe(0);
+		expect(shellMocks.openShellTerminal).toHaveBeenCalledTimes(2);
+		expect(shellMocks.openShellTerminal.mock.results.map((result) => result.value.handleId)).toEqual([
+			"pending-shell:1",
+			"pending-shell:2",
+		]);
+	});
+
+	it("keeps one subscription while route capability changes", async () => {
+		shellMocks.state.routeParams = { projectId: "proj-1" };
+		const view = await renderShell();
+
 		pressNewShellTerminal();
+		expect(shellMocks.openShellTerminal).not.toHaveBeenCalled();
+
+		shellMocks.state.routeParams = { sessionId: "sess-1" };
+		view.rerender(
+			<Suspense fallback={null}>
+				<ShellRoute />
+			</Suspense>,
+		);
+		pressNewShellTerminal();
+		expect(shellMocks.openShellTerminal).toHaveBeenCalledTimes(1);
+
+		shellMocks.state.routeParams = { sessionId: "sess-orchestrator" };
+		view.rerender(
+			<Suspense fallback={null}>
+				<ShellRoute />
+			</Suspense>,
+		);
+		pressNewShellTerminal();
+		expect(shellMocks.openShellTerminal).toHaveBeenCalledTimes(1);
+
+		shellMocks.state.routeParams = {};
+		shellMocks.state.matchRouteTarget = "/terminals";
+		view.rerender(
+			<Suspense fallback={null}>
+				<ShellRoute />
+			</Suspense>,
+		);
 		pressNewShellTerminal();
 
-		expect(useUiStore.getState().newShellTerminalNonce).toBe(2);
 		expect(shellMocks.openShellTerminal).toHaveBeenCalledTimes(2);
+		expect(shellMocks.onNewShellTerminalShortcut).toHaveBeenCalledTimes(1);
+	});
+
+	it("reconciles selection only while its own optimistic tab remains active", async () => {
+		shellMocks.state.matchRouteTarget = "/terminals";
+		await renderShell();
+		pressNewShellTerminal();
+
+		const optimisticShell = shellMocks.openShellTerminal.mock.results[0]?.value;
+		expect(useUiStore.getState().activeShellTerminalHandleId).toBe(optimisticShell.handleId);
+		const callbacks = shellMocks.state.openShellCallbacks.get(optimisticShell.handleId);
+		const openedShell = { ...optimisticShell, handleId: "shell:authoritative", optimistic: false };
+		act(() => callbacks?.onSuccess?.(openedShell, optimisticShell));
+		expect(useUiStore.getState().activeShellTerminalHandleId).toBe(openedShell.handleId);
+
+		pressNewShellTerminal();
+		const laterOptimisticShell = shellMocks.openShellTerminal.mock.results[1]?.value;
+		useUiStore.getState().setActiveShellTerminal("shell:user-selected");
+		const laterCallbacks = shellMocks.state.openShellCallbacks.get(laterOptimisticShell.handleId);
+		act(() => laterCallbacks?.onError?.(new Error("open failed"), laterOptimisticShell));
+
+		expect(useUiStore.getState().activeShellTerminalHandleId).toBe("shell:user-selected");
+
+		pressNewShellTerminal();
+		const failedActiveShell = shellMocks.openShellTerminal.mock.results[2]?.value;
+		const failedActiveCallbacks = shellMocks.state.openShellCallbacks.get(failedActiveShell.handleId);
+		act(() => failedActiveCallbacks?.onError?.(new Error("open failed"), failedActiveShell));
+
+		expect(useUiStore.getState().activeShellTerminalHandleId).toBeNull();
 	});
 });
 
