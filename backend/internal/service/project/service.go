@@ -202,10 +202,16 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 	if existing, ok, err := m.store.GetProject(ctx, string(id)); err != nil {
 		return Project{}, apierr.Internal("PROJECT_LOAD_FAILED", "Failed to load project")
 	} else if ok && existing.ArchivedAt.IsZero() && existing.Path != path {
-		return Project{}, apierr.Conflict("ID_ALREADY_REGISTERED", "A project with this id is already registered for a different path", map[string]any{
-			"existingProjectId":  existing.ID,
-			"suggestedProjectId": string(m.suggestID(ctx, id)),
-		})
+		if in.ProjectID != nil {
+			return Project{}, apierr.Conflict("ID_ALREADY_REGISTERED", "A project with this id is already registered for a different path", map[string]any{
+				"existingProjectId":  existing.ID,
+				"suggestedProjectId": string(m.suggestID(ctx, id)),
+			})
+		}
+		// A caller that omitted projectId asked the service to derive one from
+		// the basename. Resolve that derived collision here; explicit IDs retain
+		// their conflict semantics so user intent is never silently rewritten.
+		id = m.suggestID(ctx, id)
 	}
 
 	var projectConfig domain.ProjectConfig

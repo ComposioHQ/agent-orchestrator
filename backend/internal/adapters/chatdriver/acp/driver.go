@@ -256,21 +256,20 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 	}
 	var configOptions []acpsdk.SessionConfigOption
 	var modes *acpsdk.SessionModeState
+	var historyConversation *refreshableConversation
 	if init.AgentCapabilities.LoadSession {
-		conv.beginHistoryReplay(cfg.ProviderConversationID)
-		resp, err := conv.conn.LoadSession(resumeCtx, acpsdk.LoadSessionRequest{
+		historyConversation = newRefreshableConversation(conv, acpsdk.LoadSessionRequest{
 			Meta:                  meta,
 			SessionId:             acpsdk.SessionId(cfg.ProviderConversationID),
 			Cwd:                   cfg.WorkspacePath,
 			AdditionalDirectories: additional,
 			McpServers:            mcpServers,
 		})
+		resp, err := historyConversation.loadHistory(resumeCtx)
 		if err != nil {
-			conv.abortHistoryReplay()
 			_ = conv.Close()
 			return nil, fmt.Errorf("%w: %w", ports.ErrChatResumeFailed, normalizeACPError("ACP session/load", err))
 		}
-		conv.finishHistoryReplay()
 		configOptions = resp.ConfigOptions
 		modes = resp.Modes
 	} else {
@@ -299,6 +298,9 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 			_ = conv.Close()
 			return nil, fmt.Errorf("%w: configure ACP session: %w", ports.ErrChatResumeFailed, err)
 		}
+	}
+	if historyConversation != nil {
+		return historyConversation, nil
 	}
 	return conv, nil
 }

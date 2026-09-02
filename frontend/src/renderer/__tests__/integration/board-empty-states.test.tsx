@@ -165,7 +165,7 @@ describe("global board first launch", () => {
 			expect(getMock.mock.calls.some(([url]) => url === "/api/v1/projects")).toBe(true);
 			expect(getMock.mock.calls.some(([url]) => url === "/api/v1/sessions")).toBe(true);
 		});
-		expect(await screen.findByText("Add code to Agent Orchestrator")).toBeInTheDocument();
+		expect(await screen.findByText("Add a project")).toBeInTheDocument();
 		expect(getMock.mock.calls.some(([url]) => url === "/api/v1/system/requirements")).toBe(true);
 	});
 
@@ -195,11 +195,11 @@ describe("global board first launch", () => {
 		respondWith([], []);
 		renderBoard(<SessionsBoard />);
 
-		expect(await screen.findByText("Add code to Agent Orchestrator")).toBeInTheDocument();
-		expect(screen.getByText("Clone a repository or open code that is already on this computer.")).toBeInTheDocument();
+		expect(await screen.findByText("Add a project")).toBeInTheDocument();
+		expect(screen.getByText("Choose how you want to add code to Agent Orchestrator")).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Clone from Git" })).toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "Add a workspace folder" })).toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "Open local repository" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Import a workspace folder" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Import an existing project" })).toBeInTheDocument();
 		expect(columnCount()).toBe(0);
 		// The welcome carries its own orientation — no dangling "Board" header.
 		expect(screen.queryByText("Board")).not.toBeInTheDocument();
@@ -210,7 +210,7 @@ describe("global board first launch", () => {
 		chooseDirectoryMock.mockResolvedValue(null);
 		renderBoard(<SessionsBoard />);
 
-		await userEvent.click(await screen.findByRole("button", { name: "Open local repository" }));
+		await userEvent.click(await screen.findByRole("button", { name: "Import an existing project" }));
 		expect(chooseDirectoryMock).toHaveBeenCalledTimes(1);
 		expect(chooseDirectoryMock).toHaveBeenCalledWith("Choose a project repository");
 	});
@@ -220,7 +220,7 @@ describe("global board first launch", () => {
 		chooseDirectoryMock.mockResolvedValue(null);
 		renderBoard(<SessionsBoard />);
 
-		await userEvent.click(await screen.findByRole("button", { name: "Add a workspace folder" }));
+		await userEvent.click(await screen.findByRole("button", { name: "Import a workspace folder" }));
 		expect(chooseDirectoryMock).toHaveBeenCalledTimes(1);
 		expect(chooseDirectoryMock).toHaveBeenCalledWith("Choose a workspace folder");
 	});
@@ -230,7 +230,7 @@ describe("global board first launch", () => {
 		chooseDirectoryMock.mockRejectedValue(new Error("dialog unavailable"));
 		renderBoard(<SessionsBoard />);
 
-		await userEvent.click(await screen.findByRole("button", { name: "Open local repository" }));
+		await userEvent.click(await screen.findByRole("button", { name: "Import an existing project" }));
 		const messages = await screen.findAllByText("dialog unavailable");
 		expect(messages.some((el) => !el.classList.contains("sr-only"))).toBe(true);
 	});
@@ -240,7 +240,7 @@ describe("global board first launch", () => {
 		renderBoard(<SessionsBoard />);
 
 		expect(await screen.findByText("fix the bug")).toBeInTheDocument();
-		expect(screen.queryByText("Add code to Agent Orchestrator")).not.toBeInTheDocument();
+		expect(screen.queryByText("Add a project")).not.toBeInTheDocument();
 		expect(columnCount()).toBe(4);
 	});
 
@@ -277,7 +277,7 @@ describe("project board with no sessions", () => {
 		// Board header + empty state each offer the pair; the orchestrator is primary in both.
 		expect(screen.getAllByRole("button", { name: "Spawn Orchestrator" }).length).toBeGreaterThan(0);
 		expect(screen.getAllByRole("button", { name: "New task" }).length).toBeGreaterThan(0);
-		expect(screen.queryByText("Add code to Agent Orchestrator")).not.toBeInTheDocument();
+		expect(screen.queryByText("Add a project")).not.toBeInTheDocument();
 		expect(columnCount()).toBe(0);
 	});
 
