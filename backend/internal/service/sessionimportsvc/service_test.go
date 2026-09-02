@@ -161,6 +161,7 @@ func TestImportSpawnsChatSessionBoundToNativeID(t *testing.T) {
 		NativeSessionID: "nat-1",
 		ConfigDir:       "/home/user/.claude",
 		CWD:             "/Users/dev/code",
+		Branch:          "feat/payments",
 		Title:           "A conversation worth continuing",
 	}
 	src := &fakeSource{provider: domain.HarnessClaudeCode, sessions: []sessionimport.ImportableSession{target}}
@@ -200,6 +201,12 @@ func TestImportSpawnsChatSessionBoundToNativeID(t *testing.T) {
 	}
 	if projects.added.Path != "" {
 		t.Errorf("a covering project existed; no new project should be registered (added %q)", projects.added.Path)
+	}
+	// The branch the conversation ran on is a repository fact, and recording it
+	// is what lets the SCM observer find the pull request and the board place
+	// the session in review / ready to merge / merged without inventing state.
+	if cfg.Branch != "feat/payments" {
+		t.Errorf("the conversation branch must be carried into the spawn, got %q", cfg.Branch)
 	}
 }
 

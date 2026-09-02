@@ -885,6 +885,20 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	}
 	baseRefs := m.refreshDefaultBranchesBestEffort(ctx, project)
 	ws, workspaceProject, err := m.createSessionWorkspace(ctx, project, cfg, id, branch, baseRefs)
+	// An imported conversation asks for the branch it actually ran on, so the
+	// SCM observer can find its pull request and the board can place it in
+	// review, ready to merge, or merged. That branch is often still checked out
+	// in the user's own clone, and git permits one checkout per branch. Falling
+	// back to a fresh session branch keeps the import working; it only costs the
+	// pull-request association, which is better than refusing to import at all.
+	if err != nil && cfg.ResumeNativeSession != nil && cfg.Branch != "" &&
+		errors.Is(err, ports.ErrWorkspaceBranchCheckedOutElsewhere) {
+		fallback := DefaultSpawnBranch(id, cfg.Kind, sessionPrefix(project), projectKind, m.dataDir)
+		m.logger.Info("import: conversation branch is checked out elsewhere; using a fresh session branch",
+			"sessionID", id, "conversationBranch", branch, "branch", fallback)
+		branch = fallback
+		ws, workspaceProject, err = m.createSessionWorkspace(ctx, project, cfg, id, branch, baseRefs)
+	}
 	if err != nil {
 		// Nothing observable exists yet — no worktree, no runtime — so the seed
 		// row is deleted outright instead of accumulating as a terminated orphan

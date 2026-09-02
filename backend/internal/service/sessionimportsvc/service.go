@@ -108,6 +108,13 @@ func (s *Service) Import(ctx context.Context, provider domain.AgentHarness, nati
 		Harness:       provider,
 		RequestedMode: domain.SessionModeChat,
 		DisplayName:   importDisplayName(target.Title),
+		// The branch the conversation ran on, so AO's existing SCM observer
+		// discovers its pull request and the reducer places the session in
+		// review / ready to merge / merged on its own. No display state is
+		// invented or persisted: only the repository fact is recorded. If the
+		// branch is already checked out elsewhere the manager falls back to a
+		// fresh session branch and the import still succeeds.
+		Branch: target.Branch,
 		ResumeNativeSession: &ports.ResumeNativeSession{
 			Provider:        provider,
 			NativeSessionID: nativeID,
