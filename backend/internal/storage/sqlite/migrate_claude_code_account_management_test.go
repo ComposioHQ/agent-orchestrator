@@ -4,6 +4,9 @@ import (
 	"database/sql"
 	"path/filepath"
 	"testing"
+	"testing/fstest"
+
+	"github.com/pressly/goose/v3"
 )
 
 func TestClaudeCodeAccountManagementMigrationRollsBackCleanly(t *testing.T) {
@@ -13,11 +16,28 @@ func TestClaudeCodeAccountManagementMigrationRollsBackCleanly(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	upTo(t, db, 125)
+	migration, err := migrationsFS.ReadFile("migrations/0126_claude_code_account_management.sql")
+	if err != nil {
+		t.Fatalf("read Claude Code account migration: %v", err)
+	}
+	isolatedFS := fstest.MapFS{
+		"migrations/0126_claude_code_account_management.sql": &fstest.MapFile{Data: migration},
+	}
+
+	gooseMu.Lock()
+	t.Cleanup(gooseMu.Unlock)
+	goose.SetBaseFS(isolatedFS)
+	goose.SetLogger(goose.NopLogger())
+	if err := goose.SetDialect("sqlite3"); err != nil {
+		t.Fatalf("set goose dialect: %v", err)
+	}
+
 	if got := tableColumns(t, db, "claude_code_active_account"); len(got) != 0 {
 		t.Fatalf("active-account table exists before migration: %v", got)
 	}
-	upTo(t, db, 126)
+	if err := goose.Up(db, "migrations"); err != nil {
+		t.Fatalf("apply Claude Code account migration: %v", err)
+	}
 	if got := tableColumns(t, db, "claude_code_active_account"); len(got) == 0 {
 		t.Fatal("active-account table missing after migration")
 	}
@@ -25,7 +45,9 @@ func TestClaudeCodeAccountManagementMigrationRollsBackCleanly(t *testing.T) {
 		t.Fatal("account-switch table missing after migration")
 	}
 
-	downTo(t, db, 125)
+	if err := goose.Down(db, "migrations"); err != nil {
+		t.Fatalf("roll back Claude Code account migration: %v", err)
+	}
 	if got := tableColumns(t, db, "claude_code_active_account"); len(got) != 0 {
 		t.Fatalf("active-account table remains after rollback: %v", got)
 	}
