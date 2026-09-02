@@ -70,14 +70,20 @@ export function PairingQr({
 
 	return (
 		<div className={cn("flex w-full flex-col", className)}>
-			<div className="relative aspect-square w-full overflow-hidden rounded-md">
+			{/* Light card. The code is drawn dark-on-light because Android's
+			    scanner will not decode an inverted one.
+
+			    The code fills the card: StyledQRCode draws its own quiet zone, so
+			    insetting it here only stacked a second margin on top of that one
+			    and shrank the modules for nothing. */}
+			<div className="relative aspect-square w-full overflow-hidden rounded-md bg-white">
 				{/* Drifts only while waiting: a code being scanned must hold still. */}
 				<div className={cn("absolute inset-0", !resolved && "ao-qr-drift")}>
 					{scrambling &&
 						decoys.map((code, i) => (
 							<div
 								key={code}
-								className={cn("ao-qr-decoy absolute inset-4", resolved && "ao-qr-decoy--settling")}
+								className={cn("ao-qr-decoy absolute inset-0", resolved && "ao-qr-decoy--settling")}
 								style={
 									resolved
 										? undefined
@@ -90,7 +96,7 @@ export function PairingQr({
 						))}
 					{value && (
 						<div
-							className="ao-qr-resolved absolute inset-4"
+							className="ao-qr-resolved absolute inset-0"
 							style={{ animationDuration: `${QR_RESOLVE_MS}ms` }}
 						>
 							<StyledQRCode

@@ -15,7 +15,11 @@ import { InstallCloudflared } from "./InstallCloudflared";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 
-const QR_CODE_SIZE = 204;
+// Sized so the code scans at a normal arm's-length distance rather than
+// forcing the phone up against the screen. At the panel's 320px width this
+// leaves ~0.6mm per module for a full-length pairing payload, comfortably over
+// the ~0.5mm that phone cameras start to struggle below.
+const QR_CODE_SIZE = 288;
 const STORE_QR_SIZE = 140;
 
 const STORE_LINKS = [
@@ -563,7 +567,7 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 
 				{/* Right: dedicated pairing-QR panel — square, clipping, flush with
 				    the content's right edge so bottom/right spacing match. */}
-				<div className="flex w-full shrink-0 flex-col gap-3 self-start sm:w-60">
+				<div className="flex w-full shrink-0 flex-col gap-3 self-start sm:w-80">
 					{enabled && activeHost ? (
 						// Owns its own square box and puts the caption beneath it: the
 						// caption cannot live inside a clipping aspect-square, which is
@@ -583,7 +587,9 @@ export function ConnectMobileContent({ active }: { active: boolean }) {
 								</div>
 							) : (
 								<>
-									<div className="size-full opacity-60 blur-[6px]" aria-hidden="true">
+									{/* Light card, matching the real code — the QR is drawn dark
+									    on light so Android's scanner can read it. */}
+									<div className="size-full bg-white opacity-60 blur-[6px]" aria-hidden="true">
 										<StyledQRCode
 											value={PLACEHOLDER_QR_VALUE}
 											size={QR_CODE_SIZE}
