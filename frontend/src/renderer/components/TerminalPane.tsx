@@ -847,17 +847,15 @@ export function providerScrollsByKeyboard(provider?: string): boolean {
 function bannerText(
 	state: TerminalSessionState,
 	t: TFunction,
-	hasAttached: boolean,
 	cloud: WorkspaceSession["cloud"],
 	error?: string,
 ): string | undefined {
-	// Before a cloud terminal's first successful open, explain which remote
-	// lifecycle boundary is holding it up. Workspace provisioning, worker
-	// bootstrap, and the final WebSocket attach have very different expected
-	// durations and remedies; collapsing all three into "Connecting…" leaves the
-	// user unable to tell normal cold-start work from a broken terminal.
+	// Explain which remote lifecycle boundary is holding a cloud terminal up on
+	// both its first attach and later reconnects. Once a pane has attached,
+	// collapsing a Coder pause/resume into "Terminal disconnected" hides the most
+	// useful fact from the user even though the control plane already exposes it.
 	if (state === "reattaching") {
-		if (cloud && !hasAttached) {
+		if (cloud) {
 			const provider =
 				cloud.runtimeProvider === "coder"
 					? "Coder"
@@ -1035,7 +1033,7 @@ function AttachedTerminal({
 		);
 	}
 
-	const banner = bannerText(state, t, hasAttached, attachSession?.cloud, error);
+	const banner = bannerText(state, t, attachSession?.cloud, error);
 	const centerCloudStartupBanner = Boolean(
 		banner && attachSession?.cloud && !hasAttached && state === "reattaching",
 	);

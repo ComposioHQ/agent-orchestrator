@@ -522,6 +522,22 @@ describe("TerminalPane replay cover", () => {
 		}
 	});
 
+	it("explains a Coder resume after a previously attached terminal disconnects", () => {
+		terminalState.value = "reattaching";
+		hasAttached.value = true;
+		const view = renderPane({
+			...worker,
+			terminalHandleId: "cloud-session",
+			cloud: { orgId: "cloud-org", runtimeProvider: "coder", runtimeState: "restoring" },
+		});
+		try {
+			expect(screen.getByText("Resuming the Coder workspace…")).toBeInTheDocument();
+			expect(screen.getByTestId("terminal-status-banner")).toHaveClass("top-2");
+		} finally {
+			view.restore();
+		}
+	});
+
 	it("surfaces the control-plane failure instead of an endless connecting message", () => {
 		terminalState.value = "reattaching";
 		hasAttached.value = false;
