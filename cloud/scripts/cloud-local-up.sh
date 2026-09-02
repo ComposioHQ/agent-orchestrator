@@ -74,6 +74,27 @@ printf 'Building and starting the control plane, PostgreSQL, and migrations...\n
 compose up --build -d
 wait_for_ready
 
+# Seed a default dev account so you can just sign in — no register step needed.
+# Best-effort and idempotent: a 201 means it was created, anything else means it
+# already exists (or the seed was skipped); never fail the bring-up over it.
+DEV_EMAIL="dev@local.test"
+DEV_PASSWORD="localdevpass123"
+seed_dev_account() {
+	local code
+	code="$(curl -s -o /dev/null -w '%{http_code}' \
+		-X POST -H 'Content-Type: application/json' \
+		-d "{\"email\":\"${DEV_EMAIL}\",\"displayName\":\"Dev\",\"password\":\"${DEV_PASSWORD}\",\"orgSlug\":\"dev-org\",\"orgName\":\"Dev Org\"}" \
+		"http://127.0.0.1:${AO_CLOUD_PORT}/api/cloud/v1/auth/local/register" 2>/dev/null || echo 000)"
+	if [ "$code" = "201" ]; then
+		echo "Seeded default dev account (${DEV_EMAIL})."
+	elif [ "$code" = "000" ]; then
+		echo "Note: could not reach the CP to seed a dev account; register in-app if needed." >&2
+	else
+		echo "Default dev account already exists (${DEV_EMAIL})."
+	fi
+}
+seed_dev_account
+
 cat <<EOF
 
 AO Cloud is up and will stay running (no automatic teardown).
@@ -85,8 +106,12 @@ Launch the desktop app against it, from the frontend/ directory:
 
   AO_CLOUD_OFFERING=on AO_CLOUD_CONTROL_PLANE_URL=http://127.0.0.1:${AO_CLOUD_PORT} npm run dev
 
-In the app, register a local email/password account to sign in (local auth is
-enabled; no WorkOS or NodeOps is required).
+A default account is ready — just SIGN IN with:
+
+  Email    : ${DEV_EMAIL}
+  Password : ${DEV_PASSWORD}
+
+(No register step needed. You can still use Register in-app for another account.)
 
 Stop it (data retained) : npm run cloud:local:down
 Reset it (data deleted) : npm run cloud:local:reset
