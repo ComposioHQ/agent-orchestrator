@@ -1062,6 +1062,7 @@
 	"usage.output": "Output",
 	"usage.unableLoadEstimatedCost": "Unable to load estimated cost.",
 	"usage.unavailable": "Unavailable",
+	"shell.nightlyBuild": "Nightly {{version}} · {{date}}",
 	"shell.versionReady": "v{{version}} ready",
 	"shortcut.add": "Add",
 	"shortcut.addAltAria": "Add alternative for {{name}}",

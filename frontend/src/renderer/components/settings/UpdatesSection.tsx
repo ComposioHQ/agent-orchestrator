@@ -23,6 +23,12 @@ type PrimaryValue = UpdateChannel | "feature";
 
 const DEFAULT_SETTINGS: UpdateSettings = { enabled: false, channel: "latest", nightlyAck: false, feature: null };
 const MIN_MANUAL_CHECK_VISIBLE_MS = 1_000;
+// Hard ceiling on how long a manual check may hold the button. The IPC call is
+// awaited and normally settles on its own, but if it ever does not, the pending
+// request id disables the Check button for the rest of the session with nothing
+// on screen to explain it. Releasing the button is always safe: the main process
+// serializes updater operations, so a redundant check queues rather than racing.
+const MAX_MANUAL_CHECK_MS = 90_000;
 
 let updateRequestSequence = 0;
 
@@ -51,9 +57,17 @@ export function UpdatesSection({ titleHidden }: { titleHidden?: boolean } = {}) 
 	channelSwitchRef.current = channelSwitch;
 	const manualCheckStartedAtRef = useRef<number | null>(null);
 	const manualCheckFinishTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const manualCheckWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const developerMode = useUiStore((state) => state.developerMode);
 
+	const clearManualCheckWatchdog = () => {
+		if (manualCheckWatchdogRef.current === null) return;
+		clearTimeout(manualCheckWatchdogRef.current);
+		manualCheckWatchdogRef.current = null;
+	};
+
 	const finishManualCheck = (requestId: string) => {
+		clearManualCheckWatchdog();
 		if (manualCheckFinishTimerRef.current !== null) clearTimeout(manualCheckFinishTimerRef.current);
 		const elapsed = manualCheckStartedAtRef.current === null ? MIN_MANUAL_CHECK_VISIBLE_MS : Date.now() - manualCheckStartedAtRef.current;
 		const clear = () => {
@@ -70,8 +84,13 @@ export function UpdatesSection({ titleHidden }: { titleHidden?: boolean } = {}) 
 	};
 
 	const startManualCheck = (requestId: string) => {
+		clearManualCheckWatchdog();
 		manualCheckStartedAtRef.current = Date.now();
 		setManualCheckRequestId(requestId);
+		manualCheckWatchdogRef.current = setTimeout(() => {
+			manualCheckWatchdogRef.current = null;
+			setManualCheckRequestId((pending) => (pending === requestId ? null : pending));
+		}, MAX_MANUAL_CHECK_MS);
 	};
 
 	const status = useUpdateStatus((next) => {
@@ -87,6 +106,7 @@ export function UpdatesSection({ titleHidden }: { titleHidden?: boolean } = {}) 
 	useEffect(
 		() => () => {
 			if (manualCheckFinishTimerRef.current !== null) clearTimeout(manualCheckFinishTimerRef.current);
+			if (manualCheckWatchdogRef.current !== null) clearTimeout(manualCheckWatchdogRef.current);
 		},
 		[],
 	);
@@ -358,7 +378,13 @@ function UpdateActions({
 	const manualCheckPending = manualCheckRequestId !== null;
 	const checking = effectiveStatus.state === "checking" || manualCheckPending;
 	const downloading = effectiveStatus.state === "downloading";
-	const busy = checking || downloading;
+	// Only the user's OWN in-flight check blocks the button. A background check
+	// also reports "checking", and gating on that swallowed the first click
+	// whenever Settings was opened during one — every 15 minutes on nightly,
+	// which is what made the button look like it needed a double-click. A click
+	// during a background check is fine: the main process serializes updater
+	// operations, so the manual check simply queues behind it.
+	const busy = manualCheckPending || downloading;
 	const displayStatus: UpdateStatus = manualCheckPending && effectiveStatus.state !== "checking" ? { ...effectiveStatus, state: "checking" } : effectiveStatus;
 	const checkedAt = effectiveStatus.checkedAt
 		? new Intl.DateTimeFormat(i18n.resolvedLanguage ?? i18n.language, {
@@ -470,7 +496,11 @@ function UpdateActions({
 							{t("settings.updates.restartInstall")}
 						</Button>
 					)}
-					{displayStatus.state !== "available" && displayStatus.state !== "downloaded" && displayStatus.state !== "downloading" && <Button
+					{/* Always rendered. Hiding it whenever something was available or
+					    staged left no way to re-check at all: a user sitting on a build
+					    that will not install had a single dead Restart button and no
+					    other action on the page. */}
+					<Button
 						type="button"
 						aria-label={checking ? t("settings.updates.checking") : t("settings.updates.check")}
 						aria-describedby="update-status-line"
@@ -486,7 +516,7 @@ function UpdateActions({
 							<RefreshCw className="size-icon-sm" aria-hidden="true" />
 						)}
 						{checking ? t("settings.updates.checking") : t("settings.updates.check")}
-					</Button>}
+					</Button>
 				</div>
 			</div>
 

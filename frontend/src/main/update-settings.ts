@@ -36,6 +36,15 @@ export interface UpdateStatus {
 	// escalated: true when per-channel rules say the user should be nudged harder.
 	stagedAt?: number;
 	escalated?: boolean;
+	/**
+	 * Set on EVERY status while a build sits downloaded and waiting to install,
+	 * whatever `state` currently says. A routine check drives state through
+	 * checking → available → not-available while the staged build is untouched,
+	 * and the sidebar's restart row keyed off `state` alone, so it blinked out of
+	 * existence every time a background check ran. Consumers that care about
+	 * "there is something to install" should read this instead of `state`.
+	 */
+	staged?: { version?: string; stagedAt: number; escalated: boolean };
 	// Present when automatic update checks have failed several times in a row
 	// with Chromium network-stack errors (net::ERR_*) — the app's network stack
 	// is wedged and restarting the app usually fixes it (#3526).

@@ -944,6 +944,7 @@
 	"shell.updatedAt": "更新: {{time}}",
 	"shell.lastMessageAt": "最終メッセージ: {{time}}",
 	"shell.versionAvailable": "v{{version}}",
+	"shell.nightlyBuild": "Nightly {{version}} · {{date}}",
 	"shell.versionReady": "v{{version}} の準備完了",
 	"shortcut.add": "追加",
 	"shortcut.addAltAria": "{{name}} の代替を追加",

@@ -463,8 +463,30 @@ describe("GlobalSettingsForm", () => {
 			() => expect(screen.getByRole("status")).toHaveTextContent("Downloaded. Restart to finish updating."),
 			{ timeout: 1_500 },
 		);
-		expect(screen.queryByRole("button", { name: "Check for updates" })).not.toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Restart & install" })).toBeInTheDocument();
+		// The check control stays available alongside the restart action. Hiding it
+		// once something was staged left a user whose staged build would not
+		// install with a single dead button and no way to re-check.
+		const recheck = screen.getByRole("button", { name: "Check for updates" });
+		expect(recheck).toBeEnabled();
+	});
+
+	it("accepts a check click while a background check is already running", async () => {
+		// Regression: gating the button on any "checking" status swallowed the
+		// first click whenever Settings was opened during a background check --
+		// as often as every 15 minutes on nightly -- which is what made the button
+		// look like it needed a double-click. The main process serializes updater
+		// operations, so a click during a background check simply queues.
+		updGetStatus.mockResolvedValue({ state: "checking" });
+		updCheck.mockResolvedValue(undefined);
+		renderForm();
+
+		const button = await screen.findByRole("button", { name: "Checking for updates…" });
+		expect(button).toBeEnabled();
+		await userEvent.click(button);
+
+		expect(updCheck).toHaveBeenCalledTimes(1);
+		expect(updCheck.mock.calls[0]?.[0]?.requestId).toMatch(/^manual-update-/);
 	});
 
 	it("shows when the updater last completed a check", async () => {

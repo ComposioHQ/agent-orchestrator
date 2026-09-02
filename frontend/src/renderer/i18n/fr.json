@@ -954,6 +954,7 @@
 	"shell.updatedAt": "Mis à jour {{time}}",
 	"shell.lastMessageAt": "Dernier message {{time}}",
 	"shell.versionAvailable": "v{{version}}",
+	"shell.nightlyBuild": "Nightly {{version}} · {{date}}",
 	"shell.versionReady": "v{{version}} prête",
 	"shortcut.add": "Ajouter",
 	"shortcut.addAltAria": "Ajouter une alternative pour {{name}}",

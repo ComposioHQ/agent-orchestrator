@@ -21,7 +21,10 @@ test("downloaded update keeps the full version readable and actions aligned", as
 	const version = page.getByTestId("app-version");
 	await expect(version).toContainText("v0.12.7-nightly.202608240525");
 	await expect(page.getByRole("button", { name: "Restart & install" })).toBeVisible();
-	await expect(page.getByRole("button", { name: "Check for updates" })).toBeHidden();
+	// Visible alongside the restart action: hiding it once something was staged
+	// left no way to re-check at all. The height assertion below already
+	// depended on it being present.
+	await expect(page.getByRole("button", { name: "Check for updates" })).toBeVisible();
 	await expect(page.getByRole("switch", { name: "Automatic Updates" })).toBeChecked();
 	await expect(page.getByRole("button", { name: "Updates channel" })).toContainText("Nightly");
 	await expect(page.locator(".nightly-warning")).toBeVisible();

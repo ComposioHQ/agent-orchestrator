@@ -619,6 +619,8 @@ describe("startAutoUpdates", () => {
       version: "2.1.0",
       stagedAt,
       escalated: false,
+      checkedAt: expect.any(Number),
+      staged: { version: "2.1.0", stagedAt, escalated: false },
     });
 
     autoUpdater.checkForUpdates.mockImplementationOnce(() => {
@@ -638,6 +640,8 @@ describe("startAutoUpdates", () => {
       version: "2.1.0",
       stagedAt,
       escalated: false,
+      checkedAt: expect.any(Number),
+      staged: { version: "2.1.0", stagedAt, escalated: false },
     });
   });
 
@@ -757,6 +761,8 @@ describe("startAutoUpdates", () => {
       version: "2.1.0",
       stagedAt,
       escalated: true,
+      checkedAt: expect.any(Number),
+      staged: { version: "2.1.0", stagedAt, escalated: true },
     });
 
     updaterEvents.get("error")?.(err);
@@ -772,6 +778,8 @@ describe("startAutoUpdates", () => {
       version: "2.1.0",
       stagedAt,
       escalated: true,
+      checkedAt: expect.any(Number),
+      staged: { version: "2.1.0", stagedAt, escalated: true },
     });
   });
 
@@ -812,6 +820,9 @@ describe("startAutoUpdates", () => {
       version: "2.2.0",
       percent: 64,
       checkedAt: expect.any(Number),
+      // The staged 2.1.0 is still on disk while 2.2.0 downloads, so every
+      // status carries it and the sidebar keeps an actionable row throughout.
+      staged: { version: "2.1.0", stagedAt, escalated: true },
     });
 
     updaterEvents.get("error")?.(err);
@@ -828,6 +839,7 @@ describe("startAutoUpdates", () => {
       stagedAt,
       escalated: true,
       checkedAt: expect.any(Number),
+      staged: { version: "2.1.0", stagedAt, escalated: true },
     });
   });
 
@@ -1716,6 +1728,162 @@ describe("startAutoUpdates", () => {
     await module.startAutoUpdates(stateDir);
 
     expect(unref).toHaveBeenCalledTimes(2);
+  });
+
+  // Regression: electron-updater does NOT treat "already in the cache" as done.
+  // A cache hit still runs the download task's completion path, which on macOS
+  // copies the whole zip to update.zip and hands Squirrel a fresh install
+  // request. With autoDownload left on, that repeated on every check for as
+  // long as the user went without quitting.
+  it("suspends auto-download while a build is already staged", async () => {
+    const { module, autoUpdater, updaterEvents } = await importAutoUpdater();
+    const autoDownloadPerCheck: boolean[] = [];
+    autoUpdater.checkForUpdates.mockImplementation(() => {
+      autoDownloadPerCheck.push(autoUpdater.autoDownload);
+      updaterEvents.get("update-available")?.({ version: "2.1.0" });
+      return Promise.resolve({
+        isUpdateAvailable: true,
+        updateInfo: { version: "2.1.0" },
+      });
+    });
+
+    await module.startAutoUpdates(stateDir);
+    updaterEvents.get("update-downloaded")?.({ version: "2.1.0" });
+    await module.startAutoUpdates(stateDir);
+
+    expect(autoDownloadPerCheck).toEqual([true, false]);
+    expect(autoUpdater.downloadUpdate).not.toHaveBeenCalled();
+  });
+
+  it("still auto-downloads a build newer than the staged one", async () => {
+    const { module, autoUpdater, updaterEvents } = await importAutoUpdater();
+    autoUpdater.checkForUpdates.mockImplementation(() =>
+      Promise.resolve({
+        isUpdateAvailable: true,
+        updateInfo: { version: "2.2.0" },
+      }),
+    );
+
+    await module.startAutoUpdates(stateDir);
+    updaterEvents.get("update-downloaded")?.({ version: "2.1.0" });
+    await module.startAutoUpdates(stateDir);
+
+    // autoDownload was suspended for the staged 2.1.0, so the newer build has
+    // to be fetched explicitly rather than silently skipped.
+    expect(autoUpdater.autoDownload).toBe(false);
+    expect(autoUpdater.downloadUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  // Regression: the staged clock feeds the latest-channel 48h escalation rule.
+  // Re-stamping it on every re-stage meant the clock was never more than one
+  // check interval old, so that rule could never fire.
+  it("keeps the original staged time when the same build is re-staged", async () => {
+    vi.useFakeTimers();
+    const stagedAt = new Date("2026-07-17T12:00:00.000Z").getTime();
+    vi.setSystemTime(stagedAt);
+    const { module, updaterEvents } = await importAutoUpdater();
+
+    await module.checkForUpdatesNow(stateDir);
+    updaterEvents.get("update-downloaded")?.({ version: "2.1.0" });
+    expect(module.getUpdateStatus().stagedAt).toBe(stagedAt);
+
+    vi.setSystemTime(stagedAt + 60 * 60 * 1000);
+    updaterEvents.get("update-downloaded")?.({ version: "2.1.0" });
+    expect(module.getUpdateStatus().stagedAt).toBe(stagedAt);
+
+    // A genuinely different build does restart the clock.
+    updaterEvents.get("update-downloaded")?.({ version: "2.2.0" });
+    expect(module.getUpdateStatus().stagedAt).toBe(stagedAt + 60 * 60 * 1000);
+  });
+
+  it("re-arms the escalation timer only for a newly staged build", async () => {
+    vi.useFakeTimers();
+    const setIntervalSpy = vi.spyOn(globalThis, "setInterval");
+    const { module, updaterEvents } = await importAutoUpdater();
+
+    await module.checkForUpdatesNow(stateDir);
+    updaterEvents.get("update-downloaded")?.({ version: "2.1.0" });
+    const afterFirst = setIntervalSpy.mock.calls.length;
+
+    updaterEvents.get("update-downloaded")?.({ version: "2.1.0" });
+    // Re-arming on a re-stage would push the next evaluation out by another 30
+    // minutes every time, and nightly re-stages every 15 — the loop would never
+    // get a turn.
+    expect(setIntervalSpy.mock.calls.length).toBe(afterFirst);
+
+    updaterEvents.get("update-downloaded")?.({ version: "2.2.0" });
+    expect(setIntervalSpy.mock.calls.length).toBeGreaterThan(afterFirst);
+  });
+
+  // Regression: electron-updater returns the in-flight promise when a check is
+  // already running, so a second caller's events were consumed elsewhere and
+  // nothing ever moved the status off "checking". Settings keys its spinner and
+  // its disabled Check button off that state, so the page wedged silently.
+  it("settles a manual check that resolves without emitting any event", async () => {
+    const { module, autoUpdater, statusMessages } = await importAutoUpdater();
+    autoUpdater.checkForUpdates.mockResolvedValue({
+      isUpdateAvailable: false,
+      updateInfo: { version: "1.0.0" },
+    });
+
+    await module.checkForUpdatesNow(stateDir, { requestId: "manual-update-1" });
+
+    expect(module.getUpdateStatus().state).toBe("not-available");
+    expect(statusMessages().at(-1)?.payload).toMatchObject({
+      state: "not-available",
+      checkedAt: expect.any(Number),
+    });
+  });
+
+  it("settles an event-less manual check as available when the feed has a build", async () => {
+    const { module, autoUpdater } = await importAutoUpdater();
+    autoUpdater.checkForUpdates.mockResolvedValue({
+      isUpdateAvailable: true,
+      updateInfo: { version: "2.5.0" },
+    });
+
+    await module.checkForUpdatesNow(stateDir, { requestId: "manual-update-1" });
+
+    expect(module.getUpdateStatus()).toMatchObject({
+      state: "available",
+      version: "2.5.0",
+    });
+  });
+
+  it("settles an event-less manual check back to the staged build", async () => {
+    const { module, autoUpdater, updaterEvents } = await importAutoUpdater();
+    await module.checkForUpdatesNow(stateDir);
+    updaterEvents.get("update-downloaded")?.({ version: "2.1.0" });
+
+    autoUpdater.checkForUpdates.mockResolvedValue({
+      isUpdateAvailable: false,
+      updateInfo: { version: "2.1.0" },
+    });
+    await module.checkForUpdatesNow(stateDir, { requestId: "manual-update-2" });
+
+    expect(module.getUpdateStatus()).toMatchObject({
+      state: "downloaded",
+      version: "2.1.0",
+    });
+  });
+
+  // Regression: the sidebar's restart row keyed off `state`, which a routine
+  // check drives through checking/available/not-available while the staged
+  // build is untouched. The row blinked out of existence every 15 minutes.
+  it("stamps the staged build onto every status, including transient ones", async () => {
+    vi.useFakeTimers();
+    const stagedAt = new Date("2026-07-17T12:00:00.000Z").getTime();
+    vi.setSystemTime(stagedAt);
+    const { module, updaterEvents, statusMessages } = await importAutoUpdater();
+
+    await module.checkForUpdatesNow(stateDir);
+    updaterEvents.get("update-downloaded")?.({ version: "2.1.0" });
+    updaterEvents.get("checking-for-update")?.();
+
+    expect(statusMessages().at(-1)?.payload).toMatchObject({
+      state: "checking",
+      staged: { version: "2.1.0", stagedAt, escalated: false },
+    });
   });
 });
 

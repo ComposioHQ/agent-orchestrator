@@ -172,6 +172,7 @@ function broadcast(
       : { ...status, checkedAt: lastCheckedAtMs };
   const stamped: UpdateStatus = {
     ...statusWithCheckTime,
+    ...stagedStamp(),
     ...(consecutiveAutomaticNetFailures >= STALE_CHECK_NUDGE_THRESHOLD
       ? { staleCheckNudge: true }
       : {}),
@@ -383,6 +384,56 @@ async function fetchNightlyImportant(
   } catch {
     return false;
   }
+}
+
+/**
+ * The `staged` stamp every status carries while a build waits to install, so a
+ * transient checking/available/not-available state cannot make the sidebar's
+ * restart row disappear mid-check. Empty when nothing is staged.
+ */
+function stagedStamp(): Pick<UpdateStatus, "staged"> {
+  if (stagedAtMs === undefined) return {};
+  return {
+    staged: {
+      ...(stagedVersion === undefined ? {} : { version: stagedVersion }),
+      stagedAt: stagedAtMs,
+      escalated: stagedEscalated,
+    },
+  };
+}
+
+/** A build is downloaded and waiting to install, and we know which one. */
+function hasStagedBuild(): boolean {
+  return stagedAtMs !== undefined && stagedVersion !== undefined;
+}
+
+/** The feed is offering something other than what is already staged. */
+function supersedesStagedBuild(version: string | undefined): boolean {
+  return hasStagedBuild() && version !== undefined && version !== stagedVersion;
+}
+
+type UpdateCheckOutcome = Awaited<ReturnType<typeof autoUpdater.checkForUpdates>>;
+
+/**
+ * Land a terminal status when a check resolved without emitting one.
+ *
+ * electron-updater can do exactly that: `checkForUpdates()` called while another
+ * check is in flight returns the in-flight promise, and that check's events were
+ * already consumed under a different operation. Nothing else ever moves the
+ * status off "checking", and the Settings row keys its spinner and its disabled
+ * Check button off that state, so the page wedges with no visible explanation.
+ * Called only on renderer-requested checks, which are the ones a user is waiting on.
+ */
+function settleCheckStatus(result: UpdateCheckOutcome): void {
+  if (lastStatus.state !== "checking") return;
+  const version = result?.updateInfo?.version;
+  if (result?.isUpdateAvailable === true && version !== undefined) {
+    broadcastCompletedCheck({ state: "available", version });
+    return;
+  }
+  broadcastCompletedCheck(
+    hasStagedBuild() ? stagedDownloadedStatus() : { state: "not-available" },
+  );
 }
 
 // stagedDownloadedStatus rebuilds the enriched downloaded status from module
@@ -677,9 +728,17 @@ function wireUpdaterEvents(): void {
       trigger: activeUpdateTrigger(),
       ...(info?.version ? { to_version: info.version } : {}),
     });
+    // Re-staging the SAME build must not restart the staged clock. electron-updater
+    // re-runs its download task whenever a check finds a version it has already
+    // cached, so this event repeats on every automatic check until the user quits.
+    // Resetting stagedAtMs there would mean the latest-channel 48h escalation rule
+    // could never fire, because the clock is only ever minutes old.
+    const restaged = stagedAtMs !== undefined && info?.version === stagedVersion;
     stagedVersion = info?.version;
-    stagedAtMs = Date.now();
-    stagedEscalated = false;
+    if (!restaged) {
+      stagedAtMs = Date.now();
+      stagedEscalated = false;
+    }
     stagedRequestId = activeUpdaterRequestId;
     automaticCheckPreviousStatus = undefined;
     // A completed automatic download advances the independent baseline; a
@@ -689,12 +748,17 @@ function wireUpdaterEvents(): void {
     // while the update sits uninstalled. unref so the timer never holds the
     // process open on quit.
     void runEscalationCheck();
-    stopEscalationTimer();
-    escalationTimer = setInterval(
-      () => void runEscalationCheck(),
-      30 * 60 * 1000,
-    );
-    escalationTimer.unref?.();
+    // Re-arming on a re-stage would push the next evaluation out by another 30
+    // minutes every time, and the nightly channel re-stages every 15 — the loop
+    // would never get a turn. Leave the running timer alone in that case.
+    if (!restaged || escalationTimer === undefined) {
+      stopEscalationTimer();
+      escalationTimer = setInterval(
+        () => void runEscalationCheck(),
+        30 * 60 * 1000,
+      );
+      escalationTimer.unref?.();
+    }
   });
   autoUpdater.on("error", (err) => {
     // Never crash on update failure (offline, unsigned macOS, etc.).
@@ -753,6 +817,7 @@ export function getUpdateStatus(): UpdateStatus {
   // seeds from this getter (#3526).
   return {
     ...lastStatus,
+    ...stagedStamp(),
     ...(consecutiveAutomaticNetFailures >= STALE_CHECK_NUDGE_THRESHOLD
       ? { staleCheckNudge: true }
       : {}),
@@ -787,7 +852,16 @@ async function runAutomaticUpdateCheck(
       // Discovery is always on for the selected release channel. This preference
       // controls only whether electron-updater downloads the discovered build or
       // leaves it in `available` for the sidebar action.
-      autoUpdater.autoDownload = settings.enabled;
+      //
+      // A build that is already staged suspends auto-download for this check.
+      // electron-updater does not treat "already in the cache" as done: a cache
+      // hit still runs the download task's completion path, which on macOS copies
+      // the whole zip to update.zip and hands Squirrel a fresh install request.
+      // With autoDownload on, that repeated for every check for as long as the
+      // user went without quitting — 175 MB of copying and a ShipIt spawn every
+      // 15 minutes on nightly. Anything genuinely newer than the staged build is
+      // still fetched, below.
+      autoUpdater.autoDownload = settings.enabled && !hasStagedBuild();
       applyInstallOnQuitPolicy();
       // Only nightly resolves a direct feed. Skipping the await entirely on the
       // other channels keeps this check's event ordering exactly as it was.
@@ -796,8 +870,16 @@ async function runAutomaticUpdateCheck(
         : undefined;
       try {
         const result = await autoUpdater.checkForUpdates();
-        if (settings.enabled && result?.downloadPromise) {
-          await result.downloadPromise;
+        if (settings.enabled) {
+          if (result?.downloadPromise) {
+            await result.downloadPromise;
+          } else if (supersedesStagedBuild(result?.updateInfo?.version)) {
+            // autoDownload was suspended for the staged build, but this is a
+            // different version, so it still has to be fetched automatically.
+            activeUpdaterPhase = "download";
+            pendingUpdateVersion = result?.updateInfo?.version;
+            await autoUpdater.downloadUpdate();
+          }
         }
       } catch (err) {
         // electron-updater normally also emits "error" (handled in
@@ -949,7 +1031,7 @@ export async function checkForUpdatesNow(
         broadcastUpdaterStatus({ state: "checking" });
         const restoreFeed = await configureDirectNightlyFeed(settings);
         try {
-          await autoUpdater.checkForUpdates();
+          settleCheckStatus(await autoUpdater.checkForUpdates());
         } finally {
           restoreFeed?.();
         }
@@ -1016,7 +1098,7 @@ export async function returnToHome(
         autoUpdater.autoDownload = false;
         applyInstallOnQuitPolicy();
         broadcastUpdaterStatus({ state: "checking" });
-        await autoUpdater.checkForUpdates();
+        settleCheckStatus(await autoUpdater.checkForUpdates());
       },
       requestId,
     );

@@ -944,6 +944,7 @@
 	"shell.updatedAt": "업데이트: {{time}}",
 	"shell.lastMessageAt": "마지막 메시지: {{time}}",
 	"shell.versionAvailable": "v{{version}}",
+	"shell.nightlyBuild": "Nightly {{version}} · {{date}}",
 	"shell.versionReady": "v{{version}} 준비됨",
 	"shortcut.add": "추가",
 	"shortcut.addAltAria": "{{name}}의 대체 추가",
