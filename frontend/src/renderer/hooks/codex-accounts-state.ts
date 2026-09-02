@@ -104,6 +104,7 @@ export type CodexSwitchDisplay = {
 	key: CodexAccountMessageKey;
 	tone: "muted" | "warning" | "error";
 	busy: boolean;
+	mutationBlocked: boolean;
 	canRecover: boolean;
 };
 
@@ -129,6 +130,7 @@ export function codexSwitchDisplay(switchState: CodexAccountSwitch): CodexSwitch
 		key: failureKnown && failureKey ? failureKey : phaseKeys[phase] ?? "settings.codexAccounts.switch.unknown",
 		tone: phase === "failed" ? "error" : failureKnown || phase === "rollback_required" || phase === "recovery_required" ? "warning" : "muted",
 		busy: !terminal,
+		mutationBlocked: phase !== "completed" && phase !== "failed",
 		canRecover: switchState.canRecover && phase === "recovery_required",
 	};
 }

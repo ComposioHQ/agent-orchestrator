@@ -41,7 +41,7 @@ export function CodexAccountsSection({ titleHidden }: { titleHidden?: boolean })
 	const switchStatus = switchPresentation ? t(switchPresentation.key) : null;
 	const accountsError = accountsQuery.error instanceof Error ? accountsQuery.error.message : null;
 	const actionSubmitting = pendingAction?.submitting ?? false;
-	const mutationDisabled = Boolean(activeLogin || switchPresentation?.busy || actionSubmitting || actions.loginPending || actions.recoverPending);
+	const mutationDisabled = Boolean(activeLogin || switchPresentation?.mutationBlocked || actionSubmitting || actions.loginPending || actions.recoverPending);
 	const switchSourceAvailable = Boolean(data?.activeAccountId && activeAccount && !data.unmanagedGlobalAccount);
 	const switchTargets = data?.accounts.filter((account) => account.id !== data.activeAccountId) ?? [];
 	const switchUnsupported = data?.capabilities.globalSwitch.state !== "supported";
@@ -65,12 +65,12 @@ export function CodexAccountsSection({ titleHidden }: { titleHidden?: boolean })
 	}, [currentSwitch, data?.activeAccountId]);
 
 	const beginLogin = useCallback(async (accountId?: string) => {
-		if (activeLogin || switchPresentation?.busy) return;
+		if (activeLogin || switchPresentation?.mutationBlocked) return;
 		setProviderExpanded(true);
 		if (accountId) setExpandedAccount(accountId);
 		setAnnouncement("");
 		await actions.beginLogin(accountId).catch(() => undefined);
-	}, [actions, activeLogin, switchPresentation?.busy]);
+	}, [actions, activeLogin, switchPresentation?.mutationBlocked]);
 
 	const verifyLogin = useCallback(async (login: CodexActiveLogin) => {
 		const operation = await actions.verifyLogin(login).catch(() => undefined);

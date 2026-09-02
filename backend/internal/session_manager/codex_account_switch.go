@@ -819,10 +819,12 @@ func (m *Manager) restartCodexSwitchSessions(ctx context.Context, store ports.Co
 		if item.WasRunning && item.StopState == "stopped" && item.RestartState == "restarted" && item.InterfaceMode == domain.SessionModeChat {
 			rec, ok, readErr := m.store.GetSession(ctx, item.SessionID)
 			if readErr != nil || !ok {
-				return errors.Join(errors.New("session missing"), readErr)
+				errs = append(errs, fmt.Errorf("reattach restarted Chat session %s: %w", item.SessionID, errors.Join(errors.New("session missing"), readErr)))
+				continue
 			}
 			if _, attachErr := m.ensureCodexSwitchChatController(ctx, rec, *item, rec.Metadata.ControllerGeneration); attachErr != nil {
-				return attachErr
+				errs = append(errs, fmt.Errorf("reattach restarted Chat session %s: %w", item.SessionID, attachErr))
+				continue
 			}
 		}
 		if item.WasRunning && item.StopState == "stopped" && item.RestartState != "restarted" && item.RestartState != "skipped" {
@@ -831,18 +833,22 @@ func (m *Manager) restartCodexSwitchSessions(ctx context.Context, store ports.Co
 			if generation == "" {
 				generation = strings.TrimSpace(m.newLaunchID())
 				if generation == "" {
-					return errors.New("generated empty Codex restart generation")
+					errs = append(errs, fmt.Errorf("restart session %s: generated empty Codex restart generation", item.SessionID))
+					continue
 				}
 				item.ErrorCode = codexSwitchRestartIntentPrefix + generation
 				if err := m.persistCodexSwitchSession(ctx, store, switchID, *item, item.StopState, previousRestart); err != nil {
 					return err
 				}
 			}
+			var workerErr error
 			rec, ok, readErr := m.store.GetSession(ctx, item.SessionID)
 			if readErr != nil || !ok {
 				item.RestartState, item.ErrorCode = "failed", codexSwitchRestartUnknownPrefix+generation
-				_ = m.persistCodexSwitchSession(ctx, store, switchID, *item, item.StopState, previousRestart)
-				errs = append(errs, errors.Join(errors.New("session missing"), readErr))
+				if err := m.persistCodexSwitchSession(ctx, store, switchID, *item, item.StopState, previousRestart); err != nil {
+					return err
+				}
+				errs = append(errs, fmt.Errorf("restart session %s: %w", item.SessionID, errors.Join(errors.New("session missing"), readErr)))
 				continue
 			}
 			adopted := false
@@ -854,77 +860,104 @@ func (m *Manager) restartCodexSwitchSessions(ctx context.Context, store ports.Co
 					adopted, readErr = m.exactTargetGenerationAlive(ctx, ports.RuntimeHandle{ID: item.SourceHandleID}, item.SessionID, domain.AgentGenerationID(generation))
 				}
 				if readErr != nil {
-					errs = append(errs, readErr)
+					workerErr = readErr
 				}
 			} else if identityErr := validateCodexSwitchWorkerIdentity(rec, *item); identityErr != nil {
-				errs = append(errs, identityErr)
+				workerErr = identityErr
 			}
-			var restartErr error
-			if !adopted && len(errs) == 0 {
+			if !adopted && workerErr == nil {
 				forceFresh, requireNativeHistory := codexAccountSwitchRestartPolicy(*item)
 				var result RestoreResult
-				result, restartErr = m.resumeAgentRecordWithReservedGeneration(
+				result, workerErr = m.resumeAgentRecordWithReservedGeneration(
 					ctx, "Codex account switch", rec, forceFresh, requireNativeHistory, generation,
 				)
-				if restartErr == nil && result.Session.ID != item.SessionID {
-					restartErr = errors.New("codex resumed a different AO session")
+				// An interrupted Codex Chat turn can take slightly longer than the
+				// first bounded history-read window to flush its native checkpoint.
+				// Retry that exact native ID and reserved generation once. The first
+				// attempt has already waited for settlement, so this remains bounded
+				// and avoids requiring a manual recovery click for the common race.
+				if workerErr != nil && item.InterfaceMode == domain.SessionModeChat && errors.Is(workerErr, ports.ErrChatHistoryUnsettled) && ctx.Err() == nil {
+					result, workerErr = m.resumeAgentRecordWithReservedGeneration(
+						ctx, "Codex account switch", rec, forceFresh, requireNativeHistory, generation,
+					)
 				}
-				if restartErr == nil && requireNativeHistory && item.InterfaceMode == domain.SessionModeTUI && result.Mode != RestoreModeNative {
-					restartErr = errors.New("codex native history resume was not selected")
+				if workerErr == nil && result.Session.ID != item.SessionID {
+					workerErr = errors.New("codex resumed a different AO session")
 				}
-				if restartErr == nil && requireNativeHistory {
+				if workerErr == nil && requireNativeHistory && item.InterfaceMode == domain.SessionModeTUI && result.Mode != RestoreModeNative {
+					workerErr = errors.New("codex native history resume was not selected")
+				}
+				if workerErr == nil && requireNativeHistory {
 					resumedNativeID := strings.TrimSpace(result.Session.Metadata.AgentSessionID)
 					if item.InterfaceMode == domain.SessionModeChat {
 						resumedNativeID = strings.TrimSpace(result.Session.Metadata.ProviderConversationID)
 					}
 					if resumedNativeID != item.NativeSessionID {
-						restartErr = errors.New("codex resumed a different native history")
+						workerErr = errors.New("codex resumed a different native history")
 					}
 				}
 			}
-			if restartErr != nil || len(errs) > 0 {
+			if workerErr != nil {
 				item.RestartState, item.ErrorCode = "failed", codexSwitchRestartUnknownPrefix+generation
-				if restartErr != nil {
-					errs = append(errs, restartErr)
-				}
 			} else {
 				at := m.clock()
 				item.RestartState, item.RestartedAt, item.ErrorCode = "restarted", &at, ""
 			}
 			if err := m.persistCodexSwitchSession(ctx, store, switchID, *item, item.StopState, previousRestart); err != nil {
-				return errors.Join(append(errs, err)...)
+				return errors.Join(workerErr, err)
 			}
-			if len(errs) > 0 {
-				return errors.Join(errs...)
+			if workerErr != nil {
+				errs = append(errs, fmt.Errorf("restart session %s: %w", item.SessionID, workerErr))
 			}
 		}
 		if item.ReviewerWasRunning && item.ReviewerStopState == "stopped" && item.ReviewerRestartState != "restarted" && item.ReviewerRestartState != "skipped" {
+			workerFailureCode := ""
+			if item.RestartState == "failed" {
+				workerFailureCode = item.ErrorCode
+			}
+			var reviewerErr error
 			if reviewers == nil {
-				item.ReviewerRestartState, item.ErrorCode = "failed", "reviewer_restart_unconfirmed"
-				errs = append(errs, errors.New("codex reviewer lifecycle is unavailable"))
+				item.ReviewerRestartState = "failed"
+				if workerFailureCode == "" {
+					item.ErrorCode = "reviewer_restart_unconfirmed"
+				}
+				reviewerErr = errors.New("codex reviewer lifecycle is unavailable")
 			} else {
-				item.ErrorCode = codexSwitchReviewerRestartIntent
+				if workerFailureCode == "" {
+					item.ErrorCode = codexSwitchReviewerRestartIntent
+				}
 				if err := m.persistCodexSwitchSession(ctx, store, switchID, *item, item.StopState, item.RestartState); err != nil {
 					return err
 				}
 				snapshot, snapshotErr := reviewers.SnapshotCodexReviewer(ctx, item.SessionID)
 				if snapshotErr == nil && snapshot.Running && snapshot.NativeSessionID == item.ReviewerNativeSessionID {
-					item.ReviewerRestartState, item.ErrorCode = "restarted", ""
+					item.ReviewerRestartState = "restarted"
+					item.ErrorCode = workerFailureCode
 				} else if err := reviewers.RestoreCodexReviewerExact(ctx, item.SessionID, item.ReviewerNativeSessionID); err != nil {
-					item.ReviewerRestartState, item.ErrorCode = "failed", "reviewer_restart_unconfirmed"
-					errs = append(errs, errors.Join(snapshotErr, err))
+					item.ReviewerRestartState = "failed"
+					if workerFailureCode == "" {
+						item.ErrorCode = "reviewer_restart_unconfirmed"
+					}
+					reviewerErr = errors.Join(snapshotErr, err)
 				} else {
 					snapshot, snapshotErr = reviewers.SnapshotCodexReviewer(ctx, item.SessionID)
 					if snapshotErr != nil || !snapshot.Running || snapshot.NativeSessionID != item.ReviewerNativeSessionID {
-						item.ReviewerRestartState, item.ErrorCode = "failed", "reviewer_native_history_changed"
-						errs = append(errs, errors.Join(snapshotErr, errors.New("codex reviewer did not resume the recorded native history")))
+						item.ReviewerRestartState = "failed"
+						if workerFailureCode == "" {
+							item.ErrorCode = "reviewer_native_history_changed"
+						}
+						reviewerErr = errors.Join(snapshotErr, errors.New("codex reviewer did not resume the recorded native history"))
 					} else {
-						item.ReviewerRestartState, item.ErrorCode = "restarted", ""
+						item.ReviewerRestartState = "restarted"
+						item.ErrorCode = workerFailureCode
 					}
 				}
 			}
 			if err := m.persistCodexSwitchSession(ctx, store, switchID, *item, item.StopState, item.RestartState); err != nil {
-				return errors.Join(append(errs, err)...)
+				return errors.Join(reviewerErr, err)
+			}
+			if reviewerErr != nil {
+				errs = append(errs, fmt.Errorf("restart reviewer for session %s: %w", item.SessionID, reviewerErr))
 			}
 		}
 	}

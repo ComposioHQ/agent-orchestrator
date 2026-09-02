@@ -41,7 +41,9 @@ import { SessionTopbarHost } from "./SessionTopbarPortal";
 import { TerminalSwitchAgentButton } from "./TerminalSwitchAgentButton";
 import { TopbarButton } from "./TopbarButton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
+import { Button } from "./ui/button";
 import { useBrowserView } from "../hooks/useBrowserView";
+import { useCodexAccountActions } from "../hooks/useCodexAccountActions";
 import { useCodexAccountsQuery } from "../hooks/useCodexAccountsQuery";
 import { codexSwitchDisplay } from "../hooks/codex-accounts-state";
 import { useFileAnnotation } from "../hooks/useFileAnnotation";
@@ -509,6 +511,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 
 	const session = workspaceQuery.data;
 	const codexAccounts = useCodexAccountsQuery(session?.provider === "codex");
+	const codexAccountActions = useCodexAccountActions(queryClient);
 	const codexAccountSwitch = codexAccounts.data?.currentSwitch;
 	const codexAccountSwitchPresentation = codexAccountSwitch ? codexSwitchDisplay(codexAccountSwitch) : null;
 	const codexAccountSwitchBlocksSession = Boolean(
@@ -1475,15 +1478,32 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		<div className="relative flex h-full min-h-0 flex-col bg-background text-foreground" data-testid="session-detail">
 			{codexAccountSwitchBlocksSession ? (
 				<div
-					aria-live="assertive"
 					className="absolute inset-0 z-50 grid place-items-center bg-background/80 p-6 backdrop-blur-sm"
 					data-testid="codex-account-switch-blocker"
-					role="status"
 				>
 					<div className="flex max-w-sm flex-col items-center gap-3 rounded-xl border border-border bg-card px-6 py-5 text-center shadow-lg">
-						{codexAccountSwitchPresentation?.busy ? <LoaderCircle className="size-5 animate-spin text-passive" aria-label={t(codexAccountSwitchPresentation.key)} /> : null}
-						<p className="text-sm font-medium">{t("settings.codexAccounts.switchingSessions")}</p>
-						{codexAccountSwitchPresentation ? <p className="text-xs text-passive">{t(codexAccountSwitchPresentation.key)}</p> : null}
+						<div aria-live="assertive" className="flex flex-col items-center gap-3" role="status">
+							{codexAccountSwitchPresentation?.busy ? <LoaderCircle className="size-5 animate-spin text-passive" aria-label={t(codexAccountSwitchPresentation.key)} /> : null}
+							<p className="text-sm font-medium">
+								{codexAccountSwitchPresentation?.canRecover
+									? t(codexAccountSwitchPresentation.key)
+									: t("settings.codexAccounts.switchingSessions")}
+							</p>
+							{codexAccountSwitchPresentation && !codexAccountSwitchPresentation.canRecover ? <p className="text-xs text-passive">{t(codexAccountSwitchPresentation.key)}</p> : null}
+						</div>
+						{codexAccountSwitchPresentation?.canRecover && codexAccountSwitch ? (
+							<Button
+								type="button"
+								size="sm"
+								variant="outline"
+								disabled={codexAccountActions.recoverPending}
+								onClick={() => void codexAccountActions.recoverSwitch(codexAccountSwitch.id)}
+							>
+								{codexAccountActions.recoverPending ? <LoaderCircle className="animate-spin" aria-label={t("settings.codexAccounts.recovering")} /> : null}
+								{t("settings.codexAccounts.retryRestart")}
+							</Button>
+						) : null}
+						{codexAccountActions.error ? <p className="text-xs text-error" role="alert">{codexAccountActions.error}</p> : null}
 					</div>
 				</div>
 			) : null}

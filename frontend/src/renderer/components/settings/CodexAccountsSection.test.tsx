@@ -142,6 +142,8 @@ it("shows recovery as an action instead of indefinite switch progress", async ()
 
 	renderSection();
 	expect(await screen.findByRole("button", { name: "Retry failed sessions" })).toBeInTheDocument();
+	expect(screen.getByRole("button", { name: "Add account" })).toBeDisabled();
+	expect(screen.getByRole("button", { name: "Switch account" })).toBeDisabled();
 	expect(screen.getAllByText("AO could not confirm that every session restarted.").length).toBeGreaterThan(0);
 	expect(screen.queryByText("restart_unconfirmed")).not.toBeInTheDocument();
 });

@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { CodexAccountsResponse } from "./useCodexAccountsQuery";
 import { catalogFor } from "../i18n/messages";
 import type { AppLocale } from "../i18n/locales";
-import { codexAccountReasonCodes, codexAccountReasonKey, mergeCodexAccounts } from "./codex-accounts-state";
+import { codexAccountReasonCodes, codexAccountReasonKey, codexSwitchDisplay, mergeCodexAccounts } from "./codex-accounts-state";
+import type { CodexAccountSwitch } from "./useCodexAccountsQuery";
 
 const account = (id: string, createdAt: string, active = false) => ({ id, createdAt, active });
 
@@ -42,6 +43,23 @@ describe("mergeCodexAccounts", () => {
 			expect.objectContaining({ id: "b", active: true }),
 		]);
 	});
+});
+
+it("keeps account mutations fenced while recovery is required", () => {
+	const display = codexSwitchDisplay({
+		id: "switch-1",
+		sourceAccountId: "account-a",
+		targetAccountId: "account-b",
+		phase: "recovery_required",
+		canRecover: true,
+		sessions: [],
+		createdAt: "2026-09-02T00:00:00Z",
+		updatedAt: "2026-09-02T00:01:00Z",
+	} satisfies CodexAccountSwitch);
+
+	expect(display.busy).toBe(false);
+	expect(display.mutationBlocked).toBe(true);
+	expect(display.canRecover).toBe(true);
 });
 
 it("maps every account reason to complete native locale copy with a safe unknown fallback", () => {
