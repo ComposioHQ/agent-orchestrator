@@ -4,9 +4,9 @@
 
 **Goal:** Replace AO-owned Claude Code, Muse, and Codex model lists with catalogs discovered from each installed agent, while preserving Amp's static mode list.
 
-**Architecture:** Claude Code and Muse use isolated, short-lived PTYs to open `/model`, parse a complete menu, and close without creating AO sessions or sending prompts. Codex uses its structured app-server `model/list` method. Existing per-agent/per-project cache behavior remains authoritative, with asynchronous startup refresh for previously cached Claude Code and Muse scopes and the existing six-hour lazy refresh for all catalogs.
+**Architecture:** Claude Code uses the Claude Agent SDK's structured `supportedModels()` method without yielding a prompt, Muse uses an isolated short-lived PTY to open `/model`, and Codex uses its structured app-server `model/list` method. Existing per-agent/per-project cache behavior remains authoritative, with asynchronous startup refresh for previously cached Claude Code and Muse scopes and the existing six-hour lazy refresh for all catalogs.
 
-**Tech Stack:** Go, `github.com/creack/pty`, Codex app-server JSON-RPC, SQLite/sqlc, existing agent model catalog service.
+**Tech Stack:** Go, Claude Agent SDK, Node.js, `github.com/creack/pty`, Codex app-server JSON-RPC, SQLite/sqlc, existing agent model catalog service.
 
 **Spec:** `docs/superpowers/specs/2026-08-29-agent-owned-model-catalogs-design.md`
 
@@ -32,7 +32,7 @@
 3. Remove the three hardcoded model lists, classify them as discoverable catalog sources, and retain manual fallback behavior when discovery fails without cache.
 4. Re-run the targeted test.
 
-### Task 2: Add isolated Claude Code and Muse terminal discovery
+### Task 2: Add Claude SDK and isolated Muse terminal discovery
 
 **Files:**
 - Create: `backend/internal/adapters/agent/modelcatalog/terminal.go`
@@ -40,12 +40,12 @@
 - Modify: `backend/internal/adapters/agent/modelcatalog/catalog.go`
 - Modify: `backend/internal/daemon/daemon.go`
 
-1. Add fixture-driven failing tests for ANSI/control stripping, complete-menu detection, Claude alias/default normalization, Muse ID parsing, incomplete output, auth/trust output, and timeout/close behavior.
+1. Add failing SDK-runner tests for structured Claude model values, labels, version validation, timeout/close behavior, and fixture-driven Muse tests for ANSI/control stripping, complete-menu detection, IDs, incomplete output, and auth/trust output.
 2. Run the new targeted tests and confirm they fail before implementation.
-3. Add an injected terminal spawner interface backed in production by `runtime/ptyexec.Spawn`.
-4. Implement one bounded interaction: launch in project cwd/env, wait for a safe empty composer, write `/model\r`, capture a stable numbered menu, and always close the PTY.
-5. Keep Claude and Muse parsers separate. Claude derives documented aliases from menu labels; Muse accepts only explicit, unambiguous IDs. Parsing is all-or-nothing.
-6. Wire these paths into `Discoverer.Discover`; no AO session, transcript, prompt, trust answer, or auth answer is created.
+3. Add an injected Claude SDK catalog function and a terminal spawner interface backed in production by `runtime/ptyexec.Spawn` for Muse only.
+4. Package a bounded Node helper that calls `supportedModels()` with persistence, settings, hooks, tools, and MCP disabled, then always closes the SDK query.
+5. Implement Muse's bounded interaction: launch in project cwd/env, wait for a safe empty composer, write `/model\r`, capture a stable numbered menu, and always close the PTY.
+6. Wire these paths into `Discoverer.Discover`; no AO session, transcript, provider prompt, trust answer, or auth answer is created.
 7. Run `cd backend && go test ./internal/adapters/agent/modelcatalog`.
 
 ### Task 3: Discover Codex models through app-server
@@ -88,7 +88,7 @@
 - Modify: relevant daemon tests
 
 1. Add a failing daemon/service wiring test proving construction does not block and the warm pass is scheduled after dependencies exist.
-2. Wire the PTY spawner, Codex app-server source, and asynchronous Claude/Muse cache warmer.
+2. Wire the Claude SDK source, Muse PTY spawner, Codex app-server source, and asynchronous Claude/Muse cache warmer.
 3. Confirm uncached scopes are discovered on first picker access, cached catalogs are returned immediately, the existing six-hour `RefreshRecommended` behavior remains, and manual refresh still forces discovery.
 4. Run focused tests, then:
 

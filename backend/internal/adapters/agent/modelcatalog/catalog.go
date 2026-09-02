@@ -128,9 +128,14 @@ func customModelEntryMode(agentID string) ports.CustomModelEntryMode {
 // Discoverer implements the model-discovery port for production daemon wiring.
 type Discoverer struct {
 	TerminalSpawner TerminalSpawnFunc
+	ClaudeModels    ClaudeModelListFunc
 	CodexModels     CodexModelListFunc
 	ClineOptions    ClineConfigOptionListFunc
 }
+
+// ClaudeModelListFunc obtains Claude Code's account-scoped Agent SDK catalog
+// without opening an interactive client or sending a prompt.
+type ClaudeModelListFunc func(context.Context, ports.AgentModelDiscoveryRequest) ([]ports.AgentModelInfo, error)
 
 // CodexModelListFunc obtains Codex's account-scoped app-server catalog without
 // opening a provider thread.
@@ -142,7 +147,10 @@ type ClineConfigOptionListFunc func(context.Context, ports.AgentModelDiscoveryRe
 
 // Discover uses the agent-owned model surface configured for this adapter.
 func (d Discoverer) Discover(ctx context.Context, request ports.AgentModelDiscoveryRequest) (ports.AgentModelCatalog, error) {
-	if request.AgentID == "claude-code" || request.AgentID == "muse" {
+	if request.AgentID == "claude-code" {
+		return discoverClaudeSDKCatalog(ctx, request, d.ClaudeModels)
+	}
+	if request.AgentID == "muse" {
 		return discoverTerminalCatalog(ctx, request, d.TerminalSpawner)
 	}
 	if request.AgentID == "codex" {
@@ -156,6 +164,32 @@ func (d Discoverer) Discover(ctx context.Context, request ports.AgentModelDiscov
 		// the configured provider selections already stored by Cline.
 	}
 	return Discover(ctx, request.AgentID, request.Binary, request.WorkingDir, request.Env)
+}
+
+func discoverClaudeSDKCatalog(ctx context.Context, request ports.AgentModelDiscoveryRequest, list ClaudeModelListFunc) (ports.AgentModelCatalog, error) {
+	base := Base(request.AgentID)
+	if list == nil {
+		return base, errors.New("claude agent SDK model discovery is unavailable")
+	}
+	models, err := list(ctx, request)
+	if err != nil {
+		return base, fmt.Errorf("claude-code model discovery: %w", err)
+	}
+	selectable := models[:0]
+	for _, entry := range models {
+		if strings.EqualFold(strings.TrimSpace(entry.ID), "default") {
+			continue
+		}
+		selectable = append(selectable, entry)
+	}
+	selectable = normalize(selectable)
+	if len(selectable) == 0 {
+		return base, errors.New("claude-code model discovery returned no models")
+	}
+	base.Models = applyClaudeConfiguredDefault(selectable, request.WorkingDir, request.Env)
+	base.Source = "sdk"
+	base.FetchedAt = time.Now().UTC()
+	return base, nil
 }
 
 // CatalogFingerprint returns a stable fingerprint of the discovery inputs: the
@@ -172,7 +206,10 @@ func (Discoverer) Manual(agentID string) ports.AgentModelCatalog { return Manual
 // Discover executes model catalog discovery for an agent binary.
 func Discover(ctx context.Context, agentID, binary, workingDir string, env map[string]string) (ports.AgentModelCatalog, error) {
 	base := Base(agentID)
-	if agentID == "claude-code" || agentID == "muse" {
+	if agentID == "claude-code" {
+		return base, errors.New("claude-code model discovery requires the Agent SDK")
+	}
+	if agentID == "muse" {
 		return base, errors.New("interactive model discovery requires a private terminal")
 	}
 	if agentID == "codex" {

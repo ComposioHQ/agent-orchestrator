@@ -2,9 +2,8 @@ package modelcatalog
 
 import (
 	"context"
+	"errors"
 	"io"
-	"os"
-	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
@@ -31,60 +30,8 @@ type blockingModelStream struct {
 	closeOnce sync.Once
 }
 
-type repaintingModelStream struct {
-	mu        sync.Mutex
-	readIndex int
-	writes    strings.Builder
-	wrote     chan struct{}
-	wroteOnce sync.Once
-	closed    chan struct{}
-	closeOnce sync.Once
-}
-
 func newBlockingModelStream() *blockingModelStream {
 	return &blockingModelStream{closed: make(chan struct{})}
-}
-
-func newRepaintingModelStream() *repaintingModelStream {
-	return &repaintingModelStream{
-		wrote:  make(chan struct{}),
-		closed: make(chan struct{}),
-	}
-}
-
-func (s *repaintingModelStream) Read(buf []byte) (int, error) {
-	s.mu.Lock()
-	readIndex := s.readIndex
-	s.readIndex++
-	s.mu.Unlock()
-
-	switch readIndex {
-	case 0:
-		return copy(buf, []byte("$\n")), nil
-	case 1:
-		<-s.wrote
-		return copy(buf, []byte("1. Default — Default model\n2. Fable — Fable 5\n3. Sonnet — Sonnet 5\nEnter selection [1-3], or Escape to cancel:\n")), nil
-	case 2:
-		return copy(buf, []byte("1. Default — Default model\n3. Sonnet — Sonnet 5\n")), nil
-	default:
-		<-s.closed
-		return 0, io.EOF
-	}
-}
-
-func (s *repaintingModelStream) Write(buf []byte) (int, error) {
-	s.mu.Lock()
-	n, err := s.writes.Write(buf)
-	s.mu.Unlock()
-	s.wroteOnce.Do(func() { close(s.wrote) })
-	return n, err
-}
-
-func (s *repaintingModelStream) Resize(uint16, uint16) error { return nil }
-
-func (s *repaintingModelStream) Close() error {
-	s.closeOnce.Do(func() { close(s.closed) })
-	return nil
 }
 
 func (s *blockingModelStream) Read(buf []byte) (int, error) {
@@ -113,16 +60,6 @@ func (s *blockingModelStream) Close() error {
 
 func newScriptedModelStream(initial, afterWrite string) *scriptedModelStream {
 	return &scriptedModelStream{reads: [][]byte{[]byte(initial), []byte(afterWrite)}, wrote: make(chan struct{})}
-}
-
-func environmentValue(env []string, key string) string {
-	prefix := key + "="
-	for i := len(env) - 1; i >= 0; i-- {
-		if strings.HasPrefix(env[i], prefix) {
-			return strings.TrimPrefix(env[i], prefix)
-		}
-	}
-	return ""
 }
 
 func (s *scriptedModelStream) Read(buf []byte) (int, error) {
@@ -163,65 +100,7 @@ func (s *scriptedModelStream) Close() error {
 	return nil
 }
 
-func TestParseClaudeModelMenuUsesAgentOwnedOptions(t *testing.T) {
-	output := "\x1b[32m1. Default (recommended)\x1b[0m — Use the default model (currently Opus 5)\r\n" +
-		"2. (selected) Opus (1M context) — Opus 5 with 1M context\r\n" +
-		"3. Fable — Fable 5\r\n" +
-		"4. Sonnet — Sonnet 5\r\n" +
-		"5. Sonnet 5 (1M context) — Sonnet 5 for long sessions\r\n" +
-		"6. Haiku — Haiku 4.5\r\n" +
-		"Enter selection [1-6], or Escape to cancel:\r\n"
-
-	got, err := parseClaudeModelMenu(output)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := []ports.AgentModelInfo{
-		{ID: "opus[1m]", Label: "Opus (1M context)", IsDefault: true},
-		{ID: "fable", Label: "Fable"},
-		{ID: "sonnet", Label: "Sonnet"},
-		{ID: "sonnet[1m]", Label: "Sonnet 5 (1M context)"},
-		{ID: "haiku", Label: "Haiku"},
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("models = %#v, want %#v", got, want)
-	}
-}
-
-func TestParseClaudeModelMenuUsesLatestCompleteRepaint(t *testing.T) {
-	output := "1. Default — Default model\n" +
-		"2. Opus — Opus 5\n" +
-		"3. Sonnet — Sonnet 5\n" +
-		"Enter selection [1-3], or Escape to cancel:\n" +
-		"1. Default — Default model\n" +
-		"2. Fable — Fable 5\n" +
-		"3. Haiku — Haiku 4.5\n" +
-		"Enter selection [1-3], or Escape to cancel:\n"
-
-	got, err := parseClaudeModelMenu(output)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := []ports.AgentModelInfo{
-		{ID: "fable", Label: "Fable"},
-		{ID: "haiku", Label: "Haiku"},
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("models = %#v, want %#v", got, want)
-	}
-}
-
-func TestParseClaudeModelMenuRejectsIncompleteNumbering(t *testing.T) {
-	_, err := parseClaudeModelMenu("1. Default  Default model\n2. Opus  Opus 5\n4. Sonnet  Sonnet 5\n")
-	if err == nil {
-		t.Fatal("expected incomplete menu error")
-	}
-}
-
 func TestParseTerminalModelMenusRejectDuplicateIDs(t *testing.T) {
-	if _, err := parseClaudeModelMenu("1. Default  Default model\n2. Sonnet  First\n3. Sonnet  Duplicate\n"); err == nil {
-		t.Fatal("Claude duplicate alias was accepted")
-	}
 	if _, err := parseMuseModelMenu("1. muse-spark  First\n2. muse-spark  Duplicate\n"); err == nil {
 		t.Fatal("Muse duplicate model ID was accepted")
 	}
@@ -232,9 +111,6 @@ func TestParseTerminalModelMenuRejectsTrustAndAuthScreens(t *testing.T) {
 		"Do you trust the files in this folder?\n1. Yes\n2. No\n",
 		"Authentication required. Run login to continue.\n",
 	} {
-		if _, err := parseClaudeModelMenu(output); err == nil {
-			t.Fatalf("parseClaudeModelMenu(%q) succeeded", output)
-		}
 		if _, err := parseMuseModelMenu(output); err == nil {
 			t.Fatalf("parseMuseModelMenu(%q) succeeded", output)
 		}
@@ -263,103 +139,35 @@ func TestParseMuseModelMenuRejectsLabelOnlyRows(t *testing.T) {
 	}
 }
 
-func TestDiscoverClaudeModelsUsesPrivateTerminalAndClosesIt(t *testing.T) {
-	stream := newScriptedModelStream("$\n", "1. Default — Default model\n2. (selected) Fable — Fable 5\n3. Sonnet — Sonnet 5\nEnter selection [1-3], or Escape to cancel:\n")
-	var gotArgv, gotEnv []string
-	var gotDir string
-	spawn := func(_ context.Context, argv, env []string, workingDir string, rows, cols uint16) (ports.Stream, error) {
-		gotArgv, gotEnv, gotDir = argv, env, workingDir
-		if rows != 40 || cols != 160 {
-			t.Fatalf("terminal size = %dx%d, want 40x160", rows, cols)
-		}
-		return stream, nil
+func TestDiscovererRoutesClaudeThroughSDKWithoutTerminal(t *testing.T) {
+	terminalCalled := false
+	request := ports.AgentModelDiscoveryRequest{AgentID: "claude-code", Binary: "/bin/claude"}
+	discoverer := Discoverer{
+		TerminalSpawner: func(context.Context, []string, []string, string, uint16, uint16) (ports.Stream, error) {
+			terminalCalled = true
+			return nil, errors.New("terminal must not be used")
+		},
+		ClaudeModels: func(_ context.Context, got ports.AgentModelDiscoveryRequest) ([]ports.AgentModelInfo, error) {
+			if !reflect.DeepEqual(got, request) {
+				t.Fatalf("request = %#v, want %#v", got, request)
+			}
+			return []ports.AgentModelInfo{
+				{ID: "default", Label: "Default"},
+				{ID: "sonnet", Label: "Sonnet"},
+				{ID: "opus", Label: "Opus"},
+			}, nil
+		},
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	got, err := discoverTerminalCatalog(ctx, ports.AgentModelDiscoveryRequest{
-		AgentID: "claude-code", Binary: "/bin/claude", WorkingDir: "/work/project",
-		Env: map[string]string{"AO_TEST": "yes", "ANTHROPIC_MODEL": "sonnet"},
-	}, spawn)
+	got, err := discoverer.Discover(context.Background(), request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(gotArgv, []string{"/bin/claude", "--ax-screen-reader", "--safe-mode"}) {
-		t.Fatalf("argv = %q", gotArgv)
+	if terminalCalled {
+		t.Fatal("Claude model discovery opened a terminal")
 	}
-	if gotDir != "/work/project" || !environmentContains(gotEnv, "AO_TEST=yes") {
-		t.Fatalf("workingDir = %q, env = %#v", gotDir, gotEnv)
-	}
-	if stream.writes.String() != "/model\r" || !stream.closed {
-		t.Fatalf("writes = %q, closed = %v", stream.writes.String(), stream.closed)
-	}
-	if len(got.Models) != 2 || got.Models[0].ID != "sonnet" || !got.Models[0].IsDefault || got.Source != "cli" {
+	if got.Source != "sdk" || len(got.Models) != 2 || got.Models[0].ID != "opus" || got.Models[1].ID != "sonnet" {
 		t.Fatalf("catalog = %#v", got)
-	}
-}
-
-func TestDiscoverClaudeModelsIsolatesSessionStateAndHooks(t *testing.T) {
-	stream := newScriptedModelStream("$\n", "1. Default — Default model\n2. Fable — Fable 5\n3. Sonnet — Sonnet 5\nEnter selection [1-3], or Escape to cancel:\n")
-	var isolatedConfigDir string
-	spawn := func(_ context.Context, argv, env []string, _ string, _, _ uint16) (ports.Stream, error) {
-		if !reflect.DeepEqual(argv, []string{"/bin/claude", "--ax-screen-reader", "--safe-mode"}) {
-			t.Fatalf("argv = %q", argv)
-		}
-		isolatedConfigDir = environmentValue(env, "CLAUDE_CONFIG_DIR")
-		if isolatedConfigDir == "" || isolatedConfigDir == "/real/claude" {
-			t.Fatalf("CLAUDE_CONFIG_DIR = %q, want isolated directory", isolatedConfigDir)
-		}
-		if err := os.WriteFile(filepath.Join(isolatedConfigDir, "session.jsonl"), []byte("probe"), 0o600); err != nil {
-			t.Fatalf("write isolated session fixture: %v", err)
-		}
-		return stream, nil
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	_, err := discoverTerminalCatalog(ctx, ports.AgentModelDiscoveryRequest{
-		AgentID: "claude-code", Binary: "/bin/claude",
-		Env: map[string]string{"CLAUDE_CONFIG_DIR": "/real/claude"},
-	}, spawn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if isolatedConfigDir == "" {
-		t.Fatal("spawn did not receive an isolated config directory")
-	}
-	if _, err := os.Stat(isolatedConfigDir); !os.IsNotExist(err) {
-		t.Fatalf("isolated config directory still exists: stat err = %v", err)
-	}
-}
-
-func TestDiscovererRoutesClaudeThroughVisibleModelMenu(t *testing.T) {
-	stream := newScriptedModelStream("$\n", "1. Default — Default model\n2. Opus (1M context) — Opus 5\n3. Fable — Fable 5\n4. Sonnet — Sonnet 5\n5. Sonnet 5 (1M context) — Sonnet 5 long\n6. Haiku — Haiku 4.5\nEnter selection [1-6], or Escape to cancel:\n")
-	discoverer := Discoverer{TerminalSpawner: func(context.Context, []string, []string, string, uint16, uint16) (ports.Stream, error) {
-		return stream, nil
-	}}
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	got, err := discoverer.Discover(ctx, ports.AgentModelDiscoveryRequest{AgentID: "claude-code", Binary: "/bin/claude"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := []string{"opus[1m]", "fable", "sonnet", "sonnet[1m]", "haiku"}
-	if len(got.Models) != len(want) {
-		t.Fatalf("models = %#v, want IDs %q", got.Models, want)
-	}
-	wantIDs := make(map[string]bool, len(want))
-	for _, id := range want {
-		wantIDs[id] = true
-	}
-	for _, model := range got.Models {
-		if !wantIDs[model.ID] {
-			t.Fatalf("unexpected model %#v; want IDs %q", model, want)
-		}
-		delete(wantIDs, model.ID)
-	}
-	if len(wantIDs) != 0 {
-		t.Fatalf("models = %#v, missing IDs %#v", got.Models, wantIDs)
 	}
 }
 
@@ -385,29 +193,6 @@ func TestDiscoverMuseModelsUsesNoSessionLog(t *testing.T) {
 	}
 }
 
-func TestDiscoverTerminalModelsKeepsCompleteMenuDuringPartialRepaint(t *testing.T) {
-	stream := newRepaintingModelStream()
-	spawn := func(context.Context, []string, []string, string, uint16, uint16) (ports.Stream, error) {
-		return stream, nil
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	got, err := discoverTerminalCatalog(ctx, ports.AgentModelDiscoveryRequest{
-		AgentID: "claude-code", Binary: "/bin/claude",
-	}, spawn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := []ports.AgentModelInfo{
-		{ID: "fable", Label: "Fable"},
-		{ID: "sonnet", Label: "Sonnet"},
-	}
-	if !reflect.DeepEqual(got.Models, want) {
-		t.Fatalf("models = %#v, want %#v", got.Models, want)
-	}
-}
-
 func TestDiscoverTerminalModelsNeverWritesIntoTrustPrompt(t *testing.T) {
 	stream := newScriptedModelStream("Do you trust the files in this folder?\n1. Yes  Continue\n2. No  Exit\n", "")
 	spawn := func(context.Context, []string, []string, string, uint16, uint16) (ports.Stream, error) {
@@ -416,7 +201,7 @@ func TestDiscoverTerminalModelsNeverWritesIntoTrustPrompt(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	_, err := discoverTerminalCatalog(ctx, ports.AgentModelDiscoveryRequest{AgentID: "claude-code", Binary: "/bin/claude"}, spawn)
+	_, err := discoverTerminalCatalog(ctx, ports.AgentModelDiscoveryRequest{AgentID: "muse", Binary: "/bin/muse"}, spawn)
 	if err == nil {
 		t.Fatal("expected trust prompt error")
 	}
@@ -433,7 +218,7 @@ func TestDiscoverTerminalModelsClosesOnCancellation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
 
-	_, err := discoverTerminalCatalog(ctx, ports.AgentModelDiscoveryRequest{AgentID: "claude-code", Binary: "/bin/claude"}, spawn)
+	_, err := discoverTerminalCatalog(ctx, ports.AgentModelDiscoveryRequest{AgentID: "muse", Binary: "/bin/muse"}, spawn)
 	if err == nil {
 		t.Fatal("expected cancellation error")
 	}

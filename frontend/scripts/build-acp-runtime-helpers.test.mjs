@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, w
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { createWorkDirectory, npmInvocation, pruneNodeDistribution } from "./build-acp-runtime-helpers.mjs";
+import { createWorkDirectory, npmInvocation, pruneNodeDistribution, runtimeSourceFiles } from "./build-acp-runtime-helpers.mjs";
 
 const temporaryDirectories = [];
 
@@ -20,6 +20,16 @@ describe("createWorkDirectory", () => {
 
 		expect(dirname(workDirectory)).toBe(outputRoot);
 		expect(existsSync(workDirectory)).toBe(true);
+	});
+});
+
+describe("runtimeSourceFiles", () => {
+	it("packages and fingerprints the Claude model catalog helper", () => {
+		expect(runtimeSourceFiles()).toEqual([
+			"package.json",
+			"package-lock.json",
+			"claude-model-catalog.mjs",
+		]);
 	});
 });
 

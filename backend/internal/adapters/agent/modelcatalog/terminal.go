@@ -50,30 +50,14 @@ func discoverTerminalCatalog(ctx context.Context, request ports.AgentModelDiscov
 	if strings.TrimSpace(request.Binary) == "" {
 		return base, errors.New("agent binary is not installed")
 	}
-	args := []string{request.Binary}
-	discoveryEnv := request.Env
-	switch request.AgentID {
-	case "claude-code":
-		configDir, err := os.MkdirTemp("", "ao-claude-model-catalog-")
-		if err != nil {
-			return base, fmt.Errorf("claude-code model discovery isolation: %w", err)
-		}
-		defer func() { _ = os.RemoveAll(configDir) }()
-		discoveryEnv = make(map[string]string, len(request.Env)+1)
-		for key, value := range request.Env {
-			discoveryEnv[key] = value
-		}
-		discoveryEnv["CLAUDE_CONFIG_DIR"] = configDir
-		args = append(args, "--ax-screen-reader", "--safe-mode")
-	case "muse":
-		args = append(args, "--no-session-log")
-	default:
+	if request.AgentID != "muse" {
 		return base, fmt.Errorf("%s does not support terminal model discovery", request.AgentID)
 	}
+	args := []string{request.Binary, "--no-session-log"}
 
 	runCtx, cancel := context.WithTimeout(ctx, commandTimeout)
 	defer cancel()
-	stream, err := spawn(runCtx, args, mergedEnvironment(os.Environ(), discoveryEnv), request.WorkingDir, modelTerminalRows, modelTerminalColumns)
+	stream, err := spawn(runCtx, args, mergedEnvironment(os.Environ(), request.Env), request.WorkingDir, modelTerminalRows, modelTerminalColumns)
 	if err != nil {
 		return base, fmt.Errorf("%s model discovery: %w", request.AgentID, err)
 	}
@@ -102,7 +86,7 @@ func discoverTerminalCatalog(ctx context.Context, request ports.AgentModelDiscov
 				settle = nil
 				continue
 			}
-			return terminalCatalog(base, discovered, request), nil
+			return terminalCatalog(base, discovered), nil
 		case read := <-reads:
 			if len(read.data) > 0 {
 				if output.Len()+len(read.data) > modelTerminalOutputLimit {
@@ -149,7 +133,7 @@ func discoverTerminalCatalog(ctx context.Context, request ports.AgentModelDiscov
 			}
 			if read.err != nil {
 				if errors.Is(read.err, io.EOF) && len(discovered) > 0 {
-					return terminalCatalog(base, discovered, request), nil
+					return terminalCatalog(base, discovered), nil
 				}
 				if lastParseErr != nil {
 					return base, fmt.Errorf("%s model discovery: %w", request.AgentID, lastParseErr)
@@ -196,10 +180,6 @@ func writeTerminalCommand(stream ports.Stream, command string) error {
 
 func terminalComposerReady(agentID, output string) bool {
 	switch agentID {
-	case "claude-code":
-		return terminalui.LastBorderedPromptIsEmptyOrDimPlaceholder(output, "❯") ||
-			terminalui.LastPromptIsEmptyOrDimPlaceholder(output, "❯") ||
-			terminalui.LastPromptIsEmptyOrDimPlaceholder(output, "$")
 	case "muse":
 		lines := terminalui.PlainTerminalLines(output)
 		hasComposer := false
@@ -221,8 +201,6 @@ func terminalComposerReady(agentID, output string) bool {
 
 func parseTerminalModels(agentID, output string) ([]ports.AgentModelInfo, error) {
 	switch agentID {
-	case "claude-code":
-		return parseClaudeModelMenu(output)
 	case "muse":
 		return parseMuseModelMenu(output)
 	default:
@@ -230,10 +208,7 @@ func parseTerminalModels(agentID, output string) ([]ports.AgentModelInfo, error)
 	}
 }
 
-func terminalCatalog(base ports.AgentModelCatalog, models []ports.AgentModelInfo, request ports.AgentModelDiscoveryRequest) ports.AgentModelCatalog {
-	if request.AgentID == "claude-code" {
-		models = applyClaudeConfiguredDefault(models, request.WorkingDir, request.Env)
-	}
+func terminalCatalog(base ports.AgentModelCatalog, models []ports.AgentModelInfo) ports.AgentModelCatalog {
 	base.Models = normalize(models)
 	base.Source = "cli"
 	base.FetchedAt = time.Now().UTC()
@@ -249,45 +224,6 @@ func applyClaudeConfiguredDefault(models []ports.AgentModelInfo, workingDir stri
 		models[i].IsDefault = strings.EqualFold(models[i].ID, configured)
 	}
 	return models
-}
-
-func parseClaudeModelMenu(output string) ([]ports.AgentModelInfo, error) {
-	rows, err := parseNumberedModelMenu(output)
-	if err != nil {
-		return nil, err
-	}
-	boundary := fmt.Sprintf("enter selection [1-%d]", rows[len(rows)-1].number)
-	if !strings.Contains(strings.ToLower(latestNumberedModelMenuText(output)), boundary) {
-		return nil, errors.New("claude model menu boundary is incomplete")
-	}
-	models := make([]ports.AgentModelInfo, 0, len(rows))
-	seen := make(map[string]struct{}, len(rows))
-	for _, row := range rows {
-		label := strings.TrimSpace(strings.TrimSuffix(row.label, "✓"))
-		if strings.HasPrefix(strings.ToLower(label), "default") {
-			continue
-		}
-		fields := strings.Fields(label)
-		if len(fields) == 0 {
-			return nil, errors.New("claude model menu contains an empty option")
-		}
-		id := strings.ToLower(fields[0])
-		if strings.Contains(strings.ToLower(label), "1m context") {
-			id += "[1m]"
-		}
-		if !museModelIDPattern.MatchString(id) && !strings.HasSuffix(id, "[1m]") {
-			return nil, fmt.Errorf("claude model menu contains an unsupported option %q", label)
-		}
-		if _, duplicate := seen[id]; duplicate {
-			return nil, fmt.Errorf("claude model menu contains duplicate alias %q", id)
-		}
-		seen[id] = struct{}{}
-		models = append(models, ports.AgentModelInfo{ID: id, Label: label, IsDefault: row.selected})
-	}
-	if len(models) == 0 {
-		return nil, errors.New("claude model menu returned no models")
-	}
-	return models, nil
 }
 
 func parseMuseModelMenu(output string) ([]ports.AgentModelInfo, error) {

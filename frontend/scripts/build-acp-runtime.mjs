@@ -11,7 +11,12 @@ import {
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
-import { createWorkDirectory, npmInvocation, pruneNodeDistribution } from "./build-acp-runtime-helpers.mjs";
+import {
+	createWorkDirectory,
+	npmInvocation,
+	pruneNodeDistribution,
+	runtimeSourceFiles,
+} from "./build-acp-runtime-helpers.mjs";
 
 const NODE_VERSION = "22.23.2";
 const scriptsDir = dirname(fileURLToPath(import.meta.url));
@@ -31,8 +36,12 @@ if (!platform || !arch) {
 const extension = process.platform === "win32" ? "zip" : "tar.gz";
 const archiveName = `node-v${NODE_VERSION}-${platform}-${arch}.${extension}`;
 const baseURL = `https://nodejs.org/dist/v${NODE_VERSION}`;
-const buildSignature = createHash("sha256")
-	.update(readFileSync(join(sourceDir, "package-lock.json")))
+const runtimeSources = runtimeSourceFiles();
+const signature = createHash("sha256");
+for (const source of runtimeSources) {
+	signature.update(readFileSync(join(sourceDir, source)));
+}
+const buildSignature = signature
 	.update(readFileSync(fileURLToPath(import.meta.url)))
 	.update(readFileSync(join(scriptsDir, "build-acp-runtime-helpers.mjs")))
 	.update(`node=${NODE_VERSION};platform=${platform};arch=${arch}`)
@@ -49,15 +58,17 @@ const expectedAdapter = join(
 	"dist",
 	"index.js",
 );
-if (existsSync(markerPath) && existsSync(expectedNode) && existsSync(expectedAdapter)) {
+const expectedModelCatalog = join(outDir, "claude-model-catalog.mjs");
+if (existsSync(markerPath) && existsSync(expectedNode) && existsSync(expectedAdapter) && existsSync(expectedModelCatalog)) {
 	const marker = JSON.parse(readFileSync(markerPath, "utf8"));
 	if (marker.signature === buildSignature) process.exit(0);
 }
 
 rmSync(outDir, { recursive: true, force: true });
 mkdirSync(outDir, { recursive: true });
-cpSync(join(sourceDir, "package.json"), join(outDir, "package.json"));
-cpSync(join(sourceDir, "package-lock.json"), join(outDir, "package-lock.json"));
+for (const source of runtimeSources) {
+	cpSync(join(sourceDir, source), join(outDir, source));
+}
 
 const npm = npmInvocation(["ci", "--omit=dev", "--omit=optional", "--ignore-scripts"]);
 run(npm.command, npm.args, { cwd: outDir });

@@ -2,12 +2,12 @@
 
 ## Goal
 
-Remove every release-time model-ID list from AO. Claude Code and Muse discover their installed account's choices from `/model`, while Codex reads its structured app-server `model/list`. Amp's documented execution modes remain because they are modes, not provider model IDs.
+Remove every release-time model-ID list from AO. Claude Code discovers its installed account's choices through the Claude Agent SDK, Muse uses `/model`, and Codex reads its structured app-server `model/list`. Amp's documented execution modes remain because they are modes, not provider model IDs.
 
 ## Scope
 
 - Remove the hardcoded Claude Code, Codex, and Muse model catalogs.
-- Discover Claude Code choices from the installed Claude Code TUI and cache them.
+- Discover Claude Code choices from the installed Claude Agent SDK and cache them.
 - Discover Codex choices from the installed Codex app-server protocol and cache them.
 - Discover Muse choices from the installed Muse TUI and cache them.
 - Reuse the existing `AgentModelCatalog` response, SQLite cache, HTTP routes, frontend controls, and manual Refresh action.
@@ -29,24 +29,17 @@ AO does not fall back to a bundled model-ID table. A failed discovery returns th
 
 ## Claude Code Discovery
 
-Claude Code has no machine-readable model-list command. AO therefore runs the adapter-resolved Claude executable in a temporary private PTY using the project working directory and environment. It starts accessibility-oriented terminal output in Claude's safe mode, with a fresh temporary `CLAUDE_CONFIG_DIR`, waits for an empty composer, writes `/model` followed by Enter, and captures the complete stable numbered menu. Safe mode suppresses user and project hooks and other customizations during the probe; the isolated config directory keeps any provider session state out of the user's normal Claude history and is removed after the process closes.
+Claude Code has no machine-readable model-list command, but the Claude Agent SDK exposes `Query.supportedModels()`. AO runs a small packaged helper with its bundled Node runtime and the adapter-resolved, user-installed Claude executable. The helper opens only the SDK control channel, calls `supportedModels()`, and closes it without yielding a prompt.
 
-AO never selects a menu entry, submits a user prompt, answers workspace trust or authentication, or creates an AO session. It closes the terminal immediately after capture. AO therefore requests no model inference, although Claude may perform authentication and catalog network activity.
+The SDK query sets `persistSession: false`, uses no filesystem setting sources, disables hooks, tools, and MCP servers, and never creates an AO session. AO therefore requests no model inference and does not create a project transcript or run configured `SessionStart` hooks, although Claude may perform authentication and catalog network activity.
 
-Cancellation, timeout, unexpected interaction screens, incomplete output, or premature exit are discovery failures. The implementation reuses AO's cross-platform PTY support and owns cleanup on every path.
+Cancellation, timeout, malformed or version-incompatible output, an empty catalog, or premature exit are discovery failures. The implementation closes the SDK query and child process on every path.
 
-### Claude Parsing
+### Claude Normalization
 
-The parser removes ANSI and terminal-control sequences and extracts only complete numbered model rows. It ignores `Default (recommended)` because an empty AO override already means Claude's default.
+AO uses `ModelInfo.value` as the launch value and `ModelInfo.displayName` as the label. It ignores the SDK's `default` meta-entry because an empty AO override already means Claude's default.
 
-Claude shows display names instead of launch values, so AO derives aliases mechanically rather than storing a model table:
-
-- Lowercase the model-family word; version text is display metadata (`Fable 5` becomes `fable`).
-- Append `[1m]` when the row explicitly says `1M context` (`Opus 5 (1M context)` becomes `opus[1m]`).
-- Preserve the visible row name as the picker label.
-- Mark the row matching Claude's resolved project/user model setting as default.
-
-Parsing is all-or-nothing. Every selectable row must yield a unique non-empty alias and the menu boundary must be present. Unknown or ambiguous output fails discovery rather than caching a partial catalog.
+AO does not derive or hardcode Claude aliases. It preserves new SDK values automatically and marks the row matching Claude's resolved project/user model setting as default. Normalization rejects empty catalogs and malformed helper output rather than caching a partial result.
 
 ## Codex Discovery
 
@@ -58,7 +51,7 @@ Codex discovery failure follows the shared cached/manual fallback. The existing 
 
 ## Muse Discovery
 
-Muse 0.2.1 has no non-interactive model-list command, but its installed TUI exposes `/model` as the native model picker. AO removes the static Muse Spark list and uses the same private-PTY lifecycle as Claude: start Muse with no initial prompt and session logging disabled, wait for the empty composer, submit only `/model`, capture a complete stable menu, and close without selecting a model or submitting a provider prompt.
+Muse 0.2.1 has no non-interactive model-list command, but its installed TUI exposes `/model` as the native model picker. AO removes the static Muse Spark list and uses a private PTY: start Muse with no initial prompt and session logging disabled, wait for the empty composer, submit only `/model`, capture a complete stable menu, and close without selecting a model or submitting a provider prompt.
 
 Muse has its own parser because its menu layout and launch values are agent-owned and need not match Claude's alias conventions. AO records only model identifiers that the menu exposes unambiguously. It preserves Muse's display label, provider information, and default marker when present. If a row exposes only a display name with no reliable `--model` value, discovery fails all-or-nothing rather than inventing an identifier.
 
@@ -81,7 +74,7 @@ Codex relies on fingerprint invalidation and six-hour/manual refresh rather than
 ## Boundaries and Safety
 
 - No discovery starts an AO session, worktree, or provider turn.
-- Claude Code and Muse discovery send only `/model` and Enter and never answer another prompt.
+- Claude Code discovery never yields an SDK prompt; Muse sends only `/model` and Enter.
 - Codex discovery sends only app-server initialization and `model/list` before closing.
 - Startup work is background-only and interactive scopes run sequentially.
 - Raw terminal/protocol output is not persisted; only normalized catalog data and existing metadata enter SQLite.
@@ -90,13 +83,13 @@ Codex relies on fingerprint invalidation and six-hour/manual refresh rather than
 
 ## Testing
 
-Claude adapter tests use a fake PTY and recorded accessibility transcripts to cover Fable, ordinary aliases, 1M aliases, ANSI/control sequences, fragmented reads, duplicates, incomplete menus, unexpected prompts, timeout, cancellation, and cleanup.
+Claude adapter tests inject the SDK runner and cover isolation options, response-version validation, aliases, labels, timeout, cancellation, and cleanup without launching an installed provider. An opt-in contract test exercises the installed Claude SDK catalog.
 
 Muse adapter tests use a fake PTY and recorded `/model` transcripts to cover explicit IDs, labels, providers, defaults, fragmented output, stale-broker/authentication errors, ambiguous label-only rows, timeout, cancellation, session-log disabling, and cleanup.
 
 Codex adapter tests use a fake app-server transport to prove that `model/list` returns provider IDs, names, defaults, and hidden filtering without starting a thread. They also cover protocol errors, timeout, and process cleanup.
 
-Model-catalog tests prove that Claude, Codex, and Muse no longer receive bundled model IDs; both interactive agents return manual selection only when discovery has no cache; Amp remains a mode list; and existing command-discovered agents are unchanged.
+Model-catalog tests prove that Claude, Codex, and Muse no longer receive bundled model IDs; Claude never uses the terminal spawner; discovery returns manual selection only when it has no cache; Amp remains a mode list; and existing command-discovered agents are unchanged.
 
 Agent-service tests cover cache-first reads, successful replacement, failure preservation, six-hour lazy revalidation, in-flight coalescing, Claude/Muse startup scope enumeration, sequential warmup, and the ten-minute restart guard. Storage tests cover listing cached scopes without a schema change. Daemon tests prove startup warming is scheduled after construction and does not block readiness.
 
