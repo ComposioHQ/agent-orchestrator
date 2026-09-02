@@ -10,6 +10,11 @@ import {
 import { createServer, type Server } from "node:http";
 import path from "node:path";
 import type { CloudAccount } from "../shared/cloud-account";
+// Static import (not dynamic): the dynamic import created a static+dynamic
+// import cycle with cloud-auth-local that made the bundler split chunks
+// incorrectly and panic. Both modules only use each other's exports inside
+// functions, so the static ES cycle is safe at module-init time.
+import { revokeLocalSession } from "./cloud-auth-local";
 
 // The WorkOS AuthKit client id is public configuration (it appears in every
 // sign-in URL), so a baked default keeps sign-in working without build-time
@@ -589,7 +594,6 @@ export function installCloudIPC(
     try {
       const store = await readAuthStore(dataDir);
       if (isLocalSession(store.session)) {
-        const { revokeLocalSession } = await import("./cloud-auth-local");
         await revokeLocalSession(store.session);
       }
     } catch {
