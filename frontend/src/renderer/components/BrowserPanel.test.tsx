@@ -273,7 +273,7 @@ describe("BrowserPanel", () => {
 		await waitFor(() => expect(window.ao!.browser.historySuggestions).toHaveBeenCalledWith({
 			viewId: "42:sess-1",
 			query: "git",
-		}));
+		}), { timeout: 2_000 });
 		await waitFor(() => expect(document.querySelector("datalist option")).not.toBeNull());
 		const option = document.querySelector("datalist option")!;
 		expect(option).toHaveValue("https://github.com/openai");

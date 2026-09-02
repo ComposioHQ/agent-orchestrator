@@ -3,6 +3,7 @@ import {
 	useCallback,
 	useEffect,
 	useId,
+	useLayoutEffect,
 	useRef,
 	useState,
 	type FocusEvent,
@@ -459,10 +460,9 @@ export function BrowserPanelView({
 		};
 	}, [navState.url, profileState.profileId, urlEditing, urlInput, viewId]);
 
-	useEffect(() => {
+	useLayoutEffect(() => {
 		if (!urlEditing) return;
-		const frame = window.requestAnimationFrame(() => urlInputRef.current?.select());
-		return () => window.cancelAnimationFrame(frame);
+		urlInputRef.current?.select();
 	}, [urlEditing]);
 
 	useEffect(() => {
@@ -472,8 +472,10 @@ export function BrowserPanelView({
 			if (focusedViewId !== viewId) return;
 			urlInputRef.current?.blur();
 			setUrlEditing(false);
+			setUrlInput(navState.url);
+			setHistorySuggestions([]);
 		});
-	}, [viewId]);
+	}, [navState.url, viewId]);
 
 	useEffect(() => {
 		const offSubmit = window.ao?.browser.onAnnotationSubmit((payload) => {
@@ -509,6 +511,12 @@ export function BrowserPanelView({
 		void navigate(selected.url);
 	};
 
+	const endUrlEditing = () => {
+		setUrlEditing(false);
+		setUrlInput(navState.url);
+		setHistorySuggestions([]);
+	};
+
 	const beginUrlEditing = () => {
 		const input = urlInputRef.current;
 		const wrapper = input?.parentElement;
@@ -522,7 +530,6 @@ export function BrowserPanelView({
 			wrapper.style.setProperty("--browser-url-expand-left", `${targetLeft + 2 - wrapperRect.left}px`);
 			wrapper.style.setProperty("--browser-url-expand-right", `${wrapperRect.right - toolbarRect.right + 4}px`);
 		}
-		setUrlInput(navState.url);
 		setUrlEditing(true);
 	};
 
@@ -768,7 +775,7 @@ export function BrowserPanelView({
 						aria-label={t("browser.url")}
 						className="browser-panel__url-input h-browser-url font-mono text-xs"
 						list={historySuggestions.length > 0 ? historyListId : undefined}
-						onBlur={() => setUrlEditing(false)}
+						onBlur={endUrlEditing}
 						onChange={(event) => handleURLChange(event.target.value)}
 						onFocus={beginUrlEditing}
 						placeholder={t("browser.urlPlaceholder")}
