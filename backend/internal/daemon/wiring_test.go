@@ -192,6 +192,43 @@ func TestWiring_StartupSignalGateComesFromAdapters(t *testing.T) {
 	}
 }
 
+// TestWiring_UrgentNudgeGateComesFromAdapters asserts the urgent merge-conflict
+// nudge is fail-closed at a waiting_input prompt: it is only safe on a harness
+// that reports a permission dialog AS blocked (ports.BlockedActivitySignaler),
+// so a waiting_input prompt there is a genuine idle composer rather than a
+// masked permission decision. Codex, Droid, and the shared-hook harnesses all
+// fold permission prompts into waiting_input and must stay suppressed; only
+// blocked-signalling adapters (claude-code, kimchi) open the boundary.
+func TestWiring_UrgentNudgeGateComesFromAdapters(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	agents, err := buildAgentResolver(config.DefaultAgent, log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	safe := urgentNudgeWaitingInputSafe(agents)
+
+	for _, harness := range []domain.AgentHarness{domain.HarnessClaudeCode, domain.HarnessKimchi} {
+		if !safe(harness) {
+			t.Errorf("harness %q reports permission dialogs as blocked; urgent nudge must be allowed at waiting_input", harness)
+		}
+	}
+	// Codex maps permission-request to waiting_input; Droid folds both permission
+	// decisions and idle notifications into waiting_input; Goose/Devin ride the
+	// shared name-only StandardDeriveActivityState with no blocked signal. All
+	// must keep urgent delivery suppressed at a waiting_input prompt.
+	for _, harness := range []domain.AgentHarness{
+		domain.HarnessCodex, domain.HarnessDroid, domain.HarnessGoose, domain.HarnessDevin,
+		"definitely-not-an-agent", "",
+	} {
+		if safe(harness) {
+			t.Errorf("harness %q cannot distinguish a masked permission prompt from an idle composer; urgent nudge must stay fail-closed", harness)
+		}
+	}
+	if urgentNudgeWaitingInputSafe(nil)(domain.HarnessClaudeCode) {
+		t.Error("a nil resolver must fail closed, not open the waiting_input boundary")
+	}
+}
+
 // TestWiring_StartSessionBuildsSessionService asserts the daemon's startSession
 // constructs a real controller-facing session service end to end (resolver +
 // gitworktree workspace + session manager over the shared store/LCM), which is
