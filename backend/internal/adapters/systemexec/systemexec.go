@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -103,6 +104,9 @@ func (Adapter) Probe(ctx context.Context) (ports.InstallCapabilities, error) {
 			return ports.InstallCapabilities{}, err
 		}
 		snapshot.Homebrew.PrefixWritable = writable
+	}
+	if runtime.GOOS == "darwin" {
+		snapshot.MacApplicationsWritable, snapshot.MacApplicationsWritableErr = pathWritable(ctx, "/Applications")
 	}
 	return snapshot, nil
 }

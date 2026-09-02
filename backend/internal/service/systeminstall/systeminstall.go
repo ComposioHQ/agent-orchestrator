@@ -172,6 +172,24 @@ type AgentInstallMethod struct {
 	Command             string `json:"command,omitempty"`
 	Reason              string `json:"reason,omitempty"`
 	ExpectedDestination string `json:"expectedDestination,omitempty"`
+	ReinstallAvailable  bool   `json:"reinstallAvailable"`
+	ReinstallCommand    string `json:"reinstallCommand,omitempty"`
+	ReinstallReason     string `json:"reinstallReason,omitempty"`
+}
+
+// AgentOperation distinguishes a first installation from an explicit rebuild
+// of an existing harness environment.
+type AgentOperation string
+
+const (
+	// AgentOperationInstall requests a first-time installation.
+	AgentOperationInstall AgentOperation = "install"
+	// AgentOperationReinstall requests an explicit rebuild of an existing installation.
+	AgentOperationReinstall AgentOperation = "reinstall"
+)
+
+func (operation AgentOperation) valid() bool {
+	return operation == AgentOperationInstall || operation == AgentOperationReinstall
 }
 
 // Status is the lifecycle state of an install Job.
@@ -202,6 +220,10 @@ const maxOutputBytes = 4000
 // realistic expected duration.
 const defaultInstallTimeout = 15 * time.Minute
 
+// defaultPersistenceTimeout keeps best-effort worker state writes from
+// consuming the daemon's entire shutdown drain budget behind a blocked DB.
+const defaultPersistenceTimeout = 2 * time.Second
+
 // Job is the tracked state of one install run for a Target.
 type Job struct {
 	Target              Target `json:"target" enum:"tmux,gh,claude,claude-code,codex,cursor,opencode,aider,copilot,grok,kimi,pi,amp,auggie,droid,crush,cline,goose,qwen,continue,devin,kiro,kilocode,vibe,muse,agy,autohand,kimchi,prime-agent,omp,cloudflared" description:"Fixed install target this job ran (or is running) for."`
@@ -225,6 +247,12 @@ type Job struct {
 // authentication.
 type HarnessVerifier interface {
 	Verify(ctx context.Context, target Target) (VerifyResult, error)
+}
+
+// HarnessBinaryResolver exposes the same adapter-backed binary lookup used by
+// verification so repair commands can execute an installed CLI outside PATH.
+type HarnessBinaryResolver interface {
+	Resolve(ctx context.Context, target Target) (string, error)
 }
 
 // SessionLister exposes durable lifecycle facts used to keep the Droid vendor
@@ -266,6 +294,8 @@ type Service struct {
 	// override it with a short duration to exercise the timeout path without
 	// a real multi-minute wait.
 	installTimeout time.Duration
+	// persistenceTimeout bounds worker-owned transition and terminal writes.
+	persistenceTimeout time.Duration
 }
 
 // requestPlanner carries one immutable capability snapshot through all recipe
@@ -273,10 +303,11 @@ type Service struct {
 type requestPlanner struct {
 	*Service
 	capabilities *ports.InstallCapabilities
+	ctx          context.Context
 }
 
 func (s *Service) newRequestPlanner(ctx context.Context) (requestPlanner, error) {
-	planner := requestPlanner{Service: s}
+	planner := requestPlanner{Service: s, ctx: ctx}
 	if s.installCapabilities == nil {
 		return planner, nil
 	}
@@ -313,6 +344,7 @@ func NewWithDeps(executables ports.ExecutableFinder, commands ports.CommandRunne
 		sessions:            deps.Sessions,
 		goos:                runtime.GOOS,
 		installTimeout:      defaultInstallTimeout,
+		persistenceTimeout:  defaultPersistenceTimeout,
 		stop:                stop,
 		backgroundContext:   backgroundContext,
 	}
@@ -330,16 +362,24 @@ func (s *Service) AgentPlans(ctx context.Context) ([]AgentPlan, error) {
 	}
 	out := make([]AgentPlan, 0, len(agentTargets))
 	for _, target := range agentTargets {
-		plans := planner.agentMethodPlans(target)
+		plans := planner.agentMethodPlans(target, AgentOperationInstall)
+		reinstallPlans := planner.agentMethodPlans(target, AgentOperationReinstall)
+		reinstallByMethod := make(map[string]Plan, len(reinstallPlans))
+		for _, reinstallPlan := range reinstallPlans {
+			reinstallByMethod[reinstallPlan.Method] = reinstallPlan
+		}
 		recommended := recommendedPlanIndex(plans)
 		plan := plans[recommended]
 		methods := make([]AgentInstallMethod, 0, len(plans))
 		for index, methodPlan := range plans {
+			reinstallPlan := reinstallByMethod[methodPlan.Method]
 			methods = append(methods, AgentInstallMethod{
 				ID: methodPlan.Method, Label: installMethodLabel(methodPlan.Method),
 				Available: !methodPlan.Unsupported, Recommended: index == recommended,
 				Command: displayCommand(methodPlan), Reason: methodPlan.Reason,
 				ExpectedDestination: methodPlan.ExpectedDestination,
+				ReinstallAvailable:  !reinstallPlan.Unsupported,
+				ReinstallCommand:    displayCommand(reinstallPlan), ReinstallReason: reinstallPlan.Reason,
 			})
 		}
 		out = append(out, AgentPlan{
@@ -449,8 +489,17 @@ func (s *Service) Start(ctx context.Context, target Target) (Job, error) {
 // empty method chooses the first currently viable method for compatibility
 // with older clients.
 func (s *Service) StartAgent(ctx context.Context, target Target, method string) (Job, error) {
+	return s.StartAgentOperation(ctx, target, method, AgentOperationInstall)
+}
+
+// StartAgentOperation begins a harness install or reinstall using one
+// server-owned method ID and operation.
+func (s *Service) StartAgentOperation(ctx context.Context, target Target, method string, operation AgentOperation) (Job, error) {
 	if err := ctx.Err(); err != nil {
 		return Job{}, err
+	}
+	if !operation.valid() {
+		return Job{}, fmt.Errorf("%w: unknown install operation %q", ErrInstallMethod, operation)
 	}
 	if !IsAgentTarget(target) {
 		return Job{}, fmt.Errorf("systeminstall: unknown harness target %q", target)
@@ -492,10 +541,10 @@ func (s *Service) StartAgent(ctx context.Context, target Target, method string) 
 		return Job{}, plannerErr
 	}
 	if method == "" {
-		plans := planner.agentMethodPlans(target)
+		plans := planner.agentMethodPlans(target, operation)
 		plan = plans[recommendedPlanIndex(plans)]
 	} else {
-		plan, err = planner.resolveAgentMethod(target, method)
+		plan, err = planner.resolveAgentMethod(target, method, operation)
 		if err != nil {
 			return Job{}, err
 		}
@@ -602,7 +651,7 @@ func (s *Service) Status(ctx context.Context, target Target) (Job, error) {
 		if err != nil {
 			return Job{}, err
 		}
-		plans := planner.agentMethodPlans(target)
+		plans := planner.agentMethodPlans(target, AgentOperationInstall)
 		plan = plans[recommendedPlanIndex(plans)]
 	} else {
 		plan = s.resolvePlan(target)
@@ -891,7 +940,7 @@ func (s *Service) transitionAgentJob(job *Job, status Status, output, errorMessa
 	job.UpdatedAt = &now
 	snapshot := *job
 	s.mu.Unlock()
-	return s.persistJob(context.Background(), snapshot)
+	return s.persistJobBestEffort(snapshot)
 }
 
 func (s *Service) finishAgentJob(job *Job, status Status, output, errorMessage, resolvedPath string) {
@@ -907,12 +956,22 @@ func (s *Service) finishAgentJob(job *Job, status Status, output, errorMessage, 
 	job.UpdatedAt = &now
 	snapshot := *job
 	s.mu.Unlock()
-	if err := s.persistJob(context.Background(), snapshot); err != nil {
+	if err := s.persistJobBestEffort(snapshot); err != nil {
 		s.mu.Lock()
 		job.Status = StatusFailed
 		job.Error = fmt.Sprintf("persist terminal install state: %v", err)
 		s.mu.Unlock()
 	}
+}
+
+func (s *Service) persistJobBestEffort(job Job) error {
+	timeout := s.persistenceTimeout
+	if timeout <= 0 {
+		timeout = defaultPersistenceTimeout
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	return s.persistJob(ctx, job)
 }
 
 func (s *Service) persistJob(ctx context.Context, job Job) error {
@@ -1113,20 +1172,16 @@ func (p requestPlanner) planNPM(target Target, pkg string) Plan {
 		}
 		npm := p.capabilities.NPM
 		nodeVersion, nodeOK := parseToolVersion(npm.NodeVersion)
-		npmVersion, npmOK := parseToolVersion(npm.NPMVersion)
+		_, npmOK := parseToolVersion(npm.NPMVersion)
 		if !nodeOK || !npmOK {
 			plan.Unsupported = true
 			plan.Reason = "npm and Node.js versions could not be validated."
 			return plan
 		}
-		if !versionAtLeast(nodeVersion, minimumHarnessNodeVersion) {
+		minimumNode := minimumNodeVersionForTarget(target)
+		if !versionAtLeast(nodeVersion, minimumNode) {
 			plan.Unsupported = true
-			plan.Reason = fmt.Sprintf("Node.js 22.19+ is required for AO's npm harness recipes; found %s.", npm.NodeVersion)
-			return plan
-		}
-		if !versionAtLeast(npmVersion, minimumHarnessNPMVersion) {
-			plan.Unsupported = true
-			plan.Reason = fmt.Sprintf("npm 10+ is required for AO's npm harness recipes; found %s.", npm.NPMVersion)
+			plan.Reason = fmt.Sprintf("Node.js %s+ is required for %s's npm recipe; found %s.", formatToolVersion(minimumNode), target, npm.NodeVersion)
 			return plan
 		}
 		prefix := npm.GlobalPrefix
@@ -1149,13 +1204,28 @@ func (p requestPlanner) planNPM(target Target, pkg string) Plan {
 	return plan
 }
 
-var (
-	// The floor matches the strictest engine constraint among the fixed npm
-	// recipes (currently the Pi coding agent). Keeping it code-owned makes a
-	// package-recipe update review the runtime requirement at the same time.
-	minimumHarnessNodeVersion = [3]int{22, 19, 0}
-	minimumHarnessNPMVersion  = [3]int{10, 0, 0}
-)
+func minimumNodeVersionForTarget(target Target) [3]int {
+	switch target {
+	case TargetAuggie, TargetDroid:
+		return [3]int{20, 0, 0}
+	case TargetClaudeCode, TargetQwen, TargetAutohand:
+		return [3]int{22, 0, 0}
+	case TargetPi:
+		return [3]int{22, 19, 0}
+	default:
+		return [3]int{16, 0, 0}
+	}
+}
+
+func formatToolVersion(version [3]int) string {
+	if version[2] != 0 {
+		return fmt.Sprintf("%d.%d.%d", version[0], version[1], version[2])
+	}
+	if version[1] != 0 {
+		return fmt.Sprintf("%d.%d", version[0], version[1])
+	}
+	return strconv.Itoa(version[0])
+}
 
 func parseToolVersion(value string) ([3]int, bool) {
 	value = strings.TrimPrefix(strings.TrimSpace(value), "v")

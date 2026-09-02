@@ -17,7 +17,7 @@ import (
 // against the fixed systeminstall.Target allowlist.
 type Installer interface {
 	Start(ctx context.Context, target systeminstall.Target) (systeminstall.Job, error)
-	StartAgent(ctx context.Context, target systeminstall.Target, method string) (systeminstall.Job, error)
+	StartAgentOperation(ctx context.Context, target systeminstall.Target, method string, operation systeminstall.AgentOperation) (systeminstall.Job, error)
 	Status(ctx context.Context, target systeminstall.Target) (systeminstall.Job, error)
 	AgentPlans(ctx context.Context) ([]systeminstall.AgentPlan, error)
 	AgentJobs(ctx context.Context) ([]systeminstall.Job, error)
@@ -67,7 +67,15 @@ func (c *SystemInstallController) startAgent(w http.ResponseWriter, r *http.Requ
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_INSTALL_REQUEST", "invalid install request", nil)
 		return
 	}
-	job, err := c.Installer.StartAgent(r.Context(), target, request.Method)
+	operation := request.Operation
+	if operation == "" {
+		operation = systeminstall.AgentOperationInstall
+	}
+	if operation != systeminstall.AgentOperationInstall && operation != systeminstall.AgentOperationReinstall {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_INSTALL_OPERATION", "operation must be install or reinstall", nil)
+		return
+	}
+	job, err := c.Installer.StartAgentOperation(r.Context(), target, request.Method, operation)
 	if err != nil {
 		if writeAgentInstallError(w, r, err) {
 			return

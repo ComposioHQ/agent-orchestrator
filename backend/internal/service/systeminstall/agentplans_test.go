@@ -22,6 +22,18 @@ type installCapabilitiesStub struct {
 	probe             func(context.Context) error
 }
 
+type resolvingHarnessVerifier struct {
+	path string
+}
+
+func (v resolvingHarnessVerifier) Verify(context.Context, Target) (VerifyResult, error) {
+	return VerifyResult{ResolvedPath: v.path}, nil
+}
+
+func (v resolvingHarnessVerifier) Resolve(context.Context, Target) (string, error) {
+	return v.path, nil
+}
+
 func (s installCapabilitiesStub) Probe(ctx context.Context) (ports.InstallCapabilities, error) {
 	if s.calls != nil {
 		(*s.calls)++
@@ -58,6 +70,7 @@ func (s installCapabilitiesStub) Probe(ctx context.Context) (ports.InstallCapabi
 			Prefix: homebrewPrefix, PrefixWritable: s.writable,
 			Formulae: formulae, Casks: casks, Err: s.homebrewErr,
 		},
+		MacApplicationsWritable: true,
 	}, nil
 }
 
@@ -188,7 +201,7 @@ func TestAgentInstallPlansNeverUseShellEvaluationOrSudo(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, target := range agentTargets {
-			for _, plan := range planner.agentMethodPlans(target) {
+			for _, plan := range planner.agentMethodPlans(target, AgentOperationInstall) {
 				argv := append([]string(nil), plan.Command...)
 				if plan.Script != nil {
 					argv = append(argv, plan.Script.Interpreter...)
@@ -248,6 +261,171 @@ func TestVibeRequiresIsolatedToolInstaller(t *testing.T) {
 	}
 }
 
+func TestVibeReinstallUsesPackageManagerReinstallCommands(t *testing.T) {
+	s := newTestService("darwin", "uv", "pipx")
+	planner, err := s.newRequestPlanner(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	plans := planner.agentMethodPlans(TargetVibe, AgentOperationReinstall)
+	want := map[string]string{
+		"uv":   "uv tool install mistral-vibe --force --reinstall",
+		"pipx": "pipx install --force mistral-vibe",
+	}
+	for _, plan := range plans {
+		if got := strings.Join(plan.Command, " "); got != want[plan.Method] {
+			t.Errorf("%s reinstall command = %q, want %q", plan.Method, got, want[plan.Method])
+		}
+	}
+}
+
+func TestHomebrewReinstallRepairsThroughInstallWhenPackageIsNotOwned(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		installed bool
+		want      string
+	}{
+		{name: "package absent", want: "brew install --cask codex"},
+		{name: "package present", installed: true, want: "brew reinstall --cask codex"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			s := newTestService("darwin", "brew")
+			s.installCapabilities = installCapabilitiesStub{homebrewInstalled: tt.installed, writable: true}
+			planner, err := s.newRequestPlanner(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			plan, err := planner.resolveAgentMethod(TargetCodex, "homebrew", AgentOperationReinstall)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.Join(plan.Command, " "); got != tt.want {
+				t.Fatalf("Homebrew repair command = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestKiroReinstallUsesHeadlessForcedSelfUpdate(t *testing.T) {
+	s := newTestService("darwin", "bash", "kiro-cli")
+	planner, err := s.newRequestPlanner(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := planner.resolveAgentMethod(TargetKiro, "official-installer", AgentOperationReinstall)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(plan.Command, " "); got != "/usr/bin/kiro-cli update --non-interactive --force" {
+		t.Fatalf("Kiro reinstall command = %q", got)
+	}
+	if plan.Script != nil {
+		t.Fatal("Kiro reinstall must not use the interactive vendor script")
+	}
+}
+
+func TestKiroFreshInstallRequiresWritableApplicationsButReinstallUsesSelfUpdater(t *testing.T) {
+	s := newTestService("darwin", "bash", "kiro-cli")
+	s.installCapabilities = installCapabilitiesStub{
+		prefix: "/Users/test/.npm", writable: true,
+	}
+	planner, err := s.newRequestPlanner(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	planner.capabilities.MacApplicationsWritable = false
+
+	_, installErr := planner.resolveAgentMethod(TargetKiro, "official-installer", AgentOperationInstall)
+	if !errors.Is(installErr, ErrInstallMethod) || !strings.Contains(installErr.Error(), "/Applications") {
+		t.Fatalf("fresh Kiro install error = %v", installErr)
+	}
+	reinstall, reinstallErr := planner.resolveAgentMethod(TargetKiro, "official-installer", AgentOperationReinstall)
+	if reinstallErr != nil {
+		t.Fatal(reinstallErr)
+	}
+	if got := strings.Join(reinstall.Command, " "); got != "/usr/bin/kiro-cli update --non-interactive --force" {
+		t.Fatalf("Kiro reinstall command = %q", got)
+	}
+}
+
+func TestKiroReinstallUsesAdapterResolvedBinaryOutsideDaemonPATH(t *testing.T) {
+	s := newTestService("darwin", "bash")
+	s.verifier = resolvingHarnessVerifier{path: "/Users/test/.kiro/bin/kiro-cli"}
+	planner, err := s.newRequestPlanner(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	planner.capabilities = &ports.InstallCapabilities{MacApplicationsWritable: false}
+
+	plan, err := planner.resolveAgentMethod(TargetKiro, "official-installer", AgentOperationReinstall)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(plan.Command, " "); got != "/Users/test/.kiro/bin/kiro-cli update --non-interactive --force" {
+		t.Fatalf("Kiro reinstall command = %q", got)
+	}
+}
+
+func TestPiOfficialInstallerRequiresHeadlessNodePrerequisites(t *testing.T) {
+	for _, tt := range []struct {
+		name        string
+		nodeVersion string
+		npmVersion  string
+		wantReason  string
+	}{
+		{name: "missing node", nodeVersion: "missing", npmVersion: "10.8.0", wantReason: "Node.js 22.19+"},
+		{name: "old node", nodeVersion: "v22.18.0", npmVersion: "10.8.0", wantReason: "Node.js 22.19+"},
+		{name: "missing npm", nodeVersion: "v22.19.0", npmVersion: "missing", wantReason: "npm"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			s := newTestService("darwin", "sh")
+			s.installCapabilities = installCapabilitiesStub{
+				prefix: "/Users/test/.npm", writable: true,
+				nodeVersion: tt.nodeVersion, npmVersion: tt.npmVersion,
+			}
+			planner, err := s.newRequestPlanner(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			plan, err := planner.resolveAgentMethod(TargetPi, "official-installer", AgentOperationInstall)
+			if !errors.Is(err, ErrInstallMethod) || !strings.Contains(err.Error(), tt.wantReason) {
+				t.Fatalf("Pi official installer error = %v, want unavailable reason containing %q (plan=%+v)", err, tt.wantReason, plan)
+			}
+		})
+	}
+}
+
+func TestNPMPlanUsesTargetSpecificNodeFloors(t *testing.T) {
+	for _, tt := range []struct {
+		name        string
+		target      Target
+		nodeVersion string
+		wantAllowed bool
+		wantReason  string
+	}{
+		{name: "codex accepts node 16", target: TargetCodex, nodeVersion: "v16.0.0", wantAllowed: true},
+		{name: "auggie accepts node 20", target: TargetAuggie, nodeVersion: "v20.0.0", wantAllowed: true},
+		{name: "auggie rejects node 18", target: TargetAuggie, nodeVersion: "v18.20.0", wantReason: "Node.js 20+"},
+		{name: "claude rejects node 20", target: TargetClaudeCode, nodeVersion: "v20.19.0", wantReason: "Node.js 22+"},
+		{name: "pi rejects node 22.18", target: TargetPi, nodeVersion: "v22.18.0", wantReason: "Node.js 22.19+"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			s := newTestService("darwin", "npm")
+			s.installCapabilities = installCapabilitiesStub{
+				prefix: "/Users/test/.npm", writable: true,
+				nodeVersion: tt.nodeVersion, npmVersion: "9.0.0",
+			}
+			plan := s.planNPM(tt.target, "package")
+			if tt.wantAllowed && plan.Unsupported {
+				t.Fatalf("plan = %+v, want available", plan)
+			}
+			if !tt.wantAllowed && (!plan.Unsupported || !strings.Contains(plan.Reason, tt.wantReason)) {
+				t.Fatalf("plan = %+v, want unavailable reason containing %q", plan, tt.wantReason)
+			}
+		})
+	}
+}
+
 func TestNPMPlanRequiresWritableGlobalPrefix(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -261,7 +439,7 @@ func TestNPMPlanRequiresWritableGlobalPrefix(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			s := newTestService("darwin", "npm")
 			s.installCapabilities = tt.caps
-			plan := s.planAgent(TargetCodex)
+			plan := s.planNPM(TargetCodex, "@openai/codex")
 			if !plan.Unsupported || !strings.Contains(plan.Reason, tt.wantReason) {
 				t.Fatalf("plan = %+v, want unavailable reason containing %q", plan, tt.wantReason)
 			}
@@ -270,22 +448,21 @@ func TestNPMPlanRequiresWritableGlobalPrefix(t *testing.T) {
 
 	s := newTestService("darwin", "npm")
 	s.installCapabilities = installCapabilitiesStub{prefix: "/Users/test/.npm", writable: true}
-	plan := s.planAgent(TargetCodex)
+	plan := s.planNPM(TargetCodex, "@openai/codex")
 	if plan.Unsupported || plan.ExpectedDestination != "/Users/test/.npm/bin" {
 		t.Fatalf("plan = %+v, want writable npm destination", plan)
 	}
 }
 
-func TestNPMPlanRequiresSupportedNodeAndNPMVersions(t *testing.T) {
+func TestNPMPlanRequiresParseableNodeAndNPMVersions(t *testing.T) {
 	tests := []struct {
 		name        string
 		nodeVersion string
 		npmVersion  string
 		wantReason  string
 	}{
-		{name: "old node", nodeVersion: "v22.18.0", npmVersion: "10.8.0", wantReason: "Node.js 22.19+"},
-		{name: "old npm", nodeVersion: "v22.19.0", npmVersion: "9.9.4", wantReason: "npm 10+"},
 		{name: "unparseable node", nodeVersion: "unknown", npmVersion: "10.8.0", wantReason: "could not be validated"},
+		{name: "unparseable npm", nodeVersion: "v22.19.0", npmVersion: "unknown", wantReason: "could not be validated"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -294,7 +471,7 @@ func TestNPMPlanRequiresSupportedNodeAndNPMVersions(t *testing.T) {
 				prefix: "/Users/test/.npm", writable: true,
 				nodeVersion: tt.nodeVersion, npmVersion: tt.npmVersion,
 			}
-			plan := s.planAgent(TargetCodex)
+			plan := s.planNPM(TargetCodex, "@openai/codex")
 			if !plan.Unsupported || !strings.Contains(plan.Reason, tt.wantReason) {
 				t.Fatalf("plan = %+v, want unavailable reason containing %q", plan, tt.wantReason)
 			}

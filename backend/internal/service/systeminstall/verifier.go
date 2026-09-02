@@ -30,31 +30,44 @@ func NewVerifier(agents ports.AgentResolver, commands ports.CommandRunner) *Veri
 	return &Verifier{agents: agents, commands: commands, timeout: defaultVerifyTimeout}
 }
 
-// Verify resolves and version-probes the installed harness executable.
-func (v *Verifier) Verify(ctx context.Context, target Target) (VerifyResult, error) {
+// Resolve returns the executable selected by the harness adapter without
+// probing authentication or running the binary.
+func (v *Verifier) Resolve(ctx context.Context, target Target) (string, error) {
 	if !IsAgentTarget(target) {
-		return VerifyResult{}, fmt.Errorf("systeminstall: %s is not a harness", target)
+		return "", fmt.Errorf("systeminstall: %s is not a harness", target)
 	}
-	if v.agents == nil || v.commands == nil {
-		return VerifyResult{}, fmt.Errorf("systeminstall: harness verifier is not configured")
+	if v.agents == nil {
+		return "", fmt.Errorf("systeminstall: harness verifier is not configured")
 	}
 	agent, ok := v.agents.Agent(domain.AgentHarness(target))
 	if !ok {
-		return VerifyResult{}, fmt.Errorf("systeminstall: no adapter registered for %s", target)
+		return "", fmt.Errorf("systeminstall: no adapter registered for %s", target)
 	}
 	resolver, ok := agent.(ports.AgentBinaryResolver)
 	if !ok {
-		return VerifyResult{}, fmt.Errorf("systeminstall: adapter for %s cannot resolve its binary", target)
+		return "", fmt.Errorf("systeminstall: adapter for %s cannot resolve its binary", target)
+	}
+	path, err := resolver.ResolveBinary(ctx)
+	if err != nil {
+		return "", fmt.Errorf("resolve installed %s binary: %w", target, err)
+	}
+	if path == "" {
+		return "", fmt.Errorf("resolve installed %s binary: empty path", target)
+	}
+	return path, nil
+}
+
+// Verify resolves and version-probes the installed harness executable.
+func (v *Verifier) Verify(ctx context.Context, target Target) (VerifyResult, error) {
+	if v.commands == nil {
+		return VerifyResult{}, fmt.Errorf("systeminstall: harness verifier is not configured")
 	}
 
 	probeCtx, cancel := context.WithTimeout(ctx, v.timeout)
 	defer cancel()
-	path, err := resolver.ResolveBinary(probeCtx)
+	path, err := v.Resolve(probeCtx, target)
 	if err != nil {
-		return VerifyResult{}, fmt.Errorf("resolve installed %s binary: %w", target, err)
-	}
-	if path == "" {
-		return VerifyResult{}, fmt.Errorf("resolve installed %s binary: empty path", target)
+		return VerifyResult{}, err
 	}
 	out := &capturedOutput{max: maxOutputBytes}
 	if err := v.commands.Run(probeCtx, []string{path, "--version"}, out, out); err != nil {

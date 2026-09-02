@@ -5976,11 +5976,18 @@ components:
           type: string
         recommended:
           type: boolean
+        reinstallAvailable:
+          type: boolean
+        reinstallCommand:
+          type: string
+        reinstallReason:
+          type: string
       required:
       - id
       - label
       - available
       - recommended
+      - reinstallAvailable
       type: object
     AgentInstallPlan:
       properties:
@@ -9575,6 +9582,12 @@ components:
         method:
           description: Server-issued installation method id. Omit to use the recommended
             viable method.
+          type: string
+        operation:
+          description: Requested operation. Defaults to install for older clients.
+          enum:
+          - install
+          - reinstall
           type: string
       type: object
     StartPreviewServerRequest:

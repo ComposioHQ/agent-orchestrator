@@ -99,7 +99,10 @@ export function HarnessSettingsSection({ titleHidden = false }: { titleHidden?: 
 			setActionErrors((current) => ({ ...current, [agentId]: undefined }));
 			void apiClient.POST("/api/v1/agents/{agent}/probe", {
 				params: { path: { agent: agentId } },
-			}).finally(() => queryClient.invalidateQueries({ queryKey: agentsQueryKey }));
+			}).finally(() => Promise.all([
+				queryClient.invalidateQueries({ queryKey: agentsQueryKey }),
+				queryClient.invalidateQueries({ queryKey: installerQueryKey }),
+			]));
 		}
 	}, [queryClient, succeededKey]);
 
@@ -120,13 +123,13 @@ export function HarnessSettingsSection({ titleHidden = false }: { titleHidden?: 
 		setPendingAgentIds(new Set(pendingActions.current));
 	};
 
-	const startInstall = async (agentId: AgentId, method: string) => {
+	const startInstall = async (agentId: AgentId, method: string, operation: "install" | "reinstall") => {
 		if (!beginAction(agentId)) return;
 		setActionErrors((current) => ({ ...current, [agentId]: undefined }));
 		try {
 			const { data, error } = await apiClient.POST("/api/v1/agents/{agent}/install", {
 				params: { path: { agent: agentId } },
-				body: { method },
+				body: { method, operation },
 			});
 			if (error || !data) {
 				setActionErrors((current) => ({ ...current, [agentId]: apiErrorMessage(error, t("settings.harness.startFailed")) }));
@@ -201,7 +204,9 @@ export function HarnessSettingsSection({ titleHidden = false }: { titleHidden?: 
 				{rows.map((agentId) => {
 					const plan = plans.get(agentId);
 					const job = jobMap.get(agentId);
-					const availableMethods = plan?.methods.filter((method) => method.available) ?? [];
+					const isInstalled = installed.has(agentId);
+					const operation = isInstalled ? "reinstall" : "install";
+					const availableMethods = plan?.methods.filter((method) => operation === "reinstall" ? method.reinstallAvailable : method.available) ?? [];
 					const recommendedMethod = availableMethods.find((method) => method.recommended) ?? availableMethods[0];
 					const selectedMethodId = selectedMethods[agentId] ?? (availableMethods.some((method) => method.id === job?.method) ? job?.method : recommendedMethod?.id) ?? "";
 					const selectedMethod = availableMethods.find((method) => method.id === selectedMethodId);
@@ -209,7 +214,6 @@ export function HarnessSettingsSection({ titleHidden = false }: { titleHidden?: 
 					const failed = job?.status === "failed" || job?.status === "unsupported" || job?.status === "interrupted" || Boolean(actionError);
 					const active = isActive(job);
 					const pending = pendingAgentIds.has(agentId);
-					const isInstalled = installed.has(agentId);
 					const hasDiagnostics = Boolean(job && (job.error || job.output || job.method || job.expectedDestination));
 					const methodLabel = selectedMethod?.label ?? plan?.method;
 					const methodSelect = availableMethods.length > 1 ? (
@@ -217,6 +221,9 @@ export function HarnessSettingsSection({ titleHidden = false }: { titleHidden?: 
 							{availableMethods.map((method) => <option key={method.id} value={method.id}>{method.label}</option>)}
 						</select>
 					) : null;
+					const instructionsButton = (
+						<Button size="sm" variant="outline" onClick={() => void aoBridge.app.openExternal(plan?.documentationUrl ?? "https://aoagents.dev/docs/installation")}><ExternalLink aria-hidden="true" />{t("settings.harness.instructions")}</Button>
+					);
 					return (
 						<div className="settings-row-bar min-h-14 flex-wrap gap-3" data-agent={agentId} key={agentId}>
 							<AgentAvatar className="size-7 shrink-0" decorative provider={agentId} />
@@ -233,25 +240,27 @@ export function HarnessSettingsSection({ titleHidden = false }: { titleHidden?: 
 								<div className="flex items-center gap-1.5">
 									{methodSelect}
 									<Button size="sm" variant="outline" disabled={pending} onClick={() => void verifyInstall(agentId)}>{t("settings.harness.verifyAgain")}</Button>
-									<Button size="sm" onClick={() => selectedMethodId && void startInstall(agentId, selectedMethodId)} disabled={pending || !selectedMethodId}>{t("settings.harness.reinstall")}</Button>
+									{selectedMethodId ? <Button size="sm" onClick={() => void startInstall(agentId, selectedMethodId, operation)} disabled={pending}>{isInstalled ? t("settings.harness.reinstall") : t("settings.harness.retry")}</Button> : instructionsButton}
 								</div>
-							) : isInstalled ? (
+							) : isInstalled && availableMethods.length > 0 ? (
 								<div className="flex items-center gap-1.5">
 									<span className="inline-flex items-center gap-1 text-xs font-medium text-success"><Check className="size-4" aria-hidden="true" />{t("settings.harness.installed")}</span>
 									{methodSelect}
-									<Button size="sm" variant="outline" onClick={() => selectedMethodId && void startInstall(agentId, selectedMethodId)} disabled={pending || !selectedMethodId}>{t("settings.harness.reinstall")}</Button>
+									<Button size="sm" variant="outline" onClick={() => selectedMethodId && void startInstall(agentId, selectedMethodId, "reinstall")} disabled={pending || !selectedMethodId}>{t("settings.harness.reinstall")}</Button>
 								</div>
+							) : isInstalled ? (
+								instructionsButton
 							) : !plan && installers.isPending ? (
 								<span className="inline-flex items-center gap-1.5 text-xs text-settings-muted" role="status"><LoaderCircle className="size-4 animate-spin" aria-hidden="true" /></span>
 							) : availableMethods.length > 0 ? (
 								<div className="flex items-center gap-1.5">
 									{methodSelect}
-									<Button size="sm" disabled={pending} onClick={() => selectedMethodId && void startInstall(agentId, selectedMethodId)}><Download aria-hidden="true" />{t("settings.harness.install")}</Button>
+									<Button size="sm" disabled={pending} onClick={() => selectedMethodId && void startInstall(agentId, selectedMethodId, "install")}><Download aria-hidden="true" />{t("settings.harness.install")}</Button>
 								</div>
 							) : plan?.command ? (
 								<Button size="sm" variant="outline" onClick={() => void copyText(agentId, plan.command!)}>{copiedAgent === agentId ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}{copiedAgent === agentId ? t("settings.harness.copied") : t("settings.harness.copyCommand")}</Button>
 							) : (
-								<Button size="sm" variant="outline" onClick={() => void aoBridge.app.openExternal(plan?.documentationUrl ?? "https://aoagents.dev/docs/installation")}><ExternalLink aria-hidden="true" />{t("settings.harness.instructions")}</Button>
+								instructionsButton
 							)}
 
 							{hasDiagnostics ? (

@@ -77,8 +77,10 @@ type HomebrewInstallCapabilities struct {
 // InstallCapabilities contains all subprocess-backed package-manager facts
 // used to resolve the server-owned recipe catalog for one request.
 type InstallCapabilities struct {
-	NPM      NPMInstallCapabilities
-	Homebrew HomebrewInstallCapabilities
+	NPM                        NPMInstallCapabilities
+	Homebrew                   HomebrewInstallCapabilities
+	MacApplicationsWritable    bool
+	MacApplicationsWritableErr error
 }
 
 // InstallCapabilityProbe resolves package-manager state that PATH lookup alone

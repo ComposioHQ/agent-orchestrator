@@ -20,13 +20,17 @@ type installJobStoreFake struct {
 	history            []ports.AgentInstallJobRecord
 	upsertErr          error
 	upsertErrForStatus map[string]error
+	upsert             func(context.Context, ports.AgentInstallJobRecord) error
 }
 
 func newInstallJobStoreFake() *installJobStoreFake {
 	return &installJobStoreFake{records: make(map[string]ports.AgentInstallJobRecord)}
 }
 
-func (s *installJobStoreFake) UpsertAgentInstallJob(_ context.Context, record ports.AgentInstallJobRecord) error {
+func (s *installJobStoreFake) UpsertAgentInstallJob(ctx context.Context, record ports.AgentInstallJobRecord) error {
+	if s.upsert != nil {
+		return s.upsert(ctx, record)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.upsertErr != nil {
@@ -38,6 +42,28 @@ func (s *installJobStoreFake) UpsertAgentInstallJob(_ context.Context, record po
 	s.records[record.Target] = record
 	s.history = append(s.history, record)
 	return nil
+}
+
+func TestAgentJobTransitionPersistenceIsBounded(t *testing.T) {
+	store := newInstallJobStoreFake()
+	store.upsert = func(ctx context.Context, _ ports.AgentInstallJobRecord) error {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	s := newTestService("darwin", "npm")
+	s.jobStore = store
+	s.persistenceTimeout = 20 * time.Millisecond
+	now := time.Now().UTC()
+	job := &Job{Target: TargetCodex, Status: StatusInstalling, StartedAt: &now, UpdatedAt: &now}
+
+	started := time.Now()
+	err := s.transitionAgentJob(job, StatusVerifying, "", "", "")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("transitionAgentJob error = %v, want deadline exceeded", err)
+	}
+	if elapsed := time.Since(started); elapsed > 250*time.Millisecond {
+		t.Fatalf("transitionAgentJob blocked for %s", elapsed)
+	}
 }
 
 func (s *installJobStoreFake) GetAgentInstallJob(_ context.Context, target string) (ports.AgentInstallJobRecord, bool, error) {

@@ -16,18 +16,19 @@ import (
 )
 
 type fakeInstaller struct {
-	startJob   systeminstall.Job
-	startErr   error
-	statusJob  systeminstall.Job
-	statusErr  error
-	plans      []systeminstall.AgentPlan
-	plansErr   error
-	startCalls int
-	lastTarget systeminstall.Target
-	lastMethod string
-	agentJobs  []systeminstall.Job
-	verifyJob  systeminstall.Job
-	verifyErr  error
+	startJob      systeminstall.Job
+	startErr      error
+	statusJob     systeminstall.Job
+	statusErr     error
+	plans         []systeminstall.AgentPlan
+	plansErr      error
+	startCalls    int
+	lastTarget    systeminstall.Target
+	lastMethod    string
+	lastOperation systeminstall.AgentOperation
+	agentJobs     []systeminstall.Job
+	verifyJob     systeminstall.Job
+	verifyErr     error
 }
 
 func (f *fakeInstaller) Start(_ context.Context, target systeminstall.Target) (systeminstall.Job, error) {
@@ -45,10 +46,11 @@ func (f *fakeInstaller) AgentPlans(context.Context) ([]systeminstall.AgentPlan, 
 	return f.plans, f.plansErr
 }
 
-func (f *fakeInstaller) StartAgent(_ context.Context, target systeminstall.Target, method string) (systeminstall.Job, error) {
+func (f *fakeInstaller) StartAgentOperation(_ context.Context, target systeminstall.Target, method string, operation systeminstall.AgentOperation) (systeminstall.Job, error) {
 	f.startCalls++
 	f.lastTarget = target
 	f.lastMethod = method
+	f.lastOperation = operation
 	return f.startJob, f.startErr
 }
 
@@ -78,9 +80,9 @@ func TestAgentInstallRoutes(t *testing.T) {
 	if status != http.StatusOK || !strings.Contains(string(body), `"agentId":"codex"`) {
 		t.Fatalf("GET /agents/installers = %d, body=%s", status, body)
 	}
-	body, status, _ = doRequest(t, srv, http.MethodPost, "/api/v1/agents/codex/install", `{"method":"npm"}`)
-	if status != http.StatusAccepted || installer.lastTarget != systeminstall.TargetCodex || installer.lastMethod != "npm" {
-		t.Fatalf("POST /agents/codex/install = %d, target=%q method=%q, body=%s", status, installer.lastTarget, installer.lastMethod, body)
+	body, status, _ = doRequest(t, srv, http.MethodPost, "/api/v1/agents/codex/install", `{"method":"npm","operation":"reinstall"}`)
+	if status != http.StatusAccepted || installer.lastTarget != systeminstall.TargetCodex || installer.lastMethod != "npm" || installer.lastOperation != systeminstall.AgentOperationReinstall {
+		t.Fatalf("POST /agents/codex/install = %d, target=%q method=%q operation=%q, body=%s", status, installer.lastTarget, installer.lastMethod, installer.lastOperation, body)
 	}
 	body, status, _ = doRequest(t, srv, http.MethodGet, "/api/v1/agents/install-jobs", "")
 	if status != http.StatusOK || !strings.Contains(string(body), `"status":"interrupted"`) {
@@ -93,6 +95,30 @@ func TestAgentInstallRoutes(t *testing.T) {
 	body, status, _ = doRequest(t, srv, http.MethodPost, "/api/v1/agents/not-real/install", "")
 	if status != http.StatusBadRequest || !strings.Contains(string(body), `"code":"UNKNOWN_AGENT_INSTALL_TARGET"`) {
 		t.Fatalf("POST /agents/not-real/install = %d, body=%s", status, body)
+	}
+}
+
+func TestAgentInstallRejectsUnknownOperation(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	installer := &fakeInstaller{}
+	srv := httptest.NewServer(httpd.NewRouterWithControl(config.Config{}, log, nil, httpd.APIDeps{Installer: installer}, httpd.ControlDeps{}))
+	defer srv.Close()
+
+	body, status, _ := doRequest(t, srv, http.MethodPost, "/api/v1/agents/codex/install", `{"method":"npm","operation":"repair"}`)
+	if status != http.StatusBadRequest || !strings.Contains(string(body), `"code":"INVALID_INSTALL_OPERATION"`) || installer.startCalls != 0 {
+		t.Fatalf("status=%d calls=%d body=%s", status, installer.startCalls, body)
+	}
+}
+
+func TestAgentInstallDefaultsOmittedOperationToInstall(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	installer := &fakeInstaller{startJob: systeminstall.Job{Target: systeminstall.TargetCodex, Status: systeminstall.StatusInstalling}}
+	srv := httptest.NewServer(httpd.NewRouterWithControl(config.Config{}, log, nil, httpd.APIDeps{Installer: installer}, httpd.ControlDeps{}))
+	defer srv.Close()
+
+	_, status, _ := doRequest(t, srv, http.MethodPost, "/api/v1/agents/codex/install", `{"method":"npm"}`)
+	if status != http.StatusAccepted || installer.lastOperation != systeminstall.AgentOperationInstall {
+		t.Fatalf("status=%d operation=%q, want install", status, installer.lastOperation)
 	}
 }
 

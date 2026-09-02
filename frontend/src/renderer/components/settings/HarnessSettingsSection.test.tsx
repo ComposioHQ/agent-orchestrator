@@ -22,25 +22,25 @@ const plans = {
 		{
 			agentId: "claude-code", available: true, automatic: true, method: "homebrew",
 			command: "brew install --cask claude-code", documentationUrl: "https://code.claude.com/docs/en/installation",
-			methods: [{ id: "homebrew", label: "Homebrew", available: true, recommended: true, command: "brew install --cask claude-code" }],
+			methods: [{ id: "homebrew", label: "Homebrew", available: true, recommended: true, command: "brew install --cask claude-code", reinstallAvailable: true, reinstallCommand: "brew reinstall --cask claude-code" }],
 		},
 		{
 			agentId: "codex", available: true, automatic: true, method: "homebrew",
 			command: "brew install --cask codex", documentationUrl: "https://github.com/openai/codex",
 			methods: [
-				{ id: "homebrew", label: "Homebrew", available: true, recommended: true, command: "brew install --cask codex" },
-				{ id: "npm", label: "npm", available: true, recommended: false, command: "npm install -g @openai/codex", expectedDestination: "/Users/test/.npm/bin" },
+				{ id: "homebrew", label: "Homebrew", available: true, recommended: true, command: "brew install --cask codex", reinstallAvailable: true, reinstallCommand: "brew reinstall --cask codex" },
+				{ id: "npm", label: "npm", available: true, recommended: false, command: "npm install -g @openai/codex", expectedDestination: "/Users/test/.npm/bin", reinstallAvailable: true, reinstallCommand: "npm install -g @openai/codex --force" },
 			],
 		},
 		{
 			agentId: "aider", available: true, automatic: true, method: "pipx",
 			command: "pipx install aider-chat", documentationUrl: "https://aider.chat/docs/install.html",
-			methods: [{ id: "pipx", label: "pipx", available: true, recommended: true, command: "pipx install aider-chat" }],
+			methods: [{ id: "pipx", label: "pipx", available: true, recommended: true, command: "pipx install aider-chat", reinstallAvailable: true, reinstallCommand: "pipx reinstall aider-chat" }],
 		},
 		{
 			agentId: "cursor", available: true, automatic: true, method: "official-installer",
 			command: "bash <downloaded from https://cursor.com/install>", documentationUrl: "https://cursor.com/cli",
-			methods: [{ id: "official-installer", label: "Official installer", available: true, recommended: true, command: "bash <downloaded from https://cursor.com/install>" }],
+			methods: [{ id: "official-installer", label: "Official installer", available: true, recommended: true, command: "bash <downloaded from https://cursor.com/install>", reinstallAvailable: false, reinstallReason: "No headless reinstall" }],
 		},
 		{
 			agentId: "goose", available: false, automatic: false, method: "manual",
@@ -101,15 +101,15 @@ describe("HarnessSettingsSection", () => {
 
 		await waitFor(() => expect(apiClient.POST).toHaveBeenCalledWith("/api/v1/agents/{agent}/install", {
 			params: { path: { agent: "codex" } },
-			body: { method: "npm" },
+			body: { method: "npm", operation: "install" },
 		}));
 		await waitFor(() => expect(codexRow).toHaveTextContent("npm failed"));
-		expect(codexRow).toHaveTextContent("Reinstall");
+		expect(codexRow).toHaveTextContent("Retry");
 		await user.selectOptions(within(codexRow as HTMLElement).getByRole("combobox", { name: "Installation method" }), "homebrew");
-		await user.click(within(codexRow as HTMLElement).getByRole("button", { name: "Reinstall" }));
+		await user.click(within(codexRow as HTMLElement).getByRole("button", { name: "Retry" }));
 		await waitFor(() => expect(apiClient.POST).toHaveBeenLastCalledWith("/api/v1/agents/{agent}/install", {
 			params: { path: { agent: "codex" } },
-			body: { method: "homebrew" },
+			body: { method: "homebrew", operation: "install" },
 		}));
 	});
 
@@ -123,8 +123,22 @@ describe("HarnessSettingsSection", () => {
 
 		await waitFor(() => expect(apiClient.POST).toHaveBeenCalledWith("/api/v1/agents/{agent}/install", {
 			params: { path: { agent: "claude-code" } },
-			body: { method: "homebrew" },
+			body: { method: "homebrew", operation: "reinstall" },
 		}));
+	});
+
+	it("shows vendor instructions when an installed harness has no headless reinstall method", async () => {
+		vi.mocked(apiClient.GET).mockImplementation(async (path) => {
+			if (path === "/api/v1/agents") return { data: { ...catalog, installed: [...catalog.installed, { id: "cursor", label: "Cursor" }] } } as never;
+			if (path === "/api/v1/agents/installers") return { data: plans } as never;
+			if (path === "/api/v1/agents/install-jobs") return { data: { jobs: [] } } as never;
+			return { data: undefined } as never;
+		});
+		renderSection();
+		const row = (await screen.findByText("Cursor")).closest('[data-agent="cursor"]') as HTMLElement;
+
+		expect(await within(row).findByRole("button", { name: "Instructions" })).toBeEnabled();
+		expect(within(row).queryByRole("button", { name: "Reinstall" })).not.toBeInTheDocument();
 	});
 
 	it("starts an official vendor installer with one click and no instructions dialog", async () => {
@@ -144,7 +158,7 @@ describe("HarnessSettingsSection", () => {
 
 		await waitFor(() => expect(apiClient.POST).toHaveBeenCalledWith("/api/v1/agents/{agent}/install", {
 			params: { path: { agent: "cursor" } },
-			body: { method: "official-installer" },
+			body: { method: "official-installer", operation: "install" },
 		}));
 		expect(row).toHaveTextContent("Installing…");
 	});
@@ -171,9 +185,13 @@ describe("HarnessSettingsSection", () => {
 
 	it("probes the installed harness before refreshing inventory after success", async () => {
 		let installed = false;
+		let installerFetches = 0;
 		vi.mocked(apiClient.GET).mockImplementation(async (path) => {
 			if (path === "/api/v1/agents") return { data: installed ? { ...catalog, installed: [...catalog.installed, { id: "codex", label: "Codex" }] } : catalog } as never;
-			if (path === "/api/v1/agents/installers") return { data: plans } as never;
+			if (path === "/api/v1/agents/installers") {
+				installerFetches += 1;
+				return { data: plans } as never;
+			}
 			if (path === "/api/v1/agents/install-jobs") return { data: { jobs: [{ target: "codex", status: "succeeded", method: "npm", updatedAt: "2026-08-31T00:00:00Z" }] } } as never;
 			return { data: undefined } as never;
 		});
@@ -188,6 +206,7 @@ describe("HarnessSettingsSection", () => {
 		const row = (await screen.findByText("Codex")).closest('[data-agent="codex"]') as HTMLElement;
 		await waitFor(() => expect(apiClient.POST).toHaveBeenCalledWith("/api/v1/agents/{agent}/probe", { params: { path: { agent: "codex" } } }));
 		await waitFor(() => expect(row).toHaveTextContent("Installed"));
+		await waitFor(() => expect(installerFetches).toBe(2));
 	});
 
 	it("admits only one install request per harness while the first POST is pending", async () => {

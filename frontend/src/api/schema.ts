@@ -2021,6 +2021,9 @@ export interface components {
             label: string;
             reason?: string;
             recommended: boolean;
+            reinstallAvailable: boolean;
+            reinstallCommand?: string;
+            reinstallReason?: string;
         };
         AgentInstallPlan: {
             agentId: string;
@@ -3355,6 +3358,11 @@ export interface components {
         StartAgentInstallRequest: {
             /** @description Server-issued installation method id. Omit to use the recommended viable method. */
             method?: string;
+            /**
+             * @description Requested operation. Defaults to install for older clients.
+             * @enum {string}
+             */
+            operation?: "install" | "reinstall";
         };
         StartPreviewServerRequest: {
             /** @description Named preview configuration. Optional when exactly one configuration exists. */
