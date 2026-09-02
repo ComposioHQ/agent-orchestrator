@@ -3,12 +3,15 @@ import { useNavigate } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { Folder, Folders, FolderOpen, GitFork, Star } from "lucide-react";
 import { useMemo, useState, type ReactNode } from "react";
-import { aoBridge } from "../lib/bridge";
-import { useShell } from "../lib/shell-context";
+import { useSystemRequirementsGate } from "../hooks/useSystemRequirementsGate";
 import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
+import { aoBridge } from "../lib/bridge";
+import { usesPreviewWorkspaceData } from "../lib/preview-mode";
+import { useShell } from "../lib/shell-context";
 import type { WorkspaceSummary } from "../types/workspace";
 import { BoardWelcome } from "./BoardEmptyStates";
 import { CreateProjectFlow } from "./CreateProjectFlow";
+import { DaemonStartupLoader } from "./DaemonStartupLoader";
 import { TopbarButton } from "./TopbarButton";
 
 const GITHUB_REPOSITORY_URL = "https://github.com/Untrivial-ai/agent-orchestrator";
@@ -104,10 +107,11 @@ function HomeProjectSection({
 export function HomePage() {
 	const navigate = useNavigate();
 	const { t } = useTranslation();
-	const { cloneProject, createProject, initializeProjectRepository } = useShell();
+	const { cloneProject, createProject, daemonStatus, initializeProjectRepository, workspaceStartupState } =
+		useShell();
+	const { blocked: requirementsBlocked } = useSystemRequirementsGate();
 	const workspaceQuery = useWorkspaceQuery();
 	const [sourceSignal, setSourceSignal] = useState<{ source: ProjectSource; nonce: number } | null>(null);
-
 	const projects = workspaceQuery.data ?? [];
 	const { recentProjects, currentProjects } = useMemo(() => {
 		const sortedByActivity = sortProjectsByActivity(projects);
@@ -119,6 +123,17 @@ export function HomePage() {
 		return { recentProjects: recent, currentProjects: current };
 	}, [projects]);
 
+	const isDaemonReady = usesPreviewWorkspaceData || daemonStatus.state === "ready";
+	const daemonHasFailed = Boolean(daemonStatus.code);
+	const showStartup =
+		!daemonHasFailed &&
+		(!isDaemonReady ||
+			workspaceStartupState === "loading" ||
+			(!workspaceQuery.isSuccess && !workspaceQuery.isError) ||
+			requirementsBlocked);
+
+	if (showStartup) return <DaemonStartupLoader />;
+
 	const requestSource = (source: ProjectSource) => {
 		setSourceSignal({ source, nonce: Date.now() });
 	};
@@ -127,7 +142,15 @@ export function HomePage() {
 		void navigate({ to: "/projects/$projectId", params: { projectId } });
 	};
 
-	if (workspaceQuery.isSuccess && projects.length === 0) return <BoardWelcome />;
+	if (workspaceStartupState === "error" || workspaceQuery.isError) {
+		return (
+			<div className="flex min-h-full items-center justify-center px-6 py-16">
+				<p className="text-center text-xs text-passive">{t("shell.couldNotLoadProjects")}</p>
+			</div>
+		);
+	}
+
+	if (projects.length === 0) return <BoardWelcome />;
 
 	return (
 		<div className="flex min-h-full items-center justify-center px-6 py-16">

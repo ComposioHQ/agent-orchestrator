@@ -16,8 +16,14 @@ vi.mock("../hooks/useWorkspaceQuery", () => ({
 	useWorkspaceQuery: () => ({ data: routeMocks.workspaces, isSuccess: true }),
 }));
 
+vi.mock("../hooks/useSystemRequirementsGate", () => ({
+	useSystemRequirementsGate: () => ({ blocked: false }),
+}));
+
 vi.mock("../lib/shell-context", () => ({
 	useShell: () => ({
+		daemonStatus: { state: "ready" },
+		workspaceStartupState: "ready",
 		cloneProject: vi.fn(),
 		createProject: vi.fn(),
 		initializeProjectRepository: vi.fn(),
