@@ -58,8 +58,7 @@ const expectedAdapter = join(
 	"dist",
 	"index.js",
 );
-const expectedModelCatalog = join(outDir, "claude-model-catalog.mjs");
-if (existsSync(markerPath) && existsSync(expectedNode) && existsSync(expectedAdapter) && existsSync(expectedModelCatalog)) {
+if (existsSync(markerPath) && existsSync(expectedNode) && existsSync(expectedAdapter)) {
 	const marker = JSON.parse(readFileSync(markerPath, "utf8"));
 	if (marker.signature === buildSignature) process.exit(0);
 }

@@ -139,23 +139,15 @@ func TestParseMuseModelMenuRejectsLabelOnlyRows(t *testing.T) {
 	}
 }
 
-func TestDiscovererRoutesClaudeThroughSDKWithoutTerminal(t *testing.T) {
+func TestDiscovererReturnsStaticClaudeCatalogWithoutTerminal(t *testing.T) {
+	t.Setenv("ANTHROPIC_MODEL", "")
+	t.Setenv("HOME", t.TempDir())
 	terminalCalled := false
 	request := ports.AgentModelDiscoveryRequest{AgentID: "claude-code", Binary: "/bin/claude"}
 	discoverer := Discoverer{
 		TerminalSpawner: func(context.Context, []string, []string, string, uint16, uint16) (ports.Stream, error) {
 			terminalCalled = true
 			return nil, errors.New("terminal must not be used")
-		},
-		ClaudeModels: func(_ context.Context, got ports.AgentModelDiscoveryRequest) ([]ports.AgentModelInfo, error) {
-			if !reflect.DeepEqual(got, request) {
-				t.Fatalf("request = %#v, want %#v", got, request)
-			}
-			return []ports.AgentModelInfo{
-				{ID: "default", Label: "Default"},
-				{ID: "sonnet", Label: "Sonnet"},
-				{ID: "opus", Label: "Opus"},
-			}, nil
 		},
 	}
 
@@ -166,8 +158,22 @@ func TestDiscovererRoutesClaudeThroughSDKWithoutTerminal(t *testing.T) {
 	if terminalCalled {
 		t.Fatal("Claude model discovery opened a terminal")
 	}
-	if got.Source != "sdk" || len(got.Models) != 2 || got.Models[0].ID != "opus" || got.Models[1].ID != "sonnet" {
+	if got.Source != "catalog" || !got.AllowCustom || got.SelectionMode != ports.ModelSelectionCatalog {
 		t.Fatalf("catalog = %#v", got)
+	}
+	wantIDs := map[string]bool{
+		"opus[1m]": true, "claude-fable-5-1[1m]": true, "sonnet": true, "haiku": true,
+	}
+	if len(got.Models) != len(wantIDs) {
+		t.Fatalf("models = %#v, want %d entries", got.Models, len(wantIDs))
+	}
+	for _, model := range got.Models {
+		if !wantIDs[model.ID] {
+			t.Fatalf("unexpected model %q in %#v", model.ID, got.Models)
+		}
+		if model.IsDefault {
+			t.Fatalf("model %q marked default without a configured model", model.ID)
+		}
 	}
 }
 

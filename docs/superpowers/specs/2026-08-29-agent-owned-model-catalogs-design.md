@@ -2,12 +2,12 @@
 
 ## Goal
 
-Remove every release-time model-ID list from AO. Claude Code discovers its installed account's choices through the Claude Agent SDK, Muse uses `/model`, and Codex reads its structured app-server `model/list`. Amp's documented execution modes remain because they are modes, not provider model IDs.
+Remove every release-time model-ID list from AO. Claude Code ships a static catalog snapshot mirroring the model choices its ACP sessions advertise, Muse uses `/model`, and Codex reads its structured app-server `model/list`. Amp's documented execution modes remain because they are modes, not provider model IDs.
 
 ## Scope
 
-- Remove the hardcoded Claude Code, Codex, and Muse model catalogs.
-- Discover Claude Code choices from the installed Claude Agent SDK and cache them.
+- Remove the hardcoded Codex and Muse model catalogs.
+- Ship a static Claude Code catalog snapshot mirroring its ACP session model choices, refreshed manually when advertised models change.
 - Discover Codex choices from the installed Codex app-server protocol and cache them.
 - Discover Muse choices from the installed Muse TUI and cache them.
 - Reuse the existing `AgentModelCatalog` response, SQLite cache, HTTP routes, frontend controls, and manual Refresh action.
@@ -29,17 +29,11 @@ AO does not fall back to a bundled model-ID table. A failed discovery returns th
 
 ## Claude Code Discovery
 
-Claude Code has no machine-readable model-list command, but the Claude Agent SDK exposes `Query.supportedModels()`. AO runs a small packaged helper with its bundled Node runtime and the adapter-resolved, user-installed Claude executable. The helper opens only the SDK control channel, calls `supportedModels()`, and closes it without yielding a prompt.
+Claude Code has no machine-readable model-list command. Rather than spawn the Claude Agent SDK per discovery, AO ships a static catalog that mirrors the model choices a Claude Code ACP session advertises through `session/new`. The snapshot is captured from a live ACP session and refreshed manually when Claude Code's advertised models change.
 
-The SDK query sets `persistSession: false`, uses no filesystem setting sources, disables hooks, tools, and MCP servers, and never creates an AO session. AO therefore requests no model inference and does not create a project transcript or run configured `SessionStart` hooks, although Claude may perform authentication and catalog network activity.
+Discovery never launches the Agent SDK, an interactive Claude client, or a provider turn; it returns the static list immediately. The row matching Claude's resolved project/user model setting is marked as default. An empty AO override means Claude's default, so the ACP `default` meta-entry is not duplicated as a picker row.
 
-Cancellation, timeout, malformed or version-incompatible output, an empty catalog, or premature exit are discovery failures. The implementation closes the SDK query and child process on every path.
-
-### Claude Normalization
-
-AO uses `ModelInfo.value` as the launch value and `ModelInfo.displayName` as the label. It ignores the SDK's `default` meta-entry because an empty AO override already means Claude's default.
-
-AO does not derive or hardcode Claude aliases. It preserves new SDK values automatically and marks the row matching Claude's resolved project/user model setting as default. Normalization rejects empty catalogs and malformed helper output rather than caching a partial result.
+Because the list is static, discovery cannot fail on auth, timeout, or an empty catalog. Binary-version and configured-model fingerprints still invalidate the cache so a settings edit updates the default marker.
 
 ## Codex Discovery
 
@@ -74,7 +68,7 @@ Codex relies on fingerprint invalidation and six-hour/manual refresh rather than
 ## Boundaries and Safety
 
 - No discovery starts an AO session, worktree, or provider turn.
-- Claude Code discovery never yields an SDK prompt; Muse sends only `/model` and Enter.
+- Claude Code discovery launches no SDK or interactive client; Muse sends only `/model` and Enter.
 - Codex discovery sends only app-server initialization and `model/list` before closing.
 - Startup work is background-only and interactive scopes run sequentially.
 - Raw terminal/protocol output is not persisted; only normalized catalog data and existing metadata enter SQLite.
@@ -83,13 +77,13 @@ Codex relies on fingerprint invalidation and six-hour/manual refresh rather than
 
 ## Testing
 
-Claude adapter tests inject the SDK runner and cover isolation options, response-version validation, aliases, labels, timeout, cancellation, and cleanup without launching an installed provider. An opt-in contract test exercises the installed Claude SDK catalog.
+Claude model-catalog tests assert the static catalog is returned without launching the Agent SDK or a terminal, and that the configured-model default marker is applied.
 
 Muse adapter tests use a fake PTY and recorded `/model` transcripts to cover explicit IDs, labels, providers, defaults, fragmented output, stale-broker/authentication errors, ambiguous label-only rows, timeout, cancellation, session-log disabling, and cleanup.
 
 Codex adapter tests use a fake app-server transport to prove that `model/list` returns provider IDs, names, defaults, and hidden filtering without starting a thread. They also cover protocol errors, timeout, and process cleanup.
 
-Model-catalog tests prove that Claude, Codex, and Muse no longer receive bundled model IDs; Claude never uses the terminal spawner; discovery returns manual selection only when it has no cache; Amp remains a mode list; and existing command-discovered agents are unchanged.
+Model-catalog tests prove that Claude returns the static catalog without the terminal spawner or Agent SDK; Codex and Muse no longer receive bundled model IDs; discovery returns manual selection only when it has no cache; Amp remains a mode list; and existing command-discovered agents are unchanged.
 
 Agent-service tests cover cache-first reads, successful replacement, failure preservation, six-hour lazy revalidation, in-flight coalescing, Claude/Muse startup scope enumeration, sequential warmup, and the ten-minute restart guard. Storage tests cover listing cached scopes without a schema change. Daemon tests prove startup warming is scheduled after construction and does not block readiness.
 

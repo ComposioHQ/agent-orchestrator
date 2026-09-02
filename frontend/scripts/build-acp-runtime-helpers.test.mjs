@@ -24,11 +24,10 @@ describe("createWorkDirectory", () => {
 });
 
 describe("runtimeSourceFiles", () => {
-	it("packages and fingerprints the Claude model catalog helper", () => {
+	it("packages and fingerprints the ACP runtime manifest", () => {
 		expect(runtimeSourceFiles()).toEqual([
 			"package.json",
 			"package-lock.json",
-			"claude-model-catalog.mjs",
 		]);
 	});
 });
